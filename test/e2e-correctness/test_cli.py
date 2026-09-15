@@ -1,6 +1,7 @@
 """CLI behavior tests for Lumice."""
 
 import glob
+import hashlib
 import json
 import os
 import re
@@ -271,6 +272,68 @@ class TestOutputFormat(LumiceTestCase):
             ["-f", "dummy.json", "--quality"]
         )
         self.assertNotEqual(result.returncode, 0)
+
+
+class TestSeedOption(LumiceTestCase):
+    """`render --seed <N>`: `analyze` already has `--seed` coverage in
+    test_raypath_analysis_cli.py; `render` wires the same LUMICE_ServerConfig::sim_seed
+    field through its own server_config. `benchmark` refuses it outright -- a fixed seed
+    collapses the server to one worker (server.cpp), which would corrupt the per-core/
+    parallel comparison it measures.
+
+    Determinism is the oracle: two renders of the same cheap config with the same --seed
+    produce byte-identical JPEGs, and a different --seed produces a different one. The
+    equal-seed arm is also this feature's own red-state self-proof -- before
+    RunRender wired opts.sim_seed into server_config.sim_seed, two "same seed" runs would
+    have differed exactly like the "different seed" arm does below, since every run is
+    otherwise randomly seeded.
+    """
+
+    def _get_config(self):
+        if not (CONFIGS_DIR / "halo_22.json").exists():
+            self.skipTest("halo_22.json not found")
+        return _cheap_halo_22_config(self.output_dir)
+
+    def _render_and_hash(self, subdir, seed):
+        out_dir = os.path.join(self.output_dir, subdir)
+        os.makedirs(out_dir, exist_ok=True)
+        cfg = self._get_config()
+        result = self.run_lumice(["-f", str(cfg), "-o", out_dir, "--seed", str(seed)])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        imgs = sorted(glob.glob(os.path.join(out_dir, "img_*.jpg")))
+        self.assertTrue(imgs, f"no images found in {out_dir}")
+        return [hashlib.md5(Path(p).read_bytes()).hexdigest() for p in imgs]
+
+    def test_same_seed_is_byte_identical(self):
+        self.assertEqual(
+            self._render_and_hash("seed_a", 42), self._render_and_hash("seed_b", 42)
+        )
+
+    def test_different_seed_differs(self):
+        self.assertNotEqual(
+            self._render_and_hash("seed_c", 42), self._render_and_hash("seed_d", 43)
+        )
+
+    def test_invalid_seed_is_rejected(self):
+        for val in ["0", "-1", "abc"]:
+            result = self.run_lumice(["-f", "dummy.json", "--seed", val])
+            self.assertNotEqual(
+                result.returncode, 0, f"--seed {val!r} should be rejected"
+            )
+            self.assertIn("--seed", result.stderr)
+
+    def test_seed_missing_value(self):
+        result = self.run_lumice(["-f", "dummy.json", "--seed"])
+        self.assertNotEqual(result.returncode, 0)
+
+    def test_benchmark_rejects_seed_with_explicit_message(self):
+        """`benchmark --seed N` must not be silently ignored: a generic "unknown option"
+        would leave a script author guessing whether benchmark simply lacks the flag or
+        actively cannot support it -- the explicit reason is the point."""
+        cfg = self._get_config()
+        result = self.run_lumice(["benchmark", "-f", str(cfg), "--seed", "1"])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("benchmark does not accept --seed", result.stderr)
 
 
 class TestWorkerCount(LumiceTestCase):

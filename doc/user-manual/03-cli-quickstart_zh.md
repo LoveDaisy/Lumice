@@ -78,6 +78,10 @@ Options for render (the default subcommand):
   -o <dir>           Output directory for rendered images (default: current directory)
   --format <fmt>     Output image format: jpg or png (default: jpg)
   --quality <1-100>  JPEG quality (default: 95, ignored for PNG)
+  --seed <N>         Fix the simulation's random seed (a positive integer) so two runs
+                     of the same config are the same run; this also sizes the pool to
+                     one worker (a seeded run is single-threaded by contract).
+                     Default: random.
   --backend <name>   Trace backend: auto, cpu, metal, or cuda (default: auto).
                      'auto' and 'cpu' both select the CPU route today; 'metal'
                      falls back to CPU if unavailable. The LUMICE_TRACE_BACKEND
@@ -98,6 +102,7 @@ Examples:
   ./build/cmake_install/static/Lumice -f config.json -o /tmp/output
   ./build/cmake_install/static/Lumice -f config.json --format png
   ./build/cmake_install/static/Lumice -f config.json --quality 80
+  ./build/cmake_install/static/Lumice -f config.json --seed 7
   ./build/cmake_install/static/Lumice -f config.json --backend metal
   ./build/cmake_install/static/Lumice -f config.json --workers 4
   ./build/cmake_install/static/Lumice -f config.json -v

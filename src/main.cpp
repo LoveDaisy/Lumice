@@ -267,12 +267,21 @@ constexpr const char* kHelpWorkersOption =
     "                     worker count should not travel with it. Ignored on a GPU route\n"
     "                     (single engine).\n";
 
+// --seed is shared by `render` and `analyze` (both run a reproducible simulation) and rejected
+// by `benchmark` (a fixed seed collapses the server to one worker, server.cpp, which would
+// corrupt the parallel-efficiency pass benchmark exists to measure).
+constexpr const char* kHelpSeedOption =
+    "  --seed <N>         Fix the simulation's random seed (a positive integer) so two runs\n"
+    "                     of the same config are the same run; this also sizes the pool to\n"
+    "                     one worker (a seeded run is single-threaded by contract).\n"
+    "                     Default: random.\n";
+
 void PrintRenderOptions() {
   std::cout << kHelpConfigOption
             << "  -o <dir>           Output directory for rendered images (default: current directory)\n"
             << "  --format <fmt>     Output image format: jpg or png (default: jpg)\n"
             << "  --quality <1-100>  JPEG quality (default: 95, ignored for PNG)\n"
-            << kHelpBackendOption << kHelpWorkersOption << kHelpLogAndHelpOptions;
+            << kHelpSeedOption << kHelpBackendOption << kHelpWorkersOption << kHelpLogAndHelpOptions;
 }
 
 void PrintRenderExamples(const char* prog_name) {
@@ -280,6 +289,7 @@ void PrintRenderExamples(const char* prog_name) {
             << "  " << prog_name << " -f config.json -o /tmp/output\n"
             << "  " << prog_name << " -f config.json --format png\n"
             << "  " << prog_name << " -f config.json --quality 80\n"
+            << "  " << prog_name << " -f config.json --seed 7\n"
             << "  " << prog_name << " -f config.json --backend metal\n"
             << "  " << prog_name << " -f config.json --workers 4\n"
             << "  " << prog_name << " -f config.json -v\n";
@@ -351,11 +361,7 @@ void PrintAnalyzeUsage(const char* prog_name) {
             << "  --rays <N>         This run's ray budget, total across wavelengths; N may carry a\n"
             << "                     K, M or G suffix (e.g. 20M). Default: the scene's own ray_num,\n"
             << "                     including \"infinite\".\n"
-            << "  --seed <N>         Fix the simulation's random seed (a positive integer) so two\n"
-            << "                     runs of one question are the same run; this also sizes the pool\n"
-            << "                     to one worker (a seeded run is single-threaded by contract).\n"
-            << "                     Default: random.\n"
-            << "  --csv <path>       Write the CSV to this file instead of stdout.\n"
+            << kHelpSeedOption << "  --csv <path>       Write the CSV to this file instead of stdout.\n"
             << kHelpBackendOption << kHelpWorkersOption << kHelpLogAndHelpOptions << "\n"
             << "Examples:\n"
             << "  " << prog_name << " analyze -f config.json\n"
@@ -801,6 +807,7 @@ struct RenderOptions {
   // "let the server pick" (one per physical core, capped), so no separate was-it-set flag is
   // needed.
   int cli_workers = 0;
+  unsigned int sim_seed = 0;  // 0 = random, as LUMICE_ServerConfig::sim_seed spells it
 };
 
 struct BenchmarkOptions {
@@ -1002,6 +1009,28 @@ bool TryParseWorkersOption(int argc, char** argv, int& i, int& out_workers) {
   return true;
 }
 
+// The `--seed <N>` value at argv[i+1], for the two subcommands whose runs may be replayed
+// (`render` and `analyze`; `benchmark` never accepts it — a fixed seed collapses the server to
+// one worker, server.cpp, which would corrupt the parallel-efficiency pass it measures, so it
+// does not call this and reports the option with a dedicated message instead of unknown-option).
+// On success advances `i` past the value and writes it; on failure the diagnostic is already on
+// stderr and the caller prints its usage.
+bool TryParseSeedOption(int argc, char** argv, int& i, unsigned int& out_seed) {
+  if (++i >= argc) {
+    std::cerr << "Error: --seed requires an argument\n\n";
+    return false;
+  }
+  const std::string seed_arg = argv[i];
+  const auto parsed = ParseStrictUnsigned(seed_arg);
+  if (!parsed.has_value() || *parsed == 0 || *parsed > std::numeric_limits<unsigned int>::max()) {
+    std::cerr << "Error: --seed must be a positive integer up to " << std::numeric_limits<unsigned int>::max()
+              << ", got '" << seed_arg << "'\n\n";
+    return false;
+  }
+  out_seed = static_cast<unsigned int>(*parsed);
+  return true;
+}
+
 // Parses argv[first..) as the `render` option set. `print_usage` is the help this
 // invocation form should show — the top-level overview when `render` was implicit,
 // the subcommand's own page when it was named — and is what every diagnostic
@@ -1063,6 +1092,11 @@ int ParseRenderOptions(int argc, char** argv, int first, void (*print_usage)(con
         print_usage(argv[0]);
         return 1;
       }
+    } else if (arg == "--seed") {
+      if (!TryParseSeedOption(argc, argv, i, opts.sim_seed)) {
+        print_usage(argv[0]);
+        return 1;
+      }
     } else {
       std::cerr << "Error: unknown option: " << arg << "\n\n";
       print_usage(argv[0]);
@@ -1084,6 +1118,10 @@ int ParseRenderOptions(int argc, char** argv, int first, void (*print_usage)(con
 // Parses argv[first..) as the `benchmark` option set: the shared options and nothing else.
 // The old `--benchmark` mode accepted `-o` (unused) and `--workers` (announced as ignored);
 // under a subcommand neither has a reason to be accepted, so both are unknown options here.
+// `--seed` gets its own diagnostic rather than falling into "unknown option": it names a real
+// option this subcommand's page does not list, and silently ignoring it would be worse than
+// either — a fixed seed would collapse the server to one worker (server.cpp), corrupting the
+// per-core/parallel comparison this subcommand exists to measure.
 // Returns the process exit code, or -1 to proceed to RunBenchmark.
 int ParseBenchmarkOptions(int argc, char** argv, int first, BenchmarkOptions& opts) {
   for (int i = first; i < argc; i++) {
@@ -1098,6 +1136,13 @@ int ParseBenchmarkOptions(int argc, char** argv, int first, BenchmarkOptions& op
         return 1;
       case SharedStep::kNotShared:
         break;
+    }
+    if (argv[i] == std::string_view("--seed")) {
+      std::cerr << "Error: benchmark does not accept --seed: a fixed seed collapses the server to\n"
+                   "one worker, which would corrupt the per-core/parallel comparison this subcommand\n"
+                   "measures. There is no reproducibility option for benchmark.\n\n";
+      PrintBenchmarkUsage(argv[0]);
+      return 1;
     }
     std::cerr << "Error: unknown option: " << argv[i] << "\n\n";
     PrintBenchmarkUsage(argv[0]);
@@ -1287,15 +1332,10 @@ int ParseAnalyzeOptions(int argc, char** argv, int first, AnalyzeOptions& opts) 
       }
       opts.ray_num = rays;
     } else if (arg == "--seed") {
-      const std::string_view value = argv[++i];
-      const auto seed = ParseStrictUnsigned(value);
-      if (!seed.has_value() || *seed == 0 || *seed > std::numeric_limits<unsigned int>::max()) {
-        std::cerr << "Error: --seed must be a positive integer up to " << std::numeric_limits<unsigned int>::max()
-                  << ", got '" << value << "'\n\n";
+      if (!TryParseSeedOption(argc, argv, i, opts.sim_seed)) {
         PrintAnalyzeUsage(argv[0]);
         return 1;
       }
-      opts.sim_seed = static_cast<unsigned int>(*seed);
     } else if (arg == "--csv") {
       opts.csv_path = argv[++i];
       if (opts.csv_path.empty()) {
@@ -1441,6 +1481,7 @@ int RunRender(const RenderOptions& opts) {
   LUMICE_ServerConfig server_config{};
   server_config.preferred_backend = shared.preferred_backend;
   server_config.num_workers = opts.cli_workers;  // 0 = automatic: one per physical core, capped (server.cpp)
+  server_config.sim_seed = opts.sim_seed;        // 0 = random; a seed forces 1 worker (server.cpp)
   auto* server = LUMICE_CreateServerEx(&server_config);
   LUMICE_SetLogLevel(server, shared.log_level);
 
