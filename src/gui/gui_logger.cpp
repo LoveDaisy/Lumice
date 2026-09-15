@@ -24,8 +24,11 @@ void InstallEarlyGuiSinks() {
   // a server exists to emit Core logs).
   g_imgui_log_sink = std::make_shared<ImGuiLogSink>();
 
-  auto stdout_sink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
-  SetGuiLoggerSinks({ stdout_sink, g_imgui_log_sink });
+  // Console sink writes to stderr, same side as logger.hpp::GetSharedSink() (the engine's own
+  // console sink): the GUI process's stdout carries no log lines either, so a script piping or
+  // redirecting either binary's stdout sees the same thing -- nothing diagnostic.
+  auto console_sink = std::make_shared<spdlog::sinks::stderr_color_sink_mt>();
+  SetGuiLoggerSinks({ console_sink, g_imgui_log_sink });
   GetGuiLogger().set_formatter(lumice::CreateLumiceFormatter(kGuiLogPattern));
 
   // Flush strategy: warning+ immediately, all levels every 1s.
