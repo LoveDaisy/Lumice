@@ -28,10 +28,10 @@ After the run, the output directory contains one image per render entry in your 
 
 | File | Lens / view | Notes |
 |------|-------------|-------|
-| `example_img_01.jpg` | Equal-area dual fisheye, full sky | The default "everything in the sky" view |
-| `example_img_02.jpg` | Linear lens, narrower FOV | Closer to a camera-with-fisheye-removed view |
-| `example_img_03.jpg` | Equidistant fisheye | Useful for angle measurement |
-| `example_img_04.jpg` | Stereographic fisheye | Preserves circle shapes near the horizon |
+| `img_01.jpg` | Equal-area dual fisheye, full sky | The default "everything in the sky" view |
+| `img_02.jpg` | Linear lens, narrower FOV | Closer to a camera-with-fisheye-removed view |
+| `img_03.jpg` | Equidistant fisheye | Useful for angle measurement |
+| `img_04.jpg` | Stereographic fisheye | Preserves circle shapes near the horizon |
 
 ![Example output 1](../figs/example_img_01.jpg)
 ![Example output 2](../figs/example_img_02.jpg)
@@ -212,12 +212,12 @@ Notes:
 
 ## 5. Performance expectations
 
-Lumice traces light wavelength-by-wavelength. For a discrete spectrum (the typical case in `light_source.spectrum: [{wavelength, weight}, ...]`), the work scales as **`ray_num × N(wavelengths)`**. The example config uses 9 wavelengths × `ray_num=5e7` ⇒ ~4.5 × 10⁸ rays.
+Lumice traces light wavelength-by-wavelength. For a discrete spectrum (the typical case in `light_source.spectrum: [{wavelength, weight}, ...]`), `ray_num` is the **total** across every wavelength (see [`../configuration.md`](../configuration.md) for the exact division rule), so the work scales with that total, not with a per-wavelength count. The example config's `ray_num` is `4.5e8` (`450000000`) — the total across its 9-wavelength spectrum, ~5×10⁷ rays per wavelength.
 
 Practical first-run advice:
 
 - Want a result in seconds? Drop `ray_num` to `1e6` and use a single wavelength (e.g. `[{"wavelength": 550, "weight": 1.0}]`).
-- Want a publication-quality image? Keep `ray_num=5e7` or higher and the full 9-wavelength spectrum, and expect about 2 minutes on a modern multi-core laptop.
+- Want a publication-quality image? Keep `ray_num` at `4.5e8` or higher with the full 9-wavelength spectrum, and expect about 2 minutes on a modern multi-core laptop.
 
 For the precise relationship between `ray_num`, batches, and wavelengths, and for performance tuning beyond the basics, see [`05-faq.md`](05-faq.md) "ray_num × wavelength semantics" and [`../performance-testing.md`](../performance-testing.md).
 

@@ -60,7 +60,7 @@ Lumice 读取单个 JSON 文件，包含 **crystal**（晶体）、**filter**（
 {
   "crystal": [ /* 一个或多个晶体定义，详见配置指南 */ ],
   "filter":  [ /* 可选的光路过滤器 */ ],
-  "scene":   { "light_source": { /* 太阳 / 光谱 */ }, "ray_num": 50000000, "scattering": [ /* 散射层 */ ] },
+  "scene":   { "light_source": { /* 太阳 / 光谱 */ }, "ray_num": 50000000 /* 所有光谱波长加起来的总数——内置的 config_example.json 用 450000000 覆盖其 9 段光谱 */, "scattering": [ /* 散射层 */ ] },
   "render":  [ { "lens": { "type": "fisheye_equal_area", "fov": 180 }, "resolution": [1920, 1080], /* ... */ } ]
 }
 ~~~

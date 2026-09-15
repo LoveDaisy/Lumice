@@ -28,10 +28,10 @@
 
 | 文件 | 镜头 / 视图 | 说明 |
 |------|-------------|------|
-| `example_img_01.jpg` | 等积双鱼眼，全天空 | 默认的"全天看光晕"视图 |
-| `example_img_02.jpg` | 线性镜头，较窄视场 | 接近"普通相机去畸变"的视图 |
-| `example_img_03.jpg` | 等距鱼眼 | 适合按角度量取光晕半径 |
-| `example_img_04.jpg` | 立体投影鱼眼 | 靠近地平线区域圆形保持得好 |
+| `img_01.jpg` | 等积双鱼眼，全天空 | 默认的"全天看光晕"视图 |
+| `img_02.jpg` | 线性镜头，较窄视场 | 接近"普通相机去畸变"的视图 |
+| `img_03.jpg` | 等距鱼眼 | 适合按角度量取光晕半径 |
+| `img_04.jpg` | 立体投影鱼眼 | 靠近地平线区域圆形保持得好 |
 
 ![示例输出 1](../figs/example_img_01.jpg)
 ![示例输出 2](../figs/example_img_02.jpg)
@@ -212,12 +212,12 @@ Examples:
 
 ## 5. 性能预期
 
-Lumice 按波长追踪光线。对于离散波长 spectrum（典型场景：`light_source.spectrum: [{wavelength, weight}, ...]`），总工作量约为 **`ray_num × N(wavelengths)`**。示例配置 9 段波长 × `ray_num=5e7` ⇒ 约 4.5 × 10⁸ 条光线。
+Lumice 按波长追踪光线。对于离散波长 spectrum（典型场景：`light_source.spectrum: [{wavelength, weight}, ...]`），`ray_num` 是**所有波长加起来的总数**（换元的精确规则见 [`../configuration.md`](../configuration.md)），工作量随这个总数变化，不是随单波长数变化。示例配置的 `ray_num` 是 `4.5e8`（`450000000`）——9 段波长 spectrum 的总数，折合每段约 5×10⁷ 条光线。
 
 新手首跑建议：
 
 - 想几秒看到结果？把 `ray_num` 降到 `1e6`，spectrum 改成单波长（`[{"wavelength": 550, "weight": 1.0}]`）。
-- 想出版级清晰度？保持 `ray_num=5e7` 以上 + 完整 9 段 spectrum，预期在现代多核笔记本上约 2 分钟。
+- 想出版级清晰度？把 `ray_num` 保持在 `4.5e8` 以上 + 完整 9 段 spectrum，预期在现代多核笔记本上约 2 分钟。
 
 `ray_num` × batch × wavelength 的精确关系，以及更深入的性能调优，见 [`05-faq_zh.md`](05-faq_zh.md) "ray_num × wavelength 语义" 和 [`../performance-testing_zh.md`](../performance-testing_zh.md)。
 

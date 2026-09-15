@@ -62,7 +62,7 @@ A minimal skeleton looks like:
 {
   "crystal": [ /* one or more crystal definitions, see configuration guide */ ],
   "filter":  [ /* optional ray-path filters */ ],
-  "scene":   { "light_source": { /* sun/spectrum */ }, "ray_num": 50000000, "scattering": [ /* layers */ ] },
+  "scene":   { "light_source": { /* sun/spectrum */ }, "ray_num": 50000000 /* total, across every spectrum wavelength — the bundled config_example.json uses 450000000 for its 9-band spectrum */, "scattering": [ /* layers */ ] },
   "render":  [ { "lens": { "type": "fisheye_equal_area", "fov": 180 }, "resolution": [1920, 1080], /* ... */ } ]
 }
 ~~~
