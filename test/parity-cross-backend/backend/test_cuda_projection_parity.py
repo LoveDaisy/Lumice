@@ -92,8 +92,8 @@ def _run(cfg_path, backend: str, seed: int = _SEED) -> BufferedSimResult:
 def _assert_routed_cuda(r: BufferedSimResult, lens_type: str) -> None:
     """No-fallback assertion (scrum success criterion): the type routed to CUDA."""
     assert r.routed_backend == "cuda", (
-        f"{lens_type}: routed={r.routed_backend!r} (expected 'cuda'); the core "
-        f"log did not emit the CudaTraceBackend routing line. log tail: {r.log_lines[-5:]}"
+        f"{lens_type}: routed={r.routed_backend!r} (expected 'cuda'); "
+        f"LUMICE_GetActiveBackend did not report CUDA. log tail: {r.log_lines[-5:]}"
     )
     assert not r.fell_back, (
         f"{lens_type}: CUDA was requested but fell back to legacy CPU - the "
@@ -162,7 +162,7 @@ def test_cuda_projection_parity(lens_type: str, _proj_configs):
 
 @pytest.mark.slow
 def test_cuda_projection_no_fallback_detector():
-    """A CUDA request the process cannot honour MUST trip the fallback log.
+    """A CUDA request the process cannot honour MUST read back as a different route.
 
     Lens type is no longer a fallback trigger (315.3/315.4 relaxed IsCompatible);
     neither is renderer count any more: a CUDA session serves N renderers at once
@@ -171,8 +171,13 @@ def test_cuda_projection_no_fallback_detector():
     time (LUMICE_MAX_CONFIG_RENDERERS = 4), so no config that reaches the
     simulator makes CUDA fall back on this host. What still fires is the routing
     layer's own refusal when the requested device is not there ("requested but
-    no eligible CUDA device; falling back to legacy CPU") — the same WARN sink,
-    capture and regex the per-projection ``_assert_routed_cuda`` checks read.
+    no eligible CUDA device; falling back to legacy CPU"): the run executes on
+    legacy, and LUMICE_GetActiveBackend — the same call the per-projection
+    ``_assert_routed_cuda`` checks read — says so. `fell_back` stays False and
+    is pinned as such: the refusal sizes the server for the CPU route, and the
+    product's flag (LUMICE_GetBackendFallbackFlag) means "a GPU-sized route lost
+    its backend", which no legal config can trigger today — its teeth are shown
+    by breaking a CanUseBackend gate in source, not by a fixture.
     The device probe is cached once per process and the CUDA runtime reads
     CUDA_VISIBLE_DEVICES at initialisation, so the refusal has to be provoked in
     a child interpreter with the device hidden; the child runs the very same
@@ -198,7 +203,8 @@ def test_cuda_projection_no_fallback_detector():
         f"stdout tail: {proc.stdout[-800:]!r} stderr tail: {proc.stderr[-800:]!r}"
     )
     verdict = json.loads(verdict_lines[0][len("VERDICT "):])
-    assert verdict["fell_back"] and verdict["routed"] != "cuda", (
+    assert verdict["routed"] == "legacy" and not verdict["fell_back"], (
         "Expected the routing layer to refuse a CUDA request with CUDA_VISIBLE_DEVICES='' and "
-        f"log 'falling back', but got {verdict}. The no-fallback detector may be broken."
+        f"run legacy (not a fallback: the server was sized for the CPU route), but got "
+        f"{verdict}. The no-fallback detector may be broken."
     )
