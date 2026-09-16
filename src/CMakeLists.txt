@@ -34,7 +34,8 @@ target_link_libraries(Lumice PRIVATE
 # the same file name for that lookup to work, which is why the Linux engine is NOT renamed
 # per tier the way the Windows DLLs are (those sit side by side in one directory and must
 # not collide). The override / negative control is glibc's own
-# GLIBC_TUNABLES=glibc.cpu.hwcaps=-x86-64-v4, not a knob of this repository.
+# GLIBC_TUNABLES=glibc.cpu.hwcaps=-AVX512F (it masks feature bits, from which the level is
+# derived; the level name is not a token it accepts), not a knob of this repository.
 function(lumice_wire_engine_rpath target)
   if(APPLE)
     # A bundle's executable lives at <prefix>/<name>.app/Contents/MacOS/<name>; the CLI at

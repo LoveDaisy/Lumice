@@ -179,7 +179,11 @@ jobs:
       # itself and takes the v4 copy only on a CPU that has every v4 feature; an older glibc
       # never looks there and lands on baseline (correct, slower). No launcher process, no
       # CPUID code in the shell. The negative control / user override is glibc's own
-      # GLIBC_TUNABLES=glibc.cpu.hwcaps=-x86-64-v4 — not an env knob of this repository.
+      # GLIBC_TUNABLES=glibc.cpu.hwcaps=-AVX512F — not an env knob of this repository. The
+      # tunable masks CPU FEATURE bits (glibc derives the x86-64-v4 level from them, and v4
+      # needs AVX512F); the level name itself is not a token it knows, and an unknown token is
+      # silently ignored — the first dry-run of this step spelled it `-x86-64-v4` and the
+      # loader kept picking the v4 engine.
       # Two full configures, not one: -march is baked into every lumice_obj object file, so
       # one build tree cannot produce both tiers. They run serially in this job and share its
       # CPM cache, so the second pass re-compiles but does not re-download. Cost: roughly 2x
@@ -282,9 +286,9 @@ jobs:
 
       # One run of the CLI shell, the only run this workflow makes of the Linux package. It is
       # safe on any runner: without the tunable the loader takes the v4 engine only on a CPU
-      # that has AVX-512, and with it the loader is told not to, so the second run must report
-      # the baseline tier through LUMICE_GetEngineIsaLevel (the [BENCHMARK] `isa` key) and
-      # LD_DEBUG must show lib/liblumice.so, not the hwcaps copy. That is the negative control
+      # that has AVX-512, and with it the loader is told the CPU has no AVX512F, so the second
+      # run must report the baseline tier through LUMICE_GetEngineIsaLevel (the [BENCHMARK]
+      # `isa` key) and LD_DEBUG must show lib/liblumice.so, not the hwcaps copy. That is the negative control
       # the release's dispatch rests on, exercised on the built package rather than on a
       # developer's box. The unconstrained run only prints what it got: which tier a hosted
       # runner has is a coin toss, so asserting on it would say nothing about the code.
@@ -296,7 +300,7 @@ jobs:
           LD_DEBUG=libs install/Lumice benchmark -f examples/bench_config.json 2>&1 \
             | grep -E 'liblumice\.so|\[BENCHMARK\]' | grep -Ev 'trying file=.*(/lib/x86_64-linux-gnu|/usr/lib)' || true
           echo "--- hwcaps disabled (must land on baseline):"
-          out=$(GLIBC_TUNABLES=glibc.cpu.hwcaps=-x86-64-v4 LD_DEBUG=libs install/Lumice benchmark -f examples/bench_config.json 2>&1)
+          out=$(GLIBC_TUNABLES=glibc.cpu.hwcaps=-AVX512F LD_DEBUG=libs install/Lumice benchmark -f examples/bench_config.json 2>&1)
           printf '%s\n' "$out" | grep -E 'liblumice\.so|\[BENCHMARK\]' | grep -Ev 'trying file=.*(/lib/x86_64-linux-gnu|/usr/lib)' || true
           printf '%s\n' "$out" | grep -Eq '"isa"\s*:\s*"baseline"' \
             || { echo "::error::with hwcaps disabled the isa key did not report baseline"; exit 1; }
