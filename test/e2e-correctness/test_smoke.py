@@ -3,6 +3,7 @@
 import glob
 import json
 import os
+import shutil
 from pathlib import Path
 
 from test.e2e.base import LumiceTestCase
@@ -15,6 +16,11 @@ if HAS_PILLOW:
 # TODO: relocate configs when follow-up task completes
 CONFIGS_DIR = get_project_root() / "test" / "e2e" / "configs"
 REFERENCES_DIR = get_project_root() / "test" / "e2e-correctness" / "references"
+# Where a PSNR miss leaves its evidence: the rendered image next to a copy of the reference it
+# was judged against. `output_dir` is a per-case temp directory, so without this the one image
+# that reads low is gone by the time anyone asks whether it was whole-frame noise or a local
+# structure. Overwritten per threshold key, never accumulated; the tree is git-ignored.
+PSNR_FAILURE_DIR = get_project_root() / "scratchpad" / "e2e-failures"
 
 # PSNR thresholds per reference image (dB).
 # Calibrated by running each config 3 times and taking min_psnr - 3dB.
@@ -178,6 +184,11 @@ class TestSmoke(LumiceTestCase):
                     if threshold is not None:
                         mse = compute_mse(img_path, str(ref_path))
                         psnr = compute_psnr(mse)
+                        if psnr < threshold:
+                            keep = PSNR_FAILURE_DIR / threshold_key
+                            keep.mkdir(parents=True, exist_ok=True)
+                            shutil.copy2(img_path, keep / Path(img_path).name)
+                            shutil.copy2(ref_path, keep / f"reference_{ref_name}")
                         self.assertGreaterEqual(
                             psnr,
                             threshold,
