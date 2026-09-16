@@ -31,11 +31,27 @@
 #include "imgui.h"
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_opengl3.h"
+#if defined(LUMICE_ENGINE_DELAY_LOADED)
+#include "launcher/win_engine_loader.h"
+#endif
 #include "util/path_utils.hpp"
 
 namespace gui = lumice::gui;
 
 int main(int argc, char** argv) {
+#if defined(LUMICE_ENGINE_DELAY_LOADED)
+  // Windows shared build: the engine is a DLL chosen by CPUID (or `--isa=`) and loaded from
+  // this executable's own directory. First thing in main(), BEFORE the FreeConsole() block
+  // below, on purpose: a failure here is reported on stderr and in a message box, and while
+  // the console is still attached the stderr line is visible too (a console launch reads it,
+  // a double-click launch gets the box). Putting it after FreeConsole() would leave the box as
+  // the only outlet; putting it any later would let a LUMICE_* call trigger the load from
+  // inside the frame loop, where the only outlet is the process dying. The `--isa=` token is
+  // consumed here, so the argv scan below never sees it. See src/launcher/win_engine_loader.c.
+  if (int rc = LumiceEngineLoaderInit(&argc, argv, LUMICE_ENGINE_LOADER_REPORT_MESSAGE_BOX); rc != 0) {
+    return rc;
+  }
+#endif
 #ifdef _WIN32
   // Console subsystem (IMAGE_SUBSYSTEM_WINDOWS_CUI) gives longer thread time slices
   // than GUI subsystem, critical for the 18+ Simulator compute threads (~3.4x throughput

@@ -261,6 +261,20 @@ if(MSVC AND NOT BUILD_SHARED_LIBS)
     set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
     set(LUMICE_MSVC_STATIC_CRT ON)
   endif()
+elseif(MSVC AND BUILD_SHARED_LIBS)
+  # The shared flavor is on the DYNAMIC CRT, and this line is what says so. Before it
+  # existed the flavor landed on the same value through CMake's own default — the static
+  # branch above simply did not run and LUMICE_MSVC_STATIC_CRT stayed at its initial OFF —
+  # which is a behaviour nobody had written down. The Windows release now ships this
+  # flavor (a baseline cl.exe shell loading a clang-cl x86-64-v3 engine DLL, see
+  # .github/workflows/release.yml), and a shell and an engine DLL built by two compilers
+  # must agree on the CRT to share heap allocations across the boundary; "both happened to
+  # default to /MD" is the wrong kind of agreement to build a release on. Setting the value
+  # explicitly changes nothing about what is compiled; it makes the choice readable and
+  # keeps a future edit to the static branch from silently moving this one. The same
+  # baked-flag caveat as the static branch applies: an explicit CMAKE_<LANG>_FLAGS_<CONFIG>
+  # override takes precedence over this variable, and this file does not re-detect it here.
+  set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
 endif()
 
 include(CheckIPOSupported)
@@ -869,14 +883,34 @@ if(WIN32 AND BUILD_SHARED_LIBS)
   # explicit LUMICE_API __declspec export surface is a delivery concern; see
   # backlog #133.)
   set_target_properties(lumice PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
+  # On Windows the shared engine is an INTERNAL component of the release, not a library
+  # anyone links: the zip carries one shell per entry point (`Lumice.exe`, `LumiceGUI.exe`)
+  # and two builds of this DLL, one per ISA tier, and the shell picks one by CPUID at start
+  # (src/launcher/win_engine_loader.c). The tier is therefore part of the FILE NAME — the two
+  # DLLs sit side by side in one directory and must not collide — and the name says "engine"
+  # so a reader of the zip does not take it for a library to program against; there is no
+  # bare lumice.dll on Windows any more. The shell's /DELAYLOAD directive in src/CMakeLists.txt
+  # and src/gui/CMakeLists.txt reads the name back through $<TARGET_FILE_NAME:lumice> rather
+  # than spelling it a second time.
+  set_target_properties(lumice PROPERTIES OUTPUT_NAME "lumice-engine.${LUMICE_ISA_LEVEL}")
 endif()
 
 # Shared builds: install the dylib next to the CLI (build/cmake_install/shared/lib)
 # so the install tree is self-contained. The CLI's INSTALL_RPATH (@loader_path/lib,
 # see src/CMakeLists.txt) resolves @rpath/liblumice.dylib there. Static builds
 # archive lumice into the CLI, so there is nothing to install here.
+# Windows has no rpath: the shell resolves the engine DLL from its OWN directory (absolute
+# path, never PATH or the working directory), so the DLL is installed beside the executables
+# at the prefix root, not under lib/ — the same place release.yml's merge step copies it from.
+# The import library is not product content and stays under lib/.
 if(BUILD_SHARED_LIBS)
-  install(TARGETS lumice LIBRARY DESTINATION lib)
+  if(WIN32)
+    install(TARGETS lumice
+        RUNTIME DESTINATION "${CMAKE_INSTALL_PREFIX}"
+        ARCHIVE DESTINATION lib)
+  else()
+    install(TARGETS lumice LIBRARY DESTINATION lib)
+  endif()
 endif()
 
 # Test-only export surface: the same lumice_obj objects liblumice is made of, plus the handful of

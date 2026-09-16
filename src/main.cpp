@@ -29,6 +29,9 @@
 // clang-format on
 
 #include "lumice.h"
+#if defined(LUMICE_ENGINE_DELAY_LOADED)
+#include "launcher/win_engine_loader.h"
+#endif
 #include "util/cpu_info.hpp"
 #include "util/logger.hpp"
 #include "util/raypath_analysis_display.hpp"
@@ -1933,6 +1936,16 @@ int RunAnalyze(const AnalyzeOptions& opts) {
 
 
 int main(int argc, char** argv) {
+#if defined(LUMICE_ENGINE_DELAY_LOADED)
+  // Windows shared build: the engine is a DLL chosen by CPUID (or `--isa=`) and loaded from
+  // this executable's own directory, and this must happen before the first LUMICE_* call —
+  // the subcommand parsers below already make them. The token is consumed here; a bad one, or
+  // an engine DLL that cannot be loaded, has been reported on stderr and ends the process
+  // with the returned code. See src/launcher/win_engine_loader.c.
+  if (int rc = LumiceEngineLoaderInit(&argc, argv, LUMICE_ENGINE_LOADER_REPORT_STDERR); rc != 0) {
+    return rc;
+  }
+#endif
   // Subcommand dispatch. `argv[1]` is the subcommand only when it spells one; every
   // other argv[1] — an option, or nothing — is the implicit `render`, whose options
   // then start at argv[1] instead of argv[2] and whose help is the top-level page.

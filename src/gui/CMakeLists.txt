@@ -151,6 +151,12 @@ add_executable(LumiceGUI
 # `lumice` (shared: the dylib; static: the archive) — the product keeps reaching core
 # through the C API only.
 target_link_libraries(LumiceGUI PRIVATE lumice_gui_obj lumice)
+# Windows shared builds: the same delay-load wiring as the CLI (defined in src/CMakeLists.txt,
+# which is processed before this directory). The loader TU is C with no engine dependency, so
+# the GUI's C-API-only boundary is intact: it is the code that BRINGS the C API's provider in.
+if(WIN32 AND BUILD_SHARED_LIBS)
+  lumice_wire_engine_delay_load(LumiceGUI)
+endif()
 
 # Windows: embed icon via .rc resource.
 # Console subsystem (no WIN32_EXECUTABLE) is used intentionally — GUI subsystem
