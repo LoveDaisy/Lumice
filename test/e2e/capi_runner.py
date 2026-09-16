@@ -1253,7 +1253,9 @@ def run_scene_sequence_capi_buffered(
     must differ from its predecessor enough to be a reset-causing commit; both are
     enforced, loudly, by `_commit_and_wait_drained`.
 
-    `backend` selects the trace path:
+    `backend` selects the trace path (the preference is fixed at server
+    construction through LUMICE_ServerConfig.preferred_backend, as the CLI and
+    GUI do — see the comment at the CreateServerEx call):
       - "legacy"     : no env, preferred_backend = LUMICE_BACKEND_CPU. The C-API
                        server default and the ground-truth in 258.6.
       - "metal"      : no env, preferred_backend = LUMICE_BACKEND_METAL. Must NOT
@@ -1294,8 +1296,8 @@ def run_scene_sequence_capi_buffered(
     physical core count, capped — see kMaxDefaultWorkerCount in server.cpp). It is honoured independently of `sim_seed`: a caller
     that pins a seed already gets one worker (server.cpp clamps the
     deterministic CPU contract to a single simulator), so sweeping this knob is
-    only meaningful at `sim_seed == 0`. The GPU route ignores it (single
-    engine).
+    only meaningful at `sim_seed == 0`. On the GPU route (single engine) it
+    sizes only the standing CPU analysis pool, which a render never wakes.
     """
     if backend not in _BACKEND_MODES:
         raise ValueError(f"backend must be one of {_BACKEND_MODES}, got {backend!r}")
@@ -1341,21 +1343,24 @@ def run_scene_sequence_capi_buffered(
 
     try:
         with capture as log_lines:
-            if sim_seed != 0 or num_workers != 0:
-                cfg = LUMICE_ServerConfig(num_workers=num_workers, sim_seed=sim_seed)
-                server = lib.LUMICE_CreateServerEx(ctypes.byref(cfg))
-            else:
-                server = lib.LUMICE_CreateServer()
+            # The preference goes in at construction, the way the CLI (--backend) and
+            # the GUI (which rebuilds its server on a backend toggle) hand it over:
+            # ServerImpl resolves its route ONCE, here, and sizes itself on it — one
+            # engine for a GPU route, the CPU worker group otherwise. Setting the
+            # preference afterwards (LUMICE_SetPreferredBackend) leaves a server sized
+            # for the CPU route running a GPU backend in each of its workers, and
+            # LUMICE_GetBackendFallbackFlag — "a GPU-sized route lost its backend" —
+            # structurally 0 on it. cpu_backend / cuda route by env; the preference
+            # they carry is the CPU default, exactly as `Lumice --backend auto` does.
+            preferred = LUMICE_BACKEND_METAL if backend == "metal" else LUMICE_BACKEND_CPU
+            cfg = LUMICE_ServerConfig(
+                num_workers=num_workers, sim_seed=sim_seed, preferred_backend=preferred
+            )
+            server = lib.LUMICE_CreateServerEx(ctypes.byref(cfg))
             if not server:
-                raise RuntimeError("LUMICE_CreateServer returned NULL")
+                raise RuntimeError("LUMICE_CreateServerEx returned NULL")
 
             try:
-                if backend == "metal":
-                    lib.LUMICE_SetPreferredBackend(server, LUMICE_BACKEND_METAL)
-                elif backend == "legacy":
-                    lib.LUMICE_SetPreferredBackend(server, LUMICE_BACKEND_CPU)
-                # cpu_backend: env handles routing; preferred is ignored.
-
                 # Non-final stages: commit, wait for that epoch to drain, move on. The
                 # final stage falls through to the poll loop below, which is the
                 # unchanged single-config predicate.
