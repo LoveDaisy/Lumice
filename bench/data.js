@@ -1,56 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1789540155905,
+  "lastUpdate": 1789568000872,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "distinct": true,
-          "id": "9be4b99e4907e79992121a4e19f6dd742ba03dea",
-          "message": "docs(gui-layout): 原型取证锚点随原型分支一同退役\n\n三个 spike 分支（gui-layout-prototype / gui-visual-language / imgui-docking）\n从未推送、只存在于本地，随新布局方向被内测否决一并删除。布局蓝图开头\n把其中 gui-layout-prototype 及三个 commit 写作「取证锚点」，分支一删这行\n就指不到任何东西。\n\n改为如实说明：取证现场已不存在，§1–§5 此后是已记录的判断而非可重新核验\n的断言；要看那一版形态实际长什么样，去 feat/new-gui-layout——同一形态的\n完整实现，完成度高于原型，只不含 §5 那六条从未被实现的候选。\n\n§5 开头补一句界定：六条结论不因原型删除而撤销，重提的一方承担举证责任。\n顺带修一处漂移：视觉语言 §4.1 仍写着「具体字体尚未定案」，而 §7 的收口\n和 main 上的代码都已是 Roboto Medium 15。",
-          "timestamp": "2026-08-26T11:34:40+08:00",
-          "tree_id": "f4517359a5286de30e0bd6f6f01ac44f5b0b416e",
-          "url": "https://github.com/LoveDaisy/ice_halo_sim/commit/9be4b99e4907e79992121a4e19f6dd742ba03dea"
-        },
-        "date": 1787715956357,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 375181.9,
-            "unit": "rays/sec",
-            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 588105.8,
-            "unit": "rays/sec",
-            "extra": "CPU: Neoverse-N2\\nCores: 4"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 484537.9,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 9V74 80-Core Processor\\nCores: 4"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 309385.8,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 9V74 80-Core Processor                \\nCores: 4"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -4768,6 +4720,54 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 379585.4,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "eff2ea9db23ead9488cd19184d31ecc1fce4f339",
+          "message": "Merge pull request #373 from LoveDaisy/feat/axis-modal-custom-preset-memory\n\nfeat(gui): remember each crystal's last Custom axis triple in the edit modal",
+          "timestamp": "2026-09-16T22:02:36+08:00",
+          "tree_id": "e82f08c3e0d37f056f07a7e1e0c21781d6a0133a",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/eff2ea9db23ead9488cd19184d31ecc1fce4f339"
+        },
+        "date": 1789567999566,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 427075.1,
+            "unit": "rays/sec",
+            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 593394.1,
+            "unit": "rays/sec",
+            "extra": "CPU: Neoverse-N2\\nCores: 4"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 429031,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 7763 64-Core Processor\\nCores: 4"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 378895.1,
             "unit": "rays/sec",
             "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
           }
