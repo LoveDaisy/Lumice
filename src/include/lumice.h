@@ -1796,8 +1796,10 @@ LUMICE_ErrorCode LUMICE_GetColorOverflowInfo(LUMICE_Server* server, LUMICE_Color
 
 // Has the GPU backend stopped running partway through the current run?
 // Writes 1 to *out_fell_back once this server's GPU single-engine route has dropped
-// its trace backend (a device/PSO failure mid-run) or never obtained one, and tracing
-// has continued on the legacy CPU path; 0 otherwise. Always 0 on the CPU route, and 0
+// its trace backend (a device/PSO failure mid-run), never obtained one, or holds one
+// the run's config cannot use (no renderers, more than the backend serves, a
+// compatibility miss), and tracing has continued on the legacy CPU path; 0
+// otherwise. Always 0 on the CPU route, and 0
 // again after the next LUMICE_StartServer. The condition is discovered asynchronously
 // by the worker, so poll this each GUI tick the way LUMICE_GetColorOverflowInfo is
 // polled — it is a single cheap point read. Beyond the slowdown, the fallback also

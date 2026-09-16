@@ -154,10 +154,12 @@ class Simulator {
   // the top of Run().
   void SetPreferredBackend(BackendKind backend);
 
-  // Is this Run() still driving a TraceBackend? False both when
-  // Run() never got one (CreateBackend returned nullptr — CPU preference, or a
-  // GPU preference this build/host cannot honour) and after a
-  // BackendUnavailableError dropped it mid-Run(). Read across threads by the
+  // Is this Run() still driving a TraceBackend? False when Run() never got one
+  // (CreateBackend returned nullptr — CPU preference, or a GPU preference this
+  // build/host cannot honour), after a BackendUnavailableError dropped it
+  // mid-Run(), and when a live backend is refused by CanUseBackend's gates (no
+  // renders_, more renderers than MaxRenderers(), an IsCompatible miss) so the
+  // Run() executes on the legacy CPU path. Read across threads by the
   // server's producer (GenerateScene sizes its per-batch dispatch grain on it —
   // a GPU-sized batch on the legacy path traces one host-sampled wavelength per
   // 262144 rays), so it uses the same release/acquire pairing as
@@ -191,7 +193,7 @@ class Simulator {
   // for the legacy path (whether by preference, by force, by an unavailable
   // GPU, or by the mid-run BackendUnavailableError fallback, which re-publishes
   // it), kMetal / kCuda while that backend is live. kCpu before the first Run().
-  // Written at the same two points as backend_active_ and read by the server
+  // Written at the same three points as backend_active_ and read by the server
   // (Server::GetActiveBackend) — the observable answer to "did the force take".
   BackendKind ActiveBackend() const { return active_backend_.load(std::memory_order_acquire); }
 
@@ -414,9 +416,11 @@ class Simulator {
 
   // Backing store for BackendActive() (see its declaration above for
   // the contract and the default's rationale). Written by the simulator thread at
-  // exactly two points inside Run() — right after CreateBackend, and in the
-  // BackendUnavailableError catch that resets `backend` — and nowhere else; those
-  // are the only two places `backend`'s nullness changes.
+  // exactly three points inside Run() — right after CreateBackend, in the
+  // BackendUnavailableError catch that resets `backend` (the two places
+  // `backend`'s nullness changes), and after CanUseBackend refuses a live
+  // backend for the batch (the backend stays, the Run() runs on the CPU path
+  // regardless) — and nowhere else.
   std::atomic_bool backend_active_{ true };
 };
 

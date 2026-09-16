@@ -1479,6 +1479,22 @@ void Simulator::Run() {
 
     bool use_backend =
         CanUseBackend(backend.get(), batch, logger_, warned_no_renders, warned_multi_renderer, warned_compat);
+    // Third write point of the "fell back" signal (the other two: right after
+    // CreateBackend above, and the BackendUnavailableError catch below). A live
+    // backend that CanUseBackend's gates refuse — no renders_, more renderers than
+    // MaxRenderers(), an IsCompatible miss — runs this batch on the legacy CPU
+    // path exactly as the catch block does, and until here said so only in a WARN
+    // line: Server::BackendFellBack() / LUMICE_GetBackendFallbackFlag (the GUI's
+    // poll, the CLI's stats line) read these two atomics and kept reporting the
+    // GPU as active. The backend is NOT reset: it is intact, only this batch's
+    // renders_ fail its preconditions, and renders_ does not change within one
+    // Run(), so one flip holds for the Run() — the same once-per-Run() shape as
+    // the `warned_*` latches. Analysis sessions never reach this branch: they
+    // force CreateBackend to nullptr, so `backend` is already null there.
+    if (!use_backend && backend && backend_active_.load(std::memory_order_acquire)) {
+      backend_active_.store(false, std::memory_order_release);
+      active_backend_.store(BackendKind::kCpu, std::memory_order_release);
+    }
     // Analysis chain ids exist on the legacy CPU path only (v1, doc/raypath-
     // analysis-panel.md §2 ruling 1). Every backend route — CpuTraceBackend
     // via the env override as much as Metal / CUDA — leaves

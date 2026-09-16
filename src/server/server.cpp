@@ -150,8 +150,9 @@ class ServerImpl {
   }
 
   // Has this server's GPU single-engine route lost its TraceBackend for
-  // the remainder of the current Run()? (a BackendUnavailableError, or a
-  // CreateBackend that could not honour the preference at all.) Always false on the
+  // the remainder of the current Run()? (a BackendUnavailableError, a
+  // CreateBackend that could not honour the preference at all, or a CanUseBackend
+  // gate refusing the batch's renders_ — see Simulator::BackendActive.) Always false on the
   // CPU route, where there is no backend to lose. Like the color-degrade tally above
   // this is an ASYNCHRONOUS fact discovered by the worker mid-run, so the GUI polls
   // it (LUMICE_GetBackendFallbackFlag) instead of the fallback living only as a core
