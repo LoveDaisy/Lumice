@@ -18,8 +18,16 @@ machine's noise floor, not a licence to lower the bar. The figures below are
 what this file measured when it was written; a red should be read against
 them (and re-run) before anything else.
 
-Measured (CUDA reference machine, Linux role): see the progress record of the
-run that landed this file; figures are appended here once measured.
+Measured (CUDA reference machine, Linux role — RTX 5090 D under WSL2, CUDA
+12.9, `sm_120` SASS; the same fixtures and drain-aligned rate as the Metal
+file; two consecutive runs of this gate, 21 interleaved reps each):
+    run 1  dual 282.84M (CoV 0.148)  single_a 312.29M (0.164)  single_b 285.13M (0.135)
+           dual/single_a = 0.906, dual/single_b = 0.992; legacy 13.41M → 21.1×
+    run 2  dual 265.01M (CoV 0.144)  single_a 300.38M (0.120)  single_b 292.65M (0.132)
+           dual/single_a = 0.882, dual/single_b = 0.906; legacy 13.94M → 19.0×
+Both runs pass; the run-to-run swing of the ratio (0.906→0.882, 0.992→0.906)
+is the noise floor described above, and is why the gate is a median over 21
+samples and not a single pair.
 
 Requires (same gate as the CUDA parity files): Linux/Windows,
 ``LUMICE_HAS_CUDA=1``, a ``LUMICE_CUDA_ENABLED=ON`` build and an NVIDIA device.
