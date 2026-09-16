@@ -256,15 +256,17 @@ jobs:
       # Linux into a red job. Direct NEEDED entries only (objdump, the `dumpbin /dependents`
       # analogue), not ldd's transitive closure — the runner has the -dev packages installed,
       # so ldd would resolve a vendored library that a user's machine does not have. The
-      # allowlist is glibc/libgcc/libstdc++ plus the GL, X11 and GTK3 client libraries the
-      # apt step above installs the headers for (the runtime halves ship with every desktop
-      # distribution). The package's own engine resolves through lib/; the RPATH is
-      # $ORIGIN/lib, so nothing else is looked for there.
+      # allowlist is exactly what the first dry-run of this step observed, not a guess:
+      # glibc / libgcc / libstdc++ for everything, and for LumiceGUI the GLVND libOpenGL and
+      # the GTK3 quartet (gtk-3, gdk-3, gobject-2.0, glib-2.0) that nfd's file dialog links.
+      # No X11 library appears because GLFW dlopens those at run time rather than linking
+      # them. A new name here is a new run-time dependency of the package and should be a
+      # deliberate addition to this list, which is the point of keeping it narrow.
       - name: Check every NEEDED library is packaged or a system library (linux-x64)
         if: matrix.isa_split && runner.os == 'Linux'
         run: |
           set -euo pipefail
-          system='^(libc|libm|libpthread|libdl|librt|libgcc_s|libstdc\+\+|ld-linux-x86-64|libGL|libGLX|libOpenGL|libEGL|libX11|libXext|libXrandr|libXinerama|libXcursor|libXi|libXrender|libXfixes|libxkbcommon|libgtk-3|libgdk-3|libgio-2\.0|libgobject-2\.0|libglib-2\.0|libgmodule-2\.0|libpango-1\.0|libpangocairo-1\.0|libcairo|libcairo-gobject|libgdk_pixbuf-2\.0|libatk-1\.0|libharfbuzz|libfontconfig|libfreetype|libdbus-1)\.so(\.[0-9]+)*$'
+          system='^(libc|libm|libgcc_s|libstdc\+\+|ld-linux-x86-64|libOpenGL|libgtk-3|libgdk-3|libgobject-2\.0|libglib-2\.0)\.so(\.[0-9]+)*$'
           bad=""
           for f in $LUMICE_PACKAGE_FILES; do
             for dep in $(objdump -p "install/$f" | awk '$1 == "NEEDED" { print $2 }'); do
