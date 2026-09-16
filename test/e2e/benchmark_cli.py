@@ -17,12 +17,18 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, Optional
 
 from test.e2e.runner import find_lumice_binary
+
+# The JSON line, and only it: the subcommand's usage text also contains the
+# literal "[BENCHMARK]" (in prose), so a binary that rejects its arguments
+# and prints usage must not be parsed as a result.
+_BENCH_RE = re.compile(r"\[BENCHMARK\]\s*(\{.*\})")
 
 
 @dataclass
@@ -85,10 +91,9 @@ def run_benchmark(
         capture_output=True, encoding="utf-8", errors="replace", timeout=timeout_sec, env=env,
     )
     result = BenchmarkResult(stdout=proc.stdout, stderr=proc.stderr, returncode=proc.returncode)
-    for line in proc.stdout.splitlines():
-        if "[BENCHMARK]" in line:
-            data = json.loads(line.split("[BENCHMARK]", 1)[1].strip())
-            result.passes[str(data.get("mode"))] = data
+    for m in _BENCH_RE.finditer(proc.stdout):
+        data = json.loads(m.group(1))
+        result.passes[str(data.get("mode"))] = data
     return result
 
 

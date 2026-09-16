@@ -909,6 +909,36 @@ what is on screen. Widen the field of view, or turn the grid off, and export aga
   longer array is truncated/zero-padded rather than rejected — see [Shape-Scalar Sync
   Groups](#shape-scalar-sync-groups)
 - `render[].resolution` array length must be 2
+- `render` holds at most `LUMICE_MAX_CONFIG_RENDERERS` (4) entries; a longer array is rejected when
+  the config is parsed (`config has N "render" entries, exceeding the limit of 4`), whichever
+  backend will run it
+
+### Multiple Renderers and the GPU Route
+
+Every entry of `render` is served by ONE simulation. On the legacy CPU path each renderer has its
+own host-side consumer projecting the same exit rays. On a GPU route (`--backend metal` / `cuda`,
+or the `LUMICE_TRACE_BACKEND` override) one device session likewise serves all of them: each exit
+ray is projected once per renderer inside the trace kernel's exit tail, into one device plane per
+renderer, so a two-renderer document (the shape the GUI exports: preview + export projection) runs
+at close to a single renderer's throughput rather than twice its cost — measured at 0.91–0.95× of
+either renderer alone on Metal (`test/performance/test_metal_multi_renderer_throughput.py`) — and
+no longer falls back to the CPU path because it has more than one renderer. `doc/seam-design.md`
+§4.2.1 describes the mechanism.
+
+The GPU route can still decline a config and run it on the CPU path, batch-wide (there is no
+per-renderer mixing):
+
+- the config carries more renderers than the backend serves per session (4 for both Metal and
+  CUDA — the same count the parser rejects above, so this cannot happen from a config file);
+- a renderer the backend's compatibility check declines (today both backends accept every lens
+  type and view, so this cannot happen either);
+- the backend fails mid-run (a device or pipeline-state error).
+
+When any of these happens the CLI says so on its stats line (`backend=cpu, fell_back=true` after
+the ray counts; see the [CLI quickstart](user-manual/03-cli-quickstart.md)), the `benchmark`
+subcommand's `[BENCHMARK]` JSON carries the same `backend` / `fell_back` fields, and the C API
+reports it through `LUMICE_GetActiveBackend` / `LUMICE_GetBackendFallbackFlag` (the GUI polls the
+latter). A raypath-analysis session is not a fallback: it runs on the CPU path by design.
 
 ### Value Range Validation
 

@@ -25,6 +25,15 @@ this backend's own:
   * D65: 5%, as in the Metal file: the wavelength draw enters ``R``, and the
     bar sits above the seed-to-seed spread and 10× below a merged slot.
 
+Measured on the CUDA reference machine (RTX 5090 D, seed 42 both arms):
+  multi_lens                 corr(4×4) 0.9995 / 1.0000 / 1.0000, PSNR 40.1 /
+                             40.8 / 47.3 dB, energy 1.0018 / 1.0047 / 1.0055,
+                             R ratio 0.99994 / 0.99969 / 1.00001
+  multi_renderer_parity_dual corr(16×16) 0.8885 / 0.9610, PSNR 20.4 / 17.8 dB,
+                             energy 0.9893 / 0.9885, R ratio 0.9813 / 0.9917
+The dual scene's corr reads at the oracle's own seed-to-seed level (the Metal
+file's 0.886–0.904 / 0.959–0.963), as expected for a shared projection.
+
 Requires (same gate as ``test_cuda_projection_parity.py``): Linux/Windows,
 ``LUMICE_HAS_CUDA=1``, a ``LUMICE_CUDA_ENABLED=ON`` shared-lib build and an
 NVIDIA device. @pytest.mark.slow; runs serially.

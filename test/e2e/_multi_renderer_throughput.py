@@ -11,9 +11,10 @@ plane costs no more than the design-study figure.
 Threshold. ``T_DUAL_VS_SINGLE = 0.85``: dual rays/s ≥ 85% of EACH single
 renderer's rays/s. The number comes from the multi-renderer design study's
 prototype (a single-renderer engine projecting N times inside its exit tail),
-and was re-measured on the landed backends with this scene: Metal 0.934 /
-0.897 and CUDA 0.889 / 0.974 by ratio of medians. It is a design target the
-landed code met, not a number fitted to the landed code.
+and was re-measured on the landed backends with this scene by this gate:
+Metal 0.950 / 0.908 and CUDA 0.906 / 0.992 by ratio of medians (n = 21). It
+is a design target the landed code met, not a number fitted to the landed
+code.
 
 Statistic, and why it is not one sample per arm. A drain-aligned GPU rate on
 this scene has a per-sample CoV of 6–10% on Metal (15 interleaved reps:
@@ -35,7 +36,8 @@ dual-vs-legacy ratio is printed as context and held only to a loose
 ``T_LEGACY_SANITY`` floor (2.0×) whose one job is to catch the whole session
 falling back to the CPU path (which reads ~1.0×); it is not a precise gate,
 because the denominator moves with every CPU-path optimisation. Measured:
-Metal 4.3× (28.9M vs 6.7M rays/s), CUDA 15–17× — on their reference machines.
+Metal 4.2× (27.9M vs 6.7M rays/s), CUDA 21× (282.8M vs 13.4M rays/s) — on
+their reference machines.
 
 The gate's own routing guard is the [BENCHMARK] JSON's ``backend`` /
 ``fell_back`` (the C API's answer, printed by the CLI), on every sample.
