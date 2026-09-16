@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1789520232548,
+  "lastUpdate": 1789520234964,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9543,50 +9543,6 @@ window.BENCHMARK_DATA = {
             "username": "LoveDaisy"
           },
           "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "7a66c523b420650ecb6f8abbe787e38f506ba4e3",
-          "message": "Merge pull request #273 from LoveDaisy/feat/gui-form-refinement\n\nfeat(gui): 控件形态精修——宽度 token、PropertyRow 与排版秩序",
-          "timestamp": "2026-08-19T02:57:24+08:00",
-          "tree_id": "732853fea0235432d76a2465b680be58ccc15e51",
-          "url": "https://github.com/LoveDaisy/ice_halo_sim/commit/7a66c523b420650ecb6f8abbe787e38f506ba4e3"
-        },
-        "date": 1787080145142,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 80.7,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 98,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 94.9,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 101.9,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
             "email": "zhangjiajie043@gmail.com",
             "name": "Jiajie Zhang",
             "username": "LoveDaisy"
@@ -13901,6 +13857,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 89,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "f220e71f72ceab196f527085937d1268369d7e63",
+          "message": "Merge pull request #370 from LoveDaisy/chore/cli-render-seed-and-small-fixes\n\nchore: render --seed, double emitted-energy accumulators, manual fixes, GUI log sink to stderr",
+          "timestamp": "2026-09-16T08:42:53+08:00",
+          "tree_id": "9ad81ba8b1b719f173f4198a5be2b649c860cde2",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/f220e71f72ceab196f527085937d1268369d7e63"
+        },
+        "date": 1789520234254,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 76.4,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 99.8,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 94.7,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 90.3,
             "unit": "%"
           }
         ]
