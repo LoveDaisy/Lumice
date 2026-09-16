@@ -250,10 +250,10 @@ float RenderConsumer::ExposureScale() const {
     return 0.0f;
   }
   if (config_.ev_mode_ == RenderConfig::kAbsolute) {
-    if (snapshot_emitted_energy_ <= 0.0f) {
+    if (snapshot_emitted_energy_ <= 0.0) {
       return 0.0f;
     }
-    return config_.intensity_factor_ * kNormScale * total_pix / snapshot_emitted_energy_;
+    return static_cast<float>(config_.intensity_factor_ * kNormScale * total_pix / snapshot_emitted_energy_);
   }
 
   // kRelative: anchor to the SCENE's sky radiance, which is the same number the GUI anchors to.
@@ -1240,7 +1240,7 @@ RawXyzResult RenderConsumer::GetRawXyzResult() const {
                   {},
                   {},
                   effective_pix_,
-                  snapshot_emitted_energy_ };
+                  static_cast<float>(snapshot_emitted_energy_) };
   r.axis_solid_angle_ = AxisSolidAngle();
   return r;
 }
