@@ -344,6 +344,40 @@ jobs:
           Write-Host "install/ contents:"
           Get-ChildItem install/ | Select-Object Name, Length
 
+      # The merge check above asks "are the files we expect present"; this asks the question
+      # the executables ask at start-up: "is every DLL I import either in this directory or a
+      # Windows system DLL". They are not the same question, and the first shipped-shape build
+      # of this row proved it: with BUILD_SHARED_LIBS=ON the GUI's vendored GLFW/nfd/glad also
+      # came out as DLLs, LumiceGUI.exe imported them, nothing packaged them, and the merge
+      # check was green — the executable died at load with STATUS_DLL_NOT_FOUND (0xC0000135)
+      # on the reference box. (Root CMakeLists.txt now pins those three static; this step is
+      # what makes a recurrence a red job instead of a broken zip.) Runs after the cudart
+      # bundle step because cudart64_12.dll is one of the imports it has to find. The
+      # allowlist is the set of DLLs every supported Windows carries plus the VC++
+      # Redistributable the env: comment above declares as this package's dependency.
+      - name: Check every imported DLL is packaged or a system DLL (windows-x64)
+        if: matrix.isa_split && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $system = '^(KERNEL32|USER32|GDI32|SHELL32|IMM32|WINMM|ADVAPI32|ole32|OLEAUT32|MSVCP140|VCRUNTIME140|VCRUNTIME140_1|api-ms-win-[a-z0-9-]+)\.dll$'
+          $bad = @()
+          foreach ($f in @('Lumice.exe', 'LumiceGUI.exe', 'lumice-engine.baseline.dll', 'lumice-engine.x86-64-v3.dll')) {
+            $out = & dumpbin /nologo /dependents "install\$f"
+            if ($LASTEXITCODE) { throw "dumpbin failed on install\$f" }
+            $imports = $out | Where-Object { $_ -match '^\s+(\S+\.dll)\s*$' } | ForEach-Object { $matches[1] }
+            foreach ($dll in $imports) {
+              $packaged = Test-Path "install\$dll"
+              $isSystem = $dll -imatch $system
+              Write-Host ("  {0,-28} imports {1,-40} {2}" -f $f, $dll, $(if ($packaged) { 'packaged' } elseif ($isSystem) { 'system' } else { 'MISSING' }))
+              if (-not $packaged -and -not $isSystem) { $bad += "$f -> $dll" }
+            }
+          }
+          if ($bad) {
+            Write-Error "Package would not start: imported DLLs neither packaged nor system: $($bad -join '; ')"
+            exit 1
+          }
+
       # macOS code signing + notarization (Developer ID Application certificate).
       # Runs only on macOS and only when signing secrets are configured.
       - name: Import Apple certificate

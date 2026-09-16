@@ -438,6 +438,20 @@ CPMAddPackage(
 
 # GUI dependencies (only when BUILD_GUI is ON)
 if(BUILD_GUI)
+  # The GUI's vendored libraries (GLFW, nfd, glad) are linked STATICALLY into LumiceGUI in
+  # every flavor. BUILD_SHARED_LIBS is a global switch that every add_subdirectory'd dependency
+  # honours too, and under the shared flavor it made all three come out as DLLs — glfw3.dll,
+  # nfd.dll, glad_gl.dll — that LumiceGUI.exe imports implicitly at process start. Nothing
+  # installs or packages them, so the executable failed to start with STATUS_DLL_NOT_FOUND
+  # (0xC0000135) the first time the Windows release was built as the shared flavor, while the
+  # workflow's own merge check stayed green: it looks for the files it expects, not for the
+  # ones the executable does. The shared flavor exists for exactly one library, the engine;
+  # the switch is therefore shadowed OFF for this block only, as a normal variable over the
+  # cache entry, and unshadowed again right after so the engine target below still sees the
+  # configure's value. (GLFW has its own GLFW_LIBRARY_TYPE knob, nfd has none, and glad's
+  # glad_add_library takes STATIC — one mechanism for all three rather than three spellings.)
+  set(BUILD_SHARED_LIBS OFF)
+
   # GLFW: windowing and input
   CPMAddPackage(
     NAME glfw
@@ -499,6 +513,10 @@ if(BUILD_GUI)
     )
     glad_add_library(glad_gl REPRODUCIBLE API gl:core=3.3)
   endif()
+
+  # Unshadow: the normal variable set above goes away and the cache entry (the configure's
+  # -DBUILD_SHARED_LIBS) is visible again for everything after this block.
+  unset(BUILD_SHARED_LIBS)
 endif()
 
 # ==================================================================================================
