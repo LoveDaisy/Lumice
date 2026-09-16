@@ -31,6 +31,7 @@ serially (capi_runner mutates os.environ + a process-global log callback).
 
 from __future__ import annotations
 
+import os
 import platform
 
 import pytest
@@ -160,19 +161,25 @@ def test_metal_projection_parity(lens_type: str, _proj_configs):
 
 @pytest.mark.slow
 def test_metal_projection_no_fallback_detector():
-    """A multi-renderer config MUST trip the fallback log on Metal.
+    """A backend request the build cannot honour MUST trip the fallback log.
 
     Since 315.3/315.4 relaxed IsCompatible to accept ALL lens types, lens type
-    is no longer a fallback trigger. The multi-renderer path (CanUseBackend:
-    ``renders_->size() != 1``) is a projection-INDEPENDENT fallback that still
-    fires — this is the insurance that the per-projection ``_assert_routed_metal``
-    checks above can meaningfully fail rather than silently pass on a degraded
-    path.
+    is no longer a fallback trigger; and since a Metal session serves N
+    renderers at once (one device plane each) with a cap (kMaxRenderersDevice =
+    4) equal to what the C API accepts at all (LUMICE_MAX_CONFIG_RENDERERS = 4),
+    no config that reaches the simulator makes Metal fall back either. The
+    projection-INDEPENDENT trigger that still fires on a build without CUDA is
+    the routing layer refusing a CUDA request — same WARN sink, capture and
+    regex as the per-projection ``_assert_routed_metal`` checks above, which is
+    the insurance that those can meaningfully fail rather than silently pass
+    on a degraded path.
     """
-    cfg = get_project_root() / "test" / "e2e" / "configs" / "multi_lens.json"
-    r = _run(cfg, "metal")
+    if os.environ.get("LUMICE_HAS_CUDA") == "1":
+        pytest.skip("CUDA-capable build: a cuda request is honoured here, not refused")
+    cfg = get_project_root() / "test" / "e2e" / "configs" / "halo_22.json"
+    r = _run(cfg, "cuda")
     assert r.fell_back, (
-        "Expected Metal fallback on a multi-renderer config (multi_lens.json) but "
-        f"got fell_back=False. The no-fallback detector may be broken. "
+        "Expected the routing layer to refuse a CUDA request on a non-CUDA build and log "
+        f"'falling back', but got fell_back=False. The no-fallback detector may be broken. "
         f"log tail: {r.log_lines[-5:]}"
     )

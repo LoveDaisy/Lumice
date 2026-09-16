@@ -627,12 +627,26 @@ inline void AccumAnchorY(device atomic_float* anchor_buf,
 // The exposure anchor is deliberately NOT part of this loop — it is one plane
 // per session (AccumAnchorY), called once by each tail before this.
 //
-// `bump_landed` semantics are unchanged: landed_weight[r] counts the primary
+// `bump_landed` semantics are unchanged: the landed weight counts the primary
 // hit only, while every hit (including a dual-fisheye overlap-ring hit) adds
 // into the XYZ plane and the lane region — matching the CPU consumer's Pass 2.
+//
+// The landed weight is NOT an atomic here: it goes into the caller's per-thread
+// `landed_acc[r]` register and reaches `landed_weight[r]` (buffer 17) through
+// one simd_sum + one atomic per SIMD-group in the kernel epilogue, the same
+// shape as the ray-allocation tally. This is deliberate and measured, not a
+// micro-optimisation: with a per-hit atomic on `landed_weight + r` the drained
+// landed weight came back 1.66% LOW against the legacy CPU path (184.54 vs
+// 187.64 on cpu_backend_route.json, while the XYZ plane Y-sum matched to 1e-5),
+// and the identical kernel with the atomic on the bare `landed_weight` pointer
+// read 187.64. The bare pointer is provably SIMD-uniform, so the compiler
+// reduces the group before touching memory; the indexed address is not, and
+// 2M per-lane float atomics on one hot word lose ~1.7% to accumulated
+// rounding. Reducing explicitly makes the result independent of that analysis
+// — and holds for every renderer, not just the one at index 0.
 inline void AccumRendererPlanes(constant KernelParams& prm,
                                 device atomic_float* image,
-                                device atomic_float* landed_weight,
+                                thread float* landed_acc,
                                 device atomic_float* class_lane_buf,
                                 ulong this_mask,
                                 float wx, float wy, float wz,
@@ -654,7 +668,7 @@ inline void AccumRendererPlanes(constant KernelParams& prm,
         uint pix = uint(py) * uint(iw_i) + uint(px);
         AccumXyzToPixel(image + xyz_off, pix, cmf_x, cmf_y, cmf_z, cw);
         if (pr.hits[hi].bump_landed) {
-          atomic_fetch_add_explicit(&landed_weight[r], cw, memory_order_relaxed);
+          landed_acc[r] += cw;
         }
         // Per-colour-class Y-lane accumulation: fan this ray's Y (cmf_y * cw)
         // into each active class whose predicate matches this_mask. Mirrors
@@ -857,6 +871,11 @@ kernel void trace_layer_kernel(
   // serialises on the same 16 bytes. The register form costs two FMAs per exit.
   float tally_w_acc  = 0.0f;
   float tally_w2_acc = 0.0f;
+  // Per-renderer landed weight, accumulated in registers along the ray's path
+  // and folded into landed_weight[r] once per SIMD-group in the epilogue — see
+  // AccumRendererPlanes for why this is a register and not a per-hit atomic.
+  float landed_acc[kMaxRenderersDeviceMsl];
+  for (uint r = 0u; r < kMaxRenderersDeviceMsl; r++) { landed_acc[r] = 0.0f; }
 
   for (uint hit = 0u; hit < prm.max_hits; hit++) {
     if (to_face == kInvalidId) { break; }
@@ -1063,7 +1082,7 @@ kernel void trace_layer_kernel(
               // only runs for rays that landed in-bounds.
               AccumAnchorY(anchor_buf, anchor_proj_local, wcx, wcy, wcz, cmf_y * cw);
               // Then every renderer's plane — the per-renderer half of the exit work.
-              AccumRendererPlanes(prm, image, landed_weight, class_lane_buf, this_mask,
+              AccumRendererPlanes(prm, image, landed_acc, class_lane_buf, this_mask,
                                   wcx, wcy, wcz, cmf_x, cmf_y, cmf_z, cw);
               // task-358.3 (renamed from capture_component): append this
               // emitted ray's (this_mask, weight) to the capture ring for the
@@ -1170,7 +1189,7 @@ kernel void trace_layer_kernel(
             // Then every renderer's plane — the SAME function the mid-exit tail
             // calls, which is what keeps the two tails symmetric now (this_mask_f
             // here is the final-layer mask, the mid-exit tail passes this_mask).
-            AccumRendererPlanes(prm, image, landed_weight, class_lane_buf, this_mask_f,
+            AccumRendererPlanes(prm, image, landed_acc, class_lane_buf, this_mask_f,
                                 wx, wy, wz, cmf_x, cmf_y, cmf_z, cw);
             atomic_fetch_add_explicit(&exit_stats->count, 1u, memory_order_relaxed);
             atomic_fetch_add_explicit(&exit_stats->w_sum, cw, memory_order_relaxed);
@@ -1211,6 +1230,15 @@ kernel void trace_layer_kernel(
     if (simd_is_first()) {
       atomic_fetch_add_explicit(&exit_stats->tally_w, group_w, memory_order_relaxed);
       atomic_fetch_add_explicit(&exit_stats->tally_w2, group_w2, memory_order_relaxed);
+    }
+  }
+  // Per-renderer landed weight: same reduction shape, one word per renderer.
+  // Uniform control flow here (every active lane runs the same trip count), which
+  // is what simd_sum needs.
+  for (uint r = 0u; r < prm.num_renderers; r++) {
+    float group_landed = simd_sum(landed_acc[r]);
+    if (simd_is_first()) {
+      atomic_fetch_add_explicit(&landed_weight[r], group_landed, memory_order_relaxed);
     }
   }
 }

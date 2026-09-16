@@ -109,8 +109,13 @@ constexpr size_t kMaxColorClassesDevice = 16;
 // spoken for; the N renderers therefore share the three accumulation bindings
 // (image / landed_weight / class_lane_buf) via per-renderer OFFSETS. 4 covers
 // the real base rate (a GUI-exported config carries 2: preview + export) with
-// headroom; a config beyond it is routed to the legacy CPU path by
+// headroom, and equals LUMICE_MAX_CONFIG_RENDERERS — the count the C API
+// refuses at parse time — so today no config that reaches the simulator can
+// exceed it; a config beyond it would be routed to the legacy CPU path by
 // CanUseBackend via MaxRenderers(), with a WARN, never silently truncated.
+// The two constants are deliberately NOT tied by a static_assert: a device
+// backend supporting fewer renderers than the API admits is a legitimate
+// state (it just falls back), so neither bounds the other.
 // Raising the cap = bump this constant AND the MSL sibling
 // (`kMaxRenderersDeviceMsl`) together, then re-derive the sizeof asserts.
 constexpr size_t kMaxRenderersDevice = 4;

@@ -26,6 +26,7 @@ Thresholds: raw corr (block-mean ds) / render PSNR per scene calibrated from
 baseline.md (258.6.2 measurement on 2026-06-10). See `_RAW_THRESHOLDS` below.
 """
 import math
+import os
 import platform
 from pathlib import Path
 
@@ -167,7 +168,8 @@ def _assert_routed(r: BufferedSimResult, expected_backend: str, config_name: str
 
 @pytest.mark.slow
 def test_metal_fallback_detector():
-    """A multi-renderer config MUST trip the "falling back to legacy" log.
+    """A backend request the build cannot honour MUST trip the "falling back to
+    legacy" log through the same capture + regex every metal assertion relies on.
 
     Insurance that all other Axis-A (metal) assertions can meaningfully fail
     rather than silently pass on a degraded path.
@@ -176,13 +178,23 @@ def test_metal_fallback_detector():
     and rely on a *lens-type* incompatibility. That trigger is GONE — the shared
     ProjectExitToPixel migration (315.3) + globe (315.4) relaxed
     MetalTraceBackend::IsCompatible to accept EVERY lens type, so no projection
-    falls back any more. Repointed to the projection-INDEPENDENT multi-renderer
-    fallback (CanUseBackend: renders_->size() != 1) which still fires.
+    falls back any more. It was then repointed to the multi-renderer fallback,
+    and THAT trigger is gone too: a Metal session serves N renderers at once
+    (one device plane each), and the only count it refuses (more than
+    kMaxRenderersDevice = 4) is the same count the C API already rejects at
+    parse time (LUMICE_MAX_CONFIG_RENDERERS = 4), so no config that reaches the
+    simulator makes Metal fall back on this host. What still fires, on a build
+    without CUDA, is the routing layer's own refusal of a CUDA request
+    ("LUMICE_TRACE_BACKEND=cuda requested but LUMICE_CUDA_ENABLED not set;
+    falling back to legacy CPU") — the same WARN sink, capture and regex the
+    metal assertions read, exercised end to end.
     """
-    r = _run("multi_lens", "metal")
+    if os.environ.get("LUMICE_HAS_CUDA") == "1":
+        pytest.skip("CUDA-capable build: a cuda request is honoured here, not refused")
+    r = _run("halo_22", "cuda")
     assert r.fell_back, (
-        "Expected Metal fallback on a multi-renderer config (multi_lens.json) but "
-        f"got fell_back=False. log_lines tail: {r.log_lines[-5:]}"
+        "Expected the routing layer to refuse a CUDA request on a non-CUDA build and log "
+        f"'falling back', but got fell_back=False. log_lines tail: {r.log_lines[-5:]}"
     )
 
 

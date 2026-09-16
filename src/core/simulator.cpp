@@ -1309,9 +1309,18 @@ std::unique_ptr<TraceBackend> CreateBackend(BackendKind preferred_backend, Logge
 }
 
 // Compatibility gate: even when a backend is selected, a particular batch may
-// not be backend-eligible (multi-renderer config, lens/view limits, etc.).
-// Falls back to legacy CPU on mismatch — logs WARN at most once per Run() via
-// the per-Run() latches on `warned_*`.
+// not be backend-eligible (more renderers than the backend can carry, lens/view
+// limits, etc.). Falls back to legacy CPU on mismatch — logs WARN at most once
+// per Run() via the per-Run() latches on `warned_*`.
+//
+// The whole batch goes one way or the other: every renderer of the batch is
+// checked, and ONE that the backend cannot serve — by count (MaxRenderers) or
+// by config (IsCompatible) — drops ALL of them to the legacy CPU path. There
+// is no per-renderer mixing (some on device, some on host): today every device
+// backend's IsCompatible is unconditionally true, so a mixed batch is not a
+// reachable state, and the legacy path already serves N renderers correctly
+// through its N host-side consumers — mixing would buy nothing anyone can
+// observe.
 bool CanUseBackend(const TraceBackend* backend, const SimBatch& batch, Logger& logger, bool& warned_no_renders,
                    bool& warned_multi_renderer, bool& warned_compat) {
   if (backend == nullptr) {
@@ -1324,22 +1333,26 @@ bool CanUseBackend(const TraceBackend* backend, const SimBatch& batch, Logger& l
     }
     return false;
   }
-  if (batch.renders_->size() != 1) {
+  if (batch.renders_->size() > backend->MaxRenderers()) {
     if (!warned_multi_renderer) {
-      ILOG_WARN(logger, "TraceBackend path supports a single renderer only (got {}); falling back to legacy CPU",
-                batch.renders_->size());
+      ILOG_WARN(logger,
+                "TraceBackend carries at most {} renderer(s) per session (config has {}); falling back to legacy CPU",
+                backend->MaxRenderers(), batch.renders_->size());
       warned_multi_renderer = true;
     }
     return false;
   }
-  const auto& r = (*batch.renders_)[0];
-  if (!backend->IsCompatible(r)) {
-    if (!warned_compat) {
-      ILOG_WARN(logger, "backend incompatible with render config (lens_type={}, el={:.2f}); falling back to legacy CPU",
-                static_cast<int>(r.lens_.type_), r.view_.el_);
-      warned_compat = true;
+  for (const auto& r : *batch.renders_) {
+    if (!backend->IsCompatible(r)) {
+      if (!warned_compat) {
+        ILOG_WARN(logger,
+                  "backend incompatible with render config (lens_type={}, el={:.2f}); falling back to legacy CPU for "
+                  "every renderer of the batch",
+                  static_cast<int>(r.lens_.type_), r.view_.el_);
+        warned_compat = true;
+      }
+      return false;
     }
-    return false;
   }
   return true;
 }

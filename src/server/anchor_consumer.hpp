@@ -28,10 +28,14 @@ namespace lumice {
  *          its own Consume() call on the same batch, so an anchor folded into
  *          RenderConsumer would accumulate the same physical rays once per renderer, and
  *          the published scalar would become a function of how many renderers happen to be
- *          configured. It also cannot be a second entry in `renders_`: CanUseBackend()
- *          rejects any config with more than one renderer and drops the whole session back
- *          to the legacy CPU path (measured at 35x slower on Metal), so the anchor has to
- *          be a second accumulation TARGET inside the one dispatch, never a second view.
+ *          configured. It is also not a second entry in `renders_`, even now that the
+ *          device backends carry N renderers per session: a renderer is per-renderer state
+ *          (replicated N times, sized by the user's resolution, subject to the backend's
+ *          renderer cap), while the anchor is a property of the SCENE — one fixed plane
+ *          per session that no user field can move. Folding it into `renders_` would spend
+ *          a renderer slot on it and make the exposure of every real renderer depend on
+ *          the anchor being configured alongside them, so it stays a second accumulation
+ *          TARGET inside the one dispatch, never a second view.
  *
  *          Geometry, resolution and the P99 -> L99_sky conversion all live in
  *          core/anchor_buffer.hpp; this class owns only the accumulation and the snapshot
