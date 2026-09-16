@@ -2059,11 +2059,21 @@ struct CudaTraceBackend::Impl {
   // built once" (deterministic path) without inspecting device buffers.
   bool     geom_pool_rebuild_count_enabled_ = false;
   uint32_t geom_pool_rebuild_count_         = 0;
-  // scrum-306.2 increment 4: filter descriptors + wl pool are per-session-CONSTANT
-  // (config + crystal n_idx fixed across batches) — persist them across the
-  // per-batch cycle instead of free+malloc+H2D every BeginSession (post-pool the
-  // dominant host-API cost: cudaFree 40% + cudaMemcpy 43%, nsys 4M-run). Rebuilt
-  // only on scene change (pool_scene_ sentinel) or full teardown.
+  // Persist per-scene-constant device state across the per-batch BeginSession
+  // cycle instead of free+malloc+H2D every time (7399c28a; post-pool
+  // the dominant host-API cost: cudaFree 40% + cudaMemcpy 43%, nsys 4M-run).
+  // The two flags have different invalidation rules:
+  //  - filter_built_: filter descriptors depend on config only, so they are
+  //    rebuilt on scene change (pool_scene_ sentinel) or full teardown, nothing else.
+  //  - wl_pool_uploaded_: the pool depends on the crystal n_idx AND on which
+  //    wavelength(s) this session samples. Under an illuminant spectrum every
+  //    session of a scene carries the same empty spec.wl, so the pool is
+  //    per-scene-constant and follows the same sentinel. Under a discrete
+  //    spectrum the simulator runs one BeginSession per listed wavelength with
+  //    the scene pointer unchanged and only spec.wl differing, so the flag is
+  //    additionally cleared at every BeginSession (see the wl pool block there);
+  //    keeping it across those sessions traced the whole list as its first
+  //    wavelength.
   bool        filter_built_      = false;
   bool        wl_pool_uploaded_  = false;
 
@@ -4043,9 +4053,12 @@ void CudaTraceBackend::BeginSession(const SessionSpec& spec) {
       impl_->EnsureAllocTallyBuffer(std::max<size_t>(max_entries, 1));
     }
 
-    // scrum-306.2 increment 4: a scene change invalidates every per-session-constant
-    // cache (geometry pool, filter descriptors, wl pool). Within one scene these are
-    // built/uploaded ONCE and reused across the per-batch BeginSession cycle.
+    // A scene change invalidates every scene-keyed cache (7399c28a)
+    // (geometry pool, filter descriptors, wl pool). Within one scene these are
+    // built/uploaded ONCE and reused across the per-batch BeginSession cycle,
+    // except where a cache has a second key beyond the scene: stochastic
+    // geometry (pool_stochastic_, below) and the wl pool under a discrete
+    // spectrum (wl pool block, below) are rebuilt every BeginSession.
     if (impl_->pool_scene_ != static_cast<const void*>(spec.scene)) {
       impl_->geom_pool_built_   = false;
       impl_->filter_built_      = false;
@@ -4170,16 +4183,25 @@ void CudaTraceBackend::BeginSession(const SessionSpec& spec) {
     // trace kernel reads d_wl_pool_[wl_idx].n_idx (per-ray refraction) and tags
     // exit records with wl_idx for host-side wavelength reconstruction
     // (simulator.cpp). Mirrors Metal ComputeWlPool + EnsureWlPoolBuffer. The
-    // buffer is allocated once (size = env-resolved M, stable per process) and
-    // re-uploaded each BeginSession since the crystal n_idx is scene-dependent.
-    // scrum-306.2 increment 4: the wl pool (n_idx + spd_weight per sampled wl) is
-    // per-session-constant (crystal n_idx + spectrum fixed across batches), so
-    // compute + upload it ONCE per scene rather than every BeginSession.
+    // buffer is allocated once (size = env-resolved M, stable per process).
+    // Caching (7399c28a): the pool's inputs are the crystal n_idx and the
+    // session's wavelength parameters, so its cache key depends on the spectrum
+    // mode. Illuminant (D65 etc.): spec.wl is the empty WlParam{} for every
+    // session of the scene, the pool is per-scene-constant, and it is computed +
+    // uploaded ONCE per scene (pool_scene_ sentinel above). Discrete list: the
+    // simulator runs one BeginSession per listed wavelength with the scene pointer
+    // unchanged and only spec.wl differing, so there is no per-scene key to cache
+    // under — the pool is recomputed every BeginSession, as Metal does
+    // unconditionally (metal_trace_backend.mm ComputeWlPool call). Reusing the
+    // scene-keyed pool here traced every wavelength of the list as its first one.
     Logger& wl_logger = impl_->logger != nullptr ? *impl_->logger : GetGlobalLogger();
+    const auto& spectrum = spec.scene->light_source_.spectrum_;
+    impl_->illuminant_mode_ = std::holds_alternative<IlluminantType>(spectrum);
+    if (impl_->wl_pool_uploaded_ && !impl_->illuminant_mode_) {
+      impl_->wl_pool_uploaded_ = false;
+    }
     if (!impl_->wl_pool_uploaded_) {
       impl_->wl_pool_size_ = ResolveWlPoolSize(wl_logger);
-      const auto& spectrum = spec.scene->light_source_.spectrum_;
-      impl_->illuminant_mode_ = std::holds_alternative<IlluminantType>(spectrum);
       impl_->illuminant_ = impl_->illuminant_mode_ ? std::get<IlluminantType>(spectrum) : IlluminantType{};
       ComputeWlPool(crystal_for_geom, impl_->illuminant_mode_, impl_->illuminant_, spec.wl.wl_, spec.wl.weight_,
                     impl_->wl_pool_size_, impl_->wl_pool_host_);
