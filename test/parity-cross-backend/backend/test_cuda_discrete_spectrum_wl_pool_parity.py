@@ -43,7 +43,23 @@ config is generated from the committed one at test time — the two rows must
 differ in list order and nothing else, which a second hand-edited JSON file
 cannot guarantee.
 
-MEASUREMENTS-TBD (filled in from the CUDA reference machine before merge).
+Measured (CUDA reference machine, Linux role — RTX 5090 D under WSL2, CUDA
+12.9, `sm_120` SASS; legacy CPU on the same host; seeds 42/43/44 for each
+ordering, tolerance 0.02 on the L∞ of the three shares):
+    red   (scene-pointer-only cache; the probe-only tree at 7dc5265c):
+          forward   legacy (0.5418, 0.4570, 0.0012)  cuda (0.3731, 0.6244, 0.0024)
+                    L∞ = 0.1687 / 0.1685 / 0.1684  — the pure-560 nm shares
+          reversed  legacy (0.5419, 0.4569, 0.0012)  cuda (0.7348, 0.2652, 0.0000)
+                    L∞ = 0.1929 / 0.1931 / 0.1932  — the pure-720 nm shares
+    green (pool rebuilt every BeginSession under a discrete spectrum, c916645a):
+          forward   cuda (0.5415, 0.4573, 0.0012)   L∞ = 0.0003 / 0.0002 / 0.0001
+          reversed  cuda (0.5416, 0.4572, 0.0012)   L∞ = 0.0003 / 0.0002 / 0.0000
+The two red rows read the first-listed wavelength's chromaticity to four
+digits and sit on opposite sides of the mixture, which is the signature the
+pair was designed to expose. Healthy spread: legacy-vs-legacy across seeds
+0.0002–0.0006, Metal-vs-legacy (Metal reference machine) 0.00001–0.00025;
+the tolerance is ~8× under the smallest red reading and ~60× over the
+largest green one.
 
 Requires:
   - ``LUMICE_CUDA_ENABLED=ON`` build with the CUDA toolchain.
