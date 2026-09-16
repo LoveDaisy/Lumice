@@ -5580,6 +5580,8 @@ void CudaTraceBackend::ReadbackXyzAccum(std::vector<XyzImageData>& xyz_planes, s
 // Mirror MetalTraceBackend::IsCompatible. 315.3/315.4: the device-fused emit
 // gate projects via lm_proj::ProjectExitToPixel (single source with the CPU
 // parity oracle), so all forward projections including globe are supported.
+size_t CudaTraceBackend::MaxRenderers() const { return kMaxRenderersDeviceCuda; }
+
 bool CudaTraceBackend::IsCompatible(const RenderConfig& render) const {
   // The kernel exit tail projects via lm_proj::ProjectExitToPixel — the SAME
   // single source as the CPU parity oracle (scatter_accum.hpp) — so every

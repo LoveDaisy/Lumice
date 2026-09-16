@@ -132,6 +132,10 @@ class CudaTraceBackend : public TraceBackend {
   // display-cadence readback) to shed the per-batch synchronous D2H readback tax.
   bool SupportsThirdClockDrain() const override { return true; }
   bool IsCompatible(const RenderConfig& render) const override;
+  // The per-thread landed-weight register array and the device descriptor
+  // buffer are fixed-size (kMaxRenderersDeviceCuda, 4); CanUseBackend routes
+  // larger configs to the legacy CPU path on this answer.
+  size_t MaxRenderers() const override;
   void EndSession() override;
   // Per-ray wavelength pool size M (296.6 DR-3). Non-zero routes the driving
   // loop (simulator.cpp) through the single-session per-ray-wl path. Resolved
