@@ -325,6 +325,52 @@ static_assert(sizeof(ColorGateParams) == 160u,
               "ColorGateParams size mismatch — update layout audit above if fields "
               "are added or reordered");
 
+// Multi-renderer device-fused seam: the most renderers one CUDA session can
+// serve. Mirrors Metal `kMaxRenderersDevice` (metal_trace_backend.mm) as a
+// CUDA-file constant of the same value, deliberately NOT shared: a device
+// backend supporting fewer renderers than another is a legitimate state (it
+// just falls back). It also equals LUMICE_MAX_CONFIG_RENDERERS — the count the
+// C API refuses at parse time — so today no config that reaches the simulator
+// can exceed it; one beyond it would be routed to the legacy CPU path by
+// CanUseBackend via MaxRenderers(), with a WARN, never silently truncated. The
+// three values are kept in step by hand (no static_assert ties them) — an
+// explicitly recorded coupling, not an independent design choice. Unlike Metal
+// the cap does not bound a kernel-parameter array here (the descriptors travel
+// in a device buffer, see RendererPlaneDesc); it bounds the per-thread
+// `landed_acc[]` register array in the trace kernel.
+constexpr size_t kMaxRenderersDeviceCuda = 4u;
+
+// Everything that is PER-RENDERER in a session, as the trace kernel sees it.
+// The physics of the session (crystal, filters, wavelength pool, exposure
+// anchor, colour-class definitions) is shared by every renderer and travels in
+// the kernel's flat parameter list; a renderer only adds its own projection
+// and its own accumulation targets:
+//   proj      : lm_proj::ProjParams — lens / view pose / resolution
+//               (proj.img_w / img_h ARE the plane dims; there is no second copy).
+//   xyz_off   : float index into d_xyz_buf_ where this renderer's W*H*3 XYZ
+//               plane starts. Planes are packed back-to-back in renderer order.
+//   lane_off  : float index into d_class_lane_buf_ where this renderer's
+//               class_count*W*H lane region starts, laid out class-major
+//               inside the region exactly as the single-renderer buffer was:
+//               lane[lane_off + c * W*H + pix].
+// The landed-weight float needs no offset: d_landed_weight_ is indexed by
+// renderer position. Same field set as Metal's RendererPlaneDesc; one
+// definition serves host and device because nvcc compiles both from this TU.
+// The N descriptors are uploaded once per BeginSession into Impl::d_renderers_
+// and reach the kernel as a `const RendererPlaneDesc*` — CUDA's counterpart of
+// Metal's constant-space array — rather than as a by-value kernel parameter:
+// the per-exit loop indexes them at runtime, and a runtime index into
+// parameter space is not a documented fast path (nvcc may spill the whole
+// array to local memory), whereas a warp-uniform read-only global load is
+// broadcast + L1-resident. A `__constant__` symbol was rejected because it is
+// per-module, and several Impl instances may hold sessions concurrently.
+struct RendererPlaneDesc {
+  lm_proj::ProjParams proj;
+  uint32_t xyz_off;
+  uint32_t lane_off;
+};
+static_assert(sizeof(RendererPlaneDesc) == 76u, "RendererPlaneDesc layout drift — check ProjParams (68) + 2 u32");
+
 // Pairwise static_assert: LatPathKind wire values must match lm_pcg::kLatPath*
 // (device sink). Guards against silent enum-value drift.
 static_assert(lat_path::ToWireValue(lat_path::LatPathKind::kFullSphere) == lm_pcg::kLatPathFullSphere,
@@ -452,13 +498,20 @@ __device__ inline void FanColorClassLanes(float* d_class_lane_buf,
 constexpr uint32_t kAllocTallySlots = 64u;
 
 __device__ inline void EmitToDeviceXyz(float* __restrict__ d_xyz_buf,
-                                       float& landed_acc,
+                                       // Per-renderer register accumulators
+                                       // (kMaxRenderersDeviceCuda entries); entry r
+                                       // bumps on renderer r's primary hit.
+                                       float* landed_acc,
                                        const float exit_world[3],
                                        float cmf_x,
                                        float cmf_y,
                                        float cmf_z,
                                        float w_emit,
-                                       const lm_proj::ProjParams& proj,
+                                       // The session's renderers (device buffer,
+                                       // `num_renderers` live) — projection + plane
+                                       // / lane-region offsets each.
+                                       const RendererPlaneDesc* __restrict__ d_renderers,
+                                       uint32_t num_renderers,
                                        // task-358.2 Y-lane fan-out args. Pass
                                        // nullptr for d_class_lane_buf when the
                                        // caller has no lane accumulator; the
@@ -510,27 +563,40 @@ __device__ inline void EmitToDeviceXyz(float* __restrict__ d_xyz_buf,
       }
     }
   }
-  lm_proj::ProjResult r =
-      lm_proj::ProjectExitToPixel(proj, exit_world[0], exit_world[1], exit_world[2]);
-  const int iw_i = proj.img_w;
-  const int ih_i = proj.img_h;
-  for (int hi = 0; hi < r.count; ++hi) {
-    const int px = r.hits[hi].px;
-    const int py = r.hits[hi].py;
-    if (px >= 0 && px < iw_i && py >= 0 && py < ih_i) {
-      const uint32_t pix_flat =
-          static_cast<uint32_t>(py) * static_cast<uint32_t>(proj.img_w) + static_cast<uint32_t>(px);
-      AccumXyzToPixel(d_xyz_buf, pix_flat, cmf_x, cmf_y, cmf_z, w_emit);
-      if (r.hits[hi].bump_landed) {
-        landed_acc += w_emit;
-      }
-      // task-358.2 Step 4 (AC3): fan the ray's Y into every satisfied color
-      // class at this projected pixel. Overlap-ring hits included (bump_landed
-      // may be false) to match CPU/Metal semantics — an overlap contributes to
-      // lane Y though not to landed_weight.
-      if (d_class_lane_buf != nullptr) {
-        FanColorClassLanes(d_class_lane_buf, color_params, this_mask, pix_flat,
-                           static_cast<uint32_t>(proj.img_w), static_cast<uint32_t>(proj.img_h), cmf_y, w_emit);
+  // Then EVERY renderer's plane — the per-renderer half of the exit work
+  // (mirrors the MSL AccumRendererPlanes loop). Per-session inputs above are
+  // identical for every renderer; per-renderer inputs come from d_renderers[r]:
+  // the projection (plane dims inside) and the two region offsets. The landed
+  // weight goes to the caller's per-thread landed_acc[r] register slot, never
+  // to a per-hit atomic — see the kernel epilogue for why.
+  for (uint32_t ri = 0u; ri < num_renderers; ++ri) {
+    const RendererPlaneDesc& rd = d_renderers[ri];
+    const lm_proj::ProjParams& proj = rd.proj;
+    float* plane = d_xyz_buf + rd.xyz_off;
+    lm_proj::ProjResult r =
+        lm_proj::ProjectExitToPixel(proj, exit_world[0], exit_world[1], exit_world[2]);
+    const int iw_i = proj.img_w;
+    const int ih_i = proj.img_h;
+    for (int hi = 0; hi < r.count; ++hi) {
+      const int px = r.hits[hi].px;
+      const int py = r.hits[hi].py;
+      if (px >= 0 && px < iw_i && py >= 0 && py < ih_i) {
+        const uint32_t pix_flat =
+            static_cast<uint32_t>(py) * static_cast<uint32_t>(proj.img_w) + static_cast<uint32_t>(px);
+        AccumXyzToPixel(plane, pix_flat, cmf_x, cmf_y, cmf_z, w_emit);
+        if (r.hits[hi].bump_landed) {
+          landed_acc[ri] += w_emit;
+        }
+        // Device-side Y-lane accumulation: fan the ray's Y into every satisfied color
+        // class at this projected pixel. Overlap-ring hits included (bump_landed
+        // may be false) to match CPU/Metal semantics — an overlap contributes to
+        // lane Y though not to landed_weight. Region r of the lane buffer starts
+        // at rd.lane_off (0 when class_count==0: the buffer is then a dummy that
+        // FanColorClassLanes never touches).
+        if (d_class_lane_buf != nullptr) {
+          FanColorClassLanes(d_class_lane_buf + rd.lane_off, color_params, this_mask, pix_flat,
+                             static_cast<uint32_t>(proj.img_w), static_cast<uint32_t>(proj.img_h), cmf_y, w_emit);
+        }
       }
     }
   }
@@ -716,12 +782,18 @@ __global__ void trace_single_ms_kernel(const float* __restrict__ d_dirs,        
                                        // d_xyz_buf may be nullptr only when ms_mode==1 (the ms_mode==0
                                        // branches below dereference it; ms_mode==1 branches don't).
                                        float* __restrict__ d_xyz_buf,
-                                       // One warp partial per atomicAdd (epilogue), never per exit —
-                                       // see EmitToDeviceXyz. nullptr skips the epilogue atomic.
+                                       // One float PER RENDERER (indexed by renderer position).
+                                       // One warp partial per atomicAdd (epilogue), never per
+                                       // exit — see EmitToDeviceXyz. nullptr skips the epilogue
+                                       // atomic.
                                        float* __restrict__ d_landed_weight,
-                                       // 315.3: single POD carries all projection routing
-                                       // (proj_type / r_scale / max_abs_dz / scale / rot / ...).
-                                       lm_proj::ProjParams proj,
+                                       // The session's renderers: `num_renderers` descriptors
+                                       // (315.3's projection POD each, plus that renderer's plane /
+                                       // lane-region offsets). Every exit tail projects the ray
+                                       // into each of them. See RendererPlaneDesc for why this is
+                                       // a device buffer and not a by-value parameter.
+                                       const RendererPlaneDesc* __restrict__ d_renderers,
+                                       uint32_t num_renderers,
                                        float last_ms_prob,
                                        uint32_t gate_seed_final,
                                        uint32_t gate_ray_base_final,
@@ -808,9 +880,14 @@ __global__ void trace_single_ms_kernel(const float* __restrict__ d_dirs,        
   // is gated on the pointers, so a proportional dispatch pays no atomic.
   float tally_w_acc = 0.0f;
   float tally_w2_acc = 0.0f;
-  // In-bounds landed weight of this ray, same register-then-warp-reduce shape
-  // (see EmitToDeviceXyz for why it must not be a per-exit atomic).
-  float landed_acc = 0.0f;
+  // In-bounds landed weight of this ray, ONE SLOT PER RENDERER, same
+  // register-then-warp-reduce shape (see EmitToDeviceXyz for why it must not be
+  // a per-exit atomic). Bounded by the compile-time cap, not num_renderers, so
+  // it stays a fixed-size per-thread array.
+  float landed_acc[kMaxRenderersDeviceCuda];
+  for (uint32_t r = 0u; r < static_cast<uint32_t>(kMaxRenderersDeviceCuda); ++r) {
+    landed_acc[r] = 0.0f;
+  }
   // K-shape: resolve this ray's polygon-slab pool region. `d_poly_n` /
   // `d_poly_d` are BASE pointers into the pool (Σ poly_cnt across all shapes);
   // adding `poly_off * {3|1}` produces the per-ray effective pointers.
@@ -1019,8 +1096,8 @@ __global__ void trace_single_ms_kernel(const float* __restrict__ d_dirs,        
             // this_mask now carries only Design-2 colour bits (Fork-C retired).
             EmitToDeviceXyz(d_xyz_buf, landed_acc, exit_world,
                             cmf_x, cmf_y, cmf_z, w_refl_e,
-                            proj, d_class_lane_buf, color_params, this_mask, d_anchor_buf, anchor_proj,
-                            tally_w_acc, tally_w2_acc);
+                            d_renderers, num_renderers, d_class_lane_buf, color_params, this_mask, d_anchor_buf,
+                            anchor_proj, tally_w_acc, tally_w2_acc);
             // task-358.3 (renamed from capture_component): capture the mid-exit
             // ray's (this_mask, weight) for the CPU parity harness.
             if (capture_ray_mask != 0u) {
@@ -1067,8 +1144,8 @@ __global__ void trace_single_ms_kernel(const float* __restrict__ d_dirs,        
             }
             EmitToDeviceXyz(d_xyz_buf, landed_acc, exit_world,
                             cmf_x, cmf_y, cmf_z, w_refl_e,
-                            proj, d_class_lane_buf, color_params, this_mask, d_anchor_buf, anchor_proj,
-                            tally_w_acc, tally_w2_acc);
+                            d_renderers, num_renderers, d_class_lane_buf, color_params, this_mask, d_anchor_buf,
+                            anchor_proj, tally_w_acc, tally_w2_acc);
             // task-358.3 (renamed from capture_component): final-layer capture
             // (mirror of the ms_mode==1 branch).
             if (capture_ray_mask != 0u) {
@@ -1222,8 +1299,8 @@ __global__ void trace_single_ms_kernel(const float* __restrict__ d_dirs,        
               const float cmf_z = d_wl_pool[wl_idx].cmf_z;
               EmitToDeviceXyz(d_xyz_buf, landed_acc, exit_world,
                               cmf_x, cmf_y, cmf_z, w_refr,
-                              proj, d_class_lane_buf, color_params, this_mask, d_anchor_buf, anchor_proj,
-                            tally_w_acc, tally_w2_acc);
+                              d_renderers, num_renderers, d_class_lane_buf, color_params, this_mask, d_anchor_buf,
+                              anchor_proj, tally_w_acc, tally_w2_acc);
               // task-358.3 (renamed from capture_component): per-bounce mid-
               // exit capture.
               if (capture_ray_mask != 0u) {
@@ -1264,8 +1341,8 @@ __global__ void trace_single_ms_kernel(const float* __restrict__ d_dirs,        
               }
               EmitToDeviceXyz(d_xyz_buf, landed_acc, exit_world,
                               cmf_x, cmf_y, cmf_z, w_refr,
-                              proj, d_class_lane_buf, color_params, this_mask, d_anchor_buf, anchor_proj,
-                            tally_w_acc, tally_w2_acc);
+                              d_renderers, num_renderers, d_class_lane_buf, color_params, this_mask, d_anchor_buf,
+                              anchor_proj, tally_w_acc, tally_w2_acc);
               // task-358.3 (renamed from capture_component): final-layer capture
               // on the per-bounce refracted exit (gated by capture_ray_mask).
               if (capture_ray_mask != 0u) {
@@ -1304,31 +1381,43 @@ __global__ void trace_single_ms_kernel(const float* __restrict__ d_dirs,        
     const unsigned mask = (n_active >= 32u) ? 0xffffffffu : ((1u << n_active) - 1u);
     float sw = tally_w_acc;
     float sw2 = tally_w2_acc;
-    // The landed-weight ledger rides the same reduction: it is the third
-    // per-ray register sum this kernel keeps, and the only one whose single
-    // destination address is read back as a physical quantity (see
-    // EmitToDeviceXyz). Always reduced — every dispatch lands rays.
-    float sl = landed_acc;
     for (uint32_t off = 16u; off > 0u; off >>= 1u) {
       const float ow = __shfl_down_sync(mask, sw, off);
       const float ow2 = __shfl_down_sync(mask, sw2, off);
-      const float ol = __shfl_down_sync(mask, sl, off);
       if (lane + off < n_active) {
         sw += ow;
         sw2 += ow2;
-        sl += ol;
+      }
+    }
+    // The landed-weight ledger rides the same reduction shape, ONE FULL
+    // REDUCTION PER RENDERER: it is the third per-ray register sum this kernel
+    // keeps, and the only one whose destination is read back as a physical
+    // quantity (see EmitToDeviceXyz). The N renderers' sums are deliberately NOT
+    // folded into one shuffle pass — each is a separate physical ledger, and
+    // merging them would give a total that can sit close to the right number
+    // while every per-renderer share is wrong, which no corr/energy check
+    // catches. Uniform control flow (every active lane runs the same trip
+    // count), which is what __shfl_down_sync needs. Always reduced — every
+    // dispatch lands rays.
+    for (uint32_t r = 0u; r < num_renderers; ++r) {
+      float sl = landed_acc[r];
+      for (uint32_t off = 16u; off > 0u; off >>= 1u) {
+        const float ol = __shfl_down_sync(mask, sl, off);
+        if (lane + off < n_active) {
+          sl += ol;
+        }
+      }
+      if (lane == 0u && d_landed_weight != nullptr) {
+        atomicAdd(d_landed_weight + r, sl);
       }
     }
     if (lane == 0u) {
-      if (d_landed_weight != nullptr) {
-        atomicAdd(d_landed_weight, sl);
-      }
       // Spread the per-warp tally atomics over kAllocTallySlots addresses (host
       // sums them): one address for every warp of a 262144-ray dispatch still
       // serialised 8192 atomics on it and measured −3.5%; 64 slots cut that to
-      // ~128 per address, under the noise floor. The landed scalar above keeps
-      // its single address: one atomic per warp is already 30-60× fewer than
-      // the per-exit form it replaced, and the drain reads exactly one float.
+      // ~128 per address, under the noise floor. The landed slots above keep
+      // one address per renderer: one atomic per warp is already 30-60× fewer
+      // than the per-exit form it replaced, and the drain reads one float each.
       if (d_tally_w != nullptr) {
         const uint32_t slot = (warp_base >> 5u) & (kAllocTallySlots - 1u);
         atomicAdd(d_tally_w + slot, sw);
@@ -2253,12 +2342,14 @@ struct CudaTraceBackend::Impl {
   DeviceFilterDesc* d_color_filter_desc_ = nullptr;
   uint8_t*          d_color_bit_map_     = nullptr;
   // task-358.2 Step 4 (AC3 device Y-lane): per-class atomic-float accumulator.
-  //   `class_count_ * W * H` floats when class_count_ > 0; a 4-byte dummy
-  //   otherwise so the kernel pointer stays bindable. Zeroed on allocation and
-  //   after each drain (ReadbackClassLanes). Layout matches MSL and CPU
-  //   RenderConsumer: buf[c * (W * H) + (py * W + px)]. Regrown lazily by
-  //   EnsureClassLaneBuf on shape / class-count change. Mirrors Metal
-  //   `class_lane_buf_` (metal_trace_backend.mm:779).
+  //   `class_count_ * Σ W_i*H_i` floats when class_count_ > 0 — one region per
+  //   renderer packed in renderer order (region r starts at
+  //   planes_[r].desc.lane_off); a 4-byte dummy otherwise so the kernel pointer
+  //   stays bindable. Zeroed on allocation and after each drain
+  //   (ReadbackClassLanes). Inside a region the layout matches MSL and CPU
+  //   RenderConsumer: buf[lane_off + c * (W * H) + (py * W + px)]. Regrown
+  //   lazily by EnsureClassLaneBuf on shape / class-count change. Mirrors Metal
+  //   `class_lane_buf_`.
   float*  d_class_lane_buf_        = nullptr;
   size_t  class_lane_pix_capacity_ = 0;  // element count d_class_lane_buf_ was allocated for
   // The EXPOSURE ANCHOR plane and its fixed projection (core/anchor_buffer.hpp).
@@ -2297,29 +2388,53 @@ struct CudaTraceBackend::Impl {
   // BeginSession no longer zeroes it. `ReadbackXyzAccum` D2H copies it to the host
   // and zeros it, but the simulator now drains on display cadence (a whole window
   // of batches), not per batch.
-  float*   d_xyz_buf_       = nullptr;  // alloc_xyz_w_ * alloc_xyz_h_ * 3 floats, atomicAdd target
-  float*   d_landed_weight_ = nullptr;  // 1 float, one atomicAdd per warp; holds ONE layer
-  // Host-side running total of `d_landed_weight_` over the current drain window.
-  // TraceLayer reads the device scalar back after every layer (it already does,
-  // for LayerStats::exit_w_sum), folds it in here and zeroes the device side, so
-  // the float on the device only ever holds one layer's worth (≤ one dispatch of
-  // warp partials) and the cross-layer sum lives in a double. Reset in lock-step
-  // with the twin accumulators (BeginSession shape change, ReadbackXyzAccum).
-  double   window_landed_weight_ = 0.0;
-  // scrum-312: dims the persistent d_xyz_buf_ was actually allocated for. Unlike
-  // img_w_/img_h_ (per-session, cleared by Reset), these survive across sessions
-  // so ReadbackXyzAccum — which drains BETWEEN sessions — can release-safe-verify
-  // the caller's dims against the real buffer capacity (guards the Bug-1 class:
-  // dims decoupled from the buffer). Zeroed only on full teardown (buffer freed).
-  uint32_t alloc_xyz_w_     = 0u;
-  uint32_t alloc_xyz_h_     = 0u;
-  // 315.3: unified render projection — populated by BeginSession via
-  // BuildProjParams(render, camera_rot, short_pix). Passed by value to
-  // trace_single_ms_kernel; consumed by lm_proj::ProjectExitToPixel. Replaced
-  // the former loose proj_type_ / r_scale_ / max_abs_dz_ scalars.
-  lm_proj::ProjParams proj_params_{};
-  uint32_t img_w_           = 0u;
-  uint32_t img_h_           = 0u;
+  // XYZ accumulator: every renderer's W_i*H_i*3 plane packed back-to-back in
+  // renderer order (plane r starts at planes_[r].desc.xyz_off floats).
+  float*   d_xyz_buf_       = nullptr;
+  size_t   xyz_pix_capacity_ = 0;  // Σ W_i*H_i the buffer holds (×3 floats)
+  // Landed-weight accumulator, ONE float PER RENDERER (indexed by renderer
+  // position), one atomicAdd per warp per renderer; holds ONE layer. Grown by
+  // EnsureLandedWeightBuf, zeroed with the planes on a shape change and by every
+  // drain, never per BeginSession.
+  float*   d_landed_weight_ = nullptr;
+  size_t   landed_weight_capacity_ = 0;  // floats the buffer holds
+  // Host-side running totals of `d_landed_weight_[r]` over the current drain
+  // window, one per renderer. TraceLayer reads the device slots back after every
+  // layer (it already does, for LayerStats::exit_w_sum), folds them in here and
+  // zeroes the device side, so each device float only ever holds one layer's
+  // worth (≤ one dispatch of warp partials) and the cross-layer sum lives in a
+  // double. Reset in lock-step with the twin accumulators (EnsureXyzBuf shape
+  // change, ReadbackXyzAccum). Sized alongside landed_weight_capacity_.
+  std::vector<double> window_landed_weight_;
+  // Third clock: the per-renderer dims the persistent d_xyz_buf_ was actually
+  // allocated for. Unlike planes_ (per-session, cleared by Reset), this list
+  // survives across sessions so ReadbackXyzAccum — which drains BETWEEN sessions
+  // — can release-safe-verify the caller's dims against the real buffer capacity
+  // (guards the Bug-1 class: dims decoupled from the buffer) and locate each
+  // plane (offsets are a pure function of this list). Cleared only on full
+  // teardown (buffer freed).
+  std::vector<std::pair<uint32_t, uint32_t>> alloc_dims_;
+  // PER-RENDERER session state (one entry per SessionSpec::renders element, in
+  // that order). Everything else in this Impl is per-SESSION: the crystal pool,
+  // filters, wavelength pool, exposure anchor and colour-class tables are shared
+  // by every renderer; only the projection and the accumulation targets are
+  // replicated. Populated by BeginSession; cleared by Reset (per-session, like
+  // the former img_w_/img_h_). The device copy is d_renderers_.
+  //   w, h : this renderer's resolution.
+  //   desc : projection (315.3 BuildProjParams, dims inside) + the float offsets
+  //          of this renderer's plane inside d_xyz_buf_ and of its lane region
+  //          inside d_class_lane_buf_.
+  struct RendererPlane {
+    uint32_t w = 0u;
+    uint32_t h = 0u;
+    RendererPlaneDesc desc{};
+  };
+  std::vector<RendererPlane> planes_;
+  // Device copy of planes_[*].desc, kMaxRenderersDeviceCuda entries, allocated
+  // once (its capacity is a compile-time constant) and re-uploaded by every
+  // BeginSession. The trace kernel reads it as `d_renderers` (see
+  // RendererPlaneDesc for why a device buffer and not a kernel parameter).
+  RendererPlaneDesc* d_renderers_ = nullptr;
 
   // --- Final-layer host filter (296.5) -------------------------------------
   // DrainExits applies FilterSpec::Check + prob to records tagged with the
@@ -2375,12 +2490,26 @@ struct CudaTraceBackend::Impl {
   // capture_ray_mask_ is on; production never calls it.
   void EnsureComponentCaptureBuffers(size_t cap);
 
+  // Σ W_i*H_i over a dims list — the pixel count the packed buffers are sized by.
+  static size_t TotalPixels(const std::vector<std::pair<uint32_t, uint32_t>>& dims);
+  // Grow d_landed_weight_ to hold `n` floats (one per renderer) and size the host
+  // window totals to match. Zeroes on (re)allocation only; MUST run before
+  // EnsureXyzBuf so the latter's shape-change reset can cover both twins.
+  void EnsureLandedWeightBuf(size_t n);
+  // Size d_xyz_buf_ for Σ dims (one W*H*3 plane per renderer) and, on any change
+  // of the dims list, reset it together with the landed-weight slots + host
+  // window totals. Mirrors Metal EnsureImage.
+  void EnsureXyzBuf(const std::vector<std::pair<uint32_t, uint32_t>>& dims);
   // task-358.2 Step 4: grow-only allocation of the per-class Y-lane accumulator
-  // (class_count_ * W * H floats, or a 4B dummy when class_count_==0 so the
+  // (class_count_ * Σ W_i*H_i floats, or a 4B dummy when class_count_==0 so the
   // kernel pointer stays bindable). Zeroes the buffer on alloc + on regrow.
   // Post-drain (ReadbackClassLanes) zeroing lives in the readback itself.
-  // Mirrors Metal EnsureClassLaneBuf (metal_trace_backend.mm:1075-1090).
-  void EnsureClassLaneBuf(int w, int h);
+  // Mirrors Metal EnsureClassLaneBuf.
+  void EnsureClassLaneBuf(const std::vector<std::pair<uint32_t, uint32_t>>& dims);
+  // Allocate the device descriptor array once (kMaxRenderersDeviceCuda entries)
+  // and upload planes_[*].desc into it. Called by BeginSession after every
+  // offset is final.
+  void UploadRendererDescs();
   // Allocate the exposure-anchor plane once and zero it. Idempotent, and takes no
   // dimensions: the plane's shape is a build constant, not a function of the render config.
   void EnsureAnchorBuf();
@@ -2533,10 +2662,12 @@ void CudaTraceBackend::Impl::Reset(bool keep_persistent_buffers) {
     exit_comp_cap_ = 0;
     // S2 device-fused XYZ accumulation buffers.
     cudaFree(d_xyz_buf_);      d_xyz_buf_ = nullptr;
+    xyz_pix_capacity_ = 0;
     cudaFree(d_landed_weight_); d_landed_weight_ = nullptr;
-    window_landed_weight_ = 0.0;
-    alloc_xyz_w_ = 0u;  // scrum-312: buffer freed → clear its remembered dims
-    alloc_xyz_h_ = 0u;
+    landed_weight_capacity_ = 0;
+    window_landed_weight_.clear();
+    alloc_dims_.clear();  // buffer freed → clear its remembered dims
+    cudaFree(d_renderers_);  d_renderers_ = nullptr;
     // task-358.2 Step 4 (AC3): per-class Y-lane accumulator (class_count_ *
     // W * H floats). Freed on full teardown; ReadbackClassLanes handles the
     // per-batch drain-and-zero.
@@ -2599,11 +2730,10 @@ void CudaTraceBackend::Impl::Reset(bool keep_persistent_buffers) {
   // crystal_config_id_/final_layer_*/final_ms_*) is produced by EnsureFilterBuffers
   // and now PERSISTS across the per-batch keep path — reset only on full teardown
   // (keep=false block above), not here, or the idempotent-skip path reads zeros.
-  // 315.3: unified projection params reset to POD default.
-  proj_params_ = lm_proj::ProjParams{};
+  // Per-renderer session state (projection + offsets) is per-session; the
+  // persistent allocation record (alloc_dims_) deliberately survives.
+  planes_.clear();
   anchor_proj_params_ = lm_proj::ProjParams{};
-  img_w_ = 0u;
-  img_h_ = 0u;
   in_session_ = false;
   scene_ = nullptr;
   render_ = nullptr;
@@ -3264,13 +3394,101 @@ void CudaTraceBackend::Impl::EnsureComponentCaptureBuffers(size_t cap) {
   exit_comp_cap_ = cap;
 }
 
+size_t CudaTraceBackend::Impl::TotalPixels(const std::vector<std::pair<uint32_t, uint32_t>>& dims) {
+  size_t total = 0;
+  for (const auto& [w, h] : dims) {
+    total += static_cast<size_t>(w) * static_cast<size_t>(h);
+  }
+  return total;
+}
+
+// Mirror of Metal EnsureLandedWeightBuf: grow-only, zeroed on (re)allocation
+// only. The host window totals are sized in lock-step so the per-layer fold in
+// TraceLayer and the drain in ReadbackXyzAccum can index by renderer.
+void CudaTraceBackend::Impl::EnsureLandedWeightBuf(size_t n) {
+  if (d_landed_weight_ != nullptr && n <= landed_weight_capacity_) {
+    return;
+  }
+  cudaFree(d_landed_weight_);  // no-op on nullptr
+  d_landed_weight_ = nullptr;
+  CheckCuda(cudaMalloc(&d_landed_weight_, n * sizeof(float)), "EnsureLandedWeightBuf cudaMalloc d_landed_weight");
+  landed_weight_capacity_ = n;
+  CheckCuda(cudaMemset(d_landed_weight_, 0, n * sizeof(float)), "EnsureLandedWeightBuf cudaMemset d_landed_weight");
+  window_landed_weight_.assign(n, 0.0);
+}
+
+// Mirror of Metal EnsureImage. Third-clock drain: d_xyz_buf_ /
+// d_landed_weight_ are PERSISTENT accumulators across batches. Zero ONLY on
+// (re)allocation or a shape change — the former per-call memset moved to
+// ReadbackXyzAccum's post-drain reset, so device accumulation survives across
+// BeginSession/EndSession within a drain window (the simulator drains on display
+// cadence, not per batch). The buffer is always zero at a window start: first
+// window via this alloc-zero, later windows via the previous drain's memset.
+void CudaTraceBackend::Impl::EnsureXyzBuf(const std::vector<std::pair<uint32_t, uint32_t>>& dims) {
+  const size_t pix = TotalPixels(dims);
+  const size_t xyz_floats = pix * 3u;
+  // Grow/shrink the byte allocation only when the packed pixel COUNT changes.
+  if (d_xyz_buf_ == nullptr || pix != xyz_pix_capacity_) {
+    cudaFree(d_xyz_buf_);  // no-op on nullptr
+    d_xyz_buf_ = nullptr;
+    CheckCuda(cudaMalloc(&d_xyz_buf_, xyz_floats * sizeof(float)), "EnsureXyzBuf cudaMalloc d_xyz_buf");
+    xyz_pix_capacity_ = pix;
+  }
+  // Reset on any SHAPE change of the dims list — a renderer added / removed /
+  // resized, or a same-area shape swap (e.g. 512x1024 -> 1024x512) that reuses
+  // the buffer but is a fresh accumulation region (and, with several renderers,
+  // moves every plane offset after it). A resolution increase on a persistent
+  // smaller buffer would otherwise let the kernel atomicAdd new-dims pixel
+  // indices out of bounds (memory corruption). Gate on the whole list so
+  // alloc_dims_ tracks the current shape (else the between-session drain's dim
+  // check would false-throw) and BOTH twin accumulators reset together (else
+  // landed_weight would mix old/new-shape rays while d_xyz_buf_ reset). A shape
+  // change always rides a generation change, whose flush already drained the
+  // prior window, so re-zeroing here is correct. Steady state: BeginSession does
+  // NOT clear these — they persist across batches; the drain's post-read reset
+  // is the per-window reset.
+  if (dims != alloc_dims_) {
+    // landed_weight MUST already be allocated for dims.size() slots (BeginSession
+    // calls EnsureLandedWeightBuf first) — throw loudly rather than silently
+    // best-effort, so a future caller that forgets the ordering can't silently
+    // reintroduce the split reset (xyz reset while landed keeps stale rays).
+    if (d_landed_weight_ == nullptr || landed_weight_capacity_ < dims.size()) {
+      throw BackendUnavailableError(
+          "CudaTraceBackend::EnsureXyzBuf: d_landed_weight_ must be allocated for every renderer before reset");
+    }
+    CheckCuda(cudaMemset(d_xyz_buf_, 0, xyz_floats * sizeof(float)), "EnsureXyzBuf cudaMemset d_xyz_buf");
+    CheckCuda(cudaMemset(d_landed_weight_, 0, landed_weight_capacity_ * sizeof(float)),
+              "EnsureXyzBuf cudaMemset d_landed_weight");
+    window_landed_weight_.assign(landed_weight_capacity_, 0.0);
+    alloc_dims_ = dims;
+  }
+}
+
+void CudaTraceBackend::Impl::UploadRendererDescs() {
+  if (planes_.size() > kMaxRenderersDeviceCuda) {
+    throw BackendUnavailableError("CudaTraceBackend::UploadRendererDescs: " + std::to_string(planes_.size()) +
+                                  " renderers exceed kMaxRenderersDeviceCuda=" +
+                                  std::to_string(kMaxRenderersDeviceCuda));
+  }
+  if (d_renderers_ == nullptr) {
+    CheckCuda(cudaMalloc(&d_renderers_, kMaxRenderersDeviceCuda * sizeof(RendererPlaneDesc)),
+              "UploadRendererDescs cudaMalloc d_renderers");
+  }
+  RendererPlaneDesc host[kMaxRenderersDeviceCuda]{};
+  for (size_t r = 0; r < planes_.size(); ++r) {
+    host[r] = planes_[r].desc;
+  }
+  CheckCuda(cudaMemcpy(d_renderers_, host, sizeof(host), cudaMemcpyHostToDevice),
+            "UploadRendererDescs cudaMemcpy d_renderers");
+}
+
 // task-358.2 Step 4 (AC3 device-side Y-lane accumulation). Mirrors Metal
-// EnsureClassLaneBuf (metal_trace_backend.mm:1075-1090): grow-only allocation
-// of the atomic-float accumulator, sized `class_count_ * W * H` when active
-// or a single float when class_count_==0 (bindable dummy for the kernel arg).
+// EnsureClassLaneBuf: grow-only allocation of the atomic-float accumulator,
+// sized `class_count_ * Σ W_i*H_i` when active (one region per renderer) or a
+// single float when class_count_==0 (bindable dummy for the kernel arg).
 // Zeroed on alloc + on regrow via cudaMemset; per-batch drain-and-zero lives
 // in ReadbackClassLanes. Called from BeginSession after class_count_ is known.
-void CudaTraceBackend::Impl::EnsureClassLaneBuf(int w, int h) {
+void CudaTraceBackend::Impl::EnsureClassLaneBuf(const std::vector<std::pair<uint32_t, uint32_t>>& dims) {
   auto ck = [this](cudaError_t e, const char* ctx) {
     if (e != cudaSuccess) {
       Reset();
@@ -3278,7 +3496,7 @@ void CudaTraceBackend::Impl::EnsureClassLaneBuf(int w, int h) {
                                     cudaGetErrorString(e));
     }
   };
-  const size_t pix = static_cast<size_t>(std::max(w, 0)) * static_cast<size_t>(std::max(h, 0));
+  const size_t pix = TotalPixels(dims);
   const size_t needed_elems = (class_count_ == 0) ? 1u : (class_count_ * pix);
   // explore-359 FIX (mirror Metal metal_trace_backend.mm EnsureClassLaneBuf):
   // zero ONLY on (re)allocation, NOT every BeginSession. d_class_lane_buf_ is a
@@ -4031,88 +4249,98 @@ void CudaTraceBackend::BeginSession(const SessionSpec& spec) {
     impl_->captured_masks_.clear();
     impl_->captured_ws_.clear();
 
-    // S2 device-fused XYZ accumulation: allocate the W*H*3 device buffer +
-    // landed-weight scalar and zero them. Sized to render.resolution_; the
-    // ms_mode==0 kernel emit gate atomicAdds (cmf * w) into d_xyz_buf_ and
-    // adds the in-bounds weight, one warp partial at a time, into
-    // d_landed_weight_. ReadbackXyzAccum D2H copies the image and zeros it for
-    // the next window; the landed scalar is folded into `window_landed_weight_`
-    // by every TraceLayer and only the double crosses to the consumer.
-    if (spec.renders.empty() || spec.renders[0] == nullptr) {
-      throw BackendUnavailableError("CudaTraceBackend::BeginSession: spec.renders is empty or renders[0] is null");
+    // S2 device-fused XYZ accumulation: one W_i*H_i*3 plane + one landed-weight
+    // slot PER RENDERER, packed in renderer order. The ms_mode==0 kernel emit
+    // gate atomicAdds (cmf * w) into each renderer's plane and adds its
+    // in-bounds weight, one warp partial at a time, into d_landed_weight_[r].
+    // ReadbackXyzAccum D2H copies the planes and zeros them for the next window;
+    // the landed slots are folded into `window_landed_weight_` by every
+    // TraceLayer and only the doubles cross to the consumer.
+    if (spec.renders.empty()) {
+      throw BackendUnavailableError("CudaTraceBackend::BeginSession: spec.renders is empty");
     }
-    const RenderConfig& render0 = *spec.renders[0];
-    impl_->img_w_ = static_cast<uint32_t>(render0.resolution_[0]);
-    impl_->img_h_ = static_cast<uint32_t>(render0.resolution_[1]);
-    if (impl_->img_w_ == 0u || impl_->img_h_ == 0u) {
-      throw BackendUnavailableError(
-          "CudaTraceBackend::BeginSession: render.resolution_ has a zero dimension");
+    // The renderer count is bounded by kMaxRenderersDeviceCuda (the kernel's
+    // per-thread landed_acc[] and d_renderers_ are fixed-size). CanUseBackend
+    // already routes larger configs to the legacy CPU path through
+    // MaxRenderers(); this is the release-safe backstop for a caller that
+    // bypasses it.
+    if (spec.renders.size() > kMaxRenderersDeviceCuda) {
+      throw BackendUnavailableError("CudaTraceBackend::BeginSession: " + std::to_string(spec.renders.size()) +
+                                    " renderers exceed kMaxRenderersDeviceCuda=" +
+                                    std::to_string(kMaxRenderersDeviceCuda));
     }
     // Projection routing (315.3): single-source ProjParams via BuildProjParams
     // (predigests per-type scale, dual-fisheye r_scale/overlap, rectangular
-    // camera rotation) — mirrors Metal BeginSession. trace_single_ms_kernel
-    // reads this via lm_proj::ProjectExitToPixel, identical to the CPU parity
+    // camera rotation) — ONCE PER RENDERER: each has its own view pose, lens and
+    // resolution, so nothing here can be shared across them. Mirrors Metal
+    // BeginSession. trace_single_ms_kernel reads planes_[r].desc through
+    // d_renderers_ via lm_proj::ProjectExitToPixel, identical to the CPU parity
     // oracle ScatterOutgoingToXyz. The camera rotation is inlined here (mirrors
     // MakeCameraRotation in scatter_accum.hpp) to keep the .cu host-include
-    // surface narrow.
-    Rotation camera_rot;
-    float ax_z_chain[3]{ 0.0f, 0.0f, 1.0f };
-    float ax_y_chain[3]{ 0.0f, 1.0f, 0.0f };
-    camera_rot
-        .Chain({ ax_z_chain, (-90.0f + render0.view_.ro_) * math::kDegreeToRad })
-        .Chain({ ax_y_chain, (90.0f - render0.view_.el_) * math::kDegreeToRad })
-        .Chain({ ax_z_chain, render0.view_.az_ * math::kDegreeToRad });
-    const float short_pix =
-        static_cast<float>(std::min(render0.resolution_[0], render0.resolution_[1]));
-    impl_->proj_params_ = BuildProjParams(render0, camera_rot, short_pix);
-    const size_t xyz_floats = static_cast<size_t>(impl_->img_w_) *
-                              static_cast<size_t>(impl_->img_h_) * 3u;
-    // scrum-312 (third-clock drain): d_xyz_buf_ / d_landed_weight_ are PERSISTENT
-    // accumulators across batches. Zero ONLY on (re)allocation — the former
-    // per-call memset moved to ReadbackXyzAccum's post-drain reset, so device
-    // accumulation survives across BeginSession/EndSession within a drain window
-    // (the simulator drains on display cadence, not per batch). The buffer is
-    // always zero at a window start: first window via this alloc-zero, later
-    // windows via the previous drain's memset.
-    //
-    // Re-allocate when the render RESOLUTION changes (not just when null): a
-    // resolution increase on a persistent smaller buffer would let the kernel
-    // atomicAdd new-dims pixel indices out of bounds (memory corruption). A
-    // resolution change always rides a generation change, whose flush already
-    // drained the prior window, so re-zeroing is correct. Mirrors the Metal
-    // EnsureImage shape-change reset (312.4 review-Major). d_landed_weight_ (and
-    // the host double it feeds) is the twin accumulator — reset it in lock-step
-    // so the two never mix resolutions.
-    const bool xyz_dims_changed = (impl_->d_xyz_buf_ == nullptr) ||
-                                  (impl_->alloc_xyz_w_ != impl_->img_w_) ||
-                                  (impl_->alloc_xyz_h_ != impl_->img_h_);
-    if (xyz_dims_changed) {
-      const size_t old_pix = static_cast<size_t>(impl_->alloc_xyz_w_) * static_cast<size_t>(impl_->alloc_xyz_h_);
-      if (impl_->d_xyz_buf_ == nullptr || old_pix != static_cast<size_t>(impl_->img_w_) * impl_->img_h_) {
-        cudaFree(impl_->d_xyz_buf_);  // no-op on nullptr
-        CheckCuda(cudaMalloc(&impl_->d_xyz_buf_, xyz_floats * sizeof(float)),
-                  "BeginSession cudaMalloc d_xyz_buf");
+    // surface narrow. The plane / lane-region offsets are prefix sums over the
+    // renderers before it — the packing the shared accumulation buffers use
+    // (see EnsureXyzBuf / EnsureClassLaneBuf).
+    impl_->planes_.clear();
+    impl_->planes_.reserve(spec.renders.size());
+    std::vector<std::pair<uint32_t, uint32_t>> dims;
+    dims.reserve(spec.renders.size());
+    {
+      size_t pix_prefix = 0;
+      for (size_t r = 0; r < spec.renders.size(); ++r) {
+        const RenderConfig* render = spec.renders[r];
+        if (render == nullptr) {
+          throw BackendUnavailableError("CudaTraceBackend::BeginSession: spec.renders[" + std::to_string(r) +
+                                        "] is null");
+        }
+        Impl::RendererPlane plane;
+        plane.w = static_cast<uint32_t>(render->resolution_[0]);
+        plane.h = static_cast<uint32_t>(render->resolution_[1]);
+        if (plane.w == 0u || plane.h == 0u) {
+          throw BackendUnavailableError("CudaTraceBackend::BeginSession: renders[" + std::to_string(r) +
+                                        "].resolution_ has a zero dimension");
+        }
+        Rotation camera_rot;
+        float ax_z_chain[3]{ 0.0f, 0.0f, 1.0f };
+        float ax_y_chain[3]{ 0.0f, 1.0f, 0.0f };
+        camera_rot
+            .Chain({ ax_z_chain, (-90.0f + render->view_.ro_) * math::kDegreeToRad })
+            .Chain({ ax_y_chain, (90.0f - render->view_.el_) * math::kDegreeToRad })
+            .Chain({ ax_z_chain, render->view_.az_ * math::kDegreeToRad });
+        const float short_pix =
+            static_cast<float>(std::min(render->resolution_[0], render->resolution_[1]));
+        plane.desc.proj = BuildProjParams(*render, camera_rot, short_pix);
+        plane.desc.xyz_off = static_cast<uint32_t>(pix_prefix * 3u);
+        // lane_off needs class_count_, which EnsureFilterBuffers above has
+        // already fixed for this session — filled in below once the lane buffer
+        // is sized.
+        plane.desc.lane_off = 0u;
+        dims.emplace_back(plane.w, plane.h);
+        pix_prefix += static_cast<size_t>(plane.w) * static_cast<size_t>(plane.h);
+        impl_->planes_.push_back(plane);
       }
-      if (impl_->d_landed_weight_ == nullptr) {
-        CheckCuda(cudaMalloc(&impl_->d_landed_weight_, sizeof(float)),
-                  "BeginSession cudaMalloc d_landed_weight");
-      }
-      CheckCuda(cudaMemset(impl_->d_xyz_buf_, 0, xyz_floats * sizeof(float)),
-                "BeginSession cudaMemset d_xyz_buf");
-      CheckCuda(cudaMemset(impl_->d_landed_weight_, 0, sizeof(float)),
-                "BeginSession cudaMemset d_landed_weight");
-      impl_->window_landed_weight_ = 0.0;
-      impl_->alloc_xyz_w_ = impl_->img_w_;
-      impl_->alloc_xyz_h_ = impl_->img_h_;
     }
+    // Third clock: grow-only persistent accumulators. The landed slots are sized
+    // BEFORE EnsureXyzBuf so the latter resets BOTH twin accumulators atomically
+    // on a fresh accumulation region / shape change (312.4 review-Major). No
+    // per-call zero here.
+    impl_->EnsureLandedWeightBuf(dims.size());
+    impl_->EnsureXyzBuf(dims);
 
     // task-358.2 Step 4 (AC3 device-side Y-lane accumulation). Sized against
-    // class_count_ (set inside EnsureFilterBuffers above) and current
-    // resolution. Zeroed per-batch (EnsureClassLaneBuf memset) so the drain
-    // window starts clean regardless of prior batches. When class_count_==0
-    // this allocates a 4B dummy (kernel branch skip means it is never read).
-    // Mirrors Metal BeginSession's EnsureClassLaneBuf call (metal:2647).
-    impl_->EnsureClassLaneBuf(static_cast<int>(impl_->img_w_), static_cast<int>(impl_->img_h_));
+    // class_count_ (set inside EnsureFilterBuffers above) and Σ W_i*H_i, one
+    // region per renderer. Zeroed on allocation, then re-zeroed by
+    // ReadbackClassLanes after every drain window. When class_count_==0 this
+    // allocates a 4B dummy (kernel branch skip means it is never read). The
+    // region offsets are the class-count-scaled pixel prefix sums.
+    impl_->EnsureClassLaneBuf(dims);
+    {
+      size_t pix_prefix = 0;
+      for (auto& plane : impl_->planes_) {
+        plane.desc.lane_off = static_cast<uint32_t>(impl_->class_count_ * pix_prefix);
+        pix_prefix += static_cast<size_t>(plane.w) * static_cast<size_t>(plane.h);
+      }
+    }
+    impl_->UploadRendererDescs();
     // The exposure anchor: one fixed full-sky plane per backend, geometry from
     // core/anchor_buffer.hpp and NOT from `spec`. Both are idempotent.
     impl_->anchor_proj_params_ = BuildAnchorProjParams();
@@ -4663,10 +4891,10 @@ LayerHandlePtr CudaTraceBackend::TraceLayer(const RootRaySource& roots) {
         impl_->d_and_term_counts_,
         impl_->filter_desc_max_ci_,
         ci_cfg_id,
-        // S2 device-fused accumulation params.
+        // S2 device-fused accumulation params: packed XYZ planes + one landed
+        // slot per renderer, and the renderer descriptors the exit tails loop over.
         impl_->d_xyz_buf_, impl_->d_landed_weight_,
-        // 315.3: single POD carries all projection routing into the kernel.
-        impl_->proj_params_,
+        impl_->d_renderers_, static_cast<uint32_t>(impl_->planes_.size()),
         impl_->final_ms_prob_,
         impl_->gate_seed_,
         gate_split.lo,
@@ -4884,24 +5112,32 @@ LayerHandlePtr CudaTraceBackend::TraceLayer(const RootRaySource& roots) {
     impl_->h_cont_count_ = 0u;
   }
 
-  // Read this layer's landed weight off `d_landed_weight_` (device-fused XYZ
-  // path) so LayerStats::exit_w_sum reflects per-layer weight — mirrors Metal's
-  // ExitStats.w_sum (metal_trace_backend.mm :2818). Without this, callers
-  // relying on `GetLayerStats().exit_w_sum` (parity harness / K-shape filter
-  // parity battery) see a hardcoded 0 and treat every dispatch as inert. The
-  // device scalar is then zeroed and the layer folded into the host double
-  // (see `window_landed_weight_`): the float never accumulates past one layer,
-  // and the drain hands out the double. The synchronous cudaMemcpy on the NULL
-  // stream orders after the kernels on `stream_` (created blocking), and the
-  // memset that follows it orders before the next layer's launch the same way.
+  // Read this layer's landed weights off `d_landed_weight_` (device-fused XYZ
+  // path, one slot per renderer) so LayerStats::exit_w_sum reflects per-layer
+  // weight — mirrors Metal's ExitStats.w_sum. Without this, callers relying on
+  // `GetLayerStats().exit_w_sum` (parity harness / K-shape filter parity
+  // battery) see a hardcoded 0 and treat every dispatch as inert. The stat
+  // reports renderer 0's slot, the same quantity it has always carried (the
+  // primary renderer's in-bounds landed weight; summing the N slots would count
+  // a ray imaged by several renderers several times). The device slots are then
+  // zeroed and the layer folded into the host doubles (see
+  // `window_landed_weight_`): no float accumulates past one layer, and the drain
+  // hands out the doubles. The synchronous cudaMemcpy on the NULL stream orders
+  // after the kernels on `stream_` (created blocking), and the memset that
+  // follows it orders before the next layer's launch the same way.
   float layer_lw = 0.0f;
   if (impl_->d_landed_weight_ != nullptr) {
-    ck_reset(cudaMemcpy(&layer_lw, impl_->d_landed_weight_, sizeof(float),
+    const size_t n_slots = impl_->planes_.size();
+    std::vector<float> layer_lws(n_slots, 0.0f);
+    ck_reset(cudaMemcpy(layer_lws.data(), impl_->d_landed_weight_, n_slots * sizeof(float),
                         cudaMemcpyDeviceToHost),
              "TraceLayer landed_weight readback");
-    ck_reset(cudaMemset(impl_->d_landed_weight_, 0, sizeof(float)),
+    ck_reset(cudaMemset(impl_->d_landed_weight_, 0, n_slots * sizeof(float)),
              "TraceLayer landed_weight reset");
-    impl_->window_landed_weight_ += static_cast<double>(layer_lw);
+    for (size_t r = 0; r < n_slots; ++r) {
+      impl_->window_landed_weight_[r] += static_cast<double>(layer_lws[r]);
+    }
+    layer_lw = n_slots > 0 ? layer_lws[0] : 0.0f;
   }
   return std::make_unique<CudaLayerHandle>(cont_count_for_handle,
                                            LayerStats{impl_->h_exit_count_, layer_lw});
@@ -5198,12 +5434,12 @@ void CudaTraceBackend::ReadbackClassLanes(std::vector<std::vector<float>>& lane_
   // Same wait discipline as Metal / ReadbackXyzAccum — the trace kernel's
   // atomicAdd writes into d_class_lane_buf_ must finalize before the D2H copy.
   cudaDeviceSynchronize();
-  const size_t pix = static_cast<size_t>(impl_->alloc_xyz_w_) * static_cast<size_t>(impl_->alloc_xyz_h_);
+  const size_t pix = Impl::TotalPixels(impl_->alloc_dims_);
   const size_t total = impl_->class_count_ * pix;
   // Under-allocation guard (release-safe, mirrors ReadbackXyzAccum's Bug-1
-  // fix): d_class_lane_buf_ sizing is driven by EnsureClassLaneBuf(img_w,
-  // img_h) at BeginSession, but if a caller resizes render dims mid-window
-  // without a full teardown, the buffer would be smaller than `total`.
+  // fix): d_class_lane_buf_ sizing is driven by EnsureClassLaneBuf(dims) at
+  // BeginSession, but if a caller resizes render dims mid-window without a
+  // full teardown, the buffer would be smaller than `total`.
   // Logs an ILOG_ERROR and clears+returns (the assert below is a no-op under
   // -DNDEBUG, so release builds degrade silently rather than crashing).
   if (total > impl_->class_lane_pix_capacity_) {
@@ -5212,18 +5448,27 @@ void CudaTraceBackend::ReadbackClassLanes(std::vector<std::vector<float>>& lane_
                "CudaTraceBackend::ReadbackClassLanes: d_class_lane_buf_ under-allocated (capacity {} floats, requested "
                "class_count {} × W×H {} = {} floats)",
                impl_->class_lane_pix_capacity_, impl_->class_count_, pix, total);
-    assert(false && "d_class_lane_buf_ under-allocated for the current class_count * W * H");
+    assert(false && "d_class_lane_buf_ under-allocated for the current class_count * Σ W * H");
     lane_planes.clear();
     class_count = 0;
     return;
   }
-  // Single-renderer form of the N-plane seam: one region, renderer 0.
-  lane_planes.resize(1);
-  std::vector<float>& lane_data = lane_planes[0];
-  lane_data.resize(total);
-  CheckCuda(cudaMemcpy(lane_data.data(), impl_->d_class_lane_buf_, total * sizeof(float),
-                       cudaMemcpyDeviceToHost),
-            "ReadbackClassLanes D2H d_class_lane_buf");
+  // Region i is class_count × (this renderer's pixels) floats, starting at
+  // class_count × (Σ pixels of the renderers before it) — the packing
+  // BeginSession wrote into planes_[i].desc.lane_off, derived here from
+  // alloc_dims_ so a between-session drain (planes_ cleared by Reset) reads the
+  // right slice.
+  lane_planes.resize(impl_->alloc_dims_.size());
+  size_t pix_prefix = 0;
+  for (size_t i = 0; i < impl_->alloc_dims_.size(); ++i) {
+    const size_t pix_i = static_cast<size_t>(impl_->alloc_dims_[i].first) * static_cast<size_t>(impl_->alloc_dims_[i].second);
+    const size_t region = impl_->class_count_ * pix_i;
+    lane_planes[i].resize(region);
+    CheckCuda(cudaMemcpy(lane_planes[i].data(), impl_->d_class_lane_buf_ + impl_->class_count_ * pix_prefix,
+                         region * sizeof(float), cudaMemcpyDeviceToHost),
+              "ReadbackClassLanes D2H d_class_lane_buf");
+    pix_prefix += pix_i;
+  }
   // Zero for the next window (mirror Metal std::memset — CUDA uses cudaMemset).
   CheckCuda(cudaMemset(impl_->d_class_lane_buf_, 0, total * sizeof(float)),
             "ReadbackClassLanes cudaMemset d_class_lane_buf");
@@ -5256,63 +5501,80 @@ void CudaTraceBackend::ReadbackAnchorBuffer(std::vector<float>& anchor_y) {
 // batch, and possibly BETWEEN sessions. Draining twice with no accumulation in
 // between returns zeros on the second call (buffers cleared after the first read).
 void CudaTraceBackend::ReadbackXyzAccum(std::vector<XyzImageData>& xyz_planes, std::vector<float>& landed_weight) {
-  // Single-renderer form of the N-plane seam: exactly one caller plane, renderer 0.
-  if (xyz_planes.size() != 1u) {
-    throw BackendUnavailableError("CudaTraceBackend::ReadbackXyzAccum: caller passed " +
-                                  std::to_string(xyz_planes.size()) + " plane(s) but 1 renderer is allocated");
-  }
-  XyzImageData& xyz = xyz_planes[0];
   // scrum-312 (third-clock drain): the XYZ accumulator is persistent and drained
   // on display cadence, which the simulator triggers BETWEEN per-batch sessions
   // (generation-change / producer-pause / run-exit flush). Gate on the buffer
   // being allocated, not on in_session_ — the persisted buffer is valid to read
   // after EndSession(keep_persistent_buffers=true).
-  if (impl_->d_xyz_buf_ == nullptr) {
+  if (impl_->d_xyz_buf_ == nullptr || impl_->d_landed_weight_ == nullptr) {
     throw BackendUnavailableError("CudaTraceBackend::ReadbackXyzAccum called before any session allocated the buffer");
   }
-  assert(impl_->d_landed_weight_ != nullptr);
-  assert(xyz.data != nullptr && "ReadbackXyzAccum: caller must pre-allocate xyz.data");
-  // scrum-312 (release-safe, code-review Major): pixel count comes from the dims
-  // the persistent buffer was ACTUALLY allocated for (alloc_xyz_w_/h_), NOT from
-  // impl_->img_w_/img_h_ (cleared to 0 by EndSession/Reset — reading them here was
-  // Bug 1: 0-byte copy → black image). Cross-check the caller's declared dims
-  // against the real buffer capacity with a RELEASE-safe throw (not an assert —
-  // asserts are no-ops under NDEBUG, which is exactly how Bug 1 stayed silent):
-  // a mismatch means the buffer size and the caller's expectation have decoupled
+  // Invariant: alloc_dims_ and xyz_pix_capacity_ encode the same underlying
+  // allocation and are set together in EnsureXyzBuf.
+  assert(Impl::TotalPixels(impl_->alloc_dims_) == impl_->xyz_pix_capacity_ &&
+         "alloc dims out of sync with xyz_pix_capacity_");
+  // Release-safe: plane geometry comes from the
+  // dims the persistent buffer was ACTUALLY allocated for (alloc_dims_), NOT from
+  // impl_->planes_ (cleared by EndSession/Reset — reading it here was Bug 1:
+  // 0-byte copy → black image). Cross-check the caller's declared planes against
+  // the real buffer layout with RELEASE-safe throws (not asserts — asserts are
+  // no-ops under NDEBUG, which is exactly how Bug 1 stayed silent): one caller
+  // plane per renderer, each with the dims the buffer was allocated for; a
+  // mismatch means the buffer layout and the caller's expectation have decoupled
   // (e.g. a resolution change on the persistent buffer), which would corrupt the
   // D2H copy.
-  if (static_cast<uint32_t>(xyz.width) != impl_->alloc_xyz_w_ ||
-      static_cast<uint32_t>(xyz.height) != impl_->alloc_xyz_h_) {
-    throw BackendUnavailableError(
-        "CudaTraceBackend::ReadbackXyzAccum: caller dims (" + std::to_string(xyz.width) + "x" +
-        std::to_string(xyz.height) + ") != allocated buffer dims (" + std::to_string(impl_->alloc_xyz_w_) +
-        "x" + std::to_string(impl_->alloc_xyz_h_) + ")");
+  if (xyz_planes.size() != impl_->alloc_dims_.size()) {
+    throw BackendUnavailableError("CudaTraceBackend::ReadbackXyzAccum: caller passed " +
+                                  std::to_string(xyz_planes.size()) + " plane(s) but " +
+                                  std::to_string(impl_->alloc_dims_.size()) + " renderer(s) are allocated");
+  }
+  for (size_t i = 0; i < xyz_planes.size(); ++i) {
+    const XyzImageData& xyz = xyz_planes[i];
+    if (xyz.data == nullptr) {
+      throw BackendUnavailableError("CudaTraceBackend::ReadbackXyzAccum: null xyz.data for renderer " +
+                                    std::to_string(i));
+    }
+    if (static_cast<uint32_t>(xyz.width) != impl_->alloc_dims_[i].first ||
+        static_cast<uint32_t>(xyz.height) != impl_->alloc_dims_[i].second) {
+      throw BackendUnavailableError("CudaTraceBackend::ReadbackXyzAccum: renderer " + std::to_string(i) +
+                                    " caller dims (" + std::to_string(xyz.width) + "x" + std::to_string(xyz.height) +
+                                    ") != allocated buffer dims (" + std::to_string(impl_->alloc_dims_[i].first) +
+                                    "x" + std::to_string(impl_->alloc_dims_[i].second) + ")");
+    }
   }
 
   // waitUntilCompleted-equivalent — all preceding TraceLayer kernel work must
   // finalize before the D2H copy. Mirrors Metal's cmd-buffer wait.
   cudaDeviceSynchronize();
-  const size_t pix = static_cast<size_t>(impl_->alloc_xyz_w_) * static_cast<size_t>(impl_->alloc_xyz_h_);
-  CheckCuda(cudaMemcpy(xyz.data, impl_->d_xyz_buf_, pix * 3u * sizeof(float),
-                       cudaMemcpyDeviceToHost),
-            "ReadbackXyzAccum D2H d_xyz_buf");
-  // The window's landed weight is the host double TraceLayer folded every layer
-  // into; the device float is zero after each layer, so anything still on it
-  // could only be a layer whose readback never ran, and is read once here rather
-  // than left to leak into the next window.
-  float lw = 0.0f;
-  CheckCuda(cudaMemcpy(&lw, impl_->d_landed_weight_, sizeof(float), cudaMemcpyDeviceToHost),
+  // The window's landed weights are the host doubles TraceLayer folded every
+  // layer into; the device slots are zero after each layer, so anything still on
+  // them could only be a layer whose readback never ran, and is read once here
+  // rather than left to leak into the next window.
+  const size_t n_slots = impl_->landed_weight_capacity_;
+  std::vector<float> lws(n_slots, 0.0f);
+  CheckCuda(cudaMemcpy(lws.data(), impl_->d_landed_weight_, n_slots * sizeof(float), cudaMemcpyDeviceToHost),
             "ReadbackXyzAccum D2H d_landed_weight");
-  landed_weight.assign(1u, 0.0f);
-  landed_weight[0] += static_cast<float>(impl_->window_landed_weight_ + static_cast<double>(lw));
-  // Reset the accumulator so the NEXT drain window starts from zero (scrum-312:
+  // Plane i lives at the float offset 3 × (Σ pixels of the planes before it) —
+  // the same prefix-sum packing BeginSession wrote into planes_[i].desc.xyz_off,
+  // derived here from alloc_dims_ so a between-session drain reads the right slice.
+  landed_weight.assign(xyz_planes.size(), 0.0f);
+  size_t pix_prefix = 0;
+  for (size_t i = 0; i < xyz_planes.size(); ++i) {
+    const size_t pix = static_cast<size_t>(impl_->alloc_dims_[i].first) * static_cast<size_t>(impl_->alloc_dims_[i].second);
+    CheckCuda(cudaMemcpy(xyz_planes[i].data, impl_->d_xyz_buf_ + pix_prefix * 3u, pix * 3u * sizeof(float),
+                         cudaMemcpyDeviceToHost),
+              "ReadbackXyzAccum D2H d_xyz_buf");
+    landed_weight[i] += static_cast<float>(impl_->window_landed_weight_[i] + static_cast<double>(lws[i]));
+    pix_prefix += pix;
+  }
+  // Reset the accumulators so the NEXT drain window starts from zero (third clock:
   // this is now the per-window reset — BeginSession no longer zeroes; a second
   // drain with no intervening accumulation returns zeros).
-  CheckCuda(cudaMemset(impl_->d_xyz_buf_, 0, pix * 3u * sizeof(float)),
+  CheckCuda(cudaMemset(impl_->d_xyz_buf_, 0, impl_->xyz_pix_capacity_ * 3u * sizeof(float)),
             "ReadbackXyzAccum cudaMemset d_xyz_buf");
-  CheckCuda(cudaMemset(impl_->d_landed_weight_, 0, sizeof(float)),
+  CheckCuda(cudaMemset(impl_->d_landed_weight_, 0, n_slots * sizeof(float)),
             "ReadbackXyzAccum cudaMemset d_landed_weight");
-  impl_->window_landed_weight_ = 0.0;
+  std::fill(impl_->window_landed_weight_.begin(), impl_->window_landed_weight_.end(), 0.0);
 }
 
 // Mirror MetalTraceBackend::IsCompatible. 315.3/315.4: the device-fused emit
