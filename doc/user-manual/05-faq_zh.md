@@ -10,7 +10,7 @@ Lumice 的 JSON schema 只要求少量字段，其他字段都有默认值。下
 
 | 字段 | 是否必需 | 默认值 | 说明 |
 |------|----------|--------|------|
-| `scene.ray_num` | 是 | — | 每个波长追踪的光线数；可用 `"infinite"` 跑无限模拟 |
+| `scene.ray_num` | 是 | — | **所有波长加起来的总光线数**；可用 `"infinite"` 跑无限模拟 |
 | `scene.max_hits` | 是 | — | 单条光线允许的最大内部反射次数 |
 | `scene.light_source.altitude` | 是 | — | 太阳高度角（度） |
 | `scene.light_source.azimuth` | 否 | `0.0` | 太阳方位角（度） |
@@ -27,39 +27,32 @@ Lumice 的 JSON schema 只要求少量字段，其他字段都有默认值。下
 
 ## 2. `ray_num` × 波长语义 — "光线数"到底是什么意思？
 
-**简短回答**：在离散 spectrum 模式（典型场景）下，`ray_num` 是**每个波长**追踪的光线数。总工作量 = `ray_num × N(wavelengths)`。
+**简短回答**：`ray_num` 是**所有波长加起来的总光线数**——离散 spectrum 还是标准光源都一样，不是每个波长各自的数。（这是一次迁移后的语义：早先它的语义是「每个离散波长各自的光线数」，9 段 spectrum 会把实际光线总数悄悄乘 9；迁移说明与历史见 [`../configuration_zh.md`](../configuration_zh.md)。）
 
-**为什么重要**：你把单波长换成 9 段 spectrum 后没改 `ray_num`，模拟会慢约 9 倍。新手常误以为是 config bug — 不是 bug，是积分方案就这样。
+**为什么重要**：因为 `ray_num` 是总数，给离散 spectrum 加波段**不会**让同一个 `ray_num` 跑得更慢——同一个总数被摊到更多波段上。真正会变的是每段的噪点：波段越多，摊到每段的光线越少，所以同一个 `ray_num` 下 9 段 spectrum 会比单波段更"糙"，即便两者墙钟耗时差不多。加波段时想保住每段的采样量，就要相应调高 `ray_num`。
 
-**源代码事实**（`src/core/simulator.cpp:482-498`）：
+**源代码事实**（`src/server/ray_num_semantics.hpp`——这个换元唯一发生的地方，被 `src/server/server.cpp` 的 `ServerImpl::GenerateScene` 调用，早于任何 batch 到达 simulator）：
 
 ```cpp
-const auto& spectrum = config.light_source_.spectrum_;
-if (auto* illuminant = std::get_if<IlluminantType>(&spectrum)) {
-  // 标准光源（如 D65）：每个 batch 随机选一个波长
-  float wl = 380.0f + rng_.GetUniform() * 400.0f;
-  float weight = GetIlluminantSpd(*illuminant, wl);
-  SimulateOneWavelength(config, WlParam{ wl, weight }, batch.ray_num_, ...);
-} else {
-  // 离散波长：每个波长各跑 ray_num 条光线
-  const auto& wl_params = std::get<std::vector<WlParam>>(spectrum);
-  for (const auto& wl_param : wl_params) {
-    SimulateOneWavelength(config, wl_param, batch.ray_num_, ...);
-  }
+// Per-wavelength ray budget from the total-across-wavelengths ray_num.
+// n_wl <= 1 (illuminant / single wavelength) is the identity. For discrete spectra the
+// per-wavelength count is ceil(total / n_wl) so at least `total` rays are traced overall.
+inline std::size_t PerWavelengthRayNum(std::size_t total, std::size_t n_wl) {
+  if (n_wl <= 1)
+    return total;
+  return (total + n_wl - 1) / n_wl;  // ceil
 }
 ```
 
-两种 spectrum 模式的开销曲线不同：
+两种 spectrum 模式开销曲线相同——`ray_num` 都是总数：
 
-- **离散波长**（`spectrum: [{wavelength, weight}, ...]`）：开销 ≈ `ray_num × N(wavelengths)`。内置示例 `examples/config_example.json` 用 9 段 × `ray_num=5e7` ⇒ 4.5 × 10⁸ 条光线。
-- **标准光源**（`spectrum: "D65"`、`"D50"` 等）：开销 ≈ `ray_num`。每个 batch 在 `[380, 780]` 内按 SPD 加权随机选 1 个波长。
-
-**`batch.ray_num_` 的语义桥接**：服务端 `GenerateScene` 将用户的 `scene.ray_num` 切分为多个 batch（`batch_ray_num = min(kDefaultRayNum, remaining)`），逐批投递给 simulator。每批对每个波长各跑 `batch.ray_num_` 条光线，所有 batch 累加后等于用户配置的总 `ray_num`。代码注释 `src/config/proj_config.hpp:28` 直接写道：`// For every single wavelength.`
+- **离散波长**（`spectrum: [{wavelength, weight}, ...]`）：开销 ≈ `ray_num`（向上取整除法把总数均匀摊到 N 段；实际模拟总数是 `⌈ray_num/N⌉ × N ≥ ray_num`，有一点点向上溢出）。内置示例 `examples/config_example.json` 的 `ray_num` 是 `4.5e8`（`450000000`），覆盖其 9 段 spectrum——折合每段约 5×10⁷ 条。
+- **标准光源**（`spectrum: "D65"`、`"D50"` 等）：开销 ≈ `ray_num`。每个 batch 在 `[380, 780]` 内按 SPD 加权随机选 1 个波长（`n_wl = 1`，上面的除法是恒等变换）。
 
 **实操建议**：
 
 - 首跑？`ray_num=1e6` + 单波长（`[{"wavelength": 550, "weight": 1.0}]`），几秒出图。
-- 想要低噪最终图？`ray_num=5e7` + 完整离散 spectrum 是常见配方。
+- 想要完整离散 spectrum 下的低噪最终图？`ray_num=4.5e8` 以上（内置示例的值，其 9 段 spectrum 下折合每段约 5×10⁷）是常见配方。
 - 想 GUI 内连续累积预览？`ray_num: "infinite"`，看够了手动停。
 
 ## 3. GUI 与 JSON 能力差异

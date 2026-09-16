@@ -505,8 +505,15 @@ class RenderConsumer : public IConsume {
   // emitted, that one what reached a pixel. Both accumulate on BOTH consume
   // paths (Consume + ConsumeDeviceFused); charging only one of them was the
   // shape of two historical GUI brightness bugs.
-  float total_emitted_energy_ = 0;
-  float snapshot_emitted_energy_ = 0;
+  //
+  // double, not float: a long legacy-CPU run charges this hundreds of thousands of times
+  // (128 rays/batch), and once the running total reaches the 2^31 magnitude a float32
+  // accumulator's ulp is ~256 against a per-batch addend of a few thousand -- systematic
+  // rounding, not noise, measured at 0.05-0.12% drift in RawXyzResult::emitted_energy over
+  // such a run. The per-batch addend (SimData::emitted_energy_) and the published
+  // LUMICE_RawXyzResult::emitted_energy stay float; only the running accumulator widens.
+  double total_emitted_energy_ = 0;
+  double snapshot_emitted_energy_ = 0;
   // The relative-mode anchor for the snapshot being baked, per SetAnchorL99Sky above. Unlike the
   // two pairs beside it this one is not accumulated here — it is measured by AnchorConsumer over
   // a plane this class never sees, and arrives already frozen for the pass.

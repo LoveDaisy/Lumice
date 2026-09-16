@@ -232,6 +232,38 @@ TEST(RenderConsumerExposureScale, RawXyzResultCarriesTheRawEmittedTotal) {
   EXPECT_FLOAT_EQ(reproduced, rc.ExposureScale());
 }
 
+TEST(RenderConsumerExposureScale, EmittedEnergyAccumulatorMatchesDoublePrecisionOverManyBatches) {
+  // Replicates the shape of a long legacy-CPU run: 128 rays/batch, ~30M rays total, i.e. ~234k
+  // Consume() calls each charging total_emitted_energy_ once (render.cpp: charged up front,
+  // independent of how many rays a batch's outgoing set carries -- see MakeBatch's all-filtered
+  // sibling above). A same-magnitude constant addend is the worst case for a float32 running
+  // total: once the sum passes float32's exact-integer ceiling (2^24), every further += rounds
+  // in the same direction, so the drift compounds rather than averaging out. The reference is a
+  // double accumulation of the identical sequence, which stays exact here (the true total is
+  // ~2.6e9, comfortably inside double's exact-integer range up to 2^53).
+  constexpr int kBatchCount = 234000;
+  constexpr float kPerBatchEnergy = 11258.0f;
+
+  const auto cfg = MakeConfig();
+  RenderConsumer rc(cfg, ColorClassTable{});
+
+  double reference = 0.0;
+  for (int i = 0; i < kBatchCount; ++i) {
+    SimData data;
+    data.curr_wl_ = kWl;
+    data.root_ray_count_ = 128;
+    data.emitted_energy_ = kPerBatchEnergy;
+    rc.Consume(data);
+    reference += kPerBatchEnergy;
+  }
+  rc.PrepareSnapshot();
+
+  const auto raw = rc.GetRawXyzResult();
+  const double relative_error = std::abs(static_cast<double>(raw.snapshot_emitted_energy_) - reference) / reference;
+  EXPECT_LT(relative_error, 1e-6) << "accumulator drifted " << relative_error << " relative to the exact total "
+                                  << reference << " (got " << raw.snapshot_emitted_energy_ << ")";
+}
+
 // =============================================================================
 // ev_mode = kRelative: the frame anchors to the SKY, through a scalar it is handed.
 //

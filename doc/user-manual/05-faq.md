@@ -10,7 +10,7 @@ Lumice's JSON schema requires only a handful of fields; the rest fall back to de
 
 | Field | Required? | Default | Notes |
 |-------|-----------|---------|-------|
-| `scene.ray_num` | yes | — | Per-wavelength ray budget; can be `"infinite"` for an open-ended run |
+| `scene.ray_num` | yes | — | **Total** ray budget across every spectrum wavelength; can be `"infinite"` for an open-ended run |
 | `scene.max_hits` | yes | — | Maximum internal bounces before a ray is dropped |
 | `scene.light_source.altitude` | yes | — | Sun altitude above horizon (degrees) |
 | `scene.light_source.azimuth` | no | `0.0` | Sun azimuth (degrees) |
@@ -27,39 +27,32 @@ Lumice's JSON schema requires only a handful of fields; the rest fall back to de
 
 ## 2. `ray_num` × wavelength semantics — what does "ray count" really mean?
 
-**Short answer**: in discrete-spectrum mode (the typical case), `ray_num` is the number of rays traced **per wavelength**. Total work is `ray_num × N(wavelengths)`.
+**Short answer**: `ray_num` is the **total** ray budget across every wavelength in the spectrum, discrete or illuminant alike — not a per-wavelength count. (This is a migrated semantics: earlier the field meant *rays per discrete wavelength*, so a 9-band spectrum silently multiplied the traced total by 9; see [`../configuration.md`](../configuration.md) for the migration note and history.)
 
-**Why this matters**: if you switch from one wavelength to a 9-band spectrum without changing `ray_num`, the simulation gets ~9× slower. New users routinely "tune" `ray_num` and then attribute the slowdown to a config bug. It is not a bug — it is the integration scheme.
+**Why this matters**: because `ray_num` is the total, adding bands to a discrete spectrum does **not** make a run slower at the same `ray_num` — the same total is spread across however many bands the spectrum has. What it does change is per-band noise: more bands means fewer rays land in each one, so a 9-band scene looks grainier than a 1-band scene at the same `ray_num`, even though both cost about the same wall-clock time. Raise `ray_num` when you add bands if you want to keep each band's own sample count.
 
-**Source-anchored evidence** (`src/core/simulator.cpp:482-498`):
+**Source-anchored evidence** (`src/server/ray_num_semantics.hpp`, the single place this division happens — called from `ServerImpl::GenerateScene` in `src/server/server.cpp` before any batch reaches the simulator):
 
 ```cpp
-const auto& spectrum = config.light_source_.spectrum_;
-if (auto* illuminant = std::get_if<IlluminantType>(&spectrum)) {
-  // Standard illuminant (e.g. D65): each batch picks one random wavelength
-  float wl = 380.0f + rng_.GetUniform() * 400.0f;
-  float weight = GetIlluminantSpd(*illuminant, wl);
-  SimulateOneWavelength(config, WlParam{ wl, weight }, batch.ray_num_, ...);
-} else {
-  // Discrete wavelengths: trace ray_num for each
-  const auto& wl_params = std::get<std::vector<WlParam>>(spectrum);
-  for (const auto& wl_param : wl_params) {
-    SimulateOneWavelength(config, wl_param, batch.ray_num_, ...);
-  }
+// Per-wavelength ray budget from the total-across-wavelengths ray_num.
+// n_wl <= 1 (illuminant / single wavelength) is the identity. For discrete spectra the
+// per-wavelength count is ceil(total / n_wl) so at least `total` rays are traced overall.
+inline std::size_t PerWavelengthRayNum(std::size_t total, std::size_t n_wl) {
+  if (n_wl <= 1)
+    return total;
+  return (total + n_wl - 1) / n_wl;  // ceil
 }
 ```
 
-So the two spectrum modes have different cost profiles:
+So both spectrum modes have the same cost profile — `ray_num` is the total either way:
 
-- **Discrete spectrum** (`spectrum: [{wavelength, weight}, ...]`): cost ≈ `ray_num × N(wavelengths)`. The bundled `examples/config_example.json` uses 9 bands × `ray_num=5e7` ⇒ 4.5 × 10⁸ rays.
-- **Standard illuminant** (`spectrum: "D65"`, `"D50"`, …): cost ≈ `ray_num`. Each batch picks one wavelength uniformly from `[380, 780]` weighted by the SPD.
-
-**`batch.ray_num_` clarified**: the server-side `GenerateScene` slices the user's `scene.ray_num` into smaller batches (`batch_ray_num = min(kDefaultRayNum, remaining)`) and dispatches them to the simulator. Each batch traces `batch.ray_num_` rays per wavelength; summing batches recovers the user-visible total. Code comment at `src/config/proj_config.hpp:28` confirms the semantics: `// For every single wavelength.`
+- **Discrete spectrum** (`spectrum: [{wavelength, weight}, ...]`): cost ≈ `ray_num` (the ceiling division spreads it evenly across the N bands; the actual simulated total is `⌈ray_num/N⌉ × N ≥ ray_num`, a small overshoot). The bundled `examples/config_example.json` sets `ray_num` to `4.5e8` (`450000000`) for its 9-band spectrum — ~5×10⁷ rays per band.
+- **Standard illuminant** (`spectrum: "D65"`, `"D50"`, …): cost ≈ `ray_num`. Each batch picks one wavelength uniformly from `[380, 780]` weighted by the SPD (`n_wl = 1`, so the division above is the identity).
 
 **Practical advice**:
 
 - First run? `ray_num=1e6` + a single wavelength (`[{"wavelength": 550, "weight": 1.0}]`) finishes in seconds.
-- Need a low-noise final image? `ray_num=5e7` + the full discrete spectrum is the usual recipe.
+- Need a low-noise final image with the full discrete spectrum? `ray_num=4.5e8` or higher (the bundled example's value, ~5×10⁷ per band on its 9-band spectrum) is the usual recipe.
 - Need a continuous live preview in the GUI? Set `ray_num: "infinite"` and stop manually.
 
 ## 3. GUI vs JSON capabilities

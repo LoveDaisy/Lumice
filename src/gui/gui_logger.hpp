@@ -41,7 +41,7 @@ inline void SetGuiLoggerSinks(std::vector<spdlog::sink_ptr> sinks) {
 // InstallEarlyGuiSinks() must run FIRST, before GLFW / GL / ImGui init, because every failure
 // those stages can report is itself logged: a sink installed after them silently drops exactly
 // the startup diagnostics a user needs. Nothing it installs depends on a window, a GL context or
-// an ImGui context. On Windows it must still come after the FreeConsole() block, so the stdout
+// an ImGui context. On Windows it must still come after the FreeConsole() block, so the console
 // sink is built against the final console state.
 //
 // AttachGuiFileSink() must run LATER, and specifically NOT from the early call, because
@@ -55,8 +55,8 @@ inline void SetGuiLoggerSinks(std::vector<spdlog::sink_ptr> sinks) {
 // sink or changing kGuiLogPattern is a single-file edit rather than two edits in main() that can
 // drift apart.
 
-// Stage 1: the side-effect-free sinks (ImGui ring buffer + stdout). Publishes g_imgui_log_sink,
-// sets the formatter, and installs the flush strategy.
+// Stage 1: the side-effect-free sinks (ImGui ring buffer + stderr console). Publishes
+// g_imgui_log_sink, sets the formatter, and installs the flush strategy.
 void InstallEarlyGuiSinks();
 
 // Stage 2: the file sink. Resolves the log path (beside the other per-user Lumice artifacts,

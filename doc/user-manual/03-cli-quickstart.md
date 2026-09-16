@@ -28,10 +28,10 @@ After the run, the output directory contains one image per render entry in your 
 
 | File | Lens / view | Notes |
 |------|-------------|-------|
-| `example_img_01.jpg` | Equal-area dual fisheye, full sky | The default "everything in the sky" view |
-| `example_img_02.jpg` | Linear lens, narrower FOV | Closer to a camera-with-fisheye-removed view |
-| `example_img_03.jpg` | Equidistant fisheye | Useful for angle measurement |
-| `example_img_04.jpg` | Stereographic fisheye | Preserves circle shapes near the horizon |
+| `img_01.jpg` | Equal-area dual fisheye, full sky | The default "everything in the sky" view |
+| `img_02.jpg` | Linear lens, narrower FOV | Closer to a camera-with-fisheye-removed view |
+| `img_03.jpg` | Equidistant fisheye | Useful for angle measurement |
+| `img_04.jpg` | Stereographic fisheye | Preserves circle shapes near the horizon |
 
 ![Example output 1](../figs/example_img_01.jpg)
 ![Example output 2](../figs/example_img_02.jpg)
@@ -40,7 +40,7 @@ After the run, the output directory contains one image per render entry in your 
 
 The console also prints a `Stats:` block summarising the simulation (ray counts, elapsed time, per-wavelength accumulation). Capture this if you want a reproducibility receipt.
 
-Two streams, on purpose: the product lines — `Saved:` / `Stats:` here, the `[BENCHMARK]` JSON of `benchmark`, the CSV of `analyze` — go to **stdout**, and every diagnostic log line (`-v` and the engine's own messages alike) goes to **stderr**. So `Lumice -f config.json -o out 2>/dev/null` prints exactly the product lines, and `> run.log 2>&1` keeps both together when you want the receipt and the log in one file. This split is a promise about the `Lumice` command line: the GUI app's own log lines (`GUI_LOG_*`) still print to stdout, only the engine's go to stderr, so do not read it as a rule about the GUI's terminal output.
+Two streams, on purpose: the product lines — `Saved:` / `Stats:` here, the `[BENCHMARK]` JSON of `benchmark`, the CSV of `analyze` — go to **stdout**, and every diagnostic log line (`-v` and the engine's own messages alike) goes to **stderr**. So `Lumice -f config.json -o out 2>/dev/null` prints exactly the product lines, and `> run.log 2>&1` keeps both together when you want the receipt and the log in one file. The CLI and the GUI app's own log lines (`GUI_LOG_*`) both go to stderr — there is no product output on the GUI's stdout for a log line to compete with.
 
 ## 3. Verbose and debug modes
 
@@ -78,6 +78,10 @@ Options for render (the default subcommand):
   -o <dir>           Output directory for rendered images (default: current directory)
   --format <fmt>     Output image format: jpg or png (default: jpg)
   --quality <1-100>  JPEG quality (default: 95, ignored for PNG)
+  --seed <N>         Fix the simulation's random seed (a positive integer) so two runs
+                     of the same config are the same run; this also sizes the pool to
+                     one worker (a seeded run is single-threaded by contract).
+                     Default: random.
   --backend <name>   Trace backend: auto, cpu, metal, or cuda (default: auto).
                      'auto' and 'cpu' both select the CPU route today; 'metal'
                      falls back to CPU if unavailable. The LUMICE_TRACE_BACKEND
@@ -98,6 +102,7 @@ Examples:
   ./build/cmake_install/static/Lumice -f config.json -o /tmp/output
   ./build/cmake_install/static/Lumice -f config.json --format png
   ./build/cmake_install/static/Lumice -f config.json --quality 80
+  ./build/cmake_install/static/Lumice -f config.json --seed 7
   ./build/cmake_install/static/Lumice -f config.json --backend metal
   ./build/cmake_install/static/Lumice -f config.json --workers 4
   ./build/cmake_install/static/Lumice -f config.json -v
@@ -207,12 +212,12 @@ Notes:
 
 ## 5. Performance expectations
 
-Lumice traces light wavelength-by-wavelength. For a discrete spectrum (the typical case in `light_source.spectrum: [{wavelength, weight}, ...]`), the work scales as **`ray_num × N(wavelengths)`**. The example config uses 9 wavelengths × `ray_num=5e7` ⇒ ~4.5 × 10⁸ rays.
+Lumice traces light wavelength-by-wavelength. For a discrete spectrum (the typical case in `light_source.spectrum: [{wavelength, weight}, ...]`), `ray_num` is the **total** across every wavelength (see [`../configuration.md`](../configuration.md) for the exact division rule), so the work scales with that total, not with a per-wavelength count. The example config's `ray_num` is `4.5e8` (`450000000`) — the total across its 9-wavelength spectrum, ~5×10⁷ rays per wavelength.
 
 Practical first-run advice:
 
 - Want a result in seconds? Drop `ray_num` to `1e6` and use a single wavelength (e.g. `[{"wavelength": 550, "weight": 1.0}]`).
-- Want a publication-quality image? Keep `ray_num=5e7` or higher and the full 9-wavelength spectrum, and expect about 2 minutes on a modern multi-core laptop.
+- Want a publication-quality image? Keep `ray_num` at `4.5e8` or higher with the full 9-wavelength spectrum, and expect about 2 minutes on a modern multi-core laptop.
 
 For the precise relationship between `ray_num`, batches, and wavelengths, and for performance tuning beyond the basics, see [`05-faq.md`](05-faq.md) "ray_num × wavelength semantics" and [`../performance-testing.md`](../performance-testing.md).
 

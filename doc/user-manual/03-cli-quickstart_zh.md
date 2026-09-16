@@ -28,10 +28,10 @@
 
 | 文件 | 镜头 / 视图 | 说明 |
 |------|-------------|------|
-| `example_img_01.jpg` | 等积双鱼眼，全天空 | 默认的"全天看光晕"视图 |
-| `example_img_02.jpg` | 线性镜头，较窄视场 | 接近"普通相机去畸变"的视图 |
-| `example_img_03.jpg` | 等距鱼眼 | 适合按角度量取光晕半径 |
-| `example_img_04.jpg` | 立体投影鱼眼 | 靠近地平线区域圆形保持得好 |
+| `img_01.jpg` | 等积双鱼眼，全天空 | 默认的"全天看光晕"视图 |
+| `img_02.jpg` | 线性镜头，较窄视场 | 接近"普通相机去畸变"的视图 |
+| `img_03.jpg` | 等距鱼眼 | 适合按角度量取光晕半径 |
+| `img_04.jpg` | 立体投影鱼眼 | 靠近地平线区域圆形保持得好 |
 
 ![示例输出 1](../figs/example_img_01.jpg)
 ![示例输出 2](../figs/example_img_02.jpg)
@@ -40,7 +40,7 @@
 
 控制台还会打印一段 `Stats:` 总结（光线数、耗时、按波长累积等）。想要复现某次跑出的图，把这段保存下来即可。
 
-两条流是有意分开的：产品输出——这里的 `Saved:` / `Stats:`、`benchmark` 的 `[BENCHMARK]` JSON、`analyze` 的 CSV——走 **stdout**；所有诊断日志（`-v` 打开的和引擎自己的消息）走 **stderr**。所以 `Lumice -f config.json -o out 2>/dev/null` 只打印产品行；想把凭据和日志放进同一个文件，用 `> run.log 2>&1`。这条分流是对 `Lumice` 命令行的承诺：GUI 程序自己的日志行（`GUI_LOG_*`）仍打到 stdout，只有引擎的日志走 stderr，不要把它读成 GUI 终端输出的规则。
+两条流是有意分开的：产品输出——这里的 `Saved:` / `Stats:`、`benchmark` 的 `[BENCHMARK]` JSON、`analyze` 的 CSV——走 **stdout**；所有诊断日志（`-v` 打开的和引擎自己的消息）走 **stderr**。所以 `Lumice -f config.json -o out 2>/dev/null` 只打印产品行；想把凭据和日志放进同一个文件，用 `> run.log 2>&1`。CLI 与 GUI 程序自己的日志行（`GUI_LOG_*`）都走 stderr——GUI 的 stdout 上没有产品输出要跟日志行抢占。
 
 ## 3. Verbose 与 Debug 模式
 
@@ -78,6 +78,10 @@ Options for render (the default subcommand):
   -o <dir>           Output directory for rendered images (default: current directory)
   --format <fmt>     Output image format: jpg or png (default: jpg)
   --quality <1-100>  JPEG quality (default: 95, ignored for PNG)
+  --seed <N>         Fix the simulation's random seed (a positive integer) so two runs
+                     of the same config are the same run; this also sizes the pool to
+                     one worker (a seeded run is single-threaded by contract).
+                     Default: random.
   --backend <name>   Trace backend: auto, cpu, metal, or cuda (default: auto).
                      'auto' and 'cpu' both select the CPU route today; 'metal'
                      falls back to CPU if unavailable. The LUMICE_TRACE_BACKEND
@@ -98,6 +102,7 @@ Examples:
   ./build/cmake_install/static/Lumice -f config.json -o /tmp/output
   ./build/cmake_install/static/Lumice -f config.json --format png
   ./build/cmake_install/static/Lumice -f config.json --quality 80
+  ./build/cmake_install/static/Lumice -f config.json --seed 7
   ./build/cmake_install/static/Lumice -f config.json --backend metal
   ./build/cmake_install/static/Lumice -f config.json --workers 4
   ./build/cmake_install/static/Lumice -f config.json -v
@@ -207,12 +212,12 @@ Examples:
 
 ## 5. 性能预期
 
-Lumice 按波长追踪光线。对于离散波长 spectrum（典型场景：`light_source.spectrum: [{wavelength, weight}, ...]`），总工作量约为 **`ray_num × N(wavelengths)`**。示例配置 9 段波长 × `ray_num=5e7` ⇒ 约 4.5 × 10⁸ 条光线。
+Lumice 按波长追踪光线。对于离散波长 spectrum（典型场景：`light_source.spectrum: [{wavelength, weight}, ...]`），`ray_num` 是**所有波长加起来的总数**（换元的精确规则见 [`../configuration.md`](../configuration.md)），工作量随这个总数变化，不是随单波长数变化。示例配置的 `ray_num` 是 `4.5e8`（`450000000`）——9 段波长 spectrum 的总数，折合每段约 5×10⁷ 条光线。
 
 新手首跑建议：
 
 - 想几秒看到结果？把 `ray_num` 降到 `1e6`，spectrum 改成单波长（`[{"wavelength": 550, "weight": 1.0}]`）。
-- 想出版级清晰度？保持 `ray_num=5e7` 以上 + 完整 9 段 spectrum，预期在现代多核笔记本上约 2 分钟。
+- 想出版级清晰度？把 `ray_num` 保持在 `4.5e8` 以上 + 完整 9 段 spectrum，预期在现代多核笔记本上约 2 分钟。
 
 `ray_num` × batch × wavelength 的精确关系，以及更深入的性能调优，见 [`05-faq_zh.md`](05-faq_zh.md) "ray_num × wavelength 语义" 和 [`../performance-testing_zh.md`](../performance-testing_zh.md)。
 
