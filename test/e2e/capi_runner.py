@@ -420,13 +420,31 @@ class SimResult:
 class BufferedSimResult:
     """SimResult plus copied XYZ + rendered RGB buffers and backend routing.
 
-    `routed_backend` is parsed from the C-core log stream (captured via
-    LUMICE_SetLogCallback). Values: "metal" / "cpu_backend" / "legacy" / "" if
-    no routing line was emitted (legacy default path is silent).
+    `routed_backend` ∈ {"legacy", "cpu_backend", "metal", "cuda"} — which trace
+    implementation the server's simulator actually ran. The GPU kinds and the
+    CPU kind come from LUMICE_GetActiveBackend, the product's own readable
+    answer (the same call the GUI and the CLI's stats line read, so a test
+    asserting "Metal really ran" asserts what a user is shown). The C API
+    reports CpuTraceBackend and the legacy path as one kind — `LUMICE_BACKEND_CPU`
+    answers "which route", and both are the CPU one — so the split between
+    "legacy" and "cpu_backend" is refined from the one place that knows it, the
+    CreateBackend routing log line (`_RE_ROUTED_CPU_BACKEND`). That is the only
+    routing fact still read off the log.
 
-    `fell_back` is True if any "falling back" warning was observed while
-    running this server — this is how the test asserts Metal/Cpu didn't
-    silently degrade to legacy.
+    `fell_back` is LUMICE_GetBackendFallbackFlag: the server was sized for a GPU
+    route and its simulator is no longer (or never was) running that backend —
+    CreateBackend could not honour the preference, a CanUseBackend gate refused
+    the batch, or a BackendUnavailableError dropped it mid-run. It is the
+    product's definition, not the log's: a request the ROUTING layer refuses
+    outright (e.g. `cuda` on a build without CUDA) sizes the server for the CPU
+    route and is therefore not a fallback — it shows up as `routed_backend`
+    being something other than what was asked for.
+
+    `flt_bufs[i]` / `rgb_bufs[i]` / `snapshot_intensities[i]` are renderer i's
+    XYZ plane (H_i, W_i, 3) float64, its rendered sRGB image, and its scalar
+    intensity ledger, one per renderer requested via `num_renderers`;
+    `flt_buf` / `rgb_buf` / `snapshot_intensity` are the `[0]` entries, kept as
+    the spelling every single-renderer caller uses.
     """
 
     snapshot_intensity: float
@@ -439,6 +457,12 @@ class BufferedSimResult:
     routed_backend: str = ""
     fell_back: bool = False
     log_lines: List[str] = field(default_factory=list)
+    # Per-renderer copies, index = renderer position in the config's `render[]`;
+    # the scalar/array fields above are their `[0]` entries. Length == the
+    # `num_renderers` the caller asked for (1 by default).
+    flt_bufs: List[np.ndarray] = field(default_factory=list)
+    rgb_bufs: List[np.ndarray] = field(default_factory=list)
+    snapshot_intensities: List[float] = field(default_factory=list)
     # See SimResult.emitted_energy — same field, same contract.
     emitted_energy: float = 0.0
     # See SimResult.anchor_l99_sky — same field, same contract.
@@ -651,6 +675,9 @@ def _load_lib() -> ctypes.CDLL:
     lib.LUMICE_GetActiveBackend.restype = ctypes.c_int
     lib.LUMICE_GetActiveBackend.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_int)]
 
+    lib.LUMICE_GetBackendFallbackFlag.restype = ctypes.c_int
+    lib.LUMICE_GetBackendFallbackFlag.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_int)]
+
     lib.LUMICE_UnprojectPixel.restype = ctypes.c_int
     lib.LUMICE_UnprojectPixel.argtypes = [
         ctypes.POINTER(LUMICE_AnnotationView),
@@ -716,31 +743,40 @@ class _LogCapture:
             _ACTIVE_LOG_SINK = None
 
 
-# Patterns matching the routing log lines in simulator.cpp:520-537.
-_RE_ROUTED_METAL = re.compile(r"routing via MetalTraceBackend")
+# The one routing fact the C API does not expose: CreateBackend (simulator.cpp)
+# returns a CpuTraceBackend for LUMICE_TRACE_BACKEND=cpu_backend but reports it as
+# LUMICE_BACKEND_CPU, the same kind as the legacy path. This line is the only
+# witness that the seam implementation, not the legacy loop, ran.
 _RE_ROUTED_CPU_BACKEND = re.compile(r"routing via CpuTraceBackend")
-_RE_ROUTED_CUDA = re.compile(r"routing via CudaTraceBackend")
-_RE_FALLBACK = re.compile(r"falling back", re.IGNORECASE)
+
+_BACKEND_KIND_NAMES = {
+    LUMICE_BACKEND_CPU: "legacy",
+    LUMICE_BACKEND_METAL: "metal",
+    LUMICE_BACKEND_CUDA: "cuda",
+}
 
 
-def _summarize_backend(lines: List[str]) -> tuple[str, bool]:
-    """Return (routed_backend, fell_back) parsed from captured log lines.
+def _read_backend_routing(lib, server, lines: List[str]) -> tuple[str, bool]:
+    """Return (routed_backend, fell_back) for a live server — see BufferedSimResult.
 
-    routed_backend ∈ {"metal", "cpu_backend", "cuda", "legacy"}; "legacy"
-    means no routing line was seen (legacy path is silent in CreateBackend).
+    Must run while `server` is alive (before LUMICE_DestroyServer) and after the
+    run is IDLE: both queries read the simulator's per-Run() state, which
+    LUMICE_StartServer resets.
     """
-    routed = "legacy"
-    fell_back = False
-    for ln in lines:
-        if _RE_ROUTED_METAL.search(ln):
-            routed = "metal"
-        elif _RE_ROUTED_CPU_BACKEND.search(ln):
-            routed = "cpu_backend"
-        elif _RE_ROUTED_CUDA.search(ln):
-            routed = "cuda"
-        if _RE_FALLBACK.search(ln):
-            fell_back = True
-    return routed, fell_back
+    kind = ctypes.c_int(-1)
+    err = lib.LUMICE_GetActiveBackend(server, ctypes.byref(kind))
+    if err != 0:
+        raise RuntimeError(f"GetActiveBackend failed err={err}")
+    fell = ctypes.c_int(0)
+    err = lib.LUMICE_GetBackendFallbackFlag(server, ctypes.byref(fell))
+    if err != 0:
+        raise RuntimeError(f"GetBackendFallbackFlag failed err={err}")
+    if kind.value not in _BACKEND_KIND_NAMES:
+        raise RuntimeError(f"GetActiveBackend returned unknown kind {kind.value}")
+    routed = _BACKEND_KIND_NAMES[kind.value]
+    if routed == "legacy" and any(_RE_ROUTED_CPU_BACKEND.search(ln) for ln in lines):
+        routed = "cpu_backend"
+    return routed, bool(fell.value)
 
 
 @contextlib.contextmanager
@@ -1166,6 +1202,43 @@ def _read_raypath_analysis_frame(
     )
 
 
+def _copy_xyz_plane(r: LUMICE_RawXyzResult, index: int, config: str) -> np.ndarray:
+    """Copy one LUMICE_RawXyzResult row's XYZ buffer into an owned (H, W, 3) float64 array."""
+    w = int(r.img_width)
+    h = int(r.img_height)
+    addr = ctypes.cast(r.xyz_buffer, ctypes.c_void_p).value
+    if addr is None or w == 0 or h == 0:
+        raise RuntimeError(
+            f"{config}: renderer[{index}] has no XYZ buffer ({w}x{h}) — either the config "
+            f"has fewer renderers than requested, or the pointer went NULL after the IDLE check"
+        )
+    n_xyz = w * h * 3
+    return (
+        np.frombuffer((ctypes.c_float * n_xyz).from_address(addr), dtype=np.float32)
+        .copy()
+        .reshape(h, w, 3)
+        .astype(np.float64)
+    )
+
+
+def _copy_rgb_image(rr: LUMICE_RenderResult, index: int, config: str) -> np.ndarray:
+    """Copy one LUMICE_RenderResult row's packed sRGB image into an owned (H, W, 3) uint8 array."""
+    w = int(rr.img_width)
+    h = int(rr.img_height)
+    addr = ctypes.cast(rr.img_buffer, ctypes.c_void_p).value
+    if addr is None or w == 0 or h == 0:
+        raise RuntimeError(
+            f"{config}: LUMICE_FrameGetRender returned an empty buffer for renderer[{index}]"
+        )
+    # img_buffer is packed RGB uint8 (3 bytes/pixel, sRGB); per lumice.h:262.
+    n_rgb = w * h * 3
+    return (
+        np.frombuffer((ctypes.c_ubyte * n_rgb).from_address(addr), dtype=np.uint8)
+        .copy()
+        .reshape(h, w, 3)
+    )
+
+
 _BACKEND_MODES = ("legacy", "metal", "cpu_backend", "cuda")
 
 
@@ -1176,6 +1249,7 @@ def run_scene_sequence_capi_buffered(
     backend: str = "legacy",
     preserve_dispatch_env: bool = False,
     num_workers: int = 0,
+    num_renderers: int = 1,
 ) -> BufferedSimResult:
     """Commit `config_paths` in order on ONE server, and copy out the LAST one's buffers.
 
@@ -1193,14 +1267,17 @@ def run_scene_sequence_capi_buffered(
         thread-local device state that outlives one Run) is shared across the stages, so
         a defect that leaks state from one Run into the next is reachable here and
         structurally unreachable from N single-config runs;
-      - the log capture spans the WHOLE sequence, so `fell_back` / `routed_backend`
-        answer for the entire session, not just for its final stage.
+      - the server is shared, so `fell_back` / `routed_backend` (read off the live
+        server once the final stage is IDLE) answer for the session's last Run(),
+        on the same simulator every earlier stage ran on.
 
     Every non-final stage must be a FINITE run (an infinite `ray_num` never drains) and
     must differ from its predecessor enough to be a reset-causing commit; both are
     enforced, loudly, by `_commit_and_wait_drained`.
 
-    `backend` selects the trace path:
+    `backend` selects the trace path (the preference is fixed at server
+    construction through LUMICE_ServerConfig.preferred_backend, as the CLI and
+    GUI do — see the comment at the CreateServerEx call):
       - "legacy"     : no env, preferred_backend = LUMICE_BACKEND_CPU. The C-API
                        server default and the ground-truth in 258.6.
       - "metal"      : no env, preferred_backend = LUMICE_BACKEND_METAL. Must NOT
@@ -1220,9 +1297,15 @@ def run_scene_sequence_capi_buffered(
     consecutive samples. Buffers are copied into owned numpy arrays before
     destroying the server; the returned object holds no server-memory refs.
 
-    `routed_backend` and `fell_back` are parsed from the captured core log;
-    callers asserting "Metal really ran" must check both
+    `routed_backend` and `fell_back` are read from the live server through
+    LUMICE_GetActiveBackend / LUMICE_GetBackendFallbackFlag (contract on
+    BufferedSimResult); callers asserting "Metal really ran" must check both
     (routed_backend == "metal" and not fell_back).
+
+    `num_renderers` is how many of the config's `render[]` entries to copy out
+    (`flt_bufs`); the default 1 reads renderer 0 only, which is every
+    single-renderer caller's behaviour unchanged. Asking for more renderers than
+    the final config has is an error, not a silent short read.
 
     `preserve_dispatch_env` opts out of the LUMICE_DISPATCH_RAY_NUM strip that
     the legacy arm normally gets (rationale in the comment below). Pass True
@@ -1235,14 +1318,16 @@ def run_scene_sequence_capi_buffered(
     physical core count, capped — see kMaxDefaultWorkerCount in server.cpp). It is honoured independently of `sim_seed`: a caller
     that pins a seed already gets one worker (server.cpp clamps the
     deterministic CPU contract to a single simulator), so sweeping this knob is
-    only meaningful at `sim_seed == 0`. The GPU route ignores it (single
-    engine).
+    only meaningful at `sim_seed == 0`. On the GPU route (single engine) it
+    sizes only the standing CPU analysis pool, which a render never wakes.
     """
     if backend not in _BACKEND_MODES:
         raise ValueError(f"backend must be one of {_BACKEND_MODES}, got {backend!r}")
     config_paths = [str(c) for c in config_paths]
     if not config_paths:
         raise ValueError("config_paths must contain at least one config")
+    if num_renderers < 1:
+        raise ValueError(f"num_renderers must be >= 1, got {num_renderers}")
     # Every scalar/buffer this function returns comes from the last stage; the messages
     # below name it so a failure points at the config that was actually being polled.
     final_config = config_paths[-1]
@@ -1280,21 +1365,24 @@ def run_scene_sequence_capi_buffered(
 
     try:
         with capture as log_lines:
-            if sim_seed != 0 or num_workers != 0:
-                cfg = LUMICE_ServerConfig(num_workers=num_workers, sim_seed=sim_seed)
-                server = lib.LUMICE_CreateServerEx(ctypes.byref(cfg))
-            else:
-                server = lib.LUMICE_CreateServer()
+            # The preference goes in at construction, the way the CLI (--backend) and
+            # the GUI (which rebuilds its server on a backend toggle) hand it over:
+            # ServerImpl resolves its route ONCE, here, and sizes itself on it — one
+            # engine for a GPU route, the CPU worker group otherwise. Setting the
+            # preference afterwards (LUMICE_SetPreferredBackend) leaves a server sized
+            # for the CPU route running a GPU backend in each of its workers, and
+            # LUMICE_GetBackendFallbackFlag — "a GPU-sized route lost its backend" —
+            # structurally 0 on it. cpu_backend / cuda route by env; the preference
+            # they carry is the CPU default, exactly as `Lumice --backend auto` does.
+            preferred = LUMICE_BACKEND_METAL if backend == "metal" else LUMICE_BACKEND_CPU
+            cfg = LUMICE_ServerConfig(
+                num_workers=num_workers, sim_seed=sim_seed, preferred_backend=preferred
+            )
+            server = lib.LUMICE_CreateServerEx(ctypes.byref(cfg))
             if not server:
-                raise RuntimeError("LUMICE_CreateServer returned NULL")
+                raise RuntimeError("LUMICE_CreateServerEx returned NULL")
 
             try:
-                if backend == "metal":
-                    lib.LUMICE_SetPreferredBackend(server, LUMICE_BACKEND_METAL)
-                elif backend == "legacy":
-                    lib.LUMICE_SetPreferredBackend(server, LUMICE_BACKEND_CPU)
-                # cpu_backend: env handles routing; preferred is ignored.
-
                 # Non-final stages: commit, wait for that epoch to drain, move on. The
                 # final stage falls through to the poll loop below, which is the
                 # unchanged single-config predicate.
@@ -1305,8 +1393,8 @@ def run_scene_sequence_capi_buffered(
                     )
                 _commit_config(lib, server, final_config)
 
-                results = (LUMICE_RawXyzResult * 1)()
-                renders = (LUMICE_RenderResult * 1)()
+                results = (LUMICE_RawXyzResult * num_renderers)()
+                renders = (LUMICE_RenderResult * num_renderers)()
                 state_out = ctypes.c_int(0)
                 t_start = time.time()
                 consecutive_ok = 0
@@ -1325,11 +1413,11 @@ def run_scene_sequence_capi_buffered(
                     # LUMICE_FrameGet* always returns LUMICE_OK (0) when args are
                     # non-null. The err checks are a safety net for future API additions.
                     with _result_frame(lib, server) as frame:
-                        err = lib.LUMICE_FrameGetRender(frame, renders, 1)
+                        err = lib.LUMICE_FrameGetRender(frame, renders, num_renderers)
                         if err != 0:
                             raise RuntimeError(f"FrameGetRender failed err={err}")
 
-                        err = lib.LUMICE_FrameGetRawXyz(frame, results, 1)
+                        err = lib.LUMICE_FrameGetRawXyz(frame, results, num_renderers)
                         if err != 0:
                             raise RuntimeError(f"FrameGetRawXyz failed err={err}")
 
@@ -1341,7 +1429,8 @@ def run_scene_sequence_capi_buffered(
                     if state == _LUMICE_SERVER_NOT_READY:
                         raise RuntimeError("Server NOT_READY")
 
-                    if results[0].has_valid_data and state == _LUMICE_SERVER_IDLE:
+                    all_valid = all(results[i].has_valid_data for i in range(num_renderers))
+                    if all_valid and state == _LUMICE_SERVER_IDLE:
                         consecutive_ok += 1
                         if consecutive_ok >= 2:
                             break
@@ -1355,72 +1444,53 @@ def run_scene_sequence_capi_buffered(
                 # iteration), so `results`/`renders` are stale by the time the loop
                 # breaks — same fix as scripts/dump_xyz_stats.py::run_scene.
                 with _result_frame(lib, server) as frame:
-                    err = lib.LUMICE_FrameGetRender(frame, renders, 1)
+                    err = lib.LUMICE_FrameGetRender(frame, renders, num_renderers)
                     if err != 0:
                         raise RuntimeError(f"FrameGetRender failed err={err}")
-                    err = lib.LUMICE_FrameGetRawXyz(frame, results, 1)
+                    err = lib.LUMICE_FrameGetRawXyz(frame, results, num_renderers)
                     if err != 0:
                         raise RuntimeError(f"FrameGetRawXyz failed err={err}")
 
                     r = results[0]
                     r_w = int(r.img_width)
                     r_h = int(r.img_height)
-                    r_xyz_addr = ctypes.cast(r.xyz_buffer, ctypes.c_void_p).value
                     r_snap = float(r.snapshot_intensity)
                     r_valid = bool(r.has_valid_data)
                     r_eff = int(r.effective_pixels)
                     r_emitted = float(r.emitted_energy)
                     r_anchor = float(r.anchor_l99_sky)
                     r_axis_omega = float(r.axis_solid_angle)
-                    if r_xyz_addr is None:
-                        raise RuntimeError(
-                            f"{final_config}: race — xyz pointer became NULL after IDLE check"
-                        )
 
-                    n_xyz = r_w * r_h * 3
-                    flt_buf = (
-                        np.frombuffer(
-                            (ctypes.c_float * n_xyz).from_address(r_xyz_addr),
-                            dtype=np.float32,
-                        )
-                        .copy()
-                        .reshape(r_h, r_w, 3)
-                        .astype(np.float64)
-                    )
-
-                    rr = renders[0]
-                    rr_w = int(rr.img_width)
-                    rr_h = int(rr.img_height)
-                    rr_addr = ctypes.cast(rr.img_buffer, ctypes.c_void_p).value
-                    if rr_addr is None or rr_w == 0 or rr_h == 0:
-                        raise RuntimeError(
-                            f"{final_config}: LUMICE_FrameGetRender returned empty buffer"
-                        )
-                    # img_buffer is packed RGB uint8 (3 bytes/pixel, sRGB); per lumice.h:262.
-                    n_rgb = rr_w * rr_h * 3
-                    rgb_buf = (
-                        np.frombuffer(
-                            (ctypes.c_ubyte * n_rgb).from_address(rr_addr),
-                            dtype=np.uint8,
-                        )
-                        .copy()
-                        .reshape(rr_h, rr_w, 3)
-                    )
+                    # One plane per renderer. A row past the config's renderer count
+                    # is the getter's zeroed sentinel (NULL buffer, 0×0), which
+                    # _copy_xyz_plane rejects — asking for more renderers than the
+                    # config has is a caller error, not a short read.
+                    flt_bufs = [
+                        _copy_xyz_plane(results[i], i, final_config) for i in range(num_renderers)
+                    ]
+                    flt_buf = flt_bufs[0]
+                    snapshot_intensities = [
+                        float(results[i].snapshot_intensity) for i in range(num_renderers)
+                    ]
+                    rgb_bufs = [
+                        _copy_rgb_image(renders[i], i, final_config) for i in range(num_renderers)
+                    ]
+                    rgb_buf = rgb_bufs[0]
 
                 crystal_num, orientation_num = _read_sample_counts(lib, server)
+                # Routing is a property of the live server's simulator; read it
+                # here, after IDLE and before teardown. (The log snapshot below is
+                # taken AFTER teardown, because Stop() is what emits the
+                # RenderConsumer "Consume profile" line some callers count.)
+                routed, fell_back = _read_backend_routing(lib, server, log_lines)
 
             finally:
                 lib.LUMICE_DestroyServer(server)
 
-            # Log parsing happens AFTER teardown on purpose: ServerImpl::Stop()
-            # (driven by DestroyServer) is what emits the RenderConsumer
-            # "Consume profile: N batches" line, so a caller using the batch
-            # count as a positive control would never see it if the snapshot
-            # were taken before. Every buffer/scalar above was already copied
-            # out of server memory, so nothing here touches the dead server —
-            # and on the exception path this block is skipped entirely (the
-            # finally re-raises), which is why it sits outside the try.
-            routed, fell_back = _summarize_backend(log_lines)
+            # Every buffer/scalar above was already copied out of server memory,
+            # so nothing here touches the dead server — and on the exception path
+            # this block is skipped entirely (the finally re-raises), which is
+            # why it sits outside the try.
             return BufferedSimResult(
                 snapshot_intensity=r_snap,
                 has_valid_data=r_valid,
@@ -1435,6 +1505,9 @@ def run_scene_sequence_capi_buffered(
                 routed_backend=routed,
                 fell_back=fell_back,
                 log_lines=list(log_lines),
+                flt_bufs=flt_bufs,
+                rgb_bufs=rgb_bufs,
+                snapshot_intensities=snapshot_intensities,
                 crystal_num=crystal_num,
                 orientation_num=orientation_num,
             )
@@ -1463,6 +1536,7 @@ def run_scene_capi_buffered(
     backend: str = "legacy",
     preserve_dispatch_env: bool = False,
     num_workers: int = 0,
+    num_renderers: int = 1,
 ) -> BufferedSimResult:
     """Run ONE config via the C API and copy out XYZ + RGB buffers.
 
@@ -1480,4 +1554,5 @@ def run_scene_capi_buffered(
         backend=backend,
         preserve_dispatch_env=preserve_dispatch_env,
         num_workers=num_workers,
+        num_renderers=num_renderers,
     )

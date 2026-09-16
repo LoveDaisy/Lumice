@@ -565,6 +565,19 @@ void DoExportConfigJson() {
     SetGuiWarning(warning);
     return;
   }
+  // No "this config will fall back to the CPU on the GPU route" notice here, on
+  // purpose. The exported document carries two renderers (preview + export
+  // projection), and a GPU session now serves N renderers at once, so the
+  // renderer count is no longer a fallback trigger. What could still make a GPU
+  // route refuse a config is Simulator's CanUseBackend gate: more renderers than
+  // the backend's MaxRenderers() (4, the same count the C API rejects at parse
+  // time, LUMICE_MAX_CONFIG_RENDERERS — so never reached), or a renderer the
+  // backend's IsCompatible() declines (Metal's and CUDA's both accept every lens
+  // type and view unconditionally, like the base default — so never reached
+  // either). A
+  // notice for an unreachable path is a notice nobody can ever see; if a backend
+  // starts declining renderers by lens type or view, this is where to add it,
+  // reading the same fields BuildExportJsonOrWarn just serialized.
   RequestConfigJsonExport(path, json_str);
 }
 

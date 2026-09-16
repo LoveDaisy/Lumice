@@ -116,11 +116,13 @@
   $REPO/build/cmake_install/shared/Lumice -f examples/config_example.json --backend cuda -o /tmp
   ```
   （`-o` 是**目录**不是文件。）确认日志里有 `preferred_backend=cuda → routing via CudaTraceBackend`，
-  再 grep `Stats: ... crystals=N`。
-  ⚠️ **`examples/config_example.json` 有 4 个 renderer，而 TraceBackend 路径只支持单 renderer**
-  ⇒ 它会打印 `falling back to legacy CPU` 然后用 CPU 跑完。这是配置属性不是故障，但**这条冒烟
-  因此不能证明 CUDA 真的跑了仿真**——要证明路由，看上面那行 `routing via CudaTraceBackend`；
-  要证明算得对，用 parity battery。
+  且**没有** `falling back`，再 grep `Stats: ... crystals=N`。
+  `examples/config_example.json` 有 4 个 renderer；一个 CUDA 会话最多服务
+  `kMaxRenderersDeviceCuda`（4）个 renderer（每个一张 device 面，exit tail 逐 renderer 投影），
+  与 C API 解析期接受的上限相同，所以今天没有任何能到达 simulator 的 config 会因 renderer
+  数量在 CUDA 上回退。若这条冒烟仍然打印 `TraceBackend carries at most 1 renderer(s)`，
+  跑的是一个旧二进制（同步了源码没有重编——见下方 rsync 保 mtime 的坑）。这条冒烟证明的是
+  **路由**；要证明算得对，用 parity battery。
 
 - **GUI 测试**：该机是 WSL，`gui_test` 需要 `xvfb-run`（WSLg 的 X server 在 ssh 会话里不可达）：
   ```bash
@@ -175,13 +177,18 @@
   ```bat
   set LUMICE_HAS_CUDA=1
   set LUMICE_CUDA_ENABLED=1
-  set LUMICE_LIB=<仓库>\build\Release\shared\bin\lumice.dll
+  set LUMICE_LIB=<仓库>\build\Release\shared\bin\lumice_testapi.dll
   copy <CUDA>\bin\cudart64_12.dll <仓库>\build\Release\shared\bin\
   set PYTHONUTF8=1
   python.exe -m pytest -v -m slow test\parity-cross-backend\backend\test_cuda_exit_seam_parity.py ^
     test\parity-cross-backend\backend\test_cuda_filter_parity.py ^
-    test\parity-cross-backend\backend\test_cuda_multi_ms_parity.py
+    test\parity-cross-backend\backend\test_cuda_multi_ms_parity.py ^
+    test\parity-cross-backend\backend\test_cuda_energy_accounting_parity.py ^
+    test\parity-cross-backend\backend\test_cuda_hostgen_fallback_parity.py
   ```
+  判据同 Linux：退出码 0 且 `22 passed`（五个文件在这台机器上实测跑通过，2026-09-16）。
+  `LUMICE_LIB` 指向 `lumice_testapi.dll`，不是 `lumice.dll`——同 §2 的理由，ctypes harness
+  加载的是带 `LUMICE_TEST_*` 钩子的测试超集（`test/e2e/capi_runner.py::lib_candidates` 是权威）。
   - ⚠️ **不要**把 CUDA `bin` 塞进 `PATH` 期待 `LUMICE_LIB` 能带出 `cudart64_12.dll`——
     Python 3.8+ 起 `ctypes.CDLL` 在 Windows 上不再搜索 `PATH`（见 §1）。实测可行做法是把
     `cudart64_12.dll` **复制到被加载的 dll 同目录**（即 `LUMICE_LIB` 所在目录）；照此做之后
@@ -202,8 +209,7 @@
 2. 同步到 CUDA 参照机（Linux rsync / Windows tarball）。
 3. 各自 build，**逐个查 EXIT 码 + grep 告警**。
 4. Linux 参照机跑 CUDA parity battery（22/22，五个文件）；Windows 侧同一 battery 已实测跑通
-   （前三个文件时代 `pytest` 报 `11 passed`；`energy_accounting` / `hostgen_fallback` 两文件尚未在
-   Windows 上跑过），前提是应用了 §3 的 DLL 同目录做法——不是只验编译。
+   （五个文件 `22 passed`，2026-09-16），前提是应用了 §3 的 DLL 同目录做法——不是只验编译。
 5.（按需）CLI 冒烟核路由与 `Stats`、染色密度门。
 6. commit + push + PR，CI 的 `windows-cuda-compile` job 再兜一层 Windows 编译。
 

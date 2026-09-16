@@ -150,8 +150,9 @@ class ServerImpl {
   }
 
   // Has this server's GPU single-engine route lost its TraceBackend for
-  // the remainder of the current Run()? (a BackendUnavailableError, or a
-  // CreateBackend that could not honour the preference at all.) Always false on the
+  // the remainder of the current Run()? (a BackendUnavailableError, a
+  // CreateBackend that could not honour the preference at all, or a CanUseBackend
+  // gate refusing the batch's renders_ — see Simulator::BackendActive.) Always false on the
   // CPU route, where there is no backend to lose. Like the color-degrade tally above
   // this is an ASYNCHRONOUS fact discovered by the worker mid-run, so the GUI polls
   // it (LUMICE_GetBackendFallbackFlag) instead of the fallback living only as a core
@@ -1173,12 +1174,20 @@ Error ServerImpl::CommitConfig(const nlohmann::json& config_json, bool* out_reus
     } else {
       // Full rebuild path
       consumers_.clear();
+      // The consumer's renderer_index is its position in THIS iteration of renderers_ —
+      // the very same map, walked in the same order, that fills active_renders_ below (and
+      // through it SimBatch::renders_ → SessionSpec::renders → the per-renderer planes of a
+      // device-fused SimData). Passing the index explicitly is what turns that shared walk
+      // order from a coincidence into a stated contract; the reuse branch above keeps the
+      // indices valid because it requires the same keys in the same order.
+      size_t renderer_index = 0;
       for (const auto& [_, r] : config_manager_.renderers_) {
         // task-339.3: pass the color-class table so each consumer allocates one
         // Y-lane per class (empty table → no lanes, pre-336 behavior). The sun comes from the
         // scene, not the renderer: it is what the angular-distance annotations are measured from.
-        consumers_.emplace_back(
-            std::make_shared<RenderConsumer>(r, active_class_table_, config_manager_.scene_.light_source_.param_));
+        consumers_.emplace_back(std::make_shared<RenderConsumer>(
+            r, active_class_table_, config_manager_.scene_.light_source_.param_, renderer_index));
+        ++renderer_index;
       }
       consumers_.emplace_back(std::make_shared<StatsConsumer>());
       // One per SESSION, not one per renderer. See AnchorConsumer's own docs for why that

@@ -27,6 +27,7 @@
 | **parity matrix** | **10/10**（含 D65 illuminant + DR-3 波长） |
 | **occupancy**（trace_layer_kernel PSO） | **640**（benign：R1 不触发，见 §6.1 最终裁决） |
 | **PR** | #127（scrum-267）+ #129（scrum-268），均已合 main（2026-06-17） |
+| **多 renderer 双 render 吞吐**（用户双 render 文档 fisheye_equidistant 1024² + dual_fisheye_equal_area 2048×1024，3 晶体 + 3 raypath filter，D65；drain-aligned，21 次交错采样取中位数，`test/performance/test_metal_multi_renderer_throughput.py`，Apple M 系列开发机，2026-09-16） | Metal 双 render **27.9M rays/s = 单 render 的 0.950 / 0.908**（闸 ≥ 0.85）；legacy CPU 同 config 6.7M ⇒ **4.2× legacy**（N 面累加之前该 config 整批回退，仅 1.06×）。一次 session 服务全部 `render[]`（≤ 4），exit tail 内逐 renderer 投影，无第二个 dispatch——`doc/seam-design.md` §4.2.1 |
 
 **度量纠偏（task-fix-throughput-bench-honesty，2026-06-19）**——原 §0 三个数字为何错、现值为何可信：
 - **"CLI 9.5× legacy"**：旧 `--benchmark` 把一次性 setup（server alloc + scene gen + 首 dispatch 延迟）与 100ms 轮询量化计入吞吐分母，对 0.2s 量级的快后端系统性低估（实测被压到 4.95×）。修复（计时起点改首次 `sim_ray_num>0` + 5ms 轮询）后重测 = 8.1×/10.1×。旧"9.5×"作为 ratio 巧合接近真值，但出处口径不可信。

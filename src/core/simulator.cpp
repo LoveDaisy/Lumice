@@ -1309,9 +1309,18 @@ std::unique_ptr<TraceBackend> CreateBackend(BackendKind preferred_backend, Logge
 }
 
 // Compatibility gate: even when a backend is selected, a particular batch may
-// not be backend-eligible (multi-renderer config, lens/view limits, etc.).
-// Falls back to legacy CPU on mismatch — logs WARN at most once per Run() via
-// the per-Run() latches on `warned_*`.
+// not be backend-eligible (more renderers than the backend can carry, lens/view
+// limits, etc.). Falls back to legacy CPU on mismatch — logs WARN at most once
+// per Run() via the per-Run() latches on `warned_*`.
+//
+// The whole batch goes one way or the other: every renderer of the batch is
+// checked, and ONE that the backend cannot serve — by count (MaxRenderers) or
+// by config (IsCompatible) — drops ALL of them to the legacy CPU path. There
+// is no per-renderer mixing (some on device, some on host): today every device
+// backend's IsCompatible is unconditionally true, so a mixed batch is not a
+// reachable state, and the legacy path already serves N renderers correctly
+// through its N host-side consumers — mixing would buy nothing anyone can
+// observe.
 bool CanUseBackend(const TraceBackend* backend, const SimBatch& batch, Logger& logger, bool& warned_no_renders,
                    bool& warned_multi_renderer, bool& warned_compat) {
   if (backend == nullptr) {
@@ -1324,22 +1333,26 @@ bool CanUseBackend(const TraceBackend* backend, const SimBatch& batch, Logger& l
     }
     return false;
   }
-  if (batch.renders_->size() != 1) {
+  if (batch.renders_->size() > backend->MaxRenderers()) {
     if (!warned_multi_renderer) {
-      ILOG_WARN(logger, "TraceBackend path supports a single renderer only (got {}); falling back to legacy CPU",
-                batch.renders_->size());
+      ILOG_WARN(logger,
+                "TraceBackend carries at most {} renderer(s) per session (config has {}); falling back to legacy CPU",
+                backend->MaxRenderers(), batch.renders_->size());
       warned_multi_renderer = true;
     }
     return false;
   }
-  const auto& r = (*batch.renders_)[0];
-  if (!backend->IsCompatible(r)) {
-    if (!warned_compat) {
-      ILOG_WARN(logger, "backend incompatible with render config (lens_type={}, el={:.2f}); falling back to legacy CPU",
-                static_cast<int>(r.lens_.type_), r.view_.el_);
-      warned_compat = true;
+  for (const auto& r : *batch.renders_) {
+    if (!backend->IsCompatible(r)) {
+      if (!warned_compat) {
+        ILOG_WARN(logger,
+                  "backend incompatible with render config (lens_type={}, el={:.2f}); falling back to legacy CPU for "
+                  "every renderer of the batch",
+                  static_cast<int>(r.lens_.type_), r.view_.el_);
+        warned_compat = true;
+      }
+      return false;
     }
-    return false;
   }
   return true;
 }
@@ -1466,6 +1479,22 @@ void Simulator::Run() {
 
     bool use_backend =
         CanUseBackend(backend.get(), batch, logger_, warned_no_renders, warned_multi_renderer, warned_compat);
+    // Third write point of the "fell back" signal (the other two: right after
+    // CreateBackend above, and the BackendUnavailableError catch below). A live
+    // backend that CanUseBackend's gates refuse — no renders_, more renderers than
+    // MaxRenderers(), an IsCompatible miss — runs this batch on the legacy CPU
+    // path exactly as the catch block does, and until here said so only in a WARN
+    // line: Server::BackendFellBack() / LUMICE_GetBackendFallbackFlag (the GUI's
+    // poll, the CLI's stats line) read these two atomics and kept reporting the
+    // GPU as active. The backend is NOT reset: it is intact, only this batch's
+    // renders_ fail its preconditions, and renders_ does not change within one
+    // Run(), so one flip holds for the Run() — the same once-per-Run() shape as
+    // the `warned_*` latches. Analysis sessions never reach this branch: they
+    // force CreateBackend to nullptr, so `backend` is already null there.
+    if (!use_backend && backend && backend_active_.load(std::memory_order_acquire)) {
+      backend_active_.store(false, std::memory_order_release);
+      active_backend_.store(BackendKind::kCpu, std::memory_order_release);
+    }
     // Analysis chain ids exist on the legacy CPU path only (v1, doc/raypath-
     // analysis-panel.md §2 ruling 1). Every backend route — CpuTraceBackend
     // via the env override as much as Metal / CUDA — leaves
@@ -1495,7 +1524,7 @@ void Simulator::Run() {
         return false;
       }
       try {
-        SimulateOneWavelengthWithBackend(*backend, config, (*batch.renders_)[0], batch.raypath_color_, wl_param,
+        SimulateOneWavelengthWithBackend(*backend, config, *batch.renders_, batch.raypath_color_, wl_param,
                                          emitted_weight, batch.ray_num_, generation, ray_alloc, tally_out);
         deliver_tally();
         return true;
@@ -2031,14 +2060,8 @@ void Simulator::DrainDeviceXyz(TraceBackend* backend) {
   // decrements sim_scene_cnt_ by this so the counter invariant stays balanced.
   sim_data.sim_scene_credit_ = xyz_win_.calls;
   if (backend != nullptr) {
-    // Normal drain: pull the accumulated image off the device.
-    size_t pix = static_cast<size_t>(xyz_win_.w) * static_cast<size_t>(xyz_win_.h);
-    sim_data.xyz_pixel_data_.resize(pix * 3u);
-    XyzImageData xyz_out;
-    xyz_out.data = sim_data.xyz_pixel_data_.data();
-    xyz_out.width = xyz_win_.w;
-    xyz_out.height = xyz_win_.h;
-    backend->ReadbackXyzAccum(xyz_out, sim_data.xyz_landed_weight_);
+    // Normal drain: pull the accumulated planes off the device — one per renderer.
+    ReadbackDevicePlanes(*backend, xyz_win_.dims, sim_data);
     // task-358.1 Step 4: drain the device per-color-class Y-lane accumulator.
     // No-op (empty vector, class_count=0) when the backend / session carries no
     // raypath_color config — consumer's ConsumeDeviceFused path stays byte-
@@ -2068,8 +2091,25 @@ void Simulator::DrainDeviceXyz(TraceBackend* backend) {
   xyz_win_ = XyzDrainWindow{};
 }
 
+// Size one SimData XYZ plane per renderer to its resolution and read every plane (plus its
+// landed weight) back in ONE seam call. The two device-fused drain sites below (third-clock
+// window and legacy per-batch) share this so the per-renderer sizing rule has one owner.
+void Simulator::ReadbackDevicePlanes(TraceBackend& backend, const std::vector<std::pair<int, int>>& dims,
+                                     SimData& sim_data) {
+  sim_data.xyz_pixel_data_.resize(dims.size());
+  std::vector<XyzImageData> xyz_out(dims.size());
+  for (size_t i = 0; i < dims.size(); i++) {
+    const size_t pix = static_cast<size_t>(dims[i].first) * static_cast<size_t>(dims[i].second);
+    sim_data.xyz_pixel_data_[i].resize(pix * 3u);
+    xyz_out[i].data = sim_data.xyz_pixel_data_[i].data();
+    xyz_out[i].width = dims[i].first;
+    xyz_out[i].height = dims[i].second;
+  }
+  backend.ReadbackXyzAccum(xyz_out, sim_data.xyz_landed_weight_);
+}
+
 void Simulator::SimulateOneWavelengthWithBackend(TraceBackend& backend, const SceneConfig& scene,
-                                                 const RenderConfig& render,
+                                                 const std::vector<RenderConfig>& renders,
                                                  std::shared_ptr<const RaypathColorConfig> raypath_color,
                                                  const WlParam& wl_param, float emitted_weight, size_t ray_num,
                                                  uint64_t generation, const RayAllocationSnapshot* ray_alloc,
@@ -2089,7 +2129,11 @@ void Simulator::SimulateOneWavelengthWithBackend(TraceBackend& backend, const Sc
   // Task 260.6: hand the backend `effective_seed_` (non-zero) so device-gen
   // activates even when the user-facing `seed_` is 0 (default random mode).
   // When `seed_ != 0` this equals `seed_` → determinism contract unchanged.
-  SessionSpec spec{ &scene, &render, wl_param, effective_seed_, std::move(raypath_color), ray_num, ray_alloc };
+  SessionSpec spec{ &scene, {}, wl_param, effective_seed_, std::move(raypath_color), ray_num, ray_alloc };
+  spec.renders.reserve(renders.size());
+  for (const auto& r : renders) {
+    spec.renders.push_back(&r);
+  }
   backend.BeginSession(spec);
   // RAII guard: EndSession() is called on all exit paths, including exceptions
   // thrown by TraceLayer/Recombine (which would otherwise skip EndSession).
@@ -2165,10 +2209,16 @@ void Simulator::SimulateOneWavelengthWithBackend(TraceBackend& backend, const Sc
     *tally_out = backend.GetLastBatchRayAllocationTally();
   }
 
-  int w = render.resolution_[0];
-  int h = render.resolution_[1];
-  if (w <= 0 || h <= 0) {
-    return;
+  // Every renderer's resolution, in SessionSpec::renders order — the drain sizes one plane
+  // per entry. A degenerate renderer anywhere in the set discards the batch, as a single
+  // degenerate one always did.
+  std::vector<std::pair<int, int>> dims;
+  dims.reserve(renders.size());
+  for (const auto& r : renders) {
+    if (r.resolution_[0] <= 0 || r.resolution_[1] <= 0) {
+      return;
+    }
+    dims.emplace_back(r.resolution_[0], r.resolution_[1]);
   }
 
   // S1 device-fused path: backend accumulated XYZ on-device; read it back and
@@ -2195,8 +2245,7 @@ void Simulator::SimulateOneWavelengthWithBackend(TraceBackend& backend, const Sc
       xyz_win_.deterministic_crystals = deterministic_crystal_count_;
       xyz_win_.deterministic_orientations = deterministic_orientation_count_;
       xyz_win_.generation = generation;
-      xyz_win_.w = w;
-      xyz_win_.h = h;
+      xyz_win_.dims = dims;
       xyz_win_.wl = wl_param.wl_;
       xyz_win_.calls += 1;
       // task-color-degrade-gui-surfacing: OVERWRITE (not +=) — the tally is a
@@ -2224,13 +2273,7 @@ void Simulator::SimulateOneWavelengthWithBackend(TraceBackend& backend, const Sc
     // the third-clock window branch above), but keeps this path from silently
     // dropping the warning if a device-XYZ / non-third-clock backend is ever added.
     sim_data.color_degrade_counts_ = backend.GetLastColorDegradeCounts();
-    size_t pix = static_cast<size_t>(w) * static_cast<size_t>(h);
-    sim_data.xyz_pixel_data_.resize(pix * 3u);
-    XyzImageData xyz_out;
-    xyz_out.data = sim_data.xyz_pixel_data_.data();
-    xyz_out.width = w;
-    xyz_out.height = h;
-    backend.ReadbackXyzAccum(xyz_out, sim_data.xyz_landed_weight_);
+    ReadbackDevicePlanes(backend, dims, sim_data);
     // task-358.1 Step 4: drain the device per-color-class Y-lane accumulator.
     // No-op when the backend / session has no raypath_color config (AC4).
     backend.ReadbackClassLanes(sim_data.lane_pixel_data_, sim_data.lane_class_count_);

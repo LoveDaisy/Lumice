@@ -154,10 +154,12 @@ class Simulator {
   // the top of Run().
   void SetPreferredBackend(BackendKind backend);
 
-  // Is this Run() still driving a TraceBackend? False both when
-  // Run() never got one (CreateBackend returned nullptr — CPU preference, or a
-  // GPU preference this build/host cannot honour) and after a
-  // BackendUnavailableError dropped it mid-Run(). Read across threads by the
+  // Is this Run() still driving a TraceBackend? False when Run() never got one
+  // (CreateBackend returned nullptr — CPU preference, or a GPU preference this
+  // build/host cannot honour), after a BackendUnavailableError dropped it
+  // mid-Run(), and when a live backend is refused by CanUseBackend's gates (no
+  // renders_, more renderers than MaxRenderers(), an IsCompatible miss) so the
+  // Run() executes on the legacy CPU path. Read across threads by the
   // server's producer (GenerateScene sizes its per-batch dispatch grain on it —
   // a GPU-sized batch on the legacy path traces one host-sampled wavelength per
   // 262144 rays), so it uses the same release/acquire pairing as
@@ -191,7 +193,7 @@ class Simulator {
   // for the legacy path (whether by preference, by force, by an unavailable
   // GPU, or by the mid-run BackendUnavailableError fallback, which re-publishes
   // it), kMetal / kCuda while that backend is live. kCpu before the first Run().
-  // Written at the same two points as backend_active_ and read by the server
+  // Written at the same three points as backend_active_ and read by the server
   // (Server::GetActiveBackend) — the observable answer to "did the force take".
   BackendKind ActiveBackend() const { return active_backend_.load(std::memory_order_acquire); }
 
@@ -273,7 +275,10 @@ class Simulator {
   // projection (same downstream path as Metal-OFF). Only invoked when
   // CanUseBackend() returns true.
   // `emitted_weight`: see SimulateOneWavelength above — same contract.
-  void SimulateOneWavelengthWithBackend(TraceBackend& backend, const SceneConfig& scene, const RenderConfig& render,
+  // `renders`: every renderer of the batch (SimBatch::renders_) — the session serves all of
+  // them at once; a device-fused backend accumulates one plane per element.
+  void SimulateOneWavelengthWithBackend(TraceBackend& backend, const SceneConfig& scene,
+                                        const std::vector<RenderConfig>& renders,
                                         std::shared_ptr<const RaypathColorConfig> raypath_color,
                                         const WlParam& wl_param, float emitted_weight, size_t ray_num,
                                         uint64_t generation, const RayAllocationSnapshot* ray_alloc,
@@ -306,8 +311,9 @@ class Simulator {
     size_t stochastic_orientation_samples = 0;
     size_t deterministic_orientations = 0;
     uint64_t generation = 0;  // generation the window belongs to
-    int w = 0;                // render resolution of the window
-    int h = 0;
+    // Per-renderer resolution of the window (SessionSpec::renders order) — the dims the
+    // drain sizes each SimData plane to and hands the backend for its release-safe check.
+    std::vector<std::pair<int, int>> dims;
     float wl = 0.0f;     // last wl (device-fused: not consumed downstream)
     uint32_t calls = 0;  // batches accumulated since last drain (cadence cap)
     // task-color-degrade-gui-surfacing: latest GPU color-degrade tally for this
@@ -323,6 +329,11 @@ class Simulator {
   // `backend` is null or nothing is pending (self-guarding so call sites stay
   // flat). Called only for SupportsThirdClockDrain() backends.
   void DrainDeviceXyz(TraceBackend* backend);
+  // Size sim_data.xyz_pixel_data_ to one W_i*H_i*3 plane per entry of `dims` and read every
+  // plane + landed weight back through one ReadbackXyzAccum call. Shared by the two
+  // device-fused drain sites (third-clock window / legacy per-batch).
+  static void ReadbackDevicePlanes(TraceBackend& backend, const std::vector<std::pair<int, int>>& dims,
+                                   SimData& sim_data);
   // One `RayAllocationOnline: layer L entry E: p= q= rays=` line per (layer, entry)
   // of `online`, at the cadence Accumulate reports (each doubling of the first
   // layer's dealt count). The only signal of the online q that crosses the process
@@ -405,9 +416,11 @@ class Simulator {
 
   // Backing store for BackendActive() (see its declaration above for
   // the contract and the default's rationale). Written by the simulator thread at
-  // exactly two points inside Run() — right after CreateBackend, and in the
-  // BackendUnavailableError catch that resets `backend` — and nowhere else; those
-  // are the only two places `backend`'s nullness changes.
+  // exactly three points inside Run() — right after CreateBackend, in the
+  // BackendUnavailableError catch that resets `backend` (the two places
+  // `backend`'s nullness changes), and after CanUseBackend refuses a live
+  // backend for the batch (the backend stays, the Run() runs on the CPU path
+  // regardless) — and nowhere else.
   std::atomic_bool backend_active_{ true };
 };
 

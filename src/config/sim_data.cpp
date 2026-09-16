@@ -61,7 +61,10 @@ namespace lumice {
 // 4B) between two 8-aligned vectors, so it lands as 8B: 408 → 416. The bounded
 // chain record adds chain_id_overflow_count_ (uint32_t) into those 4B of
 // padding: still 416.
-static_assert(sizeof(SimData) == 416, "SimData size changed — update copy/move ctors and operators");
+// The multi-renderer device-fused seam turns xyz_pixel_data_ / lane_pixel_data_ into
+// vector<vector<float>> (same 24B each) and xyz_landed_weight_ from float (4B + 4B pad)
+// into vector<float> (24B) — one entry per renderer — bumping 416 → 432.
+static_assert(sizeof(SimData) == 432, "SimData size changed — update copy/move ctors and operators");
 
 namespace {
 
@@ -539,7 +542,7 @@ SimData::SimData(SimData&& other) noexcept
       chain_id_table_delta_(std::move(other.chain_id_table_delta_)),
       producer_effective_seed_(other.producer_effective_seed_),
       chain_id_overflow_count_(other.chain_id_overflow_count_), exit_records_(std::move(other.exit_records_)),
-      xyz_pixel_data_(std::move(other.xyz_pixel_data_)), xyz_landed_weight_(other.xyz_landed_weight_),
+      xyz_pixel_data_(std::move(other.xyz_pixel_data_)), xyz_landed_weight_(std::move(other.xyz_landed_weight_)),
       lane_pixel_data_(std::move(other.lane_pixel_data_)), lane_class_count_(other.lane_class_count_),
       anchor_y_pixel_data_(std::move(other.anchor_y_pixel_data_)), root_ray_count_(other.root_ray_count_),
       emitted_energy_(other.emitted_energy_), stochastic_crystal_sample_count_(other.stochastic_crystal_sample_count_),
@@ -616,7 +619,7 @@ SimData& SimData::operator=(SimData&& other) noexcept {
   chain_id_overflow_count_ = other.chain_id_overflow_count_;
   exit_records_ = std::move(other.exit_records_);
   xyz_pixel_data_ = std::move(other.xyz_pixel_data_);
-  xyz_landed_weight_ = other.xyz_landed_weight_;
+  xyz_landed_weight_ = std::move(other.xyz_landed_weight_);
   lane_pixel_data_ = std::move(other.lane_pixel_data_);  // task-358.1 Step 4
   lane_class_count_ = other.lane_class_count_;
   // Same move-assign trap as outgoing_wl_ / lane_pixel_data_ above: this is the path the

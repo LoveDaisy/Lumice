@@ -116,7 +116,7 @@ SlabFixture BuildSlabFixture(size_t max_hits) {
   f.scene = MakeCpuScene(/*max_hits=*/max_hits, /*ms_layers=*/1);
   f.render = MakeRectangularRender();
   f.spec.scene = &f.scene;
-  f.spec.render = &f.render;
+  f.spec.renders = { &f.render };
   f.spec.wl = WlParam{ 550.0f, 1.0f };
   f.spec.seed = 42;
 

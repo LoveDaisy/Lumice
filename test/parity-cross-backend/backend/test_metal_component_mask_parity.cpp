@@ -242,7 +242,7 @@ Capture RunMetal(const SceneConfig& scene, const RenderConfig& render, uint32_t 
                  std::shared_ptr<const RaypathColorConfig> color_cfg = nullptr) {
   SessionSpec spec;
   spec.scene = &scene;
-  spec.render = &render;
+  spec.renders = { &render };
   spec.wl = WlParam{ 550.0f, 1.0f };
   spec.seed = seed;
   spec.raypath_color = color_cfg;
@@ -279,7 +279,7 @@ Capture RunCpu(const SceneConfig& scene, const RenderConfig& render, uint32_t se
                std::shared_ptr<const RaypathColorConfig> color_cfg = nullptr) {
   SessionSpec spec;
   spec.scene = &scene;
-  spec.render = &render;
+  spec.renders = { &render };
   spec.wl = WlParam{ 550.0f, 1.0f };
   spec.seed = seed;
   spec.raypath_color = color_cfg;

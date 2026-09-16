@@ -315,7 +315,7 @@ TEST(MetalTraceParity, SingleLayerExitStatsAndXyz) {
 
   SessionSpec spec;
   spec.scene = &scene;
-  spec.render = &render;
+  spec.renders = { &render };
   spec.wl = WlParam{ 550.0f, 1.0f };
   spec.seed = 42;
 
@@ -382,7 +382,7 @@ TEST(MetalTraceParity, TwoLayerExitStatsAndXyz) {
 
   SessionSpec spec;
   spec.scene = &scene;
-  spec.render = &render;
+  spec.renders = { &render };
   spec.wl = WlParam{ 550.0f, 1.0f };
   spec.seed = 7;
 
@@ -472,7 +472,7 @@ TEST(MetalTraceParity, DeepRecorderSingleLayer) {
 
   SessionSpec spec;
   spec.scene = &scene;
-  spec.render = &render;
+  spec.renders = { &render };
   spec.wl = WlParam{ 550.0f, 1.0f };
   spec.seed = 123;
 
@@ -628,7 +628,7 @@ TEST(MetalTraceParity, MultiPopSingleLayerExitStatsAndXyz) {
 
   SessionSpec spec;
   spec.scene = &scene;
-  spec.render = &render;
+  spec.renders = { &render };
   spec.wl = WlParam{ 550.0f, 1.0f };
   spec.seed = 42;
 
@@ -689,7 +689,7 @@ TEST(MetalTraceParity, MultiPopTwoLayerExitStatsAndXyz) {
 
   SessionSpec spec;
   spec.scene = &scene;
-  spec.render = &render;
+  spec.renders = { &render };
   spec.wl = WlParam{ 550.0f, 1.0f };
   spec.seed = 7;
 
@@ -778,7 +778,7 @@ TEST(MetalTraceParity, MultiPopContinuationAppendInvariant) {
 
   SessionSpec spec;
   spec.scene = &scene;
-  spec.render = &render;
+  spec.renders = { &render };
   spec.wl = WlParam{ 550.0f, 1.0f };
   spec.seed = 123;
 
@@ -852,7 +852,7 @@ TEST(MetalTraceParity, TotalLandedWeightFormulaIdentity) {
 
   SessionSpec cpu_spec;
   cpu_spec.scene = &scene;
-  cpu_spec.render = &fisheye_render;
+  cpu_spec.renders = { &fisheye_render };
   cpu_spec.wl = WlParam{ kWl, 1.0f };
   cpu_spec.seed = 42;
 
@@ -923,7 +923,7 @@ TEST(MetalTraceParity, TotalLandedWeightFormulaIdentity) {
     {
       SessionSpec metal_spec;
       metal_spec.scene = &scene;
-      metal_spec.render = &metal_render;
+      metal_spec.renders = { &metal_render };
       metal_spec.wl = WlParam{ kWl, 1.0f };
       metal_spec.seed = 42;
 
@@ -937,7 +937,7 @@ TEST(MetalTraceParity, TotalLandedWeightFormulaIdentity) {
     {
       SessionSpec cpu_rect_spec;
       cpu_rect_spec.scene = &scene;
-      cpu_rect_spec.render = &metal_render;
+      cpu_rect_spec.renders = { &metal_render };
       cpu_rect_spec.wl = WlParam{ kWl, 1.0f };
       cpu_rect_spec.seed = 42;
 
@@ -1037,7 +1037,7 @@ TEST(MetalTraceParity, MetalVsCpuSingleLayerSpatialStructure) {
 
   SessionSpec spec;
   spec.scene = &scene;
-  spec.render = &render;
+  spec.renders = { &render };
   spec.wl = WlParam{ 550.0f, 1.0f };
   spec.seed = 42;
 
@@ -1147,7 +1147,7 @@ TEST(MetalTraceParity, MetalVsCpuMultiLayerSpatialStructure) {
 
   SessionSpec spec;
   spec.scene = &scene;
-  spec.render = &render;
+  spec.renders = { &render };
   spec.wl = WlParam{ 550.0f, 1.0f };
   spec.seed = 7;
 
@@ -1230,7 +1230,7 @@ TEST(MetalTraceParity, DualFisheyeEA_Single_NoOverlap) {
 
   SessionSpec spec;
   spec.scene = &scene;
-  spec.render = &render;
+  spec.renders = { &render };
   spec.wl = WlParam{ 550.0f, 1.0f };
   spec.seed = 42;
 
@@ -1292,7 +1292,7 @@ TEST(MetalTraceParity, DualFisheyeEA_Single_WithOverlap) {
 
   SessionSpec spec;
   spec.scene = &scene;
-  spec.render = &render;
+  spec.renders = { &render };
   spec.wl = WlParam{ 550.0f, 1.0f };
   spec.seed = 42;
 
@@ -1363,7 +1363,7 @@ TEST(MetalTraceParity, DualFisheyeEA_MultiMS_WithOverlap) {
 
   SessionSpec spec;
   spec.scene = &scene;
-  spec.render = &render;
+  spec.renders = { &render };
   spec.wl = WlParam{ 550.0f, 1.0f };
   spec.seed = 7;
 
@@ -1462,7 +1462,7 @@ TEST(MetalTraceParity, SingleWlParityAndCmfChannelRatios) {
                         OracleLayerResult& oracle_out) {
     SessionSpec spec;
     spec.scene = &scene;
-    spec.render = &render;
+    spec.renders = { &render };
     spec.wl = WlParam{ wl_nm, 1.0f };
     spec.seed = seed;
 
@@ -1567,7 +1567,7 @@ TEST(MetalTraceParity, D65IlluminantModeBlendsPerRayWavelengths) {
 
     SessionSpec spec;
     spec.scene = &scene_d65;
-    spec.render = &render;
+    spec.renders = { &render };
     spec.wl = WlParam{};  // matches simulator.cpp:674 (zero-wl sentinel)
     spec.seed = 42;
 
@@ -1588,7 +1588,7 @@ TEST(MetalTraceParity, D65IlluminantModeBlendsPerRayWavelengths) {
 
     SessionSpec spec;
     spec.scene = &scene_650;
-    spec.render = &render;
+    spec.renders = { &render };
     spec.wl = WlParam{ 650.0f, 1.0f };
     spec.seed = 42;
 

@@ -17,10 +17,10 @@ suite pins two guarantees per type:
       AND not ``fell_back``). This is the scrum's success criterion: the
       acceleration gap for the previously-CPU-only projections is closed.
 
-``test_metal_projection_no_fallback_detector`` is the teeth check: a
-multi-renderer config (projection-independent fallback trigger) MUST trip the
-"falling back to legacy" log, proving the no-fallback assertions above can
-meaningfully fail rather than silently pass on a degraded path.
+``test_metal_projection_no_fallback_detector`` is the teeth check: a backend
+request this build cannot honour MUST come back as a different
+``routed_backend`` than the one asked for, proving the routing assertions above
+can meaningfully fail rather than silently pass on a degraded path.
 
 The exit-seam battery already covers ``rectangular`` + ``dual_fisheye_equal_area``
 via ``dual_fisheye_ref``; this file extends coverage to the full 11-type set with
@@ -31,6 +31,7 @@ serially (capi_runner mutates os.environ + a process-global log callback).
 
 from __future__ import annotations
 
+import os
 import platform
 
 import pytest
@@ -85,8 +86,8 @@ def _run(cfg_path, backend: str, seed: int = _SEED) -> BufferedSimResult:
 def _assert_routed_metal(r: BufferedSimResult, lens_type: str) -> None:
     """No-fallback assertion (scrum success criterion): the type routed to Metal."""
     assert r.routed_backend == "metal", (
-        f"{lens_type}: routed={r.routed_backend!r} (expected 'metal'); the core "
-        f"log did not emit the MetalTraceBackend routing line. log tail: {r.log_lines[-5:]}"
+        f"{lens_type}: routed={r.routed_backend!r} (expected 'metal'); "
+        f"LUMICE_GetActiveBackend did not report Metal. log tail: {r.log_lines[-5:]}"
     )
     assert not r.fell_back, (
         f"{lens_type}: Metal was requested but fell back to legacy CPU - the "
@@ -160,19 +161,38 @@ def test_metal_projection_parity(lens_type: str, _proj_configs):
 
 @pytest.mark.slow
 def test_metal_projection_no_fallback_detector():
-    """A multi-renderer config MUST trip the fallback log on Metal.
+    """A backend request the build cannot honour MUST read back as a different route.
 
     Since 315.3/315.4 relaxed IsCompatible to accept ALL lens types, lens type
-    is no longer a fallback trigger. The multi-renderer path (CanUseBackend:
-    ``renders_->size() != 1``) is a projection-INDEPENDENT fallback that still
-    fires — this is the insurance that the per-projection ``_assert_routed_metal``
-    checks above can meaningfully fail rather than silently pass on a degraded
-    path.
+    is no longer a fallback trigger; and since a Metal session serves N
+    renderers at once (one device plane each) with a cap (kMaxRenderersDevice =
+    4) equal to what the C API accepts at all (LUMICE_MAX_CONFIG_RENDERERS = 4),
+    no config that reaches the simulator makes Metal fall back either. The
+    projection-INDEPENDENT trigger that still fires on a build without CUDA is
+    the routing layer refusing a CUDA request: LUMICE_GetActiveBackend — the
+    same call every ``_assert_routed_metal`` above reads — then reports the CPU
+    kind, not the one asked for. That is the insurance that the routing half of
+    those assertions can meaningfully fail rather than silently pass.
+
+    What this does NOT exercise is ``fell_back``. A request refused at routing
+    time sizes the server for the CPU route, and LUMICE_GetBackendFallbackFlag
+    is by contract "a GPU-sized route that lost its backend" — so it reads 0
+    here, and the assertion below pins that, because a detector that read the
+    refusal as a fallback would be asserting the log's vocabulary rather than
+    the product's. No legal config reaches the flag's triggers today
+    (CanUseBackend's gates and a device failure mid-run); the flag's teeth are
+    shown by breaking a gate in source, not by a fixture.
     """
-    cfg = get_project_root() / "test" / "e2e" / "configs" / "multi_lens.json"
-    r = _run(cfg, "metal")
-    assert r.fell_back, (
-        "Expected Metal fallback on a multi-renderer config (multi_lens.json) but "
-        f"got fell_back=False. The no-fallback detector may be broken. "
-        f"log tail: {r.log_lines[-5:]}"
+    if os.environ.get("LUMICE_HAS_CUDA") == "1":
+        pytest.skip("CUDA-capable build: a cuda request is honoured here, not refused")
+    cfg = get_project_root() / "test" / "e2e" / "configs" / "halo_22.json"
+    r = _run(cfg, "cuda")
+    assert r.routed_backend == "legacy", (
+        "Expected the routing layer to refuse a CUDA request on a non-CUDA build and run "
+        f"legacy, but LUMICE_GetActiveBackend reports {r.routed_backend!r}. The no-fallback "
+        f"detector may be broken. log tail: {r.log_lines[-5:]}"
+    )
+    assert not r.fell_back, (
+        "A request refused at routing time is not a fallback (the server was sized for the "
+        f"CPU route), yet LUMICE_GetBackendFallbackFlag reports 1. log tail: {r.log_lines[-5:]}"
     )

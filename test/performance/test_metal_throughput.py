@@ -29,15 +29,12 @@ auxiliary, see feedback_perf_baseline_is_legacy_cpu).
 
 @pytest.mark.slow — needs the release binary; Darwin-only (Metal).
 """
-import json
-import os
 import platform
-import re
-import subprocess
 
 import pytest
 
-from test.e2e.runner import find_lumice_binary, get_project_root
+from test.e2e.benchmark_cli import run_benchmark
+from test.e2e.runner import get_project_root
 
 pytestmark = pytest.mark.skipif(
     platform.system() != "Darwin", reason="Metal backend is only available on macOS"
@@ -96,56 +93,26 @@ _SANITY_FLOOR = 1.5
 _GATE = 1.0           # D1 pre-registered gate: Metal multi >= legacy (xfail until Scrum 2)
 _TIMEOUT = 240        # `benchmark` is bounded (poll-until-IDLE); guard against hangs
 
-# Fallback detection tripwire: a Metal run on an incompatible lens/view logs
-# "falling back" via ILOG_WARN (simulator.cpp:550/579/586/595) → spdlog `err`
-# level → the shared STDOUT color sink (logger.hpp). At the benchmark's default
-# INFO level the `err` message is still emitted. We scan BOTH stdout and stderr
-# so a future sink/stream refactor can't silently disable the tripwire (which
-# would let a degraded Metal run report a meaningless ratio). See code-review MINOR-1.
-_RE_FALLBACK = re.compile(r"falling back", re.IGNORECASE)
-
 
 def _run_benchmark(config_name: str, metal: bool) -> dict:
     """Run `Lumice benchmark` on a config; return parsed multi-pass result.
 
-    Returns {"multi_rps": float, "single_rps": float, "fell_back": bool}.
+    Returns {"multi_rps": float, "fell_back": bool, "backend": str, "multi_basis": str}.
+    `fell_back` / `backend` are the [BENCHMARK] JSON's own fields (the CLI reads
+    them off the C API after the measured pass), which is the tripwire that a
+    degraded Metal run cannot report a meaningless ratio as green.
     """
-    cfg = str(_CONFIGS_DIR / f"{config_name}.json")
-    env = dict(os.environ)
-    if metal:
-        env["LUMICE_TRACE_BACKEND"] = "metal"
-    else:
-        env.pop("LUMICE_TRACE_BACKEND", None)  # legacy = unset (NOT cpu_backend)
-
-    proc = subprocess.run(
-        [str(find_lumice_binary()), "benchmark", "-f", cfg],
-        capture_output=True, text=True, timeout=_TIMEOUT, env=env,
-    )
-    fell_back = bool(_RE_FALLBACK.search(proc.stderr) or _RE_FALLBACK.search(proc.stdout))
-    multi_rps = single_rps = 0.0
-    multi_basis = "?"
-    for line in proc.stdout.splitlines():
-        if "[BENCHMARK]" in line:
-            data = json.loads(line.split("[BENCHMARK]", 1)[1].strip())
-            if data.get("mode") == "multi":
-                multi_rps = float(data["rays_per_sec"])
-                # Reported, not asserted on: which basis each arm lands on is a
-                # property of the config's ray_num vs the backend's drain quantum
-                # (see the _SANITY_FLOOR comment), so pinning it would be pinning
-                # the gate's inputs. Printing it makes a future drift visible in
-                # the CI log instead of silent.
-                multi_basis = str(data.get("rate_basis", "?"))
-            elif data.get("mode") == "single":
-                single_rps = float(data["rays_per_sec"])
-                # No `single_basis` counterpart: nothing here consumes it (the C2
-                # sentinel below only ratios `multi_rps`), so it is omitted rather
-                # than added speculatively. Add it the same way if a future gate
-                # needs the single-pass basis too.
+    r = run_benchmark(_CONFIGS_DIR / f"{config_name}.json", "metal" if metal else None, _TIMEOUT)
     return {
-        "multi_rps": multi_rps,
-        "single_rps": single_rps,
-        "fell_back": fell_back,
-        "multi_basis": multi_basis,
+        "multi_rps": r.multi_rps if "multi" in r.passes else 0.0,
+        "fell_back": r.fell_back if "multi" in r.passes else False,
+        "backend": r.backend if "multi" in r.passes else "?",
+        # Reported, not asserted on: which basis each arm lands on is a
+        # property of the config's ray_num vs the backend's drain quantum
+        # (see the _SANITY_FLOOR comment), so pinning it would be pinning
+        # the gate's inputs. Printing it makes a future drift visible in
+        # the CI log instead of silent.
+        "multi_basis": r.multi_basis if "multi" in r.passes else "?",
     }
 
 
@@ -155,9 +122,9 @@ def test_metal_throughput_gate(config_name):
     legacy = _run_benchmark(config_name, metal=False)
     metal = _run_benchmark(config_name, metal=True)
 
-    assert not metal["fell_back"], (
-        f"{config_name}: Metal fell back to legacy — backend requested but did not run; "
-        f"throughput comparison is meaningless."
+    assert metal["backend"] == "metal" and not metal["fell_back"], (
+        f"{config_name}: Metal was requested but the measured pass ran on "
+        f"{metal['backend']!r} (fell_back={metal['fell_back']}); throughput comparison is meaningless."
     )
     assert legacy["multi_rps"] > 0.0, f"{config_name}: legacy multi rps == 0 (benchmark parse failed?)"
     assert metal["multi_rps"] > 0.0, f"{config_name}: metal multi rps == 0 (benchmark parse failed?)"

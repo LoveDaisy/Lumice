@@ -269,22 +269,28 @@ struct SimData {
   std::vector<ExitRayRecord> exit_records_;
 
   // S1 device-fused: XYZ pixel accumulation from Metal kernel (SupportsDeviceXyzAccum path).
-  // Non-empty only when the backend accumulates on-device; CPU path leaves these empty.
-  // xyz_pixel_data_: W * H * 3 floats (row-major, XYZ channels).
-  // xyz_landed_weight_: total weight of in-bounds primary-pixel writes this batch.
-  std::vector<float> xyz_pixel_data_;
-  float xyz_landed_weight_ = 0.0f;
+  // ONE ENTRY PER RENDERER of the session, in SessionSpec::renders order — the same order
+  // the server built its RenderConsumers in, which is how a consumer finds its own plane:
+  // `xyz_pixel_data_[renderer_index_]`. The OUTER container being non-empty is the one and
+  // only "this batch is device-fused" signal (RenderConsumer / AnchorConsumer branch on it);
+  // the CPU path leaves it empty.
+  // xyz_pixel_data_[i]: W_i * H_i * 3 floats (row-major, XYZ channels) for renderer i.
+  // xyz_landed_weight_[i]: total weight of in-bounds primary-pixel writes into plane i.
+  std::vector<std::vector<float>> xyz_pixel_data_;
+  std::vector<float> xyz_landed_weight_;
   // task-358.1 Step 4 (AC3 device-side per-color-class Y-lane accumulation):
   // per-class flattened Y accumulator produced by GPU backends that also fuse
-  // rule-lane accumulation on-device. Layout:
-  //     lane_pixel_data_[c * W*H + (py*W+px)] = Y for class c at (px, py)
+  // rule-lane accumulation on-device, again one entry per renderer. Layout:
+  //     lane_pixel_data_[i][c * W_i*H_i + (py*W_i+px)] = Y for class c at (px, py) of renderer i
   // Populated by Simulator::DrainDeviceXyz via TraceBackend::ReadbackClassLanes
   // and folded into RenderConsumer::lane_y_ by ConsumeDeviceFused. Empty when
   // the session has no raypath_color config OR the backend does not accumulate
   // on device (CPU path stays on per-ray outgoing_component_).
-  // `lane_class_count_` is a redundant witness of `lane_pixel_data_.size() /
-  // (W*H)` — carried so the consumer can validate the shape without knowing W/H.
-  std::vector<float> lane_pixel_data_;
+  // `lane_class_count_` stays ONE scalar for the whole batch: the colour classes are
+  // defined per session (they describe ray paths), only the buffer shape follows the
+  // renderer. It is a redundant witness of `lane_pixel_data_[i].size() / (W_i*H_i)` —
+  // carried so the consumer can validate the shape without knowing W/H.
+  std::vector<std::vector<float>> lane_pixel_data_;
   size_t lane_class_count_ = 0;
   // The EXPOSURE ANCHOR plane, when a backend accumulated one on device.
   // kAnchorWidth * kAnchorHeight floats of Y (core/anchor_buffer.hpp owns the geometry) —

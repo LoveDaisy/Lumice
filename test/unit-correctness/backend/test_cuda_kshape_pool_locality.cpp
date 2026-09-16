@@ -118,7 +118,7 @@ TEST(CudaKShapePool, KShapePool_PathIsLocalWithinPolygonFaceCount_AC1) {
 
   SessionSpec spec;
   spec.scene = &scene;
-  spec.render = &render;
+  spec.renders = { &render };
   spec.wl = WlParam{ 550.0f, 1.0f };
   spec.seed = 31;
   spec.ray_num = kCiN;
@@ -216,7 +216,7 @@ TEST(CudaKShapePool, KShapePool_TransitPicksMultipleShapes_AC1) {
 
   SessionSpec spec;
   spec.scene = &scene;
-  spec.render = &render;
+  spec.renders = { &render };
   spec.wl = WlParam{ 550.0f, 1.0f };
   spec.seed = 37;
   spec.ray_num = kRayNum;
@@ -296,7 +296,7 @@ TEST(CudaKShapePool, KShapePool_DefaultKnobUnsetGivesPCiOne_AC2) {
 
   SessionSpec spec;
   spec.scene = &scene;
-  spec.render = &render;
+  spec.renders = { &render };
   spec.wl = WlParam{ 550.0f, 1.0f };
   spec.seed = 21;
 

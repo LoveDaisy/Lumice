@@ -415,6 +415,46 @@ int ParseBackend(std::string_view name) {
   return -1;
 }
 
+// ParseBackend's inverse for what the server reports back: the names are the
+// `--backend` vocabulary above, so a user can read the stats line / [BENCHMARK]
+// JSON against the flag they passed.
+const char* BackendName(int backend) {
+  switch (backend) {
+    case LUMICE_BACKEND_METAL:
+      return "metal";
+    case LUMICE_BACKEND_CUDA:
+      return "cuda";
+    default:
+      return "cpu";
+  }
+}
+
+// What actually ran, and whether it is what was asked for. `backend` is
+// LUMICE_GetActiveBackend (the trace backend the run executed on); `fell_back`
+// is LUMICE_GetBackendFallbackFlag (a GPU route that is running on the legacy
+// CPU path instead — the request was honoured at routing time, then lost:
+// preference unavailable, config the backend cannot serve, or a device failure
+// mid-run). Read after the run so both are the run's final state. A query
+// failure reads as the CPU default with no fallback, which is also what a
+// server that never had a GPU route reports.
+struct BackendReport {
+  int backend = LUMICE_BACKEND_CPU;
+  bool fell_back = false;
+};
+
+BackendReport ReadBackendReport(LUMICE_Server* server) {
+  BackendReport report;
+  int backend = LUMICE_BACKEND_CPU;
+  if (LUMICE_GetActiveBackend(server, &backend) == LUMICE_OK) {
+    report.backend = backend;
+  }
+  int fell_back = 0;
+  if (LUMICE_GetBackendFallbackFlag(server, &fell_back) == LUMICE_OK) {
+    report.fell_back = fell_back != 0;
+  }
+  return report;
+}
+
 std::filesystem::path FormatImagePath(const std::filesystem::path& output_dir, int renderer_id, std::string_view format,
                                       std::string_view suffix = "") {
   std::ostringstream oss;
@@ -501,8 +541,13 @@ void PrintStats(LUMICE_Server* server) {
     return;
   }
   if (stats.sim_ray_num != 0) {
+    // backend / fell_back sit on the same line as the counts so the default
+    // verbosity shows them: the WARN that names the reason a GPU route fell back
+    // is a log line, and this line is the CLI's product output.
+    const BackendReport report = ReadBackendReport(server);
     std::cout << "Stats: sim_rays=" << stats.sim_ray_num << ", crystals=" << stats.crystal_num
-              << ", orientations=" << stats.orientation_num << "\n";
+              << ", orientations=" << stats.orientation_num << ", backend=" << BackendName(report.backend)
+              << ", fell_back=" << (report.fell_back ? "true" : "false") << "\n";
   }
 }
 
@@ -750,6 +795,15 @@ void RunBenchmarkPass(const std::string& config_str, int num_workers, const char
 #else
       result["isa"] = "baseline";
 #endif
+      // Which trace backend the measured pass ran on, and whether a GPU route
+      // silently degraded to the legacy CPU path — a throughput number without
+      // these is a number for an unknown code path. Pure additions to the
+      // parsed contract: every consumer reads this JSON by key.
+      {
+        const BackendReport report = ReadBackendReport(server);
+        result["backend"] = BackendName(report.backend);
+        result["fell_back"] = report.fell_back;
+      }
       if (drain_count_mode) {
         result["n_drains_in_window"] = n_drains_in_window;
         result["window_sec"] = std::round(window_sec * 1000.0) / 1000.0;

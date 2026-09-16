@@ -138,7 +138,7 @@ std::pair<size_t, double> RunCudaOnce(const SceneConfig& scene, const RenderConf
   }
   SessionSpec spec;
   spec.scene = &scene;
-  spec.render = &render;
+  spec.renders = { &render };
   spec.wl = WlParam{ 550.0f, 1.0f };
   spec.seed = seed;
   spec.ray_num = ray_count;
@@ -163,7 +163,7 @@ std::pair<size_t, double> RunCpuOnce(const SceneConfig& scene, const RenderConfi
                                      size_t ray_count) {
   SessionSpec spec;
   spec.scene = &scene;
-  spec.render = &render;
+  spec.renders = { &render };
   spec.wl = WlParam{ 550.0f, 1.0f };
   spec.seed = seed;
 

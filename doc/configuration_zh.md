@@ -868,6 +868,30 @@ GUI 没有逐条网格线的控件：它由当前 FOV 推出**单一步长**（�
   按独立（0）处理，比 6 长会被截断，而不是报错拒绝——详见[形状标量 Sync
   Group](#形状标量-sync-group)
 - `render[].resolution` 数组长度必须为 2
+- `render` 最多 `LUMICE_MAX_CONFIG_RENDERERS`（4）个条目；更长的数组在解析 config 时即被拒绝
+  （`config has N "render" entries, exceeding the limit of 4`），与将要运行它的后端无关
+
+### 多个渲染器与 GPU 路
+
+`render` 里的每一个条目都由**同一次**仿真服务。legacy CPU 路上每个渲染器各有一个 host 侧 consumer，
+对同一批出射光线各自投影。GPU 路（`--backend metal` / `cuda`，或 `LUMICE_TRACE_BACKEND` 覆盖）同样
+由一个 device session 服务全部渲染器：每条出射光线在 trace kernel 的出射尾部逐渲染器投影一次，写入
+各自的 device 面，所以一份双渲染器文档（GUI 导出的形态：预览 + 导出投影）的吞吐接近单渲染器，而不是
+两倍代价——Metal 上实测为任一单渲染器的 0.91–0.95×
+（`test/performance/test_metal_multi_renderer_throughput.py`），并且不再因为渲染器多于一个而回退到
+CPU 路。机制见 `doc/seam-design.md` §4.2.1。
+
+GPU 路仍可能拒绝一份 config 而整批改走 CPU 路（不做逐渲染器混合）：
+
+- config 的渲染器数超过后端每 session 能服务的数量（Metal 与 CUDA 均为 4——与上面解析期拒绝的数量
+  相同，所以从 config 文件无法触发）；
+- 某个渲染器被后端的兼容性检查拒绝（今天两个后端都接受全部镜头类型与视角，所以同样无法触发）；
+- 后端在运行中途失败（设备或 pipeline-state 错误）。
+
+发生以上任一情况时，CLI 会在统计行上说明（光线计数之后的 `backend=cpu, fell_back=true`，见
+[CLI 快速上手](user-manual/03-cli-quickstart_zh.md)），`benchmark` 子命令的 `[BENCHMARK]` JSON 带有
+同样的 `backend` / `fell_back` 字段，C API 则经 `LUMICE_GetActiveBackend` /
+`LUMICE_GetBackendFallbackFlag` 报告（GUI 轮询后者）。光路分析会话不算回退：它按设计就在 CPU 路上运行。
 
 ### 数值范围验证
 

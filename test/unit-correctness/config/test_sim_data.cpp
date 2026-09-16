@@ -74,8 +74,11 @@ static_assert(sizeof(void*) == 8, "SimData layout assumes 64-bit pointers");
 // (vector<ChainIdTableEntry>, 24B), bumping 360 → 408. The histogram
 // consumer adds producer_effective_seed_ (uint32_t, padded to 8B between two
 // vectors), bumping 408 → 416. The bounded chain record adds
-// chain_id_overflow_count_ (uint32_t) into that padding: still 416.
-static_assert(sizeof(SimData) == 416,
+// chain_id_overflow_count_ (uint32_t) into that padding: still 416. The
+// multi-renderer seam makes xyz_pixel_data_ / lane_pixel_data_ vector<vector<float>>
+// (unchanged 24B) and xyz_landed_weight_ a vector<float> (+16B over the padded
+// float), one entry per renderer: 416 → 432.
+static_assert(sizeof(SimData) == 432,
               "SimData layout changed — update test_sim_data.cpp DeepCopy/Move assertions "
               "and sim_data.cpp's static_assert.");
 #endif
@@ -150,13 +153,14 @@ SimData MakePopulatedSimData() {
   s.exit_records_[1].path.size_ = 1;
   s.exit_records_[1].path.data_[0] = 11;
   // S1 device-fused: xyz_pixel_data_ + xyz_landed_weight_ coverage.
-  s.xyz_pixel_data_ = { 0.1f, 0.2f, 0.3f };
-  s.xyz_landed_weight_ = 1.5f;
+  // One plane per renderer; two entries so a copy/move that kept only [0] cannot pass.
+  s.xyz_pixel_data_ = { { 0.1f, 0.2f, 0.3f }, { 0.4f, 0.5f, 0.6f } };
+  s.xyz_landed_weight_ = { 1.5f, 2.5f };
   // task-358.1 Step 4: lane_pixel_data_ + lane_class_count_ deep-copy / move
   // coverage. Shares the same move-assign trap as outgoing_wl_ / outgoing_
   // component_ above — omitting the move in operator=(SimData&&) silently drops
   // the drained per-class Y lanes on the consumer queue's move path.
-  s.lane_pixel_data_ = { 0.11f, 0.22f, 0.33f, 0.44f };
+  s.lane_pixel_data_ = { { 0.11f, 0.22f, 0.33f, 0.44f }, { 0.55f, 0.66f } };
   s.lane_class_count_ = 2;
   // The exposure anchor plane, on the same footing and with the same move-assign trap.
   // Distinct values from lane_pixel_data_ above so a copy/move that crossed the two
@@ -1021,7 +1025,7 @@ TEST(SimDataTest, CopyConstructDeepCopy) {
   EXPECT_EQ(copy.exit_records_[0].path.data_[1], 5u);
   EXPECT_EQ(copy.exit_records_[1].ms_layer_idx, 1u);
   EXPECT_EQ(copy.xyz_pixel_data_, original.xyz_pixel_data_);  // S1 device-fused
-  EXPECT_FLOAT_EQ(copy.xyz_landed_weight_, 1.5f);
+  EXPECT_EQ(copy.xyz_landed_weight_, original.xyz_landed_weight_);
   EXPECT_EQ(copy.lane_pixel_data_, original.lane_pixel_data_);  // task-358.1 Step 4
   EXPECT_EQ(copy.lane_class_count_, 2u) << "lane_class_count_ not copied";
   EXPECT_EQ(copy.anchor_y_pixel_data_, original.anchor_y_pixel_data_) << "anchor_y_pixel_data_ not copied";
@@ -1054,7 +1058,11 @@ TEST(SimDataTest, CopyConstructDeepCopy) {
   EXPECT_EQ(original.chain_id_table_delta_.size(), 1u) << "chain_id_table_delta_ not deep-copied";
 
   copy.lane_pixel_data_.clear();
-  EXPECT_EQ(original.lane_pixel_data_.size(), 4u) << "lane_pixel_data_ not deep-copied";
+  EXPECT_EQ(original.lane_pixel_data_.size(), 2u) << "lane_pixel_data_ not deep-copied";
+  copy.xyz_pixel_data_.clear();
+  EXPECT_EQ(original.xyz_pixel_data_.size(), 2u) << "xyz_pixel_data_ not deep-copied";
+  copy.xyz_landed_weight_.clear();
+  EXPECT_EQ(original.xyz_landed_weight_.size(), 2u) << "xyz_landed_weight_ not deep-copied";
 
   copy.anchor_y_pixel_data_.clear();
   EXPECT_EQ(original.anchor_y_pixel_data_.size(), 3u) << "anchor_y_pixel_data_ not deep-copied";
@@ -1094,7 +1102,7 @@ TEST(SimDataTest, CopyAssignmentDeepCopy) {
   ASSERT_EQ(target.exit_records_.size(), 2u);
   EXPECT_EQ(target.exit_records_[0].crystal_id, 7u);
   EXPECT_EQ(target.xyz_pixel_data_, original.xyz_pixel_data_);  // S1 device-fused
-  EXPECT_FLOAT_EQ(target.xyz_landed_weight_, 1.5f);
+  EXPECT_EQ(target.xyz_landed_weight_, original.xyz_landed_weight_);
   EXPECT_EQ(target.lane_pixel_data_, original.lane_pixel_data_);  // task-358.1 Step 4
   EXPECT_EQ(target.lane_class_count_, 2u) << "lane_class_count_ not assigned";
   EXPECT_EQ(target.anchor_y_pixel_data_, original.anchor_y_pixel_data_) << "anchor_y_pixel_data_ not assigned";
@@ -1155,9 +1163,12 @@ TEST(SimDataTest, MoveConstructTransfersOwnership) {
   EXPECT_EQ(moved.chain_id_overflow_count_, 0xBEEFu) << "chain_id_overflow_count_ not moved";
   EXPECT_EQ(moved.exit_records_.size(), 2u);
   EXPECT_EQ(moved.crystals_.size(), 1u);
-  EXPECT_EQ(moved.xyz_pixel_data_.size(), 3u);  // S1 device-fused
-  EXPECT_FLOAT_EQ(moved.xyz_landed_weight_, 1.5f);
-  EXPECT_EQ(moved.lane_pixel_data_.size(), 4u);  // task-358.1 Step 4
+  ASSERT_EQ(moved.xyz_pixel_data_.size(), 2u);  // S1 device-fused, one plane per renderer
+  EXPECT_EQ(moved.xyz_pixel_data_[1].size(), 3u);
+  ASSERT_EQ(moved.xyz_landed_weight_.size(), 2u);
+  EXPECT_FLOAT_EQ(moved.xyz_landed_weight_[1], 2.5f);
+  ASSERT_EQ(moved.lane_pixel_data_.size(), 2u);  // device-side Y lanes, one region per renderer
+  EXPECT_EQ(moved.lane_pixel_data_[0].size(), 4u);
   EXPECT_EQ(moved.lane_class_count_, 2u) << "lane_class_count_ not moved";
   EXPECT_EQ(moved.anchor_y_pixel_data_.size(), 3u) << "anchor_y_pixel_data_ not moved";
   EXPECT_EQ(moved.stochastic_crystal_sample_count_, 4u) << "stochastic_crystal_sample_count_ not moved";
@@ -1234,9 +1245,15 @@ TEST(SimDataTest, MoveAssignAndSelfMove) {
   EXPECT_EQ(dst.chain_id_overflow_count_, 0xBEEFu) << "chain_id_overflow_count_ not move-assigned";
   // task-358.1 Step 4: lane_pixel_data_ move-assign coverage (same failure
   // mode as outgoing_wl_ / outgoing_component_).
-  ASSERT_EQ(dst.lane_pixel_data_.size(), 4u) << "lane_pixel_data_ not move-assigned";
-  EXPECT_FLOAT_EQ(dst.lane_pixel_data_[0], 0.11f);
+  ASSERT_EQ(dst.lane_pixel_data_.size(), 2u) << "lane_pixel_data_ not move-assigned";
+  ASSERT_EQ(dst.lane_pixel_data_[0].size(), 4u);
+  EXPECT_FLOAT_EQ(dst.lane_pixel_data_[0][0], 0.11f);
   EXPECT_EQ(dst.lane_class_count_, 2u) << "lane_class_count_ not move-assigned";
+  // The per-renderer XYZ planes + landed weights ride the same move-assign path.
+  ASSERT_EQ(dst.xyz_pixel_data_.size(), 2u) << "xyz_pixel_data_ not move-assigned";
+  EXPECT_FLOAT_EQ(dst.xyz_pixel_data_[1][0], 0.4f);
+  ASSERT_EQ(dst.xyz_landed_weight_.size(), 2u) << "xyz_landed_weight_ not move-assigned";
+  EXPECT_FLOAT_EQ(dst.xyz_landed_weight_[1], 2.5f);
   // The anchor plane rides the same path: this is the move-assign the consumer queue
   // actually performs, so a plain copy here would drop it on exactly the GPU backends
   // that produce one.

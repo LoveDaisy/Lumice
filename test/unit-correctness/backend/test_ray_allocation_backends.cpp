@@ -177,7 +177,7 @@ struct ArmResult {
 SessionSpec MakeSpec(const Arm& arm, const RenderConfig& render) {
   SessionSpec spec;
   spec.scene = &arm.scene;
-  spec.render = &render;
+  spec.renders = { &render };
   spec.wl = WlParam{ 550.0f, 1.0f };
   spec.seed = kSeed;
   spec.ray_num = kN;
@@ -313,10 +313,10 @@ ArmResult RunMetalArm(const Arm& arm, const RenderConfig& render) {
   r.emitted_equiv = backend.GetLastBatchEmittedRayEquivalent(kN);
   r.tally = backend.GetLastBatchRayAllocationTally();
   std::vector<float> xyz(static_cast<size_t>(render.resolution_[0]) * render.resolution_[1] * 3u, 0.0f);
-  XyzImageData img{ xyz.data(), render.resolution_[0], render.resolution_[1] };
-  float landed = 0.0f;
+  std::vector<XyzImageData> img{ XyzImageData{ xyz.data(), render.resolution_[0], render.resolution_[1] } };
+  std::vector<float> landed;
   backend.ReadbackXyzAccum(img, landed);
-  r.landed = landed;
+  r.landed = landed.empty() ? 0.0f : landed[0];
   backend.EndSession();
   return r;
 }
@@ -390,10 +390,10 @@ ArmResult RunCudaArm(const Arm& arm, const RenderConfig& render) {
   r.emitted_equiv = backend.GetLastBatchEmittedRayEquivalent(kN);
   r.tally = backend.GetLastBatchRayAllocationTally();
   std::vector<float> xyz(static_cast<size_t>(render.resolution_[0]) * render.resolution_[1] * 3u, 0.0f);
-  XyzImageData img{ xyz.data(), render.resolution_[0], render.resolution_[1] };
-  float landed = 0.0f;
+  std::vector<XyzImageData> img{ XyzImageData{ xyz.data(), render.resolution_[0], render.resolution_[1] } };
+  std::vector<float> landed;
   backend.ReadbackXyzAccum(img, landed);
-  r.landed = landed;
+  r.landed = landed.empty() ? 0.0f : landed[0];
   backend.EndSession();
   return r;
 }

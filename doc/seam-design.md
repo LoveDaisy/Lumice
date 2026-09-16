@@ -110,8 +110,56 @@ CPU 批的原因是 cache/setup 摊薄("32 光线/晶体"是 CPU 决策)；GPU �
 ### 4.2 为什么 image 出口对 GUI 次优（精确版）
 
 - **view 无关 vs view 特定**：出射光线 view 无关；image 烤死一个 view。GUI 价值在廉价迭代(改视角/镜头/filter/曝光，多数不改物理只改投影)。手里有出射光线 → 改视角是 O(光线) 重投影、不重 trace；只留 image → 只能全部重 trace。image 出口关死这扇门，buffer 出口保留 optionality(即使 v1 不实现光线缓存，seam 形态不堵死它)。
-- **多 renderer**：buffer 出口 = trace 一次、consumer 投影 N 次，trace 不需知道 renderer；image 出口 = N 套 device 累加 + N 投影 pass。
+- **多 renderer**：buffer 出口 = trace 一次、consumer 投影 N 次，trace 不需知道 renderer；image 出口 = N 套 device 累加 + N 投影 pass。**已落地，见下方 4.2.1。**
 - **filter**：buffer 出口让 filter 跑 consumer(灵活)；image 出口若扔光线，filter 必须上 device，改 filter≈重跑。
+
+#### 4.2.1 多 renderer 的 image 出口 — as-built（`941faebd` / `c26d5a80` / `ac8de513` Metal，`2517aeaa` CUDA，PR #372）
+
+上面那一句写成代码之后长这样。写下来是因为有两处与「N 投影 pass」的字面读法不同，而那两处正是实现里最容易被"照字面重做"的地方。
+
+- **seam 携 N 个 renderer，不是 N 个 seam。** `SessionSpec::renders` 是 `std::vector<const RenderConfig*>`
+  （`trace_backend.hpp`），一个 session 服务 config 里全部 `render[]`。`SimData` 的三个累加目标随之 N 化
+  （`xyz_pixel_data_` / `xyz_landed_weight_` / `lane_pixel_data_`），`RenderConsumer` 显式持有
+  `renderer_index_`，按自己的下标取面。GPU 从 `SessionSpec` 到 `RenderConsumer` 之间没有 per-ray 记录，
+  这一点与单 renderer 时完全一样。
+- **N 面累加不是 N 个 pass，而是 exit tail 里的一个循环。** 每条出射光线在 trace kernel 的出射尾部
+  被投影 N 次（Metal `AccumRendererPlanes`，`lumice_trace.metal`；CUDA `EmitToDeviceXyz`），
+  逐 renderer 写入各自的 XYZ 面、`landed_weight` 槽与色类 lane。没有第二个 dispatch，
+  也没有 per-renderer 的命令缓冲往返——这正是双 render 吞吐能贴近单 render 的原因（下面的实测）。
+- **描述符是定长数组 + 偏移，不是变长缓冲。** 每个 renderer 一条 `RendererPlaneDesc{proj, xyz_off, lane_off}`，
+  Metal 放在 `KernelParams::renderers[kMaxRenderersDevice]` 常量空间里（30 个 buffer 绑定已经用满，
+  N 个 renderer 共用 image / landed_weight / class_lane 三个绑定，靠偏移分片），CUDA 放在每个 `Impl`
+  一份的设备缓冲 `d_renderers_` 里（运行时下标访问，常驻 L1 广播优于 `.param` 空间）。
+  上限 `kMaxRenderersDevice` / `kMaxRenderersDeviceCuda` = 4，与 C API 解析期拒绝的
+  `LUMICE_MAX_CONFIG_RENDERERS` 数值相同但**故意不用 `static_assert` 绑死**：后端支持得比 API 少是合法状态，
+  只是走回退。
+- **per-renderer 与 per-session 的归属：**
+
+  | 归属 | 内容 |
+  |---|---|
+  | per-renderer（每个 `renders[i]` 一份） | XYZ 面、`landed_weight[i]`、色类 lane 区、投影参数 `proj` |
+  | per-session（全体共享一份） | 晶体/光源/ms 层、波长池、`raypath_color` 快照、**曝光锚点面** `ReadbackAnchorBuffer`（锚点是场景属性，`anchor_l99_sky` 在同一帧每一行都相同）、`exit_w_sum` 统计（固定读 renderer[0] 槽，语义收窄为"renderer 0 的落地权重"） |
+
+- **`landed_weight[i]` 必须走寄存器归约。** 逐 hit 对 `landed_weight + r` 做索引原子加，Metal 编译器判定
+  为非 SIMD-uniform，drain 出的落地权重系统性偏低 1.66%（XYZ 面本身正确，只有曝光链读的标量错）。
+  as-built 是 per-thread `landed_acc[r]` 寄存器累加 + epilogue 每 SIMD-group / warp **逐 renderer 独立**
+  归约一次原子加；CUDA 同形，⛔ 不得把 N 个槽合并成一次 shuffle——那种错误常规 corr/energy 检查全绿，
+  只有 `sum(Y 面 i) / snapshot_intensity[i]` 的双账本比值能抓（`test/e2e/_multi_renderer_parity.py`）。
+- **混合兼容的裁决：整批同路。** `CanUseBackend` 对批里每个 renderer 问 `IsCompatible`，任一为 false
+  整批回退 legacy，不做"部分在 device、部分在 host"的混合。今天两个 device 后端的 `IsCompatible` 都
+  无条件 true，混合态不可达；legacy 路本来就通过 N 个 host consumer 正确服务 N 个 renderer，混合买不到
+  任何可观测的东西。回退现在会翻转 `backend_active_` / `active_backend_`，经
+  `LUMICE_GetBackendFallbackFlag` / `LUMICE_GetActiveBackend` 对 GUI、CLI 统计行与 `[BENCHMARK]` JSON 可见。
+- **实测（各自参照机，`test/performance/test_{metal_multi_renderer,cuda}_throughput.py` 的口径：
+  drain-aligned，21 次交错采样取中位数）：** 用户双 render 文档（fisheye_equidistant 1024² +
+  dual_fisheye_equal_area 2048×1024，3 晶体 + 3 raypath filter，D65）Metal 双 render 27.9M rays/s，
+  为单 render 的 0.950 / 0.908；legacy CPU 同 config 6.7M rays/s，改前回退态仅 1.06× legacy，
+  现为 4.2×。CUDA（RTX 5090 D，不锁频，单样本 CoV 0.13–0.16）双 render 282.8M rays/s，
+  为单 render 的 0.906 / 0.992，legacy 13.4M ⇒ 21.1×。
+  逐 renderer parity（`test/parity-cross-backend/backend/test_{metal,cuda}_multi_renderer_parity.py`）：
+  `multi_lens`（3 renderer）Metal ds-corr 0.986 / 0.991 / 0.9999、energy 0.995 / 0.996 / 0.997；
+  CUDA ds-corr 0.9995 / 1.0000 / 1.0000、energy 1.002 / 1.005 / 1.006，双账本比值 CUDA 在 0.03% 内、
+  Metal 低 0.3–0.5%（单 renderer 会话已如此，非 N 面路径引入）。
 
 ### 4.3 诚实的反点：纯吞吐 image 出口反而可能赢
 

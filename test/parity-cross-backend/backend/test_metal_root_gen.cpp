@@ -68,7 +68,7 @@ TEST(MetalRootGen, DeviceGenDeterminism) {
 
   SessionSpec spec;
   spec.scene = &scene;
-  spec.render = &render;
+  spec.renders = { &render };
   spec.wl = WlParam{ 550.0f, 1.0f };
   spec.seed = 42;
 
@@ -118,7 +118,7 @@ TEST(MetalRootGen, DeviceGenVsHostGenStatisticalParity) {
   auto render = MakeRectangularRender();
   SessionSpec spec;
   spec.scene = &scene;
-  spec.render = &render;
+  spec.renders = { &render };
   spec.wl = WlParam{ 550.0f, 1.0f };
   spec.seed = 42;
 
@@ -186,7 +186,7 @@ TEST(MetalRootGen, MultiCrystalUsesPerCiDeviceGen) {
 
   SessionSpec spec;
   spec.scene = &scene;
-  spec.render = &render;
+  spec.renders = { &render };
   spec.wl = WlParam{ 550.0f, 1.0f };
   spec.seed = 42;
 
@@ -225,7 +225,7 @@ TEST(MetalRootGen, ZeroSeedUsesHostGen) {
 
   SessionSpec spec;
   spec.scene = &scene;
-  spec.render = &render;
+  spec.renders = { &render };
   spec.wl = WlParam{ 550.0f, 1.0f };
   spec.seed = 0;  // disables device-gen branch in TraceLayer
 
@@ -268,7 +268,7 @@ TEST(MetalRootGen, DeviceGenMultiSessionAdvancesGenRayBase) {
   auto render = MakeRectangularRender();
   SessionSpec spec;
   spec.scene = &scene;
-  spec.render = &render;
+  spec.renders = { &render };
   spec.wl = WlParam{ 550.0f, 1.0f };
   spec.seed = 42;
 
@@ -329,7 +329,7 @@ TEST(MetalRootGen, DeviceGenDeterminismCrossInstanceMultiSession) {
   auto render = MakeRectangularRender();
   SessionSpec spec;
   spec.scene = &scene;
-  spec.render = &render;
+  spec.renders = { &render };
   spec.wl = WlParam{ 550.0f, 1.0f };
   spec.seed = 42;
 
@@ -423,7 +423,7 @@ TEST(MetalRootGen, GenRayBaseHiWireUp) {
 
   SessionSpec spec;
   spec.scene = &scene;
-  spec.render = &render;
+  spec.renders = { &render };
   spec.wl = WlParam{ 550.0f, 1.0f };
   spec.seed = 42;
 
@@ -514,7 +514,7 @@ TEST(MetalRootGen, TransitStreamWireUp) {
 
   SessionSpec spec;
   spec.scene = &scene;
-  spec.render = &render;
+  spec.renders = { &render };
   spec.wl = WlParam{ 550.0f, 1.0f };
   spec.seed = 42;
 
@@ -655,7 +655,7 @@ TEST(RngObservabilityFacilitySmoke, NearPoleAcceptanceRateMatchesDocAnchors) {
     auto render = MakeRectangularRender();
     SessionSpec spec;
     spec.scene = &scene;
-    spec.render = &render;
+    spec.renders = { &render };
     spec.wl = WlParam{ 550.0f, 1.0f };
     spec.seed = 42;
 
@@ -737,7 +737,7 @@ TEST(RngObservabilityFacilitySmoke, MultiCiAttemptWindowsDoNotOverwrite) {
   auto render = MakeRectangularRender();
   SessionSpec spec;
   spec.scene = &scene;
-  spec.render = &render;
+  spec.renders = { &render };
   spec.wl = WlParam{ 550.0f, 1.0f };
   spec.seed = 42;
 
@@ -798,7 +798,7 @@ TEST(RngObservabilityFacilitySmoke, NearPoleUniformAcceptanceRateBeatsBaseline) 
   auto render = MakeRectangularRender();
   SessionSpec spec;
   spec.scene = &scene;
-  spec.render = &render;
+  spec.renders = { &render };
   spec.wl = WlParam{ 550.0f, 1.0f };
   spec.seed = 42;
 
@@ -873,7 +873,7 @@ TEST(RngObservabilityFacilitySmoke, NearPoleGaussianDirsMatchCpuMoments) {
     auto render = MakeRectangularRender();
     SessionSpec spec;
     spec.scene = &scene;
-    spec.render = &render;
+    spec.renders = { &render };
     spec.wl = WlParam{ 550.0f, 1.0f };
     spec.seed = 42;
 
@@ -974,7 +974,7 @@ TEST(RngObservabilityFacilitySmoke, NearPoleLaplacianDirsMatchCpuMoments) {
     auto render = MakeRectangularRender();
     SessionSpec spec;
     spec.scene = &scene;
-    spec.render = &render;
+    spec.renders = { &render };
     spec.wl = WlParam{ 550.0f, 1.0f };
     spec.seed = 42;
 
@@ -1158,7 +1158,7 @@ TEST(MetalRootGen, PerRayEntryPointGeometricConsistency) {
 
   SessionSpec spec;
   spec.scene = &scene;
-  spec.render = &render;
+  spec.renders = { &render };
   spec.wl = WlParam{ 550.0f, 1.0f };
   spec.seed = 42;
 

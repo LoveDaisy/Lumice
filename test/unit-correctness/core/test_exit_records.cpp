@@ -103,7 +103,7 @@ TEST(ExitRecordsTest, CpuBackendSingleMsFillsMetadata) {
 
   SessionSpec spec;
   spec.scene = &scene;
-  spec.render = &render;
+  spec.renders = { &render };
   spec.wl = WlParam{ 550.0f, 1.0f };
   spec.seed = 42;
 
@@ -154,7 +154,7 @@ TEST(ExitRecordsTest, MetalBackendSingleMsFillsMetadata) {
 
   SessionSpec spec;
   spec.scene = &scene;
-  spec.render = &render;
+  spec.renders = { &render };
   spec.wl = WlParam{ 550.0f, 1.0f };
   spec.seed = 42;
 
@@ -218,7 +218,7 @@ inline std::vector<ExitRayRecord> RunMetalExitRays(const SceneConfig& scene, con
                                                    uint32_t seed = 42) {
   SessionSpec spec;
   spec.scene = &scene;
-  spec.render = &render;
+  spec.renders = { &render };
   spec.wl = WlParam{ 550.0f, 1.0f };
   spec.seed = seed;
 

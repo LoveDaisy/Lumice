@@ -109,11 +109,20 @@ class RenderConsumer : public IConsume {
   // has ever taken, and it stays a separate parameter rather than moving into RenderConfig
   // because the sun belongs to the scene, not to any one renderer — three renderers in one scene
   // share it.
-  // `sun` comes LAST, after the older `class_table`, so that every existing two-argument
+  // `sun` comes after the older `class_table`, so that every existing two-argument
   // construction keeps compiling — it is the sun a renderer with no angular_dist_grid_ entries
   // never consults.
+  // `renderer_index` is this consumer's position among the session's renderers — the SAME
+  // position its RenderConfig holds in the SimBatch::renders_ vector the server hands the
+  // simulator, and therefore in SessionSpec::renders and in every per-renderer vector a
+  // device-fused SimData carries (xyz_pixel_data_ / xyz_landed_weight_ / lane_pixel_data_).
+  // ConsumeDeviceFused slices its own plane out by it. The server passes it explicitly when
+  // it builds one consumer per renderer; the default 0 is the single-renderer meaning every
+  // test that constructs one consumer wants, and it is safe to be wrong about only in the
+  // sense that ConsumeDeviceFused validates the plane's shape against config_ at runtime
+  // (release-safe, not an assert) and warns rather than reading a wrong-sized plane.
   explicit RenderConsumer(RenderConfig config, ColorClassTable class_table = ColorClassTable{},
-                          SunParam sun = SunParam{ 0.0f, 0.0f, 0.5f });
+                          SunParam sun = SunParam{ 0.0f, 0.0f, 0.5f }, size_t renderer_index = 0);
 
   void Consume(const SimData& data) override;
   // S1 device-fused (scrum-302): fold a backend-accumulated XYZ pixel buffer
@@ -496,6 +505,11 @@ class RenderConsumer : public IConsume {
   // tidying-up.
   std::array<annotation::CanvasPoint, annotation::kMarkerCount> marker_points_;
   SunParam sun_;
+  // Position of this consumer's renderer in the session's renderer list — see the constructor.
+  size_t renderer_index_ = 0;
+  // One-shot latch for a device-fused batch whose per-renderer vectors do not carry a plane
+  // of this consumer's shape at renderer_index_ (server/backend renderer-order disagreement).
+  bool logged_plane_mismatch_ = false;
   float total_intensity_ = 0;
   float snapshot_intensity_ = 0;
   // Σ SimData::emitted_energy_ over every batch consumed since the last Reset(),

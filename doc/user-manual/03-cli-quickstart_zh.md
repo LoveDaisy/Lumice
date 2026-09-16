@@ -206,6 +206,7 @@ Examples:
 
 - `-f` 是唯一必需 flag。不带它会以非零退出并打印 usage 提示。
 - `--format png` 切到无损 PNG，此时 `--quality` 被忽略。
+- `--backend <name>` 只是**请求**一个 trace 后端；这次运行实际拿到了什么，看 `Stats:` 行：`backend=<cpu|metal|cuda>` 是运行真正跑在哪个后端上，`fell_back=true` 表示 GPU 后端曾拿到、随后丢失或被拒绝（运行中途设备出错，或 config 是它服务不了的），其余部分改走了 CPU 路——原因是 stderr 上的一条 `WARN`。本构建或本机根本提供不了的后端（比如在 Mac 上 `--backend cuda`）不算回退：运行从一开始就按 CPU 路配置，读到的是 `backend=cpu, fell_back=false`，外加启动时的一条警告。`benchmark` 子命令的 `[BENCHMARK]` JSON 带同样的两个字段。多渲染器 config（GUI 导出的文档带两个）在 GPU 路上作为一个 session 运行——见 [`../configuration_zh.md`](../configuration_zh.md#多个渲染器与-gpu-路)。
 - `--workers <N>` 覆盖自动 worker 数（每个物理核一个，但有一个实测上限；该上限只作用于自动值，你显式给出的 `N` 永远不受它约束）。它是命令行开关而不是 config 字段，是有意的：worker 数描述的是**机器**，而 config 文件会在机器之间流转。非法值（`0` / 负数 / 非数字）以非零退出，不静默回退到默认值。
 - `Lumice analyze -f <config>` 不渲染，而是向场景提一个问题：哪些光路链把能量送进了天空的某个区域，结果是 stdout 上的 CSV（或 `--csv <path>` 写文件）。config 只是场景；区域、行合并所用的对称性、光线预算与随机种子全是选项，从不读 config——所以脚本可以拿同一份 config 问多个问题，加 `--seed` 即可复现任何一次。`ray_num` 为 `"infinite"` 的场景会一直跑到 Ctrl-C，仍然写出结果；带 `--csv` 时文件每秒原子重写，任何时刻读到的都是完整文件。进度行走 stderr，stdout 只有 CSV。
 - `Lumice benchmark -f <config>` 用于性能回归测试 — 详见 [`../performance-testing_zh.md`](../performance-testing_zh.md)，**不是**普通模拟用法；它只接受 `-f`、`--backend`、`-v`、`-d`、`-h`（没有 `-o`：它不写文件；没有 `--workers`：worker 数就是测量口径本身）。原来的 `--benchmark` 旗现在会报错并给出指向这里的迁移提示。

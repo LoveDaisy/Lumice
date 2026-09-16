@@ -26,6 +26,7 @@ Thresholds: raw corr (block-mean ds) / render PSNR per scene calibrated from
 baseline.md (258.6.2 measurement on 2026-06-10). See `_RAW_THRESHOLDS` below.
 """
 import math
+import os
 import platform
 from pathlib import Path
 
@@ -145,15 +146,14 @@ def _run(config_name: str, backend: str, seed: int = _SEED) -> BufferedSimResult
 def _assert_routed(r: BufferedSimResult, expected_backend: str, config_name: str) -> None:
     """Decision Point 1 (a): assert Metal/Cpu actually executed (no fallback).
 
-    For legacy: no "routing via" log is emitted; _summarize_backend defaults to
-    routed="legacy", so this assertion's real job is catching env pollution
-    (e.g. a leaked LUMICE_TRACE_BACKEND from a prior test run), not positively
-    confirming legacy executed.
+    `routed_backend` is LUMICE_GetActiveBackend's kind, refined to "cpu_backend"
+    by the one routing log line the C API cannot express (see BufferedSimResult).
+    For legacy the assertion's real job is catching env pollution (e.g. a leaked
+    LUMICE_TRACE_BACKEND from a prior test run).
     """
     assert r.routed_backend == expected_backend, (
         f"{config_name}/{expected_backend}: routed={r.routed_backend!r} "
-        f"(expected {expected_backend!r}); core log did not emit the expected "
-        f"routing line - see log_lines for the actual path."
+        f"(expected {expected_backend!r}) - see log_lines for the actual path."
     )
     assert not r.fell_back, (
         f"{config_name}/{expected_backend}: fell back to legacy (lens/view "
@@ -167,22 +167,44 @@ def _assert_routed(r: BufferedSimResult, expected_backend: str, config_name: str
 
 @pytest.mark.slow
 def test_metal_fallback_detector():
-    """A multi-renderer config MUST trip the "falling back to legacy" log.
+    """A backend request the build cannot honour MUST read back as a different
+    route through the same LUMICE_GetActiveBackend every metal assertion reads.
 
-    Insurance that all other Axis-A (metal) assertions can meaningfully fail
-    rather than silently pass on a degraded path.
+    Insurance that all other Axis-A (metal) routing assertions can meaningfully
+    fail rather than silently pass on a degraded path.
 
     NOTE (315.3/315.4): this used to force Metal on halo_22 (fisheye_equal_area)
     and rely on a *lens-type* incompatibility. That trigger is GONE — the shared
     ProjectExitToPixel migration (315.3) + globe (315.4) relaxed
     MetalTraceBackend::IsCompatible to accept EVERY lens type, so no projection
-    falls back any more. Repointed to the projection-INDEPENDENT multi-renderer
-    fallback (CanUseBackend: renders_->size() != 1) which still fires.
+    falls back any more. It was then repointed to the multi-renderer fallback,
+    and THAT trigger is gone too: a Metal session serves N renderers at once
+    (one device plane each), and the only count it refuses (more than
+    kMaxRenderersDevice = 4) is the same count the C API already rejects at
+    parse time (LUMICE_MAX_CONFIG_RENDERERS = 4), so no config that reaches the
+    simulator makes Metal fall back on this host. What still fires, on a build
+    without CUDA, is the routing layer's own refusal of a CUDA request
+    ("LUMICE_TRACE_BACKEND=cuda requested but LUMICE_CUDA_ENABLED not set;
+    falling back to legacy CPU"): the run executes on legacy and
+    LUMICE_GetActiveBackend says so.
+
+    `fell_back` stays False here and is pinned as such: a refusal at routing
+    time sizes the server for the CPU route, and the product's flag
+    (LUMICE_GetBackendFallbackFlag) means "a GPU-sized route lost its backend",
+    which no legal config can trigger today — its teeth are shown by breaking a
+    CanUseBackend gate in source, not by a fixture.
     """
-    r = _run("multi_lens", "metal")
-    assert r.fell_back, (
-        "Expected Metal fallback on a multi-renderer config (multi_lens.json) but "
-        f"got fell_back=False. log_lines tail: {r.log_lines[-5:]}"
+    if os.environ.get("LUMICE_HAS_CUDA") == "1":
+        pytest.skip("CUDA-capable build: a cuda request is honoured here, not refused")
+    r = _run("halo_22", "cuda")
+    assert r.routed_backend == "legacy", (
+        "Expected the routing layer to refuse a CUDA request on a non-CUDA build and run "
+        f"legacy, but LUMICE_GetActiveBackend reports {r.routed_backend!r}. "
+        f"log_lines tail: {r.log_lines[-5:]}"
+    )
+    assert not r.fell_back, (
+        "A request refused at routing time is not a fallback (the server was sized for the "
+        f"CPU route), yet LUMICE_GetBackendFallbackFlag reports 1. log tail: {r.log_lines[-5:]}"
     )
 
 

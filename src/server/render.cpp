@@ -160,12 +160,12 @@ void FillZeroEnergyImage(uint8_t* buf, size_t total_pix, bool print_mode, const 
 }  // namespace
 
 // =============== Renderer ===============
-RenderConsumer::RenderConsumer(RenderConfig config, ColorClassTable class_table, SunParam sun)
+RenderConsumer::RenderConsumer(RenderConfig config, ColorClassTable class_table, SunParam sun, size_t renderer_index)
     : config_(std::move(config)),
       short_pix_(static_cast<float>(std::min(config_.resolution_[0], config_.resolution_[1]))),
       internal_xyz_(std::make_unique<float[]>(config_.resolution_[0] * config_.resolution_[1] * 3)),
       comp_xyz_(std::make_unique<float[]>(config_.resolution_[0] * config_.resolution_[1] * 3)), sun_(sun),
-      class_table_(std::move(class_table)),
+      renderer_index_(renderer_index), class_table_(std::move(class_table)),
       lane_pixel_count_(static_cast<size_t>(config_.resolution_[0]) * static_cast<size_t>(config_.resolution_[1])) {
   // Borrow the first pair up front so the two snapshot getters never see a null
   // buffer before the first PrepareSnapshot/PostSnapshot — the pool zero-fills fresh
@@ -341,14 +341,37 @@ float RenderConsumer::CompositeAnchorScale(float participating_p99_y) const {
 void RenderConsumer::ConsumeDeviceFused(const SimData& data) {
   // S1 device-fused: backend already accumulated XYZ on-device; skip
   // projection and fold the pixel buffer into internal_xyz_ via Neumaier.
+  // The batch carries ONE plane PER RENDERER (SessionSpec::renders order); this consumer's
+  // is the one at renderer_index_, the position the server built it at. Release-safe shape
+  // gate rather than an assert: a renderer-order disagreement between server and backend
+  // would otherwise fold another renderer's plane (or read past the vector) in a -DNDEBUG
+  // build with nothing but a wrong picture to show for it.
   auto t0 = std::chrono::steady_clock::now();
-  size_t total = static_cast<size_t>(config_.resolution_[0]) * static_cast<size_t>(config_.resolution_[1]) * 3u;
-  assert(data.xyz_pixel_data_.size() == total);
-  for (size_t i = 0u; i < total; ++i) {
-    NeumaierAdd(internal_xyz_[i], comp_xyz_[i], data.xyz_pixel_data_[i]);
-  }
-  total_intensity_ += data.xyz_landed_weight_;
+  // Charged up front, as the host path does: the emitted energy is a property of the batch,
+  // not of whether this consumer can find its plane in it.
   total_emitted_energy_ += data.emitted_energy_;
+  const size_t total = static_cast<size_t>(config_.resolution_[0]) * static_cast<size_t>(config_.resolution_[1]) * 3u;
+  const bool plane_ok = renderer_index_ < data.xyz_pixel_data_.size() &&
+                        data.xyz_pixel_data_[renderer_index_].size() == total &&
+                        renderer_index_ < data.xyz_landed_weight_.size();
+  if (!plane_ok) {
+    if (!logged_plane_mismatch_) {
+      ILOG_ERROR(logger_,
+                 "RenderConsumer: device-fused batch carries {} plane(s) but this consumer is renderer {} "
+                 "expecting {} floats (got {}) — server/backend renderer order disagree; dropping the batch's "
+                 "pixels for this renderer",
+                 data.xyz_pixel_data_.size(), renderer_index_, total,
+                 renderer_index_ < data.xyz_pixel_data_.size() ? data.xyz_pixel_data_[renderer_index_].size() : 0u);
+      logged_plane_mismatch_ = true;
+    }
+    consume_count_++;
+    return;
+  }
+  const std::vector<float>& plane = data.xyz_pixel_data_[renderer_index_];
+  for (size_t i = 0u; i < total; ++i) {
+    NeumaierAdd(internal_xyz_[i], comp_xyz_[i], plane[i]);
+  }
+  total_intensity_ += data.xyz_landed_weight_[renderer_index_];
   // task-358.1 Step 4 (AC3): fold the device per-color-class Y-lane accumulator
   // into lane_y_. Layout (matches Metal MSL write side):
   //     lane_pixel_data_[c * (W*H) + (py*W+px)]
@@ -366,8 +389,12 @@ void RenderConsumer::ConsumeDeviceFused(const SimData& data) {
   // branch below instead of indexing lane_pixel_data_ with a stride that
   // doesn't match its actual size (code-review-01 Major: this used to be an
   // assert-only guard, i.e. a heap-buffer-overflow read in release).
-  const bool lane_shape_ok = !data.lane_pixel_data_.empty() && lane_slots > 0 && data.lane_class_count_ > 0 &&
-                             pix_wh > 0 && data.lane_pixel_data_.size() == data.lane_class_count_ * pix_wh;
+  // Same per-renderer slicing as the XYZ plane above: lane_pixel_data_[renderer_index_].
+  static const std::vector<float> kNoLanes;
+  const std::vector<float>& lanes =
+      renderer_index_ < data.lane_pixel_data_.size() ? data.lane_pixel_data_[renderer_index_] : kNoLanes;
+  const bool lane_shape_ok = !lanes.empty() && lane_slots > 0 && data.lane_class_count_ > 0 && pix_wh > 0 &&
+                             lanes.size() == data.lane_class_count_ * pix_wh;
   if (lane_shape_ok) {
     // Iterate min(server-side lane count, drained class count) — the server
     // sizes lane_y_ from RaypathColorConfig at consumer construction so both
@@ -376,7 +403,7 @@ void RenderConsumer::ConsumeDeviceFused(const SimData& data) {
     const size_t n_classes = std::min(lane_slots, data.lane_class_count_);
     for (size_t c = 0; c < n_classes; ++c) {
       float* dst = lane_y_[c].get();
-      const float* src = data.lane_pixel_data_.data() + c * pix_wh;
+      const float* src = lanes.data() + c * pix_wh;
       for (size_t p = 0; p < pix_wh; ++p) {
         dst[p] += src[p];
       }
@@ -392,7 +419,7 @@ void RenderConsumer::ConsumeDeviceFused(const SimData& data) {
               "per-class Y-lane data (lane_pixel_data_ empty or shape mismatch: size={} expected={}). Backend "
               "may not be extended for device-side lane accumulation yet, or class_count/resolution disagree "
               "between backend and consumer.",
-              data.lane_pixel_data_.size(), data.lane_class_count_ * pix_wh);
+              lanes.size(), data.lane_class_count_ * pix_wh);
     logged_missing_component_ = true;
   }
   // Count toward the consume profile (proj=0: device did the projection).
@@ -406,6 +433,8 @@ void RenderConsumer::ConsumeDeviceFused(const SimData& data) {
 
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 void RenderConsumer::Consume(const SimData& data) {
+  // The OUTER per-renderer container being non-empty is the "device-fused batch" signal —
+  // a property of the batch, not of which renderer this consumer is, hence no index here.
   if (!data.xyz_pixel_data_.empty()) {
     ConsumeDeviceFused(data);
     return;

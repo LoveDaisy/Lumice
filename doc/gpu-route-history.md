@@ -171,3 +171,13 @@
 - **315.5**：每种投影一个 cross-backend parity 测试（legacy=oracle）`test/parity-cross-backend/backend/test_{metal,cuda}_projection_parity.py`（共享 `test/e2e/_projection_battery.py`），确认全部类型真走 GPU、不再 fallback。
 
 **结果**：**全部 11 种投影**（`linear` / `fisheye_{equal_area,equidistant,stereographic,orthographic}` / `dual_fisheye_{同四}` / `rectangular` / `globe`）现在都在 **legacy CPU + Metal + CUDA** 上渲染，单源自 `projection_shared.h`。GUI 显示重投影（inverse 重采样固定 dual-fisheye 全天图）是 C-API 边界外的独立关注点，不进 shared、不动（仅守 globe `kGlobeCameraD` 一致性；GUI 侧镜头数学多副本的隐性漂移已单记 backlog，后续单独 explore）。
+
+## 八、Phase 13 — 多 renderer N 面累加 + 回退可见性（`941faebd` → PR #372，2026-09-16）
+
+> 投影全量对齐之后，GPU 路剩下最后一条**按 config 形状回退**的门：`CanUseBackend` 的 `renders_.size() != 1`——而 GUI 导出的文档天然带两个 render（预览 + 导出投影），于是用户最常见的 config 在 Metal/CUDA 上整批回退 legacy（实测 5.1M rays/s，收益近乎不可见）。这一段把 seam 从"一个 renderer"改成"N 个 renderer"，两个 device 后端在 exit tail 内逐 renderer 投影到 N 张面（**一个 dispatch，不是 N 个 pass**），解除该门；并把剩余回退原因从 WARN 升成 C API / CLI / `[BENCHMARK]` 可见。as-built 见 `doc/seam-design.md` §4.2.1。
+
+- **seam N 化 + Metal**（`941faebd` / `c26d5a80` / `ac8de513`）：`SessionSpec::renders` 携 N 个 `RenderConfig*`，`SimData` 三累加目标 N 化，`RenderConsumer` 按下标取面；Metal `KernelParams::renderers[4]` 定长描述符 + 三个累加绑定按偏移分片。顺手修掉一个真缺陷：逐 hit 索引原子加 `landed_weight[r]` 被判非 SIMD-uniform，落地权重系统性偏低 1.66%——改寄存器累加 + 每 SIMD-group 逐 renderer 归约。
+- **CUDA 同形**（`2517aeaa`）：`EmitToDeviceXyz` 循环 N 个 `RendererPlaneDesc`（per-Impl 设备缓冲 `d_renderers_`），`landed_acc[4]` 逐 renderer 独立 warp 归约——⛔ 合并成一次 shuffle 的错误常规 corr/energy 全绿，只有双账本比值能抓。
+- **固定资产 + 可见性**（本 Phase 收口）：逐 renderer parity（`test_{metal,cuda}_multi_renderer_parity.py`，含双账本检查 `sum(Y 面 i)/snapshot_intensity[i]`）、双 render 吞吐闸（`test_{metal_multi_renderer,cuda}_throughput.py`，21 次交错采样取中位数 ≥ 单 render 0.85）；`CanUseBackend` 三条前置门拒绝时翻转 `backend_active_`/`active_backend_`，CLI `Stats:` 行与 `[BENCHMARK]` JSON 新增 `backend` / `fell_back`；`capi_runner` 的路由判定改读 `LUMICE_GetActiveBackend` / `LUMICE_GetBackendFallbackFlag`。
+
+**结果**：用户双 render 文档 Metal **27.9M rays/s = 单 render 的 0.950 / 0.908，4.2× legacy**（改前回退态 1.06×）；CUDA（RTX 5090 D）双 render **282.8M rays/s = 单 render 的 0.906 / 0.992，21.1× legacy**（参照机不锁频，单样本 CoV 0.13–0.16，故闸取 21 次交错采样的中位数比）。`IsCompatible` 两个后端均无条件 true，renderer 上限（4）与 C API 解析期上限相同 ⇒ **今天没有任何能到达 simulator 的 config 会在 GPU 路上按 config 形状回退**；剩余回退只有设备/PSO 中途失败，且现在对用户可见。

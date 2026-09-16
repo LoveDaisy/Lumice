@@ -77,6 +77,15 @@ constant uint  kDevRecCap = 64;  // kMaxHits
 // the sync is still comment/discipline-enforced, just against a real symbol).
 constant uint  kMaxColorClassesDeviceMsl = 16;
 
+// Multi-renderer device-fused seam: MUST match host kMaxRenderersDevice
+// (metal_trace_backend.mm) — same cross-language discipline as the colour-class
+// cap above. One RendererPlaneDesc per renderer rides inside KernelParams, so
+// the cap bounds a `constant`-space array rather than a buffer binding count:
+// every one of Metal's 30 per-stage buffer slots was already taken, which is why
+// the N renderers share the three accumulation bindings (image / landed_weight /
+// class_lane_buf) through per-renderer OFFSETS instead of per-renderer buffers.
+constant uint  kMaxRenderersDeviceMsl = 4;
+
 // --- ReduceBuffer (E4 spike, byte-identical to lumice::detail::ReduceBuffer) -
 
 static inline void PCanonicalShiftInPlace_dev(thread uchar* data, uint size) {
@@ -452,6 +461,29 @@ struct ExitStats {
   atomic_float tally_w2;
 };
 
+// Everything that is PER-RENDERER in a session, as the kernel sees it. The
+// physics of the session (crystal, filters, wavelength pool, exposure anchor,
+// colour-class definitions) is shared by every renderer and stays in
+// KernelParams proper; a renderer only adds its own projection and its own
+// accumulation targets:
+//   proj      : lm_proj::ProjParams — lens / view pose / resolution
+//               (proj.img_w / img_h ARE the plane dims; there is no second copy).
+//   xyz_off   : float index into `image` (buffer 7) where this renderer's
+//               W*H*3 XYZ plane starts. Planes are packed back-to-back in
+//               renderer order.
+//   lane_off  : float index into `class_lane_buf` (buffer 29) where this
+//               renderer's color_class_count*W*H lane region starts, laid out
+//               class-major inside the region exactly as the single-renderer
+//               buffer was: lane[lane_off + c * W*H + pix].
+// The landed-weight scalar needs no offset: `landed_weight` (buffer 17) is
+// simply indexed by renderer position.
+// MUST mirror the host struct of the same name field-for-field.
+struct RendererPlaneDesc {
+  lm_proj::ProjParams proj;
+  uint xyz_off;
+  uint lane_off;
+};
+
 struct KernelParams {
   // scrum-268.8 (DR-3): per-batch n_idx / cie_x/y/z removed. trace kernel now
   // reads per-ray optics from wl_pool[wl_idx] (see WlEntry above + buffer
@@ -461,8 +493,11 @@ struct KernelParams {
   // struct MUST drop the field too or sizeof drifts.
   uint  max_hits;
   uint  num_rays;
-  uint  img_w;
-  uint  img_h;
+  // How many of `renderers[]` (at the end of this struct) are live for this
+  // session — the exit tails project every emitted ray into each of them.
+  // Replaces the former per-session img_w / img_h: the dims now live inside
+  // each renderer's proj.
+  uint  num_renderers;
   uint  ms_mode;
   uint  out_cap;
   // Buffer-egress (exit seam, scrum-258.1): kernel's final-exit branch writes
@@ -493,13 +528,8 @@ struct KernelParams {
   uint  gate_seed;
   uint  filter_desc_max_ci;
   uint  crystal_config_id;
-  // Unified render projection (315.3): host predigests all trig-heavy setup
-  // (per-type scale, dual-fisheye r_scale/overlap, camera rot)
-  // into this POD, filled by BeginSession via BuildProjParams. The exit tail
-  // calls lm_proj::ProjectExitToPixel(proj, world_exit...) — single source with
-  // host CPU (scatter_accum.hpp) and CUDA. Replaces the former loose
-  // proj_type / r_scale / max_abs_dz fields.
-  lm_proj::ProjParams proj;
+  // The per-renderer projection (315.3's `proj`) now lives in renderers[r].proj
+  // below — one per renderer, not one per session.
   // task-358.3 (renamed from capture_component after Fork-C retirement): when
   // non-zero, the emit gate appends (this_mask, weight) of every emitted ray
   // to the capture ring. `this_mask` is now purely Design-2 colour bits (the
@@ -556,6 +586,10 @@ struct KernelParams {
   // tally_w2; 0 on every proportional dispatch, which then pays one branch per exit and
   // no atomic. Mirrors the host field of the same name.
   uint  alloc_tally;
+  // The session's renderers, `num_renderers` of them live (see above). Last so
+  // that every field before it keeps the offset it had; sized by the compile-
+  // time cap because this is `constant`-space data, not a buffer.
+  RendererPlaneDesc renderers[kMaxRenderersDeviceMsl];
 };
 
 // Add one emitted ray's Y into the exposure-anchor plane.
@@ -578,6 +612,89 @@ inline void AccumAnchorY(device atomic_float* anchor_buf,
   }
 }
 
+// Project one emitted ray into EVERY renderer of the session and accumulate it
+// into that renderer's XYZ plane, landed-weight slot and colour-class lane
+// region. This is the whole of the per-renderer exit work, hoisted out of the
+// two exit tails for the same reason AccumAnchorY was: the mid-exit and
+// final-layer tails used to carry two hand-copied versions of this block
+// (`pix_m`/`this_mask` vs `pix_f_lin`/`this_mask_f`) that had to be kept
+// symmetric by discipline alone. Now there is one.
+//
+// Per-session inputs (identical for every renderer): the ray's world-space exit
+// direction, its CMF triple and weight, its colour mask, and the colour-class
+// definitions in `prm`. Per-renderer inputs come from prm.renderers[r]:
+// the projection (with the plane dims inside it) and the two region offsets.
+// The exposure anchor is deliberately NOT part of this loop — it is one plane
+// per session (AccumAnchorY), called once by each tail before this.
+//
+// `bump_landed` semantics are unchanged: the landed weight counts the primary
+// hit only, while every hit (including a dual-fisheye overlap-ring hit) adds
+// into the XYZ plane and the lane region — matching the CPU consumer's Pass 2.
+//
+// The landed weight is NOT an atomic here: it goes into the caller's per-thread
+// `landed_acc[r]` register and reaches `landed_weight[r]` (buffer 17) through
+// one simd_sum + one atomic per SIMD-group in the kernel epilogue, the same
+// shape as the ray-allocation tally. This is deliberate and measured, not a
+// micro-optimisation: with a per-hit atomic on `landed_weight + r` the drained
+// landed weight came back 1.66% LOW against the legacy CPU path (184.54 vs
+// 187.64 on cpu_backend_route.json, while the XYZ plane Y-sum matched to 1e-5),
+// and the identical kernel with the atomic on the bare `landed_weight` pointer
+// read 187.64. The bare pointer is provably SIMD-uniform, so the compiler
+// reduces the group before touching memory; the indexed address is not, and
+// 2M per-lane float atomics on one hot word lose ~1.7% to accumulated
+// rounding. Reducing explicitly makes the result independent of that analysis
+// — and holds for every renderer, not just the one at index 0.
+inline void AccumRendererPlanes(constant KernelParams& prm,
+                                device atomic_float* image,
+                                thread float* landed_acc,
+                                device atomic_float* class_lane_buf,
+                                ulong this_mask,
+                                float wx, float wy, float wz,
+                                float cmf_x, float cmf_y, float cmf_z, float cw) {
+  for (uint r = 0u; r < prm.num_renderers; r++) {
+    // Thread-local copy of the POD projection params: ProjectExitToPixel takes
+    // a `thread const ProjParams&`, and MSL cannot bind a `constant` object to
+    // a thread reference.
+    lm_proj::ProjParams proj_r = prm.renderers[r].proj;
+    const uint xyz_off  = prm.renderers[r].xyz_off;
+    const uint lane_off = prm.renderers[r].lane_off;
+    const int  iw_i = proj_r.img_w;
+    const int  ih_i = proj_r.img_h;
+    lm_proj::ProjResult pr = lm_proj::ProjectExitToPixel(proj_r, wx, wy, wz);
+    for (int hi = 0; hi < pr.count; hi++) {
+      int px = pr.hits[hi].px;
+      int py = pr.hits[hi].py;
+      if (px >= 0 && px < iw_i && py >= 0 && py < ih_i) {
+        uint pix = uint(py) * uint(iw_i) + uint(px);
+        AccumXyzToPixel(image + xyz_off, pix, cmf_x, cmf_y, cmf_z, cw);
+        if (pr.hits[hi].bump_landed) {
+          landed_acc[r] += cw;
+        }
+        // Per-colour-class Y-lane accumulation: fan this ray's Y (cmf_y * cw)
+        // into each active class whose predicate matches this_mask. Mirrors
+        // CPU RenderConsumer::AccumulateColorClassLanes; zero-cost when
+        // color_class_count == 0 (single branch skip).
+        if (prm.color_class_count != 0u) {
+          uint pix_stride = uint(iw_i) * uint(ih_i);
+          float y_val = cmf_y * cw;
+          for (uint c = 0u; c < prm.color_class_count; c++) {
+            ulong bits = prm.color_class_bits[c];
+            if (bits == 0ul) { continue; }
+            ulong matched = this_mask & bits;
+            bool satisfied = (prm.color_class_combine[c] == 0u)
+                                 ? (matched != 0ul)
+                                 : (matched == bits);
+            if (satisfied) {
+              atomic_fetch_add_explicit(&class_lane_buf[lane_off + c * pix_stride + pix],
+                                        y_val, memory_order_relaxed);
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
 kernel void trace_layer_kernel(
     device const float*    root_d   [[buffer(0)]],
     device const float*    root_p   [[buffer(1)]],
@@ -586,6 +703,8 @@ kernel void trace_layer_kernel(
     device const float*    poly_n   [[buffer(4)]],
     device const float*    poly_d   [[buffer(5)]],
     constant KernelParams& prm      [[buffer(6)]],
+    // Every renderer's W*H*3 XYZ plane, packed back-to-back in renderer order;
+    // prm.renderers[r].xyz_off says where plane r starts.
     device atomic_float*   image    [[buffer(7)]],
     device float*          out_d    [[buffer(8)]],
     // scrum-268.8 (DR-3): slots 10 and 12 reclaimed from the retired out_p /
@@ -611,8 +730,9 @@ kernel void trace_layer_kernel(
     // (0, full_poly_cnt) — the historical single-shape layout.
     device const uint2*    r_pool_shape [[buffer(15)]],
     device const float*    root_rot [[buffer(16)]],
-    // S1 device-fused: slot 17 is now the per-session landed-weight scalar
-    // (total weight of in-bounds filter-pass emitted rays, used for
+    // S1 device-fused: slot 17 is the landed-weight accumulator — one float
+    // PER RENDERER, indexed by renderer position (total weight of in-bounds
+    // filter-pass emitted rays that hit renderer r's primary pixel, used for
     // normalisation). Slots 17-22, 27, 29 previously held exit-record
     // buffers; those are replaced by on-device projection + XYZ accumulation
     // into `image` (AccumXyzToPixel from accum_shared.h).
@@ -652,13 +772,14 @@ kernel void trace_layer_kernel(
     device float*                  exit_comp_w         [[buffer(22)]],
     device atomic_uint*            exit_comp_cnt       [[buffer(27)]],
     // task-358.1 Step 4 (AC3 device-side Y-lane accumulation): per-color-class
-    // atomic-float accumulator. Layout is column-major-by-class:
-    //   class_lane_buf[class_idx * (img_w * img_h) + (py * img_w + px)]
-    // The host allocates class_count * W * H atomic_floats (or a 4-byte dummy
+    // atomic-float accumulator, one region per renderer packed in renderer
+    // order (prm.renderers[r].lane_off). Inside a region the layout is
+    // column-major-by-class:
+    //   class_lane_buf[lane_off + class_idx * (W * H) + (py * W + px)]
+    // The host allocates class_count * ΣW*H atomic_floats (or a 4-byte dummy
     // when class_count==0 so this binding stays non-nil). Each emit adds
     // cmf_y * cw to every class whose predicate matches the ray's this_mask;
-    // read back + folded into RenderConsumer::lane_y_ each drain window. See
-    // plan §4 Step 4 for the accumulation semantics + rollback contract.
+    // read back + folded into RenderConsumer::lane_y_ each drain window.
     device atomic_float*           class_lane_buf      [[buffer(29)]],
     // The exposure-anchor plane: atomic_float[anchor_proj.img_w * anchor_proj.img_h] of Y.
     // Fixed size (a build constant, not a function of the session), so unlike class_lane_buf
@@ -711,13 +832,12 @@ kernel void trace_layer_kernel(
   const uint  shape_poly_cnt = shape.y;
   const uint  shape_poly_end = shape_poly_off + shape_poly_cnt;
 
-  const int   iw_i      = int(prm.img_w);
-  const int   ih_i      = int(prm.img_h);
-  // 315.3: thread-local copy of the POD projection params. ProjectExitToPixel
-  // takes a `thread const ProjParams&` (LM_THREAD), but prm lives in the
-  // `constant` address space — MSL cannot bind a constant object to a thread
-  // reference, so copy once per thread and pass the local to both exit blocks.
-  lm_proj::ProjParams proj_local = prm.proj;
+  // 315.3: thread-local copy of the anchor's POD projection params.
+  // ProjectExitToPixel takes a `thread const ProjParams&` (LM_THREAD), but prm
+  // lives in the `constant` address space — MSL cannot bind a constant object
+  // to a thread reference, so copy once per thread and pass the local to both
+  // exit blocks. The per-renderer projections are copied the same way, per
+  // renderer, inside AccumRendererPlanes.
   lm_proj::ProjParams anchor_proj_local = prm.anchor_proj;
 
   // path[] carries LOCAL polygon indices (< PolygonFaceCount), so ushort has
@@ -751,6 +871,11 @@ kernel void trace_layer_kernel(
   // serialises on the same 16 bytes. The register form costs two FMAs per exit.
   float tally_w_acc  = 0.0f;
   float tally_w2_acc = 0.0f;
+  // Per-renderer landed weight, accumulated in registers along the ray's path
+  // and folded into landed_weight[r] once per SIMD-group in the epilogue — see
+  // AccumRendererPlanes for why this is a register and not a per-hit atomic.
+  float landed_acc[kMaxRenderersDeviceMsl];
+  for (uint r = 0u; r < kMaxRenderersDeviceMsl; r++) { landed_acc[r] = 0.0f; }
 
   for (uint hit = 0u; hit < prm.max_hits; hit++) {
     if (to_face == kInvalidId) { break; }
@@ -956,39 +1081,9 @@ kernel void trace_layer_kernel(
               // rather than to the frame. Hence OUTSIDE the render hit loop below, which
               // only runs for rays that landed in-bounds.
               AccumAnchorY(anchor_buf, anchor_proj_local, wcx, wcy, wcz, cmf_y * cw);
-              lm_proj::ProjResult pr_m = lm_proj::ProjectExitToPixel(proj_local, wcx, wcy, wcz);
-              for (int hi = 0; hi < pr_m.count; hi++) {
-                int px_m = pr_m.hits[hi].px;
-                int py_m = pr_m.hits[hi].py;
-                if (px_m >= 0 && px_m < iw_i && py_m >= 0 && py_m < ih_i) {
-                  uint pix_m = uint(py_m) * prm.img_w + uint(px_m);
-                  AccumXyzToPixel(image, pix_m, cmf_x, cmf_y, cmf_z, cw);
-                  if (pr_m.hits[hi].bump_landed) {
-                    atomic_fetch_add_explicit(landed_weight, cw, memory_order_relaxed);
-                  }
-                  // task-358.1 Step 4 (AC3 device-side Y-lane accumulation):
-                  // fan this ray's Y (cmf_y * cw) into each active color class
-                  // whose predicate matches this_mask. Mirrors CPU
-                  // RenderConsumer::AccumulateColorClassLanes semantics.
-                  // Zero-cost when color_class_count == 0 (single branch skip).
-                  if (prm.color_class_count != 0u) {
-                    uint pix_stride = prm.img_w * prm.img_h;
-                    float y_val = cmf_y * cw;
-                    for (uint c = 0u; c < prm.color_class_count; c++) {
-                      ulong bits = prm.color_class_bits[c];
-                      if (bits == 0ul) { continue; }
-                      ulong matched = this_mask & bits;
-                      bool satisfied = (prm.color_class_combine[c] == 0u)
-                                           ? (matched != 0ul)
-                                           : (matched == bits);
-                      if (satisfied) {
-                        atomic_fetch_add_explicit(&class_lane_buf[c * pix_stride + pix_m],
-                                                  y_val, memory_order_relaxed);
-                      }
-                    }
-                  }
-                }
-              }
+              // Then every renderer's plane — the per-renderer half of the exit work.
+              AccumRendererPlanes(prm, image, landed_acc, class_lane_buf, this_mask,
+                                  wcx, wcy, wcz, cmf_x, cmf_y, cmf_z, cw);
               // task-358.3 (renamed from capture_component): append this
               // emitted ray's (this_mask, weight) to the capture ring for the
               // host-side CPU parity harness.
@@ -1091,43 +1186,11 @@ kernel void trace_layer_kernel(
             // bump_landed (primary, not overlap — parity with Pass 2).
             // Exposure anchor — same call, same reason, as the mid-exit tail above.
             AccumAnchorY(anchor_buf, anchor_proj_local, wx, wy, wz, cmf_y * cw);
-            lm_proj::ProjResult pr_f = lm_proj::ProjectExitToPixel(proj_local, wx, wy, wz);
-            for (int hi = 0; hi < pr_f.count; hi++) {
-              int px_f = pr_f.hits[hi].px;
-              int py_f = pr_f.hits[hi].py;
-              if (px_f >= 0 && px_f < iw_i && py_f >= 0 && py_f < ih_i) {
-                uint pix_f_lin = uint(py_f) * prm.img_w + uint(px_f);
-                uint pix = pix_f_lin * 3u;
-                atomic_fetch_add_explicit(&image[pix + 0u], cmf_x * cw, memory_order_relaxed);
-                atomic_fetch_add_explicit(&image[pix + 1u], cmf_y * cw, memory_order_relaxed);
-                atomic_fetch_add_explicit(&image[pix + 2u], cmf_z * cw, memory_order_relaxed);
-                if (pr_f.hits[hi].bump_landed) {
-                  atomic_fetch_add_explicit(landed_weight, cw, memory_order_relaxed);
-                }
-                // task-358.1 Step 4: final-layer per-class Y-lane accumulation.
-                // MUST stay symmetric with the mid-exit path above (this_mask_f
-                // vs this_mask, pix_f_lin vs pix_m). Includes overlap-ring hits
-                // (bump_landed=false) to match CPU RenderConsumer's Pass 2
-                // AccumulateColorClassLanes semantics — overlap contributes to
-                // lane Y without contributing to landed_weight.
-                if (prm.color_class_count != 0u) {
-                  uint pix_stride = prm.img_w * prm.img_h;
-                  float y_val = cmf_y * cw;
-                  for (uint c = 0u; c < prm.color_class_count; c++) {
-                    ulong bits = prm.color_class_bits[c];
-                    if (bits == 0ul) { continue; }
-                    ulong matched = this_mask_f & bits;
-                    bool satisfied = (prm.color_class_combine[c] == 0u)
-                                         ? (matched != 0ul)
-                                         : (matched == bits);
-                    if (satisfied) {
-                      atomic_fetch_add_explicit(&class_lane_buf[c * pix_stride + pix_f_lin],
-                                                y_val, memory_order_relaxed);
-                    }
-                  }
-                }
-              }
-            }
+            // Then every renderer's plane — the SAME function the mid-exit tail
+            // calls, which is what keeps the two tails symmetric now (this_mask_f
+            // here is the final-layer mask, the mid-exit tail passes this_mask).
+            AccumRendererPlanes(prm, image, landed_acc, class_lane_buf, this_mask_f,
+                                wx, wy, wz, cmf_x, cmf_y, cmf_z, cw);
             atomic_fetch_add_explicit(&exit_stats->count, 1u, memory_order_relaxed);
             atomic_fetch_add_explicit(&exit_stats->w_sum, cw, memory_order_relaxed);
             // Online ray-allocation tally: this ray reached the image.
@@ -1167,6 +1230,15 @@ kernel void trace_layer_kernel(
     if (simd_is_first()) {
       atomic_fetch_add_explicit(&exit_stats->tally_w, group_w, memory_order_relaxed);
       atomic_fetch_add_explicit(&exit_stats->tally_w2, group_w2, memory_order_relaxed);
+    }
+  }
+  // Per-renderer landed weight: same reduction shape, one word per renderer.
+  // Uniform control flow here (every active lane runs the same trip count), which
+  // is what simd_sum needs.
+  for (uint r = 0u; r < prm.num_renderers; r++) {
+    float group_landed = simd_sum(landed_acc[r]);
+    if (simd_is_first()) {
+      atomic_fetch_add_explicit(&landed_weight[r], group_landed, memory_order_relaxed);
     }
   }
 }

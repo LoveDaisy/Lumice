@@ -67,7 +67,7 @@ std::vector<ExitRayRecord> RunCudaPrism(size_t ray_count, size_t max_hits) {
 
   SessionSpec spec;
   spec.scene = &scene;
-  spec.render = &render;
+  spec.renders = { &render };
   spec.wl = WlParam{ 550.0f, 1.0f };
   spec.seed = 42;
 
@@ -211,7 +211,7 @@ TEST(CudaBackendCrystalCount, CountsStochasticCrystalDrawsAcrossLayers) {
     auto render = MakeRenderConfig();
     SessionSpec spec;
     spec.scene = &scene;
-    spec.render = &render;
+    spec.renders = { &render };
     spec.wl = WlParam{ 550.0f, 1.0f };
     spec.seed = 21;
 
@@ -241,7 +241,7 @@ TEST(CudaBackendCrystalCount, CountsStochasticCrystalDrawsAcrossLayers) {
     auto render = MakeRenderConfig();
     SessionSpec spec;
     spec.scene = &scene;
-    spec.render = &render;
+    spec.renders = { &render };
     spec.wl = WlParam{ 550.0f, 1.0f };
     spec.seed = 21;
 
@@ -287,7 +287,7 @@ TEST(CudaBackendCrystalCount, CountsStochasticCrystalDrawsAcrossLayers) {
     auto render = MakeRenderConfig();
     SessionSpec spec;
     spec.scene = &scene;
-    spec.render = &render;
+    spec.renders = { &render };
     spec.wl = WlParam{ 550.0f, 1.0f };
     spec.seed = 23;
 
@@ -373,7 +373,7 @@ TEST(CudaRngHiWiring, GenStreamWireUp) {
   auto render = MakeRenderConfig();
   SessionSpec spec;
   spec.scene = &scene;
-  spec.render = &render;
+  spec.renders = { &render };
   spec.wl = WlParam{ 550.0f, 1.0f };
   spec.seed = 42;
 
@@ -431,7 +431,7 @@ TEST(CudaRngHiWiring, GateStreamWireUp) {
   auto render = MakeFullViewRender();
   SessionSpec spec;
   spec.scene = &scene;
-  spec.render = &render;
+  spec.renders = { &render };
   spec.wl = WlParam{ 550.0f, 1.0f };
   spec.seed = 42;
 
@@ -447,10 +447,11 @@ TEST(CudaRngHiWiring, GateStreamWireUp) {
     host.crystal = nullptr;
     host.refractive_index = 0.0f;
     backend.TraceLayer(RootRaySource::FromHost(host));
-    XyzImageData img{ images[i].data(), render.resolution_[0], render.resolution_[1] };
-    float landed_weight = 0.0f;
-    backend.ReadbackXyzAccum(img, landed_weight);
+    std::vector<XyzImageData> img{ XyzImageData{ images[i].data(), render.resolution_[0], render.resolution_[1] } };
+    std::vector<float> landed_weights;
+    backend.ReadbackXyzAccum(img, landed_weights);
     backend.EndSession();
+    const float landed_weight = landed_weights.empty() ? 0.0f : landed_weights[0];
     ASSERT_GT(landed_weight, 0.0f) << "base_idx=" << i << " — no rays accumulated; gate test cannot observe.";
   }
   hi_wire::AssertImageHiDivergence(images, "gate");
@@ -476,7 +477,7 @@ TEST(CudaRngHiWiring, GateMsMode1StreamWireUp) {
   auto render = MakeFullViewRender();
   SessionSpec spec;
   spec.scene = &scene;
-  spec.render = &render;
+  spec.renders = { &render };
   spec.wl = WlParam{ 550.0f, 1.0f };
   spec.seed = 42;
 
@@ -541,7 +542,7 @@ TEST(CudaRngHiWiring, TransitStreamWireUp) {
   auto render = MakeFullViewRender();
   SessionSpec spec;
   spec.scene = &scene;
-  spec.render = &render;
+  spec.renders = { &render };
   spec.wl = WlParam{ 550.0f, 1.0f };
   spec.seed = 42;
 
@@ -634,7 +635,7 @@ TEST(RngObservabilityFacilitySmoke, MultiCiAttemptWindowsDoNotOverwrite) {
   auto render = MakeFullViewRender();
   SessionSpec spec;
   spec.scene = &scene;
-  spec.render = &render;
+  spec.renders = { &render };
   spec.wl = WlParam{ 550.0f, 1.0f };
   spec.seed = 42;
 
@@ -696,7 +697,7 @@ TEST(RngObservabilityFacilitySmoke, NearPoleGaussianTightEnvelopeAcceptanceRate)
   auto render = MakeFullViewRender();
   SessionSpec spec;
   spec.scene = &scene;
-  spec.render = &render;
+  spec.renders = { &render };
   spec.wl = WlParam{ 550.0f, 1.0f };
   spec.seed = 42;
 
@@ -771,7 +772,7 @@ TEST(RngObservabilityFacilitySmoke, NearPoleLaplacianTightEnvelopeAcceptanceRate
   auto render = MakeFullViewRender();
   SessionSpec spec;
   spec.scene = &scene;
-  spec.render = &render;
+  spec.renders = { &render };
   spec.wl = WlParam{ 550.0f, 1.0f };
   spec.seed = 42;
 
@@ -907,7 +908,7 @@ TEST(CudaRootGen, PerRayEntryPointGeometricConsistency) {
   auto render = MakeFullViewRender();
   SessionSpec spec;
   spec.scene = &scene;
-  spec.render = &render;
+  spec.renders = { &render };
   spec.wl = WlParam{ 550.0f, 1.0f };
   spec.seed = 42;
 
