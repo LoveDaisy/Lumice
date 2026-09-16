@@ -440,8 +440,10 @@ class BufferedSimResult:
     route and is therefore not a fallback — it shows up as `routed_backend`
     being something other than what was asked for.
 
-    `flt_bufs[i]` is renderer i's XYZ plane (H_i, W_i, 3) float64, one per
-    renderer requested via `num_renderers`; `flt_buf` is `flt_bufs[0]`, kept as
+    `flt_bufs[i]` / `rgb_bufs[i]` / `snapshot_intensities[i]` are renderer i's
+    XYZ plane (H_i, W_i, 3) float64, its rendered sRGB image, and its scalar
+    intensity ledger, one per renderer requested via `num_renderers`;
+    `flt_buf` / `rgb_buf` / `snapshot_intensity` are the `[0]` entries, kept as
     the spelling every single-renderer caller uses.
     """
 
@@ -455,10 +457,12 @@ class BufferedSimResult:
     routed_backend: str = ""
     fell_back: bool = False
     log_lines: List[str] = field(default_factory=list)
-    # Per-renderer XYZ planes, index = renderer position in the config's
-    # `render[]`; `flt_buf is flt_bufs[0]`. Length == the `num_renderers` the
-    # caller asked for (1 by default).
+    # Per-renderer copies, index = renderer position in the config's `render[]`;
+    # the scalar/array fields above are their `[0]` entries. Length == the
+    # `num_renderers` the caller asked for (1 by default).
     flt_bufs: List[np.ndarray] = field(default_factory=list)
+    rgb_bufs: List[np.ndarray] = field(default_factory=list)
+    snapshot_intensities: List[float] = field(default_factory=list)
     # See SimResult.emitted_energy — same field, same contract.
     emitted_energy: float = 0.0
     # See SimResult.anchor_l99_sky — same field, same contract.
@@ -1217,6 +1221,24 @@ def _copy_xyz_plane(r: LUMICE_RawXyzResult, index: int, config: str) -> np.ndarr
     )
 
 
+def _copy_rgb_image(rr: LUMICE_RenderResult, index: int, config: str) -> np.ndarray:
+    """Copy one LUMICE_RenderResult row's packed sRGB image into an owned (H, W, 3) uint8 array."""
+    w = int(rr.img_width)
+    h = int(rr.img_height)
+    addr = ctypes.cast(rr.img_buffer, ctypes.c_void_p).value
+    if addr is None or w == 0 or h == 0:
+        raise RuntimeError(
+            f"{config}: LUMICE_FrameGetRender returned an empty buffer for renderer[{index}]"
+        )
+    # img_buffer is packed RGB uint8 (3 bytes/pixel, sRGB); per lumice.h:262.
+    n_rgb = w * h * 3
+    return (
+        np.frombuffer((ctypes.c_ubyte * n_rgb).from_address(addr), dtype=np.uint8)
+        .copy()
+        .reshape(h, w, 3)
+    )
+
+
 _BACKEND_MODES = ("legacy", "metal", "cpu_backend", "cuda")
 
 
@@ -1447,25 +1469,13 @@ def run_scene_sequence_capi_buffered(
                         _copy_xyz_plane(results[i], i, final_config) for i in range(num_renderers)
                     ]
                     flt_buf = flt_bufs[0]
-
-                    rr = renders[0]
-                    rr_w = int(rr.img_width)
-                    rr_h = int(rr.img_height)
-                    rr_addr = ctypes.cast(rr.img_buffer, ctypes.c_void_p).value
-                    if rr_addr is None or rr_w == 0 or rr_h == 0:
-                        raise RuntimeError(
-                            f"{final_config}: LUMICE_FrameGetRender returned empty buffer"
-                        )
-                    # img_buffer is packed RGB uint8 (3 bytes/pixel, sRGB); per lumice.h:262.
-                    n_rgb = rr_w * rr_h * 3
-                    rgb_buf = (
-                        np.frombuffer(
-                            (ctypes.c_ubyte * n_rgb).from_address(rr_addr),
-                            dtype=np.uint8,
-                        )
-                        .copy()
-                        .reshape(rr_h, rr_w, 3)
-                    )
+                    snapshot_intensities = [
+                        float(results[i].snapshot_intensity) for i in range(num_renderers)
+                    ]
+                    rgb_bufs = [
+                        _copy_rgb_image(renders[i], i, final_config) for i in range(num_renderers)
+                    ]
+                    rgb_buf = rgb_bufs[0]
 
                 crystal_num, orientation_num = _read_sample_counts(lib, server)
                 # Routing is a property of the live server's simulator; read it
@@ -1496,6 +1506,8 @@ def run_scene_sequence_capi_buffered(
                 fell_back=fell_back,
                 log_lines=list(log_lines),
                 flt_bufs=flt_bufs,
+                rgb_bufs=rgb_bufs,
+                snapshot_intensities=snapshot_intensities,
                 crystal_num=crystal_num,
                 orientation_num=orientation_num,
             )
