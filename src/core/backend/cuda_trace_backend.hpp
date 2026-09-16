@@ -103,7 +103,7 @@ class CudaTraceBackend : public TraceBackend {
   // view, or dual_fisheye_equal_area @ fov≈180); other lens configs fall back
   // to legacy CPU via simulator backend dispatch.
   bool SupportsDeviceXyzAccum() const override;
-  void ReadbackXyzAccum(XyzImageData& xyz, float& landed_weight) override;
+  void ReadbackXyzAccum(std::vector<XyzImageData>& xyz, std::vector<float>& landed_weight) override;
   // task-358.2 Step 4 (AC3 device-side Y-lane accumulation). CUDA override of
   // the base virtual: copies the flattened `class_count * W * H` atomic-float
   // buffer to host and zeros the device side for the next window. Called from
@@ -111,7 +111,7 @@ class CudaTraceBackend : public TraceBackend {
   // (lane_data empty, class_count=0) when the session carries no
   // raypath_color config — the RenderConsumer then falls back to its host-side
   // rule-lane accumulation path (AC4 zero-cost).
-  void ReadbackClassLanes(std::vector<float>& lane_data, size_t& class_count) override;
+  void ReadbackClassLanes(std::vector<std::vector<float>>& lane_data, size_t& class_count) override;
   // Drain the device exposure-anchor plane and reset it for the next window. See
   // TraceBackend::ReadbackAnchorBuffer for why a device-fused backend must accumulate one.
   void ReadbackAnchorBuffer(std::vector<float>& anchor_y) override;

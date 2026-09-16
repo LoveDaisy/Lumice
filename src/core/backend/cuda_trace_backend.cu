@@ -3765,7 +3765,7 @@ void CudaTraceBackend::BeginSession(const SessionSpec& spec) {
 
   try {
     impl_->scene_ = spec.scene;
-    impl_->render_ = spec.render;
+    impl_->render_ = spec.renders.empty() ? nullptr : spec.renders[0];
     impl_->ray_alloc_ = spec.ray_alloc;
     impl_->wl_ = spec.wl;
     // Seed rng_ ONCE per Impl lifetime — Simulator drives BeginSession per
@@ -4038,11 +4038,12 @@ void CudaTraceBackend::BeginSession(const SessionSpec& spec) {
     // d_landed_weight_. ReadbackXyzAccum D2H copies the image and zeros it for
     // the next window; the landed scalar is folded into `window_landed_weight_`
     // by every TraceLayer and only the double crosses to the consumer.
-    if (spec.render == nullptr) {
-      throw BackendUnavailableError("CudaTraceBackend::BeginSession: spec.render is null");
+    if (spec.renders.empty() || spec.renders[0] == nullptr) {
+      throw BackendUnavailableError("CudaTraceBackend::BeginSession: spec.renders is empty or renders[0] is null");
     }
-    impl_->img_w_ = static_cast<uint32_t>(spec.render->resolution_[0]);
-    impl_->img_h_ = static_cast<uint32_t>(spec.render->resolution_[1]);
+    const RenderConfig& render0 = *spec.renders[0];
+    impl_->img_w_ = static_cast<uint32_t>(render0.resolution_[0]);
+    impl_->img_h_ = static_cast<uint32_t>(render0.resolution_[1]);
     if (impl_->img_w_ == 0u || impl_->img_h_ == 0u) {
       throw BackendUnavailableError(
           "CudaTraceBackend::BeginSession: render.resolution_ has a zero dimension");
@@ -4058,12 +4059,12 @@ void CudaTraceBackend::BeginSession(const SessionSpec& spec) {
     float ax_z_chain[3]{ 0.0f, 0.0f, 1.0f };
     float ax_y_chain[3]{ 0.0f, 1.0f, 0.0f };
     camera_rot
-        .Chain({ ax_z_chain, (-90.0f + spec.render->view_.ro_) * math::kDegreeToRad })
-        .Chain({ ax_y_chain, (90.0f - spec.render->view_.el_) * math::kDegreeToRad })
-        .Chain({ ax_z_chain, spec.render->view_.az_ * math::kDegreeToRad });
+        .Chain({ ax_z_chain, (-90.0f + render0.view_.ro_) * math::kDegreeToRad })
+        .Chain({ ax_y_chain, (90.0f - render0.view_.el_) * math::kDegreeToRad })
+        .Chain({ ax_z_chain, render0.view_.az_ * math::kDegreeToRad });
     const float short_pix =
-        static_cast<float>(std::min(spec.render->resolution_[0], spec.render->resolution_[1]));
-    impl_->proj_params_ = BuildProjParams(*spec.render, camera_rot, short_pix);
+        static_cast<float>(std::min(render0.resolution_[0], render0.resolution_[1]));
+    impl_->proj_params_ = BuildProjParams(render0, camera_rot, short_pix);
     const size_t xyz_floats = static_cast<size_t>(impl_->img_w_) *
                               static_cast<size_t>(impl_->img_h_) * 3u;
     // scrum-312 (third-clock drain): d_xyz_buf_ / d_landed_weight_ are PERSISTENT
@@ -5188,10 +5189,10 @@ void CudaTraceBackend::ReadbackRayMask(std::vector<uint64_t>& masks, std::vector
 // simulator right after ReadbackXyzAccum. Guards on the buffer being
 // allocated + class_count_ non-zero — the base virtual returns empty when the
 // session carries no raypath_color config (AC4 zero-cost).
-void CudaTraceBackend::ReadbackClassLanes(std::vector<float>& lane_data, size_t& class_count) {
+void CudaTraceBackend::ReadbackClassLanes(std::vector<std::vector<float>>& lane_planes, size_t& class_count) {
   class_count = impl_->class_count_;
   if (impl_->class_count_ == 0 || impl_->d_class_lane_buf_ == nullptr) {
-    lane_data.clear();
+    lane_planes.clear();
     return;
   }
   // Same wait discipline as Metal / ReadbackXyzAccum — the trace kernel's
@@ -5212,10 +5213,13 @@ void CudaTraceBackend::ReadbackClassLanes(std::vector<float>& lane_data, size_t&
                "class_count {} × W×H {} = {} floats)",
                impl_->class_lane_pix_capacity_, impl_->class_count_, pix, total);
     assert(false && "d_class_lane_buf_ under-allocated for the current class_count * W * H");
-    lane_data.clear();
+    lane_planes.clear();
     class_count = 0;
     return;
   }
+  // Single-renderer form of the N-plane seam: one region, renderer 0.
+  lane_planes.resize(1);
+  std::vector<float>& lane_data = lane_planes[0];
   lane_data.resize(total);
   CheckCuda(cudaMemcpy(lane_data.data(), impl_->d_class_lane_buf_, total * sizeof(float),
                        cudaMemcpyDeviceToHost),
@@ -5251,7 +5255,13 @@ void CudaTraceBackend::ReadbackAnchorBuffer(std::vector<float>& anchor_y) {
 // simulator calls this on display cadence (a whole window of batches), not per
 // batch, and possibly BETWEEN sessions. Draining twice with no accumulation in
 // between returns zeros on the second call (buffers cleared after the first read).
-void CudaTraceBackend::ReadbackXyzAccum(XyzImageData& xyz, float& landed_weight) {
+void CudaTraceBackend::ReadbackXyzAccum(std::vector<XyzImageData>& xyz_planes, std::vector<float>& landed_weight) {
+  // Single-renderer form of the N-plane seam: exactly one caller plane, renderer 0.
+  if (xyz_planes.size() != 1u) {
+    throw BackendUnavailableError("CudaTraceBackend::ReadbackXyzAccum: caller passed " +
+                                  std::to_string(xyz_planes.size()) + " plane(s) but 1 renderer is allocated");
+  }
+  XyzImageData& xyz = xyz_planes[0];
   // scrum-312 (third-clock drain): the XYZ accumulator is persistent and drained
   // on display cadence, which the simulator triggers BETWEEN per-batch sessions
   // (generation-change / producer-pause / run-exit flush). Gate on the buffer
@@ -5293,7 +5303,8 @@ void CudaTraceBackend::ReadbackXyzAccum(XyzImageData& xyz, float& landed_weight)
   float lw = 0.0f;
   CheckCuda(cudaMemcpy(&lw, impl_->d_landed_weight_, sizeof(float), cudaMemcpyDeviceToHost),
             "ReadbackXyzAccum D2H d_landed_weight");
-  landed_weight += static_cast<float>(impl_->window_landed_weight_ + static_cast<double>(lw));
+  landed_weight.assign(1u, 0.0f);
+  landed_weight[0] += static_cast<float>(impl_->window_landed_weight_ + static_cast<double>(lw));
   // Reset the accumulator so the NEXT drain window starts from zero (scrum-312:
   // this is now the per-window reset — BeginSession no longer zeroes; a second
   // drain with no intervening accumulation returns zeros).
