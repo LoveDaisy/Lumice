@@ -39,6 +39,7 @@
 #include <string>
 
 #include "IconsFontAwesome6.h"
+#include "gui/axis_presets.hpp"     // kAxisPresets rows / kAzFullUniform / kRollFreeUniform
 #include "gui/crystal_preview.hpp"  // BuildCrystalMeshData — core's own answer to "which member led"
 #include "gui/file_io.hpp"          // DeserializeFromJson / BuildExportJsonOrWarn
 #include "gui/panels.hpp"
@@ -64,6 +65,14 @@ const char* const kHeightInput = "**/##Height##modal_cr_input";
 
 gui::CrystalConfig& EntryCrystal() {
   return gui::g_state.crystals[gui::g_state.layers[0].entries[0].crystal_id];
+}
+
+// The Column preset row, as a seed for the axis-memory cases: a named row the classifier
+// recognises, so one Std edit is all it takes to step into Custom and back out.
+void SeedColumnAxis(gui::CrystalConfig& cr) {
+  cr.zenith = gui::AxisDist{ gui::AxisDistType::kGauss, 90.0f, 1.0f };
+  cr.azimuth = gui::kAzFullUniform;
+  cr.roll = gui::kRollFreeUniform;
 }
 
 // Whether a tab's rendered label carries the trailing " *". Read off the label ImGui actually
@@ -1295,6 +1304,169 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
       ctx->Yield(2);
       IM_CHECK_EQ(static_cast<int>(EntryCrystal().zenith.type), static_cast<int>(gui::AxisDistType::kZigzag));
       IM_CHECK_EQ(EntryCrystal().zenith.std, 90.0f);  // clamped into Zigzag's range on the switch
+    };
+  }
+
+  // The Custom preset is a range, not a point: anything the classifier does not recognise as one
+  // of the five named rows. The tuning a user reaches inside that range lives only in the modal's
+  // edit buffer, so before this memory existed, pressing Plate and then Custom again handed back
+  // the factory Custom row and the tuning was gone. The four cases below pin the memory's shape:
+  // it survives a preset round trip (AC1), is keyed per pool crystal (AC2), outlives the modal and
+  // the committed pool contents (AC4), and dies with the document (AC5). The "no memory yet →
+  // factory row" half is already held by the two preset-button cases above and is not repeated.
+  //
+  // Std 12 is the one number every case tunes to: it sits inside Custom from both sides — over
+  // the < 10 bound Column/Plate/Parry demand and under the > 15 bound Lowitz demands — so the
+  // classifier's answer does not depend on which named row the crystal started from.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "edit_modal", "axis_custom_memory_survives_a_preset_round_trip");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      const ScopedPopups popup_guard(ctx);
+      SeedColumnAxis(EntryCrystal());
+      ctx->Yield(2);
+
+      OpenCardEditor(ctx, 0, kAxisTabRef);
+      ctx->Yield(2);
+      ctx->ItemInputValue("**/Zenith/##Std_input", 12.0f);
+      ctx->Yield(2);
+      ctx->ItemClick("**/Plate");
+      ctx->Yield(2);
+      ctx->ItemClick("**/Custom");
+      ctx->Yield(2);
+      ctx->ItemClick(kOk);
+      ctx->Yield(2);
+
+      const auto& cr = EntryCrystal();
+      IM_CHECK(cr.zenith == (gui::AxisDist{ gui::AxisDistType::kGauss, 90.0f, 12.0f }));
+      // Not the factory Custom row's 20° roll either: the whole triple comes back, not just zenith.
+      IM_CHECK(cr.azimuth == gui::kAzFullUniform);
+      IM_CHECK(cr.roll == gui::kRollFreeUniform);
+    };
+  }
+
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "edit_modal", "axis_custom_memory_is_per_crystal");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      const ScopedPopups popup_guard(ctx);
+      SeedColumnAxis(EntryCrystal());
+
+      // A second entry on its own pool crystal, seeded as Plate so the two memories differ in mean
+      // (90 vs 0) and not only in which id they sit under: a memory that mixed the two ids up would
+      // fail on the mean, not pass on a coincidence.
+      gui::CrystalConfig second;
+      SeedColumnAxis(second);
+      second.zenith = gui::AxisDist{ gui::AxisDistType::kGauss, 0.0f, 1.0f };
+      gui::EntryCard e_second;
+      e_second.crystal_id = static_cast<int>(gui::g_state.crystals.size());
+      gui::g_state.crystals.push_back(second);
+      gui::g_state.layers[0].entries.push_back(e_second);
+      ctx->Yield(2);
+      const int cid1 = gui::g_state.layers[0].entries[1].crystal_id;
+      IM_CHECK(cid1 != gui::g_state.layers[0].entries[0].crystal_id);
+
+      OpenCardEditor(ctx, 0, kAxisTabRef);
+      ctx->Yield(2);
+      ctx->ItemInputValue("**/Zenith/##Std_input", 12.0f);
+      ctx->Yield(2);
+      ctx->ItemClick("**/Column");
+      ctx->Yield(2);
+      ctx->ItemClick("**/Custom");
+      ctx->Yield(2);
+      ctx->ItemClick(kOk);
+      ctx->Yield(2);
+
+      OpenCardEditor(ctx, 1, kAxisTabRef);
+      ctx->Yield(2);
+      ctx->ItemInputValue("**/Zenith/##Std_input", 12.0f);
+      ctx->Yield(2);
+      ctx->ItemClick("**/Plate");
+      ctx->Yield(2);
+      ctx->ItemClick("**/Custom");
+      ctx->Yield(2);
+      ctx->ItemClick(kOk);
+      ctx->Yield(2);
+
+      IM_CHECK(EntryCrystal().zenith == (gui::AxisDist{ gui::AxisDistType::kGauss, 90.0f, 12.0f }));
+      IM_CHECK(gui::g_state.crystals[cid1].zenith == (gui::AxisDist{ gui::AxisDistType::kGauss, 0.0f, 12.0f }));
+    };
+  }
+
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "edit_modal", "axis_custom_memory_survives_modal_close_and_reopen");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      const ScopedPopups popup_guard(ctx);
+      SeedColumnAxis(EntryCrystal());
+      ctx->Yield(2);
+
+      OpenCardEditor(ctx, 0, kAxisTabRef);
+      ctx->Yield(2);
+      ctx->ItemInputValue("**/Zenith/##Std_input", 12.0f);
+      ctx->Yield(2);
+      ctx->ItemClick("**/Plate");
+      ctx->Yield(2);
+      ctx->ItemClick(kOk);
+      ctx->Yield(2);
+      // The pool now holds Plate — checked, so the assertion below cannot pass on a commit that
+      // never happened. The memory has to come back from somewhere other than the pool.
+      IM_CHECK(EntryCrystal().zenith == (gui::AxisDist{ gui::AxisDistType::kGauss, 0.0f, 1.0f }));
+
+      OpenCardEditor(ctx, 0, kAxisTabRef);
+      ctx->Yield(2);
+      ctx->ItemClick("**/Custom");
+      ctx->Yield(2);
+      ctx->ItemClick(kOk);
+      ctx->Yield(2);
+
+      IM_CHECK(EntryCrystal().zenith == (gui::AxisDist{ gui::AxisDistType::kGauss, 90.0f, 12.0f }));
+    };
+  }
+
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "edit_modal", "axis_custom_memory_is_cleared_by_new_document");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      const ScopedPopups popup_guard(ctx);
+      SeedColumnAxis(EntryCrystal());
+      ctx->Yield(2);
+
+      OpenCardEditor(ctx, 0, kAxisTabRef);
+      ctx->Yield(2);
+      ctx->ItemInputValue("**/Zenith/##Std_input", 12.0f);
+      ctx->Yield(2);
+      ctx->ItemClick("**/Plate");
+      ctx->Yield(2);
+      ctx->ItemClick("**/Custom");
+      ctx->Yield(2);
+      // Cancel, not OK: the memory is captured while the tab renders, so its lifetime is the
+      // document's, not the commit's — a New must clear it even though nothing was ever committed.
+      ctx->ItemClick(kCancel);
+      ctx->Yield(2);
+
+      gui::DoNew();
+      // The production entry, not ResetTestState(): that would also run ResetModalState(), whose
+      // own clear is not the one under test. DoNew rebuilds g_state from the production defaults
+      // (vertical + immediate), so the two view preferences the harness pins are re-pinned here —
+      // in immediate mode there is no OK button to press below.
+      gui::g_state.modal_layout_vertical = false;
+      gui::g_state.modal_immediate_mode = false;
+      ctx->Yield(2);
+      // The new document's only entry sits on pool crystal id 0 again — the same key the memory
+      // above was stored under.
+      IM_CHECK_EQ(gui::g_state.layers[0].entries[0].crystal_id, 0);
+
+      OpenCardEditor(ctx, 0, kAxisTabRef);
+      ctx->Yield(2);
+      ctx->ItemClick("**/Custom");
+      ctx->Yield(2);
+      ctx->ItemClick(kOk);
+      ctx->Yield(2);
+
+      // The factory Custom row, not the previous document's 12.
+      IM_CHECK(EntryCrystal().zenith == (gui::AxisDist{ gui::AxisDistType::kGauss, 90.0f, 20.0f }));
+      IM_CHECK(EntryCrystal().roll == (gui::AxisDist{ gui::AxisDistType::kGauss, 0.0f, 20.0f }));
     };
   }
 

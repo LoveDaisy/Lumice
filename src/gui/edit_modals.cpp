@@ -9,6 +9,7 @@
 #include <cstring>
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "IconsFontAwesome6.h"
@@ -144,6 +145,13 @@ static bool g_pending_tab_select = false;
 // Edit buffers
 static CrystalConfig g_crystal_buf;
 static AxisDist g_axis_buf[3];  // zenith, azimuth, roll
+
+// Last triple classified as Custom, per pool crystal id. Captured level-triggered inside
+// RenderAxisModal (every frame the Axis tab is the active tab) so any edit path — slider,
+// input box, type combo — is remembered without a per-widget hook. Independent of the pool:
+// the entry may since have been committed as Plate, and pressing Custom still brings this back.
+// Cleared by ClearAxisCustomMemory() (ResetModalState() + every ResetFrontendState() reason).
+static std::unordered_map<int, std::array<AxisDist, 3>> g_axis_custom_memory;
 
 // Filter modal — H5 sum-of-products editor (task-composition-editor-ui / 333.4).
 // One row per OR summand; each row is a single small-domain AND text box driven
@@ -1070,11 +1078,24 @@ static void RenderCrystalModal(GuiState& /*state*/) {
 // about ONE crystal, where a control that quietly edits a global library reads as a mistake —
 // the product answers it by not inferring at all: presets are retuned where they are listed, in
 // the defaults panel's preset library, and this modal stays a pure consumer of them.
-static void RenderAxisModal(GuiState& /*state*/) {
+static void RenderAxisModal(GuiState& state) {
   // Preset buttons — active preset (inferred from current g_axis_buf) is highlighted
   // using the theme's ButtonActive color so it adapts to light/dark style changes.
   AxisPreset active = ClassifyAxisPreset(g_axis_buf[0], g_axis_buf[1], g_axis_buf[2]);
   const ImVec4 active_color = ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive);
+
+  // Level-triggered: remember this crystal's Custom-classified triple every frame it is one, so a
+  // Plate/Column/... press later does not lose it. See g_axis_custom_memory's own comment. The
+  // bounds check mirrors IsCurrentModalDApplicable(); on the real path this tab only renders after
+  // OpenEditModal bound a valid (layer, entry), so it is defensive rather than a known gap.
+  const int ly = g_modal_layer_idx;
+  const int en = g_modal_entry_idx;
+  const bool has_valid_entry = ly >= 0 && ly < static_cast<int>(state.layers.size()) && en >= 0 &&
+                               en < static_cast<int>(state.layers[ly].entries.size());
+  const int crystal_id = has_valid_entry ? state.layers[ly].entries[en].crystal_id : -1;
+  if (active == AxisPreset::kCustom && has_valid_entry) {
+    g_axis_custom_memory[crystal_id] = { g_axis_buf[0], g_axis_buf[1], g_axis_buf[2] };
+  }
 
   ImGui::Text("Presets:");
   for (const auto& entry : kAxisPresets) {
@@ -1084,12 +1105,22 @@ static void RenderAxisModal(GuiState& /*state*/) {
       ImGui::PushStyleColor(ImGuiCol_Button, active_color);
     }
     if (ImGui::SmallButton(entry.label)) {
-      // The user's tuned std when they saved one, the factory row otherwise. Resolved through the
-      // shared accessor rather than read here, so pressing Column gives exactly what the preset
-      // library says Column is.
-      g_axis_buf[0] = EffectiveAxisPresetZenith(entry);
-      g_axis_buf[1] = entry.azimuth;
-      g_axis_buf[2] = entry.roll;
+      const auto remembered =
+          entry.id == AxisPreset::kCustom ? g_axis_custom_memory.find(crystal_id) : g_axis_custom_memory.end();
+      if (remembered != g_axis_custom_memory.end()) {
+        // Custom is a range, not a point: bring back what this crystal was last tuned to inside
+        // it rather than the factory row, which would silently discard that tuning.
+        g_axis_buf[0] = remembered->second[0];
+        g_axis_buf[1] = remembered->second[1];
+        g_axis_buf[2] = remembered->second[2];
+      } else {
+        // The user's tuned std when they saved one, the factory row otherwise. Resolved through
+        // the shared accessor rather than read here, so pressing Column gives exactly what the
+        // preset library says Column is. (For Custom this is the factory row: it has no override.)
+        g_axis_buf[0] = EffectiveAxisPresetZenith(entry);
+        g_axis_buf[1] = entry.azimuth;
+        g_axis_buf[2] = entry.roll;
+      }
       // Drive modal preview to the preset's default view (fixes the bug where
       // switching preset only updated the outer card thumbnail). Same source
       // as Reset View / thumbnail — see DefaultPreviewRotation.
@@ -1536,6 +1567,11 @@ void ResetModalState() {
   g_pending_mode_switch = false;
   g_modal_mesh_hash = 0;
   g_modal_preview_epoch++;  // New preview session: reset the animation ticker (epoch-keyed)
+  ClearAxisCustomMemory();
+}
+
+void ClearAxisCustomMemory() {
+  g_axis_custom_memory.clear();
 }
 
 bool IsCurrentModalDApplicable() {

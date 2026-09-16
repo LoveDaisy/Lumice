@@ -19,6 +19,7 @@
 #include <vector>
 
 #include "gui/analysis_panel.hpp"
+#include "gui/edit_modals.hpp"
 #include "gui/export_fbo_renderer.hpp"
 #include "gui/file_io.hpp"
 #include "gui/gui_logger.hpp"
@@ -715,6 +716,12 @@ void ResetFrontendState(GuiState& state, FrontendResetReason reason, const Front
   // Every reason invalidates the thumbnail cache: New / Open replace the entire layer/entry
   // structure; Revert restores it from snapshot — same reason to refresh thumbnails either way.
   g_thumbnail_cache.OnLayerStructureChanged();
+
+  // Every reason also drops the axis modal's per-crystal Custom memory: it is keyed by pool
+  // crystal id, and each of these reasons replaces or restores the pool, so what a stale entry
+  // would remember belongs to a crystal that is no longer at that id. Unconditional on purpose —
+  // not folded into any reason-grouped block below, so it cannot inherit another state's rule.
+  ClearAxisCustomMemory();
 
   // Preview texture / background — as-built subset per reason. `.lmc` variants both call
   // ClearBackground (post-branch shared line in the pre-refactor DoOpen); the DoOpen(.lmc)
