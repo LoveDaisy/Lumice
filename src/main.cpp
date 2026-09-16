@@ -778,7 +778,7 @@ void RunBenchmarkPass(const std::string& config_str, int num_workers, const char
       result["active_sec"] = std::round(active_sec * 1000.0) / 1000.0;
       result["rays_per_sec"] = std::round(rays_per_sec * 10.0) / 10.0;
       result["rate_basis"] = rate_basis;
-      // ISA tier this binary was actually compiled for, so a recorded [BENCHMARK] line
+      // ISA tier the ENGINE was actually compiled for, so a recorded [BENCHMARK] line
       // answers "which build was this measured on?" without anyone having to still have
       // the configure log. "native" means -march=native was compiled in (local default);
       // "x86-64-v4" is the AVX-512 variant the Linux release ships beside the baseline;
@@ -786,15 +786,14 @@ void RunBenchmarkPass(const std::string& config_str, int num_workers, const char
       // "baseline" is what CI tests and every other release build ships, and is the only
       // tier comparable across platforms — real MSVC cl.exe has no equivalent flag, so a
       // Windows-vs-other A/B taken on "native" numbers is not measuring what it looks like
-      // it is measuring. The string is CMakeLists.txt's LUMICE_ISA_LEVEL_STR, resolved in
-      // lumice_apply_isa_march() by the same condition that gates the -march flag itself,
-      // so it reads "baseline" whenever no flag was applied (any non-Release config
-      // included); see doc/performance-testing.md. cl.exe never defines it.
-#if defined(LUMICE_ISA_LEVEL_STR)
-      result["isa"] = LUMICE_ISA_LEVEL_STR;
-#else
-      result["isa"] = "baseline";
-#endif
+      // it is measuring. Asked of the engine through the C API rather than read off a
+      // macro in this file: on Windows the engine is a DLL picked by CPUID at start-up and
+      // this executable is compiled once for the baseline tier, so a macro here would name
+      // the shell's configure, not the engine that ran the pass — measured on the reference
+      // box as a v3 engine reporting "baseline". The engine's answer is resolved by the same
+      // condition that gates its -march flag, so it reads "baseline" whenever no flag was
+      // applied (any non-Release config included); see doc/performance-testing.md.
+      result["isa"] = LUMICE_GetEngineIsaLevel();
       // Which trace backend the measured pass ran on, and whether a GPU route
       // silently degraded to the legacy CPU path — a throughput number without
       // these is a number for an unknown code path. Pure additions to the

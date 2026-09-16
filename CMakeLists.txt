@@ -792,8 +792,9 @@ endif()
 # flag and the number's provenance cannot independently drift out of sync. (Its inner
 # $<CONFIG:Release> is redundant with the outer $<$<CONFIG:Release>:...> wrapper; that
 # redundancy is the price of the two gates being literally the same expression.)
-# Scoped to `target`'s own compile: the -march flag is PRIVATE (each object file is compiled
-# for one tier), the macro is PUBLIC (see the comment at that call).
+# Scoped to `target`'s own compile: the -march flag and the macro are both PRIVATE (each
+# object file is compiled for one tier, and the macro is read only inside the engine — see
+# the comment at that call).
 function(lumice_apply_isa_march target)
   if(LUMICE_ISA_LEVEL STREQUAL "baseline")
     set(_march_flag "")
@@ -803,15 +804,19 @@ function(lumice_apply_isa_march target)
   set(_active_cond "$<AND:$<CONFIG:Release>,$<BOOL:${_march_flag}>>")
   target_compile_options(${target} PRIVATE
     $<$<CONFIG:Release>:$<${_active_cond}:${_march_flag}>>)
-  # PUBLIC, not PRIVATE: src/main.cpp is not part of lumice_obj — it reaches this macro
-  # through Lumice --PRIVATE--> lumice --PUBLIC--> lumice_obj, the same two-hop usage
-  # requirement chain LUMICE_CUDA_ENABLED already relies on above. The value is the tier
-  # name when the -march flag above is actually applied and "baseline" otherwise (Debug,
-  # MinSizeRel, or the baseline tier itself), so what the binary reports is what it was
-  # compiled with, never what was merely asked for. No counterpart for real MSVC cl.exe:
-  # neither block below runs there, the macro is never defined, and main.cpp's #else falls
-  # back to "baseline".
-  target_compile_definitions(${target} PUBLIC
+  # PRIVATE on purpose: the macro is read in exactly one place, LUMICE_GetEngineIsaLevel()
+  # in src/server/c_api.cpp (an object of lumice_obj), and the executables ask through that
+  # function. It used to be PUBLIC so src/main.cpp could read it directly, and that was the
+  # defect: on Windows the engine is a DLL chosen by CPUID at start-up while the executable
+  # is compiled once for the baseline tier, so a macro reaching main.cpp named the shell's
+  # configure rather than the engine that ran — a v3 engine reported "baseline". Keeping it
+  # off the usage requirements is what makes that mistake a compile error rather than a
+  # wrong number. The value is the tier name when the -march flag above is actually applied
+  # and "baseline" otherwise (Debug, MinSizeRel, or the baseline tier itself), so what the
+  # engine reports is what it was compiled with, never what was merely asked for. No
+  # counterpart for real MSVC cl.exe: neither block below runs there, the macro is never
+  # defined, and c_api.cpp's #else falls back to "baseline".
+  target_compile_definitions(${target} PRIVATE
     "LUMICE_ISA_LEVEL_STR=\"$<IF:${_active_cond},${LUMICE_ISA_LEVEL},baseline>\"")
 endfunction()
 
