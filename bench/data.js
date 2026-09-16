@@ -1,56 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1789568006160,
+  "lastUpdate": 1789569946756,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "41354876b363944c8882dba3c46014eb797382aa",
-          "message": "Merge pull request #274 from LoveDaisy/task/bg-image-filtering\n\nfix(gui): 底图纹理改用 mipmap + trilinear，修缩小显示时的欠采样混叠",
-          "timestamp": "2026-08-26T20:00:46+08:00",
-          "tree_id": "a5fbb679ee0ffcf9c28c9aec23ea64e6663e04a8",
-          "url": "https://github.com/LoveDaisy/ice_halo_sim/commit/41354876b363944c8882dba3c46014eb797382aa"
-        },
-        "date": 1787746335122,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 382839,
-            "unit": "rays/sec",
-            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 586405.5,
-            "unit": "rays/sec",
-            "extra": "CPU: Neoverse-N2\\nCores: 4"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 377604.1,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 9V74 80-Core Processor\\nCores: 4"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 342723.1,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -4768,6 +4720,54 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 378895.1,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "f28752902bc36099d973c676533fb29e7e6e1991",
+          "message": "Merge pull request #374 from LoveDaisy/feat/cuda-discrete-spectrum-wl-pool-cache\n\nfix(cuda): rebuild the wl pool every BeginSession under a discrete spectrum",
+          "timestamp": "2026-09-16T22:34:39+08:00",
+          "tree_id": "8e6d0b7a6f8bcb70d49405b289412534a3c5eb49",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/f28752902bc36099d973c676533fb29e7e6e1991"
+        },
+        "date": 1789569944719,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 374542.1,
+            "unit": "rays/sec",
+            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 592552.3,
+            "unit": "rays/sec",
+            "extra": "CPU: Neoverse-N2\\nCores: 4"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 509509.4,
+            "unit": "rays/sec",
+            "extra": "CPU: INTEL(R) XEON(R) PLATINUM 8573C\\nCores: 4"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 379167.2,
             "unit": "rays/sec",
             "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
           }
