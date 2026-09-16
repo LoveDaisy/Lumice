@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1789569950801,
+  "lastUpdate": 1789569953124,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9560,50 +9560,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "41354876b363944c8882dba3c46014eb797382aa",
-          "message": "Merge pull request #274 from LoveDaisy/task/bg-image-filtering\n\nfix(gui): 底图纹理改用 mipmap + trilinear，修缩小显示时的欠采样混叠",
-          "timestamp": "2026-08-26T20:00:46+08:00",
-          "tree_id": "a5fbb679ee0ffcf9c28c9aec23ea64e6663e04a8",
-          "url": "https://github.com/LoveDaisy/ice_halo_sim/commit/41354876b363944c8882dba3c46014eb797382aa"
-        },
-        "date": 1787746342187,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 93,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 98.6,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 95.6,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 95.3,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "f17b841b725042bd28408b6db3fd1da5cfc7fa8f",
           "message": "Merge pull request #275 from LoveDaisy/task/bg-image-transform\n\nfeat(gui): 底图可平移缩放，让裁剪过的照片能与仿真结果对齐",
           "timestamp": "2026-08-26T20:20:53+08:00",
@@ -13918,6 +13874,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 87.8,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "f28752902bc36099d973c676533fb29e7e6e1991",
+          "message": "Merge pull request #374 from LoveDaisy/feat/cuda-discrete-spectrum-wl-pool-cache\n\nfix(cuda): rebuild the wl pool every BeginSession under a discrete spectrum",
+          "timestamp": "2026-09-16T22:34:39+08:00",
+          "tree_id": "8e6d0b7a6f8bcb70d49405b289412534a3c5eb49",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/f28752902bc36099d973c676533fb29e7e6e1991"
+        },
+        "date": 1789569952480,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 73.8,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 100.3,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 94.2,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 88.4,
             "unit": "%"
           }
         ]
