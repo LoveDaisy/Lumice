@@ -203,7 +203,11 @@ struct SessionSpec {
   // renderer owns its own projection + accumulation target (device-fused
   // backends keep one XYZ plane / landed-weight / colour-class lane region per
   // element, indexed by position here — the same position RenderConsumer
-  // holds as `renderer_index_`). Non-empty; CanUseBackend() has already
+  // holds as `renderer_index_`). This is the as-built form of the "image
+  // egress = N device accumulation targets + N projections per exit" shape
+  // doc/seam-design.md §4.2 describes: a device-fused backend projects every
+  // emitted ray once per element of this vector, inside the one dispatch, and
+  // never hands the host a per-ray record to project. Non-empty; CanUseBackend() has already
   // bounded size() by TraceBackend::MaxRenderers() and checked every element
   // with IsCompatible(): a renderer the backend cannot serve drops the WHOLE
   // batch to the legacy CPU path (no per-renderer mixing — that path is
