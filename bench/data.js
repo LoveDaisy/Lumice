@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1789540149770,
+  "lastUpdate": 1789540153474,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -4788,54 +4788,6 @@ window.BENCHMARK_DATA = {
             "username": "LoveDaisy"
           },
           "distinct": true,
-          "id": "840bc16a46aa7fc6e6265bd34609af330a10af64",
-          "message": "docs(gui-layout): 形态层的锚点从 v4.4.2-new 标签改为分支 + commit\n\n内测反馈已到手，v4.4.2-new 标签与 release 随之删除（留着它就是把已被\n否决的界面挂在 Latest release 上发给外部用户）。但 §8 与 AGENTS.md 索引\n都拿这个标签当「形态层保存在哪里」的锚点，标签一删锚点就悬空。\n\n改为锚在分支 feat/new-gui-layout 与 commit 7a66c523——commit hash 是\n永久锚点，分支是可读入口。§8 同时留一句说明标签删除的原因和重出该构建\n的办法（从该分支重新打标签），免得下一个读者以为构建丢了。",
-          "timestamp": "2026-08-26T10:28:26+08:00",
-          "tree_id": "c793fa450b5d26416c5676defa6dd7ccb9d2badc",
-          "url": "https://github.com/LoveDaisy/ice_halo_sim/commit/840bc16a46aa7fc6e6265bd34609af330a10af64"
-        },
-        "date": 1787712082130,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 851851.1,
-            "unit": "rays/sec",
-            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 1175742.7,
-            "unit": "rays/sec",
-            "extra": "CPU: Neoverse-N2\\nCores: 4"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 761624.7,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 7763 64-Core Processor\\nCores: 4"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 643315.5,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "distinct": true,
           "id": "9be4b99e4907e79992121a4e19f6dd742ba03dea",
           "message": "docs(gui-layout): 原型取证锚点随原型分支一同退役\n\n三个 spike 分支（gui-layout-prototype / gui-visual-language / imgui-docking）\n从未推送、只存在于本地，随新布局方向被内测否决一并删除。布局蓝图开头\n把其中 gui-layout-prototype 及三个 commit 写作「取证锚点」，分支一删这行\n就指不到任何东西。\n\n改为如实说明：取证现场已不存在，§1–§5 此后是已记录的判断而非可重新核验\n的断言；要看那一版形态实际长什么样，去 feat/new-gui-layout——同一形态的\n完整实现，完成度高于原型，只不含 §5 那六条从未被实现的候选。\n\n§5 开头补一句界定：六条结论不因原型删除而撤销，重提的一方承担举证责任。\n顺带修一处漂移：视觉语言 §4.1 仍写着「具体字体尚未定案」，而 §7 的收口\n和 main 上的代码都已是 Roboto Medium 15。",
           "timestamp": "2026-08-26T11:34:40+08:00",
@@ -9540,6 +9492,54 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 664936.8,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "4b269f31e994c541505f45df5390fa783fd5eb4c",
+          "message": "Merge pull request #372 from LoveDaisy/feat/multi-renderer-gpu-backend\n\nfeat: device-fused multi-renderer sessions on Metal and CUDA (scrum multi-renderer-gpu-backend)",
+          "timestamp": "2026-09-16T14:15:30+08:00",
+          "tree_id": "2b95071bd3ce2b50817d54682a83c0363b9638fe",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/4b269f31e994c541505f45df5390fa783fd5eb4c"
+        },
+        "date": 1789540152838,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 1059542.2,
+            "unit": "rays/sec",
+            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 1185007.6,
+            "unit": "rays/sec",
+            "extra": "CPU: Neoverse-N2\\nCores: 4"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 809074.4,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 7763 64-Core Processor\\nCores: 4"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 672272.6,
             "unit": "rays/sec",
             "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
           }
