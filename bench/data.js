@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1789521265881,
+  "lastUpdate": 1789521267851,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9560,45 +9560,6 @@ window.BENCHMARK_DATA = {
             "username": "LoveDaisy"
           },
           "distinct": true,
-          "id": "f1228505c4ed659c006158629ed8b4501eba7074",
-          "message": "docs(gui-layout): 记录内测否决，蓝图从待办降为设计记录\n\nv4.4.2（老 shell）与 v4.4.2-new（新 shell）小范围内测对比后，几乎全部\n内测用户选择回到老 shell。main 回退到 PR #271：视觉语言层留下，形态层\n（PR #272 shell 重组 + PR #273 控件精修）退出，实现保存在分支\nfeat/new-gui-layout 与 tag/release v4.4.2-new。\n\n三处改动都是为了让下一个读者不把已被否决的方向当成在途的待办：\n\n1. gui-layout-architecture.md 顶部状态改写 + 新增 §8。记下三件事：反馈\n   粒度未知（聚合结论没区分拒的是形态还是外观，故保留视觉语言层既不由\n   它支持也不被它否定，下一步取证是老 shell 上单发视觉语言层做窄 A/B）；\n   方法层教训（原型验收与 owner 上手两道闸共享同一盲区——都在问「形态\n   本身好不好」，没问「熟练用户是否愿意换」，而后者才是内测在问的）；\n   以及没有被否决的部分（§0 诊断对今天的老 shell 仍为真，§5 六条被推翻\n   形态不恢复候选资格）。\n\n2. gui-visual-language.md 更正时态。该文 §4 定案随 PR #271 留在 main 上，\n   但文中多处把 docking 迁移写成在途的事，回退后不再成立，一律改读作\n   「将来任何一次面板重排」。同时补回 §7 正文字体的收口——字体定案\n   （Roboto Medium 15 构建期嵌入）随 PR #271 落地，而写下这条收口的文档\n   改动落在 PR #273 里，被本次回退一并带走，留下文档说「未定案」而代码\n   已定案的漂移。\n\n3. AGENTS.md 两条索引同步。索引是这两份文档唯一的必经检索入口，否决\n   记录只写在文档里而不写在索引上，等于没写。",
-          "timestamp": "2026-08-26T10:15:35+08:00",
-          "tree_id": "0508524749ee48fed4c9dbf374750ff51a0579f3",
-          "url": "https://github.com/LoveDaisy/ice_halo_sim/commit/f1228505c4ed659c006158629ed8b4501eba7074"
-        },
-        "date": 1787711364757,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 83.4,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 100.3,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 95.2,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "distinct": true,
           "id": "840bc16a46aa7fc6e6265bd34609af330a10af64",
           "message": "docs(gui-layout): 形态层的锚点从 v4.4.2-new 标签改为分支 + commit\n\n内测反馈已到手，v4.4.2-new 标签与 release 随之删除（留着它就是把已被\n否决的界面挂在 Latest release 上发给外部用户）。但 §8 与 AGENTS.md 索引\n都拿这个标签当「形态层保存在哪里」的锚点，标签一删锚点就悬空。\n\n改为锚在分支 feat/new-gui-layout 与 commit 7a66c523——commit hash 是\n永久锚点，分支是可读入口。§8 同时留一句说明标签删除的原因和重出该构建\n的办法（从该分支重新打标签），免得下一个读者以为构建丢了。",
           "timestamp": "2026-08-26T10:28:26+08:00",
@@ -13913,6 +13874,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 90.3,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "f10f34cfcd966500675c24f83142ce2b7267622e",
+          "message": "Merge pull request #371 from LoveDaisy/feat/adaptive-allocation-gate-statistics\n\ntest(e2e): judge adaptive allocation on row energy with a Šidák worst-row threshold; keep smoke PSNR failure samples",
+          "timestamp": "2026-09-16T09:04:20+08:00",
+          "tree_id": "93b698302b5b77fb9b6d221be0c96348ecf0fe95",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/f10f34cfcd966500675c24f83142ce2b7267622e"
+        },
+        "date": 1789521267378,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 71.4,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 100,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 93.6,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 89.3,
             "unit": "%"
           }
         ]
