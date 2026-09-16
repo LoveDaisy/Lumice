@@ -116,6 +116,13 @@ void StartLinkPickMode(GuiState& state, int layer_idx, int entry_idx);
 // Called by test teardown (ResetTestState) to prevent state leakage between tests.
 void ResetModalState();
 
+// Clears the axis modal's per-crystal "last Custom triple" memory (g_axis_custom_memory in
+// edit_modals.cpp). Called by ResetModalState() (test teardown) and unconditionally by
+// ResetFrontendState() (production): the memory is keyed by pool crystal id, and every reset
+// reason replaces or restores the pool, so a stale entry would attach to whichever crystal next
+// lands on that id.
+void ClearAxisCustomMemory();
+
 // Render the custom-spectrum editor modal (independent of the Crystal/Axis/Filter per-entry
 // modal above). The Sun panel's Spectrum combo calls OpenSpectrumModal() when the user picks
 // "Custom..."; this function must be called each frame (from the main loop, next to
