@@ -117,10 +117,10 @@ namespace lumice {
 //     behaviour.
 //
 // Lifetime contracts (mandatory)
-//   - SessionSpec::scene / SessionSpec::render: backend stores a non-owning
-//     pointer in BeginSession and accesses it throughout the session. Caller
-//     MUST keep both objects alive until EndSession() returns. Backends do
-//     NOT copy SceneConfig / RenderConfig.
+//   - SessionSpec::scene / SessionSpec::renders[i]: backend stores non-owning
+//     pointers in BeginSession and accesses them throughout the session. Caller
+//     MUST keep every pointed-to object alive until EndSession() returns.
+//     Backends do NOT copy SceneConfig / RenderConfig.
 //   - HostRayBatch buffers (d / p / w / tf): valid only during the
 //     TraceLayer call that consumes them. Backends may copy or upload as
 //     needed; they MUST NOT retain the host pointers beyond the call.
@@ -196,10 +196,21 @@ inline PcgRayBaseSplit SplitPcgRayBase(size_t ray_base) {
 // Non-owning pointers; lifetime contract is documented above.
 // -----------------------------------------------------------------------------
 struct SessionSpec {
-  const SceneConfig* scene;    // crystal / light source / ms[] / max_hits
-  const RenderConfig* render;  // lens / resolution / view pose
-  WlParam wl;                  // wavelength + spectral weight
-  uint32_t seed;               // 0 = non-deterministic
+  const SceneConfig* scene;  // crystal / light source / ms[] / max_hits
+  // Every renderer of the session — lens / resolution / view pose each. One
+  // trace session serves ALL of them: the physics (crystal, light, filters,
+  // wavelength pool, exposure anchor) is per-SESSION and shared, while each
+  // renderer owns its own projection + accumulation target (device-fused
+  // backends keep one XYZ plane / landed-weight / colour-class lane region per
+  // element, indexed by position here — the same position RenderConsumer
+  // holds as `renderer_index_`). Non-empty; CanUseBackend() has already
+  // bounded size() by TraceBackend::MaxRenderers() and checked every element
+  // with IsCompatible(): a renderer the backend cannot serve drops the WHOLE
+  // batch to the legacy CPU path (no per-renderer mixing — that path is
+  // unreachable today since every device backend's IsCompatible is `true`).
+  std::vector<const RenderConfig*> renders;
+  WlParam wl;     // wavelength + spectral weight
+  uint32_t seed;  // 0 = non-deterministic
   // Design 2 (task-engine-redirect-design2): raypath_color snapshot for the
   // CPU emit gate's non-destructive color pass. Null → no color configured
   // (AC3 zero-cost path). shared_ptr<const ...> so in-flight sessions keep
@@ -377,8 +388,8 @@ class TraceBackend {
   virtual ~TraceBackend() = default;
 
   // Open a session. The backend captures non-owning pointers to spec.scene
-  // and spec.render; the caller MUST keep them alive until EndSession()
-  // returns.
+  // and every spec.renders[i]; the caller MUST keep them alive until
+  // EndSession() returns.
   virtual void BeginSession(const SessionSpec& spec) = 0;
 
   // Trace one MS layer. Fuses trace -> recorder -> projection -> XYZ
@@ -466,14 +477,18 @@ class TraceBackend {
   // MetalTraceBackend overrides to true; CudaTraceBackend will follow in S2.
   virtual bool SupportsDeviceXyzAccum() const { return false; }
 
-  // Copies the device-accumulated W*H*3 XYZ image into `xyz.data` and the
-  // running landed-weight scalar into `landed_weight`. Must wait for any
-  // outstanding device work to complete before returning. Called once per
-  // wavelength batch AFTER the layer loop. No-op (xyz untouched,
-  // landed_weight = 0) unless SupportsDeviceXyzAccum() is true.
-  virtual void ReadbackXyzAccum(XyzImageData& xyz, float& landed_weight) {
+  // Copies each renderer's device-accumulated W_i*H_i*3 XYZ plane into
+  // `xyz[i].data` and its running landed-weight scalar into
+  // `landed_weight[i]`, for every i < spec.renders.size() — ONE call per
+  // drain covers every renderer (the caller does not loop). `xyz` is
+  // caller-sized (one entry per renderer, dims = that renderer's resolution)
+  // and `landed_weight` is resized to match. Must wait for any outstanding
+  // device work to complete before returning. Called once per wavelength
+  // batch AFTER the layer loop (or once per third-clock window). No-op (xyz
+  // untouched, landed_weight cleared) unless SupportsDeviceXyzAccum() is true.
+  virtual void ReadbackXyzAccum(std::vector<XyzImageData>& xyz, std::vector<float>& landed_weight) {
     (void)xyz;
-    landed_weight = 0.0f;
+    landed_weight.clear();
   }
 
   // task-358.1 Step 4 (AC3 device-side per-color-class Y-lane accumulation).
@@ -485,17 +500,20 @@ class TraceBackend {
   // (same drain cadence), so the caller MUST already have waited on any
   // outstanding device work (mirrored guarantee).
   //
-  // `lane_data` is resized to `class_count * W * H` on populate; when the
-  // session carries no raypath_color config (`class_count == 0` = default),
-  // the base impl leaves it empty and the consumer's ConsumeDeviceFused path
-  // stays byte-identical to pre-358.1 (AC4 zero-cost). Layout inside the
-  // vector matches the MSL kernel's write layout:
-  //     lane_data[c * (W * H) + (py * W + px)]
+  // `lane_data` is resized to one entry per renderer, `lane_data[i]` to
+  // `class_count * W_i * H_i`; when the session carries no raypath_color
+  // config (`class_count == 0` = default), the base impl leaves it empty and
+  // the consumer's ConsumeDeviceFused path stays byte-identical to pre-358.1
+  // (AC4 zero-cost). `class_count` stays ONE scalar: the colour-class
+  // definitions are per-session (they describe ray paths, not pixels) — only
+  // the accumulation buffer's SHAPE follows the renderer. Layout inside each
+  // inner vector matches the MSL kernel's write layout:
+  //     lane_data[i][c * (W_i * H_i) + (py * W_i + px)]
   //
   // Default: no-op (CPU stays on the per-ray outgoing_component_ path;
   // CUDA/Metal-without-lane-support fall back to the RenderConsumer host-side
   // rule-lane accumulation).
-  virtual void ReadbackClassLanes(std::vector<float>& lane_data, size_t& class_count) {
+  virtual void ReadbackClassLanes(std::vector<std::vector<float>>& lane_data, size_t& class_count) {
     lane_data.clear();
     class_count = 0;
   }
@@ -507,9 +525,12 @@ class TraceBackend {
   // buffer — there is nothing left to project. The anchor therefore has to be a SECOND
   // ACCUMULATION TARGET inside the same dispatch: one extra ProjectExitToPixel call per
   // emitted ray, against the fixed anchor parameters, atomically added into a
-  // kAnchorWidth * kAnchorHeight plane of Y. Making it a second RENDERER instead is not an
-  // option — CanUseBackend() rejects any config carrying more than one renderer and drops
-  // the whole session back to the legacy CPU path.
+  // kAnchorWidth * kAnchorHeight plane of Y. It is deliberately NOT one of the session's
+  // renderers even though the seam now carries N of them (SessionSpec::renders): the anchor
+  // is a property of the SCENE — one plane per session, with fixed geometry no user field can
+  // move — whereas a renderer plane is per-renderer state that is replicated N times. Folding
+  // it into `renders` would make the exposure of renderer 0 depend on which other renderers
+  // happen to be configured.
   //
   // Copies that plane into `anchor_y` (resized to kAnchorWidth * kAnchorHeight) and resets
   // the device side for the next window. Called by the simulator immediately after
@@ -537,10 +558,21 @@ class TraceBackend {
 
   // Returns false if this backend cannot handle the given render config.
   // Each backend self-describes its constraints, keeping the base class backend-agnostic.
+  // CanUseBackend() asks this of EVERY renderer in the batch; one `false` drops the whole
+  // batch to the legacy CPU path (no per-renderer mixing — see SessionSpec::renders).
   virtual bool IsCompatible(const RenderConfig& render) const {
     (void)render;
     return true;
   }
+
+  // The most renderers one session may carry (SessionSpec::renders.size() upper bound).
+  // Device-fused backends pack one projection descriptor per renderer into a fixed-size
+  // kernel-parameter array, so they carry a compile-time cap (Metal: kMaxRenderersDevice);
+  // a backend that hands every exit ray back to the host (CpuTraceBackend) has no such
+  // limit because the host fans the exits out to N consumers itself. Default 1 is the
+  // conservative reading for a backend that has not stated otherwise: CanUseBackend()
+  // falls the batch back to the legacy CPU path — with a WARN — when the config exceeds it.
+  virtual size_t MaxRenderers() const { return 1; }
 
   // scrum-268.8 (DR-3): per-ray wavelength pool size, > 0 only when the
   // backend tags ExitRayRecord::wl_idx with a meaningful pool index. The

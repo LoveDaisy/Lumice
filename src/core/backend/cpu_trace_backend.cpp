@@ -228,7 +228,7 @@ CpuTraceBackend::CpuTraceBackend() : rng_(0) {}
 void CpuTraceBackend::BeginSession(const SessionSpec& spec) {
   assert(!in_session_ && "BeginSession called on an already-open session");
   assert(spec.scene != nullptr && "SessionSpec.scene must be non-null");
-  assert(spec.render != nullptr && "SessionSpec.render must be non-null");
+  assert(!spec.renders.empty() && spec.renders[0] != nullptr && "SessionSpec.renders must carry a renderer");
   // Cross-seed reuse: once seeded, spec.seed must be 0 (no reseed intent)
   // or the same seed (repeated SimBatches within the same render). A
   // different non-zero seed on the same instance would silently no-op;
@@ -241,13 +241,19 @@ void CpuTraceBackend::BeginSession(const SessionSpec& spec) {
   root_ray_count_ = 0;
   total_landed_weight_ = 0.0f;
 
-  width_ = spec.render->resolution_[0];
-  height_ = spec.render->resolution_[1];
+  // This backend hands every exit ray back to the host through the exit seam, where the
+  // server's N RenderConsumers project it — so the session's renderer count does not touch
+  // the production path at all. The one thing below that reads a renderer is the [TEST-ONLY]
+  // xyz_buf_ parity image (see ReadbackImage), and that image has always been ONE plane:
+  // it follows renderer 0.
+  const RenderConfig& render0 = *spec.renders[0];
+  width_ = render0.resolution_[0];
+  height_ = render0.resolution_[1];
   size_t pix = static_cast<size_t>(width_) * static_cast<size_t>(height_);
   xyz_buf_ = std::make_unique<float[]>(pix * 3);
   std::memset(xyz_buf_.get(), 0, pix * 3 * sizeof(float));
 
-  camera_rot_ = MakeCameraRotation(*spec.render);
+  camera_rot_ = MakeCameraRotation(render0);
 
   // Seed RNGs once per backend lifetime, not once per session. Simulator
   // drives BeginSession / EndSession per 128-ray SimBatch, so reseeding here
@@ -477,7 +483,7 @@ LayerHandlePtr CpuTraceBackend::TraceLayer(const RootRaySource& roots) {
 
   // Drain the per-layer outgoing into the accumulator.
   ScatterOutgoingToXyz(outgoing_d.data(), outgoing_w.data(), outgoing_w.size(),  //
-                       *spec_.render, camera_rot_, spec_.wl.wl_,                 //
+                       *spec_.renders[0], camera_rot_, spec_.wl.wl_,             //
                        xyz_buf_.get(), &total_landed_weight_);
 
   auto handle = std::make_unique<CpuLayerHandle>();
@@ -536,7 +542,7 @@ void CpuTraceBackend::ReadbackImage(XyzImageData& out) {
   assert(in_session_ && "ReadbackImage called outside BeginSession/EndSession");
   assert(out.data != nullptr && "XyzImageData.data must be non-null");
   assert(out.width == width_ && out.height == height_ &&
-         "XyzImageData dimensions must match SessionSpec.render resolution");
+         "XyzImageData dimensions must match SessionSpec.renders[0] resolution");
   size_t pix = static_cast<size_t>(width_) * static_cast<size_t>(height_);
   std::memcpy(out.data, xyz_buf_.get(), pix * 3 * sizeof(float));
 }

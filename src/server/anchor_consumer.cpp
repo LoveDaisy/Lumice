@@ -20,7 +20,10 @@ AnchorConsumer::AnchorConsumer()
 void AnchorConsumer::Consume(const SimData& data) {
   // Mirrors RenderConsumer::Consume's own opening branch, and for the same reason: a
   // device-fused batch carries no host-side ray directions to project, only the plane the
-  // device already accumulated. The two payload forms are mutually exclusive.
+  // device already accumulated. The two payload forms are mutually exclusive. The OUTER
+  // per-renderer container is what is tested — "is this batch device-fused" is a property of
+  // the batch, so no renderer index enters here; the plane this consumer then reads is the
+  // session-level anchor_y_pixel_data_, not any renderer's.
   if (!data.xyz_pixel_data_.empty()) {
     AccumulateDevicePlane(data);
     return;

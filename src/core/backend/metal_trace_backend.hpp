@@ -118,11 +118,11 @@ class MetalTraceBackend : public TraceBackend {
   // simulator reads it back once per batch via ReadbackXyzAccum instead
   // of materialising per-exit records.
   bool SupportsDeviceXyzAccum() const override { return true; }
-  void ReadbackXyzAccum(XyzImageData& xyz, float& landed_weight) override;
+  void ReadbackXyzAccum(std::vector<XyzImageData>& xyz, std::vector<float>& landed_weight) override;
   // task-358.1 Step 4 (AC3 device-side Y-lane accumulation): copy the flattened
   // per-color-class Y accumulator to host and reset the device side for the
   // next window. See TraceBackend::ReadbackClassLanes for contract + layout.
-  void ReadbackClassLanes(std::vector<float>& lane_data, size_t& class_count) override;
+  void ReadbackClassLanes(std::vector<std::vector<float>>& lane_data, size_t& class_count) override;
   // Drain the device exposure-anchor plane and reset it for the next window. See
   // TraceBackend::ReadbackAnchorBuffer for why a device-fused backend must accumulate one.
   void ReadbackAnchorBuffer(std::vector<float>& anchor_y) override;

@@ -109,7 +109,7 @@ TEST(CpuTraceBackend, SingleLayerProducesNonZeroXyz) {
 
   SessionSpec spec;
   spec.scene = &scene;
-  spec.render = &render;
+  spec.renders = { &render };
   spec.wl = WlParam{ 550.0f, 1.0f };
   spec.seed = 42;
 
@@ -161,7 +161,7 @@ TEST(CpuTraceBackend, SingleLayerProducesNonZeroXyz) {
     CpuTraceBackend backend1h;
     SessionSpec spec1h;
     spec1h.scene = &scene1h;
-    spec1h.render = &render;
+    spec1h.renders = { &render };
     spec1h.wl = WlParam{ 550.0f, 1.0f };
     spec1h.seed = 42;
     backend1h.BeginSession(spec1h);
@@ -193,7 +193,7 @@ TEST(CpuTraceBackend, TwoLayerRecombineChain) {
 
   SessionSpec spec;
   spec.scene = &scene;
-  spec.render = &render;
+  spec.renders = { &render };
   spec.wl = WlParam{ 550.0f, 1.0f };
   spec.seed = 7;
 
@@ -266,7 +266,7 @@ TEST(CpuTraceBackend, FilterFailRaysDoNotReachXyz) {
 
   SessionSpec spec;
   spec.scene = &scene;
-  spec.render = &render;
+  spec.renders = { &render };
   spec.wl = WlParam{ 550.0f, 1.0f };
   spec.seed = 11;
 
@@ -378,7 +378,7 @@ TEST(CpuTraceBackend, GetLayerStatsCoversAllExitRays) {
   auto render = MakeRenderConfig();
   SessionSpec spec;
   spec.scene = &scene;
-  spec.render = &render;
+  spec.renders = { &render };
   spec.wl = WlParam{ 550.0f, 1.0f };
   spec.seed = 7;
 
@@ -441,7 +441,7 @@ TEST(CpuTraceBackend, CrossHitFanoutDoesNotOverflowWorkspace) {
 
   SessionSpec spec;
   spec.scene = &scene;
-  spec.render = &render;
+  spec.renders = { &render };
   spec.wl = WlParam{ 555.0f, 1.0f };
   // seed=27 + kRayCount below is an empirically-located deterministic trigger:
   // on the unfixed code one of its 32-ray small batches grows (via cross-hit
@@ -503,7 +503,7 @@ TEST(CpuTraceBackend, CountsStochasticCrystalDrawsAcrossLayers) {
     auto render = MakeRenderConfig();
     SessionSpec spec;
     spec.scene = &scene;
-    spec.render = &render;
+    spec.renders = { &render };
     spec.wl = WlParam{ 550.0f, 1.0f };
     spec.seed = 1;
 
@@ -551,7 +551,7 @@ TEST(CpuTraceBackend, CountsStochasticCrystalDrawsAcrossLayers) {
     auto render = MakeRenderConfig();
     SessionSpec spec;
     spec.scene = &scene;
-    spec.render = &render;
+    spec.renders = { &render };
     spec.wl = WlParam{ 550.0f, 1.0f };
     spec.seed = 3;
 
@@ -607,7 +607,7 @@ TEST(CpuTraceBackend, CountsStochasticCrystalDrawsAcrossLayers) {
     auto render = MakeRenderConfig();
     SessionSpec spec;
     spec.scene = &scene;
-    spec.render = &render;
+    spec.renders = { &render };
     spec.wl = WlParam{ 550.0f, 1.0f };
     spec.seed = 5;
 
@@ -648,7 +648,7 @@ TEST(CpuTraceBackend, CountsStochasticOrientationDrawsAcrossLayers) {
     auto render = MakeRenderConfig();
     SessionSpec spec;
     spec.scene = &scene;
-    spec.render = &render;
+    spec.renders = { &render };
     spec.wl = WlParam{ 550.0f, 1.0f };
     spec.seed = 1;
 
@@ -670,7 +670,7 @@ TEST(CpuTraceBackend, CountsStochasticOrientationDrawsAcrossLayers) {
     auto render = MakeRenderConfig();
     SessionSpec spec;
     spec.scene = &scene;
-    spec.render = &render;
+    spec.renders = { &render };
     spec.wl = WlParam{ 550.0f, 1.0f };
     spec.seed = 3;
 
@@ -699,7 +699,7 @@ TEST(CpuTraceBackend, CountsStochasticOrientationDrawsAcrossLayers) {
     auto render = MakeRenderConfig();
     SessionSpec spec;
     spec.scene = &scene;
-    spec.render = &render;
+    spec.renders = { &render };
     spec.wl = WlParam{ 550.0f, 1.0f };
     spec.seed = 5;
 
@@ -738,7 +738,7 @@ TEST(CpuTraceBackend, HostInjectedCrystalIsNotANewSample) {
   auto render = MakeRenderConfig();
   SessionSpec spec;
   spec.scene = &scene;
-  spec.render = &render;
+  spec.renders = { &render };
   spec.wl = WlParam{ 550.0f, 1.0f };
   spec.seed = 7;
 
@@ -795,7 +795,7 @@ TEST(CpuTraceBackend, MatchAllColorPredicateTagsEveryExitRayWithWholeCrystalBit)
 
   SessionSpec spec;
   spec.scene = &scene;
-  spec.render = &render;
+  spec.renders = { &render };
   spec.raypath_color = rpc;
   spec.wl = WlParam{ 550.0f, 1.0f };
   spec.seed = 42;
@@ -876,7 +876,7 @@ TEST(CpuTraceBackend, MatchAllColorBitSurvivesCrossLayerToPredicateLayer) {
   auto render = MakeRenderConfig();
   SessionSpec spec;
   spec.scene = &scene;
-  spec.render = &render;
+  spec.renders = { &render };
   spec.raypath_color = rpc;
   spec.wl = WlParam{ 550.0f, 1.0f };
   spec.seed = 7;
@@ -967,7 +967,7 @@ TEST(CpuTraceBackend, ColorSymmetryGroupsMatchPhysicalFilter) {
 
   SessionSpec spec;
   spec.scene = &scene;
-  spec.render = &render;
+  spec.renders = { &render };
   spec.raypath_color = rpc;
   spec.wl = WlParam{ 550.0f, 1.0f };
   spec.seed = 42;
@@ -1053,7 +1053,7 @@ TEST(CpuTraceBackend, TwoColorSymmetryGroupsBothReachCollectData) {
 
   SessionSpec spec;
   spec.scene = &scene;
-  spec.render = &render;
+  spec.renders = { &render };
   spec.raypath_color = rpc;
   spec.wl = WlParam{ 550.0f, 1.0f };
   spec.seed = 42;

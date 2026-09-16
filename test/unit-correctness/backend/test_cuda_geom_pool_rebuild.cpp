@@ -67,7 +67,7 @@ uint32_t CountRebuildsAcrossBatches(const SceneConfig& scene, const RenderConfig
 
   SessionSpec spec;
   spec.scene = &scene;
-  spec.render = &render;
+  spec.renders = { &render };
   spec.wl = WlParam{ 550.0f, 1.0f };
   spec.seed = seed;
 
@@ -170,7 +170,7 @@ TEST(CudaGeomPoolRebuild, StochasticScene_ShapesDifferAcrossBatches) {
 
   SessionSpec spec;
   spec.scene = &scene;
-  spec.render = &render;
+  spec.renders = { &render };
   spec.wl = WlParam{ 550.0f, 1.0f };
   spec.seed = 42u;  // SAME seed every cycle — the point is that rng_ advances.
 

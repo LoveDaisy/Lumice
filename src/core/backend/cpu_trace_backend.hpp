@@ -2,6 +2,7 @@
 #define CORE_CPU_TRACE_BACKEND_H_
 
 #include <cstddef>
+#include <limits>
 #include <memory>
 #include <vector>
 
@@ -65,6 +66,10 @@ class CpuTraceBackend : public TraceBackend {
   // vector is rebuilt every layer anyway.
   size_t DrainExits(std::vector<ExitRayRecord>& out) override;
   void EndSession() override;
+  // No cap: every exit ray reaches the host through the exit seam, where the server's
+  // N RenderConsumers project it — the renderer count never enters this backend's
+  // production path (only the [TEST-ONLY] xyz_buf_ reads renderer 0).
+  size_t MaxRenderers() const override { return std::numeric_limits<size_t>::max(); }
 
   // Diagnostic accessors (unit tests).
   size_t RootRayCount() const { return root_ray_count_; }

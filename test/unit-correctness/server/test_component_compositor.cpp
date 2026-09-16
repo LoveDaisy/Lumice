@@ -919,7 +919,7 @@ TEST(ComponentCompositor, DominantThreeArcsNoPhantomHue) {
   RenderConfig render = MakeRenderConfig(64);
   SessionSpec spec;
   spec.scene = &scene;
-  spec.render = &render;
+  spec.renders = { &render };
   spec.raypath_color = rpc;
   spec.wl = WlParam{ kWl, 1.0f };
   spec.seed = 20240707u;

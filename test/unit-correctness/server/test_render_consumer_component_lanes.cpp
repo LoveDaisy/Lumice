@@ -479,7 +479,7 @@ TEST(RenderConsumerComponentLanes, RealBackendMasksBucketedShareExposure) {
   RenderConfig render = MakeLaneRenderConfig();
   SessionSpec spec;
   spec.scene = &scene;
-  spec.render = &render;
+  spec.renders = { &render };
   spec.raypath_color = rpc;
   spec.wl = WlParam{ kWl, 1.0f };
   spec.seed = 20240707u;

@@ -281,7 +281,7 @@ TEST(AnchorConsumer, DeviceFusedAnchorPlaneFoldsIn) {
 
   SimData fused;
   fused.curr_wl_ = kWl;
-  fused.xyz_pixel_data_.assign(12, 0.0f);  // marks the batch as device-fused
+  fused.xyz_pixel_data_ = { std::vector<float>(12, 0.0f) };  // marks the batch as device-fused
   fused.anchor_y_pixel_data_ = plane;
 
   AnchorConsumer ac;
@@ -352,7 +352,7 @@ TEST(AnchorConsumer, WrongSizeDevicePlaneIsRefusedLoggedOnceAndCounted) {
   constexpr const char* kNotice = "device anchor plane has";
   SimData fused;
   fused.curr_wl_ = kWl;
-  fused.xyz_pixel_data_.assign(12, 0.0f);  // marks the batch as device-fused
+  fused.xyz_pixel_data_ = { std::vector<float>(12, 0.0f) };  // marks the batch as device-fused
   fused.anchor_y_pixel_data_.assign(static_cast<size_t>(kAnchorWidth) * kAnchorHeight / 2, 1.0f);
 
   AnchorConsumer ac;

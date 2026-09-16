@@ -3022,7 +3022,7 @@ MetalTraceBackend::~MetalTraceBackend() = default;
 void MetalTraceBackend::BeginSession(const SessionSpec& spec) {
   assert(!impl_->in_session && "BeginSession called on an already-open session");
   assert(spec.scene != nullptr);
-  assert(spec.render != nullptr);
+  assert(!spec.renders.empty() && spec.renders[0] != nullptr);
   // 315.3: the exit tail now projects via lm_proj::ProjectExitToPixel — the
   // SAME single source as the CPU parity oracle (scatter_accum.hpp) — so every
   // lens type (incl. globe, 315.4) produces byte-identical pixels to legacy CPU
@@ -3057,10 +3057,11 @@ void MetalTraceBackend::BeginSession(const SessionSpec& spec) {
   // lock-step with rng.SetSeed). Resetting here unconditionally would collapse
   // the GPU PCG stream to a single 128-ray range every SimBatch — the mirror
   // bug of 258.10 (RNG re-seed per batch). See task-260.5 fix.
-  impl_->width  = spec.render->resolution_[0];
-  impl_->height = spec.render->resolution_[1];
+  const RenderConfig& render0 = *spec.renders[0];
+  impl_->width  = render0.resolution_[0];
+  impl_->height = render0.resolution_[1];
 
-  Rotation camera_rot = MakeCameraRotation(*spec.render);
+  Rotation camera_rot = MakeCameraRotation(render0);
   // scrum-268.8 (DR-3): per-batch ComputeCmf(spec.wl.wl_) deleted — CMF is
   // sourced per-ray from wl_pool[wl_idx] populated below in TraceLayer's ci
   // loop. spec.wl.wl_ remains the simulator-sampled per-batch sentinel until
@@ -3089,8 +3090,8 @@ void MetalTraceBackend::BeginSession(const SessionSpec& spec) {
   // the kernel exit tail calls lm_proj::ProjectExitToPixel(proj, world_exit...),
   // identical to the CPU parity oracle ScatterOutgoingToXyz.
   const float short_pix =
-      static_cast<float>(std::min(spec.render->resolution_[0], spec.render->resolution_[1]));
-  impl_->proj_params_ = BuildProjParams(*spec.render, camera_rot, short_pix);
+      static_cast<float>(std::min(render0.resolution_[0], render0.resolution_[1]));
+  impl_->proj_params_ = BuildProjParams(render0, camera_rot, short_pix);
 
   // Seed contract: first call with spec.seed != 0 seeds the RNG; repeated
   // calls with the same seed are no-ops (normal per-SimBatch pattern).
@@ -3716,7 +3717,13 @@ size_t MetalTraceBackend::ReadbackExitRays(std::vector<ExitRayRecord>& out) {
 // display cadence (a whole window of batches), possibly BETWEEN sessions — so
 // this must not depend on in_session/width/height (Reset clears those), and must
 // itself guarantee GPU completion rather than rely on the caller having waited.
-void MetalTraceBackend::ReadbackXyzAccum(XyzImageData& xyz, float& landed_weight) {
+void MetalTraceBackend::ReadbackXyzAccum(std::vector<XyzImageData>& xyz_planes, std::vector<float>& landed_weight) {
+  if (xyz_planes.size() != 1) {
+    throw BackendUnavailableError("MetalTraceBackend::ReadbackXyzAccum: expected 1 plane, got " +
+                                  std::to_string(xyz_planes.size()));
+  }
+  XyzImageData& xyz = xyz_planes[0];
+  landed_weight.assign(1, 0.0f);
   // Release-safe gates (mirror the CUDA backend; asserts are no-ops under NDEBUG,
   // review-Minor: all three preconditions throw, not assert).
   if (impl_->xyz_image == nil || impl_->landed_weight_buf_ == nil || xyz.data == nullptr) {
@@ -3749,7 +3756,7 @@ void MetalTraceBackend::ReadbackXyzAccum(XyzImageData& xyz, float& landed_weight
   }
   size_t pix = static_cast<size_t>(impl_->alloc_xyz_w_) * static_cast<size_t>(impl_->alloc_xyz_h_);
   std::memcpy(xyz.data, [impl_->xyz_image contents], pix * 3 * sizeof(float));
-  landed_weight += *static_cast<const float*>([impl_->landed_weight_buf_ contents]);
+  landed_weight[0] += *static_cast<const float*>([impl_->landed_weight_buf_ contents]);
   // Reset the accumulators so the next drain window starts from zero (BeginSession
   // no longer clears them). Unified memory → a plain host memset/store suffices.
   std::memset([impl_->xyz_image contents], 0, pix * 3 * sizeof(float));
@@ -3764,12 +3771,14 @@ void MetalTraceBackend::ReadbackXyzAccum(XyzImageData& xyz, float& landed_weight
 //
 // When class_count_==0 this is a no-op (empty vector, class_count=0) — the
 // consumer's ConsumeDeviceFused stays byte-identical to pre-358.1 (AC4).
-void MetalTraceBackend::ReadbackClassLanes(std::vector<float>& lane_data, size_t& class_count) {
+void MetalTraceBackend::ReadbackClassLanes(std::vector<std::vector<float>>& lane_planes, size_t& class_count) {
   class_count = impl_->class_count_;
   if (impl_->class_count_ == 0 || impl_->class_lane_buf_ == nil) {
-    lane_data.clear();
+    lane_planes.clear();
     return;
   }
+  lane_planes.resize(1);
+  std::vector<float>& lane_data = lane_planes[0];
   const size_t pix = static_cast<size_t>(impl_->alloc_xyz_w_) *
                      static_cast<size_t>(impl_->alloc_xyz_h_);
   assert(pix > 0);
@@ -3789,7 +3798,7 @@ void MetalTraceBackend::ReadbackClassLanes(std::vector<float>& lane_data, size_t
                "Dropping this window's per-class lane drain.",
                total, impl_->class_lane_pix_capacity_);
     assert(false && "class_lane_buf_ under-allocated for the current class_count * W * H");
-    lane_data.clear();
+    lane_planes.clear();
     class_count = 0;
     return;
   }

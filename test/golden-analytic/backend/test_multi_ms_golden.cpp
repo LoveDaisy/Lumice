@@ -137,7 +137,7 @@ TEST(MetalGoldenRay, NormalIncidenceParallelSlab) {
 
   SessionSpec spec;
   spec.scene = &scene;
-  spec.render = &render;
+  spec.renders = { &render };
   spec.wl = WlParam{ 550.0f, 1.0f };
   spec.seed = 42;
 
@@ -218,7 +218,7 @@ TEST(MetalGoldenRay, Snell30ParallelSlab) {
 
   SessionSpec spec;
   spec.scene = &scene;
-  spec.render = &render;
+  spec.renders = { &render };
   spec.wl = WlParam{ 550.0f, 1.0f };
   spec.seed = 42;
 
@@ -302,7 +302,7 @@ TEST(MetalGoldenRay, EnergyConservationSingleRay) {
 
   SessionSpec spec;
   spec.scene = &scene;
-  spec.render = &render;
+  spec.renders = { &render };
   spec.wl = WlParam{ 550.0f, 1.0f };
   spec.seed = 42;
 
@@ -393,7 +393,7 @@ TEST(MetalGoldenRay, MultiMsContinuationNormalIncidence) {
 
   SessionSpec spec;
   spec.scene = &scene;
-  spec.render = &render;
+  spec.renders = { &render };
   spec.wl = WlParam{ 550.0f, 1.0f };
   spec.seed = 42;
 

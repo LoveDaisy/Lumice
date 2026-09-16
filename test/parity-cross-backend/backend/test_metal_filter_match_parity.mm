@@ -831,7 +831,7 @@ TEST(MetalFilterMatchParity, BeginSessionUploadsFilterDescs) {
 
   SessionSpec spec;
   spec.scene = &scene;
-  spec.render = &render;
+  spec.renders = { &render };
   spec.wl = WlParam{ 550.0f, 1.0f };
   spec.seed = 1234u;
 

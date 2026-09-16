@@ -46,7 +46,7 @@ TEST(MetalTraceBackend, SingleLayerXyzMatchesCpu) {
 
   SessionSpec spec;
   spec.scene = &scene;
-  spec.render = &render;
+  spec.renders = { &render };
   spec.wl = WlParam{ 550.0f, 1.0f };
   spec.seed = 42;
 
@@ -130,7 +130,7 @@ TEST(MetalTraceBackend, TwoLayerEndToEnd) {
 
   SessionSpec spec;
   spec.scene = &scene;
-  spec.render = &render;
+  spec.renders = { &render };
   spec.wl = WlParam{ 550.0f, 1.0f };
   spec.seed = 7;
 
@@ -213,7 +213,7 @@ TEST(MetalTraceBackend, TraceLayerKernelOccupancy) {
 
   SessionSpec spec;
   spec.scene = &scene;
-  spec.render = &render;
+  spec.renders = { &render };
   spec.wl = WlParam{ 550.0f, 1.0f };
   spec.seed = 42;
 
@@ -273,7 +273,7 @@ TEST(MetalTraceBackend, CountsStochasticCrystalDrawsAcrossLayers) {
     auto render = MakeRectangularRender();
     SessionSpec spec;
     spec.scene = &scene;
-    spec.render = &render;
+    spec.renders = { &render };
     spec.wl = WlParam{ 550.0f, 1.0f };
     spec.seed = 11;
 
@@ -305,7 +305,7 @@ TEST(MetalTraceBackend, CountsStochasticCrystalDrawsAcrossLayers) {
     auto render = MakeRectangularRender();
     SessionSpec spec;
     spec.scene = &scene;
-    spec.render = &render;
+    spec.renders = { &render };
     spec.wl = WlParam{ 550.0f, 1.0f };
     spec.seed = 11;
 
@@ -350,7 +350,7 @@ TEST(MetalTraceBackend, CountsStochasticCrystalDrawsAcrossLayers) {
     auto render = MakeRectangularRender();
     SessionSpec spec;
     spec.scene = &scene;
-    spec.render = &render;
+    spec.renders = { &render };
     spec.wl = WlParam{ 550.0f, 1.0f };
     spec.seed = 13;
 
@@ -407,7 +407,7 @@ TEST(MetalTraceBackend, HostInjectedCrystalIsNotANewSample) {
   auto render = MakeRectangularRender();
   SessionSpec spec;
   spec.scene = &scene;
-  spec.render = &render;
+  spec.renders = { &render };
   spec.wl = WlParam{ 550.0f, 1.0f };
   spec.seed = 17;
 
@@ -451,7 +451,7 @@ TEST(MetalTraceBackend, DeviceAndPsoSharedAcrossInstances) {
 
   SessionSpec spec;
   spec.scene = &scene;
-  spec.render = &render;
+  spec.renders = { &render };
   spec.wl = WlParam{ 550.0f, 1.0f };
   spec.seed = 7;
 
@@ -521,7 +521,7 @@ TEST(MetalTraceBackend, KShapePool_DefaultKnobUnsetGivesPCiOne_AC1) {
   auto render = MakeRectangularRender();
   SessionSpec spec;
   spec.scene = &scene;
-  spec.render = &render;
+  spec.renders = { &render };
   spec.wl = WlParam{ 550.0f, 1.0f };
   spec.seed = 21;
 
@@ -550,7 +550,7 @@ TEST(MetalTraceBackend, KShapePool_KEnabledBuildsCeilNciOverKShapes_AC1) {
   auto render = MakeRectangularRender();
   SessionSpec spec;
   spec.scene = &scene;
-  spec.render = &render;
+  spec.renders = { &render };
   spec.wl = WlParam{ 550.0f, 1.0f };
   spec.seed = 23;
 
@@ -627,7 +627,7 @@ TEST(MetalTraceBackend, KShapePool_ConfigDrivenKWithoutEnv) {
   auto render = MakeRectangularRender();
   SessionSpec spec;
   spec.scene = &scene;
-  spec.render = &render;
+  spec.renders = { &render };
   spec.wl = WlParam{ 550.0f, 1.0f };
   spec.seed = 23;
 
@@ -667,7 +667,7 @@ TEST(MetalTraceBackend, KShapePool_KEnabledSessionRunsAndProducesOutput_AC2) {
   auto render = MakeRectangularRender();
   SessionSpec spec;
   spec.scene = &scene;
-  spec.render = &render;
+  spec.renders = { &render };
   spec.wl = WlParam{ 550.0f, 1.0f };
   spec.seed = 25;
 
@@ -737,7 +737,7 @@ TEST(MetalTraceBackend, KShapePool_KEnabledReducesCrossSeedVariance_AC2) {
   auto render = MakeRectangularRender();
   SessionSpec spec_template;
   spec_template.scene = &scene;
-  spec_template.render = &render;
+  spec_template.renders = { &render };
   spec_template.wl = WlParam{ 550.0f, 1.0f };
 
   auto run_batch = [&](const char* k_val, uint32_t seed) -> float {
@@ -833,7 +833,7 @@ TEST(MetalTraceBackend, KShapePool_EmptyBatchWithKEnabledDoesNotCrash_Regression
   auto render = MakeRectangularRender();
   SessionSpec spec;
   spec.scene = &scene;
-  spec.render = &render;
+  spec.renders = { &render };
   spec.wl = WlParam{ 550.0f, 1.0f };
   spec.seed = 7;
 
@@ -900,7 +900,7 @@ TEST(MetalTraceBackend, KShapePool_PathIsLocalWithinPolygonFaceCount_AC1_TestA) 
   auto render = MakeRectangularRender();
   SessionSpec spec;
   spec.scene = &scene;
-  spec.render = &render;
+  spec.renders = { &render };
   spec.wl = WlParam{ 550.0f, 1.0f };
   spec.seed = 31;
 
@@ -1036,7 +1036,7 @@ TEST(MetalTraceBackend, KShapePool_TransitPicksMultipleShapes_AC1_TestB) {
   auto render = MakeRectangularRender();
   SessionSpec spec;
   spec.scene = &scene;
-  spec.render = &render;
+  spec.renders = { &render };
   spec.wl = WlParam{ 550.0f, 1.0f };
   spec.seed = 37;
 
