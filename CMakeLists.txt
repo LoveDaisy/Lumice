@@ -280,7 +280,21 @@ endif()
 include(CheckIPOSupported)
 check_ipo_supported(RESULT result OUTPUT output)
 
-if(result AND "${CMAKE_BUILD_TYPE}" STREQUAL "Release" AND NOT BUILD_SHARED_LIBS)
+# IPO is on for every static Release build and, of the shared ones, ONLY for clang-cl. The
+# static/shared split is inherited: GCC's LTO emits R_X86_64_TPOFF32 relocations for spdlog's
+# thread_local variables, which a shared object cannot carry, so the shared flavor went
+# without IPO everywhere. The Windows release now ships the shared flavor, and going without
+# costs it: measured on the Windows reference box with the release's own bench config, the
+# x86-64-v3 engine DLL built without -flto=thin ran the single-worker pass at 0.77 M rays/s
+# against 1.13 M for the static exe (multi-worker was at parity), and the same DLL with
+# thin-LTO ran 1.13 M — the whole gap, nothing to do with the DLL boundary. clang-cl's LTO
+# objects work with WINDOWS_EXPORT_ALL_SYMBOLS (the .def generator reads them), so that tree
+# gets IPO back. Real cl.exe does NOT: its /GL objects hold no symbol table CMake's
+# __create_def can read, and the DLL links "successfully" with an EMPTY export table — a
+# baseline engine with zero exports, measured, not a hypothesis — so the cl.exe baseline
+# tree stays without IPO until the export surface is explicit rather than harvested. GCC and
+# Apple Clang shared builds stay excluded for the original reason.
+if(result AND "${CMAKE_BUILD_TYPE}" STREQUAL "Release" AND (NOT BUILD_SHARED_LIBS OR LUMICE_CLANG_CL))
   message(STATUS "IPO supported. Enable inter-procedural optimization.")
   set(CMAKE_INTERPROCEDURAL_OPTIMIZATION TRUE)
 endif()
