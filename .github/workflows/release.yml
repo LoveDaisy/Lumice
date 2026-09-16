@@ -308,7 +308,7 @@ jobs:
       # file, and the job would still be green. The trailing check turns "both shells and
       # both engines are present" from a thing someone reads off the zip listing into a red
       # the workflow raises itself.
-      - name: Merge ISA variants (windows-x64: shells + engine DLLs)
+      - name: Merge ISA variants (windows-x64, shells + engine DLLs)
         if: matrix.isa_split && runner.os == 'Windows'
         shell: pwsh
         run: |
