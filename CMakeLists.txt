@@ -43,8 +43,9 @@ set(CMAKE_C_STANDARD 11)              # C11...
 # ISA tier a Release build is compiled for (compilers that honor -march: GCC, Clang and
 # clang-cl; real MSVC cl.exe has no equivalent flag wired up and is always the baseline). One
 # four-valued variable, not a boolean plus a second knob: the Linux and Windows releases each
-# ship TWO builds of this tree behind a CPUID launcher, and "which tier is this?" must have
-# exactly one answer per configure.
+# ship TWO builds of the engine and pick one at start-up (Windows: the shell's delay-load hook
+# by CPUID; Linux: glibc's hwcaps subdirectory lookup, see src/CMakeLists.txt), and "which tier
+# is this?" must have exactly one answer per configure.
 #   baseline   no -march flag: the x86-64-v1 floor every x86_64 CPU runs; what CI tests
 #   x86-64-v3  -march=x86-64-v3 (AVX2+FMA): the second Windows release variant (clang-cl —
 #              LLVM takes its whole ~2.26x at v3, where GCC takes none of it; see
@@ -114,12 +115,12 @@ elseif(LUMICE_ISA_LEVEL STREQUAL "native")
                  "with -DLUMICE_ISA_LEVEL=baseline instead. See doc/performance-testing.md.")
 elseif(LUMICE_ISA_LEVEL STREQUAL "x86-64-v3")
   message(STATUS "LUMICE_ISA_LEVEL=x86-64-v3: a Release build would apply -march=x86-64-v3 "
-                 "(AVX2+FMA); this is the Windows release's second variant (clang-cl) and "
-                 "runs only on CPUs the ISA launcher selects it for.")
+                 "(AVX2+FMA); this is the Windows release's second engine DLL (clang-cl) and "
+                 "is only loaded on CPUs the shell's CPUID check selects it for.")
 elseif(LUMICE_ISA_LEVEL STREQUAL "x86-64-v4")
   message(STATUS "LUMICE_ISA_LEVEL=x86-64-v4: a Release build would apply -march=x86-64-v4 "
-                 "(AVX-512); this is the Linux release's second variant and runs only on "
-                 "CPUs the ISA launcher selects it for.")
+                 "(AVX-512); this is the Linux release's second engine .so and is only "
+                 "loaded on CPUs glibc's hwcaps lookup selects it for.")
 else()
   message(STATUS "LUMICE_ISA_LEVEL=baseline: this build matches the release ISA baseline.")
 endif()

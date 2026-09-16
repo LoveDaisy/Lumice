@@ -14,18 +14,51 @@ target_include_directories(Lumice PRIVATE
     ${stb_SOURCE_DIR})
 target_link_libraries(Lumice PRIVATE
     lumice)
-# Shared builds link the CLI against @rpath/liblumice.dylib. Give the installed
-# CLI an rpath into the sibling lib/ dir (where the dylib is installed, see the
-# root CMakeLists) so build/cmake_install/shared/Lumice is self-contained and
-# runnable without rebuilding static — fixes "dyld: no LC_RPATH's found" when
-# switching from a static to a shared build. Static builds archive lumice into the CLI, so
-# there is no @rpath dependency and this rpath is simply not applied.
-if(BUILD_SHARED_LIBS)
+# Shared builds (Linux/macOS) link a shell against the engine library by its SONAME
+# (liblumice.so / @rpath/liblumice.dylib) and resolve it at start-up from the sibling lib/ dir
+# the root CMakeLists installs it to, so build/cmake_install/shared/ is self-contained and
+# runnable without rebuilding static — fixes "dyld: no LC_RPATH's found" when switching from a
+# static to a shared build. Static builds archive lumice into the shell, so there is no rpath
+# dependency and none of this is applied. Both shells (this one and LumiceGUI in
+# gui/CMakeLists.txt) need the same wiring, hence a function, on the model of
+# lumice_wire_engine_delay_load below; Windows has no rpath and is the other function's job.
+#
+# On Linux x86_64 this rpath is also the whole of the release's ISA dispatch. The tarball
+# carries the engine twice under ONE file name — lib/liblumice.so (baseline) and
+# lib/glibc-hwcaps/x86-64-v4/liblumice.so (AVX-512) — and glibc >= 2.33 probes the
+# glibc-hwcaps/<level>/ subdirectory of every rpath entry before the entry itself, picking the
+# v4 copy on a CPU that has it and the baseline copy elsewhere (older glibc never looks in the
+# subdirectory and lands on baseline: correct, slower). No code of ours takes part: the shell
+# is compiled once at baseline, release.yml's merge step lays the two engine builds out in
+# those two directories, and the dynamic loader does the choosing. The two copies must keep
+# the same file name for that lookup to work, which is why the Linux engine is NOT renamed
+# per tier the way the Windows DLLs are (those sit side by side in one directory and must
+# not collide). The override / negative control is glibc's own
+# GLIBC_TUNABLES=glibc.cpu.hwcaps=-x86-64-v4, not a knob of this repository.
+function(lumice_wire_engine_rpath target)
   if(APPLE)
-    set_target_properties(Lumice PROPERTIES INSTALL_RPATH "@loader_path/lib")
+    # A bundle's executable lives at <prefix>/<name>.app/Contents/MacOS/<name>; the CLI at
+    # <prefix>/<name>. lib/ is beside the prefix root in both cases.
+    get_target_property(_is_bundle ${target} MACOSX_BUNDLE)
+    if(_is_bundle)
+      set_target_properties(${target} PROPERTIES INSTALL_RPATH "@loader_path/../../../lib")
+    else()
+      set_target_properties(${target} PROPERTIES INSTALL_RPATH "@loader_path/lib")
+    endif()
   else()
-    set_target_properties(Lumice PROPERTIES INSTALL_RPATH "$ORIGIN/lib")
+    set_target_properties(${target} PROPERTIES INSTALL_RPATH "$ORIGIN/lib")
+    # Load-path safety, separate from the hwcaps layout above: the linker's default is
+    # DT_RUNPATH, which the loader consults AFTER LD_LIBRARY_PATH, so a same-named
+    # liblumice.so on LD_LIBRARY_PATH would shadow the packaged engine. --disable-new-dtags
+    # emits DT_RPATH instead, which is consulted BEFORE LD_LIBRARY_PATH. The hwcaps
+    # subdirectory probe applies to RPATH entries exactly as to RUNPATH ones, so the dispatch
+    # does not depend on this line; it can be removed on its own if the safety trade is ever
+    # reversed.
+    target_link_options(${target} PRIVATE "-Wl,--disable-new-dtags")
   endif()
+endfunction()
+if(BUILD_SHARED_LIBS AND NOT WIN32)
+  lumice_wire_engine_rpath(Lumice)
 endif()
 # Windows shared builds delay-load the engine DLL and choose WHICH one at start-up
 # (src/launcher/win_engine_loader.c has the full story). Three things wire that in, and both
@@ -49,24 +82,3 @@ if(WIN32 AND BUILD_SHARED_LIBS)
 endif()
 install(TARGETS Lumice
     DESTINATION "${CMAKE_INSTALL_PREFIX}")
-
-# linux-x64 release: the package carries two builds of every entry point (`<name>.baseline` +
-# `<name>.x86-64-v4`, produced by two configures at different LUMICE_ISA_LEVEL) and this
-# launcher installed under the user-facing name picks one by CPUID at run time
-# (src/launcher/isa_launcher.c has the full story). It deliberately gets none of the engine:
-# no lumice_obj, no -march flag — it has to run on exactly the CPUs the faster sidecar cannot.
-# Built on every x86_64 Linux configure so a plain CI build compiles it, but only
-# release.yml's merge step installs it under the entry-point names; a local
-# build/cmake_install/<flavor>/Lumice is still the real binary.
-# Compiler floor: `__builtin_cpu_supports("x86-64-v4")` needs GCC 12+ or Clang 18+ (it is a
-# compile error below that, not a silent misdetection).
-# Windows has no launcher any more: its release ships one shell per entry point and two
-# engine DLLs, and the shell loads one in-process (lumice_wire_engine_delay_load above).
-if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|amd64)$")
-  add_executable(LumiceIsaLauncher "${PROJ_SRC_DIR}/launcher/isa_launcher.c")
-  target_compile_options(LumiceIsaLauncher PRIVATE -Wall -Wextra)
-endif()
-if(TARGET LumiceIsaLauncher)
-  install(TARGETS LumiceIsaLauncher
-      DESTINATION "${CMAKE_INSTALL_PREFIX}")
-endif()

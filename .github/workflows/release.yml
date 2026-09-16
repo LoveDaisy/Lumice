@@ -11,17 +11,18 @@ env:
   # Platform support decisions (2026-03, windows-x64 revised 2026-09):
   #   - The product is the CLI and GUI executables; no library is published for anyone to
   #     link against. windows-x64 does ship two DLLs — `lumice-engine.baseline.dll` and
-  #     `lumice-engine.x86-64-v3.dll` — but they are INTERNAL components of that one zip: the
-  #     only consumer is the shell executable built in the same run, the header is not in
-  #     the package, and their ABI changes freely between versions. That row therefore
-  #     builds the shared flavor (BUILD_SHARED_LIBS=ON), which puts the shell and both DLLs
-  #     on the DYNAMIC CRT (/MD; the explicit branch in the top-level CMakeLists.txt MSVC
-  #     block): a cl.exe shell and a clang-cl engine share one heap only if they share one
-  #     CRT, and a static CRT would also give the DLL its own environment block and swallow
-  #     variables the host process sets after loading it. The consequence for users is that
-  #     the Windows package now depends on the VC++ Redistributable (VCRUNTIME140.dll,
-  #     MSVCP140.dll, api-ms-win-crt-*), which every other release row was already
-  #     indifferent to. Every other row is still the static flavor.
+  #     `lumice-engine.x86-64-v3.dll` — and linux-x64 two copies of `liblumice.so` (under
+  #     lib/ and lib/glibc-hwcaps/x86-64-v4/), but they are INTERNAL components of that one
+  #     package: the only consumer is the shell executable built in the same run, the header
+  #     is not in the package, and their ABI changes freely between versions. Those two rows
+  #     therefore build the shared flavor (BUILD_SHARED_LIBS=ON). On Windows that puts the
+  #     shell and both DLLs on the DYNAMIC CRT (/MD; the explicit branch in the top-level
+  #     CMakeLists.txt MSVC block): a cl.exe shell and a clang-cl engine share one heap only
+  #     if they share one CRT, and a static CRT would also give the DLL its own environment
+  #     block and swallow variables the host process sets after loading it. The consequence
+  #     for users is that the Windows package now depends on the VC++ Redistributable
+  #     (VCRUNTIME140.dll, MSVCP140.dll, api-ms-win-crt-*), which every other release row
+  #     was already indifferent to. linux-arm64 and macos-arm64 are still the static flavor.
   #   - linux-arm64: GUI OFF — ARM runner GPU/display support not verified.
   #   - macOS Intel: excluded — GitHub Actions dropped macos-13 runners (2025).
 
@@ -56,11 +57,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # linux-x64 is built TWICE (baseline + x86-64-v4) and merged behind a CPUID
-          # launcher — see the "ISA variants" steps below; the shared Configure/Build/
-          # Install steps skip this row. windows-x64 below is also built twice (baseline +
-          # x86-64-v3) but merged differently (one shell, two engine DLLs), so every
-          # isa_split step also names its runner.os.
+          # linux-x64 is built TWICE (baseline + x86-64-v4): one shell per entry point from
+          # the baseline tree, two builds of the engine .so laid out for glibc's hwcaps
+          # lookup — see the "ISA variants" steps below; the shared Configure/Build/Install
+          # steps skip this row. windows-x64 below is also built twice (baseline + x86-64-v3)
+          # and merged on the same one-shell-two-engines shape, but its shell does the
+          # choosing itself, so every isa_split step also names its runner.os.
           - name: linux-x64
             os: ubuntu-24.04
             build_gui: ON
@@ -169,13 +171,20 @@ jobs:
 
       # ISA variants (linux-x64 only). The x86-64-v4 (AVX-512) build of the engine is ~2x the
       # baseline on CPUs that have it and SIGILLs on the rest, and a user cannot be asked to
-      # know which they own — so the package carries both builds of every entry point plus a
-      # launcher (src/launcher/isa_launcher.c) installed under the entry-point names that picks
-      # one by CPUID at run time. Two full configures, not one: -march is baked into every
-      # lumice_obj object file, so one build tree cannot produce both tiers. They run serially
-      # in this job and share its CPM cache, so the second pass re-compiles but does not
-      # re-download. Cost: roughly 2x this row's build time (release runs on tags and manual
-      # dispatch only, never as a PR gate).
+      # know which they own — so the package carries one shell per entry point (compiled once,
+      # at baseline) and TWO builds of the engine shared library under one file name:
+      # lib/liblumice.so (baseline) and lib/glibc-hwcaps/x86-64-v4/liblumice.so (v4). The
+      # choosing is glibc's, not ours: a loader >= 2.33 probes the glibc-hwcaps/<level>/
+      # subdirectory of every rpath entry ($ORIGIN/lib, src/CMakeLists.txt) before the entry
+      # itself and takes the v4 copy only on a CPU that has every v4 feature; an older glibc
+      # never looks there and lands on baseline (correct, slower). No launcher process, no
+      # CPUID code in the shell. The negative control / user override is glibc's own
+      # GLIBC_TUNABLES=glibc.cpu.hwcaps=-x86-64-v4 — not an env knob of this repository.
+      # Two full configures, not one: -march is baked into every lumice_obj object file, so
+      # one build tree cannot produce both tiers. They run serially in this job and share its
+      # CPM cache, so the second pass re-compiles but does not re-download. Cost: roughly 2x
+      # this row's build time (release runs on tags and manual dispatch only, never as a PR
+      # gate). BUILD_SHARED_LIBS=ON on both: without it there is no .so to dispatch between.
       - name: Configure, build and install (linux-x64, baseline)
         if: matrix.isa_split && runner.os == 'Linux'
         run: |
@@ -184,6 +193,7 @@ jobs:
             -DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/install-baseline \
             -DBUILD_TEST=OFF \
             -DBUILD_GUI=${{ matrix.build_gui }} \
+            -DBUILD_SHARED_LIBS=ON \
             -DLUMICE_ISA_LEVEL=baseline
           cmake --build build-baseline --parallel
           cmake --install build-baseline
@@ -196,28 +206,105 @@ jobs:
             -DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/install-v4 \
             -DBUILD_TEST=OFF \
             -DBUILD_GUI=${{ matrix.build_gui }} \
+            -DBUILD_SHARED_LIBS=ON \
             -DLUMICE_ISA_LEVEL=x86-64-v4
           cmake --build build-v4 --parallel
           cmake --install build-v4
 
-      # The launcher comes from the baseline tree on purpose: it carries no -march flag in
-      # either tree, but "the file that must run everywhere came from the build that runs
-      # everywhere" is the invariant worth keeping obvious. The Package step below tars
-      # install/ unchanged. Only the six executables are copied: the install trees also hold
-      # what CPM dependencies' own install rules drop (GLFW and tl-expected headers, .a and
-      # cmake config files), which the single-build rows still ship because they tar the
-      # whole prefix; that was never product content, and this row no longer carries it.
-      - name: Merge ISA variants behind the launcher (linux-x64)
+      # Shells from the baseline tree (the file that must run everywhere comes from the build
+      # that runs everywhere), one engine from each tree, into the two directories the hwcaps
+      # lookup reads. Only named files are copied, never the prefix: each install tree also
+      # holds what CPM dependencies' own install rules drop (GLFW and tl-expected headers,
+      # .a and cmake config files) and liblumice_testapi.so, the pytest-only export surface
+      # that every shared configure produces; none of that is product content. The Package
+      # step below tars install/ unchanged. `set -euo pipefail` plus the explicit manifest
+      # check is the counterpart of the Windows step's `$ErrorActionPreference = 'Stop'`:
+      # a missing source file must be a red job, not a tarball short of one file. The
+      # manifest is exported for the dependency check below so that "which files this build
+      # is supposed to ship" is written down once.
+      - name: Merge ISA variants (linux-x64, shells + hwcaps engine layout)
         if: matrix.isa_split && runner.os == 'Linux'
         run: |
-          mkdir -p install
-          for name in Lumice LumiceGUI; do
-            cp install-baseline/$name install/$name.baseline
-            cp install-v4/$name       install/$name.x86-64-v4
-            cp install-baseline/LumiceIsaLauncher install/$name
+          set -euo pipefail
+          mkdir -p install/lib/glibc-hwcaps/x86-64-v4
+          cp install-baseline/Lumice install/Lumice
+          cp install-baseline/lib/liblumice.so install/lib/liblumice.so
+          cp install-v4/lib/liblumice.so install/lib/glibc-hwcaps/x86-64-v4/liblumice.so
+          chmod +x install/Lumice
+          expected_files="Lumice lib/liblumice.so lib/glibc-hwcaps/x86-64-v4/liblumice.so"
+          if [ "${{ matrix.build_gui }}" = "ON" ]; then
+            cp install-baseline/LumiceGUI install/LumiceGUI
+            chmod +x install/LumiceGUI
+            expected_files="$expected_files LumiceGUI"
+          fi
+          for f in $expected_files; do
+            test -f "install/$f" || { echo "::error::merge produced an incomplete package: missing $f"; exit 1; }
           done
-          chmod +x install/*
-          ls -l install
+          echo "LUMICE_PACKAGE_FILES=$expected_files" >> "$GITHUB_ENV"
+          ls -lR install
+
+      # The merge check above asks "are the files we expect present"; this asks the question
+      # the loader asks at start-up: "is every library each file NEEDs either in the package
+      # or one the target system provides". The Windows row learned the difference the hard
+      # way (its first shipped-shape build imported the GUI's vendored GLFW/nfd/glad as DLLs
+      # nothing packaged, and the merge check was green); the root CMakeLists.txt fix that
+      # pins those static is platform-neutral, and this step is what turns a recurrence on
+      # Linux into a red job. Direct NEEDED entries only (objdump, the `dumpbin /dependents`
+      # analogue), not ldd's transitive closure — the runner has the -dev packages installed,
+      # so ldd would resolve a vendored library that a user's machine does not have. The
+      # allowlist is glibc/libgcc/libstdc++ plus the GL, X11 and GTK3 client libraries the
+      # apt step above installs the headers for (the runtime halves ship with every desktop
+      # distribution). The package's own engine resolves through lib/; the RPATH is
+      # $ORIGIN/lib, so nothing else is looked for there.
+      - name: Check every NEEDED library is packaged or a system library (linux-x64)
+        if: matrix.isa_split && runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          system='^(libc|libm|libpthread|libdl|librt|libgcc_s|libstdc\+\+|ld-linux-x86-64|libGL|libGLX|libOpenGL|libEGL|libX11|libXext|libXrandr|libXinerama|libXcursor|libXi|libXrender|libXfixes|libxkbcommon|libgtk-3|libgdk-3|libgio-2\.0|libgobject-2\.0|libglib-2\.0|libgmodule-2\.0|libpango-1\.0|libpangocairo-1\.0|libcairo|libcairo-gobject|libgdk_pixbuf-2\.0|libatk-1\.0|libharfbuzz|libfontconfig|libfreetype|libdbus-1)\.so(\.[0-9]+)*$'
+          bad=""
+          for f in $LUMICE_PACKAGE_FILES; do
+            for dep in $(objdump -p "install/$f" | awk '$1 == "NEEDED" { print $2 }'); do
+              if [ -f "install/lib/$dep" ]; then
+                status=packaged
+              elif printf '%s\n' "$dep" | grep -Eq "$system"; then
+                status=system
+              else
+                status=MISSING
+                bad="$bad $f->$dep"
+              fi
+              printf '  %-42s needs %-28s %s\n' "$f" "$dep" "$status"
+            done
+          done
+          if [ -n "$bad" ]; then
+            echo "::error::package would not start: NEEDED libraries neither packaged nor system:$bad"
+            exit 1
+          fi
+
+      # One run of the CLI shell, the only run this workflow makes of the Linux package. It is
+      # safe on any runner: without the tunable the loader takes the v4 engine only on a CPU
+      # that has AVX-512, and with it the loader is told not to, so the second run must report
+      # the baseline tier through LUMICE_GetEngineIsaLevel (the [BENCHMARK] `isa` key) and
+      # LD_DEBUG must show lib/liblumice.so, not the hwcaps copy. That is the negative control
+      # the release's dispatch rests on, exercised on the built package rather than on a
+      # developer's box. The unconstrained run only prints what it got: which tier a hosted
+      # runner has is a coin toss, so asserting on it would say nothing about the code.
+      - name: Smoke-run the packaged CLI, with and without the hwcaps tunable (linux-x64)
+        if: matrix.isa_split && runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          echo "--- unconstrained (whatever this runner's CPU gets):"
+          LD_DEBUG=libs install/Lumice benchmark -f examples/bench_config.json 2>&1 \
+            | grep -E 'liblumice\.so|\[BENCHMARK\]' | grep -Ev 'trying file=.*(/lib/x86_64-linux-gnu|/usr/lib)' || true
+          echo "--- hwcaps disabled (must land on baseline):"
+          out=$(GLIBC_TUNABLES=glibc.cpu.hwcaps=-x86-64-v4 LD_DEBUG=libs install/Lumice benchmark -f examples/bench_config.json 2>&1)
+          printf '%s\n' "$out" | grep -E 'liblumice\.so|\[BENCHMARK\]' | grep -Ev 'trying file=.*(/lib/x86_64-linux-gnu|/usr/lib)' || true
+          printf '%s\n' "$out" | grep -Eq '"isa"\s*:\s*"baseline"' \
+            || { echo "::error::with hwcaps disabled the isa key did not report baseline"; exit 1; }
+          printf '%s\n' "$out" | grep -Eq 'calling init: .*/install/lib/liblumice\.so' \
+            || { echo "::error::with hwcaps disabled the loader did not initialise install/lib/liblumice.so"; exit 1; }
+          if printf '%s\n' "$out" | grep -Eq 'calling init: .*glibc-hwcaps/x86-64-v4/liblumice\.so'; then
+            echo "::error::with hwcaps disabled the loader still initialised the x86-64-v4 engine"; exit 1
+          fi
 
       # ISA variants (windows-x64). Two configures like linux-x64 above, with two differences.
       # First, the second tier is a different COMPILER, not just a different flag. Real MSVC

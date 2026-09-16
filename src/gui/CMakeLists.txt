@@ -197,6 +197,15 @@ if(APPLE)
       "-framework CoreVideo")
 endif()
 
+# Linux/macOS shared builds: the same rpath wiring as the CLI (defined in src/CMakeLists.txt,
+# which is processed before this directory). It sits after the bundle block above on purpose:
+# on macOS the function reads MACOSX_BUNDLE to know how far lib/ is from the executable. On
+# Linux x86_64 that rpath is also what lets the loader pick the ISA-tiered engine; the
+# comment on the function has the whole story.
+if(BUILD_SHARED_LIBS AND NOT WIN32)
+  lumice_wire_engine_rpath(LumiceGUI)
+endif()
+
 if(APPLE)
   install(TARGETS LumiceGUI BUNDLE DESTINATION .)
 else()
