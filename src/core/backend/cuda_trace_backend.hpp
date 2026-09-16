@@ -98,19 +98,26 @@ class CudaTraceBackend : public TraceBackend {
   size_t DrainExits(std::vector<ExitRayRecord>& out) override;
   // S2 device-fused XYZ accumulation overrides — mirrors MetalTraceBackend.
   // SupportsDeviceXyzAccum reports true so the simulator routes per-batch egress
-  // through ReadbackXyzAccum (W*H*3 D2H) instead of the per-exit DrainExits
-  // round-trip. IsCompatible mirrors Metal's constraints (rectangular @ zenith
-  // view, or dual_fisheye_equal_area @ fov≈180); other lens configs fall back
-  // to legacy CPU via simulator backend dispatch.
+  // through ReadbackXyzAccum (one W_i*H_i*3 plane D2H per renderer) instead of
+  // the per-exit DrainExits round-trip. IsCompatible accepts every lens type
+  // (the exit tail projects through the shared lm_proj::ProjectExitToPixel).
+  // A session serves ALL of SessionSpec::renders at once — the physics is
+  // per-session, each renderer owns its own projection + accumulation targets,
+  // and the trace kernel projects every emitted ray into each of them inside
+  // the one dispatch (doc/seam-design.md §4.2 as-built; same shape as Metal).
   bool SupportsDeviceXyzAccum() const override;
+  // One call per drain covers every renderer: `xyz[i]` (caller-sized to
+  // renderer i's resolution) receives its plane, `landed_weight[i]` its
+  // in-bounds landed weight; both are sliced by the dims the persistent device
+  // buffers were actually allocated for, so a between-session drain is valid.
   void ReadbackXyzAccum(std::vector<XyzImageData>& xyz, std::vector<float>& landed_weight) override;
-  // task-358.2 Step 4 (AC3 device-side Y-lane accumulation). CUDA override of
-  // the base virtual: copies the flattened `class_count * W * H` atomic-float
-  // buffer to host and zeros the device side for the next window. Called from
-  // the simulator right after ReadbackXyzAccum (same drain cadence). No-op
-  // (lane_data empty, class_count=0) when the session carries no
-  // raypath_color config — the RenderConsumer then falls back to its host-side
-  // rule-lane accumulation path (AC4 zero-cost).
+  // Device-side Y-lane accumulation. CUDA override of the base virtual: copies
+  // each renderer's `class_count * W_i * H_i` region of the atomic-float buffer
+  // to `lane_data[i]` and zeros the device side for the next window. Called
+  // from the simulator right after ReadbackXyzAccum (same drain cadence). No-op
+  // (lane_data empty, class_count=0) when the session carries no raypath_color
+  // config — the RenderConsumer then falls back to its host-side rule-lane
+  // accumulation path (zero-cost).
   void ReadbackClassLanes(std::vector<std::vector<float>>& lane_data, size_t& class_count) override;
   // Drain the device exposure-anchor plane and reset it for the next window. See
   // TraceBackend::ReadbackAnchorBuffer for why a device-fused backend must accumulate one.

@@ -779,8 +779,11 @@ __global__ void trace_single_ms_kernel(const float* __restrict__ d_dirs,        
                                        uint32_t filter_desc_max_ci,
                                        uint32_t crystal_config_id,
                                        // S2 device-fused accumulation (ms_mode==0 final-layer emit).
-                                       // d_xyz_buf may be nullptr only when ms_mode==1 (the ms_mode==0
-                                       // branches below dereference it; ms_mode==1 branches don't).
+                                       // Every renderer's W*H*3 XYZ plane packed back-to-back in
+                                       // renderer order; d_renderers[r].xyz_off says where plane r
+                                       // starts. d_xyz_buf may be nullptr only when ms_mode==1 (the
+                                       // ms_mode==0 branches below dereference it; ms_mode==1
+                                       // branches don't).
                                        float* __restrict__ d_xyz_buf,
                                        // One float PER RENDERER (indexed by renderer position).
                                        // One warp partial per atomicAdd (epilogue), never per
@@ -846,16 +849,17 @@ __global__ void trace_single_ms_kernel(const float* __restrict__ d_dirs,        
                                        // dummy fallback above).
                                        const DeviceFilterDesc* __restrict__ d_color_filter_desc,
                                        const uint8_t* __restrict__ d_color_bit_map,
-                                       // task-358.2 Step 4 (device Y-lane
-                                       // accumulator, AC3). Sized class_count *
-                                       // W * H floats; a 4B dummy when
-                                       // class_count==0 (kernel branch skip so
-                                       // no read/write occurs). Written via
-                                       // atomicAdd(float*, float). Pixel
-                                       // stride (img_w * img_h) is derived
-                                       // inside EmitToDeviceXyz from
-                                       // proj.img_w / proj.img_h so no
-                                       // separate size params are needed here.
+                                       // Device Y-lane accumulator. Sized
+                                       // class_count * Σ W_i*H_i floats, one
+                                       // region per renderer packed in renderer
+                                       // order (d_renderers[r].lane_off); a 4B
+                                       // dummy when class_count==0 (kernel
+                                       // branch skip so no read/write occurs).
+                                       // Written via atomicAdd(float*, float).
+                                       // Pixel stride (img_w * img_h) is derived
+                                       // inside EmitToDeviceXyz from that
+                                       // renderer's proj.img_w / proj.img_h so
+                                       // no separate size params are needed.
                                        float* __restrict__ d_class_lane_buf,
                                        // Exposure-anchor plane + its fixed projection.
                                        // Unlike d_class_lane_buf there is no dummy case:
