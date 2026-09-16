@@ -225,7 +225,8 @@ TEST(MetalTraceBackend, TraceLayerKernelOccupancy) {
   std::fprintf(stderr,
                "[occupancy] trace_layer_kernel maxTotalThreadsPerThreadgroup=%zu "
                "(1024 plan → 704 @M5 → 640 @DR-3 baseline → 576 @358.1 raypath-color "
-               "pass, ruled benign after throughput re-measure; R1 ruled benign @268.6)\n",
+               "pass → 512 @multi-renderer exit loop, each ruled benign after throughput "
+               "re-measure; R1 ruled benign @268.6)\n",
                max_threads);
   // task-358.1 (metal-color-parity) 640→576: the Step 2/4 MSL emit-gate additions
   // (Design-2 color pass + per-color-class atomic Y-lane accumulator) raise the
@@ -243,11 +244,24 @@ TEST(MetalTraceBackend, TraceLayerKernelOccupancy) {
   // non-binding constraint per explore-306.1). Precedent: 1024→704→640 each
   // cleared the same "re-measure, rule benign, relax guard" path. See
   // progress.md RESUME §3.
-  EXPECT_GE(max_threads, static_cast<size_t>(576))
-      << "trace_layer_kernel occupancy regressed below the 576 task-358.1 baseline "
-         "(1024 plan → 704 @M5 → 640 @DR-3 → 576 @358.1) — re-measure multi-MS+filter "
-         "throughput vs the active D1 gate and reconsider plan R1 option B "
-         "(split filter gate into independent dispatch); see scratchpad/"
+  // Multi-renderer device-fused seam 576→512: the exit tails now loop over the
+  // session's renderers (AccumRendererPlanes, runtime trip count) instead of
+  // projecting into one hard-wired plane. The loop alone costs the quantum — a
+  // probe build with the loop body kept but the `for` collapsed to r=0 reads 576
+  // again. Re-measured 2026-09-16 on the same box, base vs loop vs that probe,
+  // three arms interleaved with alternating order, 7 drain-aligned samples each
+  // (scene.ray_num="infinite", Metal single-renderer):
+  //   ms_multi_crystal_filtered_bd:    base 27.32M  loop 26.93M (0.986)  probe 26.00M (0.952)
+  //   ms_multi_crystal_complex_filter: base 24.70M  loop 24.95M (1.010)  probe 24.81M (1.005)
+  // Per-arm CoV 0.03-0.15, so all three are one distribution: the occupancy drop
+  // does not translate into a throughput change (ALU-bound kernel, occupancy is a
+  // non-binding constraint, as the R1 ruling above found). Same "re-measure, rule benign,
+  // relax guard" path as 1024→704→640→576.
+  EXPECT_GE(max_threads, static_cast<size_t>(512))
+      << "trace_layer_kernel occupancy regressed below the 512 multi-renderer baseline "
+         "(1024 plan → 704 @M5 → 640 @DR-3 → 576 @358.1 → 512 @multi-renderer) — "
+         "re-measure multi-MS+filter throughput vs the active D1 gate and reconsider "
+         "plan R1 option B (split filter gate into independent dispatch); see scratchpad/"
          "scrum-gpu-single-engine-continuation/task-fused-emit-gate/plan.md "
          "and progress.md for context.";
 }

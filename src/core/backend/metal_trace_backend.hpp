@@ -90,6 +90,12 @@ class MetalTraceBackend : public TraceBackend {
   // production exit egress uses DrainExits(). Used by the CPU-vs-Metal parity
   // harness; keep callers on the concrete type, not a polymorphic base reference.
   void ReadbackImage(XyzImageData& out);
+  // [TEST-ONLY] Same, for renderer `renderer_index` of a multi-renderer session
+  // (the one-argument form reads renderer 0).
+  void ReadbackImage(XyzImageData& out, size_t renderer_index);
+  // The kernel-parameter descriptor array is fixed-size (kMaxRenderersDevice, 4);
+  // CanUseBackend routes larger configs to the legacy CPU path on this answer.
+  size_t MaxRenderers() const override;
   // [TEST-ONLY] task-358.3 (renamed from SetCaptureComponent / ReadbackComponent
   // Capture after Fork-C retirement, closing blueprint §6(c) decoupling): the
   // ray's per-layer `this_mask` is now purely Design-2 colour bits (Fork-C

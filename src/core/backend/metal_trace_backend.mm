@@ -101,6 +101,20 @@ constexpr size_t kColorMaxGroupsPerSlot = 4;
 // (`kMaxColorClassesDeviceMsl`) together.
 constexpr size_t kMaxColorClassesDevice = 16;
 
+// Multi-renderer device-fused seam: the most renderers one Metal session can
+// serve. KernelParams carries one RendererPlaneDesc per renderer in a fixed
+// `renderers[kMaxRenderersDevice]` array (constant-space data, like the colour-
+// class tables above) — a fixed cap rather than a variable-length descriptor
+// buffer because every one of Metal's 30 per-stage buffer bindings is already
+// spoken for; the N renderers therefore share the three accumulation bindings
+// (image / landed_weight / class_lane_buf) via per-renderer OFFSETS. 4 covers
+// the real base rate (a GUI-exported config carries 2: preview + export) with
+// headroom; a config beyond it is routed to the legacy CPU path by
+// CanUseBackend via MaxRenderers(), with a WARN, never silently truncated.
+// Raising the cap = bump this constant AND the MSL sibling
+// (`kMaxRenderersDeviceMsl`) together, then re-derive the sizeof asserts.
+constexpr size_t kMaxRenderersDevice = 4;
+
 // Continuation-pool shuffle PCG nonce (task-gpu-backend-recombine-shuffle).
 // MUST equal the CUDA-side kCudaShuffleNonce so the two backends derive the
 // same per-layer Feistel seed (spec.seed ^ nonce ^ ms_idx) — the shuffle only
@@ -150,6 +164,18 @@ static_assert(offsetof(ExitStats, tally_w2) == 12u, "ExitStats::tally_w2 offset 
 // NOTE: field order MUST match MSL KernelParams in src/core/metal/lumice_trace.metal — static_assert
 // guards size only; reviewer-facing field-by-field check is the maintainer's
 // responsibility when adding/reordering members.
+// Host mirror of the MSL RendererPlaneDesc — the per-renderer slice of a
+// session as the kernel sees it: its projection (dims inside) and where its
+// XYZ plane / colour-lane region start inside the shared accumulation buffers.
+// Field order MUST match the MSL struct (proj, xyz_off, lane_off); all 4-byte
+// scalars, so natural alignment gives 68 + 4 + 4 = 76 bytes on both sides.
+struct RendererPlaneDesc {
+  lm_proj::ProjParams proj;
+  uint32_t xyz_off;
+  uint32_t lane_off;
+};
+static_assert(sizeof(RendererPlaneDesc) == 76u, "RendererPlaneDesc layout drift — check the MSL sibling");
+
 struct KernelParams {
   // scrum-268.8 (DR-3): per-batch n_idx + cie_x/y/z removed. trace_layer
   // kernel reads per-ray optics from the wl_pool[wl_idx] buffer instead.
@@ -158,8 +184,9 @@ struct KernelParams {
   // `r_pool_shape[tid]` (buffer 16) instead. MSL struct MUST drop it too.
   uint32_t max_hits;
   uint32_t num_rays;
-  uint32_t img_w;
-  uint32_t img_h;
+  // Live entries in `renderers[]` (end of struct); replaces the per-session
+  // img_w / img_h, which now live inside each renderer's proj.
+  uint32_t num_renderers;
   uint32_t ms_mode;
   uint32_t out_cap;
   uint32_t exit_cap;  // exit seam (scrum-258.1) — buffer-egress capacity (rays)
@@ -178,11 +205,7 @@ struct KernelParams {
   uint32_t gate_seed;
   uint32_t filter_desc_max_ci;
   uint32_t crystal_config_id;
-  // Unified render projection (315.3) — mirrors the MSL KernelParams::proj.
-  // Filled by BeginSession via BuildProjParams; consumed by
-  // lm_proj::ProjectExitToPixel in the kernel exit tail. Replaced the former
-  // loose proj_type / r_scale / max_abs_dz fields.
-  lm_proj::ProjParams proj;
+  // (315.3's per-session `proj` is now per-renderer: renderers[r].proj below.)
   // task-358.3 (renamed from capture_component after Fork-C retirement): 0 in
   // production (emit gate skips capture-ring append), 1 in the CPU-parity test
   // (append the ray's (this_mask, weight) — now purely Design-2 colour bits —
@@ -249,25 +272,25 @@ struct KernelParams {
   // ExitStats::tally_w / tally_w2; 0 on every proportional dispatch (one branch
   // per exit, no atomic — the mode's zero-cost promise). Mirrors the MSL field.
   uint32_t alloc_tally;
+  // The session's renderers — `num_renderers` live entries. Placed LAST so every
+  // field above keeps its offset. Mirrors the MSL array of the same name.
+  RendererPlaneDesc renderers[kMaxRenderersDevice];
 };
 // sizeof(ProjParams) == 68 (5 ints + 3 floats + float[9]). Two fields have left it in the 478
 // series: rectangular's `az0` (the lens now consumes the full camera pose out of `rot` like every
 // other pose-following type) and `visible_range` (478.2 — `visible` is a display clip, so no
 // branch of ProjectExitToPixel reads it any more).
-// The 14 leading 4-byte scalars = 56 → proj at offset 56 → ends at 124. Five 4-byte fields
-// (capture_ray_mask + 4 color-region knobs) + color_class_count = 24 → offset 148, which is NOT
-// 8-aligned, so 4 bytes of pad land ahead of color_class_bits[16] (uint64) at 152: bits (128) at
-// 152-280, combine[16] (16) at 280-296, and_term_counts_base_offset (4) at 296-300, trailing pad
-// to alignment 8 → 304.
-// KernelParams therefore stays 304 across this change: the 4 bytes `visible_range` gave back are
-// absorbed by the internal pad its removal opened ahead of color_class_bits. That the two numbers
-// move independently is the whole reason both are asserted rather than one derived from the other.
-// The exposure anchor then appends a second ProjParams (68) at offset 300, taking the struct to
-// 368 with no new padding — ProjParams' own alignment is 4, and 300 is already 4-aligned.
-// alloc_tally (4) then sits at 368-372, and the struct's alignment of 8 (color_class_bits) pads
-// it to 376.
+// The multi-renderer seam moved the per-session `proj` (68) out of the leading block and into
+// the trailing `renderers[]` array, and folded img_w + img_h (8) into num_renderers (4):
+// 13 leading 4-byte scalars = 52 → capture_ray_mask + 4 colour-region knobs + color_class_count
+// = 24 → offset 76, NOT 8-aligned, so 4 bytes of pad land ahead of color_class_bits[16] (uint64)
+// at 80: bits (128) at 80-208, combine[16] (16) at 208-224, and_term_counts_base_offset (4) at
+// 224-228, anchor_proj (68, alignment 4) at 228-296, alloc_tally (4) at 296-300, then
+// renderers[kMaxRenderersDevice] (4 × 76 = 304, alignment 4) at 300-604, and the struct's
+// alignment of 8 (color_class_bits) pads it to 608. That the two numbers move independently is
+// the whole reason both are asserted rather than one derived from the other.
 static_assert(sizeof(lm_proj::ProjParams) == 68u, "ProjParams layout drift — check projection_shared.h");
-static_assert(sizeof(KernelParams) == 376u,
+static_assert(sizeof(KernelParams) == 608u,
               "KernelParams size mismatch — update host struct to match Metal-side layout");
 
 // Device root-gen latitude path tags. Numeric wire encoding is single-sourced
@@ -741,14 +764,25 @@ struct MetalTraceBackend::Impl {
   //     seeding (BeginSession + !seeded gate); persists across Reset()/
   //     EndSession so successive SimBatches consume disjoint PCG ranges.
   size_t transit_ray_count_ = 0;
-  int    width = 0;
-  int    height = 0;
   // scrum-268.8 (DR-3): per-batch cie_x/y/z removed (KernelParams fields
   // dropped; trace kernel reads CMF from wl_pool[wl_idx]).
-  // Unified render projection (315.3) — populated by BeginSession via
-  // BuildProjParams(render, camera_rot, short_pix). Copied into
-  // KernelParams::proj by DispatchLayer; consumed by ProjectExitToPixel.
-  lm_proj::ProjParams proj_params_{};
+  //
+  // PER-RENDERER session state (one entry per SessionSpec::renders element, in
+  // that order). Everything else in this Impl is per-SESSION: the crystal pool,
+  // filters, wavelength pool, exposure anchor and colour-class tables are shared
+  // by every renderer; only the projection and the accumulation targets are
+  // replicated. Populated by BeginSession; cleared by Reset (per-session, like
+  // the former width/height). The kernel copy is KernelParams::renderers[].
+  //   w, h     : this renderer's resolution.
+  //   desc     : projection (315.3 BuildProjParams, dims inside) + the float
+  //              offsets of this renderer's plane inside xyz_image and of its
+  //              lane region inside class_lane_buf_.
+  struct RendererPlane {
+    int w = 0;
+    int h = 0;
+    RendererPlaneDesc desc{};
+  };
+  std::vector<RendererPlane> planes_;
   // The exposure anchor's fixed projection + its device plane.
   //   anchor_proj_params_ : BuildAnchorProjParams(), a constant of the build. Held as a
   //                         member (not recomputed per dispatch) purely so the KernelParams
@@ -775,14 +809,15 @@ struct MetalTraceBackend::Impl {
   float   current_n_idx = 0.0f;
   bool    have_crystal = false;
 
-  // XYZ accumulator (W*H*3 floats).
+  // XYZ accumulator: every renderer's W_i*H_i*3 plane packed back-to-back in
+  // renderer order (plane r starts at planes_[r].desc.xyz_off floats).
   id<MTLBuffer> xyz_image = nil;
-  size_t        xyz_pix_capacity = 0;
-  // scrum-312: dims xyz_image was actually allocated for (persist across sessions,
-  // unlike width/height which Reset clears). Used by the between-session
-  // third-clock drain to release-safe-verify the caller's dims.
-  int           alloc_xyz_w_ = 0;
-  int           alloc_xyz_h_ = 0;
+  size_t        xyz_pix_capacity = 0;  // Σ W_i*H_i the buffer holds (×3 floats)
+  // Third clock: the per-renderer dims xyz_image was actually allocated for
+  // (persist across sessions, unlike planes_ which Reset clears). Used by the
+  // between-session third-clock drain to release-safe-verify the caller's dims
+  // and to locate each plane (offsets are a pure function of this list).
+  std::vector<std::pair<int, int>> alloc_dims_;
 
   // Polygon geometry (uploaded per-layer; capacity-resized lazily).
   id<MTLBuffer> poly_n_buf  = nil;
@@ -942,11 +977,14 @@ struct MetalTraceBackend::Impl {
   id<MTLBuffer> exit_stats_buf_ = nil;
   LayerStats    last_stats{};
 
-  // S1 device-fused: per-session landed-weight scalar buffer (1 × float).
-  // The trace kernel atomically adds in-bounds filter-pass ray weights here
-  // (slot 18). ReadbackXyzAccum reads it alongside the W*H*3 XYZ image.
-  // Allocated on first use; cleared at each BeginSession.
+  // S1 device-fused: landed-weight accumulator, ONE float PER RENDERER (slot 17,
+  // indexed by renderer position). The trace kernel atomically adds in-bounds
+  // filter-pass primary-hit weights here. ReadbackXyzAccum reads it alongside
+  // the XYZ planes. Same persistent third-clock lifecycle as xyz_image: grown
+  // by EnsureLandedWeightBuf, zeroed with the planes on a shape change and by
+  // every drain, never per BeginSession.
   id<MTLBuffer> landed_weight_buf_ = nil;
+  size_t        landed_weight_capacity_ = 0;  // floats the buffer holds
 
   // Exit-record buffers — retained as nil members for compile compatibility
   // after S1 device-fused removed their allocations and kernel bindings.
@@ -1062,13 +1100,15 @@ struct MetalTraceBackend::Impl {
   //   class_count_          : cached class_table_.classes_.size() for hot-path
   //                           reads (KernelParams populate + readback sizing).
   //                           Bounded by kMaxColorClassesDevice (assert).
-  //   class_lane_buf_       : atomic_float[class_count * W * H] on device.
-  //                           Layout matches MSL indexing: class_lane_buf_
-  //                           [c * W * H + pix]. Zeroed at
-  //                           BeginSession (mirror landed_weight_buf_) and
-  //                           re-zeroed by ReadbackClassLanes after each drain.
-  //   class_lane_pix_capacity_ : the (class_count * pix) allocation actually
-  //                           held by class_lane_buf_. Regrown lazily by
+  //   class_lane_buf_       : atomic_float[class_count * Σ W_i*H_i] on device —
+  //                           one region per renderer packed in renderer order
+  //                           (region r starts at planes_[r].desc.lane_off).
+  //                           Inside a region the layout matches MSL indexing:
+  //                           class_lane_buf_[lane_off + c * W * H + pix].
+  //                           Zeroed on allocation and re-zeroed by
+  //                           ReadbackClassLanes after each drain.
+  //   class_lane_pix_capacity_ : the float allocation actually held by
+  //                           class_lane_buf_. Regrown lazily by
   //                           EnsureClassLaneBuf on shape / class-count change.
   ColorClassTable class_table_{};
   size_t          class_count_ = 0;
@@ -1143,13 +1183,21 @@ struct MetalTraceBackend::Impl {
   // Layer dispatch helpers.
   void EnsureDevice();
   void EnsurePso();
-  void EnsureImage(int w, int h);
+  // Size xyz_image for Σ dims (one W*H*3 plane per renderer) and, on any change
+  // of the dims list, reset it together with the landed-weight slots.
+  void EnsureImage(const std::vector<std::pair<int, int>>& dims);
+  // Grow landed_weight_buf_ to hold `n` floats (one per renderer). Zeroes on
+  // (re)allocation only; MUST run before EnsureImage so the latter's reset can
+  // cover both twins.
+  void EnsureLandedWeightBuf(size_t n);
   // task-358.1 Step 4 (AC3 device-side Y-lane accumulation): allocate/resize
   // class_lane_buf_ to class_count_ * w * h atomic_floats (or a 4-byte dummy
   // when class_count_==0 to keep the buffer(30) binding non-nil). Zeroes the
   // freshly allocated buffer. Idempotent: no-op when the requested capacity
   // matches the current allocation and shape.
-  void EnsureClassLaneBuf(int w, int h);
+  void EnsureClassLaneBuf(const std::vector<std::pair<int, int>>& dims);
+  // Σ W_i*H_i over a dims list — the pixel count the packed buffers are sized by.
+  static size_t TotalPixels(const std::vector<std::pair<int, int>>& dims);
   // Allocate the exposure-anchor plane once (its size is a compile-time constant, so unlike
   // the lane buffer it can never need regrowing) and zero it. Idempotent.
   void EnsureAnchorBuf();
@@ -1310,49 +1358,68 @@ void MetalTraceBackend::Impl::EnsurePso() {
             "MetalTraceBackend: using cached embedded metallib ({} functions)", 4);
 }
 
-void MetalTraceBackend::Impl::EnsureImage(int w, int h) {
-  size_t pix = static_cast<size_t>(w) * static_cast<size_t>(h);
-  // Grow/shrink the byte allocation only when the pixel COUNT changes.
+size_t MetalTraceBackend::Impl::TotalPixels(const std::vector<std::pair<int, int>>& dims) {
+  size_t total = 0;
+  for (const auto& [w, h] : dims) {
+    total += static_cast<size_t>(w) * static_cast<size_t>(h);
+  }
+  return total;
+}
+
+void MetalTraceBackend::Impl::EnsureLandedWeightBuf(size_t n) {
+  if (landed_weight_buf_ != nil && n <= landed_weight_capacity_) {
+    return;
+  }
+  landed_weight_buf_ = [device newBufferWithLength:n * sizeof(float) options:MTLResourceStorageModeShared];
+  assert(landed_weight_buf_ != nil);
+  landed_weight_capacity_ = n;
+  std::memset([landed_weight_buf_ contents], 0, n * sizeof(float));
+}
+
+void MetalTraceBackend::Impl::EnsureImage(const std::vector<std::pair<int, int>>& dims) {
+  const size_t pix = TotalPixels(dims);
+  // Grow/shrink the byte allocation only when the packed pixel COUNT changes.
   if (pix != xyz_pix_capacity) {
     xyz_image = [device newBufferWithLength:pix * 3 * sizeof(float)
                                     options:MTLResourceStorageModeShared];
     assert(xyz_image != nil);
     xyz_pix_capacity = pix;
   }
-  // scrum-312 third clock: reset on any SHAPE change (w or h), not just pixel
-  // count — a same-area shape swap (e.g. 512x1024 -> 1024x512) reuses the buffer
-  // but is a fresh accumulation region. Gate on (w,h) so alloc_xyz_w_/h_ track the
-  // current shape (else the between-session drain's dim check would false-throw,
-  // review-Major-1) and BOTH twin accumulators reset together (else landed_weight
-  // would mix old/new-shape rays while xyz_image reset, review-Major-2). A shape
-  // change always rides a generation change, whose flush already drained the prior
-  // window, so re-zeroing here is correct. Steady state: BeginSession does NOT
-  // clear these — they persist across batches; the drain's post-read reset is the
-  // per-window reset.
-  if (w != alloc_xyz_w_ || h != alloc_xyz_h_) {
+  // Third clock: reset on any SHAPE change of the dims list — a renderer
+  // added / removed / resized, or a same-area shape swap (e.g. 512x1024 -> 1024x512)
+  // that reuses the buffer but is a fresh accumulation region (and, with several
+  // renderers, moves every plane offset after it). Gate on the whole list so
+  // alloc_dims_ tracks the current shape (else the between-session drain's dim
+  // check would false-throw, review-Major-1) and BOTH twin accumulators reset
+  // together (else landed_weight would mix old/new-shape rays while xyz_image
+  // reset, review-Major-2). A shape change always rides a generation change,
+  // whose flush already drained the prior window, so re-zeroing here is correct.
+  // Steady state: BeginSession does NOT clear these — they persist across
+  // batches; the drain's post-read reset is the per-window reset.
+  if (dims != alloc_dims_) {
     // Reset BOTH twin accumulators together. landed_weight_buf_ MUST already be
-    // allocated (BeginSession allocates it before calling EnsureImage) — assert
-    // the invariant loudly rather than silently best-effort, so a future caller
-    // that forgets the ordering can't silently reintroduce the round-1 Major-2
-    // (xyz reset while landed keeps stale rays).
-    assert(landed_weight_buf_ != nil && "EnsureImage: landed_weight_buf_ must be allocated before reset");
+    // allocated for dims.size() slots (BeginSession calls EnsureLandedWeightBuf
+    // before EnsureImage) — assert the invariant loudly rather than silently
+    // best-effort, so a future caller that forgets the ordering can't silently
+    // reintroduce the split reset (xyz reset while landed keeps stale rays).
+    assert(landed_weight_buf_ != nil && landed_weight_capacity_ >= dims.size() &&
+           "EnsureImage: landed_weight_buf_ must be allocated for every renderer before reset");
     std::memset([xyz_image contents], 0, pix * 3 * sizeof(float));
-    *static_cast<float*>([landed_weight_buf_ contents]) = 0.0f;
-    alloc_xyz_w_ = w;
-    alloc_xyz_h_ = h;
+    std::memset([landed_weight_buf_ contents], 0, landed_weight_capacity_ * sizeof(float));
+    alloc_dims_ = dims;
   }
 }
 
-void MetalTraceBackend::Impl::EnsureClassLaneBuf(int w, int h) {
+void MetalTraceBackend::Impl::EnsureClassLaneBuf(const std::vector<std::pair<int, int>>& dims) {
   // class_lane_pix_capacity_ is the total float capacity currently held
-  // (class_count * W * H, or 1 for the dummy branch). Regrown only when the
+  // (class_count * Σ W_i*H_i, or 1 for the dummy branch). Regrown only when the
   // requested layout would need more floats than the current allocation.
-  const size_t pix = static_cast<size_t>(w) * static_cast<size_t>(h);
+  const size_t pix = TotalPixels(dims);
   const size_t needed_elems = (class_count_ == 0) ? 1u : (class_count_ * pix);
   // explore-359 FIX: zero ONLY on (re)allocation — NOT every BeginSession.
   // class_lane_buf_ is a scrum-312 third-clock PERSISTENT accumulator (twin of
   // xyz_image): it accumulates across batches within a drain window and is
-  // reset per-window by ReadbackClassLanes' post-read memset (mm:3122).
+  // reset per-window by ReadbackClassLanes' post-read memset.
   // The old code memset'd every BeginSession — but BeginSession runs PER BATCH,
   // so with ray_num > LUMICE_DISPATCH_RAY_NUM (multiple batches per drain) every
   // batch wiped the prior batches' lane accumulation, leaving only the LAST
@@ -2678,13 +2745,18 @@ void MetalTraceBackend::Impl::DispatchLayer(size_t num_rays,
   // (poly_off, poly_cnt) from `r_pool_shape[tid]` (buffer 16). The struct
   // field itself is gone (see KernelParams above).
   params.num_rays = static_cast<uint32_t>(num_rays);
-  params.img_w    = static_cast<uint32_t>(width);
-  params.img_h    = static_cast<uint32_t>(height);
   params.ms_mode  = ms_mode;
   params.out_cap  = static_cast<uint32_t>(out_cap);
-  // 315.3: single POD carries all projection routing (proj_type /
-  // r_scale / max_abs_dz / scale / rot / etc.) into the kernel exit tail.
-  params.proj     = proj_params_;
+  // One descriptor per renderer: 315.3's projection POD (proj_type / r_scale /
+  // max_abs_dz / scale / rot / dims) plus this renderer's plane + lane-region
+  // offsets into the shared accumulation buffers. The exit tails loop over
+  // `num_renderers` of these.
+  assert(planes_.size() <= kMaxRenderersDevice && "BeginSession bounds planes_ by kMaxRenderersDevice");
+  params.num_renderers = static_cast<uint32_t>(planes_.size());
+  std::memset(params.renderers, 0, sizeof(params.renderers));
+  for (size_t r = 0; r < planes_.size(); ++r) {
+    params.renderers[r] = planes_[r].desc;
+  }
   // The exposure anchor's own projection — a session constant, identical on every dispatch
   // and independent of everything in `spec`.
   params.anchor_proj = anchor_proj_params_;
@@ -2818,6 +2890,8 @@ void MetalTraceBackend::Impl::DispatchLayer(size_t num_rays,
   [enc setBuffer:poly_n_buf     offset:0 atIndex:4];
   [enc setBuffer:poly_d_buf     offset:0 atIndex:5];
   [enc setBytes:&params length:sizeof(KernelParams) atIndex:6];
+  // Slot 7: every renderer's XYZ plane packed in one buffer (offsets travel in
+  // params.renderers[r].xyz_off).
   [enc setBuffer:xyz_image      offset:0 atIndex:7];
   [enc setBuffer:cont_d[out_slot]  offset:0 atIndex:8];
   // Slots 9/11 carry the wavelength pool (read) + per-ray root wl_idx (read);
@@ -2837,8 +2911,9 @@ void MetalTraceBackend::Impl::DispatchLayer(size_t num_rays,
   // ray-specific polygon slice.
   [enc setBuffer:root_pool_shape_buf_ offset:0 atIndex:15];
   [enc setBuffer:root_rot_buf   offset:0 atIndex:16];
-  // S1 device-fused: slot 17 = landed_weight scalar. Exit records are not
-  // materialised — the kernel accumulates directly into image + landed_weight.
+  // S1 device-fused: slot 17 = landed_weight, one float per renderer. Exit
+  // records are not materialised — the kernel accumulates directly into
+  // image + landed_weight.
   [enc setBuffer:landed_weight_buf_ offset:0 atIndex:17];
   // Emit-gate filter state (scrum-267 task-fused-emit-gate Step 4b). Bound for
   // every dispatch (Metal disallows nil buffers). EnsureFilterBuffers guarantees
@@ -2865,8 +2940,9 @@ void MetalTraceBackend::Impl::DispatchLayer(size_t num_rays,
   [enc setBuffer:exit_comp_w_buf_          offset:0 atIndex:22];
   [enc setBuffer:exit_comp_cnt_buf_        offset:0 atIndex:27];
   // Device-side per-color-class Y-lane accumulator: slot 29 = atomic_float
-  // buffer, allocated as class_count * W * H (or a 4-byte dummy when
-  // class_count==0 so this binding stays non-nil under Metal's nil-ban).
+  // buffer, allocated as class_count * Σ W_i*H_i with one region per renderer
+  // (or a 4-byte dummy when class_count==0 so this binding stays non-nil under
+  // Metal's nil-ban).
   [enc setBuffer:class_lane_buf_           offset:0 atIndex:29];
   [enc setBuffer:anchor_buf_               offset:0 atIndex:24];
 
@@ -2964,11 +3040,10 @@ void MetalTraceBackend::Impl::Reset() {
   // gen_seed_ is re-derived from spec.seed every BeginSession; clear so a
   // session that omits spec.seed cannot inherit a previous activation.
   gen_seed_ = 0u;
-  width = 0;
-  height = 0;
   // scrum-268.8 (DR-3): cie_x/y/z removed from Impl.
-  // 315.3: unified projection params reset to POD default.
-  proj_params_ = lm_proj::ProjParams{};
+  // Per-renderer session state (projection + offsets) is per-session; the
+  // persistent allocation record (alloc_dims_) deliberately survives.
+  planes_.clear();
   anchor_proj_params_ = lm_proj::ProjParams{};
   have_crystal = false;
   current_n_idx = 0.0f;
@@ -3023,6 +3098,14 @@ void MetalTraceBackend::BeginSession(const SessionSpec& spec) {
   assert(!impl_->in_session && "BeginSession called on an already-open session");
   assert(spec.scene != nullptr);
   assert(!spec.renders.empty() && spec.renders[0] != nullptr);
+  // The renderer count is bounded by kMaxRenderersDevice (KernelParams::renderers[]
+  // is a fixed array). CanUseBackend already routes larger configs to the legacy CPU
+  // path through MaxRenderers(); this is the release-safe backstop for a caller that
+  // bypasses it — thrown BEFORE in_session flips so no Reset() dance is needed.
+  if (spec.renders.size() > kMaxRenderersDevice) {
+    throw BackendUnavailableError("MetalTraceBackend::BeginSession: " + std::to_string(spec.renders.size()) +
+                                  " renderers exceed kMaxRenderersDevice=" + std::to_string(kMaxRenderersDevice));
+  }
   // 315.3: the exit tail now projects via lm_proj::ProjectExitToPixel — the
   // SAME single source as the CPU parity oracle (scatter_accum.hpp) — so every
   // lens type (incl. globe, 315.4) produces byte-identical pixels to legacy CPU
@@ -3057,11 +3140,6 @@ void MetalTraceBackend::BeginSession(const SessionSpec& spec) {
   // lock-step with rng.SetSeed). Resetting here unconditionally would collapse
   // the GPU PCG stream to a single 128-ray range every SimBatch — the mirror
   // bug of 258.10 (RNG re-seed per batch). See task-260.5 fix.
-  const RenderConfig& render0 = *spec.renders[0];
-  impl_->width  = render0.resolution_[0];
-  impl_->height = render0.resolution_[1];
-
-  Rotation camera_rot = MakeCameraRotation(render0);
   // scrum-268.8 (DR-3): per-batch ComputeCmf(spec.wl.wl_) deleted — CMF is
   // sourced per-ray from wl_pool[wl_idx] populated below in TraceLayer's ci
   // loop. spec.wl.wl_ remains the simulator-sampled per-batch sentinel until
@@ -3085,13 +3163,37 @@ void MetalTraceBackend::BeginSession(const SessionSpec& spec) {
   impl_->per_batch_weight_ = spec.wl.weight_;
 
   // Projection routing (315.3): single-source ProjParams via BuildProjParams —
-  // predigests per-type scale, dual-fisheye r_scale/overlap,
-  // and the camera rotation. DispatchLayer copies this into KernelParams::proj;
-  // the kernel exit tail calls lm_proj::ProjectExitToPixel(proj, world_exit...),
-  // identical to the CPU parity oracle ScatterOutgoingToXyz.
-  const float short_pix =
-      static_cast<float>(std::min(render0.resolution_[0], render0.resolution_[1]));
-  impl_->proj_params_ = BuildProjParams(render0, camera_rot, short_pix);
+  // predigests per-type scale, dual-fisheye r_scale/overlap, and the camera
+  // rotation — ONCE PER RENDERER: each has its own view pose, lens and
+  // resolution, so nothing here can be shared across them. DispatchLayer copies
+  // planes_[r].desc into KernelParams::renderers[r]; the kernel exit tail calls
+  // lm_proj::ProjectExitToPixel(proj, world_exit...) for each, identical to the
+  // CPU parity oracle ScatterOutgoingToXyz. The plane / lane-region offsets are
+  // prefix sums over the renderers before it — the packing the shared
+  // accumulation buffers use (see EnsureImage / EnsureClassLaneBuf).
+  impl_->planes_.clear();
+  impl_->planes_.reserve(spec.renders.size());
+  std::vector<std::pair<int, int>> dims;
+  dims.reserve(spec.renders.size());
+  {
+    size_t pix_prefix = 0;
+    for (const RenderConfig* render : spec.renders) {
+      assert(render != nullptr);
+      Impl::RendererPlane plane;
+      plane.w = render->resolution_[0];
+      plane.h = render->resolution_[1];
+      const Rotation camera_rot = MakeCameraRotation(*render);
+      const float short_pix = static_cast<float>(std::min(render->resolution_[0], render->resolution_[1]));
+      plane.desc.proj = BuildProjParams(*render, camera_rot, short_pix);
+      plane.desc.xyz_off = static_cast<uint32_t>(pix_prefix * 3u);
+      // lane_off needs class_count_, which is only known after the colour tables
+      // below are built — filled in there.
+      plane.desc.lane_off = 0u;
+      dims.emplace_back(plane.w, plane.h);
+      pix_prefix += static_cast<size_t>(plane.w) * static_cast<size_t>(plane.h);
+      impl_->planes_.push_back(plane);
+    }
+  }
 
   // Seed contract: first call with spec.seed != 0 seeds the RNG; repeated
   // calls with the same seed are no-ops (normal per-SimBatch pattern).
@@ -3132,18 +3234,13 @@ void MetalTraceBackend::BeginSession(const SessionSpec& spec) {
   try {
     impl_->EnsureDevice();
     impl_->EnsurePso();
-    // S1 device-fused: landed_weight scalar (1 × float, MTLResourceStorageModeShared).
-    // scrum-312 third clock: allocate ONCE (nil-check); it persists as a cross-batch
-    // accumulator like xyz_image. Allocate it BEFORE EnsureImage so EnsureImage
-    // resets BOTH twin accumulators atomically on a fresh accumulation region /
-    // shape change (review-Major-2). No per-call zero here.
-    if (impl_->landed_weight_buf_ == nil) {
-      impl_->landed_weight_buf_ =
-          [impl_->device newBufferWithLength:sizeof(float)
-                                     options:MTLResourceStorageModeShared];
-      assert(impl_->landed_weight_buf_ != nil);
-    }
-    impl_->EnsureImage(impl_->width, impl_->height);
+    // S1 device-fused: landed_weight, one float per renderer (MTLResourceStorageModeShared).
+    // Third clock: grow-only; it persists as a cross-batch accumulator
+    // like xyz_image. Sized BEFORE EnsureImage so EnsureImage resets BOTH twin
+    // accumulators atomically on a fresh accumulation region / shape change
+    // (review-Major-2). No per-call zero here.
+    impl_->EnsureLandedWeightBuf(dims.size());
+    impl_->EnsureImage(dims);
     // scrum-268.8 (DR-3): allocate the wavelength pool buffer once per backend
     // (size invariant across sessions) and populate it once per BeginSession.
     // Pool content depends only on (illuminant mode, per_batch_wl_) — both
@@ -3232,11 +3329,19 @@ void MetalTraceBackend::BeginSession(const SessionSpec& spec) {
   impl_->EnsureFilterBuffers(spec);
 
   // task-358.1 Step 4: allocate/resize the device Y-lane accumulator. Layout is
-  // atomic_float[class_count * W * H] with class_count==0 collapsing to a
-  // 4-byte dummy (Metal binding must be non-nil). Content is zeroed here (per
-  // BeginSession), then re-zeroed by ReadbackClassLanes after every drain
-  // window — mirrors the landed_weight_buf_ lifecycle.
-  impl_->EnsureClassLaneBuf(impl_->width, impl_->height);
+  // atomic_float[class_count * Σ W_i*H_i], one region per renderer, with
+  // class_count==0 collapsing to a 4-byte dummy (Metal binding must be non-nil).
+  // Zeroed on allocation, then re-zeroed by ReadbackClassLanes after every drain
+  // window — mirrors the landed_weight_buf_ lifecycle. The region offsets are the
+  // class-count-scaled pixel prefix sums, now that class_count_ is known.
+  impl_->EnsureClassLaneBuf(dims);
+  {
+    size_t pix_prefix = 0;
+    for (auto& plane : impl_->planes_) {
+      plane.desc.lane_off = static_cast<uint32_t>(impl_->class_count_ * pix_prefix);
+      pix_prefix += static_cast<size_t>(plane.w) * static_cast<size_t>(plane.h);
+    }
+  }
 
   // The exposure anchor: one fixed full-sky plane per session, geometry from
   // core/anchor_buffer.hpp and NOT from `spec`. Both calls are idempotent and cheap; they
@@ -3680,14 +3785,21 @@ RootRaySource MetalTraceBackend::Recombine(LayerHandlePtr handle, const Recombin
   return RootRaySource::FromDevice(dev);
 }
 
-void MetalTraceBackend::ReadbackImage(XyzImageData& out) {
+void MetalTraceBackend::ReadbackImage(XyzImageData& out) { ReadbackImage(out, 0); }
+
+void MetalTraceBackend::ReadbackImage(XyzImageData& out, size_t renderer_index) {
   assert(impl_->in_session);
   assert(out.data != nullptr);
-  assert(out.width == impl_->width && out.height == impl_->height &&
-         "XyzImageData dimensions must match BeginSession resolution");
-  size_t pix = static_cast<size_t>(impl_->width) * static_cast<size_t>(impl_->height);
-  std::memcpy(out.data, [impl_->xyz_image contents], pix * 3 * sizeof(float));
+  assert(renderer_index < impl_->planes_.size() && "renderer_index beyond the session's renderers");
+  const auto& plane = impl_->planes_[renderer_index];
+  assert(out.width == plane.w && out.height == plane.h &&
+         "XyzImageData dimensions must match that renderer's BeginSession resolution");
+  size_t pix = static_cast<size_t>(plane.w) * static_cast<size_t>(plane.h);
+  const float* base = static_cast<const float*>([impl_->xyz_image contents]) + plane.desc.xyz_off;
+  std::memcpy(out.data, base, pix * 3 * sizeof(float));
 }
+
+size_t MetalTraceBackend::MaxRenderers() const { return kMaxRenderersDevice; }
 
 void MetalTraceBackend::SetCaptureRayMask(bool enable) {
   // Must be set before BeginSession — the capture-ring sizing + per-layer
@@ -3718,28 +3830,35 @@ size_t MetalTraceBackend::ReadbackExitRays(std::vector<ExitRayRecord>& out) {
 // this must not depend on in_session/width/height (Reset clears those), and must
 // itself guarantee GPU completion rather than rely on the caller having waited.
 void MetalTraceBackend::ReadbackXyzAccum(std::vector<XyzImageData>& xyz_planes, std::vector<float>& landed_weight) {
-  if (xyz_planes.size() != 1) {
-    throw BackendUnavailableError("MetalTraceBackend::ReadbackXyzAccum: expected 1 plane, got " +
-                                  std::to_string(xyz_planes.size()));
-  }
-  XyzImageData& xyz = xyz_planes[0];
-  landed_weight.assign(1, 0.0f);
   // Release-safe gates (mirror the CUDA backend; asserts are no-ops under NDEBUG,
-  // review-Minor: all three preconditions throw, not assert).
-  if (impl_->xyz_image == nil || impl_->landed_weight_buf_ == nil || xyz.data == nullptr) {
-    throw BackendUnavailableError("MetalTraceBackend::ReadbackXyzAccum: unallocated buffer or null xyz.data");
+  // review-Minor: every precondition throws, not asserts).
+  if (impl_->xyz_image == nil || impl_->landed_weight_buf_ == nil) {
+    throw BackendUnavailableError("MetalTraceBackend::ReadbackXyzAccum: unallocated buffer");
   }
-  // Invariant (review-Minor): alloc_xyz_w_/h_ and xyz_pix_capacity encode the same
+  // Invariant (review-Minor): alloc_dims_ and xyz_pix_capacity encode the same
   // underlying allocation and are set together in EnsureImage — assert they agree.
-  assert(static_cast<size_t>(impl_->alloc_xyz_w_) * static_cast<size_t>(impl_->alloc_xyz_h_) ==
-             impl_->xyz_pix_capacity &&
+  assert(Impl::TotalPixels(impl_->alloc_dims_) == impl_->xyz_pix_capacity &&
          "alloc dims out of sync with xyz_pix_capacity");
-  // Pixel count from the dims the buffer was ACTUALLY allocated for (persist
-  // across Reset), cross-checked release-safe against the caller's declared dims.
-  if (xyz.width != impl_->alloc_xyz_w_ || xyz.height != impl_->alloc_xyz_h_) {
-    throw BackendUnavailableError("MetalTraceBackend::ReadbackXyzAccum: caller dims (" + std::to_string(xyz.width) +
-                                  "x" + std::to_string(xyz.height) + ") != allocated buffer dims (" +
-                                  std::to_string(impl_->alloc_xyz_w_) + "x" + std::to_string(impl_->alloc_xyz_h_) + ")");
+  // One caller plane per renderer, each with the dims the buffer was ACTUALLY
+  // allocated for (persist across Reset) — cross-checked release-safe against the
+  // caller's declared dims, plane by plane.
+  if (xyz_planes.size() != impl_->alloc_dims_.size()) {
+    throw BackendUnavailableError("MetalTraceBackend::ReadbackXyzAccum: caller passed " +
+                                  std::to_string(xyz_planes.size()) + " plane(s) but " +
+                                  std::to_string(impl_->alloc_dims_.size()) + " renderer(s) are allocated");
+  }
+  for (size_t i = 0; i < xyz_planes.size(); ++i) {
+    const XyzImageData& xyz = xyz_planes[i];
+    if (xyz.data == nullptr) {
+      throw BackendUnavailableError("MetalTraceBackend::ReadbackXyzAccum: null xyz.data for renderer " +
+                                    std::to_string(i));
+    }
+    if (xyz.width != impl_->alloc_dims_[i].first || xyz.height != impl_->alloc_dims_[i].second) {
+      throw BackendUnavailableError("MetalTraceBackend::ReadbackXyzAccum: renderer " + std::to_string(i) +
+                                    " caller dims (" + std::to_string(xyz.width) + "x" + std::to_string(xyz.height) +
+                                    ") != allocated buffer dims (" + std::to_string(impl_->alloc_dims_[i].first) +
+                                    "x" + std::to_string(impl_->alloc_dims_[i].second) + ")");
+    }
   }
   // Defensive GPU-completion barrier: the per-batch WaitAndReadbackLayer (ci-loop
   // tail) + EndSession already drain pending_cb_, so this is normally nil, but a
@@ -3754,13 +3873,24 @@ void MetalTraceBackend::ReadbackXyzAccum(std::vector<XyzImageData>& xyz_planes, 
     [impl_->pending_cb_ waitUntilCompleted];
     impl_->pending_cb_ = nil;
   }
-  size_t pix = static_cast<size_t>(impl_->alloc_xyz_w_) * static_cast<size_t>(impl_->alloc_xyz_h_);
-  std::memcpy(xyz.data, [impl_->xyz_image contents], pix * 3 * sizeof(float));
-  landed_weight[0] += *static_cast<const float*>([impl_->landed_weight_buf_ contents]);
+  // Plane i lives at the float offset 3 × (Σ pixels of the planes before it) — the
+  // same prefix-sum packing BeginSession wrote into planes_[i].desc.xyz_off, derived
+  // here from alloc_dims_ so a between-session drain (planes_ cleared by Reset) reads
+  // the right slice.
+  const float* xyz_base = static_cast<const float*>([impl_->xyz_image contents]);
+  const float* landed_base = static_cast<const float*>([impl_->landed_weight_buf_ contents]);
+  landed_weight.assign(xyz_planes.size(), 0.0f);
+  size_t pix_prefix = 0;
+  for (size_t i = 0; i < xyz_planes.size(); ++i) {
+    const size_t pix = static_cast<size_t>(impl_->alloc_dims_[i].first) * static_cast<size_t>(impl_->alloc_dims_[i].second);
+    std::memcpy(xyz_planes[i].data, xyz_base + pix_prefix * 3u, pix * 3 * sizeof(float));
+    landed_weight[i] += landed_base[i];
+    pix_prefix += pix;
+  }
   // Reset the accumulators so the next drain window starts from zero (BeginSession
-  // no longer clears them). Unified memory → a plain host memset/store suffices.
-  std::memset([impl_->xyz_image contents], 0, pix * 3 * sizeof(float));
-  *static_cast<float*>([impl_->landed_weight_buf_ contents]) = 0.0f;
+  // no longer clears them). Unified memory → a plain host memset suffices.
+  std::memset([impl_->xyz_image contents], 0, impl_->xyz_pix_capacity * 3 * sizeof(float));
+  std::memset([impl_->landed_weight_buf_ contents], 0, impl_->landed_weight_capacity_ * sizeof(float));
 }
 
 // task-358.1 Step 4 (AC3 device-side Y-lane accumulation): drain the flattened
@@ -3777,33 +3907,41 @@ void MetalTraceBackend::ReadbackClassLanes(std::vector<std::vector<float>>& lane
     lane_planes.clear();
     return;
   }
-  lane_planes.resize(1);
-  std::vector<float>& lane_data = lane_planes[0];
-  const size_t pix = static_cast<size_t>(impl_->alloc_xyz_w_) *
-                     static_cast<size_t>(impl_->alloc_xyz_h_);
+  const size_t pix = Impl::TotalPixels(impl_->alloc_dims_);
   assert(pix > 0);
   const size_t total = impl_->class_count_ * pix;
   // Runtime gate (not just the assert below, which -DNDEBUG release builds
-  // compile out): alloc_xyz_w_/alloc_xyz_h_ (set by EnsureImage) and the w/h
-  // EnsureClassLaneBuf sized class_lane_buf_ against (impl_->width/height)
-  // are both driven from the same BeginSession snapshot with no intervening
-  // resize path, so `total` should never exceed class_lane_pix_capacity_ in
-  // practice — but if that invariant is ever broken by a future change,
-  // degrade to an empty drain rather than reading past the allocation
-  // (code-review-01 Minor #3, same failure class as the render.cpp Major).
+  // compile out): alloc_dims_ (set by EnsureImage) and the dims EnsureClassLaneBuf
+  // sized class_lane_buf_ against are both driven from the same BeginSession
+  // snapshot with no intervening resize path, so `total` should never exceed
+  // class_lane_pix_capacity_ in practice — but if that invariant is ever broken
+  // by a future change, degrade to an empty drain rather than reading past the
+  // allocation (same failure class as the render.cpp lane-shape gate).
   if (total > impl_->class_lane_pix_capacity_) {
     ILOG_ERROR(EffectiveLogger(impl_->logger_),
                "MetalTraceBackend::ReadbackClassLanes: class_lane_buf_ under-allocated "
-               "(need {} floats, have {}) — alloc_xyz_w_/h_ and width/height diverged. "
+               "(need {} floats, have {}) — alloc_dims_ and the lane sizing diverged. "
                "Dropping this window's per-class lane drain.",
                total, impl_->class_lane_pix_capacity_);
-    assert(false && "class_lane_buf_ under-allocated for the current class_count * W * H");
+    assert(false && "class_lane_buf_ under-allocated for the current class_count * Σ W * H");
     lane_planes.clear();
     class_count = 0;
     return;
   }
-  lane_data.resize(total);
-  std::memcpy(lane_data.data(), [impl_->class_lane_buf_ contents], total * sizeof(float));
+  // Region i is class_count × (this renderer's pixels) floats, starting at
+  // class_count × (Σ pixels of the renderers before it) — the packing
+  // BeginSession wrote into planes_[i].desc.lane_off, derived here from
+  // alloc_dims_ so a between-session drain reads the right slice.
+  const float* lane_base = static_cast<const float*>([impl_->class_lane_buf_ contents]);
+  lane_planes.resize(impl_->alloc_dims_.size());
+  size_t pix_prefix = 0;
+  for (size_t i = 0; i < impl_->alloc_dims_.size(); ++i) {
+    const size_t pix_i = static_cast<size_t>(impl_->alloc_dims_[i].first) * static_cast<size_t>(impl_->alloc_dims_[i].second);
+    const size_t region = impl_->class_count_ * pix_i;
+    lane_planes[i].resize(region);
+    std::memcpy(lane_planes[i].data(), lane_base + impl_->class_count_ * pix_prefix, region * sizeof(float));
+    pix_prefix += pix_i;
+  }
   // Reset the device accumulator so the next window starts clean (mirrors
   // ReadbackXyzAccum's post-copy zero on xyz_image / landed_weight_buf_).
   std::memset([impl_->class_lane_buf_ contents], 0, total * sizeof(float));
