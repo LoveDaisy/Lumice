@@ -33,6 +33,7 @@ from __future__ import annotations
 import ctypes
 import json
 import math
+import statistics
 import warnings
 from pathlib import Path
 
@@ -372,7 +373,24 @@ _RARE_CRYSTAL_ID = 3
 # floor ≈3σ below a true ~9×), never with a looser ratio.
 _CHALLENGE_SESSIONS = 30
 _RARE_ROW_MIN_IMPROVEMENT = 5.0
-_MEAN_AGREEMENT_Z = 3.0
+# The mean-agreement assertion is one test over ALL rows (the worst row's z against a Šidák
+# threshold), and this is its family-wise false-alarm rate: the chance that a run with no
+# offset between the arms reds at all, whichever row does it. The value is the two-sided tail
+# of the 3σ single-row test the assertion started as, 2·(1−Φ(3)); it is a number of its own
+# rather than derived from that z so that a per-row threshold and the family rate cannot be
+# moved through each other by accident. Under this rate each of R rows is held at
+# α_R = 1 − (1 − α)^(1/R); asserting every row at α instead compounds to ≈ R·α.
+# The nominal figure assumes a Gaussian z; with sample sds from 30 sessions the statistic is
+# closer to Student-t (≈58 df), whose tails lift the real rate to ≈0.6% (measured by drawing
+# 30-vs-30 from 90 sessions per arm centred on a common mean) — the same caveat the 3σ
+# single-row test always carried, and answered by more sessions, not a looser α.
+_FAMILY_ALPHA = 0.0027
+
+
+def _sidak_z_threshold(alpha_total: float, r: int) -> float:
+    """Two-sided z at which the worst of `r` rows reds with family-wise probability `alpha_total`."""
+    alpha_per = 1.0 - (1.0 - alpha_total) ** (1.0 / max(r, 1))
+    return statistics.NormalDist().inv_cdf(1.0 - alpha_per / 2.0)
 
 
 def _shares(r: cr.RaypathAnalysisResult) -> dict:
@@ -380,6 +398,11 @@ def _shares(r: cr.RaypathAnalysisResult) -> dict:
     total = sum(e.energy for e in r.entries) + r.other_energy
     assert total > 0.0
     return {e.display: e.energy / total for e in r.entries}
+
+
+def _energies(r: cr.RaypathAnalysisResult) -> dict:
+    """Each row's counted energy, Σ(Y·w) as the histogram sums it — no normalisation."""
+    return {e.display: e.energy for e in r.entries}
 
 
 def _rare_row_display(results) -> str:
@@ -411,13 +434,14 @@ def _run_arm(tmp_path, ray_allocation: str):
 @pytest.mark.slow
 def test_adaptive_allocation_cuts_rare_row_noise_without_moving_the_means(tmp_path):
     """`adaptive` on an analysis: the rare row's share is ≥5× less noisy across sessions than
-    under `proportional`, and no row's mean share moved between the arms.
+    under `proportional`, and no row's mean energy moved between the arms.
 
     Two arms of thirty sessions each on one server per arm, sim_seed=0 (random), the scene's
     own 1M-ray budget. The first assertion is the reason the analysis binds the online deal at
     all (the histogram's Σ(Y·w) carries the p/q correction, so what changes is variance, not
-    expectation); the second is that unbiasedness, per row, at 3σ of the two arms' pooled
-    standard error. Both arms are also each a positive/negative control for the bind: the
+    expectation); the second is that unbiasedness, per row, as the worst row's z over the two
+    arms' pooled standard error against a Šidák threshold at `_FAMILY_ALPHA` family-wise.
+    Both arms are also each a positive/negative control for the bind: the
     proportional arm must log no online tally line, the adaptive arm one cold start per
     session from the analysis site.
     """
@@ -461,20 +485,38 @@ def test_adaptive_allocation_cuts_rare_row_noise_without_moving_the_means(tmp_pa
         f"rare row {rare!r}: rel_sd adaptive {rel_a:.4f} vs proportional {rel_p:.4f} "
         f"({rel_p / rel_a if rel_a > 0 else float('inf'):.1f}×, need ≥ {_RARE_ROW_MIN_IMPROVEMENT}×)")
 
-    # 2. Every row's mean share agrees between the arms. A row seen in one arm only counts
-    #    as 0 in the other's sessions, which is what its estimator says.
+    # 2. Every row's mean ENERGY agrees between the arms. Energy rather than share: Σ(Y·w) is
+    #    the quantity the p/q correction makes unbiased, and a share divides it by the run's
+    #    total, which under proportional is mostly the rare row's own noise (per-session rel_sd
+    #    ≈0.19 against ≈0.02 for the other rows) — so a rare-row shortfall in that arm reads as
+    #    every OTHER row's share having moved, and the red this assertion once raised named a
+    #    non-rare row for exactly that. A row seen in one arm only counts as 0 in the other's
+    #    sessions, which is what its estimator says. One z per row, judged together: the worst
+    #    against the Šidák threshold for R rows, so the whole assertion reds at _FAMILY_ALPHA.
     n = _CHALLENGE_SESSIONS
-    worst = 0.0
+    energies_p = [_energies(r) for r in prop]
+    energies_a = [_energies(r) for r in adap]
+    scored = []  # (z, row, mean_p, mean_a) for every row with a finite z
     for row in rows:
-        m_p, s_p = _mean_sd([s.get(row, 0.0) for s in shares_p])
-        m_a, s_a = _mean_sd([s.get(row, 0.0) for s in shares_a])
+        m_p, s_p = _mean_sd([e.get(row, 0.0) for e in energies_p])
+        m_a, s_a = _mean_sd([e.get(row, 0.0) for e in energies_a])
         pooled_se = math.sqrt((s_p * s_p + s_a * s_a) / n)
         diff = abs(m_a - m_p)
         if pooled_se == 0.0:
             assert diff == 0.0, f"row {row!r}: constant in both arms yet different ({m_p} vs {m_a})"
             continue
-        z = diff / pooled_se
-        worst = max(worst, z)
-        assert z <= _MEAN_AGREEMENT_Z, (
-            f"row {row!r}: mean share proportional {m_p:.5f} vs adaptive {m_a:.5f}, z = {z:.2f} "
-            f"> {_MEAN_AGREEMENT_Z} — the p/q correction is not carrying this row's expectation")
+        scored.append((diff / pooled_se, row, m_p, m_a))
+    scored.sort(reverse=True)
+    z_max = _sidak_z_threshold(_FAMILY_ALPHA, len(rows))
+    # The failure message carries the worst row's per-session values of both arms: a red is a
+    # 30-vs-30 comparison whose only post-mortem question is "one outlier session, or a shifted
+    # arm?", and the per-case temp data is gone by the time anyone asks it.
+    assert not scored or scored[0][0] <= z_max, (
+        f"row {scored[0][1]!r}: mean energy proportional {scored[0][2]:.2f} vs adaptive "
+        f"{scored[0][3]:.2f}, z = {scored[0][0]:.2f} > {z_max:.2f} (Šidák over {len(rows)} rows at "
+        f"family-wise α = {_FAMILY_ALPHA}) — the p/q correction is not carrying this row's "
+        f"expectation; all rows by z: "
+        + ", ".join(f"{row} z={z:.2f} ({m_p:.1f} vs {m_a:.1f})" for z, row, m_p, m_a in scored)
+        + f"; per-session energy of {scored[0][1]!r} — proportional: "
+        + " ".join(f"{e.get(scored[0][1], 0.0):.0f}" for e in energies_p) + "; adaptive: "
+        + " ".join(f"{e.get(scored[0][1], 0.0):.0f}" for e in energies_a))
