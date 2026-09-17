@@ -2568,11 +2568,6 @@ void CudaTraceBackend::Impl::Reset(bool keep_persistent_buffers) {
   d_lat_attempts_ = nullptr;
   lat_attempts_cap_ = 0;
   lat_attempts_ci_start_ = 0;
-  // 330.2 S6: release the unified LUT buffers on teardown; EnsureLatLutBuffers
-  // re-allocates lazily on the next session's first UploadLatLut.
-  cudaFree(d_lat_lut_theta_); d_lat_lut_theta_ = nullptr;
-  cudaFree(d_lat_lut_cdf_);   d_lat_lut_cdf_ = nullptr;
-  cudaFree(d_lat_lut_flip_);  d_lat_lut_flip_ = nullptr;
   //
   // scrum-cuda-async-engine-port (304.2): per-batch EndSession passes
   // keep_persistent_buffers=true so the large device + pinned buffers
@@ -2590,6 +2585,17 @@ void CudaTraceBackend::Impl::Reset(bool keep_persistent_buffers) {
   // they are freed only on full teardown below — not every session end.
 
   if (!keep_persistent_buffers) {
+    // 330.2 S6 LUT buffers — fixed-size (LatLut::kNodes floats), scene- and
+    // batch-independent, and EnsureLatLutBuffers already no-ops when non-null:
+    // same shape as the filter descriptors above, so free only on full teardown.
+    // Freeing them unconditionally on every per-batch Reset (as before) forced
+    // EnsureLatLutBuffers to realloc all three on every batch's first
+    // UploadLatLut call regardless of axis path — including kFullSphere/
+    // kNoRandom scenes that never read them — because EnsureLatLutBuffers runs
+    // before UploadLatLut's SelectLatPath gate.
+    cudaFree(d_lat_lut_theta_); d_lat_lut_theta_ = nullptr;
+    cudaFree(d_lat_lut_cdf_);   d_lat_lut_cdf_ = nullptr;
+    cudaFree(d_lat_lut_flip_);  d_lat_lut_flip_ = nullptr;
     cudaFree(d_poly_n_);     d_poly_n_ = nullptr;
     cudaFree(d_poly_d_);     d_poly_d_ = nullptr;
     cudaFree(d_poly_fn_);    d_poly_fn_ = nullptr;
