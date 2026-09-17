@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1789609472356,
+  "lastUpdate": 1789609475294,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9560,50 +9560,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "f17b841b725042bd28408b6db3fd1da5cfc7fa8f",
-          "message": "Merge pull request #275 from LoveDaisy/task/bg-image-transform\n\nfeat(gui): 底图可平移缩放，让裁剪过的照片能与仿真结果对齐",
-          "timestamp": "2026-08-26T20:20:53+08:00",
-          "tree_id": "24754ad01298b2e39006a4bc1d728369562e429c",
-          "url": "https://github.com/LoveDaisy/ice_halo_sim/commit/f17b841b725042bd28408b6db3fd1da5cfc7fa8f"
-        },
-        "date": 1787747563685,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 75.6,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 100.4,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 95.2,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 96.3,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "e23d669872bbfb1762a95659960d412d793c55e9",
           "message": "Merge pull request #276 from LoveDaisy/task/crystal-enable-toggle\n\nfeat(gui): 晶体卡新增「参与仿真」toggle，替代把权重拖到 0",
           "timestamp": "2026-08-26T20:39:00+08:00",
@@ -13918,6 +13874,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 88.4,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "ab1ba3499938a637c44b1102fef825610033d17e",
+          "message": "Merge pull request #375 from LoveDaisy/feat/isa-engine-dll-dispatch\n\nrelease: one shell per entry point + two internal engine libraries picked by CPUID / glibc-hwcaps (scrum-566)",
+          "timestamp": "2026-09-17T09:29:18+08:00",
+          "tree_id": "95064d4b64e5245da0848c6223ef22c769d2c506",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/ab1ba3499938a637c44b1102fef825610033d17e"
+        },
+        "date": 1789609474415,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 86.3,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 99.7,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 94.6,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 88.5,
             "unit": "%"
           }
         ]
