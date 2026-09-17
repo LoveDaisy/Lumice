@@ -105,13 +105,17 @@ before downloading into it).
   `src/util/fatal.hpp`, the single owner of the pre-abort trap, where unbuffered stderr is the whole
   point — a per-message-unflushed file sink can lose the line precisely when it matters. For an
   unrecoverable invariant call `lumice::FatalAbort(...)` instead of hand-rolling print-then-`abort()`.
-  A third place sits outside the rule by construction rather than by name: `src/launcher/`, the
-  release CPUID launchers (`isa_launcher.c` for Linux, `isa_launcher_win.c` for Windows), link
-  nothing from the engine (no `lumice_obj`, so no `ILOG_*` exists for them to bypass) and their few
-  error lines go to stderr because there is no other sink in that process. The checker never sees
-  them — its scan covers C++/CUDA/Metal suffixes, not `.c` — which is consistent with what the rule
-  guards (the engine's unified sinks), not a loophole to reuse: a `.c` file that *does* link the
-  engine would still be wrong. Enforced by the `no-bare-print` rule
+  A third place sits outside the rule by construction rather than by name: `src/launcher/`, now
+  holding only `win_engine_loader.{c,h}` (the Windows release shell's CPUID probe and delay-load
+  wiring for its two internal engine DLLs; the Linux side needed no such file — the dynamic
+  linker's own glibc-hwcaps mechanism picks between the two engine `.so` files with zero
+  application code, so there is nothing here for it to own). It is compiled straight into the CLI
+  and GUI shell targets, not into `lumice_obj`, and runs *before* the engine DLL is even loaded, so
+  `ILOG_*` genuinely does not exist yet for it to bypass; its few error lines go to stderr because
+  there is no other sink at that point in the process's life. The checker never sees it — its scan
+  covers C++/CUDA/Metal suffixes, not `.c` — which is consistent with what the rule guards (the
+  engine's unified sinks), not a loophole to reuse: a `.c` file that *does* link the engine would
+  still be wrong. Enforced by the `no-bare-print` rule
   in `scripts/check_policies.py`, which also scans `.cu` / `.metal` so a GPU backend cannot reopen
   the side channel. `test/` is deliberately out of scope: test binaries
   are their own harness with no app logger to bypass, and some of their output is a parsed contract

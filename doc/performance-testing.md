@@ -215,11 +215,14 @@ tier a Release build is compiled for, and it has four values:
 |---|---|---|
 | `native` | `-march=native` | **local default** — `scripts/build.sh` passes nothing, so every local build takes it; a developer machine should build for itself |
 | `baseline` | none (x86-64-v1, the floor every x86_64 CPU runs) | every configure step in `.github/workflows/ci.yml`, and every release package except the two second variants below |
-| `x86-64-v3` | `-march=x86-64-v3` (AVX2+FMA) | the Windows x64 release's second variant, compiled by **clang-cl**: `release.yml` builds that row twice (baseline on MSVC cl.exe, v3 on clang-cl) and packages both |
-| `x86-64-v4` | `-march=x86-64-v4` (AVX-512) | the Linux x64 release's second variant: `release.yml` builds that row twice and packages both |
+| `x86-64-v3` | `-march=x86-64-v3` (AVX2+FMA) | the Windows x64 release's second **engine** build, compiled by **clang-cl**: `release.yml` builds the engine library twice (baseline on MSVC cl.exe, v3 on clang-cl) as two internal DLLs; the shell executables are a separate, single, always-baseline build |
+| `x86-64-v4` | `-march=x86-64-v4` (AVX-512) | the Linux x64 release's second **engine** build: `release.yml` builds the engine library twice and packages both as internal `.so` files; the shell executables are a separate, single, always-baseline build |
 
 The flag is applied on `lumice_obj` through one shared CMake function, `lumice_apply_isa_march()`,
-so the CLI and the GUI are the same tier. Real MSVC cl.exe reads none of this — the function is
+so the CLI and the GUI **link the same engine build and therefore run at the same tier** — this
+governs the engine library only; on both release platforms the shell executable itself is compiled
+once, always at baseline (structurally so on Windows, since real MSVC cl.exe reads none of this
+flag; see below for what picks the engine tier at runtime). Real MSVC cl.exe reads none of this — the function is
 called only from the GCC/Clang branch and from the clang-cl branch — so a Windows build made with
 cl.exe (the local `win_build.cmd` default, and CI's every Windows job) has no equivalent to turn on
 and is *structurally* always the baseline. **clang-cl is the exception**, and the reason the
@@ -232,28 +235,67 @@ top (2.25×/2.29×), and clang-cl with no `-march` is 1.01× — the gain is the
 and LLVM takes all of it at AVX2 where GCC (below) takes none of it before AVX-512. That is why the
 two platforms' second variants are different tiers.
 
-**What the Windows release does with it.** The `windows-x64` zip has the same shape as the Linux
-tarball below: `Lumice.baseline.exe` / `Lumice.x86-64-v3.exe`, `LumiceGUI.baseline.exe` /
-`LumiceGUI.x86-64-v3.exe`, and the launcher (`src/launcher/isa_launcher_win.c`) installed as
-`Lumice.exe` / `LumiceGUI.exe`. It reads CPUID for the whole x86-64-v3 feature level plus XGETBV
-(the OS must save YMM state — the launcher checks OSXSAVE before it executes XGETBV, which is
-`#UD` otherwise), starts the matching sidecar with `CreateProcess`, waits, and returns its exit
-code (Windows has no `exec`; the CRT's `_execv` neither preserves the child's exit code nor quotes
-arguments, so the launcher does both itself). `--isa=baseline` / `--isa=x86-64-v3` forces one, as on
-Linux. On the release-equivalent CUDA-on build the v3 variant measures **2.23×** the baseline at ms1 W=1
-(1.701 vs 0.761 M rays/s, CoV 0.72% / 0.33%, five interleaved repetitions through the launcher's
-`--isa=` override; Windows reference box, Zen 5, 2026-09-11) — within 1.3% of the CUDA-off probe
-figure above, which is a different arm and must not be quoted for it.
+**What the Windows release does with it.** The `windows-x64` zip ships one shell executable per
+entry point (`Lumice.exe`, `LumiceGUI.exe`; compiled once, by MSVC cl.exe, structurally baseline)
+plus two internal engine DLLs, `lumice-engine.baseline.dll` (cl.exe) and
+`lumice-engine.x86-64-v3.dll` (clang-cl). At startup the shell reads CPUID for the whole x86-64-v3
+feature level plus XGETBV (the OS must save YMM state — OSXSAVE is checked before XGETBV executes,
+which is `#UD` otherwise; this detection logic is carried over verbatim from the retired
+process-launcher form below) and delay-loads the matching DLL from its own executable directory by
+absolute path, never PATH or cwd, so a same-named DLL planted in either location is ignored.
+`--isa=baseline` / `--isa=x86-64-v3` on the command line forces one before any engine call runs.
+This is a single-process model: there is no separate launcher process re-`CreateProcess`-ing a
+sidecar and relaying its exit code, unlike the retired form described in the previous paragraph.
+The engine DLL is an internal implementation detail — its ABI is not a stable, versioned contract,
+it is not a supported interface on its own, and `lumice.h` does not ship with it. Because the
+shell's own compile-time tier is always baseline and says nothing about which engine DLL actually
+loaded, the `"isa"` field this benchmark reports (rule 3 below) is answered by the *loaded engine*
+at runtime through the `LUMICE_GetEngineIsaLevel()` C API, not read off a compile-time macro in the
+shell.
+On the release-equivalent CUDA-on build the v3 variant measures **2.23×** the baseline at ms1 W=1
+(1.701 vs 0.761 M rays/s, CoV 0.72% / 0.33%, five interleaved repetitions through the
+process-launcher form's `--isa=` override; Windows reference box, Zen 5, 2026-09-11) — within 1.3%
+of the CUDA-off probe figure above, which is a different arm and must not be quoted for it.
+**Remeasured on the shell-plus-engine-DLL shape** (net-machine window, Windows reference box,
+2026-09-17): the DLL boundary itself costs nothing (the v3 engine as a DLL vs the same code
+statically linked into one exe: single 100.4%, multi 97.6%, i.e. noise); relative to a fully
+static baseline build, the shipped shell + v3 DLL is **single 2.311×** (matches the pre-split
+anchor) **/ multi 1.562×** (does not — the pre-split anchor above was only ever measured at 1–4
+workers, never at this machine's full 16-core `benchmark` auto-selected worker count, so this gap
+is newly measured, not a regression introduced by the DLL split). A second, DLL-specific cost
+showed up alongside it: the baseline engine DLL is **10–14% slower** than the old fully-static
+baseline exe (single 86.1%, multi 93.4%) — `WINDOWS_EXPORT_ALL_SYMBOLS`'s generated `.def` export
+table is incompatible with cl.exe's `/GL` whole-program optimization, so the cl.exe-built baseline
+DLL loses the link-time optimization the old fully-static baseline exe had; the clang-cl-built v3
+DLL is unaffected and keeps its thin-LTO.
 
-**What the Linux release does with it.** The `linux-x64` tarball carries every entry point
-twice — `Lumice.baseline` / `Lumice.x86-64-v4`, `LumiceGUI.baseline` / `LumiceGUI.x86-64-v4` —
-and installs a small launcher (`src/launcher/isa_launcher.c`) under the plain names `Lumice` /
-`LumiceGUI`. The launcher reads CPUID (`__builtin_cpu_supports("x86-64-v4")`) and `execv`s the
-matching sidecar; a `--isa=baseline` / `--isa=x86-64-v4` token anywhere on the command line
-forces one and is consumed before the real binary sees its arguments. Nothing else changes for
-the user: one download, the same two names. Measured on this codebase (Zen 5 / GCC 13.3), the v4
-variant is 1.9–2.3× the baseline at 1–4 workers and the whole gain is AVX-512 — `x86-64-v2` and
-`-v3` measure 1.00× — which is why there are exactly two variants and not a ladder.
+**What the Linux release does with it.** The `linux-x64` tarball ships one shell per entry point
+(`Lumice`, `LumiceGUI`; compiled once, baseline) plus two internal engine shared libraries under
+`lib/`: `lib/liblumice.so` (baseline) and `lib/glibc-hwcaps/x86-64-v4/liblumice.so` (v4) — same
+SONAME, same filename, different directory. **No application code chooses between them**: this is
+glibc's own dynamic-linker hwcaps mechanism (glibc ≥ 2.33), which picks the `glibc-hwcaps/x86-64-v4/`
+copy when the running CPU and glibc both qualify and silently falls back to `lib/liblumice.so`
+otherwise. This replaces the retired per-entry-point process launcher and its `execv`-to-a-sidecar
+model, along with the `--isa=` override — **there is no Linux equivalent of `--isa=`**; the
+CPU-facing override for testing is glibc's own `GLIBC_TUNABLES=glibc.cpu.hwcaps=-<feature>` (a CPU
+*feature* name, e.g. `-AVX512F` — the tunable does not parse tier strings like `-x86-64-v4`). One
+caveat on the "older distro falls back to baseline" framing: that fallback requires the binary to
+*load* at all, and this repo's own build floor (`ubuntu-24.04`, symbol version `GLIBC_2.38`) already
+exceeds the glibc 2.33 the hwcaps mechanism itself needs, so on this codebase's own release binaries
+the "old-glibc" branch of the fallback is currently unreachable in practice — an old-enough distro's
+symbol-version check rejects loading the binary before hwcaps probing ever runs (confirmed against
+`debian:buster` and `bookworm` container images). The fallback that is actually reachable today is
+CPU-driven (a modern glibc on an older CPU), not glibc-driven.
+Measured on this codebase (Zen 5 / GCC 13.3, process-launcher form with a full duplicate exe per
+tier), the v4 variant is 1.9–2.3× the baseline at 1–4 workers and the whole gain is AVX-512 —
+`x86-64-v2` and `-v3` measure 1.00× — which is why there are exactly two variants and not a ladder.
+**Remeasured on the shell-plus-shared-library shape** (net-machine window, Linux reference box —
+WSL2, glibc 2.39, 2026-09-17): single-worker static baseline 0.685 M rays/s vs shell + v4 shared
+library 1.393 M rays/s ⇒ **2.032×** (three-arm interleaved ×5, CoV ≤ 0.4%); the shared-library
+boundary itself costs nothing (shell + v4 vs the same engine statically linked: 0.996×, i.e. noise).
+Multi-worker for this scene measures only ≈1.13× and is excluded from this comparison — full-core
+runs on this hardware are throughput-capped well short of the single-worker ISA gain regardless of
+tier, which is a hardware ceiling, not a library-boundary cost.
 
 **Consequence.** A throughput number taken from a local non-MSVC build is systematically
 optimistic relative to the baseline binary that ships (the same 1.9–2.3×). Worse, a
@@ -276,10 +318,16 @@ whatever you were trying to measure.
    arms, is unaffected.
 3. **Read the `isa` key rather than trying to remember.** Every `[BENCHMARK]` line carries
    `"isa": "native"`, `"isa": "baseline"`, `"isa": "x86-64-v3"` or `"isa": "x86-64-v4"`
-   (`src/main.cpp`, `RunBenchmarkPass`, from the `LUMICE_ISA_LEVEL_STR` macro that
+   (`src/main.cpp`, `RunBenchmarkPass`, from the `LUMICE_GetEngineIsaLevel()` C API, which the
+   *engine* library answers at runtime from its own `LUMICE_ISA_LEVEL_STR` — the macro
    `lumice_apply_isa_march()` resolves with the same condition that gates the `-march` flag
-   itself, so the key reads `baseline` whenever no flag was actually applied — a Debug build
-   included, and every cl.exe build). An old
+   itself, so the key reads `baseline` whenever no flag was actually applied to the engine build
+   that answered — a Debug build included, and every cl.exe-built engine). This is deliberately an
+   engine-side answer rather than something the shell reads off its own compile-time macro: on the
+   Windows and Linux release shapes above, the shell executable is always compiled at baseline, so
+   a macro read in the shell would report `baseline` even when a higher-tier engine library is the
+   one actually loaded and doing the work; asking the loaded engine directly is what makes the key
+   correct across that split. An old
    log therefore answers "which build was this?" on its own, with no configure log needed.
    `baseline` is the comparable tier; two rows may only be compared with each other when their
    `isa` values match.

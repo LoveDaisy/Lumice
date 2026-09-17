@@ -86,11 +86,13 @@ ISA」的变量，取四个值：
 |---|---|---|
 | `native` | `-march=native` | **本地默认**——`scripts/build.sh` 什么都不传，所以每次本地构建吃的都是它；开发机就该为自己编译 |
 | `baseline` | 无（x86-64-v1，任何 x86_64 CPU 都能跑的地板） | `.github/workflows/ci.yml` 里每一处 configure，以及除下面两个第二变体之外的每一个 release 包 |
-| `x86-64-v3` | `-march=x86-64-v3`（AVX2+FMA） | Windows x64 release 的第二个变体，由 **clang-cl** 编译：`release.yml` 把那一行构建两遍（baseline 用 MSVC cl.exe、v3 用 clang-cl）、两份都打进包 |
-| `x86-64-v4` | `-march=x86-64-v4`（AVX-512） | Linux x64 release 的第二个变体：`release.yml` 把那一行构建两遍、两份都打进包 |
+| `x86-64-v3` | `-march=x86-64-v3`（AVX2+FMA） | Windows x64 release 的第二个**引擎**构建，由 **clang-cl** 编译：`release.yml` 把引擎库构建两遍（baseline 用 MSVC cl.exe、v3 用 clang-cl），打成两份内部 DLL；外壳可执行文件是另一趟单独的、只编一次的、永远基线的构建 |
+| `x86-64-v4` | `-march=x86-64-v4`（AVX-512） | Linux x64 release 的第二个**引擎**构建：`release.yml` 把引擎库构建两遍，打成两份内部 `.so`；外壳可执行文件是另一趟单独的、只编一次的、永远基线的构建 |
 
 flag 经同一个共享 CMake 函数 `lumice_apply_isa_march()` 挂在 `lumice_obj` 上，所以 CLI 和 GUI
-永远同一档。真正的 MSVC cl.exe 完全不读这个变量——该函数只在 GCC/Clang 分支与 clang-cl 分支被
+**链接同一份引擎构建、因而同一档**——这管的只是引擎库；在两个 release 平台上，外壳可执行文件本身
+都只编一次、永远基线（Windows 上这一点是结构性的，因为真正的 MSVC cl.exe 完全不读这个 flag；运行时
+究竟加载哪一档引擎，见下文）。真正的 MSVC cl.exe 完全不读这个变量——该函数只在 GCC/Clang 分支与 clang-cl 分支被
 调用——所以用 cl.exe 做的 Windows 构建（本地 `win_build.cmd` 默认、CI 的每一个 Windows job）
 **结构上**没有等价物可开，永远是基线。**clang-cl 是例外**，也是 Windows release 有第二个变体的
 全部原因：CMake 对它报告 `MSVC=TRUE`（它驱动 MSVC ABI 与 `/` 风格 flag），但它是一个认 `-march`
@@ -100,25 +102,53 @@ flag 经同一个共享 CMake 函数 `lumice_apply_isa_march()` 挂在 `lumice_o
 （2.25×/2.29×），不带 `-march` 的 clang-cl 是 1.01×——收益来自 flag 而非换编译器，且 LLVM 在 AVX2
 就全部拿到，而 GCC（见下）在 AVX-512 之前一分不拿。这就是两个平台的第二变体档位不同的原因。
 
-**Windows release 拿它做什么。** `windows-x64` 的 zip 与下面的 Linux tarball 同形：
-`Lumice.baseline.exe` / `Lumice.x86-64-v3.exe`、`LumiceGUI.baseline.exe` /
-`LumiceGUI.x86-64-v3.exe`，再把 launcher（`src/launcher/isa_launcher_win.c`）装成 `Lumice.exe` /
-`LumiceGUI.exe`。它读 CPUID 判整个 x86-64-v3 特性级别外加 XGETBV（OS 必须保存 YMM 状态——launcher
-先确认 OSXSAVE 再执行 XGETBV，否则那条指令是 `#UD`），用 `CreateProcess` 起对应 sidecar、等待、
-把它的退出码当自己的返回（Windows 没有 `exec`；CRT 的 `_execv` 既不保留子进程退出码也不给参数
-加引号，所以这两件事 launcher 自己做）。`--isa=baseline` / `--isa=x86-64-v3` 可强制其一，与 Linux
-同语法。在与 release 等价的 CUDA-on 构建上，v3 变体在 ms1 W=1 下量到基线的 **2.23×**（1.701 vs 0.761 M
-rays/s，CoV 0.72% / 0.33%，5 次交错重复、经 launcher 的 `--isa=` 覆盖；Windows 参照机，Zen 5，
-2026-09-11）——与上面那个 CUDA-off 探针数字相差 1.3%，但那是另一条臂，不得拿来代替它。
+**Windows release 拿它做什么。** `windows-x64` 的 zip 每个入口只装一份外壳可执行文件
+（`Lumice.exe`、`LumiceGUI.exe`；只编一次，用 MSVC cl.exe，结构上永远基线），外加两份内部引擎
+DLL：`lumice-engine.baseline.dll`（cl.exe）与 `lumice-engine.x86-64-v3.dll`（clang-cl）。外壳
+启动时读 CPUID 判整个 x86-64-v3 特性级别外加 XGETBV（OS 必须保存 YMM 状态——OSXSAVE 先确认再执行
+XGETBV，否则那条指令是 `#UD`；这段探测逻辑逐字沿用自下文提到的、已退役的进程级 launcher 形态），
+按自己所在目录的绝对路径 delay-load 对应那份 DLL，绝不经 PATH 或当前目录——同名 DLL 放在这两处
+都不会被选中。`--isa=baseline` / `--isa=x86-64-v3` 可在任何 `LUMICE_*` 调用发生前强制其一。这是
+单进程模型：不再有一个独立的 launcher 进程 `CreateProcess` 起 sidecar 再转发退出码，那是下文对比
+的已退役形态。引擎 DLL 是内部实现细节——它的 ABI 不是稳定契约，不是独立的受支持接口，
+`lumice.h` 不随它出货；因为外壳自身的编译期档位永远是基线、说明不了运行时到底加载了哪份引擎，
+本节 benchmark 报的 `"isa"` 字段（见下方规则 3）改由 `LUMICE_GetEngineIsaLevel()` C API 在运行时
+询问*那份被加载的引擎*来回答，而不是读外壳自己编译期的宏。
+在与 release 等价的 CUDA-on 构建上，v3 变体在 ms1 W=1 下量到基线的 **2.23×**（1.701 vs 0.761 M
+rays/s，CoV 0.72% / 0.33%，5 次交错重复、经已退役的进程级 launcher 形态的 `--isa=` 覆盖；
+Windows 参照机，Zen 5，2026-09-11）——与上面那个 CUDA-off 探针数字相差 1.3%，但那是另一条臂，
+不得拿来代替它。**改成外壳+引擎 DLL 形态后重测**（净机窗口，Windows 参照机，2026-09-17）：DLL
+边界本身不掉速（v3 引擎做成 DLL vs 同代码静态链进一个 exe：single 100.4%、multi 97.6%，即噪声
+量级）；相对纯静态基线构建，出货的外壳 + v3 DLL 是 **single 2.311×**（与上面的旧锚一致）**/
+multi 1.562×**（不一致——上面那条旧锚从未在 1–4 worker 之外测过，从没测过这台机器 `benchmark`
+自动选择的满 16 核 multi-worker 档位，所以这个差距是新测出来的，不是 DLL 拆分引入的回归）。
+同一次复测还发现了另一项与 DLL 本身有关的代价：baseline 引擎 DLL 比旧的纯静态 baseline exe
+**慢 10–14%**（single 86.1%、multi 93.4%）——`WINDOWS_EXPORT_ALL_SYMBOLS` 生成的 `.def` 导出表
+与 cl.exe 的 `/GL` 全程序优化不兼容，所以 cl.exe 编的 baseline DLL 丢掉了旧的纯静态 baseline exe
+曾有的链接期优化；clang-cl 编的 v3 DLL 不受影响，仍保有它的 thin-LTO。
 
-**Linux release 拿它做什么。** `linux-x64` 的 tarball 里每个入口都有两份——
-`Lumice.baseline` / `Lumice.x86-64-v4`、`LumiceGUI.baseline` / `LumiceGUI.x86-64-v4`——
-并在原名 `Lumice` / `LumiceGUI` 下装一个小 launcher（`src/launcher/isa_launcher.c`）。launcher
-读 CPUID（`__builtin_cpu_supports("x86-64-v4")`）然后 `execv` 对应的 sidecar；命令行里任何位置
-的 `--isa=baseline` / `--isa=x86-64-v4` 可强制其一，且在真正的二进制看到参数之前就被吃掉。
-对用户什么都没变：一个下载、同样的两个名字。本仓库实测（Zen 5 / GCC 13.3），v4 变体在 1–4
+**Linux release 拿它做什么。** `linux-x64` 的 tarball 每个入口只装一份外壳（`Lumice`、
+`LumiceGUI`；只编一次，基线），外加 `lib/` 下两份内部引擎共享库：`lib/liblumice.so`（baseline）
+与 `lib/glibc-hwcaps/x86-64-v4/liblumice.so`（v4）——SONAME 相同、文件名相同，只是目录不同。
+**没有任何应用代码在两者间做选择**：这是 glibc 自带的动态链接器 hwcaps 机制（glibc ≥ 2.33），
+CPU 与 glibc 都够格时选中 `glibc-hwcaps/x86-64-v4/` 那份，否则静默落回 `lib/liblumice.so`。
+这取代了已退役的、按入口各装一份的进程级 launcher 及其 `execv` 到 sidecar 的模型，也取代了
+`--isa=` 覆盖——**Linux 没有 `--isa=` 的对应物**；面向 CPU 的测试覆盖手段是 glibc 自己的
+`GLIBC_TUNABLES=glibc.cpu.hwcaps=-<feature>`（一个 CPU *特性*名，例如 `-AVX512F`——这个 tunable
+不解析 `-x86-64-v4` 这类档位字符串）。「老发行版落回基线」这个说法有一个前提要说清楚：这个回落
+要求二进制本身先能*加载*，而本仓库自己的构建地板（`ubuntu-24.04`，符号版本 `GLIBC_2.38`）本来就
+已经超过 hwcaps 机制自己要求的 glibc 2.33，所以在本仓库自己出的 release 二进制上，「旧 glibc」
+这条回落分支目前实际不可达——足够老的发行版会在符号版本检查阶段就拒绝加载这个二进制，根本走不到
+hwcaps 探测（已用 `debian:buster`、`bookworm` 容器镜像核实）。今天真正可达的回落是「CPU 驱动」
+而非「glibc 驱动」。
+本仓库实测（Zen 5 / GCC 13.3，进程级 launcher 形态、每档一份完整重复 exe），v4 变体在 1–4
 worker 下是基线的 1.9–2.3×，且**收益全部来自 AVX-512**——`x86-64-v2` 与 `-v3` 都量到 1.00×——
-所以恰好是两个变体而不是一个阶梯。
+所以恰好是两个变体而不是一个阶梯。**改成外壳+共享库形态后重测**（净机窗口，Linux 参照机——
+WSL2，glibc 2.39，2026-09-17）：single-worker 静态基线 0.685 M rays/s vs 外壳 + v4 共享库
+1.393 M rays/s ⇒ **2.032×**（三臂交错 ×5，CoV ≤0.4%）；共享库边界本身不掉速（外壳+v4 vs 同一份
+引擎静态链接：0.996×，即噪声量级）。这个场景的 multi-worker 只量到 ≈1.13×，不计入这条比较——
+满核跑在这台硬件上无论哪一档都远早于单 worker 的 ISA 增益就先撞到吞吐天花板，这是硬件上限，
+不是库边界代价。
 
 **后果。** 从本地非 MSVC 构建取的吞吐数字，相对出货的基线二进制系统性偏乐观（就是上面那个
 1.9–2.3×）。更糟的是：拿两个默认设置的本地构建做 Windows vs 非 Windows 的
@@ -136,9 +166,13 @@ A/B，比的是 native-ISA 二进制对基线-ISA 二进制，而**任何地方�
    能走多远」这条线。自己改动的前后 A/B，只要两臂在同一台机器、同一档设置上取，不受影响。
 3. **读 `isa` 键，别指望记得住。** 每一行 `[BENCHMARK]` 都带 `"isa": "native"`、
    `"isa": "baseline"`、`"isa": "x86-64-v3"` 或 `"isa": "x86-64-v4"`（`src/main.cpp` 的
-   `RunBenchmarkPass`，取自 `LUMICE_ISA_LEVEL_STR` 宏；`lumice_apply_isa_march()` 用与 `-march`
-   flag 本身相同的条件解析该宏，所以只要没有真正应用 flag——包括 Debug 构建，以及每一个 cl.exe
-   构建——这个键就读 `baseline`）。于是一份旧 log 自己就能回答「这是哪个构建取的」，
+   `RunBenchmarkPass`，取自 `LUMICE_GetEngineIsaLevel()` C API——由*引擎*库在运行时用自己的
+   `LUMICE_ISA_LEVEL_STR` 回答；`lumice_apply_isa_march()` 用与 `-march` flag 本身相同的条件解析
+   该宏，所以只要回答的那份引擎构建没有真正应用 flag——包括 Debug 构建，以及每一个 cl.exe 编的
+   引擎——这个键就读 `baseline`）。这是刻意设计成由引擎回答，而不是外壳读自己编译期的宏：在上面
+   Windows / Linux 两种 release 形态下，外壳可执行文件永远编在基线档，若读外壳自己的宏，即便实际
+   加载的是更高档的引擎库，也只会报 `baseline`；直接问那份被加载的引擎，才能让这个键跨过这道拆分
+   仍然正确。于是一份旧 log 自己就能回答「这是哪个构建取的」，
    不需要还留着当时的 configure 输出。`baseline` 是可比的那一档；两行数字只有在 `isa` 相同时
    才允许互相比较。
 4. **留意 configure 那一行。** 每次 `cmake` configure 都会打印一行 `-- LUMICE_ISA_LEVEL=...`
