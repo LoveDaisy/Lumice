@@ -453,6 +453,74 @@ void RenderConsumer::Consume(const SimData& data) {
   // being re-brightened back to the unfiltered look.
   total_emitted_energy_ += data.emitted_energy_;
 
+  // Legacy-CPU worker-side projection: the worker already ran every outgoing ray of this
+  // batch through ProjectAndClassifyRay for each renderer (Simulator::SimulateOneWavelength)
+  // and the batch carries the result in SimData::projected_, one entry per renderer in
+  // SessionSpec::renders order. Skip the projection loop below and accumulate straight from
+  // this consumer's entry. The OUTER vector being non-empty is the "worker-projected batch"
+  // signal, the same convention xyz_pixel_data_ uses above; it is empty on every batch the
+  // worker did not project (GPU exit-seam, device-fused — already returned above — and any
+  // legacy-CPU batch that carried no renderer).
+  //
+  // Release-safe shape gate rather than an assert, the same lesson ConsumeDeviceFused's
+  // plane_ok carries: -DNDEBUG compiles an assert out, and a server/worker renderer-order
+  // disagreement would then read past the vector. Unlike the device-fused case this path
+  // has a fallback that costs nothing in correctness — outgoing_d_/w_ are still in the
+  // batch, and the loop below can project them itself — so a mismatch logs once and falls
+  // through instead of dropping the batch.
+  if (!data.projected_.empty()) {
+    const bool shape_ok = renderer_index_ < data.projected_.size();
+    if (!shape_ok) {
+      if (!logged_projected_mismatch_) {
+        ILOG_ERROR(logger_,
+                   "RenderConsumer: worker-projected batch carries {} renderer(s) but this consumer is renderer "
+                   "{} — server/worker renderer order disagree; falling back to this consumer's own projection "
+                   "for this batch",
+                   data.projected_.size(), renderer_index_);
+        logged_projected_mismatch_ = true;
+      }
+    } else {
+      // proj=0: the worker did the projection. accum is still timed, as in ConsumeDeviceFused,
+      // so consume_count_ and LogConsumeProfile's per-batch averages keep their meaning.
+      auto t0 = std::chrono::steady_clock::now();
+      const auto& pr = data.projected_[renderer_index_];
+      const bool per_ray_wl = !pr.main_wl_.empty();
+      const size_t main_n = pr.main_pixel_.size();
+      if (main_n > 0) {
+        if (per_ray_wl) {
+          SpectrumToXyzPerRay(pr.main_wl_.data(), pr.main_w_.data(), pr.main_pixel_.data(), internal_xyz_.get(),
+                              main_n);
+        } else {
+          SpectrumToXyz(data.curr_wl_, pr.main_w_.data(), pr.main_pixel_.data(), internal_xyz_.get(), main_n);
+        }
+      }
+      total_intensity_ += pr.landed_weight_;
+      const bool has_component = HasColorClasses() && !pr.main_component_.empty();
+      if (has_component && main_n > 0) {
+        AccumulateColorClassLanes(per_ray_wl, pr.main_wl_.data(), data.curr_wl_, pr.main_w_.data(),
+                                  pr.main_component_.data(), pr.main_pixel_.data(), main_n);
+      }
+      const size_t overlap_n = pr.overlap_pixel_.size();
+      if (overlap_n > 0) {
+        // Pass 2 does NOT update total_intensity_ — preserves normalization (same rule as
+        // the projecting branch below).
+        if (per_ray_wl) {
+          SpectrumToXyzPerRay(pr.overlap_wl_.data(), pr.overlap_w_.data(), pr.overlap_pixel_.data(),
+                              internal_xyz_.get(), overlap_n);
+        } else {
+          SpectrumToXyz(data.curr_wl_, pr.overlap_w_.data(), pr.overlap_pixel_.data(), internal_xyz_.get(), overlap_n);
+        }
+        if (has_component) {
+          AccumulateColorClassLanes(per_ray_wl, pr.overlap_wl_.data(), data.curr_wl_, pr.overlap_w_.data(),
+                                    pr.overlap_component_.data(), pr.overlap_pixel_.data(), overlap_n);
+        }
+      }
+      consume_count_++;
+      consume_accum_us_ += std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - t0).count();
+      return;
+    }
+  }
+
   auto t0 = std::chrono::steady_clock::now();
   // Resize pre-allocated buffers if needed (grow-only).
   // Use outgoing count for capacity — it's the upper bound for filtered rays.
@@ -557,45 +625,44 @@ void RenderConsumer::Consume(const SimData& data) {
   size_t main_n = 0;
   size_t overlap_n = 0;
   float landed_weight = 0.0f;
+  // The projection / clip / main-vs-overlap decision is ProjectAndClassifyRay — the same
+  // function the worker-side sidecar is built with — so the branch above and this loop
+  // cannot disagree about which pixel a ray lands in or which ring it belongs to; only
+  // the storage differs.
   for (size_t i = 0; i < filtered_ray_num; ++i) {
-    auto hit = lm_proj::ProjectExitToPixel(proj_params, d_buf_[i * 3 + 0], d_buf_[i * 3 + 1], d_buf_[i * 3 + 2]);
-    for (int k = 0; k < hit.count; ++k) {
-      int px = hit.hits[k].px;
-      int py = hit.hits[k].py;
-      if (px < 0 || px >= w_res || py < 0 || py >= h_res) {
-        continue;
-      }
-      if (hit.hits[k].bump_landed) {
-        xy_buf_[main_n] = py * w_res + px;
-        w_buf_[main_n] = w_buf_[i];
-        if (per_ray_wl) {
-          wl_buf_[main_n] = wl_buf_[i];
-        }
-        // task-336.2: parallel compaction of the component mask. main_n <= i
-        // (same in-place-compaction invariant that lets w_buf_[main_n] =
-        // w_buf_[i] be safe here).
-        if (has_component) {
-          comp_buf_[main_n] = comp_buf_[i];
-        }
-        landed_weight += w_buf_[i];
-        ++main_n;
-      } else {
-        // Overlap ring uses dedicated side-arrays so main-batch data is not
-        // clobbered before it hits SpectrumToXyz.
-        overlap_w_buf_[overlap_n] = w_buf_[i];
-        if (per_ray_wl) {
-          overlap_wl_buf_[overlap_n] = wl_buf_[i];
-        }
-        if (has_component) {
-          overlap_comp_buf_[overlap_n] = comp_buf_[i];
-        }
-        // Reuse the tail of xy_buf_ for overlap pixels (main uses the head).
-        // Safe because filtered_ray_num is the shared upper bound and both
-        // main_n and overlap_n are bounded by hit.count * filtered_ray_num.
-        xy_buf_[filtered_ray_num + overlap_n] = py * w_res + px;
-        ++overlap_n;
-      }
-    }
+    ProjectAndClassifyRay(proj_params, w_res, h_res, d_buf_[i * 3 + 0], d_buf_[i * 3 + 1], d_buf_[i * 3 + 2],
+                          [&, i](int pixel, bool is_main) {
+                            if (is_main) {
+                              xy_buf_[main_n] = pixel;
+                              w_buf_[main_n] = w_buf_[i];
+                              if (per_ray_wl) {
+                                wl_buf_[main_n] = wl_buf_[i];
+                              }
+                              // Parallel compaction of the component mask. main_n <= i
+                              // (same in-place-compaction invariant that lets w_buf_[main_n] =
+                              // w_buf_[i] be safe here).
+                              if (has_component) {
+                                comp_buf_[main_n] = comp_buf_[i];
+                              }
+                              landed_weight += w_buf_[i];
+                              ++main_n;
+                            } else {
+                              // Overlap ring uses dedicated side-arrays so main-batch data is not
+                              // clobbered before it hits SpectrumToXyz.
+                              overlap_w_buf_[overlap_n] = w_buf_[i];
+                              if (per_ray_wl) {
+                                overlap_wl_buf_[overlap_n] = wl_buf_[i];
+                              }
+                              if (has_component) {
+                                overlap_comp_buf_[overlap_n] = comp_buf_[i];
+                              }
+                              // Reuse the tail of xy_buf_ for overlap pixels (main uses the head).
+                              // Safe because filtered_ray_num is the shared upper bound and both
+                              // main_n and overlap_n are bounded by hit.count * filtered_ray_num.
+                              xy_buf_[filtered_ray_num + overlap_n] = pixel;
+                              ++overlap_n;
+                            }
+                          });
   }
   auto t2 = std::chrono::steady_clock::now();
 

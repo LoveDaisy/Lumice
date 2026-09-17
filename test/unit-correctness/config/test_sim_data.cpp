@@ -78,7 +78,10 @@ static_assert(sizeof(void*) == 8, "SimData layout assumes 64-bit pointers");
 // multi-renderer seam makes xyz_pixel_data_ / lane_pixel_data_ vector<vector<float>>
 // (unchanged 24B) and xyz_landed_weight_ a vector<float> (+16B over the padded
 // float), one entry per renderer: 416 → 432.
-static_assert(sizeof(SimData) == 432,
+// The legacy-CPU worker-side projection sidecars add projected_ (vector<ProjectedRayList>,
+// 24B regardless of element type): 432 → 456; and anchor_projected_pixel_ /
+// anchor_projected_y_ (two more 24B vectors): 456 → 504.
+static_assert(sizeof(SimData) == 504,
               "SimData layout changed — update test_sim_data.cpp DeepCopy/Move assertions "
               "and sim_data.cpp's static_assert.");
 #endif
@@ -180,6 +183,25 @@ SimData MakePopulatedSimData() {
   s.sim_scene_credit_ = 11;
   // task-color-degrade-gui-surfacing: GPU color-degrade tally propagation coverage.
   s.color_degrade_counts_ = { 5u, 6u, 7u };
+  // Worker-side projection sidecar (projected_) deep-copy / move coverage. One entry per
+  // renderer, mirroring xyz_pixel_data_/lane_pixel_data_ above; distinct values in main_
+  // vs overlap_ so a copy/move that crossed the two rings cannot pass by coincidence.
+  s.projected_.resize(2);
+  s.projected_[0].main_pixel_ = { 10, 20 };
+  s.projected_[0].main_w_ = { 0.3f, 0.4f };
+  s.projected_[0].main_component_ = { 0x01ull, 0x02ull };
+  s.projected_[0].landed_weight_ = 0.7f;
+  s.projected_[0].overlap_pixel_ = { 30 };
+  s.projected_[0].overlap_w_ = { 0.1f };
+  s.projected_[0].overlap_component_ = { 0x03ull };
+  s.projected_[1].main_pixel_ = { 40 };
+  s.projected_[1].main_w_ = { 0.9f };
+  s.projected_[1].main_component_ = { 0x04ull };
+  s.projected_[1].landed_weight_ = 0.9f;
+  // anchor_projected_pixel_/_y_ deep-copy / move coverage, same flat-list shape
+  // AnchorConsumer::Consume reads.
+  s.anchor_projected_pixel_ = { 100, 200, 300 };
+  s.anchor_projected_y_ = { 0.5f, 0.6f, 0.7f };
   return s;
 }
 
@@ -1037,6 +1059,14 @@ TEST(SimDataTest, CopyConstructDeepCopy) {
   EXPECT_EQ(copy.color_degrade_counts_.symmetry_group_overflow, 5u) << "color_degrade symmetry not copied";
   EXPECT_EQ(copy.color_degrade_counts_.or_summand_overflow, 6u) << "color_degrade or_summand not copied";
   EXPECT_EQ(copy.color_degrade_counts_.color_class_overflow, 7u) << "color_degrade color_class not copied";
+  // Worker-side projection sidecar propagation.
+  ASSERT_EQ(copy.projected_.size(), 2u) << "projected_ not copied";
+  EXPECT_EQ(copy.projected_[0].main_pixel_, original.projected_[0].main_pixel_);
+  EXPECT_EQ(copy.projected_[0].overlap_pixel_, original.projected_[0].overlap_pixel_);
+  EXPECT_FLOAT_EQ(copy.projected_[0].landed_weight_, 0.7f);
+  EXPECT_EQ(copy.projected_[1].main_component_, original.projected_[1].main_component_);
+  EXPECT_EQ(copy.anchor_projected_pixel_, original.anchor_projected_pixel_) << "anchor_projected_pixel_ not copied";
+  EXPECT_EQ(copy.anchor_projected_y_, original.anchor_projected_y_) << "anchor_projected_y_ not copied";
 
   // Deep copy independence — each pointer/container field independently.
   // (ray_seg_count_ is a scalar: value semantics, nothing to alias.)
@@ -1072,6 +1102,11 @@ TEST(SimDataTest, CopyConstructDeepCopy) {
 
   copy.crystals_.clear();
   EXPECT_EQ(original.crystals_.size(), 1u) << "crystals_ not deep-copied";
+
+  copy.projected_.clear();
+  EXPECT_EQ(original.projected_.size(), 2u) << "projected_ not deep-copied";
+  copy.anchor_projected_pixel_.clear();
+  EXPECT_EQ(original.anchor_projected_pixel_.size(), 3u) << "anchor_projected_pixel_ not deep-copied";
 }
 
 
@@ -1114,12 +1149,20 @@ TEST(SimDataTest, CopyAssignmentDeepCopy) {
   EXPECT_EQ(target.color_degrade_counts_.symmetry_group_overflow, 5u) << "color_degrade symmetry not assigned";
   EXPECT_EQ(target.color_degrade_counts_.or_summand_overflow, 6u) << "color_degrade or_summand not assigned";
   EXPECT_EQ(target.color_degrade_counts_.color_class_overflow, 7u) << "color_degrade color_class not assigned";
+  // Worker-side projection sidecar propagation.
+  ASSERT_EQ(target.projected_.size(), 2u) << "projected_ not assigned";
+  EXPECT_EQ(target.projected_[0].main_pixel_, original.projected_[0].main_pixel_);
+  EXPECT_EQ(target.anchor_projected_pixel_, original.anchor_projected_pixel_) << "anchor_projected_pixel_ not assigned";
 
   // Deep copy independence.
   target.exit_records_.clear();
   EXPECT_EQ(original.exit_records_.size(), 2u) << "exit_records_ not deep-assigned";
   target.crystals_.clear();
   EXPECT_EQ(original.crystals_.size(), 1u) << "crystals_ not deep-assigned";
+  target.projected_.clear();
+  EXPECT_EQ(original.projected_.size(), 2u) << "projected_ not deep-assigned";
+  target.anchor_projected_pixel_.clear();
+  EXPECT_EQ(original.anchor_projected_pixel_.size(), 3u) << "anchor_projected_pixel_ not deep-assigned";
 
   // Self-assignment must preserve all fields (source code has &other == this guard).
   // Snapshot → self-assign → assert preservation (NOT assert clearing).
@@ -1179,6 +1222,12 @@ TEST(SimDataTest, MoveConstructTransfersOwnership) {
   EXPECT_EQ(moved.color_degrade_counts_.symmetry_group_overflow, 5u) << "color_degrade symmetry not moved";
   EXPECT_EQ(moved.color_degrade_counts_.or_summand_overflow, 6u) << "color_degrade or_summand not moved";
   EXPECT_EQ(moved.color_degrade_counts_.color_class_overflow, 7u) << "color_degrade color_class not moved";
+  // Worker-side projection sidecar propagation.
+  ASSERT_EQ(moved.projected_.size(), 2u) << "projected_ not moved";
+  EXPECT_EQ(moved.projected_[0].main_pixel_.size(), 2u);
+  EXPECT_FLOAT_EQ(moved.projected_[1].main_w_[0], 0.9f);
+  ASSERT_EQ(moved.anchor_projected_pixel_.size(), 3u) << "anchor_projected_pixel_ not moved";
+  EXPECT_FLOAT_EQ(moved.anchor_projected_y_[2], 0.7f);
 
   // Moved-from source contract — two categories:
   // (a) std::vector members are moved-from. The C++ standard only guarantees
@@ -1200,6 +1249,8 @@ TEST(SimDataTest, MoveConstructTransfersOwnership) {
   // Step 4 comment at sim_data.cpp warns about).
   EXPECT_TRUE(original.lane_pixel_data_.empty());
   EXPECT_TRUE(original.anchor_y_pixel_data_.empty());
+  EXPECT_TRUE(original.projected_.empty());  // same move-assign trap
+  EXPECT_TRUE(original.anchor_projected_pixel_.empty());
 
   // (b) POD scalar fields are NOT reset on move — this is the current
   // contract, and ray_seg_count_ joined that category when the ray buffer
@@ -1259,6 +1310,11 @@ TEST(SimDataTest, MoveAssignAndSelfMove) {
   // that produce one.
   ASSERT_EQ(dst.anchor_y_pixel_data_.size(), 3u) << "anchor_y_pixel_data_ not move-assigned";
   EXPECT_FLOAT_EQ(dst.anchor_y_pixel_data_[0], 1.5f);
+  // The worker-side projection sidecars ride the same move-assign path — the failure mode
+  // this whole test guards against.
+  ASSERT_EQ(dst.projected_.size(), 2u) << "projected_ not move-assigned";
+  EXPECT_EQ(dst.projected_[0].overlap_component_[0], 0x03ull);
+  ASSERT_EQ(dst.anchor_projected_pixel_.size(), 3u) << "anchor_projected_pixel_ not move-assigned";
 
   // Source moved-from state.
   EXPECT_TRUE(src.crystals_.empty());
@@ -1266,6 +1322,8 @@ TEST(SimDataTest, MoveAssignAndSelfMove) {
   // MoveConstructTransfersOwnership above.
   EXPECT_TRUE(src.lane_pixel_data_.empty());
   EXPECT_TRUE(src.anchor_y_pixel_data_.empty());
+  EXPECT_TRUE(src.projected_.empty());
+  EXPECT_TRUE(src.anchor_projected_pixel_.empty());
 
   // Self-move-assignment must preserve all fields (source code has
   // &other == this guard). Snapshot → self-move → assert preservation.

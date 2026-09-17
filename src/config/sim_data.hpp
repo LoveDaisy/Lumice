@@ -268,6 +268,48 @@ struct SimData {
   // consumer's projection input until 258.3 unifies the two.
   std::vector<ExitRayRecord> exit_records_;
 
+  // Legacy-CPU worker-side projection sidecar. When the OUTER vector is non-empty, the
+  // legacy-CPU worker (Simulator::SimulateOneWavelength) has already run every
+  // outgoing_d_/w_ ray through lm_proj::ProjectExitToPixel for each renderer of the
+  // batch — ONE ENTRY PER RENDERER, same SessionSpec::renders order / same
+  // renderer_index_ indexing as xyz_pixel_data_ — splitting hits into main
+  // (bump_landed) vs overlap (dual-fisheye ring) through the same
+  // ProjectAndClassifyRay call RenderConsumer::Consume's own loop uses, so the two
+  // paths cannot drift. RenderConsumer::Consume skips its per-ray projection loop
+  // entirely when this is populated and accumulates straight from these arrays: the
+  // projection, which is ~95% of the consumer's time on this route, moves onto the
+  // already-parallel worker threads and the single consumer thread stops being the
+  // serial wall. Empty on every other path (GPU exit-seam / device-fused, and any
+  // legacy-CPU batch that carries no renderer, e.g. an analysis session) — the
+  // "outer container non-empty" signal is the same convention xyz_pixel_data_ uses.
+  // main_wl_/overlap_wl_ stay empty in lock-step with outgoing_wl_ (the legacy CPU
+  // route has no per-ray wavelength); kept so the consumer's per_ray_wl branch keeps
+  // its shape if that ever changes.
+  struct ProjectedRayList {
+    std::vector<int> main_pixel_;  // linear py*w+px, main (bump_landed) hits
+    std::vector<float> main_w_;
+    std::vector<float> main_wl_;
+    std::vector<uint64_t> main_component_;
+    float landed_weight_ = 0.0f;  // sum of main_w_ — the total_intensity_ contribution
+
+    std::vector<int> overlap_pixel_;  // dual-fisheye overlap ring; excluded from landed_weight_
+    std::vector<float> overlap_w_;
+    std::vector<float> overlap_wl_;
+    std::vector<uint64_t> overlap_component_;
+  };
+  std::vector<ProjectedRayList> projected_;
+
+  // Same technique as projected_ above, applied to AnchorConsumer::AccumulateOutgoing's
+  // OWN independent per-ray lm_proj::ProjectExitToPixel loop (src/server/anchor_consumer.cpp)
+  // — the P99 sky-luminance anchor plane build for ev_mode=relative. Flat (no main/overlap
+  // split: AnchorConsumer's own loop has none either — every hit of every ray accumulates
+  // the same way). Non-empty only when the worker built it (renders non-empty, mirroring
+  // projected_'s own gate) AND at least one ray landed with non-zero Y; when empty,
+  // AnchorConsumer::Consume falls back to its own loop unchanged — a batch whose rays all
+  // read Y == 0 is then projected twice, which is a wasted loop, not a wrong number.
+  std::vector<int> anchor_projected_pixel_;  // linear py*kAnchorWidth+px into the 2048x1024 anchor plane
+  std::vector<float> anchor_projected_y_;
+
   // S1 device-fused: XYZ pixel accumulation from Metal kernel (SupportsDeviceXyzAccum path).
   // ONE ENTRY PER RENDERER of the session, in SessionSpec::renders order — the same order
   // the server built its RenderConsumers in, which is how a consumer finds its own plane:

@@ -1,5 +1,6 @@
 #include "server/anchor_consumer.hpp"
 
+#include <cassert>
 #include <cstring>
 
 #include "core/anchor_buffer.hpp"
@@ -26,6 +27,23 @@ void AnchorConsumer::Consume(const SimData& data) {
   // session-level anchor_y_pixel_data_, not any renderer's.
   if (!data.xyz_pixel_data_.empty()) {
     AccumulateDevicePlane(data);
+    return;
+  }
+  // Legacy-CPU worker-side projection: the worker already projected every outgoing ray of
+  // this batch into anchor-plane pixel space (Simulator::SimulateOneWavelength, the flat
+  // anchor_projected_pixel_/_y_ sidecar) — skip AccumulateOutgoing's own per-ray
+  // lm_proj::ProjectExitToPixel loop and accumulate straight from it. Session-level like the
+  // plane itself, so no renderer index enters here either. Empty on every batch the worker did
+  // not project (GPU exit-seam — already returned above — any legacy-CPU batch that carried no
+  // renderer, and a batch whose rays all read Y == 0), and AccumulateOutgoing then does what it
+  // always did; on the last of those it merely re-derives an empty result.
+  if (!data.anchor_projected_pixel_.empty()) {
+    float* plane = anchor_y_.get();
+    const size_t n = data.anchor_projected_pixel_.size();
+    assert(data.anchor_projected_y_.size() == n && "anchor sidecar pixel/y lists must be parallel");
+    for (size_t i = 0; i < n; ++i) {
+      plane[static_cast<size_t>(data.anchor_projected_pixel_[i])] += data.anchor_projected_y_[i];
+    }
     return;
   }
   AccumulateOutgoing(data);

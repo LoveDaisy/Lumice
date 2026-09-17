@@ -24,15 +24,20 @@
 #include "config/raypath_color_config.hpp"
 #include "config/render_config.hpp"
 #include "config/sim_data.hpp"
+#include "core/anchor_buffer.hpp"
 #include "core/backend/cpu_trace_backend.hpp"
 #include "core/backend/trace_backend.hpp"
 #include "core/buffer.hpp"
+#include "core/color_util.hpp"
 #include "core/crystal.hpp"
 #include "core/filter_spec.hpp"
 #include "core/lat_lut.hpp"
+#include "core/lens_proj_build.hpp"
 #include "core/math.hpp"
 #include "core/optics.hpp"
+#include "core/scatter_accum.hpp"
 #include "core/shared/lat_path_selection.hpp"
+#include "core/shared/projection_shared.h"
 #include "core/trace_ops.hpp"
 #include "util/env_knobs.hpp"
 #include "util/fatal.hpp"
@@ -1506,6 +1511,13 @@ void Simulator::Run() {
       warned_chain_id_backend = true;
     }
 
+    // renders_ can be null (e.g. an analysis batch) — mirror the same null-safety
+    // CanUseBackend already applies to the backend gate above, so the legacy CPU path's
+    // worker-side projection sees "no renderers" rather than dereferencing a null
+    // shared_ptr.
+    static const std::vector<RenderConfig> kNoRenders;
+    const std::vector<RenderConfig>& renders = batch.renders_ ? *batch.renders_ : kNoRenders;
+
     // task-282: BackendUnavailableError signals the backend cannot run this
     // session (Metal PSO build failure on macOS 26.5, etc.). On first miss
     // we drop the backend instance for the remainder of the Run() (resetting
@@ -1519,7 +1531,7 @@ void Simulator::Run() {
       // catch-block fallback (run the legacy CPU path, report "backend not used").
       if (!backend) {
         SimulateOneWavelength(config, batch.raypath_color_.get(), wl_param, emitted_weight, batch.ray_num_,
-                              crystal_cache, workspace, generation, ray_alloc_carry, ray_alloc, tally_out);
+                              crystal_cache, workspace, generation, ray_alloc_carry, ray_alloc, tally_out, renders);
         deliver_tally();
         return false;
       }
@@ -1543,7 +1555,7 @@ void Simulator::Run() {
         backend_active_.store(false, std::memory_order_release);
         active_backend_.store(BackendKind::kCpu, std::memory_order_release);
         SimulateOneWavelength(config, batch.raypath_color_.get(), wl_param, emitted_weight, batch.ray_num_,
-                              crystal_cache, workspace, generation, ray_alloc_carry, ray_alloc, tally_out);
+                              crystal_cache, workspace, generation, ray_alloc_carry, ray_alloc, tally_out, renders);
         deliver_tally();
         return false;
       }
@@ -1584,7 +1596,7 @@ void Simulator::Run() {
           run_with_backend(wl_param, emitted_weight);
         } else {
           SimulateOneWavelength(config, batch.raypath_color_.get(), wl_param, emitted_weight, batch.ray_num_,
-                                crystal_cache, workspace, generation, ray_alloc_carry, ray_alloc, tally_out);
+                                crystal_cache, workspace, generation, ray_alloc_carry, ray_alloc, tally_out, renders);
           deliver_tally();
         }
       }
@@ -1601,7 +1613,7 @@ void Simulator::Run() {
           run_with_backend(wl_param, wl_param.weight_);
         } else {
           SimulateOneWavelength(config, batch.raypath_color_.get(), wl_param, wl_param.weight_, batch.ray_num_,
-                                crystal_cache, workspace, generation, ray_alloc_carry, ray_alloc, tally_out);
+                                crystal_cache, workspace, generation, ray_alloc_carry, ray_alloc, tally_out, renders);
           deliver_tally();
         }
       }
@@ -1619,7 +1631,8 @@ void Simulator::SimulateOneWavelength(const SceneConfig& config, const RaypathCo
                                       const WlParam& wl_param, float emitted_weight, size_t ray_num,
                                       CrystalCache& crystal_cache, SimWorkspace& workspace, uint64_t generation,
                                       std::vector<std::vector<double>>& ray_alloc_carry,
-                                      const RayAllocationSnapshot* ray_alloc, RayAllocationTally* tally_out) {
+                                      const RayAllocationSnapshot* ray_alloc, RayAllocationTally* tally_out,
+                                      const std::vector<RenderConfig>& renders) {
   ILOG_TRACE(logger_, "Run: get config: ray({}), wl({:.1f},{:.2f})",  //
              ray_num, wl_param.wl_, wl_param.weight_);
 
@@ -1961,6 +1974,93 @@ void Simulator::SimulateOneWavelength(const SceneConfig& config, const RaypathCo
   sim_data.outgoing_d_ = std::move(outgoing_d);
   sim_data.outgoing_w_ = std::move(outgoing_w);
   sim_data.outgoing_component_ = std::move(outgoing_component);  // task-331.1
+
+  // Worker-side projection sidecars (legacy CPU route only). Project every outgoing ray
+  // of this batch into each renderer's pixel space right here, on the worker thread,
+  // instead of leaving it for RenderConsumer::Consume: on this route the projection is
+  // ~95% of the consumer's time and the consumer is a single thread, while the workers
+  // are already parallel. The projection / clip / main-vs-overlap decision itself is
+  // ProjectAndClassifyRay — the same function render.cpp::Consume runs — so the two
+  // paths cannot drift; this loop only decides where a hit is stored. render.cpp skips
+  // its own loop when SimData::projected_ is populated. `renders` is empty on any batch
+  // with no renderer (an analysis session's batches carry a null renders_), which leaves
+  // sim_data.projected_ empty too — the "consumer projects itself" path.
+  //
+  // MakeCameraRotation + BuildProjParams are recomputed per batch per renderer, not
+  // cached: that is the same frequency the consumer assembles ProjParams at today, it
+  // is negligible next to Propagate's geometry, and it means a batch is always projected
+  // with the renders_ snapshot it was generated under — no cache to invalidate.
+  if (!renders.empty()) {
+    const size_t n = sim_data.outgoing_w_.size();
+    // The collection loop above pushes d / w / component in lock-step for every outgoing
+    // ray; the sidecar reads all three by the same index.
+    assert(sim_data.outgoing_d_.size() == 3 * n && sim_data.outgoing_component_.size() == n);
+    sim_data.projected_.resize(renders.size());
+    for (size_t ri = 0; ri < renders.size(); ++ri) {
+      const RenderConfig& cfg = renders[ri];
+      const Rotation rot = MakeCameraRotation(cfg);
+      const float short_pix = static_cast<float>(std::min(cfg.resolution_[0], cfg.resolution_[1]));
+      const auto proj_params = BuildProjParams(cfg, rot, short_pix);
+      const int w_res = cfg.resolution_[0];
+      const int h_res = cfg.resolution_[1];
+      auto& out = sim_data.projected_[ri];
+      out.main_pixel_.reserve(n);
+      out.main_w_.reserve(n);
+      out.main_component_.reserve(n);
+      for (size_t i = 0; i < n; ++i) {
+        const float w = sim_data.outgoing_w_[i];
+        const uint64_t component = sim_data.outgoing_component_[i];
+        ProjectAndClassifyRay(proj_params, w_res, h_res, sim_data.outgoing_d_[i * 3 + 0],
+                              sim_data.outgoing_d_[i * 3 + 1], sim_data.outgoing_d_[i * 3 + 2],
+                              [&out, w, component](int pixel, bool is_main) {
+                                if (is_main) {
+                                  out.main_pixel_.push_back(pixel);
+                                  out.main_w_.push_back(w);
+                                  out.main_component_.push_back(component);
+                                  out.landed_weight_ += w;
+                                } else {
+                                  out.overlap_pixel_.push_back(pixel);
+                                  out.overlap_w_.push_back(w);
+                                  out.overlap_component_.push_back(component);
+                                }
+                              });
+      }
+    }
+  }
+
+  // Same technique for AnchorConsumer::AccumulateOutgoing's own independent per-ray
+  // lm_proj::ProjectExitToPixel loop (src/server/anchor_consumer.cpp) — the P99
+  // sky-luminance anchor plane build for ev_mode=relative. Flat list (no main/overlap
+  // split: that loop has none either — every hit of every ray accumulates into the plane
+  // the same way), so ProjectAndClassifyRay's classification has nothing to offer here
+  // and lm_proj::ProjectExitToPixel is called directly. Uses sim_data.curr_wl_ (the batch
+  // wavelength), matching AnchorConsumer's own per_ray_wl fallback: the legacy CPU route
+  // never populates outgoing_wl_, so AnchorConsumer's per_ray_wl branch is always false
+  // here and mirroring that keeps this numerically identical to its own loop.
+  if (!renders.empty()) {
+    const size_t n = sim_data.outgoing_w_.size();
+    static const lm_proj::ProjParams kAnchorProjParams = BuildAnchorProjParams();
+    sim_data.anchor_projected_pixel_.reserve(n);
+    sim_data.anchor_projected_y_.reserve(n);
+    for (size_t i = 0; i < n; ++i) {
+      const float y = SpectrumToYSingle(sim_data.curr_wl_, sim_data.outgoing_w_[i]);
+      if (y == 0.0f) {
+        continue;
+      }
+      const auto hit = lm_proj::ProjectExitToPixel(kAnchorProjParams, sim_data.outgoing_d_[i * 3 + 0],
+                                                   sim_data.outgoing_d_[i * 3 + 1], sim_data.outgoing_d_[i * 3 + 2]);
+      for (int k = 0; k < hit.count; ++k) {
+        const int px = hit.hits[k].px;
+        const int py = hit.hits[k].py;
+        if (px < 0 || px >= kAnchorWidth || py < 0 || py >= kAnchorHeight) {
+          continue;
+        }
+        sim_data.anchor_projected_pixel_.push_back(py * kAnchorWidth + px);
+        sim_data.anchor_projected_y_.push_back(y);
+      }
+    }
+  }
+
   if (chain_ids_on) {
     sim_data.outgoing_chain_id_ = std::move(outgoing_chain_id);
     // Only the entries this batch added: the consumer rebuilds the trie

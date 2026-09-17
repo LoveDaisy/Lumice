@@ -126,6 +126,31 @@ inline lm_proj::ProjParams BuildProjParams(const RenderConfig& cfg, const Rotati
   return p;
 }
 
+// The one projection → clip → main/overlap classification of an outgoing ray, shared by
+// the two legacy-CPU call sites that must agree about it: RenderConsumer::Consume's own
+// per-ray loop (src/server/render.cpp) and the worker-side sidecar build in
+// Simulator::SimulateOneWavelength (src/core/simulator.cpp) that lets the consumer skip
+// that loop. The two differ only in where a hit is stored, which is what `on_hit` is
+// for: it is called once per in-bounds hit as `on_hit(pixel, is_main)` with
+// `pixel = py * w_res + px` and `is_main = bump_landed` (true → the hit drives
+// landed_weight / total_intensity_; false → the dual-fisheye overlap ring, which does
+// not). A ray yields 0, 1 or 2 hits (`hit.count`). Kept as a single implementation on
+// purpose: the consumer's short-circuit branch is only correct if the sidecar was
+// built by exactly the rule the consumer would have applied itself.
+template <typename OnHit>
+inline void ProjectAndClassifyRay(const lm_proj::ProjParams& proj_params, int w_res, int h_res, float dx, float dy,
+                                  float dz, OnHit&& on_hit) {
+  const auto hit = lm_proj::ProjectExitToPixel(proj_params, dx, dy, dz);
+  for (int k = 0; k < hit.count; ++k) {
+    const int px = hit.hits[k].px;
+    const int py = hit.hits[k].py;
+    if (px < 0 || px >= w_res || py < 0 || py >= h_res) {
+      continue;
+    }
+    on_hit(py * w_res + px, hit.hits[k].bump_landed);
+  }
+}
+
 
 // Solid angle subtended by ONE pixel on the OPTICAL AXIS of this projection, in steradians.
 //

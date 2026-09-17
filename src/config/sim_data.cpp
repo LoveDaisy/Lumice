@@ -64,7 +64,10 @@ namespace lumice {
 // The multi-renderer device-fused seam turns xyz_pixel_data_ / lane_pixel_data_ into
 // vector<vector<float>> (same 24B each) and xyz_landed_weight_ from float (4B + 4B pad)
 // into vector<float> (24B) — one entry per renderer — bumping 416 → 432.
-static_assert(sizeof(SimData) == 432, "SimData size changed — update copy/move ctors and operators");
+// The legacy-CPU worker-side projection sidecars add projected_ (vector<ProjectedRayList>,
+// 24B regardless of the element type): 432 → 456; and anchor_projected_pixel_ /
+// anchor_projected_y_ (two more 24B vectors): 456 → 504.
+static_assert(sizeof(SimData) == 504, "SimData size changed — update copy/move ctors and operators");
 
 namespace {
 
@@ -524,10 +527,12 @@ SimData::SimData(const SimData& other)
       outgoing_chain_id_(other.outgoing_chain_id_), chain_id_table_delta_(other.chain_id_table_delta_),
       producer_effective_seed_(other.producer_effective_seed_),
       chain_id_overflow_count_(other.chain_id_overflow_count_), exit_records_(other.exit_records_),
-      xyz_pixel_data_(other.xyz_pixel_data_), xyz_landed_weight_(other.xyz_landed_weight_),
-      lane_pixel_data_(other.lane_pixel_data_), lane_class_count_(other.lane_class_count_),
-      anchor_y_pixel_data_(other.anchor_y_pixel_data_), root_ray_count_(other.root_ray_count_),
-      emitted_energy_(other.emitted_energy_), stochastic_crystal_sample_count_(other.stochastic_crystal_sample_count_),
+      projected_(other.projected_), anchor_projected_pixel_(other.anchor_projected_pixel_),
+      anchor_projected_y_(other.anchor_projected_y_), xyz_pixel_data_(other.xyz_pixel_data_),
+      xyz_landed_weight_(other.xyz_landed_weight_), lane_pixel_data_(other.lane_pixel_data_),
+      lane_class_count_(other.lane_class_count_), anchor_y_pixel_data_(other.anchor_y_pixel_data_),
+      root_ray_count_(other.root_ray_count_), emitted_energy_(other.emitted_energy_),
+      stochastic_crystal_sample_count_(other.stochastic_crystal_sample_count_),
       deterministic_crystal_count_(other.deterministic_crystal_count_),
       stochastic_orientation_sample_count_(other.stochastic_orientation_sample_count_),
       deterministic_orientation_count_(other.deterministic_orientation_count_),
@@ -542,10 +547,12 @@ SimData::SimData(SimData&& other) noexcept
       chain_id_table_delta_(std::move(other.chain_id_table_delta_)),
       producer_effective_seed_(other.producer_effective_seed_),
       chain_id_overflow_count_(other.chain_id_overflow_count_), exit_records_(std::move(other.exit_records_)),
-      xyz_pixel_data_(std::move(other.xyz_pixel_data_)), xyz_landed_weight_(std::move(other.xyz_landed_weight_)),
-      lane_pixel_data_(std::move(other.lane_pixel_data_)), lane_class_count_(other.lane_class_count_),
-      anchor_y_pixel_data_(std::move(other.anchor_y_pixel_data_)), root_ray_count_(other.root_ray_count_),
-      emitted_energy_(other.emitted_energy_), stochastic_crystal_sample_count_(other.stochastic_crystal_sample_count_),
+      projected_(std::move(other.projected_)), anchor_projected_pixel_(std::move(other.anchor_projected_pixel_)),
+      anchor_projected_y_(std::move(other.anchor_projected_y_)), xyz_pixel_data_(std::move(other.xyz_pixel_data_)),
+      xyz_landed_weight_(std::move(other.xyz_landed_weight_)), lane_pixel_data_(std::move(other.lane_pixel_data_)),
+      lane_class_count_(other.lane_class_count_), anchor_y_pixel_data_(std::move(other.anchor_y_pixel_data_)),
+      root_ray_count_(other.root_ray_count_), emitted_energy_(other.emitted_energy_),
+      stochastic_crystal_sample_count_(other.stochastic_crystal_sample_count_),
       deterministic_crystal_count_(other.deterministic_crystal_count_),
       stochastic_orientation_sample_count_(other.stochastic_orientation_sample_count_),
       deterministic_orientation_count_(other.deterministic_orientation_count_),
@@ -570,6 +577,9 @@ SimData& SimData::operator=(const SimData& other) {
   producer_effective_seed_ = other.producer_effective_seed_;
   chain_id_overflow_count_ = other.chain_id_overflow_count_;
   exit_records_ = other.exit_records_;
+  projected_ = other.projected_;
+  anchor_projected_pixel_ = other.anchor_projected_pixel_;
+  anchor_projected_y_ = other.anchor_projected_y_;
   xyz_pixel_data_ = other.xyz_pixel_data_;
   xyz_landed_weight_ = other.xyz_landed_weight_;
   // task-358.1 Step 4: same move-assign trap as outgoing_wl_ / outgoing_component_ —
@@ -618,6 +628,11 @@ SimData& SimData::operator=(SimData&& other) noexcept {
   producer_effective_seed_ = other.producer_effective_seed_;
   chain_id_overflow_count_ = other.chain_id_overflow_count_;
   exit_records_ = std::move(other.exit_records_);
+  // Same move-assign trap as outgoing_wl_ / lane_pixel_data_ above: every vector member
+  // must be listed here or a move-assign silently leaves it behind.
+  projected_ = std::move(other.projected_);
+  anchor_projected_pixel_ = std::move(other.anchor_projected_pixel_);
+  anchor_projected_y_ = std::move(other.anchor_projected_y_);
   xyz_pixel_data_ = std::move(other.xyz_pixel_data_);
   xyz_landed_weight_ = std::move(other.xyz_landed_weight_);
   lane_pixel_data_ = std::move(other.lane_pixel_data_);  // task-358.1 Step 4

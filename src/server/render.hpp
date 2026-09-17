@@ -510,6 +510,11 @@ class RenderConsumer : public IConsume {
   // One-shot latch for a device-fused batch whose per-renderer vectors do not carry a plane
   // of this consumer's shape at renderer_index_ (server/backend renderer-order disagreement).
   bool logged_plane_mismatch_ = false;
+  // Same once-per-consumer gate for the legacy-CPU worker-projected sidecar (SimData::projected_)
+  // when it carries fewer renderers than this consumer's renderer_index_ — that batch falls back to
+  // this consumer's own projection loop rather than being dropped, so the line is a diagnostic, not
+  // a data-loss report.
+  bool logged_projected_mismatch_ = false;
   float total_intensity_ = 0;
   float snapshot_intensity_ = 0;
   // Σ SimData::emitted_energy_ over every batch consumed since the last Reset(),
