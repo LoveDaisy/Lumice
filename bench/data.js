@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1789676298755,
+  "lastUpdate": 1789676302858,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -4788,54 +4788,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "eea0a7b0268762f9590f8d50912a3662a80e6936",
-          "message": "Merge pull request #277 from LoveDaisy/task/gui-overlay-table\n\nfeat(gui): Overlay 辅助线组改为 6 列表格形态",
-          "timestamp": "2026-08-29T12:19:58+08:00",
-          "tree_id": "7e912e59f4173ec789186af3f24b4e7329ddef8d",
-          "url": "https://github.com/LoveDaisy/ice_halo_sim/commit/eea0a7b0268762f9590f8d50912a3662a80e6936"
-        },
-        "date": 1787977871287,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 1177114.2,
-            "unit": "rays/sec",
-            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 1183727.7,
-            "unit": "rays/sec",
-            "extra": "CPU: Neoverse-N2\\nCores: 4"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 818111.4,
-            "unit": "rays/sec",
-            "extra": "CPU: INTEL(R) XEON(R) PLATINUM 8573C\\nCores: 4"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 604573.1,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 9V74 80-Core Processor                \\nCores: 4"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "ff02ed3a487ac6e46dd2720351057ed2314aa60b",
           "message": "Merge pull request #278 from LoveDaisy/task/full-sphere-roll-flip\n\nfix(core+gui): 全球面快路径补 roll 旋转对称条件，修滑条端点浮点漂移导致的采样路静默切换",
           "timestamp": "2026-08-29T13:20:57+08:00",
@@ -9540,6 +9492,54 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 664908.5,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "fbd9e333c05a864d3df8756f7a171910bc9fd37a",
+          "message": "Merge pull request #378 from LoveDaisy/feat/cpu-worker-side-projection\n\nperf(core): move legacy-CPU per-ray projection onto the simulator workers",
+          "timestamp": "2026-09-18T04:05:22+08:00",
+          "tree_id": "14b5ad3b0df1857b2e43b1dde29f1d4fdd79955a",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/fbd9e333c05a864d3df8756f7a171910bc9fd37a"
+        },
+        "date": 1789676302029,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 898050.1,
+            "unit": "rays/sec",
+            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 1016083.7,
+            "unit": "rays/sec",
+            "extra": "CPU: Neoverse-N2\\nCores: 4"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 717472.5,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 7763 64-Core Processor\\nCores: 4"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 573649.8,
             "unit": "rays/sec",
             "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
           }
