@@ -2568,11 +2568,6 @@ void CudaTraceBackend::Impl::Reset(bool keep_persistent_buffers) {
   d_lat_attempts_ = nullptr;
   lat_attempts_cap_ = 0;
   lat_attempts_ci_start_ = 0;
-  // 330.2 S6: release the unified LUT buffers on teardown; EnsureLatLutBuffers
-  // re-allocates lazily on the next session's first UploadLatLut.
-  cudaFree(d_lat_lut_theta_); d_lat_lut_theta_ = nullptr;
-  cudaFree(d_lat_lut_cdf_);   d_lat_lut_cdf_ = nullptr;
-  cudaFree(d_lat_lut_flip_);  d_lat_lut_flip_ = nullptr;
   //
   // scrum-cuda-async-engine-port (304.2): per-batch EndSession passes
   // keep_persistent_buffers=true so the large device + pinned buffers
@@ -2590,6 +2585,17 @@ void CudaTraceBackend::Impl::Reset(bool keep_persistent_buffers) {
   // they are freed only on full teardown below — not every session end.
 
   if (!keep_persistent_buffers) {
+    // 330.2 S6 LUT buffers — fixed-size (LatLut::kNodes floats), scene- and
+    // batch-independent, and EnsureLatLutBuffers already no-ops when non-null:
+    // same shape as the filter descriptors above, so free only on full teardown.
+    // Freeing them unconditionally on every per-batch Reset (as before) forced
+    // EnsureLatLutBuffers to realloc all three on every batch's first
+    // UploadLatLut call regardless of axis path — including kFullSphere/
+    // kNoRandom scenes that never read them — because EnsureLatLutBuffers runs
+    // before UploadLatLut's SelectLatPath gate.
+    cudaFree(d_lat_lut_theta_); d_lat_lut_theta_ = nullptr;
+    cudaFree(d_lat_lut_cdf_);   d_lat_lut_cdf_ = nullptr;
+    cudaFree(d_lat_lut_flip_);  d_lat_lut_flip_ = nullptr;
     cudaFree(d_poly_n_);     d_poly_n_ = nullptr;
     cudaFree(d_poly_d_);     d_poly_d_ = nullptr;
     cudaFree(d_poly_fn_);    d_poly_fn_ = nullptr;
@@ -3193,8 +3199,19 @@ void CudaTraceBackend::Impl::BuildGeomPool(const SceneConfig& scene, size_t ray_
 }
 
 void CudaTraceBackend::Impl::EnsureSessionBuffers(size_t n) {
-  if (buffers_allocated_ && n_roots_ == n) {
-    return;  // MVP: n_roots is fixed within a session; idempotent fast-path.
+  // Grow-only fast-path (mirrors EnsureLandedWeightBuf / EnsureContCapacity /
+  // every other capacity-keyed Ensure* in this file): n_roots_ is a
+  // high-water mark, not an exact-match key. A trailing partial batch (the
+  // scene's ray_num is not an exact multiple of the dispatch size — the
+  // common case) previously forced a full free+realloc of all 9 device +
+  // 9 pinned root buffers down to the smaller remainder count, even though
+  // the larger buffers from the prior batch already covered it. The pinned
+  // buffers below are sized to `n` exactly (not buf_cap), which is fine on
+  // the fast path too — TraceLayer's host-side copies write at most `n`
+  // elements, and an oversized pinned buffer left over from a bigger prior
+  // batch is inert for the unused tail.
+  if (buffers_allocated_ && n <= n_roots_) {
+    return;
   }
   // Guard against UAF: if a prior kernel is still writing to d_exit_, freeing
   // now would corrupt device memory. cudaDeviceSynchronize is a no-op on the
