@@ -81,7 +81,8 @@
   `cmd /c "…"` 里**——被拦的启动会让承载它的 `.cmd` 批处理直接终止，不包一层整个脚本就在那一行静默
   收尾。
 - **`bcdedit /set xsavedisable 1`**（关闭 OS 的 XSAVE/AVX 状态保存，重启生效）是本机做「无 AVX2
-  环境」负对照的办法——launcher 的 OSXSAVE 检查会真实读到 0。⚠️ 它是系统级、影响整台机器（两个环境）；
+  环境」负对照的办法——外壳启动时的 OSXSAVE 检查（`src/launcher/win_engine_loader.c`）会真实读到 0。
+  ⚠️ 它是系统级、影响整台机器（两个环境）；
   用完必须 `bcdedit /deletevalue xsavedisable` 再重启复原。任何 session 接手本机前先看
   `bcdedit /enum | findstr /i xsave` 是否留有条目。
 - ⚠️ `scripts/bench_throughput.py` 的默认二进制探测**不带 `.exe`** 后缀

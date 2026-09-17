@@ -810,8 +810,8 @@ class TestBenchmarkIsaField(LumiceTestCase):
 
     Why this test is not "run it and read the output": the cross-check below reads
     `CMakeCache.txt`, which CMake writes at configure time. That is a different
-    producer from the `LUMICE_ISA_LEVEL_STR` macro → `#if` → JSON path being
-    checked, so the two do not share a failure mode: if the generator expression
+    producer from the `LUMICE_ISA_LEVEL_STR` macro → `LUMICE_GetEngineIsaLevel()` →
+    JSON path being checked, so the two do not share a failure mode: if the generator expression
     resolving the macro were written wrong (inverted, or missing one of its two
     conjuncts), the cache would still hold what CMake actually consumed and this
     would go red.

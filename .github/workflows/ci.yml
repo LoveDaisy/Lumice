@@ -827,8 +827,9 @@ jobs:
 
   # x86-64-v4 compile-only. The Linux release ships a second, AVX-512 build of the engine
   # (release.yml, linux-x64 row: two configures at LUMICE_ISA_LEVEL=baseline and =x86-64-v4,
-  # merged behind a CPUID launcher). Every other job here builds at baseline, so without
-  # this leg the -march=x86-64-v4 codegen path is first compiled on the day a tag is cut.
+  # the second engine .so laid out under lib/glibc-hwcaps/x86-64-v4/ for the loader to pick).
+  # Every other job here builds at baseline, so without this leg the -march=x86-64-v4
+  # codegen path is first compiled on the day a tag is cut.
   #
   # Compile only, and BUILD_TEST=OFF — unlike cuda-compile, which turns tests ON. The CUDA
   # cases self-skip for want of a device; an AVX-512 binary has no such graceful path. A
@@ -866,14 +867,16 @@ jobs:
           -DBUILD_GUI=OFF
           -DLUMICE_ISA_LEVEL=x86-64-v4
 
-      # The whole default graph: the CLI (so lumice_obj is compiled at v4 and linked) and
-      # the launcher (LumiceIsaLauncher, which every Linux x86_64 configure builds).
+      # The whole default graph, which with BUILD_TEST=OFF and BUILD_GUI=OFF is the CLI: lumice_obj
+      # compiled at v4 and linked into it. (There is no launcher target any more — the Linux
+      # release's dispatch is glibc's hwcaps lookup, with no code of ours to compile.)
       - name: Build (compile + link only, no run)
         run: cmake --build build --parallel
 
   # x86-64-v3 under clang-cl, with CUDA on. The Windows release ships a second build of the
   # engine compiled by clang-cl at -march=x86-64-v3 (release.yml, windows-x64 row: two
-  # configures, baseline on cl.exe and x86-64-v3 on clang-cl, merged behind a CPUID launcher).
+  # configures, baseline on cl.exe and x86-64-v3 on clang-cl, shipped as two engine DLLs the
+  # shell picks between by CPUID at start-up).
   # No other job here uses clang-cl at all, so without this leg the clang-cl (C/C++) x nvcc
   # (.cu, cl.exe host) mixed compile — the one thing the Windows split gambles on that the Linux
   # split did not — is first exercised on the day a tag is cut.
@@ -940,8 +943,8 @@ jobs:
           -DCMAKE_CUDA_HOST_COMPILER=cl
 
       # The whole default graph: the CLI (lumice_obj at v3 under clang-cl, the .cu TU under
-      # nvcc + cl.exe, linked by lld-link) and the Windows launcher (LumiceIsaLauncher, which
-      # every Windows x86_64 configure builds — here under clang-cl, which must accept it too).
+      # nvcc + cl.exe, linked by lld-link). This is the static flavor, so the shell's delay-load
+      # hook (src/launcher/win_engine_loader.c, shared flavor only) is not part of it.
       - name: Build (compile + link only)
         run: cmake --build build --parallel
 

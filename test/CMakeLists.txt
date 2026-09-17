@@ -81,6 +81,9 @@ add_executable(unit_correctness_test
   "${PROJ_TEST_DIR}/unit-correctness/config/test_color_class_table.cpp"
   # server/
   "${PROJ_TEST_DIR}/unit-correctness/server/test_c_api.cpp"
+  # The engine's run-time ISA-tier answer (LUMICE_GetEngineIsaLevel) against the tier this
+  # build was configured with; see LUMICE_TEST_CONFIGURED_ISA_LEVEL below.
+  "${PROJ_TEST_DIR}/unit-correctness/server/test_c_api_engine_isa_level.cpp"
   # The test-only export surface (LUMICE_TEST_* hooks), compiled here a second time so the parity
   # test below can call it: its other home is the `lumice_testapi` shared library (root
   # CMakeLists.txt, BUILD_SHARED_LIBS only), which this static-flavor binary never links. Two
@@ -204,6 +207,13 @@ target_include_directories(unit_correctness_test
   PRIVATE ${PROJ_TEST_DIR})
 target_link_libraries(unit_correctness_test
   PRIVATE GTest::gtest ${CMAKE_THREAD_LIBS_INIT} lumice_obj)
+# The configure-time tier, for test_c_api_engine_isa_level.cpp to hold the engine's run-time
+# answer against. A test-side definition rather than a read of the engine's own
+# LUMICE_ISA_LEVEL_STR: that macro is PRIVATE to lumice_obj on purpose (root CMakeLists.txt,
+# lumice_apply_isa_march), and the point of the test is that a consumer which cannot see the
+# macro still gets the right answer through the C API.
+target_compile_definitions(unit_correctness_test PRIVATE
+  "LUMICE_TEST_CONFIGURED_ISA_LEVEL=\"${LUMICE_ISA_LEVEL}\"")
 set_target_properties(unit_correctness_test PROPERTIES
   BUILD_RPATH "$<TARGET_FILE_DIR:GTest::gtest>")
 

@@ -29,6 +29,9 @@
 // clang-format on
 
 #include "lumice.h"
+#if defined(LUMICE_ENGINE_DELAY_LOADED)
+#include "launcher/win_engine_loader.h"
+#endif
 #include "util/cpu_info.hpp"
 #include "util/logger.hpp"
 #include "util/raypath_analysis_display.hpp"
@@ -778,7 +781,7 @@ void RunBenchmarkPass(const std::string& config_str, int num_workers, const char
       result["active_sec"] = std::round(active_sec * 1000.0) / 1000.0;
       result["rays_per_sec"] = std::round(rays_per_sec * 10.0) / 10.0;
       result["rate_basis"] = rate_basis;
-      // ISA tier this binary was actually compiled for, so a recorded [BENCHMARK] line
+      // ISA tier the ENGINE was actually compiled for, so a recorded [BENCHMARK] line
       // answers "which build was this measured on?" without anyone having to still have
       // the configure log. "native" means -march=native was compiled in (local default);
       // "x86-64-v4" is the AVX-512 variant the Linux release ships beside the baseline;
@@ -786,15 +789,14 @@ void RunBenchmarkPass(const std::string& config_str, int num_workers, const char
       // "baseline" is what CI tests and every other release build ships, and is the only
       // tier comparable across platforms — real MSVC cl.exe has no equivalent flag, so a
       // Windows-vs-other A/B taken on "native" numbers is not measuring what it looks like
-      // it is measuring. The string is CMakeLists.txt's LUMICE_ISA_LEVEL_STR, resolved in
-      // lumice_apply_isa_march() by the same condition that gates the -march flag itself,
-      // so it reads "baseline" whenever no flag was applied (any non-Release config
-      // included); see doc/performance-testing.md. cl.exe never defines it.
-#if defined(LUMICE_ISA_LEVEL_STR)
-      result["isa"] = LUMICE_ISA_LEVEL_STR;
-#else
-      result["isa"] = "baseline";
-#endif
+      // it is measuring. Asked of the engine through the C API rather than read off a
+      // macro in this file: on Windows the engine is a DLL picked by CPUID at start-up and
+      // this executable is compiled once for the baseline tier, so a macro here would name
+      // the shell's configure, not the engine that ran the pass — measured on the reference
+      // box as a v3 engine reporting "baseline". The engine's answer is resolved by the same
+      // condition that gates its -march flag, so it reads "baseline" whenever no flag was
+      // applied (any non-Release config included); see doc/performance-testing.md.
+      result["isa"] = LUMICE_GetEngineIsaLevel();
       // Which trace backend the measured pass ran on, and whether a GPU route
       // silently degraded to the legacy CPU path — a throughput number without
       // these is a number for an unknown code path. Pure additions to the
@@ -1934,6 +1936,16 @@ int RunAnalyze(const AnalyzeOptions& opts) {
 
 
 int main(int argc, char** argv) {
+#if defined(LUMICE_ENGINE_DELAY_LOADED)
+  // Windows shared build: the engine is a DLL chosen by CPUID (or `--isa=`) and loaded from
+  // this executable's own directory, and this must happen before the first LUMICE_* call —
+  // the subcommand parsers below already make them. The token is consumed here; a bad one, or
+  // an engine DLL that cannot be loaded, has been reported on stderr and ends the process
+  // with the returned code. See src/launcher/win_engine_loader.c.
+  if (int rc = LumiceEngineLoaderInit(&argc, argv, LUMICE_ENGINE_LOADER_REPORT_STDERR); rc != 0) {
+    return rc;
+  }
+#endif
   // Subcommand dispatch. `argv[1]` is the subcommand only when it spells one; every
   // other argv[1] — an option, or nothing — is the implicit `render`, whose options
   // then start at argv[1] instead of argv[2] and whose help is the top-level page.

@@ -151,6 +151,12 @@ add_executable(LumiceGUI
 # `lumice` (shared: the dylib; static: the archive) — the product keeps reaching core
 # through the C API only.
 target_link_libraries(LumiceGUI PRIVATE lumice_gui_obj lumice)
+# Windows shared builds: the same delay-load wiring as the CLI (defined in src/CMakeLists.txt,
+# which is processed before this directory). The loader TU is C with no engine dependency, so
+# the GUI's C-API-only boundary is intact: it is the code that BRINGS the C API's provider in.
+if(WIN32 AND BUILD_SHARED_LIBS)
+  lumice_wire_engine_delay_load(LumiceGUI)
+endif()
 
 # Windows: embed icon via .rc resource.
 # Console subsystem (no WIN32_EXECUTABLE) is used intentionally — GUI subsystem
@@ -189,6 +195,15 @@ if(APPLE)
       "-framework Cocoa"
       "-framework IOKit"
       "-framework CoreVideo")
+endif()
+
+# Linux/macOS shared builds: the same rpath wiring as the CLI (defined in src/CMakeLists.txt,
+# which is processed before this directory). It sits after the bundle block above on purpose:
+# on macOS the function reads MACOSX_BUNDLE to know how far lib/ is from the executable. On
+# Linux x86_64 that rpath is also what lets the loader pick the ISA-tiered engine; the
+# comment on the function has the whole story.
+if(BUILD_SHARED_LIBS AND NOT WIN32)
+  lumice_wire_engine_rpath(LumiceGUI)
 endif()
 
 if(APPLE)

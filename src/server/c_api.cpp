@@ -3514,6 +3514,21 @@ int LUMICE_WillUseGpuRoute(int preferred_backend) {
 }
 
 
+// =============== Engine Build Provenance ===============
+// LUMICE_ISA_LEVEL_STR is defined by lumice_apply_isa_march() in the top-level CMakeLists.txt on
+// the objects of lumice_obj — this translation unit among them — by the same condition that
+// applies the -march flag, so the two cannot drift apart. Real MSVC cl.exe never defines it (the
+// function does not run there), hence the fallback. This is the ONE place the macro is read; the
+// executables ask through this function so that what they report is the engine they loaded.
+const char* LUMICE_GetEngineIsaLevel(void) {
+#if defined(LUMICE_ISA_LEVEL_STR)
+  return LUMICE_ISA_LEVEL_STR;
+#else
+  return "baseline";
+#endif
+}
+
+
 // =============== Crystal Mesh ===============
 
 // Reroutes preview-only geometry through the closed-form Crystal factories so

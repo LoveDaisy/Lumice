@@ -43,8 +43,9 @@ set(CMAKE_C_STANDARD 11)              # C11...
 # ISA tier a Release build is compiled for (compilers that honor -march: GCC, Clang and
 # clang-cl; real MSVC cl.exe has no equivalent flag wired up and is always the baseline). One
 # four-valued variable, not a boolean plus a second knob: the Linux and Windows releases each
-# ship TWO builds of this tree behind a CPUID launcher, and "which tier is this?" must have
-# exactly one answer per configure.
+# ship TWO builds of the engine and pick one at start-up (Windows: the shell's delay-load hook
+# by CPUID; Linux: glibc's hwcaps subdirectory lookup, see src/CMakeLists.txt), and "which tier
+# is this?" must have exactly one answer per configure.
 #   baseline   no -march flag: the x86-64-v1 floor every x86_64 CPU runs; what CI tests
 #   x86-64-v3  -march=x86-64-v3 (AVX2+FMA): the second Windows release variant (clang-cl —
 #              LLVM takes its whole ~2.26x at v3, where GCC takes none of it; see
@@ -114,12 +115,12 @@ elseif(LUMICE_ISA_LEVEL STREQUAL "native")
                  "with -DLUMICE_ISA_LEVEL=baseline instead. See doc/performance-testing.md.")
 elseif(LUMICE_ISA_LEVEL STREQUAL "x86-64-v3")
   message(STATUS "LUMICE_ISA_LEVEL=x86-64-v3: a Release build would apply -march=x86-64-v3 "
-                 "(AVX2+FMA); this is the Windows release's second variant (clang-cl) and "
-                 "runs only on CPUs the ISA launcher selects it for.")
+                 "(AVX2+FMA); this is the Windows release's second engine DLL (clang-cl) and "
+                 "is only loaded on CPUs the shell's CPUID check selects it for.")
 elseif(LUMICE_ISA_LEVEL STREQUAL "x86-64-v4")
   message(STATUS "LUMICE_ISA_LEVEL=x86-64-v4: a Release build would apply -march=x86-64-v4 "
-                 "(AVX-512); this is the Linux release's second variant and runs only on "
-                 "CPUs the ISA launcher selects it for.")
+                 "(AVX-512); this is the Linux release's second engine .so and is only "
+                 "loaded on CPUs glibc's hwcaps lookup selects it for.")
 else()
   message(STATUS "LUMICE_ISA_LEVEL=baseline: this build matches the release ISA baseline.")
 endif()
@@ -261,12 +262,56 @@ if(MSVC AND NOT BUILD_SHARED_LIBS)
     set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
     set(LUMICE_MSVC_STATIC_CRT ON)
   endif()
+elseif(MSVC AND BUILD_SHARED_LIBS)
+  # The shared flavor is on the DYNAMIC CRT, and this line is what says so. Before it
+  # existed the flavor landed on the same value through CMake's own default — the static
+  # branch above simply did not run and LUMICE_MSVC_STATIC_CRT stayed at its initial OFF —
+  # which is a behaviour nobody had written down. The Windows release now ships this
+  # flavor (a baseline cl.exe shell loading a clang-cl x86-64-v3 engine DLL, see
+  # .github/workflows/release.yml), and a shell and an engine DLL built by two compilers
+  # must agree on the CRT to share heap allocations across the boundary; "both happened to
+  # default to /MD" is the wrong kind of agreement to build a release on. Setting the value
+  # explicitly changes nothing about what is compiled; it makes the choice readable and
+  # keeps a future edit to the static branch from silently moving this one. The same
+  # baked-flag caveat as the static branch applies: an explicit CMAKE_<LANG>_FLAGS_<CONFIG>
+  # override takes precedence over this variable, and this file does not re-detect it here.
+  set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
 endif()
 
 include(CheckIPOSupported)
 check_ipo_supported(RESULT result OUTPUT output)
 
-if(result AND "${CMAKE_BUILD_TYPE}" STREQUAL "Release" AND NOT BUILD_SHARED_LIBS)
+# IPO is on for every static Release build and, of the shared ones, for clang-cl and for GCC
+# on Linux — the two toolchains that build a release's shared engine. The shared flavor
+# originally went without IPO everywhere because GCC's LTO once emitted R_X86_64_TPOFF32
+# relocations for spdlog's thread_local variables, which a shared object cannot carry. Both
+# releases now ship the shared flavor, and going without costs the same thing on each:
+#   - Windows reference box, release bench config: the x86-64-v3 engine DLL built without
+#     -flto=thin ran the single-worker pass at 0.77 M rays/s against 1.13 M for the static
+#     exe (multi-worker at parity); the same DLL with thin-LTO ran 1.13 M.
+#   - Linux reference box (GCC 13.3), same config: the x86-64-v4 engine .so without LTO ran
+#     the single-worker pass at 1.50x the static baseline exe, below the 1.9x the release
+#     is held to and that the static v4 exe used to deliver; the same .so with -flto=auto
+#     ran 2.04x. The multi-worker pass was 1.12x / 1.13x, the memory-bound ceiling the
+#     static split measured before, unchanged by LTO.
+# In both cases the whole gap is LTO, none of it the library boundary. GCC 13's LTO links
+# the shared engine cleanly (only DTPOFF64 relocations remain, which are fine in a shared
+# object), so the TPOFF32 exclusion no longer holds for the toolchain a release uses; the
+# CI shared leg builds with the same GCC and would surface a return of it as a link error.
+# clang-cl's LTO objects work with WINDOWS_EXPORT_ALL_SYMBOLS (the .def generator reads
+# them), so that tree gets IPO too. Real cl.exe does NOT: its /GL objects hold no symbol
+# table CMake's __create_def can read, and the DLL links "successfully" with an EMPTY export
+# table — a baseline engine with zero exports, measured, not a hypothesis — so the cl.exe
+# baseline tree stays without IPO until the export surface is explicit rather than
+# harvested. Apple Clang shared builds stay excluded: no release ships them, and they have
+# not been measured either way.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+  set(_lumice_gcc_linux TRUE)
+else()
+  set(_lumice_gcc_linux FALSE)
+endif()
+if(result AND "${CMAKE_BUILD_TYPE}" STREQUAL "Release"
+   AND (NOT BUILD_SHARED_LIBS OR LUMICE_CLANG_CL OR _lumice_gcc_linux))
   message(STATUS "IPO supported. Enable inter-procedural optimization.")
   set(CMAKE_INTERPROCEDURAL_OPTIMIZATION TRUE)
 endif()
@@ -424,6 +469,20 @@ CPMAddPackage(
 
 # GUI dependencies (only when BUILD_GUI is ON)
 if(BUILD_GUI)
+  # The GUI's vendored libraries (GLFW, nfd, glad) are linked STATICALLY into LumiceGUI in
+  # every flavor. BUILD_SHARED_LIBS is a global switch that every add_subdirectory'd dependency
+  # honours too, and under the shared flavor it made all three come out as DLLs — glfw3.dll,
+  # nfd.dll, glad_gl.dll — that LumiceGUI.exe imports implicitly at process start. Nothing
+  # installs or packages them, so the executable failed to start with STATUS_DLL_NOT_FOUND
+  # (0xC0000135) the first time the Windows release was built as the shared flavor, while the
+  # workflow's own merge check stayed green: it looks for the files it expects, not for the
+  # ones the executable does. The shared flavor exists for exactly one library, the engine;
+  # the switch is therefore shadowed OFF for this block only, as a normal variable over the
+  # cache entry, and unshadowed again right after so the engine target below still sees the
+  # configure's value. (GLFW has its own GLFW_LIBRARY_TYPE knob, nfd has none, and glad's
+  # glad_add_library takes STATIC — one mechanism for all three rather than three spellings.)
+  set(BUILD_SHARED_LIBS OFF)
+
   # GLFW: windowing and input
   CPMAddPackage(
     NAME glfw
@@ -485,6 +544,10 @@ if(BUILD_GUI)
     )
     glad_add_library(glad_gl REPRODUCIBLE API gl:core=3.3)
   endif()
+
+  # Unshadow: the normal variable set above goes away and the cache entry (the configure's
+  # -DBUILD_SHARED_LIBS) is visible again for everything after this block.
+  unset(BUILD_SHARED_LIBS)
 endif()
 
 # ==================================================================================================
@@ -792,8 +855,9 @@ endif()
 # flag and the number's provenance cannot independently drift out of sync. (Its inner
 # $<CONFIG:Release> is redundant with the outer $<$<CONFIG:Release>:...> wrapper; that
 # redundancy is the price of the two gates being literally the same expression.)
-# Scoped to `target`'s own compile: the -march flag is PRIVATE (each object file is compiled
-# for one tier), the macro is PUBLIC (see the comment at that call).
+# Scoped to `target`'s own compile: the -march flag and the macro are both PRIVATE (each
+# object file is compiled for one tier, and the macro is read only inside the engine — see
+# the comment at that call).
 function(lumice_apply_isa_march target)
   if(LUMICE_ISA_LEVEL STREQUAL "baseline")
     set(_march_flag "")
@@ -803,15 +867,19 @@ function(lumice_apply_isa_march target)
   set(_active_cond "$<AND:$<CONFIG:Release>,$<BOOL:${_march_flag}>>")
   target_compile_options(${target} PRIVATE
     $<$<CONFIG:Release>:$<${_active_cond}:${_march_flag}>>)
-  # PUBLIC, not PRIVATE: src/main.cpp is not part of lumice_obj — it reaches this macro
-  # through Lumice --PRIVATE--> lumice --PUBLIC--> lumice_obj, the same two-hop usage
-  # requirement chain LUMICE_CUDA_ENABLED already relies on above. The value is the tier
-  # name when the -march flag above is actually applied and "baseline" otherwise (Debug,
-  # MinSizeRel, or the baseline tier itself), so what the binary reports is what it was
-  # compiled with, never what was merely asked for. No counterpart for real MSVC cl.exe:
-  # neither block below runs there, the macro is never defined, and main.cpp's #else falls
-  # back to "baseline".
-  target_compile_definitions(${target} PUBLIC
+  # PRIVATE on purpose: the macro is read in exactly one place, LUMICE_GetEngineIsaLevel()
+  # in src/server/c_api.cpp (an object of lumice_obj), and the executables ask through that
+  # function. It used to be PUBLIC so src/main.cpp could read it directly, and that was the
+  # defect: on Windows the engine is a DLL chosen by CPUID at start-up while the executable
+  # is compiled once for the baseline tier, so a macro reaching main.cpp named the shell's
+  # configure rather than the engine that ran — a v3 engine reported "baseline". Keeping it
+  # off the usage requirements is what makes that mistake a compile error rather than a
+  # wrong number. The value is the tier name when the -march flag above is actually applied
+  # and "baseline" otherwise (Debug, MinSizeRel, or the baseline tier itself), so what the
+  # engine reports is what it was compiled with, never what was merely asked for. No
+  # counterpart for real MSVC cl.exe: neither block below runs there, the macro is never
+  # defined, and c_api.cpp's #else falls back to "baseline".
+  target_compile_definitions(${target} PRIVATE
     "LUMICE_ISA_LEVEL_STR=\"$<IF:${_active_cond},${LUMICE_ISA_LEVEL},baseline>\"")
 endfunction()
 
@@ -864,14 +932,34 @@ if(WIN32 AND BUILD_SHARED_LIBS)
   # explicit LUMICE_API __declspec export surface is a delivery concern; see
   # backlog #133.)
   set_target_properties(lumice PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
+  # On Windows the shared engine is an INTERNAL component of the release, not a library
+  # anyone links: the zip carries one shell per entry point (`Lumice.exe`, `LumiceGUI.exe`)
+  # and two builds of this DLL, one per ISA tier, and the shell picks one by CPUID at start
+  # (src/launcher/win_engine_loader.c). The tier is therefore part of the FILE NAME — the two
+  # DLLs sit side by side in one directory and must not collide — and the name says "engine"
+  # so a reader of the zip does not take it for a library to program against; there is no
+  # bare lumice.dll on Windows any more. The shell's /DELAYLOAD directive in src/CMakeLists.txt
+  # and src/gui/CMakeLists.txt reads the name back through $<TARGET_FILE_NAME:lumice> rather
+  # than spelling it a second time.
+  set_target_properties(lumice PROPERTIES OUTPUT_NAME "lumice-engine.${LUMICE_ISA_LEVEL}")
 endif()
 
 # Shared builds: install the dylib next to the CLI (build/cmake_install/shared/lib)
 # so the install tree is self-contained. The CLI's INSTALL_RPATH (@loader_path/lib,
 # see src/CMakeLists.txt) resolves @rpath/liblumice.dylib there. Static builds
 # archive lumice into the CLI, so there is nothing to install here.
+# Windows has no rpath: the shell resolves the engine DLL from its OWN directory (absolute
+# path, never PATH or the working directory), so the DLL is installed beside the executables
+# at the prefix root, not under lib/ — the same place release.yml's merge step copies it from.
+# The import library is not product content and stays under lib/.
 if(BUILD_SHARED_LIBS)
-  install(TARGETS lumice LIBRARY DESTINATION lib)
+  if(WIN32)
+    install(TARGETS lumice
+        RUNTIME DESTINATION "${CMAKE_INSTALL_PREFIX}"
+        ARCHIVE DESTINATION lib)
+  else()
+    install(TARGETS lumice LIBRARY DESTINATION lib)
+  endif()
 endif()
 
 # Test-only export surface: the same lumice_obj objects liblumice is made of, plus the handful of

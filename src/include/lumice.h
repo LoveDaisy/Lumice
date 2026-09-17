@@ -398,7 +398,15 @@ extern "C" {
 // parser, a second copy of the defaults. The getter returns the LUMICE_RenderParam the engine
 // will use, defaults applied, and addresses entries by array index, not by `.id` — see its note
 // at the declaration. Nothing else moved; no struct changed.
-#define LUMICE_API_VERSION 440
+//
+// ADDED (v4.41): LUMICE_GetEngineIsaLevel, a pure append — the ISA tier the ENGINE was compiled
+// for, answered by the engine itself at run time. Until now the only carrier of that fact was a
+// compile-time macro in the executable's own translation unit, which is the wrong place once the
+// engine is a separately built DLL chosen at start-up: the Windows release ships one shell and
+// two engine DLLs (baseline / x86-64-v3), and a shell that reports its own macro reports the tier
+// it was configured with, never the tier it loaded — measured on the reference box as a v3 engine
+// reporting "baseline". Nothing else moved; no struct changed.
+#define LUMICE_API_VERSION 441
 #define LUMICE_MAX_RENDER_RESULTS 16
 #define LUMICE_MAX_STATS_RESULTS 1
 
@@ -2687,6 +2695,17 @@ LUMICE_ErrorCode LUMICE_GetActiveBackend(LUMICE_Server* server, int* out_backend
 // its "single" (warmup) vs "multi" (steady) passes are NOT parallel — callers use
 // this to collapse the GPU benchmark to one steady pass. Returns 1 (GPU route) or 0.
 int LUMICE_WillUseGpuRoute(int preferred_backend);
+
+// =============== Engine Build Provenance ===============
+// The ISA tier this engine was compiled for: "baseline", "x86-64-v3", "x86-64-v4" or "native".
+// Never NULL; static storage, do not free. The value is the tier name only when the matching
+// -march flag was actually applied to the engine's objects, and "baseline" otherwise — so a Debug
+// or MinSizeRel build, and every build by real MSVC cl.exe (which has no equivalent flag),
+// answers "baseline" no matter what was asked of the configure. It is the engine's own answer:
+// in a build where the engine is a shared library, it is the tier of the library that this
+// process actually loaded, which the executable's own compile cannot know. The CLI's
+// `[BENCHMARK]` JSON `isa` key is this string.
+const char* LUMICE_GetEngineIsaLevel(void);
 
 #if !defined(_MSC_VER)
 #pragma GCC visibility pop
