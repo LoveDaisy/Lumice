@@ -113,6 +113,10 @@ add_executable(unit_correctness_test
   "${PROJ_TEST_DIR}/unit-correctness/server/test_scene_batch_publish_order.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/server/test_render_consumer_component_lanes.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/server/test_render_consumer_empty_batch.cpp"
+  # The legacy-CPU worker-projected sidecar (SimData::projected_) against the consumer's own
+  # projection loop: bit-identical accumulation, the dual-fisheye overlap split, per-renderer
+  # indexing, and the release-safe fallback when the sidecar is shorter than renderer_index_.
+  "${PROJ_TEST_DIR}/unit-correctness/server/test_render_consumer_worker_projected.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/server/test_render_consumer_exposure_scale.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/server/test_render_consumer_post_snapshot_fusion.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/server/test_render_consumer_print_mode.cpp"

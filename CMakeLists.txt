@@ -596,7 +596,8 @@ set(lumice_core_src
   "${PROJ_SRC_DIR}/core/parallel_rows.cpp"
   "${PROJ_SRC_DIR}/core/projection.cpp"
   "${PROJ_SRC_DIR}/core/raypath.cpp"
-  "${PROJ_SRC_DIR}/core/simulator.cpp")
+  "${PROJ_SRC_DIR}/core/simulator.cpp"
+  "${PROJ_SRC_DIR}/core/worker_projection.cpp")
 
 # Metal backend (Apple only). task-metal-build-time-metallib (#283): the GPU
 # kernel single source of truth is `src/core/metal/lumice_trace.metal`. CMake

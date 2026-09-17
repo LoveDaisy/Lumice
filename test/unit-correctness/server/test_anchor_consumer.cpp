@@ -35,6 +35,7 @@
 #include "core/anchor_buffer.hpp"
 #include "core/color_util.hpp"
 #include "core/ev_anchor.hpp"
+#include "core/worker_projection.hpp"
 #include "server/anchor_consumer.hpp"
 #include "server/render.hpp"
 #include "server/server.hpp"
@@ -369,6 +370,63 @@ TEST(AnchorConsumer, WrongSizeDevicePlaneIsRefusedLoggedOnceAndCounted) {
   ac.Consume(fused);
   EXPECT_EQ(ac.DevicePlaneSizeMismatchCount(), 1u);
   EXPECT_EQ(CountOccurrences(capture.Text(), kNotice), 2) << capture.Text();
+}
+
+// The legacy-CPU worker can hand this consumer the anchor projection already done
+// (SimData::anchor_projected_pixel_/_y_, built by BuildWorkerProjectionSidecars on the
+// worker thread); Consume then accumulates the flat list instead of running
+// AccumulateOutgoing's own per-ray loop. The plane the two paths build must be the same
+// plane, float for float — the scalar is an order statistic over it, and a near-miss there
+// would be invisible to every test that only reads the scalar.
+TEST(AnchorConsumer, WorkerProjectedSidecarMatchesAccumulateOutgoing) {
+  const SimData batch = MakeSkyBatch(60000);
+  ASSERT_TRUE(batch.anchor_projected_pixel_.empty());
+
+  // Any renderer will do — the anchor sidecar is built whenever the batch carries one.
+  const RenderConfig any_renderer = MakeRenderConfig(LensParam::kLinear, 40.0f, 64, 64);
+  SimData projected = batch;
+  BuildWorkerProjectionSidecars(projected, { any_renderer });
+  ASSERT_FALSE(projected.anchor_projected_pixel_.empty());
+  ASSERT_EQ(projected.anchor_projected_y_.size(), projected.anchor_projected_pixel_.size());
+  // Every listed pixel is inside the plane: the worker clips, so the consumer indexes blind.
+  const size_t plane_size = static_cast<size_t>(kAnchorWidth) * static_cast<size_t>(kAnchorHeight);
+  size_t out_of_plane = 0;
+  for (int p : projected.anchor_projected_pixel_) {
+    out_of_plane += (p < 0 || static_cast<size_t>(p) >= plane_size) ? 1 : 0;
+  }
+  ASSERT_EQ(out_of_plane, 0u) << "sidecar lists pixels outside the anchor plane";
+
+  AnchorConsumer own_loop;
+  own_loop.Consume(batch);
+  AnchorConsumer sidecar;
+  sidecar.Consume(projected);
+  const float* a = own_loop.AnchorPlaneForTest();
+  const float* b = sidecar.AnchorPlaneForTest();
+  size_t nonzero = 0;
+  size_t diff = 0;
+  for (size_t p = 0; p < plane_size; ++p) {
+    nonzero += (a[p] != 0.0f) ? 1 : 0;
+    diff += (a[p] != b[p]) ? 1 : 0;
+  }
+  ASSERT_GT(nonzero, 1000u) << "the sky batch did not land — an all-zero pair agrees for the wrong reason";
+  EXPECT_EQ(diff, 0u) << "anchor planes differ at " << diff << " pixels";
+
+  own_loop.PrepareSnapshot();
+  sidecar.PrepareSnapshot();
+  EXPECT_EQ(sidecar.SnapshotL99Sky(), own_loop.SnapshotL99Sky());
+}
+
+// A batch that carries no renderer — an analysis session's, or any legacy-CPU batch outside a
+// render session — gets no sidecar at all: neither list is built, and the consumer's own loop
+// is what runs. This is the structural half of "the analysis route is untouched": the
+// histogram consumer never reads these fields, and here they are never even filled.
+TEST(AnchorConsumer, NoRendererMeansNoWorkerSidecar) {
+  SimData batch = MakeSkyBatch(2000);
+  BuildWorkerProjectionSidecars(batch, {});
+  EXPECT_TRUE(batch.projected_.empty());
+  EXPECT_TRUE(batch.anchor_projected_pixel_.empty());
+  EXPECT_TRUE(batch.anchor_projected_y_.empty());
+  EXPECT_GT(AnchorFor(batch), 0.0f) << "the consumer's own loop must still produce the anchor";
 }
 
 }  // namespace

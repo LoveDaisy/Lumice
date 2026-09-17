@@ -34,6 +34,7 @@
 #include "core/optics.hpp"
 #include "core/shared/lat_path_selection.hpp"
 #include "core/trace_ops.hpp"
+#include "core/worker_projection.hpp"
 #include "util/env_knobs.hpp"
 #include "util/fatal.hpp"
 #include "util/illuminant.hpp"
@@ -1506,6 +1507,13 @@ void Simulator::Run() {
       warned_chain_id_backend = true;
     }
 
+    // renders_ can be null (e.g. an analysis batch) — mirror the same null-safety
+    // CanUseBackend already applies to the backend gate above, so the legacy CPU path's
+    // worker-side projection sees "no renderers" rather than dereferencing a null
+    // shared_ptr.
+    static const std::vector<RenderConfig> kNoRenders;
+    const std::vector<RenderConfig>& renders = batch.renders_ ? *batch.renders_ : kNoRenders;
+
     // task-282: BackendUnavailableError signals the backend cannot run this
     // session (Metal PSO build failure on macOS 26.5, etc.). On first miss
     // we drop the backend instance for the remainder of the Run() (resetting
@@ -1519,7 +1527,7 @@ void Simulator::Run() {
       // catch-block fallback (run the legacy CPU path, report "backend not used").
       if (!backend) {
         SimulateOneWavelength(config, batch.raypath_color_.get(), wl_param, emitted_weight, batch.ray_num_,
-                              crystal_cache, workspace, generation, ray_alloc_carry, ray_alloc, tally_out);
+                              crystal_cache, workspace, generation, ray_alloc_carry, ray_alloc, tally_out, renders);
         deliver_tally();
         return false;
       }
@@ -1543,7 +1551,7 @@ void Simulator::Run() {
         backend_active_.store(false, std::memory_order_release);
         active_backend_.store(BackendKind::kCpu, std::memory_order_release);
         SimulateOneWavelength(config, batch.raypath_color_.get(), wl_param, emitted_weight, batch.ray_num_,
-                              crystal_cache, workspace, generation, ray_alloc_carry, ray_alloc, tally_out);
+                              crystal_cache, workspace, generation, ray_alloc_carry, ray_alloc, tally_out, renders);
         deliver_tally();
         return false;
       }
@@ -1584,7 +1592,7 @@ void Simulator::Run() {
           run_with_backend(wl_param, emitted_weight);
         } else {
           SimulateOneWavelength(config, batch.raypath_color_.get(), wl_param, emitted_weight, batch.ray_num_,
-                                crystal_cache, workspace, generation, ray_alloc_carry, ray_alloc, tally_out);
+                                crystal_cache, workspace, generation, ray_alloc_carry, ray_alloc, tally_out, renders);
           deliver_tally();
         }
       }
@@ -1601,7 +1609,7 @@ void Simulator::Run() {
           run_with_backend(wl_param, wl_param.weight_);
         } else {
           SimulateOneWavelength(config, batch.raypath_color_.get(), wl_param, wl_param.weight_, batch.ray_num_,
-                                crystal_cache, workspace, generation, ray_alloc_carry, ray_alloc, tally_out);
+                                crystal_cache, workspace, generation, ray_alloc_carry, ray_alloc, tally_out, renders);
           deliver_tally();
         }
       }
@@ -1619,7 +1627,8 @@ void Simulator::SimulateOneWavelength(const SceneConfig& config, const RaypathCo
                                       const WlParam& wl_param, float emitted_weight, size_t ray_num,
                                       CrystalCache& crystal_cache, SimWorkspace& workspace, uint64_t generation,
                                       std::vector<std::vector<double>>& ray_alloc_carry,
-                                      const RayAllocationSnapshot* ray_alloc, RayAllocationTally* tally_out) {
+                                      const RayAllocationSnapshot* ray_alloc, RayAllocationTally* tally_out,
+                                      const std::vector<RenderConfig>& renders) {
   ILOG_TRACE(logger_, "Run: get config: ray({}), wl({:.1f},{:.2f})",  //
              ray_num, wl_param.wl_, wl_param.weight_);
 
@@ -1961,6 +1970,16 @@ void Simulator::SimulateOneWavelength(const SceneConfig& config, const RaypathCo
   sim_data.outgoing_d_ = std::move(outgoing_d);
   sim_data.outgoing_w_ = std::move(outgoing_w);
   sim_data.outgoing_component_ = std::move(outgoing_component);  // task-331.1
+
+  // Worker-side projection sidecars (legacy CPU route only): project every outgoing ray of
+  // this batch into each renderer's pixel space and into the anchor plane right here, on
+  // the worker thread, instead of leaving it for RenderConsumer::Consume /
+  // AnchorConsumer::Consume. On this route the projection is ~95% of the consumer's time
+  // and the consumer is a single thread, while the workers are already parallel. `renders`
+  // is empty on any batch with no renderer (an analysis session's batches carry a null
+  // renders_), which leaves both sidecars empty — the "consumer projects itself" path.
+  BuildWorkerProjectionSidecars(sim_data, renders);
+
   if (chain_ids_on) {
     sim_data.outgoing_chain_id_ = std::move(outgoing_chain_id);
     // Only the entries this batch added: the consumer rebuilds the trie

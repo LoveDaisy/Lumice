@@ -262,11 +262,17 @@ class Simulator {
   // contract) is accumulated into it at the same "true exit" collection point
   // outgoing_w_ is built from, so what is measured is exactly what the consumer
   // is handed. Left untouched on a stop_ abort, when nothing is published either.
+  // `renders`: every renderer of the batch (SimBatch::renders_, or empty when the batch
+  // carries none, e.g. an analysis session). When non-empty, this call projects every
+  // outgoing ray into each renderer's pixel space itself (SimData::projected_) and into
+  // the anchor plane (SimData::anchor_projected_pixel_/_y_) instead of leaving that to
+  // RenderConsumer::Consume / AnchorConsumer::Consume — see sim_data.hpp's comment on
+  // ProjectedRayList.
   void SimulateOneWavelength(const SceneConfig& config, const RaypathColorConfig* raypath_color,
                              const WlParam& wl_param, float emitted_weight, size_t ray_num, CrystalCache& crystal_cache,
                              SimWorkspace& workspace, uint64_t generation,
                              std::vector<std::vector<double>>& ray_alloc_carry, const RayAllocationSnapshot* ray_alloc,
-                             RayAllocationTally* tally_out);
+                             RayAllocationTally* tally_out, const std::vector<RenderConfig>& renders);
 
   // Backend-routed wavelength step (TraceBackend seam, scrum-258.1 exit-seam).
   // Drives backend.BeginSession -> (TraceLayer -> Recombine)+ -> ReadbackExitRays
