@@ -59,10 +59,59 @@ Key source files:
 | `src/server/consumer.hpp` | `IConsume` interface |
 | `src/server/server.hpp` | `ResultFrame` and the view structs it publishes (`RenderResult`, `RawXyzResult`, `CompositeResult`, `StatsResult`) |
 | `src/server/render.hpp` / `render.cpp` | `RenderConsumer` — projection, accumulation, snapshot; `FrameBufferPool` |
+| `src/core/worker_projection.hpp` / `.cpp` | `BuildWorkerProjectionSidecars` — the legacy-CPU worker's own projection of a batch, consumed by §1.1 |
 | `src/server/stats.hpp` / `stats.cpp` | `StatsConsumer` — ray/crystal/orientation counters |
 | `src/server/server.cpp` | `ServerImpl` — consumer orchestration, locking, snapshot protocol |
 | `src/config/render_config.hpp` / `.cpp` | `RenderConfig`, `NeedsRebuild()` |
 | `src/gui/server_poller.hpp` / `.cpp` | GUI consumption side |
+
+### §1.1 Who projects: three payload forms of a batch
+
+`RenderConsumer::Consume` and `AnchorConsumer::Consume` each open with the same two-step
+dispatch, on the same signal, and a batch takes exactly one of three paths through it:
+
+| `SimData` carries | Who projected | What the consumer does |
+|---|---|---|
+| `xyz_pixel_data_` non-empty (device-fused, GPU routes) | the device kernel | `ConsumeDeviceFused` / `AccumulateDevicePlane`: fold the per-renderer plane, no rays to look at |
+| `projected_` non-empty (legacy CPU route in a render session) | the simulator **worker** thread, `BuildWorkerProjectionSidecars` | accumulate `projected_[renderer_index_]` (render) and `anchor_projected_pixel_/_y_` (anchor) straight into the buffers — **no per-ray loop on the consumer thread** |
+| neither (exit-seam routes; a legacy-CPU batch with no renderer) | the consumer itself | the per-ray `ProjectAndClassifyRay` / `ProjectExitToPixel` loop over `outgoing_d_/w_` |
+
+The middle row is what keeps the legacy CPU route's single consumer thread from being its
+serial wall: projecting every outgoing ray was 95–97% of that thread's time, while the
+simulator workers producing those rays were already parallel and, on the machines the route
+is for, mostly idle. Three things about it are load-bearing:
+
+- **The signal is the outer container, not an index.** "This batch was worker-projected" is a
+  property of the batch, so `!projected_.empty()` is tested before any `renderer_index_` enters —
+  the same convention `xyz_pixel_data_` uses one line above it. Whether the consumer's *own* entry
+  exists is a second, release-safe check (`renderer_index_ < projected_.size()`): a mismatch logs
+  once and **falls through to the consumer's own loop**, because unlike the device-fused case the
+  rays are still in the batch and re-projecting them costs nothing in correctness. It never
+  asserts — `-DNDEBUG` would compile that out and leave an out-of-bounds read.
+- **One classification, two storages.** The projection → clip → main-vs-overlap decision is
+  `ProjectAndClassifyRay` (`core/lens_proj_build.hpp`), called by both the worker and the
+  consumer's own loop; the two differ only in where a hit is written. That is what makes the
+  short-circuit safe to take: the sidecar was built by exactly the rule the consumer would have
+  applied, so `test_render_consumer_worker_projected.cpp` can hold the two paths to **bit
+  equality** (XYZ plane, `snapshot_intensity_`, every color-class lane), not a tolerance. The
+  overlap ring keeps its rule — accumulated into pixels, excluded from `landed_weight_` /
+  `total_intensity_` — because that split happens inside the shared function.
+- **The batch carries its own renderer list.** The worker projects with `SimBatch::renders_`,
+  captured with the scene under `scene_mutex_` at generation, so a batch's projection is bound to
+  the renderer parameters *earlier* than the consumer's `config_` binds it. `CommitConfig` orders
+  `Stop()` (queues shut down, workers joined) before the consumers are rebuilt and
+  `active_renders_` is replaced, so no batch generated under an old renderer list reaches a new
+  consumer; `test_worker_projection_commit_sequence.py` pins that with a lens + resolution change
+  across two commits on one server, compared float for float against a fresh run.
+
+What it deliberately does not cover: an analysis session's batches carry no `renders_`
+(`StartRaypathAnalysis` publishes an empty list), so `BuildWorkerProjectionSidecars` is a no-op
+there and the `RaypathHistogramConsumer` — which never reads these fields — sees the batch it
+always did. And the anchor sidecar is empty for a batch whose rays all read `Y == 0` on the
+batch wavelength, which `AnchorConsumer` cannot tell apart from "not worker-projected": it runs
+its own loop and derives the same empty result, a wasted loop rather than a wrong number,
+accepted rather than paid for with a second signal bit that the two consumers would then have to
+keep in agreement.
 
 ---
 
