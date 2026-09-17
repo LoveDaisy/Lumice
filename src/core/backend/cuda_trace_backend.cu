@@ -3199,8 +3199,19 @@ void CudaTraceBackend::Impl::BuildGeomPool(const SceneConfig& scene, size_t ray_
 }
 
 void CudaTraceBackend::Impl::EnsureSessionBuffers(size_t n) {
-  if (buffers_allocated_ && n_roots_ == n) {
-    return;  // MVP: n_roots is fixed within a session; idempotent fast-path.
+  // Grow-only fast-path (mirrors EnsureLandedWeightBuf / EnsureContCapacity /
+  // every other capacity-keyed Ensure* in this file): n_roots_ is a
+  // high-water mark, not an exact-match key. A trailing partial batch (the
+  // scene's ray_num is not an exact multiple of the dispatch size — the
+  // common case) previously forced a full free+realloc of all 9 device +
+  // 9 pinned root buffers down to the smaller remainder count, even though
+  // the larger buffers from the prior batch already covered it. The pinned
+  // buffers below are sized to `n` exactly (not buf_cap), which is fine on
+  // the fast path too — TraceLayer's host-side copies write at most `n`
+  // elements, and an oversized pinned buffer left over from a bigger prior
+  // batch is inert for the unused tail.
+  if (buffers_allocated_ && n <= n_roots_) {
+    return;
   }
   // Guard against UAF: if a prior kernel is still writing to d_exit_, freeing
   // now would corrupt device memory. cudaDeviceSynchronize is a no-op on the
