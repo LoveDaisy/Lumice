@@ -1179,6 +1179,14 @@ jobs:
         #   Ubuntu x86_64             530s
         #   Windows MSVC x86_64       528s
         #   E2E Slow (macOS rest)     456s
+        # STALE as of 2026-09-17 (PR #375/#376/main runs 35169897211 / 35170744547 /
+        # 35196516286): "rest"'s phase 2 gained test_metal_dual_renderer_throughput
+        # (#372) at 278-296s on this hardware, and phase 1 alone now swings 361-552s
+        # depending on runner day, so the leg's total is 660-850s — its OWN trigger
+        # condition below ("either macOS leg becoming the longest job of a run") is now
+        # plausibly met (850s > shared-gui-test-build's 734s), but re-measuring and
+        # re-packing is deliberately NOT done here: that needs a fresh `gh run view
+        # --log` per-file pass, which belongs to a separate follow-up.
         # The Windows leg used to hold the top of this list at 740s; sccache as
         # a compiler launcher moved it to 528-605s and the ceiling moved with
         # it. Both macOS legs still sit under the ceiling, so packing them
@@ -1339,7 +1347,16 @@ jobs:
           case "${{ matrix.pytest_args }}" in
             *test/performance*) pytest test/performance -v -m slow --durations=20 ;;
           esac
-        timeout-minutes: 15
+        # 25, not the original 15: phase 1 alone measured 500-552s on a slow runner day
+        # (vs. 361s on a fast day) and phase 2's Metal dual-renderer throughput gate
+        # (test_metal_dual_renderer_throughput, added by #372) measured 278s on a
+        # GitHub-hosted macOS runner — the 278s cost is real GPU-contention-on-shared-
+        # hardware, not this leg being slow to start; see
+        # test/performance/test_metal_multi_renderer_throughput.py's docstring for the
+        # ~70s Metal-reference-machine number that does not apply here. Worst measured
+        # sum is ~552 + 296 = 848s (~14.2min), so 25min leaves ~10min margin; 20 would
+        # not survive a slow phase-1 day stacked on the phase-2 cost.
+        timeout-minutes: 25
 
   # The `push` guard STAYS here, and now reads as "main only" — which is the
   # intent: this job publishes the benchmark history to gh-pages, and a PR must

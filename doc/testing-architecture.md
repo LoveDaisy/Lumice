@@ -1611,6 +1611,17 @@ cap measured on one leg does not transfer to another — these two configures co
 of translation units and their directories land about six times apart, 37 MB against more than
 220 MB, which nothing about "both Linux, both GUI, both tests" predicts.
 
+⚠️ **The `E2E Slow (macOS ARM64 rest)` row (411s warm / 485s cold) predates the Metal dual-renderer
+throughput gate and is now stale.** That gate measured 278s alone on this hardware, on top of a
+phase-1 cost that swings 361-552s by runner day (see the leg-balancing comment above the `e2e-slow`
+job's matrix in `ci.yml`), so total job duration measured 746s on an ordinary-phase-1 run (run
+35169897211, 2026-09-17) — a different, later run than this table's own baseline, so it is not
+directly comparable to the other rows above, but it is well past both 411s and 485s. The leg's
+"Run slow E2E tests" step timeout was raised from 15 to 25 minutes for this reason. Whether this
+leg is now the run's longest job (ahead of `shared-gui-test-build`'s 39-606s spread) has not been
+re-measured against a single run the way the table above was; that re-measurement, and any
+resulting re-pack of the two macOS legs, is a separate follow-up.
+
 The cold column is not a hypothetical. Every cache in the repository was destroyed while this table
 was being measured, so the two runs are the same commit range on the same branch, one with nothing
 to restore and one with everything. Read it as the honest price of a cold start rather than as

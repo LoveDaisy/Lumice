@@ -19,7 +19,9 @@ An earlier 15-rep sample of the same arms read 0.935 / 0.938 and 4.33×.
 Before N-plane accumulation the same dual config ran on the legacy CPU path
 at ~1.06× legacy.
 
-@pytest.mark.slow — needs the release binary; Darwin-only (Metal). ~70 s.
+@pytest.mark.slow — needs the release binary; Darwin-only (Metal). ~70 s on the Metal
+reference machine above; measured 278 s on a GitHub-hosted macOS CI runner (PR run
+35169897211) — do not reuse the 70 s figure for CI timeout budgeting.
 """
 
 from __future__ import annotations
