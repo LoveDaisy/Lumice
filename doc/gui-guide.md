@@ -259,9 +259,21 @@ Run, Stop, New, and Open are not bound to keys — use the Top Bar buttons. Expo
 Lumice uses a binary project file format (`.lmc`) that stores:
 
 - **Configuration**: all crystal, scene, render, and filter settings as semantic JSON
-- **Preview texture**: optional embedded PNG of the most recent render result
+- **Preview texture**: optionally, the most recent render result. From format v5 this is the
+  render's **unexposed linear XYZ energy** (the same floats the live preview uploads), stored as
+  zlib-deflated float32 behind a small header that also carries the frame's exposure
+  measurements. A reopened document therefore renders through the same shader path as a live
+  run — the EV slider, the exposure mode, the background and print mode all keep working on it,
+  and there is no exposure-time clipping baked into the pixels. Files written by v4 and earlier
+  embed an 8-bit PNG instead (exposure baked in) and still open, but keep their baked exposure
+  until the next run.
 
-The format uses a 44-byte header with magic number `LMC\0`, version field, and offset / size pointers to the JSON and texture payloads. Values are stored as human-readable semantic types (e.g. `"prism"` instead of enum indices) for forward compatibility.
+The format uses a 44-byte header with magic number `LMC\0`, version field, flag bits (whether a texture is present, and which encoding it uses), and offset / size pointers to the JSON and texture payloads. Values are stored as human-readable semantic types (e.g. `"prism"` instead of enum indices) for forward compatibility.
+
+Because the v5 texture is lossless float data, a project file is larger than it used to be:
+roughly 2–3 MB for a sparse scene and about 20 MB for a dense all-sky scene at the default
+1024 simulation resolution (four times that at 2048), against 0.2–5 MB for the old PNG.
+Untick "Include Texture in .lmc" in the Save menu if the file size matters more than the embedded preview.
 
 ### Unsaved Changes
 

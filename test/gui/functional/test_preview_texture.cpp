@@ -134,7 +134,10 @@ void RegisterPreviewTextureTests(ImGuiTestEngine* engine) {
       IM_CHECK(gui::LoadLmcFile(tmp_path, gui::g_state, loaded));
       IM_CHECK_EQ(loaded.width, kW);
       IM_CHECK_EQ(loaded.height, kH);
-      IM_CHECK(loaded.mode == gui::PreviewRenderer::TextureMode::kSrgbRadiance);
+      // The frame went in through UploadTexture, i.e. as composited bytes, and the file must say
+      // so: SaveLmcFile writes the flags from the mirror's mode, not from a constant, which is what
+      // keeps a reopened pre-v4 document from being re-saved as radiance-only and re-lit twice.
+      IM_CHECK(loaded.mode == gui::PreviewRenderer::TextureMode::kSrgbComposited);
       IM_CHECK(!loaded.srgb.empty());
 
       UploadAndWait(ctx, loaded.srgb, loaded.width, loaded.height);
