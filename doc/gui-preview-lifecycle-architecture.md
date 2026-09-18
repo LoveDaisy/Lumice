@@ -160,6 +160,20 @@ CUDA 超大 batch 中途无法响应。第一性原理：
 
 其中 **I3、I4 正是当前 bug 违反的两条**——回归测试应直接钉住它们。
 
+> **as-built 追记（2026-09-19）：启动校准是一次 poller 从不观测的真实 run，其隐身靠 join 纪律而非 I1–I7。**
+> `CalibrateQualityThreshold()`（`src/gui/app.cpp`）在主循环开始前对默认文档跑一次 1e5 光线的真实
+> `LUMICE_CommitScene`，既是质量闸阈值的标定，也是 server 后端（GPU context、默认文档的 consumer
+> 布局、D65 表、首次大块 readback）的启动预热——它现在跑在**后台线程**（`RunCalibrationInBackground`），
+> 且 server 从一开始就按文档的 `use_gpu_backend`/`worker_count` 构造（`ConstructServerForState`），
+> 不再先建 CPU server 再在首次 Run 时整个重建。这次 run 之所以不需要 I1–I7 的任何合规证明，是因为
+> 它**从不接入 `g_server_poller`**：poller 是预览的唯一发布者，没被唤醒就没有观测，也就没有世代号、
+> 快照、gate 可谈。这条前提的守法方式是 `JoinPendingCalibration()`（`JoinPendingStop()` 的孪生）——
+> 每条**销毁/重建 server** 的路径（R1，与 Stop 相同）**以及每条唤醒 poller** 的路径（`DoRun` /
+> `DoAnalyze` / 两处 display-time `WakeForRefresh`）都先 join。第二类调用点是 Stop 所没有的：
+> 一次漏 join 的唤醒会让 poller 观察到正在跑校准场景的 RUNNING server 并把预热帧当用户帧发布。
+> 钉住它的是 `test/composition-correctness/gui/test_startup_calibration_chain.cpp`（预热后 server
+> IDLE、已发布快照对象不变、在飞重建先 join）。
+
 > **落地补丁（2026-08-01，PR 见 git log）：I6「终帧无条件上屏」曾长期未被落实。**
 > 这不是新增不变量，而是补上实现对 **I6 后半句**（§7 规则 2）的一次合规回归——I6 本身文本不变。
 >
