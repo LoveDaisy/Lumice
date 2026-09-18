@@ -198,7 +198,10 @@ int main(int argc, char** argv) {
   // MaybeReconstructServerForConstructionProperties), so a server built for the wrong one is
   // torn down and rebuilt at that first Run, and everything the calibration below warmed up on
   // it — the GPU context above all — would be thrown away with it. use_gpu_backend arrives from
-  // the personal defaults in MakeNewDocumentState above; the factory default is CPU.
+  // the personal defaults in MakeNewDocumentState above; the factory default is CPU. Verified
+  // (code review round 1, Suggestion): MakeNewDocumentState's user_defaults load path
+  // (user_defaults.cpp, kUseGpuBackendKey) always finishes and returns before this call — it is
+  // synchronous, called on the line directly above, not deferred to a later frame.
   gui::ConstructServerForState(gui::g_state);
 
   // Stage 2 of the log-sink assembly: the file sink, which cannot be hoisted into stage 1

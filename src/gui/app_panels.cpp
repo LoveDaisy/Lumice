@@ -2111,7 +2111,15 @@ void RenderPreviewPanel(GLFWwindow* window, float window_width, float window_hei
       // + kColorModeEvBoost: static composite-mode brightness baseline (see above).
       const float composite_ev_push = rc.exposure_offset + kColorModeEvBoost;
       if (lumice::gui::ShouldPushCompositeExposure(composite_active, s_last_composite_active, composite_ev_push,
-                                                   s_last_pushed_ev, kCompositeEvPushEpsilon)) {
+                                                   s_last_pushed_ev, kCompositeEvPushEpsilon) &&
+          // A wake is a calibration join point in principle (app.cpp, JoinPendingCalibration): the
+          // poller must not observe the startup calibration's run on this server. But this is a
+          // display-time refresh on the render path, not a user-initiated command — joining here
+          // would block the whole frame for calibration's up-to-2s worst case (code review round
+          // 1, Major #3). Skip the push entirely while calibration is still actually running
+          // (s_last_pushed_ev is left unset, so this condition is re-evaluated true every frame
+          // until it isn't — no state is lost, the push just lands once calibration finishes).
+          !CalibrationPending()) {
         LUMICE_SetCompositeExposure(g_server, composite_ev_push);
         // Wake a paused poller so the next frame can pick up the freshly re-baked
         // composite even after a finite sim has completed (same rationale as the
@@ -2119,9 +2127,6 @@ void RenderPreviewPanel(GLFWwindow* window, float window_width, float window_hei
         // No-op when the poller is already running. WakeForRefresh (not WakeForRestart)
         // preserves valid=true across the wake edge — same display-time-inert contract
         // as color/visible/solo/z_order edits (task-color-migration §3 D3).
-        // A wake is a calibration join point (app.cpp, JoinPendingCalibration): the poller must not
-        // observe the startup calibration's run on this server.
-        JoinPendingCalibration();
         g_server_poller.WakeForRefresh(g_server);
         s_last_pushed_ev = composite_ev_push;
       }

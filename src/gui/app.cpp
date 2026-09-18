@@ -125,8 +125,16 @@ void JoinPendingCalibration() {
   }
 }
 
+// Non-blocking: true only while the background task is actually still running, not merely
+// "launched and not yet joined". A finished-but-unjoined future means the server is already IDLE
+// again — waking the poller then is harmless, there is nothing left to race — so this deliberately
+// reports false in that case rather than reusing JoinPendingCalibration's coarser valid() check.
+// Display-time refresh paths (which must never block the render thread waiting on join) use this
+// to skip a wake while calibration is genuinely in flight instead of joining it (code review
+// round 1, Major #3).
 bool CalibrationPending() {
-  return g_calibration_future.valid();
+  return g_calibration_future.valid() &&
+         g_calibration_future.wait_for(std::chrono::seconds(0)) != std::future_status::ready;
 }
 
 int g_programmatic_resize = 0;
@@ -1577,6 +1585,13 @@ void DoStop() {
   if (g_state.run_intent == RunIntent::kStopping) {
     return;
   }
+  // The startup calibration may still be running on this server (see JoinPendingCalibration):
+  // it holds g_server and, on the way out, calls LUMICE_StopServer itself (StopOnExit in
+  // RunCalibrationInBackground). Without this join, that call and the async Stop lambda's own
+  // LUMICE_StopServer(srv) below could run concurrently on the same server pointer. Same
+  // precedent as DoRun's top-of-function join; the queued wait is bounded by the calibration's
+  // own 2 s cap and only ever engaged in the narrow startup window before it finishes.
+  JoinPendingCalibration();
   // Optimistic async Stop (blueprint §5/§8): set the intent synchronously so the UI paints
   // "Stopping…" THIS frame, then offload the EXISTING blocking teardown sequence onto a background
   // thread. The backend cannot interrupt the in-flight batch, so LUMICE_StopServer blocks until it

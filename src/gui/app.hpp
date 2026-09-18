@@ -166,7 +166,10 @@ void JoinPendingStop();
 // server that stays off the screen only because the poller is never woken while it is in flight.
 // Where the second class of caller lives, and why, is spelled out at the definition.
 void JoinPendingCalibration();
-// True while a calibration run handed to the background thread has not been joined yet.
+// True only while the background calibration task is still actually running (not merely
+// "launched and not yet joined" — see definition). Non-blocking; display-time refresh paths use
+// this to skip a wake instead of joining, so they never block the render thread on the
+// calibration's up-to-2s worst case.
 bool CalibrationPending();
 
 // Aspect ratio state

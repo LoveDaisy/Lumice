@@ -384,10 +384,12 @@ class ServerPoller {
   uint64_t last_analysis_generation_{ 0 };
 
   // Adaptive quality gate: calibrated threshold set once at startup via SetCalibratedThreshold().
-  // If not set (calibrated_ == false), falls back to gui::kMinRaysFloor. Atomic because the
-  // setter runs on the calibration's background thread and the reader is the poll worker; the
-  // pair is consistent because the threshold is stored first and the flag last (seq_cst).
-  std::atomic<bool> calibrated_{ false };
+  // A single atomic, not a (bool, value) pair — the computed threshold is always
+  // max(gui::kMinRaysFloor, ...) and gui::kMinRaysFloor is a nonzero compile-time constant, so 0
+  // is a threshold no calibration run can ever produce and doubles as "not calibrated yet"
+  // without a second variable whose write/read order relative to this one would need reasoning
+  // about atomic memory ordering (a44: explicit over implicit). Atomic because the setter runs on
+  // the calibration's background thread and the reader is the poll worker.
   std::atomic<unsigned long long> calibrated_min_rays_{ 0 };
 
   // Timeout fallback: force upload if quality gate has been rejecting for too long.

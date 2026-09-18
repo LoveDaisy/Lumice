@@ -96,10 +96,19 @@ bool PushDisplayState(const GuiState& state, LUMICE_Server* server) {
   // observes an invalid snapshot and ReconcileSimState pulls a completed sim back into
   // kSimulating — task-color-migration AC1 activity bug root cause (a).
   //
-  // Waking the poller is what makes this a calibration join point: the startup calibration runs
-  // the default document on this server with the poller paused, and a poll during that run would
-  // publish the warm-up frame as the user's (app.cpp, JoinPendingCalibration).
-  JoinPendingCalibration();
+  // Waking the poller is a calibration join point in principle: the startup calibration runs the
+  // default document on this server with the poller paused, and a poll during that run would
+  // publish the warm-up frame as the user's (app.cpp, JoinPendingCalibration). But this is a
+  // display-time refresh, not a user-initiated command like DoRun/DoStop/DoAnalyze — blocking the
+  // render thread here for calibration's up-to-2s worst case would freeze the whole frame over an
+  // edit as small as a colour tweak (code review round 1, Major #3). While calibration is still
+  // actually running, skip the wake instead of joining it: returning false here leaves the
+  // display-state baseline unchanged, so ApplyGuiEffects retries this same push next reconcile —
+  // no state is lost, the refresh just lands once calibration finishes and a wake is attempted
+  // without CalibrationPending() blocking it.
+  if (CalibrationPending()) {
+    return false;
+  }
   g_server_poller.WakeForRefresh(server);
   return true;
 }
