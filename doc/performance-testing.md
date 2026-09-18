@@ -335,6 +335,47 @@ whatever you were trying to measure.
    status line saying which tier this build tree is on.
 
 
+## Measurement discipline: which machines a performance claim needs
+
+**CPU route: a conclusion needs both OSes, not one.** Any CPU-route throughput claim, optimal
+worker-count figure, or A/B result must carry **one-hand data from both the Windows and the WSL2
+reference roles** (role names, not host names — see `machines.md`), and must either quote a Mac
+number alongside them or say why there is none. This is not caution for its own sake: the same
+binary has already produced opposite conclusions on the two OSes twice. The mechanism is not a
+one-off fluke — moving the legacy-CPU route's per-ray projection off the single consumer thread
+and onto the simulator workers (`accumulator-consumer-architecture.md` §1.1) changes where that
+route's parallelism bottleneck sits, and the two OSes do not react to that shift the same way: this
+file's own ISA section above measures the Windows reference box's multi-worker gain at **1.562×**
+against a Linux/WSL2 gain of only **~1.13×** on the same class of comparison, with the Linux side
+explicitly called out as throughput-capped well short of the single-worker gain — the same shape of
+divergence, not a coincidence limited to one measurement. A number taken on one OS and generalized
+is a guess dressed as a result.
+
+**Native Linux has zero first-hand data — say so, don't paper over it.** Every "Linux" number in
+this tree comes from WSL2, and WSL2 has its own measured behavior that is not native Linux
+behavior: `futex`/`sys` time rising with worker count, and `dxgkrnl` half-virtualization inflating
+CUDA context establishment by ~2.5×. Any OS-keyed constant whose "Linux" cell was actually measured
+under WSL2 must say so in the cell or its caption, not just in prose elsewhere.
+
+**GPU route: `nvidia-smi` utilization is an observation, never a throughput criterion.** It
+measures the fraction of wall time some kernel is running on the device — not SM occupancy, and not
+distance from the kernel-bound ceiling. This tree has already built two scrums on treating it as a
+judge and been wrong both times: eliminating the host-side churn that was consuming 96% of host API
+time left the reported utilization number unchanged, because utilization cannot see occupancy or
+host-bound stalls, only whether *something* is scheduled. The only judges for GPU throughput are
+the `[BENCHMARK]` line's `rays_per_sec`, and — once a kernel-bound ceiling ruler exists — the ratio
+of production throughput to that ceiling.
+
+**Reference-machine mutual exclusion.** The Windows and WSL2 reference roles are one physical
+machine; running a bench on one side while the other is active corrupts both. Already stated in
+`machines.md` — this paragraph only points there, it does not restate the mechanism.
+
+**The observation channel must not sit on the measured thread's critical path.** A debug log line
+or a Python log callback wired into a hot path has previously doubled `DoSnapshot`'s wall time by
+itself — the act of observing changed the number being observed. Route any new instrumentation
+around the critical path (sampling, a separate thread, a post-hoc counter), not through it.
+
+
 ## 1. CLI Pipeline Benchmark
 
 Pure pipeline throughput test without GUI, VSync, or display overhead.

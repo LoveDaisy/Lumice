@@ -25,6 +25,7 @@
 | **CUDA 参照机（Linux）** | `home-wsl` | CUDA build、parity/正确性验证、CUDA 吞吐 bench |
 | **CUDA 参照机（Windows）** | `home-win` | MSVC + CUDA 编译、Windows 产物验证、Windows 吞吐 bench |
 | **GUI 物理桌面机** | `home-win` | 需要真实显示器 session 的 GUI VSync 性能测试 |
+| **原生 Windows 剖析机（nsys/ncu 全 CUPTI）** | `home-win` | 需要 CUPTI 全量采样（`nsys`/`ncu` kernel timeline）的 GPU 剖析——WSL2 侧 CUPTI 支持不完整，须原生 Windows |
 | **Metal 参照机** | 开发用 Mac | Metal 后端 build / parity / 吞吐 bench |
 
 `home-win` 与 `home-wsl` 是 ssh(1) 别名，须在你的 `~/.ssh/config` 里配置。
