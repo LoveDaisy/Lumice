@@ -115,7 +115,7 @@ owner 在 2026-09-11 提出第三种形态，不再试图同时满足「渲染�
    静默走 CPU、可能比渲染慢；这是子任务 5 范围内的非目标（GUI 的 GPU 路径体验留给未来子任务）。
    **多 worker（as-built，2026-09-13 起）**：CPU 路的分析本来就跑在多 worker 上；GPU 偏好的
    server 现在亦然——`ServerImpl` 构造期在单引擎之外额外建一组 CPU 偏好的**常备分析池**
-   （`analysis_pool_simulators_`，`num_workers > 0 ? num_workers : min(PhysicalCoreCount(), kMaxDefaultWorkerCount)`
+   （`analysis_pool_simulators_`，`num_workers > 0 ? num_workers : min(<平台核数>, kMaxDefaultWorkerCount)`，核数来源与上限按平台分档、与 CPU 路同一规则
    个 `Simulator`，`sim_seed != 0` 时与 CPU 路同规则坍缩为 1），`Start()` 按 `SessionKind` 只
    唤醒对应的那一组（`RunPersistentLoop` 的 `required_mode` 等待谓词：渲染唤醒引擎，分析唤醒池，
    另一组在 `Start()`/`Stop()` 间沉睡），`Stop()` 的 `active_workers_ → 0` 等待因此只计醒着的组。

@@ -87,17 +87,30 @@ The legacy CPU route runs a dual pass and prints one JSON per pass:
 `"mode":"single","workers":1` and `"mode":"multi","workers":N`. A GPU route is a single engine and
 prints one line only (`workers:1`).
 
-**The legacy CPU product path is `worker_count = min(PhysicalCoreCount(), kMaxDefaultWorkerCount)`**
-(`ServerImpl::ServerImpl`, `src/server/server.cpp`; only a fixed seed or a GPU route forces 1, and an
-explicit `--workers N` / GUI worker preference overrides the whole expression, cap included). So
-`mode:single` is a per-core/parallel-efficiency diagnostic — **it is not the shipping
-configuration**, and a `grep '"single"'` that looks right will quietly measure a config nobody runs.
+**The legacy CPU product path is a per-platform pair** (`ServerImpl::ServerImpl`,
+`src/server/server.cpp`): `worker_count = min(PhysicalCoreCount(), kMaxDefaultWorkerCount)` with
+the cap at 10 on Linux/macOS, and `worker_count = LogicalCoreCount()` — the full SMT thread count,
+no narrower cap — on Windows. Only a fixed seed or a GPU route forces 1, and an explicit
+`--workers N` / GUI worker preference overrides the whole expression, cap included. The split is
+keyed on which engine each platform's production default actually loads, and was measured, not
+derived: on the Windows reference box (16C/32T Zen 5, clang-cl x86-64-v3 engine DLL, i.e. what the
+release shell loads there) the automatic count at 10 left 1.07×–1.58× on the table against the
+32-worker count now shipped (three worker-side-projection scenes, `render` with explicit
+`--workers`, 3 interleaved reps each, CoV ≤2.3%, 2026-09-19; the 5-rep sweep that set the shape
+read 1.11×–1.56× the day before), while the same box under WSL2 on the glibc-hwcaps-selected
+x86-64-v4 engine has its optimum at exactly 10 (12 workers already cost 5–23%, 16 halve the
+throughput — a sync-frequency wall, `sys%` rising 4–6× at the knee). The "Linux" cell there is
+WSL2, not native Linux — see "Measurement discipline" below. So `mode:single` is a
+per-core/parallel-efficiency diagnostic — **it is not the shipping configuration**, and a
+`grep '"single"'` that looks right will quietly measure a config nobody runs.
 
-**Neither is `mode:multi`, on a machine with more physical cores than that cap.** The `multi` pass
-asks for `PhysicalCoreCount()` workers explicitly, which is exactly why it escapes the cap: it is
-the denominator parallel efficiency is defined against. Read it as "how well does this box scale to
-all its cores", not as "what a user gets" — the two coincided before the default was capped, and on
-a high-core-count box they no longer do. When you want the shipping number, run a normal `render`
+**Neither is `mode:multi`, on any machine where `PhysicalCoreCount()` differs from that default.**
+The `multi` pass asks for `PhysicalCoreCount()` workers explicitly, which is exactly why it escapes
+the automatic rule: it is the denominator parallel efficiency is defined against. Read it as "how
+well does this box scale to all its physical cores", not as "what a user gets" — the two coincided
+before the default was capped, and now differ in a platform-dependent direction (on a
+many-core Linux/macOS box `multi` runs more workers than the default; on an SMT Windows box it
+runs fewer, 16 against the default's 32 on the reference box). When you want the shipping number, run a normal `render`
 (the default subcommand), or pass `--workers` the capped value and read that. When you want to know
 whether the cap is costing this particular machine throughput, `mode:multi` is precisely the
 measurement that tells you.
@@ -262,7 +275,17 @@ statically linked into one exe: single 100.4%, multi 97.6%, i.e. noise); relativ
 static baseline build, the shipped shell + v3 DLL is **single 2.311×** (matches the pre-split
 anchor) **/ multi 1.562×** (does not — the pre-split anchor above was only ever measured at 1–4
 workers, never at this machine's full 16-core `benchmark` auto-selected worker count, so this gap
-is newly measured, not a regression introduced by the DLL split). A second, DLL-specific cost
+is newly measured, not a regression introduced by the DLL split). **That multi figure has since
+been superseded, and it is worker-count-dependent** (Windows reference box, 2026-09-18, `render`
+with explicit `--workers` on the three worker-side-projection scenes — 2048×1024 single-scatter /
+512×256 / colour fisheye multi-crystal — 5 interleaved reps, CoV ≤2.35%; a different scene set and
+method from the single canonical-scene `benchmark` pass above, so a shift in scope, not a
+re-run): at 16 workers, the `benchmark` `multi` pass's count, the v3 engine is **1.774× / 1.780× /
+1.908×** the baseline engine; at 32 workers — the automatic count Windows now ships — it is
+**1.141× / 1.296× / 1.510×**. The ratio shrinks with W because the fast engine tops out first: the
+baseline engine keeps gaining from SMT up to 32 threads (1.75×–2.12× over its own 10-worker
+figure), the v3 engine only 1.11×–1.56×. Quote the pair with its W; a bare "multi" ratio for this
+box is underspecified. A second, DLL-specific cost
 showed up alongside it: the baseline engine DLL is **10–14% slower** than the old fully-static
 baseline exe (single 86.1%, multi 93.4%) — `WINDOWS_EXPORT_ALL_SYMBOLS`'s generated `.def` export
 table is incompatible with cl.exe's `/GL` whole-program optimization, so the cl.exe-built baseline
@@ -345,7 +368,8 @@ binary has already produced opposite conclusions on the two OSes twice. The mech
 one-off fluke — moving the legacy-CPU route's per-ray projection off the single consumer thread
 and onto the simulator workers (`accumulator-consumer-architecture.md` §1.1) changes where that
 route's parallelism bottleneck sits, and the two OSes do not react to that shift the same way: this
-file's own ISA section above measures the Windows reference box's multi-worker gain at **1.562×**
+file's own ISA section above measures the Windows reference box's multi-worker gain at
+**1.77×–1.91×** (scene-dependent, 16 workers; 1.14×–1.51× at its 32-worker automatic default)
 against a Linux/WSL2 gain of only **~1.13×** on the same class of comparison, with the Linux side
 explicitly called out as throughput-capped well short of the single-worker gain — the same shape of
 divergence, not a coincidence limited to one measurement. A number taken on one OS and generalized
@@ -428,9 +452,10 @@ scheduling overhead. **Meaningful for the legacy CPU route only** — see the GP
 
 > **⚠️ GPU backends are single-engine — there is no "single" vs "multi" parallelism.** The GPU
 > route (Metal / CUDA) runs `worker_count=1` unconditionally (`server.cpp:284`); only the legacy
-> CPU route is genuinely multi-worker (`worker_count = min(PhysicalCoreCount(),
-> kMaxDefaultWorkerCount)` by default; the `multi` benchmark pass asks for full cores explicitly and
-> is therefore uncapped — see §A). Because a GPU
+> CPU route is genuinely multi-worker (by default `worker_count = min(PhysicalCoreCount(),
+> kMaxDefaultWorkerCount)` on Linux/macOS and `LogicalCoreCount()` on Windows; the `multi`
+> benchmark pass asks for full physical cores explicitly and is therefore outside that rule — see
+> §A). Because a GPU
 > "single" and "multi" pass would both run on the same one engine (differing only by warmup +
 > ray-count, not parallelism), **`Lumice benchmark` collapses the GPU route to ONE steady pass**
 > (labelled `mode="multi"`) and skips the warmup pass; the legacy CPU route keeps the genuine

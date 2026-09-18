@@ -122,6 +122,14 @@ Windows 参照机，Zen 5，2026-09-11）——与上面那个 CUDA-off 探针�
 量级）；相对纯静态基线构建，出货的外壳 + v3 DLL 是 **single 2.311×**（与上面的旧锚一致）**/
 multi 1.562×**（不一致——上面那条旧锚从未在 1–4 worker 之外测过，从没测过这台机器 `benchmark`
 自动选择的满 16 核 multi-worker 档位，所以这个差距是新测出来的，不是 DLL 拆分引入的回归）。
+**这个 multi 数字随后已被更新，而且它依赖 worker 数**（Windows 参照机，2026-09-18，`render` 显式
+`--workers`，三个 worker 侧投影场景——2048×1024 单次散射 / 512×256 / 彩色 fisheye 多晶体——5 次
+交错重复，CoV ≤2.35%；场景集与方法都不同于上面那条单一 canonical 场景的 `benchmark` 趟，是口径
+换了，不是同一实验重跑）：在 16 worker（即 `benchmark` `multi` 趟的档位）下，v3 引擎是基线引擎的
+**1.774× / 1.780× / 1.908×**；在 32 worker——Windows 现在出厂的自动 worker 数——下是
+**1.141× / 1.296× / 1.510×**。比值随 W 收窄，是因为快的那条臂先触顶：基线引擎靠 SMT 一路涨到 32
+线程（相对自己 10 worker 的数字 1.75×–2.12×），v3 引擎只涨 1.11×–1.56×。引用时必须带上 W；
+对这台机器，一个不带 W 的「multi 比值」是没定义清楚的数字。
 同一次复测还发现了另一项与 DLL 本身有关的代价：baseline 引擎 DLL 比旧的纯静态 baseline exe
 **慢 10–14%**（single 86.1%、multi 93.4%）——`WINDOWS_EXPORT_ALL_SYMBOLS` 生成的 `.def` 导出表
 与 cl.exe 的 `/GL` 全程序优化不兼容，所以 cl.exe 编的 baseline DLL 丢掉了旧的纯静态 baseline exe
@@ -187,7 +195,8 @@ A/B 结果，都必须同时有 **Windows 与 WSL2 两个参照角色的一手�
 已经在这两个 OS 上测出过两次相反的结论。这不是偶发的巧合——把 legacy CPU 路线的逐 ray 投影从单一
 consumer 线程搬到 simulator worker 上（`accumulator-consumer-architecture.md` §1.1）改变了这条
 路线并行瓶颈所在的位置，而两个 OS 对这次转移的反应并不一致：本文上面的 ISA 一节里，Windows
-参照机的 multi-worker 增益量到 **1.562×**，而 Linux/WSL2 在同一类对照下只有 **~1.13×**，且
+参照机的 multi-worker 增益量到 **1.77×–1.91×**（随场景而异，16 worker；在它 32 worker 的自动
+默认档位下是 1.14×–1.51×），而 Linux/WSL2 在同一类对照下只有 **~1.13×**，且
 Linux 一侧被明确标注为「远早于单 worker 的 ISA 增益就先撞到吞吐天花板」——是同一种分叉形状，不是
 局限于某一次测量的巧合。只在一个 OS 上取的数字、外推到另一个 OS，是把猜测打扮成结果。
 
@@ -253,9 +262,13 @@ GPU 吞吐唯一的判据是 `[BENCHMARK]` 行的 `rays_per_sec`，以及（kern
 
 > **⚠️ GPU 后端是单引擎——不存在 "single" vs "multi" 并行。** GPU 路线（Metal / CUDA）无条件
 > `worker_count=1`（`server.cpp:284`）；只有 legacy CPU 路线是真多 worker（默认
-> `worker_count = min(PhysicalCoreCount(), kMaxDefaultWorkerCount)`；`benchmark` 的 `multi` 趟
-> 显式请求满核，因此不受该上限约束——在核数高于上限的机器上，它量的是满核并行效率，不再等于出厂
-> 默认会跑出来的吞吐）。既然 GPU 的 "single" 与 "multi" 趟都跑在同一个单引擎（只差暖机+光线数、
+> Linux/macOS 上 `worker_count = min(PhysicalCoreCount(), kMaxDefaultWorkerCount)`、Windows 上
+> `LogicalCoreCount()`，即按平台分档——依据是各平台生产实际加载的引擎下实测的最优 worker 数：Windows
+> 参照机（clang-cl x86-64-v3 引擎）自动值卡在 10 会比现在出厂的 32 worker 慢 1.07×–1.58×，同一台
+> 机器的 WSL2 侧在 glibc-hwcaps 自动选中的 x86-64-v4 引擎下最优点恰好就是 10（16 worker 吞吐减半）；
+> ⚠️ 那格「Linux」数据来自 WSL2 代理，不是原生 Linux；`benchmark` 的 `multi` 趟显式请求满物理核，
+> 因此不受该规则约束——它量的是满核并行效率，不再等于出厂默认会跑出来的吞吐，且两者的大小关系随
+> 平台而异：多核 Linux/macOS 上 `multi` 比默认跑更多 worker，SMT 的 Windows 上反而更少）。既然 GPU 的 "single" 与 "multi" 趟都跑在同一个单引擎（只差暖机+光线数、
 > 非并行），**`Lumice benchmark` 对 GPU 路线塌成 ONE 稳态趟**（label `mode="multi"`）、跳过暖机趟；
 > legacy CPU 路线保留真双趟。路线检测是 env-aware 的（`LUMICE_WillUseGpuRoute` 认 `LUMICE_TRACE_BACKEND`，
 > 故 env 选的 GPU run 也塌）。读 GPU 结果时：
