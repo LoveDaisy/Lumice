@@ -370,9 +370,9 @@ class TestWorkerCount(LumiceTestCase):
     maintenance cost to be engineered away.
     """
 
-    # Mirrors kMaxDefaultWorkerCount in src/server/server.cpp (the non-Windows
-    # value). See the class docstring for why this is deliberately a second copy
-    # rather than a lookup.
+    # Mirrors the non-Windows branch of ServerImpl::AutomaticWorkerBaseAndCap() in
+    # src/server/server.cpp. See the class docstring for why this is deliberately
+    # a second copy rather than a lookup.
     EXPECTED_DEFAULT_CAP = 10
     IS_WINDOWS = platform.system() == "Windows"
 

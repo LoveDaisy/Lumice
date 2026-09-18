@@ -419,9 +419,9 @@ void RenderAppPreferences(const GuiState& state) {
   // worker_count comment and doc/gui-state-governance.md §8.
   //
   // No upper bound. A ceiling HAS since been measured, but it caps the automatic value only
-  // (kMaxDefaultWorkerCount, server.cpp): it answers "what should the program pick when nobody
-  // said", and a number typed into this box is somebody saying. Clamping here would also put a
-  // second copy of that constant in a second file, where the two would drift. Oversubscribing
+  // (ServerImpl::AutomaticWorkerBaseAndCap(), server.cpp): it answers "what should the program
+  // pick when nobody said", and a number typed into this box is somebody saying. Clamping here
+  // would also put a second copy of that cap in a second file, where the two would drift. Oversubscribing
   // threads is slow, not unsafe. The lower clamp is semantic, not a guess — negative is not a
   // worker count.
   int workers = ReadWorkerCountFromDoc(g_copy_doc).value_or(GuiState{}.worker_count);

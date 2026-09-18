@@ -662,8 +662,8 @@ void EraseUseGpuBackendFromDoc(nlohmann::json& doc);
 // truncated into a number they did not type.
 //
 // A stored 0 means "let the program pick" (one per physical core on Linux/macOS, one per logical
-// core on Windows, capped per platform — see kMaxDefaultWorkerCount in server.cpp), the same as
-// GuiState's factory value and the same as
+// core on Windows, capped per platform — see ServerImpl::AutomaticWorkerBaseAndCap() in
+// server.cpp), the same as GuiState's factory value and the same as
 // LUMICE_ServerConfig::num_workers's own 0. It is nonetheless a STORED answer, distinct
 // from an absent key, for the same reason WriteUseGpuBackendToDoc writes false explicitly: the two
 // resolve alike only while the factory value stays where it is.

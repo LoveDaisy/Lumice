@@ -1504,9 +1504,9 @@ struct GuiState {
   // user_defaults.hpp's app-preferences block and doc/gui-state-governance.md §8.
   //
   // No upper bound is enforced here, and that stays true now that the AUTOMATIC value has a
-  // measured one (kMaxDefaultWorkerCount, server.cpp): the cap answers "what should the program
-  // pick when nobody said", and a number typed into the Settings panel is somebody saying.
-  // Clamping it here would also put a second copy of that constant in a second file, where the
+  // measured one (ServerImpl::AutomaticWorkerBaseAndCap(), server.cpp): the cap answers "what
+  // should the program pick when nobody said", and a number typed into the Settings panel is
+  // somebody saying. Clamping it here would also put a second copy of that cap in a second file, where the
   // two would drift. Oversubscribing threads is slow, not unsafe.
   int worker_count = 0;
 

@@ -1743,11 +1743,11 @@ int ParseAnalyzeOptions(int argc, char** argv, int first, AnalyzeOptions& opts) 
 // is defined against — which is why this subcommand has no --workers option at all.
 //
 // Note "multi" is an EXPLICIT worker count (num_workers > 0), so it deliberately escapes the
-// automatic default's per-platform rule (kMaxDefaultWorkerCount, server.cpp). The two therefore
-// differ, and not in one fixed direction: on Linux/macOS the default is the physical core count
-// capped at 10, so on a box with more cores "multi" runs MORE workers than a user gets; on
-// Windows the default is the full logical core count, so on an SMT box "multi" runs FEWER. Either
-// way "multi" does not report the throughput the shipping default produces: it reports full-
+// automatic default's per-platform rule (ServerImpl::AutomaticWorkerBaseAndCap(), server.cpp).
+// The two therefore differ, and not in one fixed direction: on Linux/macOS the default is the
+// physical core count capped at 10, so on a box with more cores "multi" runs MORE workers than a
+// user gets; on Windows the default is the full logical core count, so on an SMT box "multi" runs
+// FEWER. Either way "multi" does not report the throughput the shipping default produces: it reports full-
 // physical-core parallel efficiency, which is what this pass is FOR — the one number defined
 // independently of whatever the default picks, so it can be compared against it. That is why
 // this is the one of the three worker-count consumers (render/analyze default, GUI preference,

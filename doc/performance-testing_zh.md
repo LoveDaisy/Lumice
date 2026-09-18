@@ -262,8 +262,9 @@ GPU 吞吐唯一的判据是 `[BENCHMARK]` 行的 `rays_per_sec`，以及（kern
 
 > **⚠️ GPU 后端是单引擎——不存在 "single" vs "multi" 并行。** GPU 路线（Metal / CUDA）无条件
 > `worker_count=1`（`server.cpp:284`）；只有 legacy CPU 路线是真多 worker（默认
-> Linux/macOS 上 `worker_count = min(PhysicalCoreCount(), kMaxDefaultWorkerCount)`、Windows 上
-> `LogicalCoreCount()`，即按平台分档——依据是各平台生产实际加载的引擎下实测的最优 worker 数：Windows
+> Linux/macOS 上 `worker_count = min(PhysicalCoreCount(), 10)`、Windows 上
+> `LogicalCoreCount()`——两者都是 `ServerImpl::AutomaticWorkerBaseAndCap()` 返回的一对值，即按平台
+> 分档——依据是各平台生产实际加载的引擎下实测的最优 worker 数：Windows
 > 参照机（clang-cl x86-64-v3 引擎）自动值卡在 10 会比现在出厂的 32 worker 慢 1.07×–1.58×，同一台
 > 机器的 WSL2 侧在 glibc-hwcaps 自动选中的 x86-64-v4 引擎下最优点恰好就是 10（16 worker 吞吐减半）；
 > ⚠️ 那格「Linux」数据来自 WSL2 代理，不是原生 Linux；`benchmark` 的 `multi` 趟显式请求满物理核，
@@ -697,7 +698,7 @@ push 到 `main` 的 benchmark 结果会通过
 只是换一个被偏袒的场景。这个常数还兼任提交粒度的默认值（`kCommitCap =
 env::CommitRayNum(logger_, kDefaultRayNum)`，`src/server/server.cpp:1324`），抬高它会连带把 GUI
 快照节奏变粗：它的射程比纯 CPU 吞吐更宽。（补充指针，非本次扫描的结论：worker 数是与批大小
-独立的另一条轴，其默认值单独由 `kMaxDefaultWorkerCount` 封顶，`src/server/server.cpp:181`。）
+独立的另一条轴，其默认值单独由 `ServerImpl::AutomaticWorkerBaseAndCap()` 封顶，`src/server/server.cpp:269`。）
 
 **批大小有一个 <40 光线的硬地板，且失效形态是崩溃而不是变慢。** `LUMICE_DISPATCH_RAY_NUM` ≤ 32
 在轻场景族上确定性地崩在 `RayBuffer::DupOverflowSlot` 内（`src/config/sim_data.cpp:158`），

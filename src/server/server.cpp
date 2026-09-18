@@ -211,14 +211,15 @@ class ServerImpl {
 
   // Upper bound on the AUTOMATIC worker count only (num_workers == 0). An explicit
   // num_workers > 0 is honoured verbatim, above this value included — a caller who
-  // names a number has said something this constant has no standing to overrule.
+  // names a number has said something this bound has no standing to overrule.
   //
   // The shape: a per-platform pair (core-count source, cap), not one cross-platform
-  // number. Both halves are chosen in the constructor below by the same OS_WIN test as
-  // this constant, and they have to move together — PhysicalCoreCount() is itself a
-  // hard ceiling (16 on a 16C/32T box), so raising the cap alone can never reach the
-  // logical core count; and sizing from LogicalCoreCount() without lifting the cap
-  // would clamp straight back to 10. Only-one-half is the silent-no-op failure mode.
+  // number. Both halves are returned together by AutomaticWorkerBaseAndCap() below —
+  // one function, not two independently-edited #if branches — because they have to
+  // move together: PhysicalCoreCount() is itself a hard ceiling (16 on a 16C/32T box),
+  // so raising the cap alone can never reach the logical core count; and sizing from
+  // LogicalCoreCount() without lifting the cap would clamp straight back to 10.
+  // Only-one-half is the silent-no-op failure mode a single function forecloses.
   //
   // What the pair is keyed on, and why it is not a formula: which engine the platform's
   // production default actually loads, measured per OS. The previous premise ("across
@@ -242,7 +243,7 @@ class ServerImpl {
   //   - Linux (glibc-hwcaps auto-selects the x86-64-v4/AVX-512 engine on any box that
   //     qualifies, so that is the production path): 10 IS the optimum — W12 already
   //     costs 5–23% and W16 halves throughput. The same box on the baseline engine
-  //     wants 16–32, which is exactly why the constant is keyed on the production
+  //     wants 16–32, which is exactly why the pair is keyed on the production
   //     engine and not on the local default build. Mechanism (WSL2): the slowdown is
   //     not a fixed W but a sync-frequency wall — it scales with workers × 1/(per-ray
   //     cost), so the faster engine hits it at half the worker count; sys% rises
@@ -260,13 +261,18 @@ class ServerImpl {
   // a number defined independently of whatever this default picks (main.cpp,
   // RunBenchmark). Folding it in would make the benchmark report the default instead of
   // the thing it exists to compare the default against.
+  //
+  // Single owner of the pair, so "changed one half, forgot the other" cannot compile
+  // clean: on Windows the cap is a sentinel ("no cap narrower than LogicalCoreCount()"),
+  // not an independently tunable number, which is why it is returned alongside the base
+  // rather than declared next to it.
+  static std::pair<int, int> AutomaticWorkerBaseAndCap() {
 #if defined(OS_WIN)
-  // Sentinel, not a tunable: "no cap narrower than LogicalCoreCount()" on Windows —
-  // the ceiling here is the core-count source the constructor picks, see above.
-  static constexpr int kMaxDefaultWorkerCount = std::numeric_limits<int>::max();
+    return { LogicalCoreCount(), std::numeric_limits<int>::max() };
 #else
-  static constexpr int kMaxDefaultWorkerCount = 10;
+    return { PhysicalCoreCount(), 10 };
 #endif
+  }
 
   void ConsumeData();
   void GenerateScene();
@@ -756,15 +762,12 @@ ServerImpl::ServerImpl(int num_workers, uint32_t sim_seed, BackendKind preferred
   // made distinct, or ChainIdMerger fuses chains across workers silently. The per-index
   // seed offset below is that guard, dead today.
   //
-  // The core-count source is the other half of kMaxDefaultWorkerCount's per-platform
-  // pair (see its comment): the two are selected by the same test and change together.
-#if defined(OS_WIN)
-  const int automatic_worker_base = LogicalCoreCount();
-#else
-  const int automatic_worker_base = PhysicalCoreCount();
-#endif
+  // Core-count source and cap are the two halves of one platform decision (see
+  // AutomaticWorkerBaseAndCap()'s comment) — fetched from the single function that
+  // owns both, so a future change to only one of them cannot compile clean.
+  const auto [automatic_worker_base, max_default_worker_count] = AutomaticWorkerBaseAndCap();
   const int cpu_worker_count =
-      sim_seed != 0 ? 1 : (num_workers > 0 ? num_workers : std::min(automatic_worker_base, kMaxDefaultWorkerCount));
+      sim_seed != 0 ? 1 : (num_workers > 0 ? num_workers : std::min(automatic_worker_base, max_default_worker_count));
   int worker_count = 1;
   int analysis_pool_worker_count = 0;
   if (gpu_route_) {

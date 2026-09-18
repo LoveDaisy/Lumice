@@ -88,9 +88,10 @@ The legacy CPU route runs a dual pass and prints one JSON per pass:
 prints one line only (`workers:1`).
 
 **The legacy CPU product path is a per-platform pair** (`ServerImpl::ServerImpl`,
-`src/server/server.cpp`): `worker_count = min(PhysicalCoreCount(), kMaxDefaultWorkerCount)` with
-the cap at 10 on Linux/macOS, and `worker_count = LogicalCoreCount()` — the full SMT thread count,
-no narrower cap — on Windows. Only a fixed seed or a GPU route forces 1, and an explicit
+`src/server/server.cpp`), both halves returned together by `ServerImpl::AutomaticWorkerBaseAndCap()`:
+`worker_count = min(PhysicalCoreCount(), 10)` on Linux/macOS, and
+`worker_count = LogicalCoreCount()` — the full SMT thread count, no narrower cap — on Windows.
+Only a fixed seed or a GPU route forces 1, and an explicit
 `--workers N` / GUI worker preference overrides the whole expression, cap included. The split is
 keyed on which engine each platform's production default actually loads, and was measured, not
 derived: on the Windows reference box (16C/32T Zen 5, clang-cl x86-64-v3 engine DLL, i.e. what the
@@ -452,8 +453,9 @@ scheduling overhead. **Meaningful for the legacy CPU route only** — see the GP
 
 > **⚠️ GPU backends are single-engine — there is no "single" vs "multi" parallelism.** The GPU
 > route (Metal / CUDA) runs `worker_count=1` unconditionally (`server.cpp:284`); only the legacy
-> CPU route is genuinely multi-worker (by default `worker_count = min(PhysicalCoreCount(),
-> kMaxDefaultWorkerCount)` on Linux/macOS and `LogicalCoreCount()` on Windows; the `multi`
+> CPU route is genuinely multi-worker (by default `worker_count = min(PhysicalCoreCount(), 10)`
+> on Linux/macOS and `LogicalCoreCount()` on Windows — both halves of
+> `ServerImpl::AutomaticWorkerBaseAndCap()`; the `multi`
 > benchmark pass asks for full physical cores explicitly and is therefore outside that rule — see
 > §A). Because a GPU
 > "single" and "multi" pass would both run on the same one engine (differing only by warmup +
@@ -1034,8 +1036,8 @@ heavy scene's −15% — not a net win, just a different scene favored. The cons
 the default commit granularity (`kCommitCap = env::CommitRayNum(logger_, kDefaultRayNum)`,
 `src/server/server.cpp:1324`), so raising it would coarsen the GUI snapshot cadence as a side
 effect: its reach is wider than CPU throughput alone. (Pointer, not a finding of this sweep: the
-worker count sits on a separate axis from batch size and is capped independently at
-`kMaxDefaultWorkerCount`, `src/server/server.cpp:181`.)
+worker count sits on a separate axis from batch size and is capped independently by
+`ServerImpl::AutomaticWorkerBaseAndCap()`, `src/server/server.cpp:269`.)
 
 **The batch size has a hard floor below 40 rays, and the failure mode is a crash, not a slowdown.**
 `LUMICE_DISPATCH_RAY_NUM` ≤ 32 on the light scene family faults deterministically inside
