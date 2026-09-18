@@ -22,6 +22,7 @@
 #include <gtest/gtest.h>
 #include <spdlog/sinks/ostream_sink.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <memory>
@@ -400,12 +401,12 @@ TEST(AnchorConsumer, WorkerProjectedSidecarMatchesAccumulateOutgoing) {
   own_loop.Consume(batch);
   AnchorConsumer sidecar;
   sidecar.Consume(projected);
-  const float* a = own_loop.AnchorPlaneForTest();
-  const float* b = sidecar.AnchorPlaneForTest();
+  const double* a = own_loop.AnchorPlaneForTest();
+  const double* b = sidecar.AnchorPlaneForTest();
   size_t nonzero = 0;
   size_t diff = 0;
   for (size_t p = 0; p < plane_size; ++p) {
-    nonzero += (a[p] != 0.0f) ? 1 : 0;
+    nonzero += (a[p] != 0.0) ? 1 : 0;
     diff += (a[p] != b[p]) ? 1 : 0;
   }
   ASSERT_GT(nonzero, 1000u) << "the sky batch did not land — an all-zero pair agrees for the wrong reason";
@@ -427,6 +428,92 @@ TEST(AnchorConsumer, NoRendererMeansNoWorkerSidecar) {
   EXPECT_TRUE(batch.anchor_projected_pixel_.empty());
   EXPECT_TRUE(batch.anchor_projected_y_.empty());
   EXPECT_GT(AnchorFor(batch), 0.0f) << "the consumer's own loop must still produce the anchor";
+}
+
+
+// Analytic oracle for the anchor plane's own long chain — the same defect shape
+// test_render_consumer_fp32_accum_oracle.cpp pins on the render plane, on this consumer's two
+// host accumulation forms. 1e7 identical rays (one direction, one wavelength, one weight) in
+// production-sized batches of 128 land in one anchor pixel whose double-precision value is the
+// closed form n * kCmfY[wl] * w; a float32 running sum drifts off it by percent, a double one
+// sits within a float rounding of it. The device-plane fold (AccumulateDevicePlane) is not
+// driven here: one fold is a 2M-float pass, so a chain long enough to show the drift is not a
+// unit-test-sized run — its accumulation line adds into the same double plane the two forms
+// below exercise.
+namespace {
+constexpr float kOracleW = 0.127f;
+constexpr size_t kOracleBatchRays = 128;
+constexpr size_t kOracleBatches = 10'000'000 / kOracleBatchRays;
+
+SimData MakeSingleDirectionBatch128() {
+  SimData data;
+  data.curr_wl_ = kWl;
+  data.root_ray_count_ = kOracleBatchRays;
+  data.emitted_energy_ = static_cast<float>(kOracleBatchRays);
+  data.outgoing_w_.assign(kOracleBatchRays, kOracleW);
+  data.outgoing_d_.reserve(kOracleBatchRays * 3);
+  for (size_t i = 0; i < kOracleBatchRays; ++i) {
+    data.outgoing_d_.push_back(0.0f);
+    data.outgoing_d_.push_back(0.0f);
+    data.outgoing_d_.push_back(-1.0f);
+  }
+  return data;
+}
+
+// The brightest anchor pixel and how many pixels are non-zero. A single direction can hit
+// the dual-fisheye plane once (no overlap ring on the anchor), so exactly one is expected.
+struct AnchorPeak {
+  size_t non_zero = 0;
+  double y = 0.0;
+};
+
+AnchorPeak FindAnchorPeak(const double* plane) {
+  const size_t n = static_cast<size_t>(kAnchorWidth) * static_cast<size_t>(kAnchorHeight);
+  AnchorPeak out;
+  for (size_t p = 0; p < n; ++p) {
+    if (plane[p] != 0.0) {
+      ++out.non_zero;
+      out.y = std::max(out.y, plane[p]);
+    }
+  }
+  return out;
+}
+
+double OracleRefY() {
+  return static_cast<double>(kOracleBatches * kOracleBatchRays) *
+         static_cast<double>(kCmfY[static_cast<int>(kWl) - kCmfMinWavelength]) * kOracleW;
+}
+}  // namespace
+
+TEST(AnchorConsumer, AccumulateOutgoingHoldsClosedFormOverLongChain) {
+  const SimData batch = MakeSingleDirectionBatch128();
+  ASSERT_TRUE(batch.anchor_projected_pixel_.empty());
+  AnchorConsumer ac;
+  for (size_t b = 0; b < kOracleBatches; ++b) {
+    ac.Consume(batch);
+  }
+  ac.PrepareSnapshot();
+  const AnchorPeak peak = FindAnchorPeak(ac.AnchorPlaneForTest());
+  ASSERT_EQ(peak.non_zero, 1u) << "a single direction must land in exactly one anchor pixel";
+  const double ref = OracleRefY();
+  const double rel = std::fabs(peak.y - ref) / ref;
+  EXPECT_LE(rel, 1e-5) << "anchor_y_ (own loop): Y=" << peak.y << " ref=" << ref << " rel_err=" << rel;
+}
+
+TEST(AnchorConsumer, WorkerSidecarHoldsClosedFormOverLongChain) {
+  SimData batch = MakeSingleDirectionBatch128();
+  BuildWorkerProjectionSidecars(batch, { MakeRenderConfig(LensParam::kLinear, 40.0f, 32, 32) });
+  ASSERT_EQ(batch.anchor_projected_pixel_.size(), kOracleBatchRays);
+  AnchorConsumer ac;
+  for (size_t b = 0; b < kOracleBatches; ++b) {
+    ac.Consume(batch);
+  }
+  ac.PrepareSnapshot();
+  const AnchorPeak peak = FindAnchorPeak(ac.AnchorPlaneForTest());
+  ASSERT_EQ(peak.non_zero, 1u) << "a single direction must land in exactly one anchor pixel";
+  const double ref = OracleRefY();
+  const double rel = std::fabs(peak.y - ref) / ref;
+  EXPECT_LE(rel, 1e-5) << "anchor_y_ (worker sidecar): Y=" << peak.y << " ref=" << ref << " rel_err=" << rel;
 }
 
 }  // namespace

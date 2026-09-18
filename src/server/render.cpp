@@ -20,7 +20,6 @@
 #include "core/math.hpp"
 #include "core/raypath.hpp"
 #include "core/scatter_accum.hpp"  // MakeCameraRotation (single source of the camera rotation chain)
-#include "core/shared/accum_shared.h"
 #include "core/shared/projection_shared.h"
 #include "util/color_data.hpp"
 #include "util/color_space.hpp"
@@ -162,10 +161,10 @@ void FillZeroEnergyImage(uint8_t* buf, size_t total_pix, bool print_mode, const 
 // =============== Renderer ===============
 RenderConsumer::RenderConsumer(RenderConfig config, ColorClassTable class_table, SunParam sun, size_t renderer_index)
     : config_(std::move(config)),
-      short_pix_(static_cast<float>(std::min(config_.resolution_[0], config_.resolution_[1]))),
-      internal_xyz_(std::make_unique<float[]>(config_.resolution_[0] * config_.resolution_[1] * 3)),
-      comp_xyz_(std::make_unique<float[]>(config_.resolution_[0] * config_.resolution_[1] * 3)), sun_(sun),
-      renderer_index_(renderer_index), class_table_(std::move(class_table)),
+      short_pix_(static_cast<float>(std::min(config_.resolution_[0], config_.resolution_[1]))), sun_(sun),
+      renderer_index_(renderer_index),
+      internal_xyz_(std::make_unique<double[]>(config_.resolution_[0] * config_.resolution_[1] * 3)),
+      class_table_(std::move(class_table)),
       lane_pixel_count_(static_cast<size_t>(config_.resolution_[0]) * static_cast<size_t>(config_.resolution_[1])) {
   // Borrow the first pair up front so the two snapshot getters never see a null
   // buffer before the first PrepareSnapshot/PostSnapshot — the pool zero-fills fresh
@@ -205,7 +204,7 @@ RenderConsumer::RenderConsumer(RenderConfig config, ColorClassTable class_table,
     lane_y_.resize(class_count);
     snapshot_lane_y_.resize(class_count);
     for (size_t i = 0; i < class_count; ++i) {
-      lane_y_[i] = std::make_unique<float[]>(lane_pixel_count_);
+      lane_y_[i] = std::make_unique<double[]>(lane_pixel_count_);
       snapshot_lane_y_[i] = std::make_unique<float[]>(lane_pixel_count_);
     }
   }
@@ -340,7 +339,7 @@ float RenderConsumer::CompositeAnchorScale(float participating_p99_y) const {
 
 void RenderConsumer::ConsumeDeviceFused(const SimData& data) {
   // S1 device-fused: backend already accumulated XYZ on-device; skip
-  // projection and fold the pixel buffer into internal_xyz_ via Neumaier.
+  // projection and fold the pixel buffer into internal_xyz_.
   // The batch carries ONE plane PER RENDERER (SessionSpec::renders order); this consumer's
   // is the one at renderer_index_, the position the server built it at. Release-safe shape
   // gate rather than an assert: a renderer-order disagreement between server and backend
@@ -367,20 +366,22 @@ void RenderConsumer::ConsumeDeviceFused(const SimData& data) {
     consume_count_++;
     return;
   }
+  // The plane is one drain window's worth of fp32 atomics, bounded by the window; the
+  // chain that grows with the run is this fold, and it lands in a double.
   const std::vector<float>& plane = data.xyz_pixel_data_[renderer_index_];
   for (size_t i = 0u; i < total; ++i) {
-    NeumaierAdd(internal_xyz_[i], comp_xyz_[i], plane[i]);
+    internal_xyz_[i] += plane[i];
   }
   total_intensity_ += data.xyz_landed_weight_[renderer_index_];
   // task-358.1 Step 4 (AC3): fold the device per-color-class Y-lane accumulator
   // into lane_y_. Layout (matches Metal MSL write side):
   //     lane_pixel_data_[c * (W*H) + (py*W+px)]
-  // Simple += (not Neumaier) mirrors CPU AccumulateColorClassLanes at
-  // render.cpp:398 — the two are numerically comparable for the AC3 visual
-  // parity target. Note: on-device order of atomic_fetch_add per pixel is
-  // non-deterministic, so Y values are numerically-close-not-bitwise-identical
-  // to CPU — this affects AC3 visual (which is exact-parity-not-required) but
-  // NOT AC1 mask parity (mask bits are OR-accumulated → order-independent).
+  // Same double fold as the XYZ plane above, and the same accumulator type CPU
+  // AccumulateColorClassLanes adds into — the two are numerically comparable for
+  // the AC3 visual parity target. Note: on-device order of atomic_fetch_add per
+  // pixel is non-deterministic, so Y values are numerically-close-not-bitwise-
+  // identical to CPU — this affects AC3 visual (which is exact-parity-not-required)
+  // but NOT AC1 mask parity (mask bits are OR-accumulated → order-independent).
   const size_t pix_wh = static_cast<size_t>(config_.resolution_[0]) * static_cast<size_t>(config_.resolution_[1]);
   const size_t lane_slots = lane_y_.size();
   // Shape check gates the accumulation loop itself (not just an assert) —
@@ -402,7 +403,7 @@ void RenderConsumer::ConsumeDeviceFused(const SimData& data) {
     // walking past the smaller allocation.
     const size_t n_classes = std::min(lane_slots, data.lane_class_count_);
     for (size_t c = 0; c < n_classes; ++c) {
-      float* dst = lane_y_[c].get();
+      double* dst = lane_y_[c].get();
       const float* src = lanes.data() + c * pix_wh;
       for (size_t p = 0; p < pix_wh; ++p) {
         dst[p] += src[p];
@@ -778,25 +779,23 @@ void RenderConsumer::PrepareSnapshot() {
   // tearing this task removes. The loop below writes every element, so the borrowed
   // buffer's prior contents are irrelevant.
   snapshot_xyz_ = xyz_pool_->Acquire(total);
-  // True running sum = internal_xyz_ + comp_xyz_ (Neumaier residual). The
-  // device-fused path (ConsumeDeviceFused) accumulates the compensation in
-  // comp_xyz_; folding it here is what realizes the precision gain — without
-  // this add the compensation would be tracked but never applied (plain +=).
-  // comp_xyz_ stays all-zero on the legacy projection path, so this is a no-op
-  // there.
+  // The one narrowing on the whole path: the double running sum becomes the float
+  // the readers see, rounded once here rather than once per ray.
   for (size_t i = 0u; i < total; ++i) {
-    snapshot_xyz_[i] = internal_xyz_[i] + comp_xyz_[i];
+    snapshot_xyz_[i] = static_cast<float>(internal_xyz_[i]);
   }
   snapshot_intensity_ = total_intensity_;
   snapshot_emitted_energy_ = total_emitted_energy_;
   // task-339.3: shadow per-class lanes into snapshot_lane_y_ under the same
-  // two-phase snapshot protocol. lane_y_ has no Neumaier compensation
-  // counterpart (single-precision scatter Y is enough for display), so a plain
-  // memcpy matches internal_xyz_'s treatment when comp_xyz_ is all-zero on the
-  // legacy path. PostSnapshot is not touched: lanes carry raw Y, no EV/sRGB
-  // conversion (compositor multiplies by ExposureScale()).
+  // two-phase snapshot protocol, narrowed the same way as the plane above.
+  // PostSnapshot is not touched: lanes carry raw Y, no EV/sRGB conversion
+  // (compositor multiplies by ExposureScale()).
   for (size_t c = 0; c < lane_y_.size(); ++c) {
-    std::memcpy(snapshot_lane_y_[c].get(), lane_y_[c].get(), lane_pixel_count_ * sizeof(float));
+    const double* src = lane_y_[c].get();
+    float* dst = snapshot_lane_y_[c].get();
+    for (size_t p = 0; p < lane_pixel_count_; ++p) {
+      dst[p] = static_cast<float>(src[p]);
+    }
   }
 }
 
@@ -1316,7 +1315,8 @@ Result RenderConsumer::GetResult() const {
 // See doc/ev-pipeline-architecture.md §2.3
 RawXyzResult RenderConsumer::GetRawXyzResult() const {
   int total_pix = config_.resolution_[0] * config_.resolution_[1];
-  float per_pixel_intensity = total_pix > 0 ? snapshot_intensity_ / (kNormScale * total_pix) : 0.0f;
+  float per_pixel_intensity =
+      total_pix > 0 ? static_cast<float>(snapshot_intensity_ / (static_cast<double>(kNormScale) * total_pix)) : 0.0f;
   // Note the asymmetry, which the C header documents for callers: the intensity
   // above is pre-divided into a per-pixel figure, while the emitted energy is
   // handed over raw. Raw is what a caller needs to reproduce ExposureScale()
@@ -1350,12 +1350,11 @@ void RenderConsumer::Reset() {
   snapshot_emitted_energy_ = 0;
   effective_pix_ = 0;
   auto buf_size = static_cast<size_t>(config_.resolution_[0]) * config_.resolution_[1] * 3;
-  std::memset(internal_xyz_.get(), 0, buf_size * sizeof(float));
-  std::memset(comp_xyz_.get(), 0, buf_size * sizeof(float));
+  std::fill_n(internal_xyz_.get(), buf_size, 0.0);
   // task-339.3: zero per-class lanes; snapshot_lane_y_ is not zeroed here
-  // (PrepareSnapshot will memcpy over it, mirroring snapshot_xyz_).
+  // (PrepareSnapshot will overwrite it, mirroring snapshot_xyz_).
   for (auto& lane : lane_y_) {
-    std::memset(lane.get(), 0, lane_pixel_count_ * sizeof(float));
+    std::fill_n(lane.get(), lane_pixel_count_, 0.0);
   }
   // snapshot_xyz_ not zeroed: PrepareSnapshot will memcpy over it.
   // has_ever_consumed_ = false (set in Stop) ensures the frame's xyz results report has_valid_data_=false

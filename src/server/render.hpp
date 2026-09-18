@@ -126,8 +126,8 @@ class RenderConsumer : public IConsume {
 
   void Consume(const SimData& data) override;
   // S1 device-fused (scrum-302): fold a backend-accumulated XYZ pixel buffer
-  // into internal_xyz_ via Neumaier compensation. Split out of Consume() to
-  // keep that hot projection path within the cognitive-complexity budget.
+  // into internal_xyz_. Split out of Consume() to keep that hot projection path
+  // within the cognitive-complexity budget.
   void ConsumeDeviceFused(const SimData& data);
   void PrepareSnapshot() override;
   void CountEffectivePixels();
@@ -515,8 +515,16 @@ class RenderConsumer : public IConsume {
   // this consumer's own projection loop rather than being dropped, so the line is a diagnostic, not
   // a data-loss report.
   bool logged_projected_mismatch_ = false;
-  float total_intensity_ = 0;
-  float snapshot_intensity_ = 0;
+  // Σ landed weight over every batch consumed since the last Reset(), and its snapshot
+  // freeze — the numerator of the published per-pixel intensity (GetRawXyzResult).
+  //
+  // double, not float, for the same reason as the pair below it: a long legacy-CPU run
+  // charges this once per 128-ray batch, and a float32 running sum of a near-constant
+  // addend rounds systematically once the addend nears the sum's ulp — measured at 0.03%
+  // drift on the snapshot intensity after 78k batches, exactly the shape the pair below
+  // was widened for. The per-batch addend and the published float field are unchanged.
+  double total_intensity_ = 0;
+  double snapshot_intensity_ = 0;
   // Σ SimData::emitted_energy_ over every batch consumed since the last Reset(),
   // and its snapshot freeze — the absolute-scale denominator (see
   // ExposureScale). Parallel to total_intensity_/snapshot_intensity_ above in
@@ -538,8 +546,16 @@ class RenderConsumer : public IConsume {
   // a plane this class never sees, and arrives already frozen for the pass.
   float anchor_l99_sky_ = 0;
   int effective_pix_ = 0;  // Non-zero pixel count from last PrepareSnapshot
-  std::unique_ptr<float[]> internal_xyz_;
-  std::unique_ptr<float[]> comp_xyz_;  // Neumaier compensation buffer (S1 device-fused)
+  // The running XYZ sum, W*H*3 doubles. Every path that adds to it — the two CPU projection
+  // forms per ray, the device-fused fold per drain — grows the chain with the ray budget, and
+  // a float32 sum along such a chain drifts systematically (see SpectrumToXyz). It used to be
+  // a float sum plus a float Neumaier compensation buffer of the same size, applied on the
+  // device-fused fold only; that pair costs the same 8 bytes per channel as this one double
+  // and is NOT equivalent to it over a long chain — the compensation term is itself a float
+  // running sum, and over 1e7 constant addends it drifted to 4e-3 relative on X where a
+  // double sum is exact. The snapshot the readers see (snapshot_xyz_) stays float: one
+  // rounding at publish time, not one per ray.
+  std::unique_ptr<double[]> internal_xyz_;
   // Borrowed fresh from the pools below on every snapshot, then handed to the frame
   // being assembled — NOT rewritten in place, which is what used to tear a reader's
   // data under it. shared_ptr, not unique_ptr, because the frame co-owns them.
@@ -568,9 +584,11 @@ class RenderConsumer : public IConsume {
   // class_table_.classes_ (also z-order). Only allocated when the table has
   // any classes → zero-config path stays at pre-336 zero heap allocations.
   // Snapshot lanes shadow lane_y_ under the two-phase snapshot protocol
-  // (PrepareSnapshot memcpy).
+  // (PrepareSnapshot narrows each double to the float the compositor reads).
+  // lane_y_ is double for the same reason internal_xyz_ is: a per-ray Y-slice of
+  // the same batches along the same unbounded chain.
   ColorClassTable class_table_;
-  std::vector<std::unique_ptr<float[]>> lane_y_;
+  std::vector<std::unique_ptr<double[]>> lane_y_;
   std::vector<std::unique_ptr<float[]>> snapshot_lane_y_;
   size_t lane_pixel_count_ = 0;  // W * H
   // Per-ray component mask side-cars (parallel to w_buf_ / overlap_w_buf_).

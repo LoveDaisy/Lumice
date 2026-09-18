@@ -139,7 +139,7 @@ under **no lock at all**: `CountEffectivePixels()`, in Phase 1.5 (§4.2).
 Two concrete implementations:
 
 - **`RenderConsumer`**: projects rays through the lens model, accumulates into
-  `internal_xyz_` (with a Neumaier compensation term in `comp_xyz_`), freezes into
+  `internal_xyz_` (a `double` running sum — see §6), freezes it into the `float`
   `snapshot_xyz_` in `PrepareSnapshot()`, converts to sRGB in `PostSnapshot()`.
 - **`StatsConsumer`**: counts `total_rays_` and `sim_rays_`, plus a crystal count
   and an orientation count that are each split across **two** accumulators —
@@ -327,7 +327,7 @@ reads it. The reason changed with `FrameBufferPool` and is worth stating precise
 because the old reason ("nobody writes `snapshot_xyz_` outside `PrepareSnapshot`")
 no longer describes the mechanism:
 
-1. `Consume` only writes to `internal_xyz_` / `comp_xyz_` (never `snapshot_xyz_`).
+1. `Consume` only writes to `internal_xyz_` (never `snapshot_xyz_`).
 2. `PrepareSnapshot` does not *write into* `snapshot_xyz_` — it **re-points** it at
    a buffer freshly borrowed from `xyz_pool_`. The previous buffer stays alive under
    whichever frame co-owns it.
@@ -482,8 +482,7 @@ destroying and reconstructing consumers.
 
 | Invariant | Location | Notes |
 |-----------|----------|-------|
-| `internal_xyz_` size = `W × H × 3` floats | `RenderConsumer::RenderConsumer` | Allocated once (`unique_ptr`), never resized — the consumer's resolution is fixed for its lifetime, since `ResetWith` is gated on `NeedsRebuild` |
-| `comp_xyz_` size = `W × H × 3` floats | `RenderConsumer::RenderConsumer` | Neumaier compensation term for the device-fused path. **The true accumulated sum is `internal_xyz_ + comp_xyz_`**, folded together only in `PrepareSnapshot` — `internal_xyz_` alone is not the full accumulation state. All-zero on the legacy projection path |
+| `internal_xyz_` size = `W × H × 3` **doubles** | `RenderConsumer::RenderConsumer` | Allocated once (`unique_ptr`), never resized — the consumer's resolution is fixed for its lifetime, since `ResetWith` is gated on `NeedsRebuild`. `double` because every path adds to it along a chain that grows with the ray budget (per ray on the two CPU projection forms, per drain on the device-fused fold), and a `float` running sum of a near-constant addend rounds systematically once the addend nears the sum's ulp — a monochromatic sub-sun's X:Y drifted −15% at 30M rays that way. It replaced a `float` sum + `float` Neumaier compensation pair (`comp_xyz_`) of the same total size, which was applied on the device-fused fold only and which does **not** survive a long chain either: the compensation term is itself a `float` running sum (measured 4e-3 relative on X after 1e7 constant addends, against 0 for a `double` sum). The same rule widened `lane_y_`, `total_intensity_` and `AnchorConsumer::anchor_y_`; the published buffers (`snapshot_xyz_`, `snapshot_lane_y_`, `RawXyzResult::snapshot_intensity_`) stay `float`, narrowed once at snapshot time. Pinned by the analytic oracle `test/unit-correctness/server/test_render_consumer_fp32_accum_oracle.cpp` |
 | `snapshot_xyz_` = a `shared_ptr<float[]>` of `W × H × 3`, **re-borrowed per snapshot** | `RenderConsumer::PrepareSnapshot` (`xyz_pool_->Acquire`) | **Not** a fixed allocation: each snapshot takes a fresh buffer from `xyz_pool_`; the previous one lives as long as the frame co-owning it, then returns to the pool. Constructor borrows the first one so the getters never see null |
 | `snapshot_image_buffer_` = a `shared_ptr<uint8_t[]>` of `W × H × 3` bytes, **re-borrowed per snapshot** | `RenderConsumer::PostSnapshot` (`image_pool_->Acquire`) | Same treatment as above; borrowed *before* the `total_pix <= 0 / snapshot_intensity_ <= 0` early-out so both exits hand the frame a buffer this snapshot owns |
 | A `FrameBufferPool` serves exactly one element count | `FrameBufferPool::Acquire` | A request for a different count drops the free list rather than growing a size-indexed structure. Free list is capped at `kMaxFreeBuffers` (8); beyond it a returned buffer is simply freed |

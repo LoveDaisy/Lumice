@@ -1,7 +1,7 @@
 #include "server/anchor_consumer.hpp"
 
+#include <algorithm>
 #include <cassert>
-#include <cstring>
 
 #include "core/anchor_buffer.hpp"
 #include "core/color_util.hpp"
@@ -14,8 +14,8 @@ constexpr size_t kAnchorPixels = static_cast<size_t>(kAnchorWidth) * static_cast
 }  // namespace
 
 AnchorConsumer::AnchorConsumer()
-    : anchor_y_(std::make_unique<float[]>(kAnchorPixels)), proj_params_(BuildAnchorProjParams()) {
-  std::memset(anchor_y_.get(), 0, kAnchorPixels * sizeof(float));
+    : anchor_y_(std::make_unique<double[]>(kAnchorPixels)), proj_params_(BuildAnchorProjParams()) {
+  std::fill_n(anchor_y_.get(), kAnchorPixels, 0.0);
 }
 
 void AnchorConsumer::Consume(const SimData& data) {
@@ -38,7 +38,7 @@ void AnchorConsumer::Consume(const SimData& data) {
   // renderer, and a batch whose rays all read Y == 0), and AccumulateOutgoing then does what it
   // always did; on the last of those it merely re-derives an empty result.
   if (!data.anchor_projected_pixel_.empty()) {
-    float* plane = anchor_y_.get();
+    double* plane = anchor_y_.get();
     const size_t n = data.anchor_projected_pixel_.size();
     assert(data.anchor_projected_y_.size() == n && "anchor sidecar pixel/y lists must be parallel");
     for (size_t i = 0; i < n; ++i) {
@@ -64,7 +64,7 @@ void AnchorConsumer::AccumulateOutgoing(const SimData& data) {
   const bool per_ray_wl = !data.outgoing_wl_.empty();
   const float* wl_buf = per_ray_wl ? data.outgoing_wl_.data() : nullptr;
 
-  float* plane = anchor_y_.get();
+  double* plane = anchor_y_.get();
   for (size_t i = 0; i < count; ++i) {
     const auto hit = lm_proj::ProjectExitToPixel(proj_params_, d[i * 3 + 0], d[i * 3 + 1], d[i * 3 + 2]);
     const float wl = per_ray_wl ? wl_buf[i] : data.curr_wl_;
@@ -106,13 +106,13 @@ void AnchorConsumer::AccumulateDevicePlane(const SimData& data) {
     return;
   }
   const float* src = data.anchor_y_pixel_data_.data();
-  float* dst = anchor_y_.get();
-  // Plain accumulation, deliberately without the Neumaier compensation the render path
-  // carries. The two are not the same problem: a render buffer's float error is visible as
-  // banding in the OUTPUT PIXELS, while this plane feeds a single order statistic over
-  // box-summed bins, where a relative error of order sqrt(n_batches) * eps is orders of
-  // magnitude below the P99's own sampling noise. Compensation here would cost a second
-  // 8 MB buffer to move a digit nothing reads.
+  double* dst = anchor_y_.get();
+  // The plane is one drain window's fp32 atomics, bounded by the window; the fold is the
+  // chain that grows with the run, so it lands in the double plane like every other add
+  // into it. (This used to argue that a float sum was enough here because the error is
+  // "sqrt(n) * eps" — the error of a constant addend against a large sum is not a random
+  // walk, it is a bias, and the same argument had already been wrong once on the render
+  // plane.)
   for (size_t p = 0; p < kAnchorPixels; ++p) {
     dst[p] += src[p];
   }
@@ -123,7 +123,7 @@ void AnchorConsumer::PrepareSnapshot() {
 }
 
 void AnchorConsumer::Reset() {
-  std::memset(anchor_y_.get(), 0, kAnchorPixels * sizeof(float));
+  std::fill_n(anchor_y_.get(), kAnchorPixels, 0.0);
   snapshot_l99_sky_ = 0.0f;
   // A reused consumer starts a new run, and the route (hence the backend that fills the
   // plane) can differ from the last one: "once" means once per run, not once per object.

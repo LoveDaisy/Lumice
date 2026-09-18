@@ -51,11 +51,16 @@ inline float TargetWhiteToLinear(float target_white) {
 // of it ever reads an X or a Z. Two parameters rather than one derived from the other
 // because "stride 1 implies offset 0" is a coincidence of today's two callers, not a rule.
 //
+// `T` is the buffer's element type: float for every render buffer, double for the anchor
+// plane (a running sum that must not round per ray — see AnchorConsumer). The coarse bins
+// are summed in T and come back as float, the statistic's own precision.
+//
 // PRECONDITION: `xyz_data` is a borrowed view of at least
-// img_width*img_height*channel_stride floats. A raw pointer carries no length, so the
+// img_width*img_height*channel_stride elements. A raw pointer carries no length, so the
 // caller's dimensions are the only bound this function has — exactly as before, since the
 // vector overload this replaced never consulted `.size()` either.
-inline std::vector<float> DownsampleBoxSumY(const float* xyz_data, int img_width, int img_height, int f,
+template <typename T>
+inline std::vector<float> DownsampleBoxSumY(const T* xyz_data, int img_width, int img_height, int f,
                                             int channel_stride = 3, int y_offset = 1) {
   if (f <= 0 || img_width <= 0 || img_height <= 0) {
     return {};
@@ -68,7 +73,7 @@ inline std::vector<float> DownsampleBoxSumY(const float* xyz_data, int img_width
   std::vector<float> coarse(static_cast<size_t>(wc) * static_cast<size_t>(hc), 0.0f);
   for (int rc = 0; rc < hc; ++rc) {
     for (int cc = 0; cc < wc; ++cc) {
-      float sum = 0.0f;
+      T sum = 0;
       int r0 = rc * f;
       int c0 = cc * f;
       for (int dr = 0; dr < f; ++dr) {
@@ -80,7 +85,7 @@ inline std::vector<float> DownsampleBoxSumY(const float* xyz_data, int img_width
           sum += xyz_data[idx];
         }
       }
-      coarse[static_cast<size_t>(rc) * static_cast<size_t>(wc) + static_cast<size_t>(cc)] = sum;
+      coarse[static_cast<size_t>(rc) * static_cast<size_t>(wc) + static_cast<size_t>(cc)] = static_cast<float>(sum);
     }
   }
   return coarse;
@@ -115,11 +120,12 @@ inline std::vector<float> DownsampleBoxSumY(const float* xyz_data, int img_width
 // Returns 0 if no positive Y entries exist (fine or coarse, by path).
 //
 // PRECONDITION (same as DownsampleBoxSumY): `xyz_data` views at least
-// img_width*img_height*channel_stride floats. img_width/img_height are required rather than
-// defaulted — a raw pointer carries no length, so there is no buffer to fall back to measuring.
-// `channel_stride` / `y_offset` default to a packed XYZ image; see DownsampleBoxSumY for the
-// one caller that does not have one.
-inline float ComputeP99Y(const float* xyz_data, int img_width, int img_height, int downsample_factor = 1,
+// img_width*img_height*channel_stride elements of `T` (float or double, as there). img_width
+// /img_height are required rather than defaulted — a raw pointer carries no length, so there
+// is no buffer to fall back to measuring. `channel_stride` / `y_offset` default to a packed
+// XYZ image; see DownsampleBoxSumY for the one caller that does not have one.
+template <typename T>
+inline float ComputeP99Y(const T* xyz_data, int img_width, int img_height, int downsample_factor = 1,
                          int channel_stride = 3, int y_offset = 1) {
   if (downsample_factor > 1) {
     std::vector<float> coarse =
@@ -144,15 +150,15 @@ inline float ComputeP99Y(const float* xyz_data, int img_width, int img_height, i
   // Non-positive dims yield an empty range, matching what the retired `xyz_data.size()` bound did
   // for an empty buffer. The explicit test is not decoration: unlike a vector's size(), a negative
   // int silently becomes an enormous size_t, and this loop has no other bound.
-  const size_t float_count =
+  const size_t elem_count =
       (img_width > 0 && img_height > 0) ?
           static_cast<size_t>(img_width) * static_cast<size_t>(img_height) * static_cast<size_t>(channel_stride) :
           0;
   std::vector<float> y_vals;
-  y_vals.reserve(float_count / static_cast<size_t>(channel_stride));
-  for (size_t i = static_cast<size_t>(y_offset); i < float_count; i += static_cast<size_t>(channel_stride)) {
-    if (xyz_data[i] > 0.0f) {
-      y_vals.push_back(xyz_data[i]);
+  y_vals.reserve(elem_count / static_cast<size_t>(channel_stride));
+  for (size_t i = static_cast<size_t>(y_offset); i < elem_count; i += static_cast<size_t>(channel_stride)) {
+    if (xyz_data[i] > 0) {
+      y_vals.push_back(static_cast<float>(xyz_data[i]));
     }
   }
   if (y_vals.empty()) {

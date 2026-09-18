@@ -5,19 +5,21 @@
 //     Atomically adds weight * (cmf_x, cmf_y, cmf_z) to a 3-channel XYZ
 //     pixel at `pix_flat` inside a W*H*3 float buffer.
 //
-//   NeumaierAdd(sum, comp, delta)  [HOST only]
-//     Compensated summation for cross-batch host-side accumulation. Device
-//     accumulation uses a single atomicAdd (parity-proven). NeumaierAdd is
-//     reserved for `RenderConsumer` cross-batch reduction where the
-//     accumulation chain length (100-1000 batches) is the principal precision
-//     hazard.
-//
 // Backend variants
 //   MSL (`__METAL_VERSION__`):   buf is `device atomic_float*`
 //   CUDA (`__CUDACC__`):         buf is `float*`        (atomicAdd intrinsic)
 //   Host C++:                    buf is `float*`        (plain +=, used by
 //                                                       parity oracles; not
 //                                                       the cross-batch path)
+//
+// Every variant adds into a float32 buffer that lives ONE drain window (device)
+// or one session (host oracle) — a bounded chain. The cross-batch reduction on
+// the host side is not here: RenderConsumer folds each window into a double
+// running sum (server/render.cpp), which replaced the float Neumaier pair this
+// header used to carry. Compensated float summation was measured to be no
+// answer to an unbounded chain — its compensation term is itself a float
+// running sum and drifts the same way, 4e-3 relative after 1e7 constant addends
+// — so a new long-chain accumulator takes a double, not a `NeumaierAdd`.
 //
 // Note: the parameter type cannot be unified across all three backends because
 // MSL requires the `device atomic_float*` qualifier for atomic_fetch_add.
@@ -50,7 +52,6 @@ __device__ inline void AccumXyzToPixel(float* xyz_buf, uint32_t pix_flat, float 
 
 #else
 // ===== Host C++ =====
-#include <cmath>
 #include <cstdint>
 
 inline void AccumXyzToPixel(float* xyz_buf, std::uint32_t pix_flat, float cmf_x, float cmf_y, float cmf_z,
@@ -59,18 +60,6 @@ inline void AccumXyzToPixel(float* xyz_buf, std::uint32_t pix_flat, float cmf_x,
   xyz_buf[base + 0u] += cmf_x * weight;
   xyz_buf[base + 1u] += cmf_y * weight;
   xyz_buf[base + 2u] += cmf_z * weight;
-}
-
-// Neumaier compensated summation. On each call adds `delta` into `sum`
-// while accumulating the lost low-order bits into `comp`. Caller is
-// responsible for flushing `comp` into `sum` at a safe synchronization
-// point (typically only matters for very long chains; for image
-// accumulation across N batches the residual `comp` stays small enough
-// that the snapshot path can ignore it).
-inline void NeumaierAdd(float& sum, float& comp, float delta) {
-  float new_sum = sum + delta;
-  comp += (std::fabs(delta) < std::fabs(sum)) ? ((sum - new_sum) + delta) : ((delta - new_sum) + sum);
-  sum = new_sum;
 }
 
 #endif
