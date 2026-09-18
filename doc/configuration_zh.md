@@ -1545,6 +1545,121 @@ GUI 的日志文件原先无条件写在 `$HOME` 下，现改为与此目录同�
 
 交互式 GUI 二进制在两个开关都不传时默认自动探测 OS 目录；GUI 测试二进制则默认禁用，这样一张视觉回归参考图就不会依赖拍摄它的那台机器上恰好存在的 `user_defaults.json`。
 
+## CLI 浮点原始导出（`--format npy`）
+
+`Lumice render --format npy` 对 `render` 中的每个条目，把 8-bit 图像烘焙之前的**未曝光线性 XYZ
+累加器**——曝光标量、背景、注解图层、clamp、sRGB 曲线全都还没施加——写成 float32 的 `.npy`，
+外加一个 sidecar `.json`。它是为了和非 Monte-Carlo 的结果做定量比对而存在的：烘焙图把高光压平了，
+一条穿过幻日的对数域剖面从它上面判不出对错。这**不是**第二条渲染管线：数组就是 CLI 本来会烘进
+`img_XX.jpg` 的那一份累加器快照，经同一个 result frame 读出，所以导出报告的和图像显示的是同一次
+测量的两种编码。
+
+导出模式是 CLI 层的事，因此只存在于两处 CLI 侧的位置，不进入任何 `render[]` 条目：**GUI 从不读它**，
+其 `.lmc` 文档与「导出 Config JSON」都不带它，设了这个键的 config 在 GUI 下渲染结果完全不变。
+
+### 文件
+
+对 `id` = N 的渲染器，CLI 写 `img_0N.npy` 与 `img_0N.json`（与 8-bit 图相同的编号规则）；该渲染器
+不再写 `.jpg`/`.png`。若配置了 `raypath_color`，合成图仍以 `img_0N_components.jpg` 输出——没有浮点版
+合成图，它是显示产物而非测量量。
+
+`img_0N.npy` 是 numpy 格式 v1.0，`dtype` 为 float32 小端，`shape (H, W, 3)`，C 序：
+`arr[row, col, c]`，row 0 是图像顶行，`c` = X, Y, Z（CIE 1931，与图像烘焙用的同一组三刺激值）。
+`numpy.load` 可直接读取；文件由 CLI 自己写出、不依赖任何库，头部就是 numpy 文档里那一行 dict。
+
+`img_0N.json` 记录下面每一种换算所需的全部量：
+
+| 字段 | 含义 |
+|------|------|
+| `normalization` | `"raw"` 或 `"normalized"`——数组处于下面两种尺度中的哪一种 |
+| `renderer_id`, `width`, `height`, `total_pixels` | 对应的 `render[]` 条目及其分辨率（`total_pixels = width × height`） |
+| `channels`, `dtype` | `"XYZ"`、`"float32"`——复述一遍，使 sidecar 自描述 |
+| `emitted_energy` | 本次运行光源发射的总光谱能量：对所有 batch 求 Σ(每光线发射权重 × 光线数)。离散光谱权重和为 1 时即光线数 |
+| `intensity_factor` | 该渲染器的 `intensity_factor`（2^EV）。**只报告，从不施加**——见下 |
+| `axis_solid_angle` | 该渲染器光轴上一个像素所张的立体角（球面度） |
+| `anchor_l99_sky` | 场景的 relative 模式曝光锚（P99 天空辐亮度，每球面度 Y）；同一次运行所有渲染器相同 |
+| `ev_mode` | 该渲染器的 `"absolute"` / `"relative"`——决定烘焙图用的是哪个标量 |
+| `sim_ray_num` | 快照时刻已仿真的光线数，与像素来自同一帧 |
+| `seed` | `--seed` 的值；随机种子运行时为 `null` |
+| `lumice_api_version` | 写出该文件的二进制的 `LUMICE_API_VERSION` |
+
+### 像素值是什么
+
+每条到达镜头的光线落到一个像素上，把它的权重——其光谱线的发射权重，经沿途 Fresnel 损耗衰减——
+通过**未归一化**的 CIE 1931 配色函数（`src/util/color_data.hpp` 的 `kCmfX/Y/Z`）转成 XYZ 累加到
+该像素。没有按球面度归一，没有曝光。`"raw"` 模式写出的就是这个和：
+
+    raw[p] = Σ_{落到 p 的光线} w_ray · CMF(λ_ray)
+
+于是对权重为 1 的单波长光谱，`raw[p][1]`（Y 通道）= `ȳ(λ)` × 落到像素 `p` 的光线出射权重之和；
+全帧 `Σ_p raw[p][1] / ȳ(λ)` 是到达镜头的能量（与 `emitted_energy` 相比即得落地比例）。
+`"normalized"` 模式施加一个标量：
+
+    normalized[p] = raw[p] · kNormScale · total_pixels / emitted_energy         （kNormScale = 0.08）
+
+这正是渲染器在 `ev_mode: "absolute"`、`intensity_factor = 1` 下施加的曝光标量，所以 `normalized`
+就是烘焙图的 sRGB 阶段在 EV 0 下看到的线性输入。默认是 `raw`：它是物理量，另一种拿着 sidecar
+乘一次就到。
+
+从 `raw` 推导：
+
+- **每发射光线的能量**：`raw[p] / emitted_energy`——光源发射中落到像素 `p` 的比例，跨不同 `ray_num` 的运行可比。
+- **每球面度辐亮度**（光轴上）：`raw[p] / (emitted_energy · axis_solid_angle)`。离轴处一个像素自己的
+  立体角是 `axis_solid_angle` 乘以投影的相对照度，sidecar 不带这一项——需要逐像素立体角的消费方
+  从 config 里的镜头参数自行计算。
+
+### 与 8-bit 图的关系
+
+对 `ev_mode: "absolute"` 的渲染器，CLI 写出的图像逐像素逐通道为
+
+    srgb8 = floor(255 · OETF(clamp(M · gamut_clip(normalized · intensity_factor) + background)))
+
+即 `normalized` 乘该渲染器的 `intensity_factor`，向等 Y 的 D65 灰做色域裁剪，过 XYZ→线性 sRGB 矩阵并
+clamp，加 `background`，clamp，过 sRGB 传递曲线，截断到 8 位——若配置了注解图层与 `visible` 裁剪，
+则再叠加它们。常量在 `src/util/color_data.hpp` 的 `kWhitePointD65` / `kXyzToRgb` 与
+`src/util/color_space.hpp` 的曲线；循环在 `src/server/render.cpp` 的 `RenderConsumer::PostSnapshot`；
+`test/e2e-correctness/test_raw_float_export.py` 把这条重建与 CLI 自己的 PNG 钉在 1 LSB 以内。两条
+值得点明的后果：
+
+- **`normalized` 永远用 absolute 模式的标量，与渲染器自己的 `ev_mode` 无关。**默认的 `"relative"`
+  下，烘焙图锚到的是 `anchor_l99_sky`
+  （`scale = intensity_factor · TargetWhiteToLinear(135) / (axis_solid_angle · anchor_l99_sky)`，
+  见 [`ev-pipeline-architecture.md`](ev-pipeline-architecture.md) §2.8），此时 `normalized` 与图像差
+  一个常数增益，这不是错误。把两者当同一尺度之前先读 sidecar 里的 `ev_mode`；想让它们一致，就给
+  渲染器设 `"ev_mode": "absolute"`。
+- **`intensity_factor` 在两种模式下都不会烘进导出**。它是图像的 EV 旋钮，烘进去会让同一场景不同 EV
+  的两次导出读成两次不同的测量；sidecar 报告它，消费方在复现图像时——也只在那时——自行施加。
+
+按自己口径记录逐光路能量的消费方（比如只算一条特定光路，而所配置 filter 的 P/B/D `symmetry`
+放行的是它的 6 或 12 个等价路径），通过 `emitted_energy` 与该 filter 把它们对齐到导出上：导出的
+`raw` 是 filter 放行的每一条光线的能量，不论它走的是哪个等价路径，落在该路径几何所指向的位置。
+各等价路径共用同一份发射预算，所以「一条路径」与「全部等价路径」之间的折算是针对
+`emitted_energy` 的记账，不是逐像素的系数。
+
+### 选择模式
+
+```bash
+Lumice render -f config.json -o out --format npy                                 # raw（默认）
+Lumice render -f config.json -o out --format npy --raw-normalization normalized
+```
+
+或者在 config 文件里，作为与 `crystal` / `filter` / `scene` / `render` 并列的顶层键：
+
+```json
+"raw_export": { "normalization": "normalized" }
+```
+
+两者同时给出时 flag 覆盖 config 键。该键只要出现就会被校验——值不是 `"raw"` / `"normalized"`
+在任何 `--format` 下都是错误，不会静默退回默认值；不带 `--format npy` 的 `--raw-normalization`
+会被拒绝而不是忽略。
+
+### 文件何时出现
+
+CLI 在运行进行中每秒落盘一次输出，完成后再落盘一次。8-bit 输出（图像格式下的 `img_0N.jpg`/`.png`，
+以及任何格式下的 `_components.jpg` 合成图）从第一个 tick 起就写——它们的缓冲区自 commit 起就存在，
+只是全黑；`.npy` / `.json` 对只在该渲染器产出数据之后才写，所以长运行早期的某个 tick 可能让目录里
+只有合成图而没有 `.npy`。完成后的最后一次写出总会产出全部文件，消费方应读的就是那最后一组。
+
 ## 相关文档
 
 - [README](../README_zh.md): 用户文档

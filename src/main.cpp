@@ -32,6 +32,7 @@
 #if defined(LUMICE_ENGINE_DELAY_LOADED)
 #include "launcher/win_engine_loader.h"
 #endif
+#include "core/color_util.hpp"  // kNormScale: the normalized raw-export scale reuses the renderer's own constant
 #include "util/cpu_info.hpp"
 #include "util/logger.hpp"
 #include "util/raypath_analysis_display.hpp"
@@ -282,8 +283,16 @@ constexpr const char* kHelpSeedOption =
 void PrintRenderOptions() {
   std::cout << kHelpConfigOption
             << "  -o <dir>           Output directory for rendered images (default: current directory)\n"
-            << "  --format <fmt>     Output image format: jpg or png (default: jpg)\n"
-            << "  --quality <1-100>  JPEG quality (default: 95, ignored for PNG)\n"
+            << "  --format <fmt>     Output format: jpg, png, or npy (default: jpg). npy writes each\n"
+            << "                     renderer's unexposed linear XYZ accumulator as float32 (H, W, 3)\n"
+            << "                     plus a sidecar img_XX.json of the exposure scalars; any raypath\n"
+            << "                     colour composite still goes out as jpg. See doc/configuration.md.\n"
+            << "  --quality <1-100>  JPEG quality (default: 95, ignored for PNG and npy)\n"
+            << "  --raw-normalization <raw|normalized>\n"
+            << "                     With --format npy only: write the accumulator as is (raw), or\n"
+            << "                     times the absolute-mode exposure scale at intensity_factor 1\n"
+            << "                     (normalized). Overrides the config's raw_export.normalization.\n"
+            << "                     Default: raw.\n"
             << kHelpSeedOption << kHelpBackendOption << kHelpWorkersOption << kHelpLogAndHelpOptions;
 }
 
@@ -291,6 +300,7 @@ void PrintRenderExamples(const char* prog_name) {
   std::cout << "  " << prog_name << " -f config.json\n"
             << "  " << prog_name << " -f config.json -o /tmp/output\n"
             << "  " << prog_name << " -f config.json --format png\n"
+            << "  " << prog_name << " -f config.json --format npy --raw-normalization normalized\n"
             << "  " << prog_name << " -f config.json --quality 80\n"
             << "  " << prog_name << " -f config.json --seed 7\n"
             << "  " << prog_name << " -f config.json --backend metal\n"
@@ -530,6 +540,255 @@ void SaveCompositeResults(LUMICE_Server* server, const std::filesystem::path& ou
     } else {
       std::cerr << "Error: failed to write " << filepath << "\n";
     }
+  }
+}
+
+// --- raw float export (`--format npy`) -----------------------------------------
+//
+// The float32 sibling of SaveRenderResults: the SAME accumulator snapshot the 8-bit image is
+// baked from, read through the same LUMICE_ResultFrame, written before any of the operators the
+// 8-bit path applies (exposure scale, background, annotations, clamp, sRGB gamma, narrowing).
+// It exists so an external program can hold a Monte-Carlo result against a numerical one on a
+// linear, unclipped scale; the baked image flattens exactly the highlights such a comparison
+// needs. There is no second "scientific" pipeline behind it — one snapshot, two encodings.
+//
+// What is written per renderer: `img_XX.npy` (shape (H, W, 3), dtype float32, C order, channels
+// X/Y/Z) plus a sidecar `img_XX.json` carrying every scalar a consumer needs to move between the
+// two normalizations below, or from either of them to the baked image.
+
+// Which scalar multiplies the accumulator before it hits the disk. `kRaw` is the accumulator as
+// is: per pixel, the sum of the weights of the rays that landed there. `kNormalized` multiplies by
+// the renderer's own absolute-mode exposure scale at intensity_factor = 1 — the one scalar the
+// 8-bit path applies under `ev_mode: absolute` before it starts baking — so the values match the
+// input the sRGB stage sees. Two modes, one scalar apart, and the sidecar records which one was
+// applied together with the ingredients to undo or redo it.
+enum class RawExportMode { kRaw, kNormalized };
+
+constexpr std::string_view kRawExportModeRaw = "raw";
+constexpr std::string_view kRawExportModeNormalized = "normalized";
+
+std::optional<RawExportMode> ParseRawExportMode(std::string_view text) {
+  if (text == kRawExportModeRaw) {
+    return RawExportMode::kRaw;
+  }
+  if (text == kRawExportModeNormalized) {
+    return RawExportMode::kNormalized;
+  }
+  return std::nullopt;
+}
+
+std::string_view RawExportModeName(RawExportMode mode) {
+  return mode == RawExportMode::kNormalized ? kRawExportModeNormalized : kRawExportModeRaw;
+}
+
+// The config-side spelling of the same choice: a top-level `"raw_export": {"normalization": ...}`
+// object. It is read here, by the CLI, from the config file directly — the same way
+// WarnIfLastScatteringLayerProbNonzero and PrintColorClassSignal above peek at keys of their
+// own — and never reaches core: it selects an output ENCODING of the CLI, not anything the
+// engine computes, so it has no place in LUMICE_RenderParam and no ABI cost. Core's decoders
+// ignore top-level keys they do not know, so its presence does not disturb the scene parse.
+//
+// Returns false, with the reason on stderr, when the key is present but malformed: a value
+// outside the two names is a typo the user meant to take effect, and letting it fall back to
+// the default would silently hand them the other mode. A config that cannot be opened or parsed
+// leaves `out` untouched and returns true — LUMICE_SceneFromJsonFile reports that failure
+// itself, with the real error.
+bool ReadRawExportModeFromConfig(const std::filesystem::path& config_path, std::optional<RawExportMode>& out) {
+  std::ifstream f(config_path);
+  if (!f.is_open()) {
+    return true;
+  }
+  nlohmann::json j;
+  try {
+    f >> j;
+  } catch (const nlohmann::json::exception&) {
+    return true;
+  }
+  if (!j.is_object() || !j.contains("raw_export")) {
+    return true;
+  }
+  const auto& j_raw = j.at("raw_export");
+  if (!j_raw.is_object()) {
+    std::cerr << "Error: config key \"raw_export\" must be an object, e.g. {\"normalization\": \"raw\"}\n";
+    return false;
+  }
+  if (!j_raw.contains("normalization")) {
+    return true;
+  }
+  const auto& j_norm = j_raw.at("normalization");
+  if (!j_norm.is_string()) {
+    std::cerr << "Error: config key \"raw_export.normalization\" must be the string 'raw' or 'normalized'\n";
+    return false;
+  }
+  auto mode = ParseRawExportMode(j_norm.get<std::string>());
+  if (!mode.has_value()) {
+    std::cerr << "Error: config key \"raw_export.normalization\" must be 'raw' or 'normalized', got '"
+              << j_norm.get<std::string>() << "'\n";
+    return false;
+  }
+  out = *mode;
+  return true;
+}
+
+// numpy `.npy` format, version 1.0, written by hand: 6-byte magic, two version bytes, a
+// little-endian uint16 header length, then an ASCII Python dict literal padded with spaces so
+// that the whole header ends on a 64-byte boundary and closes with '\n'; the C-order float32
+// payload follows. That is the entire format for this dtype, which is why it needs no library:
+// `numpy.load` reads the result directly. The payload is written as the host's bytes; every
+// platform this CLI ships for is little-endian, and '<f4' in the header says so to the reader.
+bool WriteNpyFloat32(const std::filesystem::path& path, const float* data, int height, int width, int channels) {
+  std::ostringstream dict;
+  dict << "{'descr': '<f4', 'fortran_order': False, 'shape': (" << height << ", " << width << ", " << channels
+       << "), }";
+  std::string header = dict.str();
+  constexpr std::size_t kPreambleLen = 6 + 2 + 2;  // magic + version + header_len field
+  constexpr std::size_t kAlign = 64;
+  std::size_t total = kPreambleLen + header.size() + 1;  // +1 for the trailing '\n'
+  std::size_t padded = (total + kAlign - 1) / kAlign * kAlign;
+  header.append(padded - total, ' ');
+  header.push_back('\n');
+  if (header.size() > std::numeric_limits<std::uint16_t>::max()) {
+    return false;  // unreachable for a three-int shape; kept so the uint16 narrowing below is honest
+  }
+  auto header_len = static_cast<std::uint16_t>(header.size());
+
+  std::ofstream f(path, std::ios::binary);
+  if (!f.is_open()) {
+    return false;
+  }
+  static constexpr unsigned char kMagic[] = { 0x93, 'N', 'U', 'M', 'P', 'Y', 1, 0 };
+  f.write(reinterpret_cast<const char*>(kMagic), sizeof(kMagic));
+  const unsigned char len_le[2] = { static_cast<unsigned char>(header_len & 0xFFu),
+                                    static_cast<unsigned char>((header_len >> 8) & 0xFFu) };
+  f.write(reinterpret_cast<const char*>(len_le), 2);
+  f.write(header.data(), static_cast<std::streamsize>(header.size()));
+  const auto count =
+      static_cast<std::size_t>(height) * static_cast<std::size_t>(width) * static_cast<std::size_t>(channels);
+  f.write(reinterpret_cast<const char*>(data), static_cast<std::streamsize>(count * sizeof(float)));
+  return f.good();
+}
+
+// The renderer's `ev_mode`, read back off the committed scene handle by declared id. Reported in
+// the sidecar because it decides whether the baked image's exposure scale is the `normalized`
+// scalar (absolute) or the sky-anchored one (relative) — the consumer cannot tell from the
+// floats alone. Falls back to "unknown" only if the id is not on the scene, which a row the
+// server just produced for that id cannot be.
+std::string RendererEvModeName(const LUMICE_Scene* scene, int renderer_id) {
+  LUMICE_RenderParam r{};
+  for (int index = 0; LUMICE_SceneGetRenderer(scene, index, &r) == LUMICE_OK; index++) {
+    if (r.id == renderer_id) {
+      return r.ev_mode == LUMICE_EV_MODE_ABSOLUTE ? "absolute" : "relative";
+    }
+  }
+  return "unknown";
+}
+
+// One `.npy` + one `.json` per renderer that has produced data. The 8-bit path writes its image
+// from the first poll on (its buffer exists, black, from the commit); this path waits for
+// `has_valid_data` instead, because an all-zero float frame is not a result but the absence of
+// one, and a consumer that reads it as a measurement would be misled in a way an all-black
+// preview does not mislead a viewer. So on a poll early in a long run the directory can hold
+// `img_XX.jpg` and no `img_XX.npy` yet; the final fetch after the run always writes both.
+void SaveRawFloatResults(LUMICE_Server* server, const LUMICE_Scene* scene, const std::filesystem::path& output_dir,
+                         RawExportMode mode, unsigned int sim_seed) {
+  LUMICE_ResultFrame* raw_frame = nullptr;
+  if (LUMICE_AcquireResultFrame(server, &raw_frame) != LUMICE_OK) {
+    return;
+  }
+  ResultFramePtr frame(raw_frame);
+  LUMICE_RawXyzResult rows[LUMICE_MAX_RENDER_RESULTS + 1]{};
+  if (LUMICE_FrameGetRawXyz(frame.get(), rows, LUMICE_MAX_RENDER_RESULTS) != LUMICE_OK) {
+    return;
+  }
+  // Same frame as the rows, so the ray count and the pixels describe one snapshot generation.
+  LUMICE_StatsResult stats{};
+  LUMICE_FrameGetStats(frame.get(), &stats);
+
+  std::vector<float> scaled;
+  for (int i = 0; rows[i].xyz_buffer != nullptr; i++) {
+    const LUMICE_RawXyzResult& row = rows[i];
+    if (row.has_valid_data == 0 || row.img_width <= 0 || row.img_height <= 0) {
+      continue;
+    }
+    // emitted_energy <= 0 makes the normalized scale undefined (division by a non-positive
+    // number); skip this renderer's export entirely rather than silently falling back to raw
+    // values while the sidecar still claims "normalized" -- a file that says one thing and
+    // contains another defeats this feature's whole purpose as a trustworthy oracle.
+    if (mode == RawExportMode::kNormalized && row.emitted_energy <= 0.0f) {
+      std::cerr << "Warning: renderer " << row.renderer_id
+                << " has emitted_energy <= 0; skipping normalized raw export for this frame\n";
+      continue;
+    }
+
+    const auto total_pixels = static_cast<std::size_t>(row.img_width) * static_cast<std::size_t>(row.img_height);
+    const std::size_t count = total_pixels * 3;
+
+    // The only operator between the accumulator and the file, and only under kNormalized:
+    //   scale = kNormScale * total_pixels / emitted_energy
+    // which is the absolute-mode exposure scale at intensity_factor = 1 exactly as
+    // LUMICE_RawXyzResult::emitted_energy documents it (src/include/lumice.h, "a consumer can
+    // reproduce that scale as ...") and as RenderConsumer::ExposureScale computes it. Hand-copied
+    // here -- not extracted into a shared core/color_util.hpp free function -- because this CLI
+    // feature is deliberately kept out of src/core/ entirely; if that comment or that function
+    // ever changes the formula, this line changes with them, same as the existing
+    // config_manager.cpp/c_api.cpp dual-decoder pattern this mirrors.
+    const float* payload = row.xyz_buffer;
+    if (mode == RawExportMode::kNormalized) {
+      const auto scale =
+          static_cast<float>(static_cast<double>(lumice::kNormScale) * static_cast<double>(total_pixels) /
+                             static_cast<double>(row.emitted_energy));
+      scaled.assign(row.xyz_buffer, row.xyz_buffer + count);
+      for (float& v : scaled) {
+        v *= scale;
+      }
+      payload = scaled.data();
+    }
+
+    auto npy_path = FormatImagePath(output_dir, row.renderer_id, "npy");
+    auto npy_u8 = npy_path.u8string();
+    if (!WriteNpyFloat32(npy_path, payload, row.img_height, row.img_width, 3)) {
+      std::cerr << "Error: failed to write " << npy_path << "\n";
+      continue;
+    }
+    std::cout << "Saved: " << npy_u8 << " (" << row.img_width << "x" << row.img_height << ")\n";
+
+    nlohmann::json meta;
+    meta["normalization"] = std::string(RawExportModeName(mode));
+    meta["renderer_id"] = row.renderer_id;
+    meta["width"] = row.img_width;
+    meta["height"] = row.img_height;
+    meta["channels"] = "XYZ";
+    meta["dtype"] = "float32";
+    meta["total_pixels"] = total_pixels;
+    meta["emitted_energy"] = row.emitted_energy;
+    meta["intensity_factor"] = row.intensity_factor;
+    meta["axis_solid_angle"] = row.axis_solid_angle;
+    meta["anchor_l99_sky"] = row.anchor_l99_sky;
+    meta["ev_mode"] = RendererEvModeName(scene, row.renderer_id);
+    meta["sim_ray_num"] = stats.sim_ray_num;
+    // sim_seed == 0 unambiguously means "unspecified": TryParseSeedOption rejects an explicit
+    // `--seed 0` with "must be a positive integer" (this file), so 0 can only reach here as the
+    // RenderOptions default, never as a user-chosen value.
+    if (sim_seed != 0) {
+      meta["seed"] = sim_seed;
+    } else {
+      meta["seed"] = nullptr;
+    }
+    meta["lumice_api_version"] = LUMICE_API_VERSION;
+
+    auto json_path = FormatImagePath(output_dir, row.renderer_id, "json");
+    auto json_u8 = json_path.u8string();
+    std::ofstream jf(json_path);
+    if (!jf.is_open()) {
+      std::cerr << "Error: failed to write " << json_path << "\n";
+      continue;
+    }
+    jf << meta.dump(2) << "\n";
+    if (!jf.good()) {
+      std::cerr << "Error: failed to write " << json_path << "\n";
+      continue;
+    }
+    std::cout << "Saved: " << json_u8 << "\n";
   }
 }
 
@@ -859,6 +1118,10 @@ struct RenderOptions {
   std::filesystem::path output_dir = ".";
   std::string image_format = "jpg";
   int jpeg_quality = kDefaultJpegQuality;
+  // `--raw-normalization`, only meaningful with `--format npy`; kept as "was it given" so the
+  // parser can reject it under a format that has no use for it, and so RunRender can tell a flag
+  // (which overrides the config's `raw_export.normalization`) from the absence of one.
+  std::optional<RawExportMode> raw_normalization;
   // 0 = "not specified" — the same value LUMICE_ServerConfig::num_workers already uses to mean
   // "let the server pick" (one per physical core, capped), so no separate was-it-set flag is
   // needed.
@@ -944,8 +1207,8 @@ SharedStep ParseSharedOption(int argc, char** argv, int& i, SharedOptions& out) 
 // Re-parse file paths from the wide-char command line for full Unicode support.
 // argv[i] on Windows uses the ANSI codepage, which loses non-ASCII characters.
 // Only path arguments (-f, -o, --csv) need wide-char re-parsing; ASCII-only args
-// (the subcommand token, --format, --quality, --workers, the analyze request) are
-// safe as-is. `output_dir` / `csv_path` are null for a subcommand that has no -o /
+// (the subcommand token, --format, --raw-normalization, --quality, --workers, the
+// analyze request) are safe as-is. `output_dir` / `csv_path` are null for a subcommand that has no -o /
 // --csv: the option was already rejected by that subcommand's parser, so there is
 // nothing to re-read.
 void ReparseWidePathArgs(std::filesystem::path& config_filename, std::filesystem::path* output_dir,
@@ -1120,8 +1383,20 @@ int ParseRenderOptions(int argc, char** argv, int first, void (*print_usage)(con
         return 1;
       }
       opts.image_format = argv[i];
-      if (opts.image_format != "jpg" && opts.image_format != "png") {
-        std::cerr << "Error: --format must be 'jpg' or 'png', got '" << opts.image_format << "'\n\n";
+      if (opts.image_format != "jpg" && opts.image_format != "png" && opts.image_format != "npy") {
+        std::cerr << "Error: --format must be 'jpg', 'png' or 'npy', got '" << opts.image_format << "'\n\n";
+        print_usage(argv[0]);
+        return 1;
+      }
+    } else if (arg == "--raw-normalization") {
+      if (++i >= argc) {
+        std::cerr << "Error: --raw-normalization requires an argument\n\n";
+        print_usage(argv[0]);
+        return 1;
+      }
+      opts.raw_normalization = ParseRawExportMode(argv[i]);
+      if (!opts.raw_normalization.has_value()) {
+        std::cerr << "Error: --raw-normalization must be 'raw' or 'normalized', got '" << argv[i] << "'\n\n";
         print_usage(argv[0]);
         return 1;
       }
@@ -1163,6 +1438,16 @@ int ParseRenderOptions(int argc, char** argv, int first, void (*print_usage)(con
 #ifdef _WIN32
   ReparseWidePathArgs(opts.shared.config_filename, &opts.output_dir, /*csv_path=*/nullptr);
 #endif
+
+  // Checked after the loop because the two options may come in either order. Rejected rather
+  // than ignored: an option that is accepted and has no effect is what this CLI's option sets
+  // are designed not to have (see AnalyzeOptions), and this flag has no history to be lenient
+  // about.
+  if (opts.raw_normalization.has_value() && opts.image_format != "npy") {
+    std::cerr << "Error: --raw-normalization requires --format npy (got --format " << opts.image_format << ")\n\n";
+    print_usage(argv[0]);
+    return 1;
+  }
 
   if (!FinishSharedOptions(opts.shared)) {
     print_usage(argv[0]);
@@ -1527,12 +1812,37 @@ int RunBenchmark(const BenchmarkOptions& opts) {
   return 0;
 }
 
+// The one place the output format is dispatched. Both of RunRender's fetch points (each poll,
+// and the final one after the loop) used to spell the same two calls, and a third output kind
+// would have made that four spellings of one decision. Under npy the mono image is the float
+// export and the raypath-colour composite stays 8-bit — there is no float composite to write, and
+// jpg is the format's own default rather than a new option to carry.
+void SaveAllRenderOutputs(LUMICE_Server* server, const LUMICE_Scene* scene, const RenderOptions& opts,
+                          RawExportMode raw_mode) {
+  if (opts.image_format == "npy") {
+    SaveRawFloatResults(server, scene, opts.output_dir, raw_mode, opts.sim_seed);
+    SaveCompositeResults(server, opts.output_dir, "jpg", kDefaultJpegQuality);
+    return;
+  }
+  SaveRenderResults(server, opts.output_dir, opts.image_format, opts.jpeg_quality);
+  SaveCompositeResults(server, opts.output_dir, opts.image_format, opts.jpeg_quality);
+}
+
 int RunRender(const RenderOptions& opts) {
   const SharedOptions& shared = opts.shared;
   if (!std::filesystem::is_directory(opts.output_dir)) {
     std::cerr << "Error: output directory does not exist: " << opts.output_dir.u8string() << "\n";
     return 1;
   }
+
+  // Flag over config over default. The config key is validated whenever it is present, whatever
+  // the format: a malformed value is a malformed config, and "it happened not to matter this run"
+  // is not a reason to let it through to the run where it does.
+  std::optional<RawExportMode> config_raw_mode;
+  if (!ReadRawExportModeFromConfig(shared.config_filename, config_raw_mode)) {
+    return 1;
+  }
+  const RawExportMode raw_mode = opts.raw_normalization.value_or(config_raw_mode.value_or(RawExportMode::kRaw));
 
   LUMICE_ServerConfig server_config{};
   server_config.preferred_backend = shared.preferred_backend;
@@ -1578,8 +1888,7 @@ int RunRender(const RenderOptions& opts) {
 
     auto now = std::chrono::steady_clock::now();
     if (now >= next_save_time) {
-      SaveRenderResults(server, opts.output_dir, opts.image_format, opts.jpeg_quality);
-      SaveCompositeResults(server, opts.output_dir, opts.image_format, opts.jpeg_quality);
+      SaveAllRenderOutputs(server, scene.get(), opts, raw_mode);
       PrintStats(server);
       next_save_time = std::chrono::steady_clock::now() + kSaveInterval;
     }
@@ -1588,8 +1897,7 @@ int RunRender(const RenderOptions& opts) {
   }
 
   // Final fetch after loop exit
-  SaveRenderResults(server, opts.output_dir, opts.image_format, opts.jpeg_quality);
-  SaveCompositeResults(server, opts.output_dir, opts.image_format, opts.jpeg_quality);
+  SaveAllRenderOutputs(server, scene.get(), opts, raw_mode);
   PrintStats(server);
   PrintColorClassSignal(server, shared.config_filename);
 
