@@ -234,8 +234,11 @@ class ServerImpl {
   //     best at 32 = SMT fully on). So Windows sizes from LogicalCoreCount() and stops
   //     narrowing: no worker count below the logical core count was measured to be a
   //     plateau on this box, and inventing a smaller number without a measurement
-  //     behind it would be the same kind of empiricism this rewrite retires. Boundary:
-  //     one machine; a much wider box may yet show a knee below its logical count.
+  //     behind it would be the same kind of empiricism this rewrite retires. At the
+  //     32 this box therefore ships, the v3 engine reads 1.11×/1.36×/1.56× over 10 by
+  //     scene (landing re-check 1.07×/1.40×/1.58×). Boundary: one machine, and the
+  //     lightest of the three scenes peaks at 16 on the v3 engine (15% over 32) — a
+  //     much wider box may yet show a knee below its logical count.
   //   - Linux (glibc-hwcaps auto-selects the x86-64-v4/AVX-512 engine on any box that
   //     qualifies, so that is the production path): 10 IS the optimum — W12 already
   //     costs 5–23% and W16 halves throughput. The same box on the baseline engine
