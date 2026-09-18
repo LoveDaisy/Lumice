@@ -96,16 +96,16 @@ inline lm_proj::ProjParams BuildAnchorProjParams() {
 
 // The published scalar: the P99 of the anchor plane, expressed as a RADIANCE.
 //
-// `anchor_y` is a kAnchorWidth * kAnchorHeight plane of accumulated Y (one float per
+// `anchor_y` is a kAnchorWidth * kAnchorHeight plane of accumulated Y (one double per
 // pixel, no interleaved X/Z — the anchor's only consumer is this statistic, and the Y
-// channel is all it reads).
+// channel is all it reads; double because it is a per-ray running sum, see AnchorConsumer).
 //
 // ComputeP99Y already divides the coarse P99 by f^2, so what comes back is a
 // fine-equivalent per-pixel Y; dividing by the pixel's solid angle turns it into Y per
 // steradian. That last division is what makes the number independent of kAnchorWidth /
 // kAnchorHeight as well: a consumer never has to know the anchor's resolution to use it,
 // which is the whole point of publishing L99_sky rather than the raw P99.
-inline float AnchorL99Sky(const float* anchor_y) {
+inline float AnchorL99Sky(const double* anchor_y) {
   const float p99 = ComputeP99Y(anchor_y, kAnchorWidth, kAnchorHeight, kAnchorDownsampleFactor,
                                 /*channel_stride=*/1, /*y_offset=*/0);
   return p99 / kAnchorPixelSolidAngle;

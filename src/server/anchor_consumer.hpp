@@ -57,7 +57,7 @@ class AnchorConsumer : public IConsume {
    *          The two-phase snapshot exists so that a reader borrowing a PIXEL VIEW cannot
    *          have it rewritten underneath; what this consumer publishes is a single float,
    *          computed here under consumer_mutex_ and then never touched until the next
-   *          pass. A snapshot copy of an 8 MB plane would buy nothing a frozen float does
+   *          pass. A snapshot copy of a 16 MB plane would buy nothing a frozen float does
    *          not already give, so the P99 is taken directly off the live accumulator while
    *          the lock that stops Consume() is still held.
    */
@@ -71,7 +71,7 @@ class AnchorConsumer : public IConsume {
   /// White-box handle on the live accumulator, for the tests that pin WHERE energy lands
   /// rather than only what statistic comes out of it. Same rationale as
   /// RenderConsumer::VisibleMaskForTest.
-  const float* AnchorPlaneForTest() const { return anchor_y_.get(); }
+  const double* AnchorPlaneForTest() const { return anchor_y_.get(); }
 
   /// How many device-fused batches AccumulateDevicePlane refused because their anchor plane
   /// was not kAnchorWidth * kAnchorHeight floats. Only the first is logged (see the .cpp);
@@ -86,9 +86,13 @@ class AnchorConsumer : public IConsume {
   // Device path: fold a plane the backend already accumulated.
   void AccumulateDevicePlane(const SimData& data);
 
-  // kAnchorWidth * kAnchorHeight floats of Y. Allocated once in the constructor: its size
+  // kAnchorWidth * kAnchorHeight doubles of Y. Allocated once in the constructor: its size
   // is a compile-time constant, so unlike a renderer's buffer it can never need regrowing.
-  std::unique_ptr<float[]> anchor_y_;
+  // double for the reason RenderConsumer::internal_xyz_ is: every form of Consume() adds
+  // to it once per ray or once per drain for as long as the run lasts, and a float32 sum
+  // along that chain drifts systematically (1.0% low on Y after 1e7 identical rays). The
+  // statistic taken off it is float; the plane it is taken from is not.
+  std::unique_ptr<double[]> anchor_y_;
   lm_proj::ProjParams proj_params_;
   float snapshot_l99_sky_ = 0.0f;
   size_t device_plane_size_mismatch_count_ = 0;

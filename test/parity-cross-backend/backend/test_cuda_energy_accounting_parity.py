@@ -44,10 +44,15 @@ is −0.004% or better at 2M rays and −0.029% on the 10M-ray ``parhelion`` row
 0.1%: ~3.4× above the worst measured spread, ≥10× below the smallest red-state
 signature the fix's revert produces on the rows that can see it (+1.74% on
 ``cpu_backend_route``, −1.04% on ``parhelion``). It is deliberately not
-tighter — legacy's own ``R`` drifts above the closed-form constant with ray
-count (+0.019% at 2M, +0.38% at 10M) because its ``total_intensity_`` is also
-an fp32 running sum, and that is accepted behaviour, not a defect; the row
-compares the two backends' drift, not either one against the constant.
+tighter. When it was set, legacy's own ``R`` drifted above the closed-form
+constant with ray count (+0.019% at 2M, +0.38% at 10M) because its
+``total_intensity_`` was itself an fp32 running sum; that accumulator (with
+``internal_xyz_`` beside it — the same rounding turned a monochromatic
+sub-sun's hue with ray count) has since been widened to ``double`` and the
+drift is gone, but the tolerance was not re-derived from the tighter spread
+that leaves: the row compares the two backends' ledger ratios against each
+other, not either one against the constant, and nothing measured since has
+argued for spending the margin.
 
 Not every row reddens on the revert. The defect scales with how much weight
 the window accumulates, so the 400k-ray and 20k-ray rows read +0.003% and

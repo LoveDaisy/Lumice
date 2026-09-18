@@ -117,6 +117,10 @@ add_executable(unit_correctness_test
   # projection loop: bit-identical accumulation, the dual-fisheye overlap split, per-renderer
   # indexing, and the release-safe fallback when the sidecar is shorter than renderer_index_.
   "${PROJ_TEST_DIR}/unit-correctness/server/test_render_consumer_worker_projected.cpp"
+  # Analytic oracle for the cross-batch fp32 accumulators (internal_xyz_ on both CPU projection
+  # forms, lane_y_ on both fold forms, total_intensity_): 1e7 identical rays into one pixel must
+  # hold the CMF ratio and the closed-form magnitude to 1e-5.
+  "${PROJ_TEST_DIR}/unit-correctness/server/test_render_consumer_fp32_accum_oracle.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/server/test_render_consumer_exposure_scale.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/server/test_render_consumer_post_snapshot_fusion.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/server/test_render_consumer_print_mode.cpp"

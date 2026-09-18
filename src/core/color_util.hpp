@@ -31,9 +31,24 @@ inline constexpr float kNormScale = 0.08f;
 // in-order to xyz[3*i .. 3*i+2]; otherwise xy[i] is the flat pixel index.
 // No bounds check — caller must clamp xy[] to [0, W*H).
 //
+// `Acc` is the accumulator's element type, float or double, and which one a
+// caller hands in is a statement about its chain length. A per-ray `+=` into a
+// float32 sum is exact only while the addend is large against the sum's ulp;
+// a pixel that collects 1e7 rays has a sum near 1e6 against addends near 0.1,
+// where every add rounds by up to half an ulp in the SAME direction (round-
+// half-even on a fixed bit pattern is a bias, not noise), and X, Y and Z bias
+// by different amounts, so the ratio drifts — a monochromatic sub-sun turned
+// from yellow-green to cyan between 10M and 30M rays that way. A running sum
+// that grows with the ray budget therefore takes double (RenderConsumer's
+// internal_xyz_); a buffer that is reset per batch or per session — the
+// CpuTraceBackend parity image, the per-batch product here — may stay float.
+// The per-ray product itself stays a float multiply on either path so the two
+// accumulator types add the same addends and differ only in where they round.
+//
 // Inline-defined so that scatter_accum.hpp and server/render.cpp can both
 // include this header without an ODR collision.
-inline void SpectrumToXyz(float wl, const float* v, const int* xy, float* xyz, size_t num = 1) {
+template <typename Acc>
+inline void SpectrumToXyz(float wl, const float* v, const int* xy, Acc* xyz, size_t num = 1) {
   int wl_key = static_cast<int>(wl + 0.5f);
   if (wl_key < kCmfMinWavelength || wl_key > kCmfMaxWavelength) {
     return;
@@ -62,9 +77,10 @@ inline float SpectrumToYSingle(float wl, float w) {
 // Per-ray variant — each ray i carries its own wavelength wl_per_ray[i].
 // Used by the Metal/DR-3 path where the photon's lifetime wavelength tag is
 // derived from a host-uploaded wavelength pool (see metal_trace_backend.mm's
-// ComputeWlPool). xy / xyz semantics mirror SpectrumToXyz above. Out-of-range
-// wavelengths are silently skipped per ray.
-inline void SpectrumToXyzPerRay(const float* wl_per_ray, const float* v, const int* xy, float* xyz, size_t num) {
+// ComputeWlPool). xy / xyz semantics mirror SpectrumToXyz above, `Acc` included.
+// Out-of-range wavelengths are silently skipped per ray.
+template <typename Acc>
+inline void SpectrumToXyzPerRay(const float* wl_per_ray, const float* v, const int* xy, Acc* xyz, size_t num) {
   for (size_t i = 0; i < num; i++) {
     int wl_key = static_cast<int>(wl_per_ray[i] + 0.5f);
     if (wl_key < kCmfMinWavelength || wl_key > kCmfMaxWavelength) {
