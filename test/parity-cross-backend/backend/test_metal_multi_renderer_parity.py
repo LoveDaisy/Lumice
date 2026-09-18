@@ -57,6 +57,30 @@ Bars (the checks are the shared module's (a)–(d)):
         three seeds on the dual scene (0.987 / 1.018 / 0.995 and 0.990 /
         1.012 / 0.996). 5% is above that spread and 10× below a merge (0.39).
 
+Post-fix residual of the single-wavelength gap (informational; the bars above
+are unchanged by it). The 0.27–0.47% figures were read before PR #380 moved
+the long-chain fp32 accumulators — legacy's scalar running sum among them —
+to double. After that fix the same ratio, ``R_metal / R_legacy``, was
+re-measured on the ``parhelion`` scene alone as a sweep over ``ray_num`` ∈
+{1e6, 1e7, 1e8, 1e9}, three seeds each (seed spread ≤ 0.0008 pp):
+  1e6 −0.021%, 1e7 +0.013%, 1e8 +0.020%, 1e9 +0.021%.
+The residual is thus roughly 1/15–1/20 of the pre-fix baseline, and a good
+part of what had been attributed to Metal was legacy's own fp32 running sum
+overestimating. The shape settles the mechanism: the per-decade increment
+shrinks about 5× per decade (+0.034 pp → +0.007 pp → +0.001 pp) and the sign
+flips between 1e6 and 1e7 — a converging series, not the one-signed,
+ever-more-negative divergence that a Metal-side ulp loss in the device atomic
+XYZ accumulation (``AccumXyzToPixel``) would produce as N grows. That reads
+as summation-order rounding — the two arms adding the same terms in a
+different order — not energy being dropped. Extrapolating the last decade's
+slope linearly to 1e11 rays (the GUI-reachable ceiling) gives ≈0.023%, about
+0.00033 stop, some 300× below the 0.1 stop at which a brightness difference
+would be worth acting on. Disposition: closed with no code change — neither
+the 2% / 5% bars nor any accumulation path was touched. Scope of that
+statement: it is one scene swept over N, not a re-measurement of
+``multi_lens``'s 0.27–0.47% or the dual scene's readings, which stand as the
+pre-PR #380 baseline they were.
+
 Routing: every Metal arm must report ``routed_backend == "metal"`` and
 ``fell_back == False`` through the C API (``LUMICE_GetActiveBackend`` /
 ``LUMICE_GetBackendFallbackFlag``) — this is also the e2e statement that a
