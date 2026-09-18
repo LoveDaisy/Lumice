@@ -156,8 +156,10 @@ TEST(Calibration, no_warning_on_startup) {
     }
   });
 
-  // Run calibration (blocks up to 2s)
+  // Run calibration: the scene build returns at once, the run itself is on a background thread
+  // (up to 2s) — the join is what makes the stats below the run's.
   gui::CalibrateQualityThreshold();
+  gui::JoinPendingCalibration();
 
   // Positive assertion: stats must have data
   LUMICE_StatsResult stats{};

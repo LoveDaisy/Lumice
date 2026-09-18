@@ -20,7 +20,7 @@ namespace lumice::gui {
 
 void InstallEarlyGuiSinks() {
   // ImGui ring buffer sink (shared between the GUI logger and the Core log callback, which
-  // main() registers later next to LUMICE_CreateServer — the callback only carries meaning once
+  // main() registers later next to ConstructServerForState — the callback only carries meaning once
   // a server exists to emit Core logs).
   g_imgui_log_sink = std::make_shared<ImGuiLogSink>();
 

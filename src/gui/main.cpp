@@ -78,7 +78,7 @@ int main(int argc, char** argv) {
 #endif
 
   // Stage 1 of the GUI's log-sink assembly (independent from Core's spdlog; Core logs arrive via
-  // the C API callback registered further down next to LUMICE_CreateServer). It runs HERE, before
+  // the C API callback registered further down next to ConstructServerForState). It runs HERE, before
   // GLFW / GL / ImGui init and after the FreeConsole block above — see gui_logger.hpp, which owns
   // both stages and the reason the ordering is what it is.
   gui::InstallEarlyGuiSinks();
@@ -193,8 +193,13 @@ int main(int argc, char** argv) {
 
   // skip_calibration already parsed above (before glfwSwapInterval).
 
-  // Create Lumice server.
-  gui::g_server = LUMICE_CreateServer();
+  // Create the Lumice server — for the backend and worker count the document asks for, not a
+  // CPU default to be swapped out on the first Run. Both are construction-time properties (see
+  // MaybeReconstructServerForConstructionProperties), so a server built for the wrong one is
+  // torn down and rebuilt at that first Run, and everything the calibration below warmed up on
+  // it — the GPU context above all — would be thrown away with it. use_gpu_backend arrives from
+  // the personal defaults in MakeNewDocumentState above; the factory default is CPU.
+  gui::ConstructServerForState(gui::g_state);
 
   // Stage 2 of the log-sink assembly: the file sink, which cannot be hoisted into stage 1
   // because constructing it truncates the log file. See gui_logger.hpp.
@@ -202,7 +207,7 @@ int main(int argc, char** argv) {
 
   // Bridge Core logs into the GUI ring buffer. Kept here rather than in the sink
   // block at the top of main(): the callback only carries meaning once a server
-  // exists to emit Core logs, so it pairs with LUMICE_CreateServer above.
+  // exists to emit Core logs, so it pairs with ConstructServerForState above.
   LUMICE_SetLogCallback([](LUMICE_LogLevel level, const char* /*name*/, const char* message) {
     if (gui::g_imgui_log_sink) {
       auto spd_level = static_cast<spdlog::level::level_enum>(level);
@@ -282,8 +287,10 @@ int main(int argc, char** argv) {
     return 1;
   }
 
-  // Calibrate quality gate threshold by running a short simulation with default config.
-  // Must happen after server creation but before the main loop.
+  // Calibrate quality gate threshold by running a short simulation with default config — which
+  // is also what warms the server's backend up for the first Run. Must happen after server
+  // creation; it hands the run to a background thread and returns, so the main loop starts
+  // without waiting for it (the first Run, and anything that wakes the poller, joins it).
   if (!skip_calibration) {
     gui::CalibrateQualityThreshold();
   }
@@ -450,8 +457,9 @@ int main(int argc, char** argv) {
   }
 
   // Cleanup
-  gui::JoinPendingStop();       // R1: drain any in-flight async Stop before tearing down the server
-  gui::g_server_poller.Stop();  // Stop poller before destroying server
+  gui::JoinPendingCalibration();  // R1: a calibration still running (quit within its first ~200ms)
+  gui::JoinPendingStop();         // R1: drain any in-flight async Stop before tearing down the server
+  gui::g_server_poller.Stop();    // Stop poller before destroying server
   gui::g_crystal_renderer.Destroy();
   gui::g_preview.Destroy();
   gui::DestroyPreviewFrameFbo();  // the preview path's persistent FBO, owned by export_fbo_renderer.cpp

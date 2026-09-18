@@ -2119,6 +2119,9 @@ void RenderPreviewPanel(GLFWwindow* window, float window_width, float window_hei
         // No-op when the poller is already running. WakeForRefresh (not WakeForRestart)
         // preserves valid=true across the wake edge — same display-time-inert contract
         // as color/visible/solo/z_order edits (task-color-migration §3 D3).
+        // A wake is a calibration join point (app.cpp, JoinPendingCalibration): the poller must not
+        // observe the startup calibration's run on this server.
+        JoinPendingCalibration();
         g_server_poller.WakeForRefresh(g_server);
         s_last_pushed_ev = composite_ev_push;
       }

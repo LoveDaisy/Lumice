@@ -406,7 +406,7 @@ void ServerPoller::PollOnce() {
 
     // Quality gate: skip texture overwrite for sparse snapshots (too few rays = visible flicker).
     // Cold start (sim_ray_num == 0) is allowed through — no "old good texture" to preserve.
-    unsigned long long min_rays = calibrated_ ? calibrated_min_rays_ : gui::kMinRaysFloor;
+    unsigned long long min_rays = calibrated_.load() ? calibrated_min_rays_.load() : gui::kMinRaysFloor;
     bool quality_ok = cached_stats.sim_ray_num == 0 || cached_stats.sim_ray_num >= min_rays;
 
     // Timeout fallback: if quality gate has been rejecting for too long (e.g. empty filter),

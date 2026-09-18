@@ -95,6 +95,11 @@ bool PushDisplayState(const GuiState& state, LUMICE_Server* server) {
   // mandatory here: display-time refresh must not publish valid=false, else SyncFromPoller
   // observes an invalid snapshot and ReconcileSimState pulls a completed sim back into
   // kSimulating — task-color-migration AC1 activity bug root cause (a).
+  //
+  // Waking the poller is what makes this a calibration join point: the startup calibration runs
+  // the default document on this server with the poller paused, and a poll during that run would
+  // publish the warm-up frame as the user's (app.cpp, JoinPendingCalibration).
+  JoinPendingCalibration();
   g_server_poller.WakeForRefresh(server);
   return true;
 }

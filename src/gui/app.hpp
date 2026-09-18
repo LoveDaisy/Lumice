@@ -119,7 +119,7 @@ extern int g_server_worker_count;
 
 // Put both trackers back to what LUMICE_CreateServer() constructs (CPU, the automatic worker count).
 // MUST be called by any code that creates g_server DIRECTLY rather than through
-// MaybeReconstructServerForConstructionProperties — e.g. the test harnesses — or the next DoRun
+// ConstructServerForState — e.g. the test harnesses — or the next DoRun
 // compares the document against a server that no longer exists and either rebuilds one it did not
 // need to or, worse, keeps one that does not match.
 //
@@ -127,6 +127,22 @@ extern int g_server_worker_count;
 // construction-time properties is stated in exactly one place: adding a third one is then a change
 // to this body, and every direct-creation site inherits it without having to be found again.
 void ResetServerConstructionTrackers();
+
+// The GPU backend this host would run: Metal on Apple, CUDA on NVIDIA, else CPU (probed through
+// the C API, cached on the core side, so it is cheap to ask repeatedly).
+int ResolveGpuBackend();
+
+// The server configuration a document asks for: its two construction-time properties, mapped to
+// what LUMICE_CreateServerEx takes. A pure function of the state so the mapping can be asserted
+// without a server, and the ONE place it is written — startup and the reconstruction on a
+// property change both build from it, which is what makes "the server the calibration warmed up
+// is the server the first Run uses" true by construction rather than by two call sites agreeing.
+LUMICE_ServerConfig ServerConfigForState(const GuiState& state);
+
+// Construct g_server for `state` and record what it was built with (the two trackers above). The
+// caller owns whatever server was live before (destroy it first), the per-server log level (not
+// re-applied here), and the display-generation reset a backend swap needs.
+void ConstructServerForState(const GuiState& state);
 
 // Async Stop completion latch (blueprint §5/§8, 1.6). Set true synchronously by DoStop when it
 // offloads the blocking `poller.Stop() + LUMICE_StopServer` sequence onto a background std::async
@@ -136,6 +152,16 @@ void ResetServerConstructionTrackers();
 // server or poller (use-after-free guard, R1).
 extern std::atomic<bool> g_stop_inflight;
 void JoinPendingStop();
+
+// Block until the startup calibration run (CalibrateQualityThreshold) has finished on its
+// background thread, releasing the future; idempotent / cheap when none is pending. MUST run
+// before every path that destroys or reconstructs g_server (R1, as JoinPendingStop) AND before
+// every path that starts or wakes g_server_poller on it — the calibration is a real run on the
+// server that stays off the screen only because the poller is never woken while it is in flight.
+// Where the second class of caller lives, and why, is spelled out at the definition.
+void JoinPendingCalibration();
+// True while a calibration run handed to the background thread has not been joined yet.
+bool CalibrationPending();
 
 // Aspect ratio state
 extern int g_programmatic_resize;  // Counter: decremented by WindowSizeCallback, set by ApplyAspectRatio
@@ -304,7 +330,15 @@ void DoNew();
 // non-empty bg_path in the state: `.lmc` open, `.json` import, and New — the last of these
 // only became reachable once bg_path could arrive from the user's personal defaults.
 void LoadBackgroundWithDegrade(GuiState& state);
+// Startup: build the default document's calibration scene on the calling thread and hand it to
+// RunCalibrationInBackground. Also the startup warm-up of the server's backend — see the
+// definition for both roles and why the scene build stays on the caller's thread.
 void CalibrateQualityThreshold();
+// Commit `scene` to g_server on a background thread, wait for it to finish (2 s cap), set the
+// poller's quality-gate threshold from its throughput, and leave the server IDLE. The scene is
+// the caller's to choose so a test can hand it a run that outlasts the assertion it makes;
+// production has exactly one caller, CalibrateQualityThreshold. Joins any previous run first.
+void RunCalibrationInBackground(ScenePtr scene);
 // task-metal-gui-commit-backpressure: DoRun returns `true` when this call reached
 // a terminal outcome that needs NO retry next tick — EITHER it issued a
 // LUMICE_CommitScene, OR it hit an unrecoverable pre-commit validation

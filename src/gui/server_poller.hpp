@@ -253,8 +253,11 @@ class ServerPoller {
   // generation cursor reset, for the same server-restart reason.
   void InvalidateAnalysisResult();
 
-  // Set calibrated quality gate threshold (called once at startup after calibration run).
-  // Thread-safe: only called from main thread before any Start().
+  // Set calibrated quality gate threshold (called once at startup, by the calibration run's
+  // background thread — app.cpp RunCalibrationInBackground). The fields it writes are atomic, so
+  // the write is race-free whatever thread the worker is on; the ORDER (threshold set before the
+  // first poll reads it) is the caller's: every path that starts or wakes the worker joins the
+  // calibration first (app.cpp JoinPendingCalibration).
   void SetCalibratedThreshold(unsigned long long threshold);
 
   // ---- Test-only synchronous seam (see test/unit-correctness/gui/test_server_poller.cpp) ----
@@ -381,9 +384,11 @@ class ServerPoller {
   uint64_t last_analysis_generation_{ 0 };
 
   // Adaptive quality gate: calibrated threshold set once at startup via SetCalibratedThreshold().
-  // If not set (calibrated_ == false), falls back to gui::kMinRaysFloor.
-  bool calibrated_{ false };
-  unsigned long long calibrated_min_rays_{ 0 };
+  // If not set (calibrated_ == false), falls back to gui::kMinRaysFloor. Atomic because the
+  // setter runs on the calibration's background thread and the reader is the poll worker; the
+  // pair is consistent because the threshold is stored first and the flag last (seq_cst).
+  std::atomic<bool> calibrated_{ false };
+  std::atomic<unsigned long long> calibrated_min_rays_{ 0 };
 
   // Timeout fallback: force upload if quality gate has been rejecting for too long.
   // Reset in Start(), updated in PollOnce() on each quality_ok pass.
