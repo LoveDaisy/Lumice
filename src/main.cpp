@@ -710,6 +710,16 @@ void SaveRawFloatResults(LUMICE_Server* server, const LUMICE_Scene* scene, const
     if (row.has_valid_data == 0 || row.img_width <= 0 || row.img_height <= 0) {
       continue;
     }
+    // emitted_energy <= 0 makes the normalized scale undefined (division by a non-positive
+    // number); skip this renderer's export entirely rather than silently falling back to raw
+    // values while the sidecar still claims "normalized" -- a file that says one thing and
+    // contains another defeats this feature's whole purpose as a trustworthy oracle.
+    if (mode == RawExportMode::kNormalized && row.emitted_energy <= 0.0f) {
+      std::cerr << "Warning: renderer " << row.renderer_id
+                << " has emitted_energy <= 0; skipping normalized raw export for this frame\n";
+      continue;
+    }
+
     const auto total_pixels = static_cast<std::size_t>(row.img_width) * static_cast<std::size_t>(row.img_height);
     const std::size_t count = total_pixels * 3;
 
@@ -718,10 +728,12 @@ void SaveRawFloatResults(LUMICE_Server* server, const LUMICE_Scene* scene, const
     // which is the absolute-mode exposure scale at intensity_factor = 1 exactly as
     // LUMICE_RawXyzResult::emitted_energy documents it (src/include/lumice.h, "a consumer can
     // reproduce that scale as ...") and as RenderConsumer::ExposureScale computes it. Hand-copied
-    // here because the C API publishes the ingredients, not the product; if that comment or that
-    // function ever changes the formula, this line changes with them.
+    // here -- not extracted into a shared core/color_util.hpp free function -- because this CLI
+    // feature is deliberately kept out of src/core/ entirely; if that comment or that function
+    // ever changes the formula, this line changes with them, same as the existing
+    // config_manager.cpp/c_api.cpp dual-decoder pattern this mirrors.
     const float* payload = row.xyz_buffer;
-    if (mode == RawExportMode::kNormalized && row.emitted_energy > 0.0f) {
+    if (mode == RawExportMode::kNormalized) {
       const auto scale =
           static_cast<float>(static_cast<double>(lumice::kNormScale) * static_cast<double>(total_pixels) /
                              static_cast<double>(row.emitted_energy));
@@ -754,6 +766,9 @@ void SaveRawFloatResults(LUMICE_Server* server, const LUMICE_Scene* scene, const
     meta["anchor_l99_sky"] = row.anchor_l99_sky;
     meta["ev_mode"] = RendererEvModeName(scene, row.renderer_id);
     meta["sim_ray_num"] = stats.sim_ray_num;
+    // sim_seed == 0 unambiguously means "unspecified": TryParseSeedOption rejects an explicit
+    // `--seed 0` with "must be a positive integer" (this file), so 0 can only reach here as the
+    // RenderOptions default, never as a user-chosen value.
     if (sim_seed != 0) {
       meta["seed"] = sim_seed;
     } else {
