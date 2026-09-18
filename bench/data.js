@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1789751526111,
+  "lastUpdate": 1789751528973,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -4788,54 +4788,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "6320bbab9d388df3b07a528374e61df82d920a6b",
-          "message": "Merge pull request #279 from LoveDaisy/task/gui-theme-color-closure\n\nrefactor(gui): 颜色收口——色槽补齐 58/58 + 调用点裸字面量逐处 disposition",
-          "timestamp": "2026-08-29T15:06:01+08:00",
-          "tree_id": "082d1f2e575f42837f85a5f180ed8d57c1ca7176",
-          "url": "https://github.com/LoveDaisy/ice_halo_sim/commit/6320bbab9d388df3b07a528374e61df82d920a6b"
-        },
-        "date": 1787987825114,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 827273.2,
-            "unit": "rays/sec",
-            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 1163973,
-            "unit": "rays/sec",
-            "extra": "CPU: Neoverse-N2\\nCores: 4"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 719872.1,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 9V74 80-Core Processor\\nCores: 4"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 604701.1,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 9V74 80-Core Processor                \\nCores: 4"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "994823ec3a42f7c5fb27150249b58b30ac4f6336",
           "message": "Merge pull request #280 from LoveDaisy/task/overlay-table-acceptance-fixes\n\nfix(gui): Overlay 表格人工验收三条修复",
           "timestamp": "2026-08-29T22:17:55+08:00",
@@ -9542,6 +9494,54 @@ window.BENCHMARK_DATA = {
             "value": 534424.1,
             "unit": "rays/sec",
             "extra": "CPU: AMD EPYC 9V74 80-Core Processor                \\nCores: 4"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "53fa48878ac86e2a3794c6b98f02d20fc12744c0",
+          "message": "Merge pull request #380 from LoveDaisy/fix/fp32-accumulator-compensation\n\nfix(server): widen long-chain fp32 accumulators to double (sub-sun hue drift with ray count)",
+          "timestamp": "2026-09-19T00:59:38+08:00",
+          "tree_id": "f432b8348761a5f45dc462565e3814371088db89",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/53fa48878ac86e2a3794c6b98f02d20fc12744c0"
+        },
+        "date": 1789751528562,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 813344.6,
+            "unit": "rays/sec",
+            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 1017120,
+            "unit": "rays/sec",
+            "extra": "CPU: Neoverse-N2\\nCores: 4"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 710106.2,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 7763 64-Core Processor\\nCores: 4"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 573300.8,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
           }
         ]
       }
