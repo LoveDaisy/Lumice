@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1789750241495,
+  "lastUpdate": 1789750243690,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9560,50 +9560,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "ff02ed3a487ac6e46dd2720351057ed2314aa60b",
-          "message": "Merge pull request #278 from LoveDaisy/task/full-sphere-roll-flip\n\nfix(core+gui): 全球面快路径补 roll 旋转对称条件，修滑条端点浮点漂移导致的采样路静默切换",
-          "timestamp": "2026-08-29T13:20:57+08:00",
-          "tree_id": "12a2380afc7b07d8b15f664fa3f2bf288d3e7f1e",
-          "url": "https://github.com/LoveDaisy/ice_halo_sim/commit/ff02ed3a487ac6e46dd2720351057ed2314aa60b"
-        },
-        "date": 1787981571254,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 84.2,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 101.1,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 96,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 94.6,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "6320bbab9d388df3b07a528374e61df82d920a6b",
           "message": "Merge pull request #279 from LoveDaisy/task/gui-theme-color-closure\n\nrefactor(gui): 颜色收口——色槽补齐 58/58 + 调用点裸字面量逐处 disposition",
           "timestamp": "2026-08-29T15:06:01+08:00",
@@ -13918,6 +13874,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 92,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "f392ee3a91e7a6975dd11b1c7e2867ef8800efa0",
+          "message": "Merge pull request #379 from LoveDaisy/feat/cli-raw-float-export\n\nfeat(cli): --format npy raw float32 XYZ export with sidecar metadata",
+          "timestamp": "2026-09-19T00:39:06+08:00",
+          "tree_id": "7f3a5e880b4c85c0d6f7ca6ecef4f6edd0373fc9",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/f392ee3a91e7a6975dd11b1c7e2867ef8800efa0"
+        },
+        "date": 1789750243085,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 92.4,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 99.7,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 98.4,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 93.8,
             "unit": "%"
           }
         ]
