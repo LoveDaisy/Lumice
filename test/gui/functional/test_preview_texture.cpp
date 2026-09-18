@@ -130,16 +130,14 @@ void RegisterPreviewTextureTests(ImGuiTestEngine* engine) {
       gui::DoNew();
       IM_CHECK(!gui::g_preview.HasTexture());
 
-      std::vector<unsigned char> loaded;
-      int loaded_w = 0;
-      int loaded_h = 0;
-      bool loaded_radiance_only = false;
-      IM_CHECK(gui::LoadLmcFile(tmp_path, gui::g_state, loaded, loaded_w, loaded_h, loaded_radiance_only));
-      IM_CHECK_EQ(loaded_w, kW);
-      IM_CHECK_EQ(loaded_h, kH);
-      IM_CHECK(!loaded.empty());
+      gui::LmcTexture loaded;
+      IM_CHECK(gui::LoadLmcFile(tmp_path, gui::g_state, loaded));
+      IM_CHECK_EQ(loaded.width, kW);
+      IM_CHECK_EQ(loaded.height, kH);
+      IM_CHECK(loaded.mode == gui::PreviewRenderer::TextureMode::kSrgbRadiance);
+      IM_CHECK(!loaded.srgb.empty());
 
-      UploadAndWait(ctx, loaded, loaded_w, loaded_h);
+      UploadAndWait(ctx, loaded.srgb, loaded.width, loaded.height);
       IM_CHECK(gui::g_preview.HasTexture());
       const unsigned char* mirror = gui::g_preview.GetTextureData();
       IM_CHECK(mirror != nullptr);
@@ -149,11 +147,13 @@ void RegisterPreviewTextureTests(ImGuiTestEngine* engine) {
     };
   }
 
-  // The dimensions belong to whichever writer wrote the bytes. RefreshCpuTextureForSave() calls
-  // UpdateCpuTextureData just before a save, at whatever resolution the server's snapshot happens
-  // to be — which is not always the resolution of the last UploadTexture. When those fields were
-  // left behind, SaveLmcFile declared the OLD size over the NEW payload, and the document was
-  // written malformed with nothing complaining at save time.
+  // The dimensions belong to whichever writer wrote the bytes. RefreshCpuTextureForSave() refreshes
+  // the CPU mirror just before a save, at whatever resolution the retained snapshot happens to be
+  // — which is not always the resolution of the last UploadTexture. When those fields were left
+  // behind, SaveLmcFile declared the OLD size over the NEW payload, and the document was written
+  // malformed with nothing complaining at save time. Production now refreshes through
+  // UpdateCpuXyzTextureData (the float mirror); this case drives the 8-bit sibling, which shares
+  // the dimension contract and is the one whose bytes can be compared without a GL float readback.
   //
   // The two sizes differ AND the payloads differ, deliberately: a check on size alone would pass on
   // a writer that carried the dimensions across but kept the stale pixels.
@@ -184,15 +184,12 @@ void RegisterPreviewTextureTests(ImGuiTestEngine* engine) {
       IM_CHECK(gui::SaveLmcFile(tmp_path, gui::g_state, gui::g_preview, /*include_texture=*/true));
 
       gui::GuiState loaded_state;
-      std::vector<unsigned char> loaded;
-      int loaded_w = 0;
-      int loaded_h = 0;
-      bool loaded_radiance_only = false;
-      IM_CHECK(gui::LoadLmcFile(tmp_path, loaded_state, loaded, loaded_w, loaded_h, loaded_radiance_only));
-      IM_CHECK_EQ(loaded_w, kNewW);
-      IM_CHECK_EQ(loaded_h, kNewH);
-      IM_CHECK_EQ(loaded.size(), static_cast<size_t>(kNewW) * kNewH * 3);
-      ExpectSamePixels("refresh_dimensions", loaded.data(), refreshed, kNewW, kNewH);
+      gui::LmcTexture loaded;
+      IM_CHECK(gui::LoadLmcFile(tmp_path, loaded_state, loaded));
+      IM_CHECK_EQ(loaded.width, kNewW);
+      IM_CHECK_EQ(loaded.height, kNewH);
+      IM_CHECK_EQ(loaded.srgb.size(), static_cast<size_t>(kNewW) * kNewH * 3);
+      ExpectSamePixels("refresh_dimensions", loaded.srgb.data(), refreshed, kNewW, kNewH);
 
       std::remove(tmp_path.c_str());
     };

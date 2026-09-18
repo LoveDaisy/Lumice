@@ -305,7 +305,7 @@ def _run_plan(groups: list[ReferenceGroup], explicit: int | None) -> dict[str, i
 # name via a plain text/regex read, matching how it reads scripts/build.sh — instead of having
 # to import this module (and its numpy/PIL dependency graph) just to reach one string.
 SUITE_FILTER_EXPR = (
-    "-perf_test,-save_open_visual_consistency,-revert_repushes_server_display_state,"
+    "-perf_test,-revert_repushes_server_display_state,"
     "-zorder_priority_persists_across_rerun,-gpu_color_class_overflow,"
     "-run_after_analysis_renders_gpu"
 )

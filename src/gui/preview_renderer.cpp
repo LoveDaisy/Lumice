@@ -142,11 +142,13 @@ const float PI = 3.14159265358979323846;
 //                           before the format carried radiance-only textures (v <= 3). Neither can
 //                           be corrected here: the sky is summed into the texel and un-summing it
 //                           is not invertible where the bake clipped.
-//   kTexModeXyz             float XYZ radiance from the live simulation.
+//   kTexModeXyz             float XYZ radiance: the live simulation, and a .lmc from format v5 on,
+//                           which stores the live frame's floats and reopens through this branch.
 //   kTexModeSrgbRadiance    8-bit sRGB texels carrying the halo's radiance ALONE, exposure already
 //                           applied, no sky. Everything a display still owes the picture — the
 //                           lens's relative illumination, then the sky — is applied below, by the
-//                           same two steps and in the same order as the XYZ branch.
+//                           same two steps and in the same order as the XYZ branch. Producers: the
+//                           raypath-colour composite the server bakes, and a v4 .lmc.
 const int kTexModeSrgbComposited = 0;
 const int kTexModeXyz = 1;
 const int kTexModeSrgbRadiance = 2;
@@ -963,12 +965,15 @@ void main() {
           float e = tex_color.y * rel_illum * u_intensity_scale;
           tex_color = clampAndGamma(subtractiveInk(e, u_paper));
         } else if (u_tone == 1) {
-          // kTexModeSrgbRadiance under print: a KNOWN GAP, held here on purpose rather than left to
-          // look supported. These texels are a reopened .lmc whose exposure was already baked in, so
-          // the exposed scalar `e` the operator needs is not directly available — recovering it
-          // would mean inverting the bake through the standard luminance coefficients, which is a
-          // relationship nothing in this repo has verified. Until it is, such a document keeps the
-          // screen result until the next simulation run replaces the texture with a live XYZ one.
+          // kTexModeSrgbRadiance under print: a KNOWN GAP, confined to the v<=4 .lmc format (and
+          // the composite preview) and held here on purpose rather than left to look supported.
+          // These texels had their exposure baked in when they were written, so the exposed scalar
+          // `e` the operator needs is not directly available — recovering it would mean inverting
+          // the bake through the standard luminance coefficients, which is a relationship nothing
+          // in this repo has verified. A document saved from format v5 on never reaches this
+          // branch: its texture is the live frame's linear XYZ and takes the kTexModeXyz arm above,
+          // print included. An older document keeps the screen result until the next simulation
+          // run (or a re-save after one) replaces the texture with a v5 one.
           // See doc/print-mode-subtractive-ink.md.
           tex_color = clampAndGamma(radiance_linear + u_background);
         } else {
@@ -1179,6 +1184,9 @@ void PreviewRenderer::Destroy() {
   tex_width_ = 0;
   tex_height_ = 0;
   tex_data_.clear();
+  tex_xyz_data_.clear();
+  tex_xyz_meta_ = XyzTextureMeta{};
+  cpu_tex_mode_ = TextureMode::kSrgbComposited;
   bg_width_ = 0;
   bg_height_ = 0;
   bg_aspect_ = 1.0f;
@@ -1188,6 +1196,9 @@ void PreviewRenderer::ClearTexture() {
   tex_width_ = 0;
   tex_height_ = 0;
   tex_data_.clear();
+  tex_xyz_data_.clear();
+  tex_xyz_meta_ = XyzTextureMeta{};
+  cpu_tex_mode_ = TextureMode::kSrgbComposited;
   // GL reset deferred to next Render() (main thread) — this method is called
   // from gui_test coroutine workers with no GL context; a direct gl* call
   // would SIGILL. See preview_renderer.hpp needs_gl_blank_ contract.
@@ -1219,6 +1230,22 @@ void PreviewRenderer::UpdateCpuTextureData(const unsigned char* data, int width,
   }
   size_t byte_count = static_cast<size_t>(width) * height * 3;
   tex_data_.assign(data, data + byte_count);
+  tex_xyz_data_.clear();
+  tex_xyz_meta_ = XyzTextureMeta{};
+  cpu_tex_mode_ = TextureMode::kSrgbRadiance;
+  tex_width_ = width;
+  tex_height_ = height;
+}
+
+void PreviewRenderer::UpdateCpuXyzTextureData(const float* data, int width, int height, const XyzTextureMeta& meta) {
+  if (!data || width <= 0 || height <= 0) {
+    return;
+  }
+  size_t float_count = static_cast<size_t>(width) * height * 3;
+  tex_xyz_data_.assign(data, data + float_count);
+  tex_xyz_meta_ = meta;
+  tex_data_.clear();
+  cpu_tex_mode_ = TextureMode::kXyz;
   tex_width_ = width;
   tex_height_ = height;
 }
@@ -1242,9 +1269,13 @@ void PreviewRenderer::UploadUint8Texture(const unsigned char* data, int width, i
   // intervening Render) doesn't get overwritten with black on the next frame.
   needs_gl_blank_ = false;
 
-  // Keep CPU-side copy for .lmc file save
+  // Keep CPU-side copy for .lmc file save, under the mode the caller declared: a reopened pre-v4
+  // document re-saved without a run must go back out flagged composited, not radiance-only.
   size_t byte_count = static_cast<size_t>(width) * height * 3;
   tex_data_.assign(data, data + byte_count);
+  tex_xyz_data_.clear();
+  tex_xyz_meta_ = XyzTextureMeta{};
+  cpu_tex_mode_ = mode;
 
   glBindTexture(GL_TEXTURE_2D, texture_);
   glPixelStorei(GL_UNPACK_ALIGNMENT, 1);  // RGB data may not be 4-byte aligned
@@ -1270,7 +1301,9 @@ void PreviewRenderer::UploadXyzTexture(const float* data, int width, int height)
   // win over any pending deferred blank (see UploadUint8Texture for rationale).
   needs_gl_blank_ = false;
 
-  // Do NOT update tex_data_ (CPU copy) — XYZ float data is not suitable for .lmc save.
+  // Does NOT touch the CPU-side mirror (tex_data_ / tex_xyz_data_): this runs at the poll rate,
+  // and Save refreshes the mirror from the retained poller payload instead — see
+  // UpdateCpuXyzTextureData.
   size_t byte_count = static_cast<size_t>(width) * height * 3 * sizeof(float);
   int w = pbo_index_;
 

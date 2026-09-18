@@ -195,6 +195,26 @@ struct PreviewParams {
   int tone = 0;
 };
 
+// The exposure measurements that travelled with a linear-XYZ texture when it was produced, kept
+// beside the pixels because they are meaningless apart: ComputeMonoExposure turns the raw texel
+// values into display brightness through exactly these numbers, so a document that stores the
+// texels has to store them too or it reopens black. They are per-snapshot MEASUREMENTS of the
+// frame (what landed, what was emitted, the sky anchor), not settings — which is why they ride in
+// the .lmc texture section and not in the JSON document body that the settings live in.
+struct XyzTextureMeta {
+  // LUMICE_RawXyzResult::snapshot_intensity — the relative-mode denominator.
+  float snapshot_intensity = 0.0f;
+  // LUMICE_RawXyzResult::emitted_energy — the absolute-mode denominator.
+  float emitted_energy = 0.0f;
+  // The mono auto-EV anchor in the texture's own units: axis_solid_angle * anchor_l99_sky, the
+  // product SyncFromPoller (app.cpp) stores in GuiState::p99_raw_y for the mono path. Stored as
+  // the product rather than the two factors so a reopened document recomputes ev_auto from the
+  // very float the live view used.
+  float mono_anchor = 0.0f;
+  // LUMICE_RawXyzResult::effective_pixels — status-bar statistic only.
+  int effective_pixels = 0;
+};
+
 class PreviewRenderer {
  public:
   // What the source texture's samples MEAN, and therefore how much of the display chain the
@@ -206,12 +226,14 @@ class PreviewRenderer {
     // written before the format carried radiance-only textures (v <= 3), whose sky is summed into
     // every texel and cannot be un-summed where the bake clipped.
     kSrgbComposited = 0,
-    // Float XYZ radiance from the live simulation.
+    // Float XYZ radiance: the live simulation, and a .lmc from format v5 on, whose texture section
+    // is the live frame's floats — so a reopened document renders through the branch the live
+    // view rendered through, on the same bytes.
     kXyz = 1,
     // 8-bit sRGB texels carrying the halo's radiance ALONE — exposure already applied, no sky.
     // The shader applies the target lens's relative illumination and then the sky, by the same
-    // lines and in the same order as the XYZ branch, so a picture reopened from disk renders the
-    // way the live view rendered it.
+    // lines and in the same order as the XYZ branch. Producers: the raypath-colour composite the
+    // server bakes, and a v4 .lmc (the format that baked exposure into 8 bits).
     kSrgbRadiance = 2,
   };
 
@@ -223,25 +245,44 @@ class PreviewRenderer {
   void UploadTexture(const unsigned char* data, int width, int height);
 
   // The same bytes, but carrying the halo's radiance alone — see TextureMode::kSrgbRadiance.
-  // This is the entry point every current producer uses: the .lmc bake and the composite
-  // (raypath-colour) preview both hand over radiance-only pixels.
+  // Two producers: the composite (raypath-colour) preview, and a v4 .lmc being reopened.
   void UploadRadianceTexture(const unsigned char* data, int width, int height);
 
-  // Upload equirectangular XYZ float data — for live simulation preview
+  // Upload equirectangular XYZ float data — the live simulation preview, and a v>=5 .lmc being
+  // reopened (the same bytes a live upload of that frame carried).
   void UploadXyzTexture(const float* data, int width, int height);
 
   // Render preview into the given viewport region (in framebuffer pixels)
   void Render(int vp_x, int vp_y, int vp_w, int vp_h, const PreviewParams& params);
 
   bool HasTexture() const { return tex_width_ > 0 && tex_height_ > 0; }
+  // What texture_ currently holds, i.e. which shader branch the next Render() takes. Read-only;
+  // the upload entry points are the only writers.
+  TextureMode GetTextureMode() const { return tex_mode_; }
   void ClearTexture();
 
-  // Update CPU-side texture data only (no GL upload, no tex_mode_ change).
-  // Used by Save to refresh tex_data_ without disturbing the GPU texture.
+  // Update the CPU-side uint8 mirror only (no GL upload, no tex_mode_ change). The mirror is
+  // declared kSrgbRadiance: every producer that bakes bytes into it bakes the halo alone.
+  // Production no longer reaches it — Save mirrors linear XYZ through UpdateCpuXyzTextureData —
+  // but it stays as the seam tests use to plant known pixels behind SaveLmcFile.
   void UpdateCpuTextureData(const unsigned char* data, int width, int height);
 
-  // CPU-side texture data access (for .lmc file save)
+  // Update the CPU-side linear-XYZ mirror only (no GL upload, no tex_mode_ change): the W*H*3
+  // floats exactly as UploadXyzTexture received them, plus the measurements that expose them.
+  // This is what Save serializes. It is NOT written by UploadXyzTexture itself: that runs at the
+  // poll rate on a buffer of tens of megabytes, and a second copy there would double the cost of
+  // every live upload for the benefit of the occasional Save. The frame stays reachable through
+  // the poller payload the upload came from, so Save copies it once, at Save time.
+  void UpdateCpuXyzTextureData(const float* data, int width, int height, const XyzTextureMeta& meta);
+
+  // CPU-side mirror access (for .lmc file save). The two data getters are mutually exclusive by
+  // construction: whichever of the mirrors was written last cleared the other, and
+  // GetCpuTextureMode() says which one is live — kXyz reads GetXyzTextureData(), the two sRGB
+  // modes read GetTextureData(). A caller must branch on the mode, not on which pointer is null.
+  TextureMode GetCpuTextureMode() const { return cpu_tex_mode_; }
   const unsigned char* GetTextureData() const { return tex_data_.empty() ? nullptr : tex_data_.data(); }
+  const float* GetXyzTextureData() const { return tex_xyz_data_.empty() ? nullptr : tex_xyz_data_.data(); }
+  const XyzTextureMeta& GetXyzTextureMeta() const { return tex_xyz_meta_; }
   int GetTextureWidth() const { return tex_width_; }
   int GetTextureHeight() const { return tex_height_; }
 
@@ -258,7 +299,14 @@ class PreviewRenderer {
   unsigned int texture_ = 0;
   int tex_width_ = 0;
   int tex_height_ = 0;
-  std::vector<unsigned char> tex_data_;                  // CPU-side copy of texture (RGB uint8, for .lmc save)
+  // CPU-side mirror for .lmc save: exactly one of the two vectors is non-empty, and cpu_tex_mode_
+  // names it. Deliberately separate from tex_mode_ below: the GPU texture tracks what is on
+  // screen and is rewritten at the poll rate, the mirror tracks what Save would write and is
+  // refreshed only at Save / Open time, so the two can legitimately disagree in between.
+  std::vector<unsigned char> tex_data_;  // RGB uint8 (kSrgbComposited / kSrgbRadiance)
+  std::vector<float> tex_xyz_data_;      // linear XYZ float (kXyz)
+  XyzTextureMeta tex_xyz_meta_;          // companion of tex_xyz_data_
+  TextureMode cpu_tex_mode_ = TextureMode::kSrgbComposited;
   TextureMode tex_mode_ = TextureMode::kSrgbComposited;  // what texture_ currently holds
 
   // Deferred GL blank request. ClearTexture() sets this from any thread

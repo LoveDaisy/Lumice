@@ -296,60 +296,51 @@ void ApplyAspectRatio(GLFWwindow* window, AspectPreset preset, bool portrait, fl
   g_state.aspect_clamp.achieved_preview_ratio = fit.achieved_preview_ratio;
 }
 
-// Ensure CPU-side sRGB uint8 texture is available for .lmc save.
-// Uses raw XYZ data + current GUI intensity_scale to match the shader's rendering,
-// rather than the old PostSnapshot path which used stale CommitConfig-time EV.
+// The poller payload behind the texture currently on screen, retained by SyncFromPoller at the
+// moment it uploads and released when the document changes (ResetFrontendState). It is what
+// Save serializes, and holding it — rather than acquiring a fresh result frame at Save time — is
+// what makes "the file holds the pixels that were on screen" true by construction: a fresh
+// acquire runs DoSnapshot, which may publish a newer accumulation than the one the last poll
+// uploaded, and the two would then differ by sampling noise. The payload's frame keeps its pixel
+// storage alive for as long as the payload is held (server_poller.hpp), across further
+// snapshots and across the server being stopped or destroyed, so this is a share of the frame's
+// lifetime, not a borrow.
+static std::shared_ptr<const TexturePayload> g_last_uploaded_payload;
+
+// Refresh the renderer's CPU-side mirror with the linear XYZ energy behind the picture on screen,
+// so SaveLmcFile writes it out. No exposure, no sky, no vignetting: all three are settings the
+// document's JSON carries and the preview shader applies at display time, for a reopened document
+// through the same kTexModeXyz branch as for a live one — which is exactly what lets the EV
+// slider, the exposure mode, the background and print mode keep working on the reopened picture,
+// and what removes the bake-then-clip step whose clipping used to blur a hot spot the live view
+// showed sharp (bilinear on clipped bytes vs bilinear on unclipped energy). The exposure
+// measurements travel alongside (XyzTextureMeta) so ComputeMonoExposure has its denominators back
+// on reopen; they are read off the retained payload, i.e. off the frame the pixels belong to,
+// through the same expression SyncFromPoller used to fill GuiState from it.
+//
+// Unconditional, with no visibility gate: this buffer is not a view of the sky, it is the
+// fixed full-sky dual-fisheye SOURCE the preview re-projects. The gate the shader applies
+// (result.w >= 0.5 && pixel_visible) is a screen-space property of the current lens / fov /
+// orientation, which this buffer has none of — every legal world direction lands inside one of
+// its two discs, and the packing's corner padding is never sampled back out.
+//
+// Mono XYZ always, even while the composite (raypath-colour) preview is showing: the payload
+// carries xyz_buffer in both cases, and the composite colouring is a display-time rule the
+// document's JSON re-derives. Same scope the sRGB bake this replaced had.
 static void RefreshCpuTextureForSave() {
-  if (!g_server || g_state.sim_state == SimState::kIdle) {
-    return;  // No simulation data to refresh
+  if (g_state.sim_state == SimState::kIdle || g_last_uploaded_payload == nullptr) {
+    return;  // No simulation data to refresh; the mirror keeps whatever Open last put there
   }
-
-  // Holding the frame across the read + conversion below is what makes the borrow safe:
-  // the poller worker may publish a new snapshot at any moment, and before frames existed
-  // that would have rewritten xyz_buffer mid-conversion.
-  LUMICE_ResultFrame* raw_frame = nullptr;
-  if (LUMICE_AcquireResultFrame(g_server, &raw_frame) != LUMICE_OK) {
+  const TexturePayload& payload = *g_last_uploaded_payload;
+  if (payload.xyz_buffer == nullptr || payload.width <= 0 || payload.height <= 0) {
     return;
   }
-  lumice::ResultFramePtr frame(raw_frame);
-
-  LUMICE_RawXyzResult xyz_results[2]{};
-  LUMICE_FrameGetRawXyz(frame.get(), xyz_results, 1);
-  if (xyz_results[0].xyz_buffer == nullptr || xyz_results[0].img_width <= 0 || xyz_results[0].img_height <= 0) {
-    return;
-  }
-
-  int w = xyz_results[0].img_width;
-  int h = xyz_results[0].img_height;
-
-  // Same exposure the shader is showing, from the same function it uses (mono_exposure_scale.hpp)
-  // — the saved thumbnail must match the picture on screen, mode included. Read off THIS frame
-  // rather than off g_state so the numbers belong to the pixels being converted.
-  lumice::gui::MonoExposureInput ev_in;
-  ev_in.exposure_offset = g_state.renderer.exposure_offset;
-  ev_in.ev_auto = g_state.ev_auto;
-  ev_in.snapshot_intensity = xyz_results[0].snapshot_intensity;
-  ev_in.snapshot_emitted_energy = xyz_results[0].emitted_energy;
-  ev_in.total_pixels = w * h;
-  const lumice::gui::MonoExposure ev = lumice::gui::ComputeMonoExposure(g_state.renderer.ev_mode, ev_in);
-
-  // Convert XYZ→sRGB on CPU using the same exposure the shader is showing, and WITHOUT the sky
-  // colour. The background is a setting, not part of the picture: it is stored in the document's
-  // JSON (SerializeRendererForGui's "background") and re-added by the preview shader at display
-  // time, for a reopened document exactly as for a live one. Summing it in here instead is what
-  // used to make the two differ — a composited texel cannot afterwards receive the target lens's
-  // relative illumination, because scaling it would dim the sky too. See
-  // PreviewRenderer::TextureMode and doc/ev-pipeline-architecture.md §7.5.
-  //
-  // Unconditional, with no visibility gate: this buffer is not a view of the sky, it is the
-  // fixed full-sky dual-fisheye SOURCE the preview re-projects. The gate the shader applies
-  // (result.w >= 0.5 && pixel_visible) is a screen-space property of the current lens / fov /
-  // orientation, which this buffer has none of — every legal world direction lands inside one of
-  // its two discs, and the packing's corner padding is never sampled back out.
-  std::vector<unsigned char> srgb(static_cast<size_t>(w) * h * 3);
-  LUMICE_XyzToSrgbUint8(xyz_results[0].xyz_buffer, srgb.data(), w * h, ev.intensity_scale);
-
-  g_preview.UpdateCpuTextureData(srgb.data(), w, h);
+  XyzTextureMeta meta;
+  meta.snapshot_intensity = payload.snapshot_intensity;
+  meta.emitted_energy = payload.emitted_energy;
+  meta.mono_anchor = payload.axis_solid_angle * payload.anchor_l99_sky;
+  meta.effective_pixels = payload.effective_pixels;
+  g_preview.UpdateCpuXyzTextureData(payload.xyz_buffer, payload.width, payload.height, meta);
 }
 
 // task-cleanup-hardening AC4: PerformSave / PerformSaveAs are the actual
@@ -706,7 +697,7 @@ void LoadBackgroundWithDegrade(GuiState& state) {
   }
 }
 
-void ResetFrontendState(GuiState& state, FrontendResetReason reason, const FrontendTexturePayload* baked) {
+void ResetFrontendState(GuiState& state, FrontendResetReason reason, const LmcTexture* baked) {
   // reason/payload consistency: baked payload is present iff and only if kOpenBaked.
   // A caller mismatch is a programming error — assert here so it fails fast in debug builds
   // instead of silently doing the wrong thing (UB deref if kOpenBaked && baked==nullptr, or
@@ -734,13 +725,34 @@ void ResetFrontendState(GuiState& state, FrontendResetReason reason, const Front
       ClearBackgroundImage(state);
       break;
     case FrontendResetReason::kOpenBaked:
-      // Which upload entry point is decided by the file, not by this owner: a v>=4 .lmc carries
-      // radiance-only pixels the shader still owes the vignetting and the sky, a pre-v4 one has
-      // the sky already summed in and can only be shown as it is.
-      if (baked->radiance_only) {
-        g_preview.UploadRadianceTexture(baked->data, baked->width, baked->height);
-      } else {
-        g_preview.UploadTexture(baked->data, baked->width, baked->height);
+      // Which upload entry point is decided by the file, not by this owner: a v>=5 .lmc carries
+      // the unexposed linear XYZ energy a live run uploads, a v4 one carries radiance-only bytes
+      // the shader still owes the vignetting and the sky, a pre-v4 one has the sky already summed
+      // in and can only be shown as it is.
+      switch (baked->mode) {
+        case PreviewRenderer::TextureMode::kXyz:
+          g_preview.UploadXyzTexture(baked->xyz.data(), baked->width, baked->height);
+          // The mirror too, so a Save of this document with no run in between writes the same
+          // section back out rather than whatever the previous document left in the mirror.
+          g_preview.UpdateCpuXyzTextureData(baked->xyz.data(), baked->width, baked->height, baked->meta);
+          // The exposure state SyncFromPoller would have filled from a live frame, filled from the
+          // file instead — the same four numbers, from the same frame the pixels came from, so the
+          // per-frame ComputeMonoExposure in the Display panel lights this texture exactly as it
+          // lit the live one. Without them intensity_scale is 0 and the reopened document is black.
+          // ev_auto is recomputed rather than stored: it is a pure function of the anchor, the
+          // intensity and target_white, and target_white is not persisted.
+          state.snapshot_intensity = baked->meta.snapshot_intensity;
+          state.snapshot_emitted_energy = baked->meta.emitted_energy;
+          state.effective_pixels = baked->meta.effective_pixels;
+          state.p99_raw_y = baked->meta.mono_anchor;
+          state.ev_auto = LUMICE_ComputeEvAuto(state.p99_raw_y, state.snapshot_intensity, state.target_white);
+          break;
+        case PreviewRenderer::TextureMode::kSrgbRadiance:
+          g_preview.UploadRadianceTexture(baked->srgb.data(), baked->width, baked->height);
+          break;
+        case PreviewRenderer::TextureMode::kSrgbComposited:
+          g_preview.UploadTexture(baked->srgb.data(), baked->width, baked->height);
+          break;
       }
       ClearBackgroundImage(state);
       break;
@@ -751,8 +763,12 @@ void ResetFrontendState(GuiState& state, FrontendResetReason reason, const Front
 
   // Poller-side staged composite fence: document-switch reasons must discard any in-flight
   // snapshot from the previous scene (task-351 class regression). Revert keeps current staged.
+  // The payload Save reads goes with it: it belonged to the previous document's picture, and
+  // whatever this document shows next either came from a file (mirrored above, no payload) or
+  // will come from a fresh upload that retains its own.
   if (reason != FrontendResetReason::kRevert) {
     g_server_poller.InvalidateStagedTexture();
+    g_last_uploaded_payload.reset();
   }
 
   // The analysis tool's state is about the scene that was on screen: its picked centre, its
@@ -855,9 +871,7 @@ void DoOpen(const std::filesystem::path& path) {
   }
 
   // Load .lmc binary file
-  std::vector<unsigned char> tex_data;
-  int tex_w = 0;
-  int tex_h = 0;
+  LmcTexture tex;
   // Discard any stale counts so only this load's downgrades are counted. Both channels need the
   // drain, and the filter one needs it for a reason the shape one does not have: MakeNewDocumentState
   // runs the user's personal defaults through the same deserializer, so a hand-edited defaults file
@@ -865,16 +879,14 @@ void DoOpen(const std::filesystem::path& path) {
   TakeShapeDistDowngradeCount();
   TakeFilterNoPredicateDowngradeCount();
   TakeInvalidSummandRowCount();
-  bool tex_radiance_only = false;
-  if (LoadLmcFile(path, g_state, tex_data, tex_w, tex_h, tex_radiance_only)) {
+  if (LoadLmcFile(path, g_state, tex)) {
     // Data restore + command-semantic fields (path/dirty/run_intent stay in handler).
     g_state.current_file_path = path;
     g_state.dirty = false;
-    if (!tex_data.empty()) {
+    if (tex.HasPixels()) {
       // Intent: a baked static result (→ kDone via ReconcileSimState, no server run).
       g_state.run_intent = RunIntent::kLoaded;
-      FrontendTexturePayload payload{ tex_data.data(), tex_w, tex_h, tex_radiance_only };
-      ResetFrontendState(g_state, FrontendResetReason::kOpenBaked, &payload);
+      ResetFrontendState(g_state, FrontendResetReason::kOpenBaked, &tex);
     } else {
       // Intent: no result to show (→ kIdle). Mirrors DoNew() / JSON-import
       // semantics: "no preview data = clear screen, wait for user to Run".
@@ -1962,6 +1974,9 @@ void SyncFromPoller() {
     } else {
       g_preview.UploadXyzTexture(payload->xyz_buffer, payload->width, payload->height);
     }
+    // Retained for Save: the picture now on screen is this payload's, and the file must hold
+    // exactly it. See g_last_uploaded_payload.
+    g_last_uploaded_payload = payload;
     g_state.last_uploaded_as_composite = effective_composite;
     g_state.snapshot_intensity = payload->snapshot_intensity;
     g_state.snapshot_emitted_energy = payload->emitted_energy;
