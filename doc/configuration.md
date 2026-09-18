@@ -1578,6 +1578,143 @@ Two CLI switches (deliberately not environment variables — a user-facing behav
 
 The interactive GUI binary defaults to auto-detecting the OS directory when neither flag is passed. The GUI test binary defaults to disabled instead, so a visual-regression reference image never depends on whichever `user_defaults.json` happens to exist on the machine that captured it.
 
+## CLI Raw Float Export (`--format npy`)
+
+`Lumice render --format npy` writes, for every entry in `render`, the **unexposed linear XYZ
+accumulator** the 8-bit image is baked from — before the exposure scale, the background, the
+annotation layers, the clamp and the sRGB curve — as a float32 `.npy` plus a sidecar `.json`.
+It exists for quantitative comparison against a non-Monte-Carlo result: the baked image flattens
+the highlights, and a log-domain profile through a parhelion cannot be judged from it. This is
+**not** a second rendering pipeline: the array is the same accumulator snapshot the CLI would
+have baked into `img_XX.jpg`, read through the same result frame, so what the export reports and
+what the image shows are one measurement in two encodings.
+
+The mode of the export is a CLI concern, so it lives in two CLI-side places and nowhere in the
+`render[]` entries: the **GUI never reads it**, its `.lmc` documents and its "Export Config
+JSON" carry no trace of it, and a config that sets it renders identically under the GUI.
+
+### Files
+
+For renderer `id` = N the CLI writes `img_0N.npy` and `img_0N.json` (the same numbering as the
+8-bit images); no `.jpg`/`.png` is written for that renderer. A `raypath_color` composite, if
+configured, still goes out as `img_0N_components.jpg` — there is no float composite, it is a
+display product, not a measurement.
+
+`img_0N.npy` is numpy format v1.0, `dtype` float32 little-endian, `shape (H, W, 3)`, C order:
+`arr[row, col, c]` with row 0 at the top of the image and `c` = X, Y, Z (CIE 1931, the same
+tristimulus the image is baked from). `numpy.load` reads it directly; the file is written by
+the CLI itself with no library, and its header is the one-line dict `numpy` documents.
+
+`img_0N.json` records the ingredients of every conversion below:
+
+| Field | Meaning |
+|-------|---------|
+| `normalization` | `"raw"` or `"normalized"` — which of the two scales below the array is in |
+| `renderer_id`, `width`, `height`, `total_pixels` | The `render[]` entry and its resolution (`total_pixels = width × height`) |
+| `channels`, `dtype` | `"XYZ"`, `"float32"` — restated so the sidecar is self-describing |
+| `emitted_energy` | Total spectral energy the light source emitted this run: Σ over batches of (per-ray emission weight × rays). For a discrete spectrum of weights summing to 1 this is the ray count |
+| `intensity_factor` | The renderer's `intensity_factor` (2^EV). **Reported, never applied** — see below |
+| `axis_solid_angle` | Steradians subtended by one pixel on this renderer's optical axis |
+| `anchor_l99_sky` | The scene's relative-mode exposure anchor (P99 sky radiance, Y per steradian); identical for every renderer of a run |
+| `ev_mode` | This renderer's `"absolute"` / `"relative"` — decides which scale the baked image used |
+| `sim_ray_num` | Rays simulated at the moment the snapshot was taken, from the same frame as the pixels |
+| `seed` | The `--seed` value, or `null` when the run was randomly seeded |
+| `lumice_api_version` | `LUMICE_API_VERSION` of the binary that wrote the file |
+
+### What a pixel value is
+
+Every ray that reaches the lens lands on one pixel and adds its weight — the emission weight
+of its spectrum line, attenuated by the Fresnel losses along its path — converted to XYZ
+through the unnormalized CIE 1931 colour-matching functions (`kCmfX/Y/Z` in
+`src/util/color_data.hpp`), to that pixel. Nothing per steradian, no exposure. Under `"raw"`
+the value written is that sum as is:
+
+    raw[p] = Σ_{rays landing on p} w_ray · CMF(λ_ray)
+
+so for a single-wavelength spectrum of weight 1, `raw[p][1]` (the Y channel) is `ȳ(λ)` times
+the summed exit weight of the rays that landed on pixel `p`, and `Σ_p raw[p][1] / ȳ(λ)` over the
+frame is the energy that reached the lens (compare it with `emitted_energy` to read the landed
+fraction). Under `"normalized"` one scalar is applied:
+
+    normalized[p] = raw[p] · kNormScale · total_pixels / emitted_energy         (kNormScale = 0.08)
+
+which is the exposure scale the renderer applies under `ev_mode: "absolute"` at
+`intensity_factor = 1`, so `normalized` is the linear input the sRGB stage of the baked image
+would see at EV 0. `raw` is the default: it is the physical quantity, and the other is one
+multiply away with the sidecar in hand.
+
+Derived quantities, from `raw`:
+
+- **Energy per emitted ray**: `raw[p] / emitted_energy` — the fraction of the source's emission
+  that landed on pixel `p`, comparable across runs of different `ray_num`.
+- **Radiance per steradian** (on the optical axis): `raw[p] / (emitted_energy · axis_solid_angle)`.
+  Off axis, a pixel's own solid angle is `axis_solid_angle` times the projection's relative
+  illumination, which the sidecar does not carry — a consumer needing per-pixel solid angles
+  computes them from the lens parameters in the config.
+
+### Relation to the 8-bit image
+
+For a renderer with `ev_mode: "absolute"`, the image the CLI writes is, per pixel and per channel,
+
+    srgb8 = floor(255 · OETF(clamp(M · gamut_clip(normalized · intensity_factor) + background)))
+
+i.e. `normalized` times the renderer's `intensity_factor`, gamut-clipped toward the D65 grey of
+equal Y, through the XYZ→linear-sRGB matrix with a clamp, plus the `background`, clamped, through
+the sRGB transfer curve, truncated to 8 bits — followed by the annotation layers and the `visible`
+clip when those are configured. The constants are `kWhitePointD65` / `kXyzToRgb` in
+`src/util/color_data.hpp` and the curve in `src/util/color_space.hpp`; the loop is
+`RenderConsumer::PostSnapshot` in `src/server/render.cpp`, and
+`test/e2e-correctness/test_raw_float_export.py` holds this reconstruction to the CLI's own PNG
+at one LSB. Two consequences worth spelling out:
+
+- **`normalized` always uses the absolute-mode scale, whatever the renderer's `ev_mode` is.**
+  Under the default `"relative"`, the baked image is anchored to `anchor_l99_sky` instead
+  (`scale = intensity_factor · TargetWhiteToLinear(135) / (axis_solid_angle · anchor_l99_sky)`,
+  see [`ev-pipeline-architecture.md`](ev-pipeline-architecture.md) §2.8), and `normalized` and
+  the image then differ by a constant gain that is not an error. Read `ev_mode` from the sidecar
+  before treating the two as the same scale; set `"ev_mode": "absolute"` on the renderer if you
+  want them to be.
+- **`intensity_factor` is never baked into the export**, in either mode. It is the image's EV
+  knob, and folding it in would make two exports of the same scene at different EVs read as
+  different measurements; the sidecar reports it so a consumer can apply it when reproducing the
+  image, and only then.
+
+A consumer holding per-raypath energies on its own accounting (one specific raypath, where
+the configured filter's P/B/D `symmetry` admits its 6 or 12 equivalents, say) aligns them to the
+export through `emitted_energy` and that filter: the export's `raw` is the energy of every ray
+the filter admitted, whichever equivalent of the path it followed, deposited where that
+equivalent's geometry sends it. The equivalents share one emission budget, so the folding
+between "one path" and "all its equivalents" is an accounting against `emitted_energy`, not a
+per-pixel factor.
+
+### Selecting the mode
+
+```bash
+Lumice render -f config.json -o out --format npy                                 # raw (default)
+Lumice render -f config.json -o out --format npy --raw-normalization normalized
+```
+
+or, in the config file, as a top-level key beside `crystal` / `filter` / `scene` / `render`:
+
+```json
+"raw_export": { "normalization": "normalized" }
+```
+
+The flag overrides the config key when both are given. The key is validated whenever it is
+present — a value other than `"raw"` / `"normalized"` is an error under every `--format`, not a
+silent fall-back to the default — and `--raw-normalization` without `--format npy` is rejected
+rather than ignored.
+
+### When the files appear
+
+The CLI materializes its outputs once per second while a run is in progress and once more when
+it completes. The 8-bit outputs (`img_0N.jpg`/`.png` under the image formats, and the
+`_components.jpg` composite under every format) are written from the first tick — their buffer
+exists, black, from the commit; the `.npy` / `.json` pair is written only once the renderer has
+produced data, so an early tick of a long run may leave the directory with a composite and no
+`.npy` yet. The final write after completion always produces every file, and it is that final
+set a consumer should read.
+
 ## Related Documentation
 
 - [README](../README.md): User documentation
