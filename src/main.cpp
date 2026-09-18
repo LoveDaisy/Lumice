@@ -264,8 +264,9 @@ constexpr const char* kHelpLogAndHelpOptions =
 // pages that show it say the same thing.
 constexpr const char* kHelpWorkersOption =
     "  --workers <N>      Number of CPU simulation worker threads (default: automatic —\n"
-    "                     one per physical core, capped at a ceiling above which no\n"
-    "                     machine measured ran faster; an explicit N is never capped).\n"
+    "                     one per physical core on Linux/macOS, one per logical core on\n"
+    "                     Windows, each capped at a measured per-platform ceiling; an\n"
+    "                     explicit N is never capped).\n"
     "                     Machine-dependent, so it is a command-line switch rather than\n"
     "                     a config-file field: a config travels between machines and a\n"
     "                     worker count should not travel with it. Ignored on a GPU route\n"
@@ -1123,8 +1124,8 @@ struct RenderOptions {
   // (which overrides the config's `raw_export.normalization`) from the absence of one.
   std::optional<RawExportMode> raw_normalization;
   // 0 = "not specified" — the same value LUMICE_ServerConfig::num_workers already uses to mean
-  // "let the server pick" (one per physical core, capped), so no separate was-it-set flag is
-  // needed.
+  // "let the server pick" (the platform's core count, capped — server.cpp), so no separate
+  // was-it-set flag is needed.
   int cli_workers = 0;
   unsigned int sim_seed = 0;  // 0 = random, as LUMICE_ServerConfig::sim_seed spells it
 };
@@ -1741,11 +1742,17 @@ int ParseAnalyzeOptions(int argc, char** argv, int first, AnalyzeOptions& opts) 
 // efficiency means, and "multi" is PhysicalCoreCount() BECAUSE that is what the parallel figure
 // is defined against — which is why this subcommand has no --workers option at all.
 //
-// Note "multi" is an EXPLICIT worker count (num_workers > 0), so it deliberately escapes the cap
-// the automatic default is subject to (kMaxDefaultWorkerCount, server.cpp). On a machine with
-// more physical cores than that cap, "multi" therefore does not report the throughput the
-// shipping default produces: it reports full-core parallel efficiency, which is what this
-// pass is FOR. doc/performance-testing.md says the same thing to whoever reads the number.
+// Note "multi" is an EXPLICIT worker count (num_workers > 0), so it deliberately escapes the
+// automatic default's per-platform rule (kMaxDefaultWorkerCount, server.cpp). The two therefore
+// differ, and not in one fixed direction: on Linux/macOS the default is the physical core count
+// capped at 10, so on a box with more cores "multi" runs MORE workers than a user gets; on
+// Windows the default is the full logical core count, so on an SMT box "multi" runs FEWER. Either
+// way "multi" does not report the throughput the shipping default produces: it reports full-
+// physical-core parallel efficiency, which is what this pass is FOR — the one number defined
+// independently of whatever the default picks, so it can be compared against it. That is why
+// this is the one of the three worker-count consumers (render/analyze default, GUI preference,
+// this pass) that does not share the automatic rule. doc/performance-testing.md says the same
+// thing to whoever reads the number.
 int RunBenchmark(const BenchmarkOptions& opts) {
   const SharedOptions& shared = opts.shared;
   std::ifstream config_file(shared.config_filename);
@@ -1772,8 +1779,8 @@ int RunBenchmark(const BenchmarkOptions& opts) {
   // (kept labelled "multi" for output continuity) and skip the meaningless warmup
   // pass. Only the legacy CPU route keeps the genuine dual-pass: "single" = 1
   // worker (per-core efficiency), "multi" = PhysicalCoreCount() workers (real
-  // parallelism — full-core, which is above the shipping default's cap on a
-  // machine with many cores; see the note at the top of this function). LUMICE_WillUseGpuRoute is env-aware
+  // parallelism — full physical cores, which differs from the shipping default in a
+  // platform-dependent direction; see the note at the top of this function). LUMICE_WillUseGpuRoute is env-aware
   // (LUMICE_TRACE_BACKEND wins over --backend), so this matches how bench_throughput.py selects a GPU run.
   bool gpu_route = LUMICE_WillUseGpuRoute(shared.preferred_backend) != 0;
 
@@ -1804,8 +1811,9 @@ int RunBenchmark(const BenchmarkOptions& opts) {
   }
 
   // Steady pass (label="multi"): original ray count. CPU = PhysicalCoreCount()
-  // workers (parallel — explicit, so uncapped: this is the parallel-efficiency figure,
-  // not the shipping default); GPU = the single engine (the representative steady figure).
+  // workers (parallel — explicit, so outside the automatic rule: this is the
+  // parallel-efficiency figure, not the shipping default); GPU = the single engine (the
+  // representative steady figure).
   int multi_workers = gpu_route ? 1 : lumice::PhysicalCoreCount();
   RunBenchmarkPass(config_json.dump(), multi_workers, "multi", cores, shared.log_level, shared.preferred_backend);
 
@@ -1846,7 +1854,7 @@ int RunRender(const RenderOptions& opts) {
 
   LUMICE_ServerConfig server_config{};
   server_config.preferred_backend = shared.preferred_backend;
-  server_config.num_workers = opts.cli_workers;  // 0 = automatic: one per physical core, capped (server.cpp)
+  server_config.num_workers = opts.cli_workers;  // 0 = automatic: the platform's core count, capped (server.cpp)
   server_config.sim_seed = opts.sim_seed;        // 0 = random; a seed forces 1 worker (server.cpp)
   auto* server = LUMICE_CreateServerEx(&server_config);
   LUMICE_SetLogLevel(server, shared.log_level);

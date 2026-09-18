@@ -1485,7 +1485,8 @@ struct GuiState {
   bool use_gpu_backend = false;
 
   // Number of CPU simulation workers a NEW server is constructed with. 0 = automatic: one per
-  // physical core, capped (LUMICE_ServerConfig::num_workers's own meaning for 0, server.cpp —
+  // physical core on Linux/macOS, one per logical core on Windows, capped per platform
+  // (LUMICE_ServerConfig::num_workers's own meaning for 0, server.cpp —
   // deliberately the same convention rather than a second answer to "what does 0 mean here"). Like use_gpu_backend this
   // is a construction-time property, so changing it reconstructs the server on the next DoRun via
   // MaybeReconstructServerForConstructionProperties. On the GPU route the render engine is a single

@@ -4,6 +4,7 @@ import glob
 import hashlib
 import json
 import os
+import platform
 import re
 from pathlib import Path
 
@@ -346,12 +347,19 @@ class TestWorkerCount(LumiceTestCase):
 
     On the no-flag path: ``server_config.num_workers`` is set from a variable
     whose no-flag value is 0, and server.cpp's
-    ``num_workers > 0 ? num_workers : min(PhysicalCoreCount(), cap)`` guard sends
+    ``num_workers > 0 ? num_workers : min(<core count>, cap)`` guard sends
     that zero to the automatic branch. These tests therefore pin the observable
     consequences (a default in the physically possible range, at or below the
     cap, stable across runs, and different from an explicitly requested value)
-    rather than re-deriving PhysicalCoreCount() in Python, which would be a
+    rather than re-deriving the core count in Python, which would be a
     second authority free to drift from the first.
+
+    The automatic rule is a per-platform pair (core-count source, cap), and the
+    two platforms have different shapes, so the cap assertion splits on
+    ``IS_WINDOWS``. Linux/macOS: ``min(PhysicalCoreCount(), 10)``. Windows:
+    ``LogicalCoreCount()`` with no narrower cap at all — there is no such thing
+    as "a cap below the logical core count" on that platform, so the Windows arm
+    asserts the identity (default == logical CPUs) rather than an inequality.
 
     The cap's own value is the one number these tests do restate from C++
     (``EXPECTED_DEFAULT_CAP``). There is no way around that: the whole point of
@@ -362,9 +370,11 @@ class TestWorkerCount(LumiceTestCase):
     maintenance cost to be engineered away.
     """
 
-    # Mirrors kMaxDefaultWorkerCount in src/server/server.cpp. See the class
-    # docstring for why this is deliberately a second copy rather than a lookup.
+    # Mirrors kMaxDefaultWorkerCount in src/server/server.cpp (the non-Windows
+    # value). See the class docstring for why this is deliberately a second copy
+    # rather than a lookup.
     EXPECTED_DEFAULT_CAP = 10
+    IS_WINDOWS = platform.system() == "Windows"
 
     WORKER_LINE = re.compile(r"worker_count=(\d+)")
 
@@ -402,8 +412,8 @@ class TestWorkerCount(LumiceTestCase):
         """
         default_workers = self._run_and_read_worker_count([])
         self.assertGreaterEqual(default_workers, 1)
-        # Physical cores never exceed logical CPUs — an independent upper bound
-        # that does not restate PhysicalCoreCount()'s own per-platform logic.
+        # Neither core-count source exceeds logical CPUs — an independent upper
+        # bound that does not restate either function's own per-platform logic.
         self.assertLessEqual(default_workers, os.cpu_count() or 1)
         # Deterministic: the default is a property of the machine, not of the run.
         self.assertEqual(self._run_and_read_worker_count([]), default_workers)
@@ -418,18 +428,36 @@ class TestWorkerCount(LumiceTestCase):
     def test_default_never_exceeds_the_cap(self):
         """The automatic worker count is capped, whatever the machine has.
 
-        DISCRIMINATING POWER DEPENDS ON THE HOST. On a machine with at most
-        EXPECTED_DEFAULT_CAP physical cores the inequality holds no matter what
-        the cap does, so this arm alone would pass on a build with the cap
-        deleted. The second assertion is the one that does not depend on the
-        host: on a machine with MORE cores than the cap, the default must be the
-        cap exactly — not merely below it — because that is the only value
-        min(cores, cap) can take. os.cpu_count() (logical CPUs) is an upper
-        bound on physical cores, so "logical CPUs > cap" is a sound-but-not-
-        complete detector of that case: it can fail to fire on a host with SMT
-        and few cores, but it never fires wrongly.
+        The name predates the per-platform split and is kept for its history;
+        on Windows the "cap" IS the logical core count, and the assertion there
+        is an equality (see below), not a bound.
+
+        WINDOWS: the automatic rule is LogicalCoreCount() with no narrower cap,
+        so the default must equal os.cpu_count() (logical CPUs) exactly. An
+        equality, not "<=", on purpose: it has discriminating power on every
+        host — a narrower constant sneaking back in on Windows reads as a
+        numeric mismatch here rather than only on a box with more cores than
+        that constant.
+
+        LINUX/MACOS — DISCRIMINATING POWER DEPENDS ON THE HOST. On a machine
+        with at most EXPECTED_DEFAULT_CAP physical cores the inequality holds
+        no matter what the cap does, so this arm alone would pass on a build
+        with the cap deleted. The second assertion is the one that does not
+        depend on the host: on a machine with MORE cores than the cap, the
+        default must be the cap exactly — not merely below it — because that
+        is the only value min(cores, cap) can take. os.cpu_count() (logical
+        CPUs) is an upper bound on physical cores, so "logical CPUs > cap" is a
+        sound-but-not-complete detector of that case: it can fail to fire on a
+        host with SMT and few cores, but it never fires wrongly.
         """
         default_workers = self._run_and_read_worker_count([])
+        if self.IS_WINDOWS:
+            self.assertEqual(
+                default_workers,
+                os.cpu_count() or 1,
+                "on Windows the automatic worker count IS the logical core count",
+            )
+            return
         self.assertLessEqual(
             default_workers,
             self.EXPECTED_DEFAULT_CAP,
@@ -448,7 +476,10 @@ class TestWorkerCount(LumiceTestCase):
         The red-state half of "the cap bounds the automatic value only": if the
         clamp were applied to the whole expression rather than to the no-flag
         branch, this would come back as EXPECTED_DEFAULT_CAP instead. Asserting
-        equality rather than "> cap" is what makes that distinguishable.
+        equality rather than "> cap" is what makes that distinguishable. On
+        Windows there is no narrower cap for the request to exceed, so the arm
+        only re-states "explicit is verbatim"; it is kept there rather than
+        skipped because that contract holds on every platform.
 
         The requested count deliberately exceeds the cap and may exceed the
         host's core count; the assertion reads the number the server was

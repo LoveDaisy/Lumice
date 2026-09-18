@@ -438,11 +438,11 @@ void RenderAppPreferences(const GuiState& state) {
   if (ImGui::IsItemHovered()) {
     ImGui::SetTooltip(
         "How many CPU worker threads a NEW document's simulation runs on. 0 means automatic: one "
-        "per physical core, up to a measured ceiling above which no machine tested ran faster. A "
-        "number you type here is used as-is, ceiling included. This is the stored preference — "
-        "changing it here does not touch the current "
-        "document, and it takes effect on the next new document. The GPU route is a single engine "
-        "and ignores it.");
+        "per physical core on Linux/macOS, one per logical core (hardware thread) on Windows, up to "
+        "a measured per-platform ceiling. A number you type here is used as-is, ceiling included. "
+        "This is the stored preference — changing it here does not touch the current document, "
+        "and it takes effect on the next new document. The GPU route is a single engine and "
+        "ignores it.");
   }
   ImGui::SameLine();
   ImGui::TextDisabled("(this window: %d)", state.worker_count);

@@ -8,6 +8,7 @@
 #include <cstddef>
 #include <cstdlib>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <nlohmann/json.hpp>
@@ -212,22 +213,57 @@ class ServerImpl {
   // num_workers > 0 is honoured verbatim, above this value included — a caller who
   // names a number has said something this constant has no standing to overrule.
   //
-  // Where the number comes from, and what it is not: it is not derived from any
-  // mechanism. It is the empirical lower edge of a plateau — across 2 CPUs
-  // (16-core x86 and a 12-core arm64), 3 operating systems (Linux/WSL2, native
-  // Windows, macOS) and 2 scene families (single- and multi-scattering), raising the
-  // worker count above 10 never once produced more throughput, while running at the
-  // full physical core count cost up to 33% of it on the 16-core box. The measured
-  // peak sat at 10 on BOTH machines despite their different core counts, which is why
-  // this is an absolute constant rather than a fraction of PhysicalCoreCount().
+  // The shape: a per-platform pair (core-count source, cap), not one cross-platform
+  // number. Both halves are chosen in the constructor below by the same OS_WIN test as
+  // this constant, and they have to move together — PhysicalCoreCount() is itself a
+  // hard ceiling (16 on a 16C/32T box), so raising the cap alone can never reach the
+  // logical core count; and sizing from LogicalCoreCount() without lifting the cap
+  // would clamp straight back to 10. Only-one-half is the silent-no-op failure mode.
   //
-  // Honest boundary: the sample is 2 CPUs. A machine that genuinely scales past 10
-  // workers would be left throughput on the table by this default — no such machine
-  // was observed, but none was ruled out either. Such a machine's escape hatch is the
-  // explicit path above (CLI --workers N, or the GUI's app-level worker preference),
-  // and the CLI's `benchmark` mode:multi pass still reports the full-core figure, so
-  // the comparison that would reveal it stays available.
+  // What the pair is keyed on, and why it is not a formula: which engine the platform's
+  // production default actually loads, measured per OS. The previous premise ("across
+  // 2 CPUs and 3 OSes, raising the worker count above 10 never once produced more
+  // throughput") held before per-ray projection moved off the consumer thread onto the
+  // workers (accumulator-consumer-architecture.md §1.1); after that move the two OSes
+  // on the same 16C/32T Zen 5 box diverge, and — the finding that rules out any single
+  // rule — they diverge in OPPOSITE directions depending on which ISA engine is loaded:
+  //   - Windows (the shell's clang-cl x86-64-v3 engine DLL, which is what release
+  //     users get): capping at 10 leaves 1.28×–1.56× on the table against the best
+  //     worker count over three scenes, and the best is at or beyond the physical core
+  //     count (16 or 32 by scene; the cl.exe baseline engine says the same, 1.75×–2.12×,
+  //     best at 32 = SMT fully on). So Windows sizes from LogicalCoreCount() and stops
+  //     narrowing: no worker count below the logical core count was measured to be a
+  //     plateau on this box, and inventing a smaller number without a measurement
+  //     behind it would be the same kind of empiricism this rewrite retires. Boundary:
+  //     one machine; a much wider box may yet show a knee below its logical count.
+  //   - Linux (glibc-hwcaps auto-selects the x86-64-v4/AVX-512 engine on any box that
+  //     qualifies, so that is the production path): 10 IS the optimum — W12 already
+  //     costs 5–23% and W16 halves throughput. The same box on the baseline engine
+  //     wants 16–32, which is exactly why the constant is keyed on the production
+  //     engine and not on the local default build. Mechanism (WSL2): the slowdown is
+  //     not a fixed W but a sync-frequency wall — it scales with workers × 1/(per-ray
+  //     cost), so the faster engine hits it at half the worker count; sys% rises
+  //     4–6× and idle% climbs at the knee. Honest boundary: every "Linux" figure here
+  //     is WSL2, not native Linux (performance-testing.md, "Measurement discipline").
+  //   - macOS: unchanged. The one clean sample (single scene) put the best count at
+  //     the physical core count, 1.16× over 10 — right at the noise floor of the
+  //     criterion, not evidence enough to move a shipped default.
+  //
+  // Three consumers, two paths — deliberately. CLI render/analyze without --workers and
+  // the GUI's stored worker preference at 0 both arrive here as num_workers == 0 and
+  // share this rule (main.cpp RunRender / RunAnalyze; gui app.cpp's server construction).
+  // The CLI `benchmark` mode:multi pass is the third and does NOT: it passes
+  // PhysicalCoreCount() explicitly, because it measures full-core parallel efficiency,
+  // a number defined independently of whatever this default picks (main.cpp,
+  // RunBenchmark). Folding it in would make the benchmark report the default instead of
+  // the thing it exists to compare the default against.
+#if defined(OS_WIN)
+  // Sentinel, not a tunable: "no cap narrower than LogicalCoreCount()" on Windows —
+  // the ceiling here is the core-count source the constructor picks, see above.
+  static constexpr int kMaxDefaultWorkerCount = std::numeric_limits<int>::max();
+#else
   static constexpr int kMaxDefaultWorkerCount = 10;
+#endif
 
   void ConsumeData();
   void GenerateScene();
@@ -710,14 +746,22 @@ ServerImpl::ServerImpl(int num_workers, uint32_t sim_seed, BackendKind preferred
   preferred_backend_.store(preferred_backend, std::memory_order_release);
   gpu_route_ = ResolveGpuRoute(preferred_backend, logger_);
   // The CPU worker count, by the one rule both routes size their CPU group with: the
-  // caller's explicit number verbatim, else the capped physical core count; and a fixed
+  // caller's explicit number verbatim, else the platform's core count, capped; and a fixed
   // seed collapses it to a single worker — the deterministic CPU contract, which is also
   // what keeps SimData::producer_effective_seed_ distinct per worker (a fixed seed is
   // returned verbatim as the effective seed): relaxing this needs every worker's seed
   // made distinct, or ChainIdMerger fuses chains across workers silently. The per-index
   // seed offset below is that guard, dead today.
+  //
+  // The core-count source is the other half of kMaxDefaultWorkerCount's per-platform
+  // pair (see its comment): the two are selected by the same test and change together.
+#if defined(OS_WIN)
+  const int automatic_worker_base = LogicalCoreCount();
+#else
+  const int automatic_worker_base = PhysicalCoreCount();
+#endif
   const int cpu_worker_count =
-      sim_seed != 0 ? 1 : (num_workers > 0 ? num_workers : std::min(PhysicalCoreCount(), kMaxDefaultWorkerCount));
+      sim_seed != 0 ? 1 : (num_workers > 0 ? num_workers : std::min(automatic_worker_base, kMaxDefaultWorkerCount));
   int worker_count = 1;
   int analysis_pool_worker_count = 0;
   if (gpu_route_) {

@@ -1315,7 +1315,8 @@ def run_scene_sequence_capi_buffered(
     of a different observable.
 
     `num_workers` pins the CPU-route worker pool (0 = the shipped default: the
-    physical core count, capped — see kMaxDefaultWorkerCount in server.cpp). It is honoured independently of `sim_seed`: a caller
+    physical core count on Linux/macOS, the logical core count on Windows, capped
+    per platform — see kMaxDefaultWorkerCount in server.cpp). It is honoured independently of `sim_seed`: a caller
     that pins a seed already gets one worker (server.cpp clamps the
     deterministic CPU contract to a single simulator), so sweeping this knob is
     only meaningful at `sim_seed == 0`. On the GPU route (single engine) it

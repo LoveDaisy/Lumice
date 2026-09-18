@@ -219,9 +219,10 @@ Server configuration structure for `LUMICE_CreateServerEx()`.
 
 ```c
 typedef struct LUMICE_ServerConfig_ {
-  int num_workers;        // CPU worker count. 0 = automatic: min(physical core count, 10) —
-                          // kMaxDefaultWorkerCount in server.cpp is the cap and carries the
-                          // measurements behind it. A value > 0 is honoured verbatim, above
+  int num_workers;        // CPU worker count. 0 = automatic: min(physical core count, 10) on
+                          // Linux/macOS, the full logical core count on Windows —
+                          // kMaxDefaultWorkerCount in server.cpp is the per-platform cap and
+                          // carries the measurements behind it. A value > 0 is honoured verbatim, above
                           // the cap included.
   unsigned int sim_seed;  // Deterministic seed for worker RNGs. 0 = random (default).
                           // Non-zero collapses to 1 worker for bit-stable results.

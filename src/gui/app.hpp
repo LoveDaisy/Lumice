@@ -117,7 +117,7 @@ bool BgPhotoOnScreen(const GuiState& state);
 extern bool g_server_is_gpu;
 extern int g_server_worker_count;
 
-// Put both trackers back to what LUMICE_CreateServer() constructs (CPU, PhysicalCoreCount workers).
+// Put both trackers back to what LUMICE_CreateServer() constructs (CPU, the automatic worker count).
 // MUST be called by any code that creates g_server DIRECTLY rather than through
 // MaybeReconstructServerForConstructionProperties — e.g. the test harnesses — or the next DoRun
 // compares the document against a server that no longer exists and either rebuilds one it did not

@@ -20,7 +20,7 @@ that definition, and this file gates both:
    is meant to answer.
 
 3. **Worker invariance.** The CPU route runs a multi-worker pool by default
-   (the physical core count, capped), each worker owning its own Simulator and
+   (the platform's core count, capped), each worker owning its own Simulator and
    therefore its own geometry sampling. A deterministic scene's geometry set does not depend on how many
    threads redundantly derive it, so `crystal_num` must not scale with the pool
    size. Historically it did — exactly `(layer, ci) count x workers` — which is
@@ -84,7 +84,7 @@ _MIN_BATCH_COUNT_RATIO = 4.0
 
 # Worker counts swept by the worker-invariance test. 1 is the reference; 4 is
 # well above it yet available on any CI box (the default pool is bounded by the
-# physical core count, so a hardcoded larger value would be untestable on small
+# machine's core count, so a hardcoded larger value would be untestable on small
 # runners). Pre-fix these reported expected*1 vs expected*4.
 _WORKERS_ONE = 1
 _WORKERS_MANY = 4

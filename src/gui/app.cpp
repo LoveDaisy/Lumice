@@ -1130,7 +1130,8 @@ bool MaybeReconstructServerForConstructionProperties() {
   LUMICE_DestroyServer(g_server);
 
   LUMICE_ServerConfig cfg{};
-  // The user's personal default (Settings §app), 0 = PhysicalCoreCount (capped). On the GPU route
+  // The user's personal default (Settings §app), 0 = the automatic count (server.cpp's per-platform
+  // core count, capped). On the GPU route
   // the render engine is one worker whatever this says; the value sizes that server's standing CPU
   // analysis pool instead.
   cfg.num_workers = want_workers;
