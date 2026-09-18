@@ -144,6 +144,12 @@ LUMICE_ServerConfig ServerConfigForState(const GuiState& state);
 // re-applied here), and the display-generation reset a backend swap needs.
 void ConstructServerForState(const GuiState& state);
 
+// Rebuild g_server when the document's construction-time properties no longer match the two
+// trackers; returns true iff it did (the caller must then treat the server as consumer-less:
+// full rebuild + fresh poller Start). DoRun is the production caller; declared so the join it
+// performs before destroying the old server can be exercised against a run still in flight.
+bool MaybeReconstructServerForConstructionProperties();
+
 // Async Stop completion latch (blueprint §5/§8, 1.6). Set true synchronously by DoStop when it
 // offloads the blocking `poller.Stop() + LUMICE_StopServer` sequence onto a background std::async
 // thread; cleared by that thread when the backend has drained. Read (never written) by
