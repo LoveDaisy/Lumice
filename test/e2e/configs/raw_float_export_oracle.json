@@ -1,0 +1,93 @@
+{
+  "crystal": [
+    {
+      "id": 1,
+      "type": "prism",
+      "shape": {
+        "height": 1.0
+      },
+      "axis": {
+        "zenith": {
+          "type": "gauss",
+          "mean": 90,
+          "std": 0.5
+        },
+        "azimuth": {
+          "type": "uniform",
+          "mean": 0,
+          "std": 360
+        },
+        "roll": {
+          "type": "uniform",
+          "mean": 0,
+          "std": 360
+        }
+      }
+    }
+  ],
+  "filter": [
+    {
+      "id": 1,
+      "type": "raypath",
+      "raypath": [
+        3,
+        5
+      ],
+      "symmetry": "PBD",
+      "action": "filter_in"
+    }
+  ],
+  "scene": {
+    "light_source": {
+      "type": "sun",
+      "altitude": 15.0,
+      "azimuth": 0.0,
+      "diameter": 0.0,
+      "spectrum": [
+        {
+          "wavelength": 550,
+          "weight": 1.0
+        }
+      ]
+    },
+    "ray_num": 1000000,
+    "max_hits": 3,
+    "scattering": [
+      {
+        "prob": 0.0,
+        "entries": [
+          {
+            "crystal": 1,
+            "proportion": 1,
+            "filter": 1
+          }
+        ]
+      }
+    ]
+  },
+  "render": [
+    {
+      "id": 1,
+      "ev_mode": "absolute",
+      "lens": {
+        "type": "linear",
+        "fov": 6
+      },
+      "resolution": [
+        251,
+        801
+      ],
+      "view": {
+        "azimuth": 0,
+        "elevation": -15
+      },
+      "visible": "full",
+      "background": [
+        0,
+        0,
+        0
+      ],
+      "intensity_factor": 2.5
+    }
+  ]
+}
