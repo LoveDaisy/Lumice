@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 
+#include "gui/preview_renderer.hpp"
 #include "include/lumice.h"
 
 namespace lumice::gui {
@@ -22,7 +23,6 @@ using ScenePtr = std::unique_ptr<LUMICE_Scene, SceneDeleter>;
 struct GuiState;
 struct PreviewViewport;
 struct FilterConfig;
-class PreviewRenderer;
 
 // Identifies which filter reference triggered an ABI-bounds overflow inside BuildScene.
 // Populated only when BuildScene returns nullptr AND the caller passed a non-null pointer.
@@ -202,7 +202,32 @@ bool DeserializeGuiStateJson(const std::string& json_str, GuiState& state);
 bool SaveLmcFile(const std::filesystem::path& path, const GuiState& state, const PreviewRenderer& preview,
                  bool save_texture);
 
-// Load .lmc binary file. If texture data is present, returns it via tex_data/tex_w/tex_h.
+// The texture section of a .lmc file, decoded. Owned by the caller of LoadLmcFile, which fills
+// it; ResetFrontendState (app.cpp) borrows it for the duration of one call and copies what it
+// keeps, so the vectors below live exactly as long as the caller's LmcTexture does and nothing
+// holds a pointer into them past that.
+//
+// `mode` says what the pixels MEAN, and a caller that displays them must branch on it — it
+// selects the PreviewRenderer upload entry point, and getting it wrong paints the sky twice, not
+// at all, or reads floats as bytes:
+//   kSrgbComposited — a pre-v4 bake with the sky already summed in; shown as it is.
+//   kSrgbRadiance   — a v4 bake: exposure applied, halo alone, 8-bit; the shader owes it the
+//                     lens's relative illumination and the sky.
+//   kXyz            — v5+: the unexposed linear XYZ energy the live preview itself uploads, with
+//                     the measurements (`meta`) that expose it. Same shader branch as a live run.
+// Exactly one of `srgb` / `xyz` is non-empty when HasPixels(), and `mode` names it.
+struct LmcTexture {
+  int width = 0;  // 0x0 = the file carried no texture section
+  int height = 0;
+  PreviewRenderer::TextureMode mode = PreviewRenderer::TextureMode::kSrgbComposited;
+  std::vector<unsigned char> srgb;  // kSrgbComposited / kSrgbRadiance: width*height*3 bytes
+  std::vector<float> xyz;           // kXyz: width*height*3 floats
+  XyzTextureMeta meta;              // kXyz only; default (all zero) otherwise
+
+  bool HasPixels() const { return width > 0 && height > 0; }
+};
+
+// Load .lmc binary file. If a texture section is present, it is decoded into `tex`.
 //
 // All-or-nothing on `state`: on success it is replaced wholesale by the file's document; on
 // failure it is not written at all, so a caller may pass the live document straight in. The two
@@ -210,16 +235,9 @@ bool SaveLmcFile(const std::filesystem::path& path, const GuiState& state, const
 // section is even read, and the deserializer clears the document it is given, so deserializing in
 // place would let a failed load leave the caller showing the file it just refused to open.
 //
-// `tex_data`/`tex_w`/`tex_h`/`tex_radiance_only` carry NO such guarantee: they are cleared on entry
-// and are only meaningful when this returns true. Read them only then.
-//
-// `tex_radiance_only` says which of the two texture semantics the file's pixels carry, and it is
-// NOT optional for a caller that displays them: true means the halo's radiance alone (the shader
-// still owes it the lens's relative illumination and the sky), false means a pre-v4 bake with the
-// sky already summed in, which can only be shown as it is. Getting it wrong paints the sky twice
-// or not at all. See PreviewRenderer::TextureMode.
-bool LoadLmcFile(const std::filesystem::path& path, GuiState& state, std::vector<unsigned char>& tex_data, int& tex_w,
-                 int& tex_h, bool& tex_radiance_only);
+// `tex` carries NO such guarantee: it is reset on entry and is only meaningful when this returns
+// true. Read it only then.
+bool LoadLmcFile(const std::filesystem::path& path, GuiState& state, LmcTexture& tex);
 
 // Returns the number of crystal shape distributions downgraded to uniform since the last call, and
 // resets the counter. The GUI edits uniform distributions only; non-uniform families loaded from

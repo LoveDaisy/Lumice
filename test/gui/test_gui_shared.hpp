@@ -653,5 +653,6 @@ void RegisterBodyFontGlyphCoverageTests(ImGuiTestEngine* engine);
 void RegisterThemeScanTests(ImGuiTestEngine* engine);
 void RegisterExportParityTests(ImGuiTestEngine* engine);
 void RegisterPreviewExportParityTests(ImGuiTestEngine* engine);
+void RegisterLmcRoundtripParityTests(ImGuiTestEngine* engine);
 
 #endif  // LUMICE_TEST_GUI_SHARED_HPP

@@ -404,19 +404,11 @@ enum class FrontendResetReason {
   kRevert,
 };
 
-// Baked-texture payload for `kOpenBaked`. `data` must remain valid for the duration of the
-// `ResetFrontendState` call; the owner does not retain the pointer.
-struct FrontendTexturePayload {
-  const unsigned char* data;
-  int width;
-  int height;
-  // True when `data` holds the halo's radiance alone (a v>=4 .lmc), false when the sky colour is
-  // already summed into it (pre-v4). Selects the PreviewRenderer upload entry point; getting it
-  // wrong paints the sky twice or not at all. See PreviewRenderer::TextureMode.
-  bool radiance_only;
-};
-
-void ResetFrontendState(GuiState& state, FrontendResetReason reason, const FrontendTexturePayload* baked = nullptr);
+// `baked` is the decoded texture section for `kOpenBaked` (LoadLmcFile's output, owned by the
+// caller). It must remain valid for the duration of the `ResetFrontendState` call and no longer:
+// the owner uploads it and copies what Save will need, and retains no pointer into it. Its
+// `mode` selects the PreviewRenderer upload entry point — see LmcTexture (file_io.hpp).
+void ResetFrontendState(GuiState& state, FrontendResetReason reason, const LmcTexture* baked = nullptr);
 
 // Single-owner sim_state reconcile (I2, blueprint §4/§5). Pure function of the last user intent,
 // the epoch the GUI committed, the last backend observation (may be null before the first poll),

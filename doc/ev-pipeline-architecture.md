@@ -1129,10 +1129,13 @@ semantics: `kXyz` (live float radiance), `kSrgbRadiance` (8-bit radiance-only: a
 format v4 on, and the raypath-colour composite the server bakes), and `kSrgbComposited` (the
 1×1 blank, and a pre-v4 `.lmc` whose sky is summed in and can only be drawn as it is). The first two
 take the same tail — relative illumination, then the sky, then the transfer curve — which is what
-makes save-then-reopen render the picture that was on screen; `test/gui/visual/test_preview_pixels.cpp`'s
-`save_open_visual_consistency` is the pixel measurement of that claim, and it moved from 19.9 dB to
-38.6 dB when the two paths were unified. Equal-area projections were never affected either way:
-their factor is exactly 1.
+makes save-then-reopen render the picture that was on screen; the then-current pixel measurement of
+that claim (`save_open_visual_consistency`, a PSNR between the live preview and its 8-bit bake) moved
+from 19.9 dB to 38.6 dB when the two paths were unified. From `.lmc` v5 the texture section carries
+the live frame's linear XYZ floats and a reopened document takes the `kXyz` branch itself, so the
+measurement is `test/gui/parity/test_gui_lmc_roundtrip_parity.cpp` at byte exactness and the
+`kSrgbRadiance` tail is exercised by pre-v5 documents only. Equal-area projections were never affected
+either way: their factor is exactly 1.
 
 Two consequences worth naming. The raypath-colour composite is covered by the same change and had
 the same defect on a **live** path — toggling the composite preview on a non-equal-area lens used to

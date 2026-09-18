@@ -23,6 +23,7 @@
 
 #include <gtest/gtest.h>
 
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
@@ -152,9 +153,48 @@ void WriteU32Field(std::vector<unsigned char>& bytes, size_t offset, uint32_t va
   std::memcpy(bytes.data() + offset, &value, sizeof(value));
 }
 
+// The 4x4 linear-XYZ pattern that goes into a v>=5 texture section. Deliberately not
+// representable in the 8-bit bake it replaces: values above 1.0 (the clipped range the old bake
+// threw away), values far below 1/255 (the quantized-to-zero range), exact zeros (a sparse
+// scene's dominant texel) and a value with no short decimal expansion — a round trip that
+// survived any of those by accident would still fail the others.
+std::vector<float> XyzTexels() {
+  std::vector<float> px(4 * 4 * 3);
+  for (size_t i = 0; i < px.size(); ++i) {
+    switch (i % 4) {
+      case 0:
+        px[i] = 0.0f;
+        break;
+      case 1:
+        px[i] = 65.0f + static_cast<float>(i);  // the hot spot: 65x over white
+        break;
+      case 2:
+        px[i] = 1.0e-6f * static_cast<float>(i + 1);
+        break;
+      default:
+        px[i] = std::sqrt(static_cast<float>(i) + 0.5f);
+        break;
+    }
+  }
+  return px;
+}
+
+XyzTextureMeta XyzMeta() {
+  XyzTextureMeta m;
+  m.snapshot_intensity = 0.0123456f;
+  m.emitted_energy = 987654.25f;
+  m.mono_anchor = 3.0517578e-5f;
+  m.effective_pixels = 13007;
+  return m;
+}
+
 // Produce a real, valid .lmc through the production writer rather than hand-assembling a header.
 // The corruptions below then edit one field of a file that the shipping code wrote, so a change to
 // the writer cannot leave these cases testing a format the loader no longer reads.
+//
+// The texture it embeds is the 8-bit radiance-only bake (the v4 encoding): that is the section
+// whose three failure exits the cases below were written against, and the production loader still
+// takes exactly that path for it. The v5 float encoding has its own writer, WriteValidXyzLmc.
 bool WriteValidLmc(const std::filesystem::path& path, bool with_texture) {
   PreviewRenderer preview;  // no Init(): UpdateCpuTextureData and the getters touch no GL
   if (with_texture) {
@@ -162,6 +202,15 @@ bool WriteValidLmc(const std::filesystem::path& path, bool with_texture) {
     preview.UpdateCpuTextureData(px.data(), 4, 4);
   }
   return SaveLmcFile(path, FileDocument(), preview, with_texture);
+}
+
+// Same, through the CPU mirror the production Save path fills (RefreshCpuTextureForSave →
+// UpdateCpuXyzTextureData): the v>=5 linear-XYZ encoding.
+bool WriteValidXyzLmc(const std::filesystem::path& path) {
+  PreviewRenderer preview;
+  const std::vector<float> px = XyzTexels();
+  preview.UpdateCpuXyzTextureData(px.data(), 4, 4, XyzMeta());
+  return SaveLmcFile(path, FileDocument(), preview, /*save_texture=*/true);
 }
 
 // The shared assertion. Every failure case ends here, so "the document is untouched" is stated
@@ -176,12 +225,9 @@ void ExpectLoadFailsAndDocumentUnchanged(const std::filesystem::path& path, cons
          "observe an overwrite at all";
 
   GuiState current = SentinelDocument();
-  std::vector<unsigned char> tex_data;
-  int tex_w = 0;
-  int tex_h = 0;
-  bool tex_radiance_only = false;
+  LmcTexture tex;
 
-  EXPECT_FALSE(LoadLmcFile(path, current, tex_data, tex_w, tex_h, tex_radiance_only))
+  EXPECT_FALSE(LoadLmcFile(path, current, tex))
       << "premise broken: this file was supposed to be unloadable, so the corruption did not take";
 
   EXPECT_EQ(current.current_file_path, SentinelDocument().current_file_path)
@@ -298,11 +344,8 @@ TEST(LmcLoadAtomicityChain, SuccessfulLoadWithTextureFullyReplacesTheDocument) {
   ASSERT_TRUE(WriteValidLmc(f.path, /*with_texture=*/true));
 
   GuiState current = SentinelDocument();
-  std::vector<unsigned char> tex_data;
-  int tex_w = 0;
-  int tex_h = 0;
-  bool tex_radiance_only = false;
-  ASSERT_TRUE(LoadLmcFile(f.path, current, tex_data, tex_w, tex_h, tex_radiance_only));
+  LmcTexture tex;
+  ASSERT_TRUE(LoadLmcFile(f.path, current, tex));
 
   ASSERT_EQ(current.crystals.size(), 1u);
   EXPECT_FLOAT_EQ(current.crystals[0].height.center, 2.5f) << "the file's document did not land";
@@ -310,9 +353,12 @@ TEST(LmcLoadAtomicityChain, SuccessfulLoadWithTextureFullyReplacesTheDocument) {
   EXPECT_TRUE(current.current_file_path.empty()) << "the sentinel's path survived a successful load";
   EXPECT_FALSE(current.dirty) << "the sentinel's dirty flag survived a successful load";
 
-  EXPECT_EQ(tex_w, 4);
-  EXPECT_EQ(tex_h, 4);
-  EXPECT_EQ(tex_data, TexturePixels());
+  EXPECT_TRUE(tex.HasPixels());
+  EXPECT_EQ(tex.width, 4);
+  EXPECT_EQ(tex.height, 4);
+  EXPECT_EQ(tex.mode, PreviewRenderer::TextureMode::kSrgbRadiance);
+  EXPECT_EQ(tex.srgb, TexturePixels());
+  EXPECT_TRUE(tex.xyz.empty()) << "the sRGB and XYZ payloads are exclusive; a PNG section must not fill both";
 }
 
 TEST(LmcLoadAtomicityChain, SuccessfulLoadWithoutTextureFullyReplacesTheDocument) {
@@ -320,18 +366,17 @@ TEST(LmcLoadAtomicityChain, SuccessfulLoadWithoutTextureFullyReplacesTheDocument
   ASSERT_TRUE(WriteValidLmc(f.path, /*with_texture=*/false));
 
   GuiState current = SentinelDocument();
-  std::vector<unsigned char> tex_data;
-  int tex_w = 0;
-  int tex_h = 0;
-  bool tex_radiance_only = false;
-  ASSERT_TRUE(LoadLmcFile(f.path, current, tex_data, tex_w, tex_h, tex_radiance_only));
+  LmcTexture tex;
+  ASSERT_TRUE(LoadLmcFile(f.path, current, tex));
 
   ASSERT_EQ(current.crystals.size(), 1u);
   EXPECT_FLOAT_EQ(current.crystals[0].height.center, 2.5f) << "the file's document did not land";
   EXPECT_FLOAT_EQ(current.sun.altitude, 11.0f) << "the file's document did not land";
   EXPECT_TRUE(current.current_file_path.empty()) << "the sentinel's path survived a successful load";
   EXPECT_FALSE(current.dirty) << "the sentinel's dirty flag survived a successful load";
-  EXPECT_TRUE(tex_data.empty());
+  EXPECT_FALSE(tex.HasPixels());
+  EXPECT_TRUE(tex.srgb.empty());
+  EXPECT_TRUE(tex.xyz.empty());
 }
 
 // The header field that says what the texture section MEANS, and the one pre-v4 answer that is
@@ -352,13 +397,11 @@ TEST(LmcLoadAtomicityChain, TheHeaderSaysWhetherTheTextureCarriesTheSkyAndAPreV4
   ASSERT_TRUE(WriteValidLmc(f.path, /*with_texture=*/true));
 
   GuiState state = SentinelDocument();
-  std::vector<unsigned char> tex_data;
-  int tex_w = 0;
-  int tex_h = 0;
-  bool tex_radiance_only = false;
+  LmcTexture tex;
 
-  ASSERT_TRUE(LoadLmcFile(f.path, state, tex_data, tex_w, tex_h, tex_radiance_only));
-  EXPECT_TRUE(tex_radiance_only) << "a file the shipping writer just produced must declare its texture radiance-only";
+  ASSERT_TRUE(LoadLmcFile(f.path, state, tex));
+  EXPECT_EQ(tex.mode, PreviewRenderer::TextureMode::kSrgbRadiance)
+      << "a file the 8-bit writer just produced must declare its texture radiance-only";
 
   // Now the same file as a pre-v4 writer would have left it: version 3, and the flag bit absent.
   // Both edits together, because either alone describes a file that never existed.
@@ -372,11 +415,111 @@ TEST(LmcLoadAtomicityChain, TheHeaderSaysWhetherTheTextureCarriesTheSkyAndAPreV4
   ASSERT_TRUE(WriteAllBytes(f.path, bytes));
 
   GuiState legacy_state = SentinelDocument();
-  tex_data.clear();
-  tex_radiance_only = true;  // set to the WRONG value first, so a loader that never writes it fails
-  ASSERT_TRUE(LoadLmcFile(f.path, legacy_state, tex_data, tex_w, tex_h, tex_radiance_only));
-  EXPECT_FALSE(tex_radiance_only) << "a pre-v4 file's texture has the sky baked in and must not be re-lit";
-  EXPECT_EQ(tex_data, TexturePixels()) << "the pixels themselves are unchanged by the semantics flag";
+  tex.mode = PreviewRenderer::TextureMode::kXyz;  // set to a WRONG value first, so a loader that never writes it fails
+  ASSERT_TRUE(LoadLmcFile(f.path, legacy_state, tex));
+  EXPECT_EQ(tex.mode, PreviewRenderer::TextureMode::kSrgbComposited)
+      << "a pre-v4 file's texture has the sky baked in and must not be re-lit";
+  EXPECT_EQ(tex.srgb, TexturePixels()) << "the pixels themselves are unchanged by the semantics flag";
+}
+
+// --- The v>=5 linear-XYZ texture section --------------------------------------------------------
+//
+// Byte offsets inside the v5 texture section, restated here for the same reason the header
+// offsets above are: the layout's single authority is the LmcXyzTextureHeader comment in
+// src/gui/file_io.cpp, and its constants are file-static there.
+constexpr size_t kXyzSectionHeaderSize = 32;
+constexpr size_t kXyzSectionRawByteCountField = 24;
+
+// The whole point of the v5 encoding: what Save was handed is what Open hands back, to the bit,
+// with the exposure measurements that make it displayable. A float that came back merely close
+// would put a threshold under "saved == reopened", which is the thing this encoding exists to
+// remove — hence exact comparison, not EXPECT_FLOAT_EQ.
+TEST(LmcLoadAtomicityChain, XyzFloatTextureRoundTripsBitExactWithItsExposureMeta) {
+  TempFile f{ TempPath("lumice_lmc_xyz_roundtrip.lmc") };
+  ASSERT_TRUE(WriteValidXyzLmc(f.path));
+
+  // The header declares the encoding, and declares it on top of the display semantics rather than
+  // instead of them: the decoder flag and the radiance-only flag are read by different code.
+  const std::vector<unsigned char> bytes = ReadAllBytes(f.path);
+  ASSERT_GE(bytes.size(), 44u);
+  EXPECT_EQ(ReadU32Field(bytes, kVersionField), 5u);
+  const uint32_t flags = ReadU32Field(bytes, kFlagsField);
+  EXPECT_EQ(flags & 0x7u, 0x7u) << "has_texture | radiance_only | xyz_float, all three";
+
+  GuiState state = SentinelDocument();
+  LmcTexture tex;
+  ASSERT_TRUE(LoadLmcFile(f.path, state, tex));
+  EXPECT_FLOAT_EQ(state.sun.altitude, 11.0f) << "the file's document did not land";
+
+  EXPECT_TRUE(tex.HasPixels());
+  EXPECT_EQ(tex.width, 4);
+  EXPECT_EQ(tex.height, 4);
+  EXPECT_EQ(tex.mode, PreviewRenderer::TextureMode::kXyz);
+  EXPECT_TRUE(tex.srgb.empty()) << "the sRGB and XYZ payloads are exclusive; a float section must not fill both";
+  const std::vector<float> expected = XyzTexels();
+  ASSERT_EQ(tex.xyz.size(), expected.size());
+  for (size_t i = 0; i < expected.size(); ++i) {
+    EXPECT_EQ(std::memcmp(&tex.xyz[i], &expected[i], sizeof(float)), 0)
+        << "texel float " << i << " is not bit-identical";
+  }
+  const XyzTextureMeta m = XyzMeta();
+  EXPECT_EQ(std::memcmp(&tex.meta.snapshot_intensity, &m.snapshot_intensity, sizeof(float)), 0);
+  EXPECT_EQ(std::memcmp(&tex.meta.emitted_energy, &m.emitted_energy, sizeof(float)), 0);
+  EXPECT_EQ(std::memcmp(&tex.meta.mono_anchor, &m.mono_anchor, sizeof(float)), 0);
+  EXPECT_EQ(tex.meta.effective_pixels, m.effective_pixels);
+}
+
+// The decoder is selected by the flag, not inferred from the version. Clear the flag on a v5 file
+// (leaving the version alone) and the loader must take the PNG path, which cannot read a deflate
+// stream — and must fail the way every texture failure fails: with the open document untouched.
+// A loader that guessed the encoding from the version, or from the bytes, would pass this file.
+TEST(LmcLoadAtomicityChain, ClearingTheXyzFlagSendsTheSectionToThePngDecoderWhichRollsBack) {
+  TempFile f{ TempPath("lumice_lmc_xyz_flag_cleared.lmc") };
+  ASSERT_TRUE(WriteValidXyzLmc(f.path));
+
+  std::vector<unsigned char> bytes = ReadAllBytes(f.path);
+  const uint32_t flags = ReadU32Field(bytes, kFlagsField);
+  ASSERT_NE(flags & 0x4u, 0u) << "premise broken: the writer did not set the xyz_float flag";
+  WriteU32Field(bytes, kFlagsField, flags & ~0x4u);
+  ASSERT_TRUE(WriteAllBytes(f.path, bytes));
+
+  ExpectLoadFailsAndDocumentUnchanged(f.path, "v5 float section with the encoding flag cleared");
+}
+
+// The two failure exits the float decoder adds, each pinned like the PNG ones above: a header
+// whose declared byte count disagrees with its dimensions, and a stream that does not inflate.
+// Both keep the JSON section intact so the loader gets all the way past the deserializer first.
+TEST(LmcLoadAtomicityChain, XyzHeaderByteCountMismatchRollsBackWithoutTouchingCurrentDocument) {
+  TempFile f{ TempPath("lumice_lmc_xyz_bad_bytecount.lmc") };
+  ASSERT_TRUE(WriteValidXyzLmc(f.path));
+
+  std::vector<unsigned char> bytes = ReadAllBytes(f.path);
+  const uint64_t tex_offset = ReadU64Field(bytes, kTexOffsetField);
+  ASSERT_GE(bytes.size(), tex_offset + kXyzSectionHeaderSize);
+  const size_t field = static_cast<size_t>(tex_offset) + kXyzSectionRawByteCountField;
+  ASSERT_EQ(ReadU32Field(bytes, field), 4u * 4u * 3u * sizeof(float)) << "premise: the writer declared 4x4x3 floats";
+  WriteU32Field(bytes, field, 4u * 4u * 3u * sizeof(float) - 4u);
+  ASSERT_TRUE(WriteAllBytes(f.path, bytes));
+
+  ExpectLoadFailsAndDocumentUnchanged(f.path, "v5 header raw_byte_count disagrees with width*height");
+}
+
+TEST(LmcLoadAtomicityChain, CorruptXyzZlibStreamRollsBackWithoutTouchingCurrentDocument) {
+  TempFile f{ TempPath("lumice_lmc_xyz_corrupt_stream.lmc") };
+  ASSERT_TRUE(WriteValidXyzLmc(f.path));
+
+  std::vector<unsigned char> bytes = ReadAllBytes(f.path);
+  const uint64_t tex_offset = ReadU64Field(bytes, kTexOffsetField);
+  const uint64_t tex_size = ReadU64Field(bytes, kTexSizeField);
+  ASSERT_GT(tex_size, kXyzSectionHeaderSize);
+  ASSERT_GE(bytes.size(), tex_offset + tex_size);
+  // Header left intact, so dimensions and byte count still agree; only the stream is garbage.
+  for (uint64_t i = kXyzSectionHeaderSize; i < tex_size; ++i) {
+    bytes[static_cast<size_t>(tex_offset + i)] = 0xAB;
+  }
+  ASSERT_TRUE(WriteAllBytes(f.path, bytes));
+
+  ExpectLoadFailsAndDocumentUnchanged(f.path, "v5 zlib stream does not inflate");
 }
 
 }  // namespace

@@ -41,20 +41,14 @@ build() {
         #  2. Real-timing pool: real frame timing + real dt, run in isolation.
         #     Holds tests whose meaning depends on real wall-clock:
         #       - perf_test: measures main-loop FPS / rays-per-sec.
-        #       - save_open_visual_consistency: compares the live poller preview
-        #         against the saved snapshot. It now waits on accumulated rays
-        #         rather than on a frame count, so fixed-dt no longer starves it
-        #         outright; it stays here because that wait is bounded by a real
-        #         wall-clock deadline, and fixed-dt decouples the test engine's
-        #         watchdog (which counts simulated frame time) from that deadline.
         #       - revert_repushes_server_display_state, zorder_priority_persists_across_rerun:
         #         both assert on LUMICE_FrameGetComposite() right after a display-time
         #         PushDisplayState() edit (color edit / z_order swap); the edit only
         #         materializes in the composite once the background ServerPoller's
         #         WakeForRefresh-triggered PollOnce() actually runs, which needs real
         #         wall-clock time between ctx->Yield() calls — fixed-dt (and
-        #         --no-frame-limit) starve that thread the same way they starve
-        #         save_open_visual_consistency's accumulation.
+        #         --no-frame-limit) starve that thread the same way they would starve
+        #         a wall-clock accumulation wait.
         #       - gpu_color_class_overflow (…_surfaces_async_warning): drives a live GPU
         #         sim and waits on wall-clock batch accumulation for the async overflow
         #         tally to appear, which fixed-dt starves.
@@ -73,11 +67,11 @@ build() {
         # contract in the diff where a reviewer sees it, and it survives someone changing that
         # default. Keep it AFTER --filter — check_policies.py's gui-test-suite-args-sync reads the
         # filter value with a regex anchored on `--fixed-dt --filter "..."`.
-        "$GUI_TEST_BIN" --fixed-dt --filter "-perf_test,-save_open_visual_consistency,-revert_repushes_server_display_state,-zorder_priority_persists_across_rerun,-gpu_color_class_overflow,-run_after_analysis_renders_gpu" --no-user-config
+        "$GUI_TEST_BIN" --fixed-dt --filter "-perf_test,-revert_repushes_server_display_state,-zorder_priority_persists_across_rerun,-gpu_color_class_overflow,-run_after_analysis_renders_gpu" --no-user-config
         ret=$?
         if [[ $ret == 0 ]]; then
           echo "Running GUI real-timing tests (perf + wall-clock-dependent, isolated)..."
-          "$GUI_TEST_BIN" --filter "perf_test,save_open_visual_consistency,revert_repushes_server_display_state,zorder_priority_persists_across_rerun,gpu_color_class_overflow,run_after_analysis_renders_gpu" --no-user-config
+          "$GUI_TEST_BIN" --filter "perf_test,revert_repushes_server_display_state,zorder_priority_persists_across_rerun,gpu_color_class_overflow,run_after_analysis_renders_gpu" --no-user-config
           ret=$?
         fi
       else

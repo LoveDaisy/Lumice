@@ -559,11 +559,8 @@ void RegisterFileOpsTests(ImGuiTestEngine* engine) {
       IM_CHECK_EQ(static_cast<int>(gui::g_pending_action), static_cast<int>(gui::PendingAction::kNone));
 
       gui::GuiState saved;
-      std::vector<unsigned char> tex;
-      int tex_w = 0;
-      int tex_h = 0;
-      bool tex_radiance_only = false;
-      IM_CHECK(gui::LoadLmcFile(path, saved, tex, tex_w, tex_h, tex_radiance_only));
+      gui::LmcTexture tex;
+      IM_CHECK(gui::LoadLmcFile(path, saved, tex));
       IM_CHECK_EQ(gui::CrystalOf(saved, saved.layers[0].entries[0]).type, gui::CrystalType::kPyramid);
       IM_CHECK_EQ(gui::CrystalOf(saved, saved.layers[0].entries[0]).prism_h, 3.5f);
 

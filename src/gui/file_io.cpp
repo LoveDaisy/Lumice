@@ -8,9 +8,11 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <map>
 #include <nlohmann/json.hpp>
 #include <optional>
@@ -32,6 +34,14 @@
 #include "util/lens_focal.hpp"
 #include "util/lens_fov_default.hpp"
 #include "util/path_utils.hpp"
+
+// stb_image_write.h declares stbi_zlib_compress only inside its implementation section, so the
+// public header included above does not carry the prototype. The implementation is compiled once
+// in stb_impl.cpp (STB_IMAGE_WRITE_IMPLEMENTATION), under the header's own STBIWDEF — which is
+// `extern "C"` when compiled as C++ — so this prototype restates that linkage and links against
+// the same symbol stbi_write_png_to_func uses for its IDAT chunk. The decoder side
+// (stbi_zlib_decode_buffer) IS in stb_image.h's public header.
+extern "C" unsigned char* stbi_zlib_compress(unsigned char* data, int data_len, int* out_len, int quality);
 
 namespace lumice::gui {
 
@@ -3749,7 +3759,19 @@ static constexpr uint32_t kLmcMagic = 0x00434D4C;  // "LMC\0" as little-endian u
 // reopened document renders the picture that was on screen when it was saved. The flag below says
 // which of the two a given file holds; the version bump is what stops an older binary from
 // displaying a v=4 texture with no sky at all.
-static constexpr uint32_t kLmcVersion = 4;
+//
+// v=4 → v=5 bump: the texture section stopped carrying an exposed 8-bit bake at all. Up to v=4 it
+// was the halo's radiance multiplied by the exposure in effect at save time, clipped to [0,1] and
+// quantized to sRGB bytes — which threw away every texel brighter than white, so a reopened
+// document blurred across a hot spot where the live view (bilinear on the UNCLIPPED energy, then
+// exposure) stayed sharp, and its EV / exposure mode / print controls could no longer re-light
+// pixels whose exposure was baked in. From v=5 the section holds the unexposed linear XYZ energy
+// the live preview itself uploads (LUMICE_FrameGetRawXyz's xyz_buffer, zlib-deflated float32),
+// with the per-snapshot measurements that expose it, so a reopened document takes the SAME shader
+// branch as a live run and "what was saved is what reopens" holds by construction rather than to
+// within a threshold. The flag below says which encoding a file holds; the bump is what stops a
+// v=4 binary from handing a deflate stream to the PNG decoder.
+static constexpr uint32_t kLmcVersion = 5;
 static constexpr uint32_t kLmcHeaderSize = 44;
 static constexpr uint32_t kLmcFlagHasTexture = 0x1;
 // Set iff the texture section holds radiance-only pixels (v >= 4). Read rather than inferred from
@@ -3757,6 +3779,33 @@ static constexpr uint32_t kLmcFlagHasTexture = 0x1;
 // display path actually asks. Absent on every v <= 3 file, which is exactly the right answer for
 // them.
 static constexpr uint32_t kLmcFlagTextureRadianceOnly = 0x2;
+// Set iff the texture section is the v>=5 linear-XYZ float encoding (LmcXyzTextureHeader + zlib
+// stream) rather than a PNG. Always set together with kLmcFlagTextureRadianceOnly — linear energy
+// carries no sky by definition — but read on its own: it selects the DECODER, the other flag
+// selects the display semantics, and a reader that conflated the two would have to infer one
+// from the other.
+static constexpr uint32_t kLmcFlagTextureXyzFloat = 0x4;
+
+// Layout of the v>=5 texture section: this 32-byte header, little-endian, followed by one zlib
+// stream (stbi_zlib_compress's output, with header and adler32) that inflates to exactly
+// `raw_byte_count` = width*height*3*sizeof(float) bytes of row-major XYZ float32 triplets — the
+// bytes UploadXyzTexture receives, byte for byte. Width/height are here rather than recovered
+// from the stream because a deflate stream, unlike a PNG, does not know its own dimensions. The
+// exposure fields are what SyncFromPoller (app.cpp) wrote into GuiState from the same result
+// frame the pixels came from; a reopened document writes them back so ComputeMonoExposure has a
+// non-zero denominator. Written and read field by field (no struct memcpy) so the on-disk layout
+// does not depend on padding.
+static constexpr uint32_t kLmcXyzTextureHeaderSize = 32;
+struct LmcXyzTextureHeader {
+  uint32_t width = 0;
+  uint32_t height = 0;
+  float snapshot_intensity = 0.0f;
+  float emitted_energy = 0.0f;
+  float mono_anchor = 0.0f;
+  uint32_t effective_pixels = 0;
+  uint32_t raw_byte_count = 0;
+  uint32_t reserved = 0;
+};
 
 static void WriteU32(std::ofstream& out, uint32_t val) {
   out.write(reinterpret_cast<const char*>(&val), sizeof(val));
@@ -3781,19 +3830,155 @@ static void StbWriteCallback(void* context, void* data, int size) {
   buf->insert(buf->end(), bytes, bytes + size);
 }
 
+// stb's own PNG compression level. Kept at stb's default: the compressor's quality knob trades
+// wall-clock for size in a hash-chain length, and this value is the one every PNG this file has
+// ever written was produced under.
+static constexpr int kLmcXyzZlibQuality = 8;
+
+static void AppendU32(std::vector<unsigned char>& buf, uint32_t val) {
+  unsigned char bytes[4];
+  std::memcpy(bytes, &val, sizeof(val));
+  buf.insert(buf.end(), bytes, bytes + sizeof(val));
+}
+
+static void AppendF32(std::vector<unsigned char>& buf, float val) {
+  unsigned char bytes[4];
+  std::memcpy(bytes, &val, sizeof(val));
+  buf.insert(buf.end(), bytes, bytes + sizeof(val));
+}
+
+static uint32_t PeekU32(const unsigned char* p) {
+  uint32_t val = 0;
+  std::memcpy(&val, p, sizeof(val));
+  return val;
+}
+
+static float PeekF32(const unsigned char* p) {
+  float val = 0.0f;
+  std::memcpy(&val, p, sizeof(val));
+  return val;
+}
+
+// Encodes the v>=5 texture section (LmcXyzTextureHeader + zlib stream) into `out`. Returns false
+// when stb's compressor fails (allocation), in which case `out` is left empty.
+static bool EncodeXyzTextureSection(const float* xyz, int w, int h, const XyzTextureMeta& meta,
+                                    std::vector<unsigned char>& out) {
+  out.clear();
+  const size_t raw_bytes = static_cast<size_t>(w) * h * 3 * sizeof(float);
+  if (raw_bytes > static_cast<size_t>(std::numeric_limits<int>::max())) {
+    return false;  // stb's API takes int lengths
+  }
+  int zlen = 0;
+  // stbi_zlib_compress reads its input only; the non-const parameter is stb's C heritage.
+  unsigned char* zdata = stbi_zlib_compress(reinterpret_cast<unsigned char*>(const_cast<float*>(xyz)),
+                                            static_cast<int>(raw_bytes), &zlen, kLmcXyzZlibQuality);
+  if (!zdata) {
+    return false;
+  }
+  out.reserve(kLmcXyzTextureHeaderSize + static_cast<size_t>(zlen));
+  AppendU32(out, static_cast<uint32_t>(w));
+  AppendU32(out, static_cast<uint32_t>(h));
+  AppendF32(out, meta.snapshot_intensity);
+  AppendF32(out, meta.emitted_energy);
+  AppendF32(out, meta.mono_anchor);
+  AppendU32(out, static_cast<uint32_t>(meta.effective_pixels));
+  AppendU32(out, static_cast<uint32_t>(raw_bytes));
+  AppendU32(out, 0u);  // reserved
+  out.insert(out.end(), zdata, zdata + zlen);
+  std::free(zdata);  // stb_impl.cpp builds stb with the default allocator, so this is STBIW_FREE
+  return true;
+}
+
+// Decodes a v>=5 texture section into `tex`. Every failure returns false with `tex` untouched
+// beyond what the caller reset, so the loader's all-or-nothing contract holds through here.
+static bool DecodeXyzTextureSection(const std::vector<unsigned char>& section, LmcTexture& tex) {
+  if (section.size() < kLmcXyzTextureHeaderSize) {
+    GUI_LOG_ERROR("[LMC] XYZ texture section shorter than its header ({} bytes)", section.size());
+    return false;
+  }
+  const unsigned char* p = section.data();
+  LmcXyzTextureHeader hdr;
+  hdr.width = PeekU32(p + 0);
+  hdr.height = PeekU32(p + 4);
+  hdr.snapshot_intensity = PeekF32(p + 8);
+  hdr.emitted_energy = PeekF32(p + 12);
+  hdr.mono_anchor = PeekF32(p + 16);
+  hdr.effective_pixels = PeekU32(p + 20);
+  hdr.raw_byte_count = PeekU32(p + 24);
+  hdr.reserved = PeekU32(p + 28);
+
+  // Dimensions bounded well below anything a preview texture reaches, so a corrupt header cannot
+  // ask for a multi-gigabyte inflate buffer.
+  constexpr uint32_t kMaxDim = 1u << 15;
+  if (hdr.width == 0 || hdr.height == 0 || hdr.width > kMaxDim || hdr.height > kMaxDim) {
+    GUI_LOG_ERROR("[LMC] XYZ texture header declares invalid dimensions {}x{}", hdr.width, hdr.height);
+    return false;
+  }
+  const uint64_t expected_bytes = static_cast<uint64_t>(hdr.width) * hdr.height * 3 * sizeof(float);
+  if (hdr.raw_byte_count != expected_bytes || expected_bytes > static_cast<uint64_t>(std::numeric_limits<int>::max())) {
+    GUI_LOG_ERROR("[LMC] XYZ texture header raw_byte_count {} does not match {}x{}x3 floats", hdr.raw_byte_count,
+                  hdr.width, hdr.height);
+    return false;
+  }
+  const size_t zlen = section.size() - kLmcXyzTextureHeaderSize;
+  if (zlen == 0 || zlen > static_cast<size_t>(std::numeric_limits<int>::max())) {
+    GUI_LOG_ERROR("[LMC] XYZ texture section has no zlib stream");
+    return false;
+  }
+
+  std::vector<float> xyz(static_cast<size_t>(hdr.width) * hdr.height * 3);
+  const int inflated =
+      stbi_zlib_decode_buffer(reinterpret_cast<char*>(xyz.data()), static_cast<int>(expected_bytes),
+                              reinterpret_cast<const char*>(p + kLmcXyzTextureHeaderSize), static_cast<int>(zlen));
+  if (inflated < 0 || static_cast<uint64_t>(inflated) != expected_bytes) {
+    GUI_LOG_ERROR("[LMC] XYZ texture zlib stream inflated to {} bytes, expected {}", inflated, expected_bytes);
+    return false;
+  }
+
+  tex.width = static_cast<int>(hdr.width);
+  tex.height = static_cast<int>(hdr.height);
+  tex.mode = PreviewRenderer::TextureMode::kXyz;
+  tex.xyz = std::move(xyz);
+  tex.meta.snapshot_intensity = hdr.snapshot_intensity;
+  tex.meta.emitted_energy = hdr.emitted_energy;
+  tex.meta.mono_anchor = hdr.mono_anchor;
+  tex.meta.effective_pixels = static_cast<int>(hdr.effective_pixels);
+  return true;
+}
+
 bool SaveLmcFile(const std::filesystem::path& path, const GuiState& state, const PreviewRenderer& preview,
                  bool save_texture) {
   std::string json_payload = SerializeGuiStateJson(state);
 
-  // Encode texture to PNG in memory if requested
-  std::vector<unsigned char> png_data;
+  // Encode the texture section in memory if requested. The renderer's CPU mirror says which of
+  // the three encodings it holds (PreviewRenderer::GetCpuTextureMode), and the flags written
+  // below follow the mirror rather than a constant: a pre-v4 document re-saved without a run
+  // still carries composited pixels, and declaring them radiance-only would paint its sky twice.
+  std::vector<unsigned char> tex_bytes;
   bool has_texture = false;
-  if (save_texture && preview.HasTexture() && preview.GetTextureData() != nullptr) {
-    int w = preview.GetTextureWidth();
-    int h = preview.GetTextureHeight();
-    int result = stbi_write_png_to_func(StbWriteCallback, &png_data, w, h, 3, preview.GetTextureData(), w * 3);
-    if (result != 0) {
-      has_texture = true;
+  uint32_t tex_flags = 0;
+  if (save_texture && preview.HasTexture()) {
+    const int w = preview.GetTextureWidth();
+    const int h = preview.GetTextureHeight();
+    switch (preview.GetCpuTextureMode()) {
+      case PreviewRenderer::TextureMode::kXyz:
+        if (preview.GetXyzTextureData() != nullptr &&
+            EncodeXyzTextureSection(preview.GetXyzTextureData(), w, h, preview.GetXyzTextureMeta(), tex_bytes)) {
+          has_texture = true;
+          tex_flags = kLmcFlagHasTexture | kLmcFlagTextureRadianceOnly | kLmcFlagTextureXyzFloat;
+        }
+        break;
+      case PreviewRenderer::TextureMode::kSrgbRadiance:
+      case PreviewRenderer::TextureMode::kSrgbComposited:
+        if (preview.GetTextureData() != nullptr &&
+            stbi_write_png_to_func(StbWriteCallback, &tex_bytes, w, h, 3, preview.GetTextureData(), w * 3) != 0) {
+          has_texture = true;
+          tex_flags = kLmcFlagHasTexture;
+          if (preview.GetCpuTextureMode() == PreviewRenderer::TextureMode::kSrgbRadiance) {
+            tex_flags |= kLmcFlagTextureRadianceOnly;
+          }
+        }
+        break;
     }
   }
 
@@ -3806,10 +3991,10 @@ bool SaveLmcFile(const std::filesystem::path& path, const GuiState& state, const
   uint64_t json_offset = kLmcHeaderSize;
   auto json_size = static_cast<uint64_t>(json_payload.size());
   uint64_t tex_offset = has_texture ? json_offset + json_size : 0;
-  auto tex_size = static_cast<uint64_t>(png_data.size());
+  auto tex_size = static_cast<uint64_t>(tex_bytes.size());
 
   // Write header
-  uint32_t flags = has_texture ? (kLmcFlagHasTexture | kLmcFlagTextureRadianceOnly) : 0;
+  uint32_t flags = has_texture ? tex_flags : 0;
   WriteU32(out, kLmcMagic);
   WriteU32(out, kLmcVersion);
   WriteU32(out, flags);
@@ -3821,20 +4006,16 @@ bool SaveLmcFile(const std::filesystem::path& path, const GuiState& state, const
   // Write JSON payload
   out.write(json_payload.data(), static_cast<std::streamsize>(json_payload.size()));
 
-  // Write texture PNG
+  // Write texture section
   if (has_texture) {
-    out.write(reinterpret_cast<const char*>(png_data.data()), static_cast<std::streamsize>(png_data.size()));
+    out.write(reinterpret_cast<const char*>(tex_bytes.data()), static_cast<std::streamsize>(tex_bytes.size()));
   }
 
   return out.good();
 }
 
-bool LoadLmcFile(const std::filesystem::path& path, GuiState& state, std::vector<unsigned char>& tex_data, int& tex_w,
-                 int& tex_h, bool& tex_radiance_only) {
-  tex_data.clear();
-  tex_radiance_only = false;
-  tex_w = 0;
-  tex_h = 0;
+bool LoadLmcFile(const std::filesystem::path& path, GuiState& state, LmcTexture& tex) {
+  tex = LmcTexture{};
 
   std::ifstream in(path, std::ios::binary);
   if (!in.is_open()) {
@@ -3895,32 +4076,46 @@ bool LoadLmcFile(const std::filesystem::path& path, GuiState& state, std::vector
     return false;
   }
 
-  // Read texture if present
-  bool flag_has_tex = (flags & kLmcFlagHasTexture) != 0;
-  tex_radiance_only = (flags & kLmcFlagTextureRadianceOnly) != 0;
+  // Read texture if present. Two decoders, selected by the encoding flag; the two never share a
+  // line, so a v<=4 file takes exactly the path it always took.
+  const bool flag_has_tex = (flags & kLmcFlagHasTexture) != 0;
+  const bool flag_radiance_only = (flags & kLmcFlagTextureRadianceOnly) != 0;
+  const bool flag_xyz_float = (flags & kLmcFlagTextureXyzFloat) != 0;
   if (flag_has_tex) {
     if (tex_size == 0) {
       GUI_LOG_ERROR("[LMC] Texture flag set but size is 0");
       return false;
     }
-    std::vector<unsigned char> png_buf(tex_size);
+    std::vector<unsigned char> tex_buf(tex_size);
     in.seekg(static_cast<std::streamoff>(tex_offset));
-    in.read(reinterpret_cast<char*>(png_buf.data()), static_cast<std::streamsize>(tex_size));
+    in.read(reinterpret_cast<char*>(tex_buf.data()), static_cast<std::streamsize>(tex_size));
     if (!in) {
       GUI_LOG_ERROR("[LMC] Failed to read texture section");
       return false;
     }
 
-    int channels = 0;
-    unsigned char* decoded =
-        stbi_load_from_memory(png_buf.data(), static_cast<int>(png_buf.size()), &tex_w, &tex_h, &channels, 3);
-    if (!decoded) {
-      GUI_LOG_ERROR("[LMC] Failed to decode texture PNG");
-      return false;
+    if (flag_xyz_float) {
+      if (!DecodeXyzTextureSection(tex_buf, tex)) {
+        return false;
+      }
+    } else {
+      int channels = 0;
+      int tex_w = 0;
+      int tex_h = 0;
+      unsigned char* decoded =
+          stbi_load_from_memory(tex_buf.data(), static_cast<int>(tex_buf.size()), &tex_w, &tex_h, &channels, 3);
+      if (!decoded) {
+        GUI_LOG_ERROR("[LMC] Failed to decode texture PNG");
+        return false;
+      }
+      size_t byte_count = static_cast<size_t>(tex_w) * tex_h * 3;
+      tex.srgb.assign(decoded, decoded + byte_count);
+      stbi_image_free(decoded);
+      tex.width = tex_w;
+      tex.height = tex_h;
+      tex.mode = flag_radiance_only ? PreviewRenderer::TextureMode::kSrgbRadiance :
+                                      PreviewRenderer::TextureMode::kSrgbComposited;
     }
-    size_t byte_count = static_cast<size_t>(tex_w) * tex_h * 3;
-    tex_data.assign(decoded, decoded + byte_count);
-    stbi_image_free(decoded);
   }
 
   // The single point where the caller's document changes. Every failure branch above returns
