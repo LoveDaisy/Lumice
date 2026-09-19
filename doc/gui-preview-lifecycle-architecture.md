@@ -441,3 +441,91 @@ I1/I2/I5/I6 管的是世代号诚实、owner 唯一、交接原子、gate 不越
 - 本文：**GUI 侧**把"显示刷新 / 快照物化 / batch 生产 / 生命周期心跳"四时钟解耦，别让昂贵帧物化绑架廉价生命周期。
 
 共同的元原则：**每个时钟一个独立频率；跨时钟边界只用单一版本化交接；真相有唯一 owner，其余是电平触发的投影。**
+
+---
+
+## 12. `DoSnapshot` 分段计时 as-built（2026-09-19 补充）
+
+§6 把「快照物化」单列为一个时钟，理由是它昂贵；§8 把 Stop 响应性和超大 batch 分开处理，理由也是
+它昂贵。本节记录这个「昂贵」到底由什么构成——`ServerImpl::DoSnapshot`（`src/server/server.cpp:1448`）
+在 GUI 轮询线程上做 XYZ→sRGB 融合与 P99 锚点计算，分段计时坐实了各段占比与随分辨率的标度，并对三条
+最容易被提出的优化路径（搬离轮询线程 / P99 降采样 / 跨 Run 持久化 backend buffer）逐条给出收益上限
+的机制层核验。结论是**三条全部不值得动**，唯一的大头在这三条之外。写下来是为了让下一个人问
+「`DoSnapshot` 为什么这么慢、能不能搬到别的线程」时不必重测。
+
+### 12.1 分段数字
+
+测量条件：Mac 本机 Metal 路，`examples/config_example.json` 的 dual-fisheye 渲染器，`ray_num=3e8`，单
+渲染器、无 raypath 染色（composite 段恒为 0，mono 路径）。探针是 `DoSnapshot` 内临时的 `steady_clock`
+分段累加，每档分辨率各起独立进程跑到稳态（HI-RES n=95 帧，LO-RES n=330 帧）后取均值——两档必须分进程，
+因为累加器是进程静态的，单进程 A/B 会让第一档的累计和污染第二档的均值（实测 LO-RES 均值从 HI-RES
+遗留值缓慢收敛下来，而非从头收敛）。
+
+| 指标 | HI-RES（2048×1024） | LO-RES（512×256） |
+|------|---------------------|-------------------|
+| `DoSnapshot` 总墙钟（稳态均值） | 92,520 µs | 6,940 µs |
+| post_snapshot（`RenderConsumer::PostSnapshot` 逐像素 XYZ→sRGB 融合循环） | 87,614 µs（94.7%） | 4,765 µs（68.7%） |
+| prepare_snapshot（Phase 1：P99 锚点 + XYZ double→float 拷贝） | 3,148 µs（3.4%） | 1,993 µs（28.7%） |
+| count_pixels（Phase 1.5：`RenderConsumer::CountEffectivePixels`） | 1,718 µs（1.9%） | 106 µs（1.5%） |
+| 分段覆盖率 | 99.96% | 99.03% |
+
+三段分别对应 `DoSnapshot` 的三个 phase：Phase 1 在 `consumer_mutex_` 下调每个 consumer 的
+`PrepareSnapshot()`（`server.cpp:1463-1486`）；Phase 1.5 在锁外数有效像素（`server.cpp:1508-1513`）；
+Phase 2 不持 `consumer_mutex_`、只持 `do_snapshot_mutex_`，调每个 consumer 的 `PostSnapshot()`
+（`server.cpp:1551-1554`）。
+
+两条从数字里读出来的标度事实：
+
+- **post_snapshot 与像素数近线性**：像素比 16.0×，耗时比 87,614 / 4,765 = 18.4×，超线性约 15%，
+  疑为高分辨率下 XYZ 与图像缓冲区超出 L2/L3 缓存，未单独验证。
+- **prepare_snapshot 不随渲染分辨率线性缩放**（耗时比仅 1.58×），因为它是两个量级不同、标度规律不同的
+  子项之和：`AnchorConsumer::PrepareSnapshot`（`src/server/anchor_consumer.cpp:121`）在**固定**
+  2048×1024 的锚平面（`src/core/anchor_buffer.hpp:49-50`）上算 P99，是与渲染分辨率无关的常数项（用两档
+  数字解出约 1.9 ms）；`RenderConsumer::PrepareSnapshot`（`src/server/render.cpp:774-800`）的逐像素
+  double→float XYZ 拷贝才与渲染分辨率 × 3 通道线性，HI-RES 下贡献约 1.2 ms。
+
+### 12.2 三条候选路径的收益上限（均为机制层核验，非测量噪声）
+
+**① 把 `DoSnapshot` 搬离轮询线程——收益上限 0%。** `server.cpp` / `render.cpp` /
+`component_compositor.cpp` 的 `DoSnapshot` 调用链上没有任何内部并行原语（`std::thread` /
+`std::async` / `parallel_for` / `#pragma omp`）；`server.cpp` 里出现的三处 `std::thread`
+（`:437` 的 simulator worker 池、`:618-619` / `:834-835` 的 consume / generate-scene 持久线程）都是
+独立于快照物化的工作线程。post_snapshot 的 87.6 ms 是纯单线程串行计算，调用它的 OS 线程只决定
+**「谁被阻塞」**，不决定**「阻塞多久」**。此前观测到的「稳态帧间隔 ≈ `DoSnapshot` 长度」串行化现象，
+根因是轮询线程与渲染发布共享同一次计算，搬线程能解开这个共享（轮询线程恢复响应性），但不能把计算本身
+变短——「回到 GPU batch 时间量级」这个目标靠换线程结构性不可达。
+
+**② P99 锚点降采样——已是现状，残余上限约 HI-RES 总时的 2–3%。**
+`kMonoAnchorDownsampleFactor = 8`（`src/core/ev_anchor.hpp:192`，经 `anchor_buffer.hpp:55` 的
+`kAnchorDownsampleFactor` 别名进入 `AnchorL99Sky`，`anchor_buffer.hpp:108-112`）早已把 mono 路径的
+P99 排序降到 256×128 粗网格，即 1/64 采样点。剩下的约 1.9 ms 常数底来自
+`DownsampleBoxSumY`（`ev_anchor.hpp:63`）的 box-sum 累加阶段——它仍要遍历全部 `wc·hc·f²` 个源像素做
+简单加法（不是排序），这是「对每个源像素至少看一眼」这条硬约束下的地板。「降采样换收益」这个好处
+已经拿过一次，不能再拿第二次。
+
+**③ 跨 Run 持久化 backend 的 session buffer——结构性不可行。** CUDA 的 `EnsureSessionBuffers`
+（`src/core/backend/cuda_trace_backend.cu:3219`，`:4517` 调用）与 Metal 的 `EnsureRootBuffers`
+（`src/core/backend/metal_trace_backend.mm:1477`，`:3427` 调用）每 Run 重新分配，看起来像 grow-only
+缓存的疏漏，其实是一条明文架构不变量的必然推论：`src/core/simulator.cpp:1383-1391` 规定 backend 实例
+按 `Run()` 粒度新建、从不跨 Run 池化，Metal 靠这个生命周期实现 `!seeded` 门
+（`metal_trace_backend.mm:809` 声明，`:3207-3212` 门本体），在每个 `Run()` 的第一次 seeding 时恰好一次
+地重置 RNG 状态与 `root_ray_count`。该注释原话已写明：若引入 backend pool，该门的语义必须重审——
+跨 Run 的 PCG 确定性与计数器翻转都建立在 per-Run 生命周期上。所以「跨 Run 持久化 buffer」不是缓存几个
+buffer 的小收益，而是重新设计 RNG 确定性契约（触及 `seam-design.md` /
+`gpu-single-engine-implementation.md` 已定案的架构），远超本节 host 侧 `DoSnapshot` 的范围。
+
+### 12.3 唯一的大头在这三条之外
+
+post_snapshot 是 HI-RES 下唯一占比超过 90% 的段，但上面三条路径没有一条碰它：①换线程不改计算量，
+②只作用于 prepare_snapshot 的 P99 子项，③根本不在 `DoSnapshot` 里。真正缩短它只有一条路——
+**并行化 `RenderConsumer::PostSnapshot` 的逐像素循环本身**（`src/server/render.cpp:1084` 起）。这个
+循环逐像素独立、无跨像素依赖（`render.cpp` 该循环上方的注释说明它是四个逐元素 pass 的融合，且被
+`test_render_consumer_post_snapshot_fusion.cpp` 钉住字节等价），是 embarrassingly parallel 的候选；
+要评估的是线程池开销、与 `do_snapshot_mutex_` / `consumer_mutex_` 的交互，以及是否值得为一条非交互式的
+预览路径引入并行开销。⚠️ 本节没有对这条路做任何测量或裁定，只标明它是空白——把它读成「已否决」或
+「已立项」都是错的。
+
+顺带一条同样未处置的旁支：`RenderConsumer::PrepareSnapshot` 的逐像素拷贝跑在 `consumer_mutex_`
+锁内，与仿真 worker 线程的 `Consume()` 共享同一把锁。它对 `DoSnapshot` 自己的墙钟排名无关紧要
+（该段本就很小），但高分辨率下这份拷贝占用的锁时间可能间接推迟 worker 产出——这是「锁竞争」而非
+「计算串行化」，与本节的主问题是两条不同的因果链，量级未测。
