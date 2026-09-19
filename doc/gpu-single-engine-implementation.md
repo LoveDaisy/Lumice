@@ -234,3 +234,83 @@
 3. **独立验证抓 runner 漏报回归**（268.7）：runner 未验证对 CLI legacy 单引擎的影响，owner 亲手发现 legacy 慢 6×（1-worker 编排=设计预期代价，非 regression）。
 
 4. **~~吞吐天花板：poller 20ms 整幅回读~~（2026-06-19 推翻，见 §0 度量纠偏）**：原结论"引擎 9.5× 在 GUI 仅兑现 2.07×、差 poller"是测量假象——同口径下引擎（8–10×）≈ GUI（~9.5×），无 headroom gap。poller 整幅回读是 **per-commit 延迟成本**（first_upload < 150ms），不是吞吐天花板（explore-271 E3 实证 poll 间隔不影响吞吐）。partial-readback / async upload 若做，目标是降**交互延迟**（first_upload），非提吞吐。
+
+## 10. XYZ 设备平面 drain-window 精度/吞吐：全场景代价矩阵（测量于 2026-09-19/20）
+
+> ⚠️ 本节在 `main` 基线上补写，与分支 `fix/cuda-drain-window-fp32-plane`（PR #383）自己的 §10.1–§10.4
+> （单场景 `examples/bench_config.json` 2048×1024、候选 A/C/B/D 的红绿矩阵）是**同一缺陷调查的两批
+> 数据**，尚未合并去重——该分支合并时，此处内容应与其 §10.2/§10.4 合并为一节，而不是并列保留两份
+> "候选对比表"。本节只补两件那次没测的事：① 候选 B 在 4 个 canonical 场景 + 完整分辨率扫描下的代价
+> （那次只测了 2048×1024 一个分辨率点）；② 新增候选 **E**（`FoldDeviceXyzBatch` 每 8 batch 折一次，
+> 而非候选 C 的每 batch 一次）的正确性与吞吐。E 与 A/B/C/D 一样是**探针**，树上不落地，代码只在
+> 别处（生成 patch 的机制过程）保留，本节只留数字与结论。
+
+### 10.1 候选 B/E 相对 `main`（无修复）的吞吐代价，按场景/分辨率
+
+协议：`scripts/bench_throughput.py`，default dispatch，N≥5 交错（CoV>15% 按脚本自身判据升到
+N=9）。`main` = `origin/main@6f38f1a7`（未修复的 fp32 平面，无 fold）；候选 B =
+`origin/fix/cuda-drain-window-fp32-plane@2cdc353e`；候选 E = 在 `main` 上 cherry-pick 候选 C 的两个
+提交（`c6eb47aa` `9ff5d1dc`）后把 fold 频率从"每 batch"改成"每 8 batch"（drain 前再补一次 fold，
+避免尾部残留漏折）。
+
+**4 场景默认分辨率矩阵**（`bench_light_single_ms`/`ms_multi_crystal` 的默认分辨率均为 512×256），
+`cuda multi_median_rps`，vs `main` 的百分比；括号内为该格 CoV，均在 3–17% 区间，多数差值在噪声内：
+
+| 场景 | home-wsl main | home-wsl B (Δ) | home-wsl E (Δ) |
+|---|---|---|---|
+| `bench_light_single_ms` | 251.6 M/s | 278.5 M/s (+10.7%, CoV 3–11%) | 301.7 M/s (+19.9%, CoV 8–11%) |
+| `ms_multi_crystal` | 131.0 M/s | 126.9 M/s (−3.1%, CoV 3–7%) | 126.8 M/s (−3.2%, CoV 1–4%) |
+| `ms_multi_crystal_complex_filter` | 228.7 M/s | 226.6 M/s (−0.9%, CoV 8–17%) | 248.0 M/s (+8.4%, CoV 10–11%) |
+| `ms_multi_crystal_filtered_bd` | 207.5 M/s | 235.8 M/s (+13.7%, CoV 9–14%) | 221.5 M/s (+6.8%, CoV 10–13%) |
+
+在 512×256 这个（较小的）默认分辨率上，B/E 相对 `main` 的差值全部落在测量噪声量级内——与 PR #383
+§10.2 "512×256 −3%（噪声内）" 的结论一致。**分辨率变大之后代价才显形**（XYZ 平面字节数
+`W×H×3×4`，512×256 仅 1.5 MB，2048×1024 是 24 MB）：
+
+| 场景 @ 2048×1024 | home-wsl main | home-wsl B (Δ) | home-wsl E (Δ) | home-win main | home-win B (Δ) | home-win E (Δ) |
+|---|---|---|---|---|---|---|
+| `bench_light_single_ms` | 250.7 M/s | 216.4 M/s (**−13.7%**) | 223.2 M/s (**−11.0%**) | 347.6 M/s | 287.5 M/s (**−17.3%**) | 327.2 M/s (**−5.9%**) |
+| `ms_multi_crystal` | 115.6 M/s | 103.4 M/s (**−10.5%**) | 103.6 M/s (**−10.4%**) | 153.8 M/s | 157.9 M/s (+2.7%) | 160.5 M/s (+4.3%) |
+
+`bench_light_single_ms`（单晶体、无 filter，出射密度最高——每像素每 drain 窗口的 `atomicAdd` 次数最多）
+在两台机器上都读到清楚的代价，且方向一致：**E 比 B 便宜**——home-wsl 省 2.7pp（−11.0% vs −13.7%），
+home-win 省 11.4pp（−5.9% vs −17.3%）更明显。`ms_multi_crystal`（多晶体、per-ray 计算重、出射密度低）
+在 home-wsl 上读到与 B 相近的代价，但在 home-win 上 B/E 反而比 `main` **快**——两台机器方向不一致，
+按实测记录，不强行统一解释；候选的吞吐代价看起来主要由"每像素出射密度"而非"晶体数/场景复杂度"驱动，
+这与 §10.1（缺陷机制：热像素场景一个像素一个窗口能吃下上万次 `atomicAdd`）的机制描述方向一致，但本次
+测量样本量（每格 5–9 次交错）不足以把"E 比 B 更便宜"钉成跨场景通用结论——只在 `bench_light_single_ms`
+这一光路密集场景上观察到。
+
+### 10.2 候选 E 的正确性：drift 剂量-响应补上"8"这一档
+
+PR #383 §10.1 的一手签名表（`parhelion` 10M rays，seed 42，未修复的 fp32 平面）给出
+`LUMICE_XYZ_DRAIN_BATCHES` ∈ {64, 16, 1} 对应的 `R_cuda/R_legacy − 1` 为 **+0.400% / −0.135% /
+−0.008%**——drift 随窗口长度走，因为窗口越长、fp32 `atomicAdd` 链越长。候选 E 把 fold 频率钉在
+"每 8 batch"，所以无论 `LUMICE_XYZ_DRAIN_BATCHES` 设多大，fp32 链长都被**上限在 8**（drain 前补一次
+fold 处理不足 8 的尾段）。用同一 `test_cuda_energy_accounting_parity.py::_r_ratio`（
+`sum(flt_buf Y) / snapshot_intensity`）在候选 E 二进制上跑 `parhelion`，seed 42/43/44 ×
+`LUMICE_XYZ_DRAIN_BATCHES` ∈ {64, 16, 4}（home-wsl，一手测量）：
+
+| seed | drain=64 | drain=16 | drain=4 |
+|---|---|---|---|
+| 42 | +0.0452% | +0.0452% | −0.0390% |
+| 43 | +0.0452% | +0.0452% | −0.0390% |
+| 44 | +0.0449% | +0.0449% | −0.0391% |
+
+三档在 64/16 之间完全一致（因为两者的 fp32 链长都被 8-batch fold 钉住，drain 窗口本身多长不再重要），
+在 drain=4 时降到 −0.039%（此时 `xyz_win_.calls` 从未达到 8，drain 前的补 fold 把链长压到 4，与
+`main` 表里 drain=4 一档"未实测"留白呼应）。**三档 |drift| 全部 ≤ 0.05%**，比 `_T_R_RATIO_TOL`
+（0.1%，两后端互比的容差）还紧一半，也确认候选 E 没有把 B 已经解决的"精度依赖窗口长度"问题带回来
+到会破坏跨后端 parity 的程度——但注意这不等于"drift 与窗口无关"（B 的性质）：跑
+`test_cuda_energy_ledger_independent_of_drain_window`（该测试针对候选 B 的
+`{1, 16, 64}` 三档、容差 0.05% 编写）在候选 E 上**预期性地红**——drain=1 读 −0.0078%（链长 1，
+与 PR #383 表格 drain=1 一档吻合，因为 E 在 drain=1 时每次都补 fold，退化成候选 C 的每 batch 折）而
+drain=16/64 读 +0.0452%（链长 8），spread 0.0530% 略超该测试为 B 钉的 0.05% 门槛——这是候选 E "有意
+把链长钉在 8 而非 1"的直接体现，不是候选 E 实现的缺陷，只是它不满足一条**为候选 B 的形态量身写的**
+不变量。
+
+### 10.3 结论边界
+
+本节只补数据，不裁定 575 的最终形态（候选取舍仍由 owner 在 PR #383 上下判断）；`bench_light_single_ms`
+上 E 比 B 便宜、`ms_multi_crystal` 上两机方向不一致、E 的三档 drift 全部 ≤0.05% 但不满足 B 的
+"drift 与窗口长度无关"这条更强不变量——这三点是本节交付的全部事实，取舍留给 owner。
