@@ -2270,8 +2270,21 @@ void Simulator::SimulateOneWavelengthWithBackend(TraceBackend& backend, const Sc
       // task-color-degrade-gui-surfacing: OVERWRITE (not +=) — the tally is a
       // config constant, identical on every batch of this committed config.
       xyz_win_.color_degrade_counts_ = backend.GetLastColorDegradeCounts();
+      // Precision fold on a fixed cadence, drain or not: every
+      // kXyzFoldEveryBatches batches widen the fp32 plane into the backend's
+      // device double plane and restart the fp32 chain, so the chain length any
+      // one fold has to correct for is capped at kXyzFoldEveryBatches batches
+      // whatever xyz_drain_batches_ is (see TraceBackend::FoldDeviceXyzBatch).
+      // Enqueued on the emit stream after this batch's layers, still inside the
+      // session; no host wait. A batch that ends the window skips the fold: the
+      // drain's readback runs the same kernel in finalize mode over whatever
+      // residue (at most kXyzFoldEveryBatches batches) the fp32 plane holds, on
+      // every drain site (this cap, and the display-cadence drains in Run()),
+      // so the tail is never dropped and never folded twice.
       if (xyz_win_.calls >= xyz_drain_batches_) {
         DrainDeviceXyz(&backend);
+      } else if (xyz_win_.calls % kXyzFoldEveryBatches == 0) {
+        backend.FoldDeviceXyzBatch();
       }
       return;
     }
