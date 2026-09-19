@@ -567,5 +567,83 @@ buffer——`CompositeAnnotations` 为避免每像素分配，对当前像素先
 多线程路径而非串行 fallback 的 `PostSnapshot` 正确性证据。
 
 **本节不覆盖的。** `ParallelRows` 每次调用现场起停一个全核线程池、与并发运行的固定 simulator worker 池
-抢核，是并行化落地后暴露的**资源调度成本**，与本节收口的「正确性 + 同环境收益」是不同命题，在
-`PrepareSnapshot` 锁竞争的独立评估里一并处理，本节不展开。
+抢核，是并行化落地后暴露的**资源调度成本**，与本节收口的「正确性 + 同环境收益」是不同命题——它已由
+§12.5 收口：池大小改为按空闲核预算，不再全核。
+
+### 12.5 空闲核预算：`ParallelRows` 不再与仿真 worker 抢核（2026-09-20）
+
+**问题。** §12.4 落地时 `ParallelRows` 内部调用的是无参 `ThreadingPool::CreatePool()`，即每次调用都起一个
+`hardware_concurrency()` 个线程的池、跑完即停。GUI 轮询节奏下 `PostSnapshot` 每 ~20 ms 触发一次，这个全核
+池与固定大小的仿真 worker 池抢同一批物理核。Mac 12 核、`num_workers=10`、2048×1024 dual-fisheye、走
+`liblumice_testapi` C API 每 20 ms 取一次 result frame 的 A/B 探针（5 rep 交错，12 s 窗口）实测：`main`
+（全核池）在 20 ms 轮询下比 2 s 稀疏轮询损失 **18.0%** worker 吞吐（4.21 → 3.45 M rays/s）；同树只把
+`ParallelRows` 强制串行的对照臂损失 **6.3%**（4.40 → 4.12）。即全核池调度本身多吃掉 ~12 个百分点，
+20 ms 轮询下的绝对吞吐比串行还慢 16%——并行化把它省下的毫秒又在 worker 那边加倍还了回去。
+
+**机制。** 「这次并行调度总共能用几个核」做成一个显式的 `int thread_budget` 参数，全链路必填、无默认值：
+
+- `ServerImpl` 构造函数在算出 `worker_count` 的同一处算
+  `render_thread_budget_ = max(0, hardware_concurrency() − worker_count)`（`src/server/server.cpp`），算一次、
+  存成员——`worker_count` 在一个 server 实例的生命周期内是常量，没有 resize 路径，所以预算也是。构造行日志
+  `ServerImpl: ... render_thread_budget=N` 把它和 `worker_count` 一起打印出来（regression sentinel 与
+  `test_server_render_thread_budget.cpp` 解析这一行，其形状是契约）。GPU 路 `worker_count=1` ⇒ 预算 `hw−1`，
+  GUI 在 GPU 路上仍拿到接近全核的并行。常备的 CPU 分析池不计入：它只在分析会话时唤醒，而分析会话与渲染
+  会话在同一个 server 里互斥。
+- `RenderConsumer` 构造函数第 2 位必填 `int thread_budget`，存成 `const int thread_budget_`，喂给它做的每一个
+  W×H 行并行循环：构造时的 `BuildVisibleMask`、`Rebuild*` 触发的 5 处 `annotation::ComputeOverlay`（含其内部
+  的 `LevelSetMaskFromField`）、`PostSnapshot` 的融合像素循环。`ComputeOverlay` 的调用点跑在 `CommitConfig`
+  调用栈（GUI/主线程）而不是 poller 线程，但抢的是同一批核，所以用同一个数字，不发明第二套规则。
+- `ParallelRows(height, pixel_count, thread_budget, body)`：`thread_budget < 2` 与既有的像素阈值 / 单行两条
+  内联门并列——预算不足直接在调用线程上 `body(0, height)`，**不起一线程的池**；否则
+  `ThreadingPool::CreatePool(thread_budget)`。`parallel_rows.cpp` 内不再有无参 `CreatePool()` 调用。
+- 为什么是必填而不是「默认全核」：默认值恰好就是产生本次回退的那个值，而任何别的默认值都是没人为该调用
+  点推理过的数字。把它做成编译期必填，遗漏的调用点是编译错误而不是静默复现——测试侧统一传
+  `test/support/thread_budget.hpp` 的 `kTestThreadBudget`（= `hardware_concurrency()`，改动前的无约束
+  行为，既有测试/benchmark 语义不变）。
+
+**并行收益仍在。** `bench/bench_post_snapshot_parallel.cpp` 现在按预算三档跑（同机同进程，2048×1024，
+50 万散射光线，只计 `PostSnapshot()`）：
+
+| 场景 | 预算 1（强制串行） | 预算 2（12 核跑 10 worker 时的真实预算） | 预算 12（无约束，旧行为） |
+|------|------|------|------|
+| HI-RES，无 marker | 50.0 ms | 30.0 ms（**1.66×**） | 11.2–12.3 ms（4.1–4.5×） |
+| HI-RES，含 2 个 marker | 69.7–84.7 ms | 31.9–43.0 ms（**2.0–2.2×**） | 9.6–12.9 ms（6.6–7.3×） |
+
+预算 2 相对串行的 1.66–2.2× 就是 GUI 在 CPU 路上真正留下的那份并行收益；预算 12 那一列是旧行为在**没有
+worker 抢核**时的样子，真实 GUI 场景里它并不存在。⚠️ 这里的串行基线（50.0 / 69.7 ms）与 §12.4 表格的
+44.9 / 60.8 ms 是不同日期的测量，同一口径，差在机器状态；两节的判据都只用同表内比值。
+
+**正确性。** 三层证据：`test_parallel_rows.cpp` 在函数本身上钉住派发规则（预算 < 2 ⇒ 调用线程上恰好一次
+`body(0, height)`；预算 2 + 大帧 ⇒ 起池、≤ 2 个线程、行带精确铺满区间；像素阈值与单行门不被大预算覆盖）；
+`test_server_render_thread_budget.cpp` 在 `worker_count ∈ {1, hw−2, hw, hw+3}` 与真实 GPU 路上断言公式；
+`test_render_consumer_post_snapshot_fusion.cpp` 新增 case 让同一场景经预算 0（内联）与预算 ≥ 2（起池）
+两个 consumer 渲染后逐字节相等——这是「预算」这条新的串行/并行分叉（区别于原有的像素数阈值分叉）不改变
+输出字节的直接证据。
+
+**端到端复测（同一探针、同一协议：W=10，20 ms vs 2 s，5 rep 交错，12 s 窗口）。**
+
+Mac 12 核（8P+4E），2048×1024 dual-fisheye，`liblumice_testapi` C API 每 `poll_ms` 取一次 result frame，
+量 12 s 窗口内的 `sim_ray_num`。「同日串行对照」是同一 commit 把 `kParallelPixelThreshold` 设为 `SIZE_MAX`
+的临时构建（与最初取证的对照臂同一做法）。取中位数，只计机器上没有其他测试进程的 rep：
+
+| 臂 | 2 s 稀疏轮询 | 20 ms GUI 轮询 | 损失 |
+|---|---|---|---|
+| 全核池（修复前，2026-09-19 取证） | 4.21 M rays/s | 3.45 | 18.0% |
+| 强制串行（2026-09-19 取证） | 4.40 | 4.12 | 6.3% |
+| 强制串行（同日对照，2026-09-20，n=10） | 4.56 | 4.11 | 9.8% |
+| **空闲核预算 = 2（本节，2026-09-20，n=10）** | 4.50 | 3.99 | **11.3%** |
+
+读法：修复后 20 ms 轮询的绝对吞吐从 3.45 回到 3.99 M rays/s（+15.6%），距强制串行的 4.11 还差 3%；损失从
+18.0% 降到 11.3%，比同日串行对照多 1.5 个百分点。这 1.5 pp 是预算公式本身的形状：`hw − W = 2` 在
+`PostSnapshot` 运行的那 ~70% 时间里让 12 个计算线程正好占满 12 核（串行臂只有 11 个），任何系统线程的
+活动都得从一个 worker 手里抢核；把公式改成 `hw − W − 1` 在这台机器上等于回到串行，也就等于放弃 §12.4 的
+并行收益。⚠️ 串行对照的两天数字不一致（2 s 臂 4.40 → 4.56，20 ms 臂 4.12 → 4.11）说明 2 s 臂对机器状态
+敏感、20 ms 臂不敏感——跨日拿「损失百分比」比较是不可靠的，同日交错测的臂才可比。
+
+home-win / home-wsl（同一台 Ryzen 9 9950X，16C/32T）的同探针复测尚未取得数字：两者互斥且当时正被另一项
+CUDA 吞吐 bench 占用。对这台机器公式给出 `hw − W = 32 − 10 = 22`，池远大于 Mac 的 2，但 22 个逻辑核确实闲置，
+预期损失接近串行臂；数字到手后补进本表。
+
+**本节不覆盖的。** `RebuildAngularDistMasks` / `RebuildViewDistMasks` / `RebuildGridMasks` 仍是「一条线一次
+`ComputeOverlay`」——每次配置提交，N 条线现场起停 N 个（预算受限的）池而不是 1 个。这是调用频率问题，
+不是池大小问题；它们走的预算与 `PostSnapshot` 相同，本节只记录、不处理。
