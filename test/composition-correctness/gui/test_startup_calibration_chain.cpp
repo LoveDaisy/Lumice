@@ -13,11 +13,16 @@
 //     through the same mapping the property-change reconstruction builds from;
 //   - the calibration is a real run on that server, on a background thread, and stays invisible
 //     only because the poller — the single publisher of what the preview shows — is never woken
-//     while it is in flight. Every path that starts or wakes the poller, and every path that
-//     destroys the server, joins the run first. The failure the join guards against has no tell:
+//     while it is in flight. Every path that destroys the server, and every user-initiated command
+//     that starts or wakes the poller (DoRun, DoStop, DoAnalyze), joins the run first with
+//     JoinPendingCalibration() — blocking is acceptable there. The two display-time refresh paths
+//     (PushDisplayState, the composite-EV push) are on the render path and must never block it, so
+//     they use the non-blocking CalibrationPending() probe instead and skip their whole push while
+//     it reports true; they never join. The failure either guard guards against has no tell:
 //     a preview quietly showing the default document at 100k rays with no Run pressed looks like
-//     a feature, and a server freed under a thread still committing to it is a crash that only
-//     happens when the user is fast.
+//     a feature, and a server freed under a thread still committing to it — or a display-time
+//     write racing that thread's own unsynchronized commit — is a crash that only happens when the
+//     user is fast.
 //
 // The propositions need a live server (the run is real) but no window and no frame: the join is
 // the whole subject, and it is observable through CalibrationPending, the server's state and the

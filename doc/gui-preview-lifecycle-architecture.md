@@ -167,11 +167,17 @@ CUDA 超大 batch 中途无法响应。第一性原理：
 > 且 server 从一开始就按文档的 `use_gpu_backend`/`worker_count` 构造（`ConstructServerForState`），
 > 不再先建 CPU server 再在首次 Run 时整个重建。这次 run 之所以不需要 I1–I7 的任何合规证明，是因为
 > 它**从不接入 `g_server_poller`**：poller 是预览的唯一发布者，没被唤醒就没有观测，也就没有世代号、
-> 快照、gate 可谈。这条前提的守法方式是 `JoinPendingCalibration()`（`JoinPendingStop()` 的孪生）——
-> 每条**销毁/重建 server** 的路径（R1，与 Stop 相同）**以及每条唤醒 poller** 的路径（`DoRun` /
-> `DoAnalyze` / 两处 display-time `WakeForRefresh`）都先 join。第二类调用点是 Stop 所没有的：
-> 一次漏 join 的唤醒会让 poller 观察到正在跑校准场景的 RUNNING server 并把预热帧当用户帧发布。
-> 钉住它的是 `test/composition-correctness/gui/test_startup_calibration_chain.cpp`（预热后 server
+> 快照、gate 可谈。这条前提由两类不同守护共同维持，按"能否接受阻塞"分类（code review round 1/2 收敛）：
+> **销毁/重建 server** 的路径（R1，与 Stop 相同）与**用户发起的命令**（`DoRun` / `DoStop` /
+> `DoAnalyze`，阻塞等待在这些路径上是预期行为）都先调 `JoinPendingCalibration()`（`JoinPendingStop()`
+> 的孪生）阻塞等待。**两处 display-time 刷新路径**（`PushDisplayState`、合成 EV push）在渲染路径上，
+> 不能为校准最坏 2s 阻塞整帧——它们改用非阻塞的 `CalibrationPending()` 探测，侦测到校准仍在跑就整体
+> 跳过本次 push（连同其中真正写 server 状态的调用，不只是唤醒 poller 那一步），显示态基线不更新，
+> 下一次 reconcile/帧自动重试，**从不调用 `JoinPendingCalibration()`**。两类守护漏掉任何一处的后果不同：
+> 唤醒类的路径漏掉会让 poller 观察到正在跑校准场景的 RUNNING server 并把预热帧当用户帧发布；
+> display-time 路径漏掉会让写 server 状态的调用（如 `LUMICE_SetRaypathColors`）与校准线程内部无锁的
+> `CommitConfig` 并发写同一结构，是堆损坏量级的竞争而非画面错误。
+> 钉住第一类的是 `test/composition-correctness/gui/test_startup_calibration_chain.cpp`（预热后 server
 > IDLE、已发布快照对象不变、在飞重建先 join）。
 
 > **落地补丁（2026-08-01，PR 见 git log）：I6「终帧无条件上屏」曾长期未被落实。**

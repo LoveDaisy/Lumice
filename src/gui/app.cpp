@@ -111,13 +111,20 @@ void JoinPendingStop() {
 
 // The calibration twin of JoinPendingStop, with one more class of caller. Like the Stop, the
 // calibration thread holds g_server, so every path that destroys or reconstructs the server joins
-// it first (R1). Unlike the Stop, the calibration is also a RUN — the server is RUNNING the default
-// document — while the poller has never been started: g_server_poller is the only publisher of
-// what the preview shows, and the calibration never touches it, which is what keeps the warm-up
-// frames off the screen. That holds only while nobody wakes the poller on the server mid-run, so
-// every path that starts or wakes the poller joins here too: DoRun, DoAnalyze, and the two
-// display-time wakes (PushDisplayState, the composite-EV push). A wake that slipped past this
-// would have the poller observe the calibration's RUNNING server and publish it as the user's run.
+// it first (R1): shutdown (main.cpp), MaybeReconstructServerForConstructionProperties. Unlike the
+// Stop, the calibration is also a RUN — the server is RUNNING the default document — while the
+// poller has never been started: g_server_poller is the only publisher of what the preview shows,
+// and the calibration never touches it, which is what keeps the warm-up frames off the screen.
+// That holds only while nobody wakes the poller on the server mid-run, so every path that starts
+// or wakes the poller must not observe a still-running calibration either. Two different
+// mechanisms enforce that, split by whether blocking is acceptable: DoRun, DoStop and DoAnalyze
+// are user-initiated commands where a bounded wait is expected, so they join here directly before
+// touching the server. The two display-time refresh paths (PushDisplayState, the composite-EV
+// push) are on the render path and must never block it for calibration's up-to-2s worst case
+// (code review round 1, Major #3), so they use the non-blocking CalibrationPending() probe below
+// instead and skip their whole push (not just the wake) while it reports true — they never call
+// this function. A wake or a server write that slipped past either guard would have the poller
+// observe the calibration's RUNNING server, or race its unsynchronized CommitConfig, respectively.
 void JoinPendingCalibration() {
   if (g_calibration_future.valid()) {
     g_calibration_future.wait();
