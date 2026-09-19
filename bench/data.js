@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1789855509383,
+  "lastUpdate": 1789855512377,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9543,50 +9543,6 @@ window.BENCHMARK_DATA = {
             "username": "LoveDaisy"
           },
           "committer": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "distinct": true,
-          "id": "53299d835046ba74d6f2897c4a1566993368a6bf",
-          "message": "Merge pull request #283 from LoveDaisy/task/gui-fisheye-lens-border\n\nGUI: 鱼眼镜头有效区边框辅助线",
-          "timestamp": "2026-08-30T22:06:58+08:00",
-          "tree_id": "2ba992405cad4908ee5cc797c9404a38a110ff48",
-          "url": "https://github.com/LoveDaisy/ice_halo_sim/commit/53299d835046ba74d6f2897c4a1566993368a6bf"
-        },
-        "date": 1788099498760,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 77,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 100.1,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 96,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 90.6,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
             "email": "noreply@github.com",
             "name": "GitHub",
             "username": "web-flow"
@@ -13906,6 +13862,45 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 91.7,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "76be31ac78abe09f12455eb5916a081fbac528cf",
+          "message": "Merge pull request #386 from LoveDaisy/feat/parallel-rows-idle-core-budget\n\nfix(server): size ParallelRows by an explicit idle-core thread budget (undo the GUI-poll worker regression from #382)",
+          "timestamp": "2026-09-20T05:54:03+08:00",
+          "tree_id": "622c8e9b60a4128f396e320415097e083aab2610",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/76be31ac78abe09f12455eb5916a081fbac528cf"
+        },
+        "date": 1789855511483,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "Ubuntu ARM64",
+            "value": 99.8,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 98.2,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 87.6,
             "unit": "%"
           }
         ]
