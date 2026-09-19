@@ -31,6 +31,7 @@
 #include "core/scatter_accum.hpp"  // MakeCameraRotation
 #include "server/render.hpp"
 #include "support/render_anchor.hpp"
+#include "support/thread_budget.hpp"
 
 namespace lumice {
 namespace {
@@ -172,11 +173,12 @@ RingExtent ExtentAbout(const std::vector<uint8_t>& mask, float cx, float cy) {
 }
 
 TEST(RenderConsumerViewDist, PaintedPixelsAreExactlyTheMaskedOnes) {
-  RenderConsumer off(MakeConfig({}), ColorClassTable{}, MakeSun());
+  RenderConsumer off(MakeConfig({}), lumice::test::kTestThreadBudget, ColorClassTable{}, MakeSun());
   const std::vector<uint8_t> img_off = SnapshotOnce(&off);
   ASSERT_EQ(img_off.size(), static_cast<size_t>(kTotalPix) * 3);
 
-  RenderConsumer on(MakeConfig({ Line(22.0f, 1.0f, 1.0f, 0.0f, 0.0f) }), ColorClassTable{}, MakeSun());
+  RenderConsumer on(MakeConfig({ Line(22.0f, 1.0f, 1.0f, 0.0f, 0.0f) }), lumice::test::kTestThreadBudget,
+                    ColorClassTable{}, MakeSun());
   const std::vector<uint8_t> img_on = SnapshotOnce(&on);
   ASSERT_EQ(img_on.size(), static_cast<size_t>(kTotalPix) * 3);
 
@@ -213,7 +215,7 @@ TEST(RenderConsumerViewDist, PaintedPixelsAreExactlyTheMaskedOnes) {
 // axis, so a ring centred on it would not be a ring about the axis pixel at any radius.
 TEST(RenderConsumerViewDist, LinearCircleIsCentredOnTheOpticalAxisAtTheProjectedRadius) {
   const RenderConfig cfg = MakeConfig({ Line(22.0f, 1.0f, 1.0f, 0.0f, 0.0f) });
-  RenderConsumer rc(cfg, ColorClassTable{}, MakeSun());
+  RenderConsumer rc(cfg, lumice::test::kTestThreadBudget, ColorClassTable{}, MakeSun());
   const auto& masks = rc.ViewDistMasksForTest();
   ASSERT_EQ(masks.size(), 1u);
   ASSERT_EQ(masks[0].size(), static_cast<size_t>(kTotalPix));
@@ -242,7 +244,7 @@ TEST(RenderConsumerViewDist, LinearCircleIsCentredOnTheOpticalAxisAtTheProjected
 // projected through the wrong lens here would not pass on the linear case's tolerance.
 TEST(RenderConsumerViewDist, FisheyeCircleIsCentredOnTheOpticalAxisAtTheProjectedRadius) {
   const RenderConfig cfg = MakeConfig({ Line(60.0f, 1.0f, 1.0f, 0.0f, 0.0f) }, LensParam::kFisheyeEqualArea, 180.0f);
-  RenderConsumer rc(cfg, ColorClassTable{}, MakeSun());
+  RenderConsumer rc(cfg, lumice::test::kTestThreadBudget, ColorClassTable{}, MakeSun());
   const auto& masks = rc.ViewDistMasksForTest();
   ASSERT_EQ(masks.size(), 1u);
 
@@ -279,7 +281,7 @@ TEST(RenderConsumerViewDist, HalfFovCircleIsInscribedInTheShortSideOfAWideCanvas
   RenderConfig cfg = MakeConfig({ Line(kFov / 2.0f, 1.0f, 1.0f, 0.0f, 0.0f) }, LensParam::kLinear, kFov);
   cfg.resolution_[0] = kWide;
   cfg.resolution_[1] = kH;
-  RenderConsumer rc(cfg, ColorClassTable{}, MakeSun());
+  RenderConsumer rc(cfg, lumice::test::kTestThreadBudget, ColorClassTable{}, MakeSun());
   const auto& masks = rc.ViewDistMasksForTest();
   ASSERT_EQ(masks.size(), 1u);
   ASSERT_EQ(masks[0].size(), static_cast<size_t>(kWide) * static_cast<size_t>(kH));
@@ -321,7 +323,7 @@ TEST(RenderConsumerViewDist, CircleFollowsTheAxisPixelNotTheCanvasCentreUnderLen
   RenderConfig shifted = MakeConfig({ Line(22.0f, 1.0f, 1.0f, 0.0f, 0.0f) });
   shifted.lens_shift_[0] = 18;
   shifted.lens_shift_[1] = -9;
-  RenderConsumer rc(shifted, ColorClassTable{}, MakeSun());
+  RenderConsumer rc(shifted, lumice::test::kTestThreadBudget, ColorClassTable{}, MakeSun());
   const auto& masks = rc.ViewDistMasksForTest();
   ASSERT_EQ(masks.size(), 1u);
 
@@ -352,9 +354,9 @@ TEST(RenderConsumerViewDist, CircleFollowsTheAxisPixelNotTheCanvasCentreUnderLen
 
 TEST(RenderConsumerViewDist, TwoLinesKeepTheirOwnColours) {
   const RenderConfig cfg = MakeConfig({ Line(22.0f, 1.0f, 1.0f, 0.0f, 0.0f), Line(46.0f, 1.0f, 0.0f, 0.0f, 1.0f) });
-  RenderConsumer off(MakeConfig({}), ColorClassTable{}, MakeSun());
+  RenderConsumer off(MakeConfig({}), lumice::test::kTestThreadBudget, ColorClassTable{}, MakeSun());
   const std::vector<uint8_t> img_off = SnapshotOnce(&off);
-  RenderConsumer on(cfg, ColorClassTable{}, MakeSun());
+  RenderConsumer on(cfg, lumice::test::kTestThreadBudget, ColorClassTable{}, MakeSun());
   const std::vector<uint8_t> img_on = SnapshotOnce(&on);
   ASSERT_EQ(img_on.size(), static_cast<size_t>(kTotalPix) * 3);
 
@@ -386,7 +388,7 @@ TEST(RenderConsumerViewDist, TwoLinesKeepTheirOwnColours) {
 TEST(RenderConsumerViewDist, ResetWithPicksUpANewLineListAndTheLabelSwitch) {
   // view_dist_grid_ and view_dist_label_ are appearance fields, so a config that adds a circle or
   // asks for its text mid-run reaches a REUSED consumer.
-  RenderConsumer rc(MakeConfig({}), ColorClassTable{}, MakeSun());
+  RenderConsumer rc(MakeConfig({}), lumice::test::kTestThreadBudget, ColorClassTable{}, MakeSun());
   ASSERT_TRUE(rc.ViewDistMasksForTest().empty());
   ASSERT_TRUE(rc.ViewDistLabelsForTest().empty());
   const std::vector<uint8_t> img_off = SnapshotOnce(&rc);
@@ -416,7 +418,7 @@ TEST(RenderConsumerViewDist, ResetWithPicksUpANewLineListAndTheLabelSwitch) {
 // demands it stay byte-identical.
 TEST(RenderConsumerViewDist, MovingTheSunLeavesTheCircleWhereItWas) {
   const std::vector<GridLineParam> lines = { Line(22.0f, 1.0f, 1.0f, 0.0f, 0.0f) };
-  RenderConsumer rc(MakeConfig(lines), ColorClassTable{}, MakeSun(20.0f));
+  RenderConsumer rc(MakeConfig(lines), lumice::test::kTestThreadBudget, ColorClassTable{}, MakeSun(20.0f));
   ASSERT_EQ(rc.ViewDistMasksForTest().size(), 1u);
   const std::vector<uint8_t> before = rc.ViewDistMasksForTest()[0];
   ASSERT_GT(static_cast<size_t>(std::count(before.begin(), before.end(), uint8_t{ 1 })), 0u);

@@ -56,6 +56,7 @@
 #include "core/color_util.hpp"
 #include "server/render.hpp"
 #include "server/server.hpp"
+#include "support/thread_budget.hpp"
 
 namespace lumice {
 namespace {
@@ -197,7 +198,7 @@ void ExpectCmfRatiosAndMagnitude(const LandedPixel& px, const char* what) {
 TEST(RenderConsumerFp32AccumOracle, LegacyProjectionXyzHoldsCmfRatio) {
   const RenderConfig cfg = MakeZenithConfig(16, 16);
   const SimData batch = MakeLegacyBatch();
-  RenderConsumer rc(cfg);
+  RenderConsumer rc(cfg, lumice::test::kTestThreadBudget);
   for (size_t b = 0; b < kBatches; ++b) {
     rc.Consume(batch);
   }
@@ -217,7 +218,7 @@ TEST(RenderConsumerFp32AccumOracle, WorkerProjectionXyzHoldsCmfRatio) {
   // two cases are talking about the same pixel rather than one chosen by hand.
   int pixel = -1;
   {
-    RenderConsumer probe(cfg);
+    RenderConsumer probe(cfg, lumice::test::kTestThreadBudget);
     probe.Consume(MakeLegacyBatch());
     probe.PrepareSnapshot();
     const RawXyzResult raw = probe.GetRawXyzResult();
@@ -225,7 +226,7 @@ TEST(RenderConsumerFp32AccumOracle, WorkerProjectionXyzHoldsCmfRatio) {
   }
   ASSERT_GE(pixel, 0);
   const SimData batch = MakeWorkerBatch(pixel);
-  RenderConsumer rc(cfg);
+  RenderConsumer rc(cfg, lumice::test::kTestThreadBudget);
   for (size_t b = 0; b < kBatches; ++b) {
     rc.Consume(batch);
   }
@@ -242,7 +243,7 @@ TEST(RenderConsumerFp32AccumOracle, WorkerProjectionXyzHoldsCmfRatio) {
 TEST(RenderConsumerFp32AccumOracle, ColorClassLaneHoldsClosedFormY) {
   const RenderConfig cfg = MakeZenithConfig(16, 16);
   const SimData batch = MakeLegacyBatch();
-  RenderConsumer rc(cfg, SingleClassBit0());
+  RenderConsumer rc(cfg, lumice::test::kTestThreadBudget, SingleClassBit0());
   for (size_t b = 0; b < kBatches; ++b) {
     rc.Consume(batch);
   }
@@ -283,7 +284,7 @@ TEST(RenderConsumerFp32AccumOracle, DeviceFusedLaneFoldHoldsClosedFormY) {
   batch.lane_pixel_data_.assign(1, std::vector<float>(static_cast<size_t>(kW2 * kH2), 0.0f));
   batch.lane_pixel_data_[0][static_cast<size_t>(kPixel)] = y_per_fold;
 
-  RenderConsumer rc(cfg, SingleClassBit0());
+  RenderConsumer rc(cfg, lumice::test::kTestThreadBudget, SingleClassBit0());
   for (size_t f = 0; f < kFolds; ++f) {
     rc.Consume(batch);
   }
@@ -308,7 +309,7 @@ TEST(RenderConsumerFp32AccumOracle, SnapshotIntensityHoldsClosedForm) {
   constexpr int kH16 = 16;
   const RenderConfig cfg = MakeZenithConfig(kW16, kH16);
   const SimData batch = MakeLegacyBatch();
-  RenderConsumer rc(cfg);
+  RenderConsumer rc(cfg, lumice::test::kTestThreadBudget);
   for (size_t b = 0; b < kBatches; ++b) {
     rc.Consume(batch);
   }

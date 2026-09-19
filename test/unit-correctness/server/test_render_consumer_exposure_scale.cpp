@@ -38,6 +38,7 @@
 #include "core/color_util.hpp"
 #include "core/ev_anchor.hpp"
 #include "server/render.hpp"
+#include "support/thread_budget.hpp"
 
 namespace lumice {
 namespace {
@@ -101,7 +102,7 @@ constexpr float kSceneAnchorL99 = 4.0e3f;
 // does not read it) keeps the two modes' fixtures identical apart from ev_mode_.
 float ScaleFor(const RenderConfig& cfg, const std::vector<float>& weights, float emitted,
                float anchor_l99_sky = kSceneAnchorL99) {
-  RenderConsumer rc(cfg, ColorClassTable{});
+  RenderConsumer rc(cfg, lumice::test::kTestThreadBudget, ColorClassTable{});
   auto data = MakeBatch(weights, emitted);
   rc.Consume(data);
   rc.PrepareSnapshot();
@@ -180,7 +181,7 @@ TEST(RenderConsumerExposureScale, EmittedEnergyAccumulatesAcrossBatchesIncluding
   // the pass rate again — the bug the whole change exists to remove — and it is
   // invisible in a single-batch test, so drive two.
   const auto cfg = MakeConfig();
-  RenderConsumer rc(cfg, ColorClassTable{});
+  RenderConsumer rc(cfg, lumice::test::kTestThreadBudget, ColorClassTable{});
 
   auto landed_batch = MakeBatch({ 1.0f, 2.0f }, 100.0f);
   rc.Consume(landed_batch);
@@ -201,7 +202,7 @@ TEST(RenderConsumerExposureScale, EmittedEnergyAccumulatesAcrossBatchesIncluding
 
 TEST(RenderConsumerExposureScale, ResetClearsTheDenominator) {
   const auto cfg = MakeConfig();
-  RenderConsumer rc(cfg, ColorClassTable{});
+  RenderConsumer rc(cfg, lumice::test::kTestThreadBudget, ColorClassTable{});
   auto data = MakeBatch(Weights(), 100.0f);
   rc.Consume(data);
   rc.PrepareSnapshot();
@@ -218,7 +219,7 @@ TEST(RenderConsumerExposureScale, RawXyzResultCarriesTheRawEmittedTotal) {
   // The C API hands the denominator out raw so a consumer can reproduce the
   // scale; assert that is literally what is published, not a per-pixel figure.
   const auto cfg = MakeConfig();
-  RenderConsumer rc(cfg, ColorClassTable{});
+  RenderConsumer rc(cfg, lumice::test::kTestThreadBudget, ColorClassTable{});
   auto data = MakeBatch(Weights(), 777.5f);
   rc.Consume(data);
   rc.PrepareSnapshot();
@@ -245,7 +246,7 @@ TEST(RenderConsumerExposureScale, EmittedEnergyAccumulatorMatchesDoublePrecision
   constexpr float kPerBatchEnergy = 11258.0f;
 
   const auto cfg = MakeConfig();
-  RenderConsumer rc(cfg, ColorClassTable{});
+  RenderConsumer rc(cfg, lumice::test::kTestThreadBudget, ColorClassTable{});
 
   double reference = 0.0;
   for (int i = 0; i < kBatchCount; ++i) {
@@ -336,11 +337,11 @@ TEST(RenderConsumerExposureScaleRelative, IgnoresThisFramesOwnPixels) {
     heavy.push_back(w * 4.0f);
   }
 
-  RenderConsumer light_rc(cfg, ColorClassTable{});
+  RenderConsumer light_rc(cfg, lumice::test::kTestThreadBudget, ColorClassTable{});
   auto light_batch = MakeBatch(Weights(), 1000.0f);
   light_rc.Consume(light_batch);
   light_rc.PrepareSnapshot();
-  RenderConsumer heavy_rc(cfg, ColorClassTable{});
+  RenderConsumer heavy_rc(cfg, lumice::test::kTestThreadBudget, ColorClassTable{});
   auto heavy_batch = MakeBatch(heavy, 1000.0f);
   heavy_rc.Consume(heavy_batch);
   heavy_rc.PrepareSnapshot();
@@ -396,13 +397,13 @@ TEST(RenderConsumerExposureScaleRelative, NoAnchorScoresZeroRatherThanCarryingTh
   // rather than a visibly broken one. The reset turns that into this, which is covered.
   const auto cfg = MakeRelativeConfig();
 
-  RenderConsumer never_pushed(cfg, ColorClassTable{});
+  RenderConsumer never_pushed(cfg, lumice::test::kTestThreadBudget, ColorClassTable{});
   auto data = MakeBatch(Weights(), 1000.0f);
   never_pushed.Consume(data);
   never_pushed.PrepareSnapshot();
   EXPECT_EQ(never_pushed.ExposureScale(), 0.0f);
 
-  RenderConsumer cleared(cfg, ColorClassTable{});
+  RenderConsumer cleared(cfg, lumice::test::kTestThreadBudget, ColorClassTable{});
   auto second = MakeBatch(Weights(), 1000.0f);
   cleared.Consume(second);
   cleared.PrepareSnapshot();

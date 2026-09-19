@@ -64,6 +64,7 @@
 #include "core/scatter_accum.hpp"  // MakeCameraRotation
 #include "gui/overlay_labels.hpp"
 #include "gui/preview_renderer.hpp"
+#include "support/thread_budget.hpp"
 
 namespace {
 
@@ -87,7 +88,7 @@ RenderConfig MakeCfg(LensParam::LensType type, float fov, int w, int h, RenderCo
 
 std::vector<uint8_t> CoreMask(const RenderConfig& cfg) {
   const float short_pix = static_cast<float>(std::min(cfg.resolution_[0], cfg.resolution_[1]));
-  return lumice::BuildVisibleMask(cfg, lumice::MakeCameraRotation(cfg), short_pix);
+  return lumice::BuildVisibleMask(cfg, lumice::MakeCameraRotation(cfg), short_pix, lumice::test::kTestThreadBudget);
 }
 
 // The shader's own visibility rule, from preview_renderer.cpp's main():

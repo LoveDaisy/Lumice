@@ -67,6 +67,7 @@
 #include "core/scatter_accum.hpp"  // MakeCameraRotation
 #include "server/render.hpp"
 #include "support/render_anchor.hpp"
+#include "support/thread_budget.hpp"
 #include "util/color_data.hpp"
 #include "util/color_space.hpp"
 #include "util/ink_transfer.hpp"
@@ -244,7 +245,7 @@ struct Coverage {
 void RunAndCompare(const RenderConfig& cfg, const std::vector<float>& weights, const std::string& label,
                    Coverage* cov) {
   *cov = Coverage{};
-  RenderConsumer rc(cfg, ColorClassTable{});
+  RenderConsumer rc(cfg, lumice::test::kTestThreadBudget, ColorClassTable{});
   auto data = MakeUpwardBatch(weights);
   rc.Consume(data);
   rc.PrepareSnapshot();
@@ -455,7 +456,7 @@ void ApplyMarkerRings(const std::vector<annotation::CanvasPoint>& pts, const std
 
 TEST(RenderConsumerPostSnapshotFusion, LargeResolutionWithMarkersIsByteExactAgainstOracle) {
   RenderConfig cfg = MakeParallelConfig();
-  RenderConsumer rc(cfg, ColorClassTable{}, MakeParallelSun());
+  RenderConsumer rc(cfg, lumice::test::kTestThreadBudget, ColorClassTable{}, MakeParallelSun());
   auto data = MakeScatteredBatch();
   rc.Consume(data);
   // This config leaves ev_mode_ at its relative default (unlike MakeSnapshotRenderConfig, which pins

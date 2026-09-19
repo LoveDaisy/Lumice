@@ -46,6 +46,7 @@
 #include "core/annotation_overlay.hpp"
 #include "core/lens_proj_build.hpp"
 #include "core/scatter_accum.hpp"  // MakeCameraRotation
+#include "support/thread_budget.hpp"
 
 namespace lumice {
 namespace {
@@ -89,7 +90,7 @@ std::vector<uint8_t> Outline(const RenderConfig& cfg) {
   req.view = SnapshotOf(cfg);
   req.horizon = true;
   req.labels = false;  // this file is about the LINE; the anchors have their own coverage
-  return annotation::ComputeOverlay(req).horizon;
+  return annotation::ComputeOverlay(req, lumice::test::kTestThreadBudget).horizon;
 }
 
 bool At(const std::vector<uint8_t>& mask, const RenderConfig& cfg, int px, int py) {
@@ -468,7 +469,7 @@ TEST(HorizonMask, EveryMarkedPixelIsInsideTheRenderDomain) {
         const float short_pix = static_cast<float>(std::min(cfg.resolution_[0], cfg.resolution_[1]));
         const Rotation rot = MakeCameraRotation(cfg);
         const std::vector<uint8_t> outline = Outline(cfg);
-        const std::vector<uint8_t> visible = BuildVisibleMask(cfg, rot, short_pix);
+        const std::vector<uint8_t> visible = BuildVisibleMask(cfg, rot, short_pix, lumice::test::kTestThreadBudget);
         if (outline.size() != visible.size()) {
           ADD_FAILURE() << TypeName(t) << ": the two masks of one frame differ in size (" << outline.size() << " vs "
                         << visible.size() << ")";
@@ -522,7 +523,8 @@ TEST(HorizonMask, FrontClipUsesNoAngularSlackAtHighResolution) {
   cfg.front_ = true;
   const float short_pix = static_cast<float>(std::min(cfg.resolution_[0], cfg.resolution_[1]));
   const std::vector<uint8_t> outline = Outline(cfg);
-  const std::vector<uint8_t> visible = BuildVisibleMask(cfg, MakeCameraRotation(cfg), short_pix);
+  const std::vector<uint8_t> visible =
+      BuildVisibleMask(cfg, MakeCameraRotation(cfg), short_pix, lumice::test::kTestThreadBudget);
   ASSERT_EQ(outline.size(), visible.size());
   ASSERT_GT(CountOn(outline), 0u) << "a full-sky lens looking at the horizon must draw one";
 

@@ -63,6 +63,7 @@
 #include "core/scatter_accum.hpp"  // MakeCameraRotation
 #include "gui/overlay_labels.hpp"
 #include "gui/preview_renderer.hpp"
+#include "support/thread_budget.hpp"
 
 namespace {
 
@@ -102,7 +103,7 @@ std::vector<uint8_t> CoreOutline(const RenderConfig& cfg) {
   req.view.front = cfg.front_;
   req.horizon = true;
   req.labels = false;
-  return lumice::annotation::ComputeOverlay(req).horizon;
+  return lumice::annotation::ComputeOverlay(req, lumice::test::kTestThreadBudget).horizon;
 }
 
 // The shader's visibility rule, restated exactly as the sibling file does (preview_renderer.cpp
@@ -152,7 +153,8 @@ std::vector<uint8_t> GuiOutline(const RenderConfig& cfg) {
       drawable[i] = VisibleInGuiTerms(cfg.visible_, dz) ? 1 : 0;
     }
   }
-  return lumice::mask_detail::LevelSetMaskFromField(alt_deg, imaged, drawable, w, h, { 0.0f }, /*circular=*/false);
+  return lumice::mask_detail::LevelSetMaskFromField(alt_deg, imaged, drawable, w, h, { 0.0f }, /*circular=*/false,
+                                                    lumice::test::kTestThreadBudget);
 }
 
 size_t CountOn(const std::vector<uint8_t>& m) {

@@ -30,6 +30,7 @@
 #include "core/lens_proj_build.hpp"
 #include "core/math.hpp"
 #include "core/scatter_accum.hpp"  // MakeCameraRotation
+#include "support/thread_budget.hpp"
 
 namespace {
 
@@ -93,7 +94,8 @@ TEST(AnnotationLevelSet, LevelZeroReproducesTheHorizonWidthRule) {
   const std::vector<float> field = RowRampField(kW, kH, 1.0f);
   const std::vector<uint8_t> all(static_cast<size_t>(kW) * kH, 1);
 
-  const std::vector<uint8_t> mask = md::LevelSetMaskFromField(field, all, all, kW, kH, { 0.0f }, /*circular=*/false);
+  const std::vector<uint8_t> mask =
+      md::LevelSetMaskFromField(field, all, all, kW, kH, { 0.0f }, /*circular=*/false, lumice::test::kTestThreadBudget);
   EXPECT_EQ(LitRows(mask, kW, kH), (std::vector<int>{ 7, 8, 9 }));
 }
 
@@ -105,7 +107,8 @@ TEST(AnnotationLevelSet, NonZeroLevelShiftsTheBandWithoutChangingItsWidth) {
 
   // Row 16 reads 0, so level 5 sits at row 21. The width rule reads the same local gradient, so
   // the band is the same three rows wide — this is why shifting the field needs no separate rule.
-  const std::vector<uint8_t> mask = md::LevelSetMaskFromField(field, all, all, kW, kH, { 5.0f }, /*circular=*/false);
+  const std::vector<uint8_t> mask =
+      md::LevelSetMaskFromField(field, all, all, kW, kH, { 5.0f }, /*circular=*/false, lumice::test::kTestThreadBudget);
   EXPECT_EQ(LitRows(mask, kW, kH), (std::vector<int>{ 20, 21, 22 }));
 }
 
@@ -115,8 +118,8 @@ TEST(AnnotationLevelSet, EveryRequestedLevelLandsInOneMask) {
   const std::vector<float> field = RowRampField(kW, kH, 1.0f);
   const std::vector<uint8_t> all(static_cast<size_t>(kW) * kH, 1);
 
-  const std::vector<uint8_t> mask =
-      md::LevelSetMaskFromField(field, all, all, kW, kH, { -10.0f, 0.0f, 10.0f }, /*circular=*/false);
+  const std::vector<uint8_t> mask = md::LevelSetMaskFromField(field, all, all, kW, kH, { -10.0f, 0.0f, 10.0f },
+                                                              /*circular=*/false, lumice::test::kTestThreadBudget);
   EXPECT_EQ(LitRows(mask, kW, kH), (std::vector<int>{ 9, 10, 11, 19, 20, 21, 29, 30, 31 }));
 }
 
@@ -152,17 +155,20 @@ TEST(AnnotationLevelSet, ACircularFieldMeasuresDistanceAcrossItsSeam) {
   };
 
   // Circular: gradient is a uniform 1 deg, half-width 1.5 deg, so 179 / 180 / -179 all light.
-  const std::vector<uint8_t> circular =
-      md::LevelSetMaskFromField(field, all, all, kW, kH, { 180.0f }, /*circular=*/true);
+  const std::vector<uint8_t> circular = md::LevelSetMaskFromField(field, all, all, kW, kH, { 180.0f },
+                                                                  /*circular=*/true, lumice::test::kTestThreadBudget);
   EXPECT_EQ(lit_columns(circular), (std::vector<int>{ 1, 2, 3 }));
 
   // The same input read as a plain number line loses the far side of the seam. Asserted rather
   // than described, because "the wrap matters here" is exactly the claim the circular flag makes.
-  const std::vector<uint8_t> plain = md::LevelSetMaskFromField(field, all, all, kW, kH, { 180.0f }, /*circular=*/false);
+  const std::vector<uint8_t> plain = md::LevelSetMaskFromField(field, all, all, kW, kH, { 180.0f }, /*circular=*/false,
+                                                               lumice::test::kTestThreadBudget);
   EXPECT_EQ(lit_columns(plain), (std::vector<int>{ 1, 2 }));
 
   // A level no column comes near draws nothing — the wrapping must not fold distant values in.
-  EXPECT_EQ(CountOn(md::LevelSetMaskFromField(field, all, all, kW, kH, { 0.0f }, /*circular=*/true)), 0u);
+  EXPECT_EQ(CountOn(md::LevelSetMaskFromField(field, all, all, kW, kH, { 0.0f }, /*circular=*/true,
+                                              lumice::test::kTestThreadBudget)),
+            0u);
 }
 
 TEST(AnnotationLevelSet, GradientIsMeasuredAcrossImagedButDrawnOnlyOnDrawable) {
@@ -180,16 +186,17 @@ TEST(AnnotationLevelSet, GradientIsMeasuredAcrossImagedButDrawnOnlyOnDrawable) {
       drawable[static_cast<size_t>(py) * kW + static_cast<size_t>(px)] = 0;
     }
   }
-  const std::vector<uint8_t> mask =
-      md::LevelSetMaskFromField(field, imaged, drawable, kW, kH, { 0.0f }, /*circular=*/false);
+  const std::vector<uint8_t> mask = md::LevelSetMaskFromField(field, imaged, drawable, kW, kH, { 0.0f },
+                                                              /*circular=*/false, lumice::test::kTestThreadBudget);
   EXPECT_EQ(LitRows(mask, kW, kH), (std::vector<int>{ 7 }));
 }
 
 TEST(AnnotationLevelSet, MalformedInputYieldsAnEmptyMaskRatherThanReadingOutOfBounds) {
   const std::vector<float> field(10, 0.0f);
   const std::vector<uint8_t> all(10, 1);
-  EXPECT_EQ(CountOn(md::LevelSetMaskFromField(field, all, all, 4, 4, { 0.0f }, false)), 0u);
-  EXPECT_EQ(CountOn(md::LevelSetMaskFromField(field, all, all, 5, 2, {}, false)), 0u);
+  EXPECT_EQ(CountOn(md::LevelSetMaskFromField(field, all, all, 4, 4, { 0.0f }, false, lumice::test::kTestThreadBudget)),
+            0u);
+  EXPECT_EQ(CountOn(md::LevelSetMaskFromField(field, all, all, 5, 2, {}, false, lumice::test::kTestThreadBudget)), 0u);
 }
 
 // =================================================================================================
@@ -221,7 +228,7 @@ TEST(AnnotationParallelRows, ParallelMaskBuildMatchesASerialReference) {
           (dir.valid && md::VisibleByRange(cfg.visible_, dir.z)) ? 1 : 0;
     }
   }
-  const std::vector<uint8_t> actual = lumice::BuildVisibleMask(cfg, rot, short_pix);
+  const std::vector<uint8_t> actual = lumice::BuildVisibleMask(cfg, rot, short_pix, lumice::test::kTestThreadBudget);
   ASSERT_EQ(actual.size(), expected.size());
   EXPECT_EQ(actual, expected);
   EXPECT_GT(CountOn(actual), 0u) << "an all-zero mask makes the comparison vacuous";
@@ -235,7 +242,7 @@ TEST(AnnotationOverlay, DegenerateViewReturnsAnEmptyOverlay) {
   ann::Request req;
   req.view = MakeView(LensParam::kDualFisheyeEqualArea, 180.0f, 0, 64);
   req.horizon = true;
-  const ann::Overlay out = ann::ComputeOverlay(req);
+  const ann::Overlay out = ann::ComputeOverlay(req, lumice::test::kTestThreadBudget);
   EXPECT_EQ(out.width, 0);
   EXPECT_TRUE(out.drawable.empty());
   EXPECT_TRUE(out.horizon.empty());
@@ -246,7 +253,7 @@ TEST(AnnotationOverlay, OnlyRequestedCategoriesAreBuilt) {
   ann::Request req;
   req.view = MakeView(LensParam::kDualFisheyeEqualArea, 180.0f, 128, 64);
   req.horizon = true;
-  const ann::Overlay out = ann::ComputeOverlay(req);
+  const ann::Overlay out = ann::ComputeOverlay(req, lumice::test::kTestThreadBudget);
   EXPECT_FALSE(out.horizon.empty());
   EXPECT_TRUE(out.elevation.empty());
   EXPECT_TRUE(out.longitude.empty());
@@ -266,7 +273,7 @@ TEST(AnnotationOverlay, EveryCategoryMaskIsASubsetOfTheDrawableRegion) {
   req.reference_dir[1] = -1.0f;
   req.reference_dir[2] = 0.0f;
   req.view_dist_deg = { 30.0f, 80.0f };
-  const ann::Overlay out = ann::ComputeOverlay(req);
+  const ann::Overlay out = ann::ComputeOverlay(req, lumice::test::kTestThreadBudget);
 
   ASSERT_EQ(out.drawable.size(), 128u * 64u);
   const std::vector<const std::vector<uint8_t>*> masks{ &out.horizon, &out.elevation, &out.longitude, &out.angular_dist,
@@ -297,9 +304,9 @@ TEST(AnnotationOverlay, MoreParallelsPaintMorePixels) {
   req.view = MakeView(LensParam::kDualFisheyeEqualArea, 180.0f, 128, 64);
   req.labels = false;
   req.elevation_deg = { 30.0f };
-  const size_t one = CountOn(ann::ComputeOverlay(req).elevation);
+  const size_t one = CountOn(ann::ComputeOverlay(req, lumice::test::kTestThreadBudget).elevation);
   req.elevation_deg = { 30.0f, -30.0f, 60.0f };
-  const size_t three = CountOn(ann::ComputeOverlay(req).elevation);
+  const size_t three = CountOn(ann::ComputeOverlay(req, lumice::test::kTestThreadBudget).elevation);
   EXPECT_GT(one, 0u);
   EXPECT_GT(three, one);
 }
@@ -309,10 +316,10 @@ TEST(AnnotationOverlay, FrontClipShrinksTheDrawableRegion) {
   ann::Request req;
   req.view = view;
   req.horizon = true;
-  const size_t full = CountOn(ann::ComputeOverlay(req).drawable);
+  const size_t full = CountOn(ann::ComputeOverlay(req, lumice::test::kTestThreadBudget).drawable);
 
   req.view.front = true;
-  const ann::Overlay clipped = ann::ComputeOverlay(req);
+  const ann::Overlay clipped = ann::ComputeOverlay(req, lumice::test::kTestThreadBudget);
   EXPECT_GT(full, 0u);
   EXPECT_LT(CountOn(clipped.drawable), full);
   EXPECT_GT(CountOn(clipped.drawable), 0u) << "the front clip removed the whole sky";
@@ -322,7 +329,7 @@ TEST(AnnotationOverlay, ZenithAndNadirProjectOntoAFullSkyCanvas) {
   ann::Request req;
   req.view = MakeView(LensParam::kDualFisheyeEqualArea, 180.0f, 128, 64);
   req.zenith_nadir = true;
-  const ann::Overlay out = ann::ComputeOverlay(req);
+  const ann::Overlay out = ann::ComputeOverlay(req, lumice::test::kTestThreadBudget);
   EXPECT_TRUE(out.zenith.valid);
   EXPECT_TRUE(out.nadir.valid);
   // Dual fisheye puts the upper hemisphere in the left disc and the lower in the right one, so the
@@ -337,7 +344,7 @@ TEST(AnnotationOverlay, ZenithIsReportedInvisibleWhenTheHemisphereExcludesIt) {
   req.view = MakeView(LensParam::kDualFisheyeEqualArea, 180.0f, 128, 64);
   req.view.visible = RenderConfig::kLower;
   req.zenith_nadir = true;
-  const ann::Overlay out = ann::ComputeOverlay(req);
+  const ann::Overlay out = ann::ComputeOverlay(req, lumice::test::kTestThreadBudget);
   EXPECT_FALSE(out.zenith.valid);
   EXPECT_TRUE(out.nadir.valid);
 }
@@ -348,7 +355,7 @@ TEST(AnnotationOverlay, LabelsCarryTheirCurveIdentityAndText) {
   req.horizon = true;
   req.elevation_deg = { 30.0f, -30.0f };
   req.longitude_deg = { 0.0f, 90.0f };
-  const ann::Overlay out = ann::ComputeOverlay(req);
+  const ann::Overlay out = ann::ComputeOverlay(req, lumice::test::kTestThreadBudget);
   ASSERT_FALSE(out.labels.empty());
 
   bool saw_horizon = false;
@@ -384,7 +391,7 @@ TEST(AnnotationOverlay, FractionalAnglesKeepOneDecimal) {
   ann::Request req;
   req.view = MakeView(LensParam::kDualFisheyeEqualArea, 180.0f, 128, 64);
   req.elevation_deg = { 22.5f };
-  const ann::Overlay out = ann::ComputeOverlay(req);
+  const ann::Overlay out = ann::ComputeOverlay(req, lumice::test::kTestThreadBudget);
   ASSERT_FALSE(out.labels.empty());
   EXPECT_EQ(out.labels.front().text, "22.5\xC2\xB0");
 }
@@ -395,7 +402,7 @@ TEST(AnnotationOverlay, LabelsCanBeSkipped) {
   req.horizon = true;
   req.elevation_deg = { 30.0f };
   req.labels = false;
-  const ann::Overlay out = ann::ComputeOverlay(req);
+  const ann::Overlay out = ann::ComputeOverlay(req, lumice::test::kTestThreadBudget);
   EXPECT_TRUE(out.labels.empty());
   EXPECT_FALSE(out.horizon.empty()) << "geometry is still built when only the anchors are skipped";
 }
@@ -411,7 +418,7 @@ TEST(AnnotationOverlay, AngularDistanceCirclesAreCentredOnTheReferenceDirection)
   req.reference_dir[1] = -0.7071f;
   req.reference_dir[2] = -0.7071f;
   req.angular_dist_deg = { 22.0f };
-  const ann::Overlay ring = ann::ComputeOverlay(req);
+  const ann::Overlay ring = ann::ComputeOverlay(req, lumice::test::kTestThreadBudget);
   ASSERT_GT(CountOn(ring.angular_dist), 0u);
 
   double sx = 0.0;
@@ -521,7 +528,7 @@ TEST(SunWorldDir, PutsTheCircleCentreWhereTheSunIsImaged) {
   req.labels = false;
   req.angular_dist_deg = { 22.0f };
   std::copy(d, d + 3, req.reference_dir);
-  const ann::Overlay ring = ann::ComputeOverlay(req);
+  const ann::Overlay ring = ann::ComputeOverlay(req, lumice::test::kTestThreadBudget);
   ASSERT_GT(CountOn(ring.angular_dist), 0u);
 
   double sx = 0.0;
@@ -563,7 +570,7 @@ TEST(AnnotationOverlay, AngularDistLabelsSitOnTheCircleTheyName) {
   const float sun[3] = { -0.7071f, -0.7071f, 0.0f };
   std::copy(sun, sun + 3, req.reference_dir);
 
-  const ann::Overlay out = ann::ComputeOverlay(req);
+  const ann::Overlay out = ann::ComputeOverlay(req, lumice::test::kTestThreadBudget);
   const RenderConfig cfg = ann::ToRenderConfig(req.view);
   const lumice::Rotation rot = lumice::MakeCameraRotation(cfg);
   const float short_pix = static_cast<float>(std::min(cfg.resolution_[0], cfg.resolution_[1]));
@@ -657,7 +664,7 @@ TEST(AnnotationOverlay, ViewDistCirclesAreCentredOnTheOpticalAxisNotTheSun) {
   req.reference_dir[2] = -0.7071f;
   req.angular_dist_deg = { 22.0f };
   req.view_dist_deg = { 22.0f };
-  const ann::Overlay out = ann::ComputeOverlay(req);
+  const ann::Overlay out = ann::ComputeOverlay(req, lumice::test::kTestThreadBudget);
   ASSERT_GT(CountOn(out.view_dist), 0u);
   ASSERT_GT(CountOn(out.angular_dist), 0u);
 
@@ -686,7 +693,7 @@ TEST(AnnotationOverlay, ViewDistCirclesFollowTheAxisPixelUnderLensShift) {
   req.view.lens_shift[1] = -20;
   req.labels = false;
   req.view_dist_deg = { 20.0f };
-  const ann::Overlay out = ann::ComputeOverlay(req);
+  const ann::Overlay out = ann::ComputeOverlay(req, lumice::test::kTestThreadBudget);
   ASSERT_GT(CountOn(out.view_dist), 0u);
 
   const RenderConfig cfg = ann::ToRenderConfig(req.view);
@@ -712,7 +719,7 @@ TEST(AnnotationOverlay, ViewDistLabelsSitOnTheCircleTheyNameAndComeFromBothEntry
   req.view.az_deg = 15.0f;
   req.view.el_deg = 35.0f;
   req.view_dist_deg = { 22.0f, 100.0f };  // one interior ring, one that straddles the disc seam
-  const ann::Overlay out = ann::ComputeOverlay(req);
+  const ann::Overlay out = ann::ComputeOverlay(req, lumice::test::kTestThreadBudget);
   const ann::Anchors anchors = ann::ComputeAnchors(req);
 
   const RenderConfig cfg = ann::ToRenderConfig(req.view);

@@ -32,6 +32,7 @@
 #include "config/render_config.hpp"
 #include "config/sim_data.hpp"
 #include "server/render.hpp"
+#include "support/thread_budget.hpp"
 
 namespace lumice {
 namespace {
@@ -67,7 +68,7 @@ TEST(RenderConsumerEmptyBatch, AllRaysFilteredOutDoesNotAbort) {
   // outgoing_d_/outgoing_w_/outgoing_component_ left empty on purpose.
 
   RenderConfig cfg = MakeMinimalRenderConfig();
-  RenderConsumer rc(cfg);
+  RenderConsumer rc(cfg, lumice::test::kTestThreadBudget);
 
   EXPECT_NO_FATAL_FAILURE(rc.Consume(data));
   rc.PrepareSnapshot();
@@ -80,7 +81,7 @@ TEST(RenderConsumerEmptyBatch, AllRaysFilteredOutDoesNotAbort) {
 #ifndef NDEBUG
 TEST(RenderConsumerEmptyBatchDeathTest, MismatchedOutgoingSizesTripsAssert) {
   RenderConfig cfg = MakeMinimalRenderConfig();
-  RenderConsumer rc(cfg);
+  RenderConsumer rc(cfg, lumice::test::kTestThreadBudget);
 
   SimData data;
   data.curr_wl_ = 550.0f;

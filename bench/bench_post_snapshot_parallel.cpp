@@ -17,6 +17,7 @@
 #include "config/sim_data.hpp"
 #include "server/render.hpp"
 #include "test/support/render_anchor.hpp"
+#include "test/support/thread_budget.hpp"
 
 using namespace lumice;  // NOLINT(google-build-using-namespace) benchmark code
 
@@ -66,7 +67,7 @@ SimData MakeScatteredBatch(size_t n_rays) {
 void BM_PostSnapshotHiRes(benchmark::State& state) {
   const bool with_markers = state.range(0) != 0;
   RenderConfig cfg = MakeHiResConfig(with_markers);
-  RenderConsumer rc(cfg, ColorClassTable{}, SunParam{ 35.0f, 20.0f, 0.5f });
+  RenderConsumer rc(cfg, lumice::test::kTestThreadBudget, ColorClassTable{}, SunParam{ 35.0f, 20.0f, 0.5f });
   auto data = MakeScatteredBatch(500000);
   rc.Consume(data);
   // Anchor + PrepareSnapshot once, matching the property-test helper's ordering; only PostSnapshot

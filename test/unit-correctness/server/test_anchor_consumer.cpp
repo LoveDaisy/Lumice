@@ -40,6 +40,7 @@
 #include "server/anchor_consumer.hpp"
 #include "server/render.hpp"
 #include "server/server.hpp"
+#include "support/thread_budget.hpp"
 #include "util/logger.hpp"
 
 namespace lumice {
@@ -112,7 +113,7 @@ float AnchorFor(const SimData& data) {
 // lives in a test for the same reason a control always does: the thing it measures is gone from
 // production, and the claim "the new anchor does not move" is empty without it.
 float LegacyAnchorFor(const SimData& data, const RenderConfig& cfg) {
-  RenderConsumer rc(cfg);
+  RenderConsumer rc(cfg, lumice::test::kTestThreadBudget);
   rc.Consume(data);
   rc.PrepareSnapshot();
   const RawXyzResult raw = rc.GetRawXyzResult();

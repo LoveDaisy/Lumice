@@ -56,6 +56,7 @@
 #include "config/sim_data.hpp"
 #include "server/render.hpp"
 #include "support/render_anchor.hpp"
+#include "support/thread_budget.hpp"
 #include "util/color_space.hpp"
 
 namespace lumice {
@@ -126,7 +127,7 @@ struct Frame {
 // checked where it lives: reading it back off sRGB bytes would be circular, since whether those
 // bytes preserve the span is the whole question.
 Frame SnapshotOnce(const RenderConfig& cfg) {
-  RenderConsumer rc(cfg, ColorClassTable{}, MakeSun());
+  RenderConsumer rc(cfg, lumice::test::kTestThreadBudget, ColorClassTable{}, MakeSun());
   auto data = MakeBatch();
   rc.Consume(data);
   // The anchor a hand-driven RenderConsumer does not get, pushed in by the shared helper rather than
