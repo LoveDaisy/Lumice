@@ -95,13 +95,15 @@ ConstructionLine BuildCpuServerAndRead(int num_workers) {
 }
 
 TEST(ServerRenderThreadBudget, OneWorkerLeavesABudgetClampedToTheCap) {
-  // With one worker, PhysicalCoreCount()-1 exceeds kTestRenderThreadBudgetCap on every machine
-  // this suite runs on today (all have more than kTestRenderThreadBudgetCap+1 physical cores),
-  // so this is the case that exercises the cap itself rather than the max(0, ·) floor.
+  // With one worker, PhysicalCoreCount()-1 exceeds kTestRenderThreadBudgetCap on every developer
+  // machine, so this is the case that exercises the cap itself rather than the max(0, ·) floor.
+  // The hosted CI runners have only 2-3 physical cores, where phys-1 never reaches the cap: that
+  // is a machine too small for this proposition, not a failure of it, so skip rather than fail —
+  // the same shape TwoIdleCoresIsABudgetOfExactlyTwo uses for its own size precondition.
   const int phys = PhysicalCoreCount();
-  ASSERT_GT(phys - 1, kTestRenderThreadBudgetCap)
-      << "PhysicalCoreCount=" << phys << ": this machine is too small for this case to reach the cap — "
-      << "see TwoIdleCoresIsABudgetOfExactlyTwo for the floor-only shape instead";
+  if (phys - 1 <= kTestRenderThreadBudgetCap) {
+    GTEST_SKIP() << "PhysicalCoreCount=" << phys << ": this machine is too small for this case to reach the cap";
+  }
   const ConstructionLine line = BuildCpuServerAndRead(1);
   ASSERT_EQ(line.worker_count, 1)
       << "the construction line was not logged, or an explicit num_workers was not honoured";
