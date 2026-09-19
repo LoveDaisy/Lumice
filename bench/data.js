@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1789846788364,
+  "lastUpdate": 1789846790839,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9560,50 +9560,6 @@ window.BENCHMARK_DATA = {
             "username": "LoveDaisy"
           },
           "distinct": true,
-          "id": "d63befda26e1912dcf6d6d8cc67efd7f34eb7ac2",
-          "message": "bump patch version for release",
-          "timestamp": "2026-08-30T17:17:40+08:00",
-          "tree_id": "ae2567feaaad662c625ed888e28482837014d4c8",
-          "url": "https://github.com/LoveDaisy/ice_halo_sim/commit/d63befda26e1912dcf6d6d8cc67efd7f34eb7ac2"
-        },
-        "date": 1788082223016,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 66.6,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 100,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 95.7,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 95.9,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "distinct": true,
           "id": "53299d835046ba74d6f2897c4a1566993368a6bf",
           "message": "Merge pull request #283 from LoveDaisy/task/gui-fisheye-lens-border\n\nGUI: 鱼眼镜头有效区边框辅助线",
           "timestamp": "2026-08-30T22:06:58+08:00",
@@ -13918,6 +13874,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 92,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "07d02b311b0c719947d1ddb96023a365f573e2c7",
+          "message": "Merge pull request #385 from LoveDaisy/chore/cuda-canonical-throughput-5090\n\ndocs(perf): first RTX 5090 D canonical throughput columns (home-wsl / home-win) + B/E drain-plane cost matrix",
+          "timestamp": "2026-09-20T03:29:12+08:00",
+          "tree_id": "42eb1aecd5d088d6fafd75cc593704374199bd52",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/07d02b311b0c719947d1ddb96023a365f573e2c7"
+        },
+        "date": 1789846790064,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 77.2,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 99.9,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 99.3,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 91.7,
             "unit": "%"
           }
         ]
