@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1789840613633,
+  "lastUpdate": 1789840616148,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9555,50 +9555,6 @@ window.BENCHMARK_DATA = {
             "username": "LoveDaisy"
           },
           "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "37658798751c385f405d25527fc3226fb807ff08",
-          "message": "Merge pull request #282 from LoveDaisy/task/gui-entry-card-layout-and-crystal-identity\n\n晶体卡片 layout 重排 + 晶体身份可寻址 + Colors 面板编号/失效态",
-          "timestamp": "2026-08-30T13:34:44+08:00",
-          "tree_id": "23118e5367b29ce0c82bda8278360f565c79c8b8",
-          "url": "https://github.com/LoveDaisy/ice_halo_sim/commit/37658798751c385f405d25527fc3226fb807ff08"
-        },
-        "date": 1788068777425,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 81.3,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 98.5,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 98.4,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 95.9,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
             "email": "zhangjiajie043@gmail.com",
             "name": "Jiajie Zhang",
             "username": "LoveDaisy"
@@ -13918,6 +13874,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 94,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "96c437719d62599f74bab998e9baa5a4192900a7",
+          "message": "Merge pull request #384 from LoveDaisy/feat/lmc-f16-texture-dual-path\n\nfeat(gui): .lmc v6 float16 texture with the live preview quantized through the same codec",
+          "timestamp": "2026-09-20T01:45:06+08:00",
+          "tree_id": "6294bd9290986f14645da62d4429859ba9129d91",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/96c437719d62599f74bab998e9baa5a4192900a7"
+        },
+        "date": 1789840615338,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 90.3,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 99.8,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 98,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 92,
             "unit": "%"
           }
         ]
