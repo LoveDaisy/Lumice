@@ -522,5 +522,50 @@ post_snapshot 是 HI-RES 下唯一占比超过 90% 的段，但上面三条路�
 循环逐像素独立、无跨像素依赖（`render.cpp` 该循环上方的注释说明它是四个逐元素 pass 的融合，且被
 `test_render_consumer_post_snapshot_fusion.cpp` 钉住字节等价），是 embarrassingly parallel 的候选；
 要评估的是线程池开销、与 `do_snapshot_mutex_` / `consumer_mutex_` 的交互，以及是否值得为一条非交互式的
-预览路径引入并行开销。⚠️ 本节没有对这条路做任何测量或裁定，只标明它是空白——把它读成「已否决」或
-「已立项」都是错的。
+预览路径引入并行开销。这条路径已在 §12.4 测量并落地，实测数字与机制说明见该节。
+
+### 12.4 第四条路径已落地：并行化 `PostSnapshot` 的逐像素循环（2026-09-19）
+
+**机制。** 复用 `core/parallel_rows.hpp::ParallelRows()`——`lens_proj_build.hpp` /
+`annotation_overlay.hpp` 已经在用的同一个工具，其「逐像素独立、按行分片、字节等价」premise 在那两处已被
+验证过——把 `RenderConsumer::PostSnapshot` 的融合像素循环包进 `ParallelRows(height, total_pix, body)`，
+`body` 收到 `[row_begin, row_end)` 半开行区间（`src/server/render.cpp`，`ParallelRows(height_px, ...)`
+调用处）。循环里每个像素只写自己的三个字节、只读 `snapshot_xyz_[i]` / `visible_mask_[i]` / `layers`，
+按行切分不改变任何一次浮点运算的顺序，因此 §12.3 引用的 `test_render_consumer_post_snapshot_fusion.cpp`
+字节等价契约原样成立。低于 `ParallelRows` 的像素阈值（`kParallelPixelThreshold` = 65536，
+`src/core/parallel_rows.cpp`）时它在调用线程上内联串行执行，LO-RES 档（512×256 = 131072 px）与 HI-RES 档
+都在阈值之上，走多线程路径。
+
+**竞争源与修复。** 「只读」有一个例外：`AnnotationLayers::on_marker_ring` 是一块逐像素复用的可变 scratch
+buffer——`CompositeAnnotations` 为避免每像素分配，对当前像素先写后读，复用同一块内存（见 `render.hpp`
+该成员的声明注释）。多个并行行带共享同一个 `layers` 对象会真实数据竞争。修复是每个行带对 `layers` 做
+一次深拷贝（`AnnotationLayers band_layers = layers;`）：拷贝的是 handful 条 `LineLayer` / `MarkerLayer`
+条目而非逐像素数据，每个行带一次而非每个像素一次，所以没有把 scratch buffer 存在的理由（避免每像素分配）
+重新引入。
+
+**实测数字。** Mac 本机（12 核）同进程 controlled A/B，`bench/bench_post_snapshot_parallel.cpp`
+（Google Benchmark，2048×1024 dual-fisheye、50 万条散射光线、只计 `PostSnapshot()` 本身），串行与并行
+两版靠切换 `render.cpp` 各编译一次：
+
+| 场景 | 串行 | 并行（`ParallelRows` 按行分片） | 比值 |
+|------|------|------|------|
+| HI-RES post_snapshot，无 marker | 44.9 ms | 6.99 ms | 6.42× |
+| HI-RES post_snapshot，含 2 个 marker | 60.8 ms | 9.59 ms | 6.34× |
+
+两者都远超立项时预登记的 1.5× 落地门槛。⚠️ 上表的串行基线 44.9 / 60.8 ms 与 §12.1 表格里的 87,614 µs
+**不是同一测量口径**：§12.1 是真实 GUI 轮询环境下（Metal 路、`ray_num=3e8`、`DoSnapshot` 内 `steady_clock`
+分段累加）测得，本节是同进程合成数据的 A/B 微基准，两者差约 2×，差异未深究（候选解释包括真实环境下
+与并发 worker 抢核、缓存状态、以及合成 batch 只有一次 `Consume` 而真实场景累积了 3e8 条光线的 XYZ 分布
+差异，均未单独验证）。两轮的判据都只依赖**同环境比值**，不依赖绝对值可比，所以这个口径差不影响结论，
+但把两组数字并排相减是错的。
+
+**正确性验证。** 既有的 4 个 fusion 字节级 oracle case 分辨率都是 16×16，在 `ParallelRows` 的像素阈值之下，
+只走串行 fallback，对多线程路径不构成证据。落地时新增第 5 个 case
+（`RenderConsumerPostSnapshotFusion.LargeResolutionWithMarkersIsByteExactAgainstOracle`，同一文件）：
+300×300 = 90000 px 越过阈值，六个 marker 全部启用（让 `on_marker_ring` 这块唯一逐像素写的状态真的
+被写），对独立重推的 marker-ring 合成 oracle 做逐字节比对，mismatch 必须为 0。它是这棵树里唯一真正执行
+多线程路径而非串行 fallback 的 `PostSnapshot` 正确性证据。
+
+**本节不覆盖的。** `ParallelRows` 每次调用现场起停一个全核线程池、与并发运行的固定 simulator worker 池
+抢核，是并行化落地后暴露的**资源调度成本**，与本节收口的「正确性 + 同环境收益」是不同命题，在
+`PrepareSnapshot` 锁竞争的独立评估里一并处理，本节不展开。
