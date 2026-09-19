@@ -2430,12 +2430,6 @@ struct CudaTraceBackend::Impl {
   // drain, never per BeginSession.
   float*   d_landed_weight_ = nullptr;
   size_t   landed_weight_capacity_ = 0;  // floats the buffer holds
-  // Pinned host landing buffer for the per-layer `d_landed_weight_` readback,
-  // sized in lock-step with it by EnsureLandedWeightBuf (mirrors
-  // `h_alloc_tally_`, and rides the same wait — see TraceLayer). Pinned because
-  // a cudaMemcpyAsync D2H into pageable memory degrades to a synchronous copy
-  // at the call site, which would put the round trip back.
-  float*   h_landed_weight_ = nullptr;
   // Host-side running totals of `d_landed_weight_[r]` over the current drain
   // window, one per renderer. TraceLayer reads the device slots back after every
   // layer (it already does, for LayerStats::exit_w_sum), folds them in here and
@@ -2708,7 +2702,6 @@ void CudaTraceBackend::Impl::Reset(bool keep_persistent_buffers) {
     cudaFree(d_xyz_buf_);      d_xyz_buf_ = nullptr;
     xyz_pix_capacity_ = 0;
     cudaFree(d_landed_weight_); d_landed_weight_ = nullptr;
-    cudaFreeHost(h_landed_weight_); h_landed_weight_ = nullptr;
     landed_weight_capacity_ = 0;
     window_landed_weight_.clear();
     alloc_dims_.clear();  // buffer freed → clear its remembered dims
@@ -3467,15 +3460,9 @@ void CudaTraceBackend::Impl::EnsureLandedWeightBuf(size_t n) {
   }
   cudaFree(d_landed_weight_);  // no-op on nullptr
   d_landed_weight_ = nullptr;
-  cudaFreeHost(h_landed_weight_);  // no-op on nullptr
-  h_landed_weight_ = nullptr;
   CheckCuda(cudaMalloc(&d_landed_weight_, n * sizeof(float)), "EnsureLandedWeightBuf cudaMalloc d_landed_weight");
   landed_weight_capacity_ = n;
   CheckCuda(cudaMemset(d_landed_weight_, 0, n * sizeof(float)), "EnsureLandedWeightBuf cudaMemset d_landed_weight");
-  // The pinned landing buffer grows with the device slots so the per-layer
-  // readback in TraceLayer can always copy `planes_.size()` floats into it.
-  CheckCuda(cudaHostAlloc(&h_landed_weight_, n * sizeof(float), cudaHostAllocDefault),
-            "EnsureLandedWeightBuf cudaHostAlloc h_landed_weight");
   window_landed_weight_.assign(n, 0.0);
 }
 
@@ -5050,37 +5037,13 @@ LayerHandlePtr CudaTraceBackend::TraceLayer(const RootRaySource& roots) {
                              cudaMemcpyDeviceToHost, impl_->stream_),
              "alloc tally readback");
   }
-  // This layer's landed weights ride the same wait, by the same mechanism: an
-  // async D2H into the pinned `h_landed_weight_` plus the async zero of the
-  // device slots, both enqueued on `stream_` behind the kernels and ahead of
-  // the `ev_end_d2h_` record below, so the event wait that follows covers them.
-  // They used to be a blocking cudaMemcpy + cudaMemset at the tail of this
-  // function, after the GPU was already idle — and moving them to an async pair
-  // with a wait of their own at the tail bought nothing (measured 1/X 2.263 →
-  // 2.283 at 1e9 rays): what the blocking copy cost was not a per-call dispatch
-  // tax but one WDDM submit→complete round trip, and a second event wait pays
-  // the identical round trip. Only sharing an existing wait removes it. The
-  // host consumes the values at the tail, well after that wait.
-  const size_t lw_slots = impl_->d_landed_weight_ != nullptr ? impl_->planes_.size() : 0;
-  if (lw_slots > 0) {
-    ck_reset(cudaMemcpyAsync(impl_->h_landed_weight_, impl_->d_landed_weight_, lw_slots * sizeof(float),
-                             cudaMemcpyDeviceToHost, impl_->stream_),
-             "TraceLayer landed_weight readback");
-    ck_reset(cudaMemsetAsync(impl_->d_landed_weight_, 0, lw_slots * sizeof(float), impl_->stream_),
-             "TraceLayer landed_weight reset");
-  }
 
   // 4B readback (synchronous on the default stream — also the first sync
   // point that surfaces async kernel errors: check the return value).
   ck_reset(cudaMemcpy(&impl_->h_exit_count_, impl_->d_exit_count_, sizeof(uint32_t),
                       cudaMemcpyDeviceToHost), "4B readback");
-  // Explicit wait on stream_ for everything enqueued above (alloc tally +
-  // landed_weight readbacks); the two pinned buffers are read after this point.
-  // Its correctness depends only on same-stream FIFO order, not on how stream_
-  // was created — so it is checked, not fire-and-forget, now that two host
-  // reads rest on it.
-  ck_reset(cudaEventRecord(impl_->ev_end_d2h_, impl_->stream_), "ev_end_d2h record");
-  ck_reset(cudaEventSynchronize(impl_->ev_end_d2h_), "ev_end_d2h sync");
+  cudaEventRecord(impl_->ev_end_d2h_, impl_->stream_);
+  cudaEventSynchronize(impl_->ev_end_d2h_);
 
   // Online ray-allocation tally: each ci's dealt count from the partition and
   // its (Σw, Σw²) as the delta of the cumulative device slots since the last
@@ -5220,16 +5183,22 @@ LayerHandlePtr CudaTraceBackend::TraceLayer(const RootRaySource& roots) {
   // a ray imaged by several renderers several times). The device slots are then
   // zeroed and the layer folded into the host doubles (see
   // `window_landed_weight_`): no float accumulates past one layer, and the drain
-  // hands out the doubles. The readback and the zero were enqueued ahead of the
-  // `ev_end_d2h_` wait above (next to the alloc tally readback, for the reason
-  // given there); by here `h_landed_weight_` holds this layer's slots and the
-  // device slots are already zero for the next launch. No GPU call in this block.
+  // hands out the doubles. The synchronous cudaMemcpy on the NULL stream orders
+  // after the kernels on `stream_` (created blocking), and the memset that
+  // follows it orders before the next layer's launch the same way.
   float layer_lw = 0.0f;
-  if (lw_slots > 0) {
-    for (size_t r = 0; r < lw_slots; ++r) {
-      impl_->window_landed_weight_[r] += static_cast<double>(impl_->h_landed_weight_[r]);
+  if (impl_->d_landed_weight_ != nullptr) {
+    const size_t n_slots = impl_->planes_.size();
+    std::vector<float> layer_lws(n_slots, 0.0f);
+    ck_reset(cudaMemcpy(layer_lws.data(), impl_->d_landed_weight_, n_slots * sizeof(float),
+                        cudaMemcpyDeviceToHost),
+             "TraceLayer landed_weight readback");
+    ck_reset(cudaMemset(impl_->d_landed_weight_, 0, n_slots * sizeof(float)),
+             "TraceLayer landed_weight reset");
+    for (size_t r = 0; r < n_slots; ++r) {
+      impl_->window_landed_weight_[r] += static_cast<double>(layer_lws[r]);
     }
-    layer_lw = impl_->h_landed_weight_[0];
+    layer_lw = n_slots > 0 ? layer_lws[0] : 0.0f;
   }
   return std::make_unique<CudaLayerHandle>(cont_count_for_handle,
                                            LayerStats{impl_->h_exit_count_, layer_lw});
@@ -5470,23 +5439,8 @@ size_t CudaTraceBackend::DrainExits(std::vector<ExitRayRecord>& out) {
                count, out.size(), drain_ms);
   }
 
-  // Reset the device counter for the next TraceLayer call. Enqueued on
-  // `stream_` rather than issued as a blocking memset on the NULL stream: the
-  // only reader of `d_exit_count_` is the trace kernel, which the next
-  // TraceLayer launches on this same stream, so same-stream FIFO order already
-  // places the reset ahead of that read — no host wait is needed, and the
-  // blocking form only paid one more dispatch latency after the GPU was idle.
-  // (TraceLayer's layer-start cudaMemset zeroes the same counter again before
-  // every launch; the two resets are redundant with each other, not in
-  // conflict, and that one is left as is — it sits before the kernels, outside
-  // the post-idle tail this change is about.)
-  const cudaError_t err_reset = cudaMemsetAsync(impl_->d_exit_count_, 0, sizeof(uint32_t), impl_->stream_);
-  if (err_reset != cudaSuccess) {
-    out.clear();
-    impl_->Reset();
-    throw BackendUnavailableError(std::string{"CudaTraceBackend::DrainExits: d_exit_count reset: "} +
-                                  cudaGetErrorString(err_reset));
-  }
+  // Reset counter for the next TraceLayer call.
+  cudaMemset(impl_->d_exit_count_, 0, sizeof(uint32_t));
   impl_->h_exit_count_ = 0u;
   return out.size();
 }
