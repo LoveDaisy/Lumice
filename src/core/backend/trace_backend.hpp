@@ -495,6 +495,24 @@ class TraceBackend {
     landed_weight.clear();
   }
 
+  // Third-clock precision fold. A SupportsThirdClockDrain() backend keeps its
+  // device XYZ plane alive across a whole drain window (kDefaultXyzDrainBatches
+  // batches), and a per-exit fp32 atomicAdd chain that long is the same defect
+  // shape the landed-weight scalar once had: once a hot pixel's running sum is
+  // large, each small exit weight lands on a coarse ulp and the plane drifts by
+  // a window-length-dependent ±0.4% against the host's double ledger. The
+  // scalar was fixed by folding per layer into a host double; a W*H*3 plane
+  // cannot afford a per-batch D2H, so the fold stays ON DEVICE: the simulator
+  // calls this once per batch, after the layer loop, and the backend adds the
+  // fp32 plane into a device double plane and zeroes the fp32 side, so no fp32
+  // chain is ever longer than one batch. Must enqueue on the same stream as the
+  // emit kernels and MUST NOT synchronize with the host — a host wait here would
+  // reintroduce the per-batch tax the third clock exists to remove.
+  //
+  // Default: no-op. Backends that drain per batch (Metal) never build a chain
+  // longer than one batch and need nothing here.
+  virtual void FoldDeviceXyzBatch() {}
+
   // task-358.1 Step 4 (AC3 device-side per-color-class Y-lane accumulation).
   //
   // Backends that also fuse per-color-class rule-lane accumulation on device
