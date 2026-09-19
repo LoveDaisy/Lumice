@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1789846784631,
+  "lastUpdate": 1789846788364,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -4788,54 +4788,6 @@ window.BENCHMARK_DATA = {
             "username": "LoveDaisy"
           },
           "distinct": true,
-          "id": "d63befda26e1912dcf6d6d8cc67efd7f34eb7ac2",
-          "message": "bump patch version for release",
-          "timestamp": "2026-08-30T17:17:40+08:00",
-          "tree_id": "ae2567feaaad662c625ed888e28482837014d4c8",
-          "url": "https://github.com/LoveDaisy/ice_halo_sim/commit/d63befda26e1912dcf6d6d8cc67efd7f34eb7ac2"
-        },
-        "date": 1788082221153,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 763856.3,
-            "unit": "rays/sec",
-            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 1162533.9,
-            "unit": "rays/sec",
-            "extra": "CPU: Neoverse-N2\\nCores: 4"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 936707.5,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 9V74 80-Core Processor\\nCores: 4"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 784105.3,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 9V74 80-Core Processor                \\nCores: 4"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "distinct": true,
           "id": "53299d835046ba74d6f2897c4a1566993368a6bf",
           "message": "Merge pull request #283 from LoveDaisy/task/gui-fisheye-lens-border\n\nGUI: 鱼眼镜头有效区边框辅助线",
           "timestamp": "2026-08-30T22:06:58+08:00",
@@ -9540,6 +9492,54 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 574573.3,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "07d02b311b0c719947d1ddb96023a365f573e2c7",
+          "message": "Merge pull request #385 from LoveDaisy/chore/cuda-canonical-throughput-5090\n\ndocs(perf): first RTX 5090 D canonical throughput columns (home-wsl / home-win) + B/E drain-plane cost matrix",
+          "timestamp": "2026-09-20T03:29:12+08:00",
+          "tree_id": "42eb1aecd5d088d6fafd75cc593704374199bd52",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/07d02b311b0c719947d1ddb96023a365f573e2c7"
+        },
+        "date": 1789846787676,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 907560.9,
+            "unit": "rays/sec",
+            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 1013805.3,
+            "unit": "rays/sec",
+            "extra": "CPU: Neoverse-N2\\nCores: 4"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 709670.4,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 7763 64-Core Processor\\nCores: 4"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 569557.7,
             "unit": "rays/sec",
             "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
           }
