@@ -160,8 +160,9 @@ void FillZeroEnergyImage(uint8_t* buf, size_t total_pix, bool print_mode, const 
 }  // namespace
 
 // =============== Renderer ===============
-RenderConsumer::RenderConsumer(RenderConfig config, ColorClassTable class_table, SunParam sun, size_t renderer_index)
-    : config_(std::move(config)),
+RenderConsumer::RenderConsumer(RenderConfig config, int thread_budget, ColorClassTable class_table, SunParam sun,
+                               size_t renderer_index)
+    : config_(std::move(config)), thread_budget_(thread_budget),
       short_pix_(static_cast<float>(std::min(config_.resolution_[0], config_.resolution_[1]))), sun_(sun),
       renderer_index_(renderer_index),
       internal_xyz_(std::make_unique<double[]>(config_.resolution_[0] * config_.resolution_[1] * 3)),
@@ -181,7 +182,7 @@ RenderConsumer::RenderConsumer(RenderConfig config, ColorClassTable class_table,
 
   // Once per consumer, right after rot_ is final — see the member's declaration for why a
   // single build covers the whole lifetime.
-  visible_mask_ = BuildVisibleMask(config_, rot_, short_pix_);
+  visible_mask_ = BuildVisibleMask(config_, rot_, short_pix_, thread_budget_);
   RebuildAngularDistMasks();
   RebuildViewDistMasks();
   RebuildGridMasks();
@@ -1095,7 +1096,7 @@ void RenderConsumer::PostSnapshot() {
   // buffer exists to avoid.
   const int width_px = config_.resolution_[0];
   const int height_px = config_.resolution_[1];
-  ParallelRows(height_px, static_cast<size_t>(total_pix), [&](int row_begin, int row_end) {
+  ParallelRows(height_px, static_cast<size_t>(total_pix), thread_budget_, [&](int row_begin, int row_end) {
     AnnotationLayers band_layers = layers;
     for (int row = row_begin; row < row_end; ++row) {
       for (int col = 0; col < width_px; ++col) {
@@ -1440,7 +1441,7 @@ void RenderConsumer::RebuildMarkerPoints() {
     req.markers.push_back(static_cast<annotation::MarkerId>(i));
   }
 
-  const annotation::Overlay overlay = annotation::ComputeOverlay(req);
+  const annotation::Overlay overlay = annotation::ComputeOverlay(req, thread_budget_);
   // Defensive on the size: a degenerate view returns an empty overlay, and the table must then be
   // all-invalid rather than half-written.
   if (overlay.markers.size() != marker_points_.size()) {
@@ -1498,7 +1499,7 @@ void RenderConsumer::RebuildAngularDistMasks() {
   angular_dist_masks_.reserve(angles.size());
   for (size_t k = 0; k < angles.size(); ++k) {
     req.angular_dist_deg = { angles[k] };
-    annotation::Overlay overlay = annotation::ComputeOverlay(req);
+    annotation::Overlay overlay = annotation::ComputeOverlay(req, thread_budget_);
     angular_dist_masks_.push_back(std::move(overlay.angular_dist));
     AppendLabels(overlay.labels, static_cast<int>(k), angular_dist_labels_);
   }
@@ -1537,7 +1538,7 @@ void RenderConsumer::RebuildViewDistMasks() {
   view_dist_masks_.reserve(angles.size());
   for (size_t k = 0; k < angles.size(); ++k) {
     req.view_dist_deg = { angles[k] };
-    annotation::Overlay overlay = annotation::ComputeOverlay(req);
+    annotation::Overlay overlay = annotation::ComputeOverlay(req, thread_budget_);
     view_dist_masks_.push_back(std::move(overlay.view_dist));
     AppendLabels(overlay.labels, static_cast<int>(k), view_dist_labels_);
   }
@@ -1594,7 +1595,7 @@ void RenderConsumer::RebuildLineFamilyMasks(LineFamily family) {
     } else {
       req.longitude_deg = { angles[k] };
     }
-    annotation::Overlay overlay = annotation::ComputeOverlay(req);
+    annotation::Overlay overlay = annotation::ComputeOverlay(req, thread_budget_);
     masks.push_back(std::move(is_elevation ? overlay.elevation : overlay.longitude));
     AppendLabels(overlay.labels, static_cast<int>(k), labels);
   }
@@ -1621,7 +1622,7 @@ void RenderConsumer::RebuildHorizonAnnotation() {
   req.horizon = true;
   // The curve walk is the only part the text switch can save, so it is the only part it gates.
   req.labels = config_.horizon_label_;
-  annotation::Overlay overlay = annotation::ComputeOverlay(req);
+  annotation::Overlay overlay = annotation::ComputeOverlay(req, thread_budget_);
   horizon_mask_ = std::move(overlay.horizon);
   if (!config_.horizon_label_) {
     return;

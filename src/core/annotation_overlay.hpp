@@ -272,8 +272,9 @@ RenderConfig ToRenderConfig(const ViewSnapshot& view);
 CanvasPoint ProjectWorldDir(const lm_proj::ProjParams& p, float wx, float wy, float wz);
 
 // The masks, the anchors and the points. Returns an Overlay with width/height zero for a
-// degenerate view.
-Overlay ComputeOverlay(const Request& req);
+// degenerate view. `thread_budget` is the idle-core budget the W*H sweeps may occupy (see
+// parallel_rows.hpp); the caller computes it, there is no default.
+Overlay ComputeOverlay(const Request& req, int thread_budget);
 
 // The anchors and the points alone — no sweep, no mask, nothing proportional to W*H. This is the
 // per-frame entry point (see the header note). `markers` is parallel to Request::markers, `labels`

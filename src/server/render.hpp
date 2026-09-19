@@ -112,6 +112,16 @@ class RenderConsumer : public IConsume {
   // `sun` comes after the older `class_table`, so that every existing two-argument
   // construction keeps compiling — it is the sun a renderer with no angular_dist_grid_ entries
   // never consults.
+  // `thread_budget` is the idle-core budget every row-parallel W*H loop this consumer runs may
+  // occupy — the visible mask built here, the annotation masks (Rebuild*), and PostSnapshot's
+  // fused pixel loop all take it (see core/parallel_rows.hpp for the rule: below 2, inline
+  // serial). The server computes it as hardware_concurrency() minus its simulation worker count,
+  // because those loops compete with the workers for the same physical cores; a consumer that
+  // asked for a full-core pool on every poll cost ~12 percentage points of simulation throughput.
+  // It is a REQUIRED parameter with no default, second so the compiler flags every construction
+  // site that has not decided its budget: a default of "all cores" is exactly the value that
+  // produced that regression, and a default of anything else is a number no caller reasoned
+  // about. Tests pass test/support/thread_budget.hpp's constant.
   // `renderer_index` is this consumer's position among the session's renderers — the SAME
   // position its RenderConfig holds in the SimBatch::renders_ vector the server hands the
   // simulator, and therefore in SessionSpec::renders and in every per-renderer vector a
@@ -121,7 +131,7 @@ class RenderConsumer : public IConsume {
   // test that constructs one consumer wants, and it is safe to be wrong about only in the
   // sense that ConsumeDeviceFused validates the plane's shape against config_ at runtime
   // (release-safe, not an assert) and warns rather than reading a wrong-sized plane.
-  explicit RenderConsumer(RenderConfig config, ColorClassTable class_table = ColorClassTable{},
+  explicit RenderConsumer(RenderConfig config, int thread_budget, ColorClassTable class_table = ColorClassTable{},
                           SunParam sun = SunParam{ 0.0f, 0.0f, 0.5f }, size_t renderer_index = 0);
 
   void Consume(const SimData& data) override;
@@ -410,6 +420,10 @@ class RenderConsumer : public IConsume {
 
 
   RenderConfig config_;
+  // Idle-core budget for every ParallelRows call this consumer makes — see the constructor.
+  // Pinned for the consumer's life: the server's worker count is fixed for the server's life,
+  // and every Rebuild* that ResetWith triggers reads the same value the constructor used.
+  const int thread_budget_;
   Rotation rot_;  // camera pose rotation
   float short_pix_ = 0;
   // Row-major W*H, 1 where the lens images a visible piece of sky. Built once in the

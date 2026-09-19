@@ -19,6 +19,17 @@ namespace lumice {
 // standing up a pool costs more than the loop saves at preview sizes, and these masks are built
 // on the config-commit path where a small frame has to stay cheap.
 //
+// `thread_budget` is the number of cores this call may occupy, computed by the caller and passed
+// explicitly on every call: there is no default, and this function never reads
+// hardware_concurrency() itself. The budget is the machine's IDLE cores — hardware_concurrency()
+// minus the simulation workers the owning server keeps busy — because the pool built here
+// competes with those workers for the same physical cores. The first version of this function
+// asked for a full-core pool on every call; under the GUI's ~20 ms poll cadence that pool
+// pre-empted the fixed-size worker pool and cost ~12 percentage points of simulation throughput
+// on a 12-core machine, more than the loop it parallelized ever saved. A budget below 2 runs the
+// body inline on the calling thread — no one-thread pool is stood up, since that is the serial
+// loop plus a spawn for nothing.
+//
 // The pool is created and torn down per call rather than kept in a function-local static. Mask
 // building runs a handful of times per commit (one RenderConsumer per renderer, at most
 // LUMICE_MAX_CONFIG_RENDERERS of them, constructed serially) and once per annotation request, so
@@ -29,7 +40,7 @@ namespace lumice {
 // backend, and pulling <thread>/<future> into those translation units buys nothing and has no CI
 // coverage on the Windows+CUDA combination (see AGENTS.md). The threading include stays in the
 // .cpp.
-void ParallelRows(int height, size_t pixel_count, const std::function<void(int, int)>& body);
+void ParallelRows(int height, size_t pixel_count, int thread_budget, const std::function<void(int, int)>& body);
 
 }  // namespace lumice
 

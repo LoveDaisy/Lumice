@@ -558,6 +558,18 @@ class ServerImpl {
   // against the route that sized simulators_ to a single Simulator.
   bool gpu_route_ = false;
 
+  // Idle-core budget handed to every RenderConsumer this server builds: hardware_concurrency()
+  // minus worker_count, floored at 0. The consumers' row-parallel W*H loops (visible mask,
+  // annotation masks, PostSnapshot's fused pixel loop — see core/parallel_rows.hpp) compete with
+  // the simulation workers for the same physical cores, so they may only use what the workers
+  // leave idle; below 2 they run inline. Computed once in the constructor, next to worker_count,
+  // because worker_count is fixed for this server's life (there is no resize path) — so is this.
+  // On the GPU route worker_count is 1 and the budget is hw−1: the GUI on that route keeps
+  // near-full-core parallelism. The standing analysis pool is not subtracted: it is idle unless
+  // an analysis session runs, and an analysis session and a render session never run together
+  // (CommitConfig refuses while an analysis is in flight).
+  int render_thread_budget_ = 0;
+
   // Set once per Run() by GenerateScene, when it has dropped the batches it had
   // queued at the GPU grain after the backend went away (see the invalidation there).
   // Written by that one thread, read by ConsumeData, and cleared at GenerateScene's
@@ -782,10 +794,21 @@ ServerImpl::ServerImpl(int num_workers, uint32_t sim_seed, BackendKind preferred
   } else {
     worker_count = cpu_worker_count;  // the CPU route's one group serves both session kinds
   }
+  // What the consumers' row-parallel loops may occupy once the workers have their cores. See
+  // render_thread_budget_'s declaration; hardware_concurrency() rather than the platform
+  // core-count pair above because that is the source ThreadingPool's own default pool size
+  // reads, i.e. the number the unconstrained pool used to be sized from.
+  const int hw_concurrency = static_cast<int>(std::thread::hardware_concurrency());
+  render_thread_budget_ = std::max(0, hw_concurrency - worker_count);
   // AC1 observability (296.6): the GPU single-engine route must run worker_count==1;
   // analysis_pool_worker_count is the standing analysis pool's size (0 = no second group).
-  ILOG_INFO(logger_, "ServerImpl: gpu_route={} worker_count={} analysis_pool_worker_count={} (preferred_backend={})",
-            gpu_route_, worker_count, analysis_pool_worker_count, static_cast<int>(preferred_backend));
+  // render_thread_budget is what the consumers' ParallelRows calls are allowed — the regression
+  // sentinels and test_server_render_thread_budget.cpp parse this line, so its shape is a contract.
+  ILOG_INFO(logger_,
+            "ServerImpl: gpu_route={} worker_count={} analysis_pool_worker_count={} render_thread_budget={} "
+            "(preferred_backend={})",
+            gpu_route_, worker_count, analysis_pool_worker_count, render_thread_budget_,
+            static_cast<int>(preferred_backend));
   for (int i = 0; i < worker_count; i++) {
     uint32_t worker_seed = sim_seed != 0 ? sim_seed + static_cast<uint32_t>(i) : 0u;
     simulators_.emplace_back(scene_queue_, data_queue_, worker_seed);
@@ -1235,8 +1258,9 @@ Error ServerImpl::CommitConfig(const nlohmann::json& config_json, bool* out_reus
         // task-339.3: pass the color-class table so each consumer allocates one
         // Y-lane per class (empty table → no lanes, pre-336 behavior). The sun comes from the
         // scene, not the renderer: it is what the angular-distance annotations are measured from.
-        consumers_.emplace_back(std::make_shared<RenderConsumer>(
-            r, active_class_table_, config_manager_.scene_.light_source_.param_, renderer_index));
+        consumers_.emplace_back(std::make_shared<RenderConsumer>(r, render_thread_budget_, active_class_table_,
+                                                                 config_manager_.scene_.light_source_.param_,
+                                                                 renderer_index));
         ++renderer_index;
       }
       consumers_.emplace_back(std::make_shared<StatsConsumer>());
