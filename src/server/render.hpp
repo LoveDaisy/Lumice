@@ -109,9 +109,11 @@ class RenderConsumer : public IConsume {
   // has ever taken, and it stays a separate parameter rather than moving into RenderConfig
   // because the sun belongs to the scene, not to any one renderer — three renderers in one scene
   // share it.
-  // `sun` comes after the older `class_table`, so that every existing two-argument
-  // construction keeps compiling — it is the sun a renderer with no angular_dist_grid_ entries
-  // never consults.
+  // `sun` comes after the older `class_table` — it is the sun a renderer with no
+  // angular_dist_grid_ entries never consults. (`RenderConsumer(config, class_table)` no longer
+  // compiles unmodified now that `thread_budget` sits between them at position 2 — see below —
+  // but that break is `thread_budget`'s, not `sun`'s: `sun` kept every construction that already
+  // named its budget compiling right up until this parameter was inserted ahead of it.)
   // `thread_budget` is the idle-core budget every row-parallel W*H loop this consumer runs may
   // occupy — the visible mask built here, the annotation masks (Rebuild*), and PostSnapshot's
   // fused pixel loop all take it (see core/parallel_rows.hpp for the rule: below 2, inline
