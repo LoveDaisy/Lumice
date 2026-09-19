@@ -401,6 +401,69 @@ itself — the act of observing changed the number being observed. Route any new
 around the critical path (sampling, a separate thread, a post-hoc counter), not through it.
 
 
+## GPU utilization ceiling: register pressure is a real cost, not compiler slack
+
+`trace_single_ms_kernel` (`src/core/backend/cuda_trace_backend.cu`) compiles to **181 registers
+per thread** on the production multi-arch fatbin. At its 256-thread block (`kTraceBlockSize`) that
+is 256 × 181 = 46,336 of the SM's 65,536 32-bit registers — one block fits, two do not — so `ncu`
+reports `Block Limit Registers = 1` and an Achieved Occupancy of **16.14%–16.28%** on the Windows
+CUDA reference role (Blackwell sm_120). Registers are the binding limit, not shared memory. The
+obvious question — is that 181 slack the compiler could be talked out of, and would halving the
+register cap double occupancy and lift throughput? — has been measured, and the answer is no on
+both counts. The numbers are recorded here so the direction is not re-tried from scratch.
+
+The one low-risk lever is `__launch_bounds__(256, 2)` on the kernel signature: no logic change, it
+only tells `ptxas` to fit two blocks per SM, which caps registers at 65,536 / (256 × 2) = 128. It
+does exactly what it promises at compile time and loses at run time:
+
+| Metric | baseline | `__launch_bounds__(256, 2)` | Δ |
+|---|---|---|---|
+| Registers / thread (sm_120, `cuobjdump -res-usage` on the built object) | 181 | 128 | −27% |
+| Block Limit Registers | 1 | 2 | +1 |
+| Theoretical occupancy | 16.67% | 33.33% | doubled |
+| Achieved occupancy (`ncu`, Windows reference role) | 16.14%–16.28% | 31.54% | doubled, as predicted |
+| Spill stores / loads (`-Xptxas -v`, sm_120) | 0 B / 0 B | 12 B / 16 B | tiny |
+| **Kernel duration** (`ncu --set basic`, 5e6-ray config, N=4 vs N=3, stdev < 1 µs on both arms) | **163.85 µs** | **179.67 µs** | **+9.65% — slower** |
+| Compute (SM) Throughput | 10.63% | 9.92% | down |
+| Memory Throughput | 27.94% | 25.81% | down |
+| End-to-end `rays_per_sec` (1e9-ray production config, WSL2 reference role, N=6 per arm, CoV 7.1%) | 423.07 M | 427.11 M | +0.95%, inside noise |
+
+Two mechanism conclusions carry beyond this kernel:
+
+1. **A 0-spill baseline means the register count is the kernel's real working set, not slack.**
+   Left unconstrained, `ptxas` chose registers over local memory for every live value and spilled
+   nothing; there was no wasted allocation for `__launch_bounds__` to release. All it can do is
+   force a cap and manufacture spills — and even a spill as small as 12 B / 16 B (three or four
+   32-bit values) cost 9.65% of kernel time here. The register count is set by the kernel's
+   logic complexity; lowering it means changing the logic, not the compiler's mind.
+2. **Occupancy doubling is not a throughput gain unless the kernel is occupancy-bound, and that
+   is decided by the throughput counters, not by the occupancy figure.** At 16% occupancy this
+   kernel ran Compute (SM) Throughput at 10.63% and Memory Throughput at 27.94% — neither anywhere
+   near saturated — so it was not short of resident warps to hide latency with; its limit sits
+   inside the per-thread dependency chain and branch/memory pattern. Doubling residency therefore
+   bought nothing to trade the spill cost against, and both throughput counters *fell*. Read
+   Compute/Memory Throughput before concluding anything from an Achieved Occupancy number; a low
+   occupancy with low throughput counters is a latency-chain kernel, not a residency-starved one.
+
+Two consequences for how this tree measures. The end-to-end A/B alone (+0.95%, 7.1% CoV) would
+have been read as "masked by host-side overhead" — the isolated `ncu` duration shows the stronger
+result, that the kernel itself got slower; the two "no visible gain" surfaces have different
+mechanisms and only the isolated measurement tells them apart. And the register figure must be
+read off the built object (`cuobjdump -res-usage`), not inferred from a green rebuild: during this
+measurement a rewritten source file carried a modification time older than the existing `.obj`,
+`ninja` skipped the recompile with exit 0, and the first profiling pass reported the baseline
+binary's 181 registers for what was believed to be the bounded build — "changed the input, output
+unchanged" was the only signal, and the artifact-level readout was what caught it.
+
+Disposition: **not adopted.** Register pressure stays at 181 / 16% occupancy by decision, not by
+omission. Splitting the kernel into smaller passes was not prototyped: with the bounds-only
+version already a net loss, a split would add real cross-kernel synchronization on top of the same
+spill economics under the single-engine large-dispatch design, and can only be worse. The *other*
+measured contributor to this kernel's low device utilization — the host-side idle gap between
+multiple-scattering layers, and why asynchronous readback was rejected for it — is a different
+mechanism with a different record: `gpu-route-history.md` Phase 14 (§九).
+
+
 ## 1. CLI Pipeline Benchmark
 
 Pure pipeline throughput test without GUI, VSync, or display overhead.

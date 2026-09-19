@@ -220,6 +220,60 @@ GPU 吞吐唯一的判据是 `[BENCHMARK]` 行的 `rays_per_sec`，以及（kern
 临界路径（采样、独立线程、事后计数），而不是挂在它上面。
 
 
+## GPU 占用率天花板：寄存器压力是真实代价，不是编译器冗余
+
+`trace_single_ms_kernel`（`src/core/backend/cuda_trace_backend.cu`）在生产多 arch fatbin 上编译
+出 **181 寄存器/线程**。按它 256 线程的 block（`kTraceBlockSize`）算，256 × 181 = 46,336，占 SM
+65,536 个 32 位寄存器的大半——放得下一个 block，放不下两个——所以 `ncu` 报 `Block Limit
+Registers = 1`，Windows CUDA 参照角色（Blackwell sm_120）上实测 Achieved Occupancy
+**16.14%–16.28%**。封顶的是寄存器，不是 shared memory。那个显而易见的问题——这 181 个里有没有
+编译器可以被说服让出来的冗余？把寄存器上限砍半让占用率翻倍，吞吐会不会跟着涨？——已经量过，
+两问的答案都是否。数字记在这里，是为了这个方向不被人从头再试一遍。
+
+唯一低风险的杠杆是在 kernel 签名上加 `__launch_bounds__(256, 2)`：不改任何逻辑，只告诉 `ptxas`
+每个 SM 要塞下两个 block，于是寄存器被封在 65,536 / (256 × 2) = 128。它在编译期完全兑现了承诺，
+在运行期输了：
+
+| 指标 | baseline | `__launch_bounds__(256, 2)` | 变化 |
+|---|---|---|---|
+| 寄存器/线程（sm_120，对构建产物 `cuobjdump -res-usage` 读数） | 181 | 128 | −27% |
+| Block Limit Registers | 1 | 2 | +1 |
+| 理论占用率 | 16.67% | 33.33% | 翻倍 |
+| Achieved Occupancy（`ncu`，Windows 参照角色） | 16.14%–16.28% | 31.54% | 如预测翻倍 |
+| Spill stores / loads（`-Xptxas -v`，sm_120） | 0 B / 0 B | 12 B / 16 B | 极小 |
+| **kernel 自身 Duration**（`ncu --set basic`，5e6-ray 配置，N=4 对 N=3，两臂 stdev < 1 µs） | **163.85 µs** | **179.67 µs** | **+9.65%——变慢** |
+| Compute (SM) Throughput | 10.63% | 9.92% | 下降 |
+| Memory Throughput | 27.94% | 25.81% | 下降 |
+| 端到端 `rays_per_sec`（1e9-ray 生产配置，WSL2 参照角色，每臂 N=6，CoV 7.1%） | 423.07 M | 427.11 M | +0.95%，噪声内 |
+
+两条机制结论可以带出这个 kernel 之外：
+
+1. **0 spill 的基线说明寄存器数就是 kernel 的真实工作集，不是冗余。** 不加约束时 `ptxas` 给每个
+   活跃值都选了寄存器而非 local memory，一个字节都没溢出；根本不存在可供 `__launch_bounds__`
+   「释放」的浪费分配。它能做的只有强行封顶、人为制造 spill——而哪怕小到 12 B / 16 B（三四个
+   32 位值）的 spill，在这里也吃掉了 9.65% 的 kernel 时间。寄存器数由 kernel 的逻辑复杂度决定；
+   要降它得改逻辑，不是改编译器的主意。
+2. **占用率翻倍不等于吞吐提升，除非 kernel 真的受占用率约束——而这由吞吐类计数器裁定，不由
+   占用率数字本身裁定。** 16% 占用率下这个 kernel 的 Compute (SM) Throughput 只有 10.63%、Memory
+   Throughput 只有 27.94%——都远未打满——说明它并不缺驻留 warp 来隐藏延迟；它的上限在单线程内的
+   依赖链和分支/访存模式里。所以驻留翻倍没有换来任何可以抵消 spill 代价的东西，两项吞吐计数器
+   反而*双双下降*。从 Achieved Occupancy 数字下任何结论之前先看 Compute/Memory Throughput：低占用率
+   配低吞吐计数器是延迟链型 kernel，不是缺驻留的 kernel。
+
+对本仓库测量方式的两条推论。只看端到端 A/B（+0.95%，CoV 7.1%）会被读成「被 host 侧开销掩盖了」——
+隔离的 `ncu` Duration 给出的是更强的结论：kernel 自身变慢了；两种「看不出收益」的表面现象机制
+完全不同，只有隔离测量能把它们分开。而寄存器数必须从构建产物上读（`cuobjdump -res-usage`），不能
+从一次绿色重建推断：这次测量里一份被改写过的源文件带着比既有 `.obj` 还旧的修改时间，`ninja` 以
+exit 0 跳过了重编，第一轮 profiling 把 baseline 二进制的 181 寄存器当成了 bounded 版本的读数——
+「改了输入、输出没变」是唯一的信号，是产物层读数抓住了它。
+
+裁决：**不采纳。** 寄存器压力留在 181 / 16% 占用率，是决定，不是遗漏。把 kernel 拆成更小的多个
+pass 没有做原型：既然只加 bounds 的版本已是净亏，拆分在单引擎大 dispatch 设计下只会在同样的 spill
+经济账上再叠加真实的跨 kernel 同步开销，只可能更差。这个 kernel 设备利用率低的*另一个*已测成因——
+多次散射层之间的 host 侧空闲间隙，以及为什么它的异步读回被否决——是另一种机制、另一份记录：
+`gpu-route-history.md` Phase 14（§九）。
+
+
 ## 1. CLI 管线基准测试
 
 不含 GUI、VSync 或显示开销的纯管线吞吐量测试。
