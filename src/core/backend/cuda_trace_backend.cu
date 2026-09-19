@@ -215,7 +215,7 @@ void CheckCuda(cudaError_t err, const char* ctx) {
 }
 
 // scrum-306.2: CUDA's SupportsDeviceXyzAccum() is unconditionally true, so every exit
-// is accumulated into d_xyz_buf_ via EmitToDeviceXyz — the trace kernel writes
+// is accumulated into d_xyz_acc_ via EmitToDeviceXyz — the trace kernel writes
 // NOTHING to d_exit_ / d_exit_count_ (DrainExits always reads 0 records). The
 // d_exit_/pinned_exit_ pool is therefore dead weight; sizing it to the analytic
 // bound (n_roots × (2·max_hits+4), formerly computed by a since-removed
@@ -347,7 +347,7 @@ constexpr size_t kMaxRenderersDeviceCuda = 4u;
 // and its own accumulation targets:
 //   proj      : lm_proj::ProjParams — lens / view pose / resolution
 //               (proj.img_w / img_h ARE the plane dims; there is no second copy).
-//   xyz_off   : float index into d_xyz_buf_ where this renderer's W*H*3 XYZ
+//   xyz_off   : element index into d_xyz_acc_ / d_xyz_buf_ where this renderer's W*H*3 XYZ
 //               plane starts. Planes are packed back-to-back in renderer order.
 //   lane_off  : float index into d_class_lane_buf_ where this renderer's
 //               class_count*W*H lane region starts, laid out class-major
@@ -484,6 +484,14 @@ __device__ inline void FanColorClassLanes(float* d_class_lane_buf,
 // those small exits. Warp partials (~30) sit far above the ulp at any window
 // size the simulator produces, and the host folds each layer into a double
 // (TraceLayer), so neither side of the ledger loses the tail again.
+// The pixel plane turned out not to be immune after all, one level down: on a
+// narrow-field scene a hot pixel's fp32 chain across the 64-batch drain window
+// drifted +0.40% (rounding drift, sign flips with window length — 16 batches
+// read −0.135%), which was masked while the host's own long chains were fp32
+// and showed as red parity rows once those went double. `d_xyz_buf` is
+// therefore a DOUBLE plane and AccumXyzToPixel's CUDA variant a 64-bit
+// atomicAdd (native since sm_60); a per-batch device fold of an fp32 plane was
+// measured correct but −22% throughput at 2048×1024 (accum_shared.h).
 // task-358.2 (cuda-color-parity) Step 4: extended to also fan per-class Y-lane
 // after the XYZ atomic add, on each projected hit (primary + overlap-ring).
 // Overlap-ring hits are included to match CPU RenderConsumer's Pass 2
@@ -497,7 +505,7 @@ __device__ inline void FanColorClassLanes(float* d_class_lane_buf,
 // it). Device layout per ci: [w × kAllocTallySlots][w² × kAllocTallySlots].
 constexpr uint32_t kAllocTallySlots = 64u;
 
-__device__ inline void EmitToDeviceXyz(float* __restrict__ d_xyz_buf,
+__device__ inline void EmitToDeviceXyz(double* __restrict__ d_xyz_buf,
                                        // Per-renderer register accumulators
                                        // (kMaxRenderersDeviceCuda entries); entry r
                                        // bumps on renderer r's primary hit.
@@ -572,7 +580,7 @@ __device__ inline void EmitToDeviceXyz(float* __restrict__ d_xyz_buf,
   for (uint32_t ri = 0u; ri < num_renderers; ++ri) {
     const RendererPlaneDesc& rd = d_renderers[ri];
     const lm_proj::ProjParams& proj = rd.proj;
-    float* plane = d_xyz_buf + rd.xyz_off;
+    double* plane = d_xyz_buf + rd.xyz_off;
     lm_proj::ProjResult r =
         lm_proj::ProjectExitToPixel(proj, exit_world[0], exit_world[1], exit_world[2]);
     const int iw_i = proj.img_w;
@@ -783,8 +791,8 @@ __global__ void trace_single_ms_kernel(const float* __restrict__ d_dirs,        
                                        // renderer order; d_renderers[r].xyz_off says where plane r
                                        // starts. d_xyz_buf may be nullptr only when ms_mode==1 (the
                                        // ms_mode==0 branches below dereference it; ms_mode==1
-                                       // branches don't).
-                                       float* __restrict__ d_xyz_buf,
+                                       // branches don't). Double: see EmitToDeviceXyz.
+                                       double* __restrict__ d_xyz_buf,
                                        // One float PER RENDERER (indexed by renderer position).
                                        // One warp partial per atomicAdd (epilogue), never per
                                        // exit — see EmitToDeviceXyz. nullptr skips the epilogue
@@ -1909,46 +1917,21 @@ __global__ void shuffle_cont_kernel(const float* __restrict__    in_d,
   out_component[tid] = in_component[src];
 }
 
-// Third-clock precision fold (TraceBackend::FoldDeviceXyzBatch). The emit gate
-// atomicAdds every exit into the fp32 plane `src`; left alone for a whole drain
-// window (64 batches) a hot pixel's chain gets long enough that its ulp swallows
-// the small weights and the plane drifts ±0.4% against the host's double ledger
-// — the same defect the landed-weight scalar had, one level down. This kernel
-// runs once per batch on the session stream, after that batch's emit kernels
-// and before the next batch's, so it is the only writer of these addresses
-// while it runs: no atomics needed. `fold[i] += src[i]` widens each batch's
-// partial sum to double, `src[i] = 0` restarts the fp32 chain, and the plane's
-// window total accumulates in `fold` with double's ulp instead of float's.
-//
-// A batch of 262144 rays touches a small fraction of a multi-megapixel plane, so
-// the kernel reads every fp32 element (that read is the cost floor) but only
-// touches the double side where there is something to fold — the zero test is
-// what keeps this kernel to a fraction of the batch's trace time on the large
-// planes the throughput fixture uses.
-//
-// When `finalize` is set (the drain path, ReadbackXyzAccum) the kernel also
-// writes the double total back into `src` as float and zeroes `fold`: the D2H
-// that follows then copies exactly the bytes it copied before this fold existed
-// (an fp32 plane), the host-side plumbing stays untouched, and no drain can ever
-// read a stale window — whatever is in `src` at drain time (a batch the fold has
-// not seen yet, e.g. one aborted mid-layer) is folded in on the same pass.
-__global__ void fold_xyz_plane_kernel(float* __restrict__ src, double* __restrict__ fold, uint32_t n,
-                                      bool finalize) {
+// Drain-side conversion of the double XYZ accumulator (d_xyz_acc_) into the
+// fp32 staging plane (d_xyz_buf_) the D2H copies, zeroing the accumulator for
+// the next window. One elementwise pass over the whole packed plane, on the
+// session stream so it is ordered after every emit kernel of the window; it
+// runs once per drain (tens of times per 1e9 rays), never per batch. The
+// per-exit atomicAdd already accumulates in double (accum_shared.h), so there
+// is no fp32 chain to fold here — the float is produced exactly once, from the
+// window's double total, for the host's XyzImageData.
+__global__ void xyz_plane_to_float_kernel(double* __restrict__ acc, float* __restrict__ out, uint32_t n) {
   const uint32_t i = blockIdx.x * blockDim.x + threadIdx.x;
   if (i >= n) {
     return;
   }
-  const float v = src[i];
-  if (finalize) {
-    const double total = fold[i] + static_cast<double>(v);
-    src[i] = static_cast<float>(total);
-    fold[i] = 0.0;
-    return;
-  }
-  if (v != 0.0f) {
-    fold[i] += static_cast<double>(v);
-    src[i] = 0.0f;
-  }
+  out[i] = static_cast<float>(acc[i]);
+  acc[i] = 0.0;
 }
 
 }  // namespace
@@ -2456,25 +2439,24 @@ struct CudaTraceBackend::Impl {
 
   // --- S2 device-fused XYZ accumulation -----------------------------------
   // ms_mode==0 emit gate accumulates per-ray (cmf_x/y/z * weight) directly into
-  // a device-resident W*H*3 float buffer via atomicAdd, replacing the per-exit
-  // PCIe round-trip (`DrainExits` + host projection). scrum-312 third clock: the
+  // a device-resident W*H*3 buffer via atomicAdd, replacing the per-exit PCIe
+  // round-trip (`DrainExits` + host projection). Third clock: the
   // buffer PERSISTS across per-batch sessions (allocated once, zeroed on alloc);
   // BeginSession no longer zeroes it. `ReadbackXyzAccum` D2H copies it to the host
   // and zeros it, but the simulator now drains on display cadence (a whole window
   // of batches), not per batch.
-  // XYZ accumulator: every renderer's W_i*H_i*3 plane packed back-to-back in
-  // renderer order (plane r starts at planes_[r].desc.xyz_off floats).
+  // The accumulator is a DOUBLE plane, d_xyz_acc_: a per-exit fp32 chain kept
+  // alive for a whole window drifted with the window length (see
+  // EmitToDeviceXyz / accum_shared.h). d_xyz_buf_ is the fp32 twin the drain
+  // converts into on device (xyz_plane_to_float_kernel) right before the D2H,
+  // so the copy stays the same bytes it always was and nothing host-side
+  // changes; the kernels never write d_xyz_buf_. Both hold every renderer's
+  // W_i*H_i*3 plane packed back-to-back in renderer order (plane r starts at
+  // planes_[r].desc.xyz_off elements), and both are allocated / reset together
+  // in EnsureXyzBuf.
+  double*  d_xyz_acc_       = nullptr;
   float*   d_xyz_buf_       = nullptr;
-  size_t   xyz_pix_capacity_ = 0;  // Σ W_i*H_i the buffer holds (×3 floats)
-  // Precision twin of d_xyz_buf_: same packing, same element count, double.
-  // The emit kernels only ever atomicAdd into the fp32 plane; once per batch
-  // FoldDeviceXyzBatch adds that plane into this one and zeroes the fp32 side
-  // (fold_xyz_plane_kernel), so an fp32 chain is at most one batch long and the
-  // window-length sum lives in double — the same shape as window_landed_weight_
-  // below, kept on device because a W*H*3 plane cannot pay a per-batch D2H.
-  // Allocated / zeroed in lock-step with d_xyz_buf_ (EnsureXyzBuf), consumed and
-  // zeroed by the drain (ReadbackXyzAccum), never touched by BeginSession.
-  double*  d_xyz_buf_fold_  = nullptr;
+  size_t   xyz_pix_capacity_ = 0;  // Σ W_i*H_i each plane holds (×3 elements)
   // Landed-weight accumulator, ONE float PER RENDERER (indexed by renderer
   // position), one atomicAdd per warp per renderer; holds ONE layer. Grown by
   // EnsureLandedWeightBuf, zeroed with the planes on a shape change and by every
@@ -2579,7 +2561,7 @@ struct CudaTraceBackend::Impl {
   // window totals to match. Zeroes on (re)allocation only; MUST run before
   // EnsureXyzBuf so the latter's shape-change reset can cover both twins.
   void EnsureLandedWeightBuf(size_t n);
-  // Size d_xyz_buf_ for Σ dims (one W*H*3 plane per renderer) and, on any change
+  // Size d_xyz_acc_ + d_xyz_buf_ for Σ dims (one W*H*3 plane per renderer) and, on any change
   // of the dims list, reset it together with the landed-weight slots + host
   // window totals. Mirrors Metal EnsureImage.
   void EnsureXyzBuf(const std::vector<std::pair<uint32_t, uint32_t>>& dims);
@@ -2750,8 +2732,8 @@ void CudaTraceBackend::Impl::Reset(bool keep_persistent_buffers) {
     cudaFree(d_exit_comp_cnt_);  d_exit_comp_cnt_  = nullptr;
     exit_comp_cap_ = 0;
     // S2 device-fused XYZ accumulation buffers.
+    cudaFree(d_xyz_acc_);      d_xyz_acc_ = nullptr;
     cudaFree(d_xyz_buf_);      d_xyz_buf_ = nullptr;
-    cudaFree(d_xyz_buf_fold_); d_xyz_buf_fold_ = nullptr;
     xyz_pix_capacity_ = 0;
     cudaFree(d_landed_weight_); d_landed_weight_ = nullptr;
     landed_weight_capacity_ = 0;
@@ -3518,8 +3500,8 @@ void CudaTraceBackend::Impl::EnsureLandedWeightBuf(size_t n) {
   window_landed_weight_.assign(n, 0.0);
 }
 
-// Mirror of Metal EnsureImage. Third-clock drain: d_xyz_buf_ /
-// d_landed_weight_ are PERSISTENT accumulators across batches. Zero ONLY on
+// Mirror of Metal EnsureImage. Third-clock drain: d_xyz_acc_ (with its fp32
+// staging twin d_xyz_buf_) / d_landed_weight_ are PERSISTENT accumulators across batches. Zero ONLY on
 // (re)allocation or a shape change — the former per-call memset moved to
 // ReadbackXyzAccum's post-drain reset, so device accumulation survives across
 // BeginSession/EndSession within a drain window (the simulator drains on display
@@ -3529,15 +3511,15 @@ void CudaTraceBackend::Impl::EnsureXyzBuf(const std::vector<std::pair<uint32_t, 
   const size_t pix = TotalPixels(dims);
   const size_t xyz_floats = pix * 3u;
   // Grow/shrink the byte allocation only when the packed pixel COUNT changes.
-  if (d_xyz_buf_ == nullptr || d_xyz_buf_fold_ == nullptr || pix != xyz_pix_capacity_) {
+  if (d_xyz_buf_ == nullptr || d_xyz_acc_ == nullptr || pix != xyz_pix_capacity_) {
     cudaFree(d_xyz_buf_);  // no-op on nullptr
     d_xyz_buf_ = nullptr;
-    cudaFree(d_xyz_buf_fold_);
-    d_xyz_buf_fold_ = nullptr;
+    cudaFree(d_xyz_acc_);
+    d_xyz_acc_ = nullptr;
+    // Both planes come from the same branch so they can never be sized for
+    // different shapes; the shape-change reset below zeroes both.
+    CheckCuda(cudaMalloc(&d_xyz_acc_, xyz_floats * sizeof(double)), "EnsureXyzBuf cudaMalloc d_xyz_acc");
     CheckCuda(cudaMalloc(&d_xyz_buf_, xyz_floats * sizeof(float)), "EnsureXyzBuf cudaMalloc d_xyz_buf");
-    // The double twin is allocated by the same branch so the pair can never be
-    // sized for different shapes; the shape-change reset below zeroes both.
-    CheckCuda(cudaMalloc(&d_xyz_buf_fold_, xyz_floats * sizeof(double)), "EnsureXyzBuf cudaMalloc d_xyz_buf_fold");
     xyz_pix_capacity_ = pix;
   }
   // Reset on any SHAPE change of the dims list — a renderer added / removed /
@@ -3562,8 +3544,8 @@ void CudaTraceBackend::Impl::EnsureXyzBuf(const std::vector<std::pair<uint32_t, 
       throw BackendUnavailableError(
           "CudaTraceBackend::EnsureXyzBuf: d_landed_weight_ must be allocated for every renderer before reset");
     }
+    CheckCuda(cudaMemset(d_xyz_acc_, 0, xyz_floats * sizeof(double)), "EnsureXyzBuf cudaMemset d_xyz_acc");
     CheckCuda(cudaMemset(d_xyz_buf_, 0, xyz_floats * sizeof(float)), "EnsureXyzBuf cudaMemset d_xyz_buf");
-    CheckCuda(cudaMemset(d_xyz_buf_fold_, 0, xyz_floats * sizeof(double)), "EnsureXyzBuf cudaMemset d_xyz_buf_fold");
     CheckCuda(cudaMemset(d_landed_weight_, 0, landed_weight_capacity_ * sizeof(float)),
               "EnsureXyzBuf cudaMemset d_landed_weight");
     window_landed_weight_.assign(landed_weight_capacity_, 0.0);
@@ -5010,9 +4992,10 @@ LayerHandlePtr CudaTraceBackend::TraceLayer(const RootRaySource& roots) {
         impl_->d_and_term_counts_,
         impl_->filter_desc_max_ci_,
         ci_cfg_id,
-        // S2 device-fused accumulation params: packed XYZ planes + one landed
-        // slot per renderer, and the renderer descriptors the exit tails loop over.
-        impl_->d_xyz_buf_, impl_->d_landed_weight_,
+        // S2 device-fused accumulation params: packed XYZ planes (the double
+        // accumulator, not the fp32 D2H staging) + one landed slot per renderer,
+        // and the renderer descriptors the exit tails loop over.
+        impl_->d_xyz_acc_, impl_->d_landed_weight_,
         impl_->d_renderers_, static_cast<uint32_t>(impl_->planes_.size()),
         impl_->final_ms_prob_,
         impl_->gate_seed_,
@@ -5612,39 +5595,32 @@ void CudaTraceBackend::ReadbackAnchorBuffer(std::vector<float>& anchor_y) {
             "ReadbackAnchorBuffer cudaMemset d_anchor_buf");
 }
 
-// One fold_xyz_plane_kernel launch over the whole packed plane (every renderer),
-// on the session stream so it is ordered after this batch's emit kernels and
-// before the next batch's. No host wait: the simulator calls this once per
-// batch right after the layer loop, and any host synchronization here would be
-// the per-batch tax the third clock removed (a drain, when one is due, follows
-// on the same stream and does its own wait).
-void CudaTraceBackend::LaunchXyzFold(bool finalize) {
+// One xyz_plane_to_float_kernel launch over the whole packed plane (every
+// renderer), on the session stream. The caller (ReadbackXyzAccum) waits on the
+// device right after, so the fp32 staging is complete before its D2H.
+void CudaTraceBackend::LaunchXyzPlaneToFloat() {
   const size_t n_elems = impl_->xyz_pix_capacity_ * 3u;
-  if (impl_->d_xyz_buf_ == nullptr || impl_->d_xyz_buf_fold_ == nullptr || n_elems == 0) {
-    return;
-  }
   if (n_elems > static_cast<size_t>(UINT32_MAX)) {
-    throw BackendUnavailableError("CudaTraceBackend::LaunchXyzFold: plane of " + std::to_string(n_elems) +
-                                  " floats exceeds the kernel's 32-bit index");
+    throw BackendUnavailableError("CudaTraceBackend::LaunchXyzPlaneToFloat: plane of " +
+                                  std::to_string(n_elems) + " elements exceeds the kernel's 32-bit index");
   }
   const uint32_t n = static_cast<uint32_t>(n_elems);
   const uint32_t grid = (n + 255u) / 256u;
   cudaStream_t stream = impl_->stream_created_ ? impl_->stream_ : nullptr;
-  fold_xyz_plane_kernel<<<grid, 256, 0, stream>>>(impl_->d_xyz_buf_, impl_->d_xyz_buf_fold_, n, finalize);
+  xyz_plane_to_float_kernel<<<grid, 256, 0, stream>>>(impl_->d_xyz_acc_, impl_->d_xyz_buf_, n);
   // Sticky-error discipline: cudaGetLastError, not Peek (same rule as the
   // shuffle launch in Recombine).
   const cudaError_t launch_err = cudaGetLastError();
   if (launch_err != cudaSuccess) {
     impl_->Reset();
-    throw BackendUnavailableError(std::string{"CudaTraceBackend::LaunchXyzFold: fold_xyz_plane_kernel launch: "} +
-                                  cudaGetErrorString(launch_err));
+    throw BackendUnavailableError(
+        std::string{"CudaTraceBackend::LaunchXyzPlaneToFloat: xyz_plane_to_float_kernel launch: "} +
+        cudaGetErrorString(launch_err));
   }
 }
 
-void CudaTraceBackend::FoldDeviceXyzBatch() { LaunchXyzFold(/*finalize=*/false); }
-
-// Third-clock drain: copies the PERSISTENT cross-batch d_xyz_buf_ to host, adds
-// the window's landed weight (`window_landed_weight_`, folded per layer by
+// Third-clock drain: converts the PERSISTENT cross-batch d_xyz_acc_ to fp32 on
+// device and copies that to host, adds the window's landed weight (`window_landed_weight_`, folded per layer by
 // TraceLayer) into the running scalar, and zeros both to start the next drain
 // window clean. The
 // simulator calls this on display cadence (a whole window of batches), not per
@@ -5656,7 +5632,7 @@ void CudaTraceBackend::ReadbackXyzAccum(std::vector<XyzImageData>& xyz_planes, s
   // (generation-change / producer-pause / run-exit flush). Gate on the buffer
   // being allocated, not on in_session_ — the persisted buffer is valid to read
   // after EndSession(keep_persistent_buffers=true).
-  if (impl_->d_xyz_buf_ == nullptr || impl_->d_landed_weight_ == nullptr) {
+  if (impl_->d_xyz_acc_ == nullptr || impl_->d_xyz_buf_ == nullptr || impl_->d_landed_weight_ == nullptr) {
     throw BackendUnavailableError("CudaTraceBackend::ReadbackXyzAccum called before any session allocated the buffer");
   }
   // Invariant: alloc_dims_ and xyz_pix_capacity_ encode the same underlying
@@ -5693,14 +5669,14 @@ void CudaTraceBackend::ReadbackXyzAccum(std::vector<XyzImageData>& xyz_planes, s
     }
   }
 
-  // Fold whatever the fp32 plane still holds into the double plane and write
-  // the window total back into the fp32 plane as float (fold_xyz_plane_kernel,
-  // finalize mode) — the D2H below then copies the same fp32 bytes it always
-  // did, sourced from a double-accumulated window. Stream-ordered after every
-  // emit kernel of the window, and covered by the wait right after.
-  LaunchXyzFold(/*finalize=*/true);
+  // Convert the window's double accumulator into the fp32 staging plane and
+  // zero the accumulator (xyz_plane_to_float_kernel) — the D2H below then
+  // copies the same fp32 bytes it always did, sourced from a double-accumulated
+  // window. Stream-ordered after every emit kernel of the window, and covered
+  // by the wait right after.
+  LaunchXyzPlaneToFloat();
   // waitUntilCompleted-equivalent — all preceding TraceLayer kernel work and
-  // the finalize fold must complete before the D2H copy. Mirrors Metal's
+  // the conversion must complete before the D2H copy. Mirrors Metal's
   // cmd-buffer wait.
   cudaDeviceSynchronize();
   // The window's landed weights are the host doubles TraceLayer folded every
@@ -5726,11 +5702,9 @@ void CudaTraceBackend::ReadbackXyzAccum(std::vector<XyzImageData>& xyz_planes, s
   }
   // Reset the accumulators so the NEXT drain window starts from zero (third clock:
   // this is now the per-window reset — BeginSession no longer zeroes; a second
-  // drain with no intervening accumulation returns zeros). The fp32 plane holds
-  // the float copy of the window total the finalize fold wrote for the D2H, so
-  // it must be cleared here; the double plane was zeroed by that same fold.
-  CheckCuda(cudaMemset(impl_->d_xyz_buf_, 0, impl_->xyz_pix_capacity_ * 3u * sizeof(float)),
-            "ReadbackXyzAccum cudaMemset d_xyz_buf");
+  // drain with no intervening accumulation returns zeros). The XYZ accumulator
+  // was zeroed by the conversion kernel above; the fp32 staging needs no reset
+  // — the next drain's conversion overwrites every element before it is read.
   CheckCuda(cudaMemset(impl_->d_landed_weight_, 0, n_slots * sizeof(float)),
             "ReadbackXyzAccum cudaMemset d_landed_weight");
   std::fill(impl_->window_landed_weight_.begin(), impl_->window_landed_weight_.end(), 0.0);
