@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1789862102384,
+  "lastUpdate": 1789862105030,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -4776,54 +4776,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "68f3be6a4fc6353c202b92f6538e7b9c3d5d1100",
-          "message": "Merge pull request #284 from LoveDaisy/task/retire-comma-raypath-separator\n\n退役 raypath 逗号连接符：静默算错改为指名改法的拒绝 + 加载期迁移",
-          "timestamp": "2026-08-30T22:29:34+08:00",
-          "tree_id": "e9cc435a031fe70e00ae4ab2e1c43c075f39eb24",
-          "url": "https://github.com/LoveDaisy/ice_halo_sim/commit/68f3be6a4fc6353c202b92f6538e7b9c3d5d1100"
-        },
-        "date": 1788100791417,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 1187522.7,
-            "unit": "rays/sec",
-            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 1173980.4,
-            "unit": "rays/sec",
-            "extra": "CPU: Neoverse-N2\\nCores: 4"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 726593.7,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 9V74 80-Core Processor\\nCores: 4"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 674099.1,
-            "unit": "rays/sec",
-            "extra": "CPU: INTEL(R) XEON(R) PLATINUM 8573C\\nCores: 4"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "6c798112109aa5fb9e2f85564fd0f9bfb59e0259",
           "message": "Merge pull request #285 from LoveDaisy/task/user-defaults-schema-version\n\n给 user_defaults.json 盖上独立的 schema 版本戳（只记录，不设闸，不迁移）",
           "timestamp": "2026-08-31T08:46:01+08:00",
@@ -9524,6 +9476,48 @@ window.BENCHMARK_DATA = {
             "value": 620521.5,
             "unit": "rays/sec",
             "extra": "CPU: Intel(R) Xeon(R) Platinum 8370C CPU @ 2.80GHz\\nCores: 4"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "88a667fb94867eaa45b47b789e101b9b505a99ee",
+          "message": "Merge pull request #387 from LoveDaisy/docs/thread-budget-owner-ruling\n\ndocs(gui): record the owner's ruling on the capped render thread budget",
+          "timestamp": "2026-09-20T07:45:28+08:00",
+          "tree_id": "659f93e361c41c0c2e674a5a3bba6178131d04b4",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/88a667fb94867eaa45b47b789e101b9b505a99ee"
+        },
+        "date": 1789862104628,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "Ubuntu ARM64",
+            "value": 1017225.1,
+            "unit": "rays/sec",
+            "extra": "CPU: Neoverse-N2\\nCores: 4"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 804518.8,
+            "unit": "rays/sec",
+            "extra": "CPU: Intel(R) Xeon(R) Platinum 8370C CPU @ 2.80GHz\\nCores: 4"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 574937,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
           }
         ]
       }
