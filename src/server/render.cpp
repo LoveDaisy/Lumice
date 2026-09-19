@@ -18,7 +18,7 @@
 #include "core/ev_anchor.hpp"
 #include "core/lens_proj_build.hpp"
 #include "core/math.hpp"
-#include "core/parallel_rows.hpp"  // EXPLORE-571.14 prototype: row-parallel dispatch for the fused pixel loop below
+#include "core/parallel_rows.hpp"  // row-parallel dispatch for the fused pixel loop in PostSnapshot()
 #include "core/raypath.hpp"
 #include "core/scatter_accum.hpp"  // MakeCameraRotation (single source of the camera rotation chain)
 #include "core/shared/projection_shared.h"
@@ -1082,9 +1082,9 @@ void RenderConsumer::PostSnapshot() {
   // to, byte for byte and without tolerance. Keep it that way: each step below
   // must stay a per-element operation on a value that never round-trips through
   // a different precision.
-  // EXPLORE-571.14 prototype: dispatched row-parallel via ParallelRows (core/parallel_rows.hpp),
-  // the same premise-checked utility lens_proj_build.hpp/annotation_overlay.hpp already use for
-  // per-pixel-independent W*H loops — every pixel here writes only its own bytes and reads only
+  // Dispatched row-parallel via ParallelRows (core/parallel_rows.hpp), the same premise-checked
+  // utility lens_proj_build.hpp/annotation_overlay.hpp already use for per-pixel-independent W*H
+  // loops — every pixel here writes only its own bytes and reads only
   // snapshot_xyz_[i]/visible_mask_[i]/layers, so splitting by row cannot change the bytes produced.
   // ONE exception to "reads only": AnnotationLayers::on_marker_ring is reusable per-pixel SCRATCH
   // that CompositeAnnotations writes before reading, for the SAME pixel, to avoid a per-pixel

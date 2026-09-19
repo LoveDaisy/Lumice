@@ -1,8 +1,9 @@
-// EXPLORE-571.14 prototype-only throughput probe for RenderConsumer::PostSnapshot()'s row-parallel
-// dispatch (core/parallel_rows.hpp). Not meant to land as a permanent bench target — it exists to
-// answer this explore's §0 predicate (does the HI-RES post_snapshot wall clock drop from the
-// 571.8-measured 87.6ms baseline to <=58.4ms, the 1.5x threshold) and gets removed or promoted
-// depending on the verdict.
+// Developer microbench for RenderConsumer::PostSnapshot()'s fused pixel loop at the HI-RES tier,
+// the segment that doc/gui-preview-lifecycle-architecture.md §12.1 measured at 94.7% of DoSnapshot
+// (87,614 us of 92,520 us at 2048x1024). It is a manual before/after tool for changes to that loop
+// — the row-parallel dispatch (core/parallel_rows.hpp) was accepted on this bench's same-process
+// controlled A/B (§12.4) — and sits on the same footing as the other bench_*.cpp files here: built
+// by CI's bench compile-only job, run by hand, not wired into the benchmark-summary report chain.
 #include <benchmark/benchmark.h>
 
 #include <cmath>
@@ -22,8 +23,8 @@ using namespace lumice;  // NOLINT(google-build-using-namespace) benchmark code
 namespace {
 
 // Matches doc/gui-preview-lifecycle-architecture.md §12.1's HI-RES tier (2048x1024, dual-fisheye,
-// no raypath colouring) as closely as a standalone microbench can, so this experiment's numbers sit
-// on the same footing as the segment-timing baseline it is checked against.
+// no raypath colouring) as closely as a standalone microbench can, so its numbers sit on the same
+// footing as the segment-timing baseline they are compared against.
 RenderConfig MakeHiResConfig(bool with_markers) {
   RenderConfig cfg;
   cfg.id_ = 0;
@@ -69,7 +70,7 @@ void BM_PostSnapshotHiRes(benchmark::State& state) {
   auto data = MakeScatteredBatch(500000);
   rc.Consume(data);
   // Anchor + PrepareSnapshot once, matching the property-test helper's ordering; only PostSnapshot
-  // itself (the fused pixel loop this prototype parallelizes) is inside the timed region.
+  // itself (the fused pixel loop) is inside the timed region.
   rc.PrepareSnapshot();
   const RawXyzResult raw = rc.GetRawXyzResult();
   const float p99 = ComputeP99Y(raw.xyz_buffer_, raw.img_width_, raw.img_height_, kMonoAnchorDownsampleFactor);
