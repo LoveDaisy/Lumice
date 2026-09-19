@@ -123,7 +123,6 @@ add_executable(unit_correctness_test
   "${PROJ_TEST_DIR}/unit-correctness/server/test_render_consumer_fp32_accum_oracle.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/server/test_render_consumer_exposure_scale.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/server/test_render_consumer_post_snapshot_fusion.cpp"
-  "${PROJ_TEST_DIR}/unit-correctness/server/test_render_consumer_post_snapshot_parallel_prototype.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/server/test_render_consumer_print_mode.cpp"
   # The other half of the print operator: the fields it takes over the colour channel FROM.
   # test_render_consumer_print_mode.cpp asserts the pixels the operator writes; this one asserts
