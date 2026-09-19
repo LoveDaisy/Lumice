@@ -235,7 +235,80 @@
 
 4. **~~吞吐天花板：poller 20ms 整幅回读~~（2026-06-19 推翻，见 §0 度量纠偏）**：原结论"引擎 9.5× 在 GUI 仅兑现 2.07×、差 poller"是测量假象——同口径下引擎（8–10×）≈ GUI（~9.5×），无 headroom gap。poller 整幅回读是 **per-commit 延迟成本**（first_upload < 150ms），不是吞吐天花板（explore-271 E3 实证 poll 间隔不影响吞吐）。partial-readback / async upload 若做，目标是降**交互延迟**（first_upload），非提吞吐。
 
-## 10. XYZ 设备平面 drain-window 精度/吞吐：全场景代价矩阵（测量于 2026-09-19/20）
+## 10. XYZ 设备平面的 drain-window 累加精度（as-built，2026-09-19）
+
+> 接手：CUDA 的像素平面在一个 drain 窗口内是一条 fp32 `atomicAdd` 长链；它的偏差曾被 legacy 侧同形的
+> fp32 偏差抵消，legacy 改 double（PR #380）后单独显形。本节记录缺陷机制、四个候选修法的一手红绿数字、
+> 选定形态与仍未闭合的吞吐代价。改 `AccumXyzToPixel` / `d_xyz_buf_` / `ReadbackXyzAccum` /
+> `LUMICE_XYZ_DRAIN_BATCHES` 语义前先读。
+
+### 10.1 缺陷机制
+
+第三时钟（§0 / `Simulator::kDefaultXyzDrainBatches = 64`）让设备侧 W×H×3 像素平面跨整个 drain 窗口
+持续存活，`EmitToDeviceXyz` 对它逐出射 `atomicAdd`。全天球场景每像素每窗口只有 ~16 次加法，无事；窄视场
+热像素场景一个像素一个窗口能吃下上万次，fp32 和的 ulp 随和增长，每次加法舍入 ≤ 半 ulp，累计成**随窗口长度
+走的舍入漂移**（符号会翻转，不是单向丢失）。这是 `d_landed_weight_` 那次「会话级单标量 −1.7%」缺陷
+（`EmitToDeviceXyz` 上方注释）在像素级的同族——标量那次靠 per-warp 寄存器 + 每层折回 host double 修掉，
+平面因体积是 W×H×3 不能照搬每层 D2H。
+
+一手签名（home-wsl，base `6f38f1a7`，`test_cuda_energy_accounting_parity.py` 的
+`R = Ysum / snapshot_intensity` 两账本比值，`parhelion` 10M rays，seed 42）：
+
+| `LUMICE_XYZ_DRAIN_BATCHES` | 64（默认） | 16 | 1 |
+|---|---|---|---|
+| `R_cuda/R_legacy − 1` | **+0.4000%** | −0.1352% | −0.0078% |
+
+parity battery 25 行里 4 行红（parhelion 三 seed +0.40%；`multi_lens` 三 renderer +0.52/+0.50/+0.32%），容差
+0.1% 不放宽。Metal 同形路径（`lumice_trace.metal` 同一 `accum_shared.h`）**不受影响**：Metal 每 batch drain，
+fp32 链最长一个 batch；且已有跨厂商证据——结构相同的单地址 GPU 原子归约，CUDA 与 Metal 的精度代价可差 50 倍
+（标量那次 CUDA +1.74% vs Metal +0.035%；Metal 平面实测残差 ±0.02% 不随 N 增长），本仓不重新逆向 Apple 硬件。
+
+### 10.2 四个候选的一手红绿矩阵
+
+协议：`examples/bench_config.json`（单 renderer 2048×1024 rectangular 180°）改 `ray_num` 3e9，
+`Lumice benchmark --backend cuda`，同一台机上 base 与候选二进制**交错 5 次**，全部 `rate_basis=steady`；
+正确性 = 上表三档 + 全量 energy-ledger / multi-renderer 两个 parity 文件。home-wsl（RTX 5090 D，WSL2）。
+
+| 候选 | 形态 | 正确性（parhelion 三档） | 吞吐 vs base | 判定 |
+|---|---|---|---|---|
+| A | `LUMICE_XYZ_DRAIN_BATCHES=1`（零代码，每 batch 同步 D2H 折回 host double） | −0.0078% 三档一致 | **−88%**（413 → 49.5 M/s） | 否决：正是第三时钟消掉的税 |
+| C | 每 batch 一个 device kernel 把 fp32 平面折进 double 平面并清零 fp32 | −0.0078% 三档一致（fp32 链仍有一个 batch 长） | **−22.5%**（405 → 314） | 否决：每 batch +188 µs，全平面遍历串在 stream 关键路径上（下一 batch 的同步 H2D 要等它），外加 WSL2 每个 GPU 包 ~30–45 µs |
+| **B** | `AccumXyzToPixel` 直接 `atomicAdd(double*)`（sm_60+ 原生），drain 时 device 转 fp32 staging 再 D2H | **1.000000** 全部行，三档 spread 0.0000% | **−13.9%**（409 → 352；home-win 原生 −17.8%，472 → 388）；1024×512 +5%、512×256 −3%（均在噪声内） | **选定**；代价是 2× 平面字节的占用效应（缩小平面即消失），不是 64-bit 原子本身 |
+| D | fp32 主路 + 比值门控迁移：`old = atomicAdd(fp32)`，`old ≥ 128·w` 时 `atomicExch` 搬进 double 平面 | 1.000000，三档 spread 0.0000% | **−24.0%**（409 → 311） | 否决：每次命中要等一次带返回值的原子（ATOM 而非 RED），比 B 的占用效应还贵 |
+
+C 与 D 的代码留在分支历史里只作证据（C：`c6eb47aa`/`9ff5d1dc`，D：`a00caa9f` + revert），树上只有 B。
+
+### 10.3 选定形态（B）as-built
+
+- `src/core/shared/accum_shared.h` CUDA 变体：`AccumXyzToPixel(double* xyz_buf, …)`，乘积仍是 float
+  乘积（与 Metal / host 同舍入），只有运行和是 double。Metal / host 变体不动。
+- `CudaTraceBackend::Impl`：`d_xyz_acc_`（double，原子目标）与 `d_xyz_buf_`（fp32，只做 D2H staging，
+  kernel 从不写）成对；`EnsureXyzBuf` 同分支分配、同 shape 变化清零；`BeginSession` 不碰。
+- `ReadbackXyzAccum`：先 `xyz_plane_to_float_kernel`（session stream 上，`acc → out` 转 float 并清零
+  `acc`），再 `cudaDeviceSynchronize`，再逐 renderer D2H `d_xyz_buf_`——**D2H 字节数、host 侧
+  `XyzImageData` / `SimData::xyz_pixel_data_` 类型一字不改**。转换 kernel 每 drain 一次（1e9 rays 约 60 次），
+  不是每 batch。
+- 显存：2048×1024 单 renderer 多 50 MB（double 平面）；`multi_lens` 四 renderer 各 1024×512 多 48 MB。
+- 哨兵：`test_cuda_energy_accounting_parity.py::test_cuda_energy_ledger_independent_of_drain_window`——
+  parhelion seed 42 三档 `R_cuda/R_legacy` 互差 ≤ 0.05%；换回 base 的 `liblumice_testapi.so` 读 spread 0.5353%
+  红。⚠️ 与 battery 其余行一样，只在 CUDA 参照机上跑（CI 无 GPU）。
+
+### 10.4 仍未闭合：吞吐代价（上抛 owner）
+
+B 在生产口径（2048×1024）上 −13.9%（home-wsl，409 → 352 M/s）、**−17.8%**（home-win 原生，同协议同日
+5 交错，472.5 → 388.4 M/s，两臂 CoV ≤ 2.7%）。四候选无一满足
+「≤2%」，且失败机制各异（A：per-batch 同步 D2H；C：per-batch 全平面遍历 + GPU 包税；D：热路径等原子返回；
+B：2× 平面占用）。没有第五个形态能同时做到「per-batch 零动作、热路径零等待、平面字节不翻倍」——三者正是
+A/C、D、B 各自的代价源。剩下的选项由 owner 裁定：接受 B 的代价换精确的两账本；或退回 fp32 平面、把 battery
+那 4 行判为已知偏差（⛔ 不是放宽 `_T_R_RATIO_TOL`，而是显式记录一个 +0.4% 的窗口长度依赖）。
+
+同缺陷族、本次**未修**的已知风险：`d_anchor_buf_`（曝光锚点平面）与 `d_class_lane_buf_`（per-class Y-lane
+平面）与 `d_xyz_buf_` 同样是跨整个 drain 窗口的逐出射 fp32 `atomicAdd`（`EmitToDeviceXyz` 里的
+`AccumAnchorY` 与 `FanColorClassLanes`）。今天没有任何一手红态数据（没有测试读这两块平面的两账本），
+按「举证责任在增加一方」不在本次交付内改；若将来证实可观测，修法就是本节 B 的同形——把那块平面的类型与
+原子拓宽，drain 侧加同样的转换 kernel——不需要新的机制。
+
+
 
 > ⚠️ 本节在 `main` 基线上补写，与分支 `fix/cuda-drain-window-fp32-plane`（PR #383）自己的 §10.1–§10.4
 > （单场景 `examples/bench_config.json` 2048×1024、候选 A/C/B/D 的红绿矩阵）是**同一缺陷调查的两批
@@ -245,7 +318,7 @@
 > 而非候选 C 的每 batch 一次）的正确性与吞吐。E 与 A/B/C/D 一样是**探针**，树上不落地，代码只在
 > 别处（生成 patch 的机制过程）保留，本节只留数字与结论。
 
-### 10.1 候选 B/E 相对 `main`（无修复）的吞吐代价，按场景/分辨率
+### 10.5 候选 B/E 相对 `main`（无修复）的吞吐代价，按场景/分辨率
 
 协议：`scripts/bench_throughput.py`，default dispatch，N≥5 交错（CoV>15% 按脚本自身判据升到
 N=9）。`main` = `origin/main@6f38f1a7`（未修复的 fp32 平面，无 fold）；候选 B =
@@ -281,7 +354,7 @@ home-win 省 11.4pp（−5.9% vs −17.3%）更明显。`ms_multi_crystal`（多
 测量样本量（每格 5–9 次交错）不足以把"E 比 B 更便宜"钉成跨场景通用结论——只在 `bench_light_single_ms`
 这一光路密集场景上观察到。
 
-### 10.2 候选 E 的正确性：drift 剂量-响应补上"8"这一档
+### 10.6 候选 E 的正确性：drift 剂量-响应补上"8"这一档
 
 PR #383 §10.1 的一手签名表（`parhelion` 10M rays，seed 42，未修复的 fp32 平面）给出
 `LUMICE_XYZ_DRAIN_BATCHES` ∈ {64, 16, 1} 对应的 `R_cuda/R_legacy − 1` 为 **+0.400% / −0.135% /
@@ -309,7 +382,7 @@ drain=16/64 读 +0.0452%（链长 8），spread 0.0530% 略超该测试为 B 钉
 把链长钉在 8 而非 1"的直接体现，不是候选 E 实现的缺陷，只是它不满足一条**为候选 B 的形态量身写的**
 不变量。
 
-### 10.3 结论边界
+### 10.7 结论边界
 
 本节只补数据，不裁定 575 的最终形态（候选取舍仍由 owner 在 PR #383 上下判断）；`bench_light_single_ms`
 上 E 比 B 便宜、`ms_multi_crystal` 上两机方向不一致、E 的三档 drift 全部 ≤0.05% 但不满足 B 的
