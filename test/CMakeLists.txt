@@ -184,6 +184,10 @@ add_executable(unit_correctness_test
   # preview shader's relative-illumination factor, and the oracle it is held to is a numerical
   # Jacobian rather than the GLSL twin, so the case needs no GL context of any kind.
   "${PROJ_TEST_DIR}/unit-correctness/gui/test_preview_jacobian.cpp"
+  # And again: xyz_half_codec.hpp is header-only and GL-free. It is the one float16 encoding the
+  # live GL upload and the .lmc v6 texture section share; its oracle is the binary16 format's own
+  # definition, so no window and no lumice_gui_obj.
+  "${PROJ_TEST_DIR}/unit-correctness/gui/test_xyz_half_codec.cpp"
   # Contrast-headroom warning, GUI half: gui_state.hpp's wrappers over util/contrast_headroom.hpp
   # plus the one-click fix. All three are header-only inline functions over a plain struct, so this
   # is the target that does not link lumice_gui_obj — the same reason as the three lines above.
