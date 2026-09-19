@@ -9,6 +9,7 @@
 
 #include "core/annotation_overlay.hpp"
 #include "server/c_api_internal.hpp"  // ToAnnotationViewSnapshot (a56: single translation owner)
+#include "thread_budget.hpp"
 
 namespace {
 
@@ -47,7 +48,7 @@ LUMICE_ErrorCode LUMICE_TEST_ComputeRenderDomainMask(const LUMICE_AnnotationView
   std::unique_ptr<RenderDomainMaskStorage> storage;
   try {
     storage = std::make_unique<RenderDomainMaskStorage>();
-    storage->overlay = lumice::annotation::ComputeOverlay(req);
+    storage->overlay = lumice::annotation::ComputeOverlay(req, lumice::test::kTestThreadBudget);
   } catch (...) {
     return LUMICE_ERR_UNKNOWN;
   }

@@ -27,6 +27,7 @@
 #include "config/sim_data.hpp"
 #include "server/render.hpp"
 #include "support/render_anchor.hpp"
+#include "support/thread_budget.hpp"
 
 namespace lumice {
 namespace {
@@ -150,12 +151,12 @@ void ExpectMaskDrivesTheImage(const RenderConfig& cfg_on, const std::vector<std:
 }
 
 TEST(RenderConsumerGrid, ElevationPaintedPixelsAreExactlyTheMaskedOnes) {
-  RenderConsumer off(MakeConfig({}, {}), ColorClassTable{}, MakeSun());
+  RenderConsumer off(MakeConfig({}, {}), lumice::test::kTestThreadBudget, ColorClassTable{}, MakeSun());
   const std::vector<uint8_t> img_off = SnapshotOnce(&off);
   ASSERT_EQ(img_off.size(), static_cast<size_t>(kTotalPix) * 3);
 
   const RenderConfig cfg = MakeConfig({ Line(30.0f, 1.0f, 1.0f, 0.0f, 0.0f) }, {});
-  RenderConsumer on(cfg, ColorClassTable{}, MakeSun());
+  RenderConsumer on(cfg, lumice::test::kTestThreadBudget, ColorClassTable{}, MakeSun());
   const std::vector<uint8_t> img_on = SnapshotOnce(&on);
   ASSERT_EQ(img_on.size(), static_cast<size_t>(kTotalPix) * 3);
 
@@ -164,12 +165,12 @@ TEST(RenderConsumerGrid, ElevationPaintedPixelsAreExactlyTheMaskedOnes) {
 }
 
 TEST(RenderConsumerGrid, LongitudePaintedPixelsAreExactlyTheMaskedOnes) {
-  RenderConsumer off(MakeConfig({}, {}), ColorClassTable{}, MakeSun());
+  RenderConsumer off(MakeConfig({}, {}), lumice::test::kTestThreadBudget, ColorClassTable{}, MakeSun());
   const std::vector<uint8_t> img_off = SnapshotOnce(&off);
   ASSERT_EQ(img_off.size(), static_cast<size_t>(kTotalPix) * 3);
 
   const RenderConfig cfg = MakeConfig({}, { Line(0.0f, 1.0f, 1.0f, 0.0f, 0.0f) });
-  RenderConsumer on(cfg, ColorClassTable{}, MakeSun());
+  RenderConsumer on(cfg, lumice::test::kTestThreadBudget, ColorClassTable{}, MakeSun());
   const std::vector<uint8_t> img_on = SnapshotOnce(&on);
   ASSERT_EQ(img_on.size(), static_cast<size_t>(kTotalPix) * 3);
 
@@ -182,7 +183,7 @@ TEST(RenderConsumerGrid, ThePairOfFamiliesProduceDifferentCurves) {
   // both families, or reading Overlay::elevation for both, yields the SAME mask from the same
   // angle. 30 deg elevation and 30 deg azimuth are different curves on any frame.
   RenderConsumer rc(MakeConfig({ Line(30.0f, 1.0f, 1.0f, 0.0f, 0.0f) }, { Line(30.0f, 1.0f, 0.0f, 0.0f, 1.0f) }),
-                    ColorClassTable{}, MakeSun());
+                    lumice::test::kTestThreadBudget, ColorClassTable{}, MakeSun());
   ASSERT_EQ(rc.ElevationMasksForTest().size(), 1u);
   ASSERT_EQ(rc.LongitudeMasksForTest().size(), 1u);
   ASSERT_GT(CountMarked(rc.ElevationMasksForTest()[0]), 0u);
@@ -195,9 +196,9 @@ TEST(RenderConsumerGrid, TwoLinesKeepTheirOwnColours) {
   // red and the 60 deg one blue. Batching both angles into one ComputeOverlay call would return
   // one mask covering both curves, and whichever colour the code picked would paint both.
   const RenderConfig cfg = MakeConfig({ Line(30.0f, 1.0f, 1.0f, 0.0f, 0.0f), Line(60.0f, 1.0f, 0.0f, 0.0f, 1.0f) }, {});
-  RenderConsumer off(MakeConfig({}, {}), ColorClassTable{}, MakeSun());
+  RenderConsumer off(MakeConfig({}, {}), lumice::test::kTestThreadBudget, ColorClassTable{}, MakeSun());
   const std::vector<uint8_t> img_off = SnapshotOnce(&off);
-  RenderConsumer on(cfg, ColorClassTable{}, MakeSun());
+  RenderConsumer on(cfg, lumice::test::kTestThreadBudget, ColorClassTable{}, MakeSun());
   const std::vector<uint8_t> img_on = SnapshotOnce(&on);
   ASSERT_EQ(img_on.size(), static_cast<size_t>(kTotalPix) * 3);
 
@@ -231,9 +232,10 @@ TEST(RenderConsumerGrid, TwoLinesKeepTheirOwnColours) {
 TEST(RenderConsumerGrid, ZeroOpacityLineDrawsNothing) {
   // The per-line appearance is honoured on the way OUT of the mask stage too: a mask is still
   // built (the cache key is the angle list), but a fully transparent line must not reach a pixel.
-  RenderConsumer off(MakeConfig({}, {}), ColorClassTable{}, MakeSun());
+  RenderConsumer off(MakeConfig({}, {}), lumice::test::kTestThreadBudget, ColorClassTable{}, MakeSun());
   const std::vector<uint8_t> img_off = SnapshotOnce(&off);
-  RenderConsumer on(MakeConfig({ Line(30.0f, 0.0f, 1.0f, 0.0f, 0.0f) }, {}), ColorClassTable{}, MakeSun());
+  RenderConsumer on(MakeConfig({ Line(30.0f, 0.0f, 1.0f, 0.0f, 0.0f) }, {}), lumice::test::kTestThreadBudget,
+                    ColorClassTable{}, MakeSun());
   const std::vector<uint8_t> img_on = SnapshotOnce(&on);
   ASSERT_EQ(img_on.size(), img_off.size());
   EXPECT_EQ(img_on, img_off);
@@ -243,7 +245,7 @@ TEST(RenderConsumerGrid, ResetWithPicksUpANewLineList) {
   // Neither list takes part in NeedsRebuild, so a config that adds grid lines mid-run reaches a
   // REUSED consumer. Masks that were only ever built in the constructor would leave that consumer
   // drawing nothing.
-  RenderConsumer rc(MakeConfig({}, {}), ColorClassTable{}, MakeSun());
+  RenderConsumer rc(MakeConfig({}, {}), lumice::test::kTestThreadBudget, ColorClassTable{}, MakeSun());
   ASSERT_TRUE(rc.ElevationMasksForTest().empty());
   ASSERT_TRUE(rc.LongitudeMasksForTest().empty());
   const std::vector<uint8_t> img_off = SnapshotOnce(&rc);
@@ -274,7 +276,7 @@ TEST(RenderConsumerGrid, LayerOrderPutsTheGridUnderTheCircles) {
   // straight off the byte.
   const RenderConfig cfg =
       MakeConfig({ Line(30.0f, 1.0f, 1.0f, 0.0f, 0.0f) }, {}, { Line(15.0f, 1.0f, 0.0f, 0.0f, 1.0f) });
-  RenderConsumer rc(cfg, ColorClassTable{}, MakeSun());
+  RenderConsumer rc(cfg, lumice::test::kTestThreadBudget, ColorClassTable{}, MakeSun());
   const std::vector<uint8_t> img = SnapshotOnce(&rc);
   ASSERT_EQ(img.size(), static_cast<size_t>(kTotalPix) * 3);
 

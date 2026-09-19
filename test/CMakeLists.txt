@@ -58,6 +58,9 @@ add_executable(unit_correctness_test
   "${PROJ_TEST_DIR}/unit-correctness/core/test_color_symmetry_oracle.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/core/test_device_filter_check_host.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/core/test_reduce_raypath_audit.cpp"
+  # ParallelRows' dispatch rule on the function itself: which thread budgets run the body
+  # inline, which stand up a pool, and that the bands tile the range either way.
+  "${PROJ_TEST_DIR}/unit-correctness/core/test_parallel_rows.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/core/test_raypath_segments.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/core/test_simulator.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/core/test_exit_records.cpp"
@@ -100,6 +103,10 @@ add_executable(unit_correctness_test
   # The analysis run as a lifecycle of the live Server: render/analysis mutual exclusion,
   # the forced CPU route, the cone stop target's natural completion, the frame's histogram.
   "${PROJ_TEST_DIR}/unit-correctness/server/test_server_analysis_run.cpp"
+  # The idle-core budget ServerImpl hands its RenderConsumers (physical cores − worker_count,
+  # clamped), at worker_count ∈ {1, phys−2, phys, phys+3} and on the real GPU route, read off the
+  # construction log line.
+  "${PROJ_TEST_DIR}/unit-correctness/server/test_server_render_thread_budget.cpp"
   # Its C API surface: request validation, both error codes, the frame getters end to end, the
   # truncation branch, and the pixel -> direction inverse against the forward projection.
   "${PROJ_TEST_DIR}/unit-correctness/server/test_c_api_raypath_analysis.cpp"

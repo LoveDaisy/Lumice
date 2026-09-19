@@ -43,6 +43,7 @@
 #include "config/sim_data.hpp"
 #include "server/render.hpp"
 #include "support/render_anchor.hpp"
+#include "support/thread_budget.hpp"
 #include "util/color_space.hpp"
 #include "util/ink_transfer.hpp"
 
@@ -101,7 +102,7 @@ SimData MakeBatch() {
 }
 
 std::vector<uint8_t> SnapshotOnce(const RenderConfig& cfg) {
-  RenderConsumer rc(cfg, ColorClassTable{}, MakeSun());
+  RenderConsumer rc(cfg, lumice::test::kTestThreadBudget, ColorClassTable{}, MakeSun());
   auto data = MakeBatch();
   rc.Consume(data);
   lumice::test::TakeSnapshotAtFormerSelfAnchor(&rc);
@@ -298,7 +299,7 @@ TEST(RenderConsumerPrintMode, PrintWithholdsInkFromTheExcludedHemisphere) {
     RenderConfig cfg = MakeConfig(RenderConfig::kPrint);
     cfg.view_.el_ = 0.0f;  // horizon-centred: the lower hemisphere is imaged, not merely absent
     cfg.visible_ = visible;
-    RenderConsumer rc(cfg, ColorClassTable{}, MakeSun());
+    RenderConsumer rc(cfg, lumice::test::kTestThreadBudget, ColorClassTable{}, MakeSun());
     SimData data;
     data.curr_wl_ = 550.0f;
     // Up and down in equal measure. The downward rays are the point: under kUpper they land in the
@@ -376,7 +377,7 @@ TEST(RenderConsumerPrintMode, EarlyExitsFillWithTheZeroEnergyColour) {
   const auto check_arm = [](const Arm& arm) {
     // No Consume() at all: snapshot_intensity_ stays zero, which is the first early exit — and it
     // is the real "the simulation has not produced anything yet" first frame, not a synthetic one.
-    RenderConsumer rc(MakeConfig(arm.tone), ColorClassTable{}, MakeSun());
+    RenderConsumer rc(MakeConfig(arm.tone), lumice::test::kTestThreadBudget, ColorClassTable{}, MakeSun());
     rc.PrepareSnapshot();
     rc.PostSnapshot();
     auto result = rc.GetResult();
@@ -396,7 +397,7 @@ TEST(RenderConsumerPrintMode, EarlyExitsFillWithTheZeroEnergyColour) {
 // land (so snapshot_intensity_ is non-zero and the first exit is passed) but no energy is deposited.
 TEST(RenderConsumerPrintMode, ZeroExposureScaleFillsWithTheZeroEnergyColour) {
   const auto paper = PaperBytes();
-  RenderConsumer rc(MakeConfig(RenderConfig::kPrint), ColorClassTable{}, MakeSun());
+  RenderConsumer rc(MakeConfig(RenderConfig::kPrint), lumice::test::kTestThreadBudget, ColorClassTable{}, MakeSun());
   SimData data;
   data.curr_wl_ = 550.0f;
   data.outgoing_d_ = { 0.0f, 0.0f, -1.0f };

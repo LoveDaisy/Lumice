@@ -69,6 +69,7 @@
 #include "core/simulator.hpp"
 #include "server/raypath_histogram_consumer.hpp"
 #include "server/render.hpp"
+#include "support/thread_budget.hpp"
 #include "util/queue.hpp"
 
 namespace lumice {
@@ -639,7 +640,7 @@ TEST(RaypathHistogramConsumer, FullSkyEnergyEqualsRenderConsumerImageY) {
   EXPECT_EQ(hist_count, kRays);
   EXPECT_NEAR(hist_sum, expected_sum, 1e-9 * abs_sum) << "double accumulation of the same float terms";
 
-  RenderConsumer rc(cfg, ColorClassTable{});
+  RenderConsumer rc(cfg, lumice::test::kTestThreadBudget, ColorClassTable{});
   rc.Consume(b.data);
   rc.PrepareSnapshot();
   const RawXyzResult raw = rc.GetRawXyzResult();

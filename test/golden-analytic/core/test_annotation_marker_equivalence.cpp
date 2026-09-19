@@ -34,6 +34,7 @@
 
 #include "config/render_config.hpp"
 #include "core/annotation_overlay.hpp"
+#include "support/thread_budget.hpp"
 
 namespace {
 
@@ -136,8 +137,8 @@ TEST(AnnotationMarkerEquivalence, MarkerListReproducesTheLegacyZenithNadirPairEx
     ann::Request via_markers = MakeRequest(c);
     via_markers.markers = { ann::kMarkerZenith, ann::kMarkerNadir };
 
-    const ann::Overlay a = ann::ComputeOverlay(legacy);
-    const ann::Overlay b = ann::ComputeOverlay(via_markers);
+    const ann::Overlay a = ann::ComputeOverlay(legacy, lumice::test::kTestThreadBudget);
+    const ann::Overlay b = ann::ComputeOverlay(via_markers, lumice::test::kTestThreadBudget);
 
     if (b.markers.size() != 2u) {
       // Non-fatal: a fatal assert here would return out of the loop and leave every later view
@@ -183,7 +184,7 @@ TEST(AnnotationMarkerEquivalence, RequestingBothRoutesAtOnceYieldsTheSameTwoPoin
     req.zenith_nadir = true;
     req.markers = { ann::kMarkerNadir, ann::kMarkerZenith };  // reversed on purpose
 
-    const ann::Overlay out = ann::ComputeOverlay(req);
+    const ann::Overlay out = ann::ComputeOverlay(req, lumice::test::kTestThreadBudget);
     if (out.markers.size() != 2u) {
       ADD_FAILURE() << Where(c) << ": expected 2 marker points, got " << out.markers.size();
       continue;
@@ -210,7 +211,7 @@ TEST(AnnotationMarkerEquivalence, ResultsAreParallelToTheRequestIncludingDuplica
   ann::Request req = MakeRequest(c);
   req.markers = { ann::kMarkerSun, ann::kMarkerZenith, ann::kMarkerSun, ann::kMarkerAntisolar, ann::kMarkerZenith };
 
-  const ann::Overlay out = ann::ComputeOverlay(req);
+  const ann::Overlay out = ann::ComputeOverlay(req, lumice::test::kTestThreadBudget);
   ASSERT_EQ(out.markers.size(), req.markers.size());
   // Same id => same point, wherever it appears in the list.
   EXPECT_EQ(out.markers[0].valid, out.markers[2].valid);
@@ -232,7 +233,7 @@ TEST(AnnotationMarkerEquivalence, NoMarkersRequestedReturnsNoMarkers) {
   for (const ViewCase& c : kViewCases) {
     ann::Request req = MakeRequest(c);
     req.zenith_nadir = true;
-    const ann::Overlay out = ann::ComputeOverlay(req);
+    const ann::Overlay out = ann::ComputeOverlay(req, lumice::test::kTestThreadBudget);
     EXPECT_TRUE(out.markers.empty()) << Where(c);
   }
 }

@@ -29,6 +29,7 @@
 #include "server/render.hpp"
 #include "server/server.hpp"
 #include "support/render_anchor.hpp"
+#include "support/thread_budget.hpp"
 
 namespace lumice {
 namespace {
@@ -84,7 +85,7 @@ size_t CountBlackPixels(const uint8_t* img, int total_pix) {
 }
 
 TEST(RenderConsumerVisibleMask, MaskIsSizedToTheFrameAndExcludesTheCorners) {
-  RenderConsumer rc(MakeMaskRenderConfig(), ColorClassTable{});
+  RenderConsumer rc(MakeMaskRenderConfig(), lumice::test::kTestThreadBudget, ColorClassTable{});
   const auto& mask = rc.VisibleMaskForTest();
   ASSERT_EQ(mask.size(), static_cast<size_t>(kRes) * kRes);
   const size_t on = static_cast<size_t>(std::count(mask.begin(), mask.end(), uint8_t{ 1 }));
@@ -95,7 +96,7 @@ TEST(RenderConsumerVisibleMask, MaskIsSizedToTheFrameAndExcludesTheCorners) {
 }
 
 TEST(RenderConsumerVisibleMask, PostSnapshotConsumesTheStoredMaskAndNeverRebuildsIt) {
-  RenderConsumer rc(MakeMaskRenderConfig(), ColorClassTable{});
+  RenderConsumer rc(MakeMaskRenderConfig(), lumice::test::kTestThreadBudget, ColorClassTable{});
   constexpr int kTotalPix = kRes * kRes;
 
   const size_t black_before = CountBlackPixels(SnapshotOnce(&rc), kTotalPix);
@@ -125,8 +126,8 @@ TEST(RenderConsumerVisibleMask, PostSnapshotConsumesTheStoredMaskAndNeverRebuild
 
   // Restore it and confirm the signal comes back — otherwise "everything black" above could
   // just as well mean the consumer stopped producing an image at all.
-  rc.VisibleMaskForTest() =
-      BuildVisibleMask(MakeMaskRenderConfig(), MakeCameraRotation(MakeMaskRenderConfig()), static_cast<float>(kRes));
+  rc.VisibleMaskForTest() = BuildVisibleMask(MakeMaskRenderConfig(), MakeCameraRotation(MakeMaskRenderConfig()),
+                                             static_cast<float>(kRes), lumice::test::kTestThreadBudget);
   EXPECT_EQ(CountBlackPixels(SnapshotOnce(&rc), kTotalPix), black_before);
 }
 
@@ -206,8 +207,8 @@ ExcludedPixel FindPixelExcludedByVisibleRange(LensParam::LensType type) {
   const Rotation rot = MakeCameraRotation(full_cfg);
   const lm_proj::ProjParams params = BuildProjParams(full_cfg, rot, short_pix);
 
-  const auto full_mask = BuildVisibleMask(full_cfg, rot, short_pix);
-  const auto upper_mask = BuildVisibleMask(upper_cfg, rot, short_pix);
+  const auto full_mask = BuildVisibleMask(full_cfg, rot, short_pix, lumice::test::kTestThreadBudget);
+  const auto upper_mask = BuildVisibleMask(upper_cfg, rot, short_pix, lumice::test::kTestThreadBudget);
   const int width = full_cfg.resolution_[0];
   for (size_t i = 0; i < full_mask.size(); ++i) {
     if (full_mask[i] == 0 || upper_mask[i] != 0) {
@@ -257,7 +258,7 @@ TEST_P(VisibleIsADisplayClip, ExcludedRegionShowsNeitherBackgroundNorRayEnergy) 
                                "cannot say anything about the clip. Fix the fixture, not the assertion.";
 
   RenderConfig::VisibleRange visible = RenderConfig::kUpper;
-  RenderConsumer rc(MakeFamilyCfg(type, visible), ColorClassTable{});
+  RenderConsumer rc(MakeFamilyCfg(type, visible), lumice::test::kTestThreadBudget, ColorClassTable{});
   const uint8_t* img = SnapshotOnceWith(&rc, MakeOneRayBatchTowards(target.dir));
   ASSERT_NE(img, nullptr) << LensName(type) << ": no image produced";
 
@@ -304,7 +305,7 @@ TEST_P(VisibleIsADisplayClip, RawEnergyIsIdenticalUnderUpperAndFull) {
   const SimData batch = MakeOneRayBatchTowards(target.dir);
 
   const auto accumulate = [&](RenderConfig::VisibleRange visible) {
-    RenderConsumer rc(MakeFamilyCfg(type, visible), ColorClassTable{});
+    RenderConsumer rc(MakeFamilyCfg(type, visible), lumice::test::kTestThreadBudget, ColorClassTable{});
     SnapshotOnceWith(&rc, batch);
     const RawXyzResult raw = rc.GetRawXyzResult();
     double sum_y = 0.0;
@@ -356,7 +357,7 @@ ExcludedPixel FindPixelIncludedByVisibleRange(LensParam::LensType type) {
   const auto short_pix = static_cast<float>(std::min(upper_cfg.resolution_[0], upper_cfg.resolution_[1]));
   const Rotation rot = MakeCameraRotation(upper_cfg);
   const lm_proj::ProjParams params = BuildProjParams(upper_cfg, rot, short_pix);
-  const auto upper_mask = BuildVisibleMask(upper_cfg, rot, short_pix);
+  const auto upper_mask = BuildVisibleMask(upper_cfg, rot, short_pix, lumice::test::kTestThreadBudget);
   const int width = upper_cfg.resolution_[0];
   for (size_t i = 0; i < upper_mask.size(); ++i) {
     if (upper_mask[i] == 0) {
@@ -416,7 +417,7 @@ TEST(RenderConsumerMeteringRule, RelativeExposureIsIndependentOfThisFramesOwnPix
     RenderConfig cfg = MakeFamilyCfg(kType, visible);
     // kRelative is the default; spelled out so the fixture cannot drift onto the absolute anchor.
     cfg.ev_mode_ = RenderConfig::kRelative;
-    RenderConsumer rc(cfg, ColorClassTable{});
+    RenderConsumer rc(cfg, lumice::test::kTestThreadBudget, ColorClassTable{});
     SimData data = rays;
     rc.Consume(data);
     rc.PrepareSnapshot();
@@ -429,7 +430,7 @@ TEST(RenderConsumerMeteringRule, RelativeExposureIsIndependentOfThisFramesOwnPix
   const auto former_anchor_of = [&](RenderConfig::VisibleRange visible, const SimData& rays) {
     RenderConfig cfg = MakeFamilyCfg(kType, visible);
     cfg.ev_mode_ = RenderConfig::kRelative;
-    RenderConsumer rc(cfg, ColorClassTable{});
+    RenderConsumer rc(cfg, lumice::test::kTestThreadBudget, ColorClassTable{});
     SimData data = rays;
     rc.Consume(data);
     rc.PrepareSnapshot();

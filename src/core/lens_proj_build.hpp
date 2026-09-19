@@ -567,13 +567,13 @@ inline float WrapAngleDiffDeg(float diff) {
 // needs no separate width rule — only the distance term moves.
 inline std::vector<uint8_t> LevelSetMaskFromField(const std::vector<float>& field, const std::vector<uint8_t>& imaged,
                                                   const std::vector<uint8_t>& drawable, int width, int height,
-                                                  const std::vector<float>& levels, bool circular) {
+                                                  const std::vector<float>& levels, bool circular, int thread_budget) {
   const size_t n = static_cast<size_t>(width) * static_cast<size_t>(height);
   std::vector<uint8_t> line(n, 0);
   if (field.size() != n || imaged.size() != n || drawable.size() != n || levels.empty()) {
     return line;
   }
-  ParallelRows(height, n, [&](int row_begin, int row_end) {
+  ParallelRows(height, n, thread_budget, [&](int row_begin, int row_end) {
     for (int py = row_begin; py < row_end; py++) {
       for (int px = 0; px < width; px++) {
         const size_t i = static_cast<size_t>(py) * static_cast<size_t>(width) + static_cast<size_t>(px);
@@ -622,8 +622,10 @@ inline std::vector<uint8_t> LevelSetMaskFromField(const std::vector<float>& fiel
 
 // Builds the W*H mask described above: 1 where the lens images a visible piece of sky, 0
 // elsewhere. Row-major, indexed py * width + px — the same indexing PostSnapshot walks.
-// Returns an empty vector for a degenerate resolution.
-inline std::vector<uint8_t> BuildVisibleMask(const RenderConfig& cfg, const Rotation& rot, float short_pix) {
+// Returns an empty vector for a degenerate resolution. `thread_budget` is the idle-core budget
+// ParallelRows may occupy (see parallel_rows.hpp); the caller computes it, there is no default.
+inline std::vector<uint8_t> BuildVisibleMask(const RenderConfig& cfg, const Rotation& rot, float short_pix,
+                                             int thread_budget) {
   const int width = cfg.resolution_[0];
   const int height = cfg.resolution_[1];
   if (width <= 0 || height <= 0) {
@@ -637,7 +639,7 @@ inline std::vector<uint8_t> BuildVisibleMask(const RenderConfig& cfg, const Rota
   float forward[3];
   mask_detail::CameraForward(rot, forward);
 
-  ParallelRows(height, mask.size(), [&](int row_begin, int row_end) {
+  ParallelRows(height, mask.size(), thread_budget, [&](int row_begin, int row_end) {
     for (int py = row_begin; py < row_end; py++) {
       for (int px = 0; px < width; px++) {
         const mask_detail::MaskDir dir = mask_detail::PixelToWorld(cfg, p, rot, px, py);

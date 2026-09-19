@@ -13,15 +13,18 @@ constexpr size_t kParallelPixelThreshold = 65536;
 
 }  // namespace
 
-void ParallelRows(int height, size_t pixel_count, const std::function<void(int, int)>& body) {
+void ParallelRows(int height, size_t pixel_count, int thread_budget, const std::function<void(int, int)>& body) {
   if (height <= 0) {
     return;
   }
-  if (pixel_count < kParallelPixelThreshold || height < 2) {
+  // Three reasons to stay on the calling thread, all cost cut-offs rather than correctness
+  // boundaries (see the header): the frame is too small for a pool to pay for itself, there is
+  // only one row to split, or the caller's idle-core budget cannot seat two workers.
+  if (pixel_count < kParallelPixelThreshold || height < 2 || thread_budget < 2) {
     body(0, height);
     return;
   }
-  auto pool = ThreadingPool::CreatePool();
+  auto pool = ThreadingPool::CreatePool(thread_budget);
   if (!pool || pool->GetPoolSize() < 2) {
     body(0, height);
     return;

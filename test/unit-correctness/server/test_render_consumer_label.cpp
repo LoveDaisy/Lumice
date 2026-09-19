@@ -33,6 +33,7 @@
 #include "core/annotation_overlay.hpp"
 #include "server/render.hpp"
 #include "support/render_anchor.hpp"
+#include "support/thread_budget.hpp"
 
 namespace lumice {
 namespace {
@@ -200,7 +201,7 @@ TEST(RenderConsumerLabel, TheSwitchesAreOptInAndOffComputesNoAnchors) {
   EXPECT_FALSE(defaults.angular_dist_label_);
   EXPECT_FALSE(defaults.view_dist_label_);
 
-  RenderConsumer off(MakeLabelConfig(LabelSwitches{}), ColorClassTable{}, MakeSun());
+  RenderConsumer off(MakeLabelConfig(LabelSwitches{}), lumice::test::kTestThreadBudget, ColorClassTable{}, MakeSun());
   const std::vector<uint8_t> img = SnapshotOnce(&off);
   ASSERT_EQ(img.size(), static_cast<size_t>(kTotalPix) * 3);
   EXPECT_TRUE(off.HorizonLabelsForTest().empty());
@@ -214,7 +215,7 @@ TEST(RenderConsumerLabel, TheSwitchesAreOptInAndOffComputesNoAnchors) {
 // proposition is per family and the shape of the check is identical; the loop body reports which
 // family it was on failure, so one broken family does not read as three.
 TEST(RenderConsumerLabel, EachSwitchDrawsTextOnItsOwn) {
-  RenderConsumer off(MakeLabelConfig(LabelSwitches{}), ColorClassTable{}, MakeSun());
+  RenderConsumer off(MakeLabelConfig(LabelSwitches{}), lumice::test::kTestThreadBudget, ColorClassTable{}, MakeSun());
   const std::vector<uint8_t> img_off = SnapshotOnce(&off);
   ASSERT_EQ(img_off.size(), static_cast<size_t>(kTotalPix) * 3);
   ASSERT_TRUE(HasAnyNonBlackPixel(img_off)) << "the reference frame is entirely black — see MakeLabelConfig";
@@ -227,7 +228,7 @@ TEST(RenderConsumerLabel, EachSwitchDrawsTextOnItsOwn) {
        { Row{ "horizon", LabelSwitches{ true, false, false } }, Row{ "grid", LabelSwitches{ false, true, false } },
          Row{ "angular_dist", LabelSwitches{ false, false, true } },
          Row{ "view_dist", LabelSwitches{ false, false, false, true } } }) {
-    RenderConsumer on(MakeLabelConfig(row.on), ColorClassTable{}, MakeSun());
+    RenderConsumer on(MakeLabelConfig(row.on), lumice::test::kTestThreadBudget, ColorClassTable{}, MakeSun());
     const std::vector<uint8_t> img_on = SnapshotOnce(&on);
     // Non-fatal: one family that draws nothing must not take the other two's reports with it, and
     // WHICH family is the whole diagnostic.
@@ -247,7 +248,8 @@ TEST(RenderConsumerLabel, EachSwitchDrawsTextOnItsOwn) {
 // anchors and leaves the other two families' alone.
 TEST(RenderConsumerLabel, TheThreeSwitchesDoNotReachEachOther) {
   {
-    RenderConsumer horizon(MakeLabelConfig(LabelSwitches{ true, false, false }), ColorClassTable{}, MakeSun());
+    RenderConsumer horizon(MakeLabelConfig(LabelSwitches{ true, false, false }), lumice::test::kTestThreadBudget,
+                           ColorClassTable{}, MakeSun());
     SnapshotOnce(&horizon);
     EXPECT_FALSE(horizon.HorizonLabelsForTest().empty());
     EXPECT_TRUE(horizon.ElevationLabelsForTest().empty());
@@ -258,7 +260,8 @@ TEST(RenderConsumerLabel, TheThreeSwitchesDoNotReachEachOther) {
   {
     // One switch covers BOTH grid families — the GUI has a single grid label control — so this
     // arm expects two non-empty lists, not one.
-    RenderConsumer grid(MakeLabelConfig(LabelSwitches{ false, true, false }), ColorClassTable{}, MakeSun());
+    RenderConsumer grid(MakeLabelConfig(LabelSwitches{ false, true, false }), lumice::test::kTestThreadBudget,
+                        ColorClassTable{}, MakeSun());
     SnapshotOnce(&grid);
     EXPECT_TRUE(grid.HorizonLabelsForTest().empty());
     EXPECT_FALSE(grid.ElevationLabelsForTest().empty());
@@ -267,7 +270,8 @@ TEST(RenderConsumerLabel, TheThreeSwitchesDoNotReachEachOther) {
     EXPECT_TRUE(grid.ViewDistLabelsForTest().empty());
   }
   {
-    RenderConsumer circles(MakeLabelConfig(LabelSwitches{ false, false, true }), ColorClassTable{}, MakeSun());
+    RenderConsumer circles(MakeLabelConfig(LabelSwitches{ false, false, true }), lumice::test::kTestThreadBudget,
+                           ColorClassTable{}, MakeSun());
     SnapshotOnce(&circles);
     EXPECT_TRUE(circles.HorizonLabelsForTest().empty());
     EXPECT_TRUE(circles.ElevationLabelsForTest().empty());
@@ -278,7 +282,8 @@ TEST(RenderConsumerLabel, TheThreeSwitchesDoNotReachEachOther) {
   {
     // The axis-referenced twin has its own switch; the sun circles' switch must not reach it, nor
     // it theirs — the pair most likely to be wired to one flag.
-    RenderConsumer view(MakeLabelConfig(LabelSwitches{ false, false, false, true }), ColorClassTable{}, MakeSun());
+    RenderConsumer view(MakeLabelConfig(LabelSwitches{ false, false, false, true }), lumice::test::kTestThreadBudget,
+                        ColorClassTable{}, MakeSun());
     SnapshotOnce(&view);
     EXPECT_TRUE(view.HorizonLabelsForTest().empty());
     EXPECT_TRUE(view.ElevationLabelsForTest().empty());
@@ -296,13 +301,13 @@ TEST(RenderConsumerLabel, TheThreeSwitchesDoNotReachEachOther) {
 // switches of their own.
 TEST(RenderConsumerLabel, TheHorizonLabelIsDrawnWithTheLineSwitchedOff) {
   RenderConsumer no_line_no_label(MakeLabelConfig(LabelSwitches{}, LineSwitches{ /*horizon=*/false }),
-                                  ColorClassTable{}, MakeSun());
+                                  lumice::test::kTestThreadBudget, ColorClassTable{}, MakeSun());
   const std::vector<uint8_t> img_off = SnapshotOnce(&no_line_no_label);
   ASSERT_EQ(img_off.size(), static_cast<size_t>(kTotalPix) * 3);
   ASSERT_TRUE(HasAnyNonBlackPixel(img_off)) << "the reference frame is entirely black — see MakeLabelConfig";
 
   RenderConsumer label_only(MakeLabelConfig(LabelSwitches{ true, false, false }, LineSwitches{ /*horizon=*/false }),
-                            ColorClassTable{}, MakeSun());
+                            lumice::test::kTestThreadBudget, ColorClassTable{}, MakeSun());
   const std::vector<uint8_t> img_on = SnapshotOnce(&label_only);
   ASSERT_EQ(img_on.size(), static_cast<size_t>(kTotalPix) * 3);
 
@@ -398,11 +403,14 @@ TEST(RenderConsumerLabel, TheGridAndCircleLabelsAreDrawnWithTheirLinesSwitchedOf
   for (const Row& row : rows) {
     // Non-fatal throughout: one broken family must not take the other two's reports with it, and
     // WHICH family is the whole diagnostic.
-    RenderConsumer all_off(MakeLabelConfig(LabelSwitches{}, row.lines_off), ColorClassTable{}, MakeSun());
+    RenderConsumer all_off(MakeLabelConfig(LabelSwitches{}, row.lines_off), lumice::test::kTestThreadBudget,
+                           ColorClassTable{}, MakeSun());
     const std::vector<uint8_t> img_all_off = SnapshotOnce(&all_off);
-    RenderConsumer labels_only(MakeLabelConfig(row.labels, row.lines_off), ColorClassTable{}, MakeSun());
+    RenderConsumer labels_only(MakeLabelConfig(row.labels, row.lines_off), lumice::test::kTestThreadBudget,
+                               ColorClassTable{}, MakeSun());
     const std::vector<uint8_t> img_labels_only = SnapshotOnce(&labels_only);
-    RenderConsumer both(MakeLabelConfig(row.labels, row.lines_on), ColorClassTable{}, MakeSun());
+    RenderConsumer both(MakeLabelConfig(row.labels, row.lines_on), lumice::test::kTestThreadBudget, ColorClassTable{},
+                        MakeSun());
     const std::vector<uint8_t> img_both = SnapshotOnce(&both);
     if (img_all_off.size() != static_cast<size_t>(kTotalPix) * 3 ||
         img_labels_only.size() != static_cast<size_t>(kTotalPix) * 3 ||
@@ -446,8 +454,8 @@ TEST(RenderConsumerLabel, TheGridAndCircleLabelsAreDrawnWithTheirLinesSwitchedOf
 // (d3) The three switches reach only their own family. One flag serving all three, or the wrong
 // flag wired to a family, passes (d2) — every arm there switches off the family it is measuring.
 TEST(RenderConsumerLabel, EachFamilyLineSwitchGatesOnlyItsOwnFamily) {
-  RenderConsumer all_on(MakeLabelConfig(LabelSwitches{}, LineSwitches{ false, true, true, true }), ColorClassTable{},
-                        MakeSun());
+  RenderConsumer all_on(MakeLabelConfig(LabelSwitches{}, LineSwitches{ false, true, true, true }),
+                        lumice::test::kTestThreadBudget, ColorClassTable{}, MakeSun());
   const std::vector<uint8_t> img_all_on = SnapshotOnce(&all_on);
   ASSERT_EQ(img_all_on.size(), static_cast<size_t>(kTotalPix) * 3);
 
@@ -467,7 +475,8 @@ TEST(RenderConsumerLabel, EachFamilyLineSwitchGatesOnlyItsOwnFamily) {
                           // likely to share a flag is the one whose pixels must not move.
                           Row{ "view_dist", LineSwitches{ false, true, true, true, false },
                                &RenderConsumer::ViewDistMasksForTest, &RenderConsumer::AngularDistMasksForTest } }) {
-    RenderConsumer one_off(MakeLabelConfig(LabelSwitches{}, row.lines), ColorClassTable{}, MakeSun());
+    RenderConsumer one_off(MakeLabelConfig(LabelSwitches{}, row.lines), lumice::test::kTestThreadBudget,
+                           ColorClassTable{}, MakeSun());
     const std::vector<uint8_t> img_one_off = SnapshotOnce(&one_off);
     if (img_one_off.size() != static_cast<size_t>(kTotalPix) * 3) {
       ADD_FAILURE() << row.name << ": the snapshot came back the wrong size";
@@ -513,14 +522,14 @@ TEST(RenderConsumerLabel, EachFamilyLineSwitchGatesOnlyItsOwnFamily) {
 // is what rules out the alternative explanation that the geometry was skipped, which would make
 // the image assertion pass for the wrong reason.
 TEST(RenderConsumerLabel, AZeroOpacityLineTakesItsLabelWithIt) {
-  RenderConsumer off(MakeLabelConfig(LabelSwitches{}, LineSwitches{}, /*line_opacity=*/0.0f), ColorClassTable{},
-                     MakeSun());
+  RenderConsumer off(MakeLabelConfig(LabelSwitches{}, LineSwitches{}, /*line_opacity=*/0.0f),
+                     lumice::test::kTestThreadBudget, ColorClassTable{}, MakeSun());
   const std::vector<uint8_t> img_off = SnapshotOnce(&off);
   ASSERT_EQ(img_off.size(), static_cast<size_t>(kTotalPix) * 3);
   ASSERT_TRUE(HasAnyNonBlackPixel(img_off)) << "the reference frame is entirely black — see MakeLabelConfig";
 
   RenderConsumer on(MakeLabelConfig(LabelSwitches{ false, true, true }, LineSwitches{}, /*line_opacity=*/0.0f),
-                    ColorClassTable{}, MakeSun());
+                    lumice::test::kTestThreadBudget, ColorClassTable{}, MakeSun());
   const std::vector<uint8_t> img_on = SnapshotOnce(&on);
   ASSERT_EQ(img_on.size(), static_cast<size_t>(kTotalPix) * 3);
 
@@ -536,7 +545,7 @@ TEST(RenderConsumerLabel, AZeroOpacityLineTakesItsLabelWithIt) {
 // the anchors computed for the old value would survive — empty exactly when the user has just
 // asked for the text.
 TEST(RenderConsumerLabel, FlippingASwitchMidRunReachesTheImage) {
-  RenderConsumer rc(MakeLabelConfig(LabelSwitches{}), ColorClassTable{}, MakeSun());
+  RenderConsumer rc(MakeLabelConfig(LabelSwitches{}), lumice::test::kTestThreadBudget, ColorClassTable{}, MakeSun());
   const std::vector<uint8_t> img_off = SnapshotOnce(&rc);
   ASSERT_EQ(img_off.size(), static_cast<size_t>(kTotalPix) * 3);
   ASSERT_TRUE(HasAnyNonBlackPixel(img_off)) << "the reference frame is entirely black — see MakeLabelConfig";
@@ -624,13 +633,14 @@ TEST(RenderConsumerLabel, ARimLabelIsPaintedWholeRatherThanCroppedAtTheCanvasEdg
   // leave this case passing without the clamp, which is the one way it could go quietly useless.
   const RenderConfig cfg = MakeRimLabelConfig(55.0f);
 
-  RenderConsumer off(MakeRimLabelConfig(55.0f, /*labels_on=*/false), ColorClassTable{}, MakeSun());
+  RenderConsumer off(MakeRimLabelConfig(55.0f, /*labels_on=*/false), lumice::test::kTestThreadBudget, ColorClassTable{},
+                     MakeSun());
   const std::vector<uint8_t> img_off = SnapshotOnce(&off);
   ASSERT_EQ(img_off.size(), static_cast<size_t>(kTotalPix) * 3);
   ASSERT_TRUE(HasAnyNonBlackPixel(img_off)) << "the reference frame is entirely black — see MakeRimLabelConfig";
   ASSERT_TRUE(off.HorizonLabelsForTest().empty());
 
-  RenderConsumer on(cfg, ColorClassTable{}, MakeSun());
+  RenderConsumer on(cfg, lumice::test::kTestThreadBudget, ColorClassTable{}, MakeSun());
   const std::vector<uint8_t> img_on = SnapshotOnce(&on);
   ASSERT_EQ(img_on.size(), static_cast<size_t>(kTotalPix) * 3);
 

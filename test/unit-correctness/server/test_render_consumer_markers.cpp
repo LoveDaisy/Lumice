@@ -32,6 +32,7 @@
 #include "config/sim_data.hpp"
 #include "server/render.hpp"
 #include "support/render_anchor.hpp"
+#include "support/thread_budget.hpp"
 
 namespace lumice {
 namespace {
@@ -149,8 +150,8 @@ std::vector<int> PaintedPixels(const std::vector<uint8_t>& img_off, const std::v
 TEST(RenderConsumerMarkers, EmptyListByDefaultChangesNoPixel) {
   // Opt-in, and off must be byte-identical to a build that had never heard of the field. The same
   // property test_render_consumer_post_snapshot_fusion.cpp holds the whole loop to.
-  RenderConsumer a(MakeFullSkyConfig(), ColorClassTable{}, MakeSun());
-  RenderConsumer b(MakeFullSkyConfig(), ColorClassTable{}, MakeSun());
+  RenderConsumer a(MakeFullSkyConfig(), lumice::test::kTestThreadBudget, ColorClassTable{}, MakeSun());
+  RenderConsumer b(MakeFullSkyConfig(), lumice::test::kTestThreadBudget, ColorClassTable{}, MakeSun());
   const std::vector<uint8_t> img_a = SnapshotOnce(&a);
   const std::vector<uint8_t> img_b = SnapshotOnce(&b);
   ASSERT_EQ(img_a.size(), static_cast<size_t>(kTotalPix) * 3);
@@ -159,7 +160,7 @@ TEST(RenderConsumerMarkers, EmptyListByDefaultChangesNoPixel) {
 }
 
 TEST(RenderConsumerMarkers, SixMarkersEachOwnColourAtOneSharedRadiusAndOpacity) {
-  RenderConsumer off(MakeFullSkyConfig(), ColorClassTable{}, MakeSun());
+  RenderConsumer off(MakeFullSkyConfig(), lumice::test::kTestThreadBudget, ColorClassTable{}, MakeSun());
   const std::vector<uint8_t> img_off = SnapshotOnce(&off);
   ASSERT_EQ(img_off.size(), static_cast<size_t>(kTotalPix) * 3);
 
@@ -177,7 +178,7 @@ TEST(RenderConsumerMarkers, SixMarkersEachOwnColourAtOneSharedRadiusAndOpacity) 
   cfg.markers_.push_back(Marker(MarkerRefId::kAnthelion, 0.0f, 1.0f, 0.0f));
   cfg.markers_.push_back(Marker(MarkerRefId::kAntisolar, 0.0f, 0.0f, 1.0f));
 
-  RenderConsumer on(cfg, ColorClassTable{}, MakeSun());
+  RenderConsumer on(cfg, lumice::test::kTestThreadBudget, ColorClassTable{}, MakeSun());
   const std::vector<uint8_t> img_on = SnapshotOnce(&on);
   ASSERT_EQ(img_on.size(), static_cast<size_t>(kTotalPix) * 3);
 
@@ -255,14 +256,14 @@ TEST(RenderConsumerMarkers, LegacyPairAndTheEquivalentListPaintIdenticalBytes) {
   listed.markers_.push_back(Marker(MarkerRefId::kZenith, kColor[0], kColor[1], kColor[2]));
   listed.markers_.push_back(Marker(MarkerRefId::kNadir, kColor[0], kColor[1], kColor[2]));
 
-  RenderConsumer a(legacy, ColorClassTable{}, MakeSun());
-  RenderConsumer b(listed, ColorClassTable{}, MakeSun());
+  RenderConsumer a(legacy, lumice::test::kTestThreadBudget, ColorClassTable{}, MakeSun());
+  RenderConsumer b(listed, lumice::test::kTestThreadBudget, ColorClassTable{}, MakeSun());
   const std::vector<uint8_t> img_a = SnapshotOnce(&a);
   const std::vector<uint8_t> img_b = SnapshotOnce(&b);
   ASSERT_EQ(img_a.size(), static_cast<size_t>(kTotalPix) * 3);
   // The fixture has to actually draw something, or "identical" is a statement about two blank
   // frames.
-  RenderConsumer none(MakeFullSkyConfig(), ColorClassTable{}, MakeSun());
+  RenderConsumer none(MakeFullSkyConfig(), lumice::test::kTestThreadBudget, ColorClassTable{}, MakeSun());
   const std::vector<uint8_t> img_none = SnapshotOnce(&none);
   ASSERT_NE(img_a, img_none) << "the legacy fixture must paint rings, or this case compares nothing";
 
@@ -273,7 +274,7 @@ TEST(RenderConsumerMarkers, NonEmptyListWinsOverTheLegacyPair) {
   // The arbitration rule, and the reason it is a rule rather than a merge: a config carrying both
   // gets the list ALONE. The legacy block here asks for red at a different radius, so "merged"
   // and "list wins" are distinguishable by colour AND by geometry.
-  RenderConsumer off(MakeFullSkyConfig(), ColorClassTable{}, MakeSun());
+  RenderConsumer off(MakeFullSkyConfig(), lumice::test::kTestThreadBudget, ColorClassTable{}, MakeSun());
   const std::vector<uint8_t> img_off = SnapshotOnce(&off);
 
   constexpr float kListRadius = 9.0f;
@@ -288,7 +289,7 @@ TEST(RenderConsumerMarkers, NonEmptyListWinsOverTheLegacyPair) {
   cfg.markers_opacity_ = 1.0f;
   cfg.markers_.push_back(Marker(MarkerRefId::kZenith, 0.0f, 0.0f, 1.0f));
 
-  RenderConsumer on(cfg, ColorClassTable{}, MakeSun());
+  RenderConsumer on(cfg, lumice::test::kTestThreadBudget, ColorClassTable{}, MakeSun());
   const std::vector<uint8_t> img_on = SnapshotOnce(&on);
   const auto& pts = on.MarkerPointsForTest();
   ASSERT_TRUE(pts[annotation::kMarkerZenith].valid);
@@ -328,8 +329,8 @@ TEST(RenderConsumerMarkers, EmptyListFallsBackToTheLegacyPair) {
   RenderConfig also_empty_list = with_legacy;
   also_empty_list.markers_.clear();
 
-  RenderConsumer a(with_legacy, ColorClassTable{}, MakeSun());
-  RenderConsumer b(also_empty_list, ColorClassTable{}, MakeSun());
+  RenderConsumer a(with_legacy, lumice::test::kTestThreadBudget, ColorClassTable{}, MakeSun());
+  RenderConsumer b(also_empty_list, lumice::test::kTestThreadBudget, ColorClassTable{}, MakeSun());
   EXPECT_EQ(SnapshotOnce(&a), SnapshotOnce(&b));
 }
 
@@ -346,8 +347,8 @@ TEST(RenderConsumerMarkers, DisabledEntryDrawsNothingForThatId) {
   disabled.enabled_ = false;
   plus_one_off.markers_.push_back(disabled);
 
-  RenderConsumer a(one_on, ColorClassTable{}, MakeSun());
-  RenderConsumer b(plus_one_off, ColorClassTable{}, MakeSun());
+  RenderConsumer a(one_on, lumice::test::kTestThreadBudget, ColorClassTable{}, MakeSun());
+  RenderConsumer b(plus_one_off, lumice::test::kTestThreadBudget, ColorClassTable{}, MakeSun());
   const std::vector<uint8_t> img_a = SnapshotOnce(&a);
   ASSERT_EQ(img_a.size(), static_cast<size_t>(kTotalPix) * 3);
   EXPECT_EQ(img_a, SnapshotOnce(&b));
@@ -368,7 +369,7 @@ TEST(RenderConsumerMarkers, SunRelativeMarkersFollowTheSunThroughResetWith) {
   cfg.markers_radius_px_ = 8.0f;
   cfg.markers_.push_back(Marker(MarkerRefId::kSun, 0.0f, 0.0f, 1.0f));
 
-  RenderConsumer rc(cfg, ColorClassTable{}, MakeSun());
+  RenderConsumer rc(cfg, lumice::test::kTestThreadBudget, ColorClassTable{}, MakeSun());
   std::array<annotation::CanvasPoint, annotation::kMarkerCount> before = rc.MarkerPointsForTest();
   size_t imaged_before = 0;
   for (size_t k = 0; k < before.size(); ++k) {

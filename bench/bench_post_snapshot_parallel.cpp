@@ -17,6 +17,7 @@
 #include "config/sim_data.hpp"
 #include "server/render.hpp"
 #include "test/support/render_anchor.hpp"
+#include "test/support/thread_budget.hpp"
 
 using namespace lumice;  // NOLINT(google-build-using-namespace) benchmark code
 
@@ -63,10 +64,22 @@ SimData MakeScatteredBatch(size_t n_rays) {
   return data;
 }
 
+// Arg 0: markers on/off. Arg 1: the thread budget handed to the consumer (core/parallel_rows.hpp),
+// where kUnconstrained resolves to hardware_concurrency() at run time — the value the pool was
+// sized to before the budget existed, and what the property tests pass. The three tiers
+// registered below are the three points the budget rule is judged on: 1 = the forced inline
+// serial loop (what a server with every core busy gets), 2 = the smallest budget that stands up a
+// pool (a 12-core machine running 10 simulation workers), unconstrained = the old full-core pool.
+// Budget 2 relative to 1 is the number the GUI keeps from the parallelization once the pool no
+// longer competes with the workers.
+constexpr int kUnconstrained = 0;
+
 void BM_PostSnapshotHiRes(benchmark::State& state) {
   const bool with_markers = state.range(0) != 0;
+  const int thread_budget =
+      state.range(1) == kUnconstrained ? lumice::test::kTestThreadBudget : static_cast<int>(state.range(1));
   RenderConfig cfg = MakeHiResConfig(with_markers);
-  RenderConsumer rc(cfg, ColorClassTable{}, SunParam{ 35.0f, 20.0f, 0.5f });
+  RenderConsumer rc(cfg, thread_budget, ColorClassTable{}, SunParam{ 35.0f, 20.0f, 0.5f });
   auto data = MakeScatteredBatch(500000);
   rc.Consume(data);
   // Anchor + PrepareSnapshot once, matching the property-test helper's ordering; only PostSnapshot
@@ -80,6 +93,15 @@ void BM_PostSnapshotHiRes(benchmark::State& state) {
     rc.PostSnapshot();
   }
 }
-BENCHMARK(BM_PostSnapshotHiRes)->Arg(0)->Arg(1)->Unit(benchmark::kMillisecond)->Iterations(30);
+BENCHMARK(BM_PostSnapshotHiRes)
+    ->ArgNames({ "markers", "budget" })
+    ->Args({ 0, 1 })
+    ->Args({ 0, 2 })
+    ->Args({ 0, kUnconstrained })
+    ->Args({ 1, 1 })
+    ->Args({ 1, 2 })
+    ->Args({ 1, kUnconstrained })
+    ->Unit(benchmark::kMillisecond)
+    ->Iterations(30);
 
 }  // namespace

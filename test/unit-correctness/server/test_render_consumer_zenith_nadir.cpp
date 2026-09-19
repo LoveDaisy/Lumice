@@ -29,6 +29,7 @@
 #include "config/sim_data.hpp"
 #include "server/render.hpp"
 #include "support/render_anchor.hpp"
+#include "support/thread_budget.hpp"
 
 namespace lumice {
 namespace {
@@ -145,8 +146,8 @@ TEST(RenderConsumerZenithNadir, DisabledByDefaultChangesNoPixel) {
   // The default is off, and off must be byte-identical to a build that had never heard of the
   // field — the same property test_render_consumer_post_snapshot_fusion.cpp holds the whole loop
   // to. A marker blended at alpha 0 would pass a "looks the same" check and fail this one.
-  RenderConsumer a(MakeBothVisibleConfig(), ColorClassTable{}, MakeSun());
-  RenderConsumer b(MakeBothVisibleConfig(), ColorClassTable{}, MakeSun());
+  RenderConsumer a(MakeBothVisibleConfig(), lumice::test::kTestThreadBudget, ColorClassTable{}, MakeSun());
+  RenderConsumer b(MakeBothVisibleConfig(), lumice::test::kTestThreadBudget, ColorClassTable{}, MakeSun());
   const std::vector<uint8_t> img_a = SnapshotOnce(&a);
   const std::vector<uint8_t> img_b = SnapshotOnce(&b);
   ASSERT_EQ(img_a.size(), static_cast<size_t>(kTotalPix) * 3);
@@ -155,12 +156,13 @@ TEST(RenderConsumerZenithNadir, DisabledByDefaultChangesNoPixel) {
 }
 
 TEST(RenderConsumerZenithNadir, BothVisiblePaintsTwoRingsOnTheReportedPoints) {
-  RenderConsumer off(MakeBothVisibleConfig(), ColorClassTable{}, MakeSun());
+  RenderConsumer off(MakeBothVisibleConfig(), lumice::test::kTestThreadBudget, ColorClassTable{}, MakeSun());
   const std::vector<uint8_t> img_off = SnapshotOnce(&off);
   ASSERT_EQ(img_off.size(), static_cast<size_t>(kTotalPix) * 3);
 
   constexpr float kRadius = 12.0f;
-  RenderConsumer on(WithMarker(MakeBothVisibleConfig(), kRadius, 1.0f, 1.0f, 0.0f, 0.0f), ColorClassTable{}, MakeSun());
+  RenderConsumer on(WithMarker(MakeBothVisibleConfig(), kRadius, 1.0f, 1.0f, 0.0f, 0.0f),
+                    lumice::test::kTestThreadBudget, ColorClassTable{}, MakeSun());
   const std::vector<uint8_t> img_on = SnapshotOnce(&on);
   ASSERT_EQ(img_on.size(), static_cast<size_t>(kTotalPix) * 3);
 
@@ -201,12 +203,13 @@ TEST(RenderConsumerZenithNadir, SingleSidedViewDrawsExactlyOneRing) {
   // view images one of them and misses the other. Testing `valid` once for the PAIR — or not at
   // all — puts a ring at the invalid point's default coordinates, (0, 0), which is a corner of
   // the canvas and therefore a QUARTER ring rather than an obviously wrong full one.
-  RenderConsumer off(MakeSingleSidedConfig(), ColorClassTable{}, MakeSun());
+  RenderConsumer off(MakeSingleSidedConfig(), lumice::test::kTestThreadBudget, ColorClassTable{}, MakeSun());
   const std::vector<uint8_t> img_off = SnapshotOnce(&off);
   ASSERT_EQ(img_off.size(), static_cast<size_t>(kTotalPix) * 3);
 
   constexpr float kRadius = 10.0f;
-  RenderConsumer on(WithMarker(MakeSingleSidedConfig(), kRadius, 1.0f, 1.0f, 0.0f, 0.0f), ColorClassTable{}, MakeSun());
+  RenderConsumer on(WithMarker(MakeSingleSidedConfig(), kRadius, 1.0f, 1.0f, 0.0f, 0.0f),
+                    lumice::test::kTestThreadBudget, ColorClassTable{}, MakeSun());
   const std::vector<uint8_t> img_on = SnapshotOnce(&on);
 
   const annotation::CanvasPoint& zp = on.ZenithPointForTest();
@@ -240,7 +243,8 @@ TEST(RenderConsumerZenithNadir, FrontClipRemovesTheMarkerBehindTheCamera) {
     RenderConfig cfg = MakeBothVisibleConfig();
     cfg.view_.el_ = el;
 
-    RenderConsumer unclipped(WithMarker(cfg, 10.0f, 1.0f, 1.0f, 0.0f, 0.0f), ColorClassTable{}, MakeSun());
+    RenderConsumer unclipped(WithMarker(cfg, 10.0f, 1.0f, 1.0f, 0.0f, 0.0f), lumice::test::kTestThreadBudget,
+                             ColorClassTable{}, MakeSun());
     if (!unclipped.ZenithPointForTest().valid || !unclipped.NadirPointForTest().valid) {
       // Non-fatal: the up-looking row must not swallow the down-looking one.
       ADD_FAILURE() << "el " << el << ": the fixture must image both poles, or the clip proves nothing";
@@ -248,7 +252,8 @@ TEST(RenderConsumerZenithNadir, FrontClipRemovesTheMarkerBehindTheCamera) {
     }
 
     cfg.front_ = true;
-    RenderConsumer clipped(WithMarker(cfg, 10.0f, 1.0f, 1.0f, 0.0f, 0.0f), ColorClassTable{}, MakeSun());
+    RenderConsumer clipped(WithMarker(cfg, 10.0f, 1.0f, 1.0f, 0.0f, 0.0f), lumice::test::kTestThreadBudget,
+                           ColorClassTable{}, MakeSun());
     // Looking up keeps the zenith and drops the nadir; looking down, the other way round. Stated
     // as "the pole the camera faces survives" rather than as a fixed pair, so the case cannot pass
     // by clipping the wrong one.
@@ -261,12 +266,12 @@ TEST(RenderConsumerZenithNadir, FrontClipRemovesTheMarkerBehindTheCamera) {
 TEST(RenderConsumerZenithNadir, RadiusIsTheConfiguredOne) {
   // Two consumers differing only in radius must paint two different circles. A hardcoded radius
   // reads as correct on any single-radius fixture.
-  RenderConsumer off(MakeBothVisibleConfig(), ColorClassTable{}, MakeSun());
+  RenderConsumer off(MakeBothVisibleConfig(), lumice::test::kTestThreadBudget, ColorClassTable{}, MakeSun());
   const std::vector<uint8_t> img_off = SnapshotOnce(&off);
 
   for (const float radius : { 6.0f, 20.0f }) {
-    RenderConsumer on(WithMarker(MakeBothVisibleConfig(), radius, 1.0f, 1.0f, 0.0f, 0.0f), ColorClassTable{},
-                      MakeSun());
+    RenderConsumer on(WithMarker(MakeBothVisibleConfig(), radius, 1.0f, 1.0f, 0.0f, 0.0f),
+                      lumice::test::kTestThreadBudget, ColorClassTable{}, MakeSun());
     const std::vector<uint8_t> img_on = SnapshotOnce(&on);
     const annotation::CanvasPoint& zp = on.ZenithPointForTest();
     const std::vector<int> red = RedPixels(img_off, img_on);
@@ -291,9 +296,10 @@ TEST(RenderConsumerZenithNadir, RadiusIsTheConfiguredOne) {
 TEST(RenderConsumerZenithNadir, ZeroOpacityDrawsNothing) {
   // The appearance is honoured on the way out too: the points are still computed (they are a
   // layout-derived quantity), but a fully transparent marker must not reach a pixel.
-  RenderConsumer off(MakeBothVisibleConfig(), ColorClassTable{}, MakeSun());
+  RenderConsumer off(MakeBothVisibleConfig(), lumice::test::kTestThreadBudget, ColorClassTable{}, MakeSun());
   const std::vector<uint8_t> img_off = SnapshotOnce(&off);
-  RenderConsumer on(WithMarker(MakeBothVisibleConfig(), 12.0f, 0.0f, 1.0f, 0.0f, 0.0f), ColorClassTable{}, MakeSun());
+  RenderConsumer on(WithMarker(MakeBothVisibleConfig(), 12.0f, 0.0f, 1.0f, 0.0f, 0.0f), lumice::test::kTestThreadBudget,
+                    ColorClassTable{}, MakeSun());
   const std::vector<uint8_t> img_on = SnapshotOnce(&on);
   ASSERT_EQ(img_on.size(), img_off.size());
   EXPECT_EQ(img_on, img_off);
@@ -303,7 +309,7 @@ TEST(RenderConsumerZenithNadir, ResetWithPicksUpTheSwitch) {
   // Neither the switch nor the radius takes part in NeedsRebuild, so a config that turns the
   // markers on mid-run reaches a REUSED consumer. Points computed only when the switch happened to
   // be on at construction would leave that consumer drawing nothing.
-  RenderConsumer rc(MakeBothVisibleConfig(), ColorClassTable{}, MakeSun());
+  RenderConsumer rc(MakeBothVisibleConfig(), lumice::test::kTestThreadBudget, ColorClassTable{}, MakeSun());
   const std::vector<uint8_t> img_off = SnapshotOnce(&rc);
   ASSERT_TRUE(rc.ZenithPointForTest().valid) << "the points are layout-derived and must exist before the switch does";
 

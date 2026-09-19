@@ -61,6 +61,7 @@
 #include "core/color_util.hpp"
 #include "server/component_compositor.hpp"
 #include "server/render.hpp"
+#include "support/thread_budget.hpp"
 #include "util/color_space.hpp"
 
 namespace lumice {
@@ -209,7 +210,7 @@ TEST(ComponentCompositor, DominantAdditivePainterPerPixelMath) {
   // class0 (bit0, red, weight a=0.6) is brighter than class1 (bit1, green,
   // weight b=0.4). List order: class0 first (top layer for painter).
   auto table = MakeSingletonClassTable(0b11, { kRed, kGreen });
-  RenderConsumer rc(cfg, table);
+  RenderConsumer rc(cfg, lumice::test::kTestThreadBudget, table);
   rc.Consume(MakeBatch({ 0b01, 0b10 }, { 0.6f, 0.4f }));
   rc.PrepareSnapshot();
 
@@ -264,7 +265,7 @@ TEST(ComponentCompositor, PainterAlphaOverBlendsTopAndBottomDominantPicksBrighte
   // doc §4.8) blends both via Porter-Duff
   // over — the top-layer class0 partially occludes but does NOT hide class1.
   auto table = MakeSingletonClassTable(0b11, { kRed, kGreen });
-  RenderConsumer rc(cfg, table);
+  RenderConsumer rc(cfg, lumice::test::kTestThreadBudget, table);
   rc.Consume(MakeBatch({ 0b01, 0b10 }, { 0.3f, 0.9f }));
   rc.PrepareSnapshot();
 
@@ -307,7 +308,7 @@ TEST(ComponentCompositor, DominantTieTakesFirstClass) {
 
   // Equal weights → equal lanes → strict-`>` ascending scan keeps the list-first class.
   auto table = MakeSingletonClassTable(0b11, { kRed, kGreen });
-  RenderConsumer rc(cfg, table);
+  RenderConsumer rc(cfg, lumice::test::kTestThreadBudget, table);
   rc.Consume(MakeBatch({ 0b01, 0b10 }, { 0.5f, 0.5f }));
   rc.PrepareSnapshot();
 
@@ -349,7 +350,7 @@ TEST(ComponentCompositor, PainterAlphaOverDimTopDoesNotBlockBrightBottom) {
   // bottom. Weights push class1 significantly brighter than class0 so the pre-§4.8
   // "list-first wins" bug would output near-black-red instead of green shining through.
   auto table = MakeSingletonClassTable(0b11, { kRed, kGreen });
-  RenderConsumer rc(cfg, table);
+  RenderConsumer rc(cfg, lumice::test::kTestThreadBudget, table);
   rc.Consume(MakeBatch({ 0b01, 0b10 }, { 0.05f, 0.9f }));  // top very dim, bottom bright
   rc.PrepareSnapshot();
 
@@ -386,7 +387,7 @@ TEST(ComponentCompositor, PainterDisplayEvOnlyScalesBrightnessNotOccluderStructu
   // Two classes both partially opaque, both contribute — use very small values
   // so that after 2x EV boost neither channel touches the clamp.
   auto table = MakeSingletonClassTable(0b11, { kRed, kGreen });
-  RenderConsumer rc(cfg, table);
+  RenderConsumer rc(cfg, lumice::test::kTestThreadBudget, table);
   rc.Consume(MakeBatch({ 0b01, 0b10 }, { 0.15f, 0.20f }));
   rc.PrepareSnapshot();
 
@@ -418,7 +419,7 @@ TEST(ComponentCompositor, PainterSingleClassNoBrightnessDoubleCount) {
   RenderConfig cfg = MakeRenderConfig(kRes);
 
   auto table = MakeSingletonClassTable(0b01, { kRed });
-  RenderConsumer rc(cfg, table);
+  RenderConsumer rc(cfg, lumice::test::kTestThreadBudget, table);
   rc.Consume(MakeBatch({ 0b01 }, { 0.5f }));
   rc.PrepareSnapshot();
 
@@ -449,7 +450,7 @@ TEST(ComponentCompositor, PainterFullOpacityCeilsAtClassColor) {
   RenderConfig cfg = MakeRenderConfig(kRes);
 
   auto table = MakeSingletonClassTable(0b01, { kRed });
-  RenderConsumer rc(cfg, table);
+  RenderConsumer rc(cfg, lumice::test::kTestThreadBudget, table);
   rc.Consume(MakeBatch({ 0b01 }, { 0.5f }));
   rc.PrepareSnapshot();
 
@@ -466,7 +467,7 @@ TEST(ComponentCompositor, PainterFullOpacityCeilsAtClassColor) {
   // Use a cranked intensity_factor to guarantee alpha == 1.
   RenderConfig cfg_bright = cfg;
   cfg_bright.intensity_factor_ = 1e6f;  // driven high so lane * A >= 1
-  RenderConsumer rc2(cfg_bright, table);
+  RenderConsumer rc2(cfg_bright, lumice::test::kTestThreadBudget, table);
   rc2.Consume(MakeBatch({ 0b01 }, { 0.5f }));
   rc2.PrepareSnapshot();
 
@@ -500,7 +501,7 @@ TEST(ComponentCompositor, SharedExposureNoSelfNormalization) {
   RenderConfig cfg = MakeRenderConfig(kRes);
 
   auto table = MakeSingletonClassTable(0b11, { kWhite, kWhite });
-  RenderConsumer rc(cfg, table);
+  RenderConsumer rc(cfg, lumice::test::kTestThreadBudget, table);
   rc.Consume(MakeBatch({ 0b01, 0b10 }, { 0.6f, 0.4f }));
   rc.PrepareSnapshot();
 
@@ -558,7 +559,7 @@ TEST(ComponentCompositor, PerClassVisibilityHideAndSoloAcrossModes) {
   // dominant would pick class0. Lane state is shared; per-class visibility is
   // toggled on a fresh table copy for each mode assertion.
   auto lane_table = MakeSingletonClassTable(0b11, { kRed, kGreen });
-  RenderConsumer rc(cfg, lane_table);
+  RenderConsumer rc(cfg, lumice::test::kTestThreadBudget, lane_table);
   rc.Consume(MakeBatch({ 0b01, 0b10 }, { 0.6f, 0.4f }));
   rc.PrepareSnapshot();
 
@@ -639,7 +640,7 @@ TEST(ComponentCompositor, OverlapDominantPicksBrighterAdditiveMixes) {
   t.classes_.push_back(MakeClass(kGreen, ColorClassCombine::kAny, 0b11));
   t.referenced_mask_ = 0b11;
 
-  RenderConsumer rc(cfg, t);
+  RenderConsumer rc(cfg, lumice::test::kTestThreadBudget, t);
   rc.Consume(MakeBatch({ 0b01, 0b10 }, { 0.3f, 0.9f }));
   rc.PrepareSnapshot();
 
@@ -701,7 +702,7 @@ TEST(ComponentCompositor, CrossLayerAllOnlyShowsWhereAllMembersHit) {
   t.classes_.push_back(MakeClass(kRed, ColorClassCombine::kAll, 0b11));
   t.referenced_mask_ = 0b11;
 
-  RenderConsumer rc(cfg, t);
+  RenderConsumer rc(cfg, lumice::test::kTestThreadBudget, t);
   rc.Consume(MakeBatch({ 0b01, 0b10, 0b11, 0b00 }, { 0.5f, 0.6f, 0.7f, 0.9f }));
   rc.PrepareSnapshot();
 
@@ -744,7 +745,7 @@ TEST(ComponentCompositor, ZOrderReordersDrawButNotLaneBinding) {
   // accumulates the 0b01 ray and lane1 the 0b10 ray — a permanent binding built at
   // RenderConsumer construction.
   auto table = MakeSingletonClassTable(0b11, { kRed, kGreen });
-  RenderConsumer rc(cfg, table);
+  RenderConsumer rc(cfg, lumice::test::kTestThreadBudget, table);
   rc.Consume(MakeBatch({ 0b01, 0b10 }, { 0.6f, 0.4f }));
   rc.PrepareSnapshot();
 
@@ -794,7 +795,7 @@ TEST(ComponentCompositor, ZOrderReordersDrawButNotLaneBinding) {
   // Dominant tie: give both lanes equal energy and flip z_order to prove the tie winner
   // follows draw order (ascending z_order), independent of lane index.
   {
-    RenderConsumer rc_tie(cfg, table);
+    RenderConsumer rc_tie(cfg, lumice::test::kTestThreadBudget, table);
     rc_tie.Consume(MakeBatch({ 0b01, 0b10 }, { 0.5f, 0.5f }));
     rc_tie.PrepareSnapshot();
     const int pt = FindLitPixel(rc_tie, total_pix);
@@ -954,7 +955,7 @@ TEST(ComponentCompositor, DominantThreeArcsNoPhantomHue) {
 
   const uint64_t kColored = 0b111;
   auto class_table = MakeSingletonClassTable(kColored, { kRed, kGreen, kBlue });
-  RenderConsumer rc(render, class_table);
+  RenderConsumer rc(render, lumice::test::kTestThreadBudget, class_table);
   rc.Consume(data);
   rc.PrepareSnapshot();
 
@@ -1067,7 +1068,7 @@ TEST(ComponentCompositor, LinearToSrgbU8Smoke) {
 
 TEST(ComponentCompositor, EmptyClassTableProducesNoComposite) {
   RenderConfig cfg = MakeRenderConfig(8);
-  RenderConsumer rc(cfg, ColorClassTable{});  // pre-336 path, no lanes
+  RenderConsumer rc(cfg, lumice::test::kTestThreadBudget, ColorClassTable{});  // pre-336 path, no lanes
   rc.Consume(MakeBatch({ 0b00 }, { 0.5f }));
   rc.PrepareSnapshot();
 
@@ -1137,7 +1138,7 @@ TEST(ComponentCompositor, DisplayExposureScalesEveryModeLinearly) {
   const int total_pix = kRes * kRes;
   RenderConfig cfg = MakeRenderConfig(kRes);
   auto table = MakeSingletonClassTable(0b11, { kRed, kGreen });
-  RenderConsumer rc(cfg, table);
+  RenderConsumer rc(cfg, lumice::test::kTestThreadBudget, table);
   // Keep exposed values small so the composite output stays sub-clamp at
   // both display scales — the equality below is otherwise saturated.
   rc.Consume(MakeBatch({ 0b01, 0b10 }, { 0.06f, 0.04f }));
@@ -1170,7 +1171,7 @@ TEST(ComponentCompositor, DisplayExposureClampBitesAfterScale) {
   const int total_pix = kRes * kRes;
   RenderConfig cfg = MakeRenderConfig(kRes);
   auto table = MakeSingletonClassTable(0b11, { kWhite });
-  RenderConsumer rc(cfg, table);
+  RenderConsumer rc(cfg, lumice::test::kTestThreadBudget, table);
   rc.Consume(MakeBatch({ 0b01 }, { 0.5f }));
   rc.PrepareSnapshot();
 
@@ -1202,7 +1203,7 @@ TEST(ComponentCompositor, ParticipatingP99IgnoresHiddenClass) {
   constexpr int kRes = 4;
   RenderConfig cfg = MakeRenderConfig(kRes);
   auto table = MakeSingletonClassTable(0b11, { kWhite, kWhite });
-  RenderConsumer rc(cfg, table);
+  RenderConsumer rc(cfg, lumice::test::kTestThreadBudget, table);
   rc.Consume(MakeBatch({ 0b01, 0b10 }, { 0.05f, 0.5f }));
   rc.PrepareSnapshot();
 
@@ -1242,7 +1243,7 @@ TEST(ComponentCompositor, ParticipatingP99IndependentOfDisplayExposureScale) {
   constexpr int kRes = 3;
   RenderConfig cfg = MakeRenderConfig(kRes);
   auto table = MakeSingletonClassTable(0b11, { kWhite });
-  RenderConsumer rc(cfg, table);
+  RenderConsumer rc(cfg, lumice::test::kTestThreadBudget, table);
   rc.Consume(MakeBatch({ 0b01 }, { 0.5f }));
   rc.PrepareSnapshot();
 
@@ -1264,7 +1265,7 @@ TEST(ComponentConsumer, ParticipatingExposureScaleGuards) {
   constexpr int kRes = 3;
   RenderConfig cfg = MakeRenderConfig(kRes);
   auto table = MakeSingletonClassTable(0b11, { kWhite });
-  RenderConsumer rc(cfg, table);
+  RenderConsumer rc(cfg, lumice::test::kTestThreadBudget, table);
   rc.Consume(MakeBatch({ 0b01 }, { 0.5f }));
   rc.PrepareSnapshot();
 
@@ -1274,7 +1275,7 @@ TEST(ComponentConsumer, ParticipatingExposureScaleGuards) {
 
   // snapshot_intensity<=0 branch: a fresh consumer without any Consume/Prepare
   // still has snapshot_intensity_==0 → guard fires even with a positive p99.
-  RenderConsumer rc_empty(cfg, table);
+  RenderConsumer rc_empty(cfg, lumice::test::kTestThreadBudget, table);
   EXPECT_FLOAT_EQ(rc_empty.ParticipatingExposureScale(0.5f), 0.0f);
 }
 
@@ -1286,7 +1287,7 @@ TEST(ComponentConsumer, ParticipatingExposureScaleFormulaCrossCheck) {
   RenderConfig cfg = MakeRenderConfig(kRes);
   cfg.intensity_factor_ = 1.0f;
   auto table = MakeSingletonClassTable(0b11, { kWhite });
-  RenderConsumer rc(cfg, table);
+  RenderConsumer rc(cfg, lumice::test::kTestThreadBudget, table);
   rc.Consume(MakeBatch({ 0b01, 0b10 }, { 0.6f, 0.4f }));
   rc.PrepareSnapshot();
 
@@ -1307,7 +1308,7 @@ TEST(ComponentConsumer, ParticipatingExposureScaleFormulaCrossCheck) {
   // is the tight structural check that snapshot_intensity does not leak into
   // the composite formula (it would have if we naively mirrored ComputeEvAuto's
   // numerator, and the AC1 gate would still pass by accident when weights=1).
-  RenderConsumer rc_heavy(cfg, table);
+  RenderConsumer rc_heavy(cfg, lumice::test::kTestThreadBudget, table);
   rc_heavy.Consume(MakeBatch({ 0b01, 0b10 }, { 6.0f, 4.0f }));  // 10x the mass
   rc_heavy.PrepareSnapshot();
   EXPECT_NEAR(rc_heavy.ParticipatingExposureScale(p99), expected, expected * 1e-5f);
@@ -1317,7 +1318,7 @@ TEST(ComponentConsumer, ParticipatingExposureScaleFormulaCrossCheck) {
   // on the composite path, plan §2 default assumption).
   RenderConfig cfg2 = cfg;
   cfg2.intensity_factor_ = 2.0f;
-  RenderConsumer rc2(cfg2, table);
+  RenderConsumer rc2(cfg2, lumice::test::kTestThreadBudget, table);
   rc2.Consume(MakeBatch({ 0b01, 0b10 }, { 0.6f, 0.4f }));
   rc2.PrepareSnapshot();
   EXPECT_NEAR(rc2.ParticipatingExposureScale(p99), 2.0f * expected, expected * 1e-5f);
@@ -1339,7 +1340,7 @@ TEST(ComponentCompositor, EarlyReturnPublishesParticipatingP99) {
   constexpr int kRes = 3;
   RenderConfig cfg = MakeRenderConfig(kRes);
   auto table = MakeSingletonClassTable(0b11, { kWhite });
-  RenderConsumer rc(cfg, table);
+  RenderConsumer rc(cfg, lumice::test::kTestThreadBudget, table);
   // No Consume — snapshot has zero signal, participating-P99 = 0 → A = 0.
   rc.PrepareSnapshot();
 
@@ -1367,12 +1368,12 @@ TEST(ComponentCompositor, ReusedOutputBufferMatchesFreshBuffer) {
 
   // Two consumers at different resolutions, each with its own signal.
   RenderConfig cfg_big = MakeRenderConfig(5);
-  RenderConsumer rc_big(cfg_big, table);
+  RenderConsumer rc_big(cfg_big, lumice::test::kTestThreadBudget, table);
   rc_big.Consume(MakeBatch({ 0b01, 0b10 }, { 0.9f, 0.3f }));
   rc_big.PrepareSnapshot();
 
   RenderConfig cfg_small = MakeRenderConfig(3);
-  RenderConsumer rc_small(cfg_small, table);
+  RenderConsumer rc_small(cfg_small, lumice::test::kTestThreadBudget, table);
   rc_small.Consume(MakeBatch({ 0b01, 0b10 }, { 0.2f, 0.7f }));
   rc_small.PrepareSnapshot();
 
@@ -1436,13 +1437,13 @@ TEST(ComponentConsumer, CompositeAnchorScaleForwardsPerEvMode) {
 
   RenderConfig rel = MakeRenderConfig(kRes);
   auto table = MakeSingletonClassTable(0b11, { kWhite, kWhite });
-  RenderConsumer rc_rel(rel, table);
+  RenderConsumer rc_rel(rel, lumice::test::kTestThreadBudget, table);
   rc_rel.Consume(MakeBatchWithEmitted({ 0b01, 0b10 }, { 0.6f, 0.4f }, 5.0f));
   rc_rel.PrepareSnapshot();
   EXPECT_FLOAT_EQ(rc_rel.CompositeAnchorScale(kP99), rc_rel.ParticipatingExposureScale(kP99));
 
   RenderConfig abs_cfg = MakeAbsoluteRenderConfig(kRes);
-  RenderConsumer rc_abs(abs_cfg, table);
+  RenderConsumer rc_abs(abs_cfg, lumice::test::kTestThreadBudget, table);
   rc_abs.Consume(MakeBatchWithEmitted({ 0b01, 0b10 }, { 0.6f, 0.4f }, 5.0f));
   rc_abs.PrepareSnapshot();
   EXPECT_FLOAT_EQ(rc_abs.CompositeAnchorScale(kP99), rc_abs.ExposureScale());
@@ -1470,7 +1471,7 @@ TEST(ComponentCompositor, AbsoluteModeCompositeSharesTheMonoScaleAcrossDIFFERENT
   auto table = MakeSingletonClassTable(0b01, { kWhite });
 
   auto run = [&](const RenderConfig& cfg, float weight, float emitted, std::vector<float>& out) {
-    auto rc = std::make_unique<RenderConsumer>(cfg, table);
+    auto rc = std::make_unique<RenderConsumer>(cfg, lumice::test::kTestThreadBudget, table);
     rc->Consume(MakeBatchWithEmitted({ 0b01 }, { weight }, emitted));
     rc->PrepareSnapshot();
     const bool ok = CompositeColorClassesLinear(*rc, table, CompositeMode::kAdditive, 1.0f, out, nullptr);
@@ -1522,7 +1523,7 @@ TEST(ComponentCompositor, AbsoluteModeAppliesIntensityFactorExactlyOnce) {
   auto cfg = MakeAbsoluteRenderConfig(kRes);
   cfg.intensity_factor_ = 2.0f;
   auto table = MakeSingletonClassTable(0b01, { kWhite });
-  RenderConsumer rc(cfg, table);
+  RenderConsumer rc(cfg, lumice::test::kTestThreadBudget, table);
   rc.Consume(MakeBatchWithEmitted({ 0b01 }, { 0.25f }, 3.0f));
   rc.PrepareSnapshot();
 
@@ -1547,7 +1548,7 @@ TEST(ComponentCompositor, AbsoluteModeParticipatingButAllZeroStaysBlack) {
   auto cfg = MakeAbsoluteRenderConfig(kRes);
   // Class 1 is referenced and visible, but no ray carries its bit, so its lane is all zeros.
   auto table = MakeSingletonClassTable(0b10, { kWhite });
-  RenderConsumer rc(cfg, table);
+  RenderConsumer rc(cfg, lumice::test::kTestThreadBudget, table);
   rc.Consume(MakeBatchWithEmitted({ 0b01 }, { 0.5f }, 2.0f));
   rc.PrepareSnapshot();
   ASSERT_GT(rc.ExposureScale(), 0.0f) << "fixture must have a positive absolute scale to be the case it claims";

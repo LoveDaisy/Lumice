@@ -68,6 +68,7 @@
 #include "core/color_util.hpp"
 #include "server/render.hpp"
 #include "server/server.hpp"
+#include "support/thread_budget.hpp"
 
 namespace lumice {
 namespace {
@@ -166,7 +167,7 @@ TEST(RenderConsumerComponentLanes, SumOfLanesEqualsMainYForSingletonClasses) {
   auto data = MakeBatch(masks, weights, kWl);
 
   RenderConfig cfg = MakeLaneRenderConfig();
-  RenderConsumer rc(cfg, MakeSingletonClassTable(0b11));
+  RenderConsumer rc(cfg, lumice::test::kTestThreadBudget, MakeSingletonClassTable(0b11));
   ASSERT_EQ(rc.ColoredMask(), 0b11u);
   rc.Consume(data);
   rc.PrepareSnapshot();
@@ -207,7 +208,7 @@ TEST(RenderConsumerComponentLanes, MultiBitAnyClassCountsRayOnce) {
   t.referenced_mask_ = 0b011;
 
   RenderConfig cfg = MakeLaneRenderConfig();
-  RenderConsumer rc(cfg, t);
+  RenderConsumer rc(cfg, lumice::test::kTestThreadBudget, t);
   rc.Consume(data);
   rc.PrepareSnapshot();
 
@@ -238,7 +239,7 @@ TEST(RenderConsumerComponentLanes, CrossLayerAllClassRequiresAllMembers) {
   t.referenced_mask_ = 0b11;
 
   RenderConfig cfg = MakeLaneRenderConfig();
-  RenderConsumer rc(cfg, t);
+  RenderConsumer rc(cfg, lumice::test::kTestThreadBudget, t);
   rc.Consume(data);
   rc.PrepareSnapshot();
 
@@ -261,7 +262,7 @@ TEST(RenderConsumerComponentLanes, OverlappingRayAccumulatesIntoEveryMatchingLan
   auto data = MakeBatch(masks, weights, kWl);
 
   RenderConfig cfg = MakeLaneRenderConfig();
-  RenderConsumer rc(cfg, MakeSingletonClassTable(0b11));
+  RenderConsumer rc(cfg, lumice::test::kTestThreadBudget, MakeSingletonClassTable(0b11));
   rc.Consume(data);
   rc.PrepareSnapshot();
 
@@ -296,7 +297,7 @@ TEST(RenderConsumerComponentLanes, EmptyMemberBitsClassNeverContributes) {
   auto data = MakeBatch(masks, weights, kWl);
 
   RenderConfig cfg = MakeLaneRenderConfig();
-  RenderConsumer rc(cfg, t);
+  RenderConsumer rc(cfg, lumice::test::kTestThreadBudget, t);
   rc.Consume(data);
   rc.PrepareSnapshot();
 
@@ -321,8 +322,8 @@ TEST(RenderConsumerComponentLanes, ColoredMaskDoesNotPerturbMainImage) {
   auto data_b = MakeBatch(masks, weights, kWl);
 
   RenderConfig cfg = MakeLaneRenderConfig();
-  RenderConsumer rc_plain(cfg, ColorClassTable{});              // pre-336 path
-  RenderConsumer rc_color(cfg, MakeSingletonClassTable(0b11));  // lane path active
+  RenderConsumer rc_plain(cfg, lumice::test::kTestThreadBudget, ColorClassTable{});              // pre-336 path
+  RenderConsumer rc_color(cfg, lumice::test::kTestThreadBudget, MakeSingletonClassTable(0b11));  // lane path active
   rc_plain.Consume(data_a);
   rc_color.Consume(data_b);
   rc_plain.PrepareSnapshot();
@@ -348,7 +349,7 @@ TEST(RenderConsumerComponentLanes, ColoredMaskDoesNotPerturbMainImage) {
 // -----------------------------------------------------------------------------
 TEST(RenderConsumerComponentLanes, LaneSnapshotIsolationAndReset) {
   RenderConfig cfg = MakeLaneRenderConfig();
-  RenderConsumer rc(cfg, MakeSingletonClassTable(0b1));
+  RenderConsumer rc(cfg, lumice::test::kTestThreadBudget, MakeSingletonClassTable(0b1));
   const int w = cfg.resolution_[0];
   const int h = cfg.resolution_[1];
 
@@ -529,7 +530,7 @@ TEST(RenderConsumerComponentLanes, RealBackendMasksBucketedShareExposure) {
     data.outgoing_component_.push_back(rec.component_mask);
   }
 
-  RenderConsumer rc(render, MakeSingletonClassTable(kColored));
+  RenderConsumer rc(render, lumice::test::kTestThreadBudget, MakeSingletonClassTable(kColored));
   rc.Consume(data);
   rc.PrepareSnapshot();
 

@@ -537,7 +537,7 @@ CanvasPoint ProjectDirectionOnView(const ViewSnapshot& view, const float dir[3])
   return { s.px, s.py, s.vis };
 }
 
-Overlay ComputeOverlay(const Request& req) {
+Overlay ComputeOverlay(const Request& req, int thread_budget) {
   Overlay out;
   const int width = req.view.width;
   const int height = req.view.height;
@@ -569,7 +569,7 @@ Overlay ComputeOverlay(const Request& req) {
 
   // One inverse projection per pixel feeds every field, which is what AC1's "any new angle field
   // goes into the SAME loop" buys: three annotation categories cost one sweep, not three.
-  ParallelRows(height, n, [&](int row_begin, int row_end) {
+  ParallelRows(height, n, thread_budget, [&](int row_begin, int row_end) {
     for (int py = row_begin; py < row_end; py++) {
       for (int px = 0; px < width; px++) {
         const mask_detail::MaskDir dir = mask_detail::PixelToWorld(cfg, inverse_params, rot, px, py);
@@ -609,25 +609,26 @@ Overlay ComputeOverlay(const Request& req) {
   });
 
   if (req.horizon) {
-    out.horizon = mask_detail::LevelSetMaskFromField(alt_field, imaged, out.drawable, width, height, { 0.0f }, false);
+    out.horizon = mask_detail::LevelSetMaskFromField(alt_field, imaged, out.drawable, width, height, { 0.0f }, false,
+                                                     thread_budget);
   }
   if (!req.elevation_deg.empty()) {
-    out.elevation =
-        mask_detail::LevelSetMaskFromField(alt_field, imaged, out.drawable, width, height, req.elevation_deg, false);
+    out.elevation = mask_detail::LevelSetMaskFromField(alt_field, imaged, out.drawable, width, height,
+                                                       req.elevation_deg, false, thread_budget);
   }
   if (!req.longitude_deg.empty()) {
     // Circular: azimuth wraps at +/-180, and both the local gradient and the distance to a level
     // have to be measured on the circle or the seam draws a spurious full-height meridian.
-    out.longitude =
-        mask_detail::LevelSetMaskFromField(az_field, imaged, out.drawable, width, height, req.longitude_deg, true);
+    out.longitude = mask_detail::LevelSetMaskFromField(az_field, imaged, out.drawable, width, height, req.longitude_deg,
+                                                       true, thread_budget);
   }
   if (!req.angular_dist_deg.empty()) {
     out.angular_dist = mask_detail::LevelSetMaskFromField(dist_field, imaged, out.drawable, width, height,
-                                                          req.angular_dist_deg, false);
+                                                          req.angular_dist_deg, false, thread_budget);
   }
   if (need_view_dist) {
     out.view_dist = mask_detail::LevelSetMaskFromField(view_dist_field, imaged, out.drawable, width, height,
-                                                       req.view_dist_deg, false);
+                                                       req.view_dist_deg, false, thread_budget);
   }
 
   // Not level sets: named directions, sampled as points. The legacy pair and the general list are

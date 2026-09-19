@@ -24,6 +24,7 @@
 #include "config/sim_data.hpp"
 #include "server/render.hpp"
 #include "support/render_anchor.hpp"
+#include "support/thread_budget.hpp"
 
 namespace lumice {
 namespace {
@@ -92,11 +93,11 @@ bool IsBlack(const std::vector<uint8_t>& img, int i) {
 }
 
 TEST(RenderConsumerHorizon, PaintedPixelsAreExactlyTheMaskedOnes) {
-  RenderConsumer off(MakeOutlineConfig(false), ColorClassTable{});
+  RenderConsumer off(MakeOutlineConfig(false), lumice::test::kTestThreadBudget, ColorClassTable{});
   const std::vector<uint8_t> img_off = SnapshotOnce(&off);
   ASSERT_EQ(img_off.size(), static_cast<size_t>(kTotalPix) * 3);
 
-  RenderConsumer on(MakeOutlineConfig(true), ColorClassTable{});
+  RenderConsumer on(MakeOutlineConfig(true), lumice::test::kTestThreadBudget, ColorClassTable{});
   const std::vector<uint8_t> img_on = SnapshotOnce(&on);
   ASSERT_EQ(img_on.size(), static_cast<size_t>(kTotalPix) * 3);
 
@@ -132,7 +133,7 @@ TEST(RenderConsumerHorizon, PaintedPixelsAreExactlyTheMaskedOnes) {
 }
 
 TEST(RenderConsumerHorizon, TheFlagGatesThePaintingNotTheMask) {
-  RenderConsumer rc(MakeOutlineConfig(false), ColorClassTable{});
+  RenderConsumer rc(MakeOutlineConfig(false), lumice::test::kTestThreadBudget, ColorClassTable{});
 
   // The mask is built at construction whatever the flag says. That is deliberate: the flag is on
   // the appearance-only side of NeedsRebuild, so it can be turned on through ResetWith without a

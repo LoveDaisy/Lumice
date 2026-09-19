@@ -47,6 +47,7 @@
 #include "core/worker_projection.hpp"
 #include "server/render.hpp"
 #include "server/server.hpp"
+#include "support/thread_budget.hpp"
 #include "util/logger.hpp"
 
 namespace lumice {
@@ -166,7 +167,7 @@ size_t NonZeroCount(const std::vector<float>& v) {
 // runs its own loop. The worker arm: the same batch after BuildWorkerProjectionSidecars.
 Accumulated LegacyArm(const SimData& batch, const RenderConfig& cfg, const ColorClassTable& classes,
                       size_t renderer_index = 0) {
-  RenderConsumer rc(cfg, classes, SunParam{ 0.0f, 0.0f, 0.5f }, renderer_index);
+  RenderConsumer rc(cfg, lumice::test::kTestThreadBudget, classes, SunParam{ 0.0f, 0.0f, 0.5f }, renderer_index);
   rc.Consume(batch);
   return Snapshot(rc, classes.classes_.size());
 }
@@ -176,7 +177,7 @@ Accumulated WorkerArm(const SimData& batch, const std::vector<RenderConfig>& ren
   SimData projected = batch;
   BuildWorkerProjectionSidecars(projected, renders);
   EXPECT_EQ(projected.projected_.size(), renders.size());
-  RenderConsumer rc(cfg, classes, SunParam{ 0.0f, 0.0f, 0.5f }, renderer_index);
+  RenderConsumer rc(cfg, lumice::test::kTestThreadBudget, classes, SunParam{ 0.0f, 0.0f, 0.5f }, renderer_index);
   rc.Consume(projected);
   return Snapshot(rc, classes.classes_.size());
 }
@@ -263,7 +264,7 @@ TEST(RenderConsumerWorkerProjected, DualFisheyeOverlapSplitMatchesLegacy) {
   // ring's sum, normalized the way PrepareSnapshot normalizes it, so it must move with
   // main_sum and not with main_sum + overlap_sum. Pin the ratio against a batch whose rays
   // all land in the main ring (no overlap) carrying the same total main weight.
-  RenderConsumer probe(cfg, classes);
+  RenderConsumer probe(cfg, lumice::test::kTestThreadBudget, classes);
   probe.Consume(projected);
   probe.PrepareSnapshot();
   const float with_overlap = probe.GetRawXyzResult().snapshot_intensity_;
@@ -271,7 +272,7 @@ TEST(RenderConsumerWorkerProjected, DualFisheyeOverlapSplitMatchesLegacy) {
   main_only.projected_[0].overlap_pixel_.clear();
   main_only.projected_[0].overlap_w_.clear();
   main_only.projected_[0].overlap_component_.clear();
-  RenderConsumer probe2(cfg, classes);
+  RenderConsumer probe2(cfg, lumice::test::kTestThreadBudget, classes);
   probe2.Consume(main_only);
   probe2.PrepareSnapshot();
   EXPECT_EQ(probe2.GetRawXyzResult().snapshot_intensity_, with_overlap)
@@ -317,14 +318,15 @@ TEST(RenderConsumerWorkerProjected, RendererIndexOutOfBoundsFallsBackSafely) {
   ASSERT_GT(NonZeroCount(legacy.xyz), 100u);
 
   LogCapture capture;
-  RenderConsumer rc(cfg, classes, SunParam{ 0.0f, 0.0f, 0.5f }, /*renderer_index=*/1);
+  RenderConsumer rc(cfg, lumice::test::kTestThreadBudget, classes, SunParam{ 0.0f, 0.0f, 0.5f }, /*renderer_index=*/1);
   rc.Consume(projected);
   rc.Consume(projected);
   EXPECT_EQ(CountOccurrences(capture.Text(), kNotice), 1) << capture.Text();
 
   // Two consumes of the same batch through the fallback == two consumes through the legacy
   // loop: the fallback IS the legacy loop.
-  RenderConsumer twice(cfg, classes, SunParam{ 0.0f, 0.0f, 0.5f }, /*renderer_index=*/1);
+  RenderConsumer twice(cfg, lumice::test::kTestThreadBudget, classes, SunParam{ 0.0f, 0.0f, 0.5f },
+                       /*renderer_index=*/1);
   twice.Consume(batch);
   twice.Consume(batch);
   ExpectIdentical(Snapshot(twice, classes.classes_.size()), Snapshot(rc, classes.classes_.size()));
@@ -344,7 +346,7 @@ TEST(RenderConsumerWorkerProjected, EmptyProjectedFallsBackToLegacy) {
   // branch over an empty list the plane would be black — so the non-zero check below is
   // the witness that the legacy loop ran, and the equality is the witness that its refactor
   // onto ProjectAndClassifyRay changed nothing about which pixel / ring a ray lands in.
-  RenderConsumer rc(cfg, classes);
+  RenderConsumer rc(cfg, lumice::test::kTestThreadBudget, classes);
   rc.Consume(batch);
   const Accumulated legacy = Snapshot(rc, classes.classes_.size());
   ASSERT_GT(NonZeroCount(legacy.xyz), 100u);

@@ -32,6 +32,7 @@
 #include "core/projection.hpp"
 #include "core/scatter_accum.hpp"  // MakeCameraRotation
 #include "core/shared/projection_shared.h"
+#include "support/thread_budget.hpp"
 
 namespace lumice {
 namespace {
@@ -50,7 +51,7 @@ RenderConfig MakeCfg(LensParam::LensType type, float fov, int w, int h,
 
 std::vector<uint8_t> Mask(const RenderConfig& cfg) {
   const float short_pix = static_cast<float>(std::min(cfg.resolution_[0], cfg.resolution_[1]));
-  return BuildVisibleMask(cfg, MakeCameraRotation(cfg), short_pix);
+  return BuildVisibleMask(cfg, MakeCameraRotation(cfg), short_pix, lumice::test::kTestThreadBudget);
 }
 
 bool At(const std::vector<uint8_t>& mask, const RenderConfig& cfg, int px, int py) {

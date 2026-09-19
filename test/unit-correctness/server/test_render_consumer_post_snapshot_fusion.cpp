@@ -41,6 +41,12 @@
 //      four cases above all sit below ParallelRows' pixel threshold and so only
 //      ever take its serial inline fallback; this one is the only case that runs
 //      the multi-threaded path (see its own comment for why that matters).
+//   6. the thread-budget gate of that dispatch: the same 300x300 scene through a
+//      consumer whose budget forces the inline serial loop (0 — what a server with
+//      every core busy passes) and through one whose budget admits a pool, compared
+//      byte-for-byte against each other. Case 5 holds the parallel result against an
+//      oracle; this one holds the NEW serial/parallel fork — the budget, distinct
+//      from the pixel-count threshold — to the same bytes on both sides.
 // Each case asserts its own coverage rather than assuming it: a non-black image
 // (so the byte comparison is not vacuous) and, for case 3, that the post-blend
 // clamp actually fired.
@@ -67,6 +73,7 @@
 #include "core/scatter_accum.hpp"  // MakeCameraRotation
 #include "server/render.hpp"
 #include "support/render_anchor.hpp"
+#include "support/thread_budget.hpp"
 #include "util/color_data.hpp"
 #include "util/color_space.hpp"
 #include "util/ink_transfer.hpp"
@@ -244,7 +251,7 @@ struct Coverage {
 void RunAndCompare(const RenderConfig& cfg, const std::vector<float>& weights, const std::string& label,
                    Coverage* cov) {
   *cov = Coverage{};
-  RenderConsumer rc(cfg, ColorClassTable{});
+  RenderConsumer rc(cfg, lumice::test::kTestThreadBudget, ColorClassTable{});
   auto data = MakeUpwardBatch(weights);
   rc.Consume(data);
   rc.PrepareSnapshot();
@@ -455,7 +462,7 @@ void ApplyMarkerRings(const std::vector<annotation::CanvasPoint>& pts, const std
 
 TEST(RenderConsumerPostSnapshotFusion, LargeResolutionWithMarkersIsByteExactAgainstOracle) {
   RenderConfig cfg = MakeParallelConfig();
-  RenderConsumer rc(cfg, ColorClassTable{}, MakeParallelSun());
+  RenderConsumer rc(cfg, lumice::test::kTestThreadBudget, ColorClassTable{}, MakeParallelSun());
   auto data = MakeScatteredBatch();
   rc.Consume(data);
   // This config leaves ev_mode_ at its relative default (unlike MakeSnapshotRenderConfig, which pins
@@ -546,6 +553,59 @@ TEST(RenderConsumerPostSnapshotFusion, LargeResolutionWithMarkersIsByteExactAgai
   EXPECT_GT(nonzero, 0u);
   EXPECT_GT(ring_hits, 100u) << "too few ring pixels landed — the fixture is not really exercising the marker "
                                 "scratch buffer";
+}
+
+// Two consumers, one scene, one batch: the only thing that differs is the thread budget, so the
+// only thing that can differ in the bytes is the dispatch path the budget selects. The parallel
+// arm's budget is forced to at least 2 rather than taken from the machine, so that on a
+// single-core host the case does not silently compare serial to serial.
+TEST(RenderConsumerPostSnapshotFusion, ThreadBudgetForcedSerialMatchesUnconstrainedParallel) {
+  RenderConfig cfg = MakeParallelConfig();
+  const int parallel_budget = std::max(2, lumice::test::kTestThreadBudget);
+  RenderConsumer rc_serial(cfg, /*thread_budget=*/0, ColorClassTable{}, MakeParallelSun());
+  RenderConsumer rc_parallel(cfg, parallel_budget, ColorClassTable{}, MakeParallelSun());
+  const auto data = MakeScatteredBatch();
+  rc_serial.Consume(data);
+  rc_parallel.Consume(data);
+  lumice::test::TakeSnapshotAtFormerSelfAnchor(&rc_serial);
+  lumice::test::TakeSnapshotAtFormerSelfAnchor(&rc_parallel);
+
+  // The visible mask and the marker points are built by the constructor through the same budget,
+  // so they are part of what is being compared, not only PostSnapshot's loop.
+  EXPECT_EQ(rc_serial.VisibleMask(), rc_parallel.VisibleMask());
+
+  auto serial = rc_serial.GetResult();
+  auto parallel = rc_parallel.GetResult();
+  const auto* rs = std::get_if<RenderResult>(&serial);
+  const auto* rp = std::get_if<RenderResult>(&parallel);
+  ASSERT_NE(rs, nullptr);
+  ASSERT_NE(rp, nullptr);
+  ASSERT_EQ(rs->img_width_, kParallelW);
+  ASSERT_EQ(rs->img_height_, kParallelH);
+  ASSERT_EQ(rp->img_width_, kParallelW);
+  ASSERT_EQ(rp->img_height_, kParallelH);
+
+  constexpr size_t kMaxReportedMismatches = 20;
+  size_t mismatches = 0;
+  size_t nonzero = 0;
+  for (int i = 0; i < kParallelTotalPix * 3; ++i) {
+    // Non-fatal and capped, for the same reason as the case above: a fatal assert inside the loop
+    // would hide every byte after the first divergence.
+    if (rs->img_buffer_[i] != rp->img_buffer_[i]) {
+      if (mismatches < kMaxReportedMismatches) {
+        ADD_FAILURE() << "byte " << i << " (pixel " << i / 3 << ", channel " << i % 3 << ") differs: serial "
+                      << static_cast<int>(rs->img_buffer_[i]) << " vs parallel "
+                      << static_cast<int>(rp->img_buffer_[i]);
+      }
+      ++mismatches;
+    }
+    if (rs->img_buffer_[i] != 0) {
+      ++nonzero;
+    }
+  }
+  EXPECT_EQ(mismatches, 0u) << mismatches << " total byte(s) diverged between the budget-0 (inline) and budget-"
+                            << parallel_budget << " (pooled) consumers";
+  EXPECT_GT(nonzero, 0u) << "an all-black image would make the byte comparison vacuous";
 }
 
 }  // namespace

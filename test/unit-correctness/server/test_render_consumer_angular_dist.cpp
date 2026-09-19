@@ -35,6 +35,7 @@
 #include "core/scatter_accum.hpp"  // MakeCameraRotation
 #include "server/render.hpp"
 #include "support/render_anchor.hpp"
+#include "support/thread_budget.hpp"
 
 namespace lumice {
 namespace {
@@ -133,11 +134,12 @@ annotation::CanvasPoint SunPixel(const RenderConfig& cfg, const SunParam& sun) {
 }
 
 TEST(RenderConsumerAngularDist, PaintedPixelsAreExactlyTheMaskedOnes) {
-  RenderConsumer off(MakeConfig({}), ColorClassTable{}, MakeSun());
+  RenderConsumer off(MakeConfig({}), lumice::test::kTestThreadBudget, ColorClassTable{}, MakeSun());
   const std::vector<uint8_t> img_off = SnapshotOnce(&off);
   ASSERT_EQ(img_off.size(), static_cast<size_t>(kTotalPix) * 3);
 
-  RenderConsumer on(MakeConfig({ Line(22.0f, 1.0f, 1.0f, 0.0f, 0.0f) }), ColorClassTable{}, MakeSun());
+  RenderConsumer on(MakeConfig({ Line(22.0f, 1.0f, 1.0f, 0.0f, 0.0f) }), lumice::test::kTestThreadBudget,
+                    ColorClassTable{}, MakeSun());
   const std::vector<uint8_t> img_on = SnapshotOnce(&on);
   ASSERT_EQ(img_on.size(), static_cast<size_t>(kTotalPix) * 3);
 
@@ -174,7 +176,7 @@ TEST(RenderConsumerAngularDist, CircleIsCentredOnTheSun) {
   // around the sun, which on this 120 deg frame would not be a ring around the sun's pixel at all.
   // The expected radius is computed from the projection, not measured from the mask.
   const RenderConfig cfg = MakeConfig({ Line(22.0f, 1.0f, 1.0f, 0.0f, 0.0f) });
-  RenderConsumer rc(cfg, ColorClassTable{}, MakeSun());
+  RenderConsumer rc(cfg, lumice::test::kTestThreadBudget, ColorClassTable{}, MakeSun());
   const auto& masks = rc.AngularDistMasksForTest();
   ASSERT_EQ(masks.size(), 1u);
   ASSERT_EQ(masks[0].size(), static_cast<size_t>(kTotalPix));
@@ -218,9 +220,9 @@ TEST(RenderConsumerAngularDist, TwoLinesKeepTheirOwnColours) {
   // and the 46 deg ring blue. Batching both angles into one ComputeOverlay call would return one
   // mask covering both rings, and whichever colour the code picked would paint both.
   const RenderConfig cfg = MakeConfig({ Line(22.0f, 1.0f, 1.0f, 0.0f, 0.0f), Line(46.0f, 1.0f, 0.0f, 0.0f, 1.0f) });
-  RenderConsumer off(MakeConfig({}), ColorClassTable{}, MakeSun());
+  RenderConsumer off(MakeConfig({}), lumice::test::kTestThreadBudget, ColorClassTable{}, MakeSun());
   const std::vector<uint8_t> img_off = SnapshotOnce(&off);
-  RenderConsumer on(cfg, ColorClassTable{}, MakeSun());
+  RenderConsumer on(cfg, lumice::test::kTestThreadBudget, ColorClassTable{}, MakeSun());
   const std::vector<uint8_t> img_on = SnapshotOnce(&on);
   ASSERT_EQ(img_on.size(), static_cast<size_t>(kTotalPix) * 3);
 
@@ -255,7 +257,7 @@ TEST(RenderConsumerAngularDist, ResetWithPicksUpANewLineList) {
   // angular_dist_grid_ is on the appearance-only side of NeedsRebuild, so a config that adds a
   // circle mid-run reaches a REUSED consumer. Masks that were only ever built in the constructor
   // would leave that consumer drawing nothing.
-  RenderConsumer rc(MakeConfig({}), ColorClassTable{}, MakeSun());
+  RenderConsumer rc(MakeConfig({}), lumice::test::kTestThreadBudget, ColorClassTable{}, MakeSun());
   ASSERT_TRUE(rc.AngularDistMasksForTest().empty());
   const std::vector<uint8_t> img_off = SnapshotOnce(&rc);
 
@@ -278,7 +280,7 @@ TEST(RenderConsumerAngularDist, ResetWithPicksUpANewSun) {
   // cached its masks against the construction-time sun would keep drawing the circle around where
   // the sun used to be — a wrong picture that still looks like a correct one.
   const std::vector<GridLineParam> lines = { Line(22.0f, 1.0f, 1.0f, 0.0f, 0.0f) };
-  RenderConsumer rc(MakeConfig(lines), ColorClassTable{}, MakeSun(kSunAltitude));
+  RenderConsumer rc(MakeConfig(lines), lumice::test::kTestThreadBudget, ColorClassTable{}, MakeSun(kSunAltitude));
   ASSERT_EQ(rc.AngularDistMasksForTest().size(), 1u);
   const std::vector<uint8_t> before = rc.AngularDistMasksForTest()[0];
   ASSERT_GT(static_cast<size_t>(std::count(before.begin(), before.end(), uint8_t{ 1 })), 0u);
@@ -330,7 +332,7 @@ TEST(RenderConsumerAngularDist, GlobeCircleAppearsAtTheGlobeRadius) {
   // The orbit position opposite the sun, so the sun sits on the optical axis and the 22 deg circle
   // around it is, by symmetry, a circle on the canvas too (off-axis it would be an ellipse).
   const RenderConfig cfg = MakeGlobeConfig(180.0f, -kSunAltitude, { Line(22.0f, 1.0f, 1.0f, 0.0f, 0.0f) });
-  RenderConsumer rc(cfg, ColorClassTable{}, MakeSun());
+  RenderConsumer rc(cfg, lumice::test::kTestThreadBudget, ColorClassTable{}, MakeSun());
   const auto& masks = rc.AngularDistMasksForTest();
   ASSERT_EQ(masks.size(), 1u);
   ASSERT_EQ(masks[0].size(), static_cast<size_t>(kTotalPix));
@@ -385,8 +387,8 @@ TEST(RenderConsumerAngularDist, GlobeImagesTheCapOppositeTheViewDirection) {
   EXPECT_FALSE(SunPixel(facing, MakeSun()).valid) << "an orbit position AT the sun looks at the far side";
   EXPECT_TRUE(SunPixel(opposite, MakeSun()).valid);
 
-  RenderConsumer rc_facing(facing, ColorClassTable{}, MakeSun());
-  RenderConsumer rc_opposite(opposite, ColorClassTable{}, MakeSun());
+  RenderConsumer rc_facing(facing, lumice::test::kTestThreadBudget, ColorClassTable{}, MakeSun());
+  RenderConsumer rc_opposite(opposite, lumice::test::kTestThreadBudget, ColorClassTable{}, MakeSun());
   ASSERT_EQ(rc_facing.AngularDistMasksForTest().size(), 1u);
   ASSERT_EQ(rc_opposite.AngularDistMasksForTest().size(), 1u);
   EXPECT_EQ(CountMarked(rc_facing.AngularDistMasksForTest()[0]), 0u)
@@ -398,9 +400,9 @@ TEST(RenderConsumerAngularDist, GlobeImagesTheCapOppositeTheViewDirection) {
   // on-axis sun cannot be imaged, and one well inside it is — the two bounds on what "visible" can
   // mean for this family under globe.
   RenderConsumer inside(MakeGlobeConfig(180.0f, -kSunAltitude, { Line(46.0f, 1.0f, 1.0f, 0.0f, 0.0f) }),
-                        ColorClassTable{}, MakeSun());
+                        lumice::test::kTestThreadBudget, ColorClassTable{}, MakeSun());
   RenderConsumer beyond(MakeGlobeConfig(180.0f, -kSunAltitude, { Line(80.0f, 1.0f, 1.0f, 0.0f, 0.0f) }),
-                        ColorClassTable{}, MakeSun());
+                        lumice::test::kTestThreadBudget, ColorClassTable{}, MakeSun());
   EXPECT_GT(CountMarked(inside.AngularDistMasksForTest()[0]), 0u);
   EXPECT_EQ(CountMarked(beyond.AngularDistMasksForTest()[0]), 0u);
 }

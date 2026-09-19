@@ -36,6 +36,7 @@
 #include "include/lumice.h"
 #include "server/c_api_internal.hpp"  // ToAnnotationViewSnapshot
 #include "support/lumice_test_api.h"
+#include "support/thread_budget.hpp"
 
 namespace {
 
@@ -92,7 +93,7 @@ struct CoreOverlay {
     req.angular_dist_deg = { 22.0f };
     req.markers = { lumice::annotation::kMarkerZenith };
     req.labels = true;
-    overlay = lumice::annotation::ComputeOverlay(req);
+    overlay = lumice::annotation::ComputeOverlay(req, lumice::test::kTestThreadBudget);
   }
 };
 

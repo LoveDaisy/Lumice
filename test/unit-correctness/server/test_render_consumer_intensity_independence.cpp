@@ -41,6 +41,7 @@
 #include "core/annotation_overlay.hpp"
 #include "server/render.hpp"
 #include "support/render_anchor.hpp"
+#include "support/thread_budget.hpp"
 #include "util/color_space.hpp"
 
 namespace lumice {
@@ -161,13 +162,13 @@ std::vector<uint8_t> UnionOfMasks(const RenderConsumer& rc) {
 // canvas), the annotated frames at intensity 1 and 0 agree everywhere the intensity 1 frame WITHOUT
 // annotations is at `zero_energy` — i.e. everywhere no ray landed.
 void ExpectAnnotationsIndependentOfIntensity(RenderConfig::Tone tone, const uint8_t zero_energy[3]) {
-  RenderConsumer bare(MakeConfig(1.0f, false, tone), ColorClassTable{}, MakeSun());
+  RenderConsumer bare(MakeConfig(1.0f, false, tone), lumice::test::kTestThreadBudget, ColorClassTable{}, MakeSun());
   const std::vector<uint8_t> img_bare = SnapshotOnce(&bare, 90.0f);
   ASSERT_EQ(img_bare.size(), static_cast<size_t>(kTotalPix) * 3);
 
-  RenderConsumer lit(MakeConfig(1.0f, true, tone), ColorClassTable{}, MakeSun());
+  RenderConsumer lit(MakeConfig(1.0f, true, tone), lumice::test::kTestThreadBudget, ColorClassTable{}, MakeSun());
   const std::vector<uint8_t> img_lit = SnapshotOnce(&lit, 90.0f);
-  RenderConsumer dark(MakeConfig(0.0f, true, tone), ColorClassTable{}, MakeSun());
+  RenderConsumer dark(MakeConfig(0.0f, true, tone), lumice::test::kTestThreadBudget, ColorClassTable{}, MakeSun());
   const std::vector<uint8_t> img_dark = SnapshotOnce(&dark, 90.0f);
   ASSERT_EQ(img_lit.size(), static_cast<size_t>(kTotalPix) * 3);
   ASSERT_EQ(img_dark.size(), static_cast<size_t>(kTotalPix) * 3);
@@ -225,9 +226,9 @@ TEST(RenderConsumerIntensityIndependence, PrintAnnotationsSurviveZeroIntensity) 
 // 0. Same geometry, same annotations, one frame through the pixel loop and one through the early
 // exit: the bytes must be the same, all of them.
 void ExpectBothPathsRenderTheSameBytes(RenderConfig::Tone tone) {
-  RenderConsumer clipped(MakeConfig(1.0f, true, tone), ColorClassTable{}, MakeSun());
+  RenderConsumer clipped(MakeConfig(1.0f, true, tone), lumice::test::kTestThreadBudget, ColorClassTable{}, MakeSun());
   const std::vector<uint8_t> img_clipped = SnapshotOnce(&clipped, -10.0f);
-  RenderConsumer dark(MakeConfig(0.0f, true, tone), ColorClassTable{}, MakeSun());
+  RenderConsumer dark(MakeConfig(0.0f, true, tone), lumice::test::kTestThreadBudget, ColorClassTable{}, MakeSun());
   const std::vector<uint8_t> img_dark = SnapshotOnce(&dark, 90.0f);
   ASSERT_EQ(img_clipped.size(), static_cast<size_t>(kTotalPix) * 3);
   ASSERT_EQ(img_dark.size(), static_cast<size_t>(kTotalPix) * 3);
