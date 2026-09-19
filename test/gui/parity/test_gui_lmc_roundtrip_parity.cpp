@@ -43,15 +43,30 @@
 // new brightness is right — the byte comparison already established the reopened chain is the
 // live one — but that the reopened document is being re-lit at all.
 //
+// From format v6 the texture is float16 with one global scale, and the identity got STRONGER
+// rather than looser: the live preview's own GPU texture is GL_RGB16F, quantized by the same codec
+// on the same floats the file section is (src/gui/xyz_half_codec.hpp), so the file holds the bits
+// the screen was sampling. The byte comparison above is unchanged and now covers that. What the
+// bump adds is a third leg per row, the pre-v6 document: a v5 file (float32 section, assembled by
+// hand here from the frame's own floats because no writer produces one any more) is opened,
+// captured, saved — which writes v6 — and reopened; the v5 capture, the v6 re-save's capture and
+// the live frame must all be byte-identical. That is the claim "an old document opens to what a
+// re-save of it shows", stated on pixels.
+//
 // Cadence and assets. No committed reference image, so this case must never enter
 // scripts/regen_gui_test_refs.py's GROUPS registry (doc/testing-architecture.md §4.10). Like the
 // rest of the parity tag it runs on a developer machine with a real GL context via
 // ./scripts/test.sh {quick,full,pr} and in no CI job today (§7.5).
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <string>
 #include <vector>
 
@@ -182,6 +197,110 @@ float MaxExposedY(float intensity_scale) {
   return max_y * intensity_scale;
 }
 
+// A v5 .lmc, assembled from a v6 file the production writer just made and the frame's own floats
+// (the CPU mirror Save was fed). The container header, the JSON section and its offsets are the
+// writer's; only the texture section is replaced, by the documented v5 layout: the same 32-byte
+// header with raw_byte_count in float32 units and the last field the reserved 0u, then a zlib
+// stream of the floats as stored (uncompressed) deflate blocks — the format says zlib, not
+// "compressed", and a stored stream needs no compressor here while inflating through the same
+// stbi call a real v5 stream does. Offsets restated from the file_io.cpp header comment, the
+// same way test_lmc_load_atomicity_chain.cpp restates them.
+bool WriteV5FloatFileFrom(const std::filesystem::path& v6_path, const std::filesystem::path& v5_path) {
+  std::ifstream in(v6_path, std::ios::binary);
+  std::vector<unsigned char> bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+  if (bytes.size() < 44u) {
+    return false;
+  }
+  uint32_t flags = 0;
+  uint64_t tex_offset = 0;
+  std::memcpy(&flags, bytes.data() + 8, sizeof(flags));
+  std::memcpy(&tex_offset, bytes.data() + 28, sizeof(tex_offset));
+  if ((flags & 0x8u) == 0u || tex_offset == 0u || bytes.size() < tex_offset + 32u) {
+    return false;  // premise: the writer made a v6 float16 file with a texture
+  }
+  const float* xyz = gui::g_preview.GetXyzTextureData();
+  const int w = gui::g_preview.GetTextureWidth();
+  const int h = gui::g_preview.GetTextureHeight();
+  if (xyz == nullptr || w <= 0 || h <= 0) {
+    return false;
+  }
+  const size_t raw_bytes = static_cast<size_t>(w) * h * 3 * sizeof(float);
+  std::vector<unsigned char> section(bytes.begin() + static_cast<std::ptrdiff_t>(tex_offset),
+                                     bytes.begin() + static_cast<std::ptrdiff_t>(tex_offset) + 32);
+  const uint32_t raw_u32 = static_cast<uint32_t>(raw_bytes);
+  const uint32_t zero = 0;
+  std::memcpy(section.data() + 24, &raw_u32, sizeof(raw_u32));
+  std::memcpy(section.data() + 28, &zero, sizeof(zero));
+  section.push_back(0x78);  // zlib header: deflate, 32K window
+  section.push_back(0x01);  // fastest level, no dictionary, check bits valid
+  const auto* raw = reinterpret_cast<const unsigned char*>(xyz);
+  uint32_t a = 1;
+  uint32_t b = 0;
+  for (size_t pos = 0; pos < raw_bytes;) {
+    const size_t len = std::min<size_t>(65535u, raw_bytes - pos);
+    const bool last = pos + len == raw_bytes;
+    section.push_back(last ? 0x01 : 0x00);  // BFINAL, BTYPE=00 (stored)
+    section.push_back(static_cast<unsigned char>(len & 0xFFu));
+    section.push_back(static_cast<unsigned char>((len >> 8) & 0xFFu));
+    section.push_back(static_cast<unsigned char>(~len & 0xFFu));
+    section.push_back(static_cast<unsigned char>((~len >> 8) & 0xFFu));
+    section.insert(section.end(), raw + pos, raw + pos + len);
+    for (size_t i = pos; i < pos + len; ++i) {  // adler32, big-endian on the wire
+      a = (a + raw[i]) % 65521u;
+      b = (b + a) % 65521u;
+    }
+    pos += len;
+  }
+  const uint32_t adler = (b << 16) | a;
+  section.push_back(static_cast<unsigned char>(adler >> 24));
+  section.push_back(static_cast<unsigned char>(adler >> 16));
+  section.push_back(static_cast<unsigned char>(adler >> 8));
+  section.push_back(static_cast<unsigned char>(adler));
+
+  bytes.resize(static_cast<size_t>(tex_offset));
+  bytes.insert(bytes.end(), section.begin(), section.end());
+  const uint32_t version = 5;
+  const uint32_t v5_flags = (flags & ~0x8u) | 0x4u;
+  const uint64_t tex_size = section.size();
+  std::memcpy(bytes.data() + 4, &version, sizeof(version));
+  std::memcpy(bytes.data() + 8, &v5_flags, sizeof(v5_flags));
+  std::memcpy(bytes.data() + 36, &tex_size, sizeof(tex_size));
+  std::ofstream out(v5_path, std::ios::binary | std::ios::trunc);
+  if (!out.is_open()) {
+    return false;
+  }
+  out.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+  return out.good();
+}
+
+// Drop the live run (or whatever document is open) and reopen `path` through the production
+// Open path on the main thread, leaving the panel settled on the loaded document.
+bool SeverAndOpen(ImGuiTestContext* ctx, const std::filesystem::path& path) {
+  if (gui::g_server != nullptr) {
+    gui::g_server_poller.Stop();
+    LUMICE_StopServer(gui::g_server);
+    LUMICE_DestroyServer(gui::g_server);
+    gui::g_server = nullptr;
+  }
+  gui::DoNew();
+  ctx->Yield(2);
+  IM_CHECK_RETV(!gui::g_preview.HasTexture(), false);
+
+  g_req.open_done = false;
+  g_req.open_path = path;
+  g_req.open_requested = true;
+  ctx->Yield(2);
+  IM_CHECK_RETV(g_req.open_done, false);
+  IM_CHECK_RETV(gui::g_state.current_file_path == path, false);
+  IM_CHECK_RETV(gui::g_preview.HasTexture(), false);
+  // The reopened document takes the live shader branch, not the legacy 8-bit one.
+  IM_CHECK_RETV(gui::g_preview.GetTextureMode() == gui::PreviewRenderer::TextureMode::kXyz, false);
+  // Let ReconcileSimState take the kLoaded intent to kDone and the panel republish params.
+  ctx->Yield(3);
+  IM_CHECK_RETV(gui::g_state.sim_state == gui::GuiState::SimState::kDone, false);
+  return true;
+}
+
 struct Scene {
   const char* name;
   void (*apply)();
@@ -307,25 +426,13 @@ void RunScene(ImGuiTestContext* ctx, const Scene& scene) {
     IM_CHECK_GT(max_exposed_y, 1.0f);
   }
 
-  // --- Sever the live run entirely, so what comes back can only have come from the file. ---
-  gui::g_server_poller.Stop();
-  LUMICE_StopServer(gui::g_server);
-  LUMICE_DestroyServer(gui::g_server);
-  gui::g_server = nullptr;
-  gui::DoNew();
-  ctx->Yield(2);
-  IM_CHECK(!gui::g_preview.HasTexture());
+  // The pre-v6 leg's input, built now while the mirror still holds the live frame's floats.
+  const std::filesystem::path v5_path = GuiTestTempPath(std::string("lumice_roundtrip_") + scene.name + "_v5.lmc");
+  IM_CHECK(WriteV5FloatFileFrom(lmc_path, v5_path));
 
-  // --- Reopened arm: the production Open path, on the main thread. ---
-  g_req.open_done = false;
-  g_req.open_path = lmc_path;
-  g_req.open_requested = true;
-  ctx->Yield(2);
-  IM_CHECK(g_req.open_done);
-  IM_CHECK(gui::g_state.current_file_path == lmc_path);
-  IM_CHECK(gui::g_preview.HasTexture());
-  // AC2: the reopened document takes the live shader branch, not the legacy 8-bit one.
-  IM_CHECK(gui::g_preview.GetTextureMode() == gui::PreviewRenderer::TextureMode::kXyz);
+  // --- Reopened arm: sever the live run entirely, so what comes back can only have come from the
+  // file, then the production Open path on the main thread. ---
+  IM_CHECK(SeverAndOpen(ctx, lmc_path));
   // AC4's mechanism: the measurements that expose the texture came back with it, to the bit.
   IM_CHECK_EQ(gui::g_state.snapshot_intensity, live_snapshot_intensity);
   IM_CHECK_EQ(gui::g_state.snapshot_emitted_energy, live_emitted_energy);
@@ -334,9 +441,6 @@ void RunScene(ImGuiTestContext* ctx, const Scene& scene) {
   IM_CHECK_EQ(gui::g_state.effective_pixels, live_effective_pixels);
   // And the settings the JSON carries, the two the exposure reads.
   IM_CHECK_EQ(gui::g_state.renderer.ev_mode, scene.ev_mode);
-  // Let ReconcileSimState take the kLoaded intent to kDone and the panel republish params.
-  ctx->Yield(3);
-  IM_CHECK(gui::g_state.sim_state == gui::GuiState::SimState::kDone);
 
   Frame b;
   IM_CHECK(CaptureFrame(ctx, b));
@@ -356,8 +460,44 @@ void RunScene(ImGuiTestContext* ctx, const Scene& scene) {
   Frame d;
   IM_CHECK(CaptureFrame(ctx, d));
   IM_CHECK_GT(CountPixelDiffs("ev_mode_flipped_vs_reopened", b, d), 0);
+  gui::g_state.renderer.ev_mode = 1 - gui::g_state.renderer.ev_mode;
+
+  // --- The pre-v6 leg: v5 open -> capture -> Save (writes v6) -> reopen -> capture. ---
+  // The v5 floats are the live frame's floats, so the upload quantizes them to the bits the live
+  // frame was sampled from: x == a. The Save then encodes the mirror the v5 load filled (the
+  // payload the live run retained was dropped by the document switch — Save cannot be reading
+  // it), and y == x is quantize∘dequantize∘quantize == quantize on real pixels.
+  IM_CHECK(SeverAndOpen(ctx, v5_path));
+  Frame x;
+  IM_CHECK(CaptureFrame(ctx, x));
+  IM_CHECK_EQ(x.w, a.w);
+  IM_CHECK_EQ(x.h, a.h);
+  IM_CHECK_EQ(CountPixelDiffs("v5_opened_vs_live", a, x), 0);
+
+  const std::filesystem::path resaved_path =
+      GuiTestTempPath(std::string("lumice_roundtrip_") + scene.name + "_v5_resaved.lmc");
+  gui::g_state.current_file_path = resaved_path;
+  gui::DoSave();
+  IM_CHECK(std::filesystem::exists(resaved_path));
+  // Premise: the re-save is a v6 file, i.e. the writer really did re-encode the v5 floats.
+  {
+    std::ifstream in(resaved_path, std::ios::binary);
+    uint32_t hdr[3] = { 0, 0, 0 };
+    in.read(reinterpret_cast<char*>(hdr), sizeof(hdr));
+    IM_CHECK_EQ(hdr[1], 6u);
+    IM_CHECK_EQ(hdr[2] & 0xCu, 0x8u);
+  }
+
+  IM_CHECK(SeverAndOpen(ctx, resaved_path));
+  Frame y;
+  IM_CHECK(CaptureFrame(ctx, y));
+  IM_CHECK_EQ(y.w, a.w);
+  IM_CHECK_EQ(y.h, a.h);
+  IM_CHECK_EQ(CountPixelDiffs("v5_resaved_as_v6_vs_v5_opened", x, y), 0);
 
   std::filesystem::remove(lmc_path);
+  std::filesystem::remove(v5_path);
+  std::filesystem::remove(resaved_path);
 }
 
 }  // namespace

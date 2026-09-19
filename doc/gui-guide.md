@@ -260,19 +260,34 @@ Lumice uses a binary project file format (`.lmc`) that stores:
 
 - **Configuration**: all crystal, scene, render, and filter settings as semantic JSON
 - **Preview texture**: optionally, the most recent render result. From format v5 this is the
-  render's **unexposed linear XYZ energy** (the same floats the live preview uploads), stored as
-  zlib-deflated float32 behind a small header that also carries the frame's exposure
-  measurements. A reopened document therefore renders through the same shader path as a live
-  run — the EV slider, the exposure mode, the background and print mode all keep working on it,
-  and there is no exposure-time clipping baked into the pixels. Files written by v4 and earlier
-  embed an 8-bit PNG instead (exposure baked in) and still open, but keep their baked exposure
-  until the next run.
+  render's **unexposed linear XYZ energy** (the same data the live preview uploads), behind a
+  small header that also carries the frame's exposure measurements. A reopened document
+  therefore renders through the same shader path as a live run — the EV slider, the exposure
+  mode, the background and print mode all keep working on it, and there is no exposure-time
+  clipping baked into the pixels. From format v6 the energy is stored as **float16 with one
+  global scale** (zlib-deflated), and the live preview's own GPU texture is the same float16 —
+  quantized by the same function before upload — so the file still holds exactly the pixels the
+  screen was sampling, at half the bytes. v5 files (float32) open unchanged and are written back
+  as v6 on the next save. Files written by v4 and earlier embed an 8-bit PNG instead (exposure
+  baked in) and still open, but keep their baked exposure until the next run.
 
-The format uses a 44-byte header with magic number `LMC\0`, version field, flag bits (whether a texture is present, and which encoding it uses), and offset / size pointers to the JSON and texture payloads. Values are stored as human-readable semantic types (e.g. `"prism"` instead of enum indices) for forward compatibility.
+The format uses a 44-byte header with magic number `LMC\0`, version field, flag bits (whether a texture is present, and which encoding it uses), and offset / size pointers to the JSON and texture payloads. Values are stored as human-readable semantic types (e.g. `"prism"` instead of enum indices) for forward compatibility. The texture section's own 32-byte header has no spare bytes left as of v6 (its last field became the float16 scale); adding a field there means growing the header and bumping the format version together.
 
-Because the v5 texture is lossless float data, a project file is larger than it used to be:
-roughly 2–3 MB for a sparse scene and about 20 MB for a dense all-sky scene at the default
-1024 simulation resolution (four times that at 2048), against 0.2–5 MB for the old PNG.
+A project file with a texture is still larger than the old PNG bake, but half of what v5 was.
+Measured on three real scenes at the default 1024 simulation resolution (a 2048×1024 source
+texture), saved from the GUI:
+
+| Scene | Non-zero texels | v5 (float32) | v6 (float16) |
+|---|---|---|---|
+| 3568/31568 raypath halos, 5 M rays | 9% | 2.5 MB | 1.4 MB |
+| 98°/120°/144° halos, 100 M rays | 65% | 17.1 MB | 8.5 MB |
+| Lens flare (5-line spectrum), 20 M rays | 79% | 20.6 MB | 9.9 MB |
+
+The old PNG bake was 0.2–5 MB; the texture is the all-sky source at 2048×1024, so the size depends
+on how much of the sky the scene lights, not on the lens or the view. Halving the bit width is
+also the last lever there is: Monte-Carlo noise is spatially white, so the compressor only ever
+recovers the black texels.
+
 Untick "Include Texture in .lmc" in the Save menu if the file size matters more than the embedded preview.
 
 ### Unsaved Changes
