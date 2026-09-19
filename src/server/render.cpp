@@ -18,6 +18,7 @@
 #include "core/ev_anchor.hpp"
 #include "core/lens_proj_build.hpp"
 #include "core/math.hpp"
+#include "core/parallel_rows.hpp"  // EXPLORE-571.14 prototype: row-parallel dispatch for the fused pixel loop below
 #include "core/raypath.hpp"
 #include "core/scatter_accum.hpp"  // MakeCameraRotation (single source of the camera rotation chain)
 #include "core/shared/projection_shared.h"
@@ -1081,105 +1082,124 @@ void RenderConsumer::PostSnapshot() {
   // to, byte for byte and without tolerance. Keep it that way: each step below
   // must stay a per-element operation on a value that never round-trips through
   // a different precision.
-  for (int i = 0; i < total_pix; i++) {
-    float xyz[3];
-    for (int j = 0; j < 3; j++) {
-      xyz[j] = snapshot_xyz_[i * 3 + j] * scale;
-    }
-
-    // Hoisted above the colour branch because print needs it there: under kPrint a masked-out pixel
-    // is not "coloured, then cleared" but simply unexposed, so the same predicate that decides
-    // whether the sky is painted decides how much ink lands. screen still consumes it below, at the
-    // point in the chain it always did — the value is computed once per pixel either way, so no
-    // arithmetic moved, only the declaration.
-    const bool paint_bg = masked_bg ? visible_mask_[i] != 0 : true;
-
-    float rgb[3];
-    if (print_mode) {
-      // Print is greyscale by construction (doc/print-mode-subtractive-ink.md §5): the gamut clip,
-      // the XYZ->RGB matrix and the ray_color tint are all skipped, not because they are expensive
-      // but because "which arc is this" cannot be carried by hue on paper at all — an ink whose
-      // absorption is the complement of the light would make a neutral feature (a sun pillar, a
-      // parhelic circle) vanish on a white sheet. What is taken is the same scalar the other two
-      // branches would have started from: xyz[1], which is CIE Y already multiplied by scale.
-      const float e = paint_bg ? xyz[1] : 0.0f;
-      const float transmittance = InkTransmittance(InkOpticalDensity(e));
-      for (int j = 0; j < 3; j++) {
-        rgb[j] = config_.paper_[j] * transmittance;
-      }
-    } else if (use_real_color) {
-      // Gamut clip → matrix multiply
-      float clipped[3];
-      GamutClipXyz(xyz, clipped);
-      XyzToLinearRgb(clipped, rgb);
-    } else {
-      // Skip gamut clip; use D65 gray (luminance-only) → matrix multiply → ray_color tint.
-      // Inline matrix multiply (no clamp before ray_color — clamp after bg blending below).
-      float gray[3];
-      for (int j = 0; j < 3; j++) {
-        gray[j] = kWhitePointD65[j] * xyz[1];
-      }
-      for (int j = 0; j < 3; j++) {
-        float v = 0;
-        for (int k = 0; k < 3; k++) {
-          v += gray[k] * kXyzToRgb[j * 3 + k];
+  // EXPLORE-571.14 prototype: dispatched row-parallel via ParallelRows (core/parallel_rows.hpp),
+  // the same premise-checked utility lens_proj_build.hpp/annotation_overlay.hpp already use for
+  // per-pixel-independent W*H loops — every pixel here writes only its own bytes and reads only
+  // snapshot_xyz_[i]/visible_mask_[i]/layers, so splitting by row cannot change the bytes produced.
+  // ONE exception to "reads only": AnnotationLayers::on_marker_ring is reusable per-pixel SCRATCH
+  // that CompositeAnnotations writes before reading, for the SAME pixel, to avoid a per-pixel
+  // allocation (see its declaration in render.hpp) — sharing one `layers` across concurrently
+  // executing row bands would race on it. Each band therefore gets its own copy of `layers`; the
+  // copy is a handful of LineLayer/MarkerLayer entries (not per-pixel data) and happens once per
+  // band, not once per pixel, so it does not reintroduce the per-pixel allocation the scratch
+  // buffer exists to avoid.
+  const int width_px = config_.resolution_[0];
+  const int height_px = config_.resolution_[1];
+  ParallelRows(height_px, static_cast<size_t>(total_pix), [&](int row_begin, int row_end) {
+    AnnotationLayers band_layers = layers;
+    for (int row = row_begin; row < row_end; ++row) {
+      for (int col = 0; col < width_px; ++col) {
+        const int i = row * width_px + col;
+        float xyz[3];
+        for (int j = 0; j < 3; j++) {
+          xyz[j] = snapshot_xyz_[i * 3 + j] * scale;
         }
-        rgb[j] = v * config_.ray_color_[j];
-      }
-    }
 
-    // Background blending, then the annotations, then clamp, sRGB gamma and the narrowing
-    // write. The gamma call is the scalar LinearToSrgb the old LinearToSrgbBatch looped
-    // over element by element (color_space.cpp), not a different formula. The three
-    // channel loops below are one per stage rather than one for all three stages; each
-    // channel's own chain of operations is unchanged, and the channels never read each
-    // other, so the bytes are the ones the single loop produced.
-    //
-    // The background is added only where the lens actually images visible sky
-    // (visible_mask_, built once at construction). Outside that region — beyond the image
-    // circle, or in the hemisphere `visible` excludes — painting it the sky colour would turn
-    // e.g. a 180 deg fisheye render into a solid rectangle of background with an invisible
-    // circle inside it. Clamp, gamma and the narrowing write still run for every pixel, so a
-    // masked pixel goes through the identical chain.
-    //
-    // A masked pixel is also CLEARED of ray energy, below (478.2). Withholding the background
-    // is not on its own enough to make `visible` a display clip: beyond the image circle no ray
-    // can land, but inside it the excluded hemisphere is imaged normally and its rays deposit
-    // energy like any other — measured at 89% (rectangular) to 99.8% (globe) of that region
-    // carrying energy. Left alone they show up as lit pixels scattered through a black field.
-    for (int j = 0; j < 3; j++) {
-      // This whole block is the ADDITIVE operator's way of saying "what colour is this pixel's
-      // ground", and kPrint answered that question already, up in the colour branch: paper times
-      // transmittance, with a zero exposure wherever paint_bg is false. So print skipping it is not
-      // an omission. There is no sky term to add either — background is the SKY and paper is the
-      // SHEET, two fields on purpose, so that "print onto the default black background" is not a
-      // reachable state at all.
-      if (!print_mode) {
-        if (paint_bg) {
-          rgb[j] += config_.background_[j];
-        } else if (masked_bg) {
-          // SYNC:visible-mask-zero — the display clip. component_compositor.cpp's
-          // ApplyCompositeBackground carries the twin of this line for the raypath-colour path;
-          // both read the SAME visible_mask_ buffer, so the predicate is single-sourced and only
-          // the two applications of it need to stay in step. Guarded by masked_bg so a mask that
-          // disagrees with the pixel count still falls back to "paint everything", which is the
-          // fallback paint_bg above already takes.
-          //
-          // Placed before the annotation layers on purpose: a grid line or the horizon is drawn ON
-          // the clipped region, over black, exactly as it is drawn over the background elsewhere.
-          // The annotations run their own hemisphere policy (annotation_overlay.cpp's
-          // VisibleForLabel), so what reaches here has already been admitted.
-          rgb[j] = 0.0f;
+        // Hoisted above the colour branch because print needs it there: under kPrint a masked-out pixel
+        // is not "coloured, then cleared" but simply unexposed, so the same predicate that decides
+        // whether the sky is painted decides how much ink lands. screen still consumes it below, at the
+        // point in the chain it always did — the value is computed once per pixel either way, so no
+        // arithmetic moved, only the declaration.
+        const bool paint_bg = masked_bg ? visible_mask_[i] != 0 : true;
+
+        float rgb[3];
+        if (print_mode) {
+          // Print is greyscale by construction (doc/print-mode-subtractive-ink.md §5): the gamut clip,
+          // the XYZ->RGB matrix and the ray_color tint are all skipped, not because they are expensive
+          // but because "which arc is this" cannot be carried by hue on paper at all — an ink whose
+          // absorption is the complement of the light would make a neutral feature (a sun pillar, a
+          // parhelic circle) vanish on a white sheet. What is taken is the same scalar the other two
+          // branches would have started from: xyz[1], which is CIE Y already multiplied by scale.
+          const float e = paint_bg ? xyz[1] : 0.0f;
+          const float transmittance = InkTransmittance(InkOpticalDensity(e));
+          for (int j = 0; j < 3; j++) {
+            rgb[j] = config_.paper_[j] * transmittance;
+          }
+        } else if (use_real_color) {
+          // Gamut clip → matrix multiply
+          float clipped[3];
+          GamutClipXyz(xyz, clipped);
+          XyzToLinearRgb(clipped, rgb);
+        } else {
+          // Skip gamut clip; use D65 gray (luminance-only) → matrix multiply → ray_color tint.
+          // Inline matrix multiply (no clamp before ray_color — clamp after bg blending below).
+          float gray[3];
+          for (int j = 0; j < 3; j++) {
+            gray[j] = kWhitePointD65[j] * xyz[1];
+          }
+          for (int j = 0; j < 3; j++) {
+            float v = 0;
+            for (int k = 0; k < 3; k++) {
+              v += gray[k] * kXyzToRgb[j * 3 + k];
+            }
+            rgb[j] = v * config_.ray_color_[j];
+          }
         }
-      }
-    }
-    CompositeAnnotations(layers, i, print_mode, rgb);
-    for (int j = 0; j < 3; j++) {
-      rgb[j] = std::clamp(rgb[j], 0.0f, 1.0f);
-      rgb[j] = LinearToSrgb(rgb[j]);
-      snapshot_image_buffer_[i * 3 + j] = static_cast<uint8_t>(rgb[j] * 255);
-    }
-  }
+
+        // Background blending, then the annotations, then clamp, sRGB gamma and the narrowing
+        // write. The gamma call is the scalar LinearToSrgb the old LinearToSrgbBatch looped
+        // over element by element (color_space.cpp), not a different formula. The three
+        // channel loops below are one per stage rather than one for all three stages; each
+        // channel's own chain of operations is unchanged, and the channels never read each
+        // other, so the bytes are the ones the single loop produced.
+        //
+        // The background is added only where the lens actually images visible sky
+        // (visible_mask_, built once at construction). Outside that region — beyond the image
+        // circle, or in the hemisphere `visible` excludes — painting it the sky colour would turn
+        // e.g. a 180 deg fisheye render into a solid rectangle of background with an invisible
+        // circle inside it. Clamp, gamma and the narrowing write still run for every pixel, so a
+        // masked pixel goes through the identical chain.
+        //
+        // A masked pixel is also CLEARED of ray energy, below (478.2). Withholding the background
+        // is not on its own enough to make `visible` a display clip: beyond the image circle no ray
+        // can land, but inside it the excluded hemisphere is imaged normally and its rays deposit
+        // energy like any other — measured at 89% (rectangular) to 99.8% (globe) of that region
+        // carrying energy. Left alone they show up as lit pixels scattered through a black field.
+        for (int j = 0; j < 3; j++) {
+          // This whole block is the ADDITIVE operator's way of saying "what colour is this pixel's
+          // ground", and kPrint answered that question already, up in the colour branch: paper times
+          // transmittance, with a zero exposure wherever paint_bg is false. So print skipping it is not
+          // an omission. There is no sky term to add either — background is the SKY and paper is the
+          // SHEET, two fields on purpose, so that "print onto the default black background" is not a
+          // reachable state at all.
+          if (!print_mode) {
+            if (paint_bg) {
+              rgb[j] += config_.background_[j];
+            } else if (masked_bg) {
+              // SYNC:visible-mask-zero — the display clip. component_compositor.cpp's
+              // ApplyCompositeBackground carries the twin of this line for the raypath-colour path;
+              // both read the SAME visible_mask_ buffer, so the predicate is single-sourced and only
+              // the two applications of it need to stay in step. Guarded by masked_bg so a mask that
+              // disagrees with the pixel count still falls back to "paint everything", which is the
+              // fallback paint_bg above already takes.
+              //
+              // Placed before the annotation layers on purpose: a grid line or the horizon is drawn ON
+              // the clipped region, over black, exactly as it is drawn over the background elsewhere.
+              // The annotations run their own hemisphere policy (annotation_overlay.cpp's
+              // VisibleForLabel), so what reaches here has already been admitted.
+              rgb[j] = 0.0f;
+            }
+          }
+        }
+        CompositeAnnotations(band_layers, i, print_mode, rgb);
+        for (int j = 0; j < 3; j++) {
+          rgb[j] = std::clamp(rgb[j], 0.0f, 1.0f);
+          rgb[j] = LinearToSrgb(rgb[j]);
+          snapshot_image_buffer_[i * 3 + j] = static_cast<uint8_t>(rgb[j] * 255);
+        }
+      }  // col
+    }  // row
+  });
 
   // The text, last and outside the loop above. See PaintLabels' declaration for why it is not a
   // stage of that loop.
