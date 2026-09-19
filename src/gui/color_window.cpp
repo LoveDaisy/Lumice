@@ -57,6 +57,18 @@ bool PushDisplayState(const GuiState& state, LUMICE_Server* server) {
   if (server == nullptr || state.raypath_color.empty()) {
     return false;
   }
+  // Skip the whole push — not just the wake below — while the startup calibration is still
+  // actually running. LUMICE_SetRaypathColors below writes active_class_table_ under
+  // consumer_mutex_ (server.cpp), while the calibration's own CommitConfig (RunCalibrationInBackground,
+  // app.cpp) assigns that same table with no lock at all before it ever takes consumer_mutex_
+  // (server.cpp) — two unsynchronized writers/readers of one struct holding a std::vector is a
+  // heap-corruption-class race, not a display glitch, so this call must not run concurrently with
+  // it either (code review round 2, Major #2: round 1 only guarded the wake, not this write).
+  // Returning false here leaves the display-state baseline unchanged, so ApplyGuiEffects retries
+  // this same push next reconcile — no state is lost, it just lands once calibration finishes.
+  if (CalibrationPending()) {
+    return false;
+  }
   const int n = static_cast<int>(state.raypath_color.size());
   std::vector<LUMICE_ColorClassDisplay> classes(static_cast<size_t>(n));
   std::vector<int> z_order(static_cast<size_t>(n));
@@ -95,6 +107,10 @@ bool PushDisplayState(const GuiState& state, LUMICE_Server* server) {
   // mandatory here: display-time refresh must not publish valid=false, else SyncFromPoller
   // observes an invalid snapshot and ReconcileSimState pulls a completed sim back into
   // kSimulating — task-color-migration AC1 activity bug root cause (a).
+  //
+  // The calibration check above already covers this wake too (CalibrationPending() was checked
+  // before the write above, and nothing between there and here can make it start pending again on
+  // the GUI's single thread), so no second check is needed here.
   g_server_poller.WakeForRefresh(server);
   return true;
 }

@@ -17,7 +17,8 @@ add_executable(lumice_bench
   "${PROJ_BENCH_DIR}/bench_sim.cpp"
   "${PROJ_BENCH_DIR}/bench_filter.cpp"
   "${PROJ_BENCH_DIR}/bench_crystal.cpp"
-  "${PROJ_BENCH_DIR}/bench_geom_closedform.cpp")
+  "${PROJ_BENCH_DIR}/bench_geom_closedform.cpp"
+  "${PROJ_BENCH_DIR}/bench_post_snapshot_parallel.cpp")
 # Reach the promoted exact prism oracle at test/support/exact_prism_oracle.hpp
 # via `#include "test/support/..."`. The dependency direction (bench →
 # test/support) is inverted vs. usual but intentional: the oracle has one

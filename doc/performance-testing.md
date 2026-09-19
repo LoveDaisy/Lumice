@@ -87,17 +87,31 @@ The legacy CPU route runs a dual pass and prints one JSON per pass:
 `"mode":"single","workers":1` and `"mode":"multi","workers":N`. A GPU route is a single engine and
 prints one line only (`workers:1`).
 
-**The legacy CPU product path is `worker_count = min(PhysicalCoreCount(), kMaxDefaultWorkerCount)`**
-(`ServerImpl::ServerImpl`, `src/server/server.cpp`; only a fixed seed or a GPU route forces 1, and an
-explicit `--workers N` / GUI worker preference overrides the whole expression, cap included). So
-`mode:single` is a per-core/parallel-efficiency diagnostic — **it is not the shipping
-configuration**, and a `grep '"single"'` that looks right will quietly measure a config nobody runs.
+**The legacy CPU product path is a per-platform pair** (`ServerImpl::ServerImpl`,
+`src/server/server.cpp`), both halves returned together by `ServerImpl::AutomaticWorkerBaseAndCap()`:
+`worker_count = min(PhysicalCoreCount(), 10)` on Linux/macOS, and
+`worker_count = LogicalCoreCount()` — the full SMT thread count, no narrower cap — on Windows.
+Only a fixed seed or a GPU route forces 1, and an explicit
+`--workers N` / GUI worker preference overrides the whole expression, cap included. The split is
+keyed on which engine each platform's production default actually loads, and was measured, not
+derived: on the Windows reference box (16C/32T Zen 5, clang-cl x86-64-v3 engine DLL, i.e. what the
+release shell loads there) the automatic count at 10 left 1.07×–1.58× on the table against the
+32-worker count now shipped (three worker-side-projection scenes, `render` with explicit
+`--workers`, 3 interleaved reps each, CoV ≤2.3%, 2026-09-19; the 5-rep sweep that set the shape
+read 1.11×–1.56× the day before), while the same box under WSL2 on the glibc-hwcaps-selected
+x86-64-v4 engine has its optimum at exactly 10 (12 workers already cost 5–23%, 16 halve the
+throughput — a sync-frequency wall, `sys%` rising 4–6× at the knee). The "Linux" cell there is
+WSL2, not native Linux — see "Measurement discipline" below. So `mode:single` is a
+per-core/parallel-efficiency diagnostic — **it is not the shipping configuration**, and a
+`grep '"single"'` that looks right will quietly measure a config nobody runs.
 
-**Neither is `mode:multi`, on a machine with more physical cores than that cap.** The `multi` pass
-asks for `PhysicalCoreCount()` workers explicitly, which is exactly why it escapes the cap: it is
-the denominator parallel efficiency is defined against. Read it as "how well does this box scale to
-all its cores", not as "what a user gets" — the two coincided before the default was capped, and on
-a high-core-count box they no longer do. When you want the shipping number, run a normal `render`
+**Neither is `mode:multi`, on any machine where `PhysicalCoreCount()` differs from that default.**
+The `multi` pass asks for `PhysicalCoreCount()` workers explicitly, which is exactly why it escapes
+the automatic rule: it is the denominator parallel efficiency is defined against. Read it as "how
+well does this box scale to all its physical cores", not as "what a user gets" — the two coincided
+before the default was capped, and now differ in a platform-dependent direction (on a
+many-core Linux/macOS box `multi` runs more workers than the default; on an SMT Windows box it
+runs fewer, 16 against the default's 32 on the reference box). When you want the shipping number, run a normal `render`
 (the default subcommand), or pass `--workers` the capped value and read that. When you want to know
 whether the cap is costing this particular machine throughput, `mode:multi` is precisely the
 measurement that tells you.
@@ -262,7 +276,17 @@ statically linked into one exe: single 100.4%, multi 97.6%, i.e. noise); relativ
 static baseline build, the shipped shell + v3 DLL is **single 2.311×** (matches the pre-split
 anchor) **/ multi 1.562×** (does not — the pre-split anchor above was only ever measured at 1–4
 workers, never at this machine's full 16-core `benchmark` auto-selected worker count, so this gap
-is newly measured, not a regression introduced by the DLL split). A second, DLL-specific cost
+is newly measured, not a regression introduced by the DLL split). **That multi figure has since
+been superseded, and it is worker-count-dependent** (Windows reference box, 2026-09-18, `render`
+with explicit `--workers` on the three worker-side-projection scenes — 2048×1024 single-scatter /
+512×256 / colour fisheye multi-crystal — 5 interleaved reps, CoV ≤2.35%; a different scene set and
+method from the single canonical-scene `benchmark` pass above, so a shift in scope, not a
+re-run): at 16 workers, the `benchmark` `multi` pass's count, the v3 engine is **1.774× / 1.780× /
+1.908×** the baseline engine; at 32 workers — the automatic count Windows now ships — it is
+**1.141× / 1.296× / 1.510×**. The ratio shrinks with W because the fast engine tops out first: the
+baseline engine keeps gaining from SMT up to 32 threads (1.75×–2.12× over its own 10-worker
+figure), the v3 engine only 1.11×–1.56×. Quote the pair with its W; a bare "multi" ratio for this
+box is underspecified. A second, DLL-specific cost
 showed up alongside it: the baseline engine DLL is **10–14% slower** than the old fully-static
 baseline exe (single 86.1%, multi 93.4%) — `WINDOWS_EXPORT_ALL_SYMBOLS`'s generated `.def` export
 table is incompatible with cl.exe's `/GL` whole-program optimization, so the cl.exe-built baseline
@@ -335,6 +359,112 @@ whatever you were trying to measure.
    status line saying which tier this build tree is on.
 
 
+## Measurement discipline: which machines a performance claim needs
+
+**CPU route: a conclusion needs both OSes, not one.** Any CPU-route throughput claim, optimal
+worker-count figure, or A/B result must carry **one-hand data from both the Windows and the WSL2
+reference roles** (role names, not host names — see `machines.md`), and must either quote a Mac
+number alongside them or say why there is none. This is not caution for its own sake: the same
+binary has already produced opposite conclusions on the two OSes twice. The mechanism is not a
+one-off fluke — moving the legacy-CPU route's per-ray projection off the single consumer thread
+and onto the simulator workers (`accumulator-consumer-architecture.md` §1.1) changes where that
+route's parallelism bottleneck sits, and the two OSes do not react to that shift the same way: this
+file's own ISA section above measures the Windows reference box's multi-worker gain at
+**1.77×–1.91×** (scene-dependent, 16 workers; 1.14×–1.51× at its 32-worker automatic default)
+against a Linux/WSL2 gain of only **~1.13×** on the same class of comparison, with the Linux side
+explicitly called out as throughput-capped well short of the single-worker gain — the same shape of
+divergence, not a coincidence limited to one measurement. A number taken on one OS and generalized
+is a guess dressed as a result.
+
+**Native Linux has zero first-hand data — say so, don't paper over it.** Every "Linux" number in
+this tree comes from WSL2, and WSL2 has its own measured behavior that is not native Linux
+behavior: `futex`/`sys` time rising with worker count, and `dxgkrnl` half-virtualization inflating
+CUDA context establishment by ~2.5×. Any OS-keyed constant whose "Linux" cell was actually measured
+under WSL2 must say so in the cell or its caption, not just in prose elsewhere.
+
+**GPU route: `nvidia-smi` utilization is an observation, never a throughput criterion.** It
+measures the fraction of wall time some kernel is running on the device — not SM occupancy, and not
+distance from the kernel-bound ceiling. This tree has already built two scrums on treating it as a
+judge and been wrong both times: eliminating the host-side churn that was consuming 96% of host API
+time left the reported utilization number unchanged, because utilization cannot see occupancy or
+host-bound stalls, only whether *something* is scheduled. The only judges for GPU throughput are
+the `[BENCHMARK]` line's `rays_per_sec`, and — once a kernel-bound ceiling ruler exists — the ratio
+of production throughput to that ceiling.
+
+**Reference-machine mutual exclusion.** The Windows and WSL2 reference roles are one physical
+machine; running a bench on one side while the other is active corrupts both. Already stated in
+`machines.md` — this paragraph only points there, it does not restate the mechanism.
+
+**The observation channel must not sit on the measured thread's critical path.** A debug log line
+or a Python log callback wired into a hot path has previously doubled `DoSnapshot`'s wall time by
+itself — the act of observing changed the number being observed. Route any new instrumentation
+around the critical path (sampling, a separate thread, a post-hoc counter), not through it.
+
+
+## GPU utilization ceiling: register pressure is a real cost, not compiler slack
+
+`trace_single_ms_kernel` (`src/core/backend/cuda_trace_backend.cu`) compiles to **181 registers
+per thread** on the production multi-arch fatbin. At its 256-thread block (`kTraceBlockSize`) that
+is 256 × 181 = 46,336 of the SM's 65,536 32-bit registers — over two thirds of the register file —
+one block fits, two do not — so `ncu`
+reports `Block Limit Registers = 1` and an Achieved Occupancy of **16.14%–16.28%** on the Windows
+CUDA reference role (Blackwell sm_120). Registers are the binding limit, not shared memory. The
+obvious question — is that 181 slack the compiler could be talked out of, and would halving the
+register cap double occupancy and lift throughput? — has been measured, and the answer is no on
+both counts. The numbers are recorded here so the direction is not re-tried from scratch.
+
+The one low-risk lever is `__launch_bounds__(256, 2)` on the kernel signature: no logic change, it
+only tells `ptxas` to fit two blocks per SM, which caps registers at 65,536 / (256 × 2) = 128. It
+does exactly what it promises at compile time and loses at run time:
+
+| Metric | baseline | `__launch_bounds__(256, 2)` | Δ |
+|---|---|---|---|
+| Registers / thread (sm_120, `cuobjdump -res-usage` on the built object) | 181 | 128 | −29.3% |
+| Block Limit Registers | 1 | 2 | +1 |
+| Theoretical occupancy | 16.67% | 33.33% | doubled |
+| Achieved occupancy (`ncu`, Windows reference role) | 16.14%–16.28% | 31.54% | doubled, as predicted |
+| Spill stores / loads (`-Xptxas -v`, sm_120) | 0 B / 0 B | 12 B / 16 B | tiny |
+| **Kernel duration** (`ncu --set basic`, 5e6-ray config, N=4 vs N=3, stdev < 1 µs on both arms) | **163.85 µs** | **179.67 µs** | **+9.65% — slower** |
+| Compute (SM) Throughput | 10.63% | 9.92% | down |
+| Memory Throughput | 27.94% | 25.81% | down |
+| End-to-end `rays_per_sec` (1e9-ray production config, WSL2 reference role, N=6 per arm, CoV 7.1%) | 423.07 M | 427.11 M | +0.95%, inside noise |
+
+Two mechanism conclusions carry beyond this kernel:
+
+1. **A 0-spill baseline means the register count is the kernel's real working set, not slack.**
+   Left unconstrained, `ptxas` chose registers over local memory for every live value and spilled
+   nothing; there was no wasted allocation for `__launch_bounds__` to release. All it can do is
+   force a cap and manufacture spills — and even a spill as small as 12 B / 16 B (three or four
+   32-bit values) cost 9.65% of kernel time here. The register count is set by the kernel's
+   logic complexity; lowering it means changing the logic, not the compiler's mind.
+2. **Occupancy doubling is not a throughput gain unless the kernel is occupancy-bound, and that
+   is decided by the throughput counters, not by the occupancy figure.** At 16% occupancy this
+   kernel ran Compute (SM) Throughput at 10.63% and Memory Throughput at 27.94% — neither anywhere
+   near saturated — so it was not short of resident warps to hide latency with; its limit sits
+   inside the per-thread dependency chain and branch/memory pattern. Doubling residency therefore
+   bought nothing to trade the spill cost against, and both throughput counters *fell*. Read
+   Compute/Memory Throughput before concluding anything from an Achieved Occupancy number; a low
+   occupancy with low throughput counters is a latency-chain kernel, not a residency-starved one.
+
+Two consequences for how this tree measures. The end-to-end A/B alone (+0.95%, 7.1% CoV) would
+have been read as "masked by host-side overhead" — the isolated `ncu` duration shows the stronger
+result, that the kernel itself got slower; the two "no visible gain" surfaces have different
+mechanisms and only the isolated measurement tells them apart. And the register figure must be
+read off the built object (`cuobjdump -res-usage`), not inferred from a green rebuild: during this
+measurement a rewritten source file carried a modification time older than the existing `.obj`,
+`ninja` skipped the recompile with exit 0, and the first profiling pass reported the baseline
+binary's 181 registers for what was believed to be the bounded build — "changed the input, output
+unchanged" was the only signal, and the artifact-level readout was what caught it.
+
+Disposition: **not adopted.** Register pressure stays at 181 / 16% occupancy by decision, not by
+omission. Splitting the kernel into smaller passes was not prototyped: with the bounds-only
+version already a net loss, a split would add real cross-kernel synchronization on top of the same
+spill economics under the single-engine large-dispatch design, and can only be worse. The *other*
+measured contributor to this kernel's low device utilization — the host-side idle gap between
+multiple-scattering layers, and why asynchronous readback was rejected for it — is a different
+mechanism with a different record: `gpu-route-history.md` Phase 14 (§九).
+
+
 ## 1. CLI Pipeline Benchmark
 
 Pure pipeline throughput test without GUI, VSync, or display overhead.
@@ -387,9 +517,11 @@ scheduling overhead. **Meaningful for the legacy CPU route only** — see the GP
 
 > **⚠️ GPU backends are single-engine — there is no "single" vs "multi" parallelism.** The GPU
 > route (Metal / CUDA) runs `worker_count=1` unconditionally (`server.cpp:284`); only the legacy
-> CPU route is genuinely multi-worker (`worker_count = min(PhysicalCoreCount(),
-> kMaxDefaultWorkerCount)` by default; the `multi` benchmark pass asks for full cores explicitly and
-> is therefore uncapped — see §A). Because a GPU
+> CPU route is genuinely multi-worker (by default `worker_count = min(PhysicalCoreCount(), 10)`
+> on Linux/macOS and `LogicalCoreCount()` on Windows — both halves of
+> `ServerImpl::AutomaticWorkerBaseAndCap()`; the `multi`
+> benchmark pass asks for full physical cores explicitly and is therefore outside that rule — see
+> §A). Because a GPU
 > "single" and "multi" pass would both run on the same one engine (differing only by warmup +
 > ray-count, not parallelism), **`Lumice benchmark` collapses the GPU route to ONE steady pass**
 > (labelled `mode="multi"`) and skips the warmup pass; the legacy CPU route keeps the genuine
@@ -968,8 +1100,8 @@ heavy scene's −15% — not a net win, just a different scene favored. The cons
 the default commit granularity (`kCommitCap = env::CommitRayNum(logger_, kDefaultRayNum)`,
 `src/server/server.cpp:1324`), so raising it would coarsen the GUI snapshot cadence as a side
 effect: its reach is wider than CPU throughput alone. (Pointer, not a finding of this sweep: the
-worker count sits on a separate axis from batch size and is capped independently at
-`kMaxDefaultWorkerCount`, `src/server/server.cpp:181`.)
+worker count sits on a separate axis from batch size and is capped independently by
+`ServerImpl::AutomaticWorkerBaseAndCap()`, `src/server/server.cpp:269`.)
 
 **The batch size has a hard floor below 40 rays, and the failure mode is a crash, not a slowdown.**
 `LUMICE_DISPATCH_RAY_NUM` ≤ 32 on the light scene family faults deterministically inside

@@ -669,9 +669,10 @@ typedef struct LUMICE_StatsResult_ {
 
 // =============== Server Configuration ===============
 typedef struct LUMICE_ServerConfig_ {
-  int num_workers;        // CPU worker count (0 = automatic: the physical core count, capped —
-                          // see kMaxDefaultWorkerCount in server.cpp for the value and the
-                          // measurements behind it). A value > 0 is honoured verbatim and is
+  int num_workers;        // CPU worker count (0 = automatic: the physical core count on
+                          // Linux/macOS, the full logical core count on Windows, each capped
+                          // per platform — see ServerImpl::AutomaticWorkerBaseAndCap() in server.cpp
+                          // for the values and the measurements behind them). A value > 0 is honoured verbatim and is
                           // NOT subject to that cap. On the CPU route these are the render
                           // workers (which also run an analysis). On the GPU/Metal/CUDA route
                           // the render engine stays a single Simulator (N engines would contend

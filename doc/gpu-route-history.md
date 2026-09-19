@@ -1,6 +1,6 @@
-# GPU 路线系统回顾（#250 → #312，截至 2026-07-01）
+# GPU 路线系统回顾（#250 → #312 + Phase 13/14，截至 2026-09-19）
 
-> §一~§四 = Metal 单引擎弧（#250→268，原始回顾，截至 2026-06-13）；§五 Phase 10 = CUDA 第二步 + device-fused（#294→302）；§六 Phase 11 = CUDA 吞吐收口 + Windows 交付 + 第三时钟（#303→312）。
+> §一~§四 = Metal 单引擎弧（#250→268，原始回顾，截至 2026-06-13）；§五 Phase 10 = CUDA 第二步 + device-fused（#294→302）；§六 Phase 11 = CUDA 吞吐收口 + Windows 交付 + 第三时钟（#303→312）；§七 Phase 12 = 投影全量对齐；§八 Phase 13 = 多 renderer N 面累加；§九 Phase 14 = CUDA 空闲间隙的机制层否定结果（异步化第三次被拒，这次带机制）。
 
 > 目的：把 GPU 迁移一路的决策演进、已积累数据、遗留项盘点清楚，作为重新深想的全局参照系。
 > 触发：owner 反思"行动前想得不够深→地基不稳、结论来回摇摆、积累不成形"。
@@ -181,3 +181,26 @@
 - **固定资产 + 可见性**（本 Phase 收口）：逐 renderer parity（`test_{metal,cuda}_multi_renderer_parity.py`，含双账本检查 `sum(Y 面 i)/snapshot_intensity[i]`）、双 render 吞吐闸（`test_{metal_multi_renderer,cuda}_throughput.py`，21 次交错采样取中位数 ≥ 单 render 0.85）；`CanUseBackend` 三条前置门拒绝时翻转 `backend_active_`/`active_backend_`，CLI `Stats:` 行与 `[BENCHMARK]` JSON 新增 `backend` / `fell_back`；`capi_runner` 的路由判定改读 `LUMICE_GetActiveBackend` / `LUMICE_GetBackendFallbackFlag`。
 
 **结果**：用户双 render 文档 Metal **27.9M rays/s = 单 render 的 0.950 / 0.908，4.2× legacy**（改前回退态 1.06×）；CUDA（RTX 5090 D）双 render **282.8M rays/s = 单 render 的 0.906 / 0.992，21.1× legacy**（参照机不锁频，单样本 CoV 0.13–0.16，故闸取 21 次交错采样的中位数比）。`IsCompatible` 两个后端均无条件 true，renderer 上限（4）与 C API 解析期上限相同 ⇒ **今天没有任何能到达 simulator 的 config 会在 GPU 路上按 config 形状回退**；剩余回退只有设备/PSO 中途失败，且现在对用户可见。
+
+## 九、Phase 14 — CUDA 每层空闲间隙：异步化第三次被拒，这次带机制（`fe621b8c` / `0b830f3e` → revert `d3810020`，2026-09-19）
+
+> 前置量尺：home-win 原生（RTX 5090 D，WDDM）1e9-ray 生产规模下，CUDA 的 `1/X`（wall ÷ nsys `cuda_gpu_kern_sum` 硬件计时的 kernel 真实执行时间）= **2.26**——GPU 有一半以上的 wall 时间没有 kernel 在跑。随后一次 1e7-ray 的 nsys CorrId 对齐把每层收尾拆成两层：`exit_count`/`cont_count` 那条 4B 读回的阻塞 ≈ 该层两个 kernel 的真实执行时间，是主机据此给 `DrainExits` 定 size、给下一层分区的**真实控制流依赖**，不可异步化；其后的 `landed_weight` 读回 + `cudaMemset` 清零 + `DrainExits` 计数器重置一串小调用发生在 GPU 已空闲之后，加总 ≈202.9 µs/周期，被估为"每次调用各付一次与字节数无关的 WDDM 派发税"，异步排队 + 一次 `cudaEventSynchronize` 即可回收，估算修复后 1/X≈1.60。**这一估算在生产规模被一手数据证伪**，两版实现都已 revert，树与基线零 diff；两个 commit 留在分支历史只作证据。
+
+**两版实现与同 session 交替三跑的结果**（同日基线复现 1/X = 2.263，与 2.26 立项线一致）：
+
+| 臂 | 做法 | wall（3 跑均值） | kernel 硬件计时 | 1/X |
+|---|---|---|---|---|
+| base（`f6d797da`） | — | 1.790 s | 791.18 ms | **2.263** |
+| v1（`fe621b8c`） | `landed_weight` 读回/清零原地改 `cudaMemcpyAsync`/`cudaMemsetAsync` 到 `stream_` + pinned host 缓冲 + 专用 event 一次 `cudaEventSynchronize`；`DrainExits` 计数器重置改 `cudaMemsetAsync` | 1.802 s | 789.28 ms | **2.283**（中性，−0.7% 在噪声内） |
+| v2（`0b830f3e`） | 在 v1 上把 `landed_weight` 的 async D2H + memset **前移到 `exit_count` 阻塞读回之前**，复用既有 `ev_end_d2h_` 等待（`alloc_tally` 同款先例） | 2.005 s | 789.74 ms | **2.539**（慢 11.5%，三次一致） |
+
+**机制（来自 nsys `cuda_api_sum` + `cuda_gpu_trace` 逐周期时间线，非推测）**：
+
+1. **小阻塞拷贝的成本不是"派发税"，是一趟 WDDM submit→complete 往返**。v1 把 `cudaMemcpy` 从 11655 次/1373 ms 降到 7839 次/1204 ms（−170 ms，正是被拿掉的 `landed_weight` 阻塞拷贝），但 `cudaEventSynchronize` 从 3816 次/31.7 ms 涨到 7632 次/251 ms（+219 ms）。等待没有消失，只是换了名字：async 排队后再 `cudaEventSynchronize` 付的是同一趟往返。**只有"不等"才能省掉它**，而 `landed_weight` 在这里是要被消费的。
+2. **⛔ `exit_count` 读回之前不得插任何 GPU 包**。GPU 时间线上 base 每周期 `K_trace` 结束 @211 µs → `exit_count` D2H 执行 @251 µs（40 µs 延迟）；v2 变成 `K_trace` 结束 @211 → lw D2H @252 → lw memset @280 → `exit_count` D2H @327。前移的两个微型 GPU 包各占 **~28–47 µs 的 GPU 时间线，与字节数无关**（WDDM 对每个 DMA/memset 包的调度延迟），全部串在那条真实控制流依赖之前；省下的 host 侧一趟小拷贝往返（`alloc_tally` 注释里既有实测 ≈20 µs）远小于新增的 ~75 µs 关键路径 ⇒ 净 +54–56 µs/周期（2.005 − 1.790 = 0.215 s ÷ 3816 周期，对得上）。这是硬约束，后续任何"合并收尾"方案先过这一条。
+3. **nsys 把 host API 时长放大约 2×，且小场景每次调用比生产规模高 3–5×**。1e7-ray profiled 口径读到 memset 70.2 µs、eventRecord 48.8 µs、第二个 memcpy 69–85 µs（加总即 202.9 µs）；1e9 生产规模的 capture 里同类是 memset 15.2 / eventRecord 12.8 / launch 16.7 µs，而且 profiling 本身把每周期从 469 µs（未 profiling）拉到 845 µs。**那 202.9 µs 是 profiler 放大后的小场景 host API 时长，不是可回收的真实间隙。** 未 profiling 的真实非 kernel 间隙 = 469 − 207 ≈ **262 µs/周期**，其中 `landed_weight` 那趟往返只占 ~20 µs（≈4%）。方法学教训与 Phase 11 同族：用 profiled 口径的绝对 µs 数去估未 profiling 的收益，尺子本身先没过审（a16/a42）。
+4. **D2H 按字节分桶（7815 条，三臂分布完全一致）**：7693 条 ≈0 B（每周期 `exit_count` 4 B + `landed_weight` 16 B，GPU 侧 0.4 µs）+ 61 条 8.389 MB + 61 条 25.166 MB（每 ~64 batch 一次 `ReadbackXyzAccum` 窗口 drain：25.166 MB = 2048×1024×3 float 的 xyz 面，8.389 MB 是同次 drain 的伴随面；GPU 侧 560 / 1900 µs 每次）。**不存在其他尺寸** ⇒ `DrainExits` 的 exit-record 大数组拷贝在 device-fused XYZ（S2）路上**一次也没发生**：kernel 不写 `d_exit_`，`h_exit_count_`==0 直接早返回，v1 改的那行在生产路径根本不执行。这不是小场景假象而是 S2 路的结构性事实（Phase 11 的 exit-cap 已说过 trace kernel 从不写 `d_exit_`，这里是它在 D2H 侧的镜像）。
+5. **顺带发现，未动**：那 122 次窗口 drain 阻塞拷贝合计 **≈150 ms/1e9 rays ≈ 8.4% wall**，比本次瞄准的 `landed_weight` 往返（~4%）大一倍，是当前数据里最大的单一非 kernel 项；它在 `ReadbackXyzAccum`（第三时钟，Phase 11 末尾引入），与本次改的函数异根因，只登记不并入。
+6. **正确性尺子**：CUDA 路上固定 seed、同一二进制跑两次，输出 `.npy` 的 MD5 就不同（float `atomicAdd` 顺序不确定），所以**逐位哈希不是 CUDA 的回归尺子**，parity battery 才是——两版都过 22/25，3 红为 `parhelion` +0.400% 的既存红且基线同机逐位复现；`CudaKShapeFilterParity`（消费 `exit_w_sum`=`landed_weight`，读回失序会直接红）两版皆绿。
+
+**结果与裁决**：AC「1/X ≤ 1.74」两版均未达标，按 a46 零收益代码不保留（v1 仅剩"显式 event 优于隐式 NULL-stream 顺序"一条理由，那是另一个题）。**这是异步化方向在 GPU 路上第三次被拒**——#263 拒"async/双缓冲藏延迟"（上界不值）、Phase 11 吞吐收口拒"stream deferral"（`cudaEventSynchronize` 仅 0.3%）、本次拒"合并收尾读回"（机制：往返不可免 + 微型包排在控制流依赖前必亏）；三次的共同教训是**异步化只对"不需要等的东西"有效，而 GPU 路上每层收尾要等的东西就是控制流本身**。剩下的 262 µs/周期间隙留给后续一次零代码的模型检验（每周期 ~10 次 host 提交 × 每包 ~30–45 µs 是否成立；不成立就不该再在这条线上花参照机时间），候选杠杆按本次数据排序：① `ReadbackXyzAccum` 窗口 drain 异步双缓冲/降频（8.4%）；② 4 个纯诊断的 timing `cudaEventRecord` 在非 debug 路径关掉；③ 层起始的 `d_exit_count_`/`d_cont_count_` memset 折进 `gen_root_kernel`；④ `exit_count` + `landed_weight` 合并成一个连续 device 缓冲一次 D2H（消掉 ~20 µs 往返而不加包）。

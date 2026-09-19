@@ -148,4 +148,8 @@ int PhysicalCoreCount() {
   return n;
 }
 
+int LogicalCoreCount() {
+  return std::max(1, static_cast<int>(std::thread::hardware_concurrency()));
+}
+
 }  // namespace lumice

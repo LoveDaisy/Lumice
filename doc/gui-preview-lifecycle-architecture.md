@@ -160,6 +160,26 @@ CUDA 超大 batch 中途无法响应。第一性原理：
 
 其中 **I3、I4 正是当前 bug 违反的两条**——回归测试应直接钉住它们。
 
+> **as-built 追记（2026-09-19）：启动校准是一次 poller 从不观测的真实 run，其隐身靠 join 纪律而非 I1–I7。**
+> `CalibrateQualityThreshold()`（`src/gui/app.cpp`）在主循环开始前对默认文档跑一次 1e5 光线的真实
+> `LUMICE_CommitScene`，既是质量闸阈值的标定，也是 server 后端（GPU context、默认文档的 consumer
+> 布局、D65 表、首次大块 readback）的启动预热——它现在跑在**后台线程**（`RunCalibrationInBackground`），
+> 且 server 从一开始就按文档的 `use_gpu_backend`/`worker_count` 构造（`ConstructServerForState`），
+> 不再先建 CPU server 再在首次 Run 时整个重建。这次 run 之所以不需要 I1–I7 的任何合规证明，是因为
+> 它**从不接入 `g_server_poller`**：poller 是预览的唯一发布者，没被唤醒就没有观测，也就没有世代号、
+> 快照、gate 可谈。这条前提由两类不同守护共同维持，按"能否接受阻塞"分类（code review round 1/2 收敛）：
+> **销毁/重建 server** 的路径（R1，与 Stop 相同）与**用户发起的命令**（`DoRun` / `DoStop` /
+> `DoAnalyze`，阻塞等待在这些路径上是预期行为）都先调 `JoinPendingCalibration()`（`JoinPendingStop()`
+> 的孪生）阻塞等待。**两处 display-time 刷新路径**（`PushDisplayState`、合成 EV push）在渲染路径上，
+> 不能为校准最坏 2s 阻塞整帧——它们改用非阻塞的 `CalibrationPending()` 探测，侦测到校准仍在跑就整体
+> 跳过本次 push（连同其中真正写 server 状态的调用，不只是唤醒 poller 那一步），显示态基线不更新，
+> 下一次 reconcile/帧自动重试，**从不调用 `JoinPendingCalibration()`**。两类守护漏掉任何一处的后果不同：
+> 唤醒类的路径漏掉会让 poller 观察到正在跑校准场景的 RUNNING server 并把预热帧当用户帧发布；
+> display-time 路径漏掉会让写 server 状态的调用（如 `LUMICE_SetRaypathColors`）与校准线程内部无锁的
+> `CommitConfig` 并发写同一结构，是堆损坏量级的竞争而非画面错误。
+> 钉住第一类的是 `test/composition-correctness/gui/test_startup_calibration_chain.cpp`（预热后 server
+> IDLE、已发布快照对象不变、在飞重建先 join）。
+
 > **落地补丁（2026-08-01，PR 见 git log）：I6「终帧无条件上屏」曾长期未被落实。**
 > 这不是新增不变量，而是补上实现对 **I6 后半句**（§7 规则 2）的一次合规回归——I6 本身文本不变。
 >
@@ -421,3 +441,131 @@ I1/I2/I5/I6 管的是世代号诚实、owner 唯一、交接原子、gate 不越
 - 本文：**GUI 侧**把"显示刷新 / 快照物化 / batch 生产 / 生命周期心跳"四时钟解耦，别让昂贵帧物化绑架廉价生命周期。
 
 共同的元原则：**每个时钟一个独立频率；跨时钟边界只用单一版本化交接；真相有唯一 owner，其余是电平触发的投影。**
+
+---
+
+## 12. `DoSnapshot` 分段计时 as-built（2026-09-19 补充）
+
+§6 把「快照物化」单列为一个时钟，理由是它昂贵；§8 把 Stop 响应性和超大 batch 分开处理，理由也是
+它昂贵。本节记录这个「昂贵」到底由什么构成——`ServerImpl::DoSnapshot`（`src/server/server.cpp:1448`）
+在 GUI 轮询线程上做 XYZ→sRGB 融合与 P99 锚点计算，分段计时坐实了各段占比与随分辨率的标度，并对三条
+最容易被提出的优化路径（搬离轮询线程 / P99 降采样 / 跨 Run 持久化 backend buffer）逐条给出收益上限
+的机制层核验。结论是**三条全部不值得动**，唯一的大头在这三条之外。写下来是为了让下一个人问
+「`DoSnapshot` 为什么这么慢、能不能搬到别的线程」时不必重测。
+
+### 12.1 分段数字
+
+测量条件：Mac 本机 Metal 路，`examples/config_example.json` 的 dual-fisheye 渲染器，`ray_num=3e8`，单
+渲染器、无 raypath 染色（composite 段恒为 0，mono 路径）。探针是 `DoSnapshot` 内临时的 `steady_clock`
+分段累加，每档分辨率各起独立进程跑到稳态（HI-RES n=95 帧，LO-RES n=330 帧）后取均值——两档必须分进程，
+因为累加器是进程静态的，单进程 A/B 会让第一档的累计和污染第二档的均值（实测 LO-RES 均值从 HI-RES
+遗留值缓慢收敛下来，而非从头收敛）。
+
+| 指标 | HI-RES（2048×1024） | LO-RES（512×256） |
+|------|---------------------|-------------------|
+| `DoSnapshot` 总墙钟（稳态均值） | 92,520 µs | 6,940 µs |
+| post_snapshot（`RenderConsumer::PostSnapshot` 逐像素 XYZ→sRGB 融合循环） | 87,614 µs（94.7%） | 4,765 µs（68.7%） |
+| prepare_snapshot（Phase 1：P99 锚点 + XYZ double→float 拷贝） | 3,148 µs（3.4%） | 1,993 µs（28.7%） |
+| count_pixels（Phase 1.5：`RenderConsumer::CountEffectivePixels`） | 1,718 µs（1.9%） | 106 µs（1.5%） |
+| 分段覆盖率 | 99.96% | 98.90% |
+
+三段分别对应 `DoSnapshot` 的三个 phase：Phase 1 在 `consumer_mutex_` 下调每个 consumer 的
+`PrepareSnapshot()`（`server.cpp:1463-1486`）；Phase 1.5 在锁外数有效像素（`server.cpp:1508-1513`）；
+Phase 2 不持 `consumer_mutex_`、只持 `do_snapshot_mutex_`，调每个 consumer 的 `PostSnapshot()`
+（`server.cpp:1551-1554`）。
+
+两条从数字里读出来的标度事实：
+
+- **post_snapshot 与像素数近线性**：像素比 16.0×，耗时比 87,614 / 4,765 = 18.4×，超线性约 15%，
+  疑为高分辨率下 XYZ 与图像缓冲区超出 L2/L3 缓存，未单独验证。
+- **prepare_snapshot 不随渲染分辨率线性缩放**（耗时比仅 1.58×），因为它是两个量级不同、标度规律不同的
+  子项之和：`AnchorConsumer::PrepareSnapshot`（`src/server/anchor_consumer.cpp:121`）在**固定**
+  2048×1024 的锚平面（`src/core/anchor_buffer.hpp:49-50`）上算 P99，是与渲染分辨率无关的常数项（用两档
+  数字解出约 1.9 ms）；`RenderConsumer::PrepareSnapshot`（`src/server/render.cpp:774-800`）的逐像素
+  double→float XYZ 拷贝才与渲染分辨率 × 3 通道线性，HI-RES 下贡献约 1.2 ms。
+
+### 12.2 三条候选路径的收益上限（均为机制层核验，非测量噪声）
+
+**① 把 `DoSnapshot` 搬离轮询线程——收益上限 0%。** `server.cpp` / `render.cpp` /
+`component_compositor.cpp` 的 `DoSnapshot` 调用链上没有任何内部并行原语（`std::thread` /
+`std::async` / `parallel_for` / `#pragma omp`）；`server.cpp` 里出现的三处 `std::thread`
+（`:437` 的 simulator worker 池、`:618-619` / `:834-835` 的 consume / generate-scene 持久线程）都是
+独立于快照物化的工作线程。post_snapshot 的 87.6 ms 是纯单线程串行计算，调用它的 OS 线程只决定
+**「谁被阻塞」**，不决定**「阻塞多久」**。此前观测到的「稳态帧间隔 ≈ `DoSnapshot` 长度」串行化现象，
+根因是轮询线程与渲染发布共享同一次计算，搬线程能解开这个共享（轮询线程恢复响应性），但不能把计算本身
+变短——「回到 GPU batch 时间量级」这个目标靠换线程结构性不可达。
+
+**② P99 锚点降采样——已是现状，残余上限约 HI-RES 总时的 2–3%。**
+`kMonoAnchorDownsampleFactor = 8`（`src/core/ev_anchor.hpp:192`，经 `anchor_buffer.hpp:55` 的
+`kAnchorDownsampleFactor` 别名进入 `AnchorL99Sky`，`anchor_buffer.hpp:108-112`）早已把 mono 路径的
+P99 排序降到 256×128 粗网格，即 1/64 采样点。剩下的约 1.9 ms 常数底来自
+`DownsampleBoxSumY`（`ev_anchor.hpp:63`）的 box-sum 累加阶段——它仍要遍历全部 `wc·hc·f²` 个源像素做
+简单加法（不是排序），这是「对每个源像素至少看一眼」这条硬约束下的地板。「降采样换收益」这个好处
+已经拿过一次，不能再拿第二次。
+
+**③ 跨 Run 持久化 backend 的 session buffer——结构性不可行。** CUDA 的 `EnsureSessionBuffers`
+（`src/core/backend/cuda_trace_backend.cu:3219`，`:4517` 调用）与 Metal 的 `EnsureRootBuffers`
+（`src/core/backend/metal_trace_backend.mm:1477`，`:3427` 调用）每 Run 重新分配，看起来像 grow-only
+缓存的疏漏，其实是一条明文架构不变量的必然推论：`src/core/simulator.cpp:1383-1391` 规定 backend 实例
+按 `Run()` 粒度新建、从不跨 Run 池化，Metal 靠这个生命周期实现 `!seeded` 门
+（`metal_trace_backend.mm:809` 声明，`:3207-3212` 门本体），在每个 `Run()` 的第一次 seeding 时恰好一次
+地重置 RNG 状态与 `root_ray_count`。该注释原话已写明：若引入 backend pool，该门的语义必须重审——
+跨 Run 的 PCG 确定性与计数器翻转都建立在 per-Run 生命周期上。所以「跨 Run 持久化 buffer」不是缓存几个
+buffer 的小收益，而是重新设计 RNG 确定性契约（触及 `seam-design.md` /
+`gpu-single-engine-implementation.md` 已定案的架构），远超本节 host 侧 `DoSnapshot` 的范围。
+
+### 12.3 唯一的大头在这三条之外
+
+post_snapshot 是 HI-RES 下唯一占比超过 90% 的段，但上面三条路径没有一条碰它：①换线程不改计算量，
+②只作用于 prepare_snapshot 的 P99 子项，③根本不在 `DoSnapshot` 里。真正缩短它只有一条路——
+**并行化 `RenderConsumer::PostSnapshot` 的逐像素循环本身**（`src/server/render.cpp:1084` 起）。这个
+循环逐像素独立、无跨像素依赖（`render.cpp` 该循环上方的注释说明它是四个逐元素 pass 的融合，且被
+`test_render_consumer_post_snapshot_fusion.cpp` 钉住字节等价），是 embarrassingly parallel 的候选；
+要评估的是线程池开销、与 `do_snapshot_mutex_` / `consumer_mutex_` 的交互，以及是否值得为一条非交互式的
+预览路径引入并行开销。这条路径已在 §12.4 测量并落地，实测数字与机制说明见该节。
+
+### 12.4 第四条路径已落地：并行化 `PostSnapshot` 的逐像素循环（2026-09-19）
+
+**机制。** 复用 `core/parallel_rows.hpp::ParallelRows()`——`lens_proj_build.hpp` /
+`annotation_overlay.hpp` 已经在用的同一个工具，其「逐像素独立、按行分片、字节等价」premise 在那两处已被
+验证过——把 `RenderConsumer::PostSnapshot` 的融合像素循环包进 `ParallelRows(height, total_pix, body)`，
+`body` 收到 `[row_begin, row_end)` 半开行区间（`src/server/render.cpp`，`ParallelRows(height_px, ...)`
+调用处）。循环里每个像素只写自己的三个字节、只读 `snapshot_xyz_[i]` / `visible_mask_[i]` / `layers`，
+按行切分不改变任何一次浮点运算的顺序，因此 §12.3 引用的 `test_render_consumer_post_snapshot_fusion.cpp`
+字节等价契约原样成立。低于 `ParallelRows` 的像素阈值（`kParallelPixelThreshold` = 65536，
+`src/core/parallel_rows.cpp`）时它在调用线程上内联串行执行，LO-RES 档（512×256 = 131072 px）与 HI-RES 档
+都在阈值之上，走多线程路径。
+
+**竞争源与修复。** 「只读」有一个例外：`AnnotationLayers::on_marker_ring` 是一块逐像素复用的可变 scratch
+buffer——`CompositeAnnotations` 为避免每像素分配，对当前像素先写后读，复用同一块内存（见 `render.hpp`
+该成员的声明注释）。多个并行行带共享同一个 `layers` 对象会真实数据竞争。修复是每个行带对 `layers` 做
+一次深拷贝（`AnnotationLayers band_layers = layers;`）：拷贝的是 handful 条 `LineLayer` / `MarkerLayer`
+条目而非逐像素数据，每个行带一次而非每个像素一次，所以没有把 scratch buffer 存在的理由（避免每像素分配）
+重新引入。
+
+**实测数字。** Mac 本机（12 核）同进程 controlled A/B，`bench/bench_post_snapshot_parallel.cpp`
+（Google Benchmark，2048×1024 dual-fisheye、50 万条散射光线、只计 `PostSnapshot()` 本身），串行与并行
+两版靠切换 `render.cpp` 各编译一次：
+
+| 场景 | 串行 | 并行（`ParallelRows` 按行分片） | 比值 |
+|------|------|------|------|
+| HI-RES post_snapshot，无 marker | 44.9 ms | 6.99 ms | 6.42× |
+| HI-RES post_snapshot，含 2 个 marker | 60.8 ms | 9.59 ms | 6.34× |
+
+两者都远超立项时预登记的 1.5× 落地门槛。⚠️ 上表的串行基线 44.9 / 60.8 ms 与 §12.1 表格里的 87,614 µs
+**不是同一测量口径**：§12.1 是真实 GUI 轮询环境下（Metal 路、`ray_num=3e8`、`DoSnapshot` 内 `steady_clock`
+分段累加）测得，本节是同进程合成数据的 A/B 微基准，两者差约 2×，差异未深究（候选解释包括真实环境下
+与并发 worker 抢核、缓存状态、以及合成 batch 只有一次 `Consume` 而真实场景累积了 3e8 条光线的 XYZ 分布
+差异，均未单独验证）。两轮的判据都只依赖**同环境比值**，不依赖绝对值可比，所以这个口径差不影响结论，
+但把两组数字并排相减是错的。
+
+**正确性验证。** 既有的 4 个 fusion 字节级 oracle case 分辨率都是 16×16，在 `ParallelRows` 的像素阈值之下，
+只走串行 fallback，对多线程路径不构成证据。落地时新增第 5 个 case
+（`RenderConsumerPostSnapshotFusion.LargeResolutionWithMarkersIsByteExactAgainstOracle`，同一文件）：
+300×300 = 90000 px 越过阈值，六个 marker 全部启用（让 `on_marker_ring` 这块唯一逐像素写的状态真的
+被写），对独立重推的 marker-ring 合成 oracle 做逐字节比对，mismatch 必须为 0。它是这棵树里唯一真正执行
+多线程路径而非串行 fallback 的 `PostSnapshot` 正确性证据。
+
+**本节不覆盖的。** `ParallelRows` 每次调用现场起停一个全核线程池、与并发运行的固定 simulator worker 池
+抢核，是并行化落地后暴露的**资源调度成本**，与本节收口的「正确性 + 同环境收益」是不同命题，在
+`PrepareSnapshot` 锁竞争的独立评估里一并处理，本节不展开。

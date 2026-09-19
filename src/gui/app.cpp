@@ -43,10 +43,11 @@ ThumbnailCache g_thumbnail_cache;
 LUMICE_Server* g_server = nullptr;
 ServerPoller g_server_poller;
 // The construction-time properties the live g_server was actually built with — the pair
-// MaybeReconstructServerForConstructionProperties compares the requested values against. Startup
-// uses LUMICE_CreateServer() → preferred_backend=CPU, num_workers=0, so these are the zero values
-// until the first change. Any code that creates g_server directly (bypassing the reconstruction
-// function) must put them back with ResetServerConstructionTrackers().
+// MaybeReconstructServerForConstructionProperties compares the requested values against. The zero
+// values are what LUMICE_CreateServer() constructs (preferred_backend=CPU, num_workers=0); every
+// server this file builds goes through ConstructServerForState, which writes both from the config
+// it actually handed to the constructor. Any code that creates g_server directly (bypassing that
+// function — the test harnesses) must put them back with ResetServerConstructionTrackers().
 bool g_server_is_gpu = false;
 int g_server_worker_count = 0;
 PreviewViewport g_preview_vp;
@@ -90,6 +91,10 @@ bool BackendFallbackWarningEdge(bool fell_back, bool& warned_latch) {
 
 namespace {
 std::future<void> g_stop_future;
+// The startup calibration run, once CalibrateQualityThreshold has handed it to a background thread
+// (see RunCalibrationInBackground). Same single-owner shape as g_stop_future: valid() while the
+// thread may still be using g_server, released by JoinPendingCalibration.
+std::future<void> g_calibration_future;
 }  // namespace
 
 // Block until any in-flight async Stop has finished (poller + server drained), then release the
@@ -102,6 +107,41 @@ void JoinPendingStop() {
     g_stop_future.wait();
     g_stop_future = {};
   }
+}
+
+// The calibration twin of JoinPendingStop, with one more class of caller. Like the Stop, the
+// calibration thread holds g_server, so every path that destroys or reconstructs the server joins
+// it first (R1): shutdown (main.cpp), MaybeReconstructServerForConstructionProperties. Unlike the
+// Stop, the calibration is also a RUN — the server is RUNNING the default document — while the
+// poller has never been started: g_server_poller is the only publisher of what the preview shows,
+// and the calibration never touches it, which is what keeps the warm-up frames off the screen.
+// That holds only while nobody wakes the poller on the server mid-run, so every path that starts
+// or wakes the poller must not observe a still-running calibration either. Two different
+// mechanisms enforce that, split by whether blocking is acceptable: DoRun, DoStop and DoAnalyze
+// are user-initiated commands where a bounded wait is expected, so they join here directly before
+// touching the server. The two display-time refresh paths (PushDisplayState, the composite-EV
+// push) are on the render path and must never block it for calibration's up-to-2s worst case
+// (code review round 1, Major #3), so they use the non-blocking CalibrationPending() probe below
+// instead and skip their whole push (not just the wake) while it reports true — they never call
+// this function. A wake or a server write that slipped past either guard would have the poller
+// observe the calibration's RUNNING server, or race its unsynchronized CommitConfig, respectively.
+void JoinPendingCalibration() {
+  if (g_calibration_future.valid()) {
+    g_calibration_future.wait();
+    g_calibration_future = {};
+  }
+}
+
+// Non-blocking: true only while the background task is actually still running, not merely
+// "launched and not yet joined". A finished-but-unjoined future means the server is already IDLE
+// again — waking the poller then is harmless, there is nothing left to race — so this deliberately
+// reports false in that case rather than reusing JoinPendingCalibration's coarser valid() check.
+// Display-time refresh paths (which must never block the render thread waiting on join) use this
+// to skip a wake while calibration is genuinely in flight instead of joining it (code review
+// round 1, Major #3).
+bool CalibrationPending() {
+  return g_calibration_future.valid() &&
+         g_calibration_future.wait_for(std::chrono::seconds(0)) != std::future_status::ready;
 }
 
 int g_programmatic_resize = 0;
@@ -998,13 +1038,27 @@ void DoClearBackground() {
 
 // Run a short simulation with the current default config to measure platform throughput,
 // then set the quality gate threshold to max(kMinRaysFloor, measured_rate * 10%).
-// Called once at startup before the main loop. Typically completes in < 200ms.
+// Called once at startup, before the main loop, and returns as soon as the run has been handed to
+// a background thread (typically the run completes in < 200ms; JoinPendingCalibration waits for
+// it).
+//
+// This is ALSO the startup warm-up, not only a measurement — the name predates that second role.
+// The run goes through the same LUMICE_CommitScene → CommitConfig → Start → Simulator::Run →
+// TraceBackend::BeginSession chain a user's Run takes, on the server the user will actually run
+// on (main.cpp constructs it for the document's backend before calling here), so every
+// once-per-process and once-per-server cost — the GPU context, the consumer layout for the default
+// document, the D65 table, the first large readback's page faults — is paid here rather than on
+// the user's first Run. Skipping the calibration (--skip-calibration) therefore also skips the
+// warm-up: the first real Run then pays the cold-start cost this removes.
+//
+// Split in two on purpose: the scene is built HERE, on the calling (main) thread, because g_state
+// is not thread-safe and the main loop starts writing it the moment this returns; the background
+// thread then touches nothing but the built scene and g_server through the C API.
 void CalibrateQualityThreshold() {
   if (!g_server) {
     return;
   }
   constexpr int kCalibrationRays = 100000;
-  constexpr double kCalibrationFraction = 0.4;  // Accept frames >= 40% of typical ray count per window
 
   // Use current default state to build a calibration scene
   ScenePtr scene = BuildScene(g_state, SceneIntent::kSimCommit);
@@ -1018,64 +1072,86 @@ void CalibrateQualityThreshold() {
   // Override just the two sim scalars for the short calibration run; every Set* is idempotent
   // (last write wins), so re-setting the group is the documented way to amend a built scene.
   LUMICE_SceneSetSimParams(scene.get(), /*infinite=*/0, kCalibrationRays, g_state.sim.max_hits, /*geom_clock=*/0);
+  RunCalibrationInBackground(std::move(scene));
+}
 
-  auto t0 = std::chrono::steady_clock::now();
-  auto err = LUMICE_CommitScene(g_server, scene.get(), nullptr);
-  if (err != LUMICE_OK) {
-    GUI_LOG_WARNING("[Calibration] CommitConfig failed ({}), using default threshold", static_cast<int>(err));
+void RunCalibrationInBackground(ScenePtr scene) {
+  if (!g_server || !scene) {
     return;
   }
-  auto t_commit = std::chrono::steady_clock::now();
-  GUI_LOG_DEBUG("[Calibration] CommitConfig took {:.1f}ms",
-                std::chrono::duration<double, std::milli>(t_commit - t0).count());
+  // Single-owner future, as g_stop_future is: a second dispatch while one is in flight would drop
+  // the first future's handle (std::async's destructor blocks) — join it instead.
+  JoinPendingCalibration();
+  // The scene is moved into the task; `srv` is captured by value so that the thread never re-reads
+  // the global — the joins at every reassignment site are what make the captured pointer stay
+  // valid for the thread's whole life.
+  g_calibration_future = std::async(std::launch::async, [srv = g_server, scene = std::move(scene)] {
+    constexpr double kCalibrationFraction = 0.4;  // Accept frames >= 40% of typical ray count per window
 
-  // Wait for simulation to complete (server returns to IDLE)
-  constexpr int kMaxWaitMs = 2000;
-  int waited_ms = 0;
-  LUMICE_ServerState final_state = LUMICE_SERVER_RUNNING;
-  while (waited_ms < kMaxWaitMs) {
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    waited_ms += 10;
-    LUMICE_QueryServerState(g_server, &final_state);
-    if (final_state == LUMICE_SERVER_IDLE) {
-      break;
-    }
-  }
-
-  auto t1 = std::chrono::steady_clock::now();
-  double elapsed_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
-
-  // Read stats to get actual rays simulated
-  LUMICE_StatsResult stats{};
-  {
-    LUMICE_ResultFrame* raw_frame = nullptr;
-    if (LUMICE_AcquireResultFrame(g_server, &raw_frame) != LUMICE_OK) {
-      GUI_LOG_WARNING("[Calibration] could not acquire a result frame, using default threshold");
+    auto t0 = std::chrono::steady_clock::now();
+    auto err = LUMICE_CommitScene(srv, scene.get(), nullptr);
+    if (err != LUMICE_OK) {
+      GUI_LOG_WARNING("[Calibration] CommitConfig failed ({}), using default threshold", static_cast<int>(err));
       return;
     }
-    lumice::ResultFramePtr frame(raw_frame);
-    LUMICE_FrameGetStats(frame.get(), &stats);
-  }
-  GUI_LOG_DEBUG("[Calibration] waited {}ms, state={}, sim_ray_num={}", waited_ms,
-                final_state == LUMICE_SERVER_IDLE ? "IDLE" : "RUNNING", stats.sim_ray_num);
+    auto t_commit = std::chrono::steady_clock::now();
+    GUI_LOG_DEBUG("[Calibration] CommitConfig took {:.1f}ms",
+                  std::chrono::duration<double, std::milli>(t_commit - t0).count());
 
-  if (stats.sim_ray_num == 0 || elapsed_ms <= 0) {
-    GUI_LOG_WARNING("[Calibration] no data produced in {:.0f}ms, using default threshold", elapsed_ms);
-    return;
-  }
+    // Wait for simulation to complete (server returns to IDLE)
+    constexpr int kMaxWaitMs = 2000;
+    int waited_ms = 0;
+    LUMICE_ServerState final_state = LUMICE_SERVER_RUNNING;
+    while (waited_ms < kMaxWaitMs) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+      waited_ms += 10;
+      LUMICE_QueryServerState(srv, &final_state);
+      if (final_state == LUMICE_SERVER_IDLE) {
+        break;
+      }
+    }
 
-  // Compute: how many rays would be produced in the calibration window?
-  // Uses kCalibrationWindowMs (fixed) instead of kCommitIntervalMs so that changing
-  // the commit interval doesn't accidentally tighten/loosen the quality gate.
-  double rays_per_window = static_cast<double>(stats.sim_ray_num) * kCalibrationWindowMs / elapsed_ms;
-  auto threshold = std::max(kMinRaysFloor, static_cast<unsigned long long>(rays_per_window * kCalibrationFraction));
+    auto t1 = std::chrono::steady_clock::now();
+    double elapsed_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
 
-  g_server_poller.SetCalibratedThreshold(threshold);
-  GUI_LOG_INFO("[Calibration] done in {:.0f}ms: {} rays, {:.0f} rays/window({}ms), threshold={}", elapsed_ms,
-               stats.sim_ray_num, rays_per_window, kCalibrationWindowMs, threshold);
+    // Whatever the outcome below, the server is left IDLE for the user's first actual Run. Done
+    // before the early returns rather than after the threshold: a timed-out run (kMaxWaitMs) that
+    // returned early would otherwise leave the server RUNNING the calibration scene behind the
+    // user's back.
+    struct StopOnExit {
+      LUMICE_Server* server;
+      ~StopOnExit() { LUMICE_StopServer(server); }
+    } stop_on_exit{ srv };
 
-  // Stop the server — ready for user's first actual Run
-  LUMICE_StopServer(g_server);
+    // Read stats to get actual rays simulated
+    LUMICE_StatsResult stats{};
+    {
+      LUMICE_ResultFrame* raw_frame = nullptr;
+      if (LUMICE_AcquireResultFrame(srv, &raw_frame) != LUMICE_OK) {
+        GUI_LOG_WARNING("[Calibration] could not acquire a result frame, using default threshold");
+        return;
+      }
+      lumice::ResultFramePtr frame(raw_frame);
+      LUMICE_FrameGetStats(frame.get(), &stats);
+    }
+    GUI_LOG_DEBUG("[Calibration] waited {}ms, state={}, sim_ray_num={}", waited_ms,
+                  final_state == LUMICE_SERVER_IDLE ? "IDLE" : "RUNNING", stats.sim_ray_num);
+
+    if (stats.sim_ray_num == 0 || elapsed_ms <= 0) {
+      GUI_LOG_WARNING("[Calibration] no data produced in {:.0f}ms, using default threshold", elapsed_ms);
+      return;
+    }
+
+    // Compute: how many rays would be produced in the calibration window?
+    // Uses kCalibrationWindowMs (fixed) instead of kCommitIntervalMs so that changing
+    // the commit interval doesn't accidentally tighten/loosen the quality gate.
+    double rays_per_window = static_cast<double>(stats.sim_ray_num) * kCalibrationWindowMs / elapsed_ms;
+    auto threshold = std::max(kMinRaysFloor, static_cast<unsigned long long>(rays_per_window * kCalibrationFraction));
+
+    g_server_poller.SetCalibratedThreshold(threshold);
+    GUI_LOG_INFO("[Calibration] done in {:.0f}ms: {} rays, {:.0f} rays/window({}ms), threshold={}", elapsed_ms,
+                 stats.sim_ray_num, rays_per_window, kCalibrationWindowMs, threshold);
+  });
 }
 
 
@@ -1083,7 +1159,7 @@ void CalibrateQualityThreshold() {
 // NVIDIA. Both are single-engine GPU routes (vs the CPU N-worker topology). Probes
 // the C API at runtime, so a host with neither resolves to CPU (the toggle that
 // drives this is hidden when no GPU is available — see panels.cpp).
-static int ResolveGpuBackend() {
+int ResolveGpuBackend() {
   if (LUMICE_IsBackendAvailable(LUMICE_BACKEND_METAL)) {
     return LUMICE_BACKEND_METAL;
   }
@@ -1091,6 +1167,34 @@ static int ResolveGpuBackend() {
     return LUMICE_BACKEND_CUDA;
   }
   return LUMICE_BACKEND_CPU;
+}
+
+LUMICE_ServerConfig ServerConfigForState(const GuiState& state) {
+  LUMICE_ServerConfig cfg{};
+  // The user's personal default (Settings §app), 0 = the automatic count (server.cpp's per-platform
+  // core count, capped). On the GPU route
+  // the render engine is one worker whatever this says; the value sizes that server's standing CPU
+  // analysis pool instead.
+  cfg.num_workers = state.worker_count;
+  cfg.sim_seed = 0;  // 0 = random — matches LUMICE_CreateServer() startup default
+  // A host whose GPU probe fails resolves to CPU here, so a personal default of use_gpu_backend
+  // saved on a machine that later lost its GPU still constructs a working server — there is no
+  // failing construction to handle (LUMICE_CreateServerEx never returns null). A GPU that probes
+  // fine but fails at BeginSession falls back to the CPU path mid-run and raises the fallback
+  // flag, exactly as it would on a user's Run.
+  cfg.preferred_backend = state.use_gpu_backend ? ResolveGpuBackend() : LUMICE_BACKEND_CPU;
+  return cfg;
+}
+
+void ConstructServerForState(const GuiState& state) {
+  const LUMICE_ServerConfig cfg = ServerConfigForState(state);
+  g_server = LUMICE_CreateServerEx(&cfg);
+  g_server_is_gpu = state.use_gpu_backend;
+  // Read back from the config that was actually handed to the constructor, not from the state.
+  // The two are the same expression today; assigning the request would make this tracker agree
+  // with the request even if ServerConfigForState stopped passing it on, which is precisely the
+  // defect the tracker is here to make observable.
+  g_server_worker_count = cfg.num_workers;
 }
 
 // Reconstruct the server so its orchestration *topology* matches the requested
@@ -1125,24 +1229,12 @@ bool MaybeReconstructServerForConstructionProperties() {
   }
   GUI_LOG_INFO("[GUI] Reconstructing server (backend {} -> {}, workers {} -> {})", g_server_is_gpu ? "GPU" : "CPU",
                want_gpu ? "GPU" : "CPU", g_server_worker_count, want_workers);
-  JoinPendingStop();       // R1: a background stop may still hold this server — drain it before destroy
-  g_server_poller.Stop();  // synchronous: worker confirmed no longer touching the old server
+  JoinPendingStop();         // R1: a background stop may still hold this server — drain it before destroy
+  JoinPendingCalibration();  // R1: so may the startup calibration run
+  g_server_poller.Stop();    // synchronous: worker confirmed no longer touching the old server
   LUMICE_DestroyServer(g_server);
 
-  LUMICE_ServerConfig cfg{};
-  // The user's personal default (Settings §app), 0 = PhysicalCoreCount (capped). On the GPU route
-  // the render engine is one worker whatever this says; the value sizes that server's standing CPU
-  // analysis pool instead.
-  cfg.num_workers = want_workers;
-  cfg.sim_seed = 0;  // 0 = random — matches LUMICE_CreateServer() startup default
-  cfg.preferred_backend = want_gpu ? ResolveGpuBackend() : LUMICE_BACKEND_CPU;
-  g_server = LUMICE_CreateServerEx(&cfg);
-  g_server_is_gpu = want_gpu;
-  // Read back from the config that was actually handed to the constructor, not from want_workers.
-  // The two are the same expression today; assigning the request would make this tracker agree
-  // with the request even if the line above stopped passing it on, which is precisely the defect
-  // the tracker is here to make observable.
-  g_server_worker_count = cfg.num_workers;
+  ConstructServerForState(g_state);
 
   // Re-apply per-server settings that died with the old instance (cf. main.cpp startup).
   LUMICE_SetLogLevel(g_server, static_cast<LUMICE_LogLevel>(g_state.core_log_level));
@@ -1223,6 +1315,11 @@ bool DoRun(bool user_initiated) {
   // LUMICE_StopServer on this same server; joining first makes the DoRun commit/rebuild below
   // race-free (and the reused-consumer / poller-pointer reasoning valid).
   JoinPendingStop();
+  // The startup calibration may still be running the default document on this server. A Run that
+  // arrives before it is done queues behind it (bounded by the calibration's own 2 s wait cap) —
+  // an accepted trade against cancelling a run that may already be inside a GPU kernel — and the
+  // poller Start below must not happen while it is running (see JoinPendingCalibration).
+  JoinPendingCalibration();
 
   // task-metal-gui-commit-backpressure §3 design point 3/6: epoch-keyed backpressure gate.
   // Rationale: kCommitIntervalMs=70ms is faster than Metal's first-batch consume latency
@@ -1495,6 +1592,13 @@ void DoStop() {
   if (g_state.run_intent == RunIntent::kStopping) {
     return;
   }
+  // The startup calibration may still be running on this server (see JoinPendingCalibration):
+  // it holds g_server and, on the way out, calls LUMICE_StopServer itself (StopOnExit in
+  // RunCalibrationInBackground). Without this join, that call and the async Stop lambda's own
+  // LUMICE_StopServer(srv) below could run concurrently on the same server pointer. Same
+  // precedent as DoRun's top-of-function join; the queued wait is bounded by the calibration's
+  // own 2 s cap and only ever engaged in the narrow startup window before it finishes.
+  JoinPendingCalibration();
   // Optimistic async Stop (blueprint §5/§8): set the intent synchronously so the UI paints
   // "Stopping…" THIS frame, then offload the EXISTING blocking teardown sequence onto a background
   // thread. The backend cannot interrupt the in-flight batch, so LUMICE_StopServer blocks until it
@@ -1520,8 +1624,9 @@ bool DoAnalyze() {
     return false;
   }
   // Same reason DoRun joins first: a Stop may still be draining on the background thread, and the
-  // server call below must not race it.
+  // server call below must not race it; and the startup calibration may still be running.
   JoinPendingStop();
+  JoinPendingCalibration();
   // The document on the panels, through the same emitter DoRun uses (its comment says why it
   // must be the same one). An analysis is always a deliberate click, so a document too large for
   // the ABI reopens the warning the way an explicit Run does, and nothing is analysed — not a

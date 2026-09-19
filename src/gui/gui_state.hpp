@@ -1485,7 +1485,8 @@ struct GuiState {
   bool use_gpu_backend = false;
 
   // Number of CPU simulation workers a NEW server is constructed with. 0 = automatic: one per
-  // physical core, capped (LUMICE_ServerConfig::num_workers's own meaning for 0, server.cpp —
+  // physical core on Linux/macOS, one per logical core on Windows, capped per platform
+  // (LUMICE_ServerConfig::num_workers's own meaning for 0, server.cpp —
   // deliberately the same convention rather than a second answer to "what does 0 mean here"). Like use_gpu_backend this
   // is a construction-time property, so changing it reconstructs the server on the next DoRun via
   // MaybeReconstructServerForConstructionProperties. On the GPU route the render engine is a single
@@ -1503,9 +1504,9 @@ struct GuiState {
   // user_defaults.hpp's app-preferences block and doc/gui-state-governance.md §8.
   //
   // No upper bound is enforced here, and that stays true now that the AUTOMATIC value has a
-  // measured one (kMaxDefaultWorkerCount, server.cpp): the cap answers "what should the program
-  // pick when nobody said", and a number typed into the Settings panel is somebody saying.
-  // Clamping it here would also put a second copy of that constant in a second file, where the
+  // measured one (ServerImpl::AutomaticWorkerBaseAndCap(), server.cpp): the cap answers "what
+  // should the program pick when nobody said", and a number typed into the Settings panel is
+  // somebody saying. Clamping it here would also put a second copy of that cap in a second file, where the
   // two would drift. Oversubscribing threads is slow, not unsafe.
   int worker_count = 0;
 

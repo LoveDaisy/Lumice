@@ -122,6 +122,14 @@ Windows 参照机，Zen 5，2026-09-11）——与上面那个 CUDA-off 探针�
 量级）；相对纯静态基线构建，出货的外壳 + v3 DLL 是 **single 2.311×**（与上面的旧锚一致）**/
 multi 1.562×**（不一致——上面那条旧锚从未在 1–4 worker 之外测过，从没测过这台机器 `benchmark`
 自动选择的满 16 核 multi-worker 档位，所以这个差距是新测出来的，不是 DLL 拆分引入的回归）。
+**这个 multi 数字随后已被更新，而且它依赖 worker 数**（Windows 参照机，2026-09-18，`render` 显式
+`--workers`，三个 worker 侧投影场景——2048×1024 单次散射 / 512×256 / 彩色 fisheye 多晶体——5 次
+交错重复，CoV ≤2.35%；场景集与方法都不同于上面那条单一 canonical 场景的 `benchmark` 趟，是口径
+换了，不是同一实验重跑）：在 16 worker（即 `benchmark` `multi` 趟的档位）下，v3 引擎是基线引擎的
+**1.774× / 1.780× / 1.908×**；在 32 worker——Windows 现在出厂的自动 worker 数——下是
+**1.141× / 1.296× / 1.510×**。比值随 W 收窄，是因为快的那条臂先触顶：基线引擎靠 SMT 一路涨到 32
+线程（相对自己 10 worker 的数字 1.75×–2.12×），v3 引擎只涨 1.11×–1.56×。引用时必须带上 W；
+对这台机器，一个不带 W 的「multi 比值」是没定义清楚的数字。
 同一次复测还发现了另一项与 DLL 本身有关的代价：baseline 引擎 DLL 比旧的纯静态 baseline exe
 **慢 10–14%**（single 86.1%、multi 93.4%）——`WINDOWS_EXPORT_ALL_SYMBOLS` 生成的 `.def` 导出表
 与 cl.exe 的 `/GL` 全程序优化不兼容，所以 cl.exe 编的 baseline DLL 丢掉了旧的纯静态 baseline exe
@@ -179,6 +187,93 @@ A/B，比的是 native-ISA 二进制对基线-ISA 二进制，而**任何地方�
    状态，说明这棵构建树在哪一档。
 
 
+## 测量纪律：一条性能结论需要哪些机器
+
+**CPU 路线：结论需要两个 OS，不是一个。** 任何 CPU 路线的吞吐结论、最优 worker 数、或任何
+A/B 结果，都必须同时有 **Windows 与 WSL2 两个参照角色的一手数据**（写角色名，不写主机名——见
+`machines.md`），并且要么同时给出 Mac 数字，要么说明为什么没有。这不是为谨慎而谨慎：同一份代码
+已经在这两个 OS 上测出过两次相反的结论。这不是偶发的巧合——把 legacy CPU 路线的逐 ray 投影从单一
+consumer 线程搬到 simulator worker 上（`accumulator-consumer-architecture.md` §1.1）改变了这条
+路线并行瓶颈所在的位置，而两个 OS 对这次转移的反应并不一致：本文上面的 ISA 一节里，Windows
+参照机的 multi-worker 增益量到 **1.77×–1.91×**（随场景而异，16 worker；在它 32 worker 的自动
+默认档位下是 1.14×–1.51×），而 Linux/WSL2 在同一类对照下只有 **~1.13×**，且
+Linux 一侧被明确标注为「远早于单 worker 的 ISA 增益就先撞到吞吐天花板」——是同一种分叉形状，不是
+局限于某一次测量的巧合。只在一个 OS 上取的数字、外推到另一个 OS，是把猜测打扮成结果。
+
+**原生 Linux 没有任何一手数据——要说清楚，不要含糊过去。** 本仓库里所有「Linux」数字都来自
+WSL2，而 WSL2 有它自己已经量到的、不同于原生 Linux 的行为：`futex`/`sys` 时间随 worker 数上升；
+`dxgkrnl` 半虚拟化把 CUDA context 建立放大约 2.5×。任何按 OS 分档的常数，只要「Linux」那一格
+实际测自 WSL2，就必须在该格或其说明里写明，不能只散落在别处的正文里。
+
+**GPU 路线：`nvidia-smi` utilization 只是观测项，从不是吞吐判据。** 它量的是「设备上有某个
+kernel 在跑」占墙钟时间的比例——不是 SM 占用率，也不是离 kernel-bound 上限还有多远。本仓库已经
+在把它当判据这件事上立错过两次 scrum：清零掉曾占去 96% host API 时间的 host 侧 churn 之后，
+utilization 数字纹丝不动——因为它本就看不见占用率或 host 侧停顿，只能看见「有没有东西被调度」。
+GPU 吞吐唯一的判据是 `[BENCHMARK]` 行的 `rays_per_sec`，以及（kernel-bound 上限尺子落地之后）
+生产吞吐相对那个上限的比值。
+
+**参照机互斥。** Windows 与 WSL2 两个参照角色是同一台物理机；一侧在跑 bench 时另一侧仍在活动
+会同时污染两边的数字。`machines.md` 已有这条，本段只指回去，不复述机制。
+
+**观测通道不得挂在被测线程的临界路径上。** 一行 DEBUG 日志或一个 Python 日志回调曾经把
+`DoSnapshot` 的墙钟时间直接拖长一倍——观测这个动作本身改变了被观测的数字。新增任何插桩都要绕开
+临界路径（采样、独立线程、事后计数），而不是挂在它上面。
+
+
+## GPU 占用率天花板：寄存器压力是真实代价，不是编译器冗余
+
+`trace_single_ms_kernel`（`src/core/backend/cuda_trace_backend.cu`）在生产多 arch fatbin 上编译
+出 **181 寄存器/线程**。按它 256 线程的 block（`kTraceBlockSize`）算，256 × 181 = 46,336，占 SM
+65,536 个 32 位寄存器的大半——放得下一个 block，放不下两个——所以 `ncu` 报 `Block Limit
+Registers = 1`，Windows CUDA 参照角色（Blackwell sm_120）上实测 Achieved Occupancy
+**16.14%–16.28%**。封顶的是寄存器，不是 shared memory。那个显而易见的问题——这 181 个里有没有
+编译器可以被说服让出来的冗余？把寄存器上限砍半让占用率翻倍，吞吐会不会跟着涨？——已经量过，
+两问的答案都是否。数字记在这里，是为了这个方向不被人从头再试一遍。
+
+唯一低风险的杠杆是在 kernel 签名上加 `__launch_bounds__(256, 2)`：不改任何逻辑，只告诉 `ptxas`
+每个 SM 要塞下两个 block，于是寄存器被封在 65,536 / (256 × 2) = 128。它在编译期完全兑现了承诺，
+在运行期输了：
+
+| 指标 | baseline | `__launch_bounds__(256, 2)` | 变化 |
+|---|---|---|---|
+| 寄存器/线程（sm_120，对构建产物 `cuobjdump -res-usage` 读数） | 181 | 128 | −29.3% |
+| Block Limit Registers | 1 | 2 | +1 |
+| 理论占用率 | 16.67% | 33.33% | 翻倍 |
+| Achieved Occupancy（`ncu`，Windows 参照角色） | 16.14%–16.28% | 31.54% | 如预测翻倍 |
+| Spill stores / loads（`-Xptxas -v`，sm_120） | 0 B / 0 B | 12 B / 16 B | 极小 |
+| **kernel 自身 Duration**（`ncu --set basic`，5e6-ray 配置，N=4 对 N=3，两臂 stdev < 1 µs） | **163.85 µs** | **179.67 µs** | **+9.65%——变慢** |
+| Compute (SM) Throughput | 10.63% | 9.92% | 下降 |
+| Memory Throughput | 27.94% | 25.81% | 下降 |
+| 端到端 `rays_per_sec`（1e9-ray 生产配置，WSL2 参照角色，每臂 N=6，CoV 7.1%） | 423.07 M | 427.11 M | +0.95%，噪声内 |
+
+两条机制结论可以带出这个 kernel 之外：
+
+1. **0 spill 的基线说明寄存器数就是 kernel 的真实工作集，不是冗余。** 不加约束时 `ptxas` 给每个
+   活跃值都选了寄存器而非 local memory，一个字节都没溢出；根本不存在可供 `__launch_bounds__`
+   「释放」的浪费分配。它能做的只有强行封顶、人为制造 spill——而哪怕小到 12 B / 16 B（三四个
+   32 位值）的 spill，在这里也吃掉了 9.65% 的 kernel 时间。寄存器数由 kernel 的逻辑复杂度决定；
+   要降它得改逻辑，不是改编译器的主意。
+2. **占用率翻倍不等于吞吐提升，除非 kernel 真的受占用率约束——而这由吞吐类计数器裁定，不由
+   占用率数字本身裁定。** 16% 占用率下这个 kernel 的 Compute (SM) Throughput 只有 10.63%、Memory
+   Throughput 只有 27.94%——都远未打满——说明它并不缺驻留 warp 来隐藏延迟；它的上限在单线程内的
+   依赖链和分支/访存模式里。所以驻留翻倍没有换来任何可以抵消 spill 代价的东西，两项吞吐计数器
+   反而*双双下降*。从 Achieved Occupancy 数字下任何结论之前先看 Compute/Memory Throughput：低占用率
+   配低吞吐计数器是延迟链型 kernel，不是缺驻留的 kernel。
+
+对本仓库测量方式的两条推论。只看端到端 A/B（+0.95%，CoV 7.1%）会被读成「被 host 侧开销掩盖了」——
+隔离的 `ncu` Duration 给出的是更强的结论：kernel 自身变慢了；两种「看不出收益」的表面现象机制
+完全不同，只有隔离测量能把它们分开。而寄存器数必须从构建产物上读（`cuobjdump -res-usage`），不能
+从一次绿色重建推断：这次测量里一份被改写过的源文件带着比既有 `.obj` 还旧的修改时间，`ninja` 以
+exit 0 跳过了重编，第一轮 profiling 把 baseline 二进制的 181 寄存器当成了 bounded 版本的读数——
+「改了输入、输出没变」是唯一的信号，是产物层读数抓住了它。
+
+裁决：**不采纳。** 寄存器压力留在 181 / 16% 占用率，是决定，不是遗漏。把 kernel 拆成更小的多个
+pass 没有做原型：既然只加 bounds 的版本已是净亏，拆分在单引擎大 dispatch 设计下只会在同样的 spill
+经济账上再叠加真实的跨 kernel 同步开销，只可能更差。这个 kernel 设备利用率低的*另一个*已测成因——
+多次散射层之间的 host 侧空闲间隙，以及为什么它的异步读回被否决——是另一种机制、另一份记录：
+`gpu-route-history.md` Phase 14（§九）。
+
+
 ## 1. CLI 管线基准测试
 
 不含 GUI、VSync 或显示开销的纯管线吞吐量测试。
@@ -221,9 +316,14 @@ A/B，比的是 native-ISA 二进制对基线-ISA 二进制，而**任何地方�
 
 > **⚠️ GPU 后端是单引擎——不存在 "single" vs "multi" 并行。** GPU 路线（Metal / CUDA）无条件
 > `worker_count=1`（`server.cpp:284`）；只有 legacy CPU 路线是真多 worker（默认
-> `worker_count = min(PhysicalCoreCount(), kMaxDefaultWorkerCount)`；`benchmark` 的 `multi` 趟
-> 显式请求满核，因此不受该上限约束——在核数高于上限的机器上，它量的是满核并行效率，不再等于出厂
-> 默认会跑出来的吞吐）。既然 GPU 的 "single" 与 "multi" 趟都跑在同一个单引擎（只差暖机+光线数、
+> Linux/macOS 上 `worker_count = min(PhysicalCoreCount(), 10)`、Windows 上
+> `LogicalCoreCount()`——两者都是 `ServerImpl::AutomaticWorkerBaseAndCap()` 返回的一对值，即按平台
+> 分档——依据是各平台生产实际加载的引擎下实测的最优 worker 数：Windows
+> 参照机（clang-cl x86-64-v3 引擎）自动值卡在 10 会比现在出厂的 32 worker 慢 1.07×–1.58×，同一台
+> 机器的 WSL2 侧在 glibc-hwcaps 自动选中的 x86-64-v4 引擎下最优点恰好就是 10（16 worker 吞吐减半）；
+> ⚠️ 那格「Linux」数据来自 WSL2 代理，不是原生 Linux；`benchmark` 的 `multi` 趟显式请求满物理核，
+> 因此不受该规则约束——它量的是满核并行效率，不再等于出厂默认会跑出来的吞吐，且两者的大小关系随
+> 平台而异：多核 Linux/macOS 上 `multi` 比默认跑更多 worker，SMT 的 Windows 上反而更少）。既然 GPU 的 "single" 与 "multi" 趟都跑在同一个单引擎（只差暖机+光线数、
 > 非并行），**`Lumice benchmark` 对 GPU 路线塌成 ONE 稳态趟**（label `mode="multi"`）、跳过暖机趟；
 > legacy CPU 路线保留真双趟。路线检测是 env-aware 的（`LUMICE_WillUseGpuRoute` 认 `LUMICE_TRACE_BACKEND`，
 > 故 env 选的 GPU run 也塌）。读 GPU 结果时：
@@ -652,7 +752,7 @@ push 到 `main` 的 benchmark 结果会通过
 只是换一个被偏袒的场景。这个常数还兼任提交粒度的默认值（`kCommitCap =
 env::CommitRayNum(logger_, kDefaultRayNum)`，`src/server/server.cpp:1324`），抬高它会连带把 GUI
 快照节奏变粗：它的射程比纯 CPU 吞吐更宽。（补充指针，非本次扫描的结论：worker 数是与批大小
-独立的另一条轴，其默认值单独由 `kMaxDefaultWorkerCount` 封顶，`src/server/server.cpp:181`。）
+独立的另一条轴，其默认值单独由 `ServerImpl::AutomaticWorkerBaseAndCap()` 封顶，`src/server/server.cpp:269`。）
 
 **批大小有一个 <40 光线的硬地板，且失效形态是崩溃而不是变慢。** `LUMICE_DISPATCH_RAY_NUM` ≤ 32
 在轻场景族上确定性地崩在 `RayBuffer::DupOverflowSlot` 内（`src/config/sim_data.cpp:158`），

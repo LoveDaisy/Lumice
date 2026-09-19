@@ -253,8 +253,11 @@ class ServerPoller {
   // generation cursor reset, for the same server-restart reason.
   void InvalidateAnalysisResult();
 
-  // Set calibrated quality gate threshold (called once at startup after calibration run).
-  // Thread-safe: only called from main thread before any Start().
+  // Set calibrated quality gate threshold (called once at startup, by the calibration run's
+  // background thread — app.cpp RunCalibrationInBackground). The fields it writes are atomic, so
+  // the write is race-free whatever thread the worker is on; the ORDER (threshold set before the
+  // first poll reads it) is the caller's: every path that starts or wakes the worker joins the
+  // calibration first (app.cpp JoinPendingCalibration).
   void SetCalibratedThreshold(unsigned long long threshold);
 
   // ---- Test-only synchronous seam (see test/unit-correctness/gui/test_server_poller.cpp) ----
@@ -381,9 +384,13 @@ class ServerPoller {
   uint64_t last_analysis_generation_{ 0 };
 
   // Adaptive quality gate: calibrated threshold set once at startup via SetCalibratedThreshold().
-  // If not set (calibrated_ == false), falls back to gui::kMinRaysFloor.
-  bool calibrated_{ false };
-  unsigned long long calibrated_min_rays_{ 0 };
+  // A single atomic, not a (bool, value) pair — the computed threshold is always
+  // max(gui::kMinRaysFloor, ...) and gui::kMinRaysFloor is a nonzero compile-time constant, so 0
+  // is a threshold no calibration run can ever produce and doubles as "not calibrated yet"
+  // without a second variable whose write/read order relative to this one would need reasoning
+  // about atomic memory ordering (a44: explicit over implicit). Atomic because the setter runs on
+  // the calibration's background thread and the reader is the poll worker.
+  std::atomic<unsigned long long> calibrated_min_rays_{ 0 };
 
   // Timeout fallback: force upload if quality gate has been rejecting for too long.
   // Reset in Start(), updated in PollOnce() on each quality_ok pass.

@@ -493,7 +493,11 @@ if(BUILD_GUI)
     # Main-window layer delete -> NotifyLayerDeleted -> the Colors panel's reading of every ref:
     # a ref must still name the same physical layer (or read as deleted), pinned on the index AND
     # the layer's identity, because the panel's own two checks pass on the wrong layer.
-    "${PROJ_TEST_DIR}/composition-correctness/gui/test_color_ref_layer_delete_chain.cpp")
+    "${PROJ_TEST_DIR}/composition-correctness/gui/test_color_ref_layer_delete_chain.cpp"
+    # Startup server construction -> the calibration run on a background thread -> the first Run
+    # and the poller: the server the calibration warmed up is the one the Run uses, and the run
+    # stays off the screen because every wake/destroy path joins it first.
+    "${PROJ_TEST_DIR}/composition-correctness/gui/test_startup_calibration_chain.cpp")
   target_include_directories(composition_correctness_test
     PRIVATE ${PROJ_TEST_DIR})
   # Same three definitions gui_unit_test carries, for the same reasons (see its block above):

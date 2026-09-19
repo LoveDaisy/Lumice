@@ -87,8 +87,9 @@ Options for render (the default subcommand):
                      falls back to CPU if unavailable. The LUMICE_TRACE_BACKEND
                      env var, if set, still overrides this (debug/CI only).
   --workers <N>      Number of CPU simulation worker threads (default: automatic —
-                     one per physical core, capped at a ceiling above which no
-                     machine measured ran faster; an explicit N is never capped).
+                     one per physical core on Linux/macOS, one per logical core on
+                     Windows, each capped at a measured per-platform ceiling; an
+                     explicit N is never capped).
                      Machine-dependent, so it is a command-line switch rather than
                      a config-file field: a config travels between machines and a
                      worker count should not travel with it. Ignored on a GPU route
@@ -185,8 +186,9 @@ Options:
                      falls back to CPU if unavailable. The LUMICE_TRACE_BACKEND
                      env var, if set, still overrides this (debug/CI only).
   --workers <N>      Number of CPU simulation worker threads (default: automatic —
-                     one per physical core, capped at a ceiling above which no
-                     machine measured ran faster; an explicit N is never capped).
+                     one per physical core on Linux/macOS, one per logical core on
+                     Windows, each capped at a measured per-platform ceiling; an
+                     explicit N is never capped).
                      Machine-dependent, so it is a command-line switch rather than
                      a config-file field: a config travels between machines and a
                      worker count should not travel with it. Ignored on a GPU route
@@ -207,7 +209,7 @@ Notes:
 - `-f` is the only required flag. Without it, Lumice exits non-zero with a usage hint.
 - `--format png` switches to lossless PNG; `--quality` is ignored in that case.
 - `--backend <name>` asks for a trace backend; whether the run actually got it is on the `Stats:` line: `backend=<cpu|metal|cuda>` is what the run executed on, and `fell_back=true` means a GPU backend was obtained and then lost or refused (a device failure mid-run, or a config it could not serve) so the rest of the run went on the CPU path — the reason is a `WARN` on stderr. A backend this build or machine cannot provide at all (`--backend cuda` on a Mac, say) is not a fallback: the run is sized for the CPU route from the start and reads `backend=cpu, fell_back=false`, with a warning at startup. The `benchmark` subcommand's `[BENCHMARK]` JSON carries the same two fields. Multi-renderer configs (the GUI's exported documents carry two) run on the GPU route as one session — see [`../configuration.md`](../configuration.md#multiple-renderers-and-the-gpu-route).
-- `--workers <N>` overrides the automatic worker count (one per physical core, capped at a measured ceiling; the cap applies to the automatic value only, never to an `N` you name). It is a switch rather than a config field on purpose: a worker count describes the machine, and a config file travels between machines. An illegal value (`0`, negative, non-numeric) exits non-zero rather than falling back to the default.
+- `--workers <N>` overrides the automatic worker count (one per physical core on Linux/macOS, one per logical core on Windows, each capped at a measured per-platform ceiling; the cap applies to the automatic value only, never to an `N` you name). It is a switch rather than a config field on purpose: a worker count describes the machine, and a config file travels between machines. An illegal value (`0`, negative, non-numeric) exits non-zero rather than falling back to the default.
 - `Lumice analyze -f <config>` asks a question of the scene rather than rendering it: which raypath chains delivered energy into a region of the sky, as CSV on stdout (or `--csv <path>`). The config is the scene; the region, the symmetry the rows are merged under, the ray budget and the seed are all options, never config fields — so one config can be asked several questions from a script, and a `--seed` makes any of them reproducible. A scene whose `ray_num` is `"infinite"` runs until Ctrl-C and still writes its result; with `--csv` the file is rewritten atomically every second, so it is complete whenever it is read. Progress goes to stderr; stdout is the CSV alone.
 - `Lumice benchmark -f <config>` is for performance regression testing — see [`../performance-testing.md`](../performance-testing.md). It is **not** how you run a normal simulation, and it takes only `-f`, `--backend`, `-v`, `-d`, `-h` (no `-o`: it writes nothing; no `--workers`: the worker counts are the measurement itself). The former `--benchmark` flag exits with a hint pointing here.
 

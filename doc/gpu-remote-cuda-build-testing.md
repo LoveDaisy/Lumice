@@ -18,13 +18,16 @@
 
 - 任何触及 `src/core/backend/cuda_trace_backend.*` 或三后端共享头（`trace_backend.hpp`、
   `pcg_shared.h`、`*_shared.h`）、`SimData`、simulator/server/stats 的改动。
-- 验收口径：**CUDA parity battery 22/22**（exit-seam 2 + filter 5 + multi-MS 4 + energy-accounting 10 +
-  hostgen-fallback 1）+（按需）CLI 冒烟。前三个文件的 11 条比较的都是**图像侧**（block-mean corr /
+- 验收口径：**CUDA parity battery 25/25**（exit-seam 2 + filter 5 + multi-MS 4 + energy-accounting 10 +
+  hostgen-fallback 1 + hit-budget 3）+（按需）CLI 冒烟。前三个文件的 11 条比较的都是**图像侧**（block-mean corr /
   两后端各自 `flt_buf` Y 总和之比 / 跨 seed 自洽）；后两个文件补的是此前没有任何测试读过的量——
   `snapshot_intensity` 这个标量账本与图像账本在同一后端内部是否自洽（`R = Ysum / snapshot_intensity`
   的 cuda/legacy 比值，单波长场景下 `R` 是常数，容差 0.1%，缺陷签名 +1.74%），以及
   `LUMICE_DISABLE_DEVICE_GEN=1` host root-gen fallback 与 device-gen 的出图 parity（曾整幅全黑而
   battery 全绿）。这两类缺陷复发时图像侧 11 条**结构上不会红**，别只跑前三个文件。
+  第六个文件 `test_cuda_hit_budget_parity.py` 盯的是 `max_hits` 预算（含入口面，三后端同数）：
+  `max_hits=1` + `entry_exit 3→5` filter 下两侧落地 Y 必须**恒为 0**——一个零对非零的确定性 oracle，
+  不靠 ±5% 容差；缺陷签名是 CUDA 多跑一次内部撞面，图像侧 11 条只读到 +0.5%，同样**结构上不会红**。
 - perf bench 才需要锁频 / idle 窗口；**纯正确性验证不需要等窗口**，随时可跑。
 
 ## 1. 通用约定（两个角色都适用）
@@ -36,7 +39,7 @@
   ⚠️ **仅 Linux 上"或在 PATH（`LD_LIBRARY_PATH`）"成立——Windows 不成立**：Python 3.8+ 起
   `ctypes.CDLL` 在 Windows 上不再搜索 `PATH`（改为显式 `add_dll_directory`），把 CUDA `bin`
   塞进 `PATH` 并不能让 `cudart64_12.dll` 被加载；Windows 侧实测可行的做法见 §3。
-- **parity battery 五文件**：`test/parity-cross-backend/backend/test_cuda_{exit_seam,filter,multi_ms,energy_accounting,hostgen_fallback}_parity.py`。
+- **parity battery 六文件**：`test/parity-cross-backend/backend/test_cuda_{exit_seam,filter,multi_ms,energy_accounting,hostgen_fallback,hit_budget}_parity.py`。
 - **别信 subprocess 自报**：读 build EXIT、grep 告警、亲看 pytest 计数（`N passed`）。
   ⚠️ 管道会吃掉退出码——`cmd | tail` 的 `$?` 是 `tail` 的。要么读前台命令的 `$?`，
   要么 `set -o pipefail`。
@@ -85,9 +88,9 @@
   export LUMICE_LIB=$REPO/build/Release/shared/lib/liblumice_testapi.so
   export LD_LIBRARY_PATH=$REPO/build/Release/shared/lib:$LD_LIBRARY_PATH
   python -m pytest -v -m slow \
-    test/parity-cross-backend/backend/test_cuda_{exit_seam,filter,multi_ms,energy_accounting,hostgen_fallback}_parity.py
+    test/parity-cross-backend/backend/test_cuda_{exit_seam,filter,multi_ms,energy_accounting,hostgen_fallback,hit_budget}_parity.py
   ```
-  判据 = 退出码 0 且看到 `22 passed`。
+  判据 = 退出码 0 且看到 `25 passed`。
   - 历史坑（**已修复**，留档以免误判为新问题）：这套 pytest 曾 `Fatal Python error: Aborted`
     （`free(): invalid next size`），根因是 `test/e2e/capi_runner.py` 的 ctypes 镜像结构
     （`LUMICE_RenderResult` / `LUMICE_ServerConfig`）比 C 侧头文件 sizeof 小 8/4 字节，
@@ -184,9 +187,11 @@
     test\parity-cross-backend\backend\test_cuda_filter_parity.py ^
     test\parity-cross-backend\backend\test_cuda_multi_ms_parity.py ^
     test\parity-cross-backend\backend\test_cuda_energy_accounting_parity.py ^
-    test\parity-cross-backend\backend\test_cuda_hostgen_fallback_parity.py
+    test\parity-cross-backend\backend\test_cuda_hostgen_fallback_parity.py ^
+    test\parity-cross-backend\backend\test_cuda_hit_budget_parity.py
   ```
-  判据同 Linux：退出码 0 且 `22 passed`（五个文件在这台机器上实测跑通过，2026-09-16）。
+  判据同 Linux：退出码 0 且 `25 passed`（前五个文件 `22 passed` 在这台机器上实测跑通过，2026-09-16；
+  第六个文件加入后尚未在 Windows 侧实测，它与前五个走同一条 ctypes 路径，没有 Windows 特有的依赖）。
   `LUMICE_LIB` 指向 `lumice_testapi.dll`，不是 `lumice.dll`——同 §2 的理由，ctypes harness
   加载的是带 `LUMICE_TEST_*` 钩子的测试超集（`test/e2e/capi_runner.py::lib_candidates` 是权威）。
   - ⚠️ **不要**把 CUDA `bin` 塞进 `PATH` 期待 `LUMICE_LIB` 能带出 `cudart64_12.dll`——
@@ -208,8 +213,8 @@
 1. 本机改代码 + Mac build/单测/Metal parity（`./scripts/build.sh -tj release`）。
 2. 同步到 CUDA 参照机（Linux rsync / Windows tarball）。
 3. 各自 build，**逐个查 EXIT 码 + grep 告警**。
-4. Linux 参照机跑 CUDA parity battery（22/22，五个文件）；Windows 侧同一 battery 已实测跑通
-   （五个文件 `22 passed`，2026-09-16），前提是应用了 §3 的 DLL 同目录做法——不是只验编译。
+4. Linux 参照机跑 CUDA parity battery（25/25，六个文件）；Windows 侧同一 battery 已实测跑通
+   （前五个文件 `22 passed`，2026-09-16），前提是应用了 §3 的 DLL 同目录做法——不是只验编译。
 5.（按需）CLI 冒烟核路由与 `Stats`、染色密度门。
 6. commit + push + PR，CI 的 `windows-cuda-compile` job 再兜一层 Windows 编译。
 

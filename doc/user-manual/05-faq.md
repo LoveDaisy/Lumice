@@ -11,7 +11,7 @@ Lumice's JSON schema requires only a handful of fields; the rest fall back to de
 | Field | Required? | Default | Notes |
 |-------|-----------|---------|-------|
 | `scene.ray_num` | yes | — | **Total** ray budget across every spectrum wavelength; can be `"infinite"` for an open-ended run |
-| `scene.max_hits` | yes | — | Maximum internal bounces before a ray is dropped |
+| `scene.max_hits` | yes | — | Maximum number of faces a ray may interact with (entry face included) before it is dropped |
 | `scene.light_source.altitude` | yes | — | Sun altitude above horizon (degrees) |
 | `scene.light_source.azimuth` | no | `0.0` | Sun azimuth (degrees) |
 | `scene.light_source.diameter` | no | `0.5` | Sun angular diameter (degrees); `0.5` ≈ real Sun |

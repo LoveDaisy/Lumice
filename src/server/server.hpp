@@ -541,8 +541,9 @@ class Server {
 
   /**
    * @brief Construct a new Server
-   * @param num_workers CPU worker count (0 = automatic: the physical core count, capped — see
-   *        kMaxDefaultWorkerCount in server.cpp). A value > 0 is honoured verbatim, above that
+   * @param num_workers CPU worker count (0 = automatic: the physical core count on Linux/macOS,
+   *        the full logical core count on Windows, each capped per platform — see
+   *        ServerImpl::AutomaticWorkerBaseAndCap() in server.cpp). A value > 0 is honoured verbatim, above that
    *        cap included. On the CPU route these are the render workers, which also run an
    *        analysis. On the GPU/Metal/CUDA route the render engine is always a single
    *        Simulator (doc/gpu-single-engine-implementation.md) and this count sizes the standing
