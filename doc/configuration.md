@@ -441,7 +441,7 @@ The scene configuration defines the simulation scene, including the light source
 |-------|------|----------|---------|-------------|
 | `light_source` | object | yes | - | Inline light source configuration (see below) |
 | `ray_num` | integer or string | yes | - | **Total** rays across all spectrum wavelengths; use `"infinite"` for continuous simulation |
-| `max_hits` | integer | yes | - | Maximum number of hits |
+| `max_hits` | integer | yes | - | Maximum number of crystal faces one ray may interact with inside a crystal, **counting the entry face**: a ray is dropped after its `max_hits`-th face, so its face sequence is at most `max_hits` long (`max_hits = 1` emits only the entry-face external reflection). Same budget on every backend (legacy CPU, Metal, CUDA). Range `[1, 64]` |
 | `ray_allocation` | string | no | `"proportional"` | How each scattering layer's rays are dealt across its entries. `"proportional"` deals by `proportion` — sampling share and energy share are one knob. `"adaptive"` measures each entry's per-ray energy from the render's own batches as it runs (on whichever backend is rendering), keeps a per-entry sampling share `q_i ∝ p_i·√E[e²]` (Neyman allocation) up to date from that running tally, deals rays by `q_i` and scales every ray born into entry *i* by `(p_i/ΣP)/(q_i/ΣQ)`, so the **expected image is unchanged** and only its variance moves. See the note below. |
 | `scattering` | array | yes | - | Scattering configuration array |
 

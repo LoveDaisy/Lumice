@@ -1005,7 +1005,8 @@ __global__ void trace_single_ms_kernel(const float* __restrict__ d_dirs,        
   // path[0], each subsequent hit is appended *before* Fresnel at that face.
   // When an exit record is emitted, `path` contains [entry, f_1, ..., f_K]
   // where f_K is the face the ray exits through. Bounded by ExitFaceSeq::kCap
-  // (64); every append is guarded so worst-case rec_len = 1 + max_hits stays
+  // (64); every append is guarded so worst-case rec_len = max_hits (the entry
+  // face plus the `max_hits - 1` interior hits of the main loop) stays
   // within the static array. `face_id` widens to uint8_t (poly_cnt ≤ ~40 on
   // all ice crystals; the BeginSession log records poly_cnt for diagnosis).
   uint8_t path_rec[ExitFaceSeq::kCap];
@@ -1173,7 +1174,25 @@ __global__ void trace_single_ms_kernel(const float* __restrict__ d_dirs,        
   }
   // ── End entry-face interaction ───────────────────────────────────────────
 
-  for (uint32_t hit = 0u; hit < max_hits; ++hit) {
+  // Hit budget. `max_hits` counts every face the ray interacts with, the
+  // entry face included: legacy's hit loop (simulator.cpp, `for (i = 0;
+  // i < max_hits_; ...)` around `TraceRayBasicInfo`) spends iteration 0 on
+  // the entry-face HitSurface, and Metal's `trace_layer_kernel` spends its
+  // `hit == 0` iteration on `to_face = root_tf[tid]`, so both see at most
+  // `max_hits - 1` interior faces and a face sequence of at most `max_hits`
+  // faces. The entry-face block above already consumed budget slot 0, so
+  // this loop starts at 1. It used to start at 0, which gave every CUDA ray
+  // one interior interaction more than the other two backends: the extra
+  // bounce's refracted exit is energy legacy never emits, measured as
+  // +0.5% total landed Y on the single-prism `dual_fisheye_ref` scene and
+  // +2.2..2.8% on its entry=3→exit=4 raypath bucket (adjacent prism sides,
+  // no direct transmission through a 120° wedge, so every ray there carries
+  // internal reflections and the last bounce weighs the most). At
+  // `max_hits = 1` the two versions differ by +814%: legacy emits only the
+  // entry-face external reflection while the old loop also emitted the
+  // first interior refracted exit — that is the deterministic oracle
+  // `test_cuda_hit_budget_parity.py` pins.
+  for (uint32_t hit = 1u; hit < max_hits; ++hit) {
     if (w <= 0.0f) {
       break;
     }
@@ -1220,11 +1239,10 @@ __global__ void trace_single_ms_kernel(const float* __restrict__ d_dirs,        
 
     // Append this face to the rich-exit path before Fresnel (matches Metal
     // shader order at lumice_trace.metal:505). Guard against overflow: worst
-    // case rec_len = 1 (entry) + max_hits; when max_hits == kCap a tail face
-    // would overflow, so silently drop the tail (degrades to the legacy
-    // truncation Metal also performs via `if (rec_len < kRecCap)`). Overflow
-    // is only reachable at max_hits == kCap == 64 — typical configs use
-    // max_hits ≤ 8 so this guard is defensive, not active in practice.
+    // case rec_len = 1 (entry) + (max_hits - 1) interior hits = max_hits,
+    // which fits kCap for every accepted `max_hits`; the guard is kept so a
+    // future widening of the budget degrades to the truncation Metal also
+    // performs via `if (rec_len < kRecCap)` instead of overrunning the array.
     if (rec_len < static_cast<uint32_t>(ExitFaceSeq::kCap)) {
       path_rec[rec_len++] = static_cast<uint8_t>(hit_poly);
     }

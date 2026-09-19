@@ -11,7 +11,7 @@ Lumice 的 JSON schema 只要求少量字段，其他字段都有默认值。下
 | 字段 | 是否必需 | 默认值 | 说明 |
 |------|----------|--------|------|
 | `scene.ray_num` | 是 | — | **所有波长加起来的总光线数**；可用 `"infinite"` 跑无限模拟 |
-| `scene.max_hits` | 是 | — | 单条光线允许的最大内部反射次数 |
+| `scene.max_hits` | 是 | — | 单条光线最多与多少个面发生作用（含入口面），超过即丢弃 |
 | `scene.light_source.altitude` | 是 | — | 太阳高度角（度） |
 | `scene.light_source.azimuth` | 否 | `0.0` | 太阳方位角（度） |
 | `scene.light_source.diameter` | 否 | `0.5` | 太阳角直径（度），`0.5` ≈ 真实太阳 |
