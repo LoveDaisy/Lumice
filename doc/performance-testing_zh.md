@@ -473,19 +473,19 @@ CUDA 路线还有 **per-batch 同步 readback** 税（`ReadbackXyzAccum` 每 Sim
 | host 块 | 状态 | 含义 |
 |---|---|---|
 | **Mac**（Apple Silicon；Metal + legacy CPU） | **LIVE** | 机器仍在手上 → 可复现、可作回归判据 |
+| **home-wsl**（Linux/WSL2；RTX 5090 D Blackwell + legacy CPU） | **LIVE** | 机器仍在手上 → 可复现、可作回归判据 |
+| **home-win**（Windows 原生；RTX 5090 D Blackwell + legacy CPU） | **LIVE** | 机器仍在手上 → 可复现、可作回归判据 |
 | **dev49**（Linux；RTX 4060 Ti Ada + legacy CPU） | **ARCHIVED — 2026-08-11 起硬件不可得** | 冻结记录；不可重跑，不可用于门控 |
 | **win-builder**（Windows；GTX 1070 Ti Pascal） | **ARCHIVED — 2026-08-11 起硬件不可得** | 冻结记录；不可重跑，不可用于门控 |
 
 两个容易被漏掉的推论：
 
-- **NVIDIA 侧一列 LIVE 都没有。** 两个 CUDA 列**以及**它们所除的 `dev49 legacy CPU` 基线全部已归档，
-  所以 dev49 行里每一个 `× legacy` 比值的分子与分母**同时**是死的。仅有的 LIVE 行是 Mac Metal 与
-  Mac legacy CPU。
-- **这个空缺是准确的，⛔ 不许在纸面上补齐。** 替代机（`home-win` / `home-wsl`，同一台物理机，
-  RTX 5090 D 32GB / Blackwell sm_120）**至今一个数都没测过**——它连 CUDA 工具链都还没装。
-  ⛔ 不要用 TFLOPs、显存带宽或任何规格比值把已归档数字缩放着填进 NVIDIA 列；那是造数据、不是测量
-  （为何在本仓这种缩放尤其无效，见上文 bar 说明）。一列只能靠在真有的硬件上按 N≥5 CoV 协议重跑
-  `bench_throughput.py` 来重新填满。
+- **现在有 LIVE 的 NVIDIA 列了**（2026-09-19/20 测量）：替代机（`home-win` / `home-wsl`，同一台物理机，
+  RTX 5090 D 32GB / Blackwell sm_120）已按 N≥5 CoV 协议测过——见下方两张表。此前它一个数都没测过；
+  dev49/win-builder 列仍然归档（硬件已不在），不被 5090D 数字取代——只在同一 host 块内读，不要跨代对比。
+- **不要再用 TFLOPs、显存带宽或任何规格比值把已归档（或 5090D）数字缩放着填进新列**；那是造数据、
+  不是测量（为何在本仓这种缩放尤其无效，见上文 bar 说明）。一列只能靠在真有的硬件上按 N≥5 CoV 协议
+  重跑 `bench_throughput.py` 来（重新）填满。
 
 #### drain-count-driven canonical · default dispatch · config 默认分辨率 · `drain_aligned` `rays_per_sec` · 2026-07-02
 
@@ -503,12 +503,19 @@ reps，>15% CoV → N=9 escalation。
 > 修复对"未灾难性挂起"的机器（1070Ti render tax 非灾难性）不改变测量值，且 dev49 那 ~10% 差是旧 run 噪声非
 > 系统性效应。
 
-| config | dev49 4060Ti CUDA (vs legacy) **[ARCHIVED]** | win-builder 1070Ti CUDA **[ARCHIVED]** | Mac Metal ⚠️(近似) **[LIVE]** | dev49 legacy CPU (5M) **[ARCHIVED]** |
-|---|---|---|---|---|
-| `bench_light_single_ms` | **130.5 M/s** (12.5×, CoV 0.2%) | 80.7 M/s (0.4%) | ~69 M/s (CoV 11%) | 10.45 M/s |
-| `ms_multi_crystal` | 22.2 M/s (12.7×, 0.1%) | 13.2 M/s (0.4%) | ~16.7 M/s (8.3%) | 1.74 M/s |
-| `ms_multi_crystal_complex_filter` | 371.6 M/s (56.9×, 0.8%) | 112.4 M/s (0.6%) | ~24.6 M/s (18% 热) | 6.53 M/s |
-| `ms_multi_crystal_filtered_bd` | 591.2 M/s (89.6×, 1.8%) | 158.8 M/s (0.8%) | ~26.7 M/s (8.4%) | 6.60 M/s |
+| config | dev49 4060Ti CUDA (vs legacy) **[ARCHIVED]** | win-builder 1070Ti CUDA **[ARCHIVED]** | Mac Metal ⚠️(近似) **[LIVE]** | dev49 legacy CPU (5M) **[ARCHIVED]** | home-wsl 5090D CUDA **[LIVE]** | home-wsl legacy CPU (5M) **[LIVE]** | home-win 5090D CUDA **[LIVE]** | home-win legacy CPU (5M) **[LIVE]** |
+|---|---|---|---|---|---|---|---|---|
+| `bench_light_single_ms` | **130.5 M/s** (12.5×, CoV 0.2%) | 80.7 M/s (0.4%) | ~69 M/s (CoV 11%) | 10.45 M/s | 251.6 M/s (52.1×, CoV 10.8%) | 4.82 M/s (CoV 2.1%) | 437.7 M/s (45.0×, CoV 4.6%) | 9.72 M/s (CoV 1.3%) |
+| `ms_multi_crystal` | 22.2 M/s (12.7×, 0.1%) | 13.2 M/s (0.4%) | ~16.7 M/s (8.3%) | 1.74 M/s | 131.0 M/s (33.6×, CoV 6.8%) | 3.90 M/s (CoV 4.4%) | 184.6 M/s (101.4×, CoV 3.2%) | 1.82 M/s (CoV 0.1%) |
+| `ms_multi_crystal_complex_filter` | 371.6 M/s (56.9×, 0.8%) | 112.4 M/s (0.6%) | ~24.6 M/s (18% 热) | 6.53 M/s | 228.7 M/s (39.3×, CoV 17.1%) | 5.82 M/s (CoV 13.3%) | 439.7 M/s (46.8×, CoV 6.0%) | 9.39 M/s (CoV 0.9%) |
+| `ms_multi_crystal_filtered_bd` | 591.2 M/s (89.6×, 1.8%) | 158.8 M/s (0.8%) | ~26.7 M/s (8.4%) | 6.60 M/s | 207.5 M/s (32.3×, CoV 11.8%) | 6.41 M/s (CoV 8.5%) | 499.3 M/s (46.8×, CoV 2.5%) | 10.68 M/s (CoV 0.5%) |
+
+**home-wsl/home-win 5090D 数据来源**（测量于 2026-09-19/20）：base `origin/main@6f38f1a7`，default
+dispatch，N≥5 交错（CoV>15% 按脚本自身的判据升到 N=9——home-wsl 上 `ms_multi_crystal_complex_filter`
+升级后仍读 17.1%，判 HIGH_COV_THERMAL，按实测值保留而非丢弃）。两台机是同一台物理机（WSL2 vs
+Windows 原生，同 CPU/GPU，见 `doc/machines.md`）——它们的 legacy CPU 列相差幅度超出单纯 WSL
+虚拟化开销能解释的范围（`ms_multi_crystal`：home-win legacy 1.82 M/s vs home-wsl legacy
+3.90 M/s，即该 config 下原生反而更慢），按实测记录，不做调和。
 
 **要点**：
 - **5× 假低已修**：`bench_light_single_ms` 4060Ti 读 **130.5 M/s** @0.2% CoV，命中 explore-315 独立实测
@@ -537,8 +544,18 @@ per-resolution `multi_wall`：
 | dev49 RTX 4060Ti (Ada) CUDA **[ARCHIVED]** | 116 M/s | 110 M/s | 92 M/s | 65 M/s | **39.2 M/s** |
 | win-builder GTX 1070Ti (Pascal) CUDA **[ARCHIVED]** | 77 M/s | 69 M/s | 45 M/s | 40 M/s | **33.5 M/s** |
 | Mac M-series Metal **[LIVE]** | 28.1 M/s | 30.3 M/s | 31.2 M/s | 35.1 M/s | **32.3 M/s** |
+| home-wsl RTX 5090D (Blackwell) CUDA **[LIVE]** | 250.1 M/s | 254.9 M/s | 278.4 M/s | 253.5 M/s | **250.7 M/s** |
+| home-win RTX 5090D (Blackwell) CUDA **[LIVE]** | 391.0 M/s | 409.2 M/s | 397.7 M/s | 402.9 M/s | **347.6 M/s** |
 | dev49 legacy CPU (baseline) **[ARCHIVED]** | 9.0 M/s | 8.8 M/s | 8.4 M/s | 7.7 M/s | 6.9 M/s |
 | Mac legacy CPU (baseline) **[LIVE]** | 5.1 M/s | 4.8 M/s | 4.7 M/s | 4.8 M/s | 4.7 M/s |
+| home-wsl legacy CPU (baseline) **[LIVE]** | 4.19 M/s | 4.13 M/s | 4.03 M/s | 4.17 M/s | 4.07 M/s |
+| home-win legacy CPU (baseline) **[LIVE]** | 9.63 M/s | 9.65 M/s | 9.71 M/s | 9.63 M/s | 9.69 M/s |
+
+**5090D 读平了，不是拐点**（测量于 2026-09-19/20，`bench_light_single_ms`，base
+`origin/main@6f38f1a7`，N≥5，CoV 4–14%）：与 Ada/Pascal 两行不同，home-wsl 与 home-win 上 CUDA 吞吐
+在 256×128→2048×1024 这整个区间内都不随分辨率下降——2048×1024 的 XYZ 平面（24 MB）仍装得进
+Blackwell 更大的 L2，本表要展示的拐点在这张卡上出现在扫描区间之外，而不是区间之内。这两行 5090D
+数据应读作"本区间未观察到拐点"，不是 Ada/Pascal 拐点数值的替代。
 
 **第三时钟在 2048×1024 的增益**（vs per-batch drain 旧值，interleaved 同 binary 隔离 drain cadence）：
 

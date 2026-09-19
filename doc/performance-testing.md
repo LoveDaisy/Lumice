@@ -737,21 +737,23 @@ regression criterion:
 | host block | status | what it means |
 |---|---|---|
 | **Mac** (Apple Silicon; Metal + legacy CPU) | **LIVE** | machine still in hand → reproducible, usable as a regression criterion |
+| **home-wsl** (Linux/WSL2; RTX 5090 D Blackwell + legacy CPU) | **LIVE** | machine still in hand → reproducible, usable as a regression criterion |
+| **home-win** (Windows native; RTX 5090 D Blackwell + legacy CPU) | **LIVE** | machine still in hand → reproducible, usable as a regression criterion |
 | **dev49** (Linux; RTX 4060 Ti Ada + legacy CPU) | **ARCHIVED — hardware unavailable since 2026-08-11** | frozen record; cannot be re-run, cannot gate anything |
 | **win-builder** (Windows; GTX 1070 Ti Pascal) | **ARCHIVED — hardware unavailable since 2026-08-11** | frozen record; cannot be re-run, cannot gate anything |
 
 Two consequences that are easy to miss:
 
-- **There is no LIVE NVIDIA column at all.** Both CUDA columns *and* the `dev49 legacy CPU`
-  baseline they are divided by are archived, so every `× legacy` ratio in a dev49 row has a dead
-  numerator **and** a dead denominator. The only LIVE rows are Mac Metal and Mac legacy CPU.
-- **This gap is accurate, and must not be closed on paper.** The replacement box
-  (`home-win` / `home-wsl`, one physical machine, RTX 5090 D 32GB / Blackwell sm_120) has produced
-  **zero** measurements to date — its CUDA toolchain is not even installed yet. Do **not** fill the
-  NVIDIA columns by scaling the archived numbers by TFLOPs, memory bandwidth, or any other spec
-  ratio; that is fabricated data, not a measurement (see the bar note above for why the scaling is
-  invalid here in particular). A column gets refilled only by re-running `bench_throughput.py`
-  under the N≥5 CoV protocol on hardware someone actually has.
+- **There is now a LIVE NVIDIA column** (measured 2026-09-19/20): the replacement box (`home-win` /
+  `home-wsl`, one physical machine, RTX 5090 D 32GB / Blackwell sm_120) has been measured under the
+  N≥5 CoV protocol — see the two tables below. Before this, the box had produced **zero**
+  measurements; the dev49/win-builder columns remain archived (their hardware is gone) and are not
+  superseded by the 5090D numbers — read within one host block, not across generations.
+- **Do not fill in any further NVIDIA numbers by scaling the archived (or the 5090D) figures by
+  TFLOPs, memory bandwidth, or any other spec ratio**; that is fabricated data, not a measurement
+  (see the bar note above for why the scaling is invalid here in particular). A column gets
+  (re)filled only by re-running `bench_throughput.py` under the N≥5 CoV protocol on hardware
+  someone actually has.
 
 #### drain-count-driven canonical · default dispatch · config-default resolution · `drain_aligned` `rays_per_sec` · 2026-07-02
 
@@ -774,12 +776,21 @@ the ≥15% CoV → N=9 escalation.
 > measurement on a machine that did not catastrophically hang (1070Ti's render tax was
 > non-catastrophic), and that the ~10 % dev49 delta was old-run noise, not a systematic effect.
 
-| config | dev49 4060Ti CUDA (vs legacy) **[ARCHIVED]** | win-builder 1070Ti CUDA **[ARCHIVED]** | Mac Metal ⚠️(approx) **[LIVE]** | dev49 legacy CPU (5M) **[ARCHIVED]** |
-|---|---|---|---|---|
-| `bench_light_single_ms` | **130.5 M/s** (12.5×, CoV 0.2%) | 80.7 M/s (0.4%) | ~69 M/s (CoV 11%) | 10.45 M/s |
-| `ms_multi_crystal` | 22.2 M/s (12.7×, 0.1%) | 13.2 M/s (0.4%) | ~16.7 M/s (8.3%) | 1.74 M/s |
-| `ms_multi_crystal_complex_filter` | 371.6 M/s (56.9×, 0.8%) | 112.4 M/s (0.6%) | ~24.6 M/s (18% thermal) | 6.53 M/s |
-| `ms_multi_crystal_filtered_bd` | 591.2 M/s (89.6×, 1.8%) | 158.8 M/s (0.8%) | ~26.7 M/s (8.4%) | 6.60 M/s |
+| config | dev49 4060Ti CUDA (vs legacy) **[ARCHIVED]** | win-builder 1070Ti CUDA **[ARCHIVED]** | Mac Metal ⚠️(approx) **[LIVE]** | dev49 legacy CPU (5M) **[ARCHIVED]** | home-wsl 5090D CUDA **[LIVE]** | home-wsl legacy CPU (5M) **[LIVE]** | home-win 5090D CUDA **[LIVE]** | home-win legacy CPU (5M) **[LIVE]** |
+|---|---|---|---|---|---|---|---|---|
+| `bench_light_single_ms` | **130.5 M/s** (12.5×, CoV 0.2%) | 80.7 M/s (0.4%) | ~69 M/s (CoV 11%) | 10.45 M/s | 251.6 M/s (52.1×, CoV 10.8%) | 4.82 M/s (CoV 2.1%) | 437.7 M/s (45.0×, CoV 4.6%) | 9.72 M/s (CoV 1.3%) |
+| `ms_multi_crystal` | 22.2 M/s (12.7×, 0.1%) | 13.2 M/s (0.4%) | ~16.7 M/s (8.3%) | 1.74 M/s | 131.0 M/s (33.6×, CoV 6.8%) | 3.90 M/s (CoV 4.4%) | 184.6 M/s (101.4×, CoV 3.2%) | 1.82 M/s (CoV 0.1%) |
+| `ms_multi_crystal_complex_filter` | 371.6 M/s (56.9×, 0.8%) | 112.4 M/s (0.6%) | ~24.6 M/s (18% thermal) | 6.53 M/s | 228.7 M/s (39.3×, CoV 17.1%) | 5.82 M/s (CoV 13.3%) | 439.7 M/s (46.8×, CoV 6.0%) | 9.39 M/s (CoV 0.9%) |
+| `ms_multi_crystal_filtered_bd` | 591.2 M/s (89.6×, 1.8%) | 158.8 M/s (0.8%) | ~26.7 M/s (8.4%) | 6.60 M/s | 207.5 M/s (32.3×, CoV 11.8%) | 6.41 M/s (CoV 8.5%) | 499.3 M/s (46.8×, CoV 2.5%) | 10.68 M/s (CoV 0.5%) |
+
+**home-wsl/home-win 5090D provenance** (measured 2026-09-19/20): base `origin/main@6f38f1a7`,
+default dispatch, N≥5 interleaved (CoV>15% escalates to N=9 per the script's own decision tree —
+`ms_multi_crystal_complex_filter` on home-wsl still reads 17.1% after escalation and is
+HIGH_COV_THERMAL, kept here as-measured rather than discarded). The two hosts are one physical
+machine (WSL2 vs native Windows on the same CPU/GPU, see `doc/machines.md`) — their legacy CPU
+columns differ by more than WSL virtualization overhead alone would suggest (`ms_multi_crystal`:
+home-win legacy 1.82 M/s vs home-wsl legacy 3.90 M/s, i.e. *slower* natively for this one config)
+and are reported as measured, not reconciled.
 
 **Key points**:
 - **The 5× under-report is fixed.** `bench_light_single_ms` on 4060Ti reads **130.5 M/s** at
@@ -815,8 +826,19 @@ amortized. `bench_light_single_ms` (light·single-MS, L2/readback dominated), pe
 | dev49 RTX 4060Ti (Ada) CUDA **[ARCHIVED]** | 116 M/s | 110 M/s | 92 M/s | 65 M/s | **39.2 M/s** |
 | win-builder GTX 1070Ti (Pascal) CUDA **[ARCHIVED]** | 77 M/s | 69 M/s | 45 M/s | 40 M/s | **33.5 M/s** |
 | Mac M-series Metal **[LIVE]** | 28.1 M/s | 30.3 M/s | 31.2 M/s | 35.1 M/s | **32.3 M/s** |
+| home-wsl RTX 5090D (Blackwell) CUDA **[LIVE]** | 250.1 M/s | 254.9 M/s | 278.4 M/s | 253.5 M/s | **250.7 M/s** |
+| home-win RTX 5090D (Blackwell) CUDA **[LIVE]** | 391.0 M/s | 409.2 M/s | 397.7 M/s | 402.9 M/s | **347.6 M/s** |
 | dev49 legacy CPU (baseline) **[ARCHIVED]** | 9.0 M/s | 8.8 M/s | 8.4 M/s | 7.7 M/s | 6.9 M/s |
 | Mac legacy CPU (baseline) **[LIVE]** | 5.1 M/s | 4.8 M/s | 4.7 M/s | 4.8 M/s | 4.7 M/s |
+| home-wsl legacy CPU (baseline) **[LIVE]** | 4.19 M/s | 4.13 M/s | 4.03 M/s | 4.17 M/s | 4.07 M/s |
+| home-win legacy CPU (baseline) **[LIVE]** | 9.63 M/s | 9.65 M/s | 9.71 M/s | 9.63 M/s | 9.69 M/s |
+
+**5090D reads flat, not a knee** (measured 2026-09-19/20, `bench_light_single_ms`, base
+`origin/main@6f38f1a7`, N≥5 CoV 4–14%): unlike the Ada/Pascal rows, CUDA throughput does not decline
+with resolution across this whole 256×128→2048×1024 range on either home-wsl or home-win — the
+2048×1024 XYZ buffer (24 MB) still fits Blackwell's larger L2, so the knee this table exists to show
+sits somewhere past 2048×1024 on this card, not inside the swept range. Read the two 5090D rows as
+"no knee observed here", not as a replacement point for the Ada/Pascal knee values above.
 
 **Third-clock gain at 2048×1024** (vs the old per-batch drain, interleaved same-binary to isolate
 the drain cadence):
