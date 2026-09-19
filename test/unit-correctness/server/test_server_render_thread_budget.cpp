@@ -2,15 +2,19 @@
 // on the render side (visible mask, annotation masks, PostSnapshot's fused pixel loop) is allowed
 // to occupy, see core/parallel_rows.hpp — is
 //
-//     render_thread_budget = max(0, hardware_concurrency() − worker_count)
+//     render_thread_budget = max(0, PhysicalCoreCount() − worker_count)
 //
-// computed once in ServerImpl's constructor next to worker_count. This file pins the formula at
-// the three worker counts that matter: 1 (the GPU single-engine route — the GUI on that route
-// keeps hw−1 cores of parallelism), hw−2 (the typical CPU-route shape, where the budget sits
-// exactly on ParallelRows' "< 2 ⇒ inline" gate and must clear it) and hw (every core busy — the
-// clamp yields 0 and the consumers run their loops inline; what "inline at budget 0" means is
-// held by test_parallel_rows.cpp, and that a budget-0 consumer produces the same bytes as an
-// unconstrained one by test_render_consumer_post_snapshot_fusion.cpp).
+// computed once in ServerImpl's constructor next to worker_count. Physical cores, not
+// hardware_concurrency(): on an SMT machine the logical count minus the workers is not idle
+// capacity (the extra threads land on the busy cores' siblings — see the member's declaration
+// in server.cpp for the measurement), and on a machine without SMT the two are equal. This file
+// pins the formula at the worker counts that matter: 1 (the GPU single-engine route — the GUI on
+// that route keeps phys−1 cores of parallelism), phys−2 (the typical CPU-route shape, where the
+// budget sits exactly on ParallelRows' "< 2 ⇒ inline" gate and must clear it), phys (every core
+// busy — the clamp yields 0 and the consumers run their loops inline; what "inline at budget 0"
+// means is held by test_parallel_rows.cpp, and that a budget-0 consumer produces the same bytes
+// as an unconstrained one by test_render_consumer_post_snapshot_fusion.cpp) and phys+3 (an
+// explicit worker count above the core count, which the clamp must absorb).
 //
 // The value is read off the one channel the live server exposes it on — the construction-time
 // `ServerImpl: ... render_thread_budget=N` log line, whose shape the regression sentinels under
@@ -26,10 +30,10 @@
 #include <algorithm>
 #include <regex>
 #include <string>
-#include <thread>
 
 #include "server/server.hpp"
 #include "support/log_capture.hpp"
+#include "util/cpu_info.hpp"
 #include "util/logger.hpp"
 
 namespace lumice {
@@ -54,12 +58,8 @@ ConstructionLine ParseConstructionLine(const std::string& text) {
   return out;
 }
 
-int HardwareConcurrency() {
-  return static_cast<int>(std::thread::hardware_concurrency());
-}
-
 int ExpectedBudget(int worker_count) {
-  return std::max(0, HardwareConcurrency() - worker_count);
+  return std::max(0, PhysicalCoreCount() - worker_count);
 }
 
 ConstructionLine BuildCpuServerAndRead(int num_workers) {
@@ -75,36 +75,36 @@ TEST(ServerRenderThreadBudget, OneWorkerLeavesAllButOneCore) {
   ASSERT_EQ(line.worker_count, 1)
       << "the construction line was not logged, or an explicit num_workers was not honoured";
   EXPECT_EQ(line.render_thread_budget, ExpectedBudget(1));
-  EXPECT_EQ(line.render_thread_budget, HardwareConcurrency() - 1);
+  EXPECT_EQ(line.render_thread_budget, PhysicalCoreCount() - 1);
 }
 
 TEST(ServerRenderThreadBudget, TwoIdleCoresIsABudgetOfExactlyTwo) {
-  const int hw = HardwareConcurrency();
-  if (hw < 4) {
-    GTEST_SKIP() << "hardware_concurrency=" << hw << ": hw−2 would not be a multi-worker pool";
+  const int phys = PhysicalCoreCount();
+  if (phys < 4) {
+    GTEST_SKIP() << "PhysicalCoreCount=" << phys << ": phys−2 would not be a multi-worker pool";
   }
-  const ConstructionLine line = BuildCpuServerAndRead(hw - 2);
-  ASSERT_EQ(line.worker_count, hw - 2);
-  EXPECT_EQ(line.render_thread_budget, 2) << "hw−2 workers must leave a budget that clears ParallelRows' < 2 gate";
+  const ConstructionLine line = BuildCpuServerAndRead(phys - 2);
+  ASSERT_EQ(line.worker_count, phys - 2);
+  EXPECT_EQ(line.render_thread_budget, 2) << "phys−2 workers must leave a budget that clears ParallelRows' < 2 gate";
 }
 
 TEST(ServerRenderThreadBudget, EveryCoreBusyClampsTheBudgetToZero) {
-  const int hw = HardwareConcurrency();
-  const ConstructionLine line = BuildCpuServerAndRead(hw);
-  ASSERT_EQ(line.worker_count, hw);
+  const int phys = PhysicalCoreCount();
+  const ConstructionLine line = BuildCpuServerAndRead(phys);
+  ASSERT_EQ(line.worker_count, phys);
   EXPECT_EQ(line.render_thread_budget, 0);
 }
 
 TEST(ServerRenderThreadBudget, MoreWorkersThanCoresStillClampsToZero) {
   // An explicit num_workers above the core count is honoured verbatim by the server, so the
   // difference goes negative and the max(0, ·) clamp is what keeps the budget a count.
-  const int hw = HardwareConcurrency();
-  const ConstructionLine line = BuildCpuServerAndRead(hw + 3);
-  ASSERT_EQ(line.worker_count, hw + 3);
+  const int phys = PhysicalCoreCount();
+  const ConstructionLine line = BuildCpuServerAndRead(phys + 3);
+  ASSERT_EQ(line.worker_count, phys + 3);
   EXPECT_EQ(line.render_thread_budget, 0);
 }
 
-TEST(ServerRenderThreadBudget, GpuRouteBudgetIsHardwareConcurrencyMinusItsSingleWorker) {
+TEST(ServerRenderThreadBudget, GpuRouteBudgetIsPhysicalCoresMinusItsSingleWorker) {
 #if defined(__APPLE__) || defined(LUMICE_CUDA_ENABLED)
 #if defined(__APPLE__)
   const BackendKind kGpu = BackendKind::kMetal;
@@ -124,7 +124,7 @@ TEST(ServerRenderThreadBudget, GpuRouteBudgetIsHardwareConcurrencyMinusItsSingle
   ASSERT_GE(line.worker_count, 1) << "the construction line was not logged";
   EXPECT_EQ(line.worker_count, 1) << "the GPU single-engine route sizes to one worker";
   EXPECT_EQ(line.render_thread_budget, ExpectedBudget(line.worker_count));
-  EXPECT_EQ(line.render_thread_budget, HardwareConcurrency() - 1);
+  EXPECT_EQ(line.render_thread_budget, PhysicalCoreCount() - 1);
 #else
   GTEST_SKIP() << "no GPU backend in this build";
 #endif

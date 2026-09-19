@@ -115,7 +115,7 @@ class RenderConsumer : public IConsume {
   // `thread_budget` is the idle-core budget every row-parallel W*H loop this consumer runs may
   // occupy — the visible mask built here, the annotation masks (Rebuild*), and PostSnapshot's
   // fused pixel loop all take it (see core/parallel_rows.hpp for the rule: below 2, inline
-  // serial). The server computes it as hardware_concurrency() minus its simulation worker count,
+  // serial). The server computes it as the physical core count minus its simulation worker count,
   // because those loops compete with the workers for the same physical cores; a consumer that
   // asked for a full-core pool on every poll cost ~12 percentage points of simulation throughput.
   // It is a REQUIRED parameter with no default, second so the compiler flags every construction

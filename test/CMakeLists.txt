@@ -103,8 +103,9 @@ add_executable(unit_correctness_test
   # The analysis run as a lifecycle of the live Server: render/analysis mutual exclusion,
   # the forced CPU route, the cone stop target's natural completion, the frame's histogram.
   "${PROJ_TEST_DIR}/unit-correctness/server/test_server_analysis_run.cpp"
-  # The idle-core budget ServerImpl hands its RenderConsumers (hw − worker_count, clamped), at
-  # worker_count ∈ {1, hw−2, hw, hw+3} and on the real GPU route, read off the construction log line.
+  # The idle-core budget ServerImpl hands its RenderConsumers (physical cores − worker_count,
+  # clamped), at worker_count ∈ {1, phys−2, phys, phys+3} and on the real GPU route, read off the
+  # construction log line.
   "${PROJ_TEST_DIR}/unit-correctness/server/test_server_render_thread_budget.cpp"
   # Its C API surface: request validation, both error codes, the frame getters end to end, the
   # truncation branch, and the pixel -> direction inverse against the forward projection.

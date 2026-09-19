@@ -583,12 +583,15 @@ buffer——`CompositeAnnotations` 为避免每像素分配，对当前像素先
 **机制。** 「这次并行调度总共能用几个核」做成一个显式的 `int thread_budget` 参数，全链路必填、无默认值：
 
 - `ServerImpl` 构造函数在算出 `worker_count` 的同一处算
-  `render_thread_budget_ = max(0, hardware_concurrency() − worker_count)`（`src/server/server.cpp`），算一次、
+  `render_thread_budget_ = max(0, PhysicalCoreCount() − worker_count)`（`src/server/server.cpp`），算一次、
   存成员——`worker_count` 在一个 server 实例的生命周期内是常量，没有 resize 路径，所以预算也是。构造行日志
   `ServerImpl: ... render_thread_budget=N` 把它和 `worker_count` 一起打印出来（regression sentinel 与
-  `test_server_render_thread_budget.cpp` 解析这一行，其形状是契约）。GPU 路 `worker_count=1` ⇒ 预算 `hw−1`，
-  GUI 在 GPU 路上仍拿到接近全核的并行。常备的 CPU 分析池不计入：它只在分析会话时唤醒，而分析会话与渲染
-  会话在同一个 server 里互斥。
+  `test_server_render_thread_budget.cpp` 解析这一行，其形状是契约）。GPU 路 `worker_count=1` ⇒ 预算 =
+  物理核数 − 1，GUI 在 GPU 路上仍拿到接近全核的并行。常备的 CPU 分析池不计入：它只在分析会话时唤醒，而分析
+  会话与渲染会话在同一个 server 里互斥。**是物理核不是 `hardware_concurrency()`**：这一步最初按逻辑核写
+  （立项公式原文如此），在 16C/32T 的参照机上 `32 − 10 = 22` 个池线程量出的损失与全核池**完全相同**
+  （下表 17.3% vs 17.3%）——多出来的线程落在 worker 所在物理核的 SMT 兄弟线程上，抢的是同一执行单元；
+  换成 `16 − 10 = 6` 才把损失从 17.3% 拉到 12.8%。无 SMT 的机器（Mac）两种算法相等。
 - `RenderConsumer` 构造函数第 2 位必填 `int thread_budget`，存成 `const int thread_budget_`，喂给它做的每一个
   W×H 行并行循环：构造时的 `BuildVisibleMask`、`Rebuild*` 触发的 5 处 `annotation::ComputeOverlay`（含其内部
   的 `LevelSetMaskFromField`）、`PostSnapshot` 的融合像素循环。`ComputeOverlay` 的调用点跑在 `CommitConfig`
@@ -640,9 +643,21 @@ Mac 12 核（8P+4E），2048×1024 dual-fisheye，`liblumice_testapi` C API 每 
 并行收益。⚠️ 串行对照的两天数字不一致（2 s 臂 4.40 → 4.56，20 ms 臂 4.12 → 4.11）说明 2 s 臂对机器状态
 敏感、20 ms 臂不敏感——跨日拿「损失百分比」比较是不可靠的，同日交错测的臂才可比。
 
-home-win / home-wsl（同一台 Ryzen 9 9950X，16C/32T）的同探针复测尚未取得数字：两者互斥且当时正被另一项
-CUDA 吞吐 bench 占用。对这台机器公式给出 `hw − W = 32 − 10 = 22`，池远大于 Mac 的 2，但 22 个逻辑核确实闲置，
-预期损失接近串行臂；数字到手后补进本表。
+Linux 参照机（Ryzen 9 9950X，16C/32T，WSL2，W=10，15 s 窗口，5 臂交错，n=5，CoV ≤ 2.3%；⚠️ 该机
+`CLOCK_REALTIME` 会被 host 时间同步拉慢约 20%，探针改用单调钟计窗口后才得到可用数据）：
+
+| 臂 | 2 s 稀疏轮询 | 20 ms GUI 轮询 | 损失 | 20 ms 下每次 poll 周期 |
+|---|---|---|---|---|
+| 全核池（修复前，32 线程） | 12.65 M rays/s | 10.46 | 17.3% | 34 ms |
+| 强制串行 | 12.64 | 11.51 | 9.0% | 88 ms |
+| 预算 = 逻辑核 − W = 22（本节第一版公式） | 12.69 | 10.49 | **17.3%** | 32 ms |
+| **预算 = 物理核 − W = 6（本节定稿）** | 12.73 | 11.10 | **12.8%** | 39 ms |
+| 预算固定 2（对照） | 12.76 | 11.29 | 11.5% | 59 ms |
+
+读法：在 SMT 机上「逻辑核 − W」等于没修；「物理核 − W」把损失从 17.3% 降到 12.8%，比串行多 3.8 pp，换来
+`PostSnapshot` 周期 88 → 39 ms（2.2×）。预算固定 2 再少 1.3 pp 损失但周期只到 59 ms——池大小与 worker
+损失之间是连续的取舍，没有一个预算能同时拿到串行的损失和并行的周期；本节取「物理核 − W」是因为它是唯一
+不含魔数、在 Mac 与该机上都自洽的定义。home-win（同一台机的原生 Windows）数字待测。
 
 **本节不覆盖的。** `RebuildAngularDistMasks` / `RebuildViewDistMasks` / `RebuildGridMasks` 仍是「一条线一次
 `ComputeOverlay`」——每次配置提交，N 条线现场起停 N 个（预算受限的）池而不是 1 个。这是调用频率问题，

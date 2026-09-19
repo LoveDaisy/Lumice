@@ -20,9 +20,9 @@ namespace lumice {
 // on the config-commit path where a small frame has to stay cheap.
 //
 // `thread_budget` is the number of cores this call may occupy, computed by the caller and passed
-// explicitly on every call: there is no default, and this function never reads
-// hardware_concurrency() itself. The budget is the machine's IDLE cores — hardware_concurrency()
-// minus the simulation workers the owning server keeps busy — because the pool built here
+// explicitly on every call: there is no default, and this function never reads a core count
+// itself. The budget is the machine's IDLE cores — physical cores minus the simulation workers
+// the owning server keeps busy (server.cpp, render_thread_budget_) — because the pool built here
 // competes with those workers for the same physical cores. The first version of this function
 // asked for a full-core pool on every call; under the GUI's ~20 ms poll cadence that pool
 // pre-empted the fixed-size worker pool and cost ~12 percentage points of simulation throughput

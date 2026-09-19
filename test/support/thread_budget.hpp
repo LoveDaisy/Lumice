@@ -6,11 +6,10 @@
 // ParallelRows, BuildVisibleMask, mask_detail::LevelSetMaskFromField, annotation::ComputeOverlay
 // and the RenderConsumer constructor all take an explicit `int thread_budget` with no default
 // (core/parallel_rows.hpp): in production the server computes it as the machine's idle cores —
-// hardware_concurrency() minus its simulation workers — because those loops compete with the
-// workers for the same physical cores, and a default would be exactly the value nobody reasoned
-// about. Test code has no worker pool to leave cores for, and what it checks is that the serial
-// and parallel paths produce the same bytes, not how they contend; so it passes the
-// pre-budget unconstrained value, hardware_concurrency(), which keeps every existing test and
+// physical cores minus its simulation workers — because those loops compete with the workers for
+// the same physical cores, and a default would be exactly the value nobody reasoned about. Test code has no worker pool
+// to leave cores for, and what it checks is that the serial and parallel paths produce the same bytes, not how they
+// contend; so it passes the pre-budget unconstrained value, hardware_concurrency(), which keeps every existing test and
 // benchmark on the same path it ran before the budget existed. A test that is ABOUT the budget
 // (forced-serial vs parallel, the server's formula) passes its own explicit number instead.
 //
