@@ -111,10 +111,6 @@ class CudaTraceBackend : public TraceBackend {
   // in-bounds landed weight; both are sliced by the dims the persistent device
   // buffers were actually allocated for, so a between-session drain is valid.
   void ReadbackXyzAccum(std::vector<XyzImageData>& xyz, std::vector<float>& landed_weight) override;
-  // Per-batch precision fold of the fp32 XYZ plane into the persistent device
-  // double plane (see TraceBackend::FoldDeviceXyzBatch). One elementwise kernel
-  // on the session stream, no host synchronization.
-  void FoldDeviceXyzBatch() override;
   // Device-side Y-lane accumulation. CUDA override of the base virtual: copies
   // each renderer's `class_count * W_i * H_i` region of the atomic-float buffer
   // to `lane_data[i]` and zeros the device side for the next window. Called
@@ -183,10 +179,10 @@ class CudaTraceBackend : public TraceBackend {
  private:
   struct Impl;
   std::unique_ptr<Impl> impl_;
-  // The one launch site of fold_xyz_plane_kernel: FoldDeviceXyzBatch (per batch,
-  // fold only) and ReadbackXyzAccum (per drain, finalize) share it so the two
-  // cannot disagree on grid shape or plane extent.
-  void LaunchXyzFold(bool finalize);
+  // The drain's device-side conversion of the double XYZ accumulator into the
+  // fp32 staging plane the D2H copies (xyz_plane_to_float_kernel); called by
+  // ReadbackXyzAccum only.
+  void LaunchXyzPlaneToFloat();
 };
 
 }  // namespace lumice
