@@ -1,56 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1789855512377,
+  "lastUpdate": 1789862102384,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "68f3be6a4fc6353c202b92f6538e7b9c3d5d1100",
-          "message": "Merge pull request #284 from LoveDaisy/task/retire-comma-raypath-separator\n\n退役 raypath 逗号连接符：静默算错改为指名改法的拒绝 + 加载期迁移",
-          "timestamp": "2026-08-30T22:29:34+08:00",
-          "tree_id": "e9cc435a031fe70e00ae4ab2e1c43c075f39eb24",
-          "url": "https://github.com/LoveDaisy/ice_halo_sim/commit/68f3be6a4fc6353c202b92f6538e7b9c3d5d1100"
-        },
-        "date": 1788100786901,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 471820.4,
-            "unit": "rays/sec",
-            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 584118.3,
-            "unit": "rays/sec",
-            "extra": "CPU: Neoverse-N2\\nCores: 4"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 375325.2,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 9V74 80-Core Processor\\nCores: 4"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 366955.1,
-            "unit": "rays/sec",
-            "extra": "CPU: INTEL(R) XEON(R) PLATINUM 8573C\\nCores: 4"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -4764,6 +4716,48 @@ window.BENCHMARK_DATA = {
             "value": 354306.1,
             "unit": "rays/sec",
             "extra": "CPU: Intel(R) Xeon(R) Platinum 8370C CPU @ 2.80GHz\\nCores: 4"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "88a667fb94867eaa45b47b789e101b9b505a99ee",
+          "message": "Merge pull request #387 from LoveDaisy/docs/thread-budget-owner-ruling\n\ndocs(gui): record the owner's ruling on the capped render thread budget",
+          "timestamp": "2026-09-20T07:45:28+08:00",
+          "tree_id": "659f93e361c41c0c2e674a5a3bba6178131d04b4",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/88a667fb94867eaa45b47b789e101b9b505a99ee"
+        },
+        "date": 1789862100870,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "Ubuntu ARM64",
+            "value": 510601.3,
+            "unit": "rays/sec",
+            "extra": "CPU: Neoverse-N2\\nCores: 4"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 417255.1,
+            "unit": "rays/sec",
+            "extra": "CPU: Intel(R) Xeon(R) Platinum 8370C CPU @ 2.80GHz\\nCores: 4"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 313501.7,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
           }
         ]
       }
