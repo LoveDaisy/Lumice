@@ -467,7 +467,7 @@ I1/I2/I5/I6 管的是世代号诚实、owner 唯一、交接原子、gate 不越
 | post_snapshot（`RenderConsumer::PostSnapshot` 逐像素 XYZ→sRGB 融合循环） | 87,614 µs（94.7%） | 4,765 µs（68.7%） |
 | prepare_snapshot（Phase 1：P99 锚点 + XYZ double→float 拷贝） | 3,148 µs（3.4%） | 1,993 µs（28.7%） |
 | count_pixels（Phase 1.5：`RenderConsumer::CountEffectivePixels`） | 1,718 µs（1.9%） | 106 µs（1.5%） |
-| 分段覆盖率 | 99.96% | 99.03% |
+| 分段覆盖率 | 99.96% | 98.90% |
 
 三段分别对应 `DoSnapshot` 的三个 phase：Phase 1 在 `consumer_mutex_` 下调每个 consumer 的
 `PrepareSnapshot()`（`server.cpp:1463-1486`）；Phase 1.5 在锁外数有效像素（`server.cpp:1508-1513`）；
@@ -524,8 +524,3 @@ post_snapshot 是 HI-RES 下唯一占比超过 90% 的段，但上面三条路�
 要评估的是线程池开销、与 `do_snapshot_mutex_` / `consumer_mutex_` 的交互，以及是否值得为一条非交互式的
 预览路径引入并行开销。⚠️ 本节没有对这条路做任何测量或裁定，只标明它是空白——把它读成「已否决」或
 「已立项」都是错的。
-
-顺带一条同样未处置的旁支：`RenderConsumer::PrepareSnapshot` 的逐像素拷贝跑在 `consumer_mutex_`
-锁内，与仿真 worker 线程的 `Consume()` 共享同一把锁。它对 `DoSnapshot` 自己的墙钟排名无关紧要
-（该段本就很小），但高分辨率下这份拷贝占用的锁时间可能间接推迟 worker 产出——这是「锁竞争」而非
-「计算串行化」，与本节的主问题是两条不同的因果链，量级未测。
