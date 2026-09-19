@@ -236,7 +236,7 @@ Registers = 1`，Windows CUDA 参照角色（Blackwell sm_120）上实测 Achiev
 
 | 指标 | baseline | `__launch_bounds__(256, 2)` | 变化 |
 |---|---|---|---|
-| 寄存器/线程（sm_120，对构建产物 `cuobjdump -res-usage` 读数） | 181 | 128 | −27% |
+| 寄存器/线程（sm_120，对构建产物 `cuobjdump -res-usage` 读数） | 181 | 128 | −29.3% |
 | Block Limit Registers | 1 | 2 | +1 |
 | 理论占用率 | 16.67% | 33.33% | 翻倍 |
 | Achieved Occupancy（`ncu`，Windows 参照角色） | 16.14%–16.28% | 31.54% | 如预测翻倍 |

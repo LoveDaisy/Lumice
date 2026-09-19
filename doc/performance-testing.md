@@ -405,7 +405,8 @@ around the critical path (sampling, a separate thread, a post-hoc counter), not 
 
 `trace_single_ms_kernel` (`src/core/backend/cuda_trace_backend.cu`) compiles to **181 registers
 per thread** on the production multi-arch fatbin. At its 256-thread block (`kTraceBlockSize`) that
-is 256 × 181 = 46,336 of the SM's 65,536 32-bit registers — one block fits, two do not — so `ncu`
+is 256 × 181 = 46,336 of the SM's 65,536 32-bit registers — over two thirds of the register file —
+one block fits, two do not — so `ncu`
 reports `Block Limit Registers = 1` and an Achieved Occupancy of **16.14%–16.28%** on the Windows
 CUDA reference role (Blackwell sm_120). Registers are the binding limit, not shared memory. The
 obvious question — is that 181 slack the compiler could be talked out of, and would halving the
@@ -418,7 +419,7 @@ does exactly what it promises at compile time and loses at run time:
 
 | Metric | baseline | `__launch_bounds__(256, 2)` | Δ |
 |---|---|---|---|
-| Registers / thread (sm_120, `cuobjdump -res-usage` on the built object) | 181 | 128 | −27% |
+| Registers / thread (sm_120, `cuobjdump -res-usage` on the built object) | 181 | 128 | −29.3% |
 | Block Limit Registers | 1 | 2 | +1 |
 | Theoretical occupancy | 16.67% | 33.33% | doubled |
 | Achieved occupancy (`ncu`, Windows reference role) | 16.14%–16.28% | 31.54% | doubled, as predicted |
