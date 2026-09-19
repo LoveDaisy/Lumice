@@ -50,10 +50,11 @@ one-way loss. It was invisible while both backends' host-side long chains were
 fp32 too (the two roundings cancelled on ``R``); widening legacy's
 ``internal_xyz_`` / ``total_intensity_`` to ``double`` removed one side of the
 cancellation and the device plane's own drift showed up as four red rows here
-and in ``test_cuda_multi_renderer_parity.py``. The fix keeps the fp32 plane
-for the emit kernels and folds it once per batch into a device ``double``
-twin (``FoldDeviceXyzBatch`` / ``fold_xyz_plane_kernel``), so no fp32 chain
-outlives one batch and the window total accumulates in double.
+and in ``test_cuda_multi_renderer_parity.py``. The fix makes the device plane
+``double`` (``AccumXyzToPixel``'s CUDA variant is a 64-bit ``atomicAdd``), with
+the drain converting to fp32 on device before the unchanged D2H; a per-batch
+fold of an fp32 plane into a double one was measured correct but too slow
+(``accum_shared.h`` records the alternatives).
 ``test_cuda_energy_ledger_independent_of_drain_window`` below is that
 mechanism's direct check: the ratio must not move when the window length does.
 
@@ -227,9 +228,9 @@ def test_cuda_energy_ledger_matches_legacy(config: str, seed: int):
 _DRAIN_WINDOW_BATCHES = (1, 16, 64)
 # Spread bound on R_cuda/R_legacy across the three windows. Tighter than
 # _T_R_RATIO_TOL because this compares one backend against itself at three
-# settings that should be numerically identical up to per-batch fp32 order
-# (measured post-fix spread ≤0.01%), not two backends against each other; the
-# red-state spread the fold's removal produces on this scene is 0.41%.
+# settings whose only difference is how often the double plane is drained
+# (measured post-fix spread 0.0000%), not two backends against each other; the
+# fp32 plane reads a 0.54% spread on this scene (-0.008% / -0.135% / +0.400%).
 _T_DRAIN_WINDOW_SPREAD = 0.0005
 _DRAIN_WINDOW_CONFIG = "parhelion"
 _DRAIN_WINDOW_SEED = 42
@@ -240,10 +241,11 @@ def test_cuda_energy_ledger_independent_of_drain_window(monkeypatch: pytest.Monk
     """R_cuda / R_legacy agrees across LUMICE_XYZ_DRAIN_BATCHES ∈ {1, 16, 64} to ≤0.05%.
 
     The legacy arm runs once (it has no drain window); the cuda arm runs once
-    per window length on the same seed. With the per-batch fold in place the
-    fp32 chain is one batch long whatever the window, so the three ratios must
-    agree; without it the ratio walks with the window (+0.40% at 64 vs −0.008%
-    at 1 on this scene), which is the signature this test exists to catch.
+    per window length on the same seed. With the double plane the drain
+    cadence only changes when the total is copied out, never how it is summed,
+    so the three ratios must agree; an fp32 plane walks with the window (+0.40%
+    at 64 vs −0.008% at 1 on this scene), which is the signature this test
+    exists to catch.
     """
     legacy = _run(_DRAIN_WINDOW_CONFIG, "legacy", _DRAIN_WINDOW_SEED)
     _assert_routed(legacy, "legacy", _DRAIN_WINDOW_CONFIG)
@@ -280,7 +282,7 @@ def test_cuda_energy_ledger_independent_of_drain_window(monkeypatch: pytest.Monk
     assert spread <= _T_DRAIN_WINDOW_SPREAD, (
         f"{_DRAIN_WINDOW_CONFIG}/seed{_DRAIN_WINDOW_SEED}: R_cuda/R_legacy moves with the drain "
         f"window (spread {spread * 100:.4f}% > {_T_DRAIN_WINDOW_SPREAD * 100:.2f}%): {detail}. "
-        "The device XYZ plane's fp32 chain is outliving one batch again — check that the "
-        "simulator calls FoldDeviceXyzBatch every third-clock batch and that "
-        "fold_xyz_plane_kernel zeroes the fp32 side."
+        "The device XYZ plane is summing in fp32 across the window again — check that "
+        "AccumXyzToPixel's CUDA variant still targets the double plane (d_xyz_acc_) and that "
+        "ReadbackXyzAccum merges it through xyz_plane_to_float_kernel."
     )
