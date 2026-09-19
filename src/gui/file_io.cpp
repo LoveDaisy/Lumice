@@ -30,6 +30,7 @@
 #include "gui/gui_state.hpp"
 #include "gui/preview_renderer.hpp"
 #include "gui/raypath_segments.hpp"
+#include "gui/xyz_half_codec.hpp"
 #include "util/color_space.hpp"
 #include "util/lens_focal.hpp"
 #include "util/lens_fov_default.hpp"
@@ -3771,7 +3772,18 @@ static constexpr uint32_t kLmcMagic = 0x00434D4C;  // "LMC\0" as little-endian u
 // branch as a live run and "what was saved is what reopens" holds by construction rather than to
 // within a threshold. The flag below says which encoding a file holds; the bump is what stops a
 // v=4 binary from handing a deflate stream to the PNG decoder.
-static constexpr uint32_t kLmcVersion = 5;
+//
+// v=5 → v=6 bump: the texture section's floats became float16 with one global scale. Not a
+// loosening of v5's "what was saved is what reopens": the live preview's OWN GPU texture is now
+// GL_RGB16F, quantized by the same codec on the same floats before upload
+// (src/gui/xyz_half_codec.hpp, PreviewRenderer::UploadXyzTexture), so the file holds exactly the
+// bits the screen was sampling and the byte identity still holds by construction — at half the
+// bytes on disk and half the texture memory. Monte-Carlo noise is spatially white, so a lossless
+// coder only ever recovered the zero pixels; the bit width was the one lever left. A v5 file is
+// still read (float32, then quantized on upload like any live frame, so it shows what a v6 re-save
+// of it shows); the bump is what stops a v=5 binary from inflating half the bytes it expects and
+// reading them as floats.
+static constexpr uint32_t kLmcVersion = 6;
 static constexpr uint32_t kLmcHeaderSize = 44;
 static constexpr uint32_t kLmcFlagHasTexture = 0x1;
 // Set iff the texture section holds radiance-only pixels (v >= 4). Read rather than inferred from
@@ -3785,16 +3797,27 @@ static constexpr uint32_t kLmcFlagTextureRadianceOnly = 0x2;
 // selects the display semantics, and a reader that conflated the two would have to infer one
 // from the other.
 static constexpr uint32_t kLmcFlagTextureXyzFloat = 0x4;
+// Set iff the texture section is the v>=6 linear-XYZ float16 encoding (the same LmcXyzTextureHeader,
+// its last field now the storage scale, + zlib stream of binary16 triplets). Mutually exclusive
+// with kLmcFlagTextureXyzFloat — each selects its own decoder — and, like it, always set together
+// with kLmcFlagTextureRadianceOnly. This is the only encoding the writer produces.
+static constexpr uint32_t kLmcFlagTextureXyzHalf = 0x8;
 
 // Layout of the v>=5 texture section: this 32-byte header, little-endian, followed by one zlib
 // stream (stbi_zlib_compress's output, with header and adler32) that inflates to exactly
-// `raw_byte_count` = width*height*3*sizeof(float) bytes of row-major XYZ float32 triplets — the
-// bytes UploadXyzTexture receives, byte for byte. Width/height are here rather than recovered
-// from the stream because a deflate stream, unlike a PNG, does not know its own dimensions. The
-// exposure fields are what SyncFromPoller (app.cpp) wrote into GuiState from the same result
-// frame the pixels came from; a reopened document writes them back so ComputeMonoExposure has a
-// non-zero denominator. Written and read field by field (no struct memcpy) so the on-disk layout
-// does not depend on padding.
+// `raw_byte_count` bytes of row-major XYZ triplets: width*height*3*sizeof(float) of float32 under
+// kLmcFlagTextureXyzFloat (v5), width*height*3*sizeof(uint16_t) of binary16 under
+// kLmcFlagTextureXyzHalf (v6) — in both cases the bytes the GPU texture was built from, byte for
+// byte. Width/height are here rather than recovered from the stream because a deflate stream,
+// unlike a PNG, does not know its own dimensions. The exposure fields are what SyncFromPoller
+// (app.cpp) wrote into GuiState from the same result frame the pixels came from; a reopened
+// document writes them back so ComputeMonoExposure has a non-zero denominator. Written and read
+// field by field (no struct memcpy) so the on-disk layout does not depend on padding.
+//
+// The last 4 bytes were `reserved` (written 0u, never read) through v5 and hold the float16
+// storage scale from v6 — the header now has NO spare bytes; the next field added here means
+// bumping kLmcXyzTextureHeaderSize and the format version together. A v5 reader never looked at
+// those bytes, and the v5 decoder below still does not, so the reuse costs nothing on either side.
 static constexpr uint32_t kLmcXyzTextureHeaderSize = 32;
 struct LmcXyzTextureHeader {
   uint32_t width = 0;
@@ -3804,7 +3827,7 @@ struct LmcXyzTextureHeader {
   float mono_anchor = 0.0f;
   uint32_t effective_pixels = 0;
   uint32_t raw_byte_count = 0;
-  uint32_t reserved = 0;
+  float scale = 0.0f;  // v6: ComputeXyzHalfScale over the frame; v5: the reserved 0u, unread
 };
 
 static void WriteU32(std::ofstream& out, uint32_t val) {
@@ -3859,19 +3882,24 @@ static float PeekF32(const unsigned char* p) {
   return val;
 }
 
-// Encodes the v>=5 texture section (LmcXyzTextureHeader + zlib stream) into `out`. Returns false
-// when stb's compressor fails (allocation), in which case `out` is left empty.
-static bool EncodeXyzTextureSection(const float* xyz, int w, int h, const XyzTextureMeta& meta,
-                                    std::vector<unsigned char>& out) {
+// Encodes the v>=6 texture section (LmcXyzTextureHeader + zlib stream of binary16) into `out`.
+// The quantization is xyz_half_codec.hpp's, the same call UploadXyzTexture makes on the same
+// floats. Returns false when stb's compressor fails (allocation), in which case `out` is left empty.
+static bool EncodeXyzHalfTextureSection(const float* xyz, int w, int h, const XyzTextureMeta& meta,
+                                        std::vector<unsigned char>& out) {
   out.clear();
-  const size_t raw_bytes = static_cast<size_t>(w) * h * 3 * sizeof(float);
+  const size_t component_count = static_cast<size_t>(w) * h * 3;
+  const size_t raw_bytes = component_count * sizeof(uint16_t);
   if (raw_bytes > static_cast<size_t>(std::numeric_limits<int>::max())) {
     return false;  // stb's API takes int lengths
   }
+  const float scale = ComputeXyzHalfScale(xyz, component_count);
+  std::vector<uint16_t> half(component_count);
+  QuantizeXyzToHalf(xyz, component_count, scale, half.data());
   int zlen = 0;
   // stbi_zlib_compress reads its input only; the non-const parameter is stb's C heritage.
-  unsigned char* zdata = stbi_zlib_compress(reinterpret_cast<unsigned char*>(const_cast<float*>(xyz)),
-                                            static_cast<int>(raw_bytes), &zlen, kLmcXyzZlibQuality);
+  unsigned char* zdata = stbi_zlib_compress(reinterpret_cast<unsigned char*>(half.data()), static_cast<int>(raw_bytes),
+                                            &zlen, kLmcXyzZlibQuality);
   if (!zdata) {
     return false;
   }
@@ -3883,21 +3911,23 @@ static bool EncodeXyzTextureSection(const float* xyz, int w, int h, const XyzTex
   AppendF32(out, meta.mono_anchor);
   AppendU32(out, static_cast<uint32_t>(meta.effective_pixels));
   AppendU32(out, static_cast<uint32_t>(raw_bytes));
-  AppendU32(out, 0u);  // reserved
+  AppendF32(out, scale);
   out.insert(out.end(), zdata, zdata + zlen);
   std::free(zdata);  // stb_impl.cpp builds stb with the default allocator, so this is STBIW_FREE
   return true;
 }
 
-// Decodes a v>=5 texture section into `tex`. Every failure returns false with `tex` untouched
-// beyond what the caller reset, so the loader's all-or-nothing contract holds through here.
-static bool DecodeXyzTextureSection(const std::vector<unsigned char>& section, LmcTexture& tex) {
+// The two halves both XYZ decoders share: the 32-byte header, validated, and the inflate into a
+// caller-sized buffer. What differs between v5 and v6 — how many bytes a texel is and what to do
+// with them once inflated — stays in the two decoders below. Every failure returns false having
+// written nothing the caller keeps, so the loader's all-or-nothing contract holds through here.
+static bool ParseXyzTextureHeader(const std::vector<unsigned char>& section, size_t bytes_per_component,
+                                  LmcXyzTextureHeader& hdr) {
   if (section.size() < kLmcXyzTextureHeaderSize) {
     GUI_LOG_ERROR("[LMC] XYZ texture section shorter than its header ({} bytes)", section.size());
     return false;
   }
   const unsigned char* p = section.data();
-  LmcXyzTextureHeader hdr;
   hdr.width = PeekU32(p + 0);
   hdr.height = PeekU32(p + 4);
   hdr.snapshot_intensity = PeekF32(p + 8);
@@ -3905,7 +3935,7 @@ static bool DecodeXyzTextureSection(const std::vector<unsigned char>& section, L
   hdr.mono_anchor = PeekF32(p + 16);
   hdr.effective_pixels = PeekU32(p + 20);
   hdr.raw_byte_count = PeekU32(p + 24);
-  hdr.reserved = PeekU32(p + 28);
+  hdr.scale = PeekF32(p + 28);
 
   // Dimensions bounded well below anything a preview texture reaches, so a corrupt header cannot
   // ask for a multi-gigabyte inflate buffer.
@@ -3914,27 +3944,36 @@ static bool DecodeXyzTextureSection(const std::vector<unsigned char>& section, L
     GUI_LOG_ERROR("[LMC] XYZ texture header declares invalid dimensions {}x{}", hdr.width, hdr.height);
     return false;
   }
-  const uint64_t expected_bytes = static_cast<uint64_t>(hdr.width) * hdr.height * 3 * sizeof(float);
+  const uint64_t expected_bytes = static_cast<uint64_t>(hdr.width) * hdr.height * 3 * bytes_per_component;
   if (hdr.raw_byte_count != expected_bytes || expected_bytes > static_cast<uint64_t>(std::numeric_limits<int>::max())) {
-    GUI_LOG_ERROR("[LMC] XYZ texture header raw_byte_count {} does not match {}x{}x3 floats", hdr.raw_byte_count,
-                  hdr.width, hdr.height);
+    GUI_LOG_ERROR("[LMC] XYZ texture header raw_byte_count {} does not match {}x{}x3 components of {} bytes",
+                  hdr.raw_byte_count, hdr.width, hdr.height, bytes_per_component);
     return false;
   }
-  const size_t zlen = section.size() - kLmcXyzTextureHeaderSize;
-  if (zlen == 0 || zlen > static_cast<size_t>(std::numeric_limits<int>::max())) {
+  if (section.size() == kLmcXyzTextureHeaderSize) {
     GUI_LOG_ERROR("[LMC] XYZ texture section has no zlib stream");
     return false;
   }
+  return true;
+}
 
-  std::vector<float> xyz(static_cast<size_t>(hdr.width) * hdr.height * 3);
-  const int inflated =
-      stbi_zlib_decode_buffer(reinterpret_cast<char*>(xyz.data()), static_cast<int>(expected_bytes),
-                              reinterpret_cast<const char*>(p + kLmcXyzTextureHeaderSize), static_cast<int>(zlen));
-  if (inflated < 0 || static_cast<uint64_t>(inflated) != expected_bytes) {
+static bool InflateXyzTextureStream(const std::vector<unsigned char>& section, void* dst, size_t expected_bytes) {
+  const size_t zlen = section.size() - kLmcXyzTextureHeaderSize;
+  if (zlen > static_cast<size_t>(std::numeric_limits<int>::max())) {
+    GUI_LOG_ERROR("[LMC] XYZ texture zlib stream too long ({} bytes)", zlen);
+    return false;
+  }
+  const int inflated = stbi_zlib_decode_buffer(static_cast<char*>(dst), static_cast<int>(expected_bytes),
+                                               reinterpret_cast<const char*>(section.data() + kLmcXyzTextureHeaderSize),
+                                               static_cast<int>(zlen));
+  if (inflated < 0 || static_cast<size_t>(inflated) != expected_bytes) {
     GUI_LOG_ERROR("[LMC] XYZ texture zlib stream inflated to {} bytes, expected {}", inflated, expected_bytes);
     return false;
   }
+  return true;
+}
 
+static void FillXyzTexture(const LmcXyzTextureHeader& hdr, std::vector<float>&& xyz, LmcTexture& tex) {
   tex.width = static_cast<int>(hdr.width);
   tex.height = static_cast<int>(hdr.height);
   tex.mode = PreviewRenderer::TextureMode::kXyz;
@@ -3943,6 +3982,45 @@ static bool DecodeXyzTextureSection(const std::vector<unsigned char>& section, L
   tex.meta.emitted_energy = hdr.emitted_energy;
   tex.meta.mono_anchor = hdr.mono_anchor;
   tex.meta.effective_pixels = static_cast<int>(hdr.effective_pixels);
+}
+
+// Decodes a v5 (float32) texture section into `tex`. Read-only compatibility: no writer produces
+// this any more. The floats go to the caller as they were stored; UploadXyzTexture quantizes them
+// on the way to the GPU exactly as it quantizes a live frame, so the picture is the one a v6
+// re-save of this file shows.
+static bool DecodeXyzFloatTextureSection(const std::vector<unsigned char>& section, LmcTexture& tex) {
+  LmcXyzTextureHeader hdr;
+  if (!ParseXyzTextureHeader(section, sizeof(float), hdr)) {
+    return false;
+  }
+  std::vector<float> xyz(static_cast<size_t>(hdr.width) * hdr.height * 3);
+  if (!InflateXyzTextureStream(section, xyz.data(), xyz.size() * sizeof(float))) {
+    return false;
+  }
+  FillXyzTexture(hdr, std::move(xyz), tex);
+  return true;
+}
+
+// Decodes a v>=6 (float16 + scale) texture section into `tex`, dequantized to float32 through the
+// same codec that quantized it — so LmcTexture::xyz has one meaning whichever section it came
+// from, and everything downstream of the loader is unaware the two encodings exist.
+static bool DecodeXyzHalfTextureSection(const std::vector<unsigned char>& section, LmcTexture& tex) {
+  LmcXyzTextureHeader hdr;
+  if (!ParseXyzTextureHeader(section, sizeof(uint16_t), hdr)) {
+    return false;
+  }
+  if (!(hdr.scale > 0.0f) || !std::isfinite(hdr.scale)) {
+    GUI_LOG_ERROR("[LMC] XYZ float16 texture header declares invalid scale {}", hdr.scale);
+    return false;
+  }
+  const size_t component_count = static_cast<size_t>(hdr.width) * hdr.height * 3;
+  std::vector<uint16_t> half(component_count);
+  if (!InflateXyzTextureStream(section, half.data(), component_count * sizeof(uint16_t))) {
+    return false;
+  }
+  std::vector<float> xyz(component_count);
+  DequantizeHalfToXyz(half.data(), component_count, hdr.scale, xyz.data());
+  FillXyzTexture(hdr, std::move(xyz), tex);
   return true;
 }
 
@@ -3963,9 +4041,9 @@ bool SaveLmcFile(const std::filesystem::path& path, const GuiState& state, const
     switch (preview.GetCpuTextureMode()) {
       case PreviewRenderer::TextureMode::kXyz:
         if (preview.GetXyzTextureData() != nullptr &&
-            EncodeXyzTextureSection(preview.GetXyzTextureData(), w, h, preview.GetXyzTextureMeta(), tex_bytes)) {
+            EncodeXyzHalfTextureSection(preview.GetXyzTextureData(), w, h, preview.GetXyzTextureMeta(), tex_bytes)) {
           has_texture = true;
-          tex_flags = kLmcFlagHasTexture | kLmcFlagTextureRadianceOnly | kLmcFlagTextureXyzFloat;
+          tex_flags = kLmcFlagHasTexture | kLmcFlagTextureRadianceOnly | kLmcFlagTextureXyzHalf;
         }
         break;
       case PreviewRenderer::TextureMode::kSrgbRadiance:
@@ -4076,11 +4154,13 @@ bool LoadLmcFile(const std::filesystem::path& path, GuiState& state, LmcTexture&
     return false;
   }
 
-  // Read texture if present. Two decoders, selected by the encoding flag; the two never share a
-  // line, so a v<=4 file takes exactly the path it always took.
+  // Read texture if present. Three decoders, selected by the encoding flags: the two XYZ ones
+  // share their header/inflate steps but not a line with the PNG one, so a v<=4 file takes
+  // exactly the path it always took, and a v5 file the path it took before the float16 bump.
   const bool flag_has_tex = (flags & kLmcFlagHasTexture) != 0;
   const bool flag_radiance_only = (flags & kLmcFlagTextureRadianceOnly) != 0;
   const bool flag_xyz_float = (flags & kLmcFlagTextureXyzFloat) != 0;
+  const bool flag_xyz_half = (flags & kLmcFlagTextureXyzHalf) != 0;
   if (flag_has_tex) {
     if (tex_size == 0) {
       GUI_LOG_ERROR("[LMC] Texture flag set but size is 0");
@@ -4094,8 +4174,12 @@ bool LoadLmcFile(const std::filesystem::path& path, GuiState& state, LmcTexture&
       return false;
     }
 
-    if (flag_xyz_float) {
-      if (!DecodeXyzTextureSection(tex_buf, tex)) {
+    if (flag_xyz_half) {
+      if (!DecodeXyzHalfTextureSection(tex_buf, tex)) {
+        return false;
+      }
+    } else if (flag_xyz_float) {
+      if (!DecodeXyzFloatTextureSection(tex_buf, tex)) {
         return false;
       }
     } else {

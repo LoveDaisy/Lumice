@@ -259,6 +259,10 @@ class PreviewRenderer {
   // What texture_ currently holds, i.e. which shader branch the next Render() takes. Read-only;
   // the upload entry points are the only writers.
   TextureMode GetTextureMode() const { return tex_mode_; }
+  // The float16 storage scale of the XYZ texture on the GPU (ComputeXyzHalfScale over the floats
+  // the last UploadXyzTexture received); Render() hands it to the shader as u_xyz_scale.
+  // Meaningless unless GetTextureMode() == kXyz.
+  float GetXyzTextureScale() const { return tex_xyz_scale_; }
   void ClearTexture();
 
   // Update the CPU-side uint8 mirror only (no GL upload, no tex_mode_ change). The mirror is
@@ -308,6 +312,7 @@ class PreviewRenderer {
   XyzTextureMeta tex_xyz_meta_;          // companion of tex_xyz_data_
   TextureMode cpu_tex_mode_ = TextureMode::kSrgbComposited;
   TextureMode tex_mode_ = TextureMode::kSrgbComposited;  // what texture_ currently holds
+  float tex_xyz_scale_ = 1.0f;                           // companion of texture_ under kXyz: the float16 storage scale
 
   // Deferred GL blank request. ClearTexture() sets this from any thread
   // (callable from coroutine workers without a GL context); Render() (main

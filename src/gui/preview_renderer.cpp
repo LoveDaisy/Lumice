@@ -9,6 +9,7 @@
 
 #include "gui/gl_common.h"
 #include "gui/gui_logger.hpp"
+#include "gui/xyz_half_codec.hpp"
 #include "util/annotation_line_width.hpp"
 
 namespace lumice::gui {
@@ -38,6 +39,9 @@ uniform int u_visible;       // 0=upper, 1=lower, 2=full
 uniform int u_front;         // 1=discard back hemisphere
 uniform float u_intensity_scale;  // = intensity_factor / per_pixel_intensity (0 = RGB mode)
 uniform int u_tex_mode;           // kTexModeSrgbComposited / kTexModeXyz / kTexModeSrgbRadiance
+// kTexModeXyz only: the texture holds xyz / u_xyz_scale as float16 (see src/gui/xyz_half_codec.hpp),
+// so one multiply at the sample site restores the frame's linear XYZ before anything reads it.
+uniform float u_xyz_scale;
 uniform vec3 u_background;        // sky colour, LINEAR RGB (see PreviewParams::background_color_linear)
 uniform vec3 u_paper;             // paper colour, LINEAR RGB (see PreviewParams::paper_color_linear)
 uniform int u_tone;               // 0 = screen (additive), 1 = print (subtractive) — config::RenderConfig::Tone
@@ -908,6 +912,11 @@ void main() {
 
     if (pixel_visible) {
       vec3 tex_color = sampleDualFisheye(world_dir);
+      if (u_tex_mode == kTexModeXyz) {
+        // Undo the float16 storage scale here, once, so every consumer below — the gamut clip,
+        // the print branch's tex_color.y — reads the frame's own linear XYZ.
+        tex_color *= u_xyz_scale;
+      }
       if (u_tex_mode != kTexModeSrgbComposited) {
         // Linear-light radiance for this pixel. The two source formats decode differently and
         // agree from here on: vignetting, then sky, then the transfer curve, in that order and by
@@ -1304,7 +1313,16 @@ void PreviewRenderer::UploadXyzTexture(const float* data, int width, int height)
   // Does NOT touch the CPU-side mirror (tex_data_ / tex_xyz_data_): this runs at the poll rate,
   // and Save refreshes the mirror from the retained poller payload instead — see
   // UpdateCpuXyzTextureData.
-  size_t byte_count = static_cast<size_t>(width) * height * 3 * sizeof(float);
+  //
+  // The texture is GL_RGB16F, and the float16 bits it receives are made HERE, by the same codec
+  // the .lmc writer runs on the same floats (src/gui/xyz_half_codec.hpp) — not by handing the
+  // driver GL_FLOAT data and letting it convert. That is what makes a reopened document's texture
+  // bit-identical to the live one's: quantize(dequantize(quantize(x))) == quantize(x), and no
+  // second converter is in either path to disagree. The scale the halves were divided by rides
+  // along in tex_xyz_scale_ and reaches the shader as u_xyz_scale from Render().
+  const size_t component_count = static_cast<size_t>(width) * height * 3;
+  const size_t byte_count = component_count * sizeof(uint16_t);
+  const float scale = ComputeXyzHalfScale(data, component_count);
   int w = pbo_index_;
 
   // Wait for prior fence (ensure GPU finished reading PBO[w])
@@ -1337,7 +1355,8 @@ void PreviewRenderer::UploadXyzTexture(const float* data, int width, int height)
     glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
     return;
   }
-  std::memcpy(ptr, data, byte_count);
+  // Quantize straight into the mapped PBO: one pass, no staging copy.
+  QuantizeXyzToHalf(data, component_count, scale, static_cast<uint16_t*>(ptr));
   if (glUnmapBuffer(GL_PIXEL_UNPACK_BUFFER) == GL_FALSE) {
     GUI_LOG_WARNING("[GL] UploadXyzTexture: glUnmapBuffer failed, buffer data may be corrupt, skipping frame");
     glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
@@ -1346,13 +1365,15 @@ void PreviewRenderer::UploadXyzTexture(const float* data, int width, int height)
 
   // Upload from PBO to texture (async DMA)
   glBindTexture(GL_TEXTURE_2D, texture_);
-  glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+  // Rows are width*3*2 bytes: even, but a multiple of 4 only for even widths, so the unpack
+  // alignment has to say 2 (the sRGB path says 1 for the same reason).
+  glPixelStorei(GL_UNPACK_ALIGNMENT, 2);
   if (width != tex_width_ || height != tex_height_ || tex_mode_ != TextureMode::kXyz) {
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB32F, width, height, 0, GL_RGB, GL_FLOAT, nullptr);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB16F, width, height, 0, GL_RGB, GL_HALF_FLOAT, nullptr);
     tex_width_ = width;
     tex_height_ = height;
   } else {
-    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, GL_RGB, GL_FLOAT, nullptr);
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, GL_RGB, GL_HALF_FLOAT, nullptr);
   }
 
   GLenum err = glGetError();
@@ -1365,6 +1386,7 @@ void PreviewRenderer::UploadXyzTexture(const float* data, int width, int height)
   }
   glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
   tex_mode_ = TextureMode::kXyz;
+  tex_xyz_scale_ = scale;
   glBindTexture(GL_TEXTURE_2D, 0);
   pbo_index_ = 1 - pbo_index_;
 }
@@ -1930,6 +1952,7 @@ void PreviewRenderer::Render(int vp_x, int vp_y, int vp_w, int vp_h, const Previ
   glUniform1i(glGetUniformLocation(shader_program_, "u_visible"), params.view_proj.visible);
   glUniform1i(glGetUniformLocation(shader_program_, "u_front"), params.view_proj.front ? 1 : 0);
   glUniform1i(glGetUniformLocation(shader_program_, "u_tex_mode"), static_cast<int>(tex_mode_));
+  glUniform1f(glGetUniformLocation(shader_program_, "u_xyz_scale"), tex_xyz_scale_);
   glUniform3f(glGetUniformLocation(shader_program_, "u_background"), params.background_color_linear[0],
               params.background_color_linear[1], params.background_color_linear[2]);
   glUniform3f(glGetUniformLocation(shader_program_, "u_paper"), params.paper_color_linear[0],
