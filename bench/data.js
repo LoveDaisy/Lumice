@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1789840609533,
+  "lastUpdate": 1789840613633,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -4783,54 +4783,6 @@ window.BENCHMARK_DATA = {
             "username": "LoveDaisy"
           },
           "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "37658798751c385f405d25527fc3226fb807ff08",
-          "message": "Merge pull request #282 from LoveDaisy/task/gui-entry-card-layout-and-crystal-identity\n\n晶体卡片 layout 重排 + 晶体身份可寻址 + Colors 面板编号/失效态",
-          "timestamp": "2026-08-30T13:34:44+08:00",
-          "tree_id": "23118e5367b29ce0c82bda8278360f565c79c8b8",
-          "url": "https://github.com/LoveDaisy/ice_halo_sim/commit/37658798751c385f405d25527fc3226fb807ff08"
-        },
-        "date": 1788068775565,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 1123679.8,
-            "unit": "rays/sec",
-            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 1156708.7,
-            "unit": "rays/sec",
-            "extra": "CPU: Neoverse-N2\\nCores: 4"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 770706.7,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 7763 64-Core Processor\\nCores: 4"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 658867.7,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
             "email": "zhangjiajie043@gmail.com",
             "name": "Jiajie Zhang",
             "username": "LoveDaisy"
@@ -9540,6 +9492,54 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 577298.1,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "96c437719d62599f74bab998e9baa5a4192900a7",
+          "message": "Merge pull request #384 from LoveDaisy/feat/lmc-f16-texture-dual-path\n\nfeat(gui): .lmc v6 float16 texture with the live preview quantized through the same codec",
+          "timestamp": "2026-09-20T01:45:06+08:00",
+          "tree_id": "6294bd9290986f14645da62d4429859ba9129d91",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/96c437719d62599f74bab998e9baa5a4192900a7"
+        },
+        "date": 1789840612873,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 903750.3,
+            "unit": "rays/sec",
+            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 1015368.8,
+            "unit": "rays/sec",
+            "extra": "CPU: Neoverse-N2\\nCores: 4"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 710456.3,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 7763 64-Core Processor\\nCores: 4"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 574573.3,
             "unit": "rays/sec",
             "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
           }
