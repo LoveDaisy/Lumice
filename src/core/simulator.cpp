@@ -2270,6 +2270,12 @@ void Simulator::SimulateOneWavelengthWithBackend(TraceBackend& backend, const Sc
       // task-color-degrade-gui-surfacing: OVERWRITE (not +=) — the tally is a
       // config constant, identical on every batch of this committed config.
       xyz_win_.color_degrade_counts_ = backend.GetLastColorDegradeCounts();
+      // Every batch, drain or not: widen this batch's fp32 plane into the
+      // backend's device double plane so no fp32 atomicAdd chain outlives one
+      // batch (the window total would otherwise drift with xyz_drain_batches_
+      // — see TraceBackend::FoldDeviceXyzBatch). Enqueued on the emit stream
+      // after this batch's layers, still inside the session; no host wait.
+      backend.FoldDeviceXyzBatch();
       if (xyz_win_.calls >= xyz_drain_batches_) {
         DrainDeviceXyz(&backend);
       }
