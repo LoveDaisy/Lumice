@@ -38,6 +38,26 @@ the defect had no machine signal for as long as it lived; this file is that
 signal. Revert the fix and the ``cpu_backend_route`` rows below read ~+1.7%
 against a 0.1% tolerance.
 
+The same defect shape came back one level down once the scalar was fixed.
+The per-pixel XYZ plane is itself an fp32 device accumulator with one
+``atomicAdd`` per exit, and on the third-clock drain path it too stays alive
+for the whole window. For most pixels that chain is short, but a narrow-field
+scene concentrates exits: on ``parhelion`` (fisheye 120°, 10M rays) the
+plane's Y sum read +0.40% above legacy's at the default 64-batch window, and
+the offset moved with the window length (16 batches → −0.135%, 4 → −0.039%,
+1 → −0.008%) — rounding drift whose sign flips with chain length, not a
+one-way loss. It was invisible while both backends' host-side long chains were
+fp32 too (the two roundings cancelled on ``R``); widening legacy's
+``internal_xyz_`` / ``total_intensity_`` to ``double`` removed one side of the
+cancellation and the device plane's own drift showed up as four red rows here
+and in ``test_cuda_multi_renderer_parity.py``. The fix makes the device plane
+``double`` (``AccumXyzToPixel``'s CUDA variant is a 64-bit ``atomicAdd``), with
+the drain converting to fp32 on device before the unchanged D2H; a per-batch
+fold of an fp32 plane into a double one was measured correct but too slow
+(``accum_shared.h`` records the alternatives).
+``test_cuda_energy_ledger_independent_of_drain_window`` below is that
+mechanism's direct check: the ratio must not move when the window length does.
+
 Tolerance. After the fix the cross-backend spread of ``R`` on the rows below
 is −0.004% or better at 2M rays and −0.029% on the 10M-ray ``parhelion`` rows
 (stable to 0.002% across seeds — a fixed offset, not noise). The tolerance is
@@ -197,4 +217,72 @@ def test_cuda_energy_ledger_matches_legacy(config: str, seed: int):
         "(flt_buf Y) have come apart. Suspect landed_weight accumulation: a single fp32 "
         "device scalar summed across the whole drain window drops sub-ulp exit weights "
         "and reads ~+1.7% here."
+    )
+
+
+# Drain-window lengths for the invariance check: the shipped default (64,
+# Simulator::kDefaultXyzDrainBatches), the middle of the dose-response table
+# and the shortest window the third clock allows. Set through
+# LUMICE_XYZ_DRAIN_BATCHES, which Simulator::Run re-reads on every Run() (the
+# env knob logs once but resolves every time), so one process can sweep it.
+_DRAIN_WINDOW_BATCHES = (1, 16, 64)
+# Spread bound on R_cuda/R_legacy across the three windows. Tighter than
+# _T_R_RATIO_TOL because this compares one backend against itself at three
+# settings whose only difference is how often the double plane is drained
+# (measured post-fix spread 0.0000%), not two backends against each other; the
+# fp32 plane reads a 0.54% spread on this scene (-0.008% / -0.135% / +0.400%).
+_T_DRAIN_WINDOW_SPREAD = 0.0005
+_DRAIN_WINDOW_CONFIG = "parhelion"
+_DRAIN_WINDOW_SEED = 42
+
+
+@pytest.mark.slow
+def test_cuda_energy_ledger_independent_of_drain_window(monkeypatch: pytest.MonkeyPatch):
+    """R_cuda / R_legacy agrees across LUMICE_XYZ_DRAIN_BATCHES ∈ {1, 16, 64} to ≤0.05%.
+
+    The legacy arm runs once (it has no drain window); the cuda arm runs once
+    per window length on the same seed. With the double plane the drain
+    cadence only changes when the total is copied out, never how it is summed,
+    so the three ratios must agree; an fp32 plane walks with the window (+0.40%
+    at 64 vs −0.008% at 1 on this scene), which is the signature this test
+    exists to catch.
+    """
+    legacy = _run(_DRAIN_WINDOW_CONFIG, "legacy", _DRAIN_WINDOW_SEED)
+    _assert_routed(legacy, "legacy", _DRAIN_WINDOW_CONFIG)
+    r_legacy = _r_ratio(legacy)
+    assert not math.isnan(r_legacy) and r_legacy > 0.0, (
+        f"{_DRAIN_WINDOW_CONFIG}: legacy R is not a positive number "
+        f"(Ysum={_y_sum(legacy):.6g} snapshot_intensity={legacy.snapshot_intensity:.6g})"
+    )
+
+    ratios = {}
+    for batches in _DRAIN_WINDOW_BATCHES:
+        monkeypatch.setenv("LUMICE_XYZ_DRAIN_BATCHES", str(batches))
+        cuda = _run(_DRAIN_WINDOW_CONFIG, "cuda", _DRAIN_WINDOW_SEED)
+        _assert_routed(cuda, "cuda", _DRAIN_WINDOW_CONFIG)
+        r_cuda = _r_ratio(cuda)
+        assert not math.isnan(r_cuda) and r_cuda > 0.0, (
+            f"{_DRAIN_WINDOW_CONFIG}/drain={batches}: cuda R is not a positive number "
+            f"(Ysum={_y_sum(cuda):.6g} snapshot_intensity={cuda.snapshot_intensity:.6g})"
+        )
+        ratios[batches] = r_cuda / r_legacy
+        print(
+            f"[drain-window] {_DRAIN_WINDOW_CONFIG}/seed{_DRAIN_WINDOW_SEED} "
+            f"LUMICE_XYZ_DRAIN_BATCHES={batches}: R_cuda/R_legacy={ratios[batches]:.6f} "
+            f"({(ratios[batches] - 1.0) * 100:+.4f}%) — cuda Ysum={_y_sum(cuda):.6g} "
+            f"snapshot_intensity={cuda.snapshot_intensity:.6g}"
+        )
+
+    spread = max(ratios.values()) - min(ratios.values())
+    detail = ", ".join(f"{b}: {r:.6f}" for b, r in ratios.items())
+    print(
+        f"[drain-window] {_DRAIN_WINDOW_CONFIG}/seed{_DRAIN_WINDOW_SEED}: spread={spread * 100:.4f}% "
+        f"(tol {_T_DRAIN_WINDOW_SPREAD * 100:.2f}%) — {detail}"
+    )
+    assert spread <= _T_DRAIN_WINDOW_SPREAD, (
+        f"{_DRAIN_WINDOW_CONFIG}/seed{_DRAIN_WINDOW_SEED}: R_cuda/R_legacy moves with the drain "
+        f"window (spread {spread * 100:.4f}% > {_T_DRAIN_WINDOW_SPREAD * 100:.2f}%): {detail}. "
+        "The device XYZ plane is summing in fp32 across the window again — check that "
+        "AccumXyzToPixel's CUDA variant still targets the double plane (d_xyz_acc_) and that "
+        "ReadbackXyzAccum merges it through xyz_plane_to_float_kernel."
     )

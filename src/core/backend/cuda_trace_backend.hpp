@@ -179,6 +179,10 @@ class CudaTraceBackend : public TraceBackend {
  private:
   struct Impl;
   std::unique_ptr<Impl> impl_;
+  // The drain's device-side conversion of the double XYZ accumulator into the
+  // fp32 staging plane the D2H copies (xyz_plane_to_float_kernel); called by
+  // ReadbackXyzAccum only.
+  void LaunchXyzPlaneToFloat();
 };
 
 }  // namespace lumice
