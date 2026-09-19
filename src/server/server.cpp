@@ -558,12 +558,13 @@ class ServerImpl {
   // against the route that sized simulators_ to a single Simulator.
   bool gpu_route_ = false;
 
-  // Idle-core budget handed to every RenderConsumer this server builds: PhysicalCoreCount()
-  // minus worker_count, floored at 0. The consumers' row-parallel W*H loops (visible mask,
-  // annotation masks, PostSnapshot's fused pixel loop — see core/parallel_rows.hpp) compete with
-  // the simulation workers for the same physical cores, so they may only use what the workers
-  // leave idle; below 2 they run inline. Computed once in the constructor, next to worker_count,
-  // because worker_count is fixed for this server's life (there is no resize path) — so is this.
+  // Idle-core budget handed to every RenderConsumer this server builds: PhysicalCoreCount() minus
+  // worker_count, floored at 0 and — on the CPU route only — capped at kRenderThreadBudgetCap. The
+  // consumers' row-parallel W*H loops (visible mask, annotation masks, PostSnapshot's fused pixel
+  // loop — see core/parallel_rows.hpp) compete with the simulation workers for the same physical
+  // cores, so they may only use what the workers leave idle; below 2 they run inline. Computed
+  // once in the constructor, next to worker_count, because worker_count is fixed for this server's
+  // life (there is no resize path) — so is this.
   // PHYSICAL cores, not hardware_concurrency(): on a 16C/32T box running 10 workers, a budget of
   // 32 − 10 = 22 pool threads measured the same simulation-throughput loss as the old full-core
   // pool (17.3% vs 17.3% under 20 ms polling), because the 22 threads land on the SMT siblings of
@@ -571,8 +572,24 @@ class ServerImpl {
   // 16 − 10 = 6 measured 12.8%, against 9.0% for a forced-serial loop. On a machine without SMT
   // the two counts are equal. The standing analysis pool is not subtracted: it is idle unless an
   // analysis session runs, and an analysis session and a render session never run together
-  // (CommitConfig refuses while an analysis is in flight). On the GPU route worker_count is 1
-  // and the budget is all but one physical core.
+  // (CommitConfig refuses while an analysis is in flight).
+  // The kRenderThreadBudgetCap=2 ceiling, CPU route only: even "physical cores idle" measures a
+  // real throughput cost proportional to the pool's own size, not just to whether it lands on a
+  // busy SMT sibling. On the 16C/32T reference machine, budget=6 (physical−10) still cost the CPU
+  // route's own workers 12.8% under 20 ms GUI polling against 9.0% for a forced-serial consumer;
+  // capping that same run's pool to a fixed 2 brought that down to 11.5% at the price of
+  // PostSnapshot's own period rising from 39 ms to 59 ms (see
+  // doc/gui-preview-lifecycle-architecture.md §12.5 for the full three-platform table). Two threads
+  // is not a magic number tuned to that one measurement: it is the smallest budget ParallelRows
+  // treats as "worth a pool" at all (its own `< 2` gate falls back to running the loop inline on
+  // the calling thread), so the cap simply declines to ever hand out more pool capacity than the
+  // one measured configuration that still cleared that gate. The GPU route does NOT apply this
+  // cap: its worker_count is 1 CPU worker that does not do the tracing (the GPU does), so its idle
+  // CPU cores are not protecting a CPU-bound simulation the way the CPU route's are, and AC1 asks
+  // for the GPU route to keep near-full parallelism (budget = physical cores − 1) for the GUI —
+  // capping it would give up parallelism this route has no matching measurement to justify giving
+  // up.
+  static constexpr int kRenderThreadBudgetCap = 2;
   int render_thread_budget_ = 0;
 
   // Set once per Run() by GenerateScene, when it has dropped the batches it had
@@ -803,7 +820,15 @@ ServerImpl::ServerImpl(int num_workers, uint32_t sim_seed, BackendKind preferred
   // render_thread_budget_'s declaration for why this counts physical cores. Deliberately not the
   // platform pair from AutomaticWorkerBaseAndCap(): that pair answers how many WORKERS pay off
   // (SMT does, on Windows), this answers how many cores are left, and a sibling thread is not one.
-  render_thread_budget_ = std::max(0, PhysicalCoreCount() - worker_count);
+  // The kRenderThreadBudgetCap ceiling applies only on the CPU route: it exists because a pool of
+  // that size measurably slows the CPU route's own simulation workers even when it lands on cores
+  // those workers are not using (see the member's declaration), which is a CPU-worker-vs-GUI-pool
+  // contention specific to the route where sim work IS what those cores are for. The GPU route's
+  // single CPU worker is not doing the tracing — the GPU is — so its idle CPU cores are not
+  // similarly protected, and AC1 asks for them uncapped (near-full parallelism for the GUI there).
+  const int uncapped_render_thread_budget = std::max(0, PhysicalCoreCount() - worker_count);
+  render_thread_budget_ =
+      gpu_route_ ? uncapped_render_thread_budget : std::min(uncapped_render_thread_budget, kRenderThreadBudgetCap);
   // AC1 observability (296.6): the GPU single-engine route must run worker_count==1;
   // analysis_pool_worker_count is the standing analysis pool's size (0 = no second group).
   // render_thread_budget is what the consumers' ParallelRows calls are allowed — the regression
