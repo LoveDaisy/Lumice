@@ -63,6 +63,7 @@ namespace {
 using lumice::test_user_defaults::FreshOverlayDir;
 using lumice::test_user_defaults::ResetUserDefaultsChannels;
 using lumice::test_user_defaults::ScopedUserConfigSource;
+using lumice::test_user_defaults::WriteRawOverlay;
 using nlohmann::json;
 
 // ---------------------------------------------------------------------------------------------
@@ -2692,6 +2693,42 @@ void RegisterDefaultsPanelTests(ImGuiTestEngine* engine) {
       }
       IM_CHECK(!gui::GetUserAxisPresetZenithTypeOverride(gui::AxisPreset::kColumn).has_value());
       IM_CHECK(!gui::GetUserAxisPresetZenithStdOverride(gui::AxisPreset::kColumn).has_value());
+    };
+  }
+
+  {
+    // A hand-edited file can hold a zenith_type this preset's classifier does not accept (a
+    // pasted-in Lowitz value under Column, say). The loader's ValidateAxisPresetZenithTypeForSave
+    // rejects it, so EffectiveCopyPresetZenith falls back to the factory type — the cell shows the
+    // untouched value. "(mine)" must agree: it would be a lie the raw JSON key tells that Save
+    // cannot correct, because Save writes back exactly what is already on screen (code-review
+    // round 1 Major #1 — has_override used to read the raw key instead of the same validated
+    // judgment the cell itself uses).
+    ImGuiTest* t =
+        IM_REGISTER_TEST(engine, "defaults_panel", "a_preset_zenith_type_outside_its_accepted_set_stays_unmarked");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ScopedPanel panel(ctx, "panel_preset_type_rejected_stays_unmarked");
+      // Written straight to the file before the panel ever opens — a hand edit, not a pick through
+      // the combo (the combo can only ever offer accepted values, so this path is unreachable any
+      // other way). No zenith_std alongside it: the claim is about the type face in isolation.
+      WriteRawOverlay(panel.dir(), R"({"presets":{"axis":{"column":{"zenith_type":"zigzag"}}}})");
+      panel.OpenOn(gui::DefaultsPanelSection::kPresets);
+
+      IM_CHECK_STR_EQ(DrawnLabel(ctx, "**/###preset_Column").c_str(), "Column###preset_Column");
+
+      // Not a labeling-only bug: the cell genuinely shows the factory type, so the title agrees
+      // with what is actually in effect rather than merely looking less alarming.
+      IM_CHECK_EQ(
+          static_cast<int>(gui::EffectiveAxisPresetZenith(gui::AxisPresetEntryFor(gui::AxisPreset::kColumn)).type),
+          static_cast<int>(gui::AxisDistType::kGauss));
+
+      // Restore agrees too: there is nothing valid to restore, so the button stays disabled rather
+      // than offering to undo a change that was never in effect.
+      ctx->ItemOpen("**/###preset_Column");
+      ctx->Yield(2);
+      const ImGuiTestItemInfo restore = ctx->ItemInfo("**/###preset_restore_column");
+      IM_CHECK(restore.ID != 0);
+      IM_CHECK(IsDisabled(restore));
     };
   }
 

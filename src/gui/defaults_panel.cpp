@@ -918,8 +918,11 @@ void RenderEditableZenithRow(const AxisPresetEntry& entry) {
 void RenderPresetEntry(const AxisPresetEntry& entry) {
   const auto slot = static_cast<std::size_t>(entry.id);
   // Either face counts: a preset with only its type retuned is "mine" too, and its Restore button
-  // has something to restore.
-  const bool has_override = CopyPresetZenithStd(entry).has_value() || CopyPresetZenithType(entry).has_value();
+  // has something to restore. The type half reads through ValidCopyPresetZenithType rather than
+  // the raw CopyPresetZenithType — a hand-edited file can hold a type this preset's classifier does
+  // not accept, and that value is already treated as "no override" by EffectiveCopyPresetZenith; a
+  // raw read would show "(mine)" while every cell on the row displays the untouched factory values.
+  const bool has_override = CopyPresetZenithStd(entry).has_value() || ValidCopyPresetZenithType(entry).has_value();
 
   // Label carries "(mine)" for a preset the user has retuned, so the collapsed view already
   // answers "which of these have I changed" without opening all six.
