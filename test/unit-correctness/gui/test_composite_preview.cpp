@@ -554,21 +554,19 @@ TEST(CompositePreview, RerunningAtTheSameExposureReproducesTheSamePicture) {
   const Composite rerun = ReadComposite(srv);
   ASSERT_EQ(rerun.rgb.size(), first.rgb.size());
 
-  // Ratios rather than byte-equality: the two runs are independent Monte Carlo samples of the same
+  // A ratio rather than byte-equality: the two runs are independent Monte Carlo samples of the same
   // scene (the crystal orientations are drawn afresh each commit), so the two pictures agree only
-  // statistically. Each window below is sized against the defect it must catch — the ~4x jump the
-  // doubling bug produced — not against the noise it must tolerate; a window fitted to the noise is
-  // exactly what went red five times in CI on diffs that never touched this code.
+  // statistically. The mean byte averages over every pixel, which is what lets sampling noise
+  // cancel, and [0.8, 1.25] has held on every CI run to date. It is also the only ruler here that
+  // can see the defect: committing the scene with `intensity_factor` baked to 4.0 (== 2^kUserEv,
+  // the exact effect of the bug) moves the mean ratio to 1.75-1.95 — short of 4x only because at
+  // EV 2 many pixels already sit at 255 — so a recurrence clears the 1.25 bound by a wide margin.
   //
-  // The mean byte is an average over every pixel, so sampling noise largely cancels and [0.8, 1.25]
-  // has held on every CI run to date; it stays. p99 is a single order statistic on the tail, which
-  // averaging does not help — its run-to-run ratio has been observed at 0.748 and 1.333 on
-  // unchanged code — so its window is [0.5, 2.0]: the log-midpoint between "same picture" and the
-  // 4x defect, so the defect still overshoots the bound by 2x while the widest ratio seen so far
-  // sits 1.5x inside it on each side. Should this window ever go red again on unchanged code, the
-  // next step is not a wider window but a different assertion shape: commit the scene a third time
-  // with `intensity_factor` baked to 4.0 and assert that THAT re-run comes back ~4x — a controlled
-  // perturbation that a noise-fitted ratio band cannot be.
+  // What is deliberately NOT compared is composite_p99_y. That anchor is the P99 of the raw,
+  // unexposed class lanes (component_compositor.hpp), computed upstream of intensity_factor and of
+  // the pushed EV; the same 4x bake leaves its run-to-run ratio at 0.89-1.13, indistinguishable
+  // from unchanged code. A ratio on it therefore measured only the sampling noise on one order
+  // statistic — which is what went red five times in CI on diffs that never touched this path.
   const auto MeanByte = [](const Composite& c) {
     unsigned long long sum = 0;
     for (uint8_t v : c.rgb) {
@@ -581,9 +579,6 @@ TEST(CompositePreview, RerunningAtTheSameExposureReproducesTheSamePicture) {
   ASSERT_GT(mean_first, 0.0);
   EXPECT_GT(mean_rerun / mean_first, 0.8);
   EXPECT_LT(mean_rerun / mean_first, 1.25);
-  ASSERT_GT(first.p99, 0.0f);
-  EXPECT_GT(rerun.p99 / first.p99, 0.5);
-  EXPECT_LT(rerun.p99 / first.p99, 2.0);
 }
 
 // ---- Adding a class re-converges instead of stalling ----
