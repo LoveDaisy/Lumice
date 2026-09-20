@@ -1411,9 +1411,8 @@ void RegisterViewDisplayControlTests(ImGuiTestEngine* engine) {
 
       // Every entry, not one: the fields the presets share are written in one place, but the loop
       // is what says no single entry grew its own side effect.
-      const char* const kEntries[] = {
-        "Zenith", "Nadir", "Sun", "Subsun", "Anthelion", "Antisolar", "Sun-side horizon"
-      };
+      const char* const kEntries[] = { "Zenith",    "Nadir",      "Sun",      "Subsun",        "Anthelion",
+                                       "Antisolar", "Toward sun", "Sun +90°", "Away from sun", "Sun -90°" };
       for (const char* entry : kEntries) {
         PickLookAt(ctx, entry);
         if (gui::g_state.renderer.roll != roll_before || gui::g_state.renderer.fov != fov_before) {
@@ -1458,9 +1457,25 @@ void RegisterViewDisplayControlTests(ImGuiTestEngine* engine) {
         IM_CHECK_LT(std::fabs(gui::g_state.renderer.elevation + altitude), 1e-3f);
         IM_CHECK_LT(std::fabs(std::fabs(gui::g_state.renderer.azimuth) - 180.0f), 1e-3f);
 
-        PickLookAt(ctx, "Sun-side horizon");
+        PickLookAt(ctx, "Toward sun");
         IM_CHECK_LT(std::fabs(gui::g_state.renderer.elevation), 1e-3f);
         IM_CHECK_LT(std::fabs(gui::g_state.renderer.azimuth), 1e-3f);
+
+        // The rest of the Horizon series: the same bearing plus the constant the entry names, at
+        // both altitudes — level, and the Azimuth slider reads the number in the label. The unit
+        // layer pins the arithmetic (including the pole, where the bearing has to wrap); what is
+        // new here is that these menu items, in this panel, reach it.
+        PickLookAt(ctx, "Sun +90°");
+        IM_CHECK_LT(std::fabs(gui::g_state.renderer.elevation), 1e-3f);
+        IM_CHECK_LT(std::fabs(gui::g_state.renderer.azimuth - 90.0f), 1e-3f);
+
+        PickLookAt(ctx, "Away from sun");
+        IM_CHECK_LT(std::fabs(gui::g_state.renderer.elevation), 1e-3f);
+        IM_CHECK_LT(std::fabs(std::fabs(gui::g_state.renderer.azimuth) - 180.0f), 1e-3f);
+
+        PickLookAt(ctx, "Sun -90°");
+        IM_CHECK_LT(std::fabs(gui::g_state.renderer.elevation), 1e-3f);
+        IM_CHECK_LT(std::fabs(gui::g_state.renderer.azimuth + 90.0f), 1e-3f);
       };
       check_altitude(30.0f);
       check_altitude(-12.0f);  // the sun has set; its subsun and anthelion have not
@@ -1493,7 +1508,18 @@ void RegisterViewDisplayControlTests(ImGuiTestEngine* engine) {
           break;
         }
       }
-      IM_CHECK(ctx->ItemExists("**/Sun-side horizon"));
+      // The Horizon series has no Overlay row to agree with; what is pinned is that the menu
+      // carries all four under the names the guide documents.
+      for (const char* horizon : { "Toward sun", "Sun +90°", "Away from sun", "Sun -90°" }) {
+        const std::string entry = std::string("**/") + horizon;
+        if (!ctx->ItemExists(entry.c_str())) {
+          IM_ERRORF("the menu has no entry named '%s'", horizon);
+        }
+
+        if (ctx->IsError()) {
+          break;
+        }
+      }
       ctx->SetRef("");
       // Close the menu this case opened by hand. Left up, it covers the button the next step has to
       // click, and the failure reads as "the button is not hoverable" rather than as the leak it is.

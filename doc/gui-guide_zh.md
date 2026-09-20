@@ -124,6 +124,7 @@ GUI 需要 display server 和支持 OpenGL 3.2 Core Profile 的 GPU。
 
 - **Projection**：`Lens Type` 提供 10 种 lens 投影 —— Linear、Rectangular、Fisheye（Equidistant / Equal Area / Stereographic / Orthographic）以及 Dual Fisheye（Equidistant / Equal Area / Stereographic / Orthographic）。Combo 中按分组排序，使 Orthographic 变体紧邻其 fisheye / dual-fisheye 同族。`FOV` 由具体 lens 限定上限；`Visible`（front / back / all）控制只渲染哪一半球的光线。
 - **Camera**：`Elevation`、`Azimuth`、`Roll`。Full-sky lens（dual 系列与 Equirectangular 导出格式）下三者均禁用并强制为 0。
+  `Reset` 旁的 `Look At` 按钮可一键把相机指向一个具名方向：Overlay 面板能画出的六个参考点（Zenith、Nadir、Sun、Subsun、Anthelion、Antisolar），以及一组相对太阳的 **Horizon** 地平线方位——`Toward sun`、`Sun +90°`、`Away from sun`、`Sun -90°`（仰角 0；标签里的数就是选中后 `Azimuth` 滑条会显示的数，因为太阳固定在方位角 0）。预设只写 `Elevation` 与 `Azimuth`，`Roll` 与 `FOV` 保持你原来的取景。
 
 不同 lens 的成像几何差异显著：
 

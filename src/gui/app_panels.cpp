@@ -1588,6 +1588,13 @@ void RenderRightPanel(GLFWwindow* window, float window_width, float window_heigh
         if (name == nullptr) {
           continue;
         }
+        // The Horizon series is grouped under its own heading: its entries are named relative to
+        // the sun ("Sun +90°") and read differently from the marker names above them, which the
+        // user can also find as dots on the canvas. A heading is not an item, so it does not change
+        // what the entries are looked up by.
+        if (id == kFirstHorizonLookAt) {
+          ImGui::SeparatorText("Horizon");
+        }
         if (ImGui::Selectable(name)) {
           float az = 0.0f;
           float el = 0.0f;

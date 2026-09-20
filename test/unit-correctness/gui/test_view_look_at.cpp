@@ -17,6 +17,7 @@
 #include <array>
 #include <cmath>
 
+#include "gui/annotation_anchors.hpp"     // GuiSunWorldDir — the sun as the code under test spells it
 #include "gui/field_editor_registry.hpp"  // ConstraintFor — the gate and bounds the menu borrows
 #include "gui/gui_state.hpp"              // kMarkerDisplayNames — the Overlay list this menu must agree with
 #include "gui/view_look_at.hpp"
@@ -127,7 +128,7 @@ TEST(ViewLookAtMath, AnswersFiniteAnglesAtThePolesRatherThanNaN) {
 }
 
 // ---------------------------------------------------------------------------------------------
-// ResolveLookAtAzEl — the seven presets, each judged by the relation that defines it.
+// ResolveLookAtAzEl — the presets, each judged by the relation that defines it.
 // ---------------------------------------------------------------------------------------------
 
 TEST(ViewLookAtPresets, EachDirectionSatisfiesItsDefiningRelation) {
@@ -166,27 +167,28 @@ TEST(ViewLookAtPresets, EachDirectionSatisfiesItsDefiningRelation) {
     ASSERT_TRUE(ok);
     EXPECT_NEAR(Dot(f_nad, { 0.0f, 0.0f, 1.0f }), 1.0f, 1e-4f) << "altitude " << alt;
 
-    // Sun-side horizon: level, and on the sun's side rather than the opposite one. The second half
+    // Toward sun (the sun-side horizon): level, and on the sun's side rather than the opposite one. The second half
     // is what a sign slip would break, and a "parallel to the sun's bearing" test alone would not
     // notice it.
     float az_h = 0.0f;
     float el_h = 0.0f;
     ASSERT_TRUE(lumice::gui::ResolveLookAtAzEl(LookAtId::kSunHorizon, alt, &az_h, &el_h));
-    EXPECT_NEAR(el_h, 0.0f, 1e-4f) << "Sun-side horizon must be level, altitude " << alt;
+    EXPECT_NEAR(el_h, 0.0f, 1e-4f) << "Toward sun must be level, altitude " << alt;
     const std::array<float, 3> f_horiz = ForwardAt(az_h, el_h);
     const float sun_h_len = std::sqrt(sun[0] * sun[0] + sun[1] * sun[1]);
     ASSERT_GT(sun_h_len, 1e-3f) << "test setup: altitude " << alt << " has no bearing to compare";
     EXPECT_NEAR(f_horiz[0] * sun[0] / sun_h_len + f_horiz[1] * sun[1] / sun_h_len, 1.0f, 1e-4f)
-        << "Sun-side horizon must share the sun's bearing, not oppose it; altitude " << alt;
+        << "Toward sun must share the sun's bearing, not oppose it; altitude " << alt;
   };
   check_altitude(25.0f);
   check_altitude(0.0f);
   check_altitude(-15.0f);  // sun below the horizon
 }
 
-TEST(ViewLookAtPresets, TheSevenDirectionsAreDistinctForAGenericSun) {
+TEST(ViewLookAtPresets, EveryDirectionIsDistinctForAGenericSun) {
   // Without this, every relation above could be satisfied by an implementation that returned one
-  // direction for several ids — each assertion only looks at its own row.
+  // direction for several ids — each assertion only looks at its own row. Sized by kCount rather
+  // than a literal so an entry added later is in the matrix without anyone remembering to add it.
   const float alt = 33.0f;
   std::array<std::array<float, 3>, static_cast<int>(LookAtId::kCount)> forwards{};
   for (int i = 0; i < static_cast<int>(LookAtId::kCount); ++i) {
@@ -231,6 +233,116 @@ TEST(ViewLookAtPresets, SunSideHorizonStaysFiniteThroughTheDegenerateBand) {
   EXPECT_NEAR(std::abs(az_up), 180.0f, 1e-3f);
 }
 
+// ---------------------------------------------------------------------------------------------
+// The Horizon series — four level bearings relative to the sun, AC2: one case per entry, each
+// asserted to the literal number the user will read off the Azimuth slider.
+//
+// The numbers are literal on purpose. A relation ("+90 is a quarter turn from Toward sun") would be
+// satisfied just as well by -90, which is exactly the slip these cases exist to catch: with the
+// sun pinned at azimuth 0, "Sun +90°" MUST land the slider on +90, and an offset table with its
+// sign inverted lands it on -90 — a different entry's number, and red here.
+//
+// Two altitudes, one below the horizon, and neither near a pole: the bearing is well defined at
+// both, so the elevation is exactly 0 and the azimuth is exactly the offset. The pole itself, where
+// core falls back to a fixed bearing, is the separate case that follows.
+// ---------------------------------------------------------------------------------------------
+
+namespace {
+
+// One row per altitude, each in its own call so a rejected row reports and the next still runs.
+void ExpectHorizonEntryAt(LookAtId id, float alt, float want_az_deg, const char* what) {
+  float az = 12345.0f;
+  float el = 12345.0f;
+  ASSERT_TRUE(lumice::gui::ResolveLookAtAzEl(id, alt, &az, &el)) << what << " altitude " << alt;
+  EXPECT_NEAR(el, 0.0f, 1e-4f) << what << " must be level, altitude " << alt;
+  EXPECT_NEAR(az, want_az_deg, 1e-3f) << what << " altitude " << alt;
+}
+
+}  // namespace
+
+TEST(ViewLookAtHorizon, TowardSunLandsOnAzimuthZero) {
+  ExpectHorizonEntryAt(LookAtId::kSunHorizon, 25.0f, 0.0f, "Toward sun");
+  ExpectHorizonEntryAt(LookAtId::kSunHorizon, -15.0f, 0.0f, "Toward sun");
+}
+
+TEST(ViewLookAtHorizon, SunPlus90LandsOnAzimuthPlus90) {
+  ExpectHorizonEntryAt(LookAtId::kHorizonSunPlus90, 25.0f, 90.0f, "Sun +90");
+  ExpectHorizonEntryAt(LookAtId::kHorizonSunPlus90, -15.0f, 90.0f, "Sun +90");
+}
+
+TEST(ViewLookAtHorizon, AwayFromSunLandsOnAzimuth180) {
+  // 180 and -180 are the same bearing and both inside the slider's range; which one comes back is
+  // decided by the sign of a zero, so the magnitude is what is pinned (same rule as the antisolar
+  // rows elsewhere in this file).
+  const auto check_altitude = [](float alt) {
+    float az = 12345.0f;
+    float el = 12345.0f;
+    ASSERT_TRUE(lumice::gui::ResolveLookAtAzEl(LookAtId::kHorizonAntiSun, alt, &az, &el)) << "altitude " << alt;
+    EXPECT_NEAR(el, 0.0f, 1e-4f) << "Away from sun must be level, altitude " << alt;
+    EXPECT_NEAR(std::abs(az), 180.0f, 1e-3f) << "altitude " << alt;
+  };
+  check_altitude(25.0f);
+  check_altitude(-15.0f);
+}
+
+TEST(ViewLookAtHorizon, SunMinus90LandsOnAzimuthMinus90) {
+  ExpectHorizonEntryAt(LookAtId::kHorizonSunMinus90, 25.0f, -90.0f, "Sun -90");
+  ExpectHorizonEntryAt(LookAtId::kHorizonSunMinus90, -15.0f, -90.0f, "Sun -90");
+}
+
+TEST(ViewLookAtHorizon, TheOffsetsWrapRatherThanClampAtTheFallbackBearing) {
+  // With the sun at a pole core falls back to a fixed bearing on the far side (|az| = 180, pinned
+  // by SunSideHorizonStaysFiniteThroughTheDegenerateBand). Adding the series' offsets to that
+  // leaves the slider's interval — -180 - 90 = -270, or 180 + 90 = 270 — and the only correct
+  // answer is the same bearing brought back round: +90 for "Sun -90°", -90 for "Sun +90°", 0 for
+  // "Away from sun". A clamp answers -180 or 180 for one of the two ±90 entries instead — the
+  // bearing of "Toward sun" — and is red here whichever sign core's fallback carries. Every other
+  // combination this file exercises keeps base + offset inside the interval, so this is the one
+  // place a wrap and a clamp disagree, and it is exercised at both poles.
+  const auto check_entry = [](LookAtId id, float alt, float want_az, const char* what) {
+    float az = 12345.0f;
+    float el = 12345.0f;
+    ASSERT_TRUE(lumice::gui::ResolveLookAtAzEl(id, alt, &az, &el)) << what << " altitude " << alt;
+    EXPECT_NEAR(az, want_az, 1e-3f) << what << " at the fallback bearing, altitude " << alt;
+    EXPECT_NEAR(el, 0.0f, 1e-4f) << what << " altitude " << alt;
+  };
+  const auto check_pole = [&check_entry](float alt) {
+    check_entry(LookAtId::kHorizonSunMinus90, alt, 90.0f, "Sun -90");
+    check_entry(LookAtId::kHorizonSunPlus90, alt, -90.0f, "Sun +90");
+    check_entry(LookAtId::kHorizonAntiSun, alt, 0.0f, "Away from sun");
+  };
+  check_pole(90.0f);
+  check_pole(-90.0f);
+}
+
+TEST(ViewLookAtHorizon, TowardSunPassesTheCoreBearingThroughUnchanged) {
+  // AC3: the entry that existed before the series did must answer exactly what it answered then —
+  // the bearing core returns, converted, with nothing added and nothing folded. Compared against
+  // the same C API call made by hand, so the assertion holds whichever of +180 / -180 the far-side
+  // fallback comes back as: a wrap that mapped one endpoint of the closed interval onto the other
+  // would pass a magnitude check and fail this one.
+  const auto check_altitude = [](float alt) {
+    float sun_dir[3] = {};
+    lumice::gui::GuiSunWorldDir(alt, sun_dir);
+    float target[3] = {};
+    ASSERT_EQ(LUMICE_ResolveSunHorizonDirection(sun_dir, target), LUMICE_OK) << "altitude " << alt;
+    float want_az = 0.0f;
+    float want_el = 0.0f;
+    lumice::gui::WorldDirToAzEl(target, &want_az, &want_el);
+
+    float az = 12345.0f;
+    float el = 12345.0f;
+    ASSERT_TRUE(lumice::gui::ResolveLookAtAzEl(LookAtId::kSunHorizon, alt, &az, &el)) << "altitude " << alt;
+    EXPECT_FLOAT_EQ(az, want_az) << "altitude " << alt;
+    EXPECT_FLOAT_EQ(el, want_el) << "altitude " << alt;
+  };
+  check_altitude(25.0f);
+  check_altitude(0.0f);
+  check_altitude(-15.0f);
+  check_altitude(90.0f);
+  check_altitude(-90.0f);
+}
+
 TEST(ViewLookAtPresets, RejectsAnOutOfRangeIdWithoutWritingAnything) {
   float az = 4242.0f;
   float el = 4242.0f;
@@ -253,8 +365,27 @@ TEST(ViewLookAtNames, MarkerEntriesReadTheirNameFromTheOverlayListsOwnTable) {
     EXPECT_EQ(lumice::gui::LookAtDisplayName(static_cast<LookAtId>(i)), lumice::gui::kMarkerDisplayNames[i])
         << "marker id " << i;
   }
-  EXPECT_STREQ(lumice::gui::LookAtDisplayName(LookAtId::kSunHorizon), "Sun-side horizon");
   EXPECT_EQ(lumice::gui::LookAtDisplayName(static_cast<LookAtId>(static_cast<int>(LookAtId::kCount))), nullptr);
+}
+
+TEST(ViewLookAtNames, TheHorizonSeriesIsNamedRelativeToTheSunAndIsNotAMarker) {
+  // AC1: the four series ids sit after the markers, and the marker predicate says so — a series
+  // entry that read as a marker would be sent to the marker table, which has no row for it.
+  const struct {
+    LookAtId id;
+    const char* name;
+  } kSeries[] = {
+    { LookAtId::kSunHorizon, "Toward sun" },
+    { LookAtId::kHorizonSunPlus90, "Sun +90°" },
+    { LookAtId::kHorizonAntiSun, "Away from sun" },
+    { LookAtId::kHorizonSunMinus90, "Sun -90°" },
+  };
+  for (const auto& entry : kSeries) {
+    EXPECT_FALSE(lumice::gui::IsMarkerLookAt(entry.id)) << entry.name;
+    EXPECT_GE(static_cast<int>(entry.id), LUMICE_ANNOTATION_MARKER_COUNT) << entry.name;
+    EXPECT_LT(static_cast<int>(entry.id), static_cast<int>(LookAtId::kCount)) << entry.name;
+    EXPECT_STREQ(lumice::gui::LookAtDisplayName(entry.id), entry.name);
+  }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -344,7 +475,7 @@ TEST(ViewLookAtPose, ALensWhoseBoundIsThePoleGetsThePole) {
 TEST(ViewLookAtPose, EveryPresetLandsInsideTheBoundsUnderEveryLens) {
   // The claim the two cases above do not make: not "these two entries are clamped correctly" but
   // "no entry, under any lens, produces a pose outside the interval" — which is what stops a
-  // seventh direction added later from slipping through with no clamp of its own.
+  // direction added later from slipping through with no clamp of its own.
   lumice::gui::GuiState state;
   const auto check_lens = [&state](int lens) {
     state.renderer.lens_type = lens;
