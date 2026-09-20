@@ -1916,12 +1916,10 @@ void RenderSceneControls(GuiState& state) {
   }
 
   ImGui::SeparatorText("Simulation");
-  PushLabelColumnItemWidth();
   Checkbox("Infinite rays", &state.sim.infinite);
   if (ImGui::IsItemHovered()) {
     ImGui::SetTooltip("Run simulation continuously until manually stopped");
   }
-  ImGui::PopItemWidth();
   ImGui::BeginGroup();
   // One call, not one per branch. The two branches were identical apart from the BeginDisabled
   // wrapper, and `enabled` (the registry's "infinite rays is on, so no ray total applies") is
