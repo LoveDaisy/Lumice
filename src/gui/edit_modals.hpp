@@ -113,8 +113,26 @@ EditTarget GetActiveTabAsEditTarget();
 // so the modal call site adds it and the card call site does not.
 void StartLinkPickMode(GuiState& state, int layer_idx, int entry_idx);
 
+// Close the edit modal because the document it was bound into has been replaced or restored —
+// called unconditionally by ResetFrontendState() (production), for every reset reason. The modal
+// binds its entry by POSITION and holds copies of that entry's crystal and filter; after a reset
+// the position names whatever the new document has at those numbers (or nothing), and the copies
+// describe a crystal the document no longer holds. There is nothing to compensate the binding to,
+// so it is dropped, together with the buffers and the pending flags that only mean something while
+// a modal is up. Leaves the user's view preferences (modal_immediate_mode, layout) alone: they are
+// session settings, not document state.
+//
+// Field-set note: ResetModalState() below (test teardown) is this PLUS the test-only forcing of
+// modal_immediate_mode / tab / uid counter / trackball save, and is implemented by calling this
+// first so the two cannot drift on the fields they share. A new edit-buffer field goes here.
+void CloseEditModalOnDocumentReset();
+
 // Reset all modal-internal static state (active modal, edit buffers, pending flags).
 // Called by test teardown (ResetTestState) to prevent state leakage between tests.
+// Delegates to CloseEditModalOnDocumentReset() for the document-bound part (see its field-set
+// note), then additionally forces modal_immediate_mode=false, the Crystal tab, the row-uid counter
+// and the trackball save back to their process-start values — things a test wants pinned and
+// production must not touch.
 void ResetModalState();
 
 // Clears the axis modal's per-crystal "last Custom triple" memory (g_axis_custom_memory in

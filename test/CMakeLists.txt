@@ -492,6 +492,9 @@ if(BUILD_GUI)
     "${PROJ_TEST_DIR}/composition-correctness/gui/test_user_defaults_chain.cpp"
     "${PROJ_TEST_DIR}/composition-correctness/gui/test_field_editor_chain.cpp"
     "${PROJ_TEST_DIR}/composition-correctness/gui/test_edit_modal_chain.cpp"
+    # Document reset (every FrontendResetReason) -> the open edit modal: closed, its positional
+    # binding dropped, since the pool its buffers were copied from has been replaced.
+    "${PROJ_TEST_DIR}/composition-correctness/gui/test_edit_modal_document_reset_chain.cpp"
     "${PROJ_TEST_DIR}/composition-correctness/gui/test_preview_projection_chain.cpp"
     "${PROJ_TEST_DIR}/composition-correctness/gui/test_absolute_ev_additivity_chain.cpp"
     # Analysis result -> Exclude -> filter pool -> exported core JSON: the closure the Raypath

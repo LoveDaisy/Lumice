@@ -1800,35 +1800,45 @@ namespace {
 void ResetSpectrumModalStateGlobals();
 }  // namespace
 
-void ResetModalState() {
-  ResetSpectrumModalStateGlobals();  // clear the spectrum-editor statics too (Major: test isolation)
+void CloseEditModalOnDocumentReset() {
   g_active_modal = ActiveModal::kNone;
-  g_active_tab = ActiveTab::kCrystal;
-  g_pending_tab_select = false;
-  // modal_immediate_mode is GuiState-owned; the test harness's DoNew-based
-  // reset overwrites g_state, but we also clear it here for belt-and-braces
-  // (test lambdas that fail mid-flight may skip their own cleanup tails).
-  g_state.modal_immediate_mode = false;
   g_modal_layer_idx = -1;
   g_modal_entry_idx = -1;
   g_modal_view_crystal_id = -1;
   g_crystal_buf = {};
+  g_crystal_buf_snapshot = {};
   g_axis_buf[0] = {};
   g_axis_buf[1] = {};
   g_axis_buf[2] = {};
+  g_axis_buf_snapshot[0] = {};
+  g_axis_buf_snapshot[1] = {};
+  g_axis_buf_snapshot[2] = {};
   g_filter_top = {};
   g_filter_top_snapshot = {};
   g_summand_rows.clear();
   g_summand_rows_snapshot.clear();
-  g_next_summand_row_uid = 0;
   g_filter_present_baseline = false;
   g_filter_remove_intent = false;
-  std::memset(g_saved_rotation, 0, sizeof(g_saved_rotation));
-  g_saved_zoom = 1.0f;
+  g_pull_adopted = {};
+  // A deferred open or a mode switch in flight was for the modal that just closed.
   g_pending_open = false;
   g_pending_mode_switch = false;
+  g_pending_tab_select = false;
   g_modal_mesh_hash = 0;
   g_modal_preview_epoch++;  // New preview session: reset the animation ticker (epoch-keyed)
+}
+
+void ResetModalState() {
+  ResetSpectrumModalStateGlobals();  // clear the spectrum-editor statics too (Major: test isolation)
+  CloseEditModalOnDocumentReset();
+  g_active_tab = ActiveTab::kCrystal;
+  // modal_immediate_mode is GuiState-owned; the test harness's DoNew-based
+  // reset overwrites g_state, but we also clear it here for belt-and-braces
+  // (test lambdas that fail mid-flight may skip their own cleanup tails).
+  g_state.modal_immediate_mode = false;
+  g_next_summand_row_uid = 0;
+  std::memset(g_saved_rotation, 0, sizeof(g_saved_rotation));
+  g_saved_zoom = 1.0f;
   ClearAxisCustomMemory();
 }
 

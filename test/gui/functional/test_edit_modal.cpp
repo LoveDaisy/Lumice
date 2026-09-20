@@ -3170,4 +3170,36 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
       ctx->Yield(2);
     };
   }
+  // A document reset (New / Open / Revert) replaces the pool the open editor is bound to. The
+  // binding is positional and the buffers are copies of a document that no longer exists, so the
+  // editor closes rather than re-aim itself at whatever the new document has at the same numbers.
+  // Staged here, because that is where the copies still matter: the per-frame pull re-syncs a
+  // clean buffer to the new pool on its own, but a field the user has edited and not yet committed
+  // is kept by the merge, and an OK on an editor that outlived the reset would write the OLD
+  // document's edit into the NEW document's entry. Driven through the real DoNew, the way the top
+  // bar's New reaches it; the per-reason proposition is in
+  // test/composition-correctness/gui/test_edit_modal_document_reset_chain.cpp.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "edit_modal", "a_new_document_closes_the_editor_and_its_uncommitted_edit");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      const ScopedPopups popup_guard(ctx);
+      ctx->Yield(2);
+      const float fresh_h = EntryCrystal().height.center;
+
+      OpenCardEditor(ctx, 0, kCrystalTabRef);
+      ctx->Yield(4);
+      ctx->ItemInputValue(kHeightInput, fresh_h + 6.5f);
+      ctx->Yield(2);
+      IM_CHECK(TabIsDirty(ctx, "**/###crystal_tab"));
+      IM_CHECK_EQ(EntryCrystal().height.center, fresh_h);  // staged: not pushed
+
+      gui::DoNew();  // between frames, as the top bar's New is
+      ctx->Yield(2);
+      IM_CHECK(!gui::IsEditModalOpen());
+      IM_CHECK_EQ(gui::GetEditModalTarget().layer_idx, -1);
+      IM_CHECK(!ctx->ItemExists(kOk));  // nothing left to commit the old edit through
+      IM_CHECK_EQ(EntryCrystal().height.center, fresh_h);
+    };
+  }
 }
