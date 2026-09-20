@@ -2706,8 +2706,8 @@ LUMICE_ErrorCode LUMICE_GetActiveBackend(LUMICE_Server* server, int* out_backend
 int LUMICE_WillUseGpuRoute(int preferred_backend);
 
 // =============== Product Version ===============
-// The product version string, e.g. "4.6.0" for a tagged release build (LUMICE_RELEASE_BUILD=ON)
-// or "4.6.0-dev" otherwise. Single source: project(VERSION) in the top-level CMakeLists.txt,
+// The product version string: "X.Y.Z" for a tagged release build (LUMICE_RELEASE_BUILD=ON) or
+// "X.Y.Z-dev" otherwise. Single source: project(VERSION) in the top-level CMakeLists.txt,
 // generated into a build-tree-only header by configure_file and read back here — the CLI's
 // `--version`, the GUI window title, both startup log lines and the .lmc `app_version` field all
 // call this instead of carrying their own copy. Never NULL; static storage, do not free.
