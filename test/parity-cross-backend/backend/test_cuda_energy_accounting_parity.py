@@ -65,13 +65,14 @@ a quarter of the tolerance and a ninth of the unfolded window's +0.40%.
 mechanism's direct check: with the chain capped, the ratio must neither move
 with the window length nor sit outside the capped chain's residual.
 
-Tolerance. After the fix the cross-backend spread of ``R`` on the rows below
-is −0.004% or better at 2M rays and −0.029% on the 10M-ray ``parhelion`` rows
-(stable to 0.002% across seeds — a fixed offset, not noise). The tolerance is
-0.1%: ~3.4× above the worst measured spread, ≥10× below the smallest red-state
-signature the fix's revert produces on the rows that can see it (+1.74% on
-``cpu_backend_route``, −1.04% on ``parhelion``). It is deliberately not
-tighter. When it was set, legacy's own ``R`` drifted above the closed-form
+Tolerance. With the capped chain the cross-backend spread of ``R`` on the rows
+below is +0.019% on the 2M-ray ``cpu_backend_route`` rows, +0.045% on the
+10M-ray ``parhelion`` rows (both stable to 0.0004% across seeds — a fixed
+offset, not noise) and ≤0.0001% on the two random-geometry rows. The
+tolerance is 0.1%: ~2.2× above the worst measured spread, ≥10× below the
+smallest red-state signature the scalar fix's revert produces on the rows
+that can see it (+1.74% on ``cpu_backend_route``, −1.04% on ``parhelion``).
+It is deliberately not tighter. When it was set, legacy's own ``R`` drifted above the closed-form
 constant with ray count (+0.019% at 2M, +0.38% at 10M) because its
 ``total_intensity_`` was itself an fp32 running sum; that accumulator (with
 ``internal_xyz_`` beside it — the same rounding turned a monochromatic
