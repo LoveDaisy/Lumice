@@ -175,6 +175,7 @@ inline constexpr FieldTierEntry kFieldTierTable[] = {
     { "pick_link_source",           FieldTier::kSession,    false },
     { "color_window_open",          FieldTier::kSession,    false },
     { "defaults_panel_open",        FieldTier::kSession,    false },
+    { "config_summary_window_open", FieldTier::kSession,    false },
     // The analysis tool's own state (window, ROI, selection, intent) — one struct, one row.
     { "analysis",                   FieldTier::kSession,    false },
     { "current_file_path",          FieldTier::kSession,    false },

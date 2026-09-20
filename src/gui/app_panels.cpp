@@ -17,6 +17,7 @@
 #include "gui/aspect_ratio_rules.hpp"
 #include "gui/color_window.hpp"
 #include "gui/composite_exposure_push.hpp"
+#include "gui/config_summary_window.hpp"
 #include "gui/crystal_preview.hpp"
 #include "gui/defaults_panel.hpp"
 #include "gui/destructive_style.hpp"
@@ -565,6 +566,15 @@ void RenderTopBar(float window_width) {
   }
   if (ImGui::IsItemHovered()) {
     ImGui::SetTooltip("Which raypaths make the light in a region of the sky. Opens the Raypath Analysis window.");
+  }
+  // The third occupant: the read-only Summary window (config_summary_window.cpp). A plain toggle
+  // like Analysis — the window has no state of its own to set on open.
+  ImGui::SameLine();
+  if (ImGui::Button(ICON_FA_FILE_LINES " Summary")) {
+    g_state.config_summary_window_open = !g_state.config_summary_window_open;
+  }
+  if (ImGui::IsItemHovered()) {
+    ImGui::SetTooltip("One page of the current configuration, for a screenshot. Opens the Summary window.");
   }
 
   // task-colored-toggle-to-topbar (346.3): colored/full-spectrum display-time

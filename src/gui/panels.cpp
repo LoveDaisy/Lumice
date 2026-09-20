@@ -626,8 +626,8 @@ bool RenderAxisDist(const char* label, AxisDist& axis, float mean_min, float mea
   // active, and the helper leaves the other alone; the type combo has no edit in flight to reload.
   if (reload_active_inputs) {
     ReloadSliderInputIfActive("Mean");
-    for (const char* spread_label : { "Std", "Range", "Amplitude", "Scale" }) {
-      ReloadSliderInputIfActive(spread_label);
+    for (int t = 0; t < static_cast<int>(AxisDistType::kCount); ++t) {
+      ReloadSliderInputIfActive(AxisDistSpreadLabel(static_cast<AxisDistType>(t)));
     }
   }
   ImGui::Text("%s", label);
@@ -690,7 +690,8 @@ bool RenderAxisDist(const char* label, AxisDist& axis, float mean_min, float mea
       constexpr const char* kStdFmt = "%.3g";
       static_assert(slider_format::FormatIsFineEnough(kStdFmt, SliderScale::kSqrt, kStdMin, kStdMax),
                     "the Std slider's format is coarser than its kSqrt mapping resolves");
-      changed |= SliderWithInput("Std", &axis.std, kStdMin, kStdMax, kStdFmt, SliderScale::kSqrt);
+      changed |=
+          SliderWithInput(AxisDistSpreadLabel(axis.type), &axis.std, kStdMin, kStdMax, kStdFmt, SliderScale::kSqrt);
       break;
     }
     case AxisDistType::kUniform: {
@@ -699,7 +700,8 @@ bool RenderAxisDist(const char* label, AxisDist& axis, float mean_min, float mea
       constexpr const char* kRangeFmt = "%.3g";
       static_assert(slider_format::FormatIsFineEnough(kRangeFmt, SliderScale::kSqrt, kRangeMin, kRangeMax),
                     "the Range slider's format is coarser than its kSqrt mapping resolves");
-      changed |= SliderWithInput("Range", &axis.std, kRangeMin, kRangeMax, kRangeFmt, SliderScale::kSqrt);
+      changed |= SliderWithInput(AxisDistSpreadLabel(axis.type), &axis.std, kRangeMin, kRangeMax, kRangeFmt,
+                                 SliderScale::kSqrt);
       break;
     }
     case AxisDistType::kZigzag: {
@@ -708,8 +710,8 @@ bool RenderAxisDist(const char* label, AxisDist& axis, float mean_min, float mea
       constexpr const char* kAmplitudeFmt = "%.3g";
       static_assert(slider_format::FormatIsFineEnough(kAmplitudeFmt, SliderScale::kSqrt, kAmplitudeMin, kAmplitudeMax),
                     "the Amplitude slider's format is coarser than its kSqrt mapping resolves");
-      changed |=
-          SliderWithInput("Amplitude", &axis.std, kAmplitudeMin, kAmplitudeMax, kAmplitudeFmt, SliderScale::kSqrt);
+      changed |= SliderWithInput(AxisDistSpreadLabel(axis.type), &axis.std, kAmplitudeMin, kAmplitudeMax, kAmplitudeFmt,
+                                 SliderScale::kSqrt);
       break;
     }
     case AxisDistType::kLaplacian: {
@@ -718,7 +720,8 @@ bool RenderAxisDist(const char* label, AxisDist& axis, float mean_min, float mea
       constexpr const char* kScaleFmt = "%.3g";
       static_assert(slider_format::FormatIsFineEnough(kScaleFmt, SliderScale::kSqrt, kScaleMin, kScaleMax),
                     "the Scale slider's format is coarser than its kSqrt mapping resolves");
-      changed |= SliderWithInput("Scale", &axis.std, kScaleMin, kScaleMax, kScaleFmt, SliderScale::kSqrt);
+      changed |= SliderWithInput(AxisDistSpreadLabel(axis.type), &axis.std, kScaleMin, kScaleMax, kScaleFmt,
+                                 SliderScale::kSqrt);
       break;
     }
   }
@@ -741,14 +744,8 @@ void ShapeTableParamLabel(const char* label) {
 // ---- Sync column: shape-scalar sync groups (the Sync cell of a shape-table row) ----
 namespace {
 
-// Row names indexed by LUMICE_SHAPE_SCALAR_*, used in the popup's membership lists. The order is
-// the SLOT index space, not CrystalConfig's field order: UPPER_H is slot 1 and PRISM_H slot 2 (see
-// the SLOT-ORDER TRAP note in gui_state.hpp), so this table reads "Upper H" before "Prism H" even
-// though the modal draws Prism H first. The strings match what ShapeTableParamLabel prints for the
-// corresponding rows, because a membership list naming rows the user cannot find is worse than none.
-const char* const kShapeScalarLabels[LUMICE_SHAPE_SCALAR_COUNT] = {
-  "Height", "Upper H", "Prism H", "Lower H", "Face 3", "Face 4", "Face 5", "Face 6", "Face 7", "Face 8",
-};
+// The row names the popup's membership lists print are kShapeScalarLabels (shape_scalar_domain.hpp),
+// indexed by LUMICE_SHAPE_SCALAR_* — see the SLOT-ORDER TRAP note there.
 
 // Group colors are DERIVED from the group number, never stored (D7): a stored color would have to
 // round-trip through JSON, the C API and the .lmc format for a purely cosmetic property. Low

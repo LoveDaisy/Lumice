@@ -66,7 +66,10 @@ namespace {
 // section's fold state, every one a serialized kView row like the sun circles' and
 // markers_section_open before them — eligible for the same reason, so no new channel and no
 // new verdict, just six more rows in the same tier.
-constexpr std::size_t kExpectedGovernedFieldCount = 85;
+// 86 with config_summary_window_open (the Summary window's open flag), registered kSession like
+// color_window_open and defaults_panel_open before it and ineligible for the same reason: which
+// windows are open is not part of the document. Not serialized, so no row can reach the panel.
+constexpr std::size_t kExpectedGovernedFieldCount = 86;
 
 std::vector<std::string> AllGovernedFieldNames() {
   std::vector<std::string> names;

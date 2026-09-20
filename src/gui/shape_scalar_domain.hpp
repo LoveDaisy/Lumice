@@ -79,6 +79,17 @@ inline constexpr ShapeScalarDomain kShapeScalarDomains[] = {
 static_assert(sizeof(kShapeScalarDomains) / sizeof(kShapeScalarDomains[0]) == LUMICE_SHAPE_SCALAR_COUNT,
               "kShapeScalarDomains must carry one row per LUMICE_SHAPE_SCALAR_* slot");
 
+// The row label each slot carries on screen, indexed by LUMICE_SHAPE_SCALAR_* like the domains
+// above. The order is the SLOT index space, not CrystalConfig's field order: UPPER_H is slot 1 and
+// PRISM_H slot 2 (see the SLOT-ORDER TRAP note in gui_state.hpp), so this table reads "Upper H"
+// before "Prism H" even though the modal draws Prism H first. The strings match what the edit
+// modal's rows print (edit_modals.cpp); the sync popup's membership lists (panels.cpp) and the
+// Summary window (config_summary.cpp) read them from here so a parameter is spelled one way
+// everywhere a user can see it.
+inline constexpr const char* kShapeScalarLabels[LUMICE_SHAPE_SCALAR_COUNT] = {
+  "Height", "Upper H", "Prism H", "Lower H", "Face 3", "Face 4", "Face 5", "Face 6", "Face 7", "Face 8",
+};
+
 // The kLogLinear law's linear segment runs [min_value, kLogLinearX0], so a row that declares a
 // min_value at or above that threshold gives it a zero or negative denominator: a division by zero,
 // or a slider whose travel runs backwards. Nothing downstream would report it — the widget would

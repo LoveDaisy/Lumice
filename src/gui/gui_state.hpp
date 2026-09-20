@@ -1605,6 +1605,13 @@ struct GuiState {
   // defaults_panel.cpp, are rebuilt every time the panel opens, and have no Revert semantics.
   bool defaults_panel_open = false;
 
+  // The read-only "Summary" window (config_summary_window.cpp): one page of the current document
+  // for a screenshot. Session-only like the two above. Unlike analysis.window_open, which stays
+  // open across a Revert, this one is closed by EVERY FrontendResetReason (app.cpp
+  // ResetFrontendState) — the window is a picture of one document, and a reset replaces or
+  // restores that document under it.
+  bool config_summary_window_open = false;
+
   // The "Raypath Analysis" window (analysis_panel.cpp, doc/raypath-analysis-panel.md). ONE
   // session-tier field rather than eight: everything in it is the tool's own state — which window
   // is open, which region the user pointed at, which row they selected — none of it is part of the

@@ -63,6 +63,8 @@ add_library(lumice_gui_obj OBJECT
     ${PROJ_SRC_DIR}/gui/analysis_panel.cpp
     ${PROJ_SRC_DIR}/gui/app_panels.cpp
     ${PROJ_SRC_DIR}/gui/color_window.cpp
+    ${PROJ_SRC_DIR}/gui/config_summary.cpp
+    ${PROJ_SRC_DIR}/gui/config_summary_window.cpp
     ${PROJ_SRC_DIR}/gui/crystal_preview.cpp
     ${PROJ_SRC_DIR}/gui/defaults_diff.cpp
     ${PROJ_SRC_DIR}/gui/defaults_panel.cpp

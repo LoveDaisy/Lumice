@@ -16,6 +16,7 @@
 #include "gui/analysis_panel.hpp"
 #include "gui/app.hpp"
 #include "gui/color_window.hpp"
+#include "gui/config_summary_window.hpp"
 #include "gui/defaults_panel.hpp"
 #include "gui/edit_modals.hpp"
 #include "gui/export_fbo_renderer.hpp"
@@ -410,6 +411,7 @@ int main(int argc, char** argv) {
     gui::RenderLogPanel(layout_width, layout_height);
     gui::RenderColorWindow(gui::g_state, gui::g_server);
     gui::RenderAnalysisPanel(gui::g_state, gui::g_server);
+    gui::RenderConfigSummaryWindow(gui::g_state);
     gui::RenderStatusBar(layout_width, layout_height);
     gui::RenderEditModals(gui::g_state, window);
     gui::RenderSpectrumModal(gui::g_state);

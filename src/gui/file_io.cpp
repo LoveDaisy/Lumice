@@ -150,7 +150,7 @@ static json SerializeAxisDist(const AxisDist& a) {
   return j;
 }
 
-static const char* ShapeDistTypeToString(ShapeDistType t) {
+const char* ShapeDistTypeToString(ShapeDistType t) {
   switch (t) {
     case ShapeDistType::kNoRandom:
       return "no_random";

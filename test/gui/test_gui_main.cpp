@@ -26,6 +26,7 @@
 #include "gui/analysis_panel.hpp"
 #include "gui/app.hpp"
 #include "gui/color_window.hpp"
+#include "gui/config_summary_window.hpp"
 #include "gui/defaults_panel.hpp"
 #include "gui/edit_modals.hpp"
 #include "gui/export_fbo_renderer.hpp"
@@ -745,6 +746,9 @@ int main(int argc, char** argv) {
     // The Raypath Analysis window, mirrored from src/gui/main.cpp for the same reason as the
     // Colors window above; a no-op while analysis.window_open is false.
     gui::RenderAnalysisPanel(gui::g_state, gui::g_server);
+    // The Summary window, mirrored from src/gui/main.cpp like the two above; a no-op while
+    // config_summary_window_open is false.
+    gui::RenderConfigSummaryWindow(gui::g_state);
     gui::RenderStatusBar(layout_width, layout_height);
     // Intentional deviation from plan (which suggested nullptr): the test
     // harness owns a real GLFW window (hidden in CI), so passing it yields

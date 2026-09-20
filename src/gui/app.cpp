@@ -759,6 +759,12 @@ void ResetFrontendState(GuiState& state, FrontendResetReason reason, const LmcTe
   // into whatever the new document has at the same position. Same shape: unconditional, no
   // reason-grouped block.
   CloseEditModalOnDocumentReset();
+  // And the Summary window, unconditionally for the same reason: it is a picture of the document
+  // these reasons replace or restore, so an open one would carry over showing the next document
+  // under the previous one's title. Deliberately NOT the analysis window's per-reason rule below
+  // (which keeps that window open across kRevert): nothing in this window is worth keeping open,
+  // and one rule that covers every reason is the shape the edit modal's close above settled on.
+  state.config_summary_window_open = false;
 
   // Preview texture / background — as-built subset per reason. `.lmc` variants both call
   // ClearBackground (post-branch shared line in the pre-refactor DoOpen); the DoOpen(.lmc)
