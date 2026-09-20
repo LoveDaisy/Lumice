@@ -4084,6 +4084,16 @@ LUMICE_ErrorCode LUMICE_StartRaypathAnalysis(LUMICE_Server* server, const LUMICE
   } else {
     return LUMICE_ERR_INVALID_VALUE;
   }
+  // The record's capacity (v4.43): 0 is "the default", a value in range is that value, and
+  // anything else — negative, or past the memory bound — is a return code, not a clamp. The
+  // CLI rejects the same range on its own; this is the public boundary and does not lean on it.
+  if (request->chain_capacity == 0) {
+    req.chain_capacity_ = std::nullopt;
+  } else if (request->chain_capacity >= 1 && request->chain_capacity <= LUMICE_MAX_RAYPATH_CHAIN_CAPACITY) {
+    req.chain_capacity_ = static_cast<size_t>(request->chain_capacity);
+  } else {
+    return LUMICE_ERR_INVALID_VALUE;
+  }
   // The same document LUMICE_CommitScene hands the server (scene->root): the two entry
   // points share one grammar and one parser, so a scene that commits analyses, and vice versa.
   const ns::Error err = server->server_->StartRaypathAnalysis(scene->root, req);

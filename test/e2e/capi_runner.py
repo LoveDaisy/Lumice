@@ -266,15 +266,18 @@ class LUMICE_RaypathAnalysisRequest(ctypes.Structure):
         # is its budget below or LUMICE_StopServer, and the symmetry is a parameter of the read.
         ("infinite",          ctypes.c_int),        # v4.32; at 72 since v4.34
         ("ray_num",           ctypes.c_ulonglong),  # v4.32; at 80 since v4.34
+        ("chain_capacity",    ctypes.c_int),        # v4.43; 0 = the default capacity
     ]
 
 
-# 88 since v4.34: the cone stop target (8 bytes at 72) is gone, `infinite` moved up into its place,
-# and the 4 bytes after `infinite` are padding before the 8-aligned `ray_num`.
-assert ctypes.sizeof(LUMICE_RaypathAnalysisRequest) == 88, (
+# 96 since v4.43: `chain_capacity` (an int) lands at 88, after the 8-aligned `ray_num`, and the
+# struct's 8-byte alignment pads the tail to 96. (88 from v4.34 to v4.41: the cone stop target
+# gone, `infinite` moved up into its place, 4 bytes of padding before `ray_num`.)
+assert ctypes.sizeof(LUMICE_RaypathAnalysisRequest) == 96, (
     "LUMICE_RaypathAnalysisRequest size mismatch — verify lumice.h field layout"
 )
-for _name, _offset in (("frame_view", 4), ("cone_center", 52), ("infinite", 72), ("ray_num", 80)):
+for _name, _offset in (("frame_view", 4), ("cone_center", 52), ("infinite", 72), ("ray_num", 80),
+                       ("chain_capacity", 88)):
     assert getattr(LUMICE_RaypathAnalysisRequest, _name).offset == _offset, (
         f"LUMICE_RaypathAnalysisRequest.{_name} offset drift — the mirror and lumice.h disagree"
     )
