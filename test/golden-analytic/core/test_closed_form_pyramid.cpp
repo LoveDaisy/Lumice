@@ -34,7 +34,6 @@
 // these invariants at CI time, so pool drift is caught by CI, not by review.
 
 #include <gtest/gtest.h>
-#include <spdlog/sinks/ostream_sink.h>
 
 #include <algorithm>
 #include <cmath>
@@ -44,7 +43,6 @@
 #include <limits>
 #include <map>
 #include <memory>
-#include <sstream>
 #include <string>
 #include <utility>
 #include <vector>
@@ -54,7 +52,7 @@
 #include "core/math.hpp"
 #include "golden-analytic/core/closed_form_samples_generated.hpp"
 #include "golden-analytic/core/pyramid_topology_golden_generated.hpp"
-#include "util/logger.hpp"
+#include "support/log_capture.hpp"
 
 namespace lumice {
 namespace {
@@ -861,25 +859,7 @@ TEST(ClosedFormPyramid, NearApexHeightWindowStructuralValidity) {
 // re-runs that experiment on demand.
 // ============================================================================
 
-// Captures everything the global logger emits for the lifetime of the object.
-// RAII rather than a manual remove_sink, because GetSharedSink() is a
-// process-wide singleton: an early return with the sink still attached would
-// leave later tests in this binary writing into a destroyed ostringstream.
-class LogCapture {
- public:
-  LogCapture() : sink_(std::make_shared<spdlog::sinks::ostream_sink_mt>(oss_)) { GetSharedSink()->add_sink(sink_); }
-
-  ~LogCapture() { GetSharedSink()->remove_sink(sink_); }
-
-  LogCapture(const LogCapture&) = delete;
-  LogCapture& operator=(const LogCapture&) = delete;
-
-  std::string Text() const { return oss_.str(); }
-
- private:
-  std::ostringstream oss_;
-  std::shared_ptr<spdlog::sinks::ostream_sink_mt> sink_;
-};
+using test::LogCapture;
 
 TEST(ClosedFormPyramid, ApexRescueDegradationNeverFiresOnLegalShapes) {
   // Which of the six face distances are pulled in — the apex is a point when

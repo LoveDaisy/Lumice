@@ -1,11 +1,9 @@
 #include <gtest/gtest.h>
-#include <spdlog/sinks/ostream_sink.h>
 
 #include <cstddef>
 #include <fstream>
 #include <memory>
 #include <nlohmann/json.hpp>
-#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -20,37 +18,17 @@
 #include "config/render_config.hpp"
 #include "core/def.hpp"
 #include "core/math.hpp"
+#include "support/log_capture.hpp"
 #include "util/color_space.hpp"
 #include "util/illuminant.hpp"
 #include "util/lens_fov_default.hpp"
-#include "util/logger.hpp"
 
 extern std::string config_file_name;
 using namespace lumice;
 
 namespace {
 
-// Captures everything the global logger emits for the lifetime of the object.
-// RAII rather than a manual remove_sink at the end of each test, because
-// GetSharedSink() is a process-wide singleton: an ASSERT_* returning early with
-// the sink still attached would leave later tests in this binary writing into a
-// destroyed ostringstream. Same shape as the copies in test_render_config.cpp
-// and test_crystal_sync_group.cpp.
-class LogCapture {
- public:
-  LogCapture() : sink_(std::make_shared<spdlog::sinks::ostream_sink_mt>(oss_)) { GetSharedSink()->add_sink(sink_); }
-
-  ~LogCapture() { GetSharedSink()->remove_sink(sink_); }
-
-  LogCapture(const LogCapture&) = delete;
-  LogCapture& operator=(const LogCapture&) = delete;
-
-  std::string Text() const { return oss_.str(); }
-
- private:
-  std::ostringstream oss_;
-  std::shared_ptr<spdlog::sinks::ostream_sink_mt> sink_;
-};
+using lumice::test::LogCapture;
 
 class V3TestJson : public ::testing::Test {
  protected:

@@ -23,37 +23,20 @@
 // and the C API's JSON -> struct -> JSON round trip would put a second decoder in between.
 
 #include <gtest/gtest.h>
-#include <spdlog/sinks/ostream_sink.h>
 
 #include <memory>
 #include <nlohmann/json.hpp>
-#include <sstream>
 #include <string>
 
 #include "server/server.hpp"
+#include "support/log_capture.hpp"
 #include "util/color_space.hpp"
 #include "util/contrast_headroom.hpp"
-#include "util/logger.hpp"
 
 namespace lumice {
 namespace {
 
-// Captures everything the global sink receives for the object's lifetime. RAII because
-// GetSharedSink() is process-wide: an early return with the sink still attached would leave later
-// cases in this binary writing into a destroyed ostringstream.
-class LogCapture {
- public:
-  LogCapture() : sink_(std::make_shared<spdlog::sinks::ostream_sink_mt>(oss_)) { GetSharedSink()->add_sink(sink_); }
-  ~LogCapture() { GetSharedSink()->remove_sink(sink_); }
-  LogCapture(const LogCapture&) = delete;
-  LogCapture& operator=(const LogCapture&) = delete;
-
-  std::string Text() const { return oss_.str(); }
-
- private:
-  std::ostringstream oss_;
-  std::shared_ptr<spdlog::sinks::ostream_sink_mt> sink_;
-};
+using test::LogCapture;
 
 // Substrings chosen to be the part that names the FIELD and its law, not the part that explains the
 // symptom: the explanation is prose that may be reworded, "its paper is within" is what a user greps
