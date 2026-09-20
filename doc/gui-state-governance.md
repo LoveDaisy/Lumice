@@ -124,7 +124,7 @@
 | # | 命名空间 | 成员 | 处置 |
 |---|----------|------|------|
 | ① 单例文档默认 | `FieldTier::kStructSoft` 中的单例字段（`sun` / `sim` / `renderer`） | 进覆盖文件的 GuiState 半区 |
-| ② 预设库 | 内置 axis 预设表每一行可调的 zenith std（该值不是 `GuiState` 的顶层字段，落地时机与运行时形态见 8.7） | 进覆盖文件独立的 `presets` 子树，不占用 GuiState 半区的键名空间 |
+| ② 预设库 | 内置 axis 预设表每一行可调的 zenith std 与 zenith type（都不是 `GuiState` 的顶层字段，落地时机与运行时形态见 8.7） | 进覆盖文件独立的 `presets` 子树，不占用 GuiState 半区的键名空间 |
 | ③ app 偏好 | `FieldTier::kView` 中未被 `SerializeGuiStateJson` 序列化的那批（日志级别三件套 / 日志面板展开态 / 左侧面板折叠态），以及 `use_gpu_backend`（渲染后端选择）/ `worker_count`（CPU 路线 worker 数） | **部分解禁**：`use_gpu_backend` 与 `worker_count` 各经覆盖文件独立的第三个根键 `app` 落地为个人默认（形态与 ② 同构，面板里是第二个注册式区，见 8.3），在 `kFieldTierTable` 上**各自**由自己的 `app_preference_eligible` 位登记、各自有一套 `Read/Write/Erase*FromDoc`；其余成员仍然排除——它们没有存储通道，`ResolveDefaultEligibility` 对它们仍返回 `kAppPreference`。工厂默认不变（`use_gpu_backend = false` / `worker_count = 0`，理由见 `gui_state.hpp` 两个字段处的注释）。⭐**这两个成员的共同点就是这个命名空间的资格判据本身，不是巧合**：二者都是**服务器构造期属性**（后端拓扑 / worker 数），描述的是**程序跑在哪台机器上**，而不是文档描述的那个晕。放进文档半区就意味着它跟着文件旅行到另一台机器——正是 `doc/env-var-policy.md` 拒绝环境变量承载用户可见行为的那条「静默逐机器漂移」换了个载体。二者也都因此**不在 `SerializeGuiStateJson` 的输出里**，`.lmc` 结构性地装不下它们。|
 | ④ 集合区 | `FieldTier::kStructHard` 的成员，以及 `kStructSoft` 里被 `kCollectionFields`（`user_defaults.hpp:64`）标记的容器：晶体 / layer / filter / 染色规则 | 排除。这些容器在序列化后的 key path 里携带文档局部下标（如某个数组的第几项），脱离具体文档后这个下标没有意义 |
 
@@ -187,7 +187,9 @@
 
 ### 8.7 预设库覆盖值的定案：约束在既有分类器容差域内，不引入身份机制
 
-用户可以覆盖内置 axis 预设（如常用的那几个）的 zenith std，但覆盖值被约束在该预设分类判据既有的容差域内；越界时 clamp 到边界并显式提示，判据本身零改动。这意味着"覆盖一个预设"目前实际上只有一个可调面（zenith std 一个浮点数）——分类判据对均值与方位角分布的约束比这更紧，所以设计上不应在 UI 上暗示可调面比这更宽。这一定案的前提是：触发需求的方向是"往判据合法域内部调紧"而非"越界调宽"；若未来出现真实的越界诉求，需要重新评估是否值得为其引入更重的身份携带机制。
+用户可以覆盖内置 axis 预设（如常用的那几个）的 zenith std，但覆盖值被约束在该预设分类判据既有的容差域内；越界时 clamp 到边界并显式提示，判据本身零改动。这意味着"覆盖一个预设"的可调面很窄——分类判据对均值与方位角分布的约束比这更紧，所以设计上不应在 UI 上暗示可调面比这更宽。这一定案的前提是：触发需求的方向是"往判据合法域内部调紧"而非"越界调宽"；若未来出现真实的越界诉求，需要重新评估是否值得为其引入更重的身份携带机制。
+
+**as-built（2026-09-20）**：可调面从 1 个变为 2 个——zenith std 之外，zenith **type** 也可覆盖（`presets.axis.<name>.zenith_type`，`src/gui/user_defaults.cpp`），但仍严格落在本节的前提之内：combo 只列出分类器本来就把该预设归入的那一族（`IsAcceptedZenithType`，`src/gui/axis_presets.hpp`——Column/Plate/Parry 用 `IsGaussLike`，Lowitz 用 `IsLowitzZenithType`），`ClassifyAxisPreset` 与其容差常量零改动，这一点由「每个可调预设 × 接受集内每个 type 仍归到同一预设」的机械矩阵测试（`test_user_defaults.cpp` 的 `preset_identity_survives_type_retuning`）钉住。两个面是**平行独立**的一对读写族而非一个泛化接口：std 是连续量、越界 clamp；type 是离散集合、越界没有"最近的合法值"，只能整体拒绝退回工厂 type——这个不对称是设计而非遗漏。type 切换不改变 std 的 clamp 域（clamp 不看 type），所以 Plate 换成 uniform 也到不了会被误判成 Random 的 `IsFullUniform360` 特例，同一测试文件里有回归钉子。
 
 ### 8.8 与 `ConfigSnapshot` / Revert baseline 的边界
 
