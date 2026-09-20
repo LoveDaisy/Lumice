@@ -36,6 +36,7 @@
 #include "server/c_api_internal.hpp"
 #include "server/raypath_histogram_consumer.hpp"  // ReduceRaypathHistogram (the analysis reads)
 #include "server/server.hpp"
+#include "server/version_gen.hpp"  // kLumiceProductVersion, configure_file'd from project(VERSION)
 #include "util/callback_sink.hpp"
 #include "util/color_space.hpp"
 #include "util/logger.hpp"
@@ -3511,6 +3512,15 @@ int LUMICE_WillUseGpuRoute(int preferred_backend) {
     ILOG_WARN(ns::GetGlobalLogger(), "LUMICE_WillUseGpuRoute: route resolution threw; assuming legacy CPU route");
     return 0;
   }
+}
+
+
+// =============== Product Version ===============
+// The generated header is the ONE place the version literal exists in compiled code; every
+// display surface (CLI --version, GUI title, startup logs, .lmc app_version) reads it through
+// this function.
+const char* LUMICE_GetVersionString(void) {
+  return kLumiceProductVersion;
 }
 
 

@@ -88,6 +88,12 @@ option(LUMICE_CUDA_ENABLED "Enable CUDA backend (requires nvcc / CUDAToolkit)" O
 # the Xcode profiling build (build/xcode) used to measure Metal kernel occupancy.
 option(LUMICE_METAL_SHADER_PROFILE "Embed Metal shader source + line tables for GPU shader profiler" OFF)
 
+# A non-tag build must be visibly distinguishable from a tagged release: OFF (the default)
+# appends "-dev" to LUMICE_GetVersionString()'s return value, and release.yml is the only caller
+# that sets this ON. No git-sha injection -- one string, one knob, and the suffix decision is made
+# here at configure time so no run-time code has to ask "release or dev?" a second time.
+option(LUMICE_RELEASE_BUILD "Building a tagged release artifact (omit the -dev version suffix)" OFF)
+
 if(MSVC)
   add_definitions(-DNOMINMAX)
   set(CMAKE_DEBUG_POSTFIX "d")
@@ -786,6 +792,21 @@ add_custom_command(
     COMMENT "[core] Embedding Roboto-Medium.ttf -> label_font_embed.cpp"
     VERBATIM)
 
+# --- Product version string ------------------------------------------------------------------------
+# project(VERSION) above is the single source (scripts/version.py reads and writes it); this bakes
+# it -- plus the "-dev" suffix unless LUMICE_RELEASE_BUILD -- into a build-tree-only header whose
+# one consumer is src/server/c_api.cpp's LUMICE_GetVersionString(). Plain configure_file: it is a
+# string substitution, so unlike the font embed above it needs no custom command or Python.
+if(LUMICE_RELEASE_BUILD)
+  set(LUMICE_PRODUCT_VERSION "${PROJECT_VERSION}")
+else()
+  set(LUMICE_PRODUCT_VERSION "${PROJECT_VERSION}-dev")
+endif()
+configure_file(
+  "${PROJ_SRC_DIR}/server/version_gen.hpp.in"
+  "${CMAKE_BINARY_DIR}/generated/server/version_gen.hpp"
+  @ONLY)
+
 set(lumice_src
   ${lumice_config_src} ${lumice_core_src}
   ${lumice_server_src} ${lumice_util_src}
@@ -805,6 +826,9 @@ target_link_libraries(lumice_obj PUBLIC nlohmann_json::nlohmann_json spdlog::spd
 # stb_truetype.h, for core/annotation_font.cpp. PRIVATE: the rasterizer is an implementation
 # detail of the label drawing, and no public header names an stb type.
 target_include_directories(lumice_obj PRIVATE "${stb_SOURCE_DIR}")
+# generated/server/version_gen.hpp (configure_file above). PRIVATE and outside the if(APPLE) block
+# below: every platform's c_api.cpp includes it, and no public header does.
+target_include_directories(lumice_obj PRIVATE "${CMAKE_BINARY_DIR}/generated")
 if(APPLE)
   target_link_libraries(lumice_obj PUBLIC "-framework Metal" "-framework Foundation")
   # task-metal-build-time-metallib (#283): metal_trace_backend.mm #includes the
