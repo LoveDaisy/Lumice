@@ -653,6 +653,8 @@ int main(int argc, char** argv) {
   RegisterRaypathAnalysisPanelTests(engine);
   RegisterDefaultsPanelTests(engine);
   RegisterDefaultsPanelLayoutTests(engine);
+  RegisterConfigSummaryWindowTests(engine);
+  RegisterConfigSummaryLayoutTests(engine);
   RegisterLensProjectionTests(engine);
   RegisterModalLayoutTests(engine);
   RegisterThemeCoverageTests(engine);

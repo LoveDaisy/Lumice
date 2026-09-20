@@ -160,6 +160,21 @@ GROUPS: dict[str, ReferenceGroup] = {
         source="test/gui/visual/test_gui_defaults_panel.cpp",
         deterministic=True,
     ),
+    # Summary-window layout scene names — must match kScenes[] order in
+    # test/gui/visual/test_gui_config_summary.cpp: the read-only Summary page over the default
+    # document and over a two-layer one, captured as the window's own on-screen rectangle.
+    "config_summary_layout": ReferenceGroup(
+        key="config_summary_layout",
+        scenes=[
+            "default_document",
+            "two_layers",
+        ],
+        modes=[None],
+        tmp_prefix="lumice_config_summary_",
+        ref_prefix="config_summary_",
+        source="test/gui/visual/test_gui_config_summary.cpp",
+        deterministic=True,
+    ),
     # Edit-modal layout scene names — must match kScenes[] order in test_gui_modal_layout.cpp.
     # Each scene is one (tab, crystal type, H/V layout) combination of the unified edit popup,
     # captured as the modal's own on-screen rectangle.

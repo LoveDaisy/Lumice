@@ -1,7 +1,7 @@
 {
   "groups": {
     "capture_harness": {
-      "generated_at": "2026-09-13T21:26:45",
+      "generated_at": "2026-09-20T23:08:40",
       "n_ref_runs": 1,
       "n_calib_runs": 1,
       "scenes": {
@@ -200,6 +200,33 @@
           "maxcc_samples": 1
         },
         "wedge_presets": {
+          "psnr_mean": null,
+          "psnr_std": null,
+          "identical_runs": 1,
+          "n_samples": 1,
+          "threshold": 40.0,
+          "maxcc_tau": 16,
+          "maxcc_local_max": 0,
+          "maxcc_samples": 1
+        }
+      }
+    },
+    "config_summary_layout": {
+      "generated_at": "2026-09-20T23:04:34",
+      "n_ref_runs": 1,
+      "n_calib_runs": 1,
+      "scenes": {
+        "default_document": {
+          "psnr_mean": null,
+          "psnr_std": null,
+          "identical_runs": 1,
+          "n_samples": 1,
+          "threshold": 40.0,
+          "maxcc_tau": 16,
+          "maxcc_local_max": 0,
+          "maxcc_samples": 1
+        },
+        "two_layers": {
           "psnr_mean": null,
           "psnr_std": null,
           "identical_runs": 1,
