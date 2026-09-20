@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1789912853676,
+  "lastUpdate": 1789912856077,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9476,50 +9476,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "fc5de377009120dd26063703a16f31027aaffd62",
-          "message": "Merge pull request #293 from LoveDaisy/feat/test-time-and-scope-discipline\n\nfeat(ci/doc): 测试时间预算的 owner —— 实测拓扑、分片重装箱、分层契约",
-          "timestamp": "2026-09-02T09:04:32+08:00",
-          "tree_id": "cfe6beb5c25bbb4014f67bf142635e635a347f4e",
-          "url": "https://github.com/LoveDaisy/ice_halo_sim/commit/fc5de377009120dd26063703a16f31027aaffd62"
-        },
-        "date": 1788311807756,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 78.9,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 98.9,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 95.6,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 87.7,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "32515f9970bfd614540c36dece2c55fe71eee1a6",
           "message": "Merge pull request #294 from LoveDaisy/chore/annotation-doc-and-diagnostics-gaps\n\nchore(doc/cli): 补 zenith_nadir schema 文档；renderer 超限诊断指向真正的上限",
           "timestamp": "2026-09-02T13:14:20+08:00",
@@ -13799,6 +13755,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 92.2,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "a9eb84bee60644a8d4838c4051be47e0b5cda60a",
+          "message": "Merge pull request #394 from LoveDaisy/feat/analyze-chain-table-capacity\n\nfeat(analyze): runtime chain-record capacity — --chain-capacity / C API chain_capacity (task-583)",
+          "timestamp": "2026-09-20T21:46:35+08:00",
+          "tree_id": "f4e0ca5a93ff255549dadfb9d9ff5d2fb530ffac",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/a9eb84bee60644a8d4838c4051be47e0b5cda60a"
+        },
+        "date": 1789912855362,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 93.2,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 99.7,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 98.4,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 91.3,
             "unit": "%"
           }
         ]
