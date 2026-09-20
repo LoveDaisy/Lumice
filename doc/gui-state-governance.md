@@ -435,7 +435,7 @@
 
 | 字段 | 档位 | 面板→主窗口 | 主窗口→面板 |
 |---|---|---|---|
-| `combine` / `match`（含每个 ref 的 `layer_idx` / `crystal_pool_id` / `match_all` / `predicate_text` / `sym_p/b/d`） | T-struct·hard | 面板直接改 `state.raypath_color` 本体，`RaypathColorStructChanged` 每帧 diff → `MarkStructHardDirty` | New：整体替换；Open：文档内容整体赋值；Revert：`ConfigSnapshot::raypath_color` 与 `crystals` / `layers` 在同一次 `ApplyTo` 里原子回滚——**ref 索引不失配**。**删层**（`NotifyLayerDeleted`，`src/gui/edit_modals.cpp:1452`）现同时遍历每个 ref 做位置补偿，规则与编辑弹窗 `g_modal_layer_idx` 的补偿共用同一个纯函数 `CompensateLayerIndexForDeletion`（同文件 `:1441`，同一模式的第二个消费者）：`layer_idx == deleted` → `-1` 悬空（`ResolveColorRef` 走既有 `kLayerMissing` 分支，面板显示 " (deleted)"）；`layer_idx > deleted` → `--layer_idx`；小于 → 不动。这一遍历**不**挂在「模态是否开着」的门槛之后。之前的缺口：ref 保留旧下标而静默指向前移进来的那一层，且 `ResolveColorRef` 的两种检测（越界 / 新层不含该 crystal）都是副作用式的，当后一层恰好复用同一 `crystal_pool_id` 时零提示——`test/composition-correctness/gui/test_color_ref_layer_delete_chain.cpp` 钉住的正是「下标 + 物理层身份」这一对，而不是单独的 `kResolved` |
+| `combine` / `match`（含每个 ref 的 `layer_idx` / `crystal_pool_id` / `match_all` / `predicate_text` / `sym_p/b/d`） | T-struct·hard | 面板直接改 `state.raypath_color` 本体，`RaypathColorStructChanged` 每帧 diff → `MarkStructHardDirty` | New：整体替换；Open：文档内容整体赋值；Revert：`ConfigSnapshot::raypath_color` 与 `crystals` / `layers` 在同一次 `ApplyTo` 里原子回滚——**ref 索引不失配**。**删层**（`NotifyLayerDeleted`，`src/gui/edit_modals.cpp`）现同时遍历每个 ref 做位置补偿，规则与编辑弹窗 `g_modal_layer_idx` 的补偿共用同一个纯函数 `CompensatePositionalIndexForDeletion`（同文件；§11 普查后它有了第三个消费者 `pick_link_source`，并因此从 `CompensateLayerIndexForDeletion` 改名——它从未依赖下标是层的）：`layer_idx == deleted` → `-1` 悬空（`ResolveColorRef` 走既有 `kLayerMissing` 分支，面板显示 " (deleted)"）；`layer_idx > deleted` → `--layer_idx`；小于 → 不动。这一遍历**不**挂在「模态是否开着」的门槛之后。之前的缺口：ref 保留旧下标而静默指向前移进来的那一层，且 `ResolveColorRef` 的两种检测（越界 / 新层不含该 crystal）都是副作用式的，当后一层恰好复用同一 `crystal_pool_id` 时零提示——`test/composition-correctness/gui/test_color_ref_layer_delete_chain.cpp` 钉住的正是「下标 + 物理层身份」这一对，而不是单独的 `kResolved` |
 | `color[3]` / `visible` / `solo` / `z_order` / `raypath_color_mode` | T-display | `DiffAgainstDisplayBaseline` 每帧 diff → `PushDisplayState` 直推 server，不经 dirty / epoch（有意双通道） | Revert 回滚字段后由 `InvalidateEffectsBaselines` 强制下一帧重推 |
 | 面板「选中 / 展开」态 | T-session（ImGui 折叠态，按 widget ID） | 不存在于 `GuiState` | 无可回滚之物——Colors 的编辑就是改本体，本体已随 Revert 回滚 |
 
@@ -443,7 +443,7 @@
 这个攻击面」，不是「验证过没问题」；若将来加入 crystal 删除 / 压缩，本行要重审。同理，`state.layers` 今天只有
 **一个**会改变既有下标含义的写点——`src/gui/panels.cpp` 里那次 `erase`（全仓无 `layers.insert` / swap / 重排入口；
 `ConfigSnapshot::ApplyTo` 是整体赋值且与 `raypath_color` 同一次原子回滚），所以补偿只为删除而写，不为不存在的
-重排预留路径；将来加入层重排时，`CompensateLayerIndexForDeletion` 旁边就是它的第二条规则该住的地方。
+重排预留路径；将来加入层重排时，`CompensatePositionalIndexForDeletion` 旁边就是它的第二条规则该住的地方。
 
 ### 10.3 两条可迁移判据（普查阶段产出，不依赖具体任务）
 
@@ -456,3 +456,125 @@
   可以是对的，但审计时必须**先分清一个派生态归哪个 tier，再检查对应的 owner**——不能默认所有派生态都归
   `ResetFrontendState` 管。§10.1 的缺口正是「猜对了机制类型、猜错了面板和 reason」的产物：Colors 的 Revert
   由 document-tier 路线正确覆盖，Analysis 的 Revert 落在 session-tier 路线的一条显式跳过分支上。
+
+## 11. 视图侧副本与位置引用的重同步不变量
+
+> 状态：as-built（2026-09-20）。触发缺陷：光路分析面板对某行点「Exclude this raypath」时，若 Immediate 模式的
+> 「Edit Entry」弹窗正开在同一 entry 上，filter 看不见变化也不生效（内测报告 + owner 本机复现）。修复落在
+> `src/gui/edit_modals.cpp`（`PullBuffersFromPool` / `PullField` / `PullSummandRows` / `SyncBaselineFromPool`）、
+> `src/gui/input_text_reload.hpp` + `panels.cpp`（`ReloadInputTextIfActive`）、`src/gui/app.cpp`（`ResetFrontendState` →
+> `CloseEditModalOnDocumentReset`）。改任何视图侧模型副本、位置引用、弹窗缓冲区、pick 模式、或新增一个
+> `src/gui/` 里跨帧持有模型内容的 `static` 前先读；**新增一个即在 §11.4 的表里追加一行并给出裁定**。
+
+### 11.1 规则（可迁移判据，逐字）
+
+> **视图持有的任何模型副本，必须有一条声明的重同步规则；只在打开时同步的副本隐含依赖一把锁，而这把锁必须是
+> 显式的、对所有写者生效的。**
+
+「写者」包括 UI 写者（用户在别的面板上点）与代码写者（别的面板的动作、poller、测试代码）。一把只挡 UI 的锁
+（`BeginPopupModal` 的输入阻塞）不是这条规则要的锁——它挡不住代码写者，而代码写者恰恰是缺陷的来源。
+
+同族的位置引用（`int layer_idx` / `entry_idx` 之类指进 `GuiState` 某个 vector 的下标）适用同一条规则的变体：
+**位置引用的重同步规则只能是 push 式**（删除方通知），因为下标位移无法从内容看出来；而内容改动能从内容看出
+来，走 pull 式（每帧比对）就够了，不需要任何写者知道视图存在。§7 的先例：`ReconcileGuiEffects` 对 baseline 做
+内容 diff 是 pull；`NotifyEntryDeleted` / `NotifyLayerDeleted` 是 push——两种形态各有其唯一适用的对象，不是风格
+选择。
+
+### 11.2 本次缺陷的机制（同一诊断框架在「弹窗缓冲区 ↔ pool」交界线上的实例）
+
+§1 的诊断说偏离都聚在通道交界；这次的交界是弹窗的**私有缓冲区**与文档 **pool** 之间：
+
+1. `OpenEditModal` 把 pool 的 crystal / axis / filter **拷贝**进 `g_crystal_buf` / `g_axis_buf` / `g_filter_top` /
+   `g_summand_rows`，此后不再回读。
+2. Immediate 模式下每帧 `CommitAllBuffersImmediate` → `ApplyBuffersToEntry` 无条件把三组缓冲区写回 pool（filter 那支
+   在 `g_filter_present_baseline || buf_changed` 为真时用缓冲区重建 `FilterConfig` 覆写 slot；缓冲区只剩空行时把
+   `entry.filter_id` 置空）。
+3. `main.cpp` 帧序：`RenderAnalysisPanel` → `RenderEditModals` → `ReconcileGuiEffects`。Exclude 在前，弹窗在后。
+   - 情形 A（晶体原本无 filter）：Exclude `push_back` 新 slot 并绑定 → 两行后弹窗看到自己的缓冲区只有空行 → 解绑
+     → **孤儿槽位**，reconciler 看到 `filters` 变了 → hard reset 重跑，画面清空但什么都没排除。
+   - 情形 B（已有 Out filter）：Exclude 在 slot 追加一行 → 弹窗用开窗时的旧 SoP 整体覆写 → 追加行被抹掉；日志打了
+     "appended … (2 rows now)"，pool 里只有 1 行——**完全静默的 no-op**。
+4. Staged 模式没事**不是**因为它处理了冲突，而是 `BeginPopupModal` 挡住了用户的鼠标——一把偶然的、只锁 UI 写者的
+   隐式锁；OK 走同一个 `ApplyBuffersToEntry`，代码写者照样被覆写。
+5. 同一结构对 `state.crystals[crystal_id]` 也成立，今天只是碰巧没有别的 UI 路径在弹窗开着时外部改晶体。
+
+### 11.3 机制：pull → draw → push，字段级三方合并
+
+采用 Unity `SerializedObject.Update()` / `ApplyModifiedProperties()` 的 pull-draw-push 形态 + 表单库 `keepDirtyValues`
+的字段级三方合并，一条规则同时覆盖 Immediate 与 Staged（owner 裁定，2026-09-20）：
+
+> 每帧渲染弹窗前（`RenderEditModals` 顶层，在索引 guard 之后、TabBar 之前，**与当前激活哪个 Tab 无关**），对绑定
+> entry 的每个字段：**base** = 上次与 pool 同步的值、**ours** = 缓冲区、**theirs** = pool 当前值。
+> `theirs == base` → 不动；`ours == base` 且 `theirs != base` → ours 与 base 都重载为 theirs；两边都变 → 保留
+> ours（用户手上的），base 更新为 theirs。
+
+- **为什么一条规则够两种模式**：Immediate 下缓冲区每帧已提交，`ours == base` 几乎恒成立，外部改动**总是**被拉进
+  来；唯一例外是提交不了的半行（`kIncomplete`），它是脏的、被保留——正是想要的。Staged 下用户真实脏字段被保留、
+  干净字段跟随文档，脏标记仍意味着「与文档不同」。**不需要任何外部写者知道弹窗存在**（Exclude、将来的面板级功能、
+  测试代码都不用调 notify）。push→pull 的回环也落在第三支上：ours 写进 pool 的下一帧，`theirs == ours != base`，
+  base 追平、无采纳。
+- **粒度**：Crystal 按 `name` / `type` / `upper_alpha` / `lower_alpha` + 10 个 shape 槽位（复用 `ShapeScalarAt`
+  单一权威）逐字段；Axis 每个 `AxisDist` 整体一个单元（预设按钮本就把三者原子写）；Filter 顶部 5 字段逐字段；
+  **SoP 行列表按行文本的多重集合并**（`PullSummandRows`）：行只增删、不就地改写——外部改了某行文本 = 删旧 + 增新，
+  用户已改过的行不再匹配旧文本，自然被保留（「两边都变 → 保留 ours」的行形态）；`c_theirs == c_base` 不动，
+  `c_ours != c_base` 保留 ours（也是挡住「上一帧自己 push 的行回流成第二份」的那条），否则按差值增删。空白行是编辑器
+  affordance 不是行：不参与比对；缓冲区**只剩**空白行而 pool 来了行，空白行让位。新行 uid 只从递增计数器取、绝不
+  回收——被删掉的空白行的 `InputText` 可能仍是活动控件，复用其 id 会继承它的编辑态。
+- **baseline 取自 pool，不取自缓冲区**（`SyncBaselineFromPool`，开窗 / Immediate→Staged 切换 / Unlink 三处）：二者恰在
+  要紧处不同——被提交闸拒绝的半行在缓冲区不在 pool，从缓冲区拍的 baseline 会让下一帧 pull 把它当「外部删除」抹掉。
+  `IsFilterDirty` 因此改比「去空白行后的行集」vs baseline（pool 本身无空白行），副作用是「用户加一个空白行」不再标脏，
+  这更正确（提交结果相同）。`crystal_dirty` 改用 `CrystalTabFieldsEqual`，排除 `CrystalConfig` 里从未被 Axis 面板
+  使用的死轴字段 `zenith/azimuth/roll`——整体 `operator==` 会把 pool 侧的活轴与缓冲区侧的死拷贝比出假脏。
+- **ImGui 活动编辑态保护（reload-if-active）**：`InputText` 在活动期间持有一份私有文本副本，且**该副本优先于调用方
+  传入的缓冲区**——每帧二者不同时，控件把私有副本写回缓冲区（`imgui_widgets.cpp` `InputTextEx`：「as soon as the
+  input box is active, the in-widget value gets priority over any underlying modification of the input buffer」）；
+  `InputFloat` 是每帧格式化一次的 `InputText`，同理。于是被 pull 采纳的值一帧后会被活动框静默撤销，**且永久**——
+  `PullField` 对 base 的推进是无条件的，机制不会再次尝试采纳。解法：`PullBuffersFromPool` 把「本帧哪些文本类字段被
+  采纳」记进 `g_pull_adopted`，各 Tab 体把标记传给编辑该字段的控件（`RenderShapeDistTableRow` / `RenderAxisDist` /
+  `SliderWithPresetEdit` 的 `reload_active_inputs` 参数；`##crystal_name` 就地），控件在**自己的 ID 作用域内**、
+  提交前调 `ReloadInputTextIfActive(id)`（gate 在 `GetActiveID() == id`——`GetInputTextState` 对上一个失活框也非空，
+  不能单靠它），即 ImGui 自己对 #2890 的补救 `ReloadUserBufAndSelectAll`。SoP 行不需要：行级合并只增删不就地改写，
+  新行不可能是活动控件。`g_pull_adopted` 寿命一帧，靠顺序不变量成立；`RenderModalTabBar` 入口断言
+  `g_pull_generation == ImGui::GetFrameCount()`（复用 ImGui 自己的帧计数器，不另建第二个）。
+- **接线的闸是表驱动测试，不是覆盖率断言**：曾考虑一个「本帧 adopted 却没有任何控件做过 reload 检查」的 debug
+  断言，落地时否决——reload 检查作为参数传给行 helper，「接线」就是传参本身，「做过检查」只能在渲染了该行的路径上
+  置位，而 Tab 未激活、Face Distance 折叠、类型不同时那一行根本不渲染：断言要么同义反复（只在渲染了的行上比），
+  要么在这些完全合法的场景里误报。
+  `test/gui/functional/test_edit_modal.cpp` 的 `an_active_box_reloads_when_its_value_arrives_from_the_pool`（19 行
+  表驱动：10 个 shape center + Height spread + 3 轴 × (Mean, Range) + 2 个 wedge）与 name 用例是真正的闸——
+  两枚红态探针证实：全局把 reload 置空第一行即红；只拆掉 `Azimuth` 一行的接线，恰好 `Azimuth mean` 红、其余绿。
+
+### 11.4 普查结果（`src/gui/` 全部视图侧模型副本与位置引用；三档裁定，每条给理由）
+
+三档：**同根因、本任务修** / **合规但依赖显式锁、须声明** / **合规、无动作**。「它是这个集合的成员」不是理由。
+S1–S8 是立项时的种子，S9 / S10 是 S3 / S4 两个待核实分支核实后确认的同根因缺陷（各占一行，S4 本身并入 S10）。
+
+| # | 位置 | 形态 | 裁定 | 理由 |
+|---|---|---|---|---|
+| S1 | `edit_modals.cpp` `g_crystal_buf` / `g_axis_buf` / `g_filter_top` / `g_summand_rows` + 各 `_snapshot` | 模型副本 | **同根因，已修** | 只在开窗时同步、Immediate 每帧写通从不回读——§11.2；现按 §11.3 每帧 pull。测试：`test_raypath_analysis_panel.cpp` 两例（真实 Exclude，情形 A/B，修前均红）+ `test_edit_modal.cpp` 四例（半行、Staged 脏字段、表驱动 reload、name） |
+| S2 | `defaults_panel.cpp` `g_snapshot_doc` / `g_copy_doc` / `g_opening_current_values` / `g_initial_checked_keys` | 模型副本（开窗时冻结） | **合规，但锁的表述须改（已改）** | 源码注释原本把锁写成「panel 是 `BeginPopupModal`，主 UI 改不到值」——那只挡用户输入，挡不住后台每帧跑的 `SyncFromPoller`。真正生效的锁是**结构性的**：面板的行集合由 `BuildDefaultDiffRows` 对 `SerializeGuiStateJson(current)` 的输出取叶子生成，而该序列化器是逐字段手写赋值；`SyncFromPoller` 独占写入的全部派生字段（`kDerivedFieldsExcludeList` 的 21 个：`sim_state` / `stats_*` / `analysis_result` / `p99_raw_y` / `ev_auto` / `target_white` …）在其函数体内零命中，天然落在行集合之外。注释已按此改写；若面板改成非 modal，UI 写者那一半锁消失，届时该按 §11.3 补 pull |
+| S3 | `edit_modals.cpp` `g_modal_layer_idx` / `g_modal_entry_idx` | 位置引用 | **合规，无动作**（删除分支既有；文档切换分支 = S9） | 层/条目**重排**：全仓 `state.layers` / `entries` 除 `push_back` 与 `panels.cpp` 里的两处 `erase` 外无任何原地重排/换位入口（`grep -rniE "reorder\|move[_ ]?up\|swap.*(layer\|entry)\|drag.*(layer\|entry)"` 唯一命中是 `color_window.cpp` 的 `z_order`，独立数组）。**Duplicate**（`panels.cpp`）：`entries.push_back` + pool `push_back` 纯末尾追加。**Unlink**（`UnlinkEntryFromPool`）：只重写 `crystal_id` / `filter_id`，从不读写下标 |
+| S5 | `ColorClassRefConfig.layer_idx` / `crystal_pool_id` | 位置引用 | **合规，无动作** | 层删除已由 `NotifyLayerDeleted` 补偿（§10.2）；重排 / Duplicate / Unlink 同 S3；pool append-only 故 `crystal_pool_id` 稳定（§10.2 已注明「当前不存在这个攻击面」） |
+| S6 | `panels.cpp` `g_edit_request`；`app_panels.cpp` / `app.cpp` `g_pending_import_warning` / `g_pending_export_json_path` / `g_pending_action` / `g_pending_save_kind` | 信箱 | **合规，无动作** | `g_edit_request`：同一次 `RenderLeftPanel` 内写入、消费、清零，承载两个下标不承载模型内容——「单帧信箱」标签准确。`g_pending_import_warning`：一次性通知文案，`RenderImportWarningPopup` `std::move` 走并清空。`g_pending_export_json_path`：用户刚选定的 I/O 目标路径，由确认/取消两个显式动作消费。`g_pending_action` / `g_pending_save_kind`：**种子表的「单帧信箱（edge）」标签对这两个不准确**——它们在「未保存改动」弹窗链打开期间跨越任意多帧；但跨帧本身不是问题，它们持有的是**意图枚举**（待执行 New/Open/Quit、Save/SaveAs），消费时读的是彼时的活体 `g_state`，不持有任何模型副本，重同步无对象。正确标签：跨帧排队的意图枚举 |
+| S7 | `analysis_panel` 的 `selected_entry`（字符串键）、`AnalysisSceneIdentity` + `ComputeAnalysisListFreshness` | 派生态 | **合规范例** | §10.1：纯谓词每帧比活体 `g_state`，`DoRun` / `DoRevert` 零新增代码——pull 式的正解形态 |
+| S8 | `color_window.cpp` 直接编辑 `state.raypath_color` | 无副本 | **合规范例** | ImGui 教义形态：控件直绑模型，没有副本就没有重同步问题（弹窗做不到这一点，因为 filter 的文本行表示与 SoP 模型表示不同——owner 裁定不改成直绑） |
+| S9 | S3 的「文档切换 / `ResetFrontendState`」分支 | 位置引用 + 模型副本 | **同根因，已修** | 每个 reset reason 都替换或恢复整个 pool，弹窗的位置引用与缓冲区全部失去意义，却没有任何 reason 关它。Immediate 下 §11.3 的 pull 已把「旧缓冲区污染新文档」堵住；**Staged 下未提交的编辑被合并规则保留，OK 会把旧文档的编辑写进新文档同位置的 entry**。修法 = `CloseEditModalOnDocumentReset()`，在 `ResetFrontendState` 里紧邻 `ClearAxisCustomMemory()` 无条件调用（同一理由、同一形状、不分 reason）；`ResetModalState()`（测试专用）= 它 + 测试才要的强制项，调它实现，两份字段集不会漂。测试：`test_edit_modal_document_reset_chain.cpp`（四个 reason 各一）+ `edit_modal/a_new_document_closes_the_editor_and_its_uncommitted_edit` |
+| S10 | `GuiState::pick_link_source`（`EntryRef`，S4） | 位置引用 | **同根因，已修** | pick 模式期间卡片的删除按钮仍可点（pick 覆盖层只接管卡片本体的点击），而 `ApplyPickLink` 的边界检查只抓「掉出末尾」，中间删除后引用在范围内、静默指向前移进来的条目——**静默错链**。修法 = `NotifyEntryDeleted(GuiState&, …)` / `NotifyLayerDeleted` 对它做同一三态补偿；命中删除位置则 `reset()` 结束 pick 模式（把 pick 静默指向另一个条目比取消更让人困惑，与 Esc / 点空白取消一致）。共用的算术从 `CompensateLayerIndexForDeletion` 改名 `CompensatePositionalIndexForDeletion`。测试：`test_edit_modal_delete_binding.cpp` 8 例 |
+
+**依赖显式锁的副本清单**（规则第二句的落地）：今天只有 S2 一处。它的锁有两半——UI 半（`BeginPopupModal`）与代码
+半（序列化器输出结构限定行集合）——两半都写在 `defaults_panel.cpp` 顶部的 copy-model 注释里。任何一半失效
+（面板改成非 modal；或 `SerializeGuiStateJson` 开始输出 poller 会写的字段）都要回到本表重裁。
+
+### 11.5 AC5 裁定：不在 `scripts/check_policies.py` 加机械门禁（含重新评估条件）
+
+- 「视图侧模型副本 / 位置引用」是类型语义概念，不是固定文本模式（不同于 `check_new_refs.py` 的路径字符串、
+  `check_new_gui_tests.py` 的匿名 `ctx` 参数）。本次三个真实实例形态各异：S1 是四个模型类型的 `static` 缓冲区，
+  S9 是两个 `static int` 下标，S10 是 `GuiState` 里一个 `std::optional<EntryRef>` 成员——没有一个共同的语法特征能
+  同时命中三者又不命中 `g_crystal_style` 这类纯 UI 偏好的 `static int`；按类型名单做正则会漏掉「看起来普通的 `int`
+  其实是位置引用」，放宽又是一片误报。
+- a50 的触发条件是**反复失误**；本次三个实例都是一次系统性普查主动找到的，不是「合入 main 后才被发现、证明 review
+  拦不住」的复发。a51：防御机制的立项门槛是已证实的真实代价，目前只有一例。
+- 人工替代物 = §11.4 的表 + 本节开头的「新增即追加一行」纪律。
+- **重新评估条件**（任一成立即重提评审并考虑加门禁）：(a) `src/gui/` 新增了视图侧副本或位置引用而**没有**在
+  §11.4 追加裁定、code review 放过、直到用户报告缺陷才发现——证明「文档 + review 纪律」不够；(b) 出现第二次
+  「同类缺陷合入 main 后才被发现」的实例（不论是否与 S1/S9/S10 同源）。

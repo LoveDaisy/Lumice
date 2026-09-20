@@ -617,6 +617,119 @@ bool RunAfterCompletedAnalysisHasNoRebuildMismatch(ImGuiTestContext* ctx) {
   return true;
 }
 
+// Exclude while the Immediate-mode editor is open on the crystal's own entry, Filter tab showing.
+//
+// The editor's buffers are a copy of the entry's crystal and filter taken when it opened, and in
+// Immediate mode it writes them back into the pool every frame; the analysis window writes the same
+// filter slot when Exclude is clicked, and main.cpp orders the two so the analysis window goes first
+// (gui_test's frame loop keeps that order). So what this drives is the one write the editor must
+// pull in rather than overwrite: the pool must hold the excluded row afterwards, the entry must
+// still be bound to it, and the editor's own row list must show it — the user is looking at both.
+//
+// `start_with_out_filter` seeds the entry with a one-row Out filter first: with no filter the
+// exclusion is a NEW slot the entry gets bound to; with one it is a row APPENDED to the slot the
+// editor already holds. The editor loses each in its own way (unbinding the new slot, or restoring
+// the old row set over the appended one), so both are driven.
+bool ExcludeWhileTheImmediateEditorIsOpen(ImGuiTestContext* ctx, bool start_with_out_filter) {
+  IM_CHECK_RETV(BringUpHaloScene(ctx, /*infinite=*/false), false);
+  OpenWindow(ctx);
+  IM_CHECK_RETV(RunPointAnalysisToCompletion(ctx), false);
+  const auto& view_result = gui::g_state.analysis_result;
+  IM_CHECK_RETV(!view_result.display_order.empty(), false);
+  const LUMICE_RaypathHistogramEntry& top =
+      view_result.payload->entries[static_cast<size_t>(view_result.display_order[0])];
+  IM_CHECK_RETV(top.chain_len == 1, false);  // the single-layer scene; Exclude accepts only these
+  const std::string top_display = top.display;
+  const std::string top_row_text = gui::FormatSegmentRaypathText(top.chain[0]);
+
+  std::vector<std::string> expected_rows;
+  if (start_with_out_filter) {
+    // Any face path but the one about to be excluded, so the append is a real second row.
+    const std::string seed = (top_row_text == "1-3") ? "3-5" : "1-3";
+    gui::FilterConfig out;
+    out.name = "drop one";
+    out.action = 1;  // filter_out
+    out.param = gui::FromLegacyRaypath(gui::RaypathParams{ seed });
+    gui::SetFilter(gui::g_state, gui::g_state.layers[0].entries[0], out);
+    expected_rows.push_back(seed);
+    ctx->Yield(2);
+  }
+  expected_rows.push_back(top_row_text);
+  IM_CHECK_RETV(gui::g_state.filters.size() == (start_with_out_filter ? 1u : 0u), false);
+
+  const ScopedPopups popup_guard(ctx);
+  gui::g_state.modal_immediate_mode = true;
+  const gui::EditRequest req{ gui::EditTarget::kFilter, 0, 0 };
+  gui::OpenEditModal(req, gui::g_state);
+  ctx->Yield(4);
+  IM_CHECK_RETV(gui::IsEditModalOpen(), false);
+  // Out of the analysis window's way, so the row and the button below are the items under the
+  // mouse rather than the editor's title bar.
+  ctx->WindowMove("//Edit Entry", ImVec2(760.0f, 40.0f));
+  ctx->Yield(2);
+
+  ctx->SetRef(kWindowRef);
+  ctx->ItemClick((std::string("**/") + top_display).c_str());
+  ctx->Yield(1);
+  IM_CHECK_RETV(gui::g_state.analysis.selected_entry.has_value(), false);
+  IM_CHECK_RETV(!IsDisabled(ctx->ItemInfo(ICON_FA_BAN " Exclude this raypath")), false);
+  ctx->ItemClick(ICON_FA_BAN " Exclude this raypath");
+  ctx->SetRef("");
+  // Two frames: the click's frame already ran the editor's pull and push once after the write;
+  // one more shows whatever it left behind is stable rather than mid-flight.
+  ctx->Yield(2);
+
+  // The pool, as the next Run will read it.
+  const auto& entry = gui::g_state.layers[0].entries[0];
+  ctx->LogInfo("after Exclude: filters=%d entry.filter_id=%d", static_cast<int>(gui::g_state.filters.size()),
+               entry.filter_id.has_value() ? *entry.filter_id : -1);
+  IM_CHECK_RETV(entry.filter_id.has_value(), false);
+  IM_CHECK_RETV(gui::g_state.filters.size() == 1u, false);  // bound to the one slot, no orphan
+  const gui::FilterConfig& bound = gui::g_state.filters[static_cast<size_t>(*entry.filter_id)];
+  IM_CHECK_RETV(bound.action == 1, false);
+  {
+    std::string got;
+    for (const auto& row : bound.param) {
+      got += "[" + row.text + "]";
+    }
+    ctx->LogInfo("pool rows: %s", got.c_str());
+  }
+  IM_CHECK_RETV(bound.param.size() == expected_rows.size(), false);
+  for (const std::string& text : expected_rows) {
+    const bool present =
+        std::any_of(bound.param.begin(), bound.param.end(), [&](const gui::SummandText& r) { return r.text == text; });
+    if (!present) {
+      IM_ERRORF("pool filter lost row \"%s\"", text.c_str());
+      return false;
+    }
+  }
+
+  // The editor, as the user sees it: the same rows, in its own row list.
+  const gui::EditModalBuffers buffers = gui::GetEditModalBuffers();
+  {
+    std::string got;
+    for (const auto& row : buffers.filter_rows) {
+      got += "[" + row + "]";
+    }
+    ctx->LogInfo("editor rows: %s", got.c_str());
+  }
+  IM_CHECK_RETV(buffers.filter_top.action == 1, false);
+  IM_CHECK_RETV(buffers.filter_rows.size() == expected_rows.size(), false);
+  for (const std::string& text : expected_rows) {
+    const bool present =
+        std::find(buffers.filter_rows.begin(), buffers.filter_rows.end(), text) != buffers.filter_rows.end();
+    if (!present) {
+      IM_ERRORF("editor row list lost row \"%s\"", text.c_str());
+      return false;
+    }
+  }
+
+  ctx->ItemClick("**/Close##edit_modal");
+  ctx->Yield(2);
+  gui::g_state.modal_immediate_mode = false;
+  return true;
+}
+
 }  // namespace
 
 void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
@@ -1273,6 +1386,28 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       IM_CHECK_EQ(gui::g_state.filters[0].action, 0);
       IM_CHECK_EQ(gui::g_state.filters[0].param.size(), 1u);
       IM_CHECK_STR_EQ(gui::g_state.filters[0].name.c_str(), "keep 1-3");
+    };
+  }
+
+
+  // Exclude with the Immediate-mode editor open on the same entry — see
+  // ExcludeWhileTheImmediateEditorIsOpen. Two cases, one per way the editor's copy used to win over
+  // the pool: a filter it had never seen (the entry had none), and a row appended to the one it
+  // was holding.
+  {
+    ImGuiTest* t =
+        IM_REGISTER_TEST(engine, "raypath_analysis", "exclude_while_the_immediate_editor_is_open_binds_a_new_filter");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ScopedServerGuard guard;
+      IM_CHECK(ExcludeWhileTheImmediateEditorIsOpen(ctx, /*start_with_out_filter=*/false));
+    };
+  }
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis",
+                                    "exclude_while_the_immediate_editor_is_open_appends_to_its_out_filter");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ScopedServerGuard guard;
+      IM_CHECK(ExcludeWhileTheImmediateEditorIsOpen(ctx, /*start_with_out_filter=*/true));
     };
   }
 

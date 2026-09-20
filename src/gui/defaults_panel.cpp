@@ -47,10 +47,20 @@ namespace {
 // looking identical — same rows, same checkboxes — and "will Save now include those diffs?" was
 // unanswerable from the screen. One commit point removes the question.
 //
-// DEPENDENCY, stated because it is invisible from here: the panel is a BeginPopupModal, so the
-// main UI cannot be edited while it is open and `current` cannot move underneath the copy. If this
-// panel is ever made non-modal (a docked window, say), that premise is gone and the copy would
-// need a reconciliation story with edits made behind it.
+// DEPENDENCY, stated because it is invisible from here — the copy is synced with `current` once,
+// at open, and a copy synced only at open rests on a lock (doc/gui-state-governance.md §11). This
+// one's lock has two halves, and both are needed:
+//   - the USER half: the panel is a BeginPopupModal, so nothing in the main UI can be edited
+//     while it is open, and no user action moves `current` underneath the copy;
+//   - the CODE half, which the modal does nothing for: SyncFromPoller writes the derived fields
+//     (sim_state, stats_*, analysis_result, p99_raw_y, ev_auto, ...) every frame whatever popup
+//     is up. Those never reach this panel's rows because the row set is generated from what
+//     SerializeGuiStateJson(current) emits (BuildDefaultDiffRows takes its leaves), and that
+//     serializer is a hand-written field list none of the poller's fields are on. The lock is the
+//     serializer's output structure, not the popup.
+// If this panel is ever made non-modal (a docked window, say), the user half is gone and the copy
+// needs the same per-frame reconciliation the edit modal has; if SerializeGuiStateJson ever emits a
+// field the poller writes, the code half is gone the same way.
 //
 // TWO documents, not one, and the split is load-bearing:
 //   g_snapshot_doc — what was on disk when the panel opened. FROZEN for the session. It anchors

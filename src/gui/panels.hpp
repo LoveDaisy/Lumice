@@ -144,7 +144,13 @@ void SetNextComboPopupTopMost();
 
 // Render axis distribution controls (combo + mean + std sliders).
 // Returns true if any value changed. Does NOT call MarkDirty() — caller is responsible.
-bool RenderAxisDist(const char* label, AxisDist& axis, float mean_min, float mean_max);
+// `reload_active_inputs`: true on a frame `axis` was replaced from outside the widgets (the edit
+// modal's pull from the pool) — see gui/input_text_reload.hpp for what that costs if omitted.
+bool RenderAxisDist(const char* label, AxisDist& axis, float mean_min, float mean_max, bool reload_active_inputs);
+
+// The reload-if-active helpers `reload_active_inputs` above refers to are declared in
+// gui/input_text_reload.hpp, not here: this header is included by targets that never see ImGui
+// (unit_correctness_test reaches it through shape_scalar_domain.hpp), and ImGuiID is an ImGui type.
 
 // ---- Shape distribution controls (crystal geometry randomization) ----
 
@@ -193,7 +199,9 @@ void ShapeTableParamLabel(const char* label);
 // read from gui/shape_scalar_domain.hpp. They used to be four arguments spelled out at every call
 // site, which made "what does Prism H allow" a fact about the caller rather than about the field.
 // Returns true if any value changed. Does NOT call MarkDirty() — caller is responsible.
-bool RenderShapeDistTableRow(const char* label, CrystalConfig& cr, int slot);
+// `reload_active_inputs`: true on a frame the slot's ShapeDist was replaced from outside the widgets
+// (the edit modal's pull from the pool) — see gui/input_text_reload.hpp.
+bool RenderShapeDistTableRow(const char* label, CrystalConfig& cr, int slot, bool reload_active_inputs);
 
 // ---- Axis preset classification ----
 

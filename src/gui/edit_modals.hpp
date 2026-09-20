@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 
+#include "gui/gui_state.hpp"
 #include "include/lumice.h"
 
 struct GLFWwindow;
@@ -82,14 +83,20 @@ EditModalTarget GetEditModalTarget();
 // falling off the end of the vector; everything short of that is in range and silently wrong,
 // because Immediate mode writes the edit buffers into the bound entry's pool slots every frame.
 //
-// The layer flavour has a second consumer: every ColorClassRefConfig in state.raypath_color holds
-// a positional layer_idx into state.layers too, and it is NOT gated on a modal being open. After
-// an erase those refs are re-indexed by the same three-outcome rule (deleted layer -> the ref is
-// left dangling at -1, so ResolveColorRef reports kLayerMissing; a layer before it -> untouched;
-// after it -> decrement). Without this the ref keeps its old number and silently denotes the
-// layer that shifted into that slot — and when that layer happens to reuse the same crystal pool
-// slot, ResolveColorRef's two checks (bounds, crystal-in-layer) both pass and nothing tells the user.
-void NotifyEntryDeleted(int layer_idx, int deleted_entry_idx);
+// Both flavours have consumers beyond the modal, none gated on a modal being open:
+//   - state.pick_link_source, the entry the "Link to..." eyedropper is armed on. It outlives the
+//     modal (arming it closes the modal) and the card delete buttons stay live while it is armed.
+//     Same three outcomes; when the deleted item IS the armed one, pick mode ends rather than
+//     re-aiming at the entry that slid into its place — silently linking to a card the user never
+//     armed is worse than asking them to arm again, and matches the Esc / click-outside cancel.
+//   - (layer flavour only) every ColorClassRefConfig in state.raypath_color holds a positional
+//     layer_idx into state.layers too. After an erase those refs are re-indexed by the same
+//     three-outcome rule (deleted layer -> the ref is left dangling at -1, so ResolveColorRef
+//     reports kLayerMissing; a layer before it -> untouched; after it -> decrement). Without this
+//     the ref keeps its old number and silently denotes the layer that shifted into that slot —
+//     and when that layer happens to reuse the same crystal pool slot, ResolveColorRef's two checks
+//     (bounds, crystal-in-layer) both pass and nothing tells the user.
+void NotifyEntryDeleted(GuiState& state, int layer_idx, int deleted_entry_idx);
 void NotifyLayerDeleted(GuiState& state, int deleted_layer_idx);
 
 // Returns the EditTarget corresponding to the currently active tab. Returns
@@ -112,8 +119,26 @@ EditTarget GetActiveTabAsEditTarget();
 // so the modal call site adds it and the card call site does not.
 void StartLinkPickMode(GuiState& state, int layer_idx, int entry_idx);
 
+// Close the edit modal because the document it was bound into has been replaced or restored —
+// called unconditionally by ResetFrontendState() (production), for every reset reason. The modal
+// binds its entry by POSITION and holds copies of that entry's crystal and filter; after a reset
+// the position names whatever the new document has at those numbers (or nothing), and the copies
+// describe a crystal the document no longer holds. There is nothing to compensate the binding to,
+// so it is dropped, together with the buffers and the pending flags that only mean something while
+// a modal is up. Leaves the user's view preferences (modal_immediate_mode, layout) alone: they are
+// session settings, not document state.
+//
+// Field-set note: ResetModalState() below (test teardown) is this PLUS the test-only forcing of
+// modal_immediate_mode / tab / uid counter / trackball save, and is implemented by calling this
+// first so the two cannot drift on the fields they share. A new edit-buffer field goes here.
+void CloseEditModalOnDocumentReset();
+
 // Reset all modal-internal static state (active modal, edit buffers, pending flags).
 // Called by test teardown (ResetTestState) to prevent state leakage between tests.
+// Delegates to CloseEditModalOnDocumentReset() for the document-bound part (see its field-set
+// note), then additionally forces modal_immediate_mode=false, the Crystal tab, the row-uid counter
+// and the trackball save back to their process-start values — things a test wants pinned and
+// production must not touch.
 void ResetModalState();
 
 // Clears the axis modal's per-crystal "last Custom triple" memory (g_axis_custom_memory in
@@ -135,6 +160,18 @@ void RenderSpectrumModal(GuiState& state);
 // Returns false when no modal is open or the entry index is invalid.
 // Intended for GUI test assertions; production code should not call this.
 bool IsCurrentModalDApplicable();
+
+// A copy of the open modal's edit buffers — what its Crystal / Axis / Filter tabs are showing —
+// so a test can compare what the user sees against the pool without reading widgets. Default
+// values when no modal is open. Intended for GUI test assertions; production code should not call
+// this: the buffers are the modal's own, and the pool is the document.
+struct EditModalBuffers {
+  CrystalConfig crystal;
+  AxisDist axis[3];                      // zenith, azimuth, roll
+  FilterConfig filter_top;               // name / action / sym_*; `param` is always empty here
+  std::vector<std::string> filter_rows;  // one string per OR row, blank rows included
+};
+EditModalBuffers GetEditModalBuffers();
 
 // One row of the wedge-angle preset dropdown. It declares only the Miller indices (h, l; k is
 // always 0 — that is what the {h,0,-h,l} notation means, not an omission); `label` and `value` are

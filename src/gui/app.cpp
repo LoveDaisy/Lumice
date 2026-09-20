@@ -753,6 +753,12 @@ void ResetFrontendState(GuiState& state, FrontendResetReason reason, const LmcTe
   // would remember belongs to a crystal that is no longer at that id. Unconditional on purpose —
   // not folded into any reason-grouped block below, so it cannot inherit another state's rule.
   ClearAxisCustomMemory();
+  // And every reason closes an open Edit Entry modal, for the same reason one level up: it binds
+  // its entry by position into the pool these reasons replace or restore, and holds copies of that
+  // entry's crystal and filter. An uncommitted edit in those copies would otherwise be committed
+  // into whatever the new document has at the same position. Same shape: unconditional, no
+  // reason-grouped block.
+  CloseEditModalOnDocumentReset();
 
   // Preview texture / background — as-built subset per reason. `.lmc` variants both call
   // ClearBackground (post-branch shared line in the pre-refactor DoOpen); the DoOpen(.lmc)
