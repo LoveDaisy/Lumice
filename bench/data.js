@@ -1,56 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1789869289898,
+  "lastUpdate": 1789871946067,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "034ab22193bfe8cf4e9efb4aac1599e82c5e3308",
-          "message": "Merge pull request #286 from LoveDaisy/feat/adjustable-background-color\n\n可调背景颜色：GUI/CLI 五路一致 + core 定义域掩码 + 注记层处置",
-          "timestamp": "2026-08-31T12:48:11+08:00",
-          "tree_id": "465ab3c2e3bc53104f4df724fba2c95cd70a2d2c",
-          "url": "https://github.com/LoveDaisy/ice_halo_sim/commit/034ab22193bfe8cf4e9efb4aac1599e82c5e3308"
-        },
-        "date": 1788152403861,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 374559.1,
-            "unit": "rays/sec",
-            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 583777,
-            "unit": "rays/sec",
-            "extra": "CPU: Neoverse-N2\\nCores: 4"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 430017.4,
-            "unit": "rays/sec",
-            "extra": "CPU: INTEL(R) XEON(R) PLATINUM 8573C\\nCores: 4"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 334834.3,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -4752,6 +4704,54 @@ window.BENCHMARK_DATA = {
             "value": 317142,
             "unit": "rays/sec",
             "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "747b2ec2a60ffe5e75331b2c0b3753ed05411959",
+          "message": "Merge pull request #388 from LoveDaisy/fix/startup-calibration-test-address-reuse\n\ntest(gui): evidence the startup-calibration server rebuild by its worker-count tracker, not by address",
+          "timestamp": "2026-09-20T10:28:39+08:00",
+          "tree_id": "1b37adad964db6f5ecb871687f0eeb0ee499b8f3",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/747b2ec2a60ffe5e75331b2c0b3753ed05411959"
+        },
+        "date": 1789871944685,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 404567.1,
+            "unit": "rays/sec",
+            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 508467.6,
+            "unit": "rays/sec",
+            "extra": "CPU: Neoverse-N2\\nCores: 4"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 538730.5,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 9V45 96-Core Processor\\nCores: 4"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 355395.1,
+            "unit": "rays/sec",
+            "extra": "CPU: INTEL(R) XEON(R) PLATINUM 8573C\\nCores: 4"
           }
         ]
       }
