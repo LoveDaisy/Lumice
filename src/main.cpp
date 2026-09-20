@@ -375,6 +375,19 @@ void PrintAnalyzeUsage(const char* prog_name) {
             << "  --rays <N>         This run's ray budget, total across wavelengths; N may carry a\n"
             << "                     K, M or G suffix (e.g. 20M). Default: the scene's own ray_num,\n"
             << "                     including \"infinite\".\n"
+            << "  --chain-capacity <N>\n"
+            << "                     How many distinct (unreduced) raypath chains the record keeps\n"
+            << "                     exact; chains past it fall into the `other (not recorded)` row\n"
+            << "                     and the head's record_full_hits counts how often. Plain integer\n"
+            << "                     in [1, " << LUMICE_MAX_RAYPATH_CHAIN_CAPACITY
+            << "], no suffix. Default: 16384, which\n"
+            << "                     holds the multi-scatter scenes it was measured on; a single-\n"
+            << "                     crystal --symmetry none listing of every long path can need\n"
+            << "                     more (a hexagonal prism's 8-face set alone is ~29k chains).\n"
+            << "                     Costs memory: about workers x N x 220 bytes on the trace side\n"
+            << "                     plus roughly as much again once for the listing, so 32768 on\n"
+            << "                     10 workers is ~140 MB and the maximum is several GB — and\n"
+            << "                     --workers above the automatic count multiplies the first term.\n"
             << kHelpSeedOption << "  --csv <path>       Write the CSV to this file instead of stdout.\n"
             << kHelpBackendOption << kHelpWorkersOption << kHelpLogAndHelpOptions << "\n"
             << "Examples:\n"
@@ -1148,6 +1161,8 @@ struct AnalyzeOptions {
   std::uint8_t symmetry_bits = LUMICE_RAYPATH_SYMMETRY_P | LUMICE_RAYPATH_SYMMETRY_B | LUMICE_RAYPATH_SYMMETRY_D;
   // nullopt = the scene's own budget (LUMICE_RAYPATH_RAY_BUDGET_SCENE_DEFAULT).
   std::optional<LUMICE_RayCount> ray_num;
+  // nullopt = the engine's default record size (LUMICE_RaypathAnalysisRequest::chain_capacity 0).
+  std::optional<int> chain_capacity;
   unsigned int sim_seed = 0;       // 0 = random, as LUMICE_ServerConfig::sim_seed spells it
   std::filesystem::path csv_path;  // empty = stdout
   int cli_workers = 0;             // 0 = automatic, as RenderOptions::cli_workers
@@ -1539,6 +1554,22 @@ std::optional<LUMICE_RayCount> ParseRayBudget(std::string_view text) {
   return static_cast<LUMICE_RayCount>(*parsed * multiplier);
 }
 
+// `--chain-capacity <N>`: a plain integer in [1, LUMICE_MAX_RAYPATH_CHAIN_CAPACITY], no suffix.
+// Deliberately not the K/M/G spelling of --rays: that suffix is decimal there because a ray
+// budget is a round human number, while a chain capacity is a table size a user reads off the
+// engine's own figures (16384, 32768) — "32K" would be ambiguous between 32000 and 32768, and
+// the table has no convention to settle it by. Zero is not a request for the default here; it
+// is refused, since a zero-row record has no honest meaning (the default is asked for by
+// leaving the option out). The same range is enforced again at the C API boundary.
+std::optional<int> ParseChainCapacity(std::string_view text) {
+  const auto parsed = ParseStrictUnsigned(text);
+  if (!parsed.has_value() || *parsed == 0 ||
+      *parsed > static_cast<unsigned long long>(LUMICE_MAX_RAYPATH_CHAIN_CAPACITY)) {
+    return std::nullopt;
+  }
+  return static_cast<int>(*parsed);
+}
+
 // `--symmetry <spec>`: `none`, or any combination of the letters P, B, D (case-insensitive,
 // repeats harmless), as a LUMICE_RAYPATH_SYMMETRY_* bit set. Anything else is nullopt.
 std::optional<std::uint8_t> ParseSymmetrySpec(std::string_view text) {
@@ -1594,7 +1625,8 @@ int ParseAnalyzeOptions(int argc, char** argv, int first, AnalyzeOptions& opts) 
     std::string_view arg = argv[i];
     // Every option below takes a value; one check for "the value is missing".
     const bool takes_value = arg == "--roi" || arg == "--center" || arg == "--radius" || arg == "--render-id" ||
-                             arg == "--symmetry" || arg == "--rays" || arg == "--seed" || arg == "--csv";
+                             arg == "--symmetry" || arg == "--rays" || arg == "--chain-capacity" || arg == "--seed" ||
+                             arg == "--csv";
     if (takes_value && i + 1 >= argc) {
       std::cerr << "Error: " << arg << " requires an argument\n\n";
       PrintAnalyzeUsage(argv[0]);
@@ -1674,6 +1706,16 @@ int ParseAnalyzeOptions(int argc, char** argv, int first, AnalyzeOptions& opts) 
         return 1;
       }
       opts.ray_num = rays;
+    } else if (arg == "--chain-capacity") {
+      const std::string_view value = argv[++i];
+      const auto capacity = ParseChainCapacity(value);
+      if (!capacity.has_value()) {
+        std::cerr << "Error: --chain-capacity must be an integer in [1, " << LUMICE_MAX_RAYPATH_CHAIN_CAPACITY
+                  << "], got '" << value << "'\n\n";
+        PrintAnalyzeUsage(argv[0]);
+        return 1;
+      }
+      opts.chain_capacity = capacity;
     } else if (arg == "--seed") {
       if (!TryParseSeedOption(argc, argv, i, opts.sim_seed)) {
         PrintAnalyzeUsage(argv[0]);
@@ -2143,6 +2185,8 @@ int RunAnalyze(const AnalyzeOptions& opts) {
   } else {
     request.infinite = LUMICE_RAYPATH_RAY_BUDGET_SCENE_DEFAULT;
   }
+  // 0 is the C API's "default" spelling; the parser above never produces it for a given value.
+  request.chain_capacity = opts.chain_capacity.value_or(0);
 
   // A --csv target that cannot be written is found out now, not after the run: the first
   // periodic write would report it, but a one-second run has no periodic write.
