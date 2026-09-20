@@ -43,6 +43,7 @@
 #include "gui/crystal_preview.hpp"  // BuildCrystalMeshData — core's own answer to "which member led"
 #include "gui/file_io.hpp"          // DeserializeFromJson / BuildExportJsonOrWarn
 #include "gui/panels.hpp"
+#include "gui/raypath_segments.hpp"  // FromLegacyRaypath — an OR row written the way the pool holds it
 // imgui_internal.h is normally an anti-pattern. Three claims here have no public reading: window
 // z-order (ImGuiContext::Windows), whether the staged form is a real modal
 // (GetTopMostPopupModal), and whether a table column's text fits (ImGuiTableColumn's layout
@@ -158,6 +159,111 @@ ImGuiWindow* TopmostRootWindow() {
     }
   }
   return nullptr;
+}
+
+// ===== The pull: what an outside write to the pool does to an open modal =====
+//
+// The modal's buffers are re-synced with the pool every frame as a per-field three-way merge
+// (edit_modals.cpp PullBuffersFromPool; doc/gui-state-governance.md §11). The cases below write the
+// pool DIRECTLY from the test coroutine, which runs between frames — the same place in the frame
+// order as the analysis window's Exclude, which runs before RenderEditModals within a frame — so
+// what they drive is the merge itself, not any one writer. The Exclude button's own end-to-end
+// cases live in test_raypath_analysis_panel.cpp.
+
+// The pool filter bound to entry 0, which the cases below seed with SeedOutFilter.
+gui::FilterConfig& EntryFilter() {
+  return gui::g_state.filters[static_cast<size_t>(*gui::g_state.layers[0].entries[0].filter_id)];
+}
+
+void SeedOutFilter(const char* row_text) {
+  gui::FilterConfig out;
+  out.name = "drop";
+  out.action = 1;  // filter_out
+  out.param = gui::FromLegacyRaypath(gui::RaypathParams{ row_text });
+  gui::SetFilter(gui::g_state, gui::g_state.layers[0].entries[0], out);
+}
+
+// Append one OR row to entry 0's pool filter, the way Exclude does (WriteFilterToPool in place).
+void AppendPoolRow(const char* row_text) {
+  EntryFilter().param.push_back(gui::FromLegacyRaypath(gui::RaypathParams{ row_text })[0]);
+}
+
+std::string JoinRows(const std::vector<std::string>& rows) {
+  std::string out;
+  for (const std::string& r : rows) {
+    out += "[" + r + "]";
+  }
+  return out;
+}
+
+// One text box the pull must reload when it is active: which value it edits, how to write that
+// value into the pool behind the modal's back, and how to read it back out of the buffers.
+struct ActiveBoxRow {
+  const char* name;
+  gui::CrystalType type;     // the crystal type whose Crystal tab shows the box (irrelevant for Axis)
+  gui::EditTarget tab;       // the tab the box is on
+  bool under_face_distance;  // the box is in the default-collapsed Face Distance section
+  const char* item;          // the box, as a test-engine path
+  void (*prepare)();         // pool setup the box needs to be enabled at all (nullptr: none)
+  void (*set_pool)(float);   // write the field in the pool (entry 0's crystal)
+  float (*get_pool)();       // read it from the pool
+  float (*get_buf)(const gui::EditModalBuffers&);  // read it from the modal's buffers
+};
+
+// Drive one ActiveBoxRow through both branches of the merge under the box's own cursor, in Staged
+// mode (the branch that keeps the user's value is only reachable where the buffer is not pushed
+// every frame). Clean: the box is active and untouched, the pool moves, the box shows the pool's
+// value and stays active. Dirty: the box has been typed into, the pool moves again, the box keeps
+// what was typed. The typing in between is also the proof the reload left a usable box behind.
+bool DriveActiveBoxReload(ImGuiTestContext* ctx, const ActiveBoxRow& row, float v_pool, const char* v_typed_text,
+                          float v_typed, float v_pool_again) {
+  EntryCrystal().type = row.type;
+  if (row.prepare != nullptr) {
+    row.prepare();
+  }
+  ctx->Yield(2);
+  const gui::EditRequest req{ row.tab, 0, 0 };
+  gui::OpenEditModal(req, gui::g_state);
+  ctx->Yield(4);
+  IM_CHECK_RETV(gui::IsEditModalOpen(), false);
+  if (row.under_face_distance) {
+    ctx->ItemOpen("**/Face Distance##modal");
+    ctx->Yield(2);
+  }
+  ctx->ItemClick(row.item);
+  ctx->Yield(2);
+  const ImGuiID box = ctx->ItemInfo(row.item).ID;
+  IM_CHECK_RETV(box != 0, false);
+  IM_CHECK_RETV(ImGui::GetActiveID() == box, false);
+
+  // Clean under the cursor: adopted, shown, still active.
+  row.set_pool(v_pool);
+  ctx->Yield(2);
+  IM_CHECK_RETV(row.get_buf(gui::GetEditModalBuffers()) == v_pool, false);
+  IM_CHECK_RETV(row.get_pool() == v_pool, false);  // ...and not written back over
+  IM_CHECK_RETV(ImGui::GetActiveID() == box, false);
+
+  // Typed into: the reload selected the text, so the keys replace it. KeyChars, not
+  // KeyCharsAppend — the latter presses End first, which would discard that selection.
+  ctx->KeyChars(v_typed_text);
+  ctx->Yield(2);
+  IM_CHECK_RETV(row.get_buf(gui::GetEditModalBuffers()) == v_typed, false);
+
+  // Dirty under the cursor: the user's value stays, the pool keeps its own (Staged: no push).
+  row.set_pool(v_pool_again);
+  ctx->Yield(2);
+  IM_CHECK_RETV(row.get_buf(gui::GetEditModalBuffers()) == v_typed, false);
+  IM_CHECK_RETV(row.get_pool() == v_pool_again, false);
+
+  if (row.under_face_distance) {
+    // ImGui persists a CollapsingHeader's open state per window across cases.
+    ctx->ItemClose("**/Face Distance##modal");
+    ctx->Yield(2);
+  }
+  ctx->ItemClick(kCancel);
+  ctx->Yield(2);
+  IM_CHECK_RETV(!gui::IsEditModalOpen(), false);
+  return true;
 }
 
 }  // namespace
@@ -2812,6 +2918,256 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
       ctx->ItemClick(kClose);
       ctx->Yield(2);
       gui::g_state.modal_immediate_mode = false;
+    };
+  }
+  // ===================================================================================
+  // The pull: the pool changes under an open modal (see the helpers' note above).
+  // ===================================================================================
+
+  // Immediate mode, a row half typed (kIncomplete, so the commit gate holds it back from the pool)
+  // while an OR row arrives in the pool from elsewhere: the arriving row joins the list, the half
+  // row is neither dropped nor overwritten, and finishing it still lands it in the pool.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "edit_modal", "an_outside_row_arrives_beside_a_half_typed_row");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      const ScopedPopups popup_guard(ctx);
+      gui::g_state.modal_immediate_mode = true;
+      SeedOutFilter("1-3");
+      ctx->Yield(2);
+
+      const gui::EditRequest req{ gui::EditTarget::kFilter, 0, 0 };
+      gui::OpenEditModal(req, gui::g_state);
+      ctx->Yield(4);
+      ctx->ItemClick("**/+ Add OR row##summand_add");
+      ctx->Yield(2);
+      ctx->ItemClick("**/##row_text_1");
+      ctx->KeyCharsAppend("3-");  // incomplete: refused by the commit gate, so it never reaches the pool
+      ctx->Yield(2);
+      IM_CHECK_EQ(EntryFilter().param.size(), 1u);
+      IM_CHECK(ImGui::GetActiveID() != 0);
+
+      AppendPoolRow("3-5");
+      ctx->Yield(2);
+      {
+        const std::vector<std::string> rows = gui::GetEditModalBuffers().filter_rows;
+        ctx->LogInfo("editor rows: %s", JoinRows(rows).c_str());
+        IM_CHECK_EQ(rows.size(), 3u);
+        IM_CHECK_STR_EQ(rows[0].c_str(), "1-3");
+        IM_CHECK_STR_EQ(rows[1].c_str(), "3-");  // kept, and still the active box
+        IM_CHECK_STR_EQ(rows[2].c_str(), "3-5");
+      }
+      IM_CHECK(ImGui::GetActiveID() != 0);
+      IM_CHECK_EQ(EntryFilter().param.size(), 2u);  // the half row still has not reached the pool
+
+      // Finishing the half row commits it beside the row that arrived.
+      ctx->KeyCharsAppend("4");
+      ctx->Yield(2);
+      IM_CHECK_EQ(EntryFilter().param.size(), 3u);
+      IM_CHECK_STR_EQ(EntryFilter().param[1].text.c_str(), "3-4");
+      IM_CHECK_STR_EQ(EntryFilter().param[2].text.c_str(), "3-5");
+
+      ctx->ItemClick(kClose);
+      ctx->Yield(2);
+      gui::g_state.modal_immediate_mode = false;
+    };
+  }
+
+  // Staged mode, the user has edited the crystal and not pressed OK, and the entry's filter changes
+  // in the pool: the crystal edit is kept and still marked, the filter follows the pool and is not
+  // marked (the user never touched it), and OK commits the edit beside the filter as it now is.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "edit_modal",
+                                    "a_staged_crystal_edit_survives_an_outside_filter_change_which_it_shows");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      const ScopedPopups popup_guard(ctx);
+      SeedOutFilter("1-3");
+      ctx->Yield(2);
+      const float orig_h = EntryCrystal().height.center;
+
+      OpenCardEditor(ctx, 0, kCrystalTabRef);
+      ctx->Yield(4);
+      ctx->ItemInputValue(kHeightInput, orig_h + 1.0f);
+      ctx->Yield(2);
+      IM_CHECK(TabIsDirty(ctx, "**/###crystal_tab"));
+      IM_CHECK(!TabIsDirty(ctx, "**/###filter_tab"));
+
+      AppendPoolRow("3-5");
+      ctx->Yield(2);
+      IM_CHECK(TabIsDirty(ctx, "**/###crystal_tab"));
+      IM_CHECK(!TabIsDirty(ctx, "**/###filter_tab"));
+      {
+        const gui::EditModalBuffers buffers = gui::GetEditModalBuffers();
+        IM_CHECK_EQ(buffers.crystal.height.center, orig_h + 1.0f);
+        ctx->LogInfo("editor rows: %s", JoinRows(buffers.filter_rows).c_str());
+        IM_CHECK_EQ(buffers.filter_rows.size(), 2u);
+        IM_CHECK_STR_EQ(buffers.filter_rows[1].c_str(), "3-5");
+      }
+      IM_CHECK_EQ(EntryCrystal().height.center, orig_h);  // staged: nothing pushed yet
+
+      // The arrived row is a real box on the Filter tab, not only a buffer entry.
+      ctx->ItemClick("**/###filter_tab");
+      ctx->Yield(2);
+      IM_CHECK(ctx->ItemExists("**/##row_text_1"));
+
+      ctx->ItemClick(kOk);
+      ctx->Yield(2);
+      IM_CHECK_EQ(EntryCrystal().height.center, orig_h + 1.0f);
+      IM_CHECK_EQ(EntryFilter().param.size(), 2u);
+      IM_CHECK_STR_EQ(EntryFilter().param[1].text.c_str(), "3-5");
+    };
+  }
+
+  // Every text box the pull can replace a value under, table-driven (see ActiveBoxRow): the
+  // crystal's shape scalars and wedge angles, and each axis row's two boxes. The point of the table
+  // is that a box left out of the modal's reload wiring fails its own row here rather than being
+  // found by a user — the failure mode is silent, since the box writes its stale copy back and the
+  // pull's baseline has already moved on. The crystal's name box, a string, is the case after this.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "edit_modal", "an_active_box_reloads_when_its_value_arrives_from_the_pool");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      const ScopedPopups popup_guard(ctx);
+      gui::g_state.modal_immediate_mode = false;
+      ctx->Yield(2);
+
+      using B = gui::EditModalBuffers;
+      const ActiveBoxRow rows[] = {
+        { "Height", gui::CrystalType::kPrism, gui::EditTarget::kCrystal, false, kHeightInput, nullptr,
+          [](float v) { EntryCrystal().height.center = v; }, [] { return EntryCrystal().height.center; },
+          [](const B& b) { return b.crystal.height.center; } },
+        { "Height spread", gui::CrystalType::kPrism, gui::EditTarget::kCrystal, false, "**/##spread_Height##modal_cr",
+          [] {  // the spread box is disabled until the row is randomized
+            EntryCrystal().height.type = gui::ShapeDistType::kUniform;
+            EntryCrystal().height.spread = 0.1f;
+          },
+          [](float v) { EntryCrystal().height.spread = v; }, [] { return EntryCrystal().height.spread; },
+          [](const B& b) { return b.crystal.height.spread; } },
+        { "Prism H", gui::CrystalType::kPyramid, gui::EditTarget::kCrystal, false, "**/##Prism H##modal_cr_input",
+          nullptr, [](float v) { EntryCrystal().prism_h.center = v; }, [] { return EntryCrystal().prism_h.center; },
+          [](const B& b) { return b.crystal.prism_h.center; } },
+        { "Upper H", gui::CrystalType::kPyramid, gui::EditTarget::kCrystal, false, "**/##Upper H##modal_cr_input",
+          nullptr, [](float v) { EntryCrystal().upper_h.center = v; }, [] { return EntryCrystal().upper_h.center; },
+          [](const B& b) { return b.crystal.upper_h.center; } },
+        { "Lower H", gui::CrystalType::kPyramid, gui::EditTarget::kCrystal, false, "**/##Lower H##modal_cr_input",
+          nullptr, [](float v) { EntryCrystal().lower_h.center = v; }, [] { return EntryCrystal().lower_h.center; },
+          [](const B& b) { return b.crystal.lower_h.center; } },
+        { "Face 3", gui::CrystalType::kPrism, gui::EditTarget::kCrystal, true, "**/##Face 3##modal_fd_input", nullptr,
+          [](float v) { EntryCrystal().face_distance[0].center = v; },
+          [] { return EntryCrystal().face_distance[0].center; },
+          [](const B& b) { return b.crystal.face_distance[0].center; } },
+        { "Face 4", gui::CrystalType::kPrism, gui::EditTarget::kCrystal, true, "**/##Face 4##modal_fd_input", nullptr,
+          [](float v) { EntryCrystal().face_distance[1].center = v; },
+          [] { return EntryCrystal().face_distance[1].center; },
+          [](const B& b) { return b.crystal.face_distance[1].center; } },
+        { "Face 5", gui::CrystalType::kPrism, gui::EditTarget::kCrystal, true, "**/##Face 5##modal_fd_input", nullptr,
+          [](float v) { EntryCrystal().face_distance[2].center = v; },
+          [] { return EntryCrystal().face_distance[2].center; },
+          [](const B& b) { return b.crystal.face_distance[2].center; } },
+        { "Face 6", gui::CrystalType::kPrism, gui::EditTarget::kCrystal, true, "**/##Face 6##modal_fd_input", nullptr,
+          [](float v) { EntryCrystal().face_distance[3].center = v; },
+          [] { return EntryCrystal().face_distance[3].center; },
+          [](const B& b) { return b.crystal.face_distance[3].center; } },
+        { "Face 7", gui::CrystalType::kPrism, gui::EditTarget::kCrystal, true, "**/##Face 7##modal_fd_input", nullptr,
+          [](float v) { EntryCrystal().face_distance[4].center = v; },
+          [] { return EntryCrystal().face_distance[4].center; },
+          [](const B& b) { return b.crystal.face_distance[4].center; } },
+        { "Face 8", gui::CrystalType::kPrism, gui::EditTarget::kCrystal, true, "**/##Face 8##modal_fd_input", nullptr,
+          [](float v) { EntryCrystal().face_distance[5].center = v; },
+          [] { return EntryCrystal().face_distance[5].center; },
+          [](const B& b) { return b.crystal.face_distance[5].center; } },
+        { "Zenith mean", gui::CrystalType::kPrism, gui::EditTarget::kAxis, false, "**/Zenith/##Mean_input", nullptr,
+          [](float v) { EntryCrystal().zenith.mean = v; }, [] { return EntryCrystal().zenith.mean; },
+          [](const B& b) { return b.axis[0].mean; } },
+        { "Zenith range", gui::CrystalType::kPrism, gui::EditTarget::kAxis, false, "**/Zenith/##Range_input", nullptr,
+          [](float v) { EntryCrystal().zenith.std = v; }, [] { return EntryCrystal().zenith.std; },
+          [](const B& b) { return b.axis[0].std; } },
+        { "Azimuth mean", gui::CrystalType::kPrism, gui::EditTarget::kAxis, false, "**/Azimuth/##Mean_input", nullptr,
+          [](float v) { EntryCrystal().azimuth.mean = v; }, [] { return EntryCrystal().azimuth.mean; },
+          [](const B& b) { return b.axis[1].mean; } },
+        { "Azimuth range", gui::CrystalType::kPrism, gui::EditTarget::kAxis, false, "**/Azimuth/##Range_input", nullptr,
+          [](float v) { EntryCrystal().azimuth.std = v; }, [] { return EntryCrystal().azimuth.std; },
+          [](const B& b) { return b.axis[1].std; } },
+        { "Roll mean", gui::CrystalType::kPrism, gui::EditTarget::kAxis, false, "**/Roll/##Mean_input", nullptr,
+          [](float v) { EntryCrystal().roll.mean = v; }, [] { return EntryCrystal().roll.mean; },
+          [](const B& b) { return b.axis[2].mean; } },
+        { "Roll range", gui::CrystalType::kPrism, gui::EditTarget::kAxis, false, "**/Roll/##Range_input", nullptr,
+          [](float v) { EntryCrystal().roll.std = v; }, [] { return EntryCrystal().roll.std; },
+          [](const B& b) { return b.axis[2].std; } },
+      };
+      // Every shape scalar above lives in [0, 1] at least (gui/shape_scalar_domain.hpp), and the
+      // wedge / axis rows have their own triples below, so one in-domain triple serves the table.
+      for (const ActiveBoxRow& row : rows) {
+        ctx->LogInfo("active box: %s", row.name);
+        const bool axis = row.tab == gui::EditTarget::kAxis;
+        const bool ok = axis ? DriveActiveBoxReload(ctx, row, 40.0f, "50", 50.0f, 60.0f) :
+                               DriveActiveBoxReload(ctx, row, 0.7f, "0.9", 0.9f, 0.6f);
+        if (!ok) {
+          IM_ERRORF("active box \"%s\": the reload under the cursor failed (see the check above)", row.name);
+        }
+        if (ctx->IsError()) {
+          break;
+        }
+      }
+      if (ctx->IsError()) {
+        return;
+      }
+      // The two wedge angles sit on their own control (SliderWithPresetEdit), domain [0.1, 90].
+      const ActiveBoxRow wedges[] = {
+        { "Upper A", gui::CrystalType::kPyramid, gui::EditTarget::kCrystal, false, "**/##Upper A##modal_cr_input",
+          nullptr, [](float v) { EntryCrystal().upper_alpha = v; }, [] { return EntryCrystal().upper_alpha; },
+          [](const B& b) { return b.crystal.upper_alpha; } },
+        { "Lower A", gui::CrystalType::kPyramid, gui::EditTarget::kCrystal, false, "**/##Lower A##modal_cr_input",
+          nullptr, [](float v) { EntryCrystal().lower_alpha = v; }, [] { return EntryCrystal().lower_alpha; },
+          [](const B& b) { return b.crystal.lower_alpha; } },
+      };
+      for (const ActiveBoxRow& row : wedges) {
+        ctx->LogInfo("active box: %s", row.name);
+        if (!DriveActiveBoxReload(ctx, row, 20.0f, "25", 25.0f, 30.0f)) {
+          IM_ERRORF("active box \"%s\": the reload under the cursor failed (see the check above)", row.name);
+        }
+        if (ctx->IsError()) {
+          break;
+        }
+      }
+    };
+  }
+
+  // The crystal's name box: the same two branches as the table above, for the one string field.
+  {
+    ImGuiTest* t =
+        IM_REGISTER_TEST(engine, "edit_modal", "the_active_name_box_reloads_when_the_name_arrives_from_the_pool");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      const ScopedPopups popup_guard(ctx);
+      gui::g_state.modal_immediate_mode = false;
+      ctx->Yield(2);
+
+      OpenCardEditor(ctx, 0, kCrystalTabRef);
+      ctx->Yield(4);
+      ctx->ItemClick("**/##crystal_name");
+      ctx->Yield(2);
+      const ImGuiID box = ctx->ItemInfo("**/##crystal_name").ID;
+      IM_CHECK(box != 0);
+      IM_CHECK_EQ(ImGui::GetActiveID(), box);
+
+      EntryCrystal().name = "from the pool";
+      ctx->Yield(2);
+      IM_CHECK_STR_EQ(gui::GetEditModalBuffers().crystal.name.c_str(), "from the pool");
+      IM_CHECK_STR_EQ(EntryCrystal().name.c_str(), "from the pool");  // not written back over
+      IM_CHECK_EQ(ImGui::GetActiveID(), box);
+
+      ctx->KeyChars("typed");  // replaces the reloaded (selected) text; KeyCharsAppend would press End first
+      ctx->Yield(2);
+      IM_CHECK_STR_EQ(gui::GetEditModalBuffers().crystal.name.c_str(), "typed");
+
+      EntryCrystal().name = "from the pool again";
+      ctx->Yield(2);
+      IM_CHECK_STR_EQ(gui::GetEditModalBuffers().crystal.name.c_str(), "typed");
+
+      ctx->ItemClick(kCancel);
+      ctx->Yield(2);
     };
   }
 }
