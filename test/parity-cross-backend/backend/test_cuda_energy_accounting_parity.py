@@ -38,13 +38,41 @@ the defect had no machine signal for as long as it lived; this file is that
 signal. Revert the fix and the ``cpu_backend_route`` rows below read ~+1.7%
 against a 0.1% tolerance.
 
-Tolerance. After the fix the cross-backend spread of ``R`` on the rows below
-is −0.004% or better at 2M rays and −0.029% on the 10M-ray ``parhelion`` rows
-(stable to 0.002% across seeds — a fixed offset, not noise). The tolerance is
-0.1%: ~3.4× above the worst measured spread, ≥10× below the smallest red-state
-signature the fix's revert produces on the rows that can see it (+1.74% on
-``cpu_backend_route``, −1.04% on ``parhelion``). It is deliberately not
-tighter. When it was set, legacy's own ``R`` drifted above the closed-form
+The same defect shape came back one level down once the scalar was fixed.
+The per-pixel XYZ plane is itself an fp32 device accumulator with one
+``atomicAdd`` per exit, and on the third-clock drain path it too stays alive
+for the whole window. For most pixels that chain is short, but a narrow-field
+scene concentrates exits: on ``parhelion`` (fisheye 120°, 10M rays) the
+plane's Y sum read +0.40% above legacy's at the default 64-batch window, and
+the offset moved with the window length (16 batches → −0.135%, 4 → −0.039%,
+1 → −0.008%) — rounding drift whose sign flips with chain length, not a
+one-way loss. It was invisible while both backends' host-side long chains were
+fp32 too (the two roundings cancelled on ``R``); widening legacy's
+``internal_xyz_`` / ``total_intensity_`` to ``double`` removed one side of the
+cancellation and the device plane's own drift showed up as four red rows here
+and in ``test_cuda_multi_renderer_parity.py``. The fix caps the chain instead
+of removing it: the plane stays fp32 ``atomicAdd``, and every
+``Simulator::kXyzFoldEveryBatches`` (8) batches the simulator has the backend
+fold it into a device ``double`` plane and zero the fp32 side
+(``fold_xyz_plane_kernel``); the drain folds the residue on the same kernel
+before the unchanged D2H. Eight is the measured trade: a fold every batch
+(chain of 1) was correct to 0.000% but cost 22.5% throughput on a dense
+2048x1024 scene, a 64-bit ``atomicAdd`` plane (no chain at all) 13.9%/17.3% on
+the two reference boxes, and a fold every 8 batches 11.0%/5.9% with the ratio
+sitting at +0.045% on this scene — the residual an 8-batch fp32 chain leaves,
+a quarter of the tolerance and a ninth of the unfolded window's +0.40%.
+``test_cuda_energy_ledger_independent_of_drain_window`` below is that
+mechanism's direct check: with the chain capped, the ratio must neither move
+with the window length nor sit outside the capped chain's residual.
+
+Tolerance. With the capped chain the cross-backend spread of ``R`` on the rows
+below is +0.019% on the 2M-ray ``cpu_backend_route`` rows, +0.045% on the
+10M-ray ``parhelion`` rows (both stable to 0.0004% across seeds — a fixed
+offset, not noise) and ≤0.0001% on the two random-geometry rows. The
+tolerance is 0.1%: ~2.2× above the worst measured spread, ≥10× below the
+smallest red-state signature the scalar fix's revert produces on the rows
+that can see it (+1.74% on ``cpu_backend_route``, −1.04% on ``parhelion``).
+It is deliberately not tighter. When it was set, legacy's own ``R`` drifted above the closed-form
 constant with ray count (+0.019% at 2M, +0.38% at 10M) because its
 ``total_intensity_`` was itself an fp32 running sum; that accumulator (with
 ``internal_xyz_`` beside it — the same rounding turned a monochromatic
@@ -197,4 +225,102 @@ def test_cuda_energy_ledger_matches_legacy(config: str, seed: int):
         "(flt_buf Y) have come apart. Suspect landed_weight accumulation: a single fp32 "
         "device scalar summed across the whole drain window drops sub-ulp exit weights "
         "and reads ~+1.7% here."
+    )
+
+
+# Drain-window lengths for the invariance check: the shipped default (64,
+# Simulator::kDefaultXyzDrainBatches), a quarter of it, and the fold cadence
+# itself (8, Simulator::kXyzFoldEveryBatches). All three are multiples of the
+# cadence, so every fp32 chain in every window is exactly 8 batches long and
+# the three runs differ only in when the double total is copied out — a window
+# that is not a multiple would end on a shorter residue chain and legitimately
+# round differently (4 batches reads -0.039% on this scene against +0.045% at
+# 16 and 64), which is a different proposition from the one asserted here. Set
+# through LUMICE_XYZ_DRAIN_BATCHES, which Simulator::Run re-reads on every
+# Run() (the env knob logs once but resolves every time), so one process can
+# sweep it.
+_DRAIN_WINDOW_BATCHES = (8, 16, 64)
+# (a) Spread bound on R_cuda/R_legacy across the three windows. With the chain
+# length pinned at 8 the three device sums differ only by the order the double
+# plane adds the same 8-batch partials (~1e-15 relative); 16 and 64 measured
+# 3e-6 % apart. 0.01% leaves that four orders of magnitude and is still 50×
+# tighter than the unfolded plane's 0.54% spread on this scene.
+_T_DRAIN_WINDOW_SPREAD = 0.0001
+# (b) Drift bound on each window's own |R_cuda/R_legacy - 1|: half the
+# cross-backend tolerance above. The capped chain's residual on this scene is
+# +0.045% (seeds 42/43/44: +0.0452 / +0.0452 / +0.0449 %), so this sits just
+# above the mechanism's own signature on purpose — any lengthening of the
+# chain (a cadence typo, a fold call that stops firing) reads through it, the
+# unfolded window at +0.40% by a factor of eight.
+_T_DRAIN_WINDOW_DRIFT_TOL = 0.0005
+_DRAIN_WINDOW_CONFIG = "parhelion"
+_DRAIN_WINDOW_SEED = 42
+
+
+@pytest.mark.slow
+def test_cuda_energy_ledger_independent_of_drain_window(monkeypatch: pytest.MonkeyPatch):
+    """R_cuda / R_legacy across LUMICE_XYZ_DRAIN_BATCHES ∈ {8, 16, 64}: spread ≤0.01%, each ≤0.05% off 1.
+
+    The legacy arm runs once (it has no drain window); the cuda arm runs once
+    per window length on the same seed. With the fp32 chain capped at 8
+    batches by the device fold, the drain cadence only changes when the double
+    total is copied out, never how it is summed, so (a) the three ratios must
+    agree; and the capped chain's own residual is a fixed +0.045% here, so (b)
+    each ratio must stay within 0.05% of 1. An unfolded fp32 plane fails both:
+    it walks with the window (+0.40% at 64 vs −0.008% at 1 on this scene).
+
+    Red-state check, done by hand because it needs a rebuild: set
+    ``Simulator::kXyzFoldEveryBatches`` to 64, so no cadence fold fires inside
+    a 64-batch window and the drain's finalize fold is the only one — the
+    unfolded-plane shape — and this test must read the +0.40% at drain=64 with
+    a ~0.4% spread against the other two windows.
+    """
+    legacy = _run(_DRAIN_WINDOW_CONFIG, "legacy", _DRAIN_WINDOW_SEED)
+    _assert_routed(legacy, "legacy", _DRAIN_WINDOW_CONFIG)
+    r_legacy = _r_ratio(legacy)
+    assert not math.isnan(r_legacy) and r_legacy > 0.0, (
+        f"{_DRAIN_WINDOW_CONFIG}: legacy R is not a positive number "
+        f"(Ysum={_y_sum(legacy):.6g} snapshot_intensity={legacy.snapshot_intensity:.6g})"
+    )
+
+    ratios = {}
+    for batches in _DRAIN_WINDOW_BATCHES:
+        monkeypatch.setenv("LUMICE_XYZ_DRAIN_BATCHES", str(batches))
+        cuda = _run(_DRAIN_WINDOW_CONFIG, "cuda", _DRAIN_WINDOW_SEED)
+        _assert_routed(cuda, "cuda", _DRAIN_WINDOW_CONFIG)
+        r_cuda = _r_ratio(cuda)
+        assert not math.isnan(r_cuda) and r_cuda > 0.0, (
+            f"{_DRAIN_WINDOW_CONFIG}/drain={batches}: cuda R is not a positive number "
+            f"(Ysum={_y_sum(cuda):.6g} snapshot_intensity={cuda.snapshot_intensity:.6g})"
+        )
+        ratios[batches] = r_cuda / r_legacy
+        print(
+            f"[drain-window] {_DRAIN_WINDOW_CONFIG}/seed{_DRAIN_WINDOW_SEED} "
+            f"LUMICE_XYZ_DRAIN_BATCHES={batches}: R_cuda/R_legacy={ratios[batches]:.6f} "
+            f"({(ratios[batches] - 1.0) * 100:+.4f}%) — cuda Ysum={_y_sum(cuda):.6g} "
+            f"snapshot_intensity={cuda.snapshot_intensity:.6g}"
+        )
+
+    spread = max(ratios.values()) - min(ratios.values())
+    worst_drift = max(abs(r - 1.0) for r in ratios.values())
+    detail = ", ".join(f"{b}: {r:.6f}" for b, r in ratios.items())
+    print(
+        f"[drain-window] {_DRAIN_WINDOW_CONFIG}/seed{_DRAIN_WINDOW_SEED}: spread={spread * 100:.4f}% "
+        f"(tol {_T_DRAIN_WINDOW_SPREAD * 100:.2f}%), worst drift={worst_drift * 100:.4f}% "
+        f"(tol {_T_DRAIN_WINDOW_DRIFT_TOL * 100:.2f}%) — {detail}"
+    )
+    assert spread <= _T_DRAIN_WINDOW_SPREAD, (
+        f"{_DRAIN_WINDOW_CONFIG}/seed{_DRAIN_WINDOW_SEED}: R_cuda/R_legacy moves with the drain "
+        f"window (spread {spread * 100:.4f}% > {_T_DRAIN_WINDOW_SPREAD * 100:.2f}%): {detail}. "
+        "The fp32 chain length is no longer pinned at kXyzFoldEveryBatches — check that "
+        "Simulator::SimulateOneWavelengthWithBackend still calls FoldDeviceXyzBatch on that "
+        "cadence and that ReadbackXyzAccum still runs fold_xyz_plane_kernel in finalize mode "
+        "before the D2H."
+    )
+    assert worst_drift <= _T_DRAIN_WINDOW_DRIFT_TOL, (
+        f"{_DRAIN_WINDOW_CONFIG}/seed{_DRAIN_WINDOW_SEED}: R_cuda/R_legacy drifts "
+        f"{worst_drift * 100:.4f}% > {_T_DRAIN_WINDOW_DRIFT_TOL * 100:.2f}% off 1 on at least one "
+        f"window: {detail}. The capped 8-batch chain reads +0.045% here; anything past 0.05% "
+        "means the chain got longer (the cadence fold is not firing, or the fold is not "
+        "zeroing the fp32 plane — see fold_xyz_plane_kernel in cuda_trace_backend.cu)."
     )

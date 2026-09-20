@@ -235,23 +235,61 @@
 
 4. **~~吞吐天花板：poller 20ms 整幅回读~~（2026-06-19 推翻，见 §0 度量纠偏）**：原结论"引擎 9.5× 在 GUI 仅兑现 2.07×、差 poller"是测量假象——同口径下引擎（8–10×）≈ GUI（~9.5×），无 headroom gap。poller 整幅回读是 **per-commit 延迟成本**（first_upload < 150ms），不是吞吐天花板（explore-271 E3 实证 poll 间隔不影响吞吐）。partial-readback / async upload 若做，目标是降**交互延迟**（first_upload），非提吞吐。
 
-## 10. XYZ 设备平面 drain-window 精度/吞吐：全场景代价矩阵（测量于 2026-09-19/20）
+## 10. XYZ 设备平面的 drain-window 累加精度（as-built，2026-09-20）
 
-> ⚠️ 本节在 `main` 基线上补写，与分支 `fix/cuda-drain-window-fp32-plane`（PR #383）自己的 §10.1–§10.4
-> （单场景 `examples/bench_config.json` 2048×1024、候选 A/C/B/D 的红绿矩阵）是**同一缺陷调查的两批
-> 数据**，尚未合并去重——该分支合并时，此处内容应与其 §10.2/§10.4 合并为一节，而不是并列保留两份
-> "候选对比表"。本节只补两件那次没测的事：① 候选 B 在 4 个 canonical 场景 + 完整分辨率扫描下的代价
-> （那次只测了 2048×1024 一个分辨率点）；② 新增候选 **E**（`FoldDeviceXyzBatch` 每 8 batch 折一次，
-> 而非候选 C 的每 batch 一次）的正确性与吞吐。E 与 A/B/C/D 一样是**探针**，树上不落地，代码只在
-> 别处（生成 patch 的机制过程）保留，本节只留数字与结论。
+> 接手：CUDA 的像素平面在一个 drain 窗口内是一条 fp32 `atomicAdd` 长链；它的偏差曾被 legacy 侧同形的
+> fp32 偏差抵消，legacy 改 double（PR #380）后单独显形。本节记录缺陷机制、五个候选修法的一手红绿矩阵
+> （单场景 + 全场景两批数据，分别来自 PR #383 与 PR #385 的测量，已合并）、选定形态 E 的 as-built 与 owner
+> 的终裁记录。改 `AccumXyzToPixel` / `d_xyz_buf_` / `d_xyz_buf_fold_` / `FoldDeviceXyzBatch` /
+> `Simulator::kXyzFoldEveryBatches` / `ReadbackXyzAccum` / `LUMICE_XYZ_DRAIN_BATCHES` 语义前先读。
 
-### 10.1 候选 B/E 相对 `main`（无修复）的吞吐代价，按场景/分辨率
+### 10.1 缺陷机制
 
-协议：`scripts/bench_throughput.py`，default dispatch，N≥5 交错（CoV>15% 按脚本自身判据升到
-N=9）。`main` = `origin/main@6f38f1a7`（未修复的 fp32 平面，无 fold）；候选 B =
-`origin/fix/cuda-drain-window-fp32-plane@2cdc353e`；候选 E = 在 `main` 上 cherry-pick 候选 C 的两个
-提交（`c6eb47aa` `9ff5d1dc`）后把 fold 频率从"每 batch"改成"每 8 batch"（drain 前再补一次 fold，
-避免尾部残留漏折）。
+第三时钟（§0 / `Simulator::kDefaultXyzDrainBatches = 64`）让设备侧 W×H×3 像素平面跨整个 drain 窗口
+持续存活，`EmitToDeviceXyz` 对它逐出射 `atomicAdd`。全天球场景每像素每窗口只有 ~16 次加法，无事；窄视场
+热像素场景一个像素一个窗口能吃下上万次，fp32 和的 ulp 随和增长，每次加法舍入 ≤ 半 ulp，累计成**随窗口长度
+走的舍入漂移**（符号会翻转，不是单向丢失）。这是 `d_landed_weight_` 那次「会话级单标量 −1.7%」缺陷
+（`EmitToDeviceXyz` 上方注释）在像素级的同族——标量那次靠 per-warp 寄存器 + 每层折回 host double 修掉，
+平面因体积是 W×H×3 不能照搬每层 D2H。
+
+一手签名（home-wsl，base `6f38f1a7`，`test_cuda_energy_accounting_parity.py` 的
+`R = Ysum / snapshot_intensity` 两账本比值，`parhelion` 10M rays，seed 42）：
+
+| `LUMICE_XYZ_DRAIN_BATCHES` | 64（默认） | 16 | 4 | 1 |
+|---|---|---|---|---|
+| `R_cuda/R_legacy − 1` | **+0.4000%** | −0.1352% | −0.039% | −0.0078% |
+
+parity battery（当时 27 行）里 4 行红（parhelion 三 seed +0.40%；`multi_lens` 三 renderer +0.52/+0.50/+0.32%），容差
+0.1% 不放宽。Metal 同形路径（`lumice_trace.metal` 同一 `accum_shared.h`）**不受影响**：Metal 每 batch drain，
+fp32 链最长一个 batch；且已有跨厂商证据——结构相同的单地址 GPU 原子归约，CUDA 与 Metal 的精度代价可差 50 倍
+（标量那次 CUDA +1.74% vs Metal +0.035%；Metal 平面实测残差 ±0.02% 不随 N 增长），本仓不重新逆向 Apple 硬件。
+
+### 10.2 五个候选的一手红绿矩阵（单场景）
+
+协议：`examples/bench_config.json`（单 renderer 2048×1024 rectangular 180°）改 `ray_num` 3e9，
+`Lumice benchmark --backend cuda`，同一台机上 base 与候选二进制**交错 5 次**，全部 `rate_basis=steady`；
+正确性 = 上表三档 + 全量 energy-ledger / multi-renderer 两个 parity 文件。home-wsl（RTX 5090 D，WSL2）。
+候选 E 的吞吐走的是 §10.3 的 `bench_throughput.py` 口径（`bench_light_single_ms` 2048×1024），与本表其余
+四行的 `bench_config.json` 3e9 口径不同源，只并列不互比；E 在同口径下相对 B 的位置见 §10.3。
+
+| 候选 | 形态 | 正确性（parhelion 三档） | 吞吐 vs base | 判定 |
+|---|---|---|---|---|
+| A | `LUMICE_XYZ_DRAIN_BATCHES=1`（零代码，每 batch 同步 D2H 折回 host double） | −0.0078% 三档一致 | **−88%**（413 → 49.5 M/s） | 否决：正是第三时钟消掉的税 |
+| C | 每 batch 一个 device kernel 把 fp32 平面折进 double 平面并清零 fp32 | −0.0078% 三档一致（fp32 链仍有一个 batch 长） | **−22.5%**（405 → 314） | 否决：每 batch +188 µs，全平面遍历串在 stream 关键路径上（下一 batch 的同步 H2D 要等它），外加 WSL2 每个 GPU 包 ~30–45 µs |
+| B | `AccumXyzToPixel` 直接 `atomicAdd(double*)`（sm_60+ 原生），drain 时 device 转 fp32 staging 再 D2H | **1.000000** 全部行，三档 spread 0.0000% | **−13.9%**（409 → 352；home-win 原生 −17.8%，472 → 388）；1024×512 +5%、512×256 −3%（均在噪声内） | 曾选定（PR #383 初版）；代价是 2× 平面字节的占用效应（缩小平面即消失），不是 64-bit 原子本身。被 E 取代，见 §10.6 |
+| D | fp32 主路 + 比值门控迁移：`old = atomicAdd(fp32)`，`old ≥ 128·w` 时 `atomicExch` 搬进 double 平面 | 1.000000，三档 spread 0.0000% | **−24.0%**（409 → 311） | 否决：每次命中要等一次带返回值的原子（ATOM 而非 RED），比 B 的占用效应还贵 |
+| **E** | C 的 fold kernel，频率从每 batch 改为每 **8** batch（`Simulator::kXyzFoldEveryBatches`），drain 的 finalize pass 折掉不足 8 的尾段 | +0.0452% 三档一致（fp32 链恒 8 batch 长；§10.4） | 探针 **−11.0%** / **−5.9%**，落地复测 **−6.0%** / **−5.1%**（home-wsl / home-win，`bench_throughput.py` 口径，§10.3） | **选定**（owner 终裁，§10.6）：链长封顶把 C 的每 batch 全平面遍历摊到 1/8，且不翻倍平面字节 |
+
+A/C/D 与 B 的代码都留在分支历史里只作证据（C：`c6eb47aa`/`9ff5d1dc`，D：`a00caa9f` + revert，B：
+`2d72f817` + revert）；树上只有 E。
+
+### 10.3 候选 B/E 在全场景 / 全分辨率下的吞吐代价
+
+协议：`scripts/bench_throughput.py`，default dispatch，N≥5 交错（CoV>15% 按脚本自身判据升到 N=9）。
+`main` = `origin/main@6f38f1a7`（未修复的 fp32 平面，无 fold）；候选 B = PR #383 初版
+（`2cdc353e`）；候选 E = `main` 上叠候选 C 两个提交后把 fold 频率改成每 8 batch 的探针（与树上落地的
+E 只差一处：探针在 drain 前多发一次 fold 调用，落地形态由 drain 自己的 finalize pass 承担尾折——数值逐位
+等价、少一趟全平面遍历）。两台机各测于 2026-09-19/20（PR #385）。
 
 **4 场景默认分辨率矩阵**（`bench_light_single_ms`/`ms_multi_crystal` 的默认分辨率均为 512×256），
 `cuda multi_median_rps`，vs `main` 的百分比；括号内为该格 CoV，均在 3–17% 区间，多数差值在噪声内：
@@ -263,8 +301,8 @@ N=9）。`main` = `origin/main@6f38f1a7`（未修复的 fp32 平面，无 fold�
 | `ms_multi_crystal_complex_filter` | 228.7 M/s | 226.6 M/s (−0.9%, CoV 8–17%) | 248.0 M/s (+8.4%, CoV 10–11%) |
 | `ms_multi_crystal_filtered_bd` | 207.5 M/s | 235.8 M/s (+13.7%, CoV 9–14%) | 221.5 M/s (+6.8%, CoV 10–13%) |
 
-在 512×256 这个（较小的）默认分辨率上，B/E 相对 `main` 的差值全部落在测量噪声量级内——与 PR #383
-§10.2 "512×256 −3%（噪声内）" 的结论一致。**分辨率变大之后代价才显形**（XYZ 平面字节数
+在 512×256 这个（较小的）默认分辨率上，B/E 相对 `main` 的差值全部落在测量噪声量级内——与 §10.2
+「512×256 −3%（噪声内）」的结论一致。**分辨率变大之后代价才显形**（XYZ 平面字节数
 `W×H×3×4`，512×256 仅 1.5 MB，2048×1024 是 24 MB）：
 
 | 场景 @ 2048×1024 | home-wsl main | home-wsl B (Δ) | home-wsl E (Δ) | home-win main | home-win B (Δ) | home-win E (Δ) |
@@ -276,41 +314,92 @@ N=9）。`main` = `origin/main@6f38f1a7`（未修复的 fp32 平面，无 fold�
 在两台机器上都读到清楚的代价，且方向一致：**E 比 B 便宜**——home-wsl 省 2.7pp（−11.0% vs −13.7%），
 home-win 省 11.4pp（−5.9% vs −17.3%）更明显。`ms_multi_crystal`（多晶体、per-ray 计算重、出射密度低）
 在 home-wsl 上读到与 B 相近的代价，但在 home-win 上 B/E 反而比 `main` **快**——两台机器方向不一致，
-按实测记录，不强行统一解释；候选的吞吐代价看起来主要由"每像素出射密度"而非"晶体数/场景复杂度"驱动，
-这与 §10.1（缺陷机制：热像素场景一个像素一个窗口能吃下上万次 `atomicAdd`）的机制描述方向一致，但本次
-测量样本量（每格 5–9 次交错）不足以把"E 比 B 更便宜"钉成跨场景通用结论——只在 `bench_light_single_ms`
-这一光路密集场景上观察到。
+按实测记录，不强行统一解释；候选的吞吐代价看起来主要由「每像素出射密度」而非「晶体数/场景复杂度」驱动，
+这与 §10.1 的机制描述方向一致，但每格 5–9 次交错的样本量不足以把「E 比 B 更便宜」钉成跨场景通用结论——
+只在 `bench_light_single_ms` 这一光路密集场景上观察到。
 
-### 10.2 候选 E 的正确性：drift 剂量-响应补上"8"这一档
+**落地形态的复测**（2026-09-20，树上的 E 而非探针，同协议同两台机；`main` 臂沿用同一 `6f38f1a7`
+基线二进制，两臂 `ldd`/md5 核对为不同 `liblumice.so`）：
 
-PR #383 §10.1 的一手签名表（`parhelion` 10M rays，seed 42，未修复的 fp32 平面）给出
-`LUMICE_XYZ_DRAIN_BATCHES` ∈ {64, 16, 1} 对应的 `R_cuda/R_legacy − 1` 为 **+0.400% / −0.135% /
-−0.008%**——drift 随窗口长度走，因为窗口越长、fp32 `atomicAdd` 链越长。候选 E 把 fold 频率钉在
-"每 8 batch"，所以无论 `LUMICE_XYZ_DRAIN_BATCHES` 设多大，fp32 链长都被**上限在 8**（drain 前补一次
-fold 处理不足 8 的尾段）。用同一 `test_cuda_energy_accounting_parity.py::_r_ratio`（
-`sum(flt_buf Y) / snapshot_intensity`）在候选 E 二进制上跑 `parhelion`，seed 42/43/44 ×
-`LUMICE_XYZ_DRAIN_BATCHES` ∈ {64, 16, 4}（home-wsl，一手测量）：
+| 场景 @ 2048×1024 | home-wsl base → E（24 对交错 pass） | home-win base → E（8 对交错 pass） |
+|---|---|---|
+| `bench_light_single_ms` | 265.5 → 249.5 M/s（**−6.0%**；逐对 Δ 均值 −5.6%，sd 7.8，se 1.6） | 337.2 → 319.9 M/s（**−5.1%**；逐对 Δ 均值 −5.1%，sd 1.6，se 0.6） |
+| `ms_multi_crystal` | 121.1 → 118.3 M/s（−2.3%；se 1.0） | 164.3 → 161.6 M/s（−1.7%；se 1.2） |
 
-| seed | drain=64 | drain=16 | drain=4 |
-|---|---|---|---|
-| 42 | +0.0452% | +0.0452% | −0.0390% |
-| 43 | +0.0452% | +0.0452% | −0.0390% |
-| 44 | +0.0449% | +0.0449% | −0.0391% |
+每一「对」= 同一时刻先后各跑一次 `bench_throughput.py --res-sweep --res-list 2048x1024`（每臂 N=5），
+`multi_median_rps` 的对内比值再取均值。home-win 与上表探针的 −5.9% 一致到 0.8 pp；home-wsl 读到 −6.0%
+而非探针的 −11.0%，差 5 pp——但这台 WSL2 机上单 pass 的臂间噪声 sd ≈ 8 pp（同一 base 二进制在 24 个 pass
+里从 240 到 295 M/s 摆动），探针那 −11.0% 是**各一个** pass 得到的，落在这个噪声里；24 对之后的 95% 区间
+[−8.8, −2.4] 把 −11.0% 排除在外，方向是落地形态**更便宜**，与 home-win 读数一致，不构成「实现与探针不同」
+的信号（唯一的形态差是少发一趟尾折，方向也相同）。`ms_multi_crystal` 两机都读到 −2%，比上表探针的
+−10.4% / +4.3% 都更接近零——上表那两个数各来自一个 pass，且 home-win 那次 `main` 臂（153.8）比本次 24 对
+里同一二进制的均值低 6%，E 臂（160.5）与本次（161.6）反而一致到 0.7%；即上表 `ms_multi_crystal` 行的差异
+是 `main` 臂单 pass 噪声，不是 E 变了。4 场景默认分辨率矩阵（512×256）本次两机各一个 pass：home-win
+`bench_light_single_ms` 436.8 → 420.5（−3.7%）、`ms_multi_crystal` 178.6 → 175.3（−1.8%）、
+`complex_filter` 411.9 → 420.7（+2.1%）、`filtered_bd` 424.5 → 458.0（+7.9%）；home-wsl 四格 CoV 7–18%
+（两格触发脚本的 N=9 重跑并标 HIGH_COV_THERMAL），读数 −14.0% / +5.6% / +2.2% / +28.9%，与上表一样全在
+噪声内，不作结论。
 
-三档在 64/16 之间完全一致（因为两者的 fp32 链长都被 8-batch fold 钉住，drain 窗口本身多长不再重要），
-在 drain=4 时降到 −0.039%（此时 `xyz_win_.calls` 从未达到 8，drain 前的补 fold 把链长压到 4，与
-`main` 表里 drain=4 一档"未实测"留白呼应）。**三档 |drift| 全部 ≤ 0.05%**，比 `_T_R_RATIO_TOL`
-（0.1%，两后端互比的容差）还紧一半，也确认候选 E 没有把 B 已经解决的"精度依赖窗口长度"问题带回来
-到会破坏跨后端 parity 的程度——但注意这不等于"drift 与窗口无关"（B 的性质）：跑
-`test_cuda_energy_ledger_independent_of_drain_window`（该测试针对候选 B 的
-`{1, 16, 64}` 三档、容差 0.05% 编写）在候选 E 上**预期性地红**——drain=1 读 −0.0078%（链长 1，
-与 PR #383 表格 drain=1 一档吻合，因为 E 在 drain=1 时每次都补 fold，退化成候选 C 的每 batch 折）而
-drain=16/64 读 +0.0452%（链长 8），spread 0.0530% 略超该测试为 B 钉的 0.05% 门槛——这是候选 E "有意
-把链长钉在 8 而非 1"的直接体现，不是候选 E 实现的缺陷，只是它不满足一条**为候选 B 的形态量身写的**
-不变量。
+### 10.4 候选 E 的正确性：drift 剂量-响应
 
-### 10.3 结论边界
+E 把 fold 频率钉在「每 8 batch」，所以无论 `LUMICE_XYZ_DRAIN_BATCHES` 设多大，fp32 链长都被**上限在 8**
+（drain 的 finalize pass 折掉不足 8 的尾段）。用 §10.1 同一比值在 E 二进制上跑 `parhelion`，
+seed 42/43/44 × `LUMICE_XYZ_DRAIN_BATCHES` ∈ {64, 16, 8, 4}（home-wsl，一手测量；64/16/4 三档来自 PR #385
+的探针，8 这一档来自落地后的哨兵测试本身）：
 
-本节只补数据，不裁定 575 的最终形态（候选取舍仍由 owner 在 PR #383 上下判断）；`bench_light_single_ms`
-上 E 比 B 便宜、`ms_multi_crystal` 上两机方向不一致、E 的三档 drift 全部 ≤0.05% 但不满足 B 的
-"drift 与窗口长度无关"这条更强不变量——这三点是本节交付的全部事实，取舍留给 owner。
+| seed | drain=64 | drain=16 | drain=8 | drain=4 |
+|---|---|---|---|---|
+| 42 | +0.0452% | +0.0452% | +0.0452% | −0.0390% |
+| 43 | +0.0452% | +0.0452% | — | −0.0390% |
+| 44 | +0.0449% | +0.0449% | — | −0.0391% |
+
+64/16/8 三档完全一致（三者的 fp32 链长都恰好是 8——8 的倍数窗口里每条链都被 fold 钉住，drain 窗口本身多长
+不再重要；seed 42 三档 spread 实测 0.0000%），drain=4 时降到 −0.039%（`xyz_win_.calls` 从未达到 8，尾折把链长
+压到 4）。**四档 |drift| 全部 ≤ 0.05%**，比 `_T_R_RATIO_TOL`（0.1%，两后端互比的容差）紧一半。这与 B 的性质不同：
+B 是「drift 恒为 0、与窗口无关」，E 是「drift 恒为一条 8-batch 链的残差、与窗口无关」——换来的是 §10.3 的代价差。
+battery 其余行在 E 下的读数：`cpu_backend_route`（2M rays）+0.019%、`parity_random_geometry` /
+`orientation_sample_count_random` ≤ 0.0001%。
+
+### 10.5 选定形态（E）as-built
+
+- `src/core/shared/accum_shared.h` CUDA 变体：保持 `AccumXyzToPixel(float* xyz_buf, …)` fp32 `atomicAdd`
+  （与 Metal / host 同一函数体）；模块文档写明三个后端各自如何把链长有界化。
+- `CudaTraceBackend::Impl`：`d_xyz_buf_`（fp32，原子目标）与 `d_xyz_buf_fold_`（double，fold 目标）成对；
+  `EnsureXyzBuf` 同分支分配、同 shape 变化清零；`BeginSession` 不碰。
+- `fold_xyz_plane_kernel(src, fold, n, finalize)`：非 finalize 模式 `fold[i] += src[i]; src[i] = 0`（只碰非零
+  元素）；finalize 模式 `src[i] = float(fold[i] + src[i]); fold[i] = 0`。`CudaTraceBackend::LaunchXyzFold`
+  是它唯一的 launch 点，`FoldDeviceXyzBatch()`（非 finalize）与 `ReadbackXyzAccum`（finalize，D2H 之前）共用。
+- `Simulator::kXyzFoldEveryBatches = 8`（`simulator.hpp`，`kDefaultXyzDrainBatches` 旁），**工程常数、不是
+  env 旋钮**（`doc/env-var-policy.md` 决策门：它不是用户会想调的行为开关，而是 owner 已裁定的数值）。调用点在
+  `SimulateOneWavelengthWithBackend` 的第三时钟分支：`xyz_win_.calls` 自增后，`calls >= xyz_drain_batches_`
+  ⇒ drain；否则 `calls % kXyzFoldEveryBatches == 0` ⇒ `backend.FoldDeviceXyzBatch()`。结束窗口的那个 batch
+  **不**另发 fold——`ReadbackXyzAccum` 的 finalize pass 对 fp32 平面里的残段（≤ 8 batch）做同一件事，且它覆盖
+  **每一个** drain 站点（窗口上限、以及 `Run()` 里 producer-pause / generation-change / run-exit 三处显示节拍
+  drain），所以尾折只有一个 owner。Metal / host 继承基类 `FoldDeviceXyzBatch() {}` no-op，零改动。
+- D2H 字节数、host 侧 `XyzImageData` / `SimData::xyz_pixel_data_` 类型一字不改；显存比 base 多一块 double
+  平面（2048×1024 单 renderer 50 MB），与 B 相同。
+- 哨兵：`test_cuda_energy_accounting_parity.py::test_cuda_energy_ledger_independent_of_drain_window`——
+  `LUMICE_XYZ_DRAIN_BATCHES` ∈ {8, 16, 64}（全是 8 的倍数），(a) 三档 `R_cuda/R_legacy` 互差 ≤ 0.01%，
+  (b) 每档 |`R_cuda/R_legacy − 1`| ≤ 0.05%。红态自证（一次性、需重编译，不做自动 case）：把
+  `kXyzFoldEveryBatches` 改成 64——64-batch 窗口内不再有任何周期 fold，只剩 drain 的 finalize，即未修复的
+  平面形态——实测 drain=8 +0.0452% / 16 −0.1352% / 64 **+0.4000%**，spread 0.5353%，`1 failed`，逐位复现
+  §10.1 的签名表。⚠️ 与 battery 其余行一样，只在 CUDA 参照机上跑（CI 无 GPU）。
+
+### 10.6 owner 终裁记录
+
+owner 于 2026-09-20 在 §10.2–§10.4 的数据上裁定取 E，原话：「同意 E……这两条是基于现有数据的判断。如果后续
+我自己或者内测用户发现新的情况，我们就需要再次讨论。」——即：接受 E 的 ≤0.05% 残差与 §10.3 的吞吐代价，
+换掉 B 的「精确但 −13.9%/−17.3%」。
+
+**复议触发条件**（任一成立即重开本节的候选取舍，而不是就地放宽判据）：
+
+1. 任一参照机上 E 的吞吐代价超出 §10.3 表中数字 **+2 pp**（`bench_light_single_ms` 2048×1024：home-wsl −11.0%、
+   home-win −5.9% 为基准）；
+2. 用户可感的两账本偏差——图像账本（`flt_buf`）与标量账本（`snapshot_intensity`）在任何场景上的偏差大到
+   曝光 / 亮度可见（E 的已知残差是 +0.045%，远低于可感阈值；出现 ≥0.1% 量级即已超 `_T_R_RATIO_TOL`）。
+
+同缺陷族、本次**未修**的已知风险：`d_anchor_buf_`（曝光锚点平面）与 `d_class_lane_buf_`（per-class Y-lane
+平面）与 `d_xyz_buf_` 同样是跨整个 drain 窗口的逐出射 fp32 `atomicAdd`（`EmitToDeviceXyz` 里的
+`AccumAnchorY` 与 `FanColorClassLanes`）。今天没有任何一手红态数据（没有测试读这两块平面的两账本），
+按「举证责任在增加一方」不在本次交付内改；若将来证实可观测，修法就是本节 E 的同形——给那块平面配一块
+double fold 平面、挂到同一个 `LaunchXyzFold` 节拍上——不需要新的机制。

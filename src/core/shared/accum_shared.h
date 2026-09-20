@@ -12,9 +12,16 @@
 //                                                       parity oracles; not
 //                                                       the cross-batch path)
 //
-// Every variant adds into a float32 buffer that lives ONE drain window (device)
-// or one session (host oracle) — a bounded chain. The cross-batch reduction on
-// the host side is not here: RenderConsumer folds each window into a double
+// Every variant adds into a float32 buffer, and every caller bounds the chain
+// that buffer ever holds. Metal drains (reads back and zeroes) its plane every
+// batch. CUDA keeps its plane alive across a whole drain window, so the chain
+// is bounded one level down instead: the simulator has the backend fold the
+// fp32 plane into a device double plane and zero the fp32 side every
+// Simulator::kXyzFoldEveryBatches (8) batches, and the drain folds the residue
+// on the same kernel (fold_xyz_plane_kernel in cuda_trace_backend.cu) — so no
+// fp32 chain here is longer than 8 batches, whatever the window length. The
+// host oracle's buffer lives one session. The cross-batch reduction on the
+// host side is not here either: RenderConsumer folds each window into a double
 // running sum (server/render.cpp), which replaced the float Neumaier pair this
 // header used to carry. Compensated float summation was measured to be no
 // answer to an unbounded chain — its compensation term is itself a float

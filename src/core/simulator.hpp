@@ -330,6 +330,19 @@ class Simulator {
   XyzDrainWindow xyz_win_;
   static constexpr uint32_t kDefaultXyzDrainBatches = 64;
   uint32_t xyz_drain_batches_ = kDefaultXyzDrainBatches;  // resolved from env at Run() entry
+  // Cadence of the device-side precision fold (TraceBackend::FoldDeviceXyzBatch)
+  // inside a drain window: every this-many batches the backend widens its fp32
+  // XYZ plane into a device double plane and restarts the fp32 chain, so no
+  // per-pixel fp32 atomicAdd chain is ever longer than this many batches
+  // regardless of xyz_drain_batches_. An engineering constant settled on measured
+  // data, not a knob (doc/env-var-policy.md): folding every batch was measured at
+  // -22.5% throughput on a 2048x1024 dense-exit scene, a double-atomic plane at
+  // -13.9%/-17.3% (two reference boxes), and folding every 8 batches at
+  // -11.0%/-5.9% with the window total drifting <= 0.05% against the host's
+  // double ledger (unfolded, a 64-batch window drifts +0.40%). Left unfolded
+  // residue (at most this many batches) at drain time is folded by the drain
+  // itself (ReadbackXyzAccum's finalize pass), so it needs no separate call.
+  static constexpr uint32_t kXyzFoldEveryBatches = 8;
   // Readback the persistent device XYZ accumulator into a SimData (window-
   // aggregated root/crystal counts), enqueue it, and reset the window. No-op if
   // `backend` is null or nothing is pending (self-guarding so call sites stay
