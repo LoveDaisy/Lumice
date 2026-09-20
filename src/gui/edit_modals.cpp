@@ -178,21 +178,52 @@ static uint64_t g_next_summand_row_uid = 0;
 static FilterConfig g_filter_top;
 static FilterConfig g_filter_top_snapshot;
 
-// Initial-present flag captured at modal open. Used by ApplyBuffersToEntry so
-// an untouched OK on a previously-empty filter does not silently materialize a
-// default-constructed filter into entry.filter. Combined with the
-// "effectively-empty → nullopt" commit rule this also closes the "Remove
-// Filter" button path together with g_filter_remove_intent.
-static bool g_filter_initial_present = false;
+// Whether the bound entry HAD a filter the last time the buffers were synced with the pool (see
+// the baseline note below). Used by ApplyBuffersToEntry so an untouched OK on a previously-empty
+// filter does not silently materialize a default-constructed filter into entry.filter. Combined
+// with the "effectively-empty → nullopt" commit rule this also closes the "Remove Filter" button
+// path together with g_filter_remove_intent.
+static bool g_filter_present_baseline = false;
 static bool g_filter_remove_intent = false;
 
-// Snapshots captured on OpenEditModal for per-tab dirty-mark computation.
-// Filter already has its own snapshot above (used for a separate purpose in
-// CommitAllBuffers). Crystal / Axis were previously not snapshotted; they are
-// now needed so the tab label can append " *" when the in-flight buffer
-// diverges from the value at modal-open time.
+// ---- The baseline: the pool value each buffer was last synced with ----
+//
+// Every edit buffer above has a `_snapshot` twin (g_filter_top_snapshot / g_summand_rows_snapshot
+// sit next to their buffers; Crystal / Axis here). A snapshot is NOT "the value at modal open" —
+// it is the value the buffer was last synced with the POOL at, and the pull that runs every frame
+// (PullBuffersFromPool) moves it forward. Three readers depend on that meaning:
+//   - the per-frame three-way merge (PullField / PullSummandRows): `base`, against which both the
+//     buffer (`ours`) and the pool (`theirs`) are compared to decide whose change a field carries;
+//   - the tab labels' " *" mark and IsFilterDirty: "does the buffer differ from what the pool had
+//     when we last looked", which under Staged mode is exactly "is there uncommitted work";
+//   - ApplyBuffersToEntry's `buf_changed` gate, through IsFilterDirty.
+// The buffers used to be synced with the pool exactly once, at open, and written back every frame
+// under Immediate mode — so anything else that wrote the same pool slot while the modal was up
+// (the analysis window's "Exclude this raypath", any code path at all) was overwritten by the
+// stale copy the next frame, and the "only synced at open" contract silently depended on a lock
+// nobody had declared. doc/gui-state-governance.md §11 states the rule this now follows.
 static CrystalConfig g_crystal_buf_snapshot;
 static AxisDist g_axis_buf_snapshot[3];
+
+// Which text-backed fields the pull adopted from the pool THIS frame (a clean buffer field replaced
+// by a changed pool value). Read by the tab bodies, which pass each flag to the widget that edits
+// the field so it can reload its private edit copy if it is the active one — see panels.hpp
+// ReloadInputTextIfActive for why a value replaced under an active InputText is otherwise undone.
+// Lifetime is one frame, and that rests on an ORDER: PullBuffersFromPool writes every flag, and the
+// tab bodies read them later in the same frame. The generation counter beside it is what makes that
+// order a checked fact rather than a convention — RenderModalTabBar asserts the pull ran this frame.
+// Fields with no edit-in-flight widget (crystal type, filter action / symmetry) need no flag.
+struct PullAdoptedFlags {
+  bool crystal_name = false;
+  bool wedge_upper_alpha = false;
+  bool wedge_lower_alpha = false;
+  bool shape_slot[LUMICE_SHAPE_SCALAR_COUNT] = {};
+  bool axis[3] = {};  // zenith, azimuth, roll — one flag per AxisDist, the merge unit
+};
+static PullAdoptedFlags g_pull_adopted;
+// ImGui::GetFrameCount() at the last PullBuffersFromPool; ImGui's own counter rather than one of
+// ours, so there is no second "which frame is it" to keep in step.
+static int g_pull_generation = -1;
 
 // Crystal modal: trackball state saved on open, restored on Cancel
 static float g_saved_rotation[16];
@@ -360,8 +391,11 @@ bool RenderCustomWedgeInput(const char* popup_id, float* value) {
 // `trailing_label = false` (table-cell mode): mirrors SliderWithInput's switch — omit the
 // trailing text label and drop kLabelColWidth from the width so the [slider][input][▼] group
 // fills the whole table cell (the field name lives in the Parameter column instead).
+// `reload_active_input`: true on a frame `*value` was replaced from outside the widgets (the edit
+// modal's pull from the pool) — see panels.hpp ReloadInputTextIfActive.
 bool SliderWithPresetEdit(const char* label, float* value, float min_val, float max_val, const char* fmt,
-                          SliderScale scale, const WedgePreset* presets, int preset_count, bool trailing_label = true) {
+                          SliderScale scale, const WedgePreset* presets, int preset_count, bool trailing_label = true,
+                          bool reload_active_input = false) {
   char display_buf[64];
   char slider_id[64];
   char input_id[64];
@@ -410,6 +444,9 @@ bool SliderWithPresetEdit(const char* label, float* value, float min_val, float 
 
   ImGui::SameLine();
   ImGui::PushItemWidth(input_w);
+  if (reload_active_input) {
+    ReloadInputTextIfActive(ImGui::GetID(input_id));
+  }
   changed |= ImGui::InputFloat(input_id, value, 0, 0, fmt);
   ImGui::PopItemWidth();
 
@@ -658,26 +695,238 @@ void SetRowsFromSop(const SumOfProducts& sop) {
   }
 }
 
-// Re-snapshot all three buffers as the new dirty-compare baseline. Used by
-// OpenEditModal (initial snapshot) and the Immediate→Staged mode switch
-// (fresh baseline so dirty-mark starts from zero). Does NOT touch trackball
-// save — that retains the Open-time baseline.
+// The rows that would reach the pool: BuildSopFromRows with the blank / whitespace-only rows
+// dropped. A blank row carries no predicate and must NOT lower to a match-all clause (which would
+// make an OR filter a silent no-op, or under filter_out hide every ray — the black-render footgun);
+// this generalizes the "empty ≡ no filter" UX from a single blank row to interior / extra blank
+// rows in a multi-row SoP. Blank rows validate as kValid, so they never gate OK; stripping them
+// here is the single point that keeps a forgotten empty row from corrupting the committed filter.
+// The one definition of "what the buffer says", used by the commit AND by the dirty comparison —
+// a blank row the user added is not a change to the filter, so it must not read as one.
+SumOfProducts BuildCommittableSop(const std::vector<SummandRowBuf>& rows) {
+  SumOfProducts sop = BuildSopFromRows(rows);
+  sop.erase(
+      std::remove_if(sop.begin(), sop.end(), [](const SummandText& s) { return TrimRaypathSegment(s.text).empty(); }),
+      sop.end());
+  return sop;
+}
+
+// The top-level fields of a filter (name / action / sym_*) as a FilterConfig whose `param` is the
+// default (empty) SoP — the shape g_filter_top and its snapshot are held in, so operator== on the
+// pair reduces to those fields.
+FilterConfig TopFieldsOf(const FilterConfig& src) {
+  FilterConfig out;
+  out.name = src.name;
+  out.action = src.action;
+  out.sym_p = src.sym_p;
+  out.sym_b = src.sym_b;
+  out.sym_d = src.sym_d;
+  return out;
+}
+
+// The Crystal tab's fields, compared WITHOUT the axis triple CrystalConfig also carries.
+// g_crystal_buf.zenith/azimuth/roll are copies from open time that no widget ever edits (the Axis
+// tab edits g_axis_buf), so CrystalConfig::operator== would report the Crystal tab dirty for an
+// axis change that reached the pool from elsewhere. The field list is the one the pull merges.
+bool CrystalTabFieldsEqual(const CrystalConfig& a, const CrystalConfig& b) {
+  if (a.name != b.name || a.type != b.type || a.upper_alpha != b.upper_alpha || a.lower_alpha != b.lower_alpha) {
+    return false;
+  }
+  for (int slot = 0; slot < LUMICE_SHAPE_SCALAR_COUNT; ++slot) {
+    if (ShapeScalarAt(a, slot) != ShapeScalarAt(b, slot)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// Re-base every buffer's baseline on the pool as it is NOW (see the baseline note at the
+// declarations). Used by OpenEditModal (the first baseline), the Immediate→Staged mode switch and
+// Unlink (a new pool slot underneath the same buffers). Does NOT touch the trackball save — that
+// keeps its open-time value.
 //
-// Any new edit-buffer field added in the future must be appended here AND
-// in ApplyBuffersToEntry to keep the dirty-compare / commit paths symmetric.
-void SnapshotAllBuffers(const GuiState& state) {
-  g_filter_top_snapshot = g_filter_top;
-  g_summand_rows_snapshot = BuildSopFromRows(g_summand_rows);
-  g_crystal_buf_snapshot = g_crystal_buf;
-  g_axis_buf_snapshot[0] = g_axis_buf[0];
-  g_axis_buf_snapshot[1] = g_axis_buf[1];
-  g_axis_buf_snapshot[2] = g_axis_buf[2];
+// The baseline is taken from the POOL, never copied from the buffers, because the two differ
+// exactly when the difference matters: a row the commit gate refused (kIncomplete) is in the
+// buffer and not in the pool, and a baseline copied from the buffer would read that row as
+// "deleted externally" on the next pull and remove it from under the user.
+//
+// Any new edit-buffer field added in the future must be appended here, in PullBuffersFromPool AND
+// in ApplyBuffersToEntry, to keep the baseline / pull / commit paths symmetric.
+void SyncBaselineFromPool(const GuiState& state) {
   const int ly = g_modal_layer_idx;
   const int en = g_modal_entry_idx;
-  if (ly >= 0 && ly < static_cast<int>(state.layers.size()) && en >= 0 &&
-      en < static_cast<int>(state.layers[ly].entries.size())) {
-    g_filter_initial_present = state.layers[ly].entries[en].filter_id.has_value();
+  if (ly < 0 || ly >= static_cast<int>(state.layers.size()) || en < 0 ||
+      en >= static_cast<int>(state.layers[ly].entries.size())) {
+    return;
   }
+  const EntryCard& entry = state.layers[ly].entries[en];
+  const CrystalConfig& pool_crystal = state.crystals[entry.crystal_id];
+  g_crystal_buf_snapshot = pool_crystal;
+  g_axis_buf_snapshot[0] = pool_crystal.zenith;
+  g_axis_buf_snapshot[1] = pool_crystal.azimuth;
+  g_axis_buf_snapshot[2] = pool_crystal.roll;
+  const FilterConfig pool_filter = entry.filter_id.has_value() ? state.filters[*entry.filter_id] : FilterConfig{};
+  g_filter_top_snapshot = TopFieldsOf(pool_filter);
+  g_summand_rows_snapshot = pool_filter.param;
+  g_filter_present_baseline = entry.filter_id.has_value();
+}
+
+// ---- The per-frame pull: pool → buffers, as a three-way merge ----
+//
+// The rule, per field (doc/gui-state-governance.md §11): base = the value the buffer was last
+// synced with the pool at, ours = the buffer, theirs = the pool now.
+//   theirs == base             → the pool did not move; leave ours alone, dirty or not.
+//   theirs != base, ours == base → ours is clean; adopt theirs. (Returns true: the caller may need
+//                                  to reload a widget that is mid-edit on this field.)
+//   theirs != base, ours != base → both moved; keep ours (the user's), and base still follows
+//                                  theirs so the next frame compares against the pool as it is.
+// One rule for both modes. Under Immediate the buffer is pushed every frame, so ours == base holds
+// for everything but a row the commit gate refused, and an outside write is always adopted; under
+// Staged the user's uncommitted fields are kept and the clean ones follow the document, which is
+// what " *" means. The push→pull round trip is the third branch too: a frame after ours reached
+// the pool, theirs == ours != base, and base catches up with nothing adopted.
+template <typename T>
+bool PullField(T& ours, T& base, const T& theirs) {
+  if (theirs == base) {
+    return false;
+  }
+  const bool was_clean = (ours == base);
+  if (was_clean) {
+    ours = theirs;
+  }
+  base = theirs;
+  return was_clean;
+}
+
+// The same merge over the OR-row list, per row TEXT with multiplicity (a filter may hold two equal
+// rows, and the pool keeps them). Rows are added or removed, never rewritten in place: an outside
+// change to a row's text is a removal plus an addition, and a row the user has since edited no
+// longer matches the removed text and so is kept — which is the "both moved → keep ours" branch
+// in row form. Per text, with c = how many rows carry it:
+//   c_theirs == c_base            → nothing;
+//   c_ours != c_base              → the user touched this text; keep ours (also what stops a row
+//                                   we pushed last frame from coming back as a second copy);
+//   c_theirs > c_base             → append the difference, each as a new row with a fresh uid;
+//   c_theirs < c_base             → drop the difference, first matching rows.
+// Blank rows are the editor's affordance, not rows (BuildCommittableSop), and never take part;
+// when the buffer holds nothing BUT blanks and the pool gains rows, the blanks give way to them,
+// so a filter arriving on a filter-less entry shows as that filter and not as it plus an empty
+// line. New rows get uids from the running counter, never a recycled one: an InputText whose id a
+// removed blank row used to own may still be the active widget, and a new row under the same id
+// would inherit its edit in flight (the leak RenderModalTabBar's per-entry scope exists to stop).
+void PullSummandRows(const SumOfProducts& theirs) {
+  const SumOfProducts& base = g_summand_rows_snapshot;
+  if (theirs == base) {
+    return;
+  }
+  std::unordered_map<std::string, int> c_base;
+  std::unordered_map<std::string, int> c_theirs;
+  std::unordered_map<std::string, int> c_ours;
+  for (const SummandText& row : base) {
+    ++c_base[row.text];
+  }
+  for (const SummandText& row : theirs) {
+    ++c_theirs[row.text];
+  }
+  bool ours_all_blank = true;
+  for (const SummandRowBuf& row : g_summand_rows) {
+    if (TrimRaypathSegment(row.text).empty()) {
+      continue;
+    }
+    ours_all_blank = false;
+    ++c_ours[row.text];
+  }
+  const auto count_in = [](const std::unordered_map<std::string, int>& m, const std::string& text) {
+    const auto it = m.find(text);
+    return it == m.end() ? 0 : it->second;
+  };
+  // Walk theirs' texts then base's, each text once (the second walk skips what the first saw).
+  std::vector<std::string> texts;
+  for (const SummandText& row : theirs) {
+    texts.push_back(row.text);
+  }
+  for (const SummandText& row : base) {
+    texts.push_back(row.text);
+  }
+  std::sort(texts.begin(), texts.end());
+  texts.erase(std::unique(texts.begin(), texts.end()), texts.end());
+  for (const std::string& text : texts) {
+    const int nb = count_in(c_base, text);
+    const int nt = count_in(c_theirs, text);
+    const int no = count_in(c_ours, text);
+    if (nt == nb || no != nb) {
+      continue;
+    }
+    if (nt > nb) {
+      if (ours_all_blank) {
+        g_summand_rows.clear();
+        ours_all_blank = false;  // the affordance is gone; later additions append to real rows
+      }
+      for (int i = nb; i < nt; ++i) {
+        SummandRowBuf row{};
+        row.uid = g_next_summand_row_uid++;
+        snprintf(row.text, sizeof(row.text), "%s", text.c_str());
+        g_summand_rows.push_back(row);
+      }
+    } else {
+      int to_drop = nb - nt;
+      for (auto it = g_summand_rows.begin(); it != g_summand_rows.end() && to_drop > 0;) {
+        if (text == it->text) {
+          it = g_summand_rows.erase(it);
+          --to_drop;
+        } else {
+          ++it;
+        }
+      }
+    }
+  }
+  g_summand_rows_snapshot = theirs;
+  if (g_summand_rows.empty()) {
+    // The ≥1 row invariant SetRowsFromSop keeps: the editor always shows a line to type into.
+    SummandRowBuf row{};
+    row.uid = g_next_summand_row_uid++;
+    row.text[0] = '\0';
+    g_summand_rows.push_back(row);
+  }
+}
+
+// Pull the pool into the buffers for this frame. Called once per frame from RenderEditModals,
+// ABOVE the tab bar and independent of which tab is showing: the push (CommitAllBuffersImmediate)
+// writes all three buffers back whether or not their tab is up, so the pull has to keep all three
+// current or the push overwrites a slot the user is not even looking at. The indices are valid by
+// the caller's guard.
+void PullBuffersFromPool(GuiState& state) {
+  const EntryCard& entry = state.layers[g_modal_layer_idx].entries[g_modal_entry_idx];
+  const CrystalConfig& pool_crystal = state.crystals[entry.crystal_id];
+
+  g_pull_adopted.crystal_name = PullField(g_crystal_buf.name, g_crystal_buf_snapshot.name, pool_crystal.name);
+  PullField(g_crystal_buf.type, g_crystal_buf_snapshot.type, pool_crystal.type);
+  g_pull_adopted.wedge_upper_alpha =
+      PullField(g_crystal_buf.upper_alpha, g_crystal_buf_snapshot.upper_alpha, pool_crystal.upper_alpha);
+  g_pull_adopted.wedge_lower_alpha =
+      PullField(g_crystal_buf.lower_alpha, g_crystal_buf_snapshot.lower_alpha, pool_crystal.lower_alpha);
+  for (int slot = 0; slot < LUMICE_SHAPE_SCALAR_COUNT; ++slot) {
+    g_pull_adopted.shape_slot[slot] =
+        PullField(ShapeScalarAt(g_crystal_buf, slot), ShapeScalarAt(g_crystal_buf_snapshot, slot),
+                  ShapeScalarAt(pool_crystal, slot));
+  }
+  // The axis triple lives in g_axis_buf; g_crystal_buf's own copy is dead (CrystalTabFieldsEqual).
+  g_pull_adopted.axis[0] = PullField(g_axis_buf[0], g_axis_buf_snapshot[0], pool_crystal.zenith);
+  g_pull_adopted.axis[1] = PullField(g_axis_buf[1], g_axis_buf_snapshot[1], pool_crystal.azimuth);
+  g_pull_adopted.axis[2] = PullField(g_axis_buf[2], g_axis_buf_snapshot[2], pool_crystal.roll);
+
+  const FilterConfig theirs_filter = entry.filter_id.has_value() ? state.filters[*entry.filter_id] : FilterConfig{};
+  // Action and the symmetry bits are radio buttons / checkboxes (no edit in flight), and the
+  // name has no widget in this modal at all, so none of these returns a flag anyone reads.
+  PullField(g_filter_top.name, g_filter_top_snapshot.name, theirs_filter.name);
+  PullField(g_filter_top.action, g_filter_top_snapshot.action, theirs_filter.action);
+  PullField(g_filter_top.sym_p, g_filter_top_snapshot.sym_p, theirs_filter.sym_p);
+  PullField(g_filter_top.sym_b, g_filter_top_snapshot.sym_b, theirs_filter.sym_b);
+  PullField(g_filter_top.sym_d, g_filter_top_snapshot.sym_d, theirs_filter.sym_d);
+  PullSummandRows(theirs_filter.param);
+  g_filter_present_baseline = entry.filter_id.has_value();
+
+  g_pull_generation = ImGui::GetFrameCount();
 }
 
 }  // namespace
@@ -752,10 +1001,10 @@ void OpenEditModal(const EditRequest& req, GuiState& state) {
   g_filter_top.sym_d = src.sym_d;
   SetRowsFromSop(src.param);
   g_filter_remove_intent = false;
-  // Snapshot the dirty-compare baseline (Crystal/Axis/Filter buffers +
-  // filter_initial_present). Trackball save is initialized separately below —
-  // it's Open-time state, not snapshot.
-  SnapshotAllBuffers(state);
+  // The first baseline (Crystal/Axis/Filter + filter presence) — the buffers were just copied
+  // from the pool, so buffer == baseline == pool on this frame. Trackball save is initialized
+  // separately below — it is Open-time state, not a baseline.
+  SyncBaselineFromPool(state);
 
   // Save trackball state for Cancel restoration
   std::memcpy(g_saved_rotation, g_crystal_rotation, sizeof(g_saved_rotation));
@@ -911,7 +1160,7 @@ static void RenderCrystalPreviewPane(GuiState& /*state*/) {
 // columns are filled; the Sync / Rand / Spread columns are advanced but left BLANK. Blank here
 // means "not applicable" — visually distinct from the greyed-but-present state a randomizable row
 // shows when its Randomize checkbox is off. Advances all kShapeTableColumnCount columns.
-static bool RenderWedgeTableRow(const char* label, float* value) {
+static bool RenderWedgeTableRow(const char* label, float* value, bool reload_active_input) {
   ImGui::TableNextRow();
   ImGui::TableNextColumn();  // Parameter
   ShapeTableParamLabel(label);
@@ -921,7 +1170,7 @@ static bool RenderWedgeTableRow(const char* label, float* value) {
   const std::vector<WedgePreset> presets = GetWedgePresets();
   bool changed = SliderWithPresetEdit(label, value, 0.1f, 90.0f, "%.3f", SliderScale::kLinear, presets.data(),
                                       static_cast<int>(presets.size()),
-                                      /*trailing_label=*/false);
+                                      /*trailing_label=*/false, reload_active_input);
   // Wedge angles are non-randomizable: advance the remaining (kShapeTableColumnCount - content)
   // columns as intentionally-empty cells (Sync / Rand / Spread). Driven by the shared constant
   // rather than a hardcoded 3, so the blank count tracks any column-count change automatically —
@@ -957,6 +1206,9 @@ static void RenderCrystalModal(GuiState& /*state*/) {
   {
     char name_buf[64];
     snprintf(name_buf, sizeof(name_buf), "%s", cr.name.c_str());
+    if (g_pull_adopted.crystal_name) {
+      ReloadInputTextIfActive(ImGui::GetID("##crystal_name"));
+    }
     ImGui::SetNextItemWidth(-FLT_MIN);
     if (ImGui::InputTextWithHint("##crystal_name", "unnamed — shown as its pool id everywhere", name_buf,
                                  sizeof(name_buf))) {
@@ -1016,14 +1268,21 @@ static void RenderCrystalModal(GuiState& /*state*/) {
 
     // Slots are named constants, never bare integers or field order — see the SLOT-ORDER TRAP note
     // on ShapeScalarAt (UPPER_H is slot 1, PRISM_H slot 2, the reverse of the rows' visual order).
+    // Each row is handed this frame's pull verdict for its own field (g_pull_adopted), so a box
+    // mid-edit on a value that just arrived from the pool reloads instead of writing the old
+    // text back — see panels.hpp ReloadInputTextIfActive.
     if (cr.type == CrystalType::kPrism) {
-      RenderShapeDistTableRow("Height##modal_cr", cr, LUMICE_SHAPE_SCALAR_HEIGHT);
+      RenderShapeDistTableRow("Height##modal_cr", cr, LUMICE_SHAPE_SCALAR_HEIGHT,
+                              g_pull_adopted.shape_slot[LUMICE_SHAPE_SCALAR_HEIGHT]);
     } else {
-      RenderShapeDistTableRow("Prism H##modal_cr", cr, LUMICE_SHAPE_SCALAR_PRISM_H);
-      RenderShapeDistTableRow("Upper H##modal_cr", cr, LUMICE_SHAPE_SCALAR_UPPER_H);
-      RenderShapeDistTableRow("Lower H##modal_cr", cr, LUMICE_SHAPE_SCALAR_LOWER_H);
-      RenderWedgeTableRow("Upper A##modal_cr", &cr.upper_alpha);
-      RenderWedgeTableRow("Lower A##modal_cr", &cr.lower_alpha);
+      RenderShapeDistTableRow("Prism H##modal_cr", cr, LUMICE_SHAPE_SCALAR_PRISM_H,
+                              g_pull_adopted.shape_slot[LUMICE_SHAPE_SCALAR_PRISM_H]);
+      RenderShapeDistTableRow("Upper H##modal_cr", cr, LUMICE_SHAPE_SCALAR_UPPER_H,
+                              g_pull_adopted.shape_slot[LUMICE_SHAPE_SCALAR_UPPER_H]);
+      RenderShapeDistTableRow("Lower H##modal_cr", cr, LUMICE_SHAPE_SCALAR_LOWER_H,
+                              g_pull_adopted.shape_slot[LUMICE_SHAPE_SCALAR_LOWER_H]);
+      RenderWedgeTableRow("Upper A##modal_cr", &cr.upper_alpha, g_pull_adopted.wedge_upper_alpha);
+      RenderWedgeTableRow("Lower A##modal_cr", &cr.lower_alpha, g_pull_adopted.wedge_lower_alpha);
     }
     ImGui::EndTable();
   }
@@ -1042,7 +1301,8 @@ static void RenderCrystalModal(GuiState& /*state*/) {
       for (int i = 0; i < 6; i++) {
         char label[32];
         snprintf(label, sizeof(label), "Face %d##modal_fd", i + 3);
-        RenderShapeDistTableRow(label, cr, LUMICE_SHAPE_SCALAR_FACE_0 + i);
+        RenderShapeDistTableRow(label, cr, LUMICE_SHAPE_SCALAR_FACE_0 + i,
+                                g_pull_adopted.shape_slot[LUMICE_SHAPE_SCALAR_FACE_0 + i]);
       }
       ImGui::EndTable();
     }
@@ -1145,12 +1405,14 @@ static void RenderAxisModal(GuiState& state) {
   // for the current implementation; if RenderAxisDist is ever refactored to
   // wrap its body in BeginChild for layout purposes, this propagation will
   // silently break (popup regresses to layer=0).
+  // Each row is handed this frame's pull verdict for its axis (g_pull_adopted) — see the same
+  // note in RenderCrystalModal.
   SetNextComboPopupTopMost();
-  RenderAxisDist("Zenith", g_axis_buf[0], 0.0f, 180.0f);
+  RenderAxisDist("Zenith", g_axis_buf[0], 0.0f, 180.0f, g_pull_adopted.axis[0]);
   SetNextComboPopupTopMost();
-  RenderAxisDist("Azimuth", g_axis_buf[1], 0.0f, 360.0f);
+  RenderAxisDist("Azimuth", g_axis_buf[1], 0.0f, 360.0f, g_pull_adopted.axis[1]);
   SetNextComboPopupTopMost();
-  RenderAxisDist("Roll", g_axis_buf[2], 0.0f, 360.0f);
+  RenderAxisDist("Roll", g_axis_buf[2], 0.0f, 360.0f, g_pull_adopted.axis[2]);
 
   // OK / Cancel handled at modal level (RenderEditModals).
 }
@@ -1559,7 +1821,7 @@ void ResetModalState() {
   g_summand_rows.clear();
   g_summand_rows_snapshot.clear();
   g_next_summand_row_uid = 0;
-  g_filter_initial_present = false;
+  g_filter_present_baseline = false;
   g_filter_remove_intent = false;
   std::memset(g_saved_rotation, 0, sizeof(g_saved_rotation));
   g_saved_zoom = 1.0f;
@@ -1652,8 +1914,9 @@ LUMICE_CrystalKind CurrentValidationKind() {
 }
 
 // Filter-tab dirty predicate. Compares the shared top fields (name / action /
-// sym_*) and the materialized SoP (row text list) against their open-time
-// snapshots. Since SummandText::operator== only compares `.text`, the parsed
+// sym_*) and the committable SoP (the row texts, blanks dropped) against the
+// baseline — the pool's own filter as of the last sync, which holds no blank
+// rows either. Since SummandText::operator== only compares `.text`, the parsed
 // factors cache is intentionally excluded — text is the single canonical form.
 //
 // Used by both the tab-label dirty mark in RenderEditModals AND the
@@ -1663,7 +1926,7 @@ bool IsFilterDirty() {
   if (g_filter_top != g_filter_top_snapshot) {
     return true;
   }
-  return BuildSopFromRows(g_summand_rows) != g_summand_rows_snapshot;
+  return BuildCommittableSop(g_summand_rows) != g_summand_rows_snapshot;
 }
 
 // Result of applying edit buffers back to the entry. Used by both commit paths
@@ -1686,8 +1949,9 @@ struct ApplyBuffersResult {
 // gui_state_reconcile.cpp from field diffs, so neither caller writes MarkDirty /
 // MarkStructHardDirty here anymore.
 //
-// Adding a new edit-buffer field? Update this function AND SnapshotAllBuffers
-// in the same change (the pair drives both commit path and dirty-compare baseline).
+// Adding a new edit-buffer field? Update this function, SyncBaselineFromPool AND
+// PullBuffersFromPool in the same change (the three drive the commit path, the baseline and the
+// per-frame pull; a field missing from the pull is a field the push overwrites blind).
 ApplyBuffersResult ApplyBuffersToEntry(GuiState& state) {
   const int ly = g_modal_layer_idx;
   const int en = g_modal_entry_idx;
@@ -1733,24 +1997,14 @@ ApplyBuffersResult ApplyBuffersToEntry(GuiState& state) {
     g_filter_remove_intent = false;
   } else {
     const bool buf_changed = IsFilterDirty();
-    SumOfProducts sop = BuildSopFromRows(g_summand_rows);
-    // Drop blank / whitespace-only summand rows before materializing. A blank
-    // row carries no predicate and must NOT lower to a match-all clause (which
-    // would make an OR filter a silent no-op, or under filter_out hide every
-    // ray — the black-render footgun). This generalizes the pre-task
-    // "empty ≡ no filter" UX from a single blank row to interior / extra blank
-    // rows in a multi-row SoP. Blank rows validate as kValid, so they never
-    // gate OK; stripping them here is the single point that keeps a forgotten
-    // empty row from corrupting the committed filter.
-    sop.erase(
-        std::remove_if(sop.begin(), sop.end(), [](const SummandText& s) { return TrimRaypathSegment(s.text).empty(); }),
-        sop.end());
+    // Blank rows are dropped on the way to the pool — see BuildCommittableSop for why.
+    SumOfProducts sop = BuildCommittableSop(g_summand_rows);
     if (sop.empty()) {
       // No non-blank rows ≡ no filter.
       const std::optional<int> old_filter_id = entry.filter_id;
       entry.filter_id = std::nullopt;
       PropagateFilterIdToLinked(state, entry.crystal_id, old_filter_id, entry.filter_id);
-    } else if (g_filter_initial_present || buf_changed) {
+    } else if (g_filter_present_baseline || buf_changed) {
       const auto kind = CurrentValidationKind();
       bool all_valid = true;
       for (const auto& row : g_summand_rows) {
@@ -1876,6 +2130,8 @@ void RenderModalTabBar(GuiState& state, const char* crystal_label, const char* a
   // + ImGuiTabItemFlags_SetSelected) is delicate and must keep a stable identity.
   const int entry_layer = g_modal_layer_idx;
   const int entry_index = g_modal_entry_idx;
+  // The tab bodies below read g_pull_adopted; it is only meaningful if this frame's pull wrote it.
+  assert(g_pull_generation == ImGui::GetFrameCount() && "PullBuffersFromPool must run before the tab bar each frame");
   if (ImGui::BeginTabBar("##edit_modal_tabs")) {
     if (ImGui::BeginTabItem(crystal_label, nullptr, crystal_flags)) {
       g_active_tab = ActiveTab::kCrystal;
@@ -1931,6 +2187,12 @@ void RenderEditModals(GuiState& state, GLFWwindow* window) {
     if (!valid) {
       g_active_modal = ActiveModal::kNone;
     }
+  }
+
+  // Pull: pool → buffers, before anything is drawn and before the Immediate push below. Every
+  // frame the modal is open, whichever mode and whichever tab — see PullBuffersFromPool.
+  if (g_active_modal == ActiveModal::kOpen) {
+    PullBuffersFromPool(state);
   }
 
   // Size constraints: clamp modal max to the workarea of the monitor containing
@@ -2142,7 +2404,7 @@ void RenderEditModals(GuiState& state, GLFWwindow* window) {
             g_axis_buf[0] = src_crystal.zenith;
             g_axis_buf[1] = src_crystal.azimuth;
             g_axis_buf[2] = src_crystal.roll;
-            SnapshotAllBuffers(state);
+            SyncBaselineFromPool(state);
             // No manual MarkDirty: UnlinkEntryFromPool appends to state.crystals/
             // state.filters pool, so the reconciler's crystals/filters diff catches
             // the change on the next frame's ReconcileGuiEffects tick.
@@ -2154,7 +2416,7 @@ void RenderEditModals(GuiState& state, GLFWwindow* window) {
   }
 
   // Per-tab dirty detection. The label picks up a trailing " *" when the
-  // in-flight buffer differs from the snapshot taken at modal-open. All
+  // in-flight buffer differs from the baseline (the pool as of the last sync). All
   // labels share a fixed `###` suffix — with three hashes ImGui derives the
   // internal ID purely from the `###suffix` portion, so the display string
   // can vary ("Crystal" vs "Crystal *") without changing the tab's hash
@@ -2164,7 +2426,7 @@ void RenderEditModals(GuiState& state, GLFWwindow* window) {
   // commit-time `buf_changed` predicate share a single source of truth. Row
   // text edits go directly through InputText → row.text (no separate char
   // buffer to mirror any more under H5), so no pre-sync is needed here.
-  const bool crystal_dirty = g_crystal_buf != g_crystal_buf_snapshot;
+  const bool crystal_dirty = !CrystalTabFieldsEqual(g_crystal_buf, g_crystal_buf_snapshot);
   const bool axis_dirty = g_axis_buf[0] != g_axis_buf_snapshot[0] || g_axis_buf[1] != g_axis_buf_snapshot[1] ||
                           g_axis_buf[2] != g_axis_buf_snapshot[2];
   const bool filter_dirty = IsFilterDirty();
@@ -2327,9 +2589,10 @@ void RenderEditModals(GuiState& state, GLFWwindow* window) {
       // g_pending_mode_switch inline (see race-case guard + inline consume).
       ImGui::CloseCurrentPopup();
     } else {
-      // Immediate → Staged: re-snapshot the current buffer state as the new
-      // dirty-compare baseline (dirty-mark starts from zero going forward).
-      SnapshotAllBuffers(state);
+      // Immediate → Staged: re-base on the pool, which the Immediate frames have been pushing
+      // into — so the dirty marks start from zero, except for what the commit gate refused
+      // (a kIncomplete row), which is uncommitted and shows as such.
+      SyncBaselineFromPool(state);
       // Current frame is still inside ImGui::Begin (dispatch at frame-start
       // used the old mode). Do NOT call CloseCurrentPopup — the popup stack
       // has no "Edit Entry" entry to close. Flow:

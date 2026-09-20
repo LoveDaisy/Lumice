@@ -23,6 +23,11 @@
 #include "gui/slider_mapping.hpp"
 #include "gui/theme.hpp"
 #include "imgui.h"
+// imgui_internal.h for ReloadInputTextIfActive only: GetActiveID / GetInputTextState /
+// ReloadUserBufAndSelectAll have no public-header spelling (the reload is ImGui's own WIP remedy,
+// imgui_internal.h "Reload user buf (WIP #2890)"). An ImGui upgrade that promotes or renames it
+// must update that one function.
+#include "imgui_internal.h"
 #include "lumice.h"
 
 namespace lumice::gui {
@@ -317,6 +322,13 @@ void PushLabelColumnItemWidth() {
 
 // Compute slider width and prepare IDs for the [slider] [input] Label layout.
 // Writes slider_id and input_id buffers, returns the computed slider width.
+// The id string of the input box SliderWithInput / SliderIntWithInput submit for `label`. The one
+// owner of that rule: PrepareSliderLayout builds the widget's id from it, and
+// ReloadSliderInputIfActive (panels.hpp) asks it which widget to reload.
+static void FormatSliderInputId(const char* label, char* input_id, size_t input_id_size) {
+  snprintf(input_id, input_id_size, "##%s_input", label);
+}
+
 // Under LabelPlacement::kNone the text label is omitted (table-cell mode): the width no longer
 // reserves kLabelColWidth nor its gap, so the [slider][input] pair fills the whole cell
 // (GetContentRegionAvail() == column width inside a BeginTable cell). kLeading and kTrailing return
@@ -338,7 +350,7 @@ static float PrepareSliderLayout(const char* label, char* display_label_out, siz
   }
 
   snprintf(slider_id, slider_id_size, "##%s_slider", label);
-  snprintf(input_id, input_id_size, "##%s_input", label);
+  FormatSliderInputId(label, input_id, input_id_size);
   snprintf(label_id, label_id_size, "##%s_label", label);
 
   float spacing = ImGui::GetStyle().ItemSpacing.x;
@@ -461,6 +473,24 @@ bool SliderWithInput(const char* label, float* value, float min_val, float max_v
     FinishSliderLayout(display_buf, label_id);
   }
   return *value != old_value;
+}
+
+void ReloadInputTextIfActive(ImGuiID id) {
+  // Only the active widget holds an edit in flight; GetInputTextState also answers for the LAST
+  // active box after it deactivated (ImGui keeps that state around to recycle the cursor), and a
+  // reload request parked on an inactive state would fire the next time the box is clicked into.
+  if (id == 0 || ImGui::GetActiveID() != id) {
+    return;
+  }
+  if (ImGuiInputTextState* state = ImGui::GetInputTextState(id)) {
+    state->ReloadUserBufAndSelectAll();
+  }
+}
+
+void ReloadSliderInputIfActive(const char* label) {
+  char input_id[64];
+  FormatSliderInputId(label, input_id, sizeof(input_id));
+  ReloadInputTextIfActive(ImGui::GetID(input_id));
 }
 
 bool DragFloatField(const char* label, float* value, float min_val, float max_val, const char* fmt, SliderScale scale) {
@@ -588,9 +618,17 @@ void SetNextComboPopupTopMost() {
 // wrapping is ever required, the SetNextComboPopupTopMost call must be moved
 // inside RenderAxisDist (after any wrapping Begin/BeginChild, immediately
 // before the Combo).
-bool RenderAxisDist(const char* label, AxisDist& axis, float mean_min, float mean_max) {
+bool RenderAxisDist(const char* label, AxisDist& axis, float mean_min, float mean_max, bool reload_active_inputs) {
   bool changed = false;
   ImGui::PushID(label);
+  // Both boxes on this row, inside the PushID(label) scope their ids are built in. Only one can be
+  // active, and the helper leaves the other alone; the type combo has no edit in flight to reload.
+  if (reload_active_inputs) {
+    ReloadSliderInputIfActive("Mean");
+    for (const char* spread_label : { "Std", "Range", "Amplitude", "Scale" }) {
+      ReloadSliderInputIfActive(spread_label);
+    }
+  }
   ImGui::Text("%s", label);
   ImGui::SameLine(100);
 
@@ -1013,7 +1051,7 @@ bool RenderSyncCell(const char* label, CrystalConfig& cr, int slot) {
 
 }  // namespace
 
-bool RenderShapeDistTableRow(const char* label, CrystalConfig& cr, int slot) {
+bool RenderShapeDistTableRow(const char* label, CrystalConfig& cr, int slot, bool reload_active_inputs) {
   const ShapeScalarDomain& domain = ShapeScalarDomainFor(slot);  // single domain authority
   const float center_min = domain.min_value;
   const float center_max = domain.max_value;
@@ -1057,6 +1095,9 @@ bool RenderShapeDistTableRow(const char* label, CrystalConfig& cr, int slot) {
   // Col 1 — center value: slider + input, filling the (stretch) Value column. trailing_label=false
   // because the name already occupies Col 0.
   ImGui::TableNextColumn();
+  if (reload_active_inputs) {
+    ReloadSliderInputIfActive(label);
+  }
   changed |=
       SliderWithInput(label, &dist.center, center_min, center_max, center_fmt, center_scale, LabelPlacement::kNone);
 
@@ -1094,6 +1135,9 @@ bool RenderShapeDistTableRow(const char* label, CrystalConfig& cr, int slot) {
   ImGui::TableNextColumn();
   char sp_id[96];
   snprintf(sp_id, sizeof(sp_id), "##spread_%s", label);
+  if (reload_active_inputs) {
+    ReloadInputTextIfActive(ImGui::GetID(sp_id));
+  }
   ImGui::SetNextItemWidth(-FLT_MIN);
   if (ImGui::InputFloat(sp_id, &dist.spread, 0, 0, center_fmt)) {
     dist.spread = std::clamp(dist.spread, 0.0f, center_max);
