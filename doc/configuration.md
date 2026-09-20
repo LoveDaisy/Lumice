@@ -1544,17 +1544,22 @@ Alongside that, a `presets` subtree carries per-preset overrides for the built-i
   "renderer": { "lens_type": "..." },
   "presets": {
     "axis": {
-      "column": { "zenith_std": 0.3 }
+      "column": { "zenith_std": 0.3, "zenith_type": "laplacian" }
     }
   }
 }
 ```
 
-Only the zenith-std of a built-in preset can be overridden, and only within that preset's existing classification tolerance — a value outside the domain is clamped to the boundary rather than rejected, and the clamp is reported (see below). Presets with no adjustable face (e.g. the fully-uniform preset) refuse a stored value entirely.
+Two faces of a built-in preset's zenith distribution can be overridden, each under its own key and each judged independently of the other, and both only within that preset's existing classification tolerance:
+
+- `zenith_std` — a number. A value outside the domain is clamped to the boundary rather than rejected, and the clamp is reported (see below).
+- `zenith_type` — one of the distribution-type names an `.lmc` axis block uses (`gauss`, `gauss_legacy`, `laplacian`, `uniform`; `zigzag` as well for Lowitz), restricted to the family the classifier already keeps that preset under. A discrete set has no nearest legal value, so an out-of-set or unrecognised type is not clamped: it is ignored, the built-in type stays in effect, and the refusal is reported. A refused `zenith_type` does not take a valid `zenith_std` in the same node with it.
+
+Presets with no adjustable face (e.g. the fully-uniform preset) refuse a stored value entirely. A missing key means the built-in value; the file's schema stamp did not change when `zenith_type` was added, since no existing key changed meaning.
 
 #### Degraded-input behavior
 
-An unparseable or non-object file, a field with the wrong JSON type, a non-numeric/non-finite preset value, or a clamped preset value are all reported through one notice channel rather than several ad hoc warnings, so a user can always find the full list of what was ignored or adjusted in one place. A field-level type error discards the whole GUI-state half of the overlay (never a half-applied result); the presets subtree is parsed independently.
+An unparseable or non-object file, a field with the wrong JSON type, a non-numeric/non-finite preset value, a clamped preset value, or a refused preset type are all reported through one notice channel rather than several ad hoc warnings, so a user can always find the full list of what was ignored or adjusted in one place. A field-level type error discards the whole GUI-state half of the overlay (never a half-applied result); the presets subtree is parsed independently.
 
 **Personal defaults only ever apply to a brand-new document** — they never override a value already present in a file being opened, whether that file is a `.lmc` project or a CLI JSON config imported through the GUI. Loading someone else's file always reproduces what that file itself specifies (or the factory value for anything it omits), regardless of what is saved on the machine doing the loading.
 

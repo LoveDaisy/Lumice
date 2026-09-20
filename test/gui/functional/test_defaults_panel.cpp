@@ -63,6 +63,7 @@ namespace {
 using lumice::test_user_defaults::FreshOverlayDir;
 using lumice::test_user_defaults::ResetUserDefaultsChannels;
 using lumice::test_user_defaults::ScopedUserConfigSource;
+using lumice::test_user_defaults::WriteRawOverlay;
 using nlohmann::json;
 
 // ---------------------------------------------------------------------------------------------
@@ -361,6 +362,27 @@ std::optional<float> ReadPresetStd(const json& doc, const char* name) {
     return std::nullopt;
   }
   return value->get<float>();
+}
+
+// presets.axis.<name>.zenith_type as the string on disk, with the same tolerance as ReadPresetStd.
+std::optional<std::string> ReadPresetType(const json& doc, const char* name) {
+  const auto presets = doc.find("presets");
+  if (presets == doc.end() || !presets->is_object()) {
+    return std::nullopt;
+  }
+  const auto axis = presets->find("axis");
+  if (axis == presets->end() || !axis->is_object()) {
+    return std::nullopt;
+  }
+  const auto node = axis->find(name);
+  if (node == axis->end() || !node->is_object()) {
+    return std::nullopt;
+  }
+  const auto value = node->find("zenith_type");
+  if (value == node->end() || !value->is_string()) {
+    return std::nullopt;
+  }
+  return value->get<std::string>();
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -2555,22 +2577,158 @@ void RegisterDefaultsPanelTests(ImGuiTestEngine* engine) {
         }
       }
 
-      // The tunable row's own neighbours are read-only too: a Zenith the user can retune still does
-      // not let them change its distribution family or its mean.
-      for (const char* cell : { "##type", "##mean" }) {
-        const ImGuiID id = PresetAxisCellID(anchor.Window, "Column", "zenith", cell);
+      // The tunable row's mean is read-only too: a Zenith the user can retune still does not let
+      // them move its centre, which is what the classifier pins.
+      {
+        const ImGuiID id = PresetAxisCellID(anchor.Window, "Column", "zenith", "##mean");
         if (id == 0 || !ctx->ItemExists(id)) {
-          IM_ERRORF("read-only cell zenith/%s is not an item at all — drawn as text?", cell);
-          continue;
+          IM_ERRORF("read-only cell zenith/%s is not an item at all — drawn as text?", "##mean");
+        } else if (!IsDisabled(ctx->ItemInfo(id))) {
+          IM_ERRORF("read-only cell zenith/%s is enabled — the mean is not tunable here", "##mean");
         }
-        if (!IsDisabled(ctx->ItemInfo(id))) {
-          IM_ERRORF("read-only cell zenith/%s is enabled — only the std is tunable here", cell);
-        }
+      }
+      // ...while its TYPE is the second live cell: an enabled combo, under its own id, so a user
+      // can move the distribution family within the set the classifier keeps Column under.
+      {
+        const ImGuiID id = PresetAxisCellID(anchor.Window, "Column", "zenith", "###preset_type_column");
+        IM_CHECK(id != 0);
+        IM_CHECK(ctx->ItemExists(id));
+        IM_CHECK(!IsDisabled(ctx->ItemInfo(id)));
+      }
+    };
+  }
 
+  {
+    // The zenith TYPE is a second tunable face of an adjustable preset: the combo lists exactly the
+    // types the classifier keeps the preset under, a pick lands in the working copy (the title
+    // says "(mine)", the file does not yet), Save stores it under presets.axis.column.zenith_type
+    // spelled as an .lmc would spell it, and a reload resolves the Column button with that type.
+    //
+    // Driven through the combo rather than through the store primitives, because the claim is
+    // about the CELL: that the panel wires a pick to the same document the std input writes.
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "defaults_panel", "a_preset_zenith_type_pick_lands_in_the_copy_and_saves");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ScopedPanel panel(ctx, "panel_preset_type_pick");
+      panel.OpenOn(gui::DefaultsPanelSection::kPresets);
+      ctx->ItemOpen("**/###preset_Column");
+      ctx->Yield(3);
+
+      // The combo's id, derived the way the read-only-cells case derives its cells: BeginCombo
+      // never registers its label with the engine, so a wildcard search cannot find it.
+      const auto anchor = ctx->ItemInfo("**/###preset_std_column");
+      IM_CHECK(anchor.ID != 0);
+      IM_CHECK(anchor.Window != nullptr);
+      const ImGuiID type_combo = PresetAxisCellID(anchor.Window, "Column", "zenith", "###preset_type_column");
+      IM_CHECK(type_combo != 0);
+      IM_CHECK(ctx->ItemExists(type_combo));
+
+      // Open it and read the popup: the entries ARE label-addressable (Selectable registers its
+      // label). The list must be Column's accepted set and nothing else — Zigzag, which only
+      // Lowitz keeps its identity under, must be absent.
+      ctx->ItemClick(type_combo);
+      ctx->Yield(2);
+      ImGuiWindow* popup = ctx->GetWindowByRef("//$FOCUSED");
+      IM_CHECK(popup != nullptr);
+      const std::string popup_prefix = std::string("//") + popup->Name + "/**/";
+      for (const auto& choice : gui::AcceptedZenithTypesForPreset(gui::AxisPreset::kColumn)) {
+        if (!ctx->ItemExists((popup_prefix + choice.label).c_str())) {
+          IM_ERRORF("Column's type combo does not offer '%s'", choice.label);
+        }
         if (ctx->IsError()) {
           break;
         }
       }
+      IM_CHECK(!ctx->ItemExists((popup_prefix + "Zigzag").c_str()));
+
+      ctx->ItemClick((popup_prefix + "Laplacian").c_str());
+      ctx->Yield(3);
+
+      // In the copy, not the file, and the title reports it — the same three claims the std edit
+      // makes, so the two faces cannot drift into different commit models.
+      IM_CHECK(!ReadPresetType(ReadOverlayFile(panel.dir()), "column").has_value());
+      IM_CHECK_EQ(
+          static_cast<int>(gui::EffectiveAxisPresetZenith(gui::AxisPresetEntryFor(gui::AxisPreset::kColumn)).type),
+          static_cast<int>(gui::AxisDistType::kGauss));  // cache unmoved until Save
+      ctx->ItemClose("**/###preset_Column");
+      ctx->Yield(2);
+      IM_CHECK_STR_EQ(DrawnLabel(ctx, "**/###preset_Column").c_str(), "Column (mine)###preset_Column");
+
+      SaveDefaultsPanel(ctx);
+      {
+        const json stored = ReadOverlayFile(panel.dir());
+        IM_CHECK_EQ(ReadPresetType(stored, "column"), std::optional<std::string>("laplacian"));
+        IM_CHECK(!ReadPresetStd(stored, "column").has_value());  // only the face that was touched
+        IM_CHECK_EQ(gui::TakeUserDefaultsDowngradeCount(), 0);
+      }
+      // Disk first, then memory: the cache followed the Save.
+      IM_CHECK_EQ(
+          static_cast<int>(gui::EffectiveAxisPresetZenith(gui::AxisPresetEntryFor(gui::AxisPreset::kColumn)).type),
+          static_cast<int>(gui::AxisDistType::kLaplacian));
+      panel.Close();
+
+      // And a fresh session reads it back off the file, still classified as Column.
+      gui::ResetUserAxisPresetOverrides();
+      gui::g_state = gui::MakeNewDocumentState();
+      const auto reloaded = gui::GetUserAxisPresetZenithTypeOverride(gui::AxisPreset::kColumn);
+      IM_CHECK(reloaded.has_value());
+      IM_CHECK_EQ(static_cast<int>(*reloaded), static_cast<int>(gui::AxisDistType::kLaplacian));
+      const auto& column = gui::AxisPresetEntryFor(gui::AxisPreset::kColumn);
+      IM_CHECK_EQ(static_cast<int>(
+                      gui::ClassifyAxisPreset(gui::EffectiveAxisPresetZenith(column), column.azimuth, column.roll)),
+                  static_cast<int>(gui::AxisPreset::kColumn));
+
+      // Restore to factory takes BOTH faces: reopen, restore, save, and the node is gone.
+      panel.OpenOn(gui::DefaultsPanelSection::kPresets);
+      ctx->ItemOpen("**/###preset_Column");
+      ctx->Yield(2);
+      ctx->ItemInputValue("**/###preset_std_column", 0.3f);
+      ctx->Yield(3);
+      ctx->ItemClick("**/###preset_restore_column");
+      ctx->Yield(3);
+      SaveDefaultsPanel(ctx);
+      {
+        const json stored = ReadOverlayFile(panel.dir());
+        IM_CHECK(!ReadPresetType(stored, "column").has_value());
+        IM_CHECK(!ReadPresetStd(stored, "column").has_value());
+      }
+      IM_CHECK(!gui::GetUserAxisPresetZenithTypeOverride(gui::AxisPreset::kColumn).has_value());
+      IM_CHECK(!gui::GetUserAxisPresetZenithStdOverride(gui::AxisPreset::kColumn).has_value());
+    };
+  }
+
+  {
+    // A hand-edited file can hold a zenith_type this preset's classifier does not accept (a
+    // pasted-in Lowitz value under Column, say). The loader's ValidateAxisPresetZenithTypeForSave
+    // rejects it, so EffectiveCopyPresetZenith falls back to the factory type — the cell shows the
+    // untouched value. "(mine)" must agree: it would be a lie the raw JSON key tells that Save
+    // cannot correct, because Save writes back exactly what is already on screen (code-review
+    // round 1 Major #1 — has_override used to read the raw key instead of the same validated
+    // judgment the cell itself uses).
+    ImGuiTest* t =
+        IM_REGISTER_TEST(engine, "defaults_panel", "a_preset_zenith_type_outside_its_accepted_set_stays_unmarked");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ScopedPanel panel(ctx, "panel_preset_type_rejected_stays_unmarked");
+      // Written straight to the file before the panel ever opens — a hand edit, not a pick through
+      // the combo (the combo can only ever offer accepted values, so this path is unreachable any
+      // other way). No zenith_std alongside it: the claim is about the type face in isolation.
+      WriteRawOverlay(panel.dir(), R"({"presets":{"axis":{"column":{"zenith_type":"zigzag"}}}})");
+      panel.OpenOn(gui::DefaultsPanelSection::kPresets);
+
+      IM_CHECK_STR_EQ(DrawnLabel(ctx, "**/###preset_Column").c_str(), "Column###preset_Column");
+
+      // Not a labeling-only bug: the cell genuinely shows the factory type, so the title agrees
+      // with what is actually in effect rather than merely looking less alarming.
+      IM_CHECK_EQ(
+          static_cast<int>(gui::EffectiveAxisPresetZenith(gui::AxisPresetEntryFor(gui::AxisPreset::kColumn)).type),
+          static_cast<int>(gui::AxisDistType::kGauss));
+
+      // Restore agrees too: there is nothing valid to restore, so the button stays disabled rather
+      // than offering to undo a change that was never in effect.
+      ctx->ItemOpen("**/###preset_Column");
+      ctx->Yield(2);
+      const ImGuiTestItemInfo restore = ctx->ItemInfo("**/###preset_restore_column");
+      IM_CHECK(restore.ID != 0);
+      IM_CHECK(IsDisabled(restore));
     };
   }
 

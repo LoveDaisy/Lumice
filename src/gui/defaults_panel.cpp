@@ -301,8 +301,27 @@ std::optional<float> CopyPresetZenithStd(const AxisPresetEntry& entry) {
   return ReadAxisPresetZenithStdFromDoc(g_copy_doc, entry.id);
 }
 
+// The type face of the same question, from the same copy for the same reason.
+std::optional<AxisDistType> CopyPresetZenithType(const AxisPresetEntry& entry) {
+  return ReadAxisPresetZenithTypeFromDoc(g_copy_doc, entry.id);
+}
+
+// The type the copy holds, judged the way the loader would judge it: nullopt when there is none
+// OR when the one there is not in this preset's accepted set. The copy is the raw disk document
+// until the user commits, so a hand-edited Column with zigzag sits in it verbatim; showing that
+// as the selected type, or adopting it on Save, would put a type in effect the loader refuses.
+// The one place the panel decides what an out-of-set type in the copy means, so the cell, the
+// header's "(mine)" and CommitCopy cannot each decide differently.
+std::optional<AxisDistType> ValidCopyPresetZenithType(const AxisPresetEntry& entry) {
+  const auto stored = CopyPresetZenithType(entry);
+  if (!stored || !ValidateAxisPresetZenithTypeForSave(entry.id, *stored).accepted) {
+    return std::nullopt;
+  }
+  return stored;
+}
+
 // The zenith row §1 renders: the factory row with the copy's std substituted, clamped the way the
-// loader would clamp it.
+// loader would clamp it, and the copy's type substituted when it is one the loader would keep.
 //
 // The clamp matters for a value this session did not write — a hand-edited file can hold one
 // outside the domain, and the document keeps it verbatim until the user commits something. Showing
@@ -314,6 +333,9 @@ AxisDist EffectiveCopyPresetZenith(const AxisPresetEntry& entry) {
     if (clamped.accepted) {
       zenith.std = clamped.stored_value;
     }
+  }
+  if (const auto stored = ValidCopyPresetZenithType(entry)) {
+    zenith.type = *stored;
   }
   return zenith;
 }
@@ -365,6 +387,17 @@ bool CommitCopy(const GuiState& state) {
     const auto before = ReadAxisPresetZenithStdFromDoc(g_snapshot_doc, entry.id);
     if (after != before) {
       AdoptAxisPresetZenithStdOverrideInMemory(entry.id, after);
+    }
+    // The type face, same diff-and-adopt — but judged before it is adopted. The copy started as
+    // the raw disk document, so a hand-edited out-of-set type can be sitting in `next` without
+    // ever having passed the loader; adopting it raw would put in memory what the loader refuses.
+    // What is adopted is what the loader WOULD keep (ValidCopyPresetZenithType's rule), so a Save
+    // leaves memory reading the same as the next launch will.
+    const auto type_after = ReadAxisPresetZenithTypeFromDoc(next, entry.id);
+    const auto type_before = ReadAxisPresetZenithTypeFromDoc(g_snapshot_doc, entry.id);
+    if (type_after != type_before) {
+      const bool keep = type_after && ValidateAxisPresetZenithTypeForSave(entry.id, *type_after).accepted;
+      AdoptAxisPresetZenithTypeOverrideInMemory(entry.id, keep ? type_after : std::nullopt);
     }
   }
   // The wedge shortcuts follow the same disk-first rule, but as a whole-list adoption rather than a
@@ -787,7 +820,7 @@ void RenderReadOnlyAxisRow(const char* axis_label, const AxisDist& dist) {
 }
 
 // The Zenith row of a preset that HAS an adjustable face: identical to the read-only row except
-// the Std cell is live and the warning cell can fill.
+// the Type and Std cells are live and the warning cell can fill.
 void RenderEditableZenithRow(const AxisPresetEntry& entry) {
   const auto slot = static_cast<std::size_t>(entry.id);
   const AxisDist zenith = EffectiveCopyPresetZenith(entry);
@@ -797,12 +830,32 @@ void RenderEditableZenithRow(const AxisPresetEntry& entry) {
   ImGui::TextUnformatted("Zenith");
 
   ImGui::TableNextColumn();
-  ImGui::BeginDisabled();
-  int type_index = static_cast<int>(zenith.type);
+  // A combo over the SUBSET of types the classifier keeps this preset under, not the full
+  // kAxisDistTypeComboItems list greyed down: every entry the user can pick is one that leaves
+  // the preset recognised, so there is no refused state for this cell to report and no warning
+  // for it to raise — the only way an out-of-set type reaches the copy is a hand edit, which the
+  // load path already reports. BeginCombo + Selectable because the subset is a runtime list
+  // (AcceptedZenithTypesForPreset) rather than a fixed zero-separated string.
+  //
+  // Committed straight into the working copy on pick: a combo choice is atomic, so unlike the
+  // std input there is no "still typing" state to buffer.
   ImGui::SetNextItemWidth(-FLT_MIN);
   SetNextComboPopupTopMost();
-  ImGui::Combo("##type", &type_index, kAxisDistTypeComboItems);
-  ImGui::EndDisabled();
+  const std::string type_id = std::string("###preset_type_") + entry.override_json_name;
+  if (ImGui::BeginCombo(type_id.c_str(), AxisDistTypeLabel(zenith.type))) {
+    for (const ZenithTypeChoice& choice : AcceptedZenithTypesForPreset(entry.id)) {
+      const bool selected = choice.type == zenith.type;
+      if (ImGui::Selectable(choice.label, selected) && !selected) {
+        WriteAxisPresetZenithTypeToDoc(g_copy_doc, entry.id, choice.type);
+        g_status_message =
+            std::string("Press Save to store ") + choice.label + " as the " + entry.label + " zenith type.";
+      }
+      if (selected) {
+        ImGui::SetItemDefaultFocus();
+      }
+    }
+    ImGui::EndCombo();
+  }
 
   ImGui::TableNextColumn();
   ImGui::BeginDisabled();
@@ -864,7 +917,12 @@ void RenderEditableZenithRow(const AxisPresetEntry& entry) {
 // about ONE preset.
 void RenderPresetEntry(const AxisPresetEntry& entry) {
   const auto slot = static_cast<std::size_t>(entry.id);
-  const bool has_override = CopyPresetZenithStd(entry).has_value();
+  // Either face counts: a preset with only its type retuned is "mine" too, and its Restore button
+  // has something to restore. The type half reads through ValidCopyPresetZenithType rather than
+  // the raw CopyPresetZenithType — a hand-edited file can hold a type this preset's classifier does
+  // not accept, and that value is already treated as "no override" by EffectiveCopyPresetZenith; a
+  // raw read would show "(mine)" while every cell on the row displays the untouched factory values.
+  const bool has_override = CopyPresetZenithStd(entry).has_value() || ValidCopyPresetZenithType(entry).has_value();
 
   // Label carries "(mine)" for a preset the user has retuned, so the collapsed view already
   // answers "which of these have I changed" without opening all six.
@@ -883,6 +941,9 @@ void RenderPresetEntry(const AxisPresetEntry& entry) {
         "spread to tune. The values below are shown for reference.",
         entry.label);
   } else {
+    // The std domain has to be spelled out because the input accepts any number; the type's
+    // accepted set is not, because the combo beside it IS the set — a sentence repeating it
+    // would only push the next preset's table below the visible band.
     ImGui::TextWrapped("Zenith std must stay %s, otherwise this stops being recognised as %s.",
                        DescribeAxisPresetZenithStdDomain(entry.id).c_str(), entry.label);
   }
@@ -925,7 +986,10 @@ void RenderPresetEntry(const AxisPresetEntry& entry) {
       // wrote the file; dropping the override from an in-memory document has none, which is also
       // why the warning is now cleared unconditionally: the value it described is gone from the
       // copy, so there is no state in which it still applies.
+      // "Restore to factory" means every face this preset exposes, so both erasers run: each
+      // takes only its own key, and the node goes when the second one empties it.
       EraseAxisPresetZenithStdFromDoc(g_copy_doc, entry.id);
+      EraseAxisPresetZenithTypeFromDoc(g_copy_doc, entry.id);
       g_status_message = std::string(entry.label) + " will go back to its built-in value when you save.";
       g_preset_warnings.slots[slot].clear();
       RefreshPresetStdBuffers();

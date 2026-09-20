@@ -22,6 +22,7 @@
 
 #include "gui/annotation_anchors.hpp"
 #include "gui/app.hpp"
+#include "gui/axis_presets.hpp"
 #include "gui/export_fbo_renderer.hpp"
 #include "gui/field_editor_registry.hpp"
 #include "gui/gl_capture.hpp"
@@ -129,22 +130,16 @@ static bool RayAllocationFromJsonName(const std::string& spelled) {
 
 // ========== Shared helpers ==========
 
+// Thin wrappers over the shared AxisDistType <-> JSON name table (axis_presets.hpp), which the
+// user-defaults preset override also spells its zenith_type with. What stays here is this file's
+// own policy for a value the table does not know: an out-of-range enum is logged and written as
+// gauss, an unrecognised spelling is logged and read as gauss.
 static const char* AxisDistTypeToString(AxisDistType t) {
-  switch (t) {
-    case AxisDistType::kGauss:
-      return "gauss";
-    case AxisDistType::kUniform:
-      return "uniform";
-    case AxisDistType::kZigzag:
-      return "zigzag";
-    case AxisDistType::kLaplacian:
-      return "laplacian";
-    case AxisDistType::kGaussLegacy:
-      return "gauss_legacy";
-    default:
-      GUI_LOG_ERROR("[FileIO] Unknown AxisDistType: {}", static_cast<int>(t));
-      return "gauss";
+  if (static_cast<int>(t) < 0 || t >= AxisDistType::kCount) {
+    GUI_LOG_ERROR("[FileIO] Unknown AxisDistType: {}", static_cast<int>(t));
+    return AxisDistTypeJsonName(AxisDistType::kGauss);
   }
+  return AxisDistTypeJsonName(t);
 }
 
 static json SerializeAxisDist(const AxisDist& a) {
@@ -658,16 +653,9 @@ static bool IsDegenerateSingleTerm(const ExpandedFilter& ef) {
 }
 
 static AxisDistType ParseAxisDistType(const std::string& t) {
-  if (t == "gauss")
-    return AxisDistType::kGauss;
-  if (t == "uniform")
-    return AxisDistType::kUniform;
-  if (t == "zigzag")
-    return AxisDistType::kZigzag;
-  if (t == "laplacian")
-    return AxisDistType::kLaplacian;
-  if (t == "gauss_legacy")
-    return AxisDistType::kGaussLegacy;
+  if (const auto parsed = AxisDistTypeFromJsonName(t)) {
+    return *parsed;
+  }
   GUI_LOG_ERROR("[FileIO] Unknown axis dist type '{}', falling back to gauss", t);
   return AxisDistType::kGauss;
 }
