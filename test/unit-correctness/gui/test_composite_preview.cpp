@@ -554,10 +554,21 @@ TEST(CompositePreview, RerunningAtTheSameExposureReproducesTheSamePicture) {
   const Composite rerun = ReadComposite(srv);
   ASSERT_EQ(rerun.rgb.size(), first.rgb.size());
 
-  // Ratios rather than byte-equality: two independently seeded accumulations reach IDLE at slightly
-  // different batch boundaries, so ~10-15% run-to-run noise is expected. [0.8, 1.25] tolerates that
-  // while ruling out the ~4x the doubling bug produced. The unexposed anchor is the tighter of the
-  // two signals, being independent of EV altogether.
+  // Ratios rather than byte-equality: the two runs are independent Monte Carlo samples of the same
+  // scene (the crystal orientations are drawn afresh each commit), so the two pictures agree only
+  // statistically. Each window below is sized against the defect it must catch — the ~4x jump the
+  // doubling bug produced — not against the noise it must tolerate; a window fitted to the noise is
+  // exactly what went red five times in CI on diffs that never touched this code.
+  //
+  // The mean byte is an average over every pixel, so sampling noise largely cancels and [0.8, 1.25]
+  // has held on every CI run to date; it stays. p99 is a single order statistic on the tail, which
+  // averaging does not help — its run-to-run ratio has been observed at 0.748 and 1.333 on
+  // unchanged code — so its window is [0.5, 2.0]: the log-midpoint between "same picture" and the
+  // 4x defect, so the defect still overshoots the bound by 2x while the widest ratio seen so far
+  // sits 1.5x inside it on each side. Should this window ever go red again on unchanged code, the
+  // next step is not a wider window but a different assertion shape: commit the scene a third time
+  // with `intensity_factor` baked to 4.0 and assert that THAT re-run comes back ~4x — a controlled
+  // perturbation that a noise-fitted ratio band cannot be.
   const auto MeanByte = [](const Composite& c) {
     unsigned long long sum = 0;
     for (uint8_t v : c.rgb) {
@@ -571,8 +582,8 @@ TEST(CompositePreview, RerunningAtTheSameExposureReproducesTheSamePicture) {
   EXPECT_GT(mean_rerun / mean_first, 0.8);
   EXPECT_LT(mean_rerun / mean_first, 1.25);
   ASSERT_GT(first.p99, 0.0f);
-  EXPECT_GT(rerun.p99 / first.p99, 0.8);
-  EXPECT_LT(rerun.p99 / first.p99, 1.25);
+  EXPECT_GT(rerun.p99 / first.p99, 0.5);
+  EXPECT_LT(rerun.p99 / first.p99, 2.0);
 }
 
 // ---- Adding a class re-converges instead of stalling ----
