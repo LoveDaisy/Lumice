@@ -14,7 +14,16 @@
 // wholesale: there is nothing to compensate to.
 //
 // The frame-level half — that an Immediate modal really does not push into the new document — is
-// test/gui/functional/test_edit_modal.cpp's a_new_document_closes_the_immediate_editor_before_it_can_push.
+// not covered by a dedicated test today; it follows mechanically from the gate above, not from a
+// separate mechanism: RenderEditModals (edit_modals.cpp) only calls PullBuffersFromPool and only
+// reaches the Immediate branch's push/draw when g_active_modal == ActiveModal::kOpen, and
+// CloseEditModalOnDocumentReset() (exercised by every case below) sets it to kNone before any
+// later frame renders. Once that guard is false there is no frame left in which the old buffers
+// could be pushed into the new pool. The same call site and gate are what the Staged case in
+// test/gui/functional/test_edit_modal.cpp (a_new_document_closes_the_editor_and_its_uncommitted_edit)
+// exercises for the Staged branch, and AC1's functional/*exclude* cases exercise the same
+// per-frame pull/push machinery this closes off — neither is a substitute for a dedicated
+// Immediate-mode frame-level case, which remains a gap should this gate ever be relaxed.
 
 #include <gtest/gtest.h>
 
