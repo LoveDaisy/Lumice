@@ -29,13 +29,11 @@
 //      that routed it through ProjectAndClassifyRay.
 
 #include <gtest/gtest.h>
-#include <spdlog/sinks/ostream_sink.h>
 
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
-#include <sstream>
 #include <string>
 #include <vector>
 
@@ -47,11 +45,14 @@
 #include "core/worker_projection.hpp"
 #include "server/render.hpp"
 #include "server/server.hpp"
+#include "support/log_capture.hpp"
 #include "support/thread_budget.hpp"
-#include "util/logger.hpp"
 
 namespace lumice {
 namespace {
+
+using test::CountOccurrences;
+using test::LogCapture;
 
 constexpr float kWl = 550.0f;
 
@@ -180,28 +181,6 @@ Accumulated WorkerArm(const SimData& batch, const std::vector<RenderConfig>& ren
   RenderConsumer rc(cfg, lumice::test::kTestThreadBudget, classes, SunParam{ 0.0f, 0.0f, 0.5f }, renderer_index);
   rc.Consume(projected);
   return Snapshot(rc, classes.classes_.size());
-}
-
-class LogCapture {
- public:
-  LogCapture() : sink_(std::make_shared<spdlog::sinks::ostream_sink_mt>(oss_)) { GetSharedSink()->add_sink(sink_); }
-  ~LogCapture() { GetSharedSink()->remove_sink(sink_); }
-  LogCapture(const LogCapture&) = delete;
-  LogCapture& operator=(const LogCapture&) = delete;
-
-  std::string Text() const { return oss_.str(); }
-
- private:
-  std::ostringstream oss_;
-  std::shared_ptr<spdlog::sinks::ostream_sink_mt> sink_;
-};
-
-int CountOccurrences(const std::string& text, const std::string& needle) {
-  int n = 0;
-  for (size_t pos = text.find(needle); pos != std::string::npos; pos = text.find(needle, pos + needle.size())) {
-    ++n;
-  }
-  return n;
 }
 
 // -----------------------------------------------------------------------------

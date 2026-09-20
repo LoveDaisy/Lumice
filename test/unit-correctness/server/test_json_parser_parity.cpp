@@ -1,5 +1,4 @@
 #include <gtest/gtest.h>
-#include <spdlog/sinks/ostream_sink.h>
 
 #include <algorithm>
 #include <cstdint>
@@ -19,8 +18,8 @@
 #include "config/config_manager.hpp"
 #include "include/lumice.h"
 #include "server/c_api_internal.hpp"  // ConfigScratch + ParseConfigString + ConfigToJson (internal)
-#include "util/color_space.hpp"       // SrgbToLinear (the JSON boundary conversion under test)
-#include "util/logger.hpp"            // GetSharedSink (dead-key warning capture)
+#include "support/log_capture.hpp"
+#include "util/color_space.hpp"  // SrgbToLinear (the JSON boundary conversion under test)
 
 // Differential tests: core's native config parser (config/*::from_json) vs the C API JSON parser
 // behind ParseConfigString / LUMICE_SceneFromJson (server/c_api.cpp::JsonToConfig).
@@ -1414,27 +1413,7 @@ TEST(JsonParserParity, BackgroundNonZeroRoundTripsIdenticallyBothParsers) {
 // Orthogonal to the sRGB/linear parity above and deliberately grouped apart from it: what is
 // asserted here is that neither parser stays silent about a key it cannot use.
 
-// Captures everything the global logger emits for the lifetime of the object. RAII rather than a
-// manual remove_sink, because GetSharedSink() is a process-wide singleton: an ASSERT_* returning
-// early with the sink still attached would leave later tests in this binary writing into a
-// destroyed ostringstream.
-class LogCapture {
- public:
-  LogCapture() : sink_(std::make_shared<spdlog::sinks::ostream_sink_mt>(oss_)) {
-    lumice::GetSharedSink()->add_sink(sink_);
-  }
-
-  ~LogCapture() { lumice::GetSharedSink()->remove_sink(sink_); }
-
-  LogCapture(const LogCapture&) = delete;
-  LogCapture& operator=(const LogCapture&) = delete;
-
-  std::string Text() const { return oss_.str(); }
-
- private:
-  std::ostringstream oss_;
-  std::shared_ptr<spdlog::sinks::ostream_sink_mt> sink_;
-};
+using lumice::test::LogCapture;
 
 // A render block carrying only the misspelling, so the warning is the sole observable effect.
 std::string RenderWithDeadBackgroundColorKey() {

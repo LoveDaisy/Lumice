@@ -1,5 +1,4 @@
 #include <gtest/gtest.h>
-#include <spdlog/sinks/ostream_sink.h>
 
 #include <algorithm>
 #include <array>
@@ -15,7 +14,6 @@
 #include <memory>
 #include <nlohmann/json.hpp>
 #include <set>
-#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -30,7 +28,7 @@
 #include "include/lumice.h"
 #include "server/c_api_internal.hpp"  // ConfigScratch(+Guard) + ParseConfigString + ConfigToJson (internal)
 #include "support/env_var.hpp"
-#include "util/logger.hpp"
+#include "support/log_capture.hpp"
 
 // Regression guard (task-fix-stats-ray-count-u32-overflow): ray-count fields must be
 // 64-bit so totals > 2^32 never truncate on Windows, where `unsigned long` is 32-bit
@@ -616,29 +614,9 @@ static std::string MakeMinimalConfigJson() {
   return root.dump();
 }
 
+using lumice::test::LogCapture;
+
 // Helper: build a full config JSON with pyramid, filters, scattering.
-// Captures everything the core logger emits for the lifetime of the object.
-// RAII rather than a manual remove_sink at the end of each test, because
-// GetSharedSink() is a process-wide singleton: an ASSERT_* returning early with
-// the sink still attached would leave later tests in this binary writing into a
-// destroyed ostringstream.
-class LogCapture {
- public:
-  LogCapture() : sink_(std::make_shared<spdlog::sinks::ostream_sink_mt>(oss_)) {
-    lumice::GetSharedSink()->add_sink(sink_);
-  }
-
-  ~LogCapture() { lumice::GetSharedSink()->remove_sink(sink_); }
-
-  LogCapture(const LogCapture&) = delete;
-  LogCapture& operator=(const LogCapture&) = delete;
-
-  std::string Text() const { return oss_.str(); }
-
- private:
-  std::ostringstream oss_;
-  std::shared_ptr<spdlog::sinks::ostream_sink_mt> sink_;
-};
 
 static std::string MakeFullConfigJson() {
   nlohmann::json root;
