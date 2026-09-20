@@ -211,7 +211,7 @@
 
 两条与文件形态相关的连带约束：
 
-- **`schema_version` 与 `defaults_schema_version` 是两个键，不是一个。** 前者是 `SerializeGuiStateJson` 的输出里本来就有的根键（因此被 `kDiffEngineExcludedRootKeys` 排除在 diff 行之外），后者是覆盖文件自己的。同名复用会让同一份合并文档里一个键承载两种含义，打开文件的人无从区分。另外，`ApplyUserDefaultsOverlay` 的 merge 是 `merge_patch`，磁盘文档里任何与工厂文档同名的根键都会覆盖合并结果里的那个（值为 `null` 时更是直接**删除**该键）——所以 `BuildMergedOverlayDocument` 在 merge 之后无条件把 `schema_version` 回写成当前构建值：喂给反序列化器的那份文档描述的是**它自己**，不是它读过的文件。今天无害（反序列化器不读它），它咬人的那天正是版本号开始被用上的那天。
+- **`schema_version` 与 `defaults_schema_version` 是两个键，不是一个。** 前者是 `SerializeGuiStateJson` 的输出里本来就有的根键（因此被 `kDiffEngineExcludedRootKeys` 排除在 diff 行之外），后者是覆盖文件自己的。同名复用会让同一份合并文档里一个键承载两种含义，打开文件的人无从区分。另外，`ApplyUserDefaultsOverlay` 的 merge 是 `merge_patch`，磁盘文档里任何与工厂文档同名的根键都会覆盖合并结果里的那个（值为 `null` 时更是直接**删除**该键）——所以 `BuildMergedOverlayDocument` 在 merge 之后无条件把 `schema_version` 回写成当前构建值：喂给反序列化器的那份文档描述的是**它自己**，不是它读过的文件。今天无害（反序列化器不读它），它咬人的那天正是版本号开始被用上的那天。`SerializeGuiStateJson` 还写第三个非字段根键 `app_version`（写盘那个构建的产品版本，`LUMICE_GetVersionString()`，纯来源戳）：同样进 `kDiffEngineExcludedRootKeys`，但**不做**这种 merge 之后的回写——它不参与任何分派、反序列化器永远不读，合并文档里这个键取谁的值都不可观察，防御要等有已证实的代价才立（把它当分派键的那天，再加那一行）。
 - **"只含一个版本戳"必须继续读作"没有个人默认值"。** 用户把所有默认值都改回出厂值后，文件从 `{}` 变成只剩这一个键。任何回答"这个用户有没有个人默认值"的判断都不得因此翻面——今天这样的判断只有 `ApplyUserDefaultsOverlay` 的早退一处，它按键名忽略版本戳。
 
 ### 8.10 用户配置只由**显式 Save** 写入——本仓库没有任何"记住上次选择"的粘滞机制
