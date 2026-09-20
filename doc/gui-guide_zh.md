@@ -56,7 +56,8 @@ GUI 需要 display server 和支持 OpenGL 3.2 Core Profile 的 GPU。
     屏幕上显示的那层 overlay，要干净的图就在 Overlay 面板里关掉对应的族。
 - **Colors / Analysis / Summary**：三个按钮各自打开一个独立的非模态窗口，可与预览并排——光路染色类、光路分析工具，
   以及只读的 **Summary**：把当前配置摊成一页（版本号、太阳、仿真、渲染设置，再逐层列出每个条目的晶体、形状、
-  朝向与 filter），专为截图分享而排。Summary 没有自己的导出按钮：用操作系统自带的截图工具截取即可
+  朝向与 filter），左右两栏排版、一屏 1280 × 900 看全，专为截图分享而排——每一行用面板自己的标签，
+  且只印面板此刻显示的行（Sky Color 与 Paper Color 二者取一）。Summary 没有自己的导出按钮：用操作系统自带的截图工具截取即可
   （macOS ⌘⇧4、Windows Win+Shift+S、Linux 用桌面环境的等价快捷键）。详见
   [用户手册 — 配置总结](user-manual/07-config-summary_zh.md)。
 - **右面板折叠按钮**：`<` / `>` 与左侧对称（也可用快捷键 `]`）。

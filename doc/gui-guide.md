@@ -62,8 +62,10 @@ From left to right, the Top Bar exposes:
 - **Colors / Analysis / Summary**: three buttons that each open an independent, non-modal window
   beside the preview — the raypath colour classes, the Raypath Analysis tool, and the read-only
   **Summary**, one page of the current configuration (version, sun, simulation, render settings,
-  then every layer with its entries' crystal, shape, axis and filter) laid out to be screenshotted
-  and shared. The Summary has no export button of its own: take the picture with your operating
+  then every layer with its entries' crystal, shape, axis and filter) laid out in two columns to
+  fit one 1280 × 900 screen and be screenshotted and shared — each row under the label the panel
+  itself uses, and only the rows the panel currently shows (Sky Color or Paper Color, never both).
+  The Summary has no export button of its own: take the picture with your operating
   system's screenshot tool (⌘⇧4 on macOS, Win+Shift+S on Windows, or your desktop's equivalent on
   Linux). See [User Manual — Configuration Summary](user-manual/07-config-summary.md).
 - **Right panel collapse**: `<` / `>` mirror the left toggle (also bound to the `]` key).
