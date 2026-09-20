@@ -16,6 +16,7 @@
 #include "gui/field_editor_registry.hpp"
 #include "gui/gui_constants.hpp"
 #include "gui/gui_state.hpp"
+#include "gui/input_text_reload.hpp"
 #include "gui/raypath_segments.hpp"  // FormatSummandText (non-degenerate SoP summary)
 #include "gui/semantic_colors.hpp"
 #include "gui/shape_scalar_domain.hpp"

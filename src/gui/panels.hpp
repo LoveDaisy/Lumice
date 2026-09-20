@@ -4,7 +4,6 @@
 // Full include (not forward declaration) because RenderAxisDist takes AxisDist by reference,
 // requiring the complete type definition. This propagates gui_state.hpp to all includers.
 #include "gui/gui_state.hpp"
-#include "imgui.h"  // ImGuiID, for ReloadInputTextIfActive
 
 namespace lumice::gui {
 
@@ -146,28 +145,12 @@ void SetNextComboPopupTopMost();
 // Render axis distribution controls (combo + mean + std sliders).
 // Returns true if any value changed. Does NOT call MarkDirty() — caller is responsible.
 // `reload_active_inputs`: true on a frame `axis` was replaced from outside the widgets (the edit
-// modal's pull from the pool) — see ReloadInputTextIfActive below for what that costs if omitted.
+// modal's pull from the pool) — see gui/input_text_reload.hpp for what that costs if omitted.
 bool RenderAxisDist(const char* label, AxisDist& axis, float mean_min, float mean_max, bool reload_active_inputs);
 
-// ---- Reload-if-active: an InputText under a value that changed by other means than typing ----
-//
-// ImGui's InputText keeps a private copy of the text it is editing for as long as it is the active
-// widget, and while it is, that copy has priority over the buffer the caller passes in: on every
-// frame the two differ, the widget writes its copy BACK over the buffer (imgui_widgets.cpp,
-// InputTextEx: "as soon as the input box is active, the in-widget value gets priority over any
-// underlying modification of the input buffer"). InputFloat is an InputText over a per-frame
-// formatting of the float, so the same holds for it. A value the edit modal pulls in from the pool
-// underneath an active box is therefore undone one frame later — silently, and for good, since the
-// pull's baseline has already moved on — unless the widget is told to reload from the buffer first
-// (ImGuiInputTextState::ReloadUserBufAndSelectAll, ImGui's own remedy for #2890).
-//
-// Call these right before submitting the widget, in the same ID scope it is submitted in, on the
-// frame the value underneath it changed. A no-op unless `id` is the active widget, so calling them
-// on a frame nothing changed costs a comparison. ReloadSliderInputIfActive derives the id of the
-// input box SliderWithInput renders from `label` — the "##<label>_input" rule lives in one place
-// (FormatSliderInputId in panels.cpp) so the two cannot disagree on which box that is.
-void ReloadInputTextIfActive(ImGuiID id);
-void ReloadSliderInputIfActive(const char* label);
+// The reload-if-active helpers `reload_active_inputs` above refers to are declared in
+// gui/input_text_reload.hpp, not here: this header is included by targets that never see ImGui
+// (unit_correctness_test reaches it through shape_scalar_domain.hpp), and ImGuiID is an ImGui type.
 
 // ---- Shape distribution controls (crystal geometry randomization) ----
 
@@ -217,7 +200,7 @@ void ShapeTableParamLabel(const char* label);
 // site, which made "what does Prism H allow" a fact about the caller rather than about the field.
 // Returns true if any value changed. Does NOT call MarkDirty() — caller is responsible.
 // `reload_active_inputs`: true on a frame the slot's ShapeDist was replaced from outside the widgets
-// (the edit modal's pull from the pool) — see ReloadInputTextIfActive above.
+// (the edit modal's pull from the pool) — see gui/input_text_reload.hpp.
 bool RenderShapeDistTableRow(const char* label, CrystalConfig& cr, int slot, bool reload_active_inputs);
 
 // ---- Axis preset classification ----

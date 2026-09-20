@@ -23,6 +23,7 @@
 #include "gui/file_io.hpp"  // SummarizeSopExpansion (Step 3 AC4 live preview)
 #include "gui/gui_constants.hpp"
 #include "gui/gui_state.hpp"
+#include "gui/input_text_reload.hpp"
 #include "gui/panels.hpp"
 #include "gui/raypath_segments.hpp"
 #include "gui/semantic_colors.hpp"
