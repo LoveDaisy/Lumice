@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1789869284416,
+  "lastUpdate": 1789869287690,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -4770,54 +4770,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "6c798112109aa5fb9e2f85564fd0f9bfb59e0259",
-          "message": "Merge pull request #285 from LoveDaisy/task/user-defaults-schema-version\n\n给 user_defaults.json 盖上独立的 schema 版本戳（只记录，不设闸，不迁移）",
-          "timestamp": "2026-08-31T08:46:01+08:00",
-          "tree_id": "c6063d0d04375864505dbcfd05c8f5eba511d092",
-          "url": "https://github.com/LoveDaisy/ice_halo_sim/commit/6c798112109aa5fb9e2f85564fd0f9bfb59e0259"
-        },
-        "date": 1788137858703,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 904543.4,
-            "unit": "rays/sec",
-            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 1177620.9,
-            "unit": "rays/sec",
-            "extra": "CPU: Neoverse-N2\\nCores: 4"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 772439.1,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 7763 64-Core Processor\\nCores: 4"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 657129.7,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "034ab22193bfe8cf4e9efb4aac1599e82c5e3308",
           "message": "Merge pull request #286 from LoveDaisy/feat/adjustable-background-color\n\n可调背景颜色：GUI/CLI 五路一致 + core 定义域掩码 + 注记层处置",
           "timestamp": "2026-08-31T12:48:11+08:00",
@@ -9510,6 +9462,48 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 574937,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "61b01911736670be1cb86ee587fc006d12b7eefd",
+          "message": "Merge pull request #383 from LoveDaisy/fix/cuda-drain-window-fp32-plane\n\nfix(cuda): fold the fp32 XYZ device plane into a double plane every 8 batches (drain-window ledger drift)",
+          "timestamp": "2026-09-20T09:41:39+08:00",
+          "tree_id": "7251f6578c75bb2a709a992bf46e1bc045a57fe2",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/61b01911736670be1cb86ee587fc006d12b7eefd"
+        },
+        "date": 1789869287207,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "Ubuntu ARM64",
+            "value": 1019977.3,
+            "unit": "rays/sec",
+            "extra": "CPU: Neoverse-N2\\nCores: 4"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 711925.3,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 7763 64-Core Processor\\nCores: 4"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 579884.5,
             "unit": "rays/sec",
             "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
           }
