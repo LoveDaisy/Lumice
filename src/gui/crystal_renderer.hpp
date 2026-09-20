@@ -10,6 +10,8 @@ enum class CrystalStyle { kWireframe, kHiddenLine, kXRay, kShaded };
 
 inline const char* const kCrystalStyleNames[] = { "Wireframe", "Hidden Line", "X-Ray", "Shaded" };
 constexpr int kCrystalStyleCount = 4;
+static_assert(sizeof(kCrystalStyleNames) / sizeof(kCrystalStyleNames[0]) == kCrystalStyleCount,
+              "kCrystalStyleNames length must match kCrystalStyleCount");
 
 class CrystalRenderer {
  public:

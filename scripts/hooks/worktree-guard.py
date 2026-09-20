@@ -124,8 +124,9 @@ RULE_LOCATION = 'AGENTS.md, "Collaboration Constraints"'
 SETTINGS_RELPATH = os.path.join(".claude", "settings.local.json")
 SETTINGS_COMMAND = (
     'f="$CLAUDE_PROJECT_DIR/scripts/hooks/worktree-guard.py"; '
-    'if [ -f "$f" ]; then python3 "$f" claude-pretooluse; '
-    'else echo "worktree-guard: $f not in this checkout (guard did not run; edit not blocked)" >&2; exit 1; fi'
+    'if [ ! -f "$f" ]; then echo "worktree-guard: $f not in this checkout (guard did not run; edit not blocked)" >&2; exit 1; fi; '
+    'if ! command -v python3 >/dev/null 2>&1; then echo "worktree-guard: python3 not found (guard did not run; edit not blocked)" >&2; exit 1; fi; '
+    'python3 "$f" claude-pretooluse'
 )
 SETTINGS_SNIPPET = {
     "hooks": {
@@ -294,6 +295,8 @@ def run_claude_pretooluse() -> int:
         payload = json.loads(raw) if raw.strip() else {}
     except json.JSONDecodeError as exc:
         return _warn(f"stdin is not JSON ({exc})")
+    if not isinstance(payload, dict):
+        return _warn("stdin JSON is not an object")
 
     tool_name = payload.get("tool_name")
     if tool_name not in GUARDED_TOOLS:
