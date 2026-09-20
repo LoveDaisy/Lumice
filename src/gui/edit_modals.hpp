@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 
+#include "gui/gui_state.hpp"
 #include "include/lumice.h"
 
 struct GLFWwindow;
@@ -135,6 +136,18 @@ void RenderSpectrumModal(GuiState& state);
 // Returns false when no modal is open or the entry index is invalid.
 // Intended for GUI test assertions; production code should not call this.
 bool IsCurrentModalDApplicable();
+
+// A copy of the open modal's edit buffers — what its Crystal / Axis / Filter tabs are showing —
+// so a test can compare what the user sees against the pool without reading widgets. Default
+// values when no modal is open. Intended for GUI test assertions; production code should not call
+// this: the buffers are the modal's own, and the pool is the document.
+struct EditModalBuffers {
+  CrystalConfig crystal;
+  AxisDist axis[3];                      // zenith, azimuth, roll
+  FilterConfig filter_top;               // name / action / sym_*; `param` is always empty here
+  std::vector<std::string> filter_rows;  // one string per OR row, blank rows included
+};
+EditModalBuffers GetEditModalBuffers();
 
 // One row of the wedge-angle preset dropdown. It declares only the Miller indices (h, l; k is
 // always 0 — that is what the {h,0,-h,l} notation means, not an omission); `label` and `value` are

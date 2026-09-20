@@ -1574,6 +1574,23 @@ void ClearAxisCustomMemory() {
   g_axis_custom_memory.clear();
 }
 
+EditModalBuffers GetEditModalBuffers() {
+  EditModalBuffers out;
+  if (g_active_modal != ActiveModal::kOpen) {
+    return out;
+  }
+  out.crystal = g_crystal_buf;
+  out.axis[0] = g_axis_buf[0];
+  out.axis[1] = g_axis_buf[1];
+  out.axis[2] = g_axis_buf[2];
+  out.filter_top = g_filter_top;
+  out.filter_rows.reserve(g_summand_rows.size());
+  for (const SummandRowBuf& row : g_summand_rows) {
+    out.filter_rows.emplace_back(row.text);
+  }
+  return out;
+}
+
 bool IsCurrentModalDApplicable() {
   const int ly = g_modal_layer_idx;
   const int en = g_modal_entry_idx;
