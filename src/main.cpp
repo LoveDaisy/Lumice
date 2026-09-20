@@ -391,6 +391,7 @@ void PrintTopLevelUsage(const char* prog_name) {
   std::cout << "Usage: " << prog_name << " [render] -f <config_file> [options]\n"
             << "       " << prog_name << " benchmark -f <config_file> [options]\n"
             << "       " << prog_name << " analyze -f <config_file> [options]\n"
+            << "       " << prog_name << " --version\n"
             << "       " << prog_name << " <subcommand> -h\n"
             << "\n"
             << "Lumice — simulate ice halos by tracing rays through ice crystals.\n"
@@ -2262,6 +2263,18 @@ int main(int argc, char** argv) {
     return rc;
   }
 #endif
+  // `--version` is a top-level flag, not a shared option: print the product version and leave,
+  // with nothing else on stdout so a script can consume the line as-is. It sits after the
+  // delay-load block above on purpose -- LUMICE_GetVersionString is a LUMICE_* call, and on the
+  // Windows shared build the engine DLL must be loaded before the first one.
+  if (argc > 1 && std::string_view(argv[1]) == "--version") {
+    std::cout << LUMICE_GetVersionString() << "\n";
+    return 0;
+  }
+  // The first log line of every real run (render / benchmark / analyze): which build wrote
+  // everything below it. stderr, like every other diagnostic; stdout stays the product's.
+  LOG_INFO("Lumice {}", LUMICE_GetVersionString());
+
   // Subcommand dispatch. `argv[1]` is the subcommand only when it spells one; every
   // other argv[1] — an option, or nothing — is the implicit `render`, whose options
   // then start at argv[1] instead of argv[2] and whose help is the top-level page.
