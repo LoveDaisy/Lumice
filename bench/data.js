@@ -1,56 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1789912856077,
+  "lastUpdate": 1789916685968,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "32515f9970bfd614540c36dece2c55fe71eee1a6",
-          "message": "Merge pull request #294 from LoveDaisy/chore/annotation-doc-and-diagnostics-gaps\n\nchore(doc/cli): 补 zenith_nadir schema 文档；renderer 超限诊断指向真正的上限",
-          "timestamp": "2026-09-02T13:14:20+08:00",
-          "tree_id": "377cc3a2fbdf13228f8c678cf3391e0e9631022c",
-          "url": "https://github.com/LoveDaisy/ice_halo_sim/commit/32515f9970bfd614540c36dece2c55fe71eee1a6"
-        },
-        "date": 1788326817910,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 388276.2,
-            "unit": "rays/sec",
-            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 582699.3,
-            "unit": "rays/sec",
-            "extra": "CPU: Neoverse-N2\\nCores: 4"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 397483.7,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 7763 64-Core Processor\\nCores: 4"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 348484.5,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -4728,6 +4680,54 @@ window.BENCHMARK_DATA = {
             "value": 311437.6,
             "unit": "rays/sec",
             "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "15a0baf562499726ca8be28b5ac5780a16af813f",
+          "message": "Merge pull request #395 from LoveDaisy/feat/axis-preset-type-override\n\nfeat(gui): preset library — zenith type is editable within each preset's accepted set (task-587)",
+          "timestamp": "2026-09-20T22:53:50+08:00",
+          "tree_id": "49dabf2ddaaebcc7d0fc14e6aa16353b02010817",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/15a0baf562499726ca8be28b5ac5780a16af813f"
+        },
+        "date": 1789916684257,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 386793.2,
+            "unit": "rays/sec",
+            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 511241.2,
+            "unit": "rays/sec",
+            "extra": "CPU: Neoverse-N2\\nCores: 4"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 361789.7,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 7763 64-Core Processor\\nCores: 4"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 369051.9,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 9V74 80-Core Processor                \\nCores: 4"
           }
         ]
       }
