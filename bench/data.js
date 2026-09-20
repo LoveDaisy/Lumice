@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1789908528477,
+  "lastUpdate": 1789908530411,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9476,50 +9476,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "03e21b4dd2baadc1325958ed61d1293e3d6434c9",
-          "message": "Merge pull request #291 from LoveDaisy/feat/fisheye-domain-widening\n\nfeat(core): 单镜头鱼眼定义域按 lens 放宽到 θ≤180，与 GUI 对齐",
-          "timestamp": "2026-09-01T15:17:01+08:00",
-          "tree_id": "db0ee29334ec16918d95c3230818b73c6aa64f80",
-          "url": "https://github.com/LoveDaisy/ice_halo_sim/commit/03e21b4dd2baadc1325958ed61d1293e3d6434c9"
-        },
-        "date": 1788247630723,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 85.3,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 99.4,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 96.2,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 96.9,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "a6034051812988c3e1fb7639296b5d3fbdbf8375",
           "message": "Merge pull request #292 from LoveDaisy/feat/core-annotation-layer\n\nfeat(core): 注解层补齐——辅助线与文字 label 收敛为 core 单一来源",
           "timestamp": "2026-09-02T04:45:19+08:00",
@@ -13804,6 +13760,45 @@ window.BENCHMARK_DATA = {
           {
             "name": "Ubuntu ARM64",
             "value": 99.8,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "distinct": true,
+          "id": "81e8d18a17511e66af4f6e17ce5e75a7c7996daf",
+          "message": "Merge pull request #392 from LoveDaisy/chore/test-hygiene-sweep\n\nchore: test hygiene sweep — shared LogCapture, static_assert, wire-table test, guard hardening (chore-584)",
+          "timestamp": "2026-09-20T20:34:42+08:00",
+          "tree_id": "06eb85faf160e5faed09fee676e77bd65d583e70",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/81e8d18a17511e66af4f6e17ce5e75a7c7996daf"
+        },
+        "date": 1789908529926,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 92,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 98.7,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 91.8,
             "unit": "%"
           }
         ]
