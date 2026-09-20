@@ -1912,18 +1912,20 @@ __global__ void shuffle_cont_kernel(const float* __restrict__    in_d,
 // Third-clock precision fold (TraceBackend::FoldDeviceXyzBatch). The emit gate
 // atomicAdds every exit into the fp32 plane `src`; left alone for a whole drain
 // window (64 batches) a hot pixel's chain gets long enough that its ulp swallows
-// the small weights and the plane drifts ±0.4% against the host's double ledger
-// — the same defect the landed-weight scalar had, one level down. This kernel
+// the small weights and the plane measurably drifts against the host's double
+// ledger (doc/gpu-single-engine-implementation.md §10 has the figure, the single
+// measurement point) — the same defect the landed-weight scalar had, one level
+// down. This kernel
 // runs on the session stream every Simulator::kXyzFoldEveryBatches (8) batches,
 // after that batch's emit kernels and before the next batch's, so it is the
 // only writer of these addresses while it runs: no atomics needed.
 // `fold[i] += src[i]` widens the last 8 batches' partial sum to double,
 // `src[i] = 0` restarts the fp32 chain, and the plane's window total
 // accumulates in `fold` with double's ulp instead of float's. Eight, not one:
-// every pass reads the whole plane, and a pass per batch was measured at
-// -22.5% throughput on a dense 2048x1024 scene; one pass per 8 batches keeps
-// the chain short enough that the window total stays within 0.05% of the host
-// ledger at a fraction of that cost (-11.0%/-5.9% on the two reference boxes).
+// every pass reads the whole plane, and a pass per batch pays measurably more
+// throughput than this 8-batch cadence for a drift improvement below the
+// cadence's own margin — see doc/gpu-single-engine-implementation.md §10 for
+// the throughput/drift numbers across cadences, the single measurement point.
 //
 // A batch of 262144 rays touches a small fraction of a multi-megapixel plane, so
 // the kernel reads every fp32 element (that read is the cost floor) but only

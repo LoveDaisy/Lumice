@@ -1,8 +1,5 @@
-#include <spdlog/sinks/ostream_sink.h>
-
 #include <memory>
 #include <nlohmann/json.hpp>
-#include <sstream>
 #include <string>
 #include <variant>
 
@@ -10,7 +7,7 @@
 #include "config/crystal_config.hpp"
 #include "core/math.hpp"
 #include "gtest/gtest.h"
-#include "util/logger.hpp"
+#include "support/log_capture.hpp"
 
 // Shape-scalar sync groups, config side: canonical form, leader normalization,
 // JSON codec and the equality predicate that drives re-simulation.
@@ -19,26 +16,7 @@ namespace {
 
 namespace ns = lumice;
 
-// Captures everything the global logger emits for the lifetime of the object.
-// RAII rather than a manual remove_sink at the end of each test, because
-// GetSharedSink() is a process-wide singleton: an ASSERT_* returning early with
-// the sink still attached would leave later tests in this binary writing into a
-// destroyed ostringstream.
-class LogCapture {
- public:
-  LogCapture() : sink_(std::make_shared<spdlog::sinks::ostream_sink_mt>(oss_)) { ns::GetSharedSink()->add_sink(sink_); }
-
-  ~LogCapture() { ns::GetSharedSink()->remove_sink(sink_); }
-
-  LogCapture(const LogCapture&) = delete;
-  LogCapture& operator=(const LogCapture&) = delete;
-
-  std::string Text() const { return oss_.str(); }
-
- private:
-  std::ostringstream oss_;
-  std::shared_ptr<spdlog::sinks::ostream_sink_mt> sink_;
-};
+using lumice::test::LogCapture;
 
 ns::Distribution Gauss(float mean, float std) {
   return ns::Distribution{ ns::DistributionType::kGaussian, mean, std };

@@ -20,13 +20,11 @@
 // such, rather than as evidence of the new property.
 
 #include <gtest/gtest.h>
-#include <spdlog/sinks/ostream_sink.h>
 
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <memory>
-#include <sstream>
 #include <string>
 #include <vector>
 
@@ -40,11 +38,14 @@
 #include "server/anchor_consumer.hpp"
 #include "server/render.hpp"
 #include "server/server.hpp"
+#include "support/log_capture.hpp"
 #include "support/thread_budget.hpp"
-#include "util/logger.hpp"
 
 namespace lumice {
 namespace {
+
+using test::CountOccurrences;
+using test::LogCapture;
 
 constexpr float kWl = 550.0f;
 
@@ -318,32 +319,6 @@ TEST(AnchorConsumer, VisibleIsNotAnAnchorInput) {
   (void)LegacyAnchorFor(data, upper);
   (void)LegacyAnchorFor(data, lower);
   EXPECT_FLOAT_EQ(AnchorFor(data), once);
-}
-
-// Captures everything the global sink receives for the object's lifetime — the same RAII shape
-// test_print_mode_colour_exclusions.cpp uses, for the same reason: GetSharedSink() is a
-// process-wide singleton, so an early return with the sink still attached would leave later
-// cases writing into a destroyed ostringstream.
-class LogCapture {
- public:
-  LogCapture() : sink_(std::make_shared<spdlog::sinks::ostream_sink_mt>(oss_)) { GetSharedSink()->add_sink(sink_); }
-  ~LogCapture() { GetSharedSink()->remove_sink(sink_); }
-  LogCapture(const LogCapture&) = delete;
-  LogCapture& operator=(const LogCapture&) = delete;
-
-  std::string Text() const { return oss_.str(); }
-
- private:
-  std::ostringstream oss_;
-  std::shared_ptr<spdlog::sinks::ostream_sink_mt> sink_;
-};
-
-int CountOccurrences(const std::string& text, const std::string& needle) {
-  int n = 0;
-  for (size_t pos = text.find(needle); pos != std::string::npos; pos = text.find(needle, pos + needle.size())) {
-    ++n;
-  }
-  return n;
 }
 
 // A device-fused batch whose anchor plane has the wrong size is refused, and the refusal is
