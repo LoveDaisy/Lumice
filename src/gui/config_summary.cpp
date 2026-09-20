@@ -1,11 +1,14 @@
 #include "gui/config_summary.hpp"
 
+#include <algorithm>
+#include <cctype>
 #include <cstdio>
 #include <optional>
 #include <utility>
 
 #include "gui/axis_presets.hpp"
 #include "gui/defaults_diff.hpp"
+#include "gui/field_editor_registry.hpp"
 #include "gui/file_io.hpp"
 #include "gui/gui_logger.hpp"
 #include "gui/gui_state_tiers.hpp"
@@ -85,8 +88,8 @@ std::string FormatAxisDist(const AxisDist& axis) {
          AxisDistSpreadLabel(axis.type) + " " + Format("%.3g", axis.std);
 }
 
-void AppendShapeRow(ConfigSummaryGroup& group, const CrystalConfig& cr, int slot) {
-  group.fields.push_back({ kShapeScalarLabels[slot], FormatShapeDist(ShapeScalarAt(cr, slot), slot) });
+void AppendShapeRow(ConfigSummaryGroup& group, const CrystalConfig& cr, int slot, int row_group_id) {
+  group.fields.push_back({ kShapeScalarLabels[slot], FormatShapeDist(ShapeScalarAt(cr, slot), slot), row_group_id });
 }
 
 ConfigSummaryGroup BuildEntryGroup(const GuiState& state, int layer_idx, int entry_idx) {
@@ -96,37 +99,49 @@ ConfigSummaryGroup BuildEntryGroup(const GuiState& state, int layer_idx, int ent
                 std::to_string(DisplayEntryNumber(entry_idx));
   group.level = 1;
 
-  // The card's own four rows first, in the card's order and spelling.
-  group.fields.push_back({ "Crystal", FormatCrystalIdentity(state, entry.crystal_id) });
+  // Which fields share a display line (ConfigSummaryField::row_group_id). Four runs, each a set
+  // of same-kind, same-unit scalars the edit modal itself lays out side by side or in one table:
+  // the card's identity triple, the type's own shape scalars, the six faces, the three axis
+  // distributions. The numbers are handed out by this counter so no two runs can collide; they
+  // carry no meaning beyond "these go together".
+  int next_row_group = 0;
+  const int card_run = next_row_group++;
+  const int type_scalar_run = next_row_group++;
+  const int face_run = next_row_group++;
+  const int axis_run = next_row_group++;
+
+  // The card's own rows first, in the card's order and spelling, on one line.
+  group.fields.push_back({ "Crystal", FormatCrystalIdentity(state, entry.crystal_id), card_run });
   if (entry.crystal_id < 0 || static_cast<size_t>(entry.crystal_id) >= state.crystals.size()) {
     // FormatCrystalIdentity has already printed the dangling id; there is no crystal to describe.
     return group;
   }
   const CrystalConfig& cr = state.crystals[static_cast<size_t>(entry.crystal_id)];
-  group.fields.push_back({ "Enabled", entry.enabled ? "true" : "false" });
-  group.fields.push_back({ "Weight", Format("%.1f", entry.proportion) });
+  group.fields.push_back({ "Enabled", entry.enabled ? "true" : "false", card_run });
+  group.fields.push_back({ "Weight", Format("%.1f", entry.proportion), card_run });
 
-  // The edit modal's Crystal tab, row for row: the type's own scalars, then the six faces.
+  // The edit modal's Crystal tab: the type's own scalars on their line(s), then the six faces on
+  // theirs (two lines of three at kPackedFieldsPerRow).
   if (cr.type == CrystalType::kPrism) {
-    AppendShapeRow(group, cr, LUMICE_SHAPE_SCALAR_HEIGHT);
+    AppendShapeRow(group, cr, LUMICE_SHAPE_SCALAR_HEIGHT, type_scalar_run);
   } else {
-    AppendShapeRow(group, cr, LUMICE_SHAPE_SCALAR_PRISM_H);
-    AppendShapeRow(group, cr, LUMICE_SHAPE_SCALAR_UPPER_H);
-    AppendShapeRow(group, cr, LUMICE_SHAPE_SCALAR_LOWER_H);
-    group.fields.push_back({ "Upper A", Format("%.3f", cr.upper_alpha) });
-    group.fields.push_back({ "Lower A", Format("%.3f", cr.lower_alpha) });
+    AppendShapeRow(group, cr, LUMICE_SHAPE_SCALAR_PRISM_H, type_scalar_run);
+    AppendShapeRow(group, cr, LUMICE_SHAPE_SCALAR_UPPER_H, type_scalar_run);
+    AppendShapeRow(group, cr, LUMICE_SHAPE_SCALAR_LOWER_H, type_scalar_run);
+    group.fields.push_back({ "Upper A", Format("%.3f", cr.upper_alpha), type_scalar_run });
+    group.fields.push_back({ "Lower A", Format("%.3f", cr.lower_alpha), type_scalar_run });
   }
   for (int i = 0; i < 6; ++i) {
-    AppendShapeRow(group, cr, LUMICE_SHAPE_SCALAR_FACE_0 + i);
+    AppendShapeRow(group, cr, LUMICE_SHAPE_SCALAR_FACE_0 + i, face_run);
   }
 
   // The Axis tab: the preset the classifier reads off the three distributions, then the
-  // distributions themselves — a preset name alone would hide a retuned zenith std, which is the
-  // one parameter of a preset the user can change and the one most worth comparing.
+  // distributions themselves on one line — a preset name alone would hide a retuned zenith std,
+  // which is the one parameter of a preset the user can change and the one most worth comparing.
   group.fields.push_back({ "Axis", AxisPresetName(cr) });
-  group.fields.push_back({ "Zenith", FormatAxisDist(cr.zenith) });
-  group.fields.push_back({ "Azimuth", FormatAxisDist(cr.azimuth) });
-  group.fields.push_back({ "Roll", FormatAxisDist(cr.roll) });
+  group.fields.push_back({ "Zenith", FormatAxisDist(cr.zenith), axis_run });
+  group.fields.push_back({ "Azimuth", FormatAxisDist(cr.azimuth), axis_run });
+  group.fields.push_back({ "Roll", FormatAxisDist(cr.roll), axis_run });
 
   // The Filter tab, as the card summarises it. The card's line truncates a long raypath and
   // collapses a multi-row sum of products to its first row "(+N more)", which is right for a
@@ -201,16 +216,47 @@ std::vector<ConfigSummaryRow> BuildConfigSummaryRows(const GuiState& state) {
   return rows;
 }
 
+// Whether the whole root key `root` is declared to have no main-panel control
+// (FieldTierEntry::has_main_panel_surface). A root with no tier row reads as "has one": the walk
+// only reaches shown-tier roots, and every one of those has a row.
+namespace {
+bool RootKeyHasMainPanelSurface(std::string_view root) {
+  for (const auto& entry : kFieldTierTable) {
+    if (root == entry.name) {
+      return entry.has_main_panel_surface;
+    }
+  }
+  return true;
+}
+}  // namespace
+
 ConfigSummary BuildConfigSummary(const GuiState& state) {
   ConfigSummary summary;
   summary.version = LUMICE_GetVersionString();
 
   // Settings: one group per root key. The known three in their listed order, anything else
-  // after them in the order the walk produced it.
+  // after them in the order the walk produced it, and the popup-only fields last under their own
+  // heading. Per leaf, the field editor registry decides the label, whether the row is on the
+  // page at all, and which group it sits in — see the header.
   std::vector<std::pair<std::string, ConfigSummaryGroup>> groups;
+  ConfigSummaryGroup popup_only{ kSettingsPopupOnlyGroupTitle, 0, {} };
   for (auto& row : BuildConfigSummaryRows(state)) {
     const std::string root = row.key_path.substr(0, row.key_path.find('.'));
     const std::string leaf = row.key_path.size() > root.size() ? row.key_path.substr(root.size() + 1) : root;
+    const FieldEditorEntry* editor = FindFieldEditor(row.key_path);
+    const char* declared_label = LabelFor(row.key_path);
+    ConfigSummaryField field{ declared_label != nullptr ? declared_label : Humanize(leaf), FormatDiffValue(row.value) };
+
+    const bool popup_only_leaf = editor != nullptr && !editor->has_main_panel_surface;
+    if (popup_only_leaf || !RootKeyHasMainPanelSurface(root)) {
+      popup_only.fields.push_back(std::move(field));
+      continue;
+    }
+    // The panel's BeginDisabled expression, read rather than restated: a leaf the panel greys or
+    // does not draw right now is not printed. An unregistered leaf has no gate and is always on.
+    if (editor != nullptr && !editor->Constraint(state).enabled) {
+      continue;
+    }
     auto it = groups.begin();
     while (it != groups.end() && it->first != root) {
       ++it;
@@ -220,8 +266,21 @@ ConfigSummary BuildConfigSummary(const GuiState& state) {
       groups.push_back({ root, ConfigSummaryGroup{ title != nullptr ? title : Humanize(root), 0, {} } });
       it = groups.end() - 1;
     }
-    it->second.fields.push_back({ Humanize(leaf), FormatDiffValue(row.value) });
+    it->second.fields.push_back(std::move(field));
   }
+  // Within a group, alphabetical by the label the reader sees. The walk's own order is the
+  // serialized key's, which read alphabetically only while labels were spelled from keys; a
+  // reader scanning for "Sky Color" or "Mode" is served by the order of the words on the page.
+  const auto by_label = [](const ConfigSummaryField& a, const ConfigSummaryField& b) {
+    return std::lexicographical_compare(
+        a.label.begin(), a.label.end(), b.label.begin(), b.label.end(), [](char x, char y) {
+          return std::tolower(static_cast<unsigned char>(x)) < std::tolower(static_cast<unsigned char>(y));
+        });
+  };
+  for (auto& [root, group] : groups) {
+    std::sort(group.fields.begin(), group.fields.end(), by_label);
+  }
+  std::sort(popup_only.fields.begin(), popup_only.fields.end(), by_label);
   for (const auto& known : kSettingsGroupTitles) {
     for (auto& [root, group] : groups) {
       if (root == known.root_key) {
@@ -234,6 +293,9 @@ ConfigSummary BuildConfigSummary(const GuiState& state) {
     if (!root.empty()) {
       summary.settings.push_back(std::move(group));
     }
+  }
+  if (!popup_only.fields.empty()) {
+    summary.settings.push_back(std::move(popup_only));
   }
 
   // Document: each layer, then each of its entries under it.
@@ -260,6 +322,53 @@ int CountConfigSummaryFields(const ConfigSummary& summary) {
   }
   for (const auto& group : summary.document) {
     count += static_cast<int>(group.fields.size());
+  }
+  return count;
+}
+
+std::vector<std::vector<const ConfigSummaryField*>> ConfigSummaryLines(const ConfigSummaryGroup& group) {
+  std::vector<std::vector<const ConfigSummaryField*>> lines;
+  std::vector<int> emitted_groups;
+  for (size_t i = 0; i < group.fields.size(); ++i) {
+    const ConfigSummaryField& field = group.fields[i];
+    if (field.row_group_id < 0) {
+      lines.push_back({ &field });
+      continue;
+    }
+    if (std::find(emitted_groups.begin(), emitted_groups.end(), field.row_group_id) != emitted_groups.end()) {
+      continue;  // already laid out with the run's first field
+    }
+    emitted_groups.push_back(field.row_group_id);
+    // The whole run, wherever its members sit, cut into lines of kPackedFieldsPerRow.
+    std::vector<const ConfigSummaryField*> line;
+    for (size_t j = i; j < group.fields.size(); ++j) {
+      if (group.fields[j].row_group_id != field.row_group_id) {
+        continue;
+      }
+      line.push_back(&group.fields[j]);
+      if (static_cast<int>(line.size()) == kPackedFieldsPerRow) {
+        lines.push_back(std::move(line));
+        line.clear();
+      }
+    }
+    if (!line.empty()) {
+      lines.push_back(std::move(line));
+    }
+  }
+  return lines;
+}
+
+int CountConfigSummaryLines(const ConfigSummaryGroup& group) {
+  return static_cast<int>(ConfigSummaryLines(group).size());
+}
+
+int CountConfigSummaryLines(const ConfigSummary& summary) {
+  int count = 0;
+  for (const auto& group : summary.settings) {
+    count += CountConfigSummaryLines(group);
+  }
+  for (const auto& group : summary.document) {
+    count += CountConfigSummaryLines(group);
   }
   return count;
 }

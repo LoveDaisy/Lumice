@@ -436,17 +436,33 @@ FieldEditorEntry SimResolutionField() {
 
 // The preset illuminants ONLY. The main UI's combo carries a seventh item ("Custom...") that opens
 // a modal editor, and this panel is itself a modal — stacking a second one is the interaction this
-// deliberately avoids. A state already using a custom spectrum therefore reads as "registered but
-// not applicable" (greyed, with the reason on hover) rather than being silently downgraded to
-// whichever preset a 6-item combo would land on.
+// deliberately avoids. A state already using a custom spectrum therefore renders as a greyed
+// "Custom..." with the reason on hover, rather than being silently downgraded to whichever preset
+// a 6-item combo would land on.
+//
+// That limitation lives in Render, NOT in the constraint, and the placement is the point: the
+// field APPLIES under a custom spectrum — the Sun panel's own combo is never greyed, it shows
+// "Custom..." beside an edit button — so `enabled` stays true, as the header's rule 1 requires
+// (`enabled` is the main UI's BeginDisabled expression, and the Summary page prints a row exactly
+// when it is true). What cannot be done here is edit it from THIS popup, which is a fact about
+// the popup's control and is drawn by the control.
 FieldEditorEntry SpectrumField() {
-  return ComboField([](GuiState& state) { return &state.sun.spectrum_index; }, kSpectrumNames, kSpectrumCount,
-                    [](const GuiState& state) -> Applicability {
-                      if (state.sun.spectrum_index == kCustomSpectrumIndex) {
-                        return { false, "A custom spectrum is edited from the Sun panel's spectrum editor." };
-                      }
-                      return {};
-                    });
+  FieldEditorEntry entry =
+      ComboField([](GuiState& state) { return &state.sun.spectrum_index; }, kSpectrumNames, kSpectrumCount);
+  const auto preset_render = entry.Render;
+  entry.Render = [preset_render](GuiState& state, const char* id_base) {
+    if (state.sun.spectrum_index != kCustomSpectrumIndex) {
+      return preset_render(state, id_base);
+    }
+    ImGui::BeginDisabled();
+    ImGui::TextUnformatted("Custom...");
+    ImGui::EndDisabled();
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+      ImGui::SetTooltip("A custom spectrum is edited from the Sun panel's spectrum editor.");
+    }
+    return false;
+  };
+  return entry;
 }
 
 // Aspect preset. Same item set and same "Match Background needs a background" rule as the main UI's

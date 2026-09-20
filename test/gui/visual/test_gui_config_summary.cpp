@@ -1,6 +1,7 @@
 // Summary window pixel regression — a disk-reference baseline for the read-only Summary page
-// (src/gui/config_summary_window.cpp): its two-column tables, group headings, entry indent, the
-// fixed width and the height the content settles at.
+// (src/gui/config_summary_window.cpp): its two columns (settings left, document right), the
+// label/value tables and the packed lines within them, group headings, entry indent, the fixed
+// width and the height the content settles at.
 //
 // Why this exists beside the functional cases: those assert state and counts (the window opens,
 // it draws N rows), and the content tests assert the words; none of them reads a committed image,
@@ -59,8 +60,8 @@ static constexpr int kSceneCount = sizeof(kScenes) / sizeof(kScenes[0]);
 
 // Where the window is parked before the capture (see modal_layout's note on why a position is
 // pinned at all: ImGui remembers a window's position for the process, so where it sits would
-// otherwise depend on which earlier case opened it). Top-left with a margin; the fixed 560 px
-// width and the work-area-bounded height fit inside 1600x980 from here.
+// otherwise depend on which earlier case opened it). Top-left with a margin; the fixed 1200 px
+// width and the 900 px height budget (config_summary_window.cpp) fit inside 1600x980 from here.
 constexpr float kParkX = 20.0f;
 constexpr float kParkY = 20.0f;
 
@@ -141,6 +142,12 @@ void RegisterConfigSummaryLayoutTests(ImGuiTestEngine* engine) {
               scene.name, fb_w, fb_h, win_w, win_h, lx, ly, win->Size.x, win->Size.y);
       IM_CHECK_EQ(lx, kParkX);
       IM_CHECK_EQ(ly, kParkY);
+      // The one-screen budget, on the very documents the references are shot from: no wider
+      // than 1280, no taller than 900, and nothing scrolled out of the capture. A reference shot
+      // of a scrolled window would be a picture of part of the page passing as the page.
+      IM_CHECK_LE(win->Size.x, 1280.0f);
+      IM_CHECK_LE(win->Size.y, 900.0f);
+      IM_CHECK_EQ(win->ScrollMax.y, 0.0f);
 
       int rx = static_cast<int>(std::lround(lx * sx));
       int ry = static_cast<int>(std::lround((win_h - (ly + win->Size.y)) * sy));

@@ -16,6 +16,22 @@
 //   A GuiState field added under one of the shown tiers appears here with no change to this file;
 //   test/unit-correctness/gui/test_config_summary_rows.cpp holds that as a permanent assertion.
 //
+//   Three more things about each leaf are read off the field editor registry
+//   (field_editor_registry.hpp), the table that already owns them for the main panel, so the
+//   page prints what the user PERCEIVES on the panel rather than what the serializer spells:
+//     * its LABEL is the panel's own word (LabelFor: "Rays(M)", "EV Anchor", "Sky Color"), the
+//       same object the widget call site builds its id from; a leaf with no declared label is
+//       spelled from its key, as every leaf was before labels had a home;
+//     * whether it APPLIES right now (Constraint(state).enabled — the panel's BeginDisabled
+//       expression): a field the panel greys out or does not draw is not on the page either, so
+//       under Print the row is Paper Color and not Sky Color, under a full-sky lens there is no
+//       Roll row, and with Infinite rays on there is no Rays(M) row. No tone or lens comparison is
+//       made here; the registry's gate is the one that is read;
+//     * whether it has a MAIN-PANEL control at all (has_main_panel_surface, on the leaf's entry or
+//       on its root key's tier row): a field only the Settings popup can edit is listed under a
+//       heading of its own, "Settings", after the three panel groups, so a reader looking for it
+//       on the Sun / Simulation / View / Display panels is told where it actually lives.
+//
 //   DOCUMENT — layers, their entries, each entry's crystal, axis and filter. These live under the
 //   one root key the walk above skips (`layers`, see kDiffEngineExcludedRootKeys: a key path into
 //   it carries a document-local index), so they are read straight off GuiState's structure and
@@ -65,7 +81,21 @@ std::vector<ConfigSummaryRow> BuildConfigSummaryRows(const GuiState& state);
 struct ConfigSummaryField {
   std::string label;
   std::string value;
+  // Which fields share a display line. -1: the field has a line of its own, label column and
+  // value column, as every settings row does. A non-negative value is an explicit group number,
+  // unique within the group: every field carrying the same number is laid out on one line (or
+  // as many lines as kPackedFieldsPerRow allows) as a run of label/value cells — the six face
+  // distances, the three axis distributions. An explicit number rather than "adjacent fields
+  // with the same label shape", so that a field inserted between two packed ones, or two
+  // unrelated runs that happen to touch, can never be packed together without saying so.
+  int row_group_id = -1;
 };
+
+// How many packed fields share one display line: a run of six face distances is two lines of
+// three, a run of three axis distributions is one. A presentation constant that the page's line
+// count depends on, hence declared beside the page rather than inside the window, so that
+// CountConfigSummaryLines below and the window's own drawing agree on what a line is.
+inline constexpr int kPackedFieldsPerRow = 3;
 
 // One titled block of fields: a settings group ("Sun"), a layer ("Layer 1"), or an entry
 // ("Layer 1 · Entry 2"). `level` is the nesting the window indents by (0 for a group or a layer,
@@ -75,6 +105,10 @@ struct ConfigSummaryGroup {
   int level = 0;
   std::vector<ConfigSummaryField> fields;
 };
+
+// The settings group that collects every field with no main-panel control (see the header
+// comment). Always last among the settings groups, and present only when such a field exists.
+inline constexpr const char* kSettingsPopupOnlyGroupTitle = "Settings";
 
 struct ConfigSummary {
   // LUMICE_GetVersionString(): the build that produced this picture, first because "which
@@ -87,9 +121,22 @@ struct ConfigSummary {
 // The whole page for `state`. Pure, and the only thing the window renders.
 ConfigSummary BuildConfigSummary(const GuiState& state);
 
-// The number of label/value lines the page carries — the figure the functional test counts
-// against the rendered rows, so the count has one definition.
+// The number of label/value FIELDS the page carries, packed or not.
 int CountConfigSummaryFields(const ConfigSummary& summary);
+
+// The group's fields as the window draws them: one inner vector per display line, in page order.
+// A field with row_group_id -1 is a line by itself; the fields sharing a non-negative id are
+// gathered (in their first field's position) and cut into lines of kPackedFieldsPerRow. The one
+// definition of "a line", read by the window to draw and by CountConfigSummaryLines to count, so
+// the functional test's rendered-row count and the page's own count cannot drift.
+std::vector<std::vector<const ConfigSummaryField*>> ConfigSummaryLines(const ConfigSummaryGroup& group);
+
+// The number of display lines `group` occupies — the figure AC "same-kind scalars share a line"
+// is measured by (test_config_summary_rows.cpp).
+int CountConfigSummaryLines(const ConfigSummaryGroup& group);
+// Summed over every group of the page — the figure the functional test counts against the
+// rendered table rows.
+int CountConfigSummaryLines(const ConfigSummary& summary);
 
 }  // namespace lumice::gui
 

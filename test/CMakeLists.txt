@@ -369,6 +369,10 @@ if(BUILD_GUI)
     # The Summary window's settings walk: which serialized root keys reach the page, decided by
     # the tier registry — the generativity claim as a permanent coverage assertion.
     "${PROJ_TEST_DIR}/unit-correctness/gui/test_config_summary_rows.cpp"
+    # The page's labels are the panel's words with one home (FieldEditorEntry::label): a source
+    # scan of both panel files proving every declared label is read through PanelLabel and never
+    # restated as a literal.
+    "${PROJ_TEST_DIR}/unit-correctness/gui/test_config_summary_labels.cpp"
     "${PROJ_TEST_DIR}/unit-correctness/gui/test_state_reconcile.cpp"
     "${PROJ_TEST_DIR}/unit-correctness/gui/test_backend_fallback_warning.cpp"
     "${PROJ_TEST_DIR}/unit-correctness/gui/test_preview_renderer.cpp"
@@ -432,6 +436,9 @@ if(BUILD_GUI)
     # the document but the sky colour" claim is about a branch that lives inside an ImGui frame and
     # cannot be called from a unit test, so what the test holds is the branch's text.
     LUMICE_GUI_APP_PANELS_CPP_PATH="${CMAKE_SOURCE_DIR}/src/gui/app_panels.cpp"
+    # Third source-scan anchor: the Sun / Simulation panel file, scanned with app_panels.cpp by
+    # test_config_summary_labels.cpp for widget labels that should be read from the registry.
+    LUMICE_GUI_PANELS_CPP_PATH="${CMAKE_SOURCE_DIR}/src/gui/panels.cpp"
     LUMICE_E2E_CONFIG_DIR="${CMAKE_SOURCE_DIR}/test/e2e/configs"
     LUMICE_TEST_FIXTURE_DIR="${CMAKE_SOURCE_DIR}/test/fixtures")
   # `lumice_obj` (objects), not `lumice` — a NAMED exemption, not an unexamined default.

@@ -15,6 +15,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <cctype>
 #include <nlohmann/json.hpp>
 #include <set>
 #include <string>
@@ -22,6 +23,7 @@
 
 #include "gui/config_summary.hpp"
 #include "gui/defaults_diff.hpp"
+#include "gui/field_editor_registry.hpp"
 #include "gui/file_io.hpp"
 #include "gui/gui_state_tiers.hpp"
 
@@ -189,4 +191,189 @@ TEST(ConfigSummaryRows, LeafRuleIsTheDiffEngines) {
     }
     EXPECT_EQ(it->current_value, row.value) << row.key_path;
   }
+}
+
+namespace {
+
+const gui::ConfigSummaryGroup* FindGroup(const gui::ConfigSummary& page, const std::string& title) {
+  for (const auto& g : page.settings) {
+    if (g.title == title) {
+      return &g;
+    }
+  }
+  for (const auto& g : page.document) {
+    if (g.title == title) {
+      return &g;
+    }
+  }
+  return nullptr;
+}
+
+// "ray_allocation" against "Ray allocation": the page's spelling of an undeclared label, compared
+// without restating its capitalisation rule.
+bool SameWords(std::string a, std::string b) {
+  for (std::string* t : { &a, &b }) {
+    for (auto& c : *t) {
+      c = c == '_' ? ' ' : static_cast<char>(std::tolower(c));
+    }
+  }
+  return a == b;
+}
+
+bool GroupHasLeaf(const gui::ConfigSummaryGroup* g, const std::string& leaf) {
+  if (g == nullptr) {
+    return false;
+  }
+  return std::any_of(g->fields.begin(), g->fields.end(),
+                     [&](const gui::ConfigSummaryField& f) { return SameWords(f.label, leaf); });
+}
+
+// The two-layer document the visual reference "two_layers" is shot from
+// (test/gui/visual/test_gui_config_summary.cpp), rebuilt here so the line-count claim below is
+// made about the same page the owner sees.
+gui::GuiState MakeTwoLayerState() {
+  gui::GuiState state = gui::InitDefaultState();
+  state.crystals.assign(2, gui::CrystalConfig{});
+  state.crystals[0].name = "plate";
+  state.crystals[0].zenith = gui::AxisDist{ gui::AxisDistType::kGauss, 0.0f, 1.0f };
+  state.crystals[1].type = gui::CrystalType::kPyramid;
+  state.crystals[1].face_distance[2] = gui::ShapeDist{ gui::ShapeDistType::kUniform, 0.9f, 0.1f };
+  gui::FilterConfig f;
+  f.name = "cza";
+  f.SetRaypath(gui::RaypathParams{ "3-5-1" });
+  state.filters.assign(1, f);
+  gui::Layer first;
+  first.probability = 0.5f;
+  gui::EntryCard a;
+  a.crystal_id = 0;
+  a.filter_id = 0;
+  a.proportion = 60.0f;
+  gui::EntryCard b;
+  b.crystal_id = 1;
+  b.proportion = 40.0f;
+  first.entries = { a, b };
+  gui::Layer second;
+  gui::EntryCard c;
+  c.crystal_id = 0;
+  c.enabled = false;
+  second.entries = { c };
+  state.layers = { first, second };
+  state.renderer.lens_type = gui::kLensTypeFisheyeEqualArea;
+  state.renderer.fov = 120.0f;
+  state.sun.altitude = 25.0f;
+  return state;
+}
+
+}  // namespace
+
+// A leaf with no main-panel control (FieldEditorEntry::has_main_panel_surface == false) is under
+// the page's own "Settings" heading and under none of the panel groups — derived from the
+// registry for every such leaf in the walk, not from a list of names here. sim.ray_allocation is
+// asserted by name as well so the generic claim is known not to be vacuous.
+TEST(ConfigSummaryRows, PopupOnlyLeavesAreUnderTheSettingsHeading) {
+  const gui::GuiState state = MakeLoadedState();
+  const gui::ConfigSummary page = gui::BuildConfigSummary(state);
+  const gui::ConfigSummaryGroup* settings = FindGroup(page, gui::kSettingsPopupOnlyGroupTitle);
+
+  int popup_only_leaves = 0;
+  for (const auto& row : gui::BuildConfigSummaryRows(state)) {
+    const gui::FieldEditorEntry* editor = gui::FindFieldEditor(row.key_path);
+    if (editor == nullptr || editor->has_main_panel_surface) {
+      continue;
+    }
+    ++popup_only_leaves;
+    const std::string leaf = row.key_path.substr(row.key_path.find('.') + 1);
+    EXPECT_TRUE(GroupHasLeaf(settings, leaf)) << row.key_path;
+    for (const char* title : { "Sun", "Simulation", "Render" }) {
+      EXPECT_FALSE(GroupHasLeaf(FindGroup(page, title), leaf)) << row.key_path << " under " << title;
+    }
+  }
+  EXPECT_GE(popup_only_leaves, 1);
+  ASSERT_NE(gui::FindFieldEditor("sim.ray_allocation"), nullptr);
+  EXPECT_FALSE(gui::FindFieldEditor("sim.ray_allocation")->has_main_panel_surface);
+  EXPECT_TRUE(GroupHasLeaf(settings, "ray_allocation"));
+  // Last among the settings groups: after Sun / Simulation / Render.
+  ASSERT_FALSE(page.settings.empty());
+  EXPECT_EQ(page.settings.back().title, gui::kSettingsPopupOnlyGroupTitle);
+}
+
+// The root-key grain of the same flag (FieldTierEntry::has_main_panel_surface): a serialized
+// root key flagged false is filed under the "Settings" heading whole. Generic over the tier table,
+// and honest about today's population — the one flagged root (worker_count) is not a document
+// key, so the loop finds nothing to route and says so, rather than asserting a row that is not
+// there. What is pinned by name is that no panel-titled group carries such a root.
+TEST(ConfigSummaryRows, PopupOnlyRootKeysAreUnderTheSettingsHeading) {
+  const gui::GuiState state = MakeLoadedState();
+  const gui::ConfigSummary page = gui::BuildConfigSummary(state);
+  const auto rows = gui::BuildConfigSummaryRows(state);
+  int flagged = 0;
+  for (const auto& entry : gui::kFieldTierTable) {
+    if (entry.has_main_panel_surface) {
+      continue;
+    }
+    ++flagged;
+    if (!RowSetCoversRootKey(rows, entry.name)) {
+      continue;  // not serialized: nothing reaches the page under this root
+    }
+    for (const auto& g : page.settings) {
+      if (g.title == gui::kSettingsPopupOnlyGroupTitle) {
+        continue;
+      }
+      for (const auto& f : g.fields) {
+        EXPECT_FALSE(SameWords(f.label, entry.name)) << entry.name << " under " << g.title;
+      }
+    }
+  }
+  EXPECT_GE(flagged, 1);
+  EXPECT_FALSE(RowSetCoversRootKey(rows, "worker_count"));
+}
+
+// Which fields share a display line is the page's own cut (ConfigSummaryLines), asserted on a
+// synthetic group so the rule is pinned apart from any document: -1 is a line of its own; a run
+// sharing an id is gathered at its first member's position, wherever the rest sit, and cut into
+// lines of kPackedFieldsPerRow; a run of one is one line.
+TEST(ConfigSummaryRows, LinesGatherRowGroupsAndCutThemAtThePackingWidth) {
+  gui::ConfigSummaryGroup group;
+  group.fields = {
+    { "a", "1", -1 }, { "b", "2", 7 }, { "c", "3", -1 }, { "d", "4", 7 },
+    { "e", "5", 7 },  { "f", "6", 7 }, { "g", "7", 9 },  { "h", "8", 7 },
+  };
+  const auto lines = gui::ConfigSummaryLines(group);
+  ASSERT_EQ(lines.size(), 5u);
+  EXPECT_EQ(lines[0].size(), 1u);
+  EXPECT_EQ(lines[0][0]->label, "a");
+  // The run 7 (b d e f h) at b's position: 3 + 2.
+  ASSERT_EQ(lines[1].size(), static_cast<size_t>(gui::kPackedFieldsPerRow));
+  EXPECT_EQ(lines[1][0]->label, "b");
+  EXPECT_EQ(lines[1][1]->label, "d");
+  EXPECT_EQ(lines[1][2]->label, "e");
+  ASSERT_EQ(lines[2].size(), 2u);
+  EXPECT_EQ(lines[2][0]->label, "f");
+  EXPECT_EQ(lines[2][1]->label, "h");
+  EXPECT_EQ(lines[3][0]->label, "c");
+  ASSERT_EQ(lines[4].size(), 1u);
+  EXPECT_EQ(lines[4][0]->label, "g");
+  EXPECT_EQ(gui::CountConfigSummaryLines(group), 5);
+}
+
+// The "same-kind scalars share a line" claim, measured: on the two-layer reference document every
+// entry occupies at most half the lines it did when every field was a line of its own — and the
+// number of FIELDS is that earlier count, since the packing moved nothing and dropped nothing.
+TEST(ConfigSummaryRows, EveryEntryOccupiesAtMostHalfTheLinesOfOnePerField) {
+  const gui::GuiState state = MakeTwoLayerState();
+  const gui::ConfigSummary page = gui::BuildConfigSummary(state);
+  int entries = 0;
+  for (const auto& g : page.document) {
+    if (g.level != 1) {
+      continue;
+    }
+    ++entries;
+    const int one_per_field = static_cast<int>(g.fields.size());
+    const int lines = gui::CountConfigSummaryLines(g);
+    EXPECT_LE(lines * 2, one_per_field) << g.title << ": " << lines << " lines for " << one_per_field << " fields";
+  }
+  EXPECT_EQ(entries, 3);
+  // And the page as a whole shrank by at least a third: the settings groups pack nothing, so the
+  // saving is the document's alone.
+  EXPECT_LE(gui::CountConfigSummaryLines(page) * 3, gui::CountConfigSummaryFields(page) * 2);
 }

@@ -19,9 +19,22 @@
 // display form), the document section through the edit modal's own slot formats, so a rule
 // compares NUMBERS re-spelled the page's way rather than raw strings — "1.0" and "1" are the same
 // value read off two encoders, not a divergence.
+//
+// Labels are the PANEL's words, spelled here as literals on purpose ("Rays(M)", "EV Anchor",
+// "Sky Color"): this file pins what a reader of the page sees, and reading the registry's
+// LabelFor back would make the assertion true of any spelling at all. That the registry's word is
+// the panel's word is test_config_summary_labels.cpp's job.
+//
+// A third thing the page does that the export does not: it prints only the fields the panel
+// currently shows or enables. So a settings rule is conditional on the registry's own gate — a
+// field whose ConstraintFor(...).enabled is false (Sky Color under Print, Roll under a full-sky
+// lens, Rays(M) with Infinite rays on) is asserted ABSENT from the page while the export still
+// writes it, and ExpectPageMatchesExport closes the loop in both directions over every registered
+// leaf: enabled <=> on the page. The three documents at the bottom each take one of those gates.
 
 #include <gtest/gtest.h>
 
+#include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <functional>
@@ -37,6 +50,7 @@
 #include "gui/axis_presets.hpp"
 #include "gui/config_summary.hpp"
 #include "gui/defaults_diff.hpp"
+#include "gui/field_editor_registry.hpp"
 #include "gui/file_io.hpp"
 #include "gui/gui_state.hpp"
 #include "gui/raypath_segments.hpp"
@@ -80,6 +94,20 @@ std::optional<std::string> PageValue(const ConfigSummary& page, const std::strin
   return std::nullopt;
 }
 
+// Whether group `title` carries a row labelled `label`, with no failure recorded either way.
+bool HasRow(const ConfigSummary& page, const std::string& title, const std::string& label) {
+  const ConfigSummaryGroup* g = FindGroup(page, title);
+  if (g == nullptr) {
+    return false;
+  }
+  for (const auto& f : g->fields) {
+    if (f.label == label) {
+      return true;
+    }
+  }
+  return false;
+}
+
 std::string Fmt(const char* fmt, double v) {
   char buf[64];
   std::snprintf(buf, sizeof(buf), fmt, v);
@@ -110,6 +138,29 @@ void ExpectPageText(const ConfigSummary& page, const std::string& title, const s
   }
   EXPECT_NE(got->find(want), std::string::npos)
       << title << " / " << label << ": page says \"" << *got << "\", export has \"" << want << "\"";
+}
+
+// A settings row behind the registry's gate: when the panel enables `key_path` right now the page
+// carries the row and its value is checked; when it does not, the row must be absent — the export
+// still writes the field, and this is where the two are allowed to differ.
+void ExpectGatedNumber(const GuiState& state, const ConfigSummary& page, const char* key_path, const std::string& title,
+                       const std::string& label, const json& v) {
+  if (ConstraintFor(key_path, state).enabled) {
+    ExpectPageNumber(page, title, label, v);
+  } else {
+    EXPECT_FALSE(HasRow(page, title, label))
+        << key_path << " is disabled on the panel but " << title << " / " << label << " is on the page";
+  }
+}
+
+void ExpectGatedText(const GuiState& state, const ConfigSummary& page, const char* key_path, const std::string& title,
+                     const std::string& label, const std::string& want) {
+  if (ConstraintFor(key_path, state).enabled) {
+    ExpectPageText(page, title, label, want);
+  } else {
+    EXPECT_FALSE(HasRow(page, title, label))
+        << key_path << " is disabled on the panel but " << title << " / " << label << " is on the page";
+  }
 }
 
 // ---- The export, flattened ---------------------------------------------------------------
@@ -250,11 +301,22 @@ std::vector<RuleEntry> BuildRules(const GuiState& state, const ConfigSummary& pa
   add(R"(^scene\.max_hits$)",
       [&](const std::smatch&, const json& v) { ExpectPageNumber(page, "Simulation", "Max hits", v); });
   add(R"(^scene\.ray_allocation$)", [&](const std::smatch&, const json& v) {
-    ExpectPageText(page, "Simulation", "Ray allocation", v.get<std::string>());
+    // No main-panel control (field_editor_registry.cpp: has_main_panel_surface=false), so the page
+    // files it under its own "Settings" heading and not beside Rays(M).
+    ExpectPageText(page, kSettingsPopupOnlyGroupTitle, "Ray allocation", v.get<std::string>());
+    EXPECT_FALSE(HasRow(page, "Simulation", "Ray allocation"));
   });
   add(R"(^scene\.ray_num$)", [&](const std::smatch&, const json& v) {
-    // The page shows the slider's unit (millions); the export the count.
-    ExpectPageNumber(page, "Simulation", "Ray num millions", json(v.get<double>() / 1.0e6));
+    // The page shows the slider's unit (millions); the export the count — or the word "infinite",
+    // in which case the panel greys the slider and the page carries Infinite rays = true and no
+    // Rays(M) row.
+    if (v.is_string()) {
+      EXPECT_EQ(v.get<std::string>(), "infinite");
+      EXPECT_FALSE(HasRow(page, "Simulation", "Rays(M)"));
+      ExpectPageText(page, "Simulation", "Infinite rays", "true");
+      return;
+    }
+    ExpectGatedNumber(state, page, "sim.ray_num_millions", "Simulation", "Rays(M)", json(v.get<double>() / 1.0e6));
   });
   add(R"(^scene\.scattering\[(\d+)\]\.prob$)", [&](const std::smatch& m, const json& v) {
     ExpectPageNumber(page, "Layer " + std::to_string(std::stoi(m[1]) + 1), "Multi-scatter prob.", v, "%.2f");
@@ -286,39 +348,46 @@ std::vector<RuleEntry> BuildRules(const GuiState& state, const ConfigSummary& pa
 
   // ---- render ----
   add(R"(^render\[0\]\.lens\.type$)",
-      [&](const std::smatch&, const json& v) { ExpectPageText(page, "Render", "Lens type", v.get<std::string>()); });
+      [&](const std::smatch&, const json& v) { ExpectPageText(page, "Render", "Lens Type", v.get<std::string>()); });
+  // The view fields the full-sky gate covers: fov, the three pose angles, visible and front (roll
+  // and front under the wider full-sky-or-globe gate). Each is asserted absent when its gate is
+  // shut, present with the export's value when open.
   add(R"(^render\[0\]\.lens\.fov$)",
-      [&](const std::smatch&, const json& v) { ExpectPageNumber(page, "Render", "Fov", v); });
+      [&](const std::smatch&, const json& v) { ExpectGatedNumber(state, page, "renderer.fov", "Render", "FOV", v); });
   add(R"(^render\[0\]\.view\.(elevation|azimuth|roll)$)", [&](const std::smatch& m, const json& v) {
     std::string label = m[1];
     label[0] = static_cast<char>(label[0] - 'a' + 'A');
-    ExpectPageNumber(page, "Render", label, v);
+    ExpectGatedNumber(state, page, ("renderer." + m[1].str()).c_str(), "Render", label, v);
   });
-  add(R"(^render\[0\]\.visible$)",
-      [&](const std::smatch&, const json& v) { ExpectPageText(page, "Render", "Visible", v.get<std::string>()); });
+  add(R"(^render\[0\]\.visible$)", [&](const std::smatch&, const json& v) {
+    ExpectGatedText(state, page, "renderer.visible", "Render", "Visible", v.get<std::string>());
+  });
   add(R"(^render\[0\]\.front$)", [&](const std::smatch&, const json& v) {
-    ExpectPageText(page, "Render", "Front", v.get<bool>() ? "true" : "false");
+    ExpectGatedText(state, page, "renderer.front", "Render", "Front", v.get<bool>() ? "true" : "false");
   });
   add(R"(^render\[0\]\.tone$)",
-      [&](const std::smatch&, const json& v) { ExpectPageText(page, "Render", "Tone", v.get<std::string>()); });
+      [&](const std::smatch&, const json& v) { ExpectPageText(page, "Render", "Mode", v.get<std::string>()); });
   add(R"(^render\[0\]\.ev_mode$)",
-      [&](const std::smatch&, const json& v) { ExpectPageText(page, "Render", "Ev mode", v.get<std::string>()); });
-  add(R"(^render\[0\]\.(background|paper)$)", [&](const std::smatch& m, const json& v) {
-    std::string label = m[1];
-    label[0] = static_cast<char>(label[0] - 'a' + 'A');
-    ExpectPageNumber(page, "Render", label, v);
+      [&](const std::smatch&, const json& v) { ExpectPageText(page, "Render", "EV Anchor", v.get<std::string>()); });
+  // The two grounds: the panel shows ONE swatch, Sky Color under Screen and Paper Color under
+  // Print, so the page carries one row — and the export always writes both fields.
+  add(R"(^render\[0\]\.background$)", [&](const std::smatch&, const json& v) {
+    ExpectGatedNumber(state, page, "renderer.background", "Render", "Sky Color", v);
+  });
+  add(R"(^render\[0\]\.paper$)", [&](const std::smatch&, const json& v) {
+    ExpectGatedNumber(state, page, "renderer.paper", "Render", "Paper Color", v);
   });
   add(R"(^render\[0\]\.intensity_factor$)", [&](const std::smatch&, const json& v) {
     // The export bakes 2^exposure_offset (doc/ev-pipeline-architecture.md §2.4); the page shows
     // the EV the user set. Same quantity, the user's spelling.
-    ExpectPageNumber(page, "Render", "Exposure offset", json(std::log2(v.get<double>())));
+    ExpectPageNumber(page, "Render", "EV", json(std::log2(v.get<double>())));
   });
   add(R"(^render\[0\]\.resolution$)", [&](const std::smatch&, const json& v) {
     // The canvas is the sim resolution stretched to the aspect preset (file_io.cpp, the export
     // arm's canvas block): its SHORT edge is the resolution the user picked, and that is what
     // the page prints — the aspect preset itself is a view preference, hidden by tier.
     ASSERT_EQ(v.size(), 2u);
-    ExpectPageNumber(page, "Render", "Sim resolution", json(std::min(v[0].get<int>(), v[1].get<int>())));
+    ExpectPageNumber(page, "Render", "Resolution", json(std::min(v[0].get<int>(), v[1].get<int>())));
   });
 
   // ---- crystal ----
@@ -592,6 +661,60 @@ void ExpectPageMatchesExport(const GuiState& state, const char* scenario) {
   }
   EXPECT_GT(matched, 10) << "the rules matched almost nothing — the export shape has moved";
 
+  // Both directions at once, over every registered settings leaf rather than only the ones the
+  // rules above happen to name: a leaf the panel enables is on the page under its panel label,
+  // and a leaf on the page is one the panel enables. The label is the registry's here (this is
+  // the membership claim; the spelling claim is the rules' literals above) and a popup-only leaf
+  // is looked for under the "Settings" heading, which has no gate.
+  for (const auto& row : BuildConfigSummaryRows(state)) {
+    const FieldEditorEntry* editor = FindFieldEditor(row.key_path);
+    if (editor == nullptr) {
+      continue;
+    }
+    const std::string root = row.key_path.substr(0, row.key_path.find('.'));
+    const std::string leaf = row.key_path.substr(root.size() + 1);
+    const char* declared = LabelFor(row.key_path);
+    // An undeclared label is the key's own words ("ray_allocation" -> "Ray allocation"); compared
+    // case-insensitively with underscores as spaces so the page's capitalisation is not restated.
+    std::string label = declared != nullptr ? declared : leaf;
+    const auto same_words = [](std::string a, std::string b) {
+      for (std::string* t : { &a, &b }) {
+        for (auto& c : *t) {
+          c = c == '_' ? ' ' : static_cast<char>(std::tolower(c));
+        }
+      }
+      return a == b;
+    };
+    const auto has_row_words = [&](const char* title) {
+      const ConfigSummaryGroup* g = FindGroup(page, title);
+      if (g == nullptr) {
+        return false;
+      }
+      for (const auto& f : g->fields) {
+        if (same_words(f.label, label)) {
+          return true;
+        }
+      }
+      return false;
+    };
+    if (!editor->has_main_panel_surface) {
+      EXPECT_TRUE(has_row_words(kSettingsPopupOnlyGroupTitle))
+          << row.key_path << " has no main-panel control and is not under the Settings heading";
+      for (const char* title : { "Sun", "Simulation", "Render" }) {
+        EXPECT_FALSE(has_row_words(title)) << row.key_path << " is under " << title << " as well";
+      }
+      continue;
+    }
+    const char* title = root == "sun" ? "Sun" : root == "sim" ? "Simulation" : root == "renderer" ? "Render" : "";
+    if (*title == '\0') {
+      ADD_FAILURE() << row.key_path << ": a registered leaf under a root this chain has no group title for";
+      continue;
+    }
+    const bool enabled = ConstraintFor(row.key_path, state).enabled;
+    EXPECT_EQ(has_row_words(title), enabled) << row.key_path << ": panel " << (enabled ? "enables" : "disables")
+                                             << " it, page " << (has_row_words(title) ? "prints" : "omits") << " it";
+  }
+
   // The other half of the design constraint: nothing on the page that the GUI does not show. The
   // one exported field that is user-INvisible by design is the sun's azimuth; the Sun group must
   // not have an Azimuth row (the Render group's Azimuth is the camera's, a real control).
@@ -721,11 +844,68 @@ void SeedRichDocument() {
   g_state.sun.custom_spectrum = { { 450.0f, 1.0f }, { 550.0f, 0.5f }, { 620.0f, 0.25f } };
 }
 
+// The default document under a full-sky lens: fov, the pose angles, visible and front all stop
+// applying on the panel (NotUnderFullSky / NotUnderFullSkyOrGlobe), while the export keeps
+// writing each of them.
+void SeedFullSkyDocument() {
+  DoNew();
+  g_state.renderer.lens_type = kLensTypeDualFisheyeEqualArea;
+  g_state.renderer.fov = 180.0f;
+  g_state.renderer.elevation = 12.0f;
+  g_state.renderer.azimuth = 34.0f;
+}
+
+// The default document with Infinite rays on: the Rays(M) slider is greyed on the panel, the
+// export writes a count regardless.
+void SeedInfiniteRaysDocument() {
+  DoNew();
+  g_state.sim.infinite = true;
+  g_state.sim.ray_num_millions = 7.0f;
+}
+
 }  // namespace
 
 TEST(ConfigSummaryExportParityChain, DefaultDocument) {
   SeedDefaultDocument();
   ExpectPageMatchesExport(g_state, "default");
+  // Screen tone: the sky's row, not the paper's — spelled out beside the gated rule so the two
+  // grounds' exclusivity is a stated fact of this document and not only a consequence of the gate.
+  const ConfigSummary page = BuildConfigSummary(g_state);
+  EXPECT_TRUE(HasRow(page, "Render", "Sky Color"));
+  EXPECT_FALSE(HasRow(page, "Render", "Paper Color"));
+  // Rays(M) on, Ray allocation under its own heading and nowhere else.
+  EXPECT_TRUE(HasRow(page, "Simulation", "Rays(M)"));
+  EXPECT_TRUE(HasRow(page, kSettingsPopupOnlyGroupTitle, "Ray allocation"));
+  EXPECT_FALSE(HasRow(page, "Simulation", "Ray allocation"));
+}
+
+TEST(ConfigSummaryExportParityChain, FullSkyLensHidesTheViewFieldsThePanelGreys) {
+  SeedFullSkyDocument();
+  ExpectPageMatchesExport(g_state, "full_sky");
+  const ConfigSummary page = BuildConfigSummary(g_state);
+  for (const char* label : { "FOV", "Elevation", "Azimuth", "Roll", "Visible", "Front" }) {
+    EXPECT_FALSE(HasRow(page, "Render", label)) << label;
+  }
+  EXPECT_EQ(PageValue(page, "Render", "Lens Type").value_or(""), "dual_fisheye_equal_area");
+  // The export still carries them: the page is what differs, not the document.
+  std::string out;
+  std::string warning;
+  ASSERT_TRUE(BuildExportJsonOrWarn(g_state, &out, &warning)) << warning;
+  const json doc = json::parse(out);
+  EXPECT_TRUE(doc["render"][0].contains("fov") || doc["render"][0]["lens"].contains("fov"));
+  EXPECT_TRUE(doc["render"][0].contains("view"));
+}
+
+TEST(ConfigSummaryExportParityChain, InfiniteRaysHidesTheRayTotalThePanelGreys) {
+  SeedInfiniteRaysDocument();
+  ExpectPageMatchesExport(g_state, "infinite");
+  const ConfigSummary page = BuildConfigSummary(g_state);
+  EXPECT_FALSE(HasRow(page, "Simulation", "Rays(M)"));
+  EXPECT_EQ(PageValue(page, "Simulation", "Infinite rays").value_or(""), "true");
+  std::string out;
+  std::string warning;
+  ASSERT_TRUE(BuildExportJsonOrWarn(g_state, &out, &warning)) << warning;
+  EXPECT_TRUE(json::parse(out)["scene"].contains("ray_num"));
 }
 
 TEST(ConfigSummaryExportParityChain, LinearFrontDocumentPrintsTheUsersLens) {
@@ -734,13 +914,18 @@ TEST(ConfigSummaryExportParityChain, LinearFrontDocumentPrintsTheUsersLens) {
   // Spelled out as well as reached through the rules: the constraint's own example. The commit
   // arm would say dual_fisheye_equal_area / 180 / view (0,0,0) here.
   const ConfigSummary page = BuildConfigSummary(g_state);
-  EXPECT_EQ(PageValue(page, "Render", "Lens type").value_or(""), "linear");
-  EXPECT_EQ(PageValue(page, "Render", "Fov").value_or(""), "55");
+  EXPECT_EQ(PageValue(page, "Render", "Lens Type").value_or(""), "linear");
+  EXPECT_EQ(PageValue(page, "Render", "FOV").value_or(""), "55");
   EXPECT_EQ(PageValue(page, "Render", "Azimuth").value_or(""), "77");
   EXPECT_EQ(PageValue(page, "Render", "Visible").value_or(""), "upper");
   EXPECT_EQ(PageValue(page, "Render", "Front").value_or(""), "true");
-  EXPECT_EQ(PageValue(page, "Render", "Exposure offset").value_or(""), "1.5");
-  EXPECT_EQ(PageValue(page, "Render", "Sim resolution").value_or(""), "2048");
+  EXPECT_EQ(PageValue(page, "Render", "EV").value_or(""), "1.5");
+  EXPECT_EQ(PageValue(page, "Render", "Resolution").value_or(""), "2048");
+  // This document is under Print (tone = 1): the paper's row, not the sky's — the mirror image of
+  // DefaultDocument's pair, so the two cases together are the exclusivity in both tones.
+  EXPECT_EQ(PageValue(page, "Render", "Mode").value_or(""), "print");
+  EXPECT_TRUE(HasRow(page, "Render", "Paper Color"));
+  EXPECT_FALSE(HasRow(page, "Render", "Sky Color"));
 }
 
 TEST(ConfigSummaryExportParityChain, RichDocument) {
