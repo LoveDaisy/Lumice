@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1789916689614,
+  "lastUpdate": 1789916691926,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9476,50 +9476,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "32515f9970bfd614540c36dece2c55fe71eee1a6",
-          "message": "Merge pull request #294 from LoveDaisy/chore/annotation-doc-and-diagnostics-gaps\n\nchore(doc/cli): 补 zenith_nadir schema 文档；renderer 超限诊断指向真正的上限",
-          "timestamp": "2026-09-02T13:14:20+08:00",
-          "tree_id": "377cc3a2fbdf13228f8c678cf3391e0e9631022c",
-          "url": "https://github.com/LoveDaisy/ice_halo_sim/commit/32515f9970bfd614540c36dece2c55fe71eee1a6"
-        },
-        "date": 1788326825273,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 96.9,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 99.7,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 95,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 93.7,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "18624004d00f891498779bf12248f36046859a41",
           "message": "Merge pull request #295 from LoveDaisy/feat/fast-e2e-dominant-test\n\ntest(e2e): smoke 按 config 拆成独立 pytest item —— 收集粒度对齐调度粒度，零覆盖损失",
           "timestamp": "2026-09-02T14:42:18+08:00",
@@ -13799,6 +13755,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 91.3,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "15a0baf562499726ca8be28b5ac5780a16af813f",
+          "message": "Merge pull request #395 from LoveDaisy/feat/axis-preset-type-override\n\nfeat(gui): preset library — zenith type is editable within each preset's accepted set (task-587)",
+          "timestamp": "2026-09-20T22:53:50+08:00",
+          "tree_id": "49dabf2ddaaebcc7d0fc14e6aa16353b02010817",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/15a0baf562499726ca8be28b5ac5780a16af813f"
+        },
+        "date": 1789916691254,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 94,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 99.6,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 98,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 92.7,
             "unit": "%"
           }
         ]
