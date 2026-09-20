@@ -205,7 +205,6 @@ TEST(StartupCalibrationChain, ASecondDispatchJoinsTheFirst) {
 
 TEST(StartupCalibrationChain, AReconstructionWhileTheWarmUpIsRunningWaitsForIt) {
   ScopedAppServer scoped;
-  LUMICE_Server* const warmed = g_server;
   RunCalibrationInBackground(CalibrationSceneWithRays(5'000'000));
   ASSERT_TRUE(CalibrationPending());
 
@@ -213,7 +212,12 @@ TEST(StartupCalibrationChain, AReconstructionWhileTheWarmUpIsRunningWaitsForIt) 
   EXPECT_TRUE(MaybeReconstructServerForConstructionProperties());
   EXPECT_FALSE(CalibrationPending()) << "the old server was destroyed with the calibration still on it";
   ASSERT_NE(g_server, nullptr);
-  EXPECT_NE(g_server, warmed);
+  // The rebuild is evidenced by the tracker ConstructServerForState writes from the config it
+  // handed to the constructor, not by the new handle differing from the old one: destroy followed
+  // by a same-sized create legitimately hands back the same address, which twice read as a red
+  // on the macOS CI leg.
+  EXPECT_EQ(g_server_worker_count, g_state.worker_count)
+      << "the new server was not constructed with the requested worker count";
   EXPECT_EQ(QueryState(g_server), LUMICE_SERVER_IDLE);
 }
 
