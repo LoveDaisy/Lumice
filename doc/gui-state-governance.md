@@ -462,7 +462,7 @@
 > 状态：as-built（2026-09-20）。触发缺陷：光路分析面板对某行点「Exclude this raypath」时，若 Immediate 模式的
 > 「Edit Entry」弹窗正开在同一 entry 上，filter 看不见变化也不生效（内测报告 + owner 本机复现）。修复落在
 > `src/gui/edit_modals.cpp`（`PullBuffersFromPool` / `PullField` / `PullSummandRows` / `SyncBaselineFromPool`）、
-> `src/gui/panels.cpp`（`ReloadInputTextIfActive`）、`src/gui/app.cpp`（`ResetFrontendState` →
+> `src/gui/input_text_reload.hpp` + `panels.cpp`（`ReloadInputTextIfActive`）、`src/gui/app.cpp`（`ResetFrontendState` →
 > `CloseEditModalOnDocumentReset`）。改任何视图侧模型副本、位置引用、弹窗缓冲区、pick 模式、或新增一个
 > `src/gui/` 里跨帧持有模型内容的 `static` 前先读；**新增一个即在 §11.4 的表里追加一行并给出裁定**。
 
