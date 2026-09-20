@@ -86,6 +86,28 @@ TEST(PrintModeColourExclusionsGui, TheLensBorderColourIsNotGated) {
   EXPECT_TRUE(gui::ConstraintFor("overlay_lens_border_color", StateWithTone(LUMICE_TONE_SCREEN)).enabled);
 }
 
+// The two GROUND colours are gated in opposite directions: `background` (the sky light is added
+// to) applies under Screen and only there, `paper` (the sheet ink is laid on) under Print and only
+// there. Asserted as an exclusive-or over both tones rather than one direction per case, because
+// what the gates exist for is the complement itself — app_panels.cpp's Display group draws whichever
+// swatch is enabled and the Summary page prints whichever row is enabled, and both read this pair.
+// A gate that let both apply, or neither, would put two swatches (or none) on screen.
+TEST(PrintModeColourExclusionsGui, ExactlyOneGroundColourAppliesUnderEitherTone) {
+  for (const int tone : { LUMICE_TONE_SCREEN, LUMICE_TONE_PRINT }) {
+    const gui::GuiState state = StateWithTone(tone);
+    const bool sky = gui::ConstraintFor("renderer.background", state).enabled;
+    const bool paper = gui::ConstraintFor("renderer.paper", state).enabled;
+    EXPECT_NE(sky, paper) << "tone " << tone;
+    EXPECT_EQ(sky, tone == LUMICE_TONE_SCREEN) << "tone " << tone;
+    if (!sky) {
+      EXPECT_TRUE(Mentions(gui::ConstraintFor("renderer.background", state).disabled_reason, "Print"));
+    }
+    if (!paper) {
+      EXPECT_TRUE(Mentions(gui::ConstraintFor("renderer.paper", state).disabled_reason, "Screen"));
+    }
+  }
+}
+
 // Instance 1's visible half. The reason matters as much as the flag here: with no image loaded
 // (which is this binary's state — uploading one needs a GL context) BOTH reasons are true, and a
 // gate that reported "No background image is loaded" under print would send the user off to load

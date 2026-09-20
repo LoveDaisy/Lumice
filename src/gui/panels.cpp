@@ -1858,9 +1858,11 @@ void RenderSceneControls(GuiState& state) {
   // Domain and format read from the field editor registry, not written here. `fmt` is passed
   // explicitly even though it currently equals SliderWithInput's own default: relying on the
   // default would leave the display precision as a second statement this call site makes on its
-  // own, which is the thing being removed.
+  // own, which is the thing being removed. The LABEL comes from the same registry (PanelLabel),
+  // for the same reason and with one more reader: the Summary window prints the registry's word,
+  // so a control spelled here by hand could drift from the page a user holds up beside it.
   const FieldEditorConstraint alt_c = ConstraintFor("sun.altitude", state);
-  SliderWithInput("Altitude", &state.sun.altitude, static_cast<float>(alt_c.min_value),
+  SliderWithInput(PanelLabel("sun.altitude").c_str(), &state.sun.altitude, static_cast<float>(alt_c.min_value),
                   static_cast<float>(alt_c.max_value), alt_c.fmt, alt_c.scale);
   ImGui::EndGroup();
   if (ImGui::IsItemHovered()) {
@@ -1869,7 +1871,7 @@ void RenderSceneControls(GuiState& state) {
   ImGui::BeginGroup();
   // AC2 migration path: same rationale as sun.altitude above.
   const FieldEditorConstraint dia_c = ConstraintFor("sun.diameter", state);
-  SliderWithInput("Diameter", &state.sun.diameter, static_cast<float>(dia_c.min_value),
+  SliderWithInput(PanelLabel("sun.diameter").c_str(), &state.sun.diameter, static_cast<float>(dia_c.min_value),
                   static_cast<float>(dia_c.max_value), dia_c.fmt, dia_c.scale);
   ImGui::EndGroup();
   if (ImGui::IsItemHovered()) {
@@ -1891,7 +1893,7 @@ void RenderSceneControls(GuiState& state) {
   // Cancel leaves it at the prior valid preset. The combo re-reads spectrum_index each frame, so it
   // shows the prior preset while the editor is open and flips to "Custom..." once OK commits.
   int combo_sel = state.sun.spectrum_index;
-  if (ImGui::Combo("Spectrum", &combo_sel, kSpectrumComboItems, kSpectrumComboItemCount)) {
+  if (ImGui::Combo(PanelLabel("sun.spectrum").c_str(), &combo_sel, kSpectrumComboItems, kSpectrumComboItemCount)) {
     if (combo_sel == kCustomSpectrumIndex) {
       OpenSpectrumModal(state);  // intent-only: open the editor; OK is the sole commit point
     } else {
@@ -1913,7 +1915,7 @@ void RenderSceneControls(GuiState& state) {
   }
 
   ImGui::SeparatorText("Simulation");
-  Checkbox("Infinite rays", &state.sim.infinite);
+  Checkbox(PanelLabel("sim.infinite").c_str(), &state.sim.infinite);
   if (ImGui::IsItemHovered()) {
     ImGui::SetTooltip("Run simulation continuously until manually stopped");
   }
@@ -1924,8 +1926,8 @@ void RenderSceneControls(GuiState& state) {
   // it removes the only way this field could still hold two constraints that disagree.
   const FieldEditorConstraint rays_c = ConstraintFor("sim.ray_num_millions", state);
   ImGui::BeginDisabled(!rays_c.enabled);
-  SliderWithInput("Rays(M)", &state.sim.ray_num_millions, static_cast<float>(rays_c.min_value),
-                  static_cast<float>(rays_c.max_value), rays_c.fmt, rays_c.scale);
+  SliderWithInput(PanelLabel("sim.ray_num_millions").c_str(), &state.sim.ray_num_millions,
+                  static_cast<float>(rays_c.min_value), static_cast<float>(rays_c.max_value), rays_c.fmt, rays_c.scale);
   ImGui::EndDisabled();
   ImGui::EndGroup();
   if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
@@ -1937,7 +1939,7 @@ void RenderSceneControls(GuiState& state) {
   ImGui::BeginGroup();
   // An int field has no fmt/scale to read — SliderIntWithInput takes neither.
   const FieldEditorConstraint hits_c = ConstraintFor("sim.max_hits", state);
-  SliderIntWithInput("Max hits", &state.sim.max_hits, static_cast<int>(hits_c.min_value),
+  SliderIntWithInput(PanelLabel("sim.max_hits").c_str(), &state.sim.max_hits, static_cast<int>(hits_c.min_value),
                      static_cast<int>(hits_c.max_value));
   ImGui::EndGroup();
   if (ImGui::IsItemHovered()) {

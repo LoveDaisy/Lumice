@@ -65,6 +65,23 @@ struct FieldTierEntry {
   // held for the second member (`worker_count`) — reconsider a registry when a THIRD arrives, not
   // before, since two hand-written pairs are still cheaper to read than a mechanism.
   bool app_preference_eligible = false;
+  // Whether the field has ANY control on the main panel (the Sun / Simulation / View / Display
+  // panels and the first-class tool windows — Colors, Raypath Analysis), as opposed to being
+  // reachable only from the Settings popup. Trailing and defaulted for the same reason as the bit
+  // above: every existing row keeps its positional initializer.
+  //
+  // Read by the Summary window (config_summary.cpp): a serialized root key flagged false is listed
+  // under the page's own "Settings" heading rather than under a group a reader would look for on
+  // the panel. Surveyed 2026-09-21 over every kStruct*/kDisplay row: `use_gpu_backend` has the
+  // top bar's "Use GPU" checkbox; `raypath_color` / `raypath_color_mode` have the Colors window;
+  // `crystals` / `layers` / `filters` are the document section; `sun` / `sim` / `renderer` are
+  // the panels themselves. `worker_count` is the one root key with no main-panel control — the
+  // Settings popup shows the live value read-only and edits only the new-document default.
+  //
+  // NOT a mirror of FieldEditorEntry::has_main_panel_surface (field_editor_registry.hpp): that
+  // one is per serialized LEAF (`sim.ray_allocation`), this one is per ROOT KEY. Same question at
+  // two grains, each answered in the table that already owns that grain.
+  bool has_main_panel_surface = true;
 };
 
 // clang-format off
@@ -98,7 +115,13 @@ inline constexpr FieldTierEntry kFieldTierTable[] = {
     // is the `app` root key. The pair is no longer a coincidence of one field: both members of this
     // namespace are CONSTRUCTION-TIME server properties that describe the machine rather than the
     // document, which is what "app preference" means here.
-    { "worker_count",               FieldTier::kStructSoft, true, true },
+    //
+    // has_main_panel_surface=false: the fifth column, and the only row that spells it out. It is
+    // not a document key today (SerializeGuiStateJson never writes it — it lives under the
+    // override file's `app` root), so the Summary walk never meets it and the bit is a statement
+    // of fact rather than a live branch; should it ever be serialized, the page files it under
+    // "Settings" with no further edit.
+    { "worker_count",               FieldTier::kStructSoft, true, true, false },
 
     // ==== T-struct·hard: re-sim + display clear + epoch floor bump ==============================
     { "filters",                    FieldTier::kStructHard, false },
