@@ -1712,39 +1712,49 @@ EditModalTarget GetEditModalTarget() {
   return { g_modal_layer_idx, g_modal_entry_idx };
 }
 
-void NotifyEntryDeleted(int layer_idx, int deleted_entry_idx) {
-  if (g_active_modal != ActiveModal::kOpen || layer_idx != g_modal_layer_idx) {
-    return;
-  }
-  if (deleted_entry_idx == g_modal_entry_idx) {
-    // Same close as the bounds guard in RenderEditModals performs — one behaviour, reached from the
-    // two directions a delete can come from.
-    g_active_modal = ActiveModal::kNone;
-  } else if (deleted_entry_idx < g_modal_entry_idx) {
-    --g_modal_entry_idx;
-  }
-}
-
 namespace {
-// Three-state positional-index compensation shared by every consumer that holds a layer_idx into
-// state.layers: the referenced layer is gone (-1), shifted down (decremented), or unaffected.
+// Three-state positional-index compensation shared by every consumer that holds an index into a
+// vector an element was just erased from — a layer_idx into state.layers, an entry_idx into a
+// layer's entries: the referenced element is gone (-1), shifted down (decremented), or unaffected.
 // The -1 is deliberate rather than "leave it and let it fall out of range": only a deleted LAST
-// layer goes out of range on its own; a deleted middle layer leaves the old index in range and
-// pointing at whichever layer moved into that slot.
-int CompensateLayerIndexForDeletion(int idx, int deleted_layer_idx) {
-  if (idx == deleted_layer_idx) {
+// element goes out of range on its own; a deleted middle one leaves the old index in range and
+// pointing at whichever element moved into that slot.
+int CompensatePositionalIndexForDeletion(int idx, int deleted_idx) {
+  if (idx == deleted_idx) {
     return -1;
   }
-  if (idx > deleted_layer_idx) {
+  if (idx > deleted_idx) {
     return idx - 1;
   }
   return idx;
 }
 }  // namespace
 
+void NotifyEntryDeleted(GuiState& state, int layer_idx, int deleted_entry_idx) {
+  if (g_active_modal == ActiveModal::kOpen && layer_idx == g_modal_layer_idx) {
+    const int compensated = CompensatePositionalIndexForDeletion(g_modal_entry_idx, deleted_entry_idx);
+    if (compensated < 0) {
+      // Same close as the bounds guard in RenderEditModals performs — one behaviour, reached from
+      // the two directions a delete can come from.
+      g_active_modal = ActiveModal::kNone;
+    } else {
+      g_modal_entry_idx = compensated;
+    }
+  }
+  // Independent of the modal: the armed "Link to..." source names an entry by position too.
+  if (state.pick_link_source.has_value() && state.pick_link_source->layer_idx == layer_idx) {
+    const int compensated = CompensatePositionalIndexForDeletion(state.pick_link_source->entry_idx, deleted_entry_idx);
+    if (compensated < 0) {
+      state.pick_link_source.reset();  // the armed entry is gone: end pick mode (see edit_modals.hpp)
+    } else {
+      state.pick_link_source->entry_idx = compensated;
+    }
+  }
+}
+
 void NotifyLayerDeleted(GuiState& state, int deleted_layer_idx) {
   if (g_active_modal == ActiveModal::kOpen) {
-    const int compensated = CompensateLayerIndexForDeletion(g_modal_layer_idx, deleted_layer_idx);
+    const int compensated = CompensatePositionalIndexForDeletion(g_modal_layer_idx, deleted_layer_idx);
     if (compensated < 0) {
       // Every entry the modal could have been editing went with the layer.
       g_active_modal = ActiveModal::kNone;
@@ -1752,11 +1762,19 @@ void NotifyLayerDeleted(GuiState& state, int deleted_layer_idx) {
       g_modal_layer_idx = compensated;
     }
   }
-  // Independent of the modal: colour-class refs name layers by position too, and they outlive any
-  // modal, so they follow the erase every time.
+  // Independent of the modal: the armed "Link to..." source and the colour-class refs name layers
+  // by position too, and both outlive any modal, so they follow the erase every time.
+  if (state.pick_link_source.has_value()) {
+    const int compensated = CompensatePositionalIndexForDeletion(state.pick_link_source->layer_idx, deleted_layer_idx);
+    if (compensated < 0) {
+      state.pick_link_source.reset();  // the armed entry went with its layer: end pick mode
+    } else {
+      state.pick_link_source->layer_idx = compensated;
+    }
+  }
   for (ColorClassConfig& cls : state.raypath_color) {
     for (ColorClassRefConfig& ref : cls.match) {
-      ref.layer_idx = CompensateLayerIndexForDeletion(ref.layer_idx, deleted_layer_idx);
+      ref.layer_idx = CompensatePositionalIndexForDeletion(ref.layer_idx, deleted_layer_idx);
     }
   }
 }

@@ -83,14 +83,20 @@ EditModalTarget GetEditModalTarget();
 // falling off the end of the vector; everything short of that is in range and silently wrong,
 // because Immediate mode writes the edit buffers into the bound entry's pool slots every frame.
 //
-// The layer flavour has a second consumer: every ColorClassRefConfig in state.raypath_color holds
-// a positional layer_idx into state.layers too, and it is NOT gated on a modal being open. After
-// an erase those refs are re-indexed by the same three-outcome rule (deleted layer -> the ref is
-// left dangling at -1, so ResolveColorRef reports kLayerMissing; a layer before it -> untouched;
-// after it -> decrement). Without this the ref keeps its old number and silently denotes the
-// layer that shifted into that slot — and when that layer happens to reuse the same crystal pool
-// slot, ResolveColorRef's two checks (bounds, crystal-in-layer) both pass and nothing tells the user.
-void NotifyEntryDeleted(int layer_idx, int deleted_entry_idx);
+// Both flavours have consumers beyond the modal, none gated on a modal being open:
+//   - state.pick_link_source, the entry the "Link to..." eyedropper is armed on. It outlives the
+//     modal (arming it closes the modal) and the card delete buttons stay live while it is armed.
+//     Same three outcomes; when the deleted item IS the armed one, pick mode ends rather than
+//     re-aiming at the entry that slid into its place — silently linking to a card the user never
+//     armed is worse than asking them to arm again, and matches the Esc / click-outside cancel.
+//   - (layer flavour only) every ColorClassRefConfig in state.raypath_color holds a positional
+//     layer_idx into state.layers too. After an erase those refs are re-indexed by the same
+//     three-outcome rule (deleted layer -> the ref is left dangling at -1, so ResolveColorRef
+//     reports kLayerMissing; a layer before it -> untouched; after it -> decrement). Without this
+//     the ref keeps its old number and silently denotes the layer that shifted into that slot —
+//     and when that layer happens to reuse the same crystal pool slot, ResolveColorRef's two checks
+//     (bounds, crystal-in-layer) both pass and nothing tells the user.
+void NotifyEntryDeleted(GuiState& state, int layer_idx, int deleted_entry_idx);
 void NotifyLayerDeleted(GuiState& state, int deleted_layer_idx);
 
 // Returns the EditTarget corresponding to the currently active tab. Returns

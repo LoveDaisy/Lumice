@@ -16,8 +16,15 @@
 // end-to-end half — that panels.cpp's delete button actually reaches these functions — needs a real
 // frame and lives in test/gui/functional/test_entry_management.cpp.
 //
+// The second positional binding the same two functions keep honest: state.pick_link_source, the
+// entry the "Link to..." eyedropper is armed on. It names a position too, it outlives the modal
+// (arming it closes the modal), and the card delete buttons stay clickable while it is armed — so
+// the same three outcomes apply, with "the deleted item IS the armed one" ending pick mode rather
+// than re-aiming it at the entry that slid into its place.
+//
 // What a user sees when this breaks: they delete one card and a DIFFERENT card's crystal and filter
-// are replaced by the deleted one's, with no error anywhere.
+// are replaced by the deleted one's, with no error anywhere — or the link they are picking a model
+// for lands on a card they never armed.
 
 #include <gtest/gtest.h>
 
@@ -87,7 +94,7 @@ TEST_F(EditModalDeleteBinding, DeletingTheBoundEntryClosesTheModal) {
   ASSERT_TRUE(gui::IsEditModalOpen());
 
   s.layers[0].entries.erase(s.layers[0].entries.begin() + 1);
-  gui::NotifyEntryDeleted(0, 1);
+  gui::NotifyEntryDeleted(s, 0, 1);
 
   EXPECT_FALSE(gui::IsEditModalOpen());
 }
@@ -99,7 +106,7 @@ TEST_F(EditModalDeleteBinding, DeletingAnEntryBeforeTheBoundOneFollowsItDown) {
   ASSERT_EQ(edited, s.layers[0].entries[2].crystal_id);
 
   s.layers[0].entries.erase(s.layers[0].entries.begin() + 0);
-  gui::NotifyEntryDeleted(0, 0);
+  gui::NotifyEntryDeleted(s, 0, 0);
 
   EXPECT_TRUE(gui::IsEditModalOpen());
   EXPECT_EQ(gui::GetEditModalTarget().entry_idx, 1);
@@ -114,7 +121,7 @@ TEST_F(EditModalDeleteBinding, DeletingAnEntryAfterTheBoundOneLeavesItAlone) {
   const int edited = BoundCrystalId(s);
 
   s.layers[0].entries.erase(s.layers[0].entries.begin() + 2);
-  gui::NotifyEntryDeleted(0, 2);
+  gui::NotifyEntryDeleted(s, 0, 2);
 
   EXPECT_TRUE(gui::IsEditModalOpen());
   EXPECT_EQ(gui::GetEditModalTarget().entry_idx, 0);
@@ -127,7 +134,7 @@ TEST_F(EditModalDeleteBinding, AnEntryDeleteInAnotherLayerDoesNotMoveTheBinding)
   const int edited = BoundCrystalId(s);
 
   s.layers[0].entries.erase(s.layers[0].entries.begin() + 0);
-  gui::NotifyEntryDeleted(0, 0);
+  gui::NotifyEntryDeleted(s, 0, 0);
 
   EXPECT_TRUE(gui::IsEditModalOpen());
   EXPECT_EQ(gui::GetEditModalTarget().layer_idx, 1);
@@ -188,12 +195,113 @@ TEST_F(EditModalDeleteBinding, NotificationsAreInertWhileNoModalIsOpen) {
   gui::GuiState s = MakeDoc(2, 3);
   ASSERT_FALSE(gui::IsEditModalOpen());
 
-  gui::NotifyEntryDeleted(0, 0);
+  gui::NotifyEntryDeleted(s, 0, 0);
   gui::NotifyLayerDeleted(s, 0);
 
   EXPECT_FALSE(gui::IsEditModalOpen());
   EXPECT_EQ(gui::GetEditModalTarget().layer_idx, -1);
   EXPECT_EQ(gui::GetEditModalTarget().entry_idx, -1);
+}
+
+// ---------------------------------------------------------------------------
+// pick_link_source, over the same orderings. Armed through StartLinkPickMode — the production entry
+// point — with no modal open, so the notification's modal branch is inert and what moves is the
+// pick source alone.
+// ---------------------------------------------------------------------------
+
+TEST_F(EditModalDeleteBinding, DeletingTheArmedEntryEndsPickMode) {
+  gui::GuiState s = MakeDoc(1, 3);
+  gui::StartLinkPickMode(s, 0, 1);
+  ASSERT_TRUE(s.pick_link_source.has_value());
+
+  s.layers[0].entries.erase(s.layers[0].entries.begin() + 1);
+  gui::NotifyEntryDeleted(s, 0, 1);
+
+  EXPECT_FALSE(s.pick_link_source.has_value());
+}
+
+TEST_F(EditModalDeleteBinding, DeletingAnEntryBeforeTheArmedOneFollowsItDown) {
+  gui::GuiState s = MakeDoc(1, 3);
+  gui::StartLinkPickMode(s, 0, 2);
+  const int armed = s.layers[0].entries[2].crystal_id;
+
+  s.layers[0].entries.erase(s.layers[0].entries.begin() + 0);
+  gui::NotifyEntryDeleted(s, 0, 0);
+
+  ASSERT_TRUE(s.pick_link_source.has_value());
+  EXPECT_EQ(s.pick_link_source->layer_idx, 0);
+  EXPECT_EQ(s.pick_link_source->entry_idx, 1);
+  EXPECT_EQ(s.layers[0].entries[s.pick_link_source->entry_idx].crystal_id, armed);
+}
+
+TEST_F(EditModalDeleteBinding, DeletingAnEntryAfterTheArmedOneLeavesItAlone) {
+  gui::GuiState s = MakeDoc(1, 3);
+  gui::StartLinkPickMode(s, 0, 0);
+
+  s.layers[0].entries.erase(s.layers[0].entries.begin() + 2);
+  gui::NotifyEntryDeleted(s, 0, 2);
+
+  ASSERT_TRUE(s.pick_link_source.has_value());
+  EXPECT_EQ(s.pick_link_source->entry_idx, 0);
+}
+
+TEST_F(EditModalDeleteBinding, AnEntryDeleteInAnotherLayerDoesNotMoveTheArmedOne) {
+  gui::GuiState s = MakeDoc(2, 3);
+  gui::StartLinkPickMode(s, 1, 2);
+
+  s.layers[0].entries.erase(s.layers[0].entries.begin() + 0);
+  gui::NotifyEntryDeleted(s, 0, 0);
+
+  ASSERT_TRUE(s.pick_link_source.has_value());
+  EXPECT_EQ(s.pick_link_source->layer_idx, 1);
+  EXPECT_EQ(s.pick_link_source->entry_idx, 2);
+}
+
+TEST_F(EditModalDeleteBinding, DeletingTheArmedEntrysLayerEndsPickMode) {
+  gui::GuiState s = MakeDoc(3, 2);
+  gui::StartLinkPickMode(s, 1, 0);
+
+  s.layers.erase(s.layers.begin() + 1);
+  gui::NotifyLayerDeleted(s, 1);
+
+  EXPECT_FALSE(s.pick_link_source.has_value());
+}
+
+TEST_F(EditModalDeleteBinding, DeletingALayerBeforeTheArmedEntrysFollowsItDown) {
+  gui::GuiState s = MakeDoc(3, 2);
+  gui::StartLinkPickMode(s, 2, 1);
+  const int armed = s.layers[2].entries[1].crystal_id;
+
+  s.layers.erase(s.layers.begin() + 0);
+  gui::NotifyLayerDeleted(s, 0);
+
+  ASSERT_TRUE(s.pick_link_source.has_value());
+  EXPECT_EQ(s.pick_link_source->layer_idx, 1);
+  EXPECT_EQ(s.pick_link_source->entry_idx, 1);
+  EXPECT_EQ(s.layers[1].entries[1].crystal_id, armed);
+}
+
+TEST_F(EditModalDeleteBinding, DeletingALayerAfterTheArmedEntrysLeavesItAlone) {
+  gui::GuiState s = MakeDoc(3, 2);
+  gui::StartLinkPickMode(s, 0, 1);
+
+  s.layers.erase(s.layers.begin() + 2);
+  gui::NotifyLayerDeleted(s, 2);
+
+  ASSERT_TRUE(s.pick_link_source.has_value());
+  EXPECT_EQ(s.pick_link_source->layer_idx, 0);
+}
+
+TEST_F(EditModalDeleteBinding, NotificationsAreInertWhileNothingIsArmed) {
+  gui::GuiState s = MakeDoc(2, 3);
+  ASSERT_FALSE(s.pick_link_source.has_value());
+
+  s.layers[0].entries.erase(s.layers[0].entries.begin() + 0);
+  gui::NotifyEntryDeleted(s, 0, 0);
+  s.layers.erase(s.layers.begin() + 0);
+  gui::NotifyLayerDeleted(s, 0);
+
+  EXPECT_FALSE(s.pick_link_source.has_value());
 }
 
 }  // namespace

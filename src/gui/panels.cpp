@@ -1815,7 +1815,7 @@ void RenderLayer(GuiState& state, int layer_idx) {
     // Deferred delete
     if (pending_delete_entry >= 0 && layer.entries.size() > 1) {
       layer.entries.erase(layer.entries.begin() + pending_delete_entry);
-      NotifyEntryDeleted(layer_idx, pending_delete_entry);
+      NotifyEntryDeleted(state, layer_idx, pending_delete_entry);
       g_thumbnail_cache.OnLayerStructureChanged();
     }
 
