@@ -86,7 +86,9 @@ int main(int argc, char** argv) {
 
   // The first line of every GUI log: which build wrote everything below it. The same string the
   // title bar shows -- one source (LUMICE_GetVersionString), no second copy in the About/status
-  // surfaces.
+  // surfaces. This call (and the window-title one further down) is a LUMICE_* call, so on the
+  // Windows shared build it must come after LumiceEngineLoaderInit() above -- it does, since that
+  // block is the first thing in main().
   GUI_LOG_INFO("[GUI] Lumice {}", LUMICE_GetVersionString());
 
   // Parse --user-config / --no-user-config before the first MakeNewDocumentState() call further
