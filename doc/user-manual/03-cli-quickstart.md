@@ -61,6 +61,7 @@ The complete set as printed by `Lumice -h` (anchor source: `./build/cmake_instal
 Usage: ./build/cmake_install/static/Lumice [render] -f <config_file> [options]
        ./build/cmake_install/static/Lumice benchmark -f <config_file> [options]
        ./build/cmake_install/static/Lumice analyze -f <config_file> [options]
+       ./build/cmake_install/static/Lumice --version
        ./build/cmake_install/static/Lumice <subcommand> -h
 
 Lumice — simulate ice halos by tracing rays through ice crystals.

@@ -100,6 +100,12 @@ the owner's to create, on the merge commit.
    perceive — CLI, GUI, config files, produced images and files. The C API is part of the
    product only insofar as it ships as a library; while it does not, a C API break alone does
    not force a major bump, though it still earns a `⚠️ Breaking Changes` entry.
+   That perception surface shows the number itself: the GUI title bar, `Lumice --version`, both
+   binaries' first log line and a saved `.lmc`'s `app_version` field all print the one string
+   `LUMICE_GetVersionString()` returns, generated from `CMakeLists.txt`'s `project(VERSION)` —
+   the same line `scripts/version.py set` writes. A build that is not a tagged release carries a
+   `-dev` suffix (`LUMICE_RELEASE_BUILD` is `OFF` unless `release.yml` sets it), so a locally
+   built binary never passes for `X.Y.Z`.
 2. **Bootstrap the chore**: `/chore-bootstrap release-X.Y.Z`, then work it in a linked worktree
    on its own branch (`AGENTS.md`, "Where a change lives, and from where it is made").
 3. **Enumerate, then decide per PR**: run the three commands under "Sourcing" in `CHANGELOG.md`

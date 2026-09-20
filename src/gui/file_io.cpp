@@ -3413,6 +3413,12 @@ std::string SerializeGuiStateJson(const GuiState& state) {
   // The constant carries the coupling note with the overlay's own independent counter; read it
   // (file_io.hpp) before bumping this.
   root["schema_version"] = kGuiStateSchemaVersion;
+  // The product version that wrote this document -- pure provenance for the person opening the
+  // file next to another build's; ignored on load and never a dispatch key. Like schema_version
+  // it is not a GuiState field a user can set, so it must stay listed in
+  // kDiffEngineExcludedRootKeys (defaults_diff.hpp): drop it from that table and the Settings
+  // panel grows a "difference" row reading "this build vs. the build that saved the file".
+  root["app_version"] = LUMICE_GetVersionString();
 
   return root.dump(2);
 }

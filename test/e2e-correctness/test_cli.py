@@ -6,10 +6,16 @@ import json
 import os
 import platform
 import re
+import sys
 from pathlib import Path
 
 from test.e2e.base import LumiceTestCase
 from test.e2e.runner import get_project_root
+
+# scripts/version.py's CMakeLists.txt reader is the same ground truth its own `check`
+# command trusts; same idiom as test/unit-correctness/scripts/test_check_new_refs.py.
+sys.path.insert(0, str(get_project_root() / "scripts"))
+import version as lumice_version  # noqa: E402
 
 # TODO: relocate configs when follow-up task completes
 CONFIGS_DIR = get_project_root() / "test" / "e2e" / "configs"
@@ -44,6 +50,24 @@ class TestCli(LumiceTestCase):
         result = self.run_lumice(["-h"])
         self.assertEqual(result.returncode, 0)
         self.assertIn("Usage:", result.stdout)
+
+    def test_version_flag(self):
+        """`Lumice --version` prints the single-source product version and exits 0.
+
+        The printed value is checked against scripts/version.py's own CMakeLists.txt
+        reader rather than loading the shared lib via ctypes: `--version` has no code
+        path other than LUMICE_GetVersionString() to produce this string (src/main.cpp),
+        so pinning it to the same CMake ground truth is equivalent in practice and keeps
+        this case in the fast subset (no -sj shared-lib build needed). The `-dev` suffix
+        is asserted, not tolerated: every build this suite runs against configures with
+        the LUMICE_RELEASE_BUILD default (OFF), so a bare X.Y.Z here would mean a release
+        binary leaked into the test tree, not a second valid answer.
+        """
+        result = self.run_lumice(["--version"])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        expected = f"{lumice_version.read_cmake_version()}-dev"
+        self.assertEqual(result.stdout, f"{expected}\n")
+        self.assertEqual(result.stderr, "", "--version must leave stderr empty (no startup log line)")
 
     def test_no_args(self):
         """Lumice with no arguments should exit non-zero."""

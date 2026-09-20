@@ -31,6 +31,7 @@
 #include "imgui.h"
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_opengl3.h"
+#include "include/lumice.h"  // LUMICE_GetVersionString (window title, startup log line)
 #if defined(LUMICE_ENGINE_DELAY_LOADED)
 #include "launcher/win_engine_loader.h"
 #endif
@@ -82,6 +83,13 @@ int main(int argc, char** argv) {
   // GLFW / GL / ImGui init and after the FreeConsole block above — see gui_logger.hpp, which owns
   // both stages and the reason the ordering is what it is.
   gui::InstallEarlyGuiSinks();
+
+  // The first line of every GUI log: which build wrote everything below it. The same string the
+  // title bar shows -- one source (LUMICE_GetVersionString), no second copy in the About/status
+  // surfaces. This call (and the window-title one further down) is a LUMICE_* call, so on the
+  // Windows shared build it must come after LumiceEngineLoaderInit() above -- it does, since that
+  // block is the first thing in main().
+  GUI_LOG_INFO("[GUI] Lumice {}", LUMICE_GetVersionString());
 
   // Parse --user-config / --no-user-config before the first MakeNewDocumentState() call further
   // down — that call is the only place personal defaults enter a session. Passing neither flag
@@ -155,7 +163,11 @@ int main(int argc, char** argv) {
       init_h = h;
     }
   }
-  GLFWwindow* window = glfwCreateWindow(init_w, init_h, "Lumice", nullptr, nullptr);
+  // "Lumice <version>": beta users run several builds side by side, and a bare "Lumice" on every
+  // window is how they got mixed up. GLFW copies the title, so the string need not outlive the
+  // call.
+  const std::string window_title = std::string("Lumice ") + LUMICE_GetVersionString();
+  GLFWwindow* window = glfwCreateWindow(init_w, init_h, window_title.c_str(), nullptr, nullptr);
   if (!window) {
     GUI_LOG_ERROR("Failed to create GLFW window");
     glfwTerminate();

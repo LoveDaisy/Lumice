@@ -68,7 +68,7 @@ struct DefaultDiffRow {
 
 // Root keys the walk skips. This is NOT the "which fields may be defaults" list — that question is
 // answered structurally by what SerializeGuiStateJson emits, and the answer for every OTHER root
-// key is "yes". Exactly two special cases live here:
+// key is "yes". Exactly three special cases live here:
 //   layers          — the whole of namespace 4. crystals / filters have no root key of their own
 //                     (they are serialized inline under layers[].entries[]), and raypath_color is
 //                     not serialized at all, so excluding this one key excludes the namespace.
@@ -77,7 +77,12 @@ struct DefaultDiffRow {
 //   schema_version  — a format version constant, not a GuiState field at all. It is identical on
 //                     both sides, so it can never differ; excluding it keeps it out of the list,
 //                     where it would only read as "is this a setting?".
-inline constexpr const char* kDiffEngineExcludedRootKeys[] = { "layers", "schema_version" };
+//   app_version     — the product version that wrote the document, a provenance stamp and, like
+//                     schema_version, not a GuiState field at all. Unlike schema_version it CAN
+//                     differ between the two sides (a file saved by an older build), which is
+//                     exactly why it must be excluded: that difference is not a setting the user
+//                     could adopt.
+inline constexpr const char* kDiffEngineExcludedRootKeys[] = { "layers", "schema_version", "app_version" };
 
 // The raw (un-merged) override document in the active user-config directory. Empty object when
 // personal defaults are disabled or unavailable, which is also what "nothing saved" looks like.

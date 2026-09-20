@@ -406,7 +406,15 @@ extern "C" {
 // two engine DLLs (baseline / x86-64-v3), and a shell that reports its own macro reports the tier
 // it was configured with, never the tier it loaded — measured on the reference box as a v3 engine
 // reporting "baseline". Nothing else moved; no struct changed.
-#define LUMICE_API_VERSION 441
+//
+// ADDED (v4.42): LUMICE_GetVersionString, a pure append — the product version string (CMake's
+// project(VERSION), the single source scripts/version.py also reads and writes), answered by the
+// engine at run time so the CLI's `--version`, the GUI title bar, both startup log lines and the
+// .lmc `app_version` field all read one shared value instead of each carrying its own copy. A
+// non-tagged build (LUMICE_RELEASE_BUILD=OFF, the CMake default) appends "-dev" so a locally
+// built binary is never mistaken for a tagged release; release.yml sets it ON. Nothing else
+// moved; no struct changed.
+#define LUMICE_API_VERSION 442
 #define LUMICE_MAX_RENDER_RESULTS 16
 #define LUMICE_MAX_STATS_RESULTS 1
 
@@ -2696,6 +2704,14 @@ LUMICE_ErrorCode LUMICE_GetActiveBackend(LUMICE_Server* server, int* out_backend
 // its "single" (warmup) vs "multi" (steady) passes are NOT parallel — callers use
 // this to collapse the GPU benchmark to one steady pass. Returns 1 (GPU route) or 0.
 int LUMICE_WillUseGpuRoute(int preferred_backend);
+
+// =============== Product Version ===============
+// The product version string: "X.Y.Z" for a tagged release build (LUMICE_RELEASE_BUILD=ON) or
+// "X.Y.Z-dev" otherwise. Single source: project(VERSION) in the top-level CMakeLists.txt,
+// generated into a build-tree-only header by configure_file and read back here — the CLI's
+// `--version`, the GUI window title, both startup log lines and the .lmc `app_version` field all
+// call this instead of carrying their own copy. Never NULL; static storage, do not free.
+const char* LUMICE_GetVersionString(void);
 
 // =============== Engine Build Provenance ===============
 // The ISA tier this engine was compiled for: "baseline", "x86-64-v3", "x86-64-v4" or "native".

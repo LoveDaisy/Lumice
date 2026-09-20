@@ -1035,6 +1035,26 @@ TEST(DocumentRoundtripChain, SchemaVersionIsFour) {
   EXPECT_EQ(root["schema_version"].get<int>(), 4);
 }
 
+TEST(DocumentRoundtripChain, AppVersionIsStampedOnWriteAndIgnoredOnLoad) {
+  // The writer stamps the product version next to schema_version so a file can be told apart from
+  // one saved by another build; the reader never dispatches on it. Both halves are pinned: the
+  // stamp is the C API's own string (not a second copy), and a document carrying a foreign or
+  // absent stamp loads exactly like one carrying this build's.
+  const nlohmann::json root = nlohmann::json::parse(SerializeGuiStateJson(MinimalDocument()));
+  ASSERT_TRUE(root.contains("app_version"));
+  EXPECT_EQ(root["app_version"].get<std::string>(), std::string(LUMICE_GetVersionString()));
+
+  nlohmann::json foreign = root;
+  foreign["app_version"] = "0.0.0-from-another-build";
+  GuiState from_foreign;
+  ASSERT_TRUE(DeserializeGuiStateJson(foreign.dump(), from_foreign));
+  nlohmann::json absent = root;
+  absent.erase("app_version");
+  GuiState from_absent;
+  ASSERT_TRUE(DeserializeGuiStateJson(absent.dump(), from_absent));
+  EXPECT_EQ(SerializeGuiStateJson(from_foreign), SerializeGuiStateJson(from_absent));
+}
+
 // The .lmc reader's syntax gate.
 //
 // The GUI-native load path used to hand every `summands` row straight to ParseSummandText, which is
