@@ -177,6 +177,18 @@ Options:
   --rays <N>         This run's ray budget, total across wavelengths; N may carry a
                      K, M or G suffix (e.g. 20M). Default: the scene's own ray_num,
                      including "infinite".
+  --chain-capacity <N>
+                     How many distinct (unreduced) raypath chains the record keeps
+                     exact; chains past it fall into the `other (not recorded)` row
+                     and the head's record_full_hits counts how often. A plain
+                     integer in [1, 1048576], no suffix. Default: 16384, which holds
+                     the multi-scatter scenes it was measured on; a single-crystal
+                     --symmetry none listing of every long path can need more (a
+                     hexagonal prism's 8-face set alone is ~29k chains). Costs
+                     memory: about workers x N x 220 bytes on the trace side, plus
+                     roughly as much again once for the listing — so 32768 on 10
+                     workers is ~140 MB and the maximum is several GB; --workers
+                     above the automatic count multiplies the first term.
   --seed <N>         Fix the simulation's random seed (a positive integer) so two
                      runs of one question are the same run; this also sizes the pool
                      to one worker (a seeded run is single-threaded by contract).

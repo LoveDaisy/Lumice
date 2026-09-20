@@ -1197,8 +1197,10 @@ void Simulator::SetPreferredBackend(BackendKind backend) {
   preferred_backend_.store(backend, std::memory_order_release);
 }
 
-void Simulator::SetAnalysisChainId(bool enabled, uint8_t symmetry) {
-  analysis_chain_id_.store(ChainIdSession{ enabled, symmetry }, std::memory_order_release);
+void Simulator::SetAnalysisChainId(bool enabled, uint8_t symmetry, size_t capacity) {
+  // The C boundary bounds the capacity at LUMICE_MAX_RAYPATH_CHAIN_CAPACITY, well inside uint32.
+  analysis_chain_id_.store(ChainIdSession{ enabled, symmetry, static_cast<uint32_t>(capacity) },
+                           std::memory_order_release);
 }
 
 void Simulator::SetAnalysisForceCpu(bool enabled) {
@@ -1401,11 +1403,14 @@ void Simulator::Run() {
   active_backend_.store(backend_kind, std::memory_order_release);
   // Raypath-analysis session snapshot (see SetAnalysisChainId). One Run() is
   // one session: the interning table restarts from id 1 here, so a consumer
-  // never sees ids from a previous session's table.
+  // never sees ids from a previous session's table. At the session's capacity:
+  // a change of size rebuilds the table, the same size (every render session,
+  // and one analysis after another at one capacity) clears it in place.
   chain_id_session_ = analysis_chain_id_.load(std::memory_order_acquire);
-  chain_id_table_.Clear();
+  chain_id_table_.ReuseOrRebuild(chain_id_session_.capacity);
   if (chain_id_session_.enabled) {
-    ILOG_INFO(logger_, "Raypath-analysis chain ids: ON (symmetry flags 0x{:x})", chain_id_session_.symmetry);
+    ILOG_INFO(logger_, "Raypath-analysis chain ids: ON (symmetry flags 0x{:x}, table capacity {})",
+              chain_id_session_.symmetry, chain_id_session_.capacity);
   }
   // scrum-312 third-clock drain cadence cap + fresh window per Run().
   xyz_drain_batches_ = env::XyzDrainBatches(logger_, kDefaultXyzDrainBatches);

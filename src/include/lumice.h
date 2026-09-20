@@ -414,7 +414,21 @@ extern "C" {
 // non-tagged build (LUMICE_RELEASE_BUILD=OFF, the CMake default) appends "-dev" so a locally
 // built binary is never mistaken for a tagged release; release.yml sets it ON. Nothing else
 // moved; no struct changed.
-#define LUMICE_API_VERSION 442
+//
+// BREAKING (v4.43): LUMICE_RaypathAnalysisRequest gains a trailing `chain_capacity` — APPENDED
+// after `ray_num`, sizeof grows (88 -> 96: the int lands at 88 and the struct's 8-byte alignment
+// pads it to 96), recompile. An analysis run can now size its own chain record: the number of
+// distinct finest chains the run keeps exact, which until now was one compiled-in constant
+// (16384, calibrated on the GUI's multi-scatter reference scenes) that a single-crystal
+// `--symmetry none` scene with more distinct chains than that (a hexagonal prism's 8-face set
+// alone is 29 212) overflowed into the "other" bucket with no way to ask for more. `0` keeps the
+// pre-v4.43 behaviour (the default capacity) — zero is the "unset" spelling here, unlike
+// `infinite`'s sentinel, because a zero-capacity record has no honest meaning to preserve — so a
+// zero-initialized request, which is what the GUI sends, is byte-for-byte the old request. The
+// same value sizes both halves of the record (the per-worker interning table and the server's
+// histogram); see LUMICE_MAX_RAYPATH_CHAIN_CAPACITY for the bound and the memory it buys.
+// Nothing else moved.
+#define LUMICE_API_VERSION 443
 #define LUMICE_MAX_RENDER_RESULTS 16
 #define LUMICE_MAX_STATS_RESULTS 1
 
@@ -2200,6 +2214,14 @@ LUMICE_ErrorCode LUMICE_ResolveSunHorizonDirection(const float sun_dir[3], float
 // rejected by LUMICE_StartRaypathAnalysis with LUMICE_ERR_INVALID_VALUE, because a truncated ring
 // split would silently change what the entries mean.
 #define LUMICE_MAX_RAYPATH_CONE_RINGS 32
+// Upper bound on LUMICE_RaypathAnalysisRequest::chain_capacity (v4.43). NOT a truncation either: a
+// request above it is rejected with LUMICE_ERR_INVALID_VALUE. The bound is a memory budget, not a
+// correctness limit — the record costs about 220 bytes per chain per simulation worker on the
+// producer side (workers × chain_capacity × 220 B) and roughly as much again once on the
+// consumer side, so at this cap a run on ten workers commits on the order of 4-5 GB, which is a
+// figure a caller should have to ask for explicitly and which also stops a mistyped extra digit
+// from being honoured. With `--workers` raised past the automatic count, multiply accordingly.
+#define LUMICE_MAX_RAYPATH_CHAIN_CAPACITY (1 << 20)
 // Longest `display` text an untruncated entry can need, including the terminating NUL. Derived
 // from the types rather than from what scenes produce: per layer, "C" (1) + a uint16 id (5) +
 // "(" + 64 uint16 faces joined by "-" (64*5 + 63 = 383) + ")" + the joining " -> " (4) = 395,
@@ -2238,6 +2260,16 @@ typedef struct LUMICE_RaypathAnalysisRequest_ {
   // LUMICE_ERR_INVALID_VALUE.
   int infinite;
   LUMICE_RayCount ray_num;
+
+  // ADDED (v4.43). How many distinct finest chains THIS run's record keeps exact — the same
+  // number sizes the per-worker interning table (what the trace can tell apart) and the server's
+  // histogram (what the read can list), so the two bounds are only ever both exact or both not.
+  // 0 = the default (16384, the compiled-in calibration for the GUI's multi-scatter scenes);
+  // 1..LUMICE_MAX_RAYPATH_CHAIN_CAPACITY = that many chains; anything else is rejected with
+  // LUMICE_ERR_INVALID_VALUE. Raise it for a `--symmetry none` read of a scene with more distinct
+  // chains than the default holds (the run's `record_full_hits` / truncated_chain_count says
+  // when that happened); the cost is memory, see LUMICE_MAX_RAYPATH_CHAIN_CAPACITY.
+  int chain_capacity;
 } LUMICE_RaypathAnalysisRequest;
 
 // One scattering layer of a chain: the crystal (its config id) and the face sequence the ray

@@ -175,11 +175,15 @@ class Simulator {
   // flags, applied uniformly to every layer; sigma_a / d_applicable are still
   // derived per layer from that layer's axis distribution exactly as
   // FilterSpec::Create does), and delivers SimData::outgoing_chain_id_ +
-  // chain_id_table_delta_. The backend-routed paths (CpuTraceBackend, Metal,
+  // chain_id_table_delta_. `capacity` sizes that table for the session
+  // (ChainIdInterningTable::kDefaultCapacity when the request names none): the
+  // table is rebuilt at Run() entry only when the size actually changes, so a
+  // render session, which never names one, keeps the storage it has. The
+  // backend-routed paths (CpuTraceBackend, Metal,
   // CUDA) do not implement it: they leave both fields empty and Run() logs one
   // WARN per entry saying so. Same thread contract as SetPreferredBackend:
   // written by the server thread, snapshotted at the top of Run().
-  void SetAnalysisChainId(bool enabled, uint8_t symmetry);
+  void SetAnalysisChainId(bool enabled, uint8_t symmetry, size_t capacity = ChainIdInterningTable::kDefaultCapacity);
 
   // The analysis run's other session property: force the legacy CPU path for
   // the next Run(), ahead of BOTH the LUMICE_TRACE_BACKEND override and the
@@ -414,18 +418,29 @@ class Simulator {
   std::atomic<BackendKind> preferred_backend_{ BackendKind::kCpu };
 
   // Raypath-analysis session settings: the atomic is what SetAnalysisChainId
-  // writes (one 2-byte trivially-copyable value, so enabled and symmetry can
-  // never be observed torn), the plain copy is Run()'s snapshot of it, read on
-  // the simulator thread only. Default: off; the symmetry only means anything
-  // once SetAnalysisChainId turns it on, and that call always sets both. The
+  // writes (one 8-byte trivially-copyable value — a bool, a byte, two bytes of
+  // padding and a uint32 — stored and loaded whole, so enabled, symmetry and
+  // capacity can never be observed torn), the plain copy is Run()'s snapshot
+  // of it, read on the simulator thread only. The capacity is a uint32 and
+  // not a size_t on purpose: it keeps the struct at 8 bytes, which every
+  // target here loads and stores lock-free with no libatomic dependency,
+  // where a 16-byte struct would be a library call on GCC/x86_64 that the link
+  // line does not provide for; LUMICE_MAX_RAYPATH_CHAIN_CAPACITY (1 << 20) is
+  // far inside the range. Default: off; the symmetry only means anything once
+  // SetAnalysisChainId turns it on, and that call always sets all three. The
   // server's analysis run passes FilterConfig::kSymNone (chains recorded at
   // their finest, reduced when read — server.hpp RaypathAnalysisRequest); the
   // mechanism itself takes any P/B/D bit set, and tests exercise the others.
+  // `capacity` is the interning table's size for the session; the default
+  // keeps a render session, which never sets it, on the table it already has
+  // (see ChainIdInterningTable::ReuseOrRebuild).
   struct ChainIdSession {
     bool enabled = false;
     uint8_t symmetry = FilterConfig::kSymNone;
+    uint32_t capacity = static_cast<uint32_t>(ChainIdInterningTable::kDefaultCapacity);
   };
-  std::atomic<ChainIdSession> analysis_chain_id_{ ChainIdSession{ false, FilterConfig::kSymNone } };
+  static_assert(sizeof(ChainIdSession) == 8, "ChainIdSession must stay one lock-free 8-byte atomic");
+  std::atomic<ChainIdSession> analysis_chain_id_{ ChainIdSession{} };
   ChainIdSession chain_id_session_{};
   // See SetAnalysisForceCpu / ActiveBackend.
   std::atomic_bool analysis_force_cpu_{ false };

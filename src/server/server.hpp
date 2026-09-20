@@ -221,6 +221,14 @@ struct RaypathAnalysisRequest {
   // Never written back into the scene: an analysis session does not edit the
   // document it reports on.
   std::optional<size_t> ray_num_;
+  // The run's chain-record capacity: how many distinct finest chains it keeps
+  // exact. nullopt = ChainIdInterningTable::kDefaultCapacity on BOTH halves of
+  // the record. A value sizes both halves too — the per-worker interning table
+  // (Simulator::SetAnalysisChainId) and the server's histogram
+  // (RaypathHistogramConsumer) — and ServerImpl::StartRaypathAnalysis is the
+  // one place that derives the number both are handed, so the two bounds
+  // cannot be given different values by any caller.
+  std::optional<size_t> chain_capacity_;
 };
 
 // One MS layer of a chain: which crystal, and the face sequence through it —

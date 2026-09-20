@@ -73,10 +73,13 @@ class ChainIdInterningTable {
   // (static_assert below pins the relationship), and far above any dense id
   // a bounded table can hand out.
   static constexpr uint32_t kOverflowChainId = 0xFFFFFFFEu;
-  // Per-table chain capacity (K_trie). One table per simulation worker, so a
-  // process holds worker_count × this many chains at most on the producer side
-  // (plus the consumer's merge of them, the same number again at most).
-  // Calibrated by measurement (doc/raypath-analysis-panel.md carries the
+  // Per-table chain capacity (K_trie) when no request names one — an analysis
+  // request may size the table itself (RaypathAnalysisRequest::chain_capacity_,
+  // applied through Simulator::SetAnalysisChainId), in which case this value
+  // is what "unset" means and nothing more. One table per simulation worker,
+  // so a process holds worker_count × the capacity in chains at most on the
+  // producer side (plus the consumer's merge of them, the same number again
+  // at most). Calibrated by measurement (doc/raypath-analysis-panel.md carries the
   // table): the 22° single-prism reference scene records 11.7k distinct
   // finest chains at 200k rays, so 16384 keeps that scene EXACT, and on the
   // two-layer plate+column scene that motivated the bound (838k distinct
@@ -126,6 +129,19 @@ class ChainIdInterningTable {
   // Drop every chain and rewind the flush cursor. Ids restart from 1.
   void Clear();
 
+  // Start a new session at `capacity`: Clear() when the table is already that
+  // size (the storage is kept, so a table that never changes size never
+  // reallocates), a rebuild from empty when it is not. The comparison lives
+  // here and not at the call site so that "same capacity reuses, a different
+  // one rebuilds" is a property of the type — a caller cannot forget it, and
+  // the one place it could be written backwards is this function's body,
+  // which rebuild_count() lets a test read directly.
+  void ReuseOrRebuild(size_t capacity);
+
+  // How many times ReuseOrRebuild() took the rebuild branch. A diagnostic for
+  // the test of that branch; the product never reads it.
+  size_t rebuild_count() const { return rebuild_count_; }
+
   // Human-readable chain, leaf first walked back to the root, e.g.
   // "crystal1(1-3-5)-crystal2(3-2)". The root itself formats as "", and so
   // does kOverflowChainId: it has no path to walk.
@@ -168,6 +184,7 @@ class ChainIdInterningTable {
   size_t flush_cursor_ = 1;
   size_t capacity_ = kDefaultCapacity;
   size_t overflow_since_flush_ = 0;
+  size_t rebuild_count_ = 0;
 };
 
 // The consumer-side merge of several producers' tables into one. Each

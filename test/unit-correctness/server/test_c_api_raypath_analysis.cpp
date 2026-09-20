@@ -18,6 +18,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstring>
+#include <limits>
 #include <memory>
 #include <string>
 #include <thread>
@@ -39,11 +40,12 @@ static_assert(LUMICE_API_VERSION >= 437,
 // one appended; the Python side pins the same numbers, so either side moving turns one of
 // the two red before the library writes past a Python buffer.
 static_assert(sizeof(LUMICE_AnnotationView) == 48, "LUMICE_AnnotationView layout changed; update capi_runner.py");
-static_assert(sizeof(LUMICE_RaypathAnalysisRequest) == 88, "LUMICE_RaypathAnalysisRequest layout changed");
+static_assert(sizeof(LUMICE_RaypathAnalysisRequest) == 96, "LUMICE_RaypathAnalysisRequest layout changed");
 static_assert(offsetof(LUMICE_RaypathAnalysisRequest, frame_view) == 4, "");
 static_assert(offsetof(LUMICE_RaypathAnalysisRequest, cone_center) == 52, "");
 static_assert(offsetof(LUMICE_RaypathAnalysisRequest, infinite) == 72, "");
 static_assert(offsetof(LUMICE_RaypathAnalysisRequest, ray_num) == 80, "");
+static_assert(offsetof(LUMICE_RaypathAnalysisRequest, chain_capacity) == 88, "");
 static_assert(sizeof(LUMICE_RaypathChainSegment) == 264, "LUMICE_RaypathChainSegment layout changed");
 static_assert(sizeof(LUMICE_RaypathHistogramEntry) == 5608, "LUMICE_RaypathHistogramEntry layout changed");
 static_assert(offsetof(LUMICE_RaypathHistogramEntry, chain_len) == 2112, "");
@@ -211,6 +213,15 @@ TEST_F(CApiRaypathAnalysis, RequestValidation) {
     req = FullSky();
     req.infinite = illegal;
     EXPECT_EQ(StartAnalysis(server_, halo, &req), LUMICE_ERR_INVALID_VALUE) << "infinite = " << illegal;
+  }
+
+  // The record capacity (v4.43): 0 and the two ends of the range are legal (0 is "default";
+  // 1 and the cap each start a run, so they are proven by the run that follows and not
+  // re-driven here); a negative value and one past the cap are refused, not clamped.
+  for (const int illegal : { -1, LUMICE_MAX_RAYPATH_CHAIN_CAPACITY + 1, std::numeric_limits<int>::min() }) {
+    req = FullSky();
+    req.chain_capacity = illegal;
+    EXPECT_EQ(StartAnalysis(server_, halo, &req), LUMICE_ERR_INVALID_VALUE) << "chain_capacity = " << illegal;
   }
 
   req = Cone();

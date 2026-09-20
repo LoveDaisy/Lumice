@@ -333,14 +333,25 @@ GUI 把 ROI 放 session tier 不进文档是同一个判断。展示层派生（
 直方图都要为它们各自分配内存与约化耗时，这个增长与「每桶一张全分辨率图」的内存墙是不同性质的
 问题，但同样需要一个上界。
 
-**机制**：两层都改为固定容量，取值刻意相同（见下方「常量取值依据」）：
+**机制**：两层都改为固定容量，取值刻意相同（见下方「常量取值依据」）。**v4.43 起这个容量是
+单次会话的运行时参数**：`RaypathAnalysisRequest::chain_capacity_`（C API
+`LUMICE_RaypathAnalysisRequest::chain_capacity`，CLI `analyze --chain-capacity <N>`）未给出时取
+下面两个默认常量，给出时**两侧都取请求值**——`ServerImpl::StartRaypathAnalysis` 里只有一行
+`chain_capacity = request.chain_capacity_.value_or(kDefaultCapacity)`，同一个局部变量既喂
+`RaypathHistogramConsumer` 的构造，也经 `Simulator::SetAnalysisChainId` 喂给每个 worker，所以
+运行时「两侧同值」是结构性的（没有第二个计算点可供分歧），不再只是一条纪律。GUI 的请求结构体
+零初始化、从不触碰这个字段（0 = 默认），GUI 路径逐字节不变。
 
-- **记录侧（trie）**：`ChainIdInterningTable::kDefaultCapacity`（`src/core/chain_id_table.hpp:87`，
-  = 16384）是每个 worker 的 trie 容量。达到容量后，新链不再获得新 id，而是映射到一个固定的溢出
+- **记录侧（trie）**：`ChainIdInterningTable::kDefaultCapacity`（`src/core/chain_id_table.hpp`，
+  = 16384）是每个 worker 的 trie **默认**容量。达到容量后，新链不再获得新 id，而是映射到一个固定的溢出
   哨兵 id（`kOverflowChainId = 0xFFFFFFFE`，高位保留常量，不占用「id 从 1 起」的稠密假设）；已有
-  链不受影响。这是**先到先得**的截断，不是按能量排序的截断。
-- **读侧（Space-Saving 直方图）**：`kRaypathHistogramCapacity`（`src/server/raypath_histogram_consumer.hpp:78`，
-  = 16384）是 server 端保留的行数上界。当一条新链到达而表已满时，它**接管**当前能量最低的行——
+  链不受影响。这是**先到先得**的截断，不是按能量排序的截断。会话容量经 `Simulator::ChainIdSession`
+  在 `Run()` 入口用 `ChainIdInterningTable::ReuseOrRebuild(capacity)` 生效：容量与表当前值相同
+  （所有渲染会话，以及同容量连续多次分析）就地 `Clear()` 复用存储，只有容量真的变了才重建——
+  「同容量复用、变容量重建」这条不变量放在表类型自身而不是调用点，`rebuild_count()` 让单测直接读
+  分支。
+- **读侧（Space-Saving 直方图）**：`kRaypathHistogramCapacity`（`src/server/raypath_histogram_consumer.hpp`，
+  = 16384）是 server 端保留行数的**默认**上界。当一条新链到达而表已满时，它**接管**当前能量最低的行——
   继承该行的 `energy`/`count`/`ring_energy` 作为自己的不确定度基线，而不是清零重开——并把被接管
   的能量记为自己的 `error_bound_`（真实能量落在 `[energy - error_bound, energy]`）。
 - **`other` 桶**：只装 trie 层的溢出哨兵光线（记录侧先到先得截断的产物），不是 Space-Saving 淘汰
@@ -365,6 +376,26 @@ column `h=2.5` 双层混合、`ms_prob=0.3`、200k 光线，与既往「双层�
 | **16384** | **16384** | **14–15 ms** | **+73 MB**（10 worker） | 22.5–23.0 | **0** | **654–661**（与无界基本恒等） |
 | 32768 | 32768 | 31 ms | +133 MB | 16.6 | 0 | — |
 
+**默认值仍按上表标定，未变**；v4.43 的运行时覆盖不改变这张表的结论，只是把「改常量重新编译」
+换成了「这一次分析请求要多大就给多大」。内存代价按公式估：producer 侧 ≈ `workers × chain_capacity × 220 B`
+（每条链约 220 B，一表一 worker），consumer 侧一份、量级相当（Space-Saving 行比 trie 条目胖，按上表
+16384 档 +73 MB / 10 worker 反推约 39 MB）；自动 worker 数 ≤10 时 32768 档合计约 140 MB、131072 档约
+600 MB、上界 `LUMICE_MAX_RAYPATH_CHAIN_CAPACITY = 1<<20` 约 4–5 GB——上界就是按这个预算定的（要用户
+显式要才撞到，同时挡住手滑多敲一个零），CLI 与 C API 两层都校验。⚠️ `--workers` 手动覆盖到 >10 时
+第一项线性放大，上面的档位数字不是绝对上限，公式才是。
+
+**为什么需要覆盖（2026-09-20，AC3 复现）**：`--symmetry none` 的单层单晶体场景 finest 链数远超多层
+散射场景的量测值——六棱柱 8 面精确可达集展开成 finest 序列有 29 212 条（≤7 面 13 688），默认 16384
+下 8 面链**必然**先到先得截进 `other`，下游只能把 `max_hits` 压到 7。本仓复现（
+`test/e2e/configs/hex_prism_h1_single_crystal.json`，h/a=1、`--roi sky --symmetry none --seed 7 --rays 50M`，
+单 worker，约 2–2.5 min）：默认 16384 下 `record_full_hits` = 6 693 901 次、`other` 占 0.198%，
+列表里 8 面链 7 322 条、可见份额 0.717%；`--chain-capacity 32768` 下 `record_full_hits` = 0、无
+`other` 行、无 `error_bound`，30 814 条 distinct finest 链全部驻留（按面数 8/44/241/641/1652/3960/8095/16173），
+8 面链份额 **0.840%**（同 seed 两次 `total_energy` 逐字相同 = 4.90967e+07，容量只改记录、不改追迹）。
+与下游「约 0.7%」同量级；差的那 0.12 个百分点正是默认容量下截进 `other` 的部分。⚠️ 30 814 已
+逼近 32768——这个场景 ≤8 面精确可达集共 42 900 条，光线预算再加大时应给 65536。8 面行里 211 条是
+相邻重复面噪声（能量 0.0000，见 §6），不计入以上份额判断。
+
 裁定 16384/16384：① halo22 在该值下**完全无损**（`other_count==0`/`truncated==0`/
 `max_row_error==0`，AC6 的恒等断言由此成为结构性事实——什么都没切时，有界记录就是无界记录）；
 更小的档位做不到（8192/4096 已有 0.2% 进 `other`）。② pc 场景首约化从 1.5 s 降到 15 ms（约
@@ -382,10 +413,15 @@ top-20 行上观测到 mean\|err\| 8.1%、max\|err\| 78%（K_trie=16384 时）�
 `other` 占比约 22–23%。单 finest 链占主导的场景（如本仓绝大多数单层 e2e/GUI 参考场景）不受
 影响，halo22 的完全恒等即是证据。
 
-**已知局限（v4.35 落地时点记录）**：`truncated_chain_count` 在 C API 侧从 `size_t`
+**已知局限（v4.35 落地时点记录，2026-09-20 复核）**：`truncated_chain_count` 在 C API 侧从 `size_t`
 clamp 到 `int`（`INT_MAX`），注释未说明该截断；`kOverflowChainId` 与 `ChainIdMerger::kUnresolved`
-的哨兵值关系、以及 K_trie 与 k「建议同值」的约束，目前只靠注释维护，无编译期 `static_assert`
-强制；CONE ROI 下 `truncated_chain_count` 是全局无过滤计数，而 `other_energy`/`other_count` 是
+的哨兵值关系已由 `chain_id_table.hpp` 末尾的 `static_assert` 钉住；K_trie 与 k 的同值约束分两层：
+**默认值**由 `raypath_histogram_consumer.hpp` 的 `static_assert(kRaypathHistogramCapacity ==
+ChainIdInterningTable::kDefaultCapacity)` 编译期强制，**会话值**由 `StartRaypathAnalysis` 的单一
+计算点结构性保证（上文「机制」段），并由 `test_raypath_analysis_cli.py` 的两条 `--chain-capacity`
+e2e 用例机械验证——`record_full_hits` 是 producer 侧 trie 拒绝计数，行数上界是 consumer 侧的
+Space-Saving 行数，一条只对 producer 未接线变红、一条只对 consumer 未接线变红，两条合起来才覆盖
+「只改一侧」（两个红态都已用故意破坏接线的探针坐实）；CONE ROI 下 `truncated_chain_count` 是全局无过滤计数，而 `other_energy`/`other_count` 是
 ROI 过滤后的子集，窄锥角场景两者量级可能差异很大。
 
 ## 4. 可复用地基清单
@@ -503,6 +539,15 @@ entry 共享）/ 多个 Out 槽位 / 还有未筛选子组分别措辞。实施�
   全部历史版本无此措辞，可用 `git log --all -p -- doc/raypath-analysis-panel.md` 核实）——**已修复**：
   锥心从「点击时缓存的画布像素」改为每帧从方向正投影的 marker（见 §2 第 3 条 2026-09-12 更新），
   ROI 圈与 marker 同步重投影，不会再与转动后的画面脱节；用户手册的对应「已知限制」小节已删除。
+- **相邻重复面链是已知追迹边缘噪声，不在记录层拦截**（2026-09-20 裁定，文档路线）——`--symmetry none`
+  的 CSV 尾部会出现面序列里有相邻重复面的链（如 `4-2-7-7-1-2-1`），均为能量 0.0000 / ±100 的单次
+  命中。凸多面体上一条光线不可能连续两次打同一面，这是光线擦棱/顶点时的数值产物。**不在
+  `InternRayChainId` 拦截**：要拦得对，得先证明它只在擦棱/顶点邻域出现（当前记录路径没有命中点到
+  边/顶点距离的诊断，这是一次独立的几何数值鲁棒性调查，量级同 `doc/numerical-robustness.md` 那族），
+  还得决定「拒绝」是丢弃、并入 `other` 还是新计数器——每种都动 `Intern()` 契约或 C ABI；而这些行对
+  能量份额统计没有可测影响，下游已在用整行剔除处理。处置 = 用户手册「已知噪声」一段 + 过滤示例
+  （`doc/user-manual/06-raypath-analysis{,_zh}.md` §6）。若日后要在记录层拒绝，根因（数值鲁棒性）
+  与容量无关，应另开任务。同批还观察到每档各 ~73 条「0.2° 细网格也判不可行」的链，疑似同源，只记录。
 - **反投影走 C API 还是 `src/util/`**（未决问题，非裁决）——**已裁定：C API**。子任务 4 新增
   `LUMICE_UnprojectPixel(view, px, py, out_dir[3])`（`src/include/lumice.h:2139`），签名从
   plan 字面的 `float px, py` 改为 `int px, py`（整数像素坐标）——用浮点签名会在 bridge 层复制一份

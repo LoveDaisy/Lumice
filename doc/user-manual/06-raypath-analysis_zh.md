@@ -137,9 +137,26 @@ Lumice analyze -f config.json                                          # 全天�
 Lumice analyze -f config.json --roi cone --center 43,0 --radius 2      # 以高度角 43°、方位角 0 为中心的 2° 锥
 Lumice analyze -f config.json --roi frame --render-id 1 --csv out.csv  # 落进 render[] 条目 1 画幅内的光线
 Lumice analyze -f config.json --symmetry none --rays 5M --seed 7       # 最细分组、自带预算、可复现
+Lumice analyze -f config.json --symmetry none --chain-capacity 32768   # 记录上限放大到默认的两倍
 ```
 
 `--roi sky | frame | cone` 对应面板的 Whole sky / In frame / Point；`--center <alt>,<az>` 用天空点的高度角与方位角给出锥心（方位角与太阳同一量法，所以 `--center <太阳高度角>,0` 就是太阳）；`--symmetry` 对应 P / B / D 复选框（默认 `PBD`，`none` 取最细分组）；`--rays` 对应窗口的 Rays 栏（默认用场景自己的 `ray_num`，包括 `"infinite"`）。两件窗口里没有对应物的事：`--seed <N>` 固定随机种子，让同一个问题的两次运行是同一次运行（按契约，带种子的运行是单线程的）；一直跑的场景用 Ctrl-C 结束，结束时仍会写出到那一刻为止累积的结果。带 `--csv` 时文件每秒原子重写，脚本任何时刻读到的都是完整文件；不带时 CSV 独占 stdout，进度行走 stderr。CLI 没有半径滑杆：锥内所有环都被累加，文件头的 `cone_rings_summed` 行会如实写出。`Lumice analyze -h` 列出全部选项；另见 [`03-cli-quickstart_zh.md`](03-cli-quickstart_zh.md) §4。
+
+**`--chain-capacity <N>`** 只为这一次运行设定 §4 所说的记录上限：最多保留多少条不同的、未归并的光路精确计数，超出的部分落进 **other** 行。默认 16384 就是窗口里那个固定值，装得下本仓所有参考场景；但用 `--symmetry none` 列出单个晶体的*全部*光路可能需要更多——仅六棱柱的 8 面光路就有约 29 000 条，默认值下它们正是 **other** 里的东西（文件头的 `record_full_hits` 行记的是有光路被拒之门外的次数，0 表示记录从未满过）。纯整数，不带 K/M/G 后缀，范围 1 到 1048576。代价是内存：追迹侧约 `workers × N × 220 字节`，列表侧再加一份量级相当的——32768 配 10 个 worker 约 140 MB，最大值要数 GB；`--workers` 手动开到自动值以上时第一项按比例放大。窗口里没有对应控件，窗口的记录上限始终是默认值。
+
+**`--symmetry none` 列表里的已知噪声。** 凸晶体上一条光线不可能连续两次打到同一个面，所以像 `4-2-7-7-1-2-1` 这样的光路不是物理光路：这类行是光线擦过棱或顶点时的数值副产物，通常出现在结果尾部——能量打印为 `0.0000`、各只有一条光线（`+/-` 读作 100）。它们不影响真实行的能量占比，引擎也不过滤它们（在记录那一刻分辨「真的擦棱」与「舍入误差」是个尚未解决的问题，不是一条可以直接套用的规则）。做统计之前先把它们剔掉——面序列里有相邻重复面的任何行：
+
+```python
+import csv
+rows = [r for r in csv.reader(open("out.csv")) if r and not r[0].startswith("#")][1:]
+def repeats(name):  # any layer whose face sequence repeats a face consecutively
+    for layer in name.split(" -> "):
+        f = layer.split("(")[-1].rstrip(")").split("-")
+        if any(a == b for a, b in zip(f, f[1:])):
+            return True
+    return False
+clean = [r for r in rows if r[0] != "other (not recorded)" and not repeats(r[0])]
+```
 
 ## 延伸阅读
 
