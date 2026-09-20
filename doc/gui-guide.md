@@ -129,6 +129,7 @@ The right panel groups every parameter that influences how the simulated rays ar
 
 - **Projection**: `Lens Type` chooses among 10 lens projections — Linear, Rectangular, Fisheye (Equidistant / Equal Area / Stereographic / Orthographic), and Dual Fisheye (Equidistant / Equal Area / Stereographic / Orthographic). The combo presents them grouped so orthographic variants sit next to their siblings. `FOV` is clamped per lens; `Visible` (front / back / all) restricts which hemispheres of rays render.
 - **Camera**: `Elevation`, `Azimuth`, `Roll`. Disabled and forced to zero for full-sky lenses (the dual variants and the equirectangular export).
+  The `Look At` button beside `Reset` points the camera at a named direction in one click: the six reference points the Overlay panel can draw (Zenith, Nadir, Sun, Subsun, Anthelion, Antisolar), and a **Horizon** series of four level bearings relative to the sun — `Toward sun`, `Sun +90°`, `Away from sun`, `Sun -90°` (elevation 0; the number is what the `Azimuth` slider will read, since the sun sits at azimuth 0). A preset writes only `Elevation` and `Azimuth`; `Roll` and `FOV` are left as you framed them.
 
 The lens choice changes the geometry of the projected image dramatically:
 
