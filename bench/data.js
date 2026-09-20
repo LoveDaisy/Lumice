@@ -1,56 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1789907142297,
+  "lastUpdate": 1789907760574,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "9faf145b0edde6af078573ca8726d7ce246411df",
-          "message": "Merge pull request #290 from LoveDaisy/task/preview-solid-angle-jacobian\n\nfeat(gui): 预览 shader 补上目标镜头的相对照度，使非等面积投影下 GUI 与 CLI 可逐像素比",
-          "timestamp": "2026-09-01T13:00:21+08:00",
-          "tree_id": "89c8de38143255c6034f17752c7461109dd74f23",
-          "url": "https://github.com/LoveDaisy/ice_halo_sim/commit/9faf145b0edde6af078573ca8726d7ce246411df"
-        },
-        "date": 1788239563097,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 420566.3,
-            "unit": "rays/sec",
-            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 582659,
-            "unit": "rays/sec",
-            "extra": "CPU: Neoverse-N2\\nCores: 4"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 484119.5,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 9V74 80-Core Processor\\nCores: 4"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 344268,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -4746,6 +4698,42 @@ window.BENCHMARK_DATA = {
             "value": 368973.6,
             "unit": "rays/sec",
             "extra": "CPU: AMD EPYC 9V74 80-Core Processor                \\nCores: 4"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "a09b72909d5b03ab532b9f908e01ac4ef233c4ac",
+          "message": "Merge pull request #392 from LoveDaisy/chore/test-hygiene-sweep\n\nchore: test hygiene sweep — shared LogCapture, static_assert, wire-table test, guard hardening (chore-584)",
+          "timestamp": "2026-09-20T20:25:08+08:00",
+          "tree_id": "06eb85faf160e5faed09fee676e77bd65d583e70",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/a09b72909d5b03ab532b9f908e01ac4ef233c4ac"
+        },
+        "date": 1789907758532,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 441690.2,
+            "unit": "rays/sec",
+            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 510290.9,
+            "unit": "rays/sec",
+            "extra": "CPU: Neoverse-N2\\nCores: 4"
           }
         ]
       }
