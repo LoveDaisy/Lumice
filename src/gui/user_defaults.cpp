@@ -28,9 +28,18 @@ std::vector<std::string> g_downgrade_notices;
 
 // Loaded preset-library overrides, indexed by AxisPreset. Only the presets whose kAxisPresets row
 // has an adjustable face can ever be populated.
+//
+// Two faces, each with its own presence flag, and each with its own Read/Write/Erase/Adopt/Get
+// family below. That is a deliberate parallel design, not an abstraction left on the table: the
+// two are different kinds of quantity (std is continuous and an out-of-domain value is CLAMPED to
+// the nearest legal one; type is a discrete set and an out-of-set value has no nearest neighbour,
+// so it is REFUSED and the factory type stands), and folding them into one interface would either
+// give type a clamp it cannot have or take std's away. A third face would get a third family.
 struct AxisPresetOverride {
   bool has_zenith_std = false;
   float zenith_std = 0.0f;
+  bool has_zenith_type = false;
+  AxisDistType zenith_type = AxisDistType::kGauss;
 };
 constexpr std::size_t kAxisPresetSlotCount = 6;  // AxisPreset has 6 enumerators
 static_assert(kAxisPresetSlotCount == static_cast<std::size_t>(AxisPreset::kCustom) + 1,
@@ -109,6 +118,20 @@ std::string DescribeAxisPresetClamp(AxisPreset preset, float requested, float st
          FormatAxisPresetStd(requested) + " is outside the range this preset is still recognised in, so " +
          FormatAxisPresetStd(stored) + " was stored instead. Allowed: " + DescribeAxisPresetZenithStdDomain(preset) +
          " — that boundary is where the neighbouring preset's criterion begins, not a physical limit.";
+}
+
+// The ONE sentence describing a refused zenith type, shared by the load path and any edit path
+// that reports one. Deliberately NOT the clamp sentence with a word swapped: std is clamped ("was
+// stored instead"), type is refused outright ("was ignored, the built-in type stands"), and two
+// notices that read alike for two different outcomes would teach a user that both do the same
+// thing.
+std::string DescribeAxisPresetTypeRejection(AxisPreset preset, const std::string& requested_spelling) {
+  const AxisPresetEntry& entry = AxisPresetEntryFor(preset);
+  return std::string("Preset '") + entry.label + "' (presets.axis." + entry.override_json_name +
+         "): a zenith type of '" + requested_spelling +
+         "' is not one this preset is still recognised with, so it was ignored and the built-in " +
+         AxisDistTypeLabel(entry.zenith.type) +
+         " stays in effect. Allowed: " + DescribeAxisPresetZenithTypeDomain(preset) + ".";
 }
 
 // Re-assert that the DOCUMENT half of an override file did not decide an app-preference field.
@@ -414,33 +437,60 @@ AxisPresetOverrides ParseAxisPresetOverrides(const nlohmann::json& root) {
       continue;
     }
     const nlohmann::json& node = axis[entry.override_json_name];
-    if (!node.is_object() || !node.contains("zenith_std")) {
+    if (!node.is_object()) {
       continue;
     }
-    const nlohmann::json& value_node = node["zenith_std"];
-    if (!value_node.is_number()) {
-      ++g_downgrade_count;
-      GUI_LOG_WARNING("[GUI] User defaults: presets.axis.{}.zenith_std is not a number; ignoring it",
-                      entry.override_json_name);
-      continue;
-    }
-    float value = value_node.get<float>();
-    if (!std::isfinite(value)) {
-      ++g_downgrade_count;
-      GUI_LOG_WARNING("[GUI] User defaults: presets.axis.{}.zenith_std is not finite; ignoring it",
-                      entry.override_json_name);
-      continue;
+    // The two faces are parsed independently: a bad zenith_type must not take a good zenith_std
+    // down with it, or vice versa. Each lands in `slot` only once its own checks have passed, and
+    // the slot is assigned as one whole value at the end.
+    AxisPresetOverride slot{};
+
+    if (node.contains("zenith_std")) {
+      const nlohmann::json& value_node = node["zenith_std"];
+      if (!value_node.is_number()) {
+        ++g_downgrade_count;
+        GUI_LOG_WARNING("[GUI] User defaults: presets.axis.{}.zenith_std is not a number; ignoring it",
+                        entry.override_json_name);
+      } else if (float value = value_node.get<float>(); !std::isfinite(value)) {
+        ++g_downgrade_count;
+        GUI_LOG_WARNING("[GUI] User defaults: presets.axis.{}.zenith_std is not finite; ignoring it",
+                        entry.override_json_name);
+      } else {
+        const float original = value;
+        if (ClampZenithStdToPresetDomain(entry.id, value)) {
+          // Never silent: at load time the user is not looking at the preset panel, so a clamp
+          // with no trace would be indistinguishable from the value having been dropped.
+          NoteUserDefaultsDowngrade(DescribeAxisPresetClamp(entry.id, original, value));
+        }
+        slot.has_zenith_std = true;
+        slot.zenith_std = value;
+      }
     }
 
-    const float original = value;
-    if (ClampZenithStdToPresetDomain(entry.id, value)) {
-      // Never silent: at load time the user is not looking at the preset panel, so a clamp with
-      // no trace would be indistinguishable from the value having been dropped.
-      NoteUserDefaultsDowngrade(DescribeAxisPresetClamp(entry.id, original, value));
+    if (node.contains("zenith_type")) {
+      const nlohmann::json& type_node = node["zenith_type"];
+      if (!type_node.is_string()) {
+        ++g_downgrade_count;
+        GUI_LOG_WARNING("[GUI] User defaults: presets.axis.{}.zenith_type is not a string; ignoring it",
+                        entry.override_json_name);
+      } else {
+        // Three outcomes and no clamp, because a discrete set has no "nearest legal value": a
+        // recognised type inside this preset's accepted set is adopted; anything else — a spelling
+        // the table does not know, or a real type the classifier would not keep this preset under
+        // (Column with zigzag) — is refused whole and the factory type stands. Both refusals are
+        // reported through the same sentence, since to the user they are the same event.
+        const std::string spelled = type_node.get<std::string>();
+        const auto parsed = AxisDistTypeFromJsonName(spelled);
+        if (parsed && IsAcceptedZenithType(entry.id, *parsed)) {
+          slot.has_zenith_type = true;
+          slot.zenith_type = *parsed;
+        } else {
+          NoteUserDefaultsDowngrade(DescribeAxisPresetTypeRejection(entry.id, spelled));
+        }
+      }
     }
 
-    const auto slot = static_cast<std::size_t>(entry.id);
-    result.slots[slot] = { true, value };
+    result.slots[static_cast<std::size_t>(entry.id)] = slot;
   }
   return result;
 }
@@ -543,6 +593,47 @@ std::string DescribeAxisPresetZenithStdDomain(AxisPreset preset) {
   return "greater than 0 and less than " + FormatAxisPresetStd(kColumnPlateParryZenithStdUpperBound);
 }
 
+std::string DescribeAxisPresetZenithTypeDomain(AxisPreset preset) {
+  const auto choices = AcceptedZenithTypesForPreset(preset);
+  std::string out;
+  for (std::size_t i = 0; i < choices.size(); ++i) {
+    if (i > 0) {
+      out += (i + 1 == choices.size()) ? " or " : ", ";
+    }
+    out += choices[i].label;
+  }
+  return out;
+}
+
+AxisPresetTypeResult ValidateAxisPresetZenithTypeForSave(AxisPreset preset, AxisDistType requested) {
+  AxisPresetTypeResult result;
+  const AxisPresetEntry& entry = AxisPresetEntryFor(preset);
+  // Same two-clause guard as ClampAxisPresetZenithStdForSave, for the same reason: a nullptr
+  // override_json_name is a crash at the write, not a refusal, and the static_assert that rules it
+  // out today is not what "refuses cleanly" should rest on.
+  if (!entry.has_adjustable_zenith_std || entry.override_json_name == nullptr) {
+    GUI_LOG_WARNING("[GUI] User defaults: preset '{}' has no adjustable zenith type; nothing was saved", entry.label);
+    result.message = std::string(entry.label) + " has no adjustable value, so nothing was saved.";
+    return result;
+  }
+  if (static_cast<int>(requested) < 0 || requested >= AxisDistType::kCount) {
+    GUI_LOG_WARNING("[GUI] User defaults: preset '{}' zenith type {} is not a distribution; nothing was saved",
+                    entry.label, static_cast<int>(requested));
+    result.message = "That is not a distribution type, so nothing was saved.";
+    return result;
+  }
+  if (!IsAcceptedZenithType(preset, requested)) {
+    // The UI's combo never offers a type outside the set, so this is the second defense — the one
+    // a hand-edited working copy or a future caller hits. Refused, not clamped: see the note on
+    // AxisPresetOverride for why the two faces differ here.
+    result.message = DescribeAxisPresetTypeRejection(preset, AxisDistTypeJsonName(requested));
+    return result;
+  }
+  result.accepted = true;
+  result.message.clear();
+  return result;
+}
+
 AxisPresetClampResult ClampAxisPresetZenithStdForSave(AxisPreset preset, float raw_value) {
   AxisPresetClampResult result;
 
@@ -614,6 +705,51 @@ void WriteAxisPresetZenithStdToDoc(nlohmann::json& doc, AxisPreset preset, float
   // Surgical: ONE key is touched. The GuiState half of the document and every other preset survive
   // by construction rather than by each caller remembering to preserve them.
   doc["presets"]["axis"][entry.override_json_name]["zenith_std"] = stored_value;
+}
+
+std::optional<AxisDistType> ReadAxisPresetZenithTypeFromDoc(const nlohmann::json& doc, AxisPreset preset) {
+  const AxisPresetEntry& entry = AxisPresetEntryFor(preset);
+  if (!entry.has_adjustable_zenith_std || entry.override_json_name == nullptr || !doc.is_object()) {
+    return std::nullopt;
+  }
+  // find() throughout, for the same reason as ReadAxisPresetZenithStdFromDoc: the document is
+  // user-editable and operator[] on a non-object throws.
+  const auto presets = doc.find("presets");
+  if (presets == doc.end() || !presets->is_object()) {
+    return std::nullopt;
+  }
+  const auto axis = presets->find("axis");
+  if (axis == presets->end() || !axis->is_object()) {
+    return std::nullopt;
+  }
+  const auto node = axis->find(entry.override_json_name);
+  if (node == axis->end() || !node->is_object()) {
+    return std::nullopt;
+  }
+  const auto value = node->find("zenith_type");
+  if (value == node->end() || !value->is_string()) {
+    return std::nullopt;
+  }
+  // RAW in the same sense as the std reader: a recognised spelling is returned whether or not
+  // this preset accepts it — that judgement is ValidateAxisPresetZenithTypeForSave's. A spelling
+  // the shared table does not know has no AxisDistType to return and reads as absent.
+  return AxisDistTypeFromJsonName(value->get<std::string>());
+}
+
+void WriteAxisPresetZenithTypeToDoc(nlohmann::json& doc, AxisPreset preset, AxisDistType stored_type) {
+  const AxisPresetEntry& entry = AxisPresetEntryFor(preset);
+  if (!entry.has_adjustable_zenith_std || entry.override_json_name == nullptr) {
+    return;
+  }
+  if (static_cast<int>(stored_type) < 0 || stored_type >= AxisDistType::kCount) {
+    return;  // kCount has no spelling; the validator refuses it before any caller gets here
+  }
+  if (!doc.is_object()) {
+    doc = nlohmann::json::object();
+  }
+  // Surgical, like the std writer: ONE key, spelled with the table the .lmc writer spells its
+  // axis types with (AxisDistTypeJsonName), so the two documents cannot disagree on a name.
+  doc["presets"]["axis"][entry.override_json_name]["zenith_type"] = AxisDistTypeJsonName(stored_type);
 }
 
 std::vector<WedgeMillerTriple> ReadWedgePresetsFromDoc(const nlohmann::json& doc) {
@@ -714,7 +850,12 @@ void ResetUserWedgePresets() {
   g_user_wedge_presets.clear();
 }
 
-void EraseAxisPresetZenithStdFromDoc(nlohmann::json& doc, AxisPreset preset) {
+// The one eraser both faces call, keyed by which of the preset node's two keys to drop. Each face
+// erases ONLY its own key — Restore to factory calls both, one after the other — and the node is
+// pruned when its last key goes, then `axis`, then `presets`, so the two faces never leave each
+// other a skeleton and never take each other's value away.
+namespace {
+void EraseAxisPresetZenithKeyFromDoc(nlohmann::json& doc, AxisPreset preset, const char* key) {
   const AxisPresetEntry& entry = AxisPresetEntryFor(preset);
   if (!entry.has_adjustable_zenith_std || entry.override_json_name == nullptr) {
     return;
@@ -738,7 +879,17 @@ void EraseAxisPresetZenithStdFromDoc(nlohmann::json& doc, AxisPreset preset) {
   }
   const auto axis_it = presets_it->find("axis");
   if (axis_it != presets_it->end() && axis_it->is_object()) {
-    axis_it->erase(entry.override_json_name);
+    const auto node_it = axis_it->find(entry.override_json_name);
+    if (node_it != axis_it->end()) {
+      if (node_it->is_object()) {
+        node_it->erase(key);
+      }
+      // A node that is not an object cannot hold this key and is not this face's to keep: a
+      // hand-edit that replaced the node with a bare number is dropped along with the override.
+      if (!node_it->is_object() || node_it->empty()) {
+        axis_it->erase(entry.override_json_name);
+      }
+    }
     if (axis_it->empty()) {
       presets_it->erase("axis");
     }
@@ -746,6 +897,15 @@ void EraseAxisPresetZenithStdFromDoc(nlohmann::json& doc, AxisPreset preset) {
   if (presets_it->empty()) {
     doc.erase("presets");
   }
+}
+}  // namespace
+
+void EraseAxisPresetZenithStdFromDoc(nlohmann::json& doc, AxisPreset preset) {
+  EraseAxisPresetZenithKeyFromDoc(doc, preset, "zenith_std");
+}
+
+void EraseAxisPresetZenithTypeFromDoc(nlohmann::json& doc, AxisPreset preset) {
+  EraseAxisPresetZenithKeyFromDoc(doc, preset, "zenith_type");
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -871,8 +1031,24 @@ void AdoptAxisPresetZenithStdOverrideInMemory(AxisPreset preset, std::optional<f
     return;
   }
   // Whole-struct assignment, never "clear the fields then refill them". This scrum has already
-  // spent three code-review rounds on partial updates to this exact global.
-  g_axis_overrides.slots[slot] = stored_value ? AxisPresetOverride{ true, *stored_value } : AxisPresetOverride{};
+  // spent three code-review rounds on partial updates to this exact global. The next value is
+  // built complete beside the slot — the other face carried over unchanged — and assigned once.
+  AxisPresetOverride next = g_axis_overrides.slots[slot];
+  next.has_zenith_std = stored_value.has_value();
+  next.zenith_std = stored_value.value_or(0.0f);
+  g_axis_overrides.slots[slot] = next;
+}
+
+void AdoptAxisPresetZenithTypeOverrideInMemory(AxisPreset preset, std::optional<AxisDistType> stored_type) {
+  const auto slot = static_cast<std::size_t>(preset);
+  if (slot >= kAxisPresetSlotCount) {
+    return;
+  }
+  // Mirrors AdoptAxisPresetZenithStdOverrideInMemory: complete next value, one assignment.
+  AxisPresetOverride next = g_axis_overrides.slots[slot];
+  next.has_zenith_type = stored_type.has_value();
+  next.zenith_type = stored_type.value_or(AxisDistType::kGauss);
+  g_axis_overrides.slots[slot] = next;
 }
 
 AxisDist EffectiveAxisPresetZenith(const AxisPresetEntry& entry) {
@@ -880,7 +1056,20 @@ AxisDist EffectiveAxisPresetZenith(const AxisPresetEntry& entry) {
   if (const auto stored = GetUserAxisPresetZenithStdOverride(entry.id)) {
     zenith.std = *stored;
   }
+  // Trusted as stored: the cache is only ever filled by ParseAxisPresetOverrides, which refuses
+  // an out-of-set type before it gets here, and by the panel's commit, which validates first.
+  if (const auto stored = GetUserAxisPresetZenithTypeOverride(entry.id)) {
+    zenith.type = *stored;
+  }
   return zenith;
+}
+
+std::optional<AxisDistType> GetUserAxisPresetZenithTypeOverride(AxisPreset preset) {
+  const auto slot = static_cast<std::size_t>(preset);
+  if (slot >= kAxisPresetSlotCount || !g_axis_overrides.slots[slot].has_zenith_type) {
+    return std::nullopt;
+  }
+  return g_axis_overrides.slots[slot].zenith_type;
 }
 
 std::optional<float> GetUserAxisPresetZenithStdOverride(AxisPreset preset) {

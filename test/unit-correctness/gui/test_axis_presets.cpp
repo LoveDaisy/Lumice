@@ -1,7 +1,10 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstring>
+#include <initializer_list>
 
 #include "core/simulator.hpp"
 #include "gui/axis_presets.hpp"
@@ -90,6 +93,98 @@ TEST(AxisPresetTest, LabelsAreCapitalized) {
   EXPECT_STREQ(AxisPresetLabel(AxisPreset::kLowitz), "Lowitz");
   EXPECT_STREQ(AxisPresetLabel(AxisPreset::kRandom), "Random");
   EXPECT_STREQ(AxisPresetLabel(AxisPreset::kCustom), "Custom");
+}
+
+// --- The type-name tables and the per-preset accepted set ---
+
+// Every enumerator round-trips through the JSON spelling, and the spelling is the one .lmc files
+// have always carried (pinned as literals so a renamed enumerator cannot silently re-spell the
+// documents on disk). An unrecognised string is nullopt, not a fallback: the two callers disagree
+// about what to do with one, and the table must not decide for either.
+TEST(AxisPresetTest, AxisDistTypeJsonNamesRoundTripAndAreTheOnDiskSpellings) {
+  using lumice::gui::AxisDistTypeFromJsonName;
+  using lumice::gui::AxisDistTypeJsonName;
+  EXPECT_STREQ(AxisDistTypeJsonName(AxisDistType::kGauss), "gauss");
+  EXPECT_STREQ(AxisDistTypeJsonName(AxisDistType::kUniform), "uniform");
+  EXPECT_STREQ(AxisDistTypeJsonName(AxisDistType::kZigzag), "zigzag");
+  EXPECT_STREQ(AxisDistTypeJsonName(AxisDistType::kLaplacian), "laplacian");
+  EXPECT_STREQ(AxisDistTypeJsonName(AxisDistType::kGaussLegacy), "gauss_legacy");
+  for (int i = 0; i < static_cast<int>(AxisDistType::kCount); ++i) {
+    const auto type = static_cast<AxisDistType>(i);
+    const auto back = AxisDistTypeFromJsonName(AxisDistTypeJsonName(type));
+    if (!back.has_value()) {
+      ADD_FAILURE() << "enumerator " << i << " does not round-trip";
+      continue;
+    }
+    EXPECT_EQ(static_cast<int>(*back), i);
+  }
+  EXPECT_FALSE(AxisDistTypeFromJsonName("Gauss").has_value());  // case matters: not a display name
+  EXPECT_FALSE(AxisDistTypeFromJsonName("").has_value());
+  EXPECT_FALSE(AxisDistTypeFromJsonName("triangular").has_value());
+}
+
+// AxisDistTypeLabel is a view over kAxisDistTypeComboItems, so it must agree with that string
+// entry by entry — walked here independently rather than through the function under test.
+TEST(AxisPresetTest, AxisDistTypeLabelIsAViewOverTheComboItemString) {
+  using lumice::gui::AxisDistTypeLabel;
+  using lumice::gui::kAxisDistTypeComboItems;
+  const char* cursor = kAxisDistTypeComboItems;
+  for (int i = 0; i < static_cast<int>(AxisDistType::kCount); ++i) {
+    EXPECT_STREQ(AxisDistTypeLabel(static_cast<AxisDistType>(i)), cursor) << "enumerator " << i;
+    cursor += std::strlen(cursor) + 1;
+  }
+  EXPECT_EQ(*cursor, '\0');  // the string holds exactly kCount names
+  EXPECT_STREQ(AxisDistTypeLabel(AxisDistType::kLaplacian), "Laplacian");
+}
+
+// The accepted set is the classifier's own predicate, so it is pinned here as the exact type
+// list per preset rather than re-derived through IsGaussLike: a change to either side shows up
+// as a diff against these literals.
+TEST(AxisPresetTest, AcceptedZenithTypesAreExactlyTheClassifiersFamilies) {
+  using lumice::gui::IsAcceptedZenithType;
+  const auto expect_set = [](AxisPreset preset, std::initializer_list<AxisDistType> accepted) {
+    for (int i = 0; i < static_cast<int>(AxisDistType::kCount); ++i) {
+      const auto type = static_cast<AxisDistType>(i);
+      const bool in_set = std::find(accepted.begin(), accepted.end(), type) != accepted.end();
+      EXPECT_EQ(IsAcceptedZenithType(preset, type), in_set) << AxisPresetLabel(preset) << " / type " << i;
+    }
+  };
+  const std::initializer_list<AxisDistType> gauss_like = { AxisDistType::kGauss, AxisDistType::kGaussLegacy,
+                                                           AxisDistType::kLaplacian, AxisDistType::kUniform };
+  expect_set(AxisPreset::kColumn, gauss_like);
+  expect_set(AxisPreset::kPlate, gauss_like);
+  expect_set(AxisPreset::kParry, gauss_like);
+  expect_set(AxisPreset::kLowitz, { AxisDistType::kGauss, AxisDistType::kGaussLegacy, AxisDistType::kLaplacian,
+                                    AxisDistType::kUniform, AxisDistType::kZigzag });
+  expect_set(AxisPreset::kRandom, {});
+  expect_set(AxisPreset::kCustom, {});
+}
+
+// The list form is the predicate filtered in enum order, carrying the display label: what a combo
+// draws is exactly what IsAcceptedZenithType says, in the order the full-type combo uses.
+TEST(AxisPresetTest, AcceptedZenithTypeListMatchesThePredicateInEnumOrder) {
+  using lumice::gui::AcceptedZenithTypesForPreset;
+  using lumice::gui::AxisDistTypeLabel;
+  using lumice::gui::IsAcceptedZenithType;
+  for (int p = 0; p <= static_cast<int>(AxisPreset::kCustom); ++p) {
+    const auto preset = static_cast<AxisPreset>(p);
+    const auto choices = AcceptedZenithTypesForPreset(preset);
+    int expected_count = 0;
+    int last = -1;
+    for (int i = 0; i < static_cast<int>(AxisDistType::kCount); ++i) {
+      expected_count += IsAcceptedZenithType(preset, static_cast<AxisDistType>(i)) ? 1 : 0;
+    }
+    EXPECT_EQ(static_cast<int>(choices.size()), expected_count) << AxisPresetLabel(preset);
+    for (const auto& choice : choices) {
+      EXPECT_TRUE(IsAcceptedZenithType(preset, choice.type)) << AxisPresetLabel(preset);
+      EXPECT_GT(static_cast<int>(choice.type), last) << AxisPresetLabel(preset) << ": not in enum order";
+      last = static_cast<int>(choice.type);
+      EXPECT_STREQ(choice.label, AxisDistTypeLabel(choice.type));
+    }
+  }
+  EXPECT_EQ(AcceptedZenithTypesForPreset(AxisPreset::kColumn).size(), 4u);
+  EXPECT_EQ(AcceptedZenithTypesForPreset(AxisPreset::kLowitz).size(), 5u);
+  EXPECT_TRUE(AcceptedZenithTypesForPreset(AxisPreset::kRandom).empty());
 }
 
 // --- DefaultPreviewRotation contract ---

@@ -377,6 +377,10 @@ void ApplyUserDefaultsOverlay(GuiState& state, const nlohmann::json& doc);
 // for the settings half of the file.
 std::optional<float> GetUserAxisPresetZenithStdOverride(AxisPreset preset);
 
+// The zenith-TYPE half of the same override, with the same presence-vs-value distinction and the
+// same reason for existing beside EffectiveAxisPresetZenith. nullopt means "use the factory type".
+std::optional<AxisDistType> GetUserAxisPresetZenithTypeOverride(AxisPreset preset);
+
 // --------------------------------------------------------------------------------------------------
 // Preset-library write side.
 //
@@ -385,11 +389,19 @@ std::optional<float> GetUserAxisPresetZenithStdOverride(AxisPreset preset);
 // GuiState half of the file and every other preset survive by construction, not by each call site
 // remembering to preserve them.
 //
-// Scope of what is storable, and why it is one float rather than a preset's nine fields: the
+// Scope of what is storable, and why it is two zenith fields rather than a preset's nine: the
 // classifier (ClassifyAxisPreset) pins mean to within kEpsilon and requires a full-uniform-360
-// azimuth, so zenith.std is the only field a user can move and still have the preset keep its
-// identity. Storing anything else would let the library define a "Column" the classifier calls
-// Custom, which is the failure this whole design exists to avoid.
+// azimuth, so zenith.std — and, within the family of types the classifier already accepts for
+// that preset (IsAcceptedZenithType), zenith.type — are the only fields a user can move and still
+// have the preset keep its identity. Storing anything else would let the library define a
+// "Column" the classifier calls Custom, which is the failure this whole design exists to avoid.
+//
+// The two faces have PARALLEL families of functions (Read/Write/Erase + a save-time judge + an
+// in-memory adopt), not one generic one. That is a design decision, recorded so it is not read as
+// an abstraction someone forgot: std is a continuous quantity whose out-of-domain values are
+// clamped to the nearest legal one, type is a discrete set whose out-of-set values have no nearest
+// neighbour and are refused whole. One interface would have to give the type a clamp it cannot
+// have, or take the std's away.
 // --------------------------------------------------------------------------------------------------
 
 // What storing a value WOULD do, with no IO: the clamp decision on its own.
@@ -422,6 +434,20 @@ struct AxisPresetClampResult {
 // this one the first time a domain moves.
 AxisPresetClampResult ClampAxisPresetZenithStdForSave(AxisPreset preset, float raw_value);
 
+// The type face's save-time judge: whether `requested` may be stored as `preset`'s zenith type.
+//
+// No stored_value field, because there is nothing to adjust: a type is either in the set the
+// classifier keeps this preset under (accepted, message empty) or it is not (refused, `message`
+// says so and names the built-in type that stands). The panel's combo only offers the accepted
+// set, so on the UI path this always accepts — it is the second defense, the one a hand-edited
+// working copy hits. Message wording is the load path's, so a refusal reads the same in the
+// startup notice and in the panel.
+struct AxisPresetTypeResult {
+  bool accepted = false;
+  std::string message;
+};
+AxisPresetTypeResult ValidateAxisPresetZenithTypeForSave(AxisPreset preset, AxisDistType requested);
+
 // The preset library's half of an override DOCUMENT, with no IO: read / write / erase
 // presets.axis.<preset>.zenith_std.
 //
@@ -438,6 +464,18 @@ std::optional<float> ReadAxisPresetZenithStdFromDoc(const nlohmann::json& doc, A
 void WriteAxisPresetZenithStdToDoc(nlohmann::json& doc, AxisPreset preset, float stored_value);
 void EraseAxisPresetZenithStdFromDoc(nlohmann::json& doc, AxisPreset preset);
 
+// The same three for presets.axis.<preset>.zenith_type, the sibling key in the same node. Each
+// face erases only its own key; the node (then `axis`, then `presets`) is pruned when the last
+// key leaves, so restoring one face never drops the other and never leaves a skeleton.
+//
+// The type is spelled on disk with AxisDistTypeJsonName — the table the .lmc writer uses — and
+// the read is RAW like the std one: a recognised spelling comes back whether or not this preset
+// accepts it (that is ValidateAxisPresetZenithTypeForSave's call); a spelling the table does not
+// know has no AxisDistType to return and reads as absent.
+std::optional<AxisDistType> ReadAxisPresetZenithTypeFromDoc(const nlohmann::json& doc, AxisPreset preset);
+void WriteAxisPresetZenithTypeToDoc(nlohmann::json& doc, AxisPreset preset, AxisDistType stored_type);
+void EraseAxisPresetZenithTypeFromDoc(nlohmann::json& doc, AxisPreset preset);
+
 // Point the in-memory preset cache at `stored_value` (nullopt = "nothing stored, use the factory
 // value") without touching any file.
 //
@@ -450,8 +488,13 @@ void EraseAxisPresetZenithStdFromDoc(nlohmann::json& doc, AxisPreset preset);
 // second answer to "what did the user save".
 void AdoptAxisPresetZenithStdOverrideInMemory(AxisPreset preset, std::optional<float> stored_value);
 
+// The type face's adopt, under the same disk-first contract. Only the type half of the slot moves;
+// the std half carries over. The caller is expected to have judged the value with
+// ValidateAxisPresetZenithTypeForSave first — the cache is trusted at the point of use.
+void AdoptAxisPresetZenithTypeOverrideInMemory(AxisPreset preset, std::optional<AxisDistType> stored_type);
+
 // The zenith distribution a preset button actually writes: the factory row, with the user's std
-// substituted when one is stored. Single source for that resolution — the axis modal's preset
+// and type substituted when either is stored. Single source for that resolution — the axis modal's preset
 // buttons and the library panel both call it, so "what Column gives you" cannot differ between the
 // place you press it and the place you configure it.
 AxisDist EffectiveAxisPresetZenith(const AxisPresetEntry& entry);
@@ -459,6 +502,11 @@ AxisDist EffectiveAxisPresetZenith(const AxisPresetEntry& entry);
 // Human-readable form of the domain a preset's zenith std must stay inside, e.g.
 // "greater than 0 and less than 10". For UI copy only.
 std::string DescribeAxisPresetZenithStdDomain(AxisPreset preset);
+
+// Human-readable form of the set a preset's zenith type must stay inside, e.g.
+// "Gauss, Uniform, Laplacian or Gauss (legacy)". For UI copy only; empty for a preset with no
+// adjustable face.
+std::string DescribeAxisPresetZenithTypeDomain(AxisPreset preset);
 
 // The shortest %g precision (6..9) that still reads back as exactly this float via strtof. Shared
 // by FormatAxisPresetStd below and by the §1 panel's InputFloat display format so both places pick

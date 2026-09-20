@@ -5,6 +5,9 @@
 #include <cmath>
 #include <cstddef>
 #include <cstring>
+#include <optional>
+#include <string_view>
+#include <vector>
 
 #include "gui/gui_state.hpp"
 
@@ -50,6 +53,59 @@ inline constexpr float kLowitzZenithStdLowerBound = 15.0f;
 inline constexpr const char* kAxisDistTypeComboItems = "Gauss\0Uniform\0Zigzag\0Laplacian\0Gauss (legacy)\0";
 static_assert(static_cast<int>(AxisDistType::kCount) == 5, "Update kAxisDistTypeComboItems when adding AxisDistType");
 
+// The same five names, one at a time. A VIEW over kAxisDistTypeComboItems, walked by enum index,
+// rather than a second array of the same literals: a caller that draws a subset of the types (the
+// preset library's zenith-type cell lists only what the classifier accepts for that preset) needs
+// the names individually, and two hand-written copies of one name list would be the divergence
+// the constant above exists to prevent. Not constexpr because the walk uses strlen; the callers
+// are per-frame UI code that already pays for string building.
+inline const char* AxisDistTypeLabel(AxisDistType type) {
+  const char* cursor = kAxisDistTypeComboItems;
+  for (int i = 0; i < static_cast<int>(type) && i < static_cast<int>(AxisDistType::kCount); ++i) {
+    cursor += std::strlen(cursor) + 1;
+  }
+  return cursor;
+}
+
+// AxisDistType <-> its JSON spelling, the one used by every document that stores a distribution
+// type: the .lmc / exported-config axis blocks (file_io.cpp) AND the user-defaults preset override
+// (presets.axis.<name>.zenith_type, user_defaults.cpp). One table, so the override file cannot come
+// to spell "laplacian" differently from the document the same session exports.
+//
+// Both functions are pure lookups with no logging and no fallback. The two callers disagree, on
+// purpose, about what an unrecognised spelling means (file_io: fall back to gauss and log a FileIO
+// error; user_defaults: drop the override and file a downgrade notice), and a shared table that
+// picked one of those would silently impose it on the other. kCount is not a stored value and has
+// no name.
+inline const char* AxisDistTypeJsonName(AxisDistType type) {
+  static_assert(static_cast<int>(AxisDistType::kCount) == 5, "Update AxisDistTypeJsonName when adding AxisDistType");
+  switch (type) {
+    case AxisDistType::kGauss:
+      return "gauss";
+    case AxisDistType::kUniform:
+      return "uniform";
+    case AxisDistType::kZigzag:
+      return "zigzag";
+    case AxisDistType::kLaplacian:
+      return "laplacian";
+    case AxisDistType::kGaussLegacy:
+      return "gauss_legacy";
+    case AxisDistType::kCount:
+      break;
+  }
+  return "gauss";
+}
+
+inline std::optional<AxisDistType> AxisDistTypeFromJsonName(std::string_view spelled) {
+  for (int i = 0; i < static_cast<int>(AxisDistType::kCount); ++i) {
+    const auto type = static_cast<AxisDistType>(i);
+    if (spelled == AxisDistTypeJsonName(type)) {
+      return type;
+    }
+  }
+  return std::nullopt;
+}
+
 // --------------------------------------------------------------------------------------------------
 // The built-in preset table.
 //
@@ -67,9 +123,15 @@ struct AxisPresetEntry {
   AxisDist zenith;
   AxisDist azimuth;
   AxisDist roll;
-  // Whether a user may retune this preset's zenith std and have it persist. THE single source for
+  // Whether a user may retune this preset's zenith and have it persist. THE single source for
   // that question — the write guard (user_defaults.cpp), the "Save as <preset>" gesture and the
   // panel's editable-cell test all read this field rather than each restating the same four names.
+  //
+  // The name says "std" because std was the first adjustable face; the field now gates BOTH faces a
+  // preset's zenith exposes, the std input and the distribution-type combo. They are one population
+  // by construction — a type override is only meaningful inside the classifier's accepted set for
+  // this preset (IsAcceptedZenithType below), and the presets with an accepted set are exactly the
+  // ones with a tunable std — so a second flag would be a second spelling of the same fact.
   //
   // False for Random (defined as three uniform-360 axes: there is no narrow-distribution field to
   // widen, so an input box for it would be one that does nothing) and for Custom (not a built-in
@@ -213,6 +275,46 @@ inline bool IsRollLocked(const AxisDist& d) {
 }
 
 }  // namespace axis_preset_detail
+
+// Which zenith distribution types a preset keeps its identity under — the SAME predicates
+// ClassifyAxisPreset applies, dispatched by preset, so the set the library offers a user and the
+// set the classifier accepts cannot be two lists. Column / Plate / Parry: the gauss-like family;
+// Lowitz: that family plus zigzag; Random and Custom have no adjustable face and accept nothing
+// (Random's zenith is a full-uniform-360 axis with no family to pick from; Custom is not an
+// identity at all).
+inline bool IsAcceptedZenithType(AxisPreset preset, AxisDistType type) {
+  switch (preset) {
+    case AxisPreset::kColumn:
+    case AxisPreset::kPlate:
+    case AxisPreset::kParry:
+      return axis_preset_detail::IsGaussLike(type);
+    case AxisPreset::kLowitz:
+      return axis_preset_detail::IsLowitzZenithType(type);
+    case AxisPreset::kRandom:
+    case AxisPreset::kCustom:
+      return false;
+  }
+  return false;
+}
+
+// The accepted set as a list, in AxisDistType enum order, with the display name beside each — the
+// shape a combo draws from. Derived from IsAcceptedZenithType every call rather than tabulated,
+// so there is one statement of the set and this cannot fall out of step with it.
+struct ZenithTypeChoice {
+  AxisDistType type;
+  const char* label;
+};
+
+inline std::vector<ZenithTypeChoice> AcceptedZenithTypesForPreset(AxisPreset preset) {
+  std::vector<ZenithTypeChoice> out;
+  for (int i = 0; i < static_cast<int>(AxisDistType::kCount); ++i) {
+    const auto type = static_cast<AxisDistType>(i);
+    if (IsAcceptedZenithType(preset, type)) {
+      out.push_back({ type, AxisDistTypeLabel(type) });
+    }
+  }
+  return out;
+}
 
 // Classify an AxisDist triple (zenith, azimuth, roll) into the best-matching
 // preset. Order of checks is strict → permissive: Lowitz → Parry → Plate →
