@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1789912849057,
+  "lastUpdate": 1789912853676,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -4746,54 +4746,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "fc5de377009120dd26063703a16f31027aaffd62",
-          "message": "Merge pull request #293 from LoveDaisy/feat/test-time-and-scope-discipline\n\nfeat(ci/doc): 测试时间预算的 owner —— 实测拓扑、分片重装箱、分层契约",
-          "timestamp": "2026-09-02T09:04:32+08:00",
-          "tree_id": "cfe6beb5c25bbb4014f67bf142635e635a347f4e",
-          "url": "https://github.com/LoveDaisy/ice_halo_sim/commit/fc5de377009120dd26063703a16f31027aaffd62"
-        },
-        "date": 1788311805928,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 1019010.4,
-            "unit": "rays/sec",
-            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 1161234.4,
-            "unit": "rays/sec",
-            "extra": "CPU: Neoverse-N2\\nCores: 4"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 763810.9,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 7763 64-Core Processor\\nCores: 4"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 641346.7,
-            "unit": "rays/sec",
-            "extra": "CPU: INTEL(R) XEON(R) PLATINUM 8573C\\nCores: 4"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "32515f9970bfd614540c36dece2c55fe71eee1a6",
           "message": "Merge pull request #294 from LoveDaisy/chore/annotation-doc-and-diagnostics-gaps\n\nchore(doc/cli): 补 zenith_nadir schema 文档；renderer 超限诊断指向真正的上限",
           "timestamp": "2026-09-02T13:14:20+08:00",
@@ -9456,6 +9408,54 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 571880,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "a9eb84bee60644a8d4838c4051be47e0b5cda60a",
+          "message": "Merge pull request #394 from LoveDaisy/feat/analyze-chain-table-capacity\n\nfeat(analyze): runtime chain-record capacity — --chain-capacity / C API chain_capacity (task-583)",
+          "timestamp": "2026-09-20T21:46:35+08:00",
+          "tree_id": "f4e0ca5a93ff255549dadfb9d9ff5d2fb530ffac",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/a9eb84bee60644a8d4838c4051be47e0b5cda60a"
+        },
+        "date": 1789912853008,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 928421.9,
+            "unit": "rays/sec",
+            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 1015904.4,
+            "unit": "rays/sec",
+            "extra": "CPU: Neoverse-N2\\nCores: 4"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 652147.1,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 9V74 80-Core Processor\\nCores: 4"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 568497.9,
             "unit": "rays/sec",
             "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
           }
