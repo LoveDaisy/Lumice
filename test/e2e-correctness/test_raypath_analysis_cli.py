@@ -19,7 +19,14 @@ What is pinned:
     finer read never has fewer rows;
   * the infinite budget — a scene whose ray_num is ``"infinite"`` runs until SIGINT, the
     ``--csv`` file is complete at every rewrite, and the interrupted run still exits 0 having
-    written its last result.
+    written its last result;
+  * the chain-record capacity (``--chain-capacity``) — the option's refusals; and, through
+    the CSV, that the number reaches BOTH halves of the record: a capacity of 5 turns chains
+    away where the default turns none, and on a scene with more distinct finest chains than
+    the default holds (``raypath_analysis_halo_22_max_hits_8.json``, 24k at 200k rays) a
+    raised capacity both stops the producer turning chains away (``record_full_hits`` back to
+    0) and lets the consumer list more than 16384 rows — each signal blind to the half the
+    other one watches, so the pair is what makes "only one side re-wired" red.
 """
 
 from __future__ import annotations
@@ -39,6 +46,13 @@ from test.e2e.runner import find_lumice_binary, get_project_root
 
 CONFIGS_DIR = get_project_root() / "test" / "e2e" / "configs"
 _CONFIG = CONFIGS_DIR / "raypath_analysis_halo_22.json"
+# The same scene one hit deeper. At max_hits 7 a prism's finest chains number at most 13 688
+# (the exact reachable set), inside the default record of 16 384; at 8 the reachable set is
+# 42 900 and 200k rays visit about 24 000 of them, so this scene is the cheapest one that
+# overflows the default — the case --chain-capacity exists for — in under a second.
+_CONFIG_MAX_HITS_8 = CONFIGS_DIR / "raypath_analysis_halo_22_max_hits_8.json"
+_DEFAULT_CHAIN_CAPACITY = 16384
+_OTHER_ROW = "other (not recorded)"
 
 # The same seed as test_raypath_analysis_capi.py: a seeded run is single-worker and
 # deterministic, so two invocations of one question are the same run and their numbers compare
@@ -235,6 +249,13 @@ class TestAnalyzeCli(LumiceTestCase):
             (["--rays", "2x"], "--rays must be a positive integer"),
             (["--seed", "0"], "--seed must be a positive integer"),
             (["--workers", "0"], "--workers must be a positive integer"),
+            (["--chain-capacity", "0"], "--chain-capacity must be an integer in [1, 1048576]"),
+            (["--chain-capacity", "-1"], "--chain-capacity must be an integer in [1, 1048576]"),
+            (["--chain-capacity", "abc"], "--chain-capacity must be an integer in [1, 1048576]"),
+            (["--chain-capacity", "32K"], "--chain-capacity must be an integer in [1, 1048576]"),
+            (["--chain-capacity", "1048577"], "--chain-capacity must be an integer in [1, 1048576]"),
+            (["--chain-capacity", "99999999999"], "--chain-capacity must be an integer in [1, 1048576]"),
+            (["--chain-capacity"], "--chain-capacity requires an argument"),
             (["-o", "somewhere"], "unknown option: -o"),
         ]
         for extra, message in cases:
@@ -311,6 +332,70 @@ class TestAnalyzeCli(LumiceTestCase):
         # At the finest the 22° orbit is split twelve ways; under P|B|D it is one row on top.
         self.assertEqual(rows_m[0][0], _HALO_22)
         self.assertGreaterEqual({"3-5", "4-6", "3-7"} & {r[0] for r in rows_f}, {"3-5", "4-6", "3-7"})
+
+    # ---- --chain-capacity: the number reaches both halves of the record ----
+
+    @staticmethod
+    def _chain_rows(rows):
+        """The rows that are chains — everything but the fixed `other` line."""
+        return [r for r in rows if r[0] != _OTHER_ROW]
+
+    def test_chain_capacity_shrunk_turns_chains_away_where_the_default_turns_none(self):
+        # The 22° scene fits the default whole (record_full_hits 0 is pinned above); at a
+        # capacity of 5 the producer's table fills on the first batch and every later chain is
+        # turned away, which the head counts, and the listing holds at most 5 chains + `other`.
+        small = self._analyze("--symmetry", "none", "--chain-capacity", "5")
+        self.assertEqual(small.returncode, 0, small.stderr)
+        head, rows = _parse_csv(small.stdout)
+        self.assertGreater(int(head["record_full_hits"]), 0, "5 slots cannot hold the 22° scene's 11.7k chains")
+        chains = self._chain_rows(rows)
+        self.assertLessEqual(len(chains), 5, [r[0] for r in rows[:8]])
+        self.assertEqual(rows[-1][0], _OTHER_ROW, "the turned-away rays must be accounted for in `other`")
+        self.assertAlmostEqual(float(rows[-1][2]), 100.0, places=2)
+        # The bound changes what is recorded, never what is traced: same seed, same totals.
+        full = self._analyze("--symmetry", "none")
+        head_full, _ = _parse_csv(full.stdout)
+        self.assertEqual(head["total_energy"], head_full["total_energy"])
+        self.assertEqual(head["total_rays"], head_full["total_rays"])
+        self.assertEqual(head_full["record_full_hits"], "0")
+
+    def test_chain_capacity_raised_reaches_both_the_producer_and_the_consumer(self):
+        # Two signals, each blind to one half of the record:
+        #  * `record_full_hits` is the PRODUCER's count of chains its table turned away (the
+        #    consumer only sums what each batch reports). It cannot see a consumer left at the
+        #    default: a producer that keeps 24k chains sends them all, and the histogram quietly
+        #    evicts down to its own row bound with the count still reading 0.
+        #  * the number of chain rows is bounded by the CONSUMER (Space-Saving never holds more
+        #    rows than its capacity) — and also by the producer, since a chain the producer
+        #    turned away is never a row. So rows > 16384 needs BOTH halves raised; but rows alone
+        #    cannot tell "producer stuck at the default" from a scene that simply has few chains,
+        #    which is what the first signal is for.
+        # Together: producer stuck -> record_full_hits > 0 here; consumer stuck -> rows <= 16384.
+        deep = ["-f", str(_CONFIG_MAX_HITS_8), "--seed", _SEED, "--symmetry", "none"]
+        default = self.run_lumice(["analyze", *deep], timeout=180)
+        self.assertEqual(default.returncode, 0, default.stderr)
+        head_d, rows_d = _parse_csv(default.stdout)
+        chains_d = self._chain_rows(rows_d)
+        self.assertGreater(int(head_d["record_full_hits"]), 0, "test premise: this scene must overflow the default")
+        self.assertEqual(len(chains_d), _DEFAULT_CHAIN_CAPACITY, "the default record fills exactly")
+        self.assertEqual(rows_d[-1][0], _OTHER_ROW)
+
+        raised = self.run_lumice(["analyze", *deep, "--chain-capacity", "32768"], timeout=180)
+        self.assertEqual(raised.returncode, 0, raised.stderr)
+        head_r, rows_r = _parse_csv(raised.stdout)
+        chains_r = self._chain_rows(rows_r)
+        # Producer half: nothing turned away any more.
+        self.assertEqual(head_r["record_full_hits"], "0", "the producer's table must have grown with the request")
+        # Consumer half: more rows than the default could ever list (24k at this budget).
+        self.assertGreater(len(chains_r), _DEFAULT_CHAIN_CAPACITY, "the consumer's row bound must have grown too")
+        self.assertTrue(all(r[0] != _OTHER_ROW for r in rows_r), "nothing was turned away, so no `other` row")
+        # And at 32768 the whole record is exact: no row inherited an evicted row's energy.
+        self.assertTrue(all("(-" not in r[3] for r in rows_r), "an error bound means a row was evicted")
+        # Same seed, same physics.
+        self.assertEqual(head_r["total_energy"], head_d["total_energy"])
+        self.assertEqual(head_r["total_rays"], head_d["total_rays"])
+        # The point of the option: 8-face chains are in the listing, not in `other`.
+        self.assertTrue(any(r[0].count("-") == 7 for r in chains_r), "an 8-face chain must be listed")
 
 
 # ---- AC4: the infinite budget and SIGINT ----
