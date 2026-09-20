@@ -23,10 +23,18 @@ namespace lumice::gui {
 // — the whole point of the feature is that the user reads a name off the Overlay list and turns to
 // the same name, so a second numbering would be an invitation to drift.
 //
-// kSunHorizon is the one entry that is not a marker, and it is deliberately last rather than mixed
-// in: it has no landing point on the canvas, which is exactly why core refuses to give it a
-// MarkerId (see annotation_overlay.hpp's SunHorizonDir). It reaches the same answer through its own
-// C API entry point instead of being smuggled in as a seventh id.
+// The four entries after the markers are the Horizon series, and they sit after rather than among
+// them on purpose: a horizon point has no landing point on the canvas, which is exactly why core
+// refuses to give it a MarkerId (see annotation_overlay.hpp's SunHorizonDir). The series shares ONE
+// C API entry point — LUMICE_ResolveSunHorizonDirection answers "the horizon on the sun's side",
+// and the other three are that bearing plus a constant (+90, 180, -90 degrees). The offset is the
+// only thing the GUI adds; which way "the sun's side" is remains core's answer, so a sign slip in
+// that rule cannot be re-introduced here (a hand-copied sign rule is how the render handedness once
+// went wrong, which is why this is stated rather than assumed).
+//
+// The bearings are RELATIVE TO THE SUN, not compass points: the GUI pins the sun at azimuth 0
+// (doc/gui-state-governance.md §9.3), so a label reading "East" would send the user looking for a
+// compass the scene does not have.
 enum class LookAtId : int {
   kZenith = LUMICE_ANNOTATION_MARKER_ZENITH,
   kNadir = LUMICE_ANNOTATION_MARKER_NADIR,
@@ -34,13 +42,20 @@ enum class LookAtId : int {
   kSubsun = LUMICE_ANNOTATION_MARKER_SUBSUN,
   kAnthelion = LUMICE_ANNOTATION_MARKER_ANTHELION,
   kAntisolar = LUMICE_ANNOTATION_MARKER_ANTISOLAR,
-  kSunHorizon = LUMICE_ANNOTATION_MARKER_COUNT,
-  kCount = LUMICE_ANNOTATION_MARKER_COUNT + 1,
+  // The Horizon series: level, at the sun's bearing plus the stated offset.
+  kSunHorizon = LUMICE_ANNOTATION_MARKER_COUNT,  // toward the sun (offset 0)
+  kHorizonSunPlus90 = LUMICE_ANNOTATION_MARKER_COUNT + 1,
+  kHorizonAntiSun = LUMICE_ANNOTATION_MARKER_COUNT + 2,
+  kHorizonSunMinus90 = LUMICE_ANNOTATION_MARKER_COUNT + 3,
+  kCount = LUMICE_ANNOTATION_MARKER_COUNT + 4,
 };
 
+// The first id of the Horizon series, for a caller that wants to draw a section header before it.
+constexpr LookAtId kFirstHorizonLookAt = LookAtId::kSunHorizon;
+
 // True for the ids that are markers, i.e. the ones whose direction comes from the marker table
-// rather than from the sun-horizon entry point. One predicate so the "< COUNT" boundary is spelled
-// once.
+// rather than from the sun-horizon entry point (the Horizon series). One predicate so the
+// "< COUNT" boundary is spelled once.
 inline bool IsMarkerLookAt(LookAtId id) {
   return static_cast<int>(id) >= 0 && static_cast<int>(id) < LUMICE_ANNOTATION_MARKER_COUNT;
 }
@@ -48,7 +63,8 @@ inline bool IsMarkerLookAt(LookAtId id) {
 // The menu label. For the six markers this returns kMarkerDisplayNames[id] verbatim — the SAME
 // string the Overlay panel's Reference Points list shows, read from the same table rather than
 // re-typed here, because a preset the user cannot match to the dot they can see is worth less than
-// no preset at all. kSunHorizon owns the only new literal in this file.
+// no preset at all. The Horizon series owns the only new literals in this file, and they live in
+// the same table as the series' offsets so a name and its bearing cannot be edited apart.
 // Returns nullptr for an out-of-range id.
 const char* LookAtDisplayName(LookAtId id);
 
