@@ -335,13 +335,14 @@ class Simulator {
   // XYZ plane into a device double plane and restarts the fp32 chain, so no
   // per-pixel fp32 atomicAdd chain is ever longer than this many batches
   // regardless of xyz_drain_batches_. An engineering constant settled on measured
-  // data, not a knob (doc/env-var-policy.md): folding every batch was measured at
-  // -22.5% throughput on a 2048x1024 dense-exit scene, a double-atomic plane at
-  // -13.9%/-17.3% (two reference boxes), and folding every 8 batches at
-  // -11.0%/-5.9% with the window total drifting <= 0.05% against the host's
-  // double ledger (unfolded, a 64-batch window drifts +0.40%). Left unfolded
-  // residue (at most this many batches) at drain time is folded by the drain
-  // itself (ReadbackXyzAccum's finalize pass), so it needs no separate call.
+  // data, not a knob (doc/env-var-policy.md): the throughput/drift trade-off
+  // across the candidates this value was chosen from (fold every batch, a
+  // double-atomic plane, this 8-batch cadence) is doc/gpu-single-engine-
+  // implementation.md §10, the single measurement point — the figures would
+  // drift stale here on a re-measurement that doc doesn't get re-copied for.
+  // Left unfolded residue (at most this many batches) at drain time is folded by
+  // the drain itself (ReadbackXyzAccum's finalize pass), so it needs no separate
+  // call.
   static constexpr uint32_t kXyzFoldEveryBatches = 8;
   // Readback the persistent device XYZ accumulator into a SimData (window-
   // aggregated root/crystal counts), enqueue it, and reset the window. No-op if
