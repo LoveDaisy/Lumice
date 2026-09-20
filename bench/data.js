@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1789904917751,
+  "lastUpdate": 1789904920062,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9524,50 +9524,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "5360f028303b6963e69eb26ba999c203a3f3018e",
-          "message": "Merge pull request #288 from LoveDaisy/feat/cli-gui-render-parity\n\n让导出的 config 诚实描述用户所见 + 建 CLI↔GUI 出图对照闸",
-          "timestamp": "2026-09-01T10:20:29+08:00",
-          "tree_id": "1d4a30db33e4386ab9a58ed55adc7521892bc4bb",
-          "url": "https://github.com/LoveDaisy/ice_halo_sim/commit/5360f028303b6963e69eb26ba999c203a3f3018e"
-        },
-        "date": 1788230002198,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 82.5,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 99.8,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 95.6,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 94,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "93c163fe3b8be8017bff712da303b6afa9ba8c03",
           "message": "Merge pull request #289 from LoveDaisy/task/lens-json-names-oob\n\nfix(gui): 修 kLensTypeJsonNames 越界读（用户可达崩溃）",
           "timestamp": "2026-09-01T11:38:10+08:00",
@@ -13867,6 +13823,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 91.3,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "337ad7c9b1160379b054d8d652114eb883ba7c36",
+          "message": "Merge pull request #390 from LoveDaisy/fix/composite-preview-p99-flake-margin\n\ntest(gui): drop the composite re-run p99 ratio that never saw the defect (task-582)",
+          "timestamp": "2026-09-20T19:39:18+08:00",
+          "tree_id": "dc6df54e496534e5ec18465303203dbf62ed18fd",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/337ad7c9b1160379b054d8d652114eb883ba7c36"
+        },
+        "date": 1789904919462,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 80.7,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 99.7,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 97,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 88.5,
             "unit": "%"
           }
         ]
