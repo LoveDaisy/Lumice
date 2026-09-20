@@ -77,9 +77,26 @@ Lumice analyze -f config.json                                          # whole s
 Lumice analyze -f config.json --roi cone --center 43,0 --radius 2      # a 2° cone around alt 43°, az 0
 Lumice analyze -f config.json --roi frame --render-id 1 --csv out.csv  # the rays inside render[] entry 1
 Lumice analyze -f config.json --symmetry none --rays 5M --seed 7       # finest rows, own budget, reproducible
+Lumice analyze -f config.json --symmetry none --chain-capacity 32768   # a record twice the default size
 ```
 
 `--roi sky | frame | cone` is the panel's Whole sky / In frame / Point; `--center <alt>,<az>` names the cone's centre as the altitude and azimuth of the sky point (azimuth measured as the sun's, so `--center <sun_altitude>,0` is the sun); `--symmetry` is the P / B / D checkboxes (`PBD` by default, `none` for the finest rows); `--rays` is the window's Rays field (the scene's own `ray_num` by default, `"infinite"` included). Two things the window has no equivalent of: `--seed <N>` fixes the random seed so two runs of one question are the same run (a seeded run is single-threaded by contract), and a scene that runs forever is ended with Ctrl-C, which still writes the result accumulated so far. With `--csv` the file is rewritten atomically every second, so it is complete whenever a script reads it; without it the CSV is stdout's alone and progress goes to stderr. The CLI has no radius slider: every ring of the cone is summed, and the head's `cone_rings_summed` line says so. `Lumice analyze -h` is the full option list; see [`03-cli-quickstart.md`](03-cli-quickstart.md) §4.
+
+**`--chain-capacity <N>`** sizes the record limit described in §4 for this one run: how many distinct unreduced raypaths are kept exact before the rest fall into the **other** row. The default, 16384, is the window's fixed size and holds every reference scene shipped here; a `--symmetry none` listing of *every* path through a single crystal can need more — a hexagonal prism's 8-face paths alone number about 29 000, so at the default they are what ends up in **other** (the head's `record_full_hits` line counts how often a path was turned away; 0 means the record was never full). Plain integer, no K/M/G suffix, 1 to 1048576. The cost is memory, roughly `workers × N × 220 bytes` on the trace side plus about as much again once for the listing: 32768 on 10 workers is ~140 MB, the maximum is several GB, and `--workers` above the automatic count multiplies the first term. It has no equivalent in the window, whose record stays at the default.
+
+**Known noise in a `--symmetry none` listing.** On a convex crystal a ray cannot hit the same face twice in a row, so a raypath like `4-2-7-7-1-2-1` is not a physical path: such rows are numerical by-products of a ray grazing an edge or a vertex, and they are what a run's tail can look like — energy printed as `0.0000`, a single ray each (`+/-` reads 100). They do not affect the energy shares of the real rows, and the engine does not filter them (telling a true edge case from a rounding one at record time is an open question, not a rule it can apply). Drop them before doing statistics on the file — any row whose face sequence repeats a face consecutively:
+
+```python
+import csv
+rows = [r for r in csv.reader(open("out.csv")) if r and not r[0].startswith("#")][1:]
+def repeats(name):  # any layer whose face sequence repeats a face consecutively
+    for layer in name.split(" -> "):
+        f = layer.split("(")[-1].rstrip(")").split("-")
+        if any(a == b for a, b in zip(f, f[1:])):
+            return True
+    return False
+clean = [r for r in rows if r[0] != "other (not recorded)" and not repeats(r[0])]
+```
 
 ## Further reading
 
