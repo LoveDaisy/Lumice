@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1789907140081,
+  "lastUpdate": 1789907142297,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9512,50 +9512,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "93c163fe3b8be8017bff712da303b6afa9ba8c03",
-          "message": "Merge pull request #289 from LoveDaisy/task/lens-json-names-oob\n\nfix(gui): 修 kLensTypeJsonNames 越界读（用户可达崩溃）",
-          "timestamp": "2026-09-01T11:38:10+08:00",
-          "tree_id": "386dbbee06c0b18a0469f3dd58b480cc1f8c7e05",
-          "url": "https://github.com/LoveDaisy/ice_halo_sim/commit/93c163fe3b8be8017bff712da303b6afa9ba8c03"
-        },
-        "date": 1788234599814,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 81.4,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 99.2,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 97.8,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 94.7,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "9faf145b0edde6af078573ca8726d7ce246411df",
           "message": "Merge pull request #290 from LoveDaisy/task/preview-solid-angle-jacobian\n\nfeat(gui): 预览 shader 补上目标镜头的相对照度，使非等面积投影下 GUI 与 CLI 可逐像素比",
           "timestamp": "2026-09-01T13:00:21+08:00",
@@ -13855,6 +13811,45 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 88.5,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "048801761115ac2403b66262d5f987c2146ca3b1",
+          "message": "Merge pull request #391 from LoveDaisy/feat/show-product-version\n\nfeat: show the product version — C API, title bar, --version, startup log, .lmc (task-585)",
+          "timestamp": "2026-09-20T20:10:01+08:00",
+          "tree_id": "93e17fbc3606c3e3386802a0e7be910d196ab10f",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/048801761115ac2403b66262d5f987c2146ca3b1"
+        },
+        "date": 1789907141668,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 94,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 99.7,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 93.9,
             "unit": "%"
           }
         ]
