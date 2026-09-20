@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1789907760574,
+  "lastUpdate": 1789907764290,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -4752,54 +4752,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "9faf145b0edde6af078573ca8726d7ce246411df",
-          "message": "Merge pull request #290 from LoveDaisy/task/preview-solid-angle-jacobian\n\nfeat(gui): 预览 shader 补上目标镜头的相对照度，使非等面积投影下 GUI 与 CLI 可逐像素比",
-          "timestamp": "2026-09-01T13:00:21+08:00",
-          "tree_id": "89c8de38143255c6034f17752c7461109dd74f23",
-          "url": "https://github.com/LoveDaisy/ice_halo_sim/commit/9faf145b0edde6af078573ca8726d7ce246411df"
-        },
-        "date": 1788239567153,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 948051,
-            "unit": "rays/sec",
-            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 1148494,
-            "unit": "rays/sec",
-            "extra": "CPU: Neoverse-N2\\nCores: 4"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 935366,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 9V74 80-Core Processor\\nCores: 4"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 651091.5,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "03e21b4dd2baadc1325958ed61d1293e3d6434c9",
           "message": "Merge pull request #291 from LoveDaisy/feat/fisheye-domain-widening\n\nfeat(core): 单镜头鱼眼定义域按 lens 放宽到 θ≤180，与 GUI 对齐",
           "timestamp": "2026-09-01T15:17:01+08:00",
@@ -9482,6 +9434,42 @@ window.BENCHMARK_DATA = {
             "value": 692927.1,
             "unit": "rays/sec",
             "extra": "CPU: AMD EPYC 9V74 80-Core Processor                \\nCores: 4"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "a09b72909d5b03ab532b9f908e01ac4ef233c4ac",
+          "message": "Merge pull request #392 from LoveDaisy/chore/test-hygiene-sweep\n\nchore: test hygiene sweep — shared LogCapture, static_assert, wire-table test, guard hardening (chore-584)",
+          "timestamp": "2026-09-20T20:25:08+08:00",
+          "tree_id": "06eb85faf160e5faed09fee676e77bd65d583e70",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/a09b72909d5b03ab532b9f908e01ac4ef233c4ac"
+        },
+        "date": 1789907763572,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 949316.6,
+            "unit": "rays/sec",
+            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 1018482.4,
+            "unit": "rays/sec",
+            "extra": "CPU: Neoverse-N2\\nCores: 4"
           }
         ]
       }
