@@ -11,10 +11,10 @@
 // a chain's energy here and its pixels' Y in a render of the same batches sum
 // to the same number (test_raypath_histogram_consumer.cpp pins that).
 //
-// The record is BOUNDED, at two levels. The producer's interning table holds
-// at most ChainIdInterningTable::kDefaultCapacity chains per worker and
-// answers the rest with one sentinel id; this consumer holds at most
-// kRaypathHistogramCapacity rows and, when a chain it has no row for arrives
+// The record is BOUNDED, at two levels, by ONE number. The producer's
+// interning table holds at most that many chains per worker and answers the
+// rest with one sentinel id; this consumer holds at most that many rows and,
+// when a chain it has no row for arrives
 // while full, replaces its lowest-energy row (Space-Saving, Metwally et al.
 // 2005): the new row starts from the evicted row's energy and count — that is
 // what makes the algorithm's guarantee hold — and records that inherited
@@ -67,18 +67,25 @@ namespace lumice {
 
 struct SceneConfig;
 
-// Row capacity of one consumer (k in the class comment): the bound on the
-// finest record's memory and on what a read-time reduction has to walk.
-// Calibrated by measurement (doc/raypath-analysis-panel.md carries the
-// table): equal to the producers' ChainIdInterningTable::kDefaultCapacity,
-// which keeps the 22° reference scene (11.7k finest chains at 200k rays)
-// exact end to end — the two bounds are only ever both exact or both not —
-// and reads back in 15 ms on the 838k-chain two-layer scene that took 1.5 s
-// unbounded; 32768 would double that for no exact row gained there.
+// Row capacity of one consumer (k in the class comment) when the analysis
+// request names none: the bound on the finest record's memory and on what a
+// read-time reduction has to walk. Calibrated by measurement
+// (doc/raypath-analysis-panel.md carries the table): equal to the producers'
+// ChainIdInterningTable::kDefaultCapacity, which keeps the 22° reference scene
+// (11.7k finest chains at 200k rays) exact end to end — the two bounds are
+// only ever both exact or both not — and reads back in 15 ms on the
+// 838k-chain two-layer scene that took 1.5 s unbounded; 32768 would double
+// that for no exact row gained there. A request that does name a capacity
+// (RaypathAnalysisRequest::chain_capacity_) sizes both halves from that one
+// number instead — ServerImpl::StartRaypathAnalysis derives it once and hands
+// the same value to this constructor and to every worker's table — so at run
+// time the agreement is structural; the constant below only has to agree with
+// the producer's DEFAULT.
 constexpr size_t kRaypathHistogramCapacity = 16384;
-// "The two bounds are only ever both exact or both not" (comment above) is a claim about this
-// value tracking ChainIdInterningTable::kDefaultCapacity (K_trie); pin it so a change to either
-// constant alone is a compile error rather than a silently-reintroduced mismatch.
+// "The two bounds are only ever both exact or both not" (comment above) is a claim about the two
+// DEFAULTS agreeing (a session's explicit capacity is one value by construction, see above); pin
+// it so a change to either constant alone is a compile error rather than a silently-reintroduced
+// mismatch.
 static_assert(kRaypathHistogramCapacity == ChainIdInterningTable::kDefaultCapacity,
               "kRaypathHistogramCapacity (k) must track ChainIdInterningTable::kDefaultCapacity "
               "(K_trie) — see the comment above");
@@ -90,9 +97,10 @@ class RaypathHistogramConsumer : public IConsume {
   // it. The server builds it from the committed scene (BuildRaypathReduceContext
   // below); a test feeding synthetic batches may leave it empty, which reduces
   // every crystal with sigma_a = 0 / D off and labels every layer as
-  // single-crystal. `capacity` is the row bound (kRaypathHistogramCapacity);
-  // a test that wants to see an eviction sets it small, the product never
-  // passes it.
+  // single-crystal. `capacity` is the row bound: kRaypathHistogramCapacity
+  // unless the analysis request named one, in which case the server passes
+  // the request's value here and to every producer's table alike; a test
+  // that wants to see an eviction sets it small.
   explicit RaypathHistogramConsumer(RaypathRoiSpec roi, RaypathReduceContext reduce_ctx = {},
                                     size_t capacity = kRaypathHistogramCapacity);
 

@@ -1412,10 +1412,18 @@ Error ServerImpl::StartRaypathAnalysis(const nlohmann::json& scene_json, const R
   } else {
     analysis_ray_num_overridden_.store(false, std::memory_order_release);
   }
+  // The record's capacity, derived ONCE and handed to both halves of the record below — the
+  // consumer's histogram rows and every worker's interning table. This line is the whole of
+  // the "producer and consumer agree" invariant at run time: there is no second place the
+  // number is computed, so there is no second place for it to differ (the compile-time
+  // constants the two halves default to are pinned equal by static_assert in
+  // raypath_histogram_consumer.hpp; that guards the defaults, this guards the session).
+  const size_t chain_capacity = request.chain_capacity_.value_or(ChainIdInterningTable::kDefaultCapacity);
   {
     std::lock_guard<TicketMutex> lock(consumer_mutex_);
     consumers_.clear();
-    consumers_.emplace_back(std::make_shared<RaypathHistogramConsumer>(request.roi_, std::move(reduce_ctx)));
+    consumers_.emplace_back(
+        std::make_shared<RaypathHistogramConsumer>(request.roi_, std::move(reduce_ctx), chain_capacity));
     // StatsConsumer for the live ray count (GetLiveSimRayCount reads it by dynamic_cast)
     // — the run's only progress signal, since there is no image to watch grow. No
     // AnchorConsumer: it measures an exposure anchor, and nothing here is exposed.
@@ -1430,7 +1438,7 @@ Error ServerImpl::StartRaypathAnalysis(const nlohmann::json& scene_json, const R
     // must not depend on which group happens to carry it.
     for (auto& s : AnalysisWorkers()) {
       // Finest, always: the reader reduces (RaypathAnalysisRequest says why).
-      s.SetAnalysisChainId(true, FilterConfig::kSymNone);
+      s.SetAnalysisChainId(true, FilterConfig::kSymNone, chain_capacity);
       s.SetAnalysisForceCpu(true);
     }
   }
@@ -1440,9 +1448,10 @@ Error ServerImpl::StartRaypathAnalysis(const nlohmann::json& scene_json, const R
   ILOG_INFO(logger_,
             "StartRaypathAnalysis: forcing CPU route (analysis run session property; overrides "
             "preferred_backend={} and LUMICE_TRACE_BACKEND, neither is modified) on {} worker(s){}; roi_mode={} "
-            "(chains recorded unreduced; symmetry is applied when the result is read)",
+            "(chains recorded unreduced; symmetry is applied when the result is read); chain_capacity={}{}",
             static_cast<int>(preferred_backend_.load(std::memory_order_acquire)), AnalysisWorkers().size(),
-            gpu_route_ ? " (standing analysis pool)" : "", static_cast<int>(request.roi_.mode_));
+            gpu_route_ ? " (standing analysis pool)" : "", static_cast<int>(request.roi_.mode_), chain_capacity,
+            request.chain_capacity_.has_value() ? " (from the request)" : " (default)");
   // Bind the scene this session traces — the same three writes, under the same lock, on
   // the same reset action as CommitConfig's bind (see the fields' declarations for why an
   // analysis advances the epoch: it is a submission of its own scene, and a reader's "is

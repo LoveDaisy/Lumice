@@ -76,6 +76,18 @@ void ChainIdInterningTable::Clear() {
   overflow_since_flush_ = 0;
 }
 
+void ChainIdInterningTable::ReuseOrRebuild(size_t capacity) {
+  if (capacity == capacity_) {
+    Clear();
+    return;
+  }
+  // A fresh table at the new size, keeping only what a rebuild is not about:
+  // the count of rebuilds itself.
+  const size_t rebuilds = rebuild_count_ + 1;
+  *this = ChainIdInterningTable(capacity);
+  rebuild_count_ = rebuilds;
+}
+
 std::vector<uint32_t> ChainIdInterningTable::PathToRoot(uint32_t id) const {
   std::vector<uint32_t> path;
   if (id == kOverflowChainId) {

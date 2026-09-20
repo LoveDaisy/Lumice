@@ -199,6 +199,39 @@ TEST(ChainIdTable, ClearRestartsIdsAndFlushCursor) {
   EXPECT_EQ(delta[0].id, 1u);
 }
 
+// ReuseOrRebuild is the one place "same capacity reuses, a different one
+// rebuilds" is written; rebuild_count() reads that branch directly, so a
+// comparison written backwards (rebuilding on the unchanged size, which is
+// every render session) cannot hide behind a table that is empty either way.
+TEST(ChainIdTable, ReuseOrRebuildRebuildsOnlyWhenTheCapacityChanges) {
+  ChainIdInterningTable table(4);
+  table.Intern(0, 1, { 3, 5 });
+  table.Intern(0, 1, { 4, 6 });
+  ASSERT_EQ(table.rebuild_count(), 0u);
+
+  table.ReuseOrRebuild(4);
+  EXPECT_EQ(table.rebuild_count(), 0u) << "the same capacity is a Clear(), not a rebuild";
+  EXPECT_EQ(table.Capacity(), 4u);
+  EXPECT_EQ(table.Size(), 0u) << "but it is still a fresh session";
+  EXPECT_EQ(table.Intern(0, 1, { 4, 6 }), 1u) << "ids restart from 1";
+
+  table.ReuseOrRebuild(2);
+  EXPECT_EQ(table.rebuild_count(), 1u) << "a different capacity rebuilds";
+  EXPECT_EQ(table.Capacity(), 2u);
+  EXPECT_EQ(table.Size(), 0u);
+  // The new bound is the one in force: two chains fit, the third is turned away.
+  EXPECT_EQ(table.Intern(0, 1, { 3, 5 }), 1u);
+  EXPECT_EQ(table.Intern(0, 1, { 4, 6 }), 2u);
+  EXPECT_EQ(table.Intern(0, 1, { 3, 7 }), ChainIdInterningTable::kOverflowChainId);
+  EXPECT_EQ(table.ConsumeOverflowCount(), 1u);
+
+  table.ReuseOrRebuild(2);
+  EXPECT_EQ(table.rebuild_count(), 1u) << "back on the unchanged size: reuse again";
+  table.ReuseOrRebuild(8);
+  EXPECT_EQ(table.rebuild_count(), 2u);
+  EXPECT_EQ(table.Capacity(), 8u);
+}
+
 // ===========================================================================
 // B. RayBuffer chain-id column: zero-cost allocation contract + reorder points.
 // ===========================================================================
@@ -681,6 +714,7 @@ void SnapshotAllData(void* ctx, const RayBuffer& all_data) {
 struct AnalysisSetting {
   bool enabled = false;
   uint8_t symmetry = kSymAll;
+  size_t capacity = ChainIdInterningTable::kDefaultCapacity;
 };
 
 // Drive Run() over `batches` batches of `ray_num` rays on ONE Simulator and
@@ -690,7 +724,7 @@ RunOutput RunScene(const SceneConfig& scene, size_t ray_num, size_t batches, uin
   auto config_queue = std::make_shared<Queue<SimBatch>>();
   auto data_queue = std::make_shared<Queue<SimData>>();
   Simulator sim(config_queue, data_queue, seed);
-  sim.SetAnalysisChainId(analysis.enabled, analysis.symmetry);
+  sim.SetAnalysisChainId(analysis.enabled, analysis.symmetry, analysis.capacity);
   RunOutput out;
   sim.SetAllDataObserverForTest(&SnapshotAllData, &out.all_data);
 
@@ -1040,6 +1074,51 @@ TEST(ChainIdEndToEnd, SessionRestartsIdsAndToggleOffInBetweenIsClean) {
   ASSERT_FALSE(second[0].chain_id_table_delta_.empty());
   EXPECT_EQ(second[0].chain_id_table_delta_[0].id, 1u) << "a new Run() is a new session: ids restart";
   EXPECT_EQ(second[0].outgoing_chain_id_.size(), second[0].outgoing_w_.size());
+}
+
+// The session's capacity reaches the producer's table: the same scene at a
+// capacity of 4 turns chains away (every delivered id is <= 4 or the sentinel,
+// and the batch counts the losses), and at the default it turns none away —
+// which is the red state the runtime capacity has to be able to produce. If
+// the number handed to SetAnalysisChainId stopped reaching the table (the
+// producer half of "both halves read one number"), the small tier would report
+// zero overflow and this fails; the default tier is the negative control that
+// says the scene, not the bound, is what keeps the record exact there.
+TEST(ChainIdEndToEnd, CapacityOverrideBoundsTheProducerTable) {
+  auto scene = MakeScene(2);
+  constexpr size_t kSmall = 4;
+  auto small = RunScene(scene, 256, 2, 4242, AnalysisSetting{ true, kSymAll, kSmall });
+  auto wide = RunScene(scene, 256, 2, 4242, AnalysisSetting{ true, kSymAll });
+  ASSERT_EQ(small.batches.size(), 2u);
+  ASSERT_EQ(wide.batches.size(), 2u);
+
+  uint64_t small_overflow = 0;
+  size_t small_delivered = 0;
+  for (const auto& sd : small.batches) {
+    small_overflow += sd.chain_id_overflow_count_;
+    small_delivered += sd.chain_id_table_delta_.size();
+    for (const auto& e : sd.chain_id_table_delta_) {
+      EXPECT_LE(e.id, kSmall) << "a delta entry past the capacity: the bound did not reach the table";
+    }
+    for (uint32_t id : sd.outgoing_chain_id_) {
+      EXPECT_TRUE(id <= kSmall || id == ChainIdInterningTable::kOverflowChainId) << "id " << id;
+    }
+  }
+  EXPECT_EQ(small_delivered, kSmall) << "a scene with more chains than the bound fills it exactly";
+  EXPECT_GT(small_overflow, 0u) << "with more distinct chains than 4 slots, some must be turned away";
+
+  uint64_t wide_overflow = 0;
+  size_t wide_delivered = 0;
+  for (const auto& sd : wide.batches) {
+    wide_overflow += sd.chain_id_overflow_count_;
+    wide_delivered += sd.chain_id_table_delta_.size();
+  }
+  EXPECT_EQ(wide_overflow, 0u) << "the default bound holds this scene whole (negative control)";
+  EXPECT_GT(wide_delivered, kSmall) << "test premise: the scene has more than 4 distinct chains";
+  // Same seed, same physics: the bound changes what is recorded, never what is traced.
+  for (size_t b = 0; b < 2; b++) {
+    EXPECT_EQ(small.batches[b].outgoing_w_, wide.batches[b].outgoing_w_) << "batch " << b;
+  }
 }
 
 // AC6: two workers = two Simulators with their own tables. Their deltas merge
