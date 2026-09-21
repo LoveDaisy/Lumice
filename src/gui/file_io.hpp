@@ -177,6 +177,13 @@ SopExpansionSummary SummarizeSopExpansion(const FilterConfig& f);
 // Deserialize Core JSON string to GuiState, returns true on success
 bool DeserializeFromJson(const std::string& json_str, GuiState& state);
 
+// The serialized spelling of a ShapeDistType ("no_random" / "uniform" / "gauss" / ...): the word
+// the .lmc document and the Settings panel's read-only rows carry for a randomized shape scalar.
+// Exposed for the Summary window (config_summary.cpp), which prints the same word so a randomized
+// parameter reads the same way in the summary as in the file — there is no GUI display label for
+// it (the edit modal offers only a Rand checkbox), so the wire spelling is the one spelling.
+const char* ShapeDistTypeToString(ShapeDistType t);
+
 // Format version of the GuiState JSON payload written by SerializeGuiStateJson (the `.lmc`
 // document body). A soft provenance signal, not a load gate: DeserializeGuiStateJson never reads
 // it, and every migration in this file triggers on the DATA's shape instead. The actual gate for

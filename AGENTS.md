@@ -384,7 +384,7 @@ worth knowing before reading a threshold: every scene shipping today calibrates 
 **full-suite** runs under `scripts/build.sh`'s correctness-pool invocation, never a single group
 in isolation: isolated runs measured 0.34–0.62 dB optimistic, which is how the since-retired
 `auto_ev` references once ended up flaking. The driver has no switch for this. `lens_proj` is
-currently the only stochastic group; the other three are deterministic and are held to the
+currently the only stochastic group; the other four are deterministic and are held to the
 pixel ruler described further down, not to a PSNR floor.
 N is **per group**, and the driver's defaults encode that: a group registered
 `deterministic=True` runs the suite **once** per phase (Phase A takes that single capture as the
@@ -477,6 +477,24 @@ table's columns, the preset table's columns, or the pinned action row. Command:
 default, same rule as `modal_layout` for `--n` / `--n-calib`. No threshold to copy back
 (same reason as `modal_layout`); `kRuler` in `test/gui/visual/test_gui_defaults_panel.cpp` holds K.
 
+The `config_summary_layout` references cover the read-only `Summary` window
+(`src/gui/config_summary_window.cpp`, content from `src/gui/config_summary.cpp`) through the same
+on-screen sub-region capture as `modal_layout`, and inherit the same docking coupling. Two
+deterministic scenes (`default_document`, `two_layers`: a pyramid, a named raypath filter, a
+randomized face, an excluded entry), judged by the pixel ruler at τ=16, K=40 — K inherited from
+`defaults_panel_layout` as the nearest group in kind (tables of text, no crystal preview), **not**
+measured against a llvmpipe residue: this group is not in the CI filter today, so measure K
+(`doc/testing-architecture.md` §4.6) before adding it. What the page PRINTS is asserted without a
+frame — `test/unit-correctness/gui/test_config_summary_rows.cpp` (which serialized root keys reach
+the settings section, decided by `gui_state_tiers.hpp`'s tier table) and
+`test/composition-correctness/gui/test_config_summary_export_parity_chain.cpp` (every leaf of
+`BuildExportJsonOrWarn`'s JSON is either found on the page or named in that test's exclusion table
+with a reason) — so this group only owns the layout pixels. Regen trigger: any change to the
+window's tables, indent, heading style or fixed width, or to the page's labels or value spelling.
+Command: `python scripts/regen_gui_test_refs.py --group config_summary_layout` — single run per
+phase, same rule as `modal_layout`; `kRuler` in `test/gui/visual/test_gui_config_summary.cpp`
+holds K.
+
 **`--keep-export-png` / `--export-dir` flags** — `--keep-export-png` makes
 `CheckAgainstReference` skip its `std::remove`, so the per-run export PNGs survive for the driver
 to collect. `--export-dir <path>` says where every scratch file this suite writes goes — capture
@@ -492,7 +510,7 @@ directory is not part of that contract.
 
 **Reference groups** — the registry is `GROUPS` at the top of
 `scripts/regen_gui_test_refs.py`, currently holding `capture_harness`, `lens_proj`,
-`modal_layout` and `defaults_panel_layout`. A
+`modal_layout`, `defaults_panel_layout` and `config_summary_layout`. A
 group names the `gui_test` category it tags its output with (also the `[<tag>]` its comparisons
 print and its key in `_thresholds.json`), its scenes/modes, and the export and reference filename
 prefixes. Adding a visual-regression suite means adding a `GROUPS` entry — Phase A/B themselves

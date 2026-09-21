@@ -59,6 +59,15 @@ From left to right, the Top Bar exposes:
   - `Include Texture in .lmc` — toggle for the next save. A screenshot has no overlay toggle of its own:
     it shows the overlay the screen shows, so a clean image comes from turning the families off in the
     Overlay panel.
+- **Colors / Analysis / Summary**: three buttons that each open an independent, non-modal window
+  beside the preview — the raypath colour classes, the Raypath Analysis tool, and the read-only
+  **Summary**, one page of the current configuration (version, sun, simulation, render settings,
+  then every layer with its entries' crystal, shape, axis and filter) laid out in two columns to
+  fit one 1280 × 900 screen and be screenshotted and shared — each row under the label the panel
+  itself uses, and only the rows the panel currently shows (Sky Color or Paper Color, never both).
+  The Summary has no export button of its own: take the picture with your operating
+  system's screenshot tool (⌘⇧4 on macOS, Win+Shift+S on Windows, or your desktop's equivalent on
+  Linux). See [User Manual — Configuration Summary](user-manual/07-config-summary.md).
 - **Right panel collapse**: `<` / `>` mirror the left toggle (also bound to the `]` key).
 
 ## Left Panel — Crystal Parameters
@@ -319,3 +328,4 @@ The simulation state — `Ready`, `Simulating`, `Done`, `Modified` — is shown 
 - [Developer Guide](developer-guide.md) — GUI testing and development
 - [User Manual — GUI Quickstart](user-manual/02-gui-quickstart.md) — step-by-step tour for first-time users
 - [User Manual — Raypath Analysis](user-manual/06-raypath-analysis.md) — which raypaths make a halo, and how to exclude one
+- [User Manual — Configuration Summary](user-manual/07-config-summary.md) — one page of the configuration, for sharing a screenshot

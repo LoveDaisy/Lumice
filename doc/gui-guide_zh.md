@@ -54,6 +54,12 @@ GUI 需要 display server 和支持 OpenGL 3.2 Core Profile 的 GPU。
     config 格式无法表达这个裁剪，否则 CLI 会渲出未裁剪的画面。
   - `Include Texture in .lmc` —— 控制下次保存的 toggle。截图没有自己的 overlay 开关：它显示的就是
     屏幕上显示的那层 overlay，要干净的图就在 Overlay 面板里关掉对应的族。
+- **Colors / Analysis / Summary**：三个按钮各自打开一个独立的非模态窗口，可与预览并排——光路染色类、光路分析工具，
+  以及只读的 **Summary**：把当前配置摊成一页（版本号、太阳、仿真、渲染设置，再逐层列出每个条目的晶体、形状、
+  朝向与 filter），左右两栏排版、一屏 1280 × 900 看全，专为截图分享而排——每一行用面板自己的标签，
+  且只印面板此刻显示的行（Sky Color 与 Paper Color 二者取一）。Summary 没有自己的导出按钮：用操作系统自带的截图工具截取即可
+  （macOS ⌘⇧4、Windows Win+Shift+S、Linux 用桌面环境的等价快捷键）。详见
+  [用户手册 — 配置总结](user-manual/07-config-summary_zh.md)。
 - **右面板折叠按钮**：`<` / `>` 与左侧对称（也可用快捷键 `]`）。
 
 ## Left Panel — Crystal Parameters（左侧面板）
@@ -264,3 +270,4 @@ Lumice 使用二进制项目文件格式（`.lmc`），存储：
 - [开发指南](developer-guide_zh.md) —— GUI 测试与开发
 - [用户手册 — GUI 快速上手](user-manual/02-gui-quickstart_zh.md) —— 面向新用户的逐步教程
 - [用户手册 — 光路分析](user-manual/06-raypath-analysis_zh.md) —— 一道晕是哪些光路做的、如何排除某一条
+- [用户手册 — 配置总结](user-manual/07-config-summary_zh.md) —— 把配置摊成一页，截图分享

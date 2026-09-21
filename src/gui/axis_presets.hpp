@@ -67,6 +67,24 @@ inline const char* AxisDistTypeLabel(AxisDistType type) {
   return cursor;
 }
 
+// The name of an AxisDist's second parameter under each distribution — what `std` MEANS for that
+// type, which is the label the editor's spread slider carries (RenderAxisDist, panels.cpp) and
+// the word the Summary window prints beside the number. One table so the two agree.
+inline const char* AxisDistSpreadLabel(AxisDistType type) {
+  switch (type) {
+    case AxisDistType::kUniform:
+      return "Range";
+    case AxisDistType::kZigzag:
+      return "Amplitude";
+    case AxisDistType::kLaplacian:
+      return "Scale";
+    case AxisDistType::kGauss:
+    case AxisDistType::kGaussLegacy:
+    default:
+      return "Std";
+  }
+}
+
 // AxisDistType <-> its JSON spelling, the one used by every document that stores a distribution
 // type: the .lmc / exported-config axis blocks (file_io.cpp) AND the user-defaults preset override
 // (presets.axis.<name>.zenith_type, user_defaults.cpp). One table, so the override file cannot come

@@ -305,6 +305,21 @@ bool DocHasKeyPath(const nlohmann::json& doc, const std::string& key_path) {
   return FindByPath(doc, SplitKeyPath(key_path)) != nullptr;
 }
 
+std::vector<std::pair<std::string, nlohmann::json>> CollectJsonLeaves(const std::string& root_key,
+                                                                      const nlohmann::json& node) {
+  // The same node on both sides: WalkDiff's union-of-keys recursion degenerates to a plain leaf
+  // walk, and reusing it (rather than writing the three-line recursion again) is the point — the
+  // leaf rule stays defined in one place.
+  std::vector<DefaultDiffRow> rows;
+  WalkDiff(root_key, node, node, rows);
+  std::vector<std::pair<std::string, nlohmann::json>> leaves;
+  leaves.reserve(rows.size());
+  for (auto& row : rows) {
+    leaves.emplace_back(std::move(row.key_path), std::move(row.current_value));
+  }
+  return leaves;
+}
+
 bool ApplyCheckedRowsToDoc(nlohmann::json& doc, const std::vector<DefaultDiffRow>& rows,
                            const std::set<std::string>& checked_key_paths, const GuiState& current) {
   json current_json;

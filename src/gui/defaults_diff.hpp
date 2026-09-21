@@ -127,6 +127,19 @@ std::vector<DefaultDiffRow> BuildDefaultDiffRows(const GuiState& current, const 
 // equality, is the question).
 bool DocHasKeyPath(const nlohmann::json& doc, const std::string& key_path);
 
+// Every leaf under root key `root_key` of a serialized GuiState document, as (key_path, value)
+// pairs in the same dot-path shape and with the same leaf rule as DefaultDiffRow (objects recurse,
+// everything else — arrays included — is one leaf). `node` is the value at that root key.
+//
+// This IS the walk BuildDefaultDiffRows is built on, run over one document instead of two, and it
+// is exported for exactly one consumer: the Summary window's settings section (config_summary.cpp),
+// which shows current values with no default to compare against. It exists so that "what counts as
+// a leaf" has one definition — a second walk in the summary would be the drift this header's
+// GENERATED, NEVER ENUMERATED rule is about, only one level down (a colour triple that is one row
+// here and three rows there).
+std::vector<std::pair<std::string, nlohmann::json>> CollectJsonLeaves(const std::string& root_key,
+                                                                      const nlohmann::json& node);
+
 // Display form of a JSON leaf. DISPLAY ONLY — comparison is done on the raw json values
 // (RowNeedsAdoption below), so no amount of formatting loss can make two different values look
 // (or be judged) equal.

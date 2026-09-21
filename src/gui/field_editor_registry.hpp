@@ -112,6 +112,32 @@ struct FieldEditorConstraint {
 struct FieldEditorEntry {
   FieldEditorKind kind = FieldEditorKind::kFloatSlider;
   std::function<FieldEditorConstraint(const GuiState&)> Constraint;
+  // The word the MAIN UI's control for this field shows — "Rays(M)", "Sky Color", "EV Anchor" —
+  // without any "##id" suffix. One home for the label, read by two consumers that must agree: the
+  // widget call site (through PanelLabel below, which appends the id) and the Summary page
+  // (through LabelFor), so a reader holding a screenshot of the page finds the same word on the
+  // panel. nullptr means "not declared": the Summary then falls back to spelling the serialized
+  // key, and the widget call site keeps its own literal — the state every field was in before
+  // the label moved here, kept as the default so a field that was never migrated is unchanged.
+  //
+  // Read through LabelFor(), never directly: the nullptr fallback is the accessor's to apply.
+  // `has_main_panel_surface` below is read DIRECTLY off the entry, and the asymmetry is on
+  // purpose — see its own comment.
+  const char* label = nullptr;
+  // Whether the field has a control on the main panel at all, as opposed to only the Settings
+  // popup's "Current value" column. False for sim.ray_allocation today: it is registered so the
+  // popup can edit it, but nothing on the Sun / Simulation / View / Display panels binds it. The
+  // Summary page uses this to keep such fields out of the groups a reader would look for them in
+  // on the panel and to list them under their own "Settings" heading instead.
+  //
+  // Read directly (FindFieldEditor(key)->has_main_panel_surface), unlike `label` above, which goes
+  // through LabelFor(): a bare bool has no "unset" state to translate, so an accessor would only
+  // forward. Do not add one to make the two look alike — the asymmetry records that difference.
+  //
+  // NOT a mirror of FieldTierEntry::has_main_panel_surface (gui_state_tiers.hpp): that one is
+  // per ROOT KEY (a whole GuiState field, `worker_count`), this one is per serialized LEAF. Same
+  // question at two grains, each answered in the table that already owns that grain.
+  bool has_main_panel_surface = true;
   // `id_base` is the caller's per-row id fragment (the panel passes "value_<key_path>"). Widgets
   // built from it are addressable by test and unique per row; the entry never invents an id of its
   // own, so no two rows can collide.
@@ -136,6 +162,16 @@ const FieldEditorEntry* FindFieldEditor(const std::string& key_path);
 // call site — a state in which the control has no domain to draw and silently substituting one
 // would be worse than stopping.
 FieldEditorConstraint ConstraintFor(const std::string& key_path, const GuiState& state);
+
+// The declared main-UI label of `key_path`, or nullptr when the field has no entry or its entry
+// declares none (FieldEditorEntry::label). Total, like FindFieldEditor: the Summary walk asks this
+// of every serialized leaf, and "no label declared" is the designed answer for an unmigrated one.
+const char* LabelFor(const std::string& key_path);
+
+// The same label as a widget id string: "<label>" or "<label>##<id>" when `id` is non-empty. For
+// the main UI's call sites, which ship a control for exactly this field — so, like ConstraintFor, a
+// key with no entry or no declared label aborts rather than drawing a control with no name.
+std::string PanelLabel(const std::string& key_path, const char* id = "");
 
 // Every registered key path. For coverage assertions ("which of the document's leaves have an
 // editor") — the panel itself never enumerates, it looks up per row.

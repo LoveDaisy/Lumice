@@ -626,8 +626,8 @@ bool RenderAxisDist(const char* label, AxisDist& axis, float mean_min, float mea
   // active, and the helper leaves the other alone; the type combo has no edit in flight to reload.
   if (reload_active_inputs) {
     ReloadSliderInputIfActive("Mean");
-    for (const char* spread_label : { "Std", "Range", "Amplitude", "Scale" }) {
-      ReloadSliderInputIfActive(spread_label);
+    for (int t = 0; t < static_cast<int>(AxisDistType::kCount); ++t) {
+      ReloadSliderInputIfActive(AxisDistSpreadLabel(static_cast<AxisDistType>(t)));
     }
   }
   ImGui::Text("%s", label);
@@ -690,7 +690,8 @@ bool RenderAxisDist(const char* label, AxisDist& axis, float mean_min, float mea
       constexpr const char* kStdFmt = "%.3g";
       static_assert(slider_format::FormatIsFineEnough(kStdFmt, SliderScale::kSqrt, kStdMin, kStdMax),
                     "the Std slider's format is coarser than its kSqrt mapping resolves");
-      changed |= SliderWithInput("Std", &axis.std, kStdMin, kStdMax, kStdFmt, SliderScale::kSqrt);
+      changed |=
+          SliderWithInput(AxisDistSpreadLabel(axis.type), &axis.std, kStdMin, kStdMax, kStdFmt, SliderScale::kSqrt);
       break;
     }
     case AxisDistType::kUniform: {
@@ -699,7 +700,8 @@ bool RenderAxisDist(const char* label, AxisDist& axis, float mean_min, float mea
       constexpr const char* kRangeFmt = "%.3g";
       static_assert(slider_format::FormatIsFineEnough(kRangeFmt, SliderScale::kSqrt, kRangeMin, kRangeMax),
                     "the Range slider's format is coarser than its kSqrt mapping resolves");
-      changed |= SliderWithInput("Range", &axis.std, kRangeMin, kRangeMax, kRangeFmt, SliderScale::kSqrt);
+      changed |= SliderWithInput(AxisDistSpreadLabel(axis.type), &axis.std, kRangeMin, kRangeMax, kRangeFmt,
+                                 SliderScale::kSqrt);
       break;
     }
     case AxisDistType::kZigzag: {
@@ -708,8 +710,8 @@ bool RenderAxisDist(const char* label, AxisDist& axis, float mean_min, float mea
       constexpr const char* kAmplitudeFmt = "%.3g";
       static_assert(slider_format::FormatIsFineEnough(kAmplitudeFmt, SliderScale::kSqrt, kAmplitudeMin, kAmplitudeMax),
                     "the Amplitude slider's format is coarser than its kSqrt mapping resolves");
-      changed |=
-          SliderWithInput("Amplitude", &axis.std, kAmplitudeMin, kAmplitudeMax, kAmplitudeFmt, SliderScale::kSqrt);
+      changed |= SliderWithInput(AxisDistSpreadLabel(axis.type), &axis.std, kAmplitudeMin, kAmplitudeMax, kAmplitudeFmt,
+                                 SliderScale::kSqrt);
       break;
     }
     case AxisDistType::kLaplacian: {
@@ -718,7 +720,8 @@ bool RenderAxisDist(const char* label, AxisDist& axis, float mean_min, float mea
       constexpr const char* kScaleFmt = "%.3g";
       static_assert(slider_format::FormatIsFineEnough(kScaleFmt, SliderScale::kSqrt, kScaleMin, kScaleMax),
                     "the Scale slider's format is coarser than its kSqrt mapping resolves");
-      changed |= SliderWithInput("Scale", &axis.std, kScaleMin, kScaleMax, kScaleFmt, SliderScale::kSqrt);
+      changed |= SliderWithInput(AxisDistSpreadLabel(axis.type), &axis.std, kScaleMin, kScaleMax, kScaleFmt,
+                                 SliderScale::kSqrt);
       break;
     }
   }
@@ -741,14 +744,8 @@ void ShapeTableParamLabel(const char* label) {
 // ---- Sync column: shape-scalar sync groups (the Sync cell of a shape-table row) ----
 namespace {
 
-// Row names indexed by LUMICE_SHAPE_SCALAR_*, used in the popup's membership lists. The order is
-// the SLOT index space, not CrystalConfig's field order: UPPER_H is slot 1 and PRISM_H slot 2 (see
-// the SLOT-ORDER TRAP note in gui_state.hpp), so this table reads "Upper H" before "Prism H" even
-// though the modal draws Prism H first. The strings match what ShapeTableParamLabel prints for the
-// corresponding rows, because a membership list naming rows the user cannot find is worse than none.
-const char* const kShapeScalarLabels[LUMICE_SHAPE_SCALAR_COUNT] = {
-  "Height", "Upper H", "Prism H", "Lower H", "Face 3", "Face 4", "Face 5", "Face 6", "Face 7", "Face 8",
-};
+// The row names the popup's membership lists print are kShapeScalarLabels (shape_scalar_domain.hpp),
+// indexed by LUMICE_SHAPE_SCALAR_* — see the SLOT-ORDER TRAP note there.
 
 // Group colors are DERIVED from the group number, never stored (D7): a stored color would have to
 // round-trip through JSON, the C API and the .lmc format for a purely cosmetic property. Low
@@ -1861,9 +1858,11 @@ void RenderSceneControls(GuiState& state) {
   // Domain and format read from the field editor registry, not written here. `fmt` is passed
   // explicitly even though it currently equals SliderWithInput's own default: relying on the
   // default would leave the display precision as a second statement this call site makes on its
-  // own, which is the thing being removed.
+  // own, which is the thing being removed. The LABEL comes from the same registry (PanelLabel),
+  // for the same reason and with one more reader: the Summary window prints the registry's word,
+  // so a control spelled here by hand could drift from the page a user holds up beside it.
   const FieldEditorConstraint alt_c = ConstraintFor("sun.altitude", state);
-  SliderWithInput("Altitude", &state.sun.altitude, static_cast<float>(alt_c.min_value),
+  SliderWithInput(PanelLabel("sun.altitude").c_str(), &state.sun.altitude, static_cast<float>(alt_c.min_value),
                   static_cast<float>(alt_c.max_value), alt_c.fmt, alt_c.scale);
   ImGui::EndGroup();
   if (ImGui::IsItemHovered()) {
@@ -1872,7 +1871,7 @@ void RenderSceneControls(GuiState& state) {
   ImGui::BeginGroup();
   // AC2 migration path: same rationale as sun.altitude above.
   const FieldEditorConstraint dia_c = ConstraintFor("sun.diameter", state);
-  SliderWithInput("Diameter", &state.sun.diameter, static_cast<float>(dia_c.min_value),
+  SliderWithInput(PanelLabel("sun.diameter").c_str(), &state.sun.diameter, static_cast<float>(dia_c.min_value),
                   static_cast<float>(dia_c.max_value), dia_c.fmt, dia_c.scale);
   ImGui::EndGroup();
   if (ImGui::IsItemHovered()) {
@@ -1894,7 +1893,7 @@ void RenderSceneControls(GuiState& state) {
   // Cancel leaves it at the prior valid preset. The combo re-reads spectrum_index each frame, so it
   // shows the prior preset while the editor is open and flips to "Custom..." once OK commits.
   int combo_sel = state.sun.spectrum_index;
-  if (ImGui::Combo("Spectrum", &combo_sel, kSpectrumComboItems, kSpectrumComboItemCount)) {
+  if (ImGui::Combo(PanelLabel("sun.spectrum").c_str(), &combo_sel, kSpectrumComboItems, kSpectrumComboItemCount)) {
     if (combo_sel == kCustomSpectrumIndex) {
       OpenSpectrumModal(state);  // intent-only: open the editor; OK is the sole commit point
     } else {
@@ -1916,7 +1915,7 @@ void RenderSceneControls(GuiState& state) {
   }
 
   ImGui::SeparatorText("Simulation");
-  Checkbox("Infinite rays", &state.sim.infinite);
+  Checkbox(PanelLabel("sim.infinite").c_str(), &state.sim.infinite);
   if (ImGui::IsItemHovered()) {
     ImGui::SetTooltip("Run simulation continuously until manually stopped");
   }
@@ -1927,8 +1926,8 @@ void RenderSceneControls(GuiState& state) {
   // it removes the only way this field could still hold two constraints that disagree.
   const FieldEditorConstraint rays_c = ConstraintFor("sim.ray_num_millions", state);
   ImGui::BeginDisabled(!rays_c.enabled);
-  SliderWithInput("Rays(M)", &state.sim.ray_num_millions, static_cast<float>(rays_c.min_value),
-                  static_cast<float>(rays_c.max_value), rays_c.fmt, rays_c.scale);
+  SliderWithInput(PanelLabel("sim.ray_num_millions").c_str(), &state.sim.ray_num_millions,
+                  static_cast<float>(rays_c.min_value), static_cast<float>(rays_c.max_value), rays_c.fmt, rays_c.scale);
   ImGui::EndDisabled();
   ImGui::EndGroup();
   if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
@@ -1940,7 +1939,7 @@ void RenderSceneControls(GuiState& state) {
   ImGui::BeginGroup();
   // An int field has no fmt/scale to read — SliderIntWithInput takes neither.
   const FieldEditorConstraint hits_c = ConstraintFor("sim.max_hits", state);
-  SliderIntWithInput("Max hits", &state.sim.max_hits, static_cast<int>(hits_c.min_value),
+  SliderIntWithInput(PanelLabel("sim.max_hits").c_str(), &state.sim.max_hits, static_cast<int>(hits_c.min_value),
                      static_cast<int>(hits_c.max_value));
   ImGui::EndGroup();
   if (ImGui::IsItemHovered()) {

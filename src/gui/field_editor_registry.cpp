@@ -63,6 +63,21 @@ std::string HiddenLabel(const char* id_base) {
   return "##" + std::string(id_base);
 }
 
+// The entry with its main-UI label declared (FieldEditorEntry::label). A wrapper rather than one
+// more factory parameter: five factories would each grow a defaulted trailing argument that most
+// callers leave empty, and the label is the one property that has nothing to do with the control's
+// kind or domain.
+FieldEditorEntry Labelled(FieldEditorEntry entry, const char* label) {
+  entry.label = label;
+  return entry;
+}
+
+// The entry marked as having no control on the main panel (FieldEditorEntry::has_main_panel_surface).
+FieldEditorEntry SettingsPopupOnly(FieldEditorEntry entry) {
+  entry.has_main_panel_surface = false;
+  return entry;
+}
+
 // Write `next` back into `slot` only if it is a genuine edit rather than the widget's own clamp.
 //
 // THE POINT: an override file can hold a value outside the domain (nothing rewrites it until the
@@ -340,6 +355,27 @@ Applicability NotUnderPrintMode(const GuiState& state) {
   return {};
 }
 
+// The two GROUND colours, one per operator (doc/print-mode-subtractive-ink.md: `background` is the
+// sky light is added to, `paper` is the sheet ink is laid on, and the panel shows one swatch or the
+// other — app_panels.cpp's Display group alternates them in place). Written here as a pair of gates
+// so that "which ground applies right now" has one owner: the main UI's if/else reads
+// ConstraintFor("renderer.background").enabled, and the Summary page reads the same bit to decide
+// which of the two rows to print. They are exact complements of each other, and the unit test
+// pins that (test_print_mode_colour_exclusions.cpp).
+Applicability WhenScreenTone(const GuiState& state) {
+  if (IsPrintTone(state.renderer)) {
+    return { false, "Print mode lays ink on paper; the sky colour applies again when Mode is Screen." };
+  }
+  return {};
+}
+
+Applicability WhenPrintTone(const GuiState& state) {
+  if (!IsPrintTone(state.renderer)) {
+    return { false, "Screen mode adds light to the sky colour; the paper colour applies when Mode is Print." };
+  }
+  return {};
+}
+
 Applicability WhenBackgroundShown(const GuiState& state) {
   const Applicability loaded = WhenBackgroundLoaded(state);
   if (!loaded.enabled) {
@@ -400,17 +436,33 @@ FieldEditorEntry SimResolutionField() {
 
 // The preset illuminants ONLY. The main UI's combo carries a seventh item ("Custom...") that opens
 // a modal editor, and this panel is itself a modal — stacking a second one is the interaction this
-// deliberately avoids. A state already using a custom spectrum therefore reads as "registered but
-// not applicable" (greyed, with the reason on hover) rather than being silently downgraded to
-// whichever preset a 6-item combo would land on.
+// deliberately avoids. A state already using a custom spectrum therefore renders as a greyed
+// "Custom..." with the reason on hover, rather than being silently downgraded to whichever preset
+// a 6-item combo would land on.
+//
+// That limitation lives in Render, NOT in the constraint, and the placement is the point: the
+// field APPLIES under a custom spectrum — the Sun panel's own combo is never greyed, it shows
+// "Custom..." beside an edit button — so `enabled` stays true, as the header's rule 1 requires
+// (`enabled` is the main UI's BeginDisabled expression, and the Summary page prints a row exactly
+// when it is true). What cannot be done here is edit it from THIS popup, which is a fact about
+// the popup's control and is drawn by the control.
 FieldEditorEntry SpectrumField() {
-  return ComboField([](GuiState& state) { return &state.sun.spectrum_index; }, kSpectrumNames, kSpectrumCount,
-                    [](const GuiState& state) -> Applicability {
-                      if (state.sun.spectrum_index == kCustomSpectrumIndex) {
-                        return { false, "A custom spectrum is edited from the Sun panel's spectrum editor." };
-                      }
-                      return {};
-                    });
+  FieldEditorEntry entry =
+      ComboField([](GuiState& state) { return &state.sun.spectrum_index; }, kSpectrumNames, kSpectrumCount);
+  const auto preset_render = entry.Render;
+  entry.Render = [preset_render](GuiState& state, const char* id_base) {
+    if (state.sun.spectrum_index != kCustomSpectrumIndex) {
+      return preset_render(state, id_base);
+    }
+    ImGui::BeginDisabled();
+    ImGui::TextUnformatted("Custom...");
+    ImGui::EndDisabled();
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+      ImGui::SetTooltip("A custom spectrum is edited from the Sun panel's spectrum editor.");
+    }
+    return false;
+  };
+  return entry;
 }
 
 // Aspect preset. Same item set and same "Match Background needs a background" rule as the main UI's
@@ -477,8 +529,12 @@ const std::unordered_map<std::string, FieldEditorEntry>& Registry() {
     std::unordered_map<std::string, FieldEditorEntry> map;
 
     // ---- sun ----
+    // Labels are the words the Sun / Simulation / View / Display panels print beside each control
+    // — panels.cpp and app_panels.cpp build their widget ids from these through PanelLabel(), and
+    // the Summary page prints them through LabelFor(), so the two cannot spell one field two ways.
     map.emplace("sun.altitude",
-                FloatField([](GuiState& s) { return &s.sun.altitude; }, FixedDomain(-90.0f, 90.0f), "%.1f"));
+                Labelled(FloatField([](GuiState& s) { return &s.sun.altitude; }, FixedDomain(-90.0f, 90.0f), "%.1f"),
+                         "Altitude"));
     // The one row in this registry the pairing gate covers, and it is here on evidence rather than
     // on principle: swept at the measured 179 px slider width, this domain under "%.1f" froze for 4
     // pixels of drag -- the same order as the axis spread sliders, and nobody had noticed. Band and
@@ -500,65 +556,91 @@ const std::unordered_map<std::string, FieldEditorEntry>& Registry() {
       static_assert(
           slider_format::FormatIsFineEnough(kSunDiameterFmt, SliderScale::kLinear, kSunDiameterMin, kSunDiameterMax),
           "the sun diameter slider's format is coarser than its linear mapping resolves");
-      map.emplace("sun.diameter", FloatField([](GuiState& s) { return &s.sun.diameter; },
-                                             FixedDomain(kSunDiameterMin, kSunDiameterMax), kSunDiameterFmt));
+      map.emplace("sun.diameter", Labelled(FloatField([](GuiState& s) { return &s.sun.diameter; },
+                                                      FixedDomain(kSunDiameterMin, kSunDiameterMax), kSunDiameterFmt),
+                                           "Diameter"));
     }
-    map.emplace("sun.spectrum", SpectrumField());
+    map.emplace("sun.spectrum", Labelled(SpectrumField(), "Spectrum"));
 
     // ---- sim ----
     // Domain, format and scale come from gui/ray_num_domain.hpp, which the analysis panel's own
     // Rays(M) row reads too; the pairing gate is static_asserted there, beside the one definition,
     // rather than in a local block here like sun.diameter's above (that form fits a single consumer).
-    map.emplace("sim.ray_num_millions",
-                FloatField([](GuiState& s) { return &s.sim.ray_num_millions; },
-                           FixedDomain(kRayNumMinMillions, kRayNumMaxMillions), kRayNumSliderFmt, kRayNumSliderScale,
-                           [](const GuiState& s) -> Applicability {
-                             if (s.sim.infinite) {
-                               return { false, "Infinite rays is on, so no ray total applies." };
-                             }
-                             return {};
-                           }));
-    map.emplace("sim.max_hits", IntField([](GuiState& s) { return &s.sim.max_hits; }, 1, 64));
-    map.emplace("sim.infinite", BoolField([](GuiState& s) { return &s.sim.infinite; }));
-    map.emplace("sim.ray_allocation", BoolField([](GuiState& s) { return &s.sim.ray_allocation_adaptive; }));
+    map.emplace(
+        "sim.ray_num_millions",
+        Labelled(FloatField([](GuiState& s) { return &s.sim.ray_num_millions; },
+                            FixedDomain(kRayNumMinMillions, kRayNumMaxMillions), kRayNumSliderFmt, kRayNumSliderScale,
+                            [](const GuiState& s) -> Applicability {
+                              if (s.sim.infinite) {
+                                return { false, "Infinite rays is on, so no ray total applies." };
+                              }
+                              return {};
+                            }),
+                 "Rays(M)"));
+    map.emplace("sim.max_hits", Labelled(IntField([](GuiState& s) { return &s.sim.max_hits; }, 1, 64), "Max hits"));
+    map.emplace("sim.infinite", Labelled(BoolField([](GuiState& s) { return &s.sim.infinite; }), "Infinite rays"));
+    // No main-panel control: the Settings popup's Current-value column is the only place this
+    // is edited, so the Summary lists it under "Settings" rather than beside Rays(M). No label
+    // either — there is no panel word to agree with, and the popup prints the key path.
+    map.emplace("sim.ray_allocation",
+                SettingsPopupOnly(BoolField([](GuiState& s) { return &s.sim.ray_allocation_adaptive; })));
 
     // ---- renderer ----
-    map.emplace("renderer.lens_type", LensTypeField());
+    map.emplace("renderer.lens_type", Labelled(LensTypeField(), "Lens Type"));
     // The one state-dependent domain in the registry, and the reason entries are functions: the
     // upper bound is the lens' own maximum field of view.
-    map.emplace("renderer.fov", FloatField([](GuiState& s) { return &s.renderer.fov; },
-                                           [](const GuiState& s) {
-                                             return std::pair<float, float>(
-                                                 1.0f,
-                                                 LUMICE_MaxFov(static_cast<LUMICE_LensType>(s.renderer.lens_type)));
-                                           },
-                                           "%.0f", SliderScale::kLinear, NotUnderFullSky));
-    map.emplace("renderer.elevation", FloatField([](GuiState& s) { return &s.renderer.elevation; },
-                                                 [](const GuiState& s) {
-                                                   // Globe clamps one degree short of the pole, where the view matrix
-                                                   // degenerates.
-                                                   const float limit =
-                                                       (s.renderer.lens_type == kLensTypeGlobe) ? 89.0f : 90.0f;
-                                                   return std::pair<float, float>(-limit, limit);
-                                                 },
-                                                 "%.2f", SliderScale::kLinear, NotUnderFullSky));
+    map.emplace("renderer.fov",
+                Labelled(FloatField([](GuiState& s) { return &s.renderer.fov; },
+                                    [](const GuiState& s) {
+                                      return std::pair<float, float>(
+                                          1.0f, LUMICE_MaxFov(static_cast<LUMICE_LensType>(s.renderer.lens_type)));
+                                    },
+                                    "%.0f", SliderScale::kLinear, NotUnderFullSky),
+                         "FOV"));
+    map.emplace("renderer.elevation",
+                Labelled(FloatField([](GuiState& s) { return &s.renderer.elevation; },
+                                    [](const GuiState& s) {
+                                      // Globe clamps one degree short of the pole, where the view matrix
+                                      // degenerates.
+                                      const float limit = (s.renderer.lens_type == kLensTypeGlobe) ? 89.0f : 90.0f;
+                                      return std::pair<float, float>(-limit, limit);
+                                    },
+                                    "%.2f", SliderScale::kLinear, NotUnderFullSky),
+                         "Elevation"));
     map.emplace("renderer.azimuth",
-                FloatField([](GuiState& s) { return &s.renderer.azimuth; }, FixedDomain(-180.0f, 180.0f), "%.2f",
-                           SliderScale::kLinear, NotUnderFullSky));
-    map.emplace("renderer.roll", FloatField([](GuiState& s) { return &s.renderer.roll; }, FixedDomain(-180.0f, 180.0f),
-                                            "%.2f", SliderScale::kLinear, NotUnderFullSkyOrGlobe));
-    map.emplace("renderer.sim_resolution", SimResolutionField());
-    map.emplace("renderer.visible", ComboField([](GuiState& s) { return &s.renderer.visible; }, kVisibleNames,
-                                               kVisibleCount, NotUnderFullSky));
-    map.emplace("renderer.front", BoolField([](GuiState& s) { return &s.renderer.front; }, NotUnderFullSkyOrGlobe));
+                Labelled(FloatField([](GuiState& s) { return &s.renderer.azimuth; }, FixedDomain(-180.0f, 180.0f),
+                                    "%.2f", SliderScale::kLinear, NotUnderFullSky),
+                         "Azimuth"));
+    map.emplace("renderer.roll",
+                Labelled(FloatField([](GuiState& s) { return &s.renderer.roll; }, FixedDomain(-180.0f, 180.0f), "%.2f",
+                                    SliderScale::kLinear, NotUnderFullSkyOrGlobe),
+                         "Roll"));
+    map.emplace("renderer.sim_resolution", Labelled(SimResolutionField(), "Resolution"));
+    // "Visible" is NOT a word the panel prints: the control is three RadioButtons (Upper / Full /
+    // Lower) under a SeparatorText("Visibility") that names the whole group, so there is no single
+    // widget label for PanelLabel to build from and app_panels.cpp does not read this one. The
+    // Summary still needs a word for the row; this is it, chosen here rather than spelled from the
+    // key so the choice is visible. test_config_summary_labels.cpp excludes exactly this key from
+    // its "every declared label is the panel's literal" scan (kExcludedFromLabelParityCheck).
+    map.emplace("renderer.visible", Labelled(ComboField([](GuiState& s) { return &s.renderer.visible; }, kVisibleNames,
+                                                        kVisibleCount, NotUnderFullSky),
+                                             "Visible"));
+    map.emplace("renderer.front",
+                Labelled(BoolField([](GuiState& s) { return &s.renderer.front; }, NotUnderFullSkyOrGlobe), "Front"));
     // `background` now HAS a main-UI control (Display > Rendering, beside EV), so this row is its
     // second editor — the one the defaults panel needs in order to edit a personal default without
     // a document open.
-    map.emplace("renderer.background", ColorField([](GuiState& s) { return s.renderer.background; }));
+    //
+    // Gated on the tone, in opposite directions, so that the main UI's "show one swatch or the
+    // other" and the Summary's "print one row or the other" both read the same bit (see the two
+    // gates' comment above).
+    map.emplace("renderer.background",
+                Labelled(ColorField([](GuiState& s) { return s.renderer.background; }, WhenScreenTone), "Sky Color"));
     // The print mode's ground colour, registered beside `background` because it is the same kind of
     // field on both counts: a colour, and one whose editor the defaults panel needs in order to set
     // a personal default with no document open.
-    map.emplace("renderer.paper", ColorField([](GuiState& s) { return s.renderer.paper; }));
+    map.emplace("renderer.paper",
+                Labelled(ColorField([](GuiState& s) { return s.renderer.paper; }, WhenPrintTone), "Paper Color"));
     // No `renderer.ray_color` row: the GUI has no tint control anywhere (owner-decided — see
     // GuiState::RenderConfig::ray_color's own comment), so there is nothing here to register an
     // editor for.
@@ -575,11 +657,14 @@ const std::unordered_map<std::string, FieldEditorEntry>& Registry() {
     // Unrelated to `ev_anchor.hpp`'s own std::clamp(ev, -6, 6) inside ComputeEvAuto — that bounds
     // the auto anchor's internal output, this bounds the manual slider's UI domain. The two
     // sharing the number 6 historically was a coincidence, not a coupling.
-    map.emplace("renderer.exposure_offset",
-                FloatField([](GuiState& s) { return &s.renderer.exposure_offset; }, FixedDomain(-8.0f, 16.0f), "%.1f"));
-    map.emplace("renderer.ev_mode",
-                ComboField([](GuiState& s) { return &s.renderer.ev_mode; }, kEvModeNames, kEvModeCount));
-    map.emplace("renderer.tone", ComboField([](GuiState& s) { return &s.renderer.tone; }, kToneNames, kToneCount));
+    map.emplace("renderer.exposure_offset", Labelled(FloatField([](GuiState& s) { return &s.renderer.exposure_offset; },
+                                                                FixedDomain(-8.0f, 16.0f), "%.1f"),
+                                                     "EV"));
+    map.emplace(
+        "renderer.ev_mode",
+        Labelled(ComboField([](GuiState& s) { return &s.renderer.ev_mode; }, kEvModeNames, kEvModeCount), "EV Anchor"));
+    map.emplace("renderer.tone",
+                Labelled(ComboField([](GuiState& s) { return &s.renderer.tone; }, kToneNames, kToneCount), "Mode"));
 
     // ---- aspect ratio ----
     map.emplace("aspect_ratio", AspectPresetField());
@@ -698,6 +783,26 @@ FieldEditorConstraint ConstraintFor(const std::string& key_path, const GuiState&
     FatalAbort("field editor registry has no entry for key path \"%s\"", key_path.c_str());
   }
   return entry->Constraint(state);
+}
+
+const char* LabelFor(const std::string& key_path) {
+  const FieldEditorEntry* entry = FindFieldEditor(key_path);
+  return entry != nullptr ? entry->label : nullptr;
+}
+
+std::string PanelLabel(const std::string& key_path, const char* id) {
+  const char* label = LabelFor(key_path);
+  if (label == nullptr) {
+    // Same reasoning as ConstraintFor's abort: the caller is a widget call site naming a field it
+    // ships a control for, so a miss is a typo or an entry that lost its label.
+    FatalAbort("field editor registry declares no label for key path \"%s\"", key_path.c_str());
+  }
+  std::string out = label;
+  if (id != nullptr && *id != '\0') {
+    out += "##";
+    out += id;
+  }
+  return out;
 }
 
 std::vector<std::string> RegisteredFieldEditorKeyPaths() {

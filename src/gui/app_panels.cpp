@@ -17,6 +17,7 @@
 #include "gui/aspect_ratio_rules.hpp"
 #include "gui/color_window.hpp"
 #include "gui/composite_exposure_push.hpp"
+#include "gui/config_summary_window.hpp"
 #include "gui/crystal_preview.hpp"
 #include "gui/defaults_panel.hpp"
 #include "gui/destructive_style.hpp"
@@ -565,6 +566,15 @@ void RenderTopBar(float window_width) {
   }
   if (ImGui::IsItemHovered()) {
     ImGui::SetTooltip("Which raypaths make the light in a region of the sky. Opens the Raypath Analysis window.");
+  }
+  // The third occupant: the read-only Summary window (config_summary_window.cpp). A plain toggle
+  // like Analysis — the window has no state of its own to set on open.
+  ImGui::SameLine();
+  if (ImGui::Button(ICON_FA_FILE_LINES " Summary")) {
+    g_state.config_summary_window_open = !g_state.config_summary_window_open;
+  }
+  if (ImGui::IsItemHovered()) {
+    ImGui::SetTooltip("One page of the current configuration, for a screenshot. Opens the Summary window.");
   }
 
   // task-colored-toggle-to-topbar (346.3): colored/full-spectrum display-time
@@ -1469,7 +1479,9 @@ void RenderRightPanel(GLFWwindow* window, float window_width, float window_heigh
     ImGui::SeparatorText("Lens");
     // Use BeginCombo + Selectable to honour kLensTypePresentationOrder (gui_state.hpp).
     // The enum value (r.lens_type) is preserved unchanged; only the display order differs.
-    if (ImGui::BeginCombo("Lens Type##view", kLensTypeNames[r.lens_type])) {
+    // Every label in this group and the Display group below is the registry's (PanelLabel), the
+    // same word the Summary window prints for the field — see panels.cpp's Sun block for why.
+    if (ImGui::BeginCombo(PanelLabel("renderer.lens_type", "view").c_str(), kLensTypeNames[r.lens_type])) {
       for (int idx : kLensTypePresentationOrder) {
         bool selected = (r.lens_type == idx);
         if (ImGui::Selectable(kLensTypeNames[idx], selected)) {
@@ -1490,8 +1502,8 @@ void RenderRightPanel(GLFWwindow* window, float window_width, float window_heigh
     // full-sky gate that used to be spelled `BeginDisabled(full_sky)` at this line.
     const FieldEditorConstraint fov_c = ConstraintFor("renderer.fov", g_state);
     ImGui::BeginDisabled(!fov_c.enabled);
-    SliderWithInput("FOV##view", &r.fov, static_cast<float>(fov_c.min_value), static_cast<float>(fov_c.max_value),
-                    fov_c.fmt, fov_c.scale);
+    SliderWithInput(PanelLabel("renderer.fov", "view").c_str(), &r.fov, static_cast<float>(fov_c.min_value),
+                    static_cast<float>(fov_c.max_value), fov_c.fmt, fov_c.scale);
     ImGui::EndDisabled();
     bool is_globe = (r.lens_type == kLensTypeGlobe);
     ImGui::SeparatorText("Visibility");
@@ -1514,7 +1526,7 @@ void RenderRightPanel(GLFWwindow* window, float window_width, float window_heigh
     ImGui::SameLine(0, 20);
     const FieldEditorConstraint front_c = ConstraintFor("renderer.front", g_state);
     ImGui::BeginDisabled(!front_c.enabled);
-    Checkbox("Front##visible", &r.front);
+    Checkbox(PanelLabel("renderer.front", "visible").c_str(), &r.front);
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
       ImGui::SetTooltip("Show front hemisphere only\n(combine with Upper/Full/Lower)");
     }
@@ -1535,16 +1547,16 @@ void RenderRightPanel(GLFWwindow* window, float window_width, float window_heigh
     const FieldEditorConstraint el_c = ConstraintFor("renderer.elevation", g_state);
     const FieldEditorConstraint az_c = ConstraintFor("renderer.azimuth", g_state);
     ImGui::BeginDisabled(!el_c.enabled);
-    SliderWithInput("Elevation##view", &r.elevation, static_cast<float>(el_c.min_value),
+    SliderWithInput(PanelLabel("renderer.elevation", "view").c_str(), &r.elevation, static_cast<float>(el_c.min_value),
                     static_cast<float>(el_c.max_value), el_c.fmt, el_c.scale);
-    SliderWithInput("Azimuth##view", &r.azimuth, static_cast<float>(az_c.min_value), static_cast<float>(az_c.max_value),
-                    az_c.fmt, az_c.scale);
+    SliderWithInput(PanelLabel("renderer.azimuth", "view").c_str(), &r.azimuth, static_cast<float>(az_c.min_value),
+                    static_cast<float>(az_c.max_value), az_c.fmt, az_c.scale);
     ImGui::EndDisabled();
     // roll's gate is the wider one (full-sky OR globe) — again read, not restated.
     const FieldEditorConstraint roll_c = ConstraintFor("renderer.roll", g_state);
     ImGui::BeginDisabled(!roll_c.enabled);
-    SliderWithInput("Roll##view", &r.roll, static_cast<float>(roll_c.min_value), static_cast<float>(roll_c.max_value),
-                    roll_c.fmt, roll_c.scale);
+    SliderWithInput(PanelLabel("renderer.roll", "view").c_str(), &r.roll, static_cast<float>(roll_c.min_value),
+                    static_cast<float>(roll_c.max_value), roll_c.fmt, roll_c.scale);
     ImGui::EndDisabled();
 
     ImGui::Separator();
@@ -1631,7 +1643,8 @@ void RenderRightPanel(GLFWwindow* window, float window_width, float window_heigh
     // Rust-tinted input: changing Resolution re-runs the simulation and discards accumulated rays.
     // The warning is the point — see doc/gui-visual-language.md §7.
     ImGui::PushStyleColor(ImGuiCol_FrameBg, WarningFillColor(0.6f));
-    ImGui::Combo("Resolution##display", &r.sim_resolution_index, kSimResolutionLabels, kSimResolutionCount);
+    ImGui::Combo(PanelLabel("renderer.sim_resolution", "display").c_str(), &r.sim_resolution_index,
+                 kSimResolutionLabels, kSimResolutionCount);
     ImGui::PopStyleColor();
     if (ImGui::IsItemHovered()) {
       ImGui::SetTooltip("Re-runs simulation; accumulated rays reset");
@@ -1645,7 +1658,7 @@ void RenderRightPanel(GLFWwindow* window, float window_width, float window_heigh
     // select a mode, and a bare "Mode" on either would leave the other's meaning to be inferred
     // from position. This one names what it anchors and sits directly above the EV slider it
     // qualifies, so the two rows read as one pair.
-    ImGui::Combo("EV Anchor##display", &r.ev_mode, kEvModeNames, kEvModeCount);
+    ImGui::Combo(PanelLabel("renderer.ev_mode", "display").c_str(), &r.ev_mode, kEvModeNames, kEvModeCount);
     if (ImGui::IsItemHovered()) {
       ImGui::SetTooltip(
           "Which anchor display brightness is measured against.\n\n"
@@ -1660,8 +1673,8 @@ void RenderRightPanel(GLFWwindow* window, float window_width, float window_heigh
 
     ImGui::BeginGroup();
     const FieldEditorConstraint ev_c = ConstraintFor("renderer.exposure_offset", g_state);
-    SliderWithInput("EV##display", &r.exposure_offset, static_cast<float>(ev_c.min_value),
-                    static_cast<float>(ev_c.max_value), ev_c.fmt, ev_c.scale);
+    SliderWithInput(PanelLabel("renderer.exposure_offset", "display").c_str(), &r.exposure_offset,
+                    static_cast<float>(ev_c.min_value), static_cast<float>(ev_c.max_value), ev_c.fmt, ev_c.scale);
     ImGui::EndGroup();
     if (ImGui::IsItemHovered()) {
       if (r.ev_mode == 1) {
@@ -1732,7 +1745,7 @@ void RenderRightPanel(GLFWwindow* window, float window_width, float window_heigh
     // Labelled "Mode" now that the exposure combo above is "EV Anchor". Screen/Print is the pair
     // the user thinks in, and the two entries say what they do without the word "tone", which is
     // opaque to anyone who has not met tone mapping.
-    ImGui::Combo("Mode##display_tone", &r.tone, kToneNames, kToneCount);
+    ImGui::Combo(PanelLabel("renderer.tone", "display_tone").c_str(), &r.tone, kToneNames, kToneCount);
     if (ImGui::IsItemHovered()) {
       ImGui::SetTooltip(
           "Which operator turns the simulated light into pixels.\n\n"
@@ -1757,8 +1770,14 @@ void RenderRightPanel(GLFWwindow* window, float window_width, float window_heigh
     // ground is the image. Nor in the "Background" block below — that one is the loaded reference
     // PHOTOGRAPH and its transform; two different things under one word in one screen is how the
     // word stops meaning anything.
-    if (!IsPrintTone(r)) {
-      ImGui::ColorEdit3("Sky Color##display_sky_color", r.background, ImGuiColorEditFlags_NoInputs);
+    //
+    // Which arm is drawn is the registry's call, not a tone comparison made here: the two ground
+    // fields carry complementary applicability gates (WhenScreenTone / WhenPrintTone in
+    // field_editor_registry.cpp), and the Summary page reads the same `enabled` bit to decide which
+    // of the two rows it prints — so the swatch on screen and the row on the page cannot disagree.
+    if (ConstraintFor("renderer.background", g_state).enabled) {
+      ImGui::ColorEdit3(PanelLabel("renderer.background", "display_sky_color").c_str(), r.background,
+                        ImGuiColorEditFlags_NoInputs);
       if (ImGui::IsItemHovered()) {
         ImGui::SetTooltip(
             "Colour of the empty sky, added to the halo in linear RGB before the\n"
@@ -1799,9 +1818,11 @@ void RenderRightPanel(GLFWwindow* window, float window_width, float window_heigh
         }
       }
     } else {
-      // "Paper Color", not "Paper": it alternates in place with "Sky Color" and the pair reads as
-      // one row wearing two faces only if both name a colour.
-      ImGui::ColorEdit3("Paper Color##display_paper_color", r.paper, ImGuiColorEditFlags_NoInputs);
+      // The label is "Paper Color", not "Paper" (field_editor_registry.cpp): it alternates in
+      // place with "Sky Color" and the pair reads as one row wearing two faces only if both name a
+      // colour.
+      ImGui::ColorEdit3(PanelLabel("renderer.paper", "display_paper_color").c_str(), r.paper,
+                        ImGuiColorEditFlags_NoInputs);
       if (ImGui::IsItemHovered()) {
         ImGui::SetTooltip(
             "Colour of the paper the ink is laid on under Print mode.\n\n"
