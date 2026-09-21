@@ -1,7 +1,8 @@
 // Summary window pixel regression — a disk-reference baseline for the read-only Summary page
 // (src/gui/config_summary_window.cpp): its two columns (settings left, document right), the
-// label/value tables and the packed lines within them, group headings, entry indent, the fixed
-// width and the height the content settles at.
+// label/value lines and group headings on the left, the per-layer heading, the two document
+// tables (their header rows, column widths and empty cells) and the legend on the right, the
+// fixed width and the height the content settles at.
 //
 // Why this exists beside the functional cases: those assert state and counts (the window opens,
 // it draws N rows), and the content tests assert the words; none of them reads a committed image,

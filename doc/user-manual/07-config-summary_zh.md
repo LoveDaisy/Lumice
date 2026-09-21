@@ -19,11 +19,13 @@ Summary 窗口把当前配置摊在一页上——晶体及其形状、朝向，
 - **Simulation**——Rays(M)（以百万计，与滑条一致）、Max hits、Infinite rays。
 - **Render**——Lens Type、FOV、相机的 Elevation / Azimuth / Roll、Visible 与 Front、Resolution、EV 与 EV Anchor、Mode（screen / print），以及底色——Screen 下是 Sky Color，Print 下是 Paper Color。
 - **Settings**——主面板上没有控件、只能在 Settings 面板里改的少数设置（目前：ray allocation）。单独列出，是为了让你对着程序读这一页时知道该去哪里找它们。
-- **Layer N**——该层的多次散射概率与条目数；随后缩进列出每个条目：
-  - **Crystal**、**Enabled** 与 **Weight** 同一行——池编号、你起的名字、类型（拼法与晶体卡片和 Colors 窗口完全一致），然后是卡片上的开关与比例；
-  - 编辑器 Crystal 页上的形状行，每行三个（棱柱为 Height；锥体为 Prism H / Upper H / Lower H / Upper A / Lower A；Face 3–8 排两行），随机化的参数印作 `中心 ± 展宽 分布`，同步的参数标 `· sync N`；
-  - **Axis**——三个分布归类出的预设（Column / Plate / Parry / Lowitz / Random / Custom），随后是完整的 **Zenith / Azimuth / Roll** 同一行，所以调过 std 的预设（std 5 而不是 1 的 Column）也看得出来；
-  - **Filter**——按卡片的拼法（`3-5-1 In PBD`，或 `None`），加上 filter 的名字；多行 filter 每行一条。
+- **Layer N**——一行标题写该层的多次散射概率与条目数，随后是两张表，每个条目一行，两张表都以条目在层内的序号（`#`）开头，所以一张表里的某一行能对上另一张表里的同一行：
+  - **Crystals**——`#`、**Enabled** 与 **Weight**（卡片上的开关与比例）；**Crystal**：池编号、你起的名字、类型，拼法与晶体卡片和 Colors 窗口完全一致；**Zenith / Azimuth / Roll**：三个朝向分布完整印出，Zenith 前面带三个分布归类出的预设名（`Plate · G 0(1)`：Column / Plate / Parry / Lowitz / Random / Custom），所以调过 std 的预设（std 5 而不是 1 的 Column）也看得出来；**Filter**：按卡片的拼法（`3-5-1 In PBD`，或 `None`），后面跟 filter 的名字——多行 filter 与卡片一样只印首行加 `(+N more)`，要读全部行请开 Filter Editor。
+  - **Shape**——`#`，然后是编辑器 Crystal 页的各列：棱柱为 Height，锥体为 Prism H / Upper H / Lower H / Upper A / Lower A，再是 Face 3–8。列是两种类型的并集，某一行用不到的列就留空。
+
+  两张表下方有一行图例，写明分布字母的含义。
+
+**分布记号。**凡是从分布里抽取的值——三个朝向角，以及你随机化了的任何形状参数——单元格写作 `字母 中心(展宽)`：字母表示分布类型（`G` Gauss、`U` Uniform、`Z` Zigzag、`L` Laplacian、`G*` Gauss (legacy)），括号前后的两个数就是面板控件上的那两个数——朝向的 Mean 与 Std / Range / Amplitude / Scale 输入框，形状参数的中心与展宽——不做任何换算：`U 0.900(0.100)` 是 Range 框写着 0.100 的均匀分布，即区间 [0.85, 0.95]，不是 ±0.100。两个简写：没有随机化的形状参数只印数字（`1.000`）；全周均匀的朝向——均值 0、范围 360，也就是 Random 预设的 azimuth 与 roll——折叠成单个 `U`。同步的形状参数在值后面标 `· sync N`。
 
 标签用的是各面板自己的字——`Rays(M)`、`EV Anchor`、`Sky Color`——拿着截图对照程序时，每一行都能在面板上按同一个名字找到；唯一的例外是 `Visible`，View 面板上它是 *Visibility* 标题下三个没有单独标签的单选按钮。这一页也只印面板此刻显示或生效的字段：全天镜头下没有 FOV / Elevation / Azimuth / Roll / Visible / Front 这几行，正如面板上这几个滑条被置灰；开了 Infinite rays 就没有 Rays(M) 行；Render 组里只有当前 Mode 用到的那一种底色——Sky Color 或 Paper Color——不会两者都印。
 
