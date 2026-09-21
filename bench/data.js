@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1789960734937,
+  "lastUpdate": 1789960738035,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -4752,48 +4752,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "18624004d00f891498779bf12248f36046859a41",
-          "message": "Merge pull request #295 from LoveDaisy/feat/fast-e2e-dominant-test\n\ntest(e2e): smoke 按 config 拆成独立 pytest item —— 收集粒度对齐调度粒度，零覆盖损失",
-          "timestamp": "2026-09-02T14:42:18+08:00",
-          "tree_id": "c633f9361f8df5a4557dd160ab557794d6e71044",
-          "url": "https://github.com/LoveDaisy/ice_halo_sim/commit/18624004d00f891498779bf12248f36046859a41"
-        },
-        "date": 1788332015631,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 812864.2,
-            "unit": "rays/sec",
-            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 1161578.1,
-            "unit": "rays/sec",
-            "extra": "CPU: Neoverse-N2\\nCores: 4"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 844346.3,
-            "unit": "rays/sec",
-            "extra": "CPU: INTEL(R) XEON(R) PLATINUM 8573C\\nCores: 4"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "1ac3ab63b1d72eb8034782f0b8b8f09e100b4636",
           "message": "Merge pull request #296 from LoveDaisy/task/save-open-visual-consistency-red\n\nfix(gui): .lmc 与 composite 纹理改存纯辐亮度，渐晕由显示端统一补上",
           "timestamp": "2026-09-02T18:00:52+08:00",
@@ -9464,6 +9422,54 @@ window.BENCHMARK_DATA = {
             "value": 684585.6,
             "unit": "rays/sec",
             "extra": "CPU: AMD EPYC 9V74 80-Core Processor                \\nCores: 4"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "1bd37a62468be8c031b66851d29f8687526ad678",
+          "message": "Merge pull request #396 from LoveDaisy/feat/config-summary-window\n\nfeat(gui): read-only Summary window — one page of the current configuration for sharing (task-588)",
+          "timestamp": "2026-09-21T11:06:18+08:00",
+          "tree_id": "a62e92733c5372ed1d234f4bdc7e07e66441a886",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/1bd37a62468be8c031b66851d29f8687526ad678"
+        },
+        "date": 1789960737540,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 861775.9,
+            "unit": "rays/sec",
+            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 1016526.4,
+            "unit": "rays/sec",
+            "extra": "CPU: Neoverse-N2\\nCores: 4"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 708358.6,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 7763 64-Core Processor\\nCores: 4"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 578469.8,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
           }
         ]
       }
