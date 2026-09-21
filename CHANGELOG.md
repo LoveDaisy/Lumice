@@ -133,6 +133,211 @@ it was thinking of and false of the C struct beside it.
 
 </details>
 
+## [4.6.1] - 2026-09-21
+
+### Added
+- **Raypath analysis from the command line: `Lumice analyze`** (#369, #394). The analysis the
+  4.6.0 GUI window runs is now a CLI subcommand that writes the same CSV the window's **Export CSV**
+  produces (one CSV builder, shared by both — a unit test pins the two byte-identical). The config
+  is the scene and the flags are the request, so no config field is added: `--roi sky|frame|cone`,
+  with `--center alt,az` + `--radius deg` for a cone and `--render-id` for a frame; `--symmetry`
+  (read-time, default `PBD`); `--rays` / `--seed` / `--workers`; `--csv <path>` for a file, else
+  stdout (progress goes to stderr, so `2>/dev/null` leaves the CSV alone). An infinite budget
+  rewrites the file periodically and a Ctrl-C ends the run with one complete final write and exit
+  0. The pass runs on the CPU whatever `--backend` says, as in the GUI. New in the same cycle:
+  **`--chain-capacity <N>`** sizes the run's chain record, which until now was one compiled-in
+  constant (16384, calibrated on the GUI's multi-scatter scenes) that a single-crystal
+  `--symmetry none` scene overflowed silently into the `other` row — a hexagonal prism alone has
+  29 212 distinct chains through 8 faces, so its 8-face set (0.84 % of the energy on the reference
+  scene) was never listed. `0` keeps the default; the ceiling is 2²⁰, and the cost is memory,
+  about 220 bytes per chain per worker. Chains with an adjacent repeated face (grazing-edge
+  numerical noise) are documented as a known shape rather than filtered out. Guide:
+  `doc/user-manual/06-raypath-analysis.md` and the CLI quickstart.
+- **`Lumice render --format npy`: the accumulator as float32, with a metadata sidecar** (#379).
+  Each renderer is written as a `.npy` (H×W×3 float32 XYZ, C order — a hand-written v1.0 header,
+  no new dependency) plus a same-name `.json` carrying what a consumer needs to interpret it:
+  `normalization`, `emitted_energy`, `total_pixels`, `intensity_factor`, `axis_solid_angle`,
+  `anchor_l99_sky`, `ev_mode`, `sim_ray_num`, `seed`, `renderer_id`, `width` / `height`,
+  `LUMICE_API_VERSION` and more. The values are the same unexposed snapshot the 8-bit image is
+  baked from — no background, no gamma, no clamp. `--raw-normalization raw|normalized` (or the new
+  top-level config key `raw_export.normalization`; the flag wins) chooses between the physical
+  landed energy (default) and the absolute-mode exposure scale at EV 0; `normalized` with a zero
+  `emitted_energy` skips that renderer with a warning instead of mislabelling the file.
+  `doc/configuration.md` states the units, the conversions to radiance and to the 8-bit image, and
+  the fact that `normalized` uses the absolute-mode scale regardless of the renderer's `ev_mode`.
+- **`render --seed <N>`** (#370): the same fixed-seed option `analyze` has, for a byte-identical
+  re-run of a render. `benchmark` rejects it with its own message — a fixed seed collapses the
+  server to one worker, which would defeat the throughput measurement.
+- **A Summary window: the whole configuration on one page, for a screenshot** (#396). A new
+  **Summary** button in the Top Bar, beside **Colors** and **Analysis**, opens a read-only,
+  non-modal window laying the current document out for sharing — the version that drew it, the sun
+  and spectrum, the simulation budget, the lens / view / exposure / mode rows, the Settings-only
+  fields, and per layer two tables, **Crystals** (enabled, weight, name and type, the three axis
+  distributions each led by the preset it classifies as, the filter as the card summarises it) and
+  **Shape** (the editor's own columns for prism and pyramid), cross-referenced by row number.
+  Distributions print in one notation, `letter centre(spread)` with the panel's own two numbers.
+  1200 px wide, two columns, so a typical document fits a 1280×900 screen without scrolling. It
+  prints what the panels show, not what the simulator is asked for internally: a `linear` lens
+  reads `linear`, and nothing about your machine (overlays, background photo, panel layout) is on
+  the page. No export button of its own — take the picture with the operating system's screenshot
+  tool. Guide: `doc/user-manual/07-config-summary.md`.
+- **Look At gains a Horizon series** (#393). Four level bearings relative to the sun —
+  **Toward sun** / **Sun +90°** / **Away from sun** / **Sun −90°** — at elevation 0, for turning
+  the camera to a fixed bearing without dragging the Azimuth slider. The existing *Sun-side
+  horizon* entry is folded in as **Toward sun**. Presets still set only azimuth and elevation;
+  roll and fov are untouched.
+- **The product version is shown everywhere, from one source** (#391). The GUI window is titled
+  `Lumice <version>`; `Lumice --version` prints it and exits 0; the first log line of a GUI or CLI
+  run names it; a saved `.lmc` carries it as `app_version` beside `schema_version` (ignored on
+  load, never a difference row in Settings). A build that is not a tagged release carries a `-dev`
+  suffix, so a locally built binary never passes for a release.
+- **C API: `LUMICE_API_VERSION` 439 → 443** (#369, #375, #391, #394). Three pure appends, with no
+  struct change: `LUMICE_SceneGetRenderer(scene, index, out)` (v4.40) reads a renderer back with
+  the engine's defaults applied — the inverse of `SceneAddRenderer`, addressed by array position,
+  not `.id`; `LUMICE_GetEngineIsaLevel()` (v4.41) answers the ISA tier of the engine actually
+  loaded (`baseline` / `x86-64-v3` / `x86-64-v4` / `native`), which is also what the
+  `[BENCHMARK]` JSON's `isa` key now reports instead of the shell's compile-time macro;
+  `LUMICE_GetVersionString()` (v4.42) is the product version above. **ABI** (v4.43):
+  `LUMICE_RaypathAnalysisRequest` gains a trailing `chain_capacity` (sizeof 88 → 96, recompile
+  against the new header); `0` — what a zero-initialised request, and the GUI, send — is
+  byte-for-byte the old request, `1 … LUMICE_MAX_RAYPATH_CHAIN_CAPACITY` (2²⁰) sizes the record,
+  anything else is `LUMICE_ERR_INVALID_VALUE`. Two documented semantics moved without a version
+  bump: `LUMICE_GetBackendFallbackFlag` now also reports a GPU session that fell back because the
+  run's config had no renderer, more renderers than the backend serves, or a compatibility miss
+  (#372); and `LUMICE_ServerConfig.num_workers = 0` now means the full logical core count on
+  Windows (see the performance entry below) while Linux / macOS keep the physical count capped at
+  10 (#382).
+
+### Changed
+- **Engine and GUI log lines go to stderr; stdout carries only product output** (#369, #370). The
+  CLI's console sink used to write its log lines to stdout, mixed in with `Saved:` / `Stats:` /
+  `[BENCHMARK]` / `ColorClassSignal:` and now the analysis CSV; those product lines stay on stdout
+  and everything logged moves to stderr, so `Lumice … 2>/dev/null` yields clean output and a
+  script that parsed stdout for one of the product lines no longer has to skip log lines. The GUI's
+  own console sink moves the same way. A script that captured *log* lines from stdout needs
+  `2>&1`.
+- **A saved `.lmc` reopens as the picture you saved, and stays re-exposable** (#381, #384). The
+  texture section now stores the unexposed linear XYZ energy the live preview is built from — as
+  float16 with one global scale, zlib-compressed (format v6) — instead of the exposed, clipped
+  8-bit sRGB preview of v4; on reopen it goes up through the live path's own shader branch, so
+  EV, `ev_mode`, sky / paper colour and print mode all work on a reopened document exactly as
+  after a Run, and the reopened frame is byte-identical to the screenshot taken before saving
+  (the live preview is quantised through the same codec before upload, which is what makes that
+  hold by construction; GPU texture memory halves as a side effect). Files are larger than v4's
+  baked PNG — about 1.4 / 8.5 / 9.9 MB on the three beta scenes at the default resolution,
+  versus 0.2 / 5.0 / 5.3 MB before — because they now hold the dynamic range the PNG had clipped
+  away. v5 (the same content as float32, an intermediate format never released) and every v≤4 file
+  open unchanged; a file saved by this version cannot be opened by 4.6.0 or earlier.
+- **Release packages: one executable per entry point, plus two internal engine libraries** (#375).
+  4.6.0 shipped each Linux / Windows executable twice behind a launcher (`Lumice.baseline` /
+  `Lumice.x86-64-v4`, `.baseline.exe` / `.x86-64-v3.exe`). Those files are gone. **Windows x64**
+  now has `Lumice.exe` / `LumiceGUI.exe` plus `lumice-engine.baseline.dll` and
+  `lumice-engine.x86-64-v3.dll`; each shell probes CPUID at startup and delay-loads the matching
+  DLL from its own directory by absolute path (never PATH or cwd), `--isa=baseline|x86-64-v3`
+  overrides. **Linux x64** has `Lumice` / `LumiceGUI` plus `lib/liblumice.so` and
+  `lib/glibc-hwcaps/x86-64-v4/liblumice.so`; glibc's own loader (≥ 2.33) picks the AVX-512 copy
+  with no application code. The engine library is an internal component — its ABI changes freely
+  between versions, `lumice.h` does not ship with it. Measured on the reference box: the DLL
+  boundary itself costs nothing (100 % / 98 % single / multi-worker against a static build of the
+  same tier); the tier gain is 2.31× single- and 1.56× 16-worker on Windows, 2.03× on Linux. Two
+  accepted costs: a machine without AVX2 runs the
+  baseline engine 10–14 % slower than 4.6.0's static baseline executable (the export table rules
+  out link-time optimisation for that DLL), and the Windows zip unpacks to 21 MB. macOS and Linux
+  ARM64 packages are unchanged.
+- **A config with several `render` entries now runs on the GPU** (#372). Metal and CUDA used to
+  serve one renderer only; a multi-lens config on a GPU-preferred window or `--backend` fell back
+  to the legacy CPU path, silently. Both backends now accumulate up to four renderers per session
+  in one pass — a two-renderer run reaches 88–95 % of a single-renderer run's throughput, 4–19×
+  the CPU path it used to fall back to — and a fallback that does still happen (no renderer, more
+  than four, a compatibility miss) is reported as `fell_back=true` on the CLI's stats line and in
+  the `[BENCHMARK]` JSON, not just logged.
+- **The CPU route is faster, and the GUI's first frame arrives sooner** (#378, #382, #386). Four
+  changes, each measured on its own: (1) per-ray projection onto the picture moved from the single
+  consumer thread onto the simulation workers, which were mostly idle waiting for it — end-to-end
+  1.8–2.4× on a 16-core Zen 5 box under WSL2; the gain is a function of how idle the workers were,
+  and a 12-core Mac whose workers were already 79 % busy measured 0.98–1.08×. (2) With that wall
+  gone, the automatic worker count (`--workers` unset, `num_workers = 0`) on **Windows** becomes
+  the full logical core count instead of 10 — 1.07–1.58× on the reference box; Linux and macOS keep
+  10, where the re-sweep found no gain. Pass `--workers 10` to get the old count. (3) The GUI builds
+  its startup server for the document's backend and warms it with a hidden calibration run in the
+  background, joined before anything the user can see: the cold-versus-hot first-frame ratio on
+  Windows CUDA drops from 1.58× to 1.03×, the Metal cold first frame by 22 %, the CPU route pays
+  nothing. (4) The snapshot's XYZ→sRGB fusion loop — the floor of a hot first frame at 2048×1024
+  — runs row-parallel on a small explicit budget of idle physical cores (2 on the CPU route,
+  all-but-one on a GPU route), 1.7–2.2× faster than the serial loop. That budget is the deliberate
+  size: a first cut on a full pool stole cores from the workers every 20 ms under GUI polling and
+  slowed the simulation 16 %; the capped version leaves 1.5–3.2 pp of that on Mac / Linux and none
+  on Windows, accepted for the snapshot speed-up.
+- **The crystal editor's Axis tab remembers each crystal's last Custom triple** (#373). Clicking a
+  preset (Plate / Column …) and then **Custom** again restores the zenith / azimuth / roll
+  distributions last dialled into the Custom range for that crystal, instead of the factory Custom
+  row. The memory lives for the document session and is cleared by New / Open / Import / Revert.
+  Nothing new is stored in the file.
+- **Settings ▸ preset library: the zenith *type* of an axis preset is editable, within the
+  preset's own accepted set** (#395). For Column / Plate / Parry / Lowitz the Type cell becomes a
+  combo listing only the distributions that preset's classifier already accepts (Lowitz also
+  `zigzag`); the other presets stay read-only, and every choice still classifies as the same
+  preset. The personal-defaults override file gains `presets.axis.<name>.zenith_type` beside
+  `zenith_std`; a file without it keeps the built-in type, and `defaults_schema_version` is
+  unchanged.
+
+### ⚠️ Breaking Changes
+- **The CLI has subcommands, and the `--benchmark` flag is gone** (#368). **Before**: one flat
+  flag set; `Lumice -f config.json --benchmark` ran the throughput pass, and `benchmark` runs
+  accepted `--workers` / `-o` with a warning that they were ignored. **Now**: `Lumice render …`
+  (the implicit default — a bare `Lumice -f config.json …` is unchanged, byte for byte, and
+  `Lumice -h`, `render -h`, `benchmark -h`, `analyze -h` are four help pages) and
+  `Lumice benchmark -f config.json [--backend …] [-v] [-d]`, each accepting only its own options;
+  `--benchmark` exits 1 with a message naming the replacement, and `benchmark --workers` /
+  `benchmark -o` are rejected. **What to do**: replace `--benchmark` with the `benchmark`
+  subcommand in any script that used it (the repository's own CI legs and `bench_throughput.py`
+  were updated); render invocations need no change.
+
+### Fixed
+- **The sun and sub-sun no longer change hue as the ray budget grows** (#380, #370). On the CPU
+  path a hot pixel's XYZ was accumulated per ray in bare float32; once it held ~10⁶–10⁷ of energy
+  each increment sat at rounding scale, the bias differed per channel, and gamut clipping turned
+  the skewed ratio into a visible flip — 10 M rays yellow-green, 30 M+ cyan; at 100 M the sun read
+  X/Y 0.338 against the exact 0.436 and 18 % too bright. Every accumulator of that shape
+  (`internal_xyz_`, the per-class lanes, the exposure anchor, the intensity totals — and the
+  `Stats:` line's emitted-energy total, which drifted 0.05–0.12 % over long runs) now sums in
+  double and is narrowed once at snapshot; the consumer got faster in the exchange (a compensated
+  float sum, tried first, could not meet a 10⁻⁵ oracle and cost more). The GPU paths, which
+  accumulate in bounded windows and fold on the host, were never affected.
+- **A reopened `.lmc` no longer looks softer than the same document after Run** (#381). The old
+  texture stored the preview after exposure and clip as 8-bit sRGB, so the reopened frame was
+  filtered on clipped gamma bytes — the sun came back as a blurred blob instead of the hard square
+  the live path shows. Fixed by the format change above. Also: a document saved by a version before
+  v4 and re-saved without a Run had the sky composited twice on the next reopen; it no longer
+  does.
+- **CUDA rendered a custom spectrum as its first wavelength only** (#374). Under a discrete
+  spectrum the CUDA wavelength pool was cached per scene and never rebuilt for the
+  remaining wavelengths of the list, so an equal-weight 560–720 nm scene rendered pure 560 nm —
+  green where the CPU and Metal paths render orange. The pool is now rebuilt at every session under
+  a non-illuminant spectrum; illuminant mode is unchanged, and a new cross-backend test covers the
+  case the battery lacked.
+- **CUDA traced one bounce fewer than the CPU and Metal paths** (#382). The CUDA main loop charged
+  the entry face against the internal `max_hits` budget, so every path was cut one hit short of
+  what the other backends trace. Per-raypath energies on the reference scene now agree within
+  0.66 % of the CPU's on every bucket (the worst was +2.84 %).
+- **CUDA's image-to-landed energy ratio no longer drifts with the drain window** (#383). The
+  device-side float32 XYZ plane accumulated across a 64-batch drain window and its rounding put
+  the ratio +0.40 % off the CPU ledger — about 0.006 stop, invisible in the picture but outside the
+  cross-backend tolerance once #380 had made the CPU exact. The plane is now folded into a double
+  plane every 8 batches; the ratio is identical across window lengths (spread 0.0000 %) at a cost
+  of 5–6 % throughput at 2048×1024 and nothing measurable at the canonical 512×256 scenes.
+- **"Exclude this raypath" works while the Edit Entry editor is open** (#389). The editor copied
+  its pool slot when opened and, in the default Immediate mode, pushed that copy back every frame
+  without reading the pool again — so an Exclude from the analysis window either bound a filter
+  that the editor unbound the same frame (an orphan slot, plus a spurious reset) or appended a row
+  the editor overwrote (a silent no-op that still logged "appended"). The editor now pulls from the
+  pool, draws, and pushes back each frame through a field-level three-way merge, keeping the
+  user's in-progress edit when both sides moved, in Immediate and Staged alike. Two more faults of
+  the same shape found in the census: opening or reverting a document no longer leaves the editor
+  open on the old one (under Staged, OK could write the old document's edits into the new one),
+  and deleting a card while pick-link mode is armed no longer leaves the link pointing at whichever
+  entry slid into the slot.
+
 ## [4.6.0] - 2026-09-14
 
 ### Added
@@ -2295,6 +2500,7 @@ it was thinking of and false of the C struct beside it.
 - Basic ice crystal halo simulation
 - Support for common crystal types (hexagonal prism, plate, column)
 
+[4.6.1]: https://github.com/LoveDaisy/ice_halo_sim/compare/v4.6.0...v4.6.1
 [4.6.0]: https://github.com/LoveDaisy/ice_halo_sim/compare/v4.5.1...v4.6.0
 [4.5.1]: https://github.com/LoveDaisy/ice_halo_sim/compare/v4.5.0...v4.5.1
 [4.5.0]: https://github.com/LoveDaisy/ice_halo_sim/compare/v4.4.3...v4.5.0
