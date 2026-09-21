@@ -392,6 +392,93 @@ int ShapeSlotForExportKey(const std::string& key) {
   return it == kSlots.end() ? -1 : it->second;
 }
 
+// ---- filter ----
+// Free functions rather than BuildRules-local lambdas: the rules are std::functions that outlive
+// BuildRules, so a rule that captured a local lambda by reference would call through a dead stack
+// frame — which is what once read `doc` as a number on Linux and MSVC while macOS happened to
+// leave the frame intact.
+//
+// The export's filters are CORE filters: BuildScene expands each GUI filter's sum of products
+// into one raypath / entry-exit filter per row plus, for a multi-row SoP, a "complex" node
+// composing them (file_io.cpp ExpandSopToClauses). Entries reference the top node. So the
+// Filter cells a core filter must be found in are the entries whose top node is it, or composes
+// it.
+std::vector<EntryLocator> EntriesReachingFilter(const json& doc, int export_idx) {
+  std::vector<EntryLocator> at;
+  const json& filters = doc["filter"];
+  const json& scattering = doc["scene"]["scattering"];
+  for (size_t l = 0; l < scattering.size(); ++l) {
+    const json& entries = scattering[l]["entries"];
+    for (size_t e = 0; e < entries.size(); ++e) {
+      if (!entries[e].contains("filter")) {
+        continue;
+      }
+      const int top = entries[e]["filter"].get<int>();
+      bool reaches = top == export_idx;
+      if (!reaches && filters[top].contains("composition")) {
+        for (const auto& member : filters[top]["composition"]) {
+          reaches = reaches || member.get<int>() == export_idx;
+        }
+      }
+      if (reaches) {
+        at.push_back({ static_cast<int>(l), static_cast<int>(e) });
+      }
+    }
+  }
+  EXPECT_FALSE(at.empty()) << "exported filter " << export_idx << " is on no entry";
+  return at;
+}
+
+// The Filter cell is the card's summary (panels.cpp FilterSummary), which prints a multi-row
+// sum of products as its FIRST row and "(+N more)" — the filter editor is where the rows are
+// read in full. So a composed member's row text is on the page only for the first member; for
+// a later one (position k > 0 in its top node's composition) what the page owes is the count:
+// "(+N more)" with N >= k, which is how the reader is told the rows exist. Position k, or
+// nullopt for a first member or a filter that is nobody's member.
+std::optional<int> HiddenRowPosition(const json& doc, int export_idx) {
+  for (const auto& f : doc["filter"]) {
+    if (!f.contains("composition")) {
+      continue;
+    }
+    const json& members = f["composition"];
+    for (size_t k = 1; k < members.size(); ++k) {
+      if (members[k].get<int>() == export_idx) {
+        return static_cast<int>(k);
+      }
+    }
+  }
+  return std::nullopt;
+}
+
+// The row-text assertion, in the two forms above.
+void ExpectRowText(const json& doc, const ConfigSummary& page, int export_idx, const std::string& text,
+                   const char* what) {
+  const std::optional<int> hidden = HiddenRowPosition(doc, export_idx);
+  for (const auto& at : EntriesReachingFilter(doc, export_idx)) {
+    const auto cell = CrystalsCell(page, at, "Filter");
+    if (!cell.has_value()) {
+      continue;
+    }
+    if (!hidden.has_value()) {
+      EXPECT_NE(cell->find(text), std::string::npos)
+          << LocatorText(at) << ": " << what << " \"" << text << "\" is not in the Filter cell \"" << *cell << "\"";
+      continue;
+    }
+    const std::smatch more = [&] {
+      std::smatch found;
+      std::regex_search(*cell, found, std::regex(R"(\(\+(\d+) more\))"));
+      return found;
+    }();
+    if (more.empty()) {
+      ADD_FAILURE() << LocatorText(at) << ": " << what << " \"" << text << "\" is row " << *hidden
+                    << " of a multi-row filter, and the Filter cell \"" << *cell << "\" does not say \"(+N more)\"";
+      continue;
+    }
+    EXPECT_GE(std::stoi(more[1]), *hidden)
+        << LocatorText(at) << ": the Filter cell \"" << *cell << "\" counts fewer hidden rows than row " << *hidden;
+  }
+};
+
 std::vector<RuleEntry> BuildRules(const GuiState& state, const ConfigSummary& page, const json& doc) {
   std::vector<RuleEntry> rules;
   const auto add = [&](const char* pattern, Rule rule) { rules.push_back({ std::regex(pattern), std::move(rule) }); };
@@ -653,93 +740,16 @@ std::vector<RuleEntry> BuildRules(const GuiState& state, const ConfigSummary& pa
   });
 
   // ---- filter ----
-  // The export's filters are CORE filters: BuildScene expands each GUI filter's sum of products
-  // into one raypath / entry-exit filter per row plus, for a multi-row SoP, a "complex" node
-  // composing them (file_io.cpp ExpandSopToClauses). Entries reference the top node. So the
-  // Filter cells a core filter must be found in are the entries whose top node is it, or composes
-  // it.
-  const auto entries_reaching_filter = [&](int export_idx) {
-    std::vector<EntryLocator> at;
-    const json& filters = doc["filter"];
-    const json& scattering = doc["scene"]["scattering"];
-    for (size_t l = 0; l < scattering.size(); ++l) {
-      const json& entries = scattering[l]["entries"];
-      for (size_t e = 0; e < entries.size(); ++e) {
-        if (!entries[e].contains("filter")) {
-          continue;
-        }
-        const int top = entries[e]["filter"].get<int>();
-        bool reaches = top == export_idx;
-        if (!reaches && filters[top].contains("composition")) {
-          for (const auto& member : filters[top]["composition"]) {
-            reaches = reaches || member.get<int>() == export_idx;
-          }
-        }
-        if (reaches) {
-          at.push_back({ static_cast<int>(l), static_cast<int>(e) });
-        }
-      }
-    }
-    EXPECT_FALSE(at.empty()) << "exported filter " << export_idx << " is on no entry";
-    return at;
-  };
-  // The Filter cell is the card's summary (panels.cpp FilterSummary), which prints a multi-row
-  // sum of products as its FIRST row and "(+N more)" — the filter editor is where the rows are
-  // read in full. So a composed member's row text is on the page only for the first member; for
-  // a later one (position k > 0 in its top node's composition) what the page owes is the count:
-  // "(+N more)" with N >= k, which is how the reader is told the rows exist. Position k, or
-  // nullopt for a first member or a filter that is nobody's member.
-  const auto hidden_row_position = [&](int export_idx) -> std::optional<int> {
-    for (const auto& f : doc["filter"]) {
-      if (!f.contains("composition")) {
-        continue;
-      }
-      const json& members = f["composition"];
-      for (size_t k = 1; k < members.size(); ++k) {
-        if (members[k].get<int>() == export_idx) {
-          return static_cast<int>(k);
-        }
-      }
-    }
-    return std::nullopt;
-  };
-  // The row-text assertion, in the two forms above.
-  const auto expect_row_text = [&](int export_idx, const std::string& text, const char* what) {
-    const std::optional<int> hidden = hidden_row_position(export_idx);
-    for (const auto& at : entries_reaching_filter(export_idx)) {
-      const auto cell = CrystalsCell(page, at, "Filter");
-      if (!cell.has_value()) {
-        continue;
-      }
-      if (!hidden.has_value()) {
-        EXPECT_NE(cell->find(text), std::string::npos)
-            << LocatorText(at) << ": " << what << " \"" << text << "\" is not in the Filter cell \"" << *cell << "\"";
-        continue;
-      }
-      const std::smatch more = [&] {
-        std::smatch found;
-        std::regex_search(*cell, found, std::regex(R"(\(\+(\d+) more\))"));
-        return found;
-      }();
-      if (more.empty()) {
-        ADD_FAILURE() << LocatorText(at) << ": " << what << " \"" << text << "\" is row " << *hidden
-                      << " of a multi-row filter, and the Filter cell \"" << *cell << "\" does not say \"(+N more)\"";
-        continue;
-      }
-      EXPECT_GE(std::stoi(more[1]), *hidden)
-          << LocatorText(at) << ": the Filter cell \"" << *cell << "\" counts fewer hidden rows than row " << *hidden;
-    }
-  };
   add(R"(^filter\[(\d+)\]\.action$)", [&](const std::smatch& m, const json& v) {
     const std::string want = v.get<std::string>() == "filter_in" ? " In" : " Out";
-    for (const auto& at : entries_reaching_filter(std::stoi(m[1]))) {
+    for (const auto& at : EntriesReachingFilter(doc, std::stoi(m[1]))) {
       ExpectCellText(CrystalsCell(page, at, "Filter"), at, "Filter", want);
     }
   });
   add(R"(^filter\[(\d+)\]\.symmetry$)", [&](const std::smatch& m, const json& v) {
     // FilterSummary's suffix is the letters of the symmetries that are ON — the same letters, in
     // the same order, the export writes. The cell may carry " · <name>" after the summary.
-    for (const auto& at : entries_reaching_filter(std::stoi(m[1]))) {
+    for (const auto& at : EntriesReachingFilter(doc, std::stoi(m[1]))) {
       const auto got = CrystalsCell(page, at, "Filter");
       if (got.has_value()) {
         std::string summary = *got;
@@ -760,17 +770,17 @@ std::vector<RuleEntry> BuildRules(const GuiState& state, const ConfigSummary& pa
     for (const auto& face : v) {
       text += (text.empty() ? "" : "-") + std::to_string(face.get<int>());
     }
-    expect_row_text(std::stoi(m[1]), text, "raypath");
+    ExpectRowText(doc, page, std::stoi(m[1]), text, "raypath");
   });
   add(R"(^filter\[(\d+)\]\.(entry|exit)$)", [&](const std::smatch& m, const json& v) {
     // An entry-exit row: each face number the export names is in the cell.
     const json faces = v.is_array() ? v : json::array({ v });
     for (const auto& face : faces) {
-      expect_row_text(std::stoi(m[1]), std::to_string(face.get<int>()), m[2].str().c_str());
+      ExpectRowText(doc, page, std::stoi(m[1]), std::to_string(face.get<int>()), m[2].str().c_str());
     }
   });
   add(R"(^filter\[(\d+)\]\.(min_len|max_len|length)$)", [&](const std::smatch& m, const json& v) {
-    expect_row_text(std::stoi(m[1]), std::to_string(v.get<int>()), m[2].str().c_str());
+    ExpectRowText(doc, page, std::stoi(m[1]), std::to_string(v.get<int>()), m[2].str().c_str());
   });
   return rules;
 }
