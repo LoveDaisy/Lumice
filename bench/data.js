@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1789964422247,
+  "lastUpdate": 1789964425390,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -4752,54 +4752,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "1ac3ab63b1d72eb8034782f0b8b8f09e100b4636",
-          "message": "Merge pull request #296 from LoveDaisy/task/save-open-visual-consistency-red\n\nfix(gui): .lmc 与 composite 纹理改存纯辐亮度，渐晕由显示端统一补上",
-          "timestamp": "2026-09-02T18:00:52+08:00",
-          "tree_id": "b7bbed427787b088d61b2fa2e14ac122e1150a1d",
-          "url": "https://github.com/LoveDaisy/ice_halo_sim/commit/1ac3ab63b1d72eb8034782f0b8b8f09e100b4636"
-        },
-        "date": 1788344054709,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 880012.9,
-            "unit": "rays/sec",
-            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 1163211.1,
-            "unit": "rays/sec",
-            "extra": "CPU: Neoverse-N2\\nCores: 4"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 817114.3,
-            "unit": "rays/sec",
-            "extra": "CPU: INTEL(R) XEON(R) PLATINUM 8573C\\nCores: 4"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 645993.1,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "08aa283330101f2ed499cab2ab657abe4bcbb2b2",
           "message": "Merge pull request #297 from LoveDaisy/feat/lens-projection-semantics\n\nfeat(core): 收口 ProjectExitToPixel 遗留的三条 core↔GUI 分歧（参考图只重拍一次）",
           "timestamp": "2026-09-02T23:11:02+08:00",
@@ -9468,6 +9420,54 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 578469.8,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "f70cdd2b7bddb782f36f438d7742e112b90ce3fc",
+          "message": "Merge pull request #397 from LoveDaisy/chore/release-4.6.1\n\nchore(release): cut 4.6.1 — changelog backfill for #368–#396",
+          "timestamp": "2026-09-21T12:10:01+08:00",
+          "tree_id": "7a67bfaac331a8f7aecdd57d6f9a15673d4db69b",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/f70cdd2b7bddb782f36f438d7742e112b90ce3fc"
+        },
+        "date": 1789964424860,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 995246.5,
+            "unit": "rays/sec",
+            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 1014765.4,
+            "unit": "rays/sec",
+            "extra": "CPU: Neoverse-N2\\nCores: 4"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 894891.2,
+            "unit": "rays/sec",
+            "extra": "CPU: INTEL(R) XEON(R) PLATINUM 8573C\\nCores: 4"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 564137.2,
             "unit": "rays/sec",
             "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
           }
