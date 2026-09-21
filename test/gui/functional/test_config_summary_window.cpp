@@ -1,14 +1,16 @@
 // The Summary window (src/gui/config_summary_window.cpp) as the user reaches it: the top-bar
 // button opens and closes it, its own X closes it, every document reset closes it, and what it
-// draws is the page config_summary.cpp built — one table per display LINE (a field, or a packed
-// run of same-kind fields), so the rendered line count is the page's own count
-// (CountConfigSummaryLines) and not a second enumeration.
+// draws is the page config_summary.cpp built — one two-column table per settings field, so the
+// rendered settings line count is the page's own field count (CountConfigSummaryFields) and not
+// a second enumeration; and per layer two document tables whose row counts are the page's own
+// tables' row counts.
 //
 // The page's CONTENT is asserted without a frame elsewhere (test_config_summary_rows.cpp for the
-// tier rule and the line packing, test_config_summary_export_parity_chain.cpp for value parity
-// with the export and the "only what the panel enables" gate); this file only holds what needs
-// the window on screen: the size budget (both reference documents fit 1280 x 900 with no
-// scrolling) and that a live change of the document — the tone switch — moves the rows in place.
+// tier rule, the table shape and the distribution notation, test_config_summary_export_parity_chain.cpp
+// for value parity with the export and the "only what the panel enables" gate); this file only
+// holds what needs the window on screen: the size budget (both reference documents fit 1280 x 900
+// with no scrolling) and that a live change of the document — the tone switch — moves the rows
+// in place.
 
 #include <string>
 
@@ -30,34 +32,46 @@ ImGuiWindow* SummaryWindow(ImGuiTestContext* ctx) {
   return (win != nullptr && win->WasActive) ? win : nullptr;
 }
 
-// The line tables the window drew this frame: "##summary_group_<g>_line_<l>" for group g's l-th
-// line, counted while they exist. Each holds exactly one row (ImGuiTable::CurrentRow, the index of
-// the last row submitted, survives EndTable and must read 0), so the number of tables IS the
-// rendered line count. Returns -1 on a table with more than one row, which would mean the window
-// stopped drawing one line per table, or when the two-column table they sit in is not drawn.
-//
-// The line tables are cells of the window's two-column table ("##summary_columns"), and a table
-// pushes its own id over the window's while its body is drawn (imgui_tables.cpp BeginTableEx:
-// PushOverrideID), so a line table's id is seeded by the column table's id, not the window's.
-int RenderedLineCount(ImGuiTestContext* ctx, int group_count) {
+// The window's two-column table ("##summary_columns"), which seeds the ids of every table drawn
+// inside it: a table pushes its own id over the window's while its body is drawn
+// (imgui_tables.cpp BeginTableEx: PushOverrideID), so an inner table's id is seeded by the column
+// table's id, not the window's. Null when the window is not drawn.
+ImGuiTable* ColumnsTable(ImGuiTestContext* ctx) {
   ImGuiWindow* win = SummaryWindow(ctx);
   if (win == nullptr) {
-    return -1;
+    return nullptr;
   }
-  ImGuiTable* columns = ImGui::TableFindByID(win->GetID("##summary_columns"));
+  return ImGui::TableFindByID(win->GetID("##summary_columns"));
+}
+
+// A table drawn INSIDE the columns table in the frame just ended, by its id, or null. ImGui
+// keeps a table's record in its pool for a while after it stops being submitted, so a bigger
+// document drawn by an earlier case (or earlier in this one) leaves tables behind that a bare
+// TableFindByID still returns; only one active this frame counts.
+ImGuiTable* InnerTableThisFrame(ImGuiTable* columns, const std::string& id) {
+  ImGuiTable* table = ImGui::TableFindByID(ImGui::GetIDWithSeed(id.c_str(), nullptr, columns->ID));
+  if (table == nullptr || table->LastFrameActive < ImGui::GetFrameCount() - 1) {
+    return nullptr;
+  }
+  return table;
+}
+
+// The settings line tables the window drew this frame: "##summary_group_<g>_line_<f>" for group
+// g's f-th field, counted while they exist. Each holds exactly one row (ImGuiTable::CurrentRow,
+// the index of the last row submitted, survives EndTable and must read 0), so the number of
+// tables IS the rendered line count. Returns -1 on a table with more than one row, which would
+// mean the window stopped drawing one line per table, or when the columns table is not drawn.
+int RenderedSettingsLineCount(ImGuiTestContext* ctx, int group_count) {
+  ImGuiTable* columns = ColumnsTable(ctx);
   if (columns == nullptr) {
     return -1;
   }
-  // Only tables drawn in the frame just ended count: ImGui keeps a table's record in its pool for
-  // a while after it stops being submitted, so a bigger document drawn by an earlier case (or
-  // earlier in this one) leaves line tables behind that a bare TableFindByID still returns.
-  const int this_frame = ImGui::GetFrameCount();
   int lines = 0;
   for (int g = 0; g < group_count; ++g) {
     for (int l = 0;; ++l) {
-      const std::string id = "##summary_group_" + std::to_string(g) + "_line_" + std::to_string(l);
-      ImGuiTable* table = ImGui::TableFindByID(ImGui::GetIDWithSeed(id.c_str(), nullptr, columns->ID));
-      if (table == nullptr || table->LastFrameActive < this_frame - 1) {
+      ImGuiTable* table =
+          InnerTableThisFrame(columns, "##summary_group_" + std::to_string(g) + "_line_" + std::to_string(l));
+      if (table == nullptr) {
         break;
       }
       if (table->CurrentRow != 0) {
@@ -67,6 +81,46 @@ int RenderedLineCount(ImGuiTestContext* ctx, int group_count) {
     }
   }
   return lines;
+}
+
+// The number of DATA rows a document table drew this frame, by its id ("##summary_crystals_<l>" /
+// "##summary_shape_<l>"): CurrentRow is the index of the last row submitted, and the header
+// row is row 0, so a table with N entries reads N. -1 when the table was not drawn this frame,
+// which is also what a layer with no entries produces (the window skips an empty table).
+int RenderedDocumentRows(ImGuiTestContext* ctx, const std::string& id) {
+  ImGuiTable* columns = ColumnsTable(ctx);
+  if (columns == nullptr) {
+    return -1;
+  }
+  ImGuiTable* table = InnerTableThisFrame(columns, id);
+  return table == nullptr ? -1 : table->CurrentRow;
+}
+
+// Both document tables of every layer of `page` are on screen with the page's own row counts,
+// and there is no table for a layer the page does not have. Reports the first mismatch.
+bool DocumentTablesMatchPage(ImGuiTestContext* ctx, const gui::ConfigSummary& page, const char* stage) {
+  for (size_t l = 0; l < page.document.size(); ++l) {
+    const gui::ConfigSummaryLayer& layer = page.document[l];
+    const int crystals = RenderedDocumentRows(ctx, "##summary_crystals_" + std::to_string(l));
+    const int shape = RenderedDocumentRows(ctx, "##summary_shape_" + std::to_string(l));
+    if (crystals != static_cast<int>(layer.crystals.rows.size())) {
+      IM_ERRORF("%s: layer %d Crystals table draws %d rows, the page has %d", stage, static_cast<int>(l), crystals,
+                static_cast<int>(layer.crystals.rows.size()));
+      return false;
+    }
+    if (shape != static_cast<int>(layer.shape.rows.size())) {
+      IM_ERRORF("%s: layer %d Shape table draws %d rows, the page has %d", stage, static_cast<int>(l), shape,
+                static_cast<int>(layer.shape.rows.size()));
+      return false;
+    }
+  }
+  const std::string beyond = "##summary_crystals_" + std::to_string(page.document.size());
+  if (RenderedDocumentRows(ctx, beyond) != -1) {
+    IM_ERRORF("%s: a Crystals table is drawn for layer %d, which the page does not have", stage,
+              static_cast<int>(page.document.size()));
+    return false;
+  }
+  return true;
 }
 
 // The one-screen budget the page is designed to: the window is no wider than 1280, no taller than
@@ -197,9 +251,10 @@ void RegisterConfigSummaryWindowTests(ImGuiTestEngine* engine) {
   }
 
   {
-    // What is drawn is the page: as many line tables as the page has lines (packed runs counted
-    // as the lines they cut into), the count moves with the document, and both reference
-    // documents fit the one-screen budget with nothing scrolled away.
+    // What is drawn is the page: as many settings line tables as the page has settings fields,
+    // per layer two document tables with as many rows as the page's tables, the counts move with
+    // the document, and both reference documents fit the one-screen budget with nothing scrolled
+    // away.
     ImGuiTest* t = IM_REGISTER_TEST(engine, "config_summary", "rendered_lines_are_the_pages_lines_and_fit_one_screen");
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
@@ -208,30 +263,35 @@ void RegisterConfigSummaryWindowTests(ImGuiTestEngine* engine) {
       IM_CHECK(SummaryWindow(ctx) != nullptr);
 
       const gui::ConfigSummary default_page = gui::BuildConfigSummary(gui::g_state);
-      const int default_groups = static_cast<int>(default_page.settings.size() + default_page.document.size());
-      const int default_lines = gui::CountConfigSummaryLines(default_page);
+      const int default_groups = static_cast<int>(default_page.settings.size());
+      const int default_lines = gui::CountConfigSummaryFields(default_page);
       IM_CHECK_GT(default_lines, 0);
-      // Packing is real on this page too: the default entry's faces and axis share lines.
-      IM_CHECK_LT(default_lines, gui::CountConfigSummaryFields(default_page));
-      IM_CHECK_EQ(RenderedLineCount(ctx, default_groups), default_lines);
+      IM_CHECK_EQ(RenderedSettingsLineCount(ctx, default_groups), default_lines);
       // One group more than the page has must NOT exist: the window draws exactly the page.
       {
-        ImGuiTable* columns = ImGui::TableFindByID(SummaryWindow(ctx)->GetID("##summary_columns"));
+        ImGuiTable* columns = ColumnsTable(ctx);
         IM_CHECK(columns != nullptr);
         const std::string beyond = "##summary_group_" + std::to_string(default_groups) + "_line_0";
-        IM_CHECK(ImGui::TableFindByID(ImGui::GetIDWithSeed(beyond.c_str(), nullptr, columns->ID)) == nullptr);
+        IM_CHECK(InnerTableThisFrame(columns, beyond) == nullptr);
       }
+      // The default document: one layer, one entry — one row in each of its two tables.
+      IM_CHECK_EQ(static_cast<int>(default_page.document.size()), 1);
+      IM_CHECK_EQ(static_cast<int>(default_page.document[0].crystals.rows.size()), 1);
+      IM_CHECK(DocumentTablesMatchPage(ctx, default_page, "default document"));
       IM_CHECK(FitsOneScreen(SummaryWindow(ctx), "default document"));
 
-      // The window is fixed-width and reads the live document: a bigger document adds lines in
-      // place, without the window growing sideways — and still inside the budget.
+      // The window is fixed-width and reads the live document: a bigger document adds table rows
+      // in place, without the window growing sideways — and still inside the budget.
       const float width_before = SummaryWindow(ctx)->Size.x;
       SeedTwoLayerDocument();
       ctx->Yield(3);
       const gui::ConfigSummary page = gui::BuildConfigSummary(gui::g_state);
-      const int groups = static_cast<int>(page.settings.size() + page.document.size());
-      IM_CHECK_GT(groups, default_groups);
-      IM_CHECK_EQ(RenderedLineCount(ctx, groups), gui::CountConfigSummaryLines(page));
+      IM_CHECK_EQ(static_cast<int>(page.document.size()), 2);
+      IM_CHECK_EQ(static_cast<int>(page.document[0].crystals.rows.size()), 2);
+      IM_CHECK_EQ(static_cast<int>(page.document[1].crystals.rows.size()), 1);
+      IM_CHECK_EQ(RenderedSettingsLineCount(ctx, static_cast<int>(page.settings.size())),
+                  gui::CountConfigSummaryFields(page));
+      IM_CHECK(DocumentTablesMatchPage(ctx, page, "two-layer document"));
       IM_CHECK_EQ(SummaryWindow(ctx)->Size.x, width_before);
       IM_CHECK(FitsOneScreen(SummaryWindow(ctx), "two-layer document"));
 
@@ -256,9 +316,9 @@ void RegisterConfigSummaryWindowTests(ImGuiTestEngine* engine) {
       gui::ConfigSummary page = gui::BuildConfigSummary(gui::g_state);
       IM_CHECK(HasRow(page, "Render", "Sky Color"));
       IM_CHECK(!HasRow(page, "Render", "Paper Color"));
-      const int groups_before = static_cast<int>(page.settings.size() + page.document.size());
-      const int lines_screen = RenderedLineCount(ctx, groups_before);
-      IM_CHECK_EQ(lines_screen, gui::CountConfigSummaryLines(page));
+      const int groups_before = static_cast<int>(page.settings.size());
+      const int lines_screen = RenderedSettingsLineCount(ctx, groups_before);
+      IM_CHECK_EQ(lines_screen, gui::CountConfigSummaryFields(page));
 
       gui::g_state.renderer.tone = LUMICE_TONE_PRINT;
       ctx->Yield(3);
@@ -266,7 +326,7 @@ void RegisterConfigSummaryWindowTests(ImGuiTestEngine* engine) {
       IM_CHECK(!HasRow(page, "Render", "Sky Color"));
       IM_CHECK(HasRow(page, "Render", "Paper Color"));
       // One row swapped for one row: the line count is unchanged, and it is what is on screen.
-      IM_CHECK_EQ(RenderedLineCount(ctx, static_cast<int>(page.settings.size() + page.document.size())), lines_screen);
+      IM_CHECK_EQ(RenderedSettingsLineCount(ctx, static_cast<int>(page.settings.size())), lines_screen);
 
       gui::g_state.renderer.tone = LUMICE_TONE_SCREEN;
       ctx->Yield(3);

@@ -1,5 +1,7 @@
-// The Summary window's settings section (src/gui/config_summary.*): which serialized root keys
-// reach the page, decided by the field-tier registry rather than by a hand-written list.
+// The Summary window's page (src/gui/config_summary.*), asserted without a frame: which serialized
+// root keys reach the settings section, decided by the field-tier registry rather than by a
+// hand-written list; the shape of the document section's two tables per layer; and the one
+// distribution notation the tables' cells are spelled in.
 //
 // The one-time red/green probe the design constraint names — add a governed GuiState field, watch
 // a row appear with no change to the summary code, remove the field again — cannot be committed:
@@ -21,11 +23,14 @@
 #include <string>
 #include <vector>
 
+#include "gui/axis_presets.hpp"
 #include "gui/config_summary.hpp"
 #include "gui/defaults_diff.hpp"
 #include "gui/field_editor_registry.hpp"
 #include "gui/file_io.hpp"
 #include "gui/gui_state_tiers.hpp"
+#include "gui/shape_scalar_domain.hpp"
+#include "include/lumice.h"
 
 namespace gui = lumice::gui;
 
@@ -201,12 +206,23 @@ const gui::ConfigSummaryGroup* FindGroup(const gui::ConfigSummary& page, const s
       return &g;
     }
   }
-  for (const auto& g : page.document) {
-    if (g.title == title) {
-      return &g;
-    }
-  }
   return nullptr;
+}
+
+// The cell under column `column` of row `row_idx`, with a failure recorded when the table has no
+// such column — distinct from a column that exists and holds "" (a legitimately empty cell), so a
+// misspelled column name in a test cannot pass as "not applicable".
+std::string Cell(const gui::ConfigSummaryTable& table, size_t row_idx, const std::string& column) {
+  const auto it = std::find(table.columns.begin(), table.columns.end(), column);
+  if (it == table.columns.end()) {
+    ADD_FAILURE() << "no column \"" << column << "\"";
+    return "<no column>";
+  }
+  if (row_idx >= table.rows.size()) {
+    ADD_FAILURE() << "no row " << row_idx;
+    return "<no row>";
+  }
+  return table.rows[row_idx].cells[static_cast<size_t>(it - table.columns.begin())];
 }
 
 // "ray_allocation" against "Ray allocation": the page's spelling of an undeclared label, compared
@@ -229,7 +245,7 @@ bool GroupHasLeaf(const gui::ConfigSummaryGroup* g, const std::string& leaf) {
 }
 
 // The two-layer document the visual reference "two_layers" is shot from
-// (test/gui/visual/test_gui_config_summary.cpp), rebuilt here so the line-count claim below is
+// (test/gui/visual/test_gui_config_summary.cpp), rebuilt here so the table-shape claims below are
 // made about the same page the owner sees.
 gui::GuiState MakeTwoLayerState() {
   gui::GuiState state = gui::InitDefaultState();
@@ -328,52 +344,188 @@ TEST(ConfigSummaryRows, PopupOnlyRootKeysAreUnderTheSettingsHeading) {
   EXPECT_FALSE(RowSetCoversRootKey(rows, "worker_count"));
 }
 
-// Which fields share a display line is the page's own cut (ConfigSummaryLines), asserted on a
-// synthetic group so the rule is pinned apart from any document: -1 is a line of its own; a run
-// sharing an id is gathered at its first member's position, wherever the rest sit, and cut into
-// lines of kPackedFieldsPerRow; a run of one is one line.
-TEST(ConfigSummaryRows, LinesGatherRowGroupsAndCutThemAtThePackingWidth) {
-  gui::ConfigSummaryGroup group;
-  group.fields = {
-    { "a", "1", -1 }, { "b", "2", 7 }, { "c", "3", -1 }, { "d", "4", 7 },
-    { "e", "5", 7 },  { "f", "6", 7 }, { "g", "7", 9 },  { "h", "8", 7 },
-  };
-  const auto lines = gui::ConfigSummaryLines(group);
-  ASSERT_EQ(lines.size(), 5u);
-  EXPECT_EQ(lines[0].size(), 1u);
-  EXPECT_EQ(lines[0][0]->label, "a");
-  // The run 7 (b d e f h) at b's position: 3 + 2.
-  ASSERT_EQ(lines[1].size(), static_cast<size_t>(gui::kPackedFieldsPerRow));
-  EXPECT_EQ(lines[1][0]->label, "b");
-  EXPECT_EQ(lines[1][1]->label, "d");
-  EXPECT_EQ(lines[1][2]->label, "e");
-  ASSERT_EQ(lines[2].size(), 2u);
-  EXPECT_EQ(lines[2][0]->label, "f");
-  EXPECT_EQ(lines[2][1]->label, "h");
-  EXPECT_EQ(lines[3][0]->label, "c");
-  ASSERT_EQ(lines[4].size(), 1u);
-  EXPECT_EQ(lines[4][0]->label, "g");
-  EXPECT_EQ(gui::CountConfigSummaryLines(group), 5);
-}
-
-// The "same-kind scalars share a line" claim, measured: on the two-layer reference document every
-// entry occupies at most half the lines it did when every field was a line of its own — and the
-// number of FIELDS is that earlier count, since the packing moved nothing and dropped nothing.
-TEST(ConfigSummaryRows, EveryEntryOccupiesAtMostHalfTheLinesOfOnePerField) {
+// The document section is two tables per layer, paired row for row: row i of both tables is the
+// layer's i-th entry, each row carries the entry's number in its "#" column, and every row has
+// exactly one cell per column (an ImGui table given fewer cells shifts the rest over silently).
+// On the two-layer reference document that is 2 + 1 rows over two layers.
+TEST(ConfigSummaryRows, DocumentTablesPairRowsByEntryNumber) {
   const gui::GuiState state = MakeTwoLayerState();
   const gui::ConfigSummary page = gui::BuildConfigSummary(state);
-  int entries = 0;
-  for (const auto& g : page.document) {
-    if (g.level != 1) {
-      continue;
+  ASSERT_EQ(page.document.size(), state.layers.size());
+  for (size_t l = 0; l < page.document.size(); ++l) {
+    const gui::ConfigSummaryLayer& layer = page.document[l];
+    const size_t entries = state.layers[l].entries.size();
+    for (const gui::ConfigSummaryTable* table : { &layer.crystals, &layer.shape }) {
+      if (table->rows.size() != entries) {
+        ADD_FAILURE() << "layer " << l << ": " << table->rows.size() << " rows for " << entries << " entries";
+        continue;
+      }
+      for (size_t r = 0; r < table->rows.size(); ++r) {
+        EXPECT_EQ(table->rows[r].cells.size(), table->columns.size()) << "layer " << l << " row " << r;
+        EXPECT_EQ(Cell(*table, r, "#"), std::to_string(r + 1)) << "layer " << l << " row " << r;
+      }
     }
-    ++entries;
-    const int one_per_field = static_cast<int>(g.fields.size());
-    const int lines = gui::CountConfigSummaryLines(g);
-    EXPECT_LE(lines * 2, one_per_field) << g.title << ": " << lines << " lines for " << one_per_field << " fields";
   }
-  EXPECT_EQ(entries, 3);
-  // And the page as a whole shrank by at least a third: the settings groups pack nothing, so the
-  // saving is the document's alone.
-  EXPECT_LE(gui::CountConfigSummaryLines(page) * 3, gui::CountConfigSummaryFields(page) * 2);
+  EXPECT_EQ(page.document[0].crystals.rows.size(), 2u);
+  EXPECT_EQ(page.document[1].crystals.rows.size(), 1u);
+  // The heading names the layer, its multi-scatter probability and its entry count.
+  EXPECT_NE(page.document[0].heading.find("Layer 1"), std::string::npos);
+  EXPECT_NE(page.document[0].heading.find("0.50"), std::string::npos);
+  EXPECT_NE(page.document[0].heading.find("2 entries"), std::string::npos);
+  EXPECT_NE(page.document[1].heading.find("1 entry"), std::string::npos);
+}
+
+// The Shape table's columns are the union over both crystal types, and a column that does not
+// apply to a row is EMPTY — not "-", not "0": on the reference document the plate (a prism) fills
+// Height and none of the pyramid columns, and the pyramid the reverse. The shape columns are
+// labelled by the edit modal's own table (kShapeScalarLabels), which is the one place the words
+// are spelled.
+TEST(ConfigSummaryRows, ShapeTableLeavesInapplicableCellsEmpty) {
+  const gui::GuiState state = MakeTwoLayerState();
+  const gui::ConfigSummary page = gui::BuildConfigSummary(state);
+  const gui::ConfigSummaryTable& shape = page.document[0].shape;
+  ASSERT_EQ(shape.columns.size(), 13u);
+  EXPECT_EQ(shape.columns[0], "#");
+  for (const int slot : { LUMICE_SHAPE_SCALAR_HEIGHT, LUMICE_SHAPE_SCALAR_PRISM_H, LUMICE_SHAPE_SCALAR_UPPER_H,
+                          LUMICE_SHAPE_SCALAR_LOWER_H }) {
+    EXPECT_NE(std::find(shape.columns.begin(), shape.columns.end(), gui::kShapeScalarLabels[slot]), shape.columns.end())
+        << gui::kShapeScalarLabels[slot];
+  }
+  // The six face columns are the last six, in face order.
+  for (int i = 0; i < 6; ++i) {
+    EXPECT_EQ(shape.columns[static_cast<size_t>(7 + i)], gui::kShapeScalarLabels[LUMICE_SHAPE_SCALAR_FACE_0 + i]);
+  }
+  // Row 0: the prism.
+  EXPECT_EQ(Cell(shape, 0, gui::kShapeScalarLabels[LUMICE_SHAPE_SCALAR_HEIGHT]), "1");
+  EXPECT_EQ(Cell(shape, 0, gui::kShapeScalarLabels[LUMICE_SHAPE_SCALAR_PRISM_H]), "");
+  EXPECT_EQ(Cell(shape, 0, "Upper A"), "");
+  // Row 1: the pyramid.
+  EXPECT_EQ(Cell(shape, 1, gui::kShapeScalarLabels[LUMICE_SHAPE_SCALAR_HEIGHT]), "");
+  EXPECT_NE(Cell(shape, 1, gui::kShapeScalarLabels[LUMICE_SHAPE_SCALAR_PRISM_H]), "");
+  EXPECT_NE(Cell(shape, 1, "Upper A"), "");
+  // The randomized face of the pyramid, in the notation; the fixed faces, bare numbers.
+  EXPECT_EQ(Cell(shape, 1, "Face 5"), "U 0.900(0.100)");
+  EXPECT_EQ(Cell(shape, 1, "Face 3"), "1.000");
+  // The Crystals table carries the words: identity, the axis distributions, the filter — and no
+  // shape column.
+  const gui::ConfigSummaryTable& crystals = page.document[0].crystals;
+  ASSERT_EQ(crystals.columns.size(), 8u);
+  for (const auto& column : crystals.columns) {
+    for (const char* label : gui::kShapeScalarLabels) {
+      EXPECT_NE(column, label);
+    }
+  }
+  // The preset name leads the zenith cell; the other two axis cells are the distributions alone.
+  EXPECT_EQ(Cell(crystals, 0, "Zenith"), "Plate · G 0(1)");
+  EXPECT_EQ(Cell(crystals, 0, "Azimuth"), "U");
+  EXPECT_EQ(Cell(crystals, 0, "Roll"), "U");
+  // The filter cell: the card's summary, then the filter's name.
+  EXPECT_EQ(Cell(crystals, 0, "Filter"), "3-5-1 In PBD · cza");
+  EXPECT_EQ(Cell(crystals, 1, "Filter"), "None");
+}
+
+// ---- The distribution notation ---------------------------------------------------------------
+//
+// One formatter for an axis distribution and a randomizable shape scalar, spelled
+// `<letter> <centre>(<spread>)` with the panel's own two numbers — asserted here on each of the
+// five distribution types, the two folds (a fixed scalar is its number; a full-circle uniform
+// axis is the bare letter) and the degenerate wire name.
+//
+// The red state this pins: a spread halved into a ± ("0.900 ± 0.050") or a uniform's range
+// written as bounds. The numbers in the parentheses are the ones on the Range / Std box, and the
+// composition-correctness chain compares them against the export's, so a converted spelling
+// fails both here and there.
+
+TEST(ConfigSummaryRows, EveryDistributionTypeHasALetter) {
+  EXPECT_STREQ(gui::DistributionLetter(gui::AxisDistType::kGauss), "G");
+  EXPECT_STREQ(gui::DistributionLetter(gui::AxisDistType::kUniform), "U");
+  EXPECT_STREQ(gui::DistributionLetter(gui::AxisDistType::kZigzag), "Z");
+  EXPECT_STREQ(gui::DistributionLetter(gui::AxisDistType::kLaplacian), "L");
+  EXPECT_STREQ(gui::DistributionLetter(gui::AxisDistType::kGaussLegacy), "G*");
+  // The wire spellings both serializers produce map to the same letters ...
+  for (int i = 0; i < static_cast<int>(gui::AxisDistType::kCount); ++i) {
+    const auto type = static_cast<gui::AxisDistType>(i);
+    EXPECT_STREQ(gui::DistributionLetterForWireName(gui::AxisDistTypeJsonName(type)), gui::DistributionLetter(type));
+  }
+  for (const auto shape : { gui::ShapeDistType::kUniform, gui::ShapeDistType::kGauss, gui::ShapeDistType::kZigzag,
+                            gui::ShapeDistType::kLaplacian, gui::ShapeDistType::kGaussLegacy }) {
+    EXPECT_STRNE(gui::DistributionLetterForWireName(gui::ShapeDistTypeToString(shape)), "?")
+        << gui::ShapeDistTypeToString(shape);
+  }
+  // ... and an unknown spelling is a visible "?", not a crash and not a sixth letter.
+  EXPECT_STREQ(gui::DistributionLetterForWireName("cauchy"), "?");
+  EXPECT_STREQ(gui::DistributionLetterForWireName(""), "?");
+  EXPECT_STREQ(gui::DistributionLetterForWireName("no_random"), "?");
+}
+
+TEST(ConfigSummaryRows, AxisCellIsLetterMeanAndSpreadUnconverted) {
+  EXPECT_EQ(gui::FormatAxisDistCell(gui::AxisDist{ gui::AxisDistType::kGauss, 0.0f, 1.2f }), "G 0(1.2)");
+  EXPECT_EQ(gui::FormatAxisDistCell(gui::AxisDist{ gui::AxisDistType::kUniform, 90.0f, 10.0f }), "U 90(10)");
+  EXPECT_EQ(gui::FormatAxisDistCell(gui::AxisDist{ gui::AxisDistType::kZigzag, 0.0f, 5.0f }), "Z 0(5)");
+  EXPECT_EQ(gui::FormatAxisDistCell(gui::AxisDist{ gui::AxisDistType::kLaplacian, 90.0f, 3.0f }), "L 90(3)");
+  EXPECT_EQ(gui::FormatAxisDistCell(gui::AxisDist{ gui::AxisDistType::kGaussLegacy, 0.0f, 2.5f }), "G* 0(2.5)");
+  // The full-circle uniform (the Random preset's azimuth and roll) folds to the bare letter — and
+  // only that one: a uniform of any other mean or range is spelled in full. "Full circle" is the
+  // preset classifier's own predicate (axis_presets.hpp IsFullUniform360, within its kEpsilon of
+  // 1°), so the page folds exactly what the panel calls Random, no more and no less.
+  EXPECT_EQ(gui::FormatAxisDistCell(gui::kAzFullUniform), "U");
+  EXPECT_EQ(gui::FormatAxisDistCell(gui::kRollFreeUniform), "U");
+  EXPECT_EQ(gui::FormatAxisDistCell(gui::AxisDist{ gui::AxisDistType::kUniform, 0.0f, 350.0f }), "U 0(350)");
+  EXPECT_EQ(gui::FormatAxisDistCell(gui::AxisDist{ gui::AxisDistType::kUniform, 5.0f, 360.0f }), "U 5(360)");
+  EXPECT_EQ(gui::FormatAxisDistCell(gui::AxisDist{ gui::AxisDistType::kGauss, 0.0f, 360.0f }), "G 0(360)");
+  // No ±, no halving: the spread is the number on the panel.
+  const std::string uniform = gui::FormatAxisDistCell(gui::AxisDist{ gui::AxisDistType::kUniform, 0.0f, 20.0f });
+  EXPECT_EQ(uniform, "U 0(20)");
+  EXPECT_EQ(uniform.find("±"), std::string::npos);
+  EXPECT_EQ(uniform.find("10"), std::string::npos);
+}
+
+TEST(ConfigSummaryRows, ShapeCellIsTheSlotsNumberOrTheNotation) {
+  // Fixed: the slot's own format and nothing else, for a length slot and a face slot alike.
+  EXPECT_EQ(gui::FormatShapeDistCell(gui::ShapeDist{ 1.0f }, LUMICE_SHAPE_SCALAR_HEIGHT), "1");
+  EXPECT_EQ(gui::FormatShapeDistCell(gui::ShapeDist{ 1.0f }, LUMICE_SHAPE_SCALAR_FACE_2), "1.000");
+  // Randomized: the same notation as an axis, in the slot's format; the uniform's spread is the
+  // full width — [0.85, 0.95] reads "0.900(0.100)", never "0.900 ± 0.050".
+  const std::string uniform =
+      gui::FormatShapeDistCell(gui::ShapeDist{ gui::ShapeDistType::kUniform, 0.9f, 0.1f }, LUMICE_SHAPE_SCALAR_FACE_2);
+  EXPECT_EQ(uniform, "U 0.900(0.100)");
+  EXPECT_EQ(uniform.find("±"), std::string::npos);
+  EXPECT_EQ(uniform.find("0.050"), std::string::npos);
+  // A length slot is "%.4g" (shape_scalar_domain.hpp), a wedge fraction or a face "%.3f": the
+  // slot's own format, whatever it is.
+  EXPECT_EQ(
+      gui::FormatShapeDistCell(gui::ShapeDist{ gui::ShapeDistType::kGauss, 0.3f, 0.05f }, LUMICE_SHAPE_SCALAR_HEIGHT),
+      "G 0.3(0.05)");
+  EXPECT_EQ(
+      gui::FormatShapeDistCell(gui::ShapeDist{ gui::ShapeDistType::kZigzag, 1.7f, 0.2f }, LUMICE_SHAPE_SCALAR_PRISM_H),
+      "Z 1.7(0.2)");
+  EXPECT_EQ(gui::FormatShapeDistCell(gui::ShapeDist{ gui::ShapeDistType::kLaplacian, 0.35f, 0.01f },
+                                     LUMICE_SHAPE_SCALAR_UPPER_H),
+            "L 0.350(0.010)");
+  EXPECT_EQ(gui::FormatShapeDistCell(gui::ShapeDist{ gui::ShapeDistType::kGaussLegacy, 0.15f, 0.02f },
+                                     LUMICE_SHAPE_SCALAR_LOWER_H),
+            "G* 0.150(0.020)");
+  // A shape scalar never folds: a uniform at 0(360) is a length, not a circle.
+  EXPECT_EQ(gui::FormatShapeDistCell(gui::ShapeDist{ gui::ShapeDistType::kUniform, 0.0f, 360.0f },
+                                     LUMICE_SHAPE_SCALAR_HEIGHT),
+            "U 0(360)");
+  // A sync group is named after the value, fixed or randomized.
+  gui::ShapeDist synced{ 1.0f };
+  synced.sync_group = 2;
+  EXPECT_EQ(gui::FormatShapeDistCell(synced, LUMICE_SHAPE_SCALAR_FACE_0), "1.000 · sync 2");
+  gui::ShapeDist synced_random{ gui::ShapeDistType::kGauss, 0.9f, 0.1f };
+  synced_random.sync_group = 1;
+  EXPECT_EQ(gui::FormatShapeDistCell(synced_random, LUMICE_SHAPE_SCALAR_FACE_0), "G 0.900(0.100) · sync 1");
+}
+
+// The legend is built from the same letter table as the cells and the combo's own labels, and
+// names every letter exactly once.
+TEST(ConfigSummaryRows, LegendSpellsEveryLetterOnce) {
+  const std::string legend = gui::DistributionLegend();
+  EXPECT_EQ(legend, "G Gauss · U Uniform · Z Zigzag · L Laplacian · G* Gauss (legacy)");
+  for (int i = 0; i < static_cast<int>(gui::AxisDistType::kCount); ++i) {
+    const auto type = static_cast<gui::AxisDistType>(i);
+    const std::string item = std::string(gui::DistributionLetter(type)) + " " + gui::AxisDistTypeLabel(type);
+    EXPECT_NE(legend.find(item), std::string::npos) << item;
+  }
 }

@@ -66,105 +66,176 @@ const char* SettingsGroupTitleFor(std::string_view root_key) {
   return nullptr;
 }
 
-// The shape scalar as the edit modal's row shows it: the value in the slot's own format, and for
-// a randomized one the spread and the distribution beside it; a sync group is named last, as the
-// Sync column does.
-std::string FormatShapeDist(const ShapeDist& dist, int slot) {
-  const char* fmt = ShapeScalarDomainFor(slot).fmt;
-  std::string out = Format(fmt, dist.center);
-  if (dist.type != ShapeDistType::kNoRandom) {
-    out += " ± " + Format(fmt, dist.spread) + " " + ShapeDistTypeToString(dist.type);
+// The distribution letters, indexed by AxisDistType. The one table behind DistributionLetter,
+// DistributionLetterForWireName and DistributionLegend; a sixth AxisDistType has to be given a
+// letter here before the build passes again.
+constexpr const char* kDistributionLetters[] = { "G", "U", "Z", "L", "G*" };
+static_assert(sizeof(kDistributionLetters) / sizeof(kDistributionLetters[0]) ==
+                  static_cast<size_t>(AxisDistType::kCount),
+              "Update kDistributionLetters when adding AxisDistType");
+
+// The notation itself (see the header): `fmt` is the number format, `wire_name` the type's wire
+// spelling, `no_random` a fixed shape scalar, `full_circle` a full-circle uniform axis.
+std::string FormatDistributionCell(const char* fmt, bool no_random, std::string_view wire_name, bool full_circle,
+                                   double center, double spread) {
+  if (no_random) {
+    return Format(fmt, center);
   }
-  if (dist.sync_group != 0) {
-    out += " · sync " + std::to_string(dist.sync_group);
+  const char* letter = DistributionLetterForWireName(wire_name);
+  if (full_circle) {
+    return letter;
   }
-  return out;
+  return std::string(letter) + " " + Format(fmt, center) + "(" + Format(fmt, spread) + ")";
 }
 
-// The axis as the axis modal's row shows it: distribution, mean, and the spread under the name
-// that distribution gives it (Std / Range / Amplitude / Scale), in the modal's "%.3g".
-std::string FormatAxisDist(const AxisDist& axis) {
-  return std::string(AxisDistTypeLabel(axis.type)) + " · Mean " + Format("%.3g", axis.mean) + " · " +
-         AxisDistSpreadLabel(axis.type) + " " + Format("%.3g", axis.std);
+// The two document tables' column lists. Each builder sizes a row from its list and fills cells
+// by these indices, which is what holds ConfigSummaryTable's "every row has columns.size() cells"
+// invariant without a check at draw time.
+enum CrystalsColumn : size_t {
+  kColNumber = 0,
+  kColEnabled,
+  kColWeight,
+  kColCrystal,
+  kColZenith,
+  kColAzimuth,
+  kColRoll,
+  kColFilter,
+  kCrystalsColumnCount,
+};
+
+std::vector<std::string> CrystalsColumns() {
+  std::vector<std::string> columns(kCrystalsColumnCount);
+  columns[kColNumber] = "#";
+  columns[kColEnabled] = "Enabled";
+  columns[kColWeight] = "Weight";
+  columns[kColCrystal] = "Crystal";
+  columns[kColZenith] = "Zenith";
+  columns[kColAzimuth] = "Azimuth";
+  columns[kColRoll] = "Roll";
+  columns[kColFilter] = "Filter";
+  return columns;
 }
 
-void AppendShapeRow(ConfigSummaryGroup& group, const CrystalConfig& cr, int slot, int row_group_id) {
-  group.fields.push_back({ kShapeScalarLabels[slot], FormatShapeDist(ShapeScalarAt(cr, slot), slot), row_group_id });
-}
+enum ShapeColumn : size_t {
+  kShapeColNumber = 0,
+  kShapeColHeight,
+  kShapeColPrismH,
+  kShapeColUpperH,
+  kShapeColLowerH,
+  kShapeColUpperA,
+  kShapeColLowerA,
+  kShapeColFace0,  // six consecutive face columns from here
+  kShapeColumnCount = kShapeColFace0 + 6,
+};
 
-ConfigSummaryGroup BuildEntryGroup(const GuiState& state, int layer_idx, int entry_idx) {
-  const EntryCard& entry = state.layers[static_cast<size_t>(layer_idx)].entries[static_cast<size_t>(entry_idx)];
-  ConfigSummaryGroup group;
-  group.title = "Layer " + std::to_string(DisplayLayerNumber(layer_idx)) + " · Entry " +
-                std::to_string(DisplayEntryNumber(entry_idx));
-  group.level = 1;
-
-  // Which fields share a display line (ConfigSummaryField::row_group_id). Four runs, each a set
-  // of same-kind, same-unit scalars the edit modal itself lays out side by side or in one table:
-  // the card's identity triple, the type's own shape scalars, the six faces, the three axis
-  // distributions. The numbers are handed out by this counter so no two runs can collide; they
-  // carry no meaning beyond "these go together".
-  int next_row_group = 0;
-  const int card_run = next_row_group++;
-  const int type_scalar_run = next_row_group++;
-  const int face_run = next_row_group++;
-  const int axis_run = next_row_group++;
-
-  // The card's own rows first, in the card's order and spelling, on one line.
-  group.fields.push_back({ "Crystal", FormatCrystalIdentity(state, entry.crystal_id), card_run });
-  if (entry.crystal_id < 0 || static_cast<size_t>(entry.crystal_id) >= state.crystals.size()) {
-    // FormatCrystalIdentity has already printed the dangling id; there is no crystal to describe.
-    return group;
-  }
-  const CrystalConfig& cr = state.crystals[static_cast<size_t>(entry.crystal_id)];
-  group.fields.push_back({ "Enabled", entry.enabled ? "true" : "false", card_run });
-  group.fields.push_back({ "Weight", Format("%.1f", entry.proportion), card_run });
-
-  // The edit modal's Crystal tab: the type's own scalars on their line(s), then the six faces on
-  // theirs (two lines of three at kPackedFieldsPerRow).
-  if (cr.type == CrystalType::kPrism) {
-    AppendShapeRow(group, cr, LUMICE_SHAPE_SCALAR_HEIGHT, type_scalar_run);
-  } else {
-    AppendShapeRow(group, cr, LUMICE_SHAPE_SCALAR_PRISM_H, type_scalar_run);
-    AppendShapeRow(group, cr, LUMICE_SHAPE_SCALAR_UPPER_H, type_scalar_run);
-    AppendShapeRow(group, cr, LUMICE_SHAPE_SCALAR_LOWER_H, type_scalar_run);
-    group.fields.push_back({ "Upper A", Format("%.3f", cr.upper_alpha), type_scalar_run });
-    group.fields.push_back({ "Lower A", Format("%.3f", cr.lower_alpha), type_scalar_run });
-  }
+std::vector<std::string> ShapeColumns() {
+  std::vector<std::string> columns(kShapeColumnCount);
+  columns[kShapeColNumber] = "#";
+  // The shape scalars' labels are the edit modal's, read from the one table that owns them.
+  columns[kShapeColHeight] = kShapeScalarLabels[LUMICE_SHAPE_SCALAR_HEIGHT];
+  columns[kShapeColPrismH] = kShapeScalarLabels[LUMICE_SHAPE_SCALAR_PRISM_H];
+  columns[kShapeColUpperH] = kShapeScalarLabels[LUMICE_SHAPE_SCALAR_UPPER_H];
+  columns[kShapeColLowerH] = kShapeScalarLabels[LUMICE_SHAPE_SCALAR_LOWER_H];
+  // The two wedge angles are not shape-scalar slots (no distribution, no sync); the modal's
+  // words for them.
+  columns[kShapeColUpperA] = "Upper A";
+  columns[kShapeColLowerA] = "Lower A";
   for (int i = 0; i < 6; ++i) {
-    AppendShapeRow(group, cr, LUMICE_SHAPE_SCALAR_FACE_0 + i, face_run);
+    columns[kShapeColFace0 + static_cast<size_t>(i)] = kShapeScalarLabels[LUMICE_SHAPE_SCALAR_FACE_0 + i];
   }
+  return columns;
+}
 
-  // The Axis tab: the preset the classifier reads off the three distributions, then the
-  // distributions themselves on one line — a preset name alone would hide a retuned zenith std,
-  // which is the one parameter of a preset the user can change and the one most worth comparing.
-  group.fields.push_back({ "Axis", AxisPresetName(cr) });
-  group.fields.push_back({ "Zenith", FormatAxisDist(cr.zenith), axis_run });
-  group.fields.push_back({ "Azimuth", FormatAxisDist(cr.azimuth), axis_run });
-  group.fields.push_back({ "Roll", FormatAxisDist(cr.roll), axis_run });
+// The entry's crystal, or null for a dangling crystal id (the card prints "<missing>" for it and
+// there is nothing more to describe).
+const CrystalConfig* CrystalOfEntry(const GuiState& state, const EntryCard& entry) {
+  if (entry.crystal_id < 0 || static_cast<size_t>(entry.crystal_id) >= state.crystals.size()) {
+    return nullptr;
+  }
+  return &state.crystals[static_cast<size_t>(entry.crystal_id)];
+}
 
-  // The Filter tab, as the card summarises it. The card's line truncates a long raypath and
-  // collapses a multi-row sum of products to its first row "(+N more)", which is right for a
-  // 151-px column and wrong for a page whose point is to be read in full — so the rows follow,
-  // one field each, in the editor's own row text.
-  std::optional<FilterConfig> filter;
-  if (entry.filter_id.has_value() && *entry.filter_id >= 0 &&
-      static_cast<size_t>(*entry.filter_id) < state.filters.size()) {
-    filter = state.filters[static_cast<size_t>(*entry.filter_id)];
-  }
-  group.fields.push_back({ "Filter", FilterSummary(filter) });
-  if (filter.has_value()) {
-    if (!filter->name.empty()) {
-      group.fields.push_back({ "Filter name", filter->name });
+// The Crystals table of layer `layer_idx`: one row per entry, in the layer's order.
+ConfigSummaryTable BuildCrystalsTable(const GuiState& state, int layer_idx) {
+  const Layer& layer = state.layers[static_cast<size_t>(layer_idx)];
+  ConfigSummaryTable table;
+  table.columns = CrystalsColumns();
+  for (int entry_idx = 0; entry_idx < static_cast<int>(layer.entries.size()); ++entry_idx) {
+    const EntryCard& entry = layer.entries[static_cast<size_t>(entry_idx)];
+    ConfigSummaryTable::Row row;
+    row.cells.resize(table.columns.size());
+    row.cells[kColNumber] = std::to_string(DisplayEntryNumber(entry_idx));
+    // The card's own words: the identity triple as the card and the Colors window spell it.
+    row.cells[kColCrystal] = FormatCrystalIdentity(state, entry.crystal_id);
+    const CrystalConfig* cr = CrystalOfEntry(state, entry);
+    if (cr == nullptr) {
+      table.rows.push_back(std::move(row));
+      continue;
     }
-    if (!filter->IsDegenerateSingleFactor()) {
-      for (size_t row = 0; row < filter->param.size(); ++row) {
-        group.fields.push_back(
-            { "Filter row " + std::to_string(row + 1), FormatSummandText(filter->param[row].factors) });
-      }
+    row.cells[kColEnabled] = entry.enabled ? "true" : "false";
+    row.cells[kColWeight] = Format("%.1f", entry.proportion);
+
+    // The Axis tab: the preset the classifier reads off the three distributions leads the Zenith
+    // cell, and the three distributions follow in full — a preset name alone would hide a retuned
+    // zenith std, the one parameter of a preset the user can change and the one most worth
+    // comparing; the name alone in a column of its own would cost a column for a word that
+    // belongs to the zenith anyway.
+    row.cells[kColZenith] = AxisPresetName(*cr) + " · " + FormatAxisDistCell(cr->zenith);
+    row.cells[kColAzimuth] = FormatAxisDistCell(cr->azimuth);
+    row.cells[kColRoll] = FormatAxisDistCell(cr->roll);
+
+    // The Filter tab, as the card summarises it, and the filter's name after it when it has one.
+    // The card's summary truncates a long raypath and collapses a multi-row sum of products to
+    // its first row "(+N more)"; the page keeps that spelling — the filter editor is the place a
+    // multi-row filter is read in full, and a column that grew a line per row would undo the
+    // table's one-entry-one-row shape for the one field that is rarely more than a row.
+    std::optional<FilterConfig> filter;
+    if (entry.filter_id.has_value() && *entry.filter_id >= 0 &&
+        static_cast<size_t>(*entry.filter_id) < state.filters.size()) {
+      filter = state.filters[static_cast<size_t>(*entry.filter_id)];
     }
+    row.cells[kColFilter] = FilterSummary(filter);
+    if (filter.has_value() && !filter->name.empty()) {
+      row.cells[kColFilter] += " · " + filter->name;
+    }
+    table.rows.push_back(std::move(row));
   }
-  return group;
+  return table;
+}
+
+// The Shape table of layer `layer_idx`: row i is entry i, as in the Crystals table. The edit
+// modal's Crystal tab, column for column: the type's own scalars (a prism fills Height, a pyramid
+// the other five, the rest left empty), then the six faces.
+ConfigSummaryTable BuildShapeTable(const GuiState& state, int layer_idx) {
+  const Layer& layer = state.layers[static_cast<size_t>(layer_idx)];
+  ConfigSummaryTable table;
+  table.columns = ShapeColumns();
+  for (int entry_idx = 0; entry_idx < static_cast<int>(layer.entries.size()); ++entry_idx) {
+    const EntryCard& entry = layer.entries[static_cast<size_t>(entry_idx)];
+    ConfigSummaryTable::Row row;
+    row.cells.resize(table.columns.size());
+    row.cells[kShapeColNumber] = std::to_string(DisplayEntryNumber(entry_idx));
+    const CrystalConfig* cr = CrystalOfEntry(state, entry);
+    if (cr == nullptr) {
+      table.rows.push_back(std::move(row));
+      continue;
+    }
+    if (cr->type == CrystalType::kPrism) {
+      row.cells[kShapeColHeight] = FormatShapeDistCell(cr->height, LUMICE_SHAPE_SCALAR_HEIGHT);
+    } else {
+      row.cells[kShapeColPrismH] = FormatShapeDistCell(cr->prism_h, LUMICE_SHAPE_SCALAR_PRISM_H);
+      row.cells[kShapeColUpperH] = FormatShapeDistCell(cr->upper_h, LUMICE_SHAPE_SCALAR_UPPER_H);
+      row.cells[kShapeColLowerH] = FormatShapeDistCell(cr->lower_h, LUMICE_SHAPE_SCALAR_LOWER_H);
+      row.cells[kShapeColUpperA] = Format("%.3f", cr->upper_alpha);
+      row.cells[kShapeColLowerA] = Format("%.3f", cr->lower_alpha);
+    }
+    for (int i = 0; i < 6; ++i) {
+      row.cells[kShapeColFace0 + static_cast<size_t>(i)] =
+          FormatShapeDistCell(cr->face_distance[static_cast<size_t>(i)], LUMICE_SHAPE_SCALAR_FACE_0 + i);
+    }
+    table.rows.push_back(std::move(row));
+  }
+  return table;
 }
 
 }  // namespace
@@ -239,7 +310,7 @@ ConfigSummary BuildConfigSummary(const GuiState& state) {
   // heading. Per leaf, the field editor registry decides the label, whether the row is on the
   // page at all, and which group it sits in — see the header.
   std::vector<std::pair<std::string, ConfigSummaryGroup>> groups;
-  ConfigSummaryGroup popup_only{ kSettingsPopupOnlyGroupTitle, 0, {} };
+  ConfigSummaryGroup popup_only{ kSettingsPopupOnlyGroupTitle, {} };
   for (auto& row : BuildConfigSummaryRows(state)) {
     const std::string root = row.key_path.substr(0, row.key_path.find('.'));
     const std::string leaf = row.key_path.size() > root.size() ? row.key_path.substr(root.size() + 1) : root;
@@ -263,7 +334,7 @@ ConfigSummary BuildConfigSummary(const GuiState& state) {
     }
     if (it == groups.end()) {
       const char* title = SettingsGroupTitleFor(root);
-      groups.push_back({ root, ConfigSummaryGroup{ title != nullptr ? title : Humanize(root), 0, {} } });
+      groups.push_back({ root, ConfigSummaryGroup{ title != nullptr ? title : Humanize(root), {} } });
       it = groups.end() - 1;
     }
     it->second.fields.push_back(std::move(field));
@@ -298,19 +369,17 @@ ConfigSummary BuildConfigSummary(const GuiState& state) {
     summary.settings.push_back(std::move(popup_only));
   }
 
-  // Document: each layer, then each of its entries under it.
+  // Document: one heading and two tables per layer.
   for (int layer_idx = 0; layer_idx < static_cast<int>(state.layers.size()); ++layer_idx) {
     const Layer& layer = state.layers[static_cast<size_t>(layer_idx)];
-    ConfigSummaryGroup layer_group;
-    layer_group.title = "Layer " + std::to_string(DisplayLayerNumber(layer_idx));
-    layer_group.level = 0;
-    // The layer header's slider, in its "%.2f".
-    layer_group.fields.push_back({ "Multi-scatter prob.", Format("%.2f", layer.probability) });
-    layer_group.fields.push_back({ "Entries", std::to_string(layer.entries.size()) });
-    summary.document.push_back(std::move(layer_group));
-    for (int entry_idx = 0; entry_idx < static_cast<int>(layer.entries.size()); ++entry_idx) {
-      summary.document.push_back(BuildEntryGroup(state, layer_idx, entry_idx));
-    }
+    ConfigSummaryLayer page_layer;
+    // The layer header's slider, under the panel's own label and in its "%.2f".
+    page_layer.heading = "Layer " + std::to_string(DisplayLayerNumber(layer_idx)) + " · Multi-scatter prob. " +
+                         Format("%.2f", layer.probability) + " · " + std::to_string(layer.entries.size()) +
+                         (layer.entries.size() == 1 ? " entry" : " entries");
+    page_layer.crystals = BuildCrystalsTable(state, layer_idx);
+    page_layer.shape = BuildShapeTable(state, layer_idx);
+    summary.document.push_back(std::move(page_layer));
   }
   return summary;
 }
@@ -320,57 +389,49 @@ int CountConfigSummaryFields(const ConfigSummary& summary) {
   for (const auto& group : summary.settings) {
     count += static_cast<int>(group.fields.size());
   }
-  for (const auto& group : summary.document) {
-    count += static_cast<int>(group.fields.size());
-  }
   return count;
 }
 
-std::vector<std::vector<const ConfigSummaryField*>> ConfigSummaryLines(const ConfigSummaryGroup& group) {
-  std::vector<std::vector<const ConfigSummaryField*>> lines;
-  std::vector<int> emitted_groups;
-  for (size_t i = 0; i < group.fields.size(); ++i) {
-    const ConfigSummaryField& field = group.fields[i];
-    if (field.row_group_id < 0) {
-      lines.push_back({ &field });
-      continue;
-    }
-    if (std::find(emitted_groups.begin(), emitted_groups.end(), field.row_group_id) != emitted_groups.end()) {
-      continue;  // already laid out with the run's first field
-    }
-    emitted_groups.push_back(field.row_group_id);
-    // The whole run, wherever its members sit, cut into lines of kPackedFieldsPerRow.
-    std::vector<const ConfigSummaryField*> line;
-    for (size_t j = i; j < group.fields.size(); ++j) {
-      if (group.fields[j].row_group_id != field.row_group_id) {
-        continue;
-      }
-      line.push_back(&group.fields[j]);
-      if (static_cast<int>(line.size()) == kPackedFieldsPerRow) {
-        lines.push_back(std::move(line));
-        line.clear();
-      }
-    }
-    if (!line.empty()) {
-      lines.push_back(std::move(line));
-    }
+const char* DistributionLetter(AxisDistType type) {
+  const int index = static_cast<int>(type);
+  if (index < 0 || index >= static_cast<int>(AxisDistType::kCount)) {
+    return "?";
   }
-  return lines;
+  return kDistributionLetters[index];
 }
 
-int CountConfigSummaryLines(const ConfigSummaryGroup& group) {
-  return static_cast<int>(ConfigSummaryLines(group).size());
+const char* DistributionLetterForWireName(std::string_view wire_name) {
+  const std::optional<AxisDistType> type = AxisDistTypeFromJsonName(wire_name);
+  return type.has_value() ? DistributionLetter(*type) : "?";
 }
 
-int CountConfigSummaryLines(const ConfigSummary& summary) {
-  int count = 0;
-  for (const auto& group : summary.settings) {
-    count += CountConfigSummaryLines(group);
+std::string FormatShapeDistCell(const ShapeDist& dist, int slot) {
+  // A shape scalar has no full-circle case: its domain is a length, not an angle.
+  std::string out =
+      FormatDistributionCell(ShapeScalarDomainFor(slot).fmt, dist.type == ShapeDistType::kNoRandom,
+                             ShapeDistTypeToString(dist.type), /*full_circle=*/false, dist.center, dist.spread);
+  if (dist.sync_group != 0) {
+    out += " · sync " + std::to_string(dist.sync_group);
   }
-  for (const auto& group : summary.document) {
-    count += CountConfigSummaryLines(group);
+  return out;
+}
+
+std::string FormatAxisDistCell(const AxisDist& axis) {
+  // An axis is always a distribution (AxisDist has no fixed alternative); the modal's "%.3g".
+  return FormatDistributionCell("%.3g", /*no_random=*/false, AxisDistTypeJsonName(axis.type),
+                                axis_preset_detail::IsFullUniform360(axis), axis.mean, axis.std);
+}
+
+std::string DistributionLegend() {
+  std::string legend;
+  for (int i = 0; i < static_cast<int>(AxisDistType::kCount); ++i) {
+    const auto type = static_cast<AxisDistType>(i);
+    if (!legend.empty()) {
+      legend += " · ";
+    }
+    legend += std::string(DistributionLetter(type)) + " " + AxisDistTypeLabel(type);
   }
-  return count;
+  return legend;
 }
 
 }  // namespace lumice::gui

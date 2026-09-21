@@ -34,6 +34,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cctype>
 #include <cmath>
 #include <cstdio>
@@ -70,12 +71,76 @@ const ConfigSummaryGroup* FindGroup(const ConfigSummary& page, const std::string
       return &g;
     }
   }
-  for (const auto& g : page.document) {
-    if (g.title == title) {
-      return &g;
-    }
-  }
   return nullptr;
+}
+
+// ---- The document tables, indexed for lookups --------------------------------------------
+//
+// The document section is two tables per layer, row i of both being the layer's i-th entry
+// (config_summary.hpp ConfigSummaryLayer), so a document value is located by (layer, row, column)
+// rather than by a group title and a label.
+
+struct EntryLocator {
+  int layer_idx;
+  int row_idx;
+};
+
+std::string LocatorText(const EntryLocator& at) {
+  return "layer " + std::to_string(at.layer_idx) + " row " + std::to_string(at.row_idx);
+}
+
+// The cell under column `column` of the entry's row in `table`, or nullopt with a failure
+// recorded. "No such column" is a failure of its own, distinct from a column that exists and
+// holds "" (a legitimately empty, not-applicable cell): a misspelled column name in a rule below
+// must not read as "the page omits it" and pass.
+std::optional<std::string> TableCell(const ConfigSummaryTable& table, const EntryLocator& at, const std::string& column,
+                                     const char* table_name) {
+  const auto col = std::find(table.columns.begin(), table.columns.end(), column);
+  if (col == table.columns.end()) {
+    ADD_FAILURE() << "the " << table_name << " table has no column \"" << column << "\"";
+    return std::nullopt;
+  }
+  if (at.row_idx < 0 || static_cast<size_t>(at.row_idx) >= table.rows.size()) {
+    ADD_FAILURE() << "the " << table_name << " table of " << LocatorText(at) << " has no such row";
+    return std::nullopt;
+  }
+  return table.rows[static_cast<size_t>(at.row_idx)].cells[static_cast<size_t>(col - table.columns.begin())];
+}
+
+const ConfigSummaryLayer* PageLayer(const ConfigSummary& page, int layer_idx) {
+  if (layer_idx < 0 || static_cast<size_t>(layer_idx) >= page.document.size()) {
+    ADD_FAILURE() << "the page has no layer " << layer_idx;
+    return nullptr;
+  }
+  return &page.document[static_cast<size_t>(layer_idx)];
+}
+
+// A Crystals-table cell of an entry, or nullopt with a failure recorded.
+std::optional<std::string> CrystalsCell(const ConfigSummary& page, const EntryLocator& at, const std::string& column) {
+  const ConfigSummaryLayer* layer = PageLayer(page, at.layer_idx);
+  if (layer == nullptr) {
+    return std::nullopt;
+  }
+  return TableCell(layer->crystals, at, column, "Crystals");
+}
+
+// A Shape-table cell of an entry, by shape slot (LUMICE_SHAPE_SCALAR_*), or nullopt.
+std::optional<std::string> ShapeCell(const ConfigSummary& page, const EntryLocator& at, int slot) {
+  const ConfigSummaryLayer* layer = PageLayer(page, at.layer_idx);
+  if (layer == nullptr) {
+    return std::nullopt;
+  }
+  return TableCell(layer->shape, at, kShapeScalarLabels[slot], "Shape");
+}
+
+// A Shape-table cell by column word, for the two wedge angles that are not shape slots.
+std::optional<std::string> ShapeCellNamed(const ConfigSummary& page, const EntryLocator& at,
+                                          const std::string& column) {
+  const ConfigSummaryLayer* layer = PageLayer(page, at.layer_idx);
+  if (layer == nullptr) {
+    return std::nullopt;
+  }
+  return TableCell(layer->shape, at, column, "Shape");
 }
 
 // The value printed under `label` in group `title`, or nullopt with a failure recorded.
@@ -115,10 +180,9 @@ std::string Fmt(const char* fmt, double v) {
 }
 
 // The export's number as the page would spell it, compared against the page's text. The settings
-// rows go through FormatDiffValue; a document row gets the format its slot uses, and the page's
-// value is allowed to carry more after it (a randomized "1.000 ± 0.100 uniform", an axis's
-// "Gauss · Mean 90 · Std 1") — so the check is "the page's value contains the number spelled
-// this way", and the caller says which format.
+// rows go through FormatDiffValue, and a value is allowed to carry more around the number — so the
+// check is "the page's value contains the number spelled this way", and the caller says which
+// format. (Document cells have their own helpers below, ExpectCellNumber and kin.)
 void ExpectPageNumber(const ConfigSummary& page, const std::string& title, const std::string& label, const json& v,
                       const char* fmt = nullptr) {
   const auto got = PageValue(page, title, label);
@@ -161,6 +225,57 @@ void ExpectGatedText(const GuiState& state, const ConfigSummary& page, const cha
     EXPECT_FALSE(HasRow(page, title, label))
         << key_path << " is disabled on the panel but " << title << " / " << label << " is on the page";
   }
+}
+
+// A document cell against the export's number, spelled the cell's way (the caller's `fmt` is the
+// slot's own): the cell may carry more around the number — the distribution letter and the spread
+// of a randomized "U 0.900(0.100)", the preset name leading a zenith "Plate · G 0(1)" — so the
+// check is "the cell contains the number spelled this way".
+void ExpectCellNumber(const std::optional<std::string>& cell, const EntryLocator& at, const std::string& column,
+                      const json& v, const char* fmt) {
+  if (!cell.has_value()) {
+    return;
+  }
+  const std::string want = Fmt(fmt, v.get<double>());
+  EXPECT_NE(cell->find(want), std::string::npos) << LocatorText(at) << " / " << column << ": the cell says \"" << *cell
+                                                 << "\", export has " << v.dump() << " (\"" << want << "\")";
+}
+
+void ExpectCellText(const std::optional<std::string>& cell, const EntryLocator& at, const std::string& column,
+                    const std::string& want) {
+  if (!cell.has_value()) {
+    return;
+  }
+  EXPECT_NE(cell->find(want), std::string::npos)
+      << LocatorText(at) << " / " << column << ": the cell says \"" << *cell << "\", export has \"" << want << "\"";
+}
+
+// The export's distribution type ("gauss") against a cell in the page's notation: the cell
+// carries the type's LETTER (config_summary.hpp DistributionLetter), so the assertion is that the
+// letter the page assigns to this wire word is in the cell — compared as a whole token, so a "G"
+// is not found inside a "G*" and a preset name ("Gauss" is not one, but "Random" holds no letter
+// either) cannot stand in for the letter.
+void ExpectCellDistributionType(const std::optional<std::string>& cell, const EntryLocator& at,
+                                const std::string& column, const std::string& wire) {
+  if (!cell.has_value()) {
+    return;
+  }
+  const std::string letter = DistributionLetterForWireName(wire);
+  ASSERT_NE(letter, "?") << "the page has no letter for the wire word \"" << wire << "\"";
+  bool found = false;
+  size_t pos = 0;
+  while ((pos = cell->find(letter, pos)) != std::string::npos) {
+    const size_t end = pos + letter.size();
+    const bool starts = pos == 0 || (*cell)[pos - 1] == ' ';
+    const bool ends = end == cell->size() || (*cell)[end] == ' ';
+    if (starts && ends) {
+      found = true;
+      break;
+    }
+    pos = end;
+  }
+  EXPECT_TRUE(found) << LocatorText(at) << " / " << column << ": the cell says \"" << *cell << "\", export has type \""
+                     << wire << "\" (letter \"" << letter << "\")";
 }
 
 // ---- The export, flattened ---------------------------------------------------------------
@@ -217,7 +332,8 @@ const Exclusion kExcluded[] = {
   { R"(^filter\[\d+\]\.id$)", "bookkeeping" },
   { R"(^filter\[\d+\]\.type$)", "the filter's wire encoding (raypath / entry_exit / complex), not a setting" },
   { R"(^filter\[\d+\]\.composition$)",
-    "the OR node a multi-row sum of products expands to; its members are asserted row by row" },
+    "the OR node a multi-row sum of products expands to; its members are asserted one by one — the "
+    "first by its row text, the rest by the \"(+N more)\" count the Filter cell carries for them" },
   { R"(^scene\.scattering\[\d+\]\.entries\[\d+\]\.filter$)",
     "the core filter id; the page shows the filter by its editor summary instead (checked per filter)" },
   { R"(^render\[0\]\.ray_color$)",
@@ -248,25 +364,20 @@ int PoolIdForCoreId(const GuiState& state, int core_id) {
   return -1;
 }
 
-std::string EntryTitle(int layer_idx, int entry_idx) {
-  return "Layer " + std::to_string(DisplayLayerNumber(layer_idx)) + " · Entry " +
-         std::to_string(DisplayEntryNumber(entry_idx));
-}
-
-// Which (layer, entry) groups on the page show scene crystal `core_id`: every entry whose crystal
-// maps to it. A crystal's rows are asserted on each of them.
-std::vector<std::string> EntryTitlesForCoreCrystal(const GuiState& state, int core_id) {
+// Which entries on the page show scene crystal `core_id`: every entry whose crystal maps to it,
+// as (layer, row) into the page's tables. A crystal's cells are asserted on each of them.
+std::vector<EntryLocator> EntriesForCoreCrystal(const GuiState& state, int core_id) {
   const int pool = PoolIdForCoreId(state, core_id);
-  std::vector<std::string> titles;
+  std::vector<EntryLocator> at;
   for (size_t l = 0; l < state.layers.size(); ++l) {
     for (size_t e = 0; e < state.layers[l].entries.size(); ++e) {
       if (state.layers[l].entries[e].crystal_id == pool) {
-        titles.push_back(EntryTitle(static_cast<int>(l), static_cast<int>(e)));
+        at.push_back({ static_cast<int>(l), static_cast<int>(e) });
       }
     }
   }
-  EXPECT_FALSE(titles.empty()) << "scene crystal " << core_id << " (pool " << pool << ") is on no entry";
-  return titles;
+  EXPECT_FALSE(at.empty()) << "scene crystal " << core_id << " (pool " << pool << ") is on no entry";
+  return at;
 }
 
 // Shape-slot lookups by the export's key names (LUMICE_ShapeScalarSyncKeyName's spellings).
@@ -319,30 +430,41 @@ std::vector<RuleEntry> BuildRules(const GuiState& state, const ConfigSummary& pa
     ExpectGatedNumber(state, page, "sim.ray_num_millions", "Simulation", "Rays(M)", json(v.get<double>() / 1.0e6));
   });
   add(R"(^scene\.scattering\[(\d+)\]\.prob$)", [&](const std::smatch& m, const json& v) {
-    ExpectPageNumber(page, "Layer " + std::to_string(std::stoi(m[1]) + 1), "Multi-scatter prob.", v, "%.2f");
+    // The layer's heading line carries its multi-scatter probability, in the slider's "%.2f".
+    const ConfigSummaryLayer* layer = PageLayer(page, std::stoi(m[1]));
+    if (layer != nullptr) {
+      const std::string want = Fmt("%.2f", v.get<double>());
+      EXPECT_NE(layer->heading.find(want), std::string::npos)
+          << "layer " << m[1] << ": heading \"" << layer->heading << "\" does not carry prob " << want;
+    }
   });
   add(R"(^scene\.scattering\[(\d+)\]\.entries\[(\d+)\]\.crystal$)", [&](const std::smatch& m, const json& v) {
-    // The page leads the crystal row with the POOL id (FormatCrystalIdentity's "#N"), so the
+    // The page leads the crystal cell with the POOL id (FormatCrystalIdentity's "#N"), so the
     // export's core id has to map back to the pool id of this very entry.
-    const int l = std::stoi(m[1]);
-    const int e = std::stoi(m[2]);
+    const EntryLocator at{ std::stoi(m[1]), std::stoi(m[2]) };
     const int pool = PoolIdForCoreId(state, v.get<int>());
     ASSERT_GE(pool, 0);
-    EXPECT_EQ(state.layers[l].entries[e].crystal_id, pool);
-    ExpectPageText(page, EntryTitle(l, e), "Crystal", "#" + std::to_string(pool));
+    EXPECT_EQ(state.layers[at.layer_idx].entries[at.row_idx].crystal_id, pool);
+    ExpectCellText(CrystalsCell(page, at, "Crystal"), at, "Crystal", "#" + std::to_string(pool));
+    // And the row is the entry's: both tables number it as the card does.
+    ExpectCellText(CrystalsCell(page, at, "#"), at, "#", std::to_string(DisplayEntryNumber(at.row_idx)));
+    const ConfigSummaryLayer* layer = PageLayer(page, at.layer_idx);
+    if (layer != nullptr) {
+      ExpectCellText(TableCell(layer->shape, at, "#", "Shape"), at, "#",
+                     std::to_string(DisplayEntryNumber(at.row_idx)));
+    }
   });
   add(R"(^scene\.scattering\[(\d+)\]\.entries\[(\d+)\]\.proportion$)", [&](const std::smatch& m, const json& v) {
     // An excluded entry is exported at proportion 0 with its weight kept; the page keeps the
     // weight too and says Enabled = false, which is what the user sees on the card.
-    const int l = std::stoi(m[1]);
-    const int e = std::stoi(m[2]);
-    const EntryCard& card = state.layers[l].entries[e];
+    const EntryLocator at{ std::stoi(m[1]), std::stoi(m[2]) };
+    const EntryCard& card = state.layers[at.layer_idx].entries[at.row_idx];
     if (card.enabled) {
-      ExpectPageNumber(page, EntryTitle(l, e), "Weight", v, "%.1f");
-      ExpectPageText(page, EntryTitle(l, e), "Enabled", "true");
+      ExpectCellNumber(CrystalsCell(page, at, "Weight"), at, "Weight", v, "%.1f");
+      ExpectCellText(CrystalsCell(page, at, "Enabled"), at, "Enabled", "true");
     } else {
       EXPECT_FLOAT_EQ(v.get<float>(), 0.0f);
-      ExpectPageText(page, EntryTitle(l, e), "Enabled", "false");
+      ExpectCellText(CrystalsCell(page, at, "Enabled"), at, "Enabled", "false");
     }
   });
 
@@ -393,45 +515,51 @@ std::vector<RuleEntry> BuildRules(const GuiState& state, const ConfigSummary& pa
   // ---- crystal ----
   add(R"(^crystal\[(\d+)\]\.type$)", [&](const std::smatch& m, const json& v) {
     const std::string want = v.get<std::string>() == "prism" ? "Prism" : "Pyramid";
-    for (const auto& title : EntryTitlesForCoreCrystal(state, std::stoi(m[1]))) {
-      ExpectPageText(page, title, "Crystal", want);
+    for (const auto& at : EntriesForCoreCrystal(state, std::stoi(m[1]))) {
+      ExpectCellText(CrystalsCell(page, at, "Crystal"), at, "Crystal", want);
     }
   });
   add(R"(^crystal\[(\d+)\]\.axis\.(zenith|azimuth|roll)\.(type|mean|std)$)", [&](const std::smatch& m, const json& v) {
-    std::string label = m[2];
-    label[0] = static_cast<char>(label[0] - 'a' + 'A');
-    for (const auto& title : EntryTitlesForCoreCrystal(state, std::stoi(m[1]))) {
+    std::string column = m[2];
+    column[0] = static_cast<char>(column[0] - 'a' + 'A');
+    const int core_id = std::stoi(m[1]);
+    const CrystalConfig& cr = state.crystals[static_cast<size_t>(PoolIdForCoreId(state, core_id))];
+    const AxisDist& axis = m[2] == "zenith" ? cr.zenith : m[2] == "azimuth" ? cr.azimuth : cr.roll;
+    for (const auto& at : EntriesForCoreCrystal(state, core_id)) {
+      const auto cell = CrystalsCell(page, at, column);
       if (m[3] == "type") {
-        // The wire word ("gauss") vs the combo label ("Gauss"): compare case-insensitively on
-        // the leading letters, which is the same word.
-        const auto got = PageValue(page, title, label);
-        if (got.has_value()) {
-          std::string page_lower = *got;
-          for (auto& c : page_lower) {
-            c = static_cast<char>(std::tolower(c));
-          }
-          std::string wire = v.get<std::string>();
-          EXPECT_EQ(page_lower.rfind(wire.substr(0, 5), 0), 0u)
-              << title << " / " << label << ": \"" << *got << "\" vs wire \"" << wire << "\"";
+        ExpectCellDistributionType(cell, at, column, v.get<std::string>());
+      } else if (axis_preset_detail::IsFullUniform360(axis)) {
+        // The one fold the notation makes: a full-circle uniform is the bare letter, and the two
+        // numbers it stands for are asserted on the export instead — the cell hides nothing but
+        // 0 and 360 (within the preset classifier's own 1° kEpsilon, since "full circle" is its
+        // predicate), and ends in the letter alone.
+        EXPECT_NEAR(v.get<float>(), m[3] == "mean" ? 0.0f : 360.0f, 1.0f) << LocatorText(at) << " / " << column;
+        if (cell.has_value()) {
+          EXPECT_TRUE(*cell == "U" || cell->size() >= 2 && cell->compare(cell->size() - 2, 2, " U") == 0)
+              << LocatorText(at) << " / " << column << ": full-circle uniform, cell says \"" << *cell << "\"";
         }
       } else {
-        ExpectPageNumber(page, title, label, v, "%.3g");
+        // The mean and the spread are in the cell in the modal's "%.3g".
+        ExpectCellNumber(cell, at, column, v, "%.3g");
       }
     }
   });
   add(R"(^crystal\[(\d+)\]\.shape\.(height|prism_h|upper_h|lower_h)$)", [&](const std::smatch& m, const json& v) {
     const int slot = ShapeSlotForExportKey(m[2]);
     ASSERT_GE(slot, 0);
-    // A fixed scalar exports as a bare number, a randomized one as {type, mean, std}; the page
-    // prints the centre in the slot's format either way, and the spread after it.
+    // A fixed scalar exports as a bare number, a randomized one as {type, mean, std}; the cell
+    // prints the centre in the slot's format either way, and the letter and spread around it.
     const char* fmt = ShapeScalarDomainFor(slot).fmt;
-    for (const auto& title : EntryTitlesForCoreCrystal(state, std::stoi(m[1]))) {
+    const std::string column = kShapeScalarLabels[slot];
+    for (const auto& at : EntriesForCoreCrystal(state, std::stoi(m[1]))) {
+      const auto cell = ShapeCell(page, at, slot);
       if (v.is_number()) {
-        ExpectPageNumber(page, title, kShapeScalarLabels[slot], v, fmt);
+        ExpectCellNumber(cell, at, column, v, fmt);
       } else {
-        ExpectPageNumber(page, title, kShapeScalarLabels[slot], v["mean"], fmt);
-        ExpectPageNumber(page, title, kShapeScalarLabels[slot], v["std"], fmt);
-        ExpectPageText(page, title, kShapeScalarLabels[slot], v["type"].get<std::string>());
+        ExpectCellNumber(cell, at, column, v["mean"], fmt);
+        ExpectCellNumber(cell, at, column, v["std"], fmt);
+        ExpectCellDistributionType(cell, at, column, v["type"].get<std::string>());
       }
     }
   });
@@ -440,26 +568,29 @@ std::vector<RuleEntry> BuildRules(const GuiState& state, const ConfigSummary& pa
         // The randomized form walked to its scalars (Flatten only keeps numeric arrays whole).
         const int slot = ShapeSlotForExportKey(m[2]);
         ASSERT_GE(slot, 0);
-        for (const auto& title : EntryTitlesForCoreCrystal(state, std::stoi(m[1]))) {
+        const std::string column = kShapeScalarLabels[slot];
+        for (const auto& at : EntriesForCoreCrystal(state, std::stoi(m[1]))) {
+          const auto cell = ShapeCell(page, at, slot);
           if (m[3] == "type") {
-            ExpectPageText(page, title, kShapeScalarLabels[slot], v.get<std::string>());
+            ExpectCellDistributionType(cell, at, column, v.get<std::string>());
           } else {
-            ExpectPageNumber(page, title, kShapeScalarLabels[slot], v, ShapeScalarDomainFor(slot).fmt);
+            ExpectCellNumber(cell, at, column, v, ShapeScalarDomainFor(slot).fmt);
           }
         }
       });
   add(R"(^crystal\[(\d+)\]\.shape\.(upper|lower)_wedge_angle$)", [&](const std::smatch& m, const json& v) {
-    for (const auto& title : EntryTitlesForCoreCrystal(state, std::stoi(m[1]))) {
-      ExpectPageNumber(page, title, m[2] == "upper" ? "Upper A" : "Lower A", v, "%.3f");
+    const std::string column = m[2] == "upper" ? "Upper A" : "Lower A";
+    for (const auto& at : EntriesForCoreCrystal(state, std::stoi(m[1]))) {
+      ExpectCellNumber(ShapeCellNamed(page, at, column), at, column, v, "%.3f");
     }
   });
   add(R"(^crystal\[(\d+)\]\.shape\.face_distance$)", [&](const std::smatch& m, const json& v) {
-    // Six fixed faces export as one numeric array; each is its own page row.
+    // Six fixed faces export as one numeric array; each is its own cell of the Shape table.
     ASSERT_EQ(v.size(), 6u);
-    for (const auto& title : EntryTitlesForCoreCrystal(state, std::stoi(m[1]))) {
+    for (const auto& at : EntriesForCoreCrystal(state, std::stoi(m[1]))) {
       for (int i = 0; i < 6; ++i) {
-        ExpectPageNumber(page, title, kShapeScalarLabels[LUMICE_SHAPE_SCALAR_FACE_0 + i], v[i],
-                         ShapeScalarDomainFor(LUMICE_SHAPE_SCALAR_FACE_0 + i).fmt);
+        const int slot = LUMICE_SHAPE_SCALAR_FACE_0 + i;
+        ExpectCellNumber(ShapeCell(page, at, slot), at, kShapeScalarLabels[slot], v[i], ShapeScalarDomainFor(slot).fmt);
       }
     }
   });
@@ -467,35 +598,40 @@ std::vector<RuleEntry> BuildRules(const GuiState& state, const ConfigSummary& pa
       [&](const std::smatch& m, const json& v) {
         // A randomized face turns the sextet into an array of objects, walked per face.
         const int slot = LUMICE_SHAPE_SCALAR_FACE_0 + std::stoi(m[2]);
-        for (const auto& title : EntryTitlesForCoreCrystal(state, std::stoi(m[1]))) {
+        for (const auto& at : EntriesForCoreCrystal(state, std::stoi(m[1]))) {
+          const auto cell = ShapeCell(page, at, slot);
           if (m[3] == "type") {
-            ExpectPageText(page, title, kShapeScalarLabels[slot], v.get<std::string>());
+            ExpectCellDistributionType(cell, at, kShapeScalarLabels[slot], v.get<std::string>());
           } else {
-            ExpectPageNumber(page, title, kShapeScalarLabels[slot], v, ShapeScalarDomainFor(slot).fmt);
+            ExpectCellNumber(cell, at, kShapeScalarLabels[slot], v, ShapeScalarDomainFor(slot).fmt);
           }
         }
       });
   add(R"(^crystal\[(\d+)\]\.shape\.face_distance\[(\d+)\]$)", [&](const std::smatch& m, const json& v) {
     // A fixed face beside randomized siblings: a bare number inside the object array.
     const int slot = LUMICE_SHAPE_SCALAR_FACE_0 + std::stoi(m[2]);
-    for (const auto& title : EntryTitlesForCoreCrystal(state, std::stoi(m[1]))) {
-      ExpectPageNumber(page, title, kShapeScalarLabels[slot], v, ShapeScalarDomainFor(slot).fmt);
+    for (const auto& at : EntriesForCoreCrystal(state, std::stoi(m[1]))) {
+      ExpectCellNumber(ShapeCell(page, at, slot), at, kShapeScalarLabels[slot], v, ShapeScalarDomainFor(slot).fmt);
     }
   });
   add(R"(^crystal\[(\d+)\]\.shape\.sync_group.*$)", [&](const std::smatch& m, const json& v) {
     // The page marks a grouped slot "· sync N"; the export lists the group per slot name. Every
-    // non-zero group number in the export has to appear on that crystal's page rows.
-    for (const auto& title : EntryTitlesForCoreCrystal(state, std::stoi(m[1]))) {
-      const ConfigSummaryGroup* g = FindGroup(page, title);
-      if (g == nullptr) {
-        ADD_FAILURE() << "no group " << title;
+    // non-zero group number in the export has to appear in that crystal's cells, in either table.
+    for (const auto& at : EntriesForCoreCrystal(state, std::stoi(m[1]))) {
+      const ConfigSummaryLayer* layer = PageLayer(page, at.layer_idx);
+      if (layer == nullptr) {
         continue;
       }
       const auto has_marker = [&](int group) {
         const std::string marker = "sync " + std::to_string(group);
-        for (const auto& f : g->fields) {
-          if (f.value.find(marker) != std::string::npos) {
-            return true;
+        for (const ConfigSummaryTable* table : { &layer->crystals, &layer->shape }) {
+          if (static_cast<size_t>(at.row_idx) >= table->rows.size()) {
+            continue;
+          }
+          for (const auto& cell : table->rows[static_cast<size_t>(at.row_idx)].cells) {
+            if (cell.find(marker) != std::string::npos) {
+              return true;
+            }
           }
         }
         return false;
@@ -504,24 +640,26 @@ std::vector<RuleEntry> BuildRules(const GuiState& state, const ConfigSummary& pa
       const json groups = v.is_array() ? v : json::array({ v });
       for (const auto& g_id : groups) {
         if (g_id.is_number_integer() && g_id.get<int>() != 0) {
-          EXPECT_TRUE(has_marker(g_id.get<int>())) << title << ": sync group " << g_id.get<int>() << " not on the page";
+          EXPECT_TRUE(has_marker(g_id.get<int>()))
+              << LocatorText(at) << ": sync group " << g_id.get<int>() << " not on the page";
         }
       }
     }
   });
   add(R"(^crystal\[(\d+)\]\.name$)", [&](const std::smatch& m, const json& v) {
-    for (const auto& title : EntryTitlesForCoreCrystal(state, std::stoi(m[1]))) {
-      ExpectPageText(page, title, "Crystal", v.get<std::string>());
+    for (const auto& at : EntriesForCoreCrystal(state, std::stoi(m[1]))) {
+      ExpectCellText(CrystalsCell(page, at, "Crystal"), at, "Crystal", v.get<std::string>());
     }
   });
 
   // ---- filter ----
   // The export's filters are CORE filters: BuildScene expands each GUI filter's sum of products
   // into one raypath / entry-exit filter per row plus, for a multi-row SoP, a "complex" node
-  // composing them (file_io.cpp ExpandSopToClauses). Entries reference the top node. So the page
-  // rows a core filter must be found on are the entries whose top node is it, or composes it.
+  // composing them (file_io.cpp ExpandSopToClauses). Entries reference the top node. So the
+  // Filter cells a core filter must be found in are the entries whose top node is it, or composes
+  // it.
   const auto entries_reaching_filter = [&](int export_idx) {
-    std::vector<std::string> titles;
+    std::vector<EntryLocator> at;
     const json& filters = doc["filter"];
     const json& scattering = doc["scene"]["scattering"];
     for (size_t l = 0; l < scattering.size(); ++l) {
@@ -538,44 +676,81 @@ std::vector<RuleEntry> BuildRules(const GuiState& state, const ConfigSummary& pa
           }
         }
         if (reaches) {
-          titles.push_back(EntryTitle(static_cast<int>(l), static_cast<int>(e)));
+          at.push_back({ static_cast<int>(l), static_cast<int>(e) });
         }
       }
     }
-    EXPECT_FALSE(titles.empty()) << "exported filter " << export_idx << " is on no entry";
-    return titles;
+    EXPECT_FALSE(at.empty()) << "exported filter " << export_idx << " is on no entry";
+    return at;
   };
-  // The page's filter text for an entry: the card summary plus, for a multi-row SoP, the rows.
-  const auto page_filter_text = [&](const std::string& title) {
-    std::string joined;
-    const ConfigSummaryGroup* g = FindGroup(page, title);
-    if (g == nullptr) {
-      ADD_FAILURE() << "no group " << title;
-      return joined;
-    }
-    for (const auto& f : g->fields) {
-      if (f.label == "Filter" || f.label.rfind("Filter row", 0) == 0) {
-        joined += f.value + "\n";
+  // The Filter cell is the card's summary (panels.cpp FilterSummary), which prints a multi-row
+  // sum of products as its FIRST row and "(+N more)" — the filter editor is where the rows are
+  // read in full. So a composed member's row text is on the page only for the first member; for
+  // a later one (position k > 0 in its top node's composition) what the page owes is the count:
+  // "(+N more)" with N >= k, which is how the reader is told the rows exist. Position k, or
+  // nullopt for a first member or a filter that is nobody's member.
+  const auto hidden_row_position = [&](int export_idx) -> std::optional<int> {
+    for (const auto& f : doc["filter"]) {
+      if (!f.contains("composition")) {
+        continue;
+      }
+      const json& members = f["composition"];
+      for (size_t k = 1; k < members.size(); ++k) {
+        if (members[k].get<int>() == export_idx) {
+          return static_cast<int>(k);
+        }
       }
     }
-    return joined;
+    return std::nullopt;
+  };
+  // The row-text assertion, in the two forms above.
+  const auto expect_row_text = [&](int export_idx, const std::string& text, const char* what) {
+    const std::optional<int> hidden = hidden_row_position(export_idx);
+    for (const auto& at : entries_reaching_filter(export_idx)) {
+      const auto cell = CrystalsCell(page, at, "Filter");
+      if (!cell.has_value()) {
+        continue;
+      }
+      if (!hidden.has_value()) {
+        EXPECT_NE(cell->find(text), std::string::npos)
+            << LocatorText(at) << ": " << what << " \"" << text << "\" is not in the Filter cell \"" << *cell << "\"";
+        continue;
+      }
+      const std::smatch more = [&] {
+        std::smatch found;
+        std::regex_search(*cell, found, std::regex(R"(\(\+(\d+) more\))"));
+        return found;
+      }();
+      if (more.empty()) {
+        ADD_FAILURE() << LocatorText(at) << ": " << what << " \"" << text << "\" is row " << *hidden
+                      << " of a multi-row filter, and the Filter cell \"" << *cell << "\" does not say \"(+N more)\"";
+        continue;
+      }
+      EXPECT_GE(std::stoi(more[1]), *hidden)
+          << LocatorText(at) << ": the Filter cell \"" << *cell << "\" counts fewer hidden rows than row " << *hidden;
+    }
   };
   add(R"(^filter\[(\d+)\]\.action$)", [&](const std::smatch& m, const json& v) {
     const std::string want = v.get<std::string>() == "filter_in" ? " In" : " Out";
-    for (const auto& title : entries_reaching_filter(std::stoi(m[1]))) {
-      ExpectPageText(page, title, "Filter", want);
+    for (const auto& at : entries_reaching_filter(std::stoi(m[1]))) {
+      ExpectCellText(CrystalsCell(page, at, "Filter"), at, "Filter", want);
     }
   });
   add(R"(^filter\[(\d+)\]\.symmetry$)", [&](const std::smatch& m, const json& v) {
     // FilterSummary's suffix is the letters of the symmetries that are ON — the same letters, in
-    // the same order, the export writes.
-    for (const auto& title : entries_reaching_filter(std::stoi(m[1]))) {
-      const auto got = PageValue(page, title, "Filter");
+    // the same order, the export writes. The cell may carry " · <name>" after the summary.
+    for (const auto& at : entries_reaching_filter(std::stoi(m[1]))) {
+      const auto got = CrystalsCell(page, at, "Filter");
       if (got.has_value()) {
-        const size_t sp = got->rfind(' ');
-        const std::string sym = sp == std::string::npos ? "" : got->substr(sp + 1);
+        std::string summary = *got;
+        const size_t name_at = summary.find(" · ");
+        if (name_at != std::string::npos) {
+          summary = summary.substr(0, name_at);
+        }
+        const size_t sp = summary.rfind(' ');
+        const std::string sym = sp == std::string::npos ? "" : summary.substr(sp + 1);
         EXPECT_EQ(sym == "In" || sym == "Out" ? "" : sym, v.get<std::string>())
-            << title << ": the page says \"" << *got << "\"";
+            << LocatorText(at) << ": the cell says \"" << *got << "\"";
       }
     }
   });
@@ -585,32 +760,17 @@ std::vector<RuleEntry> BuildRules(const GuiState& state, const ConfigSummary& pa
     for (const auto& face : v) {
       text += (text.empty() ? "" : "-") + std::to_string(face.get<int>());
     }
-    for (const auto& title : entries_reaching_filter(std::stoi(m[1]))) {
-      const std::string joined = page_filter_text(title);
-      EXPECT_NE(joined.find(text), std::string::npos)
-          << title << ": raypath \"" << text << "\" is not among the page's filter rows:\n"
-          << joined;
-    }
+    expect_row_text(std::stoi(m[1]), text, "raypath");
   });
   add(R"(^filter\[(\d+)\]\.(entry|exit)$)", [&](const std::smatch& m, const json& v) {
-    // An entry-exit row: each face number the export names is in the page's filter text.
+    // An entry-exit row: each face number the export names is in the cell.
     const json faces = v.is_array() ? v : json::array({ v });
-    for (const auto& title : entries_reaching_filter(std::stoi(m[1]))) {
-      const std::string joined = page_filter_text(title);
-      for (const auto& face : faces) {
-        EXPECT_NE(joined.find(std::to_string(face.get<int>())), std::string::npos)
-            << title << ": " << m[2] << " face " << face.dump() << " is not among the page's filter rows:\n"
-            << joined;
-      }
+    for (const auto& face : faces) {
+      expect_row_text(std::stoi(m[1]), std::to_string(face.get<int>()), m[2].str().c_str());
     }
   });
   add(R"(^filter\[(\d+)\]\.(min_len|max_len|length)$)", [&](const std::smatch& m, const json& v) {
-    for (const auto& title : entries_reaching_filter(std::stoi(m[1]))) {
-      const std::string joined = page_filter_text(title);
-      EXPECT_NE(joined.find(std::to_string(v.get<int>())), std::string::npos)
-          << title << ": " << m[2] << " " << v.dump() << " is not among the page's filter rows:\n"
-          << joined;
-    }
+    expect_row_text(std::stoi(m[1]), std::to_string(v.get<int>()), m[2].str().c_str());
   });
   return rules;
 }
@@ -932,13 +1092,30 @@ TEST(ConfigSummaryExportParityChain, RichDocument) {
   SeedRichDocument();
   ExpectPageMatchesExport(g_state, "rich");
   const ConfigSummary page = BuildConfigSummary(g_state);
-  EXPECT_EQ(PageValue(page, "Layer 1 · Entry 1", "Axis").value_or(""), "Plate");
-  EXPECT_EQ(PageValue(page, "Layer 1 · Entry 1", "Filter").value_or(""), "3-5-1 In PD");
-  EXPECT_EQ(PageValue(page, "Layer 1 · Entry 1", "Filter name").value_or(""), "cza");
-  EXPECT_EQ(PageValue(page, "Layer 1 · Entry 2", "Filter row 1").value_or(""), "3-5");
-  EXPECT_EQ(PageValue(page, "Layer 1 · Entry 2", "Filter row 2").value_or(""), "1-3-2");
-  EXPECT_EQ(PageValue(page, "Layer 2 · Entry 1", "Enabled").value_or(""), "false");
-  EXPECT_EQ(PageValue(page, "Layer 1", "Multi-scatter prob.").value_or(""), "0.35");
+  // Spelled out as well as reached through the rules: the cells as the reader sees them.
+  const EntryLocator l1e1{ 0, 0 };
+  const EntryLocator l1e2{ 0, 1 };
+  const EntryLocator l2e1{ 1, 0 };
+  EXPECT_EQ(CrystalsCell(page, l1e1, "Zenith").value_or(""), "Plate · G 0(2.5)");
+  EXPECT_EQ(CrystalsCell(page, l1e1, "Azimuth").value_or(""), "U");
+  EXPECT_EQ(CrystalsCell(page, l1e1, "Roll").value_or(""), "U");
+  EXPECT_EQ(ShapeCell(page, l1e1, LUMICE_SHAPE_SCALAR_HEIGHT).value_or(""), "U 0.3(0.05)");
+  EXPECT_EQ(ShapeCell(page, l1e1, LUMICE_SHAPE_SCALAR_PRISM_H).value_or(""), "");
+  EXPECT_EQ(CrystalsCell(page, l1e1, "Filter").value_or(""), "3-5-1 In PD · cza");
+  EXPECT_EQ(ShapeCell(page, l1e2, LUMICE_SHAPE_SCALAR_HEIGHT).value_or(""), "");
+  EXPECT_EQ(ShapeCell(page, l1e2, LUMICE_SHAPE_SCALAR_PRISM_H).value_or(""), "1.7");
+  EXPECT_EQ(ShapeCellNamed(page, l1e2, "Upper A").value_or(""), "31.500");
+  EXPECT_EQ(CrystalsCell(page, l1e2, "Zenith").value_or(""), "Custom · L 90(3)");
+  EXPECT_EQ(CrystalsCell(page, l1e2, "Azimuth").value_or(""), "Z 10(20)");
+  EXPECT_EQ(CrystalsCell(page, l1e2, "Roll").value_or(""), "G 0(1)");
+  // The two-row filter: first row, the hidden count, the suffix, the name.
+  EXPECT_EQ(CrystalsCell(page, l1e2, "Filter").value_or(""), "3-5 (+1 more) Out B · two rows");
+  EXPECT_EQ(ShapeCell(page, l1e2, LUMICE_SHAPE_SCALAR_FACE_2).value_or(""), "G 0.900(0.100)");
+  EXPECT_EQ(ShapeCell(page, l1e2, LUMICE_SHAPE_SCALAR_FACE_0).value_or(""), "1.000 · sync 1");
+  EXPECT_EQ(CrystalsCell(page, l2e1, "Enabled").value_or(""), "false");
+  ASSERT_EQ(page.document.size(), 2u);
+  EXPECT_EQ(page.document[0].heading, "Layer 1 · Multi-scatter prob. 0.35 · 2 entries");
+  EXPECT_EQ(page.document[1].heading, "Layer 2 · Multi-scatter prob. 0.00 · 2 entries");
   EXPECT_FALSE(page.version.empty());
 }
 

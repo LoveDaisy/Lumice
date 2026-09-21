@@ -34,10 +34,25 @@
 //
 //   DOCUMENT — layers, their entries, each entry's crystal, axis and filter. These live under the
 //   one root key the walk above skips (`layers`, see kDiffEngineExcludedRootKeys: a key path into
-//   it carries a document-local index), so they are read straight off GuiState's structure and
-//   spelled by the formatters the panels already use — FormatCrystalIdentity for the crystal line,
-//   AxisPresetName for the axis, FilterSummary for the filter, kShapeScalarLabels for the shape
-//   rows — rather than by a second rendering of the same facts.
+//   it carries a document-local index), so they are read straight off GuiState's structure. The
+//   entries of a layer are RECORDS OF ONE SHAPE — the same crystal / axis / filter facts for each
+//   — so they are laid out as two tables per layer, headers printed once and one entry per row,
+//   cross-referenced by the entry's number. The split is the edit modal's own: Crystals is the
+//   card and the Axis and Filter tabs (identity, enabled, weight, the three axis distributions,
+//   the filter — the columns that carry words), Shape is the Crystal tab (the type's own scalars,
+//   then the six faces — thirteen columns of short numbers). A label / value line per field, the
+//   settings section's shape, would print every label once per entry, and on a three-entry
+//   document that was half the column. Column labels and cell text
+//   come from what the panels already use — FormatCrystalIdentity for the crystal cell,
+//   AxisPresetName for the axis preset, FilterSummary for the filter, kShapeScalarLabels for the
+//   shape columns — rather than from a second rendering of the same facts; a cell whose column
+//   does not apply to that row (a prism's Prism H) is empty, not "-" or "0".
+//
+//   A randomized scalar and an axis distribution are spelled by ONE formatter
+//   (FormatShapeDistCell / FormatAxisDistCell below): `<letter> <centre>(<spread>)`, the letter
+//   naming the distribution (DistributionLegend spells the letters out once, under the tables) and
+//   the two numbers being the panel's own controls, unconverted — a uniform's spread is the full
+//   width the Range box shows, never a ± half-width, which is what the notation avoids saying.
 //
 // Every value is what the GUI SHOWS, not what it commits to core. The preview commits a fixed
 // dual-equal-area / 180° / view-(0,0,0) renderer and reprojects in the shader
@@ -77,32 +92,15 @@ bool ConfigSummaryIncludesRootKey(std::string_view key);
 // Pure: serializes and walks, reads no file.
 std::vector<ConfigSummaryRow> BuildConfigSummaryRows(const GuiState& state);
 
-// A label / value pair as the window prints it.
+// A label / value pair as the window prints it, one display line each.
 struct ConfigSummaryField {
   std::string label;
   std::string value;
-  // Which fields share a display line. -1: the field has a line of its own, label column and
-  // value column, as every settings row does. A non-negative value is an explicit group number,
-  // unique within the group: every field carrying the same number is laid out on one line (or
-  // as many lines as kPackedFieldsPerRow allows) as a run of label/value cells — the six face
-  // distances, the three axis distributions. An explicit number rather than "adjacent fields
-  // with the same label shape", so that a field inserted between two packed ones, or two
-  // unrelated runs that happen to touch, can never be packed together without saying so.
-  int row_group_id = -1;
 };
 
-// How many packed fields share one display line: a run of six face distances is two lines of
-// three, a run of three axis distributions is one. A presentation constant that the page's line
-// count depends on, hence declared beside the page rather than inside the window, so that
-// CountConfigSummaryLines below and the window's own drawing agree on what a line is.
-inline constexpr int kPackedFieldsPerRow = 3;
-
-// One titled block of fields: a settings group ("Sun"), a layer ("Layer 1"), or an entry
-// ("Layer 1 · Entry 2"). `level` is the nesting the window indents by (0 for a group or a layer,
-// 1 for an entry under its layer).
+// One titled block of settings fields ("Sun", "Simulation", "Render", "Settings").
 struct ConfigSummaryGroup {
   std::string title;
-  int level = 0;
   std::vector<ConfigSummaryField> fields;
 };
 
@@ -110,33 +108,81 @@ struct ConfigSummaryGroup {
 // comment). Always last among the settings groups, and present only when such a field exists.
 inline constexpr const char* kSettingsPopupOnlyGroupTitle = "Settings";
 
+// A table of the document section: the header row once, then one row per entry. Every row has
+// exactly columns.size() cells, by construction (the builders size a row from the column list and
+// fill by index) — an ImGui table given fewer cells than columns does not complain, it shifts the
+// rest of the row over, so the invariant is held here rather than checked on screen. An empty
+// cell is a column that does not apply to that row.
+struct ConfigSummaryTable {
+  std::vector<std::string> columns;
+  struct Row {
+    std::vector<std::string> cells;
+  };
+  std::vector<Row> rows;
+};
+
+// One layer of the document: its heading line ("Layer 1 · Multi-scatter prob. 0.50 · 2 entries",
+// spelled here at build time as the settings group titles are — a heading is a title, not a
+// value, and takes no formatter) and its two tables. Row i of both tables is the layer's i-th
+// entry, and both carry its number in their first column ("#"), so a reader can pair a crystal's
+// shape with its row in the other table. A layer with no entries has two empty tables.
+struct ConfigSummaryLayer {
+  std::string heading;
+  ConfigSummaryTable crystals;
+  ConfigSummaryTable shape;
+};
+
 struct ConfigSummary {
   // LUMICE_GetVersionString(): the build that produced this picture, first because "which
   // version" is the question a shared screenshot is most often answering.
   std::string version;
   std::vector<ConfigSummaryGroup> settings;
-  std::vector<ConfigSummaryGroup> document;
+  std::vector<ConfigSummaryLayer> document;
 };
 
 // The whole page for `state`. Pure, and the only thing the window renders.
 ConfigSummary BuildConfigSummary(const GuiState& state);
 
-// The number of label/value FIELDS the page carries, packed or not.
+// The number of label/value fields the settings section carries — the figure the functional
+// test counts the rendered settings lines against. The document section is tables, whose rows
+// are counted directly.
 int CountConfigSummaryFields(const ConfigSummary& summary);
 
-// The group's fields as the window draws them: one inner vector per display line, in page order.
-// A field with row_group_id -1 is a line by itself; the fields sharing a non-negative id are
-// gathered (in their first field's position) and cut into lines of kPackedFieldsPerRow. The one
-// definition of "a line", read by the window to draw and by CountConfigSummaryLines to count, so
-// the functional test's rendered-row count and the page's own count cannot drift.
-std::vector<std::vector<const ConfigSummaryField*>> ConfigSummaryLines(const ConfigSummaryGroup& group);
+// ---- The distribution notation -------------------------------------------------------------
+//
+// The one spelling of "a value drawn from a distribution" on this page, for the three axis
+// distributions and every randomizable shape scalar alike:
+//
+//   fixed                       "1.000"            (a shape scalar with no randomization)
+//   randomized                  "U 0.900(0.100)"   letter, centre, spread in parentheses
+//   full-circle uniform axis    "U"                (IsFullUniform360: mean 0, range 360 — the
+//                                                   Random preset's azimuth and roll, folded so
+//                                                   the commonest cell is the shortest)
+//
+// The letter is DistributionLetter's (G / U / Z / L / G*); the centre and the spread are the two
+// numbers on the panel's own controls (Mean and Std / Range / Amplitude / Scale for an axis,
+// centre and spread for a shape scalar), printed as they are. In particular a uniform's spread
+// is the FULL width, as the Range box says — "0.900(0.100)" is [0.85, 0.95] — and is never halved
+// into a ±: the composition-correctness chain compares these cells against the exported document,
+// which carries the panel's numbers, and a converted spelling goes red there.
 
-// The number of display lines `group` occupies — the figure AC "same-kind scalars share a line"
-// is measured by (test_config_summary_rows.cpp).
-int CountConfigSummaryLines(const ConfigSummaryGroup& group);
-// Summed over every group of the page — the figure the functional test counts against the
-// rendered table rows.
-int CountConfigSummaryLines(const ConfigSummary& summary);
+// The letter for a distribution type: "G" Gauss, "U" Uniform, "Z" Zigzag, "L" Laplacian,
+// "G*" Gauss (legacy).
+const char* DistributionLetter(AxisDistType type);
+// The same, keyed by the wire spelling both ShapeDistTypeToString and AxisDistTypeJsonName
+// produce ("gauss", "uniform", ...), which is how a shape scalar's type reaches the table without
+// a second enum-to-letter switch. An unknown spelling reads "?": visible on the page, never a
+// crash, and asserted by test so it cannot be mistaken for a sixth distribution.
+const char* DistributionLetterForWireName(std::string_view wire_name);
+// A shape scalar of slot `slot` (LUMICE_SHAPE_SCALAR_*), in the slot's own number format
+// (ShapeScalarDomainFor), with " · sync N" after it when the scalar is in a sync group.
+std::string FormatShapeDistCell(const ShapeDist& dist, int slot);
+// An axis distribution, in the axis modal's "%.3g".
+std::string FormatAxisDistCell(const AxisDist& axis);
+// "G Gauss · U Uniform · Z Zigzag · L Laplacian · G* Gauss (legacy)": the letters spelled out,
+// printed once under the document tables. Built from the same table as DistributionLetter and
+// the combo's own labels (AxisDistTypeLabel), so it cannot list a letter the cells do not use.
+std::string DistributionLegend();
 
 }  // namespace lumice::gui
 
