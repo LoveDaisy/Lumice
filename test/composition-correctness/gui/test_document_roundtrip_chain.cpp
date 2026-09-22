@@ -158,12 +158,13 @@ const std::vector<FieldProbe>& FieldProbes() {
         }
         return out;
       } },
-    { "view.modal_layout_vertical",
+    { "view.modal_layout_compact",
       // A view preference rather than a simulation input, and stored in the document alongside
       // them. It is here because "this field is only a preference" is exactly the reasoning under
-      // which a serializer stops writing one.
-      [](GuiState& s) { s.modal_layout_vertical = !GuiState{}.modal_layout_vertical; },
-      [](const GuiState& s) { return std::to_string(static_cast<int>(s.modal_layout_vertical)); } },
+      // which a serializer stops writing one. (Its JSON key is still the older
+      // "modal_layout_vertical" — see GuiState::modal_layout_compact.)
+      [](GuiState& s) { s.modal_layout_compact = !GuiState{}.modal_layout_compact; },
+      [](const GuiState& s) { return std::to_string(static_cast<int>(s.modal_layout_compact)); } },
     { "view.background",
       // All three background fields in one probe because they are one setting to the user: an
       // image, whether it is showing, and how far it is faded. Split across three probes, a

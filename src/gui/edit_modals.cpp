@@ -2309,7 +2309,7 @@ static void RenderModalTwoColumn(GuiState& state, bool crystal_dirty, bool axis_
   const ImGuiStyle& style = ImGui::GetStyle();
   const float column_h = ModalTwoColumnPreviewHeight() + style.ItemSpacing.y + ModalTwoColumnContentHeight();
 
-  ImGui::BeginChild("##modal_b_left", ImVec2(kModalColumnWidthCrystal, column_h), ImGuiChildFlags_None);
+  ImGui::BeginChild("##modal_expanded_left", ImVec2(kModalColumnWidthCrystal, column_h), ImGuiChildFlags_None);
   RenderCrystalPreviewPane(state);
   RenderModalSectionHeader("Crystal", crystal_dirty, show_dirty);
   ImGui::PushID(entry_layer);
@@ -2321,10 +2321,10 @@ static void RenderModalTwoColumn(GuiState& state, bool crystal_dirty, bool axis_
 
   ImGui::SameLine();
 
-  ImGui::BeginChild("##modal_b_right", ImVec2(kModalColumnWidthAxisOrFilter, column_h), ImGuiChildFlags_None);
+  ImGui::BeginChild("##modal_expanded_right", ImVec2(kModalColumnWidthAxisOrFilter, column_h), ImGuiChildFlags_None);
   RenderModalSectionHeader("Axis", axis_dirty, show_dirty);
   const float axis_h = kModalAxisSectionRows * ImGui::GetFrameHeightWithSpacing() + style.WindowPadding.y * 2.0f;
-  ImGui::BeginChild("##modal_b_axis", ImVec2(-FLT_MIN, axis_h), ImGuiChildFlags_None);
+  ImGui::BeginChild("##modal_expanded_axis", ImVec2(-FLT_MIN, axis_h), ImGuiChildFlags_None);
   ImGui::PushID(entry_layer);
   ImGui::PushID(entry_index);
   RenderAxisModal(state);
@@ -2334,7 +2334,7 @@ static void RenderModalTwoColumn(GuiState& state, bool crystal_dirty, bool axis_
   RenderModalSectionHeader("Filter", filter_dirty, show_dirty);
   const float header_h = ImGui::GetFrameHeightWithSpacing();
   const float filter_h = std::max(0.0f, column_h - axis_h - header_h * 2.0f);
-  ImGui::BeginChild("##modal_b_filter", ImVec2(-FLT_MIN, filter_h), ImGuiChildFlags_None);
+  ImGui::BeginChild("##modal_expanded_filter", ImVec2(-FLT_MIN, filter_h), ImGuiChildFlags_None);
   ImGui::PushID(entry_layer);
   ImGui::PushID(entry_index);
   RenderFilterModal();
@@ -2726,18 +2726,18 @@ void RenderEditModals(GuiState& state, GLFWwindow* window) {
   // View-preference toggles (layout selector + Immediate), right-aligned on the button row.
   // Neither marks the file dirty, both affect UI presentation only.
   //
-  // The reserve below MUST NOT under-estimate the row's real content width: it reserves space via
-  // Dummy(avail - budget) and then draws the real group after it, so an under-estimate compounds
-  // every frame — avail grows by the shortfall, the next frame's Dummy reserves even more on top
-  // of that, without bound (found the hard way: an earlier version of this row also drew a size
-  // readout here and, ~40px under budget, drove the modal from its fixed width floor past 1300px
-  // within a handful of frames, failing test_edit_modal.cpp's exact-width assertions).
+  // Right-aligned by moving the cursor to (content right edge - group width), NOT by reserving the
+  // gap with a Dummy first. The Dummy spelling has a feedback loop in it that this one does not:
+  // the reserve is computed from the CURRENT width, so any shortfall between the reserve and the
+  // real content widens the window, which widens the next frame's reserve, without bound — 4 px of
+  // shortfall (one ItemSpacing) grew the modal 4 px per frame, 72 px over the ~18 frames a test
+  // spends with the modal open, and an earlier 40 px shortfall drove it past 1300. Placing the
+  // cursor instead makes the row end exactly at the content edge whatever the window width is, so
+  // the window neither grows nor shrinks and the layout's own floor stays its actual width.
   //
-  // So the budget is DERIVED from the two controls rather than estimated as a constant: the combo
-  // is given an explicit width, and the checkbox width is ImGui's own formula (square of
-  // GetFrameHeight + ItemInnerSpacing.x + label). Both terms follow font/DPI/style automatically,
-  // which a hand-tuned constant cannot, and the failure mode above is a shortfall — the one thing
-  // an exact derivation cannot produce. kViewToggleGroupMargin only absorbs rounding.
+  // The two widths below are exact rather than estimated: the combo is given its width explicitly,
+  // and the checkbox's is ImGui's own formula for it (square of GetFrameHeight, ItemInnerSpacing,
+  // label). Both follow font, DPI and style automatically, which a hand-tuned constant cannot.
   ImGui::SameLine();
   // Two-shape layout selector. Compact keeps most of the halo preview visible at the cost of one
   // tab click per section; Expanded shows Crystal, Axis and Filter at once and leaves almost no
@@ -2747,7 +2747,6 @@ void RenderEditModals(GuiState& state, GLFWwindow* window) {
     "Compact — preview on top, one tab per section.\nKeeps most of the halo preview visible.",
     "Expanded — Crystal, Axis and Filter side by side, no tabs.\nNo tab switching; almost no preview left.",
   };
-  constexpr float kViewToggleGroupMargin = 4.0f;
   // Widest preview text + the combo's own arrow button + frame padding: the closed control never
   // clips either name, at any font scale.
   float layout_combo_w = 0.0f;
@@ -2757,11 +2756,10 @@ void RenderEditModals(GuiState& state, GLFWwindow* window) {
   layout_combo_w += ImGui::GetFrameHeight() + style.FramePadding.x * 2.0f;
   const float immediate_w = ImGui::GetFrameHeight() + style.ItemInnerSpacing.x +
                             ImGui::CalcTextSize("Immediate##edit_modal", nullptr, true).x;
-  const float view_toggle_group_w = layout_combo_w + style.ItemSpacing.x + immediate_w + UiPx(kViewToggleGroupMargin);
-  const float avail = ImGui::GetContentRegionAvail().x;
-  if (avail > view_toggle_group_w) {
-    ImGui::Dummy(ImVec2(avail - view_toggle_group_w, 0));
-    ImGui::SameLine();
+  const float view_toggle_group_x =
+      ImGui::GetContentRegionMax().x - (layout_combo_w + style.ItemSpacing.x + immediate_w);
+  if (view_toggle_group_x > ImGui::GetCursorPosX()) {
+    ImGui::SetCursorPosX(view_toggle_group_x);
   }
   int layout_selector_idx = state.modal_layout_compact ? 0 : 1;
   ImGui::SetNextItemWidth(layout_combo_w);

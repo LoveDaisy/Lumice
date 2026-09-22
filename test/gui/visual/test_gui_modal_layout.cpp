@@ -38,17 +38,18 @@ struct ModalLayoutScene {
   gui::EditTarget tab;
   gui::CrystalType crystal_type;
   FilterKind filter;
-  // Target layout. The test always drives H->V (or V->H) as a toggle while the modal is
-  // already open, never by pre-setting the flag; see the snap note in the test body.
-  bool vertical;
+  // Target layout: Compact (true) or Expanded (false). The test always drives the flip as a
+  // toggle while the modal is already open, never by pre-setting the flag; see the snap note in
+  // the test body.
+  bool compact;
   // Crystal tab only: expand the default-collapsed "Face Distance" section, which swaps in a
   // second 6-row property table. Does not change the modal's size (the content pane is a
   // fixed-height child), only what is drawn inside it.
   bool expand_face_distance;
-  // Asserted before the capture. This is the direct guard for the H<->V snap: without the
-  // toggle the vertical modal keeps the ~820 px width the stretch column last converged to
-  // instead of snapping to kEditModalMinWidthVertical, and the reference would silently be
-  // shot in the wrong layout.
+  // Asserted before the capture. This is the direct guard for the layout snap: without the
+  // toggle the window keeps whatever width the stretch column last converged to instead of
+  // snapping to its layout's floor, and the reference would silently be shot in the wrong
+  // layout.
   float expect_width;
 };
 
@@ -74,11 +75,15 @@ constexpr lumice::test::MaxCcRuler kRuler{ /*tau=*/16, /*max_cc_threshold=*/70 }
 static constexpr double kDeterministicThresholdDb = 40.0;
 
 // clang-format off
+// Two shapes, and each covers one crystal scene and one filter scene, so neither is pinned only
+// by the content that happens to suit it. The pairing is not arbitrary: the heaviest crystal
+// content (Pyramid with Face Distance expanded) goes to Expanded, whose 390 px Crystal column is
+// the narrowest place the shape table is ever drawn.
 static const ModalLayoutScene kScenes[] = {
-  {"crystal_prism",   gui::EditTarget::kCrystal, gui::CrystalType::kPrism,   FilterKind::kNone,      false, false, 820.0f},
-  {"crystal_pyramid", gui::EditTarget::kCrystal, gui::CrystalType::kPyramid, FilterKind::kNone,      true,  true,  420.0f},
-  {"filter_raypath",  gui::EditTarget::kFilter,  gui::CrystalType::kPrism,   FilterKind::kRaypath,   false, false, 820.0f},
-  {"filter_ee",       gui::EditTarget::kFilter,  gui::CrystalType::kPrism,   FilterKind::kEntryExit, false, false, 820.0f},
+  {"crystal_prism",   gui::EditTarget::kCrystal, gui::CrystalType::kPrism,   FilterKind::kNone,      true,  false, 420.0f},
+  {"crystal_pyramid", gui::EditTarget::kCrystal, gui::CrystalType::kPyramid, FilterKind::kNone,      false, true,  822.0f},
+  {"filter_raypath",  gui::EditTarget::kFilter,  gui::CrystalType::kPrism,   FilterKind::kRaypath,   true,  false, 420.0f},
+  {"filter_ee",       gui::EditTarget::kFilter,  gui::CrystalType::kPrism,   FilterKind::kEntryExit, false, false, 822.0f},
 };
 // clang-format on
 static constexpr int kSceneCount = sizeof(kScenes) / sizeof(kScenes[0]);
@@ -87,10 +92,10 @@ static constexpr int kSceneCount = sizeof(kScenes) / sizeof(kScenes[0]);
 // for the whole process and does NOT re-center a modal that merely changed size, so the
 // position "Edit Entry" happens to be at when a scene runs is a function of which earlier test
 // last opened it: measured, the same scene sat at y=48 running under --filter modal_layout and
-// at y=93 under the full suite, which for the 884 px vertical modal leaves 3 px of headroom
+// at y=93 under the full suite, which for the 884 px modal leaves 3 px of headroom
 // above the framebuffer bottom. Pinning the position makes the "modal fits on screen" gate a
 // property of this suite rather than of the test order. The value is arbitrary except that both
-// the 820x517 and 420x884 layouts must fit inside 1600x980 from here.
+// the 420x884 (Compact) and 822x884 (Expanded) layouts must fit inside 1600x980 from here.
 constexpr float kModalParkX = 20.0f;
 constexpr float kModalParkY = 20.0f;
 
@@ -135,37 +140,40 @@ void RegisterModalLayoutTests(ImGuiTestEngine* engine) {
 
       BuildSceneState(scene);
 
-      // The vertical (420 px) and horizontal (820 px) widths are only reached via
-      // SetNextWindowSize on the frame RenderEditModals observes modal_layout_vertical
+      // The Compact (420 px) and Expanded (822 px) widths are only reached via
+      // SetNextWindowSize on the frame RenderEditModals observes modal_layout_compact
       // FLIP (edit_modals.cpp). Without a flip the window keeps whatever width
       // AlwaysAutoResize last converged to, which the stretch column then holds — the
-      // "~800 wide vertical modal" trap. So: pre-set the OPPOSITE of the target while the
+      // "too-wide Compact modal" trap. So: pre-set the OPPOSITE of the target while the
       // modal is closed (that flip is consumed harmlessly — a popup that is not open
       // clears NextWindowData), open, then flip to the target while it is open.
-      gui::g_state.modal_layout_vertical = !scene.vertical;
+      gui::g_state.modal_layout_compact = !scene.compact;
       ctx->Yield(2);
 
       gui::EditRequest req{ scene.tab, /*layer_idx=*/0, /*entry_idx=*/0 };
       gui::OpenEditModal(req, gui::g_state);
       ctx->Yield(4);
 
-      gui::g_state.modal_layout_vertical = scene.vertical;
+      gui::g_state.modal_layout_compact = scene.compact;
       ctx->Yield(6);
 
       ImGuiWindow* win = ctx->GetWindowByRef("Edit Entry");
       IM_CHECK(win != nullptr);
       IM_CHECK(win->WasActive);
 
-      // Select the tab explicitly rather than relying on OpenEditModal's
+      // Compact only: select the tab explicitly rather than relying on OpenEditModal's
       // g_active_tab + g_pending_tab_select. That intent does NOT survive the layout toggle
-      // above: the two layouts host the TabBar in different child windows
-      // (##modal_right_pane vs ##modal_bottom_pane), so toggling builds a fresh ImGuiTabBar
-      // that falls back to its first tab (Crystal) — long after the one-shot
-      // ImGuiTabItemFlags_SetSelected was consumed. Measured: without this click the two
-      // filter scenes captured the Crystal tab and came out byte-identical to crystal_prism,
-      // i.e. three scenes' worth of green covering one scene's worth of pixels.
-      ctx->ItemClick(scene.tab == gui::EditTarget::kFilter ? "**/###filter_tab" : "**/###crystal_tab");
-      ctx->Yield(3);
+      // above — toggling builds a fresh ImGuiTabBar that falls back to its first tab (Crystal),
+      // long after the one-shot ImGuiTabItemFlags_SetSelected was consumed. Measured: without
+      // this click the two filter scenes captured the Crystal tab and came out byte-identical to
+      // crystal_prism, i.e. three scenes' worth of green covering one scene's worth of pixels.
+      //
+      // The Expanded layout has no tab bar at all — all three sections are drawn every frame —
+      // so there is nothing to click and the ref below would fail to find the item.
+      if (scene.compact) {
+        ctx->ItemClick(scene.tab == gui::EditTarget::kFilter ? "**/###filter_tab" : "**/###crystal_tab");
+        ctx->Yield(3);
+      }
 
       // Face Distance is a collapsible section whose open flag lives in ImGui window storage.
       // ResetTestState() clears that storage, so every scene starts with it folded and only the

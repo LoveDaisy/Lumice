@@ -150,9 +150,10 @@ ImGuiID AxisDistComboId(ImGuiTestContext* ctx, const char* row_label) {
   return ImHashStr("##dist", 0, mean.ParentID);
 }
 
-// The topmost window that is not a BeginChild pane. The modal opens two child panes of its own
-// (##modal_left_pane / ##modal_right_pane) which sit after their parent in g.Windows, so a bare
-// g.Windows.back() would name a child rather than the window whose z-order is under test.
+// The topmost window that is not a BeginChild pane. The modal opens child panes of its own
+// (##modal_top_pane / ##modal_bottom_pane in Compact, ##modal_expanded_* in Expanded) which sit
+// after their parent in g.Windows, so a bare g.Windows.back() would name a child rather than the
+// window whose z-order is under test.
 ImGuiWindow* TopmostRootWindow() {
   ImGuiContext* g = ImGui::GetCurrentContext();
   for (int i = g->Windows.Size - 1; i >= 0; --i) {
@@ -1606,9 +1607,9 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
       gui::DoNew();
       // The production entry, not ResetTestState(): that would also run ResetModalState(), whose
       // own clear is not the one under test. DoNew rebuilds g_state from the production defaults
-      // (vertical + immediate), so the two view preferences the harness pins are re-pinned here —
+      // (Compact + immediate), so the two view preferences the harness pins are re-pinned here —
       // in immediate mode there is no OK button to press below.
-      gui::g_state.modal_layout_vertical = false;
+      gui::g_state.modal_layout_compact = true;
       gui::g_state.modal_immediate_mode = false;
       ctx->Yield(2);
       // The new document's only entry sits on pool crystal id 0 again — the same key the memory
@@ -1948,8 +1949,10 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
   // Sync takes comes out of the slider. Two failures are invisible in any state assertion: the
   // slider hitting PrepareSliderLayout's 40 px floor (below which it stops shrinking and starts
   // overflowing its cell), and the content needing a scrollbar in the modal's fixed-height pane.
-  // Both are measured in the worst case the modal supports — the narrow vertical layout, a Pyramid,
-  // Face Distance expanded.
+  // Both are measured in the Compact layout with a Pyramid and Face Distance expanded. Compact is
+  // no longer the narrowest table the modal draws — the Expanded layout's 390 px Crystal column is
+  // ~14 px tighter, and has its own case below — but it is the only one of the two with a
+  // fixed-height tab pane, so the scrollbar half of the claim lives here.
   //
   // The layout flip is also P110's evidence: the 420 px floor is applied on the frame
   // RenderEditModals observes the flag CHANGE, so the window has to be open before the flip.
@@ -1966,18 +1969,18 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
       // ItemClose/ItemClick pair at the end of the body.
       const ScopedPopups popup_guard(ctx);
 
-      gui::g_state.modal_layout_vertical = false;
+      gui::g_state.modal_layout_compact = false;
       ctx->Yield(2);
       OpenCardEditor(ctx, 0, kCrystalTabRef);
       ctx->Yield(4);
-      gui::g_state.modal_layout_vertical = true;
+      gui::g_state.modal_layout_compact = true;
       ctx->Yield(6);
       ctx->ItemOpen("**/Face Distance##modal");
       ctx->Yield(4);
 
       ImGuiWindow* win = ctx->GetWindowByRef("Edit Entry");
       IM_CHECK(win != nullptr);
-      IM_CHECK_EQ(win->Size.x, 420.0f);  // the window really did snap to the narrow layout
+      IM_CHECK_EQ(win->Size.x, 420.0f);  // the window really did snap to the Compact layout
 
       const auto slider = ctx->ItemInfo("**/##Face 3##modal_fd_slider");
       const auto input = ctx->ItemInfo("**/##Face 3##modal_fd_input");
@@ -2017,8 +2020,8 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
       // runs when the case passes.
       ctx->ItemClose("**/Face Distance##modal");
       ctx->Yield(2);
-      gui::g_state.modal_layout_vertical = false;
-      ctx->Yield(4);
+      // No layout to restore: the case reached the harness's pinned layout (Compact) by flipping
+      // INTO it, so it is already there.
       ctx->ItemClick(kCancel);
       ctx->Yield(2);
     };
@@ -2051,21 +2054,21 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
       // the ItemClose/ItemClick at the bottom, and the second call would then be driving a modal the
       // first one left open. The guard is what makes each call start from a closed modal regardless
       // of how the previous one ended.
-      auto check_layout = [ctx](bool vertical) {
+      auto check_layout = [ctx](bool compact) {
         const ScopedPopups popup_guard(ctx);
         // Same flag-flip dance as the case above, for the same reason.
-        gui::g_state.modal_layout_vertical = !vertical;
+        gui::g_state.modal_layout_compact = !compact;
         ctx->Yield(2);
         OpenCardEditor(ctx, 0, kCrystalTabRef);
         ctx->Yield(4);
-        gui::g_state.modal_layout_vertical = vertical;
+        gui::g_state.modal_layout_compact = compact;
         ctx->Yield(6);
         ctx->ItemOpen("**/Face Distance##modal");
         ctx->Yield(4);
 
         ImGuiWindow* win = ctx->GetWindowByRef("Edit Entry");
         IM_CHECK(win != nullptr);
-        IM_CHECK_EQ(win->Size.x, vertical ? 420.0f : 820.0f);
+        IM_CHECK_EQ(win->Size.x, compact ? 420.0f : 822.0f);
 
         // Both shape tables, found by their column signature rather than by an id we would have to
         // reproduce through the child-window stack.
@@ -2091,7 +2094,7 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
             const float ideal = ImMax(column.ContentMaxXHeadersIdeal, column.ContentMaxXUnfrozen);
             if (ideal > column.WorkMaxX) {
               IM_ERRORF("column %s clips in the %s layout: needs %.1f, has %.1f", name,
-                        vertical ? "vertical" : "horizontal", static_cast<double>(ideal - column.WorkMinX),
+                        compact ? "Compact" : "Expanded", static_cast<double>(ideal - column.WorkMinX),
                         static_cast<double>(column.WorkMaxX - column.WorkMinX));
             }
           }
@@ -2104,12 +2107,131 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
         ctx->Yield(2);
       };
 
-      check_layout(/*vertical=*/false);
+      check_layout(/*compact=*/false);
 
       if (ctx->IsError()) {
         return;
       }
-      check_layout(/*vertical=*/true);
+      check_layout(/*compact=*/true);
+    };
+  }
+
+  // The Expanded layout's Crystal column is the NARROWEST place the shape table is ever drawn:
+  // 390 px of child, ~374 px usable, against Compact's ~388. The case above measures Compact
+  // because that is where the fixed-height pane's scrollbar claim lives; this one measures the
+  // column, because the width claim's worst case moved here when Expanded replaced the
+  // side-by-side layout, and nothing was driving this width before — the two-column layout was a
+  // hands-on prototype no automated case ever selected.
+  {
+    ImGuiTest* t =
+        IM_REGISTER_TEST(engine, "edit_modal", "the_sync_column_leaves_the_slider_room_in_the_expanded_column");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      ctx->Yield(2);
+      EntryCrystal().type = gui::CrystalType::kPyramid;
+
+      const ScopedPopups popup_guard(ctx);
+
+      // Same flag-flip dance as the two cases above: the width floor is applied on the frame
+      // RenderEditModals observes the CHANGE, so the window has to be open before the flip.
+      gui::g_state.modal_layout_compact = true;
+      ctx->Yield(2);
+      OpenCardEditor(ctx, 0, kCrystalTabRef);
+      ctx->Yield(4);
+      gui::g_state.modal_layout_compact = false;
+      ctx->Yield(6);
+      ctx->ItemOpen("**/Face Distance##modal");
+      ctx->Yield(4);
+
+      ImGuiWindow* win = ctx->GetWindowByRef("Edit Entry");
+      IM_CHECK(win != nullptr);
+      IM_CHECK_EQ(win->Size.x, 822.0f);  // the window really did snap to the Expanded layout
+
+      const auto slider = ctx->ItemInfo("**/##Face 3##modal_fd_slider");
+      const auto input = ctx->ItemInfo("**/##Face 3##modal_fd_input");
+      const auto swatch = ctx->ItemInfo("**/##sync_Face 3##modal_fd");
+      const auto rand_check = ctx->ItemInfo("**/##rnd_Face 3##modal_fd");
+      // Same three claims as the Compact case: the slider is off PrepareSliderLayout's 40 px floor,
+      // and the [slider][input] pair clears the fixed columns that follow it in order.
+      IM_CHECK_GT(slider.RectFull.GetWidth(), 40.0f);
+      IM_CHECK_LT(input.RectFull.Max.x, swatch.RectFull.Min.x);
+      IM_CHECK_LT(swatch.RectFull.Max.x, rand_check.RectFull.Min.x);
+      // And the Crystal column carries all of it without a horizontal scrollbar. Found by walking
+      // ImGui's window list rather than by reproducing the child id through the modal's stack.
+      ImGuiContext& g = *ImGui::GetCurrentContext();
+      bool found_column = false;
+      for (ImGuiWindow* w : g.Windows) {
+        if (w->ParentWindow == win && w->WasActive && std::strstr(w->Name, "modal_expanded_left") != nullptr) {
+          found_column = true;
+          if (w->ScrollMax.x != 0.0f) {
+            IM_ERRORF("the Crystal column '%s' scrolls horizontally (ScrollMax.x=%.1f)", w->Name,
+                      static_cast<double>(w->ScrollMax.x));
+          }
+        }
+      }
+      IM_CHECK(found_column);  // a renamed column must fail loudly, not silently skip the check
+
+      ctx->ItemClose("**/Face Distance##modal");
+      ctx->Yield(2);
+      gui::g_state.modal_layout_compact = true;
+      ctx->Yield(4);
+      ctx->ItemClick(kCancel);
+      ctx->Yield(2);
+    };
+  }
+
+  // What a filter long enough to overflow its region does to the Expanded layout. The Filter region
+  // is the one part of that layout with a derived height (column minus the fixed Axis region minus
+  // two headers), so "many rows" is the one input that can starve it, and a fixed-height region has
+  // no way to say so — it just clips.
+  //
+  // The claim is therefore not "it never scrolls" but the two things that make scrolling usable:
+  // the region really does offer scroll (rather than swallowing the tail), and it still shows
+  // enough rows at once to work in. Twenty rows is well past what the region can hold and well
+  // short of kMaxSummandRows, so it exercises the overflow path without testing the cap.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "edit_modal", "a_long_filter_scrolls_inside_the_expanded_layout");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      const ScopedPopups popup_guard(ctx);
+      constexpr int kRows = 20;
+      SeedOutFilter("3-1-5");
+      for (int i = 1; i < kRows; ++i) {
+        AppendPoolRow("3-2-6");
+      }
+      ctx->Yield(2);
+
+      gui::g_state.modal_layout_compact = true;
+      ctx->Yield(2);
+      OpenCardEditor(ctx, 0, kCrystalTabRef);
+      ctx->Yield(4);
+      gui::g_state.modal_layout_compact = false;
+      ctx->Yield(6);
+
+      ImGuiWindow* win = ctx->GetWindowByRef("Edit Entry");
+      IM_CHECK(win != nullptr);
+      IM_CHECK_EQ(win->Size.x, 822.0f);
+
+      ImGuiContext& g = *ImGui::GetCurrentContext();
+      ImGuiWindow* filter_region = nullptr;
+      for (ImGuiWindow* w : g.Windows) {
+        if (w->WasActive && std::strstr(w->Name, "modal_expanded_filter") != nullptr) {
+          filter_region = w;
+        }
+      }
+      IM_CHECK(filter_region != nullptr);  // a renamed region must fail loudly, not silently skip
+      ctx->LogInfo("Expanded Filter region: height=%.1f ScrollMax.y=%.1f for %d rows",
+                   static_cast<double>(filter_region->Size.y), static_cast<double>(filter_region->ScrollMax.y), kRows);
+      // Overflow reaches the user as scroll, not as a clipped tail.
+      IM_CHECK_GT(filter_region->ScrollMax.y, 0.0f);
+      // ...and what is on screen at once is still a workable slice of the list. Six rows is the
+      // floor this fixes: below that the region stops being an editor and becomes a peephole.
+      IM_CHECK_GT(filter_region->InnerRect.GetHeight(), 6.0f * ImGui::GetFrameHeightWithSpacing());
+
+      gui::g_state.modal_layout_compact = true;
+      ctx->Yield(4);
+      ctx->ItemClick(kCancel);
+      ctx->Yield(2);
     };
   }
 
@@ -2607,12 +2729,12 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
       })";
       // DeserializeFromJson assigns a fresh GuiState, which resets the modal's two display-tier
       // flags to their STRUCT defaults rather than to whatever the harness had them at.
-      // modal_layout_vertical in particular defaults to true, and the harness never recomputes it
-      // without a window resize — so an import would silently hand the clicks below a vertical modal
-      // whose bottom button row is off screen. Both flags are therefore set AFTER the import.
-      const bool layout_vertical_before = gui::g_state.modal_layout_vertical;
+      // modal_layout_compact in particular defaults to true, and the harness never recomputes it
+      // without a window resize — so an import would silently hand the clicks below a modal whose
+      // bottom button row is off screen. Both flags are therefore set AFTER the import.
+      const bool layout_compact_before = gui::g_state.modal_layout_compact;
       IM_CHECK(gui::DeserializeFromJson(core_json, gui::g_state));
-      gui::g_state.modal_layout_vertical = layout_vertical_before;
+      gui::g_state.modal_layout_compact = layout_compact_before;
       gui::g_state.modal_immediate_mode = true;
       ctx->Yield(2);
       IM_CHECK_EQ(EntryCrystal().type, gui::CrystalType::kPrism);

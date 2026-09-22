@@ -187,10 +187,11 @@ void ResetTestState() {
   gui::g_crystal_style = 1;
   gui::g_state.left_panel_collapsed = false;
   gui::g_state.right_panel_collapsed = false;
-  // Modal view preferences: pin to legacy defaults (H + Staged) for test
-  // determinism. Production defaults changed to V + Immediate in
-  // gui-polish-v15 round 2; individual tests opt-in explicitly as needed.
-  gui::g_state.modal_layout_vertical = false;
+  // Modal view preferences: pin to Compact + Staged for test determinism. Compact is the layout
+  // that has a tab bar, which is what the bulk of the edit_modal cases address their clicks
+  // through (OpenCardEditor and friends reach for ###crystal_tab / ###filter_tab); the Expanded
+  // layout has no tab bar at all, so a case that wants it says so explicitly.
+  gui::g_state.modal_layout_compact = true;
   gui::g_state.modal_immediate_mode = false;
   gui::g_preview_vp.active = false;
   gui::g_preview_vp.curve_labels.clear();
@@ -324,7 +325,7 @@ ScopedPopups::~ScopedPopups() {
   // The two view preferences a case may have flipped to reach a layout, pinned back to the values
   // ResetTestState() hands every case. Listed so this object is a complete statement of what it
   // borrowed, not a list of what ResetTestState() happens to miss today.
-  gui::g_state.modal_layout_vertical = false;
+  gui::g_state.modal_layout_compact = true;
   gui::g_state.modal_immediate_mode = false;
   // ImGui's own stack is the part nothing else reaches. Level 0 rather than a search for our entry:
   // by the time a case is leaving, every popup on the stack was opened by it (a sync-group popup

@@ -69,12 +69,7 @@ namespace {
 // 86 with config_summary_window_open (the Summary window's open flag), registered kSession like
 // color_window_open and defaults_panel_open before it and ineligible for the same reason: which
 // windows are open is not part of the document. Not serialized, so no row can reach the panel.
-// 87 with modal_layout_prototype: the Edit Entry modal's B/C column-layout prototype selector,
-// registered kSession like modal_immediate_mode next to it and ineligible for the same reason —
-// which layout prototype is selected is a throwaway hands-on-comparison switch, not persisted
-// (unlike its sibling modal_layout_vertical, which stays untouched), so no row can reach the
-// panel either.
-constexpr std::size_t kExpectedGovernedFieldCount = 87;
+constexpr std::size_t kExpectedGovernedFieldCount = 86;
 
 std::vector<std::string> AllGovernedFieldNames() {
   std::vector<std::string> names;
