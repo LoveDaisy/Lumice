@@ -420,7 +420,7 @@
 档位语言沿用 §2。「面板→主窗口」问的是面板内编辑能否正确抵达主文档 / 仿真；「主窗口→面板」问的是主窗口
 动作（New / Open / Run / Revert / 结构编辑）之后面板派生态是否仍与文档一致。
 
-**Analysis 面板**（`RaypathAnalysisSession` 19 字段 + `AnalysisResultView` 8 字段 + `analysis_run_in_progress`）：
+**Analysis 面板**（`RaypathAnalysisSession` 21 字段 + `AnalysisResultView` 8 字段 + `analysis_run_in_progress`）：
 
 | 字段 | 档位 | 面板→主窗口 | 主窗口→面板 |
 |---|---|---|---|
@@ -428,6 +428,8 @@
 | `roi_mode` / `cone_center_valid` / `cone_center_dir` / `cone_marker_dragging` / `cone_radius_deg` / `ray_num_millions` / `infinite` / `ray_budget_initialized` / `pick_armed` / `symmetry_p/b/d` / `selected_entry` / `fetched_once` / `fetched_generation` / `fetched_symmetry` | T-session（分析**请求**参数与列表读取游标） | 不写主文档（`RaypathAnalysisSession` 注释「none of it reaches the sim commit」，逐字段 grep 零写路径） | 4 个文档切换 reason 整体清空；`kRevert` 保留（请求参数不属于文档） |
 | `analyzed_cone_center_dir` | T-session（派生：请求时刻的锥心副本） | 不写主文档 | 有独立漂移检测 `ConeCenterDriftedFromResult`——它回答「锥心 vs 结果」，与本节谓词正交，不合并 |
 | `started` | reconcile 输入（`run_intent` 的分析侧孪生） | 不写主文档 | `DoRun` 清（server 转回渲染会话）；文档切换清 |
+| `excluded_memory` / `excluded_seq` | T-session（记忆：Exclude 点击时该行的 `share_pct` + 读取时的 symmetry 位 + 单调序号，键 `(pool 槽位, filter 行 token)`） | 不写主文档——它是关于**已排除的链**曾经显示过什么的记录；排除本身（filter）才是文档的 | 4 个文档切换 reason 随整体清空；`kRevert` 保留（结果也保留）；Include again 删对应键 |
+| 列表里的置灰「excluded」行 | **派生谓词，不是字段**（`ComputeExcludedRaypathRows`，`analysis_panel.hpp`）：每帧从「根层晶体上每个 Out filter 的纯光路 token 行」减去「结果 payload 里同名 `display` 的行」算出，唯一权威是文档的 filter；`was X%` 来自上一行的记忆，其余全部可重算 | 唯一反向写路径「Include again」只走 `WriteFilterToPool` / `PropagateFilterIdToLinked`（与 Exclude 同一对原语），由 reconciler 每帧 diff 接到硬 dirty——与 Exclude 一致；对打开着的 Edit Entry 弹窗而言它就是一次普通的外部 pool 写，落在 §11.3 三方合并「仅 theirs 变」分支 | 不缓存派生结果，所以文档切换 / Revert / 弹窗编辑 filter 之后无需任何重同步：下一帧重算即是当前真值 |
 | `analysis_result.payload` / `entries_symmetry` / `display_energy` / `display_order` / `display_cumulative_pct` / `display_total` / `display_ring_count` | DERIVED（poller 喂入 + display-time 重投影） | 唯一反向写路径「Exclude this raypath」只写 `state.filters`，由 `gui_state_reconcile.cpp` 每帧 diff 接到 `MarkStructHardDirty`，隔一帧生效——一致 | 文档切换清空；**Run / Revert 有意保留**，由 §10.1 谓词标 stale |
 | `analysis_result.analyzed_scene` | DERIVED（§10.1 新增） | 不写主文档 | 随 `analysis_result` 整体清空 / 保留；`DoAnalyze` 每次重写 |
 | `analysis_run_in_progress` | DERIVED（每帧从 `started` + poller 观测派生） | 不写主文档 | 文档切换清；其余由 reconcile 每帧重算 |
