@@ -29,6 +29,7 @@
 #include "gui/raypath_segments.hpp"
 #include "gui/semantic_colors.hpp"
 #include "gui/symmetry_ui.hpp"
+#include "gui/table_focus_ring.hpp"
 #include "gui/theme.hpp"
 #include "gui/user_defaults.hpp"
 #include "gui/window_sizing.hpp"
@@ -147,6 +148,12 @@ static bool g_pending_tab_select = false;
 // Edit buffers
 static CrystalConfig g_crystal_buf;
 static AxisDist g_axis_buf[3];  // zenith, azimuth, roll
+
+// The column-major Tab ring over the Crystal tab's two property tables (gui/table_focus_ring.hpp).
+// One instance, like g_crystal_buf: only one Edit Entry window is ever open. Its membership is
+// rebuilt every frame the tab is drawn, so switching tab or entry needs no reset — the ids it last
+// recorded simply never match a widget outside those tables, and it stands aside.
+static TableFocusRing g_crystal_table_focus_ring;
 
 // Last triple classified as Custom, per pool crystal id. Captured level-triggered inside
 // RenderAxisModal (every frame the Axis tab is the active tab) so any edit path — slider,
@@ -395,9 +402,19 @@ bool RenderCustomWedgeInput(const char* popup_id, float* value) {
 // fills the whole table cell (the field name lives in the Parameter column instead).
 // `reload_active_input`: true on a frame `*value` was replaced from outside the widgets (the edit
 // modal's pull from the pool) — see panels.hpp ReloadInputTextIfActive.
+// `focus_input_now`: give the input box the keyboard this frame — same contract as
+// SliderWithInput's parameter of that name (panels.hpp), for the same reason: only the function
+// submitting the box can put the SetKeyboardFocusHere(0) immediately before it.
+//
+// The input box's id, "##<label>_input", is the same rule FormatSliderInputId (panels.cpp) applies
+// to SliderWithInput's box, so a caller reasoning about either kind of row derives it the same way.
+static void FormatPresetEditInputId(const char* label, char* input_id, size_t input_id_size) {
+  snprintf(input_id, input_id_size, "##%s_input", label);
+}
+
 bool SliderWithPresetEdit(const char* label, float* value, float min_val, float max_val, const char* fmt,
                           SliderScale scale, const WedgePreset* presets, int preset_count, bool trailing_label = true,
-                          bool reload_active_input = false) {
+                          bool reload_active_input = false, bool focus_input_now = false) {
   char display_buf[64];
   char slider_id[64];
   char input_id[64];
@@ -415,7 +432,7 @@ bool SliderWithPresetEdit(const char* label, float* value, float min_val, float 
     snprintf(display_buf, sizeof(display_buf), "%s", label);
   }
   snprintf(slider_id, sizeof(slider_id), "##%s_slider", label);
-  snprintf(input_id, sizeof(input_id), "##%s_input", label);
+  FormatPresetEditInputId(label, input_id, sizeof(input_id));
 
   float spacing = ImGui::GetStyle().ItemSpacing.x;
   float avail_w = ImGui::GetContentRegionAvail().x;
@@ -448,6 +465,9 @@ bool SliderWithPresetEdit(const char* label, float* value, float min_val, float 
   ImGui::PushItemWidth(input_w);
   if (reload_active_input) {
     ReloadInputTextIfActive(ImGui::GetID(input_id));
+  }
+  if (focus_input_now) {
+    ImGui::SetKeyboardFocusHere(0);  // 0 = the very next item, which is this box; never a count
   }
   changed |= ImGui::InputFloat(input_id, value, 0, 0, fmt);
   ImGui::PopItemWidth();
@@ -1169,7 +1189,10 @@ static void RenderCrystalPreviewPane(GuiState& /*state*/) {
 // columns are filled; the Sync / Rand / Spread columns are advanced but left BLANK. Blank here
 // means "not applicable" — visually distinct from the greyed-but-present state a randomizable row
 // shows when its Randomize checkbox is off. Advances all kShapeTableColumnCount columns.
-static bool RenderWedgeTableRow(const char* label, float* value, bool reload_active_input) {
+// `ring`: the same column-major Tab ring the RenderShapeDistTableRow rows of this table are in
+// (gui/table_focus_ring.hpp). This row is a member of its Value column only — it has no Spread
+// box to register.
+static bool RenderWedgeTableRow(const char* label, float* value, bool reload_active_input, TableFocusRing& ring) {
   ImGui::TableNextRow();
   ImGui::TableNextColumn();  // Parameter
   ShapeTableParamLabel(label);
@@ -1177,9 +1200,16 @@ static bool RenderWedgeTableRow(const char* label, float* value, bool reload_act
   // Fetched fresh every frame this row paints: the list now carries the user's saved shortcuts, so
   // it can change between frames (see GetWedgePresets in edit_modals.hpp).
   const std::vector<WedgePreset> presets = GetWedgePresets();
+  // Same shape as RenderShapeDistTableRow's Value column: the box's id derived in this ID scope
+  // by the rule that names it, the [slider][box][▼] group taken out of ImGui's own Tab walk.
+  char value_input_id[64];
+  FormatPresetEditInputId(label, value_input_id, sizeof(value_input_id));
+  const bool focus_value = ring.Register(RingColumn::kValue, ImGui::GetID(value_input_id));
+  ImGui::PushItemFlag(ImGuiItemFlags_NoTabStop, true);
   bool changed = SliderWithPresetEdit(label, value, 0.1f, 90.0f, "%.3f", SliderScale::kLinear, presets.data(),
                                       static_cast<int>(presets.size()),
-                                      /*trailing_label=*/false, reload_active_input);
+                                      /*trailing_label=*/false, reload_active_input, focus_value);
+  ImGui::PopItemFlag();
   // Wedge angles are non-randomizable: advance the remaining (kShapeTableColumnCount - content)
   // columns as intentionally-empty cells (Sync / Rand / Spread). Driven by the shared constant
   // rather than a hardcoded 3, so the blank count tracks any column-count change automatically —
@@ -1245,6 +1275,11 @@ static void RenderCrystalModal(GuiState& /*state*/) {
 
   ImGui::Spacing();
 
+  // The Tab ring spans BOTH tables below (shape parameters and Face Distance): one BeginFrame
+  // before the first, one EndFrame after the second, so Face Distance's boxes sort behind the
+  // shape rows' in each column. The Name box and the type radios above are outside it on purpose.
+  g_crystal_table_focus_ring.BeginFrame();
+
   // -- Shape parameters (property table) --
   // Every randomizable shape scalar is one RenderShapeDistTableRow (5 aligned columns:
   // Param | Value | Sync | Rand | Spread); the two Pyramid wedge angles are non-randomizable
@@ -1282,16 +1317,18 @@ static void RenderCrystalModal(GuiState& /*state*/) {
     // text back — see panels.hpp ReloadInputTextIfActive.
     if (cr.type == CrystalType::kPrism) {
       RenderShapeDistTableRow("Height##modal_cr", cr, LUMICE_SHAPE_SCALAR_HEIGHT,
-                              g_pull_adopted.shape_slot[LUMICE_SHAPE_SCALAR_HEIGHT]);
+                              g_pull_adopted.shape_slot[LUMICE_SHAPE_SCALAR_HEIGHT], g_crystal_table_focus_ring);
     } else {
       RenderShapeDistTableRow("Prism H##modal_cr", cr, LUMICE_SHAPE_SCALAR_PRISM_H,
-                              g_pull_adopted.shape_slot[LUMICE_SHAPE_SCALAR_PRISM_H]);
+                              g_pull_adopted.shape_slot[LUMICE_SHAPE_SCALAR_PRISM_H], g_crystal_table_focus_ring);
       RenderShapeDistTableRow("Upper H##modal_cr", cr, LUMICE_SHAPE_SCALAR_UPPER_H,
-                              g_pull_adopted.shape_slot[LUMICE_SHAPE_SCALAR_UPPER_H]);
+                              g_pull_adopted.shape_slot[LUMICE_SHAPE_SCALAR_UPPER_H], g_crystal_table_focus_ring);
       RenderShapeDistTableRow("Lower H##modal_cr", cr, LUMICE_SHAPE_SCALAR_LOWER_H,
-                              g_pull_adopted.shape_slot[LUMICE_SHAPE_SCALAR_LOWER_H]);
-      RenderWedgeTableRow("Upper A##modal_cr", &cr.upper_alpha, g_pull_adopted.wedge_upper_alpha);
-      RenderWedgeTableRow("Lower A##modal_cr", &cr.lower_alpha, g_pull_adopted.wedge_lower_alpha);
+                              g_pull_adopted.shape_slot[LUMICE_SHAPE_SCALAR_LOWER_H], g_crystal_table_focus_ring);
+      RenderWedgeTableRow("Upper A##modal_cr", &cr.upper_alpha, g_pull_adopted.wedge_upper_alpha,
+                          g_crystal_table_focus_ring);
+      RenderWedgeTableRow("Lower A##modal_cr", &cr.lower_alpha, g_pull_adopted.wedge_lower_alpha,
+                          g_crystal_table_focus_ring);
     }
     ImGui::EndTable();
   }
@@ -1311,11 +1348,12 @@ static void RenderCrystalModal(GuiState& /*state*/) {
         char label[32];
         snprintf(label, sizeof(label), "Face %d##modal_fd", i + 3);
         RenderShapeDistTableRow(label, cr, LUMICE_SHAPE_SCALAR_FACE_0 + i,
-                                g_pull_adopted.shape_slot[LUMICE_SHAPE_SCALAR_FACE_0 + i]);
+                                g_pull_adopted.shape_slot[LUMICE_SHAPE_SCALAR_FACE_0 + i], g_crystal_table_focus_ring);
       }
       ImGui::EndTable();
     }
   }
+  g_crystal_table_focus_ring.EndFrame();
 
   // -- Reset All (Crystal tab) --
   // Resets shape parameters to defaults. Preserves type/name/axis (axis lives
