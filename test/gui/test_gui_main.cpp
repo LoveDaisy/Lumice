@@ -186,6 +186,12 @@ void ResetTestState() {
   gui::g_preview_vp.active = false;
   gui::g_preview_vp.curve_labels.clear();
   gui::g_programmatic_resize = 0;
+  // The user's UI scale multiplier is process-wide and applied by the product's frame loop, not
+  // by this harness (every reference is a 1x capture, see the ApplyVisualLanguage call in main).
+  // A case that turns the Settings dial leaves the value behind, and the "(this window: N%)" note
+  // in the very next defaults_panel_layout capture would read it.
+  gui::g_ui_scale_multiplier = gui::kFactoryUiScaleMultiplier;
+  gui::g_ui_scale_dirty = false;
 
   // Runtime state
   gui::g_show_unsaved_popup = false;
