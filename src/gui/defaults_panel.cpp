@@ -1233,14 +1233,9 @@ void RenderDefaultsPanel(GuiState& state) {
   // reopens, for the rest of the session (io.IniFilename is null, so never across restarts).
   // Appearing re-applied the default on every reopen, which threw the user's drag away each time.
   //
-  // 608 = the original 560 plus two control rows (GetFrameHeight() + ItemSpacing.y = 15 + 2*3 + 3
-  // each), one per control §app gained after its first. The alternative was to let a new row take
-  // its height out of the two collapsible sections below, which is what the §app comment says fixed
-  // rows normally do — but that budget is not slack: shrinking the preset library by one row put
-  // an already-expanded preset's std input out of reach, which is a real loss of function for
-  // every user, not just for the case that caught it. A control added ABOVE the sections has to
-  // bring its own height with it. Through UiPx: these are screen sizes, and the row heights they
-  // budget for scale with the font.
+  // The default height's own derivation lives with the constant (defaults_panel.hpp), which is
+  // also where gui_test reads it. Through UiPx here: these are screen sizes, and the row heights
+  // they budget for scale with the font.
   //
   // Semi-variable (doc/gui-visual-language.md §9): width pinned, height the user's to drag between
   // kDefaultsPanelMinHeight and the work area, and kept for the session — hence FirstUseEver for
@@ -1253,9 +1248,8 @@ void RenderDefaultsPanel(GuiState& state) {
   // that can stay open across a scale change (analysis_panel.cpp, color_window.cpp) apply.
   static float s_sized_for_scale = 0.0f;
   const ImGuiCond size_cond = WindowResizeCondForScale(s_sized_for_scale, ImGuiCond_FirstUseEver);
-  ImGui::SetNextWindowSizeConstraints(
-      ImVec2(UiPx(kDefaultsPanelWidth), UiPx(kDefaultsPanelMinHeight)),
-      ImVec2(UiPx(kDefaultsPanelWidth), ClampedSecondaryWindowMaxHeight(FLT_MAX)));
+  ImGui::SetNextWindowSizeConstraints(ImVec2(UiPx(kDefaultsPanelWidth), UiPx(kDefaultsPanelMinHeight)),
+                                      ImVec2(UiPx(kDefaultsPanelWidth), ClampedSecondaryWindowMaxHeight(FLT_MAX)));
   ImGui::SetNextWindowSize(ImVec2(UiPx(kDefaultsPanelWidth), UiPx(kDefaultsPanelDefaultHeight)), size_cond);
   if (size_cond == ImGuiCond_Always) {
     // Re-centred with the resize: ImGui grows a window from its top-left, and the old centre was

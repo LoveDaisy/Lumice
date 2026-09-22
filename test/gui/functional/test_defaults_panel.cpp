@@ -566,7 +566,7 @@ void RegisterDefaultsPanelTests(ImGuiTestEngine* engine) {
       IM_CHECK_EQ(win->Size.y, dragged);
 
       // The next case's entry, taken here rather than left to whichever case runs next: the
-      // reset restores the default, so a reference scene shot after this case sees 760x584.
+      // reset restores the default, so a reference scene shot after this case sees the default rectangle.
       panel.Close();
       ResetTestState();
       panel.OpenOn(gui::DefaultsPanelSection::kSettings);

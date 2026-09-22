@@ -49,7 +49,12 @@ inline constexpr const char* kDefaultsPanelTitle = "Settings";
 // itself grows a scrollbar and the action row leaves the screen, which is the one state this
 // layout exists to prevent. gui_test reads all three, which is why they are here, not in the .cpp.
 inline constexpr float kDefaultsPanelWidth = 760.0f;
-inline constexpr float kDefaultsPanelDefaultHeight = 584.0f;
+// 608 = the pre-semi-variable 560 plus two control rows (GetFrameHeight() + ItemSpacing.y each),
+// one per control §app gained after its first — the second of them being the UI-scale row. A
+// control added ABOVE the two collapsible sections has to bring its own height with it rather
+// than take it out of their budget, which is not slack (shrinking the preset library by one row
+// once put an already-expanded preset's std input out of reach).
+inline constexpr float kDefaultsPanelDefaultHeight = 608.0f;
 inline constexpr float kDefaultsPanelMinHeight = 360.0f;
 
 // Open the panel and rebuild its row set from the CURRENT state. Also recomputes the checkbox set
