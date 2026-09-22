@@ -6,6 +6,7 @@
 #include <windows.h>
 #endif
 
+#include <algorithm>
 #include <chrono>
 #include <climits>
 #include <cmath>
@@ -115,6 +116,28 @@ void ApplyWindowFloorForScale(GLFWwindow* window, float layout_scale) {
     // Not marked programmatic on purpose: WindowSizeCallback then drops any aspect preset, which
     // is the truth — the preview region no longer has the ratio the preset promised.
     glfwSetWindowSize(window, plan.target_w, plan.target_h);
+  }
+  // A window sized to (nearly) the work area still has to SIT in it: the OS places a new window
+  // by its own cascade and a grown one keeps its top-left, so either can end with its bottom rows
+  // under the taskbar (measured on the 150% reference desktop at a 2.25x layout: status bar
+  // hidden). Same clamp ApplyAspectRatio applies after its own resize, frame included.
+  if (have_mon) {
+    int fl = 0;
+    int ft = 0;
+    int fr = 0;
+    int fb = 0;
+    glfwGetWindowFrameSize(window, &fl, &ft, &fr, &fb);
+    int px = 0;
+    int py = 0;
+    glfwGetWindowPos(window, &px, &py);
+    int w = 0;
+    int h = 0;
+    glfwGetWindowSize(window, &w, &h);
+    const int nx = std::max(mon.x + fl, std::min(px, mon.x + mon.w - w - fr));
+    const int ny = std::max(mon.y + ft, std::min(py, mon.y + mon.h - h - fb));
+    if (nx != px || ny != py) {
+      glfwSetWindowPos(window, nx, ny);
+    }
   }
 }
 
