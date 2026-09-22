@@ -24,6 +24,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "gui/analysis_result.hpp"
 #include "gui/gui_state.hpp"
@@ -292,6 +293,71 @@ std::string JoinerForDisplay(std::string_view display);
 // sees the filters diff and marks the document hard-dirty; the user re-runs. Returns false,
 // writing nothing, when the selection is not eligible.
 bool ApplyExcludeSelectedRaypath(GuiState& state);
+
+// ---- The excluded rows: the document's Out filters, read back as a view of the list -------------
+
+// One greyed row of the result list: a raypath the document's filters exclude, shown under the
+// result rows so the user can see what they have excluded so far and take it back. Pure
+// derivation (doc/gui-state-governance.md §10), recomputed every frame from two things that are
+// both already on hand — the Out filters on the crystals the document commits, and the result on
+// show — and cached nowhere: the exclusion's one authority is the document's filter, and a row
+// here is only that filter read back. The single piece that is remembered rather than derived is
+// `was_pct`, the share the chain had when it was excluded (RaypathAnalysisSession::excluded_memory).
+struct ExcludedRaypathRow {
+  // The chain as the list would print it — the filter row's raypath token, with the "C<id>("
+  // prefix the result rows carry when the layer holds more than one entry, so that the
+  // "not already a result row" test below and the search box both compare like with like.
+  std::string display;
+  std::string token;  // the filter row's text as the filter holds it, e.g. "3-5"
+  int pool_crystal_id = 0;
+  int filter_slot = 0;
+  size_t param_index = 0;  // the row's index in that filter's `param` — where Include again erases
+  // The remembered share, when the exclusion happened in this session under the symmetry the
+  // list on show is reduced with; nullopt when the filter was loaded or typed (nothing to
+  // remember) or the symmetry differs (the number would not be comparable).
+  std::optional<double> was_pct;
+  // The memory's own sequence number (0 when there is none) — what the newest-first order sorts
+  // on; a symmetry mismatch blanks `was_pct` but keeps the row where it was excluded.
+  uint64_t memory_seq = 0;
+};
+
+// The greyed rows for the current frame. One per raypath token of every Out filter on every
+// crystal the document commits in the ROOT scattering layer — the layer a single-segment chain,
+// the only kind Exclude writes, is always in — that is NOT the `display` of any entry of the
+// result on show. A token still in the result is not greyed: the filter did not take (or the
+// list was read under another symmetry), and the row is shown as the row it is. Only rows that
+// are a pure raypath token count (ParseRaypathSegment reads them); a hand-written rule
+// ("entry:2 & len:3") is not a chain and has no row here. A token two Out filters of one
+// crystal both hold is one row (FilterCoversRow, the same predicate Exclude's idempotence
+// reads). Order: the rows with a memory newest exclusion first, then the rows without one in
+// (pool slot, filter slot, param index) order, so the list is stable frame to frame. Empty
+// without a result on show. Pure.
+std::vector<ExcludedRaypathRow> ComputeExcludedRaypathRows(const GuiState& state);
+
+// Include again: take `row` back out of the document. Erases `param[row.param_index]` from the
+// filter in `row.filter_slot` — after re-checking that the row is still that token, so a filter
+// edited between the derivation and the click is left alone (returns false; next frame's
+// derivation shows what is there) — and writes the filter back through the pool's own
+// primitives: a filter with rows left is overwritten in place (WriteFilterToPool, so every
+// entry sharing the slot sees it); a filter with none left is unbound from every entry of the
+// crystal that referenced it (PropagateFilterIdToLinked to nullopt, the edit modal's own Remove
+// Filter path), the emptied slot left in the pool as that path leaves it. The chain's memory is
+// dropped with it. The frame-tail reconciler sees the pool diff and marks the document dirty;
+// the row is gone from the next frame's derivation, and the chain is back in the next Analyze.
+bool ApplyIncludeAgain(GuiState& state, const ExcludedRaypathRow& row);
+
+// The three texts a greyed row is drawn and copied with, in the header so a test can hold the
+// screen to them: the row's label (the chain as JoinerForDisplay draws it, then the "excluded"
+// tag — one selectable, one addressable label); the Energy cell ("was 12.34%", or an em dash
+// without a memory); and the "Copy row" text (`display,excluded,<was_pct or empty>` — three
+// fields, not the CSV's four: a greyed row has no cumulative share and no noise, and Export CSV
+// does not write it).
+std::string ExcludedRowLabel(std::string_view display);
+std::string ExcludedRowWasText(const std::optional<double>& was_pct);
+std::string ExcludedRowCopyText(const ExcludedRaypathRow& row);
+// The Include again button's label (an icon, so it fits the +/- column), one per row under a
+// PushID of the row's display text.
+extern const char* const kIncludeAgainButtonLabel;
 
 // The result list as CSV text — the Export CSV button's payload, and pure so a test can hold it to
 // a byte-exact expectation. It is the list AS SHOWN: the rows of `analysis_result.display_order`

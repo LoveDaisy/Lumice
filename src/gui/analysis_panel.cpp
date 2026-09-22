@@ -12,6 +12,7 @@
 #include <map>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -95,6 +96,13 @@ bool ContainsCaseInsensitive(const char* haystack, const char* needle) {
 // greyed excluded chain, say) can be run through the same box.
 bool RaypathRowMatchesSearch(const char* display) {
   return ContainsCaseInsensitive(display, g_analysis_search_filter.InputBuf);
+}
+
+// A row's Energy cell: its display energy as a percentage of the list's total, 0 for an empty
+// list. The one spelling of the number — the table draws it, and the exclusion memory records
+// it (ApplyExcludeSelectedRaypath), so "was 12.34%" is the "12.34%" the user last saw.
+double ComputeDisplayEnergyPct(double energy, double total) {
+  return total > 0.0 ? energy / total * 100.0 : 0.0;
 }
 
 }  // namespace
@@ -532,6 +540,15 @@ std::string Plural(int n, const char* one, const char* many) {
   return std::to_string(n) + " " + (n == 1 ? one : many);
 }
 
+// "This filter already excludes this row": the row's text is one of the filter's OR rows
+// (SummandText compares by text). The one predicate for "already excluded" — Exclude's
+// idempotence reads it (a row the filter holds is not appended twice), and so does the greyed-row
+// derivation (a token two Out filters of one crystal both hold is one row, not two), so the two
+// cannot come to disagree on what "held" means.
+bool FilterCoversRow(const FilterConfig& filter, const SummandText& row) {
+  return std::find(filter.param.begin(), filter.param.end(), row) != filter.param.end();
+}
+
 }  // namespace
 
 ExcludeEligibility EvaluateExcludeEligibility(const GuiState& state, std::string* why) {
@@ -673,6 +690,24 @@ bool ApplyExcludeSelectedRaypath(GuiState& state) {
   // of a second, hand-rolled dedup living here.
   const CrystalFilterCensus census = CensusForPoolCrystal(state, *pool);
 
+  // The share this row shows NOW, kept for the greyed row that will stand in for it once the
+  // filter takes (gui_state.hpp ExcludedRaypathMemory) — written by each path below that
+  // actually puts the token into a filter, and not by the idempotent no-op, which excluded
+  // nothing new and must not renumber a memory that is already there. The share is the Energy
+  // cell's own computation on the selected entry (one token, one row: a single-segment chain's
+  // text is exactly the row's key), under the symmetry the list on show was read with.
+  const auto& view = state.analysis_result;
+  const size_t e_idx = static_cast<size_t>(e - view.payload->entries.data());
+  const double share_pct = ComputeDisplayEnergyPct(
+      e_idx < view.display_energy.size() ? view.display_energy[e_idx] : 0.0, view.display_total);
+  const auto remember_share = [&state, pool, &rp, share_pct, &view] {
+    GuiState::RaypathAnalysisSession::ExcludedRaypathMemory memory;
+    memory.share_pct = share_pct;
+    memory.symmetry_bits = view.entries_symmetry;
+    memory.seq = ++state.analysis.excluded_seq;
+    state.analysis.excluded_memory[std::make_pair(*pool, rp.raypath_text)] = memory;
+  };
+
   // Every distinct Out filter on this crystal: append. The name, the action and the symmetry are
   // deliberately the FILTER's own, not the list's — this chain joins a filter that already governs
   // other rows under those bits, and giving one OR row its own symmetry is not something the
@@ -694,7 +729,7 @@ bool ApplyExcludeSelectedRaypath(GuiState& state) {
     FilterConfig filter = state.filters[static_cast<size_t>(slot)];
     size_t added = 0;
     for (const SummandText& row : rows) {
-      if (std::find(filter.param.begin(), filter.param.end(), row) == filter.param.end()) {
+      if (!FilterCoversRow(filter, row)) {
         filter.param.push_back(row);
         ++added;
       }
@@ -705,6 +740,7 @@ bool ApplyExcludeSelectedRaypath(GuiState& state) {
       continue;
     }
     WriteFilterToPool(state, *rep, filter);  // in place: every entry sharing the slot sees it
+    remember_share();
     GUI_LOG_INFO("[Analysis] appended raypath {} to filter \"{}\" on crystal pool {} ({} rows now)", rp.raypath_text,
                  filter.name, *pool, filter.param.size());
   }
@@ -733,11 +769,194 @@ bool ApplyExcludeSelectedRaypath(GuiState& state) {
     // and propagates the id to the rest of the (crystal, no-filter) group — i.e. to every other
     // entry of the crystal that had no filter.
     WriteFilterToPool(state, *first_unfiltered, filter);
+    remember_share();
     GUI_LOG_INFO("[Analysis] excluded raypath {} on crystal pool {} (filter \"{}\", symmetry {})", rp.raypath_text,
                  *pool, filter.name, static_cast<int>(sym));
   }
   return true;
 }
+
+// ---- The excluded rows -----------------------------------------------------------------------------
+
+namespace {
+
+// "3-5" from the parsed face sequence — the list's own spelling of a token, so a row typed as
+// "03-5" is compared against the result as "3-5" and not missed for a leading zero.
+std::string FormatFaceSequence(const std::vector<int>& faces) {
+  std::string out;
+  for (size_t i = 0; i < faces.size(); ++i) {
+    if (i > 0) {
+      out += '-';
+    }
+    out += std::to_string(faces[i]);
+  }
+  return out;
+}
+
+// The entry that carries filter slot `slot` for crystal pool slot `pool`, or nullptr. The handle
+// WriteFilterToPool binds through; any entry on the slot will do, since the write is in place.
+EntryCard* AnyEntryOnSlot(GuiState& state, int pool, int slot) {
+  for (EntryCard* entry : EntriesForPoolCrystal(state, pool)) {
+    if (entry->filter_id.has_value() && *entry->filter_id == slot) {
+      return entry;
+    }
+  }
+  return nullptr;
+}
+
+}  // namespace
+
+std::vector<ExcludedRaypathRow> ComputeExcludedRaypathRows(const GuiState& state) {
+  std::vector<ExcludedRaypathRow> out;
+  const AnalysisPayload* payload = state.analysis_result.payload.get();
+  if (payload == nullptr || state.layers.empty()) {
+    return out;
+  }
+  // The root layer, and the crystals in it, in entry order. A single-segment chain — the only
+  // kind Exclude can write a filter for — is a ray that left the root layer's crystal and never
+  // entered another, so the root layer is the one whose entries a token here can be a row of,
+  // and the "C<id>(" prefix rule is that layer's: core prefixes a segment iff its layer holds
+  // more than one ENTRY (raypath_histogram_consumer.cpp BuildRaypathReduceContext reads
+  // `layer.setting_.size() > 1`, and BuildScene hands every entry over as one setting, disabled
+  // ones at proportion 0 included) — the same count, capped as BuildScene caps it.
+  const Layer& root = state.layers.front();
+  const size_t root_entry_n = std::min(root.entries.size(), static_cast<size_t>(LUMICE_MAX_CONFIG_SCATTER_ENTRIES));
+  const bool root_multi_crystal = root_entry_n > 1;
+  const std::map<int, int> pool_to_core = ComputeCrystalPoolToCoreIdMap(state);
+  std::vector<int> pools;
+  for (size_t k = 0; k < root_entry_n; ++k) {
+    const int pool = root.entries[k].crystal_id;
+    if (pool < 0 || pool >= static_cast<int>(state.crystals.size()) ||
+        std::find(pools.begin(), pools.end(), pool) != pools.end()) {
+      continue;
+    }
+    pools.push_back(pool);
+  }
+  const uint8_t list_symmetry = state.analysis_result.entries_symmetry;
+  for (const int pool : pools) {
+    const auto core_it = pool_to_core.find(pool);
+    if (core_it == pool_to_core.end()) {
+      continue;  // past the scene's crystal capacity: not committed, so never a row
+    }
+    const CrystalFilterCensus census = CensusForPoolCrystal(state, pool);
+    for (size_t s = 0; s < census.out_slots.size(); ++s) {
+      const int slot = census.out_slots[s];
+      const FilterConfig& filter = state.filters[static_cast<size_t>(slot)];
+      for (size_t i = 0; i < filter.param.size(); ++i) {
+        const SummandText& row = filter.param[i];
+        const std::vector<int> faces = ParseRaypathSegment(row.text);
+        if (faces.empty()) {
+          continue;  // a hand-written rule (or a blank), not a chain: nothing the list could show
+        }
+        // Once per token per crystal: an earlier Out filter of this crystal holding the same
+        // row, or an earlier equal row of this same filter, already produced it.
+        bool seen = false;
+        for (size_t t = 0; t < s && !seen; ++t) {
+          seen = FilterCoversRow(state.filters[static_cast<size_t>(census.out_slots[t])], row);
+        }
+        for (size_t j = 0; j < i && !seen; ++j) {
+          seen = filter.param[j] == row;
+        }
+        if (seen) {
+          continue;
+        }
+        const std::string token = FormatFaceSequence(faces);
+        const std::string display =
+            root_multi_crystal ? "C" + std::to_string(core_it->second) + "(" + token + ")" : token;
+        const bool still_a_result_row =
+            std::any_of(payload->entries.begin(), payload->entries.end(),
+                        [&display](const LUMICE_RaypathHistogramEntry& e) { return display == e.display; });
+        if (still_a_result_row) {
+          continue;
+        }
+        ExcludedRaypathRow r;
+        r.display = display;
+        r.token = row.text;
+        r.pool_crystal_id = pool;
+        r.filter_slot = slot;
+        r.param_index = i;
+        const auto memory = state.analysis.excluded_memory.find(std::make_pair(pool, row.text));
+        if (memory != state.analysis.excluded_memory.end()) {
+          r.memory_seq = memory->second.seq;
+          if (memory->second.symmetry_bits == list_symmetry) {
+            r.was_pct = memory->second.share_pct;
+          }
+        }
+        out.push_back(std::move(r));
+      }
+    }
+  }
+  std::stable_sort(out.begin(), out.end(), [](const ExcludedRaypathRow& a, const ExcludedRaypathRow& b) {
+    if ((a.memory_seq != 0) != (b.memory_seq != 0)) {
+      return a.memory_seq != 0;  // remembered exclusions first
+    }
+    if (a.memory_seq != b.memory_seq) {
+      return a.memory_seq > b.memory_seq;  // newest first
+    }
+    return std::tie(a.pool_crystal_id, a.filter_slot, a.param_index) <
+           std::tie(b.pool_crystal_id, b.filter_slot, b.param_index);
+  });
+  return out;
+}
+
+bool ApplyIncludeAgain(GuiState& state, const ExcludedRaypathRow& row) {
+  if (row.filter_slot < 0 || row.filter_slot >= static_cast<int>(state.filters.size())) {
+    return false;
+  }
+  FilterConfig filter = state.filters[static_cast<size_t>(row.filter_slot)];
+  // The row must still be the row the derivation saw: a filter edited since (the modal, another
+  // Include again this same frame) has moved or removed it, and erasing by index would take the
+  // wrong one. Nothing is done then; the next frame derives the rows as they now are.
+  if (row.param_index >= filter.param.size() || filter.param[row.param_index].text != row.token) {
+    GUI_LOG_WARNING("[Analysis] include again: filter slot {} no longer holds \"{}\" at row {}; nothing done",
+                    row.filter_slot, row.token, row.param_index);
+    return false;
+  }
+  EntryCard* rep = AnyEntryOnSlot(state, row.pool_crystal_id, row.filter_slot);
+  if (rep == nullptr) {
+    return false;  // the slot is no longer referenced by this crystal; the row was stale
+  }
+  filter.param.erase(filter.param.begin() + static_cast<std::ptrdiff_t>(row.param_index));
+  if (!filter.param.empty()) {
+    WriteFilterToPool(state, *rep, filter);  // in place: every entry sharing the slot sees it
+    GUI_LOG_INFO("[Analysis] included raypath {} again: removed from filter \"{}\" on crystal pool {} ({} rows left)",
+                 row.token, filter.name, row.pool_crystal_id, filter.param.size());
+  } else {
+    // The last row: the filter states nothing any more, so the crystal's entries drop it, as the
+    // edit modal's Remove Filter does — every entry of the crystal on this slot, in one step. The
+    // slot itself stays in the pool as that path leaves it (no pool compaction here either).
+    PropagateFilterIdToLinked(state, row.pool_crystal_id, row.filter_slot, std::nullopt);
+    GUI_LOG_INFO(
+        "[Analysis] included raypath {} again: filter \"{}\" on crystal pool {} had no other row and is removed",
+        row.token, filter.name, row.pool_crystal_id);
+  }
+  state.analysis.excluded_memory.erase(std::make_pair(row.pool_crystal_id, row.token));
+  return true;
+}
+
+std::string ExcludedRowLabel(std::string_view display) {
+  return JoinerForDisplay(display) + "   " ICON_FA_BAN " excluded";
+}
+
+std::string ExcludedRowWasText(const std::optional<double>& was_pct) {
+  if (!was_pct.has_value()) {
+    return "\xe2\x80\x94";  // an em dash: nothing was seen for this chain in this session
+  }
+  char buf[32] = { 0 };
+  std::snprintf(buf, sizeof(buf), "was %.2f%%", *was_pct);
+  return buf;
+}
+
+std::string ExcludedRowCopyText(const ExcludedRaypathRow& row) {
+  std::string out = raypath_analysis_display_detail::EscapeCsvField(row.display);
+  out += ",excluded,";
+  if (row.was_pct.has_value()) {
+    out += raypath_analysis_display_detail::Pct(*row.was_pct);
+  }
+  return out;
+}
+
+const char* const kIncludeAgainButtonLabel = ICON_FA_ARROW_ROTATE_LEFT "##include_again";
 
 // ---- CSV export ----------------------------------------------------------------------------------
 
@@ -1082,7 +1301,11 @@ void RenderResultList(GuiState& state) {
                                                          "No result yet. Choose a region and press Analyze.");
     return;
   }
-  if (view.payload->entries.empty()) {
+  // The document's exclusions, read back as rows (ComputeExcludedRaypathRows): derived here,
+  // every frame, from the filters and the result — nothing is cached between frames, so a filter
+  // edit anywhere (the modal, a Revert, Include again below) is on screen the frame it lands.
+  const std::vector<ExcludedRaypathRow> excluded = ComputeExcludedRaypathRows(state);
+  if (view.payload->entries.empty() && excluded.empty()) {
     ImGui::TextDisabled("No ray reached this region.");
     return;
   }
@@ -1141,7 +1364,7 @@ void RenderResultList(GuiState& state) {
     });
     ImGui::PopID();
     ImGui::TableSetColumnIndex(1);
-    ImGui::Text("%.2f%%", total > 0.0 ? energy / total * 100.0 : 0.0);
+    ImGui::Text("%.2f%%", ComputeDisplayEnergyPct(energy, total));
     ImGui::TableSetColumnIndex(2);
     ImGui::Text("%.1f%%", view.display_cumulative_pct[row]);
     ImGui::TableSetColumnIndex(3);
@@ -1161,6 +1384,67 @@ void RenderResultList(GuiState& state) {
     } else {
       ImGui::Text("%.0f%%", rel * 100.0);
     }
+  }
+  // The greyed rows: what the document's filters exclude, after the result rows and before the
+  // "other" line. Each is a selectable — addressable, and the right-click menu hangs on it — but
+  // never the selection: a click is not read, so the Exclude button (which needs a selected row
+  // that IS a result entry) stays shut for it by construction, and its Energy cell is the
+  // remembered share, not a term of display_total (the row is not in display_order at all, so
+  // the Cumulative column and the total need no special case). AllowOverlap: the Include again
+  // button in the last column sits on the row's span and must win the hover. Under the same
+  // search as the result rows — the raw display text, so "3-5" finds an excluded 3-5 too. One
+  // PushID per row, on the display text: unique here (the token appears once per crystal, and a
+  // token still in the result is not a row), and what a test addresses the button through.
+  // The click is applied after the loop, not inside it: ApplyIncludeAgain writes the pool, and
+  // the rows the loop walks were derived from the pool as it was — one write per frame, and the
+  // next frame derives the rows as they then are.
+  const ExcludedRaypathRow* include_again = nullptr;
+  for (const ExcludedRaypathRow& x : excluded) {
+    if (!RaypathRowMatchesSearch(x.display.c_str())) {
+      continue;
+    }
+    ImGui::TableNextRow();
+    ImGui::TableSetColumnIndex(0);
+    ImGui::PushID(x.display.c_str());
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+    ImGui::Selectable(ExcludedRowLabel(x.display).c_str(), false,
+                      ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowOverlap);
+    ImGui::PopStyleColor();
+    if (ImGui::IsItemHovered()) {
+      ImGui::SetTooltip(
+          "Excluded by filter \"%s\" on this crystal. Not in this result; the Energy cell is the\n"
+          "share it had when it was excluded (\xe2\x80\x94 when that was not seen in this session).",
+          state.filters[static_cast<size_t>(x.filter_slot)].name.c_str());
+    }
+    CopyMenuForLastItem([&x] {
+      return std::vector<CopyMenuEntry>{
+        { "Copy raypath", x.display },
+        { "Copy row", ExcludedRowCopyText(x) },
+      };
+    });
+    ImGui::TableSetColumnIndex(1);
+    ImGui::TextDisabled("%s", ExcludedRowWasText(x.was_pct).c_str());
+    ImGui::TableSetColumnIndex(2);
+    ImGui::TextDisabled("-");
+    ImGui::TableSetColumnIndex(3);
+    if (ImGui::SmallButton(kIncludeAgainButtonLabel)) {
+      include_again = &x;
+    }
+    if (ImGui::IsItemHovered()) {
+      const FilterConfig& f = state.filters[static_cast<size_t>(x.filter_slot)];
+      if (f.param.size() > 1) {
+        ImGui::SetTooltip("Include again: remove this raypath from filter \"%s\".", f.name.c_str());
+      } else {
+        ImGui::SetTooltip(
+            "Include again: remove this raypath from filter \"%s\" \xe2\x80\x94 its only row, so the "
+            "filter is removed from the crystal.",
+            f.name.c_str());
+      }
+    }
+    ImGui::PopID();
+  }
+  if (include_again != nullptr) {
+    ApplyIncludeAgain(state, *include_again);
   }
   // The fixed "other" line: what the record had no room for, so the column above reaches 100. Not
   // a raypath — a DISABLED selectable (addressable, so a test can click it; never pressed, and its

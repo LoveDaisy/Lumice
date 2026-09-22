@@ -18,6 +18,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "IconsFontAwesome6.h"
@@ -725,6 +726,229 @@ bool ExcludeWhileTheImmediateEditorIsOpen(ImGuiTestContext* ctx, bool start_with
       return false;
     }
   }
+
+  ctx->ItemClick("**/Close##edit_modal");
+  ctx->Yield(2);
+  gui::g_state.modal_immediate_mode = false;
+  return true;
+}
+
+// The halo document on the panels with no server behind it, and a hand-built whole-sky result
+// on show as RefreshAnalysisEntries leaves one — the fixture for the excluded-row cases, whose
+// subject is the list's derivation from the document's filters, not a run. `chains` are
+// single-segment chains of the one crystal (scene id 0), with their energies.
+bool ShowHaloDocumentWithResult(ImGuiTestContext* ctx, unsigned long long generation,
+                                const std::vector<std::pair<const char*, double>>& chains) {
+  auto payload = std::make_shared<gui::AnalysisPayload>();
+  payload->snapshot_generation = generation;
+  payload->roi_mode = LUMICE_RAYPATH_ROI_FULL_SKY;
+  for (const auto& [display, energy] : chains) {
+    LUMICE_RaypathHistogramEntry e{};
+    e.chain_len = 1;
+    e.chain[0].crystal_id = 0;
+    e.chain[0].segment_len = 2;
+    e.chain[0].segment[0] = display[0] - '0';
+    e.chain[0].segment[1] = display[2] - '0';
+    snprintf(e.display, sizeof(e.display), "%s", display);
+    e.energy = energy;
+    e.count = 1000;
+    payload->entries.push_back(e);
+  }
+  IM_CHECK_RETV(gui::AdoptAnalysisPayloadIfNew(gui::g_state, payload), false);
+  gui::g_state.analysis_result.entries_symmetry = gui::AnalysisSymmetryBits(gui::g_state);
+  gui::g_state.analysis.fetched_once = true;
+  gui::g_state.analysis.fetched_generation = generation;
+  gui::g_state.analysis.fetched_symmetry = gui::AnalysisSymmetryBits(gui::g_state);
+  gui::g_state.analysis.window_open = true;
+  ctx->Yield(2);
+  return true;
+}
+
+// The path of the greyed row for `display`, and of its Include again button — the row is a
+// selectable labelled ExcludedRowLabel under a PushID of the display text, the button a child of
+// that id, so "**/<display>/<button>" resolves to it and to no other row's.
+std::string ExcludedRowPath(const std::string& display) {
+  return "**/" + gui::ExcludedRowLabel(display);
+}
+
+std::string IncludeAgainPath(const std::string& display) {
+  return "**/" + display + "/" + gui::kIncludeAgainButtonLabel;
+}
+
+// Exclude a chain, put a result on show that no longer has it, and read the greyed row off the
+// screen: it is there with the share the chain had, the search box and the right-click copy
+// reach it like any row, it is not a selection, and its Include again button erases the row
+// from the filter — here the filter's only row, so the entry loses the filter — and takes the
+// greyed row with it.
+bool ExcludedRowShowsAndIncludeAgainTakesItBack(ImGuiTestContext* ctx) {
+  ResetTestState();
+  IM_CHECK_RETV(gui::DeserializeFromJson(kHalo22Json, gui::g_state), false);
+  IM_CHECK_RETV(gui::g_state.filters.empty(), false);
+  IM_CHECK_RETV(ShowHaloDocumentWithResult(ctx, 1, { { "3-5", 3.0 }, { "1-3", 1.0 } }), false);
+  ctx->WindowMove(kWindowRef, ImVec2(60, 60));
+  ctx->Yield(1);
+  ctx->SetRef(kWindowRef);
+  IM_CHECK_RETV(ctx->ItemInfo(ExcludedRowPath("3-5").c_str(), ImGuiTestOpFlags_NoError).ID == 0, false);
+
+  // Exclude 3-5: the filter is written, the memory holds the 75% the row showed.
+  ctx->ItemClick("**/3-5");
+  ctx->Yield(1);
+  IM_CHECK_RETV(!IsDisabled(ctx->ItemInfo(ICON_FA_BAN " Exclude this raypath")), false);
+  ctx->ItemClick(ICON_FA_BAN " Exclude this raypath");
+  ctx->Yield(2);
+  IM_CHECK_RETV(gui::g_state.filters.size() == 1u, false);
+  IM_CHECK_RETV(gui::g_state.filters[0].param.size() == 1u, false);
+  // Still a result row: shown as one, not greyed.
+  IM_CHECK_RETV(ctx->ItemInfo("**/3-5").ID != 0, false);
+  IM_CHECK_RETV(ctx->ItemInfo(ExcludedRowPath("3-5").c_str(), ImGuiTestOpFlags_NoError).ID == 0, false);
+
+  // The next result has no 3-5 (the filter took): the greyed row appears, under the result row
+  // 1-3 and with the remembered share.
+  ctx->SetRef("");
+  IM_CHECK_RETV(ShowHaloDocumentWithResult(ctx, 2, { { "1-3", 1.0 } }), false);
+  ctx->SetRef(kWindowRef);
+  IM_CHECK_RETV(ctx->ItemInfo("**/3-5", ImGuiTestOpFlags_NoError).ID == 0, false);
+  const ImGuiTestItemInfo greyed = ctx->ItemInfo(ExcludedRowPath("3-5").c_str());
+  IM_CHECK_RETV(greyed.ID != 0, false);
+  const ImGuiTestItemInfo kept = ctx->ItemInfo("**/1-3");
+  IM_CHECK_RETV(kept.ID != 0, false);
+  IM_CHECK_RETV(greyed.RectFull.Min.y > kept.RectFull.Min.y, false);  // after the result rows
+  const std::vector<gui::ExcludedRaypathRow> rows = gui::ComputeExcludedRaypathRows(gui::g_state);
+  IM_CHECK_RETV(rows.size() == 1u, false);
+  IM_CHECK_RETV(rows[0].was_pct.has_value(), false);
+  IM_CHECK_RETV(std::fabs(*rows[0].was_pct - 75.0) < 1e-9, false);
+  IM_CHECK_RETV(std::strcmp(gui::ExcludedRowWasText(rows[0].was_pct).c_str(), "was 75.00%") == 0, false);
+  // A click on it selects nothing: the Exclude button stays shut.
+  ctx->ItemClick(ExcludedRowPath("3-5").c_str());
+  ctx->Yield(1);
+  IM_CHECK_RETV(!gui::g_state.analysis.selected_entry.has_value(), false);
+  IM_CHECK_RETV(IsDisabled(ctx->ItemInfo(ICON_FA_BAN " Exclude this raypath")), false);
+
+  // The search box reaches it: "1-3" hides it, "3-5" shows it alone, empty brings all back.
+  ctx->ItemInputValue("**/###analysis_search", "1-3");
+  ctx->Yield(3);
+  IM_CHECK_RETV(ctx->ItemInfo(ExcludedRowPath("3-5").c_str(), ImGuiTestOpFlags_NoError).ID == 0, false);
+  IM_CHECK_RETV(ctx->ItemInfo("**/1-3").ID != 0, false);
+  ctx->ItemInputValue("**/###analysis_search", "3-5");
+  ctx->Yield(3);
+  IM_CHECK_RETV(ctx->ItemInfo(ExcludedRowPath("3-5").c_str()).ID != 0, false);
+  IM_CHECK_RETV(ctx->ItemInfo("**/1-3", ImGuiTestOpFlags_NoError).ID == 0, false);
+  ctx->ItemInputValue("**/###analysis_search", "");
+  ctx->Yield(3);
+
+  // The right-click menu reaches it: the raw text, and the row in its three-field form.
+  auto choose = [&](const std::string& path, const char* item) {
+    ctx->SetRef(kWindowRef);
+    ctx->ItemClick(path.c_str(), ImGuiMouseButton_Right);
+    ctx->Yield(2);
+    ctx->SetRef("//$FOCUSED");
+    ctx->ItemClick((std::string("**/") + item).c_str());
+    ctx->Yield(2);
+    ctx->SetRef(kWindowRef);
+  };
+  choose(ExcludedRowPath("3-5"), "Copy raypath");
+  IM_CHECK_RETV(std::strcmp(ImGui::GetClipboardText(), "3-5") == 0, false);
+  choose(ExcludedRowPath("3-5"), "Copy row");
+  IM_CHECK_RETV(std::strcmp(ImGui::GetClipboardText(), gui::ExcludedRowCopyText(rows[0]).c_str()) == 0, false);
+  IM_CHECK_RETV(std::strcmp(ImGui::GetClipboardText(), "3-5,excluded,75.0000") == 0, false);
+
+  // For a human's eyes: the greyed row under the result row, the button in its last column.
+  ctx->SetRef("");
+  ctx->MouseMoveToPos(ImVec2(2.0f, 2.0f));
+  ctx->Yield(2);
+  IM_CHECK_RETV(SaveWindowPng(ctx, kWindowRef, GuiTestTempPath("analysis_excluded_row.png").string()), false);
+
+  // Include again: the filter's only row goes, so the entry drops the filter, the memory is
+  // forgotten, and the greyed row is gone the next frame. 1-3 is untouched.
+  ctx->SetRef(kWindowRef);
+  IM_CHECK_RETV(ctx->ItemInfo(IncludeAgainPath("3-5").c_str()).ID != 0, false);
+  ctx->ItemClick(IncludeAgainPath("3-5").c_str());
+  ctx->Yield(2);
+  IM_CHECK_RETV(!gui::g_state.layers[0].entries[0].filter_id.has_value(), false);
+  IM_CHECK_RETV(gui::g_state.analysis.excluded_memory.empty(), false);
+  IM_CHECK_RETV(ctx->ItemInfo(ExcludedRowPath("3-5").c_str(), ImGuiTestOpFlags_NoError).ID == 0, false);
+  IM_CHECK_RETV(ctx->ItemInfo("**/1-3").ID != 0, false);
+  IM_CHECK_RETV(gui::ComputeExcludedRaypathRows(gui::g_state).empty(), false);
+  ctx->SetRef("");
+  return true;
+}
+
+// Include again while the Immediate-mode editor is open on the entry, Filter tab showing, on a
+// filter of TWO rows so the filter itself stays — the branch the editor's pull is argued on
+// (edit_modals.cpp PullSummandRows: theirs lost a row the buffer had not touched, so the buffer
+// drops it too). The editor pushes its buffers into the pool every frame; if it did not pull the
+// removal first it would write the row straight back. So: the pool holds one row afterwards,
+// the entry is still bound to the slot, and the editor's own row list shows one row — the user
+// is looking at both. The mirror of ExcludeWhileTheImmediateEditorIsOpen, frame for frame.
+bool IncludeAgainWhileTheImmediateEditorIsOpen(ImGuiTestContext* ctx) {
+  ResetTestState();
+  IM_CHECK_RETV(gui::DeserializeFromJson(kHalo22Json, gui::g_state), false);
+  gui::FilterConfig out;
+  out.name = "drop two";
+  out.action = 1;  // filter_out
+  out.param = gui::FromLegacyRaypath(gui::RaypathParams{ "3-5" });
+  out.param.push_back(gui::FromLegacyRaypath(gui::RaypathParams{ "1-3" }).front());
+  gui::SetFilter(gui::g_state, gui::g_state.layers[0].entries[0], out);
+  IM_CHECK_RETV(gui::g_state.filters.size() == 1u, false);
+  // A result without either chain: both are greyed rows.
+  IM_CHECK_RETV(ShowHaloDocumentWithResult(ctx, 1, { { "2-4", 1.0 } }), false);
+  ctx->WindowMove(kWindowRef, ImVec2(60, 60));
+  ctx->Yield(1);
+  ctx->SetRef(kWindowRef);
+  IM_CHECK_RETV(ctx->ItemInfo(ExcludedRowPath("3-5").c_str()).ID != 0, false);
+  IM_CHECK_RETV(ctx->ItemInfo(ExcludedRowPath("1-3").c_str()).ID != 0, false);
+  ctx->SetRef("");
+
+  const ScopedPopups popup_guard(ctx);
+  gui::g_state.modal_immediate_mode = true;
+  const gui::EditRequest req{ gui::EditTarget::kFilter, 0, 0 };
+  gui::OpenEditModal(req, gui::g_state);
+  ctx->Yield(4);
+  IM_CHECK_RETV(gui::IsEditModalOpen(), false);
+  // Out of the analysis window's way, so the button below is the item under the mouse rather
+  // than the editor's title bar.
+  ctx->WindowMove("//Edit Entry", ImVec2(760.0f, 40.0f));
+  ctx->Yield(2);
+  {
+    const gui::EditModalBuffers before = gui::GetEditModalBuffers();
+    IM_CHECK_RETV(before.filter_rows.size() == 2u, false);
+  }
+
+  ctx->SetRef(kWindowRef);
+  ctx->ItemClick(IncludeAgainPath("3-5").c_str());
+  ctx->SetRef("");
+  // Two frames: the click's frame already ran the editor's pull and push once after the write;
+  // one more shows whatever it left behind is stable rather than mid-flight.
+  ctx->Yield(2);
+
+  // The pool, as the next Run will read it: one row, the entry still bound.
+  const auto& entry = gui::g_state.layers[0].entries[0];
+  ctx->LogInfo("after Include again: filters=%d entry.filter_id=%d", static_cast<int>(gui::g_state.filters.size()),
+               entry.filter_id.has_value() ? *entry.filter_id : -1);
+  IM_CHECK_RETV(entry.filter_id.has_value(), false);
+  IM_CHECK_RETV(gui::g_state.filters.size() == 1u, false);
+  const gui::FilterConfig& bound = gui::g_state.filters[static_cast<size_t>(*entry.filter_id)];
+  IM_CHECK_RETV(bound.action == 1, false);
+  IM_CHECK_RETV(bound.param.size() == 1u, false);
+  IM_CHECK_RETV(std::strcmp(bound.param[0].text.c_str(), "1-3") == 0, false);
+
+  // The editor, as the user sees it: the one row left, in its own row list.
+  const gui::EditModalBuffers buffers = gui::GetEditModalBuffers();
+  {
+    std::string got;
+    for (const auto& row : buffers.filter_rows) {
+      got += "[" + row + "]";
+    }
+    ctx->LogInfo("editor rows: %s", got.c_str());
+  }
+  IM_CHECK_RETV(buffers.filter_rows.size() == 1u, false);
+  IM_CHECK_RETV(std::strcmp(buffers.filter_rows[0].c_str(), "1-3") == 0, false);
+
+  // And the list: 3-5 is no longer greyed, 1-3 still is.
+  ctx->SetRef(kWindowRef);
+  IM_CHECK_RETV(ctx->ItemInfo(ExcludedRowPath("3-5").c_str(), ImGuiTestOpFlags_NoError).ID == 0, false);
+  IM_CHECK_RETV(ctx->ItemInfo(ExcludedRowPath("1-3").c_str()).ID != 0, false);
+  ctx->SetRef("");
 
   ctx->ItemClick("**/Close##edit_modal");
   ctx->Yield(2);
@@ -2170,6 +2394,23 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       IM_CHECK(!gui::g_state.analysis.selected_entry.has_value());
       ctx->PopupCloseAll();
       ctx->Yield(2);
+    };
+  }
+
+  // The greyed "excluded" rows — see ExcludedRowShowsAndIncludeAgainTakesItBack and
+  // IncludeAgainWhileTheImmediateEditorIsOpen.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "excluded_row_shows_and_include_again_takes_it_back");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ScopedServerGuard guard;
+      IM_CHECK(ExcludedRowShowsAndIncludeAgainTakesItBack(ctx));
+    };
+  }
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "include_again_while_the_immediate_editor_is_open");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ScopedServerGuard guard;
+      IM_CHECK(IncludeAgainWhileTheImmediateEditorIsOpen(ctx));
     };
   }
 }
