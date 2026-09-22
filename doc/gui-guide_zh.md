@@ -29,7 +29,7 @@ GUI 需要 display server 和支持 OpenGL 3.2 Core Profile 的 GPU。
 | 3 | Right Panel — View Parameters（右侧面板，视觉参数） | Scene（光源 + 模拟）、View（投影 + 相机）、Display（分辨率 / EV / 长宽比 / 背景）、Overlay（辅助线） |
 | 4 | Render Preview（渲染预览） | 光线累计形成的、按 lens 投影的冰晕图像 |
 | 5 | Status Bar（状态栏） | 模拟状态徽标、光线总数、当前分辨率 / lens / FOV、文件名、Log 切换 |
-| 6 | Popup Editor（编辑弹窗） | 从晶体卡片打开的模态编辑器；Crystal / Axis / Filter 三个 tab |
+| 6 | Popup Editor（编辑弹窗） | 从晶体卡片打开的模态编辑器；编辑 Crystal / Axis / Filter |
 
 左侧栏与右侧栏都可独立折叠 — 模拟过程中想让 Render Preview 占据更宽空间时很有用。
 
@@ -88,7 +88,7 @@ GUI 需要 display server 和支持 OpenGL 3.2 Core Profile 的 GPU。
 - **Filter 行**：光路过滤器的单行摘要 + `Edit` 打开 Filter tab。
 - **占比滑块**（`prop.`）：本条目在所属 Layer 中的权重（0 – 100）。
 
-缩略图支持 4 种渲染风格。风格选择器位于 Popup Editor 左侧的常驻预览面板（在 Crystal / Axis / Filter 三 tab 之间共享） —— 详见下文 [Popup Editor](#popup-editor编辑弹窗) 节。
+缩略图支持 4 种渲染风格。风格选择器位于 Popup Editor 的预览面板里，两种形态下它都常驻可见 —— 详见下文 [Popup Editor](#popup-editor编辑弹窗) 节。
 
 ![晶体预览 4 种风格：线框 / 隐藏线 / 透视 / 着色](figs/gui_crystal_styles_combined.jpg)
 
@@ -109,7 +109,7 @@ GUI 需要 display server 和支持 OpenGL 3.2 Core Profile 的 GPU。
 
 **fa-link 徽章** —— 当某张卡片属于链接组（即与至少一条其他条目共享晶体和滤镜）时，卡片右侧按钮列下方会出现一个链条图标，位于悬停操作按钮（`×` / `D`）的正下方。悬停该徽章可查看 tooltip，其中按层和条目序号列出了组内其他成员。该徽章始终可见（无需悬停卡片），因为它反映的是一种持久状态。
 
-**"Link to..." — 进入 pick 模式** —— 点击任意卡片的 `Edit` 按钮打开弹窗编辑器。Crystal / Axis / Filter tab 栏上方会显示共享状态说明（`Not shared` 或 `Shared with N other entries`）。点击 **Link to...** 进入 pick 模式：弹窗关闭，左侧面板顶部出现黄色提示条：
+**"Link to..." — 进入 pick 模式** —— 点击任意卡片的 `Edit` 按钮打开弹窗编辑器。编辑器顶部会显示共享状态说明（`Not shared` 或 `Shared with N other entries`）。点击 **Link to...** 进入 pick 模式：弹窗关闭，左侧面板顶部出现黄色提示条：
 
 > Pick mode: click an entry to share crystal/filter from Layer X / Entry Y (Esc to cancel)
 
@@ -177,9 +177,18 @@ Render Preview 上的辅助线，以一张表格呈现——每条辅助线回�
 
 ## Popup Editor（编辑弹窗）
 
-晶体卡片上的 `Edit` 按钮会打开**单一**的模态编辑器，含 3 个 tab（Crystal / Axis / Filter），左侧带常驻的晶体预览面板。预览每帧重画，所以几何或取向的修改可立刻看见。自 v15 起，借助 ImGui multi-viewport，可以把弹窗拖出主窗口、独立成一个 OS 窗口。Tab 栏上方的共享状态行显示该卡片是否属于链接组，并提供 **Link to...** 和 **Unlink** 操作；详见[链接条目](#链接条目linked-entries)一节。
+晶体卡片上的 `Edit` 按钮会打开**单一**的模态编辑器，含 Crystal / Axis / Filter 三个区块，以及每帧重画的晶体预览——所以几何或取向的修改可立刻看见。顶部的共享状态行显示该卡片是否属于链接组，并提供 **Link to...** 和 **Unlink** 操作；详见[链接条目](#链接条目linked-entries)一节。
 
-![Popup Editor — Crystal / Axis / Filter 三 tab](figs/gui_edit_modal_combined.jpg)
+按钮行上的选择器在两种形态之间切换，选择会随文档保存：
+
+- **Compact（紧凑）**——预览在上，三个区块在下方共用一条 tab 栏。窗口窄，能留住弹窗后面大半的冰晕预览；换区块要点一次 tab。这是默认形态。
+- **Expanded（展开）**——左列是预览 + Crystal，右列是 Axis 叠 Filter，没有 tab 栏。三个区块一次全可见，代价是几乎盖住整个预览。
+
+用旧版本的「并排 tab」布局保存的文档，打开后会显示为 **Expanded**——那种布局已不存在，Expanded 是与它最接近的继任者。
+
+自 v15 起，借助 ImGui multi-viewport，可以把弹窗拖出主窗口、独立成一个 OS 窗口。
+
+![Popup Editor — Crystal / Axis / Filter](figs/gui_edit_modal_combined.jpg)
 
 ### Crystal Tab
 

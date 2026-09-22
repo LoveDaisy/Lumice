@@ -1586,11 +1586,21 @@ struct GuiState {
   // not persisted to .lmc (unlike right_panel_collapsed)
   bool left_panel_collapsed = false;
   bool right_panel_collapsed = false;
-  // Edit modal layout orientation (view preference). false = horizontal
-  // (preview left + tabs right); true = vertical (preview top + tabs below,
-  // default since gui-polish-v15 round 2). Persisted to .lmc alongside
-  // right_panel_collapsed.
-  bool modal_layout_vertical = true;
+  // Edit modal layout (view preference). The modal has exactly two shapes and this one bit picks
+  // between them: true = Compact (preview on top, the three sections stacked below in a tab bar);
+  // false = Expanded (preview + Crystal in a left column, Axis over Filter in a right column, no
+  // tab bar — all three sections visible at once, at the cost of nearly all preview visibility).
+  // Persisted to .lmc alongside right_panel_collapsed.
+  //
+  // Two things about this field are deliberate and easy to trip over:
+  //   * The JSON key stays "modal_layout_vertical" while the member is named modal_layout_compact.
+  //     The old name described the Compact shape's geometry, and the bit means the same thing it
+  //     always did for true, so keeping the key costs nothing and buys a zero-migration read path
+  //     for every .lmc already on disk. Do not "fix" the key without a reader-side migration.
+  //   * false used to select a side-by-side tab layout, which no longer exists. Opening an
+  //     older document saved with false therefore shows Expanded — the closest successor — rather
+  //     than what it was saved as. This is an intended, one-time behavior change.
+  bool modal_layout_compact = true;
 
   // Log panel state (view preference — does not call MarkDirty)
   int gui_log_level = 3;   // Index into log level names: 0=trace,1=debug,2=verbose,3=info,4=warning,5=error,6=off

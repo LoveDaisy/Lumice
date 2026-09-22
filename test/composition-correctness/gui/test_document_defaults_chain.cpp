@@ -129,7 +129,7 @@ const MissingKeyCase kGuiNativeCases[] = {
   LUMICE_MISSING_KEY_ROW(kRoot, s.show_lens_border_line, GuiState{}.show_lens_border_line),
   LUMICE_MISSING_KEY_ROW(kRoot, s.lens_border_alpha, GuiState{}.lens_border_alpha),
   LUMICE_MISSING_KEY_ROW(kRoot, s.right_panel_collapsed, GuiState{}.right_panel_collapsed),
-  LUMICE_MISSING_KEY_ROW(kRoot, s.modal_layout_vertical, GuiState{}.modal_layout_vertical),
+  LUMICE_MISSING_KEY_ROW(kRoot, s.modal_layout_compact, GuiState{}.modal_layout_compact),
 
   // -- root.sun / root.sim / root.renderer --
   LUMICE_MISSING_KEY_ROW(kSun, s.sun.altitude, SunConfig{}.altitude),

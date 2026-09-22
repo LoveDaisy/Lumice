@@ -244,7 +244,7 @@ TEST_F(UserDefaults, ac2_kview_difference_set_recomputed) {
     { "lens_border_color", "overlay_lens_border_color" },
     { "lens_border_alpha", "overlay_lens_border_alpha" },
     { "right_panel_collapsed", "right_panel_collapsed" },
-    { "modal_layout_vertical", "modal_layout_vertical" },
+    { "modal_layout_compact", "modal_layout_vertical" },
     { "left_panel_collapsed", nullptr },
     { "gui_log_level", nullptr },
     { "core_log_level", nullptr },
