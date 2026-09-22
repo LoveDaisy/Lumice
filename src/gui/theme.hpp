@@ -46,6 +46,23 @@ float CurrentUiScale();
 float UiPx(float logical_px);
 int UiPxI(int logical_px);
 
+// The ImGuiCond for a floating window's SetNextWindowSize (and, when the caller also wants to
+// recentre, SetNextWindowPos) that must resize on the frame the UI scale changes, not just on the
+// window's ordinary first-appearance frame: a window already open when the scale changes is
+// showing content that grew or shrank through UiPx() while its own ImGui-tracked size did not
+// move, since `first_use_cond` (Appearing for a popup that reopens every time, FirstUseEver for a
+// window ImGui keeps across frames) only fires when ImGui creates the window, not when a live one
+// is merely re-submitted.
+//
+// `tracked_scale` is the CALLER's own `static float` — per window, not shared — since the state
+// being tracked ("what scale was this window last sized for") is a property of that window, not
+// of the outlet. Pass a fresh `static float = 0.0f`; the very first call, at any real (nonzero)
+// scale, then reads as a change and returns Always rather than `first_use_cond` — harmlessly, since
+// on that same first frame the window has no ImGui-tracked size yet for either cond to override,
+// so the two behave identically there. Every later call at an unchanged scale returns
+// `first_use_cond` as intended.
+ImGuiCond WindowResizeCondForScale(float& tracked_scale, ImGuiCond first_use_cond);
+
 // The colour+geometry half of ApplyVisualLanguage: grid spacing plus the palette, applied to a
 // caller-supplied style rather than to ImGui::GetStyle(). Split out so a test can hand it a
 // scratch ImGuiStyle and ask what it wrote — the "was this slot claimed" question needs a style

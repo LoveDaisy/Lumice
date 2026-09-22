@@ -419,4 +419,10 @@ int UiPxI(int logical_px) {
   return static_cast<int>(std::lround(static_cast<float>(logical_px) * g_layout_scale));
 }
 
+ImGuiCond WindowResizeCondForScale(float& tracked_scale, ImGuiCond first_use_cond) {
+  const ImGuiCond cond = (tracked_scale == g_layout_scale) ? first_use_cond : ImGuiCond_Always;
+  tracked_scale = g_layout_scale;
+  return cond;
+}
+
 }  // namespace lumice::gui

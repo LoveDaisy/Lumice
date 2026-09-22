@@ -177,4 +177,50 @@ TEST_F(ThemeScale, RasterDensityChangesNoMetric) {
       << "sanity: the density did reach the rasterizer — a denser atlas is a larger one";
 }
 
+// WindowResizeCondForScale — the shared rule behind defaults_panel.cpp/analysis_panel.cpp/
+// color_window.cpp re-applying SetNextWindowSize on a scale change even though the window is
+// already open (the regression a Major code-review finding caught: fixed only in defaults_panel,
+// leaving the other two panels pinned at their old pixel size while their UiPx()-derived content
+// grew). No ImGui context needed — it only reads/writes CurrentUiScale() and the caller's tracked
+// float, never touches the live style or an ImGui window.
+// The very first call ever, with the caller's static still at its zero-init, reads 0.0 != the
+// current (nonzero) scale and so returns Always rather than first_use_cond — harmlessly, since a
+// window with no ImGui-tracked size yet has nothing for Always to override that first_use_cond
+// would not also have set. Documented here so a future change to the "!=" comparison does not
+// silently start requiring callers to pre-seed `tracked_scale` at the real scale.
+TEST(WindowResizeCondForScale, FirstCallEverReadsAsAChangeAndReturnsAlwaysHarmlessly) {
+  ImGuiContext* ctx = ImGui::CreateContext();
+  gui::ApplyVisualLanguage(ImGui::GetIO(), 1.0f, 1.0f);
+
+  float tracked = 0.0f;  // the caller's fresh static, as every call site declares it
+  EXPECT_EQ(gui::WindowResizeCondForScale(tracked, ImGuiCond_FirstUseEver), ImGuiCond_Always);
+  EXPECT_FLOAT_EQ(tracked, 1.0f);
+  // The very next call, at the same scale, settles into the steady state.
+  EXPECT_EQ(gui::WindowResizeCondForScale(tracked, ImGuiCond_FirstUseEver), ImGuiCond_FirstUseEver);
+
+  ImGui::DestroyContext(ctx);
+}
+
+TEST(WindowResizeCondForScale, SameScaleAgainStaysAtFirstUseCond) {
+  ImGuiContext* ctx = ImGui::CreateContext();
+  gui::ApplyVisualLanguage(ImGui::GetIO(), 1.5f, 1.0f);
+
+  float tracked = 1.5f;  // already sized for the current scale, as a window left open would be
+  EXPECT_EQ(gui::WindowResizeCondForScale(tracked, ImGuiCond_Appearing), ImGuiCond_Appearing);
+
+  ImGui::DestroyContext(ctx);
+}
+
+TEST(WindowResizeCondForScale, ScaleChangeSinceTheLastCallForcesAlwaysAndUpdatesTracked) {
+  ImGuiContext* ctx = ImGui::CreateContext();
+  gui::ApplyVisualLanguage(ImGui::GetIO(), 2.0f, 1.0f);
+
+  float tracked = 1.0f;  // sized for the old scale — the window was open when it changed
+  EXPECT_EQ(gui::WindowResizeCondForScale(tracked, ImGuiCond_FirstUseEver), ImGuiCond_Always);
+  EXPECT_FLOAT_EQ(tracked, 2.0f) << "so the NEXT call, at this same scale, reads as unchanged";
+  EXPECT_EQ(gui::WindowResizeCondForScale(tracked, ImGuiCond_FirstUseEver), ImGuiCond_FirstUseEver);
+
+  ImGui::DestroyContext(ctx);
+}
+
 }  // namespace

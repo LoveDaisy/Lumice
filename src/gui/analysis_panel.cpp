@@ -1203,8 +1203,18 @@ void RenderAnalysisPanel(GuiState& state, LUMICE_Server* server) {
   }
   // Tall and narrow on purpose: the window is a list of raypaths, and rows are what it runs out
   // of first — a wide default only stretches the table's five columns across empty space.
-  ImGui::SetNextWindowSize(ImVec2(UiPx(520.0f), UiPx(640.0f)), ImGuiCond_FirstUseEver);
-  ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_FirstUseEver, ImVec2(0.5f, 0.5f));
+  //
+  // Re-applied, not just on appearance, on the frame the UI scale changes: this window is
+  // non-modal and can stay open through Settings (see WindowResizeCondForScale, theme.hpp), so a
+  // FirstUseEver cond alone would leave it pinned at the old pixel size while its UiPx()-derived
+  // content grows.
+  static float s_sized_for_scale = 0.0f;
+  const ImGuiCond size_cond = WindowResizeCondForScale(s_sized_for_scale, ImGuiCond_FirstUseEver);
+  ImGui::SetNextWindowSize(ImVec2(UiPx(520.0f), UiPx(640.0f)), size_cond);
+  // size_cond is only ever FirstUseEver or Always, so one call covers both: the ordinary first
+  // appearance centres once, and a scale change re-centres alongside the resize (ImGui grows a
+  // window from its top-left, so leaving the position alone would run a larger panel off-screen).
+  ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), size_cond, ImVec2(0.5f, 0.5f));
   if (!ImGui::Begin(ICON_FA_ROUTE " Raypath Analysis", &state.analysis.window_open,
                     ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoDocking)) {
     ImGui::End();

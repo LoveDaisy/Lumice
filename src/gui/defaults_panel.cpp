@@ -1229,10 +1229,11 @@ void RenderDefaultsPanel(GuiState& state) {
   //
   // Re-applied, not just on appearance, on the frame the UI scale changes: this is the window the
   // scale is changed FROM, so it is open at the old size at exactly that moment, and a 760-px
-  // panel holding a 1.5x layout shows four settings rows and a clipped action row.
+  // panel holding a 1.5x layout shows four settings rows and a clipped action row. See
+  // WindowResizeCondForScale (theme.hpp) for the shared rule this and every other floating panel
+  // that can stay open across a scale change (analysis_panel.cpp, color_window.cpp) apply.
   static float s_sized_for_scale = 0.0f;
-  const ImGuiCond size_cond = (s_sized_for_scale == CurrentUiScale()) ? ImGuiCond_Appearing : ImGuiCond_Always;
-  s_sized_for_scale = CurrentUiScale();
+  const ImGuiCond size_cond = WindowResizeCondForScale(s_sized_for_scale, ImGuiCond_Appearing);
   ImGui::SetNextWindowSize(ImVec2(UiPx(760.0f), UiPx(608.0f)), size_cond);
   if (size_cond == ImGuiCond_Always) {
     // Re-centred with the resize: ImGui grows a window from its top-left, and the old centre was
