@@ -842,6 +842,9 @@ void ResetFrontendState(GuiState& state, FrontendResetReason reason, const LmcTe
     const bool window_open = state.analysis.window_open;
     state.analysis = GuiState::RaypathAnalysisSession{};
     state.analysis.window_open = window_open;
+    // The list's search text has this struct's lifetime but is not a member of it (an ImGui type
+    // cannot enter gui_state.hpp), so the whole-struct reset above does not reach it.
+    ClearAnalysisSearchFilter();
     state.analysis_result = GuiState::AnalysisResultView{};
     state.analysis_run_in_progress = false;
     // And the poller's carried copy, or the cleared view would adopt it back next frame.

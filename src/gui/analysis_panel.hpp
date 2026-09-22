@@ -45,6 +45,13 @@ struct PreviewSnapshot;
 // COMPLETED, a Stop reads IDLE (has_ever_consumed_ is reset by Stop), and both mean "not now".
 bool DeriveAnalysisInProgress(bool started, const PreviewSnapshot* snap);
 
+// Empties the result list's search box (a TU-local ImGuiTextFilter in analysis_panel.cpp — it
+// cannot live in GuiState::RaypathAnalysisSession, see the definition). Called by
+// ResetFrontendState for every document-switch reason, beside its whole-struct reset of
+// state.analysis, so the box follows that struct's lifetime: a new document clears it, Revert
+// keeps it (same scene), and a new Analyze never touches it.
+void ClearAnalysisSearchFilter();
+
 // ---- Result adoption and the display-time projection ----------------------------------------------
 
 // Adopt `payload` as the result on show iff it is a NEW result: non-null and carrying a
