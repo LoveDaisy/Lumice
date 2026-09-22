@@ -187,7 +187,7 @@ inline constexpr FieldTierEntry kFieldTierTable[] = {
     // Panel layout
     { "left_panel_collapsed",       FieldTier::kView,       false },
     { "right_panel_collapsed",      FieldTier::kView,       false },
-    { "modal_layout_vertical",      FieldTier::kView,       false },
+    { "modal_layout_compact",       FieldTier::kView,       false },
     // Log panel
     { "gui_log_level",              FieldTier::kView,       false },
     { "core_log_level",             FieldTier::kView,       false },
@@ -204,7 +204,6 @@ inline constexpr FieldTierEntry kFieldTierTable[] = {
     { "current_file_path",          FieldTier::kSession,    false },
     { "save_texture",               FieldTier::kSession,    false },
     { "modal_immediate_mode",       FieldTier::kSession,    false },
-    { "modal_layout_prototype",     FieldTier::kSession,    false },
 };
 
 // Derived / runtime-produced fields: NOT governed by a tier. The reconciler and effect layer must

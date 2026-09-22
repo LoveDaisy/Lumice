@@ -3388,7 +3388,9 @@ std::string SerializeGuiStateJson(const GuiState& state) {
 
   // Panel state
   root["right_panel_collapsed"] = state.right_panel_collapsed;
-  root["modal_layout_vertical"] = state.modal_layout_vertical;
+  // JSON key deliberately keeps the old spelling while the member is modal_layout_compact;
+  // see GuiState::modal_layout_compact for why (zero-migration read of existing .lmc files).
+  root["modal_layout_vertical"] = state.modal_layout_compact;
 
   // Schema version. v=2 added the filter `type` discriminator; v=3
   // (task-serialization-bidirectional) replaces the per-filter degenerate form
@@ -3709,7 +3711,9 @@ bool DeserializeGuiStateJson(const std::string& json_str, GuiState& state) {
 
   // Panel state
   state.right_panel_collapsed = root.value("right_panel_collapsed", GuiState{}.right_panel_collapsed);
-  state.modal_layout_vertical = root.value("modal_layout_vertical", GuiState{}.modal_layout_vertical);
+  // Old key, new member name (see the writer above). A document saved as false by a version that
+  // still had the side-by-side tab layout now opens as Expanded, its closest successor.
+  state.modal_layout_compact = root.value("modal_layout_vertical", GuiState{}.modal_layout_compact);
 
   // One line per load, not per rewritten row — the count is in the text. Reported here rather than
   // in each caller so that adding a caller cannot silently drop the notice; this function has

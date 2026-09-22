@@ -1265,14 +1265,6 @@ static_assert(sizeof(kMarkerSerialNames) / sizeof(kMarkerSerialNames[0]) == LUMI
 // Which of a marker row's three serialized leaves a key names.
 enum class MarkerKeyPart { kLine, kLabel, kColor };
 
-// Edit modal layout PROTOTYPE selector. Orthogonal to GuiState::modal_layout_vertical below,
-// which stays the serialized H/V split this switch does not touch: kLegacy defers entirely to
-// modal_layout_vertical (today's A "compact stacked" / H "side-by-side tab" pair); kTwoColumn /
-// kThreeColumn are the new "every section expanded, no tab bar" candidates B and C, for a
-// hands-on layout comparison. Prototype-only — which (if any) of these replace
-// modal_layout_vertical's role is a 592.7 decision, not this switch's.
-enum class ModalLayoutPrototype { kLegacy, kTwoColumn, kThreeColumn };
-
 // THE one place a per-marker serialization key is spelled. Every consumer — the writer and the
 // reader in file_io.cpp, the editor registry, the tests — calls this rather than writing
 // "overlay_marker_sun_color" out by hand, so a rename is one edit and the four sides cannot drift.
@@ -1594,14 +1586,21 @@ struct GuiState {
   // not persisted to .lmc (unlike right_panel_collapsed)
   bool left_panel_collapsed = false;
   bool right_panel_collapsed = false;
-  // Edit modal layout orientation (view preference). false = horizontal
-  // (preview left + tabs right); true = vertical (preview top + tabs below,
-  // default since gui-polish-v15 round 2). Persisted to .lmc alongside
-  // right_panel_collapsed.
-  bool modal_layout_vertical = true;
-  // Edit modal layout PROTOTYPE (view preference, session-only — NOT persisted to .lmc, unlike
-  // modal_layout_vertical above). See ModalLayoutPrototype's own comment.
-  ModalLayoutPrototype modal_layout_prototype = ModalLayoutPrototype::kLegacy;
+  // Edit modal layout (view preference). The modal has exactly two shapes and this one bit picks
+  // between them: true = Compact (preview on top, the three sections stacked below in a tab bar);
+  // false = Expanded (preview + Crystal in a left column, Axis over Filter in a right column, no
+  // tab bar — all three sections visible at once, at the cost of nearly all preview visibility).
+  // Persisted to .lmc alongside right_panel_collapsed.
+  //
+  // Two things about this field are deliberate and easy to trip over:
+  //   * The JSON key stays "modal_layout_vertical" while the member is named modal_layout_compact.
+  //     The old name described the Compact shape's geometry, and the bit means the same thing it
+  //     always did for true, so keeping the key costs nothing and buys a zero-migration read path
+  //     for every .lmc already on disk. Do not "fix" the key without a reader-side migration.
+  //   * false used to select a side-by-side tab layout ("H"), which no longer exists. Opening an
+  //     older document saved with false therefore shows Expanded — the closest successor — rather
+  //     than what it was saved as. This is an intended, one-time behavior change.
+  bool modal_layout_compact = true;
 
   // Log panel state (view preference — does not call MarkDirty)
   int gui_log_level = 3;   // Index into log level names: 0=trace,1=debug,2=verbose,3=info,4=warning,5=error,6=off

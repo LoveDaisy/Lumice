@@ -760,7 +760,7 @@ const std::unordered_map<std::string, FieldEditorEntry>& Registry() {
 
     // ---- panel state ----
     map.emplace("right_panel_collapsed", BoolField([](GuiState& s) { return &s.right_panel_collapsed; }));
-    map.emplace("modal_layout_vertical", BoolField([](GuiState& s) { return &s.modal_layout_vertical; }));
+    map.emplace("modal_layout_vertical", BoolField([](GuiState& s) { return &s.modal_layout_compact; }));
 
     return map;
   }();
