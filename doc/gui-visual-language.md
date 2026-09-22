@@ -70,6 +70,24 @@
 
 **4.1 正文字体** —— 换用比例字体（原型用 Roboto Medium 15px，另试过 Karla 16 / Droid Sans 15）。**这是单条改动中观感变化最大的一项**，且顺带改善了屏幕上的字形渲染质量。✅ 已定案并落地：Roboto Medium 15px，见 §7。
 
+> **15px 是逻辑像素，物理尺寸 = 15 × `ui_scale`。** 本节及 §4.2 的全部数值都是 1x 设计基准（96 dpi，
+> 也是 `gui_test` 参考图的拍摄尺度），不是跨平台不变的物理量。`ui_scale = 显示器内容缩放 × 用户倍率`，
+> 单一 owner 是 `src/gui/theme.{hpp,cpp}`：`ApplyVisualLanguage(io, layout_scale, raster_density)`
+> 每次从 `ImGuiStyle()` 基线重派生 style（`ScaleAllSizes`）、按 `round(15 × layout_scale)` 重建 atlas，
+> 其余所有屏幕像素字面量在使用处经 `UiPx()`/`UiPxI()` 取值。两个参数按平台拆分（策略在 `main.cpp`
+> 的 `ResolveUiScaleParams`，机制在 `theme.cpp`）：Windows/Linux 的 GLFW 窗口坐标就是物理像素，
+> `layout_scale = monitor × multiplier`、`raster_density = 1`；macOS 的窗口坐标是逻辑点、OS 已经把
+> 布局放大过，`layout_scale = multiplier`、`raster_density = monitor`——后者只提高 atlas 栅格化密度
+> （`ImFontConfig::RasterizerDensity`）不改任何度量，Retina 上字形变清晰而窗口尺寸不变（已真机核对）。
+> 三份状态各有一个 owner、不重复：`theme.cpp` 的 TU-local `g_layout_scale`（生效值，`CurrentUiScale()`
+> 读它）；`app.cpp` 的 `g_ui_scale_multiplier`（用户倍率，`user_defaults.json` 的 `app.ui_scale_multiplier`
+> 在窗口创建前由 `LoadUiScaleMultiplierAtStartup` 读入，Settings 面板经 `SetUiScaleMultiplierImmediate`
+> 改写）；`main.cpp` 的 `g_monitor_scale_x/y`（`glfwGetWindowContentScale` 的最近一次读数，跨屏回调只改
+> 它并置 `g_ui_scale_dirty`）。任一输入变化都走同一条路：下一帧顶部 `RebuildForUiScale` 重跑
+> `ApplyVisualLanguage` → 重传字体纹理 → `PlanWindowSizeForScale` 抬高窗口下限并在必要时放大窗口。
+> `UiPx()` 出口没有机械门禁（新写一个裸像素字面量不会被 checker 拦下），靠 code review 惯例维持，
+> 这是已知取舍。
+
 **4.2 尺寸节奏（量化）** —— 全部取值为 4 的倍数；关键在于**行距比现状更紧而非更松**，以抵消更大字号：
 
 ```

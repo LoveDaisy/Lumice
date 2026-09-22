@@ -60,6 +60,13 @@ GUI 需要 display server 和支持 OpenGL 3.2 Core Profile 的 GPU。
   且只印面板此刻显示的行（Sky Color 与 Paper Color 二者取一）。Summary 没有自己的导出按钮：用操作系统自带的截图工具截取即可
   （macOS ⌘⇧4、Windows Win+Shift+S、Linux 用桌面环境的等价快捷键）。详见
   [用户手册 — 配置总结](user-manual/07-config-summary_zh.md)。
+- **Settings**：个人默认值编辑器——决定**新**文档从什么起步，另加顶部的 `Application preferences`
+  几行，它们描述的是这台机器而不是任何文档：新文档起步用的 GPU 后端与 worker 数，以及 **UI scale**——
+  一个叠在显示器自身缩放之上的倍率（75% – 200%），作用于整套界面：文字、控件、面板一起放大缩小。
+  显示器自身的缩放（Windows 125% / 150%、Retina 屏）会自动检测，不需要设置；这个倍率是在那之上再调。
+  与它的两个邻居不同，它一改就立刻作用于当前窗口；**Save as my defaults** 会把它保存下来供以后每次启动
+  使用（`user_defaults.json` 里的 `app.ui_scale_multiplier`），试过但没保存的值会一直生效到程序退出——
+  控件旁的 `(this window: N%)` 标注显示的就是当前窗口实际在用的值。
 - **右面板折叠按钮**：`<` / `>` 与左侧对称（也可用快捷键 `]`）。
 
 ## Left Panel — Crystal Parameters（左侧面板）

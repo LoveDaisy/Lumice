@@ -92,6 +92,15 @@ If you hit "I set X in the JSON and nothing happened", check this list first, th
 4. **Wrong shape?** Check `crystal[].axis` — random orientation gives circles; oriented plates give arcs and spots.
 5. **Still stuck?** Re-run with `-v` and inspect the per-batch logs for unexpected zero-hit batches.
 
+## 7. The interface is too small (or too large) — can I change the text size?
+
+Yes. Open **Settings** from the top bar and pick a **UI scale** under `Application preferences`:
+75% to 200%, applied to the whole interface — text, controls and panels — the moment you choose it.
+Press **Save as my defaults** to keep it for every later start. The display's own scaling (a
+Windows 125% / 150% setting, a Retina screen) is detected automatically and is not part of this
+number, so 100% already means "as large as the rest of your desktop"; the multiplier is for going
+beyond that.
+
 ## Further reading
 
 - Full schema → [`../configuration.md`](../configuration.md)
