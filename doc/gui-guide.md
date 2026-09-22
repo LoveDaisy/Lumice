@@ -33,6 +33,8 @@ The main window is split into six regions. The same numbering is used in the lab
 
 The left and right side panels can be collapsed independently — useful when you want a wider Render Preview during simulation.
 
+Read-only text can be copied: right-click a line of the log panel, a row of the Raypath Analysis list, or the filter editor's live preview for a **Copy** menu, and the log panel's tool row and the Summary window each carry a button that copies the whole panel (**Copy**, **Copy as text**) as plain text.
+
 ## Top Bar
 
 From left to right, the Top Bar exposes:
@@ -65,9 +67,10 @@ From left to right, the Top Bar exposes:
   then every layer with its entries' crystal, shape, axis and filter) laid out in two columns to
   fit one 1280 × 900 screen and be screenshotted and shared — each row under the label the panel
   itself uses, and only the rows the panel currently shows (Sky Color or Paper Color, never both).
-  The Summary has no export button of its own: take the picture with your operating
+  The Summary has no image export of its own: take the picture with your operating
   system's screenshot tool (⌘⇧4 on macOS, Win+Shift+S on Windows, or your desktop's equivalent on
-  Linux). See [User Manual — Configuration Summary](user-manual/07-config-summary.md).
+  Linux); **Copy as text** on its version line puts the same page on the clipboard as tab-separated
+  text. See [User Manual — Configuration Summary](user-manual/07-config-summary.md).
 - **Settings**: the personal-defaults editor — what a *new* document starts from, plus the
   `Application preferences` rows at the top, which describe this machine rather than any document:
   the GPU backend and worker count a new document starts with, and **UI scale**, a multiplier

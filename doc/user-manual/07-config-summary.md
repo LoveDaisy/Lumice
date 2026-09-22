@@ -35,7 +35,9 @@ Value spelling is the document's own: `fisheye_equal_area`, `relative`, `full` �
 
 ## 3. Taking the picture
 
-There is no export button; use the operating system's screenshot tool and select the window — ⌘⇧4 then space-click the window on macOS, Win+Shift+S on Windows, or your desktop environment's equivalent on Linux. A document of a few layers fits the window with room to spare; if one is long enough for the page to scroll, take two screenshots or shrink the document first — the page prints every layer and entry, however many there are.
+There is no image export button; use the operating system's screenshot tool and select the window — ⌘⇧4 then space-click the window on macOS, Win+Shift+S on Windows, or your desktop environment's equivalent on Linux. A document of a few layers fits the window with room to spare; if one is long enough for the page to scroll, take two screenshots or shrink the document first — the page prints every layer and entry, however many there are.
+
+For the page as text rather than as a picture, **Copy as text** at the right end of the version line puts it on the clipboard: the version line, then each group as its title and one `label<TAB>value` line per field, then each layer as its heading and its two tables with tab-separated cells, header row first, and the distribution legend last. It is the same page model the window draws, so a row on screen is a line on the clipboard.
 
 ## 4. See also
 

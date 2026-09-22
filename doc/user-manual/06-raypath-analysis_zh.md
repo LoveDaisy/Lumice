@@ -110,6 +110,11 @@ Analyze 会应用复选框的设置。
 一切恢复。Export CSV 导出的是整张列表，不是屏幕上的那几行。搜索文本在 Analyze 和 Revert 之后都
 保留——它描述的是你怎么读结果，而不是哪个结果；打开或新建另一个文档时会被清空。
 
+**复制一行**。在某一行上右键有两个菜单项。**Copy raypath** 把这条光路的文本原样放进剪贴板——ASCII 的
+` -> ` 连接符，而不是行里画出来的箭头——贴到 filter、搜索框或笔记里就是 CSV 与命令行打印的同一串文本。
+**Copy row** 把整行按 CSV 自己的形式放进去：`Raypath,Energy,Cumulative %,+/-`，逗号分隔，与 Export CSV
+写这一行时用的是同一套格式化，所以复制一行与导出的文件逐字节一致。
+
 ## 5. 「Exclude this raypath」（排除此光路）与「Export CSV」
 
 选中一行，点击 **Exclude this raypath** 会生成一个过滤器，把走这条精确路径的光线剔除掉——采用
