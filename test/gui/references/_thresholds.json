@@ -88,49 +88,49 @@
       }
     },
     "modal_layout": {
-      "generated_at": "2026-09-12T20:37:21",
-      "n_ref_runs": 10,
-      "n_calib_runs": 10,
+      "generated_at": "2026-09-22T14:04:39",
+      "n_ref_runs": 1,
+      "n_calib_runs": 1,
       "scenes": {
         "crystal_prism": {
           "psnr_mean": null,
           "psnr_std": null,
-          "identical_runs": 10,
-          "n_samples": 10,
+          "identical_runs": 1,
+          "n_samples": 1,
           "threshold": 40.0,
           "maxcc_tau": 16,
           "maxcc_local_max": 0,
-          "maxcc_samples": 10
+          "maxcc_samples": 1
         },
         "crystal_pyramid": {
           "psnr_mean": null,
           "psnr_std": null,
-          "identical_runs": 10,
-          "n_samples": 10,
+          "identical_runs": 1,
+          "n_samples": 1,
           "threshold": 40.0,
           "maxcc_tau": 16,
           "maxcc_local_max": 0,
-          "maxcc_samples": 10
+          "maxcc_samples": 1
         },
         "filter_ee": {
           "psnr_mean": null,
           "psnr_std": null,
-          "identical_runs": 10,
-          "n_samples": 10,
+          "identical_runs": 1,
+          "n_samples": 1,
           "threshold": 40.0,
           "maxcc_tau": 16,
           "maxcc_local_max": 0,
-          "maxcc_samples": 10
+          "maxcc_samples": 1
         },
         "filter_raypath": {
           "psnr_mean": null,
           "psnr_std": null,
-          "identical_runs": 10,
-          "n_samples": 10,
+          "identical_runs": 1,
+          "n_samples": 1,
           "threshold": 40.0,
           "maxcc_tau": 16,
           "maxcc_local_max": 0,
-          "maxcc_samples": 10
+          "maxcc_samples": 1
         }
       }
     },
