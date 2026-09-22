@@ -1226,7 +1226,19 @@ void RenderDefaultsPanel(GuiState& state) {
   // every user, not just for the case that caught it. A control added ABOVE the sections has to
   // bring its own height with it. Through UiPx: this is a screen size, and the row heights it
   // budgets for scale with the font.
-  ImGui::SetNextWindowSize(ImVec2(UiPx(760.0f), UiPx(608.0f)), ImGuiCond_Appearing);
+  //
+  // Re-applied, not just on appearance, on the frame the UI scale changes: this is the window the
+  // scale is changed FROM, so it is open at the old size at exactly that moment, and a 760-px
+  // panel holding a 1.5x layout shows four settings rows and a clipped action row.
+  static float s_sized_for_scale = 0.0f;
+  const ImGuiCond size_cond = (s_sized_for_scale == CurrentUiScale()) ? ImGuiCond_Appearing : ImGuiCond_Always;
+  s_sized_for_scale = CurrentUiScale();
+  ImGui::SetNextWindowSize(ImVec2(UiPx(760.0f), UiPx(608.0f)), size_cond);
+  if (size_cond == ImGuiCond_Always) {
+    // Re-centred with the resize: ImGui grows a window from its top-left, and the old centre was
+    // computed for the old size, so the larger panel would otherwise run off the bottom.
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+  }
   // Passing a p_open is what puts the X in the title bar. Re-initialized to true every frame on
   // purpose: it is not a state we keep, only the one-frame channel ImGui uses to report "the X was
   // pressed", read below and then thrown away.
