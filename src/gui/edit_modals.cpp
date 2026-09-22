@@ -70,21 +70,10 @@ void ResetCrystalShapeParams(CrystalConfig& c) {
 enum class ActiveModal { kNone, kOpen };
 enum class ActiveTab { kCrystal, kAxis, kFilter };
 
-// Minimum width applied to the unified edit popup. Covers the two-column
-// layout: the runtime left-pane width is
-//   `kModalPreviewImageSize + 2×WindowPadding.x + 4`
-// computed dynamically; ≈340 under the default style (WindowPadding.x=8),
-// ≈348 with HiDPI themes that raise padding. The floor of 820 adds the
-// right TabBar content minimum (~432) + child spacing (~16) + popup window
-// padding (~32). AlwaysAutoResize still governs height; the constraint only
-// adds a width floor so that both columns render without clipping.
-constexpr float kEditModalMinWidth = 820.0f;
-
-// Vertical layout (modal_layout_vertical=true) relaxes the horizontal floor
-// since the tab content is stacked below the preview rather than beside it.
-// Height is content-driven (AlwaysAutoResize): the bottom pane uses the same
-// fixed height as the horizontal right pane (kPreviewChildHeight), so the
-// vertical modal is exactly 2× the horizontal modal height plus chrome.
+// Compact layout (modal_layout_compact=true): the tab content is stacked below the preview rather
+// than beside it, so the width floor only has to fit the tab body. Height is content-driven
+// (AlwaysAutoResize); the bottom pane carries the same fixed height (kPreviewChildHeight) the
+// preview pane above it does.
 //
 // Held at 420 for the Crystal-tab shape property table. Fixed columns
 // (Param kShapeParamColWidth=52 + Sync kShapeSyncColWidth=29 + Rand
@@ -95,25 +84,22 @@ constexpr float kEditModalMinWidth = 820.0f;
 constexpr float kEditModalMinWidthVertical = 420.0f;
 constexpr float kEditModalMinHeightVertical = 0.0f;
 
-// ---- Layout prototypes B and C: "everything expanded, no tab bar" ----
-// Alternatives to the H/V tab-bar split above — B stacks Axis over Filter beside a
-// preview+Crystal column, C gives Axis and Filter each their own column. Sized to comfortably fit
-// each content function's widest control without clipping (same headroom logic as
-// kEditModalMinWidth's right-pane floor above); the widths below are a starting point for a
-// hands-on layout comparison, not a target derived from any measurement.
+// ---- Expanded layout: "everything expanded, no tab bar" ----
+// The other half of the two-shape pair (modal_layout_compact=false): Axis stacked over Filter
+// beside a preview+Crystal column. Sized to fit each content function's widest control without
+// clipping. Note the left column is the NARROWEST place the shape table is ever drawn — ~14px
+// tighter than Compact's 420 window — which is what test_edit_modal.cpp's Expanded column-width
+// case pins.
 constexpr float kModalColumnWidthCrystal = 390.0f;  // preview pane (~340-348) + margin for the shape table
 constexpr float kModalColumnWidthAxisOrFilter = 400.0f;
 constexpr float kModalColumnSpacing = 16.0f;  // one ItemSpacing.x-ish gap between columns
 // Left(Crystal) + right(Axis/Filter) + one inter-column gap + popup padding.
 constexpr float kEditModalMinWidthTwoColumn =
     kModalColumnWidthCrystal + kModalColumnWidthAxisOrFilter + kModalColumnSpacing + 16.0f;
-// Left(Crystal) + middle(Axis) + right(Filter) + two inter-column gaps + popup padding.
-constexpr float kEditModalMinWidthThreeColumn =
-    kModalColumnWidthCrystal + kModalColumnWidthAxisOrFilter * 2.0f + kModalColumnSpacing * 2.0f + 16.0f;
-constexpr float kEditModalMinHeightTwoOrThreeColumn = 0.0f;  // content-driven, like kEditModalMinHeightVertical
+constexpr float kEditModalMinHeightTwoColumn = 0.0f;  // content-driven, like kEditModalMinHeightVertical
 
 // Shape property-table fixed column widths; the Value column is WidthStretch and
-// takes the remainder. Tuned so the vertical layout gives the Value slider real
+// takes the remainder. Tuned so the narrowest layout gives the Value slider real
 // length instead of starving it: Rand only needs the checkbox + "Rand" header,
 // Spread fits "100.0000" (%.4f). Shared by the main params table and the Face
 // Distance table so their columns line up.
@@ -123,7 +109,7 @@ constexpr float kEditModalMinHeightTwoOrThreeColumn = 0.0f;  // content-driven, 
 // for all three narrow columns is TEXT — the header string or the longest row label — never the
 // control. Param fits its widest label ("Prism H" / "Upper H" / "Lower A", 7 chars ≈ 48 px) with
 // symmetric ~6 px margins; the 26 px reclaimed from the three of them all goes to the Value slider
-// (vertical layout: 181 → 207 px). Anything that lengthens a header or a row label has to revisit
+// (Compact layout: 181 → 207 px). Anything that lengthens a header or a row label has to revisit
 // these — `edit_modal/the_fixed_columns_fit_their_text_in_both_layouts` in
 // test/gui/functional/test_edit_modal.cpp is what notices, by comparing each fixed column's
 // ContentMaxXHeadersIdeal against its WorkMaxX rather than against a pixel constant.
@@ -1316,7 +1302,8 @@ static void RenderCrystalModal(GuiState& /*state*/) {
       ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_RowBg;
   // Shared column setup: identical fixed widths in the main params table and the Face Distance table
   // below, so the 6 face rows line up column-for-column with the parameter rows. Value is the only
-  // WidthStretch column, so a narrow (vertical-layout) table compresses the slider first rather than
+  // WidthStretch column, so a narrow table (Compact, or the Expanded layout's Crystal column,
+  // which is narrower still) compresses the slider first rather than
   // clipping the fixed Sync/Rand/Spread cells.
   const auto setup_shape_columns = []() {
     ImGui::TableSetupColumn("Param", ImGuiTableColumnFlags_WidthFixed, UiPx(kShapeParamColWidth));
@@ -2204,13 +2191,12 @@ void HandlePopupClosed(GuiState& state) {
   g_active_modal = ActiveModal::kNone;
 }
 
-// Renders the layout-toggle button, the TabBar, and the three tab bodies.
-// Called from both the horizontal (right child) and vertical (bottom child)
-// layout branches with identical arguments; layout-dependent geometry is
-// handled by the caller's BeginChild sizing.
+// Renders the TabBar and the three tab bodies. Drawn only by the Compact layout (the Expanded
+// layout has no tab bar and calls the three content functions directly); layout-dependent geometry
+// is handled by the caller's BeginChild sizing.
 void RenderModalTabBar(GuiState& state, const char* crystal_label, const char* axis_label, const char* filter_label,
                        ImGuiTabItemFlags crystal_flags, ImGuiTabItemFlags axis_flags, ImGuiTabItemFlags filter_flags) {
-  // Note: H/V layout toggle relocated to the bottom button row alongside the
+  // Note: the layout selector lives on the bottom button row alongside the
   // Immediate checkbox for visual consistency (both are view-preference
   // toggles; gui-polish-v15 round 2 UX feedback). See RenderEditModals below.
   //
@@ -2270,11 +2256,11 @@ void RenderModalTabBar(GuiState& state, const char* crystal_label, const char* a
   }
 }
 
-// ---- Layout prototypes B and C: "everything expanded, no tab bar" ----
-// Tab-bar substitutes for the kTwoColumn / kThreeColumn ModalLayoutPrototype values, the
-// counterpart to RenderModalTabBar above. RenderCrystalModal / RenderAxisModal / RenderFilterModal
-// are called exactly as RenderModalTabBar calls them (same PushID(layer)/PushID(entry) scoping):
-// those three functions know nothing about which layout is drawing them.
+// ---- Expanded layout: "everything expanded, no tab bar" ----
+// The tab-bar substitute for modal_layout_compact=false, counterpart to RenderModalTabBar above.
+// RenderCrystalModal / RenderAxisModal / RenderFilterModal are called exactly as RenderModalTabBar
+// calls them (same PushID(layer)/PushID(entry) scoping): those three functions know nothing about
+// which layout is drawing them.
 
 // Rows budgeted for the Axis section's presets row + its (up to) three AxisDist controls
 // (~10 rows) plus a small margin, so it gets a fixed short height and Filter (the content that
@@ -2292,10 +2278,10 @@ static void RenderModalSectionHeader(const char* title, bool dirty, bool show_di
   ImGui::Separator();
 }
 
-// Content height shared by both prototypes below: same 17-row "tallest crystal layout" budget as
-// RenderEditModals's own kModalContentHeight, minus that constant's tab-bar row (kToolRow) — B/C
-// draw no tab bar, so nothing accounts for its height here.
-static float ModalPrototypeContentHeight() {
+// Column content height: same 17-row "tallest crystal layout" budget as RenderEditModals's own
+// kModalContentHeight, minus that constant's tab-bar row (kToolRow) — the Expanded layout draws no
+// tab bar, so nothing accounts for its height here.
+static float ModalTwoColumnContentHeight() {
   const ImGuiStyle& style = ImGui::GetStyle();
   const float row_h = ImGui::GetFrameHeightWithSpacing();
   const float v_pad = style.WindowPadding.y * 2.0f + style.ItemSpacing.y;
@@ -2303,24 +2289,25 @@ static float ModalPrototypeContentHeight() {
 }
 
 // Same arithmetic as RenderEditModals's own kPreviewChildHeight (preview image + a tool row +
-// child padding), local to this file section so B/C do not need it threaded through as a param.
-static float ModalPrototypePreviewHeight() {
+// child padding), local to this file section so the column layout does not need it threaded
+// through as a param.
+static float ModalTwoColumnPreviewHeight() {
   const ImGuiStyle& style = ImGui::GetStyle();
   const float tool_row = ImGui::GetFrameHeightWithSpacing();
   const float v_pad = style.WindowPadding.y * 2.0f + style.ItemSpacing.y;
   return kModalPreviewImageSize + tool_row + v_pad;
 }
 
-// Prototype B: preview+Crystal in a left column; Axis (short, fixed) stacked over Filter (gets
+// Expanded layout: preview+Crystal in a left column; Axis (short, fixed) stacked over Filter (gets
 // the remaining height) in a right column. No tab bar.
 static void RenderModalTwoColumn(GuiState& state, bool crystal_dirty, bool axis_dirty, bool filter_dirty,
                                  bool show_dirty) {
   const int entry_layer = g_modal_layer_idx;
   const int entry_index = g_modal_entry_idx;
   assert(g_pull_generation == ImGui::GetFrameCount() &&
-         "PullBuffersFromPool must run before the B/C column layout each frame");
+         "PullBuffersFromPool must run before the Expanded column layout each frame");
   const ImGuiStyle& style = ImGui::GetStyle();
-  const float column_h = ModalPrototypePreviewHeight() + style.ItemSpacing.y + ModalPrototypeContentHeight();
+  const float column_h = ModalTwoColumnPreviewHeight() + style.ItemSpacing.y + ModalTwoColumnContentHeight();
 
   ImGui::BeginChild("##modal_b_left", ImVec2(kModalColumnWidthCrystal, column_h), ImGuiChildFlags_None);
   RenderCrystalPreviewPane(state);
@@ -2354,47 +2341,6 @@ static void RenderModalTwoColumn(GuiState& state, bool crystal_dirty, bool axis_
   ImGui::PopID();
   ImGui::PopID();
   ImGui::EndChild();
-  ImGui::EndChild();
-}
-
-// Prototype C: preview+Crystal / Axis / Filter each in their own full-height column. No tab bar.
-static void RenderModalThreeColumn(GuiState& state, bool crystal_dirty, bool axis_dirty, bool filter_dirty,
-                                   bool show_dirty) {
-  const int entry_layer = g_modal_layer_idx;
-  const int entry_index = g_modal_entry_idx;
-  assert(g_pull_generation == ImGui::GetFrameCount() &&
-         "PullBuffersFromPool must run before the B/C column layout each frame");
-  const ImGuiStyle& style = ImGui::GetStyle();
-  const float column_h = ModalPrototypePreviewHeight() + style.ItemSpacing.y + ModalPrototypeContentHeight();
-
-  ImGui::BeginChild("##modal_c_left", ImVec2(kModalColumnWidthCrystal, column_h), ImGuiChildFlags_None);
-  RenderCrystalPreviewPane(state);
-  RenderModalSectionHeader("Crystal", crystal_dirty, show_dirty);
-  ImGui::PushID(entry_layer);
-  ImGui::PushID(entry_index);
-  RenderCrystalModal(state);
-  ImGui::PopID();
-  ImGui::PopID();
-  ImGui::EndChild();
-
-  ImGui::SameLine();
-  ImGui::BeginChild("##modal_c_mid", ImVec2(kModalColumnWidthAxisOrFilter, column_h), ImGuiChildFlags_None);
-  RenderModalSectionHeader("Axis", axis_dirty, show_dirty);
-  ImGui::PushID(entry_layer);
-  ImGui::PushID(entry_index);
-  RenderAxisModal(state);
-  ImGui::PopID();
-  ImGui::PopID();
-  ImGui::EndChild();
-
-  ImGui::SameLine();
-  ImGui::BeginChild("##modal_c_right", ImVec2(kModalColumnWidthAxisOrFilter, column_h), ImGuiChildFlags_None);
-  RenderModalSectionHeader("Filter", filter_dirty, show_dirty);
-  ImGui::PushID(entry_layer);
-  ImGui::PushID(entry_index);
-  RenderFilterModal();
-  ImGui::PopID();
-  ImGui::PopID();
   ImGui::EndChild();
 }
 
@@ -2432,38 +2378,18 @@ void RenderEditModals(GuiState& state, GLFWwindow* window) {
   // the helper cannot identify a monitor (headless tests, nullptr window), fall
   // back to an unbounded max rather than a primary-monitor default (avoids the
   // multi-monitor "primary bias" anti-pattern).
-  // kLegacy defers to modal_layout_vertical exactly as before — the B/C prototype switch leaves
-  // that field, and its serialization, alone; kTwoColumn/kThreeColumn are the new prototypes,
-  // sized off their own constants above.
-  float min_w = UiPx(kEditModalMinWidth);
-  float min_h = 0.0f;
-  switch (state.modal_layout_prototype) {
-    case ModalLayoutPrototype::kTwoColumn:
-      min_w = UiPx(kEditModalMinWidthTwoColumn);
-      min_h = UiPx(kEditModalMinHeightTwoOrThreeColumn);
-      break;
-    case ModalLayoutPrototype::kThreeColumn:
-      min_w = UiPx(kEditModalMinWidthThreeColumn);
-      min_h = UiPx(kEditModalMinHeightTwoOrThreeColumn);
-      break;
-    case ModalLayoutPrototype::kLegacy:
-    default:
-      min_w = UiPx(state.modal_layout_vertical ? kEditModalMinWidthVertical : kEditModalMinWidth);
-      min_h = UiPx(state.modal_layout_vertical ? kEditModalMinHeightVertical : 0.0f);
-      break;
-  }
-  // Snap window width when the user switches layout (H↔V, or into/out of a B/C prototype).
-  // SetNextWindowSizeConstraints alone only bounds the allowed range; an already-sized window
-  // stays at its current width if that value is within the new range. Explicit SetNextWindowSize
-  // on the switch frame forces the width to the new layout's minimum; height 0 means "auto-fit to
-  // content" (AlwaysAutoResize semantics).
-  static bool s_prev_modal_layout_vertical = state.modal_layout_vertical;
-  static ModalLayoutPrototype s_prev_modal_layout_prototype = state.modal_layout_prototype;
-  const bool layout_switched = s_prev_modal_layout_vertical != state.modal_layout_vertical ||
-                               s_prev_modal_layout_prototype != state.modal_layout_prototype;
+  // Each of the two layouts carries its own width floor (Compact's tab body vs. the Expanded
+  // layout's two columns); height stays content-driven in both.
+  const float min_w = UiPx(state.modal_layout_compact ? kEditModalMinWidthVertical : kEditModalMinWidthTwoColumn);
+  const float min_h = UiPx(state.modal_layout_compact ? kEditModalMinHeightVertical : kEditModalMinHeightTwoColumn);
+  // Snap window width when the user switches layout. SetNextWindowSizeConstraints alone only
+  // bounds the allowed range; an already-sized window stays at its current width if that value is
+  // within the new range. Explicit SetNextWindowSize on the switch frame forces the width to the
+  // new layout's minimum; height 0 means "auto-fit to content" (AlwaysAutoResize semantics).
+  static bool s_prev_modal_layout_compact = state.modal_layout_compact;
+  const bool layout_switched = s_prev_modal_layout_compact != state.modal_layout_compact;
   if (layout_switched) {
-    s_prev_modal_layout_vertical = state.modal_layout_vertical;
-    s_prev_modal_layout_prototype = state.modal_layout_prototype;
+    s_prev_modal_layout_compact = state.modal_layout_compact;
     ImGui::SetNextWindowSize(ImVec2(min_w, 0.0f));
   }
   // Called every frame this modal is open, not just on appearance, from min_w/min_h above (fresh
@@ -2695,12 +2621,9 @@ void RenderEditModals(GuiState& state, GLFWwindow* window) {
   const char* axis_label = (show_dirty && axis_dirty) ? "Axis *###axis_tab" : "Axis###axis_tab";
   const char* filter_label = (show_dirty && filter_dirty) ? "Filter *###filter_tab" : "Filter###filter_tab";
 
-  // Layout dispatch. Horizontal: preview on left, tab bar on right (default).
-  // Vertical: preview on top (full width), tab bar below (full width, scrollable).
-  // Both share the same preview child height and the same RenderModalTabBar body;
-  // only the container geometry and the SameLine/no-SameLine differ.
+  // Layout dispatch. Compact: preview on top (full width), tab bar below (full width, scrollable).
+  // Expanded: two columns, no tab bar (RenderModalTwoColumn).
   const ImGuiStyle& style = ImGui::GetStyle();
-  const float kPreviewChildW_H = UiPx(kModalPreviewImageSize) + style.WindowPadding.x * 2.0f + UiPx(4.0f);
   const float kToolRow = ImGui::GetFrameHeightWithSpacing();
   const float kVPad = style.WindowPadding.y * 2.0f + style.ItemSpacing.y;
   const float kPreviewChildHeight = UiPx(kModalPreviewImageSize) + kToolRow + kVPad;
@@ -2711,48 +2634,21 @@ void RenderEditModals(GuiState& state, GLFWwindow* window) {
   // that genuinely tall content (e.g. a many-row filter, up to kMaxSummandRows) still relies on — so
   // content taller than this still scrolls, while the fixed size keeps the modal centered on appear.
   const float kModalContentHeight = kToolRow + 17.0f * ImGui::GetFrameHeightWithSpacing() + kVPad;
-  bool vertical = state.modal_layout_vertical;
 
-  // Layout dispatch. kLegacy is the H/V split above, byte-for-byte unchanged from before this
-  // prototype switch existed; kTwoColumn/kThreeColumn are the B/C prototypes, whose own tab-bar
-  // substitutes live next to RenderModalTabBar above.
-  switch (state.modal_layout_prototype) {
-    case ModalLayoutPrototype::kTwoColumn:
-      RenderModalTwoColumn(state, crystal_dirty, axis_dirty, filter_dirty, show_dirty);
-      break;
-    case ModalLayoutPrototype::kThreeColumn:
-      RenderModalThreeColumn(state, crystal_dirty, axis_dirty, filter_dirty, show_dirty);
-      break;
-    case ModalLayoutPrototype::kLegacy:
-    default:
-      if (vertical) {
-        // Upper pane: preview, full modal width, fixed height.
-        ImGui::BeginChild("##modal_top_pane", ImVec2(-FLT_MIN, kPreviewChildHeight), ImGuiChildFlags_None,
-                          ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
-        RenderCrystalPreviewPane(state);
-        ImGui::EndChild();
-        // Lower pane: tab bar + body, at kModalContentHeight so the tallest crystal layout fits without a
-        // scrollbar (taller content still scrolls; see the constant's rationale).
-        ImGui::BeginChild("##modal_bottom_pane", ImVec2(-FLT_MIN, kModalContentHeight), ImGuiChildFlags_None,
-                          ImGuiWindowFlags_None);
-        RenderModalTabBar(state, crystal_label, axis_label, filter_label, crystal_flags, axis_flags, filter_flags);
-        ImGui::EndChild();
-      } else {
-        // Horizontal: existing layout. Left pane NoScrollbar + NoScrollWithMouse (fixed preview height);
-        // right pane sizes off remaining width and uses kModalContentHeight so the tallest tab content
-        // (Pyramid + all Face Distance rows) fits without a scrollbar (taller content still scrolls).
-        const float right_w =
-            std::max(320.0f, ImGui::GetContentRegionAvail().x - kPreviewChildW_H - style.ItemSpacing.x);
-        ImGui::BeginChild("##modal_left_pane", ImVec2(kPreviewChildW_H, kPreviewChildHeight), ImGuiChildFlags_None,
-                          ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
-        RenderCrystalPreviewPane(state);
-        ImGui::EndChild();
-        ImGui::SameLine();
-        ImGui::BeginChild("##modal_right_pane", ImVec2(right_w, kModalContentHeight), ImGuiChildFlags_None);
-        RenderModalTabBar(state, crystal_label, axis_label, filter_label, crystal_flags, axis_flags, filter_flags);
-        ImGui::EndChild();
-      }
-      break;
+  if (state.modal_layout_compact) {
+    // Upper pane: preview, full modal width, fixed height.
+    ImGui::BeginChild("##modal_top_pane", ImVec2(-FLT_MIN, kPreviewChildHeight), ImGuiChildFlags_None,
+                      ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+    RenderCrystalPreviewPane(state);
+    ImGui::EndChild();
+    // Lower pane: tab bar + body, at kModalContentHeight so the tallest crystal layout fits without a
+    // scrollbar (taller content still scrolls; see the constant's rationale).
+    ImGui::BeginChild("##modal_bottom_pane", ImVec2(-FLT_MIN, kModalContentHeight), ImGuiChildFlags_None,
+                      ImGuiWindowFlags_None);
+    RenderModalTabBar(state, crystal_label, axis_label, filter_label, crystal_flags, axis_flags, filter_flags);
+    ImGui::EndChild();
+  } else {
+    RenderModalTwoColumn(state, crystal_dirty, axis_dirty, filter_dirty, show_dirty);
   }
 
   // Immediate mode: push buffer→entry every frame (diff-gated inside
@@ -2827,78 +2723,56 @@ void RenderEditModals(GuiState& state, GLFWwindow* window) {
     }
   }
 
-  // View-preference toggles (layout prototype selector + Immediate), right-aligned on the button
-  // row. Neither marks the file dirty, both affect UI presentation only.
+  // View-preference toggles (layout selector + Immediate), right-aligned on the button row.
+  // Neither marks the file dirty, both affect UI presentation only.
   //
-  // kViewToggleGroupWidth MUST be an over-estimate of the row's real content width, never an
-  // under-estimate: this reserves space via Dummy(avail-budget) and then draws the real group
-  // after it, so an under-estimate compounds every frame — avail grows by the shortfall, the next
-  // frame's Dummy reserves even more on top of that, without bound (found the hard way: an
-  // earlier version of this row also drew an M1 size readout here and, ~40px under budget, drove
-  // the H/V-legacy modal from its fixed 420/820 floor past 1300px within a handful of frames,
-  // failing test_edit_modal.cpp's exact-width assertions). The readout now lives on its own line
-  // below, outside this row's budget arithmetic, for exactly that reason.
+  // The reserve below MUST NOT under-estimate the row's real content width: it reserves space via
+  // Dummy(avail - budget) and then draws the real group after it, so an under-estimate compounds
+  // every frame — avail grows by the shortfall, the next frame's Dummy reserves even more on top
+  // of that, without bound (found the hard way: an earlier version of this row also drew a size
+  // readout here and, ~40px under budget, drove the modal from its fixed width floor past 1300px
+  // within a handful of frames, failing test_edit_modal.cpp's exact-width assertions).
+  //
+  // So the budget is DERIVED from the two controls rather than estimated as a constant: the combo
+  // is given an explicit width, and the checkbox width is ImGui's own formula (square of
+  // GetFrameHeight + ItemInnerSpacing.x + label). Both terms follow font/DPI/style automatically,
+  // which a hand-tuned constant cannot, and the failure mode above is a shortfall — the one thing
+  // an exact derivation cannot produce. kViewToggleGroupMargin only absorbs rounding.
   ImGui::SameLine();
-  // Budget kept at the ORIGINAL "Vertical"+"Immediate" checkbox-pair width (210, see git history)
-  // plus a small margin: the letter-only combo below (~56px) is narrower than the "Vertical"
-  // checkbox+label it replaces, so the legacy A/H row's real content width does not grow past
-  // what it already was — kept that way on purpose so the 420/820 floors below stay the modal's
-  // actual width in legacy mode, unchanged from before this prototype selector existed (an
-  // earlier wider combo measured 457 here, breaking test_edit_modal.cpp's exact-width asserts).
-  constexpr float kViewToggleGroupWidth = 220.0f;
+  // Two-shape layout selector. Compact keeps most of the halo preview visible at the cost of one
+  // tab click per section; Expanded shows Crystal, Axis and Filter at once and leaves almost no
+  // preview. The names are what the user reads — no letter codes.
+  static const char* kModalLayoutNames[] = { "Compact", "Expanded" };
+  static const char* kModalLayoutTooltips[] = {
+    "Compact — preview on top, one tab per section.\nKeeps most of the halo preview visible.",
+    "Expanded — Crystal, Axis and Filter side by side, no tabs.\nNo tab switching; almost no preview left.",
+  };
+  constexpr float kViewToggleGroupMargin = 4.0f;
+  // Widest preview text + the combo's own arrow button + frame padding: the closed control never
+  // clips either name, at any font scale.
+  float layout_combo_w = 0.0f;
+  for (const char* name : kModalLayoutNames) {
+    layout_combo_w = std::max(layout_combo_w, ImGui::CalcTextSize(name).x);
+  }
+  layout_combo_w += ImGui::GetFrameHeight() + style.FramePadding.x * 2.0f;
+  const float immediate_w = ImGui::GetFrameHeight() + style.ItemInnerSpacing.x +
+                            ImGui::CalcTextSize("Immediate##edit_modal", nullptr, true).x;
+  const float view_toggle_group_w = layout_combo_w + style.ItemSpacing.x + immediate_w + UiPx(kViewToggleGroupMargin);
   const float avail = ImGui::GetContentRegionAvail().x;
-  if (avail > UiPx(kViewToggleGroupWidth)) {
-    ImGui::Dummy(ImVec2(avail - UiPx(kViewToggleGroupWidth), 0));
+  if (avail > view_toggle_group_w) {
+    ImGui::Dummy(ImVec2(avail - view_toggle_group_w, 0));
     ImGui::SameLine();
   }
-  // Layout-prototype selector, for a hands-on layout comparison build: temporarily replaces the
-  // Vertical checkbox. A/H are today's legacy H/V split (ModalLayoutPrototype::kLegacy,
-  // disambiguated by modal_layout_vertical, which this switch never writes to for B/C — its own
-  // serialization stays untouched); B/C are the new column prototypes. Final field disposition
-  // (keep this selector, fold into modal_layout_vertical, or drop) is a 592.7 decision.
-  //
-  // Letter-only preview (BeginCombo, not the array-based Combo) so the closed control stays
-  // pocket-sized like the checkbox it replaces; the full name is inside the dropdown only.
-  static const char* kLayoutPrototypeShort[] = { "A", "B", "C", "H" };
-  static const char* kLayoutPrototypeFull[] = {
-    "A - Compact (stacked)",
-    "B - Two column",
-    "C - Three column",
-    "H - Side-by-side (control)",
-  };
-  constexpr int kLayoutPrototypeItemCount =
-      static_cast<int>(sizeof(kLayoutPrototypeShort) / sizeof(kLayoutPrototypeShort[0]));
-  int layout_selector_idx = 0;
-  if (state.modal_layout_prototype == ModalLayoutPrototype::kTwoColumn) {
-    layout_selector_idx = 1;
-  } else if (state.modal_layout_prototype == ModalLayoutPrototype::kThreeColumn) {
-    layout_selector_idx = 2;
-  } else {
-    layout_selector_idx = state.modal_layout_vertical ? 0 : 3;
-  }
-  ImGui::SetNextItemWidth(48.0f);
-  if (ImGui::BeginCombo("##layout_prototype", kLayoutPrototypeShort[layout_selector_idx])) {
-    for (int i = 0; i < kLayoutPrototypeItemCount; ++i) {
+  int layout_selector_idx = state.modal_layout_compact ? 0 : 1;
+  ImGui::SetNextItemWidth(layout_combo_w);
+  if (ImGui::BeginCombo("##modal_layout", kModalLayoutNames[layout_selector_idx])) {
+    for (int i = 0; i < static_cast<int>(sizeof(kModalLayoutNames) / sizeof(kModalLayoutNames[0])); ++i) {
       const bool selected = (i == layout_selector_idx);
-      if (ImGui::Selectable(kLayoutPrototypeFull[i], selected)) {
-        layout_selector_idx = i;
-        switch (i) {
-          case 1:
-            state.modal_layout_prototype = ModalLayoutPrototype::kTwoColumn;
-            break;
-          case 2:
-            state.modal_layout_prototype = ModalLayoutPrototype::kThreeColumn;
-            break;
-          case 3:
-            state.modal_layout_prototype = ModalLayoutPrototype::kLegacy;
-            state.modal_layout_vertical = false;
-            break;
-          case 0:
-          default:
-            state.modal_layout_prototype = ModalLayoutPrototype::kLegacy;
-            state.modal_layout_vertical = true;
-            break;
-        }
+      if (ImGui::Selectable(kModalLayoutNames[i], selected)) {
+        state.modal_layout_compact = (i == 0);
+      }
+      if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("%s", kModalLayoutTooltips[i]);
       }
       if (selected) {
         ImGui::SetItemDefaultFocus();
@@ -2907,7 +2781,7 @@ void RenderEditModals(GuiState& state, GLFWwindow* window) {
     ImGui::EndCombo();
   }
   if (ImGui::IsItemHovered()) {
-    ImGui::SetTooltip("Edit-modal layout prototype (explore-edit-modal-layout, owner hands-on)");
+    ImGui::SetTooltip("%s", kModalLayoutTooltips[layout_selector_idx]);
   }
   ImGui::SameLine();
   // ImGui::Checkbox returns true only on the frame the user actually toggled
@@ -2946,21 +2820,6 @@ void RenderEditModals(GuiState& state, GLFWwindow* window) {
   }
   if (ImGui::IsItemHovered()) {
     ImGui::SetTooltip("Apply parameter changes to simulation in real-time");
-  }
-
-  // Window-size readout, gated to the two new prototypes only: the existing H/V modal has
-  // committed gui_test reference screenshots of its exact pixels, and an extra text line here adds
-  // height even when its own content is a single disabled label — the modal_layout reference group
-  // caught exactly that (820x546 captured vs. 820x528 reference, the readout's own row) before this
-  // gate was added. B/C have no such reference to preserve. Deliberately its own left-aligned line,
-  // NOT folded into the toggle row above — see that row's comment on why a dynamic-width label
-  // sharing its avail-budget arithmetic is a feedback-loop hazard, not just a cosmetic choice.
-  // One-frame-lagged for an AlwaysAutoResize window (ImGui applies the next fit at Render time) —
-  // stable once the modal stops changing shape, immediate for a static scene.
-  if (state.modal_layout_prototype != ModalLayoutPrototype::kLegacy) {
-    const ImVec2 win_size = ImGui::GetWindowSize();
-    ImGui::TextDisabled("[layout %s] window %.0f x %.0f", kLayoutPrototypeFull[layout_selector_idx], win_size.x,
-                        win_size.y);
   }
 
   if (dispatched_immediate) {
