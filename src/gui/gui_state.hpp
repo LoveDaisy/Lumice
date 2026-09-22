@@ -1597,7 +1597,7 @@ struct GuiState {
   //     The old name described the Compact shape's geometry, and the bit means the same thing it
   //     always did for true, so keeping the key costs nothing and buys a zero-migration read path
   //     for every .lmc already on disk. Do not "fix" the key without a reader-side migration.
-  //   * false used to select a side-by-side tab layout ("H"), which no longer exists. Opening an
+  //   * false used to select a side-by-side tab layout, which no longer exists. Opening an
   //     older document saved with false therefore shows Expanded — the closest successor — rather
   //     than what it was saved as. This is an intended, one-time behavior change.
   bool modal_layout_compact = true;
