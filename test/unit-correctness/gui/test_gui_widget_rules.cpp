@@ -320,13 +320,6 @@ TEST(EditModalRules, SummandRowCapBitesAtTheCapAndNotBefore) {
   EXPECT_TRUE(AtSummandRowCap(kMaxSummandRows + 1));
 }
 
-TEST(EditModalRules, TheLastSummandRowCannotBeDeleted) {
-  EXPECT_FALSE(CanDeleteSummandRow(0));
-  EXPECT_FALSE(CanDeleteSummandRow(1));
-  EXPECT_TRUE(CanDeleteSummandRow(2));
-  EXPECT_TRUE(CanDeleteSummandRow(kMaxSummandRows));
-}
-
 TEST(EditModalRules, OnlyValidRowsPassTheCommitGate) {
   EXPECT_FALSE(SummandRowBlocksCommit(LUMICE_RAYPATH_VALID));
   EXPECT_TRUE(SummandRowBlocksCommit(LUMICE_RAYPATH_INCOMPLETE));

@@ -103,10 +103,15 @@ enum class LabelPlacement { kTrailing, kLeading, kNone };
 // drawn by absolute position, so a row sized to the content region would run underneath it. Passing
 // the number is what makes the card's four rows share one right edge by construction rather than by
 // two formulas that have to agree.
+//
+// `focus_input_now` (false by default): submit the input box as the target of a
+// SetKeyboardFocusHere(0) — i.e. give it the keyboard this frame. Only the function that submits
+// the box can place that call, because it has to come immediately before the box and after the
+// slider; a caller cannot reach in between. gui/table_focus_ring.hpp is what asks for it.
 bool SliderWithInput(const char* label, float* value, float min_val, float max_val, const char* fmt = "%.1f",
                      SliderScale scale = SliderScale::kLinear,
                      LabelPlacement label_placement = LabelPlacement::kTrailing, bool* committed = nullptr,
-                     bool* active = nullptr, float avail_override = 0.0f);
+                     bool* active = nullptr, float avail_override = 0.0f, bool focus_input_now = false);
 
 // SliderInt + InputInt + label text — SliderWithInput's integer sibling, same layout and the same
 // `label_placement` modes and the same optional `committed` / `active` out-params.
@@ -201,7 +206,14 @@ void ShapeTableParamLabel(const char* label);
 // Returns true if any value changed. Does NOT call MarkDirty() — caller is responsible.
 // `reload_active_inputs`: true on a frame the slot's ShapeDist was replaced from outside the widgets
 // (the edit modal's pull from the pool) — see gui/input_text_reload.hpp.
-bool RenderShapeDistTableRow(const char* label, CrystalConfig& cr, int slot, bool reload_active_inputs);
+// `ring`: the column-major Tab ring the row's Value box (always) and Spread box (while enabled)
+// belong to — see gui/table_focus_ring.hpp. The row only registers its boxes and places the focus
+// where the ring says; it never works out "which box is next" itself. Declared here as an
+// incomplete type on purpose: this header stays ImGui-free (see the note above RenderAxisDist),
+// and the ring's own header is not.
+class TableFocusRing;
+bool RenderShapeDistTableRow(const char* label, CrystalConfig& cr, int slot, bool reload_active_inputs,
+                             TableFocusRing& ring);
 
 // ---- Axis preset classification ----
 

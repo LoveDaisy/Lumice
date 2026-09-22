@@ -43,12 +43,6 @@ inline bool AtSummandRowCap(std::size_t row_count) {
   return row_count >= kMaxSummandRows;
 }
 
-// A row's delete button is live. The last row may not be removed: an empty list has no way back
-// to a filter, so the editor keeps one row that the user can blank instead.
-inline bool CanDeleteSummandRow(std::size_t row_count) {
-  return row_count > 1;
-}
-
 // Which validation verdicts stop a row from being committed. Blank rows validate as kValid and so
 // pass here — "empty ≡ no filter" is resolved by stripping them at commit time, not by this gate.
 inline bool SummandRowBlocksCommit(LUMICE_RaypathValidationState state) {

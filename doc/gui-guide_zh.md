@@ -33,6 +33,8 @@ GUI 需要 display server 和支持 OpenGL 3.2 Core Profile 的 GPU。
 
 左侧栏与右侧栏都可独立折叠 — 模拟过程中想让 Render Preview 占据更宽空间时很有用。
 
+只读文本都能复制：在 Log 面板的一行、光路分析列表的一行、filter 编辑页的实时预览上右键即有 **Copy** 菜单；Log 面板的工具行与 Summary 窗口各有一个按钮（**Copy**、**Copy as text**）把整块内容以纯文本复制到剪贴板。
+
 ## Top Bar（顶栏）
 
 从左到右：
@@ -57,8 +59,9 @@ GUI 需要 display server 和支持 OpenGL 3.2 Core Profile 的 GPU。
 - **Colors / Analysis / Summary**：三个按钮各自打开一个独立的非模态窗口，可与预览并排——光路染色类、光路分析工具，
   以及只读的 **Summary**：把当前配置摊成一页（版本号、太阳、仿真、渲染设置，再逐层列出每个条目的晶体、形状、
   朝向与 filter），左右两栏排版、一屏 1280 × 900 看全，专为截图分享而排——每一行用面板自己的标签，
-  且只印面板此刻显示的行（Sky Color 与 Paper Color 二者取一）。Summary 没有自己的导出按钮：用操作系统自带的截图工具截取即可
-  （macOS ⌘⇧4、Windows Win+Shift+S、Linux 用桌面环境的等价快捷键）。详见
+  且只印面板此刻显示的行（Sky Color 与 Paper Color 二者取一）。Summary 没有自己的图片导出：用操作系统自带的截图工具截取即可
+  （macOS ⌘⇧4、Windows Win+Shift+S、Linux 用桌面环境的等价快捷键）；版本行上的 **Copy as text**
+  把同一页以制表符分隔的纯文本放进剪贴板。详见
   [用户手册 — 配置总结](user-manual/07-config-summary_zh.md)。
 - **Settings**：个人默认值编辑器——决定**新**文档从什么起步，另加顶部的 `Application preferences`
   几行，它们描述的是这台机器而不是任何文档：新文档起步用的 GPU 后端与 worker 数，以及 **UI scale**——
@@ -185,6 +188,7 @@ Render Preview 上的辅助线，以一张表格呈现——每条辅助线回�
 - **Type**：`Prism`（六棱柱）或 `Pyramid`（带上下截顶楔形的六棱锥）。
 - **形状参数**：Prism 用 `height`；Pyramid 用 `prism_h`、`upper_h`、`lower_h` 以及楔角 `upper_alpha` / `lower_alpha`（默认值对应 Miller 指数 `{1, 0, -1, 1}`）。这里显示的四指数标号 `{h, k, i, l}` 与配置文件里 `upper_indices` / `lower_indices` 的三个整数，是同一个面的两种写法：四个数里的第三个是推导出来的，`i = -(h + k)`，所以 JSON 文档只写 `(h, k, l)`，写成四个元素会被拒绝。完整规则以及楔角是从哪儿量起的，见 [configuration_zh.md](configuration_zh.md#12-读懂-miller-指数回退警告)。
 - **Face distance**：六个值，分别对应六个棱面，用于支持非规则六棱截面。
+- **Tab 顺序**：形状参数表与 Face Distance 表里，`Tab` / `Shift+Tab` 在输入框之间**按列**移动——先自上而下走完所有 Value 输入框（两张表），再走勾了 Rand 的行的 Spread 输入框，到末尾回绕到开头。先点进任意一格即可开始；滑杆、Sync 格与 Rand 复选框不在这条顺序里。
 
 ### Axis Tab
 

@@ -44,30 +44,33 @@ class ImGuiLogSink : public spdlog::sinks::base_sink<std::mutex> {
   // Thread-safe: can be called from any thread.
   void ReceiveExternal(spdlog::level::level_enum level, const char* message) {
     std::lock_guard<std::mutex> lock(this->mutex_);
-    std::string msg(message);
-    // Remove trailing newline if present
-    if (!msg.empty() && msg.back() == '\n') {
-      msg.pop_back();
-    }
-    entries_.push_back({ level, std::move(msg) });
-    if (entries_.size() > kMaxEntries) {
-      entries_.pop_front();
-    }
+    Push(level, std::string(message));
   }
 
  protected:
   void sink_it_(const spdlog::details::log_msg& msg) override {
     spdlog::memory_buf_t formatted;
     this->formatter_->format(msg, formatted);
-    entries_.push_back({ msg.level, std::string(formatted.data(), formatted.size()) });
-    if (entries_.size() > kMaxEntries) {
-      entries_.pop_front();
-    }
+    Push(msg.level, std::string(formatted.data(), formatted.size()));
   }
 
   void flush_() override {}
 
  private:
+  // Both writers land here, under the caller's lock. A stored message carries NO line ending:
+  // spdlog's formatter appends the platform eol to every line and a C API callback may too, and
+  // the one place that would show is the panel's "Copy" — a line joined with '\n' by the panel
+  // must not bring its own, or the copied block reads double-spaced.
+  void Push(spdlog::level::level_enum level, std::string message) {
+    while (!message.empty() && (message.back() == '\n' || message.back() == '\r')) {
+      message.pop_back();
+    }
+    entries_.push_back({ level, std::move(message) });
+    if (entries_.size() > kMaxEntries) {
+      entries_.pop_front();
+    }
+  }
+
   std::deque<LogEntry> entries_;
 };
 

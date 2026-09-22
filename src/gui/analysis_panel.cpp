@@ -1,6 +1,7 @@
 #include "gui/analysis_panel.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -17,6 +18,7 @@
 #include "IconsFontAwesome6.h"
 #include "gui/annotation_anchors.hpp"
 #include "gui/app.hpp"
+#include "gui/copyable_text.hpp"
 #include "gui/destructive_style.hpp"
 #include "gui/edit_modals.hpp"
 #include "gui/file_io.hpp"
@@ -66,9 +68,42 @@ constexpr float kRoiMarkerDotRadiusPt = 3.0f;
 // noise of one LUMICE_UnprojectPixel round trip and far under anything a drag produces.
 constexpr float kConeCenterSameDirDot = 1.0f - 1e-6f;
 
+// The result list's search box. TU-local rather than a GuiState::RaypathAnalysisSession field,
+// although its lifetime is that struct's: gui_state.hpp carries no ImGui type, and
+// test/unit-correctness/config/test_config_snapshot.cpp compiles it into a target that links no
+// ImGui at all (a `-t` build without `-g` has no ImGui source to link). So the struct cannot hold
+// an ImGuiTextFilter, and ResetFrontendState clears this one by name (ClearAnalysisSearchFilter)
+// beside its whole-struct reset — the same shape as edit_modals' ClearAxisCustomMemory.
+ImGuiTextFilter g_analysis_search_filter;
+
+// Case-insensitive "needle occurs in haystack"; an empty needle matches everything.
+bool ContainsCaseInsensitive(const char* haystack, const char* needle) {
+  const std::string_view h(haystack);
+  const std::string_view n(needle);
+  const auto it = std::search(h.begin(), h.end(), n.begin(), n.end(), [](char a, char b) {
+    return std::tolower(static_cast<unsigned char>(a)) == std::tolower(static_cast<unsigned char>(b));
+  });
+  return it != h.end() || n.empty();
+}
+
+// Whether a row whose raw text is `display` stays on screen under the search box. Matches the
+// raw text — the ASCII " -> " joiner, what the CSV and the CLI print — not the arrow-glyph label
+// JoinerForDisplay draws, since the user types what they read in a log. Deliberately NOT
+// ImGuiTextFilter::PassFilter: that splits on commas and reads a leading '-' as "exclude rows
+// containing the rest", so "->" would hide exactly the multi-layer rows it is meant to find. The
+// predicate takes the row's text and nothing else, so a row that is not a payload entry (a
+// greyed excluded chain, say) can be run through the same box.
+bool RaypathRowMatchesSearch(const char* display) {
+  return ContainsCaseInsensitive(display, g_analysis_search_filter.InputBuf);
+}
+
 }  // namespace
 
 // ---- Lifecycle -----------------------------------------------------------------------------------
+
+void ClearAnalysisSearchFilter() {
+  g_analysis_search_filter.Clear();
+}
 
 bool DeriveAnalysisInProgress(bool started, const PreviewSnapshot* snap) {
   if (!started) {
@@ -1031,6 +1066,15 @@ void RenderSymmetryControls(GuiState& state, LUMICE_Server* server) {
   }
 }
 
+// The search box over the list. Always drawn, result or no result, so the rows below it do not
+// jump when one arrives; the same widget shape as the Settings panel's (icon, a "###" id so the
+// label can change without the box losing its text, the same width). "Search", not "Filter": on
+// this window "filter" already means two things — the P/B/D merge above and the raypath filter
+// Exclude writes — and a third would not help.
+void RenderResultSearchBox() {
+  g_analysis_search_filter.Draw(ICON_FA_MAGNIFYING_GLASS " Search###analysis_search", 240.0f);
+}
+
 void RenderResultList(GuiState& state) {
   const auto& view = state.analysis_result;
   if (!view.payload) {
@@ -1069,6 +1113,11 @@ void RenderResultList(GuiState& state) {
     if (!(energy > 0.0)) {
       continue;  // outside the slider's radius: nothing to report for this chain
     }
+    // The search hides rows; it does not re-sum them. `row` still indexes display_cumulative_pct,
+    // so a shown row's Cumulative % is "down to this row of the whole list", hidden rows included.
+    if (!RaypathRowMatchesSearch(e.display)) {
+      continue;
+    }
     ImGui::TableNextRow();
     ImGui::TableSetColumnIndex(0);
     // The id is the ORIGINAL index, so a re-sort moves the row and not the widget; the selection
@@ -1081,6 +1130,15 @@ void RenderResultList(GuiState& state) {
     if (ImGui::Selectable(label.c_str(), selected, ImGuiSelectableFlags_SpanAllColumns)) {
       state.analysis.selected_entry = std::string(e.display);
     }
+    // Right-click: the raw text (what the CSV and the CLI print, " -> " joiner and all — not the
+    // arrow-glyph label), or the whole row in the CSV's own column order and formatting; the
+    // row is the same call the CSV export makes, so the two cannot drift apart.
+    CopyMenuForLastItem([&e, energy, row, total, &view] {
+      return std::vector<CopyMenuEntry>{
+        { "Copy raypath", std::string(e.display) },
+        { "Copy row", FormatRaypathAnalysisCsvRow(e, energy, view.display_cumulative_pct[row], total) },
+      };
+    });
     ImGui::PopID();
     ImGui::TableSetColumnIndex(1);
     ImGui::Text("%.2f%%", total > 0.0 ? energy / total * 100.0 : 0.0);
@@ -1107,8 +1165,11 @@ void RenderResultList(GuiState& state) {
   // The fixed "other" line: what the record had no room for, so the column above reaches 100. Not
   // a raypath — a DISABLED selectable (addressable, so a test can click it; never pressed, and its
   // press is not read anyway), so it can never become the selection, and the Exclude button (which
-  // needs a selected row that IS a chain) is disabled for it by construction.
-  if (view.payload->other_count > 0) {
+  // needs a selected row that IS a chain) is disabled for it by construction. Not a raypath, so
+  // not searchable either: a non-empty search box hides it. Read off InputBuf, the same text the
+  // rows are matched against, not IsActive() — that reads the comma-split token list, which is
+  // empty for a blank-only input the rows would still be matched on.
+  if (view.payload->other_count > 0 && g_analysis_search_filter.InputBuf[0] == '\0') {
     ImGui::TableNextRow();
     ImGui::TableSetColumnIndex(0);
     ImGui::Selectable(kAnalysisOtherRowLabel, false,
@@ -1228,6 +1289,7 @@ void RenderAnalysisPanel(GuiState& state, LUMICE_Server* server) {
   RenderRadiusSlider(state);
   RenderSymmetryControls(state, server);
   ImGui::Separator();
+  RenderResultSearchBox();
   RenderResultList(state);
   RenderActionButtons(state);
   ImGui::End();

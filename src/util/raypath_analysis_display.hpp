@@ -232,11 +232,32 @@ inline std::string Energy(double v) {
 // embeds the takeover figure in parentheses exactly as the table cell does, so a row that took
 // over an evicted slot still carries that information in its one cell. The per-row hit count is
 // not a column; the run-level total_rays line in the head is the one ray count the file carries.
+// One raypath row of the CSV below, without its newline: the entry's display text (quoted per
+// RFC 4180 when it has to be), its Energy share of `total`, its cumulative share, and the +/-
+// cell with the takeover figure in parentheses when the row has one. Split out of the CSV builder
+// so the GUI's "Copy row" (analysis_panel.cpp) is this same call on the same numbers, not a
+// second spelling of the columns; the CSV's own loop is the other caller. `energy` is the row's
+// display energy (after the cone's ring sum), `cumulative_pct` the value the table's column shows.
+inline std::string FormatRaypathAnalysisCsvRow(const LUMICE_RaypathHistogramEntry& e, double energy,
+                                               double cumulative_pct, double total) {
+  using raypath_analysis_display_detail::EscapeCsvField;
+  using raypath_analysis_display_detail::Fmt;
+  using raypath_analysis_display_detail::Pct;
+  const double rel = e.count > 0 ? 1.0 / std::sqrt(static_cast<double>(e.count)) : 1.0;
+  std::string out = EscapeCsvField(e.display);
+  out += ',' + Pct(total > 0.0 ? energy / total * 100.0 : 0.0);
+  out += ',' + Pct(cumulative_pct);
+  out += ',' + Fmt("%.2f", rel * 100.0);
+  if (e.error_bound > 0.0 && e.energy > 0.0) {
+    out += " (-" + Fmt("%.2f", e.error_bound / e.energy * 100.0) + ")";
+  }
+  return out;
+}
+
 inline std::string BuildRaypathAnalysisCsv(const std::vector<LUMICE_RaypathHistogramEntry>& entries,
                                            const RaypathDisplayOrder& view, const RaypathAnalysisCsvInputs& in,
                                            std::string_view exported_at) {
   using raypath_analysis_display_detail::Energy;
-  using raypath_analysis_display_detail::EscapeCsvField;
   using raypath_analysis_display_detail::Fmt;
   using raypath_analysis_display_detail::Pct;
   std::string out;
@@ -271,14 +292,7 @@ inline std::string BuildRaypathAnalysisCsv(const std::vector<LUMICE_RaypathHisto
     if (!(energy > 0.0)) {
       continue;  // the table hides these rows too
     }
-    const double rel = e.count > 0 ? 1.0 / std::sqrt(static_cast<double>(e.count)) : 1.0;
-    out += EscapeCsvField(e.display);
-    out += ',' + Pct(total > 0.0 ? energy / total * 100.0 : 0.0);
-    out += ',' + Pct(view.display_cumulative_pct[row]);
-    out += ',' + Fmt("%.2f", rel * 100.0);
-    if (e.error_bound > 0.0 && e.energy > 0.0) {
-      out += " (-" + Fmt("%.2f", e.error_bound / e.energy * 100.0) + ")";
-    }
+    out += FormatRaypathAnalysisCsvRow(e, energy, view.display_cumulative_pct[row], total);
     out += '\n';
   }
   if (in.other_count > 0) {

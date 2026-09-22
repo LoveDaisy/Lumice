@@ -34,9 +34,11 @@
 // the end of most bodies is the pass path, and stays because it drives the real control.
 
 #include <cmath>
+#include <cstddef>
 #include <cstdio>
 #include <cstring>
 #include <string>
+#include <vector>
 
 #include "IconsFontAwesome6.h"
 #include "gui/axis_presets.hpp"     // kAxisPresets rows / kAzFullUniform / kRollFreeUniform
@@ -264,6 +266,56 @@ bool DriveActiveBoxReload(ImGuiTestContext* ctx, const ActiveBoxRow& row, float 
   ctx->Yield(2);
   IM_CHECK_RETV(!gui::IsEditModalOpen(), false);
   return true;
+}
+
+// One input box of the shape tables, as the Tab-order cases name it: a label for the failure
+// message and the test-engine path its id is read from.
+struct RingBox {
+  const char* name;
+  const char* path;
+};
+
+// Press `chord` once per entry of `expected` and record which widget holds the keyboard after
+// each press. The walk is returned whole, as "name > name > ...", rather than asserted press by
+// press: a fatal check inside the loop would hide every step after the first wrong one, and the
+// shape of a wrong walk — one member skipped, the row order leaking back in, a wrap that did not
+// happen — is what the rest of the sequence tells. An id no box in `boxes` owns is printed raw.
+std::string WalkRing(ImGuiTestContext* ctx, ImGuiKeyChord chord, const std::vector<ImGuiID>& expected,
+                     const std::vector<RingBox>& boxes, const std::vector<ImGuiID>& box_ids) {
+  std::string walk;
+  for (std::size_t i = 0; i < expected.size(); ++i) {
+    ctx->KeyPress(chord);
+    ctx->Yield(2);
+    const ImGuiID landed = ImGui::GetActiveID();
+    const char* name = nullptr;
+    for (std::size_t b = 0; b < box_ids.size(); ++b) {
+      if (box_ids[b] == landed) {
+        name = boxes[b].name;
+      }
+    }
+    if (!walk.empty()) {
+      walk += " > ";
+    }
+    if (name != nullptr) {
+      walk += name;
+    } else {
+      char raw[32];
+      std::snprintf(raw, sizeof(raw), "0x%08X", landed);
+      walk += raw;
+    }
+  }
+  return walk;
+}
+
+std::string JoinNames(const std::vector<const char*>& names) {
+  std::string out;
+  for (const char* n : names) {
+    if (!out.empty()) {
+      out += " > ";
+    }
+    out += n;
+  }
+  return out;
 }
 
 }  // namespace
@@ -2058,6 +2110,107 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
         return;
       }
       check_layout(/*vertical=*/true);
+    };
+  }
+
+  // Tab and Shift+Tab walk the two tables' input boxes by COLUMN — every Value box top to bottom,
+  // then every enabled Spread box, wrapping at either end — not in ImGui's row-by-row submission
+  // order (gui/table_focus_ring.hpp). A person filling the table in works down one column, six
+  // face distances then their spreads, and this is what makes that a Tab sequence.
+  //
+  // Observed through ImGui's active id after each press: which box holds the keyboard IS the
+  // behaviour. The scene is the widest ring the modal shows — Pyramid, Face Distance open, one
+  // row randomized in EACH table — so every kind of member is in the walk: the SliderWithInput
+  // boxes, the wedge rows' SliderWithPresetEdit boxes (inside the same table, so members of the
+  // Value column, with no Spread half), and a Spread box from each table, which is also what makes
+  // the Spread half of the ring provably non-empty rather than an empty suffix no press reaches.
+  // Three walks: forward through every member and once round; backward, which must be the exact
+  // reverse; and with Face Distance folded, which drops its rows from BOTH columns at once.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "edit_modal", "tab_walks_the_shape_tables_by_column");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      const ScopedPopups popup_guard(ctx);
+      EntryCrystal().type = gui::CrystalType::kPyramid;
+      ctx->Yield(2);
+
+      OpenCardEditor(ctx, 0, kCrystalTabRef);
+      ctx->Yield(4);
+      ctx->ItemOpen("**/Face Distance##modal");
+      ctx->Yield(2);
+      ctx->ItemClick("**/##rnd_Upper H##modal_cr");
+      ctx->Yield(2);
+      ctx->ItemClick("**/##rnd_Face 4##modal_fd");
+      ctx->Yield(2);
+      // Premise for the Spread half: the two boxes are enabled, i.e. can take the keyboard at all.
+      IM_CHECK((ctx->ItemInfo("**/##spread_Upper H##modal_cr").ItemFlags & ImGuiItemFlags_Disabled) == 0);
+      IM_CHECK((ctx->ItemInfo("**/##spread_Face 4##modal_fd").ItemFlags & ImGuiItemFlags_Disabled) == 0);
+
+      // The ring, in Tab order. Value column: the shape table's five rows in their visual order
+      // (the wedge rows last), then the six faces; Spread column: the shape table's one enabled
+      // box, then Face Distance's.
+      const std::vector<RingBox> boxes = {
+        { "Prism H", "**/##Prism H##modal_cr_input" },       { "Upper H", "**/##Upper H##modal_cr_input" },
+        { "Lower H", "**/##Lower H##modal_cr_input" },       { "Upper A", "**/##Upper A##modal_cr_input" },
+        { "Lower A", "**/##Lower A##modal_cr_input" },       { "Face 3", "**/##Face 3##modal_fd_input" },
+        { "Face 4", "**/##Face 4##modal_fd_input" },         { "Face 5", "**/##Face 5##modal_fd_input" },
+        { "Face 6", "**/##Face 6##modal_fd_input" },         { "Face 7", "**/##Face 7##modal_fd_input" },
+        { "Face 8", "**/##Face 8##modal_fd_input" },         { "Upper H spread", "**/##spread_Upper H##modal_cr" },
+        { "Face 4 spread", "**/##spread_Face 4##modal_fd" },
+      };
+      std::vector<ImGuiID> ids;
+      std::vector<const char*> names;
+      int unresolved = 0;
+      for (const RingBox& box : boxes) {
+        const ImGuiID id = ctx->ItemInfo(box.path).ID;
+        ids.push_back(id);
+        names.push_back(box.name);
+        if (id == 0) {
+          ++unresolved;
+        }
+      }
+      IM_CHECK_EQ(unresolved, 0);  // every box in the table is on screen and addressable
+      const std::size_t n = ids.size();
+
+      // Forward: from the first Value box, n presses visit every other member in order and the
+      // last one wraps back to the start.
+      ctx->ItemClick(boxes[0].path);
+      ctx->Yield(2);
+      IM_CHECK_EQ(ImGui::GetActiveID(), ids[0]);
+      std::vector<ImGuiID> forward;
+      std::vector<const char*> forward_names;
+      for (std::size_t i = 1; i <= n; ++i) {
+        forward.push_back(ids[i % n]);
+        forward_names.push_back(names[i % n]);
+      }
+      const std::string forward_walk = WalkRing(ctx, ImGuiKey_Tab, forward, boxes, ids);
+      IM_CHECK_STR_EQ(forward_walk.c_str(), JoinNames(forward_names).c_str());
+
+      // Backward, from where the forward walk ended (the first box again): the exact reverse.
+      IM_CHECK_EQ(ImGui::GetActiveID(), ids[0]);
+      std::vector<ImGuiID> backward;
+      std::vector<const char*> backward_names;
+      for (std::size_t i = n; i >= 1; --i) {
+        backward.push_back(ids[i - 1]);
+        backward_names.push_back(names[i - 1]);
+      }
+      const std::string backward_walk = WalkRing(ctx, ImGuiMod_Shift | ImGuiKey_Tab, backward, boxes, ids);
+      IM_CHECK_STR_EQ(backward_walk.c_str(), JoinNames(backward_names).c_str());
+
+      // Folded: the face rows leave both columns, so from the shape table's last Value box (the
+      // second wedge row) Tab goes straight to its Spread box, and from there wraps to the top —
+      // Face 4's spread is not in the ring while its row is not drawn.
+      ctx->ItemClose("**/Face Distance##modal");
+      ctx->Yield(2);
+      ctx->ItemClick(boxes[4].path);  // Lower A
+      ctx->Yield(2);
+      IM_CHECK_EQ(ImGui::GetActiveID(), ids[4]);
+      const std::string folded_walk = WalkRing(ctx, ImGuiKey_Tab, { ids[11], ids[0] }, boxes, ids);
+      IM_CHECK_STR_EQ(folded_walk.c_str(), "Upper H spread > Prism H");
+
+      ctx->ItemClick(kCancel);
+      ctx->Yield(2);
+      IM_CHECK(!gui::IsEditModalOpen());
     };
   }
 

@@ -86,6 +86,7 @@ add_library(lumice_gui_obj OBJECT
     ${PROJ_SRC_DIR}/gui/server_poller.cpp
     ${PROJ_SRC_DIR}/gui/stb_impl.cpp
     ${PROJ_SRC_DIR}/gui/symmetry_ui.cpp
+    ${PROJ_SRC_DIR}/gui/table_focus_ring.cpp
     ${PROJ_SRC_DIR}/gui/theme.cpp
     ${PROJ_SRC_DIR}/gui/user_defaults.cpp
     ${PROJ_SRC_DIR}/gui/view_look_at.cpp

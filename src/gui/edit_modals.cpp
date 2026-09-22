@@ -15,6 +15,7 @@
 #include "IconsFontAwesome6.h"
 #include "gui/app.hpp"
 #include "gui/axis_presets.hpp"
+#include "gui/copyable_text.hpp"
 #include "gui/crystal_preview.hpp"
 #include "gui/crystal_renderer.hpp"
 #include "gui/destructive_style.hpp"
@@ -28,6 +29,7 @@
 #include "gui/raypath_segments.hpp"
 #include "gui/semantic_colors.hpp"
 #include "gui/symmetry_ui.hpp"
+#include "gui/table_focus_ring.hpp"
 #include "gui/theme.hpp"
 #include "gui/user_defaults.hpp"
 #include "gui/window_sizing.hpp"
@@ -146,6 +148,12 @@ static bool g_pending_tab_select = false;
 // Edit buffers
 static CrystalConfig g_crystal_buf;
 static AxisDist g_axis_buf[3];  // zenith, azimuth, roll
+
+// The column-major Tab ring over the Crystal tab's two property tables (gui/table_focus_ring.hpp).
+// One instance, like g_crystal_buf: only one Edit Entry window is ever open. Its membership is
+// rebuilt every frame the tab is drawn, so switching tab or entry needs no reset — the ids it last
+// recorded simply never match a widget outside those tables, and it stands aside.
+static TableFocusRing g_crystal_table_focus_ring;
 
 // Last triple classified as Custom, per pool crystal id. Captured level-triggered inside
 // RenderAxisModal (every frame the Axis tab is the active tab) so any edit path — slider,
@@ -394,9 +402,19 @@ bool RenderCustomWedgeInput(const char* popup_id, float* value) {
 // fills the whole table cell (the field name lives in the Parameter column instead).
 // `reload_active_input`: true on a frame `*value` was replaced from outside the widgets (the edit
 // modal's pull from the pool) — see panels.hpp ReloadInputTextIfActive.
+// `focus_input_now`: give the input box the keyboard this frame — same contract as
+// SliderWithInput's parameter of that name (panels.hpp), for the same reason: only the function
+// submitting the box can put the SetKeyboardFocusHere(0) immediately before it.
+//
+// The input box's id, "##<label>_input", is the same rule FormatSliderInputId (panels.cpp) applies
+// to SliderWithInput's box, so a caller reasoning about either kind of row derives it the same way.
+static void FormatPresetEditInputId(const char* label, char* input_id, size_t input_id_size) {
+  snprintf(input_id, input_id_size, "##%s_input", label);
+}
+
 bool SliderWithPresetEdit(const char* label, float* value, float min_val, float max_val, const char* fmt,
                           SliderScale scale, const WedgePreset* presets, int preset_count, bool trailing_label = true,
-                          bool reload_active_input = false) {
+                          bool reload_active_input = false, bool focus_input_now = false) {
   char display_buf[64];
   char slider_id[64];
   char input_id[64];
@@ -414,7 +432,7 @@ bool SliderWithPresetEdit(const char* label, float* value, float min_val, float 
     snprintf(display_buf, sizeof(display_buf), "%s", label);
   }
   snprintf(slider_id, sizeof(slider_id), "##%s_slider", label);
-  snprintf(input_id, sizeof(input_id), "##%s_input", label);
+  FormatPresetEditInputId(label, input_id, sizeof(input_id));
 
   float spacing = ImGui::GetStyle().ItemSpacing.x;
   float avail_w = ImGui::GetContentRegionAvail().x;
@@ -447,6 +465,9 @@ bool SliderWithPresetEdit(const char* label, float* value, float min_val, float 
   ImGui::PushItemWidth(input_w);
   if (reload_active_input) {
     ReloadInputTextIfActive(ImGui::GetID(input_id));
+  }
+  if (focus_input_now) {
+    ImGui::SetKeyboardFocusHere(0);  // 0 = the very next item, which is this box; never a count
   }
   changed |= ImGui::InputFloat(input_id, value, 0, 0, fmt);
   ImGui::PopItemWidth();
@@ -676,16 +697,24 @@ SumOfProducts BuildSopFromRows(const std::vector<SummandRowBuf>& rows) {
   return out;
 }
 
+// The one shape of "a fresh blank OR row". Every site that must uphold the editor's ≥1 row
+// invariant (or reset to exactly one blank row) constructs it through here, so the shape never
+// drifts between call sites. It only builds and appends the row: whether the caller clears the
+// list or rewinds the uid counter first is that caller's own semantics.
+void AppendBlankSummandRow() {
+  SummandRowBuf row{};
+  row.uid = g_next_summand_row_uid++;
+  row.text[0] = '\0';
+  g_summand_rows.push_back(row);
+}
+
 // Load an incoming SoP into the row buffers, resetting the uid counter. Always
 // ensures at least one row exists (mirrors FilterConfig's ≥1 row invariant).
 void SetRowsFromSop(const SumOfProducts& sop) {
   g_summand_rows.clear();
   g_next_summand_row_uid = 0;
   if (sop.empty()) {
-    SummandRowBuf row{};
-    row.uid = g_next_summand_row_uid++;
-    row.text[0] = '\0';
-    g_summand_rows.push_back(row);
+    AppendBlankSummandRow();
     return;
   }
   for (const auto& s : sop) {
@@ -884,10 +913,7 @@ void PullSummandRows(const SumOfProducts& theirs) {
   g_summand_rows_snapshot = theirs;
   if (g_summand_rows.empty()) {
     // The ≥1 row invariant SetRowsFromSop keeps: the editor always shows a line to type into.
-    SummandRowBuf row{};
-    row.uid = g_next_summand_row_uid++;
-    row.text[0] = '\0';
-    g_summand_rows.push_back(row);
+    AppendBlankSummandRow();
   }
 }
 
@@ -1163,7 +1189,10 @@ static void RenderCrystalPreviewPane(GuiState& /*state*/) {
 // columns are filled; the Sync / Rand / Spread columns are advanced but left BLANK. Blank here
 // means "not applicable" — visually distinct from the greyed-but-present state a randomizable row
 // shows when its Randomize checkbox is off. Advances all kShapeTableColumnCount columns.
-static bool RenderWedgeTableRow(const char* label, float* value, bool reload_active_input) {
+// `ring`: the same column-major Tab ring the RenderShapeDistTableRow rows of this table are in
+// (gui/table_focus_ring.hpp). This row is a member of its Value column only — it has no Spread
+// box to register.
+static bool RenderWedgeTableRow(const char* label, float* value, bool reload_active_input, TableFocusRing& ring) {
   ImGui::TableNextRow();
   ImGui::TableNextColumn();  // Parameter
   ShapeTableParamLabel(label);
@@ -1171,9 +1200,16 @@ static bool RenderWedgeTableRow(const char* label, float* value, bool reload_act
   // Fetched fresh every frame this row paints: the list now carries the user's saved shortcuts, so
   // it can change between frames (see GetWedgePresets in edit_modals.hpp).
   const std::vector<WedgePreset> presets = GetWedgePresets();
+  // Same shape as RenderShapeDistTableRow's Value column: the box's id derived in this ID scope
+  // by the rule that names it, the [slider][box][▼] group taken out of ImGui's own Tab walk.
+  char value_input_id[64];
+  FormatPresetEditInputId(label, value_input_id, sizeof(value_input_id));
+  const bool focus_value = ring.Register(RingColumn::kValue, ImGui::GetID(value_input_id));
+  ImGui::PushItemFlag(ImGuiItemFlags_NoTabStop, true);
   bool changed = SliderWithPresetEdit(label, value, 0.1f, 90.0f, "%.3f", SliderScale::kLinear, presets.data(),
                                       static_cast<int>(presets.size()),
-                                      /*trailing_label=*/false, reload_active_input);
+                                      /*trailing_label=*/false, reload_active_input, focus_value);
+  ImGui::PopItemFlag();
   // Wedge angles are non-randomizable: advance the remaining (kShapeTableColumnCount - content)
   // columns as intentionally-empty cells (Sync / Rand / Spread). Driven by the shared constant
   // rather than a hardcoded 3, so the blank count tracks any column-count change automatically —
@@ -1239,6 +1275,11 @@ static void RenderCrystalModal(GuiState& /*state*/) {
 
   ImGui::Spacing();
 
+  // The Tab ring spans BOTH tables below (shape parameters and Face Distance): one BeginFrame
+  // before the first, one EndFrame after the second, so Face Distance's boxes sort behind the
+  // shape rows' in each column. The Name box and the type radios above are outside it on purpose.
+  g_crystal_table_focus_ring.BeginFrame();
+
   // -- Shape parameters (property table) --
   // Every randomizable shape scalar is one RenderShapeDistTableRow (5 aligned columns:
   // Param | Value | Sync | Rand | Spread); the two Pyramid wedge angles are non-randomizable
@@ -1276,16 +1317,18 @@ static void RenderCrystalModal(GuiState& /*state*/) {
     // text back — see panels.hpp ReloadInputTextIfActive.
     if (cr.type == CrystalType::kPrism) {
       RenderShapeDistTableRow("Height##modal_cr", cr, LUMICE_SHAPE_SCALAR_HEIGHT,
-                              g_pull_adopted.shape_slot[LUMICE_SHAPE_SCALAR_HEIGHT]);
+                              g_pull_adopted.shape_slot[LUMICE_SHAPE_SCALAR_HEIGHT], g_crystal_table_focus_ring);
     } else {
       RenderShapeDistTableRow("Prism H##modal_cr", cr, LUMICE_SHAPE_SCALAR_PRISM_H,
-                              g_pull_adopted.shape_slot[LUMICE_SHAPE_SCALAR_PRISM_H]);
+                              g_pull_adopted.shape_slot[LUMICE_SHAPE_SCALAR_PRISM_H], g_crystal_table_focus_ring);
       RenderShapeDistTableRow("Upper H##modal_cr", cr, LUMICE_SHAPE_SCALAR_UPPER_H,
-                              g_pull_adopted.shape_slot[LUMICE_SHAPE_SCALAR_UPPER_H]);
+                              g_pull_adopted.shape_slot[LUMICE_SHAPE_SCALAR_UPPER_H], g_crystal_table_focus_ring);
       RenderShapeDistTableRow("Lower H##modal_cr", cr, LUMICE_SHAPE_SCALAR_LOWER_H,
-                              g_pull_adopted.shape_slot[LUMICE_SHAPE_SCALAR_LOWER_H]);
-      RenderWedgeTableRow("Upper A##modal_cr", &cr.upper_alpha, g_pull_adopted.wedge_upper_alpha);
-      RenderWedgeTableRow("Lower A##modal_cr", &cr.lower_alpha, g_pull_adopted.wedge_lower_alpha);
+                              g_pull_adopted.shape_slot[LUMICE_SHAPE_SCALAR_LOWER_H], g_crystal_table_focus_ring);
+      RenderWedgeTableRow("Upper A##modal_cr", &cr.upper_alpha, g_pull_adopted.wedge_upper_alpha,
+                          g_crystal_table_focus_ring);
+      RenderWedgeTableRow("Lower A##modal_cr", &cr.lower_alpha, g_pull_adopted.wedge_lower_alpha,
+                          g_crystal_table_focus_ring);
     }
     ImGui::EndTable();
   }
@@ -1305,11 +1348,12 @@ static void RenderCrystalModal(GuiState& /*state*/) {
         char label[32];
         snprintf(label, sizeof(label), "Face %d##modal_fd", i + 3);
         RenderShapeDistTableRow(label, cr, LUMICE_SHAPE_SCALAR_FACE_0 + i,
-                                g_pull_adopted.shape_slot[LUMICE_SHAPE_SCALAR_FACE_0 + i]);
+                                g_pull_adopted.shape_slot[LUMICE_SHAPE_SCALAR_FACE_0 + i], g_crystal_table_focus_ring);
       }
       ImGui::EndTable();
     }
   }
+  g_crystal_table_focus_ring.EndFrame();
 
   // -- Reset All (Crystal tab) --
   // Resets shape parameters to defaults. Preserves type/name/axis (axis lives
@@ -1462,7 +1506,6 @@ static ImVec4 ValidationFrameBgColor(LUMICE_RaypathValidationState state) {
 static void RenderSummandRowList() {
   const auto kind = CurrentValidationKind();
   size_t delete_idx = static_cast<size_t>(-1);
-  const bool can_delete_any = CanDeleteSummandRow(g_summand_rows.size());
 
   // Reserve exactly the width the trailing "x" SmallButton needs (glyph + horizontal
   // FramePadding on each side) plus one ItemSpacing for SameLine(). Formula mirrors
@@ -1495,20 +1538,14 @@ static void RenderSummandRowList() {
     ImGui::SameLine();
     char del_id[64];
     snprintf(del_id, sizeof(del_id), ICON_FA_XMARK "##row_delete_%llu", static_cast<unsigned long long>(row.uid));
-    // Match crystal-card / spectrum-row convention: red destructive style when
-    // enabled, greyed-out (not tinted red) via BeginDisabled when the last row
-    // may not be removed.
-    if (can_delete_any) {
-      PushDestructiveStyle();
-    }
-    ImGui::BeginDisabled(!can_delete_any);
+    // Match crystal-card / spectrum-row convention: red destructive style. Always live, the last
+    // row included — deleting it lands on the same one-blank-row state as clearing its text, and
+    // the refill below is what keeps the list from ever being empty.
+    PushDestructiveStyle();
     if (ImGui::SmallButton(del_id)) {
       delete_idx = i;
     }
-    ImGui::EndDisabled();
-    if (can_delete_any) {
-      PopDestructiveStyle();
-    }
+    PopDestructiveStyle();
 
     // Per-row inline validation hint (first non-valid across the list is
     // enough to gate OK; still show every offending row so the user can fix
@@ -1535,6 +1572,11 @@ static void RenderSummandRowList() {
 
   if (delete_idx != static_cast<size_t>(-1)) {
     g_summand_rows.erase(g_summand_rows.begin() + static_cast<std::ptrdiff_t>(delete_idx));
+    if (g_summand_rows.empty()) {
+      // The ≥1 row invariant SetRowsFromSop / the pull-merge path already keep — refilled through
+      // the one shared constructor, not a third hand-rolled copy.
+      AppendBlankSummandRow();
+    }
   }
 
   // Add-row button: capped at kMaxSummandRows (soft UI cap; hard cap enforced by
@@ -1542,10 +1584,7 @@ static void RenderSummandRowList() {
   const bool at_cap = AtSummandRowCap(g_summand_rows.size());
   ImGui::BeginDisabled(at_cap);
   if (ImGui::Button("+ Add OR row##summand_add", ImVec2(UiPx(140.0f), 0.0f))) {
-    SummandRowBuf row{};
-    row.uid = g_next_summand_row_uid++;
-    row.text[0] = '\0';
-    g_summand_rows.push_back(row);
+    AppendBlankSummandRow();
   }
   ImGui::EndDisabled();
   if (at_cap && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
@@ -1596,9 +1635,23 @@ static void RenderSummandRowList() {
     // no caching needed. If the cap ever grows materially, revisit.
     ImGui::Separator();
     ImGui::TextDisabled("Preview:");
+    const std::string preview_text = FormatSopExpansionPreview(live_sop);
     ImGui::PushTextWrapPos(0.0f);
-    ImGui::TextUnformatted(FormatSopExpansionPreview(live_sop).c_str());
+    ImGui::TextUnformatted(preview_text.c_str());
     ImGui::PopTextWrapPos();
+    // Right-click "Copy" over the preview. Plain text has no item id to hang a popup on
+    // (copyable_text.hpp), so an InvisibleButton is laid over the text's own rect — it draws
+    // nothing — and the cursor is then put back exactly where the text had left it, so the
+    // "Clauses" line below and everything after it sit where they did before the overlay
+    // existed (modal_layout's filter_raypath / filter_ee references are the mechanical check).
+    const ImVec2 preview_min = ImGui::GetItemRectMin();
+    const ImVec2 preview_max = ImGui::GetItemRectMax();
+    const ImVec2 cursor_after_text = ImGui::GetCursorScreenPos();
+    ImGui::SetCursorScreenPos(preview_min);
+    ImGui::InvisibleButton("##filter_preview_copy_target",
+                           ImVec2(preview_max.x - preview_min.x, preview_max.y - preview_min.y));
+    CopyMenuForLastItem(preview_text.c_str());
+    ImGui::SetCursorScreenPos(cursor_after_text);
 
     // task-gui-feedback-affordances Step 3 (AC4): show the post-Cartesian
     // expanded clause count against LUMICE_MAX_CONFIG_CLAUSES so the user
@@ -1661,10 +1714,7 @@ static void RenderRemoveFilterButton() {
   if (ImGui::Button("Remove Filter##filter", ImVec2(UiPx(120.0f), 0.0f))) {
     g_summand_rows.clear();
     g_next_summand_row_uid = 0;
-    SummandRowBuf row{};
-    row.uid = g_next_summand_row_uid++;
-    row.text[0] = '\0';
-    g_summand_rows.push_back(row);
+    AppendBlankSummandRow();
     g_filter_remove_intent = true;
   }
 }

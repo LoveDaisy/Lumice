@@ -175,9 +175,96 @@ void SeedTwoLayerDocument() {
   gui::g_state.layers = { first, second };
 }
 
+// A document tall enough to change the window's height: `layers` layers of one entry each, so the
+// document column (a heading and two tables per layer) outgrows the settings column, which is
+// what sets the height on both reference documents.
+void SeedManyLayerDocument(int layers) {
+  gui::g_state.crystals.assign(1, gui::CrystalConfig{});
+  gui::g_state.layers.clear();
+  for (int i = 0; i < layers; ++i) {
+    gui::Layer layer;
+    gui::EntryCard entry;
+    entry.crystal_id = 0;
+    layer.entries = { entry };
+    gui::g_state.layers.push_back(layer);
+  }
+}
+
 }  // namespace
 
 void RegisterConfigSummaryWindowTests(ImGuiTestEngine* engine) {
+  {
+    // The height is the content's until the user drags it, then the user's for the session
+    // (doc/gui-visual-language.md §9): a taller document grows an untouched window; once dragged,
+    // neither a taller document nor a close-and-reopen moves it; the width is never the user's;
+    // and ResetTestState() puts it back under the content's control, which is what keeps one
+    // case's drag out of the next case's reference shot.
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "config_summary", "dragged_height_survives_close_and_reset_restores_it");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      ctx->ItemClick(kButtonRef);
+      ctx->Yield(4);
+      IM_CHECK(SummaryWindow(ctx) != nullptr);
+      ctx->WindowMove(kWindowRef, ImVec2(20.0f, 20.0f));
+      ctx->Yield(2);
+      const float fitted_default = SummaryWindow(ctx)->Size.y;
+      IM_CHECK_EQ(SummaryWindow(ctx)->Size.x, 1200.0f);
+
+      // Positive control: with the height still following the content, a taller document
+      // grows the window. Without this, "the drag was not overridden" below could pass because
+      // nothing ever moves the height at all.
+      SeedManyLayerDocument(6);
+      ctx->Yield(3);
+      const float fitted_tall = SummaryWindow(ctx)->Size.y;
+      IM_CHECK_GT(fitted_tall, fitted_default);
+
+      // The drag. Taller than the default document's fit and inside the page budget, so it is
+      // distinguishable from both the content's answer and the ceiling.
+      ResetTestState();
+      ctx->ItemClick(kButtonRef);
+      ctx->Yield(4);
+      ctx->WindowMove(kWindowRef, ImVec2(20.0f, 20.0f));
+      ctx->Yield(2);
+      IM_CHECK_EQ(SummaryWindow(ctx)->Size.y, fitted_default);
+      const float dragged = fitted_default + 120.0f;
+      IM_CHECK_LE(dragged, 900.0f);
+      ctx->WindowResize(kWindowRef, ImVec2(1200.0f, dragged));
+      ctx->Yield(2);
+      IM_CHECK_EQ(SummaryWindow(ctx)->Size.y, dragged);
+
+      // Once dragged, the content no longer drives it: the same taller document that grew the
+      // untouched window leaves this one alone.
+      SeedManyLayerDocument(6);
+      ctx->Yield(3);
+      IM_CHECK_EQ(SummaryWindow(ctx)->Size.y, dragged);
+
+      // The width is pinned whatever the user tries; the height they asked for still lands.
+      ctx->WindowResize(kWindowRef, ImVec2(1300.0f, dragged + 40.0f));
+      ctx->Yield(2);
+      IM_CHECK_EQ(SummaryWindow(ctx)->Size.x, 1200.0f);
+      IM_CHECK_EQ(SummaryWindow(ctx)->Size.y, dragged + 40.0f);
+
+      // Closed and reopened the way the user does it: the height is theirs, not the content's.
+      ctx->ItemClick(kButtonRef);
+      ctx->Yield(3);
+      IM_CHECK(SummaryWindow(ctx) == nullptr);
+      ctx->ItemClick(kButtonRef);
+      ctx->Yield(4);
+      IM_CHECK(SummaryWindow(ctx) != nullptr);
+      IM_CHECK_EQ(SummaryWindow(ctx)->Size.y, dragged + 40.0f);
+
+      // The next case's entry: the reset hands the height back to the content, and the default
+      // document fits at exactly the height it fitted at before anything was dragged.
+      ResetTestState();
+      ctx->ItemClick(kButtonRef);
+      ctx->Yield(4);
+      IM_CHECK(SummaryWindow(ctx) != nullptr);
+      IM_CHECK_EQ(SummaryWindow(ctx)->Size.y, fitted_default);
+      ctx->ItemClick(kButtonRef);
+      ctx->Yield(2);
+    };
+  }
+
   {
     // The button toggles: open, then closed again by the same button; and the X closes it too.
     ImGuiTest* t = IM_REGISTER_TEST(engine, "config_summary", "top_bar_button_opens_and_closes_the_window");
@@ -338,6 +425,48 @@ void RegisterConfigSummaryWindowTests(ImGuiTestEngine* engine) {
       IM_CHECK(HasRow(page, gui::kSettingsPopupOnlyGroupTitle, "Ray allocation"));
       IM_CHECK(!page.settings.empty());
       IM_CHECK_STR_EQ(page.settings.back().title.c_str(), gui::kSettingsPopupOnlyGroupTitle);
+
+      ctx->ItemClick(kButtonRef);
+      ctx->Yield(2);
+    };
+  }
+
+  {
+    // "Copy as text" (592.3): the button on the version line puts the page on the clipboard as
+    // FormatConfigSummaryAsText spells it — built from the page model the window draws, never
+    // from the pixels — and it follows the live document, so the two-layer document copies as
+    // the two-layer page. What the text carries per field and cell is asserted a layer down
+    // (test_config_summary_rows.cpp); this case is the wiring, and that the button's line did
+    // not push the page past its one-screen budget. The clipboard read back is the process-local
+    // stand-in test_gui_main.cpp installs.
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "config_summary", "copy_as_text_puts_the_page_on_the_clipboard");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      ctx->ItemClick(kButtonRef);
+      ctx->Yield(3);
+      IM_CHECK(SummaryWindow(ctx) != nullptr);
+      IM_CHECK_STR_EQ(ImGui::GetClipboardText(), "");
+
+      ctx->SetRef(kWindowRef);
+      ctx->ItemClick(ICON_FA_COPY " Copy as text");
+      ctx->Yield(2);
+      const std::string default_text = gui::FormatConfigSummaryAsText(gui::BuildConfigSummary(gui::g_state));
+      IM_CHECK_STR_EQ(ImGui::GetClipboardText(), default_text.c_str());
+      IM_CHECK(default_text.find("Lumice ") == 0);
+      IM_CHECK(default_text.find("Layer 1") != std::string::npos);
+
+      SeedTwoLayerDocument();
+      ctx->Yield(3);
+      ctx->ItemClick(ICON_FA_COPY " Copy as text");
+      ctx->Yield(2);
+      const std::string two_layer_text = gui::FormatConfigSummaryAsText(gui::BuildConfigSummary(gui::g_state));
+      IM_CHECK(two_layer_text != default_text);
+      IM_CHECK_STR_EQ(ImGui::GetClipboardText(), two_layer_text.c_str());
+      IM_CHECK(two_layer_text.find("Layer 2") != std::string::npos);
+      IM_CHECK(two_layer_text.find("cza") != std::string::npos);
+      ctx->SetRef("");  // SummaryWindow() resolves the window from the root, not from itself
+      IM_CHECK(SummaryWindow(ctx) != nullptr);
+      IM_CHECK(FitsOneScreen(SummaryWindow(ctx), "two-layer document, with the copy button"));
 
       ctx->ItemClick(kButtonRef);
       ctx->Yield(2);

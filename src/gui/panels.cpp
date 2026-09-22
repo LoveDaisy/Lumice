@@ -22,6 +22,7 @@
 #include "gui/shape_scalar_domain.hpp"
 #include "gui/slider_format_rules.hpp"
 #include "gui/slider_mapping.hpp"
+#include "gui/table_focus_ring.hpp"
 #include "gui/theme.hpp"
 #include "imgui.h"
 // imgui_internal.h for ReloadInputTextIfActive only: GetActiveID / GetInputTextState /
@@ -435,7 +436,8 @@ static void FinishSliderLayout(const char* display_label, const char* label_id) 
 }
 
 bool SliderWithInput(const char* label, float* value, float min_val, float max_val, const char* fmt, SliderScale scale,
-                     LabelPlacement label_placement, bool* committed, bool* active, float avail_override) {
+                     LabelPlacement label_placement, bool* committed, bool* active, float avail_override,
+                     bool focus_input_now) {
   char display_buf[64];
   char slider_id[64];
   char input_id[64];
@@ -456,6 +458,9 @@ bool SliderWithInput(const char* label, float* value, float min_val, float max_v
 
   ImGui::SameLine();
   ImGui::PushItemWidth(UiPx(kInputWidth));
+  if (focus_input_now) {
+    ImGui::SetKeyboardFocusHere(0);  // 0 = the very next item, which is this box; never a count
+  }
   ImGui::InputFloat(input_id, value, 0, 0, fmt);
   const bool input_committed = ImGui::IsItemDeactivatedAfterEdit();
   const bool input_active = ImGui::IsItemActive();
@@ -1050,7 +1055,8 @@ bool RenderSyncCell(const char* label, CrystalConfig& cr, int slot) {
 
 }  // namespace
 
-bool RenderShapeDistTableRow(const char* label, CrystalConfig& cr, int slot, bool reload_active_inputs) {
+bool RenderShapeDistTableRow(const char* label, CrystalConfig& cr, int slot, bool reload_active_inputs,
+                             TableFocusRing& ring) {
   const ShapeScalarDomain& domain = ShapeScalarDomainFor(slot);  // single domain authority
   const float center_min = domain.min_value;
   const float center_max = domain.max_value;
@@ -1097,8 +1103,17 @@ bool RenderShapeDistTableRow(const char* label, CrystalConfig& cr, int slot, boo
   if (reload_active_inputs) {
     ReloadSliderInputIfActive(label);
   }
-  changed |=
-      SliderWithInput(label, &dist.center, center_min, center_max, center_fmt, center_scale, LabelPlacement::kNone);
+  // The box's id is computed here, in the same ID scope SliderWithInput submits it in, by the one
+  // rule that names it (FormatSliderInputId) — the same derivation ReloadSliderInputIfActive makes.
+  // NoTabStop over the pair takes the slider AND the box out of ImGui's own row-by-row Tab walk;
+  // the ring's SetKeyboardFocusHere still lands on the box (see gui/table_focus_ring.hpp).
+  char value_input_id[64];
+  FormatSliderInputId(label, value_input_id, sizeof(value_input_id));
+  const bool focus_value = ring.Register(RingColumn::kValue, ImGui::GetID(value_input_id));
+  ImGui::PushItemFlag(ImGuiItemFlags_NoTabStop, true);
+  changed |= SliderWithInput(label, &dist.center, center_min, center_max, center_fmt, center_scale,
+                             LabelPlacement::kNone, nullptr, nullptr, 0.0f, focus_value);
+  ImGui::PopItemFlag();
 
   // Col 2 — sync group swatch + picker popup. Ahead of Rand/Spread because sync is not a property of
   // randomization: it constrains the row's final value and is equally usable with Rand off. Left
@@ -1137,10 +1152,23 @@ bool RenderShapeDistTableRow(const char* label, CrystalConfig& cr, int slot, boo
   if (reload_active_inputs) {
     ReloadInputTextIfActive(ImGui::GetID(sp_id));
   }
+  // A member of the Tab ring only while enabled: a disabled box cannot take the keyboard, and a
+  // ring that named it would stall there. Not registered = not in the ring this frame, and the
+  // disabled box keeps ImGui's own "not focusable" handling, with no flag of ours on it.
+  const bool focus_spread = randomize && ring.Register(RingColumn::kSpread, ImGui::GetID(sp_id));
+  if (randomize) {
+    ImGui::PushItemFlag(ImGuiItemFlags_NoTabStop, true);
+  }
+  if (focus_spread) {
+    ImGui::SetKeyboardFocusHere(0);
+  }
   ImGui::SetNextItemWidth(-FLT_MIN);
   if (ImGui::InputFloat(sp_id, &dist.spread, 0, 0, center_fmt)) {
     dist.spread = std::clamp(dist.spread, 0.0f, center_max);
     changed = true;
+  }
+  if (randomize) {
+    ImGui::PopItemFlag();
   }
 
   ImGui::EndDisabled();

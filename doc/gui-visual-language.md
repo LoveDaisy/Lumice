@@ -194,3 +194,66 @@ ScrollbarRounding 3  WindowRounding 4  PopupRounding 4
 - **必须保留一个控制项**：未改动的基线变体应当**通过**现有 PSNR 门禁。它一旦不通过，说明改动动了不该动的像素，此时所有对比失效。原型全过程中该控制项持续为绿。
 - ⚠️ **测试绿灯对未走到的路径零覆盖**。原型中曾出现一次 `Missing EndGroup()`（右面板整个渲染成 ImGui 断言框），而当时 287/287 gui_test 全绿——因为测试跑的是基线主题，新路径根本没有被执行。**抓到它的是截图，不是测试。**
 - **参考图重拍是有税的**：任何主题改动都会使 on-screen 的视觉回归参考图（`modal_layout`、`defaults_panel_layout`、`capture_harness`）失效并需重拍；`lens_proj` 走离屏 FBO、不含 chrome，不受影响。⇒ **视觉方案应一次定稿再落地，不要连续多次微调**，否则每次都要付一遍重拍成本。
+
+## 9. 窗口尺寸策略：四档表
+
+GUI 里每个窗口「能不能被用户拉、拉哪个轴、出现时多大、下次打开还记不记得」曾是每个窗口一套：
+Settings 每次打开都重置到默认尺寸（`ImGuiCond_Appearing`），Summary 完全不可拉
+（`AlwaysAutoResize | NoResize`），Edit Entry 又是第三种。这一节把它收成四档，每个窗口归到一档；
+新窗口先在这张表里选档，再写代码。
+
+### 9.1 四档与判据
+
+| 档位 | 含义 | 判据 |
+|---|---|---|
+| **固定** | 位置、尺寸都不可动 | 主 shell 的一部分。改它就是重排，属 `gui-layout-architecture.md` §8 的禁区 |
+| **自动贴合** | 随内容变；用户不可拉 | 几个固定控件，或行数天然很少（确认对话框、Custom Spectrum 这一类） |
+| **半可变** | 一轴固定、另一轴用户可拉；出现时先贴合内容；会话内记住用户拉过的尺寸 | 内容是沿**一个轴**增长的行列表 |
+| **自由** | 两轴都可拉 | 内容是二维的（列表 + 预览、多列并排的工作窗口） |
+
+「会话内记住」的含义与边界：同一次进程里关掉再打开，尺寸是用户上次拉到的值；进程重启后回到默认。
+跨重启记忆属 app 偏好命名空间（`gui-state-governance.md` §8 的命名空间 ③），不在这张表里，
+也不由窗口自己实现。
+
+### 9.2 逐窗口归档
+
+| 窗口 | 落点 | 档位 | 备注 |
+|---|---|---|---|
+| TopBar / StatusBar / Left / Right / Preview | `app_panels.cpp` | 固定 | 每帧由 app 重钉；§8 禁区 |
+| Log 面板 | `app_panels.cpp` | 固定（250px） | owner：本来与主窗口同宽，暂不动 |
+| Edit Entry | `edit_modals.cpp` | 半可变（宽固定、高可拉） | 形态待裁：先出原型再落地，落地时一并重拍 `modal_layout` |
+| Custom Spectrum / 5 个确认对话框 | `edit_modals.cpp` / `app_panels.cpp` | 自动贴合 | `AlwaysAutoResize`，不动 |
+| Settings | `defaults_panel.cpp` | 半可变 | 宽钉 760；默认 760×584 不变，故 `defaults_panel_layout` 参考图不重拍 |
+| Summary | `config_summary_window.cpp` | 半可变 | 宽钉 1200；出现时贴合内容、上限 min(900, 工作区)，之后高可拉到工作区 |
+| Raypath Analysis / Colors | `analysis_panel.cpp` / `color_window.cpp` | 自由 | `ImGuiCond_FirstUseEver` 给默认尺寸，之后 ImGui 自己记 |
+
+### 9.3 与 `gui-layout-architecture.md` §8 的边界：可拉尺寸不是重排
+
+一个窗口**在自己的矩形内**可以被拖多大，是这个窗口自己的几何策略；§8 否决的是把窗口/面板挪到
+shell 的哪个区域、要不要接入 docking。两件事互不影响：将来无论重排走哪个方向，这张四档表都不需要
+跟着改，反过来这张表也不构成重启重排的理由。
+
+### 9.4 实现配方（半可变）
+
+ImGui 对「半可变」的表达只有一句：`SetNextWindowSizeConstraints(ImVec2(W, h_min), ImVec2(W, h_max))`——
+固定轴 min = max，浮动轴给 [下限, 上限]。⛔ 不要发明自定义 resize 手柄。上限的裁剪算式
+（工作区高度减一圈边距，再与窗口自己的硬上限取小）只有一个实现，`src/gui/secondary_window_sizing.hpp`
+的 `ClampedSecondaryWindowMaxHeight()`，两个半可变窗口都调它。
+
+默认尺寸怎么给，取决于内容随不随文档变：
+
+- **内容不随文档变**（Settings：表格在内部滚动，窗口外框是常量）：`SetNextWindowSize(默认, ImGuiCond_FirstUseEver)`。
+  这个 cond 只在窗口生命周期里第一次出现时生效一次，之后 ImGui 自己按窗口记住 `Size`
+  （`io.IniFilename == nullptr` 时不落盘，正好是「会话内」）。⚠️ 不是 `ImGuiCond_Appearing`——
+  那个每次重开都生效，用户拉过的尺寸就丢了，正是修掉的那个 bug。
+- **内容随文档变**（Summary：行数是文档的函数）：`AlwaysAutoResize` 用不了——ImGui 里这个 flag 蕴含
+  `NoResize`（resize 边框的命中测试在 `NoResize` **或** `AlwaysAutoResize` 任一为真时跳过），设了它用户
+  就永远拉不动。改为每帧手动做同一件事：窗口尚未被用户接管时，把上一帧量到的内容高度
+  （`ImGuiWindow::DC.IdealMaxPos − DC.CursorStartPos`，与 ImGui 自己的 `ContentSizeIdeal` 同一算式）
+  加上 padding 与标题栏，经 `SetNextWindowSize(…, ImGuiCond_Always)` 请求为本帧高度；用户一拖，下一帧
+  读回的实际 `Size.y` 与上次请求值对不上，据此判定「已接管」、停止再请求。这是配方的特化——
+  「贴合内容直到用户第一次插手」——不是另一套规则。
+
+两种窗口都要给 `gui_test` 一条复位口（`ResetXxxTestState()`，挂进 `ResetTestState()`）：
+ImGui 记住的尺寸跨用例存活，不复位就是「隔离单跑绿、全量跑红」家族的又一个字段变体（Pos / Scroll /
+InputText 缓冲之外的第四个：Size）。

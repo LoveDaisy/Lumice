@@ -14,6 +14,7 @@
 #include <cmath>
 #include <cstring>
 #include <filesystem>
+#include <initializer_list>
 #include <memory>
 #include <optional>
 #include <string>
@@ -32,6 +33,7 @@
 #include "imgui_internal.h"
 #include "include/lumice.h"
 #include "test_gui_shared.hpp"
+#include "util/raypath_analysis_display.hpp"
 
 namespace {
 
@@ -1884,6 +1886,290 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       ctx->MouseMoveToPos(ImVec2(2.0f, 2.0f));
       ctx->Yield(2);
       IM_CHECK(SaveWindowPng(ctx, kWindowRef, GuiTestTempPath("chain_label_arrow.png").string()));
+    };
+  }
+
+  // The search box over the list (592.2). Four rows put on show directly — three chains and an
+  // "other" bucket — and the box is typed into. What it does: hide the rows whose RAW text does
+  // not contain the typed text, case-insensitively. What it must not do: touch the numbers. The
+  // display order and the Cumulative % column are the whole list's, hidden rows included (a
+  // shown row's Cumulative % still reads "down to this row of everything"), and the selection is
+  // the chain's text, so a selected row that the search hides is still the selection and the
+  // Exclude button's answer is the same one. The other line is not a raypath and so not
+  // searchable: any non-empty search hides it. The multi-layer display text is written by hand
+  // here, not collected from a scene; only the substring mechanism is under test, not the
+  // formatter, and the raw " -> " joiner is what a user copies out of the CSV or the CLI's
+  // output, so "->" has to reach the multi-layer row — the shape ImGuiTextFilter::PassFilter
+  // would have read as "exclude every row containing '>'".
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "search_narrows_visible_rows");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ScopedServerGuard guard;
+      ResetTestState();
+      auto payload = std::make_shared<gui::AnalysisPayload>();
+      payload->snapshot_generation = 3;
+      payload->roi_mode = LUMICE_RAYPATH_ROI_FULL_SKY;
+      payload->other_energy = 2.0;
+      payload->other_count = 20;
+      payload->truncated_chain_count = 7;
+      const char* const displays[3] = { "3-5", "1-2", "C2(3-5) -> (1-3)" };
+      const double energies[3] = { 5.0, 2.0, 1.0 };
+      for (int i = 0; i < 3; i++) {
+        LUMICE_RaypathHistogramEntry e{};
+        e.chain_len = i == 2 ? 2 : 1;
+        e.chain[0].crystal_id = 1;
+        e.chain[0].segment_len = 2;
+        e.chain[0].segment[0] = 1;
+        e.chain[0].segment[1] = 2;
+        snprintf(e.display, sizeof(e.display), "%s", displays[i]);
+        e.energy = energies[i];
+        e.count = 100;
+        payload->entries.push_back(e);
+      }
+      IM_CHECK(gui::AdoptAnalysisPayloadIfNew(gui::g_state, payload));
+      gui::g_state.analysis.fetched_once = true;
+      gui::g_state.analysis.fetched_generation = 3;
+      gui::g_state.analysis.fetched_symmetry = gui::AnalysisSymmetryBits(gui::g_state);
+      gui::g_state.analysis.window_open = true;
+      ctx->Yield(2);
+      ctx->WindowMove(kWindowRef, ImVec2(60, 60));
+      ctx->Yield(1);
+      ctx->SetRef(kWindowRef);
+
+      // Rows are found by what is DRAWN: the multi-layer row's label carries the arrow glyph.
+      const std::string multi_label = gui::JoinerForDisplay(displays[2]);
+      const std::string other_path = std::string("**/").append(gui::kAnalysisOtherRowLabel);
+      auto row_shown = [&](const std::string& label) {
+        return ctx->ItemInfo(("**/" + label).c_str(), ImGuiTestOpFlags_NoError).ID != 0;
+      };
+      auto search = [&](const char* text) {
+        ctx->ItemInputValue("**/###analysis_search", text);
+        ctx->Yield(3);
+      };
+      // Empty box: everything, other line included.
+      IM_CHECK(row_shown("3-5"));
+      IM_CHECK(row_shown("1-2"));
+      IM_CHECK(row_shown(multi_label));
+      IM_CHECK(row_shown(gui::kAnalysisOtherRowLabel));
+      const std::vector<double> cumulative_before = gui::g_state.analysis_result.display_cumulative_pct;
+      const std::vector<int> order_before = gui::g_state.analysis_result.display_order;
+      IM_CHECK_EQ(cumulative_before.size(), 3u);
+
+      // "3-5": the single-layer row and the multi-layer row that contains it; not "1-2", not other.
+      search("3-5");
+      IM_CHECK(row_shown("3-5"));
+      IM_CHECK(!row_shown("1-2"));
+      IM_CHECK(row_shown(multi_label));
+      IM_CHECK(!row_shown(gui::kAnalysisOtherRowLabel));
+      // The numbers did not move: same order, same column, entry for entry — the same bytes, since
+      // nothing recomputed them (a recompute of the same list would also pass, and the point is
+      // that the search does not own those numbers; whichever way, the columns read as before).
+      const auto& view = gui::g_state.analysis_result;
+      IM_CHECK(view.display_order == order_before);
+      IM_CHECK(view.display_cumulative_pct == cumulative_before);
+
+      // Cleared: all four back.
+      search("");
+      IM_CHECK(row_shown("3-5"));
+      IM_CHECK(row_shown("1-2"));
+      IM_CHECK(row_shown(multi_label));
+      IM_CHECK(row_shown(gui::kAnalysisOtherRowLabel));
+
+      // "C2(" and "->": only the multi-layer row, by the raw text's crystal prefix and joiner.
+      search("C2(");
+      IM_CHECK(!row_shown("3-5"));
+      IM_CHECK(!row_shown("1-2"));
+      IM_CHECK(row_shown(multi_label));
+      search("->");
+      IM_CHECK(!row_shown("3-5"));
+      IM_CHECK(!row_shown("1-2"));
+      IM_CHECK(row_shown(multi_label));
+      // Case-insensitive: the user types what they remember, not the exact case.
+      search("c2(");
+      IM_CHECK(row_shown(multi_label));
+
+      // The selection outlives being hidden, and Exclude's verdict does not depend on the box.
+      search("");
+      ctx->ItemClick("**/1-2");
+      ctx->Yield(1);
+      IM_CHECK(gui::g_state.analysis.selected_entry.has_value() && *gui::g_state.analysis.selected_entry == "1-2");
+      const gui::ExcludeEligibility before = gui::EvaluateExcludeEligibility(gui::g_state, nullptr);
+      search("3-5");
+      IM_CHECK(!row_shown("1-2"));
+      IM_CHECK(gui::g_state.analysis.selected_entry.has_value() && *gui::g_state.analysis.selected_entry == "1-2");
+      IM_CHECK_EQ(static_cast<int>(gui::EvaluateExcludeEligibility(gui::g_state, nullptr)), static_cast<int>(before));
+      search("");
+      IM_CHECK(row_shown("1-2"));
+      IM_CHECK(gui::g_state.analysis.selected_entry.has_value() && *gui::g_state.analysis.selected_entry == "1-2");
+      // A picture of the window with the box in use, for a human to look at: where the box sits
+      // and what a narrowed list looks like are not things the assertions above can show.
+      search("3-5");
+      ctx->SetRef("");
+      ctx->MouseMoveToPos(ImVec2(2.0f, 2.0f));
+      ctx->Yield(2);
+      IM_CHECK(SaveWindowPng(ctx, kWindowRef, GuiTestTempPath("analysis_search.png").string()));
+    };
+  }
+
+  // What clears the search box, and what does not. The box has the lifetime of
+  // state.analysis (gui-state-governance.md §10.2: the analysis request parameters are session
+  // state, cleared by the four document-switch reasons and kept by Revert), though it is not a
+  // member of that struct — an ImGui type cannot enter gui_state.hpp — so ResetFrontendState
+  // clears it by name, and this case is what catches that call going missing or landing in the
+  // wrong branch. Revert: the payload and the text both survive, so the same row is still the
+  // one shown. New document: the payload is gone, so the text is read off what a NEW payload
+  // shows — a row the old text would have hidden.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "search_reset_semantics");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ScopedServerGuard guard;
+      ResetTestState();
+      auto make_payload = [](unsigned long long generation, std::initializer_list<const char*> displays) {
+        auto payload = std::make_shared<gui::AnalysisPayload>();
+        payload->snapshot_generation = generation;
+        payload->roi_mode = LUMICE_RAYPATH_ROI_FULL_SKY;
+        for (const char* d : displays) {
+          LUMICE_RaypathHistogramEntry e{};
+          e.chain_len = 1;
+          e.chain[0].crystal_id = 1;
+          e.chain[0].segment_len = 2;
+          e.chain[0].segment[0] = 1;
+          e.chain[0].segment[1] = 2;
+          snprintf(e.display, sizeof(e.display), "%s", d);
+          e.energy = 1.0;
+          e.count = 100;
+          payload->entries.push_back(e);
+        }
+        return payload;
+      };
+      auto show = [&](unsigned long long generation, std::initializer_list<const char*> displays) {
+        IM_CHECK_RETV(gui::AdoptAnalysisPayloadIfNew(gui::g_state, make_payload(generation, displays)), false);
+        gui::g_state.analysis.fetched_once = true;
+        gui::g_state.analysis.fetched_generation = generation;
+        gui::g_state.analysis.fetched_symmetry = gui::AnalysisSymmetryBits(gui::g_state);
+        gui::g_state.analysis.window_open = true;
+        ctx->Yield(2);
+        return true;
+      };
+      auto row_shown = [&](const char* label) {
+        return ctx->ItemInfo((std::string("**/") + label).c_str(), ImGuiTestOpFlags_NoError).ID != 0;
+      };
+      IM_CHECK(show(3, { "1-2", "2-3" }));
+      ctx->WindowMove(kWindowRef, ImVec2(60, 60));
+      ctx->Yield(1);
+      ctx->SetRef(kWindowRef);
+      ctx->ItemInputValue("**/###analysis_search", "1-2");
+      ctx->Yield(3);
+      IM_CHECK(row_shown("1-2"));
+      IM_CHECK(!row_shown("2-3"));
+
+      // Revert keeps the result and the text: the same scene, the same view of it.
+      gui::ResetFrontendState(gui::g_state, gui::FrontendResetReason::kRevert);
+      ctx->Yield(3);
+      IM_CHECK(gui::g_state.analysis_result.payload != nullptr);
+      IM_CHECK(row_shown("1-2"));
+      IM_CHECK(!row_shown("2-3"));
+
+      // A new document drops the result; the text must go with it. Shown on a new result whose
+      // only row the stale "1-2" would hide.
+      gui::ResetFrontendState(gui::g_state, gui::FrontendResetReason::kNewDocument);
+      ctx->Yield(3);
+      IM_CHECK(gui::g_state.analysis_result.payload == nullptr);
+      IM_CHECK(gui::g_state.analysis.window_open);
+      IM_CHECK(show(4, { "2-3" }));
+      ctx->Yield(2);
+      IM_CHECK(row_shown("2-3"));
+      ctx->SetRef("");
+    };
+  }
+
+  // Right-click on a row (592.3). Two menu items. "Copy raypath" puts the entry's RAW text on the
+  // clipboard — the " -> " joiner the CSV and the CLI print, not the arrow glyph the row draws —
+  // and "Copy row" puts the row in the CSV's own column order and formatting, which is asserted
+  // against the same call the CSV export makes on the same numbers, not against a literal, so
+  // the two cannot be checked into disagreement. Each item is reached by a fresh right-click:
+  // a chosen menu item closes its popup. The clipboard read back is the process-local stand-in
+  // test_gui_main.cpp installs, so this is what the GUI wrote, on any leg.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "row_menu_copies_raw_text_and_csv_row");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ScopedServerGuard guard;
+      ResetTestState();
+      IM_CHECK_STR_EQ(ImGui::GetClipboardText(), "");  // the reset emptied it
+      auto payload = std::make_shared<gui::AnalysisPayload>();
+      payload->snapshot_generation = 3;
+      payload->roi_mode = LUMICE_RAYPATH_ROI_FULL_SKY;
+      payload->other_energy = 2.0;
+      payload->other_count = 20;
+      const char* const displays[3] = { "3-5", "1-2", "C2(3-5) -> (1-3)" };
+      const double energies[3] = { 5.0, 2.0, 1.0 };
+      for (int i = 0; i < 3; i++) {
+        LUMICE_RaypathHistogramEntry e{};
+        e.chain_len = i == 2 ? 2 : 1;
+        e.chain[0].crystal_id = 1;
+        e.chain[0].segment_len = 2;
+        e.chain[0].segment[0] = 1;
+        e.chain[0].segment[1] = 2;
+        snprintf(e.display, sizeof(e.display), "%s", displays[i]);
+        e.energy = energies[i];
+        e.count = 100 * (i + 1);
+        payload->entries.push_back(e);
+      }
+      payload->entries[1].error_bound = 0.5;  // "1-2" took over a slot: its +/- cell has a bound
+      IM_CHECK(gui::AdoptAnalysisPayloadIfNew(gui::g_state, payload));
+      gui::g_state.analysis.fetched_once = true;
+      gui::g_state.analysis.fetched_generation = 3;
+      gui::g_state.analysis.fetched_symmetry = gui::AnalysisSymmetryBits(gui::g_state);
+      gui::g_state.analysis.window_open = true;
+      ctx->Yield(2);
+      ctx->WindowMove(kWindowRef, ImVec2(60, 60));
+      ctx->Yield(1);
+
+      // Right-click the row drawn as `label`, then choose `item` in the popup that opened.
+      auto choose = [&](const std::string& label, const char* item) {
+        ctx->SetRef(kWindowRef);
+        ctx->ItemClick(("**/" + label).c_str(), ImGuiMouseButton_Right);
+        ctx->Yield(2);
+        ctx->SetRef("//$FOCUSED");
+        ctx->ItemClick((std::string("**/") + item).c_str());
+        ctx->Yield(2);
+        ctx->SetRef("");
+      };
+      // The expected row, from the export's own formatter on the view's own numbers.
+      const auto& view = gui::g_state.analysis_result;
+      auto csv_row = [&](const char* display) {
+        for (size_t row = 0; row < view.display_order.size(); ++row) {
+          const int idx = view.display_order[row];
+          const auto& e = view.payload->entries[static_cast<size_t>(idx)];
+          if (std::strcmp(e.display, display) == 0) {
+            return lumice::FormatRaypathAnalysisCsvRow(e, view.display_energy[static_cast<size_t>(idx)],
+                                                       view.display_cumulative_pct[row], view.display_total);
+          }
+        }
+        return std::string("<no such row>");
+      };
+
+      choose("3-5", "Copy raypath");
+      IM_CHECK_STR_EQ(ImGui::GetClipboardText(), "3-5");
+      choose("3-5", "Copy row");
+      IM_CHECK_STR_EQ(ImGui::GetClipboardText(), csv_row("3-5").c_str());
+      // Not just the label with numbers after it: the row is the CSV's, four comma-separated
+      // columns with Energy % / Cumulative % / +/- in the CSV's precisions.
+      IM_CHECK_STR_EQ(ImGui::GetClipboardText(), "3-5,50.0000,50.0000,10.00");
+      // The takeover row: its +/- cell carries the bound in parentheses, as the CSV's does.
+      choose("1-2", "Copy row");
+      IM_CHECK_STR_EQ(ImGui::GetClipboardText(), csv_row("1-2").c_str());
+      IM_CHECK(std::strstr(ImGui::GetClipboardText(), " (-") != nullptr);
+      // The multi-layer row is found on screen by its glyph label and copies its raw text.
+      const std::string multi_label = gui::JoinerForDisplay(displays[2]);
+      choose(multi_label, "Copy raypath");
+      IM_CHECK_STR_EQ(ImGui::GetClipboardText(), displays[2]);
+      choose(multi_label, "Copy row");
+      IM_CHECK_STR_EQ(ImGui::GetClipboardText(), csv_row(displays[2]).c_str());
+      // A right-click neither selects the row nor is a left click: the selection is untouched.
+      IM_CHECK(!gui::g_state.analysis.selected_entry.has_value());
+      ctx->PopupCloseAll();
+      ctx->Yield(2);
     };
   }
 }
