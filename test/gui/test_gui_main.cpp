@@ -246,6 +246,7 @@ void ResetTestState() {
   // Modal state (edit_modals.cpp / defaults_panel.cpp file-scope statics)
   gui::ResetModalState();
   gui::ResetDefaultsPanelTestState();
+  gui::ResetConfigSummaryWindowTestState();
 
   // A widget left ACTIVE by the previous case, which is a leak of the same class as the file-scope
   // statics above and reaches further than any of them. ImGui keeps a drag's working value inside
@@ -282,7 +283,10 @@ void ResetTestState() {
   // case. Window position and size are deliberately NOT reset here: the fixed-layout panels are
   // re-pinned by the app every frame, and the floating windows are parked by the scenes that
   // capture them (modal_layout's WindowMove) because the park spot is part of the scene, not a
-  // default to return to.
+  // default to return to. The two exceptions are the semi-variable windows, Settings and Summary
+  // (doc/gui-visual-language.md §9): each has a default height that IS the rectangle its reference
+  // group is shot at, and each keeps a user's drag for the process on purpose — so each puts its
+  // own size back through its ResetXxxTestState() above, and this loop still does not touch Size.
   //
   // Safe to do from here: the test coroutine runs from the engine's PostNewFrame hook, i.e. after
   // NewFrame() and before any Begin() of this frame, so no widget holds a pointer into a storage

@@ -18,6 +18,11 @@ struct GuiState;
 // labelled the same way, and gui_test locates both by those strings.
 void RenderConfigSummaryWindow(GuiState& state);
 
+// Put the window's height back under the content's control, as a fresh process starts. Called
+// from gui_test's ResetTestState() so a case that dragged the window does not hand its height to
+// the next one — the config_summary_layout references are shot at the content-fitted height.
+void ResetConfigSummaryWindowTestState();
+
 }  // namespace lumice::gui
 
 #endif  // LUMICE_GUI_CONFIG_SUMMARY_WINDOW_HPP
