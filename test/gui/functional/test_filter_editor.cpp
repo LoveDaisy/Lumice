@@ -159,24 +159,47 @@ void RegisterFilterEditorTests(ImGuiTestEngine* engine) {
   // The row list.
   // ---------------------------------------------------------------------------------------------
 
-  // The editor keeps at least one row, so the last row's delete button is greyed rather than
-  // removed — removing it would reflow the row on every add and delete.
+  // The editor keeps at least one row, but it keeps it by refilling, not by greying the last
+  // delete button: deleting the last row lands on the same one-blank-row state as clearing its
+  // text, and commits the same way (no filter). A greyed button used to stand in for that
+  // invariant and gave the user nothing to explain why. Rebuilt from a committed filter first so
+  // the rows deleted are real ones, and the refilled row carries a fresh uid — a stale uid would
+  // mean a survivor was recycled rather than a blank appended.
   {
-    ImGuiTest* t = IM_REGISTER_TEST(engine, "filter_editor", "the_last_row_cannot_be_deleted");
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "filter_editor", "deleting_down_to_empty_refills_a_blank_row");
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
       ctx->Yield(2);
       OpenFilterModal(ctx);
+      AuthorRow(ctx, 0, "1-2");
+      AuthorRow(ctx, 1, "3-4");
+      AuthorRow(ctx, 2, "5-6");
+      ctx->ItemClick(kOk);
+      ctx->Yield(2);
+      const auto* seeded = CommittedFilter();
+      IM_CHECK(seeded != nullptr);
+      IM_CHECK_EQ(seeded->param.size(), static_cast<size_t>(3));
+
+      OpenFilterModal(ctx);  // rows 0..2 rebuilt from the committed filter
+      ctx->ItemClick("**/" ICON_FA_XMARK "##row_delete_2");
+      ctx->Yield(2);
+      ctx->ItemClick("**/" ICON_FA_XMARK "##row_delete_1");
+      ctx->Yield(2);
       IM_CHECK(ctx->ItemExists("**/##row_text_0"));
-      IM_CHECK(IsDisabled(ctx->ItemInfo("**/" ICON_FA_XMARK "##row_delete_0")));
+      IM_CHECK(!ctx->ItemExists("**/##row_text_1"));
+      IM_CHECK(!IsDisabled(ctx->ItemInfo("**/" ICON_FA_XMARK "##row_delete_0")));  // the last row's x is live
 
-      ctx->ItemClick(kAddRow);
+      ctx->ItemClick("**/" ICON_FA_XMARK "##row_delete_0");
       ctx->Yield(2);
-      IM_CHECK(!IsDisabled(ctx->ItemInfo("**/" ICON_FA_XMARK "##row_delete_0")));
-      IM_CHECK(!IsDisabled(ctx->ItemInfo("**/" ICON_FA_XMARK "##row_delete_1")));
+      IM_CHECK(!ctx->ItemExists("**/##row_text_0"));
+      IM_CHECK(ctx->ItemExists("**/##row_text_3"));  // exactly one row back, and a new one
+      IM_CHECK(!ctx->ItemExists("**/##row_text_4"));
+      IM_CHECK(!IsDisabled(ctx->ItemInfo("**/" ICON_FA_XMARK "##row_delete_3")));
+      IM_CHECK(!OkIsDisabled(ctx));  // a lone blank row is match-all, not an error
 
-      ctx->ItemClick(kCancel);
+      ctx->ItemClick(kOk);
       ctx->Yield(2);
+      IM_CHECK(CommittedFilter() == nullptr);  // same result as blanking the last row's text
     };
   }
 
@@ -592,6 +615,40 @@ void RegisterFilterEditorTests(ImGuiTestEngine* engine) {
       // set. That is safe because ResetTestState() pins modal_immediate_mode back to false
       // (test_gui_main.cpp:142), so the next case starts from the documented default either way.
       // Left in so a reader of THIS case does not have to know that.
+      gui::g_state.modal_immediate_mode = false;
+    };
+  }
+
+  // The same delete-to-empty under Immediate mode, where there is no OK to press: the frame that
+  // refills the blank row is the frame that pushes the buffers back, so the document must read
+  // "no filter" at once — the same thing clearing the row's text would have committed.
+  {
+    ImGuiTest* t =
+        IM_REGISTER_TEST(engine, "filter_editor", "immediate_mode_deleting_the_last_row_commits_as_no_filter");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      ctx->Yield(2);
+      SeedRaypathFilter("3-1-5");
+      ctx->Yield();
+      IM_CHECK(CommittedFilter() != nullptr);
+
+      OpenFilterModal(ctx);
+      ctx->ItemClick("**/Immediate##edit_modal");
+      ctx->Yield(6);
+      ctx->ItemClick("**/###filter_tab");
+      ctx->Yield(2);
+      IM_CHECK(!IsDisabled(ctx->ItemInfo("**/" ICON_FA_XMARK "##row_delete_0")));  // the only row, and live
+      ctx->ItemClick("**/" ICON_FA_XMARK "##row_delete_0");
+      ctx->Yield(2);
+
+      IM_CHECK(CommittedFilter() == nullptr);
+      IM_CHECK(!ctx->ItemExists("**/##row_text_0"));
+      IM_CHECK(ctx->ItemExists("**/##row_text_1"));  // the refilled blank row
+      IM_CHECK(!IsDisabled(ctx->ItemInfo("**/" ICON_FA_XMARK "##row_delete_1")));
+
+      ctx->ItemClick("**/Close##edit_modal");
+      ctx->Yield(2);
+      // Courtesy reset, as in the case above: ResetTestState() pins the flag back regardless.
       gui::g_state.modal_immediate_mode = false;
     };
   }

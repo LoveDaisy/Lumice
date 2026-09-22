@@ -676,16 +676,24 @@ SumOfProducts BuildSopFromRows(const std::vector<SummandRowBuf>& rows) {
   return out;
 }
 
+// The one shape of "a fresh blank OR row". Every site that must uphold the editor's ≥1 row
+// invariant (or reset to exactly one blank row) constructs it through here, so the shape never
+// drifts between call sites. It only builds and appends the row: whether the caller clears the
+// list or rewinds the uid counter first is that caller's own semantics.
+void AppendBlankSummandRow() {
+  SummandRowBuf row{};
+  row.uid = g_next_summand_row_uid++;
+  row.text[0] = '\0';
+  g_summand_rows.push_back(row);
+}
+
 // Load an incoming SoP into the row buffers, resetting the uid counter. Always
 // ensures at least one row exists (mirrors FilterConfig's ≥1 row invariant).
 void SetRowsFromSop(const SumOfProducts& sop) {
   g_summand_rows.clear();
   g_next_summand_row_uid = 0;
   if (sop.empty()) {
-    SummandRowBuf row{};
-    row.uid = g_next_summand_row_uid++;
-    row.text[0] = '\0';
-    g_summand_rows.push_back(row);
+    AppendBlankSummandRow();
     return;
   }
   for (const auto& s : sop) {
@@ -884,10 +892,7 @@ void PullSummandRows(const SumOfProducts& theirs) {
   g_summand_rows_snapshot = theirs;
   if (g_summand_rows.empty()) {
     // The ≥1 row invariant SetRowsFromSop keeps: the editor always shows a line to type into.
-    SummandRowBuf row{};
-    row.uid = g_next_summand_row_uid++;
-    row.text[0] = '\0';
-    g_summand_rows.push_back(row);
+    AppendBlankSummandRow();
   }
 }
 
@@ -1462,7 +1467,6 @@ static ImVec4 ValidationFrameBgColor(LUMICE_RaypathValidationState state) {
 static void RenderSummandRowList() {
   const auto kind = CurrentValidationKind();
   size_t delete_idx = static_cast<size_t>(-1);
-  const bool can_delete_any = CanDeleteSummandRow(g_summand_rows.size());
 
   // Reserve exactly the width the trailing "x" SmallButton needs (glyph + horizontal
   // FramePadding on each side) plus one ItemSpacing for SameLine(). Formula mirrors
@@ -1495,20 +1499,14 @@ static void RenderSummandRowList() {
     ImGui::SameLine();
     char del_id[64];
     snprintf(del_id, sizeof(del_id), ICON_FA_XMARK "##row_delete_%llu", static_cast<unsigned long long>(row.uid));
-    // Match crystal-card / spectrum-row convention: red destructive style when
-    // enabled, greyed-out (not tinted red) via BeginDisabled when the last row
-    // may not be removed.
-    if (can_delete_any) {
-      PushDestructiveStyle();
-    }
-    ImGui::BeginDisabled(!can_delete_any);
+    // Match crystal-card / spectrum-row convention: red destructive style. Always live, the last
+    // row included — deleting it lands on the same one-blank-row state as clearing its text, and
+    // the refill below is what keeps the list from ever being empty.
+    PushDestructiveStyle();
     if (ImGui::SmallButton(del_id)) {
       delete_idx = i;
     }
-    ImGui::EndDisabled();
-    if (can_delete_any) {
-      PopDestructiveStyle();
-    }
+    PopDestructiveStyle();
 
     // Per-row inline validation hint (first non-valid across the list is
     // enough to gate OK; still show every offending row so the user can fix
@@ -1535,6 +1533,11 @@ static void RenderSummandRowList() {
 
   if (delete_idx != static_cast<size_t>(-1)) {
     g_summand_rows.erase(g_summand_rows.begin() + static_cast<std::ptrdiff_t>(delete_idx));
+    if (g_summand_rows.empty()) {
+      // The ≥1 row invariant SetRowsFromSop / the pull-merge path already keep — refilled through
+      // the one shared constructor, not a third hand-rolled copy.
+      AppendBlankSummandRow();
+    }
   }
 
   // Add-row button: capped at kMaxSummandRows (soft UI cap; hard cap enforced by
@@ -1542,10 +1545,7 @@ static void RenderSummandRowList() {
   const bool at_cap = AtSummandRowCap(g_summand_rows.size());
   ImGui::BeginDisabled(at_cap);
   if (ImGui::Button("+ Add OR row##summand_add", ImVec2(UiPx(140.0f), 0.0f))) {
-    SummandRowBuf row{};
-    row.uid = g_next_summand_row_uid++;
-    row.text[0] = '\0';
-    g_summand_rows.push_back(row);
+    AppendBlankSummandRow();
   }
   ImGui::EndDisabled();
   if (at_cap && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
@@ -1661,10 +1661,7 @@ static void RenderRemoveFilterButton() {
   if (ImGui::Button("Remove Filter##filter", ImVec2(UiPx(120.0f), 0.0f))) {
     g_summand_rows.clear();
     g_next_summand_row_uid = 0;
-    SummandRowBuf row{};
-    row.uid = g_next_summand_row_uid++;
-    row.text[0] = '\0';
-    g_summand_rows.push_back(row);
+    AppendBlankSummandRow();
     g_filter_remove_intent = true;
   }
 }
