@@ -1265,6 +1265,14 @@ static_assert(sizeof(kMarkerSerialNames) / sizeof(kMarkerSerialNames[0]) == LUMI
 // Which of a marker row's three serialized leaves a key names.
 enum class MarkerKeyPart { kLine, kLabel, kColor };
 
+// Edit modal layout PROTOTYPE selector. Orthogonal to GuiState::modal_layout_vertical below,
+// which stays the serialized H/V split this switch does not touch: kLegacy defers entirely to
+// modal_layout_vertical (today's A "compact stacked" / H "side-by-side tab" pair); kTwoColumn /
+// kThreeColumn are the new "every section expanded, no tab bar" candidates B and C, for a
+// hands-on layout comparison. Prototype-only — which (if any) of these replace
+// modal_layout_vertical's role is a 592.7 decision, not this switch's.
+enum class ModalLayoutPrototype { kLegacy, kTwoColumn, kThreeColumn };
+
 // THE one place a per-marker serialization key is spelled. Every consumer — the writer and the
 // reader in file_io.cpp, the editor registry, the tests — calls this rather than writing
 // "overlay_marker_sun_color" out by hand, so a rename is one edit and the four sides cannot drift.
@@ -1591,6 +1599,9 @@ struct GuiState {
   // default since gui-polish-v15 round 2). Persisted to .lmc alongside
   // right_panel_collapsed.
   bool modal_layout_vertical = true;
+  // Edit modal layout PROTOTYPE (view preference, session-only — NOT persisted to .lmc, unlike
+  // modal_layout_vertical above). See ModalLayoutPrototype's own comment.
+  ModalLayoutPrototype modal_layout_prototype = ModalLayoutPrototype::kLegacy;
 
   // Log panel state (view preference — does not call MarkDirty)
   int gui_log_level = 3;   // Index into log level names: 0=trace,1=debug,2=verbose,3=info,4=warning,5=error,6=off

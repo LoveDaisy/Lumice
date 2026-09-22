@@ -204,6 +204,7 @@ inline constexpr FieldTierEntry kFieldTierTable[] = {
     { "current_file_path",          FieldTier::kSession,    false },
     { "save_texture",               FieldTier::kSession,    false },
     { "modal_immediate_mode",       FieldTier::kSession,    false },
+    { "modal_layout_prototype",     FieldTier::kSession,    false },
 };
 
 // Derived / runtime-produced fields: NOT governed by a tier. The reconciler and effect layer must
