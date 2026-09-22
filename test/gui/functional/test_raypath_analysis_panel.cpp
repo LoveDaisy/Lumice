@@ -2000,7 +2000,13 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       search("");
       IM_CHECK(row_shown("1-2"));
       IM_CHECK(gui::g_state.analysis.selected_entry.has_value() && *gui::g_state.analysis.selected_entry == "1-2");
+      // A picture of the window with the box in use, for a human to look at: where the box sits
+      // and what a narrowed list looks like are not things the assertions above can show.
+      search("3-5");
       ctx->SetRef("");
+      ctx->MouseMoveToPos(ImVec2(2.0f, 2.0f));
+      ctx->Yield(2);
+      IM_CHECK(SaveWindowPng(ctx, kWindowRef, GuiTestTempPath("analysis_search.png").string()));
     };
   }
 
