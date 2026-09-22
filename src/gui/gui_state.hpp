@@ -6,10 +6,12 @@
 #include <cassert>
 #include <cstdint>
 #include <filesystem>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
 #include <type_traits>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -1683,6 +1685,29 @@ struct GuiState {
     // lifecycle observation — the same "intent + observation -> display state" shape sim_state
     // has, kept off the SimState enum so its five values and their tests stay as they are.
     bool started = false;
+    // What the list showed for a chain at the moment "Exclude this raypath" wrote it into an Out
+    // filter — the ONE piece of the greyed "excluded" rows (analysis_panel.hpp
+    // ComputeExcludedRaypathRows) that cannot be re-derived: once the filter takes, the chain is
+    // gone from every later result, so its last share is remembered here or nowhere. Everything
+    // else about those rows is derived each frame from the document's filters and the result on
+    // show. Session tier like the rest of this struct: the memory is about a result of THIS scene,
+    // and the whole-struct reset ResetFrontendState makes for every document switch clears it
+    // (Revert keeps it, as it keeps the result). Not in the document — the .lmc carries the
+    // filter, which is the exclusion itself; a percentage seen once in one session is not.
+    struct ExcludedRaypathMemory {
+      double share_pct = 0.0;     // energy / display_total * 100 as the row read when excluded
+      uint8_t symmetry_bits = 0;  // analysis_result.entries_symmetry then: the share is only
+                                  // comparable to a list reduced under the same bits
+      uint64_t seq = 0;           // ++excluded_seq at that click, for newest-first ordering
+    };
+    // Keyed by (crystal pool slot, the filter row's raypath token, e.g. "3-5") — the token as the
+    // filter carries it, not the list's display text. Two reasons. The pool slot: two crystals
+    // in two single-crystal layers can each exclude "3-5", and the two memories must not clobber
+    // each other. The token rather than the display: the "C<id>(" prefix a display text carries
+    // is a property of the LAYER (how many entries it holds), which the user can change after
+    // the click, and the memory is about the chain, which does not change.
+    std::map<std::pair<int, std::string>, ExcludedRaypathMemory> excluded_memory;
+    uint64_t excluded_seq = 0;
   };
   RaypathAnalysisSession analysis;
 

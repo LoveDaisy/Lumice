@@ -838,6 +838,12 @@ bool PullField(T& ours, T& base, const T& theirs) {
 //                                   we pushed last frame from coming back as a second copy);
 //   c_theirs > c_base             → append the difference, each as a new row with a fresh uid;
 //   c_theirs < c_base             → drop the difference, first matching rows.
+// The "c_theirs < c_base, ours untouched → drop" branch is also what the analysis window's
+// Include again (analysis_panel.cpp ApplyIncludeAgain) relies on: it erases one row from a pool
+// filter this editor may have open, and the row leaves the editor's list through this branch,
+// not through any notification — it is an outside write like any other. Tightening that branch
+// is a change to that feature; its frame-driven case is gui_test raypath_analysis
+// "include_again_while_the_immediate_editor_is_open".
 // Blank rows are the editor's affordance, not rows (BuildCommittableSop), and never take part;
 // when the buffer holds nothing BUT blanks and the pool gains rows, the blanks give way to them,
 // so a filter arriving on a filter-less entry shows as that filter and not as it plus an empty
