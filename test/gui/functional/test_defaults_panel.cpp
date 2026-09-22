@@ -523,6 +523,58 @@ std::string ActivatedInputText(ImGuiTestContext* ctx, const char* ref) {
 }  // namespace
 
 void RegisterDefaultsPanelTests(ImGuiTestEngine* engine) {
+  {
+    // Semi-variable (doc/gui-visual-language.md §9): the panel opens at its default size, the
+    // user may drag its height between the floor and the work area but never its width, a
+    // close-and-reopen keeps the dragged height for the session, and ResetTestState() puts the
+    // default back — which is what keeps one case's drag out of defaults_panel_layout's shots.
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "defaults_panel", "dragged_height_survives_close_and_reset_restores_it");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ScopedPanel panel(ctx, "panel_drag_survives_close");
+      panel.OpenOn(gui::DefaultsPanelSection::kSettings);
+      ctx->WindowMove(gui::kDefaultsPanelTitle, ImVec2(40.0f, 40.0f));
+      ctx->Yield(2);
+      ImGuiWindow* win = ctx->GetWindowByRef(gui::kDefaultsPanelTitle);
+      IM_CHECK(win != nullptr);
+      IM_CHECK_EQ(win->Size.x, gui::kDefaultsPanelWidth);
+      IM_CHECK_EQ(win->Size.y, gui::kDefaultsPanelDefaultHeight);
+
+      // Taller, and through the resize border like a user; the width does not move even when
+      // the drag asks it to.
+      const float dragged = gui::kDefaultsPanelDefaultHeight + 116.0f;
+      ctx->WindowResize(gui::kDefaultsPanelTitle, ImVec2(gui::kDefaultsPanelWidth + 100.0f, dragged));
+      ctx->Yield(2);
+      IM_CHECK_EQ(win->Size.x, gui::kDefaultsPanelWidth);
+      IM_CHECK_EQ(win->Size.y, dragged);
+
+      // Shorter than the floor lands ON the floor: both sections at their own floor and the
+      // action row still fit, and the modal itself never grows a scrollbar.
+      ctx->WindowResize(gui::kDefaultsPanelTitle, ImVec2(gui::kDefaultsPanelWidth, 100.0f));
+      ctx->Yield(2);
+      IM_CHECK_EQ(win->Size.y, gui::kDefaultsPanelMinHeight);
+      IM_CHECK_EQ(win->ScrollMax.y, 0.0f);
+
+      ctx->WindowResize(gui::kDefaultsPanelTitle, ImVec2(gui::kDefaultsPanelWidth, dragged));
+      ctx->Yield(2);
+      IM_CHECK_EQ(win->Size.y, dragged);
+
+      // Closed through the button and reopened: the height is the user's, not the default.
+      panel.Close();
+      IM_CHECK(!gui::g_state.defaults_panel_open);
+      panel.OpenOn(gui::DefaultsPanelSection::kSettings);
+      IM_CHECK_EQ(win->Size.x, gui::kDefaultsPanelWidth);
+      IM_CHECK_EQ(win->Size.y, dragged);
+
+      // The next case's entry, taken here rather than left to whichever case runs next: the
+      // reset restores the default, so a reference scene shot after this case sees 760x584.
+      panel.Close();
+      ResetTestState();
+      panel.OpenOn(gui::DefaultsPanelSection::kSettings);
+      IM_CHECK_EQ(win->Size.x, gui::kDefaultsPanelWidth);
+      IM_CHECK_EQ(win->Size.y, gui::kDefaultsPanelDefaultHeight);
+    };
+  }
+
   // ===============================================================================================
   // Getting in and out.
   // ===============================================================================================
