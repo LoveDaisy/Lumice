@@ -520,6 +520,10 @@ if(BUILD_GUI)
     # Analysis result -> Exclude -> filter pool -> exported core JSON: the closure the Raypath
     # Analysis panel promises the CLI, asserted on the JSON the export hands over.
     "${PROJ_TEST_DIR}/composition-correctness/gui/test_raypath_analysis_filter_exclude_chain.cpp"
+    # Exclude -> the filter pool and the session memory -> a later result without the chain ->
+    # the greyed rows the list derives from the filters -> Include again back through the pool
+    # primitives, read by the reconciler as the document edit it is.
+    "${PROJ_TEST_DIR}/composition-correctness/gui/test_raypath_analysis_excluded_rows_chain.cpp"
     # Analyze -> (edit, Run | Revert) -> the list-freshness banner's verdict: the one comparison
     # both lifecycle paths are meant to reach, asserted through the real DoAnalyze / DoRun /
     # DoRevert against a live server.
