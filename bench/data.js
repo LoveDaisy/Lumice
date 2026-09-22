@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1790079815817,
+  "lastUpdate": 1790079818478,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9488,50 +9488,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "82310d302119a07fff51338e811ffd189ee0aac1",
-          "message": "Merge pull request #299 from LoveDaisy/feat/relative-ev-anchor\n\nfeat(core): 把 relative 曝光锚点做对 —— 锚到固定全天缓冲，CLI 与 GUI 消费同一个数",
-          "timestamp": "2026-09-03T15:07:51+08:00",
-          "tree_id": "582e122487ca1d78c26a6dae0bb7dc213f067af6",
-          "url": "https://github.com/LoveDaisy/ice_halo_sim/commit/82310d302119a07fff51338e811ffd189ee0aac1"
-        },
-        "date": 1788420081446,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 69.2,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 99.8,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 93.7,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 92.5,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "6c3c5042e4f17c60ecba3cbf6ff38267594826fa",
           "message": "Merge pull request #300 from LoveDaisy/fix/scene-cnt-publish-ordering\n\nfix(server): 记账先于发布，消除批次静默丢失的竞态窗口",
           "timestamp": "2026-09-03T19:19:00+08:00",
@@ -13816,6 +13772,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 95,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "d69f9167201076266c84c99adb68dcf68ac437b1",
+          "message": "Merge pull request #400 from LoveDaisy/feat/analysis-exclusion-view\n\nfeat(gui): the analysis list keeps excluded raypaths as greyed rows, with Include again",
+          "timestamp": "2026-09-22T20:10:32+08:00",
+          "tree_id": "f5c55b74bbe2f5ac5434e9ac3850cd90089af128",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/d69f9167201076266c84c99adb68dcf68ac437b1"
+        },
+        "date": 1790079817612,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 88.9,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 99.7,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 98.1,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 92,
             "unit": "%"
           }
         ]
