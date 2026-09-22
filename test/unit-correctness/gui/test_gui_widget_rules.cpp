@@ -980,6 +980,80 @@ TEST(WindowSizingTest, TheDesiredSizeIsClampedToTheWorkareaAndFlooredAtTheMinimu
   }
 }
 
+// How the window's floor and size follow the UI scale (PlanWindowSizeForScale). The floor handed to
+// glfwSetWindowSizeLimits is the scaled minimum clamped to the work area FIRST — a hard floor above
+// the screen would pin the window larger than the screen with no way to drag it smaller — and the
+// window only grows when it is below that floor, so a window the user has already made larger is
+// not touched. Work area INT_MAX is the "unknown" arm and must degrade to the unclamped minimum.
+TEST(WindowSizingTest, TheFloorFollowsTheScaleAndIsClampedToTheWorkareaFirst) {
+  using lumice::gui::kInitWindowHeight;
+  using lumice::gui::kInitWindowWidth;
+  using lumice::gui::kWindowDecorationMargin;
+  using lumice::gui::PlanWindowSizeForScale;
+  using lumice::gui::WindowSizePlan;
+  constexpr int kInf = std::numeric_limits<int>::max();
+
+  // scale 1 on a large screen with the 1x creation size: exactly today's numbers, no growth.
+  {
+    const WindowSizePlan p = PlanWindowSizeForScale(1.0f, kInitWindowWidth, kInitWindowHeight, 2880, 1800);
+    EXPECT_EQ(p.min_w, kMinWindowWidth);
+    EXPECT_EQ(p.min_h, kMinWindowHeight);
+    EXPECT_FALSE(p.grow);
+    EXPECT_EQ(p.target_w, kInitWindowWidth);
+    EXPECT_EQ(p.target_h, kInitWindowHeight);
+  }
+  // scale 1.5 on a large screen, window still at the 1x creation size: the floor is 1536×960 and
+  // the height (980 ≥ 960) already clears it, the width does not → grow to (1536, 980).
+  {
+    const WindowSizePlan p = PlanWindowSizeForScale(1.5f, 1500, kInitWindowHeight, 2880, 1800);
+    EXPECT_EQ(p.min_w, 1536);
+    EXPECT_EQ(p.min_h, 960);
+    EXPECT_TRUE(p.grow);
+    EXPECT_EQ(p.target_w, 1536);
+    EXPECT_EQ(p.target_h, kInitWindowHeight);
+  }
+  // scale 1.5, but the user has already dragged the window past the new floor: only the floor moves.
+  {
+    const WindowSizePlan p = PlanWindowSizeForScale(1.5f, 2000, 1200, 2880, 1800);
+    EXPECT_EQ(p.min_w, 1536);
+    EXPECT_EQ(p.min_h, 960);
+    EXPECT_FALSE(p.grow);
+    EXPECT_EQ(p.target_w, 2000);
+    EXPECT_EQ(p.target_h, 1200);
+  }
+  // scale 2 on a 1366×768 laptop: the scaled floor (2048×1280) does not fit, so the floor AND the
+  // target are the work area less the decoration margin — the window is the screen and scrolls.
+  {
+    const WindowSizePlan p = PlanWindowSizeForScale(2.0f, 1316, 718, 1366, 768);
+    EXPECT_EQ(p.min_w, 1366 - kWindowDecorationMargin);
+    EXPECT_EQ(p.min_h, 768 - kWindowDecorationMargin);
+    EXPECT_FALSE(p.grow) << "already at the work area: nothing to grow into";
+    EXPECT_EQ(p.target_w, 1316);
+    EXPECT_EQ(p.target_h, 718);
+  }
+  // Work area unknown: the unclamped scaled minimum, and growth up to it.
+  {
+    const WindowSizePlan p = PlanWindowSizeForScale(1.5f, 1024, 640, kInf, kInf);
+    EXPECT_EQ(p.min_w, 1536);
+    EXPECT_EQ(p.min_h, 960);
+    EXPECT_TRUE(p.grow);
+    EXPECT_EQ(p.target_w, 1536);
+    EXPECT_EQ(p.target_h, 960);
+  }
+  // The decoration margin is the OS's own quantity and does not scale with the multiplier: on a
+  // work area the scaled floor overruns at both scales, the gap between work area and floor is the
+  // 1x margin at 1.0 and at 2.0 alike. A direct assertion, so an implementation that scaled the
+  // margin would fail here and not only through case 4's totals.
+  {
+    const WindowSizePlan at_one = PlanWindowSizeForScale(1.0f, 100, 100, 1000, 600);
+    const WindowSizePlan at_two = PlanWindowSizeForScale(2.0f, 100, 100, 1000, 600);
+    EXPECT_EQ(1000 - at_one.min_w, kWindowDecorationMargin);
+    EXPECT_EQ(1000 - at_two.min_w, kWindowDecorationMargin);
+    EXPECT_EQ(600 - at_one.min_h, kWindowDecorationMargin);
+    EXPECT_EQ(600 - at_two.min_h, kWindowDecorationMargin);
+  }
+}
+
 // ========== Monitor selection (multi-monitor aspect ratio fix) ==========
 
 // Which monitor a window belongs to is decided by its CENTER point, so a window straddling the seam

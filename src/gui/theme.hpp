@@ -12,8 +12,39 @@ namespace lumice::gui {
 // by gui_test is evidence about the real app's appearance rather than a
 // coincidence of two independently maintained initialization paths.
 //
-// Must be called after ImGui::CreateContext(), before the render loop.
-void ApplyVisualLanguage(ImGuiIO& io);
+// Must be called after ImGui::CreateContext(), before the render loop — and again, at any frame
+// boundary, when the UI scale changes (the caller then owns re-uploading the font texture: this
+// file has no GL dependency, see main.cpp's g_content_scale_dirty path).
+//
+// The two scale parameters are the whole of the GUI's DPI story, and they are two rather than
+// one because GLFW's coordinate space differs by platform:
+//   layout_scale   — multiplies every layout size: ImGuiStyle (ScaleAllSizes), the body font's
+//                    SizePixels, and every screen-pixel constant that reaches ImGui through
+//                    UiPx()/UiPxI() below. On Windows/Linux (window coordinates ARE physical
+//                    pixels) this is monitor content scale × the user's multiplier; on macOS
+//                    (window coordinates are points, the OS already scales them) it is the user's
+//                    multiplier alone.
+//   raster_density — ImFontConfig::RasterizerDensity: rasterizes the atlas at a higher pixel
+//                    density WITHOUT changing any metric, so glyphs stay sharp on a backing store
+//                    denser than the coordinate space. macOS Retina passes the content scale here;
+//                    Windows/Linux pass 1.0, since layout_scale already covers it there.
+// Idempotent: every call re-derives style and atlas from the StyleColorsDark() baseline, so
+// calling it twice with different scales never compounds (pinned by test_theme_scale.cpp).
+void ApplyVisualLanguage(ImGuiIO& io, float layout_scale, float raster_density);
+
+// The layout_scale the last ApplyVisualLanguage call installed (1.0 before any call). This is the
+// number the docs call `ui_scale`.
+float CurrentUiScale();
+
+// The single screen-pixel outlet. Every layout size that was once a 1x design-basis literal — panel
+// widths, column widths, gaps, hit radii, modal minimums — takes its value through here at the
+// point of use, so `logical_px` is the number as designed at 96 dpi and the result is what ImGui
+// is handed. Two things deliberately do NOT go through it: ImGuiStyle fields (ScaleAllSizes
+// already scaled them — wrapping one would scale it twice), and any pixel quantity that lives in
+// a RENDERED IMAGE rather than in the chrome (FBO resolutions, overlay-label padding in the export
+// pipeline) — those are not screen layout and must stay put.
+float UiPx(float logical_px);
+int UiPxI(int logical_px);
 
 // The colour+geometry half of ApplyVisualLanguage: grid spacing plus the palette, applied to a
 // caller-supplied style rather than to ImGui::GetStyle(). Split out so a test can hand it a

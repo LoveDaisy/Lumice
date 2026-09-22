@@ -719,6 +719,34 @@ std::optional<int> ReadWorkerCountFromDoc(const nlohmann::json& doc);
 void WriteWorkerCountToDoc(nlohmann::json& doc, int value);
 void EraseWorkerCountFromDoc(nlohmann::json& doc);
 
+// The third member of the `app` namespace, and the first that is NOT a construction-time server
+// property: the UI scale multiplier the user chose on top of the monitor's own content scale
+// (doc/gui-visual-language.md §4.1). It qualifies for this namespace on the same criterion as the
+// other two — it describes the machine and the person at it, not the halo — and unlike them it
+// has NO GuiState field at all: it is read here at startup, held by app.cpp's
+// g_ui_scale_multiplier, and applied by theme.cpp; it never enters a document, and it is not
+// registered in gui_state_tiers.hpp, because that table classifies document fields.
+//
+// Discrete steps rather than a free float: five multipliers a user can name ("125%"), and a
+// stored value that is not one of them (a hand-edited 1.3, a string, a bool) reads as nothing
+// stored — the same reject-don't-clamp stance as the worker count, since a number the user never
+// chose is not theirs to have silently applied.
+inline constexpr float kAllowedUiScaleMultipliers[] = { 0.75f, 1.0f, 1.25f, 1.5f, 2.0f };
+inline constexpr int kAllowedUiScaleMultiplierCount =
+    static_cast<int>(sizeof(kAllowedUiScaleMultipliers) / sizeof(*kAllowedUiScaleMultipliers));
+inline constexpr float kFactoryUiScaleMultiplier = 1.0f;
+std::optional<float> ReadUiScaleMultiplierFromDoc(const nlohmann::json& doc);
+void WriteUiScaleMultiplierToDoc(nlohmann::json& doc, float value);
+void EraseUiScaleMultiplierFromDoc(nlohmann::json& doc);
+
+// The multiplier to start the process with: the stored value if the active config directory holds
+// a legal one, kFactoryUiScaleMultiplier otherwise (no directory, no file, malformed or out-of-set
+// value). Called by main.cpp BEFORE the window is created — the creation size is scaled by it — so
+// it cannot ride on MakeNewDocumentState, which needs a GL context to have been set up first. The
+// three lines it wraps (directory → overlay → field) are named so the three outcomes can be pinned
+// without a window. `override_dir` is the test seam MakeNewDocumentState has, for the same reason.
+float LoadUiScaleMultiplierAtStartup(std::optional<std::filesystem::path> override_dir = std::nullopt);
+
 // Apply the app-preferences half of `doc` to `state`: each stored field is assigned, each absent
 // one leaves `state` untouched (so an overlay with no `app` key yields the factory value).
 void ApplyAppPreferencesOverride(GuiState& state, const nlohmann::json& doc);

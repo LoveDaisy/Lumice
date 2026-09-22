@@ -541,7 +541,10 @@ int main(int argc, char** argv) {
   io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
   io.IniFilename = nullptr;
 
-  gui::ApplyVisualLanguage(io);
+  // Pinned at 1.0 / 1.0, never read from the display: every reference image is a capture at the
+  // 1x design basis, and the harness's window is created and compared at that size. The product
+  // reads the monitor here (main.cpp); the harness deliberately does not.
+  gui::ApplyVisualLanguage(io, /*layout_scale=*/1.0f, /*raster_density=*/1.0f);
   if (use_contrast_palette) {
     gui::ApplyContrastPaletteForTest(ImGui::GetStyle());
   }

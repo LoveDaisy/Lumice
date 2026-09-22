@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cfloat>
+#include <cmath>
 #include <cstddef>
 #include <cstdio>
 #include <map>
@@ -13,6 +14,7 @@
 #include <vector>
 
 #include "IconsFontAwesome6.h"
+#include "gui/app.hpp"
 #include "gui/axis_presets.hpp"
 #include "gui/defaults_diff.hpp"
 #include "gui/destructive_style.hpp"
@@ -413,7 +415,7 @@ bool CommitCopy(const GuiState& state) {
 // §app — application preferences (namespace 3), the one region of this panel that is neither a
 // generated row nor a preset.
 //
-// Fixed lines rather than a third CollapsingHeader: it holds two controls, and a section that is
+// Fixed lines rather than a third CollapsingHeader: it holds three controls, and a section that is
 // taller folded than unfolded is a fold nobody would use. Drawn ABOVE both collapsible sections on
 // purpose — every height budget below reads GetContentRegionAvail() after this point, so the rows
 // need no arithmetic of their own.
@@ -421,7 +423,7 @@ bool CommitCopy(const GuiState& state) {
 // What they DO need is for the window to grow with them. What is left after this point is not
 // slack: the second control cost the preset library one row and put an already-expanded preset's
 // std input out of reach. So RenderDefaultsPanel's fixed window height carries a term for these
-// rows — adding a third control here means adding a row to that number too.
+// rows — adding a control here means adding a row to that number too (the third did).
 //
 // The control is stateless: g_copy_doc IS the state, read fresh each frame and written on click.
 // There is deliberately no TU-local mirror of it to keep in step with the copy, to freeze at open
@@ -489,6 +491,48 @@ void RenderAppPreferences(const GuiState& state) {
   }
   ImGui::SameLine();
   ImGui::TextDisabled("(this window: %d)", state.worker_count);
+
+  // The UI scale multiplier — the third member of `app`, and the one that breaks this section's
+  // "stored preference, takes effect on the next new document" pattern ON PURPOSE. The other two
+  // are construction-time server properties: applying them means tearing a server down, so "next
+  // document" is the honest moment. Rebuilding fonts and style is instant, and the request this
+  // control answers is "make the text bigger" — a dial that did nothing until Save-and-restart
+  // would read as broken. So a change here does two things: it writes the working copy like its
+  // neighbours (Save then persists it, unchanged contract), AND it applies to this window now
+  // through SetUiScaleMultiplierImmediate. The two may then differ — close the panel unsaved and
+  // reopen it, and the combo shows the saved value while the window keeps the one tried; that is
+  // what the "(this window: N%)" note reads g_ui_scale_multiplier rather than the copy for.
+  const float stored = ReadUiScaleMultiplierFromDoc(g_copy_doc).value_or(kFactoryUiScaleMultiplier);
+  int step = 0;
+  for (int i = 0; i < kAllowedUiScaleMultiplierCount; ++i) {
+    if (kAllowedUiScaleMultipliers[i] == stored) {
+      step = i;
+    }
+  }
+  // The labels are derived from the same array the reader validates against, so a step added
+  // there is a step here without a second list to update.
+  char labels[kAllowedUiScaleMultiplierCount][8];
+  const char* label_ptrs[kAllowedUiScaleMultiplierCount];
+  for (int i = 0; i < kAllowedUiScaleMultiplierCount; ++i) {
+    std::snprintf(labels[i], sizeof(labels[i]), "%d%%",
+                  static_cast<int>(std::lround(kAllowedUiScaleMultipliers[i] * 100.0f)));
+    label_ptrs[i] = labels[i];
+  }
+  ImGui::SetNextItemWidth(ImGui::GetFontSize() * 6.0f);
+  if (ImGui::Combo("UI scale###defaults_app_ui_scale", &step, label_ptrs, kAllowedUiScaleMultiplierCount)) {
+    const float chosen = kAllowedUiScaleMultipliers[step];
+    WriteUiScaleMultiplierToDoc(g_copy_doc, chosen);
+    SetUiScaleMultiplierImmediate(chosen);
+  }
+  if (ImGui::IsItemHovered()) {
+    ImGui::SetTooltip(
+        "How much larger than the display's own scaling the whole interface is drawn — text, "
+        "controls and panels alike. Applies to this window immediately; Save keeps it for every "
+        "later start. The display's scaling (Windows 125%%, Retina) is detected on its own and is "
+        "not part of this number.");
+  }
+  ImGui::SameLine();
+  ImGui::TextDisabled("(this window: %d%%)", static_cast<int>(std::lround(g_ui_scale_multiplier * 100.0f)));
 }
 
 // Section header whose open state is forced only on the frame an entry point requested it.
@@ -1174,14 +1218,15 @@ void RenderDefaultsPanel(GuiState& state) {
   // a function of how many settings differ, and a modal that changes size with the diff would
   // make every visual-regression scene a different capture rectangle.
   //
-  // 584 = the original 560 plus one control row (GetFrameHeight() + ItemSpacing.y = 15 + 2*3 + 3),
-  // added when §app gained its second control. The alternative was to let the new row take its
-  // height out of the two collapsible sections below, which is what the §app comment says fixed
+  // 608 = the original 560 plus two control rows (GetFrameHeight() + ItemSpacing.y = 15 + 2*3 + 3
+  // each), one per control §app gained after its first. The alternative was to let a new row take
+  // its height out of the two collapsible sections below, which is what the §app comment says fixed
   // rows normally do — but that budget is not slack: shrinking the preset library by one row put
   // an already-expanded preset's std input out of reach, which is a real loss of function for
   // every user, not just for the case that caught it. A control added ABOVE the sections has to
-  // bring its own height with it.
-  ImGui::SetNextWindowSize(ImVec2(760.0f, 584.0f), ImGuiCond_Appearing);
+  // bring its own height with it. Through UiPx: this is a screen size, and the row heights it
+  // budgets for scale with the font.
+  ImGui::SetNextWindowSize(ImVec2(UiPx(760.0f), UiPx(608.0f)), ImGuiCond_Appearing);
   // Passing a p_open is what puts the X in the title bar. Re-initialized to true every frame on
   // purpose: it is not a state we keep, only the one-frame channel ImGui uses to report "the X was
   // pressed", read below and then thrown away.

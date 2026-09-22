@@ -50,6 +50,17 @@ ServerPoller g_server_poller;
 // function — the test harnesses) must put them back with ResetServerConstructionTrackers().
 bool g_server_is_gpu = false;
 int g_server_worker_count = 0;
+
+float g_ui_scale_multiplier = kFactoryUiScaleMultiplier;
+bool g_ui_scale_dirty = false;
+
+void SetUiScaleMultiplierImmediate(float multiplier) {
+  if (multiplier == g_ui_scale_multiplier) {
+    return;
+  }
+  g_ui_scale_multiplier = multiplier;
+  g_ui_scale_dirty = true;
+}
 PreviewViewport g_preview_vp;
 BgColorPickState g_bg_pick;
 

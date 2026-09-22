@@ -405,6 +405,10 @@ if(BUILD_GUI)
     "${PROJ_TEST_DIR}/unit-correctness/gui/test_print_mode_colour_exclusions.cpp"
     "${PROJ_TEST_DIR}/unit-correctness/gui/test_gui_identity_formatting.cpp"
     "${PROJ_TEST_DIR}/unit-correctness/gui/test_semantic_colors.cpp"
+    # The ui_scale outlet: ApplyVisualLanguage at 1.0 is the identity, at another scale reaches the
+    # font as well as the style, and never compounds across calls. Needs an ImGui context and the
+    # embedded fonts (lumice_gui_obj), no frame.
+    "${PROJ_TEST_DIR}/unit-correctness/gui/test_theme_scale.cpp"
     "${PROJ_TEST_DIR}/unit-correctness/gui/test_edit_modal_delete_binding.cpp"
     "${PROJ_TEST_DIR}/unit-correctness/gui/test_view_look_at.cpp"
     "${PROJ_TEST_DIR}/unit-correctness/gui/test_wedge_presets.cpp"
