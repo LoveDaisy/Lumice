@@ -306,10 +306,10 @@ CustomWedgeInputFeedback RenderMillerIndexInputRow(const char* storage_prefix, i
   bool edited = false;
   // step = 0 suppresses InputInt's -/+ buttons: four of those would be wider than the popup and
   // the boxes are typed into, not stepped through.
-  ImGui::SetNextItemWidth(kIndexInputWidth);
+  ImGui::SetNextItemWidth(UiPx(kIndexInputWidth));
   edited |= ImGui::InputInt("##custom_wedge_h", &h, 0, 0);
   ImGui::SameLine();
-  ImGui::SetNextItemWidth(kIndexInputWidth);
+  ImGui::SetNextItemWidth(UiPx(kIndexInputWidth));
   edited |= ImGui::InputInt("##custom_wedge_k", &k, 0, 0);
   ImGui::SameLine();
   // i is shown, never typed. It is the redundant Miller-Bravais index, defined as -(h+k) — the C
@@ -318,11 +318,11 @@ CustomWedgeInputFeedback RenderMillerIndexInputRow(const char* storage_prefix, i
   // use while leaving no state in which i disagrees with h and k.
   int i_derived = -(h + k);
   ImGui::BeginDisabled();
-  ImGui::SetNextItemWidth(kIndexInputWidth);
+  ImGui::SetNextItemWidth(UiPx(kIndexInputWidth));
   ImGui::InputInt("##custom_wedge_i", &i_derived, 0, 0);
   ImGui::EndDisabled();
   ImGui::SameLine();
-  ImGui::SetNextItemWidth(kIndexInputWidth);
+  ImGui::SetNextItemWidth(UiPx(kIndexInputWidth));
   edited |= ImGui::InputInt("##custom_wedge_l", &l, 0, 0);
 
   if (edited) {
@@ -350,7 +350,7 @@ CustomWedgeInputFeedback RenderMillerIndexInputRow(const char* storage_prefix, i
   }
 
   if (!fb.message.empty()) {
-    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + kMessageWrapWidth);
+    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + UiPx(kMessageWrapWidth));
     ImGui::PushStyleColor(ImGuiCol_Text, grade);
     ImGui::TextUnformatted(fb.message.c_str());
     ImGui::PopStyleColor();
@@ -401,7 +401,7 @@ bool SliderWithPresetEdit(const char* label, float* value, float min_val, float 
   char slider_id[64];
   char input_id[64];
   constexpr float kArrowBtnWidth = 20.0f;
-  float input_w = kInputWidth - kArrowBtnWidth;
+  float input_w = UiPx(kInputWidth) - UiPx(kArrowBtnWidth);
 
   const char* hash_pos = strstr(label, "##");
   if (hash_pos) {
@@ -422,10 +422,10 @@ bool SliderWithPresetEdit(const char* label, float* value, float min_val, float 
   // input->label gap (LabelColumnGapX(), see panels.hpp) with a trailing label; without it, still
   // reserve the one slider->input spacing (SameLine at the input below adds it) — omitting it
   // overflows the cell by one ItemSpacing.x and clips the arrow.
-  float slider_w = trailing_label ? (avail_w - kInputWidth - kLabelColWidth - spacing - LabelColumnGapX()) :
-                                    (avail_w - kInputWidth - spacing);
-  if (slider_w < 40.0f)
-    slider_w = 40.0f;
+  float slider_w = trailing_label ? (avail_w - UiPx(kInputWidth) - UiPx(kLabelColWidth) - spacing - LabelColumnGapX()) :
+                                    (avail_w - UiPx(kInputWidth) - spacing);
+  if (slider_w < UiPx(40.0f))
+    slider_w = UiPx(40.0f);
 
   bool changed = false;
 
@@ -1116,34 +1116,36 @@ static void RenderCrystalPreviewPane(GuiState& /*state*/) {
 
   // -- 3D Preview (horizontally centered inside the left pane) --
   auto tex_id = static_cast<ImTextureID>(g_crystal_renderer.GetTextureId());
+  // The on-screen size of the preview, scaled: the FBO behind it stays 512² (main.cpp), so past
+  // ~1.6x the draw catches up with the texture and the supersampling margin is spent.
+  const float preview_px = UiPx(kModalPreviewImageSize);
   float avail_w = ImGui::GetContentRegionAvail().x;
-  float offset_x = (avail_w - kModalPreviewImageSize) * 0.5f;
+  float offset_x = (avail_w - preview_px) * 0.5f;
   if (offset_x > 0.0f) {
     ImGui::SetCursorPosX(ImGui::GetCursorPosX() + offset_x);
   }
   ImVec2 preview_pos = ImGui::GetCursorScreenPos();
-  ImGui::Image(tex_id, ImVec2(kModalPreviewImageSize, kModalPreviewImageSize), ImVec2(0, 1), ImVec2(1, 0));
+  ImGui::Image(tex_id, ImVec2(preview_px, preview_px), ImVec2(0, 1), ImVec2(1, 0));
 
   // Face-number overlay: use the same rotation/zoom/size used by the GL render
   // pass above so screen coords align pixel-for-pixel with the FBO texture.
   if (const auto* m = GetLastCrystalMesh(); m != nullptr) {
     float mvp[16];
-    CrystalRenderer::ComputeMvp(g_crystal_rotation, g_crystal_zoom, static_cast<int>(kModalPreviewImageSize),
-                                static_cast<int>(kModalPreviewImageSize), mvp);
-    DrawFaceNumberOverlay(m, g_crystal_rotation, mvp, g_crystal_zoom, preview_pos,
-                          ImVec2(kModalPreviewImageSize, kModalPreviewImageSize), ImGui::GetWindowDrawList(),
-                          crystal_style);
+    CrystalRenderer::ComputeMvp(g_crystal_rotation, g_crystal_zoom, static_cast<int>(preview_px),
+                                static_cast<int>(preview_px), mvp);
+    DrawFaceNumberOverlay(m, g_crystal_rotation, mvp, g_crystal_zoom, preview_pos, ImVec2(preview_px, preview_px),
+                          ImGui::GetWindowDrawList(), crystal_style);
   }
 
   // Overlay InvisibleButton to consume mouse clicks and prevent modal window drag.
   ImGui::SetCursorScreenPos(preview_pos);
-  ImGui::InvisibleButton("##modal_preview_interact", ImVec2(kModalPreviewImageSize, kModalPreviewImageSize));
+  ImGui::InvisibleButton("##modal_preview_interact", ImVec2(preview_px, preview_px));
   HandleCrystalPreviewInteraction(ImGui::IsItemHovered(), ImGui::IsItemActive());
 
   // Style combo + Reset View (single row — Combo / SameLine / SmallButton).
   // SetNextComboPopupTopMost: see RenderAxisModal for rationale (combo popups
   // need same NSWindow level as the detached modal viewport).
-  ImGui::PushItemWidth(120.0f);
+  ImGui::PushItemWidth(UiPx(120.0f));
   SetNextComboPopupTopMost();
   ImGui::Combo("##ModalCrystalStyle", &g_crystal_style, kCrystalStyleNames, kCrystalStyleCount);
   ImGui::PopItemWidth();
@@ -1253,14 +1255,14 @@ static void RenderCrystalModal(GuiState& /*state*/) {
   // WidthStretch column, so a narrow (vertical-layout) table compresses the slider first rather than
   // clipping the fixed Sync/Rand/Spread cells.
   const auto setup_shape_columns = []() {
-    ImGui::TableSetupColumn("Param", ImGuiTableColumnFlags_WidthFixed, kShapeParamColWidth);
+    ImGui::TableSetupColumn("Param", ImGuiTableColumnFlags_WidthFixed, UiPx(kShapeParamColWidth));
     ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch, 1.0f);
     // Sync sits BEFORE Rand, not after Spread: sync is not a randomization sub-property. It forces
     // the final value of a geometric parameter to be shared, and works with randomization off just
     // as well as on — placing it after the Rand/Spread pair read as "a third knob of the randomizer".
-    ImGui::TableSetupColumn("Sync", ImGuiTableColumnFlags_WidthFixed, kShapeSyncColWidth);
-    ImGui::TableSetupColumn("Rand", ImGuiTableColumnFlags_WidthFixed, kShapeRandColWidth);
-    ImGui::TableSetupColumn("Spread", ImGuiTableColumnFlags_WidthFixed, kShapeSpreadColWidth);
+    ImGui::TableSetupColumn("Sync", ImGuiTableColumnFlags_WidthFixed, UiPx(kShapeSyncColWidth));
+    ImGui::TableSetupColumn("Rand", ImGuiTableColumnFlags_WidthFixed, UiPx(kShapeRandColWidth));
+    ImGui::TableSetupColumn("Spread", ImGuiTableColumnFlags_WidthFixed, UiPx(kShapeSpreadColWidth));
   };
 
   if (ImGui::BeginTable("##shape_params", kShapeTableColumnCount, kTableFlags)) {
@@ -1314,7 +1316,7 @@ static void RenderCrystalModal(GuiState& /*state*/) {
   // in a sibling tab; the OK/Cancel atomicity contract still applies — Reset
   // All only mutates g_crystal_buf, OK commits, Cancel discards).
   ImGui::Spacing();
-  if (ImGui::Button("Reset All##modal_cr", ImVec2(120, 0))) {
+  if (ImGui::Button("Reset All##modal_cr", ImVec2(UiPx(120.0f), 0.0f))) {
     ResetCrystalShapeParams(cr);
   }
 
@@ -1539,7 +1541,7 @@ static void RenderSummandRowList() {
   // BuildScene / BuildExportJsonOrWarn at the ABI boundary).
   const bool at_cap = AtSummandRowCap(g_summand_rows.size());
   ImGui::BeginDisabled(at_cap);
-  if (ImGui::Button("+ Add OR row##summand_add", ImVec2(140, 0))) {
+  if (ImGui::Button("+ Add OR row##summand_add", ImVec2(UiPx(140.0f), 0.0f))) {
     SummandRowBuf row{};
     row.uid = g_next_summand_row_uid++;
     row.text[0] = '\0';
@@ -1656,7 +1658,7 @@ static void RenderSharedFilterControls(bool d_applicable) {
 // Delayed-commit pattern (intent flag preserved across Cancel restore path) —
 // see imgui-modal-test.md.
 static void RenderRemoveFilterButton() {
-  if (ImGui::Button("Remove Filter##filter", ImVec2(120, 0))) {
+  if (ImGui::Button("Remove Filter##filter", ImVec2(UiPx(120.0f), 0.0f))) {
     g_summand_rows.clear();
     g_next_summand_row_uid = 0;
     SummandRowBuf row{};
@@ -2229,8 +2231,8 @@ void RenderEditModals(GuiState& state, GLFWwindow* window) {
   // the helper cannot identify a monitor (headless tests, nullptr window), fall
   // back to an unbounded max rather than a primary-monitor default (avoids the
   // multi-monitor "primary bias" anti-pattern).
-  const float min_w = state.modal_layout_vertical ? kEditModalMinWidthVertical : kEditModalMinWidth;
-  const float min_h = state.modal_layout_vertical ? kEditModalMinHeightVertical : 0.0f;
+  const float min_w = UiPx(state.modal_layout_vertical ? kEditModalMinWidthVertical : kEditModalMinWidth);
+  const float min_h = UiPx(state.modal_layout_vertical ? kEditModalMinHeightVertical : 0.0f);
   // Snap window width when the user toggles H↔V. SetNextWindowSizeConstraints
   // alone only bounds the allowed range; an already-sized window stays at its
   // current width if that value is within the new range. Explicit
@@ -2241,6 +2243,10 @@ void RenderEditModals(GuiState& state, GLFWwindow* window) {
     s_prev_modal_layout_vertical = state.modal_layout_vertical;
     ImGui::SetNextWindowSize(ImVec2(min_w, 0.0f));
   }
+  // Called every frame this modal is open, not just on appearance, from min_w/min_h above (fresh
+  // UiPx() each frame): exempt from the WindowResizeCondForScale (theme.hpp) audit on the same
+  // grounds as config_summary_window.cpp's Summary window — ImGui clamps the live window size into
+  // this bound at every Begin(), so a scale change grows the floor on its very next frame.
   MonitorRect mon{};
   if (GetCurrentMonitorWorkArea(window, &mon)) {
     auto max_w = std::max(min_w, static_cast<float>(mon.w - kWindowDecorationMargin));
@@ -2471,10 +2477,10 @@ void RenderEditModals(GuiState& state, GLFWwindow* window) {
   // Both share the same preview child height and the same RenderModalTabBar body;
   // only the container geometry and the SameLine/no-SameLine differ.
   const ImGuiStyle& style = ImGui::GetStyle();
-  const float kPreviewChildW_H = kModalPreviewImageSize + style.WindowPadding.x * 2.0f + 4.0f;
+  const float kPreviewChildW_H = UiPx(kModalPreviewImageSize) + style.WindowPadding.x * 2.0f + UiPx(4.0f);
   const float kToolRow = ImGui::GetFrameHeightWithSpacing();
   const float kVPad = style.WindowPadding.y * 2.0f + style.ItemSpacing.y;
-  const float kPreviewChildHeight = kModalPreviewImageSize + kToolRow + kVPad;
+  const float kPreviewChildHeight = UiPx(kModalPreviewImageSize) + kToolRow + kVPad;
   // Content pane height (tab bar + the tallest tab body). Sized to fit the tallest crystal layout —
   // Pyramid + all 6 Face Distance rows expanded (~16 rows + tab bar) — so that case no longer needs a
   // scrollbar. Kept a FIXED height (not ImGuiChildFlags_AutoResizeY): a content-driven size grows the
@@ -2527,7 +2533,7 @@ void RenderEditModals(GuiState& state, GLFWwindow* window) {
     // popup stack has no "Edit Entry" entry. Setting g_active_modal=kNone
     // drives the next-frame cleanup via title_x_open=false → Begin returns
     // false → !window_open branch.
-    if (ImGui::Button("Close##edit_modal", ImVec2(80, 0))) {
+    if (ImGui::Button("Close##edit_modal", ImVec2(UiPx(80.0f), 0.0f))) {
       g_active_modal = ActiveModal::kNone;
     }
   } else {
@@ -2589,8 +2595,8 @@ void RenderEditModals(GuiState& state, GLFWwindow* window) {
   ImGui::SameLine();
   constexpr float kViewToggleGroupWidth = 210.0f;  // "Vertical" + "Immediate" checkboxes + padding
   const float avail = ImGui::GetContentRegionAvail().x;
-  if (avail > kViewToggleGroupWidth) {
-    ImGui::Dummy(ImVec2(avail - kViewToggleGroupWidth, 0));
+  if (avail > UiPx(kViewToggleGroupWidth)) {
+    ImGui::Dummy(ImVec2(avail - UiPx(kViewToggleGroupWidth), 0));
     ImGui::SameLine();
   }
   // Vertical layout toggle (view preference — does NOT mark the file dirty).
@@ -2702,7 +2708,11 @@ void RenderSpectrumModal(GuiState& state) {
     g_spectrum_modal_open_pending = false;
   }
 
-  ImGui::SetNextWindowSize(ImVec2(480, 0), ImGuiCond_Appearing);
+  // Width hint only — height 0 means "auto-fit". AlwaysAutoResize below means this whole call is
+  // exempt from the WindowResizeCondForScale (theme.hpp) audit: only the true appearing frame ever
+  // has "set by API" survive, so a scale change on a later frame falls straight through to content
+  // auto-fit, same as every frame's height already does.
+  ImGui::SetNextWindowSize(ImVec2(UiPx(480.0f), 0.0f), ImGuiCond_Appearing);
   // p_open (re-armed to true each frame) renders the title-bar × for style parity with the Edit Entry
   // modal; clicking it sets title_x_open false and is handled as a Cancel-equivalent below.
   bool title_x_open = true;
@@ -2723,10 +2733,10 @@ void RenderSpectrumModal(GuiState& state) {
   int remove_idx = -1;
   for (int i = 0; i < static_cast<int>(g_spectrum_edit_buf.size()); i++) {
     ImGui::PushID(i);
-    ImGui::SetNextItemWidth(80);
+    ImGui::SetNextItemWidth(UiPx(80.0f));
     ImGui::InputFloat("wl(nm)##wl", &g_spectrum_edit_buf[i].wavelength, 0.0f, 0.0f, "%.1f");
     ImGui::SameLine();
-    ImGui::SetNextItemWidth(80);
+    ImGui::SetNextItemWidth(UiPx(80.0f));
     ImGui::InputFloat("weight##wt", &g_spectrum_edit_buf[i].weight, 0.0f, 0.0f, "%.3f");
     ImGui::SameLine();
     PushDestructiveStyle();
@@ -2768,7 +2778,7 @@ void RenderSpectrumModal(GuiState& state) {
   // third confirm button.
   const bool ok_disabled = SpectrumCommitBlocked(g_spectrum_edit_buf.size());
   ImGui::BeginDisabled(ok_disabled);
-  if (ImGui::Button(ICON_FA_CHECK " OK##spec_ok", ImVec2(80, 0))) {
+  if (ImGui::Button(ICON_FA_CHECK " OK##spec_ok", ImVec2(UiPx(80.0f), 0.0f))) {
     // Sanitize obviously-invalid manual input before it reaches the sim: clamp wavelength to the
     // visible band and weight to non-negative.
     for (auto& e : g_spectrum_edit_buf) {
@@ -2789,7 +2799,7 @@ void RenderSpectrumModal(GuiState& state) {
     ImGui::SetTooltip("Need at least one wavelength row before OK.");
   }
   ImGui::SameLine();
-  if (ImGui::Button(ICON_FA_XMARK " Cancel##spec_cancel", ImVec2(80, 0))) {
+  if (ImGui::Button(ICON_FA_XMARK " Cancel##spec_cancel", ImVec2(UiPx(80.0f), 0.0f))) {
     // Nothing to restore: spectrum_index was never mutated on open (only OK commits it), so Cancel /
     // Escape / click-outside all naturally leave it at the prior valid preset. Just discard the buffer.
     ImGui::CloseCurrentPopup();
@@ -2802,11 +2812,11 @@ void RenderSpectrumModal(GuiState& state) {
   // same-line placement (this converges in one frame under AlwaysAutoResize).
   ImGui::SameLine();
   constexpr float kResetBtnW = 80.0f;
-  const float reset_x = ImGui::GetWindowContentRegionMax().x - kResetBtnW;
+  const float reset_x = ImGui::GetWindowContentRegionMax().x - UiPx(kResetBtnW);
   if (reset_x > ImGui::GetCursorPosX()) {
     ImGui::SetCursorPosX(reset_x);
   }
-  if (ImGui::Button("Reset##spec_reset", ImVec2(kResetBtnW, 0))) {
+  if (ImGui::Button("Reset##spec_reset", ImVec2(UiPx(kResetBtnW), 0))) {
     g_spectrum_edit_buf = BuildPresetSeed();
   }
 

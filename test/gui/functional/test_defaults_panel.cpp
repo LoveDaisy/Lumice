@@ -1332,6 +1332,90 @@ void RegisterDefaultsPanelTests(ImGuiTestEngine* engine) {
   }
 
   {
+    // The UI scale row, the third §app control, and the one that DOES reach the running window
+    // before Save: turning the dial writes the copy like its neighbours AND applies to this session
+    // at once (SetUiScaleMultiplierImmediate). The two are then allowed to diverge — close unsaved,
+    // reopen, and the combo shows the file's value while the window keeps the one tried, which is
+    // what the "(this window: N%)" note beside it exists to show. The case asserts that divergence
+    // is what happens, not that the two agree.
+    //
+    // What the harness cannot show is the rescale itself: the frame loop that reacts to
+    // g_ui_scale_dirty is the product's (main.cpp), so here the flag is observed, not consumed.
+    ImGuiTest* t =
+        IM_REGISTER_TEST(engine, "defaults_panel", "the_ui_scale_preference_applies_now_and_is_stored_on_save");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ScopedPanel panel(ctx, "panel_app_ui_scale");
+      panel.OpenOn(gui::DefaultsPanelSection::kSettings);
+
+      // A LITERAL id path, not a "**/" wildcard: ImGui::BeginCombo never registers a debug label
+      // with the test engine, so a label search cannot see a combo (the same quirk SettingsCellID
+      // above and test_color_window.cpp's ComboPick work around). The panel is a modal named
+      // kDefaultsPanelTitle, and the combo is a direct child of it.
+      const std::string combo_path = std::string(gui::kDefaultsPanelTitle) + "/###defaults_app_ui_scale";
+      const char* kScaleCombo = combo_path.c_str();
+      // Open the combo and pick one of its entries; the popup is the focused window while open.
+      const auto pick = [&](const char* entry) {
+        ctx->ItemClick(kScaleCombo);
+        ctx->Yield(2);
+        ctx->SetRef("//$FOCUSED");
+        ctx->ItemClick((std::string("**/") + entry).c_str());
+        ctx->SetRef("");
+        ctx->Yield(2);
+      };
+      IM_CHECK(ctx->ItemExists(kScaleCombo));
+      IM_CHECK_EQ(gui::g_ui_scale_multiplier, 1.0f);
+      IM_CHECK(!gui::g_ui_scale_dirty);
+
+      // Both neighbouring headers, both ways round — the same fold-reach argument as the two rows
+      // above it.
+      ctx->ItemClick("**/###defaults_presets");
+      ctx->Yield(3);
+      IM_CHECK(ctx->ItemExists(kScaleCombo));
+      ctx->ItemClick("**/###defaults_settings");
+      ctx->Yield(3);
+      IM_CHECK(ctx->ItemExists(kScaleCombo));
+
+      pick("150%");
+      // Applied to this session now — and flagged for the product's rebuild — while nothing has
+      // reached disk.
+      IM_CHECK_EQ(gui::g_ui_scale_multiplier, 1.5f);
+      IM_CHECK(gui::g_ui_scale_dirty);
+      IM_CHECK(!ReadOverlayFile(panel.dir()).contains("app"));
+
+      SaveDefaultsPanel(ctx);
+      const json saved = ReadOverlayFile(panel.dir());
+      IM_CHECK(saved.contains("app"));
+      IM_CHECK(saved["app"].contains("ui_scale_multiplier"));
+      IM_CHECK_FLOAT_EQ_EPS(saved["app"]["ui_scale_multiplier"].get<float>(), 1.5f);
+      IM_CHECK(!saved.contains("ui_scale_multiplier"));
+      // ...and that file is what the next start reads.
+      IM_CHECK_FLOAT_EQ_EPS(gui::LoadUiScaleMultiplierAtStartup(panel.dir()), 1.5f);
+
+      // Try another step, do not save, close, reopen: the combo is back on the saved 150%, the
+      // window is still at the tried 200%, and the note says so.
+      pick("200%");
+      IM_CHECK_EQ(gui::g_ui_scale_multiplier, 2.0f);
+      panel.Close();
+      IM_CHECK_FLOAT_EQ_EPS(ReadOverlayFile(panel.dir())["app"]["ui_scale_multiplier"].get<float>(), 1.5f);
+      IM_CHECK_EQ(gui::g_ui_scale_multiplier, 2.0f);
+      panel.OpenOn(gui::DefaultsPanelSection::kSettings);
+      IM_CHECK_EQ(gui::g_ui_scale_multiplier, 2.0f);
+      // The combo is back on the file's 150%: ImGui's Combo reports a change only when the clicked
+      // item differs from the shown one, so re-picking 150% is a no-op that leaves the window at
+      // 200% — had the combo still shown 200%, this click would have moved it to 1.5.
+      pick("150%");
+      IM_CHECK_EQ(gui::g_ui_scale_multiplier, 2.0f);
+      // ...and it is live, not stuck: a different step still applies.
+      pick("125%");
+      IM_CHECK_EQ(gui::g_ui_scale_multiplier, 1.25f);
+
+      // The two sibling rows are untouched by all of this.
+      IM_CHECK(!ReadOverlayFile(panel.dir())["app"].contains("use_gpu_backend"));
+      IM_CHECK(!ReadOverlayFile(panel.dir())["app"].contains("worker_count"));
+    };
+  }
+
+  {
     // Save writes the checked rows and REMOVES the unchecked ones, in one pass, and what it wrote
     // is what a new document actually reads. Two edited keys, exactly one of them un-checked, so
     // the case distinguishes "wrote everything" from "wrote what was asked".

@@ -92,6 +92,13 @@ GUI 包了同一个引擎，但**并非** JSON config 的完全超集 — 一些
 4. **形状不对？** 检查 `crystal[].axis` — 随机取向出圆环，定向片晶出弧线和亮斑。
 5. **还是不对？** 用 `-v` 重跑，看每个 batch 是否有零命中。
 
+## 7. 界面太小（或太大）——能调字号吗？
+
+能。在顶栏打开 **Settings**，在 `Application preferences` 里选一个 **UI scale**：75% 到 200%，
+作用于整套界面——文字、控件、面板——选中即生效。按 **Save as my defaults** 就会保存下来供以后每次
+启动使用。显示器自身的缩放（Windows 的 125% / 150% 设置、Retina 屏）会自动检测，不算在这个数里，
+所以 100% 已经是"和桌面上其他东西一样大"；这个倍率是在那之上再放大或缩小。
+
 ## 延伸阅读
 
 - 完整 schema → [`../configuration_zh.md`](../configuration_zh.md)

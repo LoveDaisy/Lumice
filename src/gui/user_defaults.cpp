@@ -917,6 +917,7 @@ namespace {
 constexpr const char* kAppRootKey = "app";
 constexpr const char* kUseGpuBackendKey = "use_gpu_backend";
 constexpr const char* kWorkerCountKey = "worker_count";
+constexpr const char* kUiScaleMultiplierKey = "ui_scale_multiplier";
 }  // namespace
 
 std::optional<bool> ReadUseGpuBackendFromDoc(const nlohmann::json& doc) {
@@ -1005,6 +1006,65 @@ void EraseWorkerCountFromDoc(nlohmann::json& doc) {
   if (app_it->empty()) {
     doc.erase(kAppRootKey);
   }
+}
+
+std::optional<float> ReadUiScaleMultiplierFromDoc(const nlohmann::json& doc) {
+  if (!doc.is_object()) {
+    return std::nullopt;
+  }
+  const auto app = doc.find(kAppRootKey);
+  if (app == doc.end() || !app->is_object()) {
+    return std::nullopt;
+  }
+  const auto value = app->find(kUiScaleMultiplierKey);
+  // is_number() — integral 1 and 2 are legal spellings of 1.0 and 2.0 — but a bool is not a number
+  // under it, so `true` is rejected here like everywhere else in this namespace.
+  if (value == app->end() || !value->is_number()) {
+    return std::nullopt;
+  }
+  const auto stored = value->get<double>();
+  for (const float allowed : kAllowedUiScaleMultipliers) {
+    // A tolerance rather than exact equality: 1.25 round-trips through JSON text exactly, but the
+    // file is user-editable and "1.250" or a value typed with a stray digit should still snap to
+    // the step it obviously means, while 1.3 must not.
+    if (std::fabs(stored - static_cast<double>(allowed)) < 1e-4) {
+      return allowed;
+    }
+  }
+  return std::nullopt;
+}
+
+void WriteUiScaleMultiplierToDoc(nlohmann::json& doc, float value) {
+  if (!doc.is_object()) {
+    doc = nlohmann::json::object();
+  }
+  doc[kAppRootKey][kUiScaleMultiplierKey] = value;
+}
+
+void EraseUiScaleMultiplierFromDoc(nlohmann::json& doc) {
+  if (!doc.is_object()) {
+    doc = nlohmann::json::object();
+  }
+  const auto app_it = doc.find(kAppRootKey);
+  if (app_it == doc.end() || !app_it->is_object()) {
+    return;
+  }
+  app_it->erase(kUiScaleMultiplierKey);
+  if (app_it->empty()) {
+    doc.erase(kAppRootKey);
+  }
+}
+
+float LoadUiScaleMultiplierAtStartup(std::optional<std::filesystem::path> override_dir) {
+  const std::optional<std::filesystem::path> dir = override_dir ? std::move(override_dir) : GetActiveUserConfigDir();
+  if (!dir) {
+    return kFactoryUiScaleMultiplier;
+  }
+  // The second read of the same file in a startup (MakeNewDocumentState reads it again once the
+  // GL context exists). An unreadable file is therefore counted twice in g_downgrade_count and
+  // warned about twice in the log; the user-facing notice collapses to the one generic sentence
+  // either way (SurfaceUserDefaultsDowngrades prints no count), so the cost is one log line.
+  return ReadUiScaleMultiplierFromDoc(ReadOverlayJsonIfPresent(*dir)).value_or(kFactoryUiScaleMultiplier);
 }
 
 void ApplyAppPreferencesOverride(GuiState& state, const nlohmann::json& doc) {

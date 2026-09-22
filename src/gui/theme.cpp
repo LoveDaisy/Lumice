@@ -1,5 +1,6 @@
 #include "gui/theme.hpp"
 
+#include <cmath>
 #include <cstring>
 
 #include "IconsFontAwesome6.h"
@@ -14,10 +15,17 @@ namespace lumice::gui {
 
 namespace {
 
-// Body text size in pixels. The icon atlas is merged at the same size so glyphs
-// and text share a baseline; keeping them bound to one constant removes a
-// "two places that must change together" hazard.
+// Body text size in LOGICAL pixels — the 1x design basis, not a screen quantity. The atlas is
+// built at kBodyFontSizePx × layout_scale (ApplyVisualLanguage), so this constant does not go
+// through UiPx(): it is the outlet's input. The icon atlas is merged at the same size so glyphs
+// and text share a baseline; keeping them bound to one constant removes a "two places that must
+// change together" hazard.
 constexpr float kBodyFontSizePx = 15.0f;
+
+// The layout_scale in force — written by ApplyVisualLanguage, read by UiPx()/CurrentUiScale().
+// The ONE copy of this state: main.cpp keeps the inputs it is derived from (monitor scale, user
+// multiplier), never the product, so there is no second variable to fall out of step with this one.
+float g_layout_scale = 1.0f;
 
 // The General Punctuation block (U+2000-U+206F), added on top of ImGui's default range (Basic
 // Latin + Latin-1 Supplement, which already carries the guillemets U+00AB/U+00BB). Roboto
@@ -29,19 +37,20 @@ constexpr float kBodyFontSizePx = 15.0f;
 // the analysis list draws its chain joiner with an icon (JoinerForDisplay, analysis_panel.cpp).
 constexpr ImWchar kGeneralPunctuationRange[] = { 0x2000, 0x206F, 0 };
 
-// The body font's glyph ranges. ImGui reads the array lazily, at io.Fonts->Build() — which the
-// renderer backend calls when it creates the font texture, well after AddBodyFont returned — so
+// The body font's glyph ranges. ImGui reads the array lazily, at io.Fonts->Build() — after
+// AddBodyFont returned, and again at every rebuild the backend's texture upload triggers — so
 // the storage has to outlive the call: a function-local ImVector would already be gone by then.
 ImVector<ImWchar> g_body_glyph_ranges;
 
 // Adds Roboto Medium (embedded at build time) as the body font. Returns nullptr
 // on failure, leaving the caller to fall back rather than run with no font.
-ImFont* AddBodyFont(ImGuiIO& io, float size_px) {
+ImFont* AddBodyFont(ImGuiIO& io, float size_px, float raster_density) {
   ImFontConfig body_cfg;
   // 3x horizontal oversampling sharpens a proportional face at this size; ImGui's
   // stb rasterizer has no hinting, so subpixel positioning is what carries legibility.
   body_cfg.OversampleH = 3;
   body_cfg.OversampleV = 1;
+  body_cfg.RasterizerDensity = raster_density;
   // Built once: a rebuild would reallocate the array a font added by an earlier call still
   // points at.
   if (g_body_glyph_ranges.empty()) {
@@ -59,12 +68,13 @@ ImFont* AddBodyFont(ImGuiIO& io, float size_px) {
 }
 
 // Merges FontAwesome 6 Solid glyphs into the atlas of the font added last.
-void MergeIconGlyphs(ImGuiIO& io, float size_px) {
+void MergeIconGlyphs(ImGuiIO& io, float size_px, float raster_density) {
   ImFontConfig icon_cfg;
   icon_cfg.MergeMode = true;
   icon_cfg.PixelSnapH = true;
   icon_cfg.OversampleH = 2;
   icon_cfg.OversampleV = 2;
+  icon_cfg.RasterizerDensity = raster_density;
   icon_cfg.GlyphMinAdvanceX = size_px;
   static const ImWchar kIconRanges[] = { ICON_MIN_FA, ICON_MAX_FA, 0 };
   void* icon_buf = IM_ALLOC(kFaSolid900Size);
@@ -360,7 +370,15 @@ void ApplyContrastPaletteForTest(ImGuiStyle& style) {
   ApplyPalette(style, kContrastPaletteForTest);
 }
 
-void ApplyVisualLanguage(ImGuiIO& io) {
+void ApplyVisualLanguage(ImGuiIO& io, float layout_scale, float raster_density) {
+  IM_ASSERT(layout_scale > 0.0f && raster_density > 0.0f);
+  g_layout_scale = layout_scale;
+
+  // From the baseline EVERY time, never from the style already in force: ScaleAllSizes multiplies
+  // whatever it is given, so scaling an already-scaled style would compound — a window dragged
+  // between two monitors three times would end up 3.4x. Re-deriving from StyleColorsDark() is what
+  // makes a second call with a different scale land on the same numbers a first call would.
+  ImGui::GetStyle() = ImGuiStyle();  // the geometry defaults: StyleColorsDark() writes colours only
   ImGui::StyleColorsDark();
 
   // Lets a click-release (no drag, no ctrl) on a DragFloat enter text-input mode — the only
@@ -370,12 +388,41 @@ void ApplyVisualLanguage(ImGuiIO& io) {
   io.ConfigDragClickToInputText = true;
 
   ApplyStyle(ImGui::GetStyle());
+  ImGui::GetStyle().ScaleAllSizes(layout_scale);
 
-  if (!AddBodyFont(io, kBodyFontSizePx)) {
+  // The atlas is rebuilt from scratch, not appended to: a second AddFont on a live atlas would
+  // leave the first size's fonts in Fonts[] and ImGui would keep drawing with Fonts[0]. Clear()
+  // frees the old texture data; the caller re-uploads (main.cpp) since this file owns no GL.
+  io.Fonts->Clear();
+  // Rounded here, explicitly: ImGui truncates a fractional SizePixels itself (AddFont), so
+  // 15 × 1.25 = 18.75 would otherwise land on 18, a step down where the scale asked for a step up.
+  const float size_px = std::round(kBodyFontSizePx * layout_scale);
+  if (!AddBodyFont(io, size_px, raster_density)) {
     GUI_LOG_WARNING("Roboto Medium failed to load; falling back to the built-in bitmap font.");
     io.Fonts->AddFontDefault();
   }
-  MergeIconGlyphs(io, kBodyFontSizePx);
+  MergeIconGlyphs(io, size_px, raster_density);
+  // Build here rather than leaving it to the backend's texture upload, so a caller with no
+  // renderer (a unit test) still gets a font whose FontSize reads the scaled value.
+  io.Fonts->Build();
+}
+
+float CurrentUiScale() {
+  return g_layout_scale;
+}
+
+float UiPx(float logical_px) {
+  return logical_px * g_layout_scale;
+}
+
+int UiPxI(int logical_px) {
+  return static_cast<int>(std::lround(static_cast<float>(logical_px) * g_layout_scale));
+}
+
+ImGuiCond WindowResizeCondForScale(float& tracked_scale, ImGuiCond first_use_cond) {
+  const ImGuiCond cond = (tracked_scale == g_layout_scale) ? first_use_cond : ImGuiCond_Always;
+  tracked_scale = g_layout_scale;
+  return cond;
 }
 
 }  // namespace lumice::gui

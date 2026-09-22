@@ -186,6 +186,12 @@ void ResetTestState() {
   gui::g_preview_vp.active = false;
   gui::g_preview_vp.curve_labels.clear();
   gui::g_programmatic_resize = 0;
+  // The user's UI scale multiplier is process-wide and applied by the product's frame loop, not
+  // by this harness (every reference is a 1x capture, see the ApplyVisualLanguage call in main).
+  // A case that turns the Settings dial leaves the value behind, and the "(this window: N%)" note
+  // in the very next defaults_panel_layout capture would read it.
+  gui::g_ui_scale_multiplier = gui::kFactoryUiScaleMultiplier;
+  gui::g_ui_scale_dirty = false;
 
   // Runtime state
   gui::g_show_unsaved_popup = false;
@@ -541,7 +547,10 @@ int main(int argc, char** argv) {
   io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
   io.IniFilename = nullptr;
 
-  gui::ApplyVisualLanguage(io);
+  // Pinned at 1.0 / 1.0, never read from the display: every reference image is a capture at the
+  // 1x design basis, and the harness's window is created and compared at that size. The product
+  // reads the monitor here (main.cpp); the harness deliberately does not.
+  gui::ApplyVisualLanguage(io, /*layout_scale=*/1.0f, /*raster_density=*/1.0f);
   if (use_contrast_palette) {
     gui::ApplyContrastPaletteForTest(ImGui::GetStyle());
   }

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cfloat>
+#include <cmath>
 #include <cstddef>
 #include <cstdio>
 #include <map>
@@ -13,6 +14,7 @@
 #include <vector>
 
 #include "IconsFontAwesome6.h"
+#include "gui/app.hpp"
 #include "gui/axis_presets.hpp"
 #include "gui/defaults_diff.hpp"
 #include "gui/destructive_style.hpp"
@@ -413,7 +415,7 @@ bool CommitCopy(const GuiState& state) {
 // §app — application preferences (namespace 3), the one region of this panel that is neither a
 // generated row nor a preset.
 //
-// Fixed lines rather than a third CollapsingHeader: it holds two controls, and a section that is
+// Fixed lines rather than a third CollapsingHeader: it holds three controls, and a section that is
 // taller folded than unfolded is a fold nobody would use. Drawn ABOVE both collapsible sections on
 // purpose — every height budget below reads GetContentRegionAvail() after this point, so the rows
 // need no arithmetic of their own.
@@ -421,7 +423,7 @@ bool CommitCopy(const GuiState& state) {
 // What they DO need is for the window to grow with them. What is left after this point is not
 // slack: the second control cost the preset library one row and put an already-expanded preset's
 // std input out of reach. So RenderDefaultsPanel's fixed window height carries a term for these
-// rows — adding a third control here means adding a row to that number too.
+// rows — adding a control here means adding a row to that number too (the third did).
 //
 // The control is stateless: g_copy_doc IS the state, read fresh each frame and written on click.
 // There is deliberately no TU-local mirror of it to keep in step with the copy, to freeze at open
@@ -489,6 +491,48 @@ void RenderAppPreferences(const GuiState& state) {
   }
   ImGui::SameLine();
   ImGui::TextDisabled("(this window: %d)", state.worker_count);
+
+  // The UI scale multiplier — the third member of `app`, and the one that breaks this section's
+  // "stored preference, takes effect on the next new document" pattern ON PURPOSE. The other two
+  // are construction-time server properties: applying them means tearing a server down, so "next
+  // document" is the honest moment. Rebuilding fonts and style is instant, and the request this
+  // control answers is "make the text bigger" — a dial that did nothing until Save-and-restart
+  // would read as broken. So a change here does two things: it writes the working copy like its
+  // neighbours (Save then persists it, unchanged contract), AND it applies to this window now
+  // through SetUiScaleMultiplierImmediate. The two may then differ — close the panel unsaved and
+  // reopen it, and the combo shows the saved value while the window keeps the one tried; that is
+  // what the "(this window: N%)" note reads g_ui_scale_multiplier rather than the copy for.
+  const float stored = ReadUiScaleMultiplierFromDoc(g_copy_doc).value_or(kFactoryUiScaleMultiplier);
+  int step = 0;
+  for (int i = 0; i < kAllowedUiScaleMultiplierCount; ++i) {
+    if (kAllowedUiScaleMultipliers[i] == stored) {
+      step = i;
+    }
+  }
+  // The labels are derived from the same array the reader validates against, so a step added
+  // there is a step here without a second list to update.
+  char labels[kAllowedUiScaleMultiplierCount][8];
+  const char* label_ptrs[kAllowedUiScaleMultiplierCount];
+  for (int i = 0; i < kAllowedUiScaleMultiplierCount; ++i) {
+    std::snprintf(labels[i], sizeof(labels[i]), "%d%%",
+                  static_cast<int>(std::lround(kAllowedUiScaleMultipliers[i] * 100.0f)));
+    label_ptrs[i] = labels[i];
+  }
+  ImGui::SetNextItemWidth(ImGui::GetFontSize() * 6.0f);
+  if (ImGui::Combo("UI scale###defaults_app_ui_scale", &step, label_ptrs, kAllowedUiScaleMultiplierCount)) {
+    const float chosen = kAllowedUiScaleMultipliers[step];
+    WriteUiScaleMultiplierToDoc(g_copy_doc, chosen);
+    SetUiScaleMultiplierImmediate(chosen);
+  }
+  if (ImGui::IsItemHovered()) {
+    ImGui::SetTooltip(
+        "How much larger than the display's own scaling the whole interface is drawn — text, "
+        "controls and panels alike. Applies to this window immediately; Save keeps it for every "
+        "later start. The display's scaling (Windows 125%%, Retina) is detected on its own and is "
+        "not part of this number.");
+  }
+  ImGui::SameLine();
+  ImGui::TextDisabled("(this window: %d%%)", static_cast<int>(std::lround(g_ui_scale_multiplier * 100.0f)));
 }
 
 // Section header whose open state is forced only on the frame an entry point requested it.
@@ -505,7 +549,7 @@ void RenderListControls() {
   // "Search", not 405.4's "Filter": the word now belongs to the control beside it, and two things
   // called Filter that narrow the same list by different rules is the confusion this task is here
   // to remove, not to relocate.
-  g_search_filter.Draw(ICON_FA_MAGNIFYING_GLASS " Search###defaults_search", 240.0f);
+  g_search_filter.Draw(ICON_FA_MAGNIFYING_GLASS " Search###defaults_search", UiPx(240.0f));
 
   // Labels ARE the definitions — the point owner made about this control is that a vague "only
   // show changes" switch is what produced the confusion in the first place, so each option says
@@ -656,14 +700,14 @@ void RenderSettingsTable(GuiState& state, float table_height) {
   // the GUI holds now, what Save would write — and showing the saved value here made "I changed
   // this but have not saved" and "I saved this" render identically.
   ImGui::TableSetupColumn("Origin value", ImGuiTableColumnFlags_WidthStretch, 0.9f);
-  ImGui::TableSetupColumn("Source", ImGuiTableColumnFlags_WidthFixed, 110.0f);
+  ImGui::TableSetupColumn("Source", ImGuiTableColumnFlags_WidthFixed, UiPx(110.0f));
   // The notice column (scrum D8), now with two producers that must stay TELLABLE APART: a pencil
   // for "you changed this value here" and a warning triangle for "the value loaded from your file
   // is outside the allowed range". Sized for both side by side rather than for one, because a row
   // can carry both and hiding one behind the other would make the pair unreadable exactly when it
   // matters most.
-  ImGui::TableSetupColumn("Note", ImGuiTableColumnFlags_WidthFixed, 46.0f);
-  ImGui::TableSetupColumn("##adopt", ImGuiTableColumnFlags_WidthFixed, 24.0f);
+  ImGui::TableSetupColumn("Note", ImGuiTableColumnFlags_WidthFixed, UiPx(46.0f));
+  ImGui::TableSetupColumn("##adopt", ImGuiTableColumnFlags_WidthFixed, UiPx(24.0f));
   // AFTER every TableSetupColumn and BEFORE TableHeadersRow — ImGui's required call order. This one
   // line is the whole of AC1: row 0 (the header) stays put while the body scrolls under it. It is a
   // different mechanism from the section headers staying put (those are simply not inside any
@@ -956,7 +1000,7 @@ void RenderPresetEntry(const AxisPresetEntry& entry) {
     ImGui::TableSetupColumn("Type", ImGuiTableColumnFlags_WidthStretch, 1.0f);
     ImGui::TableSetupColumn("Mean", ImGuiTableColumnFlags_WidthStretch, 0.8f);
     ImGui::TableSetupColumn("Std", ImGuiTableColumnFlags_WidthStretch, 0.8f);
-    ImGui::TableSetupColumn("!", ImGuiTableColumnFlags_WidthFixed, 24.0f);
+    ImGui::TableSetupColumn("!", ImGuiTableColumnFlags_WidthFixed, UiPx(24.0f));
     ImGui::TableHeadersRow();
 
     if (entry.has_adjustable_zenith_std) {
@@ -1042,7 +1086,7 @@ bool RenderWedgePresetRow(size_t index, const WedgeMillerTriple& triple) {
     // icon needs a hover explanation, and text carries no item to hover — nor an id, which is also
     // what lets a test say "this row is showing a warning" without reading pixels.
     const std::string warning_id = ICON_FA_TRIANGLE_EXCLAMATION "###wedge_preset_warning_" + std::to_string(index);
-    ImGui::Selectable(warning_id.c_str(), false, ImGuiSelectableFlags_NoAutoClosePopups, ImVec2(24.0f, 0.0f));
+    ImGui::Selectable(warning_id.c_str(), false, ImGuiSelectableFlags_NoAutoClosePopups, ImVec2(UiPx(24.0f), 0.0f));
     if (ImGui::IsItemHovered()) {
       ImGui::SetTooltip("%s", fb.message.c_str());
     }
@@ -1174,14 +1218,28 @@ void RenderDefaultsPanel(GuiState& state) {
   // a function of how many settings differ, and a modal that changes size with the diff would
   // make every visual-regression scene a different capture rectangle.
   //
-  // 584 = the original 560 plus one control row (GetFrameHeight() + ItemSpacing.y = 15 + 2*3 + 3),
-  // added when §app gained its second control. The alternative was to let the new row take its
-  // height out of the two collapsible sections below, which is what the §app comment says fixed
+  // 608 = the original 560 plus two control rows (GetFrameHeight() + ItemSpacing.y = 15 + 2*3 + 3
+  // each), one per control §app gained after its first. The alternative was to let a new row take
+  // its height out of the two collapsible sections below, which is what the §app comment says fixed
   // rows normally do — but that budget is not slack: shrinking the preset library by one row put
   // an already-expanded preset's std input out of reach, which is a real loss of function for
   // every user, not just for the case that caught it. A control added ABOVE the sections has to
-  // bring its own height with it.
-  ImGui::SetNextWindowSize(ImVec2(760.0f, 584.0f), ImGuiCond_Appearing);
+  // bring its own height with it. Through UiPx: this is a screen size, and the row heights it
+  // budgets for scale with the font.
+  //
+  // Re-applied, not just on appearance, on the frame the UI scale changes: this is the window the
+  // scale is changed FROM, so it is open at the old size at exactly that moment, and a 760-px
+  // panel holding a 1.5x layout shows four settings rows and a clipped action row. See
+  // WindowResizeCondForScale (theme.hpp) for the shared rule this and every other floating panel
+  // that can stay open across a scale change (analysis_panel.cpp, color_window.cpp) apply.
+  static float s_sized_for_scale = 0.0f;
+  const ImGuiCond size_cond = WindowResizeCondForScale(s_sized_for_scale, ImGuiCond_Appearing);
+  ImGui::SetNextWindowSize(ImVec2(UiPx(760.0f), UiPx(608.0f)), size_cond);
+  if (size_cond == ImGuiCond_Always) {
+    // Re-centred with the resize: ImGui grows a window from its top-left, and the old centre was
+    // computed for the old size, so the larger panel would otherwise run off the bottom.
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+  }
   // Passing a p_open is what puts the X in the title bar. Re-initialized to true every frame on
   // purpose: it is not a state we keep, only the one-frame channel ImGui uses to report "the X was
   // pressed", read below and then thrown away.
@@ -1339,7 +1397,7 @@ void RenderDefaultsPanel(GuiState& state) {
   // Commit-and-stay rather than commit-and-close: after a save the adopted rows read as "Mine",
   // which IS the confirmation that the write landed, and the failure path (no writable config
   // directory) has somewhere to say so.
-  if (ImGui::Button(ICON_FA_FLOPPY_DISK " Save as my defaults###defaults_save", ImVec2(200.0f, 0.0f))) {
+  if (ImGui::Button(ICON_FA_FLOPPY_DISK " Save as my defaults###defaults_save", ImVec2(UiPx(200.0f), 0.0f))) {
     // Read-only preview of the document CommitCopy is about to write, so "nothing changed" is
     // decided by comparing that document with the one on disk rather than by counting clicks. The
     // count of checked rows would be the wrong measure twice over: it says nothing about §1's
@@ -1372,7 +1430,7 @@ void RenderDefaultsPanel(GuiState& state) {
   // torn down here — the next OpenDefaultsPanel replaces every piece of session state wholesale,
   // so any other way out of this popup (an X, Esc) discards the copy identically without needing
   // its own path.
-  if (ImGui::Button(ICON_FA_XMARK " Close###defaults_close", ImVec2(120.0f, 0.0f))) {
+  if (ImGui::Button(ICON_FA_XMARK " Close###defaults_close", ImVec2(UiPx(120.0f), 0.0f))) {
     state.defaults_panel_open = false;
     ImGui::CloseCurrentPopup();
   }
@@ -1382,7 +1440,7 @@ void RenderDefaultsPanel(GuiState& state) {
   // understate its reach — and a destructive control a user has to scroll 40 rows to find is also
   // one they cannot check the state of before pressing.
   ImGui::SameLine();
-  const float reset_width = 220.0f;
+  const float reset_width = UiPx(220.0f);
   ImGui::SetCursorPosX(ImGui::GetWindowWidth() - reset_width - ImGui::GetStyle().WindowPadding.x);
   PushDestructiveStyle();
   if (ImGui::Button(ICON_FA_TRASH " Reset all my defaults###defaults_reset_all", ImVec2(reset_width, 0.0f))) {

@@ -494,6 +494,103 @@ TEST_F(UserDefaults, AMalformedWorkerCountReadsAsNothingStored) {
   EXPECT_EQ(*gui::ReadWorkerCountFromDoc(bad_root), 3);
 }
 
+// The third member of the `app` namespace, and the first with no GuiState field behind it: the UI
+// scale multiplier is read at startup, before any document exists, so its contract is stated on
+// the document trio and on the startup loader rather than through MakeNewDocumentState.
+TEST_F(UserDefaults, UiScaleMultiplierRoundTripThroughTheAppRootKey) {
+  json doc = json::object();
+  EXPECT_FALSE(gui::ReadUiScaleMultiplierFromDoc(doc).has_value()) << "an empty document stores nothing";
+
+  for (const float step : gui::kAllowedUiScaleMultipliers) {
+    gui::WriteUiScaleMultiplierToDoc(doc, step);
+    const std::optional<float> back = gui::ReadUiScaleMultiplierFromDoc(doc);
+    if (!back.has_value()) {
+      ADD_FAILURE() << "step " << step << " did not round-trip";
+      continue;
+    }
+    EXPECT_FLOAT_EQ(*back, step);
+  }
+  EXPECT_TRUE(doc["app"].contains("ui_scale_multiplier"));
+  EXPECT_FALSE(doc.contains("ui_scale_multiplier")) << "the value must NOT land at the document half's top level";
+
+  // 1.0 is the factory value AND a legal stored answer, recorded rather than erased — the same
+  // argument as worker_count's 0.
+  gui::WriteUiScaleMultiplierToDoc(doc, 1.0f);
+  ASSERT_TRUE(gui::ReadUiScaleMultiplierFromDoc(doc).has_value());
+  EXPECT_FLOAT_EQ(*gui::ReadUiScaleMultiplierFromDoc(doc), 1.0f);
+
+  // The integral spellings a hand edit is likely to produce read as the step they mean.
+  doc["app"]["ui_scale_multiplier"] = 2;
+  ASSERT_TRUE(gui::ReadUiScaleMultiplierFromDoc(doc).has_value());
+  EXPECT_FLOAT_EQ(*gui::ReadUiScaleMultiplierFromDoc(doc), 2.0f);
+
+  gui::EraseUiScaleMultiplierFromDoc(doc);
+  EXPECT_FALSE(gui::ReadUiScaleMultiplierFromDoc(doc).has_value());
+  EXPECT_FALSE(doc.contains("app"));
+
+  // Independent of its two siblings, in both directions.
+  gui::WriteWorkerCountToDoc(doc, 4);
+  gui::WriteUiScaleMultiplierToDoc(doc, 1.5f);
+  gui::EraseWorkerCountFromDoc(doc);
+  ASSERT_TRUE(gui::ReadUiScaleMultiplierFromDoc(doc).has_value());
+  EXPECT_FLOAT_EQ(*gui::ReadUiScaleMultiplierFromDoc(doc), 1.5f);
+  gui::EraseUiScaleMultiplierFromDoc(doc);
+  EXPECT_FALSE(doc.contains("app"));
+}
+
+// Reject, don't clamp: a value outside the five steps is a hand edit the panel could never have
+// written, and snapping it to a neighbour would apply a scale the user never chose.
+TEST_F(UserDefaults, AUiScaleMultiplierOutsideTheStepsReadsAsNothingStored) {
+  json off_step = json::object();
+  off_step["app"]["ui_scale_multiplier"] = 1.3;
+  EXPECT_FALSE(gui::ReadUiScaleMultiplierFromDoc(off_step).has_value()) << "1.3 is not a step";
+
+  json out_of_range = json::object();
+  out_of_range["app"]["ui_scale_multiplier"] = 3.0;
+  EXPECT_FALSE(gui::ReadUiScaleMultiplierFromDoc(out_of_range).has_value());
+
+  json value_is_a_string = json::object();
+  value_is_a_string["app"]["ui_scale_multiplier"] = "1.5";
+  EXPECT_FALSE(gui::ReadUiScaleMultiplierFromDoc(value_is_a_string).has_value());
+
+  json value_is_a_bool = json::object();
+  value_is_a_bool["app"]["ui_scale_multiplier"] = true;
+  EXPECT_FALSE(gui::ReadUiScaleMultiplierFromDoc(value_is_a_bool).has_value());
+
+  json app_not_an_object = json::object();
+  app_not_an_object["app"] = 1.5;
+  EXPECT_FALSE(gui::ReadUiScaleMultiplierFromDoc(app_not_an_object).has_value());
+
+  json not_an_object = json::array();
+  EXPECT_FALSE(gui::ReadUiScaleMultiplierFromDoc(not_an_object).has_value());
+
+  // Same as its siblings: a type error in the app half costs nothing beyond itself.
+  EXPECT_EQ(gui::TakeUserDefaultsDowngradeCount(), 0);
+}
+
+// The startup loader over its three outcomes — no file, a legal value, an illegal value — plus the
+// "no directory" arm. Each must resolve to a number the window can be created with; the factory
+// 1.0 is that number for every arm but the legal one.
+TEST_F(UserDefaults, TheStartupLoaderResolvesTheMultiplierOrFallsBackToFactory) {
+  EXPECT_FLOAT_EQ(gui::LoadUiScaleMultiplierAtStartup(std::nullopt), gui::kFactoryUiScaleMultiplier)
+      << "the harness baseline has no config directory";
+
+  const std::filesystem::path dir = FreshOverlayDir("ui_scale_startup");
+  EXPECT_FLOAT_EQ(gui::LoadUiScaleMultiplierAtStartup(dir), 1.0f) << "no file yet: factory";
+
+  WriteRawOverlay(dir, R"({"app": {"ui_scale_multiplier": 1.5}})");
+  EXPECT_FLOAT_EQ(gui::LoadUiScaleMultiplierAtStartup(dir), 1.5f);
+
+  WriteRawOverlay(dir, R"({"app": {"ui_scale_multiplier": 1.3}})");
+  EXPECT_FLOAT_EQ(gui::LoadUiScaleMultiplierAtStartup(dir), 1.0f) << "off-step: factory, not the nearest step";
+
+  // A malformed FILE is the one arm that is a degradation rather than an absence, and it is the
+  // document half's business to report it; the loader still has to come back with a usable number.
+  WriteRawOverlay(dir, "{ not json");
+  EXPECT_FLOAT_EQ(gui::LoadUiScaleMultiplierAtStartup(dir), 1.0f);
+  EXPECT_GT(gui::TakeUserDefaultsDowngradeCount(), 0);
+}
+
 // The file is user-editable, so every malformed shape has to read as "nothing stored" rather than
 // throw. Each arm is a different node of the path being the wrong type, because they fail in
 // different places in the reader.

@@ -68,6 +68,16 @@ From left to right, the Top Bar exposes:
   The Summary has no export button of its own: take the picture with your operating
   system's screenshot tool (⌘⇧4 on macOS, Win+Shift+S on Windows, or your desktop's equivalent on
   Linux). See [User Manual — Configuration Summary](user-manual/07-config-summary.md).
+- **Settings**: the personal-defaults editor — what a *new* document starts from, plus the
+  `Application preferences` rows at the top, which describe this machine rather than any document:
+  the GPU backend and worker count a new document starts with, and **UI scale**, a multiplier
+  (75% – 200%) applied on top of the display's own scaling to every piece of the interface —
+  text, controls and panels alike. The display's scaling (Windows 125% / 150%, a Retina screen)
+  is detected on its own and needs no setting; the multiplier is for making everything larger or
+  smaller than that. Unlike its two neighbours it takes effect in the running window the moment it
+  is changed; **Save as my defaults** keeps it for every later start (`app.ui_scale_multiplier` in
+  `user_defaults.json`), and a value tried but not saved stays in force until the program exits —
+  the `(this window: N%)` note beside the control shows what the window is actually using.
 - **Right panel collapse**: `<` / `>` mirror the left toggle (also bound to the `]` key).
 
 ## Left Panel — Crystal Parameters

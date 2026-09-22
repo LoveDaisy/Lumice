@@ -55,7 +55,8 @@ namespace {
 
 // The neighbour offset the ring's local scale is measured over. Small enough to be local on
 // every lens the GUI draws, large enough that the angle between the two directions is well above
-// float noise at the narrowest FOV.
+// float noise at the narrowest FOV. A CANVAS pixel (the unprojection's own space), not a screen
+// one — it does not take the UI scale.
 constexpr int kRingScaleProbePx = 8;
 constexpr float kRoiRingThicknessPt = 2.0f;
 constexpr int kRoiRingSegments = 96;
@@ -861,7 +862,7 @@ void RenderPickBanner(const GuiState& state) {
   }
   ImGui::PushStyleColor(ImGuiCol_ChildBg, AccentColor(0.18f));
   ImGui::PushStyleColor(ImGuiCol_Border, AccentColor(0.9f));
-  ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, 1.0f);
+  ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, UiPx(1.0f));
   const float h = ImGui::GetFrameHeight() + ImGui::GetStyle().WindowPadding.y;
   if (ImGui::BeginChild("##pick_banner", ImVec2(0.0f, h), ImGuiChildFlags_Borders)) {
     ImGui::AlignTextToFramePadding();
@@ -988,7 +989,7 @@ void RenderRadiusSlider(GuiState& state) {
   // one, it sizes the ring on the preview (DrawAnalysisRoiRing reads it every frame) so the
   // user sees the region the list will be summed over; after one, it re-sums the rings on hand.
   // Either way the request is the full cone and nothing here starts a run.
-  ImGui::SetNextItemWidth(220.0f);
+  ImGui::SetNextItemWidth(UiPx(220.0f));
   if (ImGui::SliderFloat("Radius", &state.analysis.cone_radius_deg, min_deg, cone_deg, "%.1f deg")) {
     // Display-time only: re-sums the rings already on hand (a no-op without one), starts nothing.
     RecomputeAnalysisDisplayOrder(state);
@@ -1050,7 +1051,7 @@ void RenderResultList(GuiState& state) {
   // rays the online deal SENT its crystal, which is proportional neither to the crystal's
   // `proportion` nor to the row's Energy — shown, it only asks "why does this row get many rays
   // and little energy". Energy (the share) is the strength; the count's one job is the +/- cell.
-  if (!ImGui::BeginTable("##analysis_rows", 4, flags, ImVec2(0.0f, std::max(avail_h, 120.0f)))) {
+  if (!ImGui::BeginTable("##analysis_rows", 4, flags, ImVec2(0.0f, std::max(avail_h, UiPx(120.0f))))) {
     return;
   }
   ImGui::TableSetupScrollFreeze(0, 1);
@@ -1202,8 +1203,18 @@ void RenderAnalysisPanel(GuiState& state, LUMICE_Server* server) {
   }
   // Tall and narrow on purpose: the window is a list of raypaths, and rows are what it runs out
   // of first — a wide default only stretches the table's five columns across empty space.
-  ImGui::SetNextWindowSize(ImVec2(520, 640), ImGuiCond_FirstUseEver);
-  ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_FirstUseEver, ImVec2(0.5f, 0.5f));
+  //
+  // Re-applied, not just on appearance, on the frame the UI scale changes: this window is
+  // non-modal and can stay open through Settings (see WindowResizeCondForScale, theme.hpp), so a
+  // FirstUseEver cond alone would leave it pinned at the old pixel size while its UiPx()-derived
+  // content grows.
+  static float s_sized_for_scale = 0.0f;
+  const ImGuiCond size_cond = WindowResizeCondForScale(s_sized_for_scale, ImGuiCond_FirstUseEver);
+  ImGui::SetNextWindowSize(ImVec2(UiPx(520.0f), UiPx(640.0f)), size_cond);
+  // size_cond is only ever FirstUseEver or Always, so one call covers both: the ordinary first
+  // appearance centres once, and a scale change re-centres alongside the resize (ImGui grows a
+  // window from its top-left, so leaving the position alone would run a larger panel off-screen).
+  ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), size_cond, ImVec2(0.5f, 0.5f));
   if (!ImGui::Begin(ICON_FA_ROUTE " Raypath Analysis", &state.analysis.window_open,
                     ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoDocking)) {
     ImGui::End();
@@ -1251,9 +1262,10 @@ void DrawAnalysisRoiRing(const GuiState& state, const LUMICE_AnnotationView& vie
   const ImU32 colour = ImGui::ColorConvertFloat4ToU32(AccentColor());
   // The centre mark is always drawn; the ring only when the local scale could be measured. A drag
   // in flight draws the dot larger, so the grab reads as taken.
-  dl->AddCircleFilled(centre, a.cone_marker_dragging ? kRoiMarkerDotRadiusPt * 1.6f : kRoiMarkerDotRadiusPt, colour);
+  dl->AddCircleFilled(centre, UiPx(a.cone_marker_dragging ? kRoiMarkerDotRadiusPt * 1.6f : kRoiMarkerDotRadiusPt),
+                      colour);
   if (radius_px.has_value()) {
-    dl->AddCircle(centre, *radius_px / dpi_scale_x, colour, kRoiRingSegments, kRoiRingThicknessPt);
+    dl->AddCircle(centre, *radius_px / dpi_scale_x, colour, kRoiRingSegments, UiPx(kRoiRingThicknessPt));
   }
 }
 

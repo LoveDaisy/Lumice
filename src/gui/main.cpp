@@ -6,7 +6,10 @@
 #include <windows.h>
 #endif
 
+#include <algorithm>
 #include <chrono>
+#include <climits>
+#include <cmath>
 #include <cstdlib>
 #include <cstring>
 #include <string>
@@ -39,6 +42,117 @@
 #include "util/path_utils.hpp"
 
 namespace gui = lumice::gui;
+
+namespace {
+
+// The monitor's content scale as GLFW last reported it — the startup read after the window exists,
+// then every glfwSetWindowContentScaleCallback since. Initialised to 1 rather than 0 so the value is
+// a usable scale at every point in the program's life (a 0 would make the layout collapse rather
+// than fail). It is an INPUT the rebuild path reads, never the scale in force: that one lives in
+// theme.cpp (CurrentUiScale) and there is no second copy of it.
+float g_monitor_scale_x = 1.0f;
+float g_monitor_scale_y = 1.0f;
+
+// How the two scale inputs become the two ApplyVisualLanguage parameters, per platform. This is
+// the policy half of doc/gui-visual-language.md §4.1's ui_scale; theme.cpp is the mechanism and
+// does not know which platform it is on.
+//
+//   Windows / Linux: GLFW's window coordinates are PHYSICAL pixels (the vendored GLFW makes the
+//   process per-monitor DPI aware on Windows unconditionally, win32_init.c), so making the UI
+//   larger on a 150% monitor and rasterizing the font denser are the same operation — both are
+//   layout_scale = monitor × multiplier, and raster_density stays 1.
+//   macOS: window coordinates are POINTS; the OS already draws a 400pt panel the same physical
+//   size on every display. What was never right was the atlas: 15px rasterized once and stretched
+//   over a 2x backing store. So layout_scale = multiplier alone and the monitor's scale goes to
+//   raster_density, where it sharpens glyphs without moving a single layout size.
+struct UiScaleParams {
+  float layout_scale;
+  float raster_density;
+};
+
+UiScaleParams ResolveUiScaleParams(float monitor_scale, float user_multiplier) {
+#if defined(__APPLE__)
+  return { user_multiplier, monitor_scale };
+#else
+  return { monitor_scale * user_multiplier, 1.0f };
+#endif
+}
+
+// The rebuild every scale change ends in: style + atlas (theme.cpp), the backend's font texture,
+// and the window's floor/size. Runs at the top of the frame — after glfwPollEvents, where the
+// content-scale callback fires, and before ImGui::NewFrame, which is the one point at which the
+// atlas may be swapped: the GL context is current for the whole loop, and no draw list holds a
+// glyph from the old atlas yet. The callback itself only sets the flag (below) for that reason,
+// and the user-multiplier path (SetUiScaleMultiplierImmediate, app.cpp) sets the same flag, so
+// "the monitor changed" and "the user turned the dial" are one path, not two.
+// Style + atlas for the inputs in force, and the log line that says what they resolved to.
+UiScaleParams ApplyUiScaleInputs(ImGuiIO& io) {
+  IM_ASSERT(g_monitor_scale_x > 0.0f);
+  // GLFW reports x and y separately; nothing in this GUI can use an anisotropic scale, and no
+  // platform reports one today, so x is the scale and y is a log line if it ever disagrees.
+  if (g_monitor_scale_y != g_monitor_scale_x) {
+    GUI_LOG_WARNING("[GUI] UI scale: anisotropic content scale {}x{}; using x", g_monitor_scale_x, g_monitor_scale_y);
+  }
+  const UiScaleParams params = ResolveUiScaleParams(g_monitor_scale_x, gui::g_ui_scale_multiplier);
+  gui::ApplyVisualLanguage(io, params.layout_scale, params.raster_density);
+  GUI_LOG_INFO("[GUI] UI scale: monitor {} x user {} -> layout {} raster {}", g_monitor_scale_x,
+               gui::g_ui_scale_multiplier, params.layout_scale, params.raster_density);
+  return params;
+}
+
+// The window's floor and size follow layout_scale (PlanWindowSizeForScale): panels grow through
+// UiPx(), so a window left at the 1x floor would clip them. The monitor is the one the window sits
+// on, not the primary; unknown → INT_MAX, the plan's degrade arm.
+void ApplyWindowFloorForScale(GLFWwindow* window, float layout_scale) {
+  int cur_w = 0;
+  int cur_h = 0;
+  glfwGetWindowSize(window, &cur_w, &cur_h);
+  gui::MonitorRect mon{};
+  const bool have_mon = gui::GetCurrentMonitorWorkArea(window, &mon);
+  const gui::WindowSizePlan plan =
+      gui::PlanWindowSizeForScale(layout_scale, cur_w, cur_h, have_mon ? mon.w : INT_MAX, have_mon ? mon.h : INT_MAX);
+  glfwSetWindowSizeLimits(window, plan.min_w, plan.min_h, GLFW_DONT_CARE, GLFW_DONT_CARE);
+  if (plan.grow) {
+    // Not marked programmatic on purpose: WindowSizeCallback then drops any aspect preset, which
+    // is the truth — the preview region no longer has the ratio the preset promised.
+    glfwSetWindowSize(window, plan.target_w, plan.target_h);
+  }
+  // A window sized to (nearly) the work area still has to SIT in it: the OS places a new window
+  // by its own cascade and a grown one keeps its top-left, so either can end with its bottom rows
+  // under the taskbar (measured on the 150% reference desktop at a 2.25x layout: status bar
+  // hidden). Same clamp ApplyAspectRatio applies after its own resize, frame included.
+  if (have_mon) {
+    int fl = 0;
+    int ft = 0;
+    int fr = 0;
+    int fb = 0;
+    glfwGetWindowFrameSize(window, &fl, &ft, &fr, &fb);
+    int px = 0;
+    int py = 0;
+    glfwGetWindowPos(window, &px, &py);
+    int w = 0;
+    int h = 0;
+    glfwGetWindowSize(window, &w, &h);
+    const int nx = std::max(mon.x + fl, std::min(px, mon.x + mon.w - w - fr));
+    const int ny = std::max(mon.y + ft, std::min(py, mon.y + mon.h - h - fb));
+    if (nx != px || ny != py) {
+      glfwSetWindowPos(window, nx, ny);
+    }
+  }
+}
+
+void RebuildForUiScale(GLFWwindow* window, ImGuiIO& io) {
+  const UiScaleParams params = ApplyUiScaleInputs(io);
+  // The backend's copy of the atlas. Startup does not come through here: the backend uploads its
+  // first texture on its own first NewFrame, and a Create before that would be a second GL
+  // texture the backend's own upload then orphans.
+  ImGui_ImplOpenGL3_DestroyFontsTexture();
+  ImGui_ImplOpenGL3_CreateFontsTexture();
+  ApplyWindowFloorForScale(window, params.layout_scale);
+  gui::g_ui_scale_dirty = false;
+}
+
+}  // namespace
 
 int main(int argc, char** argv) {
 #if defined(LUMICE_ENGINE_DELAY_LOADED)
@@ -150,19 +264,44 @@ int main(int argc, char** argv) {
   // kInitWindowHeight=980 can be silently shrunk by the OS on 1080p displays
   // with a large Dock or 125% DPI scaling, spawning a scrollbar on the right
   // panel. Falls through to defaults on headless / nullptr-monitor environments.
+  //
+  // The creation size is scaled first (doc/gui-visual-language.md §4.1): the user's multiplier is
+  // read from disk here, before the window exists, and the primary monitor's content scale is
+  // the best estimate of the one the window will land on — an estimate for the same reason the
+  // work-area clamp below is one (multi-monitor: the window may open elsewhere), corrected by the
+  // authoritative glfwGetWindowContentScale read once the window exists. Both go through the one
+  // PlanWindowSizeForScale rule the runtime rebuild uses, so creation and rescale cannot disagree.
+  gui::g_ui_scale_multiplier = gui::LoadUiScaleMultiplierAtStartup();
   int init_w = gui::kInitWindowWidth;
   int init_h = gui::kInitWindowHeight;
-  if (GLFWmonitor* primary = glfwGetPrimaryMonitor()) {
-    int wx = 0;
-    int wy = 0;
-    int ww = 0;
-    int wh = 0;
-    glfwGetMonitorWorkarea(primary, &wx, &wy, &ww, &wh);
-    if (ww > 0 && wh > 0) {
-      auto [w, h] = gui::ClampWindowSizeToWorkarea(init_w, init_h, ww, wh);
-      init_w = w;
-      init_h = h;
+  {
+    float startup_monitor_scale = 1.0f;
+    int ww = INT_MAX;
+    int wh = INT_MAX;
+    if (GLFWmonitor* primary = glfwGetPrimaryMonitor()) {
+      float xscale = 1.0f;
+      float yscale = 1.0f;
+      glfwGetMonitorContentScale(primary, &xscale, &yscale);
+      if (xscale > 0.0f) {
+        startup_monitor_scale = xscale;
+      }
+      int wx = 0;
+      int wy = 0;
+      int mw = 0;
+      int mh = 0;
+      glfwGetMonitorWorkarea(primary, &wx, &wy, &mw, &mh);
+      if (mw > 0 && mh > 0) {
+        ww = mw;
+        wh = mh;
+      }
     }
+    const float startup_layout_scale =
+        ResolveUiScaleParams(startup_monitor_scale, gui::g_ui_scale_multiplier).layout_scale;
+    const gui::WindowSizePlan plan = gui::PlanWindowSizeForScale(
+        startup_layout_scale, static_cast<int>(std::lround(gui::kInitWindowWidth * startup_layout_scale)),
+        static_cast<int>(std::lround(gui::kInitWindowHeight * startup_layout_scale)), ww, wh);
+    init_w = plan.target_w;
+    init_h = plan.target_h;
   }
   // "Lumice <version>": beta users run several builds side by side, and a bare "Lumice" on every
   // window is how they got mixed up. GLFW copies the title, so the string need not outlive the
@@ -175,7 +314,27 @@ int main(int argc, char** argv) {
     return 1;
   }
 
-  glfwSetWindowSizeLimits(window, gui::kMinWindowWidth, gui::kMinWindowHeight, GLFW_DONT_CARE, GLFW_DONT_CARE);
+  // The authoritative monitor scale, now that there is a window to ask about. This is the explicit
+  // initialisation of g_monitor_scale_*: the callback below only ever REPLACES it, so a user-
+  // multiplier change on a machine whose monitor never changed still rebuilds against a real
+  // scale rather than the static default. Size limits are set below by ApplyWindowFloorForScale
+  // (not RebuildForUiScale, which is deliberately skipped at startup — see the comment at its
+  // call site a few lines down), from the same PlanWindowSizeForScale rule the creation size came
+  // from.
+  glfwGetWindowContentScale(window, &g_monitor_scale_x, &g_monitor_scale_y);
+  if (!(g_monitor_scale_x > 0.0f)) {
+    g_monitor_scale_x = 1.0f;
+    g_monitor_scale_y = 1.0f;
+  }
+  glfwSetWindowContentScaleCallback(window, [](GLFWwindow*, float xscale, float yscale) {
+    // Inside glfwPollEvents: not a frame boundary, so only record and flag. The rebuild is the
+    // first thing the next frame does.
+    if (xscale > 0.0f) {
+      g_monitor_scale_x = xscale;
+      g_monitor_scale_y = yscale;
+      gui::g_ui_scale_dirty = true;
+    }
+  });
   glfwMakeContextCurrent(window);
   glfwSwapInterval(1);  // VSync on
 
@@ -195,7 +354,11 @@ int main(int argc, char** argv) {
   io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
   io.IniFilename = nullptr;  // Disable imgui.ini persistence (also suppresses viewport position persistence)
 
-  gui::ApplyVisualLanguage(io);
+  // Style, atlas and the window's floor for the authoritative scale — the same two steps
+  // RebuildForUiScale takes at every later change, minus the texture re-upload the backend has not
+  // made yet. If the primary-monitor estimate the creation size used was wrong (the window opened
+  // on another monitor), the floor step grows the window here, before the first frame.
+  ApplyWindowFloorForScale(window, ApplyUiScaleInputs(io).layout_scale);
 
   ImGui_ImplGlfw_InitForOpenGL(window, true);
   ImGui_ImplOpenGL3_Init("#version 330");
@@ -386,6 +549,12 @@ int main(int argc, char** argv) {
       if (ImGui::IsKeyPressed(ImGuiKey_RightBracket)) {
         gui::g_state.right_panel_collapsed = !gui::g_state.right_panel_collapsed;
       }
+    }
+
+    // A scale change — the monitor's (callback, during glfwPollEvents above) or the user's
+    // (Settings, last frame) — lands here, before this frame's NewFrame. See RebuildForUiScale.
+    if (gui::g_ui_scale_dirty) {
+      RebuildForUiScale(window, io);
     }
 
     ImGui_ImplOpenGL3_NewFrame();

@@ -2,6 +2,7 @@
 #define LUMICE_GUI_WINDOW_SIZING_HPP
 
 #include <algorithm>
+#include <climits>
 #include <cmath>
 #include <utility>
 
@@ -19,6 +20,59 @@ inline std::pair<int, int> ClampWindowSizeToWorkarea(int desired_w, int desired_
   int max_w = std::max(kMinWindowWidth, work_w - kWindowDecorationMargin);
   int max_h = std::max(kMinWindowHeight, work_h - kWindowDecorationMargin);
   return { std::min(desired_w, max_w), std::min(desired_h, max_h) };
+}
+
+// What the main window's size limits and (if it must grow) its size become when the UI scale is
+// `layout_scale`. Consumed at startup (before the window exists, with the work area of the primary
+// monitor and cur_w/h = the scaled creation size) and at every scale change (with the live window
+// size and the work area of the monitor it sits on) — one rule for both, see PlanWindowSizeForScale.
+struct WindowSizePlan {
+  int min_w = 0;  // for glfwSetWindowSizeLimits
+  int min_h = 0;
+  bool grow = false;  // whether to call glfwSetWindowSize at all
+  int target_w = 0;   // the size to set when grow is true
+  int target_h = 0;
+};
+
+// Pure function: how the window's minimum size and current size respond to a layout scale.
+//
+// The minimum is kMinWindowWidth/Height × layout_scale — the panels the minimum was chosen to fit
+// (kLeftPanelWidth/kRightPanelWidth and the rest) grow with the scale through UiPx(), so a window
+// held at the 1x minimum would clip them. But the minimum handed to GLFW is clamped to the work
+// area FIRST: glfwSetWindowSizeLimits is a hard floor GLFW enforces against every later resize,
+// so a floor above the work area would pin the window larger than the screen with no way to drag
+// it smaller. Clamping the floor before applying it is what keeps this rule and
+// ClampWindowSizeToWorkarea from contradicting each other. When the scaled minimum does not fit,
+// the window is simply the work area and the layout scrolls — the honest result of a multiplier
+// too large for this screen; the multiplier is not disabled on such a screen, since a preference
+// that is selectable on one machine and greyed out on another is not predictable.
+//
+// kWindowDecorationMargin is deducted at its 1x value on purpose: it stands for the OS's own title
+// bar and borders, which a user multiplier does not enlarge (the monitor-scale half of that growth
+// is inside the 50 px buffer up to 150%).
+//
+// Reads kMinWindowWidth/Height raw rather than through UiPx(): it runs before the first
+// ApplyVisualLanguage, when the outlet is still at 1.0, so the scale is an explicit parameter.
+//
+// grow is true only when the current size is below the new floor — a window the user has already
+// dragged larger is left alone and only its floor moves. work_w/h = INT_MAX means "work area
+// unknown" (headless, monitor lookup failed) and degrades to the unclamped minimum — INT_MAX minus
+// the margin is above any scaled minimum — matching how edit_modals.cpp treats the same failure.
+inline WindowSizePlan PlanWindowSizeForScale(float layout_scale, int cur_w, int cur_h, int work_w, int work_h) {
+  WindowSizePlan plan;
+  const int scaled_min_w = static_cast<int>(std::lround(static_cast<float>(kMinWindowWidth) * layout_scale));
+  const int scaled_min_h = static_cast<int>(std::lround(static_cast<float>(kMinWindowHeight) * layout_scale));
+  plan.min_w = std::min(scaled_min_w, work_w - kWindowDecorationMargin);
+  plan.min_h = std::min(scaled_min_h, work_h - kWindowDecorationMargin);
+  plan.grow = cur_w < plan.min_w || cur_h < plan.min_h;
+  // The same clamp the creation size goes through, so a grown window lands where a created one
+  // would (ClampWindowSizeToWorkarea keeps its own 1x hard floor against a pathological work area;
+  // with work_w/h = INT_MAX it is the identity).
+  const auto [target_w, target_h] =
+      ClampWindowSizeToWorkarea(std::max(cur_w, plan.min_w), std::max(cur_h, plan.min_h), work_w, work_h);
+  plan.target_w = target_w;
+  plan.target_h = target_h;
+  return plan;
 }
 
 // POD describing a monitor's workarea in virtual screen coordinates.

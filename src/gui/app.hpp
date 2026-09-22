@@ -117,6 +117,27 @@ bool BgPhotoOnScreen(const GuiState& state);
 extern bool g_server_is_gpu;
 extern int g_server_worker_count;
 
+// The user's UI scale multiplier (app.ui_scale_multiplier in user_defaults.json; one of
+// kAllowedUiScaleMultipliers) and the flag that asks the frame loop to rebuild the visual language
+// for it. NOT a GuiState field: the scale describes this machine and the person at it, not the
+// document, so it never enters an .lmc and is not in gui_state_tiers.hpp. The multiplier is one of
+// the two INPUTS main.cpp combines (the other is the monitor's content scale, which main.cpp
+// holds); the scale in force is theme.cpp's CurrentUiScale, and nothing else caches it.
+//
+// g_ui_scale_dirty is the one channel to the rebuild — the monitor callback and the Settings
+// control both set it, and main.cpp's RebuildForUiScale clears it — so a scale change from either
+// source takes exactly the same path.
+extern float g_ui_scale_multiplier;
+extern bool g_ui_scale_dirty;
+
+// Change the multiplier for THIS session, now: sets g_ui_scale_multiplier and flags the rebuild,
+// so the next frame is drawn at the new scale. It deliberately does not touch the defaults file —
+// the Settings panel writes that through its own working copy, saved by "Save as my defaults" like
+// every other preference — and the two are allowed to differ (a multiplier tried and not saved
+// outlives the panel's discard; the panel's "(this window: N%)" note is where that shows).
+// "Whoever changes the scale triggers the rebuild" therefore has exactly one implementation.
+void SetUiScaleMultiplierImmediate(float multiplier);
+
 // Put both trackers back to what LUMICE_CreateServer() constructs (CPU, the automatic worker count).
 // MUST be called by any code that creates g_server DIRECTLY rather than through
 // ConstructServerForState — e.g. the test harnesses — or the next DoRun

@@ -318,7 +318,7 @@ float LabelColumnGapX() {
 }
 
 void PushLabelColumnItemWidth() {
-  ImGui::PushItemWidth(-(kLabelColWidth + LabelColumnGapX()));
+  ImGui::PushItemWidth(-(UiPx(kLabelColWidth) + LabelColumnGapX()));
 }
 
 // Compute slider width and prepare IDs for the [slider] [input] Label layout.
@@ -367,10 +367,10 @@ static float PrepareSliderLayout(const char* label, char* display_label_out, siz
   // cancels -- but the CONTROL's right edge is this value, so a mismatched pair moves the controls
   // out of their column while leaving the labels looking correct.
   float slider_w = label_placement == LabelPlacement::kNone ?
-                       (avail_w - kInputWidth - spacing) :
-                       (avail_w - kInputWidth - kLabelColWidth - spacing - label_gap);
-  if (slider_w < 40.0f)
-    slider_w = 40.0f;
+                       (avail_w - UiPx(kInputWidth) - spacing) :
+                       (avail_w - UiPx(kInputWidth) - UiPx(kLabelColWidth) - spacing - label_gap);
+  if (slider_w < UiPx(40.0f))
+    slider_w = UiPx(40.0f);
   return slider_w;
 }
 
@@ -425,7 +425,7 @@ static void BeginLeadingLabelLayout(const char* display_label, const char* label
   ImGui::AlignTextToFramePadding();
   TextWithLabelProbe(display_label, label_id);
   ImGui::SameLine();
-  ImGui::SetCursorScreenPos(ImVec2(line_start.x + kLabelColWidth + LabelColumnGapX(), line_start.y));
+  ImGui::SetCursorScreenPos(ImVec2(line_start.x + UiPx(kLabelColWidth) + LabelColumnGapX(), line_start.y));
 }
 
 // Render the label text after slider + input.
@@ -455,7 +455,7 @@ bool SliderWithInput(const char* label, float* value, float min_val, float max_v
   ImGui::PopItemWidth();
 
   ImGui::SameLine();
-  ImGui::PushItemWidth(kInputWidth);
+  ImGui::PushItemWidth(UiPx(kInputWidth));
   ImGui::InputFloat(input_id, value, 0, 0, fmt);
   const bool input_committed = ImGui::IsItemDeactivatedAfterEdit();
   const bool input_active = ImGui::IsItemActive();
@@ -504,7 +504,7 @@ bool DragFloatField(const char* label, float* value, float min_val, float max_va
   }
   // Full domain per kDragTrackReferenceWidth pixels of drag, in both modes: ImGui divides a
   // logarithmic drag's delta by (max - min) before applying it, which cancels the numerator here.
-  const float speed = (max_val - min_val) / kDragTrackReferenceWidth;
+  const float speed = (max_val - min_val) / UiPx(kDragTrackReferenceWidth);
   const float old_value = *value;
   ImGui::DragFloat(drag_id, value, speed, min_val, max_val, fmt, flags);
 
@@ -549,7 +549,7 @@ bool SliderIntWithInput(const char* label, int* value, int min_val, int max_val,
   ImGui::PopItemWidth();
 
   ImGui::SameLine();
-  ImGui::PushItemWidth(kInputWidth);
+  ImGui::PushItemWidth(UiPx(kInputWidth));
   ImGui::InputInt(input_id, value, 0, 0);
   const bool input_committed = ImGui::IsItemDeactivatedAfterEdit();
   const bool input_active = ImGui::IsItemActive();
@@ -631,7 +631,7 @@ bool RenderAxisDist(const char* label, AxisDist& axis, float mean_min, float mea
     }
   }
   ImGui::Text("%s", label);
-  ImGui::SameLine(100);
+  ImGui::SameLine(UiPx(100.0f));
 
   int dist_type = static_cast<int>(axis.type);
   auto prev_type = axis.type;
@@ -939,7 +939,8 @@ void DrawSyncSwatch(const ImVec2& p_min, float side, int group) {
   if (group == 0) {
     // Independent: a hollow outline. Distinct at a glance from any filled group cell, and it still
     // reads as a clickable target rather than an empty cell.
-    draw_list->AddRect(p_min, ImVec2(p_min.x + side, p_min.y + side), ImGui::GetColorU32(ImGuiCol_TextDisabled), 2.0f);
+    draw_list->AddRect(p_min, ImVec2(p_min.x + side, p_min.y + side), ImGui::GetColorU32(ImGuiCol_TextDisabled),
+                       UiPx(2.0f));
     return;
   }
   // Number centered in the swatch, in whichever of black/white contrasts with the fill. Derived
@@ -1225,7 +1226,7 @@ bool RenderEntryCard(GuiState& state, int layer_idx, int entry_idx) {
     // pushed color with IM_COL32(80, 160, 255, 255) per plan §7 Risk 1
     // (cool-blue accent, no family clash with red Delete or neutral Duplicate).
     ImGui::PushStyleColor(ImGuiCol_Border, ImGui::GetStyleColorVec4(ImGuiCol_NavHighlight));
-    ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, kActiveCardBorder);
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, UiPx(kActiveCardBorder));
   }
 
   // ---- Co-shared highlight ----
@@ -1258,7 +1259,7 @@ bool RenderEntryCard(GuiState& state, int layer_idx, int entry_idx) {
     // beside it. Measured against the panel background (12,12,15) the active border peaks at
     // (50,89,132) and this one at (33,54,79).
     ImGui::PushStyleColor(ImGuiCol_Border, AccentColor(kCoSharedBorderAlpha));
-    ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, kActiveCardBorder);
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, UiPx(kActiveCardBorder));
   }
 
   // ---- Whole-card hover feedback ----
@@ -1357,11 +1358,11 @@ bool RenderEntryCard(GuiState& state, int layer_idx, int entry_idx) {
   float rail_x = right_x + avail_w - rail_btn_w;
   // Width of one row, label column included. Every row is laid out against this single number, so
   // the four right edges cannot drift apart and the rail can never be overlapped by a value.
-  float row_w = std::max(kLabelColWidth + kInputWidth, avail_w - rail_btn_w - spacing_x);
+  float row_w = std::max(UiPx(kLabelColWidth) + UiPx(kInputWidth), avail_w - rail_btn_w - spacing_x);
   // Same gap owner the Weight row's own leading label uses (BeginLeadingLabelLayout), so the four
   // rows put their values in one column rather than two.
-  float value_x = right_x + kLabelColWidth + LabelColumnGapX();
-  float value_w = std::max(20.0f, right_x + row_w - value_x);
+  float value_x = right_x + UiPx(kLabelColWidth) + LabelColumnGapX();
+  float value_w = std::max(UiPx(20.0f), right_x + row_w - value_x);
 
   auto emit_row = [&](int row_idx, const char* row_label, const char* text_content, bool clip_text,
                       const char* tooltip = nullptr) {
@@ -1540,7 +1541,7 @@ bool RenderEntryCard(GuiState& state, int layer_idx, int entry_idx) {
       // which is exactly what sharing is. Drawn after the button so it sits over the frame.
       draw_list->AddRect(slot_pos, ImVec2(slot_pos.x + rail_btn_w, slot_pos.y + rail_btn_h),
                          ImGui::GetColorU32(AccentColor()), ImGui::GetStyle().FrameRounding, 0,
-                         kSharedOutlineThickness);
+                         UiPx(kSharedOutlineThickness));
     }
     if (ImGui::IsItemHovered()) {
       std::string tip = "Link to... — click, then click another card to adopt its crystal and filter.";
