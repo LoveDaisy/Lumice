@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1790088028316,
+  "lastUpdate": 1790088030471,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9488,50 +9488,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "6c3c5042e4f17c60ecba3cbf6ff38267594826fa",
-          "message": "Merge pull request #300 from LoveDaisy/fix/scene-cnt-publish-ordering\n\nfix(server): 记账先于发布，消除批次静默丢失的竞态窗口",
-          "timestamp": "2026-09-03T19:19:00+08:00",
-          "tree_id": "a4a02453a42967340bf873f3b689410b89d032b9",
-          "url": "https://github.com/LoveDaisy/ice_halo_sim/commit/6c3c5042e4f17c60ecba3cbf6ff38267594826fa"
-        },
-        "date": 1788435090471,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 78.9,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 100.1,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 94.5,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 94.6,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "365ba58f71d4354ec1035328c12ffd3427c6492e",
           "message": "Merge pull request #301 from LoveDaisy/feat/crystal-slider-domain-and-format\n\nfeat(gui): 柱晶高度域扩到 1e-4，滑杆显示格式由映射闭式定下界并在编译期判错",
           "timestamp": "2026-09-04T15:31:05+08:00",
@@ -13816,6 +13772,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 92,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c49ef3f32f9385ae0700b887e5f73faaedd7bea4",
+          "message": "Merge pull request #401 from LoveDaisy/feat/gui-desktop-conventions\n\nrefactor(gui): the edit modal's two shapes — Compact and Expanded",
+          "timestamp": "2026-09-22T22:24:18+08:00",
+          "tree_id": "f1e06a712c5d8c584284204571457aa629c4d097",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/c49ef3f32f9385ae0700b887e5f73faaedd7bea4"
+        },
+        "date": 1790088029954,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 92.4,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 99.7,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 98.6,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 90.7,
             "unit": "%"
           }
         ]
