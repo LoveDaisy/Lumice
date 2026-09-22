@@ -221,7 +221,7 @@ Settings 每次打开都重置到默认尺寸（`ImGuiCond_Appearing`），Summa
 |---|---|---|---|
 | TopBar / StatusBar / Left / Right / Preview | `app_panels.cpp` | 固定 | 每帧由 app 重钉；§8 禁区 |
 | Log 面板 | `app_panels.cpp` | 固定（250px） | owner：本来与主窗口同宽，暂不动 |
-| Edit Entry | `edit_modals.cpp` | 半可变（宽固定、高可拉） | 形态待裁：先出原型再落地，落地时一并重拍 `modal_layout` |
+| Edit Entry | `edit_modals.cpp` | 半可变（宽固定、高可拉） | 形态已定：Compact / Expanded 两档，`modal_layout` 参考图已按两档重拍。⚠️ 第三列是**目标**档位，不是现状：两档今天仍是 `AlwaysAutoResize`（高不可拖），「高可拉」尚未落地 |
 | Custom Spectrum / 5 个确认对话框 | `edit_modals.cpp` / `app_panels.cpp` | 自动贴合 | `AlwaysAutoResize`，不动 |
 | Settings | `defaults_panel.cpp` | 半可变 | 宽钉 760；默认 760×584 不变，故 `defaults_panel_layout` 参考图不重拍 |
 | Summary | `config_summary_window.cpp` | 半可变 | 宽钉 1200；出现时贴合内容、上限 min(900, 工作区)，之后高可拉到工作区 |

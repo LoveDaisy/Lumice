@@ -29,7 +29,7 @@ The main window is split into six regions. The same numbering is used in the lab
 | 3 | Right Panel — View Parameters | Scene (Sun + Simulation), View (Projection + Camera), Display (Resolution / EV / Aspect / Background), Overlay |
 | 4 | Render Preview | The lens-projected halo image accumulated as rays land |
 | 5 | Status Bar | Simulation state badge, ray count, current resolution / lens / FOV, file name, log toggle |
-| 6 | Popup Editor | Modal editor opened from a crystal card; edits Crystal / Axis / Filter in three tabs |
+| 6 | Popup Editor | Modal editor opened from a crystal card; edits Crystal / Axis / Filter |
 
 The left and right side panels can be collapsed independently — useful when you want a wider Render Preview during simulation.
 
@@ -99,7 +99,7 @@ Each crystal card reflects one entry in the scattering layer:
 - **Filter row**: a one-line summary of the ray-path filter + `Edit` opens the Filter tab.
 - **Proportion slider** (`prop.`): how this entry is weighted within the layer (0 – 100).
 
-The thumbnail can be drawn in four render styles. The style selector lives in the Popup Editor's persistent left preview pane (shared across the Crystal / Axis / Filter tabs) — see the [Popup Editor](#popup-editor) section.
+The thumbnail can be drawn in four render styles. The style selector lives in the Popup Editor's preview pane, which both of that editor's shapes keep on screen the whole time — see the [Popup Editor](#popup-editor) section.
 
 ![Crystal preview styles: wireframe, hidden line, x-ray, shaded](figs/gui_crystal_styles_combined.jpg)
 
@@ -120,7 +120,7 @@ Two or more crystal cards that share the same crystal configuration and filter c
 
 **fa-link badge** — A chain link icon appears below the hover action buttons on the card's right edge whenever the card belongs to a linked group (at least one other entry shares the same crystal and filter). Hovering the badge shows a tooltip listing the other entries in the group by layer and index. The badge is always visible (not hover-revealed) because it reflects a persistent state.
 
-**"Link to..." — entering pick mode** — Open the popup editor for any card by clicking its `Edit` button. Above the Crystal / Axis / Filter tabs you will see a sharing status line (`Not shared` or `Shared with N other entries`). Click **Link to...** to enter pick mode: the modal closes and a yellow hint bar appears at the top of the left panel:
+**"Link to..." — entering pick mode** — Open the popup editor for any card by clicking its `Edit` button. At the top of the editor you will see a sharing status line (`Not shared` or `Shared with N other entries`). Click **Link to...** to enter pick mode: the modal closes and a yellow hint bar appears at the top of the left panel:
 
 > Pick mode: click an entry to share crystal/filter from Layer X / Entry Y (Esc to cancel)
 
@@ -188,9 +188,18 @@ The central area shows the live, lens-projected halo image. While idle the area 
 
 ## Popup Editor
 
-`Edit` buttons on a crystal card open a single modal editor with three tabs (Crystal / Axis / Filter) and a persistent crystal preview pane on the left side. The preview redraws on every frame so geometry and axis edits are visible immediately. Since v15 the modal can be detached as its own OS window via ImGui multi-viewport — drag the title bar outside the host window to float it. A sharing status row above the tabs shows whether the card belongs to a linked group and provides **Link to...** and **Unlink** actions; see [Linked Entries](#linked-entries).
+`Edit` buttons on a crystal card open a single modal editor holding the same three sections — Crystal, Axis and Filter — plus a crystal preview that redraws every frame, so geometry and axis edits are visible immediately. A sharing status row at the top shows whether the card belongs to a linked group and provides **Link to...** and **Unlink** actions; see [Linked Entries](#linked-entries).
 
-![Popup Editor — Crystal, Axis, Filter tabs](figs/gui_edit_modal_combined.jpg)
+The selector on the button row picks between two shapes, and the choice is saved with the document:
+
+- **Compact** — the preview on top, the three sections stacked below it behind a tab bar. Narrow, and it keeps most of the halo preview behind the modal visible; you click a tab to move between sections. This is the default.
+- **Expanded** — the preview and Crystal in a left column, Axis over Filter in a right column, no tab bar. All three sections are visible at once, at the cost of covering nearly all of the preview.
+
+A document saved by an older version that used the earlier side-by-side tab layout opens as **Expanded**, its closest successor; that layout no longer exists.
+
+Since v15 the modal can be detached as its own OS window via ImGui multi-viewport — drag the title bar outside the host window to float it.
+
+![Popup Editor — Crystal, Axis, Filter](figs/gui_edit_modal_combined.jpg)
 
 ### Crystal Tab
 
