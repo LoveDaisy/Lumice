@@ -134,7 +134,9 @@ struct ConfigSummaryLayer {
 
 struct ConfigSummary {
   // LUMICE_GetVersionString(): the build that produced this picture, first because "which
-  // version" is the question a shared screenshot is most often answering.
+  // version" is the question a shared screenshot is most often answering. gui_test pins it to a
+  // fixed string through gui/config_summary_test_hooks.hpp, so the reference images that capture
+  // this line do not move on every version bump.
   std::string version;
   std::vector<ConfigSummaryGroup> settings;
   std::vector<ConfigSummaryLayer> document;
