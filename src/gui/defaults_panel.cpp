@@ -21,9 +21,16 @@
 #include "gui/edit_modals.hpp"
 #include "gui/field_editor_registry.hpp"
 #include "gui/panels.hpp"
+#include "gui/secondary_window_sizing.hpp"
 #include "gui/theme.hpp"
 #include "gui/user_defaults.hpp"
 #include "imgui.h"
+// imgui_internal.h for ResetDefaultsPanelTestState only: ImGuiWindow::Size / SizeFull and
+// SetWindowSizeAllowFlags have no public-header spelling. Their semantics were read off the pinned
+// vendor tag (CMakeLists.txt: v1.91.8-docking; imgui.cpp SetWindowSize clears the FirstUseEver bit
+// once applied, CreateNewWindow starts a fresh window with every cond bit allowed). An ImGui
+// upgrade must re-check that one function.
+#include "imgui_internal.h"
 
 namespace lumice::gui {
 
@@ -1214,9 +1221,17 @@ void RenderDefaultsPanel(GuiState& state) {
     ImGui::OpenPopup(kDefaultsPanelTitle);
   }
 
-  // Fixed size on appearance rather than AlwaysAutoResize: the content is a table whose height is
-  // a function of how many settings differ, and a modal that changes size with the diff would
-  // make every visual-regression scene a different capture rectangle.
+  // Semi-variable (doc/gui-visual-language.md §9): the width is pinned, the height is the user's
+  // to drag between a floor and the work area, and the DEFAULT size is fixed — not derived from the
+  // content. The content is a table whose height is a function of how many settings differ, and
+  // a modal that changed size with the diff would make every visual-regression scene a different
+  // capture rectangle; that is also why the default is what defaults_panel_layout's references
+  // are shot at and must not move.
+  //
+  // FirstUseEver, not Appearing: the default applies the first time this window exists in the
+  // process, and after that ImGui keeps whatever height the user dragged it to, across closes and
+  // reopens, for the rest of the session (io.IniFilename is null, so never across restarts).
+  // Appearing re-applied the default on every reopen, which threw the user's drag away each time.
   //
   // 608 = the original 560 plus two control rows (GetFrameHeight() + ItemSpacing.y = 15 + 2*3 + 3
   // each), one per control §app gained after its first. The alternative was to let a new row take
@@ -1224,17 +1239,24 @@ void RenderDefaultsPanel(GuiState& state) {
   // rows normally do — but that budget is not slack: shrinking the preset library by one row put
   // an already-expanded preset's std input out of reach, which is a real loss of function for
   // every user, not just for the case that caught it. A control added ABOVE the sections has to
-  // bring its own height with it. Through UiPx: this is a screen size, and the row heights it
-  // budgets for scale with the font.
+  // bring its own height with it. Through UiPx: these are screen sizes, and the row heights they
+  // budget for scale with the font.
   //
-  // Re-applied, not just on appearance, on the frame the UI scale changes: this is the window the
+  // Semi-variable (doc/gui-visual-language.md §9): width pinned, height the user's to drag between
+  // kDefaultsPanelMinHeight and the work area, and kept for the session — hence FirstUseEver for
+  // the default height rather than Appearing, which would overwrite the drag on every reopen.
+  //
+  // Re-applied, not just on first use, on the frame the UI scale changes: this is the window the
   // scale is changed FROM, so it is open at the old size at exactly that moment, and a 760-px
   // panel holding a 1.5x layout shows four settings rows and a clipped action row. See
   // WindowResizeCondForScale (theme.hpp) for the shared rule this and every other floating panel
   // that can stay open across a scale change (analysis_panel.cpp, color_window.cpp) apply.
   static float s_sized_for_scale = 0.0f;
-  const ImGuiCond size_cond = WindowResizeCondForScale(s_sized_for_scale, ImGuiCond_Appearing);
-  ImGui::SetNextWindowSize(ImVec2(UiPx(760.0f), UiPx(608.0f)), size_cond);
+  const ImGuiCond size_cond = WindowResizeCondForScale(s_sized_for_scale, ImGuiCond_FirstUseEver);
+  ImGui::SetNextWindowSizeConstraints(
+      ImVec2(UiPx(kDefaultsPanelWidth), UiPx(kDefaultsPanelMinHeight)),
+      ImVec2(UiPx(kDefaultsPanelWidth), ClampedSecondaryWindowMaxHeight(FLT_MAX)));
+  ImGui::SetNextWindowSize(ImVec2(UiPx(kDefaultsPanelWidth), UiPx(kDefaultsPanelDefaultHeight)), size_cond);
   if (size_cond == ImGuiCond_Always) {
     // Re-centred with the resize: ImGui grows a window from its top-left, and the old centre was
     // computed for the old size, so the larger panel would otherwise run off the bottom.
@@ -1479,6 +1501,16 @@ void ResetDefaultsPanelTestState() {
   // state, which ImGui keeps across closes of this panel, so the measurement should outlive a close
   // exactly as the thing it measures does. Test isolation is the one place that state is torn down.
   g_presets_content_height = 0.0f;
+  // The window's size, which ImGui keeps for the process exactly so that a user's drag survives a
+  // close (RenderDefaultsPanel). In a single-process suite that is a case handing its drag to the
+  // next one, and the defaults_panel_layout references are shot at the default. Written back
+  // directly, and the FirstUseEver bit re-armed so the next SetNextWindowSize counts as the first
+  // again — the window object itself is never destroyed, so without this the default could never
+  // apply a second time.
+  if (ImGuiWindow* w = ImGui::FindWindowByName(kDefaultsPanelTitle)) {
+    w->Size = w->SizeFull = ImVec2(UiPx(kDefaultsPanelWidth), UiPx(kDefaultsPanelDefaultHeight));
+    w->SetWindowSizeAllowFlags |= ImGuiCond_FirstUseEver;
+  }
 }
 
 }  // namespace lumice::gui

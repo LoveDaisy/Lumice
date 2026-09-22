@@ -39,6 +39,19 @@ enum class DefaultsPanelSection {
 // entry point and the window it opens look like two different features.
 inline constexpr const char* kDefaultsPanelTitle = "Settings";
 
+// The panel's geometry (doc/gui-visual-language.md §9, "semi-variable"): the width is pinned, the
+// height opens at the default and is the user's to drag between the floor and the work area. The
+// default is the rectangle defaults_panel_layout's references are shot at. The floor is the
+// shortest window in which both sections at their own floor (a frozen header row plus one row
+// each, RenderDefaultsPanel's min_section_h) and the pinned action row still fit: measured at
+// 357 px by dragging the modal below it in gui_test and reading Size.y + ScrollMax.y with both
+// sections unfolded (306 with only Settings open, 255 with both folded). Below it the modal
+// itself grows a scrollbar and the action row leaves the screen, which is the one state this
+// layout exists to prevent. gui_test reads all three, which is why they are here, not in the .cpp.
+inline constexpr float kDefaultsPanelWidth = 760.0f;
+inline constexpr float kDefaultsPanelDefaultHeight = 584.0f;
+inline constexpr float kDefaultsPanelMinHeight = 360.0f;
+
 // Open the panel and rebuild its row set from the CURRENT state. Also recomputes the checkbox set
 // from scratch and clears the search/filter controls: every opening starts from "here is what your
 // defaults would be if you saved right now, showing everything".

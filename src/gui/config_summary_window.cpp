@@ -1,6 +1,5 @@
 #include "gui/config_summary_window.hpp"
 
-#include <algorithm>
 #include <string>
 #include <vector>
 
@@ -8,6 +7,7 @@
 #include "gui/config_summary.hpp"
 #include "gui/copyable_text.hpp"
 #include "gui/gui_state.hpp"
+#include "gui/secondary_window_sizing.hpp"
 #include "gui/theme.hpp"
 #include "imgui.h"
 
@@ -138,8 +138,7 @@ void RenderConfigSummaryWindow(GuiState& state) {
   // rather than left to the work area alone so that "fits without scrolling" means the same
   // thing on every screen the window is opened on.
   const ImGuiViewport* viewport = ImGui::GetMainViewport();
-  const float max_height =
-      std::min(UiPx(kMaxWindowHeight), viewport->WorkSize.y - 2.0f * ImGui::GetStyle().WindowPadding.y * 4.0f);
+  const float max_height = ClampedSecondaryWindowMaxHeight(UiPx(kMaxWindowHeight));
   ImGui::SetNextWindowSizeConstraints(ImVec2(UiPx(kWindowWidth), 0.0f), ImVec2(UiPx(kWindowWidth), max_height));
   ImGui::SetNextWindowPos(viewport->GetCenter(), ImGuiCond_FirstUseEver, ImVec2(0.5f, 0.5f));
   if (!ImGui::Begin(ICON_FA_FILE_LINES " Summary###ConfigSummary", &state.config_summary_window_open,
