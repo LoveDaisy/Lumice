@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1790093874813,
+  "lastUpdate": 1790093878075,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -4752,54 +4752,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "365ba58f71d4354ec1035328c12ffd3427c6492e",
-          "message": "Merge pull request #301 from LoveDaisy/feat/crystal-slider-domain-and-format\n\nfeat(gui): 柱晶高度域扩到 1e-4，滑杆显示格式由映射闭式定下界并在编译期判错",
-          "timestamp": "2026-09-04T15:31:05+08:00",
-          "tree_id": "c649e8f7c8eff961a4f64eb3b5956f027157ad32",
-          "url": "https://github.com/LoveDaisy/ice_halo_sim/commit/365ba58f71d4354ec1035328c12ffd3427c6492e"
-        },
-        "date": 1788507859297,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 984330.6,
-            "unit": "rays/sec",
-            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 1161256.5,
-            "unit": "rays/sec",
-            "extra": "CPU: Neoverse-N2\\nCores: 4"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 720322.2,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 9V74 80-Core Processor\\nCores: 4"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 638619.2,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "ddc94c02faa23de01ef59b90d25f106843699744",
           "message": "Merge pull request #302 from LoveDaisy/fix/preview-source-gather-half-texel\n\nfix(gui): 预览 shader 从 dual-EA 源纹理取样时多出的半个纹素",
           "timestamp": "2026-09-04T18:44:53+08:00",
@@ -9468,6 +9420,54 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 571122.8,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c3d3aa1d21c41277d8cf6bc76016d7067cc2448b",
+          "message": "Merge pull request #402 from LoveDaisy/feat/summary-reference-version-independence\n\ntest(gui): pin the Summary page's version under gui_test so a release stops reddening its references",
+          "timestamp": "2026-09-23T00:07:08+08:00",
+          "tree_id": "e22276ed331178ee1e226e97b579203a031ed8ba",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/c3d3aa1d21c41277d8cf6bc76016d7067cc2448b"
+        },
+        "date": 1790093877602,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 1124630.5,
+            "unit": "rays/sec",
+            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 1018437.1,
+            "unit": "rays/sec",
+            "extra": "CPU: Neoverse-N2\\nCores: 4"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 841371.5,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 9V74 80-Core Processor\\nCores: 4"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 576388.4,
             "unit": "rays/sec",
             "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
           }
