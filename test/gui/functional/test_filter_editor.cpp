@@ -36,6 +36,7 @@
 #include "gui/edit_modals.hpp"       // IsCurrentModalDApplicable
 #include "gui/file_io.hpp"           // SaveLmcFile / LoadLmcFile
 #include "gui/gui_state.hpp"
+#include "gui/raypath_segments.hpp"  // ParseSummandText / FormatSopExpansionPreview — the preview's own spelling
 #include "test_gui_shared.hpp"
 
 namespace {
@@ -650,6 +651,47 @@ void RegisterFilterEditorTests(ImGuiTestEngine* engine) {
       ctx->Yield(2);
       // Courtesy reset, as in the case above: ResetTestState() pins the flag back regardless.
       gui::g_state.modal_immediate_mode = false;
+    };
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // Copying the preview (592.3).
+  // ---------------------------------------------------------------------------------------------
+
+  // The live preview is plain text with no item of its own (see the file comment), so the copy
+  // menu hangs on an invisible button laid over its rect, "##filter_preview_copy_target" — which
+  // is also what makes the preview reachable from here at all. A right-click on it and "Copy"
+  // puts the preview's text on the clipboard: the same string the commit path formats, spelled
+  // here from the same two helpers on the row's text rather than as a literal. The clipboard is
+  // the process-local stand-in test_gui_main.cpp installs.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "filter_editor", "the_preview_copies_its_text_on_right_click");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      ctx->Yield(2);
+      IM_CHECK_STR_EQ(ImGui::GetClipboardText(), "");
+      OpenFilterModal(ctx);
+      AuthorRow(ctx, 0, "3-5 & entry:2");
+      AuthorRow(ctx, 1, "1-2");
+      IM_CHECK(ctx->ItemExists("**/##filter_preview_copy_target"));
+
+      ctx->ItemClick("**/##filter_preview_copy_target", ImGuiMouseButton_Right);
+      ctx->Yield(2);
+      ctx->SetRef("//$FOCUSED");
+      ctx->ItemClick("**/Copy");
+      ctx->Yield(2);
+      ctx->SetRef("");
+
+      gui::SumOfProducts sop;
+      for (const char* text : { "3-5 & entry:2", "1-2" }) {
+        sop.push_back(gui::SummandText{ text, gui::ParseSummandText(text) });
+      }
+      const std::string want = gui::FormatSopExpansionPreview(sop);
+      IM_CHECK(want.find("OR of 2 row(s):") == 0);
+      IM_CHECK_STR_EQ(ImGui::GetClipboardText(), want.c_str());
+
+      ctx->ItemClick(kCancel);
+      ctx->Yield(2);
     };
   }
 }

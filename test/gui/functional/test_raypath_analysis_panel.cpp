@@ -33,6 +33,7 @@
 #include "imgui_internal.h"
 #include "include/lumice.h"
 #include "test_gui_shared.hpp"
+#include "util/raypath_analysis_display.hpp"
 
 namespace {
 
@@ -2079,6 +2080,96 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       ctx->Yield(2);
       IM_CHECK(row_shown("2-3"));
       ctx->SetRef("");
+    };
+  }
+
+  // Right-click on a row (592.3). Two menu items. "Copy raypath" puts the entry's RAW text on the
+  // clipboard — the " -> " joiner the CSV and the CLI print, not the arrow glyph the row draws —
+  // and "Copy row" puts the row in the CSV's own column order and formatting, which is asserted
+  // against the same call the CSV export makes on the same numbers, not against a literal, so
+  // the two cannot be checked into disagreement. Each item is reached by a fresh right-click:
+  // a chosen menu item closes its popup. The clipboard read back is the process-local stand-in
+  // test_gui_main.cpp installs, so this is what the GUI wrote, on any leg.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "row_menu_copies_raw_text_and_csv_row");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ScopedServerGuard guard;
+      ResetTestState();
+      IM_CHECK_STR_EQ(ImGui::GetClipboardText(), "");  // the reset emptied it
+      auto payload = std::make_shared<gui::AnalysisPayload>();
+      payload->snapshot_generation = 3;
+      payload->roi_mode = LUMICE_RAYPATH_ROI_FULL_SKY;
+      payload->other_energy = 2.0;
+      payload->other_count = 20;
+      const char* const displays[3] = { "3-5", "1-2", "C2(3-5) -> (1-3)" };
+      const double energies[3] = { 5.0, 2.0, 1.0 };
+      for (int i = 0; i < 3; i++) {
+        LUMICE_RaypathHistogramEntry e{};
+        e.chain_len = i == 2 ? 2 : 1;
+        e.chain[0].crystal_id = 1;
+        e.chain[0].segment_len = 2;
+        e.chain[0].segment[0] = 1;
+        e.chain[0].segment[1] = 2;
+        snprintf(e.display, sizeof(e.display), "%s", displays[i]);
+        e.energy = energies[i];
+        e.count = 100 * (i + 1);
+        payload->entries.push_back(e);
+      }
+      payload->entries[1].error_bound = 0.5;  // "1-2" took over a slot: its +/- cell has a bound
+      IM_CHECK(gui::AdoptAnalysisPayloadIfNew(gui::g_state, payload));
+      gui::g_state.analysis.fetched_once = true;
+      gui::g_state.analysis.fetched_generation = 3;
+      gui::g_state.analysis.fetched_symmetry = gui::AnalysisSymmetryBits(gui::g_state);
+      gui::g_state.analysis.window_open = true;
+      ctx->Yield(2);
+      ctx->WindowMove(kWindowRef, ImVec2(60, 60));
+      ctx->Yield(1);
+
+      // Right-click the row drawn as `label`, then choose `item` in the popup that opened.
+      auto choose = [&](const std::string& label, const char* item) {
+        ctx->SetRef(kWindowRef);
+        ctx->ItemClick(("**/" + label).c_str(), ImGuiMouseButton_Right);
+        ctx->Yield(2);
+        ctx->SetRef("//$FOCUSED");
+        ctx->ItemClick((std::string("**/") + item).c_str());
+        ctx->Yield(2);
+        ctx->SetRef("");
+      };
+      // The expected row, from the export's own formatter on the view's own numbers.
+      const auto& view = gui::g_state.analysis_result;
+      auto csv_row = [&](const char* display) {
+        for (size_t row = 0; row < view.display_order.size(); ++row) {
+          const int idx = view.display_order[row];
+          const auto& e = view.payload->entries[static_cast<size_t>(idx)];
+          if (std::strcmp(e.display, display) == 0) {
+            return lumice::FormatRaypathAnalysisCsvRow(e, view.display_energy[static_cast<size_t>(idx)],
+                                                       view.display_cumulative_pct[row], view.display_total);
+          }
+        }
+        return std::string("<no such row>");
+      };
+
+      choose("3-5", "Copy raypath");
+      IM_CHECK_STR_EQ(ImGui::GetClipboardText(), "3-5");
+      choose("3-5", "Copy row");
+      IM_CHECK_STR_EQ(ImGui::GetClipboardText(), csv_row("3-5").c_str());
+      // Not just the label with numbers after it: the row is the CSV's, four comma-separated
+      // columns with Energy % / Cumulative % / +/- in the CSV's precisions.
+      IM_CHECK_STR_EQ(ImGui::GetClipboardText(), "3-5,50.0000,50.0000,10.00");
+      // The takeover row: its +/- cell carries the bound in parentheses, as the CSV's does.
+      choose("1-2", "Copy row");
+      IM_CHECK_STR_EQ(ImGui::GetClipboardText(), csv_row("1-2").c_str());
+      IM_CHECK(std::strstr(ImGui::GetClipboardText(), " (-") != nullptr);
+      // The multi-layer row is found on screen by its glyph label and copies its raw text.
+      const std::string multi_label = gui::JoinerForDisplay(displays[2]);
+      choose(multi_label, "Copy raypath");
+      IM_CHECK_STR_EQ(ImGui::GetClipboardText(), displays[2]);
+      choose(multi_label, "Copy row");
+      IM_CHECK_STR_EQ(ImGui::GetClipboardText(), csv_row(displays[2]).c_str());
+      // A right-click neither selects the row nor is a left click: the selection is untouched.
+      IM_CHECK(!gui::g_state.analysis.selected_entry.has_value());
+      ctx->PopupCloseAll();
+      ctx->Yield(2);
     };
   }
 }

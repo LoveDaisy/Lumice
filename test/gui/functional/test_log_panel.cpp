@@ -208,4 +208,64 @@ void RegisterLogPanelTests(ImGuiTestEngine* engine) {
       IM_CHECK_EQ(gui::g_imgui_log_sink->Size(), (size_t)0);
     };
   }
+
+  // Copy (592.3). The tool row's "Copy" puts every line the panel is showing on the clipboard,
+  // newline-joined, in order; a line's right-click "Copy line" puts that one line there. The
+  // lines are seeded above the sink's level so all of them are "visible" — the sink admits by
+  // level at write time, so what it holds IS the level-filtered set — and the line texts carry
+  // no '/' so the test engine's path syntax cannot read them as a path. Two lines share one
+  // text on purpose: each is its own item (id = its index), so the second one's menu is the
+  // second one's. The clipboard is the process-local stand-in test_gui_main.cpp installs.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "log_panel", "copy_takes_all_visible_lines_or_one_line");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      ScopedLogPanel scoped;
+      gui::g_state.log_panel_open = true;
+      ctx->Yield(4);
+      IM_CHECK(PanelIsUp(ctx));
+      IM_CHECK_STR_EQ(ImGui::GetClipboardText(), "");
+
+      gui::GetGuiLogger().set_level(spdlog::level::trace);
+      GUI_LOG_INFO("copy test first line");
+      GUI_LOG_WARNING("copy test warning line");
+      GUI_LOG_INFO("copy test warning line");  // same text as the line before it
+      ctx->Yield(2);
+      IM_CHECK_EQ(gui::g_imgui_log_sink->Size(), (size_t)3);
+      // The panel's lines as the sink holds them (the formatted messages carry a time stamp and a
+      // level prefix ahead of the text, so the expectation is read off the sink, not hand-spelled).
+      std::vector<std::string> lines;
+      gui::g_imgui_log_sink->ForEachEntry([&lines](size_t, const gui::LogEntry& e) { lines.push_back(e.message); });
+      IM_CHECK_EQ(lines.size(), (size_t)3);
+      IM_CHECK(lines[0].find("copy test first line") != std::string::npos);
+      IM_CHECK(lines[1].find("copy test warning line") != std::string::npos);
+
+      ctx->SetRef("##LogPanel");
+      ctx->ItemClick("Copy");
+      ctx->Yield(2);
+      IM_CHECK_STR_EQ(ImGui::GetClipboardText(), (lines[0] + "\n" + lines[1] + "\n" + lines[2] + "\n").c_str());
+
+      // One line: the second of the two that share a text, addressed by the index the panel
+      // pushes per line ("$$2"), so its menu — and not the first line's — is the one that opens.
+      // The lines carry no line ending of their own (log_sink.hpp Push), which the "Copy" block
+      // above already relied on: one '\n' per line, put there by the panel.
+      ctx->ItemClick(("**/$$2/" + lines[2]).c_str(), ImGuiMouseButton_Right);
+      ctx->Yield(2);
+      ctx->SetRef("//$FOCUSED");
+      ctx->ItemClick("**/Copy line");
+      ctx->Yield(2);
+      IM_CHECK_STR_EQ(ImGui::GetClipboardText(), lines[2].c_str());
+      // And the first line, to show the menu is per line and not "the last one drawn".
+      ctx->SetRef("##LogPanel");
+      ctx->ItemClick(("**/$$0/" + lines[0]).c_str(), ImGuiMouseButton_Right);
+      ctx->Yield(2);
+      ctx->SetRef("//$FOCUSED");
+      ctx->ItemClick("**/Copy line");
+      ctx->Yield(2);
+      IM_CHECK_STR_EQ(ImGui::GetClipboardText(), lines[0].c_str());
+      ctx->SetRef("");
+      ctx->PopupCloseAll();
+      ctx->Yield(2);
+    };
+  }
 }

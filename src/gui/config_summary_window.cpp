@@ -6,6 +6,7 @@
 
 #include "IconsFontAwesome6.h"
 #include "gui/config_summary.hpp"
+#include "gui/copyable_text.hpp"
 #include "gui/gui_state.hpp"
 #include "gui/theme.hpp"
 #include "imgui.h"
@@ -155,6 +156,15 @@ void RenderConfigSummaryWindow(GuiState& state) {
   ImGui::TextDisabled("Lumice");
   ImGui::SameLine();
   ImGui::TextUnformatted(summary.version.c_str());
+  // "Copy as text" at the right end of the version line — a small button (no vertical frame
+  // padding), so the line keeps its text height and the page stays inside the same one-screen
+  // budget it fit before the button existed. The text it copies is the page model, not the
+  // pixels (FormatConfigSummaryAsText).
+  constexpr const char* kCopyLabel = ICON_FA_COPY " Copy as text";
+  const float copy_width = ImGui::CalcTextSize(kCopyLabel).x + 2.0f * ImGui::GetStyle().FramePadding.x;
+  ImGui::SameLine();
+  ImGui::SetCursorPosX(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - copy_width);
+  CopyAllSmallButton(kCopyLabel, [&summary] { return FormatConfigSummaryAsText(summary); });
 
   // Two columns: settings left, document right. A two-column table with no chrome of its own —
   // no header, no borders, no row background — so the only headings on the page are the groups'

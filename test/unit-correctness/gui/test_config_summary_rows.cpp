@@ -529,3 +529,63 @@ TEST(ConfigSummaryRows, LegendSpellsEveryLetterOnce) {
     EXPECT_NE(legend.find(item), std::string::npos) << item;
   }
 }
+
+// The plain-text form of the page (the window's "Copy as text") is built from the page model,
+// never from what ImGui drew, so nothing on the page can be missing from the clipboard: every
+// group title, every `label<TAB>value` line, every table's header and every row's tab-joined
+// cells appear in the text as their own line. Asserted as line membership rather than as one
+// string literal, so the invariant — no information lost between page and text — is what the
+// test holds, not one spelling of the blank lines around it.
+TEST(ConfigSummaryRows, PlainTextCarriesEveryFieldAndCellOfThePage) {
+  const gui::GuiState state = MakeTwoLayerState();
+  const gui::ConfigSummary page = gui::BuildConfigSummary(state);
+  ASSERT_GT(page.settings.size(), 0u);
+  ASSERT_EQ(page.document.size(), 2u);
+  const std::string text = gui::FormatConfigSummaryAsText(page);
+
+  std::set<std::string> lines;
+  {
+    size_t pos = 0;
+    while (pos < text.size()) {
+      const size_t nl = text.find('\n', pos);
+      ASSERT_NE(nl, std::string::npos) << "every line ends in a newline";
+      lines.insert(text.substr(pos, nl - pos));
+      pos = nl + 1;
+    }
+  }
+  auto tab_joined = [](const std::vector<std::string>& cells) {
+    std::string line;
+    for (size_t i = 0; i < cells.size(); ++i) {
+      line += (i > 0 ? "\t" : "") + cells[i];
+    }
+    return line;
+  };
+
+  EXPECT_EQ(lines.count("Lumice " + page.version), 1u);
+  for (const auto& group : page.settings) {
+    EXPECT_EQ(lines.count(group.title), 1u) << group.title;
+    for (const auto& field : group.fields) {
+      EXPECT_EQ(lines.count(field.label + "\t" + field.value), 1u) << group.title << " / " << field.label;
+    }
+  }
+  for (const auto& layer : page.document) {
+    EXPECT_EQ(lines.count(layer.heading), 1u) << layer.heading;
+    for (const gui::ConfigSummaryTable* table : { &layer.crystals, &layer.shape }) {
+      EXPECT_FALSE(table->rows.empty()) << layer.heading << ": a table with no rows is not what this document builds";
+      EXPECT_EQ(lines.count(tab_joined(table->columns)), 1u) << layer.heading << " header";
+      for (const auto& row : table->rows) {
+        EXPECT_EQ(lines.count(tab_joined(row.cells)), 1u) << layer.heading << " row " << row.cells[0];
+      }
+    }
+  }
+  EXPECT_EQ(lines.count(gui::DistributionLegend()), 1u);
+  // And the order is the page's: the settings come before the document, the legend last.
+  EXPECT_LT(text.find(page.settings[0].title), text.find(page.document[0].heading));
+  EXPECT_LT(text.find(page.document[1].heading), text.find(gui::DistributionLegend()));
+  EXPECT_EQ(text.rfind('\n'), text.size() - 1);
+
+  // A document with no layers has no legend: nothing on the page to spell the letters of.
+  gui::ConfigSummary empty = page;
+  empty.document.clear();
+  EXPECT_EQ(gui::FormatConfigSummaryAsText(empty).find(gui::DistributionLegend()), std::string::npos);
+}

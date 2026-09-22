@@ -392,6 +392,45 @@ int CountConfigSummaryFields(const ConfigSummary& summary) {
   return count;
 }
 
+std::string FormatConfigSummaryAsText(const ConfigSummary& summary) {
+  auto join_cells = [](const std::vector<std::string>& cells) {
+    std::string line;
+    for (size_t i = 0; i < cells.size(); ++i) {
+      if (i > 0) {
+        line += '\t';
+      }
+      line += cells[i];
+    }
+    return line;
+  };
+  std::string out = "Lumice " + summary.version + "\n";
+  for (const auto& group : summary.settings) {
+    out += '\n';
+    out += group.title + "\n";
+    for (const auto& field : group.fields) {
+      out += field.label + "\t" + field.value + "\n";
+    }
+  }
+  for (const auto& layer : summary.document) {
+    out += '\n';
+    out += layer.heading + "\n";
+    for (const ConfigSummaryTable* table : { &layer.crystals, &layer.shape }) {
+      if (table->rows.empty()) {
+        continue;
+      }
+      out += join_cells(table->columns) + "\n";
+      for (const auto& row : table->rows) {
+        out += join_cells(row.cells) + "\n";
+      }
+    }
+  }
+  if (!summary.document.empty()) {
+    out += '\n';
+    out += DistributionLegend() + "\n";
+  }
+  return out;
+}
+
 const char* DistributionLetter(AxisDistType type) {
   const int index = static_cast<int>(type);
   if (index < 0 || index >= static_cast<int>(AxisDistType::kCount)) {

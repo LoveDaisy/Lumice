@@ -148,6 +148,14 @@ ConfigSummary BuildConfigSummary(const GuiState& state);
 // are counted directly.
 int CountConfigSummaryFields(const ConfigSummary& summary);
 
+// The page as plain text, for the window's "Copy as text": the version line; each settings group
+// as its title and then one `label<TAB>value` line per field; each layer as its heading and then
+// its two tables, header row and rows alike as tab-joined cells; DistributionLegend last when
+// there is a document. Blocks are separated by a blank line. Built from the page model — the same
+// object the window draws — and never from what ImGui drew, so a field on the page is on the
+// clipboard by construction (test_config_summary_rows.cpp holds that for every field and cell).
+std::string FormatConfigSummaryAsText(const ConfigSummary& summary);
+
 // ---- The distribution notation -------------------------------------------------------------
 //
 // The one spelling of "a value drawn from a distribution" on this page, for the three axis

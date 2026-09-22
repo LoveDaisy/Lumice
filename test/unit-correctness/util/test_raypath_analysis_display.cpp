@@ -171,3 +171,77 @@ TEST(RaypathAnalysisDisplay, CsvFieldQuotingIsRfc4180) {
   EXPECT_EQ(EscapeCsvField("a,b"), "\"a,b\"");
   EXPECT_EQ(EscapeCsvField("say \"hi\""), "\"say \"\"hi\"\"\"");
 }
+
+// FormatRaypathAnalysisCsvRow is the CSV's per-row loop body, split out so the GUI's "Copy row"
+// is the same call. The proof that the split changed nothing, and that the two callers cannot
+// drift: build the whole CSV, then re-derive every raypath line from the row formatter alone and
+// require each to be the same bytes — on a document that exercises every branch a row has (a
+// quoted field, a takeover bound, rows the cone hides, and the cumulative column).
+TEST(RaypathAnalysisDisplay, CsvRowsAreTheRowFormatterByteForByte) {
+  auto entries = MakeEntries({ 2.0, 9.0, 50.0, 60.0 }, 4);
+  entries[1].error_bound = 1.5;
+  std::snprintf(entries[2].display, sizeof(entries[2].display), "%s", "say \"hi\", 4-5");
+  lumice::RaypathAnalysisCsvInputs in;
+  in.roi_mode = LUMICE_RAYPATH_ROI_CONE;
+  in.cone_ring_count = 4;
+  in.cone_request_radius_rad = 8.0f * kDeg2Rad;
+  in.cone_display_radius_deg = 6.0f;
+  in.other_energy = 1.0;
+  in.other_count = 10;
+  const auto view =
+      lumice::ComputeRaypathDisplayOrder(entries, in.roi_mode, in.cone_ring_count, in.cone_request_radius_rad,
+                                         in.cone_display_radius_deg, in.other_energy);
+  const std::string csv = lumice::BuildRaypathAnalysisCsv(entries, view, in, "2026-09-22 12:00:00");
+
+  // The CSV's raypath lines: everything between the header row and the "other" row.
+  std::vector<std::string> csv_rows;
+  {
+    const std::string header = "Raypath,Energy,Cumulative %,+/-\n";
+    size_t pos = csv.find(header);
+    ASSERT_NE(pos, std::string::npos);
+    pos += header.size();
+    while (pos < csv.size()) {
+      const size_t nl = csv.find('\n', pos);
+      ASSERT_NE(nl, std::string::npos);
+      const std::string line = csv.substr(pos, nl - pos);
+      pos = nl + 1;
+      if (line.rfind(lumice::kRaypathAnalysisOtherRowLabel, 0) == 0) {
+        break;
+      }
+      csv_rows.push_back(line);
+    }
+  }
+  // The same rows from the formatter, walking the display order exactly as the CSV does.
+  std::vector<std::string> formatted_rows;
+  int hidden = 0;
+  for (size_t row = 0; row < view.display_order.size(); ++row) {
+    const int idx = view.display_order[row];
+    const auto& e = entries[static_cast<size_t>(idx)];
+    const double energy = view.display_energy[static_cast<size_t>(idx)];
+    if (!(energy > 0.0)) {
+      ++hidden;
+      continue;
+    }
+    formatted_rows.push_back(
+        lumice::FormatRaypathAnalysisCsvRow(e, energy, view.display_cumulative_pct[row], view.display_total));
+  }
+  ASSERT_GT(hidden, 0) << "the cone must hide at least one row for this to cover the skip";
+  ASSERT_GE(csv_rows.size(), 2u);
+  ASSERT_EQ(csv_rows.size(), formatted_rows.size());
+  for (size_t i = 0; i < csv_rows.size(); ++i) {
+    EXPECT_EQ(csv_rows[i], formatted_rows[i]) << "row " << i;
+  }
+  // The branches were really taken: a quoted field and a takeover bound both appear.
+  bool saw_quoted = false;
+  bool saw_bound = false;
+  for (const auto& r : formatted_rows) {
+    saw_quoted = saw_quoted || r.rfind("\"say \"\"hi\"\", 4-5\",", 0) == 0;
+    saw_bound = saw_bound || r.find(" (-") != std::string::npos;
+  }
+  EXPECT_TRUE(saw_quoted);
+  EXPECT_TRUE(saw_bound);
+  // And the formatter has no newline of its own: the CSV's loop appends it.
+  for (const auto& r : formatted_rows) {
+    EXPECT_EQ(r.find('\n'), std::string::npos);
+  }
+}

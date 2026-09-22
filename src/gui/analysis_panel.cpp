@@ -18,6 +18,7 @@
 #include "IconsFontAwesome6.h"
 #include "gui/annotation_anchors.hpp"
 #include "gui/app.hpp"
+#include "gui/copyable_text.hpp"
 #include "gui/destructive_style.hpp"
 #include "gui/edit_modals.hpp"
 #include "gui/file_io.hpp"
@@ -1129,6 +1130,15 @@ void RenderResultList(GuiState& state) {
     if (ImGui::Selectable(label.c_str(), selected, ImGuiSelectableFlags_SpanAllColumns)) {
       state.analysis.selected_entry = std::string(e.display);
     }
+    // Right-click: the raw text (what the CSV and the CLI print, " -> " joiner and all — not the
+    // arrow-glyph label), or the whole row in the CSV's own column order and formatting; the
+    // row is the same call the CSV export makes, so the two cannot drift apart.
+    CopyMenuForLastItem([&e, energy, row, total, &view] {
+      return std::vector<CopyMenuEntry>{
+        { "Copy raypath", std::string(e.display) },
+        { "Copy row", FormatRaypathAnalysisCsvRow(e, energy, view.display_cumulative_pct[row], total) },
+      };
+    });
     ImGui::PopID();
     ImGui::TableSetColumnIndex(1);
     ImGui::Text("%.2f%%", total > 0.0 ? energy / total * 100.0 : 0.0);

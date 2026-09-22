@@ -169,9 +169,18 @@ void OpenCardEditor(ImGuiTestContext* ctx, int index, const char* tab_ref) {
   }
 }
 
+// The process-local clipboard every copy in this binary lands in (see the install site in
+// main()). A std::string rather than the OS clipboard so a case reads back exactly what the GUI
+// wrote, on a headless leg as much as on a desktop, and never what some other process put there.
+namespace {
+std::string g_test_clipboard;
+}  // namespace
+
 void ResetTestState() {
   // Document state (delegates to DoNew: g_state, g_preview, g_crystal_mesh_id/hash)
   gui::DoNew();
+  // What the previous case copied must not be what this case's copy assertion reads back.
+  g_test_clipboard.clear();
 
   // UI view state
   gui::ResetCrystalView();
@@ -557,6 +566,21 @@ int main(int argc, char** argv) {
 
   ImGui_ImplGlfw_InitForOpenGL(window, true);
   ImGui_ImplOpenGL3_Init("#version 330");
+  // Clipboard stand-in, installed AFTER the GLFW backend has set its own so this one wins. The
+  // hooks live on ImGuiPlatformIO since ImGui 1.91.1 — the legacy io.SetClipboardTextFn pair is
+  // only consulted when the platform slot is still ImGui's own default, and GLFW's backend has
+  // just filled that slot, so setting the io pair here would be a silent no-op. GetClipboardText
+  // reads this string back, which is how a case asserts what a "Copy" put there.
+  {
+    ImGuiPlatformIO& platform_io = ImGui::GetPlatformIO();
+    platform_io.Platform_SetClipboardTextFn = [](ImGuiContext* /*ctx*/, const char* text) {
+      g_test_clipboard = text != nullptr ? text : "";
+    };
+    platform_io.Platform_GetClipboardTextFn = [](ImGuiContext* /*ctx*/) -> const char* {
+      return g_test_clipboard.c_str();
+    };
+    platform_io.Platform_ClipboardUserData = nullptr;
+  }
 
   // Initialize GUI state
   gui::g_state = gui::InitDefaultState();

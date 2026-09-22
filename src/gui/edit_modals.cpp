@@ -15,6 +15,7 @@
 #include "IconsFontAwesome6.h"
 #include "gui/app.hpp"
 #include "gui/axis_presets.hpp"
+#include "gui/copyable_text.hpp"
 #include "gui/crystal_preview.hpp"
 #include "gui/crystal_renderer.hpp"
 #include "gui/destructive_style.hpp"
@@ -1596,9 +1597,23 @@ static void RenderSummandRowList() {
     // no caching needed. If the cap ever grows materially, revisit.
     ImGui::Separator();
     ImGui::TextDisabled("Preview:");
+    const std::string preview_text = FormatSopExpansionPreview(live_sop);
     ImGui::PushTextWrapPos(0.0f);
-    ImGui::TextUnformatted(FormatSopExpansionPreview(live_sop).c_str());
+    ImGui::TextUnformatted(preview_text.c_str());
     ImGui::PopTextWrapPos();
+    // Right-click "Copy" over the preview. Plain text has no item id to hang a popup on
+    // (copyable_text.hpp), so an InvisibleButton is laid over the text's own rect — it draws
+    // nothing — and the cursor is then put back exactly where the text had left it, so the
+    // "Clauses" line below and everything after it sit where they did before the overlay
+    // existed (modal_layout's filter_raypath / filter_ee references are the mechanical check).
+    const ImVec2 preview_min = ImGui::GetItemRectMin();
+    const ImVec2 preview_max = ImGui::GetItemRectMax();
+    const ImVec2 cursor_after_text = ImGui::GetCursorScreenPos();
+    ImGui::SetCursorScreenPos(preview_min);
+    ImGui::InvisibleButton("##filter_preview_copy_target",
+                           ImVec2(preview_max.x - preview_min.x, preview_max.y - preview_min.y));
+    CopyMenuForLastItem(preview_text.c_str());
+    ImGui::SetCursorScreenPos(cursor_after_text);
 
     // task-gui-feedback-affordances Step 3 (AC4): show the post-Cartesian
     // expanded clause count against LUMICE_MAX_CONFIG_CLAUSES so the user

@@ -343,4 +343,46 @@ void RegisterConfigSummaryWindowTests(ImGuiTestEngine* engine) {
       ctx->Yield(2);
     };
   }
+
+  {
+    // "Copy as text" (592.3): the button on the version line puts the page on the clipboard as
+    // FormatConfigSummaryAsText spells it — built from the page model the window draws, never
+    // from the pixels — and it follows the live document, so the two-layer document copies as
+    // the two-layer page. What the text carries per field and cell is asserted a layer down
+    // (test_config_summary_rows.cpp); this case is the wiring, and that the button's line did
+    // not push the page past its one-screen budget. The clipboard read back is the process-local
+    // stand-in test_gui_main.cpp installs.
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "config_summary", "copy_as_text_puts_the_page_on_the_clipboard");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      ctx->ItemClick(kButtonRef);
+      ctx->Yield(3);
+      IM_CHECK(SummaryWindow(ctx) != nullptr);
+      IM_CHECK_STR_EQ(ImGui::GetClipboardText(), "");
+
+      ctx->SetRef(kWindowRef);
+      ctx->ItemClick(ICON_FA_COPY " Copy as text");
+      ctx->Yield(2);
+      const std::string default_text = gui::FormatConfigSummaryAsText(gui::BuildConfigSummary(gui::g_state));
+      IM_CHECK_STR_EQ(ImGui::GetClipboardText(), default_text.c_str());
+      IM_CHECK(default_text.find("Lumice ") == 0);
+      IM_CHECK(default_text.find("Layer 1") != std::string::npos);
+
+      SeedTwoLayerDocument();
+      ctx->Yield(3);
+      ctx->ItemClick(ICON_FA_COPY " Copy as text");
+      ctx->Yield(2);
+      const std::string two_layer_text = gui::FormatConfigSummaryAsText(gui::BuildConfigSummary(gui::g_state));
+      IM_CHECK(two_layer_text != default_text);
+      IM_CHECK_STR_EQ(ImGui::GetClipboardText(), two_layer_text.c_str());
+      IM_CHECK(two_layer_text.find("Layer 2") != std::string::npos);
+      IM_CHECK(two_layer_text.find("cza") != std::string::npos);
+      ctx->SetRef("");  // SummaryWindow() resolves the window from the root, not from itself
+      IM_CHECK(SummaryWindow(ctx) != nullptr);
+      IM_CHECK(FitsOneScreen(SummaryWindow(ctx), "two-layer document, with the copy button"));
+
+      ctx->ItemClick(kButtonRef);
+      ctx->Yield(2);
+    };
+  }
 }

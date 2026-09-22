@@ -18,6 +18,7 @@
 #include "gui/color_window.hpp"
 #include "gui/composite_exposure_push.hpp"
 #include "gui/config_summary_window.hpp"
+#include "gui/copyable_text.hpp"
 #include "gui/crystal_preview.hpp"
 #include "gui/defaults_panel.hpp"
 #include "gui/destructive_style.hpp"
@@ -3116,6 +3117,18 @@ void RenderLogPanel(float window_width, float window_height) {
     ImGui::TextDisabled("%s", g_log_file_path.c_str());
   }
 
+  // Copy: every line the panel is showing, newline-joined. Read straight off the sink rather than
+  // the frame cache below (which this row is drawn before): the sink admits a line by level when
+  // it is written, so ForEachEntry already IS the level-filtered set the panel draws.
+  ImGui::SameLine(ImGui::GetWindowWidth() - 120);
+  CopyAllButton("Copy", [] {
+    std::string out;
+    g_imgui_log_sink->ForEachEntry([&out](size_t /*idx*/, const LogEntry& e) {
+      out += e.message;
+      out += '\n';
+    });
+    return out;
+  });
   ImGui::SameLine(ImGui::GetWindowWidth() - 60);
   if (ImGui::Button("Clear")) {
     g_imgui_log_sink->Clear();
@@ -3162,9 +3175,15 @@ void RenderLogPanel(float window_width, float window_height) {
           color = ImGui::GetStyleColorVec4(ImGuiCol_Text);
           break;
       }
+      // A Selectable rather than plain text so the line is an item with an id — what the
+      // right-click menu hangs on (copyable_text.hpp) and what lets a test address the line. The
+      // id is the line's index: two lines with the same text must not share one popup.
+      ImGui::PushID(i);
       ImGui::PushStyleColor(ImGuiCol_Text, color);
-      ImGui::TextUnformatted(entry.message.c_str());
+      ImGui::Selectable(entry.message.c_str(), false);
       ImGui::PopStyleColor();
+      CopyMenuForLastItem([&entry] { return std::vector<CopyMenuEntry>{ { "Copy line", entry.message } }; });
+      ImGui::PopID();
     }
   }
 
