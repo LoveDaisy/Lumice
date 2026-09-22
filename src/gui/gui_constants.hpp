@@ -8,7 +8,15 @@
 
 namespace lumice::gui {
 
-// Layout constants
+// Layout constants — every pixel value in this file is a 1x DESIGN-BASIS quantity (96 dpi, the
+// scale the visual references are shot at), not a screen quantity. A screen-layout constant is
+// read at its point of use through UiPx()/UiPxI() (theme.hpp), the single outlet that applies the
+// UI scale; the four window-size constants below are the one exception — they are consumed by
+// PlanWindowSizeForScale (window_sizing.hpp) with the scale as an explicit parameter, because
+// they are needed before the outlet is initialised. kWindowDecorationMargin is the OS's own
+// quantity and is not scaled at all. Constants that are not screen pixels (times, counts,
+// angles, alphas, FBO resolutions) say so where they are declared and never go through UiPx.
+//
 // Initial window size. Height is bound to the right-panel content footprint:
 // when adding new control groups / expanding existing groups, re-evaluate this
 // constant to avoid spawning a scrollbar on fresh install. On constrained
@@ -25,6 +33,7 @@ constexpr int kMinWindowHeight = 640;
 // compute the usable creation size. 50 px covers the typical 28-32 px
 // decoration on macOS/Windows/Linux with ~1.5x buffer.
 constexpr int kWindowDecorationMargin = 50;
+// Chrome geometry, 1x: read through UiPx() at every use (app_panels.cpp, app.cpp).
 constexpr float kLeftPanelWidth = 400.0f;
 constexpr float kRightPanelWidth = 300.0f;
 constexpr float kTopBarHeight = 40.0f;
@@ -109,13 +118,15 @@ constexpr size_t kFilterSummaryBodyChars = 16;
 // lands the same 230 px full-domain traversal there.
 constexpr float kDragTrackReferenceWidth = 230.0f;
 
-// Card thumbnail (offscreen crystal rendering)
-// Currently used for both FBO render resolution and UI display size.
-// If HiDPI support is needed later, split into separate render/display constants.
+// Card thumbnail: the FBO render resolution ONLY (thumbnail_cache.cpp). The on-screen size is a
+// font-derived quantity computed where the card is drawn (panels.cpp, row_h * 4 - spacing), so it
+// follows the UI scale on its own; this number is a texture size and does not go through UiPx.
 constexpr int kThumbnailSize = 96;
 constexpr int kMaxThumbnailUpdatesPerFrame = 2;
 
-// Vertical gap between stacked hover-action buttons (Delete on top, Duplicate below).
+// Vertical gap between stacked hover-action buttons (Delete on top, Duplicate below). No reader
+// in the tree today (the buttons went to the card's rail); kept as the documented value, and a
+// reader that returns takes it through UiPx.
 constexpr float kHoverBtnGap = 4.0f;
 
 // Border thickness applied to the entry card while its edit modal is open.

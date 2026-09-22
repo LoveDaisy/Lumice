@@ -315,9 +315,11 @@ std::vector<CurveLabelSet> BuildMarkerLabelSets(const AnnotationAnchors& cache, 
     // u_resolution names (preview_renderer.cpp: u_markers_radius_px vs pos_pix), and what the CLI
     // writes as a ring size — which is the canvas's space here, so it needs the same scaling the
     // anchor got. kMarkerLabelGapPx is a clearance in the draw list's own space and needs none: a
-    // gap that scaled with the DPI would read as a different design at every zoom level.
+    // gap that scaled with the canvas zoom would read as a different design at every zoom level.
+    // It does take the UI scale (UiPx), like the label's own font does.
     if (!set.anchors.empty()) {
-      set.anchors[0].py += state.markers_radius_px * CanvasToTargetScale(cache.Height(), vp_h) + kMarkerLabelGapPx;
+      set.anchors[0].py +=
+          state.markers_radius_px * CanvasToTargetScale(cache.Height(), vp_h) + UiPx(kMarkerLabelGapPx);
     }
     ApplyPrintInk(state.renderer, &set);
     out.push_back(std::move(set));
@@ -363,7 +365,7 @@ inline void SetNextPanelGeometry(float x, float y, float w, float h) {
 }  // namespace
 
 void RenderTopBar(float window_width) {
-  SetNextPanelGeometry(0, 0, window_width, kTopBarHeight);
+  SetNextPanelGeometry(0, 0, window_width, UiPx(kTopBarHeight));
   ImGui::Begin("##TopBar", nullptr,
                ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
                    ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoBringToFrontOnFocus);
@@ -744,8 +746,9 @@ constexpr float kAnalysisPickCrosshairArmPt = 10.0f;
 // the main-viewport origin is applied to reach absolute screen space used by
 // ForegroundDrawList and io.MousePos.
 bool OverlayButton(const char* label, float local_x, float local_y) {
+  const float btn_size = UiPx(kCollapseBtnSize);
   ImVec2 pos = MainVpPos(local_x, local_y);
-  ImVec2 max(pos.x + kCollapseBtnSize, pos.y + kCollapseBtnSize);
+  ImVec2 max(pos.x + btn_size, pos.y + btn_size);
 
   ImDrawList* fg = ImGui::GetForegroundDrawList();
   ImGuiIO& io = ImGui::GetIO();
@@ -761,11 +764,11 @@ bool OverlayButton(const char* label, float local_x, float local_y) {
   ImU32 bg_col = ImGui::GetColorU32(clicked ? ImGuiCol_ButtonActive :
                                     hovered ? ImGuiCol_ButtonHovered :
                                               ImGuiCol_Button);
-  fg->AddRectFilled(pos, max, bg_col, 3.0f);
+  fg->AddRectFilled(pos, max, bg_col, UiPx(3.0f));
 
   ImVec2 text_size = ImGui::CalcTextSize(label);
-  float tx = pos.x + (kCollapseBtnSize - text_size.x) * 0.5f;
-  float ty = pos.y + (kCollapseBtnSize - text_size.y) * 0.5f;
+  float tx = pos.x + (btn_size - text_size.x) * 0.5f;
+  float ty = pos.y + (btn_size - text_size.y) * 0.5f;
   fg->AddText(ImVec2(tx, ty), ImGui::GetColorU32(ImGuiCol_Text), label);
 
   return clicked;
@@ -777,9 +780,9 @@ bool OverlayButton(const char* label, float local_x, float local_y) {
 void RenderCollapsedStrip(const char* btn_label, float strip_x, float strip_y, float strip_h, bool* collapsed) {
   ImDrawList* fg = ImGui::GetForegroundDrawList();
   ImVec2 strip_min = MainVpPos(strip_x, strip_y);
-  ImVec2 strip_max = MainVpPos(strip_x + kCollapseBtnSize, strip_y + strip_h);
+  ImVec2 strip_max = MainVpPos(strip_x + UiPx(kCollapseBtnSize), strip_y + strip_h);
   fg->AddRectFilled(strip_min, strip_max, ImGui::GetColorU32(ImGuiCol_WindowBg));
-  float btn_y = strip_y + (strip_h - kCollapseBtnSize) * 0.5f;
+  float btn_y = strip_y + (strip_h - UiPx(kCollapseBtnSize)) * 0.5f;
   if (OverlayButton(btn_label, strip_x, btn_y)) {
     *collapsed = false;
   }
@@ -787,10 +790,10 @@ void RenderCollapsedStrip(const char* btn_label, float strip_x, float strip_y, f
 }  // namespace
 
 void RenderLeftPanel(float window_height) {
-  float panel_height = window_height - kTopBarHeight - kStatusBarHeight;
+  float panel_height = window_height - UiPx(kTopBarHeight) - UiPx(kStatusBarHeight);
 
   if (g_state.left_panel_collapsed) {
-    RenderCollapsedStrip(ICON_FA_CHEVRON_RIGHT, 0, kTopBarHeight, panel_height, &g_state.left_panel_collapsed);
+    RenderCollapsedStrip(ICON_FA_CHEVRON_RIGHT, 0, UiPx(kTopBarHeight), panel_height, &g_state.left_panel_collapsed);
     return;
   }
 
@@ -805,7 +808,7 @@ void RenderLeftPanel(float window_height) {
   std::optional<GuiState::EntryRef> pick_source_at_entry =
       pick_active_at_entry ? g_state.pick_link_source : std::nullopt;
 
-  SetNextPanelGeometry(0, kTopBarHeight, kLeftPanelWidth, panel_height);
+  SetNextPanelGeometry(0, UiPx(kTopBarHeight), UiPx(kLeftPanelWidth), panel_height);
   ImGui::Begin("##LeftPanel", nullptr,
                ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
                    ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse |
@@ -953,7 +956,7 @@ void RenderCircleAnglePopup(std::vector<float>& angles, const float* presets, si
 
   // Custom angle input
   static float custom_angle = 22.0f;
-  ImGui::PushItemWidth(60.0f);
+  ImGui::PushItemWidth(UiPx(60.0f));
   ImGui::InputFloat("##custom_angle", &custom_angle, 0.0f, 0.0f, "%.1f");
   ImGui::PopItemWidth();
   ImGui::SameLine();
@@ -1002,7 +1005,7 @@ void RenderMarkersFamilyPopup() {
   ImGui::AlignTextToFramePadding();
   ImGui::TextUnformatted("Radius");
   ImGui::SameLine();
-  ImGui::SetNextItemWidth(kFieldWidth);
+  ImGui::SetNextItemWidth(UiPx(kFieldWidth));
   DragFloatField("Radius##markers_family", &g_state.markers_radius_px, static_cast<float>(radius_c.min_value),
                  static_cast<float>(radius_c.max_value), radius_c.fmt, radius_c.scale);
 }
@@ -1077,7 +1080,7 @@ void SetupOverlayTableColumns() {
   ImGui::TableSetupColumn("##name", ImGuiTableColumnFlags_WidthStretch);
   ImGui::TableSetupColumn("Line", ImGuiTableColumnFlags_WidthFixed, std::max(check_w, ImGui::CalcTextSize("Line").x));
   ImGui::TableSetupColumn("Label", ImGuiTableColumnFlags_WidthFixed, std::max(check_w, ImGui::CalcTextSize("Label").x));
-  ImGui::TableSetupColumn("Alpha", ImGuiTableColumnFlags_WidthFixed, kAlphaColWidth);
+  ImGui::TableSetupColumn("Alpha", ImGuiTableColumnFlags_WidthFixed, UiPx(kAlphaColWidth));
   ImGui::TableSetupColumn("##fold", ImGuiTableColumnFlags_WidthFixed, fold_w);
 }
 
@@ -1451,16 +1454,16 @@ void RenderOverlaysTab() {
 }  // namespace
 
 void RenderRightPanel(GLFWwindow* window, float window_width, float window_height) {
-  float panel_height = window_height - kTopBarHeight - kStatusBarHeight;
+  float panel_height = window_height - UiPx(kTopBarHeight) - UiPx(kStatusBarHeight);
 
   if (g_state.right_panel_collapsed) {
-    RenderCollapsedStrip(ICON_FA_CHEVRON_LEFT, window_width - kCollapseBtnSize, kTopBarHeight, panel_height,
+    RenderCollapsedStrip(ICON_FA_CHEVRON_LEFT, window_width - UiPx(kCollapseBtnSize), UiPx(kTopBarHeight), panel_height,
                          &g_state.right_panel_collapsed);
     return;
   }
 
-  float panel_x = window_width - kRightPanelWidth;
-  SetNextPanelGeometry(panel_x, kTopBarHeight, kRightPanelWidth, panel_height);
+  float panel_x = window_width - UiPx(kRightPanelWidth);
+  SetNextPanelGeometry(panel_x, UiPx(kTopBarHeight), UiPx(kRightPanelWidth), panel_height);
   ImGui::Begin("##RightPanel", nullptr,
                ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
                    ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoBringToFrontOnFocus);
@@ -1523,7 +1526,7 @@ void RenderRightPanel(GLFWwindow* window, float window_width, float window_heigh
     ImGui::EndDisabled();
     // Between the two pairs rather than inside either: SameLine only moves the draw cursor for the
     // next widget, so it is unaffected by — and does not affect — the disabled stack.
-    ImGui::SameLine(0, 20);
+    ImGui::SameLine(0.0f, UiPx(20.0f));
     const FieldEditorConstraint front_c = ConstraintFor("renderer.front", g_state);
     ImGui::BeginDisabled(!front_c.enabled);
     Checkbox(PanelLabel("renderer.front", "visible").c_str(), &r.front);
@@ -2038,12 +2041,12 @@ void RenderPreviewPanel(GLFWwindow* window, float window_width, float window_hei
     g_state.analysis.cone_marker_dragging = false;
   }
 
-  float left_w = g_state.left_panel_collapsed ? kCollapseBtnSize : kLeftPanelWidth;
-  float right_w = g_state.right_panel_collapsed ? kCollapseBtnSize : kRightPanelWidth;
+  float left_w = UiPx(g_state.left_panel_collapsed ? kCollapseBtnSize : kLeftPanelWidth);
+  float right_w = UiPx(g_state.right_panel_collapsed ? kCollapseBtnSize : kRightPanelWidth);
   float panel_x = left_w;
   float panel_width = window_width - left_w - right_w;
-  float panel_height = window_height - kTopBarHeight - kStatusBarHeight;
-  SetNextPanelGeometry(panel_x, kTopBarHeight, panel_width, panel_height);
+  float panel_height = window_height - UiPx(kTopBarHeight) - UiPx(kStatusBarHeight);
+  SetNextPanelGeometry(panel_x, UiPx(kTopBarHeight), panel_width, panel_height);
   ImGui::Begin("##PreviewPanel", nullptr,
                ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
                    ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoBackground |
@@ -2086,7 +2089,7 @@ void RenderPreviewPanel(GLFWwindow* window, float window_width, float window_hei
     // Store viewport for deferred rendering
     g_preview_vp.active = true;
     g_preview_vp.vp_x = static_cast<int>(panel_x * dpi_scale_x);
-    g_preview_vp.vp_y = static_cast<int>(kStatusBarHeight * dpi_scale_y);  // OpenGL Y is bottom-up
+    g_preview_vp.vp_y = static_cast<int>(UiPx(kStatusBarHeight) * dpi_scale_y);  // OpenGL Y is bottom-up
     g_preview_vp.vp_w = static_cast<int>(panel_width * dpi_scale_x);
     g_preview_vp.vp_h = static_cast<int>(preview_height * dpi_scale_y);
     // Published for the deferred render (and read by the screenshot export, which builds its
@@ -2395,7 +2398,8 @@ void RenderPreviewPanel(GLFWwindow* window, float window_width, float window_hei
           CanvasPixelToPreviewPoint(marker->px, marker->py, dpi_scale_x, dpi_scale_y, &mx, &my);
           const float dx = io.MousePos.x - vp_origin.x - mx;
           const float dy = io.MousePos.y - vp_origin.y - my;
-          marker_hover = dx * dx + dy * dy <= kAnalysisConeMarkerHitRadiusPt * kAnalysisConeMarkerHitRadiusPt;
+          const float hit_r = UiPx(kAnalysisConeMarkerHitRadiusPt);
+          marker_hover = dx * dx + dy * dy <= hit_r * hit_r;
         }
       }
       const ConeInputOwner cone_owner =
@@ -2521,8 +2525,8 @@ void RenderPreviewPanel(GLFWwindow* window, float window_width, float window_hei
           ImDrawList* fg = ImGui::GetForegroundDrawList();
           const ImU32 swatch =
               ImGui::ColorConvertFloat4ToU32(ImVec4((*sampled)[0], (*sampled)[1], (*sampled)[2], 1.0f));
-          const ImVec2 tl(io.MousePos.x + kBgPickSwatchOffsetPt, io.MousePos.y + kBgPickSwatchOffsetPt);
-          const ImVec2 br(tl.x + kBgPickSwatchSizePt, tl.y + kBgPickSwatchSizePt);
+          const ImVec2 tl(io.MousePos.x + UiPx(kBgPickSwatchOffsetPt), io.MousePos.y + UiPx(kBgPickSwatchOffsetPt));
+          const ImVec2 br(tl.x + UiPx(kBgPickSwatchSizePt), tl.y + UiPx(kBgPickSwatchSizePt));
           fg->AddRectFilled(tl, br, swatch);
           fg->AddRect(tl, br, IM_COL32(255, 255, 255, 220));
         }
@@ -2591,10 +2595,9 @@ void RenderPreviewPanel(GLFWwindow* window, float window_width, float window_hei
         ImDrawList* dl = ImGui::GetWindowDrawList();
         const ImU32 colour = ImGui::ColorConvertFloat4ToU32(AccentColor());
         const ImVec2 m = io.MousePos;
-        dl->AddLine(ImVec2(m.x - kAnalysisPickCrosshairArmPt, m.y), ImVec2(m.x + kAnalysisPickCrosshairArmPt, m.y),
-                    colour, 1.5f);
-        dl->AddLine(ImVec2(m.x, m.y - kAnalysisPickCrosshairArmPt), ImVec2(m.x, m.y + kAnalysisPickCrosshairArmPt),
-                    colour, 1.5f);
+        const float arm = UiPx(kAnalysisPickCrosshairArmPt);
+        dl->AddLine(ImVec2(m.x - arm, m.y), ImVec2(m.x + arm, m.y), colour, 1.5f);
+        dl->AddLine(ImVec2(m.x, m.y - arm), ImVec2(m.x, m.y + arm), colour, 1.5f);
         if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
           const std::optional<CanvasPixel> px =
               PreviewPointToCanvasPixel(io.MousePos.x - vp_origin.x, io.MousePos.y - vp_origin.y, dpi_scale_x,
@@ -2623,7 +2626,7 @@ void RenderPreviewPanel(GLFWwindow* window, float window_width, float window_hei
 }
 
 void RenderStatusBar(float window_width, float window_height) {
-  SetNextPanelGeometry(0, window_height - kStatusBarHeight, window_width, kStatusBarHeight);
+  SetNextPanelGeometry(0, window_height - UiPx(kStatusBarHeight), window_width, UiPx(kStatusBarHeight));
   ImGui::Begin("##StatusBar", nullptr,
                ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
                    ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoBringToFrontOnFocus);
@@ -2778,7 +2781,7 @@ void RenderImportWarningPopup() {
     ImGui::TextUnformatted(active_msg.c_str());
     ImGui::Separator();
     ImGui::TextUnformatted("They were simplified on load. Edit the config file / CLI directly to keep the originals.");
-    if (ImGui::Button("OK", ImVec2(80, 0))) {
+    if (ImGui::Button("OK", ImVec2(UiPx(80.0f), 0.0f))) {
       active_msg.clear();
       ImGui::CloseCurrentPopup();
     }
@@ -2809,12 +2812,12 @@ void RenderExportOverwriteConfirmPopup() {
     ImGui::TextUnformatted(kExportOverwriteWarningText);
     ImGui::Separator();
 
-    if (ImGui::Button("Overwrite", ImVec2(120, 0))) {
+    if (ImGui::Button("Overwrite", ImVec2(UiPx(120.0f), 0.0f))) {
       ConfirmPendingConfigJsonExport();
       ImGui::CloseCurrentPopup();
     }
     ImGui::SameLine();
-    if (ImGui::Button("Cancel", ImVec2(80, 0))) {
+    if (ImGui::Button("Cancel", ImVec2(UiPx(80.0f), 0.0f))) {
       CancelPendingConfigJsonExport();
       ImGui::CloseCurrentPopup();
     }
@@ -2877,7 +2880,7 @@ void RenderGuiWarningPopup() {
   if (ImGui::BeginPopupModal("Warning", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
     ImGui::TextUnformatted(g_gui_warning_current.c_str());
     ImGui::Separator();
-    if (ImGui::Button("OK", ImVec2(80, 0))) {
+    if (ImGui::Button("OK", ImVec2(UiPx(80.0f), 0.0f))) {
       // Keep g_gui_warning_current set so the same persistent condition, re-detected on the
       // next debounced commit, is deduped (does not re-open). ClearGuiWarning (on a successful
       // commit) re-arms it.
@@ -2919,7 +2922,7 @@ void RenderUnsavedPopup(GLFWwindow* window) {
     ImGui::Text("You have unsaved changes. Save before continuing?");
     ImGui::Separator();
 
-    if (ImGui::Button("Save", ImVec2(80, 0))) {
+    if (ImGui::Button("Save", ImVec2(UiPx(80.0f), 0.0f))) {
       // task-cleanup-hardening AC4 code-review-01 M1: route through the
       // kModified gate (DoSave) instead of bypassing it via PerformSave. If
       // sim_state == kModified, DoSave() defers to RenderSaveModifiedPopup and
@@ -2933,12 +2936,12 @@ void RenderUnsavedPopup(GLFWwindow* window) {
       ImGui::CloseCurrentPopup();
     }
     ImGui::SameLine();
-    if (ImGui::Button("Don't Save", ImVec2(100, 0))) {
+    if (ImGui::Button("Don't Save", ImVec2(UiPx(100.0f), 0.0f))) {
       ResolvePendingAction(window);
       ImGui::CloseCurrentPopup();
     }
     ImGui::SameLine();
-    if (ImGui::Button("Cancel", ImVec2(80, 0))) {
+    if (ImGui::Button("Cancel", ImVec2(UiPx(80.0f), 0.0f))) {
       g_pending_action = PendingAction::kNone;
       ImGui::CloseCurrentPopup();
     }
@@ -3008,7 +3011,7 @@ void RenderSaveModifiedPopup(GLFWwindow* window) {
     // one additionally requires a live server.
     const bool can_run = CanRunFromModal(g_server != nullptr, g_state.sim_state, g_state.analysis_run_in_progress);
     ImGui::BeginDisabled(!can_run);
-    if (ImGui::Button("Run first", ImVec2(100, 0))) {
+    if (ImGui::Button("Run first", ImVec2(UiPx(100.0f), 0.0f))) {
       DoRun(/*user_initiated=*/true);
       g_pending_save_kind = PendingSaveKind::kNone;
       // Abort any chained New/Open/Quit (see doc comment above) — Run doesn't
@@ -3018,7 +3021,7 @@ void RenderSaveModifiedPopup(GLFWwindow* window) {
     }
     ImGui::EndDisabled();
     ImGui::SameLine();
-    if (ImGui::Button("Save anyway", ImVec2(120, 0))) {
+    if (ImGui::Button("Save anyway", ImVec2(UiPx(120.0f), 0.0f))) {
       switch (g_pending_save_kind) {
         case PendingSaveKind::kSave:
           PerformSave();
@@ -3038,7 +3041,7 @@ void RenderSaveModifiedPopup(GLFWwindow* window) {
       ImGui::CloseCurrentPopup();
     }
     ImGui::SameLine();
-    if (ImGui::Button("Cancel", ImVec2(80, 0))) {
+    if (ImGui::Button("Cancel", ImVec2(UiPx(80.0f), 0.0f))) {
       g_pending_save_kind = PendingSaveKind::kNone;
       // Abort any chained New/Open/Quit — see doc comment above.
       g_pending_action = PendingAction::kNone;
@@ -3060,7 +3063,8 @@ void RenderLogPanel(float window_width, float window_height) {
     return;
   }
 
-  SetNextPanelGeometry(0, window_height - kLogPanelHeight - kStatusBarHeight, window_width, kLogPanelHeight);
+  SetNextPanelGeometry(0, window_height - UiPx(kLogPanelHeight) - UiPx(kStatusBarHeight), window_width,
+                       UiPx(kLogPanelHeight));
   // ##LogPanel intentionally does NOT carry NoBringToFrontOnFocus: it
   // belongs to Layer 3 (floating, raisable) per the z-order convention block
   // at the top of this file. ImGui creates NoBringToFrontOnFocus windows via
@@ -3078,7 +3082,7 @@ void RenderLogPanel(float window_width, float window_height) {
 
   ImGui::Text("GUI");
   ImGui::SameLine();
-  ImGui::PushItemWidth(80);
+  ImGui::PushItemWidth(UiPx(80.0f));
   if (ImGui::Combo("##GuiLevel", &g_state.gui_log_level, kLevelNames, 7)) {
     SetGuiLogLevel(static_cast<spdlog::level::level_enum>(g_state.gui_log_level));
   }
@@ -3087,7 +3091,7 @@ void RenderLogPanel(float window_width, float window_height) {
   ImGui::SameLine();
   ImGui::Text("Core");
   ImGui::SameLine();
-  ImGui::PushItemWidth(80);
+  ImGui::PushItemWidth(UiPx(80.0f));
   if (ImGui::Combo("##CoreLevel", &g_state.core_log_level, kLevelNames, 7)) {
     if (g_server) {
       LUMICE_SetLogLevel(g_server, kLevelMap[g_state.core_log_level]);

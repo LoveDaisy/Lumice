@@ -7,6 +7,7 @@
 #include "IconsFontAwesome6.h"
 #include "gui/config_summary.hpp"
 #include "gui/gui_state.hpp"
+#include "gui/theme.hpp"
 #include "imgui.h"
 
 namespace lumice::gui {
@@ -46,7 +47,7 @@ void DrawLine(const char* table_id, const ConfigSummaryField& field, int row_ind
   if (!ImGui::BeginTable(table_id, 2, ImGuiTableFlags_SizingFixedFit)) {
     return;
   }
-  ImGui::TableSetupColumn("label", ImGuiTableColumnFlags_WidthFixed, kLabelColumnWidth);
+  ImGui::TableSetupColumn("label", ImGuiTableColumnFlags_WidthFixed, UiPx(kLabelColumnWidth));
   ImGui::TableSetupColumn("value", ImGuiTableColumnFlags_WidthStretch);
   ImGui::TableNextRow();
   SetLineBackground(row_index);
@@ -137,8 +138,8 @@ void RenderConfigSummaryWindow(GuiState& state) {
   // thing on every screen the window is opened on.
   const ImGuiViewport* viewport = ImGui::GetMainViewport();
   const float max_height =
-      std::min(kMaxWindowHeight, viewport->WorkSize.y - 2.0f * ImGui::GetStyle().WindowPadding.y * 4.0f);
-  ImGui::SetNextWindowSizeConstraints(ImVec2(kWindowWidth, 0.0f), ImVec2(kWindowWidth, max_height));
+      std::min(UiPx(kMaxWindowHeight), viewport->WorkSize.y - 2.0f * ImGui::GetStyle().WindowPadding.y * 4.0f);
+  ImGui::SetNextWindowSizeConstraints(ImVec2(UiPx(kWindowWidth), 0.0f), ImVec2(UiPx(kWindowWidth), max_height));
   ImGui::SetNextWindowPos(viewport->GetCenter(), ImGuiCond_FirstUseEver, ImVec2(0.5f, 0.5f));
   if (!ImGui::Begin(ICON_FA_FILE_LINES " Summary###ConfigSummary", &state.config_summary_window_open,
                     ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_AlwaysAutoResize |
@@ -161,7 +162,7 @@ void RenderConfigSummaryWindow(GuiState& state) {
   // share one row, so the row's height is the taller column's, and the window's single scroll
   // judgement covers both at once.
   if (ImGui::BeginTable("##summary_columns", 2, ImGuiTableFlags_SizingFixedFit)) {
-    ImGui::TableSetupColumn("settings", ImGuiTableColumnFlags_WidthFixed, kSettingsColumnWidth);
+    ImGui::TableSetupColumn("settings", ImGuiTableColumnFlags_WidthFixed, UiPx(kSettingsColumnWidth));
     ImGui::TableSetupColumn("document", ImGuiTableColumnFlags_WidthStretch);
     ImGui::TableNextRow();
     ImGui::TableNextColumn();

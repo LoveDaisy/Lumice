@@ -25,6 +25,7 @@
 #include "gui/gui_logger.hpp"
 #include "gui/gui_state_reconcile.hpp"
 #include "gui/mono_exposure_scale.hpp"
+#include "gui/theme.hpp"
 #include "gui/user_defaults.hpp"
 #include "gui/window_sizing.hpp"
 #include "util/color_space.hpp"
@@ -273,8 +274,8 @@ void ApplyAspectRatio(GLFWwindow* window, AspectPreset preset, bool portrait, fl
   glfwGetWindowPos(window, &pos_x, &pos_y);
 
   constexpr float kCollapsedStripWidth = 20.0f;  // Must match kCollapseBtnSize in app_panels.cpp
-  float left_w = g_state.left_panel_collapsed ? kCollapsedStripWidth : kLeftPanelWidth;
-  float right_w = g_state.right_panel_collapsed ? kCollapsedStripWidth : kRightPanelWidth;
+  float left_w = UiPx(g_state.left_panel_collapsed ? kCollapsedStripWidth : kLeftPanelWidth);
+  float right_w = UiPx(g_state.right_panel_collapsed ? kCollapsedStripWidth : kRightPanelWidth);
 
   // Select the monitor containing the window center so multi-monitor users do
   // not get yanked back to primary when aspect ratio changes (v11 bug #4).
@@ -307,7 +308,7 @@ void ApplyAspectRatio(GLFWwindow* window, AspectPreset preset, bool portrait, fl
   }
 
   AspectFitResult fit =
-      ResolveAspectFit(win_w, ratio, work_w, work_h, left_w, right_w, kTopBarHeight, kStatusBarHeight);
+      ResolveAspectFit(win_w, ratio, work_w, work_h, left_w, right_w, UiPx(kTopBarHeight), UiPx(kStatusBarHeight));
   int target_w = fit.target_w;
   int target_h = fit.target_h;
 

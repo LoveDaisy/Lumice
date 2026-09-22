@@ -549,7 +549,7 @@ void RenderListControls() {
   // "Search", not 405.4's "Filter": the word now belongs to the control beside it, and two things
   // called Filter that narrow the same list by different rules is the confusion this task is here
   // to remove, not to relocate.
-  g_search_filter.Draw(ICON_FA_MAGNIFYING_GLASS " Search###defaults_search", 240.0f);
+  g_search_filter.Draw(ICON_FA_MAGNIFYING_GLASS " Search###defaults_search", UiPx(240.0f));
 
   // Labels ARE the definitions — the point owner made about this control is that a vague "only
   // show changes" switch is what produced the confusion in the first place, so each option says
@@ -700,14 +700,14 @@ void RenderSettingsTable(GuiState& state, float table_height) {
   // the GUI holds now, what Save would write — and showing the saved value here made "I changed
   // this but have not saved" and "I saved this" render identically.
   ImGui::TableSetupColumn("Origin value", ImGuiTableColumnFlags_WidthStretch, 0.9f);
-  ImGui::TableSetupColumn("Source", ImGuiTableColumnFlags_WidthFixed, 110.0f);
+  ImGui::TableSetupColumn("Source", ImGuiTableColumnFlags_WidthFixed, UiPx(110.0f));
   // The notice column (scrum D8), now with two producers that must stay TELLABLE APART: a pencil
   // for "you changed this value here" and a warning triangle for "the value loaded from your file
   // is outside the allowed range". Sized for both side by side rather than for one, because a row
   // can carry both and hiding one behind the other would make the pair unreadable exactly when it
   // matters most.
-  ImGui::TableSetupColumn("Note", ImGuiTableColumnFlags_WidthFixed, 46.0f);
-  ImGui::TableSetupColumn("##adopt", ImGuiTableColumnFlags_WidthFixed, 24.0f);
+  ImGui::TableSetupColumn("Note", ImGuiTableColumnFlags_WidthFixed, UiPx(46.0f));
+  ImGui::TableSetupColumn("##adopt", ImGuiTableColumnFlags_WidthFixed, UiPx(24.0f));
   // AFTER every TableSetupColumn and BEFORE TableHeadersRow — ImGui's required call order. This one
   // line is the whole of AC1: row 0 (the header) stays put while the body scrolls under it. It is a
   // different mechanism from the section headers staying put (those are simply not inside any
@@ -1000,7 +1000,7 @@ void RenderPresetEntry(const AxisPresetEntry& entry) {
     ImGui::TableSetupColumn("Type", ImGuiTableColumnFlags_WidthStretch, 1.0f);
     ImGui::TableSetupColumn("Mean", ImGuiTableColumnFlags_WidthStretch, 0.8f);
     ImGui::TableSetupColumn("Std", ImGuiTableColumnFlags_WidthStretch, 0.8f);
-    ImGui::TableSetupColumn("!", ImGuiTableColumnFlags_WidthFixed, 24.0f);
+    ImGui::TableSetupColumn("!", ImGuiTableColumnFlags_WidthFixed, UiPx(24.0f));
     ImGui::TableHeadersRow();
 
     if (entry.has_adjustable_zenith_std) {
@@ -1086,7 +1086,7 @@ bool RenderWedgePresetRow(size_t index, const WedgeMillerTriple& triple) {
     // icon needs a hover explanation, and text carries no item to hover — nor an id, which is also
     // what lets a test say "this row is showing a warning" without reading pixels.
     const std::string warning_id = ICON_FA_TRIANGLE_EXCLAMATION "###wedge_preset_warning_" + std::to_string(index);
-    ImGui::Selectable(warning_id.c_str(), false, ImGuiSelectableFlags_NoAutoClosePopups, ImVec2(24.0f, 0.0f));
+    ImGui::Selectable(warning_id.c_str(), false, ImGuiSelectableFlags_NoAutoClosePopups, ImVec2(UiPx(24.0f), 0.0f));
     if (ImGui::IsItemHovered()) {
       ImGui::SetTooltip("%s", fb.message.c_str());
     }
@@ -1384,7 +1384,7 @@ void RenderDefaultsPanel(GuiState& state) {
   // Commit-and-stay rather than commit-and-close: after a save the adopted rows read as "Mine",
   // which IS the confirmation that the write landed, and the failure path (no writable config
   // directory) has somewhere to say so.
-  if (ImGui::Button(ICON_FA_FLOPPY_DISK " Save as my defaults###defaults_save", ImVec2(200.0f, 0.0f))) {
+  if (ImGui::Button(ICON_FA_FLOPPY_DISK " Save as my defaults###defaults_save", ImVec2(UiPx(200.0f), 0.0f))) {
     // Read-only preview of the document CommitCopy is about to write, so "nothing changed" is
     // decided by comparing that document with the one on disk rather than by counting clicks. The
     // count of checked rows would be the wrong measure twice over: it says nothing about §1's
@@ -1417,7 +1417,7 @@ void RenderDefaultsPanel(GuiState& state) {
   // torn down here — the next OpenDefaultsPanel replaces every piece of session state wholesale,
   // so any other way out of this popup (an X, Esc) discards the copy identically without needing
   // its own path.
-  if (ImGui::Button(ICON_FA_XMARK " Close###defaults_close", ImVec2(120.0f, 0.0f))) {
+  if (ImGui::Button(ICON_FA_XMARK " Close###defaults_close", ImVec2(UiPx(120.0f), 0.0f))) {
     state.defaults_panel_open = false;
     ImGui::CloseCurrentPopup();
   }
@@ -1427,7 +1427,7 @@ void RenderDefaultsPanel(GuiState& state) {
   // understate its reach — and a destructive control a user has to scroll 40 rows to find is also
   // one they cannot check the state of before pressing.
   ImGui::SameLine();
-  const float reset_width = 220.0f;
+  const float reset_width = UiPx(220.0f);
   ImGui::SetCursorPosX(ImGui::GetWindowWidth() - reset_width - ImGui::GetStyle().WindowPadding.x);
   PushDestructiveStyle();
   if (ImGui::Button(ICON_FA_TRASH " Reset all my defaults###defaults_reset_all", ImVec2(reset_width, 0.0f))) {

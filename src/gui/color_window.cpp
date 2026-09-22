@@ -336,7 +336,7 @@ void RenderCompositeModeCombo(GuiState& state) {
   }
   ImGui::TextUnformatted("Composite:");
   ImGui::SameLine();
-  ImGui::PushItemWidth(120);
+  ImGui::PushItemWidth(UiPx(120.0f));
   if (ImGui::Combo("##ColorMode", &mode, kModeNames, 3)) {
     state.raypath_color_mode = mode;
   }
@@ -416,7 +416,7 @@ void RenderRefRow(GuiState& state, ColorClassConfig& cls, size_t ref_idx, bool& 
   if (layer_broken) {
     layer_preview = ICON_FA_CIRCLE_EXCLAMATION " " + layer_preview;
   }
-  ImGui::PushItemWidth(90);
+  ImGui::PushItemWidth(UiPx(90.0f));
   if (layer_broken) {
     ImGui::PushStyleColor(ImGuiCol_Text, WarningTextColor());
   }
@@ -460,7 +460,7 @@ void RenderRefRow(GuiState& state, ColorClassConfig& cls, size_t ref_idx, bool& 
   if (crystal_broken) {
     crystal_preview = ICON_FA_CIRCLE_EXCLAMATION " " + crystal_preview;
   }
-  ImGui::PushItemWidth(120);
+  ImGui::PushItemWidth(UiPx(120.0f));
   if (pools.empty() && !crystal_broken) {
     ImGui::TextDisabled("<no placements>");
   } else {
@@ -513,14 +513,14 @@ void RenderRefRow(GuiState& state, ColorClassConfig& cls, size_t ref_idx, bool& 
   // invalid red border while frozen: the text is not participating in the
   // filter, so a "please fix" red frame would be misleading visual noise.
   ImGui::SameLine();
-  ImGui::PushItemWidth(180);
+  ImGui::PushItemWidth(UiPx(180.0f));
   char buf[256];
   std::snprintf(buf, sizeof(buf), "%s", ref.predicate_text.c_str());
   const auto validation = ValidateSingleAtomText(ref.predicate_text);
   const bool invalid = !ref.match_all && validation.state != LUMICE_RAYPATH_VALID;
   if (invalid) {
     ImGui::PushStyleColor(ImGuiCol_Border, DestructiveTextColor());
-    ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.5f);
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, UiPx(1.5f));
   }
   if (ref.match_all) {
     ImGui::BeginDisabled();
@@ -801,7 +801,7 @@ void RenderColorWindow(GuiState& state, LUMICE_Server* server) {
     return;
   }
 
-  ImGui::SetNextWindowSize(ImVec2(720, 480), ImGuiCond_FirstUseEver);
+  ImGui::SetNextWindowSize(ImVec2(UiPx(720.0f), UiPx(480.0f)), ImGuiCond_FirstUseEver);
   ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_FirstUseEver, ImVec2(0.5f, 0.5f));
 
   if (!ImGui::Begin(ICON_FA_PALETTE " Colors", &state.color_window_open,
@@ -1026,7 +1026,7 @@ void RenderColorWindow(GuiState& state, LUMICE_Server* server) {
       int combine_val = std::clamp(cls.combine, 0, 1);
       ImGui::TextUnformatted("Combine:");
       ImGui::SameLine();
-      ImGui::PushItemWidth(80);
+      ImGui::PushItemWidth(UiPx(80.0f));
       if (ImGui::Combo("##combine", &combine_val, kCombineNames, 2)) {
         cls.combine = combine_val;
         // T1: structural (ColorClassStructState.combine) → reconciler routes to hard-reset.
