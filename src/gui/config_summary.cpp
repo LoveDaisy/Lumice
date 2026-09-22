@@ -299,11 +299,24 @@ bool RootKeyHasMainPanelSurface(std::string_view root) {
   }
   return true;
 }
+
+// The version string the page prints, when a test has pinned one. Written only by
+// SetConfigSummaryVersionForTest below, read only by BuildConfigSummary; empty in every product
+// build, which is what makes the product path unconditionally the real version. No synchronization:
+// gui_test writes it from its single-threaded ResetTestState() before any frame is drawn, and
+// nothing else touches it — do not reuse it from a multi-threaded path.
+std::optional<std::string> g_version_override_for_test;
 }  // namespace
+
+// Declared in gui/config_summary_test_hooks.hpp, which this file deliberately does not include —
+// see that header. The signature must match it verbatim; nothing checks that for us.
+void SetConfigSummaryVersionForTest(std::string version) {
+  g_version_override_for_test = std::move(version);
+}
 
 ConfigSummary BuildConfigSummary(const GuiState& state) {
   ConfigSummary summary;
-  summary.version = LUMICE_GetVersionString();
+  summary.version = g_version_override_for_test.value_or(LUMICE_GetVersionString());
 
   // Settings: one group per root key. The known three in their listed order, anything else
   // after them in the order the walk produced it, and the popup-only fields last under their own

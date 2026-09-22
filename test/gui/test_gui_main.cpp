@@ -26,6 +26,7 @@
 #include "gui/analysis_panel.hpp"
 #include "gui/app.hpp"
 #include "gui/color_window.hpp"
+#include "gui/config_summary_test_hooks.hpp"
 #include "gui/config_summary_window.hpp"
 #include "gui/defaults_panel.hpp"
 #include "gui/edit_modals.hpp"
@@ -248,6 +249,13 @@ void ResetTestState() {
   gui::ResetModalState();
   gui::ResetDefaultsPanelTestState();
   gui::ResetConfigSummaryWindowTestState();
+  // The Summary page prints the product version, and the config_summary_layout references capture
+  // that line's pixels — so without a pin, every `project(VERSION ...)` bump turns that group red
+  // for a reason unrelated to the layout under test. Pinned here rather than per-scene, so it is
+  // process-wide across every case: nothing in this suite asserts a literal version string (the
+  // two tests that read ConfigSummary::version at all live in other binaries and compare against
+  // the live value), and a deliberately fake string is the right thing for any capture to carry.
+  gui::SetConfigSummaryVersionForTest("0.0.0-test");
 
   // A widget left ACTIVE by the previous case, which is a leak of the same class as the file-scope
   // statics above and reaches further than any of them. ImGui keeps a drag's working value inside
