@@ -356,6 +356,12 @@ inline ImVec2 MainVpPos(float x, float y) {
 // independent OS viewport. Without SetNextWindowViewport, panels that sit at
 // the viewport edge (e.g. status bar at the bottom row) may be promoted,
 // which makes them appear covered by the host window or float outside it.
+//
+// Exempt from the WindowResizeCondForScale (theme.hpp) audit: every caller below invokes this
+// unconditionally on every frame of the main render loop (never behind an "if just opened" gate),
+// with w/h freshly computed from UiPx() each time — the no-Cond SetNextWindowSize call this makes
+// is ImGuiCond_Always by ImGui's own default, so there is no stale frame for a scale change to
+// land on.
 inline void SetNextPanelGeometry(float x, float y, float w, float h) {
   const ImGuiViewport* vp = ImGui::GetMainViewport();
   ImGui::SetNextWindowPos(ImVec2(vp->Pos.x + x, vp->Pos.y + y));

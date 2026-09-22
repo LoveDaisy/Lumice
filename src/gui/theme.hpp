@@ -61,6 +61,36 @@ int UiPxI(int logical_px);
 // on that same first frame the window has no ImGui-tracked size yet for either cond to override,
 // so the two behave identically there. Every later call at an unchanged scale returns
 // `first_use_cond` as intended.
+//
+// Exhaustive audit of every SetNextWindowSize()/SetNextWindowSizeConstraints() call in src/gui/
+// (`grep -rn "SetNextWindowSize" src/gui/*.cpp`, cross-checked against every
+// BeginPopupModal/ImGui::Begin() call so a window with no explicit size call is not missed
+// either). Three windows use this function: defaults_panel.cpp,
+// analysis_panel.cpp, color_window.cpp — all three are non-modal-in-effect floating windows whose
+// ImGui-tracked size is set only on the appearing/first-use frame and can otherwise stay open
+// indefinitely. Every remaining SetNextWindow* call in src/gui/ is exempt, for one of two
+// independently-immune mechanisms, neither of which this function is needed for:
+//   - ImGuiWindowFlags_AlwaysAutoResize with no explicit width/height passed via SetNextWindowSize
+//     (or with height passed as 0, which ImGui never treats as "set by API" — see imgui.cpp's
+//     window_size_*_set_by_api): the window's SizeFull is recomputed from its own content's ideal
+//     size EVERY frame, not just on appearance, so it already tracks a scale change on the very
+//     next frame. Covers edit_modals.cpp's "Custom Spectrum" modal (SetNextWindowSize's width hint
+//     only survives the true appearing frame; height is 0 and always auto-fit) and every
+//     AlwaysAutoResize confirmation popup in app_panels.cpp (Import Warning, Overwrite Config
+//     File, Warning, Unsaved Changes, Save Modified Config — none of which call SetNextWindowSize
+///    at all).
+//   - SetNextWindowSizeConstraints() called unconditionally every frame the window is open (not
+//     gated by any Cond — ImGui has no cond parameter for constraints): the min/max bound is
+//     re-derived from UiPx() every frame and ImGui clamps the live window size into that bound at
+//     every Begin(), so a scale increase grows the window on its very next frame without needing
+//     an Always-cond SetNextWindowSize. Covers config_summary_window.cpp's Summary window (paired
+//     with AlwaysAutoResize, belt-and-braces) and edit_modals.cpp's "Edit Entry" modal (also paired
+//     with AlwaysAutoResize on its Staged/BeginPopupModal path).
+//   - The five fixed chrome panels (TopBar/LeftPanel/RightPanel/PreviewPanel/StatusBar/LogPanel,
+//     app_panels.cpp via the local SetNextPanelGeometry helper) call SetNextWindowSize with no
+//     Cond argument at all, which ImGui treats as Always — and they do so unconditionally on every
+//     single frame of the main render loop, not behind an "if just opened" gate, so there is no
+//     stale frame for a scale change to be missed on.
 ImGuiCond WindowResizeCondForScale(float& tracked_scale, ImGuiCond first_use_cond);
 
 // The colour+geometry half of ApplyVisualLanguage: grid spacing plus the palette, applied to a

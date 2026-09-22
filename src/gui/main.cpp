@@ -317,8 +317,10 @@ int main(int argc, char** argv) {
   // The authoritative monitor scale, now that there is a window to ask about. This is the explicit
   // initialisation of g_monitor_scale_*: the callback below only ever REPLACES it, so a user-
   // multiplier change on a machine whose monitor never changed still rebuilds against a real
-  // scale rather than the static default. Size limits are set by RebuildForUiScale below, from
-  // the same plan the creation size came from.
+  // scale rather than the static default. Size limits are set below by ApplyWindowFloorForScale
+  // (not RebuildForUiScale, which is deliberately skipped at startup — see the comment at its
+  // call site a few lines down), from the same PlanWindowSizeForScale rule the creation size came
+  // from.
   glfwGetWindowContentScale(window, &g_monitor_scale_x, &g_monitor_scale_y);
   if (!(g_monitor_scale_x > 0.0f)) {
     g_monitor_scale_x = 1.0f;

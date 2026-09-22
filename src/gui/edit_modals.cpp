@@ -2243,6 +2243,10 @@ void RenderEditModals(GuiState& state, GLFWwindow* window) {
     s_prev_modal_layout_vertical = state.modal_layout_vertical;
     ImGui::SetNextWindowSize(ImVec2(min_w, 0.0f));
   }
+  // Called every frame this modal is open, not just on appearance, from min_w/min_h above (fresh
+  // UiPx() each frame): exempt from the WindowResizeCondForScale (theme.hpp) audit on the same
+  // grounds as config_summary_window.cpp's Summary window — ImGui clamps the live window size into
+  // this bound at every Begin(), so a scale change grows the floor on its very next frame.
   MonitorRect mon{};
   if (GetCurrentMonitorWorkArea(window, &mon)) {
     auto max_w = std::max(min_w, static_cast<float>(mon.w - kWindowDecorationMargin));
@@ -2704,6 +2708,10 @@ void RenderSpectrumModal(GuiState& state) {
     g_spectrum_modal_open_pending = false;
   }
 
+  // Width hint only — height 0 means "auto-fit". AlwaysAutoResize below means this whole call is
+  // exempt from the WindowResizeCondForScale (theme.hpp) audit: only the true appearing frame ever
+  // has "set by API" survive, so a scale change on a later frame falls straight through to content
+  // auto-fit, same as every frame's height already does.
   ImGui::SetNextWindowSize(ImVec2(UiPx(480.0f), 0.0f), ImGuiCond_Appearing);
   // p_open (re-armed to true each frame) renders the title-bar × for style parity with the Edit Entry
   // modal; clicking it sets title_x_open false and is handled as a Cancel-equivalent below.
