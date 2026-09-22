@@ -199,6 +199,7 @@ Geometry of the crystal:
 - **Type**: `Prism` (hexagonal prism) or `Pyramid` (hexagonal pyramid with truncated upper / lower wedges).
 - **Shape parameters**: `height` for prisms; `prism_h`, `upper_h`, `lower_h`, and the wedge angles `upper_alpha` / `lower_alpha` for pyramids (the defaults map to Miller indices `{1, 0, -1, 1}`). That four-index label `{h, k, i, l}` and the three integers a config file's `upper_indices` / `lower_indices` carry are the same face written two ways: the third of the four is derived, `i = -(h + k)`, so a JSON document holds only `(h, k, l)` and rejects a four-element array. The rules, and what the wedge angle is measured from, are in [configuration.md](configuration.md#11-reading-the-miller-index-fallback-warning).
 - **Face distance**: six values, one for each prism face, allowing irregular hexagonal cross-sections.
+- **Tab order**: in the shape-parameter table and the Face Distance table, `Tab` / `Shift+Tab` move between the input boxes by column — down every Value box (both tables), then down every Spread box whose row has Rand on — wrapping from the last back to the first. Click into any box to start; the sliders, Sync cells and Rand checkboxes are not stops.
 
 ### Axis Tab
 

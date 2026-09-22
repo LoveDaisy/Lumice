@@ -188,6 +188,7 @@ Render Preview 上的辅助线，以一张表格呈现——每条辅助线回�
 - **Type**：`Prism`（六棱柱）或 `Pyramid`（带上下截顶楔形的六棱锥）。
 - **形状参数**：Prism 用 `height`；Pyramid 用 `prism_h`、`upper_h`、`lower_h` 以及楔角 `upper_alpha` / `lower_alpha`（默认值对应 Miller 指数 `{1, 0, -1, 1}`）。这里显示的四指数标号 `{h, k, i, l}` 与配置文件里 `upper_indices` / `lower_indices` 的三个整数，是同一个面的两种写法：四个数里的第三个是推导出来的，`i = -(h + k)`，所以 JSON 文档只写 `(h, k, l)`，写成四个元素会被拒绝。完整规则以及楔角是从哪儿量起的，见 [configuration_zh.md](configuration_zh.md#12-读懂-miller-指数回退警告)。
 - **Face distance**：六个值，分别对应六个棱面，用于支持非规则六棱截面。
+- **Tab 顺序**：形状参数表与 Face Distance 表里，`Tab` / `Shift+Tab` 在输入框之间**按列**移动——先自上而下走完所有 Value 输入框（两张表），再走勾了 Rand 的行的 Spread 输入框，到末尾回绕到开头。先点进任意一格即可开始；滑杆、Sync 格与 Rand 复选框不在这条顺序里。
 
 ### Axis Tab
 
