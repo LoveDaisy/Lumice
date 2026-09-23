@@ -133,6 +133,20 @@ void BuildEntrySubTris(const CrystalGeom& cf, EntrySubTri* out) {
 
 }  // namespace detail
 
+namespace {
+
+// The one way an entry ray is discarded before it is traced: no source face, no
+// hit face, and the w_<0 sentinel TIR and filter-fail already use, so the root
+// segment reads as terminated (not IsOutgoing()) wherever all_data is scanned
+// and its first hop ends in HitSurface's kInvalidId branch.
+void DiscardEntryRay(RaySeg& r) {
+  r.from_face_ = kInvalidId;
+  r.to_face_ = kInvalidId;
+  r.w_ = -1.0f;
+}
+
+}  // namespace
+
 void InitRay_p_fid(const Crystal& curr_crystal, RayBuffer* ray_buf_ptr) {
   if (!ray_buf_ptr) {
     return;
@@ -151,12 +165,9 @@ void InitRay_p_fid(const Crystal& curr_crystal, RayBuffer* ray_buf_ptr) {
 
   if (subtri_cnt == 0) {
     // No present face with >=3 corners (empty/degenerate crystal — only the
-    // Mesh(0,0) reject path reaches here in production). Zero every ray's weight
-    // so it contributes nothing downstream; HitSurface also guards kInvalidId.
+    // Mesh(0,0) reject path reaches here in production). No ray can enter it.
     for (auto& r : ray_buf) {
-      r.from_face_ = kInvalidId;
-      r.to_face_ = kInvalidId;
-      r.w_ = 0.0f;
+      DiscardEntryRay(r);
     }
     return;
   }
@@ -190,13 +201,12 @@ void InitRay_p_fid(const Crystal& curr_crystal, RayBuffer* ray_buf_ptr) {
   // summed per call, i.e. per sampled shape, which is what makes the g factor
   // come out right without a separate allocation mechanism.
   //
-  // A rejected ray is not resampled: it takes the same zero-weight discard as
-  // the empty-crystal path above (w_=0, to_face_=kInvalidId), so the rays this
-  // entry was dealt keep counting as emitted. The slot stays in the buffer
-  // (callers, including the GPU host-gen fallbacks, index it by the dealt
-  // count); the ray ends at its first hop, where HitSurface turns an entry ray
-  // with no hit face into two terminated segments, the same way the GPU
-  // kernels stop on kInvalidId.
+  // A rejected ray is not resampled: it takes the same discard as the
+  // empty-crystal path above, so the rays this entry was dealt keep counting as
+  // emitted. The slot stays in the buffer (callers, including the GPU host-gen
+  // fallbacks, index it by the dealt count); the ray ends at its first hop,
+  // where HitSurface turns an entry ray with no hit face into two terminated
+  // segments, the same way the GPU kernels stop on kInvalidId.
   float s_total = 0.0f;
   for (size_t j = 0; j < subtri_cnt; j++) {
     s_total += subtri[j].area;
@@ -213,9 +223,7 @@ void InitRay_p_fid(const Crystal& curr_crystal, RayBuffer* ray_buf_ptr) {
     }
     const float accept_prob = s_half > 0.0f ? std::min(1.0f, proj_sum / s_half) : 0.0f;
     if (uniform_rng.GetUniform() >= accept_prob) {
-      r.from_face_ = kInvalidId;
-      r.to_face_ = kInvalidId;
-      r.w_ = 0.0f;
+      DiscardEntryRay(r);
       continue;
     }
     int tri_id = 0;

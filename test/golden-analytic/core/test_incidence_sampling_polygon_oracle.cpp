@@ -33,6 +33,8 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <random>
+#include <string>
 #include <vector>
 
 #include "core/crystal.hpp"
@@ -382,6 +384,170 @@ TEST(IncidenceSamplingOracle, Ac1RedStateCatchesBiasedWeight) {
   // The bias should be gross, not marginal (far beyond the k-sigma band).
   EXPECT_GT(vb.max_abs_z, 10.0 * kAc1KSigma)
       << "injected bias barely exceeded threshold — pick a more directional case to avoid flakiness";
+}
+
+// ---- AC3: projected-area acceptance over the joint (orientation, shape) -------
+//
+// A crystal of shape g in orientation o intercepts sunlight in proportion to
+// its projected area A(o, g, d), so the rays that enter it must be distributed
+// as p(o)·p(g)·A-driven acceptance, while the entry sampler used to keep every
+// ray it was dealt. These cases deal rays from a known p(o)·p(g) — uniformly
+// random orientations (as crystal-local directions) on each fixture shape —
+// and judge the kept rays against the oracle's per-ray acceptance.
+
+constexpr double kAc3KSigma = 5.0;
+constexpr size_t kAc3RaysPerShape = 60000;
+constexpr int kAc3PolarBins = 8;
+
+// Uniform directions on the sphere from the test's own generator (normalized
+// Gaussian triples), not from the production orientation sampler.
+std::vector<std::array<float, 3>> UniformSphereDirections(size_t n, uint32_t seed) {
+  std::mt19937 gen(seed);
+  std::normal_distribution<double> normal(0.0, 1.0);
+  std::vector<std::array<float, 3>> dirs;
+  dirs.reserve(n);
+  while (dirs.size() < n) {
+    const double x = normal(gen);
+    const double y = normal(gen);
+    const double z = normal(gen);
+    const double len = std::sqrt(x * x + y * y + z * z);
+    if (len < 1e-12) {
+      continue;
+    }
+    dirs.push_back({ static_cast<float>(x / len), static_cast<float>(y / len), static_cast<float>(z / len) });
+  }
+  return dirs;
+}
+
+// Orientation bin: the direction's polar angle to the crystal c axis, in equal
+// |d_z| bands (equal solid angle each) — basal-on at one end, edge-on at the other.
+int PolarBin(const std::array<float, 3>& d) {
+  const int b = static_cast<int>(std::abs(d[2]) * kAc3PolarBins);
+  return std::min(b, kAc3PolarBins - 1);
+}
+
+struct Ac3Draw {
+  std::vector<int> bin_of;
+  std::vector<double> accept_prob;
+  std::vector<bool> kept;
+  size_t bin_cnt = 0;
+};
+
+// Deal kAc3RaysPerShape uniformly oriented rays to every fixture (p(g) uniform
+// over the fixtures), bin them by (fixture, polar band), and record the
+// oracle's acceptance and the production sampler's verdict per ray.
+Ac3Draw DrawAcrossFixtures(const std::vector<CrystalFixture>& fixtures, uint32_t seed) {
+  Ac3Draw out;
+  out.bin_cnt = fixtures.size() * kAc3PolarBins;
+  for (size_t fi = 0; fi < fixtures.size(); fi++) {
+    const auto dirs = UniformSphereDirections(kAc3RaysPerShape, seed + static_cast<uint32_t>(fi));
+    const EntrySamples s = test_support::DriveEntrySamplingDirs(fixtures[fi].crystal, dirs, seed + 1000 + fi);
+    const auto faces = test_support::BuildPresentFaceGeom(fixtures[fi].crystal.CfGeom());
+    for (size_t i = 0; i < dirs.size(); i++) {
+      const double d[3] = { dirs[i][0], dirs[i][1], dirs[i][2] };
+      out.bin_of.push_back(static_cast<int>(fi) * kAc3PolarBins + PolarBin(dirs[i]));
+      out.accept_prob.push_back(test_support::ComputeEntryAcceptance(faces, d));
+      out.kept.push_back(s.face[i] != kInvalidId);
+    }
+  }
+  return out;
+}
+
+TEST(IncidenceSamplingOracle, Ac3KeptRaysFollowProjectedAreaOverOrientationAndShape) {
+  const auto fixtures = MakeFixtures();
+  const Ac3Draw draw = DrawAcrossFixtures(fixtures, 31337);
+  const auto v = test_support::CheckEntryAcceptance(draw.bin_of, draw.accept_prob, draw.kept, draw.bin_cnt, kAc3KSigma);
+  for (size_t k = 0; k < v.bins.size(); k++) {
+    const auto& b = v.bins[k];
+    EXPECT_LE(std::abs(b.z), kAc3KSigma) << fixtures[k / kAc3PolarBins].label << " polar band " << k % kAc3PolarBins
+                                         << ": kept " << b.kept << " of " << b.dealt << ", expected " << b.expected;
+  }
+  EXPECT_TRUE(v.pass) << "max|z|=" << v.max_abs_z << " at bin " << v.worst_bin;
+}
+
+// The same kept counts, judged by a route that shares nothing with the oracle's
+// geometry: Cauchy's surface-area formula says a convex body's projected area
+// averaged over uniform orientations is S/4, so a uniformly oriented ray is kept
+// with probability (S/4) / (S/2) = 1/2 on EVERY convex shape. A per-shape rate
+// away from 1/2 means the sampler's A or S is wrong, whatever the oracle says.
+TEST(IncidenceSamplingOracle, Ac3UniformOrientationKeepsHalfOnEveryConvexShape) {
+  const auto fixtures = MakeFixtures();
+  for (size_t fi = 0; fi < fixtures.size(); fi++) {
+    const auto dirs = UniformSphereDirections(kAc3RaysPerShape, 4242 + static_cast<uint32_t>(fi));
+    const EntrySamples s = test_support::DriveEntrySamplingDirs(fixtures[fi].crystal, dirs, 5151 + fi);
+    const auto kept =
+        static_cast<double>(std::count_if(s.face.begin(), s.face.end(), [](IdType f) { return f != kInvalidId; }));
+    const double n = static_cast<double>(dirs.size());
+    // Σ a_i(1-a_i) <= n/4, so sqrt(n/4) bounds the standard deviation.
+    EXPECT_NEAR(kept / n, 0.5, kAc3KSigma * std::sqrt(0.25 / n)) << fixtures[fi].label;
+  }
+}
+
+// Red state: the comparator must reject the sampler this acceptance replaced,
+// which kept every ray it was dealt. The verdict vector is the pre-fix
+// behavior; the dealt rays and the oracle are the real ones.
+TEST(IncidenceSamplingOracle, Ac3RedStateCatchesKeepEverything) {
+  const auto fixtures = MakeFixtures();
+  Ac3Draw draw = DrawAcrossFixtures(fixtures, 31337);
+  std::fill(draw.kept.begin(), draw.kept.end(), true);
+  const auto v = test_support::CheckEntryAcceptance(draw.bin_of, draw.accept_prob, draw.kept, draw.bin_cnt, kAc3KSigma);
+  EXPECT_FALSE(v.pass);
+  EXPECT_GT(v.max_abs_z, 10.0 * kAc3KSigma) << "keep-everything should be a gross departure, not a marginal one";
+}
+
+// ---- AC4: A(o, g, d) <= S(g) / 2 for every convex shape and direction ----------
+//
+// The acceptance divides by S/2 and clamps at 1; the clamp must never bind, or
+// the kept distribution stops being proportional to A. It never does for a
+// convex body: its lit and unlit sides project onto the same shadow, each with
+// area A, and together they are its whole surface, so 2A <= S. This pins that
+// argument mechanically over the fixtures plus the extremes (a thin plate
+// seen face-on is where A comes closest to S/2), and checks the production
+// entry table's S against the oracle's.
+TEST(IncidenceSamplingOracle, Ac4ProjectedAreaNeverExceedsHalfTheSurface) {
+  auto fixtures = MakeFixtures();
+  fixtures.push_back({ "prism_h0.05", Crystal::CreatePrism(0.05f) });
+  fixtures.push_back({ "prism_h10", Crystal::CreatePrism(10.0f) });
+  auto dirs = UniformSphereDirections(4000, 9001);
+  for (const auto& d : CandidateDirections()) {
+    dirs.push_back(d);
+  }
+  for (const auto& f : fixtures) {
+    const CrystalGeom& cf = f.crystal.CfGeom();
+    const double s = test_support::ComputeSurfaceArea(cf);
+    if (s <= 0.0) {
+      ADD_FAILURE() << f.label << ": empty fixture";
+      continue;
+    }
+
+    std::vector<detail::EntrySubTri> sub(detail::CountEntrySubTris(cf));
+    detail::BuildEntrySubTris(cf, sub.data());
+    double s_prod = 0.0;
+    for (const auto& t : sub) {
+      s_prod += t.area;
+    }
+    EXPECT_NEAR(s_prod, s, 1e-5 * s) << f.label << ": the sampler's S disagrees with the oracle's";
+
+    const auto faces = test_support::BuildPresentFaceGeom(cf);
+    double max_ratio = 0.0;
+    std::array<float, 3> worst_d{};
+    for (const auto& dv : dirs) {
+      const double d[3] = { dv[0], dv[1], dv[2] };
+      const double ratio = test_support::ComputeProjectedArea(faces, d) / (0.5 * s);
+      if (ratio > max_ratio) {
+        max_ratio = ratio;
+        worst_d = dv;
+      }
+    }
+    EXPECT_LE(max_ratio, 1.0 + 1e-9) << f.label << " worst d=(" << worst_d[0] << "," << worst_d[1] << "," << worst_d[2]
+                                     << ")";
+    if (std::string(f.label) == "prism_h0.05") {
+      // The face-on plate must come close to the bound, or this case is not
+      // exercising the edge it claims to: there A is the basal area B and S is
+      // 2B plus the thin side band, so A/(S/2) = B/(B + side/2) ≈ 0.899.
+      EXPECT_GT(max_ratio, 0.85) << f.label;
+    }
+  }
 }
 
 // ---- Calibration scan (disabled; run manually to (re)derive thresholds) -------

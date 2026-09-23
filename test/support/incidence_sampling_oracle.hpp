@@ -56,6 +56,7 @@
 #ifndef LUMICE_TEST_SUPPORT_INCIDENCE_SAMPLING_ORACLE_HPP_
 #define LUMICE_TEST_SUPPORT_INCIDENCE_SAMPLING_ORACLE_HPP_
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstddef>
@@ -383,6 +384,51 @@ inline std::vector<double> ComputeProjectedFaceAreaDistribution(const CrystalGeo
   return w;
 }
 
+// The crystal's area projected along d, A(d) = Σ over lit fan triangles of
+// max(-d·n, 0)·area — the normalizer of the face distribution above, and the
+// marginal factor the projected-area acceptance supplies. Double precision,
+// from the corners. The face-geometry overloads let a caller judging many
+// directions on one shape build that geometry once.
+inline double ComputeProjectedArea(const std::vector<OracleFaceGeom>& faces, const double d[3]) {
+  double a = 0.0;
+  for (const OracleFaceGeom& g : faces) {
+    for (const OracleFanTri& t : g.tris) {
+      a += FanTriProjectedArea(t, d);
+    }
+  }
+  return a;
+}
+
+inline double ComputeProjectedArea(const CrystalGeom& cf, const double d[3]) {
+  return ComputeProjectedArea(BuildPresentFaceGeom(cf), d);
+}
+
+// Total surface area S of the fan triangulation (direction-free).
+inline double ComputeSurfaceArea(const std::vector<OracleFaceGeom>& faces) {
+  double s = 0.0;
+  for (const OracleFaceGeom& g : faces) {
+    for (const OracleFanTri& t : g.tris) {
+      s += t.area3d;
+    }
+  }
+  return s;
+}
+
+inline double ComputeSurfaceArea(const CrystalGeom& cf) {
+  return ComputeSurfaceArea(BuildPresentFaceGeom(cf));
+}
+
+// The acceptance probability the entry sampler must apply to a ray of
+// direction d on this shape: min(1, A(d) / (S/2)).
+inline double ComputeEntryAcceptance(const std::vector<OracleFaceGeom>& faces, const double d[3]) {
+  const double half_s = 0.5 * ComputeSurfaceArea(faces);
+  return half_s > 0.0 ? std::min(1.0, ComputeProjectedArea(faces, d) / half_s) : 0.0;
+}
+
+inline double ComputeEntryAcceptance(const CrystalGeom& cf, const double d[3]) {
+  return ComputeEntryAcceptance(BuildPresentFaceGeom(cf), d);
+}
+
 // Analytic in-face target moments (2D, in the face basis) of the sampler's
 // conditional point distribution: an area-weighted mixture over the fan
 // triangles, weighted by each triangle's PROJECTED area (the same weight the
@@ -468,6 +514,94 @@ inline EntrySamples DriveEntrySampling(const Crystal& crystal, const float d[3],
   return out;
 }
 
+// Same as DriveEntrySampling, but each ray gets its own crystal-local direction
+// `dirs[i]` — the shape a batch of randomly oriented crystals presents to the
+// sampler (orientation o and a fixed sun direction are equivalent to a
+// crystal-local d).
+inline EntrySamples DriveEntrySamplingDirs(const Crystal& crystal, const std::vector<std::array<float, 3>>& dirs,
+                                           uint32_t seed) {
+  RandomNumberGenerator::GetInstance().SetSeed(seed);
+  const size_t n = dirs.size();
+  RayBuffer buf(n);
+  buf.size_ = n;
+  for (size_t i = 0; i < n; i++) {
+    RaySeg& r = buf[i];
+    r.d_[0] = dirs[i][0];
+    r.d_[1] = dirs[i][1];
+    r.d_[2] = dirs[i][2];
+    r.w_ = 1.0f;
+    r.from_face_ = kInvalidId;
+    r.to_face_ = kInvalidId;
+  }
+  InitRay_p_fid(crystal, &buf);
+  EntrySamples out;
+  out.face.resize(n);
+  out.point.resize(n);
+  for (size_t i = 0; i < n; i++) {
+    out.face[i] = buf[i].to_face_;
+    out.point[i] = { buf[i].p_[0], buf[i].p_[1], buf[i].p_[2] };
+  }
+  return out;
+}
+
+// ---- AC3: projected-area acceptance ----
+//
+// Each ray i is kept independently with probability a_i = min(1, A_i / (S_i/2)),
+// so the number kept among any subset of rays is Poisson-binomial with mean
+// Σ a_i and variance Σ a_i(1 - a_i). Binning the rays by whatever the caller
+// wants to judge (orientation, shape, ...) and testing every bin checks the
+// kept (o, g) distribution against p(o)·p(g)·a(o, g) exactly, without
+// approximating the ensemble by a closed form: the caller deals the rays from
+// p(o)·p(g), the oracle supplies a_i.
+struct AcceptanceBin {
+  double expected = 0.0;  // Σ a_i over the bin's rays
+  double variance = 0.0;  // Σ a_i (1 - a_i)
+  long long dealt = 0;
+  long long kept = 0;
+  double z = 0.0;
+};
+
+struct Ac3Verdict {
+  bool pass = false;
+  double max_abs_z = 0.0;
+  int worst_bin = -1;
+  std::vector<AcceptanceBin> bins;
+};
+
+// `bin_of[i]` in [0, bin_cnt), `accept_prob[i]` the oracle's a_i, `kept[i]` the
+// sampler's verdict (to_face_ != kInvalidId).
+inline Ac3Verdict CheckEntryAcceptance(const std::vector<int>& bin_of, const std::vector<double>& accept_prob,
+                                       const std::vector<bool>& kept, size_t bin_cnt, double k_sigma) {
+  Ac3Verdict v;
+  v.bins.resize(bin_cnt);
+  for (size_t i = 0; i < bin_of.size(); i++) {
+    AcceptanceBin& b = v.bins[static_cast<size_t>(bin_of[i])];
+    b.expected += accept_prob[i];
+    b.variance += accept_prob[i] * (1.0 - accept_prob[i]);
+    b.dealt++;
+    b.kept += kept[i] ? 1 : 0;
+  }
+  v.pass = true;
+  for (size_t k = 0; k < bin_cnt; k++) {
+    AcceptanceBin& b = v.bins[k];
+    const double diff = static_cast<double>(b.kept) - b.expected;
+    if (b.variance > 0.0) {
+      b.z = diff / std::sqrt(b.variance);
+    } else if (std::abs(diff) > 0.5) {
+      // Every a_i is exactly 0 or 1 in this bin: the outcome is deterministic.
+      b.z = diff > 0.0 ? 1e9 : -1e9;
+    }
+    if (std::abs(b.z) > v.max_abs_z) {
+      v.max_abs_z = std::abs(b.z);
+      v.worst_bin = static_cast<int>(k);
+    }
+    if (std::abs(b.z) > k_sigma) {
+      v.pass = false;
+    }
+  }
+  return v;
+}
+
 // ---- AC1: per-face projected-area distribution ----
 struct Ac1Verdict {
   bool pass = false;
@@ -489,12 +623,22 @@ inline Ac1Verdict CheckProjectedAreaDistribution(const Crystal& crystal, const f
                                                  const std::vector<IdType>& observed_faces, double k_sigma,
                                                  double min_expected = 30.0) {
   Ac1Verdict v;
-  v.sample_n = observed_faces.size();
   v.expected_prob = ComputeProjectedFaceAreaDistribution(crystal.CfGeom(), d);
   const size_t face_cnt = v.expected_prob.size();
   v.observed_count.assign(face_cnt, 0);
+  // The target is the face distribution GIVEN that the ray entered: a ray the
+  // projected-area acceptance discarded (kInvalidId) is not a draw from it, so
+  // the binomial n counts entered rays only. The acceptance decision reads the
+  // scalar Σ proj_prob alone, never which face would be picked, so conditioning
+  // on it leaves the face distribution untouched — CheckEntryAcceptance judges
+  // the discard itself. An entered ray with an out-of-range id still counts
+  // toward n (and matches no face), so a numbering drift cannot hide here.
   for (IdType f : observed_faces) {
-    if (f != kInvalidId && f < face_cnt) {
+    if (f == kInvalidId) {
+      continue;
+    }
+    v.sample_n++;
+    if (f < face_cnt) {
       v.observed_count[f]++;
     }
   }
