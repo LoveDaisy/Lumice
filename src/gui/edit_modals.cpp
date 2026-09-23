@@ -162,6 +162,10 @@ static float g_edit_modal_flex_pane_h = 0.0f;
 static float g_edit_modal_flex_pane_min_h = 0.0f;
 // WindowResizeCondForScale's per-window tracker (theme.hpp): a scale change re-fits the window.
 static float g_edit_modal_sized_for_scale = 0.0f;
+// Test-only override for the monitor-derived max_h (see TestSetEditModalMaxHeightOverride);
+// negative means "use the real monitor". Lets a gui_test exercise the work-area clamp path
+// (EditModalFlexPaneHeight's `!user_owns` branch) without a physical small display.
+static float g_test_edit_modal_max_h_override = -1.0f;
 
 // The Expanded layout's three section headers, in the order they are drawn: Crystal (left column),
 // Axis and Filter (right column). Index into g_modal_section_header_y.
@@ -1956,6 +1960,11 @@ void ResetModalState() {
   ResetHeightFollow(g_edit_modal_height);
   g_edit_modal_fixed_part_h = 0.0f;
   g_edit_modal_flex_pane_min_h = 0.0f;
+  g_test_edit_modal_max_h_override = -1.0f;
+  // Mirrors the height-state reset above: without this, a test that reads a header's y before the
+  // Expanded layout has redrawn this process would see a previous case's stale coordinate instead
+  // of the "not drawn yet" sentinel (code-review round 1 Minor-1).
+  g_modal_section_header_y = { -1.0f, -1.0f, -1.0f };
 }
 
 void ClearAxisCustomMemory() {
@@ -1986,6 +1995,10 @@ float TestGetModalSectionHeaderY(const char* title) {
     }
   }
   return -1.0f;
+}
+
+void TestSetEditModalMaxHeightOverride(float max_h) {
+  g_test_edit_modal_max_h_override = max_h;
 }
 
 bool IsCurrentModalDApplicable() {
@@ -2318,7 +2331,8 @@ constexpr float kModalAxisSectionRows = 11.0f;
 // clicking it never makes.
 static void RenderModalSectionHeader(const char* title, bool dirty, bool show_dirty) {
   const bool marked = show_dirty && dirty;
-  ImGui::SeparatorText(marked ? (std::string(title) + " *").c_str() : title);
+  const std::string marked_label = marked ? std::string(title) + " *" : std::string();
+  ImGui::SeparatorText(marked ? marked_label.c_str() : title);
   for (size_t i = 0; i < kModalSectionTitles.size(); ++i) {
     if (std::strcmp(kModalSectionTitles[i], title) == 0) {
       g_modal_section_header_y[i] = ImGui::GetItemRectMin().y;
@@ -2486,6 +2500,12 @@ void RenderEditModals(GuiState& state, GLFWwindow* window) {
   MonitorRect mon{};
   if (GetCurrentMonitorWorkArea(window, &mon)) {
     max_h = std::max(static_cast<float>(kMinWindowHeight), static_cast<float>(mon.h - kWindowDecorationMargin));
+  }
+  // Test-only: lets a gui_test force the work-area clamp path (EditModalFlexPaneHeight's
+  // `!user_owns` branch) deterministically, standing in for a physical small-screen regression
+  // (AC 1b) that this suite cannot otherwise exercise. See TestSetEditModalMaxHeightOverride.
+  if (g_test_edit_modal_max_h_override >= 0.0f) {
+    max_h = g_test_edit_modal_max_h_override;
   }
   // The shortest the user may drag it: everything that is not the flexible pane, plus the pane's own
   // floor — so the action row is always reachable without the window itself scrolling.

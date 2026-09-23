@@ -359,6 +359,44 @@ bool DraggedHeightKeepsTheActionRowInside(ImGuiTestContext* ctx, bool compact) {
   return true;
 }
 
+// The other half of the semi-variable window's clamp behaviour: when the work area cannot fit the
+// window's natural content (AC 1b's 1366x768 regression — the reason this task exists), the window
+// itself shrinks to the work area and the layout's flexible pane gives up the difference, the same
+// as a user's drag does, but reached through EditModalFlexPaneHeight's `!user_owns` branch instead
+// of the `user_owns` one DraggedHeightKeepsTheActionRowInside above exercises — that test never
+// drives this branch, since dragging flips follows_content to false before EditModalFlexPaneHeight
+// is ever called with it true. No physical small monitor is available to this suite, so the clamp
+// is forced with TestSetEditModalMaxHeightOverride standing in for GetCurrentMonitorWorkArea (code
+// review round 1 Major-1: this path had no automated or manual coverage). Same three checks as the
+// drag case, at the same magnitude (natural height - 200px), plus a fourth: lifting the override
+// hands the height back to content-following, which a genuine drag never does. Returns false on the
+// first failed check; the caller's ScopedPopups closes what is left open.
+bool WorkAreaClampKeepsTheActionRowInside(ImGuiTestContext* ctx, bool compact) {
+  gui::g_state.modal_layout_compact = compact;
+  ctx->Yield(2);
+  OpenCardEditor(ctx, 0, kCrystalTabRef);
+  ctx->Yield(6);
+  ImGuiWindow* win = ctx->GetWindowByRef("Edit Entry");
+  IM_CHECK_RETV(win != nullptr, false);
+  const float natural_h = win->Size.y;
+  const float clamped_h = std::floor(natural_h - 200.0f);
+
+  gui::TestSetEditModalMaxHeightOverride(clamped_h);
+  ctx->Yield(4);
+  IM_CHECK_RETV(std::fabs(win->Size.y - clamped_h) <= 1.0f, false);  // (a) window itself shrinks
+  IM_CHECK_RETV(win->ScrollMax.y == 0.0f, false);                    // (b) no window scrollbar
+  const ImGuiTestItemInfo ok = ctx->ItemInfo(kOk);
+  IM_CHECK_RETV(ok.ID != 0, false);
+  IM_CHECK_RETV(ok.RectFull.Max.y <= win->Rect().Max.y, false);  // (c) action row still inside
+
+  gui::TestSetEditModalMaxHeightOverride(-1.0f);
+  ctx->Yield(4);
+  IM_CHECK_RETV(std::fabs(win->Size.y - natural_h) <= 1.0f, false);  // (d) lifting it restores content-fit
+  ctx->ItemClick(kCancel);
+  ctx->Yield(2);
+  return true;
+}
+
 // After a drag, the test-state reset puts the window back to following its content: reopened in
 // the same layout, it is exactly as tall as it was before anyone touched it. Without this, a case
 // that drags hands its height to every later case drawing the modal — the modal_layout references
@@ -3561,6 +3599,21 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
       ResetTestState();
       ctx->Yield(2);
       IM_CHECK(DraggedHeightKeepsTheActionRowInside(ctx, /*compact=*/false));
+    };
+  }
+
+  // The other half of AC(1b): a work area too short for the window's natural content clamps the
+  // window itself instead of a user dragging it (see WorkAreaClampKeepsTheActionRowInside).
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "edit_modal", "a_short_work_area_keeps_the_action_row_inside");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      const ScopedPopups popup_guard(ctx);
+      ctx->Yield(2);
+      IM_CHECK(WorkAreaClampKeepsTheActionRowInside(ctx, /*compact=*/true));
+      ResetTestState();
+      ctx->Yield(2);
+      IM_CHECK(WorkAreaClampKeepsTheActionRowInside(ctx, /*compact=*/false));
     };
   }
 
