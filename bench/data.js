@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1790128918173,
+  "lastUpdate": 1790128920629,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9488,50 +9488,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "ddc94c02faa23de01ef59b90d25f106843699744",
-          "message": "Merge pull request #302 from LoveDaisy/fix/preview-source-gather-half-texel\n\nfix(gui): 预览 shader 从 dual-EA 源纹理取样时多出的半个纹素",
-          "timestamp": "2026-09-04T18:44:53+08:00",
-          "tree_id": "5bbccc2a028e253d4dade882c65deb804b594261",
-          "url": "https://github.com/LoveDaisy/ice_halo_sim/commit/ddc94c02faa23de01ef59b90d25f106843699744"
-        },
-        "date": 1788519445690,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 84.2,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 99.1,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 93.7,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 94.4,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "7381ca162338ea5105412cc97719e7c7d7eeb1cb",
           "message": "Merge pull request #303 from LoveDaisy/feat/alloc-churn-and-rng-bounds\n\nperf(core): all_data 缓冲区复用 + GetUniform 下标边界收敛到单一 owner",
           "timestamp": "2026-09-04T20:16:18+08:00",
@@ -13816,6 +13772,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 91.5,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "b6ed96be5d6acdd7acc63a500e5c045647525ba5",
+          "message": "Merge pull request #403 from LoveDaisy/feat/edit-modal-height-and-expanded-polish\n\nfeat(gui): Edit Entry — a draggable height, aligned Expanded headers, standard headings",
+          "timestamp": "2026-09-23T09:50:00+08:00",
+          "tree_id": "4bd7771eb2b058baf5a35532f33a8b6313a2718b",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/b6ed96be5d6acdd7acc63a500e5c045647525ba5"
+        },
+        "date": 1790128919804,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 89.3,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 99.8,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 97.3,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 89.2,
             "unit": "%"
           }
         ]
