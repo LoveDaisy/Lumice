@@ -155,6 +155,19 @@ void ClearAxisCustomMemory();
 void OpenSpectrumModal(GuiState& state);
 void RenderSpectrumModal(GuiState& state);
 
+// Screen y of the top edge of the Expanded layout's section header titled `title` ("Crystal",
+// "Axis" or "Filter") as last drawn; -1 for an unknown title or one not drawn yet.
+// Intended for GUI test assertions; production code should not call this.
+float TestGetModalSectionHeaderY(const char* title);
+
+// Overrides the monitor-derived max_h RenderEditModals would otherwise compute from
+// GetCurrentMonitorWorkArea, so a small work area (AC 1b's 1366x768 regression) can be exercised
+// deterministically without a physical small display or second monitor. A negative value (the
+// default, and what ResetModalState() restores) means "use the real monitor". Takes effect from
+// the next frame RenderEditModals runs.
+// Intended for GUI test assertions; production code should not call this.
+void TestSetEditModalMaxHeightOverride(float max_h);
+
 // Returns true when the committed axis config of the currently open modal entry
 // meets D-symmetry conditions (az uniform 360°, roll mean a multiple of 30°).
 // Returns false when no modal is open or the entry index is invalid.

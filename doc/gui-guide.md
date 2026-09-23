@@ -195,6 +195,8 @@ The selector on the button row picks between two shapes, and the choice is saved
 - **Compact** — the preview on top, the three sections stacked below it behind a tab bar. Narrow, and it keeps most of the halo preview behind the modal visible; you click a tab to move between sections. This is the default.
 - **Expanded** — the preview and Crystal in a left column, Axis over Filter in a right column, no tab bar. All three sections are visible at once, at the cost of covering nearly all of the preview.
 
+In both layouts the window's width is fixed, but its height is yours: drag the bottom edge to make it shorter or taller. The preview and the button row keep their size and the section area gives or takes the difference, so the OK / Cancel row stays in view at any height. On a screen too short for the whole window it opens already fitted to the screen. A height you drag is kept until the app is closed.
+
 A document saved by an older version that used the earlier side-by-side tab layout opens as **Expanded**, its closest successor; that layout no longer exists.
 
 Since v15 the modal can be detached as its own OS window via ImGui multi-viewport — drag the title bar outside the host window to float it.

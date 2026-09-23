@@ -319,6 +319,114 @@ std::string JoinNames(const std::vector<const char*>& names) {
   return out;
 }
 
+
+// The height half of the semi-variable window (doc/gui-visual-language.md §9), in one layout: the
+// user drags the bottom edge up, and (a) the drag sticks — the window does not snap back to its
+// content, (b) the window itself does not scroll, because the layout's flexible pane gave up the
+// difference, so (c) the action row is still inside the window, (d) the width cannot be dragged at
+// all, and (e) the dragged height survives a close and reopen. The window is found open at its
+// natural height first, which is what the drag is measured from. Returns false on the first failed
+// check; the caller's ScopedPopups closes what is left open.
+bool DraggedHeightKeepsTheActionRowInside(ImGuiTestContext* ctx, bool compact) {
+  gui::g_state.modal_layout_compact = compact;
+  ctx->Yield(2);
+  OpenCardEditor(ctx, 0, kCrystalTabRef);
+  ctx->Yield(6);
+  ImGuiWindow* win = ctx->GetWindowByRef("Edit Entry");
+  IM_CHECK_RETV(win != nullptr, false);
+  const ImVec2 natural = win->Size;
+  const float dragged_h = std::floor(natural.y - 200.0f);
+
+  ctx->WindowResize("Edit Entry", ImVec2(natural.x, dragged_h));
+  ctx->Yield(4);
+  IM_CHECK_RETV(std::fabs(win->Size.y - dragged_h) <= 1.0f, false);  // (a)
+  IM_CHECK_RETV(win->ScrollMax.y == 0.0f, false);                    // (b)
+  const ImGuiTestItemInfo ok = ctx->ItemInfo(kOk);
+  IM_CHECK_RETV(ok.ID != 0, false);
+  IM_CHECK_RETV(ok.RectFull.Max.y <= win->Rect().Max.y, false);  // (c)
+
+  ctx->WindowResize("Edit Entry", ImVec2(natural.x + 120.0f, win->Size.y));
+  ctx->Yield(4);
+  IM_CHECK_RETV(win->Size.x == natural.x, false);  // (d)
+
+  ctx->ItemClick(kCancel);
+  ctx->Yield(2);
+  OpenCardEditor(ctx, 0, kCrystalTabRef);
+  ctx->Yield(4);
+  IM_CHECK_RETV(std::fabs(win->Size.y - dragged_h) <= 1.0f, false);  // (e)
+  ctx->ItemClick(kCancel);
+  ctx->Yield(2);
+  return true;
+}
+
+// The other half of the semi-variable window's clamp behaviour: when the work area cannot fit the
+// window's natural content (AC 1b's 1366x768 regression — the reason this task exists), the window
+// itself shrinks to the work area and the layout's flexible pane gives up the difference, the same
+// as a user's drag does, but reached through EditModalFlexPaneHeight's `!user_owns` branch instead
+// of the `user_owns` one DraggedHeightKeepsTheActionRowInside above exercises — that test never
+// drives this branch, since dragging flips follows_content to false before EditModalFlexPaneHeight
+// is ever called with it true. No physical small monitor is available to this suite, so the clamp
+// is forced with TestSetEditModalMaxHeightOverride standing in for GetCurrentMonitorWorkArea (code
+// review round 1 Major-1: this path had no automated or manual coverage). Same three checks as the
+// drag case, at the same magnitude (natural height - 200px), plus a fourth: lifting the override
+// hands the height back to content-following, which a genuine drag never does. Returns false on the
+// first failed check; the caller's ScopedPopups closes what is left open.
+bool WorkAreaClampKeepsTheActionRowInside(ImGuiTestContext* ctx, bool compact) {
+  gui::g_state.modal_layout_compact = compact;
+  ctx->Yield(2);
+  OpenCardEditor(ctx, 0, kCrystalTabRef);
+  ctx->Yield(6);
+  ImGuiWindow* win = ctx->GetWindowByRef("Edit Entry");
+  IM_CHECK_RETV(win != nullptr, false);
+  const float natural_h = win->Size.y;
+  const float clamped_h = std::floor(natural_h - 200.0f);
+
+  gui::TestSetEditModalMaxHeightOverride(clamped_h);
+  ctx->Yield(4);
+  IM_CHECK_RETV(std::fabs(win->Size.y - clamped_h) <= 1.0f, false);  // (a) window itself shrinks
+  IM_CHECK_RETV(win->ScrollMax.y == 0.0f, false);                    // (b) no window scrollbar
+  const ImGuiTestItemInfo ok = ctx->ItemInfo(kOk);
+  IM_CHECK_RETV(ok.ID != 0, false);
+  IM_CHECK_RETV(ok.RectFull.Max.y <= win->Rect().Max.y, false);  // (c) action row still inside
+
+  gui::TestSetEditModalMaxHeightOverride(-1.0f);
+  ctx->Yield(4);
+  IM_CHECK_RETV(std::fabs(win->Size.y - natural_h) <= 1.0f, false);  // (d) lifting it restores content-fit
+  ctx->ItemClick(kCancel);
+  ctx->Yield(2);
+  return true;
+}
+
+// After a drag, the test-state reset puts the window back to following its content: reopened in
+// the same layout, it is exactly as tall as it was before anyone touched it. Without this, a case
+// that drags hands its height to every later case drawing the modal — the modal_layout references
+// among them.
+bool ResetRestoresTheNaturalHeight(ImGuiTestContext* ctx, bool compact) {
+  ResetTestState();
+  gui::g_state.modal_layout_compact = compact;
+  ctx->Yield(2);
+  OpenCardEditor(ctx, 0, kCrystalTabRef);
+  ctx->Yield(6);
+  ImGuiWindow* win = ctx->GetWindowByRef("Edit Entry");
+  IM_CHECK_RETV(win != nullptr, false);
+  const float natural_h = win->Size.y;
+  ctx->WindowResize("Edit Entry", ImVec2(win->Size.x, std::floor(natural_h - 150.0f)));
+  ctx->Yield(4);
+  IM_CHECK_RETV(win->Size.y < natural_h - 100.0f, false);  // the drag took
+  ctx->ItemClick(kCancel);
+  ctx->Yield(2);
+
+  ResetTestState();
+  gui::g_state.modal_layout_compact = compact;
+  ctx->Yield(2);
+  OpenCardEditor(ctx, 0, kCrystalTabRef);
+  ctx->Yield(6);
+  IM_CHECK_RETV(win->Size.y == natural_h, false);
+  ctx->ItemClick(kCancel);
+  ctx->Yield(2);
+  return true;
+}
+
 }  // namespace
 
 void RegisterEditModalTests(ImGuiTestEngine* engine) {
@@ -3475,6 +3583,82 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
       IM_CHECK_EQ(gui::GetEditModalTarget().layer_idx, -1);
       IM_CHECK(!ctx->ItemExists(kOk));  // nothing left to commit the old edit through
       IM_CHECK_EQ(EntryCrystal().height.center, fresh_h);
+    };
+  }
+
+  // The window is semi-variable in both layouts (see DraggedHeightKeepsTheActionRowInside). This is
+  // what makes the modal usable on a short screen: whatever height the window gets, the action row
+  // stays reachable without scrolling the window.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "edit_modal", "a_dragged_height_sticks_and_keeps_the_action_row_inside");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      const ScopedPopups popup_guard(ctx);
+      ctx->Yield(2);
+      IM_CHECK(DraggedHeightKeepsTheActionRowInside(ctx, /*compact=*/true));
+      ResetTestState();
+      ctx->Yield(2);
+      IM_CHECK(DraggedHeightKeepsTheActionRowInside(ctx, /*compact=*/false));
+    };
+  }
+
+  // The other half of AC(1b): a work area too short for the window's natural content clamps the
+  // window itself instead of a user dragging it (see WorkAreaClampKeepsTheActionRowInside).
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "edit_modal", "a_short_work_area_keeps_the_action_row_inside");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      const ScopedPopups popup_guard(ctx);
+      ctx->Yield(2);
+      IM_CHECK(WorkAreaClampKeepsTheActionRowInside(ctx, /*compact=*/true));
+      ResetTestState();
+      ctx->Yield(2);
+      IM_CHECK(WorkAreaClampKeepsTheActionRowInside(ctx, /*compact=*/false));
+    };
+  }
+
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "edit_modal", "the_test_reset_undoes_a_dragged_height");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      const ScopedPopups popup_guard(ctx);
+      ctx->Yield(2);
+      IM_CHECK(ResetRestoresTheNaturalHeight(ctx, /*compact=*/true));
+      IM_CHECK(ResetRestoresTheNaturalHeight(ctx, /*compact=*/false));
+    };
+  }
+
+  // The Expanded layout's Crystal header (left column, under the preview) and Filter header (right
+  // column, under the Axis section) sit on one line. That is derived in RenderModalTwoColumn — the
+  // preview image takes the height the right column spends above Filter — and this is what catches
+  // a change to either side (Axis rows, header style, font) that the derivation stops covering.
+  // Measured at the natural height and again dragged short, since the flexible pane must not be
+  // what moves one header and not the other.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "edit_modal", "the_crystal_and_filter_headers_share_a_line_in_expanded");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      const ScopedPopups popup_guard(ctx);
+      gui::g_state.modal_layout_compact = false;
+      ctx->Yield(2);
+      OpenCardEditor(ctx, 0, kCrystalTabRef);
+      ctx->Yield(6);
+      const float crystal_y = gui::TestGetModalSectionHeaderY("Crystal");
+      const float filter_y = gui::TestGetModalSectionHeaderY("Filter");
+      IM_CHECK_GT(crystal_y, 0.0f);
+      IM_CHECK_LE(std::fabs(crystal_y - filter_y), 1.0f);
+      // And the Axis header opens the right column level with the preview's top: both columns
+      // start on one line, which the derivation assumes.
+      IM_CHECK_LT(gui::TestGetModalSectionHeaderY("Axis"), crystal_y);
+
+      ImGuiWindow* win = ctx->GetWindowByRef("Edit Entry");
+      IM_CHECK(win != nullptr);
+      ctx->WindowResize("Edit Entry", ImVec2(win->Size.x, std::floor(win->Size.y - 150.0f)));
+      ctx->Yield(4);
+      IM_CHECK_LE(std::fabs(gui::TestGetModalSectionHeaderY("Crystal") - gui::TestGetModalSectionHeaderY("Filter")),
+                  1.0f);
+      ctx->ItemClick(kCancel);
+      ctx->Yield(2);
     };
   }
 }
