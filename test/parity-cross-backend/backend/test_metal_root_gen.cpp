@@ -1190,9 +1190,12 @@ TEST(MetalRootGen, PerRayEntryPointGeometricConsistency) {
   ASSERT_EQ(hooks.ReadbackRootP(gen_p, kRayCount), 3u * kRayCount);
   ASSERT_EQ(hooks.ReadbackRootTf(gen_f, kRayCount), kRayCount);
   EntryVerifyStats gen_st = VerifyEntryPointsPhysical(gt, gen_dirs, gen_p, gen_f, kRayCount, "gen");
-  // A gen batch that entirely dropped would be a vacuous pass — require most rays
-  // to be real front-face hits (the sun cone illuminates several prism faces).
-  EXPECT_GT(gen_st.valid, kRayCount / 2) << "gen: too few valid entry samples (" << gen_st.valid << "/" << gen_st.total
+  // A gen batch that entirely dropped would be a vacuous pass — require a solid
+  // share of real front-face hits. Not "most": the projected-area acceptance
+  // keeps a ray with probability A/(S/2), ~0.53 for this prism and sun and
+  // exactly 1/2 on average for the uniformly oriented transit layer below, so
+  // a majority bar would sit on the expected value itself.
+  EXPECT_GT(gen_st.valid, kRayCount / 4) << "gen: too few valid entry samples (" << gen_st.valid << "/" << gen_st.total
                                          << ", drops=" << gen_st.drops << ") — check is near-vacuous";
 
   // --- Layer 1: transit_root over the compacted continuation set [0, n_cont) ---
@@ -1209,7 +1212,7 @@ TEST(MetalRootGen, PerRayEntryPointGeometricConsistency) {
   ASSERT_EQ(hooks.ReadbackRootP(tr_p, n_cont), 3u * n_cont);
   ASSERT_EQ(hooks.ReadbackRootTf(tr_f, n_cont), n_cont);
   EntryVerifyStats tr_st = VerifyEntryPointsPhysical(gt, tr_dirs, tr_p, tr_f, n_cont, "transit");
-  EXPECT_GT(tr_st.valid, n_cont / 2) << "transit: too few valid entry samples (" << tr_st.valid << "/" << tr_st.total
+  EXPECT_GT(tr_st.valid, n_cont / 4) << "transit: too few valid entry samples (" << tr_st.valid << "/" << tr_st.total
                                      << ", drops=" << tr_st.drops << ") — check is near-vacuous";
 
   metal.EndSession();
