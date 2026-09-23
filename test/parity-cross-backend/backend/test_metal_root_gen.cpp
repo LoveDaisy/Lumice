@@ -26,9 +26,12 @@
 
 #if defined(__APPLE__)
 
+#include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstring>
 #include <numeric>
+#include <set>
 #include <vector>
 
 #include "config/render_config.hpp"
@@ -38,6 +41,8 @@
 #include "core/crystal.hpp"
 #include "core/math.hpp"
 #include "metal_test_helpers.hpp"
+#include "support/env_var.hpp"
+#include "support/incidence_sampling_oracle.hpp"
 
 namespace lumice {
 namespace {
@@ -1208,6 +1213,233 @@ TEST(MetalRootGen, PerRayEntryPointGeometricConsistency) {
                                      << ", drops=" << tr_st.drops << ") — check is near-vacuous";
 
   metal.EndSession();
+}
+
+
+// ---- Projected-area entry acceptance, judged by the CPU oracle -----------------
+//
+// The gen_root / transit_root kernels keep each ray with probability A/(S/2)
+// (lm_pcg::entry_accept_prob). These cases read back what the DEVICE decided —
+// the crystal-local direction it drew (ReadbackGenDirs) and whether it kept the
+// ray (ReadbackRootTf != kInvalidId) — and judge the kept set with the analytic
+// oracle and comparator the CPU sampler is judged by
+// (test/support/incidence_sampling_oracle.hpp: ComputeEntryAcceptance +
+// CheckEntryAcceptance). This is direct parity with the CPU oracle, NOT a use
+// of the cross-backend parity battery: the battery compares backends with each
+// other, and all three used to omit the same factor, so it could not see this.
+namespace {
+
+constexpr size_t kAcceptRays = size_t{ 1 } << 17;
+constexpr int kAcceptPolarBins = 8;
+constexpr double kAcceptKSigma = 5.0;
+
+// Full-sphere uniform crystal orientation, so the crystal-local directions the
+// device draws cover every polar band and the Cauchy mean (keep rate 1/2) holds.
+void SetUniformOrientation(ScatteringSetting& s) {
+  s.crystal_.axis_.azimuth_dist = Distribution{ DistributionType::kUniform, 0.0f, 360.0f };
+  s.crystal_.axis_.latitude_dist = Distribution{ DistributionType::kUniform, 90.0f, 360.0f };
+  s.crystal_.axis_.roll_dist = Distribution{ DistributionType::kUniform, 0.0f, 360.0f };
+}
+
+// Bins the captured rays by the polar band of their crystal-local direction and
+// runs the oracle comparator; also returns the overall kept fraction.
+double CheckDeviceAcceptance(const Crystal& crystal, const std::vector<float>& dirs, const std::vector<uint32_t>& faces,
+                             size_t count, const char* label) {
+  const auto oracle_faces = test_support::BuildPresentFaceGeom(crystal.CfGeom());
+  std::vector<int> bin_of(count);
+  std::vector<double> accept_prob(count);
+  std::vector<bool> kept(count);
+  size_t kept_n = 0;
+  for (size_t i = 0; i < count; i++) {
+    const double d[3] = { dirs[3 * i + 0], dirs[3 * i + 1], dirs[3 * i + 2] };
+    bin_of[i] = std::min(static_cast<int>(std::abs(d[2]) * kAcceptPolarBins), kAcceptPolarBins - 1);
+    accept_prob[i] = test_support::ComputeEntryAcceptance(oracle_faces, d);
+    kept[i] = faces[i] != kInvalidFaceU32;
+    kept_n += kept[i] ? 1 : 0;
+  }
+  const auto v = test_support::CheckEntryAcceptance(bin_of, accept_prob, kept, kAcceptPolarBins, kAcceptKSigma);
+  for (size_t k = 0; k < v.bins.size(); k++) {
+    const auto& b = v.bins[k];
+    EXPECT_GT(b.dealt, 0) << label << " polar band " << k << " received no rays";
+    EXPECT_LE(std::abs(b.z), kAcceptKSigma) << label << " polar band " << k << ": kept " << b.kept << " of " << b.dealt
+                                            << ", oracle expects " << b.expected;
+  }
+  EXPECT_TRUE(v.pass) << label << " max|z|=" << v.max_abs_z << " at band " << v.worst_bin;
+  return static_cast<double>(kept_n) / static_cast<double>(count);
+}
+
+// Cauchy, independent of the oracle's geometry: uniform orientation keeps 1/2
+// of the rays on every convex shape. Σ a_i(1-a_i) <= n/4 bounds the spread.
+void ExpectCauchyHalf(double kept_fraction, size_t n, const char* label) {
+  EXPECT_NEAR(kept_fraction, 0.5, kAcceptKSigma * std::sqrt(0.25 / static_cast<double>(n))) << label;
+}
+
+}  // namespace
+
+TEST(MetalEntryAcceptance, GenKeptRaysFollowCpuOracle) {
+  if (ShouldSkipMetalTests()) {
+    GTEST_SKIP() << "LUMICE_SKIP_METAL_TESTS set";
+  }
+  EnableDeviceGenForStatisticalParity();
+
+  auto scene = MakeMetalScene(/*max_hits=*/2, /*ms_layers=*/1);
+  SetUniformOrientation(scene.ms_[0].setting_[0]);
+  auto render = MakeRectangularRender();
+  SessionSpec spec;
+  spec.scene = &scene;
+  spec.renders = { &render };
+  spec.wl = WlParam{ 550.0f, 1.0f };
+  spec.seed = 20260924;
+
+  HostRayBatch host;
+  host.count = kAcceptRays;
+  host.crystal = nullptr;
+  host.refractive_index = 0.0f;
+
+  MetalTraceBackend metal;
+  metal.BeginSession(spec);
+  MetalTraceBackendTestHooks hooks(metal);
+  auto h = metal.TraceLayer(RootRaySource::FromHost(host));
+  ASSERT_NE(h, nullptr);
+  std::vector<float> dirs;
+  std::vector<uint32_t> faces;
+  ASSERT_EQ(hooks.ReadbackGenDirs(dirs, kAcceptRays), 3u * kAcceptRays);
+  ASSERT_EQ(hooks.ReadbackRootTf(faces, kAcceptRays), kAcceptRays);
+  metal.EndSession();
+
+  // MakeMetalScene's crystal: deterministic prism h=1.0.
+  const Crystal gt = Crystal::CreatePrism(1.0f);
+  const double kept = CheckDeviceAcceptance(gt, dirs, faces, kAcceptRays, "gen");
+  ExpectCauchyHalf(kept, kAcceptRays, "gen");
+}
+
+TEST(MetalEntryAcceptance, TransitKeptRaysFollowCpuOracle) {
+  if (ShouldSkipMetalTests()) {
+    GTEST_SKIP() << "LUMICE_SKIP_METAL_TESTS set";
+  }
+  EnableDeviceGenForStatisticalParity();
+
+  // Layer 0 keeps every exit as a continuation (prob 1), so layer 1's transit
+  // kernel gets a large set; layer 1 is uniformly oriented.
+  auto scene = metal_test::MakeMetalSceneWithProb(/*max_hits=*/4, /*ms_layers=*/2, /*prob=*/1.0f);
+  scene.ms_[1].prob_ = 0.0f;
+  SetUniformOrientation(scene.ms_[1].setting_[0]);
+  auto render = MakeRectangularRender();
+  SessionSpec spec;
+  spec.scene = &scene;
+  spec.renders = { &render };
+  spec.wl = WlParam{ 550.0f, 1.0f };
+  spec.seed = 9241;
+
+  HostRayBatch host;
+  host.count = kAcceptRays;
+  host.crystal = nullptr;
+  host.refractive_index = 0.0f;
+
+  MetalTraceBackend metal;
+  metal.BeginSession(spec);
+  MetalTraceBackendTestHooks hooks(metal);
+  auto h0 = metal.TraceLayer(RootRaySource::FromHost(host));
+  ASSERT_NE(h0, nullptr);
+  const size_t n_cont = h0->ContinuationCount();
+  ASSERT_GT(n_cont, kAcceptRays / 8) << "too few continuation rays to judge the transit kernel";
+  RecombineSpec rspec;
+  rspec.shuffle = false;
+  auto roots1 = metal.Recombine(std::move(h0), rspec);
+  auto h1 = metal.TraceLayer(roots1);
+  ASSERT_NE(h1, nullptr);
+  std::vector<float> dirs;
+  std::vector<uint32_t> faces;
+  ASSERT_EQ(hooks.ReadbackGenDirs(dirs, n_cont), 3u * n_cont);
+  ASSERT_EQ(hooks.ReadbackRootTf(faces, n_cont), n_cont);
+  metal.EndSession();
+
+  const Crystal gt = Crystal::CreatePrism(1.0f);
+  const double kept = CheckDeviceAcceptance(gt, dirs, faces, n_cont, "transit");
+  ExpectCauchyHalf(kept, n_cont, "transit");
+}
+
+// K-shape pool: each ray draws one of P_ci shapes and the kernel sums S(g) over
+// THAT shape's triangle window, per ray. The pool's per-slot geometry is not
+// readable from the hooks, so this uses the one property that needs none:
+// under uniform orientation every convex shape keeps 1/2 (Cauchy). Heights span
+// 0.2..3.0, so S differs by up to ~3.6x across slots — a kernel that divided by
+// another slot's S (a stale or shared s_total, a wrong window offset) would put
+// the slots' keep rates far from 1/2 in both directions.
+TEST(MetalEntryAcceptance, KShapePoolKeepsHalfOnEveryShape) {
+  if (ShouldSkipMetalTests()) {
+    GTEST_SKIP() << "LUMICE_SKIP_METAL_TESTS set";
+  }
+  EnableDeviceGenForStatisticalParity();
+  // 4096 rays per shape: 32 shapes over kAcceptRays, ~4096 rays each.
+  test::SetEnvVar("LUMICE_GPU_GEOM_CLOCK", "4096");
+
+  auto scene = MakeMetalScene(/*max_hits=*/2, /*ms_layers=*/1);
+  auto& setting = scene.ms_[0].setting_[0];
+  SetUniformOrientation(setting);
+  auto prism = std::get<PrismCrystalParam>(setting.crystal_.param_);
+  prism.h_ = Distribution{ DistributionType::kUniform, 1.6f, 2.8f };
+  setting.crystal_.param_ = prism;
+  auto render = MakeRectangularRender();
+  SessionSpec spec;
+  spec.scene = &scene;
+  spec.renders = { &render };
+  spec.wl = WlParam{ 550.0f, 1.0f };
+  spec.seed = 4096;
+
+  HostRayBatch host;
+  host.count = kAcceptRays;
+  host.crystal = nullptr;
+  host.refractive_index = 0.0f;
+
+  MetalTraceBackend metal;
+  metal.BeginSession(spec);
+  MetalTraceBackendTestHooks hooks(metal);
+  auto h = metal.TraceLayer(RootRaySource::FromHost(host));
+  ASSERT_NE(h, nullptr);
+  std::vector<uint32_t> faces;
+  ASSERT_EQ(hooks.ReadbackRootTf(faces, kAcceptRays), kAcceptRays);
+  const auto table = hooks.ReadbackPoolShapeTable();
+  const auto ray_shape = hooks.ReadbackRootPoolShape(kAcceptRays);
+  metal.EndSession();
+  test::UnsetEnvVar("LUMICE_GPU_GEOM_CLOCK");
+
+  ASSERT_GE(table.size(), 16u) << "pool too small to exercise per-shape S";
+  ASSERT_EQ(ray_shape.size(), kAcceptRays);
+  // The shapes really differ: distinct triangle windows, not one shape repeated.
+  std::set<uint32_t> tri_offs;
+  for (const auto& row : table) {
+    tri_offs.insert(row[2]);
+  }
+  EXPECT_EQ(tri_offs.size(), table.size());
+
+  // Slot of each ray, recovered from its published poly_off.
+  std::vector<long long> dealt(table.size(), 0);
+  std::vector<long long> kept(table.size(), 0);
+  for (size_t i = 0; i < kAcceptRays; i++) {
+    size_t slot = table.size();
+    for (size_t k = 0; k < table.size(); k++) {
+      if (table[k][0] == ray_shape[i].first) {
+        slot = k;
+        break;
+      }
+    }
+    if (slot == table.size()) {
+      ADD_FAILURE() << "ray " << i << " published an unknown poly_off " << ray_shape[i].first;
+      continue;
+    }
+    dealt[slot]++;
+    kept[slot] += faces[i] != kInvalidFaceU32 ? 1 : 0;
+  }
+  for (size_t k = 0; k < table.size(); k++) {
+    if (dealt[k] == 0) {
+      ADD_FAILURE() << "slot " << k << " received no rays";
+      continue;
+    }
+    const double n = static_cast<double>(dealt[k]);
+    EXPECT_NEAR(static_cast<double>(kept[k]) / n, 0.5, kAcceptKSigma * std::sqrt(0.25 / n))
+        << "slot " << k << " (tri_cnt " << table[k][3] << "): kept " << kept[k] << " of " << dealt[k];
+  }
 }
 
 }  // namespace
