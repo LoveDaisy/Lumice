@@ -1414,29 +1414,47 @@ kernel void gen_root_kernel(
   //    InitRay_p_fid (simulator.cpp:106-124) is single-shape; we walk it
   //    unchanged inside the shape's window (same proj_prob = max(-d·n * area,
   //    0), same categorical_sample, same sample_triangle, same tri_to_poly
-  //    lookup — the only difference is that tri_id / tri_to_poly indices are
-  //    ABSOLUTE positions in the flattened pool buffer, which UploadCrystalPool
-  //    already baked into tri_to_poly's values).
+  //    lookup, same projected-area acceptance — the only difference is that
+  //    tri_id / tri_to_poly indices are ABSOLUTE positions in the flattened pool
+  //    buffer, which UploadCrystalPool already baked into tri_to_poly's values).
+  //    proj_sum (= the shape's projected area A along d) and s_total (= its
+  //    surface area S) ride the same walk: S must be summed per ray, not per
+  //    dispatch, because rays of one dispatch draw different pool shapes.
   float proj_prob[kMaxTriPerKernel];
   uint n_tri = min(tri_cnt, kMaxTriPerKernel);
+  float proj_sum = 0.0f;
+  float s_total = 0.0f;
   for (uint t = 0u; t < n_tri; t++) {
     uint g = tri_off + t;
     float dot = d_crystal[0] * tri_norm[g * 3 + 0]
               + d_crystal[1] * tri_norm[g * 3 + 1]
               + d_crystal[2] * tri_norm[g * 3 + 2];
     proj_prob[t] = max(-dot * tri_area[g], 0.0f);
+    proj_sum += proj_prob[t];
+    s_total += tri_area[g];
   }
   float u_cat = pcg_uniform(stream);
   uint local_tri = categorical_sample(proj_prob, n_tri, u_cat);
   uint tri_id = tri_off + local_tri;
+  // Projected-area acceptance (entry_accept_prob, pcg_shared.h — the formula
+  // CPU InitRay_p_fid calls): keep the ray with probability A / (S/2). One
+  // unconditional draw on its own seed domain, then the SAME zero-weight
+  // kInvalidId drop the degenerate-slot guard below already takes — a single
+  // decision per ray, not a resampling loop, so a warp diverges exactly where
+  // it already did (sample_triangle vs the drop), just more often. Rejected
+  // rays still count as emitted: emitted energy is charged host-side from the
+  // dealt ray count, not from root_w.
+  PcgStream accept_stream = BuildEntryAcceptStream(mixed_seed, global_idx);
+  bool rejected = pcg_uniform(accept_stream) >= entry_accept_prob(proj_sum, s_total);
   float p[3];
   // K-shape degenerate-slot guard: tri_cnt == 0 (ring0-legal zero-triangle
   // Crystal) → tri_off aliases the NEXT slot's triangles (or the pool tail), so
   // tri_vtx / tri_to_poly[tri_id] would read a neighbor shape. Skip both reads
-  // and route into the kInvalidId zero-weight drop below. Non-degenerate rays
-  // never take this branch → AC2 bit-exact single-shape path unchanged.
+  // and route into the kInvalidId zero-weight drop below. (entry_accept_prob is
+  // already 0 there, so `rejected` covers it too; the explicit test stays so the
+  // neighbor-read guard does not hinge on a float comparison.)
   uint to_face;
-  if (tri_cnt == 0u) {
+  if (tri_cnt == 0u || rejected) {
     p[0] = 0.0f;
     p[1] = 0.0f;
     p[2] = 0.0f;
@@ -1570,26 +1588,34 @@ kernel void transit_root_kernel(
 
   // 3. Triangle area×facing weighted pick → uniform point on the chosen tri.
   //    Restricted to the picked shape's window in the flattened pool buffer,
-  //    identical to gen_root_kernel §3.
+  //    identical to gen_root_kernel §3, including the projected-area
+  //    acceptance: a continuation ray meets the NEW crystal with the same
+  //    missing A(o,g,d) factor a root ray does.
   float proj_prob[kMaxTriPerKernel];
   uint n_tri = min(tri_cnt, kMaxTriPerKernel);
+  float proj_sum = 0.0f;
+  float s_total = 0.0f;
   for (uint t = 0u; t < n_tri; t++) {
     uint g = tri_off + t;
     float dot = d_crystal[0] * tri_norm[g * 3u + 0u]
               + d_crystal[1] * tri_norm[g * 3u + 1u]
               + d_crystal[2] * tri_norm[g * 3u + 2u];
     proj_prob[t] = max(-dot * tri_area[g], 0.0f);
+    proj_sum += proj_prob[t];
+    s_total += tri_area[g];
   }
   float u_cat = pcg_uniform(stream);
   uint local_tri = categorical_sample(proj_prob, n_tri, u_cat);
   uint tri_id = tri_off + local_tri;
+  PcgStream accept_stream = BuildEntryAcceptStream(mixed_seed, global_idx);
+  bool rejected = pcg_uniform(accept_stream) >= entry_accept_prob(proj_sum, s_total);
   float p[3];
   // K-shape degenerate-slot guard (mirrors gen_root_kernel): tri_cnt == 0 →
   // tri_off aliases the next slot's triangles / pool tail, so skip both reads
-  // and route into the kInvalidId zero-weight drop. Non-degenerate rays
-  // unaffected (AC2 bit-exact path unchanged).
+  // and route into the kInvalidId zero-weight drop, which a rejected ray takes
+  // too.
   uint to_face;
-  if (tri_cnt == 0u) {
+  if (tri_cnt == 0u || rejected) {
     p[0] = 0.0f;
     p[1] = 0.0f;
     p[2] = 0.0f;

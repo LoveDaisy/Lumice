@@ -7,6 +7,7 @@
 
 #if defined(__APPLE__)
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <set>
@@ -33,8 +34,8 @@ using metal_test::ShouldSkipMetalTests;
 
 // =============================================================================
 // Test E — single-layer parity: CPU vs Metal with identical SessionSpec and
-// seed must produce numerically close XYZ images (per-channel sum relative
-// error ≤ 1e-4, per plan §6 / §8 unified threshold).
+// seed must produce XYZ images whose per-channel sums agree within the
+// binomial spread of the entry acceptance (derivation at the assertion).
 // =============================================================================
 TEST(MetalTraceBackend, SingleLayerXyzMatchesCpu) {
   if (ShouldSkipMetalTests()) {
@@ -50,7 +51,8 @@ TEST(MetalTraceBackend, SingleLayerXyzMatchesCpu) {
   spec.wl = WlParam{ 550.0f, 1.0f };
   spec.seed = 42;
 
-  constexpr size_t kRayCount = 4096;
+  // Sized for the binomial bound below, not for the ULP floor: see there.
+  constexpr size_t kRayCount = size_t{ 1 } << 18;
   HostRayBatch host;
   host.count = kRayCount;
   host.crystal = nullptr;
@@ -90,26 +92,29 @@ TEST(MetalTraceBackend, SingleLayerXyzMatchesCpu) {
   EXPECT_GT(cpu_total, 0.0);
   EXPECT_GT(metal_total, 0.0);
 
-  // Per-channel sum comparison. Both backends consume the same root rays
-  // (deterministic InitRayFirstMs from spec.seed) and the kernel matches
-  // RectangularProject byte-for-byte at the source level. The residual
-  // disparity comes from two sources, neither of which the kernel can
-  // eliminate:
-  //   1) GPU vs CPU transcendentals (atan2/asin/sqrt) differ at the ULP
-  //      level. Over 8 max_hits worth of trace math this accumulates to
-  //      ~5e-5 per ray — visible in the per-channel sum.
-  //   2) GPU atomic_fetch_add on the XYZ image runs in nondeterministic
-  //      order across threadgroups; float addition is non-associative so
-  //      the running total drifts from a sequential CPU sum.
-  // 5e-4 captures observed disparity (~2.4e-4 with mathMode=Safe) with
-  // 2x headroom; plan §1 originally specified 1e-2, plan §8 suggested
-  // tightening to 1e-4 — empirically the latter is below the floor that
-  // GPU/CPU parity can hit on this code.
+  // Per-channel sum comparison. The two backends do NOT trace the same root
+  // rays: `FromHost` with a null crystal lets each generate its own (CPU via
+  // InitRayFirstMs on the host RNG, Metal via gen_root_kernel on PCG). What
+  // makes the sums comparable is energy accounting, not ray identity — on this
+  // full-sky rectangular render every exit lands, so each backend's total is
+  // (rays that entered the crystal) × (per-ray weight) minus the max_hits tail.
+  //
+  // The entry acceptance (keep with probability A/(S/2)) makes "rays that
+  // entered" a binomial count, so the totals now carry sampling noise the old
+  // 5e-4 bound (a GPU-vs-CPU ULP/atomic-order floor) cannot absorb. Under the
+  // default uniform orientation the keep probability averages exactly 1/2
+  // (Cauchy: mean projected area S/4), so each total's relative SD is at most
+  // sqrt((1-p)/(pN)) = 1/sqrt(N) and their difference's is sqrt(2/N); 5 of
+  // those at N = 2^18 is 1.4%. A backend that skipped the acceptance lands
+  // ~2x off (measured 44%), one that got A or S wrong shifts the keep rate by
+  // far more than 1.4% — the formula itself is pinned per ray by
+  // DeviceSamplingPolygonOracle and the Metal entry-acceptance oracle tests.
+  const double rel_tol = 5.0 * std::sqrt(2.0 / static_cast<double>(kRayCount));
   for (int c = 0; c < 3; c++) {
     double scpu = ChannelSum(xyz_cpu, c);
     double smetal = ChannelSum(xyz_metal, c);
     double rel = RelErr(scpu, smetal);
-    EXPECT_LT(rel, 5e-4) << "channel=" << c << " cpu=" << scpu << " metal=" << smetal;
+    EXPECT_LT(rel, rel_tol) << "channel=" << c << " cpu=" << scpu << " metal=" << smetal;
   }
 }
 
@@ -742,6 +747,14 @@ TEST(MetalTraceBackend, KShapePool_KEnabledSessionRunsAndProducesOutput_AC2) {
 // budget, so their means must agree within a few sigma; (b) variance drop:
 // stddev(K=8) < stddev(K=0). Together these constitute the AC2 evidence that
 // K→K* narrows variance without biasing the mean.
+//
+// The statistic is exit weight PER KEPT ROOT RAY, not the raw exit_w_sum. The
+// entry kernels keep a ray with probability A/(S/2), so the number of rays that
+// enter the crystal is itself binomial; at 512 rays that count's spread (about
+// sqrt(512/4) ≈ 11 rays) is as large as the shape-driven spread this test is
+// about and flattens the K=0 / K=8 contrast. Dividing by the kept count (root
+// rays whose entry face is not kInvalidId) removes that term exactly and
+// leaves what K is supposed to move.
 TEST(MetalTraceBackend, KShapePool_KEnabledReducesCrossSeedVariance_AC2) {
   if (ShouldSkipMetalTests()) {
     GTEST_SKIP() << "LUMICE_SKIP_METAL_TESTS set";
@@ -769,12 +782,18 @@ TEST(MetalTraceBackend, KShapePool_KEnabledReducesCrossSeedVariance_AC2) {
     host.crystal = nullptr;
     host.refractive_index = 0.0f;
     auto handle = backend.TraceLayer(RootRaySource::FromHost(host));
-    float w_sum = 0.0f;
+    float w_per_kept = 0.0f;
     if (handle) {
-      w_sum = handle->GetLayerStats().exit_w_sum;
+      MetalTraceBackendTestHooks hooks(backend);
+      std::vector<uint32_t> tf;
+      hooks.ReadbackRootTf(tf, host.count);
+      const auto kept = std::count_if(tf.begin(), tf.end(), [](uint32_t f) { return f != 0xffffffffu; });
+      if (kept > 0) {
+        w_per_kept = handle->GetLayerStats().exit_w_sum / static_cast<float>(kept);
+      }
     }
     backend.EndSession();
-    return w_sum;
+    return w_per_kept;
   };
 
   constexpr size_t kNumSeeds = 12u;
