@@ -27,6 +27,7 @@
 #include "gui/input_text_reload.hpp"
 #include "gui/panels.hpp"
 #include "gui/raypath_segments.hpp"
+#include "gui/secondary_window_sizing.hpp"
 #include "gui/semantic_colors.hpp"
 #include "gui/symmetry_ui.hpp"
 #include "gui/table_focus_ring.hpp"
@@ -71,9 +72,8 @@ enum class ActiveModal { kNone, kOpen };
 enum class ActiveTab { kCrystal, kAxis, kFilter };
 
 // Compact layout (modal_layout_compact=true): the tab content is stacked below the preview rather
-// than beside it, so the width floor only has to fit the tab body. Height is content-driven
-// (AlwaysAutoResize); the bottom pane carries the same fixed height (kPreviewChildHeight) the
-// preview pane above it does.
+// than beside it, so the width floor only has to fit the tab body. Height follows the content until
+// the user drags it (see the window-height machinery below RenderEditModals' statics).
 //
 // Held at 420 for the Crystal-tab shape property table. Fixed columns
 // (Param kShapeParamColWidth=52 + Sync kShapeSyncColWidth=29 + Rand
@@ -82,7 +82,10 @@ enum class ActiveTab { kCrystal, kAxis, kFilter };
 // readable, plus inner borders / cell padding. (The GUI is uniform-only, so there
 // is no Type column; that reclaimed width goes to the Value slider.)
 constexpr float kEditModalMinWidthVertical = 420.0f;
-constexpr float kEditModalMinHeightVertical = 0.0f;
+// The fewest rows of scrolling content the flexible pane (see g_edit_modal_height) keeps when the
+// window is dragged short: enough to still see which tab or section it is and a row or two of it.
+// A UX floor against a pane collapsed to a sliver, not a layout constant anything else derives from.
+constexpr float kEditModalFlexPaneMinRows = 4.0f;
 
 // ---- Expanded layout: "everything expanded, no tab bar" ----
 // The other half of the two-shape pair (modal_layout_compact=false): Axis stacked over Filter
@@ -96,7 +99,6 @@ constexpr float kModalColumnSpacing = 16.0f;  // one ItemSpacing.x-ish gap betwe
 // Left(Crystal) + right(Axis/Filter) + one inter-column gap + popup padding.
 constexpr float kEditModalMinWidthTwoColumn =
     kModalColumnWidthCrystal + kModalColumnWidthAxisOrFilter + kModalColumnSpacing + 16.0f;
-constexpr float kEditModalMinHeightTwoColumn = 0.0f;  // content-driven, like kEditModalMinHeightVertical
 
 // Shape property-table fixed column widths; the Value column is WidthStretch and
 // takes the remainder. Tuned so the narrowest layout gives the Value slider real
@@ -140,6 +142,26 @@ static int g_modal_layer_idx = -1;
 // no crystal loaded yet; cleared in ResetModalState alongside layer/entry idx.
 static int g_modal_view_crystal_id = -1;
 static int g_modal_entry_idx = -1;
+
+// ---- Window height: semi-variable (doc/gui-visual-language.md §9) ----
+// Width is pinned per layout; height follows the content (HeightFollowsContentState, shared with the
+// Summary window) until the user drags it, then it is theirs for the session. Dragging only helps if
+// something inside gives way, so each layout has ONE flexible pane that absorbs the difference
+// between the window's height and everything else in it: Compact's tab body, Expanded's two columns.
+// Everything else (title bar, sharing row, preview, bottom action row) keeps its height, so the
+// action row stays on screen at any height the window can take.
+static HeightFollowsContentState g_edit_modal_height;
+// The window's height minus the flexible pane, as measured at the end of the last frame the modal
+// was drawn — i.e. what the pane cannot take away. 0 until measured once (a fresh process, a reset,
+// a layout switch or a UI scale change), in which case the pane gets its full budget.
+static float g_edit_modal_fixed_part_h = 0.0f;
+// The flexible pane's height as drawn this frame; turned into g_edit_modal_fixed_part_h at frame end.
+static float g_edit_modal_flex_pane_h = 0.0f;
+// The shortest the flexible pane may get, as last drawn; with g_edit_modal_fixed_part_h it gives
+// the window's own height floor.
+static float g_edit_modal_flex_pane_min_h = 0.0f;
+// WindowResizeCondForScale's per-window tracker (theme.hpp): a scale change re-fits the window.
+static float g_edit_modal_sized_for_scale = 0.0f;
 
 // Active tab is updated each frame inside the corresponding BeginTabItem true-branch
 // (ImGui doesn't auto-write user state). The OpenEditModal path always sets it
@@ -1921,6 +1943,12 @@ void ResetModalState() {
   std::memset(g_saved_rotation, 0, sizeof(g_saved_rotation));
   g_saved_zoom = 1.0f;
   ClearAxisCustomMemory();
+  // The window's height, which a user's drag keeps for the process; in a single-process suite that
+  // is a case handing its drag to the next one. Following the content again is enough to undo it:
+  // the next request is made with ImGuiCond_Always, which (unlike FirstUseEver) is never used up.
+  ResetHeightFollow(g_edit_modal_height);
+  g_edit_modal_fixed_part_h = 0.0f;
+  g_edit_modal_flex_pane_min_h = 0.0f;
 }
 
 void ClearAxisCustomMemory() {
@@ -2298,16 +2326,43 @@ static float ModalTwoColumnPreviewHeight() {
   return kModalPreviewImageSize + tool_row + v_pad;
 }
 
+// The flexible pane's height this frame (see g_edit_modal_height). `budget` is what the pane asks
+// for when there is room — its content-sized height, the one it had while the window was
+// AlwaysAutoResize. While the window follows its content the pane takes its budget unless the work
+// area (`max_h`) cannot fit it, in which case it gives up the overflow and the window fits without
+// scrolling; once the user owns the height, the pane is whatever the window has left, above or
+// below the budget, down to `floor_h`. Must be called from the Edit Entry window itself, not from
+// inside a child.
+static float EditModalFlexPaneHeight(float budget, float floor_h, float max_h) {
+  float h = budget;
+  if (g_edit_modal_fixed_part_h > 0.0f) {
+    const bool user_owns = !g_edit_modal_height.follows_content;
+    const float room = (user_owns ? ImGui::GetWindowHeight() : max_h) - g_edit_modal_fixed_part_h;
+    h = user_owns ? room : std::min(budget, room);
+  }
+  // Floored so the window's content never measures half a pixel past its height (a scrollbar
+  // appearing would take width from the pinned layout).
+  h = std::floor(std::max(h, floor_h));
+  g_edit_modal_flex_pane_h = h;
+  g_edit_modal_flex_pane_min_h = floor_h;
+  return h;
+}
+
 // Expanded layout: preview+Crystal in a left column; Axis (short, fixed) stacked over Filter (gets
 // the remaining height) in a right column. No tab bar.
 static void RenderModalTwoColumn(GuiState& state, bool crystal_dirty, bool axis_dirty, bool filter_dirty,
-                                 bool show_dirty) {
+                                 bool show_dirty, float max_h) {
   const int entry_layer = g_modal_layer_idx;
   const int entry_index = g_modal_entry_idx;
   assert(g_pull_generation == ImGui::GetFrameCount() &&
          "PullBuffersFromPool must run before the Expanded column layout each frame");
   const ImGuiStyle& style = ImGui::GetStyle();
-  const float column_h = ModalTwoColumnPreviewHeight() + style.ItemSpacing.y + ModalTwoColumnContentHeight();
+  const float row_h = ImGui::GetFrameHeightWithSpacing();
+  // Floor: the right column's fixed part (Axis, both headers) plus a few Filter rows; the left
+  // column's Crystal table scrolls inside its child below that.
+  const float column_floor_h = ModalTwoColumnPreviewHeight() + row_h + kEditModalFlexPaneMinRows * row_h;
+  const float column_h = EditModalFlexPaneHeight(
+      ModalTwoColumnPreviewHeight() + style.ItemSpacing.y + ModalTwoColumnContentHeight(), column_floor_h, max_h);
 
   ImGui::BeginChild("##modal_expanded_left", ImVec2(kModalColumnWidthCrystal, column_h), ImGuiChildFlags_None);
   RenderCrystalPreviewPane(state);
@@ -2377,32 +2432,39 @@ void RenderEditModals(GuiState& state, GLFWwindow* window) {
   // the window center, so it cannot overflow a small secondary display. When
   // the helper cannot identify a monitor (headless tests, nullptr window), fall
   // back to an unbounded max rather than a primary-monitor default (avoids the
-  // multi-monitor "primary bias" anti-pattern).
-  // Each of the two layouts carries its own width floor (Compact's tab body vs. the Expanded
-  // layout's two columns); height stays content-driven in both.
+  // multi-monitor "primary bias" anti-pattern). That per-monitor bound is why this window does not
+  // use ClampedSecondaryWindowMaxHeight (secondary_window_sizing.hpp), which reads the main
+  // viewport only: Edit Entry is the one secondary window that routinely lives on another screen.
+  // Width is pinned to each layout's own floor (Compact's tab body vs. the Expanded layout's two
+  // columns); height is semi-variable — see g_edit_modal_height.
   const float min_w = UiPx(state.modal_layout_compact ? kEditModalMinWidthVertical : kEditModalMinWidthTwoColumn);
-  const float min_h = UiPx(state.modal_layout_compact ? kEditModalMinHeightVertical : kEditModalMinHeightTwoColumn);
-  // Snap window width when the user switches layout. SetNextWindowSizeConstraints alone only
-  // bounds the allowed range; an already-sized window stays at its current width if that value is
-  // within the new range. Explicit SetNextWindowSize on the switch frame forces the width to the
-  // new layout's minimum; height 0 means "auto-fit to content" (AlwaysAutoResize semantics).
+  // A layout switch changes what the content is, and a UI scale change changes how tall all of it
+  // is: either way the window goes back to fitting its content, and the last frame's measurement
+  // describes something that is no longer drawn. The width snaps with it (the constraint below
+  // pins it; the request makes it happen this frame rather than on the next resize).
   static bool s_prev_modal_layout_compact = state.modal_layout_compact;
   const bool layout_switched = s_prev_modal_layout_compact != state.modal_layout_compact;
-  if (layout_switched) {
-    s_prev_modal_layout_compact = state.modal_layout_compact;
-    ImGui::SetNextWindowSize(ImVec2(min_w, 0.0f));
+  s_prev_modal_layout_compact = state.modal_layout_compact;
+  const bool scale_changed = WindowResizeCondForScale(g_edit_modal_sized_for_scale, ImGuiCond_None) == ImGuiCond_Always;
+  if (layout_switched || scale_changed) {
+    ResetHeightFollow(g_edit_modal_height);
+    g_edit_modal_fixed_part_h = 0.0f;
+    g_edit_modal_flex_pane_min_h = 0.0f;
   }
-  // Called every frame this modal is open, not just on appearance, from min_w/min_h above (fresh
-  // UiPx() each frame): exempt from the WindowResizeCondForScale (theme.hpp) audit on the same
-  // grounds as config_summary_window.cpp's Summary window — ImGui clamps the live window size into
-  // this bound at every Begin(), so a scale change grows the floor on its very next frame.
+  float max_h = FLT_MAX;
   MonitorRect mon{};
   if (GetCurrentMonitorWorkArea(window, &mon)) {
-    auto max_w = std::max(min_w, static_cast<float>(mon.w - kWindowDecorationMargin));
-    auto max_h = std::max(static_cast<float>(kMinWindowHeight), static_cast<float>(mon.h - kWindowDecorationMargin));
-    ImGui::SetNextWindowSizeConstraints(ImVec2(min_w, min_h), ImVec2(max_w, max_h));
-  } else {
-    ImGui::SetNextWindowSizeConstraints(ImVec2(min_w, min_h), ImVec2(FLT_MAX, FLT_MAX));
+    max_h = std::max(static_cast<float>(kMinWindowHeight), static_cast<float>(mon.h - kWindowDecorationMargin));
+  }
+  // The shortest the user may drag it: everything that is not the flexible pane, plus the pane's own
+  // floor — so the action row is always reachable without the window itself scrolling.
+  const float min_h = std::min(max_h, g_edit_modal_fixed_part_h + g_edit_modal_flex_pane_min_h);
+  // Called every frame this modal is open (fresh UiPx() each frame): ImGui clamps the live window
+  // size into this bound at every Begin(), and a scale change also re-fits the height (above).
+  ImGui::SetNextWindowSizeConstraints(ImVec2(min_w, min_h), ImVec2(min_w, max_h));
+  const float requested_h = BeginHeightFollow(g_edit_modal_height, "Edit Entry", min_h, max_h);
+  if (requested_h >= 0.0f) {
+    ImGui::SetNextWindowSize(ImVec2(min_w, requested_h), ImGuiCond_Always);
   }
   // Mode dispatch: Staged → BeginPopupModal (blocks background, exposes title-bar ×
   // via p_open). Immediate → ImGui::Begin (regular window — external clicks pass
@@ -2469,11 +2531,9 @@ void RenderEditModals(GuiState& state, GLFWwindow* window) {
     // the main window while still allowing the window to live in its own OS viewport when
     // dragged outside. Without NoDocking, users could accidentally dock the editor into a
     // main-window split which is not the intended layout.
-    window_open =
-        ImGui::Begin("Edit Entry", &title_x_open,
-                     ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoCollapse);
+    window_open = ImGui::Begin("Edit Entry", &title_x_open, ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoCollapse);
   } else {
-    window_open = ImGui::BeginPopupModal("Edit Entry", &title_x_open, ImGuiWindowFlags_AlwaysAutoResize);
+    window_open = ImGui::BeginPopupModal("Edit Entry", &title_x_open, ImGuiWindowFlags_None);
   }
   if (!window_open) {
     // ImGui contract: Begin always pairs with End regardless of return value.
@@ -2643,12 +2703,14 @@ void RenderEditModals(GuiState& state, GLFWwindow* window) {
     ImGui::EndChild();
     // Lower pane: tab bar + body, at kModalContentHeight so the tallest crystal layout fits without a
     // scrollbar (taller content still scrolls; see the constant's rationale).
-    ImGui::BeginChild("##modal_bottom_pane", ImVec2(-FLT_MIN, kModalContentHeight), ImGuiChildFlags_None,
-                      ImGuiWindowFlags_None);
+    ImGui::BeginChild(
+        "##modal_bottom_pane",
+        ImVec2(-FLT_MIN, EditModalFlexPaneHeight(kModalContentHeight, kEditModalFlexPaneMinRows * kToolRow, max_h)),
+        ImGuiChildFlags_None, ImGuiWindowFlags_None);
     RenderModalTabBar(state, crystal_label, axis_label, filter_label, crystal_flags, axis_flags, filter_flags);
     ImGui::EndChild();
   } else {
-    RenderModalTwoColumn(state, crystal_dirty, axis_dirty, filter_dirty, show_dirty);
+    RenderModalTwoColumn(state, crystal_dirty, axis_dirty, filter_dirty, show_dirty, max_h);
   }
 
   // Immediate mode: push buffer→entry every frame (diff-gated inside
@@ -2819,6 +2881,10 @@ void RenderEditModals(GuiState& state, GLFWwindow* window) {
   if (ImGui::IsItemHovered()) {
     ImGui::SetTooltip("Apply parameter changes to simulation in real-time");
   }
+
+  // Next frame's height request, and what of it the flexible pane cannot take away.
+  EndHeightFollow(g_edit_modal_height);
+  g_edit_modal_fixed_part_h = MeasureCurrentWindowContentHeight() - g_edit_modal_flex_pane_h;
 
   if (dispatched_immediate) {
     ImGui::End();

@@ -319,6 +319,76 @@ std::string JoinNames(const std::vector<const char*>& names) {
   return out;
 }
 
+
+// The height half of the semi-variable window (doc/gui-visual-language.md §9), in one layout: the
+// user drags the bottom edge up, and (a) the drag sticks — the window does not snap back to its
+// content, (b) the window itself does not scroll, because the layout's flexible pane gave up the
+// difference, so (c) the action row is still inside the window, (d) the width cannot be dragged at
+// all, and (e) the dragged height survives a close and reopen. The window is found open at its
+// natural height first, which is what the drag is measured from. Returns false on the first failed
+// check; the caller's ScopedPopups closes what is left open.
+bool DraggedHeightKeepsTheActionRowInside(ImGuiTestContext* ctx, bool compact) {
+  gui::g_state.modal_layout_compact = compact;
+  ctx->Yield(2);
+  OpenCardEditor(ctx, 0, kCrystalTabRef);
+  ctx->Yield(6);
+  ImGuiWindow* win = ctx->GetWindowByRef("Edit Entry");
+  IM_CHECK_RETV(win != nullptr, false);
+  const ImVec2 natural = win->Size;
+  const float dragged_h = std::floor(natural.y - 200.0f);
+
+  ctx->WindowResize("Edit Entry", ImVec2(natural.x, dragged_h));
+  ctx->Yield(4);
+  IM_CHECK_RETV(std::fabs(win->Size.y - dragged_h) <= 1.0f, false);  // (a)
+  IM_CHECK_RETV(win->ScrollMax.y == 0.0f, false);                    // (b)
+  const ImGuiTestItemInfo ok = ctx->ItemInfo(kOk);
+  IM_CHECK_RETV(ok.ID != 0, false);
+  IM_CHECK_RETV(ok.RectFull.Max.y <= win->Rect().Max.y, false);  // (c)
+
+  ctx->WindowResize("Edit Entry", ImVec2(natural.x + 120.0f, win->Size.y));
+  ctx->Yield(4);
+  IM_CHECK_RETV(win->Size.x == natural.x, false);  // (d)
+
+  ctx->ItemClick(kCancel);
+  ctx->Yield(2);
+  OpenCardEditor(ctx, 0, kCrystalTabRef);
+  ctx->Yield(4);
+  IM_CHECK_RETV(std::fabs(win->Size.y - dragged_h) <= 1.0f, false);  // (e)
+  ctx->ItemClick(kCancel);
+  ctx->Yield(2);
+  return true;
+}
+
+// After a drag, the test-state reset puts the window back to following its content: reopened in
+// the same layout, it is exactly as tall as it was before anyone touched it. Without this, a case
+// that drags hands its height to every later case drawing the modal — the modal_layout references
+// among them.
+bool ResetRestoresTheNaturalHeight(ImGuiTestContext* ctx, bool compact) {
+  ResetTestState();
+  gui::g_state.modal_layout_compact = compact;
+  ctx->Yield(2);
+  OpenCardEditor(ctx, 0, kCrystalTabRef);
+  ctx->Yield(6);
+  ImGuiWindow* win = ctx->GetWindowByRef("Edit Entry");
+  IM_CHECK_RETV(win != nullptr, false);
+  const float natural_h = win->Size.y;
+  ctx->WindowResize("Edit Entry", ImVec2(win->Size.x, std::floor(natural_h - 150.0f)));
+  ctx->Yield(4);
+  IM_CHECK_RETV(win->Size.y < natural_h - 100.0f, false);  // the drag took
+  ctx->ItemClick(kCancel);
+  ctx->Yield(2);
+
+  ResetTestState();
+  gui::g_state.modal_layout_compact = compact;
+  ctx->Yield(2);
+  OpenCardEditor(ctx, 0, kCrystalTabRef);
+  ctx->Yield(6);
+  IM_CHECK_RETV(win->Size.y == natural_h, false);
+  ctx->ItemClick(kCancel);
+  ctx->Yield(2);
+  return true;
+}
+
 }  // namespace
 
 void RegisterEditModalTests(ImGuiTestEngine* engine) {
@@ -3475,6 +3545,33 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
       IM_CHECK_EQ(gui::GetEditModalTarget().layer_idx, -1);
       IM_CHECK(!ctx->ItemExists(kOk));  // nothing left to commit the old edit through
       IM_CHECK_EQ(EntryCrystal().height.center, fresh_h);
+    };
+  }
+
+  // The window is semi-variable in both layouts (see DraggedHeightKeepsTheActionRowInside). This is
+  // what makes the modal usable on a short screen: whatever height the window gets, the action row
+  // stays reachable without scrolling the window.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "edit_modal", "a_dragged_height_sticks_and_keeps_the_action_row_inside");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      const ScopedPopups popup_guard(ctx);
+      ctx->Yield(2);
+      IM_CHECK(DraggedHeightKeepsTheActionRowInside(ctx, /*compact=*/true));
+      ResetTestState();
+      ctx->Yield(2);
+      IM_CHECK(DraggedHeightKeepsTheActionRowInside(ctx, /*compact=*/false));
+    };
+  }
+
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "edit_modal", "the_test_reset_undoes_a_dragged_height");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      const ScopedPopups popup_guard(ctx);
+      ctx->Yield(2);
+      IM_CHECK(ResetRestoresTheNaturalHeight(ctx, /*compact=*/true));
+      IM_CHECK(ResetRestoresTheNaturalHeight(ctx, /*compact=*/false));
     };
   }
 }

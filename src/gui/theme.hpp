@@ -83,9 +83,12 @@ int UiPxI(int logical_px);
 //     gated by any Cond — ImGui has no cond parameter for constraints): the min/max bound is
 //     re-derived from UiPx() every frame and ImGui clamps the live window size into that bound at
 //     every Begin(), so a scale increase grows the window on its very next frame without needing
-//     an Always-cond SetNextWindowSize. Covers config_summary_window.cpp's Summary window (paired
-//     with AlwaysAutoResize, belt-and-braces) and edit_modals.cpp's "Edit Entry" modal (also paired
-//     with AlwaysAutoResize on its Staged/BeginPopupModal path).
+//     an Always-cond SetNextWindowSize. Covers config_summary_window.cpp's Summary window, whose
+//     height is in addition re-requested with ImGuiCond_Always every frame it follows its content
+//     (secondary_window_sizing.hpp's HeightFollowsContentState). edit_modals.cpp's "Edit Entry"
+//     modal has the same two mechanisms and also calls this function — not for its cond, but to
+//     learn that the scale changed, which sends a height the user dragged back to following the
+//     content (its measurement is at the old scale).
 //   - The five fixed chrome panels (TopBar/LeftPanel/RightPanel/PreviewPanel/StatusBar/LogPanel,
 //     app_panels.cpp via the local SetNextPanelGeometry helper) call SetNextWindowSize with no
 //     Cond argument at all, which ImGui treats as Always — and they do so unconditionally on every
