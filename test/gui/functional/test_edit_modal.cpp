@@ -3574,4 +3574,38 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
       IM_CHECK(ResetRestoresTheNaturalHeight(ctx, /*compact=*/false));
     };
   }
+
+  // The Expanded layout's Crystal header (left column, under the preview) and Filter header (right
+  // column, under the Axis section) sit on one line. That is derived in RenderModalTwoColumn — the
+  // preview image takes the height the right column spends above Filter — and this is what catches
+  // a change to either side (Axis rows, header style, font) that the derivation stops covering.
+  // Measured at the natural height and again dragged short, since the flexible pane must not be
+  // what moves one header and not the other.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "edit_modal", "the_crystal_and_filter_headers_share_a_line_in_expanded");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      const ScopedPopups popup_guard(ctx);
+      gui::g_state.modal_layout_compact = false;
+      ctx->Yield(2);
+      OpenCardEditor(ctx, 0, kCrystalTabRef);
+      ctx->Yield(6);
+      const float crystal_y = gui::TestGetModalSectionHeaderY("Crystal");
+      const float filter_y = gui::TestGetModalSectionHeaderY("Filter");
+      IM_CHECK_GT(crystal_y, 0.0f);
+      IM_CHECK_LE(std::fabs(crystal_y - filter_y), 1.0f);
+      // And the Axis header opens the right column level with the preview's top: both columns
+      // start on one line, which the derivation assumes.
+      IM_CHECK_LT(gui::TestGetModalSectionHeaderY("Axis"), crystal_y);
+
+      ImGuiWindow* win = ctx->GetWindowByRef("Edit Entry");
+      IM_CHECK(win != nullptr);
+      ctx->WindowResize("Edit Entry", ImVec2(win->Size.x, std::floor(win->Size.y - 150.0f)));
+      ctx->Yield(4);
+      IM_CHECK_LE(std::fabs(gui::TestGetModalSectionHeaderY("Crystal") - gui::TestGetModalSectionHeaderY("Filter")),
+                  1.0f);
+      ctx->ItemClick(kCancel);
+      ctx->Yield(2);
+    };
+  }
 }

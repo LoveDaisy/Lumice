@@ -163,6 +163,13 @@ static float g_edit_modal_flex_pane_min_h = 0.0f;
 // WindowResizeCondForScale's per-window tracker (theme.hpp): a scale change re-fits the window.
 static float g_edit_modal_sized_for_scale = 0.0f;
 
+// The Expanded layout's three section headers, in the order they are drawn: Crystal (left column),
+// Axis and Filter (right column). Index into g_modal_section_header_y.
+static constexpr std::array<const char*, 3> kModalSectionTitles = { "Crystal", "Axis", "Filter" };
+// Screen y of each section header's top edge as last drawn; -1 until drawn. Read only by
+// TestGetModalSectionHeaderY — a SeparatorText item has no id, so a test cannot find it.
+static std::array<float, 3> g_modal_section_header_y = { -1.0f, -1.0f, -1.0f };
+
 // Active tab is updated each frame inside the corresponding BeginTabItem true-branch
 // (ImGui doesn't auto-write user state). The OpenEditModal path always sets it
 // explicitly together with g_pending_tab_select=true to drive first-frame selection;
@@ -1108,9 +1115,9 @@ static void HandleCrystalPreviewInteraction(bool hovered, bool active) {
   }
 }
 
-// Constant: 3D preview image size inside the left pane (also the FBO display
-// size). WindowPadding is applied by the surrounding child; see the dynamic
-// child-size computation in RenderEditModals.
+// Constant: 3D preview image size in the Compact layout's top pane. WindowPadding is applied by the
+// surrounding child; see the dynamic child-size computation in RenderEditModals. The Expanded
+// layout does not use it: there the image size is derived (RenderModalTwoColumn).
 constexpr float kModalPreviewImageSize = 320.0f;
 
 // Advances (or resets, on a new epoch) the preview animation ticker and returns the sample_seed to
@@ -1146,7 +1153,10 @@ static unsigned long long AdvancePreviewAnimSeed(bool has_random) {
 // Render the persistent crystal preview pane (3D image + drag interaction +
 // style selector + reset view). Called from the left BeginChild during modal
 // rendering so the preview stays visible across Crystal / Axis / Filter tabs.
-static void RenderCrystalPreviewPane(GuiState& /*state*/) {
+// `preview_px`: the image's on-screen edge, already scaled. The FBO behind it stays 512²
+// (main.cpp), so past ~1.6x the draw catches up with the texture and the supersampling margin is
+// spent. Compact passes UiPx(kModalPreviewImageSize); Expanded derives it (RenderModalTwoColumn).
+static void RenderCrystalPreviewPane(GuiState& /*state*/, float preview_px) {
   auto& cr = g_crystal_buf;
 
   // Advance the animation ticker; a randomized shape re-samples every tick, an unrandomized one
@@ -1173,9 +1183,6 @@ static void RenderCrystalPreviewPane(GuiState& /*state*/) {
 
   // -- 3D Preview (horizontally centered inside the left pane) --
   auto tex_id = static_cast<ImTextureID>(g_crystal_renderer.GetTextureId());
-  // The on-screen size of the preview, scaled: the FBO behind it stays 512² (main.cpp), so past
-  // ~1.6x the draw catches up with the texture and the supersampling margin is spent.
-  const float preview_px = UiPx(kModalPreviewImageSize);
   float avail_w = ImGui::GetContentRegionAvail().x;
   float offset_x = (avail_w - preview_px) * 0.5f;
   if (offset_x > 0.0f) {
@@ -1972,6 +1979,15 @@ EditModalBuffers GetEditModalBuffers() {
   return out;
 }
 
+float TestGetModalSectionHeaderY(const char* title) {
+  for (size_t i = 0; i < kModalSectionTitles.size(); ++i) {
+    if (std::strcmp(kModalSectionTitles[i], title) == 0) {
+      return g_modal_section_header_y[i];
+    }
+  }
+  return -1.0f;
+}
+
 bool IsCurrentModalDApplicable() {
   const int ly = g_modal_layer_idx;
   const int en = g_modal_entry_idx;
@@ -2296,14 +2312,28 @@ void RenderModalTabBar(GuiState& state, const char* crystal_label, const char* a
 constexpr float kModalAxisSectionRows = 11.0f;
 
 // Dirty-mark equivalent of RenderModalTabBar's " *"-suffixed tab labels: with no tab bar here to
-// carry the mark, it moves to a plain section header instead.
+// carry the mark, it moves into the section header's own label. The header is the app's standard
+// one (ImGui::SeparatorText, as the right panel's groups and the Summary page use) — not a tab
+// look-alike: the three sections are all on screen at once, and a tab would promise a switch that
+// clicking it never makes.
 static void RenderModalSectionHeader(const char* title, bool dirty, bool show_dirty) {
-  ImGui::TextUnformatted(title);
-  if (show_dirty && dirty) {
-    ImGui::SameLine();
-    ImGui::TextUnformatted("*");
+  const bool marked = show_dirty && dirty;
+  ImGui::SeparatorText(marked ? (std::string(title) + " *").c_str() : title);
+  for (size_t i = 0; i < kModalSectionTitles.size(); ++i) {
+    if (std::strcmp(kModalSectionTitles[i], title) == 0) {
+      g_modal_section_header_y[i] = ImGui::GetItemRectMin().y;
+    }
   }
-  ImGui::Separator();
+}
+
+// The height RenderModalSectionHeader advances the cursor by: SeparatorText's own item height
+// (imgui_widgets.cpp SeparatorTextEx — one text line plus SeparatorTextPadding.y both sides, at
+// least the border's thickness) and the ItemSpacing after it. Kept next to the function it
+// describes so a change of header style changes both.
+static float ModalSectionHeaderHeight() {
+  const ImGuiStyle& style = ImGui::GetStyle();
+  return std::max(ImGui::GetTextLineHeight() + style.SeparatorTextPadding.y * 2.0f, style.SeparatorTextBorderSize) +
+         style.ItemSpacing.y;
 }
 
 // Column content height: same 17-row "tallest crystal layout" budget as RenderEditModals's own
@@ -2314,16 +2344,6 @@ static float ModalTwoColumnContentHeight() {
   const float row_h = ImGui::GetFrameHeightWithSpacing();
   const float v_pad = style.WindowPadding.y * 2.0f + style.ItemSpacing.y;
   return 17.0f * row_h + v_pad;
-}
-
-// Same arithmetic as RenderEditModals's own kPreviewChildHeight (preview image + a tool row +
-// child padding), local to this file section so the column layout does not need it threaded
-// through as a param.
-static float ModalTwoColumnPreviewHeight() {
-  const ImGuiStyle& style = ImGui::GetStyle();
-  const float tool_row = ImGui::GetFrameHeightWithSpacing();
-  const float v_pad = style.WindowPadding.y * 2.0f + style.ItemSpacing.y;
-  return kModalPreviewImageSize + tool_row + v_pad;
 }
 
 // The flexible pane's height this frame (see g_edit_modal_height). `budget` is what the pane asks
@@ -2358,14 +2378,27 @@ static void RenderModalTwoColumn(GuiState& state, bool crystal_dirty, bool axis_
          "PullBuffersFromPool must run before the Expanded column layout each frame");
   const ImGuiStyle& style = ImGui::GetStyle();
   const float row_h = ImGui::GetFrameHeightWithSpacing();
-  // Floor: the right column's fixed part (Axis, both headers) plus a few Filter rows; the left
-  // column's Crystal table scrolls inside its child below that.
-  const float column_floor_h = ModalTwoColumnPreviewHeight() + row_h + kEditModalFlexPaneMinRows * row_h;
-  const float column_h = EditModalFlexPaneHeight(
-      ModalTwoColumnPreviewHeight() + style.ItemSpacing.y + ModalTwoColumnContentHeight(), column_floor_h, max_h);
+  const float header_h = ModalSectionHeaderHeight();
+  const float axis_h = kModalAxisSectionRows * row_h + style.WindowPadding.y * 2.0f;
+  // The Crystal header sits level with the Filter header, by construction rather than by three
+  // constants happening to agree: the preview image takes exactly the height the right column
+  // spends above its Filter header (Axis header + Axis section), less the tool row the left column
+  // has under its image. Both columns start at the same y and put one ItemSpacing after their last
+  // block (image's tool row / Axis child), so equal heights here are equal header y there — which
+  // test_edit_modal.cpp's alignment case checks on screen. A change to the Axis rows, the font or
+  // the UI scale moves both headers together.
+  const float above_filter_h = header_h + axis_h;
+  const float preview_px = std::max(1.0f, above_filter_h - row_h);
+  // Budget: the preview block (+ the child-padding allowance Compact's top pane carries), then the
+  // same 17-row Crystal content budget as Compact. Floor: everything above the Filter header plus
+  // a few Filter rows; below that the left column's Crystal table scrolls inside its child.
+  const float column_budget_h =
+      preview_px + row_h + style.WindowPadding.y * 2.0f + style.ItemSpacing.y * 2.0f + ModalTwoColumnContentHeight();
+  const float column_floor_h = above_filter_h + style.ItemSpacing.y + header_h + kEditModalFlexPaneMinRows * row_h;
+  const float column_h = EditModalFlexPaneHeight(column_budget_h, column_floor_h, max_h);
 
   ImGui::BeginChild("##modal_expanded_left", ImVec2(kModalColumnWidthCrystal, column_h), ImGuiChildFlags_None);
-  RenderCrystalPreviewPane(state);
+  RenderCrystalPreviewPane(state, preview_px);
   RenderModalSectionHeader("Crystal", crystal_dirty, show_dirty);
   ImGui::PushID(entry_layer);
   ImGui::PushID(entry_index);
@@ -2378,7 +2411,6 @@ static void RenderModalTwoColumn(GuiState& state, bool crystal_dirty, bool axis_
 
   ImGui::BeginChild("##modal_expanded_right", ImVec2(kModalColumnWidthAxisOrFilter, column_h), ImGuiChildFlags_None);
   RenderModalSectionHeader("Axis", axis_dirty, show_dirty);
-  const float axis_h = kModalAxisSectionRows * ImGui::GetFrameHeightWithSpacing() + style.WindowPadding.y * 2.0f;
   ImGui::BeginChild("##modal_expanded_axis", ImVec2(-FLT_MIN, axis_h), ImGuiChildFlags_None);
   ImGui::PushID(entry_layer);
   ImGui::PushID(entry_index);
@@ -2387,8 +2419,7 @@ static void RenderModalTwoColumn(GuiState& state, bool crystal_dirty, bool axis_
   ImGui::PopID();
   ImGui::EndChild();
   RenderModalSectionHeader("Filter", filter_dirty, show_dirty);
-  const float header_h = ImGui::GetFrameHeightWithSpacing();
-  const float filter_h = std::max(0.0f, column_h - axis_h - header_h * 2.0f);
+  const float filter_h = std::max(0.0f, column_h - above_filter_h - style.ItemSpacing.y - header_h);
   ImGui::BeginChild("##modal_expanded_filter", ImVec2(-FLT_MIN, filter_h), ImGuiChildFlags_None);
   ImGui::PushID(entry_layer);
   ImGui::PushID(entry_index);
@@ -2699,7 +2730,7 @@ void RenderEditModals(GuiState& state, GLFWwindow* window) {
     // Upper pane: preview, full modal width, fixed height.
     ImGui::BeginChild("##modal_top_pane", ImVec2(-FLT_MIN, kPreviewChildHeight), ImGuiChildFlags_None,
                       ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
-    RenderCrystalPreviewPane(state);
+    RenderCrystalPreviewPane(state, UiPx(kModalPreviewImageSize));
     ImGui::EndChild();
     // Lower pane: tab bar + body, at kModalContentHeight so the tallest crystal layout fits without a
     // scrollbar (taller content still scrolls; see the constant's rationale).

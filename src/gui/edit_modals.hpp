@@ -155,6 +155,11 @@ void ClearAxisCustomMemory();
 void OpenSpectrumModal(GuiState& state);
 void RenderSpectrumModal(GuiState& state);
 
+// Screen y of the top edge of the Expanded layout's section header titled `title` ("Crystal",
+// "Axis" or "Filter") as last drawn; -1 for an unknown title or one not drawn yet.
+// Intended for GUI test assertions; production code should not call this.
+float TestGetModalSectionHeaderY(const char* title);
+
 // Returns true when the committed axis config of the currently open modal entry
 // meets D-symmetry conditions (az uniform 360°, roll mean a multiple of 30°).
 // Returns false when no modal is open or the entry index is invalid.
