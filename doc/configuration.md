@@ -466,14 +466,14 @@ The scene configuration defines the simulation scene, including the light source
 > **`ray_allocation` decides how many rays an entry gets; `proportion` still says how many
 > crystals the entry stands for.** The `proportion` of a scattering entry is a *crystal count
 > share under an equal-surface-area convention*: the entry's share of the layer's crystals,
-> counting every crystal as if it had the same total surface area. Lumice crystal shapes carry
+> counting every crystal as if it had the same total surface area as every other crystal. Lumice crystal shapes carry
 > no absolute size, so "how many crystals" only means something once a size convention is
 > fixed, and this is the one the tracer implements — a ray is intercepted by a sampled crystal
 > with probability `A/(S/2)`, its projected area along the ray over half its surface area. For
 > randomly oriented crystals that count share is exactly the entry's *energy share* too (Cauchy:
 > a randomly oriented convex body's mean projected area is `S/4`, so every shape intercepts
 > the same fraction of the rays dealt to it); for oriented crystals (plates, columns) the two
-> part — an entry of plates seen edge-on intercepts less light than its count share. Under the
+> diverge — an entry of plates seen edge-on intercepts less light than its count share. Under the
 > default `"proportional"` mode that same number also sets the entry's *sampling share* —
 > the fraction of the layer's rays dealt to it — which is the variance-optimal choice only
 > when every entry's per-ray energy statistics agree. They do not when a low-`proportion`
