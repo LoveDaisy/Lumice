@@ -33,6 +33,7 @@
 #include "core/math.hpp"
 #include "core/optics.hpp"
 #include "core/shared/lat_path_selection.hpp"
+#include "core/shared/pcg_shared.h"
 #include "core/trace_ops.hpp"
 #include "core/worker_projection.hpp"
 #include "util/env_knobs.hpp"
@@ -211,7 +212,6 @@ void InitRay_p_fid(const Crystal& curr_crystal, RayBuffer* ray_buf_ptr) {
   for (size_t j = 0; j < subtri_cnt; j++) {
     s_total += subtri[j].area;
   }
-  const float s_half = s_total * 0.5f;
   auto& uniform_rng = RandomNumberGenerator::GetInstance();
 
   for (auto& r : ray_buf) {
@@ -221,7 +221,8 @@ void InitRay_p_fid(const Crystal& curr_crystal, RayBuffer* ray_buf_ptr) {
       proj_prob[j] = std::max(-Dot3(d, subtri[j].n) * subtri[j].area, 0.0f);
       proj_sum += proj_prob[j];
     }
-    const float accept_prob = s_half > 0.0f ? std::min(1.0f, proj_sum / s_half) : 0.0f;
+    // Same formula the Metal / CUDA entry kernels call (single source).
+    const float accept_prob = lm_pcg::entry_accept_prob(proj_sum, s_total);
     if (uniform_rng.GetUniform() >= accept_prob) {
       DiscardEntryRay(r);
       continue;

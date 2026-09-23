@@ -602,6 +602,10 @@ TEST(IncidenceSamplingOracle, DISABLED_CalibrationScan) {
 //   (AC1) + in-face uniformity (AC2), and a biased weight is still rejected
 //   (teeth): "if the upload feeds the right data, the device selection math is
 //   analytically correct."
+//   DeviceSampler{Ac3,UniformOrientationKeepsHalf,RedStateCatchesKeepEverything}
+//   and DeviceAcceptProbMatchesOracleAndStaysBelowOne — the same for the
+//   projected-area acceptance the kernels apply before the triangle pick
+//   (lm_pcg::BuildEntryAcceptStream + lm_pcg::entry_accept_prob).
 // ================================================================================
 
 // SoA layout identical to the device geometry pool: tri_vtx[9*T] / tri_norm[3*T]
@@ -638,36 +642,80 @@ DeviceGeomSoA BuildDeviceGeomSoA(const Crystal& crystal) {
   return g;
 }
 
-// Replays the exact device entry-sampler body (cuda_trace_backend.cu
-// gen_root_kernel §3, metal lumice_trace.metal sibling): per-tri projected weight
-// max(-d·n·A, 0), one categorical_sample over that weight, one sample_triangle in
-// the chosen sub-tri — using the shared lm_pcg:: routines, not a re-implementation.
-// `biased` injects the same |d·n|·A front-face-sign drop the AC1 red-state names,
-// to prove the comparator still has teeth on THIS code path.
+// Device entry-sampler variants the red states inject. kNone is the kernel as
+// shipped; the others each break one thing the comparators must notice.
+enum class DeviceFault {
+  kNone,
+  kUnsignedWeight,  // |d·n|·A instead of max(-d·n·A, 0): the AC1 red state
+  kKeepEverything,  // skip the projected-area acceptance: the AC3 red state
+};
+
+// Replays the exact device entry-sampler body for ONE ray (cuda_trace_backend.cu
+// gen_root_kernel §3–4, transit_root_kernel §3–5, and their lumice_trace.metal
+// siblings): per-tri projected weight max(-d·n·A, 0) summed into A alongside
+// S = Σ area, one categorical_sample, one unconditional draw on the
+// seed-domain-isolated acceptance stream against entry_accept_prob(A, S), and —
+// only when kept — one sample_triangle in the chosen sub-tri. Every routine is
+// the shared lm_pcg:: one the kernels call, not a re-implementation. A rejected
+// ray reads back as face kInvalidId, the kernels' zero-weight drop.
+void DeviceEntrySampleOne(const DeviceGeomSoA& g, const float d[3], uint32_t seed, uint32_t global_idx,
+                          DeviceFault fault, std::vector<float>* proj, IdType* face, std::array<float, 3>* point) {
+  lm_pcg::PcgStream s;
+  s.seed = seed;
+  s.global_idx = global_idx;
+  s.slot = 0u;
+  float proj_sum = 0.0f;
+  float s_total = 0.0f;
+  for (size_t t = 0; t < g.tri_cnt; t++) {
+    const float dot = d[0] * g.tri_norm[3 * t + 0] + d[1] * g.tri_norm[3 * t + 1] + d[2] * g.tri_norm[3 * t + 2];
+    (*proj)[t] =
+        fault == DeviceFault::kUnsignedWeight ? std::abs(dot) * g.tri_area[t] : std::max(-dot * g.tri_area[t], 0.0f);
+    proj_sum += (*proj)[t];
+    s_total += g.tri_area[t];
+  }
+  const float u_cat = lm_pcg::pcg_uniform(s);
+  const uint32_t tri_id = lm_pcg::categorical_sample(proj->data(), static_cast<uint32_t>(g.tri_cnt), u_cat);
+  lm_pcg::PcgStream accept_stream = lm_pcg::BuildEntryAcceptStream(seed, global_idx);
+  const float u_accept = lm_pcg::pcg_uniform(accept_stream);
+  const bool rejected =
+      fault != DeviceFault::kKeepEverything && u_accept >= lm_pcg::entry_accept_prob(proj_sum, s_total);
+  if (g.tri_cnt == 0 || rejected) {
+    *face = kInvalidId;
+    *point = { 0.0f, 0.0f, 0.0f };
+    return;
+  }
+  float p[3];
+  lm_pcg::sample_triangle(s, g.tri_vtx.data() + tri_id * 9u, p);
+  *point = { p[0], p[1], p[2] };
+  *face = static_cast<IdType>(g.tri_to_poly[tri_id]);
+}
+
+// n rays along one fixed direction, one independent PCG stream each (distinct
+// global_idx), matching the device's per-thread stream construction well
+// enough for a statistical test.
 EntrySamples DriveEntrySamplingDevice(const Crystal& crystal, const float d[3], size_t n, uint32_t seed,
-                                      bool biased = false) {
+                                      DeviceFault fault = DeviceFault::kNone) {
   const DeviceGeomSoA g = BuildDeviceGeomSoA(crystal);
   EntrySamples out;
   out.face.resize(n);
   out.point.resize(n);
   std::vector<float> proj(g.tri_cnt);
   for (size_t i = 0; i < n; i++) {
-    // One independent PCG stream per ray (distinct global_idx), matching the
-    // device's per-thread stream construction well enough for a statistical test.
-    lm_pcg::PcgStream s;
-    s.seed = seed;
-    s.global_idx = static_cast<uint32_t>(i);
-    s.slot = 0u;
-    for (size_t t = 0; t < g.tri_cnt; t++) {
-      const float dot = d[0] * g.tri_norm[3 * t + 0] + d[1] * g.tri_norm[3 * t + 1] + d[2] * g.tri_norm[3 * t + 2];
-      proj[t] = biased ? std::abs(dot) * g.tri_area[t] : std::max(-dot * g.tri_area[t], 0.0f);
-    }
-    const float u_cat = lm_pcg::pcg_uniform(s);
-    const uint32_t tri_id = lm_pcg::categorical_sample(proj.data(), static_cast<uint32_t>(g.tri_cnt), u_cat);
-    float p[3];
-    lm_pcg::sample_triangle(s, g.tri_vtx.data() + tri_id * 9u, p);
-    out.point[i] = { p[0], p[1], p[2] };
-    out.face[i] = static_cast<IdType>(g.tri_to_poly[tri_id]);
+    DeviceEntrySampleOne(g, d, seed, static_cast<uint32_t>(i), fault, &proj, &out.face[i], &out.point[i]);
+  }
+  return out;
+}
+
+// One ray per direction (the AC3 shape: many orientations, one ray each).
+EntrySamples DriveEntrySamplingDeviceDirs(const Crystal& crystal, const std::vector<std::array<float, 3>>& dirs,
+                                          uint32_t seed, DeviceFault fault = DeviceFault::kNone) {
+  const DeviceGeomSoA g = BuildDeviceGeomSoA(crystal);
+  EntrySamples out;
+  out.face.resize(dirs.size());
+  out.point.resize(dirs.size());
+  std::vector<float> proj(g.tri_cnt);
+  for (size_t i = 0; i < dirs.size(); i++) {
+    DeviceEntrySampleOne(g, dirs[i].data(), seed, static_cast<uint32_t>(i), fault, &proj, &out.face[i], &out.point[i]);
   }
   return out;
 }
@@ -721,11 +769,111 @@ TEST(DeviceSamplingPolygonOracle, DeviceSamplerRedStateCatchesBias) {
                          << vg.max_abs_z;
   }
   // Biased device sampler (|d·n|·A) — same comparator + oracle → must reject.
-  EntrySamples bad = DriveEntrySamplingDevice(prism, d.data(), kSampleN, 2024, /*biased=*/true);
+  EntrySamples bad = DriveEntrySamplingDevice(prism, d.data(), kSampleN, 2024, DeviceFault::kUnsignedWeight);
   Ac1Verdict vb = test_support::CheckProjectedAreaDistribution(prism, d.data(), bad.face, kAc1KSigma);
   EXPECT_FALSE(vb.pass) << "biased device sampler slipped past AC1 — comparator has no teeth. max|z|=" << vb.max_abs_z;
   EXPECT_GT(vb.max_abs_z, 10.0 * kAc1KSigma)
       << "injected bias barely exceeded threshold — pick a more directional case";
+}
+
+
+// ---- Device sampling math: AC3 (projected-area acceptance) ----------------------
+// Same draw, bins and comparator as IncidenceSamplingOracle.Ac3* above, with the
+// device body in place of InitRay_p_fid: every fixture gets uniformly oriented
+// rays, binned by (fixture, polar band), and the kept rays are judged against
+// the oracle's per-ray acceptance A / (S/2).
+Ac3Draw DrawAcrossFixturesDevice(const std::vector<CrystalFixture>& fixtures, uint32_t seed, DeviceFault fault) {
+  Ac3Draw out;
+  out.bin_cnt = fixtures.size() * kAc3PolarBins;
+  for (size_t fi = 0; fi < fixtures.size(); fi++) {
+    const auto dirs = UniformSphereDirections(kAc3RaysPerShape, seed + static_cast<uint32_t>(fi));
+    const EntrySamples s =
+        DriveEntrySamplingDeviceDirs(fixtures[fi].crystal, dirs, seed + 1000 + static_cast<uint32_t>(fi), fault);
+    const auto faces = test_support::BuildPresentFaceGeom(fixtures[fi].crystal.CfGeom());
+    for (size_t i = 0; i < dirs.size(); i++) {
+      const double d[3] = { dirs[i][0], dirs[i][1], dirs[i][2] };
+      out.bin_of.push_back(static_cast<int>(fi) * kAc3PolarBins + PolarBin(dirs[i]));
+      out.accept_prob.push_back(test_support::ComputeEntryAcceptance(faces, d));
+      out.kept.push_back(s.face[i] != kInvalidId);
+    }
+  }
+  return out;
+}
+
+TEST(DeviceSamplingPolygonOracle, DeviceSamplerMathPassesAc3) {
+  const auto fixtures = MakeFixtures();
+  const Ac3Draw draw = DrawAcrossFixturesDevice(fixtures, 27182, DeviceFault::kNone);
+  const auto v = test_support::CheckEntryAcceptance(draw.bin_of, draw.accept_prob, draw.kept, draw.bin_cnt, kAc3KSigma);
+  for (size_t k = 0; k < v.bins.size(); k++) {
+    const auto& b = v.bins[k];
+    EXPECT_LE(std::abs(b.z), kAc3KSigma) << fixtures[k / kAc3PolarBins].label << " polar band " << k % kAc3PolarBins
+                                         << ": kept " << b.kept << " of " << b.dealt << ", expected " << b.expected;
+  }
+  EXPECT_TRUE(v.pass) << "max|z|=" << v.max_abs_z << " at bin " << v.worst_bin;
+}
+
+// Cauchy route, sharing nothing with the oracle's geometry: uniformly oriented
+// rays are kept with probability (S/4)/(S/2) = 1/2 on every convex shape.
+TEST(DeviceSamplingPolygonOracle, DeviceSamplerUniformOrientationKeepsHalf) {
+  const auto fixtures = MakeFixtures();
+  for (size_t fi = 0; fi < fixtures.size(); fi++) {
+    const auto dirs = UniformSphereDirections(kAc3RaysPerShape, 1618 + static_cast<uint32_t>(fi));
+    const EntrySamples s = DriveEntrySamplingDeviceDirs(fixtures[fi].crystal, dirs, 3141 + static_cast<uint32_t>(fi));
+    const auto kept =
+        static_cast<double>(std::count_if(s.face.begin(), s.face.end(), [](IdType f) { return f != kInvalidId; }));
+    const double n = static_cast<double>(dirs.size());
+    EXPECT_NEAR(kept / n, 0.5, kAc3KSigma * std::sqrt(0.25 / n)) << fixtures[fi].label;
+  }
+}
+
+// Red state: the device body without the acceptance step (the pre-fix kernels)
+// must be rejected by the same comparator on the same dealt rays.
+TEST(DeviceSamplingPolygonOracle, DeviceSamplerRedStateCatchesKeepEverything) {
+  const auto fixtures = MakeFixtures();
+  const Ac3Draw draw = DrawAcrossFixturesDevice(fixtures, 27182, DeviceFault::kKeepEverything);
+  const auto v = test_support::CheckEntryAcceptance(draw.bin_of, draw.accept_prob, draw.kept, draw.bin_cnt, kAc3KSigma);
+  EXPECT_FALSE(v.pass);
+  EXPECT_GT(v.max_abs_z, 10.0 * kAc3KSigma) << "keep-everything should be a gross departure, not a marginal one";
+}
+
+// ---- Device sampling math: AC4 (the acceptance probability itself) --------------
+// The kernels accumulate A and S in float over the device triangle SoA and call
+// entry_accept_prob; this pins that number against the oracle's double-precision
+// A / (S/2) per direction, and that it never reaches the clamp at 1 — including
+// on the thin face-on plate, where A comes closest to S/2.
+TEST(DeviceSamplingPolygonOracle, DeviceAcceptProbMatchesOracleAndStaysBelowOne) {
+  auto fixtures = MakeFixtures();
+  fixtures.push_back({ "prism_h0.05", Crystal::CreatePrism(0.05f) });
+  fixtures.push_back({ "prism_h10", Crystal::CreatePrism(10.0f) });
+  auto dirs = UniformSphereDirections(4000, 1123);
+  for (const auto& d : CandidateDirections()) {
+    dirs.push_back(d);
+  }
+  for (const auto& f : fixtures) {
+    const DeviceGeomSoA g = BuildDeviceGeomSoA(f.crystal);
+    const auto faces = test_support::BuildPresentFaceGeom(f.crystal.CfGeom());
+    double max_err = 0.0;
+    double max_prob = 0.0;
+    for (const auto& dv : dirs) {
+      float proj_sum = 0.0f;
+      float s_total = 0.0f;
+      for (size_t t = 0; t < g.tri_cnt; t++) {
+        const float dot = dv[0] * g.tri_norm[3 * t + 0] + dv[1] * g.tri_norm[3 * t + 1] + dv[2] * g.tri_norm[3 * t + 2];
+        proj_sum += std::max(-dot * g.tri_area[t], 0.0f);
+        s_total += g.tri_area[t];
+      }
+      const double prob = lm_pcg::entry_accept_prob(proj_sum, s_total);
+      const double d[3] = { dv[0], dv[1], dv[2] };
+      max_err = std::max(max_err, std::abs(prob - test_support::ComputeEntryAcceptance(faces, d)));
+      max_prob = std::max(max_prob, prob);
+    }
+    // Float accumulation over <= 64 sub-tris of O(1) area: 1e-5 absolute is
+    // ~100 ulp of a probability, far below the AC3 binomial width.
+    EXPECT_LT(max_err, 1e-5) << f.label;
+    EXPECT_LT(max_prob, 1.0) << f.label << ": the clamp bound; kept distribution would stop following A";
+  }
+  // Empty shape: never kept.
+  EXPECT_EQ(lm_pcg::entry_accept_prob(0.0f, 0.0f), 0.0f);
 }
 
 }  // namespace

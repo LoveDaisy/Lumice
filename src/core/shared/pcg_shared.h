@@ -114,11 +114,18 @@ LM_CONSTANT int kMaxRejectionAttempts = 1000;
 //                                        Value = SplitMix64 low half — a
 //                                        good-mixing constant unrelated by
 //                                        arithmetic to any nonce above.)
-// All seven values are pairwise distinct. `pcg_hash` has good avalanche on any
+//   kEntryAcceptStreamNonce = 0xC2B2AE3Du (this header; per-ray projected-area
+//                                        acceptance draw at crystal entry.
+//                                        Value = the second MurmurHash3 fmix32
+//                                        multiplier, unrelated by arithmetic
+//                                        to any nonce above.)
+// All eight values are pairwise distinct. `pcg_hash` has good avalanche on any
 // non-zero XOR delta, so no additional statistical validation is required.
 LM_CONSTANT uint32_t kWlStreamNonce = 0x9E3779B9u;
 LM_CONSTANT uint32_t kGeomShapeStreamNonce = 0x94D049BBu;
-// (BuildWlStream / BuildGeomShapeStream are defined after PcgStream below.)
+LM_CONSTANT uint32_t kEntryAcceptStreamNonce = 0xC2B2AE3Du;
+// (BuildWlStream / BuildGeomShapeStream / BuildEntryAcceptStream are defined
+// after PcgStream below.)
 
 // --- GenRootKernelParams --------------------------------------------------
 // Single source for both `gen_root_kernel` (Metal-only, device root sampler)
@@ -239,6 +246,19 @@ LM_FN PcgStream BuildWlStream(uint32_t mixed_seed, uint32_t global_idx) {
 LM_FN PcgStream BuildGeomShapeStream(uint32_t mixed_seed, uint32_t global_idx) {
   PcgStream s;
   s.seed = mixed_seed ^ kGeomShapeStreamNonce;
+  s.global_idx = global_idx;
+  s.slot = 0u;
+  return s;
+}
+
+// Single-source constructor for the per-ray entry-acceptance draw (see
+// entry_accept_prob below). Its own seed domain for the same reason as the wl
+// and geom-shape streams: the draw is unconditional, and keeping it off the
+// orientation stream means an ACCEPTED ray samples exactly the orientation,
+// entry triangle and entry point it would have without the acceptance step.
+LM_FN PcgStream BuildEntryAcceptStream(uint32_t mixed_seed, uint32_t global_idx) {
+  PcgStream s;
+  s.seed = mixed_seed ^ kEntryAcceptStreamNonce;
   s.global_idx = global_idx;
   s.slot = 0u;
   return s;
@@ -609,6 +629,20 @@ LM_FN uint32_t feistel_bijection(uint32_t i, uint32_t n, uint32_t seed) {
   // out-of-bounds gather read on the GPU; the energy imbalance would surface
   // in parity tests.
   return cur % n;
+}
+
+// Projected-area acceptance at crystal entry — the one formula CPU
+// InitRay_p_fid and the Metal / CUDA gen_root / transit_root kernels all call.
+// A ray born with a fixed weight meets orientation o of shape g with probability
+// proportional to p(o)·p(g)·A(o,g,d); `proj_sum` = Σ max(-d·n·area, 0) over the
+// shape's entry triangles IS A, and keeping the ray with probability A / (S/2)
+// (`s_total` = S = Σ area) supplies that missing factor. S/2 bounds A for every
+// convex body in every direction (the lit and unlit sides project to the same
+// A and together are at most S), so the min() never binds on a valid crystal;
+// it only guards float round-off. An empty shape (s_total == 0) is never kept.
+LM_FN float entry_accept_prob(float proj_sum, float s_total) {
+  const float s_half = s_total * 0.5f;
+  return s_half > 0.0f ? LM_FMIN(1.0f, proj_sum / s_half) : 0.0f;
 }
 
 // RandomSample (geo3d.cpp:112-150) — categorical CDF with negative-weight clip.
