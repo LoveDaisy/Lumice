@@ -389,9 +389,12 @@ TEST(IncidenceSamplingOracle, Ac1RedStateCatchesBiasedWeight) {
 // ---- AC3: projected-area acceptance over the joint (orientation, shape) -------
 //
 // A crystal of shape g in orientation o intercepts sunlight in proportion to
-// its projected area A(o, g, d), so the rays that enter it must be distributed
-// as p(o)·p(g)·A-driven acceptance, while the entry sampler used to keep every
-// ray it was dealt. These cases deal rays from a known p(o)·p(g) — uniformly
+// its projected area A(o, g, d). Counting every crystal as if it had the same
+// surface area S(g) (Lumice shapes carry no absolute size, so a count share
+// needs a size convention and this is the one `proportion` documents), the rays
+// that enter must be distributed as p(o)·p(g)·A(o, g, d)/S(g) — acceptance
+// A/(S(g)/2) per ray — while the entry sampler used to keep every ray it was
+// dealt. These cases deal rays from a known p(o)·p(g) — uniformly
 // random orientations (as crystal-local directions) on each fixture shape —
 // and judge the kept rays against the oracle's per-ray acceptance.
 
