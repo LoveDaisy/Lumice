@@ -1583,6 +1583,10 @@ __global__ void transit_multi_ms_kernel(
   if (n_tri > lm_pcg::kMaxTriPerKernel) {
     n_tri = lm_pcg::kMaxTriPerKernel;  // defensive; host should have already throw'd
   }
+  // proj_sum (= A along d) and s_total (= S) of THIS ray's pool shape ride the
+  // same walk — per ray, since rays of one dispatch draw different shapes.
+  float proj_sum = 0.0f;
+  float s_total = 0.0f;
   for (uint32_t t = 0u; t < n_tri; ++t) {
     float dot = d_crystal[0] * d_tri_norm_ray[t * 3u + 0u]
               + d_crystal[1] * d_tri_norm_ray[t * 3u + 1u]
@@ -1591,9 +1595,15 @@ __global__ void transit_multi_ms_kernel(
     // (i.e. the ray enters that face) get positive weight; clamp the rest to
     // zero (mirrors Metal lumice_trace.metal:1265).
     proj_prob[t] = fmaxf(-dot * d_tri_area_ray[t], 0.0f);
+    proj_sum += proj_prob[t];
+    s_total += d_tri_area_ray[t];
   }
   float u_cat = lm_pcg::pcg_uniform(stream);
   uint32_t tri_id = lm_pcg::categorical_sample(proj_prob, n_tri, u_cat);
+  // Projected-area acceptance, identical to gen_root_kernel's: a continuation
+  // ray meets the NEW crystal with the same missing A(o,g,d) factor.
+  lm_pcg::PcgStream accept_stream = lm_pcg::BuildEntryAcceptStream(transit_mixed_seed, gp.gen_ray_base + tid);
+  const bool rejected = lm_pcg::pcg_uniform(accept_stream) >= lm_pcg::entry_accept_prob(proj_sum, s_total);
 
   // 4. Uniform sample inside the chosen triangle → entry point p.
   float p[3];
@@ -1604,10 +1614,10 @@ __global__ void transit_multi_ms_kernel(
   //    a benign drop (w=0 short-circuits the entry-face emit and main loop).
   //    K-shape degenerate-slot guard (mirrors gen_root_kernel): shape_tri_cnt
   //    == 0 → shape_tri_off aliases the next slot's triangles / pool tail, so
-  //    skip both reads and route into the kInvalidId zero-weight drop.
-  //    Non-degenerate rays are unaffected (AC2 bit-exact path unchanged).
+  //    skip both reads and route into the kInvalidId zero-weight drop, which
+  //    a rejected ray takes too.
   uint16_t to_face_u16;
-  if (shape_tri_cnt == 0u) {
+  if (shape_tri_cnt == 0u || rejected) {
     p[0] = 0.0f;
     p[1] = 0.0f;
     p[2] = 0.0f;
@@ -1810,13 +1820,27 @@ __global__ void gen_root_kernel(float* __restrict__ d_root_d,           // 3 × 
   if (n_tri > lm_pcg::kMaxTriPerKernel) {
     n_tri = lm_pcg::kMaxTriPerKernel;  // defensive; host already throw'd otherwise
   }
+  //    proj_sum (= A along d) and s_total (= S) of THIS ray's pool shape ride
+  //    the same walk — per ray, since rays of one dispatch draw different shapes.
+  float proj_sum = 0.0f;
+  float s_total = 0.0f;
   for (uint32_t t = 0u; t < n_tri; ++t) {
     float dot = d_crystal[0] * d_tri_norm_ray[t * 3u + 0u] + d_crystal[1] * d_tri_norm_ray[t * 3u + 1u] +
                 d_crystal[2] * d_tri_norm_ray[t * 3u + 2u];
     proj_prob[t] = fmaxf(-dot * d_tri_area_ray[t], 0.0f);
+    proj_sum += proj_prob[t];
+    s_total += d_tri_area_ray[t];
   }
   float u_cat = lm_pcg::pcg_uniform(stream);
   uint32_t tri_id = lm_pcg::categorical_sample(proj_prob, n_tri, u_cat);
+  // Projected-area acceptance (lm_pcg::entry_accept_prob — the formula CPU
+  // InitRay_p_fid and the Metal kernels call): keep with probability A/(S/2).
+  // One unconditional draw on its own seed domain, then the SAME zero-weight
+  // kInvalidId drop the degenerate-slot guard below takes — a single decision
+  // per ray, not a resampling loop. Rejected rays still count as emitted:
+  // emitted energy is charged host-side from the dealt ray count.
+  lm_pcg::PcgStream accept_stream = lm_pcg::BuildEntryAcceptStream(gen_mixed_seed, global_idx);
+  const bool rejected = lm_pcg::pcg_uniform(accept_stream) >= lm_pcg::entry_accept_prob(proj_sum, s_total);
   float p[3];
 
   // 4. tri_to_poly. kInvalidId → zero-weight drop (InitRay_p_fid fallback).
@@ -1825,11 +1849,12 @@ __global__ void gen_root_kernel(float* __restrict__ d_root_d,           // 3 × 
   //    the NEXT pool slot's packed triangles (or runs past the pool tail on the
   //    last slot), so sampling tri_id 0 here would silently read a neighbor
   //    shape's vtx / tri_to_poly. Skip both reads and route into the existing
-  //    kInvalidId zero-weight drop below — same sentinel, no new mechanism.
-  //    Non-degenerate rays never take this branch, so the K==0 / AC2 bit-exact
-  //    path is numerically unchanged.
+  //    kInvalidId zero-weight drop below — same sentinel, no new mechanism —
+  //    which a rejected ray takes too. (entry_accept_prob is already 0 there;
+  //    the explicit test stays so the neighbor-read guard does not hinge on a
+  //    float comparison.)
   uint16_t to_face_u16;
-  if (shape_tri_cnt == 0u) {
+  if (shape_tri_cnt == 0u || rejected) {
     p[0] = 0.0f;
     p[1] = 0.0f;
     p[2] = 0.0f;

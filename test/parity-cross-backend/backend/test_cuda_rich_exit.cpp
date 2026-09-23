@@ -26,6 +26,7 @@
 #if defined(LUMICE_CUDA_ENABLED)
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -45,6 +46,8 @@
 #include "core/exit_seam.hpp"
 #include "core/raypath.hpp"
 #include "cuda_test_helpers.hpp"  // scrum-328.2 Step 5: shared scene / render fixtures
+#include "support/env_var.hpp"
+#include "support/incidence_sampling_oracle.hpp"
 
 namespace lumice {
 namespace {
@@ -933,7 +936,11 @@ TEST(CudaRootGen, PerRayEntryPointGeometricConsistency) {
   ASSERT_EQ(hooks.ReadbackGenDirs(gen_dirs, kRayCount), 3u * kRayCount);
   ASSERT_EQ(hooks.ReadbackRootEntryPoint(gen_p, gen_f, kRayCount), kRayCount);
   CudaEntryVerifyStats gen_st = VerifyCudaEntryPoints(gt, gen_dirs, gen_p, gen_f, kRayCount, "gen");
-  EXPECT_GT(gen_st.valid, kRayCount / 2) << "gen: too few valid entry samples (drops=" << gen_st.drops << ")";
+  // A solid share, not "most": the projected-area acceptance keeps a ray with
+  // probability A/(S/2), ~0.51 for this fixed axis and sun and exactly 1/2 on
+  // average for the random-axis transit layer, so a majority bar would sit on
+  // the expected value itself.
+  EXPECT_GT(gen_st.valid, kRayCount / 4) << "gen: too few valid entry samples (drops=" << gen_st.drops << ")";
 
   // --- Layer 1: transit over the compacted continuation set [0, n_cont) ---
   const size_t n_cont = h0->ContinuationCount();
@@ -949,9 +956,223 @@ TEST(CudaRootGen, PerRayEntryPointGeometricConsistency) {
   ASSERT_EQ(hooks.ReadbackGenDirs(tr_dirs, n_cont), 3u * n_cont);
   ASSERT_EQ(hooks.ReadbackRootEntryPoint(tr_p, tr_f, n_cont), n_cont);
   CudaEntryVerifyStats tr_st = VerifyCudaEntryPoints(gt, tr_dirs, tr_p, tr_f, n_cont, "transit");
-  EXPECT_GT(tr_st.valid, n_cont / 2) << "transit: too few valid entry samples (drops=" << tr_st.drops << ")";
+  EXPECT_GT(tr_st.valid, n_cont / 4) << "transit: too few valid entry samples (drops=" << tr_st.drops << ")";
 
   backend.EndSession();
+}
+
+
+// ---- Projected-area entry acceptance, judged by the CPU oracle -----------------
+//
+// CUDA sibling of MetalEntryAcceptance.* (test_metal_root_gen.cpp). The gen_root /
+// transit kernels keep each ray with probability A/(S/2)
+// (lm_pcg::entry_accept_prob). These cases read back what the DEVICE decided —
+// the crystal-local direction (ReadbackGenDirs) and whether it kept the ray
+// (ReadbackRootEntryPoint face != kInvalidId) — and judge the kept set with the
+// analytic oracle and comparator the CPU sampler is judged by
+// (test/support/incidence_sampling_oracle.hpp). Direct parity with the CPU
+// oracle, NOT the cross-backend parity battery, which compares backends with
+// each other and so could not see a factor all three used to omit.
+namespace {
+
+constexpr size_t kAcceptRays = size_t{ 1 } << 17;
+constexpr int kAcceptPolarBins = 8;
+constexpr double kAcceptKSigma = 5.0;
+
+void SetUniformOrientation(ScatteringSetting& s) {
+  s.crystal_.axis_.azimuth_dist = Distribution{ DistributionType::kUniform, 0.0f, 360.0f };
+  s.crystal_.axis_.latitude_dist = Distribution{ DistributionType::kUniform, 90.0f, 360.0f };
+  s.crystal_.axis_.roll_dist = Distribution{ DistributionType::kUniform, 0.0f, 360.0f };
+}
+
+double CheckCudaAcceptance(const Crystal& crystal, const std::vector<float>& dirs, const std::vector<uint32_t>& faces,
+                           size_t count, const char* label) {
+  const auto oracle_faces = test_support::BuildPresentFaceGeom(crystal.CfGeom());
+  std::vector<int> bin_of(count);
+  std::vector<double> accept_prob(count);
+  std::vector<bool> kept(count);
+  size_t kept_n = 0;
+  for (size_t i = 0; i < count; i++) {
+    const double d[3] = { dirs[3 * i + 0], dirs[3 * i + 1], dirs[3 * i + 2] };
+    bin_of[i] = std::min(static_cast<int>(std::abs(d[2]) * kAcceptPolarBins), kAcceptPolarBins - 1);
+    accept_prob[i] = test_support::ComputeEntryAcceptance(oracle_faces, d);
+    kept[i] = faces[i] != kInvalidFaceU32Cuda;
+    kept_n += kept[i] ? 1 : 0;
+  }
+  const auto v = test_support::CheckEntryAcceptance(bin_of, accept_prob, kept, kAcceptPolarBins, kAcceptKSigma);
+  for (size_t k = 0; k < v.bins.size(); k++) {
+    const auto& b = v.bins[k];
+    EXPECT_GT(b.dealt, 0) << label << " polar band " << k << " received no rays";
+    EXPECT_LE(std::abs(b.z), kAcceptKSigma) << label << " polar band " << k << ": kept " << b.kept << " of " << b.dealt
+                                            << ", oracle expects " << b.expected;
+  }
+  EXPECT_TRUE(v.pass) << label << " max|z|=" << v.max_abs_z << " at band " << v.worst_bin;
+  return static_cast<double>(kept_n) / static_cast<double>(count);
+}
+
+void ExpectCauchyHalf(double kept_fraction, size_t n, const char* label) {
+  EXPECT_NEAR(kept_fraction, 0.5, kAcceptKSigma * std::sqrt(0.25 / static_cast<double>(n))) << label;
+}
+
+}  // namespace
+
+TEST(CudaEntryAcceptance, GenKeptRaysFollowCpuOracle) {
+  if (!CudaDeviceAvailable()) {
+    GTEST_SKIP() << "No CUDA device available on this host; requires a CUDA-capable GPU.";
+  }
+  auto scene = MakePrismScene(/*max_hits=*/2);
+  SetUniformOrientation(scene.ms_[0].setting_[0]);
+  auto render = MakeFullViewRender();
+  SessionSpec spec;
+  spec.scene = &scene;
+  spec.renders = { &render };
+  spec.wl = WlParam{ 550.0f, 1.0f };
+  spec.seed = 20260924;
+
+  HostRayBatch host;
+  host.count = kAcceptRays;
+  host.crystal = nullptr;
+  host.refractive_index = 0.0f;
+
+  CudaTraceBackend backend;
+  backend.BeginSession(spec);
+  CudaTraceBackendTestHooks hooks(backend);
+  auto h = backend.TraceLayer(RootRaySource::FromHost(host));
+  ASSERT_NE(h, nullptr);
+  std::vector<float> dirs;
+  std::vector<float> points;
+  std::vector<uint32_t> faces;
+  ASSERT_EQ(hooks.ReadbackGenDirs(dirs, kAcceptRays), 3u * kAcceptRays);
+  ASSERT_EQ(hooks.ReadbackRootEntryPoint(points, faces, kAcceptRays), kAcceptRays);
+  backend.EndSession();
+
+  const Crystal gt = Crystal::CreatePrism(1.0f);  // MakePrismScene's crystal
+  const double kept = CheckCudaAcceptance(gt, dirs, faces, kAcceptRays, "gen");
+  ExpectCauchyHalf(kept, kAcceptRays, "gen");
+}
+
+TEST(CudaEntryAcceptance, TransitKeptRaysFollowCpuOracle) {
+  if (!CudaDeviceAvailable()) {
+    GTEST_SKIP() << "No CUDA device available on this host; requires a CUDA-capable GPU.";
+  }
+  // Layer 0 continues every exit (prob 1) into a uniformly oriented layer 1.
+  auto scene = MakePrismScene(/*max_hits=*/4);
+  scene.ms_[0].prob_ = 1.0f;
+  MsInfo layer1 = scene.ms_[0];
+  layer1.prob_ = 0.0f;
+  SetUniformOrientation(layer1.setting_[0]);
+  scene.ms_.push_back(std::move(layer1));
+  auto render = MakeFullViewRender();
+  SessionSpec spec;
+  spec.scene = &scene;
+  spec.renders = { &render };
+  spec.wl = WlParam{ 550.0f, 1.0f };
+  spec.seed = 9241;
+
+  HostRayBatch host;
+  host.count = kAcceptRays;
+  host.crystal = nullptr;
+  host.refractive_index = 0.0f;
+
+  CudaTraceBackend backend;
+  backend.BeginSession(spec);
+  CudaTraceBackendTestHooks hooks(backend);
+  auto h0 = backend.TraceLayer(RootRaySource::FromHost(host));
+  ASSERT_NE(h0, nullptr);
+  const size_t n_cont = h0->ContinuationCount();
+  ASSERT_GT(n_cont, kAcceptRays / 8) << "too few continuation rays to judge the transit kernel";
+  RecombineSpec rspec;
+  rspec.shuffle = false;
+  auto roots1 = backend.Recombine(std::move(h0), rspec);
+  auto h1 = backend.TraceLayer(roots1);
+  ASSERT_NE(h1, nullptr);
+  std::vector<float> dirs;
+  std::vector<float> points;
+  std::vector<uint32_t> faces;
+  ASSERT_EQ(hooks.ReadbackGenDirs(dirs, n_cont), 3u * n_cont);
+  ASSERT_EQ(hooks.ReadbackRootEntryPoint(points, faces, n_cont), n_cont);
+  backend.EndSession();
+
+  const Crystal gt = Crystal::CreatePrism(1.0f);
+  const double kept = CheckCudaAcceptance(gt, dirs, faces, n_cont, "transit");
+  ExpectCauchyHalf(kept, n_cont, "transit");
+}
+
+// K-shape pool: every shape keeps 1/2 under uniform orientation (Cauchy), with
+// no per-slot geometry needed; heights 0.2..3.0 make S differ ~3.6x across
+// slots, so dividing by another slot's S would push the slots' rates apart.
+// See the Metal sibling for the full argument.
+TEST(CudaEntryAcceptance, KShapePoolKeepsHalfOnEveryShape) {
+  if (!CudaDeviceAvailable()) {
+    GTEST_SKIP() << "No CUDA device available on this host; requires a CUDA-capable GPU.";
+  }
+  test::SetEnvVar("LUMICE_GPU_GEOM_CLOCK", "4096");
+
+  auto scene = MakePrismScene(/*max_hits=*/2);
+  auto& setting = scene.ms_[0].setting_[0];
+  SetUniformOrientation(setting);
+  auto prism = std::get<PrismCrystalParam>(setting.crystal_.param_);
+  prism.h_ = Distribution{ DistributionType::kUniform, 1.6f, 2.8f };
+  setting.crystal_.param_ = prism;
+  auto render = MakeFullViewRender();
+  SessionSpec spec;
+  spec.scene = &scene;
+  spec.renders = { &render };
+  spec.wl = WlParam{ 550.0f, 1.0f };
+  spec.seed = 4096;
+
+  HostRayBatch host;
+  host.count = kAcceptRays;
+  host.crystal = nullptr;
+  host.refractive_index = 0.0f;
+
+  CudaTraceBackend backend;
+  backend.BeginSession(spec);
+  CudaTraceBackendTestHooks hooks(backend);
+  auto h = backend.TraceLayer(RootRaySource::FromHost(host));
+  ASSERT_NE(h, nullptr);
+  std::vector<float> points;
+  std::vector<uint32_t> faces;
+  ASSERT_EQ(hooks.ReadbackRootEntryPoint(points, faces, kAcceptRays), kAcceptRays);
+  const auto table = hooks.ReadbackPoolShapeTable();
+  const auto ray_shape = hooks.ReadbackRootPoolShape(kAcceptRays);
+  backend.EndSession();
+  test::UnsetEnvVar("LUMICE_GPU_GEOM_CLOCK");
+
+  ASSERT_GE(table.size(), 16u) << "pool too small to exercise per-shape S";
+  ASSERT_EQ(ray_shape.size(), kAcceptRays);
+  std::set<uint32_t> tri_offs;
+  for (const auto& row : table) {
+    tri_offs.insert(row[2]);
+  }
+  EXPECT_EQ(tri_offs.size(), table.size());
+
+  std::vector<long long> dealt(table.size(), 0);
+  std::vector<long long> kept(table.size(), 0);
+  for (size_t i = 0; i < kAcceptRays; i++) {
+    size_t slot = table.size();
+    for (size_t k = 0; k < table.size(); k++) {
+      if (table[k][0] == ray_shape[i].first) {
+        slot = k;
+        break;
+      }
+    }
+    if (slot == table.size()) {
+      ADD_FAILURE() << "ray " << i << " published an unknown poly_off " << ray_shape[i].first;
+      continue;
+    }
+    dealt[slot]++;
+    kept[slot] += faces[i] != kInvalidFaceU32Cuda ? 1 : 0;
+  }
+  for (size_t k = 0; k < table.size(); k++) {
+    if (dealt[k] == 0) {
+      ADD_FAILURE() << "slot " << k << " received no rays";
+      continue;
+    }
+    const double n = static_cast<double>(dealt[k]);
+    EXPECT_NEAR(static_cast<double>(kept[k]) / n, 0.5, kAcceptKSigma * std::sqrt(0.25 / n))
+        << "slot " << k << " (tri_cnt " << table[k][3] << "): kept " << kept[k] << " of " << dealt[k];
+  }
 }
 
 }  // namespace
