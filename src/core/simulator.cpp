@@ -179,10 +179,44 @@ void InitRay_p_fid(const Crystal& curr_crystal, RayBuffer* ray_buf_ptr) {
   }
   detail::BuildEntrySubTris(cf, subtri);
 
+  // Projected-area acceptance. A ray born with a fixed weight hits orientation o
+  // of shape g with probability proportional to p(o)·p(g)·A(o,g,d), where A is
+  // the crystal's area projected along d — and A is exactly Σ proj_prob below,
+  // already computed per ray for the face selection. Keeping each ray with
+  // probability A / (S/2) supplies that missing marginal factor. S/2 bounds A
+  // for every convex body in every direction (divergence theorem: the lit and
+  // the unlit sides project to the same A, and together they are at most S),
+  // so the ratio never exceeds 1 and needs no per-family calibration; S is
+  // summed per call, i.e. per sampled shape, which is what makes the g factor
+  // come out right without a separate allocation mechanism.
+  //
+  // A rejected ray is not resampled: it takes the same zero-weight discard as
+  // the empty-crystal path above (w_=0, to_face_=kInvalidId), so the rays this
+  // entry was dealt keep counting as emitted. The slot stays in the buffer
+  // (callers, including the GPU host-gen fallbacks, index it by the dealt
+  // count); the ray ends at its first hop, where HitSurface turns an entry ray
+  // with no hit face into two terminated segments, the same way the GPU
+  // kernels stop on kInvalidId.
+  float s_total = 0.0f;
+  for (size_t j = 0; j < subtri_cnt; j++) {
+    s_total += subtri[j].area;
+  }
+  const float s_half = s_total * 0.5f;
+  auto& uniform_rng = RandomNumberGenerator::GetInstance();
+
   for (auto& r : ray_buf) {
     const auto* d = r.d_;
+    float proj_sum = 0.0f;
     for (size_t j = 0; j < subtri_cnt; j++) {
       proj_prob[j] = std::max(-Dot3(d, subtri[j].n) * subtri[j].area, 0.0f);
+      proj_sum += proj_prob[j];
+    }
+    const float accept_prob = s_half > 0.0f ? std::min(1.0f, proj_sum / s_half) : 0.0f;
+    if (uniform_rng.GetUniform() >= accept_prob) {
+      r.from_face_ = kInvalidId;
+      r.to_face_ = kInvalidId;
+      r.w_ = 0.0f;
+      continue;
     }
     int tri_id = 0;
     RandomSample(static_cast<int>(subtri_cnt), proj_prob, &tri_id);
