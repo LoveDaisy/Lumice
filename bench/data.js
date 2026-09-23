@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1790128913797,
+  "lastUpdate": 1790128918173,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -4752,54 +4752,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "ddc94c02faa23de01ef59b90d25f106843699744",
-          "message": "Merge pull request #302 from LoveDaisy/fix/preview-source-gather-half-texel\n\nfix(gui): 预览 shader 从 dual-EA 源纹理取样时多出的半个纹素",
-          "timestamp": "2026-09-04T18:44:53+08:00",
-          "tree_id": "5bbccc2a028e253d4dade882c65deb804b594261",
-          "url": "https://github.com/LoveDaisy/ice_halo_sim/commit/ddc94c02faa23de01ef59b90d25f106843699744"
-        },
-        "date": 1788519443814,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 960502.2,
-            "unit": "rays/sec",
-            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 1161010.6,
-            "unit": "rays/sec",
-            "extra": "CPU: Neoverse-N2\\nCores: 4"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 747224.1,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 7763 64-Core Processor\\nCores: 4"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 600220.3,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 9V74 80-Core Processor                \\nCores: 4"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "7381ca162338ea5105412cc97719e7c7d7eeb1cb",
           "message": "Merge pull request #303 from LoveDaisy/feat/alloc-churn-and-rng-bounds\n\nperf(core): all_data 缓冲区复用 + GetUniform 下标边界收敛到单一 owner",
           "timestamp": "2026-09-04T20:16:18+08:00",
@@ -9470,6 +9422,54 @@ window.BENCHMARK_DATA = {
             "value": 576388.4,
             "unit": "rays/sec",
             "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "b6ed96be5d6acdd7acc63a500e5c045647525ba5",
+          "message": "Merge pull request #403 from LoveDaisy/feat/edit-modal-height-and-expanded-polish\n\nfeat(gui): Edit Entry — a draggable height, aligned Expanded headers, standard headings",
+          "timestamp": "2026-09-23T09:50:00+08:00",
+          "tree_id": "4bd7771eb2b058baf5a35532f33a8b6313a2718b",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/b6ed96be5d6acdd7acc63a500e5c045647525ba5"
+        },
+        "date": 1790128917444,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 1055568.2,
+            "unit": "rays/sec",
+            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 1016430.3,
+            "unit": "rays/sec",
+            "extra": "CPU: Neoverse-N2\\nCores: 4"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 779661.4,
+            "unit": "rays/sec",
+            "extra": "CPU: INTEL(R) XEON(R) PLATINUM 8573C\\nCores: 4"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 879846.6,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 9V45 96-Core Processor                \\nCores: 4"
           }
         ]
       }
