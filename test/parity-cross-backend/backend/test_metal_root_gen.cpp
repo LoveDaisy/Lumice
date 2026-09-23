@@ -1389,6 +1389,7 @@ TEST(MetalEntryAcceptance, KShapePoolKeepsHalfOnEveryShape) {
   spec.renders = { &render };
   spec.wl = WlParam{ 550.0f, 1.0f };
   spec.seed = 4096;
+  spec.ray_num = kAcceptRays;  // sizes the K-shape pool (P_ci = ceil(ray_num / K))
 
   HostRayBatch host;
   host.count = kAcceptRays;

@@ -4866,9 +4866,17 @@ LayerHandlePtr CudaTraceBackend::TraceLayer(const RootRaySource& roots) {
           // same partition, so it owes the same correction. (InitRayFirstMs
           // above ran at its own default 1.0f — the weight it wrote is
           // overwritten here.)
-          impl_->pinned_ws_[i] = impl_->wl_pool_host_[wl_idx].spd_weight * alloc.corrections[ci];
-          impl_->pinned_from_poly_[i] =
-              (r.to_face_ == kInvalidId) ? kInvalidIdU32 : static_cast<uint32_t>(r.to_face_);
+          //
+          // A ray InitRay_p_fid discarded (projected-area rejection, or an
+          // empty crystal) carries no entry face and must carry no weight
+          // either — the rule gen_root_kernel applies on the device. The weight
+          // is what stops it: trace_single_ms_kernel skips the entry-face
+          // block on an invalid from_poly, but its hit loop breaks only on
+          // w <= 0, so a positive weight here would march the ray out of the
+          // crystal from an entry point that was never sampled.
+          const bool entered = r.to_face_ != kInvalidId;
+          impl_->pinned_ws_[i] = entered ? impl_->wl_pool_host_[wl_idx].spd_weight * alloc.corrections[ci] : 0.0f;
+          impl_->pinned_from_poly_[i] = entered ? static_cast<uint32_t>(r.to_face_) : kInvalidIdU32;
           std::memcpy(impl_->pinned_rot_c2w_ + i * 9, r.crystal_rot_.GetMat(), 9 * sizeof(float));
           // K-shape carrier. trace_single_ms_kernel reads d_pool_shape_in[tid]
           // unconditionally on every ray and takes its poly_cnt as the
