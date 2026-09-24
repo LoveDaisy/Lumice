@@ -1128,10 +1128,13 @@ const LinesOnlyScene kLinesOnlyScenes[] = {
 // clang-format on
 constexpr int kLinesOnlySceneCount = sizeof(kLinesOnlyScenes) / sizeof(kLinesOnlyScenes[0]);
 
-// The three overrides a lines-only scene applies to its base row — see the note above for why
+// The four overrides a lines-only scene applies to its base row — see the note above for why
 // each is what it is. The exposure is the EV slider's domain floor, not a smaller number.
 constexpr float kLinesOnlyExposureOffset = -8.0f;
-// The ray budget of every lines-only scene; see MakeLinesOnlyScene.
+// The ray budget of every lines-only scene, pinned rather than inherited from the base row: the
+// simulated image is exposed out of the frame by kLinesOnlyExposureOffset above, so a lines-only
+// scene's ray budget buys it nothing but wall-clock — it does not follow a base row's ray_num when
+// that row's budget changes (e.g. the 2026-09-24 export_parity doubling), see MakeLinesOnlyScene.
 constexpr float kLinesOnlyRayNumMillions = 16.0f;
 constexpr float kLinesOnlyCanvasSrgb[3] = { 1.0f, 1.0f, 1.0f };
 constexpr float kLinesOnlyGridSrgb[3] = { 0.0f, 0.0f, 0.0f };
@@ -1161,9 +1164,7 @@ ParityScene MakeLinesOnlyScene(const LinesOnlyScene& lines, const ParityScene& b
   // Not consulted by the lines-only comparison; zeroed so a reader cannot mistake the base row's
   // calibration for one that applies here.
   s.bm4_threshold = 0.0;
-  // The simulated image is exposed out of the frame (kLinesOnlyExposureOffset), so the ray budget
-  // buys these scenes nothing but wall-clock; they keep the budget they were measured at rather
-  // than inherit the base rows' doubled one.
+  // See the note above kLinesOnlyRayNumMillions's declaration for why this is pinned, not inherited.
   s.ray_num_millions = kLinesOnlyRayNumMillions;
   return s;
 }

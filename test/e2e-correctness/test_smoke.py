@@ -58,13 +58,16 @@ PSNR_FAILURE_DIR = get_project_root() / "scratchpad" / "e2e-failures"
 # built from the pre-fix merge base (30.9 dB against the old reference, i.e. the old reference was
 # still right for the old code), so it is this change's and not an older one. Same method as
 # everywhere in this table: 3 fresh CLI runs, threshold = min(PSNR_2vs1, PSNR_3vs1) - 3 dB floored
-# to 0.5 dB. Five keys came out LOWER than before, by 0.3-0.5 dB (reference_point_markers_01,
-# multi_lens_01/02/03, dual_fisheye_ref_01). That is the one exception to the rule above, and it
-# is recorded rather than absorbed: at a fixed `ray_num` roughly half the rays are now rejected
-# at entry, so the render itself is noisier and its run-to-run floor fell with it (for
-# reference_point_markers_01, 27.45 -> 26.65 dB). The old references against the new render read
-# 21.5 / 29.4 / 28.4 / 29.5 / 24.2 dB — far below any of these thresholds, so the gate did see
-# the change; only the noise floor it is set against moved.
+# to 0.5 dB. Six keys came out LOWER than before, by 0.3-0.5 dB (reference_point_markers_01,
+# multi_lens_01/02/03, dual_fisheye_ref_01, render_opts_01 — the last of these was calibrated one
+# code-review round later than the rest, see its own entry below for numbers). That is the one
+# exception to the rule above, and it is recorded rather than absorbed: at a fixed `ray_num`
+# roughly half the rays are now rejected at entry, so the render itself is noisier and its
+# run-to-run floor fell with it (for reference_point_markers_01, 27.45 -> 26.65 dB). The old
+# references against the new render read 21.5 / 29.4 / 28.4 / 29.5 / 24.2 dB — far below any of
+# these thresholds, so the gate did see the change; only the noise floor it is set against moved.
+# parhelion_01 was also re-verified against this reshoot (see its own entry below) and landed on
+# its pre-existing threshold unchanged.
 PSNR_THRESHOLDS = {
     # Thresholds for the 11 single-lens-family references (linear + 4 single-
     # fisheye) below were recalibrated by scrum-azimuth-handedness-alignment /
@@ -108,6 +111,9 @@ PSNR_THRESHOLDS = {
     # (task-270.7 / explore-269 P0). A structural regression (frame bug,
     # wrong projection) drops PSNR far below this floor.
     "orthographic_180_01": 22.5,
+    # parhelion: run-to-run at the 2026-09-24 reshoot: 40.58 / 40.67 dB -> 37.5 dB, unchanged
+    # (code-review Round 2 flagged this key as missing its calibration evidence; this note closes
+    # that gap — the threshold happened to land on the same value as before the reshoot).
     "parhelion_01": 37.5,
     "pyramid_01": 31.5,
     # render_opts: re-shot for 469.7, when `grid.outline` stopped being a no-op and started
@@ -122,7 +128,11 @@ PSNR_THRESHOLDS = {
     # neither side's reference is right for the merged result and the image had to come from a
     # binary carrying both. Run-to-run measured 35.92 / 36.02 dB, i.e. tighter than the 32.78 /
     # 33.06 dB of the previous shoot, so the threshold rises rather than relaxes.
-    "render_opts_01": 32.5,
+    # Re-shot again at the 2026-09-24 entry-acceptance reshoot (code-review Round 2 flagged this
+    # key as missing its calibration evidence for that pass; this note closes that gap): run-to-run
+    # 35.81 / 35.38 dB -> 32.0 dB, one of the keys whose floor fell (see the note at the top of this
+    # table on why a handful of keys are allowed to drop 0.3-0.5 dB this reshoot rather than rise).
+    "render_opts_01": 32.0,
     "dual_fisheye_ref_01": 25.5,
     # zenith_nadir_marker_compat: the ONE config in this table that sets `grid.zenith_nadir` and
     # nothing else marker-related, and it exists to be an unchanged picture rather than a new one.

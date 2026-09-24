@@ -54,7 +54,13 @@ Bars (the checks are the shared module's (a)–(d)):
     own noise, so what went red was the floor, not the backend. 0.65 keeps the
     gap the old floor had under the oracle's worst self-agreement (about 0.09 then,
     0.12 now) and is still 0.65 above the wrong-plane break it exists for. The
-    alternative, doubling the scene to 40M, was measured on the CUDA mirror and
+    alternative, doubling the scene to 40M, was measured on the CUDA mirror
+    (not this file's own backend — a deliberate substitution, not a missing
+    measurement: both backends project through the same
+    ``lm_proj::ProjectExitToPixel`` and read the same legacy oracle, so a 40M
+    probe answers the same "does more ray budget restore 0.80" question on
+    either one; the 0.65 floor itself, unlike this doubling probe, is NOT
+    borrowed — it rests on this file's own 20M seed-pair data above) and
     does not restore the old figure (0.863 against the historical 0.8885 there)
     while doubling the ~35 s single-worker legacy oracle on a CI leg that is
     already near the longest job; so the floor moved and the budget did not.
