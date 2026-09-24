@@ -1376,6 +1376,9 @@ TEST(MetalEntryAcceptance, KShapePoolKeepsHalfOnEveryShape) {
   EnableDeviceGenForStatisticalParity();
   // 4096 rays per shape: 32 shapes over kAcceptRays, ~4096 rays each.
   test::SetEnvVar("LUMICE_GPU_GEOM_CLOCK", "4096");
+  struct EnvGuard {
+    ~EnvGuard() { test::UnsetEnvVar("LUMICE_GPU_GEOM_CLOCK"); }
+  } env_guard;
 
   auto scene = MakeMetalScene(/*max_hits=*/2, /*ms_layers=*/1);
   auto& setting = scene.ms_[0].setting_[0];
@@ -1406,7 +1409,6 @@ TEST(MetalEntryAcceptance, KShapePoolKeepsHalfOnEveryShape) {
   const auto table = hooks.ReadbackPoolShapeTable();
   const auto ray_shape = hooks.ReadbackRootPoolShape(kAcceptRays);
   metal.EndSession();
-  test::UnsetEnvVar("LUMICE_GPU_GEOM_CLOCK");
 
   ASSERT_GE(table.size(), 16u) << "pool too small to exercise per-shape S";
   ASSERT_EQ(ray_shape.size(), kAcceptRays);

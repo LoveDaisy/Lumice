@@ -1107,6 +1107,9 @@ TEST(CudaEntryAcceptance, KShapePoolKeepsHalfOnEveryShape) {
     GTEST_SKIP() << "No CUDA device available on this host; requires a CUDA-capable GPU.";
   }
   test::SetEnvVar("LUMICE_GPU_GEOM_CLOCK", "4096");
+  struct EnvGuard {
+    ~EnvGuard() { test::UnsetEnvVar("LUMICE_GPU_GEOM_CLOCK"); }
+  } env_guard;
 
   auto scene = MakePrismScene(/*max_hits=*/2);
   auto& setting = scene.ms_[0].setting_[0];
@@ -1138,7 +1141,6 @@ TEST(CudaEntryAcceptance, KShapePoolKeepsHalfOnEveryShape) {
   const auto table = hooks.ReadbackPoolShapeTable();
   const auto ray_shape = hooks.ReadbackRootPoolShape(kAcceptRays);
   backend.EndSession();
-  test::UnsetEnvVar("LUMICE_GPU_GEOM_CLOCK");
 
   ASSERT_GE(table.size(), 16u) << "pool too small to exercise per-shape S";
   ASSERT_EQ(ray_shape.size(), kAcceptRays);
