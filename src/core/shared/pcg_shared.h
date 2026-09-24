@@ -611,23 +611,70 @@ LM_FN uint32_t feistel_bijection(uint32_t i, uint32_t n, uint32_t seed) {
   return cur % n;
 }
 
-// Projected-area entry weight — the one formula CPU InitRay_p_fid and the
-// Metal / CUDA gen_root / transit_root kernels all multiply into a ray's weight
-// at crystal entry. A ray born with a fixed weight meets orientation o of shape
-// g with probability proportional to p(o)·p(g)·A(o,g,d); `proj_sum` =
-// Σ max(-d·n·area, 0) over the shape's entry triangles IS A, and scaling the
-// ray's weight by A / (S/2) (`s_total` = S = Σ area) supplies that missing
-// factor. It is a weight multiplier, not a probability to draw against: it is
-// the expectation of keeping the ray with that probability, applied to every
-// ray so none is discarded (same expectation, no higher variance, no idle GPU
-// lanes). S/2 bounds A for every convex body in every direction (the lit and
-// unlit sides project to the same A and together are at most S), so the min()
-// never binds on a valid crystal; it only guards float round-off. An empty shape
-// (s_total == 0) weighs 0.
-LM_FN float entry_accept_prob(float proj_sum, float s_total) {
+// Projected-area entry ratio a = A / (S/2). A ray born with a fixed weight
+// meets orientation o of shape g with probability proportional to
+// p(o)·p(g)·A(o,g,d); `proj_sum` = Σ max(-d·n·area, 0) over the shape's entry
+// triangles IS A, and `s_total` = S = Σ area. S/2 bounds A for every convex
+// body in every direction (the lit and unlit sides project to the same A and
+// together are at most S), so a <= 1 and the min() never binds on a valid
+// crystal; it only guards float round-off. An empty shape (s_total == 0) is 0.
+// Only entry_acceptance below consumes it.
+LM_FN float entry_area_ratio(float proj_sum, float s_total) {
   const float s_half = s_total * 0.5f;
   return s_half > 0.0f ? LM_FMIN(1.0f, proj_sum / s_half) : 0.0f;
 }
+
+// Projected-area entry estimator family — the one definition CPU
+// InitRay_p_fid and the Metal / CUDA gen_root / transit_root kernels all call.
+// A ray is kept with probability q = min(1, c·a) and a kept ray's weight is
+// multiplied by a / q; a ray that is not kept is discarded. Every c > 0 gives
+// the same expectation a at every pixel — the factor the entry was missing —
+// and only the split between "fewer rays" and "lighter rays" moves: c = 1 is
+// plain accept/reject (weight unchanged, q = a), c = ∞ keeps every ray at
+// weight a (the conditional expectation of the former, never higher variance,
+// and no GPU lane idles on a discarded ray).
+//
+// The parameter is carried as keep_floor = 1/c ∈ [0, 1] so c = ∞ is the finite
+// value 0: q = min(1, a / keep_floor), and the kept-ray multiplier a / q is
+// max(a, keep_floor) — written that way so keep_floor = 1 multiplies by exactly
+// 1.0f and keep_floor = 0 by exactly a. a == 0 with keep_floor > 0 gives q = 0
+// (never kept); with keep_floor == 0 it gives q = 1 at weight 0.
+//
+// Which c a backend runs is a scheduling choice with no effect on the image's
+// expectation, the same kind of per-backend knob as a batch size — see the
+// kEntryKeepFloor* constants below for the values and the data behind them.
+struct EntryAcceptance {
+  float keep_prob;    // q: probability the ray is kept (1 ⇒ no draw needed)
+  float weight_mult;  // a / q: multiplier on a kept ray's weight
+};
+
+LM_FN EntryAcceptance entry_acceptance(float area_ratio, float keep_floor) {
+  EntryAcceptance r;
+  if (area_ratio >= keep_floor) {
+    r.keep_prob = 1.0f;
+    r.weight_mult = area_ratio;
+  } else {
+    r.keep_prob = area_ratio / keep_floor;
+    r.weight_mult = keep_floor;
+  }
+  return r;
+}
+
+// Per-backend keep_floor (= 1/c), measured 2026-09-24 on the same scenes:
+//  - Metal / CUDA: c = ∞ (keep_floor 0). A discarded ray still occupies its
+//    SIMD / warp lane for the whole trace loop, so accept/reject (c = 1) held
+//    kept-rays/s to ~0.5× of dealt-rays/s; keeping every ray at weight a gave
+//    2.0–2.2× (Metal, local) and 1.85–2.09× (CUDA, RTX 5090 D) kept-rays/s.
+//    With keep_floor 0 the kernels draw no acceptance number (keep_prob ≡ 1).
+//  - CPU: c = 1 (keep_floor 1). A discarded ray costs the CPU almost nothing,
+//    while tracing every ray cut dealt-rays/s by 37–43%; the per-pixel
+//    variance gain of c = ∞ (≈2.1–2.3× at a single wavelength) is swamped under
+//    the default D65 source by per-batch wavelength noise, so c = ∞ measured
+//    ≈26% worse equal-error throughput there. Revisit this value if the CPU
+//    standard-illuminant path stops drawing one wavelength per batch.
+LM_CONSTANT float kEntryKeepFloorCpu = 1.0f;
+LM_CONSTANT float kEntryKeepFloorMetal = 0.0f;
+LM_CONSTANT float kEntryKeepFloorCuda = 0.0f;
 
 // RandomSample (geo3d.cpp:112-150) — categorical CDF with negative-weight clip.
 // Mirrors host behavior: non-positive total falls back to bin 0.

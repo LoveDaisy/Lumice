@@ -288,7 +288,8 @@ TEST(IncidenceSamplingOracle, Ac1SelfProof) {
     const auto dirs = SelectDirections(f.crystal);
     ASSERT_FALSE(dirs.empty()) << f.label;
     for (const auto& d : dirs) {
-      EntrySamples samples = test_support::DriveEntrySampling(f.crystal, d.data(), kSampleN, seed++);
+      EntrySamples samples =
+          test_support::DriveEntrySampling(f.crystal, d.data(), kSampleN, seed++, lm_pcg::kEntryKeepFloorCpu);
       Ac1Verdict v = test_support::CheckProjectedAreaDistribution(f.crystal, d.data(), samples.face, kAc1KSigma);
       EXPECT_TRUE(v.pass) << f.label << " dir=(" << d[0] << "," << d[1] << "," << d[2] << ")"
                           << " max|z|=" << v.max_abs_z << " worst_face=" << v.worst_face
@@ -305,7 +306,8 @@ TEST(IncidenceSamplingOracle, Ac2SelfProof) {
     const auto dirs = SelectDirections(f.crystal);
     ASSERT_FALSE(dirs.empty()) << f.label;
     for (const auto& d : dirs) {
-      EntrySamples samples = test_support::DriveEntrySampling(f.crystal, d.data(), kSampleN, seed++);
+      EntrySamples samples =
+          test_support::DriveEntrySampling(f.crystal, d.data(), kSampleN, seed++, lm_pcg::kEntryKeepFloorCpu);
       Ac2Verdict v =
           test_support::CheckInFaceUniformity(f.crystal, d.data(), samples, kAc2CentroidKSigma, kAc2MomentKSigma);
       EXPECT_TRUE(v.pass) << f.label << " dir=(" << d[0] << "," << d[1] << "," << d[2] << ")"
@@ -370,7 +372,7 @@ TEST(IncidenceSamplingOracle, Ac1RedStateCatchesBiasedWeight) {
 
   // Sanity: the unbiased sampler passes on this same direction (green baseline).
   {
-    EntrySamples good = test_support::DriveEntrySampling(prism, d.data(), kSampleN, 2024);
+    EntrySamples good = test_support::DriveEntrySampling(prism, d.data(), kSampleN, 2024, lm_pcg::kEntryKeepFloorCpu);
     Ac1Verdict vg = test_support::CheckProjectedAreaDistribution(prism, d.data(), good.face, kAc1KSigma);
     ASSERT_TRUE(vg.pass) << "baseline (unbiased) sampler unexpectedly failed; red-state test is not isolating "
                             "the injected bias. max|z|="
@@ -396,9 +398,14 @@ TEST(IncidenceSamplingOracle, Ac1RedStateCatchesBiasedWeight) {
 // needs a size convention and this is the one `proportion` documents), the
 // weight entering the crystals must be distributed as p(o)·p(g)·A(o, g, d)/S(g)
 // — an entry weight A/(S(g)/2) per ray — while the entry sampler used to give
-// every ray it was dealt the same weight. These cases deal rays from a known
-// p(o)·p(g) — uniformly random orientations (as crystal-local directions) on
-// each fixture shape — and judge each ray's entry weight against the oracle's.
+// every ray it was dealt the same weight. The entry supplies the factor through
+// the estimator family lm_pcg::entry_acceptance — keep with q = min(1, a/f),
+// weight a kept ray by max(a, f), f = 1/c — and every member has the same
+// expectation, so these cases run the production sampler at the CPU's own
+// member, at the GPU kernels' (c = ∞), and at one in between (c = 2), dealing
+// rays from a known p(o)·p(g) — uniformly random orientations (as crystal-local
+// directions) on each fixture shape — and judging each member with the same
+// oracle and comparator.
 
 constexpr double kAc3KSigma = 5.0;
 constexpr size_t kAc3RaysPerShape = 60000;
@@ -406,6 +413,12 @@ constexpr int kAc3PolarBins = 8;
 // Float accumulation of A and S over <= 64 sub-tris of O(1) area against the
 // oracle's double precision: the same 1e-5 AC4's DeviceAcceptProb case pins.
 constexpr double kAc3WeightAbsTol = 1e-5;
+// The members judged: the CPU's (c = 1), the midpoint (c = 2), the GPU's (c = ∞).
+constexpr float kAc3MidKeepFloor = 0.5f;
+const std::array<float, 3> kAc3KeepFloors = { lm_pcg::kEntryKeepFloorCpu, kAc3MidKeepFloor,
+                                              lm_pcg::kEntryKeepFloorMetal };
+static_assert(lm_pcg::kEntryKeepFloorMetal == lm_pcg::kEntryKeepFloorCuda,
+              "one GPU member judged here stands for both kernels");
 
 // Uniform directions on the sphere from the test's own generator (normalized
 // Gaussian triples), not from the production orientation sampler.
@@ -436,124 +449,111 @@ int PolarBin(const std::array<float, 3>& d) {
 
 struct Ac3Draw {
   std::vector<int> bin_of;
-  std::vector<double> accept_prob;
+  std::vector<double> area_ratio;
   std::vector<double> weight;
-  std::vector<bool> entered;
+  std::vector<bool> kept;
   size_t bin_cnt = 0;
 };
 
 // Records one fixture's rays: bin (fixture, polar band), the oracle's a_i, and
-// the sampler's entry weight and entry face per ray.
+// the sampler's entry weight and keep verdict (an entry face) per ray.
 void AppendFixtureDraw(const CrystalFixture& fixture, size_t fi, const std::vector<std::array<float, 3>>& dirs,
                        const EntrySamples& s, Ac3Draw* out) {
   const auto faces = test_support::BuildPresentFaceGeom(fixture.crystal.CfGeom());
   for (size_t i = 0; i < dirs.size(); i++) {
     const double d[3] = { dirs[i][0], dirs[i][1], dirs[i][2] };
     out->bin_of.push_back(static_cast<int>(fi) * kAc3PolarBins + PolarBin(dirs[i]));
-    out->accept_prob.push_back(test_support::ComputeEntryAcceptance(faces, d));
+    out->area_ratio.push_back(test_support::ComputeEntryAcceptance(faces, d));
     out->weight.push_back(s.weight[i]);
-    out->entered.push_back(s.face[i] != kInvalidId);
+    out->kept.push_back(s.face[i] != kInvalidId);
   }
 }
 
 // Deal kAc3RaysPerShape uniformly oriented rays to every fixture (p(g) uniform
-// over the fixtures) through the production sampler.
-Ac3Draw DrawAcrossFixtures(const std::vector<CrystalFixture>& fixtures, uint32_t seed) {
+// over the fixtures) through the production sampler at `keep_floor`.
+Ac3Draw DrawAcrossFixtures(const std::vector<CrystalFixture>& fixtures, uint32_t seed, float keep_floor) {
   Ac3Draw out;
   out.bin_cnt = fixtures.size() * kAc3PolarBins;
   for (size_t fi = 0; fi < fixtures.size(); fi++) {
     const auto dirs = UniformSphereDirections(kAc3RaysPerShape, seed + static_cast<uint32_t>(fi));
-    const EntrySamples s = test_support::DriveEntrySamplingDirs(fixtures[fi].crystal, dirs, seed + 1000 + fi);
+    const EntrySamples s =
+        test_support::DriveEntrySamplingDirs(fixtures[fi].crystal, dirs, seed + 1000 + fi, keep_floor);
     AppendFixtureDraw(fixtures[fi], fi, dirs, s, &out);
   }
   return out;
 }
 
-void ExpectEntryWeightsPass(const std::vector<CrystalFixture>& fixtures, const Ac3Draw& draw) {
-  const auto v = test_support::CheckEntryWeights(draw.bin_of, draw.accept_prob, draw.weight, draw.entered, draw.bin_cnt,
-                                                 kAc3WeightAbsTol);
+test_support::EntryFamilyVerdict JudgeFamily(const Ac3Draw& draw, float keep_floor) {
+  return test_support::CheckEntryFamily(draw.bin_of, draw.area_ratio, keep_floor, draw.weight, draw.kept, draw.bin_cnt,
+                                        kAc3KSigma, kAc3WeightAbsTol);
+}
+
+void ExpectEntryFamilyPass(const std::vector<CrystalFixture>& fixtures, const Ac3Draw& draw, float keep_floor) {
+  const auto v = JudgeFamily(draw, keep_floor);
   for (size_t k = 0; k < v.bins.size(); k++) {
     const auto& b = v.bins[k];
-    EXPECT_NEAR(b.observed, b.expected, kAc3WeightAbsTol * static_cast<double>(b.dealt))
-        << fixtures[k / kAc3PolarBins].label << " polar band " << k % kAc3PolarBins << ": Σw " << b.observed << " over "
-        << b.dealt << " rays, oracle Σa " << b.expected;
+    EXPECT_LE(std::max(std::abs(b.kept_z), std::abs(b.weight_z)), kAc3KSigma)
+        << "keep_floor " << keep_floor << ", " << fixtures[k / kAc3PolarBins].label << " polar band "
+        << k % kAc3PolarBins << ": kept " << b.kept << " of " << b.dealt << " (expected " << b.kept_expected << "), Σw "
+        << b.weight_observed << " (oracle Σa " << b.weight_expected << ")";
   }
-  EXPECT_EQ(v.entry_drops, 0) << "rays with a positive entry weight were discarded";
-  EXPECT_TRUE(v.pass) << "max|w-a|=" << v.max_abs_dev << " at ray " << v.worst_ray;
+  EXPECT_TRUE(v.pass) << "keep_floor " << keep_floor << ": max|w-m|=" << v.max_weight_dev << " at ray " << v.worst_ray
+                      << ", max|z|=" << v.max_abs_z << " at bin " << v.worst_bin;
 }
 
-TEST(IncidenceSamplingOracle, Ac3EntryWeightFollowsProjectedAreaOverOrientationAndShape) {
+TEST(IncidenceSamplingOracle, Ac3EntryFamilyFollowsProjectedAreaOverOrientationAndShape) {
   const auto fixtures = MakeFixtures();
-  ExpectEntryWeightsPass(fixtures, DrawAcrossFixtures(fixtures, 31337));
+  for (const float keep_floor : kAc3KeepFloors) {
+    ExpectEntryFamilyPass(fixtures, DrawAcrossFixtures(fixtures, 31337, keep_floor), keep_floor);
+  }
 }
 
-// The same weights, judged by a route that shares nothing with the oracle's
+// The same members, judged by a route that shares nothing with the oracle's
 // geometry: Cauchy's surface-area formula says a convex body's projected area
 // averaged over uniform orientations is S/4, so a uniformly oriented ray's mean
-// entry weight is (S/4) / (S/2) = 1/2 on EVERY convex shape. A per-shape mean
-// away from 1/2 means the sampler's A or S is wrong, whatever the oracle says.
+// entry contribution (its weight if kept, 0 if discarded) is (S/4) / (S/2) = 1/2
+// on EVERY convex shape and for every member. A per-shape mean away from 1/2
+// means the sampler's A or S is wrong, whatever the oracle says.
 TEST(IncidenceSamplingOracle, Ac3UniformOrientationMeanWeightIsHalfOnEveryConvexShape) {
   const auto fixtures = MakeFixtures();
-  for (size_t fi = 0; fi < fixtures.size(); fi++) {
-    const auto dirs = UniformSphereDirections(kAc3RaysPerShape, 4242 + static_cast<uint32_t>(fi));
-    const EntrySamples s = test_support::DriveEntrySamplingDirs(fixtures[fi].crystal, dirs, 5151 + fi);
-    const double sum_w = std::accumulate(s.weight.begin(), s.weight.end(), 0.0);
-    const double n = static_cast<double>(dirs.size());
-    // a_i in [0, 1] over random directions: Var(a) <= 1/4 bounds the spread.
-    EXPECT_NEAR(sum_w / n, 0.5, kAc3KSigma * std::sqrt(0.25 / n)) << fixtures[fi].label;
+  for (const float keep_floor : kAc3KeepFloors) {
+    for (size_t fi = 0; fi < fixtures.size(); fi++) {
+      const auto dirs = UniformSphereDirections(kAc3RaysPerShape, 4242 + static_cast<uint32_t>(fi));
+      const EntrySamples s = test_support::DriveEntrySamplingDirs(fixtures[fi].crystal, dirs, 5151 + fi, keep_floor);
+      double sum_w = 0.0;
+      for (size_t i = 0; i < dirs.size(); i++) {
+        sum_w += s.face[i] != kInvalidId ? s.weight[i] : 0.0;
+      }
+      const double n = static_cast<double>(dirs.size());
+      // Each contribution lies in [0, 1] (max(a, f) <= 1): Var <= 1/4 bounds the spread.
+      EXPECT_NEAR(sum_w / n, 0.5, kAc3KSigma * std::sqrt(0.25 / n))
+          << "keep_floor " << keep_floor << ", " << fixtures[fi].label;
+    }
   }
 }
 
-// Red states: the comparator must reject both samplers this weight replaced on
-// the same dealt rays — the one that gave every ray the same weight (before the
-// projected-area factor existed) and the one that applied the factor by
-// discarding rays (weights in {0, 1}, the accept/reject form).
-TEST(IncidenceSamplingOracle, Ac3RedStateCatchesUnitWeightAndAcceptReject) {
+// Red states on the same dealt rays: the comparator must reject, at every
+// member, the sampler that gave every ray the same weight (before the
+// projected-area factor existed); and it must tell the members apart — the
+// rays of one member judged as another fail, so a passing check pins which
+// member ran, not only the shared expectation.
+TEST(IncidenceSamplingOracle, Ac3RedStateCatchesUnitWeightAndWrongMember) {
   const auto fixtures = MakeFixtures();
-  const Ac3Draw good = DrawAcrossFixtures(fixtures, 31337);
-
-  Ac3Draw unit = good;
-  std::fill(unit.weight.begin(), unit.weight.end(), 1.0);
-  const auto vu = test_support::CheckEntryWeights(unit.bin_of, unit.accept_prob, unit.weight, unit.entered,
-                                                  unit.bin_cnt, kAc3WeightAbsTol);
-  EXPECT_FALSE(vu.pass);
-  EXPECT_GT(vu.max_abs_dev, 0.1) << "unit weight should be a gross departure, not a marginal one";
-
-  Ac3Draw masked = good;
-  std::mt19937 gen(8128);
-  std::uniform_real_distribution<double> u01(0.0, 1.0);
-  for (size_t i = 0; i < masked.weight.size(); i++) {
-    const bool kept = u01(gen) < masked.accept_prob[i];
-    masked.weight[i] = kept ? 1.0 : 0.0;
-    masked.entered[i] = kept;
+  for (const float keep_floor : kAc3KeepFloors) {
+    Ac3Draw unit = DrawAcrossFixtures(fixtures, 31337, keep_floor);
+    std::fill(unit.weight.begin(), unit.weight.end(), 1.0);
+    std::fill(unit.kept.begin(), unit.kept.end(), true);
+    const auto vu = JudgeFamily(unit, keep_floor);
+    EXPECT_FALSE(vu.pass) << "keep_floor " << keep_floor;
+    EXPECT_GT(vu.max_abs_z, 10.0 * kAc3KSigma)
+        << "keep_floor " << keep_floor << ": unit weight should be a gross departure, not a marginal one";
   }
-  const auto vm = test_support::CheckEntryWeights(masked.bin_of, masked.accept_prob, masked.weight, masked.entered,
-                                                  masked.bin_cnt, kAc3WeightAbsTol);
-  EXPECT_FALSE(vm.pass);
-  EXPECT_GT(vm.entry_drops, 0);
-}
-
-// Control: the weighted entry and the accept/reject form it replaced agree in
-// expectation. Replaying accept/reject on the production sampler's OWN entry
-// weights (keep ray i with probability w_i) must pass the Bernoulli comparator
-// against the oracle's a_i in every (fixture, polar band) bin — the kept counts
-// the discarding implementation would have produced on these same dealt rays.
-TEST(IncidenceSamplingOracle, Ac3WeightedEntryMatchesAcceptRejectInExpectation) {
-  const auto fixtures = MakeFixtures();
-  const Ac3Draw draw = DrawAcrossFixtures(fixtures, 31337);
-  std::mt19937 gen(2718);
-  std::uniform_real_distribution<double> u01(0.0, 1.0);
-  std::vector<bool> kept(draw.weight.size());
-  for (size_t i = 0; i < kept.size(); i++) {
-    kept[i] = u01(gen) < draw.weight[i];
-  }
-  const auto v = test_support::CheckEntryAcceptance(draw.bin_of, draw.accept_prob, kept, draw.bin_cnt, kAc3KSigma);
-  for (size_t k = 0; k < v.bins.size(); k++) {
-    const auto& b = v.bins[k];
-    EXPECT_LE(std::abs(b.z), kAc3KSigma) << fixtures[k / kAc3PolarBins].label << " polar band " << k % kAc3PolarBins
-                                         << ": kept " << b.kept << " of " << b.dealt << ", expected " << b.expected;
-  }
-  EXPECT_TRUE(v.pass) << "max|z|=" << v.max_abs_z << " at bin " << v.worst_bin;
+  const Ac3Draw all_kept = DrawAcrossFixtures(fixtures, 31337, lm_pcg::kEntryKeepFloorMetal);
+  const auto vw = JudgeFamily(all_kept, lm_pcg::kEntryKeepFloorCpu);
+  EXPECT_FALSE(vw.pass) << "c = ∞ rays passed as c = 1 — the comparator does not pin the member";
+  const Ac3Draw discarding = DrawAcrossFixtures(fixtures, 31337, lm_pcg::kEntryKeepFloorCpu);
+  const auto vd = JudgeFamily(discarding, lm_pcg::kEntryKeepFloorMetal);
+  EXPECT_FALSE(vd.pass) << "c = 1 rays passed as c = ∞ — the comparator does not pin the member";
 }
 
 // ---- AC4: A(o, g, d) <= S(g) / 2 for every convex shape and direction ----------
@@ -628,7 +628,8 @@ TEST(IncidenceSamplingOracle, DISABLED_CalibrationScan) {
     for (auto& f : fixtures) {
       const auto dirs = SelectDirections(f.crystal);
       for (const auto& d : dirs) {
-        EntrySamples s = test_support::DriveEntrySampling(f.crystal, d.data(), kSampleN, seed);
+        EntrySamples s =
+            test_support::DriveEntrySampling(f.crystal, d.data(), kSampleN, seed, lm_pcg::kEntryKeepFloorCpu);
         // Use a very loose threshold so pass/fail never short-circuits the scan.
         Ac1Verdict v1 = test_support::CheckProjectedAreaDistribution(f.crystal, d.data(), s.face, 1e9);
         Ac2Verdict v2 = test_support::CheckInFaceUniformity(f.crystal, d.data(), s, 1e9, 1e9);
@@ -661,7 +662,7 @@ TEST(IncidenceSamplingOracle, DISABLED_CalibrationScan) {
 //   DeviceSampler{Ac3,UniformOrientationMeanWeightIsHalf,RedStateCatchesUnitWeight}
 //   and DeviceAcceptProbMatchesOracleAndStaysBelowOne — the same for the
 //   projected-area entry weight the kernels multiply in
-//   (lm_pcg::entry_accept_prob).
+//   (lm_pcg::entry_acceptance at kEntryKeepFloorMetal / kEntryKeepFloorCuda).
 // ================================================================================
 
 // SoA layout identical to the device geometry pool: tri_vtx[9*T] / tri_norm[3*T]
@@ -710,7 +711,8 @@ enum class DeviceFault {
 // gen_root_kernel §3–4, transit_root_kernel §3–5, and their lumice_trace.metal
 // siblings): per-tri projected weight max(-d·n·A, 0) summed into A alongside
 // S = Σ area, one categorical_sample, one sample_triangle in the chosen sub-tri,
-// and the entry weight entry_accept_prob(A, S) on a unit birth weight. Every
+// and the entry weight entry_acceptance(entry_area_ratio(A, S), kEntryKeepFloorMetal)
+// on a unit birth weight (keep_prob ≡ 1 at that floor, so no draw). Every
 // routine is the shared lm_pcg:: one the kernels call, not a re-implementation.
 void DeviceEntrySampleOne(const DeviceGeomSoA& g, const float d[3], uint32_t seed, uint32_t global_idx,
                           DeviceFault fault, std::vector<float>* proj, IdType* face, std::array<float, 3>* point,
@@ -730,7 +732,10 @@ void DeviceEntrySampleOne(const DeviceGeomSoA& g, const float d[3], uint32_t see
   }
   const float u_cat = lm_pcg::pcg_uniform(s);
   const uint32_t tri_id = lm_pcg::categorical_sample(proj->data(), static_cast<uint32_t>(g.tri_cnt), u_cat);
-  *weight = fault == DeviceFault::kUnitWeight ? 1.0f : lm_pcg::entry_accept_prob(proj_sum, s_total);
+  *weight = fault == DeviceFault::kUnitWeight ?
+                1.0f :
+                lm_pcg::entry_acceptance(lm_pcg::entry_area_ratio(proj_sum, s_total), lm_pcg::kEntryKeepFloorMetal)
+                    .weight_mult;
   if (g.tri_cnt == 0) {
     *face = kInvalidId;
     *point = { 0.0f, 0.0f, 0.0f };
@@ -853,7 +858,8 @@ Ac3Draw DrawAcrossFixturesDevice(const std::vector<CrystalFixture>& fixtures, ui
 
 TEST(DeviceSamplingPolygonOracle, DeviceSamplerMathPassesAc3) {
   const auto fixtures = MakeFixtures();
-  ExpectEntryWeightsPass(fixtures, DrawAcrossFixturesDevice(fixtures, 27182, DeviceFault::kNone));
+  ExpectEntryFamilyPass(fixtures, DrawAcrossFixturesDevice(fixtures, 27182, DeviceFault::kNone),
+                        lm_pcg::kEntryKeepFloorMetal);
 }
 
 // Cauchy route, sharing nothing with the oracle's geometry: uniformly oriented
@@ -874,15 +880,14 @@ TEST(DeviceSamplingPolygonOracle, DeviceSamplerUniformOrientationMeanWeightIsHal
 TEST(DeviceSamplingPolygonOracle, DeviceSamplerRedStateCatchesUnitWeight) {
   const auto fixtures = MakeFixtures();
   const Ac3Draw draw = DrawAcrossFixturesDevice(fixtures, 27182, DeviceFault::kUnitWeight);
-  const auto v = test_support::CheckEntryWeights(draw.bin_of, draw.accept_prob, draw.weight, draw.entered, draw.bin_cnt,
-                                                 kAc3WeightAbsTol);
+  const auto v = JudgeFamily(draw, lm_pcg::kEntryKeepFloorMetal);
   EXPECT_FALSE(v.pass);
-  EXPECT_GT(v.max_abs_dev, 0.1) << "unit weight should be a gross departure, not a marginal one";
+  EXPECT_GT(v.max_weight_dev, 0.1) << "unit weight should be a gross departure, not a marginal one";
 }
 
 // ---- Device sampling math: AC4 (the entry weight itself) ---------------------------
 // The kernels accumulate A and S in float over the device triangle SoA and call
-// entry_accept_prob; this pins that number against the oracle's double-precision
+// entry_area_ratio; this pins that number against the oracle's double-precision
 // A / (S/2) per direction, and that it never reaches the clamp at 1 — including
 // on the thin face-on plate, where A comes closest to S/2.
 TEST(DeviceSamplingPolygonOracle, DeviceAcceptProbMatchesOracleAndStaysBelowOne) {
@@ -906,7 +911,7 @@ TEST(DeviceSamplingPolygonOracle, DeviceAcceptProbMatchesOracleAndStaysBelowOne)
         proj_sum += std::max(-dot * g.tri_area[t], 0.0f);
         s_total += g.tri_area[t];
       }
-      const double prob = lm_pcg::entry_accept_prob(proj_sum, s_total);
+      const double prob = lm_pcg::entry_area_ratio(proj_sum, s_total);
       const double d[3] = { dv[0], dv[1], dv[2] };
       max_err = std::max(max_err, std::abs(prob - test_support::ComputeEntryAcceptance(faces, d)));
       max_prob = std::max(max_prob, prob);
@@ -917,7 +922,26 @@ TEST(DeviceSamplingPolygonOracle, DeviceAcceptProbMatchesOracleAndStaysBelowOne)
     EXPECT_LT(max_prob, 1.0) << f.label << ": the clamp bound; entered weight would stop following A";
   }
   // Empty shape: zero weight.
-  EXPECT_EQ(lm_pcg::entry_accept_prob(0.0f, 0.0f), 0.0f);
+  EXPECT_EQ(lm_pcg::entry_area_ratio(0.0f, 0.0f), 0.0f);
+}
+
+// ---- The estimator family's two ends and its empty-shape edge -------------------
+// keep_floor 1 (c = 1) is plain accept/reject: keep with probability a, weight
+// untouched — exactly 1.0f, so a kept CPU ray carries its birth weight bit for
+// bit. keep_floor 0 (c = ∞) keeps every ray at weight exactly a. A zero ratio is
+// never kept at any positive floor, and at floor 0 it is kept at weight 0.
+TEST(EntryAcceptanceFamily, EndsAreAcceptRejectAndPureWeight) {
+  for (const float a : { 0.0f, 0.1f, 0.37f, 0.5f, 0.899f, 1.0f }) {
+    const auto c1 = lm_pcg::entry_acceptance(a, 1.0f);
+    EXPECT_EQ(c1.keep_prob, a == 1.0f ? 1.0f : a) << a;
+    EXPECT_EQ(c1.weight_mult, 1.0f) << a;
+    const auto cinf = lm_pcg::entry_acceptance(a, 0.0f);
+    EXPECT_EQ(cinf.keep_prob, 1.0f) << a;
+    EXPECT_EQ(cinf.weight_mult, a) << a;
+    const auto c2 = lm_pcg::entry_acceptance(a, 0.5f);
+    EXPECT_FLOAT_EQ(c2.keep_prob * c2.weight_mult, a) << a << ": q·m must be a for every member";
+  }
+  EXPECT_EQ(lm_pcg::entry_acceptance(0.0f, 0.5f).keep_prob, 0.0f);
 }
 
 }  // namespace

@@ -41,6 +41,7 @@
 #include "core/geo3d.hpp"
 #include "core/math.hpp"
 #include "core/scatter_accum.hpp"
+#include "core/shared/pcg_shared.h"
 #include "core/simulator.hpp"  // PartitionCrystalRayNum
 #include "core/trace_ops.hpp"
 #include "metal_test_helpers.hpp"
@@ -265,7 +266,7 @@ FirstLayerRoots BuildFirstLayerRoots(RandomNumberGenerator& rng, const SessionSp
   RayBuffer all_data = AllocateAllData(*spec.scene, n_rays);
 
   InitRayFirstMs(rng, spec.scene->light_source_.param_, spec.wl, n_rays, out.crystal, /*curr_crystal_id=*/0,
-                 setting.crystal_.axis_, workspace, all_data);
+                 setting.crystal_.axis_, lm_pcg::kEntryKeepFloorMetal, workspace, all_data);
 
   size_t n_actual = workspace[0].size_;
   out.d.assign(n_actual * 3, 0.0f);
@@ -578,7 +579,7 @@ MultiPopFirstLayerResult OracleRunFirstLayerMultiPop(RandomNumberGenerator& rng,
     workspace[1].Reset(ci_n);
     RayBuffer all_data = AllocateAllData(*spec.scene, ci_n);
     InitRayFirstMs(rng, spec.scene->light_source_.param_, spec.wl, ci_n, crystal,
-                   /*curr_crystal_id=*/ci, setting.crystal_.axis_, workspace, all_data);
+                   /*curr_crystal_id=*/ci, setting.crystal_.axis_, lm_pcg::kEntryKeepFloorMetal, workspace, all_data);
 
     size_t n_actual = workspace[0].size_;
     std::vector<float> root_d(n_actual * 3, 0.0f);

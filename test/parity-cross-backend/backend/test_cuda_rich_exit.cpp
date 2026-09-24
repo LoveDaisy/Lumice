@@ -45,6 +45,7 @@
 #include "core/crystal.hpp"
 #include "core/exit_seam.hpp"
 #include "core/raypath.hpp"
+#include "core/shared/pcg_shared.h"
 #include "cuda_test_helpers.hpp"  // scrum-328.2 Step 5: shared scene / render fixtures
 #include "support/env_var.hpp"
 #include "support/incidence_sampling_oracle.hpp"
@@ -966,7 +967,7 @@ TEST(CudaRootGen, PerRayEntryPointGeometricConsistency) {
 //
 // CUDA sibling of MetalEntryWeight.* (test_metal_root_gen.cpp). The gen_root /
 // transit kernels multiply each ray's weight by A/(S/2)
-// (lm_pcg::entry_accept_prob) and trace every ray. These cases read back what
+// (lm_pcg::entry_acceptance) and trace every ray. These cases read back what
 // the DEVICE did — the crystal-local direction (ReadbackGenDirs), the entry
 // face (ReadbackRootEntryPoint) and the root weight (ReadbackRootW, over the
 // carried-in weight for transit) — and judge each ray's entry weight with the
@@ -1002,13 +1003,14 @@ double CheckCudaEntryWeights(const Crystal& crystal, const std::vector<float>& d
     entered[i] = faces[i] != kInvalidFaceU32Cuda;
     sum_w += weight[i];
   }
-  const auto v =
-      test_support::CheckEntryWeights(bin_of, accept_prob, weight, entered, kAcceptPolarBins, kEntryWeightAbsTol);
+  const auto v = test_support::CheckEntryFamily(bin_of, accept_prob, lm_pcg::kEntryKeepFloorCuda, weight, entered,
+                                                kAcceptPolarBins, kAcceptKSigma, kEntryWeightAbsTol);
   for (size_t k = 0; k < v.bins.size(); k++) {
     EXPECT_GT(v.bins[k].dealt, 0) << label << " polar band " << k << " received no rays";
   }
-  EXPECT_EQ(v.entry_drops, 0) << label << ": rays with a positive entry weight were dropped";
-  EXPECT_TRUE(v.pass) << label << " max|w-a|=" << v.max_abs_dev << " at ray " << v.worst_ray;
+  EXPECT_TRUE(v.pass) << label << " max|w-a|=" << v.max_weight_dev << " at ray " << v.worst_ray
+                      << ", max|z|=" << v.max_abs_z << " at bin " << v.worst_bin
+                      << " (a dropped ray reads as a kept-count z of inf at this floor)";
   return sum_w / static_cast<double>(count);
 }
 

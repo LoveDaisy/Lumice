@@ -40,6 +40,7 @@
 #include "core/backend/trace_backend.hpp"
 #include "core/crystal.hpp"
 #include "core/math.hpp"
+#include "core/shared/pcg_shared.h"
 #include "metal_test_helpers.hpp"
 #include "support/env_var.hpp"
 #include "support/incidence_sampling_oracle.hpp"
@@ -1222,13 +1223,13 @@ TEST(MetalRootGen, PerRayEntryPointGeometricConsistency) {
 // ---- Projected-area entry weight, judged by the CPU oracle ---------------------
 //
 // The gen_root / transit_root kernels multiply each ray's weight by A/(S/2)
-// (lm_pcg::entry_accept_prob) and trace every ray. These cases read back what
+// (lm_pcg::entry_acceptance) and trace every ray. These cases read back what
 // the DEVICE did — the crystal-local direction it drew (ReadbackGenDirs), the
 // entry face (ReadbackRootTf) and the root weight it wrote (ReadbackRootW, over
 // the carried-in weight for transit) — and judge each ray's entry weight with
 // the analytic oracle and comparator the CPU sampler is judged by
 // (test/support/incidence_sampling_oracle.hpp: ComputeEntryAcceptance +
-// CheckEntryWeights). This is direct parity with the CPU oracle, NOT a use of
+// CheckEntryFamily). This is direct parity with the CPU oracle, NOT a use of
 // the cross-backend parity battery: the battery compares backends with each
 // other, and all three used to omit the same factor, so it could not see this.
 namespace {
@@ -1267,14 +1268,15 @@ double CheckDeviceEntryWeights(const Crystal& crystal, const std::vector<float>&
     entered[i] = faces[i] != kInvalidFaceU32;
     sum_w += weight[i];
   }
-  const auto v =
-      test_support::CheckEntryWeights(bin_of, accept_prob, weight, entered, kAcceptPolarBins, kEntryWeightAbsTol);
+  const auto v = test_support::CheckEntryFamily(bin_of, accept_prob, lm_pcg::kEntryKeepFloorMetal, weight, entered,
+                                                kAcceptPolarBins, kAcceptKSigma, kEntryWeightAbsTol);
   for (size_t k = 0; k < v.bins.size(); k++) {
     const auto& b = v.bins[k];
     EXPECT_GT(b.dealt, 0) << label << " polar band " << k << " received no rays";
   }
-  EXPECT_EQ(v.entry_drops, 0) << label << ": rays with a positive entry weight were dropped";
-  EXPECT_TRUE(v.pass) << label << " max|w-a|=" << v.max_abs_dev << " at ray " << v.worst_ray;
+  EXPECT_TRUE(v.pass) << label << " max|w-a|=" << v.max_weight_dev << " at ray " << v.worst_ray
+                      << ", max|z|=" << v.max_abs_z << " at bin " << v.worst_bin
+                      << " (a dropped ray reads as a kept-count z of inf at this floor)";
   return sum_w / static_cast<double>(count);
 }
 

@@ -1625,9 +1625,12 @@ __global__ void transit_multi_ms_kernel(
   // Carried weight × this (layer, ci)'s ray-allocation correction: the
   // continuation layer re-deals its rays, so it owes its own host-computed
   // factor (1.0f under proportional allocation, an exact multiply) — times the
-  // projected-area entry weight A / (S/2), as in gen_root_kernel: a continuation
-  // ray meets the NEW crystal with the same missing A(o,g,d) factor.
-  float w = d_cont_w_in[tid] * gp.alloc_correction * lm_pcg::entry_accept_prob(proj_sum, s_total);
+  // projected-area entry factor at kEntryKeepFloorCuda, as in gen_root_kernel:
+  // a continuation ray meets the NEW crystal with the same missing A(o,g,d)
+  // factor.
+  float w = d_cont_w_in[tid] * gp.alloc_correction *
+            lm_pcg::entry_acceptance(lm_pcg::entry_area_ratio(proj_sum, s_total), lm_pcg::kEntryKeepFloorCuda)
+                .weight_mult;
   uint32_t to_face_u32;
   if (to_face_u16 == kInvalidIdU16) {
     w = 0.0f;
@@ -1854,10 +1857,13 @@ __global__ void gen_root_kernel(float* __restrict__ d_root_d,           // 3 × 
   }
   // Per-ray spd weight × this dispatch's ray-allocation correction
   // (host-computed; 1.0f under proportional allocation, an exact multiply)
-  // × the projected-area entry weight A / (S/2) (lm_pcg::entry_accept_prob —
-  // the formula CPU InitRay_p_fid and the Metal kernels multiply in). Every ray
-  // is traced; none is dropped for its orientation, so no lane idles.
-  float weight = d_wl_pool[wl_idx].spd_weight * gp.alloc_correction * lm_pcg::entry_accept_prob(proj_sum, s_total);
+  // × the projected-area entry factor from lm_pcg::entry_acceptance (the
+  // estimator family CPU InitRay_p_fid and the Metal kernels also call) at
+  // kEntryKeepFloorCuda = 0: keep_prob ≡ 1, so every ray is traced at
+  // weight × A / (S/2), no acceptance number is drawn and no lane idles.
+  float weight =
+      d_wl_pool[wl_idx].spd_weight * gp.alloc_correction *
+      lm_pcg::entry_acceptance(lm_pcg::entry_area_ratio(proj_sum, s_total), lm_pcg::kEntryKeepFloorCuda).weight_mult;
   uint32_t to_face_u32;
   if (to_face_u16 == kInvalidIdU16) {
     weight = 0.0f;
@@ -4839,10 +4845,13 @@ LayerHandlePtr CudaTraceBackend::TraceLayer(const RootRaySource& roots) {
         // projected-area entry weight InitRay_p_fid multiplies in — with a unit
         // weight_, r.w_ IS that factor. (weight_ is read nowhere else on this
         // path; the RNG draw order is unchanged.)
+        // kEntryKeepFloorCuda = 0 keeps every ray (no discard), as gen_root_kernel.
+        static_assert(lm_pcg::kEntryKeepFloorCuda == 0.0f,
+                      "gen_root / transit_root kernels read only weight_mult: a non-zero floor needs a keep draw there");
         WlParam unit_weight_wl = impl_->wl_;
         unit_weight_wl.weight_ = 1.0f;
         InitRayFirstMs(impl_->rng_, impl_->scene_->light_source_.param_, unit_weight_wl, ci_n, *ci_crystal_fb,
-                       impl_->ms_layer_idx_, axis_dist, workspace, all_data);
+                       impl_->ms_layer_idx_, axis_dist, lm_pcg::kEntryKeepFloorCuda, workspace, all_data);
         for (size_t i = 0; i < ci_n; ++i) {
           const auto& r = all_data[i];
           impl_->pinned_dirs_[i * 3 + 0] = r.d_[0];

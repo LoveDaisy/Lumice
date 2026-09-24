@@ -61,6 +61,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <vector>
 
 #include "core/crystal.hpp"
@@ -418,9 +419,10 @@ inline double ComputeSurfaceArea(const CrystalGeom& cf) {
   return ComputeSurfaceArea(BuildPresentFaceGeom(cf));
 }
 
-// The entry weight the sampler must multiply into a ray of direction d on this
-// shape: min(1, A(d) / (S/2)) — equivalently, the probability a ray would be
-// kept if the factor were applied by accept/reject instead.
+// The projected-area entry ratio a = min(1, A(d) / (S/2)) of a ray of direction
+// d on this shape: the factor the entry must supply in expectation, whichever
+// member of the lm_pcg::entry_acceptance family (keep probability × kept-ray
+// weight) the sampler runs — see CheckEntryFamily below.
 inline double ComputeEntryAcceptance(const std::vector<OracleFaceGeom>& faces, const double d[3]) {
   const double half_s = 0.5 * ComputeSurfaceArea(faces);
   return half_s > 0.0 ? std::min(1.0, ComputeProjectedArea(faces, d) / half_s) : 0.0;
@@ -482,7 +484,7 @@ inline Polygon2DMoments ComputeInFaceTargetMoments(const OracleFaceGeom& g, cons
 
 // One captured entry-point sample: the face hit (to_face_), the 3D point, and
 // the weight the ray left the entry with (w_; the drivers below start every ray
-// at 1, so it is the entry weight itself).
+// at 1, so it is the entry weight itself — -1 on a ray the entry discarded).
 struct EntrySamples {
   std::vector<IdType> face;                 // to_face_ per ray (kInvalidId if unmapped)
   std::vector<std::array<float, 3>> point;  // p_ per ray
@@ -494,7 +496,9 @@ struct EntrySamples {
 // primitives `RandomSample` / `SampleTrianglePoint` read
 // `RandomNumberGenerator::GetInstance()`, so reproducibility comes from seeding
 // that instance — a passed-in RNG would be ignored by the production path).
-inline EntrySamples DriveEntrySampling(const Crystal& crystal, const float d[3], size_t n, uint32_t seed) {
+// `keep_floor` picks the entry-estimator family member (lm_pcg::kEntryKeepFloor*).
+inline EntrySamples DriveEntrySampling(const Crystal& crystal, const float d[3], size_t n, uint32_t seed,
+                                       float keep_floor) {
   RandomNumberGenerator::GetInstance().SetSeed(seed);
   RayBuffer buf(n);
   buf.size_ = n;
@@ -507,7 +511,7 @@ inline EntrySamples DriveEntrySampling(const Crystal& crystal, const float d[3],
     r.from_face_ = kInvalidId;
     r.to_face_ = kInvalidId;
   }
-  InitRay_p_fid(crystal, &buf);
+  InitRay_p_fid(crystal, &buf, keep_floor);
   EntrySamples out;
   out.face.resize(n);
   out.point.resize(n);
@@ -525,7 +529,7 @@ inline EntrySamples DriveEntrySampling(const Crystal& crystal, const float d[3],
 // sampler (orientation o and a fixed sun direction are equivalent to a
 // crystal-local d).
 inline EntrySamples DriveEntrySamplingDirs(const Crystal& crystal, const std::vector<std::array<float, 3>>& dirs,
-                                           uint32_t seed) {
+                                           uint32_t seed, float keep_floor) {
   RandomNumberGenerator::GetInstance().SetSeed(seed);
   const size_t n = dirs.size();
   RayBuffer buf(n);
@@ -539,7 +543,7 @@ inline EntrySamples DriveEntrySamplingDirs(const Crystal& crystal, const std::ve
     r.from_face_ = kInvalidId;
     r.to_face_ = kInvalidId;
   }
-  InitRay_p_fid(crystal, &buf);
+  InitRay_p_fid(crystal, &buf, keep_floor);
   EntrySamples out;
   out.face.resize(n);
   out.point.resize(n);
@@ -552,111 +556,94 @@ inline EntrySamples DriveEntrySamplingDirs(const Crystal& crystal, const std::ve
   return out;
 }
 
-// ---- AC3: projected-area entry weight ----
+// ---- AC3: the projected-area entry estimator family ----
 //
-// The sampler multiplies each ray's weight by a_i = min(1, A_i / (S_i/2)) and
-// traces every ray, so for a ray dealt from p(o)·p(g) the weight it enters with
-// is a deterministic function of (o, g, d): exactly a_i, up to float round-off.
-// Checking every ray against the oracle's a_i is therefore an equality test, not
-// a statistical one, and it implies the aggregate target — Σ w over any bin of
-// (o, g) is Σ a_i, i.e. p(o)·p(g)·A(o, g, d)/S(g) — which the per-bin sums below
-// report for diagnosis. A sampler that still discarded by accept/reject (weights
-// in {0, 1}) or skipped the factor (weights all 1) fails per ray by O(1).
-struct EntryWeightBin {
-  double expected = 0.0;  // Σ a_i over the bin's rays
-  double observed = 0.0;  // Σ w_i
-  long long dealt = 0;
-};
-
-struct EntryWeightVerdict {
-  bool pass = false;
-  double max_abs_dev = 0.0;  // max_i |w_i - a_i|
-  long long worst_ray = -1;
-  long long entry_drops = 0;  // rays with no entry face (a_i > 0 rays must all enter)
-  std::vector<EntryWeightBin> bins;
-};
-
-// `bin_of[i]` in [0, bin_cnt), `accept_prob[i]` the oracle's a_i, `weight[i]`
-// the sampler's entry weight relative to the ray's birth weight, `entered[i]`
-// whether it got an entry face. `abs_tol` bounds the float round-off of the
-// sampler's A and S accumulation against the oracle's double precision.
-inline EntryWeightVerdict CheckEntryWeights(const std::vector<int>& bin_of, const std::vector<double>& accept_prob,
-                                            const std::vector<double>& weight, const std::vector<bool>& entered,
-                                            size_t bin_cnt, double abs_tol) {
-  EntryWeightVerdict v;
-  v.bins.resize(bin_cnt);
-  for (size_t i = 0; i < bin_of.size(); i++) {
-    EntryWeightBin& b = v.bins[static_cast<size_t>(bin_of[i])];
-    b.expected += accept_prob[i];
-    b.observed += weight[i];
-    b.dealt++;
-    const double dev = std::abs(weight[i] - accept_prob[i]);
-    if (dev > v.max_abs_dev) {
-      v.max_abs_dev = dev;
-      v.worst_ray = static_cast<long long>(i);
-    }
-    if (!entered[i] && accept_prob[i] > 0.0) {
-      v.entry_drops++;
-    }
-  }
-  v.pass = v.max_abs_dev <= abs_tol && v.entry_drops == 0;
-  return v;
-}
-
-// ---- Accept/reject control: the Bernoulli form of the same factor ----
-//
-// Keeping each ray with probability a_i instead of weighting it by a_i has the
-// same expectation. The kept count among any subset of rays is Poisson-binomial
-// with mean Σ a_i and variance Σ a_i(1 - a_i), so binning by (orientation,
-// shape) and z-testing every bin checks an accept/reject implementation of the
-// factor. Kept as the control that the weighted entry and the discarding form it
-// replaced agree in expectation.
-struct AcceptanceBin {
-  double expected = 0.0;  // Σ a_i over the bin's rays
-  double variance = 0.0;  // Σ a_i (1 - a_i)
+// The entry keeps ray i with probability q_i = min(1, a_i / f) and multiplies a
+// kept ray's weight by m_i = max(a_i, f), where a_i = min(1, A_i / (S_i/2)) and
+// f = keep_floor = 1/c (lm_pcg::entry_acceptance). For a ray dealt from
+// p(o)·p(g) this is judged three ways, per bin of (o, g):
+//  - every KEPT ray's weight equals the oracle's m_i — an equality test, up to
+//    the float round-off of the sampler's A and S (`abs_tol`);
+//  - the kept count is Poisson-binomial with mean Σ q_i and variance
+//    Σ q_i(1 - q_i) (both 0-variance extremes included: f = 0 must keep every
+//    ray, and a ray with q_i = 0 must never be kept);
+//  - the kept weight Σ w_i has mean Σ a_i — the target p(o)·p(g)·A(o,g,d)/S(g)
+//    itself, the same for every f — and variance Σ m_i² q_i(1 - q_i).
+// The first two pin the family member; the third is the expectation every
+// member shares, so it is what the unit-weight sampler (no factor at all) and a
+// wrong a_i fail on whatever f the check runs at.
+struct EntryFamilyBin {
   long long dealt = 0;
   long long kept = 0;
-  double z = 0.0;
+  double kept_expected = 0.0;  // Σ q_i
+  double kept_variance = 0.0;  // Σ q_i (1 - q_i)
+  double kept_z = 0.0;
+  double weight_expected = 0.0;  // Σ a_i
+  double weight_variance = 0.0;  // Σ m_i² q_i (1 - q_i)
+  double weight_observed = 0.0;  // Σ w_i over kept rays
+  double weight_z = 0.0;
 };
 
-struct Ac3Verdict {
+struct EntryFamilyVerdict {
   bool pass = false;
-  double max_abs_z = 0.0;
+  double max_weight_dev = 0.0;  // max over kept rays of |w_i - m_i|
+  long long worst_ray = -1;
+  double max_abs_z = 0.0;  // over both z columns of every bin
   int worst_bin = -1;
-  std::vector<AcceptanceBin> bins;
+  std::vector<EntryFamilyBin> bins;
 };
 
-// `bin_of[i]` in [0, bin_cnt), `accept_prob[i]` the oracle's a_i, `kept[i]` the
-// accept/reject verdict.
-inline Ac3Verdict CheckEntryAcceptance(const std::vector<int>& bin_of, const std::vector<double>& accept_prob,
-                                       const std::vector<bool>& kept, size_t bin_cnt, double k_sigma) {
-  Ac3Verdict v;
+// z of an observation against a Poisson-binomial-like mean/variance; a zero
+// variance demands the exact mean (within `abs_tol` for a float sum).
+inline double EntryFamilyZ(double observed, double expected, double variance, double abs_tol) {
+  if (variance > 0.0) {
+    return (observed - expected) / std::sqrt(variance);
+  }
+  return std::abs(observed - expected) <= abs_tol ? 0.0 : std::numeric_limits<double>::infinity();
+}
+
+// `bin_of[i]` in [0, bin_cnt), `area_ratio[i]` the oracle's a_i, `weight[i]` the
+// sampler's entry weight relative to the ray's birth weight, `kept[i]` whether
+// the ray got an entry face (a discarded ray has none). `keep_floor` is the
+// family member the sampler was run at.
+inline EntryFamilyVerdict CheckEntryFamily(const std::vector<int>& bin_of, const std::vector<double>& area_ratio,
+                                           double keep_floor, const std::vector<double>& weight,
+                                           const std::vector<bool>& kept, size_t bin_cnt, double k_sigma,
+                                           double abs_tol) {
+  EntryFamilyVerdict v;
   v.bins.resize(bin_cnt);
   for (size_t i = 0; i < bin_of.size(); i++) {
-    AcceptanceBin& b = v.bins[static_cast<size_t>(bin_of[i])];
-    b.expected += accept_prob[i];
-    b.variance += accept_prob[i] * (1.0 - accept_prob[i]);
+    EntryFamilyBin& b = v.bins[static_cast<size_t>(bin_of[i])];
+    const double a = area_ratio[i];
+    const double q = a >= keep_floor ? 1.0 : a / keep_floor;
+    const double m = std::max(a, keep_floor);
     b.dealt++;
-    b.kept += kept[i] ? 1 : 0;
-  }
-  v.pass = true;
-  for (size_t k = 0; k < bin_cnt; k++) {
-    AcceptanceBin& b = v.bins[k];
-    const double diff = static_cast<double>(b.kept) - b.expected;
-    if (b.variance > 0.0) {
-      b.z = diff / std::sqrt(b.variance);
-    } else if (std::abs(diff) > 0.5) {
-      // Every a_i is exactly 0 or 1 in this bin: the outcome is deterministic.
-      b.z = diff > 0.0 ? 1e9 : -1e9;
+    b.kept_expected += q;
+    b.kept_variance += q * (1.0 - q);
+    b.weight_expected += a;
+    b.weight_variance += m * m * q * (1.0 - q);
+    if (kept[i]) {
+      b.kept++;
+      b.weight_observed += weight[i];
+      const double dev = std::abs(weight[i] - m);
+      if (dev > v.max_weight_dev) {
+        v.max_weight_dev = dev;
+        v.worst_ray = static_cast<long long>(i);
+      }
     }
-    if (std::abs(b.z) > v.max_abs_z) {
-      v.max_abs_z = std::abs(b.z);
+  }
+  for (size_t k = 0; k < bin_cnt; k++) {
+    EntryFamilyBin& b = v.bins[k];
+    b.kept_z = EntryFamilyZ(static_cast<double>(b.kept), b.kept_expected, b.kept_variance, 0.5);
+    b.weight_z =
+        EntryFamilyZ(b.weight_observed, b.weight_expected, b.weight_variance, abs_tol * static_cast<double>(b.dealt));
+    const double z = std::max(std::abs(b.kept_z), std::abs(b.weight_z));
+    if (z > v.max_abs_z) {
+      v.max_abs_z = z;
       v.worst_bin = static_cast<int>(k);
     }
-    if (std::abs(b.z) > k_sigma) {
-      v.pass = false;
-    }
   }
+  v.pass = v.max_weight_dev <= abs_tol && v.max_abs_z <= k_sigma;
   return v;
 }
 
@@ -684,14 +671,13 @@ inline Ac1Verdict CheckProjectedAreaDistribution(const Crystal& crystal, const f
   v.expected_prob = ComputeProjectedFaceAreaDistribution(crystal.CfGeom(), d);
   const size_t face_cnt = v.expected_prob.size();
   v.observed_count.assign(face_cnt, 0);
-  // The target is the face distribution of the rays that entered. Every ray
-  // enters a non-empty crystal — the projected-area factor scales its weight,
-  // never whether it is traced — so kInvalidId only marks an empty/degenerate
-  // shape's rays and those are skipped. The entry weight reads the scalar
-  // Σ proj_prob alone, never which face was picked, so it leaves the face
-  // distribution untouched — CheckEntryWeights judges the weight itself. An
-  // entered ray with an out-of-range id still counts toward n (and matches no
-  // face), so a numbering drift cannot hide here.
+  // The target is the face distribution GIVEN that the ray entered: a ray the
+  // entry discarded (kInvalidId — possible for any keep_floor > 0) is not a
+  // draw from it, so the binomial n counts entered rays only. The keep decision
+  // and the weight read the scalar Σ proj_prob alone, never which face would be
+  // picked, so conditioning on them leaves the face distribution untouched —
+  // CheckEntryFamily judges both. An entered ray with an out-of-range id still
+  // counts toward n (and matches no face), so a numbering drift cannot hide here.
   for (IdType f : observed_faces) {
     if (f == kInvalidId) {
       continue;

@@ -134,7 +134,21 @@ void BuildEntrySubTris(const CrystalGeom& cf, EntrySubTri* out) {
 
 }  // namespace detail
 
-void InitRay_p_fid(const Crystal& curr_crystal, RayBuffer* ray_buf_ptr) {
+namespace {
+
+// The one way an entry ray is discarded before it is traced: no source face, no
+// hit face, and the w_<0 sentinel TIR and filter-fail already use, so the root
+// segment reads as terminated (not IsOutgoing()) wherever all_data is scanned
+// and its first hop ends in HitSurface's kInvalidId branch.
+void DiscardEntryRay(RaySeg& r) {
+  r.from_face_ = kInvalidId;
+  r.to_face_ = kInvalidId;
+  r.w_ = -1.0f;
+}
+
+}  // namespace
+
+void InitRay_p_fid(const Crystal& curr_crystal, RayBuffer* ray_buf_ptr, float entry_keep_floor) {
   if (!ray_buf_ptr) {
     return;
   }
@@ -152,12 +166,9 @@ void InitRay_p_fid(const Crystal& curr_crystal, RayBuffer* ray_buf_ptr) {
 
   if (subtri_cnt == 0) {
     // No present face with >=3 corners (empty/degenerate crystal — only the
-    // Mesh(0,0) reject path reaches here in production). Zero every ray's weight
-    // so it contributes nothing downstream; HitSurface also guards kInvalidId.
+    // Mesh(0,0) reject path reaches here in production). No ray can enter it.
     for (auto& r : ray_buf) {
-      r.from_face_ = kInvalidId;
-      r.to_face_ = kInvalidId;
-      r.w_ = 0.0f;
+      DiscardEntryRay(r);
     }
     return;
   }
@@ -180,28 +191,36 @@ void InitRay_p_fid(const Crystal& curr_crystal, RayBuffer* ray_buf_ptr) {
   }
   detail::BuildEntrySubTris(cf, subtri);
 
-  // Projected-area entry weight. A ray born with a fixed weight hits orientation
-  // o of shape g with probability proportional to p(o)·p(g)·A(o,g,d), where A is
-  // the crystal's area projected along d — and A is exactly Σ proj_prob below,
-  // already computed per ray for the face selection. Multiplying each ray's
-  // weight by A / (S/2) supplies that missing marginal factor. S/2 bounds A for
-  // every convex body in every direction (divergence theorem: the lit and the
-  // unlit sides project to the same A, and together they are at most S), so the
-  // factor never exceeds 1 and needs no per-family calibration; S is summed per
-  // call, i.e. per sampled shape, which is what makes the g factor come out
-  // right without a separate allocation mechanism.
+  // Projected-area entry factor. A ray born with a fixed weight hits
+  // orientation o of shape g with probability proportional to
+  // p(o)·p(g)·A(o,g,d), where A is the crystal's area projected along d — and A
+  // is exactly Σ proj_prob below, already computed per ray for the face
+  // selection. The entry supplies that missing marginal factor a = A / (S/2)
+  // through the estimator family lm_pcg::entry_acceptance: keep the ray with
+  // probability q, multiply a kept ray's weight by a / q. S/2 bounds A for every
+  // convex body in every direction (divergence theorem: the lit and the unlit
+  // sides project to the same A, and together they are at most S), so a never
+  // exceeds 1 and needs no per-family calibration; S is summed per call, i.e.
+  // per sampled shape, which is what makes the g factor come out right without
+  // a separate allocation mechanism. `entry_keep_floor` (= 1/c) picks the
+  // family member — the caller's backend constant, kEntryKeepFloor* in
+  // pcg_shared.h; the image's expectation does not depend on it.
   //
-  // This is the conditional expectation of keeping the ray with probability
-  // A / (S/2) and discarding it otherwise: the same expectation at every pixel,
-  // no higher variance, and every ray dealt to this entry is traced — which is
-  // what keeps GPU lanes from idling on rejected rays. It multiplies w_ in
-  // place, so it relies on w_ already holding the ray's birth weight
-  // (InitRay_d_w_previdx on the first layer, the carried-in weight on later
-  // ones); both callers set it before calling here.
+  // A ray that is not kept is not resampled: it takes the same discard as the
+  // empty-crystal path above, so the rays this entry was dealt keep counting as
+  // emitted. The slot stays in the buffer (callers, including the GPU host-gen
+  // fallbacks, index it by the dealt count); the ray ends at its first hop,
+  // where HitSurface turns an entry ray with no hit face into two terminated
+  // segments, the same way the GPU kernels stop on kInvalidId. The weight
+  // multiply is in place, so it relies on w_ already holding the ray's birth
+  // weight (InitRay_d_w_previdx on the first layer, the carried-in weight on
+  // later ones); both callers set it before calling here.
   float s_total = 0.0f;
   for (size_t j = 0; j < subtri_cnt; j++) {
     s_total += subtri[j].area;
   }
+  auto& uniform_rng = RandomNumberGenerator::GetInstance();
+
   for (auto& r : ray_buf) {
     const auto* d = r.d_;
     float proj_sum = 0.0f;
@@ -210,7 +229,14 @@ void InitRay_p_fid(const Crystal& curr_crystal, RayBuffer* ray_buf_ptr) {
       proj_sum += proj_prob[j];
     }
     // Same formula the Metal / CUDA entry kernels call (single source).
-    r.w_ *= lm_pcg::entry_accept_prob(proj_sum, s_total);
+    const lm_pcg::EntryAcceptance acc =
+        lm_pcg::entry_acceptance(lm_pcg::entry_area_ratio(proj_sum, s_total), entry_keep_floor);
+    // No draw when the ray is kept for certain (every ray at keep_floor 0).
+    if (acc.keep_prob < 1.0f && uniform_rng.GetUniform() >= acc.keep_prob) {
+      DiscardEntryRay(r);
+      continue;
+    }
+    r.w_ *= acc.weight_mult;
     int tri_id = 0;
     RandomSample(static_cast<int>(subtri_cnt), proj_prob, &tri_id);
     SampleTrianglePoint(subtri[tri_id].v, r.p_);
@@ -310,6 +336,7 @@ void InitRay_other_info(const Crystal& curr_crystal, size_t curr_crystal_id, siz
 void InitRayFirstMs(RandomNumberGenerator& rng, const SunParam& light_param, const WlParam& wl_param,
                     size_t curr_ray_num,                                                                        // input
                     const Crystal& curr_crystal, size_t curr_crystal_id, const AxisDistribution& crystal_axis,  // input
+                    float entry_keep_floor,                                                                     // input
                     RayBuffer buffer_data[2], RayBuffer& all_data,  // output
                     float weight_correction) {                      // input
   buffer_data[0].size_ = curr_ray_num;
@@ -321,7 +348,7 @@ void InitRayFirstMs(RandomNumberGenerator& rng, const SunParam& light_param, con
   InitRay_d_w_previdx(light_param, wl_param, curr_ray_num, buffer_data + 0, weight_correction);
 
   // 1.2 init p & fid
-  InitRay_p_fid(curr_crystal, buffer_data + 0);
+  InitRay_p_fid(curr_crystal, buffer_data + 0, entry_keep_floor);
 
   // 1.3 init crystal_id, root_ray_idx, rp, state
   InitRay_other_info(curr_crystal, curr_crystal_id, all_data.size_, buffer_data);
@@ -353,6 +380,7 @@ void InitRayFirstMs(RandomNumberGenerator& rng, const SunParam& light_param, con
 // NOLINTNEXTLINE(readability-function-size)
 void InitRayOtherMs(RandomNumberGenerator& rng, const RayBuffer init_data[2], size_t curr_ray_num,              // input
                     const Crystal& curr_crystal, size_t curr_crystal_id, const AxisDistribution& crystal_axis,  // input
+                    float entry_keep_floor,                                                                     // input
                     RayBuffer buffer_data[2], RayBuffer& all_data, size_t& init_ray_offset,  // output
                     float weight_correction) {                                               // input
   buffer_data[0].size_ = 0;
@@ -378,7 +406,7 @@ void InitRayOtherMs(RandomNumberGenerator& rng, const RayBuffer init_data[2], si
   }
 
   // 1.2 init p & fid
-  InitRay_p_fid(curr_crystal, buffer_data + 0);
+  InitRay_p_fid(curr_crystal, buffer_data + 0, entry_keep_floor);
 
   // 1.3 init crystal_id, crystal_config_id, root_ray_idx, rp, state
   InitRay_other_info(curr_crystal, curr_crystal_id, all_data.size_, buffer_data);
@@ -1893,11 +1921,13 @@ void Simulator::SimulateOneWavelength(const SceneConfig& config, const RaypathCo
         if (first_ms) {
           InitRayFirstMs(rng_, config.light_source_.param_, wl_param, curr_ray_num,  // input
                          curr_crystal, curr_crystal_id, s.crystal_.axis_,            // input
+                         lm_pcg::kEntryKeepFloorCpu,                                 // input
                          buffer_data, all_data,                                      // output
                          corrections[ci]);                                           // input
         } else {
           InitRayOtherMs(rng_, init_data, curr_ray_num,                    // input
                          curr_crystal, curr_crystal_id, s.crystal_.axis_,  // input
+                         lm_pcg::kEntryKeepFloorCpu,                       // input
                          buffer_data, all_data, init_ray_offset,           // output
                          corrections[ci]);                                 // input
         }

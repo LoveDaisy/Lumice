@@ -16,6 +16,7 @@
 #include "core/filter_spec.hpp"
 #include "core/math.hpp"
 #include "core/scatter_accum.hpp"
+#include "core/shared/pcg_shared.h"
 #include "core/simulator.hpp"  // CollectData, PartitionCrystalRayNum
 #include "core/trace_ops.hpp"
 
@@ -149,10 +150,12 @@ void TraceCrystalBatch(RandomNumberGenerator& rng, const CrystalTraceSpec& cryst
     } else if (batch.first_ms) {
       InitRayFirstMs(rng, batch.sun_param, batch.wl_param, curr_ray_num,                     //
                      crystal_spec.crystal, crystal_spec.crystal_id, crystal_spec.axis_dist,  //
+                     lm_pcg::kEntryKeepFloorCpu,                                             //
                      workspace, buffers.all_data, batch.weight_correction);
     } else {
       InitRayOtherMs(rng, buffers.prev_init, curr_ray_num,                                   //
                      crystal_spec.crystal, crystal_spec.crystal_id, crystal_spec.axis_dist,  //
+                     lm_pcg::kEntryKeepFloorCpu,                                             //
                      workspace, buffers.all_data, buffers.init_ray_offset, batch.weight_correction);
     }
 

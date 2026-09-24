@@ -41,6 +41,7 @@
 #include "core/filter_spec.hpp"
 #include "core/math.hpp"
 #include "core/raypath.hpp"
+#include "core/shared/pcg_shared.h"
 #include "core/simulator.hpp"
 #include "core/trace_ops.hpp"
 
@@ -304,8 +305,8 @@ TEST(CrossLayerHandoff, InitRayOtherMsCarriesComponentMaskNoReset) {
   }
 
   size_t init_ray_offset = 0;
-  InitRayOtherMs(rng, init_data, /*curr_ray_num=*/3, crystal, /*curr_crystal_id=*/0, axis, buffer_data, all_data,
-                 init_ray_offset);
+  InitRayOtherMs(rng, init_data, /*curr_ray_num=*/3, crystal, /*curr_crystal_id=*/0, axis, lm_pcg::kEntryKeepFloorCpu,
+                 buffer_data, all_data, init_ray_offset);
 
   ASSERT_EQ(buffer_data[0].size_, 3u);
   for (size_t i = 0; i < 3; i++) {
@@ -334,7 +335,8 @@ TEST(CrossLayerHandoff, InitRayFirstMsClearsCarriedCrossLayerBits) {
     buffer_data[0].SetComponent(i, (1ull << 33) | (1ull << 1));  // stale cross-layer bits
   }
 
-  InitRayFirstMs(rng, sun, wl, /*curr_ray_num=*/4, crystal, /*curr_crystal_id=*/0, axis, buffer_data, all_data);
+  InitRayFirstMs(rng, sun, wl, /*curr_ray_num=*/4, crystal, /*curr_crystal_id=*/0, axis, lm_pcg::kEntryKeepFloorCpu,
+                 buffer_data, all_data);
 
   ASSERT_EQ(buffer_data[0].size_, 4u);
   for (size_t i = 0; i < 4; i++) {

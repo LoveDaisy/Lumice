@@ -85,13 +85,6 @@ constexpr double kLandedTol = 0.05;
 // landed sum taken at the same emit sites: the two differ only by add order and
 // by the fp32 → fp64 conversion point, well under 1e-4 at kN.
 constexpr double kGpuTallyTol = 1e-4;
-// The CPU arm's tally is a double sum read against TotalLandedWeight, a
-// SEQUENTIAL fp32 running sum over every exit: its rounding drifts with the
-// addend count (bounded by count · 2^-24 relative), about 1e5 exits at kN here.
-// Measured drift 1.03e-4 once every ray enters the crystal at its projected-area
-// weight; 1e-3 is still far under the failure shapes (1.5× / 0.667×), and the
-// exact per-record check sits beside it.
-constexpr double kCpuTallyTol = 1e-3;
 
 ScatteringSetting MakeEntry(IdType id, float h, bool dark) {
   ScatteringSetting s;
@@ -282,8 +275,8 @@ TEST(RayAllocationBackends, CpuDealsByQAndLandsTheSameEnergy) {
   auto skew = RunCpuArm(skew_arm, render);
   ExpectSkewedInvariants(prop, skew, "cpu");
   // TotalLandedWeight is a float running sum (ScatterOutgoingToXyz), so even the
-  // CPU arm reads against it at an fp32 tolerance; the exact check is below.
-  ExpectSkewedTally(prop, skew, "cpu", kCpuTallyTol);
+  // CPU arm reads against it at the fp32 tolerance; the exact check is below.
+  ExpectSkewedTally(prop, skew, "cpu", kGpuTallyTol);
   // On the CPU arm the tally can also be read against the exit records one
   // by one: Σ over entry 0's records of weight, exactly.
   double bright_exit_w = 0.0;
