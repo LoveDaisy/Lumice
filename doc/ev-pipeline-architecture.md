@@ -316,12 +316,14 @@ different reasons, and the difference is what a user sees:
 
 - `kRelative` meters `anchor_l99_sky_`, a statistic *of the landed accumulation itself*.
   Whatever fraction of rays entry rejection removes is removed from the numerator and from
-  the anchor alike, so a factor that is uniform over the sky cancels exactly — a scene of
-  randomly oriented crystals, whose acceptance averages 1/2 for every shape, renders at the
-  same brightness as before, only noisier at the same `ray_num`. What the anchor cannot
-  cancel, and must not, is a change in *where* the light lands: oriented crystals now
-  weight each orientation by the area it shows the sun, so the halos they make move
-  relative to each other and to the sky, and the anchor meters the new picture.
+  the anchor alike, so the overall loss cancels — for randomly oriented crystals, whose
+  acceptance averages exactly 1/2 whatever their shape, the frame is metered to the same
+  brightness as before, only noisier at the same `ray_num`. What the anchor cannot cancel,
+  and must not, is a change in *where* the light lands: every orientation is now weighted
+  by the area it shows the sun, so wherever that area varies across the sampled
+  orientations (thin plates even when randomly oriented; oriented crystals with a wide
+  tilt spread or at a low sun) the halos move relative to each other and to the sky, and
+  the anchor meters the new picture.
 - `kAbsolute` divides by emitted energy, which counts a rejected ray as emitted (§7.1), so
   it shows the rejection as darkening: one stop for random orientation, a scene-dependent
   amount for oriented crystals (§7.2). That is the mode's contract — the light that got

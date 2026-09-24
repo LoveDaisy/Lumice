@@ -529,20 +529,25 @@ The scene configuration defines the simulation scene, including the light source
 > to the area it presents, as it does in the sky. The simulation of what happens *inside*
 > the crystal is unchanged; what changes is how much each orientation contributes.
 >
-> - **Randomly oriented crystals only** (22° / 46° halos, most "random" scenes): the halo
->   shapes and their relative brightness do not change. Under the default `ev_mode:
->   relative` the picture looks the same, only noisier at the same `ray_num` — about half
->   the rays are now rejected at entry, so doubling `ray_num` gets the old noise level back.
->   Under `ev_mode: absolute` the picture is one stop darker at the same EV (raise the EV
->   by 1, or `intensity_factor` ×2, to match an old render).
-> - **Oriented crystals** (plates, columns, Parry / Lowitz orientations): the brightness
->   *distribution* changes, because orientations that face the sun now outweigh those that
->   do not. How much depends on the crystal's shape, its tilt spread and the sun altitude:
->   horizontal plates with a small tilt spread behave much like before (every sampled
->   orientation shows the sun nearly the same area, so the weighting is close to uniform),
->   while plates or columns with a wide tilt spread, or scenes that mix oriented and
->   randomly oriented crystals in one layer, shift visibly. Under `ev_mode: absolute` these
->   scenes also darken, by roughly 0.7–1.4 stop depending on shape and sun altitude
+> - **Which pictures change, and how much**, is set by one thing: how much the area a crystal
+>   shows the sun varies across the orientations it is sampled in. Where it hardly varies the
+>   weighting is nearly uniform and the picture barely moves; where it varies a lot, the
+>   orientations that show the sun more area now dominate and the relative brightness of the
+>   halos shifts. Nearly unaffected: horizontal plates with a small tilt spread (the usual
+>   parhelia / CZA scenes — every sampled plate shows the sun almost the same area) and
+>   randomly oriented near-equant columns (`height` around 1; area varies about 1.8× from
+>   end-on to side-on). Visibly affected: randomly oriented thin plates (area varies about
+>   7.5×), long columns, oriented crystals with a wide tilt spread or at a low sun, and any
+>   layer that mixes oriented with randomly oriented crystals, whose relative shares move.
+> - **Noise**: about half of the rays dealt to randomly oriented crystals (an exact average
+>   of 1/2, whatever their shape) and a scene-dependent share of those dealt to oriented
+>   ones are now rejected at entry, so at the same `ray_num` every picture is noisier.
+>   Doubling `ray_num` gets a randomly oriented scene back to its old noise level.
+> - **Overall brightness**: under the default `ev_mode: relative` it is re-metered on the new
+>   picture and does not drop. Under `ev_mode: absolute` a rejected ray still counts as
+>   emitted, so the picture darkens at the same EV: exactly one stop for randomly oriented
+>   crystals (raise the EV by 1, or `intensity_factor` ×2, to match an old render), and
+>   roughly 0.7–1.4 stop for oriented ones depending on shape and sun altitude
 >   (`doc/ev-pipeline-architecture.md` §7.2 has measured values).
 > - **`proportion`** keeps its number but has a precise meaning now: a crystal count share
 >   under an equal-surface-area convention (the note above). For randomly oriented crystals

@@ -56,9 +56,9 @@ sampled orientation catching the same amount (`configuration.md`, the migration 
 the change: rows made by orientations that face the sun gain share, rows made by
 orientations seen edge-on lose it, and in a layer that mixes oriented and randomly oriented
 crystals the crystals' relative shares move too. Nothing in the analysis itself changed — a
-share recorded or exported before the change was computed under the old weighting. About
-half of the dealt rays are now rejected at entry, so at the same ray count each row's
-**+/-** is somewhat larger than it used to be.
+share recorded or exported before the change was computed under the old weighting. Part
+of the dealt rays — about half, for randomly oriented crystals — are now rejected at entry,
+so at the same ray count each row's **+/-** is somewhat larger than it used to be.
 
 **Record limits.** The analysis keeps a large but fixed number of distinct raypaths — enough that a typical scene never notices — rather than growing without bound as more rays or scattering layers are added. If a scene does produce more distinct raypaths than fit, a grayed-out **other** row appears at the bottom of the list: it is the energy and ray count that did not fit in a named row, and it is what makes the Cumulative % column reach exactly 100 at the last row. It is never selectable and cannot be excluded, since it does not correspond to one raypath. The status line under the button notes when this happened ("record full (N hits)"); for the reference scenes shipped with this tool, and for most real configurations, it does not happen at all.
 
