@@ -58,6 +58,15 @@ Bars (the checks are the shared module's (a)–(d)):
     does not restore the old figure (0.863 against the historical 0.8885 there)
     while doubling the ~35 s single-worker legacy oracle on a CI leg that is
     already near the longest job; so the floor moved and the budget did not.
+    This leaves the [0.65, 0.80) band unmonitored: a genuine cross-backend
+    divergence landing there (a corr drop of up to ~0.15 from the ~0.80–0.92
+    range both backends measure against legacy above) would not fail this
+    test, while anything at or below the oracle's own worst self-agreement
+    (~0.749–0.783 measured above) is already indistinguishable from noise and
+    anything near the wrong-plane break (~0.0) is still caught with a 0.65
+    margin. ``corr_floor=0.65`` for this scene is duplicated in
+    ``test_cuda_multi_renderer_parity.py``'s ``_SCENES`` — if this value moves
+    again, update both files together.
   * ledger tolerance, per scene:
       - single wavelength: 2%. Metal's ``R`` sits 0.27–0.47% below legacy's on
         every renderer of ``multi_lens`` — and by the same six digits in a
