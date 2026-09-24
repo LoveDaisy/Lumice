@@ -462,6 +462,14 @@ The scene configuration defines the simulation scene, including the light source
 > wavelengths in the spectrum. The two bundled configs with discrete spectra
 > (`examples/config_example.json`, `test/e2e/configs/color.json`) were migrated
 > as part of task-323 and produce bit-equivalent trace output (PSNR unchanged).
+>
+> **Not every counted ray enters a crystal.** A ray dealt to a crystal is kept with
+> probability `A/(S/2)` — the crystal's projected area along the ray over half its surface
+> area — and otherwise discarded before it is traced; a discarded ray still counts toward
+> `ray_num` and toward the emitted energy. For randomly oriented crystals about half of the
+> rays are kept, so at a given `ray_num` the image is noisier than the count suggests. See
+> the `ray_allocation` note below for what this means for `proportion`, and the migration
+> note after it for what it changed.
 
 > **`ray_allocation` decides how many rays an entry gets; `proportion` still says how many
 > crystals the entry stands for.** The `proportion` of a scattering entry is a *crystal count
@@ -514,6 +522,37 @@ The scene configuration defines the simulation scene, including the light source
 > (the Neyman formula and its floor) and `RayAllocationOnline` (the running tally and the
 > snapshot of `q` each batch is dealt by), all in `src/core/simulator.hpp`; the tally's
 > definition every backend writes to is `src/core/shared/ray_allocation_shared.hpp`.
+
+> **Migration (projected-area entry acceptance, 2026-09).** Before this change every ray
+> dealt to a crystal entered it, whatever way the crystal faced the sun, so a plate seen
+> edge-on caught as much light as the same plate seen face-on. It now catches in proportion
+> to the area it presents, as it does in the sky. The simulation of what happens *inside*
+> the crystal is unchanged; what changes is how much each orientation contributes.
+>
+> - **Randomly oriented crystals only** (22° / 46° halos, most "random" scenes): the halo
+>   shapes and their relative brightness do not change. Under the default `ev_mode:
+>   relative` the picture looks the same, only noisier at the same `ray_num` — about half
+>   the rays are now rejected at entry, so doubling `ray_num` gets the old noise level back.
+>   Under `ev_mode: absolute` the picture is one stop darker at the same EV (raise the EV
+>   by 1, or `intensity_factor` ×2, to match an old render).
+> - **Oriented crystals** (plates, columns, Parry / Lowitz orientations): the brightness
+>   *distribution* changes, because orientations that face the sun now outweigh those that
+>   do not. How much depends on the crystal's shape, its tilt spread and the sun altitude:
+>   horizontal plates with a small tilt spread behave much like before (every sampled
+>   orientation shows the sun nearly the same area, so the weighting is close to uniform),
+>   while plates or columns with a wide tilt spread, or scenes that mix oriented and
+>   randomly oriented crystals in one layer, shift visibly. Under `ev_mode: absolute` these
+>   scenes also darken, by roughly 0.7–1.4 stop depending on shape and sun altitude
+>   (`doc/ev-pipeline-architecture.md` §7.2 has measured values).
+> - **`proportion`** keeps its number but has a precise meaning now: a crystal count share
+>   under an equal-surface-area convention (the note above). For randomly oriented crystals
+>   that equals the entry's share of the light; for oriented crystals it does not.
+> - **Raypath analysis**: the Energy shares in the analysis window move for the same reason
+>   (`doc/user-manual/06-raypath-analysis.md`).
+>
+> No config key changed, and no config needs editing to keep loading. A config tuned by eye
+> against the old renders — especially one mixing oriented and random crystals — may want
+> its `proportion` values revisited.
 
 #### light_source (Light Source Configuration)
 

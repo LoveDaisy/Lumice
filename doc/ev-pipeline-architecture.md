@@ -309,6 +309,24 @@ appearance-only field — like `intensity_factor_`, it never triggers
 `NeedsRebuild()` (§6.4) because it selects which formula runs, not the
 accumulation layout.
 
+**How the two anchors take projected-area entry acceptance (2026-09).** Since then a ray
+dealt to a crystal is kept with probability `A/(S/2)` and otherwise discarded at entry
+(§7.2 has the mechanism and the numbers). Neither anchor needed a code change, for two
+different reasons, and the difference is what a user sees:
+
+- `kRelative` meters `anchor_l99_sky_`, a statistic *of the landed accumulation itself*.
+  Whatever fraction of rays entry rejection removes is removed from the numerator and from
+  the anchor alike, so a factor that is uniform over the sky cancels exactly — a scene of
+  randomly oriented crystals, whose acceptance averages 1/2 for every shape, renders at the
+  same brightness as before, only noisier at the same `ray_num`. What the anchor cannot
+  cancel, and must not, is a change in *where* the light lands: oriented crystals now
+  weight each orientation by the area it shows the sun, so the halos they make move
+  relative to each other and to the sky, and the anchor meters the new picture.
+- `kAbsolute` divides by emitted energy, which counts a rejected ray as emitted (§7.1), so
+  it shows the rejection as darkening: one stop for random orientation, a scene-dependent
+  amount for oriented crystals (§7.2). That is the mode's contract — the light that got
+  through — applied to a loss that previously went unmodelled.
+
 ### §2.7 The Metering Rule: `visible` Does Not Reach the Meter
 
 `visible` is a **display** clip and never a metering input. The visibility mask
@@ -960,6 +978,40 @@ close to what the new emitted-energy denominator wants. Re-deriving it would hav
 moved full-sphere scenes by only +0.029 stop, at the cost of re-shooting every
 committed reference image (a04: the burden of proof is on the side that changes
 something, and here the something-to-gain was smaller than the something-to-pay).
+
+**The table above and the paragraph after it predate projected-area entry acceptance
+(2026-09), and their numbers no longer hold; the law does.** A ray dealt to a crystal is now
+kept with probability `A/(S/2)` — the crystal's projected area along the ray over half its
+surface area — and otherwise discarded before tracing (`InitRay_p_fid`,
+`src/core/simulator.cpp`; `doc/crystal-orientation-sampling.md` §1). A discarded ray was
+emitted and lands nowhere, so entry rejection is one more factor inside `landed_fraction`,
+multiplying every row. It does not break the law: the acceptance is a per-ray draw whose
+mean is fixed by the scene (crystal shapes, orientation distributions, sun altitude), so
+`landed_fraction` is still a per-scene constant independent of `ray_num`. What moved is
+the value. Measured on full-sphere, no-filter scenes (`dual_fisheye_equal_area` 360°,
+single 550 nm line, `max_hits` 7, 1M rays, `Σ Y / emitted_energy` from the raw export):
+
+| Crystal population | Sun altitude | `landed_fraction` now | vs. the old ≈ 0.98 |
+|---|---|---|---|
+| Randomly oriented column (h = 1.0) | 15° / 45° | 0.489 / 0.488 | −1.00 stop |
+| Horizontal plate (h = 0.2, zenith σ = 1°) | 15° / 45° | 0.363 / 0.597 | −1.43 / −0.71 stop |
+| Horizontal column (h = 3.0, zenith σ = 1°) | 15° / 45° | 0.447 / 0.521 | −1.13 / −0.91 stop |
+
+The random row is the one with a closed form: a randomly oriented convex body's mean
+projected area is `S/4` (Cauchy), so the mean acceptance is exactly 1/2, independent of
+shape and of sun altitude — 0.489 is 0.978 × 1/2. Oriented populations accept at whatever
+their mean projected area toward the sun happens to be, which is why they move by a
+scene-dependent amount (and is the physics the change exists to get right).
+
+Consequence for the `kNormScale` paragraph above: its premise — `landed_fraction` close to
+1 on a full sphere — is now false (≈ 0.49 for random orientation), and `kNormScale` was
+deliberately **not** re-tuned to compensate. The emission weight of a ray stays what it was
+and the `kAbsolute` denominator stays the emitted energy (§7.1), so a `kAbsolute` render
+of a randomly oriented scene is one stop darker at the same EV than it was before this
+change, and an oriented scene darker by its own amount. That is the scale reporting the
+light the crystals actually intercept, not a regression; restoring the old look is an EV
+adjustment for the user, and re-tuning `kNormScale` would be a separate decision that
+re-shoots every `kAbsolute` reference image again.
 
 A narrow lens or an active filter is not a corner case of this law — it is the part
 of the range this scrum's `kAbsolute` mode exists to expose truthfully instead of

@@ -49,6 +49,17 @@ Each row is one distinct raypath — the full sequence of crystals and faces a g
 
 A raypath's raw energy is **not** the same as how visually prominent its arc looks on screen: a faint but wide-spread pattern (common with randomly-oriented crystals) can carry more total energy than a narrow bright arc, and can therefore outrank it in this list. The list answers "how much light", not "how eye-catching".
 
+**Energy shares changed in 2026-09, and older numbers are not comparable.** Since then a
+crystal intercepts light in proportion to the area it presents to the sun, instead of every
+sampled orientation catching the same amount (`configuration.md`, the migration note under
+`ray_allocation`). The analysis traces rays exactly the way the render does, so it inherits
+the change: rows made by orientations that face the sun gain share, rows made by
+orientations seen edge-on lose it, and in a layer that mixes oriented and randomly oriented
+crystals the crystals' relative shares move too. Nothing in the analysis itself changed — a
+share recorded or exported before the change was computed under the old weighting. About
+half of the dealt rays are now rejected at entry, so at the same ray count each row's
+**+/-** is somewhat larger than it used to be.
+
 **Record limits.** The analysis keeps a large but fixed number of distinct raypaths — enough that a typical scene never notices — rather than growing without bound as more rays or scattering layers are added. If a scene does produce more distinct raypaths than fit, a grayed-out **other** row appears at the bottom of the list: it is the energy and ray count that did not fit in a named row, and it is what makes the Cumulative % column reach exactly 100 at the last row. It is never selectable and cannot be excluded, since it does not correspond to one raypath. The status line under the button notes when this happened ("record full (N hits)"); for the reference scenes shipped with this tool, and for most real configurations, it does not happen at all.
 
 **Symmetry (P / B / D)**. The three checkboxes above the list decide which raypaths count as the same row — the same P, B and D symmetries the filter editor uses (prism-face rotation, basal-face reflection, mirror symmetry). With all three on (the default) the six rotations and the mirror image of `3-5` are one row; turn D off and the mirror path `3-7` becomes its own row, turn P off and every rotation does. This is a display-time choice: the analysis records every path unreduced, and toggling a checkbox regroups the result on hand at once — nothing re-runs, the totals do not change, and a selected row stays selected as long as its raypath is still a row (a row that merged into another is simply deselected). If you have pressed Run since the analysis, the result can no longer be regrouped; the window says which symmetry the list is showing, and the next Analyze applies the checkboxes.
