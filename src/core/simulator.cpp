@@ -148,9 +148,9 @@ void DiscardEntryRay(RaySeg& r) {
 
 }  // namespace
 
-void InitRay_p_fid(const Crystal& curr_crystal, RayBuffer* ray_buf_ptr, float entry_keep_floor) {
+size_t InitRay_p_fid(const Crystal& curr_crystal, RayBuffer* ray_buf_ptr, float entry_keep_floor) {
   if (!ray_buf_ptr) {
-    return;
+    return 0;
   }
 
   RayBuffer& ray_buf = *ray_buf_ptr;
@@ -170,7 +170,7 @@ void InitRay_p_fid(const Crystal& curr_crystal, RayBuffer* ray_buf_ptr, float en
     for (auto& r : ray_buf) {
       DiscardEntryRay(r);
     }
-    return;
+    return 0;
   }
 
   // Sub-triangle table + per-ray projected-weight buffer, both built once.
@@ -221,6 +221,7 @@ void InitRay_p_fid(const Crystal& curr_crystal, RayBuffer* ray_buf_ptr, float en
   }
   auto& uniform_rng = RandomNumberGenerator::GetInstance();
 
+  size_t kept = ray_buf.size_;
   for (auto& r : ray_buf) {
     const auto* d = r.d_;
     float proj_sum = 0.0f;
@@ -234,6 +235,7 @@ void InitRay_p_fid(const Crystal& curr_crystal, RayBuffer* ray_buf_ptr, float en
     // No draw when the ray is kept for certain (every ray at keep_floor 0).
     if (acc.keep_prob < 1.0f && uniform_rng.GetUniform() >= acc.keep_prob) {
       DiscardEntryRay(r);
+      kept--;
       continue;
     }
     r.w_ *= acc.weight_mult;
@@ -245,6 +247,7 @@ void InitRay_p_fid(const Crystal& curr_crystal, RayBuffer* ray_buf_ptr, float en
     r.from_face_ = kInvalidId;
     r.to_face_ = subtri[tri_id].face_id;
   }
+  return kept;
 }
 
 static void SampleRayDir(const SunParam& p, float* d, size_t num, size_t step) {
@@ -333,12 +336,13 @@ void InitRay_other_info(const Crystal& curr_crystal, size_t curr_crystal_id, siz
 
 
 // NOLINTNEXTLINE(readability-function-size)
-void InitRayFirstMs(RandomNumberGenerator& rng, const SunParam& light_param, const WlParam& wl_param,
-                    size_t curr_ray_num,                                                                        // input
-                    const Crystal& curr_crystal, size_t curr_crystal_id, const AxisDistribution& crystal_axis,  // input
-                    float entry_keep_floor,                                                                     // input
-                    RayBuffer buffer_data[2], RayBuffer& all_data,  // output
-                    float weight_correction) {                      // input
+size_t InitRayFirstMs(RandomNumberGenerator& rng, const SunParam& light_param, const WlParam& wl_param,
+                      size_t curr_ray_num,  // input
+                      const Crystal& curr_crystal, size_t curr_crystal_id,
+                      const AxisDistribution& crystal_axis,           // input
+                      float entry_keep_floor,                         // input
+                      RayBuffer buffer_data[2], RayBuffer& all_data,  // output
+                      float weight_correction) {                      // input
   buffer_data[0].size_ = curr_ray_num;
 
   // 1.0 init crystal_rot
@@ -348,7 +352,7 @@ void InitRayFirstMs(RandomNumberGenerator& rng, const SunParam& light_param, con
   InitRay_d_w_previdx(light_param, wl_param, curr_ray_num, buffer_data + 0, weight_correction);
 
   // 1.2 init p & fid
-  InitRay_p_fid(curr_crystal, buffer_data + 0, entry_keep_floor);
+  const size_t kept = InitRay_p_fid(curr_crystal, buffer_data + 0, entry_keep_floor);
 
   // 1.3 init crystal_id, root_ray_idx, rp, state
   InitRay_other_info(curr_crystal, curr_crystal_id, all_data.size_, buffer_data);
@@ -374,6 +378,7 @@ void InitRayFirstMs(RandomNumberGenerator& rng, const SunParam& light_param, con
   }
 
   all_data.EmplaceBack(buffer_data[0]);
+  return kept;
 }
 
 
@@ -1754,6 +1759,10 @@ void Simulator::SimulateOneWavelength(const SceneConfig& config, const RaypathCo
   // beside stochastic_sample_count and therefore OUTSIDE the ms loop below, so
   // continuation layers' resampling (InitRayOtherMs) accumulates here too.
   size_t stochastic_orientation_sample_count = 0;
+  // First-layer rays that passed the entry keep/discard and were actually traced
+  // — the throughput numerator (SimData::traced_root_ray_count_). Continuation
+  // layers are not counted, matching root_ray_count_'s first-layer grain.
+  size_t traced_root_ray_count = 0;
 
   // What the source emitted, in "rays at the nominal weight": N plus, over the
   // FIRST layer only, Σ_ci n_ci · (correction_ci − 1). Written that way rather
@@ -1919,11 +1928,11 @@ void Simulator::SimulateOneWavelength(const SceneConfig& config, const RaypathCo
 
         // 1. Initialize data
         if (first_ms) {
-          InitRayFirstMs(rng_, config.light_source_.param_, wl_param, curr_ray_num,  // input
-                         curr_crystal, curr_crystal_id, s.crystal_.axis_,            // input
-                         lm_pcg::kEntryKeepFloorCpu,                                 // input
-                         buffer_data, all_data,                                      // output
-                         corrections[ci]);                                           // input
+          traced_root_ray_count += InitRayFirstMs(rng_, config.light_source_.param_, wl_param, curr_ray_num,  // input
+                                                  curr_crystal, curr_crystal_id, s.crystal_.axis_,            // input
+                                                  lm_pcg::kEntryKeepFloorCpu,                                 // input
+                                                  buffer_data, all_data,                                      // output
+                                                  corrections[ci]);                                           // input
         } else {
           InitRayOtherMs(rng_, init_data, curr_ray_num,                    // input
                          curr_crystal, curr_crystal_id, s.crystal_.axis_,  // input
@@ -2055,6 +2064,7 @@ void Simulator::SimulateOneWavelength(const SceneConfig& config, const RaypathCo
     sim_data.producer_effective_seed_ = effective_seed_;
   }
   sim_data.root_ray_count_ = original_ray_num;
+  sim_data.traced_root_ray_count_ = traced_root_ray_count;
   // Not `emitted_weight * original_ray_num`: under adaptive allocation the rays
   // of one batch are not all at the nominal weight, and the denominator has to
   // charge what was actually emitted — see emitted_ray_equivalent above.
@@ -2127,6 +2137,7 @@ void Simulator::DrainDeviceXyz(TraceBackend* backend) {
   sim_data.curr_wl_ = xyz_win_.wl;
   sim_data.generation_ = xyz_win_.generation;
   sim_data.root_ray_count_ = xyz_win_.root_rays;
+  sim_data.traced_root_ray_count_ = xyz_win_.traced_root_rays;
   sim_data.emitted_energy_ = xyz_win_.emitted_energy;
   sim_data.stochastic_crystal_sample_count_ = xyz_win_.stochastic_crystal_samples;
   // OVERWRITE semantics, same as color_degrade_counts_ below: a config constant
@@ -2317,6 +2328,7 @@ void Simulator::SimulateOneWavelengthWithBackend(TraceBackend& backend, const Sc
       // hits the batch cap here. This sheds the per-batch synchronous D2H tax.
       xyz_win_.pending = true;
       xyz_win_.root_rays += ray_num;
+      xyz_win_.traced_root_rays += backend.GetLastBatchTracedRootRayCount(ray_num);
       // × what the backend's first layer emitted at the nominal weight, not
       // × ray_num: the two differ once a layer deals by q. See TraceBackend.
       xyz_win_.emitted_energy += emitted_weight * backend.GetLastBatchEmittedRayEquivalent(ray_num);
@@ -2357,6 +2369,7 @@ void Simulator::SimulateOneWavelengthWithBackend(TraceBackend& backend, const Sc
     sim_data.curr_wl_ = wl_param.wl_;
     sim_data.generation_ = generation;
     sim_data.root_ray_count_ = ray_num;
+    sim_data.traced_root_ray_count_ = backend.GetLastBatchTracedRootRayCount(ray_num);
     sim_data.emitted_energy_ = emitted_weight * backend.GetLastBatchEmittedRayEquivalent(ray_num);
     sim_data.stochastic_crystal_sample_count_ = backend.GetLastBatchStochasticCrystalSampleCount();
     sim_data.deterministic_crystal_count_ = deterministic_crystal_count_;
@@ -2426,6 +2439,7 @@ void Simulator::SimulateOneWavelengthWithBackend(TraceBackend& backend, const Sc
   sim_data.root_ray_count_ = ray_num;  // distinguishes a valid backend batch
                                        // from the shutdown sentinel (see
                                        // server.cpp::ConsumeData).
+  sim_data.traced_root_ray_count_ = backend.GetLastBatchTracedRootRayCount(ray_num);
   sim_data.emitted_energy_ = emitted_weight * backend.GetLastBatchEmittedRayEquivalent(ray_num);
   sim_data.stochastic_crystal_sample_count_ = backend.GetLastBatchStochasticCrystalSampleCount();
   sim_data.deterministic_crystal_count_ = deterministic_crystal_count_;

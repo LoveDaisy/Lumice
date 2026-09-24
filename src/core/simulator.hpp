@@ -303,6 +303,9 @@ class Simulator {
   struct XyzDrainWindow {
     bool pending = false;  // undrained device accumulation present
     size_t root_rays = 0;  // Σ ray_num over the window
+    // Σ TraceBackend::GetLastBatchTracedRootRayCount over the window, beside
+    // root_rays (the throughput numerator; see SimData::traced_root_ray_count_).
+    size_t traced_root_rays = 0;
     // Σ emitted_weight × ray_num over the window — the absolute normalization
     // denominator's window aggregate. Accumulated at exactly the same site and
     // under exactly the same condition as root_rays above; the two must never

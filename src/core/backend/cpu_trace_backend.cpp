@@ -99,8 +99,11 @@ struct BatchTraceBuffers {
 //                   cont_collect there).
 //   - all_data: simulator-side bookkeeping buffer (Recorder lookups during
 //               FilterSpec::Match traverse it).
-void TraceCrystalBatch(RandomNumberGenerator& rng, const CrystalTraceSpec& crystal_spec, const BatchTraceSpec& batch,
-                       const BatchTraceBuffers& buffers) {
+// Returns how many first-layer rays entered the crystal and were traced
+// (InitRayFirstMs's kept count; every injected host ray; 0 on later layers).
+size_t TraceCrystalBatch(RandomNumberGenerator& rng, const CrystalTraceSpec& crystal_spec, const BatchTraceSpec& batch,
+                         const BatchTraceBuffers& buffers) {
+  size_t traced_root_rays = 0;
   // workspace[0] = input rays for the current hit; workspace[1] = traced output.
   RayBuffer workspace[2]{};
 
@@ -147,11 +150,12 @@ void TraceCrystalBatch(RandomNumberGenerator& rng, const CrystalTraceSpec& cryst
       }
       InitRay_other_info(crystal_spec.crystal, crystal_spec.crystal_id, buffers.all_data.size_, workspace);
       buffers.all_data.EmplaceBack(workspace[0]);
+      traced_root_rays += curr_ray_num;
     } else if (batch.first_ms) {
-      InitRayFirstMs(rng, batch.sun_param, batch.wl_param, curr_ray_num,                     //
-                     crystal_spec.crystal, crystal_spec.crystal_id, crystal_spec.axis_dist,  //
-                     lm_pcg::kEntryKeepFloorCpu,                                             //
-                     workspace, buffers.all_data, batch.weight_correction);
+      traced_root_rays += InitRayFirstMs(rng, batch.sun_param, batch.wl_param, curr_ray_num,                     //
+                                         crystal_spec.crystal, crystal_spec.crystal_id, crystal_spec.axis_dist,  //
+                                         lm_pcg::kEntryKeepFloorCpu,                                             //
+                                         workspace, buffers.all_data, batch.weight_correction);
     } else {
       InitRayOtherMs(rng, buffers.prev_init, curr_ray_num,                                   //
                      crystal_spec.crystal, crystal_spec.crystal_id, crystal_spec.axis_dist,  //
@@ -208,6 +212,7 @@ void TraceCrystalBatch(RandomNumberGenerator& rng, const CrystalTraceSpec& cryst
       }
     }  // hit loop
   }  // small-batch loop
+  return traced_root_rays;
 }
 
 }  // namespace
@@ -274,6 +279,7 @@ void CpuTraceBackend::BeginSession(const SessionSpec& spec) {
   stochastic_sample_count_this_batch_ = 0;
   stochastic_orientation_sample_count_this_batch_ = 0;
   emitted_ray_equivalent_delta_this_batch_ = 0.0;
+  traced_root_ray_count_this_batch_ = 0;
   ray_alloc_tally_.clear();
   if (spec.ray_alloc != nullptr) {
     ray_alloc_tally_.resize(spec.scene->ms_.size());
@@ -439,7 +445,7 @@ LayerHandlePtr CpuTraceBackend::TraceLayer(const RootRaySource& roots) {
                           alloc.corrections[ci] };
     BatchTraceBuffers buffers{ prev_init, init_ray_offset, all_data, cont_collect, outgoing_records };
     const size_t exits_before = outgoing_records.size();
-    TraceCrystalBatch(rng_, crystal_spec, batch, buffers);
+    traced_root_ray_count_this_batch_ += TraceCrystalBatch(rng_, crystal_spec, batch, buffers);
     // Online ray-allocation tally for this (layer, ci): the records appended
     // between the two size() reads are exactly this ci's true exits —
     // TraceCrystalBatch appends to the shared vector in call order and nothing

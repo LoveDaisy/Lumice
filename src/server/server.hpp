@@ -655,6 +655,13 @@ class Server {
   size_t GetLiveSimRayCount();
 
   /**
+   * @brief The traced subset of GetLiveSimRayCount(): root rays that passed the
+   *        entry keep/discard and were actually traced. Same cost and same 0
+   *        conflation. The numerator of `Lumice benchmark` throughput.
+   */
+  size_t GetLiveTracedRayCount();
+
+  /**
    * @brief Stop the server
    * @note Stops processing but keeps the server alive. Can be restarted by committing new config.
    * @note No Run() method exists because server starts running immediately after construction.

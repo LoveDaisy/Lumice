@@ -85,6 +85,7 @@ class ServerImpl {
   // Simulator's own published answer otherwise.
   BackendKind GetActiveBackend() const;
   size_t GetLiveSimRayCount();
+  size_t GetLiveTracedRayCount();
 
   // THE result entry point. Materializes a snapshot if one is pending, then
   // returns a share of the published frame — the caller's pointers stay valid for as long
@@ -1762,6 +1763,18 @@ size_t ServerImpl::GetLiveSimRayCount() {
   return 0;
 }
 
+// Same shape and the same 0 conflation as GetLiveSimRayCount above; the counter
+// is the traced subset of that one (StatsConsumer::LiveTracedSimRays).
+size_t ServerImpl::GetLiveTracedRayCount() {
+  std::lock_guard<TicketMutex> lock(consumer_mutex_);
+  for (const auto& c : consumers_) {
+    if (const auto* sc = dynamic_cast<const StatsConsumer*>(c.get())) {
+      return sc->LiveTracedSimRays();
+    }
+  }
+  return 0;
+}
+
 
 void ServerImpl::Start() {
   ILOG_DEBUG(logger_, "Start: entry");
@@ -2235,6 +2248,7 @@ void ServerImpl::ConsumeData() {
             // totals a single whole-Consume call would yield.
             if (emitted == 0) {
               chunk.root_ray_count_ = sim_data.root_ray_count_;
+              chunk.traced_root_ray_count_ = sim_data.traced_root_ray_count_;
               // Same side of the split as root_ray_count_, for the same
               // reason: RenderConsumer adds it up, so repeating it on every
               // chunk would multiply the normalization denominator by the
@@ -2335,6 +2349,7 @@ void ServerImpl::ConsumeData() {
         accounting.curr_wl_ = sim_data.curr_wl_;
         accounting.generation_ = sim_data.generation_;
         accounting.root_ray_count_ = sim_data.root_ray_count_;
+        accounting.traced_root_ray_count_ = sim_data.traced_root_ray_count_;
         accounting.emitted_energy_ = sim_data.emitted_energy_;
         accounting.stochastic_crystal_sample_count_ = sim_data.stochastic_crystal_sample_count_;
         accounting.stochastic_orientation_sample_count_ = sim_data.stochastic_orientation_sample_count_;
@@ -2802,6 +2817,13 @@ size_t Server::GetLiveSimRayCount() {
     return 0;
   }
   return impl_->GetLiveSimRayCount();
+}
+
+size_t Server::GetLiveTracedRayCount() {
+  if (!impl_) {
+    return 0;
+  }
+  return impl_->GetLiveTracedRayCount();
 }
 
 std::shared_ptr<const ResultFrame> Server::AcquireResultFrame() {

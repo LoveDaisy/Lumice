@@ -67,7 +67,9 @@ namespace lumice {
 // The legacy-CPU worker-side projection sidecars add projected_ (vector<ProjectedRayList>,
 // 24B regardless of the element type): 432 → 456; and anchor_projected_pixel_ /
 // anchor_projected_y_ (two more 24B vectors): 456 → 504.
-static_assert(sizeof(SimData) == 504, "SimData size changed — update copy/move ctors and operators");
+// The throughput numerator adds traced_root_ray_count_ (size_t, 8B) beside
+// root_ray_count_: 504 → 512.
+static_assert(sizeof(SimData) == 512, "SimData size changed — update copy/move ctors and operators");
 
 namespace {
 
@@ -531,8 +533,8 @@ SimData::SimData(const SimData& other)
       anchor_projected_y_(other.anchor_projected_y_), xyz_pixel_data_(other.xyz_pixel_data_),
       xyz_landed_weight_(other.xyz_landed_weight_), lane_pixel_data_(other.lane_pixel_data_),
       lane_class_count_(other.lane_class_count_), anchor_y_pixel_data_(other.anchor_y_pixel_data_),
-      root_ray_count_(other.root_ray_count_), emitted_energy_(other.emitted_energy_),
-      stochastic_crystal_sample_count_(other.stochastic_crystal_sample_count_),
+      root_ray_count_(other.root_ray_count_), traced_root_ray_count_(other.traced_root_ray_count_),
+      emitted_energy_(other.emitted_energy_), stochastic_crystal_sample_count_(other.stochastic_crystal_sample_count_),
       deterministic_crystal_count_(other.deterministic_crystal_count_),
       stochastic_orientation_sample_count_(other.stochastic_orientation_sample_count_),
       deterministic_orientation_count_(other.deterministic_orientation_count_),
@@ -551,8 +553,8 @@ SimData::SimData(SimData&& other) noexcept
       anchor_projected_y_(std::move(other.anchor_projected_y_)), xyz_pixel_data_(std::move(other.xyz_pixel_data_)),
       xyz_landed_weight_(std::move(other.xyz_landed_weight_)), lane_pixel_data_(std::move(other.lane_pixel_data_)),
       lane_class_count_(other.lane_class_count_), anchor_y_pixel_data_(std::move(other.anchor_y_pixel_data_)),
-      root_ray_count_(other.root_ray_count_), emitted_energy_(other.emitted_energy_),
-      stochastic_crystal_sample_count_(other.stochastic_crystal_sample_count_),
+      root_ray_count_(other.root_ray_count_), traced_root_ray_count_(other.traced_root_ray_count_),
+      emitted_energy_(other.emitted_energy_), stochastic_crystal_sample_count_(other.stochastic_crystal_sample_count_),
       deterministic_crystal_count_(other.deterministic_crystal_count_),
       stochastic_orientation_sample_count_(other.stochastic_orientation_sample_count_),
       deterministic_orientation_count_(other.deterministic_orientation_count_),
@@ -589,6 +591,7 @@ SimData& SimData::operator=(const SimData& other) {
   lane_class_count_ = other.lane_class_count_;
   anchor_y_pixel_data_ = other.anchor_y_pixel_data_;
   root_ray_count_ = other.root_ray_count_;
+  traced_root_ray_count_ = other.traced_root_ray_count_;
   emitted_energy_ = other.emitted_energy_;
   stochastic_crystal_sample_count_ = other.stochastic_crystal_sample_count_;
   deterministic_crystal_count_ = other.deterministic_crystal_count_;
@@ -642,6 +645,7 @@ SimData& SimData::operator=(SimData&& other) noexcept {
   // anchor plane on exactly the backends that produce one.
   anchor_y_pixel_data_ = std::move(other.anchor_y_pixel_data_);
   root_ray_count_ = other.root_ray_count_;
+  traced_root_ray_count_ = other.traced_root_ray_count_;
   emitted_energy_ = other.emitted_energy_;
   stochastic_crystal_sample_count_ = other.stochastic_crystal_sample_count_;
   deterministic_crystal_count_ = other.deterministic_crystal_count_;

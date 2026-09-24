@@ -351,6 +351,15 @@ struct SimData {
   // accounting; they do not affect the rendered image. Keep them distinct from
   // the physical-result fields above (rays_/xyz_pixel_data_/exit_records_).
   size_t root_ray_count_ = 0;  // Count of root rays (prev_ray_idx_ == kInfSize)
+  // The subset of root_ray_count_ that passed the entry keep/discard
+  // (lm_pcg::entry_acceptance) and was actually traced. Equal to
+  // root_ray_count_ on every route whose entry keep floor is 0 (Metal, CUDA);
+  // smaller on the CPU routes, whose discarded rays end at their first hop for
+  // almost no cost. It is the numerator of reported throughput (rays/s) and
+  // nothing else: it enters no normalization and no user-facing ray count —
+  // those stay on root_ray_count_ (rays dealt). Same first-layer grain and the
+  // same first-chunk side of the server's chunk split as root_ray_count_.
+  size_t traced_root_ray_count_ = 0;
   // The weighted sibling of root_ray_count_: Σ over this batch of (spectral
   // weight of an emitted ray) — i.e. the energy the light source PUT IN, before
   // any ray is filtered, absorbed, or projected off the lens. This is the

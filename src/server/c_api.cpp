@@ -3324,6 +3324,15 @@ LUMICE_ErrorCode LUMICE_GetSimRayCount(LUMICE_Server* server, LUMICE_RayCount* o
 }
 
 
+LUMICE_ErrorCode LUMICE_GetTracedRayCount(LUMICE_Server* server, LUMICE_RayCount* out) {
+  if (!server || !out) {
+    return LUMICE_ERR_NULL_ARG;
+  }
+  *out = static_cast<LUMICE_RayCount>(server->server_->GetLiveTracedRayCount());
+  return LUMICE_OK;
+}
+
+
 // =============== State & Control ===============
 // QueryServerState is a PROJECTION of the single-source lifecycle truth
 // (GetSimLifecycle): RUNNING -> RUNNING; IDLE | COMPLETED -> IDLE. This keeps the

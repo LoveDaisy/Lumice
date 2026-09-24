@@ -29,7 +29,10 @@ class FilterSpec;
 // already be set on the buffer. `entry_keep_floor` selects the member of the
 // lm_pcg::entry_acceptance family (pcg_shared.h) — pass the calling backend's
 // kEntryKeepFloor* constant; every value gives the same expectation.
-void InitRay_p_fid(const Crystal& curr_crystal, RayBuffer* ray_buf_ptr, float entry_keep_floor);
+// Returns how many rays of the buffer were kept, i.e. actually enter the
+// crystal and get traced (the buffer size at keep floor 0, fewer above it). A
+// throughput statistic only: it does not enter any normalization.
+size_t InitRay_p_fid(const Crystal& curr_crystal, RayBuffer* ray_buf_ptr, float entry_keep_floor);
 
 // Set initial direction d (sampled from light source), weight w, and
 // prev_ray_idx for `ray_num` rays. `weight_correction` is the ray-allocation
@@ -52,11 +55,11 @@ void InitRay_other_info(const Crystal& curr_crystal, size_t curr_crystal_id, siz
 // First-MS-layer init: sample direction from sun, sample p on crystal,
 // orient the crystal, fill bookkeeping, and EmplaceBack into all_data.
 // `entry_keep_floor`: see InitRay_p_fid. `weight_correction`: see
-// InitRay_d_w_previdx.
-void InitRayFirstMs(RandomNumberGenerator& rng, const SunParam& light_param, const WlParam& wl_param,
-                    size_t curr_ray_num, const Crystal& curr_crystal, size_t curr_crystal_id,
-                    const AxisDistribution& crystal_axis, float entry_keep_floor, RayBuffer buffer_data[2],
-                    RayBuffer& all_data, float weight_correction = 1.0f);
+// InitRay_d_w_previdx. Returns InitRay_p_fid's kept-ray count for these rays.
+size_t InitRayFirstMs(RandomNumberGenerator& rng, const SunParam& light_param, const WlParam& wl_param,
+                      size_t curr_ray_num, const Crystal& curr_crystal, size_t curr_crystal_id,
+                      const AxisDistribution& crystal_axis, float entry_keep_floor, RayBuffer buffer_data[2],
+                      RayBuffer& all_data, float weight_correction = 1.0f);
 
 // Non-first MS layer init: copy continuation rays from init_data, sample a
 // fresh crystal orientation per ray, rotate d into crystal-local, sample p,

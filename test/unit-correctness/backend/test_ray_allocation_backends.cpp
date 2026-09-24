@@ -296,6 +296,35 @@ TEST(RayAllocationBackends, CpuDealsByQAndLandsTheSameEnergy) {
   EXPECT_NEAR(skew_exits / prop_exits, 1.5, 1.5 * kLandedTol);
 }
 
+// The traced-root-ray register (TraceBackend::GetLastBatchTracedRootRayCount):
+// the CPU backend runs the discarding member of the entry family, so it must
+// report what it kept, strictly below what it was dealt — and per session, not
+// accumulated across sessions (the Simulator sums it per batch itself).
+TEST(RayAllocationBackends, CpuTracedRootRayCountIsKeptPerSession) {
+  const auto render = MakeFullSkyRender();
+  const auto arm = Proportional();
+  CpuTraceBackend backend;
+  // Two sessions on one backend: a register carried over from the first session
+  // reads about twice the first session's count in the second.
+  size_t first = 0;
+  for (int session = 0; session < 2; session++) {
+    backend.BeginSession(MakeSpec(arm, render));
+    HostRayBatch host;
+    host.count = kN;
+    auto handle = backend.TraceLayer(RootRaySource::FromHost(host));
+    EXPECT_NE(handle, nullptr) << "session " << session;
+    const size_t traced = backend.GetLastBatchTracedRootRayCount(kN);
+    EXPECT_GT(traced, 0u);
+    EXPECT_LT(traced, kN) << "session " << session << ": the CPU entry discards, so this is the dealt count";
+    if (session == 0) {
+      first = traced;
+    } else {
+      EXPECT_LT(static_cast<double>(traced), 1.5 * static_cast<double>(first)) << "carried over a session";
+    }
+    backend.EndSession();
+  }
+}
+
 // ============================== MetalTraceBackend ============================
 
 #if defined(__APPLE__)

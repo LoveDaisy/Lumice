@@ -871,6 +871,50 @@ TEST(ComponentMaskPropagation, InitRayFirstMsZeroesComponentSlots) {
   }
 }
 
+// InitRayFirstMs returns the rays the entry kept — the throughput numerator
+// (SimData::traced_root_ray_count_). At keep floor 0 (the GPU member) every ray
+// is kept; at the CPU member some are discarded, and the return must equal the
+// number of slots left un-discarded (DiscardEntryRay's kInvalidId hit face), not
+// the dealt count.
+TEST(TracedRootRayCount, InitRayFirstMsReturnsTheKeptCount) {
+  Crystal crystal = Crystal::CreatePrism(1.0f);
+  SunParam sun{ 30.0f, 0.0f, 0.5f };
+  WlParam wl{ 550.0f, 1.0f };
+  AxisDistribution axis;  // random orientation: projected area varies per ray
+
+  constexpr size_t kRayNum = 4000;
+  for (const float keep_floor : { lm_pcg::kEntryKeepFloorCpu, lm_pcg::kEntryKeepFloorMetal }) {
+    RandomNumberGenerator rng(17);
+    RayBuffer buffer_data[2];
+    buffer_data[0].Reset(kRayNum);
+    buffer_data[1].Reset(kRayNum);
+    RayBuffer all_data;
+    all_data.Reset(kRayNum);
+    const size_t kept =
+        InitRayFirstMs(rng, sun, wl, kRayNum, crystal, /*curr_crystal_id=*/0, axis, keep_floor, buffer_data, all_data);
+    if (buffer_data[0].size_ != kRayNum) {
+      ADD_FAILURE() << "discarded rays must keep their slot; keep_floor=" << keep_floor;
+      continue;
+    }
+    size_t live = 0;
+    for (size_t i = 0; i < kRayNum; i++) {
+      if (buffer_data[0][i].to_face_ != kInvalidId) {
+        live++;
+      }
+    }
+    EXPECT_EQ(kept, live) << "keep_floor=" << keep_floor;
+    if (keep_floor == 0.0f) {
+      EXPECT_EQ(kept, kRayNum) << "keep floor 0 never discards";
+    } else {
+      // a = A / (S/2) < 1 for a prism in almost every direction, so the CPU
+      // member really discards; a count equal to kRayNum here means the return
+      // is the dealt count, not the kept one.
+      EXPECT_GT(kept, kRayNum / 5);
+      EXPECT_LT(kept, kRayNum * 9 / 10);
+    }
+  }
+}
+
 TEST(ComponentMaskPropagation, TraceRayBasicInfoFanOutInheritsMask) {
   Crystal crystal = Crystal::CreatePrism(1.0f);
   float refractive_index = crystal.GetRefractiveIndex(550.0f);

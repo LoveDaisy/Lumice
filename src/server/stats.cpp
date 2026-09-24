@@ -6,6 +6,7 @@ namespace lumice {
 
 void StatsConsumer::Consume(const SimData& data) {
   sim_rays_ += data.root_ray_count_;
+  traced_sim_rays_ += data.traced_root_ray_count_;
   total_rays_ += data.ray_seg_count_;
   // The two halves of the crystal-geometry count aggregate differently, and
   // conflating them is what made this stat scale with the dispatch grain and
@@ -37,6 +38,7 @@ Result StatsConsumer::GetResult() const {
 void StatsConsumer::Reset() {
   total_rays_ = 0;
   sim_rays_ = 0;
+  traced_sim_rays_ = 0;
   stochastic_crystal_samples_ = 0;
   deterministic_crystals_ = 0;
   stochastic_orientation_samples_ = 0;
