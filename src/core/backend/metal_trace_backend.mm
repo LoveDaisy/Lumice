@@ -2241,13 +2241,10 @@ size_t MetalTraceBackend::Impl::GenerateFirstLayerRootsForCi(const ScatteringSet
   // projected-area entry weight InitRay_p_fid multiplies in — with a unit
   // weight_, r.w_ IS that factor, and the pool write below keeps it. (weight_
   // is read nowhere else on this path; the RNG draw order is unchanged.)
-  // kEntryKeepFloorMetal = 0 keeps every ray (no discard), as gen_root_kernel.
-  static_assert(lm_pcg::kEntryKeepFloorMetal == 0.0f,
-                "gen_root / transit_root kernels read only weight_mult: a non-zero floor needs a keep draw there");
   WlParam unit_weight_wl = spec.wl;
   unit_weight_wl.weight_ = 1.0f;
   InitRayFirstMs(rng, spec.scene->light_source_.param_, unit_weight_wl, crystal_ray_num,
-                 current_crystal, /*crystal_id=*/ci, crystal_axis, lm_pcg::kEntryKeepFloorMetal,
+                 current_crystal, /*crystal_id=*/ci, crystal_axis,
                  workspace, all_data);
 
   // EnsureRootBuffers is called by TraceLayer at the top of each layer with

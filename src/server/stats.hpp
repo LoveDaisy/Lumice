@@ -23,15 +23,10 @@ class StatsConsumer : public IConsume {
   // dominating wall-time and starving drain-window closure. Callers must hold
   // consumer_mutex_ (Consume() mutates sim_rays_ under it).
   size_t LiveSimRays() const { return sim_rays_; }
-  // The traced subset of LiveSimRays() — Σ SimData::traced_root_ray_count_, the
-  // rays that passed the entry keep/discard. Throughput numerator only; same
-  // lock and cost as LiveSimRays(). Not part of the snapshotted StatsResult.
-  size_t LiveTracedSimRays() const { return traced_sim_rays_; }
 
  private:
   size_t total_rays_ = 0;
   size_t sim_rays_ = 0;
-  size_t traced_sim_rays_ = 0;
   // Two accumulators, two rules — summed vs overwritten. Their sum is the
   // reported crystal count; see Consume() for why they cannot be one counter.
   size_t stochastic_crystal_samples_ = 0;

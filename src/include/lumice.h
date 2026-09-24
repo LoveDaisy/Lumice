@@ -428,13 +428,7 @@ extern "C" {
 // same value sizes both halves of the record (the per-worker interning table and the server's
 // histogram); see LUMICE_MAX_RAYPATH_CHAIN_CAPACITY for the bound and the memory it buys.
 // Nothing else moved.
-//
-// ADDED (v4.44): LUMICE_GetTracedRayCount, a pure append — the traced subset of
-// LUMICE_GetSimRayCount (root rays that passed the crystal-entry keep/discard). The CPU
-// routes discard part of the rays they are dealt at entry and the GPU routes do not, so
-// the dealt count overstated CPU throughput against GPU; `Lumice benchmark` now divides
-// this one by time instead. Nothing else moved; no struct changed.
-#define LUMICE_API_VERSION 444
+#define LUMICE_API_VERSION 443
 #define LUMICE_MAX_RENDER_RESULTS 16
 #define LUMICE_MAX_STATS_RESULTS 1
 
@@ -1802,15 +1796,6 @@ LUMICE_ErrorCode LUMICE_FrameGetStats(const LUMICE_ResultFrame* frame, LUMICE_St
 // directly, so it needs no external snapshot driver to stay fresh.
 // Writes 0 if no StatsConsumer (or none produced yet).
 LUMICE_ErrorCode LUMICE_GetSimRayCount(LUMICE_Server* server, LUMICE_RayCount* out);
-
-// The traced subset of LUMICE_GetSimRayCount, same cost and same 0 sentinel: root rays
-// that passed the crystal-entry keep/discard and were actually traced. The GPU routes keep
-// every ray at entry (they weight instead), so there the two counts are equal; the CPU
-// routes discard part of what they are dealt, and a discarded ray ends at its first hop for
-// almost no cost. So this — not LUMICE_GetSimRayCount — is the numerator of a throughput
-// figure comparable across routes (`Lumice benchmark` reports rays/s on it).
-// LUMICE_GetSimRayCount stays the ray count a user asked for and sees (`ray_num`).
-LUMICE_ErrorCode LUMICE_GetTracedRayCount(LUMICE_Server* server, LUMICE_RayCount* out);
 
 // =============== State & Control ===============
 LUMICE_ErrorCode LUMICE_QueryServerState(LUMICE_Server* server, LUMICE_ServerState* out);

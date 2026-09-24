@@ -930,13 +930,8 @@ void RunBenchmarkPass(const std::string& config_str, int num_workers, const char
     // at this same interval and materializes only once per kSaveInterval — so
     // "cheap counter to decide, expensive frame only when publishing" is one
     // rule with two call sites, not a benchmark-only precaution.
-    // The counter is the TRACED one, not the dealt one: the CPU routes discard
-    // part of what they are dealt at the crystal entry (a discarded ray ends at
-    // its first hop for almost no cost) and the GPU routes do not, so rays/s over
-    // the dealt count overstated CPU against GPU. Everything below only needs a
-    // monotonic ray counter, so the drain/window logic is unchanged by the switch.
     LUMICE_RayCount cur_rays = 0;
-    LUMICE_GetTracedRayCount(server, &cur_rays);
+    LUMICE_GetSimRayCount(server, &cur_rays);
     auto now = std::chrono::steady_clock::now();
 
     // Mark end-of-setup the first time tracing has produced rays.
@@ -1055,13 +1050,6 @@ void RunBenchmarkPass(const std::string& config_str, int num_workers, const char
       result["workers"] = num_workers;
       result["cores"] = cores;
       result["rays"] = r_end;
-      // What the pass was dealt (the user-visible ray count), beside the traced
-      // `rays` every rate here is computed on; equal on the GPU routes.
-      {
-        LUMICE_RayCount dealt = 0;
-        LUMICE_GetSimRayCount(server, &dealt);
-        result["rays_dealt"] = dealt;
-      }
       result["wall_sec"] = std::round(wall_sec * 1000.0) / 1000.0;
       result["setup_sec"] = std::round(setup_sec * 1000.0) / 1000.0;
       result["active_sec"] = std::round(active_sec * 1000.0) / 1000.0;

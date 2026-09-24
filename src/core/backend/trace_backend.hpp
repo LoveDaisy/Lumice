@@ -729,17 +729,6 @@ class TraceBackend {
   // hops. Reset per BeginSession like the two counters above.
   virtual float GetLastBatchEmittedRayEquivalent(size_t ray_num) const { return static_cast<float>(ray_num); }
 
-  // How many of THIS session's first-layer rays passed the entry keep/discard
-  // (lm_pcg::entry_acceptance) and were actually traced, out of the `ray_num`
-  // dealt. Read by Simulator into SimData::traced_root_ray_count_, the numerator
-  // of reported throughput — not of any normalization. The base returns
-  // `ray_num` unchanged because a backend whose entry keep floor is 0 (Metal,
-  // CUDA: kEntryKeepFloorMetal / kEntryKeepFloorCuda) keeps every ray; a backend
-  // that runs the CPU member of the family (keep floor 1, real discards) must
-  // override with the count it kept on its first TraceLayer. First layer only,
-  // reset per BeginSession, like the counters above.
-  virtual size_t GetLastBatchTracedRootRayCount(size_t ray_num) const { return ray_num; }
-
   // What THIS session's layers measured for the online ray allocation, [mi][ci]
   // in the layout of scene.ms_, under the contract in
   // core/shared/ray_allocation_shared.hpp — and EMPTY whenever the session was

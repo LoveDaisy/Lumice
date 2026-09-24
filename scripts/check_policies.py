@@ -1775,7 +1775,7 @@ def check_pytest_invocation_marker() -> list[Violation]:
 # let the unbounded session run long enough to trip the 32-bit device PCG
 # ray-index cap — a silent fallback to legacy plus a hang. That is not a
 # hypothetical: it is what the retired f717a8f5 did, and the fix is the comment
-# above the benchmark poll's live-counter read saying to read the cheap O(1) counter instead.
+# above LUMICE_GetSimRayCount saying to read the cheap O(1) counter instead.
 #
 # Why this is a checker rather than a wall-clock test: putting the defect back
 # was measured to move CPU wall time by 1.01x and Metal by 0.88x. Every
@@ -1833,9 +1833,9 @@ def check_no_render_in_benchmark_poll() -> list[Violation]:
                         "no-render-in-benchmark-poll",
                         f"`{name}` materializes a result frame (full DoSnapshot + sRGB "
                         "conversion) inside the throughput measurement. Read the live "
-                        "counters instead (LUMICE_GetTracedRayCount / LUMICE_GetSimRayCount / "
-                        "LUMICE_QueryServerState / LUMICE_GetDrainStatus); see the comment "
-                        "above the LUMICE_GetTracedRayCount call.",
+                        "counters instead (LUMICE_GetSimRayCount / LUMICE_QueryServerState / "
+                        "LUMICE_GetDrainStatus); see the comment above the "
+                        "LUMICE_GetSimRayCount call.",
                     )
                 )
     return out

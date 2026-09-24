@@ -1335,30 +1335,6 @@ TEST_F(ServerLifecycleApi, FullLifecycle) {
 }
 
 
-// LUMICE_GetTracedRayCount is the traced subset of LUMICE_GetSimRayCount. On the
-// legacy CPU route (this fixture: no GPU backend preferred) the entry discards part
-// of what it is dealt, so the traced count is positive and strictly below the dealt
-// one; a finite run of several batches must not push it past the dealt count either
-// (a `+=` where an `=` belongs, or a count repeated per server-side chunk, would).
-TEST_F(ServerLifecycleApi, TracedRayCountIsTheTracedSubsetOfSimRayCount) {
-  auto base = nlohmann::json::parse(MakeSmallSimConfigJson());
-  base["scene"]["ray_num"] = 200000ul;
-  ASSERT_EQ(CommitJsonConfig(server_, base.dump().c_str()), LUMICE_OK);
-  ASSERT_TRUE(WaitForIdle(server_, 30000)) << "Server did not reach IDLE within 30 seconds";
-
-  LUMICE_RayCount dealt = 0;
-  LUMICE_RayCount traced = 0;
-  ASSERT_EQ(LUMICE_GetSimRayCount(server_, &dealt), LUMICE_OK);
-  ASSERT_EQ(LUMICE_GetTracedRayCount(server_, &traced), LUMICE_OK);
-  EXPECT_EQ(dealt, 200000u);
-  EXPECT_GT(traced, dealt / 5);
-  EXPECT_LT(traced, dealt) << "legacy CPU discards at entry; traced must be a strict subset";
-
-  EXPECT_EQ(LUMICE_GetTracedRayCount(nullptr, &traced), LUMICE_ERR_NULL_ARG);
-  EXPECT_EQ(LUMICE_GetTracedRayCount(server_, nullptr), LUMICE_ERR_NULL_ARG);
-}
-
-
 // Explicit single-source lifecycle (backend-lifecycle-epoch): Idle → Running →
 // Completed, monotonic epoch (++ per reset-causing commit), Stop → Idle. Also
 // pins QueryServerState as a projection (COMPLETED → IDLE).

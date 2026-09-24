@@ -289,20 +289,9 @@ pass 没有做原型：既然只加 bounds 的版本已是净亏，拆分在单�
 并行吞吐量。输出两行 JSON：
 
 ```
-[BENCHMARK] {"mode": "single", "workers": 1, "cores": 8, "rays": 998912, "rays_dealt": 2000000, "wall_sec": 8.51, "setup_sec": 0.01, "active_sec": 8.5, "rays_per_sec": 117519.1, "rate_basis": "steady", "isa": "native"}
-[BENCHMARK] {"mode": "multi", "workers": 8, "cores": 8, "rays": 4994560, "rays_dealt": 10000000, "wall_sec": 0.6, "setup_sec": 0.02, "active_sec": 0.58, "rays_per_sec": 8611310.3, "rate_basis": "steady", "isa": "native"}
+[BENCHMARK] {"mode": "single", "workers": 1, "cores": 8, "rays": 2000000, "wall_sec": 8.51, "setup_sec": 0.01, "active_sec": 8.5, "rays_per_sec": 235294.1, "rate_basis": "steady", "isa": "native"}
+[BENCHMARK] {"mode": "multi", "workers": 8, "cores": 8, "rays": 10000000, "wall_sec": 0.6, "setup_sec": 0.02, "active_sec": 0.58, "rays_per_sec": 17241379.3, "rate_basis": "steady", "isa": "native"}
 ```
-
-**`rays` 计的是进入晶体、实际被追迹的光线，不是发放的光线**（2026-09-24 起，
-`LUMICE_GetTracedRayCount`，API v4.44）。旁边的 `rays_dealt` 是发放数——`ray_num` 与所有
-面向用户的计数（`LUMICE_GetSimRayCount`、GUI 的 "Total rays"、`Stats: sim_rays`）用的都是它。
-两者只在 CPU 路线（legacy 与 `cpu_backend`）上不同：CPU 走投影面积入射估计器族里的
-accept/reject 成员（`kEntryKeepFloorCpu`，`src/core/shared/pcg_shared.h`），在晶体入射处丢掉
-大约一半发放的光线（四个 canonical 场景实测保留 47–50%）；GPU 路线按权重追迹每一条发放的光线，
-因此那里 `rays == rays_dealt`。`rays_per_sec` 与 `window_rays` 都按 `rays` 计算，所以 CPU 与
-GPU 的速率现在数的是同一种东西。**对旧数字的影响**：在已带入射 accept/reject 的构建上、本改动
-之前记录的 legacy CPU 或 `cpu_backend` `rays_per_sec` 数的是发放数，约为追迹速率的 2 倍；而入射
-accept/reject 落地之前的 `main` 构建不丢弃任何光线，发放数与追迹数本就相同，其数字仍可直接比较。
 
 `rays_per_sec` 是 `active_sec`（从首条光线追踪到 IDLE 的窗口）上的**稳态追踪率**，
 **不是** `rays / wall_sec`——但这只在 `rate_basis` 为 `steady` 时成立，而这正是

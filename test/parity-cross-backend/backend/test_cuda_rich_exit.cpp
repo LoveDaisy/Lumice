@@ -45,7 +45,6 @@
 #include "core/crystal.hpp"
 #include "core/exit_seam.hpp"
 #include "core/raypath.hpp"
-#include "core/shared/pcg_shared.h"
 #include "cuda_test_helpers.hpp"  // scrum-328.2 Step 5: shared scene / render fixtures
 #include "support/env_var.hpp"
 #include "support/incidence_sampling_oracle.hpp"
@@ -967,7 +966,7 @@ TEST(CudaRootGen, PerRayEntryPointGeometricConsistency) {
 //
 // CUDA sibling of MetalEntryWeight.* (test_metal_root_gen.cpp). The gen_root /
 // transit kernels multiply each ray's weight by A/(S/2)
-// (lm_pcg::entry_acceptance) and trace every ray. These cases read back what
+// (lm_pcg::entry_weight) and trace every ray. These cases read back what
 // the DEVICE did — the crystal-local direction (ReadbackGenDirs), the entry
 // face (ReadbackRootEntryPoint) and the root weight (ReadbackRootW, over the
 // carried-in weight for transit) — and judge each ray's entry weight with the
@@ -978,7 +977,7 @@ TEST(CudaRootGen, PerRayEntryPointGeometricConsistency) {
 namespace {
 
 constexpr size_t kAcceptRays = size_t{ 1 } << 17;
-constexpr int kAcceptPolarBins = 8;
+constexpr int kEntryPolarBins = 8;
 constexpr double kAcceptKSigma = 5.0;
 // Same device float tolerance as the Metal sibling.
 constexpr double kEntryWeightAbsTol = 1e-4;
@@ -993,24 +992,23 @@ double CheckCudaEntryWeights(const Crystal& crystal, const std::vector<float>& d
                              const std::vector<double>& weight, size_t count, const char* label) {
   const auto oracle_faces = test_support::BuildPresentFaceGeom(crystal.CfGeom());
   std::vector<int> bin_of(count);
-  std::vector<double> accept_prob(count);
+  std::vector<double> oracle_weight(count);
   std::vector<bool> entered(count);
   double sum_w = 0.0;
   for (size_t i = 0; i < count; i++) {
     const double d[3] = { dirs[3 * i + 0], dirs[3 * i + 1], dirs[3 * i + 2] };
-    bin_of[i] = std::min(static_cast<int>(std::abs(d[2]) * kAcceptPolarBins), kAcceptPolarBins - 1);
-    accept_prob[i] = test_support::ComputeEntryAcceptance(oracle_faces, d);
+    bin_of[i] = std::min(static_cast<int>(std::abs(d[2]) * kEntryPolarBins), kEntryPolarBins - 1);
+    oracle_weight[i] = test_support::ComputeEntryWeight(oracle_faces, d);
     entered[i] = faces[i] != kInvalidFaceU32Cuda;
     sum_w += weight[i];
   }
-  const auto v = test_support::CheckEntryFamily(bin_of, accept_prob, lm_pcg::kEntryKeepFloorCuda, weight, entered,
-                                                kAcceptPolarBins, kAcceptKSigma, kEntryWeightAbsTol);
+  const auto v =
+      test_support::CheckEntryWeights(bin_of, oracle_weight, weight, entered, kEntryPolarBins, kEntryWeightAbsTol);
   for (size_t k = 0; k < v.bins.size(); k++) {
     EXPECT_GT(v.bins[k].dealt, 0) << label << " polar band " << k << " received no rays";
   }
-  EXPECT_TRUE(v.pass) << label << " max|w-a|=" << v.max_weight_dev << " at ray " << v.worst_ray
-                      << ", max|z|=" << v.max_abs_z << " at bin " << v.worst_bin
-                      << " (a dropped ray reads as a kept-count z of inf at this floor)";
+  EXPECT_EQ(v.entry_drops, 0) << label << ": rays with a positive entry weight were dropped";
+  EXPECT_TRUE(v.pass) << label << " max|w-a|=" << v.max_abs_dev << " at ray " << v.worst_ray;
   return sum_w / static_cast<double>(count);
 }
 

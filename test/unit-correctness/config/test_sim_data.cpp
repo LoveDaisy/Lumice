@@ -81,8 +81,7 @@ static_assert(sizeof(void*) == 8, "SimData layout assumes 64-bit pointers");
 // The legacy-CPU worker-side projection sidecars add projected_ (vector<ProjectedRayList>,
 // 24B regardless of element type): 432 → 456; and anchor_projected_pixel_ /
 // anchor_projected_y_ (two more 24B vectors): 456 → 504.
-// The throughput numerator adds traced_root_ray_count_ (size_t, 8B): 504 → 512.
-static_assert(sizeof(SimData) == 512,
+static_assert(sizeof(SimData) == 504,
               "SimData layout changed — update test_sim_data.cpp DeepCopy/Move assertions "
               "and sim_data.cpp's static_assert.");
 #endif
@@ -111,9 +110,6 @@ SimData MakePopulatedSimData() {
   s.curr_wl_ = 550.0f;
   s.generation_ = 42;
   s.root_ray_count_ = 7;
-  // The traced subset of root_ray_count_: a distinct marker so a copy that
-  // crossed the two reads wrong.
-  s.traced_root_ray_count_ = 6;
   // Deliberately not a whole number and not equal to any other marker in this
   // helper: a copy that mistakenly picked up a neighbouring field would still
   // read as "some value" and pass a mere non-zero check.
@@ -1030,7 +1026,6 @@ TEST(SimDataTest, CopyConstructDeepCopy) {
   EXPECT_FLOAT_EQ(copy.curr_wl_, 550.0f) << "curr_wl_ not copied";
   EXPECT_EQ(copy.generation_, 42u) << "generation_ not copied";
   EXPECT_EQ(copy.root_ray_count_, 7u) << "root_ray_count_ not copied";
-  EXPECT_EQ(copy.traced_root_ray_count_, 6u) << "traced_root_ray_count_ not copied";
   EXPECT_FLOAT_EQ(copy.emitted_energy_, 615.375f) << "emitted_energy_ not copied";
 
   EXPECT_EQ(copy.ray_seg_count_, 5u) << "ray_seg_count_ not copied";
@@ -1127,7 +1122,6 @@ TEST(SimDataTest, CopyAssignmentDeepCopy) {
   EXPECT_FLOAT_EQ(target.curr_wl_, 550.0f) << "curr_wl_ not assigned";
   EXPECT_EQ(target.generation_, 42u) << "generation_ not assigned";
   EXPECT_EQ(target.root_ray_count_, 7u) << "root_ray_count_ not assigned";
-  EXPECT_EQ(target.traced_root_ray_count_, 6u) << "traced_root_ray_count_ not assigned";
   EXPECT_FLOAT_EQ(target.emitted_energy_, 615.375f) << "emitted_energy_ not assigned";
   EXPECT_EQ(target.ray_seg_count_, 5u) << "ray_seg_count_ not assigned";
   EXPECT_EQ(target.outgoing_d_, original.outgoing_d_);
@@ -1202,7 +1196,6 @@ TEST(SimDataTest, MoveConstructTransfersOwnership) {
   EXPECT_FLOAT_EQ(moved.curr_wl_, 550.0f);
   EXPECT_EQ(moved.generation_, 42u);
   EXPECT_EQ(moved.root_ray_count_, 7u);
-  EXPECT_EQ(moved.traced_root_ray_count_, 6u) << "traced_root_ray_count_ not moved";
   EXPECT_FLOAT_EQ(moved.emitted_energy_, 615.375f);
   EXPECT_EQ(moved.outgoing_d_.size(), 6u);
   EXPECT_EQ(moved.outgoing_w_.size(), 2u);
@@ -1285,7 +1278,6 @@ TEST(SimDataTest, MoveAssignAndSelfMove) {
   EXPECT_EQ(dst.deterministic_orientation_count_, 3u) << "deterministic_orientation_count_ not move-assigned";
   EXPECT_EQ(dst.sim_scene_credit_, 11u) << "sim_scene_credit_ not move-assigned";  // scrum-312
   EXPECT_FLOAT_EQ(dst.emitted_energy_, 615.375f) << "emitted_energy_ not move-assigned";
-  EXPECT_EQ(dst.traced_root_ray_count_, 6u) << "traced_root_ray_count_ not move-assigned";
   EXPECT_EQ(dst.color_degrade_counts_.symmetry_group_overflow, 5u) << "color_degrade symmetry not move-assigned";
   EXPECT_EQ(dst.color_degrade_counts_.or_summand_overflow, 6u) << "color_degrade or_summand not move-assigned";
   EXPECT_EQ(dst.color_degrade_counts_.color_class_overflow, 7u) << "color_degrade color_class not move-assigned";

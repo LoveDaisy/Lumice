@@ -483,23 +483,9 @@ efficiency, followed by a multi-worker pass for parallel throughput. Two JSON li
 output:
 
 ```
-[BENCHMARK] {"mode": "single", "workers": 1, "cores": 8, "rays": 998912, "rays_dealt": 2000000, "wall_sec": 8.51, "setup_sec": 0.01, "active_sec": 8.5, "rays_per_sec": 117519.1, "rate_basis": "steady", "isa": "native"}
-[BENCHMARK] {"mode": "multi", "workers": 8, "cores": 8, "rays": 4994560, "rays_dealt": 10000000, "wall_sec": 0.6, "setup_sec": 0.02, "active_sec": 0.58, "rays_per_sec": 8611310.3, "rate_basis": "steady", "isa": "native"}
+[BENCHMARK] {"mode": "single", "workers": 1, "cores": 8, "rays": 2000000, "wall_sec": 8.51, "setup_sec": 0.01, "active_sec": 8.5, "rays_per_sec": 235294.1, "rate_basis": "steady", "isa": "native"}
+[BENCHMARK] {"mode": "multi", "workers": 8, "cores": 8, "rays": 10000000, "wall_sec": 0.6, "setup_sec": 0.02, "active_sec": 0.58, "rays_per_sec": 17241379.3, "rate_basis": "steady", "isa": "native"}
 ```
-
-**`rays` counts rays that entered a crystal and were traced, not rays dealt** (since
-2026-09-24, `LUMICE_GetTracedRayCount`, API v4.44). `rays_dealt` beside it is the dealt count,
-the one `ray_num` and every user-facing counter (`LUMICE_GetSimRayCount`, the GUI's "Total
-rays", `Stats: sim_rays`) use. The two differ only on the CPU routes (legacy and
-`cpu_backend`): they run the accept/reject member of the projected-area entry estimator
-(`kEntryKeepFloorCpu`, `src/core/shared/pcg_shared.h`) and discard about half of what they are
-dealt at the crystal entry (measured 47–50% kept on the four canonical scenes). The GPU routes
-trace every dealt ray at a weight, so `rays == rays_dealt` there. `rays_per_sec` and
-`window_rays` are computed on `rays`, so a CPU rate and a GPU rate now count the same thing.
-**Consequence for old numbers:** a legacy-CPU or `cpu_backend` `rays_per_sec` recorded before
-this change, on a build that already had the entry acceptance, counted dealt rays and reads
-about 2× the traced rate. A `main` build from before the entry acceptance landed discards
-nothing, so its dealt and traced counts are the same thing and its numbers stay comparable.
 
 `rays_per_sec` is the **steady trace rate** over `active_sec` (the window from
 first traced ray to IDLE), NOT `rays / wall_sec` — but only on `rate_basis`

@@ -19,20 +19,16 @@ rather than a synthetic one, and pins two contracts across the std sweep:
   1. Collapse signature: Metal filtered output is never zero at any std. This is
      the crisp regression teeth -- the bug produced an exact 0.
   2. Cross-backend magnitude: Metal's nonzero-pixel count stays same-magnitude as
-     legacy CPU. The count is a coverage ruler, not an energy one: it rises with
-     how many rays are actually traced, not only with what the image converges
-     to. Since the projected-area entry factor became one estimator family run
-     per backend (CPU keeps a ray with probability A/(S/2), Metal traces every
-     ray at that weight; lm_pcg::entry_acceptance), Metal's count reads 11-15%
-     higher than it did when Metal also discarded, at every std, while its
-     linear total is unchanged (std 0.4: 5796 vs 5797, fixed seed) and its
-     16x16 block means moved 8% -- under CPU's own run-to-run 19%. The gap to
-     CPU therefore now reads 11-25% instead of the earlier 1-8%; the band
-     below is placed over that and still trips on a re-collapse (rel 1.0).
-     Separately, and pre-dating that change, the K-shape pool granularity
-     (CPU samples a fresh crystal per ray, the GPU pool reuses each crystal
-     across a batch, and a fixed seed freezes which K shapes it holds) moves
-     Metal's linear total further from CPU's than the count shows: 1.05x at
+     legacy CPU. The residual gap (~3% at high std) is the K-shape pool
+     granularity difference -- CPU samples a fresh crystal per ray, the GPU pool
+     reuses each crystal across a batch -- not a filter-match defect; a generous
+     band tolerates it and CPU's per-run sampling noise while still tripping on a
+     re-collapse or gross regression. Both backends run the same entry estimator
+     (every ray traced at its projected-area weight A/(S/2), lm_pcg::entry_weight),
+     so the count -- a coverage ruler that rises with how many rays are traced --
+     is comparable across them. The same pool granularity (with a fixed seed
+     freezing which K shapes the pool holds) moves Metal's linear total further
+     from CPU's than the count shows: 1.05x at
      std 0.2 and 1.17-1.20x at std 0.4 at the default seed, on the build
      before the entry factor existed too. It is variance, not bias: over
      seeds 1-8 at std 0.4 Metal's total swings 3011-7699 on both sides of
@@ -64,14 +60,11 @@ _TIMEOUT = 180
 # test characterises the whole curve, not just the broken tail.
 _STD_TAGS = ["020", "025", "030", "040", "050"]
 
-# Cross-backend magnitude band. First measured post-fix at +0.3% (std=0) to
-# +3.5% (std=0.4-0.5), band 0.15. Re-measured 2026-09-24 once Metal traced every
-# ray at its projected-area entry weight while CPU keeps discarding (see the
-# module docstring): Metal +10.6% / +12.2% / +18.0% / +22.6% / +22.3% over CPU at
-# std 0.20 / 0.25 / 0.30 / 0.40 / 0.50 in one sweep, up to +25.4% in another
-# (CPU's per-run noise on the count is ~1-2%). 0.35 sits ~10 points over the
-# worst reading and far under a collapse (Metal 0 -> rel diff 1.0).
-_MAGNITUDE_BAND = 0.35
+# Cross-backend magnitude band. Measured post-fix: Metal is deterministic and
+# runs +0.3% (std=0) to +3.5% (std=0.4-0.5) above CPU's per-run mean, with CPU
+# carrying ~1% run-to-run sampling noise. 0.15 leaves comfortable margin over
+# that while a collapse (Metal 0 -> rel diff 1.0) or gross regression trips it.
+_MAGNITUDE_BAND = 0.15
 
 
 def _run_nonzero_pixels(config_path, backend, workdir):

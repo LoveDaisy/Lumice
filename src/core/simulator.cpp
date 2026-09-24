@@ -134,23 +134,9 @@ void BuildEntrySubTris(const CrystalGeom& cf, EntrySubTri* out) {
 
 }  // namespace detail
 
-namespace {
-
-// The one way an entry ray is discarded before it is traced: no source face, no
-// hit face, and the w_<0 sentinel TIR and filter-fail already use, so the root
-// segment reads as terminated (not IsOutgoing()) wherever all_data is scanned
-// and its first hop ends in HitSurface's kInvalidId branch.
-void DiscardEntryRay(RaySeg& r) {
-  r.from_face_ = kInvalidId;
-  r.to_face_ = kInvalidId;
-  r.w_ = -1.0f;
-}
-
-}  // namespace
-
-size_t InitRay_p_fid(const Crystal& curr_crystal, RayBuffer* ray_buf_ptr, float entry_keep_floor) {
+void InitRay_p_fid(const Crystal& curr_crystal, RayBuffer* ray_buf_ptr) {
   if (!ray_buf_ptr) {
-    return 0;
+    return;
   }
 
   RayBuffer& ray_buf = *ray_buf_ptr;
@@ -166,11 +152,14 @@ size_t InitRay_p_fid(const Crystal& curr_crystal, RayBuffer* ray_buf_ptr, float 
 
   if (subtri_cnt == 0) {
     // No present face with >=3 corners (empty/degenerate crystal — only the
-    // Mesh(0,0) reject path reaches here in production). No ray can enter it.
+    // Mesh(0,0) reject path reaches here in production). Zero every ray's weight
+    // so it contributes nothing downstream; HitSurface also guards kInvalidId.
     for (auto& r : ray_buf) {
-      DiscardEntryRay(r);
+      r.from_face_ = kInvalidId;
+      r.to_face_ = kInvalidId;
+      r.w_ = 0.0f;
     }
-    return 0;
+    return;
   }
 
   // Sub-triangle table + per-ray projected-weight buffer, both built once.
@@ -191,37 +180,28 @@ size_t InitRay_p_fid(const Crystal& curr_crystal, RayBuffer* ray_buf_ptr, float 
   }
   detail::BuildEntrySubTris(cf, subtri);
 
-  // Projected-area entry factor. A ray born with a fixed weight hits
-  // orientation o of shape g with probability proportional to
-  // p(o)·p(g)·A(o,g,d), where A is the crystal's area projected along d — and A
-  // is exactly Σ proj_prob below, already computed per ray for the face
-  // selection. The entry supplies that missing marginal factor a = A / (S/2)
-  // through the estimator family lm_pcg::entry_acceptance: keep the ray with
-  // probability q, multiply a kept ray's weight by a / q. S/2 bounds A for every
-  // convex body in every direction (divergence theorem: the lit and the unlit
-  // sides project to the same A, and together they are at most S), so a never
-  // exceeds 1 and needs no per-family calibration; S is summed per call, i.e.
-  // per sampled shape, which is what makes the g factor come out right without
-  // a separate allocation mechanism. `entry_keep_floor` (= 1/c) picks the
-  // family member — the caller's backend constant, kEntryKeepFloor* in
-  // pcg_shared.h; the image's expectation does not depend on it.
+  // Projected-area entry weight. A ray born with a fixed weight hits orientation
+  // o of shape g with probability proportional to p(o)·p(g)·A(o,g,d), where A is
+  // the crystal's area projected along d — and A is exactly Σ proj_prob below,
+  // already computed per ray for the face selection. Multiplying each ray's
+  // weight by A / (S/2) supplies that missing marginal factor. S/2 bounds A for
+  // every convex body in every direction (divergence theorem: the lit and the
+  // unlit sides project to the same A, and together they are at most S), so the
+  // factor never exceeds 1 and needs no per-family calibration; S is summed per
+  // call, i.e. per sampled shape, which is what makes the g factor come out
+  // right without a separate allocation mechanism.
   //
-  // A ray that is not kept is not resampled: it takes the same discard as the
-  // empty-crystal path above, so the rays this entry was dealt keep counting as
-  // emitted. The slot stays in the buffer (callers, including the GPU host-gen
-  // fallbacks, index it by the dealt count); the ray ends at its first hop,
-  // where HitSurface turns an entry ray with no hit face into two terminated
-  // segments, the same way the GPU kernels stop on kInvalidId. The weight
-  // multiply is in place, so it relies on w_ already holding the ray's birth
-  // weight (InitRay_d_w_previdx on the first layer, the carried-in weight on
-  // later ones); both callers set it before calling here.
+  // This is the conditional expectation of keeping the ray with probability
+  // A / (S/2) and discarding it otherwise: the same expectation at every pixel,
+  // no higher variance, and every ray dealt to this entry is traced — which is
+  // what keeps GPU lanes from idling on rejected rays. It multiplies w_ in
+  // place, so it relies on w_ already holding the ray's birth weight
+  // (InitRay_d_w_previdx on the first layer, the carried-in weight on later
+  // ones); both callers set it before calling here.
   float s_total = 0.0f;
   for (size_t j = 0; j < subtri_cnt; j++) {
     s_total += subtri[j].area;
   }
-  auto& uniform_rng = RandomNumberGenerator::GetInstance();
-
-  size_t kept = ray_buf.size_;
   for (auto& r : ray_buf) {
     const auto* d = r.d_;
     float proj_sum = 0.0f;
@@ -230,15 +210,7 @@ size_t InitRay_p_fid(const Crystal& curr_crystal, RayBuffer* ray_buf_ptr, float 
       proj_sum += proj_prob[j];
     }
     // Same formula the Metal / CUDA entry kernels call (single source).
-    const lm_pcg::EntryAcceptance acc =
-        lm_pcg::entry_acceptance(lm_pcg::entry_area_ratio(proj_sum, s_total), entry_keep_floor);
-    // No draw when the ray is kept for certain (every ray at keep_floor 0).
-    if (acc.keep_prob < 1.0f && uniform_rng.GetUniform() >= acc.keep_prob) {
-      DiscardEntryRay(r);
-      kept--;
-      continue;
-    }
-    r.w_ *= acc.weight_mult;
+    r.w_ *= lm_pcg::entry_weight(proj_sum, s_total);
     int tri_id = 0;
     RandomSample(static_cast<int>(subtri_cnt), proj_prob, &tri_id);
     SampleTrianglePoint(subtri[tri_id].v, r.p_);
@@ -247,7 +219,6 @@ size_t InitRay_p_fid(const Crystal& curr_crystal, RayBuffer* ray_buf_ptr, float 
     r.from_face_ = kInvalidId;
     r.to_face_ = subtri[tri_id].face_id;
   }
-  return kept;
 }
 
 static void SampleRayDir(const SunParam& p, float* d, size_t num, size_t step) {
@@ -336,13 +307,11 @@ void InitRay_other_info(const Crystal& curr_crystal, size_t curr_crystal_id, siz
 
 
 // NOLINTNEXTLINE(readability-function-size)
-size_t InitRayFirstMs(RandomNumberGenerator& rng, const SunParam& light_param, const WlParam& wl_param,
-                      size_t curr_ray_num,  // input
-                      const Crystal& curr_crystal, size_t curr_crystal_id,
-                      const AxisDistribution& crystal_axis,           // input
-                      float entry_keep_floor,                         // input
-                      RayBuffer buffer_data[2], RayBuffer& all_data,  // output
-                      float weight_correction) {                      // input
+void InitRayFirstMs(RandomNumberGenerator& rng, const SunParam& light_param, const WlParam& wl_param,
+                    size_t curr_ray_num,                                                                        // input
+                    const Crystal& curr_crystal, size_t curr_crystal_id, const AxisDistribution& crystal_axis,  // input
+                    RayBuffer buffer_data[2], RayBuffer& all_data,  // output
+                    float weight_correction) {                      // input
   buffer_data[0].size_ = curr_ray_num;
 
   // 1.0 init crystal_rot
@@ -352,7 +321,7 @@ size_t InitRayFirstMs(RandomNumberGenerator& rng, const SunParam& light_param, c
   InitRay_d_w_previdx(light_param, wl_param, curr_ray_num, buffer_data + 0, weight_correction);
 
   // 1.2 init p & fid
-  const size_t kept = InitRay_p_fid(curr_crystal, buffer_data + 0, entry_keep_floor);
+  InitRay_p_fid(curr_crystal, buffer_data + 0);
 
   // 1.3 init crystal_id, root_ray_idx, rp, state
   InitRay_other_info(curr_crystal, curr_crystal_id, all_data.size_, buffer_data);
@@ -378,14 +347,12 @@ size_t InitRayFirstMs(RandomNumberGenerator& rng, const SunParam& light_param, c
   }
 
   all_data.EmplaceBack(buffer_data[0]);
-  return kept;
 }
 
 
 // NOLINTNEXTLINE(readability-function-size)
 void InitRayOtherMs(RandomNumberGenerator& rng, const RayBuffer init_data[2], size_t curr_ray_num,              // input
                     const Crystal& curr_crystal, size_t curr_crystal_id, const AxisDistribution& crystal_axis,  // input
-                    float entry_keep_floor,                                                                     // input
                     RayBuffer buffer_data[2], RayBuffer& all_data, size_t& init_ray_offset,  // output
                     float weight_correction) {                                               // input
   buffer_data[0].size_ = 0;
@@ -411,7 +378,7 @@ void InitRayOtherMs(RandomNumberGenerator& rng, const RayBuffer init_data[2], si
   }
 
   // 1.2 init p & fid
-  InitRay_p_fid(curr_crystal, buffer_data + 0, entry_keep_floor);
+  InitRay_p_fid(curr_crystal, buffer_data + 0);
 
   // 1.3 init crystal_id, crystal_config_id, root_ray_idx, rp, state
   InitRay_other_info(curr_crystal, curr_crystal_id, all_data.size_, buffer_data);
@@ -1759,10 +1726,6 @@ void Simulator::SimulateOneWavelength(const SceneConfig& config, const RaypathCo
   // beside stochastic_sample_count and therefore OUTSIDE the ms loop below, so
   // continuation layers' resampling (InitRayOtherMs) accumulates here too.
   size_t stochastic_orientation_sample_count = 0;
-  // First-layer rays that passed the entry keep/discard and were actually traced
-  // — the throughput numerator (SimData::traced_root_ray_count_). Continuation
-  // layers are not counted, matching root_ray_count_'s first-layer grain.
-  size_t traced_root_ray_count = 0;
 
   // What the source emitted, in "rays at the nominal weight": N plus, over the
   // FIRST layer only, Σ_ci n_ci · (correction_ci − 1). Written that way rather
@@ -1928,15 +1891,13 @@ void Simulator::SimulateOneWavelength(const SceneConfig& config, const RaypathCo
 
         // 1. Initialize data
         if (first_ms) {
-          traced_root_ray_count += InitRayFirstMs(rng_, config.light_source_.param_, wl_param, curr_ray_num,  // input
-                                                  curr_crystal, curr_crystal_id, s.crystal_.axis_,            // input
-                                                  lm_pcg::kEntryKeepFloorCpu,                                 // input
-                                                  buffer_data, all_data,                                      // output
-                                                  corrections[ci]);                                           // input
+          InitRayFirstMs(rng_, config.light_source_.param_, wl_param, curr_ray_num,  // input
+                         curr_crystal, curr_crystal_id, s.crystal_.axis_,            // input
+                         buffer_data, all_data,                                      // output
+                         corrections[ci]);                                           // input
         } else {
           InitRayOtherMs(rng_, init_data, curr_ray_num,                    // input
                          curr_crystal, curr_crystal_id, s.crystal_.axis_,  // input
-                         lm_pcg::kEntryKeepFloorCpu,                       // input
                          buffer_data, all_data, init_ray_offset,           // output
                          corrections[ci]);                                 // input
         }
@@ -2064,7 +2025,6 @@ void Simulator::SimulateOneWavelength(const SceneConfig& config, const RaypathCo
     sim_data.producer_effective_seed_ = effective_seed_;
   }
   sim_data.root_ray_count_ = original_ray_num;
-  sim_data.traced_root_ray_count_ = traced_root_ray_count;
   // Not `emitted_weight * original_ray_num`: under adaptive allocation the rays
   // of one batch are not all at the nominal weight, and the denominator has to
   // charge what was actually emitted — see emitted_ray_equivalent above.
@@ -2137,7 +2097,6 @@ void Simulator::DrainDeviceXyz(TraceBackend* backend) {
   sim_data.curr_wl_ = xyz_win_.wl;
   sim_data.generation_ = xyz_win_.generation;
   sim_data.root_ray_count_ = xyz_win_.root_rays;
-  sim_data.traced_root_ray_count_ = xyz_win_.traced_root_rays;
   sim_data.emitted_energy_ = xyz_win_.emitted_energy;
   sim_data.stochastic_crystal_sample_count_ = xyz_win_.stochastic_crystal_samples;
   // OVERWRITE semantics, same as color_degrade_counts_ below: a config constant
@@ -2328,7 +2287,6 @@ void Simulator::SimulateOneWavelengthWithBackend(TraceBackend& backend, const Sc
       // hits the batch cap here. This sheds the per-batch synchronous D2H tax.
       xyz_win_.pending = true;
       xyz_win_.root_rays += ray_num;
-      xyz_win_.traced_root_rays += backend.GetLastBatchTracedRootRayCount(ray_num);
       // × what the backend's first layer emitted at the nominal weight, not
       // × ray_num: the two differ once a layer deals by q. See TraceBackend.
       xyz_win_.emitted_energy += emitted_weight * backend.GetLastBatchEmittedRayEquivalent(ray_num);
@@ -2369,7 +2327,6 @@ void Simulator::SimulateOneWavelengthWithBackend(TraceBackend& backend, const Sc
     sim_data.curr_wl_ = wl_param.wl_;
     sim_data.generation_ = generation;
     sim_data.root_ray_count_ = ray_num;
-    sim_data.traced_root_ray_count_ = backend.GetLastBatchTracedRootRayCount(ray_num);
     sim_data.emitted_energy_ = emitted_weight * backend.GetLastBatchEmittedRayEquivalent(ray_num);
     sim_data.stochastic_crystal_sample_count_ = backend.GetLastBatchStochasticCrystalSampleCount();
     sim_data.deterministic_crystal_count_ = deterministic_crystal_count_;
@@ -2439,7 +2396,6 @@ void Simulator::SimulateOneWavelengthWithBackend(TraceBackend& backend, const Sc
   sim_data.root_ray_count_ = ray_num;  // distinguishes a valid backend batch
                                        // from the shutdown sentinel (see
                                        // server.cpp::ConsumeData).
-  sim_data.traced_root_ray_count_ = backend.GetLastBatchTracedRootRayCount(ray_num);
   sim_data.emitted_energy_ = emitted_weight * backend.GetLastBatchEmittedRayEquivalent(ray_num);
   sim_data.stochastic_crystal_sample_count_ = backend.GetLastBatchStochasticCrystalSampleCount();
   sim_data.deterministic_crystal_count_ = deterministic_crystal_count_;

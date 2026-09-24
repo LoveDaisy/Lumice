@@ -1454,12 +1454,10 @@ kernel void gen_root_kernel(
   }
   // Per-ray spd weight × this dispatch's ray-allocation correction
   // (host-computed; 1.0f under proportional allocation, so the multiply is exact)
-  // × the projected-area entry factor from entry_acceptance (pcg_shared.h — the
-  // estimator family CPU InitRay_p_fid also calls) at kEntryKeepFloorMetal = 0:
-  // keep_prob ≡ 1, so every ray is traced at weight × A / (S/2), no acceptance
-  // number is drawn and no lane idles on a discarded ray.
-  float weight = wl_pool[wl_idx].spd_weight * gp.alloc_correction *
-                 entry_acceptance(entry_area_ratio(proj_sum, s_total), kEntryKeepFloorMetal).weight_mult;
+  // × the projected-area entry weight A / (S/2) (entry_weight, pcg_shared.h
+  // — the formula CPU InitRay_p_fid multiplies in). Every ray is traced; none is
+  // dropped for its orientation, so no lane idles on a rejected ray.
+  float weight = wl_pool[wl_idx].spd_weight * gp.alloc_correction * entry_weight(proj_sum, s_total);
   if (to_face == kInvalidId) {
     // Mirrors InitRay_p_fid fallback (simulator.cpp:92-94): zero weight when
     // a triangle has no polygon backing so downstream HitSurface can drop it.
@@ -1619,11 +1617,10 @@ kernel void transit_root_kernel(
 
   // 4. Carry continuation weight × this (layer, ci)'s ray-allocation correction
   //    (the continuation layer re-deals its rays, so it owes its own factor —
-  //    1.0f under proportional allocation) × the projected-area entry factor
-  //    at kEntryKeepFloorMetal, as in gen_root_kernel; mirror InitRay_p_fid
-  //    fallback (zero weight when a triangle has no polygon backing).
-  float w = cont_w_in[tid] * gp.alloc_correction *
-            entry_acceptance(entry_area_ratio(proj_sum, s_total), kEntryKeepFloorMetal).weight_mult;
+  //    1.0f under proportional allocation) × the projected-area entry weight
+  //    A / (S/2), as in gen_root_kernel; mirror InitRay_p_fid fallback (zero
+  //    weight when a triangle has no polygon backing).
+  float w = cont_w_in[tid] * gp.alloc_correction * entry_weight(proj_sum, s_total);
   if (to_face == kInvalidId) {
     w = 0.0f;
   }
