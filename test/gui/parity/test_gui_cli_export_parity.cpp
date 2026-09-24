@@ -563,6 +563,20 @@ struct ParityScene {
 //     exposure break down to -0.10 stop (0.05 dB clear on that one, so read it as "at the edge")
 //     and the paper and tone breaks by 15 / 39 dB.
 //
+// RAY BUDGET DOUBLED, 16M -> 32M, on all four rows, when entry acceptance started keeping each ray
+// dealt to a crystal with probability A/(S/2) (doc/configuration.md, `proportion`). At a fixed
+// ray_num about half the rays are now discarded at entry, so both arms got noisier together and
+// every bm4 reading above sank with them: at 16M the four rows read 34.44 / 38.09 / 39.76 / 41.04,
+// three of them under their thresholds and the fourth 0.46 dB over. That is not a divergence
+// between the arms — both are the same engine and moved identically — and it was not answered by
+// re-calibrating at 16M, because the table above is what the thresholds are worth: at 16M the
+// honest reading of single_lens_angled (34.4) would sit ABOVE its own -0.25 stop break (33.85),
+// i.e. the row could no longer be placed between the two. At 32M the honest bm4 came back to
+// 36.39 / 39.33 / 43.49 on single_lens_angled / full_sky_dual_fisheye / full_sky_dual_fisheye_print
+// against 36.42 / 39.31 / 43.44 above, so the table, the margins and the thresholds stand as
+// written. The lines-only scenes, which take their framing from these rows, stay at 16M: they do
+// not read the simulated image (see MakeLinesOnlyScene).
+//
 // Whole-frame thresholds were 27.2 / 31.0 / 34.2 / 32.0. The blocks on each row below record how
 // those were arrived at and are kept as history; the whole-frame figure they discuss is the
 // diagnostic line the fixture still prints.
@@ -647,7 +661,7 @@ const ParityScene kScenes[] = {
    gui::AspectPreset::k4x3, /*aspect_portrait=*/true, /*show_horizon=*/true, /*show_sun_circles=*/true,
    /*show_view_dist=*/false,
    /*show_grid=*/true, /*show_markers=*/true, /*exposure_offset=*/0.0f, /*grid_srgb=*/{ 1.0f, 1.0f, 1.0f },
-   /*ray_num_millions=*/16.0f, /*bm4_threshold=*/35.4, /*expect_w=*/512, /*expect_h=*/683},
+   /*ray_num_millions=*/32.0f, /*bm4_threshold=*/35.4, /*expect_w=*/512, /*expect_h=*/683},
   // mean 27.602 sigma 0.0157 (N=6, range 27.58-27.62). Threshold 27.2: 25 sigma below the mean and
   // 0.31 dB above the smallest break this scene owns — the CLI drawing only the first of two
   // angular_dist lines, at 26.89 dB. Raised from 27.0 when the grid was switched on: the mean moved
@@ -731,7 +745,7 @@ const ParityScene kScenes[] = {
    gui::AspectPreset::kFree, /*aspect_portrait=*/false, /*show_horizon=*/true, /*show_sun_circles=*/true,
    /*show_view_dist=*/false,
    /*show_grid=*/true, /*show_markers=*/true, /*exposure_offset=*/0.0f, /*grid_srgb=*/{ 1.0f, 1.0f, 1.0f },
-   /*ray_num_millions=*/16.0f, /*bm4_threshold=*/38.3, /*expect_w=*/1024, /*expect_h=*/512},
+   /*ray_num_millions=*/32.0f, /*bm4_threshold=*/38.3, /*expect_w=*/1024, /*expect_h=*/512},
   // The projection-family scene. Every field except lens_type and fov is copied verbatim from
   // single_lens_angled, so the difference between the two rows is the projection and nothing else
   // — which is what makes a drop here readable as the Jacobian rather than as some other field.
@@ -856,7 +870,7 @@ const ParityScene kScenes[] = {
    gui::AspectPreset::k4x3, /*aspect_portrait=*/true, /*show_horizon=*/true, /*show_sun_circles=*/true,
    /*show_view_dist=*/false,
    /*show_grid=*/true, /*show_markers=*/true, /*exposure_offset=*/0.0f, /*grid_srgb=*/{ 1.0f, 1.0f, 1.0f },
-   /*ray_num_millions=*/16.0f, /*bm4_threshold=*/39.3, /*expect_w=*/512, /*expect_h=*/683},
+   /*ray_num_millions=*/32.0f, /*bm4_threshold=*/39.3, /*expect_w=*/512, /*expect_h=*/683},
   // The TONE scene. Every field except `tone`, `paper_srgb` and the four annotation switches is
   // copied verbatim from full_sky_dual_fisheye above, so a drop here reads as the tone operator and
   // not as some other part of the framing.
@@ -942,7 +956,7 @@ const ParityScene kScenes[] = {
    gui::AspectPreset::kFree, /*aspect_portrait=*/false, /*show_horizon=*/false, /*show_sun_circles=*/false,
    /*show_view_dist=*/false,
    /*show_grid=*/false, /*show_markers=*/false, /*exposure_offset=*/0.0f, /*grid_srgb=*/{ 1.0f, 1.0f, 1.0f },
-   /*ray_num_millions=*/16.0f, /*bm4_threshold=*/42.1, /*expect_w=*/1024, /*expect_h=*/512},
+   /*ray_num_millions=*/32.0f, /*bm4_threshold=*/42.1, /*expect_w=*/1024, /*expect_h=*/512},
 };
 // clang-format on
 // 512 -> a 1024x512 dual-equal-area simulation texture, the smallest this suite offers. Both the
@@ -1117,6 +1131,8 @@ constexpr int kLinesOnlySceneCount = sizeof(kLinesOnlyScenes) / sizeof(kLinesOnl
 // The three overrides a lines-only scene applies to its base row — see the note above for why
 // each is what it is. The exposure is the EV slider's domain floor, not a smaller number.
 constexpr float kLinesOnlyExposureOffset = -8.0f;
+// The ray budget of every lines-only scene; see MakeLinesOnlyScene.
+constexpr float kLinesOnlyRayNumMillions = 16.0f;
 constexpr float kLinesOnlyCanvasSrgb[3] = { 1.0f, 1.0f, 1.0f };
 constexpr float kLinesOnlyGridSrgb[3] = { 0.0f, 0.0f, 0.0f };
 // The canvas byte both arms must land on, packed 0xRRGGBB. kLinesOnlyCanvasSrgb is 1.0 in every
@@ -1145,6 +1161,10 @@ ParityScene MakeLinesOnlyScene(const LinesOnlyScene& lines, const ParityScene& b
   // Not consulted by the lines-only comparison; zeroed so a reader cannot mistake the base row's
   // calibration for one that applies here.
   s.bm4_threshold = 0.0;
+  // The simulated image is exposed out of the frame (kLinesOnlyExposureOffset), so the ray budget
+  // buys these scenes nothing but wall-clock; they keep the budget they were measured at rather
+  // than inherit the base rows' doubled one.
+  s.ray_num_millions = kLinesOnlyRayNumMillions;
   return s;
 }
 
