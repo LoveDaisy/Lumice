@@ -463,13 +463,18 @@ The scene configuration defines the simulation scene, including the light source
 > (`examples/config_example.json`, `test/e2e/configs/color.json`) were migrated
 > as part of task-323 and produce bit-equivalent trace output (PSNR unchanged).
 >
-> **Not every counted ray enters a crystal.** A ray dealt to a crystal is kept with
-> probability `A/(S/2)` — the crystal's projected area along the ray over half its surface
-> area — and otherwise discarded before it is traced; a discarded ray still counts toward
-> `ray_num` and toward the emitted energy. For randomly oriented crystals about half of the
-> rays are kept, so at a given `ray_num` the image is noisier than the count suggests. See
-> the `ray_allocation` note below for what this means for `proportion`, and the migration
-> note after it for what it changed.
+> **Not every counted ray enters a crystal at full weight.** A ray dealt to a crystal enters
+> it with the factor `A/(S/2)` — the crystal's projected area along the ray over half its
+> surface area — applied in expectation, and the routes apply it differently. The CPU route
+> (the default) keeps the ray with probability `A/(S/2)` and discards it otherwise, before it
+> is traced; the GPU routes (Metal, CUDA) trace every ray and multiply its weight by
+> `A/(S/2)` instead. Both give the same image in expectation. Either way the lost part still
+> counts toward `ray_num` and toward the emitted energy — a discarded ray on the CPU, the
+> weight removed from a kept ray on the GPU. For randomly oriented crystals the factor
+> averages exactly 1/2, so on the CPU route about half of the rays are kept and at a given
+> `ray_num` the image is noisier than the count suggests. See the `ray_allocation` note
+> below for what this means for `proportion`, and the migration note after it for what it
+> changed.
 
 > **`ray_allocation` decides how many rays an entry gets; `proportion` still says how many
 > crystals the entry stands for.** The `proportion` of a scattering entry is a *crystal count
@@ -477,7 +482,8 @@ The scene configuration defines the simulation scene, including the light source
 > counting every crystal as if it had the same total surface area as every other crystal. Lumice crystal shapes carry
 > no absolute size, so "how many crystals" only means something once a size convention is
 > fixed, and this is the one the tracer implements — a ray is intercepted by a sampled crystal
-> with probability `A/(S/2)`, its projected area along the ray over half its surface area. For
+> with probability `A/(S/2)`, its projected area along the ray over half its surface area
+> (as a keep probability on the CPU route, as a weight on the GPU routes; the note above). For
 > randomly oriented crystals that count share is exactly the entry's *energy share* too (Cauchy:
 > a randomly oriented convex body's mean projected area is `S/4`, so every shape intercepts
 > the same fraction of the rays dealt to it); for oriented crystals (plates, columns) the two
@@ -539,13 +545,20 @@ The scene configuration defines the simulation scene, including the light source
 >   end-on to side-on). Visibly affected: randomly oriented thin plates (area varies about
 >   7.5×), long columns, oriented crystals with a wide tilt spread or at a low sun, and any
 >   layer that mixes oriented with randomly oriented crystals, whose relative shares move.
-> - **Noise**: about half of the rays dealt to randomly oriented crystals (an exact average
->   of 1/2, whatever their shape) and a scene-dependent share of those dealt to oriented
->   ones are now rejected at entry, so at the same `ray_num` every picture is noisier.
->   Doubling `ray_num` gets a randomly oriented scene back to its old noise level.
+> - **Noise** depends on the route. On the CPU route (the default) about half of the rays
+>   dealt to randomly oriented crystals (an exact average of 1/2, whatever their shape) and
+>   a scene-dependent share of those dealt to oriented ones are now rejected at entry, so at
+>   the same `ray_num` every picture is noisier; doubling `ray_num` gets a randomly oriented
+>   scene back to its old noise level. On the GPU routes (Metal, CUDA) no ray is rejected —
+>   each is traced at weight `A/(S/2)` — which is never noisier than rejecting at the same
+>   `ray_num`: measured at a single wavelength, about half the per-pixel variance of
+>   rejection; under the default D65 spectrum the difference was within measurement noise.
+>   The CPU keeps rejection because a rejected ray costs it almost nothing, while tracing
+>   every ray measured slower per unit of noise there.
 > - **Overall brightness**: under the default `ev_mode: relative` it is re-metered on the new
->   picture and does not drop. Under `ev_mode: absolute` a rejected ray still counts as
->   emitted, so the picture darkens at the same EV: exactly one stop for randomly oriented
+>   picture and does not drop. Under `ev_mode: absolute` the removed part — a rejected ray on
+>   the CPU route, the weight a GPU ray loses at entry — still counts as emitted, so the
+>   picture darkens at the same EV, by the same amount on every route: exactly one stop for randomly oriented
 >   crystals (raise the EV by 1, or `intensity_factor` ×2, to match an old render), and
 >   roughly 0.7–1.4 stop for oriented ones depending on shape and sun altitude
 >   (`doc/ev-pipeline-architecture.md` §7.2 has measured values).
