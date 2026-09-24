@@ -31,10 +31,12 @@ rather than a synthetic one, and pins two contracts across the std sweep:
      below is placed over that and still trips on a re-collapse (rel 1.0).
      Separately, and pre-dating that change, the K-shape pool granularity
      (CPU samples a fresh crystal per ray, the GPU pool reuses each crystal
-     across a batch, and a fixed seed freezes which K shapes it holds) puts
-     Metal's linear total above CPU's by more than the count shows: 1.05x at
-     std 0.2 and 1.17-1.20x at std 0.4, the same on the build before the
-     entry factor existed.
+     across a batch, and a fixed seed freezes which K shapes it holds) moves
+     Metal's linear total further from CPU's than the count shows: 1.05x at
+     std 0.2 and 1.17-1.20x at std 0.4 at the default seed, on the build
+     before the entry factor existed too. It is variance, not bias: over
+     seeds 1-8 at std 0.4 Metal's total swings 3011-7699 on both sides of
+     CPU's 4809, mean 5230 +/- 492 (one standard error).
 
 @pytest.mark.slow: uses the installed CLI binary (built by the shared-lib CI
 phase). Darwin-only (Metal).
