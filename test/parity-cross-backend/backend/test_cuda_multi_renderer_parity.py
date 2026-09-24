@@ -34,6 +34,16 @@ Measured on the CUDA reference machine (RTX 5090 D, seed 42 both arms):
 The dual scene's corr reads at the oracle's own seed-to-seed level (the Metal
 file's 0.886–0.904 / 0.959–0.963), as expected for a shared projection.
 
+Those readings predate entry acceptance (a ray dealt to a crystal is kept with
+probability A/(S/2)), which left about half as many rays entering at the same
+20M. Re-measured on the same machine afterwards: legacy against legacy 0.775 /
+0.780 / 0.783 on renderer[0] (0.909 / 0.917 / 0.911 on renderer[1]) over seed
+pairs 42-43 / 42-44 / 43-44, CUDA against legacy 0.790 / 0.755 / 0.778 (0.907 /
+0.919 / 0.900) at seeds 42 / 43 / 44 — at the oracle's own level again, under
+the old 0.80 floor on both sides. The floor was re-calibrated to 0.65 in the
+Metal file (see its docstring for the reasoning, including why the 40M
+alternative was not taken) and carried over here as before.
+
 Requires (same gate as ``test_cuda_projection_parity.py``): Linux/Windows,
 ``LUMICE_HAS_CUDA=1``, a ``LUMICE_CUDA_ENABLED=ON`` shared-lib build and an
 NVIDIA device. @pytest.mark.slow; runs serially.
@@ -60,7 +70,7 @@ _CONFIGS_DIR = get_project_root() / "test" / "e2e" / "configs"
 assert _DS_BH == _DS_BW, "the battery's block is square; the Scene rows assume one tile size"
 _SCENES = [
     Scene("multi_lens", 3, block=_DS_BH, corr_floor=T_RAW_CORR_DS, ledger_tol=0.001),
-    Scene("multi_renderer_parity_dual", 2, block=16, corr_floor=0.80, ledger_tol=0.05),
+    Scene("multi_renderer_parity_dual", 2, block=16, corr_floor=0.65, ledger_tol=0.05),
 ]
 
 _CUDA_AVAILABLE = (
