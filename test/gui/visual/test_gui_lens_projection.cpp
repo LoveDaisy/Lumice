@@ -131,13 +131,20 @@ struct LensProjScene {
 // stretches the halo ring into an ellipse moved PSNR only ~1.2 dB and did not even cross the
 // threshold. They trace 5M rays instead, which drops the noise floor far enough for the
 // geometric term to dominate, and stays well inside halo_22.json's 10M ray budget.
+// EVERY BUDGET IN THIS PARAGRAPH AND THE NEXT WAS DOUBLED LATER (see the last RE-SHOT block
+// above kScenes[]): the figures here are the rays that ENTERED a crystal when they were chosen,
+// and when entry acceptance first landed it discarded about half the dealt rays, so the table
+// below deals twice as many to keep the same number entering. Every route has since traced each
+// dealt ray at its entry weight A/(S/2) instead, which is never noisier; the doubled budgets were
+// kept as margin, not re-measured downward.
 //
 // The budgets of the four original scenes are unchanged from the ray counts they previously
 // waited for. The two scenes added when the auto_ev group was retired follow the same rule:
 // linear is a single-lens scene like its two neighbours and gets their 0.4M; overlay_ea keeps
 // the 0.375M its capture was taken at in the retired group, so its reference describes the
 // same working point it always did. Every value reaches its intended integer under truncation
-// and rounding alike (0.4f * 1e6 is 400000.006; 0.375f and 5.0f are exact dyadic fractions),
+// and rounding alike (0.4f * 1e6 is 400000.006 and 0.8f * 1e6 is 800000.012; 0.375f, 0.75f, 5.0f
+// and 10.0f are exact dyadic fractions),
 // which is what lets ExpectedSimRayNum() assert the resulting ray count exactly — see its note
 // in test_gui_shared.hpp before changing any of them.
 //
@@ -288,26 +295,60 @@ struct LensProjScene {
 // value.
 // The other eight are the driver's unchanged mechanical output.
 // ============================================================================================
+//
+// RE-SHOT, ALL NINE, a fourth time — and every ray budget DOUBLED (0.4M -> 0.8M, 0.375M -> 0.75M,
+// 5M -> 10M) — when entry acceptance started keeping each ray dealt to a crystal with probability
+// A/(S/2), its projected area over half its surface area (doc/configuration.md, `proportion`).
+// halo_22.json is randomly oriented, where that acceptance averages exactly 1/2, so at the old
+// budgets half as many rays entered and the single-capture noise these PSNRs measure rose. A
+// first re-shoot at the OLD budgets measured it: every mean fell 1.1-2.3 dB (fisheye_equal_area_120
+// 19.80 -> 18.54, linear 21.53 -> 20.09, dual_fisheye_equal_area_full 27.53 -> 25.21, rectangular
+// 28.44 -> 26.18, sky_colour_ea_180 28.24 -> 26.68), and the driver would have lowered every
+// threshold by 1.0-2.5 dB to follow. That was not taken, because the budgets above are not
+// arbitrary: each was chosen so a projection error stands out of THIS noise floor, and lowering the
+// thresholds to follow a higher floor would have given away exactly the detection power the budget
+// paragraph argues for. Doubling the budgets keeps the number of rays that enter a crystal where it
+// was, and the second re-shoot, at the doubled budgets, confirms it — every mean lands back on the
+// previous calibration:
+//
+//   scene                                  mean before → after     sigma before → after
+//   fisheye_equal_area_120                 19.80 → 19.90  (+0.10)   0.1114 → 0.0745
+//   fisheye_equal_area_120_border          19.77 → 19.90  (+0.13)   0.0967 → 0.1038
+//   fisheye_orthographic_180               18.77 → 18.93  (+0.16)   0.0964 → 0.0387
+//   linear                                 21.53 → 21.71  (+0.18)   0.1013 → 0.0692
+//   dual_fisheye_equal_area_full           27.53 → 27.55  (+0.02)   0.0722 → 0.0530
+//   dual_fisheye_equal_area_full_border    26.87 → 26.92  (+0.05)   0.0417 → 0.0437
+//   overlay_ea                             20.80 → 20.84  (+0.04)   0.0687 → 0.0665
+//   rectangular                            28.44 → 28.54  (+0.10)   0.0662 → 0.0519
+//   sky_colour_ea_180                      28.24 → 28.35  (+0.11)   0.1289 → 0.0755
+//
+// The pictures themselves moved — a randomly oriented crystal now contributes more from the
+// orientations that show the sun more area — which is why the references were re-shot at all; the
+// noise floor they are compared at did not. ONE threshold moved, rectangular 27.0 -> 27.5, the 0.5
+// dB flooring crossing a boundary on a 0.10 dB rise (28.44 - 1.0 floors to 27.0; 28.54 - 1.0 to
+// 27.5) — a tightening the driver produced. The cost is about 3 s of the correctness pool (these
+// nine scenes measured 3.3 s in total before).
+// ============================================================================================
 static const LensProjScene kScenes[] = {
-  // mean 19.80 σ0.1114 (N=10)
-  {"fisheye_equal_area_120",       LUMICE_E2E_CONFIG_DIR "/halo_22.json", 256, 256, 18.5,  0.4f,
+  // mean 19.90 σ0.0745 (N=10)
+  {"fisheye_equal_area_120",       LUMICE_E2E_CONFIG_DIR "/halo_22.json", 256, 256, 18.5,  0.8f,
    LensSetup::kOverrideViewProj, lumice::gui::kLensTypeFisheyeEqualArea,   120.0f, 20.0f},
-  // mean 18.77 σ0.0964 (N=10)
-  {"fisheye_orthographic_180",     LUMICE_E2E_CONFIG_DIR "/halo_22.json", 256, 256, 17.5,  0.4f,
+  // mean 18.93 σ0.0387 (N=10)
+  {"fisheye_orthographic_180",     LUMICE_E2E_CONFIG_DIR "/halo_22.json", 256, 256, 17.5,  0.8f,
    LensSetup::kOverrideViewProj, lumice::gui::kLensTypeFisheyeOrthographic, 180.0f, 20.0f},
-  // mean 21.53 σ0.1013 (N=10)
+  // mean 21.71 σ0.0692 (N=10)
   // fov=90 matches the Linear entry in kSingleLens[] (test_render_handedness_guard.cpp), so a
   // suspected linearInverse regression can be cross-read against that deterministic sign pin
   // at the same focal length.
-  {"linear",                       LUMICE_E2E_CONFIG_DIR "/halo_22.json", 256, 256, 20.5,  0.4f,
+  {"linear",                       LUMICE_E2E_CONFIG_DIR "/halo_22.json", 256, 256, 20.5,  0.8f,
    LensSetup::kOverrideViewProj, lumice::gui::kLensTypeLinear,              90.0f, 20.0f},
-  // mean 27.53 σ0.0722 (N=10)
-  {"dual_fisheye_equal_area_full", LUMICE_E2E_CONFIG_DIR "/halo_22.json", 256, 128, 26.5,  5.0f,
+  // mean 27.55 σ0.0530 (N=10)
+  {"dual_fisheye_equal_area_full", LUMICE_E2E_CONFIG_DIR "/halo_22.json", 256, 128, 26.5,  10.0f,
    LensSetup::kDualFisheyeExport},
-  // mean 28.44 σ0.0662 (N=10)
-  {"rectangular",                  LUMICE_E2E_CONFIG_DIR "/halo_22.json", 256, 128, 27.0,  5.0f,
+  // mean 28.54 σ0.0519 (N=10)
+  {"rectangular",                  LUMICE_E2E_CONFIG_DIR "/halo_22.json", 256, 128, 27.5,  10.0f,
    LensSetup::kEquirectExport},
-  // mean 20.80 σ0.0687 (N=10)
+  // mean 20.84 σ0.0665 (N=10)
   // Overlay scene: same equal-area branch as the first row, tilted to elevation=45 with the
   // zenith/nadir markers and the coordinate grid enabled. It is the only committed pixel
   // coverage of overlayAuxLines(); it moved here from the retired auto_ev group, which had
@@ -319,7 +360,7 @@ static const LensProjScene kScenes[] = {
   // shader's half-width comes from the hardware fwidth() of the fields, core's from a CPU forward
   // difference, and near the rim of an equal-area frame those two disagree. Sigma is unchanged, so
   // the scene is no noisier than it was; only its operating point moved.
-  {"overlay_ea",                   LUMICE_E2E_CONFIG_DIR "/halo_22.json", 256, 256, 19.5,  0.375f,
+  {"overlay_ea",                   LUMICE_E2E_CONFIG_DIR "/halo_22.json", 256, 256, 19.5,  0.75f,
    LensSetup::kOverrideViewProj, lumice::gui::kLensTypeFisheyeEqualArea,   180.0f, 45.0f,
    /*enable_overlay=*/true, /*overlay_zenith_nadir=*/true, /*overlay_grid=*/true},
   // Lens-border scenes. Each reuses the setup of the scene named in its own name and changes ONE
@@ -331,14 +372,14 @@ static const LensProjScene kScenes[] = {
   // Ray budgets are inherited from the reused scenes for the reason those budgets exist: the border
   // is a thin bright curve, so its contribution to PSNR is small, and lowering the budget here would
   // raise the Monte-Carlo floor the border has to stand out from.
-  // mean 19.77 σ0.0967 (N=10)
-  {"fisheye_equal_area_120_border", LUMICE_E2E_CONFIG_DIR "/halo_22.json", 256, 256, 18.5,  0.4f,
+  // mean 19.90 σ0.1038 (N=10)
+  {"fisheye_equal_area_120_border", LUMICE_E2E_CONFIG_DIR "/halo_22.json", 256, 256, 18.5,  0.8f,
    LensSetup::kOverrideViewProj, lumice::gui::kLensTypeFisheyeEqualArea,   120.0f, 20.0f,
    /*enable_overlay=*/false, /*overlay_zenith_nadir=*/false, /*overlay_grid=*/false,
    /*enable_lens_border=*/true},
-  // mean 26.87 σ0.0417 (N=10) — 0.7 dB under its borderless twin, which is the border's own contribution
+  // mean 26.92 σ0.0437 (N=10) — 0.6 dB under its borderless twin, which is the border's own contribution
   // to the frame: the two circles are a thin bright curve over an otherwise identical capture.
-  {"dual_fisheye_equal_area_full_border", LUMICE_E2E_CONFIG_DIR "/halo_22.json", 256, 128, 25.5, 5.0f,
+  {"dual_fisheye_equal_area_full_border", LUMICE_E2E_CONFIG_DIR "/halo_22.json", 256, 128, 25.5, 10.0f,
    LensSetup::kDualFisheyeExport,
    /*lens_type=*/0, /*fov=*/0.f, /*elevation=*/0.f,
    /*enable_overlay=*/false, /*overlay_zenith_nadir=*/false, /*overlay_grid=*/false,
@@ -363,8 +404,8 @@ static const LensProjScene kScenes[] = {
   //
   // The colour is the one the rest of this scrum probes with, so a byte read off this reference is
   // directly comparable with the numbers those suites assert.
-  // mean 28.24 σ0.1289 (N=10)
-  {"sky_colour_ea_180",            LUMICE_E2E_CONFIG_DIR "/halo_22.json", 256, 192, 27.0,  0.4f,
+  // mean 28.35 σ0.0755 (N=10)
+  {"sky_colour_ea_180",            LUMICE_E2E_CONFIG_DIR "/halo_22.json", 256, 192, 27.0,  0.8f,
    LensSetup::kOverrideViewProj, lumice::gui::kLensTypeFisheyeEqualArea,   180.0f, 0.0f,
    /*enable_overlay=*/false, /*overlay_zenith_nadir=*/false, /*overlay_grid=*/false,
    /*enable_lens_border=*/false,

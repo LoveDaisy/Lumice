@@ -45,6 +45,29 @@ PSNR_FAILURE_DIR = get_project_root() / "scratchpad" / "e2e-failures"
 #                      multi_lens_03 and the same render run.
 # Every threshold above ROSE. That is the direction a reshoot is allowed to move them: a reshoot
 # that lowers a threshold is absorbing a difference rather than recording one.
+#
+# Every key below was re-shot together on 2026-09-24, when entry acceptance started weighting each
+# crystal orientation by the area it presents to the sun (doc/configuration.md, `proportion`;
+# doc/ev-pipeline-architecture.md §7.2). Every config here uses `ev_mode: absolute`, and the
+# weight a ray loses at entry still counts as emitted energy, so every picture got dimmer — by exactly one
+# stop where the crystals are randomly oriented and by a scene-dependent amount where they are
+# not (doc/ev-pipeline-architecture.md §7.2). Eleven configs crossed their thresholds;
+# the other three (filters_01, halo_22_01, orthographic_180_01) did not, only because a darker image
+# scores a higher PSNR against a brighter one than its run-to-run noise would allow: they sat
+# 5-8 dB below their own run-to-run floor. For halo_22 that drift was checked against a binary
+# built from the pre-fix merge base (30.9 dB against the old reference, i.e. the old reference was
+# still right for the old code), so it is this change's and not an older one. Same method as
+# everywhere in this table: 3 fresh CLI runs, threshold = min(PSNR_2vs1, PSNR_3vs1) - 3 dB floored
+# to 0.5 dB. Six keys came out LOWER than before, by 0.3-0.5 dB (reference_point_markers_01,
+# multi_lens_01/02/03, dual_fisheye_ref_01, render_opts_01 — the last of these was calibrated one
+# code-review round later than the rest, see its own entry below for numbers). That is the one
+# exception to the rule above, and it is recorded rather than absorbed: at a fixed `ray_num`
+# roughly half the rays are now rejected at entry, so the render itself is noisier and its
+# run-to-run floor fell with it (for reference_point_markers_01, 27.45 -> 26.65 dB). The old
+# references against the new render read 21.5 / 29.4 / 28.4 / 29.5 / 24.2 dB — far below any of
+# these thresholds, so the gate did see the change; only the noise floor it is set against moved.
+# parhelion_01 was also re-verified against this reshoot (see its own entry below) and landed on
+# its pre-existing threshold unchanged.
 PSNR_THRESHOLDS = {
     # Thresholds for the 11 single-lens-family references (linear + 4 single-
     # fisheye) below were recalibrated by scrum-azimuth-handedness-alignment /
@@ -55,32 +78,47 @@ PSNR_THRESHOLDS = {
     # 0.5 dB precision. The 3 control-set thresholds (multi_lens_03,
     # ms_multi_crystal_01, dual_fisheye_ref_01 — dual-fisheye family, unaffected
     # by the flip) are preserved from their prior calibration.
-    "color_01": 39.5,
-    "cza_01": 45.5,
-    "filters_01": 29.0,
-    "halo_22_01": 26.5,
+    "color_01": 40.5,
+    "cza_01": 46.0,
+    "filters_01": 36.0,
+    "halo_22_01": 30.0,
     # ms_multi_crystal: MS multi-crystal-per-layer + dual_fisheye + D65 + 2M rays
     # is noisier than the single-wavelength configs. Measured run-to-run PSNR
     # ≈ 23.4 dB (stable: 23.41/23.42/23.44); threshold = min - 3dB floored to
     # 20.0 for cross-platform margin (reference generated on macOS, CI on Linux).
     # A structural regression (e.g. the frame band-vs-ring bug) drops PSNR far
     # below 20, so the gate still catches gross regressions.
-    "ms_multi_crystal_01": 20.0,
-    "multi_lens_01": 37.5,
-    "multi_lens_02": 37.5,
-    "multi_lens_03": 42.5,
-    "multi_scatter_01": 26.5,
-    # orthographic_180: D65 + uniform full-random orientation + 1M rays. Per-run
-    # PSNR (measured on macOS): run-to-run 22.74/22.76 dB (3 runs). Threshold
-    # = min - 3 dB ≈ 19.7 → set 19.5 dB (rounded down to 0.5 dB precision) to
-    # tolerate cross-platform sampling noise (reference generated on macOS,
-    # CI runs on Linux). Re-introduces orthographic-projection e2e coverage
+    # That last sentence stopped being true at the 2026-09-24 reshoot, and the threshold is set
+    # against it rather than by the table's method. Run-to-run is now 24.93-24.97 dB, which the
+    # method turns into 21.5 — but an ALL-BLACK frame scores 22.0 dB against the new reference
+    # (the scene is dim under absolute EV and noise-dominated, so the reference is mostly dark
+    # pixels), i.e. 21.5 would pass a render with nothing in it. Neither a brighter
+    # intensity_factor nor a doubled ray_num opens the gap by more than ~1.3 dB, because the
+    # noise scales with the signal. 23.0 is placed between the two: 1.9 dB under run-to-run and
+    # 1.0 dB over black — thin on both sides, recorded as such. (The old reference had a 7 dB gap:
+    # black 16.0 dB against run-to-run 23.4.)
+    "ms_multi_crystal_01": 23.0,
+    "multi_lens_01": 37.0,
+    "multi_lens_02": 37.0,
+    "multi_lens_03": 42.0,
+    "multi_scatter_01": 30.5,
+    # orthographic_180: D65 + uniform full-random orientation + 1M rays. Run-to-run
+    # at the 2026-09-24 reshoot (3 fresh CLI runs, macOS): 25.93 / 25.93 dB.
+    # Threshold = min - 3 dB = 22.93 → 22.5 dB (floored to 0.5 dB precision), leaving
+    # room for cross-platform sampling noise (reference generated on macOS, CI runs
+    # on Linux). Known blind spot, unchanged by the reshoot: an all-black frame scores
+    # 22.9 dB against this reference (19.9 dB against the old one, vs the old 19.5 dB),
+    # i.e. whole-frame PSNR on this dim, noise-dominated scene cannot tell black from
+    # an honest rerun; fixing that needs a different ruler, not a threshold. Re-introduces orthographic-projection e2e coverage
     # lost when scrum-268.6 scoped smoke to "configs with reference images"
     # (task-270.7 / explore-269 P0). A structural regression (frame bug,
     # wrong projection) drops PSNR far below this floor.
-    "orthographic_180_01": 19.5,
+    "orthographic_180_01": 22.5,
+    # parhelion: run-to-run at the 2026-09-24 reshoot: 40.58 / 40.67 dB -> 37.5 dB, unchanged
+    # (code-review Round 2 flagged this key as missing its calibration evidence; this note closes
+    # that gap — the threshold happened to land on the same value as before the reshoot).
     "parhelion_01": 37.5,
-    "pyramid_01": 28.5,
+    "pyramid_01": 31.5,
     # render_opts: re-shot for 469.7, when `grid.outline` stopped being a no-op and started
     # drawing the celestial horizon — this config sets it, so the reference now carries a two-pixel
     # red line across rows 182-183 that the previous reference (taken while the key did nothing)
@@ -93,8 +131,12 @@ PSNR_THRESHOLDS = {
     # neither side's reference is right for the merged result and the image had to come from a
     # binary carrying both. Run-to-run measured 35.92 / 36.02 dB, i.e. tighter than the 32.78 /
     # 33.06 dB of the previous shoot, so the threshold rises rather than relaxes.
-    "render_opts_01": 32.5,
-    "dual_fisheye_ref_01": 25.8,
+    # Re-shot again at the 2026-09-24 entry-acceptance reshoot (code-review Round 2 flagged this
+    # key as missing its calibration evidence for that pass; this note closes that gap): run-to-run
+    # 35.81 / 35.38 dB -> 32.0 dB, one of the keys whose floor fell (see the note at the top of this
+    # table on why a handful of keys are allowed to drop 0.3-0.5 dB this reshoot rather than rise).
+    "render_opts_01": 32.0,
+    "dual_fisheye_ref_01": 25.5,
     # zenith_nadir_marker_compat: the ONE config in this table that sets `grid.zenith_nadir` and
     # nothing else marker-related, and it exists to be an unchanged picture rather than a new one.
     # Its reference was shot from the code as it stood BEFORE the marker list (`grid.markers`)
@@ -105,6 +147,11 @@ PSNR_THRESHOLDS = {
     # that images both poles at once, so one frame carries both rings. Same calibration method as
     # the rest of this table: 3 fresh CLI runs, threshold = min(PSNR_2vs1, PSNR_3vs1) - 3 dB
     # floored to 0.5 dB precision (measured 27.19 / 27.45 dB).
+    # The 2026-09-24 reshoot (see the top of this table) had to take this image from current code,
+    # because the simulated sky under the rings changed brightness. So the compatibility claim above
+    # was established against the pre-marker-list code once and is now carried forward, not re-proved
+    # by every run: the rings are drawn by the same legacy branch, and only the sky behind them moved.
+    # Run-to-run at the reshoot: 27.07 / 27.05 dB -> 24.0 dB, unchanged.
     "zenith_nadir_marker_compat_01": 24.0,
     # reference_point_markers: the other half of the pair above, and the opposite kind of claim —
     # this one records a new capability rather than preserving an old picture, so its reference was
@@ -117,8 +164,10 @@ PSNR_THRESHOLDS = {
     # images the whole sky, and four of the six ids are reflections of the sun that a half-sky view
     # would drop.
     # Same calibration method as the rest of this table: 3 fresh CLI runs, threshold =
-    # min(PSNR_2vs1, PSNR_3vs1) - 3 dB floored to 0.5 dB precision (measured 27.46 / 27.45 dB).
-    "reference_point_markers_01": 24.0,
+    # min(PSNR_2vs1, PSNR_3vs1) - 3 dB floored to 0.5 dB precision. At the 2026-09-24 reshoot
+    # the run-to-run floor is 26.65 dB (was 27.45 dB before entry acceptance; see the header),
+    # so 26.65 - 3 = 23.65 -> 23.5 dB.
+    "reference_point_markers_01": 23.5,
 }
 
 

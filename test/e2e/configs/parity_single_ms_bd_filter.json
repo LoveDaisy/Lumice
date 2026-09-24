@@ -24,7 +24,7 @@
       "altitude": 20.0,
       "spectrum": "D65"
     },
-    "ray_num": 2000000,
+    "ray_num": 4000000,
     "max_hits": 7,
     "scattering": [
       {

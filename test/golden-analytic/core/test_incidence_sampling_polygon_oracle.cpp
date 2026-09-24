@@ -33,6 +33,9 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <numeric>
+#include <random>
+#include <string>
 #include <vector>
 
 #include "core/crystal.hpp"
@@ -384,6 +387,207 @@ TEST(IncidenceSamplingOracle, Ac1RedStateCatchesBiasedWeight) {
       << "injected bias barely exceeded threshold — pick a more directional case to avoid flakiness";
 }
 
+// ---- AC3: projected-area entry weight over the joint (orientation, shape) -----
+//
+// A crystal of shape g in orientation o intercepts sunlight in proportion to
+// its projected area A(o, g, d). Under the equal-surface-area convention that
+// folds each instance's own S(g) into its entry weight rather than treating S
+// as a shared constant (Lumice shapes carry no absolute size, so a count share
+// needs a size convention and this is the one `proportion` documents), the
+// weight entering the crystals must be distributed as p(o)·p(g)·A(o, g, d)/S(g)
+// — an entry weight A/(S(g)/2) per ray — while the entry sampler used to give
+// every ray it was dealt the same weight. These cases deal rays from a known
+// p(o)·p(g) — uniformly random orientations (as crystal-local directions) on
+// each fixture shape — and judge each ray's entry weight against the oracle's.
+
+constexpr double kAc3KSigma = 5.0;
+constexpr size_t kAc3RaysPerShape = 60000;
+constexpr int kAc3PolarBins = 8;
+// Float accumulation of A and S over <= 64 sub-tris of O(1) area against the
+// oracle's double precision: the same 1e-5 AC4's DeviceEntryWeight case pins.
+constexpr double kAc3WeightAbsTol = 1e-5;
+
+// Uniform directions on the sphere from the test's own generator (normalized
+// Gaussian triples), not from the production orientation sampler.
+std::vector<std::array<float, 3>> UniformSphereDirections(size_t n, uint32_t seed) {
+  std::mt19937 gen(seed);
+  std::normal_distribution<double> normal(0.0, 1.0);
+  std::vector<std::array<float, 3>> dirs;
+  dirs.reserve(n);
+  while (dirs.size() < n) {
+    const double x = normal(gen);
+    const double y = normal(gen);
+    const double z = normal(gen);
+    const double len = std::sqrt(x * x + y * y + z * z);
+    if (len < 1e-12) {
+      continue;
+    }
+    dirs.push_back({ static_cast<float>(x / len), static_cast<float>(y / len), static_cast<float>(z / len) });
+  }
+  return dirs;
+}
+
+// Orientation bin: the direction's polar angle to the crystal c axis, in equal
+// |d_z| bands (equal solid angle each) — basal-on at one end, edge-on at the other.
+int PolarBin(const std::array<float, 3>& d) {
+  const int b = static_cast<int>(std::abs(d[2]) * kAc3PolarBins);
+  return std::min(b, kAc3PolarBins - 1);
+}
+
+struct Ac3Draw {
+  std::vector<int> bin_of;
+  std::vector<double> oracle_weight;
+  std::vector<double> weight;
+  std::vector<bool> entered;
+  size_t bin_cnt = 0;
+};
+
+// Records one fixture's rays: bin (fixture, polar band), the oracle's a_i, and
+// the sampler's entry weight and entry face per ray.
+void AppendFixtureDraw(const CrystalFixture& fixture, size_t fi, const std::vector<std::array<float, 3>>& dirs,
+                       const EntrySamples& s, Ac3Draw* out) {
+  const auto faces = test_support::BuildPresentFaceGeom(fixture.crystal.CfGeom());
+  for (size_t i = 0; i < dirs.size(); i++) {
+    const double d[3] = { dirs[i][0], dirs[i][1], dirs[i][2] };
+    out->bin_of.push_back(static_cast<int>(fi) * kAc3PolarBins + PolarBin(dirs[i]));
+    out->oracle_weight.push_back(test_support::ComputeEntryWeight(faces, d));
+    out->weight.push_back(s.weight[i]);
+    out->entered.push_back(s.face[i] != kInvalidId);
+  }
+}
+
+// Deal kAc3RaysPerShape uniformly oriented rays to every fixture (p(g) uniform
+// over the fixtures) through the production sampler.
+Ac3Draw DrawAcrossFixtures(const std::vector<CrystalFixture>& fixtures, uint32_t seed) {
+  Ac3Draw out;
+  out.bin_cnt = fixtures.size() * kAc3PolarBins;
+  for (size_t fi = 0; fi < fixtures.size(); fi++) {
+    const auto dirs = UniformSphereDirections(kAc3RaysPerShape, seed + static_cast<uint32_t>(fi));
+    const EntrySamples s = test_support::DriveEntrySamplingDirs(fixtures[fi].crystal, dirs, seed + 1000 + fi);
+    AppendFixtureDraw(fixtures[fi], fi, dirs, s, &out);
+  }
+  return out;
+}
+
+void ExpectEntryWeightsPass(const std::vector<CrystalFixture>& fixtures, const Ac3Draw& draw) {
+  const auto v = test_support::CheckEntryWeights(draw.bin_of, draw.oracle_weight, draw.weight, draw.entered,
+                                                 draw.bin_cnt, kAc3WeightAbsTol);
+  for (size_t k = 0; k < v.bins.size(); k++) {
+    const auto& b = v.bins[k];
+    EXPECT_NEAR(b.observed, b.expected, kAc3WeightAbsTol * static_cast<double>(b.dealt))
+        << fixtures[k / kAc3PolarBins].label << " polar band " << k % kAc3PolarBins << ": Σw " << b.observed << " over "
+        << b.dealt << " rays, oracle Σa " << b.expected;
+  }
+  EXPECT_EQ(v.entry_drops, 0) << "rays with a positive entry weight were discarded";
+  EXPECT_TRUE(v.pass) << "max|w-a|=" << v.max_abs_dev << " at ray " << v.worst_ray;
+}
+
+TEST(IncidenceSamplingOracle, Ac3EntryWeightFollowsProjectedAreaOverOrientationAndShape) {
+  const auto fixtures = MakeFixtures();
+  ExpectEntryWeightsPass(fixtures, DrawAcrossFixtures(fixtures, 31337));
+}
+
+// The same weights, judged by a route that shares nothing with the oracle's
+// geometry: Cauchy's surface-area formula says a convex body's projected area
+// averaged over uniform orientations is S/4, so a uniformly oriented ray's mean
+// entry weight is (S/4) / (S/2) = 1/2 on EVERY convex shape. A per-shape mean
+// away from 1/2 means the sampler's A or S is wrong, whatever the oracle says.
+TEST(IncidenceSamplingOracle, Ac3UniformOrientationMeanWeightIsHalfOnEveryConvexShape) {
+  const auto fixtures = MakeFixtures();
+  for (size_t fi = 0; fi < fixtures.size(); fi++) {
+    const auto dirs = UniformSphereDirections(kAc3RaysPerShape, 4242 + static_cast<uint32_t>(fi));
+    const EntrySamples s = test_support::DriveEntrySamplingDirs(fixtures[fi].crystal, dirs, 5151 + fi);
+    const double sum_w = std::accumulate(s.weight.begin(), s.weight.end(), 0.0);
+    const double n = static_cast<double>(dirs.size());
+    // a_i in [0, 1] over random directions: Var(a) <= 1/4 bounds the spread.
+    EXPECT_NEAR(sum_w / n, 0.5, kAc3KSigma * std::sqrt(0.25 / n)) << fixtures[fi].label;
+  }
+}
+
+// Red states: the comparator must reject both samplers this weight replaced on
+// the same dealt rays — the one that gave every ray the same weight (before the
+// projected-area factor existed) and the one that applied the factor by
+// discarding rays (weights in {0, 1}, the accept/reject form).
+TEST(IncidenceSamplingOracle, Ac3RedStateCatchesUnitWeightAndAcceptReject) {
+  const auto fixtures = MakeFixtures();
+  const Ac3Draw good = DrawAcrossFixtures(fixtures, 31337);
+
+  Ac3Draw unit = good;
+  std::fill(unit.weight.begin(), unit.weight.end(), 1.0);
+  const auto vu = test_support::CheckEntryWeights(unit.bin_of, unit.oracle_weight, unit.weight, unit.entered,
+                                                  unit.bin_cnt, kAc3WeightAbsTol);
+  EXPECT_FALSE(vu.pass);
+  EXPECT_GT(vu.max_abs_dev, 0.1) << "unit weight should be a gross departure, not a marginal one";
+
+  Ac3Draw masked = good;
+  std::mt19937 gen(8128);
+  std::uniform_real_distribution<double> u01(0.0, 1.0);
+  for (size_t i = 0; i < masked.weight.size(); i++) {
+    const bool kept = u01(gen) < masked.oracle_weight[i];
+    masked.weight[i] = kept ? 1.0 : 0.0;
+    masked.entered[i] = kept;
+  }
+  const auto vm = test_support::CheckEntryWeights(masked.bin_of, masked.oracle_weight, masked.weight, masked.entered,
+                                                  masked.bin_cnt, kAc3WeightAbsTol);
+  EXPECT_FALSE(vm.pass);
+  EXPECT_GT(vm.entry_drops, 0);
+}
+
+// ---- AC4: A(o, g, d) <= S(g) / 2 for every convex shape and direction ----------
+//
+// The entry weight divides by S/2 and clamps at 1; the clamp must never bind, or
+// the entered weight stops being proportional to A. It never does for a
+// convex body: its lit and unlit sides project onto the same shadow, each with
+// area A, and together they are its whole surface, so 2A <= S. This pins that
+// argument mechanically over the fixtures plus the extremes (a thin plate
+// seen face-on is where A comes closest to S/2), and checks the production
+// entry table's S against the oracle's.
+TEST(IncidenceSamplingOracle, Ac4ProjectedAreaNeverExceedsHalfTheSurface) {
+  auto fixtures = MakeFixtures();
+  fixtures.push_back({ "prism_h0.05", Crystal::CreatePrism(0.05f) });
+  fixtures.push_back({ "prism_h10", Crystal::CreatePrism(10.0f) });
+  auto dirs = UniformSphereDirections(4000, 9001);
+  for (const auto& d : CandidateDirections()) {
+    dirs.push_back(d);
+  }
+  for (const auto& f : fixtures) {
+    const CrystalGeom& cf = f.crystal.CfGeom();
+    const double s = test_support::ComputeSurfaceArea(cf);
+    if (s <= 0.0) {
+      ADD_FAILURE() << f.label << ": empty fixture";
+      continue;
+    }
+
+    std::vector<detail::EntrySubTri> sub(detail::CountEntrySubTris(cf));
+    detail::BuildEntrySubTris(cf, sub.data());
+    double s_prod = 0.0;
+    for (const auto& t : sub) {
+      s_prod += t.area;
+    }
+    EXPECT_NEAR(s_prod, s, 1e-5 * s) << f.label << ": the sampler's S disagrees with the oracle's";
+
+    const auto faces = test_support::BuildPresentFaceGeom(cf);
+    double max_ratio = 0.0;
+    std::array<float, 3> worst_d{};
+    for (const auto& dv : dirs) {
+      const double d[3] = { dv[0], dv[1], dv[2] };
+      const double ratio = test_support::ComputeProjectedArea(faces, d) / (0.5 * s);
+      if (ratio > max_ratio) {
+        max_ratio = ratio;
+        worst_d = dv;
+      }
+    }
+    EXPECT_LE(max_ratio, 1.0 + 1e-9) << f.label << " worst d=(" << worst_d[0] << "," << worst_d[1] << "," << worst_d[2]
+                                     << ")";
+    if (std::string(f.label) == "prism_h0.05") {
+      // The face-on plate must come close to the bound, or this case is not
+      // exercising the edge it claims to: there A is the basal area B and S is
+      // 2B plus the thin side band, so A/(S/2) = B/(B + side/2) ≈ 0.899.
+      EXPECT_GT(max_ratio, 0.85) << f.label;
+    }
+  }
+}
+
 // ---- Calibration scan (disabled; run manually to (re)derive thresholds) -------
 // Run with: golden_analytic_test --gtest_also_run_disabled_tests \
 //   --gtest_filter='*DISABLED_CalibrationScan*'
@@ -431,6 +635,10 @@ TEST(IncidenceSamplingOracle, DISABLED_CalibrationScan) {
 //   (AC1) + in-face uniformity (AC2), and a biased weight is still rejected
 //   (teeth): "if the upload feeds the right data, the device selection math is
 //   analytically correct."
+//   DeviceSampler{Ac3,UniformOrientationMeanWeightIsHalf,RedStateCatchesUnitWeight}
+//   and DeviceEntryWeightMatchesOracleAndStaysBelowOne — the same for the
+//   projected-area entry weight the kernels multiply in
+//   (lm_pcg::entry_weight).
 // ================================================================================
 
 // SoA layout identical to the device geometry pool: tri_vtx[9*T] / tri_norm[3*T]
@@ -467,36 +675,81 @@ DeviceGeomSoA BuildDeviceGeomSoA(const Crystal& crystal) {
   return g;
 }
 
-// Replays the exact device entry-sampler body (cuda_trace_backend.cu
-// gen_root_kernel §3, metal lumice_trace.metal sibling): per-tri projected weight
-// max(-d·n·A, 0), one categorical_sample over that weight, one sample_triangle in
-// the chosen sub-tri — using the shared lm_pcg:: routines, not a re-implementation.
-// `biased` injects the same |d·n|·A front-face-sign drop the AC1 red-state names,
-// to prove the comparator still has teeth on THIS code path.
+// Device entry-sampler variants the red states inject. kNone is the kernel as
+// shipped; the others each break one thing the comparators must notice.
+enum class DeviceFault {
+  kNone,
+  kUnsignedWeight,  // |d·n|·A instead of max(-d·n·A, 0): the AC1 red state
+  kUnitWeight,      // skip the projected-area entry weight: the AC3 red state
+};
+
+// Replays the exact device entry-sampler body for ONE ray (cuda_trace_backend.cu
+// gen_root_kernel §3–4, transit_root_kernel §3–5, and their lumice_trace.metal
+// siblings): per-tri projected weight max(-d·n·A, 0) summed into A alongside
+// S = Σ area, one categorical_sample, one sample_triangle in the chosen sub-tri,
+// and the entry weight entry_weight(A, S) on a unit birth weight. Every
+// routine is the shared lm_pcg:: one the kernels call, not a re-implementation.
+void DeviceEntrySampleOne(const DeviceGeomSoA& g, const float d[3], uint32_t seed, uint32_t global_idx,
+                          DeviceFault fault, std::vector<float>* proj, IdType* face, std::array<float, 3>* point,
+                          float* weight) {
+  lm_pcg::PcgStream s;
+  s.seed = seed;
+  s.global_idx = global_idx;
+  s.slot = 0u;
+  float proj_sum = 0.0f;
+  float s_total = 0.0f;
+  for (size_t t = 0; t < g.tri_cnt; t++) {
+    const float dot = d[0] * g.tri_norm[3 * t + 0] + d[1] * g.tri_norm[3 * t + 1] + d[2] * g.tri_norm[3 * t + 2];
+    (*proj)[t] =
+        fault == DeviceFault::kUnsignedWeight ? std::abs(dot) * g.tri_area[t] : std::max(-dot * g.tri_area[t], 0.0f);
+    proj_sum += (*proj)[t];
+    s_total += g.tri_area[t];
+  }
+  const float u_cat = lm_pcg::pcg_uniform(s);
+  const uint32_t tri_id = lm_pcg::categorical_sample(proj->data(), static_cast<uint32_t>(g.tri_cnt), u_cat);
+  *weight = fault == DeviceFault::kUnitWeight ? 1.0f : lm_pcg::entry_weight(proj_sum, s_total);
+  if (g.tri_cnt == 0) {
+    *face = kInvalidId;
+    *point = { 0.0f, 0.0f, 0.0f };
+    *weight = 0.0f;
+    return;
+  }
+  float p[3];
+  lm_pcg::sample_triangle(s, g.tri_vtx.data() + tri_id * 9u, p);
+  *point = { p[0], p[1], p[2] };
+  *face = static_cast<IdType>(g.tri_to_poly[tri_id]);
+}
+
+// n rays along one fixed direction, one independent PCG stream each (distinct
+// global_idx), matching the device's per-thread stream construction well
+// enough for a statistical test.
 EntrySamples DriveEntrySamplingDevice(const Crystal& crystal, const float d[3], size_t n, uint32_t seed,
-                                      bool biased = false) {
+                                      DeviceFault fault = DeviceFault::kNone) {
   const DeviceGeomSoA g = BuildDeviceGeomSoA(crystal);
   EntrySamples out;
   out.face.resize(n);
   out.point.resize(n);
+  out.weight.resize(n);
   std::vector<float> proj(g.tri_cnt);
   for (size_t i = 0; i < n; i++) {
-    // One independent PCG stream per ray (distinct global_idx), matching the
-    // device's per-thread stream construction well enough for a statistical test.
-    lm_pcg::PcgStream s;
-    s.seed = seed;
-    s.global_idx = static_cast<uint32_t>(i);
-    s.slot = 0u;
-    for (size_t t = 0; t < g.tri_cnt; t++) {
-      const float dot = d[0] * g.tri_norm[3 * t + 0] + d[1] * g.tri_norm[3 * t + 1] + d[2] * g.tri_norm[3 * t + 2];
-      proj[t] = biased ? std::abs(dot) * g.tri_area[t] : std::max(-dot * g.tri_area[t], 0.0f);
-    }
-    const float u_cat = lm_pcg::pcg_uniform(s);
-    const uint32_t tri_id = lm_pcg::categorical_sample(proj.data(), static_cast<uint32_t>(g.tri_cnt), u_cat);
-    float p[3];
-    lm_pcg::sample_triangle(s, g.tri_vtx.data() + tri_id * 9u, p);
-    out.point[i] = { p[0], p[1], p[2] };
-    out.face[i] = static_cast<IdType>(g.tri_to_poly[tri_id]);
+    DeviceEntrySampleOne(g, d, seed, static_cast<uint32_t>(i), fault, &proj, &out.face[i], &out.point[i],
+                         &out.weight[i]);
+  }
+  return out;
+}
+
+// One ray per direction (the AC3 shape: many orientations, one ray each).
+EntrySamples DriveEntrySamplingDeviceDirs(const Crystal& crystal, const std::vector<std::array<float, 3>>& dirs,
+                                          uint32_t seed, DeviceFault fault = DeviceFault::kNone) {
+  const DeviceGeomSoA g = BuildDeviceGeomSoA(crystal);
+  EntrySamples out;
+  out.face.resize(dirs.size());
+  out.point.resize(dirs.size());
+  out.weight.resize(dirs.size());
+  std::vector<float> proj(g.tri_cnt);
+  for (size_t i = 0; i < dirs.size(); i++) {
+    DeviceEntrySampleOne(g, dirs[i].data(), seed, static_cast<uint32_t>(i), fault, &proj, &out.face[i], &out.point[i],
+                         &out.weight[i]);
   }
   return out;
 }
@@ -550,11 +803,98 @@ TEST(DeviceSamplingPolygonOracle, DeviceSamplerRedStateCatchesBias) {
                          << vg.max_abs_z;
   }
   // Biased device sampler (|d·n|·A) — same comparator + oracle → must reject.
-  EntrySamples bad = DriveEntrySamplingDevice(prism, d.data(), kSampleN, 2024, /*biased=*/true);
+  EntrySamples bad = DriveEntrySamplingDevice(prism, d.data(), kSampleN, 2024, DeviceFault::kUnsignedWeight);
   Ac1Verdict vb = test_support::CheckProjectedAreaDistribution(prism, d.data(), bad.face, kAc1KSigma);
   EXPECT_FALSE(vb.pass) << "biased device sampler slipped past AC1 — comparator has no teeth. max|z|=" << vb.max_abs_z;
   EXPECT_GT(vb.max_abs_z, 10.0 * kAc1KSigma)
       << "injected bias barely exceeded threshold — pick a more directional case";
+}
+
+
+// ---- Device sampling math: AC3 (projected-area entry weight) --------------------
+// Same draw, bins and comparator as IncidenceSamplingOracle.Ac3* above, with the
+// device body in place of InitRay_p_fid: every fixture gets uniformly oriented
+// rays, binned by (fixture, polar band), and each ray's entry weight is judged
+// against the oracle's A / (S/2).
+Ac3Draw DrawAcrossFixturesDevice(const std::vector<CrystalFixture>& fixtures, uint32_t seed, DeviceFault fault) {
+  Ac3Draw out;
+  out.bin_cnt = fixtures.size() * kAc3PolarBins;
+  for (size_t fi = 0; fi < fixtures.size(); fi++) {
+    const auto dirs = UniformSphereDirections(kAc3RaysPerShape, seed + static_cast<uint32_t>(fi));
+    const EntrySamples s =
+        DriveEntrySamplingDeviceDirs(fixtures[fi].crystal, dirs, seed + 1000 + static_cast<uint32_t>(fi), fault);
+    AppendFixtureDraw(fixtures[fi], fi, dirs, s, &out);
+  }
+  return out;
+}
+
+TEST(DeviceSamplingPolygonOracle, DeviceSamplerMathPassesAc3) {
+  const auto fixtures = MakeFixtures();
+  ExpectEntryWeightsPass(fixtures, DrawAcrossFixturesDevice(fixtures, 27182, DeviceFault::kNone));
+}
+
+// Cauchy route, sharing nothing with the oracle's geometry: uniformly oriented
+// rays enter with mean weight (S/4)/(S/2) = 1/2 on every convex shape.
+TEST(DeviceSamplingPolygonOracle, DeviceSamplerUniformOrientationMeanWeightIsHalf) {
+  const auto fixtures = MakeFixtures();
+  for (size_t fi = 0; fi < fixtures.size(); fi++) {
+    const auto dirs = UniformSphereDirections(kAc3RaysPerShape, 1618 + static_cast<uint32_t>(fi));
+    const EntrySamples s = DriveEntrySamplingDeviceDirs(fixtures[fi].crystal, dirs, 3141 + static_cast<uint32_t>(fi));
+    const double sum_w = std::accumulate(s.weight.begin(), s.weight.end(), 0.0);
+    const double n = static_cast<double>(dirs.size());
+    EXPECT_NEAR(sum_w / n, 0.5, kAc3KSigma * std::sqrt(0.25 / n)) << fixtures[fi].label;
+  }
+}
+
+// Red state: the device body without the entry weight (the pre-fix kernels)
+// must be rejected by the same comparator on the same dealt rays.
+TEST(DeviceSamplingPolygonOracle, DeviceSamplerRedStateCatchesUnitWeight) {
+  const auto fixtures = MakeFixtures();
+  const Ac3Draw draw = DrawAcrossFixturesDevice(fixtures, 27182, DeviceFault::kUnitWeight);
+  const auto v = test_support::CheckEntryWeights(draw.bin_of, draw.oracle_weight, draw.weight, draw.entered,
+                                                 draw.bin_cnt, kAc3WeightAbsTol);
+  EXPECT_FALSE(v.pass);
+  EXPECT_GT(v.max_abs_dev, 0.1) << "unit weight should be a gross departure, not a marginal one";
+}
+
+// ---- Device sampling math: AC4 (the entry weight itself) ---------------------------
+// The kernels accumulate A and S in float over the device triangle SoA and call
+// entry_weight; this pins that number against the oracle's double-precision
+// A / (S/2) per direction, and that it never reaches the clamp at 1 — including
+// on the thin face-on plate, where A comes closest to S/2.
+TEST(DeviceSamplingPolygonOracle, DeviceEntryWeightMatchesOracleAndStaysBelowOne) {
+  auto fixtures = MakeFixtures();
+  fixtures.push_back({ "prism_h0.05", Crystal::CreatePrism(0.05f) });
+  fixtures.push_back({ "prism_h10", Crystal::CreatePrism(10.0f) });
+  auto dirs = UniformSphereDirections(4000, 1123);
+  for (const auto& d : CandidateDirections()) {
+    dirs.push_back(d);
+  }
+  for (const auto& f : fixtures) {
+    const DeviceGeomSoA g = BuildDeviceGeomSoA(f.crystal);
+    const auto faces = test_support::BuildPresentFaceGeom(f.crystal.CfGeom());
+    double max_err = 0.0;
+    double max_prob = 0.0;
+    for (const auto& dv : dirs) {
+      float proj_sum = 0.0f;
+      float s_total = 0.0f;
+      for (size_t t = 0; t < g.tri_cnt; t++) {
+        const float dot = dv[0] * g.tri_norm[3 * t + 0] + dv[1] * g.tri_norm[3 * t + 1] + dv[2] * g.tri_norm[3 * t + 2];
+        proj_sum += std::max(-dot * g.tri_area[t], 0.0f);
+        s_total += g.tri_area[t];
+      }
+      const double prob = lm_pcg::entry_weight(proj_sum, s_total);
+      const double d[3] = { dv[0], dv[1], dv[2] };
+      max_err = std::max(max_err, std::abs(prob - test_support::ComputeEntryWeight(faces, d)));
+      max_prob = std::max(max_prob, prob);
+    }
+    // Float accumulation over <= 64 sub-tris of O(1) area: 1e-5 absolute is
+    // ~100 ulp of a weight in [0, 1]; kAc3WeightAbsTol is set to it.
+    EXPECT_LT(max_err, 1e-5) << f.label;
+    EXPECT_LT(max_prob, 1.0) << f.label << ": the clamp bound; entered weight would stop following A";
+  }
+  // Empty shape: zero weight.
+  EXPECT_EQ(lm_pcg::entry_weight(0.0f, 0.0f), 0.0f);
 }
 
 }  // namespace

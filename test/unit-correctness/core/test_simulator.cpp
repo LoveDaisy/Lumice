@@ -1234,8 +1234,11 @@ namespace {
 // Drive the real production sampler for `n` rays, all with crystal-local
 // direction `d`. Mirrors the oracle's DriveEntrySampling but kept local so this
 // unit test does not depend on the golden-analytic support header.
+// Every ray starts at weight 1, so `weights_out` receives the entry weight
+// InitRay_p_fid multiplied in.
 std::vector<IdType> DriveToFaces(const Crystal& crystal, const float d[3], size_t n, uint32_t seed,
-                                 std::vector<std::array<float, 3>>* points_out = nullptr) {
+                                 std::vector<std::array<float, 3>>* points_out = nullptr,
+                                 std::vector<float>* weights_out = nullptr) {
   RandomNumberGenerator::GetInstance().SetSeed(seed);
   RayBuffer buf(n);
   buf.size_ = n;
@@ -1253,13 +1256,67 @@ std::vector<IdType> DriveToFaces(const Crystal& crystal, const float d[3], size_
   if (points_out) {
     points_out->resize(n);
   }
+  if (weights_out) {
+    weights_out->resize(n);
+  }
   for (size_t i = 0; i < n; i++) {
     faces[i] = buf[i].to_face_;
     if (points_out) {
       (*points_out)[i] = { buf[i].p_[0], buf[i].p_[1], buf[i].p_[2] };
     }
+    if (weights_out) {
+      (*weights_out)[i] = buf[i].w_;
+    }
   }
   return faces;
+}
+
+// The projected-area entry weight InitRay_p_fid applies to a ray of direction d:
+// A(d) / (S/2), with A the fan sub-triangles' projected area and S their total
+// area, recomputed here in double from the corners (not from the sampler's own
+// table).
+double ExpectedEntryAcceptance(const CrystalGeom& cf, const float d[3]) {
+  double a = 0.0;
+  double s = 0.0;
+  for (int slot = 0; slot < cf.face_cnt; slot++) {
+    if (!cf.face_present[slot]) {
+      continue;
+    }
+    const float* v = cf.face_vtx + static_cast<size_t>(slot) * kCrystalGeomMaxVtxPerFace * 3;
+    for (int k = 1; k + 1 < cf.face_vtx_cnt[slot]; k++) {
+      double e1[3];
+      double e2[3];
+      for (int c = 0; c < 3; c++) {
+        e1[c] = static_cast<double>(v[k * 3 + c]) - v[c];
+        e2[c] = static_cast<double>(v[(k + 1) * 3 + c]) - v[c];
+      }
+      // Half the cross product: area times unit normal.
+      const double an[3] = { 0.5 * (e1[1] * e2[2] - e1[2] * e2[1]), 0.5 * (e1[2] * e2[0] - e1[0] * e2[2]),
+                             0.5 * (e1[0] * e2[1] - e1[1] * e2[0]) };
+      s += std::sqrt(an[0] * an[0] + an[1] * an[1] + an[2] * an[2]);
+      a += std::max(-(an[0] * d[0] + an[1] * d[1] + an[2] * d[2]), 0.0);
+    }
+  }
+  return s > 0.0 ? std::min(1.0, a / (0.5 * s)) : 0.0;
+}
+
+// Every ray of one direction on one crystal shares A and S, so each must enter
+// (no ray is discarded) with exactly the weight A/(S/2) — an equality up to the
+// sampler's float accumulation, not a rate.
+void ExpectExactEntryWeight(const std::vector<IdType>& faces, const std::vector<float>& weights, double expected,
+                            const std::string& label) {
+  ASSERT_EQ(faces.size(), weights.size());
+  size_t discarded = 0;
+  size_t off_weight = 0;
+  double max_dev = 0.0;
+  for (size_t i = 0; i < faces.size(); i++) {
+    discarded += faces[i] == kInvalidId ? 1u : 0u;
+    const double dev = std::abs(static_cast<double>(weights[i]) - expected);
+    off_weight += dev > 1e-5 ? 1u : 0u;
+    max_dev = std::max(max_dev, dev);
+  }
+  EXPECT_EQ(discarded, 0u) << label << ": rays discarded at entry";
+  EXPECT_EQ(off_weight, 0u) << label << ": rays off the entry weight " << expected << ", max |dev| " << max_dev;
 }
 
 }  // namespace
@@ -1323,10 +1380,15 @@ TEST(InitRayPolygonSampling, SingleFaceDirectionHitsExpectedFace) {
 
   const float d[3] = { 0.0f, 0.0f, -1.0f };
   std::vector<std::array<float, 3>> pts;
-  const std::vector<IdType> faces = DriveToFaces(crystal, d, 4000, 12345, &pts);
+  std::vector<float> weights;
+  const std::vector<IdType> faces = DriveToFaces(crystal, d, 4000, 12345, &pts, &weights);
+  // Only the basal face is lit, so A is the basal area and well under S/2: every
+  // ray enters with that non-trivial weight, and all must land on the basal face.
+  const double expected_weight = ExpectedEntryAcceptance(cf, d);
+  ASSERT_LT(expected_weight, 0.9) << "the fixture no longer exercises a non-trivial entry weight";
+  ExpectExactEntryWeight(faces, weights, expected_weight, "prism_h1.2 -z");
 
   for (size_t i = 0; i < faces.size(); i++) {
-    ASSERT_NE(faces[i], kInvalidId);
     ASSERT_LT(faces[i], static_cast<IdType>(crystal.PolygonFaceCount()));
     EXPECT_EQ(faces[i], top_compact) << "ray " << i << " selected a non-illuminated face";
     EXPECT_NEAR(pts[i][2], expect_z, 1e-4f) << "sampled point off the top-basal plane";
@@ -1359,9 +1421,10 @@ TEST(InitRayPolygonSampling, SelectedFacesAreFrontFacing) {
       }
     }
     for (const auto& d : dirs) {
-      const std::vector<IdType> faces = DriveToFaces(crystal, d.data(), 2000, 777, nullptr);
+      std::vector<float> weights;
+      const std::vector<IdType> faces = DriveToFaces(crystal, d.data(), 2000, 777, nullptr, &weights);
+      ExpectExactEntryWeight(faces, weights, ExpectedEntryAcceptance(cf, d.data()), label);
       for (IdType f : faces) {
-        ASSERT_NE(f, kInvalidId) << label;
         ASSERT_LT(static_cast<size_t>(f), compact_to_slot.size()) << label;
         const int slot = compact_to_slot[f];
         const float* n = cf.face_normal + slot * 3;
@@ -1749,25 +1812,47 @@ AllocRunOutput RunLegacy(const SceneConfig& scene, size_t ray_num, size_t batche
   return out;
 }
 
-// A root segment is the one InitRay_p_fid stamped with no source face; every
-// traced child carries its parent's hit face as from_face_.
-bool IsRootSegment(const RaySeg& r) {
-  return r.from_face_ == kInvalidId && !r.is_continue_ && r.w_ >= 0.0f;
+// A root segment is one InitRay_other_info stamped: its root_ray_idx_ is its
+// own all_data index, which every traced child inherits unchanged, so the
+// predicate is exact.
+bool IsRootSegmentAt(const RayBuffer& all_data, size_t i) {
+  return all_data[i].root_ray_idx_ == i;
+}
+
+// The crystals the scenes below create, indexed by crystal_idx_: MakePrismEntry
+// prisms with unit face distances, so Crystal::CreatePrism(h) rebuilds each one.
+std::vector<Crystal> PrismsOfHeights(const std::vector<float>& heights) {
+  std::vector<Crystal> crystals;
+  crystals.reserve(heights.size());
+  for (float h : heights) {
+    crystals.push_back(Crystal::CreatePrism(h));
+  }
+  return crystals;
+}
+
+// A root's weight before InitRay_p_fid multiplied in the projected-area entry
+// weight A/(S/2): the weight it was born (or carried in) with, times its entry's
+// allocation correction. The entry weight is recomputed independently from the
+// root's crystal-local direction and its crystal's corners.
+double BirthWeightOf(const RaySeg& r, const std::vector<Crystal>& crystals) {
+  const double a = ExpectedEntryAcceptance(crystals.at(r.crystal_idx_).CfGeom(), r.d_);
+  return a > 0.0 ? r.w_ / a : 0.0;
 }
 
 struct RootTally {
-  std::map<IdType, size_t> count;   // by crystal_idx_ (== per-(layer,ci) crystal instance here)
-  std::map<IdType, double> weight;  // Σ w_ at birth, by the same key
+  std::map<IdType, size_t> count;  // dealt roots, by crystal_idx_ (== per-(layer,ci) crystal instance here)
+  std::map<IdType, double> birth;  // Σ birth weight (BirthWeightOf), by the same key
 };
 
-RootTally TallyRoots(const RayBuffer& all_data) {
+RootTally TallyRoots(const RayBuffer& all_data, const std::vector<Crystal>& crystals) {
   RootTally t;
   for (size_t i = 0; i < all_data.size_; i++) {
-    const auto& r = all_data[i];
-    if (IsRootSegment(r)) {
-      t.count[r.crystal_idx_]++;
-      t.weight[r.crystal_idx_] += r.w_;
+    if (!IsRootSegmentAt(all_data, i)) {
+      continue;
     }
+    const auto& r = all_data[i];
+    t.count[r.crystal_idx_]++;
+    t.birth[r.crystal_idx_] += BirthWeightOf(r, crystals);
   }
   return t;
 }
@@ -1812,20 +1897,21 @@ TEST(RayAllocationLegacyPath, AdaptiveDealsByQAndChargesByP) {
   ASSERT_EQ(out.batches.size(), 1u);
   ASSERT_EQ(out.all_data.size(), 1u);
 
-  const auto tally = TallyRoots(out.all_data[0]);
+  const auto tally = TallyRoots(out.all_data[0], PrismsOfHeights({ 1.0f, 0.3f }));
   ASSERT_EQ(tally.count.size(), 2u) << "both entries must be dealt rays";
   // Dealt by q, not by p (proportional would deal 500/500).
   EXPECT_EQ(tally.count.at(0), 333u);
   EXPECT_EQ(tally.count.at(1), 667u);
-  // Every root of entry i was born at w · c_i: the per-entry weight sum is
-  // n_i · w · c_i to float rounding.
-  EXPECT_NEAR(tally.weight.at(0), 333.0 * kW * 1.5, 1e-3);
-  EXPECT_NEAR(tally.weight.at(1), 667.0 * kW * 0.75, 1e-3);
+  // Every root of entry i was born at w · c_i (before its projected-area entry
+  // weight): the per-entry birth-weight sum is n_i · w · c_i to float rounding.
+  EXPECT_NEAR(tally.birth.at(0), 333.0 * kW * 1.5, 1e-5 * 333.0 * 1.5);
+  EXPECT_NEAR(tally.birth.at(1), 667.0 * kW * 0.75, 1e-5 * 667.0 * 0.75);
   // AC6: Σ n_i · w · c_i == N · w within one ray at the largest correction.
-  const double total_root_weight = tally.weight.at(0) + tally.weight.at(1);
-  EXPECT_NEAR(total_root_weight, static_cast<double>(kN) * kW, 1.5);
-  // And the batch charges exactly what it emitted — not `w · N`.
-  EXPECT_NEAR(out.batches[0].emitted_energy_, total_root_weight, 1e-3);
+  const double dealt_charge = 333.0 * kW * 1.5 + 667.0 * kW * 0.75;
+  EXPECT_NEAR(dealt_charge, static_cast<double>(kN) * kW, 1.5);
+  // And the batch charges exactly what it dealt — not `w · N`, and not the
+  // weight that entered after the projected-area entry weight.
+  EXPECT_NEAR(out.batches[0].emitted_energy_, dealt_charge, 1e-3);
   EXPECT_EQ(out.batches[0].root_ray_count_, kN);
 }
 
@@ -1861,23 +1947,24 @@ TEST(RayAllocationLegacyPath, ColdStartOnUniformPIsBitIdenticalToProportional) {
   EXPECT_EQ(mismatched, 0u);
   // Positive control on the comparison itself: q != p does move the bits.
   auto skew = RunLegacy(adap_scene, kN, 1, 11, MakeOnline(adap_scene, { { 1.0f, 3.0f } }));
-  EXPECT_NE(TallyRoots(skew.all_data[0]).count.at(0), TallyRoots(prop.all_data[0]).count.at(0));
+  const auto prisms = PrismsOfHeights({ 1.0f, 0.3f });
+  EXPECT_NE(TallyRoots(skew.all_data[0], prisms).count.at(0), TallyRoots(prop.all_data[0], prisms).count.at(0));
 }
 
 TEST(RayAllocationLegacyPath, NoSnapshotMakesTheLayerProportional) {
   // adaptive mode, but the batch binds no RayAllocationOnline — the shape of an
   // analysis session (doc/raypath-analysis-panel.md §10): the layer deals by p,
   // whole. Pinned by the dealt counts (500/500) and by every correction being
-  // exactly 1.0f (root weights == w, emitted == N).
+  // exactly 1.0f (root birth weights == w, emitted == N).
   constexpr size_t kN = 1000;
   auto out = RunLegacy(MakeTwoEntryScene(SceneConfig::RayAllocationMode::kAdaptive), kN, 1, 5, nullptr);
-  const auto tally = TallyRoots(out.all_data[0]);
+  const auto prisms = PrismsOfHeights({ 1.0f, 0.3f });
+  const auto tally = TallyRoots(out.all_data[0], prisms);
   EXPECT_EQ(tally.count.at(0), 500u);
   EXPECT_EQ(tally.count.at(1), 500u);
   size_t roots_off_nominal = 0;
   for (size_t i = 0; i < out.all_data[0].size_; i++) {
-    const auto& r = out.all_data[0][i];
-    if (IsRootSegment(r) && r.w_ != 1.0f) {
+    if (IsRootSegmentAt(out.all_data[0], i) && std::abs(BirthWeightOf(out.all_data[0][i], prisms) - 1.0) > 1e-5) {
       roots_off_nominal++;
     }
   }
@@ -1916,15 +2003,16 @@ TEST(RayAllocationLegacyPath, ContinuationLayerUsesItsOwnCorrectionAndIsNotCharg
   //   layer 1: shares p (1/2, 1/2) vs q (4/5, 1/5) → (0.625, 2.5)
   const auto c0 = ComputeRayAllocationCorrection({ 1.0f, 1.0f }, { 1.0f, 3.0f });
   const auto c1 = ComputeRayAllocationCorrection({ 1.0f, 1.0f }, { 4.0f, 1.0f });
-  const auto tally = TallyRoots(all_data);
+  const auto prisms = PrismsOfHeights({ 1.0f, 0.3f, 1.0f, 0.3f });
+  const auto tally = TallyRoots(all_data, prisms);
   ASSERT_EQ(tally.count.size(), 4u) << "every (layer, entry) must be dealt rays";
   EXPECT_EQ(tally.count.at(0), 250u);
   EXPECT_EQ(tally.count.at(1), 750u);
 
   // AC3: charged = layer 0 only.
-  const double layer0_weight = tally.weight.at(0) + tally.weight.at(1);
-  EXPECT_NEAR(layer0_weight, 250.0 * c0[0] + 750.0 * c0[1], 1e-3);
-  EXPECT_NEAR(out.batches[0].emitted_energy_, layer0_weight, 1e-3);
+  const double layer0_weight = tally.birth.at(0) + tally.birth.at(1);
+  EXPECT_NEAR(layer0_weight, 250.0 * c0[0] + 750.0 * c0[1], 1e-5 * kN);
+  EXPECT_NEAR(out.batches[0].emitted_energy_, 250.0 * c0[0] + 750.0 * c0[1], 1e-3);
   EXPECT_NEAR(out.batches[0].emitted_energy_, static_cast<double>(kN), 2.0);
 
   // AC4: layer 1 re-deals the continuation weight by its own corrections.
@@ -1938,7 +2026,10 @@ TEST(RayAllocationLegacyPath, ContinuationLayerUsesItsOwnCorrectionAndIsNotCharg
   const size_t layer1_roots = tally.count.at(2) + tally.count.at(3);
   // Layer 1 deals its (continuation count) rays as (4/5, 1/5) of that count.
   EXPECT_NEAR(static_cast<double>(tally.count.at(2)), 0.8 * static_cast<double>(layer1_roots), 1.0);
-  const double undone = tally.weight.at(2) / c1[0] + tally.weight.at(3) / c1[1];
+  // Each layer-1 root carries one continuation segment's weight times c_1[ci]
+  // times its own projected-area entry weight; BirthWeightOf divides the entry
+  // weight out, leaving the corrected continuation weight.
+  const double undone = tally.birth.at(2) / c1[0] + tally.birth.at(3) / c1[1];
   EXPECT_NEAR(undone, continuation_weight, continuation_weight * 1e-4);
 }
 
@@ -2121,12 +2212,12 @@ TEST(RayAllocationOnline, ColdStartDealsTheLiveEntriesUniformly) {
   auto two = MakeTwoEntryScene(SceneConfig::RayAllocationMode::kAdaptive);
   two.ms_[0].setting_[0].crystal_proportion_ = 3.0f;
   auto out = RunLegacy(two, 1000, 1, 5, std::make_shared<RayAllocationOnline>(two));
-  const auto roots = TallyRoots(out.all_data[0]);
+  const auto roots = TallyRoots(out.all_data[0], PrismsOfHeights({ 1.0f, 0.3f }));
   EXPECT_EQ(roots.count.at(0), 500u);
   EXPECT_EQ(roots.count.at(1), 500u);
   // Dealt uniformly but charged by p: corrections (0.75/0.5, 0.25/0.5) = (1.5, 0.5).
-  EXPECT_NEAR(roots.weight.at(0), 500.0 * 1.5, 1e-3);
-  EXPECT_NEAR(roots.weight.at(1), 500.0 * 0.5, 1e-3);
+  EXPECT_NEAR(roots.birth.at(0), 500.0 * 1.5, 1e-5 * 500.0 * 1.5);
+  EXPECT_NEAR(roots.birth.at(1), 500.0 * 0.5, 1e-5 * 500.0 * 0.5);
   EXPECT_NEAR(out.batches[0].emitted_energy_, 1000.0, 1e-3);
 }
 
@@ -2144,9 +2235,10 @@ TEST(RayAllocationOnline, EachBatchDealsByWhatTheBatchesBeforeItMeasuredAndCharg
   auto out = RunLegacy(scene, kN, 3, 23, online);
   ASSERT_EQ(out.batches.size(), 3u);
   ASSERT_EQ(out.all_data.size(), 3u);
+  const auto prisms = PrismsOfHeights({ 1.0f, 1.0f, 1.0f });
   std::vector<RootTally> roots;
   for (const auto& all_data : out.all_data) {
-    roots.push_back(TallyRoots(all_data));
+    roots.push_back(TallyRoots(all_data, prisms));
   }
   // Batch 0: the cold start, 2000 each.
   EXPECT_EQ(roots[0].count.at(0), 2000u);
@@ -2157,7 +2249,7 @@ TEST(RayAllocationOnline, EachBatchDealsByWhatTheBatchesBeforeItMeasuredAndCharg
   EXPECT_GT(roots[1].count.at(0), 2000u);
   for (size_t b = 0; b < 3; b++) {
     double charged = 0.0;
-    for (const auto& [id, w] : roots[b].weight) {
+    for (const auto& [id, w] : roots[b].birth) {
       charged += w;
     }
     EXPECT_NEAR(out.batches[b].emitted_energy_, charged, 1e-2) << "batch " << b;

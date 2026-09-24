@@ -611,6 +611,24 @@ LM_FN uint32_t feistel_bijection(uint32_t i, uint32_t n, uint32_t seed) {
   return cur % n;
 }
 
+// Projected-area entry weight — the one formula CPU InitRay_p_fid and the
+// Metal / CUDA gen_root / transit_root kernels all multiply into a ray's weight
+// at crystal entry. A ray born with a fixed weight meets orientation o of shape
+// g with probability proportional to p(o)·p(g)·A(o,g,d); `proj_sum` =
+// Σ max(-d·n·area, 0) over the shape's entry triangles IS A, and scaling the
+// ray's weight by A / (S/2) (`s_total` = S = Σ area) supplies that missing
+// factor. It is a weight multiplier, not a probability to draw against: it is
+// the expectation of keeping the ray with that probability, applied to every
+// ray so none is discarded (same expectation, no higher variance, no idle GPU
+// lanes). S/2 bounds A for every convex body in every direction (the lit and
+// unlit sides project to the same A and together are at most S), so the min()
+// never binds on a valid crystal; it only guards float round-off. An empty shape
+// (s_total == 0) weighs 0.
+LM_FN float entry_weight(float proj_sum, float s_total) {
+  const float s_half = s_total * 0.5f;
+  return s_half > 0.0f ? LM_FMIN(1.0f, proj_sum / s_half) : 0.0f;
+}
+
 // RandomSample (geo3d.cpp:112-150) — categorical CDF with negative-weight clip.
 // Mirrors host behavior: non-positive total falls back to bin 0.
 LM_FN uint32_t categorical_sample(LM_THREAD const float* weights, uint32_t n, float u_in) {

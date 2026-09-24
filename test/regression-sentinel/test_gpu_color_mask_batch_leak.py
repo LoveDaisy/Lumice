@@ -19,7 +19,7 @@ Regression contract
     ratio between CPU and Metal must stay within a tight symmetric band
     around 1.0. A resurrection of the batch-leak bug decorrelates the
     per-class marginals across backends and drops the min/max ratio well
-    below the band (issue.md measured ~0.14–0.32 on broken code).
+    below the band (measured ~0.14–0.32 on the broken code).
 
 Test protocol (issue-scenario contract)
     - Reuses the exact fixture that reproduced the bug in prod
@@ -80,7 +80,7 @@ COS_TOL = 0.90
 
 # Per-class dominant-pixel min/max ratio floor. On the fix each class should
 # be ~1.0 up to MC noise; on the leaky code min/max collapses to ~0.14
-# (RED 7.03×) or ~0.32 (GREEN 3.09×) per issue.md. 0.65 leaves headroom for
+# (RED 7.03×) or ~0.32 (GREEN 3.09×) on the broken code. 0.65 leaves headroom for
 # statistical noise + JPEG quantization at 4M rays while still catching a
 # structural regression by a wide margin.
 PER_CLASS_MIN_RATIO = 0.65

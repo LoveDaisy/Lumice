@@ -1414,17 +1414,24 @@ kernel void gen_root_kernel(
   //    InitRay_p_fid (simulator.cpp:106-124) is single-shape; we walk it
   //    unchanged inside the shape's window (same proj_prob = max(-d·n * area,
   //    0), same categorical_sample, same sample_triangle, same tri_to_poly
-  //    lookup — the only difference is that tri_id / tri_to_poly indices are
-  //    ABSOLUTE positions in the flattened pool buffer, which UploadCrystalPool
-  //    already baked into tri_to_poly's values).
+  //    lookup, same projected-area entry weight — the only difference is that
+  //    tri_id / tri_to_poly indices are ABSOLUTE positions in the flattened pool
+  //    buffer, which UploadCrystalPool already baked into tri_to_poly's values).
+  //    proj_sum (= the shape's projected area A along d) and s_total (= its
+  //    surface area S) ride the same walk: S must be summed per ray, not per
+  //    dispatch, because rays of one dispatch draw different pool shapes.
   float proj_prob[kMaxTriPerKernel];
   uint n_tri = min(tri_cnt, kMaxTriPerKernel);
+  float proj_sum = 0.0f;
+  float s_total = 0.0f;
   for (uint t = 0u; t < n_tri; t++) {
     uint g = tri_off + t;
     float dot = d_crystal[0] * tri_norm[g * 3 + 0]
               + d_crystal[1] * tri_norm[g * 3 + 1]
               + d_crystal[2] * tri_norm[g * 3 + 2];
     proj_prob[t] = max(-dot * tri_area[g], 0.0f);
+    proj_sum += proj_prob[t];
+    s_total += tri_area[g];
   }
   float u_cat = pcg_uniform(stream);
   uint local_tri = categorical_sample(proj_prob, n_tri, u_cat);
@@ -1446,8 +1453,11 @@ kernel void gen_root_kernel(
     to_face = tri_to_poly[tri_id];
   }
   // Per-ray spd weight × this dispatch's ray-allocation correction
-  // (host-computed; 1.0f under proportional allocation, so the multiply is exact).
-  float weight = wl_pool[wl_idx].spd_weight * gp.alloc_correction;
+  // (host-computed; 1.0f under proportional allocation, so the multiply is exact)
+  // × the projected-area entry weight A / (S/2) (entry_weight, pcg_shared.h
+  // — the formula CPU InitRay_p_fid multiplies in). Every ray is traced; none is
+  // dropped for its orientation, so no lane idles on a rejected ray.
+  float weight = wl_pool[wl_idx].spd_weight * gp.alloc_correction * entry_weight(proj_sum, s_total);
   if (to_face == kInvalidId) {
     // Mirrors InitRay_p_fid fallback (simulator.cpp:92-94): zero weight when
     // a triangle has no polygon backing so downstream HitSurface can drop it.
@@ -1570,15 +1580,21 @@ kernel void transit_root_kernel(
 
   // 3. Triangle area×facing weighted pick → uniform point on the chosen tri.
   //    Restricted to the picked shape's window in the flattened pool buffer,
-  //    identical to gen_root_kernel §3.
+  //    identical to gen_root_kernel §3, including the projected-area entry
+  //    weight: a continuation ray meets the NEW crystal with the same missing
+  //    A(o,g,d) factor a root ray does.
   float proj_prob[kMaxTriPerKernel];
   uint n_tri = min(tri_cnt, kMaxTriPerKernel);
+  float proj_sum = 0.0f;
+  float s_total = 0.0f;
   for (uint t = 0u; t < n_tri; t++) {
     uint g = tri_off + t;
     float dot = d_crystal[0] * tri_norm[g * 3u + 0u]
               + d_crystal[1] * tri_norm[g * 3u + 1u]
               + d_crystal[2] * tri_norm[g * 3u + 2u];
     proj_prob[t] = max(-dot * tri_area[g], 0.0f);
+    proj_sum += proj_prob[t];
+    s_total += tri_area[g];
   }
   float u_cat = pcg_uniform(stream);
   uint local_tri = categorical_sample(proj_prob, n_tri, u_cat);
@@ -1601,9 +1617,10 @@ kernel void transit_root_kernel(
 
   // 4. Carry continuation weight × this (layer, ci)'s ray-allocation correction
   //    (the continuation layer re-deals its rays, so it owes its own factor —
-  //    1.0f under proportional allocation); mirror InitRay_p_fid fallback (zero
+  //    1.0f under proportional allocation) × the projected-area entry weight
+  //    A / (S/2), as in gen_root_kernel; mirror InitRay_p_fid fallback (zero
   //    weight when a triangle has no polygon backing).
-  float w = cont_w_in[tid] * gp.alloc_correction;
+  float w = cont_w_in[tid] * gp.alloc_correction * entry_weight(proj_sum, s_total);
   if (to_face == kInvalidId) {
     w = 0.0f;
   }

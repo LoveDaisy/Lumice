@@ -293,6 +293,13 @@ pass 没有做原型：既然只加 bounds 的版本已是净亏，拆分在单�
 [BENCHMARK] {"mode": "multi", "workers": 8, "cores": 8, "rays": 10000000, "wall_sec": 0.6, "setup_sec": 0.02, "active_sec": 0.58, "rays_per_sec": 17241379.3, "rate_basis": "steady", "isa": "native"}
 ```
 
+**`rays` 是被追迹的光线数**，所有路线的吞吐分子都是它。每条路线都追迹发给它的每一条光线——
+投影面积入射因子是权重（`lm_pcg::entry_weight`，`src/core/shared/pcg_shared.h`），不是丢弃——
+所以它同时也是发放数，即 `ray_num` 与所有面向用户的计数（`LUMICE_GetSimRayCount`、GUI 的
+"Total rays"、`Stats: sim_rays`）用的那个数。一条在追迹前丢弃光线的路线会打破这个恒等式，
+它的 `rays_per_sec` 会相对其他路线虚高（被丢弃的光线几乎零成本）：这样的路线在这里必须只计
+它实际追迹的光线。
+
 `rays_per_sec` 是 `active_sec`（从首条光线追踪到 IDLE 的窗口）上的**稳态追踪率**，
 **不是** `rays / wall_sec`——但这只在 `rate_basis` 为 `steady` 时成立，而这正是
 `rate_basis` 这个字段存在的意义。两个退化档（`wall_fallback` / `active_short`）都退回
@@ -516,6 +523,15 @@ dispatch，N≥5 交错（CoV>15% 按脚本自身的判据升到 N=9——home-w
 Windows 原生，同 CPU/GPU，见 `doc/machines.md`）——它们的 legacy CPU 列相差幅度超出单纯 WSL
 虚拟化开销能解释的范围（`ms_multi_crystal`：home-win legacy 1.82 M/s vs home-wsl legacy
 3.90 M/s，即该 config 下原生反而更慢），按实测记录，不做调和。
+
+**2026-09-24 复测，未变**（Mac、home-wsl、home-win；`origin/main@b6ed96be` 对其上叠加投影面积入射
+权重改动的分支，两臂都重建，交错且轮换先后顺序，每臂 3–8 次、每次为脚本自身 N≥5 的中位）：每格分支/main
+比值 0.97–1.09，legacy 与 GPU 皆然（Mac Metal 在主机有其他负载时测得，散布 0.99–1.20——没有回退，也不算提升），因此上表数值一个未改；`rays` 在每条路线上都是追迹数
+且等于发放数（见上方 `[BENCHMARK]` 说明）。这次复测暴露一条测量状态事实：**home-win** 上 legacy
+`ms_multi_crystal` 与 `ms_multi_crystal_complex_filter` 两格（1.82 / 9.39 M/s）只在机器闲置后的
+**第一次**运行能复现；此后任一臂的每次运行都读 **1.62 / 8.64 M/s**（CoV 0.1–0.3%），两臂同样低
+11% / 8%。另两格 legacy 与全部 CUDA 格首次与之后读数相同。与热机状态下的 home-win legacy 数字比较时，
+先丢弃第一次运行，或轮换两臂顺序。
 
 **要点**：
 - **5× 假低已修**：`bench_light_single_ms` 4060Ti 读 **130.5 M/s** @0.2% CoV，命中 explore-315 独立实测

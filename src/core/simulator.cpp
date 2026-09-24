@@ -33,6 +33,7 @@
 #include "core/math.hpp"
 #include "core/optics.hpp"
 #include "core/shared/lat_path_selection.hpp"
+#include "core/shared/pcg_shared.h"
 #include "core/trace_ops.hpp"
 #include "core/worker_projection.hpp"
 #include "util/env_knobs.hpp"
@@ -179,11 +180,37 @@ void InitRay_p_fid(const Crystal& curr_crystal, RayBuffer* ray_buf_ptr) {
   }
   detail::BuildEntrySubTris(cf, subtri);
 
+  // Projected-area entry weight. A ray born with a fixed weight hits orientation
+  // o of shape g with probability proportional to p(o)·p(g)·A(o,g,d), where A is
+  // the crystal's area projected along d — and A is exactly Σ proj_prob below,
+  // already computed per ray for the face selection. Multiplying each ray's
+  // weight by A / (S/2) supplies that missing marginal factor. S/2 bounds A for
+  // every convex body in every direction (divergence theorem: the lit and the
+  // unlit sides project to the same A, and together they are at most S), so the
+  // factor never exceeds 1 and needs no per-family calibration; S is summed per
+  // call, i.e. per sampled shape, which is what makes the g factor come out
+  // right without a separate allocation mechanism.
+  //
+  // This is the conditional expectation of keeping the ray with probability
+  // A / (S/2) and discarding it otherwise: the same expectation at every pixel,
+  // no higher variance, and every ray dealt to this entry is traced — which is
+  // what keeps GPU lanes from idling on rejected rays. It multiplies w_ in
+  // place, so it relies on w_ already holding the ray's birth weight
+  // (InitRay_d_w_previdx on the first layer, the carried-in weight on later
+  // ones); both callers set it before calling here.
+  float s_total = 0.0f;
+  for (size_t j = 0; j < subtri_cnt; j++) {
+    s_total += subtri[j].area;
+  }
   for (auto& r : ray_buf) {
     const auto* d = r.d_;
+    float proj_sum = 0.0f;
     for (size_t j = 0; j < subtri_cnt; j++) {
       proj_prob[j] = std::max(-Dot3(d, subtri[j].n) * subtri[j].area, 0.0f);
+      proj_sum += proj_prob[j];
     }
+    // Same formula the Metal / CUDA entry kernels call (single source).
+    r.w_ *= lm_pcg::entry_weight(proj_sum, s_total);
     int tri_id = 0;
     RandomSample(static_cast<int>(subtri_cnt), proj_prob, &tri_id);
     SampleTrianglePoint(subtri[tri_id].v, r.p_);

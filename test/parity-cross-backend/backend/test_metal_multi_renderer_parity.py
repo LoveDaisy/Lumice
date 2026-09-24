@@ -43,6 +43,37 @@ Bars (the checks are the shared module's (a)–(d)):
     from the oracle's own noise. A plane routed to the wrong renderer reads
     ~0 on either ruler (0.0000 measured, by writing every renderer's pixels
     into plane 0).
+    RE-CALIBRATED 0.80 -> 0.65 when entry acceptance started keeping each ray
+    dealt to a crystal with probability A/(S/2) (``doc/configuration.md``,
+    ``proportion``) — the discarding form, since replaced on every route by a
+    per-ray weight that traces them all. About half the dealt rays stopped entering, so at the same
+    20M every plane got noisier and the oracle stopped agreeing with ITSELF at
+    0.80: legacy against legacy now reads 0.775 / 0.794 / 0.769 on renderer[0]
+    (0.909 / 0.917 / 0.910 on renderer[1]) over seed pairs 42-43 / 42-44 /
+    43-44, and Metal against legacy 0.749 / 0.787 / 0.815 (0.904 / 0.911 /
+    0.917) at seeds 42 / 43 / 44 — still indistinguishable from the oracle's
+    own noise, so what went red was the floor, not the backend. 0.65 keeps the
+    gap the old floor had under the oracle's worst self-agreement (about 0.09 then,
+    0.12 now) and is still 0.65 above the wrong-plane break it exists for. The
+    alternative, doubling the scene to 40M, was measured on the CUDA mirror
+    (not this file's own backend — a deliberate substitution, not a missing
+    measurement: both backends project through the same
+    ``lm_proj::ProjectExitToPixel`` and read the same legacy oracle, so a 40M
+    probe answers the same "does more ray budget restore 0.80" question on
+    either one; the 0.65 floor itself, unlike this doubling probe, is NOT
+    borrowed — it rests on this file's own 20M seed-pair data above) and
+    does not restore the old figure (0.863 against the historical 0.8885 there)
+    while doubling the ~35 s single-worker legacy oracle on a CI leg that is
+    already near the longest job; so the floor moved and the budget did not.
+    This leaves the [0.65, 0.80) band unmonitored: a genuine cross-backend
+    divergence landing there (a corr drop of up to ~0.15 from the ~0.80–0.92
+    range both backends measure against legacy above) would not fail this
+    test, while anything at or below the oracle's own worst self-agreement
+    (~0.749–0.783 measured above) is already indistinguishable from noise and
+    anything near the wrong-plane break (~0.0) is still caught with a 0.65
+    margin. ``corr_floor=0.65`` for this scene is duplicated in
+    ``test_cuda_multi_renderer_parity.py``'s ``_SCENES`` — if this value moves
+    again, update both files together.
   * ledger tolerance, per scene:
       - single wavelength: 2%. Metal's ``R`` sits 0.27–0.47% below legacy's on
         every renderer of ``multi_lens`` — and by the same six digits in a
@@ -121,7 +152,7 @@ _CONFIGS_DIR = get_project_root() / "test" / "e2e" / "configs"
 assert _DS_BH == _DS_BW, "the battery's block is square; the Scene rows assume one tile size"
 _SCENES = [
     Scene("multi_lens", 3, block=_DS_BH, corr_floor=T_RAW_CORR_DS, ledger_tol=0.02),
-    Scene("multi_renderer_parity_dual", 2, block=16, corr_floor=0.80, ledger_tol=0.05),
+    Scene("multi_renderer_parity_dual", 2, block=16, corr_floor=0.65, ledger_tol=0.05),
 ]
 
 pytestmark = pytest.mark.skipif(

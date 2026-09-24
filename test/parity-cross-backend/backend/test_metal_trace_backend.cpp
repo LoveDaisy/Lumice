@@ -7,6 +7,7 @@
 
 #if defined(__APPLE__)
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <set>
@@ -33,8 +34,9 @@ using metal_test::ShouldSkipMetalTests;
 
 // =============================================================================
 // Test E — single-layer parity: CPU vs Metal with identical SessionSpec and
-// seed must produce numerically close XYZ images (per-channel sum relative
-// error ≤ 1e-4, per plan §6 / §8 unified threshold).
+// seed must produce XYZ images whose per-channel sums agree within the
+// sampling spread of the projected-area entry weight (derivation at the
+// assertion).
 // =============================================================================
 TEST(MetalTraceBackend, SingleLayerXyzMatchesCpu) {
   if (ShouldSkipMetalTests()) {
@@ -50,7 +52,8 @@ TEST(MetalTraceBackend, SingleLayerXyzMatchesCpu) {
   spec.wl = WlParam{ 550.0f, 1.0f };
   spec.seed = 42;
 
-  constexpr size_t kRayCount = 4096;
+  // Sized for the sampling bound below, not for the ULP floor: see there.
+  constexpr size_t kRayCount = size_t{ 1 } << 18;
   HostRayBatch host;
   host.count = kRayCount;
   host.crystal = nullptr;
@@ -90,26 +93,29 @@ TEST(MetalTraceBackend, SingleLayerXyzMatchesCpu) {
   EXPECT_GT(cpu_total, 0.0);
   EXPECT_GT(metal_total, 0.0);
 
-  // Per-channel sum comparison. Both backends consume the same root rays
-  // (deterministic InitRayFirstMs from spec.seed) and the kernel matches
-  // RectangularProject byte-for-byte at the source level. The residual
-  // disparity comes from two sources, neither of which the kernel can
-  // eliminate:
-  //   1) GPU vs CPU transcendentals (atan2/asin/sqrt) differ at the ULP
-  //      level. Over 8 max_hits worth of trace math this accumulates to
-  //      ~5e-5 per ray — visible in the per-channel sum.
-  //   2) GPU atomic_fetch_add on the XYZ image runs in nondeterministic
-  //      order across threadgroups; float addition is non-associative so
-  //      the running total drifts from a sequential CPU sum.
-  // 5e-4 captures observed disparity (~2.4e-4 with mathMode=Safe) with
-  // 2x headroom; plan §1 originally specified 1e-2, plan §8 suggested
-  // tightening to 1e-4 — empirically the latter is below the floor that
-  // GPU/CPU parity can hit on this code.
+  // Per-channel sum comparison. The two backends do NOT trace the same root
+  // rays: `FromHost` with a null crystal lets each generate its own (CPU via
+  // InitRayFirstMs on the host RNG, Metal via gen_root_kernel on PCG). What
+  // makes the sums comparable is energy accounting, not ray identity — on this
+  // full-sky rectangular render every exit lands, so each backend's total is
+  // Σ (per-ray entry weight) minus the max_hits tail.
+  //
+  // The projected-area entry weight a = A/(S/2) depends on each ray's own
+  // direction, and the two backends draw different directions, so the totals
+  // carry sampling noise the old 5e-4 bound (a GPU-vs-CPU ULP/atomic-order
+  // floor) cannot absorb. Under the default uniform orientation a averages
+  // exactly 1/2 (Cauchy: mean projected area S/4) and, being in [0, 1], has
+  // Var(a) <= 1/4, so each total's relative SD is at most 1/sqrt(N) and their
+  // difference's sqrt(2/N); 5 of those at N = 2^18 is 1.4%. A backend that
+  // skipped the entry weight lands ~2x off, one that got A or S wrong shifts
+  // the mean by far more than 1.4% — the formula itself is pinned per ray by
+  // DeviceSamplingPolygonOracle and the Metal entry-weight oracle tests.
+  const double rel_tol = 5.0 * std::sqrt(2.0 / static_cast<double>(kRayCount));
   for (int c = 0; c < 3; c++) {
     double scpu = ChannelSum(xyz_cpu, c);
     double smetal = ChannelSum(xyz_metal, c);
     double rel = RelErr(scpu, smetal);
-    EXPECT_LT(rel, 5e-4) << "channel=" << c << " cpu=" << scpu << " metal=" << smetal;
+    EXPECT_LT(rel, rel_tol) << "channel=" << c << " cpu=" << scpu << " metal=" << smetal;
   }
 }
 

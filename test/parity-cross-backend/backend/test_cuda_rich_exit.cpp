@@ -26,6 +26,7 @@
 #if defined(LUMICE_CUDA_ENABLED)
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -45,6 +46,8 @@
 #include "core/exit_seam.hpp"
 #include "core/raypath.hpp"
 #include "cuda_test_helpers.hpp"  // scrum-328.2 Step 5: shared scene / render fixtures
+#include "support/env_var.hpp"
+#include "support/incidence_sampling_oracle.hpp"
 
 namespace lumice {
 namespace {
@@ -933,7 +936,11 @@ TEST(CudaRootGen, PerRayEntryPointGeometricConsistency) {
   ASSERT_EQ(hooks.ReadbackGenDirs(gen_dirs, kRayCount), 3u * kRayCount);
   ASSERT_EQ(hooks.ReadbackRootEntryPoint(gen_p, gen_f, kRayCount), kRayCount);
   CudaEntryVerifyStats gen_st = VerifyCudaEntryPoints(gt, gen_dirs, gen_p, gen_f, kRayCount, "gen");
-  EXPECT_GT(gen_st.valid, kRayCount / 2) << "gen: too few valid entry samples (drops=" << gen_st.drops << ")";
+  // A solid share, not "most": the projected-area acceptance keeps a ray with
+  // probability A/(S/2), ~0.51 for this fixed axis and sun and exactly 1/2 on
+  // average for the random-axis transit layer, so a majority bar would sit on
+  // the expected value itself.
+  EXPECT_GT(gen_st.valid, kRayCount / 4) << "gen: too few valid entry samples (drops=" << gen_st.drops << ")";
 
   // --- Layer 1: transit over the compacted continuation set [0, n_cont) ---
   const size_t n_cont = h0->ContinuationCount();
@@ -949,9 +956,301 @@ TEST(CudaRootGen, PerRayEntryPointGeometricConsistency) {
   ASSERT_EQ(hooks.ReadbackGenDirs(tr_dirs, n_cont), 3u * n_cont);
   ASSERT_EQ(hooks.ReadbackRootEntryPoint(tr_p, tr_f, n_cont), n_cont);
   CudaEntryVerifyStats tr_st = VerifyCudaEntryPoints(gt, tr_dirs, tr_p, tr_f, n_cont, "transit");
-  EXPECT_GT(tr_st.valid, n_cont / 2) << "transit: too few valid entry samples (drops=" << tr_st.drops << ")";
+  EXPECT_GT(tr_st.valid, n_cont / 4) << "transit: too few valid entry samples (drops=" << tr_st.drops << ")";
 
   backend.EndSession();
+}
+
+
+// ---- Projected-area entry weight, judged by the CPU oracle ---------------------
+//
+// CUDA sibling of MetalEntryWeight.* (test_metal_root_gen.cpp). The gen_root /
+// transit kernels multiply each ray's weight by A/(S/2)
+// (lm_pcg::entry_weight) and trace every ray. These cases read back what
+// the DEVICE did — the crystal-local direction (ReadbackGenDirs), the entry
+// face (ReadbackRootEntryPoint) and the root weight (ReadbackRootW, over the
+// carried-in weight for transit) — and judge each ray's entry weight with the
+// analytic oracle and comparator the CPU sampler is judged by
+// (test/support/incidence_sampling_oracle.hpp). Direct parity with the CPU
+// oracle, NOT the cross-backend parity battery, which compares backends with
+// each other and so could not see a factor all three used to omit.
+namespace {
+
+constexpr size_t kAcceptRays = size_t{ 1 } << 17;
+constexpr int kEntryPolarBins = 8;
+constexpr double kAcceptKSigma = 5.0;
+// Same device float tolerance as the Metal sibling.
+constexpr double kEntryWeightAbsTol = 1e-4;
+
+void SetUniformOrientation(ScatteringSetting& s) {
+  s.crystal_.axis_.azimuth_dist = Distribution{ DistributionType::kUniform, 0.0f, 360.0f };
+  s.crystal_.axis_.latitude_dist = Distribution{ DistributionType::kUniform, 90.0f, 360.0f };
+  s.crystal_.axis_.roll_dist = Distribution{ DistributionType::kUniform, 0.0f, 360.0f };
+}
+
+double CheckCudaEntryWeights(const Crystal& crystal, const std::vector<float>& dirs, const std::vector<uint32_t>& faces,
+                             const std::vector<double>& weight, size_t count, const char* label) {
+  const auto oracle_faces = test_support::BuildPresentFaceGeom(crystal.CfGeom());
+  std::vector<int> bin_of(count);
+  std::vector<double> oracle_weight(count);
+  std::vector<bool> entered(count);
+  double sum_w = 0.0;
+  for (size_t i = 0; i < count; i++) {
+    const double d[3] = { dirs[3 * i + 0], dirs[3 * i + 1], dirs[3 * i + 2] };
+    bin_of[i] = std::min(static_cast<int>(std::abs(d[2]) * kEntryPolarBins), kEntryPolarBins - 1);
+    oracle_weight[i] = test_support::ComputeEntryWeight(oracle_faces, d);
+    entered[i] = faces[i] != kInvalidFaceU32Cuda;
+    sum_w += weight[i];
+  }
+  const auto v =
+      test_support::CheckEntryWeights(bin_of, oracle_weight, weight, entered, kEntryPolarBins, kEntryWeightAbsTol);
+  for (size_t k = 0; k < v.bins.size(); k++) {
+    EXPECT_GT(v.bins[k].dealt, 0) << label << " polar band " << k << " received no rays";
+  }
+  EXPECT_EQ(v.entry_drops, 0) << label << ": rays with a positive entry weight were dropped";
+  EXPECT_TRUE(v.pass) << label << " max|w-a|=" << v.max_abs_dev << " at ray " << v.worst_ray;
+  return sum_w / static_cast<double>(count);
+}
+
+void ExpectCauchyHalf(double mean_weight, size_t n, const char* label) {
+  EXPECT_NEAR(mean_weight, 0.5, kAcceptKSigma * std::sqrt(0.25 / static_cast<double>(n))) << label;
+}
+
+}  // namespace
+
+TEST(CudaEntryWeight, GenEntryWeightsFollowCpuOracle) {
+  if (!CudaDeviceAvailable()) {
+    GTEST_SKIP() << "No CUDA device available on this host; requires a CUDA-capable GPU.";
+  }
+  auto scene = MakePrismScene(/*max_hits=*/2);
+  SetUniformOrientation(scene.ms_[0].setting_[0]);
+  auto render = MakeFullViewRender();
+  SessionSpec spec;
+  spec.scene = &scene;
+  spec.renders = { &render };
+  spec.wl = WlParam{ 550.0f, 1.0f };
+  spec.seed = 20260924;
+
+  HostRayBatch host;
+  host.count = kAcceptRays;
+  host.crystal = nullptr;
+  host.refractive_index = 0.0f;
+
+  CudaTraceBackend backend;
+  backend.BeginSession(spec);
+  CudaTraceBackendTestHooks hooks(backend);
+  auto h = backend.TraceLayer(RootRaySource::FromHost(host));
+  ASSERT_NE(h, nullptr);
+  std::vector<float> dirs;
+  std::vector<float> points;
+  std::vector<uint32_t> faces;
+  std::vector<float> root_w;
+  ASSERT_EQ(hooks.ReadbackGenDirs(dirs, kAcceptRays), 3u * kAcceptRays);
+  ASSERT_EQ(hooks.ReadbackRootEntryPoint(points, faces, kAcceptRays), kAcceptRays);
+  ASSERT_EQ(hooks.ReadbackRootW(root_w, kAcceptRays), kAcceptRays);
+  backend.EndSession();
+
+  // One wavelength at weight 1 (spd_weight 1 in every pool slot) and one
+  // proportional entry (correction 1): the root weight IS the entry weight.
+  const std::vector<double> weight(root_w.begin(), root_w.end());
+  const Crystal gt = Crystal::CreatePrism(1.0f);  // MakePrismScene's crystal
+  const double mean_w = CheckCudaEntryWeights(gt, dirs, faces, weight, kAcceptRays, "gen");
+  ExpectCauchyHalf(mean_w, kAcceptRays, "gen");
+}
+
+// Host-gen fallback (LUMICE_DISABLE_DEVICE_GEN): the roots come from the CPU
+// InitRayFirstMs, whose InitRay_p_fid multiplies the entry weight in, and the
+// fallback then writes each root's weight from the wl pool. That write must keep
+// the entry weight rather than overwrite it — a fallback that dropped it would
+// read 1 on every ray here.
+TEST(CudaEntryWeight, HostGenEntryWeightsFollowCpuOracle) {
+  if (!CudaDeviceAvailable()) {
+    GTEST_SKIP() << "No CUDA device available on this host; requires a CUDA-capable GPU.";
+  }
+  test::SetEnvVar("LUMICE_DISABLE_DEVICE_GEN", "1");
+  struct EnvGuard {
+    ~EnvGuard() { test::UnsetEnvVar("LUMICE_DISABLE_DEVICE_GEN"); }
+  } env_guard;
+
+  auto scene = MakePrismScene(/*max_hits=*/2);
+  SetUniformOrientation(scene.ms_[0].setting_[0]);
+  auto render = MakeFullViewRender();
+  SessionSpec spec;
+  spec.scene = &scene;
+  spec.renders = { &render };
+  spec.wl = WlParam{ 550.0f, 1.0f };
+  spec.seed = 20260925;
+
+  HostRayBatch host;
+  host.count = kAcceptRays;
+  host.crystal = nullptr;
+  host.refractive_index = 0.0f;
+
+  CudaTraceBackend backend;
+  backend.BeginSession(spec);
+  CudaTraceBackendTestHooks hooks(backend);
+  auto h = backend.TraceLayer(RootRaySource::FromHost(host));
+  ASSERT_NE(h, nullptr);
+  std::vector<float> dirs;
+  std::vector<uint32_t> faces;
+  std::vector<float> root_w;
+  ASSERT_EQ(hooks.ReadbackGenDirs(dirs, kAcceptRays), 3u * kAcceptRays);
+  std::vector<float> points;
+  ASSERT_EQ(hooks.ReadbackRootEntryPoint(points, faces, kAcceptRays), kAcceptRays);
+  ASSERT_EQ(hooks.ReadbackRootW(root_w, kAcceptRays), kAcceptRays);
+  backend.EndSession();
+
+  // Unit spd weight and correction 1, as in the device-gen case.
+  const std::vector<double> weight(root_w.begin(), root_w.end());
+  const Crystal gt = Crystal::CreatePrism(1.0f);
+  const double mean_w = CheckCudaEntryWeights(gt, dirs, faces, weight, kAcceptRays, "host-gen");
+  ExpectCauchyHalf(mean_w, kAcceptRays, "host-gen");
+}
+
+TEST(CudaEntryWeight, TransitEntryWeightsFollowCpuOracle) {
+  if (!CudaDeviceAvailable()) {
+    GTEST_SKIP() << "No CUDA device available on this host; requires a CUDA-capable GPU.";
+  }
+  // Layer 0 continues every exit (prob 1) into a uniformly oriented layer 1.
+  auto scene = MakePrismScene(/*max_hits=*/4);
+  scene.ms_[0].prob_ = 1.0f;
+  MsInfo layer1 = scene.ms_[0];
+  layer1.prob_ = 0.0f;
+  SetUniformOrientation(layer1.setting_[0]);
+  scene.ms_.push_back(std::move(layer1));
+  auto render = MakeFullViewRender();
+  SessionSpec spec;
+  spec.scene = &scene;
+  spec.renders = { &render };
+  spec.wl = WlParam{ 550.0f, 1.0f };
+  spec.seed = 9241;
+
+  HostRayBatch host;
+  host.count = kAcceptRays;
+  host.crystal = nullptr;
+  host.refractive_index = 0.0f;
+
+  CudaTraceBackend backend;
+  backend.BeginSession(spec);
+  CudaTraceBackendTestHooks hooks(backend);
+  auto h0 = backend.TraceLayer(RootRaySource::FromHost(host));
+  ASSERT_NE(h0, nullptr);
+  const size_t n_cont = h0->ContinuationCount();
+  ASSERT_GT(n_cont, kAcceptRays / 8) << "too few continuation rays to judge the transit kernel";
+  RecombineSpec rspec;
+  rspec.shuffle = false;
+  auto roots1 = backend.Recombine(std::move(h0), rspec);
+  auto h1 = backend.TraceLayer(roots1);
+  ASSERT_NE(h1, nullptr);
+  std::vector<float> dirs;
+  std::vector<float> points;
+  std::vector<uint32_t> faces;
+  std::vector<float> root_w;
+  std::vector<float> cont_w;
+  ASSERT_EQ(hooks.ReadbackGenDirs(dirs, n_cont), 3u * n_cont);
+  ASSERT_EQ(hooks.ReadbackRootEntryPoint(points, faces, n_cont), n_cont);
+  ASSERT_EQ(hooks.ReadbackRootW(root_w, n_cont), n_cont);
+  // Layer 1 reads layer 0's continuations from slot (1 - 1) & 1 = 0; with the
+  // shuffle off, transit ray i is continuation i.
+  ASSERT_EQ(hooks.ReadbackContW(0, cont_w, n_cont), n_cont);
+  backend.EndSession();
+
+  std::vector<double> weight(n_cont);
+  size_t weightless = 0;
+  for (size_t i = 0; i < n_cont; i++) {
+    weightless += cont_w[i] > 0.0f ? 0u : 1u;
+    weight[i] = cont_w[i] > 0.0f ? static_cast<double>(root_w[i]) / cont_w[i] : 0.0;
+  }
+  ASSERT_EQ(weightless, 0u) << "continuations carrying no weight";
+  const Crystal gt = Crystal::CreatePrism(1.0f);
+  const double mean_w = CheckCudaEntryWeights(gt, dirs, faces, weight, n_cont, "transit");
+  ExpectCauchyHalf(mean_w, n_cont, "transit");
+}
+
+// K-shape pool: every shape's mean entry weight is 1/2 under uniform
+// orientation (Cauchy), with no per-slot geometry needed; heights 0.2..3.0 make
+// S differ ~3.6x across slots, so dividing by another slot's S would push the
+// slots' means apart. See the Metal sibling for the full argument.
+TEST(CudaEntryWeight, KShapePoolMeanWeightIsHalfOnEveryShape) {
+  if (!CudaDeviceAvailable()) {
+    GTEST_SKIP() << "No CUDA device available on this host; requires a CUDA-capable GPU.";
+  }
+  test::SetEnvVar("LUMICE_GPU_GEOM_CLOCK", "4096");
+  struct EnvGuard {
+    ~EnvGuard() { test::UnsetEnvVar("LUMICE_GPU_GEOM_CLOCK"); }
+  } env_guard;
+
+  auto scene = MakePrismScene(/*max_hits=*/2);
+  auto& setting = scene.ms_[0].setting_[0];
+  SetUniformOrientation(setting);
+  auto prism = std::get<PrismCrystalParam>(setting.crystal_.param_);
+  prism.h_ = Distribution{ DistributionType::kUniform, 1.6f, 2.8f };
+  setting.crystal_.param_ = prism;
+  auto render = MakeFullViewRender();
+  SessionSpec spec;
+  spec.scene = &scene;
+  spec.renders = { &render };
+  spec.wl = WlParam{ 550.0f, 1.0f };
+  spec.seed = 4096;
+  spec.ray_num = kAcceptRays;  // sizes the K-shape pool (P_ci = ceil(ray_num / K))
+
+  HostRayBatch host;
+  host.count = kAcceptRays;
+  host.crystal = nullptr;
+  host.refractive_index = 0.0f;
+
+  CudaTraceBackend backend;
+  backend.BeginSession(spec);
+  CudaTraceBackendTestHooks hooks(backend);
+  auto h = backend.TraceLayer(RootRaySource::FromHost(host));
+  ASSERT_NE(h, nullptr);
+  std::vector<float> points;
+  std::vector<uint32_t> faces;
+  std::vector<float> root_w;
+  ASSERT_EQ(hooks.ReadbackRootEntryPoint(points, faces, kAcceptRays), kAcceptRays);
+  ASSERT_EQ(hooks.ReadbackRootW(root_w, kAcceptRays), kAcceptRays);
+  const auto table = hooks.ReadbackPoolShapeTable();
+  const auto ray_shape = hooks.ReadbackRootPoolShape(kAcceptRays);
+  backend.EndSession();
+
+  ASSERT_GE(table.size(), 16u) << "pool too small to exercise per-shape S";
+  ASSERT_EQ(ray_shape.size(), kAcceptRays);
+  std::set<uint32_t> tri_offs;
+  for (const auto& row : table) {
+    tri_offs.insert(row[2]);
+  }
+  EXPECT_EQ(tri_offs.size(), table.size());
+
+  std::vector<long long> dealt(table.size(), 0);
+  std::vector<double> sum_w(table.size(), 0.0);
+  size_t dropped = 0;
+  for (size_t i = 0; i < kAcceptRays; i++) {
+    size_t slot = table.size();
+    for (size_t k = 0; k < table.size(); k++) {
+      if (table[k][0] == ray_shape[i].first) {
+        slot = k;
+        break;
+      }
+    }
+    if (slot == table.size()) {
+      ADD_FAILURE() << "ray " << i << " published an unknown poly_off " << ray_shape[i].first;
+      continue;
+    }
+    dealt[slot]++;
+    dropped += faces[i] == kInvalidFaceU32Cuda ? 1u : 0u;
+    sum_w[slot] += root_w[i];  // unit spd weight, correction 1 (see the gen case)
+  }
+  EXPECT_EQ(dropped, 0u) << "rays dropped at entry";
+  for (size_t k = 0; k < table.size(); k++) {
+    if (dealt[k] == 0) {
+      ADD_FAILURE() << "slot " << k << " received no rays";
+      continue;
+    }
+    const double n = static_cast<double>(dealt[k]);
+    EXPECT_NEAR(sum_w[k] / n, 0.5, kAcceptKSigma * std::sqrt(0.25 / n))
+        << "slot " << k << " (tri_cnt " << table[k][3] << "): mean entry weight " << sum_w[k] / n << " over "
+        << dealt[k] << " rays";
+  }
 }
 
 }  // namespace

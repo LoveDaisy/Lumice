@@ -487,6 +487,14 @@ output:
 [BENCHMARK] {"mode": "multi", "workers": 8, "cores": 8, "rays": 10000000, "wall_sec": 0.6, "setup_sec": 0.02, "active_sec": 0.58, "rays_per_sec": 17241379.3, "rate_basis": "steady", "isa": "native"}
 ```
 
+**`rays` is the number of rays traced**, and it is the throughput numerator on every route.
+Every route traces every ray it is dealt — the projected-area entry factor is a weight
+(`lm_pcg::entry_weight`, `src/core/shared/pcg_shared.h`), not a discard — so it is also the
+dealt count, the one `ray_num` and every user-facing counter (`LUMICE_GetSimRayCount`, the
+GUI's "Total rays", `Stats: sim_rays`) use. A route that drops rays before tracing them would
+break that identity, and its `rays_per_sec` would then overstate it against the others (a
+dropped ray costs almost nothing): such a route must count only what it traced here.
+
 `rays_per_sec` is the **steady trace rate** over `active_sec` (the window from
 first traced ray to IDLE), NOT `rays / wall_sec` — but only on `rate_basis`
 `steady`, which is exactly what `rate_basis` is there to tell you. The
@@ -791,6 +799,18 @@ machine (WSL2 vs native Windows on the same CPU/GPU, see `doc/machines.md`) — 
 columns differ by more than WSL virtualization overhead alone would suggest (`ms_multi_crystal`:
 home-win legacy 1.82 M/s vs home-wsl legacy 3.90 M/s, i.e. *slower* natively for this one config)
 and are reported as measured, not reconciled.
+
+**Re-measured 2026-09-24, unchanged** (Mac, home-wsl, home-win; `origin/main@b6ed96be` against
+the projected-area entry weight change on top of it, both arms rebuilt, arms interleaved with the
+order alternated, N=3–8 runs per arm of the harness's own N≥5 medians): every cell's
+branch/main ratio is 0.97–1.09, legacy and GPU alike (Mac Metal, measured under other load on
+the host, spread 0.99–1.20 — no regression, not a gain either), so no value above was changed; `rays` is the traced count on every route and equals the dealt count (see the
+`[BENCHMARK]` note above). One measurement-state fact that run exposed: on **home-win** the
+legacy `ms_multi_crystal` and `ms_multi_crystal_complex_filter` cells above (1.82 / 9.39 M/s)
+reproduce only on the **first** run after the machine has idled; every later run of either arm
+reads **1.62 / 8.64 M/s** (CoV 0.1–0.3%), the same 11% / 8% lower on both arms. The other two
+legacy cells and all CUDA cells read the same first and later. Compare against a warm-machine
+home-win legacy number only after discarding the first run, or alternate the arm order.
 
 **Key points**:
 - **The 5× under-report is fixed.** `bench_light_single_ms` on 4060Ti reads **130.5 M/s** at

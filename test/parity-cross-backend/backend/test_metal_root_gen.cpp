@@ -26,9 +26,12 @@
 
 #if defined(__APPLE__)
 
+#include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstring>
 #include <numeric>
+#include <set>
 #include <vector>
 
 #include "config/render_config.hpp"
@@ -38,6 +41,8 @@
 #include "core/crystal.hpp"
 #include "core/math.hpp"
 #include "metal_test_helpers.hpp"
+#include "support/env_var.hpp"
+#include "support/incidence_sampling_oracle.hpp"
 
 namespace lumice {
 namespace {
@@ -1185,9 +1190,12 @@ TEST(MetalRootGen, PerRayEntryPointGeometricConsistency) {
   ASSERT_EQ(hooks.ReadbackRootP(gen_p, kRayCount), 3u * kRayCount);
   ASSERT_EQ(hooks.ReadbackRootTf(gen_f, kRayCount), kRayCount);
   EntryVerifyStats gen_st = VerifyEntryPointsPhysical(gt, gen_dirs, gen_p, gen_f, kRayCount, "gen");
-  // A gen batch that entirely dropped would be a vacuous pass — require most rays
-  // to be real front-face hits (the sun cone illuminates several prism faces).
-  EXPECT_GT(gen_st.valid, kRayCount / 2) << "gen: too few valid entry samples (" << gen_st.valid << "/" << gen_st.total
+  // A gen batch that entirely dropped would be a vacuous pass — require a solid
+  // share of real front-face hits. Not "most": the projected-area acceptance
+  // keeps a ray with probability A/(S/2), ~0.53 for this prism and sun and
+  // exactly 1/2 on average for the uniformly oriented transit layer below, so
+  // a majority bar would sit on the expected value itself.
+  EXPECT_GT(gen_st.valid, kRayCount / 4) << "gen: too few valid entry samples (" << gen_st.valid << "/" << gen_st.total
                                          << ", drops=" << gen_st.drops << ") — check is near-vacuous";
 
   // --- Layer 1: transit_root over the compacted continuation set [0, n_cont) ---
@@ -1204,10 +1212,322 @@ TEST(MetalRootGen, PerRayEntryPointGeometricConsistency) {
   ASSERT_EQ(hooks.ReadbackRootP(tr_p, n_cont), 3u * n_cont);
   ASSERT_EQ(hooks.ReadbackRootTf(tr_f, n_cont), n_cont);
   EntryVerifyStats tr_st = VerifyEntryPointsPhysical(gt, tr_dirs, tr_p, tr_f, n_cont, "transit");
-  EXPECT_GT(tr_st.valid, n_cont / 2) << "transit: too few valid entry samples (" << tr_st.valid << "/" << tr_st.total
+  EXPECT_GT(tr_st.valid, n_cont / 4) << "transit: too few valid entry samples (" << tr_st.valid << "/" << tr_st.total
                                      << ", drops=" << tr_st.drops << ") — check is near-vacuous";
 
   metal.EndSession();
+}
+
+
+// ---- Projected-area entry weight, judged by the CPU oracle ---------------------
+//
+// The gen_root / transit_root kernels multiply each ray's weight by A/(S/2)
+// (lm_pcg::entry_weight) and trace every ray. These cases read back what
+// the DEVICE did — the crystal-local direction it drew (ReadbackGenDirs), the
+// entry face (ReadbackRootTf) and the root weight it wrote (ReadbackRootW, over
+// the carried-in weight for transit) — and judge each ray's entry weight with
+// the analytic oracle and comparator the CPU sampler is judged by
+// (test/support/incidence_sampling_oracle.hpp: ComputeEntryWeight +
+// CheckEntryWeights). This is direct parity with the CPU oracle, NOT a use of
+// the cross-backend parity battery: the battery compares backends with each
+// other, and all three used to omit the same factor, so it could not see this.
+namespace {
+
+constexpr size_t kAcceptRays = size_t{ 1 } << 17;
+constexpr int kEntryPolarBins = 8;
+constexpr double kAcceptKSigma = 5.0;
+// The device sums A and S in float over its triangle SoA, in its own order;
+// the CPU oracle case pins 1e-5, and the device gets 10x that for its fp32
+// math mode.
+constexpr double kEntryWeightAbsTol = 1e-4;
+
+// Full-sphere uniform crystal orientation, so the crystal-local directions the
+// device draws cover every polar band and the Cauchy mean (weight 1/2) holds.
+void SetUniformOrientation(ScatteringSetting& s) {
+  s.crystal_.axis_.azimuth_dist = Distribution{ DistributionType::kUniform, 0.0f, 360.0f };
+  s.crystal_.axis_.latitude_dist = Distribution{ DistributionType::kUniform, 90.0f, 360.0f };
+  s.crystal_.axis_.roll_dist = Distribution{ DistributionType::kUniform, 0.0f, 360.0f };
+}
+
+// Bins the captured rays by the polar band of their crystal-local direction and
+// runs the oracle comparator on each ray's entry weight (`weight[i]`, the root
+// weight over the ray's weight before entry); returns the mean entry weight.
+double CheckDeviceEntryWeights(const Crystal& crystal, const std::vector<float>& dirs,
+                               const std::vector<uint32_t>& faces, const std::vector<double>& weight, size_t count,
+                               const char* label) {
+  const auto oracle_faces = test_support::BuildPresentFaceGeom(crystal.CfGeom());
+  std::vector<int> bin_of(count);
+  std::vector<double> oracle_weight(count);
+  std::vector<bool> entered(count);
+  double sum_w = 0.0;
+  for (size_t i = 0; i < count; i++) {
+    const double d[3] = { dirs[3 * i + 0], dirs[3 * i + 1], dirs[3 * i + 2] };
+    bin_of[i] = std::min(static_cast<int>(std::abs(d[2]) * kEntryPolarBins), kEntryPolarBins - 1);
+    oracle_weight[i] = test_support::ComputeEntryWeight(oracle_faces, d);
+    entered[i] = faces[i] != kInvalidFaceU32;
+    sum_w += weight[i];
+  }
+  const auto v =
+      test_support::CheckEntryWeights(bin_of, oracle_weight, weight, entered, kEntryPolarBins, kEntryWeightAbsTol);
+  for (size_t k = 0; k < v.bins.size(); k++) {
+    const auto& b = v.bins[k];
+    EXPECT_GT(b.dealt, 0) << label << " polar band " << k << " received no rays";
+  }
+  EXPECT_EQ(v.entry_drops, 0) << label << ": rays with a positive entry weight were dropped";
+  EXPECT_TRUE(v.pass) << label << " max|w-a|=" << v.max_abs_dev << " at ray " << v.worst_ray;
+  return sum_w / static_cast<double>(count);
+}
+
+// Cauchy, independent of the oracle's geometry: uniform orientation gives a
+// mean entry weight of 1/2 on every convex shape. Var(a) <= 1/4 bounds the spread.
+void ExpectCauchyHalf(double mean_weight, size_t n, const char* label) {
+  EXPECT_NEAR(mean_weight, 0.5, kAcceptKSigma * std::sqrt(0.25 / static_cast<double>(n))) << label;
+}
+
+}  // namespace
+
+TEST(MetalEntryWeight, GenEntryWeightsFollowCpuOracle) {
+  if (ShouldSkipMetalTests()) {
+    GTEST_SKIP() << "LUMICE_SKIP_METAL_TESTS set";
+  }
+  EnableDeviceGenForStatisticalParity();
+
+  auto scene = MakeMetalScene(/*max_hits=*/2, /*ms_layers=*/1);
+  SetUniformOrientation(scene.ms_[0].setting_[0]);
+  auto render = MakeRectangularRender();
+  SessionSpec spec;
+  spec.scene = &scene;
+  spec.renders = { &render };
+  spec.wl = WlParam{ 550.0f, 1.0f };
+  spec.seed = 20260924;
+
+  HostRayBatch host;
+  host.count = kAcceptRays;
+  host.crystal = nullptr;
+  host.refractive_index = 0.0f;
+
+  MetalTraceBackend metal;
+  metal.BeginSession(spec);
+  MetalTraceBackendTestHooks hooks(metal);
+  auto h = metal.TraceLayer(RootRaySource::FromHost(host));
+  ASSERT_NE(h, nullptr);
+  std::vector<float> dirs;
+  std::vector<uint32_t> faces;
+  std::vector<float> root_w;
+  ASSERT_EQ(hooks.ReadbackGenDirs(dirs, kAcceptRays), 3u * kAcceptRays);
+  ASSERT_EQ(hooks.ReadbackRootTf(faces, kAcceptRays), kAcceptRays);
+  ASSERT_EQ(hooks.ReadbackRootW(root_w, kAcceptRays), kAcceptRays);
+  metal.EndSession();
+
+  // spec.wl is one wavelength at weight 1, so every wl-pool slot's spd_weight
+  // is 1, and one proportional entry has correction 1: the root weight IS the
+  // entry weight.
+  const std::vector<double> weight(root_w.begin(), root_w.end());
+  // MakeMetalScene's crystal: deterministic prism h=1.0.
+  const Crystal gt = Crystal::CreatePrism(1.0f);
+  const double mean_w = CheckDeviceEntryWeights(gt, dirs, faces, weight, kAcceptRays, "gen");
+  ExpectCauchyHalf(mean_w, kAcceptRays, "gen");
+}
+
+// Host-gen fallback (LUMICE_DISABLE_DEVICE_GEN): the roots come from the CPU
+// InitRayFirstMs, whose InitRay_p_fid multiplies the entry weight in, and the
+// fallback then writes each root's weight from the wl pool. That write must keep
+// the entry weight rather than overwrite it — a fallback that dropped it would
+// read 1 on every ray here.
+TEST(MetalEntryWeight, HostGenEntryWeightsFollowCpuOracle) {
+  if (ShouldSkipMetalTests()) {
+    GTEST_SKIP() << "LUMICE_SKIP_METAL_TESTS set";
+  }
+  test::SetEnvVar("LUMICE_DISABLE_DEVICE_GEN", "1");
+  struct EnvGuard {
+    ~EnvGuard() { test::UnsetEnvVar("LUMICE_DISABLE_DEVICE_GEN"); }
+  } env_guard;
+
+  auto scene = MakeMetalScene(/*max_hits=*/2, /*ms_layers=*/1);
+  SetUniformOrientation(scene.ms_[0].setting_[0]);
+  auto render = MakeRectangularRender();
+  SessionSpec spec;
+  spec.scene = &scene;
+  spec.renders = { &render };
+  spec.wl = WlParam{ 550.0f, 1.0f };
+  spec.seed = 20260925;
+
+  HostRayBatch host;
+  host.count = kAcceptRays;
+  host.crystal = nullptr;
+  host.refractive_index = 0.0f;
+
+  MetalTraceBackend backend;
+  backend.BeginSession(spec);
+  MetalTraceBackendTestHooks hooks(backend);
+  auto h = backend.TraceLayer(RootRaySource::FromHost(host));
+  ASSERT_NE(h, nullptr);
+  std::vector<float> dirs;
+  std::vector<uint32_t> faces;
+  std::vector<float> root_w;
+  ASSERT_EQ(hooks.ReadbackGenDirs(dirs, kAcceptRays), 3u * kAcceptRays);
+  ASSERT_EQ(hooks.ReadbackRootTf(faces, kAcceptRays), kAcceptRays);
+  ASSERT_EQ(hooks.ReadbackRootW(root_w, kAcceptRays), kAcceptRays);
+  backend.EndSession();
+
+  // Unit spd weight and correction 1, as in the device-gen case.
+  const std::vector<double> weight(root_w.begin(), root_w.end());
+  const Crystal gt = Crystal::CreatePrism(1.0f);
+  const double mean_w = CheckDeviceEntryWeights(gt, dirs, faces, weight, kAcceptRays, "host-gen");
+  ExpectCauchyHalf(mean_w, kAcceptRays, "host-gen");
+}
+
+TEST(MetalEntryWeight, TransitEntryWeightsFollowCpuOracle) {
+  if (ShouldSkipMetalTests()) {
+    GTEST_SKIP() << "LUMICE_SKIP_METAL_TESTS set";
+  }
+  EnableDeviceGenForStatisticalParity();
+
+  // Layer 0 keeps every exit as a continuation (prob 1), so layer 1's transit
+  // kernel gets a large set; layer 1 is uniformly oriented.
+  auto scene = metal_test::MakeMetalSceneWithProb(/*max_hits=*/4, /*ms_layers=*/2, /*prob=*/1.0f);
+  scene.ms_[1].prob_ = 0.0f;
+  SetUniformOrientation(scene.ms_[1].setting_[0]);
+  auto render = MakeRectangularRender();
+  SessionSpec spec;
+  spec.scene = &scene;
+  spec.renders = { &render };
+  spec.wl = WlParam{ 550.0f, 1.0f };
+  spec.seed = 9241;
+
+  HostRayBatch host;
+  host.count = kAcceptRays;
+  host.crystal = nullptr;
+  host.refractive_index = 0.0f;
+
+  MetalTraceBackend metal;
+  metal.BeginSession(spec);
+  MetalTraceBackendTestHooks hooks(metal);
+  auto h0 = metal.TraceLayer(RootRaySource::FromHost(host));
+  ASSERT_NE(h0, nullptr);
+  const size_t n_cont = h0->ContinuationCount();
+  ASSERT_GT(n_cont, kAcceptRays / 8) << "too few continuation rays to judge the transit kernel";
+  RecombineSpec rspec;
+  rspec.shuffle = false;
+  auto roots1 = metal.Recombine(std::move(h0), rspec);
+  auto h1 = metal.TraceLayer(roots1);
+  ASSERT_NE(h1, nullptr);
+  std::vector<float> dirs;
+  std::vector<uint32_t> faces;
+  std::vector<float> root_w;
+  std::vector<float> cont_w;
+  ASSERT_EQ(hooks.ReadbackGenDirs(dirs, n_cont), 3u * n_cont);
+  ASSERT_EQ(hooks.ReadbackRootTf(faces, n_cont), n_cont);
+  ASSERT_EQ(hooks.ReadbackRootW(root_w, n_cont), n_cont);
+  // Layer 1 reads layer 0's continuations from slot (1 - 1) & 1 = 0; with the
+  // shuffle off, transit ray i is continuation i.
+  ASSERT_EQ(hooks.ReadbackContW(0, cont_w, n_cont), n_cont);
+  metal.EndSession();
+
+  // One proportional entry per layer: correction 1, so root_w / cont_w is the
+  // transit kernel's entry weight.
+  std::vector<double> weight(n_cont);
+  size_t weightless = 0;
+  for (size_t i = 0; i < n_cont; i++) {
+    weightless += cont_w[i] > 0.0f ? 0u : 1u;
+    weight[i] = cont_w[i] > 0.0f ? static_cast<double>(root_w[i]) / cont_w[i] : 0.0;
+  }
+  ASSERT_EQ(weightless, 0u) << "continuations carrying no weight";
+  const Crystal gt = Crystal::CreatePrism(1.0f);
+  const double mean_w = CheckDeviceEntryWeights(gt, dirs, faces, weight, n_cont, "transit");
+  ExpectCauchyHalf(mean_w, n_cont, "transit");
+}
+
+// K-shape pool: each ray draws one of P_ci shapes and the kernel sums S(g) over
+// THAT shape's triangle window, per ray. The pool's per-slot geometry is not
+// readable from the hooks, so this uses the one property that needs none:
+// under uniform orientation every convex shape's mean entry weight is 1/2
+// (Cauchy). Heights span 0.2..3.0, so S differs by up to ~3.6x across slots — a
+// kernel that divided by another slot's S (a stale or shared s_total, a wrong
+// window offset) would put the slots' means far from 1/2 in both directions.
+TEST(MetalEntryWeight, KShapePoolMeanWeightIsHalfOnEveryShape) {
+  if (ShouldSkipMetalTests()) {
+    GTEST_SKIP() << "LUMICE_SKIP_METAL_TESTS set";
+  }
+  EnableDeviceGenForStatisticalParity();
+  // 4096 rays per shape: 32 shapes over kAcceptRays, ~4096 rays each.
+  test::SetEnvVar("LUMICE_GPU_GEOM_CLOCK", "4096");
+  struct EnvGuard {
+    ~EnvGuard() { test::UnsetEnvVar("LUMICE_GPU_GEOM_CLOCK"); }
+  } env_guard;
+
+  auto scene = MakeMetalScene(/*max_hits=*/2, /*ms_layers=*/1);
+  auto& setting = scene.ms_[0].setting_[0];
+  SetUniformOrientation(setting);
+  auto prism = std::get<PrismCrystalParam>(setting.crystal_.param_);
+  prism.h_ = Distribution{ DistributionType::kUniform, 1.6f, 2.8f };
+  setting.crystal_.param_ = prism;
+  auto render = MakeRectangularRender();
+  SessionSpec spec;
+  spec.scene = &scene;
+  spec.renders = { &render };
+  spec.wl = WlParam{ 550.0f, 1.0f };
+  spec.seed = 4096;
+  spec.ray_num = kAcceptRays;  // sizes the K-shape pool (P_ci = ceil(ray_num / K))
+
+  HostRayBatch host;
+  host.count = kAcceptRays;
+  host.crystal = nullptr;
+  host.refractive_index = 0.0f;
+
+  MetalTraceBackend metal;
+  metal.BeginSession(spec);
+  MetalTraceBackendTestHooks hooks(metal);
+  auto h = metal.TraceLayer(RootRaySource::FromHost(host));
+  ASSERT_NE(h, nullptr);
+  std::vector<uint32_t> faces;
+  std::vector<float> root_w;
+  ASSERT_EQ(hooks.ReadbackRootTf(faces, kAcceptRays), kAcceptRays);
+  ASSERT_EQ(hooks.ReadbackRootW(root_w, kAcceptRays), kAcceptRays);
+  const auto table = hooks.ReadbackPoolShapeTable();
+  const auto ray_shape = hooks.ReadbackRootPoolShape(kAcceptRays);
+  metal.EndSession();
+
+  ASSERT_GE(table.size(), 16u) << "pool too small to exercise per-shape S";
+  ASSERT_EQ(ray_shape.size(), kAcceptRays);
+  // The shapes really differ: distinct triangle windows, not one shape repeated.
+  std::set<uint32_t> tri_offs;
+  for (const auto& row : table) {
+    tri_offs.insert(row[2]);
+  }
+  EXPECT_EQ(tri_offs.size(), table.size());
+
+  // Slot of each ray, recovered from its published poly_off.
+  std::vector<long long> dealt(table.size(), 0);
+  std::vector<double> sum_w(table.size(), 0.0);
+  size_t dropped = 0;
+  for (size_t i = 0; i < kAcceptRays; i++) {
+    size_t slot = table.size();
+    for (size_t k = 0; k < table.size(); k++) {
+      if (table[k][0] == ray_shape[i].first) {
+        slot = k;
+        break;
+      }
+    }
+    if (slot == table.size()) {
+      ADD_FAILURE() << "ray " << i << " published an unknown poly_off " << ray_shape[i].first;
+      continue;
+    }
+    dealt[slot]++;
+    dropped += faces[i] == kInvalidFaceU32 ? 1u : 0u;
+    sum_w[slot] += root_w[i];  // unit spd weight, correction 1 (see the gen case)
+  }
+  EXPECT_EQ(dropped, 0u) << "rays dropped at entry";
+  for (size_t k = 0; k < table.size(); k++) {
+    if (dealt[k] == 0) {
+      ADD_FAILURE() << "slot " << k << " received no rays";
+      continue;
+    }
+    const double n = static_cast<double>(dealt[k]);
+    EXPECT_NEAR(sum_w[k] / n, 0.5, kAcceptKSigma * std::sqrt(0.25 / n))
+        << "slot " << k << " (tri_cnt " << table[k][3] << "): mean entry weight " << sum_w[k] / n << " over "
+        << dealt[k] << " rays";
+  }
 }
 
 }  // namespace

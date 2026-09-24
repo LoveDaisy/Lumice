@@ -59,6 +59,16 @@ class CudaTraceBackendTestHooks {
   // that checks each captured (p, to_face) is geometrically consistent with the
   // captured direction (ReadbackGenDirs) and the crystal geometry.
   size_t ReadbackRootEntryPoint(std::vector<float>& p_out, std::vector<uint32_t>& face_out, size_t count);
+  // Per-ray root weight (d_ws_) the gen_root / transit kernel (or the host-roots
+  // fallback) wrote for the layer just traced — the carried-in weight times the
+  // allocation correction times the projected-area entry weight. Clamped to
+  // root_cap_, like ReadbackRootEntryPoint.
+  size_t ReadbackRootW(std::vector<float>& out, size_t count);
+  // Continuation weights held in d_cont_w_[slot]: the carried-in weights a
+  // transit layer reads (layer N >= 1 reads slot (N-1) & 1). Paired with
+  // ReadbackRootW after a transit TraceLayer, the ratio is that kernel's per-ray
+  // entry weight times its allocation correction. Returns 0 on an unallocated slot.
+  size_t ReadbackContW(int slot, std::vector<float>& out, size_t count);
 
   // scrum-328.2 Step 1: explicit-stream RNG probe (raw pcg_uniform draw).
   void EnableRngProbe(RngProbeStream stream, size_t count, size_t ci_start = 0);

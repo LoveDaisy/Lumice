@@ -18,69 +18,69 @@
       }
     },
     "lens_proj": {
-      "generated_at": "2026-09-10T15:41:41",
+      "generated_at": "2026-09-24T10:14:00",
       "n_ref_runs": 10,
       "n_calib_runs": 10,
       "scenes": {
         "dual_fisheye_equal_area_full": {
-          "psnr_mean": 27.531,
-          "psnr_std": 0.0722,
+          "psnr_mean": 27.554,
+          "psnr_std": 0.053,
           "identical_runs": 0,
           "n_samples": 10,
           "threshold": 26.5
         },
         "fisheye_equal_area_120": {
-          "psnr_mean": 19.8,
-          "psnr_std": 0.1114,
+          "psnr_mean": 19.898,
+          "psnr_std": 0.0745,
           "identical_runs": 0,
           "n_samples": 10,
           "threshold": 18.5
         },
         "fisheye_orthographic_180": {
-          "psnr_mean": 18.771,
-          "psnr_std": 0.0964,
+          "psnr_mean": 18.93,
+          "psnr_std": 0.0387,
           "identical_runs": 0,
           "n_samples": 10,
           "threshold": 17.5
         },
         "rectangular": {
-          "psnr_mean": 28.441,
-          "psnr_std": 0.0662,
+          "psnr_mean": 28.541,
+          "psnr_std": 0.0519,
           "identical_runs": 0,
           "n_samples": 10,
-          "threshold": 27.0
+          "threshold": 27.5
         },
         "linear": {
-          "psnr_mean": 21.533,
-          "psnr_std": 0.1013,
+          "psnr_mean": 21.706,
+          "psnr_std": 0.0692,
           "identical_runs": 0,
           "n_samples": 10,
           "threshold": 20.5
         },
         "overlay_ea": {
-          "psnr_mean": 20.798,
-          "psnr_std": 0.0687,
+          "psnr_mean": 20.845,
+          "psnr_std": 0.0665,
           "identical_runs": 0,
           "n_samples": 10,
           "threshold": 19.5
         },
         "dual_fisheye_equal_area_full_border": {
-          "psnr_mean": 26.867,
-          "psnr_std": 0.0417,
+          "psnr_mean": 26.919,
+          "psnr_std": 0.0437,
           "identical_runs": 0,
           "n_samples": 10,
           "threshold": 25.5
         },
         "fisheye_equal_area_120_border": {
-          "psnr_mean": 19.775,
-          "psnr_std": 0.0967,
+          "psnr_mean": 19.9,
+          "psnr_std": 0.1038,
           "identical_runs": 0,
           "n_samples": 10,
           "threshold": 18.5
         },
         "sky_colour_ea_180": {
-          "psnr_mean": 28.238,
-          "psnr_std": 0.1289,
+          "psnr_mean": 28.354,
+          "psnr_std": 0.0755,
           "identical_runs": 0,
           "n_samples": 10,
           "threshold": 27.0

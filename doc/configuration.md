@@ -442,7 +442,7 @@ The scene configuration defines the simulation scene, including the light source
 | `light_source` | object | yes | - | Inline light source configuration (see below) |
 | `ray_num` | integer or string | yes | - | **Total** rays across all spectrum wavelengths; use `"infinite"` for continuous simulation |
 | `max_hits` | integer | yes | - | Maximum number of crystal faces one ray may interact with inside a crystal, **counting the entry face**: a ray is dropped after its `max_hits`-th face, so its face sequence is at most `max_hits` long (`max_hits = 1` emits only the entry-face external reflection). Same budget on every backend (legacy CPU, Metal, CUDA). Range `[1, 64]` |
-| `ray_allocation` | string | no | `"proportional"` | How each scattering layer's rays are dealt across its entries. `"proportional"` deals by `proportion` — sampling share and energy share are one knob. `"adaptive"` measures each entry's per-ray energy from the render's own batches as it runs (on whichever backend is rendering), keeps a per-entry sampling share `q_i ∝ p_i·√E[e²]` (Neyman allocation) up to date from that running tally, deals rays by `q_i` and scales every ray born into entry *i* by `(p_i/ΣP)/(q_i/ΣQ)`, so the **expected image is unchanged** and only its variance moves. See the note below. |
+| `ray_allocation` | string | no | `"proportional"` | How each scattering layer's rays are dealt across its entries. `"proportional"` deals by `proportion` — sampling share and crystal count share are one knob. `"adaptive"` measures each entry's per-ray energy from the render's own batches as it runs (on whichever backend is rendering), keeps a per-entry sampling share `q_i ∝ p_i·√E[e²]` (Neyman allocation) up to date from that running tally, deals rays by `q_i` and scales every ray born into entry *i* by `(p_i/ΣP)/(q_i/ΣQ)`, so the **expected image is unchanged** and only its variance moves. See the note below. |
 | `scattering` | array | yes | - | Scattering configuration array |
 
 > **`ray_num` is the total across all wavelengths.**
@@ -462,10 +462,27 @@ The scene configuration defines the simulation scene, including the light source
 > wavelengths in the spectrum. The two bundled configs with discrete spectra
 > (`examples/config_example.json`, `test/e2e/configs/color.json`) were migrated
 > as part of task-323 and produce bit-equivalent trace output (PSNR unchanged).
+>
+> **Not every counted ray enters a crystal at full weight.** A ray dealt to a crystal enters
+> it with its weight multiplied by `A/(S/2)` — the crystal's projected area along the ray over
+> half its surface area. Every ray is traced, on every route (CPU, Metal, CUDA); none is
+> discarded. The weight a ray loses at entry still counts toward the emitted energy, and every
+> dealt ray counts toward `ray_num`. For randomly oriented crystals the factor averages exactly
+> 1/2. See the `ray_allocation` note below for what this means for `proportion`, and the
+> migration note after it for what it changed.
 
-> **`ray_allocation` decides how many rays an entry gets; `proportion` still says how much
-> energy it carries.** The `proportion` of a scattering entry is, and remains, an *energy
-> share*: the fraction of the layer's light that entry contributes to the image. Under the
+> **`ray_allocation` decides how many rays an entry gets; `proportion` still says how many
+> crystals the entry stands for.** The `proportion` of a scattering entry is a *crystal count
+> share under an equal-surface-area convention*: the entry's share of the layer's crystals,
+> counting every crystal as if it had the same total surface area as every other crystal. Lumice crystal shapes carry
+> no absolute size, so "how many crystals" only means something once a size convention is
+> fixed, and this is the one the tracer implements — a ray is intercepted by a sampled crystal
+> with probability `A/(S/2)`, its projected area along the ray over half its surface area
+> (applied as a weight on every ray; the note above). For
+> randomly oriented crystals that count share is exactly the entry's *energy share* too (Cauchy:
+> a randomly oriented convex body's mean projected area is `S/4`, so every shape intercepts
+> the same fraction of the rays dealt to it); for oriented crystals (plates, columns) the two
+> diverge — an entry of plates seen edge-on intercepts less light than its count share. Under the
 > default `"proportional"` mode that same number also sets the entry's *sampling share* —
 > the fraction of the layer's rays dealt to it — which is the variance-optimal choice only
 > when every entry's per-ray energy statistics agree. They do not when a low-`proportion`
@@ -506,6 +523,43 @@ The scene configuration defines the simulation scene, including the light source
 > (the Neyman formula and its floor) and `RayAllocationOnline` (the running tally and the
 > snapshot of `q` each batch is dealt by), all in `src/core/simulator.hpp`; the tally's
 > definition every backend writes to is `src/core/shared/ray_allocation_shared.hpp`.
+
+> **Migration (projected-area entry acceptance, 2026-09).** Before this change every ray
+> dealt to a crystal entered it, whatever way the crystal faced the sun, so a plate seen
+> edge-on caught as much light as the same plate seen face-on. It now catches in proportion
+> to the area it presents, as it does in the sky. The simulation of what happens *inside*
+> the crystal is unchanged; what changes is how much each orientation contributes.
+>
+> - **Which pictures change, and how much**, is set by one thing: how much the area a crystal
+>   shows the sun varies across the orientations it is sampled in. Where it hardly varies the
+>   weighting is nearly uniform and the picture barely moves; where it varies a lot, the
+>   orientations that show the sun more area now dominate and the relative brightness of the
+>   halos shifts. Nearly unaffected: horizontal plates with a small tilt spread (the usual
+>   parhelia / CZA scenes — every sampled plate shows the sun almost the same area) and
+>   randomly oriented near-equant columns (`height` around 1; area varies about 1.8× from
+>   end-on to side-on). Visibly affected: randomly oriented thin plates (area varies about
+>   7.5×), long columns, oriented crystals with a wide tilt spread or at a low sun, and any
+>   layer that mixes oriented with randomly oriented crystals, whose relative shares move.
+> - **Noise**: no ray is rejected — every ray is traced, at weight `A/(S/2)` — so the number
+>   of rays behind a picture does not drop. Where the area a crystal shows the sun varies
+>   across its sampled orientations the weights vary with it, which adds some per-pixel noise
+>   at the same `ray_num`; measured at a single wavelength, that is about half the per-pixel
+>   variance of the alternative of discarding rays with probability `1 - A/(S/2)`.
+> - **Overall brightness**: under the default `ev_mode: relative` it is re-metered on the new
+>   picture and does not drop. Under `ev_mode: absolute` the weight a ray loses at entry still
+>   counts as emitted, so the picture darkens at the same EV: exactly one stop for randomly oriented
+>   crystals (raise the EV by 1, or `intensity_factor` ×2, to match an old render), and
+>   roughly 0.7–1.4 stop for oriented ones depending on shape and sun altitude
+>   (`doc/ev-pipeline-architecture.md` §7.2 has measured values).
+> - **`proportion`** keeps its number but has a precise meaning now: a crystal count share
+>   under an equal-surface-area convention (the note above). For randomly oriented crystals
+>   that equals the entry's share of the light; for oriented crystals it does not.
+> - **Raypath analysis**: the Energy shares in the analysis window move for the same reason
+>   (`doc/user-manual/06-raypath-analysis.md`).
+>
+> No config key changed, and no config needs editing to keep loading. A config tuned by eye
+> against the old renders — especially one mixing oriented and random crystals — may want
+> its `proportion` values revisited.
 
 #### light_source (Light Source Configuration)
 
@@ -613,7 +667,7 @@ Each scattering configuration entry has the following structure:
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
 | `crystal` | integer | yes | - | Crystal ID reference |
-| `proportion` | float | no | 100.0 | Proportion weight |
+| `proportion` | float | no | 100.0 | Crystal count share within the layer, under an equal-surface-area convention (see the `ray_allocation` note) |
 | `filter` | integer | no | (none) | Filter ID reference; omit for no filter |
 
 **Example**:
