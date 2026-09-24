@@ -19,7 +19,7 @@ rather than a synthetic one, and pins two contracts across the std sweep:
   1. Collapse signature: Metal filtered output is never zero at any std. This is
      the crisp regression teeth -- the bug produced an exact 0.
   2. Cross-backend magnitude: Metal's nonzero-pixel count stays same-magnitude as
-     legacy CPU. The residual gap (~3% at high std) is the K-shape pool
+     legacy CPU. The residual gap (3-7% at high std) is the K-shape pool
      granularity difference -- CPU samples a fresh crystal per ray, the GPU pool
      reuses each crystal across a batch -- not a filter-match defect; a generous
      band tolerates it and CPU's per-run sampling noise while still tripping on a
@@ -64,6 +64,10 @@ _STD_TAGS = ["020", "025", "030", "040", "050"]
 # runs +0.3% (std=0) to +3.5% (std=0.4-0.5) above CPU's per-run mean, with CPU
 # carrying ~1% run-to-run sampling noise. 0.15 leaves comfortable margin over
 # that while a collapse (Metal 0 -> rel diff 1.0) or gross regression trips it.
+# Re-measured 2026-09-24 with both backends tracing every ray at its projected-
+# area entry weight: +0.1% / +0.2% / +2.9% / +6.5% / +5.6% at std 0.20 / 0.25 /
+# 0.30 / 0.40 / 0.50 -- the pool-granularity gap grew a little at high std and
+# still sits 8.5 points under the band.
 _MAGNITUDE_BAND = 0.15
 
 
