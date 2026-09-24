@@ -30,6 +30,7 @@
 #include <gtest/gtest.h>
 
 #include <cstdint>
+#include <iterator>
 #include <map>
 #include <memory>
 #include <set>
@@ -49,6 +50,7 @@
 #include "core/raypath.hpp"
 #include "core/simulator.hpp"
 #include "core/trace_ops.hpp"
+#include "support/incidence_sampling_oracle.hpp"
 #include "util/queue.hpp"
 
 namespace lumice {
@@ -859,12 +861,14 @@ TEST(ChainIdEndToEnd, SymmetrySettingFlowsIntoTheSegments) {
 // The AC3 multi-layer claim, per delivered ray: a ray that left from layer L
 // carries a depth-L chain whose k-th node is the reduced segment of THE
 // layer-k traversal this very ray made. The chain id plays no part in the
-// oracle: a layer-k entry segment (reached through root_ray_idx_) still
-// carries the weight the ray crossed the k-1 → k boundary with, and that
-// weight identifies the layer-(k-1) continuation segment, whose recorder is
-// the layer-(k-1) path and whose own root_ray_idx_ leads one layer further
-// back. Walked until the root; a ray whose crossing weight is shared by two
-// continuations at some layer is skipped rather than guessed.
+// oracle: a layer-k entry segment (reached through root_ray_idx_) carries the
+// weight the ray crossed the k-1 → k boundary with, times the projected-area
+// entry weight A/(S/2) of its layer-k crystal. Dividing that factor out (the
+// oracle recomputes it from the entry direction and the crystal's corners)
+// recovers the crossing weight, which identifies the layer-(k-1) continuation
+// segment, whose recorder is the layer-(k-1) path and whose own root_ray_idx_
+// leads one layer further back. Walked until the root; a ray whose crossing
+// weight matches two continuations at some layer is skipped rather than guessed.
 namespace {
 
 void VerifyChainsAgainstTheRaysOwnSegments(const SimData& sd, const RayBuffer& all, size_t layers, uint8_t symmetry) {
@@ -884,17 +888,16 @@ void VerifyChainsAgainstTheRaysOwnSegments(const SimData& sd, const RayBuffer& a
   };
 
   // Per layer: continuation segments keyed by the weight they crossed with.
-  std::vector<std::map<float, size_t>> continuation_by_w(layers);
-  std::vector<std::set<float>> ambiguous_w(layers);
+  std::vector<std::multimap<double, size_t>> continuation_by_w(layers);
   for (size_t i = 0; i < all.size_; i++) {
     const auto& seg = all[i];
     if (seg.IsContinue()) {
-      size_t l = layer_of(seg);
-      if (!continuation_by_w[l].emplace(seg.w_, i).second) {
-        ambiguous_w[l].insert(seg.w_);
-      }
+      continuation_by_w[layer_of(seg)].emplace(seg.w_, i);
     }
   }
+  // The recovered crossing weight carries the float round-off of the sampler's
+  // A and S (~1e-6 relative), so it is matched within a band, not bit-exactly.
+  constexpr double kCrossingRelTol = 1e-5;
   for (size_t l = 0; l + 1 < layers; l++) {
     if (continuation_by_w[l].size() <= 20u) {
       ADD_FAILURE() << "layer " << l << ": not enough continuations for the claim to have teeth";
@@ -957,15 +960,19 @@ void VerifyChainsAgainstTheRaysOwnSegments(const SimData& sd, const RayBuffer& a
         broken = true;
         break;
       }
-      const float crossing_w = entry_seg.w_;
-      if (ambiguous_w[layer - 1].count(crossing_w) != 0) {
-        skipped = true;
-        break;
-      }
-      auto it = continuation_by_w[layer - 1].find(crossing_w);
-      if (it == continuation_by_w[layer - 1].end()) {
+      const double entry_d[3] = { entry_seg.d_[0], entry_seg.d_[1], entry_seg.d_[2] };
+      const double entry_weight = test_support::ComputeEntryAcceptance(sd.crystals_[layer].CfGeom(), entry_d);
+      const double crossing_w = entry_weight > 0.0 ? entry_seg.w_ / entry_weight : 0.0;
+      const auto& candidates = continuation_by_w[layer - 1];
+      auto it = candidates.lower_bound(crossing_w * (1.0 - kCrossingRelTol));
+      const auto end = candidates.upper_bound(crossing_w * (1.0 + kCrossingRelTol));
+      if (it == end) {
         ADD_FAILURE() << "ray " << k << ": no layer-" << layer << " continuation crossed with w=" << crossing_w;
         broken = true;
+        break;
+      }
+      if (std::next(it) != end) {
+        skipped = true;
         break;
       }
       node_id = node.parent_id;

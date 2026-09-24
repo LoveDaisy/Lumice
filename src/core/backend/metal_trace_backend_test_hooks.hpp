@@ -99,6 +99,16 @@ class MetalTraceBackendTestHooks {
   // collisions. See ReadbackRecSink above for the out-param convention
   // rationale.
   size_t ReadbackRootTf(std::vector<uint32_t>& out, size_t count);
+  // Per-ray root weight (root_w_buf) the gen_root / transit_root kernel (or the
+  // host-gen fallback) wrote for the layer just traced — the carried-in weight
+  // times the allocation correction times the projected-area entry weight.
+  // Same out-param convention as ReadbackRecSink.
+  size_t ReadbackRootW(std::vector<float>& out, size_t count);
+  // Continuation weights held in cont_w[slot]: the carried-in weights a transit
+  // layer reads (layer N >= 1 reads slot (N-1) & 1). Paired with ReadbackRootW
+  // after a transit TraceLayer, the ratio is that kernel's per-ray entry weight
+  // times its allocation correction. Returns 0 on an unallocated slot.
+  size_t ReadbackContW(int slot, std::vector<float>& out, size_t count);
 
  private:
   MetalTraceBackend& backend_;

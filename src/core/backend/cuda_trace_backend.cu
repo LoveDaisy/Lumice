@@ -1600,10 +1600,6 @@ __global__ void transit_multi_ms_kernel(
   }
   float u_cat = lm_pcg::pcg_uniform(stream);
   uint32_t tri_id = lm_pcg::categorical_sample(proj_prob, n_tri, u_cat);
-  // Projected-area acceptance, identical to gen_root_kernel's: a continuation
-  // ray meets the NEW crystal with the same missing A(o,g,d) factor.
-  lm_pcg::PcgStream accept_stream = lm_pcg::BuildEntryAcceptStream(transit_mixed_seed, gp.gen_ray_base + tid);
-  const bool rejected = lm_pcg::pcg_uniform(accept_stream) >= lm_pcg::entry_accept_prob(proj_sum, s_total);
 
   // 4. Uniform sample inside the chosen triangle → entry point p.
   float p[3];
@@ -1614,10 +1610,10 @@ __global__ void transit_multi_ms_kernel(
   //    a benign drop (w=0 short-circuits the entry-face emit and main loop).
   //    K-shape degenerate-slot guard (mirrors gen_root_kernel): shape_tri_cnt
   //    == 0 → shape_tri_off aliases the next slot's triangles / pool tail, so
-  //    skip both reads and route into the kInvalidId zero-weight drop, which
-  //    a rejected ray takes too.
+  //    skip both reads and route into the kInvalidId zero-weight drop.
+  //    Non-degenerate rays are unaffected (AC2 bit-exact path unchanged).
   uint16_t to_face_u16;
-  if (shape_tri_cnt == 0u || rejected) {
+  if (shape_tri_cnt == 0u) {
     p[0] = 0.0f;
     p[1] = 0.0f;
     p[2] = 0.0f;
@@ -1628,8 +1624,10 @@ __global__ void transit_multi_ms_kernel(
   }
   // Carried weight × this (layer, ci)'s ray-allocation correction: the
   // continuation layer re-deals its rays, so it owes its own host-computed
-  // factor (1.0f under proportional allocation, an exact multiply).
-  float w = d_cont_w_in[tid] * gp.alloc_correction;
+  // factor (1.0f under proportional allocation, an exact multiply) — times the
+  // projected-area entry weight A / (S/2), as in gen_root_kernel: a continuation
+  // ray meets the NEW crystal with the same missing A(o,g,d) factor.
+  float w = d_cont_w_in[tid] * gp.alloc_correction * lm_pcg::entry_accept_prob(proj_sum, s_total);
   uint32_t to_face_u32;
   if (to_face_u16 == kInvalidIdU16) {
     w = 0.0f;
@@ -1833,14 +1831,6 @@ __global__ void gen_root_kernel(float* __restrict__ d_root_d,           // 3 × 
   }
   float u_cat = lm_pcg::pcg_uniform(stream);
   uint32_t tri_id = lm_pcg::categorical_sample(proj_prob, n_tri, u_cat);
-  // Projected-area acceptance (lm_pcg::entry_accept_prob — the formula CPU
-  // InitRay_p_fid and the Metal kernels call): keep with probability A/(S/2).
-  // One unconditional draw on its own seed domain, then the SAME zero-weight
-  // kInvalidId drop the degenerate-slot guard below takes — a single decision
-  // per ray, not a resampling loop. Rejected rays still count as emitted:
-  // emitted energy is charged host-side from the dealt ray count.
-  lm_pcg::PcgStream accept_stream = lm_pcg::BuildEntryAcceptStream(gen_mixed_seed, global_idx);
-  const bool rejected = lm_pcg::pcg_uniform(accept_stream) >= lm_pcg::entry_accept_prob(proj_sum, s_total);
   float p[3];
 
   // 4. tri_to_poly. kInvalidId → zero-weight drop (InitRay_p_fid fallback).
@@ -1849,12 +1839,11 @@ __global__ void gen_root_kernel(float* __restrict__ d_root_d,           // 3 × 
   //    the NEXT pool slot's packed triangles (or runs past the pool tail on the
   //    last slot), so sampling tri_id 0 here would silently read a neighbor
   //    shape's vtx / tri_to_poly. Skip both reads and route into the existing
-  //    kInvalidId zero-weight drop below — same sentinel, no new mechanism —
-  //    which a rejected ray takes too. (entry_accept_prob is already 0 there;
-  //    the explicit test stays so the neighbor-read guard does not hinge on a
-  //    float comparison.)
+  //    kInvalidId zero-weight drop below — same sentinel, no new mechanism.
+  //    Non-degenerate rays never take this branch, so the K==0 / AC2 bit-exact
+  //    path is numerically unchanged.
   uint16_t to_face_u16;
-  if (shape_tri_cnt == 0u || rejected) {
+  if (shape_tri_cnt == 0u) {
     p[0] = 0.0f;
     p[1] = 0.0f;
     p[2] = 0.0f;
@@ -1864,8 +1853,11 @@ __global__ void gen_root_kernel(float* __restrict__ d_root_d,           // 3 × 
     to_face_u16 = d_tri_to_poly_ray[tri_id];
   }
   // Per-ray spd weight × this dispatch's ray-allocation correction
-  // (host-computed; 1.0f under proportional allocation, an exact multiply).
-  float weight = d_wl_pool[wl_idx].spd_weight * gp.alloc_correction;
+  // (host-computed; 1.0f under proportional allocation, an exact multiply)
+  // × the projected-area entry weight A / (S/2) (lm_pcg::entry_accept_prob —
+  // the formula CPU InitRay_p_fid and the Metal kernels multiply in). Every ray
+  // is traced; none is dropped for its orientation, so no lane idles.
+  float weight = d_wl_pool[wl_idx].spd_weight * gp.alloc_correction * lm_pcg::entry_accept_prob(proj_sum, s_total);
   uint32_t to_face_u32;
   if (to_face_u16 == kInvalidIdU16) {
     weight = 0.0f;
@@ -4842,7 +4834,14 @@ LayerHandlePtr CudaTraceBackend::TraceLayer(const RootRaySource& roots) {
         workspace[0].Reset(ci_n * 2);
         workspace[1].Reset(ci_n * 4);
         RayBuffer all_data = AllocateAllData(*impl_->scene_, ci_n);
-        InitRayFirstMs(impl_->rng_, impl_->scene_->light_source_.param_, impl_->wl_, ci_n, *ci_crystal_fb,
+        // Unit birth weight: the per-ray SPD weight is written from the wl pool
+        // below, so the only factor InitRayFirstMs contributes to w_ is the
+        // projected-area entry weight InitRay_p_fid multiplies in — with a unit
+        // weight_, r.w_ IS that factor. (weight_ is read nowhere else on this
+        // path; the RNG draw order is unchanged.)
+        WlParam unit_weight_wl = impl_->wl_;
+        unit_weight_wl.weight_ = 1.0f;
+        InitRayFirstMs(impl_->rng_, impl_->scene_->light_source_.param_, unit_weight_wl, ci_n, *ci_crystal_fb,
                        impl_->ms_layer_idx_, axis_dist, workspace, all_data);
         for (size_t i = 0; i < ci_n; ++i) {
           const auto& r = all_data[i];
@@ -4862,21 +4861,18 @@ LayerHandlePtr CudaTraceBackend::TraceLayer(const RootRaySource& roots) {
           // overflow — the result is < wl_pool_size_, itself a uint32_t.
           uint32_t wl_idx = static_cast<uint32_t>(impl_->rng_.GetUniformIndex(impl_->wl_pool_size_));
           impl_->pinned_root_wl_idx_[i] = wl_idx;
-          // Same multiply gen_root_kernel applies: the fallback deals by the
-          // same partition, so it owes the same correction. (InitRayFirstMs
-          // above ran at its own default 1.0f — the weight it wrote is
-          // overwritten here.)
+          // Same multiplies gen_root_kernel applies: the fallback deals by the
+          // same partition, so it owes the same correction, and r.w_ is the
+          // projected-area entry weight (InitRayFirstMs above ran at unit weight
+          // and its own default 1.0f correction).
           //
-          // A ray InitRay_p_fid discarded (projected-area rejection, or an
-          // empty crystal) carries no entry face and must carry no weight
-          // either — the rule gen_root_kernel applies on the device. The weight
-          // is what stops it: trace_single_ms_kernel skips the entry-face
-          // block on an invalid from_poly, but its hit loop breaks only on
-          // w <= 0, so a positive weight here would march the ray out of the
-          // crystal from an entry point that was never sampled.
-          const bool entered = r.to_face_ != kInvalidId;
-          impl_->pinned_ws_[i] = entered ? impl_->wl_pool_host_[wl_idx].spd_weight * alloc.corrections[ci] : 0.0f;
-          impl_->pinned_from_poly_[i] = entered ? static_cast<uint32_t>(r.to_face_) : kInvalidIdU32;
+          // An empty crystal leaves r.w_ = 0 and no entry face, so the weight
+          // comes out 0 — which is what stops such a ray: trace_single_ms_kernel
+          // skips the entry-face block on an invalid from_poly, but its hit loop
+          // breaks only on w <= 0.
+          impl_->pinned_ws_[i] = r.w_ * impl_->wl_pool_host_[wl_idx].spd_weight * alloc.corrections[ci];
+          impl_->pinned_from_poly_[i] =
+              (r.to_face_ == kInvalidId) ? kInvalidIdU32 : static_cast<uint32_t>(r.to_face_);
           std::memcpy(impl_->pinned_rot_c2w_ + i * 9, r.crystal_rot_.GetMat(), 9 * sizeof(float));
           // K-shape carrier. trace_single_ms_kernel reads d_pool_shape_in[tid]
           // unconditionally on every ray and takes its poly_cnt as the
@@ -6066,6 +6062,38 @@ size_t CudaTraceBackendTestHooks::ReadbackRootEntryPoint(std::vector<float>& p_o
             "ReadbackRootEntryPoint D2H d_pos_");
   CheckCuda(cudaMemcpy(face_out.data(), impl.d_from_poly_, count * sizeof(uint32_t), cudaMemcpyDeviceToHost),
             "ReadbackRootEntryPoint D2H d_from_poly_");
+  return count;
+}
+
+size_t CudaTraceBackendTestHooks::ReadbackRootW(std::vector<float>& out, size_t count) {
+  auto& impl = *backend_.impl_;
+  if (count > impl.root_cap_) {
+    count = impl.root_cap_;
+  }
+  if (impl.d_ws_ == nullptr || count == 0u) {
+    out.clear();
+    return 0u;
+  }
+  out.assign(count, 0.0f);
+  cudaDeviceSynchronize();  // gen/transit kernel must finish before the D2H copy
+  CheckCuda(cudaMemcpy(out.data(), impl.d_ws_, count * sizeof(float), cudaMemcpyDeviceToHost),
+            "ReadbackRootW D2H d_ws_");
+  return count;
+}
+
+size_t CudaTraceBackendTestHooks::ReadbackContW(int slot, std::vector<float>& out, size_t count) {
+  auto& impl = *backend_.impl_;
+  if (slot < 0 || slot > 1 || impl.d_cont_w_[slot] == nullptr || count == 0u) {
+    out.clear();
+    return 0u;
+  }
+  if (count > impl.cont_cap_[slot]) {
+    count = impl.cont_cap_[slot];
+  }
+  out.assign(count, 0.0f);
+  cudaDeviceSynchronize();  // the layer that wrote this slot must finish first
+  CheckCuda(cudaMemcpy(out.data(), impl.d_cont_w_[slot], count * sizeof(float), cudaMemcpyDeviceToHost),
+            "ReadbackContW D2H d_cont_w_");
   return count;
 }
 

@@ -962,13 +962,14 @@ TEST(CudaRootGen, PerRayEntryPointGeometricConsistency) {
 }
 
 
-// ---- Projected-area entry acceptance, judged by the CPU oracle -----------------
+// ---- Projected-area entry weight, judged by the CPU oracle ---------------------
 //
-// CUDA sibling of MetalEntryAcceptance.* (test_metal_root_gen.cpp). The gen_root /
-// transit kernels keep each ray with probability A/(S/2)
-// (lm_pcg::entry_accept_prob). These cases read back what the DEVICE decided —
-// the crystal-local direction (ReadbackGenDirs) and whether it kept the ray
-// (ReadbackRootEntryPoint face != kInvalidId) — and judge the kept set with the
+// CUDA sibling of MetalEntryWeight.* (test_metal_root_gen.cpp). The gen_root /
+// transit kernels multiply each ray's weight by A/(S/2)
+// (lm_pcg::entry_accept_prob) and trace every ray. These cases read back what
+// the DEVICE did — the crystal-local direction (ReadbackGenDirs), the entry
+// face (ReadbackRootEntryPoint) and the root weight (ReadbackRootW, over the
+// carried-in weight for transit) — and judge each ray's entry weight with the
 // analytic oracle and comparator the CPU sampler is judged by
 // (test/support/incidence_sampling_oracle.hpp). Direct parity with the CPU
 // oracle, NOT the cross-backend parity battery, which compares backends with
@@ -978,6 +979,8 @@ namespace {
 constexpr size_t kAcceptRays = size_t{ 1 } << 17;
 constexpr int kAcceptPolarBins = 8;
 constexpr double kAcceptKSigma = 5.0;
+// Same device float tolerance as the Metal sibling.
+constexpr double kEntryWeightAbsTol = 1e-4;
 
 void SetUniformOrientation(ScatteringSetting& s) {
   s.crystal_.axis_.azimuth_dist = Distribution{ DistributionType::kUniform, 0.0f, 360.0f };
@@ -985,38 +988,37 @@ void SetUniformOrientation(ScatteringSetting& s) {
   s.crystal_.axis_.roll_dist = Distribution{ DistributionType::kUniform, 0.0f, 360.0f };
 }
 
-double CheckCudaAcceptance(const Crystal& crystal, const std::vector<float>& dirs, const std::vector<uint32_t>& faces,
-                           size_t count, const char* label) {
+double CheckCudaEntryWeights(const Crystal& crystal, const std::vector<float>& dirs, const std::vector<uint32_t>& faces,
+                             const std::vector<double>& weight, size_t count, const char* label) {
   const auto oracle_faces = test_support::BuildPresentFaceGeom(crystal.CfGeom());
   std::vector<int> bin_of(count);
   std::vector<double> accept_prob(count);
-  std::vector<bool> kept(count);
-  size_t kept_n = 0;
+  std::vector<bool> entered(count);
+  double sum_w = 0.0;
   for (size_t i = 0; i < count; i++) {
     const double d[3] = { dirs[3 * i + 0], dirs[3 * i + 1], dirs[3 * i + 2] };
     bin_of[i] = std::min(static_cast<int>(std::abs(d[2]) * kAcceptPolarBins), kAcceptPolarBins - 1);
     accept_prob[i] = test_support::ComputeEntryAcceptance(oracle_faces, d);
-    kept[i] = faces[i] != kInvalidFaceU32Cuda;
-    kept_n += kept[i] ? 1 : 0;
+    entered[i] = faces[i] != kInvalidFaceU32Cuda;
+    sum_w += weight[i];
   }
-  const auto v = test_support::CheckEntryAcceptance(bin_of, accept_prob, kept, kAcceptPolarBins, kAcceptKSigma);
+  const auto v =
+      test_support::CheckEntryWeights(bin_of, accept_prob, weight, entered, kAcceptPolarBins, kEntryWeightAbsTol);
   for (size_t k = 0; k < v.bins.size(); k++) {
-    const auto& b = v.bins[k];
-    EXPECT_GT(b.dealt, 0) << label << " polar band " << k << " received no rays";
-    EXPECT_LE(std::abs(b.z), kAcceptKSigma) << label << " polar band " << k << ": kept " << b.kept << " of " << b.dealt
-                                            << ", oracle expects " << b.expected;
+    EXPECT_GT(v.bins[k].dealt, 0) << label << " polar band " << k << " received no rays";
   }
-  EXPECT_TRUE(v.pass) << label << " max|z|=" << v.max_abs_z << " at band " << v.worst_bin;
-  return static_cast<double>(kept_n) / static_cast<double>(count);
+  EXPECT_EQ(v.entry_drops, 0) << label << ": rays with a positive entry weight were dropped";
+  EXPECT_TRUE(v.pass) << label << " max|w-a|=" << v.max_abs_dev << " at ray " << v.worst_ray;
+  return sum_w / static_cast<double>(count);
 }
 
-void ExpectCauchyHalf(double kept_fraction, size_t n, const char* label) {
-  EXPECT_NEAR(kept_fraction, 0.5, kAcceptKSigma * std::sqrt(0.25 / static_cast<double>(n))) << label;
+void ExpectCauchyHalf(double mean_weight, size_t n, const char* label) {
+  EXPECT_NEAR(mean_weight, 0.5, kAcceptKSigma * std::sqrt(0.25 / static_cast<double>(n))) << label;
 }
 
 }  // namespace
 
-TEST(CudaEntryAcceptance, GenKeptRaysFollowCpuOracle) {
+TEST(CudaEntryWeight, GenEntryWeightsFollowCpuOracle) {
   if (!CudaDeviceAvailable()) {
     GTEST_SKIP() << "No CUDA device available on this host; requires a CUDA-capable GPU.";
   }
@@ -1042,16 +1044,70 @@ TEST(CudaEntryAcceptance, GenKeptRaysFollowCpuOracle) {
   std::vector<float> dirs;
   std::vector<float> points;
   std::vector<uint32_t> faces;
+  std::vector<float> root_w;
   ASSERT_EQ(hooks.ReadbackGenDirs(dirs, kAcceptRays), 3u * kAcceptRays);
   ASSERT_EQ(hooks.ReadbackRootEntryPoint(points, faces, kAcceptRays), kAcceptRays);
+  ASSERT_EQ(hooks.ReadbackRootW(root_w, kAcceptRays), kAcceptRays);
   backend.EndSession();
 
+  // One wavelength at weight 1 (spd_weight 1 in every pool slot) and one
+  // proportional entry (correction 1): the root weight IS the entry weight.
+  const std::vector<double> weight(root_w.begin(), root_w.end());
   const Crystal gt = Crystal::CreatePrism(1.0f);  // MakePrismScene's crystal
-  const double kept = CheckCudaAcceptance(gt, dirs, faces, kAcceptRays, "gen");
-  ExpectCauchyHalf(kept, kAcceptRays, "gen");
+  const double mean_w = CheckCudaEntryWeights(gt, dirs, faces, weight, kAcceptRays, "gen");
+  ExpectCauchyHalf(mean_w, kAcceptRays, "gen");
 }
 
-TEST(CudaEntryAcceptance, TransitKeptRaysFollowCpuOracle) {
+// Host-gen fallback (LUMICE_DISABLE_DEVICE_GEN): the roots come from the CPU
+// InitRayFirstMs, whose InitRay_p_fid multiplies the entry weight in, and the
+// fallback then writes each root's weight from the wl pool. That write must keep
+// the entry weight rather than overwrite it — a fallback that dropped it would
+// read 1 on every ray here.
+TEST(CudaEntryWeight, HostGenEntryWeightsFollowCpuOracle) {
+  if (!CudaDeviceAvailable()) {
+    GTEST_SKIP() << "No CUDA device available on this host; requires a CUDA-capable GPU.";
+  }
+  test::SetEnvVar("LUMICE_DISABLE_DEVICE_GEN", "1");
+  struct EnvGuard {
+    ~EnvGuard() { test::UnsetEnvVar("LUMICE_DISABLE_DEVICE_GEN"); }
+  } env_guard;
+
+  auto scene = MakePrismScene(/*max_hits=*/2);
+  SetUniformOrientation(scene.ms_[0].setting_[0]);
+  auto render = MakeFullViewRender();
+  SessionSpec spec;
+  spec.scene = &scene;
+  spec.renders = { &render };
+  spec.wl = WlParam{ 550.0f, 1.0f };
+  spec.seed = 20260925;
+
+  HostRayBatch host;
+  host.count = kAcceptRays;
+  host.crystal = nullptr;
+  host.refractive_index = 0.0f;
+
+  CudaTraceBackend backend;
+  backend.BeginSession(spec);
+  CudaTraceBackendTestHooks hooks(backend);
+  auto h = backend.TraceLayer(RootRaySource::FromHost(host));
+  ASSERT_NE(h, nullptr);
+  std::vector<float> dirs;
+  std::vector<uint32_t> faces;
+  std::vector<float> root_w;
+  ASSERT_EQ(hooks.ReadbackGenDirs(dirs, kAcceptRays), 3u * kAcceptRays);
+  std::vector<float> points;
+  ASSERT_EQ(hooks.ReadbackRootEntryPoint(points, faces, kAcceptRays), kAcceptRays);
+  ASSERT_EQ(hooks.ReadbackRootW(root_w, kAcceptRays), kAcceptRays);
+  backend.EndSession();
+
+  // Unit spd weight and correction 1, as in the device-gen case.
+  const std::vector<double> weight(root_w.begin(), root_w.end());
+  const Crystal gt = Crystal::CreatePrism(1.0f);
+  const double mean_w = CheckCudaEntryWeights(gt, dirs, faces, weight, kAcceptRays, "host-gen");
+  ExpectCauchyHalf(mean_w, kAcceptRays, "host-gen");
+}
+
+TEST(CudaEntryWeight, TransitEntryWeightsFollowCpuOracle) {
   if (!CudaDeviceAvailable()) {
     GTEST_SKIP() << "No CUDA device available on this host; requires a CUDA-capable GPU.";
   }
@@ -1089,20 +1145,33 @@ TEST(CudaEntryAcceptance, TransitKeptRaysFollowCpuOracle) {
   std::vector<float> dirs;
   std::vector<float> points;
   std::vector<uint32_t> faces;
+  std::vector<float> root_w;
+  std::vector<float> cont_w;
   ASSERT_EQ(hooks.ReadbackGenDirs(dirs, n_cont), 3u * n_cont);
   ASSERT_EQ(hooks.ReadbackRootEntryPoint(points, faces, n_cont), n_cont);
+  ASSERT_EQ(hooks.ReadbackRootW(root_w, n_cont), n_cont);
+  // Layer 1 reads layer 0's continuations from slot (1 - 1) & 1 = 0; with the
+  // shuffle off, transit ray i is continuation i.
+  ASSERT_EQ(hooks.ReadbackContW(0, cont_w, n_cont), n_cont);
   backend.EndSession();
 
+  std::vector<double> weight(n_cont);
+  size_t weightless = 0;
+  for (size_t i = 0; i < n_cont; i++) {
+    weightless += cont_w[i] > 0.0f ? 0u : 1u;
+    weight[i] = cont_w[i] > 0.0f ? static_cast<double>(root_w[i]) / cont_w[i] : 0.0;
+  }
+  ASSERT_EQ(weightless, 0u) << "continuations carrying no weight";
   const Crystal gt = Crystal::CreatePrism(1.0f);
-  const double kept = CheckCudaAcceptance(gt, dirs, faces, n_cont, "transit");
-  ExpectCauchyHalf(kept, n_cont, "transit");
+  const double mean_w = CheckCudaEntryWeights(gt, dirs, faces, weight, n_cont, "transit");
+  ExpectCauchyHalf(mean_w, n_cont, "transit");
 }
 
-// K-shape pool: every shape keeps 1/2 under uniform orientation (Cauchy), with
-// no per-slot geometry needed; heights 0.2..3.0 make S differ ~3.6x across
-// slots, so dividing by another slot's S would push the slots' rates apart.
-// See the Metal sibling for the full argument.
-TEST(CudaEntryAcceptance, KShapePoolKeepsHalfOnEveryShape) {
+// K-shape pool: every shape's mean entry weight is 1/2 under uniform
+// orientation (Cauchy), with no per-slot geometry needed; heights 0.2..3.0 make
+// S differ ~3.6x across slots, so dividing by another slot's S would push the
+// slots' means apart. See the Metal sibling for the full argument.
+TEST(CudaEntryWeight, KShapePoolMeanWeightIsHalfOnEveryShape) {
   if (!CudaDeviceAvailable()) {
     GTEST_SKIP() << "No CUDA device available on this host; requires a CUDA-capable GPU.";
   }
@@ -1137,7 +1206,9 @@ TEST(CudaEntryAcceptance, KShapePoolKeepsHalfOnEveryShape) {
   ASSERT_NE(h, nullptr);
   std::vector<float> points;
   std::vector<uint32_t> faces;
+  std::vector<float> root_w;
   ASSERT_EQ(hooks.ReadbackRootEntryPoint(points, faces, kAcceptRays), kAcceptRays);
+  ASSERT_EQ(hooks.ReadbackRootW(root_w, kAcceptRays), kAcceptRays);
   const auto table = hooks.ReadbackPoolShapeTable();
   const auto ray_shape = hooks.ReadbackRootPoolShape(kAcceptRays);
   backend.EndSession();
@@ -1151,7 +1222,7 @@ TEST(CudaEntryAcceptance, KShapePoolKeepsHalfOnEveryShape) {
   EXPECT_EQ(tri_offs.size(), table.size());
 
   std::vector<long long> dealt(table.size(), 0);
-  std::vector<long long> kept(table.size(), 0);
+  std::vector<double> sum_w(table.size(), 0.0);
   for (size_t i = 0; i < kAcceptRays; i++) {
     size_t slot = table.size();
     for (size_t k = 0; k < table.size(); k++) {
@@ -1165,7 +1236,8 @@ TEST(CudaEntryAcceptance, KShapePoolKeepsHalfOnEveryShape) {
       continue;
     }
     dealt[slot]++;
-    kept[slot] += faces[i] != kInvalidFaceU32Cuda ? 1 : 0;
+    EXPECT_NE(faces[i], kInvalidFaceU32Cuda) << "ray " << i << " was dropped at entry";
+    sum_w[slot] += root_w[i];  // unit spd weight, correction 1 (see the gen case)
   }
   for (size_t k = 0; k < table.size(); k++) {
     if (dealt[k] == 0) {
@@ -1173,8 +1245,9 @@ TEST(CudaEntryAcceptance, KShapePoolKeepsHalfOnEveryShape) {
       continue;
     }
     const double n = static_cast<double>(dealt[k]);
-    EXPECT_NEAR(static_cast<double>(kept[k]) / n, 0.5, kAcceptKSigma * std::sqrt(0.25 / n))
-        << "slot " << k << " (tri_cnt " << table[k][3] << "): kept " << kept[k] << " of " << dealt[k];
+    EXPECT_NEAR(sum_w[k] / n, 0.5, kAcceptKSigma * std::sqrt(0.25 / n))
+        << "slot " << k << " (tri_cnt " << table[k][3] << "): mean entry weight " << sum_w[k] / n << " over "
+        << dealt[k] << " rays";
   }
 }
 

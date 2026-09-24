@@ -2236,7 +2236,14 @@ size_t MetalTraceBackend::Impl::GenerateFirstLayerRootsForCi(const ScatteringSet
   workspace[1].Reset(crystal_ray_num);
   RayBuffer all_data = AllocateAllData(*spec.scene, crystal_ray_num);
 
-  InitRayFirstMs(rng, spec.scene->light_source_.param_, spec.wl, crystal_ray_num,
+  // Unit birth weight: the per-ray SPD weight is written from the wl pool
+  // below, so the only factor InitRayFirstMs contributes to w_ is the
+  // projected-area entry weight InitRay_p_fid multiplies in — with a unit
+  // weight_, r.w_ IS that factor, and the pool write below keeps it. (weight_
+  // is read nowhere else on this path; the RNG draw order is unchanged.)
+  WlParam unit_weight_wl = spec.wl;
+  unit_weight_wl.weight_ = 1.0f;
+  InitRayFirstMs(rng, spec.scene->light_source_.param_, unit_weight_wl, crystal_ray_num,
                  current_crystal, /*crystal_id=*/ci, crystal_axis,
                  workspace, all_data);
 
@@ -2302,11 +2309,12 @@ size_t MetalTraceBackend::Impl::GenerateFirstLayerRootsForCi(const ScatteringSet
     // cannot overflow — the result is < wl_pool_size_, itself a uint32_t.
     uint32_t wl_idx = static_cast<uint32_t>(rng.GetUniformIndex(wl_pool_size_));
     wl_idx_ptr[i] = wl_idx;
-    // Same multiply gen_root_kernel applies to its per-ray spd weight: the
+    // Same multiplies gen_root_kernel applies to its per-ray spd weight: the
     // host-gen fallback deals by the same partition, so it owes the same
-    // correction. (InitRayFirstMs above was handed a zero WlParam and its own
-    // default 1.0f — the weight it wrote is overwritten here.)
-    w_ptr[i] = wl_pool_host_[wl_idx].spd_weight * alloc_correction;
+    // correction, and w_ptr[i] already holds the projected-area entry weight
+    // (InitRayFirstMs above ran at unit weight and its own default 1.0f
+    // correction, so that factor is all it wrote).
+    w_ptr[i] *= wl_pool_host_[wl_idx].spd_weight * alloc_correction;
   }
   // K-shape pool: host-gen fallback ran InitRayFirstMs against `current_crystal`
   // (== pool_crystals_.front() by construction), so every ray belongs to pool
@@ -4240,6 +4248,38 @@ size_t MetalTraceBackendTestHooks::ReadbackRootTf(std::vector<uint32_t>& out, si
   }
   out.assign(count, 0u);
   std::memcpy(out.data(), [impl.root_tf_buf contents], count * sizeof(uint32_t));
+  return count;
+}
+
+size_t MetalTraceBackendTestHooks::ReadbackRootW(std::vector<float>& out, size_t count) {
+  // [TEST-ONLY] Shared-storage buffer → plain memcpy, as ReadbackRootTf.
+  auto& impl = *backend_.impl_;
+  if (impl.root_w_buf == nil || count == 0u) {
+    out.clear();
+    return 0u;
+  }
+  const size_t cap = static_cast<size_t>([impl.root_w_buf length]) / sizeof(float);
+  if (count > cap) {
+    count = cap;
+  }
+  out.assign(count, 0.0f);
+  std::memcpy(out.data(), [impl.root_w_buf contents], count * sizeof(float));
+  return count;
+}
+
+size_t MetalTraceBackendTestHooks::ReadbackContW(int slot, std::vector<float>& out, size_t count) {
+  // [TEST-ONLY] See header.
+  auto& impl = *backend_.impl_;
+  if (slot < 0 || slot > 1 || impl.cont_w[slot] == nil || count == 0u) {
+    out.clear();
+    return 0u;
+  }
+  const size_t cap = static_cast<size_t>([impl.cont_w[slot] length]) / sizeof(float);
+  if (count > cap) {
+    count = cap;
+  }
+  out.assign(count, 0.0f);
+  std::memcpy(out.data(), [impl.cont_w[slot] contents], count * sizeof(float));
   return count;
 }
 

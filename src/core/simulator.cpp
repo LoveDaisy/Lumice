@@ -134,20 +134,6 @@ void BuildEntrySubTris(const CrystalGeom& cf, EntrySubTri* out) {
 
 }  // namespace detail
 
-namespace {
-
-// The one way an entry ray is discarded before it is traced: no source face, no
-// hit face, and the w_<0 sentinel TIR and filter-fail already use, so the root
-// segment reads as terminated (not IsOutgoing()) wherever all_data is scanned
-// and its first hop ends in HitSurface's kInvalidId branch.
-void DiscardEntryRay(RaySeg& r) {
-  r.from_face_ = kInvalidId;
-  r.to_face_ = kInvalidId;
-  r.w_ = -1.0f;
-}
-
-}  // namespace
-
 void InitRay_p_fid(const Crystal& curr_crystal, RayBuffer* ray_buf_ptr) {
   if (!ray_buf_ptr) {
     return;
@@ -166,9 +152,12 @@ void InitRay_p_fid(const Crystal& curr_crystal, RayBuffer* ray_buf_ptr) {
 
   if (subtri_cnt == 0) {
     // No present face with >=3 corners (empty/degenerate crystal — only the
-    // Mesh(0,0) reject path reaches here in production). No ray can enter it.
+    // Mesh(0,0) reject path reaches here in production). Zero every ray's weight
+    // so it contributes nothing downstream; HitSurface also guards kInvalidId.
     for (auto& r : ray_buf) {
-      DiscardEntryRay(r);
+      r.from_face_ = kInvalidId;
+      r.to_face_ = kInvalidId;
+      r.w_ = 0.0f;
     }
     return;
   }
@@ -191,29 +180,28 @@ void InitRay_p_fid(const Crystal& curr_crystal, RayBuffer* ray_buf_ptr) {
   }
   detail::BuildEntrySubTris(cf, subtri);
 
-  // Projected-area acceptance. A ray born with a fixed weight hits orientation o
-  // of shape g with probability proportional to p(o)·p(g)·A(o,g,d), where A is
+  // Projected-area entry weight. A ray born with a fixed weight hits orientation
+  // o of shape g with probability proportional to p(o)·p(g)·A(o,g,d), where A is
   // the crystal's area projected along d — and A is exactly Σ proj_prob below,
-  // already computed per ray for the face selection. Keeping each ray with
-  // probability A / (S/2) supplies that missing marginal factor. S/2 bounds A
-  // for every convex body in every direction (divergence theorem: the lit and
-  // the unlit sides project to the same A, and together they are at most S),
-  // so the ratio never exceeds 1 and needs no per-family calibration; S is
-  // summed per call, i.e. per sampled shape, which is what makes the g factor
-  // come out right without a separate allocation mechanism.
+  // already computed per ray for the face selection. Multiplying each ray's
+  // weight by A / (S/2) supplies that missing marginal factor. S/2 bounds A for
+  // every convex body in every direction (divergence theorem: the lit and the
+  // unlit sides project to the same A, and together they are at most S), so the
+  // factor never exceeds 1 and needs no per-family calibration; S is summed per
+  // call, i.e. per sampled shape, which is what makes the g factor come out
+  // right without a separate allocation mechanism.
   //
-  // A rejected ray is not resampled: it takes the same discard as the
-  // empty-crystal path above, so the rays this entry was dealt keep counting as
-  // emitted. The slot stays in the buffer (callers, including the GPU host-gen
-  // fallbacks, index it by the dealt count); the ray ends at its first hop,
-  // where HitSurface turns an entry ray with no hit face into two terminated
-  // segments, the same way the GPU kernels stop on kInvalidId.
+  // This is the conditional expectation of keeping the ray with probability
+  // A / (S/2) and discarding it otherwise: the same expectation at every pixel,
+  // no higher variance, and every ray dealt to this entry is traced — which is
+  // what keeps GPU lanes from idling on rejected rays. It multiplies w_ in
+  // place, so it relies on w_ already holding the ray's birth weight
+  // (InitRay_d_w_previdx on the first layer, the carried-in weight on later
+  // ones); both callers set it before calling here.
   float s_total = 0.0f;
   for (size_t j = 0; j < subtri_cnt; j++) {
     s_total += subtri[j].area;
   }
-  auto& uniform_rng = RandomNumberGenerator::GetInstance();
-
   for (auto& r : ray_buf) {
     const auto* d = r.d_;
     float proj_sum = 0.0f;
@@ -222,11 +210,7 @@ void InitRay_p_fid(const Crystal& curr_crystal, RayBuffer* ray_buf_ptr) {
       proj_sum += proj_prob[j];
     }
     // Same formula the Metal / CUDA entry kernels call (single source).
-    const float accept_prob = lm_pcg::entry_accept_prob(proj_sum, s_total);
-    if (uniform_rng.GetUniform() >= accept_prob) {
-      DiscardEntryRay(r);
-      continue;
-    }
+    r.w_ *= lm_pcg::entry_accept_prob(proj_sum, s_total);
     int tri_id = 0;
     RandomSample(static_cast<int>(subtri_cnt), proj_prob, &tri_id);
     SampleTrianglePoint(subtri[tri_id].v, r.p_);

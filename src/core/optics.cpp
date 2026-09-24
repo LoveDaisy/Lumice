@@ -24,16 +24,9 @@ void HitSurface(const Crystal& crystal, float n, size_t num,                    
 
   for (size_t i = 0; i < num; i++) {
     if (to_face_in[i] == kInvalidId) {
-      // No valid hit face. Only an entry ray InitRay_p_fid discarded (or a
-      // test-injected root with no face) gets here — CollectData refills the
-      // hit loop with IsNormal() rays alone — and its p_ was never sampled.
-      // Terminate both children with the w_<0 sentinel TIR and filter-fail
-      // already use: Propagate skips them and CollectData routes them nowhere.
-      // A zero weight would not be enough — w_>=0 lets the child be propagated
-      // from a stale point and leave as a zero-weight outgoing ray, or roll
-      // into the next scattering layer.
-      w_out[2 * i + 0] = -1.0f;
-      w_out[2 * i + 1] = -1.0f;
+      // No valid hit face — zero both output weights (and leave directions unchanged).
+      w_out[2 * i + 0] = 0.0f;
+      w_out[2 * i + 1] = 0.0f;
       continue;
     }
     const float* tmp_dir = d_in.Ptr(i);

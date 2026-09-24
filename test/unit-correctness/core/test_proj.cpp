@@ -80,7 +80,7 @@ TEST_F(V3TestProj, SimpleProj) {
   constexpr int kMaxHits = 8;
   auto output_data = std::make_unique<float[]>(kMaxHits * 2 * 7);
 
-  constexpr uint32_t kTestSeed = 45;
+  constexpr uint32_t kTestSeed = 42;
   lumice::Simulator simulator(config_queue, data_queue, kTestSeed);
 
   simulator.SetAllDataObserverForTest(&CopyRayData, output_data.get());
@@ -103,30 +103,44 @@ TEST_F(V3TestProj, SimpleProj) {
   cons_thread.join();
   prod_thread.join();
 
-  // Fixture regenerated when InitRay_p_fid gained the projected-area
-  // acceptance (each entry ray kept with probability A(o,g,d) / (S/2)). That
-  // acceptance draws one uniform per ray, so the stream moved; and at the old
-  // seed 42 both of this config's 2 rays are now discarded, which leaves the
-  // capture all zeros — a fixture that compares nothing. Seed 45 was picked
-  // because both rays enter the crystal there. Captured from
-  // test/fixtures/v3_config.json (crystal id=1, default axis = canonical pose);
-  // the two rays' segments interleave in hit order, as before. Physics
-  // signatures to read it by: p[0] = ±0.433013 (±√3/4) on the ±x prism side
-  // faces, and the Fresnel weight decaying along each ray's history.
+  // Fixture regenerated after Crystal::CreatePrism switched from the numerical
+  // triangle-mesh pipeline (FillHexCrystalCoef + CreateConvexPolyhedronMesh +
+  // math.cpp::Triangulate) to the closed-form path (ComputeClosedFormPrism +
+  // fixed-fan triangulation in crystal.cpp::AdaptClosedFormPrismToCrystalGeom
+  // / BuildMeshFromCfGeom). Captured with seed=42 from
+  // examples/config_example.json crystal id=1 (default axis = canonical pose).
+  //
+  // Why the y/z values drift while d/w/p[0] stay bit-identical: sample_triangle
+  // in simulator.cpp draws area-weighted from the crystal's triangle list. The
+  // closed-form path produces a different specific triangulation of the same
+  // per-face polygon, so categorical_sample under the same uniform sequence
+  // lands on a different triangle / point on the same face. Physics-invariant
+  // fields — w (Fresnel weight along the path history), d (exit direction from
+  // the same face with the same incident direction), and p[0] (±0.433013 =
+  // ±√3/4, the x of the ±x prism side face) — reproduce bit-for-bit vs the
+  // pre-swap capture; only p[1] / p[2] (position within the same face) shifted.
+  // That is the exact signature of "same distribution, different draw" — the
+  // ray-count-1 + distribution-unchanged invariant Crystal::CreatePrism now
+  // guarantees is the one this suite actually depends on.
+  //
+  // The w column (and only it) was rescaled when InitRay_p_fid began multiplying
+  // each entry ray's weight by its projected-area entry weight A/(S/2): p and d
+  // reproduce bit-for-bit at this seed, and each ray's w history scales by one
+  // constant per ray (0.5513 and 0.5510 for the two rays here, their A/(S/2)).
   float expect_out[kMaxHits * 2 * 7]{
     /* --------- p --------------->|<-------------- d ------------->|<-- w -->|*/
-    0.433013f,  0.232729f,  -0.548703f, 0.939850f,  0.000164f,  -0.341588f, 0.018279f,  //
-    0.228281f,  0.368202f,  0.544418f,  -0.470604f, 0.812336f,  -0.344443f, 0.064894f,  //
-    -0.433013f, 0.127994f,  0.352839f,  -0.833574f, -0.431873f, -0.344443f, 0.916629f,  //
-    -0.433013f, 0.232841f,  -0.417579f, -0.939850f, 0.000164f,  0.341588f,  0.963776f,  //
-    0.433013f,  -0.186580f, 0.101948f,  0.833573f,  -0.431873f, -0.344443f, 0.018112f,  //
-    0.433013f,  0.232953f,  -0.183861f, 0.939850f,  0.000164f,  0.341588f,  0.017617f,  //
-    -0.165995f, -0.404163f, -0.071587f, -0.938806f, 0.001387f,  -0.344443f, 0.000341f,  //
-    -0.433013f, 0.233065f,  0.049857f,  -0.939850f, 0.000164f,  0.341588f,  0.000322f,  //
-    -0.295799f, 0.329221f,  -0.274389f, -0.042774f, 0.937832f,  -0.344443f, 0.000023f,  //
-    0.433013f,  0.233178f,  0.283575f,  0.939850f,  0.000164f,  0.341588f,  0.000006f,  //
-    0.409643f,  -0.263492f, -0.525280f, 0.790799f,  -0.505959f, -0.344443f, 0.000000f,  //
-    -0.433013f, 0.233290f,  0.517293f,  -0.939850f, 0.000164f,  0.341588f,  0.000000f,  //
+    0.433013f,  -0.139846f, 0.145981f,  0.938556f,  -0.000995f, -0.345125f, 0.010082f,  //
+    0.433013f,  -0.171991f, 0.122222f,  0.939997f,  -0.000397f, -0.341181f, 0.010071f,  //
+    -0.433013f, -0.140527f, -0.090337f, -0.938556f, -0.000995f, -0.345125f, 0.531326f,  //
+    -0.433013f, -0.172262f, -0.111198f, -0.939997f, -0.000397f, -0.341181f, 0.531008f,  //
+    0.433013f,  -0.141209f, -0.326654f, 0.938556f,  -0.000996f, -0.345125f, 0.009716f,  //
+    0.433013f,  -0.172534f, -0.344618f, 0.939997f,  -0.000397f, -0.341181f, 0.009706f,  //
+    -0.433013f, -0.141891f, -0.562971f, -0.938556f, -0.000996f, -0.345125f, 0.000178f,  //
+    -0.433013f, -0.172805f, -0.578037f, -0.939997f, -0.000397f, -0.341181f, 0.000177f,  //
+    0.433013f,  -0.142573f, -0.400712f, 0.938556f,  -0.000996f, 0.345125f,  0.000003f,  //
+    0.433013f,  -0.173077f, -0.388543f, 0.939997f,  -0.000397f, 0.341181f,  0.000003f,  //
+    -0.433013f, -0.143254f, -0.164395f, -0.938556f, -0.000996f, 0.345125f,  0.000000f,  //
+    -0.433013f, -0.173349f, -0.155124f, -0.939997f, -0.000397f, 0.341181f,  0.000000f,  //
     0.000000f,  0.000000f,  0.000000f,  0.000000f,  0.000000f,  0.000000f,  0.000000f,  //
     0.000000f,  0.000000f,  0.000000f,  0.000000f,  0.000000f,  0.000000f,  0.000000f,  //
     0.000000f,  0.000000f,  0.000000f,  0.000000f,  0.000000f,  0.000000f,  0.000000f,  //
