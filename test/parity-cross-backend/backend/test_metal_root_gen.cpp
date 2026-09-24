@@ -1500,6 +1500,7 @@ TEST(MetalEntryWeight, KShapePoolMeanWeightIsHalfOnEveryShape) {
   // Slot of each ray, recovered from its published poly_off.
   std::vector<long long> dealt(table.size(), 0);
   std::vector<double> sum_w(table.size(), 0.0);
+  size_t dropped = 0;
   for (size_t i = 0; i < kAcceptRays; i++) {
     size_t slot = table.size();
     for (size_t k = 0; k < table.size(); k++) {
@@ -1513,9 +1514,10 @@ TEST(MetalEntryWeight, KShapePoolMeanWeightIsHalfOnEveryShape) {
       continue;
     }
     dealt[slot]++;
-    EXPECT_NE(faces[i], kInvalidFaceU32) << "ray " << i << " was dropped at entry";
+    dropped += faces[i] == kInvalidFaceU32 ? 1u : 0u;
     sum_w[slot] += root_w[i];  // unit spd weight, correction 1 (see the gen case)
   }
+  EXPECT_EQ(dropped, 0u) << "rays dropped at entry";
   for (size_t k = 0; k < table.size(); k++) {
     if (dealt[k] == 0) {
       ADD_FAILURE() << "slot " << k << " received no rays";
