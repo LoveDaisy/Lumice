@@ -106,8 +106,10 @@ PSNR_THRESHOLDS = {
     # at the 2026-09-24 reshoot (3 fresh CLI runs, macOS): 25.93 / 25.93 dB.
     # Threshold = min - 3 dB = 22.93 → 22.5 dB (floored to 0.5 dB precision), leaving
     # room for cross-platform sampling noise (reference generated on macOS, CI runs
-    # on Linux). The previous 19.5 dB (from 22.74/22.76 dB) sat below an all-black
-    # frame's 19.9 dB; 22.5 dB no longer does. Re-introduces orthographic-projection e2e coverage
+    # on Linux). Known blind spot, unchanged by the reshoot: an all-black frame scores
+    # 22.9 dB against this reference (19.9 dB against the old one, vs the old 19.5 dB),
+    # i.e. whole-frame PSNR on this dim, noise-dominated scene cannot tell black from
+    # an honest rerun; fixing that needs a different ruler, not a threshold. Re-introduces orthographic-projection e2e coverage
     # lost when scrum-268.6 scoped smoke to "configs with reference images"
     # (task-270.7 / explore-269 P0). A structural regression (frame bug,
     # wrong projection) drops PSNR far below this floor.
