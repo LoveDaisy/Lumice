@@ -310,25 +310,23 @@ appearance-only field — like `intensity_factor_`, it never triggers
 accumulation layout.
 
 **How the two anchors take projected-area entry acceptance (2026-09).** Since then a ray
-dealt to a crystal enters with the factor `A/(S/2)`, applied in expectation — on the CPU
-route by keeping the ray with that probability and discarding it otherwise, on the GPU
-routes by tracing every ray at that weight (§7.2 has the mechanism and the numbers). Neither anchor needed a code change, for two
+dealt to a crystal enters with its weight multiplied by `A/(S/2)`, on every route, and every
+ray is traced (§7.2 has the mechanism and the numbers). Neither anchor needed a code change, for two
 different reasons, and the difference is what a user sees:
 
 - `kRelative` meters `anchor_l99_sky_`, a statistic *of the landed accumulation itself*.
-  Whatever fraction of the dealt energy the entry factor removes — rejected rays on the
-  CPU, reduced weights on the GPU — is removed from the numerator and from the anchor
-  alike, so the overall loss cancels — for randomly oriented crystals, whose factor
-  averages exactly 1/2 whatever their shape, the frame is metered to the same brightness
-  as before (on the CPU route, noisier at the same `ray_num`). What the anchor cannot cancel,
+  Whatever fraction of the dealt energy the entry weight removes is removed from the
+  numerator and from the anchor alike, so the overall loss cancels — for randomly oriented
+  crystals, whose factor averages exactly 1/2 whatever their shape, the frame is metered to
+  the same brightness as before. What the anchor cannot cancel,
   and must not, is a change in *where* the light lands: every orientation is now weighted
   by the area it shows the sun, so wherever that area varies across the sampled
   orientations (thin plates even when randomly oriented; oriented crystals with a wide
   tilt spread or at a low sun) the halos move relative to each other and to the sky, and
   the anchor meters the new picture.
 - `kAbsolute` divides by emitted energy, which counts a ray at its birth weight whatever
-  the entry does to it (§7.1), so it shows the entry factor as darkening, the same on every
-  route: one stop for random orientation, a scene-dependent
+  the entry does to it (§7.1), so it shows the entry factor as darkening: one stop for
+  random orientation, a scene-dependent
   amount for oriented crystals (§7.2). That is the mode's contract — the light that got
   through — applied to a loss that previously went unmodelled.
 
@@ -986,14 +984,12 @@ something, and here the something-to-gain was smaller than the something-to-pay)
 
 **The table above and the paragraph after it predate projected-area entry acceptance
 (2026-09), and their numbers no longer hold; the law does.** A ray dealt to a crystal now
-enters with the factor `A/(S/2)` — the crystal's projected area along the ray over half its
-surface area — applied in expectation: the CPU route keeps it with that probability and
-discards it otherwise before tracing, the GPU routes trace every ray at that weight
-(`lm_pcg::entry_acceptance`; `doc/crystal-orientation-sampling.md` §1). A discarded ray, or
-the weight a kept one sheds, was emitted and lands nowhere, so the entry factor is one more
-factor inside `landed_fraction`, multiplying every row, by the same expected amount on every
-route. It does not break the law: the factor's mean is fixed by the scene (crystal shapes,
-orientation distributions, sun altitude), so
+enters with its weight multiplied by `A/(S/2)` — the crystal's projected area along the ray
+over half its surface area — on every route, and every ray is traced (`lm_pcg::entry_weight`;
+`doc/crystal-orientation-sampling.md` §1). The weight a ray sheds at entry was emitted and
+lands nowhere, so the entry factor is one more factor inside `landed_fraction`, multiplying
+every row. It does not break the law: the factor's mean is fixed by the scene (crystal
+shapes, orientation distributions, sun altitude), so
 `landed_fraction` is still a per-scene constant independent of `ray_num`. What moved is
 the value. Measured on full-sphere, no-filter scenes (`dual_fisheye_equal_area` 360°,
 single 550 nm line, `max_hits` 7, 1M rays, `Σ Y / emitted_energy` from the raw export):

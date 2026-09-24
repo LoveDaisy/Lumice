@@ -293,6 +293,13 @@ pass 没有做原型：既然只加 bounds 的版本已是净亏，拆分在单�
 [BENCHMARK] {"mode": "multi", "workers": 8, "cores": 8, "rays": 10000000, "wall_sec": 0.6, "setup_sec": 0.02, "active_sec": 0.58, "rays_per_sec": 17241379.3, "rate_basis": "steady", "isa": "native"}
 ```
 
+**`rays` 是被追迹的光线数**，所有路线的吞吐分子都是它。每条路线都追迹发给它的每一条光线——
+投影面积入射因子是权重（`lm_pcg::entry_weight`，`src/core/shared/pcg_shared.h`），不是丢弃——
+所以它同时也是发放数，即 `ray_num` 与所有面向用户的计数（`LUMICE_GetSimRayCount`、GUI 的
+"Total rays"、`Stats: sim_rays`）用的那个数。一条在追迹前丢弃光线的路线会打破这个恒等式，
+它的 `rays_per_sec` 会相对其他路线虚高（被丢弃的光线几乎零成本）：这样的路线在这里必须只计
+它实际追迹的光线。
+
 `rays_per_sec` 是 `active_sec`（从首条光线追踪到 IDLE 的窗口）上的**稳态追踪率**，
 **不是** `rays / wall_sec`——但这只在 `rate_basis` 为 `steady` 时成立，而这正是
 `rate_basis` 这个字段存在的意义。两个退化档（`wall_fallback` / `active_short`）都退回

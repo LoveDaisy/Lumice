@@ -487,6 +487,14 @@ output:
 [BENCHMARK] {"mode": "multi", "workers": 8, "cores": 8, "rays": 10000000, "wall_sec": 0.6, "setup_sec": 0.02, "active_sec": 0.58, "rays_per_sec": 17241379.3, "rate_basis": "steady", "isa": "native"}
 ```
 
+**`rays` is the number of rays traced**, and it is the throughput numerator on every route.
+Every route traces every ray it is dealt — the projected-area entry factor is a weight
+(`lm_pcg::entry_weight`, `src/core/shared/pcg_shared.h`), not a discard — so it is also the
+dealt count, the one `ray_num` and every user-facing counter (`LUMICE_GetSimRayCount`, the
+GUI's "Total rays", `Stats: sim_rays`) use. A route that drops rays before tracing them would
+break that identity, and its `rays_per_sec` would then overstate it against the others (a
+dropped ray costs almost nothing): such a route must count only what it traced here.
+
 `rays_per_sec` is the **steady trace rate** over `active_sec` (the window from
 first traced ray to IDLE), NOT `rays / wall_sec` — but only on `rate_basis`
 `steady`, which is exactly what `rate_basis` is there to tell you. The

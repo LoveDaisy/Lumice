@@ -565,7 +565,8 @@ struct ParityScene {
 //
 // RAY BUDGET DOUBLED, 16M -> 32M, on all four rows, when entry acceptance started keeping each ray
 // dealt to a crystal with probability A/(S/2) (doc/configuration.md, `proportion`). At a fixed
-// ray_num about half the rays are now discarded at entry, so both arms got noisier together and
+// ray_num about half the rays were then discarded at entry (every route has since traced each ray
+// at weight A/(S/2) instead; the doubled budget was kept), so both arms got noisier together and
 // every bm4 reading above sank with them: at 16M the four rows read 34.44 / 38.09 / 39.76 / 41.04,
 // three of them under their thresholds and the fourth 0.46 dB over. That is not a divergence
 // between the arms — both are the same engine and moved identically — and it was not answered by

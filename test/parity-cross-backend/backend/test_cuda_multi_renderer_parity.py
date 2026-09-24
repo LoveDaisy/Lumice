@@ -34,8 +34,9 @@ Measured on the CUDA reference machine (RTX 5090 D, seed 42 both arms):
 The dual scene's corr reads at the oracle's own seed-to-seed level (the Metal
 file's 0.886–0.904 / 0.959–0.963), as expected for a shared projection.
 
-Those readings predate entry acceptance (a ray dealt to a crystal is kept with
-probability A/(S/2)), which left about half as many rays entering at the same
+Those readings predate entry acceptance (in its first, discarding form a ray dealt
+to a crystal was kept with probability A/(S/2); every route now traces it at that
+weight instead), which left about half as many rays entering at the same
 20M. Re-measured on the same machine afterwards: legacy against legacy 0.775 /
 0.780 / 0.783 on renderer[0] (0.909 / 0.917 / 0.911 on renderer[1]) over seed
 pairs 42-43 / 42-44 / 43-44, CUDA against legacy 0.790 / 0.755 / 0.778 (0.907 /

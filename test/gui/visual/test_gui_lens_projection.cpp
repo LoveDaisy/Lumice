@@ -133,8 +133,10 @@ struct LensProjScene {
 // geometric term to dominate, and stays well inside halo_22.json's 10M ray budget.
 // EVERY BUDGET IN THIS PARAGRAPH AND THE NEXT WAS DOUBLED LATER (see the last RE-SHOT block
 // above kScenes[]): the figures here are the rays that ENTERED a crystal when they were chosen,
-// and since entry acceptance about half the dealt rays no longer do, so the table below deals
-// twice as many to keep the same number entering.
+// and when entry acceptance first landed it discarded about half the dealt rays, so the table
+// below deals twice as many to keep the same number entering. Every route has since traced each
+// dealt ray at its entry weight A/(S/2) instead, which is never noisier; the doubled budgets were
+// kept as margin, not re-measured downward.
 //
 // The budgets of the four original scenes are unchanged from the ray counts they previously
 // waited for. The two scenes added when the auto_ev group was retired follow the same rule:

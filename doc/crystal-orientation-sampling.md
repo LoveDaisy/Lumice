@@ -29,13 +29,11 @@ orientation's share of the light.** A crystal in orientation `o` intercepts sunl
 proportion to the area it presents along the ray direction `d`, `A(o,d)` — a plate seen
 face-on catches far more than the same plate seen edge-on. Everything below samples `o`
 from `p(o)` alone; the missing `A(o,d)` factor is supplied one stage later, at entry:
-each ray dealt to a sampled crystal enters with the factor `A/(S/2)` (`S` the crystal's
-total surface area, so the ratio never exceeds 1 for a convex body), applied in
-expectation by one estimator family, `lm_pcg::entry_acceptance`
-(`src/core/shared/pcg_shared.h`): keep the ray with probability `q`, multiply a kept ray's
-weight by `(A/(S/2))/q`. The CPU route (`InitRay_p_fid`, `src/core/simulator.cpp`) runs
-`q = A/(S/2)` — accept/reject, the rest discarded before tracing; the Metal and CUDA entry
-kernels run `q = 1` — every ray traced at weight `A/(S/2)`. So the light the orientations
+each ray dealt to a sampled crystal enters with its weight multiplied by `A/(S/2)` (`S` the
+crystal's total surface area, so the ratio never exceeds 1 for a convex body), and every ray
+is traced — none is discarded. One formula, `lm_pcg::entry_weight`
+(`src/core/shared/pcg_shared.h`), serves every route: the CPU's `InitRay_p_fid`
+(`src/core/simulator.cpp`) and the Metal and CUDA entry kernels. So the light the orientations
 actually contribute is distributed as `p(o)·A(o,d)`, and a "uniform" `p(o)` does not mean
 every orientation contributes equally. The two stages are independent — nothing here
 needs to know about the acceptance, and changing a distribution below never changes the

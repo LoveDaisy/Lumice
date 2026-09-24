@@ -48,8 +48,8 @@ PSNR_FAILURE_DIR = get_project_root() / "scratchpad" / "e2e-failures"
 #
 # Every key below was re-shot together on 2026-09-24, when entry acceptance started weighting each
 # crystal orientation by the area it presents to the sun (doc/configuration.md, `proportion`;
-# doc/ev-pipeline-architecture.md §7.2). Every config here uses `ev_mode: absolute`, and a ray
-# rejected at entry still counts as emitted energy, so every picture got dimmer — by exactly one
+# doc/ev-pipeline-architecture.md §7.2). Every config here uses `ev_mode: absolute`, and the
+# weight a ray loses at entry still counts as emitted energy, so every picture got dimmer — by exactly one
 # stop where the crystals are randomly oriented and by a scene-dependent amount where they are
 # not (doc/ev-pipeline-architecture.md §7.2). Eleven configs crossed their thresholds;
 # the other three (filters_01, halo_22_01, orthographic_180_01) did not, only because a darker image

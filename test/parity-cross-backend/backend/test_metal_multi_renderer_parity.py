@@ -45,7 +45,8 @@ Bars (the checks are the shared module's (a)–(d)):
     into plane 0).
     RE-CALIBRATED 0.80 -> 0.65 when entry acceptance started keeping each ray
     dealt to a crystal with probability A/(S/2) (``doc/configuration.md``,
-    ``proportion``). About half the dealt rays no longer enter, so at the same
+    ``proportion``) — the discarding form, since replaced on every route by a
+    per-ray weight that traces them all. About half the dealt rays stopped entering, so at the same
     20M every plane got noisier and the oracle stopped agreeing with ITSELF at
     0.80: legacy against legacy now reads 0.775 / 0.794 / 0.769 on renderer[0]
     (0.909 / 0.917 / 0.910 on renderer[1]) over seed pairs 42-43 / 42-44 /
