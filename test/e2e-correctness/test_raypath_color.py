@@ -73,7 +73,18 @@ MULTI_LAYER_REFERENCE = REFERENCES_DIR / "raypath_color_multi_layer_components.j
 #   (reference on macOS, CI on Linux) matching the ~1 dB safety used above
 #   -> 15.5 dB. A structural regression (wrong dominant winner, per-class lane
 #   wiring broken) drops PSNR far below 15.5 dB and the gate still fires.
-MULTI_LAYER_PSNR_THRESHOLD = 15.5
+# Re-shot when entry acceptance started weighting each crystal orientation by its projected area
+# (doc/configuration.md, `proportion`). This scene mixes one oriented plate (crystal 2) with
+# randomly oriented columns, so the fix shifts energy between classes, not just noise. Measured
+# with a binary built from the pre-fix merge base as the control arm: the old reference already
+# read 17.86 dB against the control (it had drifted from the 20 dB above for reasons that predate
+# this change), and 16.29 dB against the fixed binary — 0.8 dB above the gate. The fixed binary
+# against the control reads 27.3 dB, below its own run-to-run 34.5 dB, so the move is this change's.
+# New calibration, same method: 3 fresh CLI runs, run-to-run 34.53 / 34.58 dB, min - 3 dB floored
+# to 0.5 dB -> 31.5, minus the same ~1 dB cross-platform margin -> 30.5 dB. The rise is the
+# run-to-run floor coming back into view, not a tightening: the old 20 dB figure was measured
+# against a reference that no longer described the render.
+MULTI_LAYER_PSNR_THRESHOLD = 30.5
 
 # task-339.5 color-class list order in raypath_color_multi_layer.json.
 # Order matters: dominant-mode tie-break is list-first, and the classifier
