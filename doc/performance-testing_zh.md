@@ -524,6 +524,15 @@ Windows 原生，同 CPU/GPU，见 `doc/machines.md`）——它们的 legacy CP
 虚拟化开销能解释的范围（`ms_multi_crystal`：home-win legacy 1.82 M/s vs home-wsl legacy
 3.90 M/s，即该 config 下原生反而更慢），按实测记录，不做调和。
 
+**2026-09-24 复测，未变**（Mac、home-wsl、home-win；`origin/main@b6ed96be` 对其上叠加投影面积入射
+权重改动的分支，两臂都重建，交错且轮换先后顺序，每臂 3–8 次、每次为脚本自身 N≥5 的中位）：每格分支/main
+比值 0.97–1.09，legacy 与 GPU 皆然（Mac Metal 在主机有其他负载时测得，散布 0.99–1.20——没有回退，也不算提升），因此上表数值一个未改；`rays` 在每条路线上都是追迹数
+且等于发放数（见上方 `[BENCHMARK]` 说明）。这次复测暴露一条测量状态事实：**home-win** 上 legacy
+`ms_multi_crystal` 与 `ms_multi_crystal_complex_filter` 两格（1.82 / 9.39 M/s）只在机器闲置后的
+**第一次**运行能复现；此后任一臂的每次运行都读 **1.62 / 8.64 M/s**（CoV 0.1–0.3%），两臂同样低
+11% / 8%。另两格 legacy 与全部 CUDA 格首次与之后读数相同。与热机状态下的 home-win legacy 数字比较时，
+先丢弃第一次运行，或轮换两臂顺序。
+
 **要点**：
 - **5× 假低已修**：`bench_light_single_ms` 4060Ti 读 **130.5 M/s** @0.2% CoV，命中 explore-315 独立实测
   plateau（400M-ray wall = 130.2 M/s）。这才是诚实 CUDA 稳态率；旧 finite-20M bench 读 24.7 M/s（5× 假低）。

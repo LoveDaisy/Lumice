@@ -800,6 +800,18 @@ columns differ by more than WSL virtualization overhead alone would suggest (`ms
 home-win legacy 1.82 M/s vs home-wsl legacy 3.90 M/s, i.e. *slower* natively for this one config)
 and are reported as measured, not reconciled.
 
+**Re-measured 2026-09-24, unchanged** (Mac, home-wsl, home-win; `origin/main@b6ed96be` against
+the projected-area entry weight change on top of it, both arms rebuilt, arms interleaved with the
+order alternated, N=3–8 runs per arm of the harness's own N≥5 medians): every cell's
+branch/main ratio is 0.97–1.09, legacy and GPU alike (Mac Metal, measured under other load on
+the host, spread 0.99–1.20 — no regression, not a gain either), so no value above was changed; `rays` is the traced count on every route and equals the dealt count (see the
+`[BENCHMARK]` note above). One measurement-state fact that run exposed: on **home-win** the
+legacy `ms_multi_crystal` and `ms_multi_crystal_complex_filter` cells above (1.82 / 9.39 M/s)
+reproduce only on the **first** run after the machine has idled; every later run of either arm
+reads **1.62 / 8.64 M/s** (CoV 0.1–0.3%), the same 11% / 8% lower on both arms. The other two
+legacy cells and all CUDA cells read the same first and later. Compare against a warm-machine
+home-win legacy number only after discarding the first run, or alternate the arm order.
+
 **Key points**:
 - **The 5× under-report is fixed.** `bench_light_single_ms` on 4060Ti reads **130.5 M/s** at
   0.2% CoV — matching explore-315's independently-measured plateau (400M-ray wall = 130.2 M/s).
