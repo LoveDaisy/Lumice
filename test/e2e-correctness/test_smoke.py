@@ -84,9 +84,17 @@ PSNR_THRESHOLDS = {
     # ≈ 23.4 dB (stable: 23.41/23.42/23.44); threshold = min - 3dB floored to
     # 20.0 for cross-platform margin (reference generated on macOS, CI on Linux).
     # A structural regression (e.g. the frame band-vs-ring bug) drops PSNR far
-    # below 20, so the gate still catches gross regressions. (Re-measured at the 2026-09-24 reshoot:
-    # run-to-run 24.95 / 24.97 dB -> 21.5 dB by the table's method.)
-    "ms_multi_crystal_01": 21.5,
+    # below 20, so the gate still catches gross regressions.
+    # That last sentence stopped being true at the 2026-09-24 reshoot, and the threshold is set
+    # against it rather than by the table's method. Run-to-run is now 24.93-24.97 dB, which the
+    # method turns into 21.5 — but an ALL-BLACK frame scores 22.0 dB against the new reference
+    # (the scene is dim under absolute EV and noise-dominated, so the reference is mostly dark
+    # pixels), i.e. 21.5 would pass a render with nothing in it. Neither a brighter
+    # intensity_factor nor a doubled ray_num opens the gap by more than ~1.3 dB, because the
+    # noise scales with the signal. 23.0 is placed between the two: 1.9 dB under run-to-run and
+    # 1.0 dB over black — thin on both sides, recorded as such. (The old reference had a 7 dB gap:
+    # black 16.0 dB against run-to-run 23.4.)
+    "ms_multi_crystal_01": 23.0,
     "multi_lens_01": 37.0,
     "multi_lens_02": 37.0,
     "multi_lens_03": 42.0,

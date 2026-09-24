@@ -84,7 +84,13 @@ MULTI_LAYER_REFERENCE = REFERENCES_DIR / "raypath_color_multi_layer_components.j
 # to 0.5 dB -> 31.5, minus the same ~1 dB cross-platform margin -> 30.5 dB. The rise is the
 # run-to-run floor coming back into view, not a tightening: the old 20 dB figure was measured
 # against a reference that no longer described the render.
-MULTI_LAYER_PSNR_THRESHOLD = 30.5
+# 30.5 was NOT kept, though, because it cannot see the failure this gate names: the composite
+# is dim under the config's absolute EV and mostly dark pixels, and an ALL-BLACK frame scores
+# 31.7 dB against the new reference. Brightening (intensity_factor 2 / 4) or doubling ray_num
+# moves both numbers together and never opens the gap past ~1.4 dB. 33.0 sits between them:
+# 1.5 dB under run-to-run, 1.3 dB over black. Thin both ways, and stated so; the classifier
+# checks below do not depend on the reference and still carry the per-class assertions.
+MULTI_LAYER_PSNR_THRESHOLD = 33.0
 
 # task-339.5 color-class list order in raypath_color_multi_layer.json.
 # Order matters: dominant-mode tie-break is list-first, and the classifier
