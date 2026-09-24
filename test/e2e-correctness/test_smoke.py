@@ -102,11 +102,12 @@ PSNR_THRESHOLDS = {
     "multi_lens_02": 37.0,
     "multi_lens_03": 42.0,
     "multi_scatter_01": 30.5,
-    # orthographic_180: D65 + uniform full-random orientation + 1M rays. Per-run
-    # PSNR (measured on macOS): run-to-run 22.74/22.76 dB (3 runs). Threshold
-    # = min - 3 dB ≈ 19.7 → set 19.5 dB (rounded down to 0.5 dB precision) to
-    # tolerate cross-platform sampling noise (reference generated on macOS,
-    # CI runs on Linux). Re-introduces orthographic-projection e2e coverage
+    # orthographic_180: D65 + uniform full-random orientation + 1M rays. Run-to-run
+    # at the 2026-09-24 reshoot (3 fresh CLI runs, macOS): 25.93 / 25.93 dB.
+    # Threshold = min - 3 dB = 22.93 → 22.5 dB (floored to 0.5 dB precision), leaving
+    # room for cross-platform sampling noise (reference generated on macOS, CI runs
+    # on Linux). The previous 19.5 dB (from 22.74/22.76 dB) sat below an all-black
+    # frame's 19.9 dB; 22.5 dB no longer does. Re-introduces orthographic-projection e2e coverage
     # lost when scrum-268.6 scoped smoke to "configs with reference images"
     # (task-270.7 / explore-269 P0). A structural regression (frame bug,
     # wrong projection) drops PSNR far below this floor.
@@ -161,7 +162,9 @@ PSNR_THRESHOLDS = {
     # images the whole sky, and four of the six ids are reflections of the sun that a half-sky view
     # would drop.
     # Same calibration method as the rest of this table: 3 fresh CLI runs, threshold =
-    # min(PSNR_2vs1, PSNR_3vs1) - 3 dB floored to 0.5 dB precision (measured 27.46 / 27.45 dB).
+    # min(PSNR_2vs1, PSNR_3vs1) - 3 dB floored to 0.5 dB precision. At the 2026-09-24 reshoot
+    # the run-to-run floor is 26.65 dB (was 27.45 dB before entry acceptance; see the header),
+    # so 26.65 - 3 = 23.65 -> 23.5 dB.
     "reference_point_markers_01": 23.5,
 }
 
