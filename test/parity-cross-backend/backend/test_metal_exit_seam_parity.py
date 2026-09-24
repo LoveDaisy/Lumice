@@ -283,6 +283,14 @@ _RAW_THRESHOLDS = {
     #   ms_multi_crystal_filtered_bd:  metal ds={0.9903, 0.9903, 0.9904}  cpu_backend ds={0.9902×3}
     # min ≥ 0.97 across all 3 runs → 0.97 floor adopted (consistent with the rest of
     # the filter matrix; per plan rule "若 min ≥ 0.97 则直接用 0.97").
+    # parity_single_ms_bd_filter's ray_num was doubled 2M -> 4M when entry acceptance started
+    # discarding a ray dealt to a crystal with probability 1 - A/(S/2) (doc/configuration.md,
+    # `proportion`): at 2M about half the rays no longer entered, and this scene — a two-face
+    # BD filter, the sparsest signal in the matrix — sank to metal ds 0.9621 / cpu_backend 0.9686,
+    # both under the floor, with both arms moving together (noise, not a divergence). At 4M the
+    # same run reads 0.9809 / 0.9839, back on the 3-run baseline above, so the 0.97 floor it shares
+    # with the rest of the filter matrix stands. The config's other consumer, test_cli.py's
+    # last-layer-prob warning, reads only the log and is indifferent to ray_num.
     "parity_single_ms_bd_filter":         (0.97, 0.97),
     "ms_multi_crystal_filtered_bd":       (0.97, 0.97),
     "parity_single_ms_complex_filter":    (0.97, 0.97),
