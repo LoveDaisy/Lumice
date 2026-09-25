@@ -41,6 +41,26 @@ const char* const kStoppingBtn = "##TopBar/" ICON_FA_STOP " Stopping...";
 const char* const kContinueBtn = "##TopBar/" ICON_FA_FORWARD " Continue";
 const char* const kSettingsBtn = "##TopBar/" ICON_FA_GEAR " Settings";
 const char* const kRightToggleBtn = "##TopBar/" ICON_FA_CHEVRON_RIGHT "##right_panel_toggle";
+const char* const kRevertBtn = "##TopBar/Revert";
+
+// Every button on the top bar, in the order it is drawn. Revert is included on purpose while
+// hidden: it is submitted at alpha 0 so the bar does not shift when it appears, and its hidden
+// rectangle is the one that holds that space.
+const char* const kTopBarButtons[] = {
+  "##TopBar/" ICON_FA_CHEVRON_LEFT "##left_panel_toggle",
+  kRunBtn,
+  kContinueBtn,
+  "##TopBar/New",
+  "##TopBar/Open",
+  "##TopBar/Save",
+  "##TopBar/" ICON_FA_PALETTE " Colors",
+  "##TopBar/" ICON_FA_ROUTE " Analysis",
+  "##TopBar/" ICON_FA_FILE_LINES " Summary",
+  kSettingsBtn,
+  kRevertBtn,
+  kRightToggleBtn,
+};
+constexpr int kTopBarButtonCount = static_cast<int>(sizeof(kTopBarButtons) / sizeof(kTopBarButtons[0]));
 
 // Index of a window in ImGui's submission-order list, or -1. Later index means visually higher.
 int WindowStackIndex(const char* name) {
@@ -139,9 +159,9 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
           IM_ERRORF("%s: the run slot is not showing %s", s.name, s.button);
           continue;
         }
-        // The neighbour is what the user actually notices moving. Revert is always submitted (it is
-        // hidden by alpha rather than by omission), so it is a stable landmark in all three states.
-        const ImGuiTestItemInfo neighbour = ctx->ItemInfo("##TopBar/Revert", ImGuiTestOpFlags_NoError);
+        // The neighbour is what the user actually notices moving: New, the first control to the
+        // right of the execution group (Continue sits between, and is measured with the slot).
+        const ImGuiTestItemInfo neighbour = ctx->ItemInfo("##TopBar/New", ImGuiTestOpFlags_NoError);
         if (width < 0.0f) {
           width = btn.RectFull.GetWidth();
           right_neighbour_x = neighbour.RectFull.Min.x;
@@ -227,56 +247,91 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
       ResetTestState();
       ctx->Yield(3);
 
-      // Revert is included on purpose while hidden: it is submitted at alpha 0 so the bar does not
-      // shift when it appears, and its hidden rectangle is the one that holds that space.
-      const char* const kButtons[] = {
-        "##TopBar/" ICON_FA_CHEVRON_LEFT "##left_panel_toggle",
-        kRunBtn,
-        kContinueBtn,
-        "##TopBar/Revert",
-        "##TopBar/New",
-        "##TopBar/Open",
-        "##TopBar/Save",
-        "##TopBar/" ICON_FA_PALETTE " Colors",
-        "##TopBar/" ICON_FA_ROUTE " Analysis",
-        "##TopBar/" ICON_FA_FILE_LINES " Summary",
-        kSettingsBtn,
-        kRightToggleBtn,
-      };
-      constexpr int kCount = static_cast<int>(sizeof(kButtons) / sizeof(kButtons[0]));
+      constexpr int kCount = kTopBarButtonCount;
       ImGuiTestItemInfo infos[kCount];
       for (int i = 0; i < kCount; ++i) {
-        infos[i] = ctx->ItemInfo(kButtons[i], ImGuiTestOpFlags_NoError);
+        infos[i] = ctx->ItemInfo(kTopBarButtons[i], ImGuiTestOpFlags_NoError);
       }
 
       const float height = infos[1].RectFull.GetHeight();
       IM_CHECK_GT(height, 0.0f);
       for (int i = 0; i < kCount; ++i) {
         if (infos[i].ID == 0) {
-          IM_ERRORF("the top bar has no %s", kButtons[i]);
+          IM_ERRORF("the top bar has no %s", kTopBarButtons[i]);
         } else if (infos[i].RectFull.GetHeight() != height) {
-          IM_ERRORF("%s is %.1f px tall, the run slot is %.1f", kButtons[i],
+          IM_ERRORF("%s is %.1f px tall, the run slot is %.1f", kTopBarButtons[i],
                     static_cast<double>(infos[i].RectFull.GetHeight()), static_cast<double>(height));
         }
       }
 
-      // Indices into kButtons: the execution group is {1, 2}, the file group {4, 5, 6}.
+      // Indices into kTopBarButtons: the execution group is {1, 2}, the file group {3, 4, 5}.
       IM_CHECK_EQ(infos[2].RectFull.GetWidth(), infos[1].RectFull.GetWidth());
-      IM_CHECK_EQ(infos[5].RectFull.GetWidth(), infos[4].RectFull.GetWidth());
-      IM_CHECK_EQ(infos[6].RectFull.GetWidth(), infos[4].RectFull.GetWidth());
+      IM_CHECK_EQ(infos[4].RectFull.GetWidth(), infos[3].RectFull.GetWidth());
+      IM_CHECK_EQ(infos[5].RectFull.GetWidth(), infos[3].RectFull.GetWidth());
+    };
+  }
+
+  // P3d. The ⚠ + Revert pair appears when the document is modified and disappears when it is not,
+  // and no button on the bar moves either way — the pair is hidden by alpha, never by omission, so
+  // its rectangle is held in both states. A pair drawn only when modified would slide the right
+  // toggle (or, beside Continue where it used to sit, every group to its right) each time an edit
+  // lands or a run completes, which is the toolbar flinching under the user's cursor.
+  //
+  // Both states are reached the way the product reaches them: a completed result plus the dirty
+  // flag, which the frame-top reconcile turns into kModified, and the same result clean (kDone).
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "shell_chrome", "toggling_modified_moves_no_top_bar_button");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      gui::g_state.run_intent = gui::RunIntent::kLoaded;
+      gui::g_state.dirty = false;
+      ctx->Yield(3);
+      IM_CHECK_EQ(static_cast<int>(gui::g_state.sim_state), static_cast<int>(gui::GuiState::SimState::kDone));
+
+      ImGuiTestItemInfo clean[kTopBarButtonCount];
+      for (int i = 0; i < kTopBarButtonCount; ++i) {
+        clean[i] = ctx->ItemInfo(kTopBarButtons[i], ImGuiTestOpFlags_NoError);
+      }
+
+      gui::g_state.dirty = true;
+      ctx->Yield(3);
+      const bool reached_modified = gui::g_state.sim_state == gui::GuiState::SimState::kModified;
+      ImGuiTestItemInfo modified[kTopBarButtonCount];
+      for (int i = 0; i < kTopBarButtonCount; ++i) {
+        modified[i] = ctx->ItemInfo(kTopBarButtons[i], ImGuiTestOpFlags_NoError);
+      }
+
+      gui::g_state.dirty = false;
+      gui::g_state.run_intent = gui::RunIntent::kNone;
+      ctx->Yield(2);
+
+      IM_CHECK(reached_modified);
+      for (int i = 0; i < kTopBarButtonCount; ++i) {
+        if (clean[i].ID == 0 || modified[i].ID == 0) {
+          IM_ERRORF("%s is missing from the top bar (clean: %s, modified: %s)", kTopBarButtons[i],
+                    clean[i].ID == 0 ? "absent" : "present", modified[i].ID == 0 ? "absent" : "present");
+        } else if (clean[i].RectFull.Min.x != modified[i].RectFull.Min.x ||
+                   clean[i].RectFull.Max.x != modified[i].RectFull.Max.x) {
+          IM_ERRORF("%s spans x=[%.1f, %.1f] unmodified but [%.1f, %.1f] modified", kTopBarButtons[i],
+                    static_cast<double>(clean[i].RectFull.Min.x), static_cast<double>(clean[i].RectFull.Max.x),
+                    static_cast<double>(modified[i].RectFull.Min.x), static_cast<double>(modified[i].RectFull.Max.x));
+        }
+      }
     };
   }
 
   // P3c. At the narrowest window the app allows, the whole bar fits: every group from the left
-  // toggle through Settings, then the right toggle flush against the right edge, with at least one
-  // item gap between them. The bar has no scrollbar and no overflow handling — a bar that did not
-  // fit would put Settings underneath the right toggle, or push it off the window.
+  // toggle through Settings, then the ⚠ + Revert pair and the right toggle at the right edge, with
+  // at least one item gap between Settings and the pair. The bar has no scrollbar and no overflow
+  // handling — a bar that did not fit would draw Revert over Settings, or push it off the window.
   //
   // Measured at its widest real content: with a colour class present the Colored / Full Spectrum
   // checkbox joins the feature group (showing "Full Spectrum", the longer label), and with no run
   // yet no class has matched anything, so the empty-composite warning pip is drawn beside it too.
-  // The left part is read off the rendered frame (the right edge of Settings), the right toggle's
-  // width likewise; only the window floor comes from a constant.
+  // The left part is read off the rendered frame (the right edge of Settings), and so is the right
+  // end from Revert through the right toggle, which at any wider window sit flush together. The ⚠
+  // glyph is text, not an item with a rectangle, so its width is the one thing taken from
+  // CalcTextSize; the window floor comes from a constant.
   {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "shell_chrome", "the_top_bar_fits_at_the_minimum_window_width");
     t->TestFunc = [](ImGuiTestContext* ctx) {
@@ -289,6 +344,7 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
       const ImGuiTestItemInfo checkbox =
           ctx->ItemInfo("##TopBar/Full Spectrum##CompositePreviewToggle", ImGuiTestOpFlags_NoError);
       const ImGuiTestItemInfo settings = ctx->ItemInfo(kSettingsBtn, ImGuiTestOpFlags_NoError);
+      const ImGuiTestItemInfo revert = ctx->ItemInfo(kRevertBtn, ImGuiTestOpFlags_NoError);
       const ImGuiTestItemInfo right_toggle = ctx->ItemInfo(kRightToggleBtn, ImGuiTestOpFlags_NoError);
       ImGuiWindow* bar = ctx->GetWindowByRef("##TopBar");
 
@@ -298,12 +354,20 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
       IM_CHECK(bar != nullptr);
       IM_CHECK_NE(checkbox.ID, 0u);  // the widest configuration really was the one measured
       IM_CHECK_NE(settings.ID, 0u);
+      IM_CHECK_NE(revert.ID, 0u);
       IM_CHECK_NE(right_toggle.ID, 0u);
       IM_CHECK_GT(settings.RectFull.Min.x, checkbox.RectFull.Max.x);
+      IM_CHECK_GT(revert.RectFull.Min.x, settings.RectFull.Max.x);
 
       const ImGuiStyle& style = ImGui::GetStyle();
-      const float required = (settings.RectFull.Max.x - bar->Pos.x) + style.ItemSpacing.x +
-                             right_toggle.RectFull.GetWidth() + style.WindowPadding.x;
+      // Revert and the right toggle are flush (one item gap) at this window width, so the span from
+      // Revert's left edge to the toggle's right edge is what the right end needs at any width.
+      IM_CHECK_EQ(right_toggle.RectFull.Min.x - revert.RectFull.Max.x, style.ItemSpacing.x);
+      const float warning_glyph_w = ImGui::CalcTextSize(ICON_FA_CIRCLE_EXCLAMATION).x;
+      const float right_end_w =
+          warning_glyph_w + style.ItemSpacing.x + (right_toggle.RectFull.Max.x - revert.RectFull.Min.x);
+      const float required =
+          (settings.RectFull.Max.x - bar->Pos.x) + style.ItemSpacing.x + right_end_w + style.WindowPadding.x;
       const float floor_width = static_cast<float>(gui::kMinWindowWidth);
       ctx->LogInfo("required=%.1f min_window=%.1f headroom=%.1f", static_cast<double>(required),
                    static_cast<double>(floor_width), static_cast<double>(floor_width - required));

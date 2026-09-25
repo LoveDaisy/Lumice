@@ -495,38 +495,6 @@ void RenderTopBar(float window_width) {
     }
   }
 
-  // Revert area — always rendered for stable layout, hidden when not modified.
-  // Alpha=0 + BeginDisabled: invisible and non-interactive, but still occupies layout space.
-  // The hidden area intercepts clicks, which is harmless in this horizontal toolbar context.
-  bool modified = IsModified(g_state.sim_state);
-  if (!modified) {
-    ImGui::PushStyleVar(ImGuiStyleVar_Alpha, 0.0f);
-  }
-  ImGui::BeginDisabled(!modified);
-  ImGui::SameLine();
-  ImGui::TextColored(WarningTextColor(), ICON_FA_CIRCLE_EXCLAMATION);
-  // task-349.2 Step 2 (AC1/AC3): tooltip explains what the ⚠ + Revert row
-  // means. Source-agnostic wording (config changed, not "you added a color
-  // class") — main-scene edits and color-class edits reach kModified through
-  // the same ReconcileSimState pipeline, so a single tooltip covers both.
-  // Attached to the icon rather than the button so the button's own hover
-  // action (click to revert) is not shadowed. Only shown when modified,
-  // since the row is BeginDisabled(alpha=0) otherwise.
-  if (modified && ImGui::IsItemHovered()) {
-    ImGui::SetTooltip(
-        "Configuration changed since the last run.\n"
-        "Click Run to re-simulate, or Revert to discard the changes.");
-  }
-  ImGui::SameLine();
-  // A full-height Button, not SmallButton: the bar's buttons share one frame height.
-  if (ImGui::Button("Revert") && modified) {  // `&& modified`: redundant safety guard over BeginDisabled
-    DoRevert();
-  }
-  ImGui::EndDisabled();
-  if (!modified) {
-    ImGui::PopStyleVar();
-  }
-
   ToolbarGroupSeparator();
 
   // File operations — New/Open disabled while busy (simulating OR async Stop draining); Save menu
@@ -777,19 +745,68 @@ void RenderTopBar(float window_width) {
     OpenDefaultsPanel(g_state, DefaultsPanelSection::kSettings);
   }
 
+  // The right toggle's width is needed before it is drawn: the ⚠ + Revert pair below is placed
+  // against it. The max of both label states, so the button's left edge does not jitter when toggled.
+  const float right_toggle_w =
+      std::max(ImGui::CalcTextSize(ICON_FA_CHEVRON_RIGHT "##right_panel_toggle", nullptr, true).x,
+               ImGui::CalcTextSize(ICON_FA_CHEVRON_LEFT "##right_panel_toggle", nullptr, true).x) +
+      style.FramePadding.x * 2.0f;
+  const float right_edge = ImGui::GetWindowContentRegionMax().x;
+
+  // ⚠ + Revert — the "changed since the last run" status, at the bar's trailing end, flush against
+  // the right toggle. Always submitted, hidden when not modified: Alpha=0 + BeginDisabled keeps it
+  // invisible and non-interactive while it still occupies its rectangle, so nothing on the bar moves
+  // when it appears (shell_chrome/toggling_modified_moves_no_top_bar_button pins that).
+  //
+  // Why here and not beside Continue, where it used to sit: the hidden rectangle is permanent, and
+  // the document is unmodified most of the time — beside Continue it was a standing hole in the
+  // middle of the bar's densest run of controls. The space between Settings and the right toggle is
+  // empty at every window width above the floor, so hiding the pair there hides it in space that
+  // was blank anyway. It is right-aligned rather than following Settings so it reads as the bar's
+  // status corner, not as one more member of the Settings group (and so its x does not depend on
+  // whether the Colored checkbox is present). The max() keeps it after Settings if the window is
+  // ever narrower than the bar's budget; at kMinWindowWidth it fits (the_top_bar_fits_… pins it).
+  {
+    const bool modified = IsModified(g_state.sim_state);
+    const float revert_pair_w = ImGui::CalcTextSize(ICON_FA_CIRCLE_EXCLAMATION).x + style.ItemSpacing.x +
+                                ImGui::CalcTextSize("Revert").x + style.FramePadding.x * 2.0f;
+    ImGui::SameLine();
+    ImGui::SetCursorPosX(
+        std::max(ImGui::GetCursorPosX(), right_edge - right_toggle_w - style.ItemSpacing.x - revert_pair_w));
+    if (!modified) {
+      ImGui::PushStyleVar(ImGuiStyleVar_Alpha, 0.0f);
+    }
+    ImGui::BeginDisabled(!modified);
+    ImGui::TextColored(WarningTextColor(), ICON_FA_CIRCLE_EXCLAMATION);
+    // The tooltip explains what the ⚠ + Revert pair means. Source-agnostic wording (config changed,
+    // not "you added a color class") — main-scene edits and color-class edits reach kModified through
+    // the same ReconcileSimState pipeline, so a single tooltip covers both. Attached to the icon
+    // rather than the button so the button's own hover action (click to revert) is not shadowed.
+    // Only shown when modified, since the pair is BeginDisabled(alpha=0) otherwise.
+    if (modified && ImGui::IsItemHovered()) {
+      ImGui::SetTooltip(
+          "Configuration changed since the last run.\n"
+          "Click Run to re-simulate, or Revert to discard the changes.");
+    }
+    ImGui::SameLine();
+    // A full-height Button, not SmallButton: the bar's buttons share one frame height.
+    if (ImGui::Button("Revert") && modified) {  // `&& modified`: redundant safety guard over BeginDisabled
+      DoRevert();
+    }
+    ImGui::EndDisabled();
+    if (!modified) {
+      ImGui::PopStyleVar();
+    }
+  }
+
   // Right-panel collapse toggle — right-aligned so it sits flush with the right panel's outer edge.
   // Also note: when the right panel is already collapsed, RenderCollapsedStrip's internal button
   // still expands it; this top-bar toggle simply offers a symmetric alternate entry point.
   {
     const char* right_toggle_label = g_state.right_panel_collapsed ? ICON_FA_CHEVRON_LEFT "##right_panel_toggle" :
                                                                      ICON_FA_CHEVRON_RIGHT "##right_panel_toggle";
-    // Use the max width of both label states so the button's left edge doesn't jitter when toggled.
-    float w_expanded = ImGui::CalcTextSize(ICON_FA_CHEVRON_RIGHT "##right_panel_toggle", nullptr, true).x;
-    float w_collapsed = ImGui::CalcTextSize(ICON_FA_CHEVRON_LEFT "##right_panel_toggle", nullptr, true).x;
-    float btn_w = std::max(w_expanded, w_collapsed) + style.FramePadding.x * 2.0f;
-    float right_edge = ImGui::GetWindowContentRegionMax().x;
     ImGui::SameLine();
-    ImGui::SetCursorPosX(right_edge - btn_w);
+    ImGui::SetCursorPosX(right_edge - right_toggle_w);
     if (ImGui::Button(right_toggle_label)) {
       g_state.right_panel_collapsed = !g_state.right_panel_collapsed;
     }

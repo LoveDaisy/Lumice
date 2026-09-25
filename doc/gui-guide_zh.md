@@ -41,7 +41,6 @@ GUI 需要 display server 和支持 OpenGL 3.2 Core Profile 的 GPU。
 
 - **左面板折叠按钮**：`<` 收起左面板，`>` 展开（也可用快捷键 `[`）。
 - **Run / Stop**：固定宽度的按钮，根据模拟状态在绿色 **Run** 与红色 **Stop** 之间切换。模拟期间禁用的控件在运行结束后会自动恢复可用。
-- **Revert**：仅当模拟结束后又改了参数（状态 `Modified`）时出现；用于把配置还原到产生上次结果时的状态。
 - **New / Open**：项目生命周期操作（模拟期间禁用）。
 - **Save**：点击后弹出子菜单，包含：
   - `Save` / `Save Copy` —— 写入 `.lmc` 文件
@@ -70,6 +69,7 @@ GUI 需要 display server 和支持 OpenGL 3.2 Core Profile 的 GPU。
   与它的两个邻居不同，它一改就立刻作用于当前窗口；**Save as my defaults** 会把它保存下来供以后每次启动
   使用（`user_defaults.json` 里的 `app.ui_scale_multiplier`），试过但没保存的值会一直生效到程序退出——
   控件旁的 `(this window: N%)` 标注显示的就是当前窗口实际在用的值。
+- **⚠ Revert**：位于顶栏右端、右面板折叠按钮左侧。仅当模拟结束后又改了参数（状态 `Modified`）时出现；用于把配置还原到产生上次结果时的状态。隐藏时它的位置仍被保留，所以它出现时栏上其他按钮都不会移动。
 - **右面板折叠按钮**：`<` / `>` 与左侧对称（也可用快捷键 `]`）。
 
 ## Left Panel — Crystal Parameters（左侧面板）

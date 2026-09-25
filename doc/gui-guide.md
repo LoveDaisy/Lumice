@@ -41,7 +41,6 @@ From left to right, the Top Bar exposes:
 
 - **Left panel collapse**: `<` collapses the left panel; `>` expands it again (also bound to the `[` key).
 - **Run / Stop**: a single fixed-width button that toggles between green **Run** and red **Stop** depending on the simulation state. Disabled controls during a running simulation are re-enabled once the run finishes.
-- **Revert**: appears only after parameters have been changed since the last simulation finished (status `Modified`); restores the configuration that produced the last result.
 - **New / Open**: project lifecycle actions (disabled while simulating).
 - **Save**: opens a popup menu containing:
   - `Save` / `Save Copy` — write the project as a `.lmc` file
@@ -81,6 +80,7 @@ From left to right, the Top Bar exposes:
   is changed; **Save as my defaults** keeps it for every later start (`app.ui_scale_multiplier` in
   `user_defaults.json`), and a value tried but not saved stays in force until the program exits —
   the `(this window: N%)` note beside the control shows what the window is actually using.
+- **⚠ Revert**: at the right end of the bar, beside the right panel toggle. Appears only after parameters have been changed since the last simulation finished (status `Modified`); restores the configuration that produced the last result. Its slot is held while it is hidden, so nothing else on the bar moves when it appears.
 - **Right panel collapse**: `<` / `>` mirror the left toggle (also bound to the `]` key).
 
 ## Left Panel — Crystal Parameters
