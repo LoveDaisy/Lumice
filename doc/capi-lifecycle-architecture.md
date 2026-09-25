@@ -555,6 +555,31 @@ When a commit succeeds, the following sequence occurs
 5. **`Start()`**: queues started, `state_` set to `kRunning`, threads
    woken via `start_cv_`.
 
+### §7.1a The one run start that skips it — `LUMICE_ContinueRender`
+
+`ServerImpl::ContinueRun` (v4.44) starts a run with **no** consumer decision: step 3 above does not
+happen, so nothing `ResetWith()` / `Reset()` would clear is cleared, and the new rays land on top of
+the previous run's planes, totals and anchor. What it does instead:
+
+1. Reject unless the session is a render (`mode_ == kRender`), a render was committed
+   (`active_scene_` non-null), and the lifecycle is not `RUNNING`. After a `COMPLETED` run, wait
+   for the drain signal first — `Stop()` below would otherwise discard batches still queued for
+   the consumer.
+2. **`Stop()`** — the same function as step 2. After a user stop it is a no-op; after a natural
+   completion it releases the workers still parked inside `Simulator::Run()` on the empty queue,
+   so that every worker re-enters `Run()` in step 5. It clears `snapshot_dirty_` /
+   `has_ever_consumed_` as always; the continuation's first batch raises them again.
+3. Hand every render worker a one-shot continuation index (monotonic per server,
+   `Simulator::SetContinuationIndex`). `Run()` derives this run's seed from it, and that single
+   value feeds both CPU generators (fixed seed) and the trace backend's `SessionSpec::seed` —
+   which is what keeps the GPU routes, whose backends are created per `Run()` and restart their
+   device ray counters, from replaying the first run's rays.
+4. Rebind `active_scene_` to the committed scene with the new budget; `scene_generation_` is
+   left alone (no batch survived step 2 to be told apart), `committed_epoch_` is **advanced**.
+   The epoch is not a "reset happened" marker: the drain signal and a frame's freshness are keyed
+   on it, and a continuation that kept it would read as already drained from its first instant.
+5. **`Start()`** — unchanged.
+
 ### §7.2 Buffer Lifetime Rules
 
 | Field | State after a commit |
@@ -775,6 +800,7 @@ to-do status.
 | `src/server/c_api.cpp` (`JsonToScene` — the JSON→handle double hop) | §3.2 Known technical debt |
 | `src/server/server.cpp:518` (`ServerImpl::CommitConfig` entry) | §7 SimData side effects |
 | `src/server/server.cpp:964` (`has_ever_consumed_ = false` in `Stop()`) | §7.1 Reset sequence |
+| `src/server/server.cpp` (`ServerImpl::ContinueRun`) | §7.1a The run start that skips the reset |
 | `src/server/server.cpp` `ConsumeData` zero-exit `else` branch (`has_ever_consumed_`/`snapshot_dirty_` on all-black batch) | §3.6 Zero-output completion |
 | `src/server/server.cpp:41–63` (`TicketMutex`) | §4 Thread safety (FIFO mutex) |
 | `test/regression-sentinel/test_capi_sentinel_overflow.py` | §5.2 Regression test |
