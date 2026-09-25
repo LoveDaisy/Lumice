@@ -641,6 +641,7 @@ void RegisterViewDistCircleTests(ImGuiTestEngine* engine);
 void RegisterAnnotationLineTrackingTests(ImGuiTestEngine* engine);
 void RegisterAnnotationLineSeamTests(ImGuiTestEngine* engine);
 void RegisterPreviewViewportTests(ImGuiTestEngine* engine);
+void RegisterPreviewDisplayModeControlTests(ImGuiTestEngine* engine);
 void RegisterPerfTests(ImGuiTestEngine* engine);
 void RegisterFaceNumberOverlayTests(ImGuiTestEngine* engine);
 void RegisterRunLifecycleTests(ImGuiTestEngine* engine);

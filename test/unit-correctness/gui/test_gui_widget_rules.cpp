@@ -28,6 +28,7 @@
 #include "gui/edit_modal_rules.hpp"
 #include "gui/gui_constants.hpp"
 #include "gui/gui_state.hpp"
+#include "gui/preview_display_mode_control.hpp"
 #include "gui/shape_scalar_domain.hpp"
 #include "gui/sim_state_rules.hpp"
 #include "gui/slider_format_rules.hpp"
@@ -1203,6 +1204,67 @@ TEST(AspectFitTest, ChromeExceedsHeightYieldsBenignDefault) {
   // pathological branch.
   EXPECT_FALSE(fit.was_clamped);
   EXPECT_FLOAT_EQ(fit.achieved_preview_ratio, fit.requested_preview_ratio);
+}
+
+
+// ---- The preview's display-mode segmented control (app_panels.cpp: RenderDisplayModeControl) ----
+//
+// Its rectangle is decided before anything is submitted — the opacity and the viewport's wheel mask
+// both read it — so it is arithmetic, and asserted here over the widths the preview actually takes
+// on: wide, exactly as wide as the control plus its margin, and narrower than the control.
+
+// The segments abut left to right, share one height, and their union is the frame.
+TEST(DisplayModeControlLayout, SegmentsAbutAndTileTheFrame) {
+  const std::vector<float> text_w = { 40.0f, 75.0f };
+  const SegmentedControlLayout l = LayoutSegmentedControl(800.0f, 6.0f, 8.0f, 3.0f, 15.0f, text_w);
+  ASSERT_EQ(l.segments.size(), text_w.size());
+  EXPECT_FLOAT_EQ(l.segments.front().x0, l.frame.x0);
+  EXPECT_FLOAT_EQ(l.segments.back().x1, l.frame.x1);
+  for (size_t i = 0; i < l.segments.size(); i++) {
+    const ControlRect& seg = l.segments[i];
+    EXPECT_FLOAT_EQ(seg.x1 - seg.x0, text_w[i] + 2.0f * 8.0f) << i;
+    EXPECT_FLOAT_EQ(seg.y0, l.frame.y0) << i;
+    EXPECT_FLOAT_EQ(seg.y1, l.frame.y1) << i;
+    if (i > 0) {
+      EXPECT_FLOAT_EQ(seg.x0, l.segments[i - 1].x1) << i;
+    }
+  }
+  EXPECT_FLOAT_EQ(l.frame.y1 - l.frame.y0, 15.0f + 2.0f * 3.0f);
+}
+
+// Right-anchored with the margin on the right and on top, for every width at which it fits; at the
+// width where it just fits it touches x = 0 exactly; below that it anchors at x = 0 and never
+// starts left of the region.
+TEST(DisplayModeControlLayout, RightAnchoredWhileItFitsAndNeverLeftOfTheRegion) {
+  const std::vector<float> text_w = { 40.0f, 75.0f };
+  const float margin = 6.0f;
+  const float total = 40.0f + 75.0f + 4.0f * 8.0f;
+  const float fits_exactly = total + margin;
+  for (const float region_w : { 2000.0f, 800.0f, fits_exactly, fits_exactly - 1.0f, 50.0f, 0.0f }) {
+    const SegmentedControlLayout l = LayoutSegmentedControl(region_w, margin, 8.0f, 3.0f, 15.0f, text_w);
+    EXPECT_FLOAT_EQ(l.frame.y0, margin) << region_w;
+    EXPECT_FLOAT_EQ(l.frame.x1 - l.frame.x0, total) << region_w;
+    EXPECT_GE(l.frame.x0, 0.0f) << region_w;
+    if (region_w >= fits_exactly) {
+      EXPECT_FLOAT_EQ(l.frame.x1, region_w - margin) << region_w;
+    } else {
+      EXPECT_FLOAT_EQ(l.frame.x0, 0.0f) << region_w;
+    }
+  }
+}
+
+// Degenerate counts: no segments is an empty frame at the corner, one segment is its own frame.
+TEST(DisplayModeControlLayout, NoSegmentsIsAnEmptyFrameAndOneIsItsOwnFrame) {
+  const SegmentedControlLayout none = LayoutSegmentedControl(300.0f, 6.0f, 8.0f, 3.0f, 15.0f, {});
+  EXPECT_TRUE(none.segments.empty());
+  EXPECT_FLOAT_EQ(none.frame.x0, none.frame.x1);
+  EXPECT_FLOAT_EQ(none.frame.x1, 300.0f - 6.0f);
+
+  const SegmentedControlLayout one = LayoutSegmentedControl(300.0f, 6.0f, 8.0f, 3.0f, 15.0f, { 50.0f });
+  ASSERT_EQ(one.segments.size(), 1u);
+  EXPECT_FLOAT_EQ(one.segments[0].x0, one.frame.x0);
+  EXPECT_FLOAT_EQ(one.segments[0].x1, one.frame.x1);
+  EXPECT_FLOAT_EQ(one.frame.x1, 300.0f - 6.0f);
 }
 
 }  // namespace

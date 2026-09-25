@@ -379,7 +379,7 @@ Applicability WhenBackgroundLoaded(const GuiState& state) {
   if (IsChannelBrDisplay(state.renderer)) {
     return { false,
              "The Channel B-R display shows blue minus red of the halo itself; a photo underneath "
-             "would mix its own colours into the reading. Disabled while Show As is Channel B-R." };
+             "would mix its own colours into the reading. Disabled while the preview shows Channel B-R." };
   }
   if (!g_preview.HasBackground()) {
     return { false, "No background image is loaded." };
