@@ -121,8 +121,9 @@ inline bool operator==(const RenderConfig& a, const RenderConfig& b) {
          std::equal(std::begin(a.background_), std::end(a.background_), std::begin(b.background_)) &&
          std::equal(std::begin(a.paper_), std::end(a.paper_), std::begin(b.paper_)) &&
          std::equal(std::begin(a.ray_color_), std::end(a.ray_color_), std::begin(b.ray_color_)) &&
-         a.intensity_factor_ == b.intensity_factor_ && a.overlap_ == b.overlap_ && a.ev_mode_ == b.ev_mode_ &&
-         a.tone_ == b.tone_ && a.angular_dist_grid_ == b.angular_dist_grid_ && a.view_dist_grid_ == b.view_dist_grid_ &&
+         a.intensity_factor_ == b.intensity_factor_ && a.overlap_ == b.overlap_ &&
+         a.globe_back_fade_ == b.globe_back_fade_ && a.ev_mode_ == b.ev_mode_ && a.tone_ == b.tone_ &&
+         a.angular_dist_grid_ == b.angular_dist_grid_ && a.view_dist_grid_ == b.view_dist_grid_ &&
          a.elevation_grid_ == b.elevation_grid_ && a.longitude_grid_ == b.longitude_grid_ && a.horizon_ == b.horizon_ &&
          a.elevation_grid_line_ == b.elevation_grid_line_ && a.longitude_grid_line_ == b.longitude_grid_line_ &&
          a.angular_dist_grid_line_ == b.angular_dist_grid_line_ && a.view_dist_grid_line_ == b.view_dist_grid_line_ &&

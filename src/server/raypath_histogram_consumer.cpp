@@ -78,7 +78,12 @@ bool RaypathHistogramConsumer::InFrame(float wx, float wy, float wz) const {
     return false;
   }
   // hits[0] is the main projection; a dual-fisheye overlap dual-write (hits[1])
-  // never lands a ray the main hit did not, so it plays no part here.
+  // never lands a ray the main hit did not, so it plays no part here. A globe
+  // back-side hit is not in the frame either: it is a faded look through the
+  // sphere, not the direction the pixel images (bump_landed is false on it).
+  if (!hit.hits[0].bump_landed) {
+    return false;
+  }
   const int px = hit.hits[0].px;
   const int py = hit.hits[0].py;
   const auto& cfg = roi_.frame_config_;

@@ -298,6 +298,7 @@ void to_json(nlohmann::json& j, const RenderConfig& r) {
   j["ray_color"] = r.ray_color_;
   j["intensity_factor"] = r.intensity_factor_;
   j["overlap"] = r.overlap_;
+  j["globe_back_fade"] = r.globe_back_fade_;
   j["ev_mode"] = r.ev_mode_;
   j["tone"] = r.tone_;
 
@@ -394,7 +395,8 @@ bool NeedsRebuild(const RenderConfig& a, const RenderConfig& b) {
   return !std::equal(std::begin(a.resolution_), std::end(a.resolution_), std::begin(b.resolution_)) ||
          !(a.lens_ == b.lens_) ||
          !std::equal(std::begin(a.lens_shift_), std::end(a.lens_shift_), std::begin(b.lens_shift_)) ||
-         !(a.view_ == b.view_) || a.visible_ != b.visible_ || a.front_ != b.front_ || a.overlap_ != b.overlap_;
+         !(a.view_ == b.view_) || a.visible_ != b.visible_ || a.front_ != b.front_ || a.overlap_ != b.overlap_ ||
+         a.globe_back_fade_ != b.globe_back_fade_;
 }
 
 }  // namespace lumice

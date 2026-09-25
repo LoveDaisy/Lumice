@@ -686,6 +686,7 @@ static nlohmann::json RendererToJson(const LUMICE_RenderParam& r, int id) {
   jr["ray_color"] = { r.ray_color[0], r.ray_color[1], r.ray_color[2] };
   jr["intensity_factor"] = r.intensity_factor;
   jr["overlap"] = r.overlap;
+  jr["globe_back_fade"] = r.globe_back_fade;
   jr["ev_mode"] = MapEvModeFromCApi(r.ev_mode);
   // Assigned as a core Tone, not as a string literal: core's own to_json then owns the two
   // spellings, exactly as MapEvModeFromCApi's result does for "relative" / "absolute".
@@ -2550,6 +2551,9 @@ static LUMICE_ErrorCode JsonToRenderer(const nlohmann::json& rj, LUMICE_RenderPa
   }
   if (rj.contains("overlap")) {
     r.overlap = std::max(0.0f, rj.at("overlap").get<float>());
+  }
+  if (rj.contains("globe_back_fade")) {
+    r.globe_back_fade = std::max(0.0f, rj.at("globe_back_fade").get<float>());
   }
   // Mirrors core RenderConfig::ev_mode_'s member initializer (kRelative); the zeroed struct
   // already holds it, but stating it keeps this decoder's defaults readable in one place.

@@ -116,13 +116,23 @@ struct ProjParams {
   float scale;
   float r_scale;
   float max_abs_dz;
+  // Globe only (kProjGlobe): the back-side fade range, in the eye-space distance units of
+  // kGlobeCameraD (unit sphere). 0 = the camera-facing hemisphere only, which is what every
+  // other lens type and every non-render caller (anchor plane, annotation overlay) keeps by
+  // leaving it zero. See GlobeBackFadeWeight.
+  float globe_back_fade;
   float rot[9];
 };
 
+// `weight` scales the ray's energy at this hit. 1 everywhere except a globe back-side hit,
+// which carries GlobeBackFadeWeight and is emitted with bump_landed = false: like the dual
+// fisheye overlap ring it is a second look at energy the frame already accounts for, so it
+// must not move landed_weight (and with it the exposure normalization).
 struct PixelHit {
   int px;
   int py;
   bool bump_landed;
+  float weight;
 };
 
 struct ProjResult {
@@ -156,6 +166,36 @@ LM_CONSTANT int kProjGlobe = 10;
 //   analytic inverse of this file's globe branch, used to build the render-domain
 //   mask in lens_proj_build.hpp).
 LM_CONSTANT float kGlobeCameraD = 4.0f;
+
+// Globe back-side fade: how much of the FAR side of the sphere shows through, as a function of
+// mu — the cosine between a surface point and the camera axis (the GUI's hit_eye.z; -c.z in the
+// globe branch below) — and the fade range `fade`.
+//
+// The camera sits at distance D from a unit sphere, so a surface point's distance to it depends
+// on mu alone: dist(mu) = sqrt(D^2 + 1 - 2 D mu). The silhouette is mu = 1/D, at dist =
+// sqrt(D^2 - 1); a far-side point is `depth = dist(mu) - sqrt(D^2 - 1)` further away than the
+// silhouette, from 0 at the rim to (D + 1) - sqrt(D^2 - 1) (~1.127 for D = 4) at the antipode of
+// the camera. The weight falls from 1 at depth 0 to 0 at depth `fade` along a smoothstep, so it
+// joins the front side (weight 1) continuously at the rim and fades like fog into the distance.
+// `fade <= 0` is the camera-facing hemisphere only: weight 0 everywhere, by an explicit branch
+// rather than by trusting the curve to reach 0.
+//
+// CALLED ONLY FOR FAR-SIDE POINTS (mu <= 1/D); a near-side point is not faded at all.
+//
+// MUST MATCH, by hand: the GUI's CPU mirror GlobeBackFadeWeight (src/gui/preview_jacobian.hpp)
+// and the shader's globeBackFadeWeight (src/gui/preview_renderer.cpp) — the C-API boundary and
+// GLSL keep either from including this file. The CPU pair is compared sample by sample in
+// test/unit-correctness/gui/test_globe_back_fade.cpp.
+LM_FN float GlobeBackFadeWeight(float mu, float fade) {
+  if (!(fade > 0.0f)) {
+    return 0.0f;
+  }
+  const float d = kGlobeCameraD;
+  const float dist = LM_SQRT(LM_FMAX(d * d + 1.0f - 2.0f * d * mu, 0.0f));
+  const float depth = LM_FMAX(dist - LM_SQRT(d * d - 1.0f), 0.0f);
+  const float t = LM_CLAMP(depth / fade, 0.0f, 1.0f);
+  return 1.0f - t * t * (3.0f - 2.0f * t);
+}
 
 // Per-type numerical floors on `cz` for the SINGLE-lens fisheye cull below. These are not
 // visibility judgements — the configured visible hemisphere is a DISPLAY clip applied by the
@@ -304,6 +344,7 @@ LM_FN ProjResult ProjectExitToPixel(LM_THREAD const ProjParams& p, float wx, flo
     r.hits[0].px = px;
     r.hits[0].py = py;
     r.hits[0].bump_landed = true;
+    r.hits[0].weight = 1.0f;
     r.count = 1;
     return r;
   }
@@ -340,6 +381,7 @@ LM_FN ProjResult ProjectExitToPixel(LM_THREAD const ProjParams& p, float wx, flo
     r.hits[0].px = px;
     r.hits[0].py = py;
     r.hits[0].bump_landed = true;
+    r.hits[0].weight = 1.0f;
     r.count = 1;
     return r;
   }
@@ -371,6 +413,7 @@ LM_FN ProjResult ProjectExitToPixel(LM_THREAD const ProjParams& p, float wx, flo
     r.hits[0].px = static_cast<int>(LM_FLOOR(fx));
     r.hits[0].py = static_cast<int>(LM_FLOOR(fy));
     r.hits[0].bump_landed = true;
+    r.hits[0].weight = 1.0f;
     r.count = 1;
 
     // Overlap dual-write: only in the overlap band |sz| < max_abs_dz.
@@ -392,6 +435,7 @@ LM_FN ProjResult ProjectExitToPixel(LM_THREAD const ProjParams& p, float wx, flo
       r.hits[1].px = static_cast<int>(LM_FLOOR(fx2));
       r.hits[1].py = static_cast<int>(LM_FLOOR(fy2));
       r.hits[1].bump_landed = false;
+      r.hits[1].weight = 1.0f;
       r.count = 2;
     }
     return r;
@@ -423,9 +467,20 @@ LM_FN ProjResult ProjectExitToPixel(LM_THREAD const ProjParams& p, float wx, flo
     float cy = 0.0f;
     float cz = 0.0f;
     ApplyRotTranspose(p.rot, -wx, -wy, -wz, &cx, &cy, &cz);
-    if (cz >= -1.0f / kGlobeCameraD) {
-      return r;  // outside the camera-facing hemisphere → cull
+    // The camera-facing hemisphere is cz < -1/D. Everything else is the far side, which the
+    // same perspective formula below images onto the same pixel as the near-side point on that
+    // pixel's ray (both lie on one line through the camera), so showing it is a weight, not a
+    // second projection: 0 (cull, the default) unless a back-side fade range is configured.
+    bool far_side = cz >= -1.0f / kGlobeCameraD;
+    float weight = 1.0f;
+    if (far_side) {
+      weight = GlobeBackFadeWeight(-cz, p.globe_back_fade);
+      if (!(weight > 0.0f)) {
+        return r;  // outside the camera-facing hemisphere and faded out → cull
+      }
     }
+    // denom = D - mu with mu = -cz in [-1, 1], so it lies in [D - 1, D + 1] and never nears 0
+    // on either side of the sphere.
     float denom = kGlobeCameraD + cz;
     // Globe is an OUTSIDE-IN view (camera looks at a sphere from outside), which is
     // horizontally mirrored relative to the INSIDE-OUT single-lens family (sky seen
@@ -440,7 +495,8 @@ LM_FN ProjResult ProjectExitToPixel(LM_THREAD const ProjParams& p, float wx, flo
         LM_FLOOR(cy / denom * p.scale + static_cast<float>(p.img_h) / 2.0f + static_cast<float>(p.lens_shift_y)));
     r.hits[0].px = px;
     r.hits[0].py = py;
-    r.hits[0].bump_landed = true;
+    r.hits[0].bump_landed = !far_side;
+    r.hits[0].weight = weight;
     r.count = 1;
     return r;
   }

@@ -369,7 +369,7 @@ struct RendererPlaneDesc {
   uint32_t xyz_off;
   uint32_t lane_off;
 };
-static_assert(sizeof(RendererPlaneDesc) == 76u, "RendererPlaneDesc layout drift — check ProjParams (68) + 2 u32");
+static_assert(sizeof(RendererPlaneDesc) == 80u, "RendererPlaneDesc layout drift — check ProjParams (72) + 2 u32");
 
 // Pairwise static_assert: LatPathKind wire values must match lm_pcg::kLatPath*
 // (device sink). Guards against silent enum-value drift.
@@ -583,9 +583,12 @@ __device__ inline void EmitToDeviceXyz(float* __restrict__ d_xyz_buf,
       if (px >= 0 && px < iw_i && py >= 0 && py < ih_i) {
         const uint32_t pix_flat =
             static_cast<uint32_t>(py) * static_cast<uint32_t>(proj.img_w) + static_cast<uint32_t>(px);
-        AccumXyzToPixel(plane, pix_flat, cmf_x, cmf_y, cmf_z, w_emit);
+        // The hit's energy weight: 1 except on a globe back-side hit (its fade weight, and
+        // bump_landed false, so it never reaches landed_acc).
+        const float w_hit = w_emit * r.hits[hi].weight;
+        AccumXyzToPixel(plane, pix_flat, cmf_x, cmf_y, cmf_z, w_hit);
         if (r.hits[hi].bump_landed) {
-          landed_acc[ri] += w_emit;
+          landed_acc[ri] += w_hit;
         }
         // Device-side Y-lane accumulation: fan the ray's Y into every satisfied color
         // class at this projected pixel. Overlap-ring hits included (bump_landed
@@ -595,7 +598,7 @@ __device__ inline void EmitToDeviceXyz(float* __restrict__ d_xyz_buf,
         // FanColorClassLanes never touches).
         if (d_class_lane_buf != nullptr) {
           FanColorClassLanes(d_class_lane_buf + rd.lane_off, color_params, this_mask, pix_flat,
-                             static_cast<uint32_t>(proj.img_w), static_cast<uint32_t>(proj.img_h), cmf_y, w_emit);
+                             static_cast<uint32_t>(proj.img_w), static_cast<uint32_t>(proj.img_h), cmf_y, w_hit);
         }
       }
     }

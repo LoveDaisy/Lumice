@@ -51,17 +51,17 @@ void BuildWorkerProjectionSidecars(SimData& sim_data, const std::vector<RenderCo
       const uint64_t component = has_component ? sim_data.outgoing_component_[i] : 0u;
       ProjectAndClassifyRay(proj_params, w_res, h_res, sim_data.outgoing_d_[i * 3 + 0], sim_data.outgoing_d_[i * 3 + 1],
                             sim_data.outgoing_d_[i * 3 + 2],
-                            [&out, w, component, has_component](int pixel, bool is_main) {
+                            [&out, w, component, has_component](int pixel, bool is_main, float hit_weight) {
                               if (is_main) {
                                 out.main_pixel_.push_back(pixel);
-                                out.main_w_.push_back(w);
-                                out.landed_weight_ += w;
+                                out.main_w_.push_back(w * hit_weight);
+                                out.landed_weight_ += w * hit_weight;
                                 if (has_component) {
                                   out.main_component_.push_back(component);
                                 }
                               } else {
                                 out.overlap_pixel_.push_back(pixel);
-                                out.overlap_w_.push_back(w);
+                                out.overlap_w_.push_back(w * hit_weight);
                                 if (has_component) {
                                   out.overlap_component_.push_back(component);
                                 }

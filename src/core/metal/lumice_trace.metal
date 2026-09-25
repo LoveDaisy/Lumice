@@ -666,9 +666,12 @@ inline void AccumRendererPlanes(constant KernelParams& prm,
       int py = pr.hits[hi].py;
       if (px >= 0 && px < iw_i && py >= 0 && py < ih_i) {
         uint pix = uint(py) * uint(iw_i) + uint(px);
-        AccumXyzToPixel(image + xyz_off, pix, cmf_x, cmf_y, cmf_z, cw);
+        // The hit's energy weight: 1 except on a globe back-side hit (its fade weight, and
+        // bump_landed false, so it never reaches landed_acc).
+        float hw = cw * pr.hits[hi].weight;
+        AccumXyzToPixel(image + xyz_off, pix, cmf_x, cmf_y, cmf_z, hw);
         if (pr.hits[hi].bump_landed) {
-          landed_acc[r] += cw;
+          landed_acc[r] += hw;
         }
         // Per-colour-class Y-lane accumulation: fan this ray's Y (cmf_y * cw)
         // into each active class whose predicate matches this_mask. Mirrors
@@ -676,7 +679,7 @@ inline void AccumRendererPlanes(constant KernelParams& prm,
         // color_class_count == 0 (single branch skip).
         if (prm.color_class_count != 0u) {
           uint pix_stride = uint(iw_i) * uint(ih_i);
-          float y_val = cmf_y * cw;
+          float y_val = cmf_y * hw;
           for (uint c = 0u; c < prm.color_class_count; c++) {
             ulong bits = prm.color_class_bits[c];
             if (bits == 0ul) { continue; }

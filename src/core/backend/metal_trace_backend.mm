@@ -173,13 +173,13 @@ static_assert(offsetof(ExitStats, tally_w2) == 12u, "ExitStats::tally_w2 offset 
 // session as the kernel sees it: its projection (dims inside) and where its
 // XYZ plane / colour-lane region start inside the shared accumulation buffers.
 // Field order MUST match the MSL struct (proj, xyz_off, lane_off); all 4-byte
-// scalars, so natural alignment gives 68 + 4 + 4 = 76 bytes on both sides.
+// scalars, so natural alignment gives 72 + 4 + 4 = 80 bytes on both sides.
 struct RendererPlaneDesc {
   lm_proj::ProjParams proj;
   uint32_t xyz_off;
   uint32_t lane_off;
 };
-static_assert(sizeof(RendererPlaneDesc) == 76u, "RendererPlaneDesc layout drift — check the MSL sibling");
+static_assert(sizeof(RendererPlaneDesc) == 80u, "RendererPlaneDesc layout drift — check the MSL sibling");
 
 struct KernelParams {
   // scrum-268.8 (DR-3): per-batch n_idx + cie_x/y/z removed. trace_layer
@@ -281,21 +281,22 @@ struct KernelParams {
   // field above keeps its offset. Mirrors the MSL array of the same name.
   RendererPlaneDesc renderers[kMaxRenderersDevice];
 };
-// sizeof(ProjParams) == 68 (5 ints + 3 floats + float[9]). Two fields have left it in the 478
+// sizeof(ProjParams) == 72 (5 ints + 4 floats + float[9]). Two fields have left it in the 478
 // series: rectangular's `az0` (the lens now consumes the full camera pose out of `rot` like every
 // other pose-following type) and `visible_range` (478.2 — `visible` is a display clip, so no
-// branch of ProjectExitToPixel reads it any more).
-// The multi-renderer seam moved the per-session `proj` (68) out of the leading block and into
+// branch of ProjectExitToPixel reads it any more); one has joined it since, `globe_back_fade`
+// (the globe lens's far-side fade range, 0 on every other type).
+// The multi-renderer seam moved the per-session `proj` (72) out of the leading block and into
 // the trailing `renderers[]` array, and folded img_w + img_h (8) into num_renderers (4):
 // 13 leading 4-byte scalars = 52 → capture_ray_mask + 4 colour-region knobs + color_class_count
 // = 24 → offset 76, NOT 8-aligned, so 4 bytes of pad land ahead of color_class_bits[16] (uint64)
 // at 80: bits (128) at 80-208, combine[16] (16) at 208-224, and_term_counts_base_offset (4) at
-// 224-228, anchor_proj (68, alignment 4) at 228-296, alloc_tally (4) at 296-300, then
-// renderers[kMaxRenderersDevice] (4 × 76 = 304, alignment 4) at 300-604, and the struct's
-// alignment of 8 (color_class_bits) pads it to 608. That the two numbers move independently is
+// 224-228, anchor_proj (72, alignment 4) at 228-300, alloc_tally (4) at 300-304, then
+// renderers[kMaxRenderersDevice] (4 × 80 = 320, alignment 4) at 304-624, and 624 is already a
+// multiple of the struct's alignment of 8 (color_class_bits), so no tail pad. That the two numbers move independently is
 // the whole reason both are asserted rather than one derived from the other.
-static_assert(sizeof(lm_proj::ProjParams) == 68u, "ProjParams layout drift — check projection_shared.h");
-static_assert(sizeof(KernelParams) == 608u,
+static_assert(sizeof(lm_proj::ProjParams) == 72u, "ProjParams layout drift — check projection_shared.h");
+static_assert(sizeof(KernelParams) == 624u,
               "KernelParams size mismatch — update host struct to match Metal-side layout");
 
 // Device root-gen latitude path tags. Numeric wire encoding is single-sourced

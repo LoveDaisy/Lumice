@@ -439,7 +439,12 @@ extern "C" {
 // A continuation is a new run as far as the drain signal and frame freshness are concerned; had
 // it kept the epoch, LUMICE_GetDrainStatus would report the previous run's "drained" from its
 // first instant.
-#define LUMICE_API_VERSION 444
+//
+// BREAKING (v4.45): LUMICE_RenderParam gains a trailing `globe_back_fade` — APPENDED after
+// `view_dist_label`, sizeof grows (6452 -> 6456), recompile. The globe lens can now show the far
+// side of its sphere, faded with distance from the camera; 0, the zero-initialized value, is the
+// camera-facing hemisphere alone, i.e. the image every earlier version drew. Nothing else moved.
+#define LUMICE_API_VERSION 445
 #define LUMICE_MAX_RENDER_RESULTS 16
 #define LUMICE_MAX_STATS_RESULTS 1
 
@@ -1390,6 +1395,14 @@ typedef struct LUMICE_RenderParam_ {
   // and drives the label geometry independently of the line switch.
   int view_dist_line;
   int view_dist_label;
+  // ADDED (v4.45). Globe lens only (LUMICE_LENS_TYPE_GLOBE; every other type ignores it): how far
+  // behind the sphere's silhouette its far side stays visible, fading out with distance from the
+  // camera like fog, added onto the near side. In the eye-space units the globe camera distance
+  // is stated in (unit sphere, camera 4 away), so the far side's deepest point, straight behind
+  // the centre, sits ~1.127 behind the silhouette. 0 — the zero-initialized value and the JSON
+  // default — shows the camera-facing hemisphere only, which is the look before this field.
+  // Negative values are clamped to 0. JSON key "globe_back_fade".
+  float globe_back_fade;
 } LUMICE_RenderParam;
 // The exact-size pin, the same duty RenderConfig's own carries on the C++ side: a field appended
 // to this struct is an ABI event that has to be declared at LUMICE_API_VERSION, and the two
@@ -1398,9 +1411,9 @@ typedef struct LUMICE_RenderParam_ {
 // and every change is a bump. LUMICE_GridLine is 24 bytes (six 4-byte fields) and
 // LUMICE_MarkerStyle 20, so the arrays account for 4 * 64 * 24 + 6 * 20 of it.
 #if defined(__cplusplus)
-static_assert(sizeof(LUMICE_RenderParam) == 6452, "LUMICE_RenderParam layout changed — bump LUMICE_API_VERSION");
+static_assert(sizeof(LUMICE_RenderParam) == 6456, "LUMICE_RenderParam layout changed — bump LUMICE_API_VERSION");
 #elif defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
-_Static_assert(sizeof(LUMICE_RenderParam) == 6452, "LUMICE_RenderParam layout changed — bump LUMICE_API_VERSION");
+_Static_assert(sizeof(LUMICE_RenderParam) == 6456, "LUMICE_RenderParam layout changed — bump LUMICE_API_VERSION");
 #endif
 
 // =============== Scene (opaque handle) ===============
