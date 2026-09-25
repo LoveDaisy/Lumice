@@ -962,7 +962,32 @@ const ParityScene kScenes[] = {
    /*show_view_dist=*/false,
    /*show_grid=*/false, /*show_markers=*/false, /*exposure_offset=*/0.0f, /*grid_srgb=*/{ 1.0f, 1.0f, 1.0f },
    /*ray_num_millions=*/32.0f, /*bm4_threshold=*/42.1, /*expect_w=*/1024, /*expect_h=*/512},
-  // CHANNEL_BR_PLACEHOLDER
+  // The DISPLAY-MODE scene: the channel-B-R diagnostic (src/util/channel_math.hpp). Every field is
+  // copied from full_sky_dual_fisheye_print above except `tone` (screen, since the diagnostic is
+  // inert under print) and `display_mode`, so the framing argument that row makes — an equal-area
+  // full-sky frame is where the two arms are comparable at all — carries over unchanged, and so does
+  // its reason for the four annotation switches being OFF: the overlays are drawn on top of the
+  // diagnostic by the same blend as on the normal picture, which the simulation rows already gate.
+  //
+  // What the row gates is the END-TO-END half no in-process test can: that a document shown as the
+  // diagnostic leaves the GUI naming `channel_br` and comes back out of a child CLI process as the
+  // same grey image — the formula's two implementations (C++ owner, GLSL copy) compared through
+  // their real pipelines. The background is non-zero on purpose: the diagnostic reads B - R off the
+  // pixel WITH its sky, so a sky that one arm added before the mode and the other after would move
+  // every empty pixel's grey.
+  //
+  // THRESHOLD. bm4 mean 46.740 sigma 0.168 (N=7 category runs, range 46.47-47.01; whole-frame
+  // 37.59-37.71). 45.0 = mean - max(10 sigma, 1.0 dB) = mean - 1.68 dB, floored to 0.5 dB, and
+  // 1.47 dB below the worst honest run. Breaks, each applied to one arm only:
+  //
+  //   break                                                         | bm4    | caught by
+  //   --------------------------------------------------------------|--------|------------------
+  //   the CLI ignores the document's display_mode (renders normal)  | 10.50  | threshold, 34.5 dB clear
+  //   the GLSL copy's gain drifts 0.5 -> 0.45 (a 10% transcription) | 40.91  | threshold, 4.1 dB clear
+  //
+  // The second break is invisible to test_gui_preview_export_parity.cpp's channel case by
+  // construction — both of that file's arms run the same shader — which is why the transcription is
+  // gated here and nowhere cheaper. NO CI JOB RUNS THIS ROW, for the reason the print row states.
   {"full_sky_dual_fisheye_channel_br",
    lumice::gui::kLensTypeDualFisheyeEqualArea, 180.0f, 25.0f, 30.0f, 15.0f, lumice::gui::kVisibleFull,
    /*background_srgb=*/{ 0.28f, 0.14f, 0.10f },
