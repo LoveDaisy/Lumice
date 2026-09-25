@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1790312914930,
+  "lastUpdate": 1790312917770,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9500,45 +9500,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "1271f2699d6339b658ee96d3cf0502055c2b034a",
-          "message": "Merge pull request #304 from LoveDaisy/fix/gui-preview-single-render-path\n\nfix(gui): 预览与 Screenshot 导出收敛到单一离屏 FBO 渲染路径",
-          "timestamp": "2026-09-04T20:53:45+08:00",
-          "tree_id": "1ea3fd858b1979513692e7dd728217e33f1635d7",
-          "url": "https://github.com/LoveDaisy/ice_halo_sim/commit/1271f2699d6339b658ee96d3cf0502055c2b034a"
-        },
-        "date": 1788527143942,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 84.3,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 99.7,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 95.7,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "61328fbedb7c6acfaf163c040563f24285d52ff2",
           "message": "Merge pull request #305 from LoveDaisy/feat/sky-reference-points\n\nfeat(gui,core): 天空参考点标记六点泛化 + Look At 视角预设，共享 core 单源方向表",
           "timestamp": "2026-09-05T02:15:06+08:00",
@@ -13828,6 +13789,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 92.4,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "108fdd825206a218a0262cfb6533db39965fb3e0",
+          "message": "Merge pull request #405 from LoveDaisy/feat/card-insert-and-reorder\n\nfeat(gui): duplicate lands below the source card; drag to reorder cards",
+          "timestamp": "2026-09-25T12:52:34+08:00",
+          "tree_id": "e30f40ec89cb02353708deba953b4ee18ee297fe",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/108fdd825206a218a0262cfb6533db39965fb3e0"
+        },
+        "date": 1790312916906,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 96.2,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 99.8,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 96.2,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 93.5,
             "unit": "%"
           }
         ]
