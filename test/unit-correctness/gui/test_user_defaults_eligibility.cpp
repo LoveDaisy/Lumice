@@ -71,7 +71,10 @@ namespace {
 // windows are open is not part of the document. Not serialized, so no row can reach the panel.
 // 87 with server_session_is_analysis (derived, poller-fed: the server's session kind, Continue's
 // gate). Runtime observation of the backend, ineligible as every derived row is.
-constexpr std::size_t kExpectedGovernedFieldCount = 87;
+// 88 with angular_dist_picker (an Angular Distance pick in flight), registered kSession like
+// analysis and ineligible for the same reason: a gesture in progress is not part of the document.
+// Not serialized, so no row can reach the panel.
+constexpr std::size_t kExpectedGovernedFieldCount = 88;
 
 std::vector<std::string> AllGovernedFieldNames() {
   std::vector<std::string> names;

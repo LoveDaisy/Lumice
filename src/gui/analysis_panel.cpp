@@ -1055,6 +1055,12 @@ void RenderRoiControls(GuiState& state) {
     }
     if (ImGui::Button(ICON_FA_CROSSHAIRS " Pick on preview")) {
       a.pick_armed = !a.pick_armed;
+      if (a.pick_armed) {
+        // One click-taking mode at a time with the Angular Distance picker
+        // (GuiState::AngularDistPicker). The eyedropper/pick pairing is left as it was: in the
+        // preview the eyedropper's branch already takes precedence over this one.
+        state.angular_dist_picker.armed = false;
+      }
     }
     if (armed_style) {
       ImGui::PopStyleColor(3);
