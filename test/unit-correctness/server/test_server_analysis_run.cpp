@@ -126,18 +126,25 @@ SimLifecycle WaitForRunToEnd(Server& server, int timeout_ms) {
   return lc;
 }
 
-// Wait until the live ray count shows the run has actually started tracing — the point
-// past which "in progress" is not merely "Start() was called".
-bool WaitForFirstRays(Server& server, int timeout_ms) {
+// Wait until the live ray count reaches min_rays. It reads the stats consumer's live
+// counter, which publishes nothing — unlike AcquireResultFrame, which would put a
+// snapshot in front of whatever a later Stop() is supposed to publish on its own.
+bool WaitForLiveRays(Server& server, size_t min_rays, int timeout_ms) {
   using clock = std::chrono::steady_clock;
   const auto deadline = clock::now() + std::chrono::milliseconds(timeout_ms);
   while (clock::now() < deadline) {
-    if (server.GetLiveSimRayCount() > 0) {
+    if (server.GetLiveSimRayCount() >= min_rays) {
       return true;
     }
     std::this_thread::sleep_for(std::chrono::milliseconds(2));
   }
   return false;
+}
+
+// Wait until the live ray count shows the run has actually started tracing — the point
+// past which "in progress" is not merely "Start() was called".
+bool WaitForFirstRays(Server& server, int timeout_ms) {
+  return WaitForLiveRays(server, 1, timeout_ms);
 }
 
 size_t TotalCount(const RaypathHistogramResult& r) {
@@ -425,7 +432,14 @@ TEST_F(ServerAnalysisRun, AnalysisManualStopPreservesAccumulatedResults) {
   ASSERT_FALSE(server_.CommitConfig(Halo22Config("infinite")));
   server_.Stop();
   ASSERT_FALSE(server_.StartRaypathAnalysis(Halo22Config("infinite"), ConeOnHaloRequest()));
-  ASSERT_TRUE(WaitForFirstRays(server_, 5000));
+  // "The run has started" is not enough before the stop: the cone covers ~0.7% of sim
+  // rays, and its hits come in clumps, so a stop right after the first batch (as few as
+  // 128 sim rays) found the cone empty ~4% of the time — a histogram that was published
+  // correctly and simply had nothing in it (the full-sky ROI, same stop, never did).
+  // kMinRaysBeforeStop is a sample the cone cannot plausibly miss; the wait for it reads
+  // the live counter only, so nothing is published before the Stop() under test.
+  constexpr size_t kMinRaysBeforeStop = 20000;
+  ASSERT_TRUE(WaitForLiveRays(server_, kMinRaysBeforeStop, 15000));
   ASSERT_EQ(server_.GetSimLifecycle(), SimLifecycle::kRunning);
 
   server_.Stop();
