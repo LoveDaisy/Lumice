@@ -43,6 +43,13 @@ static_assert(LUMICE_API_VERSION >= 440, "Lumice header too old for this integra
 
 It is bumped on every BREAKING change to the public symbol set or struct layout.
 
+**v4.44 is such a break.** `LUMICE_RenderParam` gains a trailing `float globe_back_fade` after
+`view_dist_label` (sizeof 6452 → 6456), so callers recompile. It is the `globe` lens's far-side
+fade range — how far behind the sphere's silhouette its far side stays visible, fading with
+distance from the camera (JSON key `globe_back_fade`, see `configuration.md`). Every other lens
+ignores it, and 0 — the zero-initialised value and the JSON default — is the camera-facing
+hemisphere alone, the image every earlier version drew. Nothing is removed or reordered.
+
 **v4.39 is such a break.** A fifth annotation family — the view-distance circles, circles of
 constant angular distance from the camera's **optical axis**, the axis-referenced twin of
 `angular_dist` (which is referenced to the sun) — grows two structs at their tails, so callers
