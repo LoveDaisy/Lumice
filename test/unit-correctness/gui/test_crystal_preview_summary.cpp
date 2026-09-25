@@ -116,4 +116,26 @@ TEST(HeightScalarFieldsForCrystal, PyramidHasPrismUpperLowerInThatOrder) {
   EXPECT_EQ(fields[2].dist, &crystal.lower_h);
 }
 
+// ShapeColumnForHeightSlot's switch cannot be checked for exhaustiveness by the compiler (its
+// argument is a plain int), and its default branch's assert is compiled out in Release. This pins
+// the one invariant that matters instead: every slot HeightScalarFieldsForCrystal can actually hand
+// it, for every CrystalType that exists today, is one this codebase's own list of height slots
+// names (code-review round 1 Minor: the two hand-written lists — the slots this function returns
+// and the slots ShapeColumnForHeightSlot's switch maps — have no other mechanism forcing them to
+// stay in sync). Does not call ShapeColumnForHeightSlot itself: an out-of-range slot would trip its
+// default-branch assert and abort the whole test binary in a Debug build, which is a worse failure
+// mode than the one this test exists to catch cleanly.
+TEST(HeightScalarFieldsForCrystal, EveryReturnedSlotHasARealShapeColumn) {
+  for (const gui::CrystalType type : { gui::CrystalType::kPrism, gui::CrystalType::kPyramid }) {
+    gui::CrystalConfig crystal;
+    crystal.type = type;
+    for (const gui::HeightScalarField& field : gui::HeightScalarFieldsForCrystal(crystal)) {
+      EXPECT_TRUE(field.slot == LUMICE_SHAPE_SCALAR_HEIGHT || field.slot == LUMICE_SHAPE_SCALAR_PRISM_H ||
+                  field.slot == LUMICE_SHAPE_SCALAR_UPPER_H || field.slot == LUMICE_SHAPE_SCALAR_LOWER_H)
+          << "slot " << field.slot << " for CrystalType " << static_cast<int>(type)
+          << " has no column in ShapeColumnForHeightSlot's switch (default-branch fallback)";
+    }
+  }
+}
+
 }  // namespace

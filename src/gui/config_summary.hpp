@@ -204,6 +204,15 @@ struct HeightScalarField {
 // modal's preview summary line (FormatCrystalPreviewSummary) — so the two cannot disagree about
 // it. Wedge angles and face distances are not heights and are not listed.
 std::vector<HeightScalarField> HeightScalarFieldsForCrystal(const CrystalConfig& crystal);
+
+// The Shape table column a height slot (one of HeightScalarFieldsForCrystal's) is printed in.
+// Exposed only so a test can assert the two hand-written lists — the slots
+// HeightScalarFieldsForCrystal can return, and the slots this switch maps — cannot silently drift
+// apart (default-branch asserts are compiled out in Release; this closes the gap a switch's own
+// exhaustiveness check cannot, since `slot` is a plain int). Production code should call it only
+// from BuildShapeTable's own translation unit; a test is the only other legitimate caller.
+size_t ShapeColumnForHeightSlot(int slot);
+
 // "G Gauss · U Uniform · Z Zigzag · L Laplacian · G* Gauss (legacy)": the letters spelled out,
 // printed once under the document tables. Built from the same table as DistributionLetter and
 // the combo's own labels (AxisDistTypeLabel), so it cannot list a letter the cells do not use.

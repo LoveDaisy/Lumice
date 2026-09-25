@@ -177,6 +177,22 @@ float TestGetModalSectionHeaderY(const char* title);
 // Intended for GUI test assertions; production code should not call this.
 void TestSetEditModalMaxHeightOverride(float max_h);
 
+// The height RenderCrystalPreviewPane reserves under the preview's tool row for the summary line
+// (two wrapped lines' worth, whether the current text needs one line or two) -- the single value
+// both the Compact and Expanded layout formulas must agree on (see PreviewSummaryReservedHeight's
+// comment in edit_modals.cpp). Exposed so a test can compare it against the real, font-metric size
+// of a worst-case summary string rather than eyeballing a screenshot.
+// Intended for GUI test assertions; production code should not call this.
+float TestPreviewSummaryReservedHeight();
+
+// The actual wrapped height the summary line needed the last time RenderCrystalPreviewPane drew
+// it, measured from the real cursor advance at the real wrap width in effect there -- not
+// reconstructed from external layout constants. -1 if it has not drawn yet this process. Compare
+// against TestPreviewSummaryReservedHeight() to catch a worst-case summary string overflowing the
+// budget (silently clipped by the preview pane's NoScrollbar child, not scrolled or pushed).
+// Intended for GUI test assertions; production code should not call this.
+float TestGetSummaryMeasuredWrappedHeight();
+
 // Returns true when the committed axis config of the currently open modal entry
 // meets D-symmetry conditions (az uniform 360°, roll mean a multiple of 30°).
 // Returns false when no modal is open or the entry index is invalid.

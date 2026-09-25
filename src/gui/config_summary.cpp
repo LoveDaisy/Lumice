@@ -147,22 +147,10 @@ std::vector<std::string> ShapeColumns() {
   return columns;
 }
 
-// The Shape table column a height slot (one of HeightScalarFieldsForCrystal's) is printed in.
-size_t ShapeColumnForHeightSlot(int slot) {
-  switch (slot) {
-    case LUMICE_SHAPE_SCALAR_HEIGHT:
-      return kShapeColHeight;
-    case LUMICE_SHAPE_SCALAR_PRISM_H:
-      return kShapeColPrismH;
-    case LUMICE_SHAPE_SCALAR_UPPER_H:
-      return kShapeColUpperH;
-    case LUMICE_SHAPE_SCALAR_LOWER_H:
-      return kShapeColLowerH;
-    default:
-      assert(false && "HeightScalarFieldsForCrystal returned a slot with no Shape table column");
-      return kShapeColHeight;
-  }
-}
+// ShapeColumnForHeightSlot is declared in config_summary.hpp (so a test can reach it — see the
+// declaration's comment) and defined below, outside this anonymous namespace, so its linkage
+// matches that declaration; kShapeColHeight et al. above remain reachable there via the anonymous
+// namespace's implicit using-directive into the rest of this file.
 
 // The entry's crystal, or null for a dangling crystal id (the card prints "<missing>" for it and
 // there is nothing more to describe).
@@ -488,6 +476,22 @@ std::string FormatAxisDistCell(const AxisDist& axis) {
   // An axis is always a distribution (AxisDist has no fixed alternative); the modal's "%.3g".
   return FormatDistributionCell("%.3g", /*no_random=*/false, AxisDistTypeJsonName(axis.type),
                                 axis_preset_detail::IsFullUniform360(axis), axis.mean, axis.std);
+}
+
+size_t ShapeColumnForHeightSlot(int slot) {
+  switch (slot) {
+    case LUMICE_SHAPE_SCALAR_HEIGHT:
+      return kShapeColHeight;
+    case LUMICE_SHAPE_SCALAR_PRISM_H:
+      return kShapeColPrismH;
+    case LUMICE_SHAPE_SCALAR_UPPER_H:
+      return kShapeColUpperH;
+    case LUMICE_SHAPE_SCALAR_LOWER_H:
+      return kShapeColLowerH;
+    default:
+      assert(false && "HeightScalarFieldsForCrystal returned a slot with no Shape table column");
+      return kShapeColHeight;
+  }
 }
 
 std::vector<HeightScalarField> HeightScalarFieldsForCrystal(const CrystalConfig& crystal) {

@@ -176,6 +176,13 @@ static constexpr std::array<const char*, 3> kModalSectionTitles = { "Crystal", "
 // TestGetModalSectionHeaderY — a SeparatorText item has no id, so a test cannot find it.
 static std::array<float, 3> g_modal_section_header_y = { -1.0f, -1.0f, -1.0f };
 
+// The actual wrapped height RenderCrystalPreviewPane's summary text needed this frame, measured
+// from the real cursor advance at the real wrap width in effect there (not reconstructed from
+// external constants) -- -1 until drawn. Read only by TestGetSummaryMeasuredWrappedHeight, so a
+// test can compare a worst-case summary string's real size against PreviewSummaryReservedHeight()
+// instead of eyeballing a screenshot (code-review round 1 Major).
+static float g_summary_measured_wrapped_height = -1.0f;
+
 // Active tab is updated each frame inside the corresponding BeginTabItem true-branch
 // (ImGui doesn't auto-write user state). The OpenEditModal path always sets it
 // explicitly together with g_pending_tab_select=true to drive first-frame selection;
@@ -1265,6 +1272,9 @@ static void RenderCrystalPreviewPane(GuiState& /*state*/, float preview_px) {
   ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x);
   ImGui::TextDisabled("%s", FormatCrystalPreviewSummary(g_crystal_buf, g_axis_buf).c_str());
   ImGui::PopTextWrapPos();
+  // Real cursor advance at the real wrap width, before the pad-up-to-budget logic below can hide a
+  // genuine overrun by forcing the cursor back down to summary_bottom_y.
+  g_summary_measured_wrapped_height = ImGui::GetCursorPosY() - summary_top_y;
   const float summary_bottom_y = summary_top_y + PreviewSummaryReservedHeight();
   if (ImGui::GetCursorPosY() < summary_bottom_y) {
     // A zero-height item advances by ItemSpacing, so it is placed one ItemSpacing short of the end.
@@ -2052,6 +2062,7 @@ void ResetModalState() {
   // Expanded layout has redrawn this process would see a previous case's stale coordinate instead
   // of the "not drawn yet" sentinel (code-review round 1 Minor-1).
   g_modal_section_header_y = { -1.0f, -1.0f, -1.0f };
+  g_summary_measured_wrapped_height = -1.0f;
 }
 
 void ClearAxisCustomMemory() {
@@ -2086,6 +2097,14 @@ float TestGetModalSectionHeaderY(const char* title) {
 
 void TestSetEditModalMaxHeightOverride(float max_h) {
   g_test_edit_modal_max_h_override = max_h;
+}
+
+float TestPreviewSummaryReservedHeight() {
+  return PreviewSummaryReservedHeight();
+}
+
+float TestGetSummaryMeasuredWrappedHeight() {
+  return g_summary_measured_wrapped_height;
 }
 
 bool IsCurrentModalDApplicable() {
