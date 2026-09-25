@@ -18,6 +18,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cfloat>
 #include <cmath>
 #include <cstdint>
 #include <numeric>
@@ -1105,4 +1106,189 @@ TEST(ProjectDirectionOnView, DegenerateViewAndOffCanvasDirectionsAreInvalid) {
   ann::ViewSnapshot lower = MakeView(LensParam::kDualFisheyeEqualArea, 180.0f, 128, 64);
   lower.visible = RenderConfig::kLower;
   EXPECT_FALSE(ann::ProjectDirectionOnView(lower, zenith).valid);
+}
+
+// =================================================================================================
+// The globe's far side (Overlay::far_side)
+// =================================================================================================
+
+namespace {
+
+// A globe view that looks down on the sky at an angle, so the horizon and the parallels cross the
+// sphere on both sides of it: a curve's near half and far half land on different pixels.
+ann::Request GlobeGridRequest(float fade) {
+  ann::Request req;
+  req.view = MakeView(LensParam::kGlobe, 30.0f, 96, 96);
+  req.view.el_deg = 35.0f;
+  req.view.az_deg = 20.0f;
+  req.view.globe_back_fade = fade;
+  req.labels = false;
+  req.horizon = true;
+  req.elevation_deg = { -30.0f, 30.0f, 60.0f };
+  req.longitude_deg = { 0.0f, 90.0f, 180.0f, -90.0f };
+  req.angular_dist_deg = { 22.0f, 46.0f };
+  req.reference_dir[0] = 0.0f;
+  req.reference_dir[1] = -1.0f;
+  req.reference_dir[2] = -0.3f;
+  req.view_dist_deg = { 10.0f };
+  return req;
+}
+
+std::vector<const std::vector<uint8_t>*> FarMasks(const ann::Overlay& out) {
+  return { &out.far_side.horizon, &out.far_side.elevation, &out.far_side.longitude, &out.far_side.angular_dist,
+           &out.far_side.view_dist };
+}
+
+std::vector<const std::vector<uint8_t>*> NearMasks(const ann::Overlay& out) {
+  return { &out.horizon, &out.elevation, &out.longitude, &out.angular_dist, &out.view_dist };
+}
+
+}  // namespace
+
+// Off the globe, and on it at fade 0, the far side is not computed at all and the near side is
+// byte-for-byte what it is without the field: AC "fade <= 0 renders exactly what it did".
+TEST(AnnotationGlobeFarSide, AbsentOffTheGlobeOrAtZeroFadeAndNearSideUnchanged) {
+  const ann::Overlay base = ann::ComputeOverlay(GlobeGridRequest(0.0f), lumice::test::kTestThreadBudget);
+  ASSERT_EQ(base.drawable.size(), 96u * 96u);
+  EXPECT_TRUE(base.far_side.weight.empty());
+  for (const auto* m : FarMasks(base)) {
+    EXPECT_TRUE(m->empty());
+  }
+
+  ann::Request dual = GlobeGridRequest(0.8f);
+  dual.view.lens_type = LensParam::kDualFisheyeEqualArea;
+  dual.view.fov_deg = 180.0f;
+  const ann::Overlay dual_out = ann::ComputeOverlay(dual, lumice::test::kTestThreadBudget);
+  EXPECT_TRUE(dual_out.far_side.weight.empty()) << "only the globe has a far side";
+
+  // The far side ADDS masks; it never changes the near ones.
+  const ann::Overlay faded = ann::ComputeOverlay(GlobeGridRequest(0.8f), lumice::test::kTestThreadBudget);
+  EXPECT_EQ(faded.drawable, base.drawable);
+  const auto near_base = NearMasks(base);
+  const auto near_faded = NearMasks(faded);
+  for (size_t k = 0; k < near_base.size(); ++k) {
+    EXPECT_EQ(*near_faded[k], *near_base[k]) << "near-side category " << k;
+  }
+}
+
+// Every far-side family draws something, only where the near side's `drawable` admits the pixel and
+// the fade weight is positive, and on pixels other than the near side's own line.
+TEST(AnnotationGlobeFarSide, EveryFamilyDrawsInsideTheWeightedDrawableRegion) {
+  const ann::Overlay out = ann::ComputeOverlay(GlobeGridRequest(0.8f), lumice::test::kTestThreadBudget);
+  ASSERT_EQ(out.far_side.weight.size(), out.drawable.size());
+  const auto far = FarMasks(out);
+  const auto near = NearMasks(out);
+  for (size_t k = 0; k < far.size(); ++k) {
+    const std::vector<uint8_t>& m = *far[k];
+    if (m.size() != out.drawable.size()) {
+      ADD_FAILURE() << "far-side category " << k << " is " << m.size() << " bytes";
+      continue;
+    }
+    EXPECT_GT(CountOn(m), 0u) << "far-side category " << k << " draws nothing";
+    EXPECT_NE(m, *near[k]) << "far-side category " << k << " is a copy of the near side";
+    size_t stray = 0;
+    for (size_t i = 0; i < m.size(); ++i) {
+      if (m[i] != 0 && (out.drawable[i] == 0 || !(out.far_side.weight[i] > 0.0f))) {
+        ++stray;
+      }
+    }
+    EXPECT_EQ(stray, 0u) << "far-side category " << k << " painted outside the weighted drawable region";
+  }
+  for (size_t i = 0; i < out.drawable.size(); ++i) {
+    if (out.drawable[i] == 0 && out.far_side.weight[i] != 0.0f) {
+      ADD_FAILURE() << "far-side weight " << out.far_side.weight[i] << " on undrawable pixel " << i;
+      break;
+    }
+  }
+}
+
+// The weight a far-side line carries is the weight the far side's LIGHT carries on that pixel: the
+// far direction ComputeOverlay inverts each pixel to, pushed back through the renderer's own forward
+// (lm_proj::ProjectExitToPixel with the fade set, the path every backend runs), lands on the same
+// pixel as a non-landed hit of exactly that weight. This ties GlobeInverseFar to the forward the
+// preview shader is already held to, so the lines and the light cannot fade on two curves.
+TEST(AnnotationGlobeFarSide, WeightIsTheForwardProjectionsFarHitWeight) {
+  const ann::Request req = GlobeGridRequest(0.6f);
+  const ann::Overlay out = ann::ComputeOverlay(req, lumice::test::kTestThreadBudget);
+  ASSERT_EQ(out.far_side.weight.size(), 96u * 96u);
+
+  RenderConfig cfg = ann::ToRenderConfig(req.view);
+  cfg.globe_back_fade_ = req.view.globe_back_fade;
+  const lumice::Rotation rot = lumice::MakeCameraRotation(cfg);
+  const lm_proj::ProjParams p = lumice::BuildProjParams(cfg, rot, 96.0f);
+
+  size_t checked = 0;
+  size_t misplaced = 0;
+  size_t wrong_weight = 0;
+  for (int py = 0; py < 96; ++py) {
+    for (int px = 0; px < 96; ++px) {
+      const size_t i = static_cast<size_t>(py) * 96u + static_cast<size_t>(px);
+      if (!(out.far_side.weight[i] > 0.0f)) {
+        continue;
+      }
+      float mu = 0.0f;
+      const md::MaskDir far = md::GlobeFarPixelToWorld(cfg, p, rot, px, py, &mu);
+      if (!far.valid) {
+        ADD_FAILURE() << "weighted pixel (" << px << ", " << py << ") has no far direction";
+        continue;
+      }
+      const lm_proj::ProjResult r = lm_proj::ProjectExitToPixel(p, far.x, far.y, far.z);
+      ++checked;
+      if (r.count != 1 || r.hits[0].px != px || r.hits[0].py != py || r.hits[0].bump_landed) {
+        ++misplaced;
+        continue;
+      }
+      if (std::fabs(r.hits[0].weight - out.far_side.weight[i]) > 4.0f * FLT_EPSILON) {
+        ++wrong_weight;
+      }
+    }
+  }
+  EXPECT_GT(checked, 1000u) << "the far side barely shows; the check is vacuous";
+  EXPECT_EQ(misplaced, 0u) << "far directions that the forward does not land back on their pixel";
+  EXPECT_EQ(wrong_weight, 0u) << "far-side line weights that differ from the far-side light's weight";
+}
+
+TEST(AnnotationGlobeFarSide, ALongerFogNeverDimsAPixel) {
+  const ann::Overlay short_fog = ann::ComputeOverlay(GlobeGridRequest(0.2f), lumice::test::kTestThreadBudget);
+  const ann::Overlay long_fog = ann::ComputeOverlay(GlobeGridRequest(1.5f), lumice::test::kTestThreadBudget);
+  ASSERT_EQ(short_fog.far_side.weight.size(), long_fog.far_side.weight.size());
+  size_t dimmer = 0;
+  for (size_t i = 0; i < short_fog.far_side.weight.size(); ++i) {
+    if (long_fog.far_side.weight[i] < short_fog.far_side.weight[i]) {
+      ++dimmer;
+    }
+  }
+  EXPECT_EQ(dimmer, 0u);
+}
+
+// Markers, zenith / nadir and labels stay on the near side: the fade never reaches the projection
+// they are sampled through, so turning it on moves none of them.
+TEST(AnnotationGlobeFarSide, MarkersAndLabelsIgnoreTheFade) {
+  ann::Request req = GlobeGridRequest(0.0f);
+  req.labels = true;
+  req.zenith_nadir = true;
+  req.markers = { ann::kMarkerZenith, ann::kMarkerNadir,     ann::kMarkerSun,
+                  ann::kMarkerSubsun, ann::kMarkerAnthelion, ann::kMarkerAntisolar };
+  const ann::Overlay a = ann::ComputeOverlay(req, lumice::test::kTestThreadBudget);
+  req.view.globe_back_fade = 1.5f;
+  const ann::Overlay b = ann::ComputeOverlay(req, lumice::test::kTestThreadBudget);
+
+  const auto same_point = [](const ann::CanvasPoint& x, const ann::CanvasPoint& y) {
+    return x.valid == y.valid && (!x.valid || (x.px == y.px && x.py == y.py));
+  };
+  EXPECT_TRUE(same_point(a.zenith, b.zenith));
+  EXPECT_TRUE(same_point(a.nadir, b.nadir));
+  ASSERT_EQ(a.markers.size(), b.markers.size());
+  for (size_t k = 0; k < a.markers.size(); ++k) {
+    EXPECT_TRUE(same_point(a.markers[k], b.markers[k])) << "marker " << k;
+  }
+  // At least one marker is on the far side of this view, or the check says nothing.
+  EXPECT_TRUE(std::any_of(a.markers.begin(), a.markers.end(), [](const ann::CanvasPoint& m) { return !m.valid; }));
+  ASSERT_EQ(a.labels.size(), b.labels.size());
+  EXPECT_GT(a.labels.size(), 0u);
+  for (size_t k = 0; k < a.labels.size(); ++k) {
+    EXPECT_EQ(a.labels[k].px, b.labels[k].px) << "label " << k;
+    EXPECT_EQ(a.labels[k].py, b.labels[k].py) << "label " << k;
+    EXPECT_EQ(a.labels[k].text, b.labels[k].text) << "label " << k;
+  }
 }

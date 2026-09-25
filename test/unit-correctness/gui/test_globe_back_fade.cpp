@@ -13,8 +13,8 @@
 //   * a range of 0 is the camera-facing hemisphere only — weight 0 everywhere, so the default
 //     renders what the globe drew before the field existed;
 //   * at the silhouette the far side joins the near side continuously, at weight 1;
-//   * the weight falls monotonically with distance from the camera and is 0 once the far point is
-//     `range` behind the silhouette;
+//   * the weight falls monotonically with distance from the camera as exponential fog,
+//     exp(-depth / range): e^-1 at depth == range, and never exactly 0 — there is no cutoff;
 //   * on the CLI side the far point lands on the SAME pixel as the near point of its ray — which is
 //     what lets the fade be a weight on the existing forward projection rather than a second one.
 
@@ -44,19 +44,21 @@ float MuAt(int i) {
   return 1.0f / kD - (1.0f / kD + 1.0f) * static_cast<float>(i) / static_cast<float>(kMuSteps);
 }
 
-// How far two evaluations of the SAME weight formula on the SAME mu may land apart, and why the
-// bound is absolute. The weight is an inline function in a header, and a test binary holds more
+// How far two evaluations of the SAME weight formula on the SAME mu may land apart, and why this is
+// a tolerance at all. The weight is an inline function in a header, and a test binary holds more
 // than one compiled copy of it: this TU is built without the -march flag, while lumice_obj is
 // built with LUMICE_ISA_LEVEL's (root CMakeLists.txt, lumice_apply_isa_march), and the linker keeps
 // ONE of the out-of-line copies of an inline function such as ProjectExitToPixel — which can be
-// lumice_obj's. With FMA available that copy contracts `1 - t*t*(3 - 2t)` into fused
-// multiply-adds, this TU's does not, and the result ends in `1 - x` with x near 1, so the rounding
-// difference is a fraction of FLT_EPSILON in absolute terms but unbounded in ULPs once the weight
-// nears 0 (one side rounds to 0, the other to a tiny positive number). Measured on a GCC 13 /
-// -march=native build over every float mu in [-1, 1/D] at six ranges: the largest absolute gap
-// is 0.5 * FLT_EPSILON. EXPECT_FLOAT_EQ's 4-ULP window is therefore the wrong ruler (it failed at
-// 11 ULP); 4 * FLT_EPSILON keeps an 8x margin and stays orders of magnitude below any real
-// defect — a wrong mu, the wrong point, or a drifted coefficient moves the weight by far more.
+// lumice_obj's. The smoothstep this curve replaced ended in `1 - x` with x near 1, and FMA
+// contraction of its polynomial measured a 0.5 * FLT_EPSILON gap between the copies (unbounded in
+// ULPs as the weight neared 0, which is why the ruler is absolute). The exponential leaves
+// contraction nothing to change: the one product under the square root is 2 * D * mu = 8 * mu, exact
+// in float, so fma(-8, mu, 17) and 17 - 8 * mu round identically, and the rest is a sqrt, a subtract,
+// a divide and the same libm exp. Measured on Apple clang (arm64) with the two copies built -O0
+// -ffp-contract=off and -O3 -ffp-contract=fast -mcpu=native, over every float mu in [-1, 1/D] at
+// ranges 0.01 ... 4: zero gap. 4 * FLT_EPSILON is kept as headroom for a libm or vectorizer that
+// evaluates exp differently between the two copies, and stays orders of magnitude below any real
+// defect — a wrong mu, the wrong point, or a drifted formula moves the weight by far more.
 constexpr float kSameFormulaTol = 4.0f * FLT_EPSILON;
 
 }  // namespace
@@ -95,11 +97,12 @@ TEST(GlobeBackFade, StartsAtOneOnTheSilhouetteAndFallsMonotonically) {
     }
   }
   // Continuity at the rim, as a limit rather than one point: a far point a hair behind the
-  // silhouette carries nearly the full weight.
-  EXPECT_GT(lm_proj::GlobeBackFadeWeight(1.0f / kD - 1e-3f, 0.3f), 0.999f);
+  // silhouette carries nearly the full weight. The curve leaves the rim with slope -1/range (fog
+  // has no flat shoulder), so "a hair" is ~1e-5 in depth: 1 - 3.4e-5 at range 0.3.
+  EXPECT_GT(lm_proj::GlobeBackFadeWeight(1.0f / kD - 1e-5f, 0.3f), 0.9999f);
 }
 
-TEST(GlobeBackFade, ReachesZeroAtTheRangeAndGrowsWithIt) {
+TEST(GlobeBackFade, DecaysExponentiallyWithoutReachingZero) {
   // Distance from the camera to a surface point is sqrt(D^2 + 1 - 2 D mu); invert it for the point
   // `depth` behind the silhouette.
   const auto mu_at_depth = [](float depth) {
@@ -107,9 +110,18 @@ TEST(GlobeBackFade, ReachesZeroAtTheRangeAndGrowsWithIt) {
     return (kD * kD + 1.0f - dist * dist) / (2.0f * kD);
   };
   for (float range : { 0.05f, 0.3f, 0.8f }) {
-    EXPECT_EQ(lm_proj::GlobeBackFadeWeight(mu_at_depth(range * 1.01f), range), 0.0f) << "range=" << range;
-    EXPECT_GT(lm_proj::GlobeBackFadeWeight(mu_at_depth(range * 0.5f), range), 0.0f) << "range=" << range;
+    // One fog length behind the silhouette the weight is e^-1. The tolerance covers the float
+    // round trip depth -> mu -> depth (a cancellation near sqrt(D^2 - 1)), not the formula.
+    EXPECT_NEAR(lm_proj::GlobeBackFadeWeight(mu_at_depth(range), range), std::exp(-1.0f), 2e-3f) << "range=" << range;
+    EXPECT_NEAR(lm_proj::GlobeBackFadeWeight(mu_at_depth(range * 2.0f), range), std::exp(-2.0f), 2e-3f)
+        << "range=" << range;
+    // No cutoff: well past the range the far side is dim but still there.
+    EXPECT_GT(lm_proj::GlobeBackFadeWeight(mu_at_depth(range * 1.01f), range), 0.0f) << "range=" << range;
   }
+  // Even the deepest point at the shortest range carries a positive weight: the curve never reaches
+  // 0, which is why `range <= 0` needs its own branch.
+  EXPECT_GT(lm_proj::GlobeBackFadeWeight(-1.0f, 0.05f), 0.0f);
+  EXPECT_LT(lm_proj::GlobeBackFadeWeight(-1.0f, 0.05f), 1e-6f);
   // A larger range never shows less of any far point.
   for (int i = 0; i <= kMuSteps; ++i) {
     float prev = 0.0f;
@@ -119,8 +131,8 @@ TEST(GlobeBackFade, ReachesZeroAtTheRangeAndGrowsWithIt) {
       prev = w;
     }
   }
-  // Past the deepest point every far point shows at some weight — the slider's top is meaningful.
-  EXPECT_GT(lm_proj::GlobeBackFadeWeight(-1.0f, MaxDepth() * 1.1f), 0.0f);
+  // A range past the deepest point still dims the antipode — a longer fog keeps brightening it.
+  EXPECT_GT(lm_proj::GlobeBackFadeWeight(-1.0f, MaxDepth() * 2.0f), lm_proj::GlobeBackFadeWeight(-1.0f, MaxDepth()));
 }
 
 // The forward half. With an identity camera rotation ProjectExitToPixel's globe branch sees c = -w,

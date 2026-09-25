@@ -188,7 +188,12 @@ Dir3 RectangularInverse(float lon, float lat) {
 //
 // kGlobeCameraD is shared verbatim with lm_proj (and, by the must-match anchor there, with
 // the GUI); no second literal is introduced here.
-Dir3 GlobeInverse(float x, float y, float focal) {
+namespace {
+
+// Both roots of the solve above: `far_side` false takes the near root (the visible surface), true
+// the far one (where the same ray leaves the sphere). One body so the two share every step but the
+// sign in front of the square root.
+Dir3 GlobeInverseRoot(float x, float y, float focal, bool far_side) {
   if (!(focal > 0.0f)) {
     return { 0, 0, 0, false };  // degenerate lens (fov -> 180 deg); nothing is imaged
   }
@@ -200,7 +205,7 @@ Dir3 GlobeInverse(float x, float y, float focal) {
   if (disc < 0.0f) {
     return { 0, 0, 0, false };  // ray misses the sphere
   }
-  float s = (d - std::sqrt(disc)) / a;
+  float s = far_side ? (d + std::sqrt(disc)) / a : (d - std::sqrt(disc)) / a;
   if (s <= 0.0f) {
     return { 0, 0, 0, false };  // intersection behind the camera
   }
@@ -214,6 +219,16 @@ Dir3 GlobeInverse(float x, float y, float focal) {
     return { 0, 0, 0, false };
   }
   return { cx / len, cy / len, cz / len, true };
+}
+
+}  // namespace
+
+Dir3 GlobeInverse(float x, float y, float focal) {
+  return GlobeInverseRoot(x, y, focal, false);
+}
+
+Dir3 GlobeInverseFar(float x, float y, float focal) {
+  return GlobeInverseRoot(x, y, focal, true);
 }
 
 

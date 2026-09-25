@@ -175,10 +175,12 @@ LM_CONSTANT float kGlobeCameraD = 4.0f;
 // on mu alone: dist(mu) = sqrt(D^2 + 1 - 2 D mu). The silhouette is mu = 1/D, at dist =
 // sqrt(D^2 - 1); a far-side point is `depth = dist(mu) - sqrt(D^2 - 1)` further away than the
 // silhouette, from 0 at the rim to (D + 1) - sqrt(D^2 - 1) (~1.127 for D = 4) at the antipode of
-// the camera. The weight falls from 1 at depth 0 to 0 at depth `fade` along a smoothstep, so it
-// joins the front side (weight 1) continuously at the rim and fades like fog into the distance.
+// the camera. The weight is exponential fog, exp(-depth / fade): 1 at depth 0, so it joins the
+// front side (weight 1) continuously at the rim, e^-1 (~0.368) at depth == fade, and never exactly
+// 0 — `fade` is the fog's characteristic length, not a distance at which the far side vanishes.
+// There is deliberately no cutoff: a piecewise tail would put a visible seam where it switches.
 // `fade <= 0` is the camera-facing hemisphere only: weight 0 everywhere, by an explicit branch
-// rather than by trusting the curve to reach 0.
+// (the curve itself never reaches 0).
 //
 // CALLED ONLY FOR FAR-SIDE POINTS (mu <= 1/D); a near-side point is not faded at all.
 //
@@ -193,8 +195,7 @@ LM_FN float GlobeBackFadeWeight(float mu, float fade) {
   const float d = kGlobeCameraD;
   const float dist = LM_SQRT(LM_FMAX(d * d + 1.0f - 2.0f * d * mu, 0.0f));
   const float depth = LM_FMAX(dist - LM_SQRT(d * d - 1.0f), 0.0f);
-  const float t = LM_CLAMP(depth / fade, 0.0f, 1.0f);
-  return 1.0f - t * t * (3.0f - 2.0f * t);
+  return LM_EXP(-depth / fade);
 }
 
 // Per-type numerical floors on `cz` for the SINGLE-lens fisheye cull below. These are not

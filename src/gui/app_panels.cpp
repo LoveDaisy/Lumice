@@ -1593,8 +1593,10 @@ void RenderRightPanel(GLFWwindow* window, float window_width, float window_heigh
                       fade_c.scale);
       if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
         ImGui::SetTooltip(
-            "Let the far side of the sphere show through, fading with distance\n"
-            "from the camera like fog. 0 shows the near side only.");
+            "Let the far side of the sphere, its light and its grid lines, show\n"
+            "through, fading like fog with distance from the camera.\n"
+            "The value is the fog length: larger fades more slowly.\n"
+            "0 shows the near side only; 0.3-0.6 is a light haze.");
       }
       ImGui::EndDisabled();
     }
