@@ -434,8 +434,7 @@ float globeBackFadeWeight(float mu, float fade) {
   const float D = 4.0;
   float dist = sqrt(max(D * D + 1.0 - 2.0 * D * mu, 0.0));
   float depth = max(dist - sqrt(D * D - 1.0), 0.0);
-  float t = clamp(depth / fade, 0.0, 1.0);
-  return 1.0 - t * t * (3.0 - 2.0 * t);
+  return exp(-depth / fade);
 }
 #endif
 

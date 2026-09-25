@@ -228,7 +228,8 @@ inline float RelIllumGlobeFar(float rho, float focal) {
   return RelIllumGlobeRoot(rho, focal, true);
 }
 
-// Globe back-side fade weight, for a far-side point at mu (its hit_eye.z) and fade range `fade`.
+// Globe back-side fade weight, exp(-depth / fade), for a far-side point at mu (its hit_eye.z) and
+// fog length `fade`.
 // A hand copy — MUST MATCH lm_proj::GlobeBackFadeWeight (src/core/shared/projection_shared.h),
 // which carries the geometry, and the shader's globeBackFadeWeight (preview_renderer.cpp). The
 // C-API boundary keeps this header from including core's; test_globe_back_fade.cpp compares the
@@ -241,8 +242,7 @@ inline float GlobeBackFadeWeight(float mu, float fade) {
   const float d = kGlobeCameraD;
   const float dist = std::sqrt(std::max(d * d + 1.0f - 2.0f * d * mu, 0.0f));
   const float depth = std::max(dist - std::sqrt(d * d - 1.0f), 0.0f);
-  const float t = std::clamp(depth / fade, 0.0f, 1.0f);
-  return 1.0f - t * t * (3.0f - 2.0f * t);
+  return std::exp(-depth / fade);
 }
 
 }  // namespace lumice::gui
