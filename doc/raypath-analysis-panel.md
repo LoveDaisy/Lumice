@@ -701,7 +701,11 @@ B——2026-09-12 更新把 symmetry 搬到读取侧而结构性消失，完整�
    `test_adaptive_allocation_cuts_rare_row_noise_without_moving_the_means`（两臂各 30 session——
    验收要求 ≥10，实测 n=10 时比值在六次复测中出现 5.2–16.9× 的散布、一次压线，故取 30 把安全
    边际压回约 3σ 之外，不放宽比值/z 阈值本身；稀有行 share 相对标准差
-   adaptive ≤ proportional/5，各行两臂均值差 ≤ 3σ）；绑定本身由
+   adaptive ≤ proportional/5；各行**能量**两臂均值差的最差行 z ≤ Šidák 阈值（族 α=0.0027，3 行时
+   ≈3.32），首段红时每臂追加 60 个新 session、在 90×2 上用同一阈值复判，两段皆红才算红——
+   单段的实测误红率 ≈0.65%/次，CI 每天跑十余次，曾在十天内两次同行误红，而本机 2550×2 session
+   把各行两臂差限在 0.1% 以内；复判使误红率降到 ≈0.03%/次，对 ≥0.5% 的真实偏移检出率不变，
+   依据与测量写在测试的 `_CONFIRM_SESSIONS` 注释里）；绑定本身由
    `test/unit-correctness/server/test_ray_allocation_online_analysis.cpp` 按日志行钉住（每次冷
    启动、绝不 carry）。
 

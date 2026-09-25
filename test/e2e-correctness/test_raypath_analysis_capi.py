@@ -381,10 +381,26 @@ _RARE_ROW_MIN_IMPROVEMENT = 5.0
 # moved through each other by accident. Under this rate each of R rows is held at
 # α_R = 1 − (1 − α)^(1/R); asserting every row at α instead compounds to ≈ R·α.
 # The nominal figure assumes a Gaussian z; with sample sds from 30 sessions the statistic is
-# closer to Student-t (≈58 df), whose tails lift the real rate to ≈0.6% (measured by drawing
-# 30-vs-30 from 90 sessions per arm centred on a common mean) — the same caveat the 3σ
-# single-row test always carried, and answered by more sessions, not a looser α.
+# closer to Student-t (≈58 df), whose tails lift the real rate to ≈0.65% per run (measured by
+# drawing 30-vs-30 from 2550 recorded sessions per arm centred on a common mean). That is the
+# rate `_CONFIRM_SESSIONS` exists for — answered by more sessions, not a looser α.
 _FAMILY_ALPHA = 0.0027
+# A first-stage red is not a verdict: it draws `_CONFIRM_SESSIONS` FRESH sessions per arm and
+# judges all 30 + 60 of them together against the SAME threshold, and only a red there fails.
+# Why this and not a lower bar or a fixed seed. A per-run false-alarm rate of ≈0.65% is a red
+# every couple of weeks on a CI leg that runs this case about a dozen times a day, and that is
+# what it produced: the same row read low twice in ten days on CI (worker_count=3 there), while
+# 2550 sessions per arm on a local machine — at that worker count, at two others, and under CPU
+# oversubscription — bound every row's arm difference to under 0.1% (C1: −0.04% ± 0.05%, 95%),
+# an order of magnitude below either red. Requiring both stages makes the rule strictly
+# stricter than the first stage alone, so its false-alarm rate can only fall (measured: 0.65% →
+# 0.03% per run), and it gives up nothing against a real offset: an offset large enough to red
+# the first stage reads ≈√3× larger in z over 90 sessions than over 30, so it reds again
+# (detection of a −0.7% / −1.0% C1 offset: 45.9% / 88.8% single-stage vs 45.8% / 88.8% here,
+# by the same resampling). A fixed sim_seed would also stop the flake, but sim_seed ≠ 0 pins
+# the server to ONE worker, which is not the shape the automatic worker count ships.
+# The cost is paid only on a first-stage red: 120 more sessions, in about one run in 150.
+_CONFIRM_SESSIONS = 60
 
 
 def _sidak_z_threshold(alpha_total: float, r: int) -> float:
@@ -419,7 +435,25 @@ def _mean_sd(xs):
     return mean, math.sqrt(var)
 
 
-def _run_arm(tmp_path, ray_allocation: str):
+def _score_rows(energies_p, energies_a, rows):
+    """(z, row, mean_p, mean_a) for every row with a finite z, worst first: each row's arm
+    difference over the two arms' pooled standard error. A row seen in one arm only counts as 0
+    in the other's sessions, which is what its estimator says."""
+    scored = []
+    for row in rows:
+        m_p, s_p = _mean_sd([e.get(row, 0.0) for e in energies_p])
+        m_a, s_a = _mean_sd([e.get(row, 0.0) for e in energies_a])
+        pooled_se = math.sqrt(s_p * s_p / len(energies_p) + s_a * s_a / len(energies_a))
+        diff = abs(m_a - m_p)
+        if pooled_se == 0.0:
+            assert diff == 0.0, f"row {row!r}: constant in both arms yet different ({m_p} vs {m_a})"
+            continue
+        scored.append((diff / pooled_se, row, m_p, m_a))
+    scored.sort(reverse=True)
+    return scored
+
+
+def _run_arm(tmp_path, ray_allocation: str, sessions: int = _CHALLENGE_SESSIONS):
     doc = json.loads(Path(_CONFIG_CHALLENGE).read_text(encoding="utf-8"))
     doc["scene"]["ray_allocation"] = ray_allocation
     path = tmp_path / f"challenge_{ray_allocation}.json"
@@ -427,7 +461,7 @@ def _run_arm(tmp_path, ray_allocation: str):
     # sim_seed=0: a fresh random stream per session, so the spread ACROSS sessions is the
     # estimator's real noise (a fixed seed would make ten identical sessions and a sd of 0).
     return cr.run_raypath_analysis_capi_sessions(
-        str(path), _full_sky_request(), sessions=_CHALLENGE_SESSIONS, sim_seed=0, max_entries=None,
+        str(path), _full_sky_request(), sessions=sessions, sim_seed=0, max_entries=None,
         chain_id_symmetry=cr.LUMICE_RAYPATH_SYMMETRY_ALL)
 
 
@@ -440,10 +474,10 @@ def test_adaptive_allocation_cuts_rare_row_noise_without_moving_the_means(tmp_pa
     own 1M-ray budget. The first assertion is the reason the analysis binds the online deal at
     all (the histogram's Σ(Y·w) carries the p/q correction, so what changes is variance, not
     expectation); the second is that unbiasedness, per row, as the worst row's z over the two
-    arms' pooled standard error against a Šidák threshold at `_FAMILY_ALPHA` family-wise.
-    Both arms are also each a positive/negative control for the bind: the
-    proportional arm must log no online tally line, the adaptive arm one cold start per
-    session from the analysis site.
+    arms' pooled standard error against a Šidák threshold at `_FAMILY_ALPHA` family-wise, a red
+    of which is confirmed on `_CONFIRM_SESSIONS` more sessions per arm before it fails. Both
+    arms are also each a positive/negative control for the bind: the proportional arm must log
+    no online tally line, the adaptive arm one cold start per session from the analysis site.
     """
     prop = _run_arm(tmp_path, "proportional")
     adap = _run_arm(tmp_path, "adaptive")
@@ -490,33 +524,33 @@ def test_adaptive_allocation_cuts_rare_row_noise_without_moving_the_means(tmp_pa
     #    total, which under proportional is mostly the rare row's own noise (per-session rel_sd
     #    ≈0.19 against ≈0.02 for the other rows) — so a rare-row shortfall in that arm reads as
     #    every OTHER row's share having moved, and the red this assertion once raised named a
-    #    non-rare row for exactly that. A row seen in one arm only counts as 0 in the other's
-    #    sessions, which is what its estimator says. One z per row, judged together: the worst
-    #    against the Šidák threshold for R rows, so the whole assertion reds at _FAMILY_ALPHA.
-    n = _CHALLENGE_SESSIONS
+    #    non-rare row for exactly that. One z per row, judged together: the worst against the
+    #    Šidák threshold for R rows, so the stage reds at _FAMILY_ALPHA — and a first-stage red
+    #    is confirmed over 30 + _CONFIRM_SESSIONS sessions per arm before it fails (the
+    #    constant's comment says why that neither lowers the bar nor gives up power).
     energies_p = [_energies(r) for r in prop]
     energies_a = [_energies(r) for r in adap]
-    scored = []  # (z, row, mean_p, mean_a) for every row with a finite z
-    for row in rows:
-        m_p, s_p = _mean_sd([e.get(row, 0.0) for e in energies_p])
-        m_a, s_a = _mean_sd([e.get(row, 0.0) for e in energies_a])
-        pooled_se = math.sqrt((s_p * s_p + s_a * s_a) / n)
-        diff = abs(m_a - m_p)
-        if pooled_se == 0.0:
-            assert diff == 0.0, f"row {row!r}: constant in both arms yet different ({m_p} vs {m_a})"
-            continue
-        scored.append((diff / pooled_se, row, m_p, m_a))
-    scored.sort(reverse=True)
+    first = _score_rows(energies_p, energies_a, rows)
+    if not first or first[0][0] <= _sidak_z_threshold(_FAMILY_ALPHA, len(rows)):
+        return
+    energies_p += [_energies(r) for r in _run_arm(tmp_path, "proportional", _CONFIRM_SESSIONS)]
+    energies_a += [_energies(r) for r in _run_arm(tmp_path, "adaptive", _CONFIRM_SESSIONS)]
+    rows = sorted(set().union(*(e.keys() for e in energies_p + energies_a)))
+    scored = _score_rows(energies_p, energies_a, rows)
     z_max = _sidak_z_threshold(_FAMILY_ALPHA, len(rows))
-    # The failure message carries the worst row's per-session values of both arms: a red is a
-    # 30-vs-30 comparison whose only post-mortem question is "one outlier session, or a shifted
-    # arm?", and the per-case temp data is gone by the time anyone asks it.
+
+    def by_z(scored_rows):
+        return ", ".join(f"{row} z={z:.2f} ({m_p:.1f} vs {m_a:.1f})" for z, row, m_p, m_a in scored_rows)
+
+    # The failure message carries both stages and the worst row's per-session values of both
+    # arms: a red is a comparison of two random arms whose only post-mortem question is "one
+    # outlier session, or a shifted arm?", and the per-case temp data is gone by the time
+    # anyone asks it.
     assert not scored or scored[0][0] <= z_max, (
         f"row {scored[0][1]!r}: mean energy proportional {scored[0][2]:.2f} vs adaptive "
-        f"{scored[0][3]:.2f}, z = {scored[0][0]:.2f} > {z_max:.2f} (Šidák over {len(rows)} rows at "
-        f"family-wise α = {_FAMILY_ALPHA}) — the p/q correction is not carrying this row's "
-        f"expectation; all rows by z: "
-        + ", ".join(f"{row} z={z:.2f} ({m_p:.1f} vs {m_a:.1f})" for z, row, m_p, m_a in scored)
-        + f"; per-session energy of {scored[0][1]!r} — proportional: "
-        + " ".join(f"{e.get(scored[0][1], 0.0):.0f}" for e in energies_p) + "; adaptive: "
+        f"{scored[0][3]:.2f} over {len(energies_p)} vs {len(energies_a)} sessions, z = {scored[0][0]:.2f} > "
+        f"{z_max:.2f} (Šidák over {len(rows)} rows at family-wise α = {_FAMILY_ALPHA}), confirming a red "
+        f"of the first {_CHALLENGE_SESSIONS} — the p/q correction is not carrying this row's expectation; "
+        f"all rows by z: {by_z(scored)}; first stage: {by_z(first)}; per-session energy of {scored[0][1]!r} "
+        f"— proportional: " + " ".join(f"{e.get(scored[0][1], 0.0):.0f}" for e in energies_p) + "; adaptive: "
         + " ".join(f"{e.get(scored[0][1], 0.0):.0f}" for e in energies_a))
