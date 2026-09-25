@@ -167,6 +167,49 @@ TEST(SimStateRules, AnalysisPictureNoticeNamesTheTwoCasesAndNoOther) {
   }
 }
 
+// Continue's gate over its whole domain: every SimState x every RunIntent x both flags x both
+// document verdicts, with and without a server. Available exactly when a server exists, no run is
+// in flight, the picture is a render the server still holds (completed or stopped), the session is
+// not an analysis and the document still describes it — and a blocked button always has a reason
+// to show, an open one never does.
+TEST(SimStateRules, ContinueNeedsALiveRenderAccumulationTheDocumentStillDescribes) {
+  for (bool has_server : { false, true }) {
+    for (GuiState::SimState s : kAllSimStates) {
+      for (RunIntent intent : kAllRunIntents) {
+        for (bool analysis_in_progress : { false, true }) {
+          for (bool session_is_analysis : { false, true }) {
+            for (bool continuable : { false, true }) {
+              const bool expected = has_server && !IsBackendBusy(s, analysis_in_progress) &&
+                                    (intent == RunIntent::kRunCompleted || intent == RunIntent::kStopped) &&
+                                    !session_is_analysis && continuable;
+              const ContinueBlocker b =
+                  WhyCannotContinue(has_server, s, analysis_in_progress, intent, session_is_analysis, continuable);
+              EXPECT_EQ(b == ContinueBlocker::kNone, expected)
+                  << "server=" << has_server << " SimState=" << static_cast<int>(s)
+                  << " intent=" << static_cast<int>(intent) << " analysis=" << analysis_in_progress
+                  << " session_analysis=" << session_is_analysis << " continuable=" << continuable;
+              EXPECT_EQ(CanContinue(has_server, s, analysis_in_progress, intent, session_is_analysis, continuable),
+                        expected);
+              EXPECT_EQ(ContinueBlockerTooltip(b) != nullptr, !expected);
+            }
+          }
+        }
+      }
+    }
+  }
+  // The two ordinary cases by name. A finished run with its EV dragged (kModified never comes from
+  // a display edit; a budget edit does reach kModified, and is continuable) continues; a loaded
+  // .lmc does not, whatever its sim_state says, because the server holds none of its rays.
+  EXPECT_TRUE(CanContinue(true, GuiState::SimState::kDone, false, RunIntent::kRunCompleted, false, true));
+  EXPECT_TRUE(CanContinue(true, GuiState::SimState::kModified, false, RunIntent::kStopped, false, true));
+  EXPECT_EQ(WhyCannotContinue(true, GuiState::SimState::kDone, false, RunIntent::kLoaded, false, true),
+            ContinueBlocker::kNoAccumulation);
+  EXPECT_EQ(WhyCannotContinue(true, GuiState::SimState::kModified, false, RunIntent::kRunCompleted, false, false),
+            ContinueBlocker::kConfigChanged);
+  EXPECT_EQ(WhyCannotContinue(true, GuiState::SimState::kDone, false, RunIntent::kStopped, true, true),
+            ContinueBlocker::kAnalysisSession);
+}
+
 // The list-freshness predicate over its whole domain: no result is kNone whatever the scene
 // says (a match without a list is not a fresh list), and with a result the verdict is the
 // comparison's alone. Four rows, each pinned to a named value so a predicate that never returned

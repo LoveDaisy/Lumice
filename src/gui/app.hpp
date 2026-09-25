@@ -170,6 +170,10 @@ void ConstructServerForState(const GuiState& state);
 // full rebuild + fresh poller Start). DoRun is the production caller; declared so the join it
 // performs before destroying the old server can be exercised against a run still in flight.
 bool MaybeReconstructServerForConstructionProperties();
+// Does the live g_server still have the construction-time properties `state` asks for? The
+// comparison MaybeReconstructServerForConstructionProperties acts on, exposed for Continue's gate:
+// a server a Run would rebuild holds an accumulation the document no longer describes.
+bool ServerMatchesConstructionProperties(const GuiState& state);
 
 // Async Stop completion latch (blueprint §5/§8, 1.6). Set true synchronously by DoStop when it
 // offloads the blocking `poller.Stop() + LUMICE_StopServer` sequence onto a background std::async
@@ -414,6 +418,16 @@ void RunCalibrationInBackground(ScenePtr scene);
 // wrong dedup semantics.
 bool DoRun(bool user_initiated);
 void DoStop();
+// Continue the render on screen: LUMICE_ContinueRender with the panel's ray budget as the
+// increment (the whole of sim.ray_num_millions again, or unbounded under sim.infinite). The
+// caller gates on CanContinue (sim_state_rules.hpp); `DocumentContinuable` is that gate's
+// document half. On success the run reads like any other to the display — new epoch, kRunning
+// intent, poller woken — except that the picture and the stats readouts are kept, since the
+// continuation only adds to them. Returns whether the server accepted.
+bool DoContinue();
+// Continue's document condition: the panels still describe what the server accumulated, ray
+// budget aside (MatchesCommitExceptRayBudget), on the server a Run would use.
+bool DocumentContinuable(const GuiState& state);
 // The scene a run submits, built from `state` under SceneIntent::kSimCommit — the ONE emitter
 // DoRun and DoAnalyze both go through, so an analysis reports on byte-for-byte the document a
 // Run would render. Returns null when the document exceeds the ABI bounds; the warning modal

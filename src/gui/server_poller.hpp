@@ -116,6 +116,12 @@ struct PreviewSnapshot {
   // invariant I4), so the terminal COMPLETED frame durably carries the completion edge until the
   // main thread consumes it. 1.5 removed the has_valid_data + server_state side-signals it replaced.
   int lifecycle = LUMICE_LIFECYCLE_IDLE;
+  // GetSimLifecycle.session_kind, carried beside the lifecycle on every poll: which kind of run
+  // the server's current session is. The GUI's only read of it is Continue's gate — a render
+  // accumulation can be continued, an analysis session's histogram cannot — and the server's own
+  // answer is what that gate needs, since the panel's analysis intent is withdrawn by a Stop
+  // while the session it started stays an analysis.
+  int session_kind = LUMICE_SESSION_RENDER;
   LUMICE_RayCount stats_ray_seg_num = 0;
   LUMICE_RayCount stats_sim_ray_num = 0;
   // Sampling-density counters, carried in the same coherent bundle as the two above.

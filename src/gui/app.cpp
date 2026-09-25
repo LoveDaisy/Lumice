@@ -1248,12 +1248,16 @@ void ResetServerConstructionTrackers() {
   g_server_worker_count = 0;
 }
 
+bool ServerMatchesConstructionProperties(const GuiState& state) {
+  return state.use_gpu_backend == g_server_is_gpu && state.worker_count == g_server_worker_count;
+}
+
 bool MaybeReconstructServerForConstructionProperties() {
-  const bool want_gpu = g_state.use_gpu_backend;
-  const int want_workers = g_state.worker_count;
-  if (want_gpu == g_server_is_gpu && want_workers == g_server_worker_count) {
+  if (ServerMatchesConstructionProperties(g_state)) {
     return false;  // construction-time properties unchanged — keep the live server
   }
+  const bool want_gpu = g_state.use_gpu_backend;
+  const int want_workers = g_state.worker_count;
   GUI_LOG_INFO("[GUI] Reconstructing server (backend {} -> {}, workers {} -> {})", g_server_is_gpu ? "GPU" : "CPU",
                want_gpu ? "GPU" : "CPU", g_server_worker_count, want_workers);
   JoinPendingStop();         // R1: a background stop may still hold this server — drain it before destroy
@@ -1607,6 +1611,52 @@ bool DoRun(bool user_initiated) {
   // Both err==LUMICE_OK and err!=LUMICE_OK paths issued LUMICE_CommitScene;
   // "committed" here means "gate did not defer this attempt", not "commit succeeded".
   // Callers use this to gate throttle-side accounting (see main.cpp / test_gui_perf.cpp).
+  return true;
+}
+
+bool DocumentContinuable(const GuiState& state) {
+  return MatchesCommitExceptRayBudget(state) && ServerMatchesConstructionProperties(state);
+}
+
+bool DoContinue() {
+  if (!g_server) {
+    return false;
+  }
+  // Same two joins DoRun opens with, for the same reasons: a Stop may still be draining on the
+  // background thread (it is the usual way here — Stop, then Continue), and the startup
+  // calibration may still hold the server.
+  JoinPendingStop();
+  JoinPendingCalibration();
+  const bool infinite = g_state.sim.infinite;
+  const LUMICE_ErrorCode err =
+      LUMICE_ContinueRender(g_server, infinite ? 1 : 0, infinite ? 0 : SimRayCount(g_state.sim));
+  if (err != LUMICE_OK) {
+    // The button is gated on WhyCannotContinue, so a refusal is the surprise it is: logged, and
+    // nothing on the GUI side moves.
+    GUI_LOG_WARNING("[GUI] DoContinue: LUMICE_ContinueRender failed with error code {}", static_cast<int>(err));
+    return false;
+  }
+  // The budget the server is now tracing is the panel's. Recording it in the Revert baseline keeps
+  // the resim diff honest: the ray budget was the one field the gate let differ, and after this it
+  // no longer does. Nothing else in the baseline moves — the scene it describes is unchanged.
+  if (g_state.last_committed_state) {
+    g_state.last_committed_state->sim.ray_num_millions = g_state.sim.ray_num_millions;
+    g_state.last_committed_state->sim.infinite = g_state.sim.infinite;
+  }
+  // From here on a continuation is a run like any other to the display side: a new epoch read
+  // back (the server advanced it), the kRunning intent, and the poller woken for the new epoch.
+  // What it deliberately does NOT do, unlike DoRun: zero the stats readouts, or raise the display
+  // epoch floor — the picture and the counts on screen stay until this run's first frame carries
+  // larger ones, because they are a prefix of what it will show.
+  LUMICE_SimLifecycleResult lc{};
+  LUMICE_GetSimLifecycle(g_server, &lc);
+  g_state.committed_epoch = lc.epoch;
+  g_state.run_intent = RunIntent::kRunning;
+  // The poller is paused after a Stop and self-paused after a completion; the consumers were not
+  // rebuilt, so its pointers are still valid and a wake is all it needs (DoRun's reuse path).
+  g_server_poller.WakeForRestart(g_server);
+  GUI_LOG_INFO("[GUI] DoContinue: continuing the render (epoch {}, {} more rays)", lc.epoch,
+               infinite ? std::string("unbounded") : std::to_string(SimRayCount(g_state.sim)));
   return true;
 }
 
@@ -1964,6 +2014,9 @@ void SyncFromPoller() {
   {
     const bool prev_in_progress = g_state.analysis_run_in_progress;
     g_state.analysis_run_in_progress = DeriveAnalysisInProgress(g_state.analysis.started, snap.get());
+    if (snap && snap->valid) {
+      g_state.server_session_is_analysis = snap->session_kind == LUMICE_SESSION_ANALYSIS;
+    }
     if (prev_in_progress && !g_state.analysis_run_in_progress) {
       GUI_LOG_INFO("[GUI] Raypath analysis finished");
     }

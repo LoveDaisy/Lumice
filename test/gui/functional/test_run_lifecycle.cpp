@@ -45,6 +45,7 @@ const char* const kStopBtn = "##TopBar/" ICON_FA_STOP " Stop";
 const char* const kStoppingBtn = "##TopBar/" ICON_FA_STOP " Stopping...";
 const char* const kRevertBtn = "##TopBar/Revert";
 const char* const kNewBtn = "##TopBar/New";
+const char* const kContinueBtn = "##TopBar/" ICON_FA_FORWARD " Continue";
 
 // A live server for the duration of one case, torn down on EVERY exit path. Held by an object
 // because IM_CHECK* expands to `return`, so a failing assertion between creation and a hand-written
@@ -832,5 +833,79 @@ void RegisterRunLifecycleTests(ImGuiTestEngine* engine) {
           gui::g_state.dirty = true;
         },
         2000);
+  };
+
+  // Continue, pressed on a finished run, adds the panel's budget to it: the run goes back to
+  // Simulating and finishes again, with the two budgets' rays counted together — read off the
+  // server (LUMICE_GetSimRayCount) and off the status bar's readout alike. The budget is edited
+  // between the two on purpose: the ray budget is the one document field Continue reads rather
+  // than refuses, so an edit to it must leave the button pressable and set what is added.
+  // What a continuation must NOT do on the display side is also pinned: the picture stays up
+  // (no display-floor raise, texture kept) while the new rays arrive.
+  ImGuiTest* t_continue = IM_REGISTER_TEST(engine, "run_lifecycle", "continue_adds_the_panel_budget_to_a_finished_run");
+  t_continue->TestFunc = [](ImGuiTestContext* ctx) {
+    ScopedRunScene scene;
+    IM_CHECK(scene.ok());
+    SeedFiniteRun(0.5f);
+    gui::DoRun(/*user_initiated=*/true);
+    IM_CHECK(ReachedDoneAndLatched(ctx));
+    IM_CHECK_EQ(static_cast<unsigned long long>(gui::g_state.stats_sim_ray_num), ExpectedSimRayNum(0.5f));
+
+    gui::g_state.sim.ray_num_millions = 0.25f;
+    ctx->Yield(3);
+    IM_CHECK(!IsDisabled(ctx->ItemInfo(kContinueBtn)));
+
+    const uint64_t epoch_before = gui::g_state.committed_epoch;
+    const uint64_t floor_before = gui::g_state.display_epoch_floor;
+    ctx->ItemClick(kContinueBtn);
+    IM_CHECK_EQ(static_cast<int>(gui::g_state.run_intent), static_cast<int>(RunIntent::kRunning));
+    IM_CHECK_EQ(gui::g_state.committed_epoch, epoch_before + 1);
+    IM_CHECK_EQ(gui::g_state.display_epoch_floor, floor_before);
+    IM_CHECK(gui::g_preview.HasTexture());
+    // While it runs, the button it replaced a Run with is shut like Run's own slot.
+    IM_CHECK(IsDisabled(ctx->ItemInfo(kContinueBtn)));
+
+    // Latched on the intent, not on kDone: the budget edit above left the document dirty (unsaved),
+    // and a dirty document over a finished run reads kModified — for a continuation exactly as for
+    // a Run, since both leave `dirty` to the save path.
+    IM_CHECK(DriveUntil(ctx, [] { return gui::g_state.run_intent == RunIntent::kRunCompleted; }, 20));
+    const unsigned long long expected = ExpectedSimRayNum(0.5f) + ExpectedSimRayNum(0.25f);
+    LUMICE_RayCount live = 0;
+    IM_CHECK_EQ(LUMICE_GetSimRayCount(gui::g_server, &live), LUMICE_OK);
+    IM_CHECK_EQ(static_cast<unsigned long long>(live), expected);
+    IM_CHECK_EQ(static_cast<unsigned long long>(gui::g_state.stats_sim_ray_num), expected);
+    // The budget it added is now what was committed: nothing is left for the ⚠ + Revert row.
+    IM_CHECK(gui::g_state.last_committed_state.has_value());
+    IM_CHECK_EQ(gui::g_state.last_committed_state->sim.ray_num_millions, 0.25f);
+    IM_CHECK(gui::g_preview.HasTexture());
+  };
+
+  // Continue is shut whenever pressing it could not do what it says, and says why. Before any
+  // run there is nothing to add to; after an edit a re-sim would see, more rays would belong to a
+  // different picture; a Revert of that edit opens it again. The tooltip text itself is pinned
+  // one layer down (WhyCannotContinue's truth table); here it is the wiring: that the live
+  // toolbar reads the same gate.
+  ImGuiTest* t_continue_gate =
+      IM_REGISTER_TEST(engine, "run_lifecycle", "continue_is_shut_until_there_is_a_matching_render_to_add_to");
+  t_continue_gate->TestFunc = [](ImGuiTestContext* ctx) {
+    ScopedRunScene scene;
+    IM_CHECK(scene.ok());
+    SeedFiniteRun(0.125f);
+    ctx->Yield(3);
+    IM_CHECK(IsDisabled(ctx->ItemInfo(kContinueBtn)));  // never run
+
+    gui::DoRun(/*user_initiated=*/true);
+    IM_CHECK(ReachedDoneAndLatched(ctx));
+    ctx->Yield(3);
+    IM_CHECK(!IsDisabled(ctx->ItemInfo(kContinueBtn)));
+
+    const float committed_altitude = gui::g_state.sun.altitude;
+    gui::g_state.sun.altitude = committed_altitude + 7.0f;
+    ctx->Yield(3);
+    IM_CHECK(IsDisabled(ctx->ItemInfo(kContinueBtn)));  // the sun moved: more rays would not match
+
+    ctx->ItemClick(kRevertBtn);
+    ctx->Yield(3);
+    IM_CHECK(!IsDisabled(ctx->ItemInfo(kContinueBtn)));
   };
 }

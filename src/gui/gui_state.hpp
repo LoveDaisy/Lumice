@@ -1797,6 +1797,11 @@ struct GuiState {
   // (DeriveAnalysisInProgress, analysis_panel.hpp). Gates the top bar's Run / New / Open the
   // same way IsBusy does, and the panel's own Analyze button.
   bool analysis_run_in_progress = false;
+  // DERIVED each frame from the poller's session_kind observation (SyncFromPoller): the server's
+  // current session is a raypath analysis. Continue's gate (WhyCannotContinue) — an analysis
+  // session holds no render accumulation to add to. False before the first observation, which is
+  // also before any run, when Continue is shut for another reason anyway.
+  bool server_session_is_analysis = false;
 
   // Simulation state — DERIVED, not directly written. ReconcileSimState (app.cpp) is the single
   // owner (I2): it maps (run_intent, committed_epoch, last backend observation, dirty) → sim_state

@@ -71,6 +71,16 @@ struct GuiEffects {
   // (doc/gui-state-governance.md T3).
 };
 
+// Pure function: does the document on the panels still describe the scene the last commit sent,
+// apart from its ray budget (sim.ray_num_millions / sim.infinite)? It is the commit-baseline half
+// of ReconcileGuiEffects asked with those two fields held equal — the same comparison, not a second
+// copy of it — so "everything a re-sim would change is unchanged" means exactly what the resim and
+// hard-reset lanes mean by it. False before the first commit (no baseline). This is Continue's
+// document condition: the budget is the one field a continuation takes FROM the panel, as the
+// increment to add, so editing it must not stand in the way (the display-only fields never did —
+// they are outside that comparison already).
+bool MatchesCommitExceptRayBudget(const GuiState& state);
+
 // Pure function. Reads `state` (its auto-diff-participating fields, last_committed_state, and
 // last_pushed_display_state); does not write. Baselines that are nullopt make THAT particular
 // diff a no-op (both first-commit and first-repush-after-Reset gates are natural nullopt).
