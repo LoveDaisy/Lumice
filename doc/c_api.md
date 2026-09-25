@@ -923,7 +923,7 @@ LUMICE_ErrorCode LUMICE_ContinueRender(LUMICE_Server* server, int infinite, LUMI
 - `LUMICE_ERR_SERVER`: nothing to continue — no render was ever committed, or the current
   session is a raypath analysis (commit a render again first), a run is in progress, or a
   just-completed run's last batches did not finish draining within an internal wait bound (retry
-  shortly). The five causes share the code; a caller that must tell them apart can read
+  shortly). The four causes share the code; a caller that must tell them apart can read
   `LUMICE_GetSimLifecycle()` (`lifecycle`, `session_kind`) first.
 
 A rejected call changes nothing — including the drain-timeout case: rather than proceed and
