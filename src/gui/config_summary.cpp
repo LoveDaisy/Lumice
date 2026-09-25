@@ -1,6 +1,7 @@
 #include "gui/config_summary.hpp"
 
 #include <algorithm>
+#include <cassert>
 #include <cctype>
 #include <cstdio>
 #include <optional>
@@ -146,6 +147,23 @@ std::vector<std::string> ShapeColumns() {
   return columns;
 }
 
+// The Shape table column a height slot (one of HeightScalarFieldsForCrystal's) is printed in.
+size_t ShapeColumnForHeightSlot(int slot) {
+  switch (slot) {
+    case LUMICE_SHAPE_SCALAR_HEIGHT:
+      return kShapeColHeight;
+    case LUMICE_SHAPE_SCALAR_PRISM_H:
+      return kShapeColPrismH;
+    case LUMICE_SHAPE_SCALAR_UPPER_H:
+      return kShapeColUpperH;
+    case LUMICE_SHAPE_SCALAR_LOWER_H:
+      return kShapeColLowerH;
+    default:
+      assert(false && "HeightScalarFieldsForCrystal returned a slot with no Shape table column");
+      return kShapeColHeight;
+  }
+}
+
 // The entry's crystal, or null for a dangling crystal id (the card prints "<missing>" for it and
 // there is nothing more to describe).
 const CrystalConfig* CrystalOfEntry(const GuiState& state, const EntryCard& entry) {
@@ -220,12 +238,10 @@ ConfigSummaryTable BuildShapeTable(const GuiState& state, int layer_idx) {
       table.rows.push_back(std::move(row));
       continue;
     }
-    if (cr->type == CrystalType::kPrism) {
-      row.cells[kShapeColHeight] = FormatShapeDistCell(cr->height, LUMICE_SHAPE_SCALAR_HEIGHT);
-    } else {
-      row.cells[kShapeColPrismH] = FormatShapeDistCell(cr->prism_h, LUMICE_SHAPE_SCALAR_PRISM_H);
-      row.cells[kShapeColUpperH] = FormatShapeDistCell(cr->upper_h, LUMICE_SHAPE_SCALAR_UPPER_H);
-      row.cells[kShapeColLowerH] = FormatShapeDistCell(cr->lower_h, LUMICE_SHAPE_SCALAR_LOWER_H);
+    for (const HeightScalarField& field : HeightScalarFieldsForCrystal(*cr)) {
+      row.cells[ShapeColumnForHeightSlot(field.slot)] = FormatShapeDistCell(*field.dist, field.slot);
+    }
+    if (cr->type != CrystalType::kPrism) {
       row.cells[kShapeColUpperA] = Format("%.3f", cr->upper_alpha);
       row.cells[kShapeColLowerA] = Format("%.3f", cr->lower_alpha);
     }
@@ -472,6 +488,17 @@ std::string FormatAxisDistCell(const AxisDist& axis) {
   // An axis is always a distribution (AxisDist has no fixed alternative); the modal's "%.3g".
   return FormatDistributionCell("%.3g", /*no_random=*/false, AxisDistTypeJsonName(axis.type),
                                 axis_preset_detail::IsFullUniform360(axis), axis.mean, axis.std);
+}
+
+std::vector<HeightScalarField> HeightScalarFieldsForCrystal(const CrystalConfig& crystal) {
+  if (crystal.type == CrystalType::kPrism) {
+    return { { LUMICE_SHAPE_SCALAR_HEIGHT, &crystal.height } };
+  }
+  return {
+    { LUMICE_SHAPE_SCALAR_PRISM_H, &crystal.prism_h },
+    { LUMICE_SHAPE_SCALAR_UPPER_H, &crystal.upper_h },
+    { LUMICE_SHAPE_SCALAR_LOWER_H, &crystal.lower_h },
+  };
 }
 
 std::string DistributionLegend() {

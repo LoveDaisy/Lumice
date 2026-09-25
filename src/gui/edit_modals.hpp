@@ -251,6 +251,19 @@ std::string FormatWedgePresetLabel(int h, int l, float angle_deg);
 // built-ins are already in the list it de-duplicates against.)
 bool IsBuiltInWedgeMillerIndex(int h, int k, int l);
 
+// The summary line under the edit modal's crystal preview, e.g.
+// "Column · zenith G 90(1) · Prism · Height 1.000": the axis preset the triple classifies as, the
+// zenith distribution, then the crystal type and its height scalars (HeightScalarFieldsForCrystal).
+// Pure — no ImGui, no modal state — so the spelling is testable without a window.
+//
+// `axis` is {zenith, azimuth, roll} and is authoritative: the modal edits axes in a buffer of its
+// own (g_axis_buf), and the axis fields inside its crystal buffer are a stale copy until OK, so
+// `crystal`'s zenith/azimuth/roll are deliberately not read. Every piece is spelled by the formatter
+// the Summary window uses for the same fact (AxisPresetLabel, FormatAxisDistCell, CrystalTypeName,
+// kShapeScalarLabels, FormatShapeDistCell), so the live line and that page cannot spell one
+// distribution two ways.
+std::string FormatCrystalPreviewSummary(const CrystalConfig& crystal, const AxisDist axis[3]);
+
 
 // What the wedge dropdown's custom-input row should say about one Miller-index triple, in the form
 // the popup renders it: an angle to show, a message to show beside it, and whether Apply is live.
