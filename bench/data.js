@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1790348571635,
+  "lastUpdate": 1790348574218,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9512,45 +9512,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "f5015321af574f4bc5efa1787fa3feefc87a835b",
-          "message": "Merge pull request #312 from LoveDaisy/fix/benchmark-steady-window-outlier\n\nfix(bench): active_short 不得拿 IDLE 检测延迟当分母（14-29x 野值的根因）",
-          "timestamp": "2026-09-05T15:59:52+08:00",
-          "tree_id": "e502d8ac59d36d9acdffade736d7bf32b619fa08",
-          "url": "https://github.com/LoveDaisy/ice_halo_sim/commit/f5015321af574f4bc5efa1787fa3feefc87a835b"
-        },
-        "date": 1788595947438,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 84.6,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 100.2,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 94.3,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "fdf903868b533c085c845322ee50722158e3a089",
           "message": "Merge pull request #313 from LoveDaisy/scrum/sentinel-liveness-audit\n\ntest(sentinel): retire the one regression sentinel that outlived its mechanism",
           "timestamp": "2026-09-06T00:54:43+08:00",
@@ -13845,6 +13806,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 95.4,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "3c9730817a17b3c99d8469c7cfc7f9a7ceee6e38",
+          "message": "Merge pull request #413 from LoveDaisy/docs/raypath-analysis-overview\n\ndocs(raypath-analysis): feature overview and roadmap",
+          "timestamp": "2026-09-25T22:51:44+08:00",
+          "tree_id": "c79b7399ed96b48eaf32a502f0cc41512296376e",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/3c9730817a17b3c99d8469c7cfc7f9a7ceee6e38"
+        },
+        "date": 1790348573464,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 95.9,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 99.6,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 98.7,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 93.7,
             "unit": "%"
           }
         ]
