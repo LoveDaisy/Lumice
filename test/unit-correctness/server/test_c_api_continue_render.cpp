@@ -227,7 +227,7 @@ TEST(ContinueRender, ContinueAccumulatesCountEnergyAndPlanes) {
   // The plane total is noisier than its 1e5 rays suggest. The CPU route draws ONE wavelength
   // per 128-ray batch, so a half is ~780 colour draws, and X+Y+Z over a uniform draw on
   // [380, 780] nm has a coefficient of variation of 0.92: the ratio's sigma is
-  // sqrt(2) * 0.92 / sqrt(780) = 0.046, measured 0.047 over 500 runs — and the same 0.047 for
+  // sqrt(2) * 0.92 / sqrt(780) = 0.046, measured 0.047 over 500 runs (range 1.864-2.170) — and the same 0.047 for
   // two independent fresh halves, so none of it is the continuation's. The band is 6.5 sigma
   // wide; a cleared plane reads about 1 and a double-counted one about 3, both far outside it.
   const double plane_ratio = Sum(both.xyz) / Sum(first.xyz);
