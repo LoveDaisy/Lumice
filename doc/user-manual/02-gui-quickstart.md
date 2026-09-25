@@ -65,6 +65,18 @@ Any other change (a crystal, the sun, a filter, …) means the picture no longer
 configuration, so Continue is disabled until you Run again or Revert the change; hover the button
 to see why it is disabled.
 
+### Is this spot bluer or redder? — the Channel B−R display
+
+**Display ▶ Show As ▶ Channel B-R** turns the preview into a colour diagnostic: every pixel shows the blue channel minus the red channel of the normal picture (the displayed sRGB values, after gamma — the same subtraction you would do in an image editor's channel calculator), as grey. Mid grey means no difference; lighter than mid grey is bluer, darker is redder. Pure blue reads white, pure red reads black, and any neutral pixel — including empty sky and everything outside the lens circle — reads mid grey. Switch back to **Normal** to get the ordinary picture; nothing is re-simulated either way.
+
+Three things to know before reading the numbers:
+
+- **The value moves with EV.** B and R are the exposed, displayed channels, so raising the exposure makes the same halo read further from mid grey.
+- **Clipping flattens it.** Once red or blue reaches full brightness it stops growing, so the difference is compressed in the brightest parts of the image.
+- **So compare places at the same EV** — two readings taken at different exposures are not comparable.
+
+Overlays (grid, circles, markers, labels, lens border) are drawn on top in their own colours. The background photo and the Colored raypath composite are hidden while the diagnostic is on (your settings for them are kept), and under **Mode ▶ Print** the option is greyed out: print has no separate red and blue to subtract. Screenshot exports what the screen shows, and an exported config carries `"display_mode": "channel_br"`, so the CLI renders the same grey image.
+
 ## 5. Author a new entry from scratch
 
 Want to build a halo recipe yourself instead of opening the example? The shortest path is:

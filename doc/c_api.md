@@ -29,7 +29,7 @@ Link against the `lumice` static library.
 ### Constants
 
 ```c
-#define LUMICE_API_VERSION 445        // ABI version, encoded major*100 + minor (v4.45)
+#define LUMICE_API_VERSION 446        // ABI version, encoded major*100 + minor (v4.46)
 #define LUMICE_MAX_RENDER_RESULTS 16  // Maximum capacity of the render result array
 #define LUMICE_MAX_STATS_RESULTS 1    // Maximum capacity of the stats result array
 ```
@@ -42,6 +42,14 @@ static_assert(LUMICE_API_VERSION >= 440, "Lumice header too old for this integra
 ```
 
 It is bumped on every BREAKING change to the public symbol set or struct layout.
+
+**v4.46 is the latest such break.** `LUMICE_RenderParam` gains a trailing `display_mode`
+(`LUMICE_DISPLAY_MODE_NORMAL` / `LUMICE_DISPLAY_MODE_CHANNEL_BR`) after `globe_back_fade`
+(sizeof 6456 → 6460); recompile. JSON key `render.display_mode`, `"normal"` or `"channel_br"`.
+`channel_br` shows the finished image as its post-gamma sRGB B − R on a grey offset
+(`clamp(0.5 + 0.5·(B − R), 0, 1)`, mid grey = no difference, lighter = bluer); it has no effect
+under `tone: print`, and a colour-classed scene produces no raypath composite while it is on.
+Zero means normal, so a zero-initialized struct and a document without the key render as before.
 
 **v4.45 is such a break.** `LUMICE_RenderParam` gains a trailing `float globe_back_fade` after
 `view_dist_label` (sizeof 6452 → 6456), so callers recompile. It is the `globe` lens's far-side
