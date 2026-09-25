@@ -2672,8 +2672,11 @@ void ServerImpl::GenerateScene() {
     const int workers = std::max(static_cast<int>(ActiveWorkers().size()), 1);
     const int queued = std::max(static_cast<int>(workers * kQueuedHandoffsPerWorker), 2);
     const int per_handoff = static_cast<int>(kHandoffBatches * kNsimdataPerBatch);
-    scene_cnt_cap_.store((workers + queued) * per_handoff, std::memory_order_relaxed);
-    scene_cnt_wake_.store((workers + queued / 2) * per_handoff, std::memory_order_relaxed);
+    // Never below the GPU-route pair: with one physics batch per handoff (the escape
+    // hatch, LUMICE_CPU_HANDOFF_BATCHES=1) this is then exactly the pre-split throttle,
+    // which a per-worker count of single batches would otherwise undercut.
+    scene_cnt_cap_.store(std::max((workers + queued) * per_handoff, kMaxSceneCnt), std::memory_order_relaxed);
+    scene_cnt_wake_.store(std::max((workers + queued / 2) * per_handoff, kMaxSceneCnt / 2), std::memory_order_relaxed);
   }
 
   // task-323: ray_num semantic unification. At this ingest point scene->ray_num_ is the TOTAL rays
