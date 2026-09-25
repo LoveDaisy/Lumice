@@ -1,56 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1790326334325,
+  "lastUpdate": 1790341821695,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "f1822e52c6d59ab2c203aa7ef388cb2b50f4e2df",
-          "message": "Merge pull request #311 from LoveDaisy/feat/gpu-backend-user-preference\n\nfeat(gui): \"Use GPU\" 可存为个人默认（覆盖文件新增 app 根键），工厂默认仍是 CPU",
-          "timestamp": "2026-09-05T15:44:47+08:00",
-          "tree_id": "b61f1340307f90b27cb42c9f0d3c8a930fc8a63c",
-          "url": "https://github.com/LoveDaisy/ice_halo_sim/commit/f1822e52c6d59ab2c203aa7ef388cb2b50f4e2df"
-        },
-        "date": 1788594953269,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 347363.5,
-            "unit": "rays/sec",
-            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 608835.7,
-            "unit": "rays/sec",
-            "extra": "CPU: Neoverse-N2\\nCores: 4"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 707823.1,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 9V45 96-Core Processor\\nCores: 4"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 429647.9,
-            "unit": "rays/sec",
-            "extra": "CPU: INTEL(R) XEON(R) PLATINUM 8573C\\nCores: 4"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -4738,6 +4690,54 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 366962,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 9V74 80-Core Processor                \\nCores: 4"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "69d8136c8f926571410a99548a5e7374bf7f0ab2",
+          "message": "Merge pull request #412 from LoveDaisy/perf/cpu-worker-batch-sync-cliff\n\nperf(server): decouple the CPU queue handoff from the 128-ray physics batch",
+          "timestamp": "2026-09-25T20:57:22+08:00",
+          "tree_id": "09c4693994679e1f4660fbb9b8892f3e4bb629e4",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/69d8136c8f926571410a99548a5e7374bf7f0ab2"
+        },
+        "date": 1790341820114,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 291651.3,
+            "unit": "rays/sec",
+            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 511686.6,
+            "unit": "rays/sec",
+            "extra": "CPU: Neoverse-N2\\nCores: 4"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 371133.4,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 7763 64-Core Processor\\nCores: 4"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 369814.2,
             "unit": "rays/sec",
             "extra": "CPU: AMD EPYC 9V74 80-Core Processor                \\nCores: 4"
           }
