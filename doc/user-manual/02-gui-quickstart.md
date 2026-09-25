@@ -52,6 +52,7 @@ While running:
 - The Status Bar shows ray count and elapsed time.
 - The Floating Lens Bar lets you switch lens projection without stopping the simulation — the same data is re-projected on the fly.
 - The grid overlay (visible above) helps you read angles in the preview, and it travels with the document: its switches, colours and angle lists are saved into the `.lmc`, and an exported JSON carries them as `render[].grid`, which the CLI draws onto its output image too.
+- The angular-distance rings (**Overlay ▶ Angular Distance from... ▶ Sun / Lens Center**, the **⋯** button at the end of each row) can be placed by pointing instead of typing a number: press the crosshair button next to **+** in that row's angle editor, then move over the preview. A ring about that family's centre follows the cursor, with its radius written beside it; **left-click** adds that radius to the list (unrounded, printed to 0.1°), **Esc** or a **right-click** cancels without changing the list. Over anything that is not sky — outside the lens circle, or the part hidden by the **Visibility** (Upper / Lower) or **Front** setting — there is no ring and a click does nothing, so you can simply aim again. While picking, dragging and scrolling do not move the camera. Pressing the button also switches that row's **Line** on (cancelling leaves it on). Rings already drawn cannot be dragged yet; to change one, delete it in the editor and pick again.
 
 To stop early, press **Stop** in the Top Bar; partial results stay on screen.
 
