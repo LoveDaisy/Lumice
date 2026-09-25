@@ -537,6 +537,39 @@ void RegisterViewDisplayControlTests(ImGuiTestEngine* engine) {
     };
   }
 
+  // The front clip under a lens it does not apply to: the tick shows the EFFECTIVE clip (off) while
+  // the stored choice is kept, and switching back restores both. The unchecked-while-greyed read is
+  // the line that fails if the checkbox is bound to renderer.front directly again — a greyed box
+  // still showing the tick is exactly how the picture came to be clipped with no way to untick it.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "view_display_controls",
+                                    "the_front_clip_is_set_aside_under_a_full_sky_lens_and_restored");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      ctx->Yield(2);
+      gui::g_state.renderer.lens_type = gui::kLensTypeFisheyeEqualArea;
+      ctx->Yield(3);
+      IM_CHECK(!gui::g_state.renderer.front);
+
+      ctx->ItemClick("**/Front##visible");
+      ctx->Yield(2);
+      IM_CHECK(gui::g_state.renderer.front);
+      IM_CHECK(ctx->ItemIsChecked("**/Front##visible"));
+
+      gui::g_state.renderer.lens_type = gui::kLensTypeDualFisheyeEqualArea;
+      ctx->Yield(3);
+      IM_CHECK(IsDisabled(ctx->ItemInfo("**/Front##visible")));
+      IM_CHECK(!ctx->ItemIsChecked("**/Front##visible"));
+      IM_CHECK(gui::g_state.renderer.front);  // the choice is set aside, not lost
+
+      gui::g_state.renderer.lens_type = gui::kLensTypeFisheyeEqualArea;
+      ctx->Yield(3);
+      IM_CHECK(!IsDisabled(ctx->ItemInfo("**/Front##visible")));
+      IM_CHECK(ctx->ItemIsChecked("**/Front##visible"));
+      IM_CHECK(gui::g_state.renderer.front);
+    };
+  }
+
   // P25 / P57. The four View sliders at both ends of their domains, including the one bound that is
   // a function of the state: elevation stops one degree short of the pole under the globe and at
   // the pole everywhere else. Driven at BOTH lenses, since a registry that had gone back to a

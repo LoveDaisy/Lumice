@@ -480,7 +480,9 @@ inline constexpr const char* kBgModifierName = "Alt";
 
 // Build a ViewProjection from the renderer sub-state of GuiState.
 // roll is wrapped through EffectiveRollForLens so that lens types that ignore
-// roll (e.g. dual-fisheye) always see 0° — mirrors app_panels.cpp:742-747.
+// roll (e.g. dual-fisheye) always see 0° — mirrors app_panels.cpp:742-747. front is wrapped
+// through EffectiveFrontForLens for the same reason: a lens the clip does not apply to must never
+// see the stored choice, which is kept only as the memory for switching back.
 inline ViewProjection BuildPreviewViewProjFromRenderer(const RenderConfig& rc) {
   ViewProjection vp;
   vp.lens_type = rc.lens_type;
@@ -489,7 +491,7 @@ inline ViewProjection BuildPreviewViewProjFromRenderer(const RenderConfig& rc) {
   vp.azimuth = rc.azimuth;
   vp.roll = EffectiveRollForLens(rc.lens_type, rc.roll);
   vp.visible = rc.visible;
-  vp.front = rc.front;
+  vp.front = EffectiveFrontForLens(rc.lens_type, rc.front);
   vp.globe_back_fade = rc.globe_back_fade;
   return vp;
 }

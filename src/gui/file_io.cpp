@@ -2113,8 +2113,10 @@ ScenePtr BuildScene(const GuiState& state, SceneIntent intent, FilterOverflowInf
       dst.visible = r.visible;
       // The second clip, ANDed with `visible` on both sides of the seam. It is a plain bool here
       // and an int over the ABI, so it is the one Display-group field that needs a conversion
-      // rather than a pass-through.
-      dst.front = r.front ? 1 : 0;
+      // rather than a pass-through. NOT the stored r.front, for the same reason as roll below: under
+      // a lens the clip does not apply to, the preview draws no clip while r.front keeps the user's
+      // choice for switching back, and the CLI must be told what the screen shows.
+      dst.front = EffectiveFrontForLens(r.lens_type, r.front) ? 1 : 0;
       dst.view_azimuth = r.azimuth;
       dst.view_elevation = r.elevation;
       // NOT the stored r.roll: under the Globe lens the preview renders roll=0 while keeping the

@@ -1842,6 +1842,44 @@ void RegisterDefaultsPanelTests(ImGuiTestEngine* engine) {
   }
 
   {
+    // The Settings row's Front tick follows the same stored/effective split as the main panel's:
+    // under a full-sky lens it reads unchecked and greyed while renderer.front keeps the choice.
+    // The row is drawn by the registry's BoolField, not by the hand-written main-panel checkbox, so
+    // the two copies of the "show effective, write stored" glue are each pinned by their own case.
+    ImGuiTest* t =
+        IM_REGISTER_TEST(engine, "defaults_panel", "the_front_cell_shows_the_effective_clip_and_keeps_the_choice");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ScopedPanel panel(ctx, "panel_front_effective");
+      gui::g_state.renderer.lens_type = gui::kLensTypeLinear;
+      gui::g_state.renderer.front = false;
+
+      panel.OpenOn(gui::DefaultsPanelSection::kSettings);
+      FilterTo(ctx, "renderer.front");
+      ctx->ItemClick(ValueWidgetRef("renderer.front").c_str());
+      ctx->Yield(2);
+      IM_CHECK(gui::g_state.renderer.front);
+      IM_CHECK(ctx->ItemIsChecked(ValueWidgetRef("renderer.front").c_str()));
+      FilterTo(ctx, "");
+      panel.Close();
+
+      gui::g_state.renderer.lens_type = gui::kLensTypeDualFisheyeEqualArea;
+      panel.OpenOn(gui::DefaultsPanelSection::kSettings);
+      FilterTo(ctx, "renderer.front");
+      IM_CHECK(IsDisabled(ctx->ItemInfo(ValueWidgetRef("renderer.front").c_str())));
+      IM_CHECK(!ctx->ItemIsChecked(ValueWidgetRef("renderer.front").c_str()));
+      IM_CHECK(gui::g_state.renderer.front);
+      FilterTo(ctx, "");
+      panel.Close();
+
+      gui::g_state.renderer.lens_type = gui::kLensTypeLinear;
+      panel.OpenOn(gui::DefaultsPanelSection::kSettings);
+      FilterTo(ctx, "renderer.front");
+      IM_CHECK(ctx->ItemIsChecked(ValueWidgetRef("renderer.front").c_str()));
+      FilterTo(ctx, "");
+    };
+  }
+
+  {
     // A field with no registered editor cannot be edited here, and does not merely LOOK
     // uneditable — the row is still drawn (it is still a default the user can hold), which is what
     // makes the negative claim non-vacuous: the checkbox is found, so the row was there, and the

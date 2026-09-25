@@ -578,6 +578,37 @@ TEST(SceneCommitChain, AFrontHemisphereClipExportsAsItsOwnField) {
   EXPECT_FALSE(off_doc["render"][0]["front"].get<bool>());
 }
 
+// The export writes the EFFECTIVE clip, not the stored choice. Under a lens the front clip does not
+// apply to, the preview draws no clip (EffectiveFrontForLens) while renderer.front keeps the user's
+// last choice for switching back; the CLI must be told what the screen shows, so the exported
+// `front` is false there — and the stored value must survive the export untouched. Every lens, so
+// a lens added to one side of the rule and not the other shows up here; both outcomes are counted
+// so neither half of the loop can be vacuous.
+TEST(SceneCommitChain, TheExportedFrontClipIsTheEffectiveOneUnderEveryLens) {
+  int exported_off = 0;
+  int exported_on = 0;
+  for (int lens = 0; lens < kLensTypeCount; ++lens) {
+    SeedOneEntryDocument();
+    ApplyLensTypeSelection(g_state.renderer, lens);
+    g_state.renderer.front = true;
+    std::string json;
+    std::string warning;
+    if (!BuildExportJsonOrWarn(g_state, &json, &warning)) {
+      ADD_FAILURE() << "lens " << lens << ": the export was refused: " << warning;
+      continue;
+    }
+    // .at() throws if the key went missing, which gtest reports as a failure of this case.
+    const bool exported = nlohmann::json::parse(json).at("render").at(0).at("front").get<bool>();
+    EXPECT_EQ(exported, EffectiveFrontForLens(lens, true))
+        << "lens " << lens << ": the exported front clip is not the one the preview applies";
+    EXPECT_TRUE(g_state.renderer.front) << "lens " << lens << ": exporting overwrote the stored choice";
+    exported_off += exported ? 0 : 1;
+    exported_on += exported ? 1 : 0;
+  }
+  EXPECT_GT(exported_off, 0) << "no lens exports the clip as off; the full-sky/Globe case is not reached";
+  EXPECT_GT(exported_on, 0) << "no lens exports the clip as on; the export drops the clip outright";
+}
+
 // A document saved before the export path was taught to read it. Nothing about the SAVED form
 // changed — renderer view fields and the horizon-line switch have always been in the .lmc payload,
 // they simply never reached the exported config — so an old document opened by a new build must

@@ -423,6 +423,29 @@ TEST(DocumentRoundtripChain, EveryProbedFieldSurvivesJsonRoundTrip) {
   }
 }
 
+// The document keeps the STORED front clip, not the effective one. Under a lens the clip does not
+// apply to (full-sky, Globe) the preview shows no clip while renderer.front still holds the user's
+// last choice — that stored value is the only memory of it, so a save/open under such a lens must
+// carry it through, or switching back to a lens that uses the clip after reopening the file would
+// find it lost. The generic probe above only shows the field survives at all; this is the case
+// where stored and effective differ, the one a writer reaching for EffectiveFrontForLens would break.
+TEST(DocumentRoundtripChain, TheStoredFrontClipSurvivesTheDocumentUnderALensItDoesNotApplyTo) {
+  ASSERT_FALSE(MinimalDocument().renderer.front) << "the default is already true; the round trip proves nothing";
+  for (const int lens : { kLensTypeDualFisheyeEqualArea, kLensTypeGlobe }) {
+    EXPECT_FALSE(EffectiveFrontForLens(lens, true)) << "lens " << lens << " is no longer one that ignores front";
+    GuiState before = MinimalDocument();
+    ApplyLensTypeSelection(before.renderer, lens);
+    before.renderer.front = true;
+    GuiState after = MinimalDocument();
+    if (!DeserializeGuiStateJson(SerializeGuiStateJson(before), after)) {
+      ADD_FAILURE() << "lens " << lens << ": DeserializeGuiStateJson rejected its own output";
+      continue;
+    }
+    EXPECT_EQ(after.renderer.lens_type, lens);
+    EXPECT_TRUE(after.renderer.front) << "lens " << lens << ": the stored front choice was lost through the document";
+  }
+}
+
 // The ray budget's two domain bounds (gui/ray_num_domain.hpp) survive the document, exactly. The
 // probe table above moves the field off its default and asks whether it comes back; this asks the
 // stricter question at the two values the slider can actually park on. Neither is a round-trip
