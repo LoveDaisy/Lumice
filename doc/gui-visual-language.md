@@ -131,8 +131,8 @@ ScrollbarRounding 3  WindowRounding 4  PopupRounding 4
 **4.8 顶栏：分组、量化与 Continue 的动作色**（as-built，2026-09-26）—— 顶栏（`RenderTopBar`，`src/gui/app_panels.cpp`）
 原先按书写顺序机械排列，用裸字形 `"|"` 分组。现在的规则：
 
-- **分组**（左到右，顺序与位置均未改动）：左面板折叠 ｜ 执行组（Run/Stop、Continue、⚠ + Revert）｜ 文件组（New/Open/Save）｜
-  功能组（Colors/Analysis/Summary + Colored 复选框 + 告警 pip）｜ Settings …… 右面板折叠（贴右缘）。
+- **分组**（左到右）：左面板折叠 ｜ 执行组（Run/Stop、Continue）｜ 文件组（New/Open/Save）｜
+  功能组（Colors/Analysis/Summary + Colored 复选框 + 告警 pip）｜ Settings …… ⚠ + Revert（右对齐）· 右面板折叠（贴右缘）。
 - **组边界 = 主题化竖线**：`ToolbarGroupSeparator()`（`SeparatorEx(Vertical)`，颜色取 `ImGuiCol_Separator`，随色盘走）。
   两侧各一个 `ItemSpacing.x`，于是**组间距 = 2 × 组内间距 + 1px 竖线**——节奏只有 `ItemSpacing.x` 这一个来源，没有新的像素常量。
 - **尺寸量化**：全栏按钮同一帧高（Revert 由 `SmallButton` 改为 `Button`，原先矮 6px）；**组内同宽**——
@@ -141,8 +141,13 @@ ScrollbarRounding 3  WindowRounding 4  PopupRounding 4
 - **窄窗口预算**：在 `kMinWindowWidth`（1024）下、最宽内容（有色类 ⇒ `Full Spectrum` 复选框 + pip）实测需 1004px，余量 20px；
   改造前为 997px。⚠️ 曾试过组间距取 1.5 × `ItemSpacing.x`，需 1036px，**溢出 12px**——所以本栏没有更宽组间距的空间，
   下次往顶栏加东西前先看这个余量。由 `shell_chrome/the_top_bar_fits_at_the_minimum_window_width` 钉住，无降级分支（不需要）。
-- ⚠️ 已知的视觉残留：Revert 区在未修改时仍按 alpha=0 占位（「不跳动」约束），于是 Continue 与文件组之间常驻一段空白。
-  这是稳定布局约束的直接代价，不是遗漏。
+- **常隐藏的状态提示住在栏尾的空白里**：⚠ + Revert 仍是常驻提交、未修改时 alpha=0 + `BeginDisabled` 隐藏（「不跳动」约束：
+  它出现/消失时任何按钮都不许平移，由 `shell_chrome/toggling_modified_moves_no_top_bar_button` 钉住）。它原本紧跟 Continue，
+  而文档大多数时候是未修改的，于是那块隐藏矩形在栏里最密的一段常驻成一个洞。现在它右对齐贴在右面板折叠钮左侧——
+  Settings 与右折叠钮之间在最小窗宽以上本来就是空白，隐藏态藏进的是本就空着的地方；右对齐而非紧跟 Settings，
+  是为了读作栏尾的「状态角」而不是 Settings 组的一员（文档状态不属于偏好设置），也让它的 x 不随 Colored 复选框的有无而变。
+  总宽预算不变（同一组控件只是换了位置，窄窗口仍需 1004px）。⭐可迁移判据：**常驻占位、但多数时间隐藏的控件，放在布局本就空闲的
+  位置，而不是操作流中间**——占位的代价只有在它占的是本来有用的地方时才付。
 
 **Continue 的动作色**：`semantic_colors.hpp` 的 `PushContinueButtonStyle()`。它**不是** good/warning/destructive 任何一档
 （不对内容做判断），也**不是** accent（accent 表示交互状态；accent 染色的 Colors 按钮读作「已配置/被选中」）——它是

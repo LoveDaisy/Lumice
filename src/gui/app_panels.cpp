@@ -778,13 +778,11 @@ void RenderTopBar(float window_width) {
     }
     ImGui::BeginDisabled(!modified);
     ImGui::TextColored(WarningTextColor(), ICON_FA_CIRCLE_EXCLAMATION);
-    // The tooltip explains what the ⚠ + Revert row
-    // means. Source-agnostic wording (config changed, not "you added a color
-    // class") — main-scene edits and color-class edits reach kModified through
-    // the same ReconcileSimState pipeline, so a single tooltip covers both.
-    // Attached to the icon rather than the button so the button's own hover
-    // action (click to revert) is not shadowed. Only shown when modified,
-    // since the row is BeginDisabled(alpha=0) otherwise.
+    // The tooltip explains what the ⚠ + Revert pair means. Source-agnostic wording (config changed,
+    // not "you added a color class") — main-scene edits and color-class edits reach kModified through
+    // the same ReconcileSimState pipeline, so a single tooltip covers both. Attached to the icon
+    // rather than the button so the button's own hover action (click to revert) is not shadowed.
+    // Only shown when modified, since the pair is BeginDisabled(alpha=0) otherwise.
     if (modified && ImGui::IsItemHovered()) {
       ImGui::SetTooltip(
           "Configuration changed since the last run.\n"
