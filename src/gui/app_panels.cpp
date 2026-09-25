@@ -826,8 +826,11 @@ constexpr float kBgPickSwatchSizePt = 24.0f;
 // The analysis pick's crosshair at the cursor: half-length of each arm, in ImGui points.
 constexpr float kAnalysisPickCrosshairArmPt = 10.0f;
 // The Angular Distance picker's readout: offset from the cursor to the number's top-left, in ImGui
-// points — the eyedropper swatch's offset, so the two pickers put their readout in one place.
-constexpr float kAngularDistPickReadoutOffsetPt = kBgPickSwatchOffsetPt;
+// points. Further right than the eyedropper swatch's 16 pt: text starting at 16 pt put its first
+// digit under the arrow cursor's body (seen in a capture), where a swatch's larger square still
+// shows. To the right of the arrow, level with its lower half.
+constexpr float kAngularDistPickReadoutOffsetXPt = 22.0f;
+constexpr float kAngularDistPickReadoutOffsetYPt = 12.0f;
 
 // Draw a collapse/expand button as a foreground overlay using ImGui theme colors.
 // Returns true if clicked. Coordinates are viewport-local; under multi-viewport
@@ -2838,8 +2841,8 @@ void RenderPreviewPanel(GLFWwindow* window, float window_width, float window_hei
             // a point OF the picture, so it is clipped to the preview. A plate behind it, because
             // it sits over whatever the sky is.
             const std::string text = FormatAngularDistPickReadout(*angle);
-            const ImVec2 at(io.MousePos.x + UiPx(kAngularDistPickReadoutOffsetPt),
-                            io.MousePos.y + UiPx(kAngularDistPickReadoutOffsetPt));
+            const ImVec2 at(io.MousePos.x + UiPx(kAngularDistPickReadoutOffsetXPt),
+                            io.MousePos.y + UiPx(kAngularDistPickReadoutOffsetYPt));
             const ImVec2 size = ImGui::CalcTextSize(text.c_str());
             const float pad = UiPx(2.0f);
             ImDrawList* dl = ImGui::GetWindowDrawList();
