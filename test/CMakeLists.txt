@@ -387,6 +387,8 @@ if(BUILD_GUI)
     # scan of both panel files proving every declared label is read through PanelLabel and never
     # restated as a literal.
     "${PROJ_TEST_DIR}/unit-correctness/gui/test_config_summary_labels.cpp"
+    # The edit modal's preview summary line, spelled with the Summary page's own formatters.
+    "${PROJ_TEST_DIR}/unit-correctness/gui/test_crystal_preview_summary.cpp"
     "${PROJ_TEST_DIR}/unit-correctness/gui/test_state_reconcile.cpp"
     "${PROJ_TEST_DIR}/unit-correctness/gui/test_backend_fallback_warning.cpp"
     "${PROJ_TEST_DIR}/unit-correctness/gui/test_preview_renderer.cpp"

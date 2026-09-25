@@ -177,6 +177,22 @@ float TestGetModalSectionHeaderY(const char* title);
 // Intended for GUI test assertions; production code should not call this.
 void TestSetEditModalMaxHeightOverride(float max_h);
 
+// The height RenderCrystalPreviewPane reserves under the preview's tool row for the summary line
+// (two wrapped lines' worth, whether the current text needs one line or two) -- the single value
+// both the Compact and Expanded layout formulas must agree on (see PreviewSummaryReservedHeight's
+// comment in edit_modals.cpp). Exposed so a test can compare it against the real, font-metric size
+// of a worst-case summary string rather than eyeballing a screenshot.
+// Intended for GUI test assertions; production code should not call this.
+float TestPreviewSummaryReservedHeight();
+
+// The actual wrapped height the summary line needed the last time RenderCrystalPreviewPane drew
+// it, measured from the real cursor advance at the real wrap width in effect there -- not
+// reconstructed from external layout constants. -1 if it has not drawn yet this process. Compare
+// against TestPreviewSummaryReservedHeight() to catch a worst-case summary string overflowing the
+// budget (silently clipped by the preview pane's NoScrollbar child, not scrolled or pushed).
+// Intended for GUI test assertions; production code should not call this.
+float TestGetSummaryMeasuredWrappedHeight();
+
 // Returns true when the committed axis config of the currently open modal entry
 // meets D-symmetry conditions (az uniform 360°, roll mean a multiple of 30°).
 // Returns false when no modal is open or the entry index is invalid.
@@ -250,6 +266,19 @@ std::string FormatWedgePresetLabel(int h, int l, float angle_deg);
 // correct. (GetWedgePresets() needs no such call — by the time it merges the user's rows the
 // built-ins are already in the list it de-duplicates against.)
 bool IsBuiltInWedgeMillerIndex(int h, int k, int l);
+
+// The summary line under the edit modal's crystal preview, e.g.
+// "Column · zenith G 90(1) · Prism · Height 1.000": the axis preset the triple classifies as, the
+// zenith distribution, then the crystal type and its height scalars (HeightScalarFieldsForCrystal).
+// Pure — no ImGui, no modal state — so the spelling is testable without a window.
+//
+// `axis` is {zenith, azimuth, roll} and is authoritative: the modal edits axes in a buffer of its
+// own (g_axis_buf), and the axis fields inside its crystal buffer are a stale copy until OK, so
+// `crystal`'s zenith/azimuth/roll are deliberately not read. Every piece is spelled by the formatter
+// the Summary window uses for the same fact (AxisPresetLabel, FormatAxisDistCell, CrystalTypeName,
+// kShapeScalarLabels, FormatShapeDistCell), so the live line and that page cannot spell one
+// distribution two ways.
+std::string FormatCrystalPreviewSummary(const CrystalConfig& crystal, const AxisDist axis[3]);
 
 
 // What the wedge dropdown's custom-input row should say about one Miller-index triple, in the form

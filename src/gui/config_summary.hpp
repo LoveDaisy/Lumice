@@ -189,6 +189,30 @@ const char* DistributionLetterForWireName(std::string_view wire_name);
 std::string FormatShapeDistCell(const ShapeDist& dist, int slot);
 // An axis distribution, in the axis modal's "%.3g".
 std::string FormatAxisDistCell(const AxisDist& axis);
+
+// One height-like shape scalar of a crystal: its slot (LUMICE_SHAPE_SCALAR_*, which keys both
+// kShapeScalarLabels and FormatShapeDistCell's number format) and the distribution it holds.
+// `dist` points into the CrystalConfig the caller passed and does not own it.
+struct HeightScalarField {
+  int slot;
+  const ShapeDist* dist;
+};
+
+// The height scalars `crystal`'s type actually has, in the edit modal's draw order: a prism has
+// Height; a pyramid has Prism H, Upper H, Lower H. The one owner of "which heights does this type
+// carry" for the two places that print them — the Summary window's Shape table and the edit
+// modal's preview summary line (FormatCrystalPreviewSummary) — so the two cannot disagree about
+// it. Wedge angles and face distances are not heights and are not listed.
+std::vector<HeightScalarField> HeightScalarFieldsForCrystal(const CrystalConfig& crystal);
+
+// The Shape table column a height slot (one of HeightScalarFieldsForCrystal's) is printed in.
+// Exposed only so a test can assert the two hand-written lists — the slots
+// HeightScalarFieldsForCrystal can return, and the slots this switch maps — cannot silently drift
+// apart (default-branch asserts are compiled out in Release; this closes the gap a switch's own
+// exhaustiveness check cannot, since `slot` is a plain int). Production code should call it only
+// from BuildShapeTable's own translation unit; a test is the only other legitimate caller.
+size_t ShapeColumnForHeightSlot(int slot);
+
 // "G Gauss · U Uniform · Z Zigzag · L Laplacian · G* Gauss (legacy)": the letters spelled out,
 // printed once under the document tables. Built from the same table as DistributionLetter and
 // the combo's own labels (AxisDistTypeLabel), so it cannot list a letter the cells do not use.

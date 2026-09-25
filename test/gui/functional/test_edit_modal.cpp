@@ -3661,4 +3661,46 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
       ctx->Yield(2);
     };
   }
+
+  // PreviewSummaryReservedHeight() reserves a fixed two-wrapped-lines budget for the summary line,
+  // and the pane that draws it (Compact's ##modal_top_pane) has ImGuiWindowFlags_NoScrollbar: any
+  // wrapped height beyond the reservation is silently clipped, not scrolled and not pushed onto the
+  // tab body below (a separate fixed-size sibling child, not nested inside this one). Compact's own
+  // window is narrower than Expanded's, so it is the tighter case for line-wrapping. Worst realistic
+  // content is a Pyramid (three height fields, the most any crystal type shows) with every field
+  // randomized and sync-grouped (the longest suffix FormatShapeDistCell can append) — code-review
+  // round 1 Major flagged this as plausible and unverified. This measures the real wrapped height
+  // (TestGetSummaryMeasuredWrappedHeight, captured from the actual cursor advance at the actual wrap
+  // width RenderCrystalPreviewPane uses) against the real budget, with the app's real font and
+  // style, rather than eyeballing a screenshot.
+  {
+    ImGuiTest* t =
+        IM_REGISTER_TEST(engine, "edit_modal", "crystal_preview_summary_worst_case_fits_reserved_height_in_compact");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      const ScopedPopups popup_guard(ctx);
+      gui::g_state.modal_layout_compact = true;
+      gui::CrystalConfig& cr = EntryCrystal();
+      cr.type = gui::CrystalType::kPyramid;
+      // A zenith that matches no preset (Custom): a longer preset label only shortens the height
+      // segments' share of the budget, so this is not the axis that needs to be worst-cased.
+      cr.zenith = { gui::AxisDistType::kGauss, 45.0f, 3.0f };
+      cr.azimuth = { gui::AxisDistType::kUniform, 0.0f, 360.0f };
+      cr.roll = { gui::AxisDistType::kUniform, 0.0f, 360.0f };
+      cr.prism_h = { gui::ShapeDistType::kGauss, 1.234f, 0.05f };
+      cr.prism_h.sync_group = 1;
+      cr.upper_h = { gui::ShapeDistType::kGauss, 1.234f, 0.05f };
+      cr.upper_h.sync_group = 2;
+      cr.lower_h = { gui::ShapeDistType::kGauss, 1.234f, 0.05f };
+      cr.lower_h.sync_group = 3;
+      ctx->Yield(2);
+      OpenCardEditor(ctx, 0, kCrystalTabRef);
+      ctx->Yield(6);
+      const float measured = gui::TestGetSummaryMeasuredWrappedHeight();
+      IM_CHECK_GT(measured, 0.0f);
+      IM_CHECK_LE(measured, gui::TestPreviewSummaryReservedHeight() + 1.0f);
+      ctx->ItemClick(kCancel);
+      ctx->Yield(2);
+    };
+  }
 }

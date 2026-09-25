@@ -15,6 +15,7 @@
 #include "IconsFontAwesome6.h"
 #include "gui/app.hpp"
 #include "gui/axis_presets.hpp"
+#include "gui/config_summary.hpp"
 #include "gui/copyable_text.hpp"
 #include "gui/crystal_preview.hpp"
 #include "gui/crystal_renderer.hpp"
@@ -29,6 +30,7 @@
 #include "gui/raypath_segments.hpp"
 #include "gui/secondary_window_sizing.hpp"
 #include "gui/semantic_colors.hpp"
+#include "gui/shape_scalar_domain.hpp"
 #include "gui/symmetry_ui.hpp"
 #include "gui/table_focus_ring.hpp"
 #include "gui/theme.hpp"
@@ -173,6 +175,13 @@ static constexpr std::array<const char*, 3> kModalSectionTitles = { "Crystal", "
 // Screen y of each section header's top edge as last drawn; -1 until drawn. Read only by
 // TestGetModalSectionHeaderY — a SeparatorText item has no id, so a test cannot find it.
 static std::array<float, 3> g_modal_section_header_y = { -1.0f, -1.0f, -1.0f };
+
+// The actual wrapped height RenderCrystalPreviewPane's summary text needed this frame, measured
+// from the real cursor advance at the real wrap width in effect there (not reconstructed from
+// external constants) -- -1 until drawn. Read only by TestGetSummaryMeasuredWrappedHeight, so a
+// test can compare a worst-case summary string's real size against PreviewSummaryReservedHeight()
+// instead of eyeballing a screenshot (code-review round 1 Major).
+static float g_summary_measured_wrapped_height = -1.0f;
 
 // Active tab is updated each frame inside the corresponding BeginTabItem true-branch
 // (ImGui doesn't auto-write user state). The OpenEditModal path always sets it
@@ -1124,6 +1133,20 @@ static void HandleCrystalPreviewInteraction(bool hovered, bool active) {
 // layout does not use it: there the image size is derived (RenderModalTwoColumn).
 constexpr float kModalPreviewImageSize = 320.0f;
 
+// Height reserved under the preview's tool row for the summary line (FormatCrystalPreviewSummary):
+// the Spacing before it, two wrapped lines (a wrapped line advances by the font size alone, with no
+// ItemSpacing between lines), and the ItemSpacing after it. Always two lines, whether this frame's
+// text takes one or two — RenderCrystalPreviewPane pads a one-line summary up to this — so neither
+// layout's height formula moves from frame to frame as the user edits. Two
+// consumers, and they must spend the SAME amount: Compact adds it to the top pane's height
+// (kPreviewChildHeight in RenderEditModals); Expanded takes it out of the derived image size and
+// adds it back in the column budget (RenderModalTwoColumn), so the Crystal header stays level
+// with the Filter header — test_edit_modal.cpp's alignment case is what goes red if the two
+// ever stop agreeing.
+static float PreviewSummaryReservedHeight() {
+  return 2.0f * ImGui::GetTextLineHeight() + 2.0f * ImGui::GetStyle().ItemSpacing.y;
+}
+
 // Advances (or resets, on a new epoch) the preview animation ticker and returns the sample_seed to
 // build this frame. Kept separate from RenderCrystalPreviewPane so the render function stays focused
 // on rendering. When has_random is false the seed is pinned to kPreviewFixedSampleSeed and the
@@ -1160,6 +1183,21 @@ static unsigned long long AdvancePreviewAnimSeed(bool has_random) {
 // `preview_px`: the image's on-screen edge, already scaled. The FBO behind it stays 512²
 // (main.cpp), so past ~1.6x the draw catches up with the texture and the supersampling margin is
 // spent. Compact passes UiPx(kModalPreviewImageSize); Expanded derives it (RenderModalTwoColumn).
+std::string FormatCrystalPreviewSummary(const CrystalConfig& crystal, const AxisDist axis[3]) {
+  std::string out = AxisPresetLabel(ClassifyAxisPreset(axis[0], axis[1], axis[2]));
+  out += " · zenith ";
+  out += FormatAxisDistCell(axis[0]);
+  out += " · ";
+  out += CrystalTypeName(crystal.type);
+  for (const HeightScalarField& field : HeightScalarFieldsForCrystal(crystal)) {
+    out += " · ";
+    out += kShapeScalarLabels[field.slot];
+    out += " ";
+    out += FormatShapeDistCell(*field.dist, field.slot);
+  }
+  return out;
+}
+
 static void RenderCrystalPreviewPane(GuiState& /*state*/, float preview_px) {
   auto& cr = g_crystal_buf;
 
@@ -1223,6 +1261,25 @@ static void RenderCrystalPreviewPane(GuiState& /*state*/, float preview_px) {
     // distribution params. g_axis_buf reflects the user's live edits; for kCustom
     // this drives a chain-formula default that matches the outer card thumbnail.
     ResetCrystalView(ClassifyAxisPreset(g_axis_buf[0], g_axis_buf[1], g_axis_buf[2]), g_axis_buf);
+  }
+
+  // The state summary, from the edit buffers (what is being edited, not what the pool holds), so
+  // it follows every slider before OK. Wrapped to the pane, and always exactly
+  // PreviewSummaryReservedHeight() tall: a one-line summary is padded to two lines' worth, because
+  // the caller has already budgeted that much and the Expanded header alignment depends on it.
+  const float summary_top_y = ImGui::GetCursorPosY();
+  ImGui::Spacing();
+  ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x);
+  ImGui::TextDisabled("%s", FormatCrystalPreviewSummary(g_crystal_buf, g_axis_buf).c_str());
+  ImGui::PopTextWrapPos();
+  // Real cursor advance at the real wrap width, before the pad-up-to-budget logic below can hide a
+  // genuine overrun by forcing the cursor back down to summary_bottom_y.
+  g_summary_measured_wrapped_height = ImGui::GetCursorPosY() - summary_top_y;
+  const float summary_bottom_y = summary_top_y + PreviewSummaryReservedHeight();
+  if (ImGui::GetCursorPosY() < summary_bottom_y) {
+    // A zero-height item advances by ItemSpacing, so it is placed one ItemSpacing short of the end.
+    ImGui::SetCursorPosY(summary_bottom_y - ImGui::GetStyle().ItemSpacing.y);
+    ImGui::Dummy(ImVec2(0.0f, 0.0f));
   }
 }
 
@@ -1429,10 +1486,17 @@ static void RenderCrystalModal(GuiState& /*state*/) {
 // the product answers it by not inferring at all: presets are retuned where they are listed, in
 // the defaults panel's preset library, and this modal stays a pure consumer of them.
 static void RenderAxisModal(GuiState& state) {
-  // Preset buttons — active preset (inferred from current g_axis_buf) is highlighted
-  // using the theme's ButtonActive color so it adapts to light/dark style changes.
+  // Preset buttons — the active preset (inferred from current g_axis_buf, Custom included) is
+  // filled with the palette's accent and lettered in the window background colour. The earlier
+  // fill, ImGuiCol_ButtonActive, is the same deep blue as ImGuiCol_Button one step darker, which
+  // did not read as "selected" at all. Both colours are read back from the live style
+  // (AccentColor, ImGuiCol_WindowBg), so a different palette moves them with it. The dark label is
+  // not decoration: the accent is a mid-luminance blue, and the palette's light body text on it
+  // sits near 1.8:1, where the window background reaches about 6:1. Hovered / Active are filled
+  // with the same accent so pointing at the selected button does not flip it back to unselected.
   AxisPreset active = ClassifyAxisPreset(g_axis_buf[0], g_axis_buf[1], g_axis_buf[2]);
-  const ImVec4 active_color = ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive);
+  const ImVec4 active_color = AccentColor();
+  const ImVec4 active_text_color = ImGui::GetStyleColorVec4(ImGuiCol_WindowBg);
 
   // Level-triggered: remember this crystal's Custom-classified triple every frame it is one, so a
   // Plate/Column/... press later does not lose it. See g_axis_custom_memory's own comment. The
@@ -1453,6 +1517,9 @@ static void RenderAxisModal(GuiState& state) {
     bool highlighted = entry.id == active;
     if (highlighted) {
       ImGui::PushStyleColor(ImGuiCol_Button, active_color);
+      ImGui::PushStyleColor(ImGuiCol_ButtonHovered, active_color);
+      ImGui::PushStyleColor(ImGuiCol_ButtonActive, active_color);
+      ImGui::PushStyleColor(ImGuiCol_Text, active_text_color);
     }
     if (ImGui::SmallButton(entry.label)) {
       const auto remembered =
@@ -1477,7 +1544,7 @@ static void RenderAxisModal(GuiState& state) {
       ResetCrystalView(entry.id, g_axis_buf);
     }
     if (highlighted) {
-      ImGui::PopStyleColor();
+      ImGui::PopStyleColor(4);
     }
   }
 
@@ -1995,6 +2062,7 @@ void ResetModalState() {
   // Expanded layout has redrawn this process would see a previous case's stale coordinate instead
   // of the "not drawn yet" sentinel (code-review round 1 Minor-1).
   g_modal_section_header_y = { -1.0f, -1.0f, -1.0f };
+  g_summary_measured_wrapped_height = -1.0f;
 }
 
 void ClearAxisCustomMemory() {
@@ -2029,6 +2097,14 @@ float TestGetModalSectionHeaderY(const char* title) {
 
 void TestSetEditModalMaxHeightOverride(float max_h) {
   g_test_edit_modal_max_h_override = max_h;
+}
+
+float TestPreviewSummaryReservedHeight() {
+  return PreviewSummaryReservedHeight();
+}
+
+float TestGetSummaryMeasuredWrappedHeight() {
+  return g_summary_measured_wrapped_height;
 }
 
 bool IsCurrentModalDApplicable() {
@@ -2432,12 +2508,16 @@ static void RenderModalTwoColumn(GuiState& state, bool crystal_dirty, bool axis_
   // test_edit_modal.cpp's alignment case checks on screen. A change to the Axis rows, the font or
   // the UI scale moves both headers together.
   const float above_filter_h = header_h + axis_h;
-  const float preview_px = std::max(1.0f, above_filter_h - row_h);
+  // The summary line under the tool row is paid for out of the image, not added on top of it: the
+  // left column's block above its Crystal header stays exactly above_filter_h tall. The 1 px floor
+  // is not reached — the Axis section alone is several rows, far above two text lines.
+  const float summary_h = PreviewSummaryReservedHeight();
+  const float preview_px = std::max(1.0f, above_filter_h - row_h - summary_h);
   // Budget: the preview block (+ the child-padding allowance Compact's top pane carries), then the
   // same 17-row Crystal content budget as Compact. Floor: everything above the Filter header plus
   // a few Filter rows; below that the left column's Crystal table scrolls inside its child.
-  const float column_budget_h =
-      preview_px + row_h + style.WindowPadding.y * 2.0f + style.ItemSpacing.y * 2.0f + ModalTwoColumnContentHeight();
+  const float column_budget_h = preview_px + row_h + summary_h + style.WindowPadding.y * 2.0f +
+                                style.ItemSpacing.y * 2.0f + ModalTwoColumnContentHeight();
   const float column_floor_h = above_filter_h + style.ItemSpacing.y + header_h + kEditModalFlexPaneMinRows * row_h;
   const float column_h = EditModalFlexPaneHeight(column_budget_h, column_floor_h, max_h);
 
@@ -2767,7 +2847,7 @@ void RenderEditModals(GuiState& state, GLFWwindow* window) {
   const ImGuiStyle& style = ImGui::GetStyle();
   const float kToolRow = ImGui::GetFrameHeightWithSpacing();
   const float kVPad = style.WindowPadding.y * 2.0f + style.ItemSpacing.y;
-  const float kPreviewChildHeight = UiPx(kModalPreviewImageSize) + kToolRow + kVPad;
+  const float kPreviewChildHeight = UiPx(kModalPreviewImageSize) + kToolRow + PreviewSummaryReservedHeight() + kVPad;
   // Content pane height (tab bar + the tallest tab body). Sized to fit the tallest crystal layout —
   // Pyramid + all 6 Face Distance rows expanded (~16 rows + tab bar) — so that case no longer needs a
   // scrollbar. Kept a FIXED height (not ImGuiChildFlags_AutoResizeY): a content-driven size grows the
