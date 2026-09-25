@@ -1523,10 +1523,11 @@ void Simulator::Run() {
       // holds data the consumer has not been handed.
       struct FlushOnExit {
         Simulator& sim;
+        explicit FlushOnExit(Simulator& s) : sim(s) {}
         FlushOnExit(const FlushOnExit&) = delete;
         FlushOnExit& operator=(const FlushOnExit&) = delete;
         ~FlushOnExit() { sim.FlushPendingSimData(); }
-      } flush_on_exit{ *this };
+      } flush_on_exit(*this);
       const size_t physics_ray_num = batch.PhysicsRayNum();
       auto last_flush = std::chrono::steady_clock::now();
       for (size_t traced = 0; traced < batch.ray_num_; traced += physics_ray_num) {
