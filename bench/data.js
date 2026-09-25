@@ -1,56 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1790325345531,
+  "lastUpdate": 1790326328661,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "5aea061e953c620bfe6709bf6f2ce87103402f05",
-          "message": "Merge pull request #310 from LoveDaisy/fix/cli-label-viewport-clamp\n\nfix(cli): overlay label 视口 clamp 收敛为 GUI/CLI 共享的单一实现",
-          "timestamp": "2026-09-05T15:09:23+08:00",
-          "tree_id": "f073e0e74a8ffe5cbb3e2967c3330a884cb4279c",
-          "url": "https://github.com/LoveDaisy/ice_halo_sim/commit/5aea061e953c620bfe6709bf6f2ce87103402f05"
-        },
-        "date": 1788592954874,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 441332.1,
-            "unit": "rays/sec",
-            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 608037,
-            "unit": "rays/sec",
-            "extra": "CPU: Neoverse-N2\\nCores: 4"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 434390.9,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 7763 64-Core Processor\\nCores: 4"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 373513.9,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -4738,6 +4690,54 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 360623.3,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 9V74 80-Core Processor                \\nCores: 4"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "49fe5e10fab9bfff09a5c101fbf651f8f283af5b",
+          "message": "Merge pull request #411 from LoveDaisy/fix/globe-back-fade-fma-exact-eq\n\nfix(test): compare the globe back-fade weight within an absolute tolerance",
+          "timestamp": "2026-09-25T16:38:58+08:00",
+          "tree_id": "1ad240095c7e9a80ab3a0f9f3c9ec1c87f9c4465",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/49fe5e10fab9bfff09a5c101fbf651f8f283af5b"
+        },
+        "date": 1790326326838,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 291277.9,
+            "unit": "rays/sec",
+            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 508003.5,
+            "unit": "rays/sec",
+            "extra": "CPU: Neoverse-N2\\nCores: 4"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 423504.5,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 9V74 80-Core Processor\\nCores: 4"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 366962,
             "unit": "rays/sec",
             "extra": "CPU: AMD EPYC 9V74 80-Core Processor                \\nCores: 4"
           }
