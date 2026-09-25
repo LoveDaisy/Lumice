@@ -224,7 +224,15 @@ TEST(ContinueRender, ContinueAccumulatesCountEnergyAndPlanes) {
     }
   }
   EXPECT_EQ(lost, 0u) << "accumulated plane values went down across the continuation";
-  EXPECT_NEAR(Sum(both.xyz) / Sum(first.xyz), 2.0, 0.1) << "the plane total did not roughly double";
+  // The plane total is noisier than its 1e5 rays suggest. The CPU route draws ONE wavelength
+  // per 128-ray batch, so a half is ~780 colour draws, and X+Y+Z over a uniform draw on
+  // [380, 780] nm has a coefficient of variation of 0.92: the ratio's sigma is
+  // sqrt(2) * 0.92 / sqrt(780) = 0.046, measured 0.047 over 500 runs (range 1.864-2.170) — and the same 0.047 for
+  // two independent fresh halves, so none of it is the continuation's. The band is 6.5 sigma
+  // wide; a cleared plane reads about 1 and a double-counted one about 3, both far outside it.
+  const double plane_ratio = Sum(both.xyz) / Sum(first.xyz);
+  EXPECT_GT(plane_ratio, 1.7) << "the plane total did not roughly double";
+  EXPECT_LT(plane_ratio, 2.3) << "the plane total more than doubled";
   // The exposure anchor is a P99 over its own accumulated plane, so it is extensive in the
   // ray count: taken over both halves it is about twice the first half's. A continuation that
   // restarted the anchor plane would read about 1. The band is wide because the P99 of this
