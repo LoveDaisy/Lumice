@@ -345,7 +345,7 @@ void AddMarkers(const std::vector<lumice::MarkerStyleParam>& a, const std::vecto
 // already being wasted between ZenithNadirParam and markers_. So the assert below is a tripwire
 // for MOST additions, not for all of them, and adding a field is not licensed by it staying quiet.
 std::string FieldDiff(const lumice::RenderConfig& a, const lumice::RenderConfig& b) {
-  static_assert(sizeof(lumice::RenderConfig) == 272, "Update FieldDiff when RenderConfig fields change");
+  static_assert(sizeof(lumice::RenderConfig) == 280, "Update FieldDiff when RenderConfig fields change");
   static_assert(sizeof(lumice::GridLineParam) == 24, "Update AddGridLines when GridLineParam fields change");
   static_assert(sizeof(lumice::MarkerStyleParam) == 20, "Update AddMarkers when MarkerStyleParam fields change");
   std::string out;
@@ -366,6 +366,7 @@ std::string FieldDiff(const lumice::RenderConfig& a, const lumice::RenderConfig&
   AddFloatArray("ray_color", a.ray_color_, b.ray_color_, 3, &out);
   AddFloat("intensity_factor", a.intensity_factor_, b.intensity_factor_, &out);
   AddFloat("overlap", a.overlap_, b.overlap_, &out);
+  AddFloat("globe_back_fade", a.globe_back_fade_, b.globe_back_fade_, &out);
   AddScalar("ev_mode", static_cast<int>(a.ev_mode_), static_cast<int>(b.ev_mode_), &out);
   AddScalar("tone", static_cast<int>(a.tone_), static_cast<int>(b.tone_), &out);
   AddScalar("display_mode", static_cast<int>(a.display_mode_), static_cast<int>(b.display_mode_), &out);
@@ -1515,7 +1516,7 @@ TEST(JsonParserParity, ToneAndPaperOmittedAgreeOnScreenAndWhite) {
   }
 }
 
-// --- render.display_mode: the channel-B-R display mode (v4.45) ---
+// --- render.display_mode: the channel-B-R display mode (v4.46) ---
 //
 // Blind in the corpus for the reason tone is, and LEGAL VALUES ONLY for the same reason: an unknown
 // value is warned-and-defaulted by core and rejected by the C API decoder, by design.

@@ -408,13 +408,13 @@ bool NeedsRebuild(const RenderConfig& a, const RenderConfig& b) {
   // consumer built for one view never sees the axis move, and RebuildViewDistMasks() needs no
   // direction cache of its own; a config that edits the list or its switches reaches an existing
   // consumer through ResetWith() with no rebuild.
-  // Still 272 after display_mode_ (4), placed beside tone_: ev_mode_ and tone_ left four bytes of
-  // padding ahead of angular_dist_grid_ (a std::vector, 8-byte aligned), and the new enum fills
-  // them. Classified all the same, because an unchanged number proves nothing: APPEARANCE, for
-  // tone_'s reason — it post-processes the finished pixels and never touches the buffer being
-  // accumulated into, so a config that flips it reaches an existing consumer through ResetWith()
-  // with no rebuild.
-  static_assert(sizeof(RenderConfig) == 272,
+  // 272 -> 280 for display_mode_ (4), beside tone_: globe_back_fade_ had already filled the four
+  // bytes of padding the float/enum run left ahead of angular_dist_grid_ (a std::vector, 8-byte
+  // aligned), so this enum starts a new eight-byte slot and pays four bytes of padding with it.
+  // APPEARANCE, for tone_'s reason: it post-processes the finished pixels and never touches the
+  // buffer being accumulated into, so a config that flips it reaches an existing consumer through
+  // ResetWith() with no rebuild.
+  static_assert(sizeof(RenderConfig) == 280,
                 "RenderConfig layout changed — re-check the classification in NeedsRebuild");
   // Compare layout-affecting fields only. Appearance fields (background, ray_color,
   // intensity_factor, ev_mode, grids) are handled by ResetWith() without rebuild.

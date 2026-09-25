@@ -620,7 +620,7 @@ TEST(SceneNegative, RendererInvalidEnumOrGridCountRejected) {
   bad_tone.tone = 42;
   EXPECT_EQ(LUMICE_SceneAddRenderer(g.get(), &bad_tone, &id), LUMICE_ERR_INVALID_CONFIG);
 
-  // v4.45: display_mode is the fifth, same treatment.
+  // v4.46: display_mode is the fifth, same treatment.
   LUMICE_RenderParam bad_display_mode = base;
   bad_display_mode.display_mode = 42;
   EXPECT_EQ(LUMICE_SceneAddRenderer(g.get(), &bad_display_mode, &id), LUMICE_ERR_INVALID_CONFIG);
@@ -1288,7 +1288,7 @@ TEST(SceneRenderTone, DecodeRejectsANonStringValue) {
   EXPECT_EQ(scene, nullptr);
 }
 
-// =============== render.display_mode: the channel-B-R display mode (v4.45) ===============
+// =============== render.display_mode: the channel-B-R display mode (v4.46) ===============
 //
 // Both directions of the seam, for the reason the tone block above gives.
 

@@ -359,11 +359,11 @@ struct RenderConfig {
 // pins do see that class, so the two are complements and neither replaces the other.
 inline void RenderConfigFieldSetGuard(const RenderConfig& c) {
   [[maybe_unused]] const auto& [id, lens, lens_shift, resolution, view, visible, front, background, paper, ray_color,
-                                intensity_factor, overlap, globe_back_fade, ev_mode, tone, display_mode, angular_dist_grid,
-                                view_dist_grid, elevation_grid, longitude_grid, horizon, elevation_grid_line,
-                                longitude_grid_line, angular_dist_grid_line, view_dist_grid_line, horizon_label,
-                                grid_label, angular_dist_label, view_dist_label, zenith_nadir, markers, markers_opacity,
-                                markers_radius_px] = c;
+                                intensity_factor, overlap, globe_back_fade, ev_mode, tone, display_mode,
+                                angular_dist_grid, view_dist_grid, elevation_grid, longitude_grid, horizon,
+                                elevation_grid_line, longitude_grid_line, angular_dist_grid_line, view_dist_grid_line,
+                                horizon_label, grid_label, angular_dist_label, view_dist_label, zenith_nadir, markers,
+                                markers_opacity, markers_radius_px] = c;
 }
 
 NLOHMANN_JSON_SERIALIZE_ENUM(    // declare
