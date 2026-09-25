@@ -155,8 +155,21 @@ std::vector<int> LayerCrystalOrder(int layer_idx) {
 // click did NOT reach the card underneath — so the exit that skips a trailing reset is exactly the
 // one where a real regression fired. `color_window_open` is rebuilt by the next case's
 // ResetTestState(); what this buys is that the case gives it back itself.
+//
+// The case also MOVES the window, and ImGui keeps a window's position after it closes, so closing
+// is not enough: parked where the case left it, the window's top edge sits over the top bar's
+// left half, and every later case that clicks a top-bar button there while Colors is open (the
+// color_window suite toggles it from its own button) hovers the window instead. Re-arming the
+// FirstUseEver condition hands placement back to the window's own first-use rule
+// (RenderColorWindow: centred), which is where a case that never moved it finds it.
 struct ScopedColorWindow {
-  ~ScopedColorWindow() { gui::g_state.color_window_open = false; }
+  ~ScopedColorWindow() {
+    gui::g_state.color_window_open = false;
+    if (ImGuiWindow* w = ImGui::FindWindowByName(ICON_FA_PALETTE " Colors")) {
+      w->SetWindowPosAllowFlags |= ImGuiCond_FirstUseEver;
+      w->SetWindowSizeAllowFlags |= ImGuiCond_FirstUseEver;
+    }
+  }
 };
 
 // Read one card's own rectangle back out of the default framebuffer.
