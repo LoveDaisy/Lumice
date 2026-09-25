@@ -574,6 +574,10 @@ std::vector<RuleEntry> BuildRules(const GuiState& state, const ConfigSummary& pa
   add(R"(^render\[0\]\.front$)", [&](const std::smatch&, const json& v) {
     ExpectGatedText(state, page, "renderer.front", "Render", "Front", v.get<bool>() ? "true" : "false");
   });
+  // Globe only: the far side's fade range, behind the registry's WhenGlobe gate.
+  add(R"(^render\[0\]\.globe_back_fade$)", [&](const std::smatch&, const json& v) {
+    ExpectGatedNumber(state, page, "renderer.globe_back_fade", "Render", "Back fade", v);
+  });
   add(R"(^render\[0\]\.tone$)",
       [&](const std::smatch&, const json& v) { ExpectPageText(page, "Render", "Mode", v.get<std::string>()); });
   add(R"(^render\[0\]\.ev_mode$)",
@@ -936,6 +940,16 @@ void SeedLinearFrontDocument() {
 // Two layers, three entries, both crystal types, a Plate preset, randomized and synced shape
 // scalars, a named raypath filter, a multi-row SoP filter, an excluded entry, and a custom
 // spectrum — the document section with every branch taken.
+// The one lens that shows the back-fade row: globe, with the range off its default.
+void SeedGlobeDocument() {
+  DoNew();
+  g_state.renderer.lens_type = kLensTypeGlobe;
+  g_state.renderer.fov = 30.0f;
+  g_state.renderer.elevation = 20.0f;
+  g_state.renderer.azimuth = 40.0f;
+  g_state.renderer.globe_back_fade = 0.6f;
+}
+
 void SeedRichDocument() {
   DoNew();
   g_state.crystals.assign(2, CrystalConfig{});
@@ -1096,6 +1110,18 @@ TEST(ConfigSummaryExportParityChain, LinearFrontDocumentPrintsTheUsersLens) {
   EXPECT_EQ(PageValue(page, "Render", "Mode").value_or(""), "print");
   EXPECT_TRUE(HasRow(page, "Render", "Paper Color"));
   EXPECT_FALSE(HasRow(page, "Render", "Sky Color"));
+}
+
+TEST(ConfigSummaryExportParityChain, GlobeDocumentPrintsTheBackFade) {
+  SeedGlobeDocument();
+  ExpectPageMatchesExport(g_state, "globe");
+  const ConfigSummary page = BuildConfigSummary(g_state);
+  EXPECT_EQ(PageValue(page, "Render", "Lens Type").value_or(""), "globe");
+  EXPECT_EQ(PageValue(page, "Render", "Back fade").value_or(""), "0.6");
+  std::string out;
+  std::string warning;
+  ASSERT_TRUE(BuildExportJsonOrWarn(g_state, &out, &warning)) << warning;
+  EXPECT_FLOAT_EQ(json::parse(out)["render"][0]["globe_back_fade"].get<float>(), 0.6f);
 }
 
 TEST(ConfigSummaryExportParityChain, RichDocument) {

@@ -1122,6 +1122,7 @@ static json SerializeRendererForGui(const RenderConfig& r) {
   jr["exposure_offset"] = r.exposure_offset;
   jr["ev_mode"] = kEvModeJsonNames[r.ev_mode];
   jr["tone"] = kToneJsonNames[r.tone];
+  jr["globe_back_fade"] = r.globe_back_fade;
   return jr;
 }
 
@@ -1166,6 +1167,9 @@ static RenderConfig ParseRendererFromGuiJson(const json& jr) {
   r.exposure_offset = jr.value("exposure_offset", RenderConfig{}.exposure_offset);
   r.ev_mode = EvModeFromString(jr.value("ev_mode", kEvModeJsonNames[RenderConfig{}.ev_mode]));
   r.tone = ToneFromString(jr.value("tone", kToneJsonNames[RenderConfig{}.tone]));
+  // A missing key keeps the default (0, near side only), which is how a .lmc written before the
+  // field loads unchanged. Clamped like core's own parser: a negative range has no meaning.
+  r.globe_back_fade = std::max(0.0f, jr.value("globe_back_fade", RenderConfig{}.globe_back_fade));
   // Older .lmc payloads carry an "adaptive_brightness_mode" key; nlohmann's value(...) ignores
   // unknown keys, so no migration code is needed — the field becomes a silent no-op.
   return r;
@@ -2098,6 +2102,10 @@ ScenePtr BuildScene(const GuiState& state, SceneIntent intent, FilterOverflowInf
       // the stored value is one the user is not currently seeing. Exporting it would tilt the CLI
       // image against the preview. Same helper every other roll fill site uses.
       dst.view_roll = EffectiveRollForLens(r.lens_type, r.roll);
+      // The globe's far-side fade, as the user set it: the CLI's globe forward projection applies
+      // the same weight (lm_proj::GlobeBackFadeWeight) the preview shader does. Every other lens
+      // ignores it on both sides. Written on THIS arm only — see the kSimCommit arm below.
+      dst.globe_back_fade = r.globe_back_fade;
       // RenderConfig::background is sRGB (what the colour picker shows); LUMICE_RenderParam's is
       // linear RGB, because core adds it to radiance before the transfer curve. Same conversion
       // app.cpp / app_panels.cpp apply when they push the picker colour at the preview.
@@ -2254,6 +2262,10 @@ ScenePtr BuildScene(const GuiState& state, SceneIntent intent, FilterOverflowInf
       // time (u_front). Stated rather than left to the zero-init, so the two arms read as one
       // deliberate divergence instead of an omission.
       dst.front = 0;
+      // Left 0 on this arm for the same reason as `front`: the texture is dual equal-area, which
+      // ignores the field anyway, and the preview shader applies the user's value at display time
+      // (u_globe_back_fade). Stated so the divergence reads as deliberate.
+      dst.globe_back_fade = 0.0f;
       dst.horizon = 1;  // this arm annotates the texture itself; see kDivergingKeys
       // Core's defaults for the three family line switches, stated rather than left to the
       // zero-init — which would mean the opposite (see the WARNING at the fields in lumice.h).
@@ -3195,6 +3207,8 @@ bool DeserializeFromJson(const std::string& json_str, GuiState& state) {
       r.visible = VisibleFromString(vis_str);
       r.front = jr.value("front", RenderConfig{}.front);
     }
+    // Same key, same default and same clamp as core's ParseRenderConfig.
+    r.globe_back_fade = std::max(0.0f, jr.value("globe_back_fade", RenderConfig{}.globe_back_fade));
 
     // sRGB, verbatim, for the reason given at SerializeRendererToGuiJson. Note this reader is on
     // the CORE-config path, where the same key crosses into a linear-RGB struct and the config

@@ -618,6 +618,7 @@ void RegisterExportPreviewTests(ImGuiTestEngine* engine);
 void RegisterPreviewPixelTests(ImGuiTestEngine* engine);
 void RegisterPreviewTextureTests(ImGuiTestEngine* engine);
 void RegisterPreviewBackgroundTests(ImGuiTestEngine* engine);
+void RegisterPreviewGlobeBackFadeTests(ImGuiTestEngine* engine);
 void RegisterPreviewPrintModeTests(ImGuiTestEngine* engine);
 void RegisterContrastHeadroomNoticeTests(ImGuiTestEngine* engine);
 void RegisterPreviewDualFisheyeGatherTests(ImGuiTestEngine* engine);

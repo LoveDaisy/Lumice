@@ -177,6 +177,10 @@ void SeedNonDefaultView() {
   // way (constant on the commit arm, the user's switch on the export arm), so leaving it at its
   // off default would make both halves of the divergence vacuous for this field.
   g_state.renderer.front = true;
+  // The globe's far-side fade, off its 0 default for the same reason: the commit arm writes a
+  // constant 0 and the export arm the user's value, so at 0 the two would agree by accident. The
+  // lens here is linear, which ignores the field on both sides — the export still carries it.
+  g_state.renderer.globe_back_fade = 0.4f;
 }
 
 // Half of the divergence: the run intent must NOT move. Core produces one fixed full-sky texture
@@ -652,6 +656,7 @@ TEST(SceneCommitChain, IntentionalDivergenceFieldsMatchDocumentedSet) {
     "paper",             // the zeroed struct's black vs. the user's paper, same split as background
     "resolution",        // 2:1 texture vs. the user's canvas shape
     "overlap",           // the texture's seam-blend band vs. the band-less disc the screen shows
+    "globe_back_fade",   // globe far-side fade: 0 on the commit arm (applied by the shader) vs. the user's
     // "grid" is deliberately NOT here: only some of its sub-fields diverge, and they are exempted
     // below at the sub-key level so the rest keep being compared. Erasing the whole "grid" object
     // would stop checking those too. Which sub-fields, and why each:

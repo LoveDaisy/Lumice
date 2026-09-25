@@ -201,17 +201,48 @@ inline float RelIllumEquirect(float lat) {
 //     k = rho/focal:  mu = (D k^2 + sqrt(1 - k^2 (D^2 - 1))) / (k^2 + 1)
 //
 // which is the near root, the one the shader's `-b - sqrt(disc)` picks.
-inline float RelIllumGlobe(float rho, float focal) {
+//
+// The FAR root, (D k^2 - sqrt(...)) / (k^2 + 1), is the point where the same ray leaves the sphere,
+// which the back-side fade samples (RelIllumGlobeFar). The same Omega_p holds there with
+// |D mu - 1|: past the silhouette rho(psi) decreases, so rho drho/dpsi changes sign and the pixel's
+// solid angle is its magnitude. At the axis (mu = -1) that is (D + 1)^2 / (D - 1)^2 ~ 2.78: the far
+// pole is further away, so one pixel there spans more sky.
+inline float RelIllumGlobeRoot(float rho, float focal, bool far_side) {
   const float d = kGlobeCameraD;
   const float rho_limb = focal / std::sqrt(d * d - 1.0f);
   const float rho_max = std::max(rho_limb - kSingularityGuardPixels, 0.0f);
   const float k = std::min(rho, rho_max) / focal;
   const float k2 = k * k;
   const float disc = std::max(1.0f - k2 * (d * d - 1.0f), 0.0f);
-  const float mu = (d * k2 + std::sqrt(disc)) / (k2 + 1.0f);
-  const float denom = std::max(d * mu - 1.0f, 1e-12f);
+  const float mu = far_side ? (d * k2 - std::sqrt(disc)) / (k2 + 1.0f) : (d * k2 + std::sqrt(disc)) / (k2 + 1.0f);
+  const float denom = std::max(std::fabs(d * mu - 1.0f), 1e-12f);
   const float num = d - mu;
   return num * num * num / (denom * (d - 1.0f) * (d - 1.0f));
+}
+
+inline float RelIllumGlobe(float rho, float focal) {
+  return RelIllumGlobeRoot(rho, focal, false);
+}
+
+inline float RelIllumGlobeFar(float rho, float focal) {
+  return RelIllumGlobeRoot(rho, focal, true);
+}
+
+// Globe back-side fade weight, for a far-side point at mu (its hit_eye.z) and fade range `fade`.
+// A hand copy — MUST MATCH lm_proj::GlobeBackFadeWeight (src/core/shared/projection_shared.h),
+// which carries the geometry, and the shader's globeBackFadeWeight (preview_renderer.cpp). The
+// C-API boundary keeps this header from including core's; test_globe_back_fade.cpp compares the
+// two C++ copies sample by sample, and the preview_globe_back_fade gui_test the shader against
+// this one.
+inline float GlobeBackFadeWeight(float mu, float fade) {
+  if (!(fade > 0.0f)) {
+    return 0.0f;
+  }
+  const float d = kGlobeCameraD;
+  const float dist = std::sqrt(std::max(d * d + 1.0f - 2.0f * d * mu, 0.0f));
+  const float depth = std::max(dist - std::sqrt(d * d - 1.0f), 0.0f);
+  const float t = std::clamp(depth / fade, 0.0f, 1.0f);
+  return 1.0f - t * t * (3.0f - 2.0f * t);
 }
 
 }  // namespace lumice::gui
