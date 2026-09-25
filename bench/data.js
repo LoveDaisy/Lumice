@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1790324478411,
+  "lastUpdate": 1790324480337,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9500,50 +9500,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "fa044a6142525e887ef3e31b89027a953f00343b",
-          "message": "Merge pull request #308 from LoveDaisy/fix/clamp-uniform-zero-n\n\nfix(core): ClampUniformToIndex 的 n==0 前提由 assert 改为 FatalAbort 硬守卫",
-          "timestamp": "2026-09-05T14:40:02+08:00",
-          "tree_id": "b9b2c7baef1b585fa751319ac718c1a01132d770",
-          "url": "https://github.com/LoveDaisy/ice_halo_sim/commit/fa044a6142525e887ef3e31b89027a953f00343b"
-        },
-        "date": 1788591153129,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 84.1,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 99.7,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 95.3,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 93,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "92c4036ebd9dc10187397db16e7a435ba69af19b",
           "message": "Merge pull request #309 from LoveDaisy/chore/native-arch-measurement-hygiene\n\nfeat(bench): 让「本地构建不是出货二进制」这件事在取数字的地方可见（ISA 出处）",
           "timestamp": "2026-09-05T14:54:12+08:00",
@@ -13838,6 +13794,45 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 93.5,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "5c29ec370e9e6fcae68806e5d82c40e8df5359a2",
+          "message": "Merge pull request #409 from LoveDaisy/fix/continue-render-plane-total-flake\n\nfix(test): calibrate ContinueRender's plane-total band to per-batch wavelength noise",
+          "timestamp": "2026-09-25T15:58:37+08:00",
+          "tree_id": "616829b9a9cb568528885cd75ef28c022146191b",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/5c29ec370e9e6fcae68806e5d82c40e8df5359a2"
+        },
+        "date": 1790324479879,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "Ubuntu ARM64",
+            "value": 99.6,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 98.1,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 92,
             "unit": "%"
           }
         ]
