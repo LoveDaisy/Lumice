@@ -128,6 +128,38 @@ ScrollbarRounding 3  WindowRounding 4  PopupRounding 4
 
 **4.7 左右面板宽度** —— 左面板 400 → 380。左面板承载的信息远少于右面板，等宽以上会读作失衡。
 
+**4.8 顶栏：分组、量化与 Continue 的动作色**（as-built，2026-09-26）—— 顶栏（`RenderTopBar`，`src/gui/app_panels.cpp`）
+原先按书写顺序机械排列，用裸字形 `"|"` 分组。现在的规则：
+
+- **分组**（左到右，顺序与位置均未改动）：左面板折叠 ｜ 执行组（Run/Stop、Continue、⚠ + Revert）｜ 文件组（New/Open/Save）｜
+  功能组（Colors/Analysis/Summary + Colored 复选框 + 告警 pip）｜ Settings …… 右面板折叠（贴右缘）。
+- **组边界 = 主题化竖线**：`ToolbarGroupSeparator()`（`SeparatorEx(Vertical)`，颜色取 `ImGuiCol_Separator`，随色盘走）。
+  两侧各一个 `ItemSpacing.x`，于是**组间距 = 2 × 组内间距 + 1px 竖线**——节奏只有 `ItemSpacing.x` 这一个来源，没有新的像素常量。
+- **尺寸量化**：全栏按钮同一帧高（Revert 由 `SmallButton` 改为 `Button`，原先矮 6px）；**组内同宽**——
+  执行组取 Run/Stop/Stopping.../Continue 四个标签的最大宽度，文件组取 New/Open/Save 的最大宽度（`ToolbarGroupButtonWidth()`，
+  一处实现两处调用）。功能组与 Settings **不**拉齐：它们各开一个不同的窗口，拉齐只制造与内容无关的留白。
+- **窄窗口预算**：在 `kMinWindowWidth`（1024）下、最宽内容（有色类 ⇒ `Full Spectrum` 复选框 + pip）实测需 1004px，余量 20px；
+  改造前为 997px。⚠️ 曾试过组间距取 1.5 × `ItemSpacing.x`，需 1036px，**溢出 12px**——所以本栏没有更宽组间距的空间，
+  下次往顶栏加东西前先看这个余量。由 `shell_chrome/the_top_bar_fits_at_the_minimum_window_width` 钉住，无降级分支（不需要）。
+- ⚠️ 已知的视觉残留：Revert 区在未修改时仍按 alpha=0 占位（「不跳动」约束），于是 Continue 与文件组之间常驻一段空白。
+  这是稳定布局约束的直接代价，不是遗漏。
+
+**Continue 的动作色**：`semantic_colors.hpp` 的 `PushContinueButtonStyle()`。它**不是** good/warning/destructive 任何一档
+（不对内容做判断），也**不是** accent（accent 表示交互状态；accent 染色的 Colors 按钮读作「已配置/被选中」）——它是
+**动作身份色**：让「在当前画面上继续加光线」不会被读成同组的 Run（绿，从零开始）或 Stop（红）。候选均实拍截图比较
+（启用/禁用两态），按与同栏四种按钮色（Run 绿 120°、Stop 红 0°、默认按钮蓝 218°、accent 212°）的距离裁定：
+
+| 候选 | Normal RGB | 色相 | 与最近邻的色相差 | 与最近邻的 RGB 距离 | 裁定 |
+|---|---|---|---|---|---|
+| **A 紫罗兰** | (0.38, 0.24, 0.58) | 265° | 47°（默认蓝） | 0.41（默认蓝） | ✅ 采用 |
+| B 青 | (0.10, 0.42, 0.46) | 187° | 25°（accent） | 0.31（默认蓝） | ❌ 与蓝色按钮族同族，读作「又一个普通按钮」 |
+| C 梅红 | (0.52, 0.20, 0.42) | 319° | 41°（Stop 红） | **0.27**（Stop 红） | ❌ 低于 0.3 下限，且与 Stop 同栏同槽相邻 |
+
+禁用态不另设颜色：`BeginDisabled` 的 `DisabledAlpha` 对它与其它按钮一视同仁地压暗（实拍像素 (97,61,148) → (65,43,97)）。
+「与同栏四色的 RGB 距离 ≥ 0.3」由 `gui_unit_test` 的 `ContinueButtonColour.IsFarFromEveryButtonColourItSharesTheBarWith`
+机械钉住（0.3 复用 `theme.cpp` 对照色盘的既有下限，非新阈值）。它与 Run 的绿一样是写死的具名常量、不随色盘走——
+值是**相对**那几个同样写死的语义色选出来的，只让它随色盘漂移反而会破坏这组相对关系；换肤时应与 Run/Stop 一并重新决定。
+
 ## 5. 被证伪的方向（勿重提）
 
 - **均匀加大间距 / 圆角** —— 直觉上"更透气"，实测读作**空旷**，反而降低精致感。这是 §2 那条结论的反面证据。

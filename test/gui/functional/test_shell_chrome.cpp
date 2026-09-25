@@ -38,6 +38,9 @@ namespace {
 const char* const kRunBtn = "##TopBar/" ICON_FA_PLAY " Run";
 const char* const kStopBtn = "##TopBar/" ICON_FA_STOP " Stop";
 const char* const kStoppingBtn = "##TopBar/" ICON_FA_STOP " Stopping...";
+const char* const kContinueBtn = "##TopBar/" ICON_FA_FORWARD " Continue";
+const char* const kSettingsBtn = "##TopBar/" ICON_FA_GEAR " Settings";
+const char* const kRightToggleBtn = "##TopBar/" ICON_FA_CHEVRON_RIGHT "##right_panel_toggle";
 
 // Index of a window in ImGui's submission-order list, or -1. Later index means visually higher.
 int WindowStackIndex(const char* name) {
@@ -208,6 +211,103 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
       IM_CHECK_GE(log_idx, 0);
       IM_CHECK_GE(left_idx, 0);
       IM_CHECK_GT(log_idx, left_idx);
+    };
+  }
+  // P3b. The top bar's buttons are measured, not left to their labels. Every button in the bar has
+  // one frame height (Revert used to be a SmallButton, a frame-padding shorter than its neighbours),
+  // and each group shares one width: Continue takes the run slot's width, so the execution group is
+  // two equal buttons whatever the slot currently says, and New / Open / Save are three equal ones.
+  //
+  // Measured on the rendered items rather than recomputed from CalcTextSize, because the claim is
+  // about what is drawn: a width computed and then not passed to the button is the defect this
+  // would otherwise miss.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "shell_chrome", "top_bar_buttons_share_one_height_and_one_width_per_group");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      ctx->Yield(3);
+
+      // Revert is included on purpose while hidden: it is submitted at alpha 0 so the bar does not
+      // shift when it appears, and its hidden rectangle is the one that holds that space.
+      const char* const kButtons[] = {
+        "##TopBar/" ICON_FA_CHEVRON_LEFT "##left_panel_toggle",
+        kRunBtn,
+        kContinueBtn,
+        "##TopBar/Revert",
+        "##TopBar/New",
+        "##TopBar/Open",
+        "##TopBar/Save",
+        "##TopBar/" ICON_FA_PALETTE " Colors",
+        "##TopBar/" ICON_FA_ROUTE " Analysis",
+        "##TopBar/" ICON_FA_FILE_LINES " Summary",
+        kSettingsBtn,
+        kRightToggleBtn,
+      };
+      constexpr int kCount = static_cast<int>(sizeof(kButtons) / sizeof(kButtons[0]));
+      ImGuiTestItemInfo infos[kCount];
+      for (int i = 0; i < kCount; ++i) {
+        infos[i] = ctx->ItemInfo(kButtons[i], ImGuiTestOpFlags_NoError);
+      }
+
+      const float height = infos[1].RectFull.GetHeight();
+      IM_CHECK_GT(height, 0.0f);
+      for (int i = 0; i < kCount; ++i) {
+        if (infos[i].ID == 0) {
+          IM_ERRORF("the top bar has no %s", kButtons[i]);
+        } else if (infos[i].RectFull.GetHeight() != height) {
+          IM_ERRORF("%s is %.1f px tall, the run slot is %.1f", kButtons[i],
+                    static_cast<double>(infos[i].RectFull.GetHeight()), static_cast<double>(height));
+        }
+      }
+
+      // Indices into kButtons: the execution group is {1, 2}, the file group {4, 5, 6}.
+      IM_CHECK_EQ(infos[2].RectFull.GetWidth(), infos[1].RectFull.GetWidth());
+      IM_CHECK_EQ(infos[5].RectFull.GetWidth(), infos[4].RectFull.GetWidth());
+      IM_CHECK_EQ(infos[6].RectFull.GetWidth(), infos[4].RectFull.GetWidth());
+    };
+  }
+
+  // P3c. At the narrowest window the app allows, the whole bar fits: every group from the left
+  // toggle through Settings, then the right toggle flush against the right edge, with at least one
+  // item gap between them. The bar has no scrollbar and no overflow handling — a bar that did not
+  // fit would put Settings underneath the right toggle, or push it off the window.
+  //
+  // Measured at its widest real content: with a colour class present the Colored / Full Spectrum
+  // checkbox joins the feature group (showing "Full Spectrum", the longer label), and with no run
+  // yet no class has matched anything, so the empty-composite warning pip is drawn beside it too.
+  // The left part is read off the rendered frame (the right edge of Settings), the right toggle's
+  // width likewise; only the window floor comes from a constant.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "shell_chrome", "the_top_bar_fits_at_the_minimum_window_width");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      gui::ColorClassConfig cls;
+      cls.visible = true;
+      gui::g_state.raypath_color.push_back(cls);
+      ctx->Yield(4);
+
+      const ImGuiTestItemInfo checkbox =
+          ctx->ItemInfo("##TopBar/Full Spectrum##CompositePreviewToggle", ImGuiTestOpFlags_NoError);
+      const ImGuiTestItemInfo settings = ctx->ItemInfo(kSettingsBtn, ImGuiTestOpFlags_NoError);
+      const ImGuiTestItemInfo right_toggle = ctx->ItemInfo(kRightToggleBtn, ImGuiTestOpFlags_NoError);
+      ImGuiWindow* bar = ctx->GetWindowByRef("##TopBar");
+
+      gui::g_state.raypath_color.clear();
+      ctx->Yield(2);
+
+      IM_CHECK(bar != nullptr);
+      IM_CHECK_NE(checkbox.ID, 0u);  // the widest configuration really was the one measured
+      IM_CHECK_NE(settings.ID, 0u);
+      IM_CHECK_NE(right_toggle.ID, 0u);
+      IM_CHECK_GT(settings.RectFull.Min.x, checkbox.RectFull.Max.x);
+
+      const ImGuiStyle& style = ImGui::GetStyle();
+      const float required = (settings.RectFull.Max.x - bar->Pos.x) + style.ItemSpacing.x +
+                             right_toggle.RectFull.GetWidth() + style.WindowPadding.x;
+      const float floor_width = static_cast<float>(gui::kMinWindowWidth);
+      ctx->LogInfo("required=%.1f min_window=%.1f headroom=%.1f", static_cast<double>(required),
+                   static_cast<double>(floor_width), static_cast<double>(floor_width - required));
+      IM_CHECK_LE(required, floor_width);
     };
   }
 }
