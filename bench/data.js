@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1790326328661,
+  "lastUpdate": 1790326332129,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -4758,54 +4758,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "5aea061e953c620bfe6709bf6f2ce87103402f05",
-          "message": "Merge pull request #310 from LoveDaisy/fix/cli-label-viewport-clamp\n\nfix(cli): overlay label 视口 clamp 收敛为 GUI/CLI 共享的单一实现",
-          "timestamp": "2026-09-05T15:09:23+08:00",
-          "tree_id": "f073e0e74a8ffe5cbb3e2967c3330a884cb4279c",
-          "url": "https://github.com/LoveDaisy/ice_halo_sim/commit/5aea061e953c620bfe6709bf6f2ce87103402f05"
-        },
-        "date": 1788592959418,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 1154586.2,
-            "unit": "rays/sec",
-            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 1213367.2,
-            "unit": "rays/sec",
-            "extra": "CPU: Neoverse-N2\\nCores: 4"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 823912.9,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 7763 64-Core Processor\\nCores: 4"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 664572,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "f1822e52c6d59ab2c203aa7ef388cb2b50f4e2df",
           "message": "Merge pull request #311 from LoveDaisy/feat/gpu-backend-user-preference\n\nfeat(gui): \"Use GPU\" 可存为个人默认（覆盖文件新增 app 根键），工厂默认仍是 CPU",
           "timestamp": "2026-09-05T15:44:47+08:00",
@@ -9480,6 +9432,54 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 678197.8,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 9V74 80-Core Processor                \\nCores: 4"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "49fe5e10fab9bfff09a5c101fbf651f8f283af5b",
+          "message": "Merge pull request #411 from LoveDaisy/fix/globe-back-fade-fma-exact-eq\n\nfix(test): compare the globe back-fade weight within an absolute tolerance",
+          "timestamp": "2026-09-25T16:38:58+08:00",
+          "tree_id": "1ad240095c7e9a80ab3a0f9f3c9ec1c87f9c4465",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/49fe5e10fab9bfff09a5c101fbf651f8f283af5b"
+        },
+        "date": 1790326331566,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 754361,
+            "unit": "rays/sec",
+            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 1013580,
+            "unit": "rays/sec",
+            "extra": "CPU: Neoverse-N2\\nCores: 4"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 832554.9,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 9V74 80-Core Processor\\nCores: 4"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 681198.2,
             "unit": "rays/sec",
             "extra": "CPU: AMD EPYC 9V74 80-Core Processor                \\nCores: 4"
           }
