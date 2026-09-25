@@ -223,6 +223,11 @@ void ResetTestState() {
   // case's stray click on "Overwrite" would write a file.
   gui::g_show_export_overwrite_confirm_popup = false;
   gui::CancelPendingConfigJsonExport();
+  // And for the screenshot export options: an options popup left open by one case would sit over
+  // the next. The selection is cleared too, although every open prefills it afresh from the panel —
+  // what this guards is a case reading g_screenshot_export_selection without having opened it.
+  gui::g_show_screenshot_export_options_popup = false;
+  gui::g_screenshot_export_selection = gui::ScreenshotExportSelection{};
   gui::g_server_poller.Stop();  // Stop poller before nulling server
   // task-349.4: Stop() only kPaused the worker — the last published PreviewSnapshot
   // survives (production keeps it on purpose for slider-scrub carry-forward, see
@@ -831,6 +836,7 @@ int main(int argc, char** argv) {
     // — and "the prompt never appeared, so the export silently did not happen" is precisely the
     // failure mode it exists to prevent, so it has to be reachable from here.
     gui::RenderExportOverwriteConfirmPopup();
+    gui::RenderScreenshotExportOptionsPopup();
     // Mirrors src/gui/main.cpp: a Render*Panel that only the production loop calls is
     // unreachable for every gui_test ("Unable to locate item"), a failure this repo has
     // already paid for twice.

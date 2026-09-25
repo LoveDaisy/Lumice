@@ -18,6 +18,7 @@
 #include "gui/log_sink.hpp"
 #include "gui/overlay_labels.hpp"
 #include "gui/preview_renderer.hpp"
+#include "gui/screenshot_export_options.hpp"
 #include "gui/server_poller.hpp"
 #include "gui/thumbnail_cache.hpp"
 #include "include/lumice.h"
@@ -333,7 +334,14 @@ void DoSave();
 void DoSaveAs();
 void PerformSave();
 void PerformSaveAs();
+// Save > Screenshot...: opens the export options popup, prefilled from the panel. The file dialog
+// and the render happen in PerformScreenshotExport, once the user confirms.
 void DoExportPreviewPng();
+// The file dialog, render and write for one Screenshot export, narrowed to `sel`.
+void PerformScreenshotExport(const ScreenshotExportSelection& sel);
+// What the screenshot selection needs to know about the frame on screen that GuiState does not
+// hold (background photo loaded, composite payload uploaded) — read off this module's globals.
+ScreenshotFrameFacts CurrentScreenshotFrameFacts();
 void DoExportDualFisheyeEqualAreaPng();
 void DoExportEquirectangularPng();
 void DoExportConfigJson();
@@ -627,6 +635,14 @@ void RenderImportWarningPopup();
 // of it — everything the GUI cannot express is gone from the copy on disk. "Overwrite?" asks about a
 // filename; the user has to be asked about the content.
 //
+// Screenshot export options (Save > Screenshot...). DoExportPreviewPng prefills the selection from
+// the panel and raises the flag; RenderScreenshotExportOptionsPopup shows it, and its Export button
+// hands the selection to PerformScreenshotExport. The selection is overwritten on every open, so it
+// never outlives the export it was made for — see screenshot_export_options.hpp for why that is
+// the shape.
+extern bool g_show_screenshot_export_options_popup;
+extern ScreenshotExportSelection g_screenshot_export_selection;
+
 // Named and declared here rather than written inline at the ImGui call so the wording is one thing
 // that can be asserted (ConfigJsonExportContractChain.TheOverwritePromptSaysWhatIsLost). That test
 // pins the sentence; the gui_test case pins that the modal renders at all. What neither can state is
@@ -637,6 +653,8 @@ extern const char* const kExportOverwriteWarningText;
 // Begin/End block, like the other Render*Popup above it — an export that raised the prompt and
 // found nobody rendering it would sit pending forever, which is the same as losing the command.
 void RenderExportOverwriteConfirmPopup();
+// Opens iff g_show_screenshot_export_options_popup is true; every frame, like the one above.
+void RenderScreenshotExportOptionsPopup();
 // Generic GUI warning modal (see app_panels.cpp). SetGuiWarning queues a message (idempotent
 // while the same message is in-flight, so a persistent condition re-detected every debounced
 // commit does not re-spam the modal). ClearGuiWarning re-arms it (called on a successful

@@ -3140,6 +3140,134 @@ void RenderExportOverwriteConfirmPopup() {
   }
 }
 
+namespace {
+
+// One row of the screenshot export options: a family's name and its line/label boxes. A null
+// label pointer is a family with no text (the lens border). `line_on` / `label_on` are the panel's
+// switches — the ONLY thing that decides whether a box can be ticked, so a box can take away what
+// the screen shows and never add what it does not.
+struct ScreenshotOptionRow {
+  const char* name;
+  const char* line_id;
+  bool* line_sel;
+  bool line_on;
+  const char* label_id;
+  bool* label_sel;
+  bool label_on;
+};
+
+constexpr const char* kScreenshotOptionOffReason = "Not shown on screen. Turn it on in the Overlay panel to export it.";
+
+void ScreenshotOptionCheckbox(const char* id, bool* sel, bool on) {
+  ImGui::BeginDisabled(!on);
+  // Shown as the intersection rather than the raw bit, so a family switched off while the popup is
+  // open (a document dropped onto the window) reads as out of the export, which it is.
+  bool shown = *sel && on;
+  if (ImGui::Checkbox(id, &shown)) {
+    *sel = shown;
+  }
+  ImGui::EndDisabled();
+  if (!on && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+    ImGui::SetTooltip("%s", kScreenshotOptionOffReason);
+  }
+}
+
+}  // namespace
+
+void RenderScreenshotExportOptionsPopup() {
+  constexpr const char* kPopupName = "Screenshot Export Options";
+  if (g_show_screenshot_export_options_popup) {
+    ImGui::OpenPopup(kPopupName);
+    g_show_screenshot_export_options_popup = false;
+  }
+
+  if (!ImGui::BeginPopupModal(kPopupName, nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    return;
+  }
+  ScreenshotExportSelection& sel = g_screenshot_export_selection;
+  ImGui::TextUnformatted("Include in this screenshot:");
+
+  const ScreenshotOptionRow rows[] = {
+    { "Horizon", "##ss_horizon_line", &sel.horizon_line, g_state.show_horizon_line, "##ss_horizon_label",
+      &sel.horizon_label, g_state.show_horizon_label },
+    { "Grid", "##ss_grid_line", &sel.grid_line, g_state.show_grid_line, "##ss_grid_label", &sel.grid_label,
+      g_state.show_grid_label },
+    { "Lens Border", "##ss_lens_border_line", &sel.lens_border_line, g_state.show_lens_border_line, nullptr, nullptr,
+      false },
+    { "Sun Circles", "##ss_sun_circles_line", &sel.sun_circles_line, g_state.show_sun_circles_line,
+      "##ss_sun_circles_label", &sel.sun_circles_label, g_state.show_sun_circles_label },
+    { "Lens Center Circles", "##ss_view_dist_line", &sel.view_dist_line, g_state.show_view_dist_line,
+      "##ss_view_dist_label", &sel.view_dist_label, g_state.show_view_dist_label },
+    { "Reference Points", "##ss_markers_line", &sel.markers_line, AnyMarkerShown(g_state), "##ss_markers_label",
+      &sel.markers_label, AnyMarkerLabelShown(g_state) },
+  };
+  constexpr ImGuiTableFlags kFlags = ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_RowBg;
+  if (ImGui::BeginTable("##screenshot_options", 3, kFlags)) {
+    const float check_w = ImGui::GetFrameHeight();
+    ImGui::TableSetupColumn("##name", ImGuiTableColumnFlags_WidthFixed);
+    ImGui::TableSetupColumn("Line", ImGuiTableColumnFlags_WidthFixed, std::max(check_w, ImGui::CalcTextSize("Line").x));
+    ImGui::TableSetupColumn("Label", ImGuiTableColumnFlags_WidthFixed,
+                            std::max(check_w, ImGui::CalcTextSize("Label").x));
+    ImGui::TableHeadersRow();
+    for (const ScreenshotOptionRow& row : rows) {
+      ImGui::TableNextRow();
+      ImGui::TableNextColumn();
+      ImGui::AlignTextToFramePadding();
+      ImGui::TextUnformatted(row.name);
+      ImGui::TableNextColumn();
+      ScreenshotOptionCheckbox(row.line_id, row.line_sel, row.line_on);
+      ImGui::TableNextColumn();
+      if (row.label_id != nullptr) {
+        ScreenshotOptionCheckbox(row.label_id, row.label_sel, row.label_on);
+      }
+    }
+    ImGui::EndTable();
+  }
+
+  // The display mode is a choice between two pictures, not a layer, so either may be exported —
+  // under the preview control's own applicability (ConstraintFor, the one rule both read), and
+  // only where the texture on screen can draw it (ScreenshotDisplayModeRenderable).
+  ImGui::SeparatorText(PanelLabel("renderer.display_mode").c_str());
+  const FieldEditorConstraint dm_c = ConstraintFor("renderer.display_mode", g_state);
+  const ScreenshotFrameFacts facts = CurrentScreenshotFrameFacts();
+  for (int i = 0; i < kDisplayModeCount; i++) {
+    const bool renderable = ScreenshotDisplayModeRenderable(g_state, facts, i);
+    ImGui::BeginDisabled(!dm_c.enabled || !renderable);
+    const std::string label = std::string(kDisplayModeNames[i]) + "##ss_display_mode";
+    if (ImGui::RadioButton(label.c_str(), sel.display_mode == i)) {
+      sel.display_mode = i;
+    }
+    ImGui::EndDisabled();
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+      if (!dm_c.enabled) {
+        ImGui::SetTooltip("%s", dm_c.disabled_reason);
+      } else if (!renderable) {
+        ImGui::SetTooltip(
+            "The preview is showing the colored composite, which the other display mode would have to\n"
+            "replace. Switch it on screen to export it.");
+      }
+    }
+    if (i + 1 < kDisplayModeCount) {
+      ImGui::SameLine();
+    }
+  }
+
+  ImGui::Separator();
+  if (ImGui::Button("Export...", ImVec2(UiPx(120.0f), 0.0f))) {
+    ImGui::CloseCurrentPopup();
+    ImGui::EndPopup();
+    // After the popup is closed: the file dialog is a blocking OS call, and the render reads the
+    // preview's own state, which this popup never wrote.
+    PerformScreenshotExport(sel);
+    return;
+  }
+  ImGui::SameLine();
+  if (ImGui::Button("Cancel", ImVec2(UiPx(80.0f), 0.0f))) {
+    ImGui::CloseCurrentPopup();
+  }
+  ImGui::EndPopup();
+}
+
 // Generic GUI warning modal (not import-specific). Fires ONCE per distinct warning episode:
 // SetGuiWarning is idempotent while the same message is in-flight, so a persistent condition
 // re-detected on every debounced commit (e.g. an over-bounds filter re-checked on each 70ms
