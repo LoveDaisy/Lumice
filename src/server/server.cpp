@@ -81,6 +81,9 @@ class ServerImpl {
   // Stop → rebuild consumers → Start shape as CommitConfig, on the scene `scene_json`
   // carries — its own submission, not the last render commit's.
   Error StartRaypathAnalysis(const nlohmann::json& scene_json, const RaypathAnalysisRequest& request);
+  // See Server::ContinueRun. Stop → hand the render workers a new continuation index →
+  // rebind the scene with the new budget and ++epoch → Start, with no consumer reset between.
+  Error ContinueRun(size_t additional_ray_num);
   // See Server::GetActiveBackend. Structural kCpu in an analysis session; the
   // Simulator's own published answer otherwise.
   BackendKind GetActiveBackend() const;
@@ -482,11 +485,19 @@ class ServerImpl {
   // keeps the externally-published epoch from being polluted by batch-scheduling
   // details. ++ inside the scene_mutex_ critical section (next to scene_generation_)
   // of BOTH submission entry points — CommitConfig and StartRaypathAnalysis — on the
-  // accumulator-reset action: every successful submission is reset-causing today, so
-  // every success ++s, and an analysis is a submission of its own scene, not a re-run of
-  // the last render's. A future "continue-same-config" path (append rays without reset)
-  // must skip this ++. See plan §2 decision 3.
+  // accumulator-reset action: every successful submission is reset-causing, so every
+  // success ++s, and an analysis is a submission of its own scene, not a re-run of the last
+  // render's. ContinueRun ++s it as well although it resets nothing: the epoch is what
+  // "this run" means to the drain signal (drained_epoch_ below) and to a reader's frame
+  // freshness, and a continued run is a new run in both senses — with the epoch left
+  // alone, the drain status would read the previous run's "drained" from the first
+  // instant of the continuation.
   std::atomic<uint64_t> committed_epoch_{ 0 };
+  // The last index ContinueRun handed the render workers (Simulator::SetContinuationIndex).
+  // Only ever incremented, never reset — so no two continuations of this server's lifetime
+  // share a random stream, and no other entry point needs to know it exists. Written and
+  // read by the control thread only (ContinueRun).
+  uint32_t continuation_serial_ = 0;
   // Highest epoch whose data the CONSUMER has fully drained. Read
   // via DrainedEpoch() / LUMICE_GetDrainStatus; "current epoch is drained" is
   // drained_epoch_ == committed_epoch_. Deliberately NOT cleared by Stop() or
@@ -1342,6 +1353,82 @@ Error ServerImpl::CommitConfig(const nlohmann::json& config_json, bool* out_reus
             std::chrono::duration<double, std::milli>(commit_end - commit_start).count(), stop_ms, rebuild_ms,
             start_ms);
 
+  return Error::Success();
+}
+
+
+Error ServerImpl::ContinueRun(size_t additional_ray_num) {
+  if (additional_ray_num == 0) {
+    return Error::InvalidValue("ray_num", "ContinueRun: the additional ray budget must be positive");
+  }
+  // A render session only. An analysis session's consumers are a histogram, and "more of the
+  // same analysis" is not what this call means; the analysis restarts through its own entry.
+  if (mode_.load(std::memory_order_acquire) != SessionKind::kRender) {
+    return Error::ServerError("the current session is a raypath analysis; only a render run can be continued");
+  }
+  {
+    std::lock_guard<std::mutex> lock(scene_mutex_);
+    if (active_scene_ == nullptr) {
+      return Error::ServerError("nothing to continue: no render configuration has been committed");
+    }
+  }
+  const SimLifecycle lifecycle = GetSimLifecycle();
+  if (lifecycle == SimLifecycle::kRunning) {
+    return Error::ServerError("a run is in progress; continue it after it completes or is stopped");
+  }
+  // COMPLETED is the producer's verdict, not the consumer's: the last batches can still be
+  // queued for ConsumeData, and the Stop() below would throw them away (Queue::Shutdown) —
+  // rays traced and never accumulated. Wait for the drain signal first. It follows COMPLETED
+  // within one consumer pass, so the bound is a guard against a drain that never publishes,
+  // not a latency anyone waits out.
+  if (lifecycle == SimLifecycle::kCompleted) {
+    constexpr auto kDrainWaitCap = std::chrono::seconds(5);
+    const auto deadline = std::chrono::steady_clock::now() + kDrainWaitCap;
+    while (DrainedEpoch() != CommittedEpoch() && std::chrono::steady_clock::now() < deadline) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    if (DrainedEpoch() != CommittedEpoch()) {
+      ILOG_WARN(logger_,
+                "ContinueRun: the completed run did not report drained within {}s; its undrained batches "
+                "are dropped by the stop that starts the continuation",
+                std::chrono::duration_cast<std::chrono::seconds>(kDrainWaitCap).count());
+    }
+  }
+
+  // Both ways a render run ends converge here. After Stop() the workers have already left
+  // Run() and this is a no-op; after a natural completion they are still parked inside Run()
+  // on the empty queue, and this releases them — so either way the Start() below re-enters
+  // Run() on every worker, which is the one place a new random stream can begin. The Stop()
+  // resets no accumulator (CommitConfig does that, after its own Stop()); what it clears is
+  // the dirty/consumed pair, which the first batch of the continuation raises again.
+  Stop();
+
+  {
+    std::lock_guard<std::mutex> lock(prod_mutex_);
+    ++continuation_serial_;
+    // simulators_ is the render session's group on both routes (ActiveWorkers()); the
+    // analysis pool never traces a render and keeps its plain sessions.
+    for (auto& s : simulators_) {
+      s.SetContinuationIndex(continuation_serial_);
+    }
+  }
+
+  // The committed scene with the new budget. config_manager_ keeps the document as committed,
+  // so a later CommitConfig judges reuse and the ray-allocation carry against it unchanged.
+  auto scene = std::make_shared<SceneConfig>(config_manager_.scene_);
+  scene->ray_num_ = additional_ray_num;
+  {
+    std::lock_guard<std::mutex> lock(scene_mutex_);
+    active_scene_ = std::move(scene);
+    // scene_generation_ stays: no queued batch survived the Stop() above to be told apart,
+    // and a new generation would only make each worker flush per-generation state
+    // (ray-allocation carry, device XYZ window) that is already fresh at Run() entry.
+    committed_epoch_.fetch_add(1, std::memory_order_release);
+  }
+
+  Start();
+  ILOG_INFO(logger_, "ContinueRun: continuation {} started ({} more rays)", continuation_serial_,
+            additional_ray_num == kInfSize ? std::string("unbounded") : std::to_string(additional_ray_num));
   return Error::Success();
 }
 
@@ -2788,6 +2875,13 @@ Error Server::StartRaypathAnalysis(const nlohmann::json& scene_json, const Raypa
     return Error::ServerNotReady();
   }
   return impl_->StartRaypathAnalysis(scene_json, request);
+}
+
+Error Server::ContinueRun(size_t additional_ray_num) {
+  if (!impl_) {
+    return Error::ServerNotReady();
+  }
+  return impl_->ContinueRun(additional_ray_num);
 }
 
 BackendKind Server::GetActiveBackend() const {

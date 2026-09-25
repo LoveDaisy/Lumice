@@ -97,6 +97,9 @@ add_executable(unit_correctness_test
   # Holds LUMICE_TEST_ComputeRenderDomainMask byte-for-byte to the product API's drawable mask.
   "${PROJ_TEST_DIR}/unit-correctness/server/test_render_domain_mask_parity.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/server/test_c_api_scene.cpp"
+  # LUMICE_ContinueRender: a continuation adds to the accumulation (count, energy, planes, anchor)
+  # and traces a new random stream, also under a fixed seed and on the Metal route.
+  "${PROJ_TEST_DIR}/unit-correctness/server/test_c_api_continue_render.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/server/test_json_parser_parity.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/server/test_stats_consumer.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/server/test_raypath_histogram_consumer.cpp"

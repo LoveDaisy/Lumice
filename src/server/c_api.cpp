@@ -3444,6 +3444,22 @@ void LUMICE_StopServer(LUMICE_Server* server) {
 }
 
 
+LUMICE_ErrorCode LUMICE_ContinueRender(LUMICE_Server* server, int infinite, LUMICE_RayCount additional_ray_num) {
+  if (!server) {
+    return LUMICE_ERR_NULL_ARG;
+  }
+  // Same (infinite, ray_num) reading as LUMICE_SceneSetSimParams: `infinite` wins, and the
+  // budget is otherwise taken as given — the server refuses a zero one.
+  const size_t budget = infinite ? ns::kInfSize : static_cast<size_t>(additional_ray_num);
+  auto err = server->server_->ContinueRun(budget);
+  if (err) {
+    LOG_ERROR("Failed to continue the render: {}", err.message);
+    return MapErrorCode(err.code);
+  }
+  return LUMICE_OK;
+}
+
+
 void LUMICE_SetPreferredBackend(LUMICE_Server* server, int backend) {
   if (!server) {
     return;

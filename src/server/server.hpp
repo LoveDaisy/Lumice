@@ -623,6 +623,27 @@ class Server {
   Error StartRaypathAnalysis(const nlohmann::json& scene_json, const RaypathAnalysisRequest& request);
 
   /**
+   * @brief Continue the committed render: trace `additional_ray_num` more rays INTO the
+   *        accumulation the last run left behind, instead of starting a new one.
+   * @details The one run start that is not a reset. Nothing CommitConfig resets is touched —
+   *          the render planes, the emitted-energy and ray-count totals, the exposure anchor,
+   *          the adaptive ray-allocation tally — so every quantity read afterwards describes
+   *          the previous rays and the new ones together. The new rays are a fresh random
+   *          stream: each continuation hands the workers a seed of its own
+   *          (Simulator::SetContinuationIndex), which is what keeps a fixed-seed server from
+   *          tracing the same rays a second time. It does advance the lifecycle epoch, like
+   *          every other run start: the drain signal and "is this frame of the current run"
+   *          are both keyed on it, and an unchanged epoch would read as already drained.
+   *          Works from either way a render run ends — completed on its budget, or Stop()ped.
+   * @param additional_ray_num Rays to add, total across wavelengths (the same unit as the
+   *        scene's ray_num); kInfSize runs until Stop().
+   * @return Error::ServerError when there is nothing to continue — the current session is an
+   *         analysis, no render was ever committed — or when a run is in progress;
+   *         Error::InvalidValue for a zero budget. A rejected call changes nothing.
+   */
+  Error ContinueRun(size_t additional_ray_num);
+
+  /**
    * @brief The trace backend this server's Simulator ACTUALLY runs on, as opposed to the
    *        one SetPreferredBackend asked for.
    * @details The two differ in exactly two situations, and this is the read that makes

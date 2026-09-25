@@ -1166,11 +1166,26 @@ uint32_t DeriveEffectiveSeed(uint32_t seed) {
   }
   return g_simulator_seed_counter.fetch_add(1, std::memory_order_relaxed) + 1u;
 }
+
+// The seed of a continued Run() (Simulator::SetContinuationIndex): a splitmix64 finalizer over
+// (base, index), so neighbouring indices land on unrelated seeds rather than on base+1, base+2 —
+// a seed that is merely offset by one would be the next worker's or the next server's seed, and
+// the whole point is a stream nobody else traces. Never 0: 0 means "random" to every consumer of
+// a seed, and a GPU backend handed 0 would switch device generation off.
+uint32_t DeriveContinuationSeed(uint32_t base, uint32_t index) {
+  uint64_t z = (static_cast<uint64_t>(base) << 32) | index;
+  z += 0x9e3779b97f4a7c15ull;
+  z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9ull;
+  z = (z ^ (z >> 27)) * 0x94d049bb133111ebull;
+  z ^= z >> 31;
+  const auto mixed = static_cast<uint32_t>(z ^ (z >> 32));
+  return mixed != 0 ? mixed : 1u;
+}
 }  // namespace
 
 Simulator::Simulator(QueuePtrS<SimBatch> config_queue, QueuePtrS<SimData> data_queue, uint32_t seed)
     : config_queue_(std::move(config_queue)), data_queue_(std::move(data_queue)), stop_(false), idle_(true),
-      seed_(seed), effective_seed_(DeriveEffectiveSeed(seed)),
+      seed_(seed), effective_seed_(DeriveEffectiveSeed(seed)), session_seed_(effective_seed_),
       rng_(seed != 0 ? seed :
                        static_cast<uint32_t>(std::chrono::system_clock::now().time_since_epoch().count() ^
                                              (std::hash<std::thread::id>{}(std::this_thread::get_id())))) {}
@@ -1178,6 +1193,8 @@ Simulator::Simulator(QueuePtrS<SimBatch> config_queue, QueuePtrS<SimData> data_q
 Simulator::Simulator(Simulator&& other) noexcept
     : config_queue_(std::move(other.config_queue_)), data_queue_(std::move(other.data_queue_)),
       stop_(other.stop_.load()), idle_(other.idle_.load()), seed_(other.seed_), effective_seed_(other.effective_seed_),
+      session_seed_(other.session_seed_),
+      continuation_index_(other.continuation_index_.load(std::memory_order_acquire)),
       all_data_observer_(other.all_data_observer_), all_data_observer_ctx_(other.all_data_observer_ctx_),
       rng_(other.rng_), logger_(std::move(other.logger_)),
       preferred_backend_(other.preferred_backend_.load(std::memory_order_acquire)),
@@ -1204,6 +1221,8 @@ Simulator& Simulator::operator=(Simulator&& other) noexcept {
   idle_ = other.idle_.load();
   seed_ = other.seed_;
   effective_seed_ = other.effective_seed_;
+  session_seed_ = other.session_seed_;
+  continuation_index_.store(other.continuation_index_.load(std::memory_order_acquire), std::memory_order_release);
   all_data_observer_ = other.all_data_observer_;
   all_data_observer_ctx_ = other.all_data_observer_ctx_;
   other.all_data_observer_ = nullptr;
@@ -1232,6 +1251,10 @@ void Simulator::SetAnalysisChainId(bool enabled, uint8_t symmetry, size_t capaci
 
 void Simulator::SetAnalysisForceCpu(bool enabled) {
   analysis_force_cpu_.store(enabled, std::memory_order_release);
+}
+
+void Simulator::SetContinuationIndex(uint32_t index) {
+  continuation_index_.store(index, std::memory_order_release);
 }
 
 namespace {
@@ -1404,9 +1427,19 @@ void Simulator::Run() {
   // nor its rows, on every session, whatever the session before it was. The GPU backends
   // already keep this contract on their side (created per Run(), see below); this is the
   // legacy CPU path's half of it.
+  //
+  // A CONTINUED Run() (SetContinuationIndex) is the one session that must not start where the
+  // previous one did: it adds rays to an accumulation that already holds that stream's rays.
+  // It gets a seed of its own, derived here once and used for every generator this Run()
+  // seeds — the two CPU ones below and the backend's (SessionSpec::seed). Deriving rather than
+  // skipping the re-seed is what reaches the GPU backends: they are created per Run() and
+  // seed themselves from what they are handed, so "do not re-seed" has nothing to say to them.
+  const uint32_t continuation = continuation_index_.exchange(0, std::memory_order_acq_rel);
+  session_seed_ = continuation == 0 ? effective_seed_ : DeriveContinuationSeed(effective_seed_, continuation);
   if (seed_ != 0) {
-    RandomNumberGenerator::GetInstance().SetSeed(seed_);
-    rng_.SetSeed(seed_);
+    // seed_ != 0 implies effective_seed_ == seed_, so a plain Run() re-seeds with seed_ exactly as before.
+    RandomNumberGenerator::GetInstance().SetSeed(session_seed_);
+    rng_.SetSeed(session_seed_);
   }
 
   // Pick a TraceBackend once per Run() entry. nullptr keeps the legacy CPU
@@ -2177,10 +2210,11 @@ void Simulator::SimulateOneWavelengthWithBackend(TraceBackend& backend, const Sc
   // component_mask at 0 until T5/T6 wire device-side production, so this
   // host-side entry no longer builds a throwaway table.
 
-  // Task 260.6: hand the backend `effective_seed_` (non-zero) so device-gen
-  // activates even when the user-facing `seed_` is 0 (default random mode).
-  // When `seed_ != 0` this equals `seed_` → determinism contract unchanged.
-  SessionSpec spec{ &scene, {}, wl_param, effective_seed_, std::move(raypath_color), ray_num, ray_alloc };
+  // Task 260.6: hand the backend a non-zero seed so device-gen activates even when the
+  // user-facing `seed_` is 0 (default random mode). It is this Run()'s session seed:
+  // `effective_seed_` for a plain Run() (== `seed_` when that is set, so the determinism
+  // contract is unchanged), a derived one for a continued Run() (see Run()'s entry).
+  SessionSpec spec{ &scene, {}, wl_param, session_seed_, std::move(raypath_color), ray_num, ray_alloc };
   spec.renders.reserve(renders.size());
   for (const auto& r : renders) {
     spec.renders.push_back(&r);

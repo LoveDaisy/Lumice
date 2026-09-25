@@ -428,7 +428,18 @@ extern "C" {
 // same value sizes both halves of the record (the per-worker interning table and the server's
 // histogram); see LUMICE_MAX_RAYPATH_CHAIN_CAPACITY for the bound and the memory it buys.
 // Nothing else moved.
-#define LUMICE_API_VERSION 443
+//
+// ADDED (v4.44): LUMICE_ContinueRender, a pure append — trace more rays INTO the accumulation the
+// last render run left behind, instead of starting over. Until now every run start was a reset:
+// LUMICE_CommitScene clears the render planes, the ray/energy totals and the exposure anchor even
+// when it reuses the consumers, so a user who wanted a less noisy picture of a finished run could
+// only throw it away and trace a bigger one from zero. No struct changed. One documented meaning
+// widened: the lifecycle epoch now advances on EVERY run start — commit, analysis, and this
+// continuation — rather than on reset-causing commits only (see LUMICE_SimLifecycleResult.epoch).
+// A continuation is a new run as far as the drain signal and frame freshness are concerned; had
+// it kept the epoch, LUMICE_GetDrainStatus would report the previous run's "drained" from its
+// first instant.
+#define LUMICE_API_VERSION 444
 #define LUMICE_MAX_RENDER_RESULTS 16
 #define LUMICE_MAX_STATS_RESULTS 1
 
@@ -506,7 +517,9 @@ typedef enum LUMICE_SessionKind_ {
 
 // {lifecycle, epoch, session_kind} snapshot of the backend lifecycle truth.
 //   lifecycle:    one of LUMICE_SimLifecycle.
-//   epoch:        monotonic generation counter, ++ on each reset-causing commit.
+//   epoch:        monotonic generation counter, ++ on each run start: every successful
+//                 LUMICE_CommitScene, LUMICE_StartRaypathAnalysis and
+//                 LUMICE_ContinueRender (the one start that resets no accumulator).
 //                 0 before any successful commit. Read back after a synchronous
 //                 commit to learn the just-minted epoch.
 //   session_kind: one of LUMICE_SessionKind — the kind of the session that is
@@ -1840,6 +1853,37 @@ LUMICE_ErrorCode LUMICE_GetColorOverflowInfo(LUMICE_Server* server, LUMICE_Color
 LUMICE_ErrorCode LUMICE_GetBackendFallbackFlag(LUMICE_Server* server, int* out_fell_back);
 
 void LUMICE_StopServer(LUMICE_Server* server);
+
+// Continue the committed RENDER: trace more rays into the accumulation the last run left behind
+// (v4.44). LUMICE_CommitScene always starts from zero; this is the other way to start a run.
+//
+// What carries over: everything a commit would reset — the render planes (raw XYZ and the images
+// made from them), sim_ray_num and the other statistics, emitted_energy, and the exposure anchor
+// (anchor_l99_sky) — so every result read afterwards describes the earlier rays and the new ones
+// together, and the picture does not jump in brightness beyond what more samples themselves
+// change. The scene is the committed one, unchanged; only the budget is new.
+//
+// The new rays are NEW random samples: each continuation traces a random stream of its own, also
+// on a server created with a fixed `sim_seed` (which would otherwise restart its stream and trace
+// the same rays again). A fixed-seed server stays reproducible — the same sequence of commits and
+// continuations traces the same rays.
+//
+// `additional_ray_num` is an INCREMENT, total across wavelengths — "this many more", not a new
+// total (unlike LUMICE_SceneSetSimParams' `ray_num`, which is the whole run's budget). `infinite`
+// non-zero ignores it and runs until LUMICE_StopServer.
+//
+// Lifecycle: works after a render run COMPLETED (a finite budget ran out) or was stopped (IDLE).
+// On success the lifecycle reads RUNNING and the epoch has advanced by one, exactly as after a
+// commit; poll LUMICE_GetSimLifecycle / LUMICE_GetDrainStatus as for any run, and the run ends
+// COMPLETED (finite) or stays RUNNING until stopped (infinite). A completed run whose last
+// batches are still being consumed is drained first, so no traced ray is dropped.
+//
+// Errors (a rejected call changes nothing): LUMICE_ERR_NULL_ARG (NULL server);
+// LUMICE_ERR_INVALID_VALUE (`infinite` == 0 with `additional_ray_num` == 0); LUMICE_ERR_SERVER
+// when there is nothing to continue — no render was ever committed, or the current session is a
+// raypath analysis (LUMICE_StartRaypathAnalysis; a render must be committed again first) — or
+// when a run is in progress.
+LUMICE_ErrorCode LUMICE_ContinueRender(LUMICE_Server* server, int infinite, LUMICE_RayCount additional_ray_num);
 
 // =============== Crystal Mesh ===============
 // Get crystal wireframe mesh for 3D preview.
