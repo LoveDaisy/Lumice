@@ -7,6 +7,7 @@
 // shader's globeBackFadeWeight, which GLSL cannot share with either. This file holds the two C++
 // copies to each other sample by sample and holds the shape to what the feature promises; the
 // shader is held to the CPU mirror by reading pixels (test/gui/functional/test_preview_globe_back_fade.cpp).
+// "To each other" means to within kSameFormulaTol, not bit for bit — see its comment.
 //
 // What the feature promises, as the cases below state it:
 //   * a range of 0 is the camera-facing hemisphere only — weight 0 everywhere, so the default
@@ -17,6 +18,7 @@
 //   * on the CLI side the far point lands on the SAME pixel as the near point of its ray — which is
 //     what lets the fade be a weight on the existing forward projection rather than a second one.
 
+#include <cfloat>
 #include <cmath>
 #include <cstring>
 
@@ -42,13 +44,29 @@ float MuAt(int i) {
   return 1.0f / kD - (1.0f / kD + 1.0f) * static_cast<float>(i) / static_cast<float>(kMuSteps);
 }
 
+// How far two evaluations of the SAME weight formula on the SAME mu may land apart, and why the
+// bound is absolute. The weight is an inline function in a header, and a test binary holds more
+// than one compiled copy of it: this TU is built without the -march flag, while lumice_obj is
+// built with LUMICE_ISA_LEVEL's (root CMakeLists.txt, lumice_apply_isa_march), and the linker keeps
+// ONE of the out-of-line copies of an inline function such as ProjectExitToPixel — which can be
+// lumice_obj's. With FMA available that copy contracts `1 - t*t*(3 - 2t)` into fused
+// multiply-adds, this TU's does not, and the result ends in `1 - x` with x near 1, so the rounding
+// difference is a fraction of FLT_EPSILON in absolute terms but unbounded in ULPs once the weight
+// nears 0 (one side rounds to 0, the other to a tiny positive number). Measured on a GCC 13 /
+// -march=native build over every float mu in [-1, 1/D] at six ranges: the largest absolute gap
+// is 0.5 * FLT_EPSILON. EXPECT_FLOAT_EQ's 4-ULP window is therefore the wrong ruler (it failed at
+// 11 ULP); 4 * FLT_EPSILON keeps an 8x margin and stays orders of magnitude below any real
+// defect — a wrong mu, the wrong point, or a drifted coefficient moves the weight by far more.
+constexpr float kSameFormulaTol = 4.0f * FLT_EPSILON;
+
 }  // namespace
 
-TEST(GlobeBackFade, CoreAndGuiCopiesAgreeExactly) {
+TEST(GlobeBackFade, CoreAndGuiCopiesAgree) {
   for (float range : kRanges) {
     for (int i = 0; i <= kMuSteps; ++i) {
       const float mu = MuAt(i);
-      EXPECT_EQ(lm_proj::GlobeBackFadeWeight(mu, range), lumice::gui::GlobeBackFadeWeight(mu, range))
+      // Not bit-exact: the two copies may be compiled under different flags (see kSameFormulaTol).
+      EXPECT_NEAR(lm_proj::GlobeBackFadeWeight(mu, range), lumice::gui::GlobeBackFadeWeight(mu, range), kSameFormulaTol)
           << "range=" << range << " mu=" << mu;
     }
   }
@@ -165,8 +183,10 @@ TEST(GlobeBackFade, ForwardProjectionPutsTheFarPointOnItsRaysPixel) {
     EXPECT_EQ(far1.hits[0].px, near1.hits[0].px) << "slope (" << a << ", " << b << ")";
     EXPECT_EQ(far1.hits[0].py, near1.hits[0].py) << "slope (" << a << ", " << b << ")";
     EXPECT_FALSE(far1.hits[0].bump_landed) << "a far-side hit must not move landed_weight";
-    // The eye-space mu of the far point is -c.z.
-    EXPECT_EQ(far1.hits[0].weight, lm_proj::GlobeBackFadeWeight(-cf[2], p.globe_back_fade));
+    // The eye-space mu of the far point is -c.z. The mu reaching the weight is bit-identical on both
+    // sides (the identity rotation is exact); the weight itself may come from a differently
+    // compiled copy of the formula (see kSameFormulaTol).
+    EXPECT_NEAR(far1.hits[0].weight, lm_proj::GlobeBackFadeWeight(-cf[2], p.globe_back_fade), kSameFormulaTol);
     EXPECT_GT(far1.hits[0].weight, 0.0f);
     EXPECT_LT(far1.hits[0].weight, 1.0f);
   }
