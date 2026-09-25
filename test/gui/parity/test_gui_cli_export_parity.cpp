@@ -381,6 +381,10 @@ struct ParityScene {
   // size disagreement is reported as itself rather than as a PSNR failure.
   int expect_w;
   int expect_h;
+  // The display mode (GuiState::RenderConfig::display_mode: 0 normal, 1 channel B-R). LAST and
+  // defaulted, unlike every field above, so the rows that predate it keep their initializers
+  // byte-unchanged and read as normal without restating it.
+  int display_mode = 0;
 };
 
 // Both scenes share one document (test/e2e/configs/halo_22.json: prism crystals, sun at 20
@@ -958,6 +962,15 @@ const ParityScene kScenes[] = {
    /*show_view_dist=*/false,
    /*show_grid=*/false, /*show_markers=*/false, /*exposure_offset=*/0.0f, /*grid_srgb=*/{ 1.0f, 1.0f, 1.0f },
    /*ray_num_millions=*/32.0f, /*bm4_threshold=*/42.1, /*expect_w=*/1024, /*expect_h=*/512},
+  // CHANNEL_BR_PLACEHOLDER
+  {"full_sky_dual_fisheye_channel_br",
+   lumice::gui::kLensTypeDualFisheyeEqualArea, 180.0f, 25.0f, 30.0f, 15.0f, lumice::gui::kVisibleFull,
+   /*background_srgb=*/{ 0.28f, 0.14f, 0.10f },
+   /*tone=*/0, /*paper_srgb=*/{ 1.0f, 1.0f, 1.0f },
+   gui::AspectPreset::kFree, /*aspect_portrait=*/false, /*show_horizon=*/false, /*show_sun_circles=*/false,
+   /*show_view_dist=*/false,
+   /*show_grid=*/false, /*show_markers=*/false, /*exposure_offset=*/0.0f, /*grid_srgb=*/{ 1.0f, 1.0f, 1.0f },
+   /*ray_num_millions=*/32.0f, /*bm4_threshold=*/45.0, /*expect_w=*/1024, /*expect_h=*/512, /*display_mode=*/1},
 };
 // clang-format on
 // 512 -> a 1024x512 dual-equal-area simulation texture, the smallest this suite offers. Both the
@@ -1260,6 +1273,8 @@ struct ExportedRenderInfo {
   // while being unreadable to the CLI, which is the asymmetry a string check catches and a numeric
   // one would not.
   std::string tone;
+  // The display mode the exported document names, read as its string for the reason `tone` is.
+  std::string display_mode;
   // `paper_read` is the ONLY answer to "did the export state a paper". The array carries no
   // sentinel of its own on purpose: two representations of one fact drift the moment a later
   // reader updates one of them, and this one would drift silently, since nothing reads the array
@@ -1302,6 +1317,7 @@ ExportedRenderInfo ParseExportedRenderInfo(const std::string& json_str) {
     info.horizon = jr["grid"].value("horizon", false);
   }
   info.tone = jr.value("tone", std::string());
+  info.display_mode = jr.value("display_mode", std::string());
   if (jr.contains("paper") && jr["paper"].is_array() && jr["paper"].size() == 3) {
     for (int i = 0; i < 3; i++) {
       info.paper[i] = jr["paper"][i].get<float>();
@@ -1385,6 +1401,9 @@ void RenderBothArms(ImGuiTestContext* ctx, const ParityScene& scene, ScopedServe
     // and the CLI through BuildScene's export arm, and whether those two agree is the subject.
     rc.tone = scene.tone;
     std::copy(std::begin(scene.paper_srgb), std::end(scene.paper_srgb), std::begin(rc.paper));
+    // The display mode, same route as `tone`: the preview shader through the per-frame assembly,
+    // the CLI through the export arm.
+    rc.display_mode = scene.display_mode;
     rc.sim_resolution_index = kSimResolutionIndex;
   }
   gui::g_state.aspect_preset = scene.aspect_preset;
@@ -1488,6 +1507,7 @@ void RenderBothArms(ImGuiTestContext* ctx, const ParityScene& scene, ScopedServe
   // never reached the export would otherwise compare two frames that agreed because both were
   // screen-toned, and the PSNR would look healthy.
   IM_CHECK_STR_EQ(info.tone.c_str(), scene.tone == 1 ? "print" : "screen");
+  IM_CHECK_STR_EQ(info.display_mode.c_str(), scene.display_mode == 1 ? "channel_br" : "normal");
   IM_CHECK(info.paper_read);
   IM_CHECK_EQ(info.intensity_factor, std::pow(2.0f, scene.exposure_offset));
   // Three separate assertions rather than one iterated over the channels: a fatal check inside a

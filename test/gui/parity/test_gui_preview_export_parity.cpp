@@ -219,98 +219,123 @@ int CountInsetPixelDiffs(const std::vector<unsigned char>& screen, const std::ve
 
 }  // namespace
 
+// The whole comparison, for one display mode. Every step and every rule above applies to both modes;
+// the channel-B-R diagnostic is a post-process in the same shader, so it is the same two arms reading
+// the same FBO, and byte-exact is the same bar.
+static void RunPreviewExportParity(ImGuiTestContext* ctx, int display_mode) {
+  ResetTestState();
+  g_req.Reset();
+  gui::g_state.renderer.display_mode = display_mode;
+
+  // The overlay families are off by default (gui_state.hpp), and a scene with no label in it
+  // would be blind to both of the defects this gate was built after. Lines and labels both: the
+  // label anchors come from the same annotation overlay the lines are drawn from.
+  gui::g_state.show_horizon_line = true;
+  gui::g_state.show_horizon_label = true;
+  gui::g_state.show_grid_line = true;
+  gui::g_state.show_grid_label = true;
+
+  // The exposure the XYZ branch divides by. RenderPreviewPanel feeds ComputeMonoExposure this
+  // field every frame, and at its post-reset 0 the resulting `intensity_scale` is 0 — a black
+  // frame, and an exposure term that multiplies away to nothing, which would put the exposure
+  // back outside what this comparison can see for a second reason. 1.0 makes the scale the
+  // exposure factor itself.
+  gui::g_state.snapshot_intensity = 1.0f;
+  gui::g_state.ev_auto = 0.0f;
+  gui::g_state.renderer.exposure_offset = 0.0f;
+
+  // Something for the projection to sample. A blank texture would make "the two arms show the
+  // same content" trivially true over most of the frame.
+  g_req.upload_requested = true;
+  ctx->Yield(2);
+  IM_CHECK(g_req.upload_done);
+  IM_CHECK(gui::g_preview.HasTexture());
+  // The viewport is published by RenderPreviewPanel a frame behind the upload, and the top bar
+  // syncs renderer state into g_preview_vp.params at draw time — one frame further still.
+  ctx->Yield(3);
+
+  // Off the preview, and off every widget: a hover highlight is drawn after the blit and would
+  // land inside the compared region if the cursor happened to rest on the panel.
+  ctx->MouseMoveToPos(ImVec2(-100.0f, -100.0f));
+  ctx->Yield(2);
+
+  IM_CHECK(gui::g_preview_vp.active);
+  const int vp_x = gui::g_preview_vp.vp_x;
+  const int vp_y = gui::g_preview_vp.vp_y;
+  const int vp_w = gui::g_preview_vp.vp_w;
+  const int vp_h = gui::g_preview_vp.vp_h;
+  IM_CHECK(vp_w > 2 * kInsetPx);
+  IM_CHECK(vp_h > 2 * kInsetPx);
+  // Not a boundary check: an empty list means the labelled half of this comparison is vacuous,
+  // and the case would keep passing while covering strictly less than it claims to.
+  IM_CHECK(!gui::g_preview_vp.curve_labels.empty());
+
+  // The screen arm. g_preview_vp's rectangle is already device pixels with a bottom-left origin
+  // — the space glReadPixels and the g_fullframe_capture rect protocol both work in — so it is
+  // passed through untouched. That absence of a coordinate conversion is why this is the right
+  // capture point: a conversion here would be a second implementation of the placement the
+  // comparison is supposed to be checking.
+  g_fullframe_capture.Reset();
+  g_fullframe_capture.rect_x = vp_x;
+  g_fullframe_capture.rect_y = vp_y;
+  g_fullframe_capture.rect_w = vp_w;
+  g_fullframe_capture.rect_h = vp_h;
+  g_fullframe_capture.requested.store(true);
+  for (int i = 0; i < 10 && !g_fullframe_capture.done.load(); ++i) {
+    ctx->Yield(1);
+  }
+  IM_CHECK(g_fullframe_capture.done.load());
+  IM_CHECK_EQ(g_fullframe_capture.width, vp_w);
+  IM_CHECK_EQ(g_fullframe_capture.height, vp_h);
+  const std::vector<unsigned char> screen = g_fullframe_capture.pixels;
+  IM_CHECK_EQ(screen.size(), static_cast<size_t>(vp_w) * vp_h * 4);
+
+  // The export arm, from the snapshot taken here — with no ctx interaction between the capture
+  // above and these copies, so what the export renders is what the captured frame published.
+  g_req.export_requested = false;
+  g_req.export_done = false;
+  g_req.export_ok = false;
+  g_req.rgba.clear();
+  g_req.params = gui::g_preview_vp.params;
+  g_req.curve_labels = gui::g_preview_vp.curve_labels;
+  g_req.dst_w = vp_w;
+  g_req.dst_h = vp_h;
+  g_req.dpi_x = gui::g_preview_vp.dpi_scale_x;
+  g_req.dpi_y = gui::g_preview_vp.dpi_scale_y;
+  g_req.export_requested = true;
+  ctx->Yield(2);
+  IM_CHECK(g_req.export_done);
+  IM_CHECK(g_req.export_ok);
+  IM_CHECK_EQ(g_req.rgba.size(), screen.size());
+
+  const int diffs = CountInsetPixelDiffs(screen, g_req.rgba, vp_w, vp_h);
+  const int compared = (vp_w - 2 * kInsetPx) * (vp_h - 2 * kInsetPx);
+  fprintf(stderr, "[preview_export_parity] display_mode %d, %dx%d inset %d px: %d/%d pixels differ\n", display_mode,
+          vp_w, vp_h, kInsetPx, diffs, compared);
+  IM_CHECK_EQ(diffs, 0);
+
+  // Not vacuous for the diagnostic: the frame the two arms agree on must actually BE the diagnostic
+  // — grey everywhere except under the coloured overlays. A shader whose branch never fired would
+  // agree with its export just as well.
+  if (display_mode == LUMICE_DISPLAY_MODE_CHANNEL_BR) {
+    int grey = 0;
+    for (size_t i = 0; i + 3 < screen.size(); i += 4) {
+      if (screen[i] == screen[i + 1] && screen[i] == screen[i + 2]) {
+        ++grey;
+      }
+    }
+    fprintf(stderr, "[preview_export_parity] channel_br: %d/%d pixels grey\n", grey, vp_w * vp_h);
+    IM_CHECK_GT(grey, vp_w * vp_h * 9 / 10);
+  }
+}
+
 void RegisterPreviewExportParityTests(ImGuiTestEngine* engine) {
   ImGuiTest* t = IM_REGISTER_TEST(engine, "preview_export_parity", "the_screen_and_the_export_read_the_same_fbo");
   t->GuiFunc = PreviewExportGuiFunc;
-  t->TestFunc = [](ImGuiTestContext* ctx) {
-    ResetTestState();
-    g_req.Reset();
+  t->TestFunc = [](ImGuiTestContext* ctx) { RunPreviewExportParity(ctx, LUMICE_DISPLAY_MODE_NORMAL); };
 
-    // The overlay families are off by default (gui_state.hpp), and a scene with no label in it
-    // would be blind to both of the defects this gate was built after. Lines and labels both: the
-    // label anchors come from the same annotation overlay the lines are drawn from.
-    gui::g_state.show_horizon_line = true;
-    gui::g_state.show_horizon_label = true;
-    gui::g_state.show_grid_line = true;
-    gui::g_state.show_grid_label = true;
-
-    // The exposure the XYZ branch divides by. RenderPreviewPanel feeds ComputeMonoExposure this
-    // field every frame, and at its post-reset 0 the resulting `intensity_scale` is 0 — a black
-    // frame, and an exposure term that multiplies away to nothing, which would put the exposure
-    // back outside what this comparison can see for a second reason. 1.0 makes the scale the
-    // exposure factor itself.
-    gui::g_state.snapshot_intensity = 1.0f;
-    gui::g_state.ev_auto = 0.0f;
-    gui::g_state.renderer.exposure_offset = 0.0f;
-
-    // Something for the projection to sample. A blank texture would make "the two arms show the
-    // same content" trivially true over most of the frame.
-    g_req.upload_requested = true;
-    ctx->Yield(2);
-    IM_CHECK(g_req.upload_done);
-    IM_CHECK(gui::g_preview.HasTexture());
-    // The viewport is published by RenderPreviewPanel a frame behind the upload, and the top bar
-    // syncs renderer state into g_preview_vp.params at draw time — one frame further still.
-    ctx->Yield(3);
-
-    // Off the preview, and off every widget: a hover highlight is drawn after the blit and would
-    // land inside the compared region if the cursor happened to rest on the panel.
-    ctx->MouseMoveToPos(ImVec2(-100.0f, -100.0f));
-    ctx->Yield(2);
-
-    IM_CHECK(gui::g_preview_vp.active);
-    const int vp_x = gui::g_preview_vp.vp_x;
-    const int vp_y = gui::g_preview_vp.vp_y;
-    const int vp_w = gui::g_preview_vp.vp_w;
-    const int vp_h = gui::g_preview_vp.vp_h;
-    IM_CHECK(vp_w > 2 * kInsetPx);
-    IM_CHECK(vp_h > 2 * kInsetPx);
-    // Not a boundary check: an empty list means the labelled half of this comparison is vacuous,
-    // and the case would keep passing while covering strictly less than it claims to.
-    IM_CHECK(!gui::g_preview_vp.curve_labels.empty());
-
-    // The screen arm. g_preview_vp's rectangle is already device pixels with a bottom-left origin
-    // — the space glReadPixels and the g_fullframe_capture rect protocol both work in — so it is
-    // passed through untouched. That absence of a coordinate conversion is why this is the right
-    // capture point: a conversion here would be a second implementation of the placement the
-    // comparison is supposed to be checking.
-    g_fullframe_capture.Reset();
-    g_fullframe_capture.rect_x = vp_x;
-    g_fullframe_capture.rect_y = vp_y;
-    g_fullframe_capture.rect_w = vp_w;
-    g_fullframe_capture.rect_h = vp_h;
-    g_fullframe_capture.requested.store(true);
-    for (int i = 0; i < 10 && !g_fullframe_capture.done.load(); ++i) {
-      ctx->Yield(1);
-    }
-    IM_CHECK(g_fullframe_capture.done.load());
-    IM_CHECK_EQ(g_fullframe_capture.width, vp_w);
-    IM_CHECK_EQ(g_fullframe_capture.height, vp_h);
-    const std::vector<unsigned char> screen = g_fullframe_capture.pixels;
-    IM_CHECK_EQ(screen.size(), static_cast<size_t>(vp_w) * vp_h * 4);
-
-    // The export arm, from the snapshot taken here — with no ctx interaction between the capture
-    // above and these copies, so what the export renders is what the captured frame published.
-    g_req.export_requested = false;
-    g_req.export_done = false;
-    g_req.export_ok = false;
-    g_req.rgba.clear();
-    g_req.params = gui::g_preview_vp.params;
-    g_req.curve_labels = gui::g_preview_vp.curve_labels;
-    g_req.dst_w = vp_w;
-    g_req.dst_h = vp_h;
-    g_req.dpi_x = gui::g_preview_vp.dpi_scale_x;
-    g_req.dpi_y = gui::g_preview_vp.dpi_scale_y;
-    g_req.export_requested = true;
-    ctx->Yield(2);
-    IM_CHECK(g_req.export_done);
-    IM_CHECK(g_req.export_ok);
-    IM_CHECK_EQ(g_req.rgba.size(), screen.size());
-
-    const int diffs = CountInsetPixelDiffs(screen, g_req.rgba, vp_w, vp_h);
-    const int compared = (vp_w - 2 * kInsetPx) * (vp_h - 2 * kInsetPx);
-    fprintf(stderr, "[preview_export_parity] %dx%d inset %d px: %d/%d pixels differ\n", vp_w, vp_h, kInsetPx, diffs,
-            compared);
-    IM_CHECK_EQ(diffs, 0);
-  };
+  // The channel-B-R display mode: the Screenshot must carry the diagnostic the screen shows.
+  ImGuiTest* t_br = IM_REGISTER_TEST(engine, "preview_export_parity", "the_channel_br_diagnostic_exports_as_shown");
+  t_br->GuiFunc = PreviewExportGuiFunc;
+  t_br->TestFunc = [](ImGuiTestContext* ctx) { RunPreviewExportParity(ctx, LUMICE_DISPLAY_MODE_CHANNEL_BR); };
 }
