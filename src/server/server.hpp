@@ -638,8 +638,16 @@ class Server {
    * @param additional_ray_num Rays to add, total across wavelengths (the same unit as the
    *        scene's ray_num); kInfSize runs until Stop().
    * @return Error::ServerError when there is nothing to continue — the current session is an
-   *         analysis, no render was ever committed — or when a run is in progress;
-   *         Error::InvalidValue for a zero budget. A rejected call changes nothing.
+   *         analysis, no render was ever committed, a run is in progress, or a just-completed
+   *         run's last batches did not finish draining within an internal bound (retry shortly:
+   *         this is "no traced ray is dropped" failing safe rather than silently, code review
+   *         round 1 Major #1); Error::InvalidValue for a zero budget. A rejected call changes
+   *         nothing.
+   * @note Same implicit rule as CommitConfig: this mutates session state
+   *       (continuation_serial_, active_scene_, scene_generation_) with no internal
+   *       serialization of its own, so the caller must not invoke this concurrently with another
+   *       call to ContinueRun or CommitConfig (code review round 2, Minor #1) — exactly the
+   *       existing single-writer assumption every C API mutator here already relies on.
    */
   Error ContinueRun(size_t additional_ray_num);
 

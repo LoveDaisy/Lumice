@@ -564,7 +564,11 @@ the previous run's planes, totals and anchor. What it does instead:
 1. Reject unless the session is a render (`mode_ == kRender`), a render was committed
    (`active_scene_` non-null), and the lifecycle is not `RUNNING`. After a `COMPLETED` run, wait
    for the drain signal first — `Stop()` below would otherwise discard batches still queued for
-   the consumer.
+   the consumer. The wait is capped at 5s (a generous multiple of a normal consumer pass); a call
+   that hits the cap rejects with `Error::ServerError` instead of proceeding to `Stop()` anyway —
+   code review round 1, Major #1: the earlier behavior (warn, then continue and drop the undrained
+   batches while still returning success) contradicted this function's own "no traced ray is
+   dropped" guarantee.
 2. **`Stop()`** — the same function as step 2. After a user stop it is a no-op; after a natural
    completion it releases the workers still parked inside `Simulator::Run()` on the empty queue,
    so that every worker re-enters `Run()` in step 5. It clears `snapshot_dirty_` /
@@ -579,6 +583,12 @@ the previous run's planes, totals and anchor. What it does instead:
    The epoch is not a "reset happened" marker: the drain signal and a frame's freshness are keyed
    on it, and a continuation that kept it would read as already drained from its first instant.
 5. **`Start()`** — unchanged.
+
+Like `CommitConfig`, `ContinueRun` has no internal serialization of its own against a concurrent
+call to itself or to `CommitConfig` — both mutate `active_scene_` / `scene_generation_` /
+`committed_epoch_` under the same single-writer assumption every C API mutator here already
+relies on (code review round 2, Minor #1). This is an existing convention made explicit, not a
+new restriction.
 
 ### §7.2 Buffer Lifetime Rules
 
