@@ -76,7 +76,7 @@ Three things to know before reading the numbers:
 - **Clipping flattens it.** Once red or blue reaches full brightness it stops growing, so the difference is compressed in the brightest parts of the image.
 - **So compare places at the same EV** — two readings taken at different exposures are not comparable.
 
-Overlays (grid, circles, markers, labels, lens border) are drawn on top in their own colours. The background photo and the Colored raypath composite are hidden while the diagnostic is on (your settings for them are kept), and under **Mode ▶ Print** the option is greyed out: print has no separate red and blue to subtract. Screenshot exports what the screen shows, and an exported config carries `"display_mode": "channel_br"`, so the CLI renders the same grey image.
+Overlays (grid, circles, markers, labels, lens border) are drawn on top in their own colours. The background photo and the Colored raypath composite are hidden while the diagnostic is on (your settings for them are kept), and under **Mode ▶ Print** the option is greyed out: print has no separate red and blue to subtract. Screenshot exports what the screen shows by default, and its options window can also export the other display mode for just that one picture (see [§6](#6-save-and-reload)); an exported config carries `"display_mode": "channel_br"`, so the CLI renders the same grey image.
 
 ## 5. Author a new entry from scratch
 
@@ -97,6 +97,8 @@ Want to build a halo recipe yourself instead of opening the example? The shortes
 ## 6. Save and reload
 
 `File ▶ Save As` writes a `.lmc` (a JSON document Lumice can also run from the CLI). Reopening it in the GUI restores **crystal / light / render** data, the lens projection and the overlay settings — but **not** pure viewing state such as the crystal preview style. See [`05-faq.md`](05-faq.md) "GUI vs JSON capabilities" for the full divergence list.
+
+To keep the picture itself, use `Save ▶ Screenshot...`. Before asking for a file name it opens an options window, prefilled with exactly what the preview shows: a **Line** and a **Label** box for each overlay (horizon, grid, lens border, the two families of angular-distance circles, the reference points) and the display mode (Normal / Channel B−R). Untick what this one picture should leave out — say, the grid's numbers but not its lines. Overlays the preview is not showing are greyed out: the options window can only take away, so turn an overlay on in the Overlay panel first if you want it in the picture. The choice applies to that export only; the panel and the preview stay as they were, and the next Screenshot starts from the screen again.
 
 ## Further reading
 

@@ -615,6 +615,7 @@ struct ScopedPopups {
 
 void RegisterViewDisplayControlTests(ImGuiTestEngine* engine);
 void RegisterExportPreviewTests(ImGuiTestEngine* engine);
+void RegisterScreenshotExportOptionsTests(ImGuiTestEngine* engine);
 void RegisterPreviewPixelTests(ImGuiTestEngine* engine);
 void RegisterPreviewTextureTests(ImGuiTestEngine* engine);
 void RegisterPreviewBackgroundTests(ImGuiTestEngine* engine);

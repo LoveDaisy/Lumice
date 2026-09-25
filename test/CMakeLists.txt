@@ -393,6 +393,9 @@ if(BUILD_GUI)
     "${PROJ_TEST_DIR}/unit-correctness/gui/test_backend_fallback_warning.cpp"
     "${PROJ_TEST_DIR}/unit-correctness/gui/test_preview_renderer.cpp"
     "${PROJ_TEST_DIR}/unit-correctness/gui/test_export_params.cpp"
+    # The Screenshot export options' line half: prefill = the screen, subtract-only clamp, the
+    # display mode and the photo it carries.
+    "${PROJ_TEST_DIR}/unit-correctness/gui/test_screenshot_export_options.cpp"
     "${PROJ_TEST_DIR}/unit-correctness/gui/test_crystal_renderer.cpp"
     "${PROJ_TEST_DIR}/unit-correctness/gui/test_render_handedness_guard.cpp"
     "${PROJ_TEST_DIR}/unit-correctness/gui/test_visible_mask_gui_parity.cpp"
@@ -538,6 +541,9 @@ if(BUILD_GUI)
     # binding dropped, since the pool its buffers were copied from has been replaced.
     "${PROJ_TEST_DIR}/composition-correctness/gui/test_edit_modal_document_reset_chain.cpp"
     "${PROJ_TEST_DIR}/composition-correctness/gui/test_preview_projection_chain.cpp"
+    # Core anchors -> the family label builders -> the Screenshot export options: the text half,
+    # gated per family apart from the lines.
+    "${PROJ_TEST_DIR}/composition-correctness/gui/test_screenshot_export_label_sets.cpp"
     "${PROJ_TEST_DIR}/composition-correctness/gui/test_absolute_ev_additivity_chain.cpp"
     # Analysis result -> Exclude -> filter pool -> exported core JSON: the closure the Raypath
     # Analysis panel promises the CLI, asserted on the JSON the export hands over.

@@ -36,12 +36,11 @@ namespace {
 // them with a group of per-value buttons that has no single widget label to read back:
 //   - renderer.visible: three RadioButtons (Upper / Full / Lower) under a SeparatorText
 //     ("Visibility") that names the group; the registry's "Visible" is the page's word alone.
-//   - renderer.display_mode: a segmented control in the preview's top-right corner whose segments
-//     are the value names themselves (Normal / Channel B-R); the registry's "Show As" is what the
-//     Settings panel and the Summary page print, and no main-panel widget carries it.
 // Excluded from the scans below by name — each exception is stated here, once, rather than by a
-// pattern that would silently widen.
-constexpr const char* kExcludedFromLabelParityCheck[] = { "renderer.visible", "renderer.display_mode" };
+// pattern that would silently widen. (renderer.display_mode was the second one until the
+// Screenshot export options gave its "Show As" a heading of its own; it is now read there through
+// PanelLabel and covered by the rule like any other key.)
+constexpr const char* kExcludedFromLabelParityCheck[] = { "renderer.visible" };
 
 bool IsExcludedFromLabelParityCheck(const std::string& key) {
   for (const char* excluded : kExcludedFromLabelParityCheck) {

@@ -521,6 +521,14 @@ inline bool IsChannelBrDisplay(const RenderConfig& renderer) {
   return renderer.display_mode == LUMICE_DISPLAY_MODE_CHANNEL_BR && !IsPrintTone(renderer);
 }
 
+// Is the background photo in the frame this renderer draws? The pure half of BgPhotoOnScreen
+// (app.hpp), which supplies `has_background` from the live renderer; split out so a caller asking
+// about a renderer OTHER than the document's — the Screenshot export in the other display mode —
+// reads the same rule instead of restating it.
+inline bool BgPhotoInFrame(bool has_background, bool bg_show, const RenderConfig& renderer) {
+  return has_background && bg_show && !IsPrintTone(renderer) && !IsChannelBrDisplay(renderer);
+}
+
 // Has this renderer's ground run out of room for the picture to show against?
 //
 // doc/print-mode-subtractive-ink.md §8 (owner decision D6): the two tone operators have one
@@ -2089,10 +2097,16 @@ struct GuiState {
 // needs the projection (a name is placed at a point) but draws no ring, so collapsing them would
 // make one of the two call sites wrong.
 //
-// There is deliberately no third, `AnyMarkerShown`: nothing in the product asks it. The panel's
-// per-row clipping notice reads that marker's own switch, and [All]/[None] assign rather than test.
+// A third, `AnyMarkerShown` (below), was deliberately absent until something asked it: the
+// Screenshot export options treat the six rings as one family, and "is any ring on screen" is what
+// decides whether that family's line box can be ticked at all. The panel's per-row clipping notice
+// still reads that marker's own switch, and [All]/[None] still assign rather than test.
 inline bool AnyMarkerLabelShown(const GuiState& s) {
   return std::any_of(s.markers.begin(), s.markers.end(), [](const MarkerAppearance& m) { return m.label; });
+}
+// Whether ANY marker's ring is switched on — the line half of AnyMarkerLabelShown.
+inline bool AnyMarkerShown(const GuiState& s) {
+  return std::any_of(s.markers.begin(), s.markers.end(), [](const MarkerAppearance& m) { return m.show; });
 }
 // Whether core has to project ANY marker for this frame. Either switch counts, exactly like the
 // horizon's two: a user drawing only the names still needs the positions the names are placed at.

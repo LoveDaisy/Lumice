@@ -167,6 +167,8 @@ bool g_show_save_modified_popup = false;
 PendingSaveKind g_pending_save_kind = PendingSaveKind::kNone;
 
 bool g_show_export_overwrite_confirm_popup = false;
+bool g_show_screenshot_export_options_popup = false;
+ScreenshotExportSelection g_screenshot_export_selection;
 std::filesystem::path g_pending_export_json_path;
 std::string g_pending_export_json_content;
 
@@ -470,12 +472,20 @@ static PreviewParams BuildExportParams() {
 }
 
 void DoExportPreviewPng() {
-  auto path = ShowExportPngDialog();
-  if (path.empty()) {
-    return;
-  }
+  g_screenshot_export_selection = MakeScreenshotExportSelectionFromState(g_state);
+  g_show_screenshot_export_options_popup = true;
+}
 
+ScreenshotFrameFacts CurrentScreenshotFrameFacts() {
+  ScreenshotFrameFacts facts;
+  facts.has_background = g_preview.HasBackground();
+  facts.payload_is_composite = g_last_uploaded_payload != nullptr && g_last_uploaded_payload->is_composite;
+  return facts;
+}
+
+ScreenshotRender RenderScreenshot(const ScreenshotExportSelection& sel) {
   PreviewParams params = BuildExportParams();
+  ApplyScreenshotExportSelectionToParams(sel, g_state, CurrentScreenshotFrameFacts(), params);
 
   int w = g_preview_vp.vp_w;
   int h = g_preview_vp.vp_h;
@@ -490,43 +500,43 @@ void DoExportPreviewPng() {
   // the defect this alignment removes: the two paths now name the same rectangle in the same
   // units, so there is no conversion left for one of them to do differently.
   //
-  // WHICH labels appear is decided by the Overlay panel's per-family switches alone. There is no
-  // second, export-only gate: a screenshot shows the overlay the screen shows, and a user wanting
-  // a clean image turns the families off where they turned them on.
+  // WHICH lines and labels appear is the Overlay panel's per-family switches intersected with the
+  // export options the user just confirmed (screenshot_export_options.hpp). That selection is a
+  // second gate, and an earlier one — "Include Overlay in Screenshot" — was removed for
+  // disagreeing with the panel: it defaulted off, did not persist, and gated only the text. This
+  // one is prefilled from the panel on every open, lives for this one export, gates lines and
+  // labels separately, and can only take away what the screen shows, so untouched it IS the
+  // screen and it has no state of its own to drift.
   const float dpi_x = g_preview_vp.dpi_scale_x;
   const float dpi_y = g_preview_vp.dpi_scale_y;
   const float label_w = DeviceToLogical(w, dpi_x);
   const float label_h = DeviceToLogical(h, dpi_y);
-  std::vector<CurveLabelSet> curve_labels;
-  if (g_state.show_horizon_label) {
-    curve_labels.push_back(BuildHorizonLabelSet(PreviewAnnotationAnchors(), g_state, label_w, label_h));
+  const std::vector<CurveLabelSet> curve_labels =
+      BuildScreenshotExportLabelSets(PreviewAnnotationAnchors(), g_state, sel, label_w, label_h);
+  ScreenshotRender out;
+  out.w = w;
+  out.h = h;
+  out.has_labels = !curve_labels.empty();
+  out.rgba = RenderExportToRgba(g_preview, params, w, h, curve_labels, dpi_x, dpi_y);
+  return out;
+}
+
+void PerformScreenshotExport(const ScreenshotExportSelection& sel) {
+  auto path = ShowExportPngDialog();
+  if (path.empty()) {
+    return;
   }
-  if (g_state.show_sun_circles_label) {
-    curve_labels.push_back(BuildSunCirclesLabelSet(PreviewAnnotationAnchors(), g_state, label_w, label_h));
-  }
-  if (g_state.show_view_dist_label) {
-    curve_labels.push_back(BuildViewDistLabelSet(PreviewAnnotationAnchors(), g_state, label_w, label_h));
-  }
-  if (g_state.show_grid_label) {
-    curve_labels.push_back(BuildGridLabelSet(PreviewAnnotationAnchors(), g_state, label_w, label_h));
-  }
-  // No outer switch to gate on, unlike the three above: each marker carries its own label switch,
-  // so the builder returns an empty vector when none of the six is on and the gate would only
-  // restate that. Built at label_w/label_h like the three above, for the same reason.
-  for (CurveLabelSet& set : BuildMarkerLabelSets(PreviewAnnotationAnchors(), g_state, label_w, label_h)) {
-    curve_labels.push_back(std::move(set));
-  }
-  auto rgba = RenderExportToRgba(g_preview, params, w, h, curve_labels, dpi_x, dpi_y);
-  if (rgba.empty()) {
-    GUI_LOG_ERROR("[GUI] Export screenshot failed: RenderExportToRgba returned empty (vp={}x{})", w, h);
+  const ScreenshotRender shot = RenderScreenshot(sel);
+  if (shot.rgba.empty()) {
+    GUI_LOG_ERROR("[GUI] Export screenshot failed: RenderExportToRgba returned empty (vp={}x{})", shot.w, shot.h);
     return;
   }
 
-  if (!WriteRgbaBufferToPng(path, w, h, rgba)) {
+  if (!WriteRgbaBufferToPng(path, shot.w, shot.h, shot.rgba)) {
     GUI_LOG_ERROR("[GUI] Export screenshot failed: PNG write error path={}", PathToU8(path));
     return;
   }
-  GUI_LOG_INFO("[GUI] Export screenshot{}: {}", curve_labels.empty() ? "" : " (overlay)", PathToU8(path));
+  GUI_LOG_INFO("[GUI] Export screenshot{}: {}", shot.has_labels ? " (overlay)" : "", PathToU8(path));
 }
 
 void DoExportDualFisheyeEqualAreaPng() {
@@ -665,8 +675,7 @@ void CancelPendingConfigJsonExport() {
 }
 
 bool BgPhotoOnScreen(const GuiState& state) {
-  return g_preview.HasBackground() && state.bg_show && !IsPrintTone(state.renderer) &&
-         !IsChannelBrDisplay(state.renderer);
+  return BgPhotoInFrame(g_preview.HasBackground(), state.bg_show, state.renderer);
 }
 
 // The background photo lives in two places that must agree: the GL texture the shader samples and
