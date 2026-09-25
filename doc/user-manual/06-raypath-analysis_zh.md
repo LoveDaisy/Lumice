@@ -202,3 +202,4 @@ clean = [r for r in rows if r[0] != "other (not recorded)" and not repeats(r[0])
 - 完整面板参考 → [`../gui-guide.md`](../gui-guide.md)
 - 「Exclude this raypath」用到的 filter 语法 → [`../gui-guide.md`](../gui-guide.md) 「Filter Tab」一节
 - 设计记录与机制细节 → [`../raypath-analysis-panel.md`](../raypath-analysis-panel.md)
+- 功能为什么这么拆、接下来往哪走 → [`../raypath-analysis.md`](../raypath-analysis.md)
