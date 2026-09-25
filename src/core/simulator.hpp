@@ -74,6 +74,31 @@ struct SimBatch {
   // a synchronized channel between the workers and the server, not a snapshot;
   // its own mutex is the whole of its thread contract.
   std::shared_ptr<RayAllocationOnline> ray_alloc_online_;
+  // Two granularities, deliberately separated: ray_num_ is how many rays cross the
+  // queue in ONE handoff (one lock on the way in, one on the way out), while
+  // physics_ray_num_ is how many rays the worker traces as one physics batch — one
+  // wavelength draw, one ray-allocation snapshot, one SimData. 0 (the default)
+  // means "the whole handoff is one physics batch", which is every GPU-route
+  // batch. The CPU route sets it so a handoff carries several physics batches
+  // back to back: each is traced exactly as a batch of that size used to be when
+  // it was queued on its own, so the per-ray work and the RNG stream a worker
+  // consumes are unchanged, and only the number of cross-thread handoffs per ray
+  // drops. (Why that number had to drop: doc/performance-testing.md, "CPU worker
+  // handoff grain".)
+  size_t physics_ray_num_ = 0;
+
+  // The physics batch size this handoff is traced in (see physics_ray_num_).
+  size_t PhysicsRayNum() const {
+    return (physics_ray_num_ == 0 || physics_ray_num_ >= ray_num_) ? ray_num_ : physics_ray_num_;
+  }
+  // How many physics batches — hence how many legacy-path SimData per wavelength —
+  // this handoff produces. The server credits its in-flight counter with this
+  // (times the wavelength count) before publishing, and the consumer takes one
+  // back per SimData, so the two sides stay paired whatever the split.
+  size_t PhysicsBatchCount() const {
+    const size_t per = PhysicsRayNum();
+    return per == 0 ? 1 : (ray_num_ + per - 1) / per;
+  }
 };
 
 // The online authority of one adaptive scene's ray allocation: the cumulative
@@ -412,6 +437,16 @@ class Simulator {
 
   QueuePtrS<SimBatch> config_queue_;
   QueuePtrS<SimData> data_queue_;
+  // Legacy-path SimData produced inside the current handoff, not yet handed to
+  // data_queue_. SimulateOneWavelength appends here instead of enqueuing, and
+  // Run() hands the lot over with one Queue::EmplaceMany — at the end of every
+  // handoff (unconditionally, on every way out of it), and earlier whenever the
+  // oldest entry has waited kPendingSimDataMaxAge, so a heavy scene's first image
+  // does not wait for a whole multi-batch handoff to finish. Touched only on this
+  // Simulator's own thread.
+  std::vector<SimData> pending_sim_data_;
+  static constexpr auto kPendingSimDataMaxAgeMs = 5;
+  void FlushPendingSimData();
   std::atomic_bool stop_;
   std::atomic_bool idle_;
 

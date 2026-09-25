@@ -10,6 +10,7 @@
 #include <memory>
 #include <numeric>
 #include <set>
+#include <string>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -1626,6 +1627,116 @@ TEST(SimulatorEmittedEnergy, IlluminantChargesTheBandExpectationNotTheSampledWei
   ASSERT_GT(totals.sim_data_count, 0u);
   EXPECT_NEAR(totals.emitted, expected, expected * 1e-5);
 }
+
+
+// ============================================================================
+// Handoff grain vs physics grain (SimBatch::physics_ray_num_)
+// ============================================================================
+//
+// A CPU-route handoff carries several physics batches. The claim that lets the
+// server do that without touching what gets traced: one SimBatch of R rays split
+// at P is the same trace, SimData for SimData, as the ceil(R/P) batches of P rays
+// (and the short remainder) it replaces, queued one after another to the same
+// worker. A fixed seed makes that checkable to the bit.
+
+namespace {
+
+std::vector<SimData> RunBatchesAndCollect(const SceneConfig& scene, const std::vector<SimBatch>& shapes) {
+  auto config_queue = std::make_shared<Queue<SimBatch>>();
+  auto data_queue = std::make_shared<Queue<SimData>>();
+  Simulator sim(config_queue, data_queue, /*seed=*/4321);
+  auto shared_scene = std::make_shared<const SceneConfig>(scene);
+  for (const auto& shape : shapes) {
+    SimBatch batch;
+    batch.ray_num_ = shape.ray_num_;
+    batch.physics_ray_num_ = shape.physics_ray_num_;
+    batch.scene_ = shared_scene;
+    batch.generation_ = 1;
+    config_queue->Emplace(std::move(batch));
+  }
+  config_queue->Emplace(SimBatch{});  // ray_num_ == 0 → Run() exits
+  std::thread runner([&] { sim.Run(); });
+  runner.join();
+  std::vector<SimData> out;
+  while (!data_queue->Empty()) {
+    out.push_back(data_queue->Get());
+  }
+  return out;
+}
+
+SimBatch Shape(size_t ray_num, size_t physics_ray_num = 0) {
+  SimBatch b;
+  b.ray_num_ = ray_num;
+  b.physics_ray_num_ = physics_ray_num;
+  return b;
+}
+
+}  // namespace
+
+TEST(SimBatchGrain, PhysicsBatchArithmetic) {
+  EXPECT_EQ(Shape(2048, 128).PhysicsRayNum(), 128u);
+  EXPECT_EQ(Shape(2048, 128).PhysicsBatchCount(), 16u);
+  EXPECT_EQ(Shape(677, 128).PhysicsBatchCount(), 6u) << "a short tail is a physics batch of its own";
+  EXPECT_EQ(Shape(100, 128).PhysicsRayNum(), 100u) << "a handoff smaller than the grain is one physics batch";
+  EXPECT_EQ(Shape(100, 128).PhysicsBatchCount(), 1u);
+  EXPECT_EQ(Shape(262144).PhysicsRayNum(), 262144u) << "0 = unsplit (every GPU-route batch)";
+  EXPECT_EQ(Shape(262144).PhysicsBatchCount(), 1u);
+}
+
+TEST(SimBatchGrain, SplitHandoffIsTheSameTraceAsItsPhysicsBatchesQueuedOneByOne) {
+  // 677 = 5 x 128 + 37: the tail must come out as its own short physics batch, in
+  // the same place in the RNG stream as the short batch it replaces.
+  const SceneConfig scene = MakeTwoWavelengthScene({ { 450.0f, 0.25f }, { 650.0f, 1.75f } });
+  const auto one_by_one =
+      RunBatchesAndCollect(scene, { Shape(128), Shape(128), Shape(128), Shape(128), Shape(128), Shape(37) });
+  const auto split = RunBatchesAndCollect(scene, { Shape(677, 128) });
+
+  ASSERT_EQ(one_by_one.size(), 6u * 2u) << "one SimData per physics batch per wavelength";
+  ASSERT_EQ(split.size(), one_by_one.size());
+  for (size_t i = 0; i < split.size(); ++i) {
+    SCOPED_TRACE("SimData #" + std::to_string(i));
+    EXPECT_EQ(split[i].root_ray_count_, one_by_one[i].root_ray_count_);
+    EXPECT_EQ(split[i].curr_wl_, one_by_one[i].curr_wl_);
+    EXPECT_EQ(split[i].emitted_energy_, one_by_one[i].emitted_energy_);
+    EXPECT_EQ(split[i].ray_seg_count_, one_by_one[i].ray_seg_count_);
+    EXPECT_EQ(split[i].outgoing_w_, one_by_one[i].outgoing_w_) << "same rays, same RNG stream, same exits";
+    EXPECT_EQ(split[i].outgoing_d_, one_by_one[i].outgoing_d_);
+  }
+}
+
+TEST(SimBatchGrain, StopMidHandoffEndsItAtThePhysicsBatchBoundary) {
+  // A handoff is many physics batches long, so Stop() must not wait for the rest of
+  // it: the worker ends the handoff at the next physics-batch boundary, which keeps
+  // Stop()'s latency at one physics batch, where it was when each was queued on its
+  // own. (What happens to the data is the queue's business, not the handoff's:
+  // Simulator::Stop shuts both queues down, which discards whatever they hold —
+  // finished physics batches included, split or not.)
+  struct StopAfter {
+    Simulator* sim = nullptr;
+    int calls = 0;
+  } ctl;
+  auto observer = [](void* ctx, const RayBuffer&) {
+    auto* c = static_cast<StopAfter*>(ctx);
+    if (++c->calls == 2) {
+      c->sim->Stop();
+    }
+  };
+  auto config_queue = std::make_shared<Queue<SimBatch>>();
+  auto data_queue = std::make_shared<Queue<SimData>>();
+  Simulator sim(config_queue, data_queue, /*seed=*/4321);
+  ctl.sim = &sim;
+  sim.SetAllDataObserverForTest(observer, &ctl);
+  SimBatch batch = Shape(16 * 128, 128);
+  // Single wavelength so "one physics batch" is "one observer call".
+  batch.scene_ = std::make_shared<const SceneConfig>(MakeTwoWavelengthScene({ { 550.0f, 1.0f } }));
+  batch.generation_ = 1;
+  config_queue->Emplace(std::move(batch));
+  std::thread runner([&] { sim.Run(); });
+  runner.join();  // Stop() shut the config queue, so Run() returns rather than waiting for more
+
+  EXPECT_EQ(ctl.calls, 2) << "the 14 physics batches after the Stop() must not be traced";
+}
+
 
 }  // namespace
 

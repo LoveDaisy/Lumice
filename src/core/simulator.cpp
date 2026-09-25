@@ -1507,178 +1507,219 @@ void Simulator::Run() {
     const auto& config = *batch.scene_;
     auto generation = batch.generation_;
     idle_ = false;
-    // Single derivation point for the config-constant half of the crystal count
-    // (see the member's declaration for why it is not gated on a generation change).
-    deterministic_crystal_count_ = DeterministicCrystalCount(config);
-    deterministic_orientation_count_ = DeterministicOrientationCount(config);
-
-    // Reset carry when config changes (new generation = new proportions).
-    if (generation != prev_generation) {
-      ray_alloc_carry.clear();
-      // scrum-312 third-clock: flush the old generation's device XYZ window
-      // BEFORE any new-generation batch traces into the (shared, persistent)
-      // device buffer — otherwise the new generation's atomicAdds would mix into
-      // the old generation's un-drained accumulation.
-      DrainDeviceXyz(backend.get());
-      prev_generation = generation;
-    }
-
-    // Online ray allocation (scene.ray_allocation = adaptive): ONE snapshot per
-    // SimBatch, Loaded here and held for every wavelength of the batch, so the q
-    // a ray is corrected by depends only on batches that finished before this one
-    // started; every wavelength's tally is Accumulated right after it is traced.
-    // Null on proportional and analysis batches — then nothing is loaded, nothing
-    // is tallied, and the layers deal by p with every correction 1.0f.
-    const std::shared_ptr<const RayAllocationSnapshot> ray_alloc_snapshot =
-        batch.ray_alloc_online_ ? batch.ray_alloc_online_->Load() : nullptr;
-    const RayAllocationSnapshot* ray_alloc = ray_alloc_snapshot.get();
-    RayAllocationTally wl_tally;
-    RayAllocationTally* tally_out = batch.ray_alloc_online_ ? &wl_tally : nullptr;
-    auto deliver_tally = [&]() {
-      if (batch.ray_alloc_online_ && !wl_tally.empty()) {
-        if (batch.ray_alloc_online_->Accumulate(wl_tally)) {
-          LogRayAllocationMilestone(*batch.ray_alloc_online_);
-        }
-        wl_tally.clear();
-      }
-    };
-
-    bool use_backend =
-        CanUseBackend(backend.get(), batch, logger_, warned_no_renders, warned_multi_renderer, warned_compat);
-    // Third write point of the "fell back" signal (the other two: right after
-    // CreateBackend above, and the BackendUnavailableError catch below). A live
-    // backend that CanUseBackend's gates refuse — no renders_, more renderers than
-    // MaxRenderers(), an IsCompatible miss — runs this batch on the legacy CPU
-    // path exactly as the catch block does, and until here said so only in a WARN
-    // line: Server::BackendFellBack() / LUMICE_GetBackendFallbackFlag (the GUI's
-    // poll, the CLI's stats line) read these two atomics and kept reporting the
-    // GPU as active. The backend is NOT reset: it is intact, only this batch's
-    // renders_ fail its preconditions, and renders_ does not change within one
-    // Run(), so one flip holds for the Run() — the same once-per-Run() shape as
-    // the `warned_*` latches. Analysis sessions never reach this branch: they
-    // force CreateBackend to nullptr, so `backend` is already null there.
-    if (!use_backend && backend && backend_active_.load(std::memory_order_acquire)) {
-      backend_active_.store(false, std::memory_order_release);
-      active_backend_.store(BackendKind::kCpu, std::memory_order_release);
-    }
-    // Analysis chain ids exist on the legacy CPU path only (v1, doc/raypath-
-    // analysis-panel.md §2 ruling 1). Every backend route — CpuTraceBackend
-    // via the env override as much as Metal / CUDA — leaves
-    // SimData::outgoing_chain_id_ empty, and says so once rather than never.
-    if (chain_id_session_.enabled && use_backend && !warned_chain_id_backend) {
-      ILOG_WARN(logger_,
-                "Raypath-analysis chain ids are not populated on the trace-backend route; "
-                "outgoing_chain_id_ stays empty for this Run()");
-      warned_chain_id_backend = true;
-    }
-
-    // renders_ can be null (e.g. an analysis batch) — mirror the same null-safety
-    // CanUseBackend already applies to the backend gate above, so the legacy CPU path's
-    // worker-side projection sees "no renderers" rather than dereferencing a null
-    // shared_ptr.
-    static const std::vector<RenderConfig> kNoRenders;
-    const std::vector<RenderConfig>& renders = batch.renders_ ? *batch.renders_ : kNoRenders;
-
-    // task-282: BackendUnavailableError signals the backend cannot run this
-    // session (Metal PSO build failure on macOS 26.5, etc.). On first miss
-    // we drop the backend instance for the remainder of the Run() (resetting
-    // `backend` flips `use_backend` to false on the next CanUseBackend call)
-    // and execute the current wavelength on the legacy CPU path here. Crystal
-    // cache + workspace + ray_alloc_carry are in Run() scope, so the fallback
-    // is a direct re-dispatch — no signature plumbing into the helper.
-    auto run_with_backend = [&](const WlParam& wl_param, float emitted_weight) {
-      // Self-guard: every current call site gates on a non-null backend, but this
-      // keeps the lambda safe if a future caller forgets — same effect as the
-      // catch-block fallback (run the legacy CPU path, report "backend not used").
-      if (!backend) {
-        SimulateOneWavelength(config, batch.raypath_color_.get(), wl_param, emitted_weight, batch.ray_num_,
-                              crystal_cache, workspace, generation, ray_alloc_carry, ray_alloc, tally_out, renders);
-        deliver_tally();
-        return false;
-      }
-      try {
-        SimulateOneWavelengthWithBackend(*backend, config, *batch.renders_, batch.raypath_color_, wl_param,
-                                         emitted_weight, batch.ray_num_, generation, ray_alloc, tally_out);
-        deliver_tally();
-        return true;
-      } catch (const BackendUnavailableError& e) {
-        ILOG_WARN(
-            logger_,
-            "TraceBackend unavailable ({}); dropping backend and falling back to legacy CPU for the rest of this Run()",
-            e.what());
-        backend.reset();
-        // The second and last write point of this signal. The server's
-        // producer polls it so the batches it queues from here on shrink back to the
-        // legacy grain instead of feeding 262144-ray single-wavelength batches to the
-        // CPU path. Nothing synchronises this store with the producer's read — it only
-        // has to be seen eventually, which narrows the mis-sized window rather than
-        // closing it (batches already queued keep their size).
-        backend_active_.store(false, std::memory_order_release);
-        active_backend_.store(BackendKind::kCpu, std::memory_order_release);
-        SimulateOneWavelength(config, batch.raypath_color_.get(), wl_param, emitted_weight, batch.ray_num_,
-                              crystal_cache, workspace, generation, ray_alloc_carry, ray_alloc, tally_out, renders);
-        deliver_tally();
-        return false;
-      }
-    };
-
-    const auto& spectrum = config.light_source_.spectrum_;
-    if (auto* illuminant = std::get_if<IlluminantType>(&spectrum)) {
-      // Standard illuminant.
-      // scrum-268.8 (DR-3 / Step 9): only backends with a per-ray wavelength
-      // pool (Metal, WlPoolSize() > 0) sample wavelength per-ray on device. For
-      // those, the per-batch host sampling is deleted — it would only consume
-      // rng_ and set a misleading curr_wl_. Pass a zero-wl WlParam so curr_wl_
-      // stays 0: IF the per-ray wavelength is ever dropped upstream, the
-      // consumer renders black (loud) instead of silently collapsing onto a
-      // flat spectrum (the bug fixed in a101c53e). Pool-less backends (CPU /
-      // cpu_backend / legacy) keep per-batch uniform wl + SPD weight.
-      // The emitted weight charged to the normalization denominator is the
-      // BAND EXPECTATION of this illuminant, not the weight of whichever
-      // wavelength this batch happens to draw. Both sub-branches below use it:
-      // the per-ray-pool branch has no host-side draw to speak of, and the
-      // host-sampling branch has one whose weight varies ~20% per batch — using
-      // it would make the same config render at a different brightness per seed.
-      float emitted_weight = MeanIlluminantWeight(*illuminant);
-      bool backend_per_ray_wl = use_backend && backend->WlPoolSize() > 0u;
-      if (backend_per_ray_wl) {
-        // task-282 fallback samples a host wl (matches the no-backend branch)
-        // if the backend drops mid-call; otherwise the per-ray pool drives wl.
-        // The fallback already ran the CPU path here using a zero-wl WlParam
-        // (consistent with pool-driven semantics: no per-batch host wl when the
-        // backend owns the pool); subsequent batches take the use_backend == false
-        // branch since `backend` is now reset. Nothing more to do on either result.
-        (void)run_with_backend(WlParam{}, emitted_weight);
-      } else {
-        float wl = 380.0f + rng_.GetUniform() * 400.0f;  // [380, 780] nm
-        float weight = GetIlluminantSpd(*illuminant, wl);
-        WlParam wl_param{ wl, weight };
-        if (use_backend) {
-          run_with_backend(wl_param, emitted_weight);
-        } else {
-          SimulateOneWavelength(config, batch.raypath_color_.get(), wl_param, emitted_weight, batch.ray_num_,
-                                crystal_cache, workspace, generation, ray_alloc_carry, ray_alloc, tally_out, renders);
-          deliver_tally();
-        }
-      }
-    } else {
-      // Discrete wavelength list
-      const auto& wl_params = std::get<std::vector<WlParam>>(spectrum);
-      for (const auto& wl_param : wl_params) {
-        if (stop_) {
+    {
+      // One handoff, traced as PhysicsBatchCount() physics batches back to back (SimBatch
+      // says why the two grains differ). Each iteration below is exactly what one queued
+      // batch of PhysicsRayNum() rays used to be — its own wavelength draw, its own
+      // ray-allocation snapshot, its own SimData — so a single worker consumes the same
+      // RNG stream in the same order either way. stop_ is honoured between physics
+      // batches, so a Stop() waits for at most one of them, as before.
+      //
+      // The SimData the iterations produce are collected in pending_sim_data_ and handed
+      // to the consumer by FlushPendingSimData. The guard makes that hand-over
+      // unconditional on every way out of this scope — the normal end, a stop_ break,
+      // an exception — so no physics batch that finished is ever left behind, and it
+      // runs BEFORE idle_ goes true below: a worker must not read as idle while it still
+      // holds data the consumer has not been handed.
+      struct FlushOnExit {
+        Simulator& sim;
+        FlushOnExit(const FlushOnExit&) = delete;
+        FlushOnExit& operator=(const FlushOnExit&) = delete;
+        ~FlushOnExit() { sim.FlushPendingSimData(); }
+      } flush_on_exit{ *this };
+      const size_t physics_ray_num = batch.PhysicsRayNum();
+      auto last_flush = std::chrono::steady_clock::now();
+      for (size_t traced = 0; traced < batch.ray_num_; traced += physics_ray_num) {
+        if (traced > 0 && stop_) {
           break;
         }
-        // Discrete spectrum: the traced weight IS deterministic, so the
-        // denominator is charged with it directly — no expectation needed.
-        if (use_backend && backend) {
-          run_with_backend(wl_param, wl_param.weight_);
+        const size_t sub_ray_num = std::min(physics_ray_num, batch.ray_num_ - traced);
+        // Single derivation point for the config-constant half of the crystal count
+        // (see the member's declaration for why it is not gated on a generation change).
+        deterministic_crystal_count_ = DeterministicCrystalCount(config);
+        deterministic_orientation_count_ = DeterministicOrientationCount(config);
+
+        // Reset carry when config changes (new generation = new proportions).
+        if (generation != prev_generation) {
+          ray_alloc_carry.clear();
+          // Third-clock drain: flush the old generation's device XYZ window
+          // BEFORE any new-generation batch traces into the (shared, persistent)
+          // device buffer — otherwise the new generation's atomicAdds would mix into
+          // the old generation's un-drained accumulation.
+          DrainDeviceXyz(backend.get());
+          prev_generation = generation;
+        }
+
+        // Online ray allocation (scene.ray_allocation = adaptive): ONE snapshot per
+        // SimBatch, Loaded here and held for every wavelength of the batch, so the q
+        // a ray is corrected by depends only on batches that finished before this one
+        // started; every wavelength's tally is Accumulated right after it is traced.
+        // Null on proportional and analysis batches — then nothing is loaded, nothing
+        // is tallied, and the layers deal by p with every correction 1.0f.
+        const std::shared_ptr<const RayAllocationSnapshot> ray_alloc_snapshot =
+            batch.ray_alloc_online_ ? batch.ray_alloc_online_->Load() : nullptr;
+        const RayAllocationSnapshot* ray_alloc = ray_alloc_snapshot.get();
+        RayAllocationTally wl_tally;
+        RayAllocationTally* tally_out = batch.ray_alloc_online_ ? &wl_tally : nullptr;
+        auto deliver_tally = [&]() {
+          if (batch.ray_alloc_online_ && !wl_tally.empty()) {
+            if (batch.ray_alloc_online_->Accumulate(wl_tally)) {
+              LogRayAllocationMilestone(*batch.ray_alloc_online_);
+            }
+            wl_tally.clear();
+          }
+        };
+
+        bool use_backend =
+            CanUseBackend(backend.get(), batch, logger_, warned_no_renders, warned_multi_renderer, warned_compat);
+        // Third write point of the "fell back" signal (the other two: right after
+        // CreateBackend above, and the BackendUnavailableError catch below). A live
+        // backend that CanUseBackend's gates refuse — no renders_, more renderers than
+        // MaxRenderers(), an IsCompatible miss — runs this batch on the legacy CPU
+        // path exactly as the catch block does, and until here said so only in a WARN
+        // line: Server::BackendFellBack() / LUMICE_GetBackendFallbackFlag (the GUI's
+        // poll, the CLI's stats line) read these two atomics and kept reporting the
+        // GPU as active. The backend is NOT reset: it is intact, only this batch's
+        // renders_ fail its preconditions, and renders_ does not change within one
+        // Run(), so one flip holds for the Run() — the same once-per-Run() shape as
+        // the `warned_*` latches. Analysis sessions never reach this branch: they
+        // force CreateBackend to nullptr, so `backend` is already null there.
+        if (!use_backend && backend && backend_active_.load(std::memory_order_acquire)) {
+          backend_active_.store(false, std::memory_order_release);
+          active_backend_.store(BackendKind::kCpu, std::memory_order_release);
+        }
+        // Analysis chain ids exist on the legacy CPU path only (v1, doc/raypath-
+        // analysis-panel.md §2 ruling 1). Every backend route — CpuTraceBackend
+        // via the env override as much as Metal / CUDA — leaves
+        // SimData::outgoing_chain_id_ empty, and says so once rather than never.
+        if (chain_id_session_.enabled && use_backend && !warned_chain_id_backend) {
+          ILOG_WARN(logger_,
+                    "Raypath-analysis chain ids are not populated on the trace-backend route; "
+                    "outgoing_chain_id_ stays empty for this Run()");
+          warned_chain_id_backend = true;
+        }
+
+        // renders_ can be null (e.g. an analysis batch) — mirror the same null-safety
+        // CanUseBackend already applies to the backend gate above, so the legacy CPU path's
+        // worker-side projection sees "no renderers" rather than dereferencing a null
+        // shared_ptr.
+        static const std::vector<RenderConfig> kNoRenders;
+        const std::vector<RenderConfig>& renders = batch.renders_ ? *batch.renders_ : kNoRenders;
+
+        // BackendUnavailableError signals the backend cannot run this
+        // session (Metal PSO build failure on macOS 26.5, etc.). On first miss
+        // we drop the backend instance for the remainder of the Run() (resetting
+        // `backend` flips `use_backend` to false on the next CanUseBackend call)
+        // and execute the current wavelength on the legacy CPU path here. Crystal
+        // cache + workspace + ray_alloc_carry are in Run() scope, so the fallback
+        // is a direct re-dispatch — no signature plumbing into the helper.
+        auto run_with_backend = [&](const WlParam& wl_param, float emitted_weight) {
+          // Self-guard: every current call site gates on a non-null backend, but this
+          // keeps the lambda safe if a future caller forgets — same effect as the
+          // catch-block fallback (run the legacy CPU path, report "backend not used").
+          if (!backend) {
+            SimulateOneWavelength(config, batch.raypath_color_.get(), wl_param, emitted_weight, sub_ray_num,
+                                  crystal_cache, workspace, generation, ray_alloc_carry, ray_alloc, tally_out, renders);
+            deliver_tally();
+            return false;
+          }
+          try {
+            SimulateOneWavelengthWithBackend(*backend, config, *batch.renders_, batch.raypath_color_, wl_param,
+                                             emitted_weight, sub_ray_num, generation, ray_alloc, tally_out);
+            deliver_tally();
+            return true;
+          } catch (const BackendUnavailableError& e) {
+            ILOG_WARN(logger_,
+                      "TraceBackend unavailable ({}); dropping backend and falling back to legacy CPU for the rest of "
+                      "this Run()",
+                      e.what());
+            backend.reset();
+            // The second and last write point of this signal. The server's
+            // producer polls it so the batches it queues from here on shrink back to the
+            // legacy grain instead of feeding 262144-ray single-wavelength batches to the
+            // CPU path. Nothing synchronises this store with the producer's read — it only
+            // has to be seen eventually, which narrows the mis-sized window rather than
+            // closing it (batches already queued keep their size).
+            backend_active_.store(false, std::memory_order_release);
+            active_backend_.store(BackendKind::kCpu, std::memory_order_release);
+            SimulateOneWavelength(config, batch.raypath_color_.get(), wl_param, emitted_weight, sub_ray_num,
+                                  crystal_cache, workspace, generation, ray_alloc_carry, ray_alloc, tally_out, renders);
+            deliver_tally();
+            return false;
+          }
+        };
+
+        const auto& spectrum = config.light_source_.spectrum_;
+        if (auto* illuminant = std::get_if<IlluminantType>(&spectrum)) {
+          // Standard illuminant.
+          // Only backends with a per-ray wavelength
+          // pool (Metal, WlPoolSize() > 0) sample wavelength per-ray on device. For
+          // those, the per-batch host sampling is deleted — it would only consume
+          // rng_ and set a misleading curr_wl_. Pass a zero-wl WlParam so curr_wl_
+          // stays 0: IF the per-ray wavelength is ever dropped upstream, the
+          // consumer renders black (loud) instead of silently collapsing onto a
+          // flat spectrum (the bug fixed in a101c53e). Pool-less backends (CPU /
+          // cpu_backend / legacy) keep per-batch uniform wl + SPD weight.
+          // The emitted weight charged to the normalization denominator is the
+          // BAND EXPECTATION of this illuminant, not the weight of whichever
+          // wavelength this batch happens to draw. Both sub-branches below use it:
+          // the per-ray-pool branch has no host-side draw to speak of, and the
+          // host-sampling branch has one whose weight varies ~20% per batch — using
+          // it would make the same config render at a different brightness per seed.
+          float emitted_weight = MeanIlluminantWeight(*illuminant);
+          bool backend_per_ray_wl = use_backend && backend->WlPoolSize() > 0u;
+          if (backend_per_ray_wl) {
+            // The BackendUnavailableError fallback samples a host wl (matches the no-backend branch)
+            // if the backend drops mid-call; otherwise the per-ray pool drives wl.
+            // The fallback already ran the CPU path here using a zero-wl WlParam
+            // (consistent with pool-driven semantics: no per-batch host wl when the
+            // backend owns the pool); subsequent batches take the use_backend == false
+            // branch since `backend` is now reset. Nothing more to do on either result.
+            (void)run_with_backend(WlParam{}, emitted_weight);
+          } else {
+            float wl = 380.0f + rng_.GetUniform() * 400.0f;  // [380, 780] nm
+            float weight = GetIlluminantSpd(*illuminant, wl);
+            WlParam wl_param{ wl, weight };
+            if (use_backend) {
+              run_with_backend(wl_param, emitted_weight);
+            } else {
+              SimulateOneWavelength(config, batch.raypath_color_.get(), wl_param, emitted_weight, sub_ray_num,
+                                    crystal_cache, workspace, generation, ray_alloc_carry, ray_alloc, tally_out,
+                                    renders);
+              deliver_tally();
+            }
+          }
         } else {
-          SimulateOneWavelength(config, batch.raypath_color_.get(), wl_param, wl_param.weight_, batch.ray_num_,
-                                crystal_cache, workspace, generation, ray_alloc_carry, ray_alloc, tally_out, renders);
-          deliver_tally();
+          // Discrete wavelength list
+          const auto& wl_params = std::get<std::vector<WlParam>>(spectrum);
+          for (const auto& wl_param : wl_params) {
+            if (stop_) {
+              break;
+            }
+            // Discrete spectrum: the traced weight IS deterministic, so the
+            // denominator is charged with it directly — no expectation needed.
+            if (use_backend && backend) {
+              run_with_backend(wl_param, wl_param.weight_);
+            } else {
+              SimulateOneWavelength(config, batch.raypath_color_.get(), wl_param, wl_param.weight_, sub_ray_num,
+                                    crystal_cache, workspace, generation, ray_alloc_carry, ray_alloc, tally_out,
+                                    renders);
+              deliver_tally();
+            }
+          }
+        }
+
+        // Age-based early hand-over: a heavy scene can spend long enough on one handoff
+        // that waiting for its end would hold back the first image the user sees.
+        if (!pending_sim_data_.empty()) {
+          const auto now = std::chrono::steady_clock::now();
+          if (now - last_flush >= std::chrono::milliseconds(kPendingSimDataMaxAgeMs)) {
+            FlushPendingSimData();
+            last_flush = now;
+          }
         }
       }
-    }
+    }  // flush_on_exit: hands over whatever this handoff still holds
 
     idle_ = true;
   }
@@ -2076,7 +2117,9 @@ void Simulator::SimulateOneWavelength(const SceneConfig& config, const RaypathCo
   sim_data.deterministic_crystal_count_ = deterministic_crystal_count_;
   sim_data.stochastic_orientation_sample_count_ = stochastic_orientation_sample_count;
   sim_data.deterministic_orientation_count_ = deterministic_orientation_count_;
-  data_queue_->Emplace(std::move(sim_data));
+  // Not enqueued here: Run() hands a handoff's SimData over in one go (see
+  // pending_sim_data_).
+  pending_sim_data_.push_back(std::move(sim_data));
 }
 
 // Backend-routed wavelength step (TraceBackend seam integration, scrum-258.1).
@@ -2441,6 +2484,11 @@ void Simulator::SimulateOneWavelengthWithBackend(TraceBackend& backend, const Sc
   sim_data.outgoing_component_ = std::move(exit_component);  // task-331.1
   sim_data.exit_records_ = std::move(exit_records);
   data_queue_->Emplace(std::move(sim_data));
+}
+
+
+void Simulator::FlushPendingSimData() {
+  data_queue_->EmplaceMany(pending_sim_data_);
 }
 
 

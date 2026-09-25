@@ -69,6 +69,31 @@ class Queue {
     q_cv_.notify_one();
   }
 
+  // Enqueues every element of `items` (in order) under ONE lock acquisition and
+  // wakes the waiters once, instead of one lock + one notify per element. A
+  // no-op for an empty vector. This is what lets a producer hand over a burst
+  // without paying the per-element wakeup: on a condvar with waiters coming and
+  // going, each notify is a futex syscall, and on a virtualised scheduler (WSL2)
+  // that syscall is what a producer running one wakeup per small item ends up
+  // spending its whole thread on. `items` is left empty.
+  void EmplaceMany(std::vector<T>& items) {
+    if (items.empty()) {
+      return;
+    }
+    std::unique_lock lock(q_mutex_);
+    if (!shutdown_) {
+      for (auto& e : items) {
+        q_.emplace(std::move(e));
+      }
+      if (items.size() == 1) {
+        q_cv_.notify_one();
+      } else {
+        q_cv_.notify_all();
+      }
+    }
+    items.clear();
+  }
+
   void Shutdown() {
     std::unique_lock<std::mutex> lock(q_mutex_);
     if (shutdown_) {

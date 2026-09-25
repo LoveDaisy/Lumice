@@ -193,6 +193,16 @@ class ServerImpl {
   // pool on the GPU route (see the ctor). See doc/gpu-single-engine-implementation.md §6.
   static constexpr int kMaxSceneCnt = 128;
   static constexpr size_t kDefaultRayNum = 128;
+  // CPU route only: how many physics batches of kDispatchCap rays one SimBatch hands a
+  // worker at once (SimBatch::physics_ray_num_). The physics batch stays kDefaultRayNum —
+  // that size is what the rest of the trace is tuned around (wavelength draws per ray,
+  // ray-allocation cadence, workspace footprint; doc/performance-testing.md "Legacy CPU
+  // batch size") — while every queue handoff, and the wakeup it can cost, is paid once
+  // per this many of them. With one handoff per 128 rays the single producer thread's
+  // notify became the ceiling as soon as the workers were fast enough to drain the queue,
+  // and past that point extra workers made the run slower, not faster. The value and the
+  // measurements behind it: doc/performance-testing.md, "CPU worker handoff grain".
+  static constexpr size_t kCpuHandoffBatches = 16;
   // scrum-268.6: Metal single-engine needs a large GPU dispatch to saturate the
   // device — a 128-ray dispatch starves it (~0.04x legacy), while ~32768 peaks
   // at ~5.3x legacy on heavy multi-MS+filter scenes (sweep 2026-06-16; plateau
@@ -657,6 +667,13 @@ class ServerImpl {
   std::array<std::vector<Simulator>*, 2> AllWorkerGroups() { return { &simulators_, &analysis_pool_simulators_ }; }
 
   std::atomic_int sim_scene_cnt_;
+  // The in-flight ceiling the producer throttles sim_scene_cnt_ against, and whose half
+  // the consumer wakes it at. kMaxSceneCnt handoffs' worth of SimData: set by
+  // GenerateScene at the start of each run to kMaxSceneCnt times the physics batches one
+  // of its handoffs carries (1 on the GPU route, so kMaxSceneCnt exactly there), so the
+  // backlog the throttle admits is still ~kMaxSceneCnt handoffs whatever the split — the
+  // counter counts SimData, and a CPU handoff now produces several.
+  std::atomic_int scene_cnt_cap_{ kMaxSceneCnt };
   std::mutex scene_mutex_;
   std::condition_variable scene_cv_;
 
@@ -2499,7 +2516,7 @@ void ServerImpl::ConsumeData() {
     // Decrement by the credit to keep the GenerateScene ++ / ConsumeData --
     // invariant balanced regardless of drain windowing.
     sim_scene_cnt_ -= static_cast<int>(sim_data.sim_scene_credit_);
-    if (sim_scene_cnt_ < kMaxSceneCnt / 2) {
+    if (sim_scene_cnt_ < scene_cnt_cap_.load(std::memory_order_relaxed) / 2) {
       scene_cv_.notify_one();
     } else if (gpu_route_ && !fallback_queue_invalidated_.load(std::memory_order_acquire) && !ReadBackendActive()) {
       // The queue is still deep, so the throttle above would keep the producer parked for
@@ -2587,7 +2604,13 @@ void ServerImpl::GenerateScene() {
                                   kGpuRoute    ? kDefaultMetalDispatchRayNum :
                                                  kDefaultRayNum;
   const size_t kDispatchCap = env::DispatchRayNum(logger_, kDefaultDispatch);
-  const size_t kBatchCap = kDispatchCap;  // local alias for the loop below
+  // CPU route: one handoff carries kHandoffBatches physics batches of kDispatchCap rays
+  // (see kCpuHandoffBatches). GPU route: one physics batch per handoff, as before — the
+  // GPU dispatch grain is already large, and the backend traces a batch as one dispatch.
+  const size_t kHandoffBatches = kGpuRoute ? 1 : env::CpuHandoffBatches(logger_, kCpuHandoffBatches);
+  const size_t kPhysicsRayNum = kGpuRoute ? 0 : kDispatchCap;  // 0 = "the whole batch"
+  const size_t kBatchCap = kDispatchCap * kHandoffBatches;     // rays per handoff
+  scene_cnt_cap_.store(kMaxSceneCnt * static_cast<int>(kHandoffBatches), std::memory_order_relaxed);
   // The ctor-time route and this live re-derivation ask two different
   // questions off the same ResolveGpuRoute (see gpu_route_'s declaration). They
   // cannot disagree today; say so out loud if they ever do, rather than letting one
@@ -2689,8 +2712,12 @@ void ServerImpl::GenerateScene() {
     const size_t fallback_cap = kDefaultRayNum;
     const size_t iter_cap = EffectiveDispatchCap(kGpuRoute, backend_active, nominal_cap, fallback_cap);
     size_t batch_ray_num = std::min(iter_cap, per_wl_ray_num - committed_num);
-    AccountThenPublishBatch(sim_scene_cnt_, static_cast<int>(kNsimdataPerBatch), *scene_queue_,
-                            SimBatch{ batch_ray_num, scene, generation, renders, raypath_color, ray_alloc_online });
+    SimBatch batch{ batch_ray_num, scene, generation, renders, raypath_color, ray_alloc_online };
+    batch.physics_ray_num_ = kPhysicsRayNum;
+    // One SimData per physics batch per wavelength: credit exactly what the consumer
+    // will take back for this handoff (a short last handoff splits into fewer).
+    const int credit = static_cast<int>(batch.PhysicsBatchCount() * kNsimdataPerBatch);
+    AccountThenPublishBatch(sim_scene_cnt_, credit, *scene_queue_, std::move(batch));
     if (!first_batch_logged) {
       ILOG_INFO(logger_, "GenerateScene: first batch enqueued at {:.1f}ms after start",
                 std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - gen_start).count());
@@ -2700,7 +2727,7 @@ void ServerImpl::GenerateScene() {
     ILOG_TRACE(logger_, "GenerateScene: put a scene: ray({}/{}, {})", batch_ray_num, per_wl_ray_num, committed_num);
     CHECK_STOP
 
-    if (sim_scene_cnt_ >= kMaxSceneCnt) {
+    if (sim_scene_cnt_ >= scene_cnt_cap_.load(std::memory_order_relaxed)) {
       ILOG_DEBUG(logger_, "GenerateScene: too many scenes generated. wait for consumer");
       std::unique_lock<std::mutex> lock(scene_mutex_);
       // The third term is what makes the invalidation above reachable in time. Without it
@@ -2711,7 +2738,8 @@ void ServerImpl::GenerateScene() {
       // safe in one direction only — prod_mutex_ is a leaf (its holders call nothing but
       // Simulator accessors) and nothing takes scene_mutex_ under it. Keep it that way.
       scene_cv_.wait(lock, [this, kGpuRoute]() {
-        return state_.load() != ServerState::kRunning || sim_scene_cnt_ < kMaxSceneCnt ||
+        return state_.load() != ServerState::kRunning ||
+               sim_scene_cnt_ < scene_cnt_cap_.load(std::memory_order_relaxed) ||
                (kGpuRoute && !fallback_queue_invalidated_.load(std::memory_order_acquire) && !ReadBackendActive());
       });
       ILOG_DEBUG(logger_, "GenerateScene: continue to generate scenes.");

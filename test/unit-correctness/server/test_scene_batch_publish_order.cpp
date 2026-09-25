@@ -77,9 +77,11 @@ TEST(SceneBatchPublishOrder, AccumulatesAcrossMultipleBatches) {
 // grain, which makes this function responsible for two ledgers at once — the in-flight
 // SimData counter, and the producer's own ray budget.
 
-// Minimal double for Queue<SimBatch>: DrainAll plus the one field the refund reads.
+// Minimal double for Queue<SimBatch>: DrainAll plus what the refund reads off a batch.
 struct FakeBatch {
   size_t ray_num_ = 0;
+  size_t physics_batches_ = 1;
+  size_t PhysicsBatchCount() const { return physics_batches_; }
 };
 
 struct DrainableQueue {
@@ -101,7 +103,7 @@ TEST(SceneBatchDiscardRefund, RefundsBothLedgersExactly) {
   DrainableQueue queue{ { { 262144 }, { 262144 }, { 262144 }, { 100 } }, {} };
 
   size_t dropped = 0;
-  const size_t rays = lumice::DiscardQueuedBatchesThenRefund(cnt, /*credit_per_batch=*/3, queue, &dropped);
+  const size_t rays = lumice::DiscardQueuedBatchesThenRefund(cnt, /*credit_per_physics_batch=*/3, queue, &dropped);
 
   EXPECT_EQ(dropped, 4u);
   EXPECT_EQ(rays, 262144u * 3 + 100)
@@ -116,10 +118,23 @@ TEST(SceneBatchDiscardRefund, LeavesOtherBatchesCreditUntouched) {
   std::atomic_int cnt{ 10 };
   DrainableQueue queue{ { { 128 }, { 128 } }, {} };
 
-  const size_t rays = lumice::DiscardQueuedBatchesThenRefund(cnt, /*credit_per_batch=*/1, queue);
+  const size_t rays = lumice::DiscardQueuedBatchesThenRefund(cnt, /*credit_per_physics_batch=*/1, queue);
 
   EXPECT_EQ(rays, 256u);
   EXPECT_EQ(cnt.load(), 8) << "only the two dropped batches' credit is refunded";
+}
+
+TEST(SceneBatchDiscardRefund, RefundsEveryPhysicsBatchOfASplitHandoff) {
+  // A CPU-route handoff carries several physics batches and was charged one credit per
+  // physics batch per wavelength; refunding it at one physics batch's worth would leave
+  // the rest on the counter for good, and the epoch would never read as drained.
+  std::atomic_int cnt{ (16 + 3) * 2 };  // a full 16-batch handoff and a short 3-batch one, two wavelengths
+  DrainableQueue queue{ { { 2048, 16 }, { 300, 3 } }, {} };
+
+  const size_t rays = lumice::DiscardQueuedBatchesThenRefund(cnt, /*credit_per_physics_batch=*/2, queue);
+
+  EXPECT_EQ(rays, 2048u + 300u);
+  EXPECT_EQ(cnt.load(), 0);
 }
 
 TEST(SceneBatchDiscardRefund, EmptyQueueIsANoOp) {
@@ -141,7 +156,7 @@ TEST(SceneBatchDiscardRefund, DiscountIsVisibleOnlyAfterTheDrain) {
   DrainableQueue queue{ { { 1 }, { 2 } }, {} };
   queue.on_drain = [&] { observed_at_drain = cnt.load(); };
 
-  lumice::DiscardQueuedBatchesThenRefund(cnt, /*credit_per_batch=*/3, queue);
+  lumice::DiscardQueuedBatchesThenRefund(cnt, /*credit_per_physics_batch=*/3, queue);
 
   EXPECT_EQ(observed_at_drain, 6) << "the refund must not land before the batches leave the queue";
   EXPECT_EQ(cnt.load(), 0);
