@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1790314921821,
+  "lastUpdate": 1790314923955,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9500,50 +9500,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "61328fbedb7c6acfaf163c040563f24285d52ff2",
-          "message": "Merge pull request #305 from LoveDaisy/feat/sky-reference-points\n\nfeat(gui,core): 天空参考点标记六点泛化 + Look At 视角预设，共享 core 单源方向表",
-          "timestamp": "2026-09-05T02:15:06+08:00",
-          "tree_id": "66f5811bd94711b21e96cefdfa28e8d5b7dcf841",
-          "url": "https://github.com/LoveDaisy/ice_halo_sim/commit/61328fbedb7c6acfaf163c040563f24285d52ff2"
-        },
-        "date": 1788546560712,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 71.9,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 99.4,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 96.4,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 90.3,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "9327bb7a34e0095c493f6408acc9067e2512fd61",
           "message": "Merge pull request #307 from LoveDaisy/fix/gui-test-harness-gates\n\ntest(gui): 闭合 gui_test 现场三处守卫可信度缺口——恒红闸 / 缺失的互比闸 / 注释纪律一致性",
           "timestamp": "2026-09-05T14:10:18+08:00",
@@ -13833,6 +13789,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 93.5,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "65514f1a79aafa4a7d5bf1c468123ac24550aa41",
+          "message": "Merge pull request #406 from LoveDaisy/feat/sim-continue\n\nfeat: Continue adds rays to a finished render (LUMICE_ContinueRender)",
+          "timestamp": "2026-09-25T13:25:12+08:00",
+          "tree_id": "86a13a44187986c4d27a4fea1b98d72c471e573d",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/65514f1a79aafa4a7d5bf1c468123ac24550aa41"
+        },
+        "date": 1790314923420,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 91.4,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 99.6,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 98.9,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 92.5,
             "unit": "%"
           }
         ]
