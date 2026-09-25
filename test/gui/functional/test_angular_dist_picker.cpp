@@ -208,6 +208,31 @@ void RegisterAngularDistPickerTests(ImGuiTestEngine* engine) {
     };
   }
 
+  // plan Step 4/6 promised this half too: at the cap, greyed even with a picture up — with
+  // PreviewShowsPicture() satisfied, at_limit is the only reason left the button could be disabled
+  // for, so this isolates that branch from the no-picture one the test above already covers.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "angular_dist_picker", "a_full_list_greys_the_pick_button");
+    t->GuiFunc = ProbeGuiFunc;
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      const ScopedPopups popup_guard(ctx);
+      InstallPicture(ctx, gui::kLensTypeLinear, 90.0f);
+      gui::g_state.sun_circle_angles.clear();
+      for (int i = 0; i < gui::kMaxAnnotationCircles; ++i) {
+        gui::g_state.sun_circle_angles.push_back(5.0f + static_cast<float>(i) * 5.0f);
+      }
+      gui::g_state.angular_dist_section_open = true;
+      ctx->Yield(3);
+      ctx->SetRef("//##RightPanel");
+      ctx->ItemClick(kSunFold);
+      ctx->SetRef("");
+      ctx->Yield(3);
+      IM_CHECK(IsDisabled(ctx->ItemInfo(kPickButton)));
+      ctx->KeyPress(ImGuiKey_Escape);
+      ctx->Yield(2);
+    };
+  }
+
   // AC5: enter, move, click. The ring the frame publishes is the cursor's radius; the click adds
   // exactly that radius, disarms, and the rest of that same press does not orbit the camera.
   {
