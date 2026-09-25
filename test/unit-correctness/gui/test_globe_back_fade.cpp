@@ -18,8 +18,6 @@
 //     what lets the fade be a weight on the existing forward projection rather than a second one.
 
 #include <cmath>
-#include <cstdint>
-#include <cstdio>
 #include <cstring>
 
 #include "core/shared/projection_shared.h"
@@ -167,36 +165,6 @@ TEST(GlobeBackFade, ForwardProjectionPutsTheFarPointOnItsRaysPixel) {
     EXPECT_EQ(far1.hits[0].px, near1.hits[0].px) << "slope (" << a << ", " << b << ")";
     EXPECT_EQ(far1.hits[0].py, near1.hits[0].py) << "slope (" << a << ", " << b << ")";
     EXPECT_FALSE(far1.hits[0].bump_landed) << "a far-side hit must not move landed_weight";
-    {  // PROBE (temporary): bit-level origin of the far-weight mismatch.
-      float px = 0.0f;
-      float py = 0.0f;
-      float pz = 0.0f;
-      lm_proj::ApplyRotTranspose(p.rot, cf[0], cf[1], cf[2], &px, &py, &pz);
-      const auto hex = [](float v) {
-        std::uint32_t u = 0;
-        std::memcpy(&u, &v, sizeof(u));
-        return u;
-      };
-      const float mu = -cf[2];
-      const float d = lm_proj::kGlobeCameraD;
-      const float fade = p.globe_back_fade;
-      volatile float dd = d * d;
-      volatile float two_d_mu = 2.0f * d * mu;
-      volatile float inner_sep = (dd + 1.0f) - two_d_mu;
-      const float inner_fma = std::fma(-2.0f * d, mu, d * d + 1.0f);
-      const auto w_from_inner = [&](float inner) {
-        const float dist = std::sqrt(std::fmax(inner, 0.0f));
-        const float depth = std::fmax(dist - std::sqrt(d * d - 1.0f), 0.0f);
-        const float t = std::fmin(std::fmax(depth / fade, 0.0f), 1.0f);
-        volatile float tt = t * t;
-        volatile float poly = 3.0f - 2.0f * t;
-        volatile float prod = tt * poly;
-        return 1.0f - prod;
-      };
-      std::printf("PROBE slope=(%g,%g) -cf2=%08x -cz=%08x | far1.w=%08x test.w=%08x sep.w=%08x fma.w=%08x\n", a, b,
-                  hex(mu), hex(-pz), hex(far1.hits[0].weight), hex(lm_proj::GlobeBackFadeWeight(mu, fade)),
-                  hex(w_from_inner(inner_sep)), hex(w_from_inner(inner_fma)));
-    }
     // The eye-space mu of the far point is -c.z.
     EXPECT_EQ(far1.hits[0].weight, lm_proj::GlobeBackFadeWeight(-cf[2], p.globe_back_fade));
     EXPECT_GT(far1.hits[0].weight, 0.0f);
