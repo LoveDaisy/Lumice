@@ -207,7 +207,7 @@ class ServerImpl {
   static constexpr size_t kCpuHandoffBatches = 16;
   // CPU route: queued handoffs the in-flight ceiling leaves room for, per worker, on top
   // of the one each worker has in progress (GenerateScene says why).
-  static constexpr double kQueuedHandoffsPerWorker = 0.5;
+  static constexpr double kQueuedHandoffsPerWorker = 1.0;
   // scrum-268.6: Metal single-engine needs a large GPU dispatch to saturate the
   // device — a 128-ray dispatch starves it (~0.04x legacy), while ~32768 peaks
   // at ~5.3x legacy on heavy multi-MS+filter scenes (sweep 2026-06-16; plateau
