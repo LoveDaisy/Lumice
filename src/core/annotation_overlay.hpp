@@ -60,6 +60,12 @@ struct ViewSnapshot {
   // `visible` says which half of the SKY exists, `front` says the viewer only wants what is in
   // front of the camera.
   bool front = false;
+  // The globe lens's far-side fog length (RenderConfig::globe_back_fade_). > 0 under kGlobe asks
+  // ComputeOverlay for the far side's curves as well (Overlay::far_side); every other value, and
+  // every other lens, leaves the overlay exactly what it was without the field. It never reaches
+  // the projection the anchors and markers are sampled through (ToRenderConfig leaves the
+  // RenderConfig field at 0), so labels and markers stay on the near side by construction.
+  float globe_back_fade = 0.0f;
 };
 
 // Which family a label belongs to. The consumer decides colour / font / background from this;
@@ -173,6 +179,29 @@ struct Overlay {
   std::vector<uint8_t> longitude;
   std::vector<uint8_t> angular_dist;
   std::vector<uint8_t> view_dist;
+
+  // The globe's far side, seen through the near one: the same five curve families evaluated at the
+  // direction where each pixel's ray LEAVES the sphere, plus the per-pixel weight a consumer
+  // multiplies the layer alpha by — lm_proj::GlobeBackFadeWeight, the weight the far side's light
+  // carries, so lines and light fade together. Filled only for kGlobe with
+  // ViewSnapshot::globe_back_fade > 0; otherwise every vector here is empty, the convention the
+  // near-side masks above already use for "not requested", and a consumer checks `weight.empty()`.
+  // A mask is empty too when its near-side twin was not requested.
+  //
+  // Gated by the NEAR side's `drawable`: `visible` / `front` are a per-pixel display clip over the
+  // finished picture, exactly as they gate the far side's light (and the preview shader's
+  // overlayAuxLines gates both the same way). `weight` is 0 wherever no far-side line may be drawn.
+  //
+  // Lines only: markers, zenith / nadir and labels have no far-side counterpart.
+  struct FarSideLines {
+    std::vector<float> weight;
+    std::vector<uint8_t> horizon;
+    std::vector<uint8_t> elevation;
+    std::vector<uint8_t> longitude;
+    std::vector<uint8_t> angular_dist;
+    std::vector<uint8_t> view_dist;
+  };
+  FarSideLines far_side;
 
   CanvasPoint zenith;
   CanvasPoint nadir;

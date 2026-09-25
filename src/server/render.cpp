@@ -65,6 +65,9 @@ annotation::Request MakeMaskRequest(const RenderConfig& config) {
   // false: BuildVisibleMask clips the background sky by front_, so an annotation that ignored it
   // would draw its line or marker over the half that was clipped away.
   req.view.front = config.front_;
+  // The globe's far side: its curves ride along in every family's call (Overlay::far_side) and
+  // are composited under the near ones. Inert off the globe and at 0.
+  req.view.globe_back_fade = config.globe_back_fade_;
   // Masks only BY DEFAULT. Whether a given call also wants the label anchors is a per-FAMILY
   // question — each family has its own *_label_ switch — so it is left to the caller, exactly as
   // the angle list is, and for the same reason: a request field that varies per family cannot have
@@ -929,6 +932,25 @@ RenderConsumer::AnnotationLayers RenderConsumer::BuildAnnotationLayers() const {
     collect_layers(view_dist_masks_, config_.view_dist_grid_, layers.view_dist);
   }
 
+  // The globe's far side: the same families through the same gates and the same collect_layers;
+  // CompositeAnnotations scales each layer's alpha per pixel by the far side's fade weight. Nothing here unless
+  // ComputeOverlay produced a weight (globe, globe_back_fade_ > 0).
+  if (globe_far_weight_.size() == static_cast<size_t>(total_pix)) {
+    if (config_.elevation_grid_line_) {
+      collect_layers(elevation_far_masks_, config_.elevation_grid_, layers.far_grid);
+    }
+    if (config_.longitude_grid_line_) {
+      collect_layers(longitude_far_masks_, config_.longitude_grid_, layers.far_grid);
+    }
+    if (config_.angular_dist_grid_line_) {
+      collect_layers(angular_dist_far_masks_, config_.angular_dist_grid_, layers.far_angular_dist);
+    }
+    if (config_.view_dist_grid_line_) {
+      collect_layers(view_dist_far_masks_, config_.view_dist_grid_, layers.far_view_dist);
+    }
+    layers.paint_far_outline = config_.horizon_ && horizon_far_mask_.size() == static_cast<size_t>(total_pix);
+  }
+
   // The ring markers, on top of everything else — the layer order the preview shader uses
   // (overlayAuxLines draws them last). No mask: the ring is a circle of a config-named radius
   // around a single point, so the per-pixel test is a distance comparison, which is cheaper than a
@@ -1019,6 +1041,28 @@ void RenderConsumer::CompositeAnnotations(AnnotationLayers& layers, int i, bool 
       // the picture does not contain.
       layers.on_marker_ring[m] = static_cast<uint8_t>(
           p.valid && std::fabs(std::hypot(px - p.px, py - p.py) - layers.marker_radius_px) < kMarkerHalfWidthPx);
+    }
+  }
+  // The globe's far side first, so every near-side layer below wins a pixel both touch — the
+  // preview shader's order (overlayAuxLines: far curves, then near curves, then markers). Each
+  // layer's alpha is scaled by the far side's fade weight at this pixel. All four lists are empty
+  // off the globe or at globe_back_fade_ 0, so this whole block is then a no-op and the bytes below
+  // are what they were before it existed.
+  if (!layers.far_grid.empty() || !layers.far_angular_dist.empty() || !layers.far_view_dist.empty() ||
+      layers.paint_far_outline) {
+    const float w = globe_far_weight_[static_cast<size_t>(i)];
+    const bool far_outline = layers.paint_far_outline && horizon_far_mask_[static_cast<size_t>(i)] != 0;
+    for (int j = 0; j < 3; j++) {
+      for (const auto* family : { &layers.far_grid, &layers.far_angular_dist, &layers.far_view_dist }) {
+        for (const auto& layer : *family) {
+          if (layer.mask[i] != 0) {
+            rgb[j] = BlendAnnotation(rgb[j], layer.alpha * w, layer.rgb[j], print_mode);
+          }
+        }
+      }
+      if (far_outline) {
+        rgb[j] = BlendAnnotation(rgb[j], kOutlineAlpha * w, layers.outline_rgb[j], print_mode);
+      }
     }
   }
   for (int j = 0; j < 3; j++) {
@@ -1520,6 +1564,7 @@ void RenderConsumer::RebuildAngularDistMasks() {
   angular_dist_masks_built_ = true;
   angular_dist_labels_built_for_ = want_labels;
   angular_dist_masks_.clear();
+  angular_dist_far_masks_.clear();
   angular_dist_labels_.clear();
   if (angles.empty()) {
     return;
@@ -1544,6 +1589,7 @@ void RenderConsumer::RebuildAngularDistMasks() {
     req.angular_dist_deg = { angles[k] };
     annotation::Overlay overlay = annotation::ComputeOverlay(req, thread_budget_);
     angular_dist_masks_.push_back(std::move(overlay.angular_dist));
+    angular_dist_far_masks_.push_back(std::move(overlay.far_side.angular_dist));
     AppendLabels(overlay.labels, static_cast<int>(k), angular_dist_labels_);
   }
 }
@@ -1569,6 +1615,7 @@ void RenderConsumer::RebuildViewDistMasks() {
   view_dist_masks_built_ = true;
   view_dist_labels_built_for_ = want_labels;
   view_dist_masks_.clear();
+  view_dist_far_masks_.clear();
   view_dist_labels_.clear();
   if (angles.empty()) {
     return;
@@ -1583,6 +1630,7 @@ void RenderConsumer::RebuildViewDistMasks() {
     req.view_dist_deg = { angles[k] };
     annotation::Overlay overlay = annotation::ComputeOverlay(req, thread_budget_);
     view_dist_masks_.push_back(std::move(overlay.view_dist));
+    view_dist_far_masks_.push_back(std::move(overlay.far_side.view_dist));
     AppendLabels(overlay.labels, static_cast<int>(k), view_dist_labels_);
   }
 }
@@ -1596,6 +1644,7 @@ void RenderConsumer::RebuildLineFamilyMasks(LineFamily family) {
   const bool is_elevation = family == LineFamily::kElevation;
   const auto& lines = is_elevation ? config_.elevation_grid_ : config_.longitude_grid_;
   auto& masks = is_elevation ? elevation_masks_ : longitude_masks_;
+  auto& far_masks = is_elevation ? elevation_far_masks_ : longitude_far_masks_;
   auto& built_from = is_elevation ? elevation_mask_angles_ : longitude_mask_angles_;
   bool& built = is_elevation ? elevation_masks_built_ : longitude_masks_built_;
   auto& labels = is_elevation ? elevation_labels_ : longitude_labels_;
@@ -1621,6 +1670,7 @@ void RenderConsumer::RebuildLineFamilyMasks(LineFamily family) {
   built = true;
   labels_built_for = want_labels;
   masks.clear();
+  far_masks.clear();
   labels.clear();
   if (angles.empty()) {
     return;
@@ -1640,6 +1690,7 @@ void RenderConsumer::RebuildLineFamilyMasks(LineFamily family) {
     }
     annotation::Overlay overlay = annotation::ComputeOverlay(req, thread_budget_);
     masks.push_back(std::move(is_elevation ? overlay.elevation : overlay.longitude));
+    far_masks.push_back(std::move(is_elevation ? overlay.far_side.elevation : overlay.far_side.longitude));
     AppendLabels(overlay.labels, static_cast<int>(k), labels);
   }
 }
@@ -1667,6 +1718,8 @@ void RenderConsumer::RebuildHorizonAnnotation() {
   req.labels = config_.horizon_label_;
   annotation::Overlay overlay = annotation::ComputeOverlay(req, thread_budget_);
   horizon_mask_ = std::move(overlay.horizon);
+  horizon_far_mask_ = std::move(overlay.far_side.horizon);
+  globe_far_weight_ = std::move(overlay.far_side.weight);
   if (!config_.horizon_label_) {
     return;
   }

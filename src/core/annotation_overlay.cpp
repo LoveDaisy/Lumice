@@ -567,6 +567,21 @@ Overlay ComputeOverlay(const Request& req, int thread_budget) {
   std::vector<float> dist_field(need_dist ? n : 0, 0.0f);
   std::vector<float> view_dist_field(need_view_dist ? n : 0, 0.0f);
 
+  // The globe's far side (Overlay::far_side). Its own fields and its own `imaged` — the gradient of
+  // a far-side field is measured across far-side neighbours, as the shader measures it across
+  // globeFarDir's — but the NEAR side's `drawable` as the gate, folded into far_drawable below.
+  const bool need_far = cfg.lens_.type_ == LensParam::kGlobe && req.view.globe_back_fade > 0.0f;
+  const size_t n_far = need_far ? n : 0;
+  std::vector<uint8_t> far_imaged(n_far, 0);
+  std::vector<uint8_t> far_drawable(n_far, 0);
+  std::vector<float> far_alt_field(need_far && need_alt ? n : 0, 0.0f);
+  std::vector<float> far_az_field(need_far && need_az ? n : 0, 0.0f);
+  std::vector<float> far_dist_field(need_far && need_dist ? n : 0, 0.0f);
+  std::vector<float> far_view_dist_field(need_far && need_view_dist ? n : 0, 0.0f);
+  if (need_far) {
+    out.far_side.weight.assign(n, 0.0f);
+  }
+
   // One inverse projection per pixel feeds every field, which is what AC1's "any new angle field
   // goes into the SAME loop" buys: three annotation categories cost one sweep, not three.
   ParallelRows(height, n, thread_budget, [&](int row_begin, int row_end) {
@@ -604,6 +619,32 @@ Overlay ComputeOverlay(const Request& req, int thread_budget) {
           // handling here.
           view_dist_field[i] = AngularDistDegOfDir(forward, dir.x, dir.y, dir.z);
         }
+        if (need_far) {
+          float mu = 0.0f;
+          const mask_detail::MaskDir far = mask_detail::GlobeFarPixelToWorld(cfg, inverse_params, rot, px, py, &mu);
+          // THE weight the far side's light carries (lm_proj::GlobeBackFadeWeight), not a copy.
+          const float w = far.valid ? lm_proj::GlobeBackFadeWeight(mu, req.view.globe_back_fade) : 0.0f;
+          if (!(w > 0.0f)) {
+            continue;
+          }
+          far_imaged[i] = 1;
+          if (drawable) {
+            far_drawable[i] = 1;
+            out.far_side.weight[i] = w;
+          }
+          if (need_alt) {
+            far_alt_field[i] = mask_detail::AltitudeDeg(far);
+          }
+          if (need_az) {
+            far_az_field[i] = AzimuthDegOfDir(far.x, far.y);
+          }
+          if (need_dist) {
+            far_dist_field[i] = AngularDistDegOfDir(ref_dir, far.x, far.y, far.z);
+          }
+          if (need_view_dist) {
+            far_view_dist_field[i] = AngularDistDegOfDir(forward, far.x, far.y, far.z);
+          }
+        }
       }
     }
   });
@@ -629,6 +670,30 @@ Overlay ComputeOverlay(const Request& req, int thread_budget) {
   if (need_view_dist) {
     out.view_dist = mask_detail::LevelSetMaskFromField(view_dist_field, imaged, out.drawable, width, height,
                                                        req.view_dist_deg, false, thread_budget);
+  }
+
+  if (need_far) {
+    Overlay::FarSideLines& fs = out.far_side;
+    if (req.horizon) {
+      fs.horizon = mask_detail::LevelSetMaskFromField(far_alt_field, far_imaged, far_drawable, width, height, { 0.0f },
+                                                      false, thread_budget);
+    }
+    if (!req.elevation_deg.empty()) {
+      fs.elevation = mask_detail::LevelSetMaskFromField(far_alt_field, far_imaged, far_drawable, width, height,
+                                                        req.elevation_deg, false, thread_budget);
+    }
+    if (!req.longitude_deg.empty()) {
+      fs.longitude = mask_detail::LevelSetMaskFromField(far_az_field, far_imaged, far_drawable, width, height,
+                                                        req.longitude_deg, true, thread_budget);
+    }
+    if (!req.angular_dist_deg.empty()) {
+      fs.angular_dist = mask_detail::LevelSetMaskFromField(far_dist_field, far_imaged, far_drawable, width, height,
+                                                           req.angular_dist_deg, false, thread_budget);
+    }
+    if (need_view_dist) {
+      fs.view_dist = mask_detail::LevelSetMaskFromField(far_view_dist_field, far_imaged, far_drawable, width, height,
+                                                        req.view_dist_deg, false, thread_budget);
+    }
   }
 
   // Not level sets: named directions, sampled as points. The legacy pair and the general list are

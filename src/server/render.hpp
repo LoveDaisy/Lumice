@@ -397,7 +397,16 @@ class RenderConsumer : public IConsume {
     std::vector<LineLayer> grid;          // parallels then meridians, under the circles
     std::vector<LineLayer> angular_dist;  // the sun circles
     std::vector<LineLayer> view_dist;     // the view circles, above the sun circles, below the outline
-    std::vector<MarkerLayer> markers;     // the rings, on top of everything
+    // The globe's far side, seen through the near one (annotation::Overlay::far_side): the same
+    // families in the same order, ALL of them under every near-side layer — the preview shader's
+    // overlayAuxLines draws the far curves first, then the near ones. Each is blended at its
+    // `alpha` times globe_far_weight_ at the pixel. Empty, and paint_far_outline false, unless the
+    // lens is the globe with globe_back_fade_ > 0.
+    std::vector<LineLayer> far_grid;
+    std::vector<LineLayer> far_angular_dist;
+    std::vector<LineLayer> far_view_dist;
+    bool paint_far_outline = false;
+    std::vector<MarkerLayer> markers;  // the rings, on top of everything
     float marker_alpha = 0.0f;
     float marker_radius_px = 0.0f;
     bool paint_marker = false;
@@ -444,6 +453,13 @@ class RenderConsumer : public IConsume {
   // then be empty exactly when the user has just asked for the line. Gating happens at the
   // point of use in PostSnapshot instead.
   std::vector<uint8_t> horizon_mask_;
+  // The horizon's far-side twin, and the per-pixel far-side fade weight every far-side layer
+  // multiplies its alpha by (annotation::Overlay::far_side.weight). Both from the horizon's
+  // unconditional ComputeOverlay call, so the weight exists whenever any far-side mask does: it
+  // depends on the view alone, never on which curve was asked for. Empty unless the lens is the
+  // globe with globe_back_fade_ > 0.
+  std::vector<uint8_t> horizon_far_mask_;
+  std::vector<float> globe_far_weight_;
   // Whether horizon_mask_ has been filled at all. Not a change detector like the *_masks_built_
   // flags below: nothing this mask depends on can move under a reused consumer (the view is a
   // NeedsRebuild field), so this only stops ResetWith from redoing the sweep.
@@ -459,6 +475,7 @@ class RenderConsumer : public IConsume {
   // constructor AND from ResetWith, and skips the sweep when the inputs it last built from are
   // unchanged.
   std::vector<std::vector<uint8_t>> angular_dist_masks_;
+  std::vector<std::vector<uint8_t>> angular_dist_far_masks_;
   // What angular_dist_masks_ was last built from — the change detector for the paragraph above.
   std::vector<float> angular_dist_mask_angles_;
   float angular_dist_mask_sun_[3]{ 0.0f, 0.0f, 0.0f };
@@ -468,6 +485,11 @@ class RenderConsumer : public IConsume {
   // core derives the centre from the view, and the view is a NeedsRebuild field, so a reused
   // consumer's axis never moves — see RebuildViewDistMasks().
   std::vector<std::vector<uint8_t>> view_dist_masks_;
+  // The far-side twins of view_dist_masks_ (annotation::Overlay::far_side), index-aligned with it
+  // and built by the same ComputeOverlay calls. The other four families carry theirs beside their
+  // own near-side masks below. All five are empty unless the lens is the globe with
+  // globe_back_fade_ > 0 — a layout field, so a consumer never sees that change under it.
+  std::vector<std::vector<uint8_t>> view_dist_far_masks_;
   std::vector<float> view_dist_mask_angles_;
   bool view_dist_masks_built_ = false;
   // Parallels and meridians, index-aligned with config_.elevation_grid_ / config_.longitude_grid_.
@@ -475,9 +497,11 @@ class RenderConsumer : public IConsume {
   // difference: these geometries are fixed in the celestial frame, so the sun is NOT an input and
   // the change detector compares the angle list alone.
   std::vector<std::vector<uint8_t>> elevation_masks_;
+  std::vector<std::vector<uint8_t>> elevation_far_masks_;
   std::vector<float> elevation_mask_angles_;
   bool elevation_masks_built_ = false;
   std::vector<std::vector<uint8_t>> longitude_masks_;
+  std::vector<std::vector<uint8_t>> longitude_far_masks_;
   std::vector<float> longitude_mask_angles_;
   bool longitude_masks_built_ = false;
   // The label anchors, one vector per family, harvested from the same ComputeOverlay calls that

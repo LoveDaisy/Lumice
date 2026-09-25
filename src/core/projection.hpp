@@ -103,6 +103,17 @@ Dir3 RectangularInverse(float lon, float lat);
 // sphere's silhouette, not an edge case) or when the intersection is behind the camera.
 Dir3 GlobeInverse(float x, float y, float focal);
 
+// The FAR root of the same solve: the point where the ray through (x, y) leaves the sphere, for
+// the globe's back-side fade. Same validity as GlobeInverse (a ray that meets the sphere has both
+// crossings). Its camera-frame -z is the mu lm_proj::GlobeBackFadeWeight takes.
+//
+// MUST MATCH the preview shader's globeFarDir (src/gui/preview_renderer.cpp), which solves the
+// same ray-sphere pair from a normalized eye-space direction and takes the same root; the two
+// agree up to the positive factor noted at GlobeInverse. The C++ side is pinned to the forward the
+// shader is already held to (lm_proj::ProjectExitToPixel lands every far direction back on its
+// pixel, with the same weight) in test/unit-correctness/core/test_annotation_overlay.cpp.
+Dir3 GlobeInverseFar(float x, float y, float focal);
+
 
 // =============== Dual fisheye texture layout utilities ===============
 // These convert between normalized disc coordinates and continuous pixel coordinates

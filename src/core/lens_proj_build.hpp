@@ -507,6 +507,30 @@ inline MaskDir PixelToWorld(const RenderConfig& cfg, const lm_proj::ProjParams& 
   return { 0.0f, 0.0f, 0.0f, false };
 }
 
+// The globe's FAR side at pixel (px, py): the world direction where that pixel's ray leaves the
+// sphere, and in `mu` its camera-frame -z — the argument lm_proj::GlobeBackFadeWeight takes, the
+// same mu the forward's globe branch weights a far-side hit by. Invalid for every other lens (no
+// other lens has a far side) and wherever PixelToWorld's globe branch is invalid. Same pixel
+// centre and lens-shift arithmetic as that branch, so the near and far directions of one pixel
+// are the two crossings of one ray.
+inline MaskDir GlobeFarPixelToWorld(const RenderConfig& cfg, const lm_proj::ProjParams& p, const Rotation& rot, int px,
+                                    int py, float* mu) {
+  *mu = 0.0f;
+  if (cfg.lens_.type_ != LensParam::kGlobe) {
+    return { 0.0f, 0.0f, 0.0f, false };
+  }
+  const int width = cfg.resolution_[0];
+  const int height = cfg.resolution_[1];
+  const float x = static_cast<float>(px) + 0.5f - static_cast<float>(width) / 2.0f - static_cast<float>(p.lens_shift_x);
+  const float y =
+      static_cast<float>(py) + 0.5f - static_cast<float>(height) / 2.0f - static_cast<float>(p.lens_shift_y);
+  const projection::Dir3 c = projection::GlobeInverseFar(x, y, p.scale);
+  if (c.valid) {
+    *mu = -c.z;
+  }
+  return CameraDirToWorld(rot, c);
+}
+
 // Altitude in DEGREES for a world direction, in the GUI shader's own terms
 // (preview_renderer.cpp overlayAuxLines: `asin(clamp(-world_dir.z, -1, 1)) * DEG`). Degrees
 // rather than the raw z because the line-width rule below is stated in degrees on both sides;
