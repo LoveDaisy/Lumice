@@ -57,6 +57,14 @@
 //     rectangle, whatever style.WindowBorderSize says.
 //   * Measured. At `kInsetPx = 0` the two arms come back byte-identical over all 900x912 pixels
 //     of the viewport, this suite's whole rectangle, with nothing skipped.
+// One piece of chrome IS painted inside the rectangle, by design: the display-mode segmented control
+// in the preview's top-right corner (RenderDisplayModeControl, src/gui/app_panels.cpp). It is an
+// ImGui widget drawn over the blit and so never part of the export — which is correct, a Screenshot
+// must not carry it. It is excluded by name and by the rectangle the test engine reports for its
+// two segments, not by an inset: an inset would stop watching every edge to hide one corner. The
+// case asserts that exclusion both ways — differences do occur inside it (it is really drawn
+// there) and it stays under 2% of the frame.
+//
 // Keep it at 0. Widening it is how this gate would quietly stop watching its own edges — and the
 // edge is where a blit-rectangle or DPI-rounding regression shows up FIRST. If a future change
 // really does paint chrome inside this rectangle, the honest fix is to say which pixels and why,
@@ -87,6 +95,7 @@
 // developer machine with a real GL context via ./scripts/test.sh {quick,full,pr} and in no CI job
 // today (§7.5).
 
+#include <cmath>
 #include <cstdio>
 #include <vector>
 
@@ -154,6 +163,11 @@ PreviewExportRequest g_req;
 // quantisation do not swallow a small perturbation, dim enough not to saturate. They vary per
 // texel in all three channels so that "the two arms agree" is a statement about content and not
 // about a flat field.
+// The display-mode control's two segments (RenderDisplayModeControl), by the ids the control gives
+// them. The one chrome element drawn over the blit; see the inset section above.
+const char* const kDisplayModeControlSegments[] = { "//##PreviewPanel/Normal##preview_display_mode",
+                                                    "//##PreviewPanel/Channel B-R##preview_display_mode" };
+
 constexpr int kXyzTexW = 64;
 constexpr int kXyzTexH = 64;
 
@@ -189,18 +203,35 @@ void PreviewExportGuiFunc(ImGuiTestContext* /*ctx*/) {
   }
 }
 
-// Byte-for-byte over the inset interior. Returns the number of differing pixels and reports the
-// first one — a coordinate plus both sides' RGBA is what makes a red diagnosable without a second
-// run, and "which pixel" is the first question a real divergence gets asked.
+// A pixel rectangle in the captured frame's own coordinates (top-left origin, device pixels),
+// half-open: [x0, x1) x [y0, y1).
+struct PixelRect {
+  int x0 = 0;
+  int y0 = 0;
+  int x1 = 0;
+  int y1 = 0;
+  bool Contains(int x, int y) const { return x >= x0 && x < x1 && y >= y0 && y < y1; }
+};
+
+// Byte-for-byte over the inset interior, minus `excluded`. Returns the number of differing pixels
+// outside it and reports the first one — a coordinate plus both sides' RGBA is what makes a red
+// diagnosable without a second run, and "which pixel" is the first question a real divergence
+// gets asked. Differences inside `excluded` are counted separately into `*excluded_diffs`, so the
+// caller can show the exclusion is not vacuous.
 int CountInsetPixelDiffs(const std::vector<unsigned char>& screen, const std::vector<unsigned char>& exported, int w,
-                         int h) {
+                         int h, const PixelRect& excluded, int* excluded_diffs) {
   int diffs = 0;
+  *excluded_diffs = 0;
   bool reported = false;
   for (int y = kInsetPx; y < h - kInsetPx; ++y) {
     for (int x = kInsetPx; x < w - kInsetPx; ++x) {
       const size_t i = (static_cast<size_t>(y) * w + x) * 4;
       if (screen[i] == exported[i] && screen[i + 1] == exported[i + 1] && screen[i + 2] == exported[i + 2] &&
           screen[i + 3] == exported[i + 3]) {
+        continue;
+      }
+      if (excluded.Contains(x, y)) {
+        ++*excluded_diffs;
         continue;
       }
       ++diffs;
@@ -308,11 +339,38 @@ static void RunPreviewExportParity(ImGuiTestContext* ctx, int display_mode) {
   IM_CHECK(g_req.export_ok);
   IM_CHECK_EQ(g_req.rgba.size(), screen.size());
 
-  const int diffs = CountInsetPixelDiffs(screen, g_req.rgba, vp_w, vp_h);
-  const int compared = (vp_w - 2 * kInsetPx) * (vp_h - 2 * kInsetPx);
-  fprintf(stderr, "[preview_export_parity] display_mode %d, %dx%d inset %d px: %d/%d pixels differ\n", display_mode,
-          vp_w, vp_h, kInsetPx, diffs, compared);
+  // The one piece of chrome inside the rectangle: the display-mode control, excluded by the
+  // rectangle ImGui itself laid it out in (see the inset section above for why this is not an
+  // inset). Converted from screen points to this capture's pixels through the published DPI, from
+  // the preview window's own origin — the same origin the blit rectangle is built from.
+  const ImGuiWindow* panel = ctx->GetWindowByRef("//##PreviewPanel");
+  IM_CHECK(panel != nullptr);
+  ImRect control = ctx->ItemInfo(kDisplayModeControlSegments[0]).RectFull;
+  for (const char* ref : kDisplayModeControlSegments) {
+    control.Add(ctx->ItemInfo(ref).RectFull);
+  }
+  const PixelRect excluded{
+    static_cast<int>(std::floor((control.Min.x - panel->Pos.x) * gui::g_preview_vp.dpi_scale_x)),
+    static_cast<int>(std::floor((control.Min.y - panel->Pos.y) * gui::g_preview_vp.dpi_scale_y)),
+    static_cast<int>(std::ceil((control.Max.x - panel->Pos.x) * gui::g_preview_vp.dpi_scale_x)),
+    static_cast<int>(std::ceil((control.Max.y - panel->Pos.y) * gui::g_preview_vp.dpi_scale_y)),
+  };
+  const int excluded_area = (excluded.x1 - excluded.x0) * (excluded.y1 - excluded.y0);
+
+  int excluded_diffs = 0;
+  const int diffs = CountInsetPixelDiffs(screen, g_req.rgba, vp_w, vp_h, excluded, &excluded_diffs);
+  const int compared = (vp_w - 2 * kInsetPx) * (vp_h - 2 * kInsetPx) - excluded_area;
+  fprintf(stderr,
+          "[preview_export_parity] display_mode %d, %dx%d inset %d px, control [%d,%d)x[%d,%d) excluded "
+          "(%d px, %d of them differ): %d/%d pixels differ\n",
+          display_mode, vp_w, vp_h, kInsetPx, excluded.x0, excluded.x1, excluded.y0, excluded.y1, excluded_area,
+          excluded_diffs, diffs, compared);
   IM_CHECK_EQ(diffs, 0);
+  // Not vacuous: the control really is drawn over the blit inside the excluded rectangle (it is on
+  // screen and not in the export), and the rectangle is a small corner rather than a slab of the
+  // frame — an exclusion that had grown to cover a real divergence would fail the second bound.
+  IM_CHECK_GT(excluded_diffs, 0);
+  IM_CHECK_LT(excluded_area, vp_w * vp_h / 50);
 
   // Not vacuous for the diagnostic: the frame the two arms agree on must actually BE the diagnostic
   // — grey everywhere except under the coloured overlays. A shader whose branch never fired would
