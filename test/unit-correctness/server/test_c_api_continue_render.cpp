@@ -230,6 +230,8 @@ TEST(ContinueRender, ContinueAccumulatesCountEnergyAndPlanes) {
   // sqrt(2) * 0.92 / sqrt(780) = 0.046, measured 0.047 over 500 runs (range 1.864-2.170) — and the same 0.047 for
   // two independent fresh halves, so none of it is the continuation's. The band is 6.5 sigma
   // wide; a cleared plane reads about 1 and a double-counted one about 3, both far outside it.
+  // (That sigma is for independent batch wavelengths. They are now stratified across each
+  // half's batches — WavelengthStratifier — which makes the ratio tighter, not looser.)
   const double plane_ratio = Sum(both.xyz) / Sum(first.xyz);
   EXPECT_GT(plane_ratio, 1.7) << "the plane total did not roughly double";
   EXPECT_LT(plane_ratio, 2.3) << "the plane total more than doubled";

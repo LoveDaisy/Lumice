@@ -1097,6 +1097,10 @@ The dashboard tracks 12 time-series (4 platforms × 3 metrics):
 > the same knob (which overrides legacy's `kDefaultRayNum`=128) swings legacy ΣY
 > **−5%..+13%** — this is Monte-Carlo variance from per-batch wavelength sampling,
 > not a bug (converged at the default 128; see scrum-306.7 in the per-run log).
+> Those swings were measured with independent per-batch wavelengths; legacy now
+> stratifies them across batches (`WavelengthStratifier`, `src/core/wl_stratifier.hpp`),
+> which shrinks the swing at large dispatch but does not remove it (a 1e6-ray run at
+> dispatch 131072 still has only 8 wavelengths). The rule below stands.
 >
 > **Consequence / historical misdiagnosis to NOT repeat**: setting
 > `LUMICE_DISPATCH_RAY_NUM=131072` globally to probe CUDA made

@@ -18,10 +18,12 @@ namespace lumice {
 // consecutive batches covers the band evenly (three-gap theorem), so the part of the
 // image a whole batch lands on together — the direct-transmission sun spot, and the
 // frame total — no longer inherits the scatter of a few thousand independent
-// wavelengths. Measured on three D65 scenes at 1e6 rays: whole-image pixel variance
-// 0.22-0.31x of independent draws, frame-total variance 0.0002-0.001x, per-ray cost zero.
-// Per-ray independent wavelengths bought the same whole-image variance and a frame
-// total 10x worse, which is why the batch keeps a single wavelength here.
+// wavelengths. Measured on three D65 scenes at 1e6 rays (X/Y/Z): summed pixel variance
+// 0.16-0.30x of independent draws, frame-total variance 0.0001-0.0015x, throughput
+// unchanged. Pixels a batch does not hit en masse (the halos themselves) see no change:
+// their rays come from different batches either way. Per-ray independent wavelengths
+// measured the same summed variance and a frame total ~10x worse, which is why the batch
+// keeps a single wavelength here.
 //
 // Scope is one Simulator::Run(): Run() re-seeds its RNG under a fixed seed, and a
 // stratifier created there draws phi from that RNG on first use, so a fixed-seed session
