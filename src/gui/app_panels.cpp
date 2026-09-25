@@ -547,12 +547,13 @@ void RenderTopBar(float window_width) {
       // matters: a user looking for their settings does not open a Save menu to find them, and in
       // practice did not. The entry is now a Settings button in the top bar — see RenderTopBar.
       ImGui::MenuItem("Include Texture in .lmc", nullptr, &g_state.save_texture);
-      // No "Include Overlay in Screenshot" here any more, and deliberately not moved elsewhere:
-      // the Screenshot export renders the same frame the preview does, so the Overlay panel's
-      // per-family switches are the only thing that decides what the PNG contains. A second gate
-      // would have to agree with those switches to mean anything, and its whole history was of
-      // not agreeing — it defaulted off, never persisted, and gated only the text while the lines
-      // went out regardless.
+      // No "Include Overlay in Screenshot" here any more. Its history was of not agreeing with the
+      // Overlay panel — it defaulted off, never persisted, and gated only the text while the lines
+      // went out regardless. What replaced it is the options popup Screenshot... now opens
+      // (RenderScreenshotExportOptionsPopup), shaped against each of those three: prefilled from
+      // the panel on every open instead of defaulting off, held for that one export instead of
+      // persisted beside the panel, and one box per family for the line and one for the label,
+      // each able only to take away what the screen shows (screenshot_export_options.hpp).
       ImGui::EndPopup();
     }
   }
@@ -3243,8 +3244,8 @@ void RenderScreenshotExportOptionsPopup() {
         ImGui::SetTooltip("%s", dm_c.disabled_reason);
       } else if (!renderable) {
         ImGui::SetTooltip(
-            "The preview is showing the colored composite, which the other display mode would have to\n"
-            "replace. Switch it on screen to export it.");
+            "With the Colored raypath composite on, Normal and Channel B-R are drawn from two different\n"
+            "pictures, and only the one on screen is loaded. Switch the mode on screen to export it.");
       }
     }
     if (i + 1 < kDisplayModeCount) {

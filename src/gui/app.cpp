@@ -502,7 +502,7 @@ ScreenshotRender RenderScreenshot(const ScreenshotExportSelection& sel) {
   //
   // WHICH lines and labels appear is the Overlay panel's per-family switches intersected with the
   // export options the user just confirmed (screenshot_export_options.hpp). That selection is a
-  // second gate, and the one it replaced — "Include Overlay in Screenshot" — was removed for
+  // second gate, and an earlier one — "Include Overlay in Screenshot" — was removed for
   // disagreeing with the panel: it defaulted off, did not persist, and gated only the text. This
   // one is prefilled from the panel on every open, lives for this one export, gates lines and
   // labels separately, and can only take away what the screen shows, so untouched it IS the

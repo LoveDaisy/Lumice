@@ -44,7 +44,13 @@ GUI 需要 display server 和支持 OpenGL 3.2 Core Profile 的 GPU。
 - **New / Open**：项目生命周期操作（模拟期间禁用）。
 - **Save**：点击后弹出子菜单，包含：
   - `Save` / `Save Copy` —— 写入 `.lmc` 文件
-  - `Screenshot...` —— 把当前 Render Preview 导出为 PNG
+  - `Screenshot...` —— 把当前 Render Preview 导出为 PNG。会先弹出一个小的选项窗口，按预览当前显示
+    的内容预填：每个 overlay 族一个 **Line** 框、一个 **Label** 框，外加显示模式（Normal / Channel
+    B-R）。取消勾选即可让这一次导出不含那条线或那组标签；预览上本就没开的族置灰、不能在这里加上——
+    要加请到 Overlay 面板里打开。这里的选择不会被保留：面板与预览都不变，下一次 Screenshot 仍从屏幕
+    所示重新预填。显示模式可以为这次导出任意切换，例外是 Print 下（与预览一致）以及正在显示光路染色
+    Colored 合成图开关对一次染色运行打开时——另一种模式需要的是与屏幕所用不同的另一张图（两种情况都置灰，悬停显示原因）。点
+    **Export...** 后再选择文件名。
   - `Dual Fisheye Equal Area...` / `Equirectangular...` —— 服务端离屏渲染导出（需要已完成的模拟）
   - `Config JSON...` —— 把配置导出为 JSON，供 CLI 重新渲染。导出的 renderer 描述的是 Render
     Preview 当前显示的那张图：显示投影与 FOV、视角、可见半球、背景色、地平线开关，以及画幅预设

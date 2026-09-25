@@ -44,7 +44,16 @@ From left to right, the Top Bar exposes:
 - **New / Open**: project lifecycle actions (disabled while simulating).
 - **Save**: opens a popup menu containing:
   - `Save` / `Save Copy` — write the project as a `.lmc` file
-  - `Screenshot...` — export the current Render Preview as PNG
+  - `Screenshot...` — export the current Render Preview as PNG. It first opens a small options
+    window, prefilled with what the preview shows: per overlay family a **Line** and a **Label**
+    box, and the display mode (Normal / Channel B-R). Untick a box to leave that line or label out
+    of this one export; a family the preview is not showing is greyed and cannot be added here —
+    turn it on in the Overlay panel instead. Nothing chosen here is kept: the panel and the preview
+    are unchanged, and the next Screenshot starts again from what the screen shows. The display mode
+    may be switched either way for the export, except under Print (as in the preview) and while the
+    Colored raypath composite is switched on for a coloured run, where the other mode would need a
+    different picture than the one uploaded for the screen (both greyed, with the reason on hover). **Export...**
+    then asks for the file name.
   - `Dual Fisheye Equal Area...` / `Equirectangular...` — server-side off-screen exports (require a finished simulation)
   - `Config JSON...` — export the configuration in JSON form, for re-rendering with the CLI. The
     exported renderer describes what the Render Preview is currently showing: the display
