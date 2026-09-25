@@ -13,13 +13,18 @@
 //     "warning" bluer than it is red would keep every equality test above green while making the
 //     Resolution input read as an accent rather than a warning.
 //
-// The Push*/Pop* button helpers are not covered here: they call ImGui::PushStyleColor, which needs a
-// live ImGui context this target deliberately does not create. Their pairing is exercised by the
-// rendered-frame suites.
+// The Push*/Pop* button helpers' pairing is exercised by the rendered-frame suites. What is pinned
+// here, under a bare ImGui context with the app's style applied (no window, no frame), is the one
+// property of the button triples a palette edit could silently break: the Continue button stays
+// telling apart from every other button colour it shares the top bar with.
 
 #include <gtest/gtest.h>
 
+#include <cmath>
+
+#include "gui/destructive_style.hpp"
 #include "gui/semantic_colors.hpp"
+#include "gui/theme.hpp"
 #include "imgui.h"
 
 namespace {
@@ -100,6 +105,50 @@ TEST(SemanticColors, EachGradeStaysInItsColourFamily) {
     EXPECT_GT(c.x, c.z);
     EXPECT_FLOAT_EQ(c.y, c.z);
   }
+}
+
+// The Continue button sits in the execution group beside Run (good green) and, while a run is live,
+// in the slot next to Stop (destructive red); the file group to its right uses the palette's
+// default button, and the Colors button is accent-tinted when classes exist. Its colour exists to
+// be read as none of those. The floor is the RGB-distance floor theme.cpp's test palette was
+// calibrated against (0.3) — the tree's existing answer to "far enough apart to tell by eye",
+// reused rather than invented for this one comparison.
+class ContinueButtonColour : public ::testing::Test {
+ protected:
+  void SetUp() override {
+    ctx_ = ImGui::CreateContext();
+    lumice::gui::ApplyStyle(ImGui::GetStyle());
+  }
+  void TearDown() override { ImGui::DestroyContext(ctx_); }
+
+  template <typename Push, typename Pop>
+  static ImVec4 ButtonColourUnder(Push push, Pop pop) {
+    push();
+    const ImVec4 c = ImGui::GetStyleColorVec4(ImGuiCol_Button);
+    pop();
+    return c;
+  }
+
+  static float RgbDistance(const ImVec4& a, const ImVec4& b) {
+    return std::sqrt((a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y) + (a.z - b.z) * (a.z - b.z));
+  }
+
+  ImGuiContext* ctx_ = nullptr;
+};
+
+TEST_F(ContinueButtonColour, IsFarFromEveryButtonColourItSharesTheBarWith) {
+  constexpr float kFloor = 0.3f;
+  const ImVec4 cont = ButtonColourUnder(lumice::gui::PushContinueButtonStyle, lumice::gui::PopContinueButtonStyle);
+  const ImVec4 run = ButtonColourUnder(lumice::gui::PushGoodButtonStyle, lumice::gui::PopGoodButtonStyle);
+  const ImVec4 stop = ButtonColourUnder(lumice::gui::PushDestructiveStyle, lumice::gui::PopDestructiveStyle);
+  const ImVec4 plain = ImGui::GetStyleColorVec4(ImGuiCol_Button);
+  const ImVec4 accent = lumice::gui::AccentColor();
+
+  EXPECT_GE(RgbDistance(cont, run), kFloor);
+  EXPECT_GE(RgbDistance(cont, stop), kFloor);
+  EXPECT_GE(RgbDistance(cont, plain), kFloor);
+  EXPECT_GE(RgbDistance(cont, accent), kFloor);
+  EXPECT_FLOAT_EQ(cont.w, 1.0f);  // opaque at rest, so DisabledAlpha alone decides the dimmed form
 }
 
 }  // namespace

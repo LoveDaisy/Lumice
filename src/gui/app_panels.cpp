@@ -4,6 +4,7 @@
 #include <array>
 #include <cmath>
 #include <cstdio>
+#include <initializer_list>
 #include <iterator>
 #include <limits>
 #include <optional>
@@ -35,6 +36,9 @@
 #include "gui/theme.hpp"
 #include "gui/view_look_at.hpp"
 #include "imgui.h"
+// imgui_internal.h for SeparatorEx(ImGuiSeparatorFlags_Vertical) only — the one themed vertical
+// rule ImGui has; the public Separator() is horizontal-only. Same precedent as theme.cpp.
+#include "imgui_internal.h"
 #include "util/color_space.hpp"
 #include "util/path_utils.hpp"  // PathToU8 — the pending export path is shown in the overwrite prompt
 
@@ -371,6 +375,32 @@ inline void SetNextPanelGeometry(float x, float y, float w, float h) {
   ImGui::SetNextWindowSize(ImVec2(w, h));
   ImGui::SetNextWindowViewport(vp->ID);
 }
+
+// The top bar's one boundary between groups: a themed vertical rule (ImGuiCol_Separator, so it
+// follows the palette) with the ordinary item spacing on each side, so the gap between two groups
+// is twice the gap inside one plus the rule — the bar's rhythm is the theme's ItemSpacing.x and
+// nothing else. It replaces a bare "|" glyph whose weight and colour came from the font.
+//
+// Why not a wider gap: at kMinWindowWidth the bar's widest content (a colour class present, so the
+// Colored / Full Spectrum checkbox and its warning pip are drawn) leaves ~20 px of headroom with
+// this spacing, and 1.5x ItemSpacing per side overflowed it by 12 — the budget is pinned by
+// shell_chrome/the_top_bar_fits_at_the_minimum_window_width.
+void ToolbarGroupSeparator() {
+  ImGui::SameLine();
+  ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
+  ImGui::SameLine();
+}
+
+// One width for every button of a top-bar group: the widest label plus the frame padding. A group
+// whose buttons share a width reads as one control, and a slot whose label changes (Run / Stop /
+// Stopping...) keeps its rectangle, so nothing to its right moves.
+float ToolbarGroupButtonWidth(std::initializer_list<const char*> labels) {
+  float widest = 0.0f;
+  for (const char* label : labels) {
+    widest = std::max(widest, ImGui::CalcTextSize(label, nullptr, /*hide_text_after_double_hash=*/true).x);
+  }
+  return widest + ImGui::GetStyle().FramePadding.x * 2.0f;
+}
 }  // namespace
 
 void RenderTopBar(float window_width) {
@@ -387,14 +417,12 @@ void RenderTopBar(float window_width) {
     if (ImGui::Button(left_toggle_label)) {
       g_state.left_panel_collapsed = !g_state.left_panel_collapsed;
     }
-    ImGui::SameLine();
-    ImGui::TextDisabled("|");
-    ImGui::SameLine();
+    ToolbarGroupSeparator();
   }
 
-  // Run/Stop — fixed width (max of ALL three labels, incl. "Stopping…") to prevent layout shift on
-  // toggle. `busy` widens the file-op gates below: New/Open/Save/backend-toggle stay disabled while
-  // the backend is still draining an async Stop (kStopping), not just while simulating.
+  // Run/Stop and Continue — one width for the whole execution group (max of ALL four labels, incl.
+  // "Stopping…") to prevent layout shift on toggle. `busy` widens the file-op gates below: New/Open/Save/backend-toggle
+  // stay disabled while the backend is still draining an async Stop (kStopping), not just while simulating.
   bool simulating = IsSimulating(g_state.sim_state);
   bool stopping = IsStopping(g_state.sim_state);
   // Counts the analysis run: while one is tracing, a render commit would be refused by the server
@@ -404,9 +432,8 @@ void RenderTopBar(float window_width) {
   const char* kRunLabel = ICON_FA_PLAY " Run";
   const char* kStopLabel = ICON_FA_STOP " Stop";
   const char* kStoppingLabel = ICON_FA_STOP " Stopping...";
-  float run_stop_width = std::max({ ImGui::CalcTextSize(kRunLabel).x, ImGui::CalcTextSize(kStopLabel).x,
-                                    ImGui::CalcTextSize(kStoppingLabel).x }) +
-                         style.FramePadding.x * 2;
+  const char* kContinueLabel = ICON_FA_FORWARD " Continue";
+  const float run_stop_width = ToolbarGroupButtonWidth({ kRunLabel, kStopLabel, kStoppingLabel, kContinueLabel });
   if (simulating) {
     // Stop is a destructive action in the same sense as delete/remove — it shares their palette
     // rather than keeping a second, slightly different red of its own.
@@ -446,9 +473,13 @@ void RenderTopBar(float window_width) {
         WhyCannotContinue(g_server != nullptr, g_state.sim_state, g_state.analysis_run_in_progress, g_state.run_intent,
                           g_state.server_session_is_analysis, DocumentContinuable(g_state));
     ImGui::BeginDisabled(blocker != ContinueBlocker::kNone);
-    if (ImGui::Button(ICON_FA_FORWARD " Continue")) {
+    // Its own colour, so it cannot be read as Run (green, start over) or Stop (red) in the same
+    // slot group; BeginDisabled's DisabledAlpha dims it like every other disabled control.
+    PushContinueButtonStyle();
+    if (ImGui::Button(kContinueLabel, ImVec2(run_stop_width, 0))) {
       DoContinue();
     }
+    PopContinueButtonStyle();
     ImGui::EndDisabled();
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
       if (const char* why = ContinueBlockerTooltip(blocker)) {
@@ -485,7 +516,8 @@ void RenderTopBar(float window_width) {
         "Click Run to re-simulate, or Revert to discard the changes.");
   }
   ImGui::SameLine();
-  if (ImGui::SmallButton("Revert") && modified) {  // `&& modified`: redundant safety guard over BeginDisabled
+  // A full-height Button, not SmallButton: the bar's buttons share one frame height.
+  if (ImGui::Button("Revert") && modified) {  // `&& modified`: redundant safety guard over BeginDisabled
     DoRevert();
   }
   ImGui::EndDisabled();
@@ -493,25 +525,24 @@ void RenderTopBar(float window_width) {
     ImGui::PopStyleVar();
   }
 
-  ImGui::SameLine();
-  ImGui::TextDisabled("|");
-  ImGui::SameLine();
+  ToolbarGroupSeparator();
 
   // File operations — New/Open disabled while busy (simulating OR async Stop draining); Save menu
   // itself stays enabled so read-only exports (Screenshot / Dual Fisheye Equal Area /
   // Equirectangular / Config JSON) remain reachable.
+  const float file_op_width = ToolbarGroupButtonWidth({ "New", "Open", "Save" });
   ImGui::BeginDisabled(busy);
-  if (ImGui::Button("New")) {
+  if (ImGui::Button("New", ImVec2(file_op_width, 0))) {
     CheckUnsavedAndDo(PendingAction::kNew);
   }
   ImGui::SameLine();
-  if (ImGui::Button("Open")) {
+  if (ImGui::Button("Open", ImVec2(file_op_width, 0))) {
     CheckUnsavedAndDo(PendingAction::kOpen);
   }
   ImGui::EndDisabled();
   ImGui::SameLine();
   {
-    if (ImGui::Button("Save")) {
+    if (ImGui::Button("Save", ImVec2(file_op_width, 0))) {
       ImGui::OpenPopup("SaveMenu");
     }
     if (ImGui::BeginPopup("SaveMenu")) {
@@ -555,9 +586,7 @@ void RenderTopBar(float window_width) {
     }
   }
 
-  ImGui::SameLine();
-  ImGui::TextDisabled("|");
-  ImGui::SameLine();
+  ToolbarGroupSeparator();
 
   // task-345.5 (⑥): dedicated "feature button" group, immediately right of
   // New/Open/Save. Colors is the first occupant; future cross-cutting toggles
@@ -732,7 +761,7 @@ void RenderTopBar(float window_width) {
   // by nobody who had not been told where it was, which is the only measure a settings entry has.
   //
   // Two deliberate choices, both worth knowing before this button gets tidied away again:
-  //   - It is separated from the Colors group by the same "|" the file group uses, because the two
+  //   - It is separated from the Colors group by the same group rule the file group uses, because the two
   //     are different kinds of control. Colors and the Colored checkbox are toggles that change
   //     what the viewport shows; this opens a modal that edits persistent preferences. Sharing a
   //     run of buttons with no break would let a modal launcher read as one more view toggle.
@@ -741,9 +770,7 @@ void RenderTopBar(float window_width) {
   //     the user is watching runs is a settings entry they cannot find when they think to look.
   // The panel's preset library is one section inside it, so retuning a preset is still reachable;
   // it no longer has a menu item of its own pointing straight at that section.
-  ImGui::SameLine();
-  ImGui::TextDisabled("|");
-  ImGui::SameLine();
+  ToolbarGroupSeparator();
   if (ImGui::Button(ICON_FA_GEAR " Settings")) {
     OpenDefaultsPanel(g_state, DefaultsPanelSection::kSettings);
   }

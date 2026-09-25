@@ -30,6 +30,15 @@
 // Button triples are only provided where a consumer exists: good (the Run
 // button) below, destructive in gui/destructive_style.hpp. There is no warning
 // button form — no warning-semantic button exists in the tree.
+//
+// One button triple here is not a grade at all: Continue's. It says nothing
+// about the content (fine / attention / error) — it names an ACTION, so that
+// "add rays to this picture" cannot be mistaken for Run ("start over", green)
+// or Stop (red) sitting in the same slot group. It is not the accent either:
+// accent means interaction state, and a button tinted with it would read as
+// "currently selected" (which is exactly what the tinted Colors button means).
+// It lives here because this file owns every named button colour that is not
+// the palette's default; see doc/gui-visual-language.md §4.8.
 
 namespace lumice::gui {
 
@@ -41,6 +50,11 @@ ImVec4 GoodFillColor(float alpha);
 // code path (no early return between them), matching PushDestructiveStyle.
 void PushGoodButtonStyle();
 void PopGoodButtonStyle();
+
+// Continue button's Normal/Hovered/Active triple — an action-identity colour,
+// not a grade (see above). Same pairing rule as PushGoodButtonStyle.
+void PushContinueButtonStyle();
+void PopContinueButtonStyle();
 
 // "Needs your attention, but not an error" — a Resolution change that will
 // re-run the simulation, unsaved edits, an incomplete row, a soft cap exceeded.
