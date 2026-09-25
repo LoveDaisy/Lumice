@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1790348567366,
+  "lastUpdate": 1790348571635,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -4764,48 +4764,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "f5015321af574f4bc5efa1787fa3feefc87a835b",
-          "message": "Merge pull request #312 from LoveDaisy/fix/benchmark-steady-window-outlier\n\nfix(bench): active_short 不得拿 IDLE 检测延迟当分母（14-29x 野值的根因）",
-          "timestamp": "2026-09-05T15:59:52+08:00",
-          "tree_id": "e502d8ac59d36d9acdffade736d7bf32b619fa08",
-          "url": "https://github.com/LoveDaisy/ice_halo_sim/commit/f5015321af574f4bc5efa1787fa3feefc87a835b"
-        },
-        "date": 1788595945017,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 1241991.1,
-            "unit": "rays/sec",
-            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 1212952.8,
-            "unit": "rays/sec",
-            "extra": "CPU: Neoverse-N2\\nCores: 4"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 821812.6,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 7763 64-Core Processor\\nCores: 4"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "fdf903868b533c085c845322ee50722158e3a089",
           "message": "Merge pull request #313 from LoveDaisy/scrum/sentinel-liveness-audit\n\ntest(sentinel): retire the one regression sentinel that outlived its mechanism",
           "timestamp": "2026-09-06T00:54:43+08:00",
@@ -9488,6 +9446,54 @@ window.BENCHMARK_DATA = {
             "value": 705311.2,
             "unit": "rays/sec",
             "extra": "CPU: AMD EPYC 9V74 80-Core Processor                \\nCores: 4"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "3c9730817a17b3c99d8469c7cfc7f9a7ceee6e38",
+          "message": "Merge pull request #413 from LoveDaisy/docs/raypath-analysis-overview\n\ndocs(raypath-analysis): feature overview and roadmap",
+          "timestamp": "2026-09-25T22:51:44+08:00",
+          "tree_id": "c79b7399ed96b48eaf32a502f0cc41512296376e",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/3c9730817a17b3c99d8469c7cfc7f9a7ceee6e38"
+        },
+        "date": 1790348570955,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 1099502.6,
+            "unit": "rays/sec",
+            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 1021807.2,
+            "unit": "rays/sec",
+            "extra": "CPU: Neoverse-N2\\nCores: 4"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 797192.2,
+            "unit": "rays/sec",
+            "extra": "CPU: INTEL(R) XEON(R) PLATINUM 8573C\\nCores: 4"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 586912.6,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
           }
         ]
       }
