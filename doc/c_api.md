@@ -29,7 +29,7 @@ Link against the `lumice` static library.
 ### Constants
 
 ```c
-#define LUMICE_API_VERSION 444        // ABI version, encoded major*100 + minor (v4.44)
+#define LUMICE_API_VERSION 445        // ABI version, encoded major*100 + minor (v4.45)
 #define LUMICE_MAX_RENDER_RESULTS 16  // Maximum capacity of the render result array
 #define LUMICE_MAX_STATS_RESULTS 1    // Maximum capacity of the stats result array
 ```
@@ -43,7 +43,7 @@ static_assert(LUMICE_API_VERSION >= 440, "Lumice header too old for this integra
 
 It is bumped on every BREAKING change to the public symbol set or struct layout.
 
-**v4.44 is such a break.** `LUMICE_RenderParam` gains a trailing `float globe_back_fade` after
+**v4.45 is such a break.** `LUMICE_RenderParam` gains a trailing `float globe_back_fade` after
 `view_dist_label` (sizeof 6452 → 6456), so callers recompile. It is the `globe` lens's far-side
 fade range — how far behind the sphere's silhouette its far side stays visible, fading with
 distance from the camera (JSON key `globe_back_fade`, see `configuration.md`). Every other lens
