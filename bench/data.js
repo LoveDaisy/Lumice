@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1790366935238,
+  "lastUpdate": 1790366938817,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -4770,54 +4770,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "59208e341a7a63e1f22366ec0fbc47211fd93950",
-          "message": "Merge pull request #318 from LoveDaisy/test/e2e-cost-and-oracle-audit\n\ntest(e2e): 按「每个测试为自己的开销举证」审计套件成本，恢复预算余量",
-          "timestamp": "2026-09-07T04:18:31+08:00",
-          "tree_id": "a180e65114ec4dbebe9febd562ebcb9d7dcb6dcd",
-          "url": "https://github.com/LoveDaisy/ice_halo_sim/commit/59208e341a7a63e1f22366ec0fbc47211fd93950"
-        },
-        "date": 1788726578238,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 1096881.1,
-            "unit": "rays/sec",
-            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 1214833.6,
-            "unit": "rays/sec",
-            "extra": "CPU: Neoverse-N2\\nCores: 4"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 902823.8,
-            "unit": "rays/sec",
-            "extra": "CPU: Intel(R) Xeon(R) Platinum 8370C CPU @ 2.80GHz\\nCores: 4"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 673985,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "e707b15d31a6676c8f4147a0b0cfe62dfc452995",
           "message": "Merge pull request #319 from LoveDaisy/fix/gui-entry-delete-vs-open-editor\n\nfix(gui): keep the edit modal bound to its entry across a delete",
           "timestamp": "2026-09-08T11:14:03+08:00",
@@ -9506,6 +9458,54 @@ window.BENCHMARK_DATA = {
             "value": 594661,
             "unit": "rays/sec",
             "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "3493b66dd3bb005b0ece61229caadab5c3c3fd09",
+          "message": "Merge pull request #419 from LoveDaisy/feat/display-mode-viewport-control\n\nfeat(gui): display mode becomes a segmented control in the preview's corner",
+          "timestamp": "2026-09-26T03:55:16+08:00",
+          "tree_id": "97ddaa25b9147c1d43eec4ed3cd226d46d8195bb",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/3493b66dd3bb005b0ece61229caadab5c3c3fd09"
+        },
+        "date": 1790366938227,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 1029633.8,
+            "unit": "rays/sec",
+            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 1025248.3,
+            "unit": "rays/sec",
+            "extra": "CPU: Neoverse-N2\\nCores: 4"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 730291.8,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 7763 64-Core Processor\\nCores: 4"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 610478.7,
+            "unit": "rays/sec",
+            "extra": "CPU: INTEL(R) XEON(R) PLATINUM 8573C\\nCores: 4"
           }
         ]
       }
