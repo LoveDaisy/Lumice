@@ -166,6 +166,20 @@ struct RenderConfig {
     kPrint,
   };
 
+  // What the finished screen image is SHOWN as — a post-process on the pixels kScreen already
+  // produced, not a third tone operator, which is why this is a field of its own and not a Tone
+  // enumerator:
+  //   kDisplayNormal    — the image itself.
+  //   kDisplayChannelBr — a diagnostic of "bluer or redder here": the post-gamma sRGB B - R of each
+  //                       pixel, shown as a grey offset (mid grey = 0, bluer is lighter, redder is
+  //                       darker). The formula's single owner is src/util/channel_math.hpp.
+  // It needs the R and B the screen operator computes; kPrint never computes them separately (it
+  // reads the scalar Y alone), so under kPrint this field is kept but inert, and the server warns.
+  enum DisplayMode {
+    kDisplayNormal,
+    kDisplayChannelBr,
+  };
+
   IdType id_{};
   LensParam lens_{ LensParam::kLinear, 90.0f };
   int lens_shift_[2]{};  // dx, dy
@@ -213,6 +227,11 @@ struct RenderConfig {
   // rebuild. Read by RenderConsumer::PostSnapshot (src/server/render.cpp) and, on the GUI side, by
   // the preview fragment shader through LUMICE_RenderParam::tone.
   Tone tone_ = kScreen;
+  // Appearance field, for the same reason tone_ is: it post-processes the finished pixels and never
+  // touches the accumulation layout, so a change needs no consumer rebuild. Read by
+  // RenderConsumer::PostSnapshot and, on the GUI side, by the preview fragment shader through
+  // LUMICE_RenderParam::display_mode.
+  DisplayMode display_mode_ = kDisplayNormal;
 
   std::vector<GridLineParam> angular_dist_grid_;
   // Circles of constant angular distance from the camera's OPTICAL AXIS — the view's own forward
@@ -340,7 +359,7 @@ struct RenderConfig {
 // pins do see that class, so the two are complements and neither replaces the other.
 inline void RenderConfigFieldSetGuard(const RenderConfig& c) {
   [[maybe_unused]] const auto& [id, lens, lens_shift, resolution, view, visible, front, background, paper, ray_color,
-                                intensity_factor, overlap, globe_back_fade, ev_mode, tone, angular_dist_grid,
+                                intensity_factor, overlap, globe_back_fade, ev_mode, tone, display_mode, angular_dist_grid,
                                 view_dist_grid, elevation_grid, longitude_grid, horizon, elevation_grid_line,
                                 longitude_grid_line, angular_dist_grid_line, view_dist_grid_line, horizon_label,
                                 grid_label, angular_dist_label, view_dist_label, zenith_nadir, markers, markers_opacity,
@@ -372,6 +391,11 @@ NLOHMANN_JSON_SERIALIZE_ENUM(  // declare
 // malformed value must not make a whole config unloadable — but it is announced.
 void to_json(nlohmann::json& j, const RenderConfig::Tone& t);
 void from_json(const nlohmann::json& j, RenderConfig::Tone& t);
+
+// DisplayMode is hand-written for Tone's reason: a typo that silently lands on "normal" returns
+// exactly the picture the user was trying to leave, so the fall back is announced.
+void to_json(nlohmann::json& j, const RenderConfig::DisplayMode& m);
+void from_json(const nlohmann::json& j, RenderConfig::DisplayMode& m);
 
 void to_json(nlohmann::json& j, const RenderConfig& r);
 

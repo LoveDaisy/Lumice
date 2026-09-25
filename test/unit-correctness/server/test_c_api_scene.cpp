@@ -620,6 +620,11 @@ TEST(SceneNegative, RendererInvalidEnumOrGridCountRejected) {
   bad_tone.tone = 42;
   EXPECT_EQ(LUMICE_SceneAddRenderer(g.get(), &bad_tone, &id), LUMICE_ERR_INVALID_CONFIG);
 
+  // v4.45: display_mode is the fifth, same treatment.
+  LUMICE_RenderParam bad_display_mode = base;
+  bad_display_mode.display_mode = 42;
+  EXPECT_EQ(LUMICE_SceneAddRenderer(g.get(), &bad_display_mode, &id), LUMICE_ERR_INVALID_CONFIG);
+
   EXPECT_TRUE(SceneRoot(g.get()).at("render").empty())
       << "a rejected renderer must not leave a partially-built entry behind";
 
@@ -1283,6 +1288,57 @@ TEST(SceneRenderTone, DecodeRejectsANonStringValue) {
   EXPECT_EQ(scene, nullptr);
 }
 
+// =============== render.display_mode: the channel-B-R display mode (v4.45) ===============
+//
+// Both directions of the seam, for the reason the tone block above gives.
+
+TEST(SceneRenderDisplayMode, EncodeWritesTheSpellingCoreReads) {
+  SceneGuard g;
+  int id = -1;
+  LUMICE_RenderParam r{};
+  r.resolution_w = 64;
+  r.resolution_h = 64;
+  r.lens_fov = 90.0f;
+  r.display_mode = LUMICE_DISPLAY_MODE_CHANNEL_BR;
+  ASSERT_EQ(LUMICE_SceneAddRenderer(g.get(), &r, &id), LUMICE_OK);
+  EXPECT_EQ(RendererOf(g.get()).at("display_mode").get<std::string>(), "channel_br");
+}
+
+TEST(SceneRenderDisplayMode, NormalIsTheZeroInitializedDefault) {
+  SceneGuard g;
+  int id = -1;
+  LUMICE_RenderParam r{};
+  r.resolution_w = 64;
+  r.resolution_h = 64;
+  r.lens_fov = 90.0f;
+  ASSERT_EQ(LUMICE_SceneAddRenderer(g.get(), &r, &id), LUMICE_OK);
+  EXPECT_EQ(RendererOf(g.get()).at("display_mode").get<std::string>(), "normal");
+}
+
+TEST(SceneRenderDisplayMode, DecodeRoundTripsBothValues) {
+  for (const char* name : { "normal", "channel_br" }) {
+    const std::string doc = SceneJsonWithRendererEdit([name](nlohmann::json& jr) { jr["display_mode"] = name; });
+    LUMICE_Scene* scene = nullptr;
+    if (LUMICE_SceneFromJson(doc.c_str(), &scene) != LUMICE_OK || scene == nullptr) {
+      ADD_FAILURE() << name << ": SceneFromJson did not produce a scene";
+      continue;
+    }
+    EXPECT_EQ(RendererOf(scene).at("display_mode").get<std::string>(), name);
+    LUMICE_SceneDestroy(scene);
+  }
+}
+
+// Rejected here, warned-and-defaulted in core — the divergence IsKnownToneString argues, applied to
+// the same kind of field.
+TEST(SceneRenderDisplayMode, DecodeRejectsAnUnknownOrNonStringValue) {
+  for (const nlohmann::json& bad : { nlohmann::json("channel_rb"), nlohmann::json(1) }) {
+    const std::string doc = SceneJsonWithRendererEdit([&bad](nlohmann::json& jr) { jr["display_mode"] = bad; });
+    LUMICE_Scene* scene = Sentinel();
+    EXPECT_EQ(LUMICE_SceneFromJson(doc.c_str(), &scene), LUMICE_ERR_INVALID_VALUE) << bad.dump();
+    EXPECT_EQ(scene, nullptr) << bad.dump();
+  }
+}
+
 // The counterpart of SceneRenderZenithNadir.MissingKeyDecodesToCoreDefaultsNotZeros, and the more
 // dangerous of the two: `paper`'s core default is WHITE, so a decoder that left the zeroed struct
 // alone would hand back BLACK paper for every document written before v4.27 — and under the
@@ -1387,6 +1443,7 @@ LUMICE_RenderParam MakeDistinctRenderer(int k) {
   r.view_dist[0] = LUMICE_GridLine{ 10.0f + k, 1.2f, 0.7f, { 0.3f, 0.3f, 0.9f } };
   r.view_dist_line = 1;
   r.view_dist_label = 1;
+  r.display_mode = LUMICE_DISPLAY_MODE_CHANNEL_BR;
   return r;
 }
 
@@ -1464,6 +1521,7 @@ void ExpectRendererEq(const LUMICE_RenderParam& want, const LUMICE_RenderParam& 
   EXPECT_EQ(got.tone, want.tone);
   EXPECT_EQ(got.view_dist_line, want.view_dist_line);
   EXPECT_EQ(got.view_dist_label, want.view_dist_label);
+  EXPECT_EQ(got.display_mode, want.display_mode);
 }
 }  // namespace
 

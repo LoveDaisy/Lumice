@@ -573,6 +573,18 @@ static ns::RenderConfig::Tone MapToneFromCApi(int tone) {
   }
 }
 
+// Same fail-loud contract as MapToneFromCApi above, for the same reason.
+static ns::RenderConfig::DisplayMode MapDisplayModeFromCApi(int display_mode) {
+  switch (display_mode) {
+    case LUMICE_DISPLAY_MODE_NORMAL:
+      return ns::RenderConfig::kDisplayNormal;
+    case LUMICE_DISPLAY_MODE_CHANNEL_BR:
+      return ns::RenderConfig::kDisplayChannelBr;
+    default:
+      throw std::invalid_argument("LUMICE_RenderParam.display_mode is invalid: " + std::to_string(display_mode));
+  }
+}
+
 // Copy `count` C grid lines into the core vector form so nlohmann's to_json(GridLineParam) owns
 // the wire shape (single source for the per-field optional/default logic).
 static std::vector<ns::GridLineParam> GridLinesToCore(const LUMICE_GridLine* lines, int count) {
@@ -691,6 +703,7 @@ static nlohmann::json RendererToJson(const LUMICE_RenderParam& r, int id) {
   // Assigned as a core Tone, not as a string literal: core's own to_json then owns the two
   // spellings, exactly as MapEvModeFromCApi's result does for "relative" / "absolute".
   jr["tone"] = MapToneFromCApi(r.tone);
+  jr["display_mode"] = MapDisplayModeFromCApi(r.display_mode);
   jr["grid"]["angular_dist"] = GridLinesToCore(r.angular_dist, r.angular_dist_count);
   jr["grid"]["view_dist"] = GridLinesToCore(r.view_dist, r.view_dist_count);
   jr["grid"]["elevation"] = GridLinesToCore(r.elevation_grid, r.elevation_grid_count);
@@ -2407,6 +2420,17 @@ static int MapToneToCApi(ns::RenderConfig::Tone tone) {
   throw std::invalid_argument("unmapped core Tone: " + std::to_string(static_cast<int>(tone)));
 }
 
+// Inverse of MapDisplayModeFromCApi, same fail-loud contract.
+static int MapDisplayModeToCApi(ns::RenderConfig::DisplayMode display_mode) {
+  switch (display_mode) {
+    case ns::RenderConfig::kDisplayNormal:
+      return LUMICE_DISPLAY_MODE_NORMAL;
+    case ns::RenderConfig::kDisplayChannelBr:
+      return LUMICE_DISPLAY_MODE_CHANNEL_BR;
+  }
+  throw std::invalid_argument("unmapped core DisplayMode: " + std::to_string(static_cast<int>(display_mode)));
+}
+
 // The two enum-valued renderer fields need a string pre-check: NLOHMANN_JSON_SERIALIZE_ENUM maps
 // an unrecognized value to the FIRST table entry ("linear" / "upper"), so a typo'd projection
 // would be silently misread rather than reported. Same deliberate exception to "align with core"
@@ -2439,6 +2463,12 @@ static bool IsKnownEvModeString(const std::string& s) {
 // exactly this reason.
 static bool IsKnownToneString(const std::string& s) {
   return s == "screen" || s == "print";
+}
+
+// The display_mode twin of IsKnownToneString: rejected here, warned-and-defaulted in core, for the
+// reason stated above.
+static bool IsKnownDisplayModeString(const std::string& s) {
+  return s == "normal" || s == "channel_br";
 }
 
 // Decode one field with core's own from_json (single source for the f->fov trigonometry, the
@@ -2583,6 +2613,19 @@ static LUMICE_ErrorCode JsonToRenderer(const nlohmann::json& rj, LUMICE_RenderPa
       return err;
     }
     r.tone = MapToneToCApi(tone);
+  }
+  // Mirrors core RenderConfig::display_mode_'s member initializer, same shape as `tone` above.
+  r.display_mode = LUMICE_DISPLAY_MODE_NORMAL;
+  if (rj.contains("display_mode")) {
+    if (!rj.at("display_mode").is_string() || !IsKnownDisplayModeString(rj.at("display_mode").get<std::string>())) {
+      return LUMICE_ERR_INVALID_VALUE;
+    }
+    auto display_mode = ns::RenderConfig::kDisplayNormal;
+    const LUMICE_ErrorCode err = DecodeCoreField(rj.at("display_mode"), display_mode);
+    if (err != LUMICE_OK) {
+      return err;
+    }
+    r.display_mode = MapDisplayModeToCApi(display_mode);
   }
 
   // ---- Fields the struct gained in v4.11 (previously parsed and thrown away) ----

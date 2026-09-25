@@ -163,6 +163,13 @@ TEST(RenderConfigTest, EachAppearanceField_ReturnsFalse) {
     EXPECT_FALSE(lumice::NeedsRebuild(base, mod)) << "tone";
   }
 
+  // display_mode
+  {
+    auto mod = base;
+    mod.display_mode_ = lumice::RenderConfig::kDisplayChannelBr;
+    EXPECT_FALSE(lumice::NeedsRebuild(base, mod)) << "display_mode";
+  }
+
   // ray_color
   {
     auto mod = base;
@@ -433,6 +440,73 @@ TEST(RenderConfigToneTest, OperatorEq_ComparesToneAndPaper) {
     b.paper_[1] = 0.5f;
     EXPECT_FALSE(a == b) << "paper";
   }
+}
+
+// ===== display_mode: default, JSON round trip, warn-and-fall-back, equality =====
+//
+// The channel-B-R display mode's field chain, held to the properties tone_ is held to above: the
+// value survives JSON both ways, an unknown value SAYS SO instead of silently becoming `normal`, and
+// operator== sees it. The appearance classification is asserted in the NeedsRebuild table.
+
+TEST(RenderConfigDisplayModeTest, DefaultIsNormal) {
+  lumice::RenderConfig cfg;
+  EXPECT_EQ(cfg.display_mode_, lumice::RenderConfig::kDisplayNormal);
+}
+
+TEST(RenderConfigDisplayModeTest, ToJson_EmitsModeString) {
+  auto cfg = MakeBaseline();
+  cfg.display_mode_ = lumice::RenderConfig::kDisplayChannelBr;
+  nlohmann::json j = cfg;
+  EXPECT_EQ(j.at("display_mode").get<std::string>(), "channel_br");
+
+  cfg.display_mode_ = lumice::RenderConfig::kDisplayNormal;
+  nlohmann::json j2 = cfg;
+  EXPECT_EQ(j2.at("display_mode").get<std::string>(), "normal");
+}
+
+TEST(RenderConfigDisplayModeTest, FromJson_BothValuesRoundTrip) {
+  for (const auto& [text, expected] : std::vector<std::pair<std::string, lumice::RenderConfig::DisplayMode>>{
+           { "normal", lumice::RenderConfig::kDisplayNormal },
+           { "channel_br", lumice::RenderConfig::kDisplayChannelBr } }) {
+    // Seeded with the other value so both reads are real.
+    auto mode = expected == lumice::RenderConfig::kDisplayNormal ? lumice::RenderConfig::kDisplayChannelBr :
+                                                                   lumice::RenderConfig::kDisplayNormal;
+    nlohmann::json(text).get_to(mode);
+    EXPECT_EQ(mode, expected) << text;
+  }
+}
+
+// Both halves asserted — the fall back AND the warning — as for tone.
+TEST(RenderConfigDisplayModeTest, FromJson_UnknownStringWarnsAndFallsBackToNormal) {
+  auto mode = lumice::RenderConfig::kDisplayChannelBr;
+  std::string logged;
+  {
+    LogCapture capture;
+    nlohmann::json("channel_rb").get_to(mode);
+    logged = capture.Text();
+  }
+  EXPECT_EQ(mode, lumice::RenderConfig::kDisplayNormal);
+  EXPECT_NE(logged.find("channel_rb"), std::string::npos) << logged;
+}
+
+TEST(RenderConfigDisplayModeTest, FromJson_KnownStringIsSilent) {
+  auto mode = lumice::RenderConfig::kDisplayNormal;
+  std::string logged;
+  {
+    LogCapture capture;
+    nlohmann::json("channel_br").get_to(mode);
+    logged = capture.Text();
+  }
+  EXPECT_EQ(mode, lumice::RenderConfig::kDisplayChannelBr);
+  EXPECT_TRUE(logged.empty()) << logged;
+}
+
+TEST(RenderConfigDisplayModeTest, OperatorEq_ComparesDisplayMode) {
+  auto a = MakeBaseline();
+  auto b = MakeBaseline();
+  EXPECT_TRUE(a == b);
+  b.display_mode_ = lumice::RenderConfig::kDisplayChannelBr;
+  EXPECT_FALSE(a == b);
 }
 
 // The meridian list added in v4.18, held to the same three properties the parallels already have:

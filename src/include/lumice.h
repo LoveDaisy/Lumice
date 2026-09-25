@@ -444,7 +444,18 @@ extern "C" {
 // `view_dist_label`, sizeof grows (6452 -> 6456), recompile. The globe lens can now show the far
 // side of its sphere, faded with distance from the camera; 0, the zero-initialized value, is the
 // camera-facing hemisphere alone, i.e. the image every earlier version drew. Nothing else moved.
-#define LUMICE_API_VERSION 445
+//
+// BREAKING (v4.46): LUMICE_RenderParam gains a trailing `display_mode` (LUMICE_DISPLAY_MODE_*) —
+// APPENDED after `globe_back_fade`, so every existing field keeps its offset while sizeof() grows
+// (6456 -> 6460); a caller that was NOT recompiled hands the API a shorter struct and the new field
+// is read past the end of it. Recompile against this header. The JSON key is "render.display_mode"
+// ("normal" / "channel_br"). It selects what the finished screen image is SHOWN as: the image
+// itself, or the channel-B-R diagnostic — the post-gamma sRGB B - R of each pixel as a grey offset
+// (formula in src/util/channel_math.hpp). LIVE in the renderer (PostSnapshot) and in the GUI's
+// preview shader; inert under LUMICE_TONE_PRINT, and a colour-classed scene produces no raypath
+// composite while it is on. Nothing is removed and nothing changes meaning:
+// LUMICE_DISPLAY_MODE_NORMAL == 0, so a zero-initialized struct asks for the existing picture.
+#define LUMICE_API_VERSION 446
 #define LUMICE_MAX_RENDER_RESULTS 16
 #define LUMICE_MAX_STATS_RESULTS 1
 
@@ -1161,6 +1172,15 @@ typedef struct LUMICE_ColorClass_ {
 #define LUMICE_TONE_SCREEN 0
 #define LUMICE_TONE_PRINT 1
 
+// What the finished screen image is shown as (mirrors core RenderConfig::DisplayMode).
+//   NORMAL     — the image itself.
+//   CHANNEL_BR — the "bluer or redder here" diagnostic: gray = clamp(0.5 + 0.5 * (B - R), 0, 1) on
+//                the post-gamma sRGB channels of the NORMAL image (src/util/channel_math.hpp).
+// NORMAL == 0 is the default, so a zero-initialized LUMICE_RenderParam and a config with no
+// "display_mode" key both mean the existing picture.
+#define LUMICE_DISPLAY_MODE_NORMAL 0
+#define LUMICE_DISPLAY_MODE_CHANNEL_BR 1
+
 // Which half of the celestial sphere the renderer draws (mirrors core RenderConfig::VisibleRange).
 #define LUMICE_VISIBLE_UPPER 0
 #define LUMICE_VISIBLE_LOWER 1
@@ -1403,6 +1423,10 @@ typedef struct LUMICE_RenderParam_ {
   // default — shows the camera-facing hemisphere only, which is the look before this field.
   // Negative values are clamped to 0. JSON key "globe_back_fade".
   float globe_back_fade;
+  // ADDED (v4.46). LUMICE_DISPLAY_MODE_* — see the constants. A post-process on the pixels the
+  // screen operator produced, independent of `tone` as a field; under LUMICE_TONE_PRINT it is kept
+  // but has no effect (print never computes R and B separately).
+  int display_mode;
 } LUMICE_RenderParam;
 // The exact-size pin, the same duty RenderConfig's own carries on the C++ side: a field appended
 // to this struct is an ABI event that has to be declared at LUMICE_API_VERSION, and the two
@@ -1411,9 +1435,9 @@ typedef struct LUMICE_RenderParam_ {
 // and every change is a bump. LUMICE_GridLine is 24 bytes (six 4-byte fields) and
 // LUMICE_MarkerStyle 20, so the arrays account for 4 * 64 * 24 + 6 * 20 of it.
 #if defined(__cplusplus)
-static_assert(sizeof(LUMICE_RenderParam) == 6456, "LUMICE_RenderParam layout changed — bump LUMICE_API_VERSION");
+static_assert(sizeof(LUMICE_RenderParam) == 6460, "LUMICE_RenderParam layout changed — bump LUMICE_API_VERSION");
 #elif defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
-_Static_assert(sizeof(LUMICE_RenderParam) == 6456, "LUMICE_RenderParam layout changed — bump LUMICE_API_VERSION");
+_Static_assert(sizeof(LUMICE_RenderParam) == 6460, "LUMICE_RenderParam layout changed — bump LUMICE_API_VERSION");
 #endif
 
 // =============== Scene (opaque handle) ===============

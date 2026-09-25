@@ -120,6 +120,10 @@ RenderConfig ParseRenderConfig(const nlohmann::json& j_render, const ConfigManag
   if (j_render.contains("tone")) {
     j_render.at("tone").get_to(render.tone_);
   }
+  // Same shape as "tone": the warning and the fall back live in DisplayMode's from_json.
+  if (j_render.contains("display_mode")) {
+    j_render.at("display_mode").get_to(render.display_mode_);
+  }
 
   if (j_render.contains("grid")) {
     const auto& j_grid = j_render.at("grid");

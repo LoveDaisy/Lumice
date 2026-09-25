@@ -280,6 +280,27 @@ void from_json(const nlohmann::json& j, RenderConfig::Tone& t) {
 }
 
 
+// ========== RenderConfig::DisplayMode ==========
+void to_json(nlohmann::json& j, const RenderConfig::DisplayMode& m) {
+  j = (m == RenderConfig::kDisplayChannelBr) ? "channel_br" : "normal";
+}
+
+// Warn-and-fall-back for the reason Tone's from_json above gives: falling back to "normal"
+// reproduces the pre-field picture, so a typo must not make the config unloadable, but it must not
+// be silent either.
+void from_json(const nlohmann::json& j, RenderConfig::DisplayMode& m) {
+  const auto s = j.get<std::string>();
+  if (s == "channel_br") {
+    m = RenderConfig::kDisplayChannelBr;
+    return;
+  }
+  if (s != "normal") {
+    LOG_WARNING("render.display_mode: unknown value \"{}\" is ignored; falling back to \"normal\"", s);
+  }
+  m = RenderConfig::kDisplayNormal;
+}
+
+
 // ========== RenderConfig ==========
 void to_json(nlohmann::json& j, const RenderConfig& r) {
   j["id"] = r.id_;
@@ -301,6 +322,7 @@ void to_json(nlohmann::json& j, const RenderConfig& r) {
   j["globe_back_fade"] = r.globe_back_fade_;
   j["ev_mode"] = r.ev_mode_;
   j["tone"] = r.tone_;
+  j["display_mode"] = r.display_mode_;
 
   j["grid"].emplace("angular_dist", r.angular_dist_grid_);
   j["grid"].emplace("view_dist", r.view_dist_grid_);
@@ -386,6 +408,12 @@ bool NeedsRebuild(const RenderConfig& a, const RenderConfig& b) {
   // consumer built for one view never sees the axis move, and RebuildViewDistMasks() needs no
   // direction cache of its own; a config that edits the list or its switches reaches an existing
   // consumer through ResetWith() with no rebuild.
+  // Still 272 after display_mode_ (4), placed beside tone_: ev_mode_ and tone_ left four bytes of
+  // padding ahead of angular_dist_grid_ (a std::vector, 8-byte aligned), and the new enum fills
+  // them. Classified all the same, because an unchanged number proves nothing: APPEARANCE, for
+  // tone_'s reason — it post-processes the finished pixels and never touches the buffer being
+  // accumulated into, so a config that flips it reaches an existing consumer through ResetWith()
+  // with no rebuild.
   static_assert(sizeof(RenderConfig) == 272,
                 "RenderConfig layout changed — re-check the classification in NeedsRebuild");
   // Compare layout-affecting fields only. Appearance fields (background, ray_color,

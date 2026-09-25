@@ -22,6 +22,7 @@
 #include "core/raypath.hpp"
 #include "core/scatter_accum.hpp"  // MakeCameraRotation (single source of the camera rotation chain)
 #include "core/shared/projection_shared.h"
+#include "util/channel_math.hpp"
 #include "util/color_data.hpp"
 #include "util/color_space.hpp"
 #include "util/ink_transfer.hpp"
@@ -139,13 +140,46 @@ void ZeroEnergyLinearRgb(bool print_mode, const float paper[3], float out[3]) {
   }
 }
 
+// The channel-B-R display mode applied to ONE pixel's linear RGB, in place: the post-process that
+// turns what the Normal mode would show into its grey B - R diagnostic (util/channel_math.hpp owns
+// the formula). The formula reads POST-GAMMA values, while every stage after this one — the
+// annotation blend, the clamp, the one final gamma — works in linear, so the result is carried back
+// to linear with SrgbToLinear, the exact inverse of LinearToSrgb, and the rest of the chain runs
+// unchanged. That is what keeps the annotations drawn ON the diagnostic image with their own
+// colours, as they are drawn on the normal one.
+//
+// The clamp before the gamma is the display chain's own clamp, moved earlier: B_srgb and R_srgb are
+// the channels of the DISPLAYED pixel, so they are taken after the same [0, 1] clamp the final
+// write applies.
+//
+// No-op outside kDisplayChannelBr, and under kPrint: print never computes R and B separately (it
+// reads the scalar Y alone), so there is no B - R to show and the field is kept but inert — the
+// server warns about that combination at commit (WarnChannelMathIgnoredFields in server.cpp).
+//
+// The ONE implementation of this step for every frame path — the fused loop, the zero-scale exit
+// and the no-frame fill — so the three cannot drift: an unexposed pixel is R == B == 0, which the
+// formula maps to mid grey on every path alike.
+void ApplyDisplayMode(RenderConfig::DisplayMode mode, bool print_mode, float rgb[3]) {
+  if (mode != RenderConfig::kDisplayChannelBr || print_mode) {
+    return;
+  }
+  const float r_srgb = LinearToSrgb(std::clamp(rgb[0], 0.0f, 1.0f));
+  const float b_srgb = LinearToSrgb(std::clamp(rgb[2], 0.0f, 1.0f));
+  const float gray = SrgbToLinear(ChannelMathBrGray(r_srgb, b_srgb));
+  for (int j = 0; j < 3; j++) {
+    rgb[j] = gray;
+  }
+}
+
 // The "no energy at all" image, for the early exit that has no frame to draw on at all (no ray has
 // landed yet, or a degenerate resolution). The other exit — a live frame with a zero exposure
 // scale — no longer comes here: it draws the annotations onto this same colour instead, in
 // PostSnapshot.
-void FillZeroEnergyImage(uint8_t* buf, size_t total_pix, bool print_mode, const float paper[3]) {
+void FillZeroEnergyImage(uint8_t* buf, size_t total_pix, bool print_mode, const float paper[3],
+                         RenderConfig::DisplayMode display_mode) {
   float zero_energy[3];
   ZeroEnergyLinearRgb(print_mode, paper, zero_energy);
+  ApplyDisplayMode(display_mode, print_mode, zero_energy);
   uint8_t srgb[3];
   for (int j = 0; j < 3; j++) {
     srgb[j] = static_cast<uint8_t>(LinearToSrgb(zero_energy[j]) * 255);
@@ -1035,7 +1069,7 @@ void RenderConsumer::PostSnapshot() {
   snapshot_image_buffer_ = image_pool_->Acquire(static_cast<size_t>(std::max(total_pix, 0)) * 3u);
   if (total_pix <= 0 || snapshot_intensity_ <= 0) {
     FillZeroEnergyImage(snapshot_image_buffer_.get(), static_cast<size_t>(std::max(total_pix, 0)), print_mode,
-                        config_.paper_);
+                        config_.paper_, config_.display_mode_);
     return;
   }
 
@@ -1057,6 +1091,7 @@ void RenderConsumer::PostSnapshot() {
     AnnotationLayers layers = BuildAnnotationLayers();
     float zero_energy[3];
     ZeroEnergyLinearRgb(print_mode, config_.paper_, zero_energy);
+    ApplyDisplayMode(config_.display_mode_, print_mode, zero_energy);
     for (int i = 0; i < total_pix; i++) {
       float rgb[3]{ zero_energy[0], zero_energy[1], zero_energy[2] };
       CompositeAnnotations(layers, i, print_mode, rgb);
@@ -1197,6 +1232,9 @@ void RenderConsumer::PostSnapshot() {
             }
           }
         }
+        // After the background (B - R is read off the pixel the Normal mode would show, sky
+        // included) and before the annotations (which are drawn ON the diagnostic image).
+        ApplyDisplayMode(config_.display_mode_, print_mode, rgb);
         CompositeAnnotations(band_layers, i, print_mode, rgb);
         for (int j = 0; j < 3; j++) {
           rgb[j] = std::clamp(rgb[j], 0.0f, 1.0f);

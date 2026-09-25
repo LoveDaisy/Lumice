@@ -194,6 +194,7 @@ class RenderConsumer : public IConsume {
   // correspondence (by index, or by the renderer id recovered from GetResult()) that the consumer
   // already holds. Same reason ImageWidth/ImageHeight above are here.
   RenderConfig::Tone Tone() const { return config_.tone_; }
+  RenderConfig::DisplayMode DisplayMode() const { return config_.display_mode_; }
 
   // task-336.3: the SINGLE mono-image exposure scale, the sole source of truth
   // for both PostSnapshot() and the component compositor (plan §1.1). Reads the
