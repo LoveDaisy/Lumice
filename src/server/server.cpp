@@ -203,6 +203,8 @@ class ServerImpl {
   // and past that point extra workers made the run slower, not faster. The value and the
   // measurements behind it: doc/performance-testing.md, "CPU worker handoff grain".
   static constexpr size_t kCpuHandoffBatches = 16;
+  // CPU route: the in-flight ceiling, in handoffs per worker (GenerateScene says why 4).
+  static constexpr int kInFlightHandoffsPerWorker = 4;
   // scrum-268.6: Metal single-engine needs a large GPU dispatch to saturate the
   // device — a 128-ray dispatch starves it (~0.04x legacy), while ~32768 peaks
   // at ~5.3x legacy on heavy multi-MS+filter scenes (sweep 2026-06-16; plateau
@@ -668,11 +670,9 @@ class ServerImpl {
 
   std::atomic_int sim_scene_cnt_;
   // The in-flight ceiling the producer throttles sim_scene_cnt_ against, and whose half
-  // the consumer wakes it at. kMaxSceneCnt handoffs' worth of SimData: set by
-  // GenerateScene at the start of each run to kMaxSceneCnt times the physics batches one
-  // of its handoffs carries (1 on the GPU route, so kMaxSceneCnt exactly there), so the
-  // backlog the throttle admits is still ~kMaxSceneCnt handoffs whatever the split — the
-  // counter counts SimData, and a CPU handoff now produces several.
+  // the consumer wakes it at, in the counter's own unit (SimData). Set by GenerateScene at
+  // the start of each run — kMaxSceneCnt on the GPU route, a per-worker number of
+  // handoffs on the CPU route, where one handoff produces several SimData (see there).
   std::atomic_int scene_cnt_cap_{ kMaxSceneCnt };
   std::mutex scene_mutex_;
   std::condition_variable scene_cv_;
@@ -2610,7 +2610,6 @@ void ServerImpl::GenerateScene() {
   const size_t kHandoffBatches = kGpuRoute ? 1 : env::CpuHandoffBatches(logger_, kCpuHandoffBatches);
   const size_t kPhysicsRayNum = kGpuRoute ? 0 : kDispatchCap;  // 0 = "the whole batch"
   const size_t kBatchCap = kDispatchCap * kHandoffBatches;     // rays per handoff
-  scene_cnt_cap_.store(kMaxSceneCnt * static_cast<int>(kHandoffBatches), std::memory_order_relaxed);
   // The ctor-time route and this live re-derivation ask two different
   // questions off the same ResolveGpuRoute (see gpu_route_'s declaration). They
   // cannot disagree today; say so out loud if they ever do, rather than letting one
@@ -2638,11 +2637,31 @@ void ServerImpl::GenerateScene() {
   // Resolve by incrementing here by the same N the simulator will emplace, so the
   // counter matches the consumer's per-SimData decrement. The scene is captured under scene_mutex_
   // above and immutable for this GenerateScene invocation, so N is computed
-  // once. Throttle/notify thresholds (kMaxSceneCnt, kMaxSceneCnt/2) now refer
+  // once. Throttle/notify thresholds (scene_cnt_cap_ and its half) now refer
   // to in-flight SimData, which is also the right quantity for memory control.
   const size_t kNsimdataPerBatch = std::holds_alternative<std::vector<WlParam>>(scene->light_source_.spectrum_) ?
                                        std::get<std::vector<WlParam>>(scene->light_source_.spectrum_).size() :
                                        static_cast<size_t>(1);
+  // The in-flight ceiling for this run (see scene_cnt_cap_). GPU route: kMaxSceneCnt
+  // SimData, as always. CPU route: kInFlightHandoffsPerWorker handoffs per worker of the
+  // group this session runs on. Sized by the workers, not by a fixed count, because
+  // both ways of getting it wrong were measured. Too low and a worker finds the queue
+  // empty: the producer is only woken once the count falls under half the ceiling, so
+  // the ceiling must leave at least one queued handoff per worker at that point, which
+  // is what 4 per worker does (2 per worker measurably starved 32 workers on a heavy
+  // multi-scattering scene). Too high and, in a run the consumer thread cannot keep up
+  // with, the whole ceiling sits in data_queue_ as a backlog of SimData the consumer
+  // reaches long after another core wrote them: at a fixed 128 handoffs (2048 SimData)
+  // a 2048x1024 scene at 10 workers lost 10% against a ceiling of 2 per worker, and the
+  // process held 2-4x the memory.
+  if (kGpuRoute) {
+    scene_cnt_cap_.store(kMaxSceneCnt, std::memory_order_relaxed);
+  } else {
+    const auto workers = static_cast<int>(ActiveWorkers().size());
+    scene_cnt_cap_.store(kInFlightHandoffsPerWorker * std::max(workers, 1) * static_cast<int>(kHandoffBatches) *
+                             static_cast<int>(kNsimdataPerBatch),
+                         std::memory_order_relaxed);
+  }
 
   // task-323: ray_num semantic unification. At this ingest point scene->ray_num_ is the TOTAL rays
   // across all wavelengths; the simulator loop below consumes a PER-WAVELENGTH budget. Keep the two
