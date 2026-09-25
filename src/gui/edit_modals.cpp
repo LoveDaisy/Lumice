@@ -1824,6 +1824,23 @@ int CompensatePositionalIndexForDeletion(int idx, int deleted_idx) {
   }
   return idx;
 }
+
+// The move counterpart of the deletion rule above, for an element taken out at from_idx and
+// reinserted at to_idx (std::rotate semantics): the moved element follows itself to to_idx, every
+// element strictly between the two positions shifts one step toward from_idx, the rest stay put.
+// Nothing is removed, so unlike the deletion rule there is no -1 outcome.
+int CompensatePositionalIndexForMove(int idx, int from_idx, int to_idx) {
+  if (idx == from_idx) {
+    return to_idx;
+  }
+  if (from_idx < to_idx && idx > from_idx && idx <= to_idx) {
+    return idx - 1;
+  }
+  if (from_idx > to_idx && idx >= to_idx && idx < from_idx) {
+    return idx + 1;
+  }
+  return idx;
+}
 }  // namespace
 
 void NotifyEntryDeleted(GuiState& state, int layer_idx, int deleted_entry_idx) {
@@ -1845,6 +1862,19 @@ void NotifyEntryDeleted(GuiState& state, int layer_idx, int deleted_entry_idx) {
     } else {
       state.pick_link_source->entry_idx = compensated;
     }
+  }
+}
+
+void NotifyEntryMoved(GuiState& state, int layer_idx, int from_idx, int to_idx) {
+  if (from_idx == to_idx) {
+    return;
+  }
+  if (g_active_modal == ActiveModal::kOpen && layer_idx == g_modal_layer_idx) {
+    g_modal_entry_idx = CompensatePositionalIndexForMove(g_modal_entry_idx, from_idx, to_idx);
+  }
+  if (state.pick_link_source.has_value() && state.pick_link_source->layer_idx == layer_idx) {
+    state.pick_link_source->entry_idx =
+        CompensatePositionalIndexForMove(state.pick_link_source->entry_idx, from_idx, to_idx);
   }
 }
 

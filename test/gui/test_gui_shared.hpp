@@ -240,12 +240,15 @@ void ResetTestState();
 struct ImGuiWindow;
 ImGuiWindow* CardWindow(int index);
 
-// The blank area of a card, in screen coordinates.
+// The card's click-to-edit spot, in screen coordinates: a point on its thumbnail.
 //
-// There is no widget there, and that is the point: RenderEntryCard hit-tests the card rectangle
-// itself so the whole card is a target. The thumbnail is the blank half — it is drawn into the
-// draw list rather than submitted as an item — and this stays inside its left edge, clear of the
-// right column's four rows of widgets and of the icon rail at the card's right edge.
+// The thumbnail is the card's drag handle — an InvisibleButton the size of the thumbnail, so it
+// holds no visible widget — and a click on it that never became a drag opens the editor, the same
+// EditTarget::kCard request the rest of the card body sends on press. In pick mode the handle is
+// not submitted at all and this point is plain card body again, which is what the pick cases rely
+// on: there, a press anywhere on the card is the pick. This stays inside the thumbnail's left
+// edge, clear of the right column's four rows of widgets and of the icon rail at the card's right
+// edge.
 //
 // Vertically it takes three quarters of the card's own height, which under the current layout
 // lands in the thumbnail's lower half — the card is the thumbnail plus window padding, so the
@@ -253,7 +256,8 @@ ImGuiWindow* CardWindow(int index);
 // fixed offset from the top would not do: the top-left corner was blank, then was not (the
 // participation toggle was overlaid there for a while), and is blank again now that the toggle
 // moved into the rail. Anything added to a card's corners in future needs this same second look —
-// the constraint is that the returned point hits no item, and no compiler or gate enforces it.
+// the constraint is that the returned point hits no item other than the drag handle, and no
+// compiler or gate enforces it.
 ImVec2 CardBlankSpot(int index);
 
 // The unified edit modal's three tab ids. Spelled once here rather than at each of the ~65 places

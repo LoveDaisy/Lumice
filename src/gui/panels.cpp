@@ -165,6 +165,69 @@ bool ApplyPickLink(GuiState& state, GuiState::EntryRef source, GuiState::EntryRe
   return true;
 }
 
+// ---- Structural edits of one layer's entry list ----
+
+int DropGapToMoveTarget(int from_idx, int insert_before) {
+  // Taking the card out first shifts every gap below it up by one.
+  return insert_before > from_idx ? insert_before - 1 : insert_before;
+}
+
+void MoveEntryWithinLayer(GuiState& state, int layer_idx, int from_idx, int to_idx) {
+  if (layer_idx < 0 || layer_idx >= static_cast<int>(state.layers.size())) {
+    return;
+  }
+  auto& entries = state.layers[layer_idx].entries;
+  const int n = static_cast<int>(entries.size());
+  if (from_idx < 0 || from_idx >= n || to_idx < 0 || to_idx >= n || from_idx == to_idx) {
+    return;
+  }
+  if (from_idx < to_idx) {
+    std::rotate(entries.begin() + from_idx, entries.begin() + from_idx + 1, entries.begin() + to_idx + 1);
+  } else {
+    std::rotate(entries.begin() + to_idx, entries.begin() + from_idx, entries.begin() + from_idx + 1);
+  }
+  NotifyEntryMoved(state, layer_idx, from_idx, to_idx);
+}
+
+int DuplicateEntryBelow(GuiState& state, int layer_idx, int entry_idx) {
+  if (layer_idx < 0 || layer_idx >= static_cast<int>(state.layers.size())) {
+    return -1;
+  }
+  if (entry_idx < 0 || entry_idx >= static_cast<int>(state.layers[layer_idx].entries.size())) {
+    return -1;
+  }
+  // Duplicate = clone-to-pool: append new CrystalConfig (and new FilterConfig if present) so the
+  // dup'd entry is fully independent. Copy the source entry and pool slots BEFORE any push_back —
+  // a reallocation would leave references into those vectors dangling.
+  const EntryCard entry = state.layers[layer_idx].entries[entry_idx];
+  CrystalConfig cloned_crystal = state.crystals[entry.crystal_id];
+  std::optional<FilterConfig> cloned_filter;
+  if (entry.filter_id.has_value()) {
+    cloned_filter = state.filters[*entry.filter_id];
+  }
+  EntryCard new_entry;
+  new_entry.crystal_id = static_cast<int>(state.crystals.size());
+  new_entry.proportion = entry.proportion;
+  // Duplicate builds the clone field-by-field rather than copying the struct, so every
+  // EntryCard field needs a line here. Carrying `enabled` over keeps duplicate a pure clone:
+  // without it, duplicating an excluded card would hand back a participating one.
+  new_entry.enabled = entry.enabled;
+  state.crystals.push_back(std::move(cloned_crystal));
+  if (cloned_filter.has_value()) {
+    new_entry.filter_id = static_cast<int>(state.filters.size());
+    state.filters.push_back(std::move(*cloned_filter));
+  }
+  // Appending is the only insertion a vector offers without shifting anything; the move that
+  // follows is what places the copy, and it is the same primitive a drag-reorder uses, so the
+  // positional bindings are repaired by one rule whichever of the two produced the shift.
+  auto& entries = state.layers[layer_idx].entries;
+  entries.push_back(new_entry);
+  const int below = entry_idx + 1;
+  MoveEntryWithinLayer(state, layer_idx, static_cast<int>(entries.size()) - 1, below);
+  g_thumbnail_cache.OnLayerStructureChanged();
+  return below;
+}
+
 namespace {
 
 // Append " <In|Out>[ <sym>]" suffix shared by every filter type's summary.
@@ -1211,7 +1274,7 @@ void ResetPendingDeleteState() {
 
 // ========== Entry Card ==========
 
-bool RenderEntryCard(GuiState& state, int layer_idx, int entry_idx) {
+EntryCardAction RenderEntryCard(GuiState& state, int layer_idx, int entry_idx) {
   auto& entry = state.layers[layer_idx].entries[entry_idx];
 
   // ---- Pick-mode: detect whether we're targeting this card ----
@@ -1354,6 +1417,43 @@ bool RenderEntryCard(GuiState& state, int layer_idx, int entry_idx) {
     draw_list->AddRectFilled(thumb_pos, thumb_br, ImGui::GetColorU32(ImGuiCol_FrameBg, thumb_alpha));
   }
   draw_list->AddRect(thumb_pos, thumb_br, ImGui::GetColorU32(ImGuiCol_Border, thumb_alpha));
+
+  // ---- Drag handle: the thumbnail ----
+  //
+  // Reordering needs a real ImGui item to hang BeginDragDropSource on, and the card body is not one
+  // (its click is a hand-written rect test — see the AutoResizeY note at the click handling below).
+  // The thumbnail is the one region of the card that holds no control, so it becomes the handle:
+  // no new column, no width taken from the rows, nothing a rail button can be confused with. It is
+  // exactly the thumbnail's own square, which is also the extent the rows already reserve, so it
+  // does not change what AutoResizeY measures.
+  //
+  // Taking it over costs the thumbnail its share of the whole-card click (the card-area test skips
+  // any hovered item), so a click that never became a drag opens the editor from here instead —
+  // on release rather than on press, because on press it cannot yet know it is not a drag.
+  //
+  // Not submitted in pick mode: there a press anywhere is the pick gesture (or its cancel, in
+  // app_panels.cpp), and a handle that only answers on release would lose that press.
+  bool handle_click = false;
+  if (!pick_active) {
+    char handle_id[40];
+    snprintf(handle_id, sizeof(handle_id), "##drag_%d_%d", layer_idx, entry_idx);
+    ImGui::SetCursorScreenPos(thumb_pos);
+    const bool released_on_handle = ImGui::InvisibleButton(handle_id, ImVec2(thumb_display_size, thumb_display_size));
+    const float drag_threshold = ImGui::GetIO().MouseDragThreshold;
+    handle_click = released_on_handle && ImGui::GetIO().MouseDragMaxDistanceSqr[0] < drag_threshold * drag_threshold;
+    if (ImGui::IsItemHovered() || ImGui::IsItemActive()) {
+      ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
+    }
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal) && !ImGui::IsItemActive()) {
+      ImGui::SetTooltip("Drag to reorder this card within its layer. Click to edit.");
+    }
+    if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_None)) {
+      const CardDragPayload payload{ layer_idx, entry_idx };
+      ImGui::SetDragDropPayload(kCardDragPayloadType, &payload, sizeof(payload));
+      ImGui::TextUnformatted(FormatCrystalIdentity(state, entry.crystal_id).c_str());
+      ImGui::EndDragDropSource();
+    }
+  }
 
   // ---- Right column geometry ----
   //
@@ -1629,32 +1729,6 @@ bool RenderEntryCard(GuiState& state, int layer_idx, int entry_idx) {
     ImGui::SetTooltip("%s", can_delete_entry ? "Delete this card." : "A layer must keep at least one crystal.");
   }
 
-  if (dup_clicked) {
-    // Duplicate = clone-to-pool: append new CrystalConfig (and new FilterConfig
-    // if present) so the dup'd entry is fully independent. Capture pool copies
-    // BEFORE push_back to avoid dangling references if vector reallocates.
-    CrystalConfig cloned_crystal = state.crystals[entry.crystal_id];
-    std::optional<FilterConfig> cloned_filter;
-    if (entry.filter_id.has_value()) {
-      cloned_filter = state.filters[*entry.filter_id];
-    }
-    EntryCard new_entry;
-    new_entry.crystal_id = static_cast<int>(state.crystals.size());
-    new_entry.proportion = entry.proportion;
-    // Duplicate builds the clone field-by-field rather than copying the struct, so every
-    // EntryCard field needs a line here. Carrying `enabled` over keeps duplicate a pure clone:
-    // without it, duplicating an excluded card would hand back a participating one.
-    new_entry.enabled = entry.enabled;
-    state.crystals.push_back(std::move(cloned_crystal));
-    if (cloned_filter.has_value()) {
-      new_entry.filter_id = static_cast<int>(state.filters.size());
-      state.filters.push_back(std::move(*cloned_filter));
-    }
-    auto& entries = state.layers[layer_idx].entries;
-    entries.push_back(new_entry);
-    g_thumbnail_cache.OnLayerStructureChanged();
-  }
-
   // Persist hover state for next frame (computed while still inside the child
   // window so widget hover does not disqualify it), into the PARENT's storage — see the
   // hover-feedback note above BeginChild for why it has to be readable from out there.
@@ -1705,13 +1779,50 @@ bool RenderEntryCard(GuiState& state, int layer_idx, int entry_idx) {
   } else {
     const ImVec2 card_max(card_win_pos.x + card_win_sz.x, card_win_pos.y + card_win_sz.y);
     // See pick-mode branch above for IsWindowHovered() rationale.
-    if (ImGui::IsWindowHovered() && ImGui::IsMouseHoveringRect(card_win_pos, card_max) &&
-        ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !ImGui::IsAnyItemHovered()) {
+    if (handle_click || (ImGui::IsWindowHovered() && ImGui::IsMouseHoveringRect(card_win_pos, card_max) &&
+                         ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !ImGui::IsAnyItemHovered())) {
       g_edit_request = { EditTarget::kCard, layer_idx, entry_idx };
     }
   }
 
   ImGui::EndChild();  // ##card — must be unconditional
+
+  // ---- Drop target: the whole card, same layer only ----
+  //
+  // The upper half of the card means "above this card", the lower half "below it"; an accent line
+  // in the gap on that side is the indicator of where the card will land. A payload from another
+  // layer is not offered to the target at all — cross-layer moves are out of scope — so such a
+  // drag shows no indicator and its drop does nothing. Neither does a drop into either gap next to
+  // the dragged card itself, which would leave the order unchanged.
+  //
+  // The move is only reported here; RenderLayer applies it after its card loop (see
+  // EntryCardAction).
+  int move_from = -1;
+  int move_to = -1;
+  if (const ImGuiPayload* dragged = ImGui::GetDragDropPayload();
+      dragged != nullptr && dragged->IsDataType(kCardDragPayloadType)) {
+    const CardDragPayload src = *static_cast<const CardDragPayload*>(dragged->Data);
+    const ImRect card_rect(card_win_pos, ImVec2(card_win_pos.x + card_win_sz.x, card_win_pos.y + card_win_sz.y));
+    if (src.layer_idx == layer_idx && ImGui::BeginDragDropTargetCustom(card_rect, ImGui::GetID("##card_drop"))) {
+      const bool below = ImGui::GetMousePos().y > (card_rect.Min.y + card_rect.Max.y) * 0.5f;
+      const int to = DropGapToMoveTarget(src.entry_idx, entry_idx + (below ? 1 : 0));
+      if (to != src.entry_idx) {
+        // Cards are separated by one ItemSpacing after each card plus the Spacing() before the
+        // next, so the middle of the gap sits one ItemSpacing.y outside the card's edge.
+        const float gap_half = ImGui::GetStyle().ItemSpacing.y;
+        const float line_y = below ? card_rect.Max.y + gap_half : card_rect.Min.y - gap_half;
+        ImGui::GetWindowDrawList()->AddLine(ImVec2(card_rect.Min.x, line_y), ImVec2(card_rect.Max.x, line_y),
+                                            ImGui::GetColorU32(AccentColor()), UiPx(kDropIndicatorThickness));
+        if (const ImGuiPayload* delivered =
+                ImGui::AcceptDragDropPayload(kCardDragPayloadType, ImGuiDragDropFlags_AcceptNoDrawDefaultRect);
+            delivered != nullptr && delivered->IsDelivery()) {
+          move_from = src.entry_idx;
+          move_to = to;
+        }
+      }
+      ImGui::EndDragDropTarget();
+    }
+  }
 
   if (hover_border) {
     ImGui::PopStyleColor();
@@ -1726,7 +1837,12 @@ bool RenderEntryCard(GuiState& state, int layer_idx, int entry_idx) {
   }
 
   ImGui::PopID();
-  return delete_clicked;
+  EntryCardAction action;
+  action.delete_requested = delete_clicked;
+  action.duplicate_requested = dup_clicked;
+  action.move_from = move_from;
+  action.move_to = move_to;
+  return action;
 }
 
 
@@ -1829,21 +1945,37 @@ void RenderLayer(GuiState& state, int layer_idx) {
                          " Every crystal is excluded or has Weight 0 — layer produces no rays");
     }
 
-    // Render entry cards with deferred deletion
+    // Render entry cards; every structural change a card asks for is deferred until the loop is
+    // done, so no card in this frame is drawn under an index that has already shifted. One frame
+    // carries at most one of them (a single click, or a single drop), but the order is fixed
+    // anyway: delete, then duplicate, then move — revisit it if a batch action ever appears.
     int pending_delete_entry = -1;
+    int pending_duplicate_entry = -1;
+    int pending_move_from = -1;
+    int pending_move_to = -1;
     for (int i = 0; i < static_cast<int>(layer.entries.size()); i++) {
       ImGui::Spacing();
-      bool del = RenderEntryCard(state, layer_idx, i);
-      if (del) {
+      const EntryCardAction action = RenderEntryCard(state, layer_idx, i);
+      if (action.delete_requested) {
         pending_delete_entry = i;
+      }
+      if (action.duplicate_requested) {
+        pending_duplicate_entry = i;
+      }
+      if (action.move_from >= 0) {
+        pending_move_from = action.move_from;
+        pending_move_to = action.move_to;
       }
     }
 
-    // Deferred delete
     if (pending_delete_entry >= 0 && layer.entries.size() > 1) {
       layer.entries.erase(layer.entries.begin() + pending_delete_entry);
       NotifyEntryDeleted(state, layer_idx, pending_delete_entry);
       g_thumbnail_cache.OnLayerStructureChanged();
+    } else if (pending_duplicate_entry >= 0) {
+      DuplicateEntryBelow(state, layer_idx, pending_duplicate_entry);
+    } else if (pending_move_from >= 0) {
+      MoveEntryWithinLayer(state, layer_idx, pending_move_from, pending_move_to);
     }
 
     // Add entry button. Bind the new entry to a fresh pool slot so it is

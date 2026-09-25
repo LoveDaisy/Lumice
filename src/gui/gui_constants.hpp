@@ -150,6 +150,11 @@ constexpr float kCardHoverBorderAlpha = 0.30f;
 // DOES is constant, and sharing is a separate fact drawn on top of it.
 constexpr float kSharedOutlineThickness = 1.5f;
 
+// Line drawn in the gap between two entry cards to show where a dragged card will land. Heavier
+// than the sharing outline: it is the only thing on screen answering "where does this go", and it
+// sits in a gap a few pixels tall rather than on top of a control. Consumed by RenderEntryCard.
+constexpr float kDropIndicatorThickness = 2.5f;
+
 // Opacity of an excluded entry card's thumbnail area — the rendered image, the placeholder that
 // stands in for it, and the frame around both. One constant rather than a per-branch literal so
 // "excluded" is one visual statement instead of two that can drift apart.

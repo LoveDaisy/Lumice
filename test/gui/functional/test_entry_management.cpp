@@ -114,6 +114,41 @@ void OpenImmediateEditorOnEntry(ImGuiTestContext* ctx, int entry_idx, int layer_
   }
 }
 
+// A point on card `card_index`'s drag handle (its thumbnail). CardBlankSpot already lands there —
+// see its note in test_gui_shared.hpp — so it is the same point a click-to-edit uses; what makes it
+// a drag is the button staying down while the pointer travels.
+ImVec2 CardHandleSpot(int card_index) {
+  return CardBlankSpot(card_index);
+}
+
+// A point in the upper (`lower_half == false`) or lower half of card `card_index`, clear of the
+// thumbnail and the rail — a drop target covers the whole card, so any point in the half will do.
+ImVec2 CardDropSpot(int card_index, bool lower_half) {
+  ImGuiWindow* w = CardWindow(card_index);
+  IM_CHECK_RETV(w != nullptr, ImVec2(0, 0));
+  return ImVec2(w->Pos.x + w->Size.x * 0.5f, w->Pos.y + w->Size.y * (lower_half ? 0.85f : 0.15f));
+}
+
+// Press at `from`, travel to `to`, release — the whole gesture, with no check in between, so no
+// early return can leave the button held into the next case.
+void DragMouse(ImGuiTestContext* ctx, const ImVec2& from, const ImVec2& to) {
+  ctx->MouseMoveToPos(from);
+  ctx->MouseDown(0);
+  ctx->Yield(2);
+  ctx->MouseMoveToPos(to);
+  ctx->Yield(2);
+  ctx->MouseUp(0);
+  ctx->Yield(4);
+}
+
+std::vector<int> LayerCrystalOrder(int layer_idx) {
+  std::vector<int> ids;
+  for (const auto& e : gui::g_state.layers[layer_idx].entries) {
+    ids.push_back(e.crystal_id);
+  }
+  return ids;
+}
+
 // The Colors window one case parks over the cards, closed on every exit path.
 //
 // An object rather than a statement at the end of that case: its assertion is a negative one — the
@@ -1435,6 +1470,125 @@ void RegisterEntryManagementTests(ImGuiTestEngine* engine) {
       IM_CHECK_EQ(gui::GetEditModalTarget().layer_idx, 0);
       IM_CHECK_EQ(gui::GetEditModalTarget().entry_idx, 0);
       IM_CHECK_EQ(gui::g_state.layers[0].entries[0].crystal_id, edited_cid);
+    };
+  }
+  // ===================================================================================
+  // Putting a card somewhere other than the end: Duplicate-below and drag-to-reorder.
+  //
+  // Both go through MoveEntryWithinLayer, whose index arithmetic and binding repair are pinned in
+  // isolation by unit-correctness/gui/test_edit_modal_move_binding.cpp. What only a frame can show
+  // is that the real controls reach it: the Duplicate button, and a drag started on the thumbnail
+  // and dropped on another card's upper or lower half.
+  // ===================================================================================
+
+  // Duplicate places the copy directly below its original, not at the end of the layer.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "entry_management", "duplicating_a_middle_card_puts_the_copy_below_it");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      ctx->Yield(2);
+      MakeThreeIndependentEntries(ctx);
+      const std::vector<int> before = LayerCrystalOrder(0);
+
+      ctx->ItemClick("**/" ICON_FA_COPY "##dup_0_1");
+      ctx->Yield(2);
+
+      const std::vector<int> after = LayerCrystalOrder(0);
+      IM_CHECK_EQ(static_cast<int>(after.size()), 4);
+      IM_CHECK_EQ(after[0], before[0]);
+      IM_CHECK_EQ(after[1], before[1]);
+      IM_CHECK_EQ(after[3], before[2]);
+      IM_CHECK_NE(after[2], before[1]);                                                              // its own slot...
+      IM_CHECK_EQ(gui::g_state.crystals[after[2]].height, gui::g_state.crystals[before[1]].height);  // ...same crystal
+    };
+  }
+
+  // A drag from one card's thumbnail onto another card's lower half lands it below that card, and
+  // onto an upper half lands it above. A drag is not a click: the editor stays closed.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "entry_management", "dragging_a_card_by_its_thumbnail_reorders_the_layer");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      ctx->Yield(2);
+      MakeThreeIndependentEntries(ctx);
+      const std::vector<int> abc = LayerCrystalOrder(0);
+
+      DragMouse(ctx, CardHandleSpot(0), CardDropSpot(2, /*lower_half=*/true));
+      IM_CHECK(LayerCrystalOrder(0) == (std::vector<int>{ abc[1], abc[2], abc[0] }));
+      IM_CHECK(!gui::IsEditModalOpen());
+
+      DragMouse(ctx, CardHandleSpot(2), CardDropSpot(0, /*lower_half=*/false));
+      IM_CHECK(LayerCrystalOrder(0) == abc);
+      IM_CHECK(!gui::IsEditModalOpen());
+    };
+  }
+
+  // Reordering while the Immediate-mode editor is open on a card the drag jumps over. The editor
+  // binds by index; without the move repair it would stay on the number and start writing its
+  // buffers into the neighbour that slid into it — the same defect the delete cases above pin.
+  {
+    ImGuiTest* t =
+        IM_REGISTER_TEST(engine, "entry_management", "dragging_a_card_past_the_editor_keeps_it_on_the_same_entry");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      const ScopedPopups popup_guard(ctx);
+      ctx->Yield(2);
+      MakeThreeIndependentEntries(ctx);
+
+      const int edited_cid = gui::g_state.layers[0].entries[1].crystal_id;
+      // Entry 2 is the one a stale binding would land on once entry 0 has moved below it.
+      const int cid2 = gui::g_state.layers[0].entries[2].crystal_id;
+      const int fid2 = *gui::g_state.layers[0].entries[2].filter_id;
+      const gui::CrystalConfig crystal_before = gui::g_state.crystals[cid2];
+      const gui::FilterConfig filter_before = gui::g_state.filters[fid2];
+
+      OpenImmediateEditorOnEntry(ctx, 1);
+      if (ctx->IsError()) {
+        return;
+      }
+
+      DragMouse(ctx, CardHandleSpot(0), CardDropSpot(2, /*lower_half=*/true));
+
+      IM_CHECK_EQ(gui::g_state.layers[0].entries[1].crystal_id, cid2);  // the drop happened
+      IM_CHECK(gui::IsEditModalOpen());
+      IM_CHECK_EQ(gui::GetEditModalTarget().entry_idx, 0);
+      IM_CHECK_EQ(gui::g_state.layers[0].entries[0].crystal_id, edited_cid);
+      IM_CHECK(gui::g_state.crystals[cid2] == crystal_before);
+      IM_CHECK(gui::g_state.filters[fid2] == filter_before);
+    };
+  }
+
+  // What a drag must NOT do: move a card into another layer (out of scope, the target refuses the
+  // payload), move anything when released outside every card, or start at all from a rail button.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "entry_management", "drags_that_do_not_reorder_leave_the_layers_alone");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      ctx->Yield(2);
+      MakeThreeIndependentEntries(ctx);
+      ctx->ItemClick("**/+ Layer");
+      ctx->Yield(3);
+      IM_CHECK_EQ(static_cast<int>(gui::g_state.layers.size()), 2);
+      const std::vector<int> layer0 = LayerCrystalOrder(0);
+      const std::vector<int> layer1 = LayerCrystalOrder(1);
+
+      // Card 3 is layer 1's only card: cards are counted in submission order across layers.
+      DragMouse(ctx, CardHandleSpot(0), CardDropSpot(3, /*lower_half=*/true));
+      IM_CHECK(LayerCrystalOrder(0) == layer0);
+      IM_CHECK(LayerCrystalOrder(1) == layer1);
+
+      // Released over the preview, far from any card.
+      const ImVec2 display = ImGui::GetIO().DisplaySize;
+      DragMouse(ctx, CardHandleSpot(0), ImVec2(display.x * 0.6f, display.y * 0.5f));
+      IM_CHECK(LayerCrystalOrder(0) == layer0);
+
+      // Pressed on a rail button, released on another card: a button is not a drag source, and a
+      // release away from it is not a click on it either.
+      const ImGuiTestItemInfo dup = ctx->ItemInfo("**/" ICON_FA_COPY "##dup_0_0");
+      IM_CHECK(dup.ID != 0);
+      DragMouse(ctx, dup.RectFull.GetCenter(), CardDropSpot(2, /*lower_half=*/true));
+      IM_CHECK(LayerCrystalOrder(0) == layer0);
+      IM_CHECK(!gui::IsEditModalOpen());
     };
   }
 }
