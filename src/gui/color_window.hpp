@@ -169,8 +169,8 @@ inline constexpr const char* kColorsDisabledPrintModeTooltip =
 // "full spectrum"), because B - R of a user-chosen palette measures the palette, not the light.
 inline constexpr const char* kColorsDisabledChannelBrTooltip =
     "The Channel B-R display reads blue minus red off the natural colours of the light, so the\n"
-    "colored composite is not shown while it is on. Your color classes are kept -- switch\n"
-    "Show As back to Normal to see them again.";
+    "colored composite is not shown while it is on. Your color classes are kept -- switch the\n"
+    "preview's top-right control back to Normal to see them again.";
 
 inline constexpr const char* kColorsDisabledNoMatchTooltip =
     "No visible color class currently matches any rays -- the composite would be empty.\n"

@@ -33,6 +33,7 @@ add_executable(gui_test
     functional/test_marker_panel.cpp
     functional/test_lens_border.cpp
     functional/test_preview_viewport.cpp
+    functional/test_preview_display_mode_control.cpp
     functional/test_background_main_ui_control.cpp
     functional/test_preview_background.cpp
     functional/test_preview_globe_back_fade.cpp

@@ -67,7 +67,7 @@ to see why it is disabled.
 
 ### Is this spot bluer or redder? — the Channel B−R display
 
-**Display ▶ Show As ▶ Channel B-R** turns the preview into a colour diagnostic: every pixel shows the blue channel minus the red channel of the normal picture (the displayed sRGB values, after gamma — the same subtraction you would do in an image editor's channel calculator), as grey. Mid grey means no difference; lighter than mid grey is bluer, darker is redder. Pure blue reads white, pure red reads black, and any neutral pixel — including empty sky and everything outside the lens circle — reads mid grey. Switch back to **Normal** to get the ordinary picture; nothing is re-simulated either way.
+The **Normal | Channel B-R** switch in the top-right corner of the preview (dim until you hover it; greyed under Print mode, which has no separate red and blue to subtract) turns the preview into a colour diagnostic: every pixel shows the blue channel minus the red channel of the normal picture (the displayed sRGB values, after gamma — the same subtraction you would do in an image editor's channel calculator), as grey. Mid grey means no difference; lighter than mid grey is bluer, darker is redder. Pure blue reads white, pure red reads black, and any neutral pixel — including empty sky and everything outside the lens circle — reads mid grey. Switch back to **Normal** to get the ordinary picture; nothing is re-simulated either way.
 
 Three things to know before reading the numbers:
 

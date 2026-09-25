@@ -9,8 +9,8 @@
 // test_user_defaults.cpp use for their own "the branch's text says so" claims.
 //
 // The list of words is NOT restated here. It is derived from the registry — every key that declares
-// a label — so a label added there is scanned for with no edit to this file, and the one key the
-// scan skips is named once, below.
+// a label — so a label added there is scanned for with no edit to this file, and the keys the scan
+// skips are named once, below.
 //
 // The scan strips comments first, and does so with a scanner that knows where string literals are:
 // a line-wise "cut at //" would take a `//` INSIDE a string ("http://...") as a comment start and
@@ -32,12 +32,25 @@ namespace gui = lumice::gui;
 
 namespace {
 
-// The one registered key whose declared label is NOT a panel literal: renderer.visible is edited
-// by three RadioButtons (Upper / Full / Lower) under a SeparatorText("Visibility") that names the
-// group, so there is no single widget label to read back, and the registry's "Visible" is the
-// page's word alone. Excluded from both scans below by name — the exception is stated here, once,
-// rather than by a pattern that would silently widen.
-constexpr const char* kExcludedFromLabelParityCheck = "renderer.visible";
+// The registered keys whose declared label is NOT a panel literal, because the main panel edits
+// them with a group of per-value buttons that has no single widget label to read back:
+//   - renderer.visible: three RadioButtons (Upper / Full / Lower) under a SeparatorText
+//     ("Visibility") that names the group; the registry's "Visible" is the page's word alone.
+//   - renderer.display_mode: a segmented control in the preview's top-right corner whose segments
+//     are the value names themselves (Normal / Channel B-R); the registry's "Show As" is what the
+//     Settings panel and the Summary page print, and no main-panel widget carries it.
+// Excluded from the scans below by name — each exception is stated here, once, rather than by a
+// pattern that would silently widen.
+constexpr const char* kExcludedFromLabelParityCheck[] = { "renderer.visible", "renderer.display_mode" };
+
+bool IsExcludedFromLabelParityCheck(const std::string& key) {
+  for (const char* excluded : kExcludedFromLabelParityCheck) {
+    if (key == excluded) {
+      return true;
+    }
+  }
+  return false;
+}
 
 std::string ReadFile(const char* path) {
   std::ifstream in(path);
@@ -136,7 +149,7 @@ std::vector<DeclaredLabel> DeclaredLabels() {
   std::vector<DeclaredLabel> out;
   for (const std::string& key : gui::RegisteredFieldEditorKeyPaths()) {
     const char* label = gui::LabelFor(key);
-    if (label != nullptr && key != kExcludedFromLabelParityCheck) {
+    if (label != nullptr && !IsExcludedFromLabelParityCheck(key)) {
       out.push_back({ key, label });
     }
   }
@@ -165,14 +178,20 @@ TEST(ConfigSummaryLabels, EveryDeclaredLabelIsReadFromTheRegistryAndNotRestated)
   }
 }
 
-// The exception is real and stays an exception: renderer.visible declares a label the page prints,
-// and no call site reads it (the control is a RadioButton triple). If a widget labelled "Visible"
-// ever appears, this goes red and the key comes off the exclusion — the rule then covers it.
-TEST(ConfigSummaryLabels, TheVisibleFieldIsTheOneDeclaredLabelNoCallSiteReads) {
+// The exceptions are real and stay exceptions: each excluded key declares a label the page prints,
+// and no call site reads it (its control is a group of per-value buttons). If a widget carrying
+// that label ever appears, this goes red and the key comes off the exclusion — the rule then
+// covers it.
+TEST(ConfigSummaryLabels, TheExcludedFieldsAreTheDeclaredLabelsNoCallSiteReads) {
   const std::string code = StripComments(ReadFile(LUMICE_GUI_APP_PANELS_CPP_PATH));
-  ASSERT_NE(gui::LabelFor(kExcludedFromLabelParityCheck), nullptr);
-  EXPECT_EQ(code.find(std::string("PanelLabel(\"") + kExcludedFromLabelParityCheck + "\""), std::string::npos);
-  EXPECT_FALSE(HasLabelLiteral(code, gui::LabelFor(kExcludedFromLabelParityCheck)));
+  for (const char* key : kExcludedFromLabelParityCheck) {
+    if (gui::LabelFor(key) == nullptr) {
+      ADD_FAILURE() << key << ": declares no label";
+      continue;
+    }
+    EXPECT_EQ(code.find(std::string("PanelLabel(\"") + key + "\""), std::string::npos) << key;
+    EXPECT_FALSE(HasLabelLiteral(code, gui::LabelFor(key))) << key;
+  }
 }
 
 // The probe: one line with no comment on it at all, a `//` inside a string literal, and a widget

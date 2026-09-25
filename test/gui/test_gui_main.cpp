@@ -690,6 +690,7 @@ int main(int argc, char** argv) {
   RegisterAnnotationLineTrackingTests(engine);
   RegisterAnnotationLineSeamTests(engine);
   RegisterPreviewViewportTests(engine);
+  RegisterPreviewDisplayModeControlTests(engine);
   RegisterPerfTests(engine);
   RegisterFaceNumberOverlayTests(engine);
   RegisterRunLifecycleTests(engine);

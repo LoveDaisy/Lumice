@@ -9,6 +9,7 @@
 #include <limits>
 #include <optional>
 #include <string>
+#include <vector>
 
 #include "IconsFontAwesome6.h"
 #include "gui/analysis_panel.hpp"
@@ -30,6 +31,7 @@
 #include "gui/mono_exposure_scale.hpp"
 #include "gui/overlay_labels.hpp"
 #include "gui/panels.hpp"
+#include "gui/preview_display_mode_control.hpp"
 #include "gui/preview_renderer.hpp"  // ComputeBgUvTransform / kBgModifierName / SampleBgColorAtScreenPos
 #include "gui/semantic_colors.hpp"
 #include "gui/sim_state_rules.hpp"
@@ -1973,36 +1975,8 @@ void RenderRightPanel(GLFWwindow* window, float window_width, float window_heigh
       }
     }
 
-    // What the finished picture is shown as: the image itself, or the channel-B-R diagnostic (the
-    // post-gamma B - R of each pixel as a grey offset; src/util/channel_math.hpp). Display-time
-    // like the combos above — the preview shader applies it to the frame already on screen, so it
-    // re-runs nothing. Its gate (field_editor_registry.cpp's DisplayModeUnderScreenTone) greys it
-    // under Print, which has no separate R and B to subtract; the value is kept.
-    //
-    // The tooltip carries the same three points the user manual's section does (value moves with
-    // EV, clipping flattens it, compare at one EV) because those are what make the reading
-    // trustworthy, and a user who only ever hovers must still meet them.
-    {
-      const FieldEditorConstraint dm_c = ConstraintFor("renderer.display_mode", g_state);
-      ImGui::BeginDisabled(!dm_c.enabled);
-      ImGui::Combo(PanelLabel("renderer.display_mode", "display_mode").c_str(), &r.display_mode, kDisplayModeNames,
-                   kDisplayModeCount);
-      ImGui::EndDisabled();
-      if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-        if (!dm_c.enabled) {
-          ImGui::SetTooltip("%s", dm_c.disabled_reason);
-        } else {
-          ImGui::SetTooltip(
-              "Normal: the rendered image.\n\n"
-              "Channel B-R: is this spot bluer or redder? Shows blue minus red of the displayed\n"
-              "image as grey — mid grey is no difference, lighter is bluer, darker is redder.\n\n"
-              "The value moves with EV, and once red or blue clips at full brightness the\n"
-              "difference is flattened, so compare places at the same EV. Overlays are drawn\n"
-              "on top in their own colours; the background photo and the colored composite\n"
-              "are hidden while it is on.");
-        }
-      }
-    }
+    // The display mode (Normal / Channel B-R) is not edited here: its one entry point is the
+    // segmented control in the preview's top-right corner, RenderDisplayModeControl.
 
     ImGui::SeparatorText("Aspect Ratio");
     int preset_idx = static_cast<int>(g_state.aspect_preset);
@@ -2132,6 +2106,95 @@ void RenderRightPanel(GLFWwindow* window, float window_width, float window_heigh
 
   ImGui::End();
 }
+
+namespace {
+
+// The display mode's one entry point: a segmented control, one segment per kDisplayModeNames entry,
+// in the top-right corner of the preview's content region. Display-time — it writes
+// renderer.display_mode, which the preview shader reads on the next frame, and re-runs nothing.
+// Its gate is the registry's (DisplayModeUnderScreenTone, via ConstraintFor), the same one the
+// Settings panel and the Summary window read; it greys the control under Print, which has no
+// separate R and B to subtract, and keeps the value.
+//
+// MUST be called before RenderPreviewPanel submits `##preview_interact`, and the order carries
+// weight: ImGui gives the hover to the first item submitted under the cursor, so a press here
+// makes this control the active item and the interaction button below never becomes active — no
+// camera drag, no background pan starts from a click on the control. That covers presses only.
+// IsItemHovered() on the interaction button does not consult which item holds the hover, so the
+// wheel and click-on-hover branches (FOV, background zoom, eyedropper, cone pick) would still fire
+// over the control; the returned "cursor is over the control" is what the caller masks them with.
+//
+// The opacity follows the same rectangle test rather than ImGui's item hover, because it has to be
+// decided before the first segment is drawn. ImGuiStyleVar_Alpha changes what is drawn, not what
+// is hit, so the dim control is exactly as clickable as the opaque one.
+bool RenderDisplayModeControl() {
+  const ImVec2 origin = ImGui::GetCursorScreenPos();
+  const ImVec2 avail = ImGui::GetContentRegionAvail();
+  std::vector<float> text_w;
+  text_w.reserve(kDisplayModeCount);
+  for (int i = 0; i < kDisplayModeCount; i++) {
+    text_w.push_back(ImGui::CalcTextSize(kDisplayModeNames[i]).x);
+  }
+  const SegmentedControlLayout layout =
+      LayoutSegmentedControl(avail.x, UiPx(kDisplayModeControlMarginPt), UiPx(kDisplayModeControlPadXPt),
+                             UiPx(kDisplayModeControlPadYPt), ImGui::GetTextLineHeight(), text_w);
+  const ImVec2 frame_min(origin.x + layout.frame.x0, origin.y + layout.frame.y0);
+  const ImVec2 frame_max(origin.x + layout.frame.x1, origin.y + layout.frame.y1);
+  const bool over_control = ImGui::IsMouseHoveringRect(frame_min, frame_max);
+
+  const FieldEditorConstraint dm_c = ConstraintFor("renderer.display_mode", g_state);
+  int& mode = g_state.renderer.display_mode;
+  ImGui::PushStyleVar(ImGuiStyleVar_Alpha, over_control ? kDisplayModeControlHoverAlpha : kDisplayModeControlIdleAlpha);
+  ImGui::BeginGroup();
+  ImGui::BeginDisabled(!dm_c.enabled);
+  for (int i = 0; i < kDisplayModeCount; i++) {
+    const ControlRect& seg = layout.segments[static_cast<size_t>(i)];
+    ImGui::SetCursorScreenPos(ImVec2(origin.x + seg.x0, origin.y + seg.y0));
+    // The selected segment in the accent, at the alphas the Colors badge in the top bar uses for
+    // "this one is on".
+    const bool selected = mode == i;
+    if (selected) {
+      ImGui::PushStyleColor(ImGuiCol_Button, AccentColor(0.55f));
+      ImGui::PushStyleColor(ImGuiCol_ButtonHovered, AccentColor(0.70f));
+      ImGui::PushStyleColor(ImGuiCol_ButtonActive, AccentColor(0.45f));
+    }
+    const std::string label = std::string(kDisplayModeNames[i]) + "##preview_display_mode";
+    if (ImGui::Button(label.c_str(), ImVec2(seg.x1 - seg.x0, seg.y1 - seg.y0))) {
+      mode = i;
+    }
+    if (selected) {
+      ImGui::PopStyleColor(3);
+    }
+  }
+  ImGui::EndDisabled();
+  ImGui::EndGroup();
+  ImGui::PopStyleVar();
+
+  // The tooltip carries the same three points the user manual's section does (value moves with
+  // EV, clipping flattens it, compare at one EV) because those are what make the reading
+  // trustworthy, and a user who only ever hovers must still meet them. With the segment names as
+  // the only label, it is also where "Channel B-R" is explained at all.
+  if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+    if (!dm_c.enabled) {
+      ImGui::SetTooltip("%s", dm_c.disabled_reason);
+    } else {
+      ImGui::SetTooltip(
+          "Normal: the rendered image.\n\n"
+          "Channel B-R: is this spot bluer or redder? Shows blue minus red of the displayed\n"
+          "image as grey — mid grey is no difference, lighter is bluer, darker is redder.\n\n"
+          "The value moves with EV, and once red or blue clips at full brightness the\n"
+          "difference is flattened, so compare places at the same EV. Overlays are drawn\n"
+          "on top in their own colours; the background photo and the colored composite\n"
+          "are hidden while it is on.");
+    }
+  }
+
+  // Back to where the caller's next item expects to start: the content region's top-left.
+  ImGui::SetCursorScreenPos(origin);
+  return over_control;
+}
+
+}  // namespace
 
 void RenderPreviewPanel(GLFWwindow* window, float window_width, float window_height) {
   // Eyedropper mode: two ways out that must be taken before anything else this frame reads the
@@ -2485,11 +2548,17 @@ void RenderPreviewPanel(GLFWwindow* window, float window_width, float window_hei
     // ComputeBgUvTransform, which never consults the view matrix, so panning it means the same
     // thing under a full-sky lens as under any other.
     bool full_sky = LensIsFullSky(rc.lens_type);
+    // Submitted ahead of `##preview_interact` on purpose — see RenderDisplayModeControl for why the
+    // order is what keeps a click on it from orbiting the camera. Do not move it below, and do not
+    // give the interaction button AllowOverlap: either hands the control's presses back to it.
+    const bool over_display_mode_control = RenderDisplayModeControl();
     ImVec2 avail = ImGui::GetContentRegionAvail();
     ImGui::InvisibleButton("##preview_interact", avail);
 
     {
-      bool is_hovered = ImGui::IsItemHovered();
+      // Masked over the display-mode control: IsItemHovered() here would still read true there,
+      // and every wheel and click-on-hover branch below keys on it.
+      bool is_hovered = ImGui::IsItemHovered() && !over_display_mode_control;
       bool is_active = ImGui::IsItemActive();
       ImGuiIO& io = ImGui::GetIO();
 

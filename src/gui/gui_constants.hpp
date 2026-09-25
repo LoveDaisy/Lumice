@@ -200,6 +200,17 @@ static_assert(kAnalysisConeDefaultRadiusDeg > 0.0f && kAnalysisConeDefaultRadius
 // one place.
 constexpr float kAnalysisConeMarkerHitRadiusPt = 12.0f;
 
+// The display-mode segmented control in the preview's top-right corner (RenderPreviewPanel).
+// Geometry in logical points, read through UiPx(); the two alphas are opacities and are not.
+// Idle is low but never zero: the control is meant to be found without hunting for it, and it
+// stays clickable at any alpha because ImGuiStyleVar_Alpha changes what is drawn, not what is hit.
+// Feel values chosen on screenshots, not measured against anything.
+constexpr float kDisplayModeControlMarginPt = 6.0f;
+constexpr float kDisplayModeControlPadXPt = 8.0f;
+constexpr float kDisplayModeControlPadYPt = 3.0f;
+constexpr float kDisplayModeControlIdleAlpha = 0.45f;
+constexpr float kDisplayModeControlHoverAlpha = 1.0f;
+
 // Auxiliary line overlay. The per-family ceiling on a ring list — the sun circles' angle list and
 // the view circles' alike, since the bound is the shader's canvas for ONE family's levels
 // (vec4 u_*_deg[4] in preview_renderer.cpp) rather than anything about the sun. Named for what it
