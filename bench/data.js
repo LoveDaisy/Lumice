@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1790318816089,
+  "lastUpdate": 1790318818164,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9507,45 +9507,6 @@ window.BENCHMARK_DATA = {
             "username": "LoveDaisy"
           },
           "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "9327bb7a34e0095c493f6408acc9067e2512fd61",
-          "message": "Merge pull request #307 from LoveDaisy/fix/gui-test-harness-gates\n\ntest(gui): 闭合 gui_test 现场三处守卫可信度缺口——恒红闸 / 缺失的互比闸 / 注释纪律一致性",
-          "timestamp": "2026-09-05T14:10:18+08:00",
-          "tree_id": "2ca052b6512de4cebc819bec0838eb5723d8a739",
-          "url": "https://github.com/LoveDaisy/ice_halo_sim/commit/9327bb7a34e0095c493f6408acc9067e2512fd61"
-        },
-        "date": 1788589265575,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 69.9,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 100,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 93.1,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
             "email": "zhangjiajie043@gmail.com",
             "name": "Jiajie Zhang",
             "username": "LoveDaisy"
@@ -13845,6 +13806,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 92.5,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "69b1b656449030f1e93e69f7bd842037f16a8bdc",
+          "message": "Merge pull request #407 from LoveDaisy/feat/globe-backside-fog-fade\n\nfeat: globe back-side fade (the far side shows through, fading like fog)",
+          "timestamp": "2026-09-25T14:30:07+08:00",
+          "tree_id": "e4f340177152a07e767413c1203db933158f3ac0",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/69b1b656449030f1e93e69f7bd842037f16a8bdc"
+        },
+        "date": 1790318817628,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 115.2,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 99.6,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 99.2,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 92.7,
             "unit": "%"
           }
         ]
