@@ -20,6 +20,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <string>
 #include <thread>
 #include <vector>
@@ -268,6 +269,38 @@ TEST(ContinueRender, ContinuedRunMatchesOneRunOfTheSameTotal) {
   const double dist = (RelL1(b.xyz, refs[0].xyz) + RelL1(b.xyz, refs[1].xyz) + RelL1(b.xyz, refs[2].xyz)) / 3.0;
   EXPECT_LT(dist, 1.5 * noise) << "N+N sits further from the 2N runs than they sit from each other (noise " << noise
                                << ", distance " << dist << ")";
+}
+
+
+// PROBE (temporary, not for landing): distribution of the plane-total ratio.
+TEST(ContinueRenderProbe, PlaneTotalRatio) {
+  auto chan = [](const std::vector<double>& v, int c) {
+    double s = 0.0;
+    for (size_t i = c; i < v.size(); i += 3)
+      s += v[i];
+    return s;
+  };
+  LUMICE_Server* server = MakeServer(0, LUMICE_BACKEND_CPU);
+  ASSERT_NE(server, nullptr);
+  Accumulation first;
+  Accumulation both;
+  RunThenContinue(server, &first, &both);
+  Destroy(server);
+  // Control: two independent fresh runs of kHalf each.
+  Accumulation a;
+  Accumulation b;
+  for (Accumulation* acc : { &a, &b }) {
+    LUMICE_Server* s2 = MakeServer(0, LUMICE_BACKEND_CPU);
+    EXPECT_EQ(CommitJson(s2, MakeConfig(std::to_string(kHalf))), LUMICE_OK);
+    EXPECT_TRUE(WaitForDrain(s2));
+    *acc = Read(s2);
+    Destroy(s2);
+  }
+  std::fprintf(stderr, "PROBE cont=%.5f X=%.5f Y=%.5f Z=%.5f em=%.6f n1=%llu n2=%llu ctrl=%.5f ctrlY=%.5f\n",
+               Sum(both.xyz) / Sum(first.xyz), chan(both.xyz, 0) / chan(first.xyz, 0),
+               chan(both.xyz, 1) / chan(first.xyz, 1), chan(both.xyz, 2) / chan(first.xyz, 2),
+               both.emitted_energy / first.emitted_energy, first.sim_ray_num, both.sim_ray_num,
+               (Sum(a.xyz) + Sum(b.xyz)) / Sum(a.xyz), (chan(a.xyz, 1) + chan(b.xyz, 1)) / chan(a.xyz, 1));
 }
 
 // ---- Proposition 2: new samples ------------------------------------------------------------
