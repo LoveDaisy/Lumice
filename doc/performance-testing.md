@@ -1229,7 +1229,11 @@ everything else 1.
 | five-wavelength fisheye | 12.35 → 14.54 | 15.29 → 16.78 | 15.15 → 18.18 | 20.52 → 20.21 |
 
 Linux system time at 16 workers fell from 3.5–21 s to 0.4–1.8 s per run, and one worker got 18–27%
-faster (the per-batch handoff was paid even there). On Linux, 16 workers now beat 10 on all eight
+faster (the per-batch handoff was paid even there). What it costs: peak RSS at 16 workers is 1.1–2.2×
+what it was (at most 225 MB, the 2048×1024 scene; 1.3–2.9× and at most 460 MB at 32), the price of
+keeping one queued handoff per worker; and the time from the first queued batch to the first SimData
+the consumer sees is unchanged (19–25 ms either way at 16 workers), which the 5 ms early hand-over is
+there to guarantee for scenes heavy enough that a whole handoff would take longer. On Linux, 16 workers now beat 10 on all eight
 scenes and 32 beats 10 on seven. macOS (M2 Max, 12 cores, 4–12 workers) moved −2.3%…+4.4%,
 nothing past noise at its default of 10.
 
