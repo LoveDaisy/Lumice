@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1790365020635,
+  "lastUpdate": 1790365022952,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9524,50 +9524,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "349656ac94b6b2fd27ecbf4ed35812bea7646a2a",
-          "message": "Merge pull request #317 from LoveDaisy/ci/windows-release-image-unify\n\nci: build Windows on the image we actually release from",
-          "timestamp": "2026-09-07T01:04:20+08:00",
-          "tree_id": "d7e945127aac502e4a16adeca4de66c2fca33ff5",
-          "url": "https://github.com/LoveDaisy/ice_halo_sim/commit/349656ac94b6b2fd27ecbf4ed35812bea7646a2a"
-        },
-        "date": 1788714903512,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 86.4,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 99.5,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 94.6,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 92.7,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "59208e341a7a63e1f22366ec0fbc47211fd93950",
           "message": "Merge pull request #318 from LoveDaisy/test/e2e-cost-and-oracle-audit\n\ntest(e2e): 按「每个测试为自己的开销举证」审计套件成本，恢复预算余量",
           "timestamp": "2026-09-07T04:18:31+08:00",
@@ -13867,6 +13823,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 94.6,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c6d32d110ca90680080935d49bda6d00274d6ac7",
+          "message": "Merge pull request #418 from LoveDaisy/feat/axis-preset-highlight-summary\n\nfeat(gui): highlight the active axis preset and summarize the crystal under the edit-modal preview",
+          "timestamp": "2026-09-26T03:24:31+08:00",
+          "tree_id": "0c4591c98e7a93246c6b7ac5869eb931880bb594",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/c6d32d110ca90680080935d49bda6d00274d6ac7"
+        },
+        "date": 1790365022412,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 88.5,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 99.9,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 98.9,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 95,
             "unit": "%"
           }
         ]
