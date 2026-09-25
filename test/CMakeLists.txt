@@ -163,6 +163,9 @@ add_executable(unit_correctness_test
   # new test infrastructure, not these guards.
   "${PROJ_TEST_DIR}/unit-correctness/server/test_result_frame_lifetime.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/server/test_drain_contract.cpp"
+  # CPU-route handoff backpressure (scene_cnt_cap_/scene_cnt_wake_/scene_cv_) liveness at a
+  # large dispatch grain — the wake-predicate-must-move-with-the-cap regression class.
+  "${PROJ_TEST_DIR}/unit-correctness/server/test_cpu_handoff_backpressure.cpp"
   # util/
   "${PROJ_TEST_DIR}/unit-correctness/util/test_color_space.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/util/test_queue.cpp"
