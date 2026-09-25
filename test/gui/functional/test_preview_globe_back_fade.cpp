@@ -2,8 +2,8 @@
 //
 // The globe looks at the sky from OUTSIDE a unit sphere, so a pixel's ray crosses the sphere twice:
 // the near point the globe has always shown, and a far point behind it. `globe_back_fade` lets the
-// far point's light through, weighted by how far behind the silhouette it sits (a smoothstep to 0
-// at the fade range — lm_proj::GlobeBackFadeWeight). Three claims about the shader can only be
+// far point's light through, weighted by how far behind the silhouette it sits (exponential fog,
+// exp(-depth / range) — lm_proj::GlobeBackFadeWeight). Four claims about the shader can only be
 // read off pixels:
 //
 //   * a range of 0 adds nothing: the frame is the near side alone, which is the globe as it was;
@@ -11,9 +11,12 @@
 //     illumination, plus far light x ITS relative illumination x the fade weight. This is the
 //     check that holds the GLSL transcription of the weight and of the far-side Jacobian to
 //     src/gui/preview_jacobian.hpp, which test_globe_back_fade.cpp in turn holds to core's copy;
-//   * the far side contributes light and nothing else: no grid line, horizon or lens border is
-//     drawn at the far point (AC6 of the feature — a far-side overlay at full strength would sit
-//     on top of the near side and read as part of it).
+//   * the far side's curves (grid, horizon, and the circle families beside them) are drawn at the
+//     far point faded by the same weight, confined to the disc, and UNDER the near side's: a
+//     near-side line pixel is byte-identical with the fade on or off, since a far-side line at
+//     full strength would sit on top of the near side and read as part of it;
+//   * nothing else is drawn at the far point — the markers are near-side points (core projects
+//     them; the shader only draws the rings it is handed) and the globe has no lens border.
 //
 // Capture path: RenderExportToRgba's off-screen FBO, the same one test_preview_background.cpp
 // uses, with a UNIFORM XYZ field uploaded directly and no simulation — so every pixel's expected
@@ -52,6 +55,7 @@ struct Request {
   float fade = 0.0f;
   float luminance = 0.0f;  // uniform field Y, in D65 chromaticity
   bool overlays = false;
+  bool markers = false;
   std::vector<unsigned char> rgba;
 };
 
@@ -84,6 +88,13 @@ void RunRequest() {
     params.overlay.horizon_alpha = 1.0f;
     params.overlay.grid_alpha = 1.0f;
   }
+  if (g_req.markers) {
+    // One ring inside the disc, in the shader's centre-origin, y-up pixel space, and the border.
+    params.overlay.show_lens_border = true;
+    params.overlay.marker_screen_pos[0] = { 20.0f, -15.0f };
+    params.overlay.marker_color[0] = { 1.0f, 1.0f, 1.0f };
+    params.overlay.markers_alpha = 1.0f;
+  }
   g_req.rgba = gui::RenderExportToRgba(gui::g_preview, params, kCanvas, kCanvas);
   g_req.done = true;
   g_req.requested = false;
@@ -96,11 +107,13 @@ void GlobeBackFadeGuiFunc(ImGuiTestContext* /*ctx*/) {
 }
 
 // One frame from the render thread (the GL context lives there, not on the test coroutine).
-std::vector<unsigned char> Render(ImGuiTestContext* ctx, float fade, float luminance, bool overlays) {
+std::vector<unsigned char> Render(ImGuiTestContext* ctx, float fade, float luminance, bool overlays,
+                                  bool markers = false) {
   g_req = Request{};
   g_req.fade = fade;
   g_req.luminance = luminance;
   g_req.overlays = overlays;
+  g_req.markers = markers;
   g_req.requested = true;
   for (int i = 0; i < 60 && !g_req.done; ++i) {
     ctx->Yield();
@@ -250,29 +263,90 @@ void RegisterPreviewGlobeBackFadeTests(ImGuiTestEngine* engine) {
     };
   }
 
-  // The far side brings light and nothing else. With a ZERO-energy field the far side has no light
-  // to add, so any difference a range makes can only be something drawn — an overlay evaluated at
-  // the far point. Every overlay the globe has is on (grid, horizon, lens border — the border is a
-  // no-op on globe, which is itself part of what is held here) and at full opacity.
+  // The far side's curves. With a ZERO-energy field the far side has no light to add, so any
+  // difference a range makes can only be something drawn at the far point. Grid and horizon at
+  // full opacity: a near-side line pixel is then fully the line's colour whatever lies under it,
+  // which is what makes "the near side wins" a byte-exact claim.
   {
-    ImGuiTest* t = IM_REGISTER_TEST(engine, "preview_globe_back_fade", "no_overlay_is_drawn_on_the_far_side");
+    ImGuiTest* t =
+        IM_REGISTER_TEST(engine, "preview_globe_back_fade", "far_side_curves_fade_in_the_disc_under_the_near_ones");
     t->GuiFunc = GlobeBackFadeGuiFunc;
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
       ctx->Yield(2);
       const std::vector<unsigned char> f0 = Render(ctx, 0.0f, 0.0f, true);
-      const std::vector<unsigned char> f1 = Render(ctx, 1.5f, 0.0f, true);
+      const std::vector<unsigned char> f_short = Render(ctx, 0.3f, 0.0f, true);
+      const std::vector<unsigned char> f_long = Render(ctx, 1.5f, 0.0f, true);
+      const std::size_t n = static_cast<std::size_t>(kCanvas) * kCanvas * 4;
+      IM_CHECK(f0.size() == n && f_short.size() == n && f_long.size() == n);
+      const float rho_limb = RhoLimb();
+      int near_lit = 0;
+      int near_changed = 0;
+      int far_drawn = 0;
+      int outside_changed = 0;
+      long long ink_short = 0;
+      long long ink_long = 0;
+      for (int row = 0; row < kCanvas; ++row) {
+        for (int col = 0; col < kCanvas; ++col) {
+          const std::size_t i = (static_cast<std::size_t>(row) * kCanvas + col) * 4;
+          const bool lit0 = f0[i] != 0 || f0[i + 1] != 0 || f0[i + 2] != 0;
+          const bool differs =
+              !std::equal(f0.begin() + static_cast<std::ptrdiff_t>(i), f0.begin() + static_cast<std::ptrdiff_t>(i + 3),
+                          f_long.begin() + static_cast<std::ptrdiff_t>(i));
+          if (lit0) {
+            ++near_lit;
+            if (differs || !std::equal(f0.begin() + static_cast<std::ptrdiff_t>(i),
+                                       f0.begin() + static_cast<std::ptrdiff_t>(i + 3),
+                                       f_short.begin() + static_cast<std::ptrdiff_t>(i))) {
+              ++near_changed;
+            }
+            continue;
+          }
+          if (differs) {
+            ++far_drawn;
+            if (RhoAt(col, row) > rho_limb + 1.5f) {
+              ++outside_changed;
+            }
+          }
+          for (int ch = 0; ch < 3; ++ch) {
+            ink_short += f_short[i + ch];
+            ink_long += f_long[i + ch];
+          }
+        }
+      }
+      // Positive control: the near side draws, so an unchanged near side is a claim about order.
+      IM_CHECK_GT(near_lit, 200);
+      IM_CHECK_EQ(near_changed, 0);
+      IM_CHECK_GT(far_drawn, 200);
+      IM_CHECK_EQ(outside_changed, 0);
+      // The same lines under a longer fog carry more of their colour: the far side's lines fade on
+      // the range exactly as its light does.
+      IM_CHECK_GT(ink_long, ink_short);
+      IM_CHECK_GT(ink_short, 0);
+    };
+  }
+
+  // Nothing but curves is drawn on the far side: with the markers and the lens border on and no
+  // curve family, a zero-energy frame is the same bytes at any range.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "preview_globe_back_fade", "no_marker_or_border_is_drawn_on_the_far_side");
+    t->GuiFunc = GlobeBackFadeGuiFunc;
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      ctx->Yield(2);
+      const std::vector<unsigned char> f0 = Render(ctx, 0.0f, 0.0f, false, true);
+      const std::vector<unsigned char> f1 = Render(ctx, 1.5f, 0.0f, false, true);
       const std::size_t n = static_cast<std::size_t>(kCanvas) * kCanvas * 4;
       IM_CHECK(f0.size() == n && f1.size() == n);
       // A positive control, so an identical pair is attributable to the far side drawing nothing
-      // rather than to the overlays not being drawn at all.
+      // rather than to the ring not being drawn at all.
       int lit = 0;
       for (std::size_t i = 0; i < n; i += 4) {
         if (f0[i] != 0 || f0[i + 1] != 0 || f0[i + 2] != 0) {
           ++lit;
         }
       }
-      IM_CHECK_GT(lit, 200);
+      IM_CHECK_GT(lit, 20);
       IM_CHECK(f0 == f1);
     };
   }

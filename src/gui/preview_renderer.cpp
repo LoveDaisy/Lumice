@@ -586,8 +586,9 @@ vec4 globeInverse(vec2 pos, float half_fov, out float ri) {
 // The FAR surface point on the same ray as globeInverse — where the ray leaves the sphere — for the
 // back-side fade. w = 1 only when the ray meets the sphere AND the point is not faded out; `ri`
 // receives its relative illumination and `weight` its fade weight. Same solve as globeInverse,
-// other root (-b + sqrt(disc)). Called by main() alone: the overlay and every other consumer of
-// the inverse read the near point only, so nothing is ever drawn on the far side but its light.
+// other root (-b + sqrt(disc)). Two callers: main(), for the far side's light, and overlayAuxLines,
+// for the far side's curves (at the pixel and its two neighbours). Markers and labels never read
+// it — they stay on the near side.
 #ifdef LUMICE_GLOBE_BACK_FADE
 vec4 globeFarDir(vec2 pos, float half_fov, out float ri, out float weight) {
   const float kGlobeCameraDist = 4.0;  // see globeInverse
@@ -764,16 +765,20 @@ vec3 overlayMarkers(vec3 color, vec2 pos_pix) {
 
 )glsl"
 R"glsl(
-// Overlay auxiliary lines on top of final_color.
+// The four curve families (grid, sun circles, view circles, horizon) at one direction, composited
+// over `color` with every family's alpha multiplied by `alpha_scale`.
 //
-// world_dir: this fragment's unit world-space direction (the one the picture was sampled at), in
-// the convention every annotation direction uses — altitude = asin(-z), azimuth = atan2(-y, -x).
-// The caller only reaches here for a fragment the lens images AND the hemisphere policy admits,
-// so the clip the CLI applies through its `drawable` mask is applied here by the call site.
-// pos: the fragment's raw position (centre-origin, y-up), from which the neighbours' directions
-// are re-derived; pos_pix: the same in the overlay's space (flipped for the CPI family), which is
-// what the marker positions are stated in.
-vec3 overlayAuxLines(vec3 world_dir, vec3 color, vec2 pos_pix, vec2 pos, float half_fov) {
+// world_dir: the unit world-space direction the curves are evaluated at, in the convention every
+// annotation direction uses — altitude = asin(-z), azimuth = atan2(-y, -x). nx / ny: the directions
+// at the fragment's right and lower neighbours (w = 1 where imaged), from which the local gradient
+// of each field is taken — see the comment on the forward difference below.
+//
+// TWO callers, both in overlayAuxLines: the near side at alpha_scale 1 (the picture's own
+// direction, exactly the lines the preview always drew) and, in the LUMICE_GLOBE_BACK_FADE variant
+// only, the globe's far side at alpha_scale = its fade weight, so the far side's lines fade with
+// the same curve as its light. Markers are not drawn here: they are named directions projected by
+// core onto the near side, and the far side draws none (nor does the CLI).
+vec3 drawAuxCurves(vec3 world_dir, vec4 nx, vec4 ny, vec3 color, float alpha_scale) {
   const float DEG = 180.0 / PI;
 
   // The four angle fields. Each formula is the shader-side twin of a core function, named here so
@@ -805,20 +810,10 @@ vec3 overlayAuxLines(vec3 world_dir, vec3 color, vec2 pos_pix, vec2 pos, float h
   // pixel at full amplitude (measured on the rectilinear parity scene as 213 pixels for 1.8 dB).
   // Three inverse projections per fragment instead of one is the price of the two evaluators
   // agreeing on which pixels are the line, and it is a few trig calls.
-  //
-  // "Lower" is the next IMAGE row, which in this y-up fragment space is pos.y - 1; the last
-  // row/column test is the CPU's `px + 1 < width` written in centre-origin coordinates.
-  vec2 half_res = u_resolution * 0.5;
-  vec2 step_x = vec2(pos.x + 0.5 < half_res.x ? 1.0 : -1.0, 0.0);
-  vec2 step_y = vec2(0.0, -(pos.y - 0.5 > -half_res.y ? 1.0 : -1.0));
-  float ri_unused;
-  vec2 ovl_unused;
-  vec4 nx = inverseWorldDir(pos + step_x, half_fov, ri_unused, ovl_unused);
-  vec4 ny = inverseWorldDir(pos + step_y, half_fov, ri_unused, ovl_unused);
   if (nx.w < 0.5 && ny.w < 0.5) {
     // No local scale can be measured here, so no curve is drawn — the CPU's rule, and the one
     // that keeps a horizon out of a corner that images nothing.
-    return overlayMarkers(color, pos_pix);
+    return color;
   }
   float fw_alt = 0.0;
   float fw_az = 0.0;
@@ -848,7 +843,7 @@ vec3 overlayAuxLines(vec3 world_dir, vec3 color, vec2 pos_pix, vec2 pos, float h
     int ec = u_elevation_count;
     float t = lineCoverage(nearestGridLevelDistDeg(altitude_deg, 0, ec, false), grad_alt);
     t = max(t, lineCoverage(nearestGridLevelDistDeg(azimuth_deg, ec, ec + u_longitude_count, true), grad_az));
-    color = blendAnnotationColor(color, u_grid_color, t, u_grid_alpha, u_tone);
+    color = blendAnnotationColor(color, u_grid_color, t, u_grid_alpha * alpha_scale, u_tone);
   }
 
   // Circles of constant angular distance from u_reference_dir. A linear pass: the list is at most
@@ -858,7 +853,7 @@ vec3 overlayAuxLines(vec3 world_dir, vec3 color, vec2 pos_pix, vec2 pos, float h
     for (int i = 0; i < u_angular_dist_count; ++i) {
       t = max(t, lineCoverage(angular_dist_deg - u_angular_dist_deg[i >> 2][i & 3], grad_dist));
     }
-    color = blendAnnotationColor(color, u_sun_circles_color, t, u_sun_circles_alpha, u_tone);
+    color = blendAnnotationColor(color, u_sun_circles_color, t, u_sun_circles_alpha * alpha_scale, u_tone);
   }
 
   // Circles of constant angular distance from the optical axis. AFTER the sun circles and BEFORE
@@ -871,14 +866,57 @@ vec3 overlayAuxLines(vec3 world_dir, vec3 color, vec2 pos_pix, vec2 pos, float h
     for (int i = 0; i < u_view_dist_count; ++i) {
       t = max(t, lineCoverage(view_dist_val - u_view_dist_deg[i >> 2][i & 3], grad_view));
     }
-    color = blendAnnotationColor(color, u_view_dist_color, t, u_view_dist_alpha, u_tone);
+    color = blendAnnotationColor(color, u_view_dist_color, t, u_view_dist_alpha * alpha_scale, u_tone);
   }
 
   // Horizon line (altitude = 0) — drawn last of the curves so it's most visible.
   if (u_show_horizon != 0) {
-    color = blendAnnotationColor(color, u_horizon_color, lineCoverage(altitude_deg, grad_alt), u_horizon_alpha, u_tone);
+    color = blendAnnotationColor(color, u_horizon_color, lineCoverage(altitude_deg, grad_alt), u_horizon_alpha * alpha_scale, u_tone);
   }
 
+  return color;
+}
+
+// Overlay auxiliary lines on top of final_color.
+//
+// world_dir: this fragment's unit world-space direction (the one the picture was sampled at).
+// The caller only reaches here for a fragment the lens images AND the hemisphere policy admits,
+// so the clip the CLI applies through its `drawable` mask is applied here by the call site — and
+// that same near-side gate also admits the globe's far-side lines, as it admits the far side's
+// light in main(): `visible` / `front` are a per-pixel display clip, not a per-direction one.
+// pos: the fragment's raw position (centre-origin, y-up), from which the neighbours' directions
+// are re-derived; pos_pix: the same in the overlay's space (flipped for the CPI family), which is
+// what the marker positions are stated in.
+vec3 overlayAuxLines(vec3 world_dir, vec3 color, vec2 pos_pix, vec2 pos, float half_fov) {
+  // The right and lower neighbours drawAuxCurves differences against. "Lower" is the next IMAGE
+  // row, which in this y-up fragment space is pos.y - 1; the last row/column test is the CPU's
+  // `px + 1 < width` written in centre-origin coordinates.
+  vec2 half_res = u_resolution * 0.5;
+  vec2 step_x = vec2(pos.x + 0.5 < half_res.x ? 1.0 : -1.0, 0.0);
+  vec2 step_y = vec2(0.0, -(pos.y - 0.5 > -half_res.y ? 1.0 : -1.0));
+#ifdef LUMICE_GLOBE_BACK_FADE
+  // The globe's far side, seen through the near one: its curves are drawn FIRST, faded by the same
+  // weight its light is (lm_proj::GlobeBackFadeWeight and its mirrors), so the near side's lines —
+  // drawn next, at full alpha — win any pixel both touch. The CLI composites the same order
+  // (src/server/render.cpp, the far-side layers before their near-side twins). Relative
+  // illumination is not applied: it is an energy term, and a line is not energy.
+  if (u_lens_type == 10 && u_globe_back_fade > 0.0) {
+    float back_ri_unused;
+    float back_w = 0.0;
+    float nb_w_unused;
+    vec4 back = globeFarDir(pos, half_fov, back_ri_unused, back_w);
+    if (back.w >= 0.5) {
+      vec4 bnx = globeFarDir(pos + step_x, half_fov, back_ri_unused, nb_w_unused);
+      vec4 bny = globeFarDir(pos + step_y, half_fov, back_ri_unused, nb_w_unused);
+      color = drawAuxCurves(back.xyz, bnx, bny, color, back_w);
+    }
+  }
+#endif
+  float ri_unused;
+  vec2 ovl_unused;
+  vec4 nx = inverseWorldDir(pos + step_x, half_fov, ri_unused, ovl_unused);
+  vec4 ny = inverseWorldDir(pos + step_y, half_fov, ri_unused, ovl_unused);
+  color = drawAuxCurves(world_dir, nx, ny, color, 1.0);
   return overlayMarkers(color, pos_pix);
 }
 
