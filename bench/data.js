@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1790318813133,
+  "lastUpdate": 1790318816089,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -4759,48 +4759,6 @@ window.BENCHMARK_DATA = {
             "username": "LoveDaisy"
           },
           "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "9327bb7a34e0095c493f6408acc9067e2512fd61",
-          "message": "Merge pull request #307 from LoveDaisy/fix/gui-test-harness-gates\n\ntest(gui): 闭合 gui_test 现场三处守卫可信度缺口——恒红闸 / 缺失的互比闸 / 注释纪律一致性",
-          "timestamp": "2026-09-05T14:10:18+08:00",
-          "tree_id": "2ca052b6512de4cebc819bec0838eb5723d8a739",
-          "url": "https://github.com/LoveDaisy/ice_halo_sim/commit/9327bb7a34e0095c493f6408acc9067e2512fd61"
-        },
-        "date": 1788589263729,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 806841.9,
-            "unit": "rays/sec",
-            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 1213671.4,
-            "unit": "rays/sec",
-            "extra": "CPU: Neoverse-N2\\nCores: 4"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 817336,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 9V74 80-Core Processor                \\nCores: 4"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
             "email": "zhangjiajie043@gmail.com",
             "name": "Jiajie Zhang",
             "username": "LoveDaisy"
@@ -9486,6 +9444,54 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 574226.3,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "69b1b656449030f1e93e69f7bd842037f16a8bdc",
+          "message": "Merge pull request #407 from LoveDaisy/feat/globe-backside-fog-fade\n\nfeat: globe back-side fade (the far side shows through, fading like fog)",
+          "timestamp": "2026-09-25T14:30:07+08:00",
+          "tree_id": "e4f340177152a07e767413c1203db933158f3ac0",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/69b1b656449030f1e93e69f7bd842037f16a8bdc"
+        },
+        "date": 1790318815680,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 992191.6,
+            "unit": "rays/sec",
+            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 1013332.6,
+            "unit": "rays/sec",
+            "extra": "CPU: Neoverse-N2\\nCores: 4"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 836351.1,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 9V74 80-Core Processor\\nCores: 4"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 566069.4,
             "unit": "rays/sec",
             "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
           }
