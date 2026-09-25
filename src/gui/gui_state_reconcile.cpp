@@ -1,6 +1,9 @@
 #include "gui/gui_state_reconcile.hpp"
 
 #include <cassert>
+#include <unordered_map>
+#include <unordered_set>
+#include <vector>
 
 // T1 (task-color-migration) landed this as the reconciler's only concrete-widget dependency,
 // inverting the intended "widget depends on reconciler abstraction" layering direction (doc/
@@ -61,6 +64,55 @@ bool DisplayStateEqualAtCurrentSize(const GuiState& state, const GuiState::Displ
 // (they already fire on any shape delta). ImGui is immediate-mode single-write-per-frame, so
 // a same-frame combination of "entry added" + "another entry's filter presence toggled" is
 // unreachable via UI interaction (each widget event writes one class of field per frame).
+//
+// Matching entries across the two snapshots. Reordering a layer (drag, or Duplicate placing its
+// copy below the original) keeps the entry count, so matching by INDEX would read a card with a
+// filter swapping places with one without as two presence toggles and throw the run away for
+// what is a soft change. Within a layer whose live crystal ids are all distinct, the crystal id is
+// the entry's identity, so entries are matched by it instead. A live id the baseline layer never
+// had is reported as a change — and that conservative branch is load-bearing, not defensive: it is
+// what keeps the id match from missing a real toggle when the baseline layer HAD duplicate ids
+// (e.g. a "Link to..." since undone). If the baseline had duplicates and live has none, live has N
+// distinct ids against at most N-1 in the baseline, so at least one live id is necessarily missing
+// there and lands in this branch. Narrowing it to "silently skip" would open exactly that hole.
+//
+// A layer whose live ids are NOT distinct (two cards linked to one crystal) has no per-entry
+// identity to match on, so it falls back to the index comparison — for the whole layer, which
+// means ANY reorder in such a layer may be over-reported as hard. That direction is safe (an extra
+// restart, never a missed one) and is the pre-existing behaviour for every reorder.
+bool LayerHasDuplicateCrystalId(const std::vector<EntryCard>& entries) {
+  std::unordered_set<int> seen;
+  for (const auto& e : entries) {
+    if (!seen.insert(e.crystal_id).second) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool LayerFilterPresenceChanged(const std::vector<EntryCard>& live_entries,
+                                const std::vector<EntryCard>& base_entries) {
+  if (LayerHasDuplicateCrystalId(live_entries)) {
+    for (size_t ei = 0; ei < live_entries.size(); ++ei) {
+      if (live_entries[ei].filter_id.has_value() != base_entries[ei].filter_id.has_value()) {
+        return true;
+      }
+    }
+    return false;
+  }
+  std::unordered_map<int, bool> base_has_filter;
+  for (const auto& e : base_entries) {
+    base_has_filter[e.crystal_id] = e.filter_id.has_value();
+  }
+  for (const auto& e : live_entries) {
+    const auto it = base_has_filter.find(e.crystal_id);
+    if (it == base_has_filter.end() || it->second != e.filter_id.has_value()) {
+      return true;
+    }
+  }
+  return false;
+}
+
 bool AnyEntryFilterPresenceChanged(const GuiState& state, const GuiState::ConfigSnapshot& baseline) {
   if (state.layers.size() != baseline.layers.size()) {
     return false;
@@ -71,10 +123,8 @@ bool AnyEntryFilterPresenceChanged(const GuiState& state, const GuiState::Config
     if (live_entries.size() != base_entries.size()) {
       continue;
     }
-    for (size_t ei = 0; ei < live_entries.size(); ++ei) {
-      if (live_entries[ei].filter_id.has_value() != base_entries[ei].filter_id.has_value()) {
-        return true;
-      }
+    if (LayerFilterPresenceChanged(live_entries, base_entries)) {
+      return true;
     }
   }
   return false;
