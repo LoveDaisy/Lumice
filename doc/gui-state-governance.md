@@ -448,6 +448,11 @@
 **一个**会改变既有下标含义的写点——`src/gui/panels.cpp` 里那次 `erase`（全仓无 `layers.insert` / swap / 重排入口；
 `ConfigSnapshot::ApplyTo` 是整体赋值且与 `raypath_color` 同一次原子回滚），所以补偿只为删除而写，不为不存在的
 重排预留路径；将来加入层重排时，`CompensatePositionalIndexForDeletion` 旁边就是它的第二条规则该住的地方。
+（条目级已兑现：同层内的条目现在可以被放到末尾以外的位置——Duplicate 把副本放在原卡片正下方、拖拽缩略图重排——两者都只经
+`MoveEntryWithinLayer`（`src/gui/panels.cpp`）这一个原语，它旋转 entries 之后调 `NotifyEntryMoved`，后者用
+`CompensatePositionalIndexForMove` 修正同样两个位置引用（编辑弹窗绑定与 `pick_link_source`），两条补偿规则并排住在
+`src/gui/edit_modals.cpp`。移动不删除任何东西，故没有 `-1` 结局；`raypath_color` 的 ref 只记层号，同层重排不涉及它。
+`state.layers` 本身仍只有删除这一个改变下标含义的写点。）
 
 ### 10.3 两条可迁移判据（普查阶段产出，不依赖具体任务）
 
