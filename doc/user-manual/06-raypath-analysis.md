@@ -120,3 +120,4 @@ clean = [r for r in rows if r[0] != "other (not recorded)" and not repeats(r[0])
 - Full panel reference → [`../gui-guide.md`](../gui-guide.md)
 - Filter syntax used by "Exclude this raypath" → [`../gui-guide.md`](../gui-guide.md) §"Filter Tab"
 - Design record and mechanism detail → [`../raypath-analysis-panel.md`](../raypath-analysis-panel.md)
+- Why the feature is split the way it is, and where it is heading (Chinese) → [`../raypath-analysis.md`](../raypath-analysis.md)
