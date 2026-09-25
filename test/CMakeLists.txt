@@ -413,6 +413,8 @@ if(BUILD_GUI)
     # themselves inapplicable under the print tone, and the import notice standing in for the one
     # instance that has no control at all.
     "${PROJ_TEST_DIR}/unit-correctness/gui/test_print_mode_colour_exclusions.cpp"
+    # The same rule for the channel-B-R display mode: the controls it greys and the gate on itself.
+    "${PROJ_TEST_DIR}/unit-correctness/gui/test_channel_math_exclusions.cpp"
     "${PROJ_TEST_DIR}/unit-correctness/gui/test_gui_identity_formatting.cpp"
     "${PROJ_TEST_DIR}/unit-correctness/gui/test_semantic_colors.cpp"
     # The ui_scale outlet: ApplyVisualLanguage at 1.0 is the identity, at another scale reaches the

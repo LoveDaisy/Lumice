@@ -243,6 +243,10 @@ const std::vector<FieldProbe>& FieldProbes() {
       // 1 (print) for the same reason ev_mode uses 1, and with the same word-on-disk split; the
       // spelling case further down covers that half.
       [](GuiState& s) { s.renderer.tone = 1; }, [](const GuiState& s) { return std::to_string(s.renderer.tone); } },
+    { "renderer.display_mode",
+      // 1 (channel B-R), for the reason tone uses 1: 0 is the default a dropped key would restore.
+      [](GuiState& s) { s.renderer.display_mode = 1; },
+      [](const GuiState& s) { return std::to_string(s.renderer.display_mode); } },
     { "sim.ray_allocation",
       // false (proportional): the document default is adaptive, so a serializer that dropped the
       // key would round-trip adaptive. A bool in the struct, a WORD on disk; the spelling case
@@ -1368,6 +1372,48 @@ TEST(DocumentRoundtripChain, ToneIsSpelledOnDiskTheWayCoreSpellsIt) {
       continue;
     }
     EXPECT_EQ(read_back.renderer.tone, 0) << "variant: " << label;
+  }
+}
+
+// The same three properties for display_mode, for tone's reason.
+TEST(DocumentRoundtripChain, DisplayModeIsSpelledOnDiskTheWayCoreSpellsIt) {
+  struct Row {
+    int value;
+    const char* spelling;
+  };
+  for (const Row& row : { Row{ 0, "normal" }, Row{ 1, "channel_br" } }) {
+    GuiState doc = MinimalDocument();
+    doc.renderer.display_mode = row.value;
+    const auto written = nlohmann::json::parse(SerializeGuiStateJson(doc));
+    EXPECT_EQ(written["renderer"]["display_mode"].get<std::string>(), row.spelling);
+
+    auto on_disk = nlohmann::json::parse(SerializeGuiStateJson(MinimalDocument()));
+    on_disk["renderer"]["display_mode"] = row.spelling;
+    GuiState read_back = MinimalDocument();
+    read_back.renderer.display_mode = 1 - row.value;  // seed off the expectation
+    if (!DeserializeGuiStateJson(on_disk.dump(), read_back)) {
+      ADD_FAILURE() << row.spelling << ": the reader rejected a document carrying this spelling";
+      continue;
+    }
+    EXPECT_EQ(read_back.renderer.display_mode, row.value) << row.spelling;
+  }
+
+  // Absent (a document from before the key) and a typo both land on normal, and both still LOAD.
+  for (const char* variant : { "", "channel_rb" }) {
+    auto doc = nlohmann::json::parse(SerializeGuiStateJson(MinimalDocument()));
+    if (variant[0] == '\0') {
+      doc["renderer"].erase("display_mode");
+    } else {
+      doc["renderer"]["display_mode"] = variant;
+    }
+    GuiState read_back = MinimalDocument();
+    read_back.renderer.display_mode = 1;  // seed non-default so a no-op read is visible
+    const char* label = variant[0] == '\0' ? "<absent>" : variant;
+    if (!DeserializeGuiStateJson(doc.dump(), read_back)) {
+      ADD_FAILURE() << label << ": an unrecognised display_mode must load, not fail the whole document";
+      continue;
+    }
+    EXPECT_EQ(read_back.renderer.display_mode, 0) << "variant: " << label;
   }
 }
 

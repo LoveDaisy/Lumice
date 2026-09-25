@@ -64,6 +64,7 @@ uniform float u_xyz_scale;
 uniform vec3 u_background;        // sky colour, LINEAR RGB (see PreviewParams::background_color_linear)
 uniform vec3 u_paper;             // paper colour, LINEAR RGB (see PreviewParams::paper_color_linear)
 uniform int u_tone;               // 0 = screen (additive), 1 = print (subtractive) — config::RenderConfig::Tone
+uniform int u_display_mode;       // 0 = normal, 1 = channel B-R — config::RenderConfig::DisplayMode
 uniform sampler2D u_bg_texture;
 uniform float u_max_abs_dz;      // overlap zone |sky.z| threshold (0 = no blend)
 uniform float u_r_scale;         // projection r_scale for overlap normalization
@@ -257,6 +258,16 @@ vec3 subtractiveInk(float e, vec3 paper) {
     // GLSL has no log10 builtin; log(x)/log(10) is the whole of the difference from the C++ line.
     float density = kInkGamma * log(1.0 + max(e, 0.0)) / log(10.0);
     return paper * pow(10.0, -density);
+}
+
+// The channel-B-R display mode (u_display_mode == 1): the post-gamma sRGB B - R of the pixel the
+// normal mode would show, as a grey offset — mid grey is zero, bluer is lighter, redder is darker.
+//
+// HAND-TRANSCRIBED from src/util/channel_math.hpp (ChannelMathBrGray), which is the authority; it
+// MUST equal that function. GLSL cannot #include a C++ header, so this is a copy, held to the C++
+// one by the preview/export/CLI parity tests under test/gui/parity/.
+float channelMathBrGray(float r_srgb, float b_srgb) {
+    return clamp(0.5 + 0.5 * (b_srgb - r_srgb), 0.0, 1.0);
 }
 
 // One annotation layer composited over what is already there.
@@ -1104,6 +1115,18 @@ void main() {
       }
       final_color = tex_color;
     }
+  }
+
+  // The channel-B-R display mode, on the finished pixel of the normal picture — sky included, and
+  // on EVERY pixel, the unimaged ones too: their zero-energy black is R == B and reads mid grey, the
+  // same rule RenderConsumer::PostSnapshot applies on all of its frame paths (ApplyDisplayMode in
+  // src/server/render.cpp). final_color is already post-gamma here, so no round trip is needed; the
+  // CLI has one only because its annotation blend runs in linear. Before the overlays, so the grid,
+  // the markers and the lens border are drawn ON the diagnostic image in their own colours. Inert
+  // under print, which never computes R and B separately. The background PHOTO is excluded one
+  // level up (BgPhotoOnScreen, app.cpp), so u_bg_enabled is never set together with this.
+  if (u_display_mode == 1 && u_tone != 1) {
+    final_color = vec3(channelMathBrGray(final_color.r, final_color.b));
   }
 
   // Background image overlay (contain mode with letterbox)
@@ -2104,6 +2127,7 @@ void PreviewRenderer::Render(int vp_x, int vp_y, int vp_w, int vp_h, const Previ
   glUniform3f(glGetUniformLocation(program, "u_paper"), params.paper_color_linear[0], params.paper_color_linear[1],
               params.paper_color_linear[2]);
   glUniform1i(glGetUniformLocation(program, "u_tone"), params.tone);
+  glUniform1i(glGetUniformLocation(program, "u_display_mode"), params.display_mode);
   glUniform1f(glGetUniformLocation(program, "u_intensity_scale"), params.exposure.intensity_scale);
   glUniform1f(glGetUniformLocation(program, "u_max_abs_dz"), params.source.max_abs_dz);
   glUniform1f(glGetUniformLocation(program, "u_r_scale"), params.source.r_scale);

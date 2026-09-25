@@ -670,7 +670,8 @@ void RenderTopBar(float window_width) {
     // window's "Enable colors" checkbox (color_window.cpp), and the two read the same predicate and
     // the same two tooltip constants in the same priority order so they cannot drift.
     const bool print_disabled = IsPrintTone(g_state.renderer);
-    ImGui::BeginDisabled(composite_empty || print_disabled);
+    const bool channel_disabled = IsChannelBrDisplay(g_state.renderer);
+    ImGui::BeginDisabled(composite_empty || print_disabled || channel_disabled);
     if (Checkbox(checkbox_id.c_str(), &checked)) {
       ToggleCompositePreview(g_state);
     }
@@ -685,6 +686,8 @@ void RenderTopBar(float window_width) {
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
       if (print_disabled) {
         ImGui::SetTooltip("%s", kColorsDisabledPrintModeTooltip);
+      } else if (channel_disabled) {
+        ImGui::SetTooltip("%s", kColorsDisabledChannelBrTooltip);
       } else if (composite_empty) {
         ImGui::SetTooltip("%s", kColorsDisabledNoMatchTooltip);
       } else {
@@ -1930,6 +1933,37 @@ void RenderRightPanel(GLFWwindow* window, float window_width, float window_heigh
       }
     }
 
+    // What the finished picture is shown as: the image itself, or the channel-B-R diagnostic (the
+    // post-gamma B - R of each pixel as a grey offset; src/util/channel_math.hpp). Display-time
+    // like the combos above — the preview shader applies it to the frame already on screen, so it
+    // re-runs nothing. Its gate (field_editor_registry.cpp's DisplayModeUnderScreenTone) greys it
+    // under Print, which has no separate R and B to subtract; the value is kept.
+    //
+    // The tooltip carries the same three points the user manual's section does (value moves with
+    // EV, clipping flattens it, compare at one EV) because those are what make the reading
+    // trustworthy, and a user who only ever hovers must still meet them.
+    {
+      const FieldEditorConstraint dm_c = ConstraintFor("renderer.display_mode", g_state);
+      ImGui::BeginDisabled(!dm_c.enabled);
+      ImGui::Combo(PanelLabel("renderer.display_mode", "display_mode").c_str(), &r.display_mode, kDisplayModeNames,
+                   kDisplayModeCount);
+      ImGui::EndDisabled();
+      if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+        if (!dm_c.enabled) {
+          ImGui::SetTooltip("%s", dm_c.disabled_reason);
+        } else {
+          ImGui::SetTooltip(
+              "Normal: the rendered image.\n\n"
+              "Channel B-R: is this spot bluer or redder? Shows blue minus red of the displayed\n"
+              "image as grey — mid grey is no difference, lighter is bluer, darker is redder.\n\n"
+              "The value moves with EV, and once red or blue clips at full brightness the\n"
+              "difference is flattened, so compare places at the same EV. Overlays are drawn\n"
+              "on top in their own colours; the background photo and the colored composite\n"
+              "are hidden while it is on.");
+        }
+      }
+    }
+
     ImGui::SeparatorText("Aspect Ratio");
     int preset_idx = static_cast<int>(g_state.aspect_preset);
     const char* preview_label = kAspectPresetNames[preset_idx];
@@ -2238,6 +2272,7 @@ void RenderPreviewPanel(GLFWwindow* window, float window_width, float window_hei
     // transfer curve.
     lumice::SrgbToLinearRgb(rc.paper, pp.paper_color_linear);
     pp.tone = rc.tone;
+    pp.display_mode = rc.display_mode;
 
     // The predicate's Print term is doc/print-mode-subtractive-ink.md §7 instance 1, and it is
     // what makes the exclusion real rather than advisory: `bg_show` is left exactly as the user

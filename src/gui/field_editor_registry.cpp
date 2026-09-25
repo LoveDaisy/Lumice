@@ -337,6 +337,15 @@ Applicability WhenBackgroundLoaded(const GuiState& state) {
              "A background photo is additive — the halo is drawn on top of the sky in it. Print lays "
              "subtractive ink on paper, which can only darken it. Disabled while Mode is Print." };
   }
+  // The channel-B-R display mode takes the colour channel over the same way print does (the same
+  // rule, applied to a diagnostic rather than an operator): a photo composited over the grey B - R
+  // image would put the photo's own colours into the reading. Second in line after print for the
+  // reason above — while print is on, this mode is inert and so is its exclusion.
+  if (IsChannelBrDisplay(state.renderer)) {
+    return { false,
+             "The Channel B-R display shows blue minus red of the halo itself; a photo underneath "
+             "would mix its own colours into the reading. Disabled while Show As is Channel B-R." };
+  }
   if (!g_preview.HasBackground()) {
     return { false, "No background image is loaded." };
   }
@@ -379,6 +388,18 @@ Applicability WhenScreenTone(const GuiState& state) {
 Applicability WhenPrintTone(const GuiState& state) {
   if (!IsPrintTone(state.renderer)) {
     return { false, "Screen mode adds light to the sky colour; the paper colour applies when Mode is Print." };
+  }
+  return {};
+}
+
+// The display-mode combo's gate. The field is kept and round-trips under print, but print never
+// computes R and B separately, so there is no B - R to show — the same "kept, applies again" shape
+// as the gates above.
+Applicability DisplayModeUnderScreenTone(const GuiState& state) {
+  if (IsPrintTone(state.renderer)) {
+    return { false,
+             "Print lays one neutral ink and has no separate red and blue to subtract, so the display "
+             "mode has no effect. It is kept and applies again when Mode is Screen." };
   }
   return {};
 }
@@ -679,6 +700,10 @@ const std::unordered_map<std::string, FieldEditorEntry>& Registry() {
         Labelled(ComboField([](GuiState& s) { return &s.renderer.ev_mode; }, kEvModeNames, kEvModeCount), "EV Anchor"));
     map.emplace("renderer.tone",
                 Labelled(ComboField([](GuiState& s) { return &s.renderer.tone; }, kToneNames, kToneCount), "Mode"));
+    map.emplace("renderer.display_mode",
+                Labelled(ComboField([](GuiState& s) { return &s.renderer.display_mode; }, kDisplayModeNames,
+                                    kDisplayModeCount, DisplayModeUnderScreenTone),
+                         "Show As"));
 
     // ---- aspect ratio ----
     map.emplace("aspect_ratio", AspectPresetField());

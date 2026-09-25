@@ -164,6 +164,14 @@ inline constexpr const char* kColorsDisabledPrintModeTooltip =
     "The colored composite is not produced while Mode is Print. Your color classes are kept --\n"
     "switch Mode back to Screen to see them again.";
 
+// The channel-B-R display mode's twin of the constant above, shared by the same two checkboxes. The
+// composite is not shown while the diagnostic is (app.cpp's SyncFromPoller reads the preference as
+// "full spectrum"), because B - R of a user-chosen palette measures the palette, not the light.
+inline constexpr const char* kColorsDisabledChannelBrTooltip =
+    "The Channel B-R display reads blue minus red off the natural colours of the light, so the\n"
+    "colored composite is not shown while it is on. Your color classes are kept -- switch\n"
+    "Show As back to Normal to see them again.";
+
 inline constexpr const char* kColorsDisabledNoMatchTooltip =
     "No visible color class currently matches any rays -- the composite would be empty.\n"
     "Either no rays match any configured class (a physical filter may be blocking them,\n"

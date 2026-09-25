@@ -730,6 +730,9 @@ TEST_F(DefaultsDiff, registry_covers_every_row) {
     // v4.27. Two values only (Screen / Print), a control in the Display group, and the same
     // disposition ev_mode has above — a combo with an inline editor.
     { "renderer.tone", true, Kind::kCombo },
+    // The channel-B-R display mode: same disposition as tone above — a two-value combo in the
+    // Display group, display-time, so a personal default is as legitimate as tone's.
+    { "renderer.display_mode", true, Kind::kCombo },
     { "aspect_ratio", true, Kind::kCombo },
     { "aspect_portrait", true, Kind::kCheckbox },
     { "bg_path", false, Kind::kCheckbox },

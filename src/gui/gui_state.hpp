@@ -413,6 +413,14 @@ inline const char* const kToneNames[] = { "Screen", "Print" };
 constexpr int kToneCount = 2;
 static_assert(sizeof(kToneNames) / sizeof(*kToneNames) == kToneCount, "kToneNames length must match kToneCount");
 
+// Display labels for the display-mode combo, mirroring core RenderConfig::DisplayMode. Same split
+// as kToneNames: user-facing text here, the serialized spelling in file_io.cpp's
+// kDisplayModeJsonNames. A plain hyphen, not U+2212: the label must render in the embedded font.
+inline const char* const kDisplayModeNames[] = { "Normal", "Channel B-R" };
+constexpr int kDisplayModeCount = 2;
+static_assert(sizeof(kDisplayModeNames) / sizeof(*kDisplayModeNames) == kDisplayModeCount,
+              "kDisplayModeNames length must match kDisplayModeCount");
+
 inline const int kSimResolutions[] = { 512, 1024, 2048, 4096 };
 constexpr int kSimResolutionCount = 4;
 // The same four values as the combo shows them. Written once here rather than at each control:
@@ -472,6 +480,12 @@ struct RenderConfig {
   // like lens_type / fov, because the simulation renders a fixed full-sky texture and the far side
   // is just a second sample of it at display time.
   float globe_back_fade = 0.0f;
+  // What the finished picture is shown as, mirroring core RenderConfig::DisplayMode (0 = normal,
+  // 1 = the channel-B-R diagnostic). A post-process the preview shader applies to the pixels the
+  // screen operator produced; inert under print. Registered as "renderer.display_mode" and excluded
+  // from RenderConfigResimFields and from the Revert baseline for exactly tone's reason: it is a
+  // display-time reading of already-simulated data. Read through IsChannelBrDisplay() below.
+  int display_mode = 0;
 
   bool operator==(const RenderConfig& o) const {
     return lens_type == o.lens_type && fov == o.fov && elevation == o.elevation && azimuth == o.azimuth &&
@@ -479,7 +493,7 @@ struct RenderConfig {
            front == o.front && std::equal(background, background + 3, o.background) &&
            std::equal(paper, paper + 3, o.paper) && std::equal(ray_color, ray_color + 3, o.ray_color) &&
            exposure_offset == o.exposure_offset && ev_mode == o.ev_mode && tone == o.tone &&
-           globe_back_fade == o.globe_back_fade;
+           globe_back_fade == o.globe_back_fade && display_mode == o.display_mode;
   }
   bool operator!=(const RenderConfig& o) const { return !(*this == o); }
 };
@@ -497,6 +511,14 @@ struct RenderConfig {
 // LUMICE_TONE_PRINT is its published spelling. `tone` is held as a plain int for the same reason.
 inline bool IsPrintTone(const RenderConfig& renderer) {
   return renderer.tone == LUMICE_TONE_PRINT;
+}
+
+// Is the channel-B-R diagnostic on SCREEN? The one place the GUI spells this, for IsPrintTone's
+// reason. "On screen", not merely "selected": under print the field is kept but inert (print never
+// computes R and B separately), so every exclusion this mode imposes — the background photo, the
+// raypath-colour composite — is lifted again while print is on, exactly as the picture says.
+inline bool IsChannelBrDisplay(const RenderConfig& renderer) {
+  return renderer.display_mode == LUMICE_DISPLAY_MODE_CHANNEL_BR && !IsPrintTone(renderer);
 }
 
 // Has this renderer's ground run out of room for the picture to show against?
@@ -648,7 +670,8 @@ struct RenderConfigResimFields {
 namespace {
 [[maybe_unused]] void RenderConfigFieldSetGuard(const RenderConfig& c) {
   [[maybe_unused]] const auto& [lens_type, fov, elevation, azimuth, roll, sim_resolution_index, visible, front,
-                                background, paper, ray_color, exposure_offset, ev_mode, tone, globe_back_fade] = c;
+                                background, paper, ray_color, exposure_offset, ev_mode, tone, globe_back_fade,
+                                display_mode] = c;
 }
 [[maybe_unused]] void RenderConfigResimFieldsGuard(const RenderConfigResimFields& r) {
   [[maybe_unused]] const auto& [sim_resolution_index] = r;
@@ -702,7 +725,10 @@ namespace {
 // globe_back_fade is excluded outright, with lens_type / fov and the other T-view fields: it
 // changes where the preview samples an already-simulated texture, never the simulation, and it has
 // no "undo me" claim of the background / paper kind — a lens-view slider, not a colour.
-static_assert(sizeof(RenderConfig) == 84, "RenderConfig layout changed — see RenderConfigFieldSetGuard above");
+// display_mode (84 -> 88) is EXCLUDED outright, captured by nothing, for tone's reason: it picks
+// how already-simulated data is shown, so it must neither dirty a finished run nor be put back by
+// Revert.
+static_assert(sizeof(RenderConfig) == 88, "RenderConfig layout changed — see RenderConfigFieldSetGuard above");
 // RenderConfigResimFields: naming the field list once does NOT by itself keep the three
 // directions in step. From() aggregate-initializes, so a newly added field is silently
 // value-initialized rather than rejected, and ApplyTo()/operator== would quietly keep working on
