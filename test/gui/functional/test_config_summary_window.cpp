@@ -403,6 +403,7 @@ void RegisterConfigSummaryWindowTests(ImGuiTestEngine* engine) {
       gui::ConfigSummary page = gui::BuildConfigSummary(gui::g_state);
       IM_CHECK(HasRow(page, "Render", "Sky Color"));
       IM_CHECK(!HasRow(page, "Render", "Paper Color"));
+      IM_CHECK(HasRow(page, "Render", "Show As"));
       const int groups_before = static_cast<int>(page.settings.size());
       const int lines_screen = RenderedSettingsLineCount(ctx, groups_before);
       IM_CHECK_EQ(lines_screen, gui::CountConfigSummaryFields(page));
@@ -412,8 +413,11 @@ void RegisterConfigSummaryWindowTests(ImGuiTestEngine* engine) {
       page = gui::BuildConfigSummary(gui::g_state);
       IM_CHECK(!HasRow(page, "Render", "Sky Color"));
       IM_CHECK(HasRow(page, "Render", "Paper Color"));
-      // One row swapped for one row: the line count is unchanged, and it is what is on screen.
-      IM_CHECK_EQ(RenderedSettingsLineCount(ctx, static_cast<int>(page.settings.size())), lines_screen);
+      // One row swapped for one row, and one row gone: Show As is greyed under Print (the
+      // channel-B-R display has no separate R and B to subtract there), so the page drops it the
+      // way it drops every greyed field. What is on screen is that count.
+      IM_CHECK(!HasRow(page, "Render", "Show As"));
+      IM_CHECK_EQ(RenderedSettingsLineCount(ctx, static_cast<int>(page.settings.size())), lines_screen - 1);
 
       gui::g_state.renderer.tone = LUMICE_TONE_SCREEN;
       ctx->Yield(3);

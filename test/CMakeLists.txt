@@ -138,6 +138,9 @@ add_executable(unit_correctness_test
   # test_render_consumer_print_mode.cpp asserts the pixels the operator writes; this one asserts
   # the composite it declines to produce and the notices it emits for the fields it drops.
   "${PROJ_TEST_DIR}/unit-correctness/server/test_print_mode_colour_exclusions.cpp"
+  # The channel-B-R display mode: the pixels it writes, and the colour fields it reports as unread.
+  "${PROJ_TEST_DIR}/unit-correctness/server/test_render_consumer_channel_math.cpp"
+  "${PROJ_TEST_DIR}/unit-correctness/server/test_channel_math_colour_exclusions.cpp"
   # And the cross-cutting one: not "the operator computes the right thing" but "the mode resolves a
   # scene the additive operator structurally cannot", which is the claim the whole mode was
   # commissioned against and only measurable once every piece of it exists.
@@ -170,6 +173,7 @@ add_executable(unit_correctness_test
   "${PROJ_TEST_DIR}/unit-correctness/util/test_label_viewport_clamp.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/util/test_thousands_format.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/util/test_ink_transfer.cpp"
+  "${PROJ_TEST_DIR}/unit-correctness/util/test_channel_math.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/util/test_contrast_headroom.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/util/test_lens_focal.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/util/test_lens_fov_default.cpp"
@@ -409,6 +413,8 @@ if(BUILD_GUI)
     # themselves inapplicable under the print tone, and the import notice standing in for the one
     # instance that has no control at all.
     "${PROJ_TEST_DIR}/unit-correctness/gui/test_print_mode_colour_exclusions.cpp"
+    # The same rule for the channel-B-R display mode: the controls it greys and the gate on itself.
+    "${PROJ_TEST_DIR}/unit-correctness/gui/test_channel_math_exclusions.cpp"
     "${PROJ_TEST_DIR}/unit-correctness/gui/test_gui_identity_formatting.cpp"
     "${PROJ_TEST_DIR}/unit-correctness/gui/test_semantic_colors.cpp"
     # The ui_scale outlet: ApplyVisualLanguage at 1.0 is the identity, at another scale reaches the

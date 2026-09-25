@@ -196,6 +196,11 @@ struct PreviewParams {
   // The default of 0 is what makes every caller that never touches this field render exactly as
   // before, the same guarantee background_color_linear's all-zero default gives.
   int tone = 0;
+
+  // What the finished picture is shown as: 0 = normal, 1 = the channel-B-R diagnostic. Same int
+  // spelling as config::RenderConfig::DisplayMode and GuiState::RenderConfig::display_mode, and the
+  // same "0 renders exactly as before" default as `tone` above.
+  int display_mode = 0;
 };
 
 // The exposure measurements that travelled with a linear-XYZ texture when it was produced, kept

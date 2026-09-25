@@ -665,7 +665,8 @@ void CancelPendingConfigJsonExport() {
 }
 
 bool BgPhotoOnScreen(const GuiState& state) {
-  return g_preview.HasBackground() && state.bg_show && !IsPrintTone(state.renderer);
+  return g_preview.HasBackground() && state.bg_show && !IsPrintTone(state.renderer) &&
+         !IsChannelBrDisplay(state.renderer);
 }
 
 // The background photo lives in two places that must agree: the GL texture the shader samples and
@@ -2136,11 +2137,20 @@ void SyncFromPoller() {
   // raypath_color ⇒ is_composite==false ⇒ effective_composite==false ⇒ mode_changed==false ⇒ path
   // is bit-identical to pre-345.4.
   const auto& payload = snap->payload;
+  // The channel-B-R diagnostic reads B - R off the NORMAL picture; a composite's hues are a
+  // per-class palette the user chose, whose B - R would measure the palette, not the light. So while
+  // the diagnostic is on screen the preference is read as "full spectrum" — the preference itself is
+  // untouched and applies again the moment the mode goes back to Normal. Done here, not by the
+  // server, because the GUI never commits display_mode (it is display-time, and the kSimCommit arm
+  // of BuildScene leaves it at normal), so the server keeps producing the composite regardless. The
+  // CLI's twin is DoSnapshot's composite skip. Fed into BOTH predicates below, which is what turns a
+  // mode flip into an immediate re-upload through their mode-change OR-branch.
+  const bool show_composite = g_state.show_composite_preview && !IsChannelBrDisplay(g_state.renderer);
   const bool effective_composite =
-      payload != nullptr && ShouldUseCompositeUpload(payload->is_composite, g_state.show_composite_preview);
+      payload != nullptr && ShouldUseCompositeUpload(payload->is_composite, show_composite);
 
   if (ShouldFireCompositeUpload(*snap, g_state.last_uploaded_texture_serial, g_state.display_epoch_floor,
-                                g_state.show_composite_preview, g_state.last_uploaded_as_composite)) {
+                                show_composite, g_state.last_uploaded_as_composite)) {
     GUI_LOG_VERBOSE("[GUI] SyncFromPoller: upload tex_rays={}, intensity={:.6f}, eff_pixels={}, factor={:.6f}",
                     payload->texture_ray_count, payload->snapshot_intensity, payload->effective_pixels,
                     payload->intensity_factor);

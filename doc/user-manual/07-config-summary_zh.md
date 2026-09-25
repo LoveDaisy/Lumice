@@ -17,7 +17,7 @@ Summary 窗口把当前配置摊在一页上——晶体及其形状、朝向，
 - **版本号**——画出这张图的 Lumice 版本。两张总结图有出入时，先看两边各是哪个版本画的，比较起来最省事。
 - **Sun**——Altitude、Diameter、Spectrum（或自定义光谱的表）。
 - **Simulation**——Rays(M)（以百万计，与滑条一致）、Max hits、Infinite rays。
-- **Render**——Lens Type、FOV、相机的 Elevation / Azimuth / Roll、Visible 与 Front、Resolution、EV 与 EV Anchor、Mode（screen / print），以及底色——Screen 下是 Sky Color，Print 下是 Paper Color。
+- **Render**——Lens Type、FOV、相机的 Elevation / Azimuth / Roll、Visible 与 Front、Resolution、EV 与 EV Anchor、Mode（screen / print）、Show As（normal / channel_br，仅 Mode 为 Screen 时），以及底色——Screen 下是 Sky Color，Print 下是 Paper Color。
 - **Settings**——主面板上没有控件、只能在 Settings 面板里改的少数设置（目前：ray allocation）。单独列出，是为了让你对着程序读这一页时知道该去哪里找它们。
 - **Layer N**——一行标题写该层的多次散射概率与条目数，随后是两张表，每个条目一行，两张表都以条目在层内的序号（`#`）开头，所以一张表里的某一行能对上另一张表里的同一行：
   - **Crystals**——`#`、**Enabled** 与 **Weight**（卡片上的开关与比例）；**Crystal**：池编号、你起的名字、类型，拼法与晶体卡片和 Colors 窗口完全一致；**Zenith / Azimuth / Roll**：三个朝向分布完整印出，Zenith 前面带三个分布归类出的预设名（`Plate · G 0(1)`：Column / Plate / Parry / Lowitz / Random / Custom），所以调过 std 的预设（std 5 而不是 1 的 Column）也看得出来；**Filter**：按卡片的拼法（`3-5-1 In PBD`，或 `None`），后面跟 filter 的名字——多行 filter 与卡片一样只印首行加 `(+N more)`，要读全部行请开 Filter Editor。

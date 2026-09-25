@@ -132,6 +132,8 @@ void SeedNonDefaultView() {
   g_state.renderer.paper[0] = 0.95f;
   g_state.renderer.paper[1] = 0.90f;
   g_state.renderer.paper[2] = 0.80f;
+  // The display mode, off its default for the same reason as tone.
+  g_state.renderer.display_mode = 1;  // Channel B-R
   g_state.aspect_preset = AspectPreset::k16x9;
   g_state.aspect_portrait = false;
   g_state.show_horizon_line = false;
@@ -229,6 +231,9 @@ TEST(SceneCommitChain, TheRunIntentIgnoresEveryViewSetting) {
   // a texture the preview then converts itself, so it describes no tone of the user's. `screen`
   // despite the document's `print`.
   EXPECT_EQ(r["tone"].get<std::string>(), "screen") << "the run intent baked the document's display mode";
+  // Same split for the channel-B-R display mode: the texture core renders for the preview is shown
+  // as normal and post-processed by the shader, so `normal` despite the document's `channel_br`.
+  EXPECT_EQ(r["display_mode"].get<std::string>(), "normal") << "the run intent baked the document's display mode";
   // Black paper, not white, and this is the one place in the tree where that is the right answer:
   // the zeroed LUMICE_RenderParam is what this arm deliberately leaves `paper` at, exactly as it
   // leaves `background`, and under `tone: screen` nothing reads it. An arm that wrote the
@@ -326,6 +331,8 @@ TEST(SceneCommitChain, TheExportIntentDescribesTheDocumentsView) {
   // The print mode reaches the exported config, both halves. `paper` makes the same sRGB round trip
   // `background` just did, through the same pair of inverse conversions.
   EXPECT_EQ(r["tone"].get<std::string>(), "print") << "the exported config would render in the wrong tone";
+  EXPECT_EQ(r["display_mode"].get<std::string>(), "channel_br")
+      << "the exported config would render the normal picture, not the diagnostic on screen";
   EXPECT_NEAR(r["paper"][0].get<float>(), 0.95f, 1e-4f);
   EXPECT_NEAR(r["paper"][1].get<float>(), 0.90f, 1e-4f);
   EXPECT_NEAR(r["paper"][2].get<float>(), 0.80f, 1e-4f);
@@ -654,6 +661,7 @@ TEST(SceneCommitChain, IntentionalDivergenceFieldsMatchDocumentedSet) {
     "background",        // composited at display time vs. baked by the CLI
     "tone",              // always screen on the commit arm vs. the user's mode on the export arm
     "paper",             // the zeroed struct's black vs. the user's paper, same split as background
+    "display_mode",      // always normal on the commit arm vs. the user's display mode on the export arm
     "resolution",        // 2:1 texture vs. the user's canvas shape
     "overlap",           // the texture's seam-blend band vs. the band-less disc the screen shows
     "globe_back_fade",   // globe far-side fade: 0 on the commit arm (applied by the shader) vs. the user's

@@ -1036,6 +1036,47 @@ void WarnPrintModeIgnoresColourFields(Logger& logger, const std::map<IdType, Ren
   }
 }
 
+// The channel-B-R display mode's twin of WarnPrintModeIgnoresColourFields above: the same "one rule"
+// (a mode that takes over the colour channel says which colour fields it leaves unread), applied to
+// the diagnostic post-process. Diagnostic only, like its twin — never changes the config, never
+// fails the commit, and every value it names is kept and takes effect again under display_mode
+// normal. Annotation colours are deliberately NOT on the list: unlike print, the diagnostic draws
+// the overlays on top in their own colours, so nothing about them is lost.
+void WarnChannelMathIgnoredFields(Logger& logger, const std::map<IdType, RenderConfig>& renderers,
+                                  const ColorClassTable& class_table) {
+  const RenderConfig kDefaults{};
+  for (const auto& [id, rc] : renderers) {
+    if (rc.display_mode_ != RenderConfig::kDisplayChannelBr) {
+      continue;
+    }
+    // Under print the whole mode is inert, so that is the one thing worth saying; the per-field
+    // notices below would describe a picture that is not being drawn.
+    if (rc.tone_ == RenderConfig::kPrint) {
+      ILOG_WARN(logger,
+                "CommitConfig: render[{}] sets display_mode=channel_br, which has no effect under "
+                "tone=print — print lays one neutral ink and never computes R and B separately, so "
+                "there is no B - R to show. The value is kept and takes effect again under tone=screen.",
+                id);
+      continue;
+    }
+    if (class_table.referenced_mask_ != 0) {
+      ILOG_WARN(logger,
+                "CommitConfig: render[{}] is display_mode=channel_br, so the raypath-colour composite "
+                "is not produced — B - R of a per-class palette would measure the palette, not the "
+                "light. The colour classes are kept and take effect again under display_mode=normal.",
+                id);
+    }
+    if (ColorDiffers(rc.ray_color_, kDefaults.ray_color_)) {
+      ILOG_WARN(logger,
+                "CommitConfig: render[{}] sets ray_color under display_mode=channel_br. The tint "
+                "replaces the light's own colour with one fixed hue, so B - R shows that hue's constant "
+                "offset, not where the halo is bluer or redder. Clear ray_color for a meaningful "
+                "diagnostic.",
+                id);
+    }
+  }
+}
+
 // The other half of doc/print-mode-subtractive-ink.md §8, on the side that has no panel to put a
 // notice in: a config whose zero-energy colour has run out of headroom renders a picture that is
 // not there, and `Lumice -f that.json` would otherwise write the file and exit 0 with nothing said.
@@ -1172,6 +1213,8 @@ Error ServerImpl::CommitConfig(const nlohmann::json& config_json, bool* out_reus
   // it never changes `new_config` and never fails the commit: none of the three is a configuration
   // ERROR, they are configurations whose colour half print has no way to show.
   WarnPrintModeIgnoresColourFields(logger_, new_config.renderers_, class_table);
+  // The same rule for the channel-B-R display mode, at the same point and with the same standing.
+  WarnChannelMathIgnoredFields(logger_, new_config.renderers_, class_table);
 
   // §8's predicate, applied at the same point and with the same standing: diagnostic only, never a
   // reason to fail the commit. A ground with no headroom left is a legal configuration that renders
@@ -1760,7 +1803,13 @@ bool ServerImpl::DoSnapshot() {
     // configuration is not lost", not a promise.
     for (const auto& c : snapshot_consumers) {
       auto* rc = dynamic_cast<RenderConsumer*>(c.get());
-      if (rc == nullptr || rc->ColoredMask() == 0 || rc->Tone() == RenderConfig::kPrint) {
+      // The channel-B-R display mode is the third skip reason, and the same statement print makes:
+      // the diagnostic reads B - R off the NORMAL picture, and a composite whose hues were chosen
+      // per class by the user would hand it a difference that measures the palette, not the light.
+      // Same consequence as print, too — config untouched, composite back the moment the display
+      // mode returns to normal.
+      if (rc == nullptr || rc->ColoredMask() == 0 || rc->Tone() == RenderConfig::kPrint ||
+          rc->DisplayMode() == RenderConfig::kDisplayChannelBr) {
         continue;
       }
       // task-345.3: display-time EV multiplier + participating-P99 anchor

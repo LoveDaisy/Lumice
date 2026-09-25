@@ -381,6 +381,10 @@ struct ParityScene {
   // size disagreement is reported as itself rather than as a PSNR failure.
   int expect_w;
   int expect_h;
+  // The display mode (GuiState::RenderConfig::display_mode: 0 normal, 1 channel B-R). LAST and
+  // defaulted, unlike every field above, so the rows that predate it keep their initializers
+  // byte-unchanged and read as normal without restating it.
+  int display_mode = 0;
 };
 
 // Both scenes share one document (test/e2e/configs/halo_22.json: prism crystals, sun at 20
@@ -958,6 +962,40 @@ const ParityScene kScenes[] = {
    /*show_view_dist=*/false,
    /*show_grid=*/false, /*show_markers=*/false, /*exposure_offset=*/0.0f, /*grid_srgb=*/{ 1.0f, 1.0f, 1.0f },
    /*ray_num_millions=*/32.0f, /*bm4_threshold=*/42.1, /*expect_w=*/1024, /*expect_h=*/512},
+  // The DISPLAY-MODE scene: the channel-B-R diagnostic (src/util/channel_math.hpp). Every field is
+  // copied from full_sky_dual_fisheye_print above except `tone` (screen, since the diagnostic is
+  // inert under print) and `display_mode`, so the framing argument that row makes — an equal-area
+  // full-sky frame is where the two arms are comparable at all — carries over unchanged, and so does
+  // its reason for the four annotation switches being OFF: the overlays are drawn on top of the
+  // diagnostic by the same blend as on the normal picture, which the simulation rows already gate.
+  //
+  // What the row gates is the END-TO-END half no in-process test can: that a document shown as the
+  // diagnostic leaves the GUI naming `channel_br` and comes back out of a child CLI process as the
+  // same grey image — the formula's two implementations (C++ owner, GLSL copy) compared through
+  // their real pipelines. The background is non-zero on purpose: the diagnostic reads B - R off the
+  // pixel WITH its sky, so a sky that one arm added before the mode and the other after would move
+  // every empty pixel's grey.
+  //
+  // THRESHOLD. bm4 mean 46.740 sigma 0.168 (N=7 category runs, range 46.47-47.01; whole-frame
+  // 37.59-37.71). 45.0 = mean - max(10 sigma, 1.0 dB) = mean - 1.68 dB, floored to 0.5 dB, and
+  // 1.47 dB below the worst honest run. Breaks, each applied to one arm only:
+  //
+  //   break                                                         | bm4    | caught by
+  //   --------------------------------------------------------------|--------|------------------
+  //   the CLI ignores the document's display_mode (renders normal)  | 10.50  | threshold, 34.5 dB clear
+  //   the GLSL copy's gain drifts 0.5 -> 0.45 (a 10% transcription) | 40.91  | threshold, 4.1 dB clear
+  //
+  // The second break is invisible to test_gui_preview_export_parity.cpp's channel case by
+  // construction — both of that file's arms run the same shader — which is why the transcription is
+  // gated here and nowhere cheaper. NO CI JOB RUNS THIS ROW, for the reason the print row states.
+  {"full_sky_dual_fisheye_channel_br",
+   lumice::gui::kLensTypeDualFisheyeEqualArea, 180.0f, 25.0f, 30.0f, 15.0f, lumice::gui::kVisibleFull,
+   /*background_srgb=*/{ 0.28f, 0.14f, 0.10f },
+   /*tone=*/0, /*paper_srgb=*/{ 1.0f, 1.0f, 1.0f },
+   gui::AspectPreset::kFree, /*aspect_portrait=*/false, /*show_horizon=*/false, /*show_sun_circles=*/false,
+   /*show_view_dist=*/false,
+   /*show_grid=*/false, /*show_markers=*/false, /*exposure_offset=*/0.0f, /*grid_srgb=*/{ 1.0f, 1.0f, 1.0f },
+   /*ray_num_millions=*/32.0f, /*bm4_threshold=*/45.0, /*expect_w=*/1024, /*expect_h=*/512, /*display_mode=*/1},
 };
 // clang-format on
 // 512 -> a 1024x512 dual-equal-area simulation texture, the smallest this suite offers. Both the
@@ -1260,6 +1298,8 @@ struct ExportedRenderInfo {
   // while being unreadable to the CLI, which is the asymmetry a string check catches and a numeric
   // one would not.
   std::string tone;
+  // The display mode the exported document names, read as its string for the reason `tone` is.
+  std::string display_mode;
   // `paper_read` is the ONLY answer to "did the export state a paper". The array carries no
   // sentinel of its own on purpose: two representations of one fact drift the moment a later
   // reader updates one of them, and this one would drift silently, since nothing reads the array
@@ -1302,6 +1342,7 @@ ExportedRenderInfo ParseExportedRenderInfo(const std::string& json_str) {
     info.horizon = jr["grid"].value("horizon", false);
   }
   info.tone = jr.value("tone", std::string());
+  info.display_mode = jr.value("display_mode", std::string());
   if (jr.contains("paper") && jr["paper"].is_array() && jr["paper"].size() == 3) {
     for (int i = 0; i < 3; i++) {
       info.paper[i] = jr["paper"][i].get<float>();
@@ -1385,6 +1426,9 @@ void RenderBothArms(ImGuiTestContext* ctx, const ParityScene& scene, ScopedServe
     // and the CLI through BuildScene's export arm, and whether those two agree is the subject.
     rc.tone = scene.tone;
     std::copy(std::begin(scene.paper_srgb), std::end(scene.paper_srgb), std::begin(rc.paper));
+    // The display mode, same route as `tone`: the preview shader through the per-frame assembly,
+    // the CLI through the export arm.
+    rc.display_mode = scene.display_mode;
     rc.sim_resolution_index = kSimResolutionIndex;
   }
   gui::g_state.aspect_preset = scene.aspect_preset;
@@ -1488,6 +1532,7 @@ void RenderBothArms(ImGuiTestContext* ctx, const ParityScene& scene, ScopedServe
   // never reached the export would otherwise compare two frames that agreed because both were
   // screen-toned, and the PSNR would look healthy.
   IM_CHECK_STR_EQ(info.tone.c_str(), scene.tone == 1 ? "print" : "screen");
+  IM_CHECK_STR_EQ(info.display_mode.c_str(), scene.display_mode == 1 ? "channel_br" : "normal");
   IM_CHECK(info.paper_read);
   IM_CHECK_EQ(info.intensity_factor, std::pow(2.0f, scene.exposure_offset));
   // Three separate assertions rather than one iterated over the channels: a fatal check inside a

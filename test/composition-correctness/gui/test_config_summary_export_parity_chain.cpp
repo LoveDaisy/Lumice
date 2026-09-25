@@ -580,6 +580,9 @@ std::vector<RuleEntry> BuildRules(const GuiState& state, const ConfigSummary& pa
   });
   add(R"(^render\[0\]\.tone$)",
       [&](const std::smatch&, const json& v) { ExpectPageText(page, "Render", "Mode", v.get<std::string>()); });
+  add(R"(^render\[0\]\.display_mode$)", [&](const std::smatch&, const json& v) {
+    ExpectGatedText(state, page, "renderer.display_mode", "Render", "Show As", v.get<std::string>());
+  });
   add(R"(^render\[0\]\.ev_mode$)",
       [&](const std::smatch&, const json& v) { ExpectPageText(page, "Render", "EV Anchor", v.get<std::string>()); });
   // The two grounds: the panel shows ONE swatch, Sky Color under Screen and Paper Color under

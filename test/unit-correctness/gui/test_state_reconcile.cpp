@@ -152,6 +152,10 @@ const Row kInertRows[] = {
   // only what shows behind the rays.
   { "renderer.tone", "renderer", [](GuiState& s) { s.renderer.tone = 1; }, false, false, false },
   { "renderer.paper", "renderer", [](GuiState& s) { s.renderer.paper[0] = 0.7f; }, false, false, false },
+  // The channel-B-R display mode is the tone case again: it changes how an already-simulated
+  // snapshot is SHOWN (a post-process in the preview shader), so it must drive nothing — no resim,
+  // no reset, no push.
+  { "renderer.display_mode", "renderer", [](GuiState& s) { s.renderer.display_mode = 1; }, false, false, false },
   // Not part of the committed snapshot at all, so it cannot participate in the diff even in
   // principle — the legacy wrapper owns it.
   { "use_gpu_backend", "use_gpu_backend", [](GuiState& s) { s.use_gpu_backend = !s.use_gpu_backend; }, false, false,

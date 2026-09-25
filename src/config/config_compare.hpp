@@ -113,7 +113,7 @@ inline bool operator==(const RenderConfig& a, const RenderConfig& b) {
   // field landing in an alignment hole — this assert can, and has been (see that comment). What
   // it catches instead is a change WITHIN a field, which moves the size without moving the
   // count. Both fire on the same duty: decide whether the comparison below must cover it.
-  static_assert(sizeof(RenderConfig) == 272, "RenderConfig layout changed — re-check what operator== compares");
+  static_assert(sizeof(RenderConfig) == 280, "RenderConfig layout changed — re-check what operator== compares");
   return a.id_ == b.id_ && a.lens_ == b.lens_ &&
          std::equal(std::begin(a.lens_shift_), std::end(a.lens_shift_), std::begin(b.lens_shift_)) &&
          std::equal(std::begin(a.resolution_), std::end(a.resolution_), std::begin(b.resolution_)) &&
@@ -123,8 +123,9 @@ inline bool operator==(const RenderConfig& a, const RenderConfig& b) {
          std::equal(std::begin(a.ray_color_), std::end(a.ray_color_), std::begin(b.ray_color_)) &&
          a.intensity_factor_ == b.intensity_factor_ && a.overlap_ == b.overlap_ &&
          a.globe_back_fade_ == b.globe_back_fade_ && a.ev_mode_ == b.ev_mode_ && a.tone_ == b.tone_ &&
-         a.angular_dist_grid_ == b.angular_dist_grid_ && a.view_dist_grid_ == b.view_dist_grid_ &&
-         a.elevation_grid_ == b.elevation_grid_ && a.longitude_grid_ == b.longitude_grid_ && a.horizon_ == b.horizon_ &&
+         a.display_mode_ == b.display_mode_ && a.angular_dist_grid_ == b.angular_dist_grid_ &&
+         a.view_dist_grid_ == b.view_dist_grid_ && a.elevation_grid_ == b.elevation_grid_ &&
+         a.longitude_grid_ == b.longitude_grid_ && a.horizon_ == b.horizon_ &&
          a.elevation_grid_line_ == b.elevation_grid_line_ && a.longitude_grid_line_ == b.longitude_grid_line_ &&
          a.angular_dist_grid_line_ == b.angular_dist_grid_line_ && a.view_dist_grid_line_ == b.view_dist_grid_line_ &&
          a.view_dist_label_ == b.view_dist_label_ && a.zenith_nadir_ == b.zenith_nadir_ && a.markers_ == b.markers_ &&

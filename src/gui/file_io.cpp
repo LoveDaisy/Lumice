@@ -113,6 +113,12 @@ static_assert(sizeof(kEvModeJsonNames) / sizeof(kEvModeJsonNames[0]) == kEvModeC
 // on both paths for the same reason kEvModeJsonNames gives.
 static const char* kToneJsonNames[] = { "screen", "print" };
 static_assert(sizeof(kToneJsonNames) / sizeof(kToneJsonNames[0]) == kToneCount, "kToneJsonNames must match kToneCount");
+// Display-mode JSON names, indexed by GUI RenderConfig::display_mode and mirroring core's
+// hand-written RenderConfig::DisplayMode codec ("normal"/"channel_br"). Strings on both paths for
+// the same reason as the two tables above.
+static const char* kDisplayModeJsonNames[] = { "normal", "channel_br" };
+static_assert(sizeof(kDisplayModeJsonNames) / sizeof(kDisplayModeJsonNames[0]) == kDisplayModeCount,
+              "kDisplayModeJsonNames must match kDisplayModeCount");
 static const char* kAspectPresetJsonNames[] = { "free", "16:9", "3:2", "4:3", "1:1", "2:1", "match_background" };
 static_assert(sizeof(kAspectPresetJsonNames) / sizeof(kAspectPresetJsonNames[0]) == kAspectPresetCount,
               "kAspectPresetJsonNames must match kAspectPresetCount");
@@ -1061,6 +1067,18 @@ static int ToneFromString(const std::string& s) {
   return 0;
 }
 
+// ToneFromString's twin, warning for the same reasons: core's decoder warns on this field too, and a
+// silent fallback to "normal" would hand back exactly the picture the document asked to leave.
+static int DisplayModeFromString(const std::string& s) {
+  for (int i = 0; i < kDisplayModeCount; i++) {
+    if (s == kDisplayModeJsonNames[i])
+      return i;
+  }
+  GUI_LOG_WARNING("[FileIO] Unrecognized renderer.display_mode \"{}\"; loading as normal.", s);
+  SetImportComplexFilterWarning("renderer.display_mode states an unrecognized value \"" + s + "\"; loaded as normal.");
+  return 0;
+}
+
 static int VisibleFromString(const std::string& s) {
   for (int i = 0; i < kVisibleCount; i++) {
     if (s == kVisibleJsonNames[i])
@@ -1123,6 +1141,7 @@ static json SerializeRendererForGui(const RenderConfig& r) {
   jr["ev_mode"] = kEvModeJsonNames[r.ev_mode];
   jr["tone"] = kToneJsonNames[r.tone];
   jr["globe_back_fade"] = r.globe_back_fade;
+  jr["display_mode"] = kDisplayModeJsonNames[r.display_mode];
   return jr;
 }
 
@@ -1170,6 +1189,7 @@ static RenderConfig ParseRendererFromGuiJson(const json& jr) {
   // A missing key keeps the default (0, near side only), which is how a .lmc written before the
   // field loads unchanged. Clamped like core's own parser: a negative range has no meaning.
   r.globe_back_fade = std::max(0.0f, jr.value("globe_back_fade", RenderConfig{}.globe_back_fade));
+  r.display_mode = DisplayModeFromString(jr.value("display_mode", kDisplayModeJsonNames[RenderConfig{}.display_mode]));
   // Older .lmc payloads carry an "adaptive_brightness_mode" key; nlohmann's value(...) ignores
   // unknown keys, so no migration code is needed — the field becomes a silent no-op.
   return r;
@@ -2116,6 +2136,11 @@ ScenePtr BuildScene(const GuiState& state, SceneIntent intent, FilterOverflowInf
       // both at the zeroed struct's values, exactly as it leaves `background`.
       dst.tone = r.tone == 1 ? LUMICE_TONE_PRINT : LUMICE_TONE_SCREEN;
       SrgbToLinearRgb(r.paper, dst.paper);
+      // The display mode, on this arm only and for tone's reason: it describes the picture, and the
+      // kSimCommit texture is deliberately independent of how the picture is shown — which is also
+      // why the GUI, not the server, is the one that sets the composite aside while it is on
+      // (app.cpp's SyncFromPoller).
+      dst.display_mode = r.display_mode == 1 ? LUMICE_DISPLAY_MODE_CHANNEL_BR : LUMICE_DISPLAY_MODE_NORMAL;
       // The horizon line is the one annotation core actually draws, and its GUI switch lives
       // outside RenderConfig (GuiState's overlay group). Reading it is what stops the export from
       // asserting a line the user turned off.
@@ -3247,6 +3272,9 @@ bool DeserializeFromJson(const std::string& json_str, GuiState& state) {
     // parser is not involved on this path at all — this function decodes the document itself, so
     // core's own warning for the same field never fires here and the GUI has to carry it.
     r.tone = ToneFromString(jr.value("tone", kToneJsonNames[RenderConfig{}.tone]));
+    // Same shape and same reason as tone just above.
+    r.display_mode =
+        DisplayModeFromString(jr.value("display_mode", kDisplayModeJsonNames[RenderConfig{}.display_mode]));
 
     // doc/print-mode-subtractive-ink.md §7 instance 3. This is the ONLY route by which the
     // combination can reach the GUI at all: no editor registers renderer.ray_color, and both

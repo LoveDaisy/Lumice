@@ -895,18 +895,21 @@ void RenderColorWindow(GuiState& state, LUMICE_Server* server) {
     // just set. The top-bar mirror in app_panels.cpp does the same two things in the same order —
     // both read IsPrintTone(), so a third tone can never reach one of them and not the other.
     const bool print_disabled = IsPrintTone(state.renderer);
-    if (composite_empty || print_disabled) {
+    const bool channel_disabled = IsChannelBrDisplay(state.renderer);
+    if (composite_empty || print_disabled || channel_disabled) {
       ImGui::BeginDisabled();
     }
     if (Checkbox(label, &checked)) {
       ToggleCompositePreview(state);
     }
-    if (composite_empty || print_disabled) {
+    if (composite_empty || print_disabled || channel_disabled) {
       ImGui::EndDisabled();
     }
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
       if (print_disabled) {
         ImGui::SetTooltip("%s", kColorsDisabledPrintModeTooltip);
+      } else if (channel_disabled) {
+        ImGui::SetTooltip("%s", kColorsDisabledChannelBrTooltip);
       } else if (composite_empty) {
         ImGui::SetTooltip("%s", kColorsDisabledNoMatchTooltip);
       } else {
