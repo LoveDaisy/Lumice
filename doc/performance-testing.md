@@ -89,8 +89,9 @@ prints one line only (`workers:1`).
 
 **The legacy CPU product path is a per-platform pair** (`ServerImpl::ServerImpl`,
 `src/server/server.cpp`), both halves returned together by `ServerImpl::AutomaticWorkerBaseAndCap()`:
-`worker_count = min(PhysicalCoreCount(), 10)` on Linux/macOS, and
-`worker_count = LogicalCoreCount()` — the full SMT thread count, no narrower cap — on Windows.
+`worker_count = min(PhysicalCoreCount(), 10)` on macOS, `worker_count = PhysicalCoreCount()` —
+no narrower cap — on Linux, and `worker_count = LogicalCoreCount()` — the full SMT thread count,
+no narrower cap — on Windows.
 Only a fixed seed or a GPU route forces 1, and an explicit
 `--workers N` / GUI worker preference overrides the whole expression, cap included. The split is
 keyed on which engine each platform's production default actually loads, and was measured, not
@@ -98,10 +99,12 @@ derived: on the Windows reference box (16C/32T Zen 5, clang-cl x86-64-v3 engine 
 release shell loads there) the automatic count at 10 left 1.07×–1.58× on the table against the
 32-worker count now shipped (three worker-side-projection scenes, `render` with explicit
 `--workers`, 3 interleaved reps each, CoV ≤2.3%, 2026-09-19; the 5-rep sweep that set the shape
-read 1.11×–1.56× the day before), while the same box under WSL2 on the glibc-hwcaps-selected
-x86-64-v4 engine has its optimum at exactly 10 (12 workers already cost 5–23%, 16 halve the
-throughput — a sync-frequency wall, `sys%` rising 4–6× at the knee). The "Linux" cell there is
-WSL2, not native Linux — see "Measurement discipline" below. So `mode:single` is a
+read 1.11×–1.56× the day before). The same box under WSL2 on the glibc-hwcaps-selected
+x86-64-v4 engine used to have its optimum at exactly 10 (12 workers cost 5–23%, 16 halved the
+throughput, `sys%` rising 4–6× at the knee); that was a queue-handoff wall, not a property of the
+worker count, and once it was removed ("CPU worker handoff grain" under Runtime Tuning Knobs) 16
+workers beat 10 on every measured scene, so Linux now ships the physical core count. The "Linux"
+cell there is WSL2, not native Linux — see "Measurement discipline" below. So `mode:single` is a
 per-core/parallel-efficiency diagnostic — **it is not the shipping configuration**, and a
 `grep '"single"'` that looks right will quietly measure a config nobody runs.
 
@@ -110,8 +113,10 @@ The `multi` pass asks for `PhysicalCoreCount()` workers explicitly, which is exa
 the automatic rule: it is the denominator parallel efficiency is defined against. Read it as "how
 well does this box scale to all its physical cores", not as "what a user gets" — the two coincided
 before the default was capped, and now differ in a platform-dependent direction (on a
-many-core Linux/macOS box `multi` runs more workers than the default; on an SMT Windows box it
-runs fewer, 16 against the default's 32 on the reference box). When you want the shipping number, run a normal `render`
+many-core macOS box `multi` runs more workers than the default; on an SMT Windows box it
+runs fewer, 16 against the default's 32 on the reference box; on Linux the two rules currently
+give the same number — the physical core count — which makes `multi` the shipping figure there
+by coincidence of two rules, not by one rule, so re-check it whenever either changes). When you want the shipping number, run a normal `render`
 (the default subcommand), or pass `--workers` the capped value and read that. When you want to know
 whether the cap is costing this particular machine throughput, `mode:multi` is precisely the
 measurement that tells you.
@@ -526,7 +531,7 @@ scheduling overhead. **Meaningful for the legacy CPU route only** — see the GP
 > **⚠️ GPU backends are single-engine — there is no "single" vs "multi" parallelism.** The GPU
 > route (Metal / CUDA) runs `worker_count=1` unconditionally (`server.cpp:284`); only the legacy
 > CPU route is genuinely multi-worker (by default `worker_count = min(PhysicalCoreCount(), 10)`
-> on Linux/macOS and `LogicalCoreCount()` on Windows — both halves of
+> on macOS, `PhysicalCoreCount()` on Linux and `LogicalCoreCount()` on Windows — both halves of
 > `ServerImpl::AutomaticWorkerBaseAndCap()`; the `multi`
 > benchmark pass asks for full physical cores explicitly and is therefore outside that rule — see
 > §A). Because a GPU
@@ -1141,7 +1146,9 @@ scenes**:
 heavy scene's −15% — not a net win, just a different scene favored. The constant also doubles as
 the default commit granularity (`kCommitCap = env::CommitRayNum(logger_, kDefaultRayNum)`,
 `src/server/server.cpp:1324`), so raising it would coarsen the GUI snapshot cadence as a side
-effect: its reach is wider than CPU throughput alone. (Pointer, not a finding of this sweep: the
+effect: its reach is wider than CPU throughput alone. (The light scene's handoff-rate ceiling in this sweep is the same
+queue-synchronisation wall the next section separates from the batch size, so the sweep's
+"no size is good for both" is now answered by splitting the grains rather than choosing one.) (Pointer, not a finding of this sweep: the
 worker count sits on a separate axis from batch size and is capped independently by
 `ServerImpl::AutomaticWorkerBaseAndCap()`, `src/server/server.cpp:269`.)
 
@@ -1154,6 +1161,92 @@ runs fine at those same batch sizes (8/16/32/64 all green), so this floor is sce
 Today the user-facing exposure is zero (the default is 128 and nothing ships a smaller one), but
 any proposal to lower the batch is blocked by it, and a sweep that walks below 40 will die rather
 than report a number.
+
+#### CPU worker handoff grain (`kCpuHandoffBatches`=16): one queue handoff per 16 physics batches
+
+The "handoff-rate ceiling" the section above found is a queue-synchronisation wall, and it is now
+cut loose from the physics batch rather than traded against it. Before the split, every 128-ray
+physics batch was one trip through both queues: the producer's `Queue::Emplace` + `notify_one` on
+`scene_queue_`, a worker's `Get`, the worker's `Emplace` + `notify_one` on `data_queue_`, and the
+consumer's `Get` (`src/util/queue.hpp`; producer `ServerImpl::GenerateScene`, worker
+`Simulator::Run`, consumer `ServerImpl::ConsumeData`).
+
+**The mechanism.** On the Linux reference (WSL2, x86-64-v4 engine), `ms_multi_crystal_filtered_bd`
+at 40M rays read 5.4 / 11.6 / 7.1 / 4.0 M rays/s at 4 / 10 / 16 / 32 workers, with 5.8 / 3.7 /
+12.1 / 22.6 s of system time. Per-thread `/proc` counters and repeated `gdb` snapshots at 16
+workers: the producer thread spent 77% of its time in the kernel, parked inside
+`pthread_cond_signal` (glibc's `__condvar_quiesce_and_switch_g1`), while 51 of 128 worker samples
+were waiting on `scene_queue_`'s condition variable and another 24 on its mutex — the workers were
+starved by the one thread feeding them. At 10 workers the producer was instead parked on its own
+backpressure wait (the queue was full) and the only contention was on `data_queue_`'s mutex. The
+system is bistable: while the queue stays non-empty no worker waits and a notify costs nothing;
+once batches turn over faster than the single producer can hand them out, workers start waiting,
+every notify becomes a real cross-CPU wakeup (a futex syscall, expensive under WSL2), and the
+producer slows further. The knee sits where the handoff rate — workers × rays/s per worker ÷ 128 —
+meets that ceiling, which is why it moved with the ISA engine (faster rays, lower knee) and with
+the entry-rejection rate (cheaper batches, lower knee). Raising `LUMICE_DISPATCH_RAY_NUM` to 2048
+removed it at once (16 workers: 22.6 M rays/s, 0.8 s system time) — but that changes what is traced,
+which is the whole of the section above.
+
+**The fix: two grains.** `SimBatch::ray_num_` is the handoff; `SimBatch::physics_ray_num_` is the
+physics batch. On the CPU route the producer hands out `kCpuHandoffBatches` SimData's worth per
+SimBatch (physics batches × wavelengths, so a discrete spectrum gets fewer physics batches per
+handoff); the worker traces them back to back as 128-ray physics batches, each exactly the batch it
+replaces — its own wavelength draw, its own ray-allocation snapshot, its own SimData — and hands the
+SimData to the consumer with one `Queue::EmplaceMany` at the end of the handoff, or earlier once the
+oldest has waited 5 ms (`Simulator::kPendingSimDataMaxAgeMs`). A single worker therefore consumes
+the same RNG stream in the same order: seeded renders are byte-identical before and after (raw
+`npy` accumulators on six scenes, two of them adaptive ray allocation). The GPU route is unchanged
+(one physics batch per handoff). `LUMICE_CPU_HANDOFF_BATCHES=1` restores the old one-handoff-per-batch
+behaviour and is the escape hatch.
+
+**The in-flight ceiling has to move with it**, because it is counted in SimData and one handoff now
+produces sixteen. A fixed 128 handoffs' worth (the old 128 × 16) is too deep: when the single
+consumer thread is the bottleneck the whole ceiling sits in `data_queue_` as a backlog of SimData the
+consumer reaches long after another core wrote them — a 2048×1024 scene at 10 workers lost 10% and a
+five-wavelength scene at 32 workers held 949 MB instead of 63 MB. The ceiling is now one handoff in
+progress per worker plus a queue of `kQueuedHandoffsPerWorker` per worker, with the producer woken
+once half that queue has been taken, and never below the GPU-route pair (128 / 64 SimData, which is
+what keeps the escape hatch faithful). The queue depth is per OS, because the two measured OSes want
+opposite depths at the same worker count: under WSL2 a wakeup is the expensive operation, and a
+quarter handoff per worker starved 32 workers (a five-wavelength scene −17% against one per
+worker); on native Windows the wakeup is cheap and one per worker instead cost its consumer-bound
+scenes 5–6% at its default 32 workers, which a quarter per worker recovers. So: Windows 0.25,
+everything else 1.
+
+**Measured** (render with explicit `--workers`, the two arms interleaved; Linux = WSL2 v4 engine,
+5 reps, `/usr/bin/time`; Windows = native clang-cl v3 engine, 3 reps; M rays/s, median):
+
+| scene | Linux W10 before → after | W16 | W32 | Windows W32 (its default) before → after |
+|---|---|---|---|---|
+| `bench_light_single_ms` | 10.68 → 14.29 | 4.29 → 14.49 | 4.03 → 15.56 | 17.16 → 17.54 |
+| `ms_multi_crystal` | 2.69 → 2.77 | 3.91 → 3.94 | 2.75 → 3.39 | 2.18 → 3.27 |
+| `ms_multi_crystal_complex_filter` | 10.08 → 12.95 | 5.60 → 18.69 | 4.59 → 21.62 | 22.17 → 22.56 |
+| `ms_multi_crystal_filtered` | 10.64 → 13.74 | 5.05 → 19.90 | 4.61 → 22.54 | 23.89 → 23.81 |
+| `ms_multi_crystal_filtered_bd` | 11.06 → 15.34 | 6.87 → 22.10 | 4.68 → 26.67 | 25.34 → 27.27 |
+| 2048×1024 single-scattering | 8.87 → 8.87 | 4.08 → 9.30 | 3.71 → 8.62 | 9.28 → 10.57 |
+| 512×256 single-scattering | 10.59 → 12.02 | 4.58 → 13.79 | 3.90 → 13.51 | 15.10 → 15.30 |
+| five-wavelength fisheye | 12.35 → 14.54 | 15.29 → 16.78 | 15.15 → 18.18 | 20.52 → 20.21 |
+
+Linux system time at 16 workers fell from 3.5–21 s to 0.4–1.8 s per run, and one worker got 18–27%
+faster (the per-batch handoff was paid even there). On Linux, 16 workers now beat 10 on all eight
+scenes and 32 beats 10 on seven. macOS (M2 Max, 12 cores, 4–12 workers) moved −2.3%…+4.4%,
+nothing past noise at its default of 10.
+
+**What is left, and why it is not this wall.**
+- *A single consumer thread still caps the heaviest-to-consume scenes.* The 2048×1024 scene is flat at
+  ~9 M rays/s from 10 workers up, and at 32 workers on Linux reads 0.97× of 10: its consumer thread is
+  at 85% / 89% / 96% CPU at 10 / 16 / 32 workers while the workers are 56% / 32% busy at 16 / 32, and
+  system time stays near 1 s. More workers cannot help a serial consumer, and at 32 they share its
+  physical core through SMT.
+- *Native Windows below its default worker count.* Windows never had the wall (its wakeups are
+  cheap), so it only pays for the split: −2…−5% at 4–16 workers on several scenes, and −11.5% on the
+  2048×1024 scene at 4 workers. Most of the latter is the consumer's core idling between the now 16×
+  rarer wakeups — with processor idle states disabled the gap shrinks to −3.2% — and it steps in
+  between 8 and 16 SimData per handoff (8 reads 0.99×). The remaining few percent appear for 8 and 16
+  alike and are not pinned to a cause. At the 32 workers Windows ships, every scene measured is
+  within −1.5% or better (up to +50%).
+- Every "Linux" number here is WSL2, not native Linux ("Measurement discipline").
 
 **GPU device root-gen (scrum-260)**: on the GPU backends, root rays (orientation / direction /
 entry point) are generated on-device via a counter-based PCG stream keyed by

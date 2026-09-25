@@ -274,17 +274,24 @@ class ServerImpl {
   //     lightest of the three scenes peaks at 16 on the v3 engine (15% over 32) — a
   //     much wider box may yet show a knee below its logical count.
   //   - Linux (glibc-hwcaps auto-selects the x86-64-v4/AVX-512 engine on any box that
-  //     qualifies, so that is the production path): 10 IS the optimum — W12 already
-  //     costs 5–23% and W16 halves throughput. The same box on the baseline engine
-  //     wants 16–32, which is exactly why the pair is keyed on the production
-  //     engine and not on the local default build. Mechanism (WSL2): the slowdown is
-  //     not a fixed W but a sync-frequency wall — it scales with workers × 1/(per-ray
-  //     cost), so the faster engine hits it at half the worker count; sys% rises
-  //     4–6× and idle% climbs at the knee. Honest boundary: every "Linux" figure here
-  //     is WSL2, not native Linux (performance-testing.md, "Measurement discipline").
-  //   - macOS: unchanged. The one clean sample (single scene) put the best count at
-  //     the physical core count, 1.16× over 10 — right at the noise floor of the
-  //     criterion, not evidence enough to move a shipped default.
+  //     qualifies, so that is the production path): the physical core count, with no
+  //     narrower cap. This used to be capped at 10 because 10 WAS the optimum there —
+  //     16 workers halved throughput — but that was a queue-handoff wall, not a
+  //     property of the worker count: one handoff per 128 rays made the single
+  //     producer thread's wakeups the ceiling as soon as the workers drained the queue
+  //     (performance-testing.md, "CPU worker handoff grain"). With the handoff split
+  //     from the physics batch, 16 workers beat 10 on all eight measured scenes
+  //     (1.01×–1.45×) and the wall is gone. 32 (SMT) is NOT taken: it is mixed by scene
+  //     (0.86×–1.21× against 16; a 2048×1024 scene whose single consumer thread is
+  //     already saturated reads 0.97× of 10), so the physical count is the robust
+  //     choice. Honest boundary: every "Linux" figure here is WSL2, not native Linux
+  //     (performance-testing.md, "Measurement discipline").
+  //   - macOS: unchanged, capped at 10. The one clean sample (single scene) put the
+  //     best count at the physical core count, 1.16× over 10 — right at the noise floor
+  //     of the criterion, not evidence enough to move a shipped default; the handoff
+  //     split's own no-regression run on macOS pointed the same way (+7–10% at 12 on
+  //     most scenes) but ran while the machine carried other load, so it does not
+  //     settle it either.
   //
   // Three consumers, two paths — deliberately. CLI render/analyze without --workers and
   // the GUI's stored worker preference at 0 both arrive here as num_workers == 0 and
@@ -296,14 +303,16 @@ class ServerImpl {
   // the thing it exists to compare the default against.
   //
   // Single owner of the pair, so "changed one half, forgot the other" cannot compile
-  // clean: on Windows the cap is a sentinel ("no cap narrower than LogicalCoreCount()"),
+  // clean: on Windows and Linux the cap is a sentinel ("no cap narrower than the base"),
   // not an independently tunable number, which is why it is returned alongside the base
   // rather than declared next to it.
   static std::pair<int, int> AutomaticWorkerBaseAndCap() {
 #if defined(OS_WIN)
     return { LogicalCoreCount(), std::numeric_limits<int>::max() };
-#else
+#elif defined(__APPLE__)
     return { PhysicalCoreCount(), 10 };
+#else
+    return { PhysicalCoreCount(), std::numeric_limits<int>::max() };
 #endif
   }
 
