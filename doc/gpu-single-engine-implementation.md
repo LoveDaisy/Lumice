@@ -223,6 +223,37 @@
 
 **静默失效抓捕**（硬门案例，see §2.4 正确性）：Step 9 gate 误放在 `use_backend` 分支，使 cpu_backend 路径 `curr_wl_` 保持 0（无池），产全黑图像——触发反静默回退硬门（`!per_ray_wl && !outgoing_d_.empty() && curr_wl_ < 1.0f → assert`）当场抓住。没有硬门，bug 静默产平坦谱（plausible，不崩）继续藏。
 
+### 8.1 CPU 侧为何不跟进逐光线波长（as-built，2026-09-25）
+
+legacy CPU（以及 pool-less 的 `CpuTraceBackend`）仍是**每个 physics batch 一个波长**（默认 128 光线，
+`server.cpp` `kDefaultRayNum`），但各 batch 的波长不再独立抽，而是取自随机平移的黄金比 Kronecker 序列
+（`WavelengthStratifier`，`src/core/wl_stratifier.hpp`；平移每 `Run()` 从 worker RNG 取一次，固定 seed 下
+每个 `Run()` 重放）。每个 batch 的波长单独看仍均匀分布于 [380, 780]，所以估计量对任意 batch 数无偏；
+变的只是联合分布——任意一段连续 batch 均匀铺满波段。
+
+选型依据（三个 D65 场景 × 24 seed，1e6 光线，方差取对旧实现的比值；逐光线 C 与块内共享 B 的方差用
+`LUMICE_DISPATCH_RAY_NUM=1/32` 零代码模拟，冻结波长对照证明 dispatch 大小别无方差效应）：
+
+| 方案 | 全图 Σ 像素方差（Y） | 去最亮 0.1% 像素 / 逐像素中位数 | 帧总量方差 | 每光线代价 |
+|---|---|---|---|---|
+| A 跨 batch 分层（落地） | 0.21–0.24 | 0.86–0.99 / ≈1.0 | 0.0002–0.001 | 0 |
+| C 逐光线独立 | 0.21–0.24 | 0.87–1.00 / ≈1.0 | 0.007–0.010 | 需 `RaySeg` 携带 + 逐光线 n + consumer 逐光线 CMF |
+| B 块内共享（32） | 0.34–0.45 | ≈0.86–1.0 / ≈1.0 | 0.14–0.25 | 同 C 的消费侧改动 |
+
+- **batch 相关噪声只活在「整个 batch 一起落上去」的地方**：太阳直透光斑那几个像素、以及帧总量。晕像素里
+  同一 batch 的两条光线落进同一像素的概率本来就低，三种粒度都不改变它——所以 C 相对 A 没有任何方差收益，
+  帧总量反而差一个量级（独立 vs 分层）。
+- **晕像素里残余的光谱噪声**（冻结波长可再降到 0.36–0.47 倍）是均匀 λ pdf 下的逐光线内禀方差，任何共享粒度
+  都消不掉；能降它的是光谱重要性抽样（pdf 随 SPD·CMF 加权），那要三端同改分布，未做。
+- **「共享折射率利于向量化」不成立**：`HitSurface` 在 Mac clang 与 x86 gcc 13（Zen5 `-march=native`）上都**没有**
+  被向量化（AoS 跨步访问 / 循环内控制流），最终 LTO 二进制全标量；标量 n 只让 `1/n` 被提到循环外。去共享
+  （逐光线 n[i]）微基准 x86 −0.4%、Mac −2~−3%，查表带 1/n 反而 x86 +6%——`HitSurface` 只占每光线几个百分点。
+- 吞吐：A 与旧实现无差别（Mac / Zen5，single + multi，比值 0.98–1.03，CoV ≤3%）⇒ 按 597.5 的全图口径等误差
+  吞吐 4.1–4.8×；去光斑后 1.01–1.16×。
+- 跨后端：D65 帧的 `ΣY/snapshot_intensity` 与色度，legacy 12 seed 间极差 0.053%（旧实现 4 seed 极差 2.2%），与 Metal 均值差
+  −0.064%，色度 y 差 −0.0002（GPU 64 中点表的 CMF 求积偏差，3.4 se）。由
+  `test/parity-cross-backend/backend/test_illuminant_wavelength_parity.py` 钉住（CUDA 上同样通过）。
+
 ## 9. 单引擎 as-built：关键发现与弯路
 
 > 接手：这些是 scrum-268 最值得学的教训，避免重做。

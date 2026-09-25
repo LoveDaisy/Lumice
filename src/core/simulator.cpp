@@ -35,6 +35,7 @@
 #include "core/shared/lat_path_selection.hpp"
 #include "core/shared/pcg_shared.h"
 #include "core/trace_ops.hpp"
+#include "core/wl_stratifier.hpp"
 #include "core/worker_projection.hpp"
 #include "util/env_knobs.hpp"
 #include "util/fatal.hpp"
@@ -1485,6 +1486,9 @@ void Simulator::Run() {
   SimWorkspace workspace;
   std::vector<std::vector<double>> ray_alloc_carry;
   uint64_t prev_generation = 0;
+  // Standard-illuminant wavelength per physics batch, stratified across the batches of
+  // this Run() (see WavelengthStratifier). Run()-scoped so a fixed-seed session replays.
+  WavelengthStratifier wl_stratifier;
 
   while (true) {
     // scrum-312 third-clock: producer-pause flush. When no batch is queued we are
@@ -1660,7 +1664,8 @@ void Simulator::Run() {
           // stays 0: IF the per-ray wavelength is ever dropped upstream, the
           // consumer renders black (loud) instead of silently collapsing onto a
           // flat spectrum (the bug fixed in a101c53e). Pool-less backends (CPU /
-          // cpu_backend / legacy) keep per-batch uniform wl + SPD weight.
+          // cpu_backend / legacy) keep one wl per physics batch + its SPD weight, the wl
+          // stratified across batches by wl_stratifier (uniform on [380, 780] per batch).
           // The emitted weight charged to the normalization denominator is the
           // BAND EXPECTATION of this illuminant, not the weight of whichever
           // wavelength this batch happens to draw. Both sub-branches below use it:
@@ -1678,7 +1683,7 @@ void Simulator::Run() {
             // branch since `backend` is now reset. Nothing more to do on either result.
             (void)run_with_backend(WlParam{}, emitted_weight);
           } else {
-            float wl = 380.0f + rng_.GetUniform() * 400.0f;  // [380, 780] nm
+            float wl = 380.0f + wl_stratifier.NextUnit(rng_) * 400.0f;  // [380, 780) nm
             float weight = GetIlluminantSpd(*illuminant, wl);
             WlParam wl_param{ wl, weight };
             if (use_backend) {

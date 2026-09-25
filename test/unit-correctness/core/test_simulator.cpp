@@ -1628,6 +1628,67 @@ TEST(SimulatorEmittedEnergy, IlluminantChargesTheBandExpectationNotTheSampledWei
   EXPECT_NEAR(totals.emitted, expected, expected * 1e-5);
 }
 
+namespace {
+
+// The curr_wl_ of every SimData one Run() of `physics_batches` D65 physics batches puts
+// out, in trace order (one worker, so queue order is trace order). Runs `sim` itself so a
+// caller can hand the same Simulator in twice.
+std::vector<float> RunD65AndCollectWavelengths(Simulator& sim, Queue<SimBatch>& config_queue,
+                                               Queue<SimData>& data_queue, size_t physics_batches) {
+  auto scene = MakeTwoWavelengthScene({});
+  scene.light_source_.spectrum_ = IlluminantType::kD65;
+  constexpr size_t kPhysicsRayNum = 16;
+  SimBatch batch;
+  batch.ray_num_ = physics_batches * kPhysicsRayNum;
+  batch.physics_ray_num_ = kPhysicsRayNum;
+  batch.scene_ = std::make_shared<const SceneConfig>(std::move(scene));
+  batch.generation_ = 1;
+  config_queue.Emplace(std::move(batch));
+  config_queue.Emplace(SimBatch{});  // ray_num_ == 0 → Run() exits
+  std::thread runner([&] { sim.Run(); });
+  runner.join();
+  std::vector<float> wl;
+  while (!data_queue.Empty()) {
+    wl.push_back(data_queue.Get().curr_wl_);
+  }
+  return wl;
+}
+
+}  // namespace
+
+TEST(SimulatorIlluminantWavelength, PhysicsBatchesAreStratifiedAcrossTheBandAndReplayPerRun) {
+  // One wavelength per physics batch, but not independent ones: 64 consecutive batches
+  // must put 4 +- 1 wavelengths in each 25 nm sixteenth of [380, 780] (independent draws
+  // meet that with probability ~1e-4). And the schedule belongs to the Run(), like the
+  // RNG it draws its shift from: a second Run() of the same fixed-seed Simulator replays
+  // it rather than continuing where the first one stopped.
+  constexpr size_t kBatches = 64;
+  constexpr size_t kBins = 16;
+  auto config_queue = std::make_shared<Queue<SimBatch>>();
+  auto data_queue = std::make_shared<Queue<SimData>>();
+  Simulator sim(config_queue, data_queue, /*seed=*/4321);
+
+  const auto first = RunD65AndCollectWavelengths(sim, *config_queue, *data_queue, kBatches);
+  ASSERT_EQ(first.size(), kBatches);
+  std::vector<int> count(kBins, 0);
+  size_t outside = 0;
+  for (float wl : first) {
+    if (wl < 380.0f || wl >= 780.0f) {
+      outside++;
+      continue;
+    }
+    count[std::min(static_cast<size_t>((wl - 380.0f) / 400.0f * kBins), kBins - 1)]++;
+  }
+  EXPECT_EQ(outside, 0u) << "every batch wavelength must lie in [380, 780) nm";
+  for (size_t b = 0; b < kBins; ++b) {
+    EXPECT_GE(count[b], 3) << "bin " << b;
+    EXPECT_LE(count[b], 5) << "bin " << b;
+  }
+
+  const auto second = RunD65AndCollectWavelengths(sim, *config_queue, *data_queue, kBatches);
+  EXPECT_EQ(second, first);
+}
+
 
 // ============================================================================
 // Handoff grain vs physics grain (SimBatch::physics_ray_num_)

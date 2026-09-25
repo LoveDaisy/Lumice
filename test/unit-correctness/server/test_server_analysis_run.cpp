@@ -678,7 +678,10 @@ TEST(ServerAnalysisRunGpu, AnalysisForcesCpuUnderGpuPreference) {
 // the same for N=1 and N=4, 5.16M vs 5.20M — the legacy grain draws one wavelength per
 // 128-ray batch, so 1563 draws of Y(wl) set that spread), the eight ~3% chains' shares
 // move 0.0296-0.0329 (up to ~11% relative between two runs), the ~2% chains 0.0196-0.0212,
-// and the counted-ray total 962949-964260 (0.14%). A merge defect is not a few percent:
+// and the counted-ray total 962949-964260 (0.14%). Those were measured while the 1563 batch
+// wavelengths were independent draws; they are now stratified across the batches
+// (WavelengthStratifier), which only narrows the energy spread, so the bounds still hold
+// with more margin than they state. A merge defect is not a few percent:
 // a chain split across workers loses 75% of its share, a chain double-counted doubles it.
 // ---------------------------------------------------------------------------
 struct ChainShare {

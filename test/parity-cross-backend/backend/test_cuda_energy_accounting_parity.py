@@ -89,9 +89,12 @@ shapes they cover (filter + random geometry; per-layer fold), and the 2M/10M
 rows are the ones that carry the red.
 
 Scene selection. Only single-wavelength configs: under a D65 spectrum ``R``
-becomes ``sum(cmf_y * w) / sum(w)``, which varies ~1% between seeds on legacy
-alone (it draws one wavelength per batch), so the same ratio measured there
-cannot resolve a sub-percent accounting error. The four configs cover the
+becomes ``sum(cmf_y * w) / sum(w)``, a sampling statistic. Legacy's own spread
+of it is now small (its batches' wavelengths are stratified; 0.05% on a 2M-ray
+frame, see ``test_illuminant_wavelength_parity.py``), but a GPU backend draws
+per ray from a 64-entry table and spreads it ~0.1% per seed on the same frame,
+the size of this file's tolerance, so the ratio measured there still cannot
+resolve a sub-0.1% accounting error. The four configs cover the
 four session shapes the CUDA backend has (single-MS no filter; fisheye 120°
 view where most exits fall outside the frame; single-MS with a filter and
 random geometry; two-layer MS with five crystals) — the per-layer fold is
