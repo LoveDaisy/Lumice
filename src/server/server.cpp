@@ -193,6 +193,36 @@ class ServerImpl {
   // pool on the GPU route (see the ctor). See doc/gpu-single-engine-implementation.md §6.
   static constexpr int kMaxSceneCnt = 128;
   static constexpr size_t kDefaultRayNum = 128;
+  // CPU route only: how much one SimBatch hands a worker at once, counted in the SimData it
+  // will produce — physics batches of kDispatchCap rays (SimBatch::physics_ray_num_) times
+  // wavelengths, so a discrete spectrum gets proportionally fewer physics batches per
+  // handoff (GenerateScene). The physics batch stays kDefaultRayNum —
+  // that size is what the rest of the trace is tuned around (wavelength draws per ray,
+  // ray-allocation cadence, workspace footprint; doc/performance-testing.md "Legacy CPU
+  // batch size") — while every queue handoff, and the wakeup it can cost, is paid once
+  // per this many of them. With one handoff per 128 rays the single producer thread's
+  // notify became the ceiling as soon as the workers were fast enough to drain the queue,
+  // and past that point extra workers made the run slower, not faster. The value and the
+  // measurements behind it: doc/performance-testing.md, "CPU worker handoff grain".
+  static constexpr size_t kCpuHandoffBatches = 16;
+  // CPU route: queued handoffs the in-flight ceiling leaves room for, per worker, on top
+  // of the one each worker has in progress (GenerateScene says why a queue is needed and
+  // why it must stay shallow). Per OS because the two measured OSes want opposite depths
+  // at the same worker count, and for a reason the depth has to answer to: the queue
+  // only has to cover the workers while the consumer wakes the producer back up, and
+  // that wakeup costs very different amounts. Under WSL2 (the Linux reference) a futex
+  // wake is the expensive operation this whole split exists to avoid, and a quarter
+  // handoff per worker starved 32 workers (a five-wavelength scene lost 17% against one
+  // per worker); on native Windows the wake is cheap, and one per worker instead costs
+  // the consumer-bound scenes at its default 32 workers (light -5%, a five-wavelength
+  // scene -6% against the pre-split code) through the deeper backlog, which a quarter
+  // per worker recovers. Measurements: doc/performance-testing.md, "CPU worker handoff
+  // grain". macOS takes the non-Windows value: not measured to want otherwise.
+#if defined(OS_WIN)
+  static constexpr double kQueuedHandoffsPerWorker = 0.25;
+#else
+  static constexpr double kQueuedHandoffsPerWorker = 1.0;
+#endif
   // scrum-268.6: Metal single-engine needs a large GPU dispatch to saturate the
   // device — a 128-ray dispatch starves it (~0.04x legacy), while ~32768 peaks
   // at ~5.3x legacy on heavy multi-MS+filter scenes (sweep 2026-06-16; plateau
@@ -244,17 +274,24 @@ class ServerImpl {
   //     lightest of the three scenes peaks at 16 on the v3 engine (15% over 32) — a
   //     much wider box may yet show a knee below its logical count.
   //   - Linux (glibc-hwcaps auto-selects the x86-64-v4/AVX-512 engine on any box that
-  //     qualifies, so that is the production path): 10 IS the optimum — W12 already
-  //     costs 5–23% and W16 halves throughput. The same box on the baseline engine
-  //     wants 16–32, which is exactly why the pair is keyed on the production
-  //     engine and not on the local default build. Mechanism (WSL2): the slowdown is
-  //     not a fixed W but a sync-frequency wall — it scales with workers × 1/(per-ray
-  //     cost), so the faster engine hits it at half the worker count; sys% rises
-  //     4–6× and idle% climbs at the knee. Honest boundary: every "Linux" figure here
-  //     is WSL2, not native Linux (performance-testing.md, "Measurement discipline").
-  //   - macOS: unchanged. The one clean sample (single scene) put the best count at
-  //     the physical core count, 1.16× over 10 — right at the noise floor of the
-  //     criterion, not evidence enough to move a shipped default.
+  //     qualifies, so that is the production path): the physical core count, with no
+  //     narrower cap. This used to be capped at 10 because 10 WAS the optimum there —
+  //     16 workers halved throughput — but that was a queue-handoff wall, not a
+  //     property of the worker count: one handoff per 128 rays made the single
+  //     producer thread's wakeups the ceiling as soon as the workers drained the queue
+  //     (performance-testing.md, "CPU worker handoff grain"). With the handoff split
+  //     from the physics batch, 16 workers beat 10 on all eight measured scenes
+  //     (1.01×–1.45×) and the wall is gone. 32 (SMT) is NOT taken: it is mixed by scene
+  //     (0.86×–1.21× against 16; a 2048×1024 scene whose single consumer thread is
+  //     already saturated reads 0.97× of 10), so the physical count is the robust
+  //     choice. Honest boundary: every "Linux" figure here is WSL2, not native Linux
+  //     (performance-testing.md, "Measurement discipline").
+  //   - macOS: unchanged, capped at 10. The one clean sample (single scene) put the
+  //     best count at the physical core count, 1.16× over 10 — right at the noise floor
+  //     of the criterion, not evidence enough to move a shipped default; the handoff
+  //     split's own no-regression run on macOS pointed the same way (+7–10% at 12 on
+  //     most scenes) but ran while the machine carried other load, so it does not
+  //     settle it either.
   //
   // Three consumers, two paths — deliberately. CLI render/analyze without --workers and
   // the GUI's stored worker preference at 0 both arrive here as num_workers == 0 and
@@ -266,14 +303,16 @@ class ServerImpl {
   // the thing it exists to compare the default against.
   //
   // Single owner of the pair, so "changed one half, forgot the other" cannot compile
-  // clean: on Windows the cap is a sentinel ("no cap narrower than LogicalCoreCount()"),
+  // clean: on Windows and Linux the cap is a sentinel ("no cap narrower than the base"),
   // not an independently tunable number, which is why it is returned alongside the base
   // rather than declared next to it.
   static std::pair<int, int> AutomaticWorkerBaseAndCap() {
 #if defined(OS_WIN)
     return { LogicalCoreCount(), std::numeric_limits<int>::max() };
-#else
+#elif defined(__APPLE__)
     return { PhysicalCoreCount(), 10 };
+#else
+    return { PhysicalCoreCount(), std::numeric_limits<int>::max() };
 #endif
   }
 
@@ -657,6 +696,12 @@ class ServerImpl {
   std::array<std::vector<Simulator>*, 2> AllWorkerGroups() { return { &simulators_, &analysis_pool_simulators_ }; }
 
   std::atomic_int sim_scene_cnt_;
+  // The in-flight ceiling the producer throttles sim_scene_cnt_ against, and the level
+  // under which the consumer wakes it, in the counter's own unit (SimData). Set by GenerateScene at
+  // the start of each run — kMaxSceneCnt on the GPU route, a per-worker number of
+  // handoffs on the CPU route, where one handoff produces several SimData (see there).
+  std::atomic_int scene_cnt_cap_{ kMaxSceneCnt };
+  std::atomic_int scene_cnt_wake_{ kMaxSceneCnt / 2 };
   std::mutex scene_mutex_;
   std::condition_variable scene_cv_;
 
@@ -2499,7 +2544,7 @@ void ServerImpl::ConsumeData() {
     // Decrement by the credit to keep the GenerateScene ++ / ConsumeData --
     // invariant balanced regardless of drain windowing.
     sim_scene_cnt_ -= static_cast<int>(sim_data.sim_scene_credit_);
-    if (sim_scene_cnt_ < kMaxSceneCnt / 2) {
+    if (sim_scene_cnt_ < scene_cnt_wake_.load(std::memory_order_relaxed)) {
       scene_cv_.notify_one();
     } else if (gpu_route_ && !fallback_queue_invalidated_.load(std::memory_order_acquire) && !ReadBackendActive()) {
       // The queue is still deep, so the throttle above would keep the producer parked for
@@ -2587,7 +2632,12 @@ void ServerImpl::GenerateScene() {
                                   kGpuRoute    ? kDefaultMetalDispatchRayNum :
                                                  kDefaultRayNum;
   const size_t kDispatchCap = env::DispatchRayNum(logger_, kDefaultDispatch);
-  const size_t kBatchCap = kDispatchCap;  // local alias for the loop below
+  // CPU route: one handoff carries several physics batches of kDispatchCap rays (sized
+  // below, once the wavelength count is known; see kCpuHandoffBatches). GPU route: one
+  // physics batch per handoff, as before — the GPU dispatch grain is already large, and
+  // the backend traces a batch as one dispatch.
+  const size_t kHandoffSimData = kGpuRoute ? 1 : env::CpuHandoffBatches(logger_, kCpuHandoffBatches);
+  const size_t kPhysicsRayNum = kGpuRoute ? 0 : kDispatchCap;  // 0 = "the whole batch"
   // The ctor-time route and this live re-derivation ask two different
   // questions off the same ResolveGpuRoute (see gpu_route_'s declaration). They
   // cannot disagree today; say so out loud if they ever do, rather than letting one
@@ -2615,11 +2665,43 @@ void ServerImpl::GenerateScene() {
   // Resolve by incrementing here by the same N the simulator will emplace, so the
   // counter matches the consumer's per-SimData decrement. The scene is captured under scene_mutex_
   // above and immutable for this GenerateScene invocation, so N is computed
-  // once. Throttle/notify thresholds (kMaxSceneCnt, kMaxSceneCnt/2) now refer
+  // once. Throttle/notify thresholds (scene_cnt_cap_ and its half) now refer
   // to in-flight SimData, which is also the right quantity for memory control.
   const size_t kNsimdataPerBatch = std::holds_alternative<std::vector<WlParam>>(scene->light_source_.spectrum_) ?
                                        std::get<std::vector<WlParam>>(scene->light_source_.spectrum_).size() :
                                        static_cast<size_t>(1);
+  // Physics batches per handoff. kHandoffSimData counts SimData — the unit every queue
+  // operation is paid in — and each physics batch yields one per wavelength, so a
+  // discrete spectrum takes proportionally fewer physics batches per handoff: the
+  // handoff then carries about the same traced work, and the same memory, as a
+  // single-wavelength one.
+  const size_t kHandoffBatches =
+      kGpuRoute ? 1 : std::max<size_t>(1, (kHandoffSimData + kNsimdataPerBatch - 1) / kNsimdataPerBatch);
+  const size_t kBatchCap = kDispatchCap * kHandoffBatches;  // rays per handoff
+  // The in-flight ceiling for this run and the level the consumer wakes the producer at
+  // (see scene_cnt_cap_). GPU route: kMaxSceneCnt and half of it, as always. CPU route:
+  // counted in handoffs of the group this session runs on — one in progress per worker
+  // plus a queue of kQueuedHandoffsPerWorker per worker, and the producer is woken once
+  // half that queue has been taken. Both ways of getting it wrong were measured. Too
+  // shallow a queue at wake time and a worker finds it empty. Too high a ceiling and, in
+  // a run the consumer thread cannot keep up with, the whole ceiling sits in data_queue_
+  // as SimData the consumer reaches long after another core wrote them: at a fixed 128
+  // handoffs a 2048x1024 scene at 10 workers lost 10%, and a five-wavelength scene at 32
+  // workers held 15x the memory. Measurements: doc/performance-testing.md, "CPU worker
+  // handoff grain".
+  if (kGpuRoute) {
+    scene_cnt_cap_.store(kMaxSceneCnt, std::memory_order_relaxed);
+    scene_cnt_wake_.store(kMaxSceneCnt / 2, std::memory_order_relaxed);
+  } else {
+    const int workers = std::max(static_cast<int>(ActiveWorkers().size()), 1);
+    const int queued = std::max(static_cast<int>(workers * kQueuedHandoffsPerWorker), 2);
+    const int per_handoff = static_cast<int>(kHandoffBatches * kNsimdataPerBatch);
+    // Never below the GPU-route pair: with one physics batch per handoff (the escape
+    // hatch, LUMICE_CPU_HANDOFF_BATCHES=1) this is then exactly the pre-split throttle,
+    // which a per-worker count of single batches would otherwise undercut.
+    scene_cnt_cap_.store(std::max((workers + queued) * per_handoff, kMaxSceneCnt), std::memory_order_relaxed);
+    scene_cnt_wake_.store(std::max((workers + queued / 2) * per_handoff, kMaxSceneCnt / 2), std::memory_order_relaxed);
+  }
 
   // task-323: ray_num semantic unification. At this ingest point scene->ray_num_ is the TOTAL rays
   // across all wavelengths; the simulator loop below consumes a PER-WAVELENGTH budget. Keep the two
@@ -2689,8 +2771,12 @@ void ServerImpl::GenerateScene() {
     const size_t fallback_cap = kDefaultRayNum;
     const size_t iter_cap = EffectiveDispatchCap(kGpuRoute, backend_active, nominal_cap, fallback_cap);
     size_t batch_ray_num = std::min(iter_cap, per_wl_ray_num - committed_num);
-    AccountThenPublishBatch(sim_scene_cnt_, static_cast<int>(kNsimdataPerBatch), *scene_queue_,
-                            SimBatch{ batch_ray_num, scene, generation, renders, raypath_color, ray_alloc_online });
+    SimBatch batch{ batch_ray_num, scene, generation, renders, raypath_color, ray_alloc_online };
+    batch.physics_ray_num_ = kPhysicsRayNum;
+    // One SimData per physics batch per wavelength: credit exactly what the consumer
+    // will take back for this handoff (a short last handoff splits into fewer).
+    const int credit = static_cast<int>(batch.PhysicsBatchCount() * kNsimdataPerBatch);
+    AccountThenPublishBatch(sim_scene_cnt_, credit, *scene_queue_, std::move(batch));
     if (!first_batch_logged) {
       ILOG_INFO(logger_, "GenerateScene: first batch enqueued at {:.1f}ms after start",
                 std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - gen_start).count());
@@ -2700,7 +2786,7 @@ void ServerImpl::GenerateScene() {
     ILOG_TRACE(logger_, "GenerateScene: put a scene: ray({}/{}, {})", batch_ray_num, per_wl_ray_num, committed_num);
     CHECK_STOP
 
-    if (sim_scene_cnt_ >= kMaxSceneCnt) {
+    if (sim_scene_cnt_ >= scene_cnt_cap_.load(std::memory_order_relaxed)) {
       ILOG_DEBUG(logger_, "GenerateScene: too many scenes generated. wait for consumer");
       std::unique_lock<std::mutex> lock(scene_mutex_);
       // The third term is what makes the invalidation above reachable in time. Without it
@@ -2711,7 +2797,8 @@ void ServerImpl::GenerateScene() {
       // safe in one direction only — prod_mutex_ is a leaf (its holders call nothing but
       // Simulator accessors) and nothing takes scene_mutex_ under it. Keep it that way.
       scene_cv_.wait(lock, [this, kGpuRoute]() {
-        return state_.load() != ServerState::kRunning || sim_scene_cnt_ < kMaxSceneCnt ||
+        return state_.load() != ServerState::kRunning ||
+               sim_scene_cnt_ < scene_cnt_cap_.load(std::memory_order_relaxed) ||
                (kGpuRoute && !fallback_queue_invalidated_.load(std::memory_order_acquire) && !ReadBackendActive());
       });
       ILOG_DEBUG(logger_, "GenerateScene: continue to generate scenes.");

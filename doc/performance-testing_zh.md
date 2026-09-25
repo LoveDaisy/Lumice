@@ -323,14 +323,15 @@ pass 没有做原型：既然只加 bounds 的版本已是净亏，拆分在单�
 
 > **⚠️ GPU 后端是单引擎——不存在 "single" vs "multi" 并行。** GPU 路线（Metal / CUDA）无条件
 > `worker_count=1`（`server.cpp:284`）；只有 legacy CPU 路线是真多 worker（默认
-> Linux/macOS 上 `worker_count = min(PhysicalCoreCount(), 10)`、Windows 上
-> `LogicalCoreCount()`——两者都是 `ServerImpl::AutomaticWorkerBaseAndCap()` 返回的一对值，即按平台
+> macOS 上 `worker_count = min(PhysicalCoreCount(), 10)`、Linux 上 `PhysicalCoreCount()`（不再封顶）、Windows 上
+> `LogicalCoreCount()`——三者都是 `ServerImpl::AutomaticWorkerBaseAndCap()` 返回的一对值，即按平台
 > 分档——依据是各平台生产实际加载的引擎下实测的最优 worker 数：Windows
-> 参照机（clang-cl x86-64-v3 引擎）自动值卡在 10 会比现在出厂的 32 worker 慢 1.07×–1.58×，同一台
-> 机器的 WSL2 侧在 glibc-hwcaps 自动选中的 x86-64-v4 引擎下最优点恰好就是 10（16 worker 吞吐减半）；
+> 参照机（clang-cl x86-64-v3 引擎）自动值卡在 10 会比现在出厂的 32 worker 慢 1.07×–1.58×；同一台
+> 机器的 WSL2 侧在 glibc-hwcaps 自动选中的 x86-64-v4 引擎下最优点**曾经**恰好是 10（16 worker 吞吐减半），
+> 那是一堵队列交接墙而非 worker 数本身的属性，拆掉之后（见下文「CPU worker 交接粒度」）16 worker 在全部实测场景上都胜过 10，故 Linux 改为物理核数；
 > ⚠️ 那格「Linux」数据来自 WSL2 代理，不是原生 Linux；`benchmark` 的 `multi` 趟显式请求满物理核，
 > 因此不受该规则约束——它量的是满核并行效率，不再等于出厂默认会跑出来的吞吐，且两者的大小关系随
-> 平台而异：多核 Linux/macOS 上 `multi` 比默认跑更多 worker，SMT 的 Windows 上反而更少）。既然 GPU 的 "single" 与 "multi" 趟都跑在同一个单引擎（只差暖机+光线数、
+> 平台而异：多核 macOS 上 `multi` 比默认跑更多 worker，SMT 的 Windows 上反而更少；Linux 上两条规则眼下恰好给出同一个数——物理核数——所以那里的 `multi` 碰巧就是出厂值，是两条规则巧合而非同一条规则，任一改动后都要重核）。既然 GPU 的 "single" 与 "multi" 趟都跑在同一个单引擎（只差暖机+光线数、
 > 非并行），**`Lumice benchmark` 对 GPU 路线塌成 ONE 稳态趟**（label `mode="multi"`）、跳过暖机趟；
 > legacy CPU 路线保留真双趟。路线检测是 env-aware 的（`LUMICE_WillUseGpuRoute` 认 `LUMICE_TRACE_BACKEND`，
 > 故 env 选的 GPU run 也塌）。读 GPU 结果时：
@@ -784,7 +785,7 @@ push 到 `main` 的 benchmark 结果会通过
 **为什么 `kDefaultRayNum` 保持 128。** 改成 256 是拿轻场景的 +16% 去换重场景的 −15%，不是净胜，
 只是换一个被偏袒的场景。这个常数还兼任提交粒度的默认值（`kCommitCap =
 env::CommitRayNum(logger_, kDefaultRayNum)`，`src/server/server.cpp:1324`），抬高它会连带把 GUI
-快照节奏变粗：它的射程比纯 CPU 吞吐更宽。（补充指针，非本次扫描的结论：worker 数是与批大小
+快照节奏变粗：它的射程比纯 CPU 吞吐更宽。（这次扫描里轻场景撞上的交接率天花板，就是下一节把它从批大小里拆出去的那堵队列同步墙；所以「没有一个批大小对两个场景都好」如今的答案是把两种粒度拆开，而不是二选一。）（补充指针，非本次扫描的结论：worker 数是与批大小
 独立的另一条轴，其默认值单独由 `ServerImpl::AutomaticWorkerBaseAndCap()` 封顶，`src/server/server.cpp:269`。）
 
 **批大小有一个 <40 光线的硬地板，且失效形态是崩溃而不是变慢。** `LUMICE_DISPATCH_RAY_NUM` ≤ 32
@@ -794,6 +795,76 @@ arm64/macOS 上 16 与 32 档 SIGSEGV、8 档 abort，同样 ≥ 40 正常。重
 （8/16/32/64 全绿），所以这个地板同样是场景相关的。今天的用户暴露面为零（默认就是 128，
 也没有任何产物发更小的值），但任何「下调批大小」的方案都被它挡住，而一次走到 40 以下的扫描会直接
 崩掉而不是给出一个数。
+
+#### CPU worker 交接粒度（`kCpuHandoffBatches`=16）：每 16 个物理 batch 才交接一次队列
+
+上一节扫出来的「交接率天花板」是一堵队列同步墙，现在它被从物理 batch 上拆开，而不是拿批大小去换。
+拆开之前，每个 128 光线的物理 batch 都要把两个队列各走一趟：生产者在 `scene_queue_` 上
+`Queue::Emplace` + `notify_one`、worker `Get`、worker 在 `data_queue_` 上 `Emplace` + `notify_one`、
+consumer `Get`（`src/util/queue.hpp`；生产者 `ServerImpl::GenerateScene`，worker `Simulator::Run`，
+consumer `ServerImpl::ConsumeData`）。
+
+**机制。** Linux 参照（WSL2、x86-64-v4 引擎）上 `ms_multi_crystal_filtered_bd` 40M 光线，4 / 10 / 16 / 32
+worker 分别为 5.4 / 11.6 / 7.1 / 4.0 M rays/s，系统时间 5.8 / 3.7 / 12.1 / 22.6 s。16 worker 下逐线程
+`/proc` 计数与多次 `gdb` 快照：生产者线程 77% 的时间在内核里，停在 `pthread_cond_signal`（glibc 的
+`__condvar_quiesce_and_switch_g1`）内部，128 个 worker 样本里 51 个在等 `scene_queue_` 的条件变量、
+另 24 个在等它的互斥锁——worker 被唯一给它们喂数的线程饿着。10 worker 时生产者反而停在自己的背压等待上
+（队列是满的），唯一的争用在 `data_queue_` 的互斥锁上。这是一个双稳态系统：只要队列不空，就没有 worker
+在等，notify 近乎零成本；一旦 batch 周转快过唯一的生产者能分发的速度，worker 开始等待，每次 notify 都变成
+真实的跨 CPU 唤醒（一次 futex 系统调用，在 WSL2 下很贵），生产者进一步变慢。拐点落在交接率——
+worker 数 × 每 worker 光线速率 ÷ 128——撞上这个天花板的地方，这正是它随 ISA 引擎（光线越快拐点越低）和
+入射拒绝率（batch 越便宜拐点越低）平移的原因。把 `LUMICE_DISPATCH_RAY_NUM` 调到 2048 能立刻消掉它
+（16 worker：22.6 M rays/s、系统时间 0.8 s）——但那会改变追迹的内容，也就是上一节讲的全部。
+
+**修法：两种粒度。** `SimBatch::ray_num_` 是交接，`SimBatch::physics_ray_num_` 是物理 batch。CPU 路上
+生产者每个 SimBatch 发 `kCpuHandoffBatches` 份 SimData 的量（物理 batch 数 × 波长数，所以离散光谱每次交接
+的物理 batch 更少）；worker 把它们当 128 光线的物理 batch 依次追完，每一个都与它取代的那个 batch 完全相同
+——各自的波长抽样、各自的 ray-allocation 快照、各自的 SimData——并在交接结束时用一次
+`Queue::EmplaceMany` 交给 consumer（最老的一份等满 5 ms 也会提前交，`Simulator::kPendingSimDataMaxAgeMs`）。
+因此单个 worker 按同样顺序消费同一条 RNG 流：固定 seed 的渲染前后逐字节一致（六个场景的原始 `npy`
+累加器，其中两个是 adaptive ray allocation）。GPU 路不变（每次交接一个物理 batch）。
+`LUMICE_CPU_HANDOFF_BATCHES=1` 恢复旧的「每 batch 交接一次」，即逃生口。
+
+**在飞上限必须跟着动**，因为它按 SimData 计数，而一次交接现在产出 16 份。固定 128 次交接的量（旧值 128 × 16）
+太深：当唯一的 consumer 线程是瓶颈时，整个上限都堆在 `data_queue_` 里，成了 consumer 很久之后才读到、由别的
+核写下的 SimData 积压——2048×1024 场景在 10 worker 下损失 10%，五波长场景在 32 worker 下占 949 MB 而不是
+63 MB。现在的上限是每 worker 一次在做的交接加 `kQueuedHandoffsPerWorker` 次排队，排队量被取走一半时唤醒
+生产者，且不低于 GPU 路那一对值（128 / 64 份 SimData，这正是让逃生口名副其实的那一条）。排队深度按 OS 分，
+因为两个实测 OS 在同一 worker 数下要的深度相反：WSL2 下唤醒本身就是昂贵操作，每 worker 四分之一次排队会饿死
+32 个 worker（五波长场景比每 worker 一次慢 17%）；原生 Windows 唤醒便宜，每 worker 一次反而让它默认 32
+worker 下的 consumer 瓶颈场景慢 5–6%，四分之一次就能收回。所以：Windows 0.25，其余 1。
+
+**实测**（render 显式 `--workers`，两臂交错；Linux = WSL2 v4 引擎，5 轮，`/usr/bin/time`；Windows = 原生
+clang-cl v3 引擎，3 轮；M rays/s，中位数）：
+
+| 场景 | Linux W10 前 → 后 | W16 | W32 | Windows W32（其默认）前 → 后 |
+|---|---|---|---|---|
+| `bench_light_single_ms` | 10.68 → 14.29 | 4.29 → 14.49 | 4.03 → 15.56 | 17.16 → 17.54 |
+| `ms_multi_crystal` | 2.69 → 2.77 | 3.91 → 3.94 | 2.75 → 3.39 | 2.18 → 3.27 |
+| `ms_multi_crystal_complex_filter` | 10.08 → 12.95 | 5.60 → 18.69 | 4.59 → 21.62 | 22.17 → 22.56 |
+| `ms_multi_crystal_filtered` | 10.64 → 13.74 | 5.05 → 19.90 | 4.61 → 22.54 | 23.89 → 23.81 |
+| `ms_multi_crystal_filtered_bd` | 11.06 → 15.34 | 6.87 → 22.10 | 4.68 → 26.67 | 25.34 → 27.27 |
+| 2048×1024 单次散射 | 8.87 → 8.87 | 4.08 → 9.30 | 3.71 → 8.62 | 9.28 → 10.57 |
+| 512×256 单次散射 | 10.59 → 12.02 | 4.58 → 13.79 | 3.90 → 13.51 | 15.10 → 15.30 |
+| 五波长鱼眼 | 12.35 → 14.54 | 15.29 → 16.78 | 15.15 → 18.18 | 20.52 → 20.21 |
+
+Linux 16 worker 下每次运行的系统时间从 3.5–21 s 降到 0.4–1.8 s，单 worker 也快了 18–27%（每 batch 的交接
+在那里同样要付）。代价：16 worker 下峰值 RSS 是原来的 1.1–2.2×（最多 225 MB，2048×1024 场景；32 worker 下
+1.3–2.9×、最多 460 MB），这是每 worker 保留一次排队交接的价钱；从第一个 batch 入队到 consumer 看到第一份
+SimData 的时间不变（16 worker 下两臂都是 19–25 ms）——对重到一次完整交接会更久的场景，5 ms 的提前交付正是为
+保证这一点。Linux 上 16 worker 在全部八个场景胜过 10，32 在其中七个胜过 10。macOS（M2 Max，12 核，
+4–12 worker）变化 −2.3%…+4.4%，在其默认 10 下没有超出噪声的变化。
+
+**剩下的，以及为什么不是这堵墙。**
+- *单个 consumer 线程仍然封住最难消费的场景。* 2048×1024 场景从 10 worker 起平在 ~9 M rays/s，Linux 32 worker
+  读 10 worker 的 0.97×：它的 consumer 线程在 10 / 16 / 32 worker 下分别占 85% / 89% / 96% CPU，而 worker 在
+  16 / 32 下只忙 56% / 32%，系统时间仍在 1 s 左右。串行的 consumer 加 worker 帮不上忙，32 时还要经 SMT 与它共核。
+- *原生 Windows 在默认 worker 数以下。* Windows 从来没有这堵墙（唤醒便宜），所以只为拆分付代价：若干场景在
+  4–16 worker 下 −2…−5%，2048×1024 场景在 4 worker 下 −11.5%。后者大部分是 consumer 所在核在两次（如今稀疏了
+  16 倍的）唤醒之间进入空闲态——关掉处理器空闲态后差距缩到 −3.2%——且它在每次交接 8 与 16 份 SimData 之间
+  跳变（8 读 0.99×）。余下的几个百分点在 8 和 16 下都出现，未钉到原因。Windows 出厂的 32 worker 下，所有实测
+  场景都在 −1.5% 以内或更好（最多 +50%）。
+- 这里每个「Linux」数字都来自 WSL2，不是原生 Linux（「测量纪律」）。
 
 **GPU device root-gen（scrum-260）**：GPU 后端上，root 光线（取向 / 方向 / 入射点）经 counter-based
 PCG 流 `(gen_seed, gen_ray_base + tid)` 在 device 上生成，替代 host 预生成 + 上传。这是默认路径；对

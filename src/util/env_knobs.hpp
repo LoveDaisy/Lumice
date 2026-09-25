@@ -37,6 +37,14 @@ std::optional<std::string> TraceBackendOverride(Logger& logger);
 // override when set to a positive integer, else default_val. INFO once if applied.
 std::size_t DispatchRayNum(Logger& logger, std::size_t default_val);
 
+// LUMICE_CPU_HANDOFF_BATCHES — experiment knob: how much one CPU-route SimBatch
+// hands a worker per queue handoff, counted in the SimData it produces (physics
+// batches of the dispatch grain above, times wavelengths; server.cpp
+// kCpuHandoffBatches). 1 restores one handoff per physics batch, i.e. the pre-split
+// behaviour, which is what makes this the escape hatch as well as the sweep knob. Returns the override when set to a
+// positive integer, else default_val. INFO once if applied.
+std::size_t CpuHandoffBatches(Logger& logger, std::size_t default_val);
+
 // LUMICE_GEOM_CLOCK — experiment knob: how many rays share one sampled crystal
 // shape on the legacy CPU path (its geometry clock, K). K=1 is a fresh shape per
 // ray (the unconstrained optimum); 32 is the shipped default. Returns the

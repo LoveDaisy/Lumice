@@ -146,6 +146,47 @@ TEST(QueueTest, EmplaceAfterShutdownIsDropped) {
   EXPECT_EQ(v, 42);
 }
 
+TEST(QueueTest, EmplaceManyKeepsFifoOrderAndEmptiesItsArgument) {
+  Queue<int> q;
+  q.Emplace(0);
+  std::vector<int> burst{ 1, 2, 3 };
+  q.EmplaceMany(burst);
+  EXPECT_TRUE(burst.empty()) << "the caller reuses the vector for its next burst";
+  q.Emplace(4);
+  for (int i = 0; i <= 4; ++i) {
+    EXPECT_EQ(q.Get(), i);
+  }
+  std::vector<int> none;
+  q.EmplaceMany(none);  // no-op
+  EXPECT_TRUE(q.Empty());
+}
+
+TEST(QueueTest, EmplaceManyWakesEveryBlockedConsumer) {
+  // One burst, one wake-up call — and every waiter it can feed must come out of the
+  // wait: two consumers blocked on an empty queue, one burst of two, both return.
+  Queue<int> q;
+  std::atomic<int> sum{ 0 };
+  std::thread a([&] { sum += q.Get(); });
+  std::thread b([&] { sum += q.Get(); });
+  std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  std::vector<int> burst{ 10, 20 };
+  q.EmplaceMany(burst);
+  a.join();
+  b.join();
+  EXPECT_EQ(sum.load(), 30);
+}
+
+TEST(QueueTest, EmplaceManyAfterShutdownIsDropped) {
+  Queue<int> q;
+  q.Shutdown();
+  std::vector<int> burst{ 1, 2 };
+  q.EmplaceMany(burst);
+  EXPECT_TRUE(burst.empty()) << "dropped, like Emplace after Shutdown, and still consumed";
+  q.Start();
+  q.Emplace(42);
+  EXPECT_EQ(q.Get(), 42);
+}
+
 TEST(QueueTest, ShutdownIdempotent) {
   Queue<int> q;
   q.Emplace(1);

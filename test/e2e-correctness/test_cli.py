@@ -361,6 +361,30 @@ class TestSeedOption(LumiceTestCase):
         self.assertIn("benchmark does not accept --seed", result.stderr)
 
 
+def _linux_physical_core_count():
+    """Distinct (physical id, core id) pairs in /proc/cpuinfo, or None if it has none.
+
+    Deliberately a second reading of the core count, not the engine's own
+    (see TestWorkerCount's docstring): the Linux arm is an identity check, and
+    one that asked the binary how many cores it counted would agree with it
+    whatever it counted.
+    """
+    try:
+        text = Path("/proc/cpuinfo").read_text()
+    except OSError:
+        return None
+    pairs = set()
+    for block in text.split("\n\n"):
+        fields = dict(
+            (k.strip(), v.strip())
+            for k, _, v in (line.partition(":") for line in block.splitlines())
+            if k.strip() in ("physical id", "core id")
+        )
+        if len(fields) == 2:
+            pairs.add((fields["physical id"], fields["core id"]))
+    return len(pairs) or None
+
+
 class TestWorkerCount(LumiceTestCase):
     """--workers N: the CLI entry point for the simulation worker count.
 
@@ -379,11 +403,13 @@ class TestWorkerCount(LumiceTestCase):
     second authority free to drift from the first.
 
     The automatic rule is a per-platform pair (core-count source, cap), and the
-    two platforms have different shapes, so the cap assertion splits on
-    ``IS_WINDOWS``. Linux/macOS: ``min(PhysicalCoreCount(), 10)``. Windows:
-    ``LogicalCoreCount()`` with no narrower cap at all — there is no such thing
-    as "a cap below the logical core count" on that platform, so the Windows arm
-    asserts the identity (default == logical CPUs) rather than an inequality.
+    platforms have different shapes, so the cap assertion splits three ways.
+    macOS: ``min(PhysicalCoreCount(), 10)``. Windows: ``LogicalCoreCount()`` with
+    no narrower cap at all — there is no such thing as "a cap below the logical
+    core count" on that platform, so the Windows arm asserts the identity
+    (default == logical CPUs) rather than an inequality. Linux:
+    ``PhysicalCoreCount()``, likewise uncapped, so its arm asserts the identity
+    against the physical core count read from /proc/cpuinfo.
 
     The cap's own value is the one number these tests do restate from C++
     (``EXPECTED_DEFAULT_CAP``). There is no way around that: the whole point of
@@ -394,11 +420,12 @@ class TestWorkerCount(LumiceTestCase):
     maintenance cost to be engineered away.
     """
 
-    # Mirrors the non-Windows branch of ServerImpl::AutomaticWorkerBaseAndCap() in
+    # Mirrors the macOS branch of ServerImpl::AutomaticWorkerBaseAndCap() in
     # src/server/server.cpp. See the class docstring for why this is deliberately
     # a second copy rather than a lookup.
     EXPECTED_DEFAULT_CAP = 10
     IS_WINDOWS = platform.system() == "Windows"
+    IS_LINUX = platform.system() == "Linux"
 
     WORKER_LINE = re.compile(r"worker_count=(\d+)")
 
@@ -480,6 +507,16 @@ class TestWorkerCount(LumiceTestCase):
                 default_workers,
                 os.cpu_count() or 1,
                 "on Windows the automatic worker count IS the logical core count",
+            )
+            return
+        if self.IS_LINUX:
+            physical = _linux_physical_core_count()
+            if physical is None:
+                self.skipTest("/proc/cpuinfo carries no (physical id, core id) pairs here")
+            self.assertEqual(
+                default_workers,
+                physical,
+                "on Linux the automatic worker count IS the physical core count, uncapped",
             )
             return
         self.assertLessEqual(

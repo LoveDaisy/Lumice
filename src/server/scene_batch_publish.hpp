@@ -50,19 +50,24 @@ void AccountThenPublishBatch(std::atomic_int& sim_scene_cnt, int credit, QueueT&
 // call the epoch drained while batches remain; this order errs the other way, briefly
 // over-reporting in-flight work, which costs nothing but a late "drained" verdict.
 //
-// The caller must know that every batch it is discarding was charged the same credit — true
-// for GenerateScene, whose scene snapshot (and hence per-batch SimData count) is fixed for
-// the whole invocation, and whose queue cannot hold a batch from any other invocation
+// Each dropped batch is refunded what it was charged: `credit_per_physics_batch` (the
+// SimData one physics batch produces — its wavelength count) times the physics batches it
+// carries (SimBatch::PhysicsBatchCount()), which is the credit GenerateScene computed for it
+// when it published it. The caller must know that every batch shares that per-physics-batch
+// credit — true for GenerateScene, whose scene snapshot (and hence wavelength count) is fixed
+// for the whole invocation, and whose queue cannot hold a batch from any other invocation
 // (Stop() swap-clears the queue, and CommitConfig restarts through Stop/Start).
 template <class QueueT>
-size_t DiscardQueuedBatchesThenRefund(std::atomic_int& sim_scene_cnt, int credit_per_batch, QueueT& queue,
+size_t DiscardQueuedBatchesThenRefund(std::atomic_int& sim_scene_cnt, int credit_per_physics_batch, QueueT& queue,
                                       size_t* out_batch_count = nullptr) {
   auto dropped = queue.DrainAll();
   size_t ray_num = 0;
+  int refund = 0;
   for (const auto& batch : dropped) {
     ray_num += batch.ray_num_;
+    refund += static_cast<int>(batch.PhysicsBatchCount()) * credit_per_physics_batch;
   }
-  sim_scene_cnt -= static_cast<int>(dropped.size()) * credit_per_batch;
+  sim_scene_cnt -= refund;
   if (out_batch_count) {
     *out_batch_count = dropped.size();
   }
