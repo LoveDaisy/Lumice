@@ -720,7 +720,7 @@ Valuable design/architecture docs live in `doc/` (tracked). Consult the relevant
     专测钉住）/ 总能量降序必有，密度排序（能量/立体角）v1 未做。顺带闭环：列表行 →「Exclude this
     raypath」→ 生成 filter → 重跑（`WriteFilterToPool`），v1 只对单段链可用（五类可用性判据见 §5）。
     chain id 约化对称来源的 A/B 之争已随 symmetry 搬到读取侧（C API v4.33）而结构性消失，见 §7 末尾。
-    ⭐**一条 535.1 起草时的 assistant 推断被 535.3 实现证伪**：`ProjectExitToPixel` 本身**不含**
+    ⭐**一条设计阶段的 assistant 推断被实现证伪**：`ProjectExitToPixel` 本身**不含**
     `visible`/`front` 语义，「可见区域」ROI 需要额外组合 `VisibleByRange`/`FrontVisible`（§3.4）。
     含逐条回写「已确认/已证伪/仍待办」的诚实边界（§6）与已落地后仍明确未做的四项升级点及各自触发条件
     （§8：GPU kernel / 密度排序 / 列表→预览高亮联动 / 多段链排除）。改光路分析面板 / 链 id 携带 /
