@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1790351096836,
+  "lastUpdate": 1790351101021,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -4770,48 +4770,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "fdf903868b533c085c845322ee50722158e3a089",
-          "message": "Merge pull request #313 from LoveDaisy/scrum/sentinel-liveness-audit\n\ntest(sentinel): retire the one regression sentinel that outlived its mechanism",
-          "timestamp": "2026-09-06T00:54:43+08:00",
-          "tree_id": "58522174f803a4d43425b4cd8e96c32dbab08dee",
-          "url": "https://github.com/LoveDaisy/ice_halo_sim/commit/fdf903868b533c085c845322ee50722158e3a089"
-        },
-        "date": 1788628074947,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "Ubuntu ARM64",
-            "value": 1205476.4,
-            "unit": "rays/sec",
-            "extra": "CPU: Neoverse-N2\\nCores: 4"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 757574.6,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 9V74 80-Core Processor\\nCores: 4"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 674237.5,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "aa3ec3edc826ec5ba4b7cb59fb1e102222309889",
           "message": "Merge pull request #314 from LoveDaisy/scrum/worker-and-batch-granularity\n\nperf(cpu): cap the automatic worker count at 10, expose --workers, and fix a hit-loop buffer overflow",
           "timestamp": "2026-09-06T10:48:35+08:00",
@@ -9500,6 +9458,54 @@ window.BENCHMARK_DATA = {
             "value": 586912.6,
             "unit": "rays/sec",
             "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "6a148bbcba23d5e330a528600062b88fbe62aae5",
+          "message": "Merge pull request #414 from LoveDaisy/perf/cpu-per-ray-wavelength\n\nperf(core): stratify the CPU illuminant wavelength across physics batches",
+          "timestamp": "2026-09-25T23:31:46+08:00",
+          "tree_id": "b0ecff07f1973fc2a59863cf12726b470566f04c",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/6a148bbcba23d5e330a528600062b88fbe62aae5"
+        },
+        "date": 1790351100247,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 797618.9,
+            "unit": "rays/sec",
+            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 1023832.5,
+            "unit": "rays/sec",
+            "extra": "CPU: Neoverse-N2\\nCores: 4"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 736770.4,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 7763 64-Core Processor\\nCores: 4"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 648817.4,
+            "unit": "rays/sec",
+            "extra": "CPU: Intel(R) Xeon(R) Platinum 8370C CPU @ 2.80GHz\\nCores: 4"
           }
         ]
       }
