@@ -227,8 +227,32 @@ std::string FilterSummary(const std::optional<FilterConfig>& f);
 
 // ---- Panel rendering ----
 
-// Render a single entry card within a layer. Returns true if the delete button was clicked.
-bool RenderEntryCard(GuiState& state, int layer_idx, int entry_idx);
+// What a card asked its layer to do this frame. Structural changes are never applied inside the
+// card: RenderLayer applies them after its loop over the cards, so no card is drawn under an index
+// that has already shifted.
+struct EntryCardAction {
+  bool delete_requested = false;
+  bool duplicate_requested = false;
+  // A same-layer drop landed on this card: move the entry at move_from to move_to (final index,
+  // MoveEntryWithinLayer semantics). -1 when nothing was dropped.
+  int move_from = -1;
+  int move_to = -1;
+};
+
+// Drag-and-drop payload type of an entry card's drag handle; the payload is a CardDragPayload.
+inline constexpr const char* kCardDragPayloadType = "LUMICE_ENTRY_CARD";
+struct CardDragPayload {
+  int layer_idx;
+  int entry_idx;
+};
+
+// Final index for a card dragged from `from_idx` and dropped into the gap `insert_before` (0..n:
+// the gap above the card of that index, n = below the last card). Returns from_idx when the drop
+// would leave the order unchanged (either gap adjacent to the dragged card).
+int DropGapToMoveTarget(int from_idx, int insert_before);
+
+// Render a single entry card within a layer.
+EntryCardAction RenderEntryCard(GuiState& state, int layer_idx, int entry_idx);
 
 // Render a full layer (collapsing header + entry cards + controls).
 void RenderLayer(GuiState& state, int layer_idx);
@@ -257,6 +281,20 @@ bool UnlinkEntryFromPool(GuiState& state, int layer_idx, int entry_idx);
 // Complete a pick-mode share: copy source entry's (crystal_id, filter_id) onto
 // the target entry. Returns true if any id actually changed.
 bool ApplyPickLink(GuiState& state, GuiState::EntryRef source, GuiState::EntryRef target);
+
+// ---- Structural edits of one layer's entry list ----
+//
+// The single primitive for putting an entry at a position other than the end: take the entry at
+// from_idx out and reinsert it at to_idx (std::rotate semantics — everything in between shifts one
+// step toward from_idx), then repair every positional binding into the layer through
+// NotifyEntryMoved (edit_modals.hpp). Duplicate-below and drag-reorder both go through it, so the
+// binding repair for a shifted entry is written once. Out-of-range indices and from == to are no-ops.
+void MoveEntryWithinLayer(GuiState& state, int layer_idx, int from_idx, int to_idx);
+
+// Duplicate the entry into an independent copy (its own crystal slot, and its own filter slot when
+// it has one; `proportion` and `enabled` carried over) placed directly below the original.
+// Returns the copy's index, or -1 when the indices are out of range.
+int DuplicateEntryBelow(GuiState& state, int layer_idx, int entry_idx);
 
 }  // namespace lumice::gui
 

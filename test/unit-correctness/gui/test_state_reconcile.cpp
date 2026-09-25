@@ -12,8 +12,10 @@
 #include <gtest/gtest.h>
 
 #include <cstdint>
+#include <initializer_list>
 #include <set>
 #include <string>
+#include <utility>
 
 #include "gui/gui_state.hpp"
 #include "gui/gui_state_reconcile.hpp"
@@ -35,6 +37,25 @@ using gui::ReconcileGuiEffects;
 //
 // The collections are non-empty on purpose: a vector-vs-vector comparison of two empty vectors is
 // equal for reasons that have nothing to do with the fields inside them.
+// Append entries to layer 0 as (crystal_id, filter_id) pairs, -1 meaning "no filter". The pools
+// are grown to cover every id named, so each entry refers to a slot that exists.
+void AddEntries(GuiState& s, std::initializer_list<std::pair<int, int>> entries) {
+  for (const auto& [cid, fid] : entries) {
+    while (static_cast<int>(s.crystals.size()) <= cid) {
+      s.crystals.emplace_back();
+    }
+    while (fid >= 0 && static_cast<int>(s.filters.size()) <= fid) {
+      s.filters.emplace_back();
+    }
+    gui::EntryCard e;
+    e.crystal_id = cid;
+    if (fid >= 0) {
+      e.filter_id = fid;
+    }
+    s.layers[0].entries.push_back(e);
+  }
+}
+
 GuiState MakeBaselineState() {
   GuiState s;
   s.crystals.emplace_back();
@@ -214,6 +235,46 @@ TEST(GuiStateReconcile, AttachingOrDetachingAFilterIsHardButRebindingIsNot) {
     // past the overlap.
     { "an added entry with no filter", [](GuiState& s) { s.layers[0].entries.emplace_back(); },
       [](GuiState& s) { s.layers[0].entries.emplace_back(); }, false },
+    // Reordering a layer keeps its entry count, so the detector sees it — and a filtered card
+    // swapping places with an unfiltered one is not a presence toggle on either. Matched by crystal
+    // id (distinct here), the swap is soft.
+    { "a filtered and an unfiltered card swap places", [](GuiState& s) { AddEntries(s, { { 0, 0 }, { 1, -1 } }); },
+      [](GuiState& s) { std::swap(s.layers[0].entries[0], s.layers[0].entries[1]); }, false },
+    // The same swap, plus a real detach on one of the two: matching by identity must still see it.
+    { "a swap that also detaches a filter", [](GuiState& s) { AddEntries(s, { { 0, 0 }, { 1, -1 } }); },
+      [](GuiState& s) {
+        std::swap(s.layers[0].entries[0], s.layers[0].entries[1]);
+        s.layers[0].entries[1].filter_id.reset();
+      },
+      true },
+    // Two cards linked to one crystal have no per-entry identity, so the layer falls back to the
+    // index comparison. Moving a filter from one to the other without moving either card is a real
+    // attach + detach, and must stay hard.
+    { "a filter moved between two cards on one crystal", [](GuiState& s) { AddEntries(s, { { 0, 0 }, { 0, -1 } }); },
+      [](GuiState& s) {
+        s.layers[0].entries[0].filter_id.reset();
+        s.layers[0].entries[1].filter_id = 0;
+      },
+      true },
+    // Known, accepted over-report: swapping the two cards on one crystal reads as the same attach +
+    // detach under the index fallback. Safe direction (an extra restart, never a missed one).
+    { "two cards on one crystal swap places", [](GuiState& s) { AddEntries(s, { { 0, 0 }, { 0, -1 } }); },
+      [](GuiState& s) { std::swap(s.layers[0].entries[0], s.layers[0].entries[1]); }, true },
+    // And the fallback is per LAYER, not per pair: one linked pair anywhere in the layer puts every
+    // reorder in it on the index comparison, including a swap of two unrelated cards.
+    { "an unrelated swap in a layer that also holds a linked pair",
+      [](GuiState& s) { AddEntries(s, { { 0, 0 }, { 0, -1 }, { 1, 0 }, { 2, -1 } }); },
+      [](GuiState& s) { std::swap(s.layers[0].entries[2], s.layers[0].entries[3]); }, true },
+    // A baseline layer with a linked pair, unlinked since while also reordered: live ids are all
+    // distinct, but one of them is new to the layer, and the conservative "unknown id" branch is
+    // what reports the detach that happened alongside.
+    { "a linked pair unlinked, reordered and detached", [](GuiState& s) { AddEntries(s, { { 0, 0 }, { 0, -1 } }); },
+      [](GuiState& s) {
+        s.layers[0].entries[0].crystal_id = 1;
+        s.layers[0].entries[0].filter_id.reset();
+        std::swap(s.layers[0].entries[0], s.layers[0].entries[1]);
+      },
+      true },
   };
 
   for (const Case& c : kCases) {

@@ -109,10 +109,12 @@ The bottom of each layer carries a `+ Crystal` button (add another entry) and th
 
 Hovering a crystal card reveals two small action buttons in its top-right corner:
 
-- `D` — duplicate the entry into the same layer (deep copy of crystal / axis / filter / proportion).
+- `D` — duplicate the entry into the same layer, directly below the original (deep copy of crystal / axis / filter / proportion).
 - `×` — delete the entry. Coloured red and disabled when the layer would otherwise be empty.
 
 The buttons fade in / out via alpha so the card layout stays stable; clicks are routed even on the very first hovered frame.
+
+**Reordering** — drag a card by its thumbnail and drop it on another card of the same layer: the upper half of the target card places it above, the lower half below, and an accent line in the gap shows where it will land. Cards cannot be dragged into a different layer. A click on the thumbnail that does not turn into a drag opens the editor, like a click anywhere else on the card.
 
 ### Linked Entries
 

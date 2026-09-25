@@ -99,6 +99,15 @@ EditModalTarget GetEditModalTarget();
 void NotifyEntryDeleted(GuiState& state, int layer_idx, int deleted_entry_idx);
 void NotifyLayerDeleted(GuiState& state, int deleted_layer_idx);
 
+// The same bindings, after an entry of layer layer_idx was moved from from_idx to to_idx within
+// that layer (the element is reinserted at to_idx, everything in between shifts one step toward
+// from_idx). Every binding keeps denoting the entry it denoted before the move — nothing closes and
+// pick mode is not cancelled, because nothing was removed. Only MoveEntryWithinLayer (panels.hpp)
+// calls this; every insert-at-position and reorder of a layer's entries goes through that one
+// primitive, so the rule lives here once. Colour-class refs name layers, not entries, and are
+// unaffected by a move inside one layer.
+void NotifyEntryMoved(GuiState& state, int layer_idx, int from_idx, int to_idx);
+
 // Returns the EditTarget corresponding to the currently active tab. Returns
 // EditTarget::kCrystal when no modal is open because ResetModalState() resets
 // g_active_tab to kCrystal on close. Intended solely for resolving the tab in

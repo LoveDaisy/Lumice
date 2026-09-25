@@ -25,6 +25,7 @@
 #include "gui/app.hpp"
 #include "gui/file_io.hpp"
 #include "gui/gui_state.hpp"
+#include "gui/panels.hpp"  // MoveEntryWithinLayer
 #include "gui/preview_renderer.hpp"
 #include "gui/raypath_segments.hpp"
 #include "support/scene_json_helpers.hpp"
@@ -1503,6 +1504,62 @@ TEST(DocumentRoundtripChain, LensTypeIsSpelledOnDiskTheWayCoreSpellsIt) {
     }
   }
   ClearImportComplexFilterWarning();
+}
+
+// A layer reordered in the GUI keeps that order in both documents that leave it: the .lmc JSON
+// (read back through DeserializeGuiStateJson) and the core JSON export (whose scattering entries
+// are what the CLI renders). Neither writer sorts, but nothing says so except that no one has
+// written the sort yet — and an order quietly restored on reopen would read as "my reorder did not
+// stick", with nothing on screen to say otherwise.
+//
+// The entries are told apart by weight, the one per-entry field both documents carry verbatim in
+// meaning: pool ids are renumbered by both writers, so they cannot identify an entry across the
+// trip. Weights 1/2/3 on the original order, moved so that it reads 2/3/1 — a rotation, which no
+// sort by any single field of these entries restores.
+TEST(DocumentRoundtripChain, AReorderedLayerKeepsItsOrderInTheDocumentAndTheExport) {
+  GuiState before;
+  before.crystals.assign(3, CrystalConfig{});
+  before.filters.clear();
+  Layer layer;
+  for (int i = 0; i < 3; ++i) {
+    EntryCard e;
+    e.crystal_id = i;
+    e.proportion = static_cast<float>(i + 1);
+    layer.entries.push_back(e);
+  }
+  before.layers.assign(1, layer);
+  MoveEntryWithinLayer(before, 0, 0, 2);
+  const std::vector<float> expected{ 2.0f, 3.0f, 1.0f };
+  std::vector<float> moved;
+  for (const auto& e : before.layers[0].entries) {
+    moved.push_back(e.proportion);
+  }
+  ASSERT_EQ(moved, expected) << "the move itself did not produce the order under test";
+
+  GuiState after;
+  ASSERT_TRUE(DeserializeGuiStateJson(SerializeGuiStateJson(before), after));
+  ASSERT_EQ(after.layers.size(), 1u);
+  std::vector<float> reloaded;
+  for (const auto& e : after.layers[0].entries) {
+    reloaded.push_back(e.proportion);
+  }
+  EXPECT_EQ(reloaded, expected) << "the .lmc document did not keep the reordered layer's order";
+
+  std::string json;
+  std::string warning;
+  ASSERT_TRUE(BuildExportJsonOrWarn(before, &json, &warning)) << warning;
+  const nlohmann::json doc = nlohmann::json::parse(json);
+  const auto& entries = doc.at("scene").at("scattering").at(0).at("entries");
+  ASSERT_EQ(entries.size(), 3u);
+  // Compared as ratios to the last entry, so a writer that normalizes the weights still passes and
+  // only a reorder fails.
+  const float last = entries.at(2).at("proportion").get<float>();
+  ASSERT_GT(last, 0.0f);
+  std::vector<float> exported;
+  for (const auto& je : entries) {
+    exported.push_back(je.at("proportion").get<float>() / last);
+  }
+  EXPECT_EQ(exported, expected) << "the core JSON export did not keep the reordered layer's order";
 }
 
 }  // namespace lumice::gui

@@ -410,6 +410,7 @@ if(BUILD_GUI)
     # embedded fonts (lumice_gui_obj), no frame.
     "${PROJ_TEST_DIR}/unit-correctness/gui/test_theme_scale.cpp"
     "${PROJ_TEST_DIR}/unit-correctness/gui/test_edit_modal_delete_binding.cpp"
+    "${PROJ_TEST_DIR}/unit-correctness/gui/test_edit_modal_move_binding.cpp"
     "${PROJ_TEST_DIR}/unit-correctness/gui/test_view_look_at.cpp"
     "${PROJ_TEST_DIR}/unit-correctness/gui/test_wedge_presets.cpp"
     "${PROJ_TEST_DIR}/unit-correctness/gui/test_custom_wedge_input.cpp"
