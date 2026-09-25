@@ -1380,7 +1380,15 @@ Error ServerImpl::ContinueRun(size_t additional_ray_num) {
   // queued for ConsumeData, and the Stop() below would throw them away (Queue::Shutdown) —
   // rays traced and never accumulated. Wait for the drain signal first. It follows COMPLETED
   // within one consumer pass, so the bound is a guard against a drain that never publishes,
-  // not a latency anyone waits out.
+  // not a latency anyone waits out — code review round 1, Major #1: proceeding anyway on
+  // timeout silently dropped the undrained batches while this function's own doc comment (and
+  // lumice.h's) promises unconditionally that "no traced ray is dropped". Erroring out instead
+  // keeps that promise true in every code path: a caller that hits this either gets the drain it
+  // asked for, or a rejected call that (per the same doc comment) changed nothing — never a
+  // silent LUMICE_OK sitting on top of a quiet loss. 5s is a generous multiple of a normal
+  // consumer pass (observed low milliseconds); a real trip of this bound means the consumer is
+  // stuck, not merely slow, so surfacing it as an error rather than absorbing it here is also the
+  // more honest signal to the caller.
   if (lifecycle == SimLifecycle::kCompleted) {
     constexpr auto kDrainWaitCap = std::chrono::seconds(5);
     const auto deadline = std::chrono::steady_clock::now() + kDrainWaitCap;
@@ -1388,10 +1396,9 @@ Error ServerImpl::ContinueRun(size_t additional_ray_num) {
       std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
     if (DrainedEpoch() != CommittedEpoch()) {
-      ILOG_WARN(logger_,
-                "ContinueRun: the completed run did not report drained within {}s; its undrained batches "
-                "are dropped by the stop that starts the continuation",
-                std::chrono::duration_cast<std::chrono::seconds>(kDrainWaitCap).count());
+      return Error::ServerError(
+          "ContinueRun: the completed run's last batches did not finish draining within 5s; "
+          "nothing was changed, retry shortly");
     }
   }
 

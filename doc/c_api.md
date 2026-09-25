@@ -921,11 +921,14 @@ LUMICE_ErrorCode LUMICE_ContinueRender(LUMICE_Server* server, int infinite, LUMI
 - `LUMICE_ERR_NULL_ARG`: `server` is `NULL`
 - `LUMICE_ERR_INVALID_VALUE`: `infinite == 0` with `additional_ray_num == 0`
 - `LUMICE_ERR_SERVER`: nothing to continue — no render was ever committed, or the current
-  session is a raypath analysis (commit a render again first) — or a run is in progress.
-  The four causes share the code; a caller that must tell them apart can read
+  session is a raypath analysis (commit a render again first), a run is in progress, or a
+  just-completed run's last batches did not finish draining within an internal wait bound (retry
+  shortly). The five causes share the code; a caller that must tell them apart can read
   `LUMICE_GetSimLifecycle()` (`lifecycle`, `session_kind`) first.
 
-A rejected call changes nothing.
+A rejected call changes nothing — including the drain-timeout case: rather than proceed and
+silently discard the undrained batches, the call fails so "no traced ray is dropped" (below)
+holds unconditionally, not just in the common case.
 
 **What carries over**: everything a commit would reset — the render planes (raw XYZ and the
 images made from them), `sim_ray_num` and the other statistics, `emitted_energy`, and the
@@ -944,7 +947,9 @@ of commits and continuations traces the same rays.
 (`IDLE`). On success the lifecycle reads `RUNNING` and the epoch has advanced by one, exactly as
 after a commit; poll `LUMICE_GetSimLifecycle()` / `LUMICE_GetDrainStatus()` as for any run. A
 completed run whose last batches are still being consumed is drained before the continuation
-starts, so no traced ray is dropped.
+starts, so no traced ray is dropped — if that drain does not finish within 5s (a normal consumer
+pass is orders of magnitude faster; hitting the bound means the consumer is stuck, not merely
+slow), the call returns `LUMICE_ERR_SERVER` instead of proceeding and dropping them.
 
 ### Raypath Analysis Run
 

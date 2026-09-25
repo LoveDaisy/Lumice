@@ -1876,13 +1876,17 @@ void LUMICE_StopServer(LUMICE_Server* server);
 // On success the lifecycle reads RUNNING and the epoch has advanced by one, exactly as after a
 // commit; poll LUMICE_GetSimLifecycle / LUMICE_GetDrainStatus as for any run, and the run ends
 // COMPLETED (finite) or stays RUNNING until stopped (infinite). A completed run whose last
-// batches are still being consumed is drained first, so no traced ray is dropped.
+// batches are still being consumed is drained first, so no traced ray is dropped — unconditionally:
+// if that drain does not finish within an internal bound (a normal consumer pass is orders of
+// magnitude faster), the call fails rather than proceeding and discarding them (see Errors below).
 //
 // Errors (a rejected call changes nothing): LUMICE_ERR_NULL_ARG (NULL server);
 // LUMICE_ERR_INVALID_VALUE (`infinite` == 0 with `additional_ray_num` == 0); LUMICE_ERR_SERVER
 // when there is nothing to continue — no render was ever committed, or the current session is a
-// raypath analysis (LUMICE_StartRaypathAnalysis; a render must be committed again first) — or
-// when a run is in progress.
+// raypath analysis (LUMICE_StartRaypathAnalysis; a render must be committed again first), a run
+// is in progress, or a just-completed run's last batches did not finish draining within the
+// internal wait bound (retry shortly; this is the "no traced ray is dropped" guarantee failing
+// safe rather than silently).
 LUMICE_ErrorCode LUMICE_ContinueRender(LUMICE_Server* server, int infinite, LUMICE_RayCount additional_ray_num);
 
 // =============== Crystal Mesh ===============
