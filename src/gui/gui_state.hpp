@@ -1323,6 +1323,10 @@ static_assert(sizeof(kMarkerSerialNames) / sizeof(kMarkerSerialNames[0]) == LUMI
 // Which of a marker row's three serialized leaves a key names.
 enum class MarkerKeyPart { kLine, kLabel, kColor };
 
+// The two families of iso-angular rings the Angular Distance section edits: about the sun
+// (GuiState::sun_circle_angles) and about the optical axis (GuiState::view_dist_angles).
+enum class AngularDistFamily { kSun, kView };
+
 // THE one place a per-marker serialization key is spelled. Every consumer — the writer and the
 // reader in file_io.cpp, the editor registry, the tests — calls this rather than writing
 // "overlay_marker_sun_color" out by hand, so a rename is one edit and the four sides cannot drift.
@@ -1778,6 +1782,33 @@ struct GuiState {
     uint64_t excluded_seq = 0;
   };
   RaypathAnalysisSession analysis;
+
+  // The Angular Distance section's "pick a radius on the preview" mode (angular_dist_picker.hpp).
+  // While armed, the preview's left click belongs to the pick — camera orbit and zoom, the
+  // background gestures and the analysis window's point pick are all locked out — and the cursor
+  // carries a preview ring about `family`'s centre through its own direction. A click on the sky
+  // adds that ring's radius to the family's list and disarms; Esc or a right click over the
+  // preview disarms with the list untouched.
+  //
+  // Session tier and not serialized: an armed pick is a gesture in flight, not a property of the
+  // document. It lives here rather than in a file-scope global (the eyedropper's g_bg_pick shape)
+  // so that every path that rebuilds GuiState — DoNew and therefore ResetTestState — drops it with
+  // the rest; ResetFrontendState additionally disarms it by name for the reasons that keep the
+  // struct (Open, Revert).
+  //
+  // One of three modes that take the preview's next click — with the eyedropper (g_bg_pick) and
+  // the analysis window's point pick (analysis.pick_armed) — and arming any one disarms the other
+  // two, so at most one is ever armed and "which of them does this click belong to" has no case
+  // to decide.
+  struct AngularDistPicker {
+    bool armed = false;
+    AngularDistFamily family = AngularDistFamily::kSun;
+    // The eyedropper's latch (BgColorPickState::swallow_drag_until_release) for the same reason:
+    // the click that adds the ring fires on the mouse-DOWN frame, and the rest of that press must
+    // not reach the camera-orbit branch as a drag once the mode is off. Cleared on release.
+    bool swallow_drag_until_release = false;
+  };
+  AngularDistPicker angular_dist_picker;
 
   // The scene an analysis result DESCRIBES, as DoAnalyze saw it — the identity the panel's
   // freshness line compares the live document against each frame (ComputeAnalysisListFreshness,
