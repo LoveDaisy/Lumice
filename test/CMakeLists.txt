@@ -435,6 +435,9 @@ if(BUILD_GUI)
     # The Raypath Analysis panel's logic: adoption gate, ring sums, click arithmetic, the exclude
     # closure — every proposition the panel makes that is not an ImGui call.
     "${PROJ_TEST_DIR}/unit-correctness/gui/test_analysis_panel_logic.cpp"
+    # The Angular Distance picker's radius at a pixel (against closed-form lens formulas and core's
+    # inverse), which pixels are not pickable, and the list/overlay writes a pick makes.
+    "${PROJ_TEST_DIR}/unit-correctness/gui/test_angular_dist_picker.cpp"
     # AxisDistTypeToWire is the single table FillAxisDist and IsDApplicableGuiAxis share; nothing
     # else in the tree pins it against the literal LUMICE_DIST_* wire constants (backlog §2.H).
     "${PROJ_TEST_DIR}/unit-correctness/gui/test_axis_dist_type_to_wire.cpp")

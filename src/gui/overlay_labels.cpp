@@ -449,12 +449,10 @@ void AppendOverlayToDrawList(ImDrawList* dl, const std::vector<OverlayLabel>& la
   }
 }
 
-namespace detail {
-
-// Test-only thin wrapper exposing the anonymous-namespace PixelToWorldDir so
-// unit tests can pin per-lens dispatch. See overlay_labels.hpp for contract.
-void PixelToWorldDirForTesting(float px, float py, float res_x, float res_y, int lens_type, float fov,
-                               const float view_matrix[9], float* out_x, float* out_y, float* out_z, bool* out_valid) {
+// The public entry to the anonymous-namespace PixelToWorldDir. See overlay_labels.hpp for the
+// contract and for its two consumers.
+void PixelToWorldDir(float px, float py, float res_x, float res_y, int lens_type, float fov, const float view_matrix[9],
+                     float* out_x, float* out_y, float* out_z, bool* out_valid) {
   InvResult r = PixelToWorldDir(px, py, res_x, res_y, lens_type, fov, view_matrix);
   *out_valid = r.valid;
   if (r.valid) {
@@ -462,6 +460,13 @@ void PixelToWorldDirForTesting(float px, float py, float res_x, float res_y, int
     *out_y = r.y;
     *out_z = r.z;
   }
+}
+
+namespace detail {
+
+void PixelToWorldDirForTesting(float px, float py, float res_x, float res_y, int lens_type, float fov,
+                               const float view_matrix[9], float* out_x, float* out_y, float* out_z, bool* out_valid) {
+  lumice::gui::PixelToWorldDir(px, py, res_x, res_y, lens_type, fov, view_matrix, out_x, out_y, out_z, out_valid);
 }
 
 void WorldDirToPixelForTesting(float wx, float wy, float wz, float res_x, float res_y, int lens_type, float fov,

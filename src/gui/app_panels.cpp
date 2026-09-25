@@ -13,6 +13,7 @@
 
 #include "IconsFontAwesome6.h"
 #include "gui/analysis_panel.hpp"
+#include "gui/angular_dist_picker.hpp"
 #include "gui/angular_dist_rules.hpp"
 #include "gui/annotation_anchors.hpp"
 #include "gui/app.hpp"
@@ -824,6 +825,12 @@ constexpr float kBgPickSwatchOffsetPt = 16.0f;
 constexpr float kBgPickSwatchSizePt = 24.0f;
 // The analysis pick's crosshair at the cursor: half-length of each arm, in ImGui points.
 constexpr float kAnalysisPickCrosshairArmPt = 10.0f;
+// The Angular Distance picker's readout: offset from the cursor to the number's top-left, in ImGui
+// points. Further right than the eyedropper swatch's 16 pt: text starting at 16 pt put its first
+// digit under the arrow cursor's body (seen in a capture), where a swatch's larger square still
+// shows. To the right of the arrow, level with its lower half.
+constexpr float kAngularDistPickReadoutOffsetXPt = 22.0f;
+constexpr float kAngularDistPickReadoutOffsetYPt = 12.0f;
 
 // Draw a collapse/expand button as a foreground overlay using ImGui theme colors.
 // Returns true if clicked. Coordinates are viewport-local; under multi-viewport
@@ -1000,6 +1007,12 @@ void RenderLeftPanel(float window_height) {
 
 namespace {
 
+// Whether the preview panel is drawing a picture this frame — the gate of RenderPreviewPanel's
+// whole picture branch (overlays, gestures) and so of anything that acts on that picture.
+bool PreviewShowsPicture() {
+  return g_preview.HasTexture() || g_preview.HasBackground();
+}
+
 // The angle list behind an angular-distance row's fold: presets, a custom-angle input, and the
 // current list with per-entry delete.
 //
@@ -1008,9 +1021,10 @@ namespace {
 // the last one submitted wins. Having exactly one construction site is a property worth being able
 // to check by reading, not by trusting the loop's shape to stay what it is today.
 //
-// `angles` is a parameter because the editor has TWO callers — the Sun row's fold edits the
-// sun circles' list, the Lens Center row's fold edits the view circles' — and the list is the
-// only thing about the editor that differs between them, EXCEPT for the preset buttons: those are
+// `family` is a parameter because the editor has TWO callers — the Sun row's fold edits the
+// sun circles' list, the Lens Center row's fold edits the view circles' — and the list (with the
+// family its Pick button arms) is the only thing about the editor that differs between them,
+// EXCEPT for the preset buttons: those are
 // now also passed in (`presets`/`preset_count`), one table per family (Sun keeps halo radii
 // 9/22/28/46, Lens Center gets framing radii 22/46/90 — see the two callers in
 // RenderAngularDistSection for both tables). The rules the editor applies to whichever list it is
@@ -1019,7 +1033,8 @@ namespace {
 // offer. The typed scratch value is one `static` shared by both callers on purpose: only one popup
 // is open at a time, and a number half-typed for one family is not a value worth keeping apart per
 // family.
-void RenderCircleAnglePopup(std::vector<float>& angles, const float* presets, size_t preset_count) {
+void RenderCircleAnglePopup(AngularDistFamily family, const float* presets, size_t preset_count) {
+  std::vector<float>& angles = AngularDistFamilyAngles(g_state, family);
   bool at_limit = AngularDistCirclesAtLimit(angles.size());
 
   // Preset buttons
@@ -1051,6 +1066,27 @@ void RenderCircleAnglePopup(std::vector<float>& angles, const float* presets, si
     std::sort(angles.begin(), angles.end());
   }
   ImGui::EndDisabled();
+
+  // Pick the radius on the preview instead of typing it (angular_dist_picker.hpp). On the typed
+  // input's row because it is the same act — adding one radius — by pointing rather than by number.
+  // Greyed at the cap for the reason "+" is, and with no picture on screen, where there is nothing
+  // to point at. Closes the popup: the next click belongs to the preview.
+  ImGui::SameLine();
+  const bool can_pick = !at_limit && PreviewShowsPicture();
+  ImGui::BeginDisabled(!can_pick);
+  if (ImGui::Button(ICON_FA_CROSSHAIRS "##pick_circle")) {
+    ArmAngularDistPicker(g_state, family);
+    g_bg_pick.active = false;  // one click-taking mode at a time (gui_state.hpp); the analysis pick
+                               // is disarmed inside ArmAngularDistPicker, the eyedropper lives here
+    ImGui::CloseCurrentPopup();
+  }
+  ImGui::EndDisabled();
+  if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+    ImGui::SetTooltip("%s", at_limit               ? "The list is full." :
+                            !PreviewShowsPicture() ? "Needs a picture on the preview to point at." :
+                                                     "Pick on preview: a ring follows the cursor; click to add it.\n"
+                                                     "Esc or right click cancels.");
+  }
 
   // Current list with delete buttons
   ImGui::Separator();
@@ -1120,18 +1156,19 @@ struct OverlayRowSpec {
   // the icon codepoint, so renaming the icon would silently rename the item. "###suffix" hashes the
   // suffix alone. Null for a row with no fold.
   const char* fold_id;
-  // What the fold holds, when it holds anything: the angle list the row's popup edits. Null for a
-  // row with no fold — a row offers a fold exactly when it owns a field the others lack, and today
-  // that field is always a list of ring radii. A pointer rather than an enum naming the list: the
-  // two rows that fold differ in which vector the one editor is handed and which preset table it
-  // offers (see fold_presets below), and an enum would be two near-identical cases switching on
-  // that. (The reference-point markers' two family fields are NOT here: they belong to their
-  // section's header, not to a row in a table.)
-  std::vector<float>* fold_angles;
-  // The fold's preset buttons — a second thing that differs per family, alongside fold_angles: the
+  // What the fold holds, when it holds anything: the ring family whose angle list the row's popup
+  // edits. nullopt for a row with no fold — a row offers a fold exactly when it owns a field the
+  // others lack, and today that field is always a list of ring radii. The FAMILY rather than a
+  // pointer to its list, because the popup needs to know more than which vector to draw: its Pick
+  // button arms the picker for a family (angular_dist_picker.hpp), and a list pointer plus a family
+  // would be two fields stating one thing. The family's list is AngularDistFamilyAngles'. (The
+  // reference-point markers' two family fields are NOT here: they belong to their section's
+  // header, not to a row in a table.)
+  std::optional<AngularDistFamily> fold_family;
+  // The fold's preset buttons — a second thing that differs per family, alongside fold_family: the
   // Sun row's presets are halo astronomy's standing radii (9/22/28/46), the Lens Center row's are
   // framing/calibration radii with a different provenance (22/46/90, matching its own default list).
-  // Null (with fold_presets_count 0) for a row with no fold, set explicitly like fold_angles rather
+  // Null (with fold_presets_count 0) for a row with no fold, set explicitly like fold_family rather
   // than defaulted — same reasoning as color_field's "no default member initialiser" above.
   const float* fold_presets;
   size_t fold_presets_count;
@@ -1231,7 +1268,7 @@ void RenderOverlayRowsTable(const char* table_id, const OverlayRowSpec* rows, in
     DragFloatField(row.alpha_id + 2, row.alpha, static_cast<float>(alpha_c.min_value),
                    static_cast<float>(alpha_c.max_value), alpha_c.fmt, alpha_c.scale);
 
-    if (row.fold_angles == nullptr) {
+    if (!row.fold_family.has_value()) {
       continue;  // Empty fold cell: this overlay has no field the others lack.
     }
     ImGui::TableSetColumnIndex(5);
@@ -1248,7 +1285,7 @@ void RenderOverlayRowsTable(const char* table_id, const OverlayRowSpec* rows, in
       ImGui::SetTooltip("Edit angles");
     }
     if (ImGui::BeginPopup(row.fold_id)) {
-      RenderCircleAnglePopup(*row.fold_angles, row.fold_presets, row.fold_presets_count);
+      RenderCircleAnglePopup(*row.fold_family, row.fold_presets, row.fold_presets_count);
       ImGui::EndPopup();
     }
   }
@@ -1309,11 +1346,11 @@ void RenderAngularDistSection() {
   const OverlayRowSpec rows[] = {
     { "Sun", "##sun_circles_color", g_state.sun_circles_color, "overlay_sun_circles_color", "##sun_circles_line",
       &g_state.show_sun_circles_line, "##sun_circles_label", &g_state.show_sun_circles_label, "##sun_circles_alpha",
-      "overlay_sun_circles_alpha", &g_state.sun_circles_alpha, "###sun_circles_fold", &g_state.sun_circle_angles,
+      "overlay_sun_circles_alpha", &g_state.sun_circles_alpha, "###sun_circles_fold", AngularDistFamily::kSun,
       kSunCirclePresets, std::size(kSunCirclePresets) },
     { "Lens Center", "##view_dist_color", g_state.view_dist_color, "overlay_view_dist_color", "##view_dist_line",
       &g_state.show_view_dist_line, "##view_dist_label", &g_state.show_view_dist_label, "##view_dist_alpha",
-      "overlay_view_dist_alpha", &g_state.view_dist_alpha, "###view_dist_fold", &g_state.view_dist_angles,
+      "overlay_view_dist_alpha", &g_state.view_dist_alpha, "###view_dist_fold", AngularDistFamily::kView,
       kLensCenterCirclePresets, std::size(kLensCenterCirclePresets) },
   };
   RenderOverlayRowsTable("##AngularDistTable", rows, 2, /*with_headers=*/false);
@@ -1500,10 +1537,10 @@ void RenderOverlaysTab() {
   const OverlayRowSpec rows[] = {
     { "Horizon", "##horizon_color", g_state.horizon_color, "overlay_horizon_color", "##horizon_line",
       &g_state.show_horizon_line, "##horizon_label", &g_state.show_horizon_label, "##horizon_alpha",
-      "overlay_horizon_alpha", &g_state.horizon_alpha, nullptr, nullptr, nullptr, 0 },
+      "overlay_horizon_alpha", &g_state.horizon_alpha, nullptr, std::nullopt, nullptr, 0 },
     { "Grid", "##grid_color", g_state.grid_color, "overlay_grid_color", "##grid_line", &g_state.show_grid_line,
       "##grid_label", &g_state.show_grid_label, "##grid_alpha", "overlay_grid_alpha", &g_state.grid_alpha, nullptr,
-      nullptr, nullptr, 0 },
+      std::nullopt, nullptr, 0 },
     // The lens image circle. No text label (null label id, empty cell) and no fold: unlike the
     // angular-distance circles in the section below, it owns no field of its own — the shader
     // derives the circle from the lens type, the FOV and the viewport, so there is nothing here for
@@ -1513,7 +1550,7 @@ void RenderOverlaysTab() {
     // from consistency with its neighbours.
     { "Lens Border", "##lens_border_color", g_state.lens_border_color, nullptr, "##lens_border_line",
       &g_state.show_lens_border_line, nullptr, nullptr, "##lens_border_alpha", "overlay_lens_border_alpha",
-      &g_state.lens_border_alpha, nullptr, nullptr, nullptr, 0 },
+      &g_state.lens_border_alpha, nullptr, std::nullopt, nullptr, 0 },
   };
 
   // The Alpha column width is calibrated against THIS panel's width budget, not carried over from
@@ -1916,6 +1953,9 @@ void RenderRightPanel(GLFWwindow* window, float window_width, float window_heigh
       ImGui::BeginDisabled(!bg_pick_ok);
       if (ImGui::Button(ICON_FA_EYE_DROPPER "##display_sky_pick")) {
         g_bg_pick.active = !g_bg_pick.active;
+        if (g_bg_pick.active) {
+          g_state.angular_dist_picker.armed = false;  // one click-taking mode at a time (gui_state.hpp)
+        }
       }
       ImGui::EndDisabled();
       // AllowWhenDisabled: the disabled case is the one that most needs to say why.
@@ -2244,6 +2284,16 @@ void RenderPreviewPanel(GLFWwindow* window, float window_width, float window_hei
       (!ImGui::IsMouseDown(ImGuiMouseButton_Left) || !g_state.analysis.window_open)) {
     g_state.analysis.cone_marker_dragging = false;
   }
+  // The Angular Distance picker (angular_dist_picker.hpp) has the same two ways out, for the same
+  // reasons: Esc, read here ahead of any widget; and the picture going away under it (a document
+  // switch, a texture cleared), which would leave a click armed over nothing to point at. Its drag
+  // latch ends with the press that set it, like the eyedropper's.
+  if (g_state.angular_dist_picker.armed && (ImGui::IsKeyPressed(ImGuiKey_Escape, false) || !PreviewShowsPicture())) {
+    g_state.angular_dist_picker.armed = false;
+  }
+  if (g_state.angular_dist_picker.swallow_drag_until_release && !ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+    g_state.angular_dist_picker.swallow_drag_until_release = false;
+  }
 
   float left_w = UiPx(g_state.left_panel_collapsed ? kCollapseBtnSize : kLeftPanelWidth);
   float right_w = UiPx(g_state.right_panel_collapsed ? kCollapseBtnSize : kRightPanelWidth);
@@ -2276,7 +2326,7 @@ void RenderPreviewPanel(GLFWwindow* window, float window_width, float window_hei
   // that does not republish them is the frame that has neither. See PreviewViewport in app.hpp.
   g_preview_vp.curve_labels.clear();
 
-  if (g_preview.HasTexture() || g_preview.HasBackground()) {
+  if (PreviewShowsPicture()) {
     // Compute viewport in framebuffer pixels (for HiDPI)
     int fb_w = 0;
     int fb_h = 0;
@@ -2613,12 +2663,17 @@ void RenderPreviewPanel(GLFWwindow* window, float window_width, float window_hei
           marker_hover = dx * dx + dy * dy <= hit_r * hit_r;
         }
       }
+      // An armed Angular Distance pick owns the click outright, the cone marker included: the user
+      // is aiming a ring, and a press that lands on the marker must add the ring rather than grab
+      // the marker. So under it the arbiter is not consulted at all.
+      const bool angular_pick = g_state.angular_dist_picker.armed;
       const ConeInputOwner cone_owner =
-          cone_mode ?
+          cone_mode && !angular_pick ?
               ArbitrateConeInput(marker_hover || g_state.analysis.cone_marker_dragging, g_state.analysis.pick_armed) :
               ConeInputOwner::kCamera;
-      const bool gestures_locked =
-          g_bg_pick.active || g_bg_pick.swallow_drag_until_release || cone_owner != ConeInputOwner::kCamera;
+      const bool gestures_locked = g_bg_pick.active || g_bg_pick.swallow_drag_until_release ||
+                                   cone_owner != ConeInputOwner::kCamera || angular_pick ||
+                                   g_state.angular_dist_picker.swallow_drag_until_release;
       // Same predicate the eyedropper button is enabled by, and deliberately not a second copy of
       // the expression: "there is a photo on screen to act on" is one question, whether the act is
       // dragging it or sampling it.
@@ -2756,6 +2811,54 @@ void RenderPreviewPanel(GLFWwindow* window, float window_width, float window_hei
         // A click on the letterbox is deliberately inert — not a cancel: the user aimed at the
         // photo and missed its edge, and dropping them out of the mode would make the miss cost a
         // second trip to the button.
+      }
+
+      // The Angular Distance picker's branch (angular_dist_picker.hpp), gated on the flag
+      // gestures_locked carries for it. Over sky, the ring through the cursor is put on THIS
+      // frame's picture by handing its radius to the shader as one more level of the family
+      // (InjectAngularDistPickPreview on `pp`, the frame's own copy — the deferred pass has not
+      // run yet), and its value is written beside the cursor. Off sky (letterbox, outside the
+      // lens's image, the side `visible` / `front` hides) there is no ring, no number, and a click
+      // is inert — not a cancel, for the eyedropper's reason: the miss should not cost a second
+      // trip to the button. A right click over the preview cancels, as Esc does above.
+      if (angular_pick && !g_bg_pick.active && is_hovered) {
+        auto& picker = g_state.angular_dist_picker;
+        if (ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+          picker.armed = false;
+        } else {
+          const std::optional<CanvasPixel> px =
+              PreviewPointToCanvasPixel(io.MousePos.x - vp_origin.x, io.MousePos.y - vp_origin.y, dpi_scale_x,
+                                        dpi_scale_y, g_preview_vp.vp_w, g_preview_vp.vp_h);
+          std::optional<float> angle;
+          if (px.has_value()) {
+            angle = AngularDistAtCanvasPixel(picker.family,
+                                             PreviewAnnotationView(g_state, g_preview_vp.vp_w, g_preview_vp.vp_h),
+                                             pp.view_proj, g_state.sun.altitude, px->px, px->py);
+          }
+          if (angle.has_value()) {
+            InjectAngularDistPickPreview(picker.family, *angle, pp.overlay);
+            // On this window's draw list, like the analysis pick's crosshair: the number describes
+            // a point OF the picture, so it is clipped to the preview. A plate behind it, because
+            // it sits over whatever the sky is.
+            const std::string text = FormatAngularDistPickReadout(*angle);
+            const ImVec2 at(io.MousePos.x + UiPx(kAngularDistPickReadoutOffsetXPt),
+                            io.MousePos.y + UiPx(kAngularDistPickReadoutOffsetYPt));
+            const ImVec2 size = ImGui::CalcTextSize(text.c_str());
+            const float pad = UiPx(2.0f);
+            ImDrawList* dl = ImGui::GetWindowDrawList();
+            dl->AddRectFilled(ImVec2(at.x - pad, at.y - pad), ImVec2(at.x + size.x + pad, at.y + size.y + pad),
+                              IM_COL32(0, 0, 0, 170), 2.0f);
+            dl->AddText(at, IM_COL32(255, 255, 255, 255), text.c_str());
+            if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+              const bool added = CommitAngularDistPick(AngularDistFamilyAngles(g_state, picker.family), *angle);
+              GUI_LOG_INFO("[Overlay] angular distance picked: {:.2f} deg ({} family){}", *angle,
+                           picker.family == AngularDistFamily::kSun ? "sun" : "lens-center",
+                           added ? "" : " — already in the list, not added again");
+              picker.armed = false;
+              picker.swallow_drag_until_release = true;
+            }
+          }
+        }
       }
 
       // The analysis window's two gestures: the sixth and seventh branches, exclusive with the

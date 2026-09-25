@@ -778,6 +778,10 @@ void ResetFrontendState(GuiState& state, FrontendResetReason reason, const LmcTe
   // (which keeps that window open across kRevert): nothing in this window is worth keeping open,
   // and one rule that covers every reason is the shape the edit modal's close above settled on.
   state.config_summary_window_open = false;
+  // And an armed Angular Distance pick, by the same reasoning as the Summary window: the pick
+  // would otherwise survive into the next document, with the next click adding a ring to a list
+  // the user never aimed at.
+  state.angular_dist_picker.armed = false;
 
   // Preview texture / background — as-built subset per reason. `.lmc` variants both call
   // ClearBackground (post-branch shared line in the pre-refactor DoOpen); the DoOpen(.lmc)

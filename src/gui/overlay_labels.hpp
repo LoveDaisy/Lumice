@@ -96,26 +96,32 @@ void AppendCurveLabels(const CurveLabelSet& set, float vp_screen_x, float vp_scr
 void AppendOverlayToDrawList(ImDrawList* dl, const std::vector<OverlayLabel>& labels, float vp_screen_x,
                              float vp_screen_y, float vp_screen_w, float vp_screen_h);
 
-namespace detail {
-
 // Pure-function inverse projection: the C++ mirror of the preview fragment shader's own inverse
 // lens math (preview_renderer.cpp), kept in step with it by hand because GLSL cannot include a C++
 // header.
 //
-// ITS CONSUMER IS THE TEST LAYER, and deliberately so — read this before concluding it is dead.
-// It had one production caller, the GUI's curve walk, and that walk is gone (its labels come from
-// core now). What is left is its role as the GUI-SIDE ORACLE of the cross-implementation parity
-// gates: test_visible_mask_gui_parity.cpp, test_horizon_gui_parity.cpp,
+// TWO KINDS OF CONSUMER, and both are why it is kept.
+//
+// The production one is the Angular Distance picker (angular_dist_picker.cpp): it measures the
+// radius of the ring under the cursor by inverting the cursor pixel through THIS function and
+// hands that radius back to the shader as one more level of the same family, so the ring the
+// shader draws goes through the pixel the radius was measured at — the shader and this mirror
+// agree on which direction a pixel shows because they are the same formula. core's
+// LUMICE_UnprojectPixel is a separate implementation that agrees with it only within the parity
+// gates' tolerances below; used for the radius, the preview ring could miss the cursor by that
+// much at the rim.
+//
+// The other is the test layer, as the GUI-SIDE ORACLE of the cross-implementation parity gates:
+// test_visible_mask_gui_parity.cpp, test_horizon_gui_parity.cpp,
 // test_annotation_overlay_gui_parity.cpp, test_lens_border_geometry.cpp,
 // test_render_handedness_guard.cpp and test_preview_projection_chain.cpp all compare core's
-// projection against THIS function, because the only other copy of the shader's math is in GLSL
-// and cannot be called from a test. Deleting it would not remove a duplicate; it would remove the
-// second implementation those six gates exist to compare against.
+// projection against this function (through detail::PixelToWorldDirForTesting below), because the
+// only other copy of the shader's math is in GLSL and cannot be called from a test.
 //
 // Inputs:
-//   px, py            pixel offset from viewport center (shader convention)
+//   px, py            pixel offset from viewport center (shader convention: y up)
 //   res_x, res_y      viewport width / height in pixels
-//   lens_type         LensType enum value (0..9)
+//   lens_type         LensType enum value (0..10)
 //   fov               horizontal field-of-view in degrees
 //   view_matrix       column-major 3x3 from BuildViewMatrix (preview_renderer.hpp);
 //                     ignored by full-sky lens branches that don't view-transform.
@@ -125,11 +131,22 @@ namespace detail {
 //   out_valid           false if the pixel falls outside the projection domain
 //                       (asin guard, |lat| > π/2, etc.); the xyz outputs are
 //                       left untouched in that case.
+//
+// It knows the lens's projection domain and nothing else: no `visible`, no `front`. A caller that
+// needs "is this pixel sky on the picture" asks LUMICE_UnprojectPixel for that verdict.
+void PixelToWorldDir(float px, float py, float res_x, float res_y, int lens_type, float fov, const float view_matrix[9],
+                     float* out_x, float* out_y, float* out_z, bool* out_valid);
+
+namespace detail {
+
+// The same function under the name the six parity gates above call it by. Kept as its own entry
+// rather than migrating the gates, so that the gates' call sites say what they are.
 void PixelToWorldDirForTesting(float px, float py, float res_x, float res_y, int lens_type, float fov,
                                const float view_matrix[9], float* out_x, float* out_y, float* out_z, bool* out_valid);
 
-// The forward direction of the same mirror, and the same standing: no production caller since the
-// curve walk was deleted, and the same parity gates as its inverse above are what it is kept for.
+// The forward direction of the same mirror. Unlike the inverse it has no production caller (the
+// curve walk that used it was deleted); the same parity gates as the inverse's are what it is kept
+// for.
 //
 // Inputs:
 //   wx, wy, wz         world-space unit direction

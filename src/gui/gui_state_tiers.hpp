@@ -201,6 +201,8 @@ inline constexpr FieldTierEntry kFieldTierTable[] = {
     { "config_summary_window_open", FieldTier::kSession,    false },
     // The analysis tool's own state (window, ROI, selection, intent) — one struct, one row.
     { "analysis",                   FieldTier::kSession,    false },
+    // An Angular Distance pick in flight (armed + which family) — a gesture, not the document.
+    { "angular_dist_picker",        FieldTier::kSession,    false },
     { "current_file_path",          FieldTier::kSession,    false },
     { "save_texture",               FieldTier::kSession,    false },
     { "modal_immediate_mode",       FieldTier::kSession,    false },

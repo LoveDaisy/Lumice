@@ -61,6 +61,7 @@ add_library(lumice_gui_obj OBJECT
     ${PROJ_SRC_DIR}/gui/app.cpp
     ${PROJ_SRC_DIR}/gui/annotation_anchors.cpp
     ${PROJ_SRC_DIR}/gui/analysis_panel.cpp
+    ${PROJ_SRC_DIR}/gui/angular_dist_picker.cpp
     ${PROJ_SRC_DIR}/gui/app_panels.cpp
     ${PROJ_SRC_DIR}/gui/color_window.cpp
     ${PROJ_SRC_DIR}/gui/config_summary.cpp
