@@ -694,11 +694,15 @@ const std::unordered_map<std::string, FieldEditorEntry>& Registry() {
                                      return EffectiveFrontForLens(s.renderer.lens_type, stored);
                                    }),
                          "Front"));
-    // Globe only. The domain's upper end is past the deepest far-side point, (D + 1) - sqrt(D^2 - 1)
-    // ~ 1.127 at D = kGlobeCameraD = 4, so the top of the slider shows the whole far side at some
-    // weight; 0 is the camera-facing hemisphere only.
+    // Globe only; 0 is the camera-facing hemisphere only. The value is exponential fog's
+    // characteristic length (weight exp(-depth / fade)), and fog has no range at which the far side
+    // is "fully shown", so the top is set by what can still be seen changing: the deepest far-side
+    // point sits (D + 1) - sqrt(D^2 - 1) ~ 1.127 behind the silhouette at D = kGlobeCameraD = 4, and
+    // at 2.0 it already carries exp(-1.127 / 2) ~ 0.57 of its light. Rendered side by side at
+    // 0.8 / 1.2 / 2.0 the last step is barely visible, so going higher buys nothing a user could
+    // see. An aesthetic setting (the owner reviews the comparison sheet), not a derived bound.
     map.emplace("renderer.globe_back_fade",
-                Labelled(FloatField([](GuiState& s) { return &s.renderer.globe_back_fade; }, FixedDomain(0.0f, 1.5f),
+                Labelled(FloatField([](GuiState& s) { return &s.renderer.globe_back_fade; }, FixedDomain(0.0f, 2.0f),
                                     "%.2f", SliderScale::kLinear, WhenGlobe),
                          "Back fade"));
     // `background` now HAS a main-UI control (Display > Rendering, beside EV), so this row is its
