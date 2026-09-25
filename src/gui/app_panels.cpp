@@ -144,7 +144,9 @@ AnnotationViewInput AnnotationViewInputFor(const GuiState& state, const RenderCo
   // says 0 for the same reason (file_io.cpp BuildScene, kJsonExport), so the CLI render of that
   // config and this screen agree on the disc too.
   in.overlap = 0.0f;
-  in.front = rc.front;
+  // The effective clip, not the stored choice — same rule as the preview's ViewProjection
+  // (BuildPreviewViewProjFromRenderer), so the anchors never clip under a lens the picture does not.
+  in.front = EffectiveFrontForLens(rc.lens_type, rc.front);
   in.sun_altitude_deg = state.sun.altitude;
   // Each family's angle list is filled only when that family's line OR label switch is on. The
   // switches gate here rather than only at the drawing site because an unwanted list is not free:
@@ -1565,9 +1567,18 @@ void RenderRightPanel(GLFWwindow* window, float window_width, float window_heigh
     ImGui::SameLine(0.0f, UiPx(20.0f));
     const FieldEditorConstraint front_c = ConstraintFor("renderer.front", g_state);
     ImGui::BeginDisabled(!front_c.enabled);
-    Checkbox(PanelLabel("renderer.front", "visible").c_str(), &r.front);
+    // The tick shows the EFFECTIVE clip, not the stored choice: under a lens the clip does not
+    // apply to it reads unchecked while r.front keeps the choice for switching back
+    // (EffectiveFrontForLens). A click only lands while enabled, where the two agree, so writing it
+    // back to r.front records a real choice. field_editor_registry.cpp's BoolField does the same
+    // for the Settings row through its `effective` argument; change the two together.
+    bool front_effective = EffectiveFrontForLens(r.lens_type, r.front);
+    if (Checkbox(PanelLabel("renderer.front", "visible").c_str(), &front_effective)) {
+      r.front = front_effective;
+    }
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-      ImGui::SetTooltip("Show front hemisphere only\n(combine with Upper/Full/Lower)");
+      ImGui::SetTooltip("%s", front_c.enabled ? "Show front hemisphere only\n(combine with Upper/Full/Lower)" :
+                                                front_c.disabled_reason);
     }
     ImGui::EndDisabled();
     // The globe's far side, seen through the near one. Only drawn under Globe — the one lens that

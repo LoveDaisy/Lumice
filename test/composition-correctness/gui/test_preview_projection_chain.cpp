@@ -23,6 +23,7 @@
 #include <cmath>
 #include <string>
 
+#include "gui/app.hpp"  // AnnotationViewInputFor
 #include "gui/gui_state.hpp"
 #include "gui/overlay_labels.hpp"
 #include "gui/preview_renderer.hpp"
@@ -270,6 +271,31 @@ TEST(PreviewProjectionChain, LensTypesThatIgnoreRollSeeZeroRollInTheProjection) 
   // And the rule itself has to actually zero SOMETHING, or the normalisation is a no-op that every
   // consumer could have skipped and the loop above is vacuous.
   EXPECT_GT(zeroed, 0) << "no lens discards roll";
+}
+
+// The front clip's twin of the roll test above, across EVERY lens rather than a sample, and for both
+// consumers that turn a RenderConfig into a view: the preview's ViewProjection (the shader's u_front)
+// and the annotation anchors' request. Each must carry the effective clip — false under a lens the
+// clip does not apply to, however the stored choice reads — and never the stored value itself.
+TEST(PreviewProjectionChain, LensTypesThatIgnoreFrontSeeNoFrontClipInTheProjectionOrTheAnchors) {
+  GuiState state;
+  int zeroed = 0;
+  int kept = 0;
+  for (int lens = 0; lens < kLensTypeCount; ++lens) {
+    RenderConfig rc = LensAt(lens, 90.0f, 0.0f);
+    rc.front = true;
+    const bool effective = EffectiveFrontForLens(lens, true);
+    EXPECT_EQ(BuildPreviewViewProjFromRenderer(rc).front, effective)
+        << "lens " << lens << ": the projection's front clip is not the one the lens rule produced";
+    EXPECT_EQ(AnnotationViewInputFor(state, rc).front, effective)
+        << "lens " << lens << ": the anchors' front clip is not the one the lens rule produced";
+    zeroed += effective ? 0 : 1;
+    kept += effective ? 1 : 0;
+  }
+  // Both directions have to occur, or the loop is vacuous: a rule that zeroes nothing is the bug
+  // this pins, and one that zeroes everything would pass the loop while killing the clip outright.
+  EXPECT_GT(zeroed, 0) << "no lens discards the front clip";
+  EXPECT_GT(kept, 0) << "no lens keeps the front clip";
 }
 
 }  // namespace

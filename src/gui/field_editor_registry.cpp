@@ -183,15 +183,38 @@ FieldEditorEntry IntField(SlotFn<int> access, int min_value, int max_value,
   return entry;
 }
 
-FieldEditorEntry BoolField(SlotFn<bool> access, ApplicabilityFn applicable = AlwaysApplies) {
+// Maps a checkbox's stored value to the value it DISPLAYS. Empty = identity, which is every caller
+// but one. It exists for a field whose stored value is a remembered choice that does not always
+// take effect: the one consumer today is renderer.front (EffectiveFrontForLens), whose tick must
+// read unchecked under a lens the clip does not apply to while the stored choice is kept for
+// switching back. Check that a new use has that shape — stored != effective, and the gap only
+// under a gate that also disables the control — before reusing it for anything else.
+using BoolEffectiveFn = std::function<bool(const GuiState&, bool)>;
+
+FieldEditorEntry BoolField(SlotFn<bool> access, ApplicabilityFn applicable = AlwaysApplies,
+                           BoolEffectiveFn effective = nullptr) {
   FieldEditorEntry entry;
   entry.kind = FieldEditorKind::kCheckbox;
   entry.Constraint = [applicable](const GuiState& state) {
     const Applicability a = applicable(state);
     return FieldEditorConstraint{ a.enabled, a.disabled_reason, false, 0.0, 0.0 };
   };
-  entry.Render = [access](GuiState& state, const char* id_base) {
-    return Checkbox(HiddenLabel(id_base).c_str(), access(state));
+  entry.Render = [access, effective](GuiState& state, const char* id_base) {
+    bool* slot = access(state);
+    if (!effective) {
+      return Checkbox(HiddenLabel(id_base).c_str(), slot);
+    }
+    // Draw the effective value, write a click back to the stored one. A click can only land while
+    // the control is enabled — the caller wraps it in BeginDisabled(!constraint.enabled), and the
+    // gate is where effective and stored may differ — so the value written back is always a real
+    // user choice, never the forced display value. app_panels.cpp's main-panel Front checkbox
+    // does the same by hand (it is not drawn through this factory); change the two together.
+    bool working = effective(state, *slot);
+    if (!Checkbox(HiddenLabel(id_base).c_str(), &working) || working == *slot) {
+      return false;
+    }
+    *slot = working;
+    return true;
   };
   return entry;
 }
@@ -309,6 +332,18 @@ Applicability NotUnderFullSkyOrGlobe(const GuiState& state) {
   }
   if (state.renderer.lens_type == kLensTypeGlobe) {
     return { false, "The Globe lens orbits the observer around the sphere; roll is locked to 0." };
+  }
+  return {};
+}
+
+// renderer.front's gate: the same lens set as NotUnderFullSkyOrGlobe (reused, not restated), with a
+// reason of its own — that gate's Globe wording is about roll, and the thing worth telling the user
+// here is that the choice is only set aside, not lost (EffectiveFrontForLens, gui_state.hpp).
+Applicability WhenFrontClipApplies(const GuiState& state) {
+  if (!NotUnderFullSkyOrGlobe(state).enabled) {
+    return { false,
+             "This lens has no front or back to clip, so the front-hemisphere clip does not apply. "
+             "Your previous choice is kept and comes back when you switch to a lens that uses it." };
   }
   return {};
 }
@@ -654,7 +689,11 @@ const std::unordered_map<std::string, FieldEditorEntry>& Registry() {
                                                         kVisibleCount, NotUnderFullSky),
                                              "Visible"));
     map.emplace("renderer.front",
-                Labelled(BoolField([](GuiState& s) { return &s.renderer.front; }, NotUnderFullSkyOrGlobe), "Front"));
+                Labelled(BoolField([](GuiState& s) { return &s.renderer.front; }, WhenFrontClipApplies,
+                                   [](const GuiState& s, bool stored) {
+                                     return EffectiveFrontForLens(s.renderer.lens_type, stored);
+                                   }),
+                         "Front"));
     // Globe only. The domain's upper end is past the deepest far-side point, (D + 1) - sqrt(D^2 - 1)
     // ~ 1.127 at D = kGlobeCameraD = 4, so the top of the slider shows the whole far side at some
     // weight; 0 is the camera-facing hemisphere only.

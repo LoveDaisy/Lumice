@@ -153,5 +153,39 @@ TEST(FieldEditorChain, EveryShapeScalarSlotReachesADistinctFieldInBothDirections
 // stated here until this wave; the same proposition in two layers is the redundancy this rebuild
 // was told to remove, and its subject is the table, not a collaboration.
 
+// ---------------------------------------------------------------------------------------------
+// The front clip's gate and its effective value are one rule seen from two sides.
+//
+// renderer.front greys its control exactly where EffectiveFrontForLens forces the clip off; the
+// stored choice is kept there as the memory for switching back. The two are written in two files
+// (the gate cannot live below gui_state.hpp, where the effective value does), so a lens that one
+// side learns about and the other does not would either grey a control that still clips — the bug
+// this pins — or force off a clip the user can still tick. Every lens, not a sample. And the reason
+// shown on the greyed control has to say the choice comes back, not merely that it does not apply.
+
+TEST(FieldEditorChain, TheFrontClipIsGreyedExactlyWhereItsEffectiveValueIsForcedOff) {
+  GuiState state;
+  int greyed = 0;
+  for (int lens = 0; lens < kLensTypeCount; ++lens) {
+    state.renderer.lens_type = lens;
+    const FieldEditorConstraint c = ConstraintFor("renderer.front", state);
+    EXPECT_EQ(c.enabled, EffectiveFrontForLens(lens, true))
+        << "lens " << lens << ": the control's gate and the clip's effective value disagree";
+    if (c.enabled) {
+      continue;
+    }
+    ++greyed;
+    if (c.disabled_reason == nullptr) {
+      ADD_FAILURE() << "lens " << lens << ": greyed with no reason";
+      continue;
+    }
+    const std::string reason = c.disabled_reason;
+    EXPECT_NE(reason.find("does not apply"), std::string::npos) << "lens " << lens << ": " << reason;
+    EXPECT_NE(reason.find("comes back"), std::string::npos)
+        << "lens " << lens << ": the reason does not say the previous choice is restored: " << reason;
+  }
+  EXPECT_GT(greyed, 0) << "no lens greys the front clip";
+}
+
 }  // namespace
 }  // namespace lumice::gui

@@ -823,6 +823,25 @@ inline float EffectiveRollForLens(int lens_type, float stored_roll) {
   return (lens_type == kLensTypeGlobe) ? 0.0f : stored_roll;
 }
 
+// The front-hemisphere clip as the picture actually applies it under `lens_type`. Stored and
+// effective values are two concepts, exactly as for roll above: RenderConfig.front holds the
+// user's choice, and under a lens the clip does not apply to it stays untouched — the control is
+// greyed there, so the stored value cannot change and IS the memory of the last choice made under
+// a lens that does take it. Switching back restores it with no extra state.
+//
+// Every reader that asks "is the picture clipped to the front hemisphere?" goes through here — the
+// preview's ViewProjection, the annotation anchors' view input, the exported config (kJsonExport)
+// and the checkbox's displayed tick. The lens set is the one NotUnderFullSkyOrGlobe
+// (field_editor_registry.cpp) greys the control under, built from the same two primitives
+// (LensIsFullSky / kLensTypeGlobe); test_field_editor_chain.cpp pins the two to agree per lens.
+//
+// Wider than EffectiveRollForLens on purpose: roll is inert in the full-sky lenses' shader paths
+// anyway, so only Globe needs forcing; the front clip is NOT inert there — the preview shader's
+// u_front test runs under every lens — so every lens outside the control's domain must see false.
+inline bool EffectiveFrontForLens(int lens_type, bool stored_front) {
+  return (LensIsFullSky(lens_type) || lens_type == kLensTypeGlobe) ? false : stored_front;
+}
+
 // Filter action
 inline const char* const kFilterActionNames[] = { "Filter In", "Filter Out" };
 constexpr int kFilterActionCount = 2;
