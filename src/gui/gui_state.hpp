@@ -465,13 +465,21 @@ struct RenderConfig {
   // lives in the preview shader and in the CLI's PostSnapshot, and the fields it takes the colour
   // channel over from are listed at doc/print-mode-subtractive-ink.md §7.
   int tone = 0;
+  // Globe lens only: how far behind the sphere's silhouette its far side stays visible, fading
+  // like fog (lm_proj::GlobeBackFadeWeight on the core side; the shader's globeBackFadeWeight
+  // here). Same units and meaning as core's RenderConfig::globe_back_fade_; 0 — the default — is
+  // the camera-facing hemisphere only. A T-view field: excluded from RenderConfigResimFields below
+  // like lens_type / fov, because the simulation renders a fixed full-sky texture and the far side
+  // is just a second sample of it at display time.
+  float globe_back_fade = 0.0f;
 
   bool operator==(const RenderConfig& o) const {
     return lens_type == o.lens_type && fov == o.fov && elevation == o.elevation && azimuth == o.azimuth &&
            roll == o.roll && sim_resolution_index == o.sim_resolution_index && visible == o.visible &&
            front == o.front && std::equal(background, background + 3, o.background) &&
            std::equal(paper, paper + 3, o.paper) && std::equal(ray_color, ray_color + 3, o.ray_color) &&
-           exposure_offset == o.exposure_offset && ev_mode == o.ev_mode && tone == o.tone;
+           exposure_offset == o.exposure_offset && ev_mode == o.ev_mode && tone == o.tone &&
+           globe_back_fade == o.globe_back_fade;
   }
   bool operator!=(const RenderConfig& o) const { return !(*this == o); }
 };
@@ -565,6 +573,8 @@ inline void ApplyHeadroomFix(RenderConfig& renderer) {
 //                                                finite mode). That was the scrum-353 T2 regression:
 //                                                only exposure_offset had been carved out.
 //   visible, front                            — upper/lower/full hemisphere clip (display crop).
+//   globe_back_fade                           — the globe lens's far-side fade: a second sample of
+//                                                the same full-sky texture (u_globe_back_fade).
 //   exposure_offset                           — EV (doc/ev-pipeline-architecture.md §6.4/§6.5;
 //                                                pushed every frame via LUMICE_SetCompositeExposure).
 //
@@ -638,7 +648,7 @@ struct RenderConfigResimFields {
 namespace {
 [[maybe_unused]] void RenderConfigFieldSetGuard(const RenderConfig& c) {
   [[maybe_unused]] const auto& [lens_type, fov, elevation, azimuth, roll, sim_resolution_index, visible, front,
-                                background, paper, ray_color, exposure_offset, ev_mode, tone] = c;
+                                background, paper, ray_color, exposure_offset, ev_mode, tone, globe_back_fade] = c;
 }
 [[maybe_unused]] void RenderConfigResimFieldsGuard(const RenderConfigResimFields& r) {
   [[maybe_unused]] const auto& [sim_resolution_index] = r;
@@ -689,7 +699,10 @@ namespace {
 // config edit awaiting a re-run. `paper` is excluded from resim but Revert-tracked through its own
 // ConfigSnapshot slot, like background — editing a colour must not re-run anything, but Revert
 // must still put the previous one back.
-static_assert(sizeof(RenderConfig) == 80, "RenderConfig layout changed — see RenderConfigFieldSetGuard above");
+// globe_back_fade is excluded outright, with lens_type / fov and the other T-view fields: it
+// changes where the preview samples an already-simulated texture, never the simulation, and it has
+// no "undo me" claim of the background / paper kind — a lens-view slider, not a colour.
+static_assert(sizeof(RenderConfig) == 84, "RenderConfig layout changed — see RenderConfigFieldSetGuard above");
 // RenderConfigResimFields: naming the field list once does NOT by itself keep the three
 // directions in step. From() aggregate-initializes, so a newly added field is silently
 // value-initialized rather than rejected, and ApplyTo()/operator== would quietly keep working on

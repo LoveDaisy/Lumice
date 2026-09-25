@@ -275,6 +275,7 @@
 | `resolution` | 2:1 纹理 vs 用户的画幅 |
 | `overlap` | 双鱼眼重叠带：commit 臂写 `kDualFisheyeOverlap`（预览 shader 靠它在源**纹理**的两半球拼缝上混合）vs export 臂写 `0`（屏幕上那张画的双鱼眼目标投影 `dualFisheyeInverse` 每盘恰好一个半球，根本没有重叠带；带着它导出会让 CLI 把每个盘画大 4%，地平线缩进盘沿十几像素——用户从没看过那张画）。加入理由见 §9.4 |
 | `front` | 第二道裁剪：恒关 vs 用户的开关（与 `visible` 正交，见 §9.3） |
+| `globe_back_fade` | globe 背面渐隐范围：commit 臂恒 `0`（纹理是双等面积、本就忽略该字段；预览 shader 在显示期经 `u_globe_back_fade` 自己施加）vs export 臂写用户的值（CLI 的 globe 前向投影按同一权重 `lm_proj::GlobeBackFadeWeight` 叠加背面光）。与 `front` 同一形状：显示期参数，CLI 没有显示期阶段 |
 | `grid.horizon` | 恒开 vs 用户的开关 |
 | `grid.angular_dist` / `grid.view_dist` / `grid.elevation` / `grid.longitude` | 角度表：commit 臂留空 vs export 臂写用户的表（理由见 §9.4）。`view_dist`（v4.39）是 `angular_dist` 的孪生：同一个分叉理由、同一份家族形状，圆心换成相机光轴而不是太阳 |
 | `grid.horizon_label` / `grid.label` / `grid.angular_dist_label` / `grid.view_dist_label` | 文字标注开关：commit 臂恒关 vs 用户的开关。文字烤进纹理会被重投影一起重采样，再被预览自己的 label 层画第二遍 |

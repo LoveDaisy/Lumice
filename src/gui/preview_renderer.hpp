@@ -50,6 +50,9 @@ struct ViewProjection {
   float roll = 0.0f;                // Degrees
   int visible = kVisibleFull;       // Index into kVisibleNames (int for shader uniform)
   bool front = false;               // Independent front-hemisphere clip flag
+  // Globe only: the far-side fade range (RenderConfig::globe_back_fade). Trailing, so the
+  // aggregate-initialized export presets below leave it 0.
+  float globe_back_fade = 0.0f;
 };
 
 // Canonical ViewProjection values for export code paths. Kept adjacent to
@@ -298,6 +301,9 @@ class PreviewRenderer {
 
  private:
   unsigned int shader_program_ = 0;
+  // The same program with the globe far-side sample compiled in (LUMICE_GLOBE_BACK_FADE); bound by
+  // Render() only for a globe frame with a fade range > 0.
+  unsigned int globe_back_fade_program_ = 0;
   unsigned int vao_ = 0;
   unsigned int vbo_ = 0;
   unsigned int texture_ = 0;
@@ -479,6 +485,7 @@ inline ViewProjection BuildPreviewViewProjFromRenderer(const RenderConfig& rc) {
   vp.roll = EffectiveRollForLens(rc.lens_type, rc.roll);
   vp.visible = rc.visible;
   vp.front = rc.front;
+  vp.globe_back_fade = rc.globe_back_fade;
   return vp;
 }
 

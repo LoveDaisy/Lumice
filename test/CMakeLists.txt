@@ -194,6 +194,9 @@ add_executable(unit_correctness_test
   # preview shader's relative-illumination factor, and the oracle it is held to is a numerical
   # Jacobian rather than the GLSL twin, so the case needs no GL context of any kind.
   "${PROJ_TEST_DIR}/unit-correctness/gui/test_preview_jacobian.cpp"
+  # Same reason: the globe back-fade weight's two C++ copies, core's projection_shared.h and the
+  # GUI's preview_jacobian.hpp, are both header-only, so the case that compares them links neither.
+  "${PROJ_TEST_DIR}/unit-correctness/gui/test_globe_back_fade.cpp"
   # And again: xyz_half_codec.hpp is header-only and GL-free. It is the one float16 encoding the
   # live GL upload and the .lmc v6 texture section share; its oracle is the binary16 format's own
   # definition, so no window and no lumice_gui_obj.

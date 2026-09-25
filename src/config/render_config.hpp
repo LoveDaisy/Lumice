@@ -197,6 +197,14 @@ struct RenderConfig {
   // different paths and may differ at runtime (GUI updates EV without re-committing config).
   float intensity_factor_ = 1.0f;
   float overlap_ = 0.0f;  // Dual fisheye overlap zone |sky.z| threshold (sin value). 0 = no overlap.
+  // Globe lens only: how far behind the silhouette the sphere's far side stays visible, fading out
+  // like fog (lm_proj::GlobeBackFadeWeight, src/core/shared/projection_shared.h). In the eye-space
+  // distance units of lm_proj::kGlobeCameraD (unit sphere), so 0 shows the camera-facing
+  // hemisphere only — the default and the look before this field existed — and anything at or past
+  // (D + 1) - sqrt(D^2 - 1) ~ 1.127 lets the whole far side through at some weight. Every other
+  // lens type ignores it. LAYOUT-affecting, like overlap_: it decides which rays accumulate into
+  // the buffer and at what weight, so a change rebuilds the consumer (NeedsRebuild).
+  float globe_back_fade_ = 0.0f;
   // Appearance field (like intensity_factor_): it selects WHICH exposure formula PostSnapshot()
   // and the compositor use, never the accumulation layout, so a change needs no consumer rebuild.
   EvMode ev_mode_ = kRelative;
@@ -332,10 +340,10 @@ struct RenderConfig {
 // pins do see that class, so the two are complements and neither replaces the other.
 inline void RenderConfigFieldSetGuard(const RenderConfig& c) {
   [[maybe_unused]] const auto& [id, lens, lens_shift, resolution, view, visible, front, background, paper, ray_color,
-                                intensity_factor, overlap, ev_mode, tone, angular_dist_grid, view_dist_grid,
-                                elevation_grid, longitude_grid, horizon, elevation_grid_line, longitude_grid_line,
-                                angular_dist_grid_line, view_dist_grid_line, horizon_label, grid_label,
-                                angular_dist_label, view_dist_label, zenith_nadir, markers, markers_opacity,
+                                intensity_factor, overlap, globe_back_fade, ev_mode, tone, angular_dist_grid,
+                                view_dist_grid, elevation_grid, longitude_grid, horizon, elevation_grid_line,
+                                longitude_grid_line, angular_dist_grid_line, view_dist_grid_line, horizon_label,
+                                grid_label, angular_dist_label, view_dist_label, zenith_nadir, markers, markers_opacity,
                                 markers_radius_px] = c;
 }
 

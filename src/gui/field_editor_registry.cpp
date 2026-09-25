@@ -313,6 +313,13 @@ Applicability NotUnderFullSkyOrGlobe(const GuiState& state) {
   return {};
 }
 
+Applicability WhenGlobe(const GuiState& state) {
+  if (state.renderer.lens_type != kLensTypeGlobe) {
+    return { false, "Only the Globe lens has a far side to show; other lenses look out from inside the sky." };
+  }
+  return {};
+}
+
 // doc/print-mode-subtractive-ink.md §7 instance 1. Ordered BEFORE the "is an image loaded" check on
 // purpose: when both reasons hold, print is the one the user has to act on — loading an image would
 // not enable the control, and a reason that stops being true when you satisfy it is the wrong
@@ -627,6 +634,13 @@ const std::unordered_map<std::string, FieldEditorEntry>& Registry() {
                                              "Visible"));
     map.emplace("renderer.front",
                 Labelled(BoolField([](GuiState& s) { return &s.renderer.front; }, NotUnderFullSkyOrGlobe), "Front"));
+    // Globe only. The domain's upper end is past the deepest far-side point, (D + 1) - sqrt(D^2 - 1)
+    // ~ 1.127 at D = kGlobeCameraD = 4, so the top of the slider shows the whole far side at some
+    // weight; 0 is the camera-facing hemisphere only.
+    map.emplace("renderer.globe_back_fade",
+                Labelled(FloatField([](GuiState& s) { return &s.renderer.globe_back_fade; }, FixedDomain(0.0f, 1.5f),
+                                    "%.2f", SliderScale::kLinear, WhenGlobe),
+                         "Back fade"));
     // `background` now HAS a main-UI control (Display > Rendering, beside EV), so this row is its
     // second editor — the one the defaults panel needs in order to edit a personal default without
     // a document open.

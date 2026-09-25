@@ -29,7 +29,7 @@ Lumice 提供了完整的C接口，方便与其他语言集成。C接口封装�
 ### 常量
 
 ```c
-#define LUMICE_API_VERSION 439        // ABI 版本，编码为 major*100 + minor（v4.39）
+#define LUMICE_API_VERSION 445        // ABI 版本，编码为 major*100 + minor（v4.45）
 #define LUMICE_MAX_RENDER_RESULTS 16  // 渲染结果数组最大容量
 #define LUMICE_MAX_STATS_RESULTS 1    // 统计结果数组最大容量
 ```
@@ -41,6 +41,8 @@ static_assert(LUMICE_API_VERSION >= 439, "Lumice header too old for this integra
 ```
 
 公开符号集或结构体布局每发生一次 BREAKING 变更就 bump 一次。
+
+**v4.45 就是一次这样的 break。** `LUMICE_RenderParam` 在 `view_dist_label` 之后追加 `float globe_back_fade`（sizeof 6452 → 6456），调用方需重新编译。它是 `globe` 镜头的背面渐隐范围——球的背面在轮廓之后多深的范围内仍然可见、随离相机的距离渐隐（JSON 键 `globe_back_fade`，见 `configuration.md`）。其余镜头忽略它；0（零初始化值与 JSON 默认值）只显示朝向相机的半球，即此前各版本的画面。没有任何移除或重排。
 
 **v4.39 就是一次这样的 break。** 第五个注解 family——视场距离圆，即与相机**光轴**成等角距的圆，是 `angular_dist`（以太阳为参考）的以光轴为参考的孪生——让两个结构体在尾部增长，调用方需重新编译。`LUMICE_RenderParam` 在 `paper` 之后新增 `view_dist[]` / `view_dist_count` / `view_dist_line` / `view_dist_label`（sizeof 4904 → 6452），与 `angular_dist` 四字段逐项同形；`LUMICE_AnnotationRequest` 在 `marker_count` 之后新增 `view_dist_deg` / `view_dist_count`（128 → 144），其标签以 kind `LUMICE_ANNOTATION_VIEW_DIST`（4）返回。JSON 键为 `grid.view_dist`、`grid.view_dist_line`（默认 true）、`grid.view_dist_label`（默认 false），形态与 `angular_dist` 三键完全一致；缺键即 family 关闭，所以 v4.39 之前写下的文档渲染结果不变。没有任何移除或重排。有两点是**刻意不做**的：没有 `reference_dir_view`——圆心就是视图自己的前向（elevation / azimuth / roll），core 已经为前半球裁剪推导了它，请求本身已决定了圆心，再加一个方向字段只是它的第二份拷贝；且它结构上与 `lens_shift` 无关——移轴移动的是光轴的**像素**而非光轴，圆跟着光轴走。另一点与其他三个线开关相同：零初始化的 `LUMICE_RenderParam` 里 `view_dist_line` 读作 0，而 JSON 默认为 true，请显式设置或走 JSON。两个结构体现在都在头文件里带精确 sizeof 的 `static_assert`，下一次尾部追加若不同时递增版本号即为编译错误。
 

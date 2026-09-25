@@ -634,10 +634,13 @@ void RenderConsumer::Consume(const SimData& data) {
   // the storage differs.
   for (size_t i = 0; i < filtered_ray_num; ++i) {
     ProjectAndClassifyRay(proj_params, w_res, h_res, d_buf_[i * 3 + 0], d_buf_[i * 3 + 1], d_buf_[i * 3 + 2],
-                          [&, i](int pixel, bool is_main) {
+                          [&, i](int pixel, bool is_main, float hit_weight) {
                             if (is_main) {
                               xy_buf_[main_n] = pixel;
-                              w_buf_[main_n] = w_buf_[i];
+                              // Read w_buf_[i] before this write: main_n <= i, and when they are
+                              // equal this is the slot being read.
+                              const float w_i = w_buf_[i];
+                              w_buf_[main_n] = w_i * hit_weight;
                               if (per_ray_wl) {
                                 wl_buf_[main_n] = wl_buf_[i];
                               }
@@ -647,12 +650,14 @@ void RenderConsumer::Consume(const SimData& data) {
                               if (has_component) {
                                 comp_buf_[main_n] = comp_buf_[i];
                               }
-                              landed_weight += w_buf_[i];
+                              landed_weight += w_i * hit_weight;
                               ++main_n;
                             } else {
                               // Overlap ring uses dedicated side-arrays so main-batch data is not
                               // clobbered before it hits SpectrumToXyz.
-                              overlap_w_buf_[overlap_n] = w_buf_[i];
+                              // A globe back-side hit lands here too (bump_landed = false), with
+                              // its fade weight; the dual-fisheye ring's weight is 1.
+                              overlap_w_buf_[overlap_n] = w_buf_[i] * hit_weight;
                               if (per_ray_wl) {
                                 overlap_wl_buf_[overlap_n] = wl_buf_[i];
                               }

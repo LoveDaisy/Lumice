@@ -120,7 +120,9 @@ inline lm_proj::ProjParams BuildProjParams(const RenderConfig& cfg, const Rotati
       break;
     case LensParam::kGlobe:
       // Globe carries no r_scale / max_abs_dz; its perspective scale is in
-      // p.scale (ComputeLensScale). ProjectExitToPixel's globe branch handles it.
+      // p.scale (ComputeLensScale). ProjectExitToPixel's globe branch handles it,
+      // and reads the far-side fade range from here (0 = culled, as before).
+      p.globe_back_fade = std::max(cfg.globe_back_fade_, 0.0f);
       break;
   }
   return p;
@@ -134,7 +136,9 @@ inline lm_proj::ProjParams BuildProjParams(const RenderConfig& cfg, const Rotati
 // for: it is called once per in-bounds hit as `on_hit(pixel, is_main)` with
 // `pixel = py * w_res + px` and `is_main = bump_landed` (true → the hit drives
 // landed_weight / total_intensity_; false → the dual-fisheye overlap ring, which does
-// not). A ray yields 0, 1 or 2 hits (`hit.count`). Kept as a single implementation on
+// not). The third argument is the hit's energy weight (PixelHit::weight): 1 on every hit
+// except a globe back-side one, which arrives as a non-main hit carrying its fade weight.
+// A ray yields 0, 1 or 2 hits (`hit.count`). Kept as a single implementation on
 // purpose: the consumer's short-circuit branch is only correct if the sidecar was
 // built by exactly the rule the consumer would have applied itself.
 template <typename OnHit>
@@ -147,7 +151,7 @@ inline void ProjectAndClassifyRay(const lm_proj::ProjParams& proj_params, int w_
     if (px < 0 || px >= w_res || py < 0 || py >= h_res) {
       continue;
     }
-    on_hit(py * w_res + px, hit.hits[k].bump_landed);
+    on_hit(py * w_res + px, hit.hits[k].bump_landed, hit.hits[k].weight);
   }
 }
 

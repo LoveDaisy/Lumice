@@ -108,6 +108,9 @@ RenderConfig ParseRenderConfig(const nlohmann::json& j_render, const ConfigManag
   if (j_render.contains("overlap")) {
     render.overlap_ = std::max(0.0f, j_render.at("overlap").get<float>());
   }
+  if (j_render.contains("globe_back_fade")) {
+    render.globe_back_fade_ = std::max(0.0f, j_render.at("globe_back_fade").get<float>());
+  }
   if (j_render.contains("ev_mode")) {
     j_render.at("ev_mode").get_to(render.ev_mode_);
   }

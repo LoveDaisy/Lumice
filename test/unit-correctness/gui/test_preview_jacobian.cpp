@@ -67,7 +67,9 @@ double ThetaFisheye(FisheyeKind kind, double r_norm, double half_fov) {
 // Globe: the polar angle of the sphere point a pixel's ray hits, from the same ray-sphere solve
 // the shader's globeInverse runs. Camera at (0,0,D) in eye space looking toward -z at a unit
 // sphere centred on the origin; psi is measured from the camera axis.
-double PsiGlobe(double rho, double focal) {
+// `far_side` takes the other root: the point where the ray leaves the sphere, which the back-side
+// fade samples.
+double PsiGlobe(double rho, double focal, bool far_side = false) {
   const double d = kGlobeCameraD;
   const double len = std::sqrt(rho * rho + focal * focal);
   const double dz = -focal / len;  // ray direction z, eye space
@@ -76,7 +78,7 @@ double PsiGlobe(double rho, double focal) {
   if (disc < 0.0) {
     return std::nan("");
   }
-  const double t = -b - std::sqrt(disc);
+  const double t = far_side ? -b + std::sqrt(disc) : -b - std::sqrt(disc);
   const double mu = d + t * dz;  // hit_eye.z, and the sphere point is unit length
   return std::acos(std::min(1.0, std::max(-1.0, mu)));
 }
@@ -170,6 +172,35 @@ TEST(PreviewJacobian, GlobeMatchesNumericalJacobian) {
       const double got = lumice::gui::RelIllumGlobe(static_cast<float>(rho), static_cast<float>(focal));
       EXPECT_NEAR(got, expect, 1e-3 * expect) << "fov=" << fov_deg << " rho/limb=" << frac;
     }
+  }
+}
+
+// The far side, against the same oracle. What the fade samples there is normalized to the NEAR
+// side's on-axis Omega_p — the one both halves of a pixel's light are exposed against — so the
+// oracle's reference radius runs through the near root while the radius under test runs through the
+// far one. Past the silhouette psi(rho) decreases, so the derivative is taken as a magnitude: a
+// pixel's solid angle has no sign. The on-axis value is (D + 1)^2 / (D - 1)^2 ~ 2.78, checked on its
+// own below so that a normalization slip cannot hide inside the ratio.
+TEST(PreviewJacobian, GlobeFarSideMatchesNumericalJacobian) {
+  const double img_radius = 256.0;
+  for (double fov_deg : { 30.0, 60.0 }) {
+    const double focal = img_radius / std::tan(fov_deg * kPi / 360.0);
+    const double rho_limb = focal / std::sqrt(kGlobeCameraD * kGlobeCameraD - 1.0);
+    const double h = 1e-6 * rho_limb;
+    const double rho_axis = 1e-4 * rho_limb;
+    const auto near = [focal](double r) { return PsiGlobe(r, focal); };
+    const auto far = [focal](double r) { return PsiGlobe(r, focal, true); };
+    const double omega_axis = NumericOmega(near, rho_axis, h);
+    for (double frac : { 0.05, 0.25, 0.5, 0.75, 0.9 }) {
+      const double rho = frac * rho_limb;
+      const double expect = std::fabs(NumericOmega(far, rho, h)) / omega_axis;
+      const double got = lumice::gui::RelIllumGlobeFar(static_cast<float>(rho), static_cast<float>(focal));
+      EXPECT_NEAR(got, expect, 1e-3 * expect) << "fov=" << fov_deg << " rho/limb=" << frac;
+    }
+    const double d = kGlobeCameraD;
+    EXPECT_NEAR(lumice::gui::RelIllumGlobeFar(0.0f, static_cast<float>(focal)), (d + 1) * (d + 1) / ((d - 1) * (d - 1)),
+                1e-4)
+        << "fov=" << fov_deg;
   }
 }
 

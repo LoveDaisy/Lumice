@@ -1567,6 +1567,23 @@ void RenderRightPanel(GLFWwindow* window, float window_width, float window_heigh
       ImGui::SetTooltip("Show front hemisphere only\n(combine with Upper/Full/Lower)");
     }
     ImGui::EndDisabled();
+    // The globe's far side, seen through the near one. Only drawn under Globe — the one lens that
+    // looks at the sky from outside and so has a far side at all — rather than greyed under the
+    // ten that do not; the registry gate (WhenGlobe) still states the rule for the defaults panel
+    // and the Summary.
+    if (is_globe) {
+      const FieldEditorConstraint fade_c = ConstraintFor("renderer.globe_back_fade", g_state);
+      ImGui::BeginDisabled(!fade_c.enabled);
+      SliderWithInput(PanelLabel("renderer.globe_back_fade", "visible").c_str(), &r.globe_back_fade,
+                      static_cast<float>(fade_c.min_value), static_cast<float>(fade_c.max_value), fade_c.fmt,
+                      fade_c.scale);
+      if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+        ImGui::SetTooltip(
+            "Let the far side of the sphere show through, fading with distance\n"
+            "from the camera like fog. 0 shows the near side only.");
+      }
+      ImGui::EndDisabled();
+    }
     ImGui::SeparatorText("Pose");
     if (is_globe) {
       ImGui::TextDisabled("(?)");

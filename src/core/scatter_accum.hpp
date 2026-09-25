@@ -54,13 +54,15 @@ inline void ScatterOutgoingToXyz(const float* d, const float* w, size_t count, c
   const auto proj_params = BuildProjParams(cfg, camera_rot, short_pix);
 
   // Two batch arrays: main hits (bump_landed=true) and overlap hits (=false).
-  // Overlap only fires for dual-fisheye with max_abs_dz>0 (ProjectExitToPixel
-  // never emits hits[1] otherwise), so the overlap buffers are only
-  // allocated when the projection is actually configured for overlap;
-  // allocation is O(count) worst case (every ray in the overlap band).
+  // A non-main hit only occurs for dual-fisheye with max_abs_dz>0 (the hits[1]
+  // ring) or for globe with a back-side fade range (the far-side hit, weighted),
+  // so the overlap buffers are only allocated when the projection is configured
+  // for one of them; allocation is O(count) worst case (at most one non-main hit
+  // per ray in either case).
   auto main_w = std::make_unique<float[]>(count);
   auto main_xy = std::make_unique<int[]>(count);
-  const bool has_overlap = proj_params.max_abs_dz > 0.0f;
+  const bool has_overlap = proj_params.max_abs_dz > 0.0f ||
+                           (proj_params.proj_type == lm_proj::kProjGlobe && proj_params.globe_back_fade > 0.0f);
   std::unique_ptr<float[]> overlap_w;
   std::unique_ptr<int[]> overlap_xy;
   if (has_overlap) {
@@ -85,12 +87,12 @@ inline void ScatterOutgoingToXyz(const float* d, const float* w, size_t count, c
       }
       if (hit.hits[k].bump_landed) {
         main_xy[main_n] = py * w_res + px;
-        main_w[main_n] = w[i];
-        landed_weight += w[i];
+        main_w[main_n] = w[i] * hit.hits[k].weight;
+        landed_weight += w[i] * hit.hits[k].weight;
         ++main_n;
       } else {
         overlap_xy[overlap_n] = py * w_res + px;
-        overlap_w[overlap_n] = w[i];
+        overlap_w[overlap_n] = w[i] * hit.hits[k].weight;
         ++overlap_n;
       }
     }

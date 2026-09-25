@@ -712,6 +712,7 @@ TEST_F(DefaultsDiff, registry_covers_every_row) {
     { "renderer.sim_resolution", true, Kind::kCombo },
     { "renderer.visible", true, Kind::kCombo },
     { "renderer.front", true, Kind::kCheckbox },
+    { "renderer.globe_back_fade", true, Kind::kFloatSlider },
     { "renderer.background", true, Kind::kColor },
     // v4.27, beside the sky colour it is the print-mode counterpart of. Registered for the same
     // reason renderer.background is: it has a main-UI control, so the defaults panel offers the

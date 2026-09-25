@@ -25,8 +25,24 @@ void main() {
 }
 )glsl";
 
+// The fragment shader is compiled TWICE, and the second copy differs from the first by one
+// preprocessor symbol: LUMICE_GLOBE_BACK_FADE, which compiles in the globe lens's far-side sample
+// (globeFarDir and its use in main()). Render() binds the variant only while a globe frame has a
+// fade range > 0; every other frame runs the program without it.
+//
+// WHY TWO PROGRAMS rather than one branch on u_globe_back_fade. With the far-side code present
+// behind a runtime branch the GPU compiler schedules the NEAR side's arithmetic differently, and
+// that was measured, not guessed: globe frames at fade 0 came back with 2-7 pixels one LSB off the
+// shader as it was before the fade existed, and removing the branch at compile time made them
+// byte-identical again. A range of 0 promises the old picture exactly, so the old picture is the
+// program without the symbol, and the claim holds by construction rather than by a compiler's
+// continued goodwill. The variant is a strict superset: without the symbol `has_back` is a
+// constant false and every arm that reads it folds to the original expression.
+//
+// The #version line lives apart (kFragmentShaderVersion) because it has to precede the #define.
+static const char* kFragmentShaderVersion = "#version 330 core\n";
+static const char* kGlobeBackFadeDefine = "#define LUMICE_GLOBE_BACK_FADE 1\n";
 static const char* kFragmentShader = R"glsl(
-#version 330 core
 
 in vec2 v_ndc;               // NDC position [-1, 1]
 
@@ -37,6 +53,9 @@ uniform float u_fov;         // full FOV in degrees
 uniform mat3 u_view_matrix;  // view-to-world rotation (inverse view)
 uniform int u_visible;       // 0=upper, 1=lower, 2=full
 uniform int u_front;         // 1=discard back hemisphere
+#ifdef LUMICE_GLOBE_BACK_FADE
+uniform float u_globe_back_fade;  // globe only: far-side fade range (> 0 whenever this variant is bound)
+#endif
 uniform float u_intensity_scale;  // = intensity_factor / per_pixel_intensity (0 = RGB mode)
 uniform int u_tex_mode;           // kTexModeSrgbComposited / kTexModeXyz / kTexModeSrgbRadiance
 // kTexModeXyz only: the texture holds xyz / u_xyz_scale as float16 (see src/gui/xyz_half_codec.hpp),
@@ -373,7 +392,11 @@ float relIllumEquirect(float lat) {
   return max(cos(lat), 0.0);
 }
 
-float relIllumGlobe(float rho, float focal) {
+// `far_side` picks the root: the near (camera-facing) surface point, or the far one the same ray
+// meets on its way out of the sphere (globeFarDir). The same Jacobian serves both, with |D mu - 1|:
+// on the far side the map rho(psi) runs backwards, and the pixel's solid angle is the magnitude.
+// CPU twin: RelIllumGlobe / RelIllumGlobeFar (src/gui/preview_jacobian.hpp).
+float relIllumGlobeRoot(float rho, float focal, bool far_side) {
   // kGlobeCameraDist, repeated here for the same reason globeInverse repeats it.
   const float D = 4.0;
   float rho_limb = focal / sqrt(D * D - 1.0);
@@ -381,11 +404,29 @@ float relIllumGlobe(float rho, float focal) {
   float k = min(rho, rho_max) / focal;
   float k2 = k * k;
   float disc = max(1.0 - k2 * (D * D - 1.0), 0.0);
-  float mu = (D * k2 + sqrt(disc)) / (k2 + 1.0);
-  float denom = max(D * mu - 1.0, 1e-12);
+  float mu = far_side ? (D * k2 - sqrt(disc)) / (k2 + 1.0) : (D * k2 + sqrt(disc)) / (k2 + 1.0);
+  float denom = max(abs(D * mu - 1.0), 1e-12);
   float num = D - mu;
   return num * num * num / (denom * (D - 1.0) * (D - 1.0));
 }
+
+float relIllumGlobe(float rho, float focal) {
+  return relIllumGlobeRoot(rho, focal, false);
+}
+
+#ifdef LUMICE_GLOBE_BACK_FADE
+// Globe back-side fade weight — MUST MATCH lm_proj::GlobeBackFadeWeight
+// (src/core/shared/projection_shared.h), which states the geometry, and its CPU mirror
+// GlobeBackFadeWeight (src/gui/preview_jacobian.hpp). mu is the far-side point's hit_eye.z.
+float globeBackFadeWeight(float mu, float fade) {
+  if (!(fade > 0.0)) return 0.0;
+  const float D = 4.0;
+  float dist = sqrt(max(D * D + 1.0 - 2.0 * D * mu, 0.0));
+  float depth = max(dist - sqrt(D * D - 1.0), 0.0);
+  float t = clamp(depth / fade, 0.0, 1.0);
+  return 1.0 - t * t * (3.0 - 2.0 * t);
+}
+#endif
 
 // Compute view direction from pixel for linear projection
 // Returns false (via w component) if outside valid range
@@ -531,6 +572,32 @@ vec4 globeInverse(vec2 pos, float half_fov, out float ri) {
   vec3 hit_world = u_view_matrix * hit_eye;
   return vec4(normalize(hit_world), 1.0);
 }
+
+// The FAR surface point on the same ray as globeInverse — where the ray leaves the sphere — for the
+// back-side fade. w = 1 only when the ray meets the sphere AND the point is not faded out; `ri`
+// receives its relative illumination and `weight` its fade weight. Same solve as globeInverse,
+// other root (-b + sqrt(disc)). Called by main() alone: the overlay and every other consumer of
+// the inverse read the near point only, so nothing is ever drawn on the far side but its light.
+#ifdef LUMICE_GLOBE_BACK_FADE
+vec4 globeFarDir(vec2 pos, float half_fov, out float ri, out float weight) {
+  const float kGlobeCameraDist = 4.0;  // see globeInverse
+  float short_edge = min(u_resolution.x, u_resolution.y);
+  float focal = short_edge * 0.5 / tan(half_fov);
+  ri = relIllumGlobeRoot(length(pos), focal, true);
+  weight = 0.0;
+  vec3 d = normalize(vec3(pos, -focal));
+  float b = kGlobeCameraDist * d.z;
+  float c = kGlobeCameraDist * kGlobeCameraDist - 1.0;
+  float disc = b * b - c;
+  if (disc < 0.0) return vec4(0.0, 0.0, 0.0, 0.0);
+  float t = -b + sqrt(disc);
+  if (t <= 0.0) return vec4(0.0, 0.0, 0.0, 0.0);
+  vec3 hit_eye = vec3(0.0, 0.0, kGlobeCameraDist) + t * d;
+  weight = globeBackFadeWeight(hit_eye.z, u_globe_back_fade);
+  if (!(weight > 0.0)) return vec4(0.0, 0.0, 0.0, 0.0);
+  return vec4(normalize(u_view_matrix * hit_eye), 1.0);
+}
+#endif
 
 // THE inverse: the fragment-space position `pos` (centre-origin, y-up pixels) to the world
 // direction the active lens images there, with w = 1 when the lens images it at all and 0 when
@@ -917,6 +984,40 @@ void main() {
         // the print branch's tex_color.y — reads the frame's own linear XYZ.
         tex_color *= u_xyz_scale;
       }
+
+      // Globe back-side fade: the far side of the sphere, seen THROUGH the near side, added as
+      // light (a halo is an emitter, not a surface, so the near side does not occlude it). Its
+      // texel and its weight (relative illumination x fade) join the near side's inside the
+      // linear-energy sums below, before the sky, the gamut clip and the tone operator, which is
+      // exactly where the CLI's forward projection adds the same rays into the same pixel
+      // (lm_proj::ProjectExitToPixel, globe branch). Gated by this pixel's own visibility — the
+      // near point's — for the same reason: the CLI's `visible` / `front` are a per-pixel mask
+      // over the finished accumulation. Not in kTexModeSrgbComposited, whose texels carry a baked
+      // sky that a second sample would add twice. Compiled in only for the LUMICE_GLOBE_BACK_FADE
+      // variant (see kFragmentShader); in the other one `has_back` is a constant false and the
+      // arms below that read it fold to the pre-fade expressions.
+#ifdef LUMICE_GLOBE_BACK_FADE
+      bool has_back = false;
+      vec3 back_tex = vec3(0.0);
+      float back_gain = 0.0;
+      if (u_lens_type == 10 && u_globe_back_fade > 0.0 && u_tex_mode != kTexModeSrgbComposited) {
+        float back_ri = 1.0;
+        float back_w = 0.0;
+        vec4 back = globeFarDir(pos, half_fov, back_ri, back_w);
+        if (back.w >= 0.5) {
+          has_back = true;
+          back_tex = sampleDualFisheye(back.xyz);
+          if (u_tex_mode == kTexModeXyz) {
+            back_tex *= u_xyz_scale;
+          }
+          back_gain = back_ri * back_w;
+        }
+      }
+#else
+      const bool has_back = false;
+      const vec3 back_tex = vec3(0.0);
+      const float back_gain = 0.0;
+#endif
       if (u_tex_mode != kTexModeSrgbComposited) {
         // Linear-light radiance for this pixel. The two source formats decode differently and
         // agree from here on: vignetting, then sky, then the transfer curve, in that order and by
@@ -928,7 +1029,14 @@ void main() {
           // scale multiplies it: it states how much of this direction's radiance the target lens's
           // pixel collects, so it belongs to the quantity being exposed rather than to the
           // exposure. See the relIllum* block above and src/gui/preview_jacobian.hpp.
-          radiance_linear = xyzToLinearRgb(tex_color * rel_illum);
+          // Two spellings of one sum: the no-far-side arm is the pre-fade expression verbatim, so
+          // that the variant without LUMICE_GLOBE_BACK_FADE folds to exactly it. Same for the two
+          // arms below.
+          if (has_back) {
+            radiance_linear = xyzToLinearRgb(tex_color * rel_illum + back_tex * back_gain);
+          } else {
+            radiance_linear = xyzToLinearRgb(tex_color * rel_illum);
+          }
         } else {
           // kTexModeSrgbRadiance: the exposure was already applied when these bytes were baked, so
           // there is no u_intensity_scale here and no gamut clip to redo — only the decode. The
@@ -936,7 +1044,11 @@ void main() {
           // picture, so it is applied here rather than baked, exactly as in the branch above. What
           // makes that possible is that the bake no longer sums the sky into the texel: scaling a
           // composited texel would dim the sky too, which neither the CLI nor this shader does.
-          radiance_linear = srgbToLinear(tex_color) * rel_illum;
+          if (has_back) {
+            radiance_linear = srgbToLinear(tex_color) * rel_illum + srgbToLinear(back_tex) * back_gain;
+          } else {
+            radiance_linear = srgbToLinear(tex_color) * rel_illum;
+          }
         }
 
         // The sky colour joins the halo here: inside this gate, and in linear RGB between the two
@@ -971,7 +1083,8 @@ void main() {
           // taken is the exposed scalar alone. tex_color.y is CIE Y and the two multipliers are the
           // ones xyzToLinearRgb would have applied to it, in the same order, so this is the same
           // number the CLI calls xyz[1] (src/server/render.cpp).
-          float e = tex_color.y * rel_illum * u_intensity_scale;
+          float e = has_back ? (tex_color.y * rel_illum + back_tex.y * back_gain) * u_intensity_scale
+                             : tex_color.y * rel_illum * u_intensity_scale;
           tex_color = clampAndGamma(subtractiveInk(e, u_paper));
         } else if (u_tone == 1) {
           // kTexModeSrgbRadiance under print: a KNOWN GAP, confined to the v<=4 .lmc format (and
@@ -1052,11 +1165,7 @@ static_assert(static_cast<int>(PreviewRenderer::TextureMode::kXyz) == 1, "kTexMo
 static_assert(static_cast<int>(PreviewRenderer::TextureMode::kSrgbRadiance) == 2,
               "kTexModeSrgbRadiance in the fragment shader is 2");
 
-static unsigned int CompileShader(unsigned int type, const char* source) {
-  unsigned int shader = glCreateShader(type);
-  glShaderSource(shader, 1, &source, nullptr);
-  glCompileShader(shader);
-
+static unsigned int CheckCompiledShader(unsigned int shader) {
   int success;
   glGetShaderiv(shader, GL_COMPILE_STATUS, &success);
   if (!success) {
@@ -1069,30 +1178,58 @@ static unsigned int CompileShader(unsigned int type, const char* source) {
   return shader;
 }
 
+static unsigned int CompileShader(unsigned int type, const char* source) {
+  unsigned int shader = glCreateShader(type);
+  glShaderSource(shader, 1, &source, nullptr);
+  glCompileShader(shader);
+  return CheckCompiledShader(shader);
+}
+
+// The fragment shader from its parts — version, optional define, body; see kFragmentShader.
+static unsigned int CompileFragmentShader(bool globe_back_fade) {
+  unsigned int shader = glCreateShader(GL_FRAGMENT_SHADER);
+  const char* parts[3] = { kFragmentShaderVersion, globe_back_fade ? kGlobeBackFadeDefine : "", kFragmentShader };
+  glShaderSource(shader, 3, parts, nullptr);
+  glCompileShader(shader);
+  return CheckCompiledShader(shader);
+}
+
+// 0 on a link failure (logged).
+static unsigned int LinkProgram(unsigned int vs, unsigned int fs) {
+  unsigned int program = glCreateProgram();
+  glAttachShader(program, vs);
+  glAttachShader(program, fs);
+  glLinkProgram(program);
+  int success;
+  glGetProgramiv(program, GL_LINK_STATUS, &success);
+  if (!success) {
+    char log[512];
+    glGetProgramInfoLog(program, sizeof(log), nullptr, log);
+    GUI_LOG_ERROR("Shader link error: {}", log);
+    glDeleteProgram(program);
+    return 0;
+  }
+  return program;
+}
+
 bool PreviewRenderer::Init() {
   // Compile shaders
   unsigned int vs = CompileShader(GL_VERTEX_SHADER, kVertexShader);
-  unsigned int fs = CompileShader(GL_FRAGMENT_SHADER, kFragmentShader);
-  if (!vs || !fs) {
+  unsigned int fs = CompileFragmentShader(false);
+  unsigned int fs_back_fade = CompileFragmentShader(true);
+  if (!vs || !fs || !fs_back_fade) {
     return false;
   }
 
-  shader_program_ = glCreateProgram();
-  glAttachShader(shader_program_, vs);
-  glAttachShader(shader_program_, fs);
-  glLinkProgram(shader_program_);
-
-  int success;
-  glGetProgramiv(shader_program_, GL_LINK_STATUS, &success);
-  if (!success) {
-    char log[512];
-    glGetProgramInfoLog(shader_program_, sizeof(log), nullptr, log);
-    GUI_LOG_ERROR("Shader link error: {}", log);
+  shader_program_ = LinkProgram(vs, fs);
+  globe_back_fade_program_ = LinkProgram(vs, fs_back_fade);
+  if (!shader_program_ || !globe_back_fade_program_) {
     return false;
   }
 
   glDeleteShader(vs);
   glDeleteShader(fs);
+  glDeleteShader(fs_back_fade);
 
   // Fullscreen quad (two triangles, NDC coordinates)
   // clang-format off
@@ -1189,6 +1326,10 @@ void PreviewRenderer::Destroy() {
   if (shader_program_) {
     glDeleteProgram(shader_program_);
     shader_program_ = 0;
+  }
+  if (globe_back_fade_program_) {
+    glDeleteProgram(globe_back_fade_program_);
+    globe_back_fade_program_ = 0;
   }
   tex_width_ = 0;
   tex_height_ = 0;
@@ -1919,7 +2060,10 @@ static void UploadCircleLevels(unsigned int program, const char* deg_uniform_fir
 }
 
 void PreviewRenderer::Render(int vp_x, int vp_y, int vp_w, int vp_h, const PreviewParams& params) {
-  if (!shader_program_ || !texture_ || vp_w <= 0 || vp_h <= 0) {
+  // The far-side variant only while it has something to draw; see kFragmentShader.
+  const bool globe_back_fade = params.view_proj.lens_type == kLensTypeGlobe && params.view_proj.globe_back_fade > 0.0f;
+  const unsigned int program = globe_back_fade ? globe_back_fade_program_ : shader_program_;
+  if (!program || !texture_ || vp_w <= 0 || vp_h <= 0) {
     return;
   }
 
@@ -1942,83 +2086,84 @@ void PreviewRenderer::Render(int vp_x, int vp_y, int vp_w, int vp_h, const Previ
   glGetIntegerv(GL_VIEWPORT, prev_viewport);
 
   glViewport(vp_x, vp_y, vp_w, vp_h);
-  glUseProgram(shader_program_);
+  glUseProgram(program);
 
   // Set uniforms
-  glUniform2f(glGetUniformLocation(shader_program_, "u_resolution"), static_cast<float>(vp_w),
-              static_cast<float>(vp_h));
-  glUniform1i(glGetUniformLocation(shader_program_, "u_lens_type"), params.view_proj.lens_type);
-  glUniform1f(glGetUniformLocation(shader_program_, "u_fov"), params.view_proj.fov);
-  glUniform1i(glGetUniformLocation(shader_program_, "u_visible"), params.view_proj.visible);
-  glUniform1i(glGetUniformLocation(shader_program_, "u_front"), params.view_proj.front ? 1 : 0);
-  glUniform1i(glGetUniformLocation(shader_program_, "u_tex_mode"), static_cast<int>(tex_mode_));
-  glUniform1f(glGetUniformLocation(shader_program_, "u_xyz_scale"), tex_xyz_scale_);
-  glUniform3f(glGetUniformLocation(shader_program_, "u_background"), params.background_color_linear[0],
+  glUniform2f(glGetUniformLocation(program, "u_resolution"), static_cast<float>(vp_w), static_cast<float>(vp_h));
+  glUniform1i(glGetUniformLocation(program, "u_lens_type"), params.view_proj.lens_type);
+  glUniform1f(glGetUniformLocation(program, "u_fov"), params.view_proj.fov);
+  glUniform1i(glGetUniformLocation(program, "u_visible"), params.view_proj.visible);
+  glUniform1i(glGetUniformLocation(program, "u_front"), params.view_proj.front ? 1 : 0);
+  if (globe_back_fade) {
+    glUniform1f(glGetUniformLocation(program, "u_globe_back_fade"), params.view_proj.globe_back_fade);
+  }
+  glUniform1i(glGetUniformLocation(program, "u_tex_mode"), static_cast<int>(tex_mode_));
+  glUniform1f(glGetUniformLocation(program, "u_xyz_scale"), tex_xyz_scale_);
+  glUniform3f(glGetUniformLocation(program, "u_background"), params.background_color_linear[0],
               params.background_color_linear[1], params.background_color_linear[2]);
-  glUniform3f(glGetUniformLocation(shader_program_, "u_paper"), params.paper_color_linear[0],
-              params.paper_color_linear[1], params.paper_color_linear[2]);
-  glUniform1i(glGetUniformLocation(shader_program_, "u_tone"), params.tone);
-  glUniform1f(glGetUniformLocation(shader_program_, "u_intensity_scale"), params.exposure.intensity_scale);
-  glUniform1f(glGetUniformLocation(shader_program_, "u_max_abs_dz"), params.source.max_abs_dz);
-  glUniform1f(glGetUniformLocation(shader_program_, "u_r_scale"), params.source.r_scale);
+  glUniform3f(glGetUniformLocation(program, "u_paper"), params.paper_color_linear[0], params.paper_color_linear[1],
+              params.paper_color_linear[2]);
+  glUniform1i(glGetUniformLocation(program, "u_tone"), params.tone);
+  glUniform1f(glGetUniformLocation(program, "u_intensity_scale"), params.exposure.intensity_scale);
+  glUniform1f(glGetUniformLocation(program, "u_max_abs_dz"), params.source.max_abs_dz);
+  glUniform1f(glGetUniformLocation(program, "u_r_scale"), params.source.r_scale);
 
   float view_matrix[9];
   BuildViewMatrix(params.view_proj.elevation, params.view_proj.azimuth, params.view_proj.roll, view_matrix);
-  glUniformMatrix3fv(glGetUniformLocation(shader_program_, "u_view_matrix"), 1, GL_FALSE, view_matrix);
+  glUniformMatrix3fv(glGetUniformLocation(program, "u_view_matrix"), 1, GL_FALSE, view_matrix);
 
   // Bind equirect texture to unit 0
   glActiveTexture(GL_TEXTURE0);
   glBindTexture(GL_TEXTURE_2D, texture_);
-  glUniform1i(glGetUniformLocation(shader_program_, "u_texture"), 0);
+  glUniform1i(glGetUniformLocation(program, "u_texture"), 0);
 
   // Background image uniforms
-  glUniform1i(glGetUniformLocation(shader_program_, "u_bg_enabled"), params.bg.enabled ? 1 : 0);
+  glUniform1i(glGetUniformLocation(program, "u_bg_enabled"), params.bg.enabled ? 1 : 0);
   if (params.bg.enabled) {
-    glUniform1f(glGetUniformLocation(shader_program_, "u_overlay_alpha"), params.bg.alpha);
+    glUniform1f(glGetUniformLocation(program, "u_overlay_alpha"), params.bg.alpha);
 
     // CPU-side contain-fit + pan/zoom UV calculation (ComputeBgUvTransform, declared in the
     // header so it is unit-testable without a GL context).
     const BgUvTransform bg_uv =
         ComputeBgUvTransform(vp_w, vp_h, params.bg.aspect, params.bg.pan_x, params.bg.pan_y, params.bg.zoom);
-    glUniform2f(glGetUniformLocation(shader_program_, "u_bg_uv_scale"), bg_uv.scale_x, bg_uv.scale_y);
-    glUniform2f(glGetUniformLocation(shader_program_, "u_bg_uv_offset"), bg_uv.offset_x, bg_uv.offset_y);
+    glUniform2f(glGetUniformLocation(program, "u_bg_uv_scale"), bg_uv.scale_x, bg_uv.scale_y);
+    glUniform2f(glGetUniformLocation(program, "u_bg_uv_offset"), bg_uv.offset_x, bg_uv.offset_y);
 
     // Bind bg texture to unit 1
     glActiveTexture(GL_TEXTURE1);
     glBindTexture(GL_TEXTURE_2D, bg_texture_);
-    glUniform1i(glGetUniformLocation(shader_program_, "u_bg_texture"), 1);
+    glUniform1i(glGetUniformLocation(program, "u_bg_texture"), 1);
     glActiveTexture(GL_TEXTURE0);
   }
 
   // Auxiliary line overlay uniforms
   const auto& ov = params.overlay;
-  glUniform1i(glGetUniformLocation(shader_program_, "u_show_horizon"), ov.show_horizon ? 1 : 0);
-  glUniform1i(glGetUniformLocation(shader_program_, "u_show_grid"), ov.show_grid ? 1 : 0);
-  glUniform1i(glGetUniformLocation(shader_program_, "u_show_sun_circles"), ov.show_sun_circles ? 1 : 0);
-  glUniform1i(glGetUniformLocation(shader_program_, "u_show_view_dist"), ov.show_view_dist ? 1 : 0);
+  glUniform1i(glGetUniformLocation(program, "u_show_horizon"), ov.show_horizon ? 1 : 0);
+  glUniform1i(glGetUniformLocation(program, "u_show_grid"), ov.show_grid ? 1 : 0);
+  glUniform1i(glGetUniformLocation(program, "u_show_sun_circles"), ov.show_sun_circles ? 1 : 0);
+  glUniform1i(glGetUniformLocation(program, "u_show_view_dist"), ov.show_view_dist ? 1 : 0);
   // The curve definitions: level lists, packed four to a vec4 (see the uniform block in
   // kFragmentShader for why), the circles' centre, and the line-width rule's constants — the
   // latter from their single owner in src/util/, never as digits in the GLSL source.
-  UploadGridLevels(shader_program_, ov.elevation_deg, ov.longitude_deg);
-  UploadCircleLevels(shader_program_, "u_angular_dist_deg[0]", "u_angular_dist_count", ov.angular_dist_deg);
-  UploadCircleLevels(shader_program_, "u_view_dist_deg[0]", "u_view_dist_count", ov.view_dist_deg);
-  glUniform3f(glGetUniformLocation(shader_program_, "u_reference_dir"), ov.reference_dir[0], ov.reference_dir[1],
+  UploadGridLevels(program, ov.elevation_deg, ov.longitude_deg);
+  UploadCircleLevels(program, "u_angular_dist_deg[0]", "u_angular_dist_count", ov.angular_dist_deg);
+  UploadCircleLevels(program, "u_view_dist_deg[0]", "u_view_dist_count", ov.view_dist_deg);
+  glUniform3f(glGetUniformLocation(program, "u_reference_dir"), ov.reference_dir[0], ov.reference_dir[1],
               ov.reference_dir[2]);
-  glUniform1f(glGetUniformLocation(shader_program_, "u_line_fwidth_min_deg"), kAnnotationLineFwidthMinDeg);
-  glUniform1f(glGetUniformLocation(shader_program_, "u_line_fwidth_max_deg"), kAnnotationLineFwidthMaxDeg);
-  glUniform1f(glGetUniformLocation(shader_program_, "u_line_half_width_px"), kAnnotationLineHalfWidthPx);
-  glUniform3f(glGetUniformLocation(shader_program_, "u_horizon_color"), ov.horizon_color[0], ov.horizon_color[1],
+  glUniform1f(glGetUniformLocation(program, "u_line_fwidth_min_deg"), kAnnotationLineFwidthMinDeg);
+  glUniform1f(glGetUniformLocation(program, "u_line_fwidth_max_deg"), kAnnotationLineFwidthMaxDeg);
+  glUniform1f(glGetUniformLocation(program, "u_line_half_width_px"), kAnnotationLineHalfWidthPx);
+  glUniform3f(glGetUniformLocation(program, "u_horizon_color"), ov.horizon_color[0], ov.horizon_color[1],
               ov.horizon_color[2]);
-  glUniform3f(glGetUniformLocation(shader_program_, "u_grid_color"), ov.grid_color[0], ov.grid_color[1],
-              ov.grid_color[2]);
-  glUniform3f(glGetUniformLocation(shader_program_, "u_sun_circles_color"), ov.sun_circles_color[0],
-              ov.sun_circles_color[1], ov.sun_circles_color[2]);
-  glUniform3f(glGetUniformLocation(shader_program_, "u_view_dist_color"), ov.view_dist_color[0], ov.view_dist_color[1],
+  glUniform3f(glGetUniformLocation(program, "u_grid_color"), ov.grid_color[0], ov.grid_color[1], ov.grid_color[2]);
+  glUniform3f(glGetUniformLocation(program, "u_sun_circles_color"), ov.sun_circles_color[0], ov.sun_circles_color[1],
+              ov.sun_circles_color[2]);
+  glUniform3f(glGetUniformLocation(program, "u_view_dist_color"), ov.view_dist_color[0], ov.view_dist_color[1],
               ov.view_dist_color[2]);
-  glUniform1f(glGetUniformLocation(shader_program_, "u_horizon_alpha"), ov.horizon_alpha);
-  glUniform1f(glGetUniformLocation(shader_program_, "u_grid_alpha"), ov.grid_alpha);
-  glUniform1f(glGetUniformLocation(shader_program_, "u_sun_circles_alpha"), ov.sun_circles_alpha);
-  glUniform1f(glGetUniformLocation(shader_program_, "u_view_dist_alpha"), ov.view_dist_alpha);
+  glUniform1f(glGetUniformLocation(program, "u_horizon_alpha"), ov.horizon_alpha);
+  glUniform1f(glGetUniformLocation(program, "u_grid_alpha"), ov.grid_alpha);
+  glUniform1f(glGetUniformLocation(program, "u_sun_circles_alpha"), ov.sun_circles_alpha);
+  glUniform1f(glGetUniformLocation(program, "u_view_dist_alpha"), ov.view_dist_alpha);
 
   // "[0]" and not the bare array name: glGetUniformLocation is specified to resolve the FIRST
   // ELEMENT of an array, and while most drivers also accept the bare name, the spec does not
@@ -2030,17 +2175,17 @@ void PreviewRenderer::Render(int vp_x, int vp_y, int vp_w, int vp_h, const Previ
                 "marker_screen_pos must be a flat float[N][2] for the single glUniform2fv upload");
   static_assert(sizeof(ov.marker_color) == sizeof(float) * 3 * LUMICE_ANNOTATION_MARKER_COUNT,
                 "marker_color must be a flat float[N][3] for the single glUniform3fv upload");
-  glUniform2fv(glGetUniformLocation(shader_program_, "u_marker_screen_pos[0]"), LUMICE_ANNOTATION_MARKER_COUNT,
+  glUniform2fv(glGetUniformLocation(program, "u_marker_screen_pos[0]"), LUMICE_ANNOTATION_MARKER_COUNT,
                ov.marker_screen_pos[0].data());
-  glUniform3fv(glGetUniformLocation(shader_program_, "u_marker_color[0]"), LUMICE_ANNOTATION_MARKER_COUNT,
+  glUniform3fv(glGetUniformLocation(program, "u_marker_color[0]"), LUMICE_ANNOTATION_MARKER_COUNT,
                ov.marker_color[0].data());
-  glUniform1f(glGetUniformLocation(shader_program_, "u_markers_radius_px"), ov.markers_radius_px);
-  glUniform1f(glGetUniformLocation(shader_program_, "u_markers_alpha"), ov.markers_alpha);
+  glUniform1f(glGetUniformLocation(program, "u_markers_radius_px"), ov.markers_radius_px);
+  glUniform1f(glGetUniformLocation(program, "u_markers_alpha"), ov.markers_alpha);
 
-  glUniform1i(glGetUniformLocation(shader_program_, "u_show_lens_border"), ov.show_lens_border ? 1 : 0);
-  glUniform3f(glGetUniformLocation(shader_program_, "u_lens_border_color"), ov.lens_border_color[0],
-              ov.lens_border_color[1], ov.lens_border_color[2]);
-  glUniform1f(glGetUniformLocation(shader_program_, "u_lens_border_alpha"), ov.lens_border_alpha);
+  glUniform1i(glGetUniformLocation(program, "u_show_lens_border"), ov.show_lens_border ? 1 : 0);
+  glUniform3f(glGetUniformLocation(program, "u_lens_border_color"), ov.lens_border_color[0], ov.lens_border_color[1],
+              ov.lens_border_color[2]);
+  glUniform1f(glGetUniformLocation(program, "u_lens_border_alpha"), ov.lens_border_alpha);
 
   // Draw fullscreen quad
   glBindVertexArray(vao_);
