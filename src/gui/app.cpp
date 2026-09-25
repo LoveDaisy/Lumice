@@ -483,12 +483,7 @@ ScreenshotFrameFacts CurrentScreenshotFrameFacts() {
   return facts;
 }
 
-void PerformScreenshotExport(const ScreenshotExportSelection& sel) {
-  auto path = ShowExportPngDialog();
-  if (path.empty()) {
-    return;
-  }
-
+ScreenshotRender RenderScreenshot(const ScreenshotExportSelection& sel) {
   PreviewParams params = BuildExportParams();
   ApplyScreenshotExportSelectionToParams(sel, g_state, CurrentScreenshotFrameFacts(), params);
 
@@ -518,17 +513,30 @@ void PerformScreenshotExport(const ScreenshotExportSelection& sel) {
   const float label_h = DeviceToLogical(h, dpi_y);
   const std::vector<CurveLabelSet> curve_labels =
       BuildScreenshotExportLabelSets(PreviewAnnotationAnchors(), g_state, sel, label_w, label_h);
-  auto rgba = RenderExportToRgba(g_preview, params, w, h, curve_labels, dpi_x, dpi_y);
-  if (rgba.empty()) {
-    GUI_LOG_ERROR("[GUI] Export screenshot failed: RenderExportToRgba returned empty (vp={}x{})", w, h);
+  ScreenshotRender out;
+  out.w = w;
+  out.h = h;
+  out.has_labels = !curve_labels.empty();
+  out.rgba = RenderExportToRgba(g_preview, params, w, h, curve_labels, dpi_x, dpi_y);
+  return out;
+}
+
+void PerformScreenshotExport(const ScreenshotExportSelection& sel) {
+  auto path = ShowExportPngDialog();
+  if (path.empty()) {
+    return;
+  }
+  const ScreenshotRender shot = RenderScreenshot(sel);
+  if (shot.rgba.empty()) {
+    GUI_LOG_ERROR("[GUI] Export screenshot failed: RenderExportToRgba returned empty (vp={}x{})", shot.w, shot.h);
     return;
   }
 
-  if (!WriteRgbaBufferToPng(path, w, h, rgba)) {
+  if (!WriteRgbaBufferToPng(path, shot.w, shot.h, shot.rgba)) {
     GUI_LOG_ERROR("[GUI] Export screenshot failed: PNG write error path={}", PathToU8(path));
     return;
   }
-  GUI_LOG_INFO("[GUI] Export screenshot{}: {}", curve_labels.empty() ? "" : " (overlay)", PathToU8(path));
+  GUI_LOG_INFO("[GUI] Export screenshot{}: {}", shot.has_labels ? " (overlay)" : "", PathToU8(path));
 }
 
 void DoExportDualFisheyeEqualAreaPng() {

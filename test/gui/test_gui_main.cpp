@@ -669,6 +669,7 @@ int main(int argc, char** argv) {
   // Register and queue all tests
   RegisterViewDisplayControlTests(engine);
   RegisterExportPreviewTests(engine);
+  RegisterScreenshotExportOptionsTests(engine);
   RegisterPreviewPixelTests(engine);
   RegisterPreviewTextureTests(engine);
   RegisterPreviewBackgroundTests(engine);

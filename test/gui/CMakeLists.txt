@@ -8,6 +8,7 @@ add_executable(gui_test
     test_gui_main.cpp
     functional/test_gui_preview_animation.cpp
     functional/test_export.cpp
+    functional/test_screenshot_export_options.cpp
     functional/test_file_ops.cpp
     functional/test_color_window.cpp
     functional/test_edit_modal.cpp

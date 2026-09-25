@@ -339,6 +339,16 @@ void PerformSaveAs();
 void DoExportPreviewPng();
 // The file dialog, render and write for one Screenshot export, narrowed to `sel`.
 void PerformScreenshotExport(const ScreenshotExportSelection& sel);
+// The render half of PerformScreenshotExport, with no dialog and no file: the live viewport's
+// device-pixel size, the preview's params and this frame's anchors, narrowed to `sel`. Separate so
+// a test can read back exactly the pixels the command would write. Needs the GL context.
+struct ScreenshotRender {
+  std::vector<unsigned char> rgba;  // empty on failure
+  int w = 0;
+  int h = 0;
+  bool has_labels = false;
+};
+ScreenshotRender RenderScreenshot(const ScreenshotExportSelection& sel);
 // What the screenshot selection needs to know about the frame on screen that GuiState does not
 // hold (background photo loaded, composite payload uploaded) — read off this module's globals.
 ScreenshotFrameFacts CurrentScreenshotFrameFacts();
