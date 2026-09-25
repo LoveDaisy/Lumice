@@ -88,6 +88,73 @@ inline bool CanStartAnalysis(bool has_server, GuiState::SimState state, bool ana
   return has_server && !IsBackendBusy(state, analysis_in_progress) && HasEverShownPicture(intent);
 }
 
+// The top bar's Continue button (LUMICE_ContinueRender: trace more rays into the picture on
+// screen instead of starting over). Why it cannot run now, as the first reason that applies, or
+// kNone. One function answers both "enabled?" (CanContinue) and "why not?" (the tooltip), so the
+// two cannot drift apart.
+//   kNoServer         — no backend.
+//   kBusy             — a run (render or analysis) is in flight or a Stop is draining; a
+//                       continuation starts a run, so it waits exactly as Run does.
+//   kNoAccumulation   — the picture on screen is not the server's live accumulation of a render:
+//                       nothing was run yet (kNone), or it came out of a file (kLoaded). Only a
+//                       render that completed or was stopped leaves one (kRunCompleted / kStopped).
+//   kAnalysisSession  — the server's session is a raypath analysis; its consumers hold a
+//                       histogram, and the render accumulation it replaced is gone. The server's
+//                       own session kind, read back through the poller — not the panel's
+//                       analysis.started intent, which a Stop withdraws while the session stays.
+//   kConfigChanged    — the document no longer describes what was accumulated: a re-sim field
+//                       moved (MatchesCommitExceptRayBudget), or a construction-time property
+//                       (backend, worker count) did, which a Run would rebuild the server for.
+//                       The ray budget is exempt — it is what Continue reads, as the increment.
+// Display-only edits (EV, overlays, the view) reach none of these, so they never block it.
+enum class ContinueBlocker { kNone, kNoServer, kBusy, kNoAccumulation, kAnalysisSession, kConfigChanged };
+
+inline ContinueBlocker WhyCannotContinue(bool has_server, GuiState::SimState state, bool analysis_in_progress,
+                                         RunIntent intent, bool server_session_is_analysis, bool document_continuable) {
+  if (!has_server) {
+    return ContinueBlocker::kNoServer;
+  }
+  if (IsBackendBusy(state, analysis_in_progress)) {
+    return ContinueBlocker::kBusy;
+  }
+  if (intent != RunIntent::kRunCompleted && intent != RunIntent::kStopped) {
+    return ContinueBlocker::kNoAccumulation;
+  }
+  if (server_session_is_analysis) {
+    return ContinueBlocker::kAnalysisSession;
+  }
+  if (!document_continuable) {
+    return ContinueBlocker::kConfigChanged;
+  }
+  return ContinueBlocker::kNone;
+}
+
+inline bool CanContinue(bool has_server, GuiState::SimState state, bool analysis_in_progress, RunIntent intent,
+                        bool server_session_is_analysis, bool document_continuable) {
+  return WhyCannotContinue(has_server, state, analysis_in_progress, intent, server_session_is_analysis,
+                           document_continuable) == ContinueBlocker::kNone;
+}
+
+// The disabled button's tooltip for each blocker; nullptr for kNone (the enabled button has its own).
+inline const char* ContinueBlockerTooltip(ContinueBlocker blocker) {
+  switch (blocker) {
+    case ContinueBlocker::kNone:
+      return nullptr;
+    case ContinueBlocker::kNoServer:
+      return "No simulation backend.";
+    case ContinueBlocker::kBusy:
+      return "A run is in progress. Continue adds rays once it has completed or been stopped.";
+    case ContinueBlocker::kNoAccumulation:
+      return "Nothing to continue yet \xe2\x80\x94 press Run first.";
+    case ContinueBlocker::kAnalysisSession:
+      return "The last run was a raypath analysis. Press Run to render again; Continue can then add rays to it.";
+    case ContinueBlocker::kConfigChanged:
+      return "The configuration changed since the last run, so more rays would not match the picture.\n"
+             "Press Run to start over with the new configuration, or Revert the changes.";
+  }
+  return nullptr;
+}
+
 // The panel's notice that the picture on screen is not of the document on the panels — the text
 // to show, or nullptr when there is nothing to say. Two cases and they cannot both hold: an
 // intent of kNone (fresh / New / a JSON import / an .lmc with no baked picture) means no picture

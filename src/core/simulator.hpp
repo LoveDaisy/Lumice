@@ -193,6 +193,20 @@ class Simulator {
   // snapshotted at the top of Run().
   void SetAnalysisForceCpu(bool enabled);
 
+  // Continuation of an accumulated render (Server::ContinueRun): the NEXT Run() traces a
+  // random stream of its own instead of the one a plain Run() would start. A Run() is one
+  // stream session — a fixed seed re-seeds both CPU generators at its entry, and every GPU
+  // backend is created per Run() and seeds itself from the seed it is handed, restarting its
+  // device ray counters — so re-entering Run() with the same seed replays the rays already
+  // accumulated. `index` != 0 derives the session's seed as a mix of the effective seed and
+  // `index`, and that one value is what both halves see: the CPU generators (fixed seed only;
+  // a random-seed worker's generators simply carry on) and SessionSpec::seed. The caller
+  // passes a value it has never passed before, so no two continuations share a stream.
+  // One-shot: Run() consumes it at entry and the Run() after that is a plain one again, so
+  // no other entry point has to remember to clear it. Same thread contract as
+  // SetAnalysisForceCpu: written by the server thread between runs.
+  void SetContinuationIndex(uint32_t index);
+
   // The backend kind the most recent Run() entry actually resolved to — kCpu
   // for the legacy path (whether by preference, by force, by an unavailable
   // GPU, or by the mid-run BackendUnavailableError fallback, which re-publishes
@@ -406,6 +420,12 @@ class Simulator {
   // so the device-gen path activates even when the user-facing `seed_` is 0
   // (default multi-worker random mode). See task 260.6.
   uint32_t effective_seed_;
+  // The seed of the CURRENT Run(): effective_seed_ for a plain Run(), a mix of it and the
+  // continuation index for a continued one (SetContinuationIndex). Set at Run() entry and
+  // only read on the simulator thread after that.
+  uint32_t session_seed_;
+  // See SetContinuationIndex. Exchanged back to 0 at Run() entry.
+  std::atomic<uint32_t> continuation_index_{ 0 };
 
   // See SetAllDataObserverForTest. nullptr in every production build path.
   AllDataObserverFn all_data_observer_ = nullptr;

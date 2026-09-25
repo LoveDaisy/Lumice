@@ -21,6 +21,7 @@ struct SceneDeleter {
 using ScenePtr = std::unique_ptr<LUMICE_Scene, SceneDeleter>;
 
 struct GuiState;
+struct SimConfig;
 struct PreviewViewport;
 struct FilterConfig;
 
@@ -75,6 +76,12 @@ enum class SceneIntent {
   kJsonExport,  // "Export Config JSON" for the CLI → LUMICE_SceneToJson. Describes the PICTURE on
                 // screen, because the CLI has no reprojection stage to apply afterwards.
 };
+
+// The document's finite ray budget as the C API counts it (sim.ray_num_millions is in millions).
+// One conversion for the two places that hand it to the server — the budget a commit asks for
+// (BuildScene) and the increment a Continue adds (DoContinue) — so "Continue adds the budget
+// shown on the panel" cannot come to mean a slightly different number than a Run of it.
+LUMICE_RayCount SimRayCount(const SimConfig& sim);
 
 // Build a LUMICE_Scene from GuiState: the single GUI→core assembly path, feeding both the
 // simulation commit (LUMICE_CommitScene) and the JSON export (LUMICE_SceneToJson) via `intent`.

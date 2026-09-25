@@ -434,6 +434,32 @@ void RenderTopBar(float window_width) {
     }
   }
 
+  // Continue — beside Run, always drawn so the bar does not shift when it becomes available.
+  // Run starts over from zero; Continue adds the panel's ray budget to the picture on screen
+  // (DoContinue). Whether it may run, and why not, is one function (WhyCannotContinue), so the
+  // disabled state and its tooltip cannot disagree.
+  {
+    ImGui::SameLine();
+    const ContinueBlocker blocker =
+        WhyCannotContinue(g_server != nullptr, g_state.sim_state, g_state.analysis_run_in_progress, g_state.run_intent,
+                          g_state.server_session_is_analysis, DocumentContinuable(g_state));
+    ImGui::BeginDisabled(blocker != ContinueBlocker::kNone);
+    if (ImGui::Button(ICON_FA_FORWARD " Continue")) {
+      DoContinue();
+    }
+    ImGui::EndDisabled();
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+      if (const char* why = ContinueBlockerTooltip(blocker)) {
+        ImGui::SetTooltip("%s", why);
+      } else if (g_state.sim.infinite) {
+        ImGui::SetTooltip("Keep adding rays to this picture until stopped.");
+      } else {
+        ImGui::SetTooltip("Add %.6g million more rays to this picture, keeping everything traced so far.",
+                          static_cast<double>(g_state.sim.ray_num_millions));
+      }
+    }
+  }
+
   // Revert area — always rendered for stable layout, hidden when not modified.
   // Alpha=0 + BeginDisabled: invisible and non-interactive, but still occupies layout space.
   // The hidden area intercepts clicks, which is harmless in this horizontal toolbar context.

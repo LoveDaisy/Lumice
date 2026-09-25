@@ -1865,6 +1865,10 @@ std::map<int, int> ComputeCrystalPoolToCoreIdMap(const GuiState& state) {
   return pool_to_core;
 }
 
+LUMICE_RayCount SimRayCount(const SimConfig& sim) {
+  return static_cast<LUMICE_RayCount>(sim.ray_num_millions * 1e6);
+}
+
 ScenePtr BuildScene(const GuiState& state, SceneIntent intent, FilterOverflowInfo* overflow,
                     ColorClassOverflowInfo* color_overflow, GridOverflowInfo* grid_overflow) {
   ScenePtr scene(LUMICE_SceneCreate());
@@ -2348,8 +2352,7 @@ ScenePtr BuildScene(const GuiState& state, SceneIntent intent, FilterOverflowInf
 
   // Scene: simulation. geom_clock is passed 0 explicitly — the GUI has never set it (the
   // pre-handle path left the memset-0 field untouched) and exposes no control for it.
-  if (LUMICE_SceneSetSimParams(scene.get(), state.sim.infinite ? 1 : 0,
-                               static_cast<LUMICE_RayCount>(state.sim.ray_num_millions * 1e6), state.sim.max_hits,
+  if (LUMICE_SceneSetSimParams(scene.get(), state.sim.infinite ? 1 : 0, SimRayCount(state.sim), state.sim.max_hits,
                                /*geom_clock=*/0) != LUMICE_OK) {
     GUI_LOG_WARNING("[FileIO] BuildScene: LUMICE_SceneSetSimParams failed");
     return nullptr;

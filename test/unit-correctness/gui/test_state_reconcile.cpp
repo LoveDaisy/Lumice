@@ -405,3 +405,53 @@ TEST(GuiStateReconcile, ApplyingEffectsLetsAHardResetTakeOverFromAPlainReRun) {
     EXPECT_FLOAT_EQ(s.snapshot_intensity, c.expect_p99 == 0.0f ? 0.0f : 2.5f);
   }
 }
+
+// Continue's document condition is the commit-baseline comparison with the ray budget held equal —
+// not a second list of fields. Read over the same three tables: every structural row still blocks
+// it except the one that only moves the budget, and every display / inert row leaves it open,
+// which is what lets EV, the view or a class colour be adjusted on a finished run and the run
+// still be continued. The budget's own two fields, and a field of the sim block beside them, are
+// pinned by name: a comparison that skipped the whole sim block would pass the first two and fail
+// the third.
+TEST(GuiStateReconcile, ContinueIgnoresTheRayBudgetAndNothingElseTheReRunLaneReads) {
+  using gui::MatchesCommitExceptRayBudget;
+  {
+    GuiState s;
+    EXPECT_FALSE(MatchesCommitExceptRayBudget(s)) << "no commit yet: nothing a continuation could match";
+  }
+  {
+    GuiState s = MakeBaselineState();
+    EXPECT_TRUE(MatchesCommitExceptRayBudget(s));
+  }
+  for (const Row& row : kStructuralRows) {
+    SCOPED_TRACE(row.what_changed);
+    GuiState s = MakeBaselineState();
+    row.mutate(s);
+    const bool budget_only = std::string(row.what_changed) == "sim";  // that row edits ray_num_millions
+    EXPECT_EQ(MatchesCommitExceptRayBudget(s), budget_only);
+  }
+  for (const Row* rows : { kDisplayRows, kInertRows }) {
+    const size_t n = rows == kDisplayRows ? std::size(kDisplayRows) : std::size(kInertRows);
+    for (size_t i = 0; i < n; ++i) {
+      SCOPED_TRACE(rows[i].what_changed);
+      GuiState s = MakeBaselineState();
+      rows[i].mutate(s);
+      EXPECT_TRUE(MatchesCommitExceptRayBudget(s));
+    }
+  }
+  {
+    GuiState s = MakeBaselineState();
+    s.sim.infinite = !s.sim.infinite;
+    EXPECT_TRUE(MatchesCommitExceptRayBudget(s)) << "toggling Infinite rays is a budget edit";
+  }
+  {
+    GuiState s = MakeBaselineState();
+    s.sim.max_hits += 1;
+    EXPECT_FALSE(MatchesCommitExceptRayBudget(s)) << "max_hits changes the rays, not just how many";
+  }
+  {
+    GuiState s = MakeBaselineState();
+    s.sim.ray_allocation_adaptive = !s.sim.ray_allocation_adaptive;
+    EXPECT_FALSE(MatchesCommitExceptRayBudget(s)) << "the allocation mode changes how rays are dealt";
+  }
+}

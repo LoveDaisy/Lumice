@@ -623,6 +623,35 @@ class Server {
   Error StartRaypathAnalysis(const nlohmann::json& scene_json, const RaypathAnalysisRequest& request);
 
   /**
+   * @brief Continue the committed render: trace `additional_ray_num` more rays INTO the
+   *        accumulation the last run left behind, instead of starting a new one.
+   * @details The one run start that is not a reset. Nothing CommitConfig resets is touched —
+   *          the render planes, the emitted-energy and ray-count totals, the exposure anchor,
+   *          the adaptive ray-allocation tally — so every quantity read afterwards describes
+   *          the previous rays and the new ones together. The new rays are a fresh random
+   *          stream: each continuation hands the workers a seed of its own
+   *          (Simulator::SetContinuationIndex), which is what keeps a fixed-seed server from
+   *          tracing the same rays a second time. It does advance the lifecycle epoch, like
+   *          every other run start: the drain signal and "is this frame of the current run"
+   *          are both keyed on it, and an unchanged epoch would read as already drained.
+   *          Works from either way a render run ends — completed on its budget, or Stop()ped.
+   * @param additional_ray_num Rays to add, total across wavelengths (the same unit as the
+   *        scene's ray_num); kInfSize runs until Stop().
+   * @return Error::ServerError when there is nothing to continue — the current session is an
+   *         analysis, no render was ever committed, a run is in progress, or a just-completed
+   *         run's last batches did not finish draining within an internal bound (retry shortly:
+   *         this is "no traced ray is dropped" failing safe rather than silently, code review
+   *         round 1 Major #1); Error::InvalidValue for a zero budget. A rejected call changes
+   *         nothing.
+   * @note Same implicit rule as CommitConfig: this mutates session state
+   *       (continuation_serial_, active_scene_, scene_generation_) with no internal
+   *       serialization of its own, so the caller must not invoke this concurrently with another
+   *       call to ContinueRun or CommitConfig (code review round 2, Minor #1) — exactly the
+   *       existing single-writer assumption every C API mutator here already relies on.
+   */
+  Error ContinueRun(size_t additional_ray_num);
+
+  /**
    * @brief The trace backend this server's Simulator ACTUALLY runs on, as opposed to the
    *        one SetPreferredBackend asked for.
    * @details The two differ in exactly two situations, and this is the read that makes

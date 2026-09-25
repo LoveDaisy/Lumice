@@ -24,7 +24,7 @@ The annotated screenshot below labels the six regions you will use most often. T
 
 | # | Region | Purpose |
 |---|--------|---------|
-| 1 | Top Bar | Open / save project, simulation Run/Stop, status badges |
+| 1 | Top Bar | Open / save project, simulation Run/Stop/Continue, status badges |
 | 2 | Left Panel | Crystal list, Light Source, Scattering, Render configuration cards |
 | 3 | Crystal Preview | 3D preview of the currently selected crystal (wireframe / hidden line / x-ray / shaded) |
 | 4 | Render Preview | Live halo image accumulated as rays land |
@@ -54,6 +54,16 @@ While running:
 - The grid overlay (visible above) helps you read angles in the preview, and it travels with the document: its switches, colours and angle lists are saved into the `.lmc`, and an exported JSON carries them as `render[].grid`, which the CLI draws onto its output image too.
 
 To stop early, press **Stop** in the Top Bar; partial results stay on screen.
+
+Still too noisy once a run has finished — or after you stopped it? Press **Continue** next to
+**Run**. It traces as many more rays as the Rays(M) field says (or, with Infinite rays on, keeps
+going until you press Stop) and adds them to the picture on screen, so nothing already traced is
+thrown away: the ray count carries on from where it was, and the brightness does not jump. **Run**,
+by contrast, always starts over from zero. You can change Rays(M) between the two — it sets how
+many rays the next Continue adds — and you can adjust exposure, overlays and the view freely.
+Any other change (a crystal, the sun, a filter, …) means the picture no longer matches the
+configuration, so Continue is disabled until you Run again or Revert the change; hover the button
+to see why it is disabled.
 
 ## 5. Author a new entry from scratch
 

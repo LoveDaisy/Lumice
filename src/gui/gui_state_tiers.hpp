@@ -243,6 +243,9 @@ inline constexpr const char* kDerivedFieldsExcludeList[] = {
     // analysis.started + the lifecycle observation, both written by SyncFromPoller.
     "analysis_result",
     "analysis_run_in_progress",
+    // The server's session kind as the poller last observed it (Continue's gate), written by
+    // SyncFromPoller.
+    "server_session_is_analysis",
     // Dirty flag (this is the effect output, not an input to the reconciler)
     "dirty",
     // Runtime-derived aspect clamp info (populated by ApplyAspectRatio)

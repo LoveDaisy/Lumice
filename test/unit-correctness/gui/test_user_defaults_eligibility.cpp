@@ -69,7 +69,9 @@ namespace {
 // 86 with config_summary_window_open (the Summary window's open flag), registered kSession like
 // color_window_open and defaults_panel_open before it and ineligible for the same reason: which
 // windows are open is not part of the document. Not serialized, so no row can reach the panel.
-constexpr std::size_t kExpectedGovernedFieldCount = 86;
+// 87 with server_session_is_analysis (derived, poller-fed: the server's session kind, Continue's
+// gate). Runtime observation of the backend, ineligible as every derived row is.
+constexpr std::size_t kExpectedGovernedFieldCount = 87;
 
 std::vector<std::string> AllGovernedFieldNames() {
   std::vector<std::string> names;

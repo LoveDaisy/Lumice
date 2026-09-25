@@ -29,7 +29,7 @@ Link against the `lumice` static library.
 ### Constants
 
 ```c
-#define LUMICE_API_VERSION 440        // ABI version, encoded major*100 + minor (v4.40)
+#define LUMICE_API_VERSION 444        // ABI version, encoded major*100 + minor (v4.44)
 #define LUMICE_MAX_RENDER_RESULTS 16  // Maximum capacity of the render result array
 #define LUMICE_MAX_STATS_RESULTS 1    // Maximum capacity of the stats result array
 ```
@@ -788,7 +788,7 @@ typedef enum LUMICE_SessionKind_ {
 
 typedef struct LUMICE_SimLifecycleResult_ {
   int lifecycle;                  // one of LUMICE_SimLifecycle
-  unsigned long long epoch;       // monotonic, ++ on each reset-causing commit; 0 before any
+  unsigned long long epoch;       // monotonic, ++ on each run start; 0 before any commit
   int session_kind;               // one of LUMICE_SessionKind (v4.37)
 } LUMICE_SimLifecycleResult;
 
@@ -804,7 +804,9 @@ LUMICE_ErrorCode LUMICE_GetSimLifecycle(LUMICE_Server* server, LUMICE_SimLifecyc
 - `LUMICE_ERR_NULL_ARG`: `server` or `out` is `NULL`
 
 **`epoch`**: read back after a synchronous `LUMICE_CommitScene` to learn the epoch it just
-minted (the commit signature does not change). An analysis run advances it too.
+minted (the commit signature does not change). Every run start advances it: a commit, an
+analysis run, and a `LUMICE_ContinueRender` (v4.44) — the one start that resets no accumulator,
+and advances the epoch anyway because the drain signal and a frame's freshness are keyed on it.
 
 **`session_kind`** (v4.37): which kind of run the session that is **current at the time of the
 call** is — not "the kind at the last commit". It is written only by the two calls that
@@ -865,8 +867,9 @@ render, no lock. Safe to call on every poll iteration.
 - `LUMICE_StopServer()` does **not** publish a drain. Stopping discards whatever is still
   queued, so "stopped" stays distinguishable from "drained" rather than being reported as
   a clean finish.
-- `drained_epoch` is monotonic and never reset. A new commit advances `current_epoch` past
-  it, which makes the equality test read "not drained yet" on its own.
+- `drained_epoch` is monotonic and never reset. A new commit — or a `LUMICE_ContinueRender` —
+  advances `current_epoch` past it, which makes the equality test read "not drained yet" on its
+  own.
 
 **Typical use**:
 
@@ -895,6 +898,58 @@ void LUMICE_StopServer(LUMICE_Server* server);
 **Notes**:
 - After stopping, you can still submit new configurations
 - Stopping does not release server resources; call `LUMICE_DestroyServer()` to release them
+- A stopped render keeps its accumulation: `LUMICE_ContinueRender()` can add to it later
+
+#### LUMICE_ContinueRender
+
+Traces more rays **into** the accumulation the last render run left behind, instead of starting
+over (v4.44). `LUMICE_CommitScene` always starts from zero; this is the other way to start a run.
+
+```c
+LUMICE_ErrorCode LUMICE_ContinueRender(LUMICE_Server* server, int infinite, LUMICE_RayCount additional_ray_num);
+```
+
+**Parameters**:
+- `server`: server handle pointer
+- `infinite`: non-zero runs until `LUMICE_StopServer()` and ignores `additional_ray_num`
+- `additional_ray_num`: how many **more** rays to trace, total across wavelengths — an
+  increment, not a new total (unlike the `ray_num` of `LUMICE_SceneSetSimParams`, which is the
+  whole run's budget)
+
+**Return value**:
+- `LUMICE_OK`: the continuation is running
+- `LUMICE_ERR_NULL_ARG`: `server` is `NULL`
+- `LUMICE_ERR_INVALID_VALUE`: `infinite == 0` with `additional_ray_num == 0`
+- `LUMICE_ERR_SERVER`: nothing to continue — no render was ever committed, or the current
+  session is a raypath analysis (commit a render again first), a run is in progress, or a
+  just-completed run's last batches did not finish draining within an internal wait bound (retry
+  shortly). The four causes share the code; a caller that must tell them apart can read
+  `LUMICE_GetSimLifecycle()` (`lifecycle`, `session_kind`) first.
+
+A rejected call changes nothing — including the drain-timeout case: rather than proceed and
+silently discard the undrained batches, the call fails so "no traced ray is dropped" (below)
+holds unconditionally, not just in the common case.
+
+**What carries over**: everything a commit would reset — the render planes (raw XYZ and the
+images made from them), `sim_ray_num` and the other statistics, `emitted_energy`, and the
+exposure anchor (`anchor_l99_sky`). Every result read afterwards describes the earlier rays and
+the new ones together, so the picture does not jump in brightness beyond what more samples
+themselves change. The scene is the committed one; only the budget is new.
+
+**New samples, also under a fixed seed**: each continuation traces a random stream of its own.
+A server created with a non-zero `sim_seed` would otherwise restart its stream at every run start
+and trace the same rays a second time — and so would every GPU route, whose backend seeds itself
+per run even when `sim_seed` is 0. The continuation's seed is derived from the server's seed and
+a per-server continuation counter, so a fixed-seed server stays reproducible: the same sequence
+of commits and continuations traces the same rays.
+
+**Lifecycle**: works after a render `COMPLETED` (its finite budget ran out) or was stopped
+(`IDLE`). On success the lifecycle reads `RUNNING` and the epoch has advanced by one, exactly as
+after a commit; poll `LUMICE_GetSimLifecycle()` / `LUMICE_GetDrainStatus()` as for any run. A
+completed run whose last batches are still being consumed is drained before the continuation
+starts, so no traced ray is dropped — if that drain does not finish within 5s (a normal consumer
+pass is orders of magnitude faster; hitting the bound means the consumer is stuck, not merely
+slow), the call returns `LUMICE_ERR_SERVER` instead of proceeding and dropping them.
 
 ### Raypath Analysis Run
 

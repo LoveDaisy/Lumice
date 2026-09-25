@@ -149,11 +149,18 @@ bool RaypathColorStructChanged(const GuiState& state, const GuiState::ConfigSnap
 
 // Commit-baseline diff (resim / hard-reset lane). Extracted from ReconcileGuiEffects so its
 // cognitive complexity stays below clang-tidy's threshold (25). Reads state; does not write.
-void DiffAgainstCommitBaseline(const GuiState& state, GuiEffects& effects) {
+// `ignore_ray_budget` compares the sim block with its two budget fields taken from the baseline —
+// the question MatchesCommitExceptRayBudget asks; the reconciler itself always passes false.
+void DiffAgainstCommitBaseline(const GuiState& state, GuiEffects& effects, bool ignore_ray_budget) {
   if (!state.last_committed_state.has_value()) {
     return;
   }
   const auto& baseline = *state.last_committed_state;
+  SimConfig live_sim = state.sim;
+  if (ignore_ray_budget) {
+    live_sim.ray_num_millions = baseline.sim.ray_num_millions;
+    live_sim.infinite = baseline.sim.infinite;
+  }
 
   // T-struct·soft: re-sim carry-forward. Renderer comparison uses RenderConfigResimFields
   // (defined in gui_state.hpp): it excludes `exposure_offset`, which is a pure display-time
@@ -171,7 +178,7 @@ void DiffAgainstCommitBaseline(const GuiState& state, GuiEffects& effects) {
   // reading the already-simulated XYZ rather than asking for new rays, so flipping the Mode combo
   // must leave a finished run finished.
   if (state.crystals != baseline.crystals || state.layers != baseline.layers || state.sun != baseline.sun ||
-      state.sim != baseline.sim || !baseline.renderer_resim.Matches(state.renderer)) {
+      live_sim != baseline.sim || !baseline.renderer_resim.Matches(state.renderer)) {
     effects.need_resim = true;
   }
 
@@ -211,9 +218,18 @@ void DiffAgainstDisplayBaseline(const GuiState& state, GuiEffects& effects) {
 
 GuiEffects ReconcileGuiEffects(const GuiState& state) {
   GuiEffects effects;
-  DiffAgainstCommitBaseline(state, effects);
+  DiffAgainstCommitBaseline(state, effects, /*ignore_ray_budget=*/false);
   DiffAgainstDisplayBaseline(state, effects);
   return effects;
+}
+
+bool MatchesCommitExceptRayBudget(const GuiState& state) {
+  if (!state.last_committed_state.has_value()) {
+    return false;
+  }
+  GuiEffects effects;
+  DiffAgainstCommitBaseline(state, effects, /*ignore_ray_budget=*/true);
+  return !effects.need_resim && !effects.need_hard_reset;
 }
 
 void ApplyGuiEffects(GuiState& state, LUMICE_Server* server, const GuiEffects& effects) {

@@ -583,6 +583,7 @@ void ServerPoller::PollOnce() {
     next->epoch = lc.epoch;
     // Lifecycle level signal (clock ④ / I4): carried on every poll.
     next->lifecycle = lc.lifecycle;
+    next->session_kind = lc.session_kind;
     // Stats: fresh value if this generation produced one; else carry forward prev's (coherent
     // bundle — no torn zero). The stats' own generation stamp travels WITH them in both branches:
     // freshly read stats are stamped with the generation that produced them, and a carry-forward
