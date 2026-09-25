@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1790356918007,
+  "lastUpdate": 1790356921591,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9524,50 +9524,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "aa3ec3edc826ec5ba4b7cb59fb1e102222309889",
-          "message": "Merge pull request #314 from LoveDaisy/scrum/worker-and-batch-granularity\n\nperf(cpu): cap the automatic worker count at 10, expose --workers, and fix a hit-loop buffer overflow",
-          "timestamp": "2026-09-06T10:48:35+08:00",
-          "tree_id": "0f52437edfb35a55cb432bf05c2ba64797af8a5f",
-          "url": "https://github.com/LoveDaisy/ice_halo_sim/commit/aa3ec3edc826ec5ba4b7cb59fb1e102222309889"
-        },
-        "date": 1788663724514,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 87.1,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 99.8,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 93.9,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 92.7,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "5cb81a9565ff0e1394a957d97ad2078d0d8f9310",
           "message": "Merge pull request #315 from LoveDaisy/scrum/changelog-backfill-and-release-notes\n\ndocs(release): 回填 v4.1.4 起 31 个版本的 CHANGELOG，并把它接进发版链路",
           "timestamp": "2026-09-06T16:24:48+08:00",
@@ -13867,6 +13823,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 92,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "48679991416540658f3039cdbde51520d6375e79",
+          "message": "Merge pull request #415 from LoveDaisy/feat/gui-front-effective-value\n\nfix(gui): read the effective front clip under lenses it does not apply to",
+          "timestamp": "2026-09-26T01:08:03+08:00",
+          "tree_id": "9f96f5fa48eafea0128b3d270b751019093977c1",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/48679991416540658f3039cdbde51520d6375e79"
+        },
+        "date": 1790356920739,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 89.4,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 100,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 99,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 95,
             "unit": "%"
           }
         ]
