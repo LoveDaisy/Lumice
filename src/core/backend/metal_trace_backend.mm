@@ -120,6 +120,10 @@ constexpr size_t kMaxColorClassesDevice = 16;
 // (`kMaxRenderersDeviceMsl`) together, then re-derive the sizeof asserts.
 constexpr size_t kMaxRenderersDevice = 4;
 
+// RendererPlaneDesc::far_off for a renderer that keeps no far-side share. MUST match the MSL
+// kNoFarPlaneMsl.
+constexpr uint32_t kNoFarPlane = 0xFFFFFFFFu;
+
 // Continuation-pool shuffle PCG nonce (task-gpu-backend-recombine-shuffle).
 // MUST equal the CUDA-side kCudaShuffleNonce so the two backends derive the
 // same per-layer Feistel seed (spec.seed ^ nonce ^ ms_idx) — the shuffle only
@@ -172,14 +176,15 @@ static_assert(offsetof(ExitStats, tally_w2) == 12u, "ExitStats::tally_w2 offset 
 // Host mirror of the MSL RendererPlaneDesc — the per-renderer slice of a
 // session as the kernel sees it: its projection (dims inside) and where its
 // XYZ plane / colour-lane region start inside the shared accumulation buffers.
-// Field order MUST match the MSL struct (proj, xyz_off, lane_off); all 4-byte
-// scalars, so natural alignment gives 72 + 4 + 4 = 80 bytes on both sides.
+// Field order MUST match the MSL struct (proj, xyz_off, lane_off, far_off); all 4-byte
+// scalars, so natural alignment gives 72 + 4 + 4 + 4 = 84 bytes on both sides.
 struct RendererPlaneDesc {
   lm_proj::ProjParams proj;
   uint32_t xyz_off;
   uint32_t lane_off;
+  uint32_t far_off;
 };
-static_assert(sizeof(RendererPlaneDesc) == 80u, "RendererPlaneDesc layout drift — check the MSL sibling");
+static_assert(sizeof(RendererPlaneDesc) == 84u, "RendererPlaneDesc layout drift — check the MSL sibling");
 
 struct KernelParams {
   // scrum-268.8 (DR-3): per-batch n_idx + cie_x/y/z removed. trace_layer
@@ -292,11 +297,12 @@ struct KernelParams {
 // = 24 → offset 76, NOT 8-aligned, so 4 bytes of pad land ahead of color_class_bits[16] (uint64)
 // at 80: bits (128) at 80-208, combine[16] (16) at 208-224, and_term_counts_base_offset (4) at
 // 224-228, anchor_proj (72, alignment 4) at 228-300, alloc_tally (4) at 300-304, then
-// renderers[kMaxRenderersDevice] (4 × 80 = 320, alignment 4) at 304-624, and 624 is already a
-// multiple of the struct's alignment of 8 (color_class_bits), so no tail pad. That the two numbers move independently is
+// renderers[kMaxRenderersDevice] (4 × 84 = 336, alignment 4) at 304-640 — 84, not 80, since each
+// renderer carries its far-side plane offset — and 640 is already a multiple of the struct's
+// alignment of 8 (color_class_bits), so no tail pad. That the two numbers move independently is
 // the whole reason both are asserted rather than one derived from the other.
 static_assert(sizeof(lm_proj::ProjParams) == 72u, "ProjParams layout drift — check projection_shared.h");
-static_assert(sizeof(KernelParams) == 624u,
+static_assert(sizeof(KernelParams) == 640u,
               "KernelParams size mismatch — update host struct to match Metal-side layout");
 
 // Device root-gen latitude path tags. Numeric wire encoding is single-sourced
@@ -816,9 +822,16 @@ struct MetalTraceBackend::Impl {
   bool    have_crystal = false;
 
   // XYZ accumulator: every renderer's W_i*H_i*3 plane packed back-to-back in
-  // renderer order (plane r starts at planes_[r].desc.xyz_off floats).
+  // renderer order (plane r starts at planes_[r].desc.xyz_off floats), then —
+  // past xyz_pix_capacity * 3 floats — the far-side-only planes of the renderers
+  // that keep one (lm_proj::NeedsFarXyzShadow), in renderer order
+  // (planes_[r].desc.far_off). One allocation because the stage has no buffer
+  // index left for a second one.
   id<MTLBuffer> xyz_image = nil;
-  size_t        xyz_pix_capacity = 0;  // Σ W_i*H_i the buffer holds (×3 floats)
+  size_t        xyz_pix_capacity = 0;  // Σ W_i*H_i of the XYZ planes (×3 floats)
+  size_t        far_pix_capacity = 0;  // Σ W_i*H_i of the far-side planes that follow (×3 floats)
+  // Which renderers of alloc_dims_ keep a far-side plane — part of the buffer's SHAPE, like the dims.
+  std::vector<bool> alloc_far_;
   // Third clock: the per-renderer dims xyz_image was actually allocated for
   // (persist across sessions, unlike planes_ which Reset clears). Used by the
   // between-session third-clock drain to release-safe-verify the caller's dims
@@ -1191,7 +1204,8 @@ struct MetalTraceBackend::Impl {
   void EnsurePso();
   // Size xyz_image for Σ dims (one W*H*3 plane per renderer) and, on any change
   // of the dims list, reset it together with the landed-weight slots.
-  void EnsureImage(const std::vector<std::pair<int, int>>& dims);
+  // `far[i]`: renderer i keeps a far-side plane (packed after the XYZ planes).
+  void EnsureImage(const std::vector<std::pair<int, int>>& dims, const std::vector<bool>& far_flags);
   // Grow landed_weight_buf_ to hold `n` floats (one per renderer). Zeroes on
   // (re)allocation only; MUST run before EnsureImage so the latter's reset can
   // cover both twins.
@@ -1382,14 +1396,21 @@ void MetalTraceBackend::Impl::EnsureLandedWeightBuf(size_t n) {
   std::memset([landed_weight_buf_ contents], 0, n * sizeof(float));
 }
 
-void MetalTraceBackend::Impl::EnsureImage(const std::vector<std::pair<int, int>>& dims) {
+void MetalTraceBackend::Impl::EnsureImage(const std::vector<std::pair<int, int>>& dims, const std::vector<bool>& far_flags) {
   const size_t pix = TotalPixels(dims);
+  size_t far_pix = 0;
+  for (size_t i = 0; i < dims.size() && i < far_flags.size(); ++i) {
+    if (far_flags[i]) {
+      far_pix += static_cast<size_t>(dims[i].first) * static_cast<size_t>(dims[i].second);
+    }
+  }
   // Grow/shrink the byte allocation only when the packed pixel COUNT changes.
-  if (pix != xyz_pix_capacity) {
-    xyz_image = [device newBufferWithLength:pix * 3 * sizeof(float)
+  if (pix != xyz_pix_capacity || far_pix != far_pix_capacity) {
+    xyz_image = [device newBufferWithLength:(pix + far_pix) * 3 * sizeof(float)
                                     options:MTLResourceStorageModeShared];
     assert(xyz_image != nil);
     xyz_pix_capacity = pix;
+    far_pix_capacity = far_pix;
   }
   // Third clock: reset on any SHAPE change of the dims list — a renderer
   // added / removed / resized, or a same-area shape swap (e.g. 512x1024 -> 1024x512)
@@ -1402,7 +1423,7 @@ void MetalTraceBackend::Impl::EnsureImage(const std::vector<std::pair<int, int>>
   // whose flush already drained the prior window, so re-zeroing here is correct.
   // Steady state: BeginSession does NOT clear these — they persist across
   // batches; the drain's post-read reset is the per-window reset.
-  if (dims != alloc_dims_) {
+  if (dims != alloc_dims_ || far_flags != alloc_far_) {
     // Reset BOTH twin accumulators together. landed_weight_buf_ MUST already be
     // allocated for dims.size() slots (BeginSession calls EnsureLandedWeightBuf
     // before EnsureImage) — assert the invariant loudly rather than silently
@@ -1410,9 +1431,10 @@ void MetalTraceBackend::Impl::EnsureImage(const std::vector<std::pair<int, int>>
     // reintroduce the split reset (xyz reset while landed keeps stale rays).
     assert(landed_weight_buf_ != nil && landed_weight_capacity_ >= dims.size() &&
            "EnsureImage: landed_weight_buf_ must be allocated for every renderer before reset");
-    std::memset([xyz_image contents], 0, pix * 3 * sizeof(float));
+    std::memset([xyz_image contents], 0, (pix + far_pix) * 3 * sizeof(float));
     std::memset([landed_weight_buf_ contents], 0, landed_weight_capacity_ * sizeof(float));
     alloc_dims_ = dims;
+    alloc_far_ = far_flags;
   }
 }
 
@@ -3189,6 +3211,8 @@ void MetalTraceBackend::BeginSession(const SessionSpec& spec) {
   impl_->planes_.reserve(spec.renders.size());
   std::vector<std::pair<int, int>> dims;
   dims.reserve(spec.renders.size());
+  std::vector<bool> far_flags;
+  far_flags.reserve(spec.renders.size());
   {
     size_t pix_prefix = 0;
     for (const RenderConfig* render : spec.renders) {
@@ -3203,9 +3227,20 @@ void MetalTraceBackend::BeginSession(const SessionSpec& spec) {
       // lane_off needs class_count_, which is only known after the colour tables
       // below are built — filled in there.
       plane.desc.lane_off = 0u;
+      plane.desc.far_off = kNoFarPlane;  // assigned below, once the XYZ planes' total is known
       dims.emplace_back(plane.w, plane.h);
+      far_flags.push_back(NeedsFarXyzShadow(*render));
       pix_prefix += static_cast<size_t>(plane.w) * static_cast<size_t>(plane.h);
       impl_->planes_.push_back(plane);
+    }
+    // The far-side planes follow every XYZ plane, in renderer order, only for the renderers that
+    // keep one — the layout EnsureImage allocates and ReadbackFarXyzAccum walks.
+    size_t far_prefix = pix_prefix;
+    for (size_t r = 0; r < impl_->planes_.size(); ++r) {
+      if (far_flags[r]) {
+        impl_->planes_[r].desc.far_off = static_cast<uint32_t>(far_prefix * 3u);
+        far_prefix += static_cast<size_t>(impl_->planes_[r].w) * static_cast<size_t>(impl_->planes_[r].h);
+      }
     }
   }
 
@@ -3254,7 +3289,7 @@ void MetalTraceBackend::BeginSession(const SessionSpec& spec) {
     // accumulators atomically on a fresh accumulation region / shape change
     // (review-Major-2). No per-call zero here.
     impl_->EnsureLandedWeightBuf(dims.size());
-    impl_->EnsureImage(dims);
+    impl_->EnsureImage(dims, far_flags);
     // scrum-268.8 (DR-3): allocate the wavelength pool buffer once per backend
     // (size invariant across sessions) and populate it once per BeginSession.
     // Pool content depends only on (illuminant mode, per_batch_wl_) — both
@@ -3902,9 +3937,38 @@ void MetalTraceBackend::ReadbackXyzAccum(std::vector<XyzImageData>& xyz_planes, 
     pix_prefix += pix;
   }
   // Reset the accumulators so the next drain window starts from zero (BeginSession
-  // no longer clears them). Unified memory → a plain host memset suffices.
+  // no longer clears them). Unified memory → a plain host memset suffices. The XYZ
+  // planes only: the far-side planes past them are ReadbackFarXyzAccum's to read and
+  // reset, which the simulator calls right after this.
   std::memset([impl_->xyz_image contents], 0, impl_->xyz_pix_capacity * 3 * sizeof(float));
   std::memset([impl_->landed_weight_buf_ contents], 0, impl_->landed_weight_capacity_ * sizeof(float));
+}
+
+// The far-side planes packed after the XYZ planes (see xyz_image). Called by the simulator
+// right after ReadbackXyzAccum on the same drain, which has already waited on the GPU; the
+// wait is repeated here only because it is free when there is nothing pending.
+void MetalTraceBackend::ReadbackFarXyzAccum(std::vector<std::vector<float>>& far_planes) {
+  far_planes.clear();
+  if (impl_->xyz_image == nil || impl_->far_pix_capacity == 0) {
+    return;
+  }
+  if (impl_->pending_cb_ != nil) {
+    [impl_->pending_cb_ waitUntilCompleted];
+    impl_->pending_cb_ = nil;
+  }
+  far_planes.resize(impl_->alloc_dims_.size());
+  float* base = static_cast<float*>([impl_->xyz_image contents]);
+  size_t far_prefix = impl_->xyz_pix_capacity;
+  for (size_t i = 0; i < impl_->alloc_dims_.size(); ++i) {
+    if (i >= impl_->alloc_far_.size() || !impl_->alloc_far_[i]) {
+      continue;
+    }
+    const size_t pix =
+        static_cast<size_t>(impl_->alloc_dims_[i].first) * static_cast<size_t>(impl_->alloc_dims_[i].second);
+    far_planes[i].assign(base + far_prefix * 3u, base + (far_prefix + pix) * 3u);
+    far_prefix += pix;
+  }
+  std::memset(base + impl_->xyz_pix_capacity * 3u, 0, impl_->far_pix_capacity * 3 * sizeof(float));
 }
 
 // task-358.1 Step 4 (AC3 device-side Y-lane accumulation): drain the flattened

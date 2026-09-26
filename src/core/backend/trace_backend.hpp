@@ -495,6 +495,17 @@ class TraceBackend {
     landed_weight.clear();
   }
 
+  // The globe far side's share of each renderer's plane, for the renderers that keep one
+  // (lm_proj::NeedsFarXyzShadow): `far_planes[i]` is renderer i's W_i*H_i*3 plane of only the
+  // back-side hits already summed into its XYZ plane, or EMPTY for a renderer that keeps none.
+  // Lets the consumer clip a globe pixel's near and far directions each by its own `visible`.
+  // Called by the simulator right after ReadbackXyzAccum, on the same drain and under the same
+  // already-waited guarantee, and resets the device side for the next window the same way.
+  //
+  // Default: `far_planes` cleared — the consumer then treats every pixel's light as near-side,
+  // which is the picture before the far side had its own clip, never a worse one.
+  virtual void ReadbackFarXyzAccum(std::vector<std::vector<float>>& far_planes) { far_planes.clear(); }
+
   // Third-clock precision fold. A SupportsThirdClockDrain() backend keeps its
   // device XYZ plane alive across a whole drain window (kDefaultXyzDrainBatches
   // batches), and a per-exit fp32 atomicAdd chain that long is the same defect

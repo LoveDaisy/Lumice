@@ -680,6 +680,54 @@ inline std::vector<uint8_t> BuildVisibleMask(const RenderConfig& cfg, const Rota
   return mask;
 }
 
+static_assert(static_cast<int>(RenderConfig::kFull) == lm_proj::kProjVisibleFull,
+              "lm_proj::kProjVisibleFull restates RenderConfig::kFull for the device-side headers");
+
+// lm_proj::NeedsFarXyzShadow read off a RenderConfig. A forwarding call, not a second spelling of
+// the gate: the three-way conjunction lives in the shared header only.
+inline bool NeedsFarXyzShadow(const RenderConfig& cfg) {
+  return lm_proj::NeedsFarXyzShadow(static_cast<int>(cfg.lens_.type_), cfg.globe_back_fade_,
+                                    static_cast<int>(cfg.visible_), cfg.front_);
+}
+
+// BuildVisibleMask's twin for the globe's FAR side: 1 where the direction a pixel's ray LEAVES the
+// sphere through (mask_detail::GlobeFarPixelToWorld) passes the same two clips — `visible` and
+// `front` — judged on that direction itself, never on the near one. On the globe one pixel images
+// two sky directions, generally at different altitudes, and each is shown or hidden on its own:
+// under `visible: upper` looking down, a pixel whose near point is below the horizon can still
+// show a far point above it, and a pixel whose near point is above it must not show a far point
+// below it.
+//
+// Empty unless NeedsFarXyzShadow(cfg) — i.e. exactly when the far side's energy is kept as a
+// separate sum. With no far side (not the globe, or fade <= 0) there is nothing to gate; with no
+// clip configured every far direction would read 1 and PostSnapshot's combination falls back to
+// the plain total anyway, so the sweep would buy nothing.
+inline std::vector<uint8_t> BuildFarVisibleMask(const RenderConfig& cfg, const Rotation& rot, float short_pix,
+                                                int thread_budget) {
+  const int width = cfg.resolution_[0];
+  const int height = cfg.resolution_[1];
+  if (width <= 0 || height <= 0 || !NeedsFarXyzShadow(cfg)) {
+    return {};
+  }
+  std::vector<uint8_t> mask(static_cast<size_t>(width) * static_cast<size_t>(height), 0);
+  const lm_proj::ProjParams p = BuildProjParams(cfg, rot, short_pix);
+  float forward[3];
+  mask_detail::CameraForward(rot, forward);
+
+  ParallelRows(height, mask.size(), thread_budget, [&](int row_begin, int row_end) {
+    for (int py = row_begin; py < row_end; py++) {
+      for (int px = 0; px < width; px++) {
+        float mu = 0.0f;
+        const mask_detail::MaskDir far_dir = mask_detail::GlobeFarPixelToWorld(cfg, p, rot, px, py, &mu);
+        const bool on = far_dir.valid && mask_detail::VisibleByRange(cfg.visible_, far_dir.z) &&
+                        mask_detail::FrontVisible(cfg.front_, forward, far_dir.x, far_dir.y, far_dir.z);
+        mask[static_cast<size_t>(py) * static_cast<size_t>(width) + static_cast<size_t>(px)] = on ? 1 : 0;
+      }
+    }
+  });
+  return mask;
+}
+
 }  // namespace lumice
 
 #endif  // CORE_LENS_PROJ_BUILD_H_

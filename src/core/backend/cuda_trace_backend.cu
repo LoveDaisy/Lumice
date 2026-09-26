@@ -353,6 +353,13 @@ constexpr size_t kMaxRenderersDeviceCuda = 4u;
 //               class_count*W*H lane region starts, laid out class-major
 //               inside the region exactly as the single-renderer buffer was:
 //               lane[lane_off + c * W*H + pix].
+//   far_off   : float index into d_xyz_buf_ where this renderer's
+//               FAR-SIDE-ONLY W*H*3 plane starts — the globe back-side hits'
+//               share of its XYZ plane, kept apart so the host can clip a
+//               pixel's near and far directions independently. Packed after
+//               every renderer's XYZ plane, so the fold / finalize pass over the
+//               whole buffer covers it too. kNoFarPlane when the host's
+//               lm_proj::NeedsFarXyzShadow is false for this renderer.
 // The landed-weight float needs no offset: d_landed_weight_ is indexed by
 // renderer position. Same field set as Metal's RendererPlaneDesc; one
 // definition serves host and device because nvcc compiles both from this TU.
@@ -368,8 +375,11 @@ struct RendererPlaneDesc {
   lm_proj::ProjParams proj;
   uint32_t xyz_off;
   uint32_t lane_off;
+  uint32_t far_off;
 };
-static_assert(sizeof(RendererPlaneDesc) == 80u, "RendererPlaneDesc layout drift — check ProjParams (72) + 2 u32");
+static_assert(sizeof(RendererPlaneDesc) == 84u, "RendererPlaneDesc layout drift — check ProjParams (72) + 3 u32");
+// RendererPlaneDesc::far_off for a renderer that keeps no far-side share.
+constexpr uint32_t kNoFarPlane = 0xFFFFFFFFu;
 
 // Pairwise static_assert: LatPathKind wire values must match lm_pcg::kLatPath*
 // (device sink). Guards against silent enum-value drift.
@@ -587,6 +597,13 @@ __device__ inline void EmitToDeviceXyz(float* __restrict__ d_xyz_buf,
         // bump_landed false, so it never reaches landed_acc).
         const float w_hit = w_emit * r.hits[hi].weight;
         AccumXyzToPixel(plane, pix_flat, cmf_x, cmf_y, cmf_z, w_hit);
+        // A globe back-side hit also lands in this renderer's far-side share (see far_off).
+        // Every other non-landed hit (the dual-fisheye overlap ring) meets far_off ==
+        // kNoFarPlane: the host only assigns a far plane where NeedsFarXyzShadow holds.
+        // Mirrors the MSL AccumRendererPlanes.
+        if (!r.hits[hi].bump_landed && rd.far_off != kNoFarPlane) {
+          AccumXyzToPixel(d_xyz_buf + rd.far_off, pix_flat, cmf_x, cmf_y, cmf_z, w_hit);
+        }
         if (r.hits[hi].bump_landed) {
           landed_acc[ri] += w_hit;
         }
@@ -2494,7 +2511,10 @@ struct CudaTraceBackend::Impl {
   // XYZ accumulator: every renderer's W_i*H_i*3 plane packed back-to-back in
   // renderer order (plane r starts at planes_[r].desc.xyz_off floats).
   float*   d_xyz_buf_       = nullptr;
-  size_t   xyz_pix_capacity_ = 0;  // Σ W_i*H_i the buffer holds (×3 floats)
+  size_t   xyz_pix_capacity_ = 0;  // Σ W_i*H_i of the XYZ planes (×3 floats)
+  // Σ W_i*H_i of the far-side planes packed after the XYZ planes (×3 floats), for the renderers
+  // that keep one (RendererPlaneDesc::far_off). Same buffer, same double twin, same fold.
+  size_t   far_pix_capacity_ = 0;
   // Precision twin of d_xyz_buf_: same packing, same element count, double.
   // The emit kernels only ever atomicAdd into the fp32 plane; every
   // Simulator::kXyzFoldEveryBatches (8) batches FoldDeviceXyzBatch adds that
@@ -2527,6 +2547,8 @@ struct CudaTraceBackend::Impl {
   // plane (offsets are a pure function of this list). Cleared only on full
   // teardown (buffer freed).
   std::vector<std::pair<uint32_t, uint32_t>> alloc_dims_;
+  // Which renderers of alloc_dims_ keep a far-side plane — part of the buffer's SHAPE, like the dims.
+  std::vector<bool> alloc_far_;
   // PER-RENDERER session state (one entry per SessionSpec::renders element, in
   // that order). Everything else in this Impl is per-SESSION: the crystal pool,
   // filters, wavelength pool, exposure anchor and colour-class tables are shared
@@ -2612,7 +2634,8 @@ struct CudaTraceBackend::Impl {
   // Size d_xyz_buf_ for Σ dims (one W*H*3 plane per renderer) and, on any change
   // of the dims list, reset it together with the landed-weight slots + host
   // window totals. Mirrors Metal EnsureImage.
-  void EnsureXyzBuf(const std::vector<std::pair<uint32_t, uint32_t>>& dims);
+  // `far[i]`: renderer i keeps a far-side plane (packed after the XYZ planes).
+  void EnsureXyzBuf(const std::vector<std::pair<uint32_t, uint32_t>>& dims, const std::vector<bool>& far_flags);
   // task-358.2 Step 4: grow-only allocation of the per-class Y-lane accumulator
   // (class_count_ * Σ W_i*H_i floats, or a 4B dummy when class_count_==0 so the
   // kernel pointer stays bindable). Zeroes the buffer on alloc + on regrow.
@@ -2783,10 +2806,12 @@ void CudaTraceBackend::Impl::Reset(bool keep_persistent_buffers) {
     cudaFree(d_xyz_buf_);      d_xyz_buf_ = nullptr;
     cudaFree(d_xyz_buf_fold_); d_xyz_buf_fold_ = nullptr;
     xyz_pix_capacity_ = 0;
+    far_pix_capacity_ = 0;
     cudaFree(d_landed_weight_); d_landed_weight_ = nullptr;
     landed_weight_capacity_ = 0;
     window_landed_weight_.clear();
     alloc_dims_.clear();  // buffer freed → clear its remembered dims
+    alloc_far_.clear();
     cudaFree(d_renderers_);  d_renderers_ = nullptr;
     // task-358.2 Step 4 (AC3): per-class Y-lane accumulator (class_count_ *
     // W * H floats). Freed on full teardown; ReadbackClassLanes handles the
@@ -3555,11 +3580,20 @@ void CudaTraceBackend::Impl::EnsureLandedWeightBuf(size_t n) {
 // BeginSession/EndSession within a drain window (the simulator drains on display
 // cadence, not per batch). The buffer is always zero at a window start: first
 // window via this alloc-zero, later windows via the previous drain's memset.
-void CudaTraceBackend::Impl::EnsureXyzBuf(const std::vector<std::pair<uint32_t, uint32_t>>& dims) {
+void CudaTraceBackend::Impl::EnsureXyzBuf(const std::vector<std::pair<uint32_t, uint32_t>>& dims,
+                                          const std::vector<bool>& far_flags) {
   const size_t pix = TotalPixels(dims);
-  const size_t xyz_floats = pix * 3u;
+  size_t far_pix = 0;
+  for (size_t i = 0; i < dims.size() && i < far_flags.size(); ++i) {
+    if (far_flags[i]) {
+      far_pix += static_cast<size_t>(dims[i].first) * static_cast<size_t>(dims[i].second);
+    }
+  }
+  // The XYZ planes, then the far-side planes (RendererPlaneDesc::far_off).
+  const size_t xyz_floats = (pix + far_pix) * 3u;
   // Grow/shrink the byte allocation only when the packed pixel COUNT changes.
-  if (d_xyz_buf_ == nullptr || d_xyz_buf_fold_ == nullptr || pix != xyz_pix_capacity_) {
+  if (d_xyz_buf_ == nullptr || d_xyz_buf_fold_ == nullptr || pix != xyz_pix_capacity_ ||
+      far_pix != far_pix_capacity_) {
     cudaFree(d_xyz_buf_);  // no-op on nullptr
     d_xyz_buf_ = nullptr;
     cudaFree(d_xyz_buf_fold_);
@@ -3569,6 +3603,7 @@ void CudaTraceBackend::Impl::EnsureXyzBuf(const std::vector<std::pair<uint32_t, 
     // sized for different shapes; the shape-change reset below zeroes both.
     CheckCuda(cudaMalloc(&d_xyz_buf_fold_, xyz_floats * sizeof(double)), "EnsureXyzBuf cudaMalloc d_xyz_buf_fold");
     xyz_pix_capacity_ = pix;
+    far_pix_capacity_ = far_pix;
   }
   // Reset on any SHAPE change of the dims list — a renderer added / removed /
   // resized, or a same-area shape swap (e.g. 512x1024 -> 1024x512) that reuses
@@ -3583,7 +3618,7 @@ void CudaTraceBackend::Impl::EnsureXyzBuf(const std::vector<std::pair<uint32_t, 
   // prior window, so re-zeroing here is correct. Steady state: BeginSession does
   // NOT clear these — they persist across batches; the drain's post-read reset
   // is the per-window reset.
-  if (dims != alloc_dims_) {
+  if (dims != alloc_dims_ || far_flags != alloc_far_) {
     // landed_weight MUST already be allocated for dims.size() slots (BeginSession
     // calls EnsureLandedWeightBuf first) — throw loudly rather than silently
     // best-effort, so a future caller that forgets the ordering can't silently
@@ -3598,6 +3633,7 @@ void CudaTraceBackend::Impl::EnsureXyzBuf(const std::vector<std::pair<uint32_t, 
               "EnsureXyzBuf cudaMemset d_landed_weight");
     window_landed_weight_.assign(landed_weight_capacity_, 0.0);
     alloc_dims_ = dims;
+    alloc_far_ = far_flags;
   }
 }
 
@@ -4433,6 +4469,8 @@ void CudaTraceBackend::BeginSession(const SessionSpec& spec) {
     impl_->planes_.reserve(spec.renders.size());
     std::vector<std::pair<uint32_t, uint32_t>> dims;
     dims.reserve(spec.renders.size());
+    std::vector<bool> far_flags;
+    far_flags.reserve(spec.renders.size());
     {
       size_t pix_prefix = 0;
       for (size_t r = 0; r < spec.renders.size(); ++r) {
@@ -4463,9 +4501,20 @@ void CudaTraceBackend::BeginSession(const SessionSpec& spec) {
         // already fixed for this session — filled in below once the lane buffer
         // is sized.
         plane.desc.lane_off = 0u;
+        plane.desc.far_off = kNoFarPlane;  // assigned below, once the XYZ planes' total is known
         dims.emplace_back(plane.w, plane.h);
+        far_flags.push_back(NeedsFarXyzShadow(*render));
         pix_prefix += static_cast<size_t>(plane.w) * static_cast<size_t>(plane.h);
         impl_->planes_.push_back(plane);
+      }
+      // The far-side planes follow every XYZ plane, in renderer order, only for the renderers that
+      // keep one — the layout EnsureXyzBuf allocates and ReadbackFarXyzAccum walks.
+      size_t far_prefix = pix_prefix;
+      for (size_t r = 0; r < impl_->planes_.size(); ++r) {
+        if (far_flags[r]) {
+          impl_->planes_[r].desc.far_off = static_cast<uint32_t>(far_prefix * 3u);
+          far_prefix += static_cast<size_t>(impl_->planes_[r].w) * static_cast<size_t>(impl_->planes_[r].h);
+        }
       }
     }
     // Third clock: grow-only persistent accumulators. The landed slots are sized
@@ -4473,7 +4522,7 @@ void CudaTraceBackend::BeginSession(const SessionSpec& spec) {
     // on a fresh accumulation region / shape change (312.4 review-Major). No
     // per-call zero here.
     impl_->EnsureLandedWeightBuf(dims.size());
-    impl_->EnsureXyzBuf(dims);
+    impl_->EnsureXyzBuf(dims, far_flags);
 
     // task-358.2 Step 4 (AC3 device-side Y-lane accumulation). Sized against
     // class_count_ (set inside EnsureFilterBuffers above) and Σ W_i*H_i, one
@@ -5661,7 +5710,9 @@ void CudaTraceBackend::ReadbackAnchorBuffer(std::vector<float>& anchor_y) {
 // would be the per-batch tax the third clock removed (a drain, when one is due,
 // follows on the same stream and does its own wait).
 void CudaTraceBackend::LaunchXyzFold(bool finalize) {
-  const size_t n_elems = impl_->xyz_pix_capacity_ * 3u;
+  // The XYZ planes AND the far-side planes packed after them: both are fp32 atomic chains of the
+  // same length, so both are folded (and finalized) by the same pass.
+  const size_t n_elems = (impl_->xyz_pix_capacity_ + impl_->far_pix_capacity_) * 3u;
   if (impl_->d_xyz_buf_ == nullptr || impl_->d_xyz_buf_fold_ == nullptr || n_elems == 0) {
     return;
   }
@@ -5776,6 +5827,37 @@ void CudaTraceBackend::ReadbackXyzAccum(std::vector<XyzImageData>& xyz_planes, s
   CheckCuda(cudaMemset(impl_->d_landed_weight_, 0, n_slots * sizeof(float)),
             "ReadbackXyzAccum cudaMemset d_landed_weight");
   std::fill(impl_->window_landed_weight_.begin(), impl_->window_landed_weight_.end(), 0.0);
+  // The far-side planes past xyz_pix_capacity_ are NOT reset here: the finalize fold above left
+  // their window total in fp32, which ReadbackFarXyzAccum — called by the simulator right after
+  // this, on the same drain — copies and then clears.
+}
+
+// The far-side planes packed after the XYZ planes (RendererPlaneDesc::far_off). Runs right after
+// ReadbackXyzAccum on the same drain: that call's finalize fold already wrote each far plane's
+// window total into the fp32 region and zeroed its double twin, and its device sync covers it.
+void CudaTraceBackend::ReadbackFarXyzAccum(std::vector<std::vector<float>>& far_planes) {
+  far_planes.clear();
+  if (impl_->d_xyz_buf_ == nullptr || impl_->far_pix_capacity_ == 0) {
+    return;
+  }
+  cudaDeviceSynchronize();
+  far_planes.resize(impl_->alloc_dims_.size());
+  size_t far_prefix = impl_->xyz_pix_capacity_;
+  for (size_t i = 0; i < impl_->alloc_dims_.size(); ++i) {
+    if (i >= impl_->alloc_far_.size() || !impl_->alloc_far_[i]) {
+      continue;
+    }
+    const size_t pix =
+        static_cast<size_t>(impl_->alloc_dims_[i].first) * static_cast<size_t>(impl_->alloc_dims_[i].second);
+    far_planes[i].resize(pix * 3u);
+    CheckCuda(cudaMemcpy(far_planes[i].data(), impl_->d_xyz_buf_ + far_prefix * 3u, pix * 3u * sizeof(float),
+                         cudaMemcpyDeviceToHost),
+              "ReadbackFarXyzAccum D2H far plane");
+    far_prefix += pix;
+  }
+  CheckCuda(cudaMemset(impl_->d_xyz_buf_ + impl_->xyz_pix_capacity_ * 3u, 0,
+                       impl_->far_pix_capacity_ * 3u * sizeof(float)),
+            "ReadbackFarXyzAccum cudaMemset far planes");
 }
 
 // Mirror MetalTraceBackend::IsCompatible. 315.3/315.4: the device-fused emit

@@ -111,6 +111,7 @@ class CudaTraceBackend : public TraceBackend {
   // in-bounds landed weight; both are sliced by the dims the persistent device
   // buffers were actually allocated for, so a between-session drain is valid.
   void ReadbackXyzAccum(std::vector<XyzImageData>& xyz, std::vector<float>& landed_weight) override;
+  void ReadbackFarXyzAccum(std::vector<std::vector<float>>& far_planes) override;
   // Periodic precision fold of the fp32 XYZ plane into the persistent device
   // double plane, on the simulator's kXyzFoldEveryBatches cadence (see
   // TraceBackend::FoldDeviceXyzBatch). One elementwise kernel on the session

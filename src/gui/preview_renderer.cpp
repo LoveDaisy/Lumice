@@ -583,6 +583,28 @@ vec4 globeInverse(vec2 pos, float half_fov, out float ri) {
   return vec4(normalize(hit_world), 1.0);
 }
 
+// Whether a world direction passes the display clips: `visible` (the half-sky kept) AND `front`.
+// ONE function for every direction a fragment shows — the near point the picture is sampled at and,
+// on the globe, the far point seen through it — because each is shown or hidden by where IT points,
+// never by the other one sharing its pixel.
+//
+// SYNC:visible-hemisphere-predicate — core states the same rule in C++, as lens_proj_build.hpp's
+// VisibleByRange (`kUpper && wz > 0` -> not visible) and FrontVisible. GLSL cannot call into it, so
+// the rule is written twice on purpose; the two are kept honest by test_visible_mask_gui_parity.cpp,
+// which compares the resulting masks pixel by pixel across every lens type and all three values.
+// Both sides are a DISPLAY clip and neither may become an energy cull.
+bool dirPassesClip(vec3 world_dir) {
+  // In equirect convention: lat = asin(-dz), lat > 0 means upper sky
+  float lat = asin(clamp(-world_dir.z, -1.0, 1.0));
+  bool keep = true;
+  if (u_visible == 0 && lat < 0.0) keep = false;   // upper: discard lower hemisphere
+  if (u_visible == 1 && lat > 0.0) keep = false;   // lower: discard upper hemisphere
+  // u_front: discard back hemisphere (AND with base). u_view_matrix[2] = -forward
+  // (see BuildViewMatrix), so dot > 0 means world_dir is behind the camera.
+  if (u_front == 1 && dot(world_dir, u_view_matrix[2]) > 0.0) keep = false;
+  return keep;
+}
+
 // The FAR surface point on the same ray as globeInverse — where the ray leaves the sphere — for the
 // back-side fade. w = 1 only when the ray meets the sphere AND the point is not faded out; `ri`
 // receives its relative illumination and `weight` its fade weight. Same solve as globeInverse,
@@ -880,14 +902,15 @@ vec3 drawAuxCurves(vec3 world_dir, vec4 nx, vec4 ny, vec3 color, float alpha_sca
 // Overlay auxiliary lines on top of final_color.
 //
 // world_dir: this fragment's unit world-space direction (the one the picture was sampled at).
-// The caller only reaches here for a fragment the lens images AND the hemisphere policy admits,
-// so the clip the CLI applies through its `drawable` mask is applied here by the call site — and
-// that same near-side gate also admits the globe's far-side lines, as it admits the far side's
-// light in main(): `visible` / `front` are a per-pixel display clip, not a per-direction one.
+// The caller only reaches here for a fragment the lens images and where at least one of its
+// directions passes the clips. near_on / far_on say which: the near side's curves and the markers
+// are drawn only when the near direction passes (the CLI's `drawable` mask), and on the globe the
+// far side's curves only when the FAR direction itself passes (the CLI's far_side masks) — each
+// direction by its own verdict, as main() shows each side's light.
 // pos: the fragment's raw position (centre-origin, y-up), from which the neighbours' directions
 // are re-derived; pos_pix: the same in the overlay's space (flipped for the CPI family), which is
 // what the marker positions are stated in.
-vec3 overlayAuxLines(vec3 world_dir, vec3 color, vec2 pos_pix, vec2 pos, float half_fov) {
+vec3 overlayAuxLines(vec3 world_dir, vec3 color, vec2 pos_pix, vec2 pos, float half_fov, bool near_on, bool far_on) {
   // The right and lower neighbours drawAuxCurves differences against. "Lower" is the next IMAGE
   // row, which in this y-up fragment space is pos.y - 1; the last row/column test is the CPU's
   // `px + 1 < width` written in centre-origin coordinates.
@@ -905,13 +928,16 @@ vec3 overlayAuxLines(vec3 world_dir, vec3 color, vec2 pos_pix, vec2 pos, float h
     float back_w = 0.0;
     float nb_w_unused;
     vec4 back = globeFarDir(pos, half_fov, back_ri_unused, back_w);
-    if (back.w >= 0.5) {
+    if (far_on && back.w >= 0.5) {
       vec4 bnx = globeFarDir(pos + step_x, half_fov, back_ri_unused, nb_w_unused);
       vec4 bny = globeFarDir(pos + step_y, half_fov, back_ri_unused, nb_w_unused);
       color = drawAuxCurves(back.xyz, bnx, bny, color, back_w);
     }
   }
 #endif
+  if (!near_on) {
+    return color;
+  }
   float ri_unused;
   vec2 ovl_unused;
   vec4 nx = inverseWorldDir(pos + step_x, half_fov, ri_unused, ovl_unused);
@@ -1003,68 +1029,78 @@ void main() {
   vec3 final_color = (u_tone == 1) ? clampAndGamma(u_paper) : vec3(0.0);
   vec3 world_dir = vec3(0.0);
   bool pixel_visible = false;
+  // On the globe, whether this pixel's FAR direction passes the clips by itself. Always false
+  // outside the LUMICE_GLOBE_BACK_FADE variant (a constant there, so every test of it folds away).
+#ifdef LUMICE_GLOBE_BACK_FADE
+  bool far_pixel_visible = false;
+#else
+  const bool far_pixel_visible = false;
+#endif
 
   if (result.w >= 0.5) {
     world_dir = result.xyz;
 
-    // Visible hemisphere check
-    // In equirect convention: lat = asin(-dz), lat > 0 means upper sky
-    //
-    // SYNC:visible-hemisphere-predicate — core states the same rule in C++, as
-    // lens_proj_build.hpp's VisibleByRange (`kUpper && wz > 0` -> not visible). GLSL cannot call
-    // into it, so the rule is written twice on purpose; the two are kept honest by
-    // test_visible_mask_gui_parity.cpp, which compares the resulting masks pixel by pixel across
-    // every lens type and all three values. Both sides are a DISPLAY clip and neither may become
-    // an energy cull -- the branch below never samples the texture for an excluded pixel, and
-    // core's twin (SYNC:visible-mask-zero) zeroes one that already accumulated.
-    float lat = asin(clamp(-world_dir.z, -1.0, 1.0));
-    pixel_visible = true;
-    if (u_visible == 0 && lat < 0.0) pixel_visible = false;   // upper: discard lower hemisphere
-    if (u_visible == 1 && lat > 0.0) pixel_visible = false;   // lower: discard upper hemisphere
-    // u_front: discard back hemisphere (AND with base). u_view_matrix[2] = -forward
-    // (see BuildViewMatrix), so dot > 0 means world_dir is behind the camera.
-    if (u_front == 1 && dot(world_dir, u_view_matrix[2]) > 0.0) pixel_visible = false;
+    // The near direction's clip. A DISPLAY clip, never an energy cull: the branch below never
+    // samples the texture for an excluded direction, and core's twin (SYNC:visible-mask-zero)
+    // zeroes one that already accumulated.
+    pixel_visible = dirPassesClip(world_dir);
 
-    if (pixel_visible) {
-      vec3 tex_color = sampleDualFisheye(world_dir);
-      if (u_tex_mode == kTexModeXyz) {
-        // Undo the float16 storage scale here, once, so every consumer below — the gamut clip,
-        // the print branch's tex_color.y — reads the frame's own linear XYZ.
-        tex_color *= u_xyz_scale;
-      }
-
-      // Globe back-side fade: the far side of the sphere, seen THROUGH the near side, added as
-      // light (a halo is an emitter, not a surface, so the near side does not occlude it). Its
-      // texel and its weight (relative illumination x fade) join the near side's inside the
-      // linear-energy sums below, before the sky, the gamut clip and the tone operator, which is
-      // exactly where the CLI's forward projection adds the same rays into the same pixel
-      // (lm_proj::ProjectExitToPixel, globe branch). Gated by this pixel's own visibility — the
-      // near point's — for the same reason: the CLI's `visible` / `front` are a per-pixel mask
-      // over the finished accumulation. Not in kTexModeSrgbComposited, whose texels carry a baked
-      // sky that a second sample would add twice. Compiled in only for the LUMICE_GLOBE_BACK_FADE
-      // variant (see kFragmentShader); in the other one `has_back` is a constant false and the
-      // arms below that read it fold to the pre-fade expressions.
+    // Globe back-side fade: the far side of the sphere, seen THROUGH the near side, added as
+    // light (a halo is an emitter, not a surface, so the near side does not occlude it). Its
+    // texel and its weight (relative illumination x fade) join the near side's inside the
+    // linear-energy sums below, before the gamut clip and the tone operator, which is exactly
+    // where the CLI's forward projection adds the same rays into the same pixel
+    // (lm_proj::ProjectExitToPixel, globe branch). Clipped by the FAR direction's own verdict —
+    // one pixel images two sky directions here, generally at different altitudes, and each is
+    // shown or hidden on its own (SYNC:globe-far-own-visibility, RenderConsumer::PostSnapshot):
+    // under `upper`, looking down, the near point can be in the kept half and the far one not, or
+    // the other way round. Not in kTexModeSrgbComposited, whose texels carry a baked sky that a
+    // second sample would add twice. Compiled in only for the LUMICE_GLOBE_BACK_FADE variant (see
+    // kFragmentShader); in the other one `has_back` is a constant false and the arms below that
+    // read it fold to the pre-fade expressions.
 #ifdef LUMICE_GLOBE_BACK_FADE
-      bool has_back = false;
-      vec3 back_tex = vec3(0.0);
-      float back_gain = 0.0;
-      if (u_lens_type == 10 && u_globe_back_fade > 0.0 && u_tex_mode != kTexModeSrgbComposited) {
-        float back_ri = 1.0;
-        float back_w = 0.0;
-        vec4 back = globeFarDir(pos, half_fov, back_ri, back_w);
-        if (back.w >= 0.5) {
-          has_back = true;
-          back_tex = sampleDualFisheye(back.xyz);
-          if (u_tex_mode == kTexModeXyz) {
-            back_tex *= u_xyz_scale;
-          }
-          back_gain = back_ri * back_w;
+    bool has_back = false;
+    vec3 back_tex = vec3(0.0);
+    float back_gain = 0.0;
+    if (u_lens_type == 10 && u_globe_back_fade > 0.0) {
+      float back_ri = 1.0;
+      float back_w = 0.0;
+      vec4 back = globeFarDir(pos, half_fov, back_ri, back_w);
+      far_pixel_visible = back.w >= 0.5 && dirPassesClip(back.xyz);
+      if (far_pixel_visible && u_tex_mode != kTexModeSrgbComposited) {
+        has_back = true;
+        back_tex = sampleDualFisheye(back.xyz);
+        if (u_tex_mode == kTexModeXyz) {
+          back_tex *= u_xyz_scale;
         }
+        back_gain = back_ri * back_w;
       }
+    }
 #else
-      const bool has_back = false;
-      const vec3 back_tex = vec3(0.0);
-      const float back_gain = 0.0;
+    const bool has_back = false;
+    const vec3 back_tex = vec3(0.0);
+    const float back_gain = 0.0;
+#endif
+
+    // The near side's texel and sky exist only where the near direction passes; a pixel whose near
+    // point is clipped but whose far point is not shows the far side's light alone, over the
+    // zero-energy colour (the sky belongs to the near hemisphere: SYNC:globe-far-own-visibility).
+    if (pixel_visible || has_back) {
+      // The near texel. Outside the LUMICE_GLOBE_BACK_FADE variant this block is only ever entered
+      // with pixel_visible true, so the guard exists in the variant alone and the other program's
+      // text is the pre-fade one.
+      vec3 tex_color = vec3(0.0);
+#ifdef LUMICE_GLOBE_BACK_FADE
+      if (pixel_visible) {
+#endif
+        tex_color = sampleDualFisheye(world_dir);
+        if (u_tex_mode == kTexModeXyz) {
+          // Undo the float16 storage scale here, once, so every consumer below — the gamut clip,
+          // the print branch's tex_color.y — reads the frame's own linear XYZ.
+          tex_color *= u_xyz_scale;
+        }
+#ifdef LUMICE_GLOBE_BACK_FADE
+      }
 #endif
       if (u_tex_mode != kTexModeSrgbComposited) {
         // Linear-light radiance for this pixel. The two source formats decode differently and
@@ -1080,8 +1116,10 @@ void main() {
           // Two spellings of one sum: the no-far-side arm is the pre-fade expression verbatim, so
           // that the variant without LUMICE_GLOBE_BACK_FADE folds to exactly it. Same for the two
           // arms below.
-          if (has_back) {
+          if (has_back && pixel_visible) {
             radiance_linear = xyzToLinearRgb(tex_color * rel_illum + back_tex * back_gain);
+          } else if (has_back) {  // far side only
+            radiance_linear = xyzToLinearRgb(back_tex * back_gain);
           } else {
             radiance_linear = xyzToLinearRgb(tex_color * rel_illum);
           }
@@ -1092,8 +1130,10 @@ void main() {
           // picture, so it is applied here rather than baked, exactly as in the branch above. What
           // makes that possible is that the bake no longer sums the sky into the texel: scaling a
           // composited texel would dim the sky too, which neither the CLI nor this shader does.
-          if (has_back) {
+          if (has_back && pixel_visible) {
             radiance_linear = srgbToLinear(tex_color) * rel_illum + srgbToLinear(back_tex) * back_gain;
+          } else if (has_back) {  // far side only
+            radiance_linear = srgbToLinear(back_tex) * back_gain;
           } else {
             radiance_linear = srgbToLinear(tex_color) * rel_illum;
           }
@@ -1125,6 +1165,20 @@ void main() {
         // before the format carried radiance-only textures — whose pixels were baked with whatever
         // background was in effect when they were saved. Adding here too would apply it twice, and
         // subtracting the old one back out is not invertible where the bake clipped.
+#ifdef LUMICE_GLOBE_BACK_FADE
+        if (!pixel_visible) {
+          // The far side only (the near direction is clipped): its light over the zero-energy
+          // colour with no sky — the sky is the near hemisphere's ground — which is the CLI's
+          // `!paint_bg` arm with light present. Print inks the far side's exposed Y onto bare
+          // paper; the kTexModeSrgbRadiance print gap below takes the screen result, as it does
+          // everywhere else.
+          if (u_tone == 1 && u_tex_mode == kTexModeXyz) {
+            tex_color = clampAndGamma(subtractiveInk(back_tex.y * back_gain * u_intensity_scale, u_paper));
+          } else {
+            tex_color = clampAndGamma(radiance_linear);
+          }
+        } else
+#endif
         if (u_tone == 1 && u_tex_mode == kTexModeXyz) {
           // print: ink on paper replaces the whole additive statement above. The gamut clip and the
           // matrix are skipped along with the sky — print is greyscale by construction, so what is
@@ -1176,9 +1230,10 @@ void main() {
     final_color = bg_color * (1.0 - u_overlay_alpha) + final_color * u_overlay_alpha;
   }
 
-  // Auxiliary line overlay (on top of everything, only in visible region)
-  if (result.w >= 0.5 && pixel_visible) {
-    final_color = overlayAuxLines(world_dir, final_color, pos_ovl, pos, half_fov);
+  // Auxiliary line overlay (on top of everything, only where some direction of this pixel passes
+  // the clips — see overlayAuxLines for which side's curves each flag admits)
+  if (result.w >= 0.5 && (pixel_visible || far_pixel_visible)) {
+    final_color = overlayAuxLines(world_dir, final_color, pos_ovl, pos, half_fov, pixel_visible, far_pixel_visible);
   }
 
   // Lens border — deliberately OUTSIDE the `result.w >= 0.5 && pixel_visible` gate.

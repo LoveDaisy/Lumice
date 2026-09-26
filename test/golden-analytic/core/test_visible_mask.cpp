@@ -641,5 +641,86 @@ TEST(VisibleMask, DegenerateResolutionYieldsAnEmptyMask) {
   EXPECT_TRUE(Mask(cfg).empty());
 }
 
+// ==================================================================================================
+// The globe's far side: its own clip (BuildFarVisibleMask) and the gate on whether it exists
+// (NeedsFarXyzShadow)
+// ==================================================================================================
+
+// The gate's whole truth table over the three inputs the plan names plus `front`: the far-side sum
+// exists only on the globe, only with a fade range, and only when a clip could split a pixel.
+TEST(FarXyzShadow, TruthTable) {
+  for (const int lens : { lm_proj::kProjLinear, lm_proj::kProjDualFisheyeEqualArea, lm_proj::kProjGlobe }) {
+    for (const float fade : { 0.0f, -1.0f, 0.5f }) {
+      for (const int vis : { static_cast<int>(RenderConfig::kUpper), static_cast<int>(RenderConfig::kLower),
+                             static_cast<int>(RenderConfig::kFull) }) {
+        for (const bool front : { false, true }) {
+          const bool expected =
+              lens == lm_proj::kProjGlobe && fade > 0.0f && (vis != static_cast<int>(RenderConfig::kFull) || front);
+          EXPECT_EQ(lm_proj::NeedsFarXyzShadow(lens, fade, vis, front), expected)
+              << "lens=" << lens << " fade=" << fade << " visible=" << vis << " front=" << front;
+        }
+      }
+    }
+  }
+}
+
+std::vector<uint8_t> FarMask(const RenderConfig& cfg) {
+  const float short_pix = static_cast<float>(std::min(cfg.resolution_[0], cfg.resolution_[1]));
+  return BuildFarVisibleMask(cfg, MakeCameraRotation(cfg), short_pix, lumice::test::kTestThreadBudget);
+}
+
+TEST(FarVisibleMask, EmptyWheneverTheFarSideIsNotKeptApart) {
+  RenderConfig cfg = MakeCfg(LensParam::kGlobe, 30.0f, 96, 96, RenderConfig::kUpper, 35.0f);
+  EXPECT_TRUE(FarMask(cfg).empty()) << "fade 0: no far side at all";
+  cfg.globe_back_fade_ = 0.5f;
+  EXPECT_EQ(FarMask(cfg).size(), 96u * 96u);
+  cfg.visible_ = RenderConfig::kFull;
+  EXPECT_TRUE(FarMask(cfg).empty()) << "full, front off: no clip to split a pixel";
+  cfg.front_ = true;
+  EXPECT_EQ(FarMask(cfg).size(), 96u * 96u) << "the front clip splits a pixel on its own";
+
+  RenderConfig linear = MakeCfg(LensParam::kLinear, 90.0f, 96, 96, RenderConfig::kUpper);
+  linear.globe_back_fade_ = 0.5f;
+  EXPECT_TRUE(FarMask(linear).empty()) << "only the globe has a far side";
+}
+
+// Upper and lower partition the far side exactly as they partition the near one — every far
+// direction lands in exactly one of them, bar the ones sitting on the horizon itself — and the far
+// mask is NOT the near one: the two directions of one pixel are clipped independently.
+TEST(FarVisibleMask, UpperAndLowerPartitionTheFarSideIndependentlyOfTheNearOne) {
+  for (const float el : { 35.0f, -35.0f, 80.0f }) {
+    SCOPED_TRACE(testing::Message() << "el=" << el);
+    RenderConfig up = MakeCfg(LensParam::kGlobe, 30.0f, 96, 96, RenderConfig::kUpper, el);
+    up.globe_back_fade_ = 0.5f;
+    RenderConfig low = up;
+    low.visible_ = RenderConfig::kLower;
+    const auto far_up = FarMask(up);
+    const auto far_low = FarMask(low);
+    const auto near_up = Mask(up);
+    if (far_up.size() != 96u * 96u || far_low.size() != 96u * 96u) {
+      ADD_FAILURE() << "far masks sized " << far_up.size() << " / " << far_low.size();
+      continue;
+    }
+    // Imaged at all: any pixel the near mask images under `full` has a far side too (one ray, two
+    // crossings of one sphere).
+    const auto near_full = Mask(MakeCfg(LensParam::kGlobe, 30.0f, 96, 96, RenderConfig::kFull, el));
+    size_t both = 0;
+    size_t neither = 0;
+    for (size_t i = 0; i < far_up.size(); ++i) {
+      if (near_full[i] == 0) {
+        EXPECT_EQ(far_up[i] | far_low[i], 0) << "far side off the sphere at " << i;
+        continue;
+      }
+      both += (far_up[i] != 0 && far_low[i] != 0) ? 1u : 0u;
+      neither += (far_up[i] == 0 && far_low[i] == 0) ? 1u : 0u;
+    }
+    EXPECT_EQ(neither, 0u) << "a far direction clipped by both halves";
+    EXPECT_LE(both, 2u) << "only an exactly-horizontal far direction may pass both";
+    EXPECT_GT(CountOn(far_up), 0u);
+    EXPECT_GT(CountOn(far_low), 0u);
+    EXPECT_NE(far_up, near_up) << "the far side copied the near side's clip";
+  }
+}
+
 }  // namespace
 }  // namespace lumice

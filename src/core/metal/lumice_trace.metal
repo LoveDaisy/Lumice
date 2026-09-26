@@ -85,6 +85,9 @@ constant uint  kMaxColorClassesDeviceMsl = 16;
 // the N renderers share the three accumulation bindings (image / landed_weight /
 // class_lane_buf) through per-renderer OFFSETS instead of per-renderer buffers.
 constant uint  kMaxRenderersDeviceMsl = 4;
+// RendererPlaneDesc::far_off for a renderer that keeps no far-side share. MUST match the host
+// kNoFarPlane (metal_trace_backend.mm).
+constant uint  kNoFarPlaneMsl = 0xFFFFFFFFu;
 
 // --- ReduceBuffer (E4 spike, byte-identical to lumice::detail::ReduceBuffer) -
 
@@ -475,6 +478,13 @@ struct ExitStats {
 //               renderer's color_class_count*W*H lane region starts, laid out
 //               class-major inside the region exactly as the single-renderer
 //               buffer was: lane[lane_off + c * W*H + pix].
+//   far_off   : float index into `image` (buffer 7) where this renderer's
+//               FAR-SIDE-ONLY W*H*3 plane starts — the globe back-side hits'
+//               share of its XYZ plane, kept apart so the host can clip a
+//               pixel's near and far directions independently. Packed after
+//               every renderer's XYZ plane (no extra buffer binding: the stage
+//               is at Metal's buffer-index cap). kNoFarPlaneMsl when the host's
+//               lm_proj::NeedsFarXyzShadow is false for this renderer.
 // The landed-weight scalar needs no offset: `landed_weight` (buffer 17) is
 // simply indexed by renderer position.
 // MUST mirror the host struct of the same name field-for-field.
@@ -482,6 +492,7 @@ struct RendererPlaneDesc {
   lm_proj::ProjParams proj;
   uint xyz_off;
   uint lane_off;
+  uint far_off;
 };
 
 struct KernelParams {
@@ -670,6 +681,12 @@ inline void AccumRendererPlanes(constant KernelParams& prm,
         // bump_landed false, so it never reaches landed_acc).
         float hw = cw * pr.hits[hi].weight;
         AccumXyzToPixel(image + xyz_off, pix, cmf_x, cmf_y, cmf_z, hw);
+        // A globe back-side hit also lands in this renderer's far-side share (see far_off).
+        // Every other non-landed hit (the dual-fisheye overlap ring) meets far_off ==
+        // kNoFarPlaneMsl: the host only assigns a far plane where NeedsFarXyzShadow holds.
+        if (!pr.hits[hi].bump_landed && prm.renderers[r].far_off != kNoFarPlaneMsl) {
+          AccumXyzToPixel(image + prm.renderers[r].far_off, pix, cmf_x, cmf_y, cmf_z, hw);
+        }
         if (pr.hits[hi].bump_landed) {
           landed_acc[r] += hw;
         }

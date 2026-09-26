@@ -198,6 +198,27 @@ LM_FN float GlobeBackFadeWeight(float mu, float fade) {
   return LM_EXP(-depth / fade);
 }
 
+// RenderConfig::VisibleRange's `full` value, restated as a plain int because this header is also
+// compiled as MSL and CUDA and cannot see RenderConfig. lens_proj_build.hpp static_asserts the two
+// equal, so reordering the enum is a compile error rather than a silently wrong gate.
+LM_CONSTANT int kProjVisibleFull = 2;
+
+// Whether a renderer needs the globe's FAR-SIDE-ONLY energy kept apart from the total. On the globe
+// a pixel images two sky directions — where its ray enters the sphere (near) and where it leaves
+// (far) — and `visible` is judged for each of them on its own, so the display has to be able to
+// show one side's energy without the other's. That needs the far side's share as a separate sum,
+// which only exists when there is a far side at all (globe, fade > 0) AND when some pixel can
+// actually split: a clip is configured, i.e. `visible` != full or the front clip is on. With
+// neither, every direction passes both clips, both sides are always shown, and the separate sum
+// would be written and never read. (The GUI never sends `front` with the globe — its effective
+// value is forced off there — but a hand-written CLI config can, and core honours it on every lens.)
+//
+// THE one spelling of that gate: the CPU consumer, the Metal kernel and the CUDA kernel all call
+// this function, so the three backends cannot disagree about when the far-side sum exists.
+LM_FN bool NeedsFarXyzShadow(int proj_type, float globe_back_fade, int visible, bool front) {
+  return proj_type == kProjGlobe && globe_back_fade > 0.0f && (visible != kProjVisibleFull || front);
+}
+
 // Per-type numerical floors on `cz` for the SINGLE-lens fisheye cull below. These are not
 // visibility judgements — the configured visible hemisphere is a DISPLAY clip applied by the
 // render-domain mask (lens_proj_build.hpp::VisibleByRange) and never by this function, and bounds
