@@ -1171,35 +1171,134 @@ TEST(AnnotationGlobeFarSide, AbsentOffTheGlobeOrAtZeroFadeAndNearSideUnchanged) 
   }
 }
 
-// Every far-side family draws something, only where the near side's `drawable` admits the pixel and
-// the fade weight is positive, and on pixels other than the near side's own line.
-TEST(AnnotationGlobeFarSide, EveryFamilyDrawsInsideTheWeightedDrawableRegion) {
-  const ann::Overlay out = ann::ComputeOverlay(GlobeGridRequest(0.8f), lumice::test::kTestThreadBudget);
-  ASSERT_EQ(out.far_side.weight.size(), out.drawable.size());
-  const auto far = FarMasks(out);
-  const auto near = NearMasks(out);
-  for (size_t k = 0; k < far.size(); ++k) {
-    const std::vector<uint8_t>& m = *far[k];
-    if (m.size() != out.drawable.size()) {
-      ADD_FAILURE() << "far-side category " << k << " is " << m.size() << " bytes";
+namespace {
+
+// The far direction's OWN clip, per pixel, computed straight from the inverse rather than read off
+// ComputeOverlay: 1 where the pixel has a far side AND that far direction passes `visible` / `front`.
+// Deliberately spelled out with the raw hemisphere test (upper keeps z <= 0, lower keeps z >= 0) and
+// not through mask_detail::VisibleByRange, so a wrong predicate in the code under test cannot also
+// be the ruler it is measured with.
+std::vector<uint8_t> FarOwnVisible(const ann::Request& req) {
+  RenderConfig cfg = ann::ToRenderConfig(req.view);
+  cfg.globe_back_fade_ = req.view.globe_back_fade;
+  const lumice::Rotation rot = lumice::MakeCameraRotation(cfg);
+  const lm_proj::ProjParams p =
+      lumice::BuildProjParams(cfg, rot, static_cast<float>(std::min(req.view.width, req.view.height)));
+  std::vector<uint8_t> on(static_cast<size_t>(req.view.width) * static_cast<size_t>(req.view.height), 0);
+  for (int py = 0; py < req.view.height; ++py) {
+    for (int px = 0; px < req.view.width; ++px) {
+      float mu = 0.0f;
+      const md::MaskDir far = md::GlobeFarPixelToWorld(cfg, p, rot, px, py, &mu);
+      bool keep = far.valid;
+      if (req.view.visible == RenderConfig::kUpper) {
+        keep = keep && far.z <= 0.0f;
+      } else if (req.view.visible == RenderConfig::kLower) {
+        keep = keep && far.z >= 0.0f;
+      }
+      on[static_cast<size_t>(py) * static_cast<size_t>(req.view.width) + static_cast<size_t>(px)] = keep ? 1 : 0;
+    }
+  }
+  return on;
+}
+
+}  // namespace
+
+// Every far-side family draws something, only where the FAR direction's own clip admits the pixel
+// and the fade weight is positive, and on pixels other than the near side's own line. Under all
+// three `visible` values: the far side is judged by where it points, not by the near point that
+// shares its pixel. (This test used to assert the opposite — far lines inside the NEAR side's
+// `drawable` — which was the defect: under `upper`, looking down, the far side's lower hemisphere
+// showed through the near side's upper one.)
+TEST(AnnotationGlobeFarSide, EveryFamilyDrawsOnlyWhereTheFarDirectionItselfIsVisible) {
+  for (const RenderConfig::VisibleRange visible : { RenderConfig::kUpper, RenderConfig::kLower, RenderConfig::kFull }) {
+    SCOPED_TRACE(testing::Message() << "visible=" << static_cast<int>(visible));
+    ann::Request req = GlobeGridRequest(0.8f);
+    req.view.visible = visible;
+    const ann::Overlay out = ann::ComputeOverlay(req, lumice::test::kTestThreadBudget);
+    const std::vector<uint8_t> far_ok = FarOwnVisible(req);
+    if (out.far_side.weight.size() != out.drawable.size() || far_ok.size() != out.drawable.size()) {
+      ADD_FAILURE() << "far-side weight / far-visible sized unlike drawable";
       continue;
     }
-    EXPECT_GT(CountOn(m), 0u) << "far-side category " << k << " draws nothing";
-    EXPECT_NE(m, *near[k]) << "far-side category " << k << " is a copy of the near side";
-    size_t stray = 0;
-    for (size_t i = 0; i < m.size(); ++i) {
-      if (m[i] != 0 && (out.drawable[i] == 0 || !(out.far_side.weight[i] > 0.0f))) {
-        ++stray;
+    const auto far = FarMasks(out);
+    const auto near = NearMasks(out);
+    for (size_t k = 0; k < far.size(); ++k) {
+      const std::vector<uint8_t>& m = *far[k];
+      if (m.size() != out.drawable.size()) {
+        ADD_FAILURE() << "far-side category " << k << " is " << m.size() << " bytes";
+        continue;
+      }
+      if (CountOn(m) > 0) {
+        EXPECT_NE(m, *near[k]) << "far-side category " << k << " is a copy of the near side";
+      }
+      size_t stray = 0;
+      for (size_t i = 0; i < m.size(); ++i) {
+        if (m[i] != 0 && (far_ok[i] == 0 || !(out.far_side.weight[i] > 0.0f))) {
+          ++stray;
+        }
+      }
+      EXPECT_EQ(stray, 0u) << "far-side category " << k << " painted where the far direction is clipped";
+    }
+    // The far-side horizon is the boundary of the far side's visible region; it has to draw under
+    // every `visible` value this loop covers, or the region check above is vacuous.
+    EXPECT_GT(CountOn(out.far_side.horizon), 0u);
+    size_t wrong_weight = 0;
+    for (size_t i = 0; i < out.drawable.size(); ++i) {
+      if ((far_ok[i] == 0) != !(out.far_side.weight[i] > 0.0f)) {
+        ++wrong_weight;
       }
     }
-    EXPECT_EQ(stray, 0u) << "far-side category " << k << " painted outside the weighted drawable region";
+    EXPECT_EQ(wrong_weight, 0u) << "far-side weight present exactly where the far direction is visible";
   }
-  for (size_t i = 0; i < out.drawable.size(); ++i) {
-    if (out.drawable[i] == 0 && out.far_side.weight[i] != 0.0f) {
-      ADD_FAILURE() << "far-side weight " << out.far_side.weight[i] << " on undrawable pixel " << i;
-      break;
+}
+
+// The two boundary cases that make "each direction by its own clip" different from "the far side by
+// the near side's clip", each decided the new way. Under `upper`:
+//   near clipped, far visible  -> far lines DO draw there (the lower near hemisphere is absent, so
+//                                 the far upper hemisphere shows through it);
+//   near visible, far clipped  -> far lines do NOT draw there (the historic defect: looking down on
+//                                 the globe, the far side's lower hemisphere showed through the near
+//                                 side's upper one).
+// Two views, the camera above and below the horizon, because each puts only one of the two cases
+// on screen: the near hemisphere's centre sits on one side of the horizon and the far one's on the
+// other.
+TEST(AnnotationGlobeFarSide, NearAndFarAreClippedIndependently) {
+  size_t near_out_far_in = 0;
+  size_t near_in_far_out = 0;
+  size_t far_line_on_near_out = 0;
+  size_t far_line_on_far_out = 0;
+  for (const float el : { 35.0f, -35.0f }) {
+    SCOPED_TRACE(testing::Message() << "el=" << el);
+    ann::Request req = GlobeGridRequest(0.8f);
+    req.view.visible = RenderConfig::kUpper;
+    req.view.el_deg = el;
+    const ann::Overlay out = ann::ComputeOverlay(req, lumice::test::kTestThreadBudget);
+    const std::vector<uint8_t> far_ok = FarOwnVisible(req);
+    if (out.far_side.weight.size() != out.drawable.size() || far_ok.size() != out.drawable.size()) {
+      ADD_FAILURE() << "far-side weight / far-visible sized unlike drawable";
+      continue;
+    }
+    for (size_t i = 0; i < out.drawable.size(); ++i) {
+      bool far_line = false;
+      for (const auto* m : FarMasks(out)) {
+        far_line = far_line || (*m)[i] != 0;
+      }
+      if (out.drawable[i] == 0 && far_ok[i] != 0) {
+        ++near_out_far_in;
+        far_line_on_near_out += far_line ? 1u : 0u;
+        EXPECT_GT(out.far_side.weight[i], 0.0f) << "pixel " << i;
+      }
+      if (out.drawable[i] != 0 && far_ok[i] == 0) {
+        ++near_in_far_out;
+        far_line_on_far_out += far_line ? 1u : 0u;
+        EXPECT_EQ(out.far_side.weight[i], 0.0f) << "pixel " << i;
+      }
     }
   }
+  EXPECT_GT(near_out_far_in, 100u) << "no view puts a visible far point behind a clipped near one";
+  EXPECT_GT(near_in_far_out, 100u) << "no view puts a clipped far point behind a visible near one";
+  EXPECT_GT(far_line_on_near_out, 0u) << "no far-side line drawn where only the far direction is visible";
+  EXPECT_EQ(far_line_on_far_out, 0u) << "far-side lines drawn where the far direction is clipped";
 }
 
 // The weight a far-side line carries is the weight the far side's LIGHT carries on that pixel: the

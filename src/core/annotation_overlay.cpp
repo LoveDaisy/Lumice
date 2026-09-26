@@ -569,7 +569,8 @@ Overlay ComputeOverlay(const Request& req, int thread_budget) {
 
   // The globe's far side (Overlay::far_side). Its own fields and its own `imaged` — the gradient of
   // a far-side field is measured across far-side neighbours, as the shader measures it across
-  // globeFarDir's — but the NEAR side's `drawable` as the gate, folded into far_drawable below.
+  // globeFarDir's — and its own `drawable`: the far direction passes or fails the `visible` / `front`
+  // clips on its own altitude, never on the near point's that shares its pixel.
   const bool need_far = cfg.lens_.type_ == LensParam::kGlobe && req.view.globe_back_fade > 0.0f;
   const size_t n_far = need_far ? n : 0;
   std::vector<uint8_t> far_imaged(n_far, 0);
@@ -628,7 +629,9 @@ Overlay ComputeOverlay(const Request& req, int thread_budget) {
             continue;
           }
           far_imaged[i] = 1;
-          if (drawable) {
+          const bool far_drawable_here = mask_detail::VisibleByRange(cfg.visible_, far.z) &&
+                                         mask_detail::FrontVisible(req.view.front, forward, far.x, far.y, far.z);
+          if (far_drawable_here) {
             far_drawable[i] = 1;
             out.far_side.weight[i] = w;
           }

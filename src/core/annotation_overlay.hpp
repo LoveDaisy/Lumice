@@ -188,9 +188,11 @@ struct Overlay {
   // near-side masks above already use for "not requested", and a consumer checks `weight.empty()`.
   // A mask is empty too when its near-side twin was not requested.
   //
-  // Gated by the NEAR side's `drawable`: `visible` / `front` are a per-pixel display clip over the
-  // finished picture, exactly as they gate the far side's light (and the preview shader's
-  // overlayAuxLines gates both the same way). `weight` is 0 wherever no far-side line may be drawn.
+  // Gated by the FAR direction's own `visible` / `front` clips, not by the near side's `drawable`:
+  // one pixel images two sky directions on the globe, generally at different altitudes, and each
+  // is shown or hidden on its own — the rule the far side's light follows too (RenderConsumer's
+  // far-visible mask, and the preview shader's far_pixel_visible). `weight` is 0 wherever no
+  // far-side line may be drawn.
   //
   // Lines only: markers, zenith / nadir and labels have no far-side counterpart.
   struct FarSideLines {
