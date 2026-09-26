@@ -31,6 +31,7 @@
 #include "gui/export_fbo_renderer.hpp"
 #include "gui/gui_constants.hpp"
 #include "gui/preview_jacobian.hpp"
+#include "gui/preview_renderer.hpp"
 #include "test_gui_shared.hpp"
 #include "util/color_space.hpp"
 
@@ -56,6 +57,9 @@ struct Request {
   float luminance = 0.0f;  // uniform field Y, in D65 chromaticity
   bool overlays = false;
   bool markers = false;
+  int visible = gui::kVisibleFull;
+  float elevation = 20.0f;
+  float sky = 0.0f;  // linear background, all three channels
   std::vector<unsigned char> rgba;
 };
 
@@ -72,7 +76,11 @@ void RunRequest() {
   gui::PreviewParams params{};
   params.view_proj.lens_type = gui::kLensTypeGlobe;
   params.view_proj.fov = kFov;
-  params.view_proj.elevation = 20.0f;
+  params.view_proj.elevation = g_req.elevation;
+  params.view_proj.visible = g_req.visible;
+  for (float& c : params.background_color_linear) {
+    c = g_req.sky;
+  }
   params.view_proj.azimuth = 30.0f;
   params.view_proj.globe_back_fade = g_req.fade;
   params.source.max_abs_dz = gui::kDualFisheyeOverlap;
@@ -108,8 +116,12 @@ void GlobeBackFadeGuiFunc(ImGuiTestContext* /*ctx*/) {
 
 // One frame from the render thread (the GL context lives there, not on the test coroutine).
 std::vector<unsigned char> Render(ImGuiTestContext* ctx, float fade, float luminance, bool overlays,
-                                  bool markers = false) {
+                                  bool markers = false, int visible = gui::kVisibleFull, float elevation = 20.0f,
+                                  float sky = 0.0f) {
   g_req = Request{};
+  g_req.visible = visible;
+  g_req.elevation = elevation;
+  g_req.sky = sky;
   g_req.fade = fade;
   g_req.luminance = luminance;
   g_req.overlays = overlays;
@@ -148,6 +160,35 @@ float FarMu(float rho) {
 
 int Byte(const std::vector<unsigned char>& rgba, int col, int row, int ch) {
   return rgba[(static_cast<std::size_t>(row) * kCanvas + col) * 4 + ch];
+}
+
+// The world z of the near (far = false) or far (far = true) crossing at buffer pixel (col, row) —
+// the shader's globeInverse / globeFarDir solve, restated on the CPU from BuildViewMatrix. Only the
+// sign of z is read (`visible` keeps z <= 0 under upper), so a direction is returned un-normalized
+// in magnitude but exact in sign. `ok` is false off the sphere. The buffer is top-down and the
+// shader's `pos` y-up, hence the flip.
+float CrossingZ(int col, int row, float elevation, bool far, bool* ok) {
+  const float x = static_cast<float>(col) + 0.5f - kCanvas * 0.5f;
+  const float y = kCanvas * 0.5f - (static_cast<float>(row) + 0.5f);
+  const float focal = Focal();
+  const float len = std::sqrt(x * x + y * y + focal * focal);
+  const float dx = x / len;
+  const float dy = y / len;
+  const float dz = -focal / len;
+  const float d = gui::kGlobeCameraD;
+  const float b = d * dz;
+  const float disc = b * b - (d * d - 1.0f);
+  *ok = disc >= 0.0f;
+  if (!*ok) {
+    return 0.0f;
+  }
+  const float t = far ? -b + std::sqrt(disc) : -b - std::sqrt(disc);
+  const float hx = t * dx;
+  const float hy = t * dy;
+  const float hz = d + t * dz;
+  float m[9];
+  gui::BuildViewMatrix(elevation, 30.0f, 0.0f, m);  // column-major, as the shader's u_view_matrix
+  return m[2] * hx + m[5] * hy + m[8] * hz;
 }
 
 }  // namespace
@@ -348,6 +389,101 @@ void RegisterPreviewGlobeBackFadeTests(ImGuiTestEngine* engine) {
       }
       IM_CHECK_GT(lit, 20);
       IM_CHECK(f0 == f1);
+    };
+  }
+
+  // Each side of a globe pixel is clipped by ITS OWN direction. Under `visible: upper` the near and
+  // far crossings of one pixel generally sit at different altitudes, and the picture must be the
+  // prediction built per side: near light x relIllum where the near direction is kept, plus far light
+  // x relIllumFar x weight where the FAR direction is kept, plus the sky only where the near one is.
+  // Two camera elevations, because each puts one of the two disagreeing cases on screen:
+  //   near clipped, far kept  -> the far side's light alone, no sky (it used to be black);
+  //   near kept, far clipped  -> the near side's light and the sky alone (the far side's clipped
+  //                              light used to leak in: the owner's "looking down under upper, the
+  //                              back's lower hemisphere shows through").
+  {
+    ImGuiTest* t =
+        IM_REGISTER_TEST(engine, "preview_globe_back_fade", "each_side_of_a_pixel_is_clipped_by_its_own_direction");
+    t->GuiFunc = GlobeBackFadeGuiFunc;
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      ctx->Yield(2);
+      constexpr float kY = 0.08f;
+      constexpr float kSky = 0.02f;
+      constexpr float kFade = 1.5f;
+      // Keep off the horizon on both crossings: a pixel whose direction is within this much of
+      // z = 0 is left out, so a sub-pixel disagreement about which side it is on cannot read as red.
+      constexpr float kZMargin = 0.03f;
+      const float focal = Focal();
+      const float rho_limb = RhoLimb();
+      int near_out_far_in = 0;
+      int near_in_far_out = 0;
+      for (float elevation : { 35.0f, -35.0f }) {
+        const std::vector<unsigned char> rgba =
+            Render(ctx, kFade, kY, false, false, gui::kVisibleUpper, elevation, kSky);
+        if (rgba.size() != static_cast<std::size_t>(kCanvas) * kCanvas * 4) {
+          IM_ERRORF("el %.0f: the off-screen render produced no frame", static_cast<double>(elevation));
+          break;
+        }
+        int checked = 0;
+        int worst = 0;
+        int worst_col = -1;
+        int worst_row = -1;
+        for (int row = 0; row < kCanvas; row += 2) {
+          for (int col = 0; col < kCanvas; col += 2) {
+            const float rho = RhoAt(col, row);
+            if (rho > rho_limb - 2.0f) {
+              continue;
+            }
+            bool ok_near = false;
+            bool ok_far = false;
+            const float z_near = CrossingZ(col, row, elevation, false, &ok_near);
+            const float z_far = CrossingZ(col, row, elevation, true, &ok_far);
+            if (!ok_near || !ok_far || std::fabs(z_near) < kZMargin || std::fabs(z_far) < kZMargin) {
+              continue;
+            }
+            const bool near_kept = z_near < 0.0f;  // upper keeps z <= 0
+            const bool far_kept = z_far < 0.0f;
+            float linear = 0.0f;
+            if (near_kept) {
+              linear += kY * gui::RelIllumGlobe(rho, focal) + kSky;
+            }
+            if (far_kept) {
+              linear += kY * gui::RelIllumGlobeFar(rho, focal) * gui::GlobeBackFadeWeight(FarMu(rho), kFade);
+            }
+            if (linear > 0.95f) {
+              continue;
+            }
+            near_out_far_in += (!near_kept && far_kept) ? 1 : 0;
+            near_in_far_out += (near_kept && !far_kept) ? 1 : 0;
+            const int expected = static_cast<int>(std::lround(lumice::LinearToSrgb(linear) * 255.0f));
+            for (int ch = 0; ch < 3; ++ch) {
+              const int diff = std::abs(Byte(rgba, col, row, ch) - expected);
+              if (diff > worst) {
+                worst = diff;
+                worst_col = col;
+                worst_row = row;
+              }
+            }
+            ++checked;
+          }
+        }
+        if (checked < 1000) {
+          IM_ERRORF("el %.0f: only %d pixels were predictable", static_cast<double>(elevation), checked);
+        }
+        if (worst > kPredictToleranceLsb) {
+          IM_ERRORF(
+              "el %.0f: pixel (%d, %d) is %d LSB from the per-side prediction (tolerance %d) — a side shown or "
+              "hidden by the other side's direction, or the sky painted under a clipped near point",
+              static_cast<double>(elevation), worst_col, worst_row, worst, kPredictToleranceLsb);
+        }
+        if (ctx->IsError()) {
+          break;
+        }
+      }
+      // Both disagreeing cases were actually on screen, or the prediction above never tested them.
+      IM_CHECK_GT(near_out_far_in, 200);
+      IM_CHECK_GT(near_in_far_out, 200);
     };
   }
 }
