@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1790392429303,
+  "lastUpdate": 1790392432662,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9524,50 +9524,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "5dab8ac5279acc30e74281d28ec9852f7091260f",
-          "message": "Merge pull request #323 from LoveDaisy/feat/annotation-label-line-independence\n\nfeat(config): give the three grid families a line switch of their own",
-          "timestamp": "2026-09-08T21:51:50+08:00",
-          "tree_id": "17e102e9476ace17c070d7edc5d9863355c01883",
-          "url": "https://github.com/LoveDaisy/ice_halo_sim/commit/5dab8ac5279acc30e74281d28ec9852f7091260f"
-        },
-        "date": 1788876191569,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 85.6,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 99.2,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 96,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 91.9,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "e06d6f8ee003f53159f4265e0a60478c3912298f",
           "message": "Merge pull request #324 from LoveDaisy/perf/cli-render-poll-floor\n\nperf(cli): poll completion before sleeping, so a render is not floored at 1s",
           "timestamp": "2026-09-08T22:52:18+08:00",
@@ -13867,6 +13823,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 93.5,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "f185f3da689e6f99f72572f6b6198659524a0cfa",
+          "message": "Merge pull request #424 from LoveDaisy/fix/globe-far-side-own-visibility\n\nfix: clip each side of the globe by its own direction's visibility",
+          "timestamp": "2026-09-26T11:01:44+08:00",
+          "tree_id": "1d3bdfa97e8e41f70adb6f2c18d2203221bfa8e4",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/f185f3da689e6f99f72572f6b6198659524a0cfa"
+        },
+        "date": 1790392431725,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 95.2,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 99.8,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 98.2,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 91.9,
             "unit": "%"
           }
         ]
