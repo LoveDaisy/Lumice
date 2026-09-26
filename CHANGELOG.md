@@ -133,6 +133,173 @@ it was thinking of and false of the C struct beside it.
 
 </details>
 
+## [4.7.0] - 2026-09-26
+
+### Added
+- **The GUI is DPI-aware, with a user scale preference** (#398). Until now the whole UI was drawn
+  at physical pixels regardless of monitor scaling — on a 150% Windows display, at 13 px instead
+  of the intended ~19 px (matched to the OS title bar: the same window went from 1600×980 to
+  2400×1470 physical pixels). A single `UiPx()` / `UiPxI()` outlet now converts every layout
+  constant (~90 literals) through a monitor tier (read at startup, tracked across screens) and a
+  new user tier: **Settings › app** gets a discrete scale combo (75 / 100 / 125 / 150 / 200%),
+  stored as `app.ui_scale_multiplier` in `user_defaults.json` and applied immediately.
+  `ui_scale == 1` renders byte-identical to 4.6.1. Changing the scale re-centres the Settings /
+  Analysis / Colors windows at their design size, so a larger window cannot end up off-screen.
+- **A search box over the raypath analysis list** (#399). Filters the list by the raw raypath
+  text — the same text the CSV and the log print, not the on-screen arrow glyph; energy shares,
+  the cumulative column and the selection keep their meaning, it only hides rows.
+- **Right-click Copy (and Copy all) on read-only text** (#399), across the analysis list, the Log
+  panel, the filter editor's expansion preview, and a new "Copy as text" button on the Summary
+  page.
+- **The analysis list remembers what you have excluded** (#400). Pressing **Exclude this
+  raypath** used to make the row vanish on the next Analyze, with no way to see what had already
+  been taken out. An excluded raypath now stays in the list as a greyed row (`was X%`, the share
+  it last had), with **Include again** to undo it. A hand-written filter the greyed-row detector
+  cannot read as a plain raypath token is not shown this way, by design.
+- **Cards can be reordered by dragging, and Duplicate lands next to the original** (#405). The
+  card list previously supported only append and delete; a single new primitive
+  (`MoveEntryWithinLayer`) now backs both a drag handle on the card thumbnail (click-to-edit now
+  fires on release, so a drag no longer opens the editor) and **Duplicate**, which inserts
+  directly below the source card instead of at the end of the layer. Every position-based
+  reference — the open Edit Entry popup, the analysis panel's pick-link mode — is remapped
+  through the same compensation the delete path already used.
+- **Continue: add more rays to a finished render without starting over** (#406). A new
+  **Continue** button next to **Run** traces another `ray_num` worth of rays into the
+  accumulation a completed run already has — the XYZ planes, ray/energy totals and both exposure
+  anchors (`relative` and `absolute`) carry over unchanged, so the picture only gets less noisy,
+  not different. The new rays are a fresh random stream, never a replay, on all three backends.
+  Continue is disabled, with a tooltip, when there is no finished render to continue, an analysis
+  session is active, or the document has changed in a way that needs a full re-simulation.
+- **Globe lens: the far side of the sphere shows through, fading like fog** (#407, #416, #424). A
+  new **Back fade** slider (Settings, under the Globe lens; JSON `globe_back_fade`, default 0 —
+  today's camera-facing-hemisphere-only image) adds the far hemisphere's light on top of the near
+  side, weighted by exponential fog with no hard cutoff (`exp(-depth/fade)`); the slider runs
+  0–2.0. The four line families (grid, horizon, angular distance, view distance) fade the same
+  way and are drawn under the near-side lines; markers and text labels stay near-side only.
+  Every direction — light and lines alike — is clipped by its *own* `visible` / `front`, not by
+  the near point sharing its pixel, so an "upper" view correctly shows a faded far side even
+  where the near point itself is excluded. `fade <= 0`, or a full-sphere `visible`, renders
+  byte-identical to before this feature.
+- **A "Channel B−R" display mode: is this spot bluer or redder?** (#410, #419). A small segmented
+  control in the preview's top-right corner (moved there from a Settings row after users did not
+  find it) switches between the normal image and a grey-level map of
+  `clamp(0.5 + 0.5·(B−R), 0, 1)` on the displayed sRGB — the same subtraction a researcher used to
+  do by hand in Photoshop. Purely a display transform: switching it, or EV, never re-simulates,
+  and the export / screenshot paths match the screen exactly. It has no effect under print tone
+  (greyed out there), suppresses the raypath-colour composite and the background photo while
+  active, and a non-default `ray_color` triggers a warning. JSON key `render.display_mode`
+  (`"normal"` / `"channel_br"`).
+- **Pick an angular-distance ring on the preview, instead of typing a number** (#421). Both ring
+  families (sun-centred, and lens-centre-referenced) gain a **Pick** button: a live ring follows
+  the cursor with its angle read out, a left click adds it to that family's list (turning the
+  family's line display on if it was off), Esc or a right-click cancels. A location with no
+  direction — outside the lens circle, or clipped by `visible` / `front` — shows no preview ring
+  and adds nothing on click.
+- **A screenshot export options popup** (#422). **Save › Screenshot...** now opens a popup,
+  pre-filled from what is currently on screen, before the file dialog: each overlay family's line
+  and label, and the display mode (Normal or Channel B−R, greyed out where the uploaded texture
+  cannot render it honestly), can be turned off for that one export — never turned on beyond what
+  the panel already shows, and never written back to the document.
+- **The Edit Entry modal's Axis page highlights the active preset and summarises the crystal**
+  (#418). The active preset button (Custom included) now fills with the accent colour instead of
+  leaving the choice to be read off the thumbnail alone; a new summary line under the preview
+  (`<preset> · zenith <dist> · <type> · <height scalars…>`) updates live as the edit buffers
+  change.
+- **C API: `LUMICE_API_VERSION` 443 → 446** (#406, #407, #410). `LUMICE_ContinueRender(server,
+  infinite, additional_ray_num)` (v4.44) is a pure append, no struct change — the Continue
+  feature above. **ABI** (v4.45): `LUMICE_RenderParam` gains a trailing `globe_back_fade`
+  (sizeof 6452 → 6456) — the Globe far-side parameter above; `0`, the zero-initialised value, is
+  the pre-4.7.0 image. **ABI** (v4.46): `LUMICE_RenderParam` gains a trailing `display_mode`
+  after it (sizeof 6456 → 6460) — `LUMICE_DISPLAY_MODE_NORMAL` (0, the default) /
+  `_CHANNEL_BR`, the display mode above. Both struct growths require recompiling against the new
+  header; neither moves an existing field's offset or changes its meaning, and an
+  unmodified / zero-initialised caller reads the same image as before.
+
+### Changed
+- **The filter editor's last OR row can be deleted** (#399). It used to grey out the row's `x`, a
+  rule copied from the crystal card where an empty list really is illegal; a filter list may
+  legitimately be empty, and deleting the last row now goes through the same invariant that
+  already refills a blank one.
+- **Tab in the crystal editor's shape tables walks column-major** (#399). Tab now walks the Value
+  column down every row before moving to the Spread column, matching how face distances are
+  actually edited; Shift+Tab reverses.
+- **Settings and Summary windows keep the height you drag them to** (#399). Both become
+  "semi-variable" under a newly documented sizing policy (`doc/gui-visual-language.md`): width
+  pinned per window, height free until the user drags it and then remembered for the session;
+  Summary still auto-fits its content until that first drag.
+- **The Edit Entry popup has two shapes: Compact and Expanded** (#401). A side-by-side tab layout
+  and a three-column prototype are gone; **Compact** (unchanged — the stacked layout almost
+  everyone already used) keeps the halo preview visible while editing, and the new **Expanded**
+  shows the crystal, axis and filter sections all at once, two columns, no tabs — chosen by the
+  owner from a measured comparison of all four candidate shapes. See ⚠️ Breaking Changes for what
+  happens to a document that had chosen the removed shape.
+- **The Edit Entry popup's height can be dragged, and its Expanded headers line up** (#403). It
+  was fixed-height (`AlwaysAutoResize`); it now follows the window-sizing policy above — width
+  pinned, height free until dragged, then kept for the session — and a too-short work area no
+  longer pushes the OK button out of reach. Expanded's `Crystal` and `Filter` section headers,
+  previously aligned by coincidence, are now derived from one height and asserted to agree. All
+  three section headings switch to the standard `SeparatorText` style used elsewhere in the GUI.
+- **The top bar's buttons are grouped and sized consistently, and Continue gets its own colour**
+  (#417, #420). Revert, Run / Stop / Continue, and New / Open / Save each share one height and
+  one width per group, with a proper separator between groups instead of a `"/"` character;
+  Continue is now violet, distinct from every other action colour. The always-reserved Revert
+  slot — previously a hole in the middle of the bar when nothing was unsaved — has moved to the
+  trailing end, next to the right-panel collapse chevron.
+- **CPU multi-worker throughput no longer falls off a cliff as workers are added, and Linux's
+  automatic worker count is uncapped** (#412). The queue handoff between simulation workers and
+  the consumer was tied to the 128-ray physics batch; under load, the resulting synchronization
+  rate created a runaway feedback loop that made adding workers past 10 counter-productive on
+  Linux, which is why the automatic count (`num_workers = 0`) was capped there. Workers now
+  aggregate batches locally before handing them off, decoupling the two; the automatic count on
+  Linux is now the full physical core count (macOS keeps its cap of 10, pending stronger data),
+  measured 1.02–1.45× against the old 10-worker cap across 8 reference scenes at 16 and 32
+  workers. Pass `--workers 10` for the previous count. A fixed seed at `--workers 1` still
+  reproduces byte-for-byte.
+- **The CPU path's per-pixel noise under a continuous illuminant (e.g. D65) drops sharply**
+  (#414). Each 128-ray physics batch used to draw one independent random wavelength, so a
+  typical image was built from only a few hundred distinct wavelengths — measured at 91–92% of
+  the whole image's per-pixel variance. The wavelength is now drawn from a randomly-shifted
+  golden-ratio sequence stratified across batches instead, at no extra per-ray cost and no change
+  to the wavelength distribution or the expected image (total energy differs by ≤0.45%):
+  equal-error throughput on the reference D65 scenes improves 4.1–4.8×.
+
+### ⚠️ Breaking Changes
+- **A `.lmc` that had chosen the Edit Entry popup's old side-by-side shape now opens in the new
+  Expanded shape** (#401). **Before**: `modal_layout_vertical: false` showed the side-by-side tab
+  layout. **Now**: that removed shape has no replacement of its own, so the same stored `false`
+  is read as **Expanded** — the closer of the two remaining shapes, since neither hides a section
+  behind a tab. `true` (the default, and the far more common choice) is unaffected: it still
+  opens **Compact**. **What to do**: if you preferred the removed side-by-side layout, pick
+  **Compact** or **Expanded** from the popup's own selector — the choice persists like any other
+  setting.
+
+### Fixed
+- **Every backend's halo brightness now depends on the crystal's orientation toward the sun, as
+  it physically should** (#404). Each ray drew a crystal orientation and started with a constant
+  weight, correctly distributing energy *within* that orientation by projected area but never
+  weighting the orientation draw itself by how much of the crystal actually faces the light
+  (`A(o,d)`, its projected area along the ray direction) — a bias shared, identically, by the
+  CPU, Metal and CUDA backends, so the existing cross-backend parity battery could not catch it.
+  Multi-scattering layers had the same defect. Every backend now weights each ray's birth weight
+  by `A(o,g,d) / (S(g)/2)` (`S(g)`: the sampled crystal instance's surface area — the
+  Rao-Blackwellised expectation of an accept/reject step, so no ray is discarded and no GPU lane
+  idles). **Effect**: halo brightness distribution moves for every scene except near-horizontal
+  plates; randomly-oriented plates move the most — their edge-on orientations were previously
+  over-weighted by up to ≈4.6×. Under `ev_mode: absolute`, a randomly-oriented scene renders
+  exactly one stop dimmer; other configurations move by a scene-dependent amount. Energy-share
+  numbers in the raypath analysis panel move accordingly. `proportion`'s own meaning — a crystal's
+  count share **under an equal-surface-area convention** — is unchanged, and there is no C API
+  change. Migration notes: `doc/configuration.md`, `doc/ev-pipeline-architecture.md` §7.2,
+  `doc/user-manual/06-raypath-analysis.md`.
+- **The "front" clip checkbox now reflects what it actually does under full-sky and Globe lenses**
+  (#415). Those lens types ignore `front` by design, and the checkbox was greyed out to say so —
+  but the stored value still reached the preview shader, the annotation overlay and the JSON
+  export, so a `front` ticked under a `linear` lens kept cropping a dual-fisheye, rectangular or
+  Globe picture with no way to untick it. The checkbox, the preview and the export now all read
+  the same *effective* value (unticked and grey under those lenses); the last non-full-sky choice
+  is remembered and restored when you switch back. **Effect**: a document with a full-sky or
+  Globe lens and a stored `front: true` now exports `"front": false` — this was the bug.
+
 ## [4.6.1] - 2026-09-21
 
 ### Added
@@ -2500,6 +2667,7 @@ it was thinking of and false of the C struct beside it.
 - Basic ice crystal halo simulation
 - Support for common crystal types (hexagonal prism, plate, column)
 
+[4.7.0]: https://github.com/LoveDaisy/ice_halo_sim/compare/v4.6.1...v4.7.0
 [4.6.1]: https://github.com/LoveDaisy/ice_halo_sim/compare/v4.6.0...v4.6.1
 [4.6.0]: https://github.com/LoveDaisy/ice_halo_sim/compare/v4.5.1...v4.6.0
 [4.5.1]: https://github.com/LoveDaisy/ice_halo_sim/compare/v4.5.0...v4.5.1
