@@ -2239,6 +2239,7 @@ void Simulator::ReadbackDevicePlanes(TraceBackend& backend, const std::vector<st
     xyz_out[i].height = dims[i].second;
   }
   backend.ReadbackXyzAccum(xyz_out, sim_data.xyz_landed_weight_);
+  backend.ReadbackFarXyzAccum(sim_data.xyz_pixel_data_far_);
 }
 
 void Simulator::SimulateOneWavelengthWithBackend(TraceBackend& backend, const SceneConfig& scene,

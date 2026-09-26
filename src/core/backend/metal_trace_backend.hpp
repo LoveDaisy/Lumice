@@ -125,6 +125,7 @@ class MetalTraceBackend : public TraceBackend {
   // of materialising per-exit records.
   bool SupportsDeviceXyzAccum() const override { return true; }
   void ReadbackXyzAccum(std::vector<XyzImageData>& xyz, std::vector<float>& landed_weight) override;
+  void ReadbackFarXyzAccum(std::vector<std::vector<float>>& far_planes) override;
   // task-358.1 Step 4 (AC3 device-side Y-lane accumulation): copy the flattened
   // per-color-class Y accumulator to host and reset the device side for the
   // next window. See TraceBackend::ReadbackClassLanes for contract + layout.

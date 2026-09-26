@@ -18,6 +18,7 @@
 #include "core/backend/metal_trace_backend.hpp"
 #include "core/backend/metal_trace_backend_test_hooks.hpp"
 #include "core/backend/trace_backend.hpp"
+#include "core/lens_proj_build.hpp"  // NeedsFarXyzShadow
 #include "core/trace_ops.hpp"
 #include "metal_test_helpers.hpp"
 #include "support/env_var.hpp"
@@ -1114,6 +1115,91 @@ TEST(MetalTraceBackend, KShapePool_TransitPicksMultipleShapes_AC1_TestB) {
 
   backend.EndSession();
   test::UnsetEnvVar("LUMICE_GPU_GEOM_CLOCK");
+}
+
+// =============================================================================
+// The globe far side's own plane (ReadbackFarXyzAccum). One session, two globe
+// renderers with the same view — one with a fade range and `visible: upper`
+// (keeps a far-side share: lm_proj::NeedsFarXyzShadow), one at fade 0 (no far
+// side at all) — so both see the SAME rays in the SAME dispatch. Every near-side
+// hit lands identically in both planes; only the faded renderer adds back-side
+// hits. So its far-side plane must equal the difference of the two XYZ planes,
+// pixel by pixel, up to the fp32 atomic-order floor — an oracle that needs no
+// second backend and no statistics.
+// =============================================================================
+TEST(MetalTraceBackend, GlobeFarPlaneIsExactlyTheBackSideShare) {
+  if (ShouldSkipMetalTests()) {
+    GTEST_SKIP() << "LUMICE_SKIP_METAL_TESTS set";
+  }
+  auto scene = MakeMetalScene(/*max_hits=*/8, /*ms_layers=*/1);
+  RenderConfig faded;
+  faded.id_ = 0;
+  faded.lens_.type_ = LensParam::kGlobe;
+  faded.lens_.fov_ = 30.0f;
+  faded.resolution_[0] = 64;
+  faded.resolution_[1] = 64;
+  faded.view_.el_ = 35.0f;
+  faded.view_.az_ = 20.0f;
+  faded.visible_ = RenderConfig::kUpper;
+  faded.globe_back_fade_ = 0.8f;
+  RenderConfig plain = faded;
+  plain.id_ = 1;
+  plain.globe_back_fade_ = 0.0f;
+  ASSERT_TRUE(NeedsFarXyzShadow(faded));
+  ASSERT_FALSE(NeedsFarXyzShadow(plain));
+
+  SessionSpec spec;
+  spec.scene = &scene;
+  spec.renders = { &faded, &plain };
+  spec.wl = WlParam{ 550.0f, 1.0f };
+  spec.seed = 42;
+
+  HostRayBatch host;
+  host.count = size_t{ 1 } << 18;
+  host.crystal = nullptr;
+  host.refractive_index = 0.0f;
+
+  MetalTraceBackend metal;
+  metal.BeginSession(spec);
+  auto h = metal.TraceLayer(RootRaySource::FromHost(host));
+  ASSERT_NE(h, nullptr);
+  const size_t n = 64u * 64u * 3u;
+  std::vector<float> xyz_faded(n, 0.0f);
+  std::vector<float> xyz_plain(n, 0.0f);
+  std::vector<XyzImageData> planes{ XyzImageData{ xyz_faded.data(), 64, 64 },
+                                    XyzImageData{ xyz_plain.data(), 64, 64 } };
+  std::vector<float> landed;
+  metal.ReadbackXyzAccum(planes, landed);
+  std::vector<std::vector<float>> far;
+  metal.ReadbackFarXyzAccum(far);
+  metal.EndSession();
+
+  ASSERT_EQ(far.size(), 2u);
+  ASSERT_EQ(far[0].size(), n) << "the faded upper globe keeps a far-side plane";
+  EXPECT_TRUE(far[1].empty()) << "a fade-0 renderer has no far side to keep";
+
+  double far_sum = 0.0;
+  double diff_sum = 0.0;
+  double worst = 0.0;
+  double peak = 0.0;
+  for (size_t i = 0; i < n; ++i) {
+    const double diff = static_cast<double>(xyz_faded[i]) - static_cast<double>(xyz_plain[i]);
+    far_sum += far[0][i];
+    diff_sum += diff;
+    worst = std::max(worst, std::fabs(static_cast<double>(far[0][i]) - diff));
+    peak = std::max(peak, static_cast<double>(xyz_faded[i]));
+  }
+  EXPECT_GT(far_sum, 0.0) << "no back-side hit reached the far plane";
+  EXPECT_LT(RelErr(diff_sum, far_sum), 1e-4) << "far=" << far_sum << " faded-minus-plain=" << diff_sum;
+  // fp32 atomics in a different order on each plane: a few ulps of the brightest pixel.
+  EXPECT_LT(worst, 1e-4 * peak) << "worst pixel " << worst << " vs peak " << peak;
+
+  // The drain reset the far side too: a second drain with no tracing in between reads zeros.
+  metal.ReadbackXyzAccum(planes, landed);
+  metal.ReadbackFarXyzAccum(far);
+  ASSERT_EQ(far.size(), 2u);
+  ASSERT_EQ(far[0].size(), n);
+  EXPECT_EQ(std::count(far[0].begin(), far[0].end(), 0.0f), static_cast<long>(n));
 }
 
 }  // namespace
