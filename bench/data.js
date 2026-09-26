@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1790394804702,
+  "lastUpdate": 1790394806631,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9524,50 +9524,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "e06d6f8ee003f53159f4265e0a60478c3912298f",
-          "message": "Merge pull request #324 from LoveDaisy/perf/cli-render-poll-floor\n\nperf(cli): poll completion before sleeping, so a render is not floored at 1s",
-          "timestamp": "2026-09-08T22:52:18+08:00",
-          "tree_id": "0e0c25fa9ce2a27fc0554ad989a39b2c64786891",
-          "url": "https://github.com/LoveDaisy/ice_halo_sim/commit/e06d6f8ee003f53159f4265e0a60478c3912298f"
-        },
-        "date": 1788879788663,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 80.4,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 99.8,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 93.9,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 92.3,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "dfb3f72cde1303813ed87b0403da0bf2d5264b86",
           "message": "Merge pull request #325 from LoveDaisy/fix/user-run-vs-backpressure-gate\n\nfix(gui): exempt a user-initiated Run from the commit backpressure gate",
           "timestamp": "2026-09-08T23:07:48+08:00",
@@ -13867,6 +13823,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 91.9,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "e4adc5bd4c991f32ec7d292e06eaeb6773249573",
+          "message": "Merge pull request #425 from LoveDaisy/chore/release-4.7.0\n\nchore(release): cut 4.7.0",
+          "timestamp": "2026-09-26T11:42:17+08:00",
+          "tree_id": "31eb8c69a51d64a2fd2f696314ecf1251915e92e",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/e4adc5bd4c991f32ec7d292e06eaeb6773249573"
+        },
+        "date": 1790394806245,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 95.1,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 100,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 100,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 93.2,
             "unit": "%"
           }
         ]
