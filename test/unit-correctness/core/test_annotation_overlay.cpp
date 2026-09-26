@@ -1188,12 +1188,12 @@ std::vector<uint8_t> FarOwnVisible(const ann::Request& req) {
   for (int py = 0; py < req.view.height; ++py) {
     for (int px = 0; px < req.view.width; ++px) {
       float mu = 0.0f;
-      const md::MaskDir far = md::GlobeFarPixelToWorld(cfg, p, rot, px, py, &mu);
-      bool keep = far.valid;
+      const md::MaskDir far_dir = md::GlobeFarPixelToWorld(cfg, p, rot, px, py, &mu);
+      bool keep = far_dir.valid;
       if (req.view.visible == RenderConfig::kUpper) {
-        keep = keep && far.z <= 0.0f;
+        keep = keep && far_dir.z <= 0.0f;
       } else if (req.view.visible == RenderConfig::kLower) {
-        keep = keep && far.z >= 0.0f;
+        keep = keep && far_dir.z >= 0.0f;
       }
       on[static_cast<size_t>(py) * static_cast<size_t>(req.view.width) + static_cast<size_t>(px)] = keep ? 1 : 0;
     }
@@ -1220,16 +1220,16 @@ TEST(AnnotationGlobeFarSide, EveryFamilyDrawsOnlyWhereTheFarDirectionItselfIsVis
       ADD_FAILURE() << "far-side weight / far-visible sized unlike drawable";
       continue;
     }
-    const auto far = FarMasks(out);
-    const auto near = NearMasks(out);
-    for (size_t k = 0; k < far.size(); ++k) {
-      const std::vector<uint8_t>& m = *far[k];
+    const auto far_masks = FarMasks(out);
+    const auto near_masks = NearMasks(out);
+    for (size_t k = 0; k < far_masks.size(); ++k) {
+      const std::vector<uint8_t>& m = *far_masks[k];
       if (m.size() != out.drawable.size()) {
         ADD_FAILURE() << "far-side category " << k << " is " << m.size() << " bytes";
         continue;
       }
       if (CountOn(m) > 0) {
-        EXPECT_NE(m, *near[k]) << "far-side category " << k << " is a copy of the near side";
+        EXPECT_NE(m, *near_masks[k]) << "far-side category " << k << " is a copy of the near side";
       }
       size_t stray = 0;
       for (size_t i = 0; i < m.size(); ++i) {
@@ -1326,12 +1326,12 @@ TEST(AnnotationGlobeFarSide, WeightIsTheForwardProjectionsFarHitWeight) {
         continue;
       }
       float mu = 0.0f;
-      const md::MaskDir far = md::GlobeFarPixelToWorld(cfg, p, rot, px, py, &mu);
-      if (!far.valid) {
+      const md::MaskDir far_dir = md::GlobeFarPixelToWorld(cfg, p, rot, px, py, &mu);
+      if (!far_dir.valid) {
         ADD_FAILURE() << "weighted pixel (" << px << ", " << py << ") has no far direction";
         continue;
       }
-      const lm_proj::ProjResult r = lm_proj::ProjectExitToPixel(p, far.x, far.y, far.z);
+      const lm_proj::ProjResult r = lm_proj::ProjectExitToPixel(p, far_dir.x, far_dir.y, far_dir.z);
       ++checked;
       if (r.count != 1 || r.hits[0].px != px || r.hits[0].py != py || r.hits[0].bump_landed) {
         ++misplaced;

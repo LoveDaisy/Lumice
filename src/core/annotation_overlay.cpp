@@ -622,30 +622,31 @@ Overlay ComputeOverlay(const Request& req, int thread_budget) {
         }
         if (need_far) {
           float mu = 0.0f;
-          const mask_detail::MaskDir far = mask_detail::GlobeFarPixelToWorld(cfg, inverse_params, rot, px, py, &mu);
+          const mask_detail::MaskDir far_dir = mask_detail::GlobeFarPixelToWorld(cfg, inverse_params, rot, px, py, &mu);
           // THE weight the far side's light carries (lm_proj::GlobeBackFadeWeight), not a copy.
-          const float w = far.valid ? lm_proj::GlobeBackFadeWeight(mu, req.view.globe_back_fade) : 0.0f;
+          const float w = far_dir.valid ? lm_proj::GlobeBackFadeWeight(mu, req.view.globe_back_fade) : 0.0f;
           if (!(w > 0.0f)) {
             continue;
           }
           far_imaged[i] = 1;
-          const bool far_drawable_here = mask_detail::VisibleByRange(cfg.visible_, far.z) &&
-                                         mask_detail::FrontVisible(req.view.front, forward, far.x, far.y, far.z);
+          const bool far_drawable_here =
+              mask_detail::VisibleByRange(cfg.visible_, far_dir.z) &&
+              mask_detail::FrontVisible(req.view.front, forward, far_dir.x, far_dir.y, far_dir.z);
           if (far_drawable_here) {
             far_drawable[i] = 1;
             out.far_side.weight[i] = w;
           }
           if (need_alt) {
-            far_alt_field[i] = mask_detail::AltitudeDeg(far);
+            far_alt_field[i] = mask_detail::AltitudeDeg(far_dir);
           }
           if (need_az) {
-            far_az_field[i] = AzimuthDegOfDir(far.x, far.y);
+            far_az_field[i] = AzimuthDegOfDir(far_dir.x, far_dir.y);
           }
           if (need_dist) {
-            far_dist_field[i] = AngularDistDegOfDir(ref_dir, far.x, far.y, far.z);
+            far_dist_field[i] = AngularDistDegOfDir(ref_dir, far_dir.x, far_dir.y, far_dir.z);
           }
           if (need_view_dist) {
-            far_view_dist_field[i] = AngularDistDegOfDir(forward, far.x, far.y, far.z);
+            far_view_dist_field[i] = AngularDistDegOfDir(forward, far_dir.x, far_dir.y, far_dir.z);
           }
         }
       }

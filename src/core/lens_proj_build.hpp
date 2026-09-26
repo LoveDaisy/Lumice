@@ -718,9 +718,9 @@ inline std::vector<uint8_t> BuildFarVisibleMask(const RenderConfig& cfg, const R
     for (int py = row_begin; py < row_end; py++) {
       for (int px = 0; px < width; px++) {
         float mu = 0.0f;
-        const mask_detail::MaskDir far = mask_detail::GlobeFarPixelToWorld(cfg, p, rot, px, py, &mu);
-        const bool on = far.valid && mask_detail::VisibleByRange(cfg.visible_, far.z) &&
-                        mask_detail::FrontVisible(cfg.front_, forward, far.x, far.y, far.z);
+        const mask_detail::MaskDir far_dir = mask_detail::GlobeFarPixelToWorld(cfg, p, rot, px, py, &mu);
+        const bool on = far_dir.valid && mask_detail::VisibleByRange(cfg.visible_, far_dir.z) &&
+                        mask_detail::FrontVisible(cfg.front_, forward, far_dir.x, far_dir.y, far_dir.z);
         mask[static_cast<size_t>(py) * static_cast<size_t>(width) + static_cast<size_t>(px)] = on ? 1 : 0;
       }
     }

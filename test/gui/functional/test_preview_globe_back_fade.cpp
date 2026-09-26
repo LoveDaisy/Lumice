@@ -167,7 +167,7 @@ int Byte(const std::vector<unsigned char>& rgba, int col, int row, int ch) {
 // sign of z is read (`visible` keeps z <= 0 under upper), so a direction is returned un-normalized
 // in magnitude but exact in sign. `ok` is false off the sphere. The buffer is top-down and the
 // shader's `pos` y-up, hence the flip.
-float CrossingZ(int col, int row, float elevation, bool far, bool* ok) {
+float CrossingZ(int col, int row, float elevation, bool far_root, bool* ok) {
   const float x = static_cast<float>(col) + 0.5f - kCanvas * 0.5f;
   const float y = kCanvas * 0.5f - (static_cast<float>(row) + 0.5f);
   const float focal = Focal();
@@ -182,7 +182,7 @@ float CrossingZ(int col, int row, float elevation, bool far, bool* ok) {
   if (!*ok) {
     return 0.0f;
   }
-  const float t = far ? -b + std::sqrt(disc) : -b - std::sqrt(disc);
+  const float t = far_root ? -b + std::sqrt(disc) : -b - std::sqrt(disc);
   const float hx = t * dx;
   const float hy = t * dy;
   const float hz = d + t * dz;

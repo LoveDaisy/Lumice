@@ -1205,7 +1205,7 @@ struct MetalTraceBackend::Impl {
   // Size xyz_image for Σ dims (one W*H*3 plane per renderer) and, on any change
   // of the dims list, reset it together with the landed-weight slots.
   // `far[i]`: renderer i keeps a far-side plane (packed after the XYZ planes).
-  void EnsureImage(const std::vector<std::pair<int, int>>& dims, const std::vector<bool>& far);
+  void EnsureImage(const std::vector<std::pair<int, int>>& dims, const std::vector<bool>& far_flags);
   // Grow landed_weight_buf_ to hold `n` floats (one per renderer). Zeroes on
   // (re)allocation only; MUST run before EnsureImage so the latter's reset can
   // cover both twins.
@@ -1396,11 +1396,11 @@ void MetalTraceBackend::Impl::EnsureLandedWeightBuf(size_t n) {
   std::memset([landed_weight_buf_ contents], 0, n * sizeof(float));
 }
 
-void MetalTraceBackend::Impl::EnsureImage(const std::vector<std::pair<int, int>>& dims, const std::vector<bool>& far) {
+void MetalTraceBackend::Impl::EnsureImage(const std::vector<std::pair<int, int>>& dims, const std::vector<bool>& far_flags) {
   const size_t pix = TotalPixels(dims);
   size_t far_pix = 0;
-  for (size_t i = 0; i < dims.size() && i < far.size(); ++i) {
-    if (far[i]) {
+  for (size_t i = 0; i < dims.size() && i < far_flags.size(); ++i) {
+    if (far_flags[i]) {
       far_pix += static_cast<size_t>(dims[i].first) * static_cast<size_t>(dims[i].second);
     }
   }
@@ -1423,7 +1423,7 @@ void MetalTraceBackend::Impl::EnsureImage(const std::vector<std::pair<int, int>>
   // whose flush already drained the prior window, so re-zeroing here is correct.
   // Steady state: BeginSession does NOT clear these — they persist across
   // batches; the drain's post-read reset is the per-window reset.
-  if (dims != alloc_dims_ || far != alloc_far_) {
+  if (dims != alloc_dims_ || far_flags != alloc_far_) {
     // Reset BOTH twin accumulators together. landed_weight_buf_ MUST already be
     // allocated for dims.size() slots (BeginSession calls EnsureLandedWeightBuf
     // before EnsureImage) — assert the invariant loudly rather than silently
@@ -1434,7 +1434,7 @@ void MetalTraceBackend::Impl::EnsureImage(const std::vector<std::pair<int, int>>
     std::memset([xyz_image contents], 0, (pix + far_pix) * 3 * sizeof(float));
     std::memset([landed_weight_buf_ contents], 0, landed_weight_capacity_ * sizeof(float));
     alloc_dims_ = dims;
-    alloc_far_ = far;
+    alloc_far_ = far_flags;
   }
 }
 
@@ -3211,8 +3211,8 @@ void MetalTraceBackend::BeginSession(const SessionSpec& spec) {
   impl_->planes_.reserve(spec.renders.size());
   std::vector<std::pair<int, int>> dims;
   dims.reserve(spec.renders.size());
-  std::vector<bool> far;
-  far.reserve(spec.renders.size());
+  std::vector<bool> far_flags;
+  far_flags.reserve(spec.renders.size());
   {
     size_t pix_prefix = 0;
     for (const RenderConfig* render : spec.renders) {
@@ -3229,7 +3229,7 @@ void MetalTraceBackend::BeginSession(const SessionSpec& spec) {
       plane.desc.lane_off = 0u;
       plane.desc.far_off = kNoFarPlane;  // assigned below, once the XYZ planes' total is known
       dims.emplace_back(plane.w, plane.h);
-      far.push_back(NeedsFarXyzShadow(*render));
+      far_flags.push_back(NeedsFarXyzShadow(*render));
       pix_prefix += static_cast<size_t>(plane.w) * static_cast<size_t>(plane.h);
       impl_->planes_.push_back(plane);
     }
@@ -3237,7 +3237,7 @@ void MetalTraceBackend::BeginSession(const SessionSpec& spec) {
     // keep one — the layout EnsureImage allocates and ReadbackFarXyzAccum walks.
     size_t far_prefix = pix_prefix;
     for (size_t r = 0; r < impl_->planes_.size(); ++r) {
-      if (far[r]) {
+      if (far_flags[r]) {
         impl_->planes_[r].desc.far_off = static_cast<uint32_t>(far_prefix * 3u);
         far_prefix += static_cast<size_t>(impl_->planes_[r].w) * static_cast<size_t>(impl_->planes_[r].h);
       }
@@ -3289,7 +3289,7 @@ void MetalTraceBackend::BeginSession(const SessionSpec& spec) {
     // accumulators atomically on a fresh accumulation region / shape change
     // (review-Major-2). No per-call zero here.
     impl_->EnsureLandedWeightBuf(dims.size());
-    impl_->EnsureImage(dims, far);
+    impl_->EnsureImage(dims, far_flags);
     // scrum-268.8 (DR-3): allocate the wavelength pool buffer once per backend
     // (size invariant across sessions) and populate it once per BeginSession.
     // Pool content depends only on (illuminant mode, per_batch_wl_) — both

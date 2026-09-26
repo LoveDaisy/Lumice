@@ -51,8 +51,8 @@ RenderConfig MakeGlobeConfig(float el, RenderConfig::VisibleRange visible, float
 
 struct PixelDirs {
   int index = -1;
-  mask_detail::MaskDir near{};
-  mask_detail::MaskDir far{};
+  mask_detail::MaskDir near_dir{};
+  mask_detail::MaskDir far_dir{};
 };
 
 // The first pixel (row-major) whose near and far directions fall on the requested sides of the
@@ -65,16 +65,16 @@ PixelDirs FindPixel(const RenderConfig& cfg, bool near_kept, bool far_kept) {
   constexpr float kMargin = 0.05f;
   for (int py = 0; py < kRes; ++py) {
     for (int px = 0; px < kRes; ++px) {
-      const mask_detail::MaskDir near = mask_detail::PixelToWorld(cfg, p, rot, px, py);
+      const mask_detail::MaskDir near_dir = mask_detail::PixelToWorld(cfg, p, rot, px, py);
       float mu = 0.0f;
-      const mask_detail::MaskDir far = mask_detail::GlobeFarPixelToWorld(cfg, p, rot, px, py, &mu);
-      if (!near.valid || !far.valid) {
+      const mask_detail::MaskDir far_dir = mask_detail::GlobeFarPixelToWorld(cfg, p, rot, px, py, &mu);
+      if (!near_dir.valid || !far_dir.valid) {
         continue;
       }
-      const bool near_ok = near_kept ? near.z < -kMargin : near.z > kMargin;
-      const bool far_ok = far_kept ? far.z < -kMargin : far.z > kMargin;
+      const bool near_ok = near_kept ? near_dir.z < -kMargin : near_dir.z > kMargin;
+      const bool far_ok = far_kept ? far_dir.z < -kMargin : far_dir.z > kMargin;
       if (near_ok && far_ok && lm_proj::GlobeBackFadeWeight(mu, cfg.globe_back_fade_) > 0.1f) {
-        return { py * kRes + px, near, far };
+        return { py * kRes + px, near_dir, far_dir };
       }
     }
   }
@@ -126,7 +126,7 @@ TEST(RenderConsumerGlobeFarVisibility, FarLightShowsThroughAClippedNearPoint) {
   ASSERT_EQ(rc.VisibleMask()[a.index], 0u);
   ASSERT_EQ(rc.FarVisibleMask()[a.index], 1u);
 
-  const auto img = Snapshot(&rc, RaysAlong({ a.far, lit.near }));
+  const auto img = Snapshot(&rc, RaysAlong({ a.far_dir, lit.near_dir }));
   ASSERT_EQ(img.size(), static_cast<size_t>(kTotalPix) * 3u);
   EXPECT_FALSE(IsBlack(img, a.index)) << "the far side's light was clipped by the near point's verdict";
   const float far_energy = rc.SnapshotFarXyzForTest()[a.index * 3 + 1];
@@ -157,7 +157,7 @@ TEST(RenderConsumerGlobeFarVisibility, ClippedFarLightStaysOutOfAVisibleNearPoin
   }
   ASSERT_GE(sky, 0);
 
-  const auto img = Snapshot(&rc, RaysAlong({ b.far, lit.near }));
+  const auto img = Snapshot(&rc, RaysAlong({ b.far_dir, lit.near_dir }));
   ASSERT_EQ(img.size(), static_cast<size_t>(kTotalPix) * 3u);
   EXPECT_TRUE(SamePixel(img, b.index, sky)) << "light from a clipped far direction reached a visible near pixel";
   EXPECT_FALSE(SamePixel(img, lit.index, sky)) << "the control pixel is not lit; the comparison above is vacuous";
@@ -178,8 +178,8 @@ TEST(RenderConsumerGlobeFarVisibility, NearOnlyPixelShowsTheTotalMinusTheFarShar
   RenderConsumer near_only(cfg, lumice::test::kTestThreadBudget, ColorClassTable{});
   // The far ray lands on its own pixel only, so the exposure anchor (a P99 over the frame) can move
   // between the two arms; compare in XYZ, the quantity the colour chain starts from.
-  both.Consume(RaysAlong({ b.near, b.far }));
-  near_only.Consume(RaysAlong({ b.near }));
+  both.Consume(RaysAlong({ b.near_dir, b.far_dir }));
+  near_only.Consume(RaysAlong({ b.near_dir }));
   both.PrepareSnapshot();
   near_only.PrepareSnapshot();
   const float* far_share = both.SnapshotFarXyzForTest();

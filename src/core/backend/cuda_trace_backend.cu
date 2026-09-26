@@ -2635,7 +2635,7 @@ struct CudaTraceBackend::Impl {
   // of the dims list, reset it together with the landed-weight slots + host
   // window totals. Mirrors Metal EnsureImage.
   // `far[i]`: renderer i keeps a far-side plane (packed after the XYZ planes).
-  void EnsureXyzBuf(const std::vector<std::pair<uint32_t, uint32_t>>& dims, const std::vector<bool>& far);
+  void EnsureXyzBuf(const std::vector<std::pair<uint32_t, uint32_t>>& dims, const std::vector<bool>& far_flags);
   // task-358.2 Step 4: grow-only allocation of the per-class Y-lane accumulator
   // (class_count_ * Σ W_i*H_i floats, or a 4B dummy when class_count_==0 so the
   // kernel pointer stays bindable). Zeroes the buffer on alloc + on regrow.
@@ -3581,11 +3581,11 @@ void CudaTraceBackend::Impl::EnsureLandedWeightBuf(size_t n) {
 // cadence, not per batch). The buffer is always zero at a window start: first
 // window via this alloc-zero, later windows via the previous drain's memset.
 void CudaTraceBackend::Impl::EnsureXyzBuf(const std::vector<std::pair<uint32_t, uint32_t>>& dims,
-                                          const std::vector<bool>& far) {
+                                          const std::vector<bool>& far_flags) {
   const size_t pix = TotalPixels(dims);
   size_t far_pix = 0;
-  for (size_t i = 0; i < dims.size() && i < far.size(); ++i) {
-    if (far[i]) {
+  for (size_t i = 0; i < dims.size() && i < far_flags.size(); ++i) {
+    if (far_flags[i]) {
       far_pix += static_cast<size_t>(dims[i].first) * static_cast<size_t>(dims[i].second);
     }
   }
@@ -3618,7 +3618,7 @@ void CudaTraceBackend::Impl::EnsureXyzBuf(const std::vector<std::pair<uint32_t, 
   // prior window, so re-zeroing here is correct. Steady state: BeginSession does
   // NOT clear these — they persist across batches; the drain's post-read reset
   // is the per-window reset.
-  if (dims != alloc_dims_ || far != alloc_far_) {
+  if (dims != alloc_dims_ || far_flags != alloc_far_) {
     // landed_weight MUST already be allocated for dims.size() slots (BeginSession
     // calls EnsureLandedWeightBuf first) — throw loudly rather than silently
     // best-effort, so a future caller that forgets the ordering can't silently
@@ -3633,7 +3633,7 @@ void CudaTraceBackend::Impl::EnsureXyzBuf(const std::vector<std::pair<uint32_t, 
               "EnsureXyzBuf cudaMemset d_landed_weight");
     window_landed_weight_.assign(landed_weight_capacity_, 0.0);
     alloc_dims_ = dims;
-    alloc_far_ = far;
+    alloc_far_ = far_flags;
   }
 }
 
@@ -4469,8 +4469,8 @@ void CudaTraceBackend::BeginSession(const SessionSpec& spec) {
     impl_->planes_.reserve(spec.renders.size());
     std::vector<std::pair<uint32_t, uint32_t>> dims;
     dims.reserve(spec.renders.size());
-    std::vector<bool> far;
-    far.reserve(spec.renders.size());
+    std::vector<bool> far_flags;
+    far_flags.reserve(spec.renders.size());
     {
       size_t pix_prefix = 0;
       for (size_t r = 0; r < spec.renders.size(); ++r) {
@@ -4503,7 +4503,7 @@ void CudaTraceBackend::BeginSession(const SessionSpec& spec) {
         plane.desc.lane_off = 0u;
         plane.desc.far_off = kNoFarPlane;  // assigned below, once the XYZ planes' total is known
         dims.emplace_back(plane.w, plane.h);
-        far.push_back(NeedsFarXyzShadow(*render));
+        far_flags.push_back(NeedsFarXyzShadow(*render));
         pix_prefix += static_cast<size_t>(plane.w) * static_cast<size_t>(plane.h);
         impl_->planes_.push_back(plane);
       }
@@ -4511,7 +4511,7 @@ void CudaTraceBackend::BeginSession(const SessionSpec& spec) {
       // keep one — the layout EnsureXyzBuf allocates and ReadbackFarXyzAccum walks.
       size_t far_prefix = pix_prefix;
       for (size_t r = 0; r < impl_->planes_.size(); ++r) {
-        if (far[r]) {
+        if (far_flags[r]) {
           impl_->planes_[r].desc.far_off = static_cast<uint32_t>(far_prefix * 3u);
           far_prefix += static_cast<size_t>(impl_->planes_[r].w) * static_cast<size_t>(impl_->planes_[r].h);
         }
@@ -4522,7 +4522,7 @@ void CudaTraceBackend::BeginSession(const SessionSpec& spec) {
     // on a fresh accumulation region / shape change (312.4 review-Major). No
     // per-call zero here.
     impl_->EnsureLandedWeightBuf(dims.size());
-    impl_->EnsureXyzBuf(dims, far);
+    impl_->EnsureXyzBuf(dims, far_flags);
 
     // task-358.2 Step 4 (AC3 device-side Y-lane accumulation). Sized against
     // class_count_ (set inside EnsureFilterBuffers above) and Σ W_i*H_i, one

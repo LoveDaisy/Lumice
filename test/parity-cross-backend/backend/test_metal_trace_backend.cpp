@@ -1170,13 +1170,13 @@ TEST(MetalTraceBackend, GlobeFarPlaneIsExactlyTheBackSideShare) {
                                     XyzImageData{ xyz_plain.data(), 64, 64 } };
   std::vector<float> landed;
   metal.ReadbackXyzAccum(planes, landed);
-  std::vector<std::vector<float>> far;
-  metal.ReadbackFarXyzAccum(far);
+  std::vector<std::vector<float>> far_planes;
+  metal.ReadbackFarXyzAccum(far_planes);
   metal.EndSession();
 
-  ASSERT_EQ(far.size(), 2u);
-  ASSERT_EQ(far[0].size(), n) << "the faded upper globe keeps a far-side plane";
-  EXPECT_TRUE(far[1].empty()) << "a fade-0 renderer has no far side to keep";
+  ASSERT_EQ(far_planes.size(), 2u);
+  ASSERT_EQ(far_planes[0].size(), n) << "the faded upper globe keeps a far-side plane";
+  EXPECT_TRUE(far_planes[1].empty()) << "a fade-0 renderer has no far side to keep";
 
   double far_sum = 0.0;
   double diff_sum = 0.0;
@@ -1184,9 +1184,9 @@ TEST(MetalTraceBackend, GlobeFarPlaneIsExactlyTheBackSideShare) {
   double peak = 0.0;
   for (size_t i = 0; i < n; ++i) {
     const double diff = static_cast<double>(xyz_faded[i]) - static_cast<double>(xyz_plain[i]);
-    far_sum += far[0][i];
+    far_sum += far_planes[0][i];
     diff_sum += diff;
-    worst = std::max(worst, std::fabs(static_cast<double>(far[0][i]) - diff));
+    worst = std::max(worst, std::fabs(static_cast<double>(far_planes[0][i]) - diff));
     peak = std::max(peak, static_cast<double>(xyz_faded[i]));
   }
   EXPECT_GT(far_sum, 0.0) << "no back-side hit reached the far plane";
@@ -1196,10 +1196,10 @@ TEST(MetalTraceBackend, GlobeFarPlaneIsExactlyTheBackSideShare) {
 
   // The drain reset the far side too: a second drain with no tracing in between reads zeros.
   metal.ReadbackXyzAccum(planes, landed);
-  metal.ReadbackFarXyzAccum(far);
-  ASSERT_EQ(far.size(), 2u);
-  ASSERT_EQ(far[0].size(), n);
-  EXPECT_EQ(std::count(far[0].begin(), far[0].end(), 0.0f), static_cast<long>(n));
+  metal.ReadbackFarXyzAccum(far_planes);
+  ASSERT_EQ(far_planes.size(), 2u);
+  ASSERT_EQ(far_planes[0].size(), n);
+  EXPECT_EQ(std::count(far_planes[0].begin(), far_planes[0].end(), 0.0f), static_cast<long>(n));
 }
 
 }  // namespace
