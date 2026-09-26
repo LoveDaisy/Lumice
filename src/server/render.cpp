@@ -220,6 +220,13 @@ RenderConsumer::RenderConsumer(RenderConfig config, int thread_budget, ColorClas
   // Once per consumer, right after rot_ is final — see the member's declaration for why a
   // single build covers the whole lifetime.
   visible_mask_ = BuildVisibleMask(config_, rot_, short_pix_, thread_budget_);
+  far_visible_mask_ = BuildFarVisibleMask(config_, rot_, short_pix_, thread_budget_);
+  if (NeedsFarXyzShadow(config_)) {
+    // value-initialised (zeroed), as internal_xyz_ is
+    internal_far_xyz_ = std::make_unique<double[]>(buf_elems);
+    snapshot_near_xyz_ = std::make_unique<float[]>(buf_elems);
+    snapshot_far_xyz_ = std::make_unique<float[]>(buf_elems);
+  }
   RebuildAngularDistMasks();
   RebuildViewDistMasks();
   RebuildGridMasks();
@@ -411,6 +418,16 @@ void RenderConsumer::ConsumeDeviceFused(const SimData& data) {
   for (size_t i = 0u; i < total; ++i) {
     internal_xyz_[i] += plane[i];
   }
+  // The far side's share, as its own plane. A backend that does not deliver it leaves the share at
+  // zero, which PostSnapshot reads as "all of this pixel's light is near-side" — the behaviour
+  // before the far side had its own clip, never worse than that.
+  if (internal_far_xyz_ != nullptr && renderer_index_ < data.xyz_pixel_data_far_.size() &&
+      data.xyz_pixel_data_far_[renderer_index_].size() == total) {
+    const std::vector<float>& far_plane = data.xyz_pixel_data_far_[renderer_index_];
+    for (size_t i = 0u; i < total; ++i) {
+      internal_far_xyz_[i] += far_plane[i];
+    }
+  }
   total_intensity_ += data.xyz_landed_weight_[renderer_index_];
   // task-358.1 Step 4 (AC3): fold the device per-color-class Y-lane accumulator
   // into lane_y_. Layout (matches Metal MSL write side):
@@ -549,6 +566,17 @@ void RenderConsumer::Consume(const SimData& data) {
                               internal_xyz_.get(), overlap_n);
         } else {
           SpectrumToXyz(data.curr_wl_, pr.overlap_w_.data(), pr.overlap_pixel_.data(), internal_xyz_.get(), overlap_n);
+        }
+        // On the globe every non-landed hit is a back-side hit; its share is also kept apart (see
+        // internal_far_xyz_). Same inputs, same call, a second accumulator.
+        if (internal_far_xyz_ != nullptr) {
+          if (per_ray_wl) {
+            SpectrumToXyzPerRay(pr.overlap_wl_.data(), pr.overlap_w_.data(), pr.overlap_pixel_.data(),
+                                internal_far_xyz_.get(), overlap_n);
+          } else {
+            SpectrumToXyz(data.curr_wl_, pr.overlap_w_.data(), pr.overlap_pixel_.data(), internal_far_xyz_.get(),
+                          overlap_n);
+          }
         }
         if (has_component) {
           AccumulateColorClassLanes(per_ray_wl, pr.overlap_wl_.data(), data.curr_wl_, pr.overlap_w_.data(),
@@ -735,6 +763,16 @@ void RenderConsumer::Consume(const SimData& data) {
       SpectrumToXyz(data.curr_wl_, overlap_w_buf_.get(), xy_buf_.get() + filtered_ray_num, internal_xyz_.get(),
                     overlap_n);
     }
+    // The globe's back-side share, kept apart — the same rule as the worker-projected branch above.
+    if (internal_far_xyz_ != nullptr) {
+      if (per_ray_wl) {
+        SpectrumToXyzPerRay(overlap_wl_buf_.get(), overlap_w_buf_.get(), xy_buf_.get() + filtered_ray_num,
+                            internal_far_xyz_.get(), overlap_n);
+      } else {
+        SpectrumToXyz(data.curr_wl_, overlap_w_buf_.get(), xy_buf_.get() + filtered_ray_num, internal_far_xyz_.get(),
+                      overlap_n);
+      }
+    }
     // task-339.3: overlap ring lane accumulation, symmetric with main pass.
     if (has_component) {
       AccumulateColorClassLanes(per_ray_wl, overlap_wl_buf_.get(), data.curr_wl_, overlap_w_buf_.get(),
@@ -827,6 +865,14 @@ void RenderConsumer::PrepareSnapshot() {
   // the readers see, rounded once here rather than once per ray.
   for (size_t i = 0u; i < total; ++i) {
     snapshot_xyz_[i] = static_cast<float>(internal_xyz_[i]);
+  }
+  if (internal_far_xyz_ != nullptr) {
+    for (size_t i = 0u; i < total; ++i) {
+      snapshot_far_xyz_[i] = static_cast<float>(internal_far_xyz_[i]);
+      // Taken in double, then narrowed once: a difference of two already-rounded floats would put
+      // the rounding of the TOTAL into a near side that may be much smaller than it.
+      snapshot_near_xyz_[i] = static_cast<float>(internal_xyz_[i] - internal_far_xyz_[i]);
+    }
   }
   snapshot_intensity_ = total_intensity_;
   snapshot_emitted_energy_ = total_emitted_energy_;
@@ -1154,6 +1200,10 @@ void RenderConsumer::PostSnapshot() {
   // total_pix > 0 is already guaranteed above, so this only differs from `true` if the two
   // ever disagree about the pixel count.
   const bool masked_bg = visible_mask_.size() == static_cast<size_t>(total_pix);
+  // The globe's far side, clipped on its own (far_visible_mask_). Only when the far side's share
+  // was kept apart; otherwise every pixel takes the path it always took, byte for byte.
+  const bool split_far = masked_bg && far_visible_mask_.size() == static_cast<size_t>(total_pix) &&
+                         snapshot_near_xyz_ != nullptr && snapshot_far_xyz_ != nullptr;
   AnnotationLayers layers = BuildAnnotationLayers();
 
   // One pass per pixel, intermediates kept in registers. This used to be four
@@ -1185,10 +1235,6 @@ void RenderConsumer::PostSnapshot() {
     for (int row = row_begin; row < row_end; ++row) {
       for (int col = 0; col < width_px; ++col) {
         const int i = row * width_px + col;
-        float xyz[3];
-        for (int j = 0; j < 3; j++) {
-          xyz[j] = snapshot_xyz_[i * 3 + j] * scale;
-        }
 
         // Hoisted above the colour branch because print needs it there: under kPrint a masked-out pixel
         // is not "coloured, then cleared" but simply unexposed, so the same predicate that decides
@@ -1196,6 +1242,34 @@ void RenderConsumer::PostSnapshot() {
         // point in the chain it always did — the value is computed once per pixel either way, so no
         // arithmetic moved, only the declaration.
         const bool paint_bg = masked_bg ? visible_mask_[i] != 0 : true;
+        // Whether this pixel's globe FAR direction passes its own clip. False whenever the far side
+        // is not split out, which leaves every branch below exactly as it was.
+        const bool far_paint = split_far && far_visible_mask_[i] != 0;
+
+        // Which light this pixel shows. The near and far sides of a globe pixel are two sky
+        // directions, each shown or hidden by its own clip:
+        //   both shown   -> the total, read as is (NOT near + far re-added: the short circuit is
+        //                   what keeps every unsplit pixel byte-identical to the unsplit path);
+        //   near only    -> total minus the far side's share;
+        //   far only     -> the far side's share;
+        //   neither      -> irrelevant, cleared below exactly as before.
+        // The background follows the NEAR side alone (paint_bg): the sky colour is the near
+        // hemisphere's ground, and a far point seen through a clipped near one is drawn over black.
+        // SYNC:globe-far-own-visibility — the preview shader makes the same four-way choice
+        // (preview_renderer.cpp, far_pixel_visible). The raypath-colour composite does NOT: its
+        // per-class lanes carry no near/far split, so ApplyCompositeBackground still clips a globe
+        // pixel by its near side alone (a known gap, not a second rule).
+        const float* src = snapshot_xyz_.get();
+        if (split_far && paint_bg != far_paint) {
+          src = paint_bg ? snapshot_near_xyz_.get() : snapshot_far_xyz_.get();
+        }
+        float xyz[3];
+        for (int j = 0; j < 3; j++) {
+          xyz[j] = src[i * 3 + j] * scale;
+        }
+        // Light reaches this pixel from at least one side. Equal to paint_bg whenever the far side
+        // is not split out.
+        const bool show_light = paint_bg || far_paint;
 
         float rgb[3];
         if (print_mode) {
@@ -1205,7 +1279,7 @@ void RenderConsumer::PostSnapshot() {
           // absorption is the complement of the light would make a neutral feature (a sun pillar, a
           // parhelic circle) vanish on a white sheet. What is taken is the same scalar the other two
           // branches would have started from: xyz[1], which is CIE Y already multiplied by scale.
-          const float e = paint_bg ? xyz[1] : 0.0f;
+          const float e = show_light ? xyz[1] : 0.0f;
           const float transmittance = InkTransmittance(InkOpticalDensity(e));
           for (int j = 0; j < 3; j++) {
             rgb[j] = config_.paper_[j] * transmittance;
@@ -1260,7 +1334,7 @@ void RenderConsumer::PostSnapshot() {
           if (!print_mode) {
             if (paint_bg) {
               rgb[j] += config_.background_[j];
-            } else if (masked_bg) {
+            } else if (masked_bg && !show_light) {
               // SYNC:visible-mask-zero — the display clip. component_compositor.cpp's
               // ApplyCompositeBackground carries the twin of this line for the raypath-colour path;
               // both read the SAME visible_mask_ buffer, so the predicate is single-sourced and only
@@ -1459,6 +1533,9 @@ void RenderConsumer::Reset() {
   effective_pix_ = 0;
   auto buf_size = static_cast<size_t>(config_.resolution_[0]) * config_.resolution_[1] * 3;
   std::fill_n(internal_xyz_.get(), buf_size, 0.0);
+  if (internal_far_xyz_ != nullptr) {
+    std::fill_n(internal_far_xyz_.get(), buf_size, 0.0);
+  }
   // task-339.3: zero per-class lanes; snapshot_lane_y_ is not zeroed here
   // (PrepareSnapshot will overwrite it, mirroring snapshot_xyz_).
   for (auto& lane : lane_y_) {

@@ -319,6 +319,12 @@ struct SimData {
   // xyz_pixel_data_[i]: W_i * H_i * 3 floats (row-major, XYZ channels) for renderer i.
   // xyz_landed_weight_[i]: total weight of in-bounds primary-pixel writes into plane i.
   std::vector<std::vector<float>> xyz_pixel_data_;
+  // The globe's far-side share of xyz_pixel_data_, same per-renderer indexing and plane shape:
+  // entry i holds only the back-side hits already summed into xyz_pixel_data_[i], so the
+  // consumer can clip the near and far sides of one pixel independently. Written only for a
+  // renderer with lm_proj::NeedsFarXyzShadow; every other entry (and the whole vector, on a
+  // backend that does not produce it) is empty, which the consumer reads as "no far-side share".
+  std::vector<std::vector<float>> xyz_pixel_data_far_;
   std::vector<float> xyz_landed_weight_;
   // task-358.1 Step 4 (AC3 device-side per-color-class Y-lane accumulation):
   // per-class flattened Y accumulator produced by GPU backends that also fuse

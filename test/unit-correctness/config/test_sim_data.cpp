@@ -81,7 +81,8 @@ static_assert(sizeof(void*) == 8, "SimData layout assumes 64-bit pointers");
 // The legacy-CPU worker-side projection sidecars add projected_ (vector<ProjectedRayList>,
 // 24B regardless of element type): 432 → 456; and anchor_projected_pixel_ /
 // anchor_projected_y_ (two more 24B vectors): 456 → 504.
-static_assert(sizeof(SimData) == 504,
+// The globe far side's own clip adds xyz_pixel_data_far_ (24B): 504 → 528.
+static_assert(sizeof(SimData) == 528,
               "SimData layout changed — update test_sim_data.cpp DeepCopy/Move assertions "
               "and sim_data.cpp's static_assert.");
 #endif
@@ -158,6 +159,7 @@ SimData MakePopulatedSimData() {
   // S1 device-fused: xyz_pixel_data_ + xyz_landed_weight_ coverage.
   // One plane per renderer; two entries so a copy/move that kept only [0] cannot pass.
   s.xyz_pixel_data_ = { { 0.1f, 0.2f, 0.3f }, { 0.4f, 0.5f, 0.6f } };
+  s.xyz_pixel_data_far_ = { { 0.01f, 0.02f, 0.03f }, {} };
   s.xyz_landed_weight_ = { 1.5f, 2.5f };
   // task-358.1 Step 4: lane_pixel_data_ + lane_class_count_ deep-copy / move
   // coverage. Shares the same move-assign trap as outgoing_wl_ / outgoing_
@@ -1047,6 +1049,7 @@ TEST(SimDataTest, CopyConstructDeepCopy) {
   EXPECT_EQ(copy.exit_records_[0].path.data_[1], 5u);
   EXPECT_EQ(copy.exit_records_[1].ms_layer_idx, 1u);
   EXPECT_EQ(copy.xyz_pixel_data_, original.xyz_pixel_data_);  // S1 device-fused
+  EXPECT_EQ(copy.xyz_pixel_data_far_, original.xyz_pixel_data_far_) << "xyz_pixel_data_far_ not copied";
   EXPECT_EQ(copy.xyz_landed_weight_, original.xyz_landed_weight_);
   EXPECT_EQ(copy.lane_pixel_data_, original.lane_pixel_data_);  // task-358.1 Step 4
   EXPECT_EQ(copy.lane_class_count_, 2u) << "lane_class_count_ not copied";
@@ -1137,6 +1140,7 @@ TEST(SimDataTest, CopyAssignmentDeepCopy) {
   ASSERT_EQ(target.exit_records_.size(), 2u);
   EXPECT_EQ(target.exit_records_[0].crystal_id, 7u);
   EXPECT_EQ(target.xyz_pixel_data_, original.xyz_pixel_data_);  // S1 device-fused
+  EXPECT_EQ(target.xyz_pixel_data_far_, original.xyz_pixel_data_far_) << "xyz_pixel_data_far_ not copy-assigned";
   EXPECT_EQ(target.xyz_landed_weight_, original.xyz_landed_weight_);
   EXPECT_EQ(target.lane_pixel_data_, original.lane_pixel_data_);  // task-358.1 Step 4
   EXPECT_EQ(target.lane_class_count_, 2u) << "lane_class_count_ not assigned";
@@ -1208,6 +1212,8 @@ TEST(SimDataTest, MoveConstructTransfersOwnership) {
   EXPECT_EQ(moved.crystals_.size(), 1u);
   ASSERT_EQ(moved.xyz_pixel_data_.size(), 2u);  // S1 device-fused, one plane per renderer
   EXPECT_EQ(moved.xyz_pixel_data_[1].size(), 3u);
+  ASSERT_EQ(moved.xyz_pixel_data_far_.size(), 2u) << "xyz_pixel_data_far_ not moved";
+  EXPECT_FLOAT_EQ(moved.xyz_pixel_data_far_[0][1], 0.02f);
   ASSERT_EQ(moved.xyz_landed_weight_.size(), 2u);
   EXPECT_FLOAT_EQ(moved.xyz_landed_weight_[1], 2.5f);
   ASSERT_EQ(moved.lane_pixel_data_.size(), 2u);  // device-side Y lanes, one region per renderer
@@ -1303,6 +1309,8 @@ TEST(SimDataTest, MoveAssignAndSelfMove) {
   // The per-renderer XYZ planes + landed weights ride the same move-assign path.
   ASSERT_EQ(dst.xyz_pixel_data_.size(), 2u) << "xyz_pixel_data_ not move-assigned";
   EXPECT_FLOAT_EQ(dst.xyz_pixel_data_[1][0], 0.4f);
+  ASSERT_EQ(dst.xyz_pixel_data_far_.size(), 2u) << "xyz_pixel_data_far_ not move-assigned";
+  EXPECT_FLOAT_EQ(dst.xyz_pixel_data_far_[0][2], 0.03f);
   ASSERT_EQ(dst.xyz_landed_weight_.size(), 2u) << "xyz_landed_weight_ not move-assigned";
   EXPECT_FLOAT_EQ(dst.xyz_landed_weight_[1], 2.5f);
   // The anchor plane rides the same path: this is the move-assign the consumer queue

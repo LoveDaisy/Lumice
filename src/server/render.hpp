@@ -287,6 +287,11 @@ class RenderConsumer : public IConsume {
   // paths agree pixel-for-pixel; see visible_mask_'s own comment for what it is and why it
   // stays valid for the consumer's whole life.
   const std::vector<uint8_t>& VisibleMask() const { return visible_mask_; }
+  // The globe far side's own render-domain mask (see far_visible_mask_). Empty unless the far
+  // side's energy is kept apart (NeedsFarXyzShadow).
+  const std::vector<uint8_t>& FarVisibleMask() const { return far_visible_mask_; }
+  // The far side's share of the last snapshot, W*H*3, or nullptr when it is not kept apart.
+  const float* SnapshotFarXyzForTest() const { return snapshot_far_xyz_.get(); }
 
   // White-box handle on the horizon-annotation mask, for the tests that pin its shape against
   // the projection it is derived from. Same rationale as VisibleMaskForTest above.
@@ -445,6 +450,12 @@ class RenderConsumer : public IConsume {
   // life — ResetWith included. Read by PostSnapshot to decide which pixels the background
   // is added to.
   std::vector<uint8_t> visible_mask_;
+  // The globe's FAR side has its own `visible` / `front` verdict per pixel (BuildFarVisibleMask):
+  // one pixel images two sky directions there, and each is shown or hidden on its own. Row-major
+  // W*H, same lifetime argument as visible_mask_ (visible, front, lens and globe_back_fade are all
+  // NeedsRebuild fields). Empty unless NeedsFarXyzShadow(config_), and then PostSnapshot takes the
+  // exact pre-existing path.
+  std::vector<uint8_t> far_visible_mask_;
   // Row-major W*H, 1 where the celestial horizon (altitude = 0) annotation is drawn. Same
   // lifetime argument as visible_mask_ above, and built the same way — unconditionally, NOT
   // only when config_.horizon_ is set. The flag is on the appearance-only side of
@@ -597,6 +608,18 @@ class RenderConsumer : public IConsume {
   // double sum is exact. The snapshot the readers see (snapshot_xyz_) stays float: one
   // rounding at publish time, not one per ray.
   std::unique_ptr<double[]> internal_xyz_;
+  // The far side's share of internal_xyz_, W*H*3 doubles, allocated only when
+  // NeedsFarXyzShadow(config_). internal_xyz_ keeps the near+far total — the raw XYZ the C API
+  // exports and the exposure anchors read, neither of which `visible` may touch — and this is the
+  // extra sum that lets PostSnapshot show one side without the other. Every path that adds a
+  // globe back-side hit to internal_xyz_ adds it here too, and nothing else does.
+  std::unique_ptr<double[]> internal_far_xyz_;
+  // PostSnapshot's per-side inputs, narrowed from the two sums above in PrepareSnapshot: the near
+  // side as (total - far) taken in DOUBLE before narrowing, so the subtraction does not run on two
+  // already-rounded floats. Consumer-private (never published in a frame): Prepare and Post run in
+  // one pass under do_snapshot_mutex_, the same reason snapshot_lane_y_ can be plain members.
+  std::unique_ptr<float[]> snapshot_near_xyz_;
+  std::unique_ptr<float[]> snapshot_far_xyz_;
   // Borrowed fresh from the pools below on every snapshot, then handed to the frame
   // being assembled — NOT rewritten in place, which is what used to tear a reader's
   // data under it. shared_ptr, not unique_ptr, because the frame co-owns them.
