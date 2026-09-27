@@ -2490,6 +2490,55 @@ TEST(RayAllocationOnline, EachBatchDealsByWhatTheBatchesBeforeItMeasuredAndCharg
   EXPECT_EQ(tally[0][0].rays + tally[0][1].rays + tally[0][2].rays, 3 * kN);
 }
 
+TEST(RayAllocationOnline, EmittedEnergyIsTheExactChargeWhenTheRelativeFloorBinds) {
+  // The charge must not care which floor shaped q: emitted_energy_ is Σ n_i · c_i
+  // over what the partition actually dealt, c_i = (p_i/ΣP)/(q_i/ΣQ), whatever q
+  // is. Pinned bit for bit on a batch the relative floor does bind: the tally is
+  // seeded so Neyman alone would deal the filtered entry 1 a share of 0.05/2.05 ≈
+  // 0.024, under its p_norm / R = 1/6, so the batch is dealt by the floored q —
+  // and the unfloored entries' ΣQ-normalized shares are diluted by it.
+  static_assert(kRayAllocationRelativeFloorRatio == 2.0, "the seeded shares below assume R = 2");
+  auto scene = MakeSkewedScene(1.0f, 1.0f, 1.0f);
+  auto online = MakeOnline(scene, { { 1.0f, 0.05f, 1.0f } });
+  const auto snapshot = online->Load();
+  ASSERT_EQ(snapshot->q.size(), 1u);
+  const std::vector<float> q = snapshot->q[0];
+  ASSERT_EQ(q.size(), 3u);
+  ASSERT_FLOAT_EQ(q[1], static_cast<float>((1.0 / 3.0) / kRayAllocationRelativeFloorRatio))
+      << "the relative floor, not Neyman's 0.024, must be what entry 1 is dealt by";
+  EXPECT_FLOAT_EQ(q[0], static_cast<float>(1.0 / 2.05)) << "an unfloored entry keeps its Neyman value";
+
+  constexpr size_t kN = 6000;
+  auto out = RunLegacy(scene, kN, 1, 31, online);
+  ASSERT_EQ(out.batches.size(), 1u);
+  const auto roots = TallyRoots(out.all_data[0], PrismsOfHeights({ 1.0f, 1.0f, 1.0f }));
+  ASSERT_EQ(roots.count.size(), 3u);
+  const double q_total = static_cast<double>(q[0]) + q[1] + q[2];
+  EXPECT_NEAR(static_cast<double>(roots.count.at(1)), kN * q[1] / q_total, 1.0) << "dealt by the floored q";
+
+  // The charge, from the definition: N + Σ n_i · (c_i − 1) on the first layer
+  // (Σ n_i = N, so this is Σ n_i · c_i), times the source's weight — 1 for this
+  // one-line spectrum, as the proportional test pins.
+  const std::vector<float> p = { 1.0f, 1.0f, 1.0f };
+  const auto c = ComputeRayAllocationCorrection(p, q);
+  double expected = static_cast<double>(kN);
+  size_t dealt = 0;
+  for (size_t i = 0; i < 3; i++) {
+    expected += static_cast<double>(roots.count.at(i)) * (static_cast<double>(c[i]) - 1.0);
+    dealt += roots.count.at(i);
+  }
+  ASSERT_EQ(dealt, kN);
+  EXPECT_EQ(out.batches[0].emitted_energy_, static_cast<float>(expected)) << "bit for bit";
+  // And it is what the roots were actually born with, to summation rounding.
+  double charged = 0.0;
+  for (const auto& [id, w] : roots.birth) {
+    charged += w;
+  }
+  EXPECT_NEAR(out.batches[0].emitted_energy_, charged, 1e-2);
+  // Unbiased to the partition's rounding: |Σ n_i·c_i − N| < Σ c_i (|δ_i| < 1).
+  EXPECT_LT(std::abs(expected - static_cast<double>(kN)), static_cast<double>(c[0]) + c[1] + c[2]);
+}
+
 TEST(RayAllocationOnline, MovesQInTheNeymanDirectionOnARealEnergySkew) {
   // Energy shares p = (1, 1, 0.05). Entry B keeps one raypath of A's crystal, so
   // per dealt ray it lands a small fraction of A's energy: its q share must fall
