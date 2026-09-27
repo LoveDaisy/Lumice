@@ -1,0 +1,122 @@
+{
+  "crystal": [
+    {
+      "id": 1,
+      "type": "prism",
+      "shape": {
+        "height": 1.0
+      },
+      "axis": {
+        "azimuth": {
+          "mean": 0,
+          "std": 360,
+          "type": "uniform"
+        },
+        "roll": {
+          "mean": 0,
+          "std": 360,
+          "type": "uniform"
+        },
+        "zenith": {
+          "mean": 0,
+          "std": 360,
+          "type": "uniform"
+        }
+      }
+    },
+    {
+      "id": 2,
+      "type": "prism",
+      "shape": {
+        "height": 1.0
+      },
+      "axis": {
+        "azimuth": {
+          "mean": 0,
+          "std": 360,
+          "type": "uniform"
+        },
+        "roll": {
+          "mean": 0,
+          "std": 0.5,
+          "type": "gauss"
+        },
+        "zenith": {
+          "mean": 90,
+          "std": 0.5,
+          "type": "gauss"
+        }
+      }
+    }
+  ],
+  "filter": [
+    {
+      "id": 1,
+      "type": "raypath",
+      "action": "filter_in",
+      "raypath": [
+        3,
+        5
+      ],
+      "symmetry": ""
+    }
+  ],
+  "render": [
+    {
+      "id": 0,
+      "lens": {
+        "type": "linear",
+        "fov": 80
+      },
+      "resolution": [
+        512,
+        384
+      ],
+      "view": {
+        "azimuth": -1.2,
+        "elevation": 27.0,
+        "roll": 0
+      },
+      "visible": "upper",
+      "background": [
+        0,
+        0,
+        0
+      ],
+      "ray_color": [
+        1,
+        1,
+        1
+      ],
+      "opacity": 1.0
+    }
+  ],
+  "scene": {
+    "light_source": {
+      "type": "sun",
+      "altitude": 4.0,
+      "azimuth": 0,
+      "diameter": 0.5,
+      "spectrum": "D65"
+    },
+    "max_hits": 8,
+    "ray_num": 2000000,
+    "ray_allocation": "adaptive",
+    "scattering": [
+      {
+        "prob": 0.0,
+        "entries": [
+          {
+            "crystal": 1,
+            "proportion": 100
+          },
+          {
+            "crystal": 2,
+            "filter": 1,
+            "proportion": 100
+          }
+        ]
+      }
+    ]
+  }
+}
