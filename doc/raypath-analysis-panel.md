@@ -243,6 +243,14 @@ segment)` 建表，`Format(uint32_t id)`（`chain_id_table.hpp:86`，实现 `cha
 `FilterSpec::Create`（`filter_spec.cpp:383-384`）两处字面重复，仅靠测试断言两者数值相等保证同步，
 未抽出共享函数（a56 的一个已知但未消解的小实例）。已登记为项目缺陷追踪的一条独立记账。
 
+**约化元 = 请求 ∩ 晶体几何**：约化只使用开关请求、且该晶体形状（及 D 的姿态集体条件）确实具备的
+对称元——非正六棱柱（如 `face_distance` 交替 1 / 1.2 的三重轴棱柱）或上下锥不一致的锥晶不具备完整 D6h，
+按 D6h 约化会把能量不等的光路并成一行。读时约化（`ReduceRaypathHistogram`，
+`src/server/raypath_histogram_consumer.cpp`）不经 `Crystal` 对象，而是对每段调用
+`ReduceRaypathByPeriod`，所需参数来自约化上下文 `RaypathCrystalReduceParams`：`sigma_a` /
+`d_applicable` 与 `geom`（`DeriveGeometricSymmetry` 对该晶体配置的结果，与模拟时盖在每个抽样实例上的是同一个
+函数的输出）。上下文里查不到的 crystal id 不做任何约化。
+
 链 id 只在光线穿过一层晶体、生成本层 raypath 之后，用该层约化后的 segment 去查/建表，
 而不是缓存未约化的原始面序列——这样同一等价类的光路天然映射到同一条链，链数不会因为
 「同一物理路径的不同镜像/旋转变体」被重复计数。打印一条完整链时，从叶子链 id 沿父指针
