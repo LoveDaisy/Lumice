@@ -308,14 +308,14 @@ RaypathReduceContext BuildRaypathReduceContext(const SceneConfig& scene) {
   for (const auto& layer : scene.ms_) {
     ctx.layer_multi_crystal_.push_back(layer.setting_.size() > 1);
     for (const auto& setting : layer.setting_) {
-      // Same two derivations, in the same order, as FilterSpec::Create and
+      // Same derivations, in the same order, as FilterSpec::Create and
       // MakeChainIdLayerContext. A crystal id reused across layers names the
       // same config, so a second visit writes the same values.
       RaypathCrystalReduceParams p;
       p.d_applicable = detail::IsDApplicable(setting.crystal_.axis_);
       p.sigma_a = p.d_applicable ? detail::ComputeSigmaA(setting.crystal_.axis_.roll_dist.center) : 0;
-      p.p_applicable = true;  // Step-2 checkpoint: pre-fix behavior
-      p.b_applicable = true;
+      p.p_applicable = detail::IsPApplicable(setting.crystal_.axis_);
+      p.b_applicable = detail::IsBApplicable(setting.crystal_.axis_);
       // The shape symmetry every drawn instance of this design carried
       // (MakeCrystal stamps the same function's result), so the read-time
       // reduction and a filter on this crystal reduce under one group.

@@ -614,10 +614,11 @@ TEST(H6_LowSymmetryShape_Audit, BacklogReproPrismKeepsTheTwoEnergyBucketsApart) 
   const Crystal c = Crystal::CreatePrism(1.0f, dist);
   ASSERT_EQ(c.FnPeriod(), 6);  // the face-number modulus is unchanged
   EXPECT_EQ(c.GeomSymmetry().p_step, 2);
-  const auto canon = c.ReduceRaypath({ 3, 5 }, FilterConfig::kSymP);
-  EXPECT_NE(c.ReduceRaypath({ 4, 6 }, FilterConfig::kSymP), canon);
-  EXPECT_EQ(c.ReduceRaypath({ 5, 7 }, FilterConfig::kSymP), canon);
-  EXPECT_EQ(c.ReduceRaypath({ 7, 3 }, FilterConfig::kSymP), canon);
+  // The orientation ensemble is assumed to admit P (p_applicable): this case is about the shape.
+  const auto canon = c.ReduceRaypath({ 3, 5 }, FilterConfig::kSymP, 0, false, true, true);
+  EXPECT_NE(c.ReduceRaypath({ 4, 6 }, FilterConfig::kSymP, 0, false, true, true), canon);
+  EXPECT_EQ(c.ReduceRaypath({ 5, 7 }, FilterConfig::kSymP, 0, false, true, true), canon);
+  EXPECT_EQ(c.ReduceRaypath({ 7, 3 }, FilterConfig::kSymP, 0, false, true, true), canon);
   // D with an odd sigma_a would swap near and far faces too (sigma_1 sends {3,4} to {4,3}); with an
   // even one it is a real mirror of this shape (sigma_0 sends {3,4} to {3,8}).
   EXPECT_NE(c.ReduceRaypath({ 3, 4 }, FilterConfig::kSymD, 1, true, true, true),

@@ -61,16 +61,18 @@ constexpr uint8_t kSymAll = FilterConfig::kSymP | FilterConfig::kSymB | FilterCo
 // Plate-like axis: azimuth uniform over 360°, latitude fixed at 90°, roll
 // fixed at 0° — D symmetry applicable (full-360 uniform azimuth + roll on a
 // multiple of 30°), so every one of P/B/D has something to reduce.
+// An orientation ensemble that admits all of P, B and D: uniform azimuth, a horizontal c-axis
+// (latitude 0, i.e. zenith 90) and a full-turn uniform roll anchored at 0.
 AxisDistribution MakeAxis() {
   AxisDistribution d{};
   d.azimuth_dist.type = DistributionType::kUniform;
   d.azimuth_dist.spread = 360.0f;
   d.azimuth_dist.center = 0.0f;
   d.latitude_dist.type = DistributionType::kNoRandom;
-  d.latitude_dist.center = 90.0f;
-  d.roll_dist.type = DistributionType::kNoRandom;
+  d.latitude_dist.center = 0.0f;
+  d.roll_dist.type = DistributionType::kUniform;
   d.roll_dist.center = 0.0f;
-  d.roll_dist.spread = 0.0f;
+  d.roll_dist.spread = 360.0f;
   return d;
 }
 
@@ -109,7 +111,8 @@ std::vector<IdType> OracleReduce(const Crystal& crystal, const AxisDistribution&
                                  const std::vector<IdType>& rp) {
   bool d_applicable = detail::IsDApplicable(axis);
   int sigma_a = d_applicable ? detail::ComputeSigmaA(axis.roll_dist.center) : 0;
-  return crystal.ReduceRaypath(rp, symmetry, sigma_a, d_applicable, true, true);
+  return crystal.ReduceRaypath(rp, symmetry, sigma_a, d_applicable, detail::IsPApplicable(axis),
+                               detail::IsBApplicable(axis));
 }
 
 std::string SegmentString(const std::vector<IdType>& seg) {
@@ -582,6 +585,20 @@ TEST(ChainIdFold, LayerContextDerivesSigmaAndDLikeFilterSpecCreate) {
   EXPECT_EQ(ctx.d_applicable, detail::IsDApplicable(d_axis));
   EXPECT_TRUE(ctx.d_applicable) << "this axis is D-applicable by construction";
   EXPECT_EQ(ctx.sigma_a, detail::ComputeSigmaA(d_axis.roll_dist.center));
+  EXPECT_TRUE(ctx.p_applicable) << "this axis is P-applicable by construction";
+  EXPECT_TRUE(ctx.b_applicable) << "this axis is B-applicable by construction";
+
+  // A locked roll drops P, a vertical c-axis drops B — each on its own.
+  AxisDistribution no_p = MakeAxis();
+  no_p.roll_dist = Distribution{ DistributionType::kNoRandom, 0.0f, 0.0f };
+  auto ctx_p = MakeChainIdLayerContext(table, crystal, 7, no_p, kSymAll);
+  EXPECT_FALSE(ctx_p.p_applicable);
+  EXPECT_TRUE(ctx_p.b_applicable);
+  AxisDistribution no_b = MakeAxis();
+  no_b.latitude_dist.center = 90.0f;
+  auto ctx_b = MakeChainIdLayerContext(table, crystal, 7, no_b, kSymAll);
+  EXPECT_TRUE(ctx_b.p_applicable);
+  EXPECT_FALSE(ctx_b.b_applicable);
 
   AxisDistribution no_d = MakeAxis();
   no_d.roll_dist.center = 17.0f;  // not a multiple of 30° → D not applicable

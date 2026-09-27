@@ -82,17 +82,20 @@ std::string FormatRecorder(const RaypathRecorder& rp) {
   return ::testing::AssertionSuccess();
 }
 
-// Helper to build axis dist with given roll_mean and az-uniform-360.
+// Helper to build an axis dist whose orientation ensemble admits all of P, B and D (the latter
+// when roll_mean is a multiple of 30°), so these cases exercise the shape and request halves of
+// the reduction: az-uniform-360 (D, B), a horizontal c-axis (latitude 0, i.e. zenith 90: B) and a
+// full-turn uniform roll anchored at roll_mean (P; D reads the anchor).
 AxisDistribution MakeAxis(float roll_mean_deg) {
   AxisDistribution d{};
   d.azimuth_dist.type = DistributionType::kUniform;
   d.azimuth_dist.spread = 360.0f;
   d.azimuth_dist.center = 0.0f;
   d.latitude_dist.type = DistributionType::kNoRandom;
-  d.latitude_dist.center = 90.0f;
-  d.roll_dist.type = DistributionType::kNoRandom;
+  d.latitude_dist.center = 0.0f;
+  d.roll_dist.type = DistributionType::kUniform;
   d.roll_dist.center = roll_mean_deg;
-  d.roll_dist.spread = 0.0f;
+  d.roll_dist.spread = 360.0f;
   return d;
 }
 

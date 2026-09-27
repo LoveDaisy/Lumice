@@ -403,9 +403,10 @@ std::unique_ptr<FilterSpec> FilterSpec::Create(const FilterConfig& config, const
   auto d_params = detail::DeriveDSymmetryParams(axis_dist);
   bool d_applicable = d_params.d_applicable;
   int sigma_a = d_params.sigma_a;
-  // Step-2 checkpoint: P/B still always admitted by the ensemble (the pre-fix behavior).
-  const bool p_applicable = true;
-  const bool b_applicable = true;
+  // The P / B ensemble conditions, likewise shared with MakeChainIdLayerContext and the server's
+  // read-time reduction context.
+  const bool p_applicable = detail::IsPApplicable(axis_dist);
+  const bool b_applicable = detail::IsBApplicable(axis_dist);
   auto spec = std::visit(TopSpecCreator{ crystal, config.symmetry_, sigma_a, d_applicable, p_applicable, b_applicable },
                          config.param_);
   spec->action_ = config.action_;

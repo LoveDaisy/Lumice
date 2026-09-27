@@ -1122,8 +1122,8 @@ ChainIdLayerContext MakeChainIdLayerContext(ChainIdInterningTable& table, const 
   auto d_params = detail::DeriveDSymmetryParams(axis);
   ctx.d_applicable = d_params.d_applicable;
   ctx.sigma_a = d_params.sigma_a;
-  ctx.p_applicable = true;  // Step-2 checkpoint: pre-fix behavior
-  ctx.b_applicable = true;
+  ctx.p_applicable = detail::IsPApplicable(axis);
+  ctx.b_applicable = detail::IsBApplicable(axis);
   return ctx;
 }
 

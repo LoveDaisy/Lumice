@@ -1,4 +1,5 @@
-"""`Lumice analyze --symmetry` merges only raypaths the crystal's SHAPE makes equivalent.
+"""`Lumice analyze --symmetry` merges only raypaths the crystal's SHAPE and its ORIENTATION
+ENSEMBLE make equivalent.
 
 The P/B/D reduction used to assume every prism and pyramid is a regular hexagonal crystal (full
 D6h), whatever its ``face_distance`` or cones. On ``face_distance [1, 1.2, 1, 1.2, 1, 1.2]`` — a
@@ -12,12 +13,20 @@ case names BY HAND from the crystal's shape — never read back from the engine 
 row must carry exactly the energy of the finest rows in its true orbit: a row that merged an
 inequivalent path is too heavy, a row that failed to merge an equivalent one too light.
 
+The orientation half: P (a 60° rotation) is a shift of the roll angle and needs roll invariant
+under it; B (the horizontal mirror) reverses the c-axis and needs the zenith symmetric about 90°
+(with a uniform azimuth). A Parry arc's locked roll lights 3-5 and leaves its 60° image 4-6 dark; a
+plate's face 1 always faces up, so 1-3 and 2-3 are nothing alike. Merging either pair made one
+analysis row stand for paths that are not one class.
+
 Cases:
   * three-fold prism under P, D and PBD: allowed rotations are by two faces, allowed mirrors
     the even ones (``sigma_a`` is 0 for this axis), B holds;
   * a pyramid with unequal wedge angles (upper {1,0,1}, lower {2,0,3}) under B and PBD: the full
     six-fold section, but B would swap unlike cones and must not act;
-  * the regular prism under PBD: the full group, i.e. the behavior before shape was consulted.
+  * the regular prism under PBD: the full group, i.e. the behavior before shape was consulted;
+  * a Parry arc (roll locked, zenith 90°) under P and PBD: no rotation, B and the D mirror hold;
+  * a plate (zenith 0°, roll free) under B and PBD: B never acts, rotations and the D mirror do.
 """
 
 from __future__ import annotations
@@ -81,7 +90,9 @@ def _orbit_key(raypath, group):
     return min(tuple(_apply(g, f) for f in raypath) for g in group)
 
 
-class TestRaypathSymmetryFollowsShape(LumiceTestCase):
+class _RaypathOrbitOracle(LumiceTestCase):
+    """The runner and oracle both case classes share; holds no tests of its own."""
+
     def _read(self, config, symmetry):
         result = self.run_lumice(["analyze", "-f", str(CONFIGS_DIR / config), "--seed", _SEED,
                                   "--symmetry", symmetry, "--chain-capacity", "1000000"], timeout=180)
@@ -106,6 +117,8 @@ class TestRaypathSymmetryFollowsShape(LumiceTestCase):
                                        f"its true orbit {truth[key]:.4f}%")
         return finest
 
+
+class TestRaypathSymmetryFollowsShape(_RaypathOrbitOracle):
     def test_three_fold_prism(self):
         config = "raypath_symmetry_three_fold_prism.json"
         p = [_rotation(2)]
@@ -134,6 +147,27 @@ class TestRaypathSymmetryFollowsShape(LumiceTestCase):
     def test_regular_prism_keeps_the_full_group(self):
         generators = [_rotation(1), _mirror(0), _rotation(0, True)]
         self._assert_rows_are_true_orbits("raypath_analysis_halo_22.json", "PBD", generators)
+
+
+class TestRaypathSymmetryFollowsOrientationEnsemble(_RaypathOrbitOracle):
+    def test_parry_keeps_p_off(self):
+        config = "raypath_symmetry_parry.json"
+        finest = self._assert_rows_are_true_orbits(config, "P", [])
+        # Roll mean 0 with a uniform azimuth: D holds with sigma_a 0, and so does B.
+        self._assert_rows_are_true_orbits(config, "PBD", [_mirror(0), _rotation(0, True)])
+        # Not vacuous: the pair a 60° rotation would fold is lit on one side only.
+        share = dict(finest)
+        self.assertGreater(share.get((3, 5), 0.0), 0.5, sorted(finest)[:10])
+        self.assertLess(share.get((4, 6), 0.0), 0.1 * share[(3, 5)])
+
+    def test_plate_keeps_b_off(self):
+        config = "raypath_symmetry_plate.json"
+        finest = self._assert_rows_are_true_orbits(config, "B", [])
+        self._assert_rows_are_true_orbits(config, "PBD", [_rotation(1), _mirror(0)])
+        # Not vacuous: the pair the horizontal mirror would fold is lit on one side only.
+        share = dict(finest)
+        self.assertGreater(share.get((1, 3), 0.0), 0.5, sorted(finest)[:10])
+        self.assertLess(share.get((2, 3), 0.0), 0.1 * share[(1, 3)])
 
 
 def test_group_helper_sizes():

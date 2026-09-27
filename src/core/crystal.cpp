@@ -657,7 +657,7 @@ std::vector<IdType> ReduceRaypathByPeriod(const std::vector<IdType>& rp, uint8_t
 }
 
 std::vector<IdType> Crystal::ReduceRaypath(const std::vector<IdType>& rp, uint8_t symmetry) const {
-  return ReduceRaypath(rp, symmetry, 0, false, true, true);
+  return ReduceRaypath(rp, symmetry, 0, false, false, false);
 }
 
 std::vector<IdType> Crystal::ReduceRaypath(const std::vector<IdType>& rp, uint8_t symmetry, int sigma_a,
@@ -667,7 +667,7 @@ std::vector<IdType> Crystal::ReduceRaypath(const std::vector<IdType>& rp, uint8_
 }
 
 std::vector<std::vector<IdType>> Crystal::ExpandRaypath(const std::vector<IdType>& rp, uint8_t symmetry) const {
-  return ExpandRaypath(rp, symmetry, 0, false, true, true);
+  return ExpandRaypath(rp, symmetry, 0, false, false, false);
 }
 
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)

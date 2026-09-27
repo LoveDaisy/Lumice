@@ -180,7 +180,9 @@ Crystal MakePyramid() {
     }
   }
 
-  auto orbit = crystal.ExpandRaypath(tc.seed, tc.symmetry);
+  // The orbit under P and B as the shape admits them (D left out, as before): the two specs must
+  // agree on every member, whatever the fixture's ensemble lets each of them reduce.
+  auto orbit = crystal.ExpandRaypath(tc.seed, tc.symmetry, 0, false, true, true);
   if (orbit.empty()) {
     return ::testing::AssertionFailure() << tc.label << ": ExpandRaypath returned empty (fixture bug)";
   }
