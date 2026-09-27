@@ -709,6 +709,11 @@ Valuable design/architecture docs live in `doc/` (tracked). Consult the relevant
     想新增任何光路分析相关功能、或重提「即时开关某条弧」前先读；机制细节在下一条。§5.1.8 = Analyze
     工作区的产品形态与布局定稿（2026-09-28；两张单圆盘等面积全景分工、光路视图缩放 + 吸附、太阳
     方向球上的水平集即 fiber、Analyze 下左 300 / 详情 400；可交互原型 `doc/prototypes/analyze-workspace.html`）。
+    §5.1.6「仓库定位」（2026-09-28 owner 裁定）：Lumice = 产品（用户能用到的全部计算，C++，每个语义
+    只有一份产品实现）、Lumice Integral（LI）= 研究与参照（新方法诞生地，同时是 Lumice 的独立校验
+    对象）；共享判据不是单纯「稳定就共享」，而是「稳定，且不是两边互相校验的对象」——原语与约定层
+    （晶体几何、面编号、对称约化、Snell / Fresnel）两边刻意各留一份，算法层（单光路反解与 fiber
+    行走等）成熟后收敛为 Lumice 的一份 C++ 实现，经 Lumice 共享库共享给 LI。
   - `raypath-analysis-panel.md` — **光路分析面板设计记录（as-built，2026-09-11；PR #347 已合入 `main`）**：
     (i) 已交付形态的机制记录。从「光路成分分析」(ii) 剥离需求的内存墙拆出第三种形态——**专用统计运行**（不渲染、只按完整光路聚合能量）
     取代「一次运行既渲染又按像素存分解」，拆开 N×W×H 的两处耦合各消解一处：专用运行拆掉与渲染的耦合，
@@ -747,6 +752,9 @@ Valuable design/architecture docs live in `doc/` (tracked). Consult the relevant
     含跨树改动实测（近 12 个月已合并代码 PR 中 37% 同时动两棵树，皆为功能纵切）、
     那处「唯一未守住的边界」（`gui_test` 曾链 `lumice_obj` 而非 `lumice`）——**2026-08-06 已收口**：`gui_test` 现链 `lumice_gui_obj + lumice`（`test/gui/CMakeLists.txt:73`），即 core 侧只经 C API ⇒ 这是「GUI 能只靠 C API 活下来」的第一份正面证据；余下 `gui_unit_test` / `composition_correctness_test` 链 `lumice_obj` 是 CMake 注释里写明的**具名跨层 oracle 豁免**、
     以及拆仓触发条件（真实外部消费者 / 不同授权策略 / 第二团队；且届时该拆的是 L0 而非 core|gui）。
+    **§8（2026-09-28 更新）**：光路分析升级为第二产品核心后，「第二条产品线立项」与「真实外部
+    消费者」两个触发信号同时响了（LI 经共享库消费单光路反解 / fiber 行走）；发布的是一个新窄
+    接口而非现在的 `lumice.h`，共享判据见 `raypath-analysis.md` §5.1.6。
     考虑发布动态库、设计新产品线、或再次提起拆仓前先读。
 - **GPU / Metal route** (read these before touching the GPU path):
   - **🔒 设计纪律（GPU 后端实现硬约束）**：按 `seam-design.md` 蓝图走，**不要自己重新发明**。几何遍历 / 出射 seam / per-ray 旋转上传 / 单引擎大 dispatch — **复用已验证的实现**：参考当前 Metal（`gpu-single-engine-implementation.md` as-built）+ legacy `PropagateSlab`（`optics.cpp` 的 polygon-slab 遍历）。**蓝图是最终判据**：Metal/legacy 与蓝图冲突处以蓝图为准（如历史 Metal 投影焊进 trace 已被 §4.1/scrum-258 纠正，别照搬旧形态）。教训：CUDA #295 自创 Möller-Trumbore 遍历复现了 task-275~278 已解决的绝对-ε 漏面 bug（energy 0.735）；详见 `scratchpad/backlog.md`「MVP 落地后的架构发现」。
