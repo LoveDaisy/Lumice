@@ -486,6 +486,38 @@ FieldEditorEntry LensTypeField() {
   return entry;
 }
 
+// scene.ray_allocation as a two-option combo over SimConfig::ray_allocation_adaptive (bool),
+// rather than the generic int-backed ComboField above — same reason LensTypeField gets its own
+// Render: the bound value isn't an index. Option text is RayAllocationJsonName (gui_state.hpp),
+// the same function file_io.cpp's serializers call, so the combo and the wire spelling cannot say
+// different things for the same bool.
+FieldEditorEntry RayAllocationField() {
+  FieldEditorEntry entry;
+  entry.kind = FieldEditorKind::kCombo;
+  entry.Constraint = [](const GuiState&) { return FieldEditorConstraint{}; };
+  entry.Render = [](GuiState& state, const char* id_base) {
+    bool& adaptive = state.sim.ray_allocation_adaptive;
+    bool changed = false;
+    ImGui::SetNextItemWidth(-FLT_MIN);
+    SetNextComboPopupTopMost();
+    if (ImGui::BeginCombo(HiddenLabel(id_base).c_str(), RayAllocationJsonName(adaptive))) {
+      for (const bool option : { true, false }) {
+        const bool selected = (adaptive == option);
+        if (ImGui::Selectable(RayAllocationJsonName(option), selected) && adaptive != option) {
+          adaptive = option;
+          changed = true;
+        }
+        if (selected) {
+          ImGui::SetItemDefaultFocus();
+        }
+      }
+      ImGui::EndCombo();
+    }
+    return changed;
+  };
+  return entry;
+}
+
 // The simulation grid. AC3's named special case: the document stores the VALUE (1024) while the
 // control edits an INDEX into kSimResolutions. Registered as editable rather than dodged — a
 // registry that could not express "serialized value != bound value" would have to leave every such
@@ -645,8 +677,7 @@ const std::unordered_map<std::string, FieldEditorEntry>& Registry() {
     // No main-panel control: the Settings popup's Current-value column is the only place this
     // is edited, so the Summary lists it under "Settings" rather than beside Rays(M). No label
     // either — there is no panel word to agree with, and the popup prints the key path.
-    map.emplace("sim.ray_allocation",
-                SettingsPopupOnly(BoolField([](GuiState& s) { return &s.sim.ray_allocation_adaptive; })));
+    map.emplace("sim.ray_allocation", SettingsPopupOnly(RayAllocationField()));
 
     // ---- renderer ----
     map.emplace("renderer.lens_type", Labelled(LensTypeField(), "Lens Type"));

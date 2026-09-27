@@ -312,9 +312,11 @@ struct SimConfig {
   bool infinite = false;
   // scene.ray_allocation, held as a bool because the wire field is two-valued ("proportional" |
   // "adaptive") and the only editor is the Settings modal's Current value column (field-editor
-  // registry `sim.ray_allocation`) — there is no control on the main panel. The string spelling
-  // lives only at the .lmc / JSON / C-API seams. Were the field ever to grow a third value, this
-  // bool, the two serializers in file_io.cpp, and the field-editor registration all change together.
+  // registry `sim.ray_allocation`, a two-option combo) — there is no control on the main panel.
+  // The string spelling lives only at the .lmc / JSON / C-API seams, via RayAllocationJsonName /
+  // RayAllocationFromJsonName below. Were the field ever to grow a third value, this bool, the two
+  // serializers in file_io.cpp, and the field-editor registration all change together (the combo
+  // keeps that a one-line addition rather than a UI redesign).
   // The factory value here is the GUI DOCUMENT default — a new document, an .lmc saved before the
   // key existed, and a core JSON imported without it all land on it — and it is deliberately not
   // core's own default (proportional, which guards CLI regression batteries that never pass
@@ -328,6 +330,23 @@ struct SimConfig {
   }
   friend bool operator!=(const SimConfig& a, const SimConfig& b) { return !(a == b); }
 };
+
+// scene.ray_allocation wire spellings for SimConfig::ray_allocation_adaptive, on BOTH the .lmc and
+// the CLI-JSON path, mirroring core's vocabulary (doc/configuration.md), and reused by the Settings
+// combo's option text (field_editor_registry.cpp) so the control and the serializers cannot drift
+// apart. One codec pair for all three consumers. An unrecognised spelling reads as proportional —
+// the same conservative side core itself falls to (with a warning) at commit; the GUI never writes
+// one.
+// Placement rule this pair follows (the other JSON-name tables in file_io.cpp, e.g.
+// kDisplayModeJsonNames, deliberately stay file-local): a wire-name codec lives here, beside the
+// field it serializes, once some field-editor widget needs its spelling too; one only file_io.cpp
+// consumes stays a file_io.cpp static.
+inline const char* RayAllocationJsonName(bool adaptive) {
+  return adaptive ? "adaptive" : "proportional";
+}
+inline bool RayAllocationFromJsonName(const std::string& spelled) {
+  return spelled == "adaptive";
+}
 
 // Lens type names (order must match Core's LensParam::LensType enum)
 inline const char* const kLensTypeNames[] = {

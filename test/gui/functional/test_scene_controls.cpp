@@ -314,13 +314,13 @@ void RegisterSceneControlTests(ImGuiTestEngine* engine) {
   // (field-editor registry key "sim.ray_allocation") — this chore removed the main panel's
   // checkbox, so driving the Settings cell is itself the new contract worth a case for. It still
   // edits the document field, and — being a SimConfig field the reconciler auto-diffs — still
-  // dirties the document without a MarkDirty of its own. Both directions are clicked so a cell
+  // dirties the document without a MarkDirty of its own. Both directions are picked so a cell
   // wired to a copy of the field, or one that only ever set it, would show. The fresh document's
   // state is asserted first: a new document (and an .lmc saved before the key existed, which reads
-  // the same factory value) opens with the switch ON, which is the GUI default the user manual
+  // the same factory value) opens on "adaptive", which is the GUI default the user manual
   // describes.
   {
-    ImGuiTest* t = IM_REGISTER_TEST(engine, "scene_controls", "toggling_adaptive_ray_allocation_dirties_the_document");
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "scene_controls", "picking_ray_allocation_via_combo_dirties_the_document");
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
       ScopedServer server;
@@ -339,13 +339,30 @@ void RegisterSceneControlTests(ImGuiTestEngine* engine) {
         ctx->ItemInputValue("**/###defaults_search", "sim.ray_allocation");
         ctx->Yield(3);
 
-        ctx->ItemClick("**/##value_sim.ray_allocation");
-        ctx->Yield();
+        // A LITERAL id path, not a "**/" wildcard: ImGui::BeginCombo never registers a debug
+        // label with the test engine, so a label search cannot see the combo (same quirk as
+        // defaults_app_ui_scale's combo in test_defaults_panel.cpp). The popup entries ARE
+        // label-addressable (Selectable registers its label), and the option text is the wire
+        // spelling the combo itself renders ("adaptive" / "proportional"). The settings table is
+        // ImGuiTableFlags_ScrollY (RenderSettingsTable), which ImGui implements with an inner
+        // child window of the table's own id, so the cell sits one level deeper than the Settings
+        // window itself.
+        const std::string combo_path =
+            std::string(gui::kDefaultsPanelTitle) + "/##defaults_settings_table/##value_sim.ray_allocation";
+        const auto pick = [&](const char* option) {
+          ctx->ItemClick(combo_path.c_str());
+          ctx->Yield(2);
+          ctx->SetRef("//$FOCUSED");
+          ctx->ItemClick((std::string("**/") + option).c_str());
+          ctx->SetRef("");
+          ctx->Yield();
+        };
+
+        pick("proportional");
         IM_CHECK(!gui::g_state.sim.ray_allocation_adaptive);
         IM_CHECK(gui::g_state.dirty);
 
-        ctx->ItemClick("**/##value_sim.ray_allocation");
-        ctx->Yield();
+        pick("adaptive");
         IM_CHECK(gui::g_state.sim.ray_allocation_adaptive);
       }
       // Teardown, including clearing the search filter, is the guards'; see ScopedServer and
