@@ -277,8 +277,7 @@ Fixture BuildFixture(const Crystal& crystal, const AxisDistribution& axis) {
       const auto* cp = std::get_if<ComplexFilterParam>(&cfg.param_);
       desc.sub_desc_start = static_cast<uint32_t>(fx.complex_subs.size());
       desc.and_terms_start = static_cast<uint32_t>(fx.and_term_counts.size());
-      detail::BuildComplexSubDescs(*cp, fx.crystal, desc.symmetry, desc.sigma_a, desc.d_applicable != 0u,
-                                   fx.complex_subs, fx.and_term_counts);
+      detail::BuildComplexSubDescs(*cp, fx.crystal, desc, fx.complex_subs, fx.and_term_counts);
     }
     fx.descs.push_back(desc);
     fx.host_specs.push_back(FilterSpec::Create(cfg, fx.crystal, fx.axis));

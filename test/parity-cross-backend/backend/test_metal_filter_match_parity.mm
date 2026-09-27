@@ -79,15 +79,11 @@ using metal_test::ShouldSkipMetalTests;
 // Layout sanity — guards future struct edits (parity harness reuploads bytes
 // verbatim so any host-side reshape that changes sizeof must be intentional).
 TEST(DeviceFilterDescLayout, SizeFitsBudget) {
-  // task-device-flat-and-terms: `and_term_counts[8]` inline array retired
-  // (moved to a separate host-built flat buffer indexed by `and_terms_start`).
-  // `or_clause_count` was a uint8 (1B); it is now uint16 (2B) plus a trailing
-  // uint16 padding. Former `or_clause_count` position now holds a 1-byte
-  // `_pad_reserved`. Net swap: -8B (inline array) +4B (and_terms_start) +2B
-  // (or_clause_count widen) +2B (trailing pad) = 0B. Total stays 120B; assert
-  // the exact number so any host layout drift is caught early. The <256 belt
-  // is the coarser budget.
-  EXPECT_EQ(sizeof(DeviceFilterDesc), static_cast<size_t>(120));
+  // 120B with the flat AND-term buffer layout, +8B for the symmetry-gating tail
+  // (int32 shape_p_step + four uint8: shape_d_mirror_mask, shape_b_applicable,
+  // p_applicable, b_applicable) = 128B. Assert the exact number so any host
+  // layout drift is caught early. The <256 belt is the coarser budget.
+  EXPECT_EQ(sizeof(DeviceFilterDesc), static_cast<size_t>(128));
   EXPECT_LE(sizeof(DeviceFilterDesc), static_cast<size_t>(256));
 }
 
@@ -599,9 +595,7 @@ ParityFixture BuildFixture(const Crystal& crystal, const AxisDistribution& axis)
       assert(cp != nullptr && "Complex desc type without ComplexFilterParam variant");
       desc.sub_desc_start = static_cast<uint32_t>(fx.complex_sub_descs.size());
       desc.and_terms_start = static_cast<uint32_t>(fx.and_term_counts.size());
-      detail::BuildComplexSubDescs(*cp, fx.crystal, desc.symmetry,
-                                   desc.sigma_a, desc.d_applicable != 0u,
-                                   fx.complex_sub_descs, fx.and_term_counts);
+      detail::BuildComplexSubDescs(*cp, fx.crystal, desc, fx.complex_sub_descs, fx.and_term_counts);
     }
     fx.descs.push_back(desc);
     fx.host_specs.push_back(FilterSpec::Create(cfg, fx.crystal, fx.axis));

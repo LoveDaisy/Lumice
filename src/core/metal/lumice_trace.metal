@@ -50,6 +50,11 @@ struct DeviceFilterDesc {
   uint   and_terms_start;        // Complex only: flat start index in and_term_counts_buf
   ushort or_clause_count;        // Complex only; 0 for non-Complex
   ushort _pad_or_tail;           // trailing padding
+  int    shape_p_step;           // Crystal::GeomSymmetry().p_step
+  uchar  shape_d_mirror_mask;    // Crystal::GeomSymmetry().d_valid_sigma_mask
+  uchar  shape_b_applicable;     // Crystal::GeomSymmetry().b_applicable
+  uchar  p_applicable;           // detail::IsPApplicable(axis)
+  uchar  b_applicable;           // detail::IsBApplicable(axis)
 };
 
 // Device filter type tags. Mirror kDeviceFilterType* in device_filter_desc.hpp.
@@ -89,18 +94,24 @@ constant uint  kMaxRenderersDeviceMsl = 4;
 // kNoFarPlane (metal_trace_backend.mm).
 constant uint  kNoFarPlaneMsl = 0xFFFFFFFFu;
 
-// --- ReduceBuffer (E4 spike, byte-identical to lumice::detail::ReduceBuffer) -
+// --- ReduceBuffer (byte-identical to lumice::detail::ReduceBuffer) ---------
+//
+// Same request ∩ ensemble ∩ shape gating as the host form and as the CUDA /
+// host copy in src/core/shared/filter_shared.h: see the comment there.
 
-static inline void PCanonicalShiftInPlace_dev(thread uchar* data, uint size) {
-  int first_pri = -1;
+// P-canonical shift rotating only by multiples of p_step (mirrors host
+// PCanonicalShiftInPlace). p_step 6 (or any out-of-range value) = no rotation.
+static inline void PCanonicalShiftInPlace_dev(thread uchar* data, uint size, int p_step) {
+  if (p_step <= 0 || p_step >= kDevFnPeriodHex) { return; }
+  int shift = -1;
   for (uint i = 0; i < size; i++) {
     uchar x = data[i];
     if (x < 3) { continue; }
     uchar pyr = x / 10;
-    int pri = (int)(x % 10);
-    if (first_pri < 0) { first_pri = pri; }
-    pri = (pri + kDevFnPeriodHex - first_pri) % kDevFnPeriodHex + 3;
-    data[i] = (uchar)(pyr * 10 + pri);
+    int pri0 = (int)(x % 10) - 3;
+    if (shift < 0) { shift = pri0 - pri0 % p_step; }
+    pri0 = (pri0 - shift + kDevFnPeriodHex) % kDevFnPeriodHex;
+    data[i] = (uchar)(pyr * 10 + pri0 + 3);
   }
 }
 
@@ -111,30 +122,33 @@ static inline bool LexLess_dev(thread const uchar* a, thread const uchar* b, uin
   return false;
 }
 
-static inline void ReduceBuffer_dev(thread uchar* data, uint size, uchar symmetry,
-                                    int sigma_a, bool d_applicable) {
-  if (symmetry == kDevSymNone) { return; }
-  if (symmetry & kDevSymP) {
-    PCanonicalShiftInPlace_dev(data, size);
+static inline void ReduceBuffer_dev(thread uchar* data, uint size, device const DeviceFilterDesc& f) {
+  if (f.symmetry == kDevSymNone) { return; }
+  const bool p_active = (f.symmetry & kDevSymP) && f.p_applicable != 0u;
+  if (p_active) {
+    PCanonicalShiftInPlace_dev(data, size, f.shape_p_step);
   }
-  if ((symmetry & kDevSymD) && d_applicable) {
+  // DMirrorActive: ensemble admits D and the shape has the mirror sigma_a.
+  const bool d_active = (f.symmetry & kDevSymD) && f.d_applicable != 0u && f.sigma_a >= 0 &&
+                        f.sigma_a < kDevFnPeriodHex && ((f.shape_d_mirror_mask >> f.sigma_a) & 1u) != 0u;
+  if (d_active) {
     uchar scratch[kDevRecCap];
     for (uint i = 0; i < size; i++) {
       uchar x = data[i];
       if (x < 3) { scratch[i] = x; continue; }
       uchar pyr = x / 10;
       int pri0 = (int)(x % 10) - 3;
-      int new_pri0 = ((sigma_a - pri0) % kDevFnPeriodHex + kDevFnPeriodHex) % kDevFnPeriodHex;
+      int new_pri0 = ((f.sigma_a - pri0) % kDevFnPeriodHex + kDevFnPeriodHex) % kDevFnPeriodHex;
       scratch[i] = (uchar)(pyr * 10 + new_pri0 + 3);
     }
-    if (symmetry & kDevSymP) {
-      PCanonicalShiftInPlace_dev(scratch, size);
+    if (p_active) {
+      PCanonicalShiftInPlace_dev(scratch, size, f.shape_p_step);
     }
     if (LexLess_dev(scratch, data, size)) {
       for (uint i = 0; i < size; i++) { data[i] = scratch[i]; }
     }
   }
-  if (symmetry & kDevSymB) {
+  if ((f.symmetry & kDevSymB) && f.b_applicable != 0u && f.shape_b_applicable != 0u) {
     uchar scratch[kDevRecCap];
     bool changed = false;
     for (uint i = 0; i < size; i++) {
@@ -193,7 +207,7 @@ static inline bool DeviceFilterMatchRaypath(device const DeviceFilterDesc& f,
     }
     return true;
   }
-  ReduceBuffer_dev(buf, path_len, f.symmetry, f.sigma_a, f.d_applicable != 0u);
+  ReduceBuffer_dev(buf, path_len, f);
   for (uint i = 0; i < path_len; i++) {
     if (buf[i] != f.canonical_bytes[i]) { return false; }
   }
@@ -222,7 +236,7 @@ static inline bool DeviceFilterMatchEntryExit(device const DeviceFilterDesc& f,
   }
   uchar buf[kDevRecCap];
   for (uint i = 0; i < ee_len; i++) { buf[i] = ee[i]; }
-  ReduceBuffer_dev(buf, ee_len, f.symmetry, f.sigma_a, f.d_applicable != 0u);
+  ReduceBuffer_dev(buf, ee_len, f);
   if (ee_len != f.canonical_len) { return false; }
   for (uint i = 0; i < ee_len; i++) {
     if (buf[i] != f.canonical_bytes[i]) { return false; }

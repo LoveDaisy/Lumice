@@ -7,8 +7,9 @@
 // (validated by the parity harness at scrum-267.1 acceptance).
 //
 // Layout contract: this header is the single source of truth for the C++ side
-// of the host/device `DeviceFilterDesc` layout (D2 in plan). The MSL source
-// string in `metal_filter_match_src.mm` must mirror field order/types exactly.
+// of the host/device `DeviceFilterDesc` layout (D2 in plan). The MSL
+// `struct DeviceFilterDesc` in `metal/lumice_trace.metal` must mirror field
+// order/types exactly.
 //
 // Locality: not part of the public C API. Compiled into lumice_obj on all
 // platforms (Metal + CUDA backends both consume this descriptor; the CUDA
@@ -80,15 +81,21 @@ static_assert(kDeviceFilterOrClauseSanityCap >= 4096,
 // Plain-data descriptor uploaded to the Metal `filter_desc_buf_` (per filter).
 //
 // Field order/type MUST match the MSL `struct DeviceFilterDesc` declared in
-// kFilterMatchHelperSrc. Fields not relevant to the active `type` are zero-
+// metal/lumice_trace.metal. Fields not relevant to the active `type` are zero-
 // initialized but still occupy their slots (fixed layout simplifies the device
 // reader).
 //
-// `d_applicable` semantics: mirrors `RaypathOrbit::d_applicable_` — when false
-// the device MATCH path skips the σ-mirror branch of ReduceBuffer even if
-// `symmetry & kSymD` is set, exactly as `detail::ReduceBuffer` does
-// (filter_spec.cpp:67). Both host and device read this single flag; no other
-// short-circuit logic is keyed off it.
+// Symmetry gating: the device reduction (`ReduceBuffer_dev`) applies a
+// requested symmetry element only where `detail::ReduceBuffer` does — the
+// request (`symmetry`) ∩ what the orientation ENSEMBLE admits (`p_applicable`
+// / `b_applicable` / `d_applicable`, i.e. detail::IsPApplicable /
+// IsBApplicable / IsDApplicable) ∩ what the crystal's SHAPE admits
+// (`shape_p_step` / `shape_d_mirror_mask` / `shape_b_applicable`, a verbatim
+// copy of Crystal::GeomSymmetry()). The two halves are separate fields on
+// purpose: `b_applicable` is the ensemble's, `shape_b_applicable` the shape's,
+// and B acts only when both hold. All six are filled once, on the host, by
+// BuildDeviceFilterDesc from those authorities; the device never re-derives
+// them, and the canonical bytes are reduced under the same six values.
 struct DeviceFilterDesc {
   uint8_t type;                 // see kDeviceFilterType* above
   uint8_t action;               // 0=kFilterIn (match→true), 1=kFilterOut (match→false)
@@ -120,20 +127,27 @@ struct DeviceFilterDesc {
   uint16_t or_clause_count;  // Complex only: # OR-clauses (≤ kDeviceFilterOrClauseSanityCap);
                              // non-Complex types leave this 0
   uint16_t _pad_or_tail;     // padding so struct size stays a multiple of 4
+  // Shape half of the gating: Crystal::GeomSymmetry() of the filter's crystal.
+  int32_t shape_p_step;         // GeometricSymmetry::p_step (P rotates by its multiples)
+  uint8_t shape_d_mirror_mask;  // GeometricSymmetry::d_valid_sigma_mask (bit sigma_a ⇒ D allowed)
+  uint8_t shape_b_applicable;   // GeometricSymmetry::b_applicable (cones match)
+  // Ensemble half for P and B (D's is `d_applicable` above).
+  uint8_t p_applicable;  // 0/1; detail::IsPApplicable(axis)
+  uint8_t b_applicable;  // 0/1; detail::IsBApplicable(axis)
 };
 
-static_assert(sizeof(DeviceFilterDesc) <= 256,
-              "DeviceFilterDesc must stay under 256 bytes — was 120B at 267.1b; task-device-flat-and-terms "
-              "drops and_term_counts[8] inline array and adds and_terms_start (uint32) + or_clause_count "
-              "widened to uint16, net delta is small (see Step 8 of the task plan)");
+// Exact size pinned so a layout change is deliberate: the MSL mirror in
+// lumice_trace.metal has no compile-time check against this struct.
+static_assert(sizeof(DeviceFilterDesc) == 128, "DeviceFilterDesc layout changed; update the MSL mirror");
 
 namespace detail {
 
 // Build a flat `DeviceFilterDesc` from a host-side `FilterConfig`.
 //
-// `crystal` provides `GetFn` (for Raypath/EntryExit canonical computation) and
-// `FnPeriod` (for the fn_period field). `axis_dist` resolves
-// `d_applicable` + `sigma_a` exactly as `FilterSpec::Create` does. The current
+// `crystal` provides `GetFn` (for Raypath/EntryExit canonical computation),
+// `FnPeriod` (for the fn_period field) and `GeomSymmetry` (the shape half of
+// the symmetry gating). `axis_dist` resolves `d_applicable` / `p_applicable`
+// / `b_applicable` + `sigma_a` exactly as `FilterSpec::Create` does. The current
 // project supports hexagonal crystals only (`fn_period == 6`); for the custom-
 // crystal fallback the function still produces a valid desc — the device path
 // memcmps verbatim when `fn_period < 0`.
@@ -154,8 +168,9 @@ DeviceFilterDesc BuildDeviceFilterDesc(const FilterConfig& config, const Crystal
 // `start = out_sub_descs.size()` BEFORE this call and write it into the parent
 // desc's `sub_desc_start`; this function only appends.
 //
-// Sub-descs inherit the parent Complex's `symmetry`/`sigma_a`/`d_applicable`
-// (mirrors `ComplexSpec::ComplexSpec` ctor in filter_spec.cpp:316). Each sub-
+// Sub-descs inherit the parent Complex's `symmetry`/`sigma_a` and all six
+// symmetry-gating fields (mirrors `ComplexSpec::ComplexSpec` ctor in
+// filter_spec.cpp), copied from `parent` rather than recomputed. Each sub-
 // desc's `action` is forced to 0 (kFilterIn) — the device matcher invokes the
 // Simple-only dispatch (`DeviceFilterMatchSimple`) without applying action XOR;
 // the top-level Complex `action` is XORed at the outer `DeviceFilterCheck`
@@ -169,9 +184,8 @@ DeviceFilterDesc BuildDeviceFilterDesc(const FilterConfig& config, const Crystal
 // BEFORE this call and write it into the parent desc's `and_terms_start`
 // (mirrors `sub_desc_start` discipline). The OR-clause count itself is
 // checked against `kDeviceFilterOrClauseSanityCap`.
-void BuildComplexSubDescs(const ComplexFilterParam& p, const Crystal& crystal, uint8_t symmetry, int sigma_a,
-                          bool d_applicable, std::vector<DeviceFilterDesc>& out_sub_descs,
-                          std::vector<uint8_t>& out_and_term_counts);
+void BuildComplexSubDescs(const ComplexFilterParam& p, const Crystal& crystal, const DeviceFilterDesc& parent,
+                          std::vector<DeviceFilterDesc>& out_sub_descs, std::vector<uint8_t>& out_and_term_counts);
 
 // Build the per-crystal poly-index → face-number byte table consumed by the
 // device filter MATCH kernels (see `ApplyGetFn_dev` in `metal_filter_match_src
