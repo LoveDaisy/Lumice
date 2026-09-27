@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1790482583918,
+  "lastUpdate": 1790482586225,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9524,50 +9524,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "dfb3f72cde1303813ed87b0403da0bf2d5264b86",
-          "message": "Merge pull request #325 from LoveDaisy/fix/user-run-vs-backpressure-gate\n\nfix(gui): exempt a user-initiated Run from the commit backpressure gate",
-          "timestamp": "2026-09-08T23:07:48+08:00",
-          "tree_id": "3e55872359ee24f0c6224f4e627e5dd6964a1d7d",
-          "url": "https://github.com/LoveDaisy/ice_halo_sim/commit/dfb3f72cde1303813ed87b0403da0bf2d5264b86"
-        },
-        "date": 1788880732587,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 81.9,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 99.7,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 95,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 92.7,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "61afdda60a81f3800fe9d39d0f1790efbed2eb82",
           "message": "Merge pull request #326 from LoveDaisy/ci/cuda-test-tu-compile-coverage\n\nci: compile the CUDA test TUs (close the CUDA×BUILD_TEST empty intersection)",
           "timestamp": "2026-09-09T09:01:05+08:00",
@@ -13867,6 +13823,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 93.2,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "7b107c5623d51c5578890e40cfa4b2a1e2545b02",
+          "message": "Merge pull request #426 from LoveDaisy/chore/raypath-analysis-lumice-integral-plan\n\ndocs(raypath-analysis): expand §5.1 into the post-selection three-feature plan",
+          "timestamp": "2026-09-27T12:04:30+08:00",
+          "tree_id": "22a4d5cac931dca24cc45e2267cdd77444575d99",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/7b107c5623d51c5578890e40cfa4b2a1e2545b02"
+        },
+        "date": 1790482585622,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 93.1,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 100.1,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 98.6,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 95.3,
             "unit": "%"
           }
         ]
