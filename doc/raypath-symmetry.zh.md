@@ -201,10 +201,6 @@ filter 点名这样的面时，不论对称设置如何都匹配不到经过它�
 
 - **Complex filter 跨子过滤器的对称性**：`complex` 类型的过滤器组合多个子过滤器；跨子过滤器边界的对称性归约未实现。
 - **含多值的 entry/exit 对**：当 `entry_exit` 过滤器列出多个入射或出射面时，P/B/D 之外的跨面对称性未处理。
-- **低对称形状与集体上的 GPU filter 匹配**：Metal / CUDA 设备核仍按全 D6h、且 P/B 恒开地约化每条光线
-  （`src/core/shared/filter_shared.h`、`src/core/metal/lumice_trace.metal`），设备 filter 描述符也按同样方式构造以与之保持一致。
-  因此在低于 D6h 的形状上，或在 roll / 天顶角排除了 P / B 的集体上（§2b），GPU 上求值的对称 filter 仍可能合并不等价光路，
-  而 CPU 路线不会。
 
 ---
 
