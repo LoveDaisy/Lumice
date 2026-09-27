@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1790532804396,
+  "lastUpdate": 1790532806443,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9524,50 +9524,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "712eb886076cecd28b4dedc683f8255351558cb5",
-          "message": "Merge pull request #333 from LoveDaisy/ci/cache-budget\n\nci(cache): budget the actions/cache quota — fix three prefix-shadowed keys, add ccache to the critical-path leg",
-          "timestamp": "2026-09-10T02:35:58+08:00",
-          "tree_id": "c53075d893ac829084799f406bdd8c280a195292",
-          "url": "https://github.com/LoveDaisy/ice_halo_sim/commit/712eb886076cecd28b4dedc683f8255351558cb5"
-        },
-        "date": 1788979619952,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 74.4,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 99.6,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 92.5,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 92,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "491b117b9a07cdf85de8099529f7811e686abf1e",
           "message": "Merge pull request #336 from LoveDaisy/feat/miller-index-and-wedge-presets\n\nfix(gui,core): give the Miller-index wedge conversion one owner, and correct the presets it was never checked against",
           "timestamp": "2026-09-10T04:26:14+08:00",
@@ -13867,6 +13823,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 100.4,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "26ab6a18e6455817e83e95ad76594539cffc24d6",
+          "message": "Merge pull request #434 from LoveDaisy/chore/ray-allocation-settings-combo\n\ngui: sim.ray_allocation Settings editor becomes an adaptive/proportional combo",
+          "timestamp": "2026-09-28T01:59:27+08:00",
+          "tree_id": "f911df15b6d21e6900447e072754865902bb15a7",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/26ab6a18e6455817e83e95ad76594539cffc24d6"
+        },
+        "date": 1790532805943,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 86.2,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 100.2,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 98.6,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 93.3,
             "unit": "%"
           }
         ]
