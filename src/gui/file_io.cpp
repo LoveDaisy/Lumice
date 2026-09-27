@@ -122,18 +122,6 @@ static_assert(sizeof(kDisplayModeJsonNames) / sizeof(kDisplayModeJsonNames[0]) =
 static const char* kAspectPresetJsonNames[] = { "free", "16:9", "3:2", "4:3", "1:1", "2:1", "match_background" };
 static_assert(sizeof(kAspectPresetJsonNames) / sizeof(kAspectPresetJsonNames[0]) == kAspectPresetCount,
               "kAspectPresetJsonNames must match kAspectPresetCount");
-// scene.ray_allocation wire spellings for SimConfig::ray_allocation_adaptive, on BOTH the .lmc and
-// the CLI-JSON path, mirroring core's vocabulary (doc/configuration.md). One codec pair so the two
-// serializers cannot drift from each other. An unrecognised spelling reads as proportional — the
-// same conservative side core itself falls to (with a warning) at commit; the GUI never writes one.
-static const char* RayAllocationJsonName(bool adaptive) {
-  return adaptive ? "adaptive" : "proportional";
-}
-static bool RayAllocationFromJsonName(const std::string& spelled) {
-  return spelled == "adaptive";
-}
-
-
 // ========== Shared helpers ==========
 
 // Thin wrappers over the shared AxisDistType <-> JSON name table (axis_presets.hpp), which the
