@@ -22,33 +22,25 @@ namespace {
 // raypath. We recompute here rather than calling `BuildOrbit` to keep `filter_spec.cpp`
 // platform-agnostic (plan D5).
 //
-// Reduced under the FULL hexagonal symmetry on purpose, not the crystal's GeomSymmetry(): the
-// device kernels (ReduceBuffer_dev in shared/filter_shared.h and metal/lumice_trace.metal) still
-// reduce every ray under full D6h, and the descriptor carries no shape symmetry. A canonical form
-// computed under a smaller group would never meet the device's, so a symmetry filter on a
-// low-symmetry crystal would silently match nothing; keeping the two on one rule leaves the GPU
-// where it was (over-merging on such crystals — a known CPU/GPU gap) instead of making it worse.
-// The orientation ensemble's P and B conditions (detail::IsPApplicable / IsBApplicable) are held
-// at "admitted" for the same reason: the device kernels apply P and B unconditionally, so a
-// canonical form computed without them would never meet the device's either.
-void FillCanonicalBytes(const Crystal& crystal, const std::vector<IdType>& rp, uint8_t symmetry, int sigma_a,
-                        bool d_applicable, DeviceFilterDesc& out) {
-  auto canonical = ReduceRaypathByPeriod(rp, symmetry, sigma_a, d_applicable, /*p_applicable=*/true,
-                                         /*b_applicable=*/true, crystal.FnPeriod(), kFullHexagonalSymmetry);
+// Reduced under the descriptor's own gating fields — the same request ∩ ensemble ∩ shape the
+// device reduction (ReduceBuffer_dev) reads per ray — so the canonical form and the reduced ray
+// always meet, and both equal what FilterSpec computes on the CPU path.
+void FillCanonicalBytes(const Crystal& crystal, const std::vector<IdType>& rp, DeviceFilterDesc& out) {
+  const GeometricSymmetry geom{ out.shape_p_step, out.shape_d_mirror_mask, out.shape_b_applicable != 0u };
+  auto canonical = ReduceRaypathByPeriod(rp, out.symmetry, out.sigma_a, out.d_applicable != 0u, out.p_applicable != 0u,
+                                         out.b_applicable != 0u, crystal.FnPeriod(), geom);
   out.canonical_len = static_cast<uint8_t>(std::min<size_t>(canonical.size(), kMaxHits));
   for (uint8_t i = 0; i < out.canonical_len; ++i) {
     out.canonical_bytes[i] = static_cast<uint8_t>(canonical[i] & 0xFF);
   }
 }
 
-void FillRaypath(const Crystal& crystal, const RaypathFilterParam& p, uint8_t symmetry, int sigma_a, bool d_applicable,
-                 DeviceFilterDesc& out) {
+void FillRaypath(const Crystal& crystal, const RaypathFilterParam& p, DeviceFilterDesc& out) {
   out.type = kDeviceFilterTypeRaypath;
-  FillCanonicalBytes(crystal, p.raypath_, symmetry, sigma_a, d_applicable, out);
+  FillCanonicalBytes(crystal, p.raypath_, out);
 }
 
-void FillEntryExit(const Crystal& crystal, const EntryExitFilterParam& p, uint8_t symmetry, int sigma_a,
-                   bool d_applicable, DeviceFilterDesc& out) {
+void FillEntryExit(const Crystal& crystal, const EntryExitFilterParam& p, DeviceFilterDesc& out) {
   out.type = kDeviceFilterTypeEntryExit;
   out.has_entry = p.entry_.has_value() ? 1u : 0u;
   out.has_exit = p.exit_.has_value() ? 1u : 0u;
@@ -66,7 +58,7 @@ void FillEntryExit(const Crystal& crystal, const EntryExitFilterParam& p, uint8_
     rp.push_back(*p.exit_);
   }
   if (!rp.empty()) {
-    FillCanonicalBytes(crystal, rp, symmetry, sigma_a, d_applicable, out);
+    FillCanonicalBytes(crystal, rp, out);
   }
 }
 
@@ -86,18 +78,14 @@ void FillCrystal(const CrystalFilterParam& p, DeviceFilterDesc& out) {
   out.crystal_id = static_cast<uint32_t>(p.crystal_id_);
 }
 
+// `out` already carries symmetry / sigma_a and the six gating fields; the Fill* helpers read them.
 struct SimpleVisitor {
   const Crystal& crystal;
-  uint8_t symmetry;
-  int sigma_a;
-  bool d_applicable;
   DeviceFilterDesc& out;
 
   void operator()(const NoneFilterParam& /*p*/) const { out.type = kDeviceFilterTypeNone; }
-  void operator()(const RaypathFilterParam& p) const { FillRaypath(crystal, p, symmetry, sigma_a, d_applicable, out); }
-  void operator()(const EntryExitFilterParam& p) const {
-    FillEntryExit(crystal, p, symmetry, sigma_a, d_applicable, out);
-  }
+  void operator()(const RaypathFilterParam& p) const { FillRaypath(crystal, p, out); }
+  void operator()(const EntryExitFilterParam& p) const { FillEntryExit(crystal, p, out); }
   void operator()(const DirectionFilterParam& p) const { FillDirection(p, out); }
   void operator()(const CrystalFilterParam& p) const { FillCrystal(p, out); }
 };
@@ -119,14 +107,9 @@ void FillComplexDescTop(const ComplexFilterParam& p, DeviceFilterDesc& out) {
 
 struct TopVisitor {
   const Crystal& crystal;
-  uint8_t symmetry;
-  int sigma_a;
-  bool d_applicable;
   DeviceFilterDesc& out;
 
-  void operator()(const SimpleFilterParam& p) const {
-    std::visit(SimpleVisitor{ crystal, symmetry, sigma_a, d_applicable, out }, p);
-  }
+  void operator()(const SimpleFilterParam& p) const { std::visit(SimpleVisitor{ crystal, out }, p); }
   void operator()(const ComplexFilterParam& p) const {
     // Top-level desc only: or_clause_count + and_term_counts. sub_desc_start
     // is assigned in EnsureFilterBuffers immediately before BuildComplexSubDescs
@@ -146,14 +129,20 @@ DeviceFilterDesc BuildDeviceFilterDesc(const FilterConfig& config, const Crystal
   desc.d_applicable = d_applicable ? 1u : 0u;
   desc.sigma_a = d_applicable ? detail::ComputeSigmaA(axis_dist.roll_dist.center) : 0;
   desc.fn_period = crystal.FnPeriod();
+  // The one place the gating fields are computed; sub-descs and the canonical bytes copy them.
+  desc.p_applicable = detail::IsPApplicable(axis_dist) ? 1u : 0u;
+  desc.b_applicable = detail::IsBApplicable(axis_dist) ? 1u : 0u;
+  const GeometricSymmetry& geom = crystal.GeomSymmetry();
+  desc.shape_p_step = geom.p_step;
+  desc.shape_d_mirror_mask = geom.d_valid_sigma_mask;
+  desc.shape_b_applicable = geom.b_applicable ? 1u : 0u;
 
-  std::visit(TopVisitor{ crystal, config.symmetry_, desc.sigma_a, d_applicable, desc }, config.param_);
+  std::visit(TopVisitor{ crystal, desc }, config.param_);
   return desc;
 }
 
-void BuildComplexSubDescs(const ComplexFilterParam& p, const Crystal& crystal, uint8_t symmetry, int sigma_a,
-                          bool d_applicable, std::vector<DeviceFilterDesc>& out_sub_descs,
-                          std::vector<uint8_t>& out_and_term_counts) {
+void BuildComplexSubDescs(const ComplexFilterParam& p, const Crystal& crystal, const DeviceFilterDesc& parent,
+                          std::vector<DeviceFilterDesc>& out_sub_descs, std::vector<uint8_t>& out_and_term_counts) {
   assert(p.filters_.size() <= kDeviceFilterOrClauseSanityCap &&
          "Complex filter exceeds kDeviceFilterOrClauseSanityCap sanity bound; check host ABI clamp");
   for (const auto& or_clause : p.filters_) {
@@ -165,20 +154,25 @@ void BuildComplexSubDescs(const ComplexFilterParam& p, const Crystal& crystal, u
     // second traversal.
     out_and_term_counts.push_back(static_cast<uint8_t>(or_clause.size()));
     for (const auto& and_entry : or_clause) {
-      // Mirror ComplexSpec ctor (filter_spec.cpp:316): sub-spec inherits the
-      // parent Complex's symmetry / sigma_a / d_applicable. and_entry.first
-      // is the host-side filter id (unused on device — sub_specs are inlined
-      // by position).
+      // Mirror ComplexSpec ctor (filter_spec.cpp): sub-spec inherits the parent
+      // Complex's symmetry / sigma_a and every symmetry-gating field.
+      // and_entry.first is the host-side filter id (unused on device —
+      // sub_specs are inlined by position).
       DeviceFilterDesc sub{};
-      sub.symmetry = symmetry;
-      sub.d_applicable = d_applicable ? 1u : 0u;
-      sub.sigma_a = sigma_a;
-      sub.fn_period = crystal.FnPeriod();
+      sub.symmetry = parent.symmetry;
+      sub.d_applicable = parent.d_applicable;
+      sub.sigma_a = parent.sigma_a;
+      sub.fn_period = parent.fn_period;
+      sub.p_applicable = parent.p_applicable;
+      sub.b_applicable = parent.b_applicable;
+      sub.shape_p_step = parent.shape_p_step;
+      sub.shape_d_mirror_mask = parent.shape_d_mirror_mask;
+      sub.shape_b_applicable = parent.shape_b_applicable;
       // sub-filter predicate only; the top-level Complex `action` is XORed by
       // DeviceFilterCheck. Mirrors host ComplexSpec::Match calling
-      // `and_f->Match` (not `Check`) per filter_spec.cpp:274-288.
+      // `and_f->Match` (not `Check`) per filter_spec.cpp.
       sub.action = 0u;
-      std::visit(SimpleVisitor{ crystal, symmetry, sigma_a, d_applicable, sub }, and_entry.second);
+      std::visit(SimpleVisitor{ crystal, sub }, and_entry.second);
       out_sub_descs.push_back(sub);
     }
   }

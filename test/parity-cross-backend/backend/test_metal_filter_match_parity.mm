@@ -79,15 +79,11 @@ using metal_test::ShouldSkipMetalTests;
 // Layout sanity — guards future struct edits (parity harness reuploads bytes
 // verbatim so any host-side reshape that changes sizeof must be intentional).
 TEST(DeviceFilterDescLayout, SizeFitsBudget) {
-  // task-device-flat-and-terms: `and_term_counts[8]` inline array retired
-  // (moved to a separate host-built flat buffer indexed by `and_terms_start`).
-  // `or_clause_count` was a uint8 (1B); it is now uint16 (2B) plus a trailing
-  // uint16 padding. Former `or_clause_count` position now holds a 1-byte
-  // `_pad_reserved`. Net swap: -8B (inline array) +4B (and_terms_start) +2B
-  // (or_clause_count widen) +2B (trailing pad) = 0B. Total stays 120B; assert
-  // the exact number so any host layout drift is caught early. The <256 belt
-  // is the coarser budget.
-  EXPECT_EQ(sizeof(DeviceFilterDesc), static_cast<size_t>(120));
+  // 120B with the flat AND-term buffer layout, +8B for the symmetry-gating tail
+  // (int32 shape_p_step + four uint8: shape_d_mirror_mask, shape_b_applicable,
+  // p_applicable, b_applicable) = 128B. Assert the exact number so any host
+  // layout drift is caught early. The <256 belt is the coarser budget.
+  EXPECT_EQ(sizeof(DeviceFilterDesc), static_cast<size_t>(128));
   EXPECT_LE(sizeof(DeviceFilterDesc), static_cast<size_t>(256));
 }
 
@@ -366,11 +362,12 @@ FilterConfig MakeComplexConfig(uint8_t symmetry, FilterConfig::Action action,
   return cfg;
 }
 
-// Build a comprehensive filter table (covers all device filter types).
-ParityFixture BuildFixture(bool d_applicable_axis) {
+// Build a comprehensive filter table (covers all device filter types) for one
+// crystal shape under one orientation ensemble.
+ParityFixture BuildFixture(const Crystal& crystal, const AxisDistribution& axis) {
   ParityFixture fx;
-  fx.crystal = MakeHexPrism();
-  fx.axis = d_applicable_axis ? MakeDApplicableAxis() : MakeDNonApplicableAxis();
+  fx.crystal = crystal;
+  fx.axis = axis;
 
   auto push = [&](FilterConfig cfg) {
     fx.filter_configs.push_back(std::move(cfg));
@@ -551,6 +548,39 @@ ParityFixture BuildFixture(bool d_applicable_axis) {
         std::move(or_clauses)));
   }
 
+  // Faces B acts on: an upper-cone face (13 <-> 23, drawn only by a pyramid —
+  // on a prism this filter matches nothing on either side), a basal face
+  // (1 <-> 2, drawn by a prism too), and an EntryExit pair with a cone entry.
+  {
+    FilterConfig cfg{};
+    cfg.symmetry_ = FilterConfig::kSymB;
+    cfg.action_ = FilterConfig::kFilterIn;
+    RaypathFilterParam p;
+    p.raypath_ = std::vector<IdType>{ 13, 3 };
+    cfg.param_ = p;
+    push(cfg);
+  }
+  {
+    FilterConfig cfg{};
+    cfg.symmetry_ = static_cast<uint8_t>(FilterConfig::kSymP | FilterConfig::kSymB | FilterConfig::kSymD);
+    cfg.action_ = FilterConfig::kFilterIn;
+    RaypathFilterParam p;
+    p.raypath_ = std::vector<IdType>{ 1, 5 };
+    cfg.param_ = p;
+    push(cfg);
+  }
+  {
+    FilterConfig cfg{};
+    cfg.symmetry_ = static_cast<uint8_t>(FilterConfig::kSymP | FilterConfig::kSymB | FilterConfig::kSymD);
+    cfg.action_ = FilterConfig::kFilterIn;
+    EntryExitFilterParam p;
+    p.entry_ = IdType{ 14 };
+    p.exit_ = IdType{ 6 };
+    p.min_len_ = 2;
+    cfg.param_ = p;
+    push(cfg);
+  }
+
   fx.descs.reserve(fx.filter_configs.size());
   fx.host_specs.reserve(fx.filter_configs.size());
   for (size_t i = 0; i < fx.filter_configs.size(); ++i) {
@@ -565,9 +595,7 @@ ParityFixture BuildFixture(bool d_applicable_axis) {
       assert(cp != nullptr && "Complex desc type without ComplexFilterParam variant");
       desc.sub_desc_start = static_cast<uint32_t>(fx.complex_sub_descs.size());
       desc.and_terms_start = static_cast<uint32_t>(fx.and_term_counts.size());
-      detail::BuildComplexSubDescs(*cp, fx.crystal, desc.symmetry,
-                                   desc.sigma_a, desc.d_applicable != 0u,
-                                   fx.complex_sub_descs, fx.and_term_counts);
+      detail::BuildComplexSubDescs(*cp, fx.crystal, desc, fx.complex_sub_descs, fx.and_term_counts);
     }
     fx.descs.push_back(desc);
     fx.host_specs.push_back(FilterSpec::Create(cfg, fx.crystal, fx.axis));
@@ -773,12 +801,13 @@ TEST(MetalFilterMatchParity, RandomSequencesAcrossAxisAndCheckMode) {
 
   size_t total = 0, mism = 0;
   for (int axis_d_app : { 0, 1 }) {
-    ParityFixture fx = BuildFixture(axis_d_app != 0);
-    // 10 Simple + 5 Complex (A/B/C/D/E). When this count changes, update both
+    ParityFixture fx =
+        BuildFixture(MakeHexPrism(), axis_d_app != 0 ? MakeDApplicableAxis() : MakeDNonApplicableAxis());
+    // 13 Simple + 5 Complex (A/B/C/D/E). When this count changes, update both
     // BuildFixture and this constant. task-device-flat-and-terms added
     // Complex-E (20 OR-clauses × 1 AND) so the sweep exercises >8 OR-clauses on
     // the real GPU.
-    constexpr size_t kFilterCnt = 15;
+    constexpr size_t kFilterCnt = 18;
     ASSERT_EQ(fx.descs.size(), kFilterCnt);
     // Guard against the "double pass-through" trap: if all Complex descs had
     // or_clause_count==0, both host (empty Complex → false) and device (early
@@ -807,6 +836,70 @@ TEST(MetalFilterMatchParity, RandomSequencesAcrossAxisAndCheckMode) {
   std::fprintf(stderr, "[parity] aggregate total=%zu mismatch=%zu\n", total, mism);
   EXPECT_EQ(mism, 0u) << "device filter MATCH diverged from host FilterSpec::Check";
   EXPECT_GE(total, 1'000'000u) << "N below acceptance bound (plan §1)";
+}
+
+// The device reduction must narrow exactly where the host one does: to the
+// symmetry elements the crystal's shape has (GeometricSymmetry) and the
+// orientation ensemble admits (IsPApplicable / IsBApplicable / IsDApplicable).
+// Same shape × ensemble grid as the host-side DeviceFilterCheckHost test, run
+// here on the real GPU against the MSL copy of ReduceBuffer_dev.
+TEST(MetalFilterMatchParity, LowSymmetryShapesAndEnsembles) {
+  if (ShouldSkipMetalTests()) { GTEST_SKIP() << "LUMICE_SKIP_METAL_TESTS set"; }
+  MetalHarness h;
+  ASSERT_TRUE(h.Init()) << "Metal kernel compile failed: " << h.compile_log;
+
+  const float three_fold[6]{ 1.0f, 1.2f, 1.0f, 1.2f, 1.0f, 1.2f };
+  const float two_fold[6]{ 1.0f, 1.0f, 1.3f, 1.0f, 1.0f, 1.3f };
+  const float one_mirror[6]{ 1.0f, 1.2f, 1.3f, 1.3f, 1.2f, 1.0f };
+  struct Shape {
+    const char* name;
+    Crystal crystal;
+  };
+  const Shape shapes[] = {
+    { "regular_prism", MakeHexPrism() },
+    { "three_fold_prism", Crystal::CreatePrism(1.0f, three_fold) },
+    { "two_fold_prism", Crystal::CreatePrism(1.0f, two_fold) },
+    { "one_mirror_prism", Crystal::CreatePrism(1.0f, one_mirror) },
+    { "asymmetric_cones", Crystal::CreatePyramid(28.0f, 40.0f, 0.4f, 1.0f, 0.4f) },
+    { "three_fold_pyramid", Crystal::CreatePyramid(28.0f, 40.0f, 0.4f, 1.0f, 0.3f, three_fold) },
+  };
+  AxisDistribution p_off = MakeDApplicableAxis();
+  p_off.roll_dist.spread = 60.0f;  // not a full turn: P (and D) off
+  AxisDistribution b_off = MakeDApplicableAxis();
+  b_off.latitude_dist.type = DistributionType::kGaussian;  // c-axis tilted: B off, P/D kept
+  b_off.latitude_dist.center = 30.0f;
+  b_off.latitude_dist.spread = 10.0f;
+  struct Ensemble {
+    const char* name;
+    AxisDistribution axis;
+  };
+  const Ensemble ensembles[] = {
+    { "d_applicable", MakeDApplicableAxis() },
+    { "d_off", MakeDNonApplicableAxis() },
+    { "p_off", p_off },
+    { "b_off", b_off },
+  };
+  ASSERT_FALSE(detail::IsPApplicable(p_off));
+  ASSERT_FALSE(detail::IsBApplicable(b_off));
+  ASSERT_TRUE(detail::IsPApplicable(b_off));
+
+  constexpr size_t kPerCombo = 60'000;
+  std::mt19937 rng(0x0625u);
+  size_t total = 0;
+  size_t mism = 0;
+  for (const auto& shape : shapes) {
+    for (const auto& ens : ensembles) {
+      ParityFixture fx = BuildFixture(shape.crystal, ens.axis);
+      size_t combo_total = 0;
+      size_t combo_mism = 0;
+      RunSweep(h, fx, rng, kPerCombo, /*check_mode=*/1u, combo_total, combo_mism);
+      EXPECT_EQ(combo_mism, 0u) << shape.name << "/" << ens.name << " total=" << combo_total;
+      total += combo_total;
+      mism += combo_mism;
+    }
+  }
+  std::fprintf(stderr, "[parity] low-symmetry aggregate total=%zu mismatch=%zu\n", total, mism);
+  EXPECT_GE(total, 1'000'000u);
 }
 
 // Step 4 — BeginSession buffer upload sanity. The production trace kernel

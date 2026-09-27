@@ -18,7 +18,7 @@
 
 - 任何触及 `src/core/backend/cuda_trace_backend.*` 或三后端共享头（`trace_backend.hpp`、
   `pcg_shared.h`、`*_shared.h`）、`SimData`、simulator/server/stats 的改动。
-- 验收口径：**CUDA parity battery 28/28**（exit-seam 2 + filter 5 + multi-MS 4 + energy-accounting 11 +
+- 验收口径：**CUDA parity battery 30/30**（exit-seam 2 + filter 7 + multi-MS 4 + energy-accounting 11 +
   hostgen-fallback 1 + hit-budget 3 + multi-renderer 2）+（按需）CLI 冒烟。前三个文件的 11 条比较的都是**图像侧**（block-mean corr /
   两后端各自 `flt_buf` Y 总和之比 / 跨 seed 自洽）；后两个文件补的是此前没有任何测试读过的量——
   `snapshot_intensity` 这个标量账本与图像账本在同一后端内部是否自洽（`R = Ysum / snapshot_intensity`
@@ -94,7 +94,7 @@
   python -m pytest -v -m slow \
     test/parity-cross-backend/backend/test_cuda_{exit_seam,filter,multi_ms,energy_accounting,hostgen_fallback,hit_budget,multi_renderer}_parity.py
   ```
-  判据 = 退出码 0 且看到 `28 passed`。
+  判据 = 退出码 0 且看到 `30 passed`。
   - 历史坑（**已修复**，留档以免误判为新问题）：这套 pytest 曾 `Fatal Python error: Aborted`
     （`free(): invalid next size`），根因是 `test/e2e/capi_runner.py` 的 ctypes 镜像结构
     （`LUMICE_RenderResult` / `LUMICE_ServerConfig`）比 C 侧头文件 sizeof 小 8/4 字节，
@@ -195,7 +195,8 @@
     test\parity-cross-backend\backend\test_cuda_hit_budget_parity.py ^
     test\parity-cross-backend\backend\test_cuda_multi_renderer_parity.py
   ```
-  判据同 Linux：退出码 0 且 `28 passed`（前五个文件 `22 passed` 在这台机器上实测跑通过，2026-09-16；
+  判据同 Linux：退出码 0 且 `30 passed`（前五个文件 `22 passed` 在这台机器上实测跑通过，2026-09-16，
+  其时 filter 文件还没有两条低对称形状场景；
   第六、第七个文件加入后尚未在 Windows 侧实测，它们与前五个走同一条 ctypes 路径，没有 Windows 特有的依赖）。
   `LUMICE_LIB` 指向 `lumice_testapi.dll`，不是 `lumice.dll`——同 §2 的理由，ctypes harness
   加载的是带 `LUMICE_TEST_*` 钩子的测试超集（`test/e2e/capi_runner.py::lib_candidates` 是权威）。
@@ -218,7 +219,7 @@
 1. 本机改代码 + Mac build/单测/Metal parity（`./scripts/build.sh -tj release`）。
 2. 同步到 CUDA 参照机（Linux rsync / Windows tarball）。
 3. 各自 build，**逐个查 EXIT 码 + grep 告警**。
-4. Linux 参照机跑 CUDA parity battery（28/28，七个文件）；Windows 侧同一 battery 已实测跑通
+4. Linux 参照机跑 CUDA parity battery（30/30，七个文件）；Windows 侧同一 battery 已实测跑通
    （前五个文件 `22 passed`，2026-09-16），前提是应用了 §3 的 DLL 同目录做法——不是只验编译。
 5.（按需）CLI 冒烟核路由与 `Stats`、染色密度门。
 6. commit + push + PR，CI 的 `windows-cuda-compile` job 再兜一层 Windows 编译。

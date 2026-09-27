@@ -290,12 +290,6 @@ The following are **not** covered by P, B, or D:
   symmetry reduction across sub-filter boundaries is not implemented.
 - **Entry/exit pairs with multiple values**: when an `entry_exit` filter lists multiple entry
   or exit faces, cross-face symmetry beyond what P/B/D express is not handled.
-- **GPU filter matching on low-symmetry shapes and ensembles**: the Metal / CUDA device kernels
-  still reduce every ray under the full D6h with P and B always on
-  (`src/core/shared/filter_shared.h`, `src/core/metal/lumice_trace.metal`), and the device filter
-  descriptor is built the same way to stay consistent with them. On a shape with less than D6h, or
-  on an ensemble whose roll or zenith rules P or B out (§2b), a symmetry filter evaluated on the GPU
-  can therefore still merge inequivalent paths, where the CPU route does not.
 
 ---
 

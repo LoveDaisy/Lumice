@@ -3851,8 +3851,7 @@ void CudaTraceBackend::Impl::EnsureFilterBuffers(const SessionSpec& spec) {
         assert(complex_p != nullptr && "Complex desc type without ComplexFilterParam variant");
         descs[slot].sub_desc_start = static_cast<uint32_t>(all_sub_descs.size());
         descs[slot].and_terms_start = static_cast<uint32_t>(and_term_counts_flat.size());
-        detail::BuildComplexSubDescs(*complex_p, proto, descs[slot].symmetry, descs[slot].sigma_a,
-                                     descs[slot].d_applicable != 0u, all_sub_descs, and_term_counts_flat);
+        detail::BuildComplexSubDescs(*complex_p, proto, descs[slot], all_sub_descs, and_term_counts_flat);
       }
     }
     // Trailing slots (ms.setting_.size() < max_ci) keep zero-init
@@ -4024,8 +4023,7 @@ void CudaTraceBackend::Impl::EnsureFilterBuffers(const SessionSpec& spec) {
           DeviceFilterDesc top = detail::BuildDeviceFilterDesc(fc, proto, setting.crystal_.axis_);
           top.sub_desc_start = static_cast<uint32_t>(all_sub_descs.size());
           top.and_terms_start = static_cast<uint32_t>(and_term_counts_flat.size());
-          detail::BuildComplexSubDescs(cfp, proto, top.symmetry, top.sigma_a,
-                                       top.d_applicable != 0u, all_sub_descs, and_term_counts_flat);
+          detail::BuildComplexSubDescs(cfp, proto, top, all_sub_descs, and_term_counts_flat);
           const size_t color_slot = gate_slot * kColorMaxGroupsPerSlot + gi;
           assert(color_slot < color_desc_region);
           color_descs[color_slot] = top;

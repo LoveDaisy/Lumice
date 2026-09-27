@@ -46,28 +46,35 @@ inline constexpr uint32_t kDevRecCap = 64u;  // == ExitFaceSeq::kCap == kMaxHits
 
 // --- ReduceBuffer (canonical re-ordering of a face-number sequence) ---------
 //
-// Byte-identical with `lumice::detail::ReduceBuffer` in filter_spec.cpp UNDER
-// kFullHexagonalSymmetry (crystal.hpp), and with `ReduceBuffer_dev` in
-// lumice_trace.metal. The host form also honours a crystal's GeomSymmetry
-// (fewer rotations / mirrors on a low-symmetry shape); this device form does
-// not yet, which is why device_filter_desc.cpp builds the descriptor's
-// canonical form under the full group — the two sides must meet. Operates in place on
-// `data[0..size-1]` (face-number space, NOT poly-index space — callers must
-// pre-remap via ApplyGetFn_dev).
-LM_FN void PCanonicalShiftInPlace_dev(uint8_t* data, uint32_t size) {
-  int first_pri = -1;
+// Byte-identical with `lumice::detail::ReduceBuffer` in filter_spec.cpp and with
+// `ReduceBuffer_dev` in lumice_trace.metal: each requested element acts only
+// where the orientation ensemble admits it (`f.p_applicable` / `f.b_applicable`
+// / `f.d_applicable`) AND the crystal's shape has it (`f.shape_p_step` /
+// `f.shape_d_mirror_mask` / `f.shape_b_applicable`, a copy of
+// Crystal::GeomSymmetry()). The descriptor's canonical bytes were reduced by
+// the host under the same fields (device_filter_desc.cpp FillCanonicalBytes).
+// Operates in place on `data[0..size-1]` (face-number space, NOT poly-index
+// space — callers must pre-remap via ApplyGetFn_dev).
+
+// P-canonical shift rotating only by multiples of p_step (mirrors host
+// PCanonicalShiftInPlace). p_step 6 (or any out-of-range value) = no rotation.
+LM_FN void PCanonicalShiftInPlace_dev(uint8_t* data, uint32_t size, int32_t p_step) {
+  if (p_step <= 0 || p_step >= kDevFnPeriodHex) {
+    return;
+  }
+  int shift = -1;
   for (uint32_t i = 0; i < size; ++i) {
     uint8_t x = data[i];
     if (x < 3u) {
       continue;
     }
     uint8_t pyr = static_cast<uint8_t>(x / 10u);
-    int pri = static_cast<int>(x % 10u);
-    if (first_pri < 0) {
-      first_pri = pri;
+    int pri0 = static_cast<int>(x % 10u) - 3;
+    if (shift < 0) {
+      shift = pri0 - pri0 % p_step;
     }
-    pri = (pri + kDevFnPeriodHex - first_pri) % kDevFnPeriodHex + 3;
-    data[i] = static_cast<uint8_t>(pyr * 10u + static_cast<uint32_t>(pri));
+    pri0 = (pri0 - shift + kDevFnPeriodHex) % kDevFnPeriodHex;
+    data[i] = static_cast<uint8_t>(pyr * 10u + static_cast<uint32_t>(pri0 + 3));
   }
 }
 
@@ -80,14 +87,18 @@ LM_FN bool LexLess_dev(const uint8_t* a, const uint8_t* b, uint32_t size) {
   return false;
 }
 
-LM_FN void ReduceBuffer_dev(uint8_t* data, uint32_t size, uint8_t symmetry, int32_t sigma_a, bool d_applicable) {
-  if (symmetry == 0u /* kSymNone */) {
+LM_FN void ReduceBuffer_dev(uint8_t* data, uint32_t size, const DeviceFilterDesc& f) {
+  if (f.symmetry == 0u /* kSymNone */) {
     return;
   }
-  if (symmetry & 1u /* kSymP */) {
-    PCanonicalShiftInPlace_dev(data, size);
+  const bool p_active = (f.symmetry & 1u /* kSymP */) && f.p_applicable != 0u;
+  if (p_active) {
+    PCanonicalShiftInPlace_dev(data, size, f.shape_p_step);
   }
-  if ((symmetry & 4u /* kSymD */) && d_applicable) {
+  // DMirrorActive: ensemble admits D and the shape has the mirror sigma_a.
+  const bool d_active = (f.symmetry & 4u /* kSymD */) && f.d_applicable != 0u && f.sigma_a >= 0 &&
+                        f.sigma_a < kDevFnPeriodHex && ((f.shape_d_mirror_mask >> f.sigma_a) & 1u) != 0u;
+  if (d_active) {
     uint8_t scratch[kDevRecCap];
     for (uint32_t i = 0; i < size; ++i) {
       uint8_t x = data[i];
@@ -97,11 +108,11 @@ LM_FN void ReduceBuffer_dev(uint8_t* data, uint32_t size, uint8_t symmetry, int3
       }
       uint8_t pyr = static_cast<uint8_t>(x / 10u);
       int pri0 = static_cast<int>(x % 10u) - 3;
-      int new_pri0 = ((sigma_a - pri0) % kDevFnPeriodHex + kDevFnPeriodHex) % kDevFnPeriodHex;
+      int new_pri0 = ((f.sigma_a - pri0) % kDevFnPeriodHex + kDevFnPeriodHex) % kDevFnPeriodHex;
       scratch[i] = static_cast<uint8_t>(pyr * 10u + static_cast<uint32_t>(new_pri0 + 3));
     }
-    if (symmetry & 1u /* kSymP */) {
-      PCanonicalShiftInPlace_dev(scratch, size);
+    if (p_active) {
+      PCanonicalShiftInPlace_dev(scratch, size, f.shape_p_step);
     }
     if (LexLess_dev(scratch, data, size)) {
       for (uint32_t i = 0; i < size; ++i) {
@@ -109,7 +120,7 @@ LM_FN void ReduceBuffer_dev(uint8_t* data, uint32_t size, uint8_t symmetry, int3
       }
     }
   }
-  if (symmetry & 2u /* kSymB */) {
+  if ((f.symmetry & 2u /* kSymB */) && f.b_applicable != 0u && f.shape_b_applicable != 0u) {
     uint8_t scratch[kDevRecCap];
     bool changed = false;
     for (uint32_t i = 0; i < size; ++i) {
@@ -172,7 +183,7 @@ LM_FN bool DeviceFilterMatchRaypath(const DeviceFilterDesc& f, const uint8_t* pa
     }
     return true;
   }
-  ReduceBuffer_dev(buf, path_len, f.symmetry, f.sigma_a, f.d_applicable != 0u);
+  ReduceBuffer_dev(buf, path_len, f);
   for (uint32_t i = 0; i < path_len; ++i) {
     if (buf[i] != f.canonical_bytes[i]) {
       return false;
@@ -215,7 +226,7 @@ LM_FN bool DeviceFilterMatchEntryExit(const DeviceFilterDesc& f, const uint8_t* 
   for (uint32_t i = 0; i < ee_len; ++i) {
     buf[i] = ee[i];
   }
-  ReduceBuffer_dev(buf, ee_len, f.symmetry, f.sigma_a, f.d_applicable != 0u);
+  ReduceBuffer_dev(buf, ee_len, f);
   if (ee_len != f.canonical_len) {
     return false;
   }

@@ -133,8 +133,7 @@ inline bool DMirrorActive(bool d_applicable, int sigma_a, const GeometricSymmetr
 }
 
 // The full D6h: what every regular hexagonal prism and symmetric pyramid has. Named so that a
-// caller that must keep the pre-geometry rule on purpose (the GPU filter descriptor, whose device
-// kernels still hardcode it) says so instead of relying on a default.
+// caller that means the full group says so instead of relying on a default.
 constexpr GeometricSymmetry kFullHexagonalSymmetry{ 1, 0x3F, true };
 
 // Image of prism face i (0-based, i.e. face number 3+i) under the vertical mirror sigma_a, over a

@@ -295,6 +295,17 @@ _RAW_THRESHOLDS = {
     "ms_multi_crystal_filtered_bd":       (0.97, 0.97),
     "parity_single_ms_complex_filter":    (0.97, 0.97),
     "ms_multi_crystal_complex_filter":    (0.97, 0.97),
+    # Low-symmetry filter rows: the device reduction must narrow to the elements the crystal's
+    # shape has (GeometricSymmetry), as the CPU one does. Before it did, Metal merged the far-face
+    # orbit {4,6} into a P filter on a three-fold prism and the lower cone into a B filter on
+    # unequal cones. Measured 2026-09-27 (seed 42), before -> after the device reduction read the
+    # shape's symmetry:
+    #   parity_low_symmetry_p_filter:    metal ds 0.9971 -> 0.9974, metal/legacy Y 1.4142 -> 1.0005
+    #   parity_asymmetric_cone_b_filter: metal ds 0.9369 -> 0.9864, metal/legacy Y (2M rays, 1.81 at
+    #     0.5M) -> 1.0036; ray_num 4M because at 2M the post-fix ds sat at 0.9750, too close to 0.97.
+    # The P row's corr barely moves (the far-face orbit draws the same 22° ring); energy is its gate.
+    "parity_low_symmetry_p_filter":       (0.97, 0.97),
+    "parity_asymmetric_cone_b_filter":    (0.97, 0.97),
 }
 _T_PSNR_DB = 13.0  # uniform render-PSNR floor; see baseline.md threshold section.
 
@@ -511,3 +522,16 @@ def test_parity_multi_ms_complex_filter():
     # plan §C-A: multi-MS is unconditional 4-axis hard gate.
     _assert_energy_conservation("ms_multi_crystal_complex_filter", metal, legacy)
     _assert_metal_self_consistency("ms_multi_crystal_complex_filter", metal, legacy)
+
+
+# --- Low-symmetry shapes: device reduction follows the shape's symmetry ---- #
+
+@pytest.mark.slow
+@pytest.mark.parametrize("config_name", ["parity_low_symmetry_p_filter", "parity_asymmetric_cone_b_filter"])
+def test_parity_low_symmetry_filters(config_name):
+    (legacy, metal, _cpu), (cm, pm, cc, pc) = _run_parity(config_name)
+    print(f"[parity] {config_name}: metal ds={cm:.4f} psnr={pm:.2f}dB | cpu_backend ds={cc:.4f} psnr={pc:.2f}dB")
+    _assert_parity(config_name, cm, pm, cc, pc)
+    # Energy is the axis a symmetry over-merge moves first: the extra orbit adds light the
+    # legacy path filters out, while the image shape can stay close.
+    _assert_energy_conservation(config_name, metal, legacy)

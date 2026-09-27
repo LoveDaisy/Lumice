@@ -17,8 +17,11 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <iterator>
 #include <memory>
 #include <random>
+#include <set>
+#include <string>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -41,12 +44,8 @@ Crystal MakeHexPrism() {
 // d_applicable=true axis (roll anchored at 30°, sigma_a non-zero) vs the other variant (roll
 // anchored at 0). Same logic the Metal parity fixture uses
 // (test_metal_filter_match_parity.mm:MakeDApplicableAxis).
-//
-// Both variants are ones whose orientation ensemble admits P and B (uniform azimuth, horizontal
-// c-axis, full-turn uniform roll): the device kernels apply P and B unconditionally
-// (device_filter_desc.cpp FillCanonicalBytes), while FilterSpec applies them only where
-// detail::IsPApplicable / IsBApplicable hold, so on any other axis the two would disagree by
-// design — a known CPU/GPU gap, not what this parity check is about.
+// Both variants admit P and B as well (uniform azimuth, horizontal c-axis, full-turn uniform roll);
+// MakePOffAxis / MakeBOffAxis below are the ensembles that switch one of them off.
 AxisDistribution MakeAxis(bool d_applicable) {
   AxisDistribution d{};
   d.azimuth_dist.type = DistributionType::kUniform;
@@ -63,6 +62,21 @@ AxisDistribution MakeAxis(bool d_applicable) {
     d.roll_dist.center = 0.0f;
     d.roll_dist.spread = 360.0f;
   }
+  return d;
+}
+
+// Roll confined to a 60° window: not a full turn, so detail::IsPApplicable is false (and D with it).
+AxisDistribution MakePOffAxis() {
+  AxisDistribution d = MakeAxis(/*d_applicable=*/false);
+  d.roll_dist.spread = 60.0f;
+  return d;
+}
+
+// C-axis tilted 30° above the horizon: the ensemble is not symmetric about it, so
+// detail::IsBApplicable is false while P and D keep their full-turn roll.
+AxisDistribution MakeBOffAxis() {
+  AxisDistribution d = MakeAxis(/*d_applicable=*/true);
+  d.latitude_dist.center = 30.0f;
   return d;
 }
 
@@ -101,10 +115,10 @@ struct Fixture {
   std::vector<std::unique_ptr<FilterSpec>> host_specs;
 };
 
-Fixture BuildFixture(bool d_applicable_axis) {
+Fixture BuildFixture(const Crystal& crystal, const AxisDistribution& axis) {
   Fixture fx;
-  fx.crystal = MakeHexPrism();
-  fx.axis = MakeAxis(d_applicable_axis);
+  fx.crystal = crystal;
+  fx.axis = axis;
 
   auto push = [&](FilterConfig cfg) { fx.filter_configs.push_back(std::move(cfg)); };
 
@@ -221,6 +235,40 @@ Fixture BuildFixture(bool d_applicable_axis) {
                            FilterConfig::kFilterIn, std::move(or_clauses)));
   }
 
+  // 10: Raypath B {13,3} — an upper-cone face, so B has something to swap (13 <-> 23). Only a pyramid
+  // draws face 13; on a prism this filter simply never matches, on either side.
+  {
+    FilterConfig cfg{};
+    cfg.symmetry_ = FilterConfig::kSymB;
+    cfg.action_ = FilterConfig::kFilterIn;
+    RaypathFilterParam p;
+    p.raypath_ = std::vector<IdType>{ 13, 3 };
+    cfg.param_ = p;
+    push(cfg);
+  }
+  // 11: Raypath PBD {1,5} — a basal face, so B acts on a prism too (1 <-> 2).
+  {
+    FilterConfig cfg{};
+    cfg.symmetry_ = static_cast<uint8_t>(FilterConfig::kSymP | FilterConfig::kSymB | FilterConfig::kSymD);
+    cfg.action_ = FilterConfig::kFilterIn;
+    RaypathFilterParam p;
+    p.raypath_ = std::vector<IdType>{ 1, 5 };
+    cfg.param_ = p;
+    push(cfg);
+  }
+  // 12: EntryExit PBD (entry=14, exit=6).
+  {
+    FilterConfig cfg{};
+    cfg.symmetry_ = static_cast<uint8_t>(FilterConfig::kSymP | FilterConfig::kSymB | FilterConfig::kSymD);
+    cfg.action_ = FilterConfig::kFilterIn;
+    EntryExitFilterParam p;
+    p.entry_ = IdType{ 14 };
+    p.exit_ = IdType{ 6 };
+    p.min_len_ = 2;
+    cfg.param_ = p;
+    push(cfg);
+  }
+
   fx.descs.reserve(fx.filter_configs.size());
   fx.host_specs.reserve(fx.filter_configs.size());
   for (const auto& cfg : fx.filter_configs) {
@@ -229,8 +277,7 @@ Fixture BuildFixture(bool d_applicable_axis) {
       const auto* cp = std::get_if<ComplexFilterParam>(&cfg.param_);
       desc.sub_desc_start = static_cast<uint32_t>(fx.complex_subs.size());
       desc.and_terms_start = static_cast<uint32_t>(fx.and_term_counts.size());
-      detail::BuildComplexSubDescs(*cp, fx.crystal, desc.symmetry, desc.sigma_a, desc.d_applicable != 0u,
-                                   fx.complex_subs, fx.and_term_counts);
+      detail::BuildComplexSubDescs(*cp, fx.crystal, desc, fx.complex_subs, fx.and_term_counts);
     }
     fx.descs.push_back(desc);
     fx.host_specs.push_back(FilterSpec::Create(cfg, fx.crystal, fx.axis));
@@ -327,25 +374,86 @@ bool DeviceCheck(const Fixture& fx, const Ray& r) {
                                       /*poly_off=*/0u, r.dir, static_cast<uint32_t>(r.crystal_config_id));
 }
 
+// Host/device disagreements over `n_rays` random rays on one fixture; the first few are reported.
+size_t CountMismatches(const Fixture& fx, uint32_t seed, size_t n_rays, const char* label) {
+  std::mt19937 rng(seed);
+  auto rays = GenerateRays(fx, rng, n_rays, /*cap=*/15);
+  size_t mismatch = 0;
+  for (const auto& r : rays) {
+    bool host_b = HostCheck(fx, r);
+    bool dev_b = DeviceCheck(fx, r);
+    if (host_b != dev_b) {
+      ++mismatch;
+      if (mismatch <= 5) {
+        ADD_FAILURE() << "DeviceFilterCheck mismatch " << label << " filter_idx=" << r.filter_idx
+                      << " path_len=" << static_cast<int>(r.path_len) << " host=" << host_b << " dev=" << dev_b;
+      }
+    }
+  }
+  return mismatch;
+}
+
 TEST(DeviceFilterCheckHost, RaypathEntryExitDirCrystalComplex_ParityWithFilterSpec) {
   constexpr size_t kPerFixture = 100'000;
   for (int axis_d_app : { 0, 1 }) {
-    Fixture fx = BuildFixture(axis_d_app != 0);
-    std::mt19937 rng(0xCAFEBABEu + static_cast<uint32_t>(axis_d_app));
-    auto rays = GenerateRays(fx, rng, kPerFixture, /*cap=*/15);
-    size_t mismatch = 0;
-    for (const auto& r : rays) {
-      bool host_b = HostCheck(fx, r);
-      bool dev_b = DeviceCheck(fx, r);
-      if (host_b != dev_b) {
-        ++mismatch;
-        if (mismatch <= 5) {
-          ADD_FAILURE() << "DeviceFilterCheck mismatch axis_d_app=" << axis_d_app << " filter_idx=" << r.filter_idx
-                        << " path_len=" << static_cast<int>(r.path_len) << " host=" << host_b << " dev=" << dev_b;
-        }
-      }
+    Fixture fx = BuildFixture(MakeHexPrism(), MakeAxis(axis_d_app != 0));
+    const std::string label = "axis_d_app=" + std::to_string(axis_d_app);
+    size_t mismatch = CountMismatches(fx, 0xCAFEBABEu + static_cast<uint32_t>(axis_d_app), kPerFixture, label.c_str());
+    EXPECT_EQ(mismatch, 0u) << label << " kPerFixture=" << kPerFixture;
+  }
+}
+
+// The device reduction must narrow exactly where the host one does: to the elements the crystal's
+// shape has (GeometricSymmetry) and the orientation ensemble admits (IsPApplicable / IsBApplicable /
+// IsDApplicable). Shapes cover p_step 3 and 2, a single vertical mirror, and cones that differ (B
+// off); axes cover each ensemble condition switched off on the regular prism, where only the
+// ensemble can be the reason.
+TEST(DeviceFilterCheckHost, LowSymmetryShapesAndEnsembles_ParityWithFilterSpec) {
+  const float three_fold[6]{ 1.0f, 1.2f, 1.0f, 1.2f, 1.0f, 1.2f };
+  const float two_fold[6]{ 1.0f, 1.0f, 1.3f, 1.0f, 1.0f, 1.3f };
+  const float one_mirror[6]{ 1.0f, 1.2f, 1.3f, 1.3f, 1.2f, 1.0f };
+  struct Shape {
+    const char* name;
+    Crystal crystal;
+  };
+  const Shape shapes[] = {
+    { "regular_prism", MakeHexPrism() },
+    { "three_fold_prism", Crystal::CreatePrism(1.0f, three_fold) },
+    { "two_fold_prism", Crystal::CreatePrism(1.0f, two_fold) },
+    { "one_mirror_prism", Crystal::CreatePrism(1.0f, one_mirror) },
+    { "asymmetric_cones", Crystal::CreatePyramid(28.0f, 40.0f, 0.4f, 1.0f, 0.4f) },
+    { "three_fold_pyramid", Crystal::CreatePyramid(28.0f, 40.0f, 0.4f, 1.0f, 0.3f, three_fold) },
+  };
+  struct Ensemble {
+    const char* name;
+    AxisDistribution axis;
+  };
+  const Ensemble ensembles[] = {
+    { "full_sigma0", MakeAxis(false) },
+    { "full_sigma5", MakeAxis(true) },
+    { "p_off", MakePOffAxis() },
+    { "b_off", MakeBOffAxis() },
+  };
+  ASSERT_TRUE(detail::IsPApplicable(ensembles[1].axis) && detail::IsBApplicable(ensembles[1].axis));
+  ASSERT_FALSE(detail::IsPApplicable(ensembles[2].axis)) << "p_off axis no longer switches P off";
+  ASSERT_FALSE(detail::IsBApplicable(ensembles[3].axis)) << "b_off axis no longer switches B off";
+  ASSERT_TRUE(detail::IsPApplicable(ensembles[3].axis)) << "b_off axis must isolate B";
+  std::set<int> p_steps;
+  for (size_t i = 1; i < std::size(shapes); i++) {
+    EXPECT_NE(shapes[i].crystal.GeomSymmetry(), kFullHexagonalSymmetry) << shapes[i].name << " lost its low symmetry";
+    p_steps.insert(shapes[i].crystal.GeomSymmetry().p_step);
+  }
+  // The device P shift rounds to multiples of p_step; cover more than one non-trivial step.
+  EXPECT_TRUE(p_steps.count(2) == 1 && p_steps.count(3) == 1) << "shapes no longer cover p_step 2 and 3";
+
+  constexpr size_t kPerCombo = 100'000;
+  uint32_t seed = 0x5EED0625u;
+  for (const auto& shape : shapes) {
+    for (const auto& ens : ensembles) {
+      Fixture fx = BuildFixture(shape.crystal, ens.axis);
+      const std::string label = std::string(shape.name) + "/" + ens.name;
+      EXPECT_EQ(CountMismatches(fx, seed++, kPerCombo, label.c_str()), 0u) << label;
     }
-    EXPECT_EQ(mismatch, 0u) << "axis_d_app=" << axis_d_app << " kPerFixture=" << kPerFixture;
   }
 }
 
