@@ -473,7 +473,17 @@ extern "C" {
 // crystal's orientation distribution; it now applies P only when roll is invariant under a 60°
 // shift and B only when the zenith is symmetric about 90° with a uniform azimuth, so a Parry arc no
 // longer merges 3-5 with 4-6 and a plate no longer merges 1-3 with 2-3. Nothing is removed.
-#define LUMICE_API_VERSION 448
+//
+// ADDED (v4.49): LUMICE_CouldFilterMatchFace, a pure append — LUMICE_CouldCrystalHaveFace with the
+// filter's own P/B/D taken into account — and LUMICE_ExpandRaypathClass with its
+// LUMICE_SYMMETRY_SEMANTICS_* / LUMICE_MAX_RAYPATH_CLASS_MEMBERS constants. BEHAVIOR (v4.49): a FILTER's P/B/D is a
+// label equivalence again, as it was up to v4.46: P is the label six-fold rotation and B the label horizontal mirror
+// whatever the crystal's shape and orientation distribution, D reads the roll mean as before. The
+// narrowing v4.47 and v4.48 describe above now applies to the raypath-analysis list's grouping
+// only (one row = one physical class); LUMICE_GetCrystalSymmetry and LUMICE_IsPApplicable /
+// LUMICE_IsBApplicable keep their meaning and serve that grouping and the filter editor's hints.
+// No struct changed.
+#define LUMICE_API_VERSION 449
 #define LUMICE_MAX_RENDER_RESULTS 16
 #define LUMICE_MAX_STATS_RESULTS 1
 
@@ -2673,10 +2683,12 @@ int LUMICE_IsPApplicable(int roll_dist_type, float roll_full_range_deg);
 int LUMICE_IsBApplicable(int azimuth_dist_type, float azimuth_full_range_deg, int zenith_dist_type,
                          float zenith_center_deg, float zenith_full_range_deg);
 
-// Which symmetry elements a crystal's shape admits (v4.47). Raypath reduction under a filter's or
-// the analysis list's P/B/D uses only the elements the request names AND the crystal allows — a
-// prism with face_distance [1, 1.2, 1, 1.2, 1, 1.2] has a three-fold axis, not a six-fold one, and
-// P must not merge a near-face path with a far-face path. Read over the crystal as a random
+// Which symmetry elements a crystal's shape admits (v4.47). The raypath-analysis list's P/B/D
+// merges only the elements the request names AND the crystal allows — a prism with face_distance
+// [1, 1.2, 1, 1.2, 1, 1.2] has a three-fold axis, not a six-fold one, and a row must not hold a
+// near-face path together with a far-face path. A FILTER's P/B/D does not read this (v4.49): it is
+// a label equivalence, and these fields only tell the filter editor when ticking P/B/D merges paths
+// that are not physically equivalent. Read over the crystal as a random
 // ENSEMBLE: six face distances drawn i.i.d. from one distribution keep every element, because
 // rotating a draw relabels it into another equally likely draw; sync groups count.
 typedef struct LUMICE_CrystalSymmetry_ {
@@ -2688,20 +2700,22 @@ typedef struct LUMICE_CrystalSymmetry_ {
   // Non-zero when the horizontal mirror (B: basal 1<->2, upper cone <-> lower cone) is a symmetry.
   // Always non-zero for a prism; for a pyramid it needs matching cones.
   int horizontal_mirror;
-  // Non-zero when D acts on this crystal: the axis condition LUMICE_IsDApplicable reports AND the
-  // shape having the mirror that axis selects. What a "D has no effect" hint should read.
+  // Non-zero when D acts in the analysis list's physical grouping: the axis condition
+  // LUMICE_IsDApplicable reports AND the shape having the mirror that axis selects. (A filter's D
+  // acts whenever LUMICE_IsDApplicable does.)
   int d_effective;
-  // Non-zero when P acts on this crystal (v4.48): the axis condition LUMICE_IsPApplicable reports
-  // AND rotation_step < 6 (the shape has at least one rotation besides the identity).
+  // Non-zero when P acts in the analysis list's physical grouping (v4.48): the axis condition
+  // LUMICE_IsPApplicable reports AND rotation_step < 6 (at least one rotation besides the identity).
   int p_effective;
-  // Non-zero when B acts on this crystal (v4.48): the axis condition LUMICE_IsBApplicable reports
-  // AND horizontal_mirror.
+  // Non-zero when B acts in the analysis list's physical grouping (v4.48): the axis condition
+  // LUMICE_IsBApplicable reports AND horizontal_mirror.
   int b_effective;
 } LUMICE_CrystalSymmetry;
 
 // Fills *out for `crystal` (its shape, sync groups and axis). LUMICE_ERR_NULL_ARG on a NULL
 // argument; LUMICE_ERR_INVALID_VALUE on an unknown type; LUMICE_ERR_INVALID_CONFIG when the
-// parameters do not describe a crystal. This is core's own derivation, the one the reduction runs.
+// parameters do not describe a crystal. This is core's own derivation, the one the analysis list's
+// reduction runs.
 LUMICE_ErrorCode LUMICE_GetCrystalSymmetry(const LUMICE_CrystalParam* crystal, LUMICE_CrystalSymmetry* out);
 
 // Returns 0 when it is certain that no crystal drawn from `crystal` has face number `face` — its
@@ -2712,6 +2726,37 @@ LUMICE_ErrorCode LUMICE_GetCrystalSymmetry(const LUMICE_CrystalParam* crystal, L
 // answers that). The same check the engine logs as a warning when a scene binds such a filter to
 // such a crystal (v4.48).
 int LUMICE_CouldCrystalHaveFace(const LUMICE_CrystalParam* crystal, int face);
+
+// Returns 0 when a filter on `crystal` naming face `face` with P/B/D bit set `symmetry` (1 = P,
+// 2 = B, 4 = D, as LUMICE_FilterParam.symmetry) certainly matches no ray through it: neither the
+// face nor any face its symmetry relabels it to (D per the crystal's axis, as the engine applies it)
+// can exist, in LUMICE_CouldCrystalHaveFace's sense. "3-6" with P on face_distance
+// [2, 1, 2, 1, 2, 1] answers non-zero for face 3 — P relabels it to faces 4, 6 and 8, which exist.
+// Non-zero in every case LUMICE_CouldCrystalHaveFace answers non-zero. The check behind the
+// engine's scene-parse warning (v4.49).
+int LUMICE_CouldFilterMatchFace(const LUMICE_CrystalParam* crystal, int face, int symmetry);
+
+// The two meanings a P/B/D bit set has (v4.49). A FILTER's (and a colour ref's) is a label
+// equivalence: P relabels the prism faces by any multiple of 60 degrees, B swaps 1<->2 and the
+// upper and lower cones, whatever the crystal. The raypath-analysis list's merges only what is
+// physically equivalent on the crystal: its shape (LUMICE_GetCrystalSymmetry) and its orientation
+// distribution (LUMICE_IsPApplicable / LUMICE_IsBApplicable). D is the same in both.
+#define LUMICE_SYMMETRY_SEMANTICS_LABEL 0
+#define LUMICE_SYMMETRY_SEMANTICS_PHYSICAL 1
+// The most distinct face sequences one P/B/D class can hold: 6 rotations x 2 mirrors x 2 flips.
+#define LUMICE_MAX_RAYPATH_CLASS_MEMBERS 24
+
+// The face sequences equivalent to `faces[0..face_count)` under P/B/D bit set `symmetry` on
+// `crystal`, in the meaning `semantics` (LUMICE_SYMMETRY_SEMANTICS_*): the engine's own expansion,
+// each distinct sequence once, `faces` itself first. Writes *out_member_count sequences of
+// `face_count` ints each, back to back, into `out_faces`, which must hold
+// LUMICE_MAX_RAYPATH_CLASS_MEMBERS * face_count ints. LUMICE_ERR_NULL_ARG on a NULL pointer;
+// LUMICE_ERR_INVALID_VALUE on an unknown type or semantics, or face_count outside
+// 1..LUMICE_MAX_RAYPATH_SEGMENT_LEN; LUMICE_ERR_INVALID_CONFIG when the parameters do not describe
+// a crystal. The one way to tell whether an analysis row (a physical class) is also a label class
+// — what "exclude this row" needs to write a filter that removes exactly its members (v4.49).
+LUMICE_ErrorCode LUMICE_ExpandRaypathClass(const LUMICE_CrystalParam* crystal, const int* faces, int face_count,
+                                           int symmetry, int semantics, int* out_faces, int* out_member_count);
 
 // =============== Raypath Validation ===============
 // Validation state for raypath text input (GUI border color + OK gate).

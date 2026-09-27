@@ -587,7 +587,7 @@ void RenderRefRow(GuiState& state, ColorClassConfig& cls, size_t ref_idx, bool& 
   // MarkStructHardDirty call needed (see gui_state_reconcile.cpp
   // RaypathColorStructChanged; the operator== extension in gui_state.hpp is
   // what wires new fields into that diff).
-  RenderSymmetryCheckboxes(ref.sym_p, ref.sym_b, ref.sym_d, avail, "color_ref");
+  RenderSymmetryCheckboxes(ref.sym_p, ref.sym_b, ref.sym_d, avail, SymmetryCheckboxMeaning::kFilterLabel, "color_ref");
   if (!sym_editable) {
     ImGui::EndDisabled();
   }

@@ -6,9 +6,11 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <memory>
 #include <nlohmann/json.hpp>
 #include <string>
+#include <vector>
 
 #include "gui/analysis_panel.hpp"
 #include "gui/analysis_result.hpp"
@@ -241,6 +243,64 @@ TEST(RaypathAnalysisFilterExcludeChain, MultiSegmentChainIsRefusedAndExportsNoFi
   nlohmann::json doc;
   ASSERT_NO_THROW(doc = nlohmann::json::parse(CoreJson(g_state)));
   EXPECT_TRUE(!doc.contains("filter") || doc["filter"].empty());
+}
+
+// A row of the analysis list is a PHYSICAL class; a filter's P/B/D is a LABEL equivalence. On a
+// three-fold prism (face_distance [1, 1.2, 1, 1.2, 1, 1.2], random orientation) the list's P
+// merges 3-5 only with its 120-degree images 5-7 and 7-3; a filter "3-5, P" would also remove the
+// far-face rotations 4-6, 6-8 and 8-4, which the list shows as a separate row. So the new filter
+// carries no symmetry and names the row's three members, one OR row each: exactly the row, no
+// more (AC: a filter generated on a low-symmetry shape excludes no path outside the row).
+TEST(RaypathAnalysisFilterExcludeChain, LowSymmetryShapeExcludesExactlyTheRowsMembers) {
+  SeedUnfilteredPrismDocument();
+  const float three_fold[6]{ 1.0f, 1.2f, 1.0f, 1.2f, 1.0f, 1.2f };
+  for (int i = 0; i < 6; ++i) {
+    g_state.crystals[0].face_distance[i] = three_fold[i];
+  }
+  ASSERT_TRUE(AdoptAnalysisPayloadIfNew(g_state, OneChainResult(1)));
+  g_state.analysis_result.entries_symmetry = LUMICE_RAYPATH_SYMMETRY_P;
+  g_state.analysis.selected_entry = "3-5";
+  ASSERT_TRUE(ApplyExcludeSelectedRaypath(g_state));
+
+  ASSERT_EQ(g_state.filters.size(), 1u);
+  const FilterConfig& f = g_state.filters[0];
+  EXPECT_FALSE(f.sym_p || f.sym_b || f.sym_d) << "a label P here would also remove 4-6, 6-8 and 8-4";
+  std::vector<std::string> rows;
+  for (const SummandText& row : f.param) {
+    rows.push_back(row.text);
+  }
+  std::sort(rows.begin(), rows.end());
+  EXPECT_EQ(rows, (std::vector<std::string>{ "3-5", "5-7", "7-3" }));
+
+  // The export carries exactly those three raypaths, with no symmetry, composed under filter_out.
+  nlohmann::json doc;
+  ASSERT_NO_THROW(doc = nlohmann::json::parse(CoreJson(g_state)));
+  std::vector<nlohmann::json> exported;
+  for (const nlohmann::json& fj : doc["filter"]) {
+    if (fj["type"] == "raypath") {
+      exported.push_back(fj["raypath"]);
+      EXPECT_TRUE(!fj.contains("symmetry") || fj["symmetry"] == "") << fj.dump();
+    }
+  }
+  std::sort(exported.begin(), exported.end());
+  EXPECT_EQ(exported, (std::vector<nlohmann::json>{ { 3, 5 }, { 5, 7 }, { 7, 3 } }));
+}
+
+// A regular prism with a locked roll (a Parry-like ensemble): P is not a physical symmetry, so the
+// list's P leaves 3-5 alone in its row, and the filter names 3-5 alone — a label P would take
+// 4-6 (dark on a Parry arc) and the other rotations with it.
+TEST(RaypathAnalysisFilterExcludeChain, LockedRollExcludesOnlyTheRowItself) {
+  SeedUnfilteredPrismDocument();
+  g_state.crystals[0].roll = AxisDist{ AxisDistType::kGauss, 0.0f, 1.0f };
+  ASSERT_TRUE(AdoptAnalysisPayloadIfNew(g_state, OneChainResult(1)));
+  g_state.analysis_result.entries_symmetry = LUMICE_RAYPATH_SYMMETRY_P;
+  g_state.analysis.selected_entry = "3-5";
+  ASSERT_TRUE(ApplyExcludeSelectedRaypath(g_state));
+  ASSERT_EQ(g_state.filters.size(), 1u);
+  const FilterConfig& f = g_state.filters[0];
+  EXPECT_FALSE(f.sym_p || f.sym_b || f.sym_d);
+  ASSERT_EQ(f.param.size(), 1u);
+  EXPECT_EQ(f.param[0].text, "3-5");
 }
 
 }  // namespace

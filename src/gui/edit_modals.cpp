@@ -1614,13 +1614,13 @@ static ImVec4 ValidationFrameBgColor(LUMICE_RaypathValidationState state) {
 // removing a middle row cannot re-collide ImGui's internal id stack with a
 // leftover buffer.
 // The first face a valid row names that the crystal being edited can never have (its shape
-// leaves the face no area), or 0 when there is none. The engine's own answer
-// (LUMICE_CouldCrystalHaveFace), asked of the live crystal buffer so the note follows edits to the
-// shape as they are typed.
-static int FirstFaceTheCrystalLacks(const char* row_text, const LUMICE_CrystalParam& crystal) {
+// leaves the face no area) and that the filter's own P/B/D does not relabel onto a face it has, or
+// 0 when there is none. The engine's own answer (LUMICE_CouldFilterMatchFace), asked of the live
+// crystal buffer and checkbox state so the note follows edits as they are made.
+static int FirstFaceTheCrystalLacks(const char* row_text, const LUMICE_CrystalParam& crystal, int symmetry) {
   for (const auto& factor : ParseSummandText(row_text)) {
     for (int face : FactorFaceNumbers(factor)) {
-      if (LUMICE_CouldCrystalHaveFace(&crystal, face) == 0) {
+      if (LUMICE_CouldFilterMatchFace(&crystal, face, symmetry) == 0) {
         return face;
       }
     }
@@ -1632,6 +1632,9 @@ static void RenderSummandRowList() {
   const auto kind = CurrentValidationKind();
   LUMICE_CrystalParam crystal_param{};
   FillCrystalParam(g_crystal_buf, &crystal_param);
+  const int filter_symmetry = (g_filter_top.sym_p ? LUMICE_RAYPATH_SYMMETRY_P : 0) |
+                              (g_filter_top.sym_b ? LUMICE_RAYPATH_SYMMETRY_B : 0) |
+                              (g_filter_top.sym_d ? LUMICE_RAYPATH_SYMMETRY_D : 0);
   size_t delete_idx = static_cast<size_t>(-1);
 
   // Reserve exactly the width the trailing "x" SmallButton needs (glyph + horizontal
@@ -1682,7 +1685,7 @@ static void RenderSummandRowList() {
         case LUMICE_RAYPATH_VALID:
           // Valid text can still name a face this shape does not have: the row then matches
           // nothing through it. A warning, not an error — the filter commits as written.
-          if (const int face = FirstFaceTheCrystalLacks(row.text, crystal_param); face != 0) {
+          if (const int face = FirstFaceTheCrystalLacks(row.text, crystal_param, filter_symmetry); face != 0) {
             ImGui::PushStyleColor(ImGuiCol_Text, WarningTextColor());
             ImGui::TextWrapped("Row %zu: face %d does not exist on this crystal's shape, so this row matches nothing.",
                                i + 1, face);
@@ -1837,7 +1840,8 @@ static void RenderSharedFilterControls(const SymmetryAvailability& avail) {
     ImGui::SetTooltip("Hide rays matching the filter");
   }
 
-  RenderSymmetryCheckboxes(g_filter_top.sym_p, g_filter_top.sym_b, g_filter_top.sym_d, avail, "filter_modal");
+  RenderSymmetryCheckboxes(g_filter_top.sym_p, g_filter_top.sym_b, g_filter_top.sym_d, avail,
+                           SymmetryCheckboxMeaning::kFilterLabel, "filter_modal");
 }
 
 // Remove Filter — arms g_filter_remove_intent so ApplyBuffersToEntry writes

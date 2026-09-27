@@ -13,22 +13,36 @@ namespace lumice::gui {
 
 namespace {
 
+// Filter-side hints (kFilterLabel). A filter's P/B/D relabels face numbers whatever the crystal,
+// so the hint's job is to say when that merges paths that are not physically alike, and how to
+// select them exactly instead: untick the element and write each wanted path as its own row.
+#define LUMICE_EXACT_ROUTE "\nTo select them separately, untick it and write each path as its own row."
 constexpr const char* kDAxisTooltipText =
     "D applies when azimuth = uniform 360\xc2\xb0 and roll mean is a multiple of 30\xc2\xb0.\n"
     "Current config does not meet this condition, so D has no effect.";
 constexpr const char* kDShapeTooltipText =
     "This crystal's shape (face distances) is not mirror-symmetric about the plane its\n"
-    "roll selects, so D has no effect.";
+    "roll selects, so D merges paths that are not physically equivalent." LUMICE_EXACT_ROUTE;
 constexpr const char* kPAxisTooltipText =
-    "P applies when roll = uniform 360\xc2\xb0 (every 60\xc2\xb0 turn about the crystal's axis\n"
-    "equally likely). Current config does not meet this condition, so P has no effect.";
+    "Roll is not uniform 360\xc2\xb0, so a path and its 60\xc2\xb0 rotations are not equally likely\n"
+    "(a Parry arc lights 3-5, not 4-6). P still merges them." LUMICE_EXACT_ROUTE;
 constexpr const char* kBShapeTooltipText =
-    "The upper and lower pyramid parts differ (height or wedge angle),\n"
-    "so B has no effect on this crystal.";
+    "The upper and lower pyramid parts differ (height or wedge angle), so B merges\n"
+    "paths through different cones." LUMICE_EXACT_ROUTE;
 constexpr const char* kBAxisTooltipText =
-    "B applies when zenith is symmetric about 90\xc2\xb0 and azimuth = uniform 360\xc2\xb0\n"
-    "(either end of the crystal equally likely to point up).\n"
-    "Current config does not meet this condition, so B has no effect.";
+    "Zenith is not symmetric about 90\xc2\xb0 or azimuth is not uniform 360\xc2\xb0, so a path and its\n"
+    "B mirror (1<->2, 13..18<->23..28) are not equally likely. B still merges them." LUMICE_EXACT_ROUTE;
+
+constexpr const char* kPFilterHover = "P: also match every 60\xc2\xb0 rotation of the path's prism-face labels";
+constexpr const char* kBFilterHover = "B: also match the path with 1<->2 and 13..18<->23..28 swapped";
+constexpr const char* kDFilterHover = "D: also match the path mirrored in the plane the roll mean selects";
+constexpr const char* kPAnalysisHover =
+    "P: merge 60\xc2\xb0 rotations, only where each crystal's shape and orientation make them\n"
+    "physically equivalent (unlike a filter's P, which merges face labels)";
+constexpr const char* kBAnalysisHover =
+    "B: merge the 1<->2 / upper<->lower cone mirror, only where it is physically equivalent";
+constexpr const char* kDAnalysisHover =
+    "D: merge the vertical mirror the roll selects, only where it is physically equivalent";
 
 // Transparent SmallButton as a hover target for a tooltip (TextDisabled lacks a stable item ID
 // needed by the test engine). `icon_id` is the ImGui id of the button.
@@ -83,7 +97,8 @@ SymmetryAvailability SymmetryAvailabilityFor(const CrystalConfig& cr) {
 }
 
 void RenderSymmetryCheckboxes(bool& sym_p, bool& sym_b, bool& sym_d, const SymmetryAvailability& avail,
-                              const char* id_suffix) {
+                              SymmetryCheckboxMeaning meaning, const char* id_suffix) {
+  const bool physical = meaning == SymmetryCheckboxMeaning::kAnalysisPhysical;
   // P/B/D Checkboxes: unconditional under H5 (raypath / EE / AND mix all consume
   // crystal symmetry at the core layer). The pre-H5 `sym_active` gate was already
   // effectively constant.
@@ -91,22 +106,21 @@ void RenderSymmetryCheckboxes(bool& sym_p, bool& sym_b, bool& sym_d, const Symme
   std::snprintf(id_buf, sizeof(id_buf), "P##%s", id_suffix);
   Checkbox(id_buf, &sym_p);
   if (ImGui::IsItemHovered()) {
-    ImGui::SetTooltip("Prism-face reflection symmetry");
+    ImGui::SetTooltip("%s", physical ? kPAnalysisHover : kPFilterHover);
   }
-  if (!avail.p_axis) {
-    // The axis already rules P out; the shape's rotation step would add nothing.
+  if (!physical && !avail.p_axis) {
     std::snprintf(id_buf, sizeof(id_buf), ICON_FA_CIRCLE_INFO "##p_tooltip_icon_%s", id_suffix);
     InfoIcon(id_buf, kPAxisTooltipText);
-  } else if (avail.rotation_step != 1) {
-    char tip[192];
+  } else if (!physical && avail.rotation_step != 1) {
+    char tip[320];
     if (avail.rotation_step >= 6) {
       std::snprintf(tip, sizeof(tip),
-                    "This crystal's shape (face distances) has no rotational symmetry,\n"
-                    "so P has no effect.");
+                    "This crystal's shape (face distances) has no rotational symmetry, so P merges\n"
+                    "paths through faces that differ." LUMICE_EXACT_ROUTE);
     } else {
       std::snprintf(tip, sizeof(tip),
-                    "This crystal's shape (face distances) repeats only every %d\xc2\xb0,\n"
-                    "so P merges only paths rotated by multiples of that.",
+                    "This crystal's shape (face distances) repeats only every %d\xc2\xb0, so P also merges\n"
+                    "paths through faces that differ." LUMICE_EXACT_ROUTE,
                     avail.rotation_step * 60);
     }
     std::snprintf(id_buf, sizeof(id_buf), ICON_FA_CIRCLE_INFO "##p_tooltip_icon_%s", id_suffix);
@@ -116,16 +130,19 @@ void RenderSymmetryCheckboxes(bool& sym_p, bool& sym_b, bool& sym_d, const Symme
   std::snprintf(id_buf, sizeof(id_buf), "B##%s", id_suffix);
   Checkbox(id_buf, &sym_b);
   if (ImGui::IsItemHovered()) {
-    ImGui::SetTooltip("Basal-face reflection symmetry");
+    ImGui::SetTooltip("%s", physical ? kBAnalysisHover : kBFilterHover);
   }
-  if (!avail.b) {
+  if (!physical && !avail.b) {
     std::snprintf(id_buf, sizeof(id_buf), ICON_FA_CIRCLE_INFO "##b_tooltip_icon_%s", id_suffix);
     InfoIcon(id_buf, avail.b_axis ? kBShapeTooltipText : kBAxisTooltipText);
   }
   ImGui::SameLine();
   std::snprintf(id_buf, sizeof(id_buf), "D##%s", id_suffix);
   Checkbox(id_buf, &sym_d);
-  if (!avail.d) {
+  if (ImGui::IsItemHovered()) {
+    ImGui::SetTooltip("%s", physical ? kDAnalysisHover : kDFilterHover);
+  }
+  if (!physical && !avail.d) {
     std::snprintf(id_buf, sizeof(id_buf), ICON_FA_CIRCLE_INFO "##d_tooltip_icon_%s", id_suffix);
     InfoIcon(id_buf, avail.d_axis ? kDShapeTooltipText : kDAxisTooltipText);
   }

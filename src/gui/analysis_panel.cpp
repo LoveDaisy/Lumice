@@ -655,6 +655,40 @@ std::string JoinerForDisplay(std::string_view display) {
   return out;
 }
 
+namespace {
+
+// The members of `segment`'s class under P/B/D bits `symmetry` on crystal `cr`, in the meaning
+// `semantics` (LUMICE_SYMMETRY_SEMANTICS_*), each as "a-b-c" text, the segment itself first; empty
+// when the engine cannot answer.
+std::vector<std::string> RaypathClassMembers(const CrystalConfig& cr, const LUMICE_RaypathChainSegment& segment,
+                                             uint8_t symmetry, int semantics) {
+  const int n = std::max(0, std::min(segment.segment_len, LUMICE_MAX_RAYPATH_SEGMENT_LEN));
+  if (n == 0) {
+    return {};
+  }
+  LUMICE_CrystalParam param{};
+  FillCrystalParam(cr, &param);
+  std::vector<int> faces(static_cast<size_t>(LUMICE_MAX_RAYPATH_CLASS_MEMBERS) * static_cast<size_t>(n));
+  int count = 0;
+  if (LUMICE_ExpandRaypathClass(&param, segment.segment, n, symmetry, semantics, faces.data(), &count) != LUMICE_OK) {
+    return {};
+  }
+  std::vector<std::string> out;
+  for (int k = 0; k < count; ++k) {
+    std::string text;
+    for (int i = 0; i < n; ++i) {
+      if (i > 0) {
+        text += '-';
+      }
+      text += std::to_string(faces[static_cast<size_t>(k) * static_cast<size_t>(n) + static_cast<size_t>(i)]);
+    }
+    out.push_back(std::move(text));
+  }
+  return out;
+}
+
+}  // namespace
+
 bool ApplyExcludeSelectedRaypath(GuiState& state) {
   std::string why;
   if (EvaluateExcludeEligibility(state, &why) != ExcludeEligibility::kOk) {
@@ -756,22 +790,53 @@ bool ApplyExcludeSelectedRaypath(GuiState& state) {
     FilterConfig filter;
     filter.name = std::string("Exclude ") + e->display;
     filter.action = 1;  // filter_out
-    // The row was counted under the symmetry the list on show was reduced with, so the filter
-    // matches it under the same bits: fewer and "3-5" would leave orientation-equivalent paths
-    // the row merged in the picture; more and it would remove paths the user saw as separate
-    // rows.
+    // The row is a PHYSICAL class: the paths the list merged under its symmetry on this crystal's
+    // shape and orientation. A filter's P/B/D is a LABEL equivalence, so the filter must remove
+    // exactly that class: fewer members would leave paths the row merged in the picture; more
+    // would remove paths the user saw as separate rows (or that the list never merged, e.g. the
+    // far-face rotations on a three-fold prism). When the label class under the list's bits is
+    // the row's class, the bits say it; otherwise the filter lists the members one row each,
+    // with no symmetry.
     const uint8_t sym = state.analysis_result.entries_symmetry;
-    filter.sym_p = (sym & LUMICE_RAYPATH_SYMMETRY_P) != 0;
-    filter.sym_b = (sym & LUMICE_RAYPATH_SYMMETRY_B) != 0;
-    filter.sym_d = (sym & LUMICE_RAYPATH_SYMMETRY_D) != 0;
-    filter.param = rows;
+    const CrystalConfig& crystal = state.crystals[static_cast<size_t>(*pool)];
+    std::vector<std::string> physical =
+        RaypathClassMembers(crystal, e->chain[0], sym, LUMICE_SYMMETRY_SEMANTICS_PHYSICAL);
+    std::vector<std::string> label = RaypathClassMembers(crystal, e->chain[0], sym, LUMICE_SYMMETRY_SEMANTICS_LABEL);
+    std::sort(label.begin(), label.end());
+    std::vector<std::string> physical_sorted = physical;
+    std::sort(physical_sorted.begin(), physical_sorted.end());
+    const bool label_is_the_row = !physical.empty() && physical_sorted == label;
+    uint8_t filter_sym = 0;  // no symmetry unless the label class is the row's
+    if (label_is_the_row) {
+      filter_sym = sym;
+      filter.param = rows;
+    } else {
+      if (physical.empty()) {
+        // The engine could not expand the row: the row's own labelling alone, which never removes a
+        // path the row does not hold.
+        GUI_LOG_WARNING("[Analysis] could not expand raypath {}'s class; excluding that labelling only",
+                        rp.raypath_text);
+        physical.push_back(rp.raypath_text);
+      }
+      std::string alternatives;
+      for (const std::string& m : physical) {
+        if (!alternatives.empty()) {
+          alternatives += ';';
+        }
+        alternatives += m;
+      }
+      filter.param = FromLegacyRaypath(RaypathParams{ alternatives });
+    }
+    filter.sym_p = (filter_sym & LUMICE_RAYPATH_SYMMETRY_P) != 0;
+    filter.sym_b = (filter_sym & LUMICE_RAYPATH_SYMMETRY_B) != 0;
+    filter.sym_d = (filter_sym & LUMICE_RAYPATH_SYMMETRY_D) != 0;
     // The first filter-less entry is written through the pool primitive, which appends the slot
     // and propagates the id to the rest of the (crystal, no-filter) group — i.e. to every other
     // entry of the crystal that had no filter.
     WriteFilterToPool(state, *first_unfiltered, filter);
     remember_share();
-    GUI_LOG_INFO("[Analysis] excluded raypath {} on crystal pool {} (filter \"{}\", symmetry {})", rp.raypath_text,
-                 *pool, filter.name, static_cast<int>(sym));
+    GUI_LOG_INFO("[Analysis] excluded raypath {} on crystal pool {} (filter \"{}\", symmetry {}, {} rows)",
+                 rp.raypath_text, *pool, filter.name, static_cast<int>(filter_sym), filter.param.size());
   }
   return true;
 }
@@ -1274,14 +1339,17 @@ void RenderSymmetryControls(GuiState& state, LUMICE_Server* server) {
   auto& a = state.analysis;
   ImGui::AlignTextToFramePadding();
   ImGui::TextUnformatted("Symmetry");
-  ImGui::SameLine();
-  // Scene-wide: no single crystal to explain, so no hints (the reduction still honours each
-  // crystal's own shape and axis).
-  RenderSymmetryCheckboxes(a.symmetry_p, a.symmetry_b, a.symmetry_d, SymmetryAvailability{}, "analysis_symmetry");
   if (ImGui::IsItemHovered()) {
     ImGui::SetTooltip(
-        "Merge raypaths that are the same up to this symmetry. Re-reads the result on hand; does not re-run.");
+        "Merges only raypaths that are physically equivalent on their crystal (its shape and\n"
+        "orientation), so one row is one physical class. A filter's P/B/D is different: it\n"
+        "merges face labels. Re-reads the result on hand; does not re-run.");
   }
+  ImGui::SameLine();
+  // Scene-wide: no single crystal to explain, so no per-crystal hints (the reduction still honours
+  // each crystal's own shape and axis).
+  RenderSymmetryCheckboxes(a.symmetry_p, a.symmetry_b, a.symmetry_d, SymmetryAvailability{},
+                           SymmetryCheckboxMeaning::kAnalysisPhysical, "analysis_symmetry");
   RefreshAnalysisEntries(state, server);
   // The list could not be re-read under the bits asked for (the server has left the analysis
   // session): say which bits it IS showing rather than let the checkboxes claim otherwise.

@@ -30,19 +30,30 @@ bool IsDApplicableGuiAxis(const AxisDist& az, const AxisDist& roll);
 bool IsPApplicableGuiAxis(const AxisDist& roll);
 bool IsBApplicableGuiAxis(const AxisDist& az, const AxisDist& zenith);
 
-// Which of P / B / D actually act on one crystal — the engine's own answer (LUMICE_GetCrystalSymmetry),
-// not a GUI rule. A reduction uses only the elements the checkbox asks for AND the crystal allows:
-// its axis (orientation distribution) for all three, and its SHAPE for all three (a prism with
-// face_distance [1, 1.2, 1, 1.2, 1, 1.2] is three-fold, so P rotates only by 120°; unlike upper
-// and lower cones rule B out).
-// Default-constructed = everything acts, which is what a caller with no single crystal passes.
+// Which of P / B / D are PHYSICAL symmetries of one crystal — the engine's own answer
+// (LUMICE_GetCrystalSymmetry), not a GUI rule: its axis (orientation distribution) for all three,
+// and its SHAPE for all three (a prism with face_distance [1, 1.2, 1, 1.2, 1, 1.2] is three-fold, so
+// only 120° rotations are; unlike upper and lower cones rule B out). The raypath-analysis list
+// merges only under these. A filter's P/B/D does not read them — it is a label equivalence — so for
+// a filter they say when a ticked element merges paths that are not physically equivalent.
+// Default-constructed = everything holds, which is what a caller with no single crystal passes.
 struct SymmetryAvailability {
-  int rotation_step = 1;  // shape: 1: P uses all six rotations; 2 / 3: only multiples of 120° / 180°; 6: none
-  bool b = true;          // B acts: axis condition AND the shape has the horizontal mirror
-  bool d = true;          // D acts: axis condition AND the shape has the mirror that axis selects
-  bool d_axis = true;     // the axis condition alone — picks which reason the D hint gives
-  bool p_axis = true;     // P's axis condition alone; when false P does nothing whatever the shape
+  int rotation_step = 1;  // shape: 1: all six rotations; 2 / 3: only multiples of 120° / 180°; 6: none
+  bool b = true;          // B physical: axis condition AND the shape has the horizontal mirror
+  bool d = true;          // D physical: axis condition AND the shape has the mirror that axis selects
+  bool d_axis = true;     // D's axis condition alone — a filter's D acts exactly when this holds
+  bool p_axis = true;     // P's axis condition alone
   bool b_axis = true;     // B's axis condition alone — picks which reason the B hint gives
+};
+
+// What the P/B/D checkboxes being drawn mean — named at every call site, never inferred from the
+// availability passed in (core's SymmetrySemantics, as the GUI sees it).
+enum class SymmetryCheckboxMeaning {
+  // A filter or a colour ref: label equivalence. Hints say when a ticked element merges physically
+  // inequivalent paths on this crystal, and how to select them exactly instead.
+  kFilterLabel,
+  // The raypath-analysis list: merges only physically equivalent paths, per crystal.
+  kAnalysisPhysical,
 };
 
 // The availability for crystal `cr`, asked of the engine through the GUI's single crystal
@@ -52,11 +63,13 @@ SymmetryAvailability SymmetryAvailabilityFor(const CrystalConfig& cr);
 
 // Renders the "P B D" checkbox row (ImGui). `id_suffix` disambiguates ImGui
 // item IDs across call sites (mirrors the existing "##filter_modal" convention;
-// pass e.g. "filter_modal" or "color_ref"). Every checkbox stays writable; one
-// whose element does not (fully) act on this crystal is followed by a small
-// info icon whose tooltip says why.
+// pass e.g. "filter_modal" or "color_ref"). Every checkbox stays writable. Under
+// kFilterLabel, one whose element is not a physical symmetry of this crystal is
+// followed by a small info icon whose tooltip says what ticking it merges (or,
+// for D off-axis, that it does nothing); under kAnalysisPhysical the hover text
+// says the list merges only physically equivalent paths.
 void RenderSymmetryCheckboxes(bool& sym_p, bool& sym_b, bool& sym_d, const SymmetryAvailability& avail,
-                              const char* id_suffix);
+                              SymmetryCheckboxMeaning meaning, const char* id_suffix);
 
 }  // namespace lumice::gui
 
