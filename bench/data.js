@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1790491715248,
+  "lastUpdate": 1790491717843,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9524,50 +9524,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "5d04ed2b510cf8da1331d69d8a0ec9d064e8688a",
-          "message": "Merge pull request #328 from LoveDaisy/feat/gui-import-capability-boundary\n\nfeat(gui): warn on intentionally unsupported capabilities when importing core/CLI configs",
-          "timestamp": "2026-09-09T11:28:47+08:00",
-          "tree_id": "5fb7bd048fbeeb0720b37f54dc406c24b4f696f7",
-          "url": "https://github.com/LoveDaisy/ice_halo_sim/commit/5d04ed2b510cf8da1331d69d8a0ec9d064e8688a"
-        },
-        "date": 1788925163996,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 78.9,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 99.5,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 93.9,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 92,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "fe4c0778ad67356b7107c49b9f2d1758751cbab0",
           "message": "Merge pull request #329 from LoveDaisy/fix/raypath-load-path-syntax-gate\n\nfix(gui): reject malformed raypath summand rows on the .lmc load path",
           "timestamp": "2026-09-09T11:50:12+08:00",
@@ -13867,6 +13823,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 90.1,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "cd82b68f1c2ab9e12e9b4f3b56f752998e9e3f34",
+          "message": "Merge pull request #428 from LoveDaisy/chore/analyze-product-form-docs\n\ndocs(raypath-analysis): Analyze as the second product core (§5.1.8)",
+          "timestamp": "2026-09-27T14:38:00+08:00",
+          "tree_id": "79d92ce67a0cff0ef0251d949186ab2eade8ef5c",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/cd82b68f1c2ab9e12e9b4f3b56f752998e9e3f34"
+        },
+        "date": 1790491717078,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 94.5,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 100.2,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 98.1,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 96,
             "unit": "%"
           }
         ]
