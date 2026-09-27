@@ -314,6 +314,8 @@ RaypathReduceContext BuildRaypathReduceContext(const SceneConfig& scene) {
       RaypathCrystalReduceParams p;
       p.d_applicable = detail::IsDApplicable(setting.crystal_.axis_);
       p.sigma_a = p.d_applicable ? detail::ComputeSigmaA(setting.crystal_.axis_.roll_dist.center) : 0;
+      p.p_applicable = true;  // Step-2 checkpoint: pre-fix behavior
+      p.b_applicable = true;
       // The shape symmetry every drawn instance of this design carried
       // (MakeCrystal stamps the same function's result), so the read-time
       // reduction and a filter on this crystal reduce under one group.
@@ -402,9 +404,9 @@ RaypathHistogramResult ReduceRaypathHistogram(const RaypathHistogramResult& fine
                   seg.crystal_id);
         logged_unknown_crystal = true;
       }
-      id = table.Intern(
-          id, seg.crystal_id,
-          ReduceRaypathByPeriod(seg.segment, symmetry, p.sigma_a, p.d_applicable, kHexagonalFnPeriod, p.geom));
+      id = table.Intern(id, seg.crystal_id,
+                        ReduceRaypathByPeriod(seg.segment, symmetry, p.sigma_a, p.d_applicable, p.p_applicable,
+                                              p.b_applicable, kHexagonalFnPeriod, p.geom));
     }
     auto& dst = merged[id];
     if (dst.chain_.empty()) {

@@ -28,10 +28,13 @@ namespace {
 // computed under a smaller group would never meet the device's, so a symmetry filter on a
 // low-symmetry crystal would silently match nothing; keeping the two on one rule leaves the GPU
 // where it was (over-merging on such crystals — a known CPU/GPU gap) instead of making it worse.
+// The orientation ensemble's P and B conditions (detail::IsPApplicable / IsBApplicable) are held
+// at "admitted" for the same reason: the device kernels apply P and B unconditionally, so a
+// canonical form computed without them would never meet the device's either.
 void FillCanonicalBytes(const Crystal& crystal, const std::vector<IdType>& rp, uint8_t symmetry, int sigma_a,
                         bool d_applicable, DeviceFilterDesc& out) {
-  auto canonical =
-      ReduceRaypathByPeriod(rp, symmetry, sigma_a, d_applicable, crystal.FnPeriod(), kFullHexagonalSymmetry);
+  auto canonical = ReduceRaypathByPeriod(rp, symmetry, sigma_a, d_applicable, /*p_applicable=*/true,
+                                         /*b_applicable=*/true, crystal.FnPeriod(), kFullHexagonalSymmetry);
   out.canonical_len = static_cast<uint8_t>(std::min<size_t>(canonical.size(), kMaxHits));
   for (uint8_t i = 0; i < out.canonical_len; ++i) {
     out.canonical_bytes[i] = static_cast<uint8_t>(canonical[i] & 0xFF);

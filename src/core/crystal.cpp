@@ -578,26 +578,33 @@ std::vector<IdType> PCanonicalShiftByPeriod(const std::vector<IdType>& rp, int f
 }
 
 // Whether each symmetry element takes part, given request, ensemble and geometry: the one place the
-// three halves are intersected for Crystal's reduction and expansion.
+// three halves are intersected for Crystal's reduction and expansion. `p_applicable` /
+// `b_applicable` / `d_applicable` are the orientation ensemble's halves (detail::Is*Applicable);
+// `geom` (including geom.b_applicable) is the shape's.
+bool PActive(uint8_t symmetry, bool p_applicable) {
+  return (symmetry & FilterConfig::kSymP) && p_applicable;
+}
+
 bool DActive(uint8_t symmetry, int sigma_a, bool d_applicable, const GeometricSymmetry& geom) {
   return (symmetry & FilterConfig::kSymD) && DMirrorActive(d_applicable, sigma_a, geom);
 }
 
-bool BActive(uint8_t symmetry, const GeometricSymmetry& geom) {
-  return (symmetry & FilterConfig::kSymB) && geom.b_applicable;
+bool BActive(uint8_t symmetry, bool b_applicable, const GeometricSymmetry& geom) {
+  return (symmetry & FilterConfig::kSymB) && b_applicable && geom.b_applicable;
 }
 
 }  // namespace
 
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 std::vector<IdType> ReduceRaypathByPeriod(const std::vector<IdType>& rp, uint8_t symmetry, int sigma_a,
-                                          bool d_applicable, int fn_period, const GeometricSymmetry& geom) {
+                                          bool d_applicable, bool p_applicable, bool b_applicable, int fn_period,
+                                          const GeometricSymmetry& geom) {
   if (symmetry == FilterConfig::kSymNone || fn_period < 0) {
     return rp;
   }
 
   std::vector<IdType> reduced_rp = rp;
-  if (symmetry & FilterConfig::kSymP) {
+  if (PActive(symmetry, p_applicable)) {
     reduced_rp = PCanonicalShiftByPeriod(reduced_rp, fn_period, geom.p_step);
   }
 
@@ -616,7 +623,7 @@ std::vector<IdType> ReduceRaypathByPeriod(const std::vector<IdType>& rp, uint8_t
     // When kSymP is also enabled, the D-image may no longer be P-canonical
     // (first pri shifted by sigma_a); re-canonicalize before lex comparison
     // so same orbit always reduces to the same representative.
-    if (symmetry & FilterConfig::kSymP) {
+    if (PActive(symmetry, p_applicable)) {
       rp_reflected = PCanonicalShiftByPeriod(rp_reflected, fn_period, geom.p_step);
     }
     if (rp_reflected < reduced_rp) {
@@ -624,7 +631,7 @@ std::vector<IdType> ReduceRaypathByPeriod(const std::vector<IdType>& rp, uint8_t
     }
   }
 
-  if (BActive(symmetry, geom)) {
+  if (BActive(symmetry, b_applicable, geom)) {
     // B reflection: basal 1↔2 and pyramid upper[13..18]↔lower[23..28], applied together.
     // Generate the B-reflected candidate and keep the lexicographically smaller one.
     std::vector<IdType> rp_b_reflected = reduced_rp;
@@ -650,28 +657,29 @@ std::vector<IdType> ReduceRaypathByPeriod(const std::vector<IdType>& rp, uint8_t
 }
 
 std::vector<IdType> Crystal::ReduceRaypath(const std::vector<IdType>& rp, uint8_t symmetry) const {
-  return ReduceRaypath(rp, symmetry, 0, false);
+  return ReduceRaypath(rp, symmetry, 0, false, true, true);
 }
 
 std::vector<IdType> Crystal::ReduceRaypath(const std::vector<IdType>& rp, uint8_t symmetry, int sigma_a,
-                                           bool d_applicable) const {
-  return ReduceRaypathByPeriod(rp, symmetry, sigma_a, d_applicable, fn_period_, geom_symmetry_);
+                                           bool d_applicable, bool p_applicable, bool b_applicable) const {
+  return ReduceRaypathByPeriod(rp, symmetry, sigma_a, d_applicable, p_applicable, b_applicable, fn_period_,
+                               geom_symmetry_);
 }
 
 std::vector<std::vector<IdType>> Crystal::ExpandRaypath(const std::vector<IdType>& rp, uint8_t symmetry) const {
-  return ExpandRaypath(rp, symmetry, 0, false);
+  return ExpandRaypath(rp, symmetry, 0, false, true, true);
 }
 
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 std::vector<std::vector<IdType>> Crystal::ExpandRaypath(const std::vector<IdType>& rp, uint8_t symmetry, int sigma_a,
-                                                        bool d_applicable) const {
+                                                        bool d_applicable, bool p_applicable, bool b_applicable) const {
   std::vector<std::vector<IdType>> result;
   result.emplace_back(rp);
   if (symmetry == FilterConfig::kSymNone || fn_period_ < 0) {
     return result;
   }
 
-  if (symmetry & FilterConfig::kSymP) {
+  if (PActive(symmetry, p_applicable)) {
     // Only the rotations the shape admits: multiples of p_step (none when p_step >= fn_period_).
     const int step = geom_symmetry_.p_step > 0 ? geom_symmetry_.p_step : fn_period_;
     for (int i = step; i < fn_period_; i += step) {
@@ -722,7 +730,7 @@ std::vector<std::vector<IdType>> Crystal::ExpandRaypath(const std::vector<IdType
     }
   }
 
-  if (BActive(symmetry, geom_symmetry_)) {
+  if (BActive(symmetry, b_applicable, geom_symmetry_)) {
     // B reflection: basal 1↔2, pyramid upper[13..18]↔lower[23..28], prism unchanged.
     // Both swaps are part of the same transformation and applied together.
     auto size = result.size();

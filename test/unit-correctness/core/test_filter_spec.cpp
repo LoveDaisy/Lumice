@@ -63,13 +63,13 @@ std::string FormatRecorder(const RaypathRecorder& rp) {
 
 ::testing::AssertionResult VerifyReduceRecorderOracle(const Crystal& crystal, uint8_t symmetry, int sigma_a,
                                                       bool d_applicable, const std::vector<IdType>& rp_seed) {
-  auto oracle_vec = crystal.ReduceRaypath(rp_seed, symmetry, sigma_a, d_applicable);
+  auto oracle_vec = crystal.ReduceRaypath(rp_seed, symmetry, sigma_a, d_applicable, true, true);
   auto oracle_rec = ToRecorder(oracle_vec);
 
   auto actual = ToRecorder(rp_seed);
   // ToRecorder yields inline-only recorders (rp_seed ≤ 5 elements), so it is
   // safe to canonicalise data_ in-place via the buffer-level ReduceBuffer.
-  detail::ReduceBuffer(actual.data_, actual.size_, symmetry, sigma_a, d_applicable, crystal.FnPeriod(),
+  detail::ReduceBuffer(actual.data_, actual.size_, symmetry, sigma_a, d_applicable, true, true, crystal.FnPeriod(),
                        crystal.GeomSymmetry());
 
   if (actual != oracle_rec) {
@@ -298,7 +298,7 @@ constexpr float kSigmaARollDeg[6] = { 0.0f, 150.0f, 120.0f, 90.0f, 60.0f, 30.0f 
 ::testing::AssertionResult VerifyMatchOrbitInvariant(FilterSpec* spec, const Crystal& crystal,
                                                      const std::vector<IdType>& seed_rp, uint8_t symmetry, int sigma_a,
                                                      bool d_applicable) {
-  auto orbit = crystal.ExpandRaypath(seed_rp, symmetry, sigma_a, d_applicable);
+  auto orbit = crystal.ExpandRaypath(seed_rp, symmetry, sigma_a, d_applicable, true, true);
   if (orbit.empty()) {
     return ::testing::AssertionFailure() << "ExpandRaypath returned empty orbit for seed=" << FormatRaypath(seed_rp);
   }
@@ -471,7 +471,7 @@ TEST(FilterSpec_AntiPattern, NoPerRayReinit_ComplexFilter_PD_SigmaA5) {
 
   std::vector<RaySeg> batch;
   std::vector<RaypathRecorder> batch_rec;
-  auto orbit = pyramid.ExpandRaypath({ 14, 6 }, kSym, /*sigma_a=*/5, /*d_applicable=*/true);
+  auto orbit = pyramid.ExpandRaypath({ 14, 6 }, kSym, /*sigma_a=*/5, /*d_applicable=*/true, true, true);
   for (const auto& rp : orbit) {
     batch.push_back(MakeRay());
     batch_rec.push_back(ToRecorder(rp));
@@ -503,14 +503,14 @@ TEST(FilterSpec_MultiCrystal, IndependentCanonical) {
   ASSERT_NE(prism_spec, nullptr);
   ASSERT_NE(pyr_spec, nullptr);
 
-  auto prism_orbit = prism.ExpandRaypath({ 3, 5 }, kSym, /*sigma_a=*/0, /*d_applicable=*/false);
+  auto prism_orbit = prism.ExpandRaypath({ 3, 5 }, kSym, /*sigma_a=*/0, /*d_applicable=*/false, true, true);
   for (const auto& rp : prism_orbit) {
     EXPECT_TRUE(SpecMatch(prism_spec.get(), rp))
         << "prism orbit member " << FormatRaypath(rp) << " not matched by prism spec";
     EXPECT_FALSE(SpecMatch(pyr_spec.get(), rp))
         << "prism orbit member " << FormatRaypath(rp) << " matched by pyramid spec (canonical leak)";
   }
-  auto pyr_orbit = pyramid.ExpandRaypath({ 14, 6 }, kSym, /*sigma_a=*/0, /*d_applicable=*/false);
+  auto pyr_orbit = pyramid.ExpandRaypath({ 14, 6 }, kSym, /*sigma_a=*/0, /*d_applicable=*/false, true, true);
   for (const auto& rp : pyr_orbit) {
     EXPECT_TRUE(SpecMatch(pyr_spec.get(), rp))
         << "pyramid orbit member " << FormatRaypath(rp) << " not matched by pyramid spec";
@@ -853,7 +853,7 @@ TEST(EntryExitSpec_Match, PBD_OrbitInvariant) {
     auto spec = MakeEESpec(prism, IdType{ 3 }, IdType{ 5 }, /*min_len=*/1, /*max_len=*/std::nullopt, kSym,
                            kSigmaARollDeg[sigma_a]);
     ASSERT_NE(spec, nullptr);
-    auto orbit = prism.ExpandRaypath({ 3, 5 }, kSym, sigma_a, /*d_applicable=*/true);
+    auto orbit = prism.ExpandRaypath({ 3, 5 }, kSym, sigma_a, /*d_applicable=*/true, true, true);
     ASSERT_FALSE(orbit.empty());
     for (size_t i = 0; i < orbit.size(); i++) {
       SCOPED_TRACE("sigma_a=" + std::to_string(sigma_a) + " orbit[" + std::to_string(i) +

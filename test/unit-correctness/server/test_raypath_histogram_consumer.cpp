@@ -765,7 +765,7 @@ Seg ExpectedSegment(const SimData& batch, const Seg& rp) {
   const AxisDistribution& axis = batch.crystal_axis_dists_[0];
   const bool d_applicable = detail::IsDApplicable(axis);
   const int sigma_a = d_applicable ? detail::ComputeSigmaA(axis.roll_dist.center) : 0;
-  return crystal.ReduceRaypath(rp, kSymAll, sigma_a, d_applicable);
+  return crystal.ReduceRaypath(rp, kSymAll, sigma_a, d_applicable, true, true);
 }
 
 class Halo22 : public ::testing::Test {
@@ -1251,8 +1251,8 @@ constexpr double kFixtureTotalOverK = 0.5;  // (15 + 5) / 40
 RaypathHistogramResult FinestFixture() {
   RaypathHistogramResult r;
   r.roi_mode_ = RaypathRoiMode::kFullSky;
-  r.reduce_ctx_.crystal_params_[1] = RaypathCrystalReduceParams{ 0, true, kFullHexagonalSymmetry };
-  r.reduce_ctx_.crystal_params_[2] = RaypathCrystalReduceParams{ 0, false, kFullHexagonalSymmetry };
+  r.reduce_ctx_.crystal_params_[1] = RaypathCrystalReduceParams{ 0, true, true, true, kFullHexagonalSymmetry };
+  r.reduce_ctx_.crystal_params_[2] = RaypathCrystalReduceParams{ 0, false, true, true, kFullHexagonalSymmetry };
   r.reduce_ctx_.layer_multi_crystal_ = { false };
   r.other_energy_ = 5.0;
   r.other_count_ = 50;
@@ -1312,13 +1312,13 @@ TEST(ReadTimeReduction, RowCountIsMonotoneAndSumsAreConservedOverTheFourSymmetri
   EXPECT_NE(Find(p, "3-7"), nullptr);
   // P|B|D: two rows, whose segments are what the reduction authority says.
   EXPECT_EQ(pbd.entries_[0].chain_[0].segment,
-            ReduceRaypathByPeriod({ 4, 6 }, kSymAll, 0, true, 6, kFullHexagonalSymmetry));
+            ReduceRaypathByPeriod({ 4, 6 }, kSymAll, 0, true, true, true, 6, kFullHexagonalSymmetry));
   EXPECT_EQ(pbd.entries_[0].chain_[0].segment,
-            ReduceRaypathByPeriod({ 3, 7 }, kSymAll, 0, true, 6, kFullHexagonalSymmetry));
+            ReduceRaypathByPeriod({ 3, 7 }, kSymAll, 0, true, true, true, 6, kFullHexagonalSymmetry));
   EXPECT_DOUBLE_EQ(pbd.entries_[0].energy_, 12.0);
   EXPECT_EQ(pbd.entries_[0].count_, 120u);
   EXPECT_EQ(pbd.entries_[1].chain_[0].segment,
-            ReduceRaypathByPeriod({ 2, 3, 5 }, kSymAll, 0, true, 6, kFullHexagonalSymmetry));
+            ReduceRaypathByPeriod({ 2, 3, 5 }, kSymAll, 0, true, true, true, 6, kFullHexagonalSymmetry));
   EXPECT_DOUBLE_EQ(pbd.entries_[1].energy_, 3.0);
   EXPECT_EQ(pbd.entries_[1].count_, 30u);
   EXPECT_EQ(pbd.entries_[0].display_, "3-5");
@@ -1354,7 +1354,8 @@ TEST(ReadTimeReduction, MergedRowErrorIsTheOrbitSumAndRecordScalarsPassThrough) 
   auto orbit_of = [&finest](const RaypathHistogramEntry& e, uint8_t sym) {
     size_t n = 0;
     for (const auto& f : finest.entries_) {
-      if (ReduceRaypathByPeriod(f.chain_[0].segment, sym, 0, true, 6, kFullHexagonalSymmetry) == e.chain_[0].segment) {
+      if (ReduceRaypathByPeriod(f.chain_[0].segment, sym, 0, true, true, true, 6, kFullHexagonalSymmetry) ==
+          e.chain_[0].segment) {
         n++;
       }
     }
@@ -1388,8 +1389,8 @@ TEST(ReadTimeReduction, DIsAppliedPerLayerWithThatLayersCrystalParameters) {
   // crystal 1 is {3,5}'s D-image; on crystal 2 it is not, so the two chains
   // {3,7}->{3,7} and {3,5}->{3,5} merge on layer 0 only, and stay two rows.
   RaypathHistogramResult finest;
-  finest.reduce_ctx_.crystal_params_[1] = RaypathCrystalReduceParams{ 0, true, kFullHexagonalSymmetry };
-  finest.reduce_ctx_.crystal_params_[2] = RaypathCrystalReduceParams{ 0, false, kFullHexagonalSymmetry };
+  finest.reduce_ctx_.crystal_params_[1] = RaypathCrystalReduceParams{ 0, true, true, true, kFullHexagonalSymmetry };
+  finest.reduce_ctx_.crystal_params_[2] = RaypathCrystalReduceParams{ 0, false, true, true, kFullHexagonalSymmetry };
   finest.reduce_ctx_.layer_multi_crystal_ = { false, false };
   auto add = [&finest](Seg a, Seg b, double energy) {
     RaypathHistogramEntry e;
@@ -1419,7 +1420,7 @@ TEST(ReadTimeReduction, RingEnergiesAreSummedElementwiseAndTheConeEchoIsKept) {
   finest.roi_mode_ = RaypathRoiMode::kCone;
   finest.cone_ring_count_ = 3;
   finest.cone_radius_rad_ = 0.25f;
-  finest.reduce_ctx_.crystal_params_[1] = RaypathCrystalReduceParams{ 0, false, kFullHexagonalSymmetry };
+  finest.reduce_ctx_.crystal_params_[1] = RaypathCrystalReduceParams{ 0, false, true, true, kFullHexagonalSymmetry };
   finest.reduce_ctx_.layer_multi_crystal_ = { false };
   auto add = [&finest](Seg seg, std::vector<double> rings) {
     RaypathHistogramEntry e;

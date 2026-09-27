@@ -340,6 +340,11 @@ class Crystal {
    * @param rp Raypath (face index sequence)
    * @param symmetry Symmetry flags (P, B, D)
    * @return Reduced raypath
+   *
+   * Knows no orientation ensemble, so it assumes the conservative answer for every element:
+   * D, P and B are all treated as not admitted by the ensemble (no reduction at all). A caller
+   * that holds an axis distribution uses the full overload with detail::DeriveDSymmetryParams,
+   * detail::IsPApplicable and detail::IsBApplicable.
    */
   std::vector<IdType> ReduceRaypath(const std::vector<IdType>& rp, uint8_t symmetry) const;
 
@@ -348,11 +353,16 @@ class Crystal {
    * @param rp Raypath (face index sequence)
    * @param symmetry Symmetry flags (P, B, D)
    * @param sigma_a σ-mirror parameter (0..5); ignored when d_applicable=false
-   * @param d_applicable Whether D symmetry should be applied
+   * @param d_applicable Whether the orientation ensemble admits D (detail::IsDApplicable)
+   * @param p_applicable Whether the orientation ensemble admits P (detail::IsPApplicable)
+   * @param b_applicable Whether the orientation ensemble admits B (detail::IsBApplicable)
    * @return Reduced raypath
+   *
+   * The three *_applicable flags are the ensemble's halves; the shape's halves are
+   * GeomSymmetry(). An element acts only when the request, its ensemble flag and the shape allow it.
    */
-  std::vector<IdType> ReduceRaypath(const std::vector<IdType>& rp, uint8_t symmetry, int sigma_a,
-                                    bool d_applicable) const;
+  std::vector<IdType> ReduceRaypath(const std::vector<IdType>& rp, uint8_t symmetry, int sigma_a, bool d_applicable,
+                                    bool p_applicable, bool b_applicable) const;
   // The reduction rule itself lives in the free function ReduceRaypathByPeriod below; this
   // member supplies the crystal's fn_period_ and GeomSymmetry() and nothing else.
 
@@ -361,6 +371,8 @@ class Crystal {
    * @param rp Raypath (face index sequence)
    * @param symmetry Symmetry flags (P, B, D)
    * @return Expanded raypaths (all symmetric variants)
+   *
+   * Same conservative ensemble assumption as the two-argument ReduceRaypath: nothing expands.
    */
   std::vector<std::vector<IdType>> ExpandRaypath(const std::vector<IdType>& rp, uint8_t symmetry) const;
 
@@ -369,11 +381,13 @@ class Crystal {
    * @param rp Raypath (face index sequence)
    * @param symmetry Symmetry flags (P, B, D)
    * @param sigma_a σ-mirror parameter (0..5); ignored when d_applicable=false
-   * @param d_applicable Whether D symmetry should be applied
+   * @param d_applicable Whether the orientation ensemble admits D (detail::IsDApplicable)
+   * @param p_applicable Whether the orientation ensemble admits P (detail::IsPApplicable)
+   * @param b_applicable Whether the orientation ensemble admits B (detail::IsBApplicable)
    * @return Expanded raypaths (all symmetric variants)
    */
   std::vector<std::vector<IdType>> ExpandRaypath(const std::vector<IdType>& rp, uint8_t symmetry, int sigma_a,
-                                                 bool d_applicable) const;
+                                                 bool d_applicable, bool p_applicable, bool b_applicable) const;
 
   /**
    * @brief Get refractive index for a given wavelength
@@ -455,13 +469,16 @@ class Crystal {
 // kHexagonalFnPeriod above); a negative period means "no symmetry defined" and the input is
 // returned as is, as is the input under
 // symmetry == FilterConfig::kSymNone. `sigma_a` and `d_applicable` are the axis-derived D
-// parameters (detail::ComputeSigmaA / detail::IsDApplicable). `geom` is the crystal's shape
-// symmetry: P rotates only by multiples of geom.p_step, D is applied only when the D bit is set,
-// d_applicable is true AND geom admits mirror sigma_a, B only when the B bit is set and
-// geom.b_applicable. The reduced element set is the request intersected with what the geometry
-// allows — never more.
+// parameters (detail::ComputeSigmaA / detail::IsDApplicable); `p_applicable` and `b_applicable`
+// are the axis-derived P and B conditions (detail::IsPApplicable / detail::IsBApplicable) — the
+// orientation ensemble's halves. `geom` is the crystal's shape symmetry, the other half: P rotates
+// only when the P bit is set and p_applicable, and then only by multiples of geom.p_step; D is
+// applied only when the D bit is set, d_applicable is true AND geom admits mirror sigma_a; B only
+// when the B bit is set, b_applicable AND geom.b_applicable. The reduced element set is the
+// request intersected with what the ensemble and the geometry allow — never more.
 std::vector<IdType> ReduceRaypathByPeriod(const std::vector<IdType>& rp, uint8_t symmetry, int sigma_a,
-                                          bool d_applicable, int fn_period, const GeometricSymmetry& geom);
+                                          bool d_applicable, bool p_applicable, bool b_applicable, int fn_period,
+                                          const GeometricSymmetry& geom);
 
 namespace detail {
 // Internal — not part of public API.

@@ -109,7 +109,7 @@ std::vector<IdType> OracleReduce(const Crystal& crystal, const AxisDistribution&
                                  const std::vector<IdType>& rp) {
   bool d_applicable = detail::IsDApplicable(axis);
   int sigma_a = d_applicable ? detail::ComputeSigmaA(axis.roll_dist.center) : 0;
-  return crystal.ReduceRaypath(rp, symmetry, sigma_a, d_applicable);
+  return crystal.ReduceRaypath(rp, symmetry, sigma_a, d_applicable, true, true);
 }
 
 std::string SegmentString(const std::vector<IdType>& seg) {

@@ -97,8 +97,8 @@ TEST_F(FilterTest, SymmetryRoundTrip_None) {
 
 // ExpandRaypath: verify unique hashes (D enabled via sigma_a=0, d_applicable=true)
 TEST_F(FilterTest, ExpandRaypath_UniqueHashes) {
-  auto expanded =
-      crystal_.ExpandRaypath({ 3, 5 }, FilterConfig::kSymP | FilterConfig::kSymB | FilterConfig::kSymD, 0, true);
+  auto expanded = crystal_.ExpandRaypath({ 3, 5 }, FilterConfig::kSymP | FilterConfig::kSymB | FilterConfig::kSymD, 0,
+                                         true, true, true);
   EXPECT_EQ(expanded.size(), 12u);
 
   RaypathHash h;
@@ -541,7 +541,7 @@ TEST(ValidateFaceNumberTextTest, FaceOutsideAnyKindSet_IsInvalid) {
 TEST(SymmetryB_PyramidSwap, UpperPyramid_ExpandsToLower) {
   Crystal pyramid = Crystal::CreatePyramid(1.0f, 1.0f, 1.0f);
 
-  auto expanded = pyramid.ExpandRaypath({ 13, 5 }, FilterConfig::kSymB, 0, false);
+  auto expanded = pyramid.ExpandRaypath({ 13, 5 }, FilterConfig::kSymB, 0, false, true, true);
   bool found_lower = false;
   for (const auto& rp : expanded) {
     for (auto fn : rp) {
@@ -559,21 +559,21 @@ TEST(SymmetryB_PyramidSwap, UpperPyramid_ExpandsToLower) {
 // D symmetry with sigma_a=0: reflected path {3,5} < original {3,7}, so reduction returns {3,5}
 TEST(ReduceRaypath4Param, D_SigmaA0_ReflectedSmaller) {
   Crystal prism = Crystal::CreatePrism(1.0f);
-  auto result = prism.ReduceRaypath({ 3, 7 }, FilterConfig::kSymD, 0, true);
+  auto result = prism.ReduceRaypath({ 3, 7 }, FilterConfig::kSymD, 0, true, true, true);
   EXPECT_EQ(result, (std::vector<IdType>{ 3, 5 }));
 }
 
 // D symmetry with sigma_a=5: reflected path {5,3} < original {6,8}, so reduction returns {5,3}
 TEST(ReduceRaypath4Param, D_SigmaA5_ReflectedSmaller) {
   Crystal prism = Crystal::CreatePrism(1.0f);
-  auto result = prism.ReduceRaypath({ 6, 8 }, FilterConfig::kSymD, 5, true);
+  auto result = prism.ReduceRaypath({ 6, 8 }, FilterConfig::kSymD, 5, true, true, true);
   EXPECT_EQ(result, (std::vector<IdType>{ 5, 3 }));
 }
 
 // B symmetry: original {13,5} < reflected {23,5}, so reduction keeps original
 TEST(ReduceRaypath4Param, B_OriginalSmaller) {
   Crystal pyramid = Crystal::CreatePyramid(1.0f, 1.0f, 1.0f);
-  auto result = pyramid.ReduceRaypath({ 13, 5 }, FilterConfig::kSymB, 0, false);
+  auto result = pyramid.ReduceRaypath({ 13, 5 }, FilterConfig::kSymB, 0, false, true, true);
   EXPECT_EQ(result, (std::vector<IdType>{ 13, 5 }));
 }
 
@@ -583,7 +583,7 @@ TEST(ReduceRaypath4Param, B_OriginalSmaller) {
 // {14,6} < {18,6} → returns {14,6}. Before fix: bug returned {18,6} (D noop on pyramid).
 TEST(ReduceRaypath4Param, D_Pyramid_SigmaA0_FaceReflected) {
   Crystal pyramid = Crystal::CreatePyramid(1.0f, 1.0f, 1.0f);
-  auto result = pyramid.ReduceRaypath({ 18, 6 }, FilterConfig::kSymD, 0, true);
+  auto result = pyramid.ReduceRaypath({ 18, 6 }, FilterConfig::kSymD, 0, true, true, true);
   EXPECT_EQ(result, (std::vector<IdType>{ 14, 6 }));
 }
 
@@ -591,14 +591,14 @@ TEST(ReduceRaypath4Param, D_Pyramid_SigmaA0_FaceReflected) {
 // Reflected {14,7,23} < {18,5,23} → returns {14,7,23}.
 TEST(ReduceRaypath4Param, D_Pyramid_SigmaA0_MixedPath) {
   Crystal pyramid = Crystal::CreatePyramid(1.0f, 1.0f, 1.0f);
-  auto result = pyramid.ReduceRaypath({ 18, 5, 23 }, FilterConfig::kSymD, 0, true);
+  auto result = pyramid.ReduceRaypath({ 18, 5, 23 }, FilterConfig::kSymD, 0, true, true, true);
   EXPECT_EQ(result, (std::vector<IdType>{ 14, 7, 23 }));
 }
 
 // sigma_a=0: pyramid faces 13 (pri=0) and 16 (pri=3) are D fixed points → unchanged.
 TEST(ReduceRaypath4Param, D_Pyramid_SigmaA0_FixedPoint) {
   Crystal pyramid = Crystal::CreatePyramid(1.0f, 1.0f, 1.0f);
-  auto result = pyramid.ReduceRaypath({ 13, 16 }, FilterConfig::kSymD, 0, true);
+  auto result = pyramid.ReduceRaypath({ 13, 16 }, FilterConfig::kSymD, 0, true, true, true);
   EXPECT_EQ(result, (std::vector<IdType>{ 13, 16 }));
 }
 
@@ -607,7 +607,7 @@ TEST(ReduceRaypath4Param, D_Pyramid_SigmaA0_FixedPoint) {
 // Reflected {14,8} < {17,3} → returns {14,8}.
 TEST(ReduceRaypath4Param, D_Pyramid_SigmaA5_FaceReflected) {
   Crystal pyramid = Crystal::CreatePyramid(1.0f, 1.0f, 1.0f);
-  auto result = pyramid.ReduceRaypath({ 17, 3 }, FilterConfig::kSymD, 5, true);
+  auto result = pyramid.ReduceRaypath({ 17, 3 }, FilterConfig::kSymD, 5, true, true, true);
   EXPECT_EQ(result, (std::vector<IdType>{ 14, 8 }));
 }
 
@@ -616,7 +616,7 @@ TEST(ReduceRaypath4Param, D_Pyramid_SigmaA5_FaceReflected) {
 // sigma_a=0: D-reflect {14,6} → {18,6} (different), expansion has 2 unique entries.
 TEST(ExpandRaypath4Param, D_Pyramid_SigmaA0_TwoVariants) {
   Crystal pyramid = Crystal::CreatePyramid(1.0f, 1.0f, 1.0f);
-  auto expanded = pyramid.ExpandRaypath({ 14, 6 }, FilterConfig::kSymD, 0, true);
+  auto expanded = pyramid.ExpandRaypath({ 14, 6 }, FilterConfig::kSymD, 0, true, true, true);
   ASSERT_EQ(expanded.size(), 2u);
   bool found_18 = false;
   for (const auto& rp : expanded) {
@@ -631,7 +631,7 @@ TEST(ExpandRaypath4Param, D_Pyramid_SigmaA0_TwoVariants) {
 // Before fix: D skipped pyramid faces, yielding only 10 unique paths.
 TEST(ExpandRaypath4Param, D_Pyramid_SigmaA0_PD_12Paths) {
   Crystal pyramid = Crystal::CreatePyramid(1.0f, 1.0f, 1.0f);
-  auto expanded = pyramid.ExpandRaypath({ 18, 6 }, FilterConfig::kSymP | FilterConfig::kSymD, 0, true);
+  auto expanded = pyramid.ExpandRaypath({ 18, 6 }, FilterConfig::kSymP | FilterConfig::kSymD, 0, true, true, true);
   EXPECT_EQ(expanded.size(), 12u);
 
   RaypathHash h;
@@ -657,7 +657,7 @@ TEST(ExpandRaypath4Param, D_Pyramid_SigmaA0_PD_12Paths) {
 // sigma_a=5: D-reflect {14,8} → {17,3}. Expansion has 2 unique entries.
 TEST(ExpandRaypath4Param, D_Pyramid_SigmaA5_TwoVariants) {
   Crystal pyramid = Crystal::CreatePyramid(1.0f, 1.0f, 1.0f);
-  auto expanded = pyramid.ExpandRaypath({ 14, 8 }, FilterConfig::kSymD, 5, true);
+  auto expanded = pyramid.ExpandRaypath({ 14, 8 }, FilterConfig::kSymD, 5, true, true, true);
   ASSERT_EQ(expanded.size(), 2u);
   bool found_17_3 = false;
   for (const auto& rp : expanded) {
@@ -679,11 +679,11 @@ TEST(ReduceRaypath_OrbitInvariant, PD_Pyramid_AllSigmaA) {
   Crystal pyramid = Crystal::CreatePyramid(1.0f, 1.0f, 1.0f);
   constexpr uint8_t kSym = FilterConfig::kSymP | FilterConfig::kSymD;
   for (int sigma_a = 0; sigma_a < 6; sigma_a++) {
-    auto orbit = pyramid.ExpandRaypath({ 14, 6 }, kSym, sigma_a, true);
+    auto orbit = pyramid.ExpandRaypath({ 14, 6 }, kSym, sigma_a, true, true, true);
     ASSERT_EQ(orbit.size(), 12u) << "orbit size mismatch at sigma_a=" << sigma_a;
-    auto first = pyramid.ReduceRaypath(orbit[0], kSym, sigma_a, true);
+    auto first = pyramid.ReduceRaypath(orbit[0], kSym, sigma_a, true, true, true);
     for (size_t i = 1; i < orbit.size(); i++) {
-      auto reduced = pyramid.ReduceRaypath(orbit[i], kSym, sigma_a, true);
+      auto reduced = pyramid.ReduceRaypath(orbit[i], kSym, sigma_a, true, true, true);
       EXPECT_EQ(reduced, first) << "orbit member " << i << " reduces to different canonical at sigma_a=" << sigma_a;
     }
   }
@@ -692,8 +692,8 @@ TEST(ReduceRaypath_OrbitInvariant, PD_Pyramid_AllSigmaA) {
 TEST(ReduceRaypath_OrbitInvariant, PD_Pyramid_KnownBugCase_SigmaA5) {
   Crystal pyramid = Crystal::CreatePyramid(1.0f, 1.0f, 1.0f);
   constexpr uint8_t kSym = FilterConfig::kSymP | FilterConfig::kSymD;
-  auto r1 = pyramid.ReduceRaypath({ 14, 6 }, kSym, 5, true);
-  auto r2 = pyramid.ReduceRaypath({ 18, 6 }, kSym, 5, true);
+  auto r1 = pyramid.ReduceRaypath({ 14, 6 }, kSym, 5, true, true, true);
+  auto r2 = pyramid.ReduceRaypath({ 18, 6 }, kSym, 5, true, true, true);
   EXPECT_EQ(r1, r2) << "Same orbit must map to same canonical form";
 }
 
@@ -701,11 +701,11 @@ TEST(ReduceRaypath_OrbitInvariant, PD_Prism_AllSigmaA) {
   Crystal prism = Crystal::CreatePrism(1.0f);
   constexpr uint8_t kSym = FilterConfig::kSymP | FilterConfig::kSymD;
   for (int sigma_a = 0; sigma_a < 6; sigma_a++) {
-    auto orbit = prism.ExpandRaypath({ 3, 7 }, kSym, sigma_a, true);
+    auto orbit = prism.ExpandRaypath({ 3, 7 }, kSym, sigma_a, true, true, true);
     ASSERT_GE(orbit.size(), 2u);
-    auto first = prism.ReduceRaypath(orbit[0], kSym, sigma_a, true);
+    auto first = prism.ReduceRaypath(orbit[0], kSym, sigma_a, true, true, true);
     for (const auto& member : orbit) {
-      EXPECT_EQ(prism.ReduceRaypath(member, kSym, sigma_a, true), first)
+      EXPECT_EQ(prism.ReduceRaypath(member, kSym, sigma_a, true, true, true), first)
           << "prism orbit member reduces differently at sigma_a=" << sigma_a;
     }
   }
@@ -715,11 +715,11 @@ TEST(ReduceRaypath_OrbitInvariant, D_Only_Pyramid_AllSigmaA) {
   Crystal pyramid = Crystal::CreatePyramid(1.0f, 1.0f, 1.0f);
   constexpr uint8_t kSym = FilterConfig::kSymD;
   for (int sigma_a = 0; sigma_a < 6; sigma_a++) {
-    auto orbit = pyramid.ExpandRaypath({ 14, 6 }, kSym, sigma_a, true);
+    auto orbit = pyramid.ExpandRaypath({ 14, 6 }, kSym, sigma_a, true, true, true);
     ASSERT_EQ(orbit.size(), 2u) << "D-only orbit must have 2 members at sigma_a=" << sigma_a;
-    auto first = pyramid.ReduceRaypath(orbit[0], kSym, sigma_a, true);
+    auto first = pyramid.ReduceRaypath(orbit[0], kSym, sigma_a, true, true, true);
     for (const auto& member : orbit) {
-      EXPECT_EQ(pyramid.ReduceRaypath(member, kSym, sigma_a, true), first)
+      EXPECT_EQ(pyramid.ReduceRaypath(member, kSym, sigma_a, true, true, true), first)
           << "D-only orbit member reduces differently at sigma_a=" << sigma_a;
     }
   }
