@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1790489015038,
+  "lastUpdate": 1790489018888,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -4770,54 +4770,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "61afdda60a81f3800fe9d39d0f1790efbed2eb82",
-          "message": "Merge pull request #326 from LoveDaisy/ci/cuda-test-tu-compile-coverage\n\nci: compile the CUDA test TUs (close the CUDA×BUILD_TEST empty intersection)",
-          "timestamp": "2026-09-09T09:01:05+08:00",
-          "tree_id": "d8015a4a11ce1b395d085be4867bade1cd75f056",
-          "url": "https://github.com/LoveDaisy/ice_halo_sim/commit/61afdda60a81f3800fe9d39d0f1790efbed2eb82"
-        },
-        "date": 1788916300005,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 1000537.7,
-            "unit": "rays/sec",
-            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 1221757.8,
-            "unit": "rays/sec",
-            "extra": "CPU: Neoverse-N2\\nCores: 4"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 820672.5,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 7763 64-Core Processor\\nCores: 4"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 809410.3,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 9V74 80-Core Processor                \\nCores: 4"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "5d04ed2b510cf8da1331d69d8a0ec9d064e8688a",
           "message": "Merge pull request #328 from LoveDaisy/feat/gui-import-capability-boundary\n\nfeat(gui): warn on intentionally unsupported capabilities when importing core/CLI configs",
           "timestamp": "2026-09-09T11:28:47+08:00",
@@ -9506,6 +9458,54 @@ window.BENCHMARK_DATA = {
             "value": 590784.4,
             "unit": "rays/sec",
             "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "bbe3d1883d9873540b5709ec8aa616be79897b36",
+          "message": "Merge pull request #427 from LoveDaisy/chore/raypath-analysis-compute-timing\n\ndocs(raypath-analysis): compute location moves per module maturity",
+          "timestamp": "2026-09-27T13:51:45+08:00",
+          "tree_id": "f291db49905b10460d4a5110faf832aca1be33b0",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/bbe3d1883d9873540b5709ec8aa616be79897b36"
+        },
+        "date": 1790489018162,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 939759.8,
+            "unit": "rays/sec",
+            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 1026820.8,
+            "unit": "rays/sec",
+            "extra": "CPU: Neoverse-N2\\nCores: 4"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 767976.7,
+            "unit": "rays/sec",
+            "extra": "CPU: INTEL(R) XEON(R) PLATINUM 8573C\\nCores: 4"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 908829.4,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 9V45 96-Core Processor                \\nCores: 4"
           }
         ]
       }
