@@ -1457,6 +1457,7 @@ void ExpectCanonicalEmptyCrystal(const Crystal& c, const char* who) {
   // on the success path), and GetFn must reject every index rather than read
   // out of a null table.
   EXPECT_EQ(c.FnPeriod(), -1) << who;
+  EXPECT_EQ(c.GeomSymmetry(), GeometricSymmetry{}) << who;
   EXPECT_EQ(c.GetFn(0), kInvalidId) << who;
   EXPECT_EQ(c.config_id_, kInvalidId) << who;
   // On-demand triangulation of an empty geometry must yield an empty mesh, not
@@ -1574,6 +1575,115 @@ TEST(EmptyCrystalContract, MakeCrystalCanReturnTheEmptyStateFromRandomizedParams
                            << "this test exists to pin is no longer exercised by these parameters";
   EXPECT_GT(populated_cnt, 0u) << "the sweep produced only degenerate draws — parameters are unrealistic "
                                << "and the test says nothing about production behaviour";
+}
+
+// ---------------------------------------------------------------------------
+// GeometricSymmetry of a crystal ENSEMBLE (DeriveGeometricSymmetry over a param).
+// The per-shape truth for fixed values is audited against the built face planes
+// in test_reduce_raypath_audit.cpp (H6); these cases pin what only the param
+// form can express: random draws and sync groups.
+// ---------------------------------------------------------------------------
+
+PrismCrystalParam PrismOf(const Distribution& face) {
+  PrismCrystalParam p;
+  p.h_ = Distribution{ DistributionType::kNoRandom, 1.0f, 0.0f };
+  for (auto& d : p.d_) {
+    d = face;
+  }
+  return p;
+}
+
+TEST(GeometricSymmetryEnsemble, IidRandomFaceDistancesKeepTheFullGroup) {
+  // No single draw is symmetric, but the ensemble is: rotating a drawn crystal relabels its faces
+  // into another draw of equal probability.
+  const auto p = PrismOf(Distribution{ DistributionType::kGaussian, 1.0f, 0.1f });
+  EXPECT_EQ(DeriveGeometricSymmetry(p), kFullHexagonalSymmetry);
+}
+
+TEST(GeometricSymmetryEnsemble, OneFaceWithADifferentSpreadBreaksEveryElementMovingIt) {
+  auto p = PrismOf(Distribution{ DistributionType::kGaussian, 1.0f, 0.1f });
+  p.d_[0] = Distribution{ DistributionType::kGaussian, 1.0f, 0.2f };
+  const auto g = DeriveGeometricSymmetry(p);
+  EXPECT_EQ(g.p_step, 6);
+  // Only the mirror fixing face 0 survives: sigma_0 (i -> -i).
+  EXPECT_EQ(g.d_valid_sigma_mask, 0b000001);
+  EXPECT_TRUE(g.b_applicable);
+}
+
+TEST(GeometricSymmetryEnsemble, SyncGroupsMustMapOntoSyncGroups) {
+  // Faces 0, 2, 4 share one draw; 1, 3, 5 draw independently, all from the same distribution.
+  // Rotating by two faces maps the shared triple onto itself (three-fold); by one face it would
+  // send the shared triple onto three independent faces, which is a different joint distribution.
+  auto p = PrismOf(Distribution{ DistributionType::kGaussian, 1.0f, 0.1f });
+  p.sync_group_[kShapeScalarFace0 + 0] = 1;
+  p.sync_group_[kShapeScalarFace0 + 2] = 1;
+  p.sync_group_[kShapeScalarFace0 + 4] = 1;
+  const auto g = DeriveGeometricSymmetry(p);
+  EXPECT_EQ(g.p_step, 2);
+  EXPECT_EQ(g.d_valid_sigma_mask, 0b010101);
+  EXPECT_TRUE(g.b_applicable);
+  // All six faces in one group: every face takes the same draw — a regular prism of random size.
+  for (int i = 0; i < 6; i++) {
+    p.sync_group_[kShapeScalarFace0 + i] = 1;
+  }
+  EXPECT_EQ(DeriveGeometricSymmetry(p), kFullHexagonalSymmetry);
+}
+
+TEST(GeometricSymmetryEnsemble, AGroupMemberTakesItsLeadersDrawNotItsOwnDistribution) {
+  // Face 1 declares a different distribution but is synced to face 0, so it is drawn as face 0 is —
+  // a constant 1.2 — and the other faces are the constant 1.0: face_distance [1.2, 1.2, 1, 1, 1, 1].
+  auto p = PrismOf(Distribution{ DistributionType::kNoRandom, 1.0f, 0.0f });
+  p.d_[0] = Distribution{ DistributionType::kNoRandom, 1.2f, 0.0f };
+  p.d_[1] = Distribution{ DistributionType::kGaussian, 5.0f, 3.0f };
+  p.sync_group_[kShapeScalarFace0 + 0] = 1;
+  p.sync_group_[kShapeScalarFace0 + 1] = 1;
+  const auto g = DeriveGeometricSymmetry(p);
+  EXPECT_EQ(g.p_step, 6);
+  // The mirror swapping faces 0 and 1 (i -> 1 - i) is the only one.
+  EXPECT_EQ(g.d_valid_sigma_mask, 0b000010);
+}
+
+TEST(GeometricSymmetryEnsemble, PyramidBNeedsInterchangeableCones) {
+  PyramidCrystalParam p;
+  p.h_prs_ = Distribution{ DistributionType::kNoRandom, 1.0f, 0.0f };
+  for (auto& d : p.d_) {
+    d = Distribution{ DistributionType::kNoRandom, 1.0f, 0.0f };
+  }
+  p.h_pyr_u_ = Distribution{ DistributionType::kGaussian, 0.4f, 0.1f };
+  p.h_pyr_l_ = Distribution{ DistributionType::kGaussian, 0.4f, 0.1f };
+  EXPECT_TRUE(DeriveGeometricSymmetry(p).b_applicable) << "i.i.d. cone heights";
+  p.sync_group_[kShapeScalarUpperH] = 1;
+  p.sync_group_[kShapeScalarLowerH] = 1;
+  EXPECT_TRUE(DeriveGeometricSymmetry(p).b_applicable) << "one shared cone height";
+  p.sync_group_[kShapeScalarUpperH] = 0;
+  p.sync_group_[kShapeScalarLowerH] = 0;
+  p.h_pyr_l_ = Distribution{ DistributionType::kGaussian, 0.5f, 0.1f };
+  EXPECT_FALSE(DeriveGeometricSymmetry(p).b_applicable) << "different cone height means";
+  p.h_pyr_l_ = p.h_pyr_u_;
+  p.wedge_angle_l_ = 40.0f;
+  EXPECT_FALSE(DeriveGeometricSymmetry(p).b_applicable) << "different wedge angles";
+  p.h_pyr_u_ = Distribution{ DistributionType::kNoRandom, 0.0f, 0.0f };
+  p.h_pyr_l_ = Distribution{ DistributionType::kNoRandom, 0.0f, 0.0f };
+  EXPECT_TRUE(DeriveGeometricSymmetry(p).b_applicable) << "no cones: the wedge angles shape nothing";
+  EXPECT_EQ(DeriveGeometricSymmetry(p).p_step, 1);
+}
+
+TEST(GeometricSymmetryEnsemble, MakeCrystalStampsTheEnsembleNotTheDraw) {
+  const auto p = PrismOf(Distribution{ DistributionType::kGaussian, 1.0f, 0.1f });
+  RandomNumberGenerator rng(20260927u);
+  const Crystal c = MakeCrystal(rng, CrystalParam{ p });
+  ASSERT_EQ(c.FnPeriod(), 6) << "draw was degenerate; the test needs a populated crystal";
+  EXPECT_EQ(c.GeomSymmetry(), kFullHexagonalSymmetry);
+  // The same drawn values, read as a fixed shape, have no rotation at all — which is exactly what the
+  // ensemble stamp must not inherit. Replaying the same seed draws the same values.
+  RandomNumberGenerator rng2(20260927u);
+  float drawn[6]{};
+  const float h = SamplePrismShapeScalars(rng2, p, drawn);
+  EXPECT_EQ(Crystal::CreatePrism(h, drawn).GeomSymmetry().p_step, 6);
+  // A fixed non-uniform param is stamped with its own (reduced) symmetry.
+  auto fixed = PrismOf(Distribution{ DistributionType::kNoRandom, 1.0f, 0.0f });
+  fixed.d_[1] = fixed.d_[3] = fixed.d_[5] = Distribution{ DistributionType::kNoRandom, 1.2f, 0.0f };
+  EXPECT_EQ(MakeCrystal(rng, CrystalParam{ fixed }).GeomSymmetry().p_step, 2);
 }
 
 }  // namespace

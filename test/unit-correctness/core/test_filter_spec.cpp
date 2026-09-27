@@ -563,6 +563,73 @@ TEST(FilterSpecReduceRecorder, Random1000_AllSymmetries) {
   }
 }
 
+// =============== Low-symmetry shapes: a symmetry filter matches only geometric equivalents ===============
+
+TEST(FilterSpecLowSymmetry, SymmetryPFilterOnAThreeFoldPrismMatchesOnlyItsRealOrbit) {
+  // face_distance [1, 1.2, 1, 1.2, 1, 1.2]: rotations by 120° map the crystal onto itself, by 60° do
+  // not. A "3-5, symmetry P" filter must accept {5,7} and {7,3} and reject {4,6}, {6,8}, {8,4}.
+  const float dist[6]{ 1.0f, 1.2f, 1.0f, 1.2f, 1.0f, 1.2f };
+  const Crystal crystal = Crystal::CreatePrism(1.0f, dist);
+  auto spec = MakeRaypathSpec(crystal, { 3, 5 }, FilterConfig::kSymP, kSigmaARollDeg[0]);
+  ASSERT_NE(spec, nullptr);
+  for (const std::vector<IdType>& rp : { std::vector<IdType>{ 3, 5 }, { 5, 7 }, { 7, 3 } }) {
+    EXPECT_TRUE(SpecMatch(spec.get(), rp)) << FormatRaypath(rp);
+  }
+  for (const std::vector<IdType>& rp : { std::vector<IdType>{ 4, 6 }, { 6, 8 }, { 8, 4 } }) {
+    EXPECT_FALSE(SpecMatch(spec.get(), rp)) << FormatRaypath(rp) << " is a far-face path, not equivalent";
+  }
+  // The regular prism keeps merging all six (unchanged behavior).
+  const Crystal regular = Crystal::CreatePrism(1.0f);
+  auto regular_spec = MakeRaypathSpec(regular, { 3, 5 }, FilterConfig::kSymP, kSigmaARollDeg[0]);
+  ASSERT_NE(regular_spec, nullptr);
+  EXPECT_TRUE(SpecMatch(regular_spec.get(), { 4, 6 }));
+}
+
+TEST(FilterSpecLowSymmetry, AsymmetricConesKeepBOff) {
+  const Crystal crystal = Crystal::CreatePyramid(28.0f, 40.0f, 0.4f, 1.0f, 0.4f);
+  auto spec = MakeRaypathSpec(crystal, { 13, 3 }, FilterConfig::kSymB, kSigmaARollDeg[0]);
+  ASSERT_NE(spec, nullptr);
+  EXPECT_TRUE(SpecMatch(spec.get(), { 13, 3 }));
+  EXPECT_FALSE(SpecMatch(spec.get(), { 23, 3 })) << "upper and lower cones differ; B is not a symmetry";
+}
+
+TEST(FilterSpecReduceRecorder, LowSymmetryShapesAgreeWithCrystalReduceRaypath) {
+  // detail::ReduceBuffer (the per-ray byte form) against Crystal::ReduceRaypath on shapes whose
+  // GeomSymmetry is not the full group — the two hand-written forms must not drift.
+  const float three_fold[6]{ 1.0f, 1.2f, 1.0f, 1.2f, 1.0f, 1.2f };
+  const float two_fold[6]{ 1.0f, 1.0f, 1.3f, 1.0f, 1.0f, 1.3f };
+  const float one_mirror[6]{ 1.0f, 1.2f, 1.3f, 1.3f, 1.2f, 1.0f };
+  const Crystal crystals[] = {
+    Crystal::CreatePrism(1.0f, three_fold),
+    Crystal::CreatePrism(1.0f, two_fold),
+    Crystal::CreatePrism(1.0f, one_mirror),
+    Crystal::CreatePyramid(28.0f, 40.0f, 0.4f, 1.0f, 0.3f, three_fold),
+  };
+  const std::vector<IdType> faces = { 1, 2, 3, 4, 5, 6, 7, 8, 13, 14, 15, 16, 17, 18, 23, 24, 25, 26, 27, 28 };
+  std::mt19937 rng(20260927u);
+  std::uniform_int_distribution<int> len_dist(1, 5);
+  std::uniform_int_distribution<size_t> face_dist(0, faces.size() - 1);
+  for (const auto& crystal : crystals) {
+    EXPECT_NE(crystal.GeomSymmetry(), kFullHexagonalSymmetry) << "fixture lost its low symmetry";
+  }
+  int checked = 0;
+  for (const auto& crystal : crystals) {
+    for (uint8_t sym = 1; sym <= 7; sym++) {
+      for (int sigma_a = 0; sigma_a < 6; sigma_a++) {
+        for (int k = 0; k < 10; k++) {
+          std::vector<IdType> rp(static_cast<size_t>(len_dist(rng)));
+          for (auto& x : rp) {
+            x = faces[face_dist(rng)];
+          }
+          EXPECT_TRUE(VerifyReduceRecorderOracle(crystal, sym, sigma_a, /*d_applicable=*/true, rp));
+          checked++;
+        }
+      }
+    }
+  }
+  EXPECT_EQ(checked, 4 * 7 * 6 * 10);
+}
+
 // =============== DirectionSpec tests (port of DirectionFilter_* legacy tests) ===============
 
 std::unique_ptr<FilterSpec> MakeDirectionSpec(float lon_deg, float lat_deg, float radii_deg,

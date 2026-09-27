@@ -1516,6 +1516,53 @@ ScatteringSetting Setting(const CrystalConfig& crystal) {
   return s;
 }
 
+TEST(ReduceContext, EachCrystalCarriesTheShapeSymmetryOfItsOwnParam) {
+  // Two crystals on one layer: a regular prism (full D6h) and a three-fold one
+  // (face_distance [1, 1.2, 1, 1.2, 1, 1.2]). The context must hold each one's
+  // own group — one scene-wide value is exactly the shape of the old defect.
+  SceneConfig scene = Halo22Scene();
+  scene.ms_.clear();
+  CrystalConfig regular = PrismWithAxis(1, true);
+  CrystalConfig three_fold = PrismWithAxis(2, true);
+  auto& param = std::get<PrismCrystalParam>(three_fold.param_);
+  param.d_[1] = param.d_[3] = param.d_[5] = Distribution{ DistributionType::kNoRandom, 1.2f, 0.0f };
+  MsInfo l0;
+  l0.prob_ = 0.0f;
+  l0.setting_.push_back(Setting(regular));
+  l0.setting_.push_back(Setting(three_fold));
+  scene.ms_.push_back(std::move(l0));
+
+  const RaypathReduceContext ctx = BuildRaypathReduceContext(scene);
+  ASSERT_EQ(ctx.crystal_params_.size(), 2u);
+  EXPECT_EQ(ctx.crystal_params_.at(1).geom, kFullHexagonalSymmetry);
+  EXPECT_EQ(ctx.crystal_params_.at(2).geom, DeriveGeometricSymmetry(param));
+  EXPECT_EQ(ctx.crystal_params_.at(2).geom.p_step, 2);
+
+  // Read time: on crystal 2, {3,5} and {4,6} (60° apart: near vs far faces) stay
+  // two rows under P while {5,7} joins {3,5}; on crystal 1 all three merge.
+  RaypathHistogramResult finest;
+  finest.reduce_ctx_ = ctx;
+  for (IdType crystal_id : { IdType{ 1 }, IdType{ 2 } }) {
+    for (const Seg& seg : { Seg{ 3, 5 }, Seg{ 4, 6 }, Seg{ 5, 7 } }) {
+      RaypathHistogramEntry e;
+      e.chain_.push_back(RaypathChainSegment{ crystal_id, seg });
+      e.energy_ = 1.0;
+      e.count_ = 1;
+      finest.entries_.push_back(std::move(e));
+    }
+  }
+  const auto r = ReduceRaypathHistogram(finest, FilterConfig::kSymP);
+  ASSERT_EQ(r.entries_.size(), 3u);
+  ExpectSums(r, 6.0, 6, "per-crystal shape symmetry");
+  std::map<std::string, double> by_display;
+  for (const auto& e : r.entries_) {
+    by_display[e.display_] += e.energy_;
+  }
+  EXPECT_DOUBLE_EQ(by_display["C1(3-5)"], 3.0);
+  EXPECT_DOUBLE_EQ(by_display["C2(3-5)"], 2.0);
+  EXPECT_DOUBLE_EQ(by_display["C2(3-5)"] + by_display["C2(4-6)"], 3.0);
+}
+
 TEST(ReduceContext, LayerFlagIsPerLayerWhenOneCrystalIsAloneOnOneLayerAndSharedOnAnother) {
   // Crystal 1 alone on layer 0; crystals 1 and 2 together on layer 1. A map
   // keyed by crystal id could only hold one answer for crystal 1; the layer
