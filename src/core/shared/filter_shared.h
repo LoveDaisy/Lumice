@@ -46,8 +46,12 @@ inline constexpr uint32_t kDevRecCap = 64u;  // == ExitFaceSeq::kCap == kMaxHits
 
 // --- ReduceBuffer (canonical re-ordering of a face-number sequence) ---------
 //
-// Byte-identical with `lumice::detail::ReduceBuffer` in filter_spec.cpp:60-95
-// and `ReduceBuffer_dev` in lumice_trace.metal:83-120. Operates in place on
+// Byte-identical with `lumice::detail::ReduceBuffer` in filter_spec.cpp UNDER
+// kFullHexagonalSymmetry (crystal.hpp), and with `ReduceBuffer_dev` in
+// lumice_trace.metal. The host form also honours a crystal's GeomSymmetry
+// (fewer rotations / mirrors on a low-symmetry shape); this device form does
+// not yet, which is why device_filter_desc.cpp builds the descriptor's
+// canonical form under the full group — the two sides must meet. Operates in place on
 // `data[0..size-1]` (face-number space, NOT poly-index space — callers must
 // pre-remap via ApplyGetFn_dev).
 LM_FN void PCanonicalShiftInPlace_dev(uint8_t* data, uint32_t size) {
