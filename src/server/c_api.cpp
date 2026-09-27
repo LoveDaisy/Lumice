@@ -12,6 +12,7 @@
 #include <stdexcept>
 #include <string>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "config/crystal_config.hpp"        // ns::PrismCrystalParam / PyramidCrystalParam (LUMICE_GetCrystalMesh)
@@ -4430,6 +4431,33 @@ int LUMICE_IsDApplicable(int azimuth_dist_type, float azimuth_full_range_deg, fl
       return 0;
   }
   return ns::detail::IsDApplicableParams(az_type, azimuth_full_range_deg, roll_anchor_deg) ? 1 : 0;
+}
+
+
+LUMICE_ErrorCode LUMICE_GetCrystalSymmetry(const LUMICE_CrystalParam* crystal, LUMICE_CrystalSymmetry* out) {
+  if (!crystal || !out) {
+    return LUMICE_ERR_NULL_ARG;
+  }
+  if (crystal->type != 0 && crystal->type != 1) {
+    return LUMICE_ERR_INVALID_VALUE;
+  }
+  // The same wire -> core translation a committed scene takes (CrystalToJson, then core's
+  // from_json, which also canonicalizes the sync groups), so the answer is about the crystal the
+  // engine would build.
+  ns::CrystalConfig config;
+  try {
+    config = CrystalToJson(*crystal, 0).get<ns::CrystalConfig>();
+  } catch (...) {
+    return LUMICE_ERR_INVALID_CONFIG;
+  }
+  const ns::GeometricSymmetry g =
+      std::visit([](const auto& param) { return ns::DeriveGeometricSymmetry(param); }, config.param_);
+  const auto d = ns::detail::DeriveDSymmetryParams(config.axis_);
+  out->rotation_step = g.p_step;
+  out->vertical_mirror_mask = g.d_valid_sigma_mask;
+  out->horizontal_mirror = g.b_applicable ? 1 : 0;
+  out->d_effective = ns::DMirrorActive(d.d_applicable, d.sigma_a, g) ? 1 : 0;
+  return LUMICE_OK;
 }
 
 

@@ -193,8 +193,9 @@ float TestPreviewSummaryReservedHeight();
 // Intended for GUI test assertions; production code should not call this.
 float TestGetSummaryMeasuredWrappedHeight();
 
-// Returns true when the committed axis config of the currently open modal entry
-// meets D-symmetry conditions (az uniform 360°, roll mean a multiple of 30°).
+// Returns true when D acts on the committed crystal of the currently open modal entry: its axis
+// meets the D conditions (az uniform 360°, roll mean a multiple of 30°) AND its shape has the
+// mirror that roll selects (SymmetryAvailabilityFor(...).d).
 // Returns false when no modal is open or the entry index is invalid.
 // Intended for GUI test assertions; production code should not call this.
 bool IsCurrentModalDApplicable();

@@ -69,7 +69,7 @@ void ReduceBuffer(uint8_t* data, size_t size, uint8_t symmetry, int sigma_a, boo
     PCanonicalShiftInPlace(data, size, fn_period, geom.p_step);
   }
 
-  if ((symmetry & FilterConfig::kSymD) && d_applicable && geom.AllowsMirror(sigma_a)) {
+  if ((symmetry & FilterConfig::kSymD) && DMirrorActive(d_applicable, sigma_a, geom)) {
     uint8_t scratch[kMaxHits]{};
     for (size_t i = 0; i < size; i++) {
       uint8_t x = data[i];

@@ -580,7 +580,7 @@ std::vector<IdType> PCanonicalShiftByPeriod(const std::vector<IdType>& rp, int f
 // Whether each symmetry element takes part, given request, ensemble and geometry: the one place the
 // three halves are intersected for Crystal's reduction and expansion.
 bool DActive(uint8_t symmetry, int sigma_a, bool d_applicable, const GeometricSymmetry& geom) {
-  return (symmetry & FilterConfig::kSymD) && d_applicable && geom.AllowsMirror(sigma_a);
+  return (symmetry & FilterConfig::kSymD) && DMirrorActive(d_applicable, sigma_a, geom);
 }
 
 bool BActive(uint8_t symmetry, const GeometricSymmetry& geom) {

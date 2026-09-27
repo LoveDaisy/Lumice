@@ -123,6 +123,15 @@ struct GeometricSymmetry {
   bool operator!=(const GeometricSymmetry& o) const { return !(*this == o); }
 };
 
+// Whether D acts on a crystal at all: the orientation ensemble's condition (d_applicable, from
+// detail::DeriveDSymmetryParams) AND the shape admitting that ensemble's mirror sigma_a. The one
+// place the two halves meet — the reductions (Crystal, detail::ReduceBuffer) and the C API's
+// LUMICE_GetCrystalSymmetry (what the GUI's D hint reads) all ask this, so a hint cannot say D is
+// live on a crystal the engine does not reduce under it.
+inline bool DMirrorActive(bool d_applicable, int sigma_a, const GeometricSymmetry& g) {
+  return d_applicable && g.AllowsMirror(sigma_a);
+}
+
 // The full D6h: what every regular hexagonal prism and symmetric pyramid has. Named so that a
 // caller that must keep the pre-geometry rule on purpose (the GPU filter descriptor, whose device
 // kernels still hardcode it) says so instead of relying on a default.

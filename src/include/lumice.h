@@ -455,7 +455,14 @@ extern "C" {
 // preview shader; inert under LUMICE_TONE_PRINT, and a colour-classed scene produces no raypath
 // composite while it is on. Nothing is removed and nothing changes meaning:
 // LUMICE_DISPLAY_MODE_NORMAL == 0, so a zero-initialized struct asks for the existing picture.
-#define LUMICE_API_VERSION 446
+//
+// ADDED (v4.47): LUMICE_GetCrystalSymmetry + LUMICE_CrystalSymmetry, a pure append — which of the
+// P/B/D symmetry elements a crystal's SHAPE really has, and whether D acts on it at all. Raypath
+// reduction (filters' symmetry, the analysis list's merge) used to assume every prism and pyramid
+// is a regular hexagon; it now intersects the request with the crystal's shape, so D can be
+// dropped for a reason LUMICE_IsDApplicable (axis only) cannot see. No struct changed and
+// LUMICE_IsDApplicable keeps its meaning.
+#define LUMICE_API_VERSION 447
 #define LUMICE_MAX_RENDER_RESULTS 16
 #define LUMICE_MAX_STATS_RESULTS 1
 
@@ -2631,6 +2638,31 @@ const char* LUMICE_AxisScalarKeyName(int slot);
 // had already dropped it, the two having drifted to different float tolerances (1e-3 against
 // 1e-5) on a difference of 3.05e-5.
 int LUMICE_IsDApplicable(int azimuth_dist_type, float azimuth_full_range_deg, float roll_anchor_deg);
+
+// Which symmetry elements a crystal's shape admits (v4.47). Raypath reduction under a filter's or
+// the analysis list's P/B/D uses only the elements the request names AND the crystal allows — a
+// prism with face_distance [1, 1.2, 1, 1.2, 1, 1.2] has a three-fold axis, not a six-fold one, and
+// P must not merge a near-face path with a far-face path. Read over the crystal as a random
+// ENSEMBLE: six face distances drawn i.i.d. from one distribution keep every element, because
+// rotating a draw relabels it into another equally likely draw; sync groups count.
+typedef struct LUMICE_CrystalSymmetry_ {
+  // Smallest prism-face step (1, 2, 3 or 6) of the rotations P may use: 1 = all six (a regular
+  // hexagon), 2 = three-fold, 3 = two-fold, 6 = none.
+  int rotation_step;
+  // Bit a (0..5) set when the vertical mirror sending prism face i to (a - i) mod 6 is a symmetry.
+  int vertical_mirror_mask;
+  // Non-zero when the horizontal mirror (B: basal 1<->2, upper cone <-> lower cone) is a symmetry.
+  // Always non-zero for a prism; for a pyramid it needs matching cones.
+  int horizontal_mirror;
+  // Non-zero when D acts on this crystal: the axis condition LUMICE_IsDApplicable reports AND the
+  // shape having the mirror that axis selects. What a "D has no effect" hint should read.
+  int d_effective;
+} LUMICE_CrystalSymmetry;
+
+// Fills *out for `crystal` (its shape, sync groups and axis). LUMICE_ERR_NULL_ARG on a NULL
+// argument; LUMICE_ERR_INVALID_VALUE on an unknown type; LUMICE_ERR_INVALID_CONFIG when the
+// parameters do not describe a crystal. This is core's own derivation, the one the reduction runs.
+LUMICE_ErrorCode LUMICE_GetCrystalSymmetry(const LUMICE_CrystalParam* crystal, LUMICE_CrystalSymmetry* out);
 
 // =============== Raypath Validation ===============
 // Validation state for raypath text input (GUI border color + OK gate).
