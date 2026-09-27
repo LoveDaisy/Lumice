@@ -717,9 +717,11 @@ std::vector<float> ComputeAdaptiveRayAllocationWeights(const std::vector<float>&
   const size_t n = p.size();
   std::vector<float> q(n, 0.0f);
   size_t live = 0;
+  double sum_p = 0.0;
   for (size_t i = 0; i < n; i++) {
     if (p[i] > 0.0f) {
       live++;
+      sum_p += static_cast<double>(p[i]);
     }
   }
   if (live == 0) {
@@ -741,8 +743,13 @@ std::vector<float> ComputeAdaptiveRayAllocationWeights(const std::vector<float>&
     if (p[i] <= 0.0f) {
       continue;  // q_i == 0: never floored, never dealt
     }
-    const double share = total > 0.0 ? raw[i] / total : 0.0;
-    q[i] = static_cast<float>(std::max(share, floor));
+    if (total <= 0.0) {
+      q[i] = static_cast<float>(floor);  // nothing measured yet: the uniform cold-start deal
+      continue;
+    }
+    const double share = raw[i] / total;
+    const double relative_floor = static_cast<double>(p[i]) / sum_p / kRayAllocationRelativeFloorRatio;
+    q[i] = static_cast<float>(std::max({ share, relative_floor, floor }));
   }
   return q;
 }
