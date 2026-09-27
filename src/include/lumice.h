@@ -462,7 +462,17 @@ extern "C" {
 // is a regular hexagon; it now intersects the request with the crystal's shape, so D can be
 // dropped for a reason LUMICE_IsDApplicable (axis only) cannot see. No struct changed and
 // LUMICE_IsDApplicable keeps its meaning.
-#define LUMICE_API_VERSION 447
+//
+// BREAKING (v4.48): LUMICE_CrystalSymmetry gains trailing `p_effective` and `b_effective` —
+// APPENDED after `d_effective`, so every existing field keeps its offset while sizeof() grows
+// (16 -> 24); LUMICE_GetCrystalSymmetry writes the whole struct, so a caller that was NOT
+// recompiled hands it a shorter one and the two new fields land past its end. Recompile against
+// this header. ADDED alongside: LUMICE_IsPApplicable and LUMICE_IsBApplicable, the axis halves of
+// P and B (the counterparts of LUMICE_IsDApplicable). The engine used to apply P and B whatever the
+// crystal's orientation distribution; it now applies P only when roll is invariant under a 60°
+// shift and B only when the zenith is symmetric about 90° with a uniform azimuth, so a Parry arc no
+// longer merges 3-5 with 4-6 and a plate no longer merges 1-3 with 2-3. Nothing is removed.
+#define LUMICE_API_VERSION 448
 #define LUMICE_MAX_RENDER_RESULTS 16
 #define LUMICE_MAX_STATS_RESULTS 1
 
@@ -2639,6 +2649,29 @@ const char* LUMICE_AxisScalarKeyName(int slot);
 // 1e-5) on a difference of 3.05e-5.
 int LUMICE_IsDApplicable(int azimuth_dist_type, float azimuth_full_range_deg, float roll_anchor_deg);
 
+// Returns non-zero when P (the 60-degree rotation about the c-axis) is applicable to a crystal
+// whose axis has this roll distribution (v4.48). P rotates the roll angle, so it needs roll to be
+// invariant under a 60-degree shift — a uniform over a full turn. Azimuth plays no part: a Parry
+// arc (uniform azimuth, locked roll) lights 3-5 and leaves its rotated image 4-6 dark. An axis
+// failing the condition has its P flag ignored by the engine's reduction.
+//   roll_dist_type      one of LUMICE_DIST_*, from the roll LUMICE_Distribution's .type
+//   roll_full_range_deg that distribution's .spread (for LUMICE_DIST_UNIFORM, the full width)
+// Core's own predicate, like LUMICE_IsDApplicable — ask it rather than transcribing the rule.
+int LUMICE_IsPApplicable(int roll_dist_type, float roll_full_range_deg);
+
+// Returns non-zero when B (the horizontal mirror: basal 1<->2, upper cone <-> lower cone) is
+// applicable to a crystal whose axis has this azimuth and zenith distribution (v4.48). B reverses
+// the c-axis, so it needs the zenith symmetric about 90 degrees AND the azimuth invariant under a
+// half turn (in practice: uniform over a full turn). A plate (zenith 0) fails — its face 1 always
+// faces up; a column (zenith 90) passes. Roll plays no part.
+//   azimuth_dist_type / azimuth_full_range_deg  as for LUMICE_IsDApplicable
+//   zenith_dist_type    one of LUMICE_DIST_*, from the zenith LUMICE_Distribution's .type
+//   zenith_center_deg   that distribution's .center, in the WIRE's zenith (not core's latitude)
+//   zenith_full_range_deg that distribution's .spread
+// Core's own predicate, like LUMICE_IsDApplicable — ask it rather than transcribing the rule.
+int LUMICE_IsBApplicable(int azimuth_dist_type, float azimuth_full_range_deg, int zenith_dist_type,
+                         float zenith_center_deg, float zenith_full_range_deg);
+
 // Which symmetry elements a crystal's shape admits (v4.47). Raypath reduction under a filter's or
 // the analysis list's P/B/D uses only the elements the request names AND the crystal allows — a
 // prism with face_distance [1, 1.2, 1, 1.2, 1, 1.2] has a three-fold axis, not a six-fold one, and
@@ -2657,6 +2690,12 @@ typedef struct LUMICE_CrystalSymmetry_ {
   // Non-zero when D acts on this crystal: the axis condition LUMICE_IsDApplicable reports AND the
   // shape having the mirror that axis selects. What a "D has no effect" hint should read.
   int d_effective;
+  // Non-zero when P acts on this crystal (v4.48): the axis condition LUMICE_IsPApplicable reports
+  // AND rotation_step < 6 (the shape has at least one rotation besides the identity).
+  int p_effective;
+  // Non-zero when B acts on this crystal (v4.48): the axis condition LUMICE_IsBApplicable reports
+  // AND horizontal_mirror.
+  int b_effective;
 } LUMICE_CrystalSymmetry;
 
 // Fills *out for `crystal` (its shape, sync groups and axis). LUMICE_ERR_NULL_ARG on a NULL

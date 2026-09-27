@@ -19,9 +19,16 @@ constexpr const char* kDAxisTooltipText =
 constexpr const char* kDShapeTooltipText =
     "This crystal's shape (face distances) is not mirror-symmetric about the plane its\n"
     "roll selects, so D has no effect.";
-constexpr const char* kBTooltipText =
+constexpr const char* kPAxisTooltipText =
+    "P applies when roll = uniform 360\xc2\xb0 (every 60\xc2\xb0 turn about the crystal's axis\n"
+    "equally likely). Current config does not meet this condition, so P has no effect.";
+constexpr const char* kBShapeTooltipText =
     "The upper and lower pyramid parts differ (height or wedge angle),\n"
     "so B has no effect on this crystal.";
+constexpr const char* kBAxisTooltipText =
+    "B applies when zenith is symmetric about 90\xc2\xb0 and azimuth = uniform 360\xc2\xb0\n"
+    "(either end of the crystal equally likely to point up).\n"
+    "Current config does not meet this condition, so B has no effect.";
 
 // Transparent SmallButton as a hover target for a tooltip (TextDisabled lacks a stable item ID
 // needed by the test engine). `icon_id` is the ImGui id of the button.
@@ -46,12 +53,23 @@ bool IsDApplicableGuiAxis(const AxisDist& az, const AxisDist& roll) {
   return LUMICE_IsDApplicable(AxisDistTypeToWire(az.type), az.std, roll.mean) != 0;
 }
 
+bool IsPApplicableGuiAxis(const AxisDist& roll) {
+  return LUMICE_IsPApplicable(AxisDistTypeToWire(roll.type), roll.std) != 0;
+}
+
+bool IsBApplicableGuiAxis(const AxisDist& az, const AxisDist& zenith) {
+  return LUMICE_IsBApplicable(AxisDistTypeToWire(az.type), az.std, AxisDistTypeToWire(zenith.type), zenith.mean,
+                              zenith.std) != 0;
+}
+
 SymmetryAvailability SymmetryAvailabilityFor(const CrystalConfig& cr) {
   LUMICE_CrystalParam param{};
   FillCrystalParam(cr, &param);
   LUMICE_CrystalSymmetry sym{};
   SymmetryAvailability out;
   out.d_axis = IsDApplicableGuiAxis(cr.azimuth, cr.roll);
+  out.p_axis = IsPApplicableGuiAxis(cr.roll);
+  out.b_axis = IsBApplicableGuiAxis(cr.azimuth, cr.zenith);
   if (LUMICE_GetCrystalSymmetry(&param, &sym) != LUMICE_OK) {
     out.rotation_step = 6;
     out.b = false;
@@ -59,7 +77,7 @@ SymmetryAvailability SymmetryAvailabilityFor(const CrystalConfig& cr) {
     return out;
   }
   out.rotation_step = sym.rotation_step;
-  out.b = sym.horizontal_mirror != 0;
+  out.b = sym.b_effective != 0;
   out.d = sym.d_effective != 0;
   return out;
 }
@@ -75,7 +93,11 @@ void RenderSymmetryCheckboxes(bool& sym_p, bool& sym_b, bool& sym_d, const Symme
   if (ImGui::IsItemHovered()) {
     ImGui::SetTooltip("Prism-face reflection symmetry");
   }
-  if (avail.rotation_step != 1) {
+  if (!avail.p_axis) {
+    // The axis already rules P out; the shape's rotation step would add nothing.
+    std::snprintf(id_buf, sizeof(id_buf), ICON_FA_CIRCLE_INFO "##p_tooltip_icon_%s", id_suffix);
+    InfoIcon(id_buf, kPAxisTooltipText);
+  } else if (avail.rotation_step != 1) {
     char tip[192];
     if (avail.rotation_step >= 6) {
       std::snprintf(tip, sizeof(tip),
@@ -98,7 +120,7 @@ void RenderSymmetryCheckboxes(bool& sym_p, bool& sym_b, bool& sym_d, const Symme
   }
   if (!avail.b) {
     std::snprintf(id_buf, sizeof(id_buf), ICON_FA_CIRCLE_INFO "##b_tooltip_icon_%s", id_suffix);
-    InfoIcon(id_buf, kBTooltipText);
+    InfoIcon(id_buf, avail.b_axis ? kBShapeTooltipText : kBAxisTooltipText);
   }
   ImGui::SameLine();
   std::snprintf(id_buf, sizeof(id_buf), "D##%s", id_suffix);

@@ -572,6 +572,63 @@ void RegisterFilterEditorTests(ImGuiTestEngine* engine) {
     };
   }
 
+  // The orientation half for P and B: P needs a free roll, B a zenith symmetric about 90 degrees
+  // (with a uniform azimuth). A Parry axis (roll locked, zenith 90) loses P and keeps B; a plate
+  // axis (zenith 0, roll free) keeps P and loses B; a random axis keeps both. The crystal is a
+  // regular prism, so every icon here is the axis's doing.
+  {
+    ImGuiTest* t =
+        IM_REGISTER_TEST(engine, "filter_editor", "p_and_b_are_explained_when_the_axis_does_not_support_them");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      struct AxisCase {
+        const char* label;
+        gui::AxisDist zenith;
+        gui::AxisDist roll;
+        bool expect_p_icon;
+        bool expect_b_icon;
+      };
+      const AxisCase kCases[] = {
+        { "random",
+          { gui::AxisDistType::kUniform, 0.0f, 360.0f },
+          { gui::AxisDistType::kUniform, 0.0f, 360.0f },
+          false,
+          false },
+        { "parry", { gui::AxisDistType::kGauss, 90.0f, 1.0f }, { gui::AxisDistType::kGauss, 0.0f, 1.0f }, true, false },
+        { "plate",
+          { gui::AxisDistType::kGauss, 0.0f, 1.0f },
+          { gui::AxisDistType::kUniform, 0.0f, 360.0f },
+          false,
+          true },
+      };
+      std::string wrong;
+      for (const auto& c : kCases) {
+        ResetTestState();
+        ctx->Yield(2);
+        auto& crystal = gui::g_state.crystals[gui::g_state.layers[0].entries[0].crystal_id];
+        crystal.type = gui::CrystalType::kPrism;
+        for (auto& d : crystal.face_distance) {
+          d = 1.0f;
+        }
+        crystal.zenith = c.zenith;
+        crystal.azimuth = { gui::AxisDistType::kUniform, 0.0f, 360.0f };
+        crystal.roll = c.roll;
+        ctx->Yield();
+        OpenFilterModal(ctx);
+        const bool p_icon = ctx->ItemExists("**/" ICON_FA_CIRCLE_INFO "##p_tooltip_icon_filter_modal");
+        const bool b_icon = ctx->ItemExists("**/" ICON_FA_CIRCLE_INFO "##b_tooltip_icon_filter_modal");
+        if (p_icon != c.expect_p_icon) {
+          wrong += std::string(" ") + c.label + ":p";
+        }
+        if (b_icon != c.expect_b_icon) {
+          wrong += std::string(" ") + c.label + ":b";
+        }
+        ctx->ItemClick(kCancel);
+        ctx->Yield(2);
+      }
+      IM_CHECK_STR_EQ(wrong.c_str(), "");
+    };
+  }
+
   // ---------------------------------------------------------------------------------------------
   // Remove Filter — a session-level intent, not a buffer edit.
   // ---------------------------------------------------------------------------------------------

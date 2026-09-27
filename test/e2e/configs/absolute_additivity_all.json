@@ -9,8 +9,8 @@
         },
         "roll": {
           "mean": 0.0,
-          "std": 1.0,
-          "type": "gauss"
+          "std": 360.0,
+          "type": "uniform"
         },
         "zenith": {
           "mean": 0.0,

@@ -24,16 +24,25 @@ namespace lumice::gui {
 // dropped it. A comment asking two copies to agree is not a mechanism; one owner is.
 bool IsDApplicableGuiAxis(const AxisDist& az, const AxisDist& roll);
 
+// The axis halves of P and B, likewise delegated to core (LUMICE_IsPApplicable /
+// LUMICE_IsBApplicable): P needs roll invariant under a 60° turn (uniform 360°), B needs zenith
+// symmetric about 90° with a uniform-360° azimuth. `zenith` is the GUI's (the wire's) zenith.
+bool IsPApplicableGuiAxis(const AxisDist& roll);
+bool IsBApplicableGuiAxis(const AxisDist& az, const AxisDist& zenith);
+
 // Which of P / B / D actually act on one crystal — the engine's own answer (LUMICE_GetCrystalSymmetry),
 // not a GUI rule. A reduction uses only the elements the checkbox asks for AND the crystal allows:
-// its axis for D, and its SHAPE for all three (a prism with face_distance [1, 1.2, 1, 1.2, 1, 1.2]
-// is three-fold, so P rotates only by 120°; unlike upper and lower cones rule B out).
+// its axis (orientation distribution) for all three, and its SHAPE for all three (a prism with
+// face_distance [1, 1.2, 1, 1.2, 1, 1.2] is three-fold, so P rotates only by 120°; unlike upper
+// and lower cones rule B out).
 // Default-constructed = everything acts, which is what a caller with no single crystal passes.
 struct SymmetryAvailability {
-  int rotation_step = 1;  // 1: P uses all six rotations; 2 / 3: only multiples of 120° / 180°; 6: none
-  bool b = true;          // the shape has the horizontal mirror
+  int rotation_step = 1;  // shape: 1: P uses all six rotations; 2 / 3: only multiples of 120° / 180°; 6: none
+  bool b = true;          // B acts: axis condition AND the shape has the horizontal mirror
   bool d = true;          // D acts: axis condition AND the shape has the mirror that axis selects
   bool d_axis = true;     // the axis condition alone — picks which reason the D hint gives
+  bool p_axis = true;     // P's axis condition alone; when false P does nothing whatever the shape
+  bool b_axis = true;     // B's axis condition alone — picks which reason the B hint gives
 };
 
 // The availability for crystal `cr`, asked of the engine through the GUI's single crystal
