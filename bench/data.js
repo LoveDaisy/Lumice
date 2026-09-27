@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1790517274904,
+  "lastUpdate": 1790517277487,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9524,50 +9524,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "52b769f8831d3826607f24929ab7130e9dc62d1e",
-          "message": "Merge pull request #331 from LoveDaisy/refactor/field-set-sentinel-proxy\n\nrefactor(config): guard RenderConfig's field set by member count, not sizeof",
-          "timestamp": "2026-09-09T13:13:40+08:00",
-          "tree_id": "ea00f972f5073c2d5a34b75fbe200d19d12f07b6",
-          "url": "https://github.com/LoveDaisy/ice_halo_sim/commit/52b769f8831d3826607f24929ab7130e9dc62d1e"
-        },
-        "date": 1788931515598,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 78.9,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 99.7,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 93.1,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 89.2,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "96d644a21248a0968f4866679a3de372c1610833",
           "message": "Merge pull request #334 from LoveDaisy/feat/bg-image-color-picker\n\nfeat(gui): sample Sky Color off the background photo with an eyedropper",
           "timestamp": "2026-09-10T01:16:27+08:00",
@@ -13867,6 +13823,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 93.7,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "ac0fbdf294cc91312b0c421c64b99e05db8828fb",
+          "message": "Merge pull request #431 from LoveDaisy/task/gpu-reduce-follows-cpu-symmetry\n\nfix(core): device filter reduction follows the crystal's shape and ensemble symmetry",
+          "timestamp": "2026-09-27T21:42:14+08:00",
+          "tree_id": "900e6e02f3b3e8425e7b98cde0722045fca77d1c",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/ac0fbdf294cc91312b0c421c64b99e05db8828fb"
+        },
+        "date": 1790517276860,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 97.5,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 99.6,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 99.3,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 95.9,
             "unit": "%"
           }
         ]
