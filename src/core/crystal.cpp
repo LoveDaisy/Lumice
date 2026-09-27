@@ -997,6 +997,98 @@ GeometricSymmetry DeriveGeometricSymmetry(const PyramidCrystalParam& param) {
   return g;
 }
 
+namespace {
+
+// The exact support [lo, hi] of a shape scalar, or false when it is not bounded and exactly known.
+// `fold` applies the sampler's |x| (heights fold; face distances are signed, see
+// SamplePrismShapeScalars).
+bool ShapeScalarSupport(const Distribution& d, bool fold, float& lo, float& hi) {
+  switch (d.type) {
+    case DistributionType::kNoRandom:
+      lo = hi = d.center;
+      break;
+    case DistributionType::kUniform:
+      lo = d.center - d.spread / 2.0f;
+      hi = d.center + d.spread / 2.0f;
+      break;
+    default:
+      return false;
+  }
+  if (fold) {
+    const float a = std::fabs(lo);
+    const float b = std::fabs(hi);
+    lo = (lo <= 0.0f && hi >= 0.0f) ? 0.0f : std::min(a, b);
+    hi = std::max(a, b);
+  }
+  return true;
+}
+
+// The six face distances at the corner most favourable to prism slot `favoured` (0..5, or -1 for
+// none): that one at its minimum, every other at its maximum. False when any support is unknown.
+bool FavourableDistances(const Distribution (&d)[6], int favoured, float out[6]) {
+  for (int i = 0; i < 6; i++) {
+    float lo = 0.0f;
+    float hi = 0.0f;
+    if (!ShapeScalarSupport(d[i], false, lo, hi)) {
+      return false;
+    }
+    out[i] = (i == favoured) ? lo : hi;
+  }
+  return true;
+}
+
+}  // namespace
+
+bool CouldFaceExist(const PrismCrystalParam& param, IdType face) {
+  if (face < 1 || face > 8) {
+    return true;
+  }
+  float h_lo = 0.0f;
+  float h_hi = 0.0f;
+  float dist[6]{};
+  if (!ShapeScalarSupport(param.h_, true, h_lo, h_hi) ||
+      !FavourableDistances(param.d_, face >= 3 ? static_cast<int>(face) - 3 : -1, dist)) {
+    return true;
+  }
+  const ClosedFormPrismResult r = ComputeClosedFormPrism(h_hi, dist);
+  for (int slot = 0; slot < kClosedFormPrismFaceCnt; slot++) {
+    if (r.face_number[slot] == static_cast<int>(face)) {
+      return r.face_present[slot];
+    }
+  }
+  return true;
+}
+
+bool CouldFaceExist(const PyramidCrystalParam& param, IdType face) {
+  const bool basal = face == 1 || face == 2;
+  const bool side = face >= 3 && face <= 8;
+  const bool cone = (face >= 13 && face <= 18) || (face >= 23 && face <= 28);
+  if (!basal && !side && !cone) {
+    return true;
+  }
+  float h[3][2]{};  // upper cone, prism, lower cone: {lo, hi}
+  if (!ShapeScalarSupport(param.h_pyr_u_, true, h[0][0], h[0][1]) ||
+      !ShapeScalarSupport(param.h_prs_, true, h[1][0], h[1][1]) ||
+      !ShapeScalarSupport(param.h_pyr_l_, true, h[2][0], h[2][1])) {
+    return true;
+  }
+  const int favoured = side ? static_cast<int>(face) - 3 : cone ? static_cast<int>(face % 10) - 3 : -1;
+  float dist[6]{};
+  if (!FavourableDistances(param.d_, favoured, dist)) {
+    return true;
+  }
+  const float h1 = face == 1 ? h[0][0] : h[0][1];
+  const float h3 = face == 2 ? h[2][0] : h[2][1];
+  const ClosedFormPyramidResult r =
+      ComputeClosedFormPyramid(param.wedge_angle_u_, param.wedge_angle_l_, h1, h[1][1], h3, dist);
+  for (int slot = 0; slot < kClosedFormPyramidFaceCnt; slot++) {
+    if (r.face_number[slot] == static_cast<int>(face)) {
+      return r.face_present[slot];
+    }
+  }
+  return true;
+}
+
 
 namespace detail {
 

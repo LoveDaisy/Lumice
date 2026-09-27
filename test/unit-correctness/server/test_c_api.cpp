@@ -1990,6 +1990,17 @@ TEST(GetCrystalSymmetryApi, PAndBEffectiveNeedBothAxisAndShape) {
   EXPECT_EQ(s.b_effective, 0);
 }
 
+TEST(CouldCrystalHaveFaceApi, AnswersForTheShapeAndErrsTowardYes) {
+  const float alternating[6]{ 2, 1, 2, 1, 2, 1 };
+  const auto c = SymmetryProbeCrystal(0, alternating, 0.0f);
+  EXPECT_EQ(LUMICE_CouldCrystalHaveFace(&c, 3), 0);
+  EXPECT_EQ(LUMICE_CouldCrystalHaveFace(&c, 5), 0);
+  EXPECT_NE(LUMICE_CouldCrystalHaveFace(&c, 4), 0);
+  EXPECT_NE(LUMICE_CouldCrystalHaveFace(&c, 1), 0);
+  EXPECT_NE(LUMICE_CouldCrystalHaveFace(&c, 13), 0);  // not legal on a prism: not this function's call
+  EXPECT_NE(LUMICE_CouldCrystalHaveFace(nullptr, 3), 0);
+}
+
 TEST(GetCrystalSymmetryApi, RejectsNullAndUnknownType) {
   const float regular[6]{ 1, 1, 1, 1, 1, 1 };
   auto c = SymmetryProbeCrystal(0, regular, 0.0f);

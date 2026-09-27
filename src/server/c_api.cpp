@@ -4496,6 +4496,22 @@ LUMICE_ErrorCode LUMICE_GetCrystalSymmetry(const LUMICE_CrystalParam* crystal, L
 }
 
 
+int LUMICE_CouldCrystalHaveFace(const LUMICE_CrystalParam* crystal, int face) {
+  if (!crystal || (crystal->type != 0 && crystal->type != 1) || face < 0 || face > 255) {
+    return 1;
+  }
+  // The same wire -> core translation LUMICE_GetCrystalSymmetry takes.
+  ns::CrystalConfig config;
+  try {
+    config = CrystalToJson(*crystal, 0).get<ns::CrystalConfig>();
+  } catch (...) {
+    return 1;
+  }
+  const auto fn = static_cast<ns::IdType>(face);
+  return std::visit([fn](const auto& param) { return ns::CouldFaceExist(param, fn); }, config.param_) ? 1 : 0;
+}
+
+
 // =============== Raypath Validation ===============
 LUMICE_ErrorCode LUMICE_ValidateRaypathText(const char* text, LUMICE_CrystalKind kind,
                                             LUMICE_RaypathValidationState* out_state, char* out_msg,

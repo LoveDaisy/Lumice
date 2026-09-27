@@ -467,7 +467,8 @@ extern "C" {
 // APPENDED after `d_effective`, so every existing field keeps its offset while sizeof() grows
 // (16 -> 24); LUMICE_GetCrystalSymmetry writes the whole struct, so a caller that was NOT
 // recompiled hands it a shorter one and the two new fields land past its end. Recompile against
-// this header. ADDED alongside: LUMICE_IsPApplicable and LUMICE_IsBApplicable, the axis halves of
+// this header. ADDED alongside: LUMICE_CouldCrystalHaveFace (whether a filter naming a face can
+// ever match through it on this crystal), and LUMICE_IsPApplicable and LUMICE_IsBApplicable, the axis halves of
 // P and B (the counterparts of LUMICE_IsDApplicable). The engine used to apply P and B whatever the
 // crystal's orientation distribution; it now applies P only when roll is invariant under a 60°
 // shift and B only when the zenith is symmetric about 90° with a uniform azimuth, so a Parry arc no
@@ -2702,6 +2703,15 @@ typedef struct LUMICE_CrystalSymmetry_ {
 // argument; LUMICE_ERR_INVALID_VALUE on an unknown type; LUMICE_ERR_INVALID_CONFIG when the
 // parameters do not describe a crystal. This is core's own derivation, the one the reduction runs.
 LUMICE_ErrorCode LUMICE_GetCrystalSymmetry(const LUMICE_CrystalParam* crystal, LUMICE_CrystalSymmetry* out);
+
+// Returns 0 when it is certain that no crystal drawn from `crystal` has face number `face` — its
+// shape leaves that face no area (face_distance [2, 1, 2, 1, 2, 1] does that to faces 3, 5 and 7),
+// so a filter naming it matches nothing through it. Non-zero otherwise, including whenever the
+// answer cannot be certain (a shape scalar that is neither fixed nor uniform), for a NULL or
+// unusable crystal, and for a face number not legal on the crystal's kind (LUMICE_IsLegalFace
+// answers that). The same check the engine logs as a warning when a scene binds such a filter to
+// such a crystal (v4.48).
+int LUMICE_CouldCrystalHaveFace(const LUMICE_CrystalParam* crystal, int face);
 
 // =============== Raypath Validation ===============
 // Validation state for raypath text input (GUI border color + OK gate).

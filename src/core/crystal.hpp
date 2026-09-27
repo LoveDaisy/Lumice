@@ -155,6 +155,23 @@ constexpr int MirrorFaceIndex(int i, int sigma_a, int period) {
 GeometricSymmetry DeriveGeometricSymmetry(const PrismCrystalParam& param);
 GeometricSymmetry DeriveGeometricSymmetry(const PyramidCrystalParam& param);
 
+// Whether face number `face` can bound a crystal this config draws — false only when it is certain
+// that NO draw has that face, e.g. a prism face whose face_distance pushes it past its neighbours'
+// corner ([2, 1, 2, 1, 2, 1] leaves faces 3, 5 and 7 zero-wide). A filter naming such a face can
+// never match through it, whatever its symmetry: the shape's own symmetries map absent faces onto
+// absent faces. This is a diagnostic, and it answers true whenever it cannot be sure:
+//   * every shape scalar must be kNoRandom or kUniform (a bounded, exactly known support); any
+//     other type answers true;
+//   * the shape is evaluated once, by the closed-form geometry, at the corner of the scalars'
+//     support most favourable to the face: its own distance at its minimum, every other distance
+//     at its maximum, the cone heights at their maximum — except the one whose basal face is asked
+//     about, at its minimum (a full cone reaches its apex and cuts that basal face away);
+//   * sync groups are ignored — pinning shared draws together could only rule out more corners,
+//     so the answer can err toward "exists" but never toward "absent".
+// A face number not legal for the crystal kind answers true (legality is checked elsewhere).
+bool CouldFaceExist(const PrismCrystalParam& param, IdType face);
+bool CouldFaceExist(const PyramidCrystalParam& param, IdType face);
+
 struct CrystalGeom {
   int face_cnt = 0;
   // Plane coefficients (a, b, c, d) so a·x + b·y + c·z + d ≤ 0 is the bounded

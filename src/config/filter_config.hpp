@@ -83,6 +83,10 @@ void from_json(const nlohmann::json& j, SimpleFilterParam& p);
 std::string FilterSymmetryToString(uint8_t symmetry);
 uint8_t FilterSymmetryFromString(const std::string& s);
 
+// Every face number a filter's raypath and entry/exit terms name, ascending and without repeats
+// (a complex filter's terms included; direction and crystal terms name none).
+std::vector<IdType> FilterFaceNumbers(const FilterConfig& f);
+
 }  // namespace lumice
 
 #endif  // CONFIG_FILTER_CONFIG_H_

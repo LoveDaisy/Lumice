@@ -1,5 +1,6 @@
 #include "config/filter_config.hpp"
 
+#include <algorithm>
 #include <nlohmann/json.hpp>
 #include <stdexcept>
 #include <string>
@@ -143,6 +144,39 @@ struct FilterParamToJson {
 };
 
 }  // namespace
+
+namespace {
+
+void CollectFaceNumbers(const SimpleFilterParam& p, std::vector<IdType>& out) {
+  if (const auto* rp = std::get_if<RaypathFilterParam>(&p)) {
+    out.insert(out.end(), rp->raypath_.begin(), rp->raypath_.end());
+  } else if (const auto* ee = std::get_if<EntryExitFilterParam>(&p)) {
+    if (ee->entry_) {
+      out.push_back(*ee->entry_);
+    }
+    if (ee->exit_) {
+      out.push_back(*ee->exit_);
+    }
+  }
+}
+
+}  // namespace
+
+std::vector<IdType> FilterFaceNumbers(const FilterConfig& f) {
+  std::vector<IdType> out;
+  if (const auto* simple = std::get_if<SimpleFilterParam>(&f.param_)) {
+    CollectFaceNumbers(*simple, out);
+  } else if (const auto* complex = std::get_if<ComplexFilterParam>(&f.param_)) {
+    for (const auto& clause : complex->filters_) {
+      for (const auto& term : clause) {
+        CollectFaceNumbers(term.second, out);
+      }
+    }
+  }
+  std::sort(out.begin(), out.end());
+  out.erase(std::unique(out.begin(), out.end()), out.end());
+  return out;
+}
 
 std::string FilterSymmetryToString(uint8_t symmetry) {
   std::string sym;

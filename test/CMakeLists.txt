@@ -61,6 +61,8 @@ add_executable(unit_correctness_test
   "${PROJ_TEST_DIR}/unit-correctness/core/test_reduce_raypath_audit.cpp"
   # P/B orientation-ensemble applicability (the counterparts of detail::IsDApplicable).
   "${PROJ_TEST_DIR}/unit-correctness/core/test_raypath_ensemble_applicability.cpp"
+  # CouldFaceExist + the scene-parse warning for a filter naming a face its crystal never has.
+  "${PROJ_TEST_DIR}/unit-correctness/core/test_could_face_exist.cpp"
   # ParallelRows' dispatch rule on the function itself: which thread budgets run the body
   # inline, which stand up a pool, and that the bands tile the range either way.
   "${PROJ_TEST_DIR}/unit-correctness/core/test_parallel_rows.cpp"
@@ -421,6 +423,8 @@ if(BUILD_GUI)
     "${PROJ_TEST_DIR}/unit-correctness/gui/test_lens_border_geometry.cpp"
     "${PROJ_TEST_DIR}/unit-correctness/gui/test_composite_preview.cpp"
     "${PROJ_TEST_DIR}/unit-correctness/gui/test_color_window_logic.cpp"
+    # The faces a filter row names, as the modal checks them against LUMICE_CouldCrystalHaveFace.
+    "${PROJ_TEST_DIR}/unit-correctness/gui/test_factor_face_numbers.cpp"
     # The GUI half of doc/print-mode-subtractive-ink.md §7's exclusion rule: which controls report
     # themselves inapplicable under the print tone, and the import notice standing in for the one
     # instance that has no control at all.

@@ -5,10 +5,12 @@
 #include <nlohmann/json.hpp>
 #include <stdexcept>
 #include <string>
+#include <variant>
 
 #include "config/filter_config.hpp"
 #include "config/light_config.hpp"
 #include "config/render_config.hpp"
+#include "core/crystal.hpp"
 #include "core/def.hpp"
 #include "util/color_space.hpp"
 #include "util/logger.hpp"
@@ -225,6 +227,24 @@ RenderConfig ParseRenderConfig(const nlohmann::json& j_render, const ConfigManag
   return render;
 }
 
+// A filter naming a face its crystal's shape never has matches nothing through that face — which
+// used to be silent, and became common when raypath reduction started following the crystal's own
+// symmetry: a path on a missing face no longer rotates onto a present one. Warn, once per face,
+// and leave the matching exactly as it is.
+static void WarnFilterFacesTheCrystalLacks(const ScatteringSetting& setting, IdType crystal_id, IdType filter_id,
+                                           size_t layer_index) {
+  for (IdType face : FilterFaceNumbers(setting.filter_)) {
+    const bool could_exist =
+        std::visit([face](const auto& param) { return CouldFaceExist(param, face); }, setting.crystal_.param_);
+    if (!could_exist) {
+      LOG_WARNING(
+          "scene.scattering[{}]: filter {} names face {}, which crystal {} never has (its shape leaves that face "
+          "no area); the filter matches no ray through it",
+          layer_index, filter_id, face, crystal_id);
+    }
+  }
+}
+
 static MsInfo ParseScatteringInfo(const nlohmann::json& j_s, const ConfigManager& m, size_t layer_index) {
   static const FilterConfig kDefaultNoneFilter{ kInvalidId, FilterConfig::kSymNone, FilterConfig::kFilterIn,
                                                 NoneFilterParam{} };
@@ -252,6 +272,7 @@ static MsInfo ParseScatteringInfo(const nlohmann::json& j_s, const ConfigManager
     if (j_entry.contains("filter")) {
       IdType filter_id = j_entry.at("filter").get<IdType>();
       setting.filter_ = m.filters_.at(filter_id);
+      WarnFilterFacesTheCrystalLacks(setting, crystal_id, filter_id, layer_index);
     }
 
     ms.setting_.emplace_back(std::move(setting));

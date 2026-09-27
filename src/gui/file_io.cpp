@@ -548,6 +548,24 @@ int CountFactorAlternatives(const Factor& factor) {
   return static_cast<int>(FactorAlternatives(factor).size());
 }
 
+std::vector<int> FactorFaceNumbers(const Factor& factor) {
+  std::vector<int> faces;
+  for (const auto& alt : FactorAlternatives(factor)) {
+    if (alt.is_raypath) {
+      faces.insert(faces.end(), alt.raypath.begin(), alt.raypath.end());
+    } else {
+      for (int f : { alt.entry, alt.exit }) {
+        if (f != kEEWildcardSentinel) {
+          faces.push_back(f);
+        }
+      }
+    }
+  }
+  std::sort(faces.begin(), faces.end());
+  faces.erase(std::unique(faces.begin(), faces.end()), faces.end());
+  return faces;
+}
+
 // Steps A–C — GUI FilterConfig → OR of AND-clauses. A summand (AND-of-factors)
 // distributes over each factor's internal OR via a Cartesian product (DNF):
 // AND(EE{3,4}, RP) = OR(AND(EE3,RP), AND(EE4,RP)). Concatenating every summand's

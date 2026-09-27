@@ -719,6 +719,11 @@ inline std::vector<Factor> ParseSummandText(const std::string& text) {
 // the next commit because it resolves to 2 alternatives).
 int CountFactorAlternatives(const Factor& factor);
 
+// Every face number a factor names across all its alternatives (raypath faces, entry / exit
+// faces; wildcards name none), ascending and without repeats. Defined in file_io.cpp on the same
+// expansion CountFactorAlternatives and the commit path use.
+std::vector<int> FactorFaceNumbers(const Factor& factor);
+
 // Format a single Factor back to canonical text.
 inline std::string FormatFactor(const Factor& f) {
   return std::visit(
