@@ -83,7 +83,10 @@ struct ChainIdLayerContext {
   IdType crystal_id = kInvalidId;  // CrystalConfig::id_, see ChainIdTableEntry
   uint8_t symmetry = 0;            // FilterConfig::kSym* flags
   int sigma_a = 0;
+  // The orientation ensemble's D / P / B conditions (detail::Is*Applicable).
   bool d_applicable = false;
+  bool p_applicable = false;
+  bool b_applicable = false;
 };
 
 // sigma_a / d_applicable derive from `axis` exactly the way FilterSpec::Create

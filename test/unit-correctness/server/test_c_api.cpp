@@ -1936,6 +1936,71 @@ TEST(GetCrystalSymmetryApi, UnequalConesLoseTheHorizontalMirror) {
   EXPECT_EQ(s.rotation_step, 1);
 }
 
+TEST(IsPApplicableApi, ReadsRollOnly) {
+  EXPECT_NE(LUMICE_IsPApplicable(LUMICE_DIST_UNIFORM, 360.0f), 0);
+  EXPECT_EQ(LUMICE_IsPApplicable(LUMICE_DIST_UNIFORM, 180.0f), 0);  // not a full turn
+  EXPECT_EQ(LUMICE_IsPApplicable(LUMICE_DIST_GAUSS, 360.0f), 0);    // Parry-style locked roll
+  EXPECT_EQ(LUMICE_IsPApplicable(LUMICE_DIST_NO_RANDOM, 0.0f), 0);
+  EXPECT_EQ(LUMICE_IsPApplicable(12345, 360.0f), 0);  // unknown type answers the negative
+}
+
+TEST(IsBApplicableApi, SpeaksZenithOnTheWire) {
+  // Column (zenith 90) and random (full-turn uniform) pass; plate (zenith 0) fails.
+  EXPECT_NE(LUMICE_IsBApplicable(LUMICE_DIST_UNIFORM, 360.0f, LUMICE_DIST_GAUSS, 90.0f, 1.0f), 0);
+  EXPECT_NE(LUMICE_IsBApplicable(LUMICE_DIST_UNIFORM, 360.0f, LUMICE_DIST_UNIFORM, 90.0f, 360.0f), 0);
+  EXPECT_NE(LUMICE_IsBApplicable(LUMICE_DIST_UNIFORM, 360.0f, LUMICE_DIST_UNIFORM, 0.0f, 360.0f), 0);
+  EXPECT_EQ(LUMICE_IsBApplicable(LUMICE_DIST_UNIFORM, 360.0f, LUMICE_DIST_GAUSS, 0.0f, 1.0f), 0);
+  // A column whose azimuth is not uniform over a full turn fails too.
+  EXPECT_EQ(LUMICE_IsBApplicable(LUMICE_DIST_GAUSS, 30.0f, LUMICE_DIST_GAUSS, 90.0f, 1.0f), 0);
+  EXPECT_EQ(LUMICE_IsBApplicable(12345, 360.0f, LUMICE_DIST_GAUSS, 90.0f, 1.0f), 0);
+  EXPECT_EQ(LUMICE_IsBApplicable(LUMICE_DIST_UNIFORM, 360.0f, 12345, 90.0f, 1.0f), 0);
+}
+
+// p_effective / b_effective intersect the axis condition with the shape, like d_effective.
+TEST(GetCrystalSymmetryApi, PAndBEffectiveNeedBothAxisAndShape) {
+  const float regular[6]{ 1, 1, 1, 1, 1, 1 };
+  const float no_rotation[6]{ 1.0f, 1.1f, 1.2f, 1.3f, 1.4f, 1.5f };
+  LUMICE_CrystalSymmetry s{};
+
+  auto c = SymmetryProbeCrystal(0, regular, 0.0f);
+  c.roll = { LUMICE_DIST_UNIFORM, 0.0f, 360.0f };
+  ASSERT_EQ(LUMICE_GetCrystalSymmetry(&c, &s), LUMICE_OK);
+  EXPECT_NE(s.p_effective, 0);
+  EXPECT_NE(s.b_effective, 0);
+
+  // Axis rules P out (locked roll) and B out (plate zenith), shape unchanged.
+  c.roll = { LUMICE_DIST_GAUSS, 0.0f, 1.0f };
+  c.zenith = { LUMICE_DIST_GAUSS, 0.0f, 1.0f };
+  ASSERT_EQ(LUMICE_GetCrystalSymmetry(&c, &s), LUMICE_OK);
+  EXPECT_EQ(s.p_effective, 0);
+  EXPECT_EQ(s.b_effective, 0);
+  EXPECT_EQ(s.rotation_step, 1);
+  EXPECT_NE(s.horizontal_mirror, 0);
+
+  // Shape rules each out with the axis admitting both.
+  c = SymmetryProbeCrystal(0, no_rotation, 0.0f);
+  c.roll = { LUMICE_DIST_UNIFORM, 0.0f, 360.0f };
+  ASSERT_EQ(LUMICE_GetCrystalSymmetry(&c, &s), LUMICE_OK);
+  EXPECT_EQ(s.rotation_step, 6);
+  EXPECT_EQ(s.p_effective, 0);
+  c = SymmetryProbeCrystal(1, regular, 0.0f);
+  c.roll = { LUMICE_DIST_UNIFORM, 0.0f, 360.0f };
+  c.lower_wedge_angle = 40.0f;
+  ASSERT_EQ(LUMICE_GetCrystalSymmetry(&c, &s), LUMICE_OK);
+  EXPECT_EQ(s.b_effective, 0);
+}
+
+TEST(CouldCrystalHaveFaceApi, AnswersForTheShapeAndErrsTowardYes) {
+  const float alternating[6]{ 2, 1, 2, 1, 2, 1 };
+  const auto c = SymmetryProbeCrystal(0, alternating, 0.0f);
+  EXPECT_EQ(LUMICE_CouldCrystalHaveFace(&c, 3), 0);
+  EXPECT_EQ(LUMICE_CouldCrystalHaveFace(&c, 5), 0);
+  EXPECT_NE(LUMICE_CouldCrystalHaveFace(&c, 4), 0);
+  EXPECT_NE(LUMICE_CouldCrystalHaveFace(&c, 1), 0);
+  EXPECT_NE(LUMICE_CouldCrystalHaveFace(&c, 13), 0);  // not legal on a prism: not this function's call
+  EXPECT_NE(LUMICE_CouldCrystalHaveFace(nullptr, 3), 0);
+}
+
 TEST(GetCrystalSymmetryApi, RejectsNullAndUnknownType) {
   const float regular[6]{ 1, 1, 1, 1, 1, 1 };
   auto c = SymmetryProbeCrystal(0, regular, 0.0f);

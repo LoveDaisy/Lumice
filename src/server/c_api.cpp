@@ -4401,36 +4401,66 @@ const char* LUMICE_AxisScalarKeyName(int slot) {
   return ns::AxisScalarKeyName(slot);
 }
 
-int LUMICE_IsDApplicable(int azimuth_dist_type, float azimuth_full_range_deg, float roll_anchor_deg) {
-  // Spelled as a switch rather than a cast: the header promises only that LUMICE_DIST_* stays
-  // self-consistent, not that it stays numerically equal to core's DistributionType. Every other
-  // wire-enum translation in this file (LUMICE_DIST_* above, LUMICE_LENS_TYPE_*) goes through an
-  // explicit switch for the same reason. An unrecognised value answers the negative, matching
-  // LUMICE_IsLegalFace / LUMICE_IsShapeScalarApplicable.
-  ns::DistributionType az_type{};
-  switch (azimuth_dist_type) {
+// LUMICE_DIST_* -> core's DistributionType for the three symmetry-applicability predicates below.
+// Spelled as a switch rather than a cast: the header promises only that LUMICE_DIST_* stays
+// self-consistent, not that it stays numerically equal to core's DistributionType. Every other
+// wire-enum translation in this file (LUMICE_DIST_* above, LUMICE_LENS_TYPE_*) goes through an
+// explicit switch for the same reason. False on an unrecognised value, which each caller answers
+// with the negative, matching LUMICE_IsLegalFace / LUMICE_IsShapeScalarApplicable.
+static bool WireDistType(int wire, ns::DistributionType* out) {
+  switch (wire) {
     case LUMICE_DIST_NO_RANDOM:
-      az_type = ns::DistributionType::kNoRandom;
-      break;
+      *out = ns::DistributionType::kNoRandom;
+      return true;
     case LUMICE_DIST_UNIFORM:
-      az_type = ns::DistributionType::kUniform;
-      break;
+      *out = ns::DistributionType::kUniform;
+      return true;
     case LUMICE_DIST_GAUSS:
-      az_type = ns::DistributionType::kGaussian;
-      break;
+      *out = ns::DistributionType::kGaussian;
+      return true;
     case LUMICE_DIST_ZIGZAG:
-      az_type = ns::DistributionType::kZigzag;
-      break;
+      *out = ns::DistributionType::kZigzag;
+      return true;
     case LUMICE_DIST_LAPLACIAN:
-      az_type = ns::DistributionType::kLaplacian;
-      break;
+      *out = ns::DistributionType::kLaplacian;
+      return true;
     case LUMICE_DIST_GAUSS_LEGACY:
-      az_type = ns::DistributionType::kGaussianLegacy;
-      break;
+      *out = ns::DistributionType::kGaussianLegacy;
+      return true;
     default:
-      return 0;
+      return false;
+  }
+}
+
+int LUMICE_IsDApplicable(int azimuth_dist_type, float azimuth_full_range_deg, float roll_anchor_deg) {
+  ns::DistributionType az_type{};
+  if (!WireDistType(azimuth_dist_type, &az_type)) {
+    return 0;
   }
   return ns::detail::IsDApplicableParams(az_type, azimuth_full_range_deg, roll_anchor_deg) ? 1 : 0;
+}
+
+int LUMICE_IsPApplicable(int roll_dist_type, float roll_full_range_deg) {
+  ns::DistributionType roll_type{};
+  if (!WireDistType(roll_dist_type, &roll_type)) {
+    return 0;
+  }
+  return ns::detail::IsPApplicableParams(roll_type, roll_full_range_deg) ? 1 : 0;
+}
+
+int LUMICE_IsBApplicable(int azimuth_dist_type, float azimuth_full_range_deg, int zenith_dist_type,
+                         float zenith_center_deg, float zenith_full_range_deg) {
+  ns::DistributionType az_type{};
+  ns::DistributionType zenith_type{};
+  if (!WireDistType(azimuth_dist_type, &az_type) || !WireDistType(zenith_dist_type, &zenith_type)) {
+    return 0;
+  }
+  // The wire speaks zenith, core's predicate latitude (= 90 - zenith) — the conversion core's own
+  // axis from_json makes. The spread is a width and does not change.
+  return ns::detail::IsBApplicableParams(az_type, azimuth_full_range_deg, zenith_type, 90.0f - zenith_center_deg,
+                                         zenith_full_range_deg) ?
+             1 :
+             0;
 }
 
 
@@ -4457,7 +4487,28 @@ LUMICE_ErrorCode LUMICE_GetCrystalSymmetry(const LUMICE_CrystalParam* crystal, L
   out->vertical_mirror_mask = g.d_valid_sigma_mask;
   out->horizontal_mirror = g.b_applicable ? 1 : 0;
   out->d_effective = ns::DMirrorActive(d.d_applicable, d.sigma_a, g) ? 1 : 0;
+  // P acts when the ensemble admits it and the shape leaves at least one non-identity rotation;
+  // B when the ensemble admits it and the shape has the horizontal mirror — the same
+  // intersections the reductions take (crystal.cpp PActive / BActive, detail::ReduceBuffer).
+  out->p_effective = (ns::detail::IsPApplicable(config.axis_) && g.p_step < ns::kHexagonalFnPeriod) ? 1 : 0;
+  out->b_effective = (ns::detail::IsBApplicable(config.axis_) && g.b_applicable) ? 1 : 0;
   return LUMICE_OK;
+}
+
+
+int LUMICE_CouldCrystalHaveFace(const LUMICE_CrystalParam* crystal, int face) {
+  if (!crystal || (crystal->type != 0 && crystal->type != 1) || face < 0 || face > 255) {
+    return 1;
+  }
+  // The same wire -> core translation LUMICE_GetCrystalSymmetry takes.
+  ns::CrystalConfig config;
+  try {
+    config = CrystalToJson(*crystal, 0).get<ns::CrystalConfig>();
+  } catch (...) {
+    return 1;
+  }
+  const auto fn = static_cast<ns::IdType>(face);
+  return std::visit([fn](const auto& param) { return ns::CouldFaceExist(param, fn); }, config.param_) ? 1 : 0;
 }
 
 

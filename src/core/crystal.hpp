@@ -155,6 +155,23 @@ constexpr int MirrorFaceIndex(int i, int sigma_a, int period) {
 GeometricSymmetry DeriveGeometricSymmetry(const PrismCrystalParam& param);
 GeometricSymmetry DeriveGeometricSymmetry(const PyramidCrystalParam& param);
 
+// Whether face number `face` can bound a crystal this config draws — false only when it is certain
+// that NO draw has that face, e.g. a prism face whose face_distance pushes it past its neighbours'
+// corner ([2, 1, 2, 1, 2, 1] leaves faces 3, 5 and 7 zero-wide). A filter naming such a face can
+// never match through it, whatever its symmetry: the shape's own symmetries map absent faces onto
+// absent faces. This is a diagnostic, and it answers true whenever it cannot be sure:
+//   * every shape scalar must be kNoRandom or kUniform (a bounded, exactly known support); any
+//     other type answers true;
+//   * the shape is evaluated once, by the closed-form geometry, at the corner of the scalars'
+//     support most favourable to the face: its own distance at its minimum, every other distance
+//     at its maximum, the cone heights at their maximum — except the one whose basal face is asked
+//     about, at its minimum (a full cone reaches its apex and cuts that basal face away);
+//   * sync groups are ignored — pinning shared draws together could only rule out more corners,
+//     so the answer can err toward "exists" but never toward "absent".
+// A face number not legal for the crystal kind answers true (legality is checked elsewhere).
+bool CouldFaceExist(const PrismCrystalParam& param, IdType face);
+bool CouldFaceExist(const PyramidCrystalParam& param, IdType face);
+
 struct CrystalGeom {
   int face_cnt = 0;
   // Plane coefficients (a, b, c, d) so a·x + b·y + c·z + d ≤ 0 is the bounded
@@ -340,6 +357,11 @@ class Crystal {
    * @param rp Raypath (face index sequence)
    * @param symmetry Symmetry flags (P, B, D)
    * @return Reduced raypath
+   *
+   * Knows no orientation ensemble, so it assumes the conservative answer for every element:
+   * D, P and B are all treated as not admitted by the ensemble (no reduction at all). A caller
+   * that holds an axis distribution uses the full overload with detail::DeriveDSymmetryParams,
+   * detail::IsPApplicable and detail::IsBApplicable.
    */
   std::vector<IdType> ReduceRaypath(const std::vector<IdType>& rp, uint8_t symmetry) const;
 
@@ -348,11 +370,16 @@ class Crystal {
    * @param rp Raypath (face index sequence)
    * @param symmetry Symmetry flags (P, B, D)
    * @param sigma_a σ-mirror parameter (0..5); ignored when d_applicable=false
-   * @param d_applicable Whether D symmetry should be applied
+   * @param d_applicable Whether the orientation ensemble admits D (detail::IsDApplicable)
+   * @param p_applicable Whether the orientation ensemble admits P (detail::IsPApplicable)
+   * @param b_applicable Whether the orientation ensemble admits B (detail::IsBApplicable)
    * @return Reduced raypath
+   *
+   * The three *_applicable flags are the ensemble's halves; the shape's halves are
+   * GeomSymmetry(). An element acts only when the request, its ensemble flag and the shape allow it.
    */
-  std::vector<IdType> ReduceRaypath(const std::vector<IdType>& rp, uint8_t symmetry, int sigma_a,
-                                    bool d_applicable) const;
+  std::vector<IdType> ReduceRaypath(const std::vector<IdType>& rp, uint8_t symmetry, int sigma_a, bool d_applicable,
+                                    bool p_applicable, bool b_applicable) const;
   // The reduction rule itself lives in the free function ReduceRaypathByPeriod below; this
   // member supplies the crystal's fn_period_ and GeomSymmetry() and nothing else.
 
@@ -361,6 +388,8 @@ class Crystal {
    * @param rp Raypath (face index sequence)
    * @param symmetry Symmetry flags (P, B, D)
    * @return Expanded raypaths (all symmetric variants)
+   *
+   * Same conservative ensemble assumption as the two-argument ReduceRaypath: nothing expands.
    */
   std::vector<std::vector<IdType>> ExpandRaypath(const std::vector<IdType>& rp, uint8_t symmetry) const;
 
@@ -369,11 +398,13 @@ class Crystal {
    * @param rp Raypath (face index sequence)
    * @param symmetry Symmetry flags (P, B, D)
    * @param sigma_a σ-mirror parameter (0..5); ignored when d_applicable=false
-   * @param d_applicable Whether D symmetry should be applied
+   * @param d_applicable Whether the orientation ensemble admits D (detail::IsDApplicable)
+   * @param p_applicable Whether the orientation ensemble admits P (detail::IsPApplicable)
+   * @param b_applicable Whether the orientation ensemble admits B (detail::IsBApplicable)
    * @return Expanded raypaths (all symmetric variants)
    */
   std::vector<std::vector<IdType>> ExpandRaypath(const std::vector<IdType>& rp, uint8_t symmetry, int sigma_a,
-                                                 bool d_applicable) const;
+                                                 bool d_applicable, bool p_applicable, bool b_applicable) const;
 
   /**
    * @brief Get refractive index for a given wavelength
@@ -455,13 +486,16 @@ class Crystal {
 // kHexagonalFnPeriod above); a negative period means "no symmetry defined" and the input is
 // returned as is, as is the input under
 // symmetry == FilterConfig::kSymNone. `sigma_a` and `d_applicable` are the axis-derived D
-// parameters (detail::ComputeSigmaA / detail::IsDApplicable). `geom` is the crystal's shape
-// symmetry: P rotates only by multiples of geom.p_step, D is applied only when the D bit is set,
-// d_applicable is true AND geom admits mirror sigma_a, B only when the B bit is set and
-// geom.b_applicable. The reduced element set is the request intersected with what the geometry
-// allows — never more.
+// parameters (detail::ComputeSigmaA / detail::IsDApplicable); `p_applicable` and `b_applicable`
+// are the axis-derived P and B conditions (detail::IsPApplicable / detail::IsBApplicable) — the
+// orientation ensemble's halves. `geom` is the crystal's shape symmetry, the other half: P rotates
+// only when the P bit is set and p_applicable, and then only by multiples of geom.p_step; D is
+// applied only when the D bit is set, d_applicable is true AND geom admits mirror sigma_a; B only
+// when the B bit is set, b_applicable AND geom.b_applicable. The reduced element set is the
+// request intersected with what the ensemble and the geometry allow — never more.
 std::vector<IdType> ReduceRaypathByPeriod(const std::vector<IdType>& rp, uint8_t symmetry, int sigma_a,
-                                          bool d_applicable, int fn_period, const GeometricSymmetry& geom);
+                                          bool d_applicable, bool p_applicable, bool b_applicable, int fn_period,
+                                          const GeometricSymmetry& geom);
 
 namespace detail {
 // Internal — not part of public API.
@@ -515,6 +549,42 @@ struct DSymmetryParams {
   int sigma_a = 0;
 };
 DSymmetryParams DeriveDSymmetryParams(const AxisDistribution& d);
+
+// The orientation-ensemble halves of P and B — the counterparts of IsDApplicable. A symmetry
+// element may merge two face sequences only when the orientation ENSEMBLE maps each onto the
+// other with equal weight; the shape admitting it (GeometricSymmetry) is necessary but not enough.
+// These are the ensemble's `p_applicable` / `b_applicable` threaded through every reduction next
+// to `d_applicable`, and are not GeometricSymmetry::b_applicable (the shape's half of B): an
+// element acts only when the request, its ensemble condition and the shape all allow it.
+//
+// P (a 60° rotation about the c-axis) is a pure shift of the roll angle, so it holds iff roll's
+// distribution is invariant under a 60° shift. Of this repo's DistributionTypes only a uniform
+// over a full turn is — the same primitive IsDApplicableParams reads for azimuth, called directly
+// rather than through AxisDistribution::IsRollRotationallySymmetric, which answers a different
+// question (+180° invariance for the full-sphere fast path) that merely has the same answer today.
+// Azimuth plays no part: a Parry arc's azimuth is uniform, its roll is locked, and 3-5 carries
+// light while its 60° image 4-6 carries none.
+bool IsPApplicableParams(DistributionType roll_type, float roll_full_range_deg);
+bool IsPApplicable(const AxisDistribution& d);
+
+// B (the horizontal mirror: basal 1<->2, upper cone <-> lower cone) relabels the same physical
+// crystal with its c-axis reversed, i.e. orientation (zenith, azimuth) against
+// (180° - zenith, azimuth + 180°). It holds iff the ensemble weighs the two equally, which this
+// predicate accepts when BOTH:
+//   * azimuth is invariant under a 180° shift — conservatively, uniform over a full turn. Not in
+//     the first statement of the rule ("zenith symmetric about 90°"), and measured to matter: a
+//     column (zenith 90°) with a Gaussian azimuth lights 3-2 at 1.98% and 3-1 at 0.00%;
+//   * zenith is symmetric about 90°, i.e. core's latitude (= 90° - zenith) symmetric about 0°:
+//     either a full-turn uniform (a random orientation, symmetric about every point), or a
+//     distribution symmetric about its own centre (fixed value, uniform, Gaussian, Laplacian)
+//     whose centre is 0°. kZigzag folds |A·sin + B| and is not symmetric about its tilt offset in
+//     general, so it answers false; so does any type added later until someone decides otherwise.
+// Roll plays no part. A plate (zenith 0°) fails: face 1 is always the one facing up.
+// The arguments are the raw fields the rule reads, like IsDApplicableParams: `latitude_*` are
+// core's latitude slot (centre = 90° - zenith), not the wire's zenith — the C API converts.
+bool IsBApplicableParams(DistributionType azimuth_type, float azimuth_full_range_deg, DistributionType latitude_type,
+                         float latitude_center_deg, float latitude_full_range_deg);
+bool IsBApplicable(const AxisDistribution& d);
 }  // namespace detail
 
 

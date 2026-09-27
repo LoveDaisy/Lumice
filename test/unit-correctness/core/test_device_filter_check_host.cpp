@@ -38,20 +38,26 @@ Crystal MakeHexPrism() {
   return Crystal::CreatePrism(1.0f);
 }
 
-// d_applicable=true axis (roll fixed, sigma_a non-zero) vs d_applicable=false
-// axis (roll uniform, sigma_a meaningless). Same logic the Metal parity
-// fixture uses (test_metal_filter_match_parity.mm:MakeDApplicableAxis).
+// d_applicable=true axis (roll anchored at 30°, sigma_a non-zero) vs the other variant (roll
+// anchored at 0). Same logic the Metal parity fixture uses
+// (test_metal_filter_match_parity.mm:MakeDApplicableAxis).
+//
+// Both variants are ones whose orientation ensemble admits P and B (uniform azimuth, horizontal
+// c-axis, full-turn uniform roll): the device kernels apply P and B unconditionally
+// (device_filter_desc.cpp FillCanonicalBytes), while FilterSpec applies them only where
+// detail::IsPApplicable / IsBApplicable hold, so on any other axis the two would disagree by
+// design — a known CPU/GPU gap, not what this parity check is about.
 AxisDistribution MakeAxis(bool d_applicable) {
   AxisDistribution d{};
   d.azimuth_dist.type = DistributionType::kUniform;
   d.azimuth_dist.spread = 360.0f;
   d.azimuth_dist.center = 0.0f;
   d.latitude_dist.type = DistributionType::kNoRandom;
-  d.latitude_dist.center = 90.0f;
+  d.latitude_dist.center = 0.0f;
   if (d_applicable) {
-    d.roll_dist.type = DistributionType::kNoRandom;
+    d.roll_dist.type = DistributionType::kUniform;
     d.roll_dist.center = 30.0f;  // sigma_a=5 per kSigmaARollDeg inverse
-    d.roll_dist.spread = 0.0f;
+    d.roll_dist.spread = 360.0f;
   } else {
     d.roll_dist.type = DistributionType::kUniform;
     d.roll_dist.center = 0.0f;

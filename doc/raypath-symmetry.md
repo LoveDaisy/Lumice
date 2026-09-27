@@ -4,7 +4,8 @@
 
 This document explains the geometric reasoning behind the `symmetry` field in Lumice filters,
 covering the two sources of raypath equivalence, the precise semantics of the P, B, and D
-toggles, D's enabling condition, and the corresponding GUI behavior.
+toggles, the orientation-ensemble condition each of them needs, D's mirror derivation, and the
+corresponding GUI behavior.
 
 **Target audience**: advanced users who want to understand filter behavior at the crystal
 geometry level, beta testers, and future contributors.
@@ -47,7 +48,7 @@ pyramid whose upper and lower cones match. A config can describe less: `face_dis
 `[1, 1.2, 1, 1.2, 1, 1.2]` has a three-fold axis (rotations by 120°, three vertical mirrors), not
 a six-fold one; unequal `upper_h` / `lower_h` or wedge angles remove σh. The reduction therefore
 uses **the elements the toggles request, intersected with the elements the crystal's shape really
-has** (and, for D, with the ensemble condition of §4) — never more. Merging by an element the
+has and with the elements its orientation ensemble admits** (§2b) — never more. Merging by an element the
 shape lacks folds inequivalent paths into one row: on the three-fold prism above, P used to merge
 near-face and far-face paths whose energies differ by 2.4×.
 
@@ -69,20 +70,35 @@ Face numbering convention:
 
 ### 2b. Orientation Distribution Symmetry (ensemble — conditional)
 
-When a population of crystals has a specific orientation distribution, additional raypath
-equivalences can arise at the **ensemble** level. These depend on how azimuth, zenith, and
-roll are distributed:
+A symmetry element of the shape relabels faces; two raypaths it maps onto each other carry the
+same light only if the crystal **ensemble** holds the two labelings with equal weight — i.e. the
+orientation distribution is invariant under the element. Each element moves a different part of
+the orientation:
 
-- **Azimuth uniform 360°**: all orientations about the vertical are equally likely →
-  C6 equivalence holds in the ensemble.
-- **Zenith distribution symmetric** (e.g., plate crystals with both faces up/down equally):
-  σh (horizontal mirror) equivalence holds.
-- **Roll mean at a multiple of 30°** combined with azimuth uniform 360°: a specific vertical
-  mirror σv or σd applies across the ensemble.
+- **P (60° rotation about the c-axis)** is a shift of the **roll** angle. It holds iff roll's
+  distribution is invariant under a 60° shift — in this engine, a uniform roll over a full turn.
+  Azimuth does not enter: a Parry arc has a uniform azimuth and a locked roll, and lights 3-5
+  while its 60° image 4-6 stays dark.
+- **B (σh)** reverses the c-axis: the same physical crystal labeled upside down is orientation
+  (zenith, azimuth) against (180° − zenith, azimuth + 180°). It holds iff the **zenith** is
+  symmetric about 90° **and the azimuth** is invariant under a half turn (in practice: uniform over
+  360°). Roll does not enter. A plate (zenith ≈ 0°) fails — face 1 is always the one facing up, and
+  1-3 and 2-3 are nothing alike; a column (zenith ≈ 90°) passes, locked roll or not. A column with a
+  non-uniform azimuth fails too: measured, 3-2 carries 1.98% and 3-1 none.
+- **D (one vertical mirror)** needs azimuth uniform over 360° and a roll anchor on a multiple of
+  30°, which selects the mirror (§4).
 
 **The key insight**: P, B, and D are not properties of a single crystal. They are properties
-of the *ensemble* of crystals described by the axis distribution. Only when the ensemble
-distribution respects a symmetry does it make sense to enable the corresponding filter toggle.
+of the *ensemble* of crystals described by the axis distribution, and the engine applies each
+only where its condition holds — a toggle set on an ensemble that does not admit it has no effect
+(fewer rows merge), never a wrong merge. The three conditions are core's
+`detail::IsPApplicable` / `IsBApplicable` / `IsDApplicable` (`src/core/crystal.hpp`), shared by
+every CPU reduction (filters, the analysis chain ids, the analysis list's read-time merge) and
+exposed as `LUMICE_IsPApplicable` / `LUMICE_IsBApplicable` / `LUMICE_IsDApplicable`.
+
+An earlier version of this section tied P to a uniform azimuth and B to "a symmetric zenith
+distribution (plate crystals)". Both were wrong, and the engine had no condition for either: P and
+B merged on every ensemble.
 
 ---
 
@@ -94,8 +110,8 @@ Applies the six-fold rotational symmetry of the hexagonal prism about the c-axis
 each prism face maps to the next (3→4→5→6→7→8→3), and the basal and pyramid faces rotate
 correspondingly.
 
-**Enabling condition**: azimuth distribution is uniform over 360°. This is the most common
-case (freely falling or lightly oriented crystals) and is nearly always safe to enable.
+**Enabling condition**: roll is uniform over 360° (§2b) — true for random, plate and column
+orientations, false for Parry and Lowitz, whose roll is locked. Azimuth plays no part.
 
 **Effect**: the canonical raypath uses the smallest face permutation representative; six
 rotationally equivalent paths collapse to one. On a shape with only a three- or two-fold axis,
@@ -110,9 +126,9 @@ Applies the horizontal mirror plane through the crystal's equator. Under σh:
 - Prism faces 3–8: unchanged (they straddle the mirror plane)
 - Upper pyramid faces: 13 ↔ 23, 14 ↔ 24, 15 ↔ 25, 16 ↔ 26, 17 ↔ 27, 18 ↔ 28
 
-**Enabling condition**: the zenith distribution is symmetric about 90° (neither top nor bottom
-basal face is preferentially up). This is typically satisfied for column crystals with a
-broad zenith distribution and for completely random orientations.
+**Enabling condition**: the zenith distribution is symmetric about 90° (neither end of the
+c-axis is preferentially up) and the azimuth is uniform over 360° (§2b). True for random, column
+and Parry orientations; false for plate and Lowitz, whose c-axis stays near vertical.
 
 **Effect**: paths entering through the top basal become equivalent to paths entering through
 the bottom basal; upper-pyramid paths become equivalent to lower-pyramid paths. Only on a shape
@@ -197,20 +213,24 @@ axis.
 
 ## 5. Typical Scenario Reference
 
-| Crystal type | Az | Zenith | Roll mean | P | B | D |
+What the engine applies for each orientation family (the GUI's axis presets and two more), on a
+shape that has all of D6h:
+
+| Orientation | Az | Zenith | Roll | P | B | D |
 |---|---|---|---|---|---|---|
-| Plate, free falling (22° halo ring) | uniform 360° | Gauss ≈ 0° | uniform 360° | ✓ | ✓ | ✓ (D geometrically coincides with P; enabling both is harmless) |
-| Plate, Parry arc | uniform 360° | Gauss ≈ 0° | 0° | ✓ | — | ✓ (roll mean = 0°, σv through face 3) |
-| Column, random | uniform 360° | uniform 90° | uniform 360° | ✓ | ✓ | ✓ (D geometrically coincides with P) |
-| Column, oriented (tangent arcs) | uniform 360° | Gauss ≈ 90° | Gauss σ ≈ 0°, mean = 0° | ✓ | — | ✓ |
-| Pyramid (odd-roll config) | uniform 360° | Gauss ≈ 45° | Gauss mean = 15° | ✓ | — | ✗ (15° not a multiple of 30°) |
-| Any, non-uniform azimuth | Gauss | any | any | ✗ | — | ✗ |
+| Random | uniform 360° | uniform, full turn | uniform 360° | ✓ | ✓ | ✓ (D coincides with P here) |
+| Plate (parhelia) | uniform 360° | Gauss ≈ 0° | uniform 360° | ✓ | ✗ (face 1 always up) | ✓ |
+| Column (tangent arcs) | uniform 360° | Gauss ≈ 90° | uniform 360° | ✓ | ✓ | ✓ |
+| Parry | uniform 360° | Gauss ≈ 90° | Gauss, mean 0° | ✗ (roll locked) | ✓ | ✓ (σv through face 3) |
+| Lowitz | uniform 360° | Gauss ≈ 0°, wide | Gauss, mean 0° | ✗ | ✗ | ✓ |
+| Odd-roll config | uniform 360° | Gauss ≈ 45° | Gauss, mean 15° | ✗ | ✗ | ✗ (15° not a multiple of 30°) |
+| Any, non-uniform azimuth | Gauss | any | any | as roll decides | ✗ | ✗ |
 
 Notes:
-- "–" means the toggle is typically not meaningful for this crystal type.
-- When roll distribution is `uniform 360°`, D is geometrically equivalent to P (the ensemble
-  has full rotational symmetry); enabling D alongside P is harmless but redundant.
-- B is generally only meaningful when the zenith distribution treats up/down equally.
+- When roll is `uniform 360°`, D adds nothing P does not already merge (the ensemble has full
+  rotational symmetry); enabling D alongside P is harmless but redundant.
+- A ✗ cell means the toggle is ignored for that crystal, not that it is an error to set it: the
+  reduction simply keeps those rows apart. The toggles are per filter, the conditions per crystal.
 
 ---
 
@@ -238,12 +258,26 @@ is what the sqrt-scaled Range slider once stored at its stop, the hint said D wa
 engine had already dropped it. A hint that disagrees with the thing it describes is worse than no
 hint, which is why this one has no copy of the rule to drift.
 
+**P and B hints**: the same `(i)` button appears beside **P** when roll is not uniform over
+360°, and beside **B** when the zenith is not symmetric about 90° or the azimuth is not uniform
+(§2b), each asking the engine (`LUMICE_IsPApplicable` / `LUMICE_IsBApplicable`). When the axis
+already rules P out, the P hint gives that reason and not the shape's rotation step.
+
 **Shape hints**: since the reduction also intersects with the crystal's shape (§2a), the GUI
 asks `LUMICE_GetCrystalSymmetry` for the crystal of the filter / colour row and shows the same
 kind of `(i)` button beside **P** when the shape repeats only every 120° / 180° (or not at all),
 beside **B** when the upper and lower pyramid parts differ, and beside **D** when the axis passes
-the §4 condition but the shape lacks the mirror it selects. The D answer (`d_effective`) is
-decided in core (`DMirrorActive`), the same function the reductions call. The analysis panel's
+the §4 condition but the shape lacks the mirror it selects. Whether each element acts at all
+(`p_effective`, `b_effective`, `d_effective`) is decided in core, by the same intersections the
+reductions take.
+
+**Faces the shape never has**: a shape can leave a face with no area at all — `face_distance`
+`[2, 1, 2, 1, 2, 1]` does that to faces 3, 5 and 7. A filter naming such a face matches nothing
+through it, whatever its symmetry (the shape's own symmetries map absent faces onto absent faces).
+That is reported rather than changed: loading a scene logs a warning per such face, and the Edit
+Entry modal notes it under the filter row (`LUMICE_CouldCrystalHaveFace`, core's
+`CouldFaceExist`). The check is exact for fixed and uniform shape scalars and stays quiet for any
+other distribution, where it cannot be sure. The analysis panel's
 toggles act scene-wide and show no hints; each crystal is still reduced under its own shape.
 
 ---
@@ -256,11 +290,12 @@ The following are **not** covered by P, B, or D:
   symmetry reduction across sub-filter boundaries is not implemented.
 - **Entry/exit pairs with multiple values**: when an `entry_exit` filter lists multiple entry
   or exit faces, cross-face symmetry beyond what P/B/D express is not handled.
-- **GPU filter matching on low-symmetry shapes**: the Metal / CUDA device kernels still reduce
-  every ray under the full D6h (`src/core/shared/filter_shared.h`, `src/core/metal/lumice_trace.metal`),
-  and the device filter descriptor is built under the same full group to stay consistent with them.
-  On a shape with less than D6h, a symmetry filter evaluated on the GPU can therefore still merge
-  inequivalent paths, where the CPU route does not.
+- **GPU filter matching on low-symmetry shapes and ensembles**: the Metal / CUDA device kernels
+  still reduce every ray under the full D6h with P and B always on
+  (`src/core/shared/filter_shared.h`, `src/core/metal/lumice_trace.metal`), and the device filter
+  descriptor is built the same way to stay consistent with them. On a shape with less than D6h, or
+  on an ensemble whose roll or zenith rules P or B out (§2b), a symmetry filter evaluated on the GPU
+  can therefore still merge inequivalent paths, where the CPU route does not.
 
 ---
 

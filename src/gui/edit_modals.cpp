@@ -1613,8 +1613,25 @@ static ImVec4 ValidationFrameBgColor(LUMICE_RaypathValidationState state) {
 // per-row `uid` is baked into both the InputText and the delete-button IDs so
 // removing a middle row cannot re-collide ImGui's internal id stack with a
 // leftover buffer.
+// The first face a valid row names that the crystal being edited can never have (its shape
+// leaves the face no area), or 0 when there is none. The engine's own answer
+// (LUMICE_CouldCrystalHaveFace), asked of the live crystal buffer so the note follows edits to the
+// shape as they are typed.
+static int FirstFaceTheCrystalLacks(const char* row_text, const LUMICE_CrystalParam& crystal) {
+  for (const auto& factor : ParseSummandText(row_text)) {
+    for (int face : FactorFaceNumbers(factor)) {
+      if (LUMICE_CouldCrystalHaveFace(&crystal, face) == 0) {
+        return face;
+      }
+    }
+  }
+  return 0;
+}
+
 static void RenderSummandRowList() {
   const auto kind = CurrentValidationKind();
+  LUMICE_CrystalParam crystal_param{};
+  FillCrystalParam(g_crystal_buf, &crystal_param);
   size_t delete_idx = static_cast<size_t>(-1);
 
   // Reserve exactly the width the trailing "x" SmallButton needs (glyph + horizontal
@@ -1663,7 +1680,15 @@ static void RenderSummandRowList() {
     if (!is_empty) {
       switch (v.state) {
         case LUMICE_RAYPATH_VALID:
-          break;  // silent when valid
+          // Valid text can still name a face this shape does not have: the row then matches
+          // nothing through it. A warning, not an error — the filter commits as written.
+          if (const int face = FirstFaceTheCrystalLacks(row.text, crystal_param); face != 0) {
+            ImGui::PushStyleColor(ImGuiCol_Text, WarningTextColor());
+            ImGui::TextWrapped("Row %zu: face %d does not exist on this crystal's shape, so this row matches nothing.",
+                               i + 1, face);
+            ImGui::PopStyleColor();
+          }
+          break;
         case LUMICE_RAYPATH_INCOMPLETE:
           ImGui::TextColored(WarningTextColor(), "Row %zu: incomplete", i + 1);
           break;

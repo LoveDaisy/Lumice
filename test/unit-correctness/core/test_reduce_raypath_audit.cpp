@@ -53,13 +53,13 @@ std::string FormatRaypath(const std::vector<IdType>& rp) {
 // Returns ::testing::AssertionResult so EXPECT_TRUE prints the failing detail.
 ::testing::AssertionResult VerifyOrbitInvariant(const Crystal& crystal, uint8_t symmetry, int sigma_a,
                                                 bool d_applicable, const std::vector<IdType>& rp_seed) {
-  auto canonical_seed = crystal.ReduceRaypath(rp_seed, symmetry, sigma_a, d_applicable);
-  auto orbit = crystal.ExpandRaypath(rp_seed, symmetry, sigma_a, d_applicable);
+  auto canonical_seed = crystal.ReduceRaypath(rp_seed, symmetry, sigma_a, d_applicable, true, true);
+  auto orbit = crystal.ExpandRaypath(rp_seed, symmetry, sigma_a, d_applicable, true, true);
   if (orbit.empty()) {
     return ::testing::AssertionFailure() << "ExpandRaypath returned empty orbit for seed " << FormatRaypath(rp_seed);
   }
   for (const auto& member : orbit) {
-    auto canonical_member = crystal.ReduceRaypath(member, symmetry, sigma_a, d_applicable);
+    auto canonical_member = crystal.ReduceRaypath(member, symmetry, sigma_a, d_applicable, true, true);
     if (canonical_member != canonical_seed) {
       return ::testing::AssertionFailure()
              << "Orbit invariant broken:" << "\n  seed:               " << FormatRaypath(rp_seed)
@@ -189,10 +189,10 @@ TEST(H1_KSymP_SigmaA_Audit, SigmaA_Ignored_Pyramid) {
 TEST(H1_KSymP_SigmaA_Audit, Canonical_Independent_of_SigmaA) {
   Crystal prism = Crystal::CreatePrism(1.0f);
   std::vector<IdType> rp = { 3, 5 };
-  auto baseline = prism.ReduceRaypath(rp, FilterConfig::kSymP, 0, false);
+  auto baseline = prism.ReduceRaypath(rp, FilterConfig::kSymP, 0, false, true, true);
   for (int sigma_a : { 0, 1, 3, 5 }) {
     for (bool d_applicable : { false, true }) {
-      auto canonical = prism.ReduceRaypath(rp, FilterConfig::kSymP, sigma_a, d_applicable);
+      auto canonical = prism.ReduceRaypath(rp, FilterConfig::kSymP, sigma_a, d_applicable, true, true);
       EXPECT_EQ(canonical, baseline) << "sigma_a=" << sigma_a << " d_applicable=" << d_applicable;
     }
   }
@@ -313,13 +313,13 @@ TEST(H5_MixedCrystal_Audit, PrismPyramidIsolation) {
   // representatives of their respective orbits. They may equal each other (because
   // {3,5} prism orbit overlaps the pyramid {3,5} prism-only orbit), but the audit
   // verifies neither crystal pollutes the other.
-  auto canonical_prism_alone = prism.ReduceRaypath(rp, FilterConfig::kSymP, 0, false);
-  auto canonical_pyramid_alone = pyramid.ReduceRaypath(rp, FilterConfig::kSymP, 0, false);
+  auto canonical_prism_alone = prism.ReduceRaypath(rp, FilterConfig::kSymP, 0, false, true, true);
+  auto canonical_pyramid_alone = pyramid.ReduceRaypath(rp, FilterConfig::kSymP, 0, false, true, true);
 
   // Compute interleaved to detect any shared state.
-  auto canonical_prism_2 = prism.ReduceRaypath(rp, FilterConfig::kSymP, 0, false);
-  auto canonical_pyramid_2 = pyramid.ReduceRaypath(rp, FilterConfig::kSymP, 0, false);
-  auto canonical_prism_3 = prism.ReduceRaypath(rp, FilterConfig::kSymP, 0, false);
+  auto canonical_prism_2 = prism.ReduceRaypath(rp, FilterConfig::kSymP, 0, false, true, true);
+  auto canonical_pyramid_2 = pyramid.ReduceRaypath(rp, FilterConfig::kSymP, 0, false, true, true);
+  auto canonical_prism_3 = prism.ReduceRaypath(rp, FilterConfig::kSymP, 0, false, true, true);
 
   // Same crystal must give identical canonical.
   EXPECT_EQ(canonical_prism_alone, canonical_prism_2);
@@ -336,10 +336,10 @@ TEST(H5_MixedCrystal_Audit, PyramidFacesRejectedByPrism) {
   // but ReduceRaypath should still produce some deterministic result without crash.
   Crystal prism = Crystal::CreatePrism(1.0f);
   std::vector<IdType> rp_pyramid_face = { 13, 5 };
-  auto canonical = prism.ReduceRaypath(rp_pyramid_face, FilterConfig::kSymP, 0, false);
+  auto canonical = prism.ReduceRaypath(rp_pyramid_face, FilterConfig::kSymP, 0, false, true, true);
   // The result is implementation-defined; we just check the call doesn't crash and
   // is deterministic across calls.
-  auto canonical_again = prism.ReduceRaypath(rp_pyramid_face, FilterConfig::kSymP, 0, false);
+  auto canonical_again = prism.ReduceRaypath(rp_pyramid_face, FilterConfig::kSymP, 0, false, true, true);
   EXPECT_EQ(canonical, canonical_again);
 }
 
@@ -356,9 +356,9 @@ TEST(H4_MultiSegment_Audit, FirstPriProvenance_PD) {
   EXPECT_TRUE(VerifyOrbitInvariant(prism, FilterConfig::kSymP, 0, false, { 5, 7, 3 }));
   EXPECT_TRUE(VerifyOrbitInvariant(prism, FilterConfig::kSymP, 0, false, { 7, 3, 5 }));
   // These three should reduce to the SAME canonical (they're in the same P-orbit).
-  auto c1 = prism.ReduceRaypath({ 3, 5, 7 }, FilterConfig::kSymP, 0, false);
-  auto c2 = prism.ReduceRaypath({ 5, 7, 3 }, FilterConfig::kSymP, 0, false);
-  auto c3 = prism.ReduceRaypath({ 7, 3, 5 }, FilterConfig::kSymP, 0, false);
+  auto c1 = prism.ReduceRaypath({ 3, 5, 7 }, FilterConfig::kSymP, 0, false, true, true);
+  auto c2 = prism.ReduceRaypath({ 5, 7, 3 }, FilterConfig::kSymP, 0, false, true, true);
+  auto c3 = prism.ReduceRaypath({ 7, 3, 5 }, FilterConfig::kSymP, 0, false, true, true);
   // Wait — {3,5,7}, {5,7,3}, {7,3,5} are different sequences (segment ORDER matters).
   // P-shift on {3,5,7} by k gives {3+k, 5+k, 7+k} mod 6 (with +3 offset). So {3,5,7} and
   // {5,7,3} are P-related: shift by 2 gives {5,7,9 mod 6 + 3} = {5,7,3}. Yes!
@@ -550,7 +550,7 @@ std::vector<SymElem> AllowedGroup(const Crystal& c, uint8_t symmetry, int sigma_
           for (const auto& g : group) {
             orbit.insert(Apply(g, rp));
           }
-          const auto expanded = c.ExpandRaypath(rp, sym, sigma_a, d_applicable);
+          const auto expanded = c.ExpandRaypath(rp, sym, sigma_a, d_applicable, true, true);
           const std::set<std::vector<IdType>> expanded_set(expanded.begin(), expanded.end());
           if (expanded_set != orbit) {
             return ::testing::AssertionFailure()
@@ -558,10 +558,10 @@ std::vector<SymElem> AllowedGroup(const Crystal& c, uint8_t symmetry, int sigma_
                    << " members, shape oracle " << orbit.size() << " (sym=" << int{ sym } << " sigma_a=" << sigma_a
                    << " d_applicable=" << d_applicable << ")";
           }
-          const auto canon = c.ReduceRaypath(rp, sym, sigma_a, d_applicable);
+          const auto canon = c.ReduceRaypath(rp, sym, sigma_a, d_applicable, true, true);
           for (const auto& g : all) {
             const auto img = Apply(g, rp);
-            const bool same = c.ReduceRaypath(img, sym, sigma_a, d_applicable) == canon;
+            const bool same = c.ReduceRaypath(img, sym, sigma_a, d_applicable, true, true) == canon;
             const bool equivalent = orbit.count(img) > 0;
             if (same != equivalent) {
               return ::testing::AssertionFailure()
@@ -614,16 +614,17 @@ TEST(H6_LowSymmetryShape_Audit, BacklogReproPrismKeepsTheTwoEnergyBucketsApart) 
   const Crystal c = Crystal::CreatePrism(1.0f, dist);
   ASSERT_EQ(c.FnPeriod(), 6);  // the face-number modulus is unchanged
   EXPECT_EQ(c.GeomSymmetry().p_step, 2);
-  const auto canon = c.ReduceRaypath({ 3, 5 }, FilterConfig::kSymP);
-  EXPECT_NE(c.ReduceRaypath({ 4, 6 }, FilterConfig::kSymP), canon);
-  EXPECT_EQ(c.ReduceRaypath({ 5, 7 }, FilterConfig::kSymP), canon);
-  EXPECT_EQ(c.ReduceRaypath({ 7, 3 }, FilterConfig::kSymP), canon);
+  // The orientation ensemble is assumed to admit P (p_applicable): this case is about the shape.
+  const auto canon = c.ReduceRaypath({ 3, 5 }, FilterConfig::kSymP, 0, false, true, true);
+  EXPECT_NE(c.ReduceRaypath({ 4, 6 }, FilterConfig::kSymP, 0, false, true, true), canon);
+  EXPECT_EQ(c.ReduceRaypath({ 5, 7 }, FilterConfig::kSymP, 0, false, true, true), canon);
+  EXPECT_EQ(c.ReduceRaypath({ 7, 3 }, FilterConfig::kSymP, 0, false, true, true), canon);
   // D with an odd sigma_a would swap near and far faces too (sigma_1 sends {3,4} to {4,3}); with an
   // even one it is a real mirror of this shape (sigma_0 sends {3,4} to {3,8}).
-  EXPECT_NE(c.ReduceRaypath({ 3, 4 }, FilterConfig::kSymD, 1, true),
-            c.ReduceRaypath({ 4, 3 }, FilterConfig::kSymD, 1, true));
-  EXPECT_EQ(c.ReduceRaypath({ 3, 4 }, FilterConfig::kSymD, 0, true),
-            c.ReduceRaypath({ 3, 8 }, FilterConfig::kSymD, 0, true));
+  EXPECT_NE(c.ReduceRaypath({ 3, 4 }, FilterConfig::kSymD, 1, true, true, true),
+            c.ReduceRaypath({ 4, 3 }, FilterConfig::kSymD, 1, true, true, true));
+  EXPECT_EQ(c.ReduceRaypath({ 3, 4 }, FilterConfig::kSymD, 0, true, true, true),
+            c.ReduceRaypath({ 3, 8 }, FilterConfig::kSymD, 0, true, true, true));
   EXPECT_TRUE(VerifyDerivedFields(c));
 }
 

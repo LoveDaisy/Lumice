@@ -1122,6 +1122,8 @@ ChainIdLayerContext MakeChainIdLayerContext(ChainIdInterningTable& table, const 
   auto d_params = detail::DeriveDSymmetryParams(axis);
   ctx.d_applicable = d_params.d_applicable;
   ctx.sigma_a = d_params.sigma_a;
+  ctx.p_applicable = detail::IsPApplicable(axis);
+  ctx.b_applicable = detail::IsBApplicable(axis);
   return ctx;
 }
 
@@ -1132,7 +1134,8 @@ uint32_t InternRayChainId(const ChainIdLayerContext& ctx, const RayBuffer& buf, 
   std::vector<IdType> segment(data, data + rec.size_);
   // Crystal::ReduceRaypath is the single authority for the canonical form;
   // it is also what a filter on this crystal canonicalises against.
-  segment = ctx.crystal->ReduceRaypath(segment, ctx.symmetry, ctx.sigma_a, ctx.d_applicable);
+  segment = ctx.crystal->ReduceRaypath(segment, ctx.symmetry, ctx.sigma_a, ctx.d_applicable, ctx.p_applicable,
+                                       ctx.b_applicable);
   return ctx.table->Intern(buf.ChainIdAt(idx), ctx.crystal_id, std::move(segment));
 }
 

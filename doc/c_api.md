@@ -29,7 +29,7 @@ Link against the `lumice` static library.
 ### Constants
 
 ```c
-#define LUMICE_API_VERSION 447        // ABI version, encoded major*100 + minor (v4.47)
+#define LUMICE_API_VERSION 448        // ABI version, encoded major*100 + minor (v4.48)
 #define LUMICE_MAX_RENDER_RESULTS 16  // Maximum capacity of the render result array
 #define LUMICE_MAX_STATS_RESULTS 1    // Maximum capacity of the stats result array
 ```
@@ -43,6 +43,16 @@ static_assert(LUMICE_API_VERSION >= 440, "Lumice header too old for this integra
 
 It is bumped on every BREAKING change to the public symbol set or struct layout.
 
+**v4.48 is the latest such break.** `LUMICE_CrystalSymmetry` gains trailing `p_effective` and
+`b_effective` after `d_effective` (sizeof 16 → 24); `LUMICE_GetCrystalSymmetry` writes the whole
+struct, so recompile. Added alongside: `LUMICE_IsPApplicable(roll type, roll full range)` and
+`LUMICE_IsBApplicable(azimuth type, azimuth full range, zenith type, zenith centre, zenith full
+range)`, the orientation halves of P and B (counterparts of `LUMICE_IsDApplicable`). Raypath
+reduction now applies P only when roll is invariant under a 60° shift (a full-turn uniform) and B
+only when the zenith is symmetric about 90° with a full-turn uniform azimuth: a Parry arc no longer
+merges 3-5 with 4-6, a plate no longer merges 1-3 with 2-3. `p_effective` / `b_effective` are
+those conditions intersected with the shape (`rotation_step < 6` / `horizontal_mirror`).
+
 **v4.47** is a pure append: `LUMICE_GetCrystalSymmetry(const LUMICE_CrystalParam*,
 LUMICE_CrystalSymmetry*)` reports which P / B / D elements a crystal's shape admits — the rotation
 step P may use (1, 2, 3 or 6), the valid vertical mirrors, the horizontal mirror — and whether D
@@ -51,7 +61,7 @@ axis selects). Raypath reduction intersects the requested toggles with these, so
 shape (e.g. `face_distance` `[1, 1.2, 1, 1.2, 1, 1.2]`) is no longer reduced as a regular
 hexagon. No struct changed; `LUMICE_IsDApplicable` keeps its meaning.
 
-**v4.46 is the latest such break.** `LUMICE_RenderParam` gains a trailing `display_mode`
+**v4.46** `LUMICE_RenderParam` gains a trailing `display_mode`
 (`LUMICE_DISPLAY_MODE_NORMAL` / `LUMICE_DISPLAY_MODE_CHANNEL_BR`) after `globe_back_fade`
 (sizeof 6456 → 6460); recompile. JSON key `render.display_mode`, `"normal"` or `"channel_br"`.
 `channel_br` shows the finished image as its post-gamma sRGB B − R on a grey offset

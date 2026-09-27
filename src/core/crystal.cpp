@@ -578,26 +578,33 @@ std::vector<IdType> PCanonicalShiftByPeriod(const std::vector<IdType>& rp, int f
 }
 
 // Whether each symmetry element takes part, given request, ensemble and geometry: the one place the
-// three halves are intersected for Crystal's reduction and expansion.
+// three halves are intersected for Crystal's reduction and expansion. `p_applicable` /
+// `b_applicable` / `d_applicable` are the orientation ensemble's halves (detail::Is*Applicable);
+// `geom` (including geom.b_applicable) is the shape's.
+bool PActive(uint8_t symmetry, bool p_applicable) {
+  return (symmetry & FilterConfig::kSymP) && p_applicable;
+}
+
 bool DActive(uint8_t symmetry, int sigma_a, bool d_applicable, const GeometricSymmetry& geom) {
   return (symmetry & FilterConfig::kSymD) && DMirrorActive(d_applicable, sigma_a, geom);
 }
 
-bool BActive(uint8_t symmetry, const GeometricSymmetry& geom) {
-  return (symmetry & FilterConfig::kSymB) && geom.b_applicable;
+bool BActive(uint8_t symmetry, bool b_applicable, const GeometricSymmetry& geom) {
+  return (symmetry & FilterConfig::kSymB) && b_applicable && geom.b_applicable;
 }
 
 }  // namespace
 
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 std::vector<IdType> ReduceRaypathByPeriod(const std::vector<IdType>& rp, uint8_t symmetry, int sigma_a,
-                                          bool d_applicable, int fn_period, const GeometricSymmetry& geom) {
+                                          bool d_applicable, bool p_applicable, bool b_applicable, int fn_period,
+                                          const GeometricSymmetry& geom) {
   if (symmetry == FilterConfig::kSymNone || fn_period < 0) {
     return rp;
   }
 
   std::vector<IdType> reduced_rp = rp;
-  if (symmetry & FilterConfig::kSymP) {
+  if (PActive(symmetry, p_applicable)) {
     reduced_rp = PCanonicalShiftByPeriod(reduced_rp, fn_period, geom.p_step);
   }
 
@@ -616,7 +623,7 @@ std::vector<IdType> ReduceRaypathByPeriod(const std::vector<IdType>& rp, uint8_t
     // When kSymP is also enabled, the D-image may no longer be P-canonical
     // (first pri shifted by sigma_a); re-canonicalize before lex comparison
     // so same orbit always reduces to the same representative.
-    if (symmetry & FilterConfig::kSymP) {
+    if (PActive(symmetry, p_applicable)) {
       rp_reflected = PCanonicalShiftByPeriod(rp_reflected, fn_period, geom.p_step);
     }
     if (rp_reflected < reduced_rp) {
@@ -624,7 +631,7 @@ std::vector<IdType> ReduceRaypathByPeriod(const std::vector<IdType>& rp, uint8_t
     }
   }
 
-  if (BActive(symmetry, geom)) {
+  if (BActive(symmetry, b_applicable, geom)) {
     // B reflection: basal 1↔2 and pyramid upper[13..18]↔lower[23..28], applied together.
     // Generate the B-reflected candidate and keep the lexicographically smaller one.
     std::vector<IdType> rp_b_reflected = reduced_rp;
@@ -650,28 +657,29 @@ std::vector<IdType> ReduceRaypathByPeriod(const std::vector<IdType>& rp, uint8_t
 }
 
 std::vector<IdType> Crystal::ReduceRaypath(const std::vector<IdType>& rp, uint8_t symmetry) const {
-  return ReduceRaypath(rp, symmetry, 0, false);
+  return ReduceRaypath(rp, symmetry, 0, false, false, false);
 }
 
 std::vector<IdType> Crystal::ReduceRaypath(const std::vector<IdType>& rp, uint8_t symmetry, int sigma_a,
-                                           bool d_applicable) const {
-  return ReduceRaypathByPeriod(rp, symmetry, sigma_a, d_applicable, fn_period_, geom_symmetry_);
+                                           bool d_applicable, bool p_applicable, bool b_applicable) const {
+  return ReduceRaypathByPeriod(rp, symmetry, sigma_a, d_applicable, p_applicable, b_applicable, fn_period_,
+                               geom_symmetry_);
 }
 
 std::vector<std::vector<IdType>> Crystal::ExpandRaypath(const std::vector<IdType>& rp, uint8_t symmetry) const {
-  return ExpandRaypath(rp, symmetry, 0, false);
+  return ExpandRaypath(rp, symmetry, 0, false, false, false);
 }
 
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 std::vector<std::vector<IdType>> Crystal::ExpandRaypath(const std::vector<IdType>& rp, uint8_t symmetry, int sigma_a,
-                                                        bool d_applicable) const {
+                                                        bool d_applicable, bool p_applicable, bool b_applicable) const {
   std::vector<std::vector<IdType>> result;
   result.emplace_back(rp);
   if (symmetry == FilterConfig::kSymNone || fn_period_ < 0) {
     return result;
   }
 
-  if (symmetry & FilterConfig::kSymP) {
+  if (PActive(symmetry, p_applicable)) {
     // Only the rotations the shape admits: multiples of p_step (none when p_step >= fn_period_).
     const int step = geom_symmetry_.p_step > 0 ? geom_symmetry_.p_step : fn_period_;
     for (int i = step; i < fn_period_; i += step) {
@@ -722,7 +730,7 @@ std::vector<std::vector<IdType>> Crystal::ExpandRaypath(const std::vector<IdType
     }
   }
 
-  if (BActive(symmetry, geom_symmetry_)) {
+  if (BActive(symmetry, b_applicable, geom_symmetry_)) {
     // B reflection: basal 1↔2, pyramid upper[13..18]↔lower[23..28], prism unchanged.
     // Both swaps are part of the same transformation and applied together.
     auto size = result.size();
@@ -989,6 +997,98 @@ GeometricSymmetry DeriveGeometricSymmetry(const PyramidCrystalParam& param) {
   return g;
 }
 
+namespace {
+
+// The exact support [lo, hi] of a shape scalar, or false when it is not bounded and exactly known.
+// `fold` applies the sampler's |x| (heights fold; face distances are signed, see
+// SamplePrismShapeScalars).
+bool ShapeScalarSupport(const Distribution& d, bool fold, float& lo, float& hi) {
+  switch (d.type) {
+    case DistributionType::kNoRandom:
+      lo = hi = d.center;
+      break;
+    case DistributionType::kUniform:
+      lo = d.center - d.spread / 2.0f;
+      hi = d.center + d.spread / 2.0f;
+      break;
+    default:
+      return false;
+  }
+  if (fold) {
+    const float a = std::fabs(lo);
+    const float b = std::fabs(hi);
+    lo = (lo <= 0.0f && hi >= 0.0f) ? 0.0f : std::min(a, b);
+    hi = std::max(a, b);
+  }
+  return true;
+}
+
+// The six face distances at the corner most favourable to prism slot `favoured` (0..5, or -1 for
+// none): that one at its minimum, every other at its maximum. False when any support is unknown.
+bool FavourableDistances(const Distribution (&d)[6], int favoured, float out[6]) {
+  for (int i = 0; i < 6; i++) {
+    float lo = 0.0f;
+    float hi = 0.0f;
+    if (!ShapeScalarSupport(d[i], false, lo, hi)) {
+      return false;
+    }
+    out[i] = (i == favoured) ? lo : hi;
+  }
+  return true;
+}
+
+}  // namespace
+
+bool CouldFaceExist(const PrismCrystalParam& param, IdType face) {
+  if (face < 1 || face > 8) {
+    return true;
+  }
+  float h_lo = 0.0f;
+  float h_hi = 0.0f;
+  float dist[6]{};
+  if (!ShapeScalarSupport(param.h_, true, h_lo, h_hi) ||
+      !FavourableDistances(param.d_, face >= 3 ? static_cast<int>(face) - 3 : -1, dist)) {
+    return true;
+  }
+  const ClosedFormPrismResult r = ComputeClosedFormPrism(h_hi, dist);
+  for (int slot = 0; slot < kClosedFormPrismFaceCnt; slot++) {
+    if (r.face_number[slot] == static_cast<int>(face)) {
+      return r.face_present[slot];
+    }
+  }
+  return true;
+}
+
+bool CouldFaceExist(const PyramidCrystalParam& param, IdType face) {
+  const bool basal = face == 1 || face == 2;
+  const bool side = face >= 3 && face <= 8;
+  const bool cone = (face >= 13 && face <= 18) || (face >= 23 && face <= 28);
+  if (!basal && !side && !cone) {
+    return true;
+  }
+  float h[3][2]{};  // upper cone, prism, lower cone: {lo, hi}
+  if (!ShapeScalarSupport(param.h_pyr_u_, true, h[0][0], h[0][1]) ||
+      !ShapeScalarSupport(param.h_prs_, true, h[1][0], h[1][1]) ||
+      !ShapeScalarSupport(param.h_pyr_l_, true, h[2][0], h[2][1])) {
+    return true;
+  }
+  const int favoured = side ? static_cast<int>(face) - 3 : cone ? static_cast<int>(face % 10) - 3 : -1;
+  float dist[6]{};
+  if (!FavourableDistances(param.d_, favoured, dist)) {
+    return true;
+  }
+  const float h1 = face == 1 ? h[0][0] : h[0][1];
+  const float h3 = face == 2 ? h[2][0] : h[2][1];
+  const ClosedFormPyramidResult r =
+      ComputeClosedFormPyramid(param.wedge_angle_u_, param.wedge_angle_l_, h1, h[1][1], h3, dist);
+  for (int slot = 0; slot < kClosedFormPyramidFaceCnt; slot++) {
+    if (r.face_number[slot] == static_cast<int>(face)) {
+      return r.face_present[slot];
+    }
+  }
+  return true;
+}
+
 
 namespace detail {
 
@@ -1031,6 +1131,42 @@ DSymmetryParams DeriveDSymmetryParams(const AxisDistribution& d) {
   params.d_applicable = IsDApplicable(d);
   params.sigma_a = params.d_applicable ? ComputeSigmaA(d.roll_dist.center) : 0;
   return params;
+}
+
+bool IsPApplicableParams(DistributionType roll_type, float roll_full_range_deg) {
+  return IsFullTurnUniform(roll_type, roll_full_range_deg);
+}
+
+bool IsPApplicable(const AxisDistribution& d) {
+  // Raw `spread`, for the reason IsDApplicable gives.
+  return IsPApplicableParams(d.roll_dist.type, d.roll_dist.spread);
+}
+
+bool IsBApplicableParams(DistributionType azimuth_type, float azimuth_full_range_deg, DistributionType latitude_type,
+                         float latitude_center_deg, float latitude_full_range_deg) {
+  if (!IsFullTurnUniform(azimuth_type, azimuth_full_range_deg)) {
+    return false;
+  }
+  if (IsFullTurnUniform(latitude_type, latitude_full_range_deg)) {
+    return true;
+  }
+  switch (latitude_type) {
+    case DistributionType::kNoRandom:
+    case DistributionType::kUniform:
+    case DistributionType::kGaussian:
+    case DistributionType::kGaussianLegacy:
+    case DistributionType::kLaplacian:
+      return FloatEqual(latitude_center_deg, 0.0f);
+    case DistributionType::kZigzag:
+      return false;
+  }
+  return false;
+}
+
+bool IsBApplicable(const AxisDistribution& d) {
+  // Raw `spread` / `center`, for the reason IsDApplicable gives.
+  return IsBApplicableParams(d.azimuth_dist.type, d.azimuth_dist.spread, d.latitude_dist.type, d.latitude_dist.center,
+                             d.latitude_dist.spread);
 }
 
 }  // namespace detail
