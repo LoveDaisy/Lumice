@@ -50,8 +50,8 @@ inline constexpr uint32_t kDevRecCap = 64u;  // == ExitFaceSeq::kCap == kMaxHits
 // `ReduceBuffer_dev` in lumice_trace.metal: each requested element acts only
 // where the orientation ensemble admits it (`f.p_applicable` / `f.b_applicable`
 // / `f.d_applicable`) AND the crystal's shape has it (`f.shape_p_step` /
-// `f.shape_d_mirror_mask` / `f.shape_b_applicable`, a copy of
-// Crystal::GeomSymmetry()). The descriptor's canonical bytes were reduced by
+// `f.shape_d_mirror_mask` / `f.shape_b_applicable`), all six filled by the host
+// from DeriveSymmetryGating (a filter's label regime). The descriptor's canonical bytes were reduced by
 // the host under the same fields (device_filter_desc.cpp FillCanonicalBytes).
 // Operates in place on `data[0..size-1]` (face-number space, NOT poly-index
 // space — callers must pre-remap via ApplyGetFn_dev).

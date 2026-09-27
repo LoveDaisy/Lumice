@@ -88,14 +88,16 @@ static_assert(kDeviceFilterOrClauseSanityCap >= 4096,
 // Symmetry gating: the device reduction (`ReduceBuffer_dev`) applies a
 // requested symmetry element only where `detail::ReduceBuffer` does — the
 // request (`symmetry`) ∩ what the orientation ENSEMBLE admits (`p_applicable`
-// / `b_applicable` / `d_applicable`, i.e. detail::IsPApplicable /
-// IsBApplicable / IsDApplicable) ∩ what the crystal's SHAPE admits
-// (`shape_p_step` / `shape_d_mirror_mask` / `shape_b_applicable`, a verbatim
-// copy of Crystal::GeomSymmetry()). The two halves are separate fields on
-// purpose: `b_applicable` is the ensemble's, `shape_b_applicable` the shape's,
-// and B acts only when both hold. All six are filled once, on the host, by
-// BuildDeviceFilterDesc from those authorities; the device never re-derives
-// them, and the canonical bytes are reduced under the same six values.
+// / `b_applicable` / `d_applicable`) ∩ what the crystal's SHAPE admits
+// (`shape_p_step` / `shape_d_mirror_mask` / `shape_b_applicable`). The two
+// halves are separate fields on purpose: `b_applicable` is the ensemble's,
+// `shape_b_applicable` the shape's, and B acts only when both hold. All six are
+// filled once, on the host, by BuildDeviceFilterDesc; the device never
+// re-derives them, and the canonical bytes are reduced under the same six
+// values. A filter reduces under SymmetrySemantics::kLabel, so today the P/B
+// ensemble fields are always 1 and the shape fields the full D6h
+// (kFullHexagonalSymmetry) — DeriveSymmetryGating is the authority for that;
+// the fields stay so the device reduction keeps one shape for both regimes.
 struct DeviceFilterDesc {
   uint8_t type;                 // see kDeviceFilterType* above
   uint8_t action;               // 0=kFilterIn (match→true), 1=kFilterOut (match→false)
@@ -127,13 +129,13 @@ struct DeviceFilterDesc {
   uint16_t or_clause_count;  // Complex only: # OR-clauses (≤ kDeviceFilterOrClauseSanityCap);
                              // non-Complex types leave this 0
   uint16_t _pad_or_tail;     // padding so struct size stays a multiple of 4
-  // Shape half of the gating: Crystal::GeomSymmetry() of the filter's crystal.
+  // Shape half of the gating: DeriveSymmetryGating(kLabel, ...).geom.
   int32_t shape_p_step;         // GeometricSymmetry::p_step (P rotates by its multiples)
   uint8_t shape_d_mirror_mask;  // GeometricSymmetry::d_valid_sigma_mask (bit sigma_a ⇒ D allowed)
   uint8_t shape_b_applicable;   // GeometricSymmetry::b_applicable (cones match)
   // Ensemble half for P and B (D's is `d_applicable` above).
-  uint8_t p_applicable;  // 0/1; detail::IsPApplicable(axis)
-  uint8_t b_applicable;  // 0/1; detail::IsBApplicable(axis)
+  uint8_t p_applicable;  // 0/1; DeriveSymmetryGating(kLabel, ...).p_applicable
+  uint8_t b_applicable;  // 0/1; DeriveSymmetryGating(kLabel, ...).b_applicable
 };
 
 // Exact size pinned so a layout change is deliberate: the MSL mirror in
@@ -145,9 +147,9 @@ namespace detail {
 // Build a flat `DeviceFilterDesc` from a host-side `FilterConfig`.
 //
 // `crystal` provides `GetFn` (for Raypath/EntryExit canonical computation),
-// `FnPeriod` (for the fn_period field) and `GeomSymmetry` (the shape half of
-// the symmetry gating). `axis_dist` resolves `d_applicable` / `p_applicable`
-// / `b_applicable` + `sigma_a` exactly as `FilterSpec::Create` does. The current
+// `FnPeriod` (for the fn_period field). The P/B gating and the shape half come
+// from DeriveSymmetryGating(SymmetrySemantics::kLabel, ...) and `axis_dist`
+// resolves `d_applicable` + `sigma_a`, exactly as `FilterSpec::Create` does. The current
 // project supports hexagonal crystals only (`fn_period == 6`); for the custom-
 // crystal fallback the function still produces a valid desc — the device path
 // memcmps verbatim when `fn_period < 0`.

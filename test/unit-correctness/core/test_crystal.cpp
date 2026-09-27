@@ -10,9 +10,11 @@
 #include <random>
 #include <set>
 #include <utility>
+#include <vector>
 
 #include "config/config_manager.hpp"
 #include "config/crystal_config.hpp"
+#include "config/filter_config.hpp"
 #include "core/crystal.hpp"
 #include "core/geo3d.hpp"
 #include "core/geo3d_closedform.hpp"
@@ -1684,6 +1686,143 @@ TEST(GeometricSymmetryEnsemble, MakeCrystalStampsTheEnsembleNotTheDraw) {
   auto fixed = PrismOf(Distribution{ DistributionType::kNoRandom, 1.0f, 0.0f });
   fixed.d_[1] = fixed.d_[3] = fixed.d_[5] = Distribution{ DistributionType::kNoRandom, 1.2f, 0.0f };
   EXPECT_EQ(MakeCrystal(rng, CrystalParam{ fixed }).GeomSymmetry().p_step, 2);
+}
+
+
+// ---- DeriveSymmetryGating: the one translation of a SymmetrySemantics into reduction gating ----
+
+AxisDistribution GatingAxis(DistributionType lat_type, float lat_center, float lat_spread, DistributionType roll_type,
+                            float roll_center, float roll_spread) {
+  AxisDistribution d{};
+  d.azimuth_dist.type = DistributionType::kUniform;
+  d.azimuth_dist.center = 0.0f;
+  d.azimuth_dist.spread = 360.0f;
+  d.latitude_dist.type = lat_type;
+  d.latitude_dist.center = lat_center;
+  d.latitude_dist.spread = lat_spread;
+  d.roll_dist.type = roll_type;
+  d.roll_dist.center = roll_center;
+  d.roll_dist.spread = roll_spread;
+  return d;
+}
+
+// The scenario rows of doc/raypath-symmetry.md §5: random, column, Parry, plate, Lowitz-like.
+std::vector<AxisDistribution> GatingScenarioAxes() {
+  return {
+    GatingAxis(DistributionType::kUniform, 0.0f, 360.0f, DistributionType::kUniform, 0.0f, 360.0f),  // random
+    GatingAxis(DistributionType::kGaussian, 0.0f, 1.0f, DistributionType::kUniform, 0.0f, 360.0f),   // column
+    GatingAxis(DistributionType::kGaussian, 0.0f, 1.0f, DistributionType::kGaussian, 0.0f, 1.0f),    // Parry
+    GatingAxis(DistributionType::kGaussian, 90.0f, 1.0f, DistributionType::kUniform, 0.0f, 360.0f),  // plate
+    GatingAxis(DistributionType::kGaussian, 90.0f, 20.0f, DistributionType::kGaussian, 0.0f, 1.0f),  // Lowitz-like
+  };
+}
+
+TEST(DeriveSymmetryGating, LabelIgnoresShapeAndEnsemble) {
+  const float three_fold[6]{ 1.0f, 1.2f, 1.0f, 1.2f, 1.0f, 1.2f };
+  const GeometricSymmetry shapes[] = {
+    kFullHexagonalSymmetry,
+    Crystal::CreatePrism(1.0f, three_fold).GeomSymmetry(),
+    Crystal::CreatePyramid(28.0f, 40.0f, 0.4f, 1.0f, 0.4f).GeomSymmetry(),
+    GeometricSymmetry{},               // admits nothing
+    GeometricSymmetry{ 0, 0, false },  // a value no derivation produces
+  };
+  auto axes = GatingScenarioAxes();
+  ASSERT_FALSE(detail::IsPApplicable(axes[2]) || detail::IsBApplicable(axes[3])) << "fixture lost its off cases";
+  for (const auto& shape : shapes) {
+    for (const auto& axis : axes) {
+      const SymmetryGating g = DeriveSymmetryGating(SymmetrySemantics::kLabel, shape, axis);
+      EXPECT_EQ(g.geom, kFullHexagonalSymmetry);
+      EXPECT_TRUE(g.p_applicable);
+      EXPECT_TRUE(g.b_applicable);
+    }
+  }
+}
+
+TEST(DeriveSymmetryGating, PhysicalIsTheShapeAndTheEnsemblesOwnConditions) {
+  const float three_fold[6]{ 1.0f, 1.2f, 1.0f, 1.2f, 1.0f, 1.2f };
+  const GeometricSymmetry shapes[] = {
+    kFullHexagonalSymmetry,
+    Crystal::CreatePrism(1.0f, three_fold).GeomSymmetry(),
+    Crystal::CreatePyramid(28.0f, 40.0f, 0.4f, 1.0f, 0.4f).GeomSymmetry(),
+  };
+  int p_on = 0;
+  int b_on = 0;
+  for (const auto& shape : shapes) {
+    for (const auto& axis : GatingScenarioAxes()) {
+      const SymmetryGating g = DeriveSymmetryGating(SymmetrySemantics::kPhysical, shape, axis);
+      EXPECT_EQ(g.geom, shape);
+      EXPECT_EQ(g.p_applicable, detail::IsPApplicable(axis));
+      EXPECT_EQ(g.b_applicable, detail::IsBApplicable(axis));
+      p_on += g.p_applicable ? 1 : 0;
+      b_on += g.b_applicable ? 1 : 0;
+    }
+  }
+  // The scenarios must switch each ensemble condition both ways, or the equality above is vacuous.
+  EXPECT_TRUE(p_on > 0 && p_on < 15);
+  EXPECT_TRUE(b_on > 0 && b_on < 15);
+}
+
+
+// ---- LabelEquivalentFaces: a filter's L1 face orbit, delegated to ExpandRaypathByPeriod ----
+
+std::set<IdType> AsSet(const std::vector<IdType>& v) {
+  return { v.begin(), v.end() };
+}
+
+TEST(LabelEquivalentFaces, PIsTheFullLabelRotation) {
+  EXPECT_EQ(AsSet(LabelEquivalentFaces(6, FilterConfig::kSymP, 0, false)), (std::set<IdType>{ 3, 4, 5, 6, 7, 8 }));
+  EXPECT_EQ(AsSet(LabelEquivalentFaces(15, FilterConfig::kSymP, 0, false)),
+            (std::set<IdType>{ 13, 14, 15, 16, 17, 18 }));
+  EXPECT_EQ(AsSet(LabelEquivalentFaces(1, FilterConfig::kSymP, 0, false)), (std::set<IdType>{ 1 }));
+  EXPECT_EQ(LabelEquivalentFaces(6, FilterConfig::kSymP, 0, false).front(), 6) << "the face itself comes first";
+}
+
+TEST(LabelEquivalentFaces, BFlipsBasalAndConesOnly) {
+  EXPECT_EQ(AsSet(LabelEquivalentFaces(1, FilterConfig::kSymB, 0, false)), (std::set<IdType>{ 1, 2 }));
+  EXPECT_EQ(AsSet(LabelEquivalentFaces(14, FilterConfig::kSymB, 0, false)), (std::set<IdType>{ 14, 24 }));
+  EXPECT_EQ(AsSet(LabelEquivalentFaces(5, FilterConfig::kSymB, 0, false)), (std::set<IdType>{ 5 }));
+}
+
+TEST(LabelEquivalentFaces, DActsOnlyWhenTheEnsembleAdmitsIt) {
+  // sigma_0 sends prism index i to -i: face 4 (i = 1) to face 8 (i = 5).
+  EXPECT_EQ(AsSet(LabelEquivalentFaces(4, FilterConfig::kSymD, 0, true)), (std::set<IdType>{ 4, 8 }));
+  EXPECT_EQ(AsSet(LabelEquivalentFaces(4, FilterConfig::kSymD, 0, false)), (std::set<IdType>{ 4 }));
+  // sigma_1 sends index 1 to 0: face 4 to face 3.
+  EXPECT_EQ(AsSet(LabelEquivalentFaces(4, FilterConfig::kSymD, 1, true)), (std::set<IdType>{ 3, 4 }));
+  EXPECT_EQ(AsSet(LabelEquivalentFaces(3, FilterConfig::kSymNone, 0, true)), (std::set<IdType>{ 3 }));
+}
+
+TEST(LabelEquivalentFaces, IgnoresTheShape) {
+  // What a filter on a three-fold prism treats as face 6's equivalents is the same label orbit.
+  const float three_fold[6]{ 1.0f, 1.2f, 1.0f, 1.2f, 1.0f, 1.2f };
+  const Crystal c = Crystal::CreatePrism(1.0f, three_fold);
+  ASSERT_EQ(c.GeomSymmetry().p_step, 2);
+  EXPECT_EQ(LabelEquivalentFaces(6, FilterConfig::kSymP, 0, false).size(), 6u);
+}
+
+TEST(ExpandRaypathByPeriod, IsWhatCrystalExpandRaypathForwardsTo) {
+  const float three_fold[6]{ 1.0f, 1.2f, 1.0f, 1.2f, 1.0f, 1.2f };
+  const Crystal crystals[] = {
+    Crystal::CreatePrism(1.0f),
+    Crystal::CreatePrism(1.0f, three_fold),
+    Crystal::CreatePyramid(28.0f, 40.0f, 0.4f, 1.0f, 0.4f),
+  };
+  const std::vector<std::vector<IdType>> rps = { { 3, 5 }, { 13, 4, 25 }, { 1, 6, 2 }, { 18, 7 } };
+  for (const auto& c : crystals) {
+    for (const auto& rp : rps) {
+      for (uint8_t sym = 0; sym <= 7; sym++) {
+        for (int sigma_a : { 0, 3, 5 }) {
+          for (int flags = 0; flags < 8; flags++) {
+            const bool d = (flags & 1) != 0;
+            const bool pa = (flags & 2) != 0;
+            const bool ba = (flags & 4) != 0;
+            EXPECT_EQ(c.ExpandRaypath(rp, sym, sigma_a, d, pa, ba),
+                      ExpandRaypathByPeriod(rp, sym, sigma_a, d, pa, ba, c.FnPeriod(), c.GeomSymmetry()));
+          }
+        }
+      }
+    }
+  }
 }
 
 }  // namespace

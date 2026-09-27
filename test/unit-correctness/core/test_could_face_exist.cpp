@@ -2,9 +2,10 @@
 // gets when one of its filters names a face its crystal never has. Matching itself is untouched:
 // such a filter still matches nothing through that face; the point is that it is no longer silent.
 //
-// The shape is the one the three-crystal e2e fixtures carried: face_distance [2, 1, 2, 1, 2, 1]
-// leaves faces 3, 5 and 7 zero-wide. Before raypath reduction followed the crystal's own symmetry,
-// a filter on 3-5 there matched rays on 4-6 by a full-hexagon rotation; since then it matches none.
+// The shape is the one the three-crystal e2e fixtures carry: face_distance [2, 1, 2, 1, 2, 1]
+// leaves faces 3, 5 and 7 zero-wide. A filter's P/B/D is a label equivalence, so a filter on 3-5
+// with P matches rays on 4-6 by a full-hexagon rotation and is not warned about; without a
+// symmetry that maps the face onto a present one, it matches nothing through it and is.
 
 #include <gtest/gtest.h>
 
@@ -14,6 +15,7 @@
 
 #include "config/config_manager.hpp"
 #include "config/crystal_config.hpp"
+#include "config/filter_config.hpp"
 #include "core/crystal.hpp"
 #include "support/log_capture.hpp"
 
@@ -96,7 +98,7 @@ TEST(CouldFaceExist, APyramidWithoutAnUpperConeHasNoUpperConeFaces) {
 
 // The scene-level half: a filter bound to such a crystal is reported once per missing face, and a
 // filter on faces the crystal has stays quiet.
-nlohmann::json SceneWithFilter(const nlohmann::json& raypath) {
+nlohmann::json SceneWithFilter(const nlohmann::json& raypath, const char* symmetry) {
   std::ifstream f(config_file_name);
   nlohmann::json j;
   f >> j;
@@ -104,8 +106,8 @@ nlohmann::json SceneWithFilter(const nlohmann::json& raypath) {
       nlohmann::json::array({ { { "id", 1 },
                                 { "type", "prism" },
                                 { "shape", { { "height", 1.0 }, { "face_distance", { 2, 1, 2, 1, 2, 1 } } } } } });
-  j["filter"] =
-      nlohmann::json::array({ { { "id", 1 }, { "type", "raypath" }, { "raypath", raypath }, { "symmetry", "PBD" } } });
+  j["filter"] = nlohmann::json::array(
+      { { { "id", 1 }, { "type", "raypath" }, { "raypath", raypath }, { "symmetry", symmetry } } });
   j["scene"]["scattering"] =
       nlohmann::json::array({ { { "prob", 0.0 }, { "entries", { { { "crystal", 1 }, { "filter", 1 } } } } } });
   return j;
@@ -115,7 +117,7 @@ TEST(FilterFacesTheCrystalLacks, AreWarnedAtSceneParse) {
   std::string text;
   {
     test::LogCapture capture;
-    (void)SceneWithFilter({ 3, 5 }).get<ConfigManager>();
+    (void)SceneWithFilter({ 3, 5 }, "").get<ConfigManager>();
     text = capture.Text();
   }
   EXPECT_NE(text.find("names face 3"), std::string::npos) << text;
@@ -123,11 +125,51 @@ TEST(FilterFacesTheCrystalLacks, AreWarnedAtSceneParse) {
   EXPECT_EQ(test::CountOccurrences(text, "which crystal 1 never has"), 2u) << text;
 }
 
+// A rhombic section with P: face 6 (present) and face 3 (absent) are in one label orbit with the
+// present faces 4 and 8, so the filter matches through all of them — no warning. The same path
+// without a symmetry names face 3 alone and is warned about once.
+TEST(FilterFacesTheCrystalLacks, ASymmetryReachingAPresentFaceStaysQuiet) {
+  std::string with_p;
+  {
+    test::LogCapture capture;
+    (void)SceneWithFilter({ 3, 6 }, "P").get<ConfigManager>();
+    with_p = capture.Text();
+  }
+  EXPECT_EQ(with_p.find("never has"), std::string::npos) << with_p;
+  std::string without;
+  {
+    test::LogCapture capture;
+    (void)SceneWithFilter({ 3, 6 }, "").get<ConfigManager>();
+    without = capture.Text();
+  }
+  EXPECT_NE(without.find("names face 3"), std::string::npos) << without;
+  EXPECT_EQ(test::CountOccurrences(without, "which crystal 1 never has"), 1u) << without;
+}
+
+// B maps prism faces to themselves and D (roll 0, uniform azimuth: sigma_0) sends face 3 to
+// itself: neither reaches a present face from 3.
+TEST(CouldFilterMatchFace, OnlyARotationRescuesAnAbsentPrismFace) {
+  const auto p = Prism({ 2, 1, 2, 1, 2, 1 });
+  AxisDistribution axis{};
+  axis.azimuth_dist.type = DistributionType::kUniform;
+  axis.azimuth_dist.spread = 360.0f;
+  axis.roll_dist.type = DistributionType::kNoRandom;
+  axis.roll_dist.center = 0.0f;
+  ASSERT_FALSE(CouldFaceExist(p, 3));
+  EXPECT_FALSE(CouldFilterMatchFace(p, axis, 3, FilterConfig::kSymNone));
+  EXPECT_FALSE(CouldFilterMatchFace(p, axis, 3, FilterConfig::kSymB | FilterConfig::kSymD));
+  EXPECT_TRUE(CouldFilterMatchFace(p, axis, 3, FilterConfig::kSymP));
+  // sigma_1 (roll 330°) sends face 3 to face 4, which is present.
+  axis.roll_dist.center = 330.0f;
+  EXPECT_TRUE(CouldFilterMatchFace(p, axis, 3, FilterConfig::kSymD));
+  EXPECT_TRUE(CouldFilterMatchFace(p, axis, 4, FilterConfig::kSymNone));
+}
+
 TEST(FilterFacesTheCrystalLacks, AFilterOnPresentFacesStaysQuiet) {
   std::string text;
   {
     test::LogCapture capture;
-    (void)SceneWithFilter({ 4, 6 }).get<ConfigManager>();
+    (void)SceneWithFilter({ 4, 6 }, "PBD").get<ConfigManager>();
     text = capture.Text();
   }
   EXPECT_EQ(text.find("never has"), std::string::npos) << text;

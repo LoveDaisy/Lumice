@@ -228,18 +228,22 @@ RenderConfig ParseRenderConfig(const nlohmann::json& j_render, const ConfigManag
 }
 
 // A filter naming a face its crystal's shape never has matches nothing through that face — which
-// used to be silent, and became common when raypath reduction started following the crystal's own
-// symmetry: a path on a missing face no longer rotates onto a present one. Warn, once per face,
-// and leave the matching exactly as it is.
+// used to be silent. Warn, once per face, and leave the matching exactly as it is. A face whose
+// label orbit under the filter's own P/B/D reaches a present face is not warned about: the filter
+// matches through that face (CouldFilterMatchFace), so "3-6, symmetry P" on a rhombic section is a
+// legitimate way to write the path.
 static void WarnFilterFacesTheCrystalLacks(const ScatteringSetting& setting, IdType crystal_id, IdType filter_id,
                                            size_t layer_index) {
+  const uint8_t symmetry = setting.filter_.symmetry_;
+  const AxisDistribution& axis = setting.crystal_.axis_;
   for (IdType face : FilterFaceNumbers(setting.filter_)) {
-    const bool could_exist =
-        std::visit([face](const auto& param) { return CouldFaceExist(param, face); }, setting.crystal_.param_);
-    if (!could_exist) {
+    const bool could_match = std::visit(
+        [&](const auto& param) { return CouldFilterMatchFace(param, axis, face, symmetry); }, setting.crystal_.param_);
+    if (!could_match) {
       LOG_WARNING(
           "scene.scattering[{}]: filter {} names face {}, which crystal {} never has (its shape leaves that face "
-          "no area); the filter matches no ray through it",
+          "no area, and the filter's symmetry maps it onto no face that has any); the filter matches no ray "
+          "through it",
           layer_index, filter_id, face, crystal_id);
     }
   }

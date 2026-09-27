@@ -82,20 +82,19 @@ std::string FormatRecorder(const RaypathRecorder& rp) {
   return ::testing::AssertionSuccess();
 }
 
-// Helper to build an axis dist whose orientation ensemble admits all of P, B and D (the latter
-// when roll_mean is a multiple of 30°), so these cases exercise the shape and request halves of
-// the reduction: az-uniform-360 (D, B), a horizontal c-axis (latitude 0, i.e. zenith 90: B) and a
-// full-turn uniform roll anchored at roll_mean (P; D reads the anchor).
+// Helper to build axis dist with given roll_mean and az-uniform-360. A filter's P/B/D is a label
+// equivalence, so a locked roll and a vertical c-axis (which admit neither P nor B physically) do
+// not stop P or B from matching; only D reads the ensemble.
 AxisDistribution MakeAxis(float roll_mean_deg) {
   AxisDistribution d{};
   d.azimuth_dist.type = DistributionType::kUniform;
   d.azimuth_dist.spread = 360.0f;
   d.azimuth_dist.center = 0.0f;
   d.latitude_dist.type = DistributionType::kNoRandom;
-  d.latitude_dist.center = 0.0f;
-  d.roll_dist.type = DistributionType::kUniform;
+  d.latitude_dist.center = 90.0f;
+  d.roll_dist.type = DistributionType::kNoRandom;
   d.roll_dist.center = roll_mean_deg;
-  d.roll_dist.spread = 360.0f;
+  d.roll_dist.spread = 0.0f;
   return d;
 }
 
@@ -566,34 +565,35 @@ TEST(FilterSpecReduceRecorder, Random1000_AllSymmetries) {
   }
 }
 
-// =============== Low-symmetry shapes: a symmetry filter matches only geometric equivalents ===============
+// =============== Low-symmetry shapes: a filter's P/B is a label equivalence ===============
+// A filter reduces under SymmetrySemantics::kLabel: the crystal's real shape (and the ensemble —
+// MakeAxis above is a locked roll with a vertical c-axis, which physically admits neither P nor B)
+// does not narrow what P or B match. The raypath-analysis panel is where the physical grouping
+// lives (server/raypath_histogram_consumer.cpp).
 
-TEST(FilterSpecLowSymmetry, SymmetryPFilterOnAThreeFoldPrismMatchesOnlyItsRealOrbit) {
-  // face_distance [1, 1.2, 1, 1.2, 1, 1.2]: rotations by 120° map the crystal onto itself, by 60° do
-  // not. A "3-5, symmetry P" filter must accept {5,7} and {7,3} and reject {4,6}, {6,8}, {8,4}.
+TEST(FilterSpecLowSymmetry, SymmetryPFilterOnAThreeFoldPrismMatchesTheWholeLabelOrbit) {
+  // face_distance [1, 1.2, 1, 1.2, 1, 1.2]: only 120° rotations map the shape onto itself, yet a
+  // "3-5, symmetry P" filter accepts all six label rotations, near-face and far-face alike.
   const float dist[6]{ 1.0f, 1.2f, 1.0f, 1.2f, 1.0f, 1.2f };
   const Crystal crystal = Crystal::CreatePrism(1.0f, dist);
+  ASSERT_EQ(crystal.GeomSymmetry().p_step, 2);
   auto spec = MakeRaypathSpec(crystal, { 3, 5 }, FilterConfig::kSymP, kSigmaARollDeg[0]);
   ASSERT_NE(spec, nullptr);
-  for (const std::vector<IdType>& rp : { std::vector<IdType>{ 3, 5 }, { 5, 7 }, { 7, 3 } }) {
+  for (const std::vector<IdType>& rp :
+       { std::vector<IdType>{ 3, 5 }, { 4, 6 }, { 5, 7 }, { 6, 8 }, { 7, 3 }, { 8, 4 } }) {
     EXPECT_TRUE(SpecMatch(spec.get(), rp)) << FormatRaypath(rp);
   }
-  for (const std::vector<IdType>& rp : { std::vector<IdType>{ 4, 6 }, { 6, 8 }, { 8, 4 } }) {
-    EXPECT_FALSE(SpecMatch(spec.get(), rp)) << FormatRaypath(rp) << " is a far-face path, not equivalent";
-  }
-  // The regular prism keeps merging all six (unchanged behavior).
-  const Crystal regular = Crystal::CreatePrism(1.0f);
-  auto regular_spec = MakeRaypathSpec(regular, { 3, 5 }, FilterConfig::kSymP, kSigmaARollDeg[0]);
-  ASSERT_NE(regular_spec, nullptr);
-  EXPECT_TRUE(SpecMatch(regular_spec.get(), { 4, 6 }));
+  EXPECT_FALSE(SpecMatch(spec.get(), { 3, 6 })) << "not a rotation of 3-5";
 }
 
-TEST(FilterSpecLowSymmetry, AsymmetricConesKeepBOff) {
+TEST(FilterSpecLowSymmetry, AsymmetricConesStillFlipUnderB) {
   const Crystal crystal = Crystal::CreatePyramid(28.0f, 40.0f, 0.4f, 1.0f, 0.4f);
+  ASSERT_FALSE(crystal.GeomSymmetry().b_applicable);
   auto spec = MakeRaypathSpec(crystal, { 13, 3 }, FilterConfig::kSymB, kSigmaARollDeg[0]);
   ASSERT_NE(spec, nullptr);
   EXPECT_TRUE(SpecMatch(spec.get(), { 13, 3 }));
-  EXPECT_FALSE(SpecMatch(spec.get(), { 23, 3 })) << "upper and lower cones differ; B is not a symmetry";
+  EXPECT_TRUE(SpecMatch(spec.get(), { 23, 3 })) << "B is the label sigma_h 13<->23 whatever the cones";
+  EXPECT_FALSE(SpecMatch(spec.get(), { 14, 3 }));
 }
 
 TEST(FilterSpecReduceRecorder, LowSymmetryShapesAgreeWithCrystalReduceRaypath) {

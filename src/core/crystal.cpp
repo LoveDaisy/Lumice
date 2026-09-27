@@ -671,18 +671,19 @@ std::vector<std::vector<IdType>> Crystal::ExpandRaypath(const std::vector<IdType
 }
 
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
-std::vector<std::vector<IdType>> Crystal::ExpandRaypath(const std::vector<IdType>& rp, uint8_t symmetry, int sigma_a,
-                                                        bool d_applicable, bool p_applicable, bool b_applicable) const {
+std::vector<std::vector<IdType>> ExpandRaypathByPeriod(const std::vector<IdType>& rp, uint8_t symmetry, int sigma_a,
+                                                       bool d_applicable, bool p_applicable, bool b_applicable,
+                                                       int fn_period, const GeometricSymmetry& geom) {
   std::vector<std::vector<IdType>> result;
   result.emplace_back(rp);
-  if (symmetry == FilterConfig::kSymNone || fn_period_ < 0) {
+  if (symmetry == FilterConfig::kSymNone || fn_period < 0) {
     return result;
   }
 
   if (PActive(symmetry, p_applicable)) {
-    // Only the rotations the shape admits: multiples of p_step (none when p_step >= fn_period_).
-    const int step = geom_symmetry_.p_step > 0 ? geom_symmetry_.p_step : fn_period_;
-    for (int i = step; i < fn_period_; i += step) {
+    // Only the rotations the shape admits: multiples of p_step (none when p_step >= fn_period).
+    const int step = geom.p_step > 0 ? geom.p_step : fn_period;
+    for (int i = step; i < fn_period; i += step) {
       std::vector<IdType> curr_rp{ rp };
       bool changed = false;
       for (auto& x : curr_rp) {
@@ -692,9 +693,9 @@ std::vector<std::vector<IdType>> Crystal::ExpandRaypath(const std::vector<IdType
 
         IdType pyr = x / 10;
         IdType pri = x % 10;
-        pri += fn_period_ - 3;
+        pri += fn_period - 3;
         pri += i;
-        pri %= fn_period_;
+        pri %= fn_period;
         pri += 3;
         x = pyr * 10 + pri;
         changed = true;
@@ -705,7 +706,7 @@ std::vector<std::vector<IdType>> Crystal::ExpandRaypath(const std::vector<IdType
     }
   }
 
-  if (DActive(symmetry, sigma_a, d_applicable, geom_symmetry_)) {
+  if (DActive(symmetry, sigma_a, d_applicable, geom)) {
     // σ-clean: for each existing variant, generate σ-reflected copy
     auto size = result.size();
     for (size_t i = 0; i < size; i++) {
@@ -717,7 +718,7 @@ std::vector<std::vector<IdType>> Crystal::ExpandRaypath(const std::vector<IdType
         }
         IdType pyr = x / 10;
         int pri = static_cast<int>(x % 10) - 3;
-        IdType pri_new = static_cast<IdType>(MirrorFaceIndex(pri, sigma_a, fn_period_));
+        IdType pri_new = static_cast<IdType>(MirrorFaceIndex(pri, sigma_a, fn_period));
         IdType x_new = pyr * 10 + pri_new + 3;
         if (x_new != x) {
           x = x_new;
@@ -730,7 +731,7 @@ std::vector<std::vector<IdType>> Crystal::ExpandRaypath(const std::vector<IdType
     }
   }
 
-  if (BActive(symmetry, b_applicable, geom_symmetry_)) {
+  if (BActive(symmetry, b_applicable, geom)) {
     // B reflection: basal 1↔2, pyramid upper[13..18]↔lower[23..28], prism unchanged.
     // Both swaps are part of the same transformation and applied together.
     auto size = result.size();
@@ -756,6 +757,25 @@ std::vector<std::vector<IdType>> Crystal::ExpandRaypath(const std::vector<IdType
   }
 
   return result;
+}
+
+std::vector<std::vector<IdType>> Crystal::ExpandRaypath(const std::vector<IdType>& rp, uint8_t symmetry, int sigma_a,
+                                                        bool d_applicable, bool p_applicable, bool b_applicable) const {
+  return ExpandRaypathByPeriod(rp, symmetry, sigma_a, d_applicable, p_applicable, b_applicable, fn_period_,
+                               geom_symmetry_);
+}
+
+std::vector<IdType> LabelEquivalentFaces(IdType face, uint8_t symmetry, int sigma_a, bool d_applicable) {
+  const SymmetryGating label =
+      DeriveSymmetryGating(SymmetrySemantics::kLabel, kFullHexagonalSymmetry, AxisDistribution{});
+  std::vector<IdType> faces;
+  for (const auto& rp : ExpandRaypathByPeriod({ face }, symmetry, sigma_a, d_applicable, label.p_applicable,
+                                              label.b_applicable, kHexagonalFnPeriod, label.geom)) {
+    if (std::find(faces.begin(), faces.end(), rp[0]) == faces.end()) {
+      faces.push_back(rp[0]);
+    }
+  }
+  return faces;
 }
 
 size_t Crystal::PolygonFaceCount() const {
@@ -1089,6 +1109,30 @@ bool CouldFaceExist(const PyramidCrystalParam& param, IdType face) {
   return true;
 }
 
+namespace {
+
+template <typename Param>
+bool CouldFilterMatchFaceImpl(const Param& param, const AxisDistribution& axis, IdType face, uint8_t symmetry) {
+  const auto d = detail::DeriveDSymmetryParams(axis);
+  for (IdType f : LabelEquivalentFaces(face, symmetry, d.sigma_a, d.d_applicable)) {
+    if (CouldFaceExist(param, f)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+}  // namespace
+
+bool CouldFilterMatchFace(const PrismCrystalParam& param, const AxisDistribution& axis, IdType face, uint8_t symmetry) {
+  return CouldFilterMatchFaceImpl(param, axis, face, symmetry);
+}
+
+bool CouldFilterMatchFace(const PyramidCrystalParam& param, const AxisDistribution& axis, IdType face,
+                          uint8_t symmetry) {
+  return CouldFilterMatchFaceImpl(param, axis, face, symmetry);
+}
+
 
 namespace detail {
 
@@ -1170,6 +1214,14 @@ bool IsBApplicable(const AxisDistribution& d) {
 }
 
 }  // namespace detail
+
+SymmetryGating DeriveSymmetryGating(SymmetrySemantics semantics, const GeometricSymmetry& shape_geom,
+                                    const AxisDistribution& axis_dist) {
+  if (semantics == SymmetrySemantics::kLabel) {
+    return { kFullHexagonalSymmetry, true, true };
+  }
+  return { shape_geom, detail::IsPApplicable(axis_dist), detail::IsBApplicable(axis_dist) };
+}
 
 
 }  // namespace lumice

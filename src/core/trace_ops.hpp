@@ -90,8 +90,11 @@ struct ChainIdLayerContext {
 };
 
 // sigma_a / d_applicable derive from `axis` exactly the way FilterSpec::Create
-// derives them for a filter on the same crystal, so a chain segment reduces to
-// the same canonical form a filter on that crystal would match against.
+// derives them for a filter on the same crystal. P and B do not: a chain id
+// names a physical class (SymmetrySemantics::kPhysical, the crystal's real
+// shape and the ensemble's own P/B conditions), while a filter's P/B/D is a
+// label equivalence (kLabel), so under P or B a chain segment's canonical form
+// can differ from the one a filter on that crystal matches against.
 //
 // Reducing each layer's segment on its own — with that layer's crystal, that
 // layer's axis distribution, and nothing from any other layer — is legitimate

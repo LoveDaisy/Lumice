@@ -171,6 +171,16 @@ GeometricSymmetry DeriveGeometricSymmetry(const PyramidCrystalParam& param);
 bool CouldFaceExist(const PrismCrystalParam& param, IdType face);
 bool CouldFaceExist(const PyramidCrystalParam& param, IdType face);
 
+// Whether a filter naming `face` with P/B/D bits `symmetry` can match any ray through it on this
+// crystal: CouldFaceExist for `face` OR for any face its label orbit reaches (LabelEquivalentFaces,
+// with D's ensemble half from `axis`, as FilterSpec::Create derives it). A filter's P/B/D is a
+// label equivalence, so "3-6, symmetry P" on face_distance [2, 1, 2, 1, 2, 1] matches through the
+// present faces 4, 6 and 8 although faces 3, 5 and 7 have no area. The one rule behind the
+// scene-parse warning and LUMICE_CouldFilterMatchFace.
+bool CouldFilterMatchFace(const PrismCrystalParam& param, const AxisDistribution& axis, IdType face, uint8_t symmetry);
+bool CouldFilterMatchFace(const PyramidCrystalParam& param, const AxisDistribution& axis, IdType face,
+                          uint8_t symmetry);
+
 struct CrystalGeom {
   int face_cnt = 0;
   // Plane coefficients (a, b, c, d) so a·x + b·y + c·z + d ≤ 0 is the bounded
@@ -496,6 +506,20 @@ std::vector<IdType> ReduceRaypathByPeriod(const std::vector<IdType>& rp, uint8_t
                                           bool d_applicable, bool p_applicable, bool b_applicable, int fn_period,
                                           const GeometricSymmetry& geom);
 
+// The inverse view of ReduceRaypathByPeriod — every face sequence the same arguments fold onto
+// `rp` (rp itself first; duplicates possible when an element fixes rp) — and the ONE expansion
+// algorithm: Crystal::ExpandRaypath forwards here with its own fn_period_ and GeomSymmetry(), a
+// caller that means the label regime passes DeriveSymmetryGating(SymmetrySemantics::kLabel, ...).
+std::vector<std::vector<IdType>> ExpandRaypathByPeriod(const std::vector<IdType>& rp, uint8_t symmetry, int sigma_a,
+                                                       bool d_applicable, bool p_applicable, bool b_applicable,
+                                                       int fn_period, const GeometricSymmetry& geom);
+
+// The faces a filter's P/B/D (the SymmetrySemantics::kLabel regime) treats as equivalent to
+// `face`, `face` first, each once: the orbit of the length-1 raypath {face} under
+// ExpandRaypathByPeriod with the label gating, so it holds no permutation formula of its own.
+// `sigma_a` / `d_applicable` are D's ensemble half (detail::DeriveDSymmetryParams).
+std::vector<IdType> LabelEquivalentFaces(IdType face, uint8_t symmetry, int sigma_a, bool d_applicable);
+
 namespace detail {
 // Internal — not part of public API.
 
@@ -585,6 +609,39 @@ bool IsBApplicableParams(DistributionType azimuth_type, float azimuth_full_range
                          float latitude_center_deg, float latitude_full_range_deg);
 bool IsBApplicable(const AxisDistribution& d);
 }  // namespace detail
+
+// Which of the two symmetry regimes a P/B/D reduction means. There is no default and nothing is
+// inferred from "was a shape / an ensemble passed": every call site names its regime, because the
+// two used to share one implicit derivation, and narrowing it for one consumer silently changed the
+// other.
+//   * kLabel — what a FILTER's P/B/D means: a pure relabelling of the hexagonal face numbering.
+//     P is the label C6 (period 6), B the label sigma_h (basal 1<->2, cone 13..18 <-> 23..28),
+//     whatever the crystal's actual shape and orientation ensemble. On a low-symmetry shape this
+//     can merge raypaths that are not physically equivalent; that is the user's stated intent when
+//     they tick the box, and the GUI says so (LUMICE_GetCrystalSymmetry feeds that hint only).
+//   * kPhysical — what the raypath-analysis panel's grouping means: one row is one physical class,
+//     so an element merges only when the crystal's real GeometricSymmetry AND the orientation
+//     ensemble (detail::IsPApplicable / IsBApplicable) both admit it.
+// D is the same in both regimes (roll mean at a multiple of 30°, uniform full-turn azimuth): its
+// ensemble half, detail::DeriveDSymmetryParams, is computed by every caller unconditionally and is
+// deliberately not part of SymmetryGating. D's SHAPE half (d_valid_sigma_mask) is part of `geom`.
+enum class SymmetrySemantics {
+  kLabel,
+  kPhysical,
+};
+
+// The (shape, P-ensemble, B-ensemble) triple a reduction gates on, besides D's ensemble half.
+struct SymmetryGating {
+  GeometricSymmetry geom;
+  bool p_applicable;
+  bool b_applicable;
+};
+
+// The one authority translating a SymmetrySemantics into the gating a reduction reads. kLabel
+// ignores both `shape_geom` and `axis_dist` and answers the full D6h with P and B admitted;
+// kPhysical answers `shape_geom` with the ensemble's own P and B conditions.
+SymmetryGating DeriveSymmetryGating(SymmetrySemantics semantics, const GeometricSymmetry& shape_geom,
+                                    const AxisDistribution& axis_dist);
 
 
 }  // namespace lumice

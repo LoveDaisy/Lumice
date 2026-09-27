@@ -179,19 +179,20 @@ def test_cuda_single_ms_filter_image_parity_vs_legacy():
 
 
 # --------------------------------------------------------------------------- #
-# Low-symmetry shapes: the device reduction follows the shape's symmetry.
+# Low-symmetry shapes: the device reduction is the same label equivalence.
 # --------------------------------------------------------------------------- #
 
 @pytest.mark.slow
 @pytest.mark.parametrize("cfg", ["parity_low_symmetry_p_filter", "parity_asymmetric_cone_b_filter"])
 def test_cuda_low_symmetry_filter_parity_vs_legacy(cfg):
     """A symmetry filter on a crystal whose shape has less than D6h: a three-fold prism with a
-    P filter, unequal cones with a B filter. The device reduction must merge only the orbit the
-    shape really has (GeometricSymmetry), as FilterSpec does on the legacy path.
+    P filter, unequal cones with a B filter. A filter's P/B is a label equivalence
+    (SymmetrySemantics::kLabel) on both routes, so the device must merge the whole label orbit —
+    far-face rotations, the other cone — exactly as FilterSpec does on the legacy path.
 
     Suspects on failure:
-      - energy ratio well above 1 → the device still folds the far-face orbit / the other cone
-        in (ReduceBuffer_dev ignoring the descriptor's p_step / geom_b_applicable).
+      - energy ratio well below 1 → the device narrowed to the shape's own symmetry (the
+        descriptor's shape / ensemble fields no longer the full-D6h label gating).
       - energy ratio near 0 → canonical bytes and device reduction built under different
         symmetry (FillCanonicalBytes vs ReduceBuffer_dev): every ray misses the canonical form.
     """

@@ -183,9 +183,12 @@ class RaypathHistogramConsumer : public IConsume {
 // The scene facts a reader needs (server.hpp RaypathReduceContext), from the
 // scene a run traces: per crystal id the axis-derived D parameters, by the
 // same two derivations FilterSpec::Create and the simulator's chain-id layer
-// context make (detail::IsDApplicable / detail::ComputeSigmaA), and the shape
-// symmetry DeriveGeometricSymmetry gives its param (what MakeCrystal stamped on
-// every drawn instance); per layer whether it holds more than one crystal.
+// context make (detail::IsDApplicable / detail::ComputeSigmaA), and the P/B
+// gating and shape symmetry of the SymmetrySemantics::kPhysical regime
+// (DeriveSymmetryGating over DeriveGeometricSymmetry of its param, what
+// MakeCrystal stamped on every drawn instance) — an analysis row is one
+// physical class, unlike a filter's label-equivalence P/B/D; per layer whether
+// it holds more than one crystal.
 RaypathReduceContext BuildRaypathReduceContext(const SceneConfig& scene);
 
 // The display text of one chain — THE format a user sees, in the C API's

@@ -1125,12 +1125,18 @@ ChainIdLayerContext MakeChainIdLayerContext(ChainIdInterningTable& table, const 
   ctx.crystal = &crystal;
   ctx.crystal_id = crystal_id;
   ctx.symmetry = symmetry;
-  // Same shared derivation FilterSpec::Create uses (detail::DeriveDSymmetryParams).
+  // Chain ids name physical classes, so this is the SymmetrySemantics::kPhysical regime (the same
+  // one the server's read-time reduction uses): the P/B ensemble conditions here, and the crystal's
+  // real shape through Crystal::ReduceRaypath's GeomSymmetry(). A filter on the same crystal is the
+  // kLabel regime and does not share this derivation. Today the only production caller passes
+  // kSymNone (server.cpp's analysis run records chains at their finest and reduces on read), so
+  // the gating below is inert there; tests exercise the other bit sets.
   auto d_params = detail::DeriveDSymmetryParams(axis);
   ctx.d_applicable = d_params.d_applicable;
   ctx.sigma_a = d_params.sigma_a;
-  ctx.p_applicable = detail::IsPApplicable(axis);
-  ctx.b_applicable = detail::IsBApplicable(axis);
+  const SymmetryGating gating = DeriveSymmetryGating(SymmetrySemantics::kPhysical, crystal.GeomSymmetry(), axis);
+  ctx.p_applicable = gating.p_applicable;
+  ctx.b_applicable = gating.b_applicable;
   return ctx;
 }
 
@@ -1139,8 +1145,8 @@ uint32_t InternRayChainId(const ChainIdLayerContext& ctx, const RayBuffer& buf, 
   const auto& rec = buf.RecorderAt(idx);
   const uint8_t* data = buf.RecorderDataPtr(idx);  // inline or arena, either way
   std::vector<IdType> segment(data, data + rec.size_);
-  // Crystal::ReduceRaypath is the single authority for the canonical form;
-  // it is also what a filter on this crystal canonicalises against.
+  // Crystal::ReduceRaypath reduces under the crystal's real shape (the kPhysical regime; a filter
+  // on this crystal reduces under the kLabel regime instead — see MakeChainIdLayerContext).
   segment = ctx.crystal->ReduceRaypath(segment, ctx.symmetry, ctx.sigma_a, ctx.d_applicable, ctx.p_applicable,
                                        ctx.b_applicable);
   return ctx.table->Intern(buf.ChainIdAt(idx), ctx.crystal_id, std::move(segment));
