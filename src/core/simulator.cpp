@@ -481,13 +481,17 @@ void SamplePyramidShapeScalars(RandomNumberGenerator& rng, const PyramidCrystalP
 }
 
 
+// Every drawn instance carries the symmetry of the ENSEMBLE it was drawn from, not of its own
+// values: filters and chain ids reduce raypaths across the whole ensemble, and a randomized shape is
+// almost never symmetric draw by draw even when the ensemble is (i.i.d. face distances). For a
+// deterministic param both derivations agree, so this only changes randomized shapes.
 struct CrystalMaker {
   RandomNumberGenerator& rng_;
 
   Crystal operator()(const PrismCrystalParam& p) {
     float dist[6]{};
     const float h = SamplePrismShapeScalars(rng_, p, dist);
-    return Crystal::CreatePrism(h, dist);
+    return Crystal::CreatePrism(h, dist, DeriveGeometricSymmetry(p));
   }
 
   Crystal operator()(const PyramidCrystalParam& p) {
@@ -496,7 +500,7 @@ struct CrystalMaker {
     float h3 = 0.f;
     float dist[6]{};
     SamplePyramidShapeScalars(rng_, p, h1, h2, h3, dist);
-    return Crystal::CreatePyramid(p.wedge_angle_u_, p.wedge_angle_l_, h1, h2, h3, dist);
+    return Crystal::CreatePyramid(p.wedge_angle_u_, p.wedge_angle_l_, h1, h2, h3, dist, DeriveGeometricSymmetry(p));
   }
 };
 

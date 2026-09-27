@@ -69,7 +69,8 @@ std::string FormatRecorder(const RaypathRecorder& rp) {
   auto actual = ToRecorder(rp_seed);
   // ToRecorder yields inline-only recorders (rp_seed ≤ 5 elements), so it is
   // safe to canonicalise data_ in-place via the buffer-level ReduceBuffer.
-  detail::ReduceBuffer(actual.data_, actual.size_, symmetry, sigma_a, d_applicable);
+  detail::ReduceBuffer(actual.data_, actual.size_, symmetry, sigma_a, d_applicable, crystal.FnPeriod(),
+                       crystal.GeomSymmetry());
 
   if (actual != oracle_rec) {
     return ::testing::AssertionFailure() << "ReduceRecorder mismatch: seed=" << FormatRaypath(rp_seed)

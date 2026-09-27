@@ -21,9 +21,10 @@ struct RaypathOrbit {
   uint8_t symmetry_ = FilterConfig::kSymNone;
   int sigma_a_ = 0;
   bool d_applicable_ = false;
-  // fn_period_ < 0: custom crystal, no reduction; current detail::ReduceBuffer
-  // hardcodes kFnPeriod=6 for hexagonal prism/pyramid (the only supported family).
+  // fn_period_ < 0: empty crystal, no reduction. Otherwise the crystal's face-number modulus and
+  // shape symmetry (Crystal::FnPeriod / GeomSymmetry), which detail::ReduceBuffer reduces under.
   int fn_period_ = -1;
+  GeometricSymmetry geom_symmetry_{};
 
   // overflow_arena resolves recorders whose hit data lives in their owning
   // RayBuffer's arena (Round 2 / #247.4). Pass nullptr for inline-only
@@ -134,10 +135,12 @@ std::vector<ColorSpecGroupOwned> BuildColorSpecGroups(const ColorGatePlacement& 
 
 namespace detail {
 // In-place canonicalisation of a raypath byte buffer under (symmetry, sigma_a,
-// d_applicable). Mirrors Crystal::ReduceRaypath for hexagonal crystals
-// (fn_period=6). Operates on a raw uint8_t buffer so it works uniformly on
-// inline data_ and on copies of arena slots. Precondition: symmetry != kSymNone.
-void ReduceBuffer(uint8_t* data, size_t size, uint8_t symmetry, int sigma_a, bool d_applicable);
+// d_applicable) on a crystal of face-number modulus `fn_period` and shape symmetry `geom`.
+// Mirrors Crystal::ReduceRaypath (the byte-buffer form of the same rule, kept separate for the
+// per-ray hot path). Operates on a raw uint8_t buffer so it works uniformly on inline data_ and on
+// copies of arena slots. A no-op under kSymNone or fn_period < 0.
+void ReduceBuffer(uint8_t* data, size_t size, uint8_t symmetry, int sigma_a, bool d_applicable, int fn_period,
+                  const GeometricSymmetry& geom);
 }  // namespace detail
 
 }  // namespace lumice

@@ -15,6 +15,7 @@
 #include "config/color_class_table.hpp"
 #include "config/render_config.hpp"  // RaypathRoiSpec::frame_config_
 #include "core/backend/backend_kind.hpp"
+#include "core/crystal.hpp"
 #include "core/def.hpp"  // ColorDegradeCounts (task-color-degrade-gui-surfacing)
 #include "server/component_compositor.hpp"
 #include "util/logger.hpp"
@@ -246,7 +247,8 @@ struct RaypathChainSegment {
 // the scene the chains were recorded on even after the next commit.
 //
 // Two kinds of fact, keyed two different ways on purpose:
-//  - crystal_params_: the axis-derived D parameters of each crystal DESIGN,
+//  - crystal_params_: the axis-derived D parameters and the shape symmetry
+//    (DeriveGeometricSymmetry of the crystal's param) of each crystal DESIGN,
 //    keyed by CrystalConfig::id_. A property of the crystal alone (the same
 //    config object wherever the scene reuses it), so one entry per id is
 //    exact.
@@ -261,6 +263,8 @@ struct RaypathChainSegment {
 struct RaypathCrystalReduceParams {
   int sigma_a = 0;
   bool d_applicable = false;
+  // Default admits nothing: a crystal the context does not describe is not reduced.
+  GeometricSymmetry geom{};
 };
 struct RaypathReduceContext {
   std::unordered_map<IdType, RaypathCrystalReduceParams> crystal_params_;

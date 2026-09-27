@@ -5,6 +5,7 @@
 #include <memory>
 #include <mutex>
 #include <utility>
+#include <variant>
 
 #include "config/proj_config.hpp"
 #include "core/color_util.hpp"
@@ -297,7 +298,9 @@ void RaypathHistogramConsumer::Reset() {
 // ---- Read-time reduction ----------------------------------------------------
 
 // The reduce context carries no period because crystal.hpp's kHexagonalFnPeriod
-// (every crystal family the engine builds today) is the only one to carry.
+// (the face-number modulus of every crystal family the engine builds today) is
+// the only one to carry. What differs per crystal is which rotations and
+// mirrors its shape admits — GeometricSymmetry, carried per crystal below.
 
 RaypathReduceContext BuildRaypathReduceContext(const SceneConfig& scene) {
   RaypathReduceContext ctx;
@@ -311,6 +314,10 @@ RaypathReduceContext BuildRaypathReduceContext(const SceneConfig& scene) {
       RaypathCrystalReduceParams p;
       p.d_applicable = detail::IsDApplicable(setting.crystal_.axis_);
       p.sigma_a = p.d_applicable ? detail::ComputeSigmaA(setting.crystal_.axis_.roll_dist.center) : 0;
+      // The shape symmetry every drawn instance of this design carried
+      // (MakeCrystal stamps the same function's result), so the read-time
+      // reduction and a filter on this crystal reduce under one group.
+      p.geom = std::visit([](const auto& param) { return DeriveGeometricSymmetry(param); }, setting.crystal_.param_);
       ctx.crystal_params_[setting.crystal_.id_] = p;
     }
   }
@@ -390,13 +397,14 @@ RaypathHistogramResult ReduceRaypathHistogram(const RaypathHistogramResult& fine
       } else if (!logged_unknown_crystal) {
         Logger logger("RaypathHistogram");
         ILOG_WARN(logger,
-                  "chain names crystal id {} the reduce context does not describe; reduced with sigma_a=0, D off "
+                  "chain names crystal id {} the reduce context does not describe; left unreduced "
                   "(reported once per read)",
                   seg.crystal_id);
         logged_unknown_crystal = true;
       }
-      id = table.Intern(id, seg.crystal_id,
-                        ReduceRaypathByPeriod(seg.segment, symmetry, p.sigma_a, p.d_applicable, kHexagonalFnPeriod));
+      id = table.Intern(
+          id, seg.crystal_id,
+          ReduceRaypathByPeriod(seg.segment, symmetry, p.sigma_a, p.d_applicable, kHexagonalFnPeriod, p.geom));
     }
     auto& dst = merged[id];
     if (dst.chain_.empty()) {
