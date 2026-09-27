@@ -77,6 +77,11 @@ enum class SceneIntent {
                 // screen, because the CLI has no reprojection stage to apply afterwards.
 };
 
+// Fill a LUMICE_CrystalParam from a GUI crystal: the one GUI -> wire translation of a crystal
+// (shape, sync groups, axis), used by the scene commit and by anything else that asks the C API
+// about "the crystal the engine would build" (e.g. SymmetryAvailabilityFor). `dst->id` is not set.
+void FillCrystalParam(const CrystalConfig& c, LUMICE_CrystalParam* dst);
+
 // The document's finite ray budget as the C API counts it (sim.ray_num_millions is in millions).
 // One conversion for the two places that hand it to the server — the budget a commit asks for
 // (BuildScene) and the increment a Continue adds (DoContinue) — so "Continue adds the budget

@@ -1275,7 +1275,9 @@ void RenderSymmetryControls(GuiState& state, LUMICE_Server* server) {
   ImGui::AlignTextToFramePadding();
   ImGui::TextUnformatted("Symmetry");
   ImGui::SameLine();
-  RenderSymmetryCheckboxes(a.symmetry_p, a.symmetry_b, a.symmetry_d, /*d_applicable=*/true, "analysis_symmetry");
+  // Scene-wide: no single crystal to explain, so no hints (the reduction still honours each
+  // crystal's own shape and axis).
+  RenderSymmetryCheckboxes(a.symmetry_p, a.symmetry_b, a.symmetry_d, SymmetryAvailability{}, "analysis_symmetry");
   if (ImGui::IsItemHovered()) {
     ImGui::SetTooltip(
         "Merge raypaths that are the same up to this symmetry. Re-reads the result on hand; does not re-run.");

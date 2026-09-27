@@ -1873,6 +1873,79 @@ TEST(IsDApplicableApi, AnUnrecognisedDistributionTypeAnswersFalse) {
   EXPECT_EQ(LUMICE_IsDApplicable(999, 360.0f, 0.0f), 0);
 }
 
+// ============================================================
+// LUMICE_GetCrystalSymmetry
+// ============================================================
+
+LUMICE_CrystalParam SymmetryProbeCrystal(int type, const float dist[6], float roll_deg) {
+  LUMICE_CrystalParam c{};
+  c.type = type;
+  c.height = { LUMICE_DIST_NO_RANDOM, 1.0f, 0.0f };
+  c.prism_h = { LUMICE_DIST_NO_RANDOM, 1.0f, 0.0f };
+  c.upper_h = { LUMICE_DIST_NO_RANDOM, 0.4f, 0.0f };
+  c.lower_h = { LUMICE_DIST_NO_RANDOM, 0.4f, 0.0f };
+  c.upper_wedge_angle = 28.0f;
+  c.lower_wedge_angle = 28.0f;
+  for (int i = 0; i < 6; i++) {
+    c.face_distance[i] = { LUMICE_DIST_NO_RANDOM, dist[i], 0.0f };
+  }
+  c.zenith = { LUMICE_DIST_UNIFORM, 90.0f, 360.0f };
+  c.azimuth = { LUMICE_DIST_UNIFORM, 0.0f, 360.0f };
+  c.roll = { LUMICE_DIST_NO_RANDOM, roll_deg, 0.0f };
+  return c;
+}
+
+TEST(GetCrystalSymmetryApi, RegularPrismHasEverything) {
+  const float regular[6]{ 1, 1, 1, 1, 1, 1 };
+  const auto c = SymmetryProbeCrystal(0, regular, 0.0f);
+  LUMICE_CrystalSymmetry s{};
+  ASSERT_EQ(LUMICE_GetCrystalSymmetry(&c, &s), LUMICE_OK);
+  EXPECT_EQ(s.rotation_step, 1);
+  EXPECT_EQ(s.vertical_mirror_mask, 0x3F);
+  EXPECT_NE(s.horizontal_mirror, 0);
+  EXPECT_NE(s.d_effective, 0);
+}
+
+// The case the axis-only predicate cannot see: the axis passes LUMICE_IsDApplicable, but on a
+// three-fold prism the mirror a roll of 30 deg selects swaps near and far faces.
+TEST(GetCrystalSymmetryApi, ThreeFoldPrismDropsTheMirrorItsRollSelects) {
+  const float three_fold[6]{ 1.0f, 1.2f, 1.0f, 1.2f, 1.0f, 1.2f };
+  LUMICE_CrystalSymmetry s{};
+  auto c = SymmetryProbeCrystal(0, three_fold, 30.0f);
+  ASSERT_NE(LUMICE_IsDApplicable(c.azimuth.type, c.azimuth.spread, c.roll.center), 0);
+  ASSERT_EQ(LUMICE_GetCrystalSymmetry(&c, &s), LUMICE_OK);
+  EXPECT_EQ(s.rotation_step, 2);
+  EXPECT_EQ(s.vertical_mirror_mask, 0b010101);
+  EXPECT_NE(s.horizontal_mirror, 0);
+  EXPECT_EQ(s.d_effective, 0);
+  // Roll 0 selects an even mirror, which the shape has.
+  c = SymmetryProbeCrystal(0, three_fold, 0.0f);
+  ASSERT_EQ(LUMICE_GetCrystalSymmetry(&c, &s), LUMICE_OK);
+  EXPECT_NE(s.d_effective, 0);
+}
+
+TEST(GetCrystalSymmetryApi, UnequalConesLoseTheHorizontalMirror) {
+  const float regular[6]{ 1, 1, 1, 1, 1, 1 };
+  auto c = SymmetryProbeCrystal(1, regular, 0.0f);
+  LUMICE_CrystalSymmetry s{};
+  ASSERT_EQ(LUMICE_GetCrystalSymmetry(&c, &s), LUMICE_OK);
+  EXPECT_NE(s.horizontal_mirror, 0);
+  c.lower_wedge_angle = 40.0f;
+  ASSERT_EQ(LUMICE_GetCrystalSymmetry(&c, &s), LUMICE_OK);
+  EXPECT_EQ(s.horizontal_mirror, 0);
+  EXPECT_EQ(s.rotation_step, 1);
+}
+
+TEST(GetCrystalSymmetryApi, RejectsNullAndUnknownType) {
+  const float regular[6]{ 1, 1, 1, 1, 1, 1 };
+  auto c = SymmetryProbeCrystal(0, regular, 0.0f);
+  LUMICE_CrystalSymmetry s{};
+  EXPECT_EQ(LUMICE_GetCrystalSymmetry(nullptr, &s), LUMICE_ERR_NULL_ARG);
+  EXPECT_EQ(LUMICE_GetCrystalSymmetry(&c, nullptr), LUMICE_ERR_NULL_ARG);
+  c.type = 7;
+  EXPECT_EQ(LUMICE_GetCrystalSymmetry(&c, &s), LUMICE_ERR_INVALID_VALUE);
+}
+
 TEST(ShapeScalarApplicableApi, OutOfRangeSlotsAnswerFalseRatherThanTrapping) {
   for (auto kind : { LUMICE_CRYSTAL_PRISM, LUMICE_CRYSTAL_PYRAMID }) {
     EXPECT_EQ(LUMICE_IsShapeScalarApplicable(kind, -1), 0);

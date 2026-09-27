@@ -1,6 +1,7 @@
 #include "core/crystal.hpp"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cassert>
 #include <cmath>
@@ -11,6 +12,7 @@
 #include <utility>
 #include <vector>
 
+#include "config/crystal_config.hpp"
 #include "config/filter_config.hpp"
 #include "core/def.hpp"
 #include "core/geo3d.hpp"
@@ -346,7 +348,8 @@ void Crystal::PopulateFromCfGeom() {
   }
 }
 
-Crystal Crystal::MakePrismClosedForm(float h, const float dist[6], const char* factory) {
+Crystal Crystal::MakePrismClosedForm(float h, const float dist[6], const GeometricSymmetry* symmetry,
+                                     const char* factory) {
   ClosedFormPrismResult r = ComputeClosedFormPrism(h, dist);
   if (!IsValidClosedFormPrism(r, h)) {
     // Silent for the FillHexCrystalCoef-mirroring zero-volume path (h ≤ eps).
@@ -363,17 +366,31 @@ Crystal Crystal::MakePrismClosedForm(float h, const float dist[6], const char* f
   Crystal c;
   AdaptClosedFormPrismToCrystalGeom(r, h, c.cf_geom_);
   c.fn_period_ = kHexagonalFnPeriod;
+  if (symmetry != nullptr) {
+    c.geom_symmetry_ = *symmetry;
+  } else {
+    PrismCrystalParam as_param;
+    as_param.h_ = Distribution{ DistributionType::kNoRandom, h, 0.0f };
+    for (int i = 0; i < kHexagonalFnPeriod; i++) {
+      as_param.d_[i] = Distribution{ DistributionType::kNoRandom, dist[i], 0.0f };
+    }
+    c.geom_symmetry_ = DeriveGeometricSymmetry(as_param);
+  }
   c.PopulateFromCfGeom();
   return c;
 }
 
 Crystal Crystal::CreatePrism(float h) {
   float dist[6]{ 1, 1, 1, 1, 1, 1 };
-  return MakePrismClosedForm(h, dist, "CreatePrism(h)");
+  return MakePrismClosedForm(h, dist, nullptr, "CreatePrism(h)");
 }
 
 Crystal Crystal::CreatePrism(float h, const float* fd) {
-  return MakePrismClosedForm(h, fd, "CreatePrism(h, fd)");
+  return MakePrismClosedForm(h, fd, nullptr, "CreatePrism(h, fd)");
+}
+
+Crystal Crystal::CreatePrism(float h, const float* fd, const GeometricSymmetry& ensemble_symmetry) {
+  return MakePrismClosedForm(h, fd, &ensemble_symmetry, "CreatePrism(h, fd, symmetry)");
 }
 
 Crystal Crystal::CreatePyramid(float h1, float h2, float h3) {
@@ -383,7 +400,7 @@ Crystal Crystal::CreatePyramid(float h1, float h2, float h3) {
 }
 
 Crystal Crystal::MakePyramidClosedForm(float upper_alpha, float lower_alpha, float h1, float h2, float h3,
-                                       const float dist[6], const char* factory) {
+                                       const float dist[6], const GeometricSymmetry* symmetry, const char* factory) {
   ClosedFormPyramidResult r = ComputeClosedFormPyramid(upper_alpha, lower_alpha, h1, h2, h3, dist);
   if (!IsValidClosedFormPyramid(r)) {
     // Silent when the evaluator returned an all-empty result (zero-volume
@@ -399,12 +416,31 @@ Crystal Crystal::MakePyramidClosedForm(float upper_alpha, float lower_alpha, flo
   Crystal c;
   AdaptClosedFormPyramidToCrystalGeom(r, c.cf_geom_);
   c.fn_period_ = kHexagonalFnPeriod;
+  if (symmetry != nullptr) {
+    c.geom_symmetry_ = *symmetry;
+  } else {
+    PyramidCrystalParam as_param;
+    as_param.h_pyr_u_ = Distribution{ DistributionType::kNoRandom, h1, 0.0f };
+    as_param.h_prs_ = Distribution{ DistributionType::kNoRandom, h2, 0.0f };
+    as_param.h_pyr_l_ = Distribution{ DistributionType::kNoRandom, h3, 0.0f };
+    for (int i = 0; i < kHexagonalFnPeriod; i++) {
+      as_param.d_[i] = Distribution{ DistributionType::kNoRandom, dist[i], 0.0f };
+    }
+    as_param.wedge_angle_u_ = upper_alpha;
+    as_param.wedge_angle_l_ = lower_alpha;
+    c.geom_symmetry_ = DeriveGeometricSymmetry(as_param);
+  }
   c.PopulateFromCfGeom();
   return c;
 }
 
 Crystal Crystal::CreatePyramid(float upper_alpha, float lower_alpha, float h1, float h2, float h3, const float* dist) {
-  return MakePyramidClosedForm(upper_alpha, lower_alpha, h1, h2, h3, dist, "CreatePyramid");
+  return MakePyramidClosedForm(upper_alpha, lower_alpha, h1, h2, h3, dist, nullptr, "CreatePyramid");
+}
+
+Crystal Crystal::CreatePyramid(float upper_alpha, float lower_alpha, float h1, float h2, float h3, const float* dist,
+                               const GeometricSymmetry& ensemble_symmetry) {
+  return MakePyramidClosedForm(upper_alpha, lower_alpha, h1, h2, h3, dist, &ensemble_symmetry, "CreatePyramid");
 }
 
 Crystal Crystal::CreatePyramid(float upper_alpha, float lower_alpha, float h1, float h2, float h3) {
@@ -424,8 +460,8 @@ Crystal Crystal::CreatePyramid(int upper_i1, int upper_i4, int lower_i1, int low
 Crystal::Crystal() {}
 
 Crystal::Crystal(const Crystal& other)
-    : config_id_(other.config_id_), fn_period_(other.fn_period_), poly_face_cnt_(other.poly_face_cnt_),
-      cf_geom_(other.cf_geom_) {
+    : config_id_(other.config_id_), fn_period_(other.fn_period_), geom_symmetry_(other.geom_symmetry_),
+      poly_face_cnt_(other.poly_face_cnt_), cf_geom_(other.cf_geom_) {
   if (poly_face_cnt_ > 0) {
     poly_face_data_ = std::make_unique<float[]>(poly_face_cnt_ * 4);
     poly_face_n_ = poly_face_data_.get();
@@ -437,9 +473,9 @@ Crystal::Crystal(const Crystal& other)
 }
 
 Crystal::Crystal(Crystal&& other) noexcept
-    : config_id_(other.config_id_), fn_period_(other.fn_period_), poly_face_cnt_(other.poly_face_cnt_),
-      poly_face_data_(std::move(other.poly_face_data_)), poly_face_fn_(std::move(other.poly_face_fn_)),
-      cf_geom_(other.cf_geom_) {
+    : config_id_(other.config_id_), fn_period_(other.fn_period_), geom_symmetry_(other.geom_symmetry_),
+      poly_face_cnt_(other.poly_face_cnt_), poly_face_data_(std::move(other.poly_face_data_)),
+      poly_face_fn_(std::move(other.poly_face_fn_)), cf_geom_(other.cf_geom_) {
   if (poly_face_cnt_ > 0) {
     poly_face_n_ = poly_face_data_.get();
     poly_face_d_ = poly_face_data_.get() + poly_face_cnt_ * 3;
@@ -456,6 +492,7 @@ Crystal& Crystal::operator=(const Crystal& other) {
 
   config_id_ = other.config_id_;
   fn_period_ = other.fn_period_;
+  geom_symmetry_ = other.geom_symmetry_;
 
   poly_face_cnt_ = other.poly_face_cnt_;
   if (poly_face_cnt_ > 0) {
@@ -482,6 +519,7 @@ Crystal& Crystal::operator=(Crystal&& other) noexcept {
 
   config_id_ = other.config_id_;
   fn_period_ = other.fn_period_;
+  geom_symmetry_ = other.geom_symmetry_;
 
   poly_face_cnt_ = other.poly_face_cnt_;
   poly_face_data_ = std::move(other.poly_face_data_);
@@ -512,68 +550,81 @@ IdType Crystal::GetFn(IdType poly_idx) const {
 
 namespace {
 
-// Shift prism/pyramid faces so the first non-basal pri index becomes 0 (the P-canonical form).
-// Basal faces (x < 3) pass through unchanged; the input is returned verbatim when no non-basal
-// face is present.
-std::vector<IdType> PCanonicalShiftByPeriod(const std::vector<IdType>& rp, int fn_period) {
+// Rotate prism/pyramid faces by the allowed step so the first non-basal face lands on the smallest
+// face its orbit can reach (the P-canonical form): with rotations by multiples of p_step, the first
+// 0-based pri index f can be sent exactly to f mod p_step. p_step == 1 is the full six-fold case
+// (first face -> 0, bit-identical to the rule before geometry was consulted); p_step >= fn_period
+// admits no rotation and returns the input. Basal faces (x < 3) pass through unchanged; the input is
+// returned verbatim when no non-basal face is present.
+std::vector<IdType> PCanonicalShiftByPeriod(const std::vector<IdType>& rp, int fn_period, int p_step) {
   std::vector<IdType> result = rp;
-  IdType first_pri = kInvalidId;
+  if (p_step <= 0 || p_step >= fn_period) {
+    return result;
+  }
+  int shift = -1;
   for (auto& x : result) {
     if (x < 3) {
       continue;
     }
     IdType pyr = x / 10;
-    IdType pri = x % 10;
-    if (first_pri == kInvalidId) {
-      first_pri = pri;
+    int pri0 = static_cast<int>(x % 10) - 3;
+    if (shift < 0) {
+      shift = pri0 - pri0 % p_step;
     }
-    pri += fn_period - first_pri;
-    pri %= fn_period;
-    pri += 3;
-    x = pyr * 10 + pri;
+    pri0 = (pri0 - shift + fn_period) % fn_period;
+    x = pyr * 10 + static_cast<IdType>(pri0 + 3);
   }
   return result;
+}
+
+// Whether each symmetry element takes part, given request, ensemble and geometry: the one place the
+// three halves are intersected for Crystal's reduction and expansion.
+bool DActive(uint8_t symmetry, int sigma_a, bool d_applicable, const GeometricSymmetry& geom) {
+  return (symmetry & FilterConfig::kSymD) && DMirrorActive(d_applicable, sigma_a, geom);
+}
+
+bool BActive(uint8_t symmetry, const GeometricSymmetry& geom) {
+  return (symmetry & FilterConfig::kSymB) && geom.b_applicable;
 }
 
 }  // namespace
 
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 std::vector<IdType> ReduceRaypathByPeriod(const std::vector<IdType>& rp, uint8_t symmetry, int sigma_a,
-                                          bool d_applicable, int fn_period) {
+                                          bool d_applicable, int fn_period, const GeometricSymmetry& geom) {
   if (symmetry == FilterConfig::kSymNone || fn_period < 0) {
     return rp;
   }
 
   std::vector<IdType> reduced_rp = rp;
   if (symmetry & FilterConfig::kSymP) {
-    reduced_rp = PCanonicalShiftByPeriod(reduced_rp, fn_period);
+    reduced_rp = PCanonicalShiftByPeriod(reduced_rp, fn_period, geom.p_step);
   }
 
-  if ((symmetry & FilterConfig::kSymD) && d_applicable) {
-    // σ-clean: reflect every prism face using formula face_id_new = (sigma_a - (face_id-3) + fn_period) % fn_period +
-    // 3
+  if (DActive(symmetry, sigma_a, d_applicable, geom)) {
+    // σ-clean: reflect every prism face, face_id_new = MirrorFaceIndex(face_id - 3, sigma_a, fn_period) + 3
     std::vector<IdType> rp_reflected = reduced_rp;
     for (auto& x : rp_reflected) {
       if (x < 3) {
         continue;  // skip basal faces; pyramid faces use same pyr/pri decomposition
       }
       IdType pyr = x / 10;
-      IdType pri = x % 10 - 3;
-      pri = (sigma_a - pri + fn_period) % fn_period;
-      x = pyr * 10 + pri + 3;
+      int pri = static_cast<int>(x % 10) - 3;
+      pri = MirrorFaceIndex(pri, sigma_a, fn_period);
+      x = pyr * 10 + static_cast<IdType>(pri + 3);
     }
     // When kSymP is also enabled, the D-image may no longer be P-canonical
     // (first pri shifted by sigma_a); re-canonicalize before lex comparison
     // so same orbit always reduces to the same representative.
     if (symmetry & FilterConfig::kSymP) {
-      rp_reflected = PCanonicalShiftByPeriod(rp_reflected, fn_period);
+      rp_reflected = PCanonicalShiftByPeriod(rp_reflected, fn_period, geom.p_step);
     }
     if (rp_reflected < reduced_rp) {
       reduced_rp = rp_reflected;
     }
   }
 
-  if (symmetry & FilterConfig::kSymB) {
+  if (BActive(symmetry, geom)) {
     // B reflection: basal 1↔2 and pyramid upper[13..18]↔lower[23..28], applied together.
     // Generate the B-reflected candidate and keep the lexicographically smaller one.
     std::vector<IdType> rp_b_reflected = reduced_rp;
@@ -604,7 +655,7 @@ std::vector<IdType> Crystal::ReduceRaypath(const std::vector<IdType>& rp, uint8_
 
 std::vector<IdType> Crystal::ReduceRaypath(const std::vector<IdType>& rp, uint8_t symmetry, int sigma_a,
                                            bool d_applicable) const {
-  return ReduceRaypathByPeriod(rp, symmetry, sigma_a, d_applicable, fn_period_);
+  return ReduceRaypathByPeriod(rp, symmetry, sigma_a, d_applicable, fn_period_, geom_symmetry_);
 }
 
 std::vector<std::vector<IdType>> Crystal::ExpandRaypath(const std::vector<IdType>& rp, uint8_t symmetry) const {
@@ -621,7 +672,9 @@ std::vector<std::vector<IdType>> Crystal::ExpandRaypath(const std::vector<IdType
   }
 
   if (symmetry & FilterConfig::kSymP) {
-    for (int i = 1; i < fn_period_; i++) {
+    // Only the rotations the shape admits: multiples of p_step (none when p_step >= fn_period_).
+    const int step = geom_symmetry_.p_step > 0 ? geom_symmetry_.p_step : fn_period_;
+    for (int i = step; i < fn_period_; i += step) {
       std::vector<IdType> curr_rp{ rp };
       bool changed = false;
       for (auto& x : curr_rp) {
@@ -644,7 +697,7 @@ std::vector<std::vector<IdType>> Crystal::ExpandRaypath(const std::vector<IdType
     }
   }
 
-  if ((symmetry & FilterConfig::kSymD) && d_applicable) {
+  if (DActive(symmetry, sigma_a, d_applicable, geom_symmetry_)) {
     // σ-clean: for each existing variant, generate σ-reflected copy
     auto size = result.size();
     for (size_t i = 0; i < size; i++) {
@@ -655,8 +708,8 @@ std::vector<std::vector<IdType>> Crystal::ExpandRaypath(const std::vector<IdType
           continue;  // skip basal faces; pyramid faces use same pyr/pri decomposition
         }
         IdType pyr = x / 10;
-        IdType pri = x % 10 - 3;
-        IdType pri_new = (sigma_a - pri + fn_period_) % fn_period_;
+        int pri = static_cast<int>(x % 10) - 3;
+        IdType pri_new = static_cast<IdType>(MirrorFaceIndex(pri, sigma_a, fn_period_));
         IdType x_new = pyr * 10 + pri_new + 3;
         if (x_new != x) {
           x = x_new;
@@ -669,7 +722,7 @@ std::vector<std::vector<IdType>> Crystal::ExpandRaypath(const std::vector<IdType
     }
   }
 
-  if (symmetry & FilterConfig::kSymB) {
+  if (BActive(symmetry, geom_symmetry_)) {
     // B reflection: basal 1↔2, pyramid upper[13..18]↔lower[23..28], prism unchanged.
     // Both swaps are part of the same transformation and applied together.
     auto size = result.size();
@@ -711,6 +764,229 @@ const float* Crystal::GetPolygonFaceDist() const {
 
 float Crystal::GetRefractiveIndex(float wl) const {
   return IceRefractiveIndex::Get(wl);
+}
+
+
+// ---- Geometric symmetry of a crystal ensemble -------------------------------------------------
+
+namespace {
+
+// One shape scalar as SyncGroupSampler (simulator.cpp) realizes it: which distribution is drawn,
+// and by whom. A slot in sync group g takes the draw of g's leader — its lowest applicable slot in
+// ShapeScalar order, which is also the sampler's draw order — and ignores its own distribution, so
+// two slots with the same `token` always hold the same value and slots with different tokens are
+// independent.
+struct ShapeScalarDraw {
+  bool present = false;
+  Distribution dist{ DistributionType::kNoRandom, 0.0f, 0.0f };
+  int token = -1;
+};
+
+// "The same shape scalar" at the closed-form geometry's own tolerance (geo3d_closedform.hpp,
+// kClosedFormGapToleranceCoefficient): relative to the larger magnitude, never clamped to an
+// absolute floor, so it scales with the crystal.
+bool SameShapeScalar(float a, float b) {
+  const double da = static_cast<double>(a);
+  const double db = static_cast<double>(b);
+  const double scale = std::max(std::fabs(da), std::fabs(db));
+  return std::fabs(da - db) <= kClosedFormGapToleranceCoefficient * static_cast<double>(math::kFloatEps) * scale;
+}
+
+// The two slots draw from the same distribution. Fields are read type-erased (raw center/spread):
+// a kNoRandom slot has only its constant, every other type both positional parameters.
+bool SameDraw(const Distribution& a, const Distribution& b) {
+  if (a.type != b.type) {
+    return false;
+  }
+  if (a.type == DistributionType::kNoRandom) {
+    return SameShapeScalar(a.center, b.center);
+  }
+  return SameShapeScalar(a.center, b.center) && SameShapeScalar(a.spread, b.spread);
+}
+
+// The resolved draws plus what every permutation test needs, computed once: `cls[s]` names the
+// equal-distribution class of slot s among the slots a symmetry can exchange it with (faces with
+// faces, the two cone heights with each other), and `any_shared` says whether some random slot
+// shares its draw with another — the only case the draw-pairing test has anything to check.
+// MakeCrystal derives this for every drawn crystal, so the common no-sync case costs a handful of
+// comparisons, not a pass over every slot pair per permutation.
+struct ShapeScalarDraws {
+  std::array<ShapeScalarDraw, kShapeScalarCount> slot{};
+  std::array<int, kShapeScalarCount> cls{};
+  bool any_shared = false;
+};
+using ShapeScalarPerm = std::array<int, kShapeScalarCount>;
+
+bool IsRandomDraw(const ShapeScalarDraw& d) {
+  return d.present && d.dist.type != DistributionType::kNoRandom;
+}
+
+ShapeScalarDraws ResolveShapeScalarDraws(const std::array<const Distribution*, kShapeScalarCount>& slots,
+                                         const int sync_group[kShapeScalarCount]) {
+  ShapeScalarDraws draws;
+  for (int i = 0; i < kShapeScalarCount; i++) {
+    auto& d = draws.slot[i];
+    draws.cls[i] = i;
+    if (slots[i] == nullptr) {
+      continue;
+    }
+    d.present = true;
+    d.token = i;
+    d.dist = *slots[i];
+    if (sync_group[i] == 0) {
+      continue;
+    }
+    for (int k = 0; k < i; k++) {
+      if (slots[k] != nullptr && sync_group[k] == sync_group[i]) {
+        d.token = k;
+        d.dist = *slots[k];
+        break;
+      }
+    }
+  }
+  for (int i = 0; i < kShapeScalarCount; i++) {
+    const auto& d = draws.slot[i];
+    if (IsRandomDraw(d) && d.token != i) {
+      draws.any_shared = true;  // i takes an earlier slot's draw
+    }
+  }
+  // Classes among the faces, and between the two cone heights.
+  for (int i = kShapeScalarFace0 + 1; i < kShapeScalarCount; i++) {
+    for (int k = kShapeScalarFace0; k < i; k++) {
+      if (draws.slot[k].present && draws.slot[i].present && SameDraw(draws.slot[k].dist, draws.slot[i].dist)) {
+        draws.cls[i] = draws.cls[k];
+        break;
+      }
+    }
+  }
+  const auto& up = draws.slot[kShapeScalarUpperH];
+  const auto& lo = draws.slot[kShapeScalarLowerH];
+  if (up.present && lo.present && SameDraw(up.dist, lo.dist)) {
+    draws.cls[kShapeScalarLowerH] = draws.cls[kShapeScalarUpperH];
+  }
+  return draws;
+}
+
+// Whether the joint distribution of the shape scalars is unchanged when slot s's value is moved to
+// slot perm[s] (perm only ever exchanges faces with faces and cone height with cone height): each
+// moved slot's distribution must match its image's, and random slots that share a draw must map to
+// slots that share a draw (and vice versa). Constant slots need no pairing — equal constants are
+// interchangeable whoever "draws" them.
+bool InvariantUnder(const ShapeScalarDraws& draws, const ShapeScalarPerm& perm) {
+  for (int s = 0; s < kShapeScalarCount; s++) {
+    const int t = perm[s];
+    if (t == s) {
+      continue;
+    }
+    if (draws.slot[s].present != draws.slot[t].present || (draws.slot[s].present && draws.cls[s] != draws.cls[t])) {
+      return false;
+    }
+  }
+  if (!draws.any_shared) {
+    return true;
+  }
+  for (int s = 0; s < kShapeScalarCount; s++) {
+    if (!IsRandomDraw(draws.slot[s])) {
+      continue;
+    }
+    for (int t = s + 1; t < kShapeScalarCount; t++) {
+      if (!IsRandomDraw(draws.slot[t])) {
+        continue;
+      }
+      const bool shared = draws.slot[s].token == draws.slot[t].token;
+      const bool shared_image = draws.slot[perm[s]].token == draws.slot[perm[t]].token;
+      if (shared != shared_image) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+// A permutation of the six face-distance slots (face i -> face_map(i)), identity elsewhere.
+template <class FaceMap>
+ShapeScalarPerm FacePerm(FaceMap face_map) {
+  ShapeScalarPerm perm{};
+  for (int s = 0; s < kShapeScalarCount; s++) {
+    perm[s] = s;
+  }
+  for (int i = 0; i < kHexagonalFnPeriod; i++) {
+    perm[kShapeScalarFace0 + i] = kShapeScalarFace0 + face_map(i);
+  }
+  return perm;
+}
+
+// P and D: both act on the face distances only (a pyramid's cone faces sit on the same six
+// distances, scaled, so they follow).
+void DeriveFaceSymmetry(const ShapeScalarDraws& draws, GeometricSymmetry& out) {
+  // The common case — a regular hexagon, or six faces drawn i.i.d. with no shared draw — admits
+  // every face permutation; answer it without walking the nine.
+  const bool one_face_class = std::all_of(draws.cls.begin() + kShapeScalarFace0, draws.cls.end(),
+                                          [&draws](int c) { return c == draws.cls[kShapeScalarFace0]; }) &&
+                              std::all_of(draws.slot.begin() + kShapeScalarFace0, draws.slot.end(),
+                                          [](const ShapeScalarDraw& d) { return d.present; });
+  if (one_face_class && !draws.any_shared) {
+    out.p_step = kFullHexagonalSymmetry.p_step;
+    out.d_valid_sigma_mask = kFullHexagonalSymmetry.d_valid_sigma_mask;
+    return;
+  }
+  out.p_step = kHexagonalFnPeriod;
+  // The rotation subgroups of Z6 are generated by 1, 2, 3 or nothing; the first step that works is
+  // the generator (a shape invariant under steps 2 and 3 is invariant under 1, found first).
+  for (int k : { 1, 2, 3 }) {
+    if (InvariantUnder(draws, FacePerm([k](int i) { return (i + k) % kHexagonalFnPeriod; }))) {
+      out.p_step = k;
+      break;
+    }
+  }
+  out.d_valid_sigma_mask = 0;
+  for (int a = 0; a < kHexagonalFnPeriod; a++) {
+    if (InvariantUnder(draws, FacePerm([a](int i) { return MirrorFaceIndex(i, a, kHexagonalFnPeriod); }))) {
+      out.d_valid_sigma_mask = static_cast<uint8_t>(out.d_valid_sigma_mask | (1u << a));
+    }
+  }
+}
+
+}  // namespace
+
+GeometricSymmetry DeriveGeometricSymmetry(const PrismCrystalParam& param) {
+  std::array<const Distribution*, kShapeScalarCount> slots{
+    &param.h_,    nullptr,      nullptr,      nullptr,      &param.d_[0],
+    &param.d_[1], &param.d_[2], &param.d_[3], &param.d_[4], &param.d_[5],
+  };
+  const auto draws = ResolveShapeScalarDraws(slots, param.sync_group_);
+  GeometricSymmetry g;
+  DeriveFaceSymmetry(draws, g);
+  // A prism's cross section does not change along the c-axis: the horizontal mirror is always one
+  // of its symmetries.
+  g.b_applicable = true;
+  return g;
+}
+
+GeometricSymmetry DeriveGeometricSymmetry(const PyramidCrystalParam& param) {
+  std::array<const Distribution*, kShapeScalarCount> slots{
+    nullptr,      &param.h_pyr_u_, &param.h_prs_, &param.h_pyr_l_, &param.d_[0],
+    &param.d_[1], &param.d_[2],    &param.d_[3],  &param.d_[4],    &param.d_[5],
+  };
+  const auto draws = ResolveShapeScalarDraws(slots, param.sync_group_);
+  GeometricSymmetry g;
+  DeriveFaceSymmetry(draws, g);
+  // B swaps the upper and lower cones: their heights must be interchangeable and their wedge angles
+  // equal — unless neither cone exists, in which case the angles shape nothing.
+  ShapeScalarPerm swap{};
+  for (int s = 0; s < kShapeScalarCount; s++) {
+    swap[s] = s;
+  }
+  swap[kShapeScalarUpperH] = kShapeScalarLowerH;
+  swap[kShapeScalarLowerH] = kShapeScalarUpperH;
+  auto certainly_flat = [](const Distribution& d) {
+    return d.type == DistributionType::kNoRandom && std::fabs(d.center) <= math::kFloatEps;
+  };
+  const bool no_cones =
+      certainly_flat(draws.slot[kShapeScalarUpperH].dist) && certainly_flat(draws.slot[kShapeScalarLowerH].dist);
+  g.b_applicable =
+      InvariantUnder(draws, swap) && (no_cones || SameShapeScalar(param.wedge_angle_u_, param.wedge_angle_l_));
+  return g;
 }
 
 

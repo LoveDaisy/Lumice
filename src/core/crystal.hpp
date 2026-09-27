@@ -12,6 +12,9 @@
 
 namespace lumice {
 
+struct PrismCrystalParam;
+struct PyramidCrystalParam;
+
 /**
  * @brief Test whether @p face is a legal face number on the given crystal kind.
  *
@@ -75,13 +78,82 @@ constexpr int kCrystalGeomMaxFaces = 20;
 // shrinks CrystalGeom's by-value copy cost (face_vtx dominates its footprint).
 constexpr int kCrystalGeomMaxVtxPerFace = 12;
 
-// The prism-face rotational period every crystal family this engine builds
-// today shares (6 sides, hexagonal): Crystal::fn_period_ for both prism and
-// pyramid closed-form factories, and every call site that needs the period
-// without a live Crystal (FilterSpec::Create's GPU descriptor path, the
-// server's read-time raypath-histogram reduction). One symbol so those
-// copies cannot drift apart.
+// The number of prism faces every crystal family this engine builds today has
+// (6 sides, hexagonal): Crystal::fn_period_ for both prism and pyramid
+// closed-form factories. It is the MODULUS of the prism face numbering (face
+// 3+i, i in 0..5), not the crystal's rotational symmetry — a prism with
+// face_distance [1, 1.2, 1, 1.2, 1, 1.2] still has six faces but only a
+// three-fold axis. Which rotations and mirrors a crystal's shape really admits
+// is GeometricSymmetry below.
 constexpr int kHexagonalFnPeriod = 6;
+
+// Which part of the hexagonal prism's D6h symmetry a crystal's SHAPE actually has — the geometric
+// half of "may these two face sequences be merged under P/B/D". The request (FilterConfig::kSym*)
+// and the orientation-ensemble conditions (detail::DeriveDSymmetryParams) are the other halves; a
+// symmetry element takes part in a reduction only when all of them allow it. Deciding it from the
+// requested bits alone merges raypaths that are not equivalent: on face_distance
+// [1, 1.2, 1, 1.2, 1, 1.2] a 60° rotation swaps a near face for a far one, and P used to fold two
+// rows 2.4× apart in energy into one.
+//
+// It describes the crystal ENSEMBLE a config draws from, not one drawn instance (see
+// DeriveGeometricSymmetry): a prism whose six face distances are drawn i.i.d. is rotation-symmetric
+// as an ensemble although no single draw is, and every consumer reduces over the ensemble.
+//
+// All three fields are produced together by DeriveGeometricSymmetry and must never be set one by
+// one: a default-constructed value admits nothing (no reduction), which is the safe side.
+struct GeometricSymmetry {
+  // Smallest prism-face step k in {1, 2, 3, 6} such that rotating the faces by k maps the shape onto
+  // itself; the P rotations allowed are the multiples of k. 1 = full six-fold, 6 = identity only.
+  int p_step = kHexagonalFnPeriod;
+  // Bit a (0..5) is set iff the vertical mirror sending prism face i to MirrorFaceIndex(i, a, 6)
+  // maps the shape onto itself. D (whose mirror is sigma_a) is geometrically allowed iff bit sigma_a.
+  uint8_t d_valid_sigma_mask = 0;
+  // The horizontal mirror B (basal 1<->2, upper cone 13..18 <-> lower cone 23..28) maps the shape
+  // onto itself. Always true for a prism; for a pyramid it needs matching cones.
+  bool b_applicable = false;
+
+  // Whether the shape admits the vertical mirror sigma_a (0..5); false for any other index.
+  bool AllowsMirror(int sigma_a) const {
+    return sigma_a >= 0 && sigma_a < kHexagonalFnPeriod && ((d_valid_sigma_mask >> sigma_a) & 1u) != 0;
+  }
+
+  bool operator==(const GeometricSymmetry& o) const {
+    return p_step == o.p_step && d_valid_sigma_mask == o.d_valid_sigma_mask && b_applicable == o.b_applicable;
+  }
+  bool operator!=(const GeometricSymmetry& o) const { return !(*this == o); }
+};
+
+// Whether D acts on a crystal at all: the orientation ensemble's condition (d_applicable, from
+// detail::DeriveDSymmetryParams) AND the shape admitting that ensemble's mirror sigma_a. The one
+// place the two halves meet — the reductions (Crystal, detail::ReduceBuffer) and the C API's
+// LUMICE_GetCrystalSymmetry (what the GUI's D hint reads) all ask this, so a hint cannot say D is
+// live on a crystal the engine does not reduce under it.
+inline bool DMirrorActive(bool d_applicable, int sigma_a, const GeometricSymmetry& g) {
+  return d_applicable && g.AllowsMirror(sigma_a);
+}
+
+// The full D6h: what every regular hexagonal prism and symmetric pyramid has. Named so that a
+// caller that must keep the pre-geometry rule on purpose (the GPU filter descriptor, whose device
+// kernels still hardcode it) says so instead of relying on a default.
+constexpr GeometricSymmetry kFullHexagonalSymmetry{ 1, 0x3F, true };
+
+// Image of prism face i (0-based, i.e. face number 3+i) under the vertical mirror sigma_a, over a
+// face numbering of `period` faces. The one formula every σ-mirror site uses (Crystal's reduction and
+// expansion, detail::ReduceBuffer, DeriveGeometricSymmetry's mirror test).
+constexpr int MirrorFaceIndex(int i, int sigma_a, int period) {
+  return ((sigma_a - i) % period + period) % period;
+}
+
+// The single authority for GeometricSymmetry: whether the joint distribution of the config's shape
+// scalars (heights, the six face distances; sync groups included — a group's members all take its
+// leader's draw) is invariant under each prism-face rotation / vertical mirror, and under swapping
+// the upper and lower cones. For a config whose scalars are all kNoRandom this is plain value
+// equality, at the closed-form geometry's relative tolerance. Consumed by MakeCrystal (stamped on
+// every drawn instance), Crystal::CreatePrism / CreatePyramid (their values wrapped as kNoRandom),
+// and the server's read-time histogram reduction, which holds only the config (a CrystalParam
+// variant: std::visit onto these two overloads).
+GeometricSymmetry DeriveGeometricSymmetry(const PrismCrystalParam& param);
+GeometricSymmetry DeriveGeometricSymmetry(const PyramidCrystalParam& param);
 
 struct CrystalGeom {
   int face_cnt = 0;
@@ -151,6 +223,13 @@ class Crystal {
   static Crystal CreatePrism(float h, const float* fd);
 
   /**
+   * @brief CreatePrism(h, fd) carrying a given geometric symmetry instead of deriving it from h/fd.
+   * @note For MakeCrystal: a drawn instance must carry its ENSEMBLE's symmetry (see
+   *       GeometricSymmetry), which its own drawn values almost never show.
+   */
+  static Crystal CreatePrism(float h, const float* fd, const GeometricSymmetry& ensemble_symmetry);
+
+  /**
    * @brief Create a hexagonal pyramid crystal
    * @param h1 Upper pyramid segment relative height (h1/H1), range [0.0, 1.0]
    * @param h2 Prism segment height ratio (h2/a)
@@ -174,6 +253,15 @@ class Crystal {
   static Crystal CreatePyramid(float upper_alpha, float lower_alpha,  // wedge angle (degrees)
                                float h1, float h2, float h3,          // height
                                const float* dist);                    // face distance
+
+  /**
+   * @brief The wedge-angle CreatePyramid carrying a given geometric symmetry; see the CreatePrism
+   *        overload of the same shape.
+   */
+  static Crystal CreatePyramid(float upper_alpha, float lower_alpha,  // wedge angle (degrees)
+                               float h1, float h2, float h3,          // height
+                               const float* dist,                     // face distance
+                               const GeometricSymmetry& ensemble_symmetry);
 
   /**
    * @brief Create a hexagonal pyramid crystal with wedge angles (default face distances)
@@ -242,6 +330,12 @@ class Crystal {
   int FnPeriod() const { return fn_period_; }
 
   /**
+   * @brief The subgroup of D6h this crystal's shape (ensemble) admits; see GeometricSymmetry.
+   * @note Meaningless when FnPeriod() < 0 (no reduction applies at all).
+   */
+  const GeometricSymmetry& GeomSymmetry() const { return geom_symmetry_; }
+
+  /**
    * @brief Reduce raypath using symmetry
    * @param rp Raypath (face index sequence)
    * @param symmetry Symmetry flags (P, B, D)
@@ -260,7 +354,7 @@ class Crystal {
   std::vector<IdType> ReduceRaypath(const std::vector<IdType>& rp, uint8_t symmetry, int sigma_a,
                                     bool d_applicable) const;
   // The reduction rule itself lives in the free function ReduceRaypathByPeriod below; this
-  // member supplies the crystal's fn_period_ and nothing else.
+  // member supplies the crystal's fn_period_ and GeomSymmetry() and nothing else.
 
   /**
    * @brief Expand raypath using symmetry
@@ -310,7 +404,9 @@ class Crystal {
   // Runs ComputeClosedFormPrism → 386.2 validity gate → CrystalGeom adapter →
   // fan-triangulation → PopulateFromCfGeom. Returns an empty crystal when the
   // gate rejects (matches the legacy RejectMalformed downstream contract).
-  static Crystal MakePrismClosedForm(float h, const float dist[6], const char* factory);
+  // `symmetry` null: derive GeometricSymmetry from h/dist themselves.
+  static Crystal MakePrismClosedForm(float h, const float dist[6], const GeometricSymmetry* symmetry,
+                                     const char* factory);
 
   // Same shape for the pyramid family, entered from the alpha overload
   // (Miller-index overload delegates through the alpha overload today, so this
@@ -318,9 +414,13 @@ class Crystal {
   // evaluator; the validity gate is "≥4 present face slots" (see
   // IsValidClosedFormPyramid in crystal.cpp).
   static Crystal MakePyramidClosedForm(float upper_alpha, float lower_alpha, float h1, float h2, float h3,
-                                       const float dist[6], const char* factory);
+                                       const float dist[6], const GeometricSymmetry* symmetry, const char* factory);
 
   int fn_period_ = -1;  // for raypath symmetry
+  // Set together with fn_period_ by the two closed-form factories, as a whole (derived, or the
+  // ensemble's handed in by MakeCrystal); never field by field. Default admits nothing, which
+  // no reduction reads anyway: every reduction path returns early on fn_period_ < 0 first.
+  GeometricSymmetry geom_symmetry_{};
 
   // Polygon face data for per-plane intersection
   size_t poly_face_cnt_ = 0;
@@ -348,16 +448,20 @@ class Crystal {
 // over a Crystal so a caller holding only the period can reduce without constructing one. The
 // server's read-time histogram merge is that caller (server/raypath_histogram_consumer.hpp): it
 // reduces recorded finest chains under whatever symmetry the reader asks for, long after the
-// crystals of the run are gone. Crystal::ReduceRaypath forwards here with its own fn_period_.
+// crystals of the run are gone. Crystal::ReduceRaypath forwards here with its own fn_period_ and
+// GeomSymmetry().
 //
 // `fn_period` is the number of prism faces (6 for every crystal family the engine builds today —
 // kHexagonalFnPeriod above); a negative period means "no symmetry defined" and the input is
 // returned as is, as is the input under
 // symmetry == FilterConfig::kSymNone. `sigma_a` and `d_applicable` are the axis-derived D
-// parameters (detail::ComputeSigmaA / detail::IsDApplicable); D is applied only when both the D
-// bit is set and d_applicable is true.
+// parameters (detail::ComputeSigmaA / detail::IsDApplicable). `geom` is the crystal's shape
+// symmetry: P rotates only by multiples of geom.p_step, D is applied only when the D bit is set,
+// d_applicable is true AND geom admits mirror sigma_a, B only when the B bit is set and
+// geom.b_applicable. The reduced element set is the request intersected with what the geometry
+// allows — never more.
 std::vector<IdType> ReduceRaypathByPeriod(const std::vector<IdType>& rp, uint8_t symmetry, int sigma_a,
-                                          bool d_applicable, int fn_period);
+                                          bool d_applicable, int fn_period, const GeometricSymmetry& geom);
 
 namespace detail {
 // Internal — not part of public API.

@@ -573,10 +573,9 @@ void RenderRefRow(GuiState& state, ColorClassConfig& cls, size_t ref_idx, bool& 
   // the ref was created — parallels the `<no placements>` fallback earlier in
   // this function) degrades gracefully to "D not applicable" without a crash.
   ImGui::SameLine();
-  bool d_applicable = false;
+  SymmetryAvailability avail{ 1, true, false, false };
   if (ref.crystal_pool_id >= 0 && static_cast<size_t>(ref.crystal_pool_id) < state.crystals.size()) {
-    const auto& cr = state.crystals[static_cast<size_t>(ref.crystal_pool_id)];
-    d_applicable = IsDApplicableGuiAxis(cr.azimuth, cr.roll);
+    avail = SymmetryAvailabilityFor(state.crystals[static_cast<size_t>(ref.crystal_pool_id)]);
   }
   const bool sym_editable = IsRefSymmetryEditable(ref);
   if (!sym_editable) {
@@ -588,7 +587,7 @@ void RenderRefRow(GuiState& state, ColorClassConfig& cls, size_t ref_idx, bool& 
   // MarkStructHardDirty call needed (see gui_state_reconcile.cpp
   // RaypathColorStructChanged; the operator== extension in gui_state.hpp is
   // what wires new fields into that diff).
-  RenderSymmetryCheckboxes(ref.sym_p, ref.sym_b, ref.sym_d, d_applicable, "color_ref");
+  RenderSymmetryCheckboxes(ref.sym_p, ref.sym_b, ref.sym_d, avail, "color_ref");
   if (!sym_editable) {
     ImGui::EndDisabled();
   }

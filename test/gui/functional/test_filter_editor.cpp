@@ -518,6 +518,60 @@ void RegisterFilterEditorTests(ImGuiTestEngine* engine) {
     };
   }
 
+  // The shape half of the same rule: P, B and D act only as far as the crystal's own shape allows,
+  // and a checkbox whose element this crystal lacks is explained the same way. A three-fold prism
+  // (face distances alternating 1 / 1.2) keeps B, keeps P only for 120-degree turns, and loses D
+  // when its roll selects an odd mirror; a regular prism shows none of the three hints.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "filter_editor", "symmetry_hints_follow_the_crystal_shape");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      struct ShapeCase {
+        const char* label;
+        float alt_distance;  // face_distance of faces 1, 3, 5 (faces 0, 2, 4 stay 1)
+        float roll_mean;
+        bool expect_p_icon;
+        bool expect_d_icon;
+      };
+      const ShapeCase kCases[] = {
+        { "regular", 1.0f, 0.0f, false, false },
+        { "three_fold_even_mirror", 1.2f, 0.0f, true, false },
+        { "three_fold_odd_mirror", 1.2f, 30.0f, true, true },
+      };
+      std::string wrong;
+      for (const auto& c : kCases) {
+        ResetTestState();
+        ctx->Yield(2);
+        auto& crystal = gui::g_state.crystals[gui::g_state.layers[0].entries[0].crystal_id];
+        crystal.type = gui::CrystalType::kPrism;
+        for (int i = 1; i < 6; i += 2) {
+          crystal.face_distance[i] = c.alt_distance;
+        }
+        crystal.azimuth = { gui::AxisDistType::kUniform, 0.0f, 360.0f };
+        crystal.roll = { gui::AxisDistType::kUniform, c.roll_mean, 360.0f };
+        ctx->Yield();
+        OpenFilterModal(ctx);
+        const bool p_icon = ctx->ItemExists("**/" ICON_FA_CIRCLE_INFO "##p_tooltip_icon_filter_modal");
+        const bool b_icon = ctx->ItemExists("**/" ICON_FA_CIRCLE_INFO "##b_tooltip_icon_filter_modal");
+        const bool d_icon = ctx->ItemExists("**/" ICON_FA_CIRCLE_INFO "##d_tooltip_icon_filter_modal");
+        if (p_icon != c.expect_p_icon) {
+          wrong += std::string(" ") + c.label + ":p";
+        }
+        if (b_icon) {
+          wrong += std::string(" ") + c.label + ":b";
+        }
+        if (d_icon != c.expect_d_icon) {
+          wrong += std::string(" ") + c.label + ":d";
+        }
+        if (gui::IsCurrentModalDApplicable() == c.expect_d_icon) {
+          wrong += std::string(" ") + c.label + ":predicate";
+        }
+        ctx->ItemClick(kCancel);
+        ctx->Yield(2);
+      }
+      IM_CHECK_STR_EQ(wrong.c_str(), "");
+    };
+  }
+
   // ---------------------------------------------------------------------------------------------
   // Remove Filter — a session-level intent, not a buffer edit.
   // ---------------------------------------------------------------------------------------------

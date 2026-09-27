@@ -1706,7 +1706,7 @@ static void RenderSummandRowList() {
   ImGui::TextDisabled("e.g. 3-5  or  1-3;3-5 (OR)  or  entry:2 & exit:4  or  3-5 & len:2-3");
 
   // Token help icon: transparent SmallButton acts as a stable hover target
-  // (mirrors RenderSharedFilterControls' `kDTooltipText` icon pattern).
+  // (mirrors the symmetry checkboxes' info-icon pattern, symmetry_ui.cpp InfoIcon).
   ImGui::SameLine();
   ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
   ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0, 0, 0, 0));
@@ -1795,7 +1795,7 @@ static void RenderSummandRowList() {
 //
 // task-356.3 — P/B/D rendering and IsDApplicableGuiAxis moved to
 // gui/symmetry_ui.hpp so color_window.cpp (per-ref row) can reuse them (a12).
-static void RenderSharedFilterControls(bool d_applicable) {
+static void RenderSharedFilterControls(const SymmetryAvailability& avail) {
   // Action: two RadioButtons (was Combo pre-task; aligns with Crystal tab style).
   // Always rendered — filter_in / filter_out semantics apply to every type.
   if (ImGui::RadioButton("Filter In##filter_action", g_filter_top.action == 0)) {
@@ -1812,7 +1812,7 @@ static void RenderSharedFilterControls(bool d_applicable) {
     ImGui::SetTooltip("Hide rays matching the filter");
   }
 
-  RenderSymmetryCheckboxes(g_filter_top.sym_p, g_filter_top.sym_b, g_filter_top.sym_d, d_applicable, "filter_modal");
+  RenderSymmetryCheckboxes(g_filter_top.sym_p, g_filter_top.sym_b, g_filter_top.sym_d, avail, "filter_modal");
 }
 
 // Remove Filter — arms g_filter_remove_intent so ApplyBuffersToEntry writes
@@ -1834,18 +1834,18 @@ static void RenderFilterModal() {
 
   ImGui::Spacing();
 
-  bool d_applicable = false;
+  // No valid entry: the D hint alone, as before shape was consulted.
+  SymmetryAvailability avail{ 1, true, false, false };
   {
     const int ly = g_modal_layer_idx;
     const int en = g_modal_entry_idx;
     if (ly >= 0 && ly < static_cast<int>(g_state.layers.size()) && en >= 0 &&
         en < static_cast<int>(g_state.layers[ly].entries.size())) {
       const auto& entry_ref = g_state.layers[ly].entries[en];
-      const auto& cr = g_state.crystals[entry_ref.crystal_id];
-      d_applicable = IsDApplicableGuiAxis(cr.azimuth, cr.roll);
+      avail = SymmetryAvailabilityFor(g_state.crystals[entry_ref.crystal_id]);
     }
   }
-  RenderSharedFilterControls(d_applicable);
+  RenderSharedFilterControls(avail);
 
   ImGui::Spacing();
 
@@ -2117,8 +2117,7 @@ bool IsCurrentModalDApplicable() {
     return false;
   }
   const auto& entry_ref = g_state.layers[ly].entries[en];
-  const auto& cr = g_state.crystals[entry_ref.crystal_id];
-  return IsDApplicableGuiAxis(cr.azimuth, cr.roll);
+  return SymmetryAvailabilityFor(g_state.crystals[entry_ref.crystal_id]).d;
 }
 
 // See edit_modals.hpp. Propagate a filter_id change from one entry to all entries that were

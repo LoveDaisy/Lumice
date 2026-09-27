@@ -18,13 +18,20 @@ namespace detail {
 
 namespace {
 
-// Mirror of `RaypathOrbit`/`BuildOrbit` (filter_spec.cpp:139-152): canonical
-// hits are produced by `Crystal::ReduceRaypath` on the configured raypath. We
-// recompute here rather than calling `BuildOrbit` to keep `filter_spec.cpp`
+// Mirror of `RaypathOrbit`/`BuildOrbit` (filter_spec.cpp): the canonical hits of the configured
+// raypath. We recompute here rather than calling `BuildOrbit` to keep `filter_spec.cpp`
 // platform-agnostic (plan D5).
+//
+// Reduced under the FULL hexagonal symmetry on purpose, not the crystal's GeomSymmetry(): the
+// device kernels (ReduceBuffer_dev in shared/filter_shared.h and metal/lumice_trace.metal) still
+// reduce every ray under full D6h, and the descriptor carries no shape symmetry. A canonical form
+// computed under a smaller group would never meet the device's, so a symmetry filter on a
+// low-symmetry crystal would silently match nothing; keeping the two on one rule leaves the GPU
+// where it was (over-merging on such crystals — a known CPU/GPU gap) instead of making it worse.
 void FillCanonicalBytes(const Crystal& crystal, const std::vector<IdType>& rp, uint8_t symmetry, int sigma_a,
                         bool d_applicable, DeviceFilterDesc& out) {
-  auto canonical = crystal.ReduceRaypath(rp, symmetry, sigma_a, d_applicable);
+  auto canonical =
+      ReduceRaypathByPeriod(rp, symmetry, sigma_a, d_applicable, crystal.FnPeriod(), kFullHexagonalSymmetry);
   out.canonical_len = static_cast<uint8_t>(std::min<size_t>(canonical.size(), kMaxHits));
   for (uint8_t i = 0; i < out.canonical_len; ++i) {
     out.canonical_bytes[i] = static_cast<uint8_t>(canonical[i] & 0xFF);

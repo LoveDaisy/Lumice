@@ -21,22 +21,25 @@ namespace lumice {
 
 namespace {
 
-// In-place P-canonical shift on the recorder buffer. Mirrors crystal.cpp PCanonicalShiftByPeriod
-// for hexagonal crystals (fn_period == kHexagonalFnPeriod).
-void PCanonicalShiftInPlace(uint8_t* data, size_t size) {
-  int first_pri = -1;
+// In-place P-canonical shift on the recorder buffer, rotating only by multiples of p_step.
+// Must match crystal.cpp PCanonicalShiftByPeriod (the vector form Crystal::ReduceRaypath uses).
+void PCanonicalShiftInPlace(uint8_t* data, size_t size, int fn_period, int p_step) {
+  if (p_step <= 0 || p_step >= fn_period) {
+    return;
+  }
+  int shift = -1;
   for (size_t i = 0; i < size; i++) {
     uint8_t x = data[i];
     if (x < 3) {
       continue;
     }
     uint8_t pyr = x / 10;
-    int pri = static_cast<int>(x % 10);
-    if (first_pri < 0) {
-      first_pri = pri;
+    int pri0 = static_cast<int>(x % 10) - 3;
+    if (shift < 0) {
+      shift = pri0 - pri0 % p_step;
     }
-    pri = (pri + kHexagonalFnPeriod - first_pri) % kHexagonalFnPeriod + 3;
-    data[i] = static_cast<uint8_t>(pyr * 10 + pri);
+    pri0 = (pri0 - shift + fn_period) % fn_period;
+    data[i] = static_cast<uint8_t>(pyr * 10 + pri0 + 3);
   }
 }
 
@@ -54,16 +57,19 @@ bool LexLessRecorder(const uint8_t* a, const uint8_t* b, size_t size) {
 namespace detail {
 
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
-void ReduceBuffer(uint8_t* data, size_t size, uint8_t symmetry, int sigma_a, bool d_applicable) {
-  if (symmetry == FilterConfig::kSymNone) {
+// Must match Crystal::ReduceRaypath (ReduceRaypathByPeriod): same elements, same order, same
+// request ∩ ensemble ∩ geometry gating.
+void ReduceBuffer(uint8_t* data, size_t size, uint8_t symmetry, int sigma_a, bool d_applicable, int fn_period,
+                  const GeometricSymmetry& geom) {
+  if (symmetry == FilterConfig::kSymNone || fn_period < 0) {
     return;
   }
 
   if (symmetry & FilterConfig::kSymP) {
-    PCanonicalShiftInPlace(data, size);
+    PCanonicalShiftInPlace(data, size, fn_period, geom.p_step);
   }
 
-  if ((symmetry & FilterConfig::kSymD) && d_applicable) {
+  if ((symmetry & FilterConfig::kSymD) && DMirrorActive(d_applicable, sigma_a, geom)) {
     uint8_t scratch[kMaxHits]{};
     for (size_t i = 0; i < size; i++) {
       uint8_t x = data[i];
@@ -73,18 +79,18 @@ void ReduceBuffer(uint8_t* data, size_t size, uint8_t symmetry, int sigma_a, boo
       }
       uint8_t pyr = x / 10;
       int pri0 = static_cast<int>(x % 10) - 3;
-      int new_pri0 = ((sigma_a - pri0) % kHexagonalFnPeriod + kHexagonalFnPeriod) % kHexagonalFnPeriod;
+      int new_pri0 = MirrorFaceIndex(pri0, sigma_a, fn_period);
       scratch[i] = static_cast<uint8_t>(pyr * 10 + new_pri0 + 3);
     }
     if (symmetry & FilterConfig::kSymP) {
-      PCanonicalShiftInPlace(scratch, size);
+      PCanonicalShiftInPlace(scratch, size, fn_period, geom.p_step);
     }
     if (LexLessRecorder(scratch, data, size)) {
       std::memcpy(data, scratch, size);
     }
   }
 
-  if (symmetry & FilterConfig::kSymB) {
+  if ((symmetry & FilterConfig::kSymB) && geom.b_applicable) {
     uint8_t scratch[kMaxHits]{};
     bool changed = false;
     for (size_t i = 0; i < size; i++) {
@@ -129,7 +135,7 @@ bool RaypathOrbit::Contains(const RaypathRecorder& rp_input, const uint8_t* over
 
   uint8_t scratch[kMaxHits]{};
   std::memcpy(scratch, src, size);
-  detail::ReduceBuffer(scratch, size, symmetry_, sigma_a_, d_applicable_);
+  detail::ReduceBuffer(scratch, size, symmetry_, sigma_a_, d_applicable_, fn_period_, geom_symmetry_);
   return std::memcmp(scratch, canonical_.data_, size) == 0;
 }
 
@@ -147,6 +153,7 @@ RaypathOrbit BuildOrbit(const Crystal& crystal, const std::vector<IdType>& rp, u
   orbit.sigma_a_ = sigma_a;
   orbit.d_applicable_ = d_applicable;
   orbit.fn_period_ = crystal.FnPeriod();
+  orbit.geom_symmetry_ = crystal.GeomSymmetry();
   return orbit;
 }
 

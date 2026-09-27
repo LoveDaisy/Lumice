@@ -183,8 +183,9 @@ class RaypathHistogramConsumer : public IConsume {
 // The scene facts a reader needs (server.hpp RaypathReduceContext), from the
 // scene a run traces: per crystal id the axis-derived D parameters, by the
 // same two derivations FilterSpec::Create and the simulator's chain-id layer
-// context make (detail::IsDApplicable / detail::ComputeSigmaA); per layer
-// whether it holds more than one crystal.
+// context make (detail::IsDApplicable / detail::ComputeSigmaA), and the shape
+// symmetry DeriveGeometricSymmetry gives its param (what MakeCrystal stamped on
+// every drawn instance); per layer whether it holds more than one crystal.
 RaypathReduceContext BuildRaypathReduceContext(const SceneConfig& scene);
 
 // The display text of one chain — THE format a user sees, in the C API's
@@ -206,7 +207,7 @@ std::string FormatRaypathChainDisplay(const std::vector<RaypathChainSegment>& ch
 
 // A finest result under `symmetry` (a FilterConfig::kSym* bit set, 0..7): every
 // entry's segments are reduced per layer with that layer's crystal's D
-// parameters (ReduceRaypathByPeriod, the same rule a filter canonicalises
+// parameters and shape symmetry (ReduceRaypathByPeriod, the same rule a filter canonicalises
 // under), entries that meet on one reduced chain are merged — energy_, count_
 // ring_energy_ and error_bound_ summed — and each merged row is labelled by
 // FormatRaypathChainDisplay and sorted as the recorded result is (energy

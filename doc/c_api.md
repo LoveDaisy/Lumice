@@ -29,7 +29,7 @@ Link against the `lumice` static library.
 ### Constants
 
 ```c
-#define LUMICE_API_VERSION 446        // ABI version, encoded major*100 + minor (v4.46)
+#define LUMICE_API_VERSION 447        // ABI version, encoded major*100 + minor (v4.47)
 #define LUMICE_MAX_RENDER_RESULTS 16  // Maximum capacity of the render result array
 #define LUMICE_MAX_STATS_RESULTS 1    // Maximum capacity of the stats result array
 ```
@@ -42,6 +42,14 @@ static_assert(LUMICE_API_VERSION >= 440, "Lumice header too old for this integra
 ```
 
 It is bumped on every BREAKING change to the public symbol set or struct layout.
+
+**v4.47** is a pure append: `LUMICE_GetCrystalSymmetry(const LUMICE_CrystalParam*,
+LUMICE_CrystalSymmetry*)` reports which P / B / D elements a crystal's shape admits — the rotation
+step P may use (1, 2, 3 or 6), the valid vertical mirrors, the horizontal mirror — and whether D
+acts on it at all (the `LUMICE_IsDApplicable` axis condition AND the shape having the mirror that
+axis selects). Raypath reduction intersects the requested toggles with these, so a low-symmetry
+shape (e.g. `face_distance` `[1, 1.2, 1, 1.2, 1, 1.2]`) is no longer reduced as a regular
+hexagon. No struct changed; `LUMICE_IsDApplicable` keeps its meaning.
 
 **v4.46 is the latest such break.** `LUMICE_RenderParam` gains a trailing `display_mode`
 (`LUMICE_DISPLAY_MODE_NORMAL` / `LUMICE_DISPLAY_MODE_CHANNEL_BR`) after `globe_back_fade`

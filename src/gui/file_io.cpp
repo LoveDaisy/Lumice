@@ -1488,7 +1488,7 @@ static void FillAxisDist(const AxisDist& src, LUMICE_Distribution* dst) {
 // Field-sync guard: see the static_assert(sizeof(CrystalConfig) == 232) near
 // SerializeCrystal above. One copy guards both functions (same TU, identical
 // condition); this comment keeps the pairing obvious to readers.
-static void FillCrystalParam(const CrystalConfig& c, LUMICE_CrystalParam* dst) {
+void FillCrystalParam(const CrystalConfig& c, LUMICE_CrystalParam* dst) {
   dst->type = c.type == CrystalType::kPrism ? 0 : 1;
   // GUI shape fields are now first-class ShapeDist; map each straight to LUMICE_Distribution so a
   // GUI-configured randomization actually reaches the simulator (the pre-upgrade NO_RANDOM wrapper

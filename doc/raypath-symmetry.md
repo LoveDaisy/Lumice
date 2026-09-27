@@ -42,6 +42,22 @@ A hexagonal ice crystal belongs to the D6h point group, which contains:
 This geometric symmetry is **intrinsic** — it holds for any ice crystal regardless of how it
 is oriented in the atmosphere.
 
+**But only for a regular shape.** D6h is the symmetry of a *regular* hexagonal prism or of a
+pyramid whose upper and lower cones match. A config can describe less: `face_distance`
+`[1, 1.2, 1, 1.2, 1, 1.2]` has a three-fold axis (rotations by 120°, three vertical mirrors), not
+a six-fold one; unequal `upper_h` / `lower_h` or wedge angles remove σh. The reduction therefore
+uses **the elements the toggles request, intersected with the elements the crystal's shape really
+has** (and, for D, with the ensemble condition of §4) — never more. Merging by an element the
+shape lacks folds inequivalent paths into one row: on the three-fold prism above, P used to merge
+near-face and far-face paths whose energies differ by 2.4×.
+
+"The shape" is the shape *distribution* a crystal config draws from, sync groups included, not
+one drawn instance: six `face_distance` values drawn i.i.d. from one distribution keep the full
+group, because rotating a draw relabels it into another equally likely draw. The single
+derivation is `DeriveGeometricSymmetry` (`src/core/crystal.hpp`), carried by every `Crystal`
+(`GeomSymmetry()`) and by the analysis list's reduce context; `LUMICE_GetCrystalSymmetry` exposes
+it through the C API. Values are compared at the closed-form geometry's relative tolerance.
+
 Face numbering convention:
 
 | Group | Faces |
@@ -82,7 +98,9 @@ correspondingly.
 case (freely falling or lightly oriented crystals) and is nearly always safe to enable.
 
 **Effect**: the canonical raypath uses the smallest face permutation representative; six
-rotationally equivalent paths collapse to one.
+rotationally equivalent paths collapse to one. On a shape with only a three- or two-fold axis,
+only the rotations it has are used (three or two paths collapse), and on a shape with no rotation
+P has no effect (§2a).
 
 ### B — Horizontal Mirror (σh)
 
@@ -97,7 +115,9 @@ basal face is preferentially up). This is typically satisfied for column crystal
 broad zenith distribution and for completely random orientations.
 
 **Effect**: paths entering through the top basal become equivalent to paths entering through
-the bottom basal; upper-pyramid paths become equivalent to lower-pyramid paths.
+the bottom basal; upper-pyramid paths become equivalent to lower-pyramid paths. Only on a shape
+whose two halves match: a pyramid with different upper and lower heights or wedge angles has no
+σh, and B has no effect on it (§2a).
 
 ### D — Vertical Mirror (σv or σd)
 
@@ -109,7 +129,7 @@ prism edges).
 Under D, basal faces 1 and 2 are always fixed. Prism faces map according to the
 σ-by-roll-mean formula (see §4). Pyramid faces follow the same prism mapping.
 
-**Enabling condition**: see §4.
+**Enabling condition**: see §4 — plus the shape itself must have the mirror §4 selects (§2a).
 
 ---
 
@@ -218,6 +238,14 @@ is what the sqrt-scaled Range slider once stored at its stop, the hint said D wa
 engine had already dropped it. A hint that disagrees with the thing it describes is worse than no
 hint, which is why this one has no copy of the rule to drift.
 
+**Shape hints**: since the reduction also intersects with the crystal's shape (§2a), the GUI
+asks `LUMICE_GetCrystalSymmetry` for the crystal of the filter / colour row and shows the same
+kind of `(i)` button beside **P** when the shape repeats only every 120° / 180° (or not at all),
+beside **B** when the upper and lower pyramid parts differ, and beside **D** when the axis passes
+the §4 condition but the shape lacks the mirror it selects. The D answer (`d_effective`) is
+decided in core (`DMirrorActive`), the same function the reductions call. The analysis panel's
+toggles act scene-wide and show no hints; each crystal is still reduced under its own shape.
+
 ---
 
 ## 7. Out of Scope
@@ -228,8 +256,11 @@ The following are **not** covered by P, B, or D:
   symmetry reduction across sub-filter boundaries is not implemented.
 - **Entry/exit pairs with multiple values**: when an `entry_exit` filter lists multiple entry
   or exit faces, cross-face symmetry beyond what P/B/D express is not handled.
-- **Non-standard crystal types**: custom face geometries (pyramidal crystals with unusual
-  upper/lower index lists) may not map correctly under B; verify against your crystal config.
+- **GPU filter matching on low-symmetry shapes**: the Metal / CUDA device kernels still reduce
+  every ray under the full D6h (`src/core/shared/filter_shared.h`, `src/core/metal/lumice_trace.metal`),
+  and the device filter descriptor is built under the same full group to stay consistent with them.
+  On a shape with less than D6h, a symmetry filter evaluated on the GPU can therefore still merge
+  inequivalent paths, where the CPU route does not.
 
 ---
 
