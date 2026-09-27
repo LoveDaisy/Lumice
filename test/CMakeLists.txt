@@ -59,6 +59,8 @@ add_executable(unit_correctness_test
   "${PROJ_TEST_DIR}/unit-correctness/core/test_color_symmetry_oracle.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/core/test_device_filter_check_host.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/core/test_reduce_raypath_audit.cpp"
+  # P/B orientation-ensemble applicability (the counterparts of detail::IsDApplicable).
+  "${PROJ_TEST_DIR}/unit-correctness/core/test_raypath_ensemble_applicability.cpp"
   # ParallelRows' dispatch rule on the function itself: which thread budgets run the body
   # inline, which stand up a pool, and that the bands tile the range either way.
   "${PROJ_TEST_DIR}/unit-correctness/core/test_parallel_rows.cpp"

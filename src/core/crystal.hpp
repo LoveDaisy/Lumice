@@ -515,6 +515,42 @@ struct DSymmetryParams {
   int sigma_a = 0;
 };
 DSymmetryParams DeriveDSymmetryParams(const AxisDistribution& d);
+
+// The orientation-ensemble halves of P and B — the counterparts of IsDApplicable. A symmetry
+// element may merge two face sequences only when the orientation ENSEMBLE maps each onto the
+// other with equal weight; the shape admitting it (GeometricSymmetry) is necessary but not enough.
+// These are the ensemble's `p_applicable` / `b_applicable` threaded through every reduction next
+// to `d_applicable`, and are not GeometricSymmetry::b_applicable (the shape's half of B): an
+// element acts only when the request, its ensemble condition and the shape all allow it.
+//
+// P (a 60° rotation about the c-axis) is a pure shift of the roll angle, so it holds iff roll's
+// distribution is invariant under a 60° shift. Of this repo's DistributionTypes only a uniform
+// over a full turn is — the same primitive IsDApplicableParams reads for azimuth, called directly
+// rather than through AxisDistribution::IsRollRotationallySymmetric, which answers a different
+// question (+180° invariance for the full-sphere fast path) that merely has the same answer today.
+// Azimuth plays no part: a Parry arc's azimuth is uniform, its roll is locked, and 3-5 carries
+// light while its 60° image 4-6 carries none.
+bool IsPApplicableParams(DistributionType roll_type, float roll_full_range_deg);
+bool IsPApplicable(const AxisDistribution& d);
+
+// B (the horizontal mirror: basal 1<->2, upper cone <-> lower cone) relabels the same physical
+// crystal with its c-axis reversed, i.e. orientation (zenith, azimuth) against
+// (180° - zenith, azimuth + 180°). It holds iff the ensemble weighs the two equally, which this
+// predicate accepts when BOTH:
+//   * azimuth is invariant under a 180° shift — conservatively, uniform over a full turn. Not in
+//     the first statement of the rule ("zenith symmetric about 90°"), and measured to matter: a
+//     column (zenith 90°) with a Gaussian azimuth lights 3-2 at 1.98% and 3-1 at 0.00%;
+//   * zenith is symmetric about 90°, i.e. core's latitude (= 90° - zenith) symmetric about 0°:
+//     either a full-turn uniform (a random orientation, symmetric about every point), or a
+//     distribution symmetric about its own centre (fixed value, uniform, Gaussian, Laplacian)
+//     whose centre is 0°. kZigzag folds |A·sin + B| and is not symmetric about its tilt offset in
+//     general, so it answers false; so does any type added later until someone decides otherwise.
+// Roll plays no part. A plate (zenith 0°) fails: face 1 is always the one facing up.
+// The arguments are the raw fields the rule reads, like IsDApplicableParams: `latitude_*` are
+// core's latitude slot (centre = 90° - zenith), not the wire's zenith — the C API converts.
+bool IsBApplicableParams(DistributionType azimuth_type, float azimuth_full_range_deg, DistributionType latitude_type,
+                         float latitude_center_deg, float latitude_full_range_deg);
+bool IsBApplicable(const AxisDistribution& d);
 }  // namespace detail
 
 

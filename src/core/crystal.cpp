@@ -1033,6 +1033,42 @@ DSymmetryParams DeriveDSymmetryParams(const AxisDistribution& d) {
   return params;
 }
 
+bool IsPApplicableParams(DistributionType roll_type, float roll_full_range_deg) {
+  return IsFullTurnUniform(roll_type, roll_full_range_deg);
+}
+
+bool IsPApplicable(const AxisDistribution& d) {
+  // Raw `spread`, for the reason IsDApplicable gives.
+  return IsPApplicableParams(d.roll_dist.type, d.roll_dist.spread);
+}
+
+bool IsBApplicableParams(DistributionType azimuth_type, float azimuth_full_range_deg, DistributionType latitude_type,
+                         float latitude_center_deg, float latitude_full_range_deg) {
+  if (!IsFullTurnUniform(azimuth_type, azimuth_full_range_deg)) {
+    return false;
+  }
+  if (IsFullTurnUniform(latitude_type, latitude_full_range_deg)) {
+    return true;
+  }
+  switch (latitude_type) {
+    case DistributionType::kNoRandom:
+    case DistributionType::kUniform:
+    case DistributionType::kGaussian:
+    case DistributionType::kGaussianLegacy:
+    case DistributionType::kLaplacian:
+      return FloatEqual(latitude_center_deg, 0.0f);
+    case DistributionType::kZigzag:
+      return false;
+  }
+  return false;
+}
+
+bool IsBApplicable(const AxisDistribution& d) {
+  // Raw `spread` / `center`, for the reason IsDApplicable gives.
+  return IsBApplicableParams(d.azimuth_dist.type, d.azimuth_dist.spread, d.latitude_dist.type, d.latitude_dist.center,
+                             d.latitude_dist.spread);
+}
+
 }  // namespace detail
 
 
