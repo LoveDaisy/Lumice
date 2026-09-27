@@ -781,32 +781,6 @@ struct ShapeScalarDraw {
   Distribution dist{ DistributionType::kNoRandom, 0.0f, 0.0f };
   int token = -1;
 };
-using ShapeScalarDraws = std::array<ShapeScalarDraw, kShapeScalarCount>;
-using ShapeScalarPerm = std::array<int, kShapeScalarCount>;
-
-ShapeScalarDraws ResolveShapeScalarDraws(const std::array<const Distribution*, kShapeScalarCount>& slots,
-                                         const int sync_group[kShapeScalarCount]) {
-  ShapeScalarDraws draws{};
-  for (int i = 0; i < kShapeScalarCount; i++) {
-    if (slots[i] == nullptr) {
-      continue;
-    }
-    draws[i].present = true;
-    draws[i].token = i;
-    draws[i].dist = *slots[i];
-    if (sync_group[i] == 0) {
-      continue;
-    }
-    for (int k = 0; k < i; k++) {
-      if (slots[k] != nullptr && sync_group[k] == sync_group[i]) {
-        draws[i].token = k;
-        draws[i].dist = *slots[k];
-        break;
-      }
-    }
-  }
-  return draws;
-}
 
 // "The same shape scalar" at the closed-form geometry's own tolerance (geo3d_closedform.hpp,
 // kClosedFormGapToleranceCoefficient): relative to the larger magnitude, never clamped to an
@@ -830,31 +804,97 @@ bool SameDraw(const Distribution& a, const Distribution& b) {
   return SameShapeScalar(a.center, b.center) && SameShapeScalar(a.spread, b.spread);
 }
 
+// The resolved draws plus what every permutation test needs, computed once: `cls[s]` names the
+// equal-distribution class of slot s among the slots a symmetry can exchange it with (faces with
+// faces, the two cone heights with each other), and `any_shared` says whether some random slot
+// shares its draw with another — the only case the draw-pairing test has anything to check.
+// MakeCrystal derives this for every drawn crystal, so the common no-sync case costs a handful of
+// comparisons, not a pass over every slot pair per permutation.
+struct ShapeScalarDraws {
+  std::array<ShapeScalarDraw, kShapeScalarCount> slot{};
+  std::array<int, kShapeScalarCount> cls{};
+  bool any_shared = false;
+};
+using ShapeScalarPerm = std::array<int, kShapeScalarCount>;
+
+bool IsRandomDraw(const ShapeScalarDraw& d) {
+  return d.present && d.dist.type != DistributionType::kNoRandom;
+}
+
+ShapeScalarDraws ResolveShapeScalarDraws(const std::array<const Distribution*, kShapeScalarCount>& slots,
+                                         const int sync_group[kShapeScalarCount]) {
+  ShapeScalarDraws draws;
+  for (int i = 0; i < kShapeScalarCount; i++) {
+    auto& d = draws.slot[i];
+    draws.cls[i] = i;
+    if (slots[i] == nullptr) {
+      continue;
+    }
+    d.present = true;
+    d.token = i;
+    d.dist = *slots[i];
+    if (sync_group[i] == 0) {
+      continue;
+    }
+    for (int k = 0; k < i; k++) {
+      if (slots[k] != nullptr && sync_group[k] == sync_group[i]) {
+        d.token = k;
+        d.dist = *slots[k];
+        break;
+      }
+    }
+  }
+  for (int i = 0; i < kShapeScalarCount; i++) {
+    const auto& d = draws.slot[i];
+    if (IsRandomDraw(d) && d.token != i) {
+      draws.any_shared = true;  // i takes an earlier slot's draw
+    }
+  }
+  // Classes among the faces, and between the two cone heights.
+  for (int i = kShapeScalarFace0 + 1; i < kShapeScalarCount; i++) {
+    for (int k = kShapeScalarFace0; k < i; k++) {
+      if (draws.slot[k].present && draws.slot[i].present && SameDraw(draws.slot[k].dist, draws.slot[i].dist)) {
+        draws.cls[i] = draws.cls[k];
+        break;
+      }
+    }
+  }
+  const auto& up = draws.slot[kShapeScalarUpperH];
+  const auto& lo = draws.slot[kShapeScalarLowerH];
+  if (up.present && lo.present && SameDraw(up.dist, lo.dist)) {
+    draws.cls[kShapeScalarLowerH] = draws.cls[kShapeScalarUpperH];
+  }
+  return draws;
+}
+
 // Whether the joint distribution of the shape scalars is unchanged when slot s's value is moved to
-// slot perm[s]: each slot's distribution must match its image's, and random slots that share a draw
-// must map to slots that share a draw (and vice versa). Constant slots need no pairing — equal
-// constants are interchangeable whoever "draws" them.
+// slot perm[s] (perm only ever exchanges faces with faces and cone height with cone height): each
+// moved slot's distribution must match its image's, and random slots that share a draw must map to
+// slots that share a draw (and vice versa). Constant slots need no pairing — equal constants are
+// interchangeable whoever "draws" them.
 bool InvariantUnder(const ShapeScalarDraws& draws, const ShapeScalarPerm& perm) {
   for (int s = 0; s < kShapeScalarCount; s++) {
-    const auto& a = draws[s];
-    const auto& b = draws[perm[s]];
-    if (a.present != b.present) {
-      return false;
+    const int t = perm[s];
+    if (t == s) {
+      continue;
     }
-    if (a.present && !SameDraw(a.dist, b.dist)) {
+    if (draws.slot[s].present != draws.slot[t].present || (draws.slot[s].present && draws.cls[s] != draws.cls[t])) {
       return false;
     }
   }
+  if (!draws.any_shared) {
+    return true;
+  }
   for (int s = 0; s < kShapeScalarCount; s++) {
-    if (!draws[s].present || draws[s].dist.type == DistributionType::kNoRandom) {
+    if (!IsRandomDraw(draws.slot[s])) {
       continue;
     }
     for (int t = s + 1; t < kShapeScalarCount; t++) {
-      if (!draws[t].present || draws[t].dist.type == DistributionType::kNoRandom) {
+      if (!IsRandomDraw(draws.slot[t])) {
         continue;
       }
-      const bool shared = draws[s].token == draws[t].token;
-      const bool shared_image = draws[perm[s]].token == draws[perm[t]].token;
+      const bool shared = draws.slot[s].token == draws.slot[t].token;
+      const bool shared_image = draws.slot[perm[s]].token == draws.slot[perm[t]].token;
       if (shared != shared_image) {
         return false;
       }
@@ -879,6 +919,17 @@ ShapeScalarPerm FacePerm(FaceMap face_map) {
 // P and D: both act on the face distances only (a pyramid's cone faces sit on the same six
 // distances, scaled, so they follow).
 void DeriveFaceSymmetry(const ShapeScalarDraws& draws, GeometricSymmetry& out) {
+  // The common case — a regular hexagon, or six faces drawn i.i.d. with no shared draw — admits
+  // every face permutation; answer it without walking the nine.
+  const bool one_face_class = std::all_of(draws.cls.begin() + kShapeScalarFace0, draws.cls.end(),
+                                          [&draws](int c) { return c == draws.cls[kShapeScalarFace0]; }) &&
+                              std::all_of(draws.slot.begin() + kShapeScalarFace0, draws.slot.end(),
+                                          [](const ShapeScalarDraw& d) { return d.present; });
+  if (one_face_class && !draws.any_shared) {
+    out.p_step = kFullHexagonalSymmetry.p_step;
+    out.d_valid_sigma_mask = kFullHexagonalSymmetry.d_valid_sigma_mask;
+    return;
+  }
   out.p_step = kHexagonalFnPeriod;
   // The rotation subgroups of Z6 are generated by 1, 2, 3 or nothing; the first step that works is
   // the generator (a shape invariant under steps 2 and 3 is invariant under 1, found first).
@@ -932,7 +983,7 @@ GeometricSymmetry DeriveGeometricSymmetry(const PyramidCrystalParam& param) {
     return d.type == DistributionType::kNoRandom && std::fabs(d.center) <= math::kFloatEps;
   };
   const bool no_cones =
-      certainly_flat(draws[kShapeScalarUpperH].dist) && certainly_flat(draws[kShapeScalarLowerH].dist);
+      certainly_flat(draws.slot[kShapeScalarUpperH].dist) && certainly_flat(draws.slot[kShapeScalarLowerH].dist);
   g.b_applicable =
       InvariantUnder(draws, swap) && (no_cones || SameShapeScalar(param.wedge_angle_u_, param.wedge_angle_l_));
   return g;
