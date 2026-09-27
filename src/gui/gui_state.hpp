@@ -337,6 +337,10 @@ struct SimConfig {
 // apart. One codec pair for all three consumers. An unrecognised spelling reads as proportional —
 // the same conservative side core itself falls to (with a warning) at commit; the GUI never writes
 // one.
+// Placement rule this pair follows (the other JSON-name tables in file_io.cpp, e.g.
+// kDisplayModeJsonNames, deliberately stay file-local): a wire-name codec lives here, beside the
+// field it serializes, once some field-editor widget needs its spelling too; one only file_io.cpp
+// consumes stays a file_io.cpp static.
 inline const char* RayAllocationJsonName(bool adaptive) {
   return adaptive ? "adaptive" : "proportional";
 }
