@@ -1,0 +1,910 @@
+<meta charset="utf-8">
+<title>Analyze Workspace Prototype</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&family=Roboto+Mono:wght@400;500&display=swap">
+<style>
+/* Single dark theme on purpose: this page imitates the Lumice GUI, whose palette
+   (src/gui/theme.cpp, kIceTruePalette) is dark-only. */
+:root{
+  color-scheme: dark;
+  --page:#0b0c0f; --win:#101114; --child:#15161a; --popup:#181a1f;
+  --frame:#1c283c; --frame-h:#26364f; --frame-a:#2e405d;
+  --btn:#212e44; --btn-h:#2d3d59; --btn-a:#1b2537;
+  --text:#ccd1d9; --dim:#7a7f89; --faint:#4c5059;
+  --accent:#599eeb; --accent-t:rgba(89,158,235,.16); --accent-2:#8cc4ff;
+  --amber:#e0a458; --amber-t:rgba(224,164,88,.16);
+  --green:#7fbf8f;
+  --sep:rgba(255,255,255,.08); --border:rgba(0,0,0,.55);
+  --ui: "Roboto", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "Roboto Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+body{background:var(--page); color:var(--text); font-family:var(--ui); font-size:14px; margin:0; padding-inline:16px; padding-block:14px 24px;}
+.proto{display:flex; flex-wrap:wrap; gap:10px 18px; align-items:center; margin-bottom:10px; max-width:1920px;}
+.proto h1{font-size:15px; font-weight:500; margin:0; letter-spacing:.02em;}
+.proto .note{color:var(--dim); font-size:12.5px; line-height:1.5; flex:1 1 420px;}
+.seg{display:inline-flex; border-radius:3px; overflow:hidden; background:var(--frame);}
+.seg button{background:transparent; color:var(--dim); border:0; font:inherit; font-size:12.5px; padding:3px 9px; cursor:pointer;}
+.seg button:hover{background:var(--frame-h); color:var(--text)}
+.seg button.on{background:var(--btn-h); color:var(--text)}
+.seg button:focus-visible, .btn:focus-visible, .chipbtn:focus-visible{outline:1px solid var(--accent); outline-offset:1px}
+.hints{color:var(--dim); font-size:12px; margin:0 0 10px; display:flex; flex-wrap:wrap; gap:4px 16px; max-width:1920px}
+.hints b{color:var(--text); font-weight:500}
+
+#stage{position:relative; overflow:hidden; max-width:100%;}
+#app{position:absolute; left:0; top:0; transform-origin:0 0; background:var(--win); border:1px solid #000; display:flex; flex-direction:column; font-size:14px; box-shadow:0 10px 40px rgba(0,0,0,.5); user-select:none;}
+
+.topbar{height:34px; flex:none; display:flex; align-items:center; gap:14px; padding:0 10px; background:#0d0e11; border-bottom:1px solid var(--border);}
+.brand{color:var(--dim); font-weight:500; letter-spacing:.04em}
+.tabs{display:flex; gap:2px; height:100%; align-items:flex-end}
+.tabs button{font:inherit; font-weight:500; border:0; background:transparent; color:var(--dim); padding:6px 16px 7px; border-radius:3px 3px 0 0; cursor:pointer}
+.tabs button.on{background:var(--win); color:var(--text); box-shadow:inset 0 2px 0 var(--accent)}
+.file{color:var(--dim)}
+.spacer{flex:1}
+.pill{font-size:12.5px; padding:2px 8px; border-radius:10px; background:var(--frame); color:var(--text); font-variant-numeric:tabular-nums; white-space:nowrap}
+.pill.run{box-shadow:inset 3px 0 0 var(--accent)}
+.pill.stale{box-shadow:inset 3px 0 0 var(--amber)}
+.pill.done{box-shadow:inset 3px 0 0 var(--green)}
+
+.main{flex:1; min-height:0; display:grid; grid-template-columns:300px 1fr 1fr 400px; grid-template-rows:var(--topH,420px) 7px minmax(0,1fr);}
+#left{grid-column:1; grid-row:1/4; border-right:1px solid var(--border)}
+#paneScene{grid-column:2; grid-row:1; border-right:1px solid var(--border)}
+#paneRp{grid-column:3; grid-row:1}
+#split{grid-column:2/4; grid-row:2; background:#0d0e11; cursor:row-resize; border-top:1px solid var(--border); border-bottom:1px solid var(--border); position:relative}
+#split::after{content:""; position:absolute; left:50%; top:2px; width:40px; height:2px; margin-left:-20px; background:rgba(255,255,255,.2); border-radius:1px}
+#split:hover, #split.drag, #split:focus-visible{background:var(--accent-t); outline:none}
+#paneList{grid-column:2; grid-row:3; border-right:1px solid var(--border)}
+#pane3d{grid-column:3; grid-row:3}
+#col3{grid-column:4; grid-row:1/4; display:flex; flex-direction:column; min-height:0; min-width:0; border-left:1px solid var(--border)}
+.cvbox{display:flex; justify-content:center; align-items:flex-start; flex:1; min-height:0}
+.pf{flex-wrap:nowrap!important; overflow:hidden}
+.col{display:flex; flex-direction:column; min-width:0; min-height:0; border-left:1px solid var(--border)}
+.pane{display:flex; flex-direction:column; min-height:0; background:var(--win); border-bottom:1px solid var(--border)}
+.pane.grow{flex:1}
+.ph{height:26px; flex:none; display:flex; align-items:center; gap:8px; padding:0 8px; background:var(--accent-t); color:var(--text); font-weight:500; font-size:13px; white-space:nowrap; overflow:hidden}
+.ph .sub{color:var(--dim); font-weight:400; overflow:hidden; text-overflow:ellipsis}
+.ph .seg button{font-size:12px; padding:2px 8px}
+.pb{padding:6px 8px; min-height:0}
+.pf{display:flex; align-items:center; gap:10px; padding:4px 8px 6px; font-size:12.5px; color:var(--dim); flex-wrap:wrap}
+canvas{display:block}
+.cv{touch-action:none; cursor:crosshair}
+.cv.grab{cursor:grab}
+
+/* left panel */
+.left{border-left:0; background:var(--win); overflow:auto; padding:0 0 10px}
+.lsec{padding:6px 10px 2px}
+.sep-text{display:flex; align-items:center; gap:8px; color:var(--dim); font-size:12.5px; margin:8px 0 6px}
+.sep-text::after{content:""; flex:1; height:1px; background:var(--sep)}
+.crys{display:grid; grid-template-columns:18px 1fr auto; gap:2px 8px; padding:6px 8px; border-radius:3px; background:var(--child); margin-bottom:4px; align-items:center}
+.crys .nm{font-weight:500}
+.crys .meta{grid-column:2/4; color:var(--dim); font-size:12.5px; line-height:1.4}
+.crys .w{color:var(--dim); font-size:12.5px; font-variant-numeric:tabular-nums}
+.cb{width:14px; height:14px; accent-color:var(--accent); margin:0}
+.row{display:grid; grid-template-columns:86px 1fr 50px; align-items:center; gap:8px; margin:5px 0}
+.row label{color:var(--text)}
+.row .val{font-variant-numeric:tabular-nums; text-align:right; color:var(--text)}
+input[type=range]{width:100%; accent-color:var(--accent); height:16px; margin:0}
+.ro{background:var(--frame); border-radius:2px; padding:2px 6px; color:var(--text); font-size:13px}
+.btn{font:inherit; font-size:13px; background:var(--btn); color:var(--text); border:0; border-radius:2px; padding:3px 10px; cursor:pointer}
+.btn:hover{background:var(--btn-h)}
+.btn[disabled]{opacity:.45; cursor:default}
+.lnote{color:var(--dim); font-size:12.5px; line-height:1.5; margin:10px 0 0}
+
+/* list */
+.search{width:100%; font:inherit; font-size:13px; background:var(--frame); color:var(--text); border:0; border-radius:2px; padding:4px 7px; margin-bottom:6px}
+.search::placeholder{color:var(--faint)}
+.listwrap{overflow:auto; min-height:0; flex:1}
+table.rl{width:100%; border-collapse:collapse; font-size:13px; font-variant-numeric:tabular-nums}
+table.rl th{text-align:left; color:var(--dim); font-weight:400; padding:3px 6px; border-bottom:1px solid var(--sep); position:sticky; top:0; background:var(--win)}
+table.rl td{padding:4px 6px; border-bottom:1px solid rgba(255,255,255,.03); vertical-align:middle}
+table.rl tr.r{cursor:pointer}
+table.rl tr.r:hover td{background:rgba(255,255,255,.03)}
+table.rl tr.sel td{background:var(--accent-t)}
+table.rl tr.sel td:first-child{box-shadow:inset 2px 0 0 var(--accent)}
+.chain{font-family:var(--mono); font-size:12.5px; color:var(--text)}
+.cryn{color:var(--dim)}
+.halo{color:var(--dim); font-size:12px}
+.num{text-align:right}
+.bar{height:6px; background:var(--frame); border-radius:1px; min-width:40px}
+.bar i{display:block; height:100%; background:var(--accent); border-radius:1px}
+.dimrows{opacity:.45}
+.listmeta{color:var(--dim); font-size:12px; margin-bottom:6px; font-variant-numeric:tabular-nums}
+
+/* details */
+.details{overflow:auto; flex:1; min-height:0; padding:8px 12px 14px; font-size:14px}
+.dsec{color:var(--dim); font-size:12px; letter-spacing:.08em; text-transform:uppercase; margin:6px 0 6px; display:flex; align-items:center; gap:8px}
+.dsec::after{content:""; flex:1; height:1px; background:var(--sep)}
+.rt{font-size:15px; font-weight:500; margin-bottom:4px}
+.chips{display:flex; flex-wrap:wrap; gap:4px; margin:4px 0 8px}
+.chip{font-size:12.5px; padding:1px 7px; border-radius:9px; background:var(--frame); color:var(--text)}
+.chip.j{box-shadow:inset 0 0 0 1px rgba(89,158,235,.55)}
+.chip.c{box-shadow:inset 0 0 0 1px rgba(224,164,88,.6)}
+.chipbtn{white-space:nowrap; font:inherit; font-size:12px; border:0; background:var(--btn); color:var(--text); padding:1px 7px; border-radius:2px; cursor:pointer}
+.chipbtn:hover{background:var(--btn-h)}
+table.crit{width:100%; border-collapse:collapse; font-size:13.5px; font-variant-numeric:tabular-nums; margin-bottom:8px}
+table.crit td{padding:3px 4px; border-bottom:1px solid rgba(255,255,255,.04); cursor:pointer}
+table.crit tr:hover td{background:rgba(255,255,255,.03)}
+table.crit tr.on td{background:var(--accent-t)}
+.term{font-weight:500}
+.card{background:var(--child); border-radius:3px; padding:9px 10px; margin:0 0 10px; display:grid; grid-template-columns:1fr 80px; gap:4px 10px}
+.card .tn{font-weight:500; grid-column:1/3}
+.card p{margin:0; color:var(--text); line-height:1.45; font-size:13.5px}
+.card svg{width:70px; height:40px}
+.card .cap{grid-column:1/3; color:var(--dim); font-size:12.5px}
+.kv{display:grid; grid-template-columns:120px 1fr; gap:4px 10px; font-size:13.5px; margin-bottom:8px; font-variant-numeric:tabular-nums}
+.kv .k{color:var(--dim)}
+.mono{font-family:var(--mono); font-size:13px}
+.ebar{display:grid; grid-template-columns:110px 1fr 52px; gap:8px; align-items:center; font-size:13px; margin:3px 0; font-variant-numeric:tabular-nums}
+.ebar .bar{height:8px}
+.ebar .bar i{background:linear-gradient(90deg, var(--amber), #f3d9a4)}
+.warn{color:var(--amber); font-size:12.5px; line-height:1.45}
+.tag{font-size:11px; padding:1px 6px; border-radius:2px; background:var(--amber-t); color:var(--amber); font-weight:500}
+.tag.mc{background:rgba(255,255,255,.06); color:var(--dim)}
+
+.fiberbar{display:flex; align-items:center; gap:8px; padding:2px 8px 8px; font-size:12px; color:var(--dim); font-variant-numeric:tabular-nums}
+.fiberbar input{flex:1}
+
+.statusbar{height:24px; flex:none; display:flex; align-items:center; gap:16px; padding:0 10px; background:#0d0e11; border-top:1px solid var(--border); color:var(--dim); font-size:12.5px; font-variant-numeric:tabular-nums}
+
+.renderveil{position:absolute; inset:0; background:var(--win); display:flex; align-items:center; justify-content:center; flex-direction:column; gap:10px; color:var(--dim); z-index:5}
+.renderveil b{color:var(--text); font-weight:500}
+@media (prefers-reduced-motion: reduce){ *{transition:none!important} }
+</style>
+
+<div class="proto">
+  <h1>Analyze 工作区原型</h1>
+  <div class="seg" role="group" aria-label="窗口尺寸">
+    <button id="sz1280">1280×800</button><button id="sz1440" class="on">1440×860</button><button id="sz1920">1920×1040</button>
+  </div>
+  <div class="note"><b style="color:var(--text);font-weight:500">v2</b>：两张全景改为单圆盘等面积投影（场景全景默认上半球，可切下半球）；光路视图像地图一样拖动平移、滚轮缩放，点击放观察点会自动吸附到该光路的可达区域；左面板 300、详情列 400（字号接近 app 的 15 px）；两张全景与下方区域之间的分隔条可拖动。数据说明同 v1：页内小型蒙特卡洛，n = 1.31，偏折角场与 fiber 为真实追迹，光路相对强度与机制标签为示意。</div>
+</div>
+<div class="hints">
+  <span><b>场景全景</b> 点击或拖动：锥形中心；Upper / Lower 切换半球</span>
+  <span><b>光路视图</b> 拖动：平移；滚轮：缩放；点击：放观察点（吸附）；拖白圈：移动观察点；Fit / Full sky</span>
+  <span><b>分隔条</b> 拖动：调上下比例</span>
+  <span><b>u 球</b> 拖动：旋转；拖白圈：移动姿态点</span>
+  <span><b>3D</b> 拖动：旋转；▶ 沿 fiber 播放</span>
+</div>
+
+<div id="stage"><div id="app">
+  <div class="topbar">
+    <span class="brand">LUMICE</span>
+    <div class="tabs" role="tablist"><button id="tabRender" role="tab">Render</button><button id="tabAnalyze" role="tab" class="on">Analyze</button></div>
+    <span class="file">halo_demo.lmc</span>
+    <span class="spacer"></span>
+    <span id="runPill" class="pill run">Analyzing</span>
+    <span id="rayPill" class="pill">0 rays</span>
+  </div>
+  <div class="main" id="main">
+    <aside class="left" id="left">
+      <div class="lsec">
+        <div class="sep-text">Crystals</div>
+        <div id="crysList"></div>
+        <button class="btn" disabled>+ Add crystal</button>
+        <div class="sep-text">Sun</div>
+        <div class="row"><label for="sunAlt">Altitude</label><input id="sunAlt" type="range" min="0" max="60" step="0.5" value="20"><span class="val" id="sunAltV">20.0°</span></div>
+        <div class="row"><label>Diameter</label><span class="ro">0.5°</span><span></span></div>
+        <div class="sep-text">Simulation</div>
+        <div class="row"><label>Spectrum</label><span class="ro">Single λ, n 1.31</span><span></span></div>
+        <div class="row"><label>Rays / path</label><span class="ro">600 k</span><span></span></div>
+        <div class="row"><label>Scattering</label><span class="ro">Single layer</span><span></span></div>
+        <p class="lnote">Sun and Simulation move here from the right panel. Editing a crystal opens the same editor as in Render.</p>
+      </div>
+    </aside>
+
+    <div class="pane" id="paneScene">
+      <div class="ph">Scene <span class="sub">Monte Carlo · equal-area</span><span class="spacer"></span>
+        <div class="seg"><button id="svUpper" class="on">Upper</button><button id="svLower">Lower</button></div></div>
+      <div class="pb cvbox"><canvas id="cvScene" class="cv"></canvas></div>
+      <div class="pf">
+        <label for="coneR">Cone</label><input id="coneR" type="range" min="1" max="15" step="0.5" value="4" style="width:96px"><span id="coneRV" style="color:var(--text);font-variant-numeric:tabular-nums">4.0°</span>
+        <label style="display:flex;gap:5px;align-items:center;margin-left:auto"><input id="outline" type="checkbox" class="cb" checked> Outline selected</label>
+      </div>
+    </div>
+
+    <div class="pane" id="paneRp">
+      <div class="ph">Raypath <span class="sub" id="rpSub"></span><span class="spacer"></span>
+        <div class="seg"><button id="mMC" class="on">MC</button><button id="mAn">Analytic</button></div></div>
+      <div class="pb cvbox"><canvas id="cvRp" class="cv"></canvas></div>
+      <div class="pf" id="rpFoot"><span id="rpTag"></span><span id="rpPresets" hidden></span><span style="color:var(--dim)">◆ presets on the map</span><span class="spacer"></span><span id="rpZoom" style="font-variant-numeric:tabular-nums"></span><button class="chipbtn" id="rpFit">Fit</button><button class="chipbtn" id="rpFull">Full sky</button></div>
+    </div>
+
+    <div id="split" role="separator" aria-orientation="horizontal" aria-label="Resize panoramas" tabindex="0"></div>
+
+    <div class="pane" id="paneList">
+      <div class="ph">Raypaths in cone <span class="sub" id="listSub"></span></div>
+      <div class="pb" style="display:flex;flex-direction:column;flex:1;min-height:0">
+        <input id="search" class="search" placeholder="Filter raypaths" aria-label="Filter raypaths">
+        <div class="listmeta" id="listMeta"></div>
+        <div class="listwrap"><table class="rl"><thead><tr><th>Raypath</th><th class="num">Share</th><th class="num">±</th><th style="width:28%"></th></tr></thead><tbody id="listBody"></tbody></table></div>
+      </div>
+    </div>
+
+    <div class="pane" id="pane3d">
+      <div class="ph">Path in crystal <span class="sub" id="p3Sub" hidden></span><span class="spacer"></span>
+        <button class="chipbtn" id="play" aria-label="Play along fiber">▶ Fiber</button>
+        <div class="seg"><button id="fWorld" class="on">World</button><button id="fCrys">Crystal</button></div></div>
+      <div class="pb" style="flex:1;min-height:0;padding:0"><canvas id="cv3d" class="cv grab"></canvas></div>
+    </div>
+
+    <div id="col3">
+      <div class="pane" id="paneG">
+        <div class="ph">Sun direction in crystal <span class="sub">level set = fiber</span></div>
+        <div class="pb" style="padding-bottom:2px"><canvas id="cvG" class="cv grab"></canvas><canvas id="cvStrip" style="margin-top:4px"></canvas></div>
+        <div class="fiberbar"><span>Fiber</span><input id="fiberS" type="range" min="0" max="0" value="0" aria-label="Position along fiber"><span id="fiberV" style="min-width:52px;text-align:right">–</span></div>
+      </div>
+      <div class="details" id="details"></div>
+    </div>
+  </div>
+
+  <div class="statusbar"><span id="st1">Analyze · CPU pool</span><span id="st2"></span><span class="spacer"></span><span>Prototype · synthetic data</span></div>
+  <div class="renderveil" id="veil" hidden><b>Render workspace</b><span>Today's layout: preview + right panel. Not part of this prototype.</span><button class="btn" id="backAn">Back to Analyze</button></div>
+</div></div>
+
+<script>
+
+// ============================================================ math
+const D2R=Math.PI/180, R2D=180/Math.PI, NI=1.31, SIN45=Math.SQRT1_2;
+const dot=(a,b)=>a[0]*b[0]+a[1]*b[1]+a[2]*b[2];
+const cross=(a,b)=>[a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]];
+const add=(a,b)=>[a[0]+b[0],a[1]+b[1],a[2]+b[2]];
+const sub=(a,b)=>[a[0]-b[0],a[1]-b[1],a[2]-b[2]];
+const mul=(a,s)=>[a[0]*s,a[1]*s,a[2]*s];
+const len=a=>Math.hypot(a[0],a[1],a[2]);
+const nrm=a=>{const l=len(a)||1;return [a[0]/l,a[1]/l,a[2]/l]};
+const neg=a=>[-a[0],-a[1],-a[2]];
+const ang=(a,b)=>Math.acos(Math.max(-1,Math.min(1,dot(a,b))));
+const clamp=(x,a,b)=>x<a?a:x>b?b:x;
+function gauss(){let u=0;while(u===0)u=Math.random();return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*Math.random());}
+function tangentBasis(u){const ref=Math.abs(u[2])<0.9?[0,0,1]:[1,0,0];const e1=nrm(cross(u,ref));return [e1,cross(u,e1)];}
+function rotStep(u,t,a){return nrm(add(mul(u,Math.cos(a)),mul(t,Math.sin(a))));}
+function toWorld(B,v){return [B.x[0]*v[0]+B.y[0]*v[1]+B.c[0]*v[2],B.x[1]*v[0]+B.y[1]*v[1]+B.c[1]*v[2],B.x[2]*v[0]+B.y[2]*v[1]+B.c[2]*v[2]];}
+function toCrys(B,w){return [dot(B.x,w),dot(B.y,w),dot(B.c,w)];}
+function rotXZ(pitch,yaw){ // view = Rx(pitch)*Rz(yaw)
+  const cy=Math.cos(yaw),sy=Math.sin(yaw),cp=Math.cos(pitch),sp=Math.sin(pitch);
+  const Rz=[[cy,-sy,0],[sy,cy,0],[0,0,1]], Rx=[[1,0,0],[0,cp,-sp],[0,sp,cp]];
+  const M=[[0,0,0],[0,0,0],[0,0,0]];
+  for(let i=0;i<3;i++)for(let j=0;j<3;j++)for(let k=0;k<3;k++)M[i][j]+=Rx[i][k]*Rz[k][j];
+  return M;
+}
+const mv=(M,v)=>[M[0][0]*v[0]+M[0][1]*v[1]+M[0][2]*v[2],M[1][0]*v[0]+M[1][1]*v[1]+M[1][2]*v[2],M[2][0]*v[0]+M[2][1]*v[1]+M[2][2]*v[2]];
+const mtv=(M,v)=>[M[0][0]*v[0]+M[1][0]*v[1]+M[2][0]*v[2],M[0][1]*v[0]+M[1][1]*v[1]+M[2][1]*v[2],M[0][2]*v[0]+M[1][2]*v[1]+M[2][2]*v[2]];
+
+// ============================================================ crystal + optics
+// Face numbering follows Lumice: 1 top basal, 2 bottom basal, 3..8 prism faces.
+const NRM=[null,[0,0,1],[0,0,-1]];
+for(let k=3;k<=8;k++){const p=(k-3)*60*D2R;NRM[k]=[Math.cos(p),Math.sin(p),0];}
+const APO=Math.sqrt(3)/2, BASAL_AREA=3*Math.sqrt(3)/2, SIG=2*D2R;
+const CRYSTALS=[
+  {name:"Prism", shape:"Hex prism · h/a 2.0", ori:"Random", type:"random", h:2.0, weight:1.0, on:true},
+  {name:"Plate", shape:"Hex plate · h/a 0.6", ori:"Horizontal · σ 2°", type:"plate", h:0.6, weight:1.0, on:true},
+  {name:"Column", shape:"Hex column · h/a 4.0", ori:"Horizontal axis · σ 2°", type:"column", h:4.0, weight:0.5, on:true},
+];
+// k: relative strength fudge (beam-reach fraction is not modelled); illustrative only.
+const CHAINS=[
+  {cr:0, faces:[3,5], halo:"22° halo", k:0.5},
+  {cr:0, faces:[1,3], halo:"46° halo", k:0.22},
+  {cr:1, faces:[3,5], halo:"Parhelia", k:1.0},
+  {cr:1, faces:[1,3], halo:"Circumzenithal arc", k:0.35},
+  {cr:1, faces:[1], halo:"Subsun", k:0.8},
+  {cr:1, faces:[3], halo:"Parhelic circle", k:1.2},
+  {cr:2, faces:[3,5], halo:"Tangent arcs", k:0.5},
+];
+const chainLabel=ch=>ch.faces.join("→");
+const faceArea=(cr,f)=>f<=2?BASAL_AREA:cr.h;
+const faceOff=(cr,f)=>f<=2?cr.h/2:APO;
+
+function refl(d,n){const k=2*dot(d,n);return [d[0]-k*n[0],d[1]-k*n[1],d[2]-k*n[2]];}
+function refr(d,N,eta){ // N faces the incoming side
+  const ci=-dot(d,N), s2=eta*eta*(1-ci*ci); if(s2>=1) return null;
+  const ct=Math.sqrt(1-s2), a=eta*ci-ct;
+  const rs=(eta*ci-ct)/(eta*ci+ct), rp=(ci-eta*ct)/(ci+eta*ct);
+  return {t:[eta*d[0]+a*N[0],eta*d[1]+a*N[1],eta*d[2]+a*N[2]], T:1-(rs*rs+rp*rp)/2};
+}
+function reflR(ci,eta){const s2=eta*eta*(1-ci*ci);if(s2>=1)return 1;const ct=Math.sqrt(1-s2);const rs=(eta*ci-ct)/(eta*ci+ct),rp=(ci-eta*ct)/(ci+eta*ct);return (rs*rs+rp*rp)/2;}
+// u: sun direction in the crystal frame. Returns the outgoing propagation direction (crystal frame).
+function trace(u,faces,n){
+  const d0=[-u[0],-u[1],-u[2]], n0=NRM[faces[0]], c0=dot(u,n0);
+  if(c0<=1e-7) return null;
+  if(faces.length===1){const R=reflR(c0,1/n);return {out:refl(d0,n0),e:[1,R],w:c0*R,inc:[Math.acos(c0)],dirs:[]};}
+  const r0=refr(d0,n0,1/n); if(!r0) return null;
+  let d=r0.t,E=r0.T; const e=[1,E],inc=[Math.acos(c0)],dirs=[d];
+  for(let i=1;i<faces.length-1;i++){const nm=NRM[faces[i]],cm=dot(d,nm);if(cm<=1e-7)return null;E*=reflR(cm,n);d=refl(d,nm);e.push(E);inc.push(Math.acos(cm));dirs.push(d);}
+  const nl=NRM[faces[faces.length-1]], cl=dot(d,nl); if(cl<=1e-7) return null;
+  const r1=refr(d,neg(nl),n); if(!r1) return null;
+  E*=r1.T; e.push(E); inc.push(Math.acos(cl));
+  return {out:r1.t,e,w:c0*E,inc,dirs};
+}
+function devDeg(u,faces,n){const t=trace(u,faces,n);if(!t)return NaN;return ang(neg(u),t.out)*R2D;}
+
+function basisFromAxis(c,psi){const ref=Math.abs(c[2])<0.9?[0,0,1]:[1,0,0];const e=nrm(cross(c,ref)),f=cross(c,e);const cp=Math.cos(psi),sp=Math.sin(psi);const x=[e[0]*cp+f[0]*sp,e[1]*cp+f[1]*sp,e[2]*cp+f[2]*sp];return {x,y:cross(c,x),c};}
+function sampleOri(cr){
+  if(cr.type==="random"){
+    const u1=Math.random(),u2=Math.random()*2*Math.PI,u3=Math.random()*2*Math.PI;
+    const a=Math.sqrt(1-u1),b=Math.sqrt(u1),x=a*Math.sin(u2),y=a*Math.cos(u2),z=b*Math.sin(u3),w=b*Math.cos(u3);
+    return {x:[1-2*(y*y+z*z),2*(x*y+w*z),2*(x*z-w*y)], y:[2*(x*y-w*z),1-2*(x*x+z*z),2*(y*z+w*x)], c:[2*(x*z+w*y),2*(y*z-w*x),1-2*(x*x+y*y)]};
+  }
+  if(cr.type==="plate"){const gx=gauss()*SIG,gy=gauss()*SIG,t=Math.hypot(gx,gy),a=Math.atan2(gy,gx),st=Math.sin(t);return basisFromAxis([st*Math.cos(a),st*Math.sin(a),Math.cos(t)],Math.random()*2*Math.PI);}
+  const az=Math.random()*2*Math.PI, el=gauss()*SIG;
+  return basisFromAxis([Math.cos(el)*Math.cos(az),Math.cos(el)*Math.sin(az),Math.sin(el)],Math.random()*2*Math.PI);
+}
+function poseDensity(cr,B){
+  if(cr.type==="random") return 1;
+  const cz=Math.min(1,Math.abs(B.c[2]));
+  const t=cr.type==="plate"?Math.acos(cz):Math.asin(cz);
+  return Math.exp(-t*t/(2*SIG*SIG));
+}
+
+// ============================================================ sky grid (dual equal-area)
+const DSK=200, NX=DSK*2, NY=DSK, NPIX=NX*NY, HALF=DSK/2;
+function dirToPixF(v){ // map coords (float) or null
+  const up=v[2]>=0, zen=Math.acos(Math.min(1,Math.abs(v[2]))), r=Math.sin(zen/2)/SIN45, A=Math.atan2(v[1],v[0]);
+  return [HALF+r*HALF*Math.sin(A)+(up?0:DSK), HALF+r*HALF*Math.cos(A)];
+}
+function dirToPix(v){const p=dirToPixF(v);const ix=Math.min(NX-1,Math.max(0,p[0]|0)),iy=Math.min(NY-1,Math.max(0,p[1]|0));return iy*NX+ix;}
+function pixToDir(px,py){
+  const disk=px>=DSK?1:0, dx=(px-disk*DSK-HALF)/HALF, dy=(py-HALF)/HALF, r=Math.hypot(dx,dy);
+  if(r>1) return null;
+  const A=Math.atan2(dx,dy), zen=2*Math.asin(Math.min(1,r*SIN45)), s=Math.sin(zen);
+  return [s*Math.cos(A), s*Math.sin(A), disk?-Math.cos(zen):Math.cos(zen)];
+}
+const PD=new Float32Array(NPIX*3), PV=new Uint8Array(NPIX);
+for(let iy=0;iy<NY;iy++)for(let ix=0;ix<NX;ix++){const d=pixToDir(ix+.5,iy+.5),i=iy*NX+ix;if(d){PV[i]=1;PD[i*3]=d[0];PD[i*3+1]=d[1];PD[i*3+2]=d[2];}}
+
+// ============================================================ equal-area views (Lambert azimuthal, any centre)
+function makeView(c,tm,size){
+  c=nrm(c);const up=Math.abs(c[2])>0.999?[-1,0,0]:nrm(sub([0,0,1],mul(c,c[2])));
+  const R=size*0.492;return {c,up,r:cross(c,up),tm,size,cx:size/2,cy:size/2,R,k:R/(2*Math.sin(Math.min(tm,Math.PI)/2))};
+}
+function vFwd(V,v){
+  const cs=clamp(dot(V.c,v),-1,1),th=Math.acos(cs);if(th>V.tm+1e-9)return null;
+  const rho=2*Math.sin(th/2);let t=sub(v,mul(V.c,cs));const tl=len(t);if(tl<1e-12)return [V.cx,V.cy];t=mul(t,1/tl);
+  return [V.cx+rho*V.k*dot(t,V.r),V.cy-rho*V.k*dot(t,V.up)];
+}
+function vInv(V,x,y){
+  const X=(x-V.cx)/V.k,Y=(V.cy-y)/V.k,rho=Math.hypot(X,Y);if(rho>2)return null;
+  const th=2*Math.asin(Math.min(1,rho/2));if(th>V.tm+1e-9)return null;if(rho<1e-12)return V.c.slice();
+  const t=nrm(add(mul(V.r,X/rho),mul(V.up,Y/rho)));return nrm(add(mul(V.c,Math.cos(th)),mul(t,Math.sin(th))));
+}
+function buildLUT(V){const n=V.size,L=new Int32Array(n*n).fill(-1);for(let y=0;y<n;y++)for(let x=0;x<n;x++){const v=vInv(V,x+.5,y+.5);if(v)L[y*n+x]=dirToPix(v);}return L;}
+function slerpToward(c,p,a){const t=sub(p,mul(c,dot(c,p)));if(len(t)<1e-9)return c;return rotStep(c,nrm(t),a);}
+
+// ============================================================ state
+const TARGET=600000, BATCH=15000, HI_MC=400000, HI_AN=3000000, HI_BATCH=50000;
+const S={
+  W:1440,H:860,scale:1,topH:null,
+  sunAlt:20, acc:null, disp:null, dim:false,
+  cone:{dir:null,r:4}, coneMask:new Uint8Array(NPIX),
+  sceneMode:"upper", sceneV:null, sceneLUT:null,
+  rv:{c:[0,0,1],tm:Math.PI}, rpV:null, rpLUT:null, rvMovedAt:0, rvAuto:true, hi:null, sup:null,
+  sel:null, probe:null, presets:[], presetsAt:-1, snapped:false,
+  mode:"mc", fiber:{pts:[],closed:false,reason:""}, fIdx:0,
+  frame3d:"world", cam:{pitch:-72*D2R,yaw:-35*D2R}, gv:{pitch:-58*D2R,yaw:25*D2R},
+  playing:false, playDir:1, card:null, filter:"", rows:[], tick:0,
+};
+const sunVec=()=>[Math.cos(S.sunAlt*D2R),0,Math.sin(S.sunAlt*D2R)];
+function newAcc(){return {sum:CHAINS.map(()=>new Float64Array(NPIX)),cnt:CHAINS.map(()=>new Uint32Array(NPIX)),n:CHAINS.map(()=>0)};}
+function progress(acc){let a=0,b=0;CHAINS.forEach((ch,i)=>{if(CRYSTALS[ch.cr].on){a+=Math.min(acc.n[i],TARGET);b+=TARGET;}});return b?a/b:1;}
+function totalRays(acc){return acc.n.reduce((a,b)=>a+b,0);}
+function sampleChain(ci,count,sumArr,cntArr){
+  const ch=CHAINS[ci],cr=CRYSTALS[ch.cr],s=sunVec(),a0=faceArea(cr,ch.faces[0])*ch.k*cr.weight;
+  for(let i=0;i<count;i++){const B=sampleOri(cr),u=toCrys(B,s),t=trace(u,ch.faces,NI);if(!t)continue;const p=dirToPix(neg(toWorld(B,t.out)));if(!PV[p])continue;sumArr[p]+=a0*t.w;if(cntArr)cntArr[p]++;}
+}
+// Render the selected raypath straight into the current view's own pixel grid (what zoom costs:
+// a re-render of one raypath at the view's resolution, MC now, deterministic in phase 2).
+function sampleChainView(ci,count,H){
+  const ch=CHAINS[ci],cr=CRYSTALS[ch.cr],s=sunVec(),a0=faceArea(cr,ch.faces[0])*ch.k*cr.weight,n=H.HR;
+  for(let i=0;i<count;i++){const B=sampleOri(cr),u=toCrys(B,s),t=trace(u,ch.faces,NI);if(!t)continue;const q=vFwd(H.V,neg(toWorld(B,t.out)));if(!q)continue;const x=q[0]|0,y=q[1]|0;if(x<0||y<0||x>=n||y>=n)continue;H.sum[y*n+x]+=a0*t.w;}
+  H.n+=count;
+}
+function restartSim(){
+  if(S.acc&&totalRays(S.acc)>0){S.disp=S.acc;S.dim=true;}
+  S.acc=newAcc();if(!S.dim)S.disp=S.acc;S.hi=null;S.sup=null;S.presetsAt=-1;
+}
+
+// ============================================================ DOM + layout
+const $=id=>document.getElementById(id);
+const app=$("app"),stage=$("stage");
+const DPR=2;
+function setupCanvas(cv,w,h){w=Math.max(10,Math.floor(w));h=Math.max(10,Math.floor(h));cv.width=w*DPR;cv.height=h*DPR;cv.style.width=w+"px";cv.style.height=h+"px";const c=cv.getContext("2d");c.setTransform(DPR,0,0,DPR,0,0);cv._w=w;cv._h=h;return c;}
+function evPos(e,cv){const r=cv.getBoundingClientRect();return [(e.clientX-r.left)*cv._w/r.width,(e.clientY-r.top)*cv._h/r.height];}
+let ctxScene,ctxRp,ctx3d,ctxG,ctxStrip;
+function layout(){
+  app.style.width=S.W+"px";app.style.height=S.H+"px";
+  const avail=Math.max(300,document.documentElement.clientWidth-32);
+  S.scale=Math.min(1,avail/S.W);app.style.transform=`scale(${S.scale})`;
+  stage.style.height=(S.H*S.scale)+"px";stage.style.width=(S.W*S.scale)+"px";
+  const main=$("main"),ps=$("paneScene");
+  if(S.topH==null)S.topH=Math.round(Math.min(ps.clientWidth-16+26+34+12,S.H*0.62));
+  S.topH=clamp(S.topH,200,S.H-34-24-7-170);main.style.setProperty("--topH",S.topH+"px");
+  const sz=Math.max(80,Math.min(ps.clientWidth-16,ps.clientHeight-26-34-10));
+  ctxScene=setupCanvas($("cvScene"),sz,sz);ctxRp=setupCanvas($("cvRp"),sz,sz);
+  rebuildSceneView();rebuildRpView();
+  const gw=$("paneG").clientWidth-16;ctxG=setupCanvas($("cvG"),gw,Math.round(gw*0.8));ctxStrip=setupCanvas($("cvStrip"),gw,30);
+  const p3=$("pane3d");ctx3d=setupCanvas($("cv3d"),p3.clientWidth,p3.clientHeight-26);
+  globe.field=null;drawAll();
+}
+function drawAll(){drawScene();renderList();drawRp();drawGlobe();drawStrip();draw3D();renderDetails();}
+function bindSplit(){
+  const sp=$("split");let down=false,ly=0,pend=false;
+  sp.addEventListener("pointerdown",e=>{down=true;ly=e.clientY;sp.setPointerCapture(e.pointerId);sp.classList.add("drag");});
+  sp.addEventListener("pointermove",e=>{if(!down)return;S.topH+=(e.clientY-ly)/S.scale;ly=e.clientY;if(!pend){pend=true;requestAnimationFrame(()=>{pend=false;layout();});}});
+  sp.addEventListener("pointerup",()=>{down=false;sp.classList.remove("drag");});
+  sp.addEventListener("keydown",e=>{if(e.key==="ArrowUp"||e.key==="ArrowDown"){S.topH+=e.key==="ArrowUp"?-20:20;layout();e.preventDefault();}});
+}
+
+// ============================================================ left panel
+function renderCrystals(){
+  $("crysList").innerHTML=CRYSTALS.map((c,i)=>`<div class="crys"><input type="checkbox" class="cb" id="cr${i}" ${c.on?"checked":""} aria-label="Enable ${c.name}"><span class="nm">${c.name}</span><span class="w">× ${c.weight.toFixed(1)}</span><span class="meta">${c.shape}<br>${c.ori}</span></div>`).join("");
+  CRYSTALS.forEach((c,i)=>$("cr"+i).addEventListener("change",e=>{c.on=e.target.checked;restartSim();afterSceneChange();}));
+}
+$("sunAlt").addEventListener("input",e=>{S.sunAlt=+e.target.value;$("sunAltV").textContent=S.sunAlt.toFixed(1)+"°";restartSim();afterSceneChange();});
+function afterSceneChange(){computeFiber(null,true);drawAll();}
+
+// ============================================================ painting helpers
+const offs=new Map();
+function offCanvas(key,n){let o=offs.get(key);if(!o||o.width!==n){o=document.createElement("canvas");o.width=n;o.height=n;offs.set(key,o);}return o;}
+function exposureOf(arr,mask){const v=[];for(let i=0;i<arr.length;i++)if((!mask||mask[i])&&arr[i]>0)v.push(arr[i]);if(!v.length)return 1;v.sort((a,b)=>a-b);return v[Math.floor(v.length*0.985)]||v[v.length-1];}
+const rampWhite=g=>[7+g*248,9+g*243,13+g*230];
+const rampIce=g=>g<0.5?[7+g*2*40,9+g*2*95,14+g*2*170]:[47+(g-.5)*2*208,104+(g-.5)*2*151,184+(g-.5)*2*71];
+const tone=(v,ex)=>Math.pow(1-Math.exp(-2.2*v/ex),0.55);
+function frameDisk(ctx,V,dimmed){
+  ctx.fillStyle="#101114";ctx.fillRect(0,0,V.size,V.size);
+  ctx.beginPath();ctx.arc(V.cx,V.cy,V.R,0,2*Math.PI);ctx.fillStyle="#07090d";ctx.fill();
+}
+function strokeDisk(ctx,V,dimmed){
+  if(dimmed){ctx.beginPath();ctx.arc(V.cx,V.cy,V.R,0,2*Math.PI);ctx.fillStyle="rgba(16,17,20,.55)";ctx.fill();}
+  ctx.beginPath();ctx.arc(V.cx,V.cy,V.R,0,2*Math.PI);ctx.strokeStyle="rgba(255,255,255,.16)";ctx.lineWidth=1;ctx.stroke();
+}
+function polyOnSphere(ctx,V,pts){let open=false;ctx.beginPath();for(const p of pts){const q=vFwd(V,p);if(!q){open=false;continue;}if(!open){ctx.moveTo(q[0],q[1]);open=true;}else ctx.lineTo(q[0],q[1]);}}
+function drawHorizon(ctx,V){const pts=[];for(let k=0;k<=180;k++){const a=k/180*2*Math.PI;pts.push([Math.cos(a),Math.sin(a),0]);}polyOnSphere(ctx,V,pts);ctx.setLineDash([4,4]);ctx.strokeStyle="rgba(255,255,255,.22)";ctx.lineWidth=1;ctx.stroke();ctx.setLineDash([]);
+  const z=vFwd(V,[0,0,1]);ctx.font="500 10.5px Roboto, sans-serif";ctx.fillStyle="rgba(204,209,217,.45)";if(z&&V.tm>1)ctx.fillText("zenith",z[0]-14,z[1]-5);}
+function conePts(c,rad){const [e1,e2]=tangentBasis(c),p=[];for(let k=0;k<=96;k++){const t=k/96*2*Math.PI;p.push(nrm(add(mul(c,Math.cos(rad)),mul(add(mul(e1,Math.cos(t)),mul(e2,Math.sin(t))),Math.sin(rad)))));}return p;}
+function drawSunV(ctx,V){const q=vFwd(V,sunVec());if(!q)return;ctx.beginPath();ctx.arc(q[0],q[1],4,0,2*Math.PI);ctx.fillStyle="#ffe7a8";ctx.fill();ctx.beginPath();ctx.arc(q[0],q[1],7,0,2*Math.PI);ctx.strokeStyle="rgba(255,231,168,.5)";ctx.lineWidth=1;ctx.stroke();}
+// Paint a dual-grid map through a view's LUT; optional outline mask edges in accent.
+function paintLUT(ctx,V,LUT,arr,ramp,ex,outline){
+  const n=V.size,o=offCanvas(ctx.canvas.id,n),c=o.getContext("2d"),im=c.createImageData(n,n),d=im.data;
+  for(let i=0;i<n*n;i++){const p=LUT[i];if(p<0)continue;const col=ramp(tone(arr[p],ex));d[i*4]=col[0];d[i*4+1]=col[1];d[i*4+2]=col[2];d[i*4+3]=255;}
+  if(outline){const {m,thr}=outline;for(let y=0;y<n-1;y++)for(let x=0;x<n-1;x++){const i=y*n+x,p=LUT[i];if(p<0)continue;const a=m[p]>thr,pr=LUT[i+1],pd=LUT[i+n];
+    if((pr>=0&&(m[pr]>thr)!==a)||(pd>=0&&(m[pd]>thr)!==a)){d[i*4]=140;d[i*4+1]=196;d[i*4+2]=255;d[i*4+3]=255;}}}
+  c.putImageData(im,0,0);ctx.imageSmoothingEnabled=true;ctx.drawImage(o,0,0,n,n);
+}
+
+// ============================================================ scene panorama
+function rebuildSceneView(){const cv=$("cvScene");S.sceneV=makeView(S.sceneMode==="lower"?[0,0,-1]:[0,0,1],Math.PI/2,cv._w);S.sceneLUT=buildLUT(S.sceneV);}
+function sceneTotal(acc){const t=new Float32Array(NPIX);CHAINS.forEach((ch,ci)=>{if(!CRYSTALS[ch.cr].on||!acc.n[ci])return;const k=1000/acc.n[ci],s=acc.sum[ci];for(let i=0;i<NPIX;i++)t[i]+=s[i]*k;});return t;}
+function drawScene(){
+  const ctx=ctxScene,V=S.sceneV;if(!ctx||!V)return;
+  frameDisk(ctx,V);
+  const tot=sceneTotal(S.disp);let outline=null;
+  if(S.sel!=null&&$("outline").checked){const m=supportMap().m;let mx=0;for(let i=0;i<NPIX;i++)if(m[i]>mx)mx=m[i];if(mx>0)outline={m,thr:mx*0.06};}
+  paintLUT(ctx,V,S.sceneLUT,tot,rampWhite,exposureOf(tot,PV),outline);
+  strokeDisk(ctx,V,S.dim);drawHorizon(ctx,V);drawSunV(ctx,V);
+  if(S.cone.dir){polyOnSphere(ctx,V,conePts(S.cone.dir,S.cone.r*D2R));ctx.strokeStyle="#fff";ctx.lineWidth=1.4;ctx.stroke();
+    const q=vFwd(V,S.cone.dir);if(q){ctx.beginPath();ctx.moveTo(q[0]-4,q[1]);ctx.lineTo(q[0]+4,q[1]);ctx.moveTo(q[0],q[1]-4);ctx.lineTo(q[0],q[1]+4);ctx.stroke();}}
+  if(S.dim){ctx.fillStyle="#e0a458";ctx.font="500 11px Roboto, sans-serif";ctx.fillText("Updating: scene changed",6,V.size-6);}
+}
+function updateConeMask(){const c=S.cone.dir,cr=Math.cos(S.cone.r*D2R);for(let i=0;i<NPIX;i++)S.coneMask[i]=PV[i]&&(PD[i*3]*c[0]+PD[i*3+1]*c[1]+PD[i*3+2]*c[2]>=cr)?1:0;}
+function bindScene(){
+  const cv=$("cvScene");let down=false;
+  const set=e=>{const [x,y]=evPos(e,cv),d=vInv(S.sceneV,x,y);if(!d)return;S.cone.dir=d;updateConeMask();drawScene();renderList();};
+  cv.addEventListener("pointerdown",e=>{down=true;cv.setPointerCapture(e.pointerId);set(e);});
+  cv.addEventListener("pointermove",e=>{if(down)set(e);});
+  cv.addEventListener("pointerup",()=>{down=false;drawRp();});
+  $("coneR").addEventListener("input",e=>{S.cone.r=+e.target.value;$("coneRV").textContent=S.cone.r.toFixed(1)+"°";updateConeMask();drawScene();renderList();drawRp();});
+  $("outline").addEventListener("change",drawScene);
+  const sv=m=>{S.sceneMode=m;$("svUpper").classList.toggle("on",m==="upper");$("svLower").classList.toggle("on",m==="lower");rebuildSceneView();drawScene();};
+  $("svUpper").addEventListener("click",()=>sv("upper"));$("svLower").addEventListener("click",()=>sv("lower"));
+}
+
+// ============================================================ list
+function computeRows(){
+  const acc=S.disp,rows=[];let tot=0;
+  CHAINS.forEach((ch,ci)=>{let e=0,h=0;if(acc.n[ci]&&CRYSTALS[ch.cr].on){const k=1000/acc.n[ci],s=acc.sum[ci],c=acc.cnt[ci];for(let i=0;i<NPIX;i++)if(S.coneMask[i]){e+=s[i]*k;h+=c[i];}}tot+=e;rows.push({ci,e,h});});
+  rows.forEach(r=>{r.share=tot?r.e/tot:0;r.err=r.h?r.share/Math.sqrt(r.h):0;});
+  rows.sort((a,b)=>b.e-a.e);return {rows:rows.filter(r=>r.e>0),tot};
+}
+function renderList(){
+  const {rows}=computeRows();S.rows=rows;const f=S.filter.trim().toLowerCase();
+  const vis=rows.filter(r=>{if(!f)return true;const ch=CHAINS[r.ci];return (CRYSTALS[ch.cr].name+" "+chainLabel(ch)+" "+ch.halo).toLowerCase().includes(f);});
+  const mx=rows.length?rows[0].share:1;
+  $("listBody").innerHTML=vis.map(r=>{const ch=CHAINS[r.ci];return `<tr class="r ${r.ci===S.sel?"sel":""}" data-ci="${r.ci}"><td><span class="cryn">${CRYSTALS[ch.cr].name}</span> <span class="chain">${chainLabel(ch)}</span><div class="halo">${ch.halo}</div></td><td class="num">${(r.share*100).toFixed(1)}%</td><td class="num" style="color:var(--dim)">${(r.err*100).toFixed(2)}</td><td><div class="bar"><i style="width:${(r.share/mx*100).toFixed(1)}%"></i></div></td></tr>`;}).join("")
+    ||`<tr><td colspan="4" style="color:var(--dim);padding:10px 6px">${rows.length?"No raypath matches the filter.":"No light reaches this cone yet."}</td></tr>`;
+  $("listBody").className=S.dim?"dimrows":"";
+  const c=S.cone.dir;if(c){const el=Math.asin(c[2])*R2D,az=Math.atan2(c[1],c[0])*R2D;$("listSub").textContent=`az ${az.toFixed(1)}° · el ${el.toFixed(1)}° · r ${S.cone.r.toFixed(1)}°`;}
+  $("listMeta").textContent=`${rows.length} raypaths · ${fmtRays(totalRays(S.disp))} rays traced`+(S.dim?" · showing previous result":"");
+}
+$("listBody").addEventListener("click",e=>{const tr=e.target.closest("tr.r");if(tr)selectChain(+tr.dataset.ci);});
+$("search").addEventListener("input",e=>{S.filter=e.target.value;renderList();});
+function selectChain(ci){
+  S.sel=ci;S.hi=null;S.sup=null;S.card=null;S.presetsAt=-1;S.playing=false;$("play").textContent="▶ Fiber";
+  S.probe=brightestIn(ci,true);globe.field=null;
+  computePresets();fitRaypath();computeFiber(null,false);drawAll();
+}
+
+// ============================================================ raypath view: pan / zoom / snap
+function supportMap(){
+  if(S.sel==null)return {m:new Float32Array(NPIX),thr:0,mx:0};
+  if(!S.sup||S.sup.sel!==S.sel||(S.tick-S.sup.tick>30&&!S.dim)){const m=smoothMap(chainMap(S.disp,S.sel));let mx=0;for(let i=0;i<NPIX;i++)if(m[i]>mx)mx=m[i];S.sup={sel:S.sel,tick:S.tick,m,mx,thr:mx*0.02};}
+  return S.sup;
+}
+function snapToSupport(v){
+  const {m,thr,mx}=supportMap();if(!mx)return {v,snapped:false};if(m[dirToPix(v)]>=thr)return {v,snapped:false};
+  let best=-2,bi=-1;for(let i=0;i<NPIX;i++){if(m[i]<thr)continue;const d=PD[i*3]*v[0]+PD[i*3+1]*v[1]+PD[i*3+2]*v[2];if(d>best){best=d;bi=i;}}
+  return bi<0?{v,snapped:false}:{v:[PD[bi*3],PD[bi*3+1],PD[bi*3+2]],snapped:true};
+}
+function radius95(m,c,limit){const a=[];let tot=0;for(let i=0;i<NPIX;i++){if(m[i]<=0)continue;const d=[PD[i*3],PD[i*3+1],PD[i*3+2]],t=ang(d,c);if(limit&&t>limit)continue;a.push([t,m[i]]);tot+=m[i];}a.sort((x,y)=>x[0]-y[0]);let s=0;for(const [t,w] of a){s+=w;if(s>=0.95*tot)return t;}return a.length?a[a.length-1][0]:Math.PI;}
+function centroid(m,around,limit){let c=[0,0,0];for(let i=0;i<NPIX;i++){if(m[i]<=0)continue;const d=[PD[i*3],PD[i*3+1],PD[i*3+2]];if(limit&&ang(d,around)>limit)continue;c=add(c,mul(d,m[i]));}return len(c)>0?nrm(c):null;}
+function fitRaypath(){
+  const {m,mx}=supportMap();if(!mx){S.rv={c:[0,0,1],tm:Math.PI};rebuildRpView();return;}
+  const cAll=centroid(m,null,0)||[0,0,1],extAll=radius95(m,cAll,0);
+  const b=S.probe||brightestIn(S.sel,false),cB=centroid(m,b,35*D2R)||b,extB=radius95(m,cB,35*D2R);
+  let c=cAll,ext=extAll;if(extAll>20*D2R&&extB<extAll/3){c=cB;ext=extB;}
+  S.rv={c,tm:clamp(ext*1.4,3*D2R,Math.PI)};S.rvAuto=true;rebuildRpView();
+}
+function rebuildRpView(){const cv=$("cvRp");if(!cv._w)return;S.rpV=makeView(S.rv.c,S.rv.tm,cv._w);S.rpLUT=buildLUT(S.rpV);S.rvMovedAt=performance.now();S.hi=null;}
+function computePresets(){
+  S.presets=[];if(S.sel==null)return;const ci=S.sel,{m,mx}=supportMap();if(!mx)return;
+  const b=brightestIn(ci,false);S.presets.push({dir:b,label:"Brightest",term:CRYSTALS[CHAINS[ci].cr].type==="random"?null:"dimension_collapse"});
+  const s=sunVec(),cr=critOf(ci);
+  for(const c of [cr.min,cr.max]){const p=pointAt(s,b,c.D);if(m[dirToPix(p)]>mx*0.08&&S.presets.every(q=>ang(q.dir,p)>1.5*D2R))S.presets.push({dir:p,label:`${TERMS[c.term].short} ${c.D.toFixed(1)}°`,term:c.term});}
+  S.presetsAt=S.tick;
+}
+function drawRp(){
+  const cv=$("cvRp"),ctx=ctxRp,V=S.rpV;if(!ctx||!V)return;
+  frameDisk(ctx,V);
+  if(S.sel==null){strokeDisk(ctx,V);$("rpSub").textContent="select a raypath in the list";return;}
+  const ch=CHAINS[S.sel],H=S.hi,need=S.mode==="analytic"?800000:120000,useHi=H&&H.n>=need;
+  if(useHi){
+    const n=H.HR,k=1000/H.n,vals=new Float32Array(n*n);for(let i=0;i<n*n;i++)vals[i]=H.sum[i]*k;
+    let show=vals;if(S.mode==="analytic"){show=new Float32Array(n*n);for(let y=1;y<n-1;y++)for(let x=1;x<n-1;x++){let s=0;for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++)s+=vals[(y+dy)*n+x+dx];show[y*n+x]=s/9;}}
+    const ex=exposureOf(show),o=offCanvas("rpHi",n),c=o.getContext("2d"),im=c.createImageData(n,n),d=im.data;
+    for(let y=0;y<n;y++)for(let x=0;x<n;x++){if(Math.hypot(x+.5-H.V.cx,y+.5-H.V.cy)>H.V.R)continue;const i=y*n+x,col=rampIce(tone(show[i],ex));d[i*4]=col[0];d[i*4+1]=col[1];d[i*4+2]=col[2];d[i*4+3]=255;}
+    c.putImageData(im,0,0);ctx.save();ctx.beginPath();ctx.arc(V.cx,V.cy,V.R,0,2*Math.PI);ctx.clip();ctx.imageSmoothingEnabled=true;ctx.drawImage(o,0,0,V.size,V.size);ctx.restore();
+  } else {const m=chainMap(S.disp,S.sel);paintLUT(ctx,V,S.rpLUT,m,rampIce,exposureOf(m,PV),null);}
+  strokeDisk(ctx,V,S.dim);drawHorizon(ctx,V);drawSunV(ctx,V);
+  if(S.cone.dir){polyOnSphere(ctx,V,conePts(S.cone.dir,S.cone.r*D2R));ctx.setLineDash([3,3]);ctx.strokeStyle="rgba(255,255,255,.35)";ctx.lineWidth=1;ctx.stroke();ctx.setLineDash([]);}
+  ctx.font="500 10.5px Roboto, sans-serif";const boxes=[];
+  S.presets.forEach((p,i)=>{const q=vFwd(V,p.dir);if(!q)return;const [x,y]=q;ctx.beginPath();ctx.moveTo(x,y-5);ctx.lineTo(x+5,y);ctx.lineTo(x,y+5);ctx.lineTo(x-5,y);ctx.closePath();ctx.fillStyle=i===0?"#ffd27a":"#e0a458";ctx.fill();ctx.strokeStyle="#101114";ctx.lineWidth=1;ctx.stroke();
+    ctx.fillStyle="rgba(255,226,170,.95)";const tw=ctx.measureText(p.label).width;const lx=Math.min(V.size-tw-3,x+8);let ly=y-6;while(boxes.some(b=>lx<b[0]+b[2]&&lx+tw>b[0]&&Math.abs(ly-b[1])<12))ly+=13;boxes.push([lx,ly,tw]);ctx.fillText(p.label,lx,ly);});
+  if(S.probe){const q=vFwd(V,S.probe);if(q){const [x,y]=q;ctx.lineWidth=1.6;ctx.strokeStyle="#fff";ctx.beginPath();ctx.arc(x,y,6,0,2*Math.PI);ctx.stroke();ctx.beginPath();ctx.moveTo(x-11,y);ctx.lineTo(x-7,y);ctx.moveTo(x+7,y);ctx.lineTo(x+11,y);ctx.moveTo(x,y-11);ctx.lineTo(x,y-7);ctx.moveTo(x,y+7);ctx.lineTo(x,y+11);ctx.stroke();}}
+  ctx.font="11px Roboto, sans-serif";ctx.fillStyle="rgba(204,209,217,.6)";ctx.fillText(useHi?"view render":"sky map (refining…)",6,13);
+  if(S.snapped){ctx.fillStyle="#8cc4ff";ctx.fillText("snapped to this raypath",6,V.size-6);}
+  $("rpSub").innerHTML=`${CRYSTALS[ch.cr].name} <span class="chain">${chainLabel(ch)}</span> · ${ch.halo}`;
+  const tag=S.mode==="analytic"?`<span class="tag">Analytic · mock</span>`:`<span class="tag mc">MC</span>`;
+  if($("rpTag").innerHTML!==tag)$("rpTag").innerHTML=tag;
+  const pr=S.presets.map((p,i)=>`<button class="chipbtn" data-pi="${i}">◆ ${p.label}</button>`).join("");if($("rpPresets")._h!==pr){$("rpPresets").innerHTML=pr;$("rpPresets")._h=pr;}
+  $("rpZoom").textContent=`r ${(S.rv.tm*R2D).toFixed(S.rv.tm<10*D2R?1:0)}°`;
+}
+$("rpPresets").addEventListener("click",e=>{const b=e.target.closest("[data-pi]");if(b)gotoPreset(+b.dataset.pi);});
+$("rpFit").addEventListener("click",()=>{fitRaypath();drawRp();});
+$("rpFull").addEventListener("click",()=>{S.rv={c:[0,0,1],tm:Math.PI};S.rvAuto=false;rebuildRpView();drawRp();});
+function gotoPreset(i){const p=S.presets[i];if(!p)return;S.probe=p.dir;S.snapped=false;if(p.term)S.card=p.term;if(!vFwd(S.rpV,p.dir)){S.rv.c=p.dir;rebuildRpView();}computeFiber(null,false);drawRp();renderDetails();}
+function setProbe(v){const r=snapToSupport(v);S.probe=r.v;S.snapped=r.snapped;computeFiber(null,false);drawRp();renderDetails();}
+function bindRp(){
+  const cv=$("cvRp");let mode=null,sx=0,sy=0,lx=0,ly=0,moved=0,pend=false;
+  cv.addEventListener("pointerdown",e=>{if(S.sel==null)return;const [x,y]=evPos(e,cv);
+    for(let i=0;i<S.presets.length;i++){const q=vFwd(S.rpV,S.presets[i].dir);if(q&&Math.hypot(q[0]-x,q[1]-y)<8){gotoPreset(i);return;}}
+    cv.setPointerCapture(e.pointerId);sx=lx=x;sy=ly=y;moved=0;mode="pan";
+    if(S.probe){const q=vFwd(S.rpV,S.probe);if(q&&Math.hypot(q[0]-x,q[1]-y)<11)mode="probe";}
+    cv.style.cursor=mode==="pan"?"grabbing":"crosshair";});
+  cv.addEventListener("pointermove",e=>{if(!mode)return;const [x,y]=evPos(e,cv);moved=Math.max(moved,Math.hypot(x-sx,y-sy));
+    if(mode==="probe"){const v=vInv(S.rpV,x,y);if(v&&!pend){pend=true;requestAnimationFrame(()=>{pend=false;setProbe(v);});}return;}
+    if(moved<3)return;const V=S.rpV,c=vInv(V,V.cx-(x-lx),V.cy-(y-ly));lx=x;ly=y;if(!c)return;S.rv.c=c;S.rvAuto=false;
+    if(!pend){pend=true;requestAnimationFrame(()=>{pend=false;rebuildRpView();drawRp();});}});
+  cv.addEventListener("pointerup",e=>{if(mode==="pan"&&moved<3){const [x,y]=evPos(e,cv),v=vInv(S.rpV,x,y);if(v)setProbe(v);}mode=null;cv.style.cursor="";});
+  cv.addEventListener("wheel",e=>{if(S.sel==null)return;e.preventDefault();const [x,y]=evPos(e,cv),V=S.rpV,f=e.deltaY<0?1/1.2:1.2,tm=clamp(S.rv.tm*f,1.5*D2R,Math.PI),p=vInv(V,x,y);
+    if(p)S.rv.c=slerpToward(S.rv.c,p,ang(S.rv.c,p)*(1-tm/S.rv.tm));S.rv.tm=tm;S.rvAuto=false;
+    if(!pend){pend=true;requestAnimationFrame(()=>{pend=false;rebuildRpView();drawRp();});}},{passive:false});
+  $("mMC").addEventListener("click",()=>{S.mode="mc";$("mMC").classList.add("on");$("mAn").classList.remove("on");drawRp();});
+  $("mAn").addEventListener("click",()=>{S.mode="analytic";$("mAn").classList.add("on");$("mMC").classList.remove("on");drawRp();});
+}
+
+function smoothMap(arr){const o=new Float32Array(NPIX);for(let y=0;y<NY;y++)for(let x=0;x<NX;x++){const i=y*NX+x;if(!PV[i])continue;let s=0,n=0;for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){const xx=x+dx,yy=y+dy;if(xx<0||yy<0||xx>=NX||yy>=NY)continue;const j=yy*NX+xx;if(!PV[j]||(xx>=DSK)!==(x>=DSK))continue;s+=arr[j];n++;}o[i]=s/n;}return o;}
+function chainMap(acc,ci){const a=new Float32Array(NPIX);if(!acc.n[ci]||!CRYSTALS[CHAINS[ci].cr].on)return a;const k=1000/acc.n[ci],s=acc.sum[ci];for(let i=0;i<NPIX;i++)a[i]=s[i]*k;return a;}
+function fmtRays(n){return n>=1e6?(n/1e6).toFixed(2)+" M":n>=1e3?(n/1e3).toFixed(0)+" k":String(n);}
+function brightestIn(ci,useCone){
+  const m=smoothMap(chainMap(S.disp,ci));let bi=-1,bv=0,anyCone=false;
+  if(useCone)for(let i=0;i<NPIX;i++)if(S.coneMask[i]&&m[i]>bv){bv=m[i];bi=i;anyCone=true;}
+  if(!anyCone){bv=0;for(let i=0;i<NPIX;i++)if(m[i]>bv){bv=m[i];bi=i;}}
+  return bi<0?null:[PD[bi*3],PD[bi*3+1],PD[bi*3+2]];
+}
+
+// ============================================================ raypath panorama + presets
+function critOf(ci){ // D_P critical values on the sun-direction sphere; independent of the sun
+  const ch=CHAINS[ci];if(ch._crit)return ch._crit;
+  const NT=181,NP=360,Dg=new Float32Array(NT*NP);
+  const U=(ti,pj)=>{const t=ti*D2R,p=pj*D2R;return [Math.sin(t)*Math.cos(p),Math.sin(t)*Math.sin(p),Math.cos(t)];};
+  let mn=1e9,mx=-1e9,imn=-1,imx=-1;
+  for(let i=0;i<NT;i++)for(let j=0;j<NP;j++){const d=devDeg(U(i,j),ch.faces,NI);Dg[i*NP+j]=d;if(!isNaN(d)){if(d<mn){mn=d;imn=i*NP+j;}if(d>mx){mx=d;imx=i*NP+j;}}}
+  const interior=k=>{const i=(k/NP)|0,j=k%NP;for(const [a,b] of [[1,0],[-1,0],[0,1],[0,-1],[2,0],[-2,0],[0,2],[0,-2]]){const ii=i+a,jj=(j+b+NP)%NP;if(ii<0||ii>=NT)continue;if(isNaN(Dg[ii*NP+jj]))return false;}return true;};
+  const refine=(u0,sign,n)=>{let u=u0,best=sign*devDeg(u,ch.faces,n);for(const st of [1,.5,.25,.1,.05,.02,.01]){let moved=true;while(moved){moved=false;const [e1,e2]=tangentBasis(u);for(let k=0;k<8;k++){const t=nrm(add(mul(e1,Math.cos(k*Math.PI/4)),mul(e2,Math.sin(k*Math.PI/4))));const v=rotStep(u,t,st*D2R),d=sign*devDeg(v,ch.faces,n);if(!isNaN(d)&&d<best-1e-9){best=d;u=v;moved=true;}}}}return {u,D:sign*best};};
+  const pt=(k,sign)=>{const i=(k/NP)|0,j=k%NP,r=refine(U(i,j),sign,NI),inn=interior(k);const o={D:r.D,u:r.u,term:inn?"finite_jump":"boundary_onset",where:inn?(sign>0?"interior minimum":"interior maximum"):"feasibility boundary"};
+    if(inn){o.Dr=refine(r.u,sign,1.3080).D;o.Db=refine(r.u,sign,1.3170).D;}return o;};
+  {const a=pt(imn,1),b=pt(imx,-1);ch._crit={min:a,max:b,Dmin:Math.min(mn,a.D),Dmax:Math.max(mx,b.D)};}
+  return ch._crit;
+}
+function pointAt(s,toward,delta){const b=nrm(sub(toward,mul(s,dot(s,toward))));return nrm(add(mul(s,Math.cos(delta*D2R)),mul(b,Math.sin(delta*D2R))));}
+// ============================================================ fiber on the sun-direction sphere
+const STEP=0.8*D2R;
+function fiberPoint(u,ch,cr,s,p){
+  const t=trace(u,ch.faces,NI);if(!t)return null;
+  const a1=u,a2=nrm(sub(t.out,mul(u,dot(t.out,u)))),a3=cross(a1,a2);
+  const ow=neg(p),b1=s,b2=nrm(sub(ow,mul(s,dot(ow,s)))),b3=cross(b1,b2);
+  const col=j=>add(add(mul(b1,a1[j]),mul(b2,a2[j])),mul(b3,a3[j]));
+  const B={x:col(0),y:col(1),c:col(2)};
+  return {u,t,B,rho:poseDensity(cr,B)};
+}
+function gradD(u,faces){const [e1,e2]=tangentBasis(u),eps=0.003,d0=devDeg(u,faces,NI),d1=devDeg(rotStep(u,e1,eps),faces,NI),d2=devDeg(rotStep(u,e2,eps),faces,NI);if(isNaN(d0)||isNaN(d1)||isNaN(d2))return null;return {g1:(d1-d0)/eps,g2:(d2-d0)/eps,e1,e2,d0};}
+function projectToLevel(u,delta,faces){for(let k=0;k<8;k++){const g=gradD(u,faces);if(!g)return null;const gg=g.g1*g.g1+g.g2*g.g2;if(gg<1e-9)return null;if(Math.abs(g.d0-delta)<2e-4)return u;const a=-(g.d0-delta)/gg;u=nrm(add(u,add(mul(g.e1,a*g.g1),mul(g.e2,a*g.g2))));}return Math.abs(devDeg(u,faces,NI)-delta)<0.02?u:null;}
+function walk(u0,delta,faces,dir){
+  const pts=[];let u=u0,prevT=null,closed=false;
+  for(let k=0;k<600;k++){const g=gradD(u,faces);if(!g)break;let t=nrm(add(mul(g.e1,-g.g2),mul(g.e2,g.g1)));if(!prevT&&dir<0)t=neg(t);if(prevT&&dot(t,prevT)<0)t=neg(t);prevT=t;
+    const un=projectToLevel(rotStep(u,t,STEP),delta,faces);if(!un)break;if(k>12&&ang(un,u0)<STEP*0.9){closed=true;break;}pts.push(un);u=un;}
+  return {pts,closed};
+}
+function computeFiber(seedU,keepIndex){
+  const F=S.fiber;F.pts=[];F.reason="";S.fIdx=0;
+  if(S.sel==null||!S.probe){F.reason="Select a raypath and a point.";afterFiber();return;}
+  const ch=CHAINS[S.sel],cr=CRYSTALS[ch.cr],s=sunVec(),p=S.probe,delta=ang(s,p)*R2D;S.delta=delta;
+  let u0=null,prevU=F.cur?F.cur.u:null;
+  if(seedU){u0=projectToLevel(seedU,delta,ch.faces);}
+  if(!u0){const cand=[];
+    for(let i=1;i<60;i++)for(let j=0;j<120;j++){const t=i*3*D2R,q=j*3*D2R,u=[Math.sin(t)*Math.cos(q),Math.sin(t)*Math.sin(q),Math.cos(t)];const d=devDeg(u,ch.faces,NI);if(isNaN(d)||Math.abs(d-delta)>2.5)continue;const fp=fiberPoint(u,ch,cr,s,p);if(!fp)continue;cand.push({u,score:cr.type==="random"?(prevU?-ang(u,prevU):0):fp.rho});}
+    cand.sort((a,b)=>b.score-a.score);
+    for(const c of cand.slice(0,8)){u0=projectToLevel(c.u,delta,ch.faces);if(u0)break;}}
+  if(!u0){F.reason="No pose of this raypath sends light to this point.";afterFiber();return;}
+  const fw=walk(u0,delta,ch.faces,1);let us;
+  if(fw.closed)us=[u0,...fw.pts];else{const bw=walk(u0,delta,ch.faces,-1);us=[...bw.pts.reverse(),u0,...fw.pts];}
+  const pts=[];let i0=0;
+  us.forEach(u=>{const fp=fiberPoint(u,ch,cr,s,p);if(!fp)return;const g=gradD(u,ch.faces);const gm=g?Math.hypot(g.g1,g.g2):1;fp.w=fp.rho*faceArea(cr,ch.faces[0])*fp.t.w/Math.max(gm,1e-3);if(u===u0)i0=pts.length;pts.push(fp);});
+  F.pts=pts;F.closed=fw.closed;
+  let wmax=0,imax=0;pts.forEach((q,i)=>{if(q.w>wmax){wmax=q.w;imax=i;}});F.wmax=wmax;
+  if(cr.type!=="random"&&wmax<1e-4){F.reason="This crystal's pose distribution never reaches this point: the level set exists, but no allowed orientation lies on it.";}
+  S.fIdx=(cr.type==="random"||seedU)?i0:imax;
+  afterFiber();
+}
+function afterFiber(){
+  const F=S.fiber,sl=$("fiberS");sl.max=Math.max(0,F.pts.length-1);sl.value=S.fIdx;F.cur=F.pts[S.fIdx]||null;
+  $("fiberV").textContent=F.pts.length?`${S.fIdx+1}/${F.pts.length}`:"–";
+  globe.compDelta=null;drawGlobe();drawStrip();draw3D();renderProbe();
+}
+$("fiberS").addEventListener("input",e=>{S.fIdx=+e.target.value;S.fiber.cur=S.fiber.pts[S.fIdx];$("fiberV").textContent=`${S.fIdx+1}/${S.fiber.pts.length}`;drawGlobe();drawStrip();draw3D();renderProbe();});
+
+// ============================================================ globe (sun direction in crystal frame)
+const globe={field:null,img:null,compDelta:null,forChain:-1};
+const VIR=[[68,1,84],[59,82,139],[33,145,140],[94,201,98],[253,231,37]];
+function vir(t){t=clamp(t,0,1)*4;const i=Math.min(3,t|0),f=t-i,a=VIR[i],b=VIR[i+1];return [a[0]+(b[0]-a[0])*f,a[1]+(b[1]-a[1])*f,a[2]+(b[2]-a[2])*f];}
+function globeGeom(){const cv=$("cvG");const w=cv._w,h=cv._h,R=Math.min(w,h)/2-8;return {w,h,R,cx:w/2,cy:h/2};}
+function buildGlobeField(){
+  const {w,h,R,cx,cy}=globeGeom(),ch=CHAINS[S.sel],V=rotXZ(S.gv.pitch,S.gv.yaw);
+  const D=new Float32Array(w*h).fill(NaN),inside=new Uint8Array(w*h),shade=new Float32Array(w*h);
+  for(let y=0;y<h;y++)for(let x=0;x<w;x++){const vx=(x+.5-cx)/R,vy=(cy-y-.5)/R,r2=vx*vx+vy*vy;if(r2>1)continue;const vz=Math.sqrt(1-r2),i=y*w+x;inside[i]=1;shade[i]=vz;
+    const u=mtv(V,[vx,vy,vz]);D[i]=devDeg(u,ch.faces,NI);}
+  globe.field={D,inside,shade,w,h,V};globe.forChain=S.sel;globe.compDelta=null;
+}
+function composeGlobe(){
+  const f=globe.field,{w,h}=f,cr=critOf(S.sel),delta=S.delta||0,off=document.createElement("canvas");off.width=w;off.height=h;
+  const c=off.getContext("2d"),im=c.createImageData(w,h),d=im.data,span=Math.max(1e-6,cr.Dmax-cr.Dmin);
+  for(let y=0;y<h;y++)for(let x=0;x<w;x++){const i=y*w+x;if(!f.inside[i])continue;const sh=0.45+0.55*f.shade[i];let col;const Dv=f.D[i];
+    if(isNaN(Dv)){const hatch=((x+y)%7===0)?14:0;col=[26+hatch,28+hatch,34+hatch].map(v=>v*sh);}
+    else{col=vir((Dv-cr.Dmin)/span).map(v=>v*0.62*sh);
+      let g=0;const nx=x+1<w?f.D[i+1]:NaN,ny=y+1<h?f.D[i+w]:NaN;if(!isNaN(nx))g=Math.max(g,Math.abs(nx-Dv));if(!isNaN(ny))g=Math.max(g,Math.abs(ny-Dv));
+      if(Math.abs(Dv-delta)<Math.max(0.12,0.75*g))col=col.map(v=>v+(235-v)*0.45);}
+    d[i*4]=col[0];d[i*4+1]=col[1];d[i*4+2]=col[2];d[i*4+3]=255;}
+  c.putImageData(im,0,0);globe.img=off;globe.compDelta=delta;
+}
+function gProj(v){const {R,cx,cy}=globeGeom(),q=mv(globe.field.V,v);return [cx+q[0]*R,cy-q[1]*R,q[2]];}
+function drawGlobe(){
+  const ctx=ctxG,cv=$("cvG");if(!ctx)return;ctx.clearRect(0,0,cv._w,cv._h);
+  const {R,cx,cy}=globeGeom();
+  if(S.sel==null){ctx.fillStyle="#7a7f89";ctx.font="12px Roboto, sans-serif";ctx.fillText("Select a raypath",cx-44,cy);return;}
+  if(!globe.field||globe.forChain!==S.sel||globe.field.w!==cv._w)buildGlobeField();
+  if(globe.compDelta!==S.delta)composeGlobe();
+  ctx.imageSmoothingEnabled=true;ctx.drawImage(globe.img,0,0,cv._w,cv._h);
+  ctx.beginPath();ctx.arc(cx,cy,R,0,2*Math.PI);ctx.strokeStyle="rgba(255,255,255,.18)";ctx.lineWidth=1;ctx.stroke();
+  const ch=CHAINS[S.sel],cr=critOf(S.sel);
+  ctx.font="500 10.5px Roboto, sans-serif";
+  for(let f=1;f<=8;f++){const [x,y,z]=gProj(NRM[f]);if(z<0.05)continue;const isIn=f===ch.faces[0],isOut=f===ch.faces[ch.faces.length-1]&&ch.faces.length>1;
+    ctx.fillStyle=isIn?"#8cc4ff":isOut?"#ffd27a":"rgba(204,209,217,.55)";ctx.beginPath();ctx.arc(x,y,2,0,2*Math.PI);ctx.fill();ctx.fillText(String(f),x+4,y-3);}
+  for(const [c,lab] of [[cr.min,"min"],[cr.max,"max"]]){const [x,y,z]=gProj(c.u);if(z<0)continue;ctx.beginPath();ctx.moveTo(x,y-5);ctx.lineTo(x+4.5,y+3);ctx.lineTo(x-4.5,y+3);ctx.closePath();ctx.strokeStyle="#e0a458";ctx.lineWidth=1.3;ctx.stroke();ctx.fillStyle="#e0a458";ctx.fillText(`${lab} ${c.D.toFixed(1)}°`,x+6,y+4);}
+  const F=S.fiber;
+  if(F.pts.length>1){const wm=F.wmax||1;ctx.lineWidth=2.6;ctx.lineCap="round";
+    for(let i=0;i+1<F.pts.length;i++){const a=gProj(F.pts[i].u),b=gProj(F.pts[i+1].u);if(a[2]<0||b[2]<0)continue;ctx.strokeStyle=`rgba(140,196,255,${0.12+0.88*Math.pow(F.pts[i].w/wm,0.5)})`;ctx.beginPath();ctx.moveTo(a[0],a[1]);ctx.lineTo(b[0],b[1]);ctx.stroke();}}
+  if(F.cur){const [x,y,z]=gProj(F.cur.u);ctx.lineWidth=2;ctx.strokeStyle="#fff";ctx.setLineDash(z<0?[2,2]:[]);ctx.beginPath();ctx.arc(x,y,6,0,2*Math.PI);ctx.stroke();ctx.setLineDash([]);}
+  ctx.fillStyle="rgba(204,209,217,.8)";ctx.font="11px Roboto, sans-serif";
+  ctx.fillText(`deviation ${cr.Dmin.toFixed(1)}°–${cr.Dmax.toFixed(1)}°`,6,13);
+  if(S.delta!=null){ctx.fillStyle="rgba(235,235,235,.85)";ctx.fillText(`level set δ = ${S.delta.toFixed(2)}°`,6,27);}
+  const lg=ctx.createLinearGradient(cv._w-78,0,cv._w-8,0);for(let k=0;k<=4;k++){const c=vir(k/4).map(v=>v*0.62|0);lg.addColorStop(k/4,`rgb(${c})`);}ctx.fillStyle=lg;ctx.fillRect(cv._w-78,6,70,6);
+  ctx.fillStyle="rgba(204,209,217,.5)";ctx.fillText("hatched: path impossible",6,cv._h-6);
+}
+function drawStrip(){
+  const ctx=ctxStrip,cv=$("cvStrip");if(!ctx)return;ctx.clearRect(0,0,cv._w,cv._h);
+  ctx.fillStyle="#15161a";ctx.fillRect(0,0,cv._w,cv._h);
+  const F=S.fiber;ctx.font="10.5px Roboto, sans-serif";
+  if(!F.pts.length){ctx.fillStyle="#7a7f89";ctx.fillText(F.reason?"No fiber at this point":"Weight along fiber",6,18);return;}
+  const n=F.pts.length,wm=F.wmax||1,W=cv._w,H=cv._h-4;
+  ctx.beginPath();ctx.moveTo(0,H+2);F.pts.forEach((p,i)=>ctx.lineTo(i/(n-1||1)*W,H+2-(p.w/wm)*(H-4)));ctx.lineTo(W,H+2);ctx.closePath();ctx.fillStyle="rgba(89,158,235,.35)";ctx.fill();
+  ctx.beginPath();F.pts.forEach((p,i)=>{const x=i/(n-1||1)*W,y=H+2-(p.w/wm)*(H-4);i?ctx.lineTo(x,y):ctx.moveTo(x,y);});ctx.strokeStyle="#8cc4ff";ctx.lineWidth=1;ctx.stroke();
+  const x=S.fIdx/(n-1||1)*W;ctx.strokeStyle="#fff";ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,cv._h);ctx.stroke();
+  ctx.fillStyle="rgba(204,209,217,.7)";ctx.fillText("weight along fiber",5,11);
+}
+function bindGlobe(){
+  const cv=$("cvG");let mode=null,lx=0,ly=0,pending=false;
+  cv.addEventListener("pointerdown",e=>{if(S.sel==null)return;const [x,y]=evPos(e,cv);cv.setPointerCapture(e.pointerId);lx=x;ly=y;mode="rot";
+    if(S.fiber.cur){const [px,py,pz]=gProj(S.fiber.cur.u);if(pz>0&&Math.hypot(px-x,py-y)<10)mode="move";}});
+  cv.addEventListener("pointermove",e=>{if(!mode)return;const [x,y]=evPos(e,cv);
+    if(mode==="rot"){S.gv.yaw+=(x-lx)*0.012;S.gv.pitch=clamp(S.gv.pitch+(y-ly)*0.012,-Math.PI,0.2);lx=x;ly=y;if(!pending){pending=true;requestAnimationFrame(()=>{pending=false;globe.field=null;drawGlobe();});}}
+    else{const {R,cx,cy}=globeGeom(),vx=(x-cx)/R,vy=(cy-y)/R,r2=vx*vx+vy*vy;if(r2>=1)return;const u=mtv(globe.field.V,[vx,vy,Math.sqrt(1-r2)]),ch=CHAINS[S.sel],d=devDeg(u,ch.faces,NI);if(isNaN(d))return;
+      const s=sunVec();S.probe=pointAt(s,S.probe||add(s,[0,0.1,0]),d);computeFiber(u,true);drawRp();}});
+  cv.addEventListener("pointerup",()=>{mode=null;});
+}
+
+// ============================================================ 3D path view
+function crystalFaces(cr){
+  const h=cr.h,V=a=>[Math.cos(a*D2R),Math.sin(a*D2R)],faces={};
+  for(let k=3;k<=8;k++){const p=(k-3)*60,[ax,ay]=V(p-30),[bx,by]=V(p+30);faces[k]=[[ax,ay,-h/2],[bx,by,-h/2],[bx,by,h/2],[ax,ay,h/2]];}
+  const ring=z=>[...Array(6)].map((_,i)=>{const [x,y]=V(i*60+30-60);return [x,y,z];});
+  faces[1]=ring(h/2);faces[2]=ring(-h/2).reverse();return faces;
+}
+function exitOf(cr,P,d,skip){let best=1e9,bf=-1;for(let f=1;f<=8;f++){if(f===skip)continue;const nd=dot(NRM[f],d);if(nd<=1e-9)continue;const t=(faceOff(cr,f)-dot(NRM[f],P))/nd;if(t>1e-7&&t<best){best=t;bf=f;}}return {f:bf,t:best};}
+function entrySamples(cr,f){const pts=[];
+  if(f<=2){const z=f===1?cr.h/2:-cr.h/2;for(let x=-0.95;x<=0.95;x+=0.1)for(let y=-0.95;y<=0.95;y+=0.1){let ok=true;for(let k=3;k<=8;k++)if(x*NRM[k][0]+y*NRM[k][1]>APO-1e-6){ok=false;break;}if(ok)pts.push([x,y,z]);}}
+  else{const p=(f-3)*60,A=[Math.cos((p-30)*D2R),Math.sin((p-30)*D2R)],B=[Math.cos((p+30)*D2R),Math.sin((p+30)*D2R)];for(let a=0.05;a<1;a+=0.1)for(let b=0.05;b<1;b+=0.1)pts.push([A[0]+(B[0]-A[0])*a,A[1]+(B[1]-A[1])*a,(b-0.5)*cr.h]);}
+  return pts;}
+function poseGeometry(fp){
+  if(fp._geo)return fp._geo;const ch=CHAINS[S.sel],cr=CRYSTALS[ch.cr],f0=ch.faces[0],samples=entrySamples(cr,f0);
+  let valid=[],P0=null,P1=null,best=1e9;
+  if(ch.faces.length===1){valid=samples;const c=samples.reduce((a,p)=>add(a,p),[0,0,0]);P0=mul(c,1/samples.length);}
+  else{const d=fp.t.dirs[0],fl=ch.faces[ch.faces.length-1],cen=mul(samples.reduce((a,p)=>add(a,p),[0,0,0]),1/samples.length);
+    for(const P of samples){const ex=exitOf(cr,P,d,f0);if(ex.f===fl){valid.push(P);const dd=len(sub(P,cen));if(dd<best){best=dd;P0=P;P1=add(P,mul(d,ex.t));}}}}
+  fp._geo={valid,P0,P1,frac:valid.length/samples.length};return fp._geo;
+}
+function draw3D(){
+  const ctx=ctx3d,cv=$("cv3d");if(!ctx)return;const W=cv._w,H=cv._h;ctx.fillStyle="#0c0d10";ctx.fillRect(0,0,W,H);
+  if(S.sel==null){ctx.fillStyle="#7a7f89";ctx.font="12px Roboto, sans-serif";ctx.fillText("Select a raypath",W/2-44,H/2);return;}
+  const ch=CHAINS[S.sel],cr=CRYSTALS[ch.cr],F=S.fiber,fp=F.cur,world=S.frame3d==="world";
+  const ext=Math.max(1.05,cr.h/2),L=Math.max(1.9,ext*1.3),sc=Math.min(W,H)/(2*(L*0.85+0.3)),C=rotXZ(S.cam.pitch,S.cam.yaw),cx=W/2,cy=H/2+H*0.04;
+  const B=fp?fp.B:{x:[1,0,0],y:[0,1,0],c:[0,0,1]},toS=v=>world?toWorld(B,v):v;
+  const P=v=>{const q=mv(C,v);return [cx+q[0]*sc,cy-q[1]*sc,q[2]];};
+  const line=(a,b,col,wd,dash)=>{const p=P(a),q=P(b);ctx.beginPath();ctx.moveTo(p[0],p[1]);ctx.lineTo(q[0],q[1]);ctx.strokeStyle=col;ctx.lineWidth=wd;ctx.setLineDash(dash||[]);ctx.stroke();ctx.setLineDash([]);};
+  ctx.font="500 11px Roboto, sans-serif";
+  if(world){ctx.beginPath();for(let k=0;k<=72;k++){const a=k/72*2*Math.PI,p=P([L*Math.cos(a),L*Math.sin(a),0]);k?ctx.lineTo(p[0],p[1]):ctx.moveTo(p[0],p[1]);}ctx.strokeStyle="rgba(255,255,255,.08)";ctx.lineWidth=1;ctx.stroke();
+    line([0,0,0],[0,0,L],"rgba(255,255,255,.18)",1,[3,4]);const z=P([0,0,L]);ctx.fillStyle="rgba(204,209,217,.5)";ctx.fillText("zenith",z[0]+4,z[1]);
+    const hz=P([L,0,0]);ctx.fillText("toward sun (azimuth)",hz[0]+4,hz[1]+12);}
+  else{line([0,0,-L*0.9],[0,0,L*0.9],"rgba(255,255,255,.18)",1,[3,4]);const z=P([0,0,L*0.9]);ctx.fillStyle="rgba(204,209,217,.5)";ctx.fillText("c-axis",z[0]+4,z[1]);}
+  const faces=crystalFaces(cr),poly=[];
+  for(let f=1;f<=8;f++){const vs=faces[f].map(toS),n=toS(NRM[f]),facing=mv(C,n)[2]>0,cen=mul(vs.reduce((a,v)=>add(a,v),[0,0,0]),1/vs.length);poly.push({f,vs,facing,cen});}
+  const drawFace=(q,front)=>{ctx.beginPath();q.vs.forEach((v,i)=>{const p=P(v);i?ctx.lineTo(p[0],p[1]):ctx.moveTo(p[0],p[1]);});ctx.closePath();
+    const isIn=q.f===ch.faces[0],isOut=ch.faces.length>1&&q.f===ch.faces[ch.faces.length-1];
+    ctx.fillStyle=isIn?`rgba(89,158,235,${front?.20:.08})`:isOut?`rgba(224,164,88,${front?.18:.07})`:`rgba(150,175,210,${front?.07:.03})`;ctx.fill();
+    ctx.strokeStyle=front?"rgba(205,218,236,.62)":"rgba(160,180,210,.22)";ctx.lineWidth=1;ctx.setLineDash(front?[]:[3,3]);ctx.stroke();ctx.setLineDash([]);};
+  poly.filter(q=>!q.facing).forEach(q=>drawFace(q,false));
+  let msg=null;
+  if(fp&&!F.reason){
+    const g=poseGeometry(fp),uS=toS(fp.t?toCrys(B,sunVec()):[0,0,1]),sunS=world?sunVec():toCrys(B,sunVec());
+    const pick=[];const vv=g.valid;if(vv.length){const stepN=Math.max(1,Math.floor(vv.length/6));for(let i=0;i<vv.length;i+=stepN)pick.push(vv[i]);}
+    pick.forEach(Pc=>{const a=toS(Pc);line(add(a,mul(sunS,L)),a,"rgba(243,227,176,.22)",1);});
+    vv.forEach(Pc=>{const p=P(toS(Pc));ctx.fillStyle="rgba(140,196,255,.55)";ctx.fillRect(p[0]-1,p[1]-1,2,2);});
+    if(g.P0){const a=toS(g.P0);line(add(a,mul(sunS,L)),a,"#f3e3b0",1.8);const st=P(add(a,mul(sunS,L)));ctx.fillStyle="#f3e3b0";ctx.fillText("sunlight",st[0]+4,st[1]);
+      const outS=world?toWorld(B,fp.t.out):fp.t.out;
+      if(ch.faces.length===1){line(a,add(a,mul(outS,L)),"#ffd27a",2);arrowHead(P(add(a,mul(outS,L*0.98))),P(add(a,mul(outS,L*0.9))));const e=P(add(a,mul(outS,L)));ctx.fillStyle="#ffd27a";ctx.fillText("to eye",e[0]+4,e[1]);}
+      else if(g.P1){const b=toS(g.P1);line(a,b,"#599eeb",2.4);line(b,add(b,mul(outS,L)),"#ffd27a",2);arrowHead(P(add(b,mul(outS,L*0.98))),P(add(b,mul(outS,L*0.9))));const e=P(add(b,mul(outS,L)));ctx.fillStyle="#ffd27a";ctx.fillText("to eye",e[0]+4,e[1]);}}
+    else msg="No entry point on this face reaches the exit face (the crystal is too thin at this pose).";
+    void uS;
+  } else msg=F.reason||"Pick a point on the raypath panorama.";
+  poly.filter(q=>q.facing).forEach(q=>drawFace(q,true));
+  poly.filter(q=>q.facing).forEach(q=>{const p=P(q.cen);const isIn=q.f===ch.faces[0],isOut=ch.faces.length>1&&q.f===ch.faces[ch.faces.length-1];ctx.fillStyle=isIn?"#8cc4ff":isOut?"#ffd27a":"rgba(204,209,217,.6)";ctx.fillText(String(q.f),p[0]-3,p[1]+4);});
+  if(msg){ctx.fillStyle="#e0a458";ctx.font="12px Roboto, sans-serif";wrapText(ctx,msg,12,H-34,W-24,15);}
+  function arrowHead(tip,base){const dx=tip[0]-base[0],dy=tip[1]-base[1],l=Math.hypot(dx,dy)||1,ux=dx/l,uy=dy/l;ctx.beginPath();ctx.moveTo(tip[0],tip[1]);ctx.lineTo(tip[0]-ux*9-uy*4,tip[1]-uy*9+ux*4);ctx.lineTo(tip[0]-ux*9+uy*4,tip[1]-uy*9-ux*4);ctx.closePath();ctx.fillStyle="#ffd27a";ctx.fill();}
+  $("p3Sub").textContent=world?"world frame · z up":"crystal frame · c-axis up";
+}
+function wrapText(ctx,t,x,y,w,lh){const ws=t.split(" ");let line="";for(const wd of ws){const tt=line?line+" "+wd:wd;if(ctx.measureText(tt).width>w&&line){ctx.fillText(line,x,y);y+=lh;line=wd;}else line=tt;}ctx.fillText(line,x,y);}
+function bind3D(){
+  const cv=$("cv3d");let down=false,lx=0,ly=0;
+  cv.addEventListener("pointerdown",e=>{down=true;cv.setPointerCapture(e.pointerId);[lx,ly]=evPos(e,cv);});
+  cv.addEventListener("pointermove",e=>{if(!down)return;const [x,y]=evPos(e,cv);S.cam.yaw+=(x-lx)*0.01;S.cam.pitch=clamp(S.cam.pitch+(y-ly)*0.01,-Math.PI,0);lx=x;ly=y;draw3D();});
+  cv.addEventListener("pointerup",()=>{down=false;});
+  $("fWorld").addEventListener("click",()=>{S.frame3d="world";$("fWorld").classList.add("on");$("fCrys").classList.remove("on");draw3D();});
+  $("fCrys").addEventListener("click",()=>{S.frame3d="crystal";$("fCrys").classList.add("on");$("fWorld").classList.remove("on");draw3D();});
+  $("play").addEventListener("click",()=>{S.playing=!S.playing&&S.fiber.pts.length>1;$("play").textContent=S.playing?"❚❚ Fiber":"▶ Fiber";});
+}
+
+// ============================================================ details
+const TERMS={
+  finite_jump:{name:"Finite jump",short:"Finite jump",kind:"j",expl:"The deviation has a non-degenerate extremum inside the region where this path is possible. Brightness steps from zero to a finite value: a sharp edge.",svg:"M2 34 L24 34 L24 8 C34 10 48 20 68 25",cap:"brightness vs. deviation near the critical value"},
+  boundary_onset:{name:"Boundary onset",short:"Boundary",kind:"j",expl:"An extremum on the edge of the possible region (total internal reflection, or a face turning away from the sun). The arc starts or ends here with a square-root cusp.",svg:"M2 34 L26 34 C27 22 31 17 38 16 L68 15",cap:"brightness vs. deviation near the critical value"},
+  log_divergence:{name:"Log divergence",short:"Saddle",kind:"j",expl:"A saddle of the deviation. A weak logarithmic peak, easily swamped by a nearby boundary onset.",svg:"M2 30 C18 28 30 24 34 6 C38 24 50 28 68 30",cap:"brightness vs. deviation near the critical value"},
+  dimension_collapse:{name:"Dimension collapse",short:"Collapse",kind:"c",expl:"This crystal's orientations are confined to a thin family, so each sky point is reached by a few isolated poses. Light concentrates where the level set crosses the allowed poses; the distribution width caps the peak.",svg:"M2 34 L26 34 C30 34 31 5 34 5 C37 5 38 34 42 34 L68 34",cap:"brightness vs. deviation across the peak"},
+};
+function members(ch){const cr=CRYSTALS[ch.cr],res=new Set(),rot=(f,r)=>f<=2?f:3+((f-3+r)%6),mir=f=>f<=2?f:3+((6-(f-3))%6),fb=f=>f===1?2:f===2?1:f;
+  for(let r=0;r<6;r++)for(const m of [0,1])for(const b of (cr.type==="plate"?[0]:[0,1]))res.add(ch.faces.map(f=>{let g=rot(f,r);if(m)g=mir(g);if(b)g=fb(g);return g;}).join("→"));return [...res];}
+function renderDetails(){
+  const el=$("details");
+  if(S.sel==null){el.innerHTML=`<div class="dsec">Raypath</div><p style="color:var(--dim)">Select a raypath in the list.</p>`;return;}
+  const ch=CHAINS[S.sel],cr=CRYSTALS[ch.cr],cc=critOf(S.sel),oriented=cr.type!=="random";
+  const rowsC=[cc.min,cc.max].map(c=>({v:c.D,term:c.term,where:c.where,c}));
+  if(oriented)rowsC.push({v:null,term:"dimension_collapse",where:`pose density · ${cr.ori.split("·")[0].trim().toLowerCase()} σ 2°`});
+  if(!S.card)S.card=oriented?"dimension_collapse":rowsC[0].term;
+  const T=TERMS[S.card];
+  const mem=members(ch);
+  const same=CHAINS.map((c,i)=>({c,i})).filter(o=>o.c.cr===ch.cr&&o.i!==S.sel);
+  const wl=cc.min.Dr!=null?`<div class="k">Red / blue edge</div><div>${cc.min.Dr.toFixed(2)}° / ${cc.min.Db.toFixed(2)}° <span style="color:var(--dim)">(Δ ${(cc.min.Db-cc.min.Dr).toFixed(2)}°)</span></div>`:"";
+  el.innerHTML=`
+  <div class="dsec">Raypath</div>
+  <div class="rt">${cr.name} <span class="chain">${chainLabel(ch)}</span> <span style="color:var(--dim);font-weight:400">· ${ch.halo}</span></div>
+  <div class="chips"><span class="chip j">Jacobian focusing</span>${oriented?`<span class="chip c">Dimension collapse</span>`:""}</div>
+  <table class="crit">${rowsC.map(r=>`<tr class="${r.term===S.card?"on":""}" data-term="${r.term}" data-v="${r.v??""}"><td style="width:54px">${r.v!=null?r.v.toFixed(2)+"°":"—"}</td><td><span class="term">${TERMS[r.term].name}</span><div style="color:var(--dim);font-size:11.5px">${r.where}</div></td></tr>`).join("")}</table>
+  <div class="card"><div class="tn">${T.name} <span class="chip ${T.kind}" style="margin-left:4px">${T.kind==="j"?"Jacobian focusing":"pose distribution"}</span></div><p>${T.expl}</p><svg viewBox="0 0 70 40" aria-hidden="true"><path d="M2 36 H68" stroke="rgba(255,255,255,.15)" fill="none"/><path d="${T.svg}" stroke="#e0a458" stroke-width="1.6" fill="none"/></svg><div class="cap">${T.cap}</div></div>
+  <div class="kv">${wl}<div class="k">Symmetric members</div><div class="mono">${mem.slice(0,6).join(" · ")}${mem.length>6?" …":""} <span style="color:var(--dim)">(${mem.length})</span></div>
+  <div class="k">Same crystal</div><div style="display:flex;flex-wrap:wrap;gap:4px">${same.map(o=>`<button class="chipbtn" data-ci="${o.i}"><span class="mono">${chainLabel(o.c)}</span> ${o.c.halo}</button>`).join("")}</div></div>
+  <div class="dsec">Point</div><div id="probeBox"></div>`;
+  el.querySelectorAll("table.crit tr").forEach(tr=>tr.addEventListener("click",()=>{S.card=tr.dataset.term;const v=tr.dataset.v;if(v!==""){const i=S.presets.findIndex(p=>p.term===tr.dataset.term);if(i>=0){gotoPreset(i);return;}}renderDetails();}));
+  el.querySelectorAll("[data-ci]").forEach(b=>b.addEventListener("click",()=>selectChain(+b.dataset.ci)));
+  renderProbe();
+}
+function renderProbe(){
+  const box=$("probeBox");if(!box)return;const F=S.fiber,fp=F.cur;
+  if(!S.probe){box.innerHTML=`<p style="color:var(--dim)">Drag the point on the raypath panorama.</p>`;return;}
+  const p=S.probe,el=Math.asin(p[2])*R2D,az=Math.atan2(p[1],p[0])*R2D;
+  let h=`<div class="kv"><div class="k">Sky</div><div>az ${az.toFixed(1)}° · el ${el.toFixed(1)}°</div><div class="k">Deviation δ</div><div>${(S.delta??0).toFixed(2)}°</div>`;
+  if(!fp||F.reason){box.innerHTML=h+`</div><p class="warn">${F.reason||"No pose found."}</p>`;return;}
+  const ch=CHAINS[S.sel],cz=fp.B.c,tilt=Math.acos(clamp(Math.abs(cz[2]),0,1))*R2D,caz=Math.atan2(cz[1],cz[0])*R2D,g=poseGeometry(fp);
+  h+=`<div class="k">Fiber</div><div>${S.fIdx+1} of ${F.pts.length}${F.closed?" · closed loop":""}</div>
+  <div class="k">Weight</div><div>${F.wmax?(fp.w/F.wmax*100).toFixed(0):0}% of fiber peak</div>
+  <div class="k">c-axis</div><div>tilt ${tilt.toFixed(1)}° · az ${caz.toFixed(1)}°</div>
+  <div class="k">Incidence</div><div>${fp.t.inc.map((a,i)=>`${ch.faces[i]}: ${(a*R2D).toFixed(1)}°`).join(" · ")}</div>
+  <div class="k">Beam section</div><div>${(g.frac*100).toFixed(0)}% of face ${ch.faces[0]}</div></div>`;
+  const labs=ch.faces.length===1?["Incident",`Reflect · ${ch.faces[0]}`]:["Incident",...ch.faces.map((f,i)=>i===0?`Enter · ${f}`:i===ch.faces.length-1?`Exit · ${f}`:`Reflect · ${f}`)];
+  h+=`<div style="color:var(--dim);font-size:12px;margin:2px 0 4px">Energy along the path</div>`+fp.t.e.map((v,i)=>`<div class="ebar"><span>${labs[i]}</span><div class="bar"><i style="width:${(v*100).toFixed(1)}%"></i></div><span style="text-align:right">${(v*100).toFixed(1)}%</span></div>`).join("");
+  box.innerHTML=h;
+}
+
+// ============================================================ tabs, sizes, loop
+$("tabRender").addEventListener("click",()=>{$("veil").hidden=false;$("tabRender").classList.add("on");$("tabAnalyze").classList.remove("on");});
+const backAn=()=>{$("veil").hidden=true;$("tabAnalyze").classList.add("on");$("tabRender").classList.remove("on");};
+$("tabAnalyze").addEventListener("click",backAn);$("backAn").addEventListener("click",backAn);
+for(const [id,w,h] of [["sz1280",1280,800],["sz1440",1440,860],["sz1920",1920,1040]])$(id).addEventListener("click",()=>{S.W=w;S.H=h;S.topH=null;document.querySelectorAll(".proto .seg button").forEach(b=>b.classList.toggle("on",b.id===id));layout();});
+window.addEventListener("resize",()=>{clearTimeout(S._rt);S._rt=setTimeout(layout,120);});
+
+function tick(){
+  S.tick++;let dirty=false;
+  if(CHAINS.some((ch,i)=>CRYSTALS[ch.cr].on&&S.acc.n[i]<TARGET)){
+    CHAINS.forEach((ch,ci)=>{if(CRYSTALS[ch.cr].on&&S.acc.n[ci]<TARGET){sampleChain(ci,BATCH,S.acc.sum[ci],S.acc.cnt[ci]);S.acc.n[ci]+=BATCH;}});
+    if(S.dim&&progress(S.acc)>=0.25){S.disp=S.acc;S.dim=false;S.sup=null;S.presetsAt=-1;
+      if(S.sel!=null){computePresets();if(S.rvAuto)fitRaypath();if(S.probe){const r=snapToSupport(S.probe);S.probe=r.v;}computeFiber(null,false);}}
+    if(!S.dim)S.disp=S.acc;dirty=true;}
+  if(S.sel!=null&&S.rpV&&performance.now()-S.rvMovedAt>160){
+    if(!S.hi){const HR=Math.floor(S.rpV.size/1.4);S.hi={HR,V:makeView(S.rv.c,S.rv.tm,HR),sum:new Float64Array(HR*HR),n:0};}
+    const target=S.mode==="analytic"?HI_AN:HI_MC;
+    if(S.hi.n<target){sampleChainView(S.sel,HI_BATCH,S.hi);if(S.tick%3===0||S.hi.n>=target)drawRp();}
+  }
+  if(dirty){
+    if(S.sel==null&&progress(S.acc)>0.12&&!S.dim){const {rows}=computeRows();if(rows.length)selectChain(rows[0].ci);}
+    if(S.tick%2===0)drawScene();if(S.tick%4===0)renderList();
+    if(S.sel!=null&&(S.presetsAt<0||S.tick-S.presetsAt>25)&&!S.dim)computePresets();
+    if(!S.hi||S.hi.n<120000){if(S.tick%4===0)drawRp();}
+  } else if(S._wasDirty){drawScene();renderList();computePresets();drawRp();}
+  S._wasDirty=dirty;
+  if(S.playing&&S.fiber.pts.length>1){const n=S.fiber.pts.length;if(S.fiber.closed)S.fIdx=(S.fIdx+1)%n;else{S.fIdx+=S.playDir;if(S.fIdx>=n-1||S.fIdx<=0)S.playDir*=-1;S.fIdx=clamp(S.fIdx,0,n-1);}
+    S.fiber.cur=S.fiber.pts[S.fIdx];$("fiberS").value=S.fIdx;$("fiberV").textContent=`${S.fIdx+1}/${n}`;drawGlobe();drawStrip();draw3D();if(S.tick%4===0)renderProbe();}
+  const pr=progress(S.acc),pill=$("runPill");
+  if(S.dim){pill.className="pill stale";pill.textContent=`Updating · ${Math.min(100,pr*100/0.25).toFixed(0)}% to first result`;}
+  else if(pr<1){pill.className="pill run";pill.textContent=`Analyzing · ${(pr*100).toFixed(0)}%`;}
+  else{pill.className="pill done";pill.textContent="Converged";}
+  $("rayPill").textContent=fmtRays(totalRays(S.acc))+" rays";
+  $("st2").textContent=`sun ${S.sunAlt.toFixed(1)}° · ${CRYSTALS.filter(c=>c.on).length} crystals · ${CHAINS.length} raypaths`;
+  requestAnimationFrame(tick);
+}
+
+(function init(){
+  renderCrystals();
+  const h=S.sunAlt*D2R,np=Math.sqrt(NI*NI-Math.sin(h)**2)/Math.cos(h),A=(2*Math.asin(np*0.5)*R2D-60-0.8)*D2R;
+  S.cone.dir=[Math.cos(h)*Math.cos(A),Math.cos(h)*Math.sin(A),Math.sin(h)];
+  S.acc=newAcc();S.disp=S.acc;updateConeMask();
+  bindScene();bindRp();bindGlobe();bind3D();bindSplit();
+  layout();requestAnimationFrame(tick);
+})();
+</script>
