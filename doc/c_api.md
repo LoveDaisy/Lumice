@@ -43,6 +43,18 @@ static_assert(LUMICE_API_VERSION >= 440, "Lumice header too old for this integra
 
 It is bumped on every BREAKING change to the public symbol set or struct layout.
 
+**v4.49** is a pure append plus a behavior restoration. Added: `LUMICE_CouldFilterMatchFace(crystal,
+face, symmetry)` — `LUMICE_CouldCrystalHaveFace` with the filter's own P/B/D taken into account
+(a face with no area still matches through the faces the filter's symmetry relabels it to) — and
+`LUMICE_ExpandRaypathClass(crystal, faces, n, symmetry, semantics, out, &count)`, a raypath's
+class under a bit set in one of two meanings (`LUMICE_SYMMETRY_SEMANTICS_LABEL` /
+`LUMICE_SYMMETRY_SEMANTICS_PHYSICAL`, at most `LUMICE_MAX_RAYPATH_CLASS_MEMBERS` members). Behavior:
+a **filter's** P/B/D is a label equivalence again, as up to v4.46 — P and B apply whatever the
+crystal's shape and orientation, D as before. The narrowing v4.47 and v4.48 describe below now
+applies to the raypath-analysis list's grouping only; `LUMICE_GetCrystalSymmetry` and
+`LUMICE_IsPApplicable` / `LUMICE_IsBApplicable` keep their meaning and feed that grouping and the
+filter editor's hints (see `raypath-symmetry.md` §1.1). No struct changed.
+
 **v4.48 is the latest such break.** `LUMICE_CrystalSymmetry` gains trailing `p_effective` and
 `b_effective` after `d_effective` (sizeof 16 → 24); `LUMICE_GetCrystalSymmetry` writes the whole
 struct, so recompile. Added alongside: `LUMICE_IsPApplicable(roll type, roll full range)` and

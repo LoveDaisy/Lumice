@@ -251,6 +251,15 @@ segment)` 建表，`Format(uint32_t id)`（`chain_id_table.hpp:86`，实现 `cha
 `d_applicable` 与 `geom`（`DeriveGeometricSymmetry` 对该晶体配置的结果，与模拟时盖在每个抽样实例上的是同一个
 函数的输出）。上下文里查不到的 crystal id 不做任何约化。
 
+**这是物理对称（L2），不是 filter 的标号对称（L1）**（2026-09-28 起显式拆开）：分析列表的一行是一个物理类，
+所以这里的 P/B 还要与取向集体条件（`detail::IsPApplicable` / `IsBApplicable`）相交；filter 的 P/B/D 则是纯标号
+规约，不看形状也不看取向（`raypath-symmetry.md` §1.1）。两者在代码里由 `SymmetrySemantics`（`kLabel` /
+`kPhysical`，`src/core/crystal.hpp`）在每个约化入口显式点名，门控由唯一的 `DeriveSymmetryGating` 给出：
+`BuildRaypathReduceContext` 与 `MakeChainIdLayerContext` 传 `kPhysical`，`FilterSpec::Create` 与
+`BuildDeviceFilterDesc` 传 `kLabel`。二者曾共用一份隐式推导，为面板收窄时把 filter 一起改了、让既有 `.lmc`
+的 filter 零匹配——拆开的原因即此。面板「Exclude this raypath」据此判断：该行的 L2 类等于同位下的 L1 标号类时
+新 filter 带对称位，否则逐成员 OR、不带对称（`LUMICE_ExpandRaypathClass`）。
+
 链 id 只在光线穿过一层晶体、生成本层 raypath 之后，用该层约化后的 segment 去查/建表，
 而不是缓存未约化的原始面序列——这样同一等价类的光路天然映射到同一条链，链数不会因为
 「同一物理路径的不同镜像/旋转变体」被重复计数。打印一条完整链时，从叶子链 id 沿父指针
