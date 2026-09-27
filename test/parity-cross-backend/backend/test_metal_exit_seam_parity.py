@@ -295,6 +295,12 @@ _RAW_THRESHOLDS = {
     "ms_multi_crystal_filtered_bd":       (0.97, 0.97),
     "parity_single_ms_complex_filter":    (0.97, 0.97),
     "ms_multi_crystal_complex_filter":    (0.97, 0.97),
+    # Low-symmetry filter rows: the device reduction must narrow to the elements the crystal's
+    # shape has (GeometricSymmetry), as the CPU one does. Before it did, Metal merged the far-face
+    # orbit {4,6} into a P filter on a three-fold prism and the lower cone into a B filter on
+    # unequal cones — see test_parity_low_symmetry_filters below for the measured pre-fix gap.
+    "parity_low_symmetry_p_filter":       (0.97, 0.97),
+    "parity_asymmetric_cone_b_filter":    (0.97, 0.97),
 }
 _T_PSNR_DB = 13.0  # uniform render-PSNR floor; see baseline.md threshold section.
 
@@ -511,3 +517,16 @@ def test_parity_multi_ms_complex_filter():
     # plan §C-A: multi-MS is unconditional 4-axis hard gate.
     _assert_energy_conservation("ms_multi_crystal_complex_filter", metal, legacy)
     _assert_metal_self_consistency("ms_multi_crystal_complex_filter", metal, legacy)
+
+
+# --- Low-symmetry shapes: device reduction follows the shape's symmetry ---- #
+
+@pytest.mark.slow
+@pytest.mark.parametrize("config_name", ["parity_low_symmetry_p_filter", "parity_asymmetric_cone_b_filter"])
+def test_parity_low_symmetry_filters(config_name):
+    (legacy, metal, _cpu), (cm, pm, cc, pc) = _run_parity(config_name)
+    print(f"[parity] {config_name}: metal ds={cm:.4f} psnr={pm:.2f}dB | cpu_backend ds={cc:.4f} psnr={pc:.2f}dB")
+    _assert_parity(config_name, cm, pm, cc, pc)
+    # Energy is the axis a symmetry over-merge moves first: the extra orbit adds light the
+    # legacy path filters out, while the image shape can stay close.
+    _assert_energy_conservation(config_name, metal, legacy)

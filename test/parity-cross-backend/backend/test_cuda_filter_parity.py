@@ -179,6 +179,47 @@ def test_cuda_single_ms_filter_image_parity_vs_legacy():
 
 
 # --------------------------------------------------------------------------- #
+# Low-symmetry shapes: the device reduction follows the shape's symmetry.
+# --------------------------------------------------------------------------- #
+
+@pytest.mark.slow
+@pytest.mark.parametrize("cfg", ["parity_low_symmetry_p_filter", "parity_asymmetric_cone_b_filter"])
+def test_cuda_low_symmetry_filter_parity_vs_legacy(cfg):
+    """A symmetry filter on a crystal whose shape has less than D6h: a three-fold prism with a
+    P filter, unequal cones with a B filter. The device reduction must merge only the orbit the
+    shape really has (GeometricSymmetry), as FilterSpec does on the legacy path.
+
+    Suspects on failure:
+      - energy ratio well above 1 → the device still folds the far-face orbit / the other cone
+        in (ReduceBuffer_dev ignoring the descriptor's p_step / geom_b_applicable).
+      - energy ratio near 0 → canonical bytes and device reduction built under different
+        symmetry (FillCanonicalBytes vs ReduceBuffer_dev): every ray misses the canonical form.
+    """
+    legacy = _run(cfg, "legacy", seed=_SEED)
+    cuda = _run(cfg, "cuda", seed=_SEED)
+
+    _assert_routed(legacy, "legacy", cfg)
+    _assert_routed(cuda, "cuda", cfg)
+
+    corr = _raw_corr_ds(cuda, legacy)
+    psnr = _render_psnr(cuda, legacy)
+    cuda_Y = float(cuda.flt_buf[..., 1].sum())
+    legacy_Y = float(legacy.flt_buf[..., 1].sum())
+    assert legacy_Y > 0.0, f"{cfg}: legacy total Y == 0; cannot form energy ratio"
+    energy_ratio = cuda_Y / legacy_Y
+
+    print(
+        f"[parity] {cfg}: cuda ds_corr={corr:.4f} psnr={psnr:.2f}dB "
+        f"energy_ratio={energy_ratio:.4f} (tol +/-{_T_ENERGY_TOL})"
+    )
+
+    assert corr >= _T_RAW_CORR_DS, f"{cfg}: ds_corr {corr:.4f} < {_T_RAW_CORR_DS}"
+    assert abs(energy_ratio - 1.0) <= _T_ENERGY_TOL, (
+        f"{cfg}: cuda/legacy total-Y ratio {energy_ratio:.4f} outside [1 +/- {_T_ENERGY_TOL}]"
+    )
+
+
+# --------------------------------------------------------------------------- #
 # AC2a + AC2c — multi-MS filter parity (device emit gate + drain).
 # --------------------------------------------------------------------------- #
 
