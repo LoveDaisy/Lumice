@@ -12,6 +12,10 @@ namespace lumice {
 
 // spdlog sink that forwards log messages to a C callback function.
 // Used by LUMICE_SetLogCallback() to let external consumers receive Core logs.
+// src/analytic/analytic_callback_sink.hpp is a second copy of this class typed on
+// lumice_analytic.h's own enum (the two headers share no type, doc/analytic-api.md section 6/7).
+// callback-sink-template-threshold: if a third such pair appears, re-weigh a type-agnostic
+// template shared by all three over another copy (doc/analytic-api.md section 6).
 class CCallbackSink : public spdlog::sinks::base_sink<std::mutex> {
  public:
   using Callback = LUMICE_LogCallback;

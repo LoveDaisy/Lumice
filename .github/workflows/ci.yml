@@ -1452,7 +1452,7 @@ jobs:
       # for lumice_analytic, a CUDA configure), and this leg has just built one without CUDA. So
       # a skip here means the lookup missed the build — the green it would print is the one
       # outcome this job exists to rule out.
-      - name: Check export sets
+      - name: Check export sets & analytic log sink
         shell: pwsh
         run: |
           python -m pytest test/e2e-correctness/test_export_symbol_scope.py test/e2e-correctness/test_analytic_log_sink.py -v -m slow -rs 2>&1 | Tee-Object -Variable log

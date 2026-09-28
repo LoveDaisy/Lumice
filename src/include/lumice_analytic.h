@@ -65,9 +65,14 @@ typedef void (*LUMICE_ANALYTIC_LogCallback)(LUMICE_ANALYTIC_LogLevel level, cons
                                             const char* message);
 
 // Installs `callback` as the one receiver of the library's diagnostics, replacing any previous one.
-// Installing a non-NULL callback logs one LUMICE_ANALYTIC_LOG_INFO line, "log callback installed", so
-// the host can see the wiring work. NULL stops forwarding; the library is then silent again. An initialisation call:
-// make it before any computation, from one thread (doc/analytic-api.md section 5.3).
+// A non-NULL callback logs one LUMICE_ANALYTIC_LOG_INFO line, "log callback installed", through
+// itself so the host can see the wiring work; this is not a one-time event — every call with a
+// non-NULL callback logs it again, including a call that merely replaces an already-installed one.
+// NULL stops forwarding; the library is then silent again. An initialisation call: make it before
+// any computation, from one thread (doc/analytic-api.md section 5.3). Do not call this function
+// again from inside `callback` itself — the sink holds a non-recursive mutex across the callback
+// invocation, and a reentrant call would deadlock (the same known limitation as lumice.h's
+// LUMICE_SetLogCallback).
 LUMICE_ANALYTIC_API void LUMICE_ANALYTIC_SetLogCallback(LUMICE_ANALYTIC_LogCallback callback);
 
 #ifdef __cplusplus
