@@ -1414,18 +1414,31 @@ jobs:
           key: cpm-${{ matrix.cache_key }}-${{ hashFiles('**/CMakeLists.txt') }}
           restore-keys: cpm-${{ matrix.cache_key }}-
 
+      # BUILD_TEST=ON (unlike e2e-slow's shared legs) so unit_correctness_test — the one CMake
+      # target that links lumice_obj directly rather than through the `lumice` DLL boundary
+      # (test/CMakeLists.txt's target_link_libraries(unit_correctness_test PRIVATE ... lumice_obj))
+      # — is actually compiled here. Without it, no CI leg ever built a lumice_obj-direct
+      # consumer together with BUILD_SHARED_LIBS=ON on Windows, so a wrong
+      # LUMICE_SHARED_DEFINE INTERFACE definition (this repo's CMakeLists.txt, `target_compile_
+      # definitions(lumice INTERFACE LUMICE_SHARED_DEFINE)`) could leak dllimport into such a
+      # consumer — which does not link the `lumice` import library — without any red CI to show
+      # it (an LNK2001/LNK2019 that only a build reaching this exact combination would surface).
       - name: Configure (shared library, no CUDA)
         run: >
           cmake -S . -B build -G Ninja
           -DCMAKE_BUILD_TYPE=Release
-          -DBUILD_TEST=OFF
+          -DBUILD_TEST=ON
           -DBUILD_GUI=OFF
           -DBUILD_SHARED_LIBS=ON
           -DLUMICE_ISA_LEVEL=baseline
           ${{ matrix.compiler_args }}
 
+      # Named targets, not a plain `--parallel` build of everything BUILD_TEST=ON now pulls in:
+      # parity_test / golden_analytic_test don't need to be part of this leg (they carry no
+      # lumice_obj-direct-under-shared-config risk beyond what unit_correctness_test already
+      # covers), so building them here would only add Windows CI time for no new signal.
       - name: Build
-        run: cmake --build build --parallel
+        run: cmake --build build --target Lumice --target lumice_testapi --target lumice_analytic --target unit_correctness_test --parallel
 
       - name: Setup Python
         uses: actions/setup-python@v7

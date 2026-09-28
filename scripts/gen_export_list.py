@@ -13,11 +13,13 @@ this script writes:
     --format darwin  ld64 -exported_symbols_list:  one _NAME per line (Mach-O C mangling)
     --format def     Windows module-definition:    EXPORTS / NAME per line
 
-What counts as an exported function: a `LUMICE_*` identifier followed by `(` in a header's code
-(comments stripped by check_policies.strip_comments, preprocessor directives dropped), except
-one that is the name inside a pointer declarator `(*NAME)` — a function-pointer typedef such as
-`typedef void (*LUMICE_LogCallback)(...)`. The scan does not follow #include: a caller passes
-every header whose functions the library exports, and the result is their union.
+What counts as an exported function: a `LUMICE_*` identifier immediately followed by `(` in a
+header's code (comments stripped by check_policies.strip_comments, preprocessor directives
+dropped). A function-pointer typedef's name, such as `LUMICE_LogCallback` in
+`typedef void (*LUMICE_LogCallback)(...)`, never matches this shape and needs no separate
+filter: the name is followed by `)` (closing the `(*NAME)` declarator), not `(`, so it is
+excluded by construction. The scan does not follow #include: a caller passes every header whose
+functions the library exports, and the result is their union.
 
 Every such declaration must also carry its header's visibility marker (`LUMICE_API`,
 `LUMICE_TEST_API` or `LUMICE_ANALYTIC_API`). The engine objects are compiled with
@@ -43,12 +45,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from check_policies import strip_comments  # noqa: E402
 
 # A `LUMICE_*` identifier immediately followed (whitespace allowed) by an opening parenthesis.
+# A pointer return type (`LUMICE_Server* LUMICE_CreateServer(void)`) still matches here — the
+# `*` sits before the identifier, not between it and `(` — so it is correctly kept as a function.
 _CALL_SHAPE = re.compile(r"\b(LUMICE_[A-Za-z0-9_]*)\s*\(")
 # The visibility markers the three public headers define. LUMICE_API_VERSION and friends are
 # not markers: \b after API rules them out.
-# What precedes the name of a function-pointer declarator: `(` then any number of `*`. A bare
-# trailing `*` is a pointer return type (`LUMICE_Server* LUMICE_CreateServer(void)`), a function.
-_POINTER_DECLARATOR = re.compile(r"\(\s*\**$")
 _MARKER = re.compile(r"\bLUMICE_(?:TEST_|ANALYTIC_)?API\b")
 
 FORMATS = ("gnu", "darwin", "def")
@@ -85,8 +86,6 @@ def parse_header_text(text: str, origin: str = "<text>") -> list[str]:
     unmarked: list[str] = []
     for m in _CALL_SHAPE.finditer(code):
         before = code[: m.start()].rstrip()
-        if _POINTER_DECLARATOR.search(before):
-            continue  # `(*NAME)(...)`: a function-pointer typedef or declarator, not a function
         name = m.group(1)
         # The declaration statement starts after the previous `;`, `{` or `}`.
         start = max(before.rfind(";"), before.rfind("{"), before.rfind("}")) + 1

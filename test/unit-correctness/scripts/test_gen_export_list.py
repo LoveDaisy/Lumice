@@ -38,6 +38,9 @@ def test_plain_and_pointer_returning_declarations_are_extracted() -> None:
 
 
 def test_function_pointer_typedef_is_not_a_function() -> None:
+    # Both names sit inside `(*NAME)`, so the character right after each name is `)`, never
+    # `(` — _CALL_SHAPE's required shape — with or without inner spacing. No separate filter
+    # is needed: this pins that natural exclusion, not a dedicated pointer-declarator branch.
     body = (
         "typedef void (*LUMICE_LogCallback)(int level, const char* msg);\n"
         "typedef void ( * LUMICE_Spaced )(void);\n"
