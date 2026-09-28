@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1790559877239,
+  "lastUpdate": 1790559880743,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -4770,54 +4770,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "491b117b9a07cdf85de8099529f7811e686abf1e",
-          "message": "Merge pull request #336 from LoveDaisy/feat/miller-index-and-wedge-presets\n\nfix(gui,core): give the Miller-index wedge conversion one owner, and correct the presets it was never checked against",
-          "timestamp": "2026-09-10T04:26:14+08:00",
-          "tree_id": "4e290141061128a452482994544759c4c4475a08",
-          "url": "https://github.com/LoveDaisy/ice_halo_sim/commit/491b117b9a07cdf85de8099529f7811e686abf1e"
-        },
-        "date": 1788986313728,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 1000101.9,
-            "unit": "rays/sec",
-            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 1217212.5,
-            "unit": "rays/sec",
-            "extra": "CPU: Neoverse-N2\\nCores: 4"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 784590.7,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 7763 64-Core Processor\\nCores: 4"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 666161.5,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "7a4c526050e74287deacd4473631926deabf13a9",
           "message": "Merge pull request #337 from LoveDaisy/feat/print-mode-subtractive-ink\n\nfeat(render,gui): add a print tone that lays ink on paper instead of adding light to sky",
           "timestamp": "2026-09-10T09:06:10+08:00",
@@ -9506,6 +9458,54 @@ window.BENCHMARK_DATA = {
             "value": 583220.9,
             "unit": "rays/sec",
             "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "a7dc7af83f8475e1465a1e0705a2c6437b0e04dc",
+          "message": "Merge pull request #435 from LoveDaisy/task/adopt-relative-floor-ray-allocation\n\ncore: relative floor in adaptive ray allocation stops starving a filtered arc",
+          "timestamp": "2026-09-28T09:32:31+08:00",
+          "tree_id": "e682da94016f1a73dff66ec1f11396547391e218",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/a7dc7af83f8475e1465a1e0705a2c6437b0e04dc"
+        },
+        "date": 1790559880231,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 897619.4,
+            "unit": "rays/sec",
+            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 1026009.7,
+            "unit": "rays/sec",
+            "extra": "CPU: Neoverse-N2\\nCores: 4"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 734400.7,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 7763 64-Core Processor\\nCores: 4"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 926714.4,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 9V45 96-Core Processor                \\nCores: 4"
           }
         ]
       }
