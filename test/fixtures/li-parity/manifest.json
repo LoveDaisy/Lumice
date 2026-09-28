@@ -1,0 +1,414 @@
+{
+ "cells": [
+  {
+   "category": "random",
+   "crystal": {
+    "face_distance": [
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0
+    ],
+    "height": 1.0,
+    "kind": "prism",
+    "lower_h": 0.0,
+    "lower_wedge_deg": 0.0,
+    "upper_h": 0.0,
+    "upper_wedge_deg": 0.0
+   },
+   "files": [
+    "3-5__random__evaluate_path__point.json",
+    "3-5__random__trace_fiber.json",
+    "3-5__random__evaluate_path__curve_min_margin.json",
+    "3-5__random__seed_search.json"
+   ],
+   "name": "3-5__random",
+   "path": "3-5",
+   "rationale": "no internal reflection: the 22 deg halo path on the canonical column (tests/test_discovery.py's production scene); a generic admissible point: first uniform draw of a fixed-seed generator that passes discovery's gates",
+   "selection": {
+    "deviation_deg": 39.32018385540372,
+    "draws": 9,
+    "method": "first admissible uniform draw",
+    "rng": "numpy.random.default_rng",
+    "rng_seed": 20260928,
+    "u": [
+     0.07443562131389585,
+     -0.9208915320040145,
+     -0.38264621331317694
+    ]
+   },
+   "skipped": []
+  },
+  {
+   "category": "critical",
+   "crystal": {
+    "face_distance": [
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0
+    ],
+    "height": 1.0,
+    "kind": "prism",
+    "lower_h": 0.0,
+    "lower_wedge_deg": 0.0,
+    "upper_h": 0.0,
+    "upper_wedge_deg": 0.0
+   },
+   "files": [
+    "3-5__critical__evaluate_path__point.json",
+    "3-5__critical__trace_fiber.json",
+    "3-5__critical__evaluate_path__curve_min_margin.json",
+    "3-5__critical__seed_search.json"
+   ],
+   "name": "3-5__critical",
+   "path": "3-5",
+   "rationale": "no internal reflection: the 22 deg halo path on the canonical column (tests/test_discovery.py's production scene); next to an interior extremum of D_P (a caustic): a short loop around a Jacobian-degenerate point",
+   "selection": {
+    "deviation_deg": 22.33929990977301,
+    "extremum_deviation_deg": 21.83929990977304,
+    "extremum_kind": "minimum",
+    "extremum_u": [
+     0.7556288771612691,
+     -0.6549999999999998,
+     0.0
+    ],
+    "geodesic_angle_deg": 7.89075547579103,
+    "level_offset_deg": 0.5,
+    "method": "lit side of an interior extremum of D_P",
+    "u": [
+     0.6585528039187281,
+     -0.7525345204379541,
+     0.0
+    ]
+   },
+   "skipped": []
+  },
+  {
+   "category": "near_boundary",
+   "crystal": {
+    "face_distance": [
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0
+    ],
+    "height": 1.0,
+    "kind": "prism",
+    "lower_h": 0.0,
+    "lower_wedge_deg": 0.0,
+    "upper_h": 0.0,
+    "upper_wedge_deg": 0.0
+   },
+   "files": [
+    "3-5__near_boundary__evaluate_path__point.json",
+    "3-5__near_boundary__evaluate_path__outside.json",
+    "3-5__near_boundary__trace_fiber.json",
+    "3-5__near_boundary__evaluate_path__curve_min_margin.json",
+    "3-5__near_boundary__seed_search.json"
+   ],
+   "name": "3-5__near_boundary",
+   "path": "3-5",
+   "rationale": "no internal reflection: the 22 deg halo path on the canonical column (tests/test_discovery.py's production scene); a pose 1e-3 inside the nearest validity gate (Snell/incidence), plus its mirror image outside",
+   "selection": {
+    "deviation_deg": 43.225188604290516,
+    "draws": 9,
+    "edge_geodesic_angle_deg": 4.2708289128633705,
+    "inside_geodesic_angle_deg": 4.213505877104882,
+    "method": "bisected to a validity margin from the random cell's start",
+    "nearest_margin": "entry_incidence_cosine",
+    "nearest_margin_value": 0.0009999999999999872,
+    "outside_failure": "incident ray does not enter through face 3",
+    "rng_seed": 20260928,
+    "start_u": [
+     0.07443562131389585,
+     -0.9208915320040145,
+     -0.38264621331317694
+    ],
+    "target_margin": 0.001,
+    "u": [
+     0.0009999999999999872,
+     -0.924322069322058,
+     -0.3816119916409714
+    ]
+   },
+   "skipped": []
+  },
+  {
+   "category": "random",
+   "crystal": {
+    "face_distance": [
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0
+    ],
+    "height": 1.0,
+    "kind": "prism",
+    "lower_h": 0.0,
+    "lower_wedge_deg": 0.0,
+    "upper_h": 0.0,
+    "upper_wedge_deg": 0.0
+   },
+   "files": [
+    "3-5-6-7__random__evaluate_path__point.json",
+    "3-5-6-7__random__trace_fiber.json",
+    "3-5-6-7__random__evaluate_path__curve_min_margin.json",
+    "3-5-6-7__random__seed_search.json"
+   ],
+   "name": "3-5-6-7__random",
+   "path": "3-5-6-7",
+   "rationale": "two internal reflections (partial or total, Fresnel-weighted) on the canonical column; its arcs end on exit TIR or path infeasibility; a generic admissible point: first uniform draw of a fixed-seed generator that passes discovery's gates",
+   "selection": {
+    "deviation_deg": 143.8661033483508,
+    "draws": 20,
+    "method": "first admissible uniform draw",
+    "rng": "numpy.random.default_rng",
+    "rng_seed": 20260928,
+    "u": [
+     0.91106356149664,
+     -0.4017856502023679,
+     0.09236600134529149
+    ]
+   },
+   "skipped": []
+  },
+  {
+   "category": "critical",
+   "crystal": {
+    "face_distance": [
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0
+    ],
+    "height": 1.0,
+    "kind": "prism",
+    "lower_h": 0.0,
+    "lower_wedge_deg": 0.0,
+    "upper_h": 0.0,
+    "upper_wedge_deg": 0.0
+   },
+   "files": [],
+   "name": "3-5-6-7__critical",
+   "path": "3-5-6-7",
+   "rationale": "two internal reflections (partial or total, Fresnel-weighted) on the canonical column; its arcs end on exit TIR or path infeasibility; next to an interior extremum of D_P (a caustic): a short loop around a Jacobian-degenerate point",
+   "skipped": [
+    {
+     "fixture": "all",
+     "reason": "D_P of 3-5-6-7 has no interior extremum on this crystal (interior critical points: none; critical values are boundary ones only: DPField.interior_critical_points)"
+    }
+   ]
+  },
+  {
+   "category": "near_boundary",
+   "crystal": {
+    "face_distance": [
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0
+    ],
+    "height": 1.0,
+    "kind": "prism",
+    "lower_h": 0.0,
+    "lower_wedge_deg": 0.0,
+    "upper_h": 0.0,
+    "upper_wedge_deg": 0.0
+   },
+   "files": [
+    "3-5-6-7__near_boundary__evaluate_path__point.json",
+    "3-5-6-7__near_boundary__evaluate_path__outside.json",
+    "3-5-6-7__near_boundary__trace_fiber.json",
+    "3-5-6-7__near_boundary__evaluate_path__curve_min_margin.json",
+    "3-5-6-7__near_boundary__seed_search.json"
+   ],
+   "name": "3-5-6-7__near_boundary",
+   "path": "3-5-6-7",
+   "rationale": "two internal reflections (partial or total, Fresnel-weighted) on the canonical column; its arcs end on exit TIR or path infeasibility; a pose 1e-3 inside the nearest validity gate (Snell/incidence), plus its mirror image outside",
+   "selection": {
+    "deviation_deg": 140.7227009472004,
+    "draws": 20,
+    "edge_geodesic_angle_deg": 17.133946019131045,
+    "inside_geodesic_angle_deg": 17.047891382578715,
+    "method": "bisected to a validity margin from the random cell's start",
+    "nearest_margin": "internal_2_incidence_cosine",
+    "nearest_margin_value": 0.0009999999999998899,
+    "outside_failure": "internal ray does not reach face 6 from inside (reflection 2)",
+    "rng_seed": 20260928,
+    "start_u": [
+     0.91106356149664,
+     -0.4017856502023679,
+     0.09236600134529149
+    ],
+    "target_margin": 0.001,
+    "u": [
+     0.7527338795896603,
+     -0.6523752770057872,
+     0.08830744288858698
+    ]
+   },
+   "skipped": []
+  },
+  {
+   "category": "random",
+   "crystal": {
+    "face_distance": [
+     1.0,
+     1.1,
+     0.9,
+     1.0,
+     1.2,
+     0.95
+    ],
+    "height": 0.5,
+    "kind": "pyramid",
+    "lower_h": 0.6,
+    "lower_wedge_deg": 38.5704386184827,
+    "upper_h": 0.25,
+    "upper_wedge_deg": 27.996455531220374
+   },
+   "files": [
+    "13-15-26-28__random__evaluate_path__point.json",
+    "13-15-26-28__random__trace_fiber.json",
+    "13-15-26-28__random__evaluate_path__curve_min_margin.json",
+    "13-15-26-28__random__seed_search.json"
+   ],
+   "name": "13-15-26-28__random",
+   "path": "13-15-26-28",
+   "rationale": "pyramid faces off the prism family on the asymmetric pyramid of tests/test_optics_crystal_native.py (focusing.classify reaches it, roadmap 2026-09-27); a generic admissible point: first uniform draw of a fixed-seed generator that passes discovery's gates",
+   "selection": {
+    "deviation_deg": 142.53554141426164,
+    "draws": 196,
+    "method": "first admissible uniform draw",
+    "rng": "numpy.random.default_rng",
+    "rng_seed": 20260928,
+    "u": [
+     0.7013305397224517,
+     -0.7109503150467189,
+     0.05181817815772565
+    ]
+   },
+   "skipped": []
+  },
+  {
+   "category": "critical",
+   "crystal": {
+    "face_distance": [
+     1.0,
+     1.1,
+     0.9,
+     1.0,
+     1.2,
+     0.95
+    ],
+    "height": 0.5,
+    "kind": "pyramid",
+    "lower_h": 0.6,
+    "lower_wedge_deg": 38.5704386184827,
+    "upper_h": 0.25,
+    "upper_wedge_deg": 27.996455531220374
+   },
+   "files": [
+    "13-15-26-28__critical__evaluate_path__point.json",
+    "13-15-26-28__critical__trace_fiber.json",
+    "13-15-26-28__critical__evaluate_path__curve_min_margin.json",
+    "13-15-26-28__critical__seed_search.json"
+   ],
+   "name": "13-15-26-28__critical",
+   "path": "13-15-26-28",
+   "rationale": "pyramid faces off the prism family on the asymmetric pyramid of tests/test_optics_crystal_native.py (focusing.classify reaches it, roadmap 2026-09-27); next to an interior extremum of D_P (a caustic): a short loop around a Jacobian-degenerate point",
+   "selection": {
+    "deviation_deg": 148.73720035377954,
+    "extremum_deviation_deg": 149.23720035377946,
+    "extremum_kind": "maximum",
+    "extremum_u": [
+     0.6503697478340033,
+     -0.7401956883331182,
+     -0.1706737650472289
+    ],
+    "geodesic_angle_deg": 2.9860013377977017,
+    "level_offset_deg": -0.5,
+    "method": "lit side of an interior extremum of D_P",
+    "u": [
+     0.6103543195753254,
+     -0.7735742469973911,
+     -0.17044203987913664
+    ]
+   },
+   "skipped": []
+  },
+  {
+   "category": "near_boundary",
+   "crystal": {
+    "face_distance": [
+     1.0,
+     1.1,
+     0.9,
+     1.0,
+     1.2,
+     0.95
+    ],
+    "height": 0.5,
+    "kind": "pyramid",
+    "lower_h": 0.6,
+    "lower_wedge_deg": 38.5704386184827,
+    "upper_h": 0.25,
+    "upper_wedge_deg": 27.996455531220374
+   },
+   "files": [
+    "13-15-26-28__near_boundary__evaluate_path__point.json",
+    "13-15-26-28__near_boundary__evaluate_path__outside.json",
+    "13-15-26-28__near_boundary__trace_fiber.json",
+    "13-15-26-28__near_boundary__evaluate_path__curve_min_margin.json",
+    "13-15-26-28__near_boundary__seed_search.json"
+   ],
+   "name": "13-15-26-28__near_boundary",
+   "path": "13-15-26-28",
+   "rationale": "pyramid faces off the prism family on the asymmetric pyramid of tests/test_optics_crystal_native.py (focusing.classify reaches it, roadmap 2026-09-27); a pose 1e-3 inside the nearest validity gate (Snell/incidence), plus its mirror image outside",
+   "selection": {
+    "deviation_deg": 87.33157785717307,
+    "draws": 196,
+    "edge_geodesic_angle_deg": 45.674891354558504,
+    "inside_geodesic_angle_deg": 45.61120313808936,
+    "method": "bisected to a validity margin from the random cell's start",
+    "nearest_margin": "entry_incidence_cosine",
+    "nearest_margin_value": 0.0009999999999999523,
+    "outside_failure": "incident ray does not enter through face 13",
+    "rng_seed": 20260928,
+    "start_u": [
+     0.7013305397224517,
+     -0.7109503150467189,
+     0.05181817815772565
+    ],
+    "target_margin": 0.001,
+    "u": [
+     -0.018138015592317702,
+     -0.9991782083285794,
+     0.03624803983200876
+    ]
+   },
+   "skipped": []
+  }
+ ],
+ "format": "lumice-integral/analytic-parity",
+ "provenance": {
+  "conventions_sha256": "4af1326270649820be6ad4859d86d3cb54f05c6b677f1769e76c0c907e98c871",
+  "li_rev": "bfbd042a2234a80efb96950ce33375690a94fb07",
+  "li_tracked_tree_clean": true
+ },
+ "schema_version": 1,
+ "symmetry_semantics": "none"
+}
