@@ -339,7 +339,10 @@ TEST(FiberContinuation, C08DomainEventPrecedesTheUnsafeDirection) {
   for (int i = 0; i < n; i++) {
     EXPECT_GT(0.1 - std::atan2(r.poses[9 * i + 3], r.poses[9 * i]), 0.0) << i;
   }
-  EXPECT_LT(0.1 - std::atan2(r.poses[9 * (n - 1) + 3], r.poses[9 * (n - 1)]), 0.02);
+  // Without the rule the last pose of this trace stops ~0.01 short (steps 0.04, 0.05, then a
+  // crossing trial); with it the step halves toward the boundary down to minimum_step.
+  const double last_margin = 0.1 - std::atan2(r.poses[9 * (n - 1) + 3], r.poses[9 * (n - 1)]);
+  EXPECT_LT(last_margin, 1e-3);
 }
 
 TEST(FiberContinuation, C08DomainEventIsOnlyBelievedInsideTheTrustRegion) {
