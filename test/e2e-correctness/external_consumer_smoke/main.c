@@ -1,6 +1,5 @@
-#include <stdio.h>
-
 #include <lumice_analytic.h>
+#include <stdio.h>
 
 int main(void) {
   int version = LUMICE_ANALYTIC_GetApiVersion();
