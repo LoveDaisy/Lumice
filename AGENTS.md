@@ -757,6 +757,20 @@ Valuable design/architecture docs live in `doc/` (tracked). Consult the relevant
     消费者」两个触发信号同时响了（LI 经共享库消费单光路反解 / fiber 行走）；发布的是一个新窄
     接口而非现在的 `lumice.h`，共享判据见 `raypath-analysis.md` §5.1.6。
     考虑发布动态库、设计新产品线、或再次提起拆仓前先读。
+  - `analytic-api.md` — **`liblumice_analytic` 设计（第一个对外发布的共享库；设计稿，尚未构建，
+    2026-09-28）**：头文件 `lumice_analytic.h`、前缀 `LUMICE_ANALYTIC_`（owner 已定），链整个
+    `lumice_obj` 的三条规矩（新 target 显式开死代码裁剪 / 只从无 CUDA 构建产出 / ISA 是**配置**的属性
+    ⇒ 从 `LUMICE_ISA_LEVEL=baseline` 的配置产出，⛔ 不从本地默认 `native`）+ 一进程只加载
+    `liblumice` / `liblumice_testapi` / `liblumice_analytic` 之一。⭐**§3 对称性语义**（owner 硬要求）：
+    接口只收具体面序列、不带对称参数、不提供约化——约化属原语层、两仓各留一份互校；调用方在接口外
+    约化须写明 L1/L2，parity fixture 须带 `symmetry_semantics` 字段；典型分叉 = 三重对称棱柱（LI 实测
+    L1 在 `D3h` `[3,5]` 过并 1.41×）。§4 首个模块（单光路反解 + fiber 行走）C 头文件草案：
+    `EvaluatePath` + `TraceFiber[Batch]`，种子由调用方给（v0 不含 seed search），库分配 + 显式释放，
+    `status` 封闭 / `reason` 开放。⚠️ §6：几何构造路径**有** `LOG_WARNING`（退化晶体 / 锥退化到顶点 /
+    丢面），默认静默会吞掉 ⇒ 回调须转发，且退化晶体同时以错误码返回。§7：`lumice.h` 的
+    `#pragma GCC visibility push(default)` 编进 `lumice_obj`，新库的导出集合只靠按库导出列表收窄。
+    §9 未决项表（seed search、`FiberResult` 是否补 LI §9.3 诊断字段两条待 owner 裁定）。
+    实现新库 target / 导出列表 / 日志接管 / 打包 / 首个解析模块前先读。
 - **GPU / Metal route** (read these before touching the GPU path):
   - **🔒 设计纪律（GPU 后端实现硬约束）**：按 `seam-design.md` 蓝图走，**不要自己重新发明**。几何遍历 / 出射 seam / per-ray 旋转上传 / 单引擎大 dispatch — **复用已验证的实现**：参考当前 Metal（`gpu-single-engine-implementation.md` as-built）+ legacy `PropagateSlab`（`optics.cpp` 的 polygon-slab 遍历）。**蓝图是最终判据**：Metal/legacy 与蓝图冲突处以蓝图为准（如历史 Metal 投影焊进 trace 已被 §4.1/scrum-258 纠正，别照搬旧形态）。教训：CUDA #295 自创 Möller-Trumbore 遍历复现了 task-275~278 已解决的绝对-ε 漏面 bug（energy 0.735）；详见 `scratchpad/backlog.md`「MVP 落地后的架构发现」。
   - `seam-design.md` — **the `TraceBackend` host/device seam redesign blueprint**; §5 = single-engine, three-clock-decoupled GPU simulator (the target architecture); §3.6 "原始之罪" = why GPU must not mirror the CPU pipeline.
