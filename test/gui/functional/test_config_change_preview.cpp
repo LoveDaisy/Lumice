@@ -264,6 +264,16 @@ void RegisterConfigChangePreviewTests(ImGuiTestEngine* engine) {
                              c->ItemClick("##TopBar/Revert");
                            } });
   };
+  // AC1 zero-ray control: while running, edit the filter to a path longer than max_hits (8), so the
+  // new configuration lands no ray at all — the case the immediate clear was originally for.
+  ImGuiTest* t9 = IM_REGISTER_TEST(engine, "config_change_probe", "filter_edited_to_zero_rays_while_running");
+  t9->TestFunc = [](ImGuiTestContext* ctx) {
+    RunProbe(ctx, ProbeArm{ "zero_ray_filter_running", AttachFilterToFirstCard, true, [](ImGuiTestContext* c) {
+                             gui::g_state.filters[static_cast<size_t>(*gui::g_state.layers[0].entries[0].filter_id)]
+                                 .SetRaypath(gui::RaypathParams{ "3-1-5-7-3-1-5-7-3-1" });
+                             c->Yield();
+                           } });
+  };
   // Same while running, no filter.
   ImGuiTest* t7 = IM_REGISTER_TEST(engine, "config_change_probe", "dup_unfiltered_card_while_running");
   t7->TestFunc = [](ImGuiTestContext* ctx) {
