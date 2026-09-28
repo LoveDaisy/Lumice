@@ -3,11 +3,12 @@
 > Status: **partly built** (2026-09-29). As built: the target and its per-library export list
 > (§2.5), logging handed to the host (§6), and packaging with a `find_package` config plus the
 > version policy (§8), and an external-consumer smoke test that builds a C program and loads the
-> library from Python using the install tree alone (§8.7); and the first function of the first
-> module, `LUMICE_ANALYTIC_EvaluatePath` (§4.3, header version 2), with its precision (§5.4) and
-> thread-safety (§5.3) decisions. Not built yet: seed search and fiber continuation (§4), which
-> land with the Analyze workspace's first phase (`doc/raypath-analysis.md` §5.1.8). Until that
-> module is complete the library is not in any download package (§8.8).
+> library from Python using the install tree alone (§8.7); and the whole of the first module's v0
+> (§4.3): `LUMICE_ANALYTIC_EvaluatePath` (header version 2), with its precision (§5.4) and
+> thread-safety (§5.3) decisions, fiber continuation `LUMICE_ANALYTIC_TraceFiber[Batch]` (version
+> 3) and component discovery `LUMICE_ANALYTIC_DiscoverComponents` (version 4). The module serves the
+> Analyze workspace's first phase (`doc/raypath-analysis.md` §5.1.8). The library is not in any
+> download package yet: that is §8.8's checklist, not done.
 >
 > Every decision below is marked either **(owner)** — ruled by the owner on 2026-09-28, not open
 > for re-derivation — or **(design)** — this document's own judgement, open to the owner's review.
@@ -326,7 +327,9 @@ The normative source for discovery is the discovery section of LI's
 subset is §9.5.8), written to the same standard as §5–§10 (LI task `discovery-contract`). This
 document cites it by path and does not restate it. The library does **not** require the Monte Carlo
 side to record ray poses: the Analyze all-sky map is low resolution, so seed density can start low
-and be refined progressively, which is not an interaction blocker (§9 item 1).
+and be refined progressively, which is not an interaction blocker (§9 item 1). Refinement is not
+monotone by itself (LI §9.5.7), so it passes the sparser components forward as warm seeds; §4.3
+("`DiscoverComponents` as built") has the calling convention.
 
 ### 4.3 Two function families **(design)**
 
@@ -340,6 +343,11 @@ and be refined progressively, which is not an interaction blocker (§9 item 1).
 - **`LUMICE_ANALYTIC_TraceFiber` / `TraceFiberBatch`** — continuation along the fiber from a seed:
   accepted poses, crystal-frame sun directions, arclength increments, residual norms, tangents,
   and a `status`/`reason` pair.
+- **`LUMICE_ANALYTIC_DiscoverComponents`** — the seeds, for one path and one target: every
+  component the sample reaches, each traced once with `TraceFiber`'s solver and classified closed
+  or arc, plus the candidates that could not be classified. Analyze's core action, "click a sky
+  point, get its fibers", is this call; without it the product and LI would each write their own
+  way of finding a seed.
 
 **`EvaluatePath` as built** (`src/analytic/path_evaluation.{hpp,cpp}`; the C wrapper in `analytic_api.cpp`). The
 kernel has two stages, split by cost and by the kind of failure each can report:
@@ -428,6 +436,117 @@ the orientations matched the accepted pose sequences are the same sequences, to 
 rad per pose, on all eight — one open arc (`3-5-6-7__near_boundary`) ends one sample earlier at
 its TIR end. Largest residual on an accepted pose over those traces: `4.6e-12`, against the
 `1e-11` gate. The standing check is the parity fixtures, once this repository replays them (§10).
+
+**`DiscoverComponents` as built** (API version 4). LI `docs/phase1-math-contract.md` §9.5
+(`reference-discovery-v1`, LI `bfbd042`) makes every step order and gate normative, so that two
+backends given the same sample return the same components and counters; this is a port of LI's
+`discovery.discover_components` and of the pieces of `s2_store` it reads, step for step
+(`src/analytic/discovery.{hpp,cpp}`):
+
+1. **Sample** (§9.5.2). The antipodal Fibonacci lattice of `sample_count` points
+   `u = R^-1 s_hat`, generated inside the call in LI's evaluation order. The fields depend on the
+   pose only through `u`, so each event is one `TracePathChain` at the identity pose with incident
+   direction `-u`: validity, the body-frame outgoing direction `phi`, the Fresnel factor `T`, and
+   `D = angle(phi, -u)`. No persisted sample format exists or is needed.
+2. **Band** (§9.5.3). The events with `w = A T > 0` and `|D - delta| <= b`, inclusive at both ends,
+   in increasing `(D, index)`. The entry measure `A` is evaluated only for events already in the
+   band: `A` does not change `D`, so the band of the kept events is the kept events of the band, in
+   the same order, at `|band|` entry measures instead of `N`. One streaming pass; only band events
+   are stored.
+3. **Pool, clusters, representative** (§9.5.3–§9.5.4). Extra seeds first in the caller's order,
+   then the band; poses `R_i = W F_i^T`. Greedy geodesic clustering: the lowest unassigned index is
+   the centre, members strictly closer than `r_c` to it (not transitive). An extra seed represents
+   its cluster; otherwise the smallest offset `|D_i - delta|`, ties to the lowest index.
+4. **Gauss-Newton and admissibility** (§9.5.4). At most 30 minimum-norm steps
+   `R <- R exp(-A^T (A A^T)^-1 r)`, stopping once `|r| <= tau / 100`, with `A` from the same
+   `Jet<3>` Jacobian `TraceFiber` uses; admissible iff `|r| <= tau`
+   (`tau = residual_tolerance + relative_residual_tolerance`), every validity margin `> 0`, and
+   `A > eps`. An inadmissible representative is dropped; its cluster's other members are not
+   tried.
+5. **Dedup, trace, classify** (§9.5.4–§9.5.5). A pose strictly closer than `eta` to a stored pose
+   of an accepted component (both traces of an arc) is folded without a trace. Otherwise the
+   forward trace; on one of the five arc events (TIR, branch, path-infeasible, visibility, chart
+   boundary) the backward trace, and LI's six-row table decides component or incomplete candidate
+   and which counter moves.
+
+- **The finite crystal** enters only through the entry measure `A_P(R)`
+  (`src/analytic/entry_measure.{hpp,cpp}`): the area, perpendicular to the incident direction, of
+  the entry points whose internal ray meets every later face of the path inside its polygon (LI
+  §7), by unfolding the path's faces into a corridor and clipping their projections along the
+  internal direction. It is a port of LI's `geometry.entry_measure` over its corridor primitives,
+  with LI's status names in LI's gate order, and it is a primitive-layer twin kept on purpose
+  (§3, `doc/raypath-analysis.md` §5.1.6): LI keeps its own and the two are compared, not merged.
+  The corners are the engine's float closed-form face polygons promoted to double —
+  `BuildFaceNormals` returns them next to the normals — and `eps = 1e-6 * (shortest edge)^2` is
+  LI's. Measured once against LI on 12000 random poses over three crystals (a prism with `3-5` and
+  `3-5-6-7`, the asymmetric pyramid with `13-15-26-28`): the status agreed everywhere, and the
+  value equalled 0.25 times LI's (this library's crystals are half LI's size in length) to within
+  `1.4e-5` relative, the float corners' spread on the pyramid's smallest corridors. The value is
+  not in the v0 result; the gate uses `> eps`, and a wave-2 weight can read the same kernel.
+- **Deterministic; no seed parameter.** The lattice has no random numbers, so the result is fixed
+  by the inputs, which is what "reproducible" asked for. A random-number seed would be a knob no
+  sampler reads (LI's i.i.d. sampler, the contract's alternative, is not built); a later random
+  sampler would arrive as a new field or function, with a version bump (§8.2).
+- **Densification is not monotone, so the calling convention is warm seeds.** A denser sample can
+  lose a component a sparser one found (LI §9.5.7: greedy clustering moves its centres as events
+  are added, and an inadmissible representative is not replaced; LI's counterexample is the `D3h`
+  prism's `5-3` at 43.0347°). Analyze's low-then-dense pattern is therefore: pass the sparser
+  call's component seeds as `extra_seeds` of the denser call. An extra seed is only the
+  Gauss-Newton start of its cluster — never traced on its own, never counted toward completeness —
+  so it can only help that cluster converge onto a known component. The Fibonacci lattices of two
+  sizes are not nested, so this pattern, not the sample, is what carries a component forward.
+  Measured on `3-5` near its boundary (LI fixture `3-5__near_boundary`'s target): `1e5` gives 4
+  components, `1e6` gives 5, and the warm `1e6` call keeps all 4 sparse ones.
+- **`completeness` is procedural** (LI §9.5.6): `COMPLETE` means every admissible, non-folded
+  candidate closed or became an arc, never that every component was found; a target with no
+  candidate is `COMPLETE` with zero components. The post-hoc check LI offers (`check_band_coverage`,
+  §9.5.6a) is not in v0.
+- **Options** (C field → LI → reference default of LI §9.5.9; zero means the default, negative or
+  non-finite is `ERR_INVALID_VALUE`): `sample_count` → `N`, `1000000`; `band_half_width` (radians;
+  LI's argument is in degrees) → `0.2°`; `cluster_radius` → `0.3` rad; `distance_threshold` →
+  `closure_distance` of the call's continuation, `0.08` rad by default. LI requires `eta > 0`; here
+  a negative one is rejected and zero selects the default, so the threshold in effect is always
+  positive. The call's `ContinuationOptions` are the one trace policy (LI: "no separate discovery
+  budget"). Every trace starts in the library's `+1` orientation, `TraceFiber`'s (§4.3 above).
+- **Guarded where LI is not.** A target at `0` or `pi` from the incident direction (LI §9.5.3 needs
+  a component of `d` normal to `s`, and LI's reference does not guard it, its §12) is
+  `ERR_INVALID_VALUE`.
+- **Two differences from LI, both inert on every LI fixture.** The entry measure's exit gate uses
+  the call's refractive index where LI's uses its package constant `N_ICE = 1.31` (they agree at
+  1.31, the index of every fixture). And this library's direction is NaN outside the path's
+  domain, where LI's JAX evaluator returns whatever the formulas give; a Gauss-Newton iterate that
+  leaves the domain therefore ends inadmissible here, where LI could in principle come back. No
+  fixture reaches that branch.
+- **Result layout.** `DiscoveryResult` (a `struct_size` struct, §8.2) holds the counters and two
+  library-allocated arrays, components and incomplete candidates. Each element points to its
+  traces: `forward`, and `backward` or NULL when no backward trace was run — never an embedded
+  zeroed struct, whose status 0 would read as `CLOSED`. Pointers rather than embedded
+  `FiberResult`s also keep the element layout fixed when `FiberResult` grows in wave 2. The pointed-to
+  `FiberResult`s are views into the discovery block (their own `storage` is NULL); only
+  `ReleaseDiscoveryResult` frees them.
+- **Cost.** At the default `N = 1e6` the band takes 25–28 ms single-threaded (Apple M-series,
+  release) and the rest of the call under 2 ms on LI's eight fixture scenes — the sampling pass, not
+  the traces, is the cost. No thread is started (§5.3).
+
+Checked by: `test/unit-correctness/analytic/test_discovery.cpp`, which states each LI conformance
+row it covers — C15 (canonical pixel at `N = 1e6`: pool 5024, 6 clusters, 5 folded, LI's counts;
+rows 225/226; three caustic pixels), C16 (the two boundary-hugging rows), C17 (`1-3` at 60°: two
+arcs 0.82 rad apart), C18 (each classification branch on LI's capped analytic circle, the arc ends
+of `1-3`, the one-pose arc of `3-1` at 64.7434° pinned as LI's known limitation), C19 (the `D3h`
+prism differing only through `A`, an unlit member with an empty pool, LI's three pyramid paths at
+eight deviations), C20 (cluster centres and strictness, representative, dedup strictness, warm
+seeds near and far, the funnel identities on every result), C21 (a dark target, a starving budget,
+the warm-seed densification above) — plus the bands of two LI parity fixtures point by point, the
+pipeline on LI's own band reproducing LI's seeds to `1e-9`, and concurrency;
+`test_entry_measure.cpp` (LI pins, an analytic case, the threshold); and
+`test/e2e-correctness/test_analytic_seed_search.py` (the C ABI, one call against fixture
+`3-5-6-7__random`, a sparse-then-dense round trip). Each strict or inclusive comparison was broken
+on purpose once to see a test fail (cluster radius, band ends, dedup threshold, the entry-measure
+gate). One-time comparison with LI's eight `seed_search` fixtures at `bfbd042` (`N = 1e5`): this
+library's own band equals LI's exported band in size and order (`|du| <= 1.1e-16`,
+`|dD| <= 1.4e-14`), and on both bands every funnel count and counter is equal, every component's
+kind matches, and every seed lies within `1.3e-14` rad of LI's curve. The standing check is the
+parity fixtures, once this repository replays them (§10).
 
 **Batch shape.** LI's heavy use is one path swept over many targets (pixels or sample points)
 with the crystal, the path and the sun fixed. The batch call takes one crystal and one options
@@ -700,6 +819,15 @@ N = 1 cases and the closed-loop sample convention on `FiberResult`, each option'
 default. `EvaluatePath` gained the `face_count <= 64` bound and `ERR_UNKNOWN` for an allocation
 failure.
 
+Version 4 adds discovery, which the draft did not have: `DiscoveryProblem` (the fiber problem's
+path, index and directions without a seed, plus the extra seeds), `DiscoveryOptions` (the sampling,
+clustering and dedup parameters of LI §9.5.9 — kept apart from `ContinuationOptions`, which is the
+trace policy the call shares with `TraceFiber`), the closed sets `Completeness`, `ComponentKind`
+and `IncompleteCause`, the `DiscoveredComponent` / `IncompleteCandidate` elements, which point to
+their traces rather than embedding them, `DiscoveryResult` with `struct_size`, and
+`DiscoverComponents` / `ReleaseDiscoveryResult`. Why each shape: §4.3, "`DiscoverComponents` as
+built". Nothing existing changed.
+
 ---
 
 ## 5. Conventions, errors, threading **(design)**
@@ -929,17 +1057,23 @@ subsections keep that number.
 
 ### 8.2 Compatible and incompatible changes
 
-A compatible change leaves the integer alone; an incompatible one bumps it.
+An incompatible change bumps the integer. In 0.x a compatible one bumps it too — every addition so
+far has (versions 2, 3 and 4 each added functions and nothing else incompatible), and that is the
+rule: `find_package` accepts only the exact version (§8.4) and a ctypes binding pins the version it
+was written against, so the integer is the only way a consumer can tell which functions a library
+has. From 1.0, when compatibility is promised, a compatible change leaves the integer alone and the
+table below becomes the rule.
 
 | Change | Kind |
 |---|---|
 | A new function | Compatible |
 | A new value in an open set (`LUMICE_ANALYTIC_Reason`, §4.4) | Compatible — callers must already handle an unknown reason |
-| A field appended at the end of `PathEvaluation` or `FiberResult`, under the `struct_size` rule below | Compatible |
+| A field appended at the end of `PathEvaluation`, `FiberResult` or `DiscoveryResult`, under the `struct_size` rule below | Compatible |
+| A field added to an element of a library-allocated array (`DiscoveredComponent`, `IncompleteCandidate`) | Incompatible — the caller indexes the array with its own `sizeof` |
 | Growth of a library-allocated buffer reached through `storage` (`segment_directions`, `poses`, …) | Compatible — the caller never lays memory out for it |
 | A changed signature, a removed function, a renamed or reordered field | Incompatible |
-| Any field added to a caller-owned input struct (`Crystal`, `FiberProblem`, `ContinuationOptions`) | Incompatible — the library would read past what an older caller allocated |
-| Any change to a closed set (`LUMICE_ANALYTIC_FiberStatus`, `LUMICE_ANALYTIC_ErrorCode`) | Incompatible |
+| Any field added to a caller-owned input struct (`Crystal`, `FiberProblem`, `ContinuationOptions`, `DiscoveryProblem`, `DiscoveryOptions`) | Incompatible — the library would read past what an older caller allocated |
+| Any change to a closed set (`LUMICE_ANALYTIC_FiberStatus`, `LUMICE_ANALYTIC_ErrorCode`, `LUMICE_ANALYTIC_Completeness`, `LUMICE_ANALYTIC_ComponentKind`, `LUMICE_ANALYTIC_IncompleteCause`) | Incompatible |
 | Any change to a convention the functions pass (frames, face numbers, pose chain — §5.1) | Incompatible, even with an unchanged signature |
 | A result field added other than by the `struct_size` rule | Incompatible |
 
@@ -1105,7 +1239,7 @@ functions. The first real module's work opens this list. **The state described h
 
 | # | Item | Decided by / when |
 |---|---|---|
-| 1 | ~~Seed search (discovery) in scope for v0?~~ **Answered** — yes, v0 includes seed search (author, 2026-09-28; §4.2). Spec: LI `docs/phase1-math-contract.md` §9.5. No MC ray-pose recording is required: Analyze's all-sky map is low resolution, seed density goes low first and is refined progressively. | Author and owner, 2026-09-28 |
+| 1 | ~~Seed search (discovery) in scope for v0?~~ **Answered** — yes, v0 includes seed search (author, 2026-09-28; §4.2). Spec: LI `docs/phase1-math-contract.md` §9.5. No MC ray-pose recording is required: Analyze's all-sky map is low resolution, seed density goes low first and is refined progressively. **As built** (API version 4, §4.3): `DiscoverComponents`, deterministic lattice sample, warm seeds as the densification convention because densification is not monotone. | Author and owner, 2026-09-28 |
 | 2 | ~~Reference defaults of `ContinuationOptions`, each linked to convergence evidence (LI §10.1).~~ **Answered** — every default is LI §10.1's, none deviates; the mapping and evidence are in §4.3 (`TraceFiber` as built). | The first-module implementation (`TraceFiber`, 2026-09-29) |
 | 3 | A refractive-index convenience function (Sellmeier). Default: not exposed (§4.2). | The first-module implementation, on LI's actual need |
 | 4 | ~~Semver, ABI and deprecation policy text; what 1.0 commits to.~~ **Answered** — see §8 (as built): one integer is the only version, `find_package` requires it exactly (§8.4), compatible/incompatible table (§8.2), no promise in 0.x (§8.3), deprecation (§8.5), graduation conditions (§8.6). | The packaging and version-policy work (done) |
