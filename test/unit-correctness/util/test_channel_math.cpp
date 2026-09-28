@@ -16,7 +16,7 @@
 namespace lumice {
 namespace {
 
-// R == B is exactly mid grey, not "close to" it: 0.5 + 0.5 * 0 is exact in IEEE 754, and "no
+// R == B is exactly mid grey, not "close to" it: 0.5 + gain * 0 is exact in IEEE 754, and "no
 // difference" being a single known value is what lets a user read mid grey as zero.
 TEST(ChannelMath, EqualChannelsAreExactlyMidGrey) {
   for (float v : { 0.0f, 0.25f, 0.5f, 0.75f, 1.0f }) {
@@ -64,7 +64,7 @@ TEST(ChannelMath, MatchesTheClosedForm) {
     for (int k = 0; k <= 20; ++k) {
       const double r = i / 20.0;
       const double b = k / 20.0;
-      const double expected = std::clamp(0.5 + 0.5 * (b - r), 0.0, 1.0);
+      const double expected = std::clamp(0.5 + static_cast<double>(kChannelBrGain) * (b - r), 0.0, 1.0);
       EXPECT_NEAR(ChannelMathBrGray(static_cast<float>(r), static_cast<float>(b)), expected, 1e-6)
           << "r=" << r << " b=" << b;
     }

@@ -263,11 +263,13 @@ vec3 subtractiveInk(float e, vec3 paper) {
 // The channel-B-R display mode (u_display_mode == 1): the post-gamma sRGB B - R of the pixel the
 // normal mode would show, as a grey offset — mid grey is zero, bluer is lighter, redder is darker.
 //
-// HAND-TRANSCRIBED from src/util/channel_math.hpp (ChannelMathBrGray), which is the authority; it
-// MUST equal that function. GLSL cannot #include a C++ header, so this is a copy, held to the C++
+// HAND-TRANSCRIBED from src/util/channel_math.hpp (kChannelBrGain / ChannelMathBrGray), which is
+// the authority; it MUST equal that function, and kChannelBrGain below MUST equal
+// lumice::kChannelBrGain. GLSL cannot #include a C++ header, so this is a copy, held to the C++
 // one by the preview/export/CLI parity tests under test/gui/parity/.
+const float kChannelBrGain = 2.0;
 float channelMathBrGray(float r_srgb, float b_srgb) {
-    return clamp(0.5 + 0.5 * (b_srgb - r_srgb), 0.0, 1.0);
+    return clamp(0.5 + kChannelBrGain * (b_srgb - r_srgb), 0.0, 1.0);
 }
 
 // One annotation layer composited over what is already there.
