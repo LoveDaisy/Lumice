@@ -462,5 +462,62 @@ TEST(PathFiber, C06StripLoopsCloseOnceAndBoundaryHuggersDoNotCrawl) {
   }
 }
 
+// ---------------------------------------------------------------------------------------------
+// Pins from LI's parity fixtures (li_rev bfbd042, `scripts/export_analytic_parity.py`): inputs
+// and expectations of 3-5__random__trace_fiber.json and 3-5-6-7__random__trace_fiber.json, held to
+// those fixtures' own tolerances (LI docs/analytic-parity-fixtures.md sections 4-5: status/reason
+// exact, summed arclength to 2e-3 relative, residuals <= 1e-11). A regression guard until the
+// fixtures themselves are replayed here; step counts are deliberately not pinned.
+// ---------------------------------------------------------------------------------------------
+
+struct LiTracePin {
+  const char* name;
+  std::vector<int> faces;
+  std::array<double, 3> target;
+  Mat seed;
+  std::vector<std::pair<FiberReason, double>> traces;  // +1 then -1: reason and arclength
+};
+
+TEST(PathFiber, MatchesLiParityFixturePins) {
+  const std::array<double, 3> incident = { -0.9659258262890683, -0.0, -0.25881904510252074 };
+  const LiTracePin pins[] = {
+    { "3-5__random",
+      { 3, 5 },
+      { -0.9112582539764014, 8.326672684688674e-17, 0.41183539741003355 },
+      { 0.3258565506826661, -0.8542836236664049, -0.4049901217469277, 0.17797600617978254, -0.36528256190089714,
+        0.9137248990781696, -0.9285160470349928, -0.36982176829726143, 0.03301227183938536 },
+      { { FiberReason::kClosedLoop, 5.670160732846 } } },
+    { "3-5-6-7__random",
+      { 3, 5, 6, 7 },
+      { 0.6275025327724766, -5.551115123125783e-17, 0.7786145203912691 },
+      { 0.9739245884679638, -0.15831553091898734, 0.16250258043288573, -0.1957670169785059, -0.22445280180182878,
+        0.9546183608262762, -0.1146567531410371, -0.9615389396343489, -0.24959306185470612 },
+      { { FiberReason::kTirBoundary, 0.9217831785332176 }, { FiberReason::kTirBoundary, 1.5453840580147638 } } },
+  };
+  for (const auto& pin : pins) {
+    SCOPED_TRACE(pin.name);
+    const Path path(pin.faces, incident);
+    double traced = 0.0;
+    double expected = 0.0;
+    std::vector<FiberReason> reasons;
+    std::vector<FiberReason> expected_reasons;
+    for (size_t k = 0; k < pin.traces.size(); k++) {
+      ContinuationParams p;
+      p.initial_tangent_sign = k == 0 ? 1 : -1;
+      const TraceResult r = TraceFiber(path.Map(), MakeTargetChart(pin.target.data()), pin.seed.data(), p);
+      EXPECT_LE(MaxResidual(r), 1e-11);
+      traced += Length(r);
+      expected += pin.traces[k].second;
+      reasons.push_back(r.reason);
+      expected_reasons.push_back(pin.traces[k].first);
+    }
+    // Orientation-free, as the fixtures compare: the pair of reasons as a multiset, the summed length.
+    std::sort(reasons.begin(), reasons.end());
+    std::sort(expected_reasons.begin(), expected_reasons.end());
+    EXPECT_EQ(reasons, expected_reasons);
+    EXPECT_NEAR(traced, expected, 2e-3 * expected);
+  }
+}
+
 }  // namespace
 }  // namespace lumice::analytic
