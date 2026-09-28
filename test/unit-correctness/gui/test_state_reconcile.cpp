@@ -20,6 +20,7 @@
 #include "gui/gui_state.hpp"
 #include "gui/gui_state_reconcile.hpp"
 #include "gui/gui_state_tiers.hpp"
+#include "gui/panels.hpp"  // DuplicateEntryBelow
 
 namespace gui = lumice::gui;
 
@@ -289,6 +290,39 @@ TEST(GuiStateReconcile, AttachingOrDetachingAFilterIsHardButRebindingIsNot) {
     c.mutate(s);
     const GuiEffects e = ReconcileGuiEffects(s);
     EXPECT_TRUE(e.need_resim) << "every one of these is at least a structural change";
+    EXPECT_EQ(e.need_hard_reset, c.expect_hard);
+  }
+}
+
+// Duplicate, through the real DuplicateEntryBelow, is classified by what it appends to the pools, not
+// by what it means physically. The copy always gets a new crystal slot (soft: crystals/layers) and,
+// only when the original carries a filter, a new filter slot — and a longer `filters` vector is a
+// hard change under the whole-vector comparison, even though the new slot's content equals an
+// existing one. The same copy of the same card is therefore soft or hard depending solely on whether
+// a filter is attached; the "a copied card with a filter blanks the preview" report is this row.
+TEST(GuiStateReconcile, DuplicatingACardIsHardExactlyWhenItCarriesAFilter) {
+  struct Case {
+    const char* name;
+    std::initializer_list<std::pair<int, int>> entries;  // (crystal_id, filter_id), -1 = no filter
+    int dup_idx;
+    bool expect_hard;
+  };
+  const Case kCases[] = {
+    { "the only card, no filter", { { 0, -1 } }, 0, false },
+    { "the only card, filtered", { { 0, 0 } }, 0, true },
+    { "the filtered one of two", { { 0, 0 }, { 1, -1 } }, 0, true },
+    { "the unfiltered one of two", { { 0, 0 }, { 1, -1 } }, 1, false },
+  };
+
+  for (const Case& c : kCases) {
+    SCOPED_TRACE(c.name);
+    GuiState s;
+    s.layers.emplace_back();
+    AddEntries(s, c.entries);
+    s.last_committed_state = GuiState::ConfigSnapshot::From(s);
+    EXPECT_GE(gui::DuplicateEntryBelow(s, 0, c.dup_idx), 0);
+    const GuiEffects e = ReconcileGuiEffects(s);
+    EXPECT_TRUE(e.need_resim);
     EXPECT_EQ(e.need_hard_reset, c.expect_hard);
   }
 }
