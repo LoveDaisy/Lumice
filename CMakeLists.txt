@@ -1129,14 +1129,16 @@ if(BUILD_SHARED_LIBS AND NOT LUMICE_CUDA_ENABLED)
   # Standard bin/ + lib/ layout — deliberately not `lumice`'s DLL-at-the-prefix-root one, which
   # serves the release shell loading its engine from its own directory. This is a library for
   # other projects' builds (doc/analytic-api.md section 8.7 fixes these relative paths as a
-  # contract for non-CMake consumers).
+  # contract for non-CMake consumers). Every rule below is in the `analytic` component, so
+  # `cmake --install <build> --component analytic` installs exactly this package — from a tree
+  # that built only some targets (CI's windows-shared-export), or into a separate artifact.
   install(TARGETS lumice_analytic EXPORT LumiceAnalyticTargets
-    RUNTIME DESTINATION bin
-    LIBRARY DESTINATION lib
-    ARCHIVE DESTINATION lib)
+    RUNTIME DESTINATION bin COMPONENT analytic
+    LIBRARY DESTINATION lib COMPONENT analytic
+    ARCHIVE DESTINATION lib COMPONENT analytic)
   # This one header only, never the whole src/include/: lumice.h is not published, and a
   # consumer must not be able to compile both (doc/analytic-api.md section 2.6).
-  install(FILES "${PROJ_SRC_DIR}/include/lumice_analytic.h" DESTINATION include)
+  install(FILES "${PROJ_SRC_DIR}/include/lumice_analytic.h" DESTINATION include COMPONENT analytic)
 
   # ExactVersion: in 0.x no two interface versions are promised compatible (section 8.3), so a
   # request for any version other than the installed one is refused at configure time. Moving to
@@ -1153,11 +1155,13 @@ if(BUILD_SHARED_LIBS AND NOT LUMICE_CUDA_ENABLED)
   install(EXPORT LumiceAnalyticTargets
     FILE LumiceAnalyticTargets.cmake
     NAMESPACE Lumice::
-    DESTINATION lib/cmake/LumiceAnalytic)
+    DESTINATION lib/cmake/LumiceAnalytic
+    COMPONENT analytic)
   install(FILES
     "${CMAKE_CURRENT_BINARY_DIR}/LumiceAnalyticConfig.cmake"
     "${CMAKE_CURRENT_BINARY_DIR}/LumiceAnalyticConfigVersion.cmake"
-    DESTINATION lib/cmake/LumiceAnalytic)
+    DESTINATION lib/cmake/LumiceAnalytic
+    COMPONENT analytic)
 endif()
 
 

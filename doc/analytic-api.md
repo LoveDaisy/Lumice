@@ -785,6 +785,12 @@ lib/cmake/LumiceAnalytic/LumiceAnalyticConfigVersion.cmake
 lib/cmake/LumiceAnalytic/LumiceAnalyticTargets*.cmake
 ```
 
+All of these rules, and nothing else, are the install component `analytic`:
+`cmake --install <build> --component analytic --prefix <prefix>` produces exactly this tree, even
+from a build that compiled only some targets (a plain `cmake --install` installs it together with
+everything else the configure installs). CI runs that command on Linux, macOS and Windows (cl.exe
+and clang-cl) and checks the files are there (`e2e-slow`, `windows-shared-export`).
+
 A consumer's CMake:
 
 ```cmake

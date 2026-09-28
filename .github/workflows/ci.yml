@@ -1293,6 +1293,26 @@ jobs:
       - name: Build
         run: cmake --build build --parallel
 
+      # The analytic library's install rules and package config (root CMakeLists.txt,
+      # doc/analytic-api.md section 8.4) run nowhere else in CI: the tests below read the build
+      # tree. Installing the `analytic` component alone into a scratch prefix and checking the
+      # files it must produce turns a broken install rule into a red leg rather than a silent
+      # gap. Whether an outside project can then find_package and link it is the
+      # external-consumer smoke test's question, not this step's.
+      - name: Install analytic package (packaging smoke)
+        run: |
+          set -euo pipefail
+          cmake --install build --component analytic --prefix "$RUNNER_TEMP/analytic-install"
+          if [ "$RUNNER_OS" = "macOS" ]; then lib=lib/liblumice_analytic.dylib; else lib=lib/liblumice_analytic.so; fi
+          for f in include/lumice_analytic.h "$lib" \
+                   lib/cmake/LumiceAnalytic/LumiceAnalyticConfig.cmake \
+                   lib/cmake/LumiceAnalytic/LumiceAnalyticConfigVersion.cmake \
+                   lib/cmake/LumiceAnalytic/LumiceAnalyticTargets.cmake; do
+            test -f "$RUNNER_TEMP/analytic-install/$f" || { echo "::error::analytic install is missing $f"; exit 1; }
+          done
+          test ! -e "$RUNNER_TEMP/analytic-install/include/lumice.h" || { echo "::error::lumice.h was installed with the analytic package"; exit 1; }
+          find "$RUNNER_TEMP/analytic-install" -type f | sort
+
       - name: Setup Python
         uses: actions/setup-python@v7
         with:
@@ -1305,7 +1325,8 @@ jobs:
         # CLI-based Darwin slow gates (test_metal_throughput, test_metal_batch_invariance
         # exit-conservation) drive the `Lumice` CLI via runner.find_lumice_binary(), which
         # looks for build/cmake_install/static/Lumice or $LUMICE_BIN. This shared-lib build does
-        # not install, so point LUMICE_BIN at the build-tree binary (its build-tree rpath
+        # not install the CLI (the packaging step above installs only the analytic component,
+        # into a scratch prefix), so point LUMICE_BIN at the build-tree binary (its build-tree rpath
         # resolves liblumice; DYLD/LD_LIBRARY_PATH set as a belt-and-suspenders fallback).
         # No-op on legs where the binary is absent. (The parity leg uses the shared lib via
         # capi_runner and is unaffected; the Ubuntu leg has no CLI-based slow tests.)
@@ -1439,6 +1460,32 @@ jobs:
       # covers), so building them here would only add Windows CI time for no new signal.
       - name: Build
         run: cmake --build build --target Lumice --target lumice_testapi --target lumice_analytic --target unit_correctness_test --parallel
+
+      # Same packaging smoke as e2e-slow's, for the DLL + import library layout (bin/ + lib/).
+      # `--component analytic` matters here: this leg builds named targets only, and a plain
+      # install would also run the install rules of targets it never built.
+      - name: Install analytic package (packaging smoke)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $prefix = Join-Path $env:RUNNER_TEMP 'analytic-install'
+          cmake --install build --component analytic --prefix $prefix
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $expected = @('include/lumice_analytic.h', 'bin/lumice_analytic.dll', 'lib/lumice_analytic.lib',
+                        'lib/cmake/LumiceAnalytic/LumiceAnalyticConfig.cmake',
+                        'lib/cmake/LumiceAnalytic/LumiceAnalyticConfigVersion.cmake',
+                        'lib/cmake/LumiceAnalytic/LumiceAnalyticTargets.cmake')
+          foreach ($f in $expected) {
+            if (-not (Test-Path (Join-Path $prefix $f) -PathType Leaf)) {
+              Write-Output "::error::analytic install is missing $f"
+              exit 1
+            }
+          }
+          if (Test-Path (Join-Path $prefix 'include/lumice.h')) {
+            Write-Output "::error::lumice.h was installed with the analytic package"
+            exit 1
+          }
+          Get-ChildItem -Recurse -File $prefix | ForEach-Object { $_.FullName }
 
       - name: Setup Python
         uses: actions/setup-python@v7
