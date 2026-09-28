@@ -136,21 +136,17 @@ it was thinking of and false of the C struct beside it.
 ## [4.7.1] - 2026-09-28
 
 ### Added
-- **C API: `LUMICE_API_VERSION` 446 → 449** (#429, #430, #436). `LUMICE_GetCrystalSymmetry` /
-  `LUMICE_CrystalSymmetry` (v4.47) is a pure append: which of the P/B/D symmetry elements a
-  crystal's *shape* actually has (a prism with unequal alternating face distances has a
-  three-fold axis, not a six-fold one), for shape-aware hints in the GUI. **ABI** (v4.48):
-  `LUMICE_CrystalSymmetry` gains trailing `p_effective` / `b_effective` (sizeof 16 → 24) —
-  appended after `d_effective`, so no existing field moves; the struct itself was introduced
-  this same cycle by v4.47 above, so no 4.7.0 consumer has ever seen it, and this is not
-  written as a Breaking change. Added alongside: `LUMICE_CouldCrystalHaveFace` (can a filter
-  naming this face ever match through it, given the crystal's shape) and `LUMICE_IsPApplicable`
-  / `LUMICE_IsBApplicable`, the orientation-ensemble counterparts of the existing
-  `LUMICE_IsDApplicable`. **v4.49**: `LUMICE_CouldFilterMatchFace` (the face check above,
-  combined with a filter's own P/B/D) and `LUMICE_ExpandRaypathClass` with its
-  `LUMICE_SYMMETRY_SEMANTICS_*` / `LUMICE_MAX_RAYPATH_CLASS_MEMBERS` constants — the one way to
-  tell whether an analysis row is also a label class, which **Exclude this raypath** uses to
-  write a filter that removes exactly that row's members.
+- **C API: `LUMICE_API_VERSION` 446 → 449** (#429, #430, #436) — new functions only, nothing
+  existing changed. `LUMICE_GetCrystalSymmetry` / `LUMICE_CrystalSymmetry`: which of the P/B/D
+  symmetry elements a crystal's *shape* actually has (a prism with unequal alternating face
+  distances has a three-fold axis, not a six-fold one). `LUMICE_IsPApplicable` /
+  `LUMICE_IsBApplicable`: the orientation-ensemble counterparts of the existing
+  `LUMICE_IsDApplicable`. `LUMICE_CouldCrystalHaveFace` / `LUMICE_CouldFilterMatchFace`: whether a
+  filter naming a face can ever match through it on this crystal (the latter with the filter's own
+  P/B/D taken into account). `LUMICE_ExpandRaypathClass` with its `LUMICE_SYMMETRY_SEMANTICS_*` /
+  `LUMICE_MAX_RAYPATH_CLASS_MEMBERS` constants: the members of a raypath's label or physical
+  class, which **Exclude this raypath** uses to write a filter that removes exactly one analysis
+  row's members.
 
 ### Changed
 - **The raypath-analysis list now groups rows by physical symmetry class; a filter's P/B/D
@@ -180,13 +176,16 @@ it was thinking of and false of the C struct beside it.
   black/white where it did not before.
 
 ### Fixed
-- **The `adaptive` ray-allocation mode no longer starves a filtered arc that is small in total
-  output but visually concentrated** (#435). Online Neyman allocation could drive a filtered
-  entry's ray share so low that its one visible arc turned visibly noisier than the rest of the
-  image — measured on a Parry-arc scene at 2.5× the proportional-mode noise on that arc. Each
-  entry's allocation now floors at half its proportional share (`q_i >= p_norm_i / 2`); the
-  Parry arc above drops to 0.455× its previous noise. This is a pre-existing v4.7.0 behavior, not
-  a regression introduced by this release.
+- **The `adaptive` ray-allocation mode no longer starves a filtered crystal whose output is small
+  in total but concentrated in one visible arc** (#435). Example: a layer with a randomly oriented
+  column and a Parry-oriented column filtered to `3-5`, equal proportions. Adaptive (Neyman)
+  allocation gave the filtered entry so few rays that the Parry arc came out 2.1–2.6× noisier than
+  under `proportional`, visibly grainier than the rest of the image. Each entry's allocation now
+  floors at half its proportional share (`q_i >= p_norm_i / 2`), which brings the arc back to
+  1.1–1.2× the `proportional` noise; the price on that scene is about 11% more noise on the random
+  column's halos, which the floor takes rays from. Scenes where no entry hits the floor allocate
+  exactly as before. The starvation dates from when `adaptive` was introduced (v4.6.0), not from
+  this release.
 - **Duplicating a crystal card that carries a filter no longer blanks the whole preview after a
   finished run** (#440). Any edit that structurally changes the committed scene (Duplicate on a
   filtered entry is one way to trigger it) used to zero the displayed frame's intensity
