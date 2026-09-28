@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1790588100179,
+  "lastUpdate": 1790588102243,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9524,50 +9524,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "d57f132dc2f546ad001a215fb28d6c917bddabf4",
-          "message": "Merge pull request #340 from LoveDaisy/docs/working-discipline-hardening\n\ndocs+hooks: harden two working-discipline rules into criteria and a commit gate",
-          "timestamp": "2026-09-10T18:06:39+08:00",
-          "tree_id": "1e03b6ab5fd5688bd565295581883fc4c9690d85",
-          "url": "https://github.com/LoveDaisy/ice_halo_sim/commit/d57f132dc2f546ad001a215fb28d6c917bddabf4"
-        },
-        "date": 1789035357696,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 86.7,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 100,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 94.6,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 90.8,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "37b141504a40cc0be937f0d5bf071fef24759171",
           "message": "Merge pull request #341 from LoveDaisy/test/defaults-panel-refs-reshoot\n\ntest(gui): pin the wedge add row in every preset scene, and re-shoot the two that were not",
           "timestamp": "2026-09-10T18:49:54+08:00",
@@ -13867,6 +13823,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 91.9,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "e6d934376e48fc8fc854f3d4f4a866d325bcd3bd",
+          "message": "Merge pull request #441 from LoveDaisy/scrum/lumice-shared-lib-foundation\n\nPublish-ready shared library foundation: liblumice_analytic, per-library export lists, packaging",
+          "timestamp": "2026-09-28T17:16:31+08:00",
+          "tree_id": "d9f2f2216737e9645bf134e5c5a1d6d6b8628eca",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/e6d934376e48fc8fc854f3d4f4a866d325bcd3bd"
+        },
+        "date": 1790588101689,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 87.2,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 99.7,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 97.4,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 94,
             "unit": "%"
           }
         ]
