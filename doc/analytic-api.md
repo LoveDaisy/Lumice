@@ -1,16 +1,18 @@
 # `liblumice_analytic`: the published analytic interface
 
-> Status: **partly built** (2026-09-28). As built: the target and its per-library export list
+> Status: **partly built** (2026-09-29). As built: the target and its per-library export list
 > (§2.5), logging handed to the host (§6), and packaging with a `find_package` config plus the
 > version policy (§8), and an external-consumer smoke test that builds a C program and loads the
-> library from Python using the install tree alone (§8.7). Not built yet: the first real module
-> (single-path inversion + fiber walk, §4), which lands with the Analyze workspace's first phase
-> (`doc/raypath-analysis.md` §5.1.8). Until that module exists the library is not in any download
-> package (§8.8).
+> library from Python using the install tree alone (§8.7); and the first function of the first
+> module, `LUMICE_ANALYTIC_EvaluatePath` (§4.3, header version 2), with its precision (§5.4) and
+> thread-safety (§5.3) decisions. Not built yet: seed search and fiber continuation (§4), which
+> land with the Analyze workspace's first phase (`doc/raypath-analysis.md` §5.1.8). Until that
+> module is complete the library is not in any download package (§8.8).
 >
 > Every decision below is marked either **(owner)** — ruled by the owner on 2026-09-28, not open
 > for re-derivation — or **(design)** — this document's own judgement, open to the owner's review.
-> The header in §4.5 is a draft for review; it is not a file in the tree.
+> The header in §4.5 is a draft for review; it is not a file in the tree. Its `EvaluatePath` part
+> is now in `src/include/lumice_analytic.h` (§4.5 lists what the built header adds).
 
 Related: `doc/api-layering-and-product-lines.md` (why a new narrow interface and not
 `lumice.h`; §8 is the 2026-09-28 update), `doc/raypath-analysis.md` §5.1.6 (repository roles and
@@ -244,7 +246,8 @@ only ever sees one concrete sequence.
 
 ## 4. First module: single-path inversion + fiber walk
 
-Signatures and data conventions only; there is no implementation. Sources: LI
+`EvaluatePath` is built (§4.3–§4.5, `src/analytic/`); the fiber functions are signatures and data
+conventions only. Sources: LI
 `docs/phase1-math-contract.md` §9 (the backend-independent `FiberProblem` / `ContinuationOptions`
 / `FiberResult` semantics and the §9.4 status/reason table), LI `docs/conventions.md` (rows 1–8,
 16–21), and the fiber computation of `doc/prototypes/analyze-workspace.html` (the panel's
@@ -281,6 +284,19 @@ legality rules); the header does not restate them.
   yield an open surface and pass `IsValidClosedFormPyramid`. This is a backlog item the owner
   decided not to pick (2026-09-04); no user-configurable shape has been seen to hit it. No extra
   gate is added.
+- **As built: which faces exist is the engine's float decision; normals are double.** The
+  evaluator builds the crystal with the simulator's own factory (`Crystal::CreatePrism` /
+  `CreatePyramid`, float arguments), so face presence and the validity gate are exactly those of a
+  simulated crystal — including the gate's warning, which reaches the log callback (§6). Face
+  normals are then taken in double from the same per-slot plane formula (§5.4). A face number the
+  crystal does not have (unknown, or absent from this shape — `13`–`18` without an upper cone) is
+  `ERR_INVALID_VALUE` when named in a path, as LI's `normalize_faces` raises for it. Heights fold to
+  their absolute value, as the simulator folds them.
+- **Degradation as data (§9 item 9): not in v0.** A dropped face is visible only as that face
+  number being rejected; an apex collapse is invisible in the result (it changes no face normal,
+  only which faces exist and where). Both are still logged. A result field for it belongs with the
+  wave-2 diagnostics extension (§4.3, §10), where `TraceFiber`'s result gains its `struct_size`
+  fields; `PathEvaluation` can take the same field then.
 
 ### 4.2 Path, directions, pose **(design)**
 
@@ -324,6 +340,34 @@ and be refined progressively, which is not an interaction blocker (§9 item 1).
 - **`LUMICE_ANALYTIC_TraceFiber` / `TraceFiberBatch`** — continuation along the fiber from a seed:
   accepted poses, crystal-frame sun directions, arclength increments, residual norms, tangents,
   and a `status`/`reason` pair.
+
+**`EvaluatePath` as built** (`src/analytic/path_evaluation.{hpp,cpp}`; the C wrapper in `analytic_api.cpp`). The
+kernel has two stages, split by cost and by the kind of failure each can report:
+`BuildFaceNormals` once per crystal (validation, the engine's factory, a fixed-size table of
+double normals by slot — the only stage that can say `ERR_INVALID_CONFIG`), and `EvaluatePath` per
+pose (no allocation, no crystal construction, returns only `valid`). Continuation and seed search
+call the kernel, not the C function, so a fiber pays for the crystal once and never allocates per
+point. `valid` gates exactly LI's `validity_margin_names` with LI's margin expressions (entry
+incidence cosine and Snell discriminant, each internal face's incidence cosine, exit incidence
+cosine and Snell discriminant, all `> 0`); an internal TIR discriminant gates nothing. Validity is
+direction-level: whether the ray at that pose meets the faces' finite polygons is not checked —
+LI's evaluator does not check it either, and the fiber problem is a direction-level one. When
+`valid` is 0 the call succeeds with directions, transmittances and `segment_count` zero and both
+pointers NULL. Input checks use LI's reference tolerances (`unit_tolerance` = `rotation_tolerance`
+= `1e-10`, LI `docs/phase1-math-contract.md`): the incident direction's length within `1e-10` of 1,
+`RᵀR` within `1e-10` of `I` entrywise and `det R > 0`.
+
+Checked by: `test/unit-correctness/analytic/test_path_evaluation.cpp` (physics restated
+independently — normals from the wedge geometry, Snell as a sine ratio, Fresnel in `r_s`/`r_p`
+form, reversed-path reciprocity, both TIR cases, each validity gate, concurrency — plus agreement
+with the simulator's float `HitSurface` chain and four pins from LI's float64 evaluator);
+`test/e2e-correctness/test_analytic_evaluate_path.py` (the C ABI: codes, zero-fill, storage,
+the warning path); the external-consumer smoke test (one call from the install tree, C and
+ctypes). One-time comparison with LI's `parity_export.evaluate_path` while writing it: 24000
+random poses over six (crystal, path) pairs — prisms `3-5`, `3-5-6-7`, a pyramid `13-15-26-28`,
+an irregular pyramid (unequal cones, unequal `face_distance`) `13-25`, `3-1-26`, `13-6-24` — no
+validity mismatch, largest deviation 0.054 of LI's per-pose `kinematic_atol` (itself `1e-12`,
+widened near a Snell boundary). The standing check is the parity fixtures LI exports (§10).
 
 **Batch shape.** LI's heavy use is one path swept over many targets (pixels or sample points)
 with the crystal, the path and the sun fixed. The batch call takes one crystal and one options
@@ -574,6 +618,16 @@ the first real module lands. Not from LI: the leading `struct_size` of the two c
 result structs, which lets a later version append a field without a version bump (§8.2; the
 draft's `#include <stdint.h>` is implied).
 
+**What the built header changes against this draft** (`src/include/lumice_analytic.h`, version 2).
+The `ErrorCode`, `CrystalKind`, `Crystal`, `PathEvaluation`, `EvaluatePath` and
+`ReleasePathEvaluation` declarations carry the draft's types, fields, order and signatures
+unchanged. What was added: the `LUMICE_ANALYTIC_API` marker on each function (§2.5); an explicit
+`#include <stdint.h>`; the version-note block (§8.1); and the contract comments this draft left to
+§4.3 — when `valid` is 0 and what the result holds then, which inputs are `ERR_INVALID_VALUE` with
+their tolerances, that a face absent from the crystal's shape is one of them, and that a prism's
+unused fields must be zero. The draft's `LUMICE_ANALYTIC_API_VERSION 1` above is the draft's own
+number, not the built one.
+
 ---
 
 ## 5. Conventions, errors, threading **(design)**
@@ -599,8 +653,8 @@ are never error codes; they are `status`/`reason` (§4.4).
 ### 5.3 Thread safety and re-entrancy
 
 - The computation functions (`EvaluatePath`, `TraceFiber`, `TraceFiberBatch`, the `Release*`
-  functions) are **intended to be re-entrant and safe to call concurrently** on distinct outputs,
-  pending the verification in the third bullet below. They hold no mutable state between calls
+  functions) are **re-entrant and safe to call concurrently** on distinct outputs (third bullet:
+  verified for the code `EvaluatePath` reaches; the fiber functions must re-check any new callee). They hold no mutable state between calls
   themselves, and the library **starts no threads** of its own.
 - `SetLogCallback` writes process-wide state (the sink and the callback pointer). It is an
   initialisation call: made once, before computation, from one thread. The same holds for
@@ -608,9 +662,17 @@ are never error codes; they are `status`/`reason` (§4.4).
   static flag (`src/server/c_api.cpp:127-139`); the analytic library's registration is a
   function-local static initialiser, so concurrent first calls cannot attach its sink twice, and
   the callback pointer is swapped under the sink's own lock.
-- **To verify during implementation, not verified here**: that the closed-form geometry and optics
-  code the module will call (`geo3d_closedform.cpp`, `crystal.cpp`, `optics.cpp`) holds no
-  thread-unsafe function-local cache. The re-entrancy promise is conditional on that check.
+- **Verified (as built, 2026-09-29)**: the code `EvaluatePath` reaches holds no mutable static
+  state. Its call graph is `src/analytic/path_evaluation.cpp` → `Crystal::CreatePrism` /
+  `CreatePyramid` (`crystal.cpp`: the closed-form factory, `DeriveGeometricSymmetry`,
+  `PopulateFromCfGeom`) → `geo3d_closedform.cpp`, plus `optics_shared.h`'s header-only Fresnel and
+  the logger on the warning path. None of `geo3d_closedform.cpp`, `crystal.cpp`, `optics.cpp`,
+  `geo3d.cpp`, `math.cpp` has a function-local `static` variable or a `thread_local`; the logger's
+  statics (`util/logger.hpp`) are magic-static singletons, whose initialisation C++11 makes
+  thread-safe, and spdlog's sinks lock internally. Each call builds its own `Crystal` and table on
+  the stack or heap and shares nothing. Pinned by
+  `PathEvaluationConcurrency.ConcurrentCallsMatchSerialResults` (eight threads, each building the
+  crystal and evaluating, bit-identical to a serial run).
 - "Links all of `lumice_obj`" does not mean "goes through the simulator". The module calls the
   closed-form geometry and optics directly; it must not route through `Simulator`, the worker
   pool or the RNG infrastructure just because they are linked in. Those carry threads and state
@@ -620,11 +682,52 @@ are never error codes; they are `status`/`reason` (§4.4).
 
 The ABI is `double` throughout, because continuation's residual tolerances are set in double. The
 engine's existing closed-form geometry takes `float` (`ComputeClosedFormPrism(float h, const float
-dist[6])`, `geo3d_closedform.hpp:195`), and its optics runs in `float` for the MC hot loop. Whether
-the module reuses those kernels, promotes them, or evaluates its own path in double is the
-implementation's decision, bound by one criterion: the reference tolerances in the options must be
-achievable, demonstrated against LI's float64 evaluator. `doc/numerical-robustness.md` already
-asks for double precision in geometry generation.
+dist[6])`), and its optics runs in `float` for the MC hot loop. Whether the module reuses those
+kernels, promotes them, or evaluates its own path in double is the implementation's decision,
+bound by one criterion: the reference tolerances in the options must be achievable, demonstrated
+against LI's float64 evaluator. `doc/numerical-robustness.md` already asks for double precision in
+geometry generation.
+
+**As built (2026-09-29): one source, two precisions.** Three options were on the table: (a) make
+the existing closed-form geometry and optics precision-parametric, float for the simulator and
+double for this library; (b) call the float code and promote its results; (c) write a separate
+double path. (c) would put a second implementation of a primitive in this repository, against the
+sharing criterion of `doc/raypath-analysis.md` §5.1.6, and was only admissible if (a) and (b)
+were both excluded by evidence.
+
+- **(b) is excluded by measurement.** LI's float64 evaluator with each face normal rounded to
+  float32 — a lower bound on (b)'s error, since the engine's pyramid normals also carry the float
+  constants of the slope — against the same evaluator with exact normals, 300 valid poses per
+  path, `n = 1.31`: prism `3-5` 3.1e-7, prism `3-5-6-7` 6.2e-7, pyramid 28° `13-15-26-28` 9.7e-7
+  largest outgoing-direction deviation. The requirement is LI's `kinematic_atol` = `1e-12` (and
+  continuation's default residual tolerance, `1e-11`): (b) misses it by five to six orders.
+- **(a) is what is built**, and in three places only, because a path evaluation needs face
+  normals and a Fresnel factor and nothing else of the geometry:
+  1. The cone slope `a = (√3/4) / tan(wedge)` — `ClosedFormConeSlopeFromWedgeDeg<Real>`
+     (`geo3d_closedform.{hpp,cpp}`): the template parameter is the precision of the two constants;
+     the float instance is the expression the simulator always evaluated.
+  2. The per-slot face plane `(a, b, c, d)` — `ClosedFormHexFacePlane`, double. The simulator's
+     pyramid rounds it to float and normalises its `face_normal` from the rounded values (its
+     historical order, kept); this library normalises the unrounded values, for a prism's slots
+     0–7 as well. (The simulator's prism takes its normals from the `kHexFace*` direction tables
+     instead; the two derivations agree to within an ulp, and the unit test holds the library's
+     normals to the star directions at `1e-15`.)
+  3. The Fresnel reflectance — `GetReflectRatioT<T>` in `core/shared/optics_shared.h`, the
+     single-source header Metal, CUDA and the host trace share. `GetReflectRatio(float, float)`
+     stays the wrapper every backend calls; the double instance exists on the host only.
+  The float instances are unchanged to the bit: a hash over 72056 closed-form prism and pyramid
+  results (every field) and `GetReflectRatio` outputs is identical before and after, a seeded
+  render of two pyramid configurations is byte-identical, and the Metal shader compiles with the
+  templated header.
+- **What stays outside a shared primitive.** The refraction *vector* (`rr·d + (rr·cos − √disc)·n`)
+  has no single-source helper in this tree today — the host `HitSurface`, the Metal kernel and the
+  CUDA kernel each inline it. The evaluator writes it in LI's `refract_smooth` form, with LI's
+  margin expressions, so its validity boundaries are LI's. It is cross-checked against the
+  simulator by a unit test that runs the float `HitSurface` chain on the same crystal and path
+  (agreement to float precision), and against LI by the parity fixtures.
+- **Face presence stays float** (§4.1): the engine's float closed form decides which faces exist,
+  as for a simulated crystal. Only on a knife-edge input where a face appears or vanishes between
+  float and double geometry could that differ from LI, which decides it in double.
 
 ---
 
@@ -641,8 +744,8 @@ routed to the global logger, which forwards to the process-wide shared sink):
 | Where | When |
 |---|---|
 | `src/core/crystal.cpp:361`, `:412` | a prism or pyramid fails the closed-form validity gate and is treated as degenerate (empty crystal) |
-| `src/core/geo3d_closedform.cpp:1003` | a pyramid cone has no cross-section at the requested inset; it is degraded to its apex point |
-| `src/core/geo3d_closedform.cpp:1226` | pyramid face slots keep fewer than 3 vertices and are dropped, leaving the surface open |
+| `src/core/geo3d_closedform.cpp:1054` | a pyramid cone has no cross-section at the requested inset; it is degraded to its apex point |
+| `src/core/geo3d_closedform.cpp:1277` | pyramid face slots keep fewer than 3 vertices and are dropped, leaving the surface open |
 | `src/core/geo3d.cpp:417`, `:510` | the legacy coefficient path finds a zero-volume crystal or an empty pyramid region |
 
 Today these reach the default `stderr` console sink that every engine binary inherits
@@ -663,7 +766,14 @@ of them into silence. Two consequences for the design:
 
 If the module is later extended to call code beyond the closed-form geometry and optics (for
 example a higher-level crystal factory), this table must be re-checked; it describes the call
-graph planned today.
+graph planned today. **Re-checked for `EvaluatePath` (2026-09-29)**, which does go through the
+crystal factory (`Crystal::CreatePrism` / `CreatePyramid`, §4.1): the factory's own warnings are
+the two `crystal.cpp` rows above, and `DeriveGeometricSymmetry` / `PopulateFromCfGeom` log nothing;
+the `geo3d.cpp` rows are the legacy path, which the factory no longer takes. Not a log line and not
+silenceable: the closed-form evaluator's overflow guards (`FatalAbort` on a vertex-pool or
+face-polygon overflow, `geo3d_closedform.cpp`) print to stderr and abort the process, as they do in
+every engine binary. They guard bounds a 2M-sample fuzz stays well inside; reaching one is an
+engine bug, not an input the library could report.
 
 **As built.** `src/util/logger.hpp` names the console sink (`GetDefaultConsoleSink()`), which
 `GetSharedSink()` still attaches by default — so `liblumice`, `liblumice_testapi`, the CLI and the
@@ -678,9 +788,10 @@ line is what makes the silence testable at the library boundary — it must reac
 not stderr (`test/e2e-correctness/test_analytic_log_sink.py`). The warning-level path (a
 `LOG_WARNING` silent without a callback, delivered at `LUMICE_ANALYTIC_LOG_WARNING` with its text
 intact) is pinned in-process by
-`test/unit-correctness/util/test_logger_default_console_sink_removable.cpp`, because no function
-of the library can warn yet; driving a real crystal warning through the library is the first
-module's test to write.
+`test/unit-correctness/util/test_logger_default_console_sink_removable.cpp`, and end to end by
+`test/e2e-correctness/test_analytic_evaluate_path.py`: a crystal the closed-form gate rejects,
+passed to `EvaluatePath`, returns `ERR_INVALID_CONFIG`, its gate warning arrives at the callback
+at `LUMICE_ANALYTIC_LOG_WARNING`, and the child's stderr stays empty.
 
 There is **one** receiver: a second `SetLogCallback` replaces the first, and there is no per-level
 filter or fan-out. That is sufficient for a host that owns the process; several independent
@@ -921,11 +1032,11 @@ functions. The first real module's work opens this list. **The state described h
 | 6 | ~~Callback forwarding implementation; removing the console sink only in this library.~~ **Answered** — see §6 (as built): `GetDefaultConsoleSink()` removed at load time in `src/analytic/analytic_api.cpp`, `AnalyticCallbackSink` attached by `LUMICE_ANALYTIC_SetLogCallback`. | The log-sink work (done) |
 | 7 | ~~External consumer smoke test (C + Python ctypes, install tree only), with `symmetry_semantics` in any fixture.~~ **Answered** — see §8.7 (as built): `test/e2e-correctness/test_external_consumer_smoke.py` + `external_consumer_smoke/`, consuming the prefix named by `LUMICE_ANALYTIC_INSTALL_DIR`; it compares no face sequence and says so, `symmetry_semantics: none`, in its docstrings (§3.3 rule 2). | The external-consumer smoke test (done) |
 | 8 | ~~Does `FiberResult` need LI §9.3's diagnostics and the entry cross-section `A_P`?~~ **Answered** — two steps (author, 2026-09-28): v0 returns the point list only; diagnostics + weights enter in wave 2 as a `struct_size`-compatible extension, once LI's explore `fiber-diagnostics-contract` has converged (§4.3, §10). | Author and owner, 2026-09-28 |
-| 9 | Surface crystal *degradation* (apex collapse, dropped face) as result data, not only as a log line (§6). | The first-module implementation |
+| 9 | ~~Surface crystal *degradation* (apex collapse, dropped face) as result data, not only as a log line (§6).~~ **Answered for v0** — not surfaced: a dropped face shows only as that face number being rejected, an apex collapse only in the log. A result field for it goes with the wave-2 diagnostics extension (§4.1). | The first-module implementation (`EvaluatePath`, 2026-09-29) |
 | 10 | Parallelism inside `TraceFiberBatch` (v0: none; caller parallelises). Revisit only with a measured batch where binding-side threading is the bottleneck. | The first-module implementation |
 | 11 | Re-read LI `docs/phase1-math-contract.md` §9 before implementing: this draft mirrors it as of 2026-09-28, and LI's §12 lists open items that may move it. LI's §9.1 also says problem construction "MUST not import or invoke Lumice" — a rule LI revises on its side when it adopts this library. | The first-module implementation (and LI, on adoption) |
 | 12 | ~~Whether `PathEvaluation`/`FiberResult` should carry a `struct_size`/version field (Win32 `cbSize`, Vulkan `sType`+`pNext` are existing patterns) so a future field addition would not need an `LUMICE_ANALYTIC_API_VERSION` bump (§8).~~ **Answered** — yes: a leading `uint32_t struct_size`, the Win32 `cbSize` pattern (§4.5 draft, rules in §8.2). | The packaging and version-policy work (done) |
-| 13 | Verify no thread-unsafe static cache in the called geometry/optics code (§5.3). | The first-module implementation |
+| 13 | ~~Verify no thread-unsafe static cache in the called geometry/optics code (§5.3).~~ **Answered** — none on `EvaluatePath`'s call graph; pinned by a concurrency test (§5.3). | The first-module implementation (`EvaluatePath`, 2026-09-29) |
 | 14 | An optional batch-mode `FiberResult` variant that also returns per-point segment directions and interface transmittances (today only `EvaluatePath` returns those, §4.3), for a caller with many accepted poses who would otherwise pay one ctypes call per point to get them — in tension with §4.3's own binding-overhead concern. | The first-module implementation |
 
 ---

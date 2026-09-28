@@ -10,12 +10,11 @@ the engine's global logger when a callback is installed. That line is the observ
 must arrive at the host's callback, at LUMICE_ANALYTIC_LOG_INFO, and must not appear on the
 child's stderr — so a deleted or link-stripped silencing object goes red, and so does a callback
 sink that never got attached. Loading and calling without a callback must leave stderr empty too.
-It does NOT drive a real engine warning (crystal.cpp, geo3d_closedform.cpp) through the library,
-because the library exposes no function that can warn yet; that end-to-end path belongs to the
-first module that calls the crystal code. The warning-level half of the mechanism — LOG_WARNING
-silent once the console sink is removed, delivered at LUMICE_ANALYTIC_LOG_WARNING with its text
-intact — is pinned in-process by
-test/unit-correctness/util/test_logger_default_console_sink_removable.cpp.
+It does NOT drive a real engine warning (crystal.cpp, geo3d_closedform.cpp) through the library;
+test_analytic_evaluate_path.py does, with a crystal LUMICE_ANALYTIC_EvaluatePath hands to the
+closed-form gate. The warning-level half of the mechanism — LOG_WARNING silent once the console
+sink is removed, delivered at LUMICE_ANALYTIC_LOG_WARNING with its text intact — is also pinned
+in-process by test/unit-correctness/util/test_logger_default_console_sink_removable.cpp.
 
 Needs a shared build (`./scripts/build.sh -sj release`); skipped when there is none, or in a CUDA
 configure, which does not produce the library. Free of test/e2e's helpers and of numpy/Pillow, like

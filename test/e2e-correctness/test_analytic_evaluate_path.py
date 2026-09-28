@@ -230,3 +230,15 @@ def test_rejected_crystal_warning_reaches_the_callback_not_stderr() -> None:
         """
     )
     assert proc.stderr == "", proc.stderr
+
+
+def test_rejected_crystal_without_callback_writes_nothing() -> None:
+    proc = _run_child(
+        """
+        c = prism()
+        c.face_distance[3] = -1.0
+        rc, out = call(c, [3, 5])
+        assert rc == INVALID_CONFIG, rc
+        """
+    )
+    assert proc.stderr == "", proc.stderr
