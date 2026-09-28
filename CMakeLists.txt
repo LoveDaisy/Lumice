@@ -1079,7 +1079,9 @@ endif()
 #     configuration it ships in; MinSizeRel matches what `lumice` does there.
 #   - the ISA tier is a property of the configure it is produced from (2.4): publish it from
 #     -DLUMICE_ISA_LEVEL=baseline, never from the local default `native`. Not enforced here.
-# Not installed yet: packaging is its own piece of work; the build tree is where tests find it.
+# Installed with a CMake package config, so an outside project finds it with
+# find_package(LumiceAnalytic <version>) and links Lumice::lumice_analytic (doc/analytic-api.md
+# section 8.4). Tests in this tree still load it from the build tree.
 if(BUILD_SHARED_LIBS AND NOT LUMICE_CUDA_ENABLED)
   add_library(lumice_analytic SHARED "${PROJ_SRC_DIR}/analytic/analytic_api.cpp")
   target_link_libraries(lumice_analytic PRIVATE lumice_obj)
@@ -1106,6 +1108,56 @@ if(BUILD_SHARED_LIBS AND NOT LUMICE_CUDA_ENABLED)
   if(WIN32)
     target_compile_definitions(lumice_analytic INTERFACE LUMICE_ANALYTIC_SHARED_DEFINE)
   endif()
+
+  # The target's own include interface. The engine's include directories reach it only through
+  # the PRIVATE link to lumice_obj, which a consumer never sees; install(EXPORT) needs a path that
+  # is relative to the install prefix, not this checkout's absolute source path.
+  target_include_directories(lumice_analytic PUBLIC
+    $<BUILD_INTERFACE:${PROJ_SRC_DIR}/include>
+    $<INSTALL_INTERFACE:include>)
+
+  # The package version IS the header's LUMICE_ANALYTIC_API_VERSION, read from the header rather
+  # than written a second time here: one counter, so the version a consumer's find_package
+  # accepts cannot drift from the one LUMICE_ANALYTIC_GetApiVersion() reports.
+  file(STRINGS "${PROJ_SRC_DIR}/include/lumice_analytic.h" _analytic_version_line
+    REGEX "^#define LUMICE_ANALYTIC_API_VERSION [0-9]+$")
+  string(REGEX MATCH "[0-9]+$" LUMICE_ANALYTIC_API_VERSION "${_analytic_version_line}")
+  if(NOT LUMICE_ANALYTIC_API_VERSION)
+    message(FATAL_ERROR "Could not parse LUMICE_ANALYTIC_API_VERSION from lumice_analytic.h")
+  endif()
+
+  # Standard bin/ + lib/ layout — deliberately not `lumice`'s DLL-at-the-prefix-root one, which
+  # serves the release shell loading its engine from its own directory. This is a library for
+  # other projects' builds (doc/analytic-api.md section 8.7 fixes these relative paths as a
+  # contract for non-CMake consumers).
+  install(TARGETS lumice_analytic EXPORT LumiceAnalyticTargets
+    RUNTIME DESTINATION bin
+    LIBRARY DESTINATION lib
+    ARCHIVE DESTINATION lib)
+  # This one header only, never the whole src/include/: lumice.h is not published, and a
+  # consumer must not be able to compile both (doc/analytic-api.md section 2.6).
+  install(FILES "${PROJ_SRC_DIR}/include/lumice_analytic.h" DESTINATION include)
+
+  # ExactVersion: in 0.x no two interface versions are promised compatible (section 8.3), so a
+  # request for any version other than the installed one is refused at configure time. Moving to
+  # SameMajorVersion is part of the 1.0 graduation (section 8.6), not before.
+  include(CMakePackageConfigHelpers)
+  write_basic_package_version_file(
+    "${CMAKE_CURRENT_BINARY_DIR}/LumiceAnalyticConfigVersion.cmake"
+    VERSION "${LUMICE_ANALYTIC_API_VERSION}"
+    COMPATIBILITY ExactVersion)
+  configure_package_config_file(
+    "${CMAKE_SOURCE_DIR}/cmake/LumiceAnalyticConfig.cmake.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/LumiceAnalyticConfig.cmake"
+    INSTALL_DESTINATION lib/cmake/LumiceAnalytic)
+  install(EXPORT LumiceAnalyticTargets
+    FILE LumiceAnalyticTargets.cmake
+    NAMESPACE Lumice::
+    DESTINATION lib/cmake/LumiceAnalytic)
+  install(FILES
+    "${CMAKE_CURRENT_BINARY_DIR}/LumiceAnalyticConfig.cmake"
+    "${CMAKE_CURRENT_BINARY_DIR}/LumiceAnalyticConfigVersion.cmake"
+    DESTINATION lib/cmake/LumiceAnalytic)
 endif()
 
 
