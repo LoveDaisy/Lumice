@@ -1,56 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1790594373042,
+  "lastUpdate": 1790598759291,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "f860acc46471dee85057842a8611895cea64b88d",
-          "message": "Merge pull request #343 from LoveDaisy/feat/gui-print-mode-label-ink\n\nfix(gui): draw overlay label text as ink under the print tone",
-          "timestamp": "2026-09-10T20:57:53+08:00",
-          "tree_id": "f3daf403c69c5adec882772328d1a77ec96a9215",
-          "url": "https://github.com/LoveDaisy/ice_halo_sim/commit/f860acc46471dee85057842a8611895cea64b88d"
-        },
-        "date": 1789045689806,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 361400.6,
-            "unit": "rays/sec",
-            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 607430.3,
-            "unit": "rays/sec",
-            "extra": "CPU: Neoverse-N2\\nCores: 4"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 499679.9,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 9V74 80-Core Processor\\nCores: 4"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 380774.8,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -4750,6 +4702,54 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 314632.9,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "591c97d4c35ccce4e8f3f6dd1cf340e93390e6e4",
+          "message": "Merge pull request #443 from LoveDaisy/chore/workflow-token-least-privilege\n\nci: add top-level permissions: contents: read to workflows",
+          "timestamp": "2026-09-28T20:18:35+08:00",
+          "tree_id": "200ab539ed87c0bd2915e7f5e25f6ed5dac388e4",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/591c97d4c35ccce4e8f3f6dd1cf340e93390e6e4"
+        },
+        "date": 1790598756871,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 335412,
+            "unit": "rays/sec",
+            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 512159.2,
+            "unit": "rays/sec",
+            "extra": "CPU: Neoverse-N2\\nCores: 4"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 566879.8,
+            "unit": "rays/sec",
+            "extra": "CPU: Intel(R) Xeon(R) 6973P-C\\nCores: 4"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 312997.2,
             "unit": "rays/sec",
             "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
           }
