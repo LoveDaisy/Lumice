@@ -30,21 +30,36 @@ enum class LogLevel {
 };
 
 
+// The console sink GetSharedSink() starts with. Named so that a binary which must not write to
+// the console can take this exact sink back out (see GetSharedSink()).
+//
+// It writes to STDERR. The CLI's stdout is its product output — a config's `Saved:` / `Stats:`
+// lines, the `[BENCHMARK]` JSON, `analyze`'s CSV — which a consumer pipes or redirects; a
+// diagnostic line on the same stream corrupts that output for whoever parses it. stderr is the
+// stream a diagnostic belongs on, and `2>/dev/null` then leaves the product alone.
+inline std::shared_ptr<spdlog::sinks::stderr_color_sink_mt>& GetDefaultConsoleSink() {
+  static auto sink = []() {
+    auto s = std::make_shared<spdlog::sinks::stderr_color_sink_mt>();
+    s->set_formatter(CreateLumiceFormatter(kLogPattern));
+    return s;
+  }();
+  return sink;
+}
+
+
 // Shared dist_sink singleton. All Logger instances use this as their sole sink,
 // so adding a sink here (e.g., callback sink, file sink) is immediately visible
 // to all loggers. No initialization order dependency.
 //
-// The console sink writes to STDERR. Every binary that links the engine inherits this sink with
-// no API to point it elsewhere, and the CLI's stdout is its product output — a config's `Saved:`
-// / `Stats:` lines, the `[BENCHMARK]` JSON, `analyze`'s CSV — which a consumer pipes or
-// redirects; a diagnostic line on the same stream corrupts that output for whoever parses it.
-// stderr is the stream a diagnostic belongs on, and `2>/dev/null` then leaves the product alone.
+// It starts with GetDefaultConsoleSink() attached, and every binary linking the engine keeps it —
+// with one exception: liblumice_analytic removes it while the library loads, so that library is
+// silent until its host installs a callback (src/analytic/analytic_api.cpp,
+// doc/analytic-api.md section 6). Each shared library has its own copy of this singleton, so that
+// removal never reaches liblumice, the CLI or the GUI.
 inline std::shared_ptr<spdlog::sinks::dist_sink_mt>& GetSharedSink() {
   static auto sink = []() {
     auto s = std::make_shared<spdlog::sinks::dist_sink_mt>();
-    auto console_sink = std::make_shared<spdlog::sinks::stderr_color_sink_mt>();
-    console_sink->set_formatter(CreateLumiceFormatter(kLogPattern));
-    s->add_sink(console_sink);
+    s->add_sink(GetDefaultConsoleSink());
     return s;
   }();
   return sink;

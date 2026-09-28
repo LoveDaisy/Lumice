@@ -186,6 +186,7 @@ add_executable(unit_correctness_test
   "${PROJ_TEST_DIR}/unit-correctness/util/test_contrast_headroom.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/util/test_lens_focal.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/util/test_lens_fov_default.cpp"
+  "${PROJ_TEST_DIR}/unit-correctness/util/test_logger_default_console_sink_removable.cpp"
   # The (altitude, azimuth) <-> travel-direction convention and the raypath-analysis display
   # order / CSV formatter, both header-only under src/util/ so the GUI and the CLI print one
   # result the same way. The CSV cases hold the same byte-exact expectations the GUI-side cases

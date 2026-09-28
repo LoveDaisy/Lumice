@@ -43,6 +43,32 @@ extern "C" {
 // with before any module exists.
 LUMICE_ANALYTIC_API int LUMICE_ANALYTIC_GetApiVersion(void);
 
+// Logging: the library writes nothing by default — no console, no file — until the host installs a
+// callback, which then receives the engine's diagnostics, including crystal-construction warnings
+// (doc/analytic-api.md section 6). This differs from lumice.h's LUMICE_SetLogCallback, which only
+// adds a destination next to a console sink the host cannot remove.
+//
+// The level values match spdlog's six levels, which is what the engine's messages carry; a
+// LOG_WARNING in the engine arrives as LUMICE_ANALYTIC_LOG_WARNING.
+typedef enum LUMICE_ANALYTIC_LogLevel_ {
+  LUMICE_ANALYTIC_LOG_TRACE = 0,
+  LUMICE_ANALYTIC_LOG_DEBUG,
+  LUMICE_ANALYTIC_LOG_VERBOSE,
+  LUMICE_ANALYTIC_LOG_INFO,
+  LUMICE_ANALYTIC_LOG_WARNING,
+  LUMICE_ANALYTIC_LOG_ERROR,
+} LUMICE_ANALYTIC_LogLevel;
+
+// `message` is the formatted line without a trailing newline. Both strings are valid only for the
+// duration of the call. The callback may be invoked from any thread that calls into this library.
+typedef void (*LUMICE_ANALYTIC_LogCallback)(LUMICE_ANALYTIC_LogLevel level, const char* logger_name,
+                                            const char* message);
+
+// Installs `callback` as the one receiver of the library's diagnostics, replacing any previous one.
+// NULL stops forwarding; the library is then silent again. An initialisation call: make it before
+// any computation, from one thread (doc/analytic-api.md section 5.3).
+LUMICE_ANALYTIC_API void LUMICE_ANALYTIC_SetLogCallback(LUMICE_ANALYTIC_LogCallback callback);
+
 #ifdef __cplusplus
 }
 #endif
