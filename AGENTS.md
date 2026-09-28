@@ -768,8 +768,8 @@ Valuable design/architecture docs live in `doc/` (tracked). Consult the relevant
     消费者」两个触发信号同时响了（LI 经共享库消费单光路反解 / fiber 行走）；发布的是一个新窄
     接口而非现在的 `lumice.h`，共享判据见 `raypath-analysis.md` §5.1.6。
     考虑发布动态库、设计新产品线、或再次提起拆仓前先读。
-  - `analytic-api.md` — **`liblumice_analytic` 设计（第一个对外发布的共享库；设计稿，尚未构建，
-    2026-09-28）**：头文件 `lumice_analytic.h`、前缀 `LUMICE_ANALYTIC_`（owner 已定），链整个
+  - `analytic-api.md` — **`liblumice_analytic` 设计（第一个对外发布的共享库；target / 导出列表 / 日志接管 / 打包与版本政策
+    已 as-built，首个解析模块未建，尚不进下载包，2026-09-28）**：头文件 `lumice_analytic.h`、前缀 `LUMICE_ANALYTIC_`（owner 已定），链整个
     `lumice_obj` 的三条规矩（新 target 显式开死代码裁剪 / 只从无 CUDA 构建产出 / ISA 是**配置**的属性
     ⇒ 从 `LUMICE_ISA_LEVEL=baseline` 的配置产出，⛔ 不从本地默认 `native`）+ 一进程只加载
     `liblumice` / `liblumice_testapi` / `liblumice_analytic` 之一。⭐**§3 对称性语义**（owner 硬要求）：
@@ -781,6 +781,15 @@ Valuable design/architecture docs live in `doc/` (tracked). Consult the relevant
     丢面），默认静默会吞掉 ⇒ 回调须转发，且退化晶体同时以错误码返回。§7：三个共享库同链
     `lumice_obj`，导出集合**只**由按库导出列表决定（`scripts/gen_export_list.py` 从各库头文件生成，
     as-built）；`WINDOWS_EXPORT_ALL_SYMBOLS` 与 visibility pragma 已移除。
+    ⭐**§8 版本与打包（as-built）**：`LUMICE_ANALYTIC_API_VERSION` 这一个整数就是唯一版本号，CMake
+    从头文件读出它当 package 版本（不写第二份）；`find_package(LumiceAnalytic <n>)` 用 `ExactVersion`，
+    版本不符在**配置期**被拒；链 `Lumice::lumice_analytic`，install 树只含 `lumice_analytic.h`（⛔ 不装
+    `lumice.h`），布局 `bin/`+`lib/`（有意不同于 `lumice` 的 DLL 放 prefix 根）。0.x 不承诺任何两版兼容，
+    但每次 bump 必须留说明；兼容/破坏判定表（§8.2）；两个调用方分配的结果 struct 打头 `struct_size`
+    （Win32 `cbSize` 模式，batch 以 `out_results[0].struct_size` 为步长）使追加字段不必 bump；废弃流程与
+    1.0 三条毕业条件（§8.5/§8.6）；非 CMake 消费者靠 install 树相对路径契约 + 建议变量名
+    `LUMICE_ANALYTIC_INSTALL_DIR`（只由消费者读，⛔ 不进 `src/`，§8.7）；进下载包的改动清单（§8.8，
+    首个真实模块的任务执行，动手前先重读 `release.yml`）。
     §9 未决项表（seed search、`FiberResult` 是否补 LI §9.3 诊断字段两条待 owner 裁定）。
     实现新库 target / 导出列表 / 日志接管 / 打包 / 首个解析模块前先读。
 - **GPU / Metal route** (read these before touching the GPU path):

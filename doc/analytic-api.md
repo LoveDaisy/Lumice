@@ -1,10 +1,11 @@
 # `liblumice_analytic`: the published analytic interface
 
-> Status: **design, not yet built** (2026-09-28). Nothing described here exists in `src/` or
-> `CMakeLists.txt` yet. This document is the input to the work that builds the target and its
-> export list, hands logging to the host, packages and versions the library, and adds an
-> external-consumer smoke test — and to the first real module (single-path inversion + fiber
-> walk), which lands with the Analyze workspace's first phase (`doc/raypath-analysis.md` §5.1.8).
+> Status: **partly built** (2026-09-28). As built: the target and its per-library export list
+> (§2.5), logging handed to the host (§6), and packaging with a `find_package` config plus the
+> version policy (§8). Not built yet: the external-consumer smoke test, and the first real module
+> (single-path inversion + fiber walk, §4), which lands with the Analyze workspace's first phase
+> (`doc/raypath-analysis.md` §5.1.8). Until that module exists the library is not in any download
+> package (§8.8).
 >
 > Every decision below is marked either **(owner)** — ruled by the owner on 2026-09-28, not open
 > for re-derivation — or **(design)** — this document's own judgement, open to the owner's review.
@@ -137,7 +138,7 @@ from a Release, non-CUDA, baseline-ISA configure. The mechanisms, as built with 
   `BUILD_SHARED_LIBS AND NOT LUMICE_CUDA_ENABLED`, linking `lumice_obj` PRIVATE, with the stripping
   flag of §2.2 in Release and MinSizeRel (`-dead_strip` / `--gc-sections` / `/OPT:REF`). Its own
   code lives in `src/analytic/`, outside `lumice_obj`, so the other two libraries never carry it.
-  Not installed yet — packaging is its own work.
+  Installed with a CMake package config (§8.4); the install layout is a contract (§8.7).
 - **Header**: `src/include/lumice_analytic.h`, next to `lumice.h`. Today it holds only
   `LUMICE_ANALYTIC_API_VERSION` and `LUMICE_ANALYTIC_GetApiVersion`; the §4 module arrives with
   its implementation.
@@ -418,6 +419,7 @@ typedef struct LUMICE_ANALYTIC_Crystal_ {
  * Single-pose path evaluation.
  * ------------------------------------------------------------------------------------------- */
 typedef struct LUMICE_ANALYTIC_PathEvaluation_ {
+  uint32_t struct_size;                   /* caller sets sizeof(*out) before the call (section 8.2) */
   int valid;                              /* 1 iff the path is realisable at this pose */
   double outgoing_direction[3];           /* world, propagation crystal -> observer */
   double fresnel_transmission;            /* T_entry * prod(R_k) * T_exit, R_k = 1 under TIR */
@@ -494,6 +496,7 @@ typedef enum LUMICE_ANALYTIC_Reason_ {
 } LUMICE_ANALYTIC_Reason;
 
 typedef struct LUMICE_ANALYTIC_FiberResult_ {
+  uint32_t struct_size;                       /* caller sets sizeof(*out_result) (section 8.2) */
   int status;                                 /* LUMICE_ANALYTIC_FiberStatus */
   int reason;                                 /* LUMICE_ANALYTIC_Reason (open set) */
   int pose_count;                             /* N accepted samples */
@@ -560,7 +563,9 @@ Changes from a literal transcription of LI §9, each deliberate: no diagnostics 
 options (§4.3); reasons numbered explicitly so appending one never renumbers another (§4.4);
 `EvaluatePath` takes `incident_direction` because the outgoing direction depends on it;
 `GetApiVersion` exists so the build, export and packaging chain can be proven end to end before
-the first real module lands.
+the first real module lands. Not from LI: the leading `struct_size` of the two caller-allocated
+result structs, which lets a later version append a field without a version bump (§8.2; the
+draft's `#include <stdint.h>` is implied).
 
 ---
 
@@ -702,28 +707,179 @@ third such pair appears, re-weigh a type-agnostic template shared by both over a
 
 ---
 
-## 8. Version **(design; policy text left to the packaging work)**
+## 8. Version, compatibility and packaging **(design; as built with the packaging work)**
+
+Code comments across the tree cite "doc/analytic-api.md section 8" for all of this; the
+subsections keep that number.
+
+### 8.1 What the version is
 
 - **An independent counter**, `LUMICE_ANALYTIC_API_VERSION`, not tied to `LUMICE_API_VERSION`.
   The two surfaces change at rates an order of magnitude apart (`lumice.h` is at 449 after the
   classified churn in `doc/api-layering-and-product-lines.md` §8), and a consumer of one must not
   see the other's churn as a version bump.
-- Same style as `LUMICE_API_VERSION`: a single integer, bumped on every incompatible change, with a
-  one-line note per bump at the top of the header. Adding a function or an enum value to an open
-  set (§4.4) is compatible. **A field appended to `PathEvaluation` or `FiberResult` is not** —
-  those two structs are caller-allocated, passed by pointer (`out`/`out_result`) or as a
-  caller-allocated array (`out_results` in `TraceFiberBatch`), never library-allocated (§4.4), so a
-  library built against a header with more fields would write past the bounds of memory the caller
-  sized against an older header — in the batch case, past the first element's bounds into the next.
-  Only the internal variable-length buffers reached through `storage` (`segment_directions`,
-  `poses`, and similarly) are library-allocated, and those can grow freely because a caller never
-  lays memory out for them. Anything else — including a convention change (§5.1) — is also not
-  compatible. Whether the two result structs should instead carry a size/version field so a future
-  field could be added without a version bump is left open (§9 item 12). The runtime
-  `LUMICE_ANALYTIC_GetApiVersion()` lets a binding detect a header/library mismatch.
-- **0.x is experimental** until the first real module is in LI's use. The wording of the
-  compatibility promise, the semver mapping of the integer, ABI and deprecation policy, and what
-  1.0 commits to are written with the packaging work.
+- **A single integer, and the only version.** It is bumped on every incompatible change (§8.2),
+  with a one-line note at the top of the header saying what changed — the same style as the
+  `BREAKING` / `ADDED` / `BEHAVIOR` notes above `LUMICE_API_VERSION` in `lumice.h`. There is no
+  second, three-part semver number beside it: the CMake package version is this integer (§8.4),
+  read from the header by the build rather than written a second time, so the version a build
+  accepts and the version `LUMICE_ANALYTIC_GetApiVersion()` reports cannot drift apart.
+- **The run-time check.** `LUMICE_ANALYTIC_GetApiVersion()` returns the library's value; a binding
+  compares it with the header's macro (or, for ctypes, with the value it was written against) to
+  detect a header/library mismatch that no linker catches.
+
+### 8.2 Compatible and incompatible changes
+
+A compatible change leaves the integer alone; an incompatible one bumps it.
+
+| Change | Kind |
+|---|---|
+| A new function | Compatible |
+| A new value in an open set (`LUMICE_ANALYTIC_Reason`, §4.4) | Compatible — callers must already handle an unknown reason |
+| A field appended at the end of `PathEvaluation` or `FiberResult`, under the `struct_size` rule below | Compatible |
+| Growth of a library-allocated buffer reached through `storage` (`segment_directions`, `poses`, …) | Compatible — the caller never lays memory out for it |
+| A changed signature, a removed function, a renamed or reordered field | Incompatible |
+| Any field added to a caller-owned input struct (`Crystal`, `FiberProblem`, `ContinuationOptions`) | Incompatible — the library would read past what an older caller allocated |
+| Any change to a closed set (`LUMICE_ANALYTIC_FiberStatus`, `LUMICE_ANALYTIC_ErrorCode`) | Incompatible |
+| Any change to a convention the functions pass (frames, face numbers, pose chain — §5.1) | Incompatible, even with an unchanged signature |
+| A result field added other than by the `struct_size` rule | Incompatible |
+
+**The `struct_size` rule** (answers §9 item 12). The two result structs are caller-allocated —
+passed by pointer, or as a caller-allocated array in `TraceFiberBatch` (§4.4) — so a library built
+against a header with more fields would, without a guard, write past the memory an older caller
+sized, and in the batch case into the next element. Each therefore begins with
+`uint32_t struct_size`, the Win32 `cbSize` pattern:
+
+- The caller zero-initialises the struct and sets `struct_size = sizeof(the struct)` as compiled
+  against its header, before the call.
+- The library writes only fields that lie wholly inside `struct_size` bytes; a field beyond it is
+  one the caller does not know, and stays untouched. A caller newer than the library sees its
+  extra fields left at zero, so every appended field must give zero the meaning "not provided".
+- `struct_size` smaller than the first published layout is a call-level `ERR_INVALID_VALUE`.
+- Zero-filling on error (§4.4) zeroes everything after `struct_size`, never `struct_size` itself.
+- In `TraceFiberBatch` the array stride is `out_results[0].struct_size`, not the library's own
+  `sizeof`; every element must carry the same value (a mismatch is a call-level error). The
+  library cannot index an array of structs smaller or larger than its own any other way.
+- New fields go at the end only. Input structs get no `struct_size`: they are small, fixed, and a
+  change to them is rare enough that a version bump is the honest price (the table above).
+
+### 8.3 What 0.x promises
+
+**0.x is experimental** until the conditions in §8.6 hold. In 0.x, **no two values of
+`LUMICE_ANALYTIC_API_VERSION` are promised compatible**, including across a change the table in
+§8.2 calls compatible — the table is the rule the library tries to keep, not a guarantee a consumer
+may build on yet. Two things stay promised even in 0.x: every incompatible change bumps the
+integer, and every bump carries its one-line note saying what changed. "Nothing is promised" is
+about compatibility, never about disclosure.
+
+### 8.4 The CMake package, and how a mismatch is refused
+
+A shared, non-CUDA configure (§2.3) installs, relative to `CMAKE_INSTALL_PREFIX`:
+
+```
+include/lumice_analytic.h                      the one header; lumice.h is never installed with it
+lib/liblumice_analytic.so | .dylib             Linux / macOS
+bin/lumice_analytic.dll + lib/lumice_analytic.lib   Windows: DLL + import library
+lib/cmake/LumiceAnalytic/LumiceAnalyticConfig.cmake
+lib/cmake/LumiceAnalytic/LumiceAnalyticConfigVersion.cmake
+lib/cmake/LumiceAnalytic/LumiceAnalyticTargets*.cmake
+```
+
+A consumer's CMake:
+
+```cmake
+find_package(LumiceAnalytic 1 REQUIRED)   # 1 = the LUMICE_ANALYTIC_API_VERSION written against
+add_executable(app main.c)
+target_link_libraries(app PRIVATE Lumice::lumice_analytic)
+```
+
+with `-DCMAKE_PREFIX_PATH=<prefix>` pointing at the install tree. The imported target carries the
+include directory and, on Windows, the `LUMICE_ANALYTIC_SHARED_DEFINE` that turns the header's
+macro into `dllimport` (§2.5); nothing else is exported — the engine is linked PRIVATE and does not
+reach the consumer. The package version is the integer of §8.1 with **`ExactVersion`**
+compatibility: any requested version other than the installed one is refused **at configure
+time**, before anything is compiled (`Could not find a configuration file for package
+"LumiceAnalytic" that is compatible with requested version …`). That is the mechanical form of
+§8.3. Omitting the version accepts whatever is installed; a consumer who does that should check
+`LUMICE_ANALYTIC_GetApiVersion()` at run time instead. The config uses `@PACKAGE_INIT@`, so an
+install tree still works after being moved.
+
+On Windows the DLL has to be findable when the consumer runs: copy it next to the executable, or
+put `<prefix>/bin` on `PATH`. For example:
+
+```cmake
+add_custom_command(TARGET app POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different
+  $<TARGET_FILE:Lumice::lumice_analytic> $<TARGET_FILE_DIR:app>)
+```
+
+Two omissions are deliberate. **No SONAME / SOVERSION symlinks**: in 0.x a consumer builds and
+installs against one version, and no machine is expected to hold two side by side for the
+loader to choose between; `ExactVersion` plus the run-time check covers the mismatch case. And
+**`bin/` + `lib/`, unlike `lumice`**, which puts its Windows engine DLL at the prefix root: that
+layout serves the release shell loading its engine from its own directory, while this library is
+consumed by other projects' builds, for which `bin/` + `lib/` is the convention.
+
+### 8.5 Deprecation
+
+- **In 0.x there is no deprecation stage.** A function or field to be removed is removed in the
+  next bump, and the bump's note says so. Keeping a deprecated name alive for a period would be a
+  compatibility promise 0.x does not make (§8.3).
+- **From 1.0**: a declaration to be removed is first marked with a `LUMICE_ANALYTIC_DEPRECATED`
+  macro (`__attribute__((deprecated))` / `__declspec(deprecated)`, written when first needed),
+  stays for at least one minor version, and is removed in the next major one.
+
+### 8.6 What 1.0 requires
+
+All three, together:
+
+1. The first real module (§4) has shipped in at least one download-package release.
+2. LI has consumed it for at least one release cycle without the interface needing an incompatible
+   change.
+3. The owner rules the interface stable.
+
+1.0 is where the single integer gains semver structure (major for incompatible changes, minor for
+compatible additions), the package switches from `ExactVersion` to `SameMajorVersion`, and the
+§8.2 table becomes a promise rather than a rule.
+
+### 8.7 Locating the library without CMake (the install-tree contract)
+
+A consumer that does not use CMake — LI's Python bindings through ctypes or pybind — finds the
+library by path. The contract is the layout of §8.4 **relative to the install prefix**: the header
+at `include/lumice_analytic.h`; the library at `lib/liblumice_analytic.so` (Linux),
+`lib/liblumice_analytic.dylib` (macOS), or `bin/lumice_analytic.dll` with its import library at
+`lib/lumice_analytic.lib` (Windows). The file names differ by platform; the directory each sits in,
+relative to the prefix, does not, and changing it is an incompatible change in the sense of §8.2.
+
+How a consumer learns the prefix is the consumer's decision. The suggested name, so the
+external-consumer smoke test and LI's bindings agree, is an environment variable
+**`LUMICE_ANALYTIC_INSTALL_DIR`** holding the prefix. It is read by the consumer's own code only:
+Lumice's `src/` never reads it, it is not in `src/util/env_knobs.cpp`, and
+`doc/env-var-policy.md` — which governs what Lumice itself reads — does not cover it.
+
+### 8.8 Checklist for putting the library in a download package
+
+Owner, 2026-09-28: the library does not enter a download package while it holds only placeholder
+functions. The first real module's work opens this list. **The state described here is that of
+`release.yml` on 2026-09-28; re-read it before acting.**
+
+- `release.yml`'s top-level comment says "no library is published for anyone to link"; rewrite it.
+- Which configures produce the library today: `linux-x64` is `isa_split`, and its baseline tree
+  (`build-baseline`: shared, non-CUDA, `-DLUMICE_ISA_LEVEL=baseline`) already builds and installs
+  it into `install-baseline/` — exactly the configure §2.4 asks for; the merge step copies only
+  named files, so it does not reach the package, and shipping it there means adding those files
+  (§8.4's list) to the copy and to the manifest. `linux-arm64` and `macos-arm64` build the default
+  static flavour, where the target does not exist: they need an extra shared configure or a
+  separate analytic-only job. `windows-x64` sets `cuda: ON` on both of its configures, so **no
+  Windows configure in the release workflow is non-CUDA** — the Windows library needs a new
+  non-CUDA configure (§2.3), not a reuse of the `isa_split` trees.
+- Artifact shape: a separate `lumice-analytic-<version>-<platform>.{tar.gz,zip}` rather than files
+  inside the CLI/GUI package is recommended — the people downloading the application do not need a
+  development library, and the reverse — but it is that work's call.
+- `CHANGELOG.md`'s Sourcing rule gains a fourth mechanical command:
+  `git diff <prev_tag>..<tag> -- src/include/lumice_analytic.h | grep LUMICE_ANALYTIC_API_VERSION`.
+- `CONTRIBUTING.md`'s list of platform packages ("The release produces platform-specific packages") gains the new artifact.
+- The consumer-facing notes shipped with it include §2.6 (one engine per process) verbatim, and
+  §8.4's Windows DLL note.
 
 ---
 
@@ -734,7 +890,7 @@ third such pair appears, re-weigh a type-agnostic template shared by both over a
 | 1 | Seed search (discovery) in scope for v0? v0 says no (§4.2). If yes, LI first writes discovery's contract to §5–§10 standard. | Owner, reviewing this document |
 | 2 | Reference defaults of `ContinuationOptions`, each linked to convergence evidence (LI §10.1). | The first-module implementation |
 | 3 | A refractive-index convenience function (Sellmeier). Default: not exposed (§4.2). | The first-module implementation, on LI's actual need |
-| 4 | Semver, ABI and deprecation policy text; what 1.0 commits to. | The packaging and version-policy work |
+| 4 | ~~Semver, ABI and deprecation policy text; what 1.0 commits to.~~ **Answered** — see §8 (as built): one integer is the only version, `find_package` requires it exactly (§8.4), compatible/incompatible table (§8.2), no promise in 0.x (§8.3), deprecation (§8.5), graduation conditions (§8.6). | The packaging and version-policy work (done) |
 | 5 | ~~Export-list mechanism on each platform, Windows export path, header location, prefix gate in `check_policies.py`, the stripping flag.~~ **Answered** — see §2.5 (as built): `scripts/gen_export_list.py` + `lumice_apply_export_list`, `.def` on Windows, `src/include/lumice_analytic.h`, rule `analytic-symbol-scope`. | The target and export-list work (done) |
 | 6 | ~~Callback forwarding implementation; removing the console sink only in this library.~~ **Answered** — see §6 (as built): `GetDefaultConsoleSink()` removed at load time in `src/analytic/analytic_api.cpp`, `AnalyticCallbackSink` attached by `LUMICE_ANALYTIC_SetLogCallback`. | The log-sink work (done) |
 | 7 | External consumer smoke test (C + Python ctypes, install tree only), with `symmetry_semantics` in any fixture. | The external-consumer smoke test |
@@ -742,6 +898,6 @@ third such pair appears, re-weigh a type-agnostic template shared by both over a
 | 9 | Surface crystal *degradation* (apex collapse, dropped face) as result data, not only as a log line (§6). | The first-module implementation |
 | 10 | Parallelism inside `TraceFiberBatch` (v0: none; caller parallelises). Revisit only with a measured batch where binding-side threading is the bottleneck. | The first-module implementation |
 | 11 | Re-read LI `docs/phase1-math-contract.md` §9 before implementing: this draft mirrors it as of 2026-09-28, and LI's §12 lists open items that may move it. LI's §9.1 also says problem construction "MUST not import or invoke Lumice" — a rule LI revises on its side when it adopts this library. | The first-module implementation (and LI, on adoption) |
-| 12 | Whether `PathEvaluation`/`FiberResult` should carry a `struct_size`/version field (Win32 `cbSize`, Vulkan `sType`+`pNext` are existing patterns) so a future field addition would not need an `LUMICE_ANALYTIC_API_VERSION` bump (§8). Until decided, appending a field to either struct is an incompatible change. | The packaging and version-policy work |
+| 12 | ~~Whether `PathEvaluation`/`FiberResult` should carry a `struct_size`/version field (Win32 `cbSize`, Vulkan `sType`+`pNext` are existing patterns) so a future field addition would not need an `LUMICE_ANALYTIC_API_VERSION` bump (§8).~~ **Answered** — yes: a leading `uint32_t struct_size`, the Win32 `cbSize` pattern (§4.5 draft, rules in §8.2). | The packaging and version-policy work (done) |
 | 13 | Verify no thread-unsafe static cache in the called geometry/optics code (§5.3). | The first-module implementation |
 | 14 | An optional batch-mode `FiberResult` variant that also returns per-point segment directions and interface transmittances (today only `EvaluatePath` returns those, §4.3), for a caller with many accepted poses who would otherwise pay one ctypes call per point to get them — in tension with §4.3's own binding-overhead concern. | The first-module implementation |
