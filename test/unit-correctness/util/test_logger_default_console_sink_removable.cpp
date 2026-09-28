@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <memory>
 #include <string>
 #include <vector>
@@ -18,9 +19,26 @@
 //
 // GetSharedSink() and the global logger are process-wide, so every case restores both before it
 // returns, and uses EXPECT_* only so no failure can skip the restore.
+//
+// Each case asserts the mechanism twice: structurally (the default sink is detached from, then
+// re-attached to, GetSharedSink()) on every platform, and by its output on stderr where that output
+// is observable. On Windows it is not: spdlog's stderr colour sink there writes to the console
+// HANDLE it fetched at construction (GetStdHandle), not to file descriptor 2, so gtest's
+// CaptureStderr -- a redirect of fd 2 -- captures nothing either way.
 
 namespace lumice {
 namespace {
+
+#if defined(_WIN32)
+constexpr bool kConsoleSinkOutputCapturable = false;
+#else
+constexpr bool kConsoleSinkOutputCapturable = true;
+#endif
+
+bool DefaultConsoleSinkAttached() {
+  const auto& sinks = GetSharedSink()->sinks();
+  return std::find(sinks.begin(), sinks.end(), GetDefaultConsoleSink()) != sinks.end();
+}
 
 struct Received {
   LUMICE_ANALYTIC_LogLevel level;
@@ -59,14 +77,22 @@ TEST(DefaultConsoleSinkRemoval, RemovingItSilencesAWarning) {
   ScopedDefaultLevel level;
 
   // Baseline: the warning path is live and reaches stderr, so the silence below is not an empty call.
+  EXPECT_TRUE(DefaultConsoleSinkAttached());
   std::string before = WarnAndCaptureStderr("console-sink baseline");
-  EXPECT_NE(before.find("console-sink baseline"), std::string::npos) << "stderr was: " << before;
+  if (kConsoleSinkOutputCapturable) {
+    EXPECT_NE(before.find("console-sink baseline"), std::string::npos) << "stderr was: " << before;
+  }
 
   GetSharedSink()->remove_sink(GetDefaultConsoleSink());
+  const bool attached_while_removed = DefaultConsoleSinkAttached();
   std::string after = WarnAndCaptureStderr("console-sink removed");
   GetSharedSink()->add_sink(GetDefaultConsoleSink());
 
-  EXPECT_EQ(after, "");
+  EXPECT_FALSE(attached_while_removed);
+  EXPECT_TRUE(DefaultConsoleSinkAttached());
+  if (kConsoleSinkOutputCapturable) {
+    EXPECT_EQ(after, "");
+  }
 }
 
 TEST(DefaultConsoleSinkRemoval, CallbackReceivesTheWarningAtWarningLevel) {
@@ -78,6 +104,7 @@ TEST(DefaultConsoleSinkRemoval, CallbackReceivesTheWarningAtWarningLevel) {
   sink->SetCallback(&RecordCallback);
   GetSharedSink()->remove_sink(GetDefaultConsoleSink());
   GetSharedSink()->add_sink(sink);
+  const bool attached_while_removed = DefaultConsoleSinkAttached();
 
   std::string console = WarnAndCaptureStderr("crystal is degenerate");
 
@@ -87,8 +114,12 @@ TEST(DefaultConsoleSinkRemoval, CallbackReceivesTheWarningAtWarningLevel) {
   GetSharedSink()->remove_sink(sink);
   GetSharedSink()->add_sink(GetDefaultConsoleSink());
 
-  EXPECT_EQ(console, "");
-  EXPECT_EQ(after_null, "");
+  EXPECT_FALSE(attached_while_removed);
+  EXPECT_TRUE(DefaultConsoleSinkAttached());
+  if (kConsoleSinkOutputCapturable) {
+    EXPECT_EQ(console, "");
+    EXPECT_EQ(after_null, "");
+  }
   ASSERT_EQ(Inbox().size(), 1u);  // fatal only after the restore above
   const Received& r = Inbox()[0];
   // LOG_WARNING maps to spdlog::err (Logger::ToSpdLevel), numerically LUMICE_ANALYTIC_LOG_WARNING.
