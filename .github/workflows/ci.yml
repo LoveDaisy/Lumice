@@ -1455,7 +1455,7 @@ jobs:
       - name: Check export sets
         shell: pwsh
         run: |
-          python -m pytest test/e2e-correctness/test_export_symbol_scope.py -v -m slow -rs 2>&1 | Tee-Object -Variable log
+          python -m pytest test/e2e-correctness/test_export_symbol_scope.py test/e2e-correctness/test_analytic_log_sink.py -v -m slow -rs 2>&1 | Tee-Object -Variable log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           if (($log | Out-String) -match '\bskipped\b') {
             Write-Error "export-set test skipped on a leg that just built the shared flavor"

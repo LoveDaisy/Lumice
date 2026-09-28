@@ -47,6 +47,13 @@ void LUMICE_ANALYTIC_SetLogCallback(LUMICE_ANALYTIC_LogCallback callback) {
     return true;
   }();
   (void)kRegistered;
+
+  // One line through the engine's own logger, so a host can see its callback is wired up — and so
+  // this library's silence is observable at its boundary: the line must reach the callback and
+  // never the host's stderr (test/e2e-correctness/test_analytic_log_sink.py).
+  if (callback != nullptr) {
+    LOG_INFO("liblumice_analytic {}: log callback installed", LUMICE_ANALYTIC_API_VERSION);
+  }
 }
 
 }  // extern "C"
