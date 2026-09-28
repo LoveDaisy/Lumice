@@ -116,11 +116,12 @@ help() {
   echo "               directory outside build/ (\$HOME/.cache/lumice-cpm) shared with"
   echo "               every other clone and worktree; delete that directory by hand if"
   echo "               you really want the sources re-downloaded."
-  echo "  -s:          Build shared library (default: static). Produces TWO"
-  echo "               libraries: liblumice (the product C API, lumice.h) and"
+  echo "  -s:          Build shared library (default: static). Produces THREE"
+  echo "               libraries: liblumice (the product C API, lumice.h),"
   echo "               liblumice_testapi (the same objects plus the LUMICE_TEST_*"
-  echo "               hooks of test/support/lumice_test_api.h). The pytest ctypes"
-  echo "               harness loads the latter; see test/e2e/capi_runner.py."
+  echo "               hooks of test/support/lumice_test_api.h) and, without CUDA,"
+  echo "               liblumice_analytic (lumice_analytic.h). The pytest ctypes"
+  echo "               harness loads liblumice_testapi; see test/e2e/capi_runner.py."
   echo "  -h:          Show this message."
 }
 

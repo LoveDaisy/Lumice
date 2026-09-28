@@ -127,14 +127,37 @@ not of the target, and the rule is:
 
 On arm64 `baseline` applies no `-march` flag at all, so the rule is uniform across platforms.
 
-### 2.5 Produced where, exported how — left to the target work
+### 2.5 Produced where, exported how (as built)
 
 What the artifact list is: one shared library per platform (`liblumice_analytic.so`,
 `liblumice_analytic.dylib`, `lumice_analytic.dll` + import library) plus `lumice_analytic.h`,
-from a Release, non-CUDA, baseline-ISA configure. The mechanisms — the per-library export list
-(§7), the Windows export path (today both existing shared targets rely on
-`WINDOWS_EXPORT_ALL_SYMBOLS`, which would export every engine symbol), where the header lives,
-and the prefix gate — are decided and built with the target.
+from a Release, non-CUDA, baseline-ISA configure. The mechanisms, as built with the target:
+
+- **Target**: `lumice_analytic` in the root `CMakeLists.txt`, gated on
+  `BUILD_SHARED_LIBS AND NOT LUMICE_CUDA_ENABLED`, linking `lumice_obj` PRIVATE, with the stripping
+  flag of §2.2 in Release and MinSizeRel (`-dead_strip` / `--gc-sections` / `/OPT:REF`). Its own
+  code lives in `src/analytic/`, outside `lumice_obj`, so the other two libraries never carry it.
+  Not installed yet — packaging is its own work.
+- **Header**: `src/include/lumice_analytic.h`, next to `lumice.h`. Today it holds only
+  `LUMICE_ANALYTIC_API_VERSION` and `LUMICE_ANALYTIC_GetApiVersion`; the §4 module arrives with
+  its implementation.
+- **Export list, every platform**: one list per shared library, generated from that library's
+  headers by `scripts/gen_export_list.py` and passed as a GNU version script, an ld64
+  `-exported_symbols_list`, or a Windows `.def` (`lumice_apply_export_list`). This replaced both
+  `WINDOWS_EXPORT_ALL_SYMBOLS` (which exported every engine symbol from the DLLs) and
+  `lumice.h`'s `#pragma GCC visibility`, for all three libraries.
+- **Header macros**: `LUMICE_API` / `LUMICE_TEST_API` / `LUMICE_ANALYTIC_API` on each declaration.
+  They do not export: on GCC/Clang they give default visibility (the objects are compiled with
+  `-fvisibility=hidden`, and a hidden symbol cannot be listed), on Windows they are the
+  consumer-side `dllimport`, switched on by an INTERFACE definition of the DLL's target so that a
+  target linking the objects directly sees an empty macro. The generator refuses a declaration
+  without its marker.
+- **Prefix gate**: `check_policies.py` rule `analytic-symbol-scope` — `LUMICE_ANALYTIC_` appears
+  under `src/` only in the header and `src/analytic/`, and the header names no other `LUMICE_`
+  identifier (§7).
+- **Test**: `test/e2e-correctness/test_export_symbol_scope.py` compares each built library's
+  export table (`nm -D` / `nm -gU` / `dumpbin /exports`) with its headers and loads it; it runs in
+  CI on Linux, macOS, and Windows under both cl.exe and clang-cl.
 
 ### 2.6 Consumer notice: one engine per process
 
@@ -637,15 +660,14 @@ graph planned today.
 - `lumice.h` is not published by this work. It moves to explicit exports too **(owner)**, but
   stays an internal interface of Lumice's own binaries.
 - **The export set of `liblumice_analytic` is exactly the `LUMICE_ANALYTIC_*` functions.** This
-  does not happen by itself: `lumice.h` marks its declarations `#pragma GCC visibility
-  push(default)` (`lumice.h:15`), and `c_api.cpp` — part of `lumice_obj` — includes it, so every
-  `LUMICE_*` function is compiled with default visibility into the objects. A shared library linked
-  from those objects with `-fvisibility=hidden` alone would export the whole `lumice.h` surface
-  next to the analytic one, and on Windows `WINDOWS_EXPORT_ALL_SYMBOLS` would export everything.
-  The guarantee comes from the **per-library export list** built with the target (a symbol list /
-  version script / `.def` naming only `LUMICE_ANALYTIC_*`), and its test is mechanical: list the
-  dynamic symbol table of the built library and assert that every exported name matches
-  `\bLUMICE_ANALYTIC_` and that at least one does.
+  does not happen by itself: `lumice.h` marks every declaration `LUMICE_API` (default visibility
+  on GCC/Clang), and `c_api.cpp` — part of `lumice_obj` — includes it, so every `LUMICE_*`
+  function is compiled with default visibility into the objects. A shared library linked from
+  those objects with `-fvisibility=hidden` alone would export the whole `lumice.h` surface next to
+  the analytic one. The guarantee comes from the **per-library export list** (§2.5: a version
+  script / symbol list / `.def` naming only `LUMICE_ANALYTIC_*`), and its test is mechanical: list
+  the dynamic symbol table of the built library and assert that every exported name matches
+  `\bLUMICE_ANALYTIC_` and that at least one does (`test_export_symbol_scope.py`).
 - Both libraries run the same objects. A behaviour change in shared engine code reaches both; that
   is intended (one implementation per semantics), and it is why §5.1 treats a convention change as
   an interface change.
@@ -685,7 +707,7 @@ graph planned today.
 | 2 | Reference defaults of `ContinuationOptions`, each linked to convergence evidence (LI §10.1). | The first-module implementation |
 | 3 | A refractive-index convenience function (Sellmeier). Default: not exposed (§4.2). | The first-module implementation, on LI's actual need |
 | 4 | Semver, ABI and deprecation policy text; what 1.0 commits to. | The packaging and version-policy work |
-| 5 | Export-list mechanism on each platform, Windows export path, header location, prefix gate in `check_policies.py`, the stripping flag. | The target and export-list work |
+| 5 | ~~Export-list mechanism on each platform, Windows export path, header location, prefix gate in `check_policies.py`, the stripping flag.~~ **Answered** — see §2.5 (as built): `scripts/gen_export_list.py` + `lumice_apply_export_list`, `.def` on Windows, `src/include/lumice_analytic.h`, rule `analytic-symbol-scope`. | The target and export-list work (done) |
 | 6 | Callback forwarding implementation; removing the console sink only in this library. | The log-sink work |
 | 7 | External consumer smoke test (C + Python ctypes, install tree only), with `symmetry_semantics` in any fixture. | The external-consumer smoke test |
 | 8 | **Does `FiberResult` need LI §9.3's diagnostics** (`jacobian_`/`step_`/`branch_`/`closure_diagnostics`, `terminal_payload`, `conventions`, `weight_observables`, `component_scope`) and the entry cross-section `A_P`? "LI reads point lists" → no, extend on demand; "LI certifies this library as its continuation backend against its §11" → yes, designed before the implementation is scheduled. | Owner, reviewing this document |

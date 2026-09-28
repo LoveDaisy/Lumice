@@ -304,13 +304,15 @@ check_ipo_supported(RESULT result OUTPUT output)
 # the shared engine cleanly (only DTPOFF64 relocations remain, which are fine in a shared
 # object), so the TPOFF32 exclusion no longer holds for the toolchain a release uses; the
 # CI shared leg builds with the same GCC and would surface a return of it as a link error.
-# clang-cl's LTO objects work with WINDOWS_EXPORT_ALL_SYMBOLS (the .def generator reads
-# them), so that tree gets IPO too. Real cl.exe does NOT: its /GL objects hold no symbol
-# table CMake's __create_def can read, and the DLL links "successfully" with an EMPTY export
+# clang-cl's LTO objects worked with WINDOWS_EXPORT_ALL_SYMBOLS (its .def generator read
+# them), so that tree gets IPO too. Real cl.exe did NOT: its /GL objects hold no symbol
+# table CMake's __create_def can read, and the DLL linked "successfully" with an EMPTY export
 # table — a baseline engine with zero exports, measured, not a hypothesis — so the cl.exe
-# baseline tree stays without IPO until the export surface is explicit rather than
-# harvested. Apple Clang shared builds stay excluded: no release ships them, and they have
-# not been measured either way.
+# baseline tree was left without IPO until the export surface was explicit rather than
+# harvested. It now is (lumice_apply_export_list below: a .def generated from lumice.h, no
+# symbol harvesting), so that reason no longer holds; turning IPO on for the cl.exe shared
+# tree is still a separate, measured change and is not made here. Apple Clang shared builds
+# stay excluded: no release ships them, and they have not been measured either way.
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
   set(_lumice_gcc_linux TRUE)
 else()

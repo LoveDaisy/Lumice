@@ -1358,6 +1358,97 @@ jobs:
         # not survive a slow phase-1 day stacked on the phase-2 cost.
         timeout-minutes: 25
 
+  # Windows shared-library export sets, under both Windows compilers the release uses (cl.exe
+  # for the baseline engine, clang-cl for the v3 one). The three shared libraries — lumice,
+  # lumice_testapi and the published lumice_analytic — are linked from the same engine objects
+  # and differ only in their export lists (scripts/gen_export_list.py → a .def per library on
+  # Windows). No other Windows leg builds the shared flavor, so without this job nothing would
+  # check that a DLL exports exactly its header's functions rather than every engine symbol, or
+  # that lumice_analytic is produced and loads on Windows at all. e2e-slow covers the same test
+  # on Linux and macOS (its "rest" legs pick up test/e2e-correctness by directory).
+  #
+  # Narrow on purpose: configure + build + one pytest file that reads `dumpbin /exports` and
+  # loads each DLL through ctypes. It needs nothing but pytest — no numpy/Pillow, no test/e2e
+  # helpers — which is what keeps this from becoming a Windows e2e suite. Not CUDA (the
+  # analytic library is produced only without it) and baseline ISA (what it ships at).
+  #
+  # No job-level `if:` — relies on the workflow-level `on: push: branches: [main]`
+  # / `pull_request` triggers, so this gate runs once per PR and once per push to
+  # main.
+  windows-shared-export:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: MSVC
+            cache_key: windows-shared-msvc
+            compiler_args: ""
+          - name: clang-cl
+            cache_key: windows-shared-clangcl
+            # Named by full path, not put on PATH — same as windows-isa-v3-compile and release.yml.
+            compiler_args: >-
+              -DCMAKE_CXX_COMPILER="C:/Program Files/LLVM/bin/clang-cl.exe"
+              -DCMAKE_C_COMPILER="C:/Program Files/LLVM/bin/clang-cl.exe"
+    runs-on: windows-2022
+    timeout-minutes: 40
+    name: Windows shared export (${{ matrix.name }})
+    steps:
+      - uses: actions/checkout@v7
+
+      # Both legs: cl.exe / link.exe for the MSVC leg, and dumpbin.exe for the test on both.
+      - name: Set up MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+
+      # The LLVM pin mirrors windows-isa-v3-compile's and release.yml's.
+      - name: Install clang-cl (LLVM, pinned)
+        if: matrix.name == 'clang-cl'
+        shell: pwsh
+        run: |
+          choco install llvm --version=20.1.0 -y --no-progress --allow-downgrade
+          & "C:\Program Files\LLVM\bin\clang-cl.exe" --version
+
+      - name: Cache CPM dependencies
+        uses: actions/cache@v6
+        with:
+          path: cpm_cache
+          key: cpm-${{ matrix.cache_key }}-${{ hashFiles('**/CMakeLists.txt') }}
+          restore-keys: cpm-${{ matrix.cache_key }}-
+
+      - name: Configure (shared library, no CUDA)
+        run: >
+          cmake -S . -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DBUILD_TEST=OFF
+          -DBUILD_GUI=OFF
+          -DBUILD_SHARED_LIBS=ON
+          -DLUMICE_ISA_LEVEL=baseline
+          ${{ matrix.compiler_args }}
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Setup Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+
+      - name: Install Python dependencies
+        run: pip install 'pytest<9'
+
+      # A skip is a failure on this leg: the test skips only when it finds no shared build (or,
+      # for lumice_analytic, a CUDA configure), and this leg has just built one without CUDA. So
+      # a skip here means the lookup missed the build — the green it would print is the one
+      # outcome this job exists to rule out.
+      - name: Check export sets
+        shell: pwsh
+        run: |
+          python -m pytest test/e2e-correctness/test_export_symbol_scope.py -v -m slow -rs 2>&1 | Tee-Object -Variable log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (($log | Out-String) -match '\bskipped\b') {
+            Write-Error "export-set test skipped on a leg that just built the shared flavor"
+            exit 1
+          }
+
   # The `push` guard STAYS here, and now reads as "main only" — which is the
   # intent: this job publishes the benchmark history to gh-pages, and a PR must
   # not write to it.

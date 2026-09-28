@@ -78,6 +78,8 @@ before downloading into it).
 - `src/gui/`: GUI app, panels, preview, file IO, poller
 - `src/server/`: server-side render, consumer, stats, C API bridge
 - `src/util/`: logger, threading, queue, arguments, color data
+- `src/analytic/`: implementation of the published analytic library `liblumice_analytic`
+  (header `src/include/lumice_analytic.h`, prefix `LUMICE_ANALYTIC_`; design in `doc/analytic-api.md`)
 - `src/include/`: public C API header
 - `test/`: unit tests, GUI tests, and E2E tests
 
@@ -315,7 +317,7 @@ before downloading into it).
     `-g`/`-t` alone never produce it, see "Build trees..." above) and are excluded from CI's fast
     leg. Run them locally with `pytest -v -m slow` before opening a PR that touches the simulator
     core, query filter, or C API surface.
-    That build produces **two** shared libraries, and pytest loads the second one. `liblumice` is
+    That build produces **three** shared libraries, and pytest loads the second one. `liblumice` is
     the product export surface: `src/include/lumice.h`, `LUMICE_*` only, and nothing that exists
     for a test's sake. `liblumice_testapi` (root `CMakeLists.txt`, target `lumice_testapi`; header
     `test/support/lumice_test_api.h`) is built from the **same `lumice_obj` objects** — so every
@@ -326,6 +328,15 @@ before downloading into it).
     process loads exactly one of the two. `test/e2e/capi_runner.py::lib_candidates` is the single
     authority on which file that is; `scripts/check_policies.py`'s `no-test-symbol-in-src` rule
     keeps the `LUMICE_TEST_` prefix out of `src/` so the two surfaces cannot grow back together.
+    The third, `liblumice_analytic`, is the published analytic library (`doc/analytic-api.md`),
+    again the same objects, exporting only `LUMICE_ANALYTIC_*`; it is not produced by a CUDA
+    configure. What each of the three exports is its own export list, generated from its headers
+    by `scripts/gen_export_list.py` — declarations carry `LUMICE_API` / `LUMICE_TEST_API` /
+    `LUMICE_ANALYTIC_API` and the generator refuses one without — and
+    `test/e2e-correctness/test_export_symbol_scope.py` reads the built binaries' export tables
+    against those headers (Linux/macOS in `e2e-slow`, Windows cl.exe + clang-cl in
+    `windows-shared-export`). The prefix boundary itself is `check_policies.py`'s
+    `analytic-symbol-scope` rule.
     Existing pytest calls to product symbols are deliberately **not** migrated to the test header:
     their subject is the product C API contract itself, and wrapping them would test the wrapper.
     - `test/regression-sentinel/test_capi_sentinel_overflow.py` — sentinel-overflow regression: 3-config × 12 rounds = 36 server lifecycles via `LUMICE_AcquireResultFrame` + `LUMICE_FrameGetRawXyz(max_count=1)`; guards against reintroduction of the c_api.cpp off-by-one sentinel write (fix: 5287efe)
@@ -767,8 +778,9 @@ Valuable design/architecture docs live in `doc/` (tracked). Consult the relevant
     L1 在 `D3h` `[3,5]` 过并 1.41×）。§4 首个模块（单光路反解 + fiber 行走）C 头文件草案：
     `EvaluatePath` + `TraceFiber[Batch]`，种子由调用方给（v0 不含 seed search），库分配 + 显式释放，
     `status` 封闭 / `reason` 开放。⚠️ §6：几何构造路径**有** `LOG_WARNING`（退化晶体 / 锥退化到顶点 /
-    丢面），默认静默会吞掉 ⇒ 回调须转发，且退化晶体同时以错误码返回。§7：`lumice.h` 的
-    `#pragma GCC visibility push(default)` 编进 `lumice_obj`，新库的导出集合只靠按库导出列表收窄。
+    丢面），默认静默会吞掉 ⇒ 回调须转发，且退化晶体同时以错误码返回。§7：三个共享库同链
+    `lumice_obj`，导出集合**只**由按库导出列表决定（`scripts/gen_export_list.py` 从各库头文件生成，
+    as-built）；`WINDOWS_EXPORT_ALL_SYMBOLS` 与 visibility pragma 已移除。
     §9 未决项表（seed search、`FiberResult` 是否补 LI §9.3 诊断字段两条待 owner 裁定）。
     实现新库 target / 导出列表 / 日志接管 / 打包 / 首个解析模块前先读。
 - **GPU / Metal route** (read these before touching the GPU path):
