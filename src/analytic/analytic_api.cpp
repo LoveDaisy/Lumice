@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "analytic/analytic_callback_sink.hpp"
+#include "analytic/discovery.hpp"
 #include "analytic/fiber_continuation.hpp"
 #include "analytic/path_evaluation.hpp"
 #include "analytic/path_fiber.hpp"
@@ -269,6 +270,174 @@ LUMICE_ANALYTIC_ErrorCode TraceFiberBatchImpl(const LUMICE_ANALYTIC_Crystal* cry
   return LUMICE_ANALYTIC_OK;
 }
 
+// The block behind DiscoveryResult::storage: the component and candidate arrays, the FiberResults
+// they point to (sized once, so the pointers stay put), and the trace blocks those results view.
+struct DiscoveryResultStorage {
+  std::vector<LUMICE_ANALYTIC_DiscoveredComponent> components;
+  std::vector<LUMICE_ANALYTIC_IncompleteCandidate> incomplete;
+  std::vector<LUMICE_ANALYTIC_FiberResult> traces;
+  std::vector<std::unique_ptr<FiberResultStorage>> blocks;
+};
+
+// The C discovery options onto the kernel's settings: zero is the default, negative or non-finite
+// is invalid. The dedup threshold's default is the continuation's closure distance.
+struct DiscoverySettings {
+  int sample_count = lumice::analytic::kDefaultDiscoverySampleCount;
+  double band_half_width = lumice::analytic::kDefaultBandHalfWidth;
+  double cluster_radius = lumice::analytic::kDefaultClusterRadius;
+  double distance_threshold = 0.0;
+};
+
+bool ToDiscoverySettings(const LUMICE_ANALYTIC_DiscoveryOptions* options, double closure_distance,
+                         DiscoverySettings* s) {
+  *s = DiscoverySettings{};
+  s->distance_threshold = closure_distance;
+  if (options == nullptr) {
+    return true;
+  }
+  auto real = [](double v, double* field) {
+    if (!std::isfinite(v) || v < 0.0) {
+      return false;
+    }
+    if (v > 0.0) {
+      *field = v;
+    }
+    return true;
+  };
+  if (options->sample_count < 0) {
+    return false;
+  }
+  if (options->sample_count > 0) {
+    s->sample_count = options->sample_count;
+  }
+  return real(options->band_half_width, &s->band_half_width) && real(options->cluster_radius, &s->cluster_radius) &&
+         real(options->distance_threshold, &s->distance_threshold);
+}
+
+LUMICE_ANALYTIC_ErrorCode DiscoverComponentsImpl(const LUMICE_ANALYTIC_Crystal* crystal,
+                                                 const LUMICE_ANALYTIC_DiscoveryProblem* problem,
+                                                 const LUMICE_ANALYTIC_DiscoveryOptions* options,
+                                                 const LUMICE_ANALYTIC_ContinuationOptions* continuation,
+                                                 LUMICE_ANALYTIC_DiscoveryResult* out) {
+  namespace an = lumice::analytic;
+  if (out->struct_size < sizeof(LUMICE_ANALYTIC_DiscoveryResult)) {
+    return LUMICE_ANALYTIC_ERR_INVALID_VALUE;
+  }
+  if (crystal == nullptr || problem == nullptr) {
+    return LUMICE_ANALYTIC_ERR_NULL_ARG;
+  }
+  if ((problem->faces == nullptr && problem->face_count > 0) ||
+      (problem->extra_seeds == nullptr && problem->extra_seed_count > 0)) {
+    return LUMICE_ANALYTIC_ERR_NULL_ARG;
+  }
+  an::ContinuationParams params;
+  DiscoverySettings settings;
+  if (!ToParams(continuation, &params) || !ToDiscoverySettings(options, params.closure_distance, &settings)) {
+    return LUMICE_ANALYTIC_ERR_INVALID_VALUE;
+  }
+  an::FaceNormalTable table;
+  an::FacePolygonTable polygons;
+  if (auto status = an::BuildFaceNormals(*crystal, &table, &polygons); status != an::Status::kOk) {
+    return ToErrorCode(status);
+  }
+  if (problem->face_count < 2 || problem->face_count > an::kMaxFaceCount || !std::isfinite(problem->refractive_index) ||
+      problem->refractive_index <= 0.0 || !an::ValidateUnitVector(problem->incident_direction) ||
+      !an::ValidateUnitVector(problem->target_direction) || problem->extra_seed_count < 0) {
+    return LUMICE_ANALYTIC_ERR_INVALID_VALUE;
+  }
+  // LI section 9.5.3: the target's component normal to the sun must exist.
+  const double delta = an::TargetDeviation(problem->incident_direction, problem->target_direction);
+  if (!(delta > 0.0 && delta < std::acos(-1.0))) {
+    return LUMICE_ANALYTIC_ERR_INVALID_VALUE;
+  }
+  for (int i = 0; i < problem->extra_seed_count; i++) {
+    if (!an::ValidateRotation(problem->extra_seeds + 9 * static_cast<size_t>(i))) {
+      return LUMICE_ANALYTIC_ERR_INVALID_VALUE;
+    }
+  }
+  int slots[an::kMaxFaceCount];
+  if (an::ResolveFaceSequence(table, problem->faces, problem->face_count, slots) != an::Status::kOk) {
+    return LUMICE_ANALYTIC_ERR_INVALID_VALUE;
+  }
+
+  an::IceDiscovery discovery(table, polygons, slots, problem->face_count, problem->refractive_index,
+                             problem->incident_direction);
+  const an::DiscoveryOutput found = discovery.Discover(
+      problem->target_direction, settings.sample_count, settings.band_half_width, problem->extra_seeds,
+      problem->extra_seed_count, settings.cluster_radius, settings.distance_threshold, params);
+
+  auto storage = std::make_unique<DiscoveryResultStorage>();
+  auto backward_run = [](const an::IncompleteCandidate& c) {
+    return c.cause == an::IncompleteCause::kArcBackwardFailed ||
+           c.cause == an::IncompleteCause::kArcBackwardClosedAnomaly;
+  };
+  size_t trace_count = 0;
+  for (const auto& c : found.components) {
+    trace_count += c.kind == an::ComponentKind::kArc ? 2 : 1;
+  }
+  for (const auto& c : found.incomplete) {
+    trace_count += backward_run(c) ? 2 : 1;
+  }
+  storage->traces.resize(trace_count);
+  size_t next = 0;
+  auto view = [&](const an::TraceResult& trace) -> const LUMICE_ANALYTIC_FiberResult* {
+    LUMICE_ANALYTIC_FiberResult* r = &storage->traces[next++];
+    r->struct_size = sizeof(LUMICE_ANALYTIC_FiberResult);
+    FillFiberResult(trace, problem->incident_direction, r);
+    // The block moves to the discovery storage: the nested result is a view, not an owner.
+    storage->blocks.emplace_back(static_cast<FiberResultStorage*>(r->storage));
+    r->storage = nullptr;
+    return r;
+  };
+  for (const auto& c : found.components) {
+    LUMICE_ANALYTIC_DiscoveredComponent d{};
+    d.kind = c.kind == an::ComponentKind::kArc ? LUMICE_ANALYTIC_COMPONENT_ARC : LUMICE_ANALYTIC_COMPONENT_CLOSED;
+    std::memcpy(d.seed, c.seed, sizeof(d.seed));
+    d.forward = view(c.forward);
+    d.backward = c.kind == an::ComponentKind::kArc ? view(c.backward) : nullptr;
+    storage->components.push_back(d);
+  }
+  for (const auto& c : found.incomplete) {
+    LUMICE_ANALYTIC_IncompleteCandidate d{};
+    switch (c.cause) {
+      case an::IncompleteCause::kArcBackwardFailed:
+        d.cause = LUMICE_ANALYTIC_INCOMPLETE_ARC_BACKWARD_FAILED;
+        break;
+      case an::IncompleteCause::kArcBackwardClosedAnomaly:
+        d.cause = LUMICE_ANALYTIC_INCOMPLETE_ARC_BACKWARD_CLOSED_ANOMALY;
+        break;
+      case an::IncompleteCause::kUnnamedEvent:
+        d.cause = LUMICE_ANALYTIC_INCOMPLETE_UNNAMED_EVENT;
+        break;
+      case an::IncompleteCause::kNotConverged:
+        d.cause = LUMICE_ANALYTIC_INCOMPLETE_NOT_CONVERGED;
+        break;
+    }
+    std::memcpy(d.seed, c.seed, sizeof(d.seed));
+    d.forward = view(c.forward);
+    d.backward = backward_run(c) ? view(c.backward) : nullptr;
+    storage->incomplete.push_back(d);
+  }
+
+  out->completeness = found.Complete() ? LUMICE_ANALYTIC_COMPLETENESS_COMPLETE : LUMICE_ANALYTIC_COMPLETENESS_UNKNOWN;
+  out->component_count = static_cast<int>(storage->components.size());
+  out->components = storage->components.empty() ? nullptr : storage->components.data();
+  out->incomplete_count = static_cast<int>(storage->incomplete.size());
+  out->incomplete = storage->incomplete.empty() ? nullptr : storage->incomplete.data();
+  out->pool_count = found.pool_count;
+  out->extra_seed_count = found.extra_seed_count;
+  out->raw_cluster_count = found.raw_cluster_count;
+  out->admissible_count = found.admissible_count;
+  out->dedup_merged = found.dedup_merged;
+  out->arc_stitched = found.arc_stitched;
+  out->arc_backward_failed = found.arc_backward_failed;
+  out->arc_backward_closed_anomaly = found.arc_backward_closed_anomaly;
+  out->incomplete_unnamed_event = found.incomplete_unnamed_event;
+  out->incomplete_not_converged = found.incomplete_not_converged;
+  out->storage = storage.release();
+  return LUMICE_ANALYTIC_OK;
+}
+
 LUMICE_ANALYTIC_ErrorCode EvaluatePathImpl(const LUMICE_ANALYTIC_Crystal* crystal, const int* faces, int face_count,
                                            double refractive_index, const double incident_direction[3],
                                            const double pose[9], LUMICE_ANALYTIC_PathEvaluation* out) {
@@ -442,6 +611,37 @@ void LUMICE_ANALYTIC_ReleaseFiberResult(LUMICE_ANALYTIC_FiberResult* result) {
     return;
   }
   ReleaseFiberStorage(result);
+}
+
+LUMICE_ANALYTIC_ErrorCode LUMICE_ANALYTIC_DiscoverComponents(const LUMICE_ANALYTIC_Crystal* crystal,
+                                                             const LUMICE_ANALYTIC_DiscoveryProblem* problem,
+                                                             const LUMICE_ANALYTIC_DiscoveryOptions* options,
+                                                             const LUMICE_ANALYTIC_ContinuationOptions* continuation,
+                                                             LUMICE_ANALYTIC_DiscoveryResult* out_result) {
+  if (out_result == nullptr) {
+    return LUMICE_ANALYTIC_ERR_NULL_ARG;
+  }
+  ZeroAfterStructSize(out_result);
+  // No exception crosses the C boundary; the storage is released to out_result only on success.
+  try {
+    const LUMICE_ANALYTIC_ErrorCode code = DiscoverComponentsImpl(crystal, problem, options, continuation, out_result);
+    if (code != LUMICE_ANALYTIC_OK) {
+      ZeroAfterStructSize(out_result);
+    }
+    return code;
+  } catch (...) {
+    ZeroAfterStructSize(out_result);
+    return LUMICE_ANALYTIC_ERR_UNKNOWN;
+  }
+}
+
+void LUMICE_ANALYTIC_ReleaseDiscoveryResult(LUMICE_ANALYTIC_DiscoveryResult* result) {
+  if (result == nullptr || result->struct_size < sizeof(LUMICE_ANALYTIC_DiscoveryResult)) {
+    return;
+  }
+  // Reclaims the block released to the caller by DiscoverComponents; destroyed at scope exit.
+  std::unique_ptr<DiscoveryResultStorage> owned(static_cast<DiscoveryResultStorage*>(result->storage));
+  ZeroAfterStructSize(result);
 }
 
 }  // extern "C"

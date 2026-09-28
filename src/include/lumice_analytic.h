@@ -17,6 +17,12 @@
 // face sequence and performs no symmetry reduction (doc/analytic-api.md section 3).
 //
 // Version notes, newest first (every bump says what changed, doc/analytic-api.md section 8.1):
+//   4  ADDED LUMICE_ANALYTIC_DiscoveryProblem, LUMICE_ANALYTIC_DiscoveryOptions,
+//      LUMICE_ANALYTIC_Completeness, LUMICE_ANALYTIC_ComponentKind, LUMICE_ANALYTIC_IncompleteCause,
+//      LUMICE_ANALYTIC_DiscoveredComponent, LUMICE_ANALYTIC_IncompleteCandidate,
+//      LUMICE_ANALYTIC_DiscoveryResult, LUMICE_ANALYTIC_DiscoverComponents,
+//      LUMICE_ANALYTIC_ReleaseDiscoveryResult — component discovery (seed search). Nothing existing
+//      changed.
 //   3  ADDED LUMICE_ANALYTIC_FiberProblem, LUMICE_ANALYTIC_ContinuationOptions,
 //      LUMICE_ANALYTIC_FiberStatus, LUMICE_ANALYTIC_Reason, LUMICE_ANALYTIC_FiberResult,
 //      LUMICE_ANALYTIC_TraceFiber, LUMICE_ANALYTIC_TraceFiberBatch, LUMICE_ANALYTIC_ReleaseFiberResult —
@@ -53,7 +59,7 @@ extern "C" {
 
 // Interface version, a single integer bumped on every incompatible change (doc/analytic-api.md
 // section 8). Independent of lumice.h's LUMICE_API_VERSION.
-#define LUMICE_ANALYTIC_API_VERSION 3
+#define LUMICE_ANALYTIC_API_VERSION 4
 
 // Library version at run time; compare with LUMICE_ANALYTIC_API_VERSION to detect a
 // header/library mismatch. Also the minimal function the build, export and load chain is proven
@@ -276,6 +282,144 @@ LUMICE_ANALYTIC_API LUMICE_ANALYTIC_ErrorCode LUMICE_ANALYTIC_TraceFiberBatch(
 // Frees what TraceFiber / TraceFiberBatch allocated for one result and zeroes it after struct_size.
 // NULL-safe; a no-op on a zero-filled struct.
 LUMICE_ANALYTIC_API void LUMICE_ANALYTIC_ReleaseFiberResult(LUMICE_ANALYTIC_FiberResult* result);
+
+// ---------------------------------------------------------------------------------------------
+// Component discovery / seed search (doc/analytic-api.md section 4.3): for one path and one target
+// direction, the seeds of the fiber { R : outgoing_direction(R) = target_direction }, each distinct
+// component traced once (TraceFiber's solver) and classified. LI docs/phase1-math-contract.md
+// section 9.5, strategy reference-discovery-v1; the step order and gates are that section's.
+//
+// Deterministic: the sample is the antipodal Fibonacci lattice of `sample_count` points of the
+// sun direction in the crystal frame, generated inside the call — no random numbers, so the result
+// is fixed by the inputs.
+//
+// NOT a completeness certificate. `completeness` is procedural: COMPLETE means only that every
+// admissible candidate of this sample closed or became an arc, never that every component of the
+// fiber was found. A denser sample is NOT guaranteed to find a superset: it can lose a component a
+// sparser one found (LI section 9.5.7). To densify, pass the sparser call's component seeds as
+// `extra_seeds` of the denser one.
+// ---------------------------------------------------------------------------------------------
+typedef struct LUMICE_ANALYTIC_DiscoveryProblem_ {
+  const int* faces;              // concrete Lumice face numbers: entry, internal reflections, exit
+  int face_count;                // 2..64
+  double refractive_index;       // finite, > 0
+  double incident_direction[3];  // world unit vector, propagation sun -> crystal (LI's s)
+  double target_direction[3];    // world unit vector (LI's d); its angle to incident_direction must
+                                 // lie strictly between 0 and pi
+  // Warm starts, typically the component seeds of a sparser call or a neighbouring target:
+  // extra_seed_count row-major rotations (body -> world), 9 doubles each. Each is only the
+  // Gauss-Newton start of its cluster; it is never traced on its own and never counts toward
+  // completeness. May be NULL when extra_seed_count is 0.
+  const double* extra_seeds;
+  int extra_seed_count;
+} LUMICE_ANALYTIC_DiscoveryProblem;
+
+// NULL => every field at its reference default (LI section 9.5.9). A zero field also means
+// "default"; a negative or non-finite one is ERR_INVALID_VALUE.
+typedef struct LUMICE_ANALYTIC_DiscoveryOptions_ {
+  int sample_count;           // lattice points N; default 1000000
+  double band_half_width;     // rad; candidates are sample events whose deviation is within this
+                              // of the target's; default 0.2 deg
+  double cluster_radius;      // rad, SO(3) geodesic; default 0.3
+  double distance_threshold;  // rad, SO(3) geodesic: a corrected candidate closer than this to an
+                              // accepted component's curve is that component; default the
+                              // continuation's closure_pose_tolerance (0.08)
+} LUMICE_ANALYTIC_DiscoveryOptions;
+
+typedef enum LUMICE_ANALYTIC_Completeness_ {
+  LUMICE_ANALYTIC_COMPLETENESS_COMPLETE = 0,  // no incomplete candidate (procedural, see above)
+  LUMICE_ANALYTIC_COMPLETENESS_UNKNOWN = 1,   // at least one incomplete candidate
+} LUMICE_ANALYTIC_Completeness;
+
+typedef enum LUMICE_ANALYTIC_ComponentKind_ {
+  LUMICE_ANALYTIC_COMPONENT_CLOSED = 0,  // one closed trace
+  LUMICE_ANALYTIC_COMPONENT_ARC = 1,     // two traces from the seed, each ending on a boundary event
+} LUMICE_ANALYTIC_ComponentKind;
+
+// Why a traced candidate is neither a component nor a duplicate of one (LI section 9.5.5).
+typedef enum LUMICE_ANALYTIC_IncompleteCause_ {
+  LUMICE_ANALYTIC_INCOMPLETE_ARC_BACKWARD_FAILED = 0,          // forward on a boundary event, backward not
+  LUMICE_ANALYTIC_INCOMPLETE_ARC_BACKWARD_CLOSED_ANOMALY = 1,  // forward on a boundary event, backward closed
+  LUMICE_ANALYTIC_INCOMPLETE_UNNAMED_EVENT = 2,                // forward on an event that ends no arc
+  LUMICE_ANALYTIC_INCOMPLETE_NOT_CONVERGED = 3,                // forward failed numerically or ran out of budget
+} LUMICE_ANALYTIC_IncompleteCause;
+
+// A component. `forward` is the trace from `seed` in the library's +1 orientation (TraceFiber's).
+// For an arc, `backward` is the trace from the same seed in the opposite orientation; the arc runs
+// from backward's last pose through the seed to forward's last pose, and either trace may hold only
+// the seed. A boundary event ends each trace: TIR, BRANCH, PATH_INFEASIBLE, VISIBILITY or CHART
+// BOUNDARY. For a closed component `backward` is NULL.
+typedef struct LUMICE_ANALYTIC_DiscoveredComponent_ {
+  int kind;                                     // LUMICE_ANALYTIC_ComponentKind
+  double seed[9];                               // corrected seed, row-major, body -> world
+  const LUMICE_ANALYTIC_FiberResult* forward;   // never NULL
+  const LUMICE_ANALYTIC_FiberResult* backward;  // arc only; NULL for a closed component
+} LUMICE_ANALYTIC_DiscoveredComponent;
+
+typedef struct LUMICE_ANALYTIC_IncompleteCandidate_ {
+  int cause;                                    // LUMICE_ANALYTIC_IncompleteCause
+  double seed[9];                               // corrected seed, row-major, body -> world
+  const LUMICE_ANALYTIC_FiberResult* forward;   // never NULL
+  const LUMICE_ANALYTIC_FiberResult* backward;  // NULL unless cause is one of the ARC_BACKWARD_* values
+} LUMICE_ANALYTIC_IncompleteCandidate;
+
+// Everything reached through `components` and `incomplete`, including the FiberResults they point
+// to, lives in `storage` and is freed by LUMICE_ANALYTIC_ReleaseDiscoveryResult alone. The nested
+// FiberResults are views: their own `storage` is NULL, and they must not be passed to
+// LUMICE_ANALYTIC_ReleaseFiberResult. Their struct_size is the library's sizeof.
+typedef struct LUMICE_ANALYTIC_DiscoveryResult_ {
+  uint32_t struct_size;  // caller sets sizeof(*out_result) (section 8.2)
+  int completeness;      // LUMICE_ANALYTIC_Completeness
+  int component_count;
+  const LUMICE_ANALYTIC_DiscoveredComponent* components;  // trace order; NULL when component_count is 0
+  int incomplete_count;
+  const LUMICE_ANALYTIC_IncompleteCandidate* incomplete;  // trace order; NULL when incomplete_count is 0
+  // The funnel (LI section 9.5.6): sample events in the band (w = A T > 0), extra seeds, clusters of
+  // the pool, admissible representatives. admissible_count = dedup_merged + component_count +
+  // incomplete_count.
+  int pool_count;
+  int extra_seed_count;
+  int raw_cluster_count;
+  int admissible_count;
+  // The six classification counters of LI section 9.5.6. arc_stitched counts the arc components; the
+  // last four sum to incomplete_count.
+  int dedup_merged;
+  int arc_stitched;
+  int arc_backward_failed;
+  int arc_backward_closed_anomaly;
+  int incomplete_unnamed_event;
+  int incomplete_not_converged;
+  void* storage;  // opaque; LUMICE_ANALYTIC_ReleaseDiscoveryResult
+} LUMICE_ANALYTIC_DiscoveryResult;
+
+// Discovers the components of `problem`'s fiber on `crystal`. `options` NULL = reference defaults;
+// `continuation` (NULL = defaults) is the one policy every trace of the call runs under — there is
+// no separate discovery budget, and a starving budget shows up as NOT_CONVERGED candidates. The
+// candidates must also pass the finite crystal's entry-measure gate: some ray entering the entry
+// face at that pose must meet every later face of the path inside its polygon.
+//
+// A target with no candidate is a success: COMPLETE, zero components (a dark sky point).
+//
+// Call errors (out_result is zero-filled after struct_size, so Release is safe):
+//   ERR_NULL_ARG       crystal, problem or out_result NULL; faces NULL with face_count > 0;
+//                      extra_seeds NULL with extra_seed_count > 0
+//   ERR_INVALID_VALUE  out_result->struct_size smaller than this struct; face_count outside 2..64, a
+//                      face number the crystal does not have; refractive_index not finite and
+//                      positive; a direction not finite or its length off 1 by more than 1e-10; the
+//                      target at 0 or pi from the incident direction; extra_seed_count < 0, an extra
+//                      seed that is not a rotation (as EvaluatePath checks a pose); an invalid options
+//                      or continuation block; a crystal field as for EvaluatePath
+//   ERR_INVALID_CONFIG crystal rejected by the engine's closed-form validity gate
+//   ERR_UNKNOWN        an internal failure (out of memory)
+// Re-entrant: safe to call concurrently on distinct outputs; keeps no state between calls.
+LUMICE_ANALYTIC_API LUMICE_ANALYTIC_ErrorCode LUMICE_ANALYTIC_DiscoverComponents(
+    const LUMICE_ANALYTIC_Crystal* crystal, const LUMICE_ANALYTIC_DiscoveryProblem* problem,
+    const LUMICE_ANALYTIC_DiscoveryOptions* options, const LUMICE_ANALYTIC_ContinuationOptions* continuation,
+    LUMICE_ANALYTIC_DiscoveryResult* out_result);
+
+// Frees what DiscoverComponents allocated, nested traces included, and zeroes the struct after
+// struct_size. NULL-safe; a no-op on a zero-filled struct.
+LUMICE_ANALYTIC_API void LUMICE_ANALYTIC_ReleaseDiscoveryResult(LUMICE_ANALYTIC_DiscoveryResult* result);
 
 // Logging: the library writes nothing by default — no console, no file — until the host installs a
 // callback, which then receives the engine's diagnostics, including crystal-construction warnings
