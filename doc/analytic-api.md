@@ -491,7 +491,9 @@ LUMICE_ANALYTIC_ErrorCode LUMICE_ANALYTIC_TraceFiber(
 /* One crystal, one options block, `count` independent problems (typically one path swept over
  * many target directions). out_results: caller-allocated array of `count`; each element is filled
  * and released independently. A per-problem failure is that element's status/reason; the return
- * code reports only call-level errors. */
+ * code reports only call-level errors (NULL crystal, NULL problems, count < 0, an invalid options
+ * block). On a call-level error every element of out_results is zero-filled, so Release* is safe
+ * to call on all `count` elements regardless of which error path was taken. */
 LUMICE_ANALYTIC_ErrorCode LUMICE_ANALYTIC_TraceFiberBatch(
     const LUMICE_ANALYTIC_Crystal* crystal,
     const LUMICE_ANALYTIC_FiberProblem* problems, int count,
@@ -559,8 +561,9 @@ are never error codes; they are `status`/`reason` (§4.4).
 ### 5.3 Thread safety and re-entrancy
 
 - The computation functions (`EvaluatePath`, `TraceFiber`, `TraceFiberBatch`, the `Release*`
-  functions) are **re-entrant and safe to call concurrently** on distinct outputs. They hold no
-  mutable state between calls, and the library **starts no threads** of its own.
+  functions) are **intended to be re-entrant and safe to call concurrently** on distinct outputs,
+  pending the verification in the third bullet below. They hold no mutable state between calls
+  themselves, and the library **starts no threads** of its own.
 - `SetLogCallback` writes process-wide state (the sink and the callback pointer). It is an
   initialisation call: made once, before computation, from one thread. The same holds for
   `LUMICE_SetLogCallback` in `lumice.h` today, whose first-call registration is an unsynchronised
@@ -653,9 +656,17 @@ graph planned today.
   classified churn in `doc/api-layering-and-product-lines.md` §8), and a consumer of one must not
   see the other's churn as a version bump.
 - Same style as `LUMICE_API_VERSION`: a single integer, bumped on every incompatible change, with a
-  one-line note per bump at the top of the header. Adding a function, an enum value to an open set
-  (§4.4) or a field at the *end* of a result struct that the library allocates is compatible;
-  anything else — including a convention change (§5.1) — is not. The runtime
+  one-line note per bump at the top of the header. Adding a function or an enum value to an open
+  set (§4.4) is compatible. **A field appended to `PathEvaluation` or `FiberResult` is not** —
+  those two structs are caller-allocated, passed by pointer (`out`/`out_result`) or as a
+  caller-allocated array (`out_results` in `TraceFiberBatch`), never library-allocated (§4.4), so a
+  library built against a header with more fields would write past the bounds of memory the caller
+  sized against an older header — in the batch case, past the first element's bounds into the next.
+  Only the internal variable-length buffers reached through `storage` (`segment_directions`,
+  `poses`, and similarly) are library-allocated, and those can grow freely because a caller never
+  lays memory out for them. Anything else — including a convention change (§5.1) — is also not
+  compatible. Whether the two result structs should instead carry a size/version field so a future
+  field could be added without a version bump is left open (§9 item 12). The runtime
   `LUMICE_ANALYTIC_GetApiVersion()` lets a binding detect a header/library mismatch.
 - **0.x is experimental** until the first real module is in LI's use. The wording of the
   compatibility promise, the semver mapping of the integer, ABI and deprecation policy, and what
@@ -678,4 +689,5 @@ graph planned today.
 | 9 | Surface crystal *degradation* (apex collapse, dropped face) as result data, not only as a log line (§6). | The first-module implementation |
 | 10 | Parallelism inside `TraceFiberBatch` (v0: none; caller parallelises). Revisit only with a measured batch where binding-side threading is the bottleneck. | The first-module implementation |
 | 11 | Re-read LI `docs/phase1-math-contract.md` §9 before implementing: this draft mirrors it as of 2026-09-28, and LI's §12 lists open items that may move it. LI's §9.1 also says problem construction "MUST not import or invoke Lumice" — a rule LI revises on its side when it adopts this library. | The first-module implementation (and LI, on adoption) |
+| 12 | Whether `PathEvaluation`/`FiberResult` should carry a `struct_size`/version field (Win32 `cbSize`, Vulkan `sType`+`pNext` are existing patterns) so a future field addition would not need an `LUMICE_ANALYTIC_API_VERSION` bump (§8). Until decided, appending a field to either struct is an incompatible change. | The packaging and version-policy work |
 | 12 | Verify no thread-unsafe static cache in the called geometry/optics code (§5.3). | The first-module implementation |
