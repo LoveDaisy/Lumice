@@ -665,7 +665,8 @@ B——2026-09-12 更新把 symmetry 搬到读取侧而结构性消失，完整�
 
 `scene.ray_allocation`（`doc/configuration.md`「scene」节）现在提供两种分配策略：默认的
 `"proportional"` 按晶体种群比例（`proportion`）均分光线数；`"adaptive"` 在渲染主跑中由每一批
-自己在线累计各条目的每光线能量统计，按 Neyman 重要性权重 `q_i ∝ p_i·√E[e²]` 逐批重新分配各条目
+自己在线累计各条目的每光线能量统计，按 Neyman 重要性权重 `q_i ∝ p_i·√E[e²]`（另有两道下限：
+不低于按比例份额的一半、不低于均匀分配的 1%；完整公式与代价见 `doc/configuration.md`）逐批重新分配各条目
 的光线数，并给每条光线乘一个权重校正因子 `(p_i/ΣP)/(q_i/ΣQ)`，使期望能量不变、只有方差移动
 （`ResolveLayerRayAllocation` / `ComputeAdaptiveRayAllocationWeights` / `RayAllocationOnline`，
 `src/core/simulator.hpp`）。它与本面板的交互面有四点：

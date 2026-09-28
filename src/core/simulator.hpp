@@ -574,24 +574,59 @@ struct LayerRayAllocation {
 LayerRayAllocation ResolveLayerRayAllocation(SceneConfig::RayAllocationMode mode, const MsInfo& layer,
                                              const std::vector<float>* q_for_layer);
 
+// R in the relative floor of ComputeAdaptiveRayAllocationWeights: a live entry is
+// never dealt less than 1/R of its proportional share. Hard-coded on purpose — a
+// correctness guard, not a user knob.
+inline constexpr double kRayAllocationRelativeFloorRatio = 2.0;
+
 // The q one layer is dealt by, from its energy shares `p` (crystal_proportion_) and
 // the cumulative tally of the same layer (`stats.size() == p.size()`). Neyman
-// allocation with a floor:
-//   q_i = 0                                  if p_i <= 0   (a switched-off entry stays off)
-//   q_i = max(raw_i / Σraw, 0.01 / K)        otherwise, raw_i = p_i · √(Σw²_i / rays_i)
-// with K the number of p_i > 0 entries — the entries the floor is FOR; a p_i = 0 entry
-// is not a share the floor divides among. The floor is not a zero-hit special case:
-// Neyman on its own pushes a rare-but-ordinary-energy entry BELOW its proportional
-// share (E[e²] carries the hit rate once more than E[e] does), and an entry the tally
-// saw no exit from would otherwise be dealt nothing for the rest of the run — a fixed
-// point nothing escapes (see the starvation test). 0.01/K keeps the main entries'
-// shares within 0.1% of Neyman while guaranteeing every live entry 1% of a uniform
-// deal. The vector is returned unnormalized past the floor: PartitionCrystalRayNum
-// and ComputeRayAllocationCorrection normalize whatever they are handed, and the
-// same Σ is what both see. An entry with rays_i == 0 has raw_i = 0 (nothing was
-// measured, so nothing is claimed); when every raw_i is 0 the live entries are
-// dealt uniformly at the floor — which is also the cold-start deal, before any
-// batch has been measured.
+// allocation with two floors:
+//   q_i = 0                                              if p_i <= 0   (a switched-off entry stays off)
+//   q_i = 0.01 / K                                       if Σraw == 0  (cold start: uniform)
+//   q_i = max(raw_i / Σraw, p_norm_i / R, 0.01 / K)      otherwise
+// with raw_i = p_i · √(Σw²_i / rays_i), p_norm_i = p_i / Σ_{p_j > 0} p_j, R =
+// kRayAllocationRelativeFloorRatio, and K the number of p_i > 0 entries — the entries
+// the floors are FOR; a p_i = 0 entry is not a share either floor divides among.
+//
+// The relative floor p_norm_i / R: Neyman on its own pushes a rare-but-ordinary-energy
+// entry BELOW its proportional share (E[e²] carries the hit rate once more than E[e]
+// does). A filter_in entry whose narrow raypath almost never passes is exactly that
+// entry, and the arc it draws is the only place its rays land — so Neyman, which
+// minimizes the whole frame's summed variance, starved the one feature that entry
+// exists to draw (a Parry arc measured 2.6× noisier than under proportional). The
+// floor only binds where Neyman dealt an entry less than 1/R of p_norm_i; an entry
+// Neyman RAISES above p_norm_i is never floored (p_norm_i / R ≤ p_norm_i ≤ share_i).
+// It is not free for that entry, though: q is normalized downstream, so every unit
+// the floor adds elsewhere dilutes the unfloored entries by 1/Σq. The dilution is
+// bounded — the floors lift Σq by at most Σ p_norm_i / R + K · 0.01 / K = 1/R + 0.01,
+// so an unfloored entry keeps at least 1 / (1 + 1/R + 0.01) of its Neyman share:
+// about 2/3 at R = 2, i.e. its variance grows by at most about 1.5×.
+//
+// Known limitation — the floor is keyed on the declared p, not on what the entry
+// draws, and no per-entry scalar can tell apart the two filter_in shapes it meets:
+// an entry whose rare output is concentrated on a narrow feature the user is looking
+// at (the Parry arc above), and one whose rare output is spread so thin it is never
+// visible (ray_allocation_skewed_adaptive.json: p = 0.99, output ~3e-6 of the frame).
+// Both read "large p, small energy per ray" in p, E[e] and E[e²] alike, so the floor
+// protects both, and in the second case it only dilutes the visible entry (measured
+// 1.17× noisier there at R = 2). The quantity that does separate them is spatial
+// concentration — per-pixel relative variance — which a per-entry tally does not
+// carry; an allocation target built on it is the follow-up direction, not something
+// this floor solves.
+//
+// The absolute floor 0.01 / K is what keeps an entry the tally saw no exit from
+// alive: without it such an entry would be dealt nothing for the rest of the run — a
+// fixed point nothing escapes (see the starvation test). The relative floor covers
+// the same case whenever p_norm_i / R > 0.01 / K; the absolute one still binds for a
+// tiny-p entry. The vector is returned unnormalized past the floors:
+// PartitionCrystalRayNum and ComputeRayAllocationCorrection normalize whatever they
+// are handed, and the same Σ is what both see, so the charge stays unbiased whatever
+// the floors did. An entry with rays_i == 0 has raw_i = 0 (nothing was measured, so
+// nothing is claimed); when every raw_i is 0 the live entries are dealt uniformly at
+// the absolute floor — the cold-start deal, before any batch has been measured (the
+// relative floor is deliberately NOT applied there: it would turn the cold start into
+// a deal by p, which is what the uniform start was chosen over).
 std::vector<float> ComputeAdaptiveRayAllocationWeights(const std::vector<float>& p,
                                                        const std::vector<RayAllocationEntryTally>& stats);
 

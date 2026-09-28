@@ -500,9 +500,18 @@ The scene configuration defines the simulation scene, including the light source
 > `"adaptive"` separates the two knobs. The statistic comes from the render itself: every
 > batch the run traces — on the CPU, on Metal or on CUDA, whichever backend is rendering —
 > tallies each entry's per-ray energy (rays dealt, Σw and Σw² of its exits), and the running
-> total gives each entry a sampling share `q_i ∝ p_i·√E[e²_i]`, floored at `0.01/K` of a
-> uniform deal (K = the number of entries with `proportion > 0`) so no live entry is ever
-> starved; an entry with `proportion: 0` stays at zero. The very first batch, before anything
+> total gives each entry a sampling share `q_i ∝ p_i·√E[e²_i]` (Neyman), with two floors: never
+> under half its proportional share, `p_i/(2·ΣP)`, and never under `0.01/K` of a uniform deal
+> (K = the number of entries with `proportion > 0`) so no live entry is ever starved; an entry
+> with `proportion: 0` stays at zero. The first floor is there because Neyman minimizes the
+> *whole frame's* variance, and on its own it deals a `filter_in` entry whose raypath rarely
+> passes far below its proportional share — the narrow arc that entry draws came out ~2.6×
+> noisier than under `"proportional"`. It only binds on entries Neyman pushed under half their
+> share, and it is not free for the others: shares are normalized, so what the floor lifts is
+> taken proportionally from every unfloored entry — bounded, each keeps at least about 2/3 of its
+> Neyman share. It cannot tell an arc worth protecting from a filtered entry whose output is too
+> faint to see (both look alike in the per-entry statistics); in the latter case it just costs the
+> visible entries some noise. The very first batch, before anything
 > has been measured, deals the live entries uniformly; every batch after that deals by the
 > shares the batches before it measured, and every ray born into entry *i* has its weight
 > multiplied by `(p_i/ΣP)/(q_i/ΣQ)` for the shares *its* batch was dealt by — the image's

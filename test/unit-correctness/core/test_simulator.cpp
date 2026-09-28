@@ -1926,7 +1926,9 @@ SceneConfig MakeTwoEntryScene(SceneConfig::RayAllocationMode mode, float prob = 
 
 // Drive `online` to publish exactly the shares `q` on every layer: a synthetic tally
 // with rays = 1 and Σw² = q_i² per entry has raw_i = p_i · q_i, so with p uniform
-// on the layer Neyman returns q itself (every q here sits above the 0.01/K floor).
+// on the layer Neyman returns q itself — provided every share q_i / Σq sits at or
+// above both floors, 0.01/K and the relative p_norm_i / R = 1/(R·K); a share under
+// them would be lifted, and the test would run under a q it did not ask for.
 // The synthetic tally stays in the cumulative afterwards — a test that then runs
 // batches reads the q those batches Loaded, not the one this seeded.
 void SeedQ(RayAllocationOnline& online, const std::vector<std::vector<float>>& q) {
@@ -2146,7 +2148,7 @@ TEST(RayAllocationLegacyPath, NoSnapshotMakesTheLayerProportional) {
 
 TEST(RayAllocationLegacyPath, ContinuationLayerUsesItsOwnCorrectionAndIsNotCharged) {
   // Two layers, both adaptive with DIFFERENT q: layer 0 q = (1, 3), layer 1
-  // q = (4, 1). prob = 1 on layer 0 so every filter-pass exit continues.
+  // q = (7, 3). prob = 1 on layer 0 so every filter-pass exit continues.
   //   AC3: emitted_energy_ is layer 0's Σ n_i·c_i·w only — the continuation
   //        hops (which re-deal the SAME rays) add nothing.
   //   AC4: layer 1's roots are the continuation segments re-dealt by ITS q and
@@ -2154,9 +2156,9 @@ TEST(RayAllocationLegacyPath, ContinuationLayerUsesItsOwnCorrectionAndIsNotCharg
   //        segment times c_1[ci], so Σ_{layer-1 roots} w_/c_1[ci] equals
   //        Σ_{continuation segments} w_ EXACTLY (to summation rounding),
   //        whatever random subset each entry was dealt. Detection power: with
-  //        layer 1 left uncorrected the left side reads ≈1.36× the right; with
-  //        layer 0's (2, 2/3) applied instead of layer 1's (0.625, 2.5) it reads
-  //        ≈2.6× — both far outside the 1e-4 tolerance.
+  //        layer 1 left uncorrected the left side reads ≈1.16× the right; with
+  //        layer 0's (2, 2/3) applied instead of layer 1's (5/7, 5/3) it reads
+  //        ≈2.08× — both far outside the 1e-4 tolerance.
   constexpr size_t kN = 1000;
   auto scene = MakeTwoEntryScene(SceneConfig::RayAllocationMode::kAdaptive, /*prob=*/1.0f);
   MsInfo second;
@@ -2165,16 +2167,16 @@ TEST(RayAllocationLegacyPath, ContinuationLayerUsesItsOwnCorrectionAndIsNotCharg
   second.setting_.push_back(MakePrismEntry(3, 0.3f, 1.0f));
   scene.ms_.push_back(std::move(second));
 
-  auto out = RunLegacy(scene, kN, 1, 3, MakeOnline(scene, { { 1.0f, 3.0f }, { 4.0f, 1.0f } }));
+  auto out = RunLegacy(scene, kN, 1, 3, MakeOnline(scene, { { 1.0f, 3.0f }, { 7.0f, 3.0f } }));
   ASSERT_EQ(out.batches.size(), 1u);
   const auto& all_data = out.all_data[0];
 
   // Layer-0 crystals are instances 0 and 1 (created in ci order on the first
   // layer); layer-1 crystals are 2 and 3. Corrections per layer:
   //   layer 0: shares p (1/2, 1/2) vs q (1/4, 3/4) → (2, 2/3)
-  //   layer 1: shares p (1/2, 1/2) vs q (4/5, 1/5) → (0.625, 2.5)
+  //   layer 1: shares p (1/2, 1/2) vs q (7/10, 3/10) → (5/7, 5/3)
   const auto c0 = ComputeRayAllocationCorrection({ 1.0f, 1.0f }, { 1.0f, 3.0f });
-  const auto c1 = ComputeRayAllocationCorrection({ 1.0f, 1.0f }, { 4.0f, 1.0f });
+  const auto c1 = ComputeRayAllocationCorrection({ 1.0f, 1.0f }, { 7.0f, 3.0f });
   const auto prisms = PrismsOfHeights({ 1.0f, 0.3f, 1.0f, 0.3f });
   const auto tally = TallyRoots(all_data, prisms);
   ASSERT_EQ(tally.count.size(), 4u) << "every (layer, entry) must be dealt rays";
@@ -2196,8 +2198,8 @@ TEST(RayAllocationLegacyPath, ContinuationLayerUsesItsOwnCorrectionAndIsNotCharg
   }
   ASSERT_GT(continuation_weight, 0.0) << "prob=1 on layer 0 must produce continuations";
   const size_t layer1_roots = tally.count.at(2) + tally.count.at(3);
-  // Layer 1 deals its (continuation count) rays as (4/5, 1/5) of that count.
-  EXPECT_NEAR(static_cast<double>(tally.count.at(2)), 0.8 * static_cast<double>(layer1_roots), 1.0);
+  // Layer 1 deals its (continuation count) rays as (7/10, 3/10) of that count.
+  EXPECT_NEAR(static_cast<double>(tally.count.at(2)), 0.7 * static_cast<double>(layer1_roots), 1.0);
   // Each layer-1 root carries one continuation segment's weight times c_1[ci]
   // times its own projected-area entry weight; BirthWeightOf divides the entry
   // weight out, leaving the corrected continuation weight.
@@ -2321,21 +2323,72 @@ TEST(AdaptiveRayAllocationWeights, ASwitchedOffEntryStaysOffWhateverTheTallySays
 }
 
 TEST(AdaptiveRayAllocationWeights, AZeroExitLiveEntryLandsOnTheFloorNotOnZero) {
-  // Entry 1 was dealt rays and none exited: raw = 0, q = 0.01/K = 0.005 (K = 2).
-  // Entry 2 was dealt nothing at all (a deep layer no ray reached): same floor —
+  // Entry 1 was dealt rays and none exited: raw = 0, so Neyman alone would deal it
+  // nothing. Entry 2 was dealt nothing at all (a deep layer no ray reached): same —
   // nothing measured is not "measured to be zero", and both are dealt something.
+  // What they are dealt is the relative floor p_norm / R, which here exceeds the
+  // absolute 0.01/K: K = 2 → p_norm = 0.5, q = 0.25 (not 0.005); K = 3 → p_norm =
+  // 1/3, q = 1/6 (not 0.01/3). A zero-exit entry with an ordinary p keeps half its
+  // proportional share — that is the relative floor doing its job, not a side effect.
+  static_assert(kRayAllocationRelativeFloorRatio == 2.0, "expected values below are for R = 2");
   std::vector<RayAllocationEntryTally> stats(3);
   stats[0] = { 10.0, 10.0, 1000 };
   stats[1] = { 0.0, 0.0, 1000 };
   stats[2] = {};
   auto q = ComputeAdaptiveRayAllocationWeights({ 0.5f, 0.5f, 0.0f }, stats);
   EXPECT_NEAR(q[0], 1.0f, 1e-6f);
-  EXPECT_FLOAT_EQ(q[1], 0.005f);
+  EXPECT_FLOAT_EQ(q[1], 0.25f);
   EXPECT_EQ(q[2], 0.0f);
   auto q3 = ComputeAdaptiveRayAllocationWeights({ 0.5f, 0.5f, 0.5f }, stats);
   EXPECT_NEAR(q3[0], 1.0f, 1e-6f);
-  EXPECT_NEAR(q3[1], 0.01f / 3.0f, 1e-7f);
-  EXPECT_NEAR(q3[2], 0.01f / 3.0f, 1e-7f);
+  EXPECT_NEAR(q3[1], 1.0f / 6.0f, 1e-6f);
+  EXPECT_NEAR(q3[2], 1.0f / 6.0f, 1e-6f);
+}
+
+TEST(AdaptiveRayAllocationWeights, RelativeFloorProtectsANeymanSuppressedParryLikeEntry) {
+  // The shape the relative floor was introduced for: a filter_in entry at an
+  // ordinary p whose narrow raypath almost never passes, so its per-dealt-ray E[e²]
+  // is tiny (entry 1), next to an unfiltered crystal at the same p (entry 0), plus a
+  // rare, high-energy entry Neyman RAISES far above its p (entry 2, the design
+  // calibration's). Pinned: (a) Neyman alone would push entry 1 under p_norm / R —
+  // so the floor is what the assertion measures, not a vacuous bound; (b) with the
+  // floor it is dealt at least p_norm / R, i.e. its normalized share is ≥ p_norm /
+  // (R · Σq); (c) the entries Neyman keeps at or above their floor carry their
+  // Neyman value unchanged; (d) their normalized share is diluted by at most
+  // 1 / (1 + 1/R + 0.01) — bounded, not zero.
+  const std::vector<float> p = { 0.4995f, 0.4995f, 0.001f };
+  const double e2[3] = { 1.0e-3, 1.0e-7, 1.1e-2 };
+  std::vector<RayAllocationEntryTally> stats(3);
+  for (size_t i = 0; i < 3; i++) {
+    stats[i].rays = 100'000;
+    stats[i].sum_w2 = e2[i] * 100'000.0;
+  }
+  double raw[3];
+  double raw_total = 0.0;
+  for (size_t i = 0; i < 3; i++) {
+    raw[i] = static_cast<double>(p[i]) * std::sqrt(e2[i]);
+    raw_total += raw[i];
+  }
+  const double sum_p = static_cast<double>(p[0]) + p[1] + p[2];
+  const auto q = ComputeAdaptiveRayAllocationWeights(p, stats);
+  const double q_total = static_cast<double>(q[0]) + q[1] + q[2];
+
+  const double p_norm1 = p[1] / sum_p;
+  const double rel_floor1 = p_norm1 / kRayAllocationRelativeFloorRatio;
+  ASSERT_LT(raw[1] / raw_total, rel_floor1) << "(a) the input must put Neyman under the relative floor";
+  ASSERT_GT(rel_floor1, 0.01 / 3.0) << "(a) and the relative floor, not the absolute one, must be what binds";
+  EXPECT_FLOAT_EQ(q[1], static_cast<float>(rel_floor1)) << "(b)";
+  EXPECT_GE(q[1] / q_total, p_norm1 / (kRayAllocationRelativeFloorRatio * q_total)) << "(b), normalized";
+  for (size_t i : { size_t{ 0 }, size_t{ 2 } }) {
+    const double share = raw[i] / raw_total;
+    if (share < (p[i] / sum_p) / kRayAllocationRelativeFloorRatio) {
+      ADD_FAILURE() << "(c) entry " << i << " must be one the floor does not bind";
+      continue;
+    }
+    EXPECT_FLOAT_EQ(q[i], static_cast<float>(share)) << "(c) entry " << i;
+    EXPECT_GE(q[i] / q_total, share / (1.0 + 1.0 / kRayAllocationRelativeFloorRatio + 0.01)) << "(d) entry " << i;
+  }
+  EXPECT_GT(raw[2] / raw_total, 5.0 * p[2] / sum_p) << "entry 2 is one Neyman raises, far above its p";
 }
 
 TEST(AdaptiveRayAllocationWeights, ReproducesTheDesignCalibration) {
@@ -2343,6 +2396,8 @@ TEST(AdaptiveRayAllocationWeights, ReproducesTheDesignCalibration) {
   // 5×20k-ray probes of the user's scene): p = (.4995, .4995, .001), E[e²] =
   // (1.0e-7, 2.8e-7, 1.1e-2) → Neyman q = (.30, .50, .20). The rare entry's share
   // rises 200× over its energy share; that is the number the whole scrum is for.
+  // The relative floor p_norm / R does not bind anywhere here (0.25, 0.25, 0.0005
+  // against 0.30, 0.50, 0.20): an entry Neyman raises is never floored.
   std::vector<RayAllocationEntryTally> stats(3);
   const double e2[3] = { 1.0e-7, 2.8e-7, 1.1e-2 };
   for (size_t i = 0; i < 3; i++) {
@@ -2435,6 +2490,55 @@ TEST(RayAllocationOnline, EachBatchDealsByWhatTheBatchesBeforeItMeasuredAndCharg
   EXPECT_EQ(tally[0][0].rays + tally[0][1].rays + tally[0][2].rays, 3 * kN);
 }
 
+TEST(RayAllocationOnline, EmittedEnergyIsTheExactChargeWhenTheRelativeFloorBinds) {
+  // The charge must not care which floor shaped q: emitted_energy_ is Σ n_i · c_i
+  // over what the partition actually dealt, c_i = (p_i/ΣP)/(q_i/ΣQ), whatever q
+  // is. Pinned bit for bit on a batch the relative floor does bind: the tally is
+  // seeded so Neyman alone would deal the filtered entry 1 a share of 0.05/2.05 ≈
+  // 0.024, under its p_norm / R = 1/6, so the batch is dealt by the floored q —
+  // and the unfloored entries' ΣQ-normalized shares are diluted by it.
+  static_assert(kRayAllocationRelativeFloorRatio == 2.0, "the seeded shares below assume R = 2");
+  auto scene = MakeSkewedScene(1.0f, 1.0f, 1.0f);
+  auto online = MakeOnline(scene, { { 1.0f, 0.05f, 1.0f } });
+  const auto snapshot = online->Load();
+  ASSERT_EQ(snapshot->q.size(), 1u);
+  const std::vector<float> q = snapshot->q[0];
+  ASSERT_EQ(q.size(), 3u);
+  ASSERT_FLOAT_EQ(q[1], static_cast<float>((1.0 / 3.0) / kRayAllocationRelativeFloorRatio))
+      << "the relative floor, not Neyman's 0.024, must be what entry 1 is dealt by";
+  EXPECT_FLOAT_EQ(q[0], static_cast<float>(1.0 / 2.05)) << "an unfloored entry keeps its Neyman value";
+
+  constexpr size_t kN = 6000;
+  auto out = RunLegacy(scene, kN, 1, 31, online);
+  ASSERT_EQ(out.batches.size(), 1u);
+  const auto roots = TallyRoots(out.all_data[0], PrismsOfHeights({ 1.0f, 1.0f, 1.0f }));
+  ASSERT_EQ(roots.count.size(), 3u);
+  const double q_total = static_cast<double>(q[0]) + q[1] + q[2];
+  EXPECT_NEAR(static_cast<double>(roots.count.at(1)), kN * q[1] / q_total, 1.0) << "dealt by the floored q";
+
+  // The charge, from the definition: N + Σ n_i · (c_i − 1) on the first layer
+  // (Σ n_i = N, so this is Σ n_i · c_i), times the source's weight — 1 for this
+  // one-line spectrum, as the proportional test pins.
+  const std::vector<float> p = { 1.0f, 1.0f, 1.0f };
+  const auto c = ComputeRayAllocationCorrection(p, q);
+  double expected = static_cast<double>(kN);
+  size_t dealt = 0;
+  for (size_t i = 0; i < 3; i++) {
+    expected += static_cast<double>(roots.count.at(i)) * (static_cast<double>(c[i]) - 1.0);
+    dealt += roots.count.at(i);
+  }
+  ASSERT_EQ(dealt, kN);
+  EXPECT_EQ(out.batches[0].emitted_energy_, static_cast<float>(expected)) << "bit for bit";
+  // And it is what the roots were actually born with, to summation rounding.
+  double charged = 0.0;
+  for (const auto& [id, w] : roots.birth) {
+    charged += w;
+  }
+  EXPECT_NEAR(out.batches[0].emitted_energy_, charged, 1e-2);
+  // Unbiased to the partition's rounding: |Σ n_i·c_i − N| < Σ c_i (|δ_i| < 1).
+  EXPECT_LT(std::abs(expected - static_cast<double>(kN)), static_cast<double>(c[0]) + c[1] + c[2]);
+}
+
 TEST(RayAllocationOnline, MovesQInTheNeymanDirectionOnARealEnergySkew) {
   // Energy shares p = (1, 1, 0.05). Entry B keeps one raypath of A's crystal, so
   // per dealt ray it lands a small fraction of A's energy: its q share must fall
@@ -2470,6 +2574,8 @@ TEST(RayAllocationOnline, ARareEntryNeverFallsUnderTheFloorAcrossBatches) {
   // which is what the partition is handed.
   auto scene = MakeSkewedScene(1.0f, 0.02f, 1.0f);
   auto online = std::make_shared<RayAllocationOnline>(scene);
+  // The absolute floor — a sufficient bound, not the exact one: here the relative
+  // floor p_norm / R = (0.02 / 2.02) / 2 ≈ 0.005 is the tighter of the two.
   const float floor = 0.01f / 3.0f;
   size_t min_dealt = std::numeric_limits<size_t>::max();
   for (int b = 0; b < 8; b++) {
@@ -2531,6 +2637,9 @@ TEST(RayAllocationOnline, TheFloorIsWhatKeepsAZeroExitEntryFromStarvingForever) 
   EXPECT_EQ(q_none[2], 0.0f) << "without a floor the rare entry is absorbed at q = 0";
   EXPECT_EQ(dealt_none[2], 0u) << "and dealt nothing — the fixed point";
   auto [q_floor, dealt_floor] = simulate(true);
+  // p = 0.001 puts the relative floor (p_norm / R ≈ 0.0005) under the absolute one,
+  // so this pins the absolute floor; the relative floor's zero-exit case is
+  // AZeroExitLiveEntryLandsOnTheFloorNotOnZero.
   EXPECT_FLOAT_EQ(q_floor[2], 0.01f / 3.0f) << "the floor holds the rare entry at 1%/K";
   EXPECT_GT(dealt_floor[2], 0u) << "so it keeps being dealt rays, and can be measured";
 }
