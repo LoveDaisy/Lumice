@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1790598759291,
+  "lastUpdate": 1790598763674,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -4770,54 +4770,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "f860acc46471dee85057842a8611895cea64b88d",
-          "message": "Merge pull request #343 from LoveDaisy/feat/gui-print-mode-label-ink\n\nfix(gui): draw overlay label text as ink under the print tone",
-          "timestamp": "2026-09-10T20:57:53+08:00",
-          "tree_id": "f3daf403c69c5adec882772328d1a77ec96a9215",
-          "url": "https://github.com/LoveDaisy/ice_halo_sim/commit/f860acc46471dee85057842a8611895cea64b88d"
-        },
-        "date": 1789045695822,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 763603.8,
-            "unit": "rays/sec",
-            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 1212271.2,
-            "unit": "rays/sec",
-            "extra": "CPU: Neoverse-N2\\nCores: 4"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 955404.3,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 9V74 80-Core Processor\\nCores: 4"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 674721.6,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "dc76b64939e2b7e7bb319dee15905da1c73ee7fa",
           "message": "Merge pull request #344 from LoveDaisy/feat/image-comparison-metric-by-layer\n\ntest: give each image comparison a ruler that matches its layer (pixel ruler, lines-only parity, block-mean PSNR)",
           "timestamp": "2026-09-11T01:37:19+08:00",
@@ -9504,6 +9456,54 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 592032.8,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "591c97d4c35ccce4e8f3f6dd1cf340e93390e6e4",
+          "message": "Merge pull request #443 from LoveDaisy/chore/workflow-token-least-privilege\n\nci: add top-level permissions: contents: read to workflows",
+          "timestamp": "2026-09-28T20:18:35+08:00",
+          "tree_id": "200ab539ed87c0bd2915e7f5e25f6ed5dac388e4",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/591c97d4c35ccce4e8f3f6dd1cf340e93390e6e4"
+        },
+        "date": 1790598762889,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 903281.6,
+            "unit": "rays/sec",
+            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 1028729.9,
+            "unit": "rays/sec",
+            "extra": "CPU: Neoverse-N2\\nCores: 4"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 1089354.5,
+            "unit": "rays/sec",
+            "extra": "CPU: Intel(R) Xeon(R) 6973P-C\\nCores: 4"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 593747.5,
             "unit": "rays/sec",
             "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
           }
