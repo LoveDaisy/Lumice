@@ -1,6 +1,8 @@
 # 光路分析 —— 功能总篇与路线图
 
-> Status：**路线图**（2026-09-28，本次更新 §5.1.6 仓库定位、§5.1.8 两期划分修订）。本文回答三件事：「光路分析」为什么被拆成两半、
+> Status：**路线图**（2026-09-28，本次更新 §5.1.6 仓库定位、§5.1.8 两期划分修订；同日追加 §5.1.6
+> 「两仓计算用的对称性口径」一段，并给 `fn_period_` 实证补上「专指面板物理分组（L2）」的限定，见
+> [`raypath-symmetry.md`](raypath-symmetry.md) §1.1）。本文回答三件事：「光路分析」为什么被拆成两半、
 > 现在走到了哪、接下来往哪走。它不是机制记录，也不是使用说明：
 >
 > | 文档 | 读者 | 内容 |
@@ -310,8 +312,14 @@ LI 的非目标是多次散射**场景渲染**；组合发生在消费层，具�
 最先进共享库的会是原语层（晶体几何、Snell / Fresnel、对称约化），而原语层恰恰是两边各自实现
 最有价值的地方——2026-09-27 Lumice `Crystal::MakePrismClosedForm` / `MakePyramidClosedForm`
 把 `fn_period_` 硬编码为 6、不读 `face_distance` 的缺陷，正是 LI 用独立实现对照才抓出来的
-（已由 PR #429 修复）；反面证据是同一轮里对称约化在两个仓库各做了一遍（LI 的 `G_true`，本仓
-PR #429–#431）——两边共用一份原语，这类缺陷会让两边一起错而不可见。因此按层处理：
+（已由 PR #429 修复）。⚠️ 这条实证**专指光路分析面板的物理分组**（`raypath-symmetry.md` §1.1 的
+L2，`SymmetrySemantics::kPhysical`）——对 filter（以及染色 ref）而言，六方标号规约、周期恒为 6
+正是 L1（`kLabel`）的本意；PR #429/#430 当时顺带把 filter 的约化也改成按形状读周期，这一半已被
+owner 判定为误伤 L1 语义，由 PR #436 恢复（`fix(core): a filter's P/B/D is a label equivalence
+again`）。实证发现本身仍然成立——LI 当时对照的正是面板行（L2）的口径，不因 filter 那半的回退而
+失效。反面证据是同一轮里对称约化在两个仓库各做了一遍（LI 的 `G_true`，本仓 PR #429–#431）：那一轮
+里本仓 filter 曾短暂跟面板一起改用 L2，PR #436 之后本仓 filter 回到 L1、面板保持 L2——两边共用
+一份原语，这类缺陷会让两边一起错而不可见。因此按层处理：
 
 - **原语与约定层**（晶体几何、面编号、对称约化、Snell / Fresnel）：两边刻意各留一份，作为互相
   校验的对象；用 parity / 约定测试锁定。它们变化慢，两份的成本低。
@@ -319,6 +327,25 @@ PR #429–#431）——两边共用一份原语，这类缺陷会让两边一起
   变化时，两边各自实现（即上面 5.1.6 现行做法：JAX 先改、C++ 跟随、parity fixture 锁定）；
   成熟之后收敛为 Lumice 的一份 C++ 实现，经 Lumice 共享库给 LI 使用，LI 那份 JAX 版在 LI 不再
   研究该模块时退役。
+
+**两仓计算用的对称性口径（2026-09-28）**：上面「原语与约定层刻意各留一份」对对称约化这一项
+需要更精确的对应——两仓、两个消费者，各自用的其实是 `raypath-symmetry.md` §1.1「Two Meanings
+of One Bit Set」定义的两种口径中的一种，而不是同一口径的两份独立实现：
+
+- Lumice filter（以及染色 ref）的 P/B/D = **L1 标号等价**（`SymmetrySemantics::kLabel`）：不看
+  形状、不看取向分布，六方标号规约、周期恒为 6；
+- Lumice 光路分析面板的行 = **L2 物理等价**（`SymmetrySemantics::kPhysical`，
+  `DeriveSymmetryGating(kPhysical)`）：形状（§2a）与取向集体（§2b）两个条件都成立才合并；
+- LI 的 `G_true`（`symmetry/crystal_group.py`）= L2，与面板同口径；LI 的 `pbd_orbit_hexprism`
+  （`symmetry/reflection_group.py`）= L1，与 filter 同口径——即 LI 内部也分别维护两份，两仓四份
+  实现按口径两两对应，不是「LI 一份、Lumice 一份」；
+- 即将发布的 `liblumice_analytic`（本节候选的第一个共享模块）只接受具体的面序列，不带对称参数、
+  不提供约化接口——对称约化属于原语与约定层，两仓各留一份、互为校验对象，不经共享库分发。调用方
+  若要在这层接口之外自行做约化，必须说明用的是哪种口径；LI ↔ Lumice 的 parity fixture 命名同样
+  要标明口径，否则两个都合理但不同的约化会被当成同一件事对照，产生假红或假绿；
+- 典型分叉：三重对称的晶体（如 `face_distance` 交替的三重棱柱）——L1 按六重标号合并（filter 的
+  P 总是这样做，见 §1.1），L2 只按三重物理对称合并（近面与远面能量不同，不可合并）；同一份
+  `.lmc` 用两种口径读，得到的光路类数量不同。
 
 共享的载体是 Lumice 正式发布的共享库，LI 经 Python binding 使用。这是 Lumice 共享库的第一个
 正式需求（第一个外部消费者），触发了 [`api-layering-and-product-lines.md`](api-layering-and-product-lines.md)
