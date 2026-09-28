@@ -2,7 +2,8 @@
 
 > Status: **partly built** (2026-09-28). As built: the target and its per-library export list
 > (§2.5), logging handed to the host (§6), and packaging with a `find_package` config plus the
-> version policy (§8). Not built yet: the external-consumer smoke test, and the first real module
+> version policy (§8), and an external-consumer smoke test that builds a C program and loads the
+> library from Python using the install tree alone (§8.7). Not built yet: the first real module
 > (single-path inversion + fiber walk, §4), which lands with the Analyze workspace's first phase
 > (`doc/raypath-analysis.md` §5.1.8). Until that module exists the library is not in any download
 > package (§8.8).
@@ -862,6 +863,19 @@ external-consumer smoke test and LI's bindings agree, is an environment variable
 Lumice's `src/` never reads it, it is not in `src/util/env_knobs.cpp`, and
 `doc/env-var-policy.md` — which governs what Lumice itself reads — does not cover it.
 
+Both kinds of consumer exist in this repository as a smoke test that sees only an install tree:
+`test/e2e-correctness/external_consumer_smoke/` holds a standalone CMake project
+(`find_package(LumiceAnalytic)`, links `Lumice::lumice_analytic`, compares
+`LUMICE_ANALYTIC_GetApiVersion()` with the header's macro) and `smoke.py`, a dependency-free ctypes
+loader that finds the library from `LUMICE_ANALYTIC_INSTALL_DIR` by the layout above — the minimal
+sample for a Python binding. `test/e2e-correctness/test_external_consumer_smoke.py` drives both
+against the prefix that variable names, or, when it is unset, against a fresh
+`cmake --install --component analytic` of the local shared build. It also asserts that every
+include directory of the C project resolves outside the source tree, and that the installed
+`include/` is one of them, so "install tree only" is checked rather than assumed. CI runs it in
+`e2e-slow` (Linux and macOS "rest" legs) and in both `windows-shared-export` legs, each time
+against the prefix that job's packaging step has just installed.
+
 ### 8.8 Checklist for putting the library in a download package
 
 Owner, 2026-09-28: the library does not enter a download package while it holds only placeholder
@@ -899,7 +913,7 @@ functions. The first real module's work opens this list. **The state described h
 | 4 | ~~Semver, ABI and deprecation policy text; what 1.0 commits to.~~ **Answered** — see §8 (as built): one integer is the only version, `find_package` requires it exactly (§8.4), compatible/incompatible table (§8.2), no promise in 0.x (§8.3), deprecation (§8.5), graduation conditions (§8.6). | The packaging and version-policy work (done) |
 | 5 | ~~Export-list mechanism on each platform, Windows export path, header location, prefix gate in `check_policies.py`, the stripping flag.~~ **Answered** — see §2.5 (as built): `scripts/gen_export_list.py` + `lumice_apply_export_list`, `.def` on Windows, `src/include/lumice_analytic.h`, rule `analytic-symbol-scope`. | The target and export-list work (done) |
 | 6 | ~~Callback forwarding implementation; removing the console sink only in this library.~~ **Answered** — see §6 (as built): `GetDefaultConsoleSink()` removed at load time in `src/analytic/analytic_api.cpp`, `AnalyticCallbackSink` attached by `LUMICE_ANALYTIC_SetLogCallback`. | The log-sink work (done) |
-| 7 | External consumer smoke test (C + Python ctypes, install tree only), with `symmetry_semantics` in any fixture. | The external-consumer smoke test |
+| 7 | ~~External consumer smoke test (C + Python ctypes, install tree only), with `symmetry_semantics` in any fixture.~~ **Answered** — see §8.7 (as built): `test/e2e-correctness/test_external_consumer_smoke.py` + `external_consumer_smoke/`, consuming the prefix named by `LUMICE_ANALYTIC_INSTALL_DIR`; it compares no face sequence and says so, `symmetry_semantics: none`, in its docstrings (§3.3 rule 2). | The external-consumer smoke test (done) |
 | 8 | **Does `FiberResult` need LI §9.3's diagnostics** (`jacobian_`/`step_`/`branch_`/`closure_diagnostics`, `terminal_payload`, `conventions`, `weight_observables`, `component_scope`) and the entry cross-section `A_P`? "LI reads point lists" → no, extend on demand; "LI certifies this library as its continuation backend against its §11" → yes, designed before the implementation is scheduled. | Owner, reviewing this document |
 | 9 | Surface crystal *degradation* (apex collapse, dropped face) as result data, not only as a log line (§6). | The first-module implementation |
 | 10 | Parallelism inside `TraceFiberBatch` (v0: none; caller parallelises). Revisit only with a measured batch where binding-side threading is the bottleneck. | The first-module implementation |
