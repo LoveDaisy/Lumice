@@ -12,6 +12,7 @@
 #include <array>
 #include <cmath>
 #include <random>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -516,6 +517,39 @@ TEST(PathFiber, MatchesLiParityFixturePins) {
     std::sort(expected_reasons.begin(), expected_reasons.end());
     EXPECT_EQ(reasons, expected_reasons);
     EXPECT_NEAR(traced, expected, 2e-3 * expected);
+  }
+}
+
+// doc/analytic-api.md section 5.3: the continuation's callees (fiber_continuation, so3, jet,
+// path_chain, path_fiber) hold no static or thread_local state, so concurrent traces on distinct
+// outputs are bit-identical to serial ones — each thread builds its own table, as the C wrapper does.
+TEST(PathFiberConcurrency, ConcurrentTracesMatchSerialResults) {
+  const std::array<double, 3> incident = kCanonicalIncident;
+  auto trace = [&incident](int i) {
+    const StripPixel& px = kStripPixels[i % 5];
+    const Path path({ 3, 5 }, incident);
+    const Mat seed = Exp(px.seed_coordinates[0], px.seed_coordinates[1], px.seed_coordinates[2]);
+    ContinuationParams p;
+    p.initial_tangent_sign = i % 2 == 0 ? 1 : -1;
+    return TraceFiber(path.Map(), MakeTargetChart(px.target.data()), seed.data(), p);
+  };
+  constexpr int kThreads = 8;
+  std::vector<TraceResult> serial;
+  for (int i = 0; i < kThreads; i++) {
+    serial.push_back(trace(i));
+  }
+  std::vector<TraceResult> parallel(kThreads);
+  std::vector<std::thread> threads;
+  for (int i = 0; i < kThreads; i++) {
+    threads.emplace_back([&parallel, &trace, i] { parallel[i] = trace(i); });
+  }
+  for (auto& t : threads) {
+    t.join();
+  }
+  for (int i = 0; i < kThreads; i++) {
+    EXPECT_EQ(parallel[i].reason, serial[i].reason) << i;
+    EXPECT_EQ(parallel[i].poses, serial[i].poses) << i;
+    EXPECT_EQ(parallel[i].arclength_increments, serial[i].arclength_increments) << i;
   }
 }
 
