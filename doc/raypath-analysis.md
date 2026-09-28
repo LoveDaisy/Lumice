@@ -337,7 +337,7 @@ of One Bit Set」定义的两种口径中的一种，而不是同一口径的两
 - Lumice 光路分析面板的行 = **L2 物理等价**（`SymmetrySemantics::kPhysical`，
   `DeriveSymmetryGating(kPhysical)`）：形状（§2a）与取向集体（§2b）两个条件都成立才合并；
 - LI 的 `G_true`（`symmetry/crystal_group.py`）= L2，与面板同口径；LI 的 `pbd_orbit_hexprism`
-  （`symmetry/reflection_group.py`）= L1，与 filter 同口径——即 LI 内部也分别维护两份，两仓四份
+  （`path_class.py`）= L1，与 filter 同口径——即 LI 内部也分别维护两份，两仓四份
   实现按口径两两对应，不是「LI 一份、Lumice 一份」；
 - 即将发布的 `liblumice_analytic`（本节候选的第一个共享模块）只接受具体的面序列，不带对称参数、
   不提供约化接口——对称约化属于原语与约定层，两仓各留一份、互为校验对象，不经共享库分发。调用方
