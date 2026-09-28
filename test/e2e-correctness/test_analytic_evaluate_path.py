@@ -181,6 +181,7 @@ def test_call_errors_return_their_code_and_zero_fill_the_result() -> None:
         cases = [
             ("null crystal", lambda: call(None, [3, 5]), NULL_ARG),
             ("one face", lambda: call(prism(), [3]), INVALID_VALUE),
+            ("65 faces", lambda: call(prism(), [3, 5] * 32 + [3]), INVALID_VALUE),
             ("face 13 on a prism", lambda: call(prism(), [3, 13]), INVALID_VALUE),
             ("face 0", lambda: call(prism(), [0, 5]), INVALID_VALUE),
             ("n = 0", lambda: call(prism(), [3, 5], n=0.0), INVALID_VALUE),
