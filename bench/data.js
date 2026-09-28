@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1790577946614,
+  "lastUpdate": 1790577948894,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9524,50 +9524,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "3ad57411dc16f516b6785967efaba5266c88e7b8",
-          "message": "Merge pull request #339 from LoveDaisy/feat/test-capi-lib\n\ntest: liblumice_testapi, a test-only export surface beside the product C API",
-          "timestamp": "2026-09-10T16:59:47+08:00",
-          "tree_id": "91bfa648700adc1c02137e2bab552ca4271f3417",
-          "url": "https://github.com/LoveDaisy/ice_halo_sim/commit/3ad57411dc16f516b6785967efaba5266c88e7b8"
-        },
-        "date": 1789031377316,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 79.9,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 99.7,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 96,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 89.3,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "724fa7cff5ff0cc832f33d45b08e1bf3d4536f40",
           "message": "Merge pull request #342 from LoveDaisy/feat/annotation-lines-shader-anchors-api\n\ngui: auxiliary lines track the camera every frame again; anchors-only annotation API (v4.28)",
           "timestamp": "2026-09-10T17:18:09+08:00",
@@ -13867,6 +13823,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 93.8,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "5d353c63c4688fb9be43a5042ef239a4c310a93b",
+          "message": "Merge pull request #439 from LoveDaisy/feat/channel-br-gain-x2\n\nChannel B-R display mode: raise gain from 0.5 to 2",
+          "timestamp": "2026-09-28T14:33:59+08:00",
+          "tree_id": "0b0e5066e995207a2d2bb4b5603b597496d80793",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/5d353c63c4688fb9be43a5042ef239a4c310a93b"
+        },
+        "date": 1790577948299,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 90.5,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 99.9,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 98.9,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 93.7,
             "unit": "%"
           }
         ]
