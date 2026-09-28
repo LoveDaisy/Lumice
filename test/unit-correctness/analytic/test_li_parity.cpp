@@ -63,6 +63,10 @@ constexpr double kDensifySpacing = 1e-3;
 // makes a zero-length reference (a one-pose trace) comparable; it is LI's recipe, not a tolerance.
 constexpr double kArclengthAbsoluteGuard = 1e-12;
 
+bool ArclengthWithin(double got, double reference, double rtol) {
+  return std::fabs(got - reference) <= rtol * reference + kArclengthAbsoluteGuard;
+}
+
 // ------------------------------------------------------------------------------------------------
 // Fixture access
 // ------------------------------------------------------------------------------------------------
@@ -97,7 +101,12 @@ std::map<std::string, std::string> ReadSource() {
     while (v < line.size() && line[v] == ' ') {
       v++;
     }
-    out[line.substr(0, colon)] = line.substr(v);
+    // A checkout with core.autocrlf leaves a trailing '\r' on a text file; a value never carries one.
+    std::string value = line.substr(v);
+    while (!value.empty() && (value.back() == '\r' || value.back() == ' ' || value.back() == '\t')) {
+      value.pop_back();
+    }
+    out[line.substr(0, colon)] = value;
   }
   return out;
 }
@@ -116,7 +125,10 @@ std::vector<std::string> ManifestFiles() {
     return files;
   }
   for (const Json& cell : manifest["cells"]) {
-    for (const Json& f : cell["files"]) {
+    if (!cell.is_object() || !cell.contains("files")) {
+      continue;  // a malformed cell surfaces in the manifest test, not as a crash at registration
+    }
+    for (const Json& f : cell.at("files")) {
       files.push_back(f.get<std::string>());
     }
   }
@@ -246,7 +258,8 @@ ContinuationParams ParamsOf(const Json& j) {
     } else if (auto jt = int_fields.find(key); jt != int_fields.end()) {
       *jt->second = value.get<int>();
     } else if (key == "rotation_tolerance") {
-      // The kernel's rotation gate is the constant kRotationTolerance.
+      // The kernel's rotation gate is the constant kRotationTolerance; the exact pin is deliberate, so a
+      // constant change has to be re-agreed with LI rather than drift inside a tolerance.
       EXPECT_EQ(value.get<double>(), kRotationTolerance) << key;
     } else if (key == "dtype") {
       EXPECT_EQ(value.get<std::string>(), "float64") << key;  // the kernel computes in double only
@@ -606,6 +619,17 @@ TEST(LiParityFixtures, ManifestMatchesDirectoryAndSource) {
     EXPECT_TRUE(listed.insert(f).second) << "listed twice: " << f;
   }
   EXPECT_FALSE(listed.empty());
+  // Every listed file must be replayed by one of the suites below. A fixture kind LI adds later would
+  // otherwise pass provenance alone and be silently skipped; here it goes red and points at the reader.
+  size_t replayed = 0;
+  for (const char* kind : { "evaluate_path", "trace_fiber", "seed_search" }) {
+    const size_t n = ManifestFilesOfKind(kind).size();
+    EXPECT_GT(n, 0u) << "no fixture of kind " << kind;
+    replayed += n;
+  }
+  EXPECT_EQ(replayed, listed.size())
+      << "the manifest lists a fixture kind this reader does not replay: extend the reader first "
+         "(doc/analytic-api.md, Parity with LI)";
   std::set<std::string> present;
   for (const auto& entry : std::filesystem::directory_iterator(FixtureDir())) {
     const std::string name = entry.path().filename().string();
@@ -618,10 +642,8 @@ TEST(LiParityFixtures, ManifestMatchesDirectoryAndSource) {
   // A skipped fixture is a legal input, not a missing file: it carries its reason, and its cell
   // lists no file it did not export. On this matrix that is 3-5-6-7__critical (D_P has no interior
   // extremum on the canonical column — a physical fact, LI section 6).
-  int skipped = 0;
   for (const Json& cell : manifest.at("cells")) {
     for (const Json& s : cell.at("skipped")) {
-      skipped++;
       EXPECT_FALSE(s.value("reason", "").empty()) << cell.at("name");
       EXPECT_TRUE(s.contains("fixture")) << cell.at("name");
       if (s.value("fixture", "") == "all") {
@@ -629,7 +651,6 @@ TEST(LiParityFixtures, ManifestMatchesDirectoryAndSource) {
       }
     }
   }
-  EXPECT_GE(skipped, 1) << "LI's matrix records 3-5-6-7__critical as skipped";
 }
 
 class LiParityProvenance : public testing::TestWithParam<std::string> {};
@@ -791,8 +812,7 @@ TEST_P(LiParityTraceFiber, MatchesLi) {
   }
   const double rtol = Tolerance(f, "arclength_relative");
   Report(GetParam(), "arclength_relative", std::fabs(length - reference_length) / reference_length, rtol);
-  EXPECT_LE(std::fabs(length - reference_length), rtol * reference_length + kArclengthAbsoluteGuard)
-      << "arclength " << length << " vs " << reference_length;
+  EXPECT_TRUE(ArclengthWithin(length, reference_length, rtol)) << "arclength " << length << " vs " << reference_length;
 
   // Every residual within the bound (a bound on this backend, not an equality with LI).
   double worst = 0.0;
@@ -930,7 +950,8 @@ TEST_P(LiParitySeedSearch, MatchesLi) {
       const double rtol = Tolerance(f, "closed_arclength_relative");
       Report(GetParam(), tag + "closed_arclength_relative", std::fabs(length - reference_length) / reference_length,
              rtol);
-      EXPECT_LE(std::fabs(length - reference_length), rtol * reference_length);
+      EXPECT_TRUE(ArclengthWithin(length, reference_length, rtol))
+          << "closed arclength " << length << " vs " << reference_length;
     }
   }
 

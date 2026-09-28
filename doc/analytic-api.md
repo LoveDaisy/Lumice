@@ -1332,7 +1332,10 @@ component: it is a negative case, and a search that invents a component there is
    this repo, and no case is disabled to get green; a disagreement about a tolerance or a semantic
    goes back to LI, is fixed there with its evidence, and comes back as a re-export.
 
-A `schema_version` other than 1 fails every case: read LI's updated page, change the reader, then
-re-export. A new fixture kind or cell needs no change here as long as the manifest lists it — cases
-are generated from `manifest.json`, and the manifest check fails if a file is present but not listed
-or listed but not present.
+A `schema_version` other than 1 fails the provenance and manifest cases: read LI's updated page,
+change the reader, then re-export. A new cell needs no change here — cases are generated from
+`manifest.json`, and the manifest check fails if a file is present but not listed or listed but not
+present. A new fixture *kind* needs a reader first: the manifest check goes red on a listed file that
+no replay suite covers, so it cannot pass silently. The reader's SO(3) helpers are a deliberate second
+implementation, independent of `so3.hpp` so the ruler does not share the code under test; nothing
+checks the two against each other automatically, and that fork is accepted.
