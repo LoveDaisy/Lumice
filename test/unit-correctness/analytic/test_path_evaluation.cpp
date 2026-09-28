@@ -403,6 +403,38 @@ TEST_F(PathEvaluationTest, BackFaceEntryAndUnreachableFacesAreInvalidWithoutNan)
   EXPECT_GT(invalid, 1000);
 }
 
+TEST_F(PathEvaluationTest, InternalFaceMustBeReachedFromInside) {
+  // 3-1-5 through a prism: whenever the refracted ray heads away from basal face 1 (its incidence
+  // cosine there is not positive), the path is invalid even if entry and exit alone would pass.
+  Use(Prism(0.6));
+  std::mt19937_64 rng(13);
+  int away = 0;
+  for (int t = 0; t < 4000; t++) {
+    const auto r = RandomRotation(rng);
+    double n3[3];
+    double n1[3];
+    for (int i = 0; i < 3; i++) {
+      n3[i] = r[i * 3 + 0] * BodyNormal(3)[0] + r[i * 3 + 1] * BodyNormal(3)[1] + r[i * 3 + 2] * BodyNormal(3)[2];
+      n1[i] = r[i * 3 + 0] * BodyNormal(1)[0] + r[i * 3 + 1] * BodyNormal(1)[1] + r[i * 3 + 2] * BodyNormal(1)[2];
+    }
+    const double c = -Dot(n3, kSun);
+    if (c <= 0) {
+      continue;
+    }
+    const double rr = 1.0 / kN;
+    const double k = rr * c - std::sqrt(1.0 - rr * rr * (1.0 - c * c));
+    double d[3];
+    for (int i = 0; i < 3; i++) {
+      d[i] = rr * kSun[i] + k * n3[i];
+    }
+    if (Dot(n1, d) <= 0) {
+      away++;
+      EXPECT_FALSE(Eval({ 3, 1, 5 }, kSun, r.data()).valid);
+    }
+  }
+  EXPECT_GT(away, 500);
+}
+
 TEST_F(PathEvaluationTest, RepeatedFaceIsNeverValid) {
   // A face cannot be reached from inside right after the ray entered or reflected off it.
   Use(Prism(1.0));
