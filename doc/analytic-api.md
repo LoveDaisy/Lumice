@@ -369,6 +369,66 @@ an irregular pyramid (unequal cones, unequal `face_distance`) `13-25`, `3-1-26`,
 validity mismatch, largest deviation 0.054 of LI's per-pose `kinematic_atol` (itself `1e-12`,
 widened near a Snell boundary). The standing check is the parity fixtures LI exports (§10).
 
+**`TraceFiber` as built** (API version 3). The core is `src/analytic/fiber_continuation.{hpp,cpp}`,
+a port of LI's reference solver (`src/lumice_integral/continuation.py` at LI `bfbd042`) function for
+function — each C++ function names its LI counterpart — against LI `docs/phase1-math-contract.md`
+§5–§10 as of that revision, including §6.4's step-aware closure trigger (the seed distance of a
+crossing edge is measured at the section zero bisected on that edge, 52 halvings, and the closure
+corrector starts there). The core does not know optics: it is a template over a map with a
+`Domain` (validity, event margins, typed event) and a `Direction`, as LI's `FiberProblem` takes a
+`domain_and_event_evaluator` and a `direction_evaluator`. The ice-crystal path is one such map,
+`path_fiber.{hpp,cpp}` (LI `optics.path_problem`: the event margins are the validity margins, and a
+Snell discriminant at or below `1e-8` is already `tir_boundary`); the unit tests drive the same core
+with LI's analytic maps. Both `EvaluatePath` and the fiber map run one ray chain,
+`path_chain.hpp`'s `TracePathChain`, so there is still one evaluator; moving `EvaluatePath` onto it
+left its output identical bit for bit (a hash over 24000 poses on six paths).
+
+- **Derivatives.** Forward-mode dual numbers (`jet.hpp`, `Jet<3>`; no AD framework,
+  `doc/raypath-analysis.md` §5.1.6). The direction map is evaluated with the pose
+  `R exp([delta]_x)` built from a `Jet<3>` delta, through the same Rodrigues `exp` as LI (Taylor
+  branch below `theta^2 = 1e-8`), both for the residual Jacobian `A` (at `delta = 0`) and for the
+  bordered Newton system (at the current iterate's `delta`, as LI's `jax.jacfwd`); the closure
+  corrector's border, the section coordinate, is differentiated the same way. No derivative is
+  written by hand. The small linear algebra is in `so3.hpp`: `A`'s singular values from Lagrange's
+  identity (`sigma1 sigma2 = |r0 x r1|`, so a `sigma2` at the `1e-8` rank gate keeps its relative
+  precision), the bordered system's 2-norm condition number from a one-sided Jacobi SVD, and a
+  pivoted solve.
+- **Options** (C field → LI field → reference default of LI §10.1, whose text and the tests it
+  names are the convergence evidence; zero means the default):
+  `seed_residual_tolerance` → `residual_tolerance` `1e-11` (seed gate, corrector root and
+  acceptance alike); `step_initial` / `step_min` / `step_max` → `initial_step` / `minimum_step` /
+  `maximum_step` `0.04` / `1e-5` / `0.12`; `max_accepted_steps` → `maximum_accepted_steps` `4000`;
+  `closure_min_steps` → `closure_minimum_steps` `3`; `closure_pose_tolerance` → `closure_distance`
+  `0.08`. Every other LI option is fixed at its §10.1 value (`ContinuationParams`). No default
+  deviates from LI.
+- **Seed orientation.** `initial_tangent_sign = +1` is `A`'s row 0 × row 1 times the handedness of
+  the target basis, `(b0 x b1) . d`: a change of basis by any `Q` in O(2) scales both factors by
+  `det Q`, so the traversal order does not depend on the chart (LI §11 C03). It is not LI's `+1`,
+  which is its LAPACK build's SVD sign; the parity recipe is orientation-free for that reason.
+- **Errors and results.** Anything that belongs to one problem of a batch — a bad face number or
+  count, a non-finite or non-unit direction, a seed that is not a rotation, a bad index or sign — is
+  that element's `NUMERICAL_FAILURE` / `INVALID_NUMERICAL_INPUT` with `pose_count = 0`; the call's
+  return code is for the call (NULL arguments, `count < 0`, the shared options block and crystal, a
+  `faces == NULL` with `face_count > 0`, the §8.2 stride). `EvaluatePath` reports the same inputs as
+  call errors because it evaluates one pose; both headers say so. A closed result's last sample is
+  the closure-corrected pose (it replaces the last step's end, as in LI), N = 0 when the seed is
+  rejected, N = 1 when the first trial ends the trace, and every zero-length array is NULL. The
+  result block is `17 N - 1` doubles. Face sequences are bounded at 64, the simulator's `kMaxHits`,
+  for `EvaluatePath` too.
+
+Checked by: `test/unit-correctness/analytic/test_fiber_continuation.cpp` (LI's conformance matrix,
+§11, restated on analytic maps: C01–C04, C06's first-traversal cases, C07, C08, C10–C12, the step
+controller), `test_path_fiber.cpp` (the map against `EvaluatePath` and against a central difference
+that does not use `Jet`; LI's optical C03 / C05 / C06 / C08 cases, including the ch06 strip loops,
+whose lengths match LI's recorded `1.645239` / `2.375620` / `3.111244` to `1e-6`; two parity-fixture
+pins; concurrency), `test_jet.cpp`, `test_so3.cpp`, and `test/e2e-correctness/test_analytic_trace_fiber.py`
+(the C ABI). One-time comparison with LI's own `trace_fiber` fixtures at `bfbd042` (all eight
+exported cells, compared by LI `docs/analytic-parity-fixtures.md` §4): every one passes, and with
+the orientations matched the accepted pose sequences are the same sequences, to at most `1.8e-13`
+rad per pose, on all eight — one open arc (`3-5-6-7__near_boundary`) ends one sample earlier at
+its TIR end. Largest residual on an accepted pose over those traces: `4.6e-12`, against the
+`1e-11` gate. The standing check is the parity fixtures, once this repository replays them (§10).
+
 **Batch shape.** LI's heavy use is one path swept over many targets (pixels or sample points)
 with the crystal, the path and the sun fixed. The batch call takes one crystal and one options
 block and an array of problems. The reason for a batch at all is call overhead: a ctypes call
@@ -628,6 +688,18 @@ their tolerances, that a face absent from the crystal's shape is one of them, an
 unused fields must be zero. The draft's `LUMICE_ANALYTIC_API_VERSION 1` above is the draft's own
 number, not the built one.
 
+Version 3 adds the fiber declarations. They carry the draft's types, fields, order and signatures
+with one deliberate difference: `FiberProblem` ends with `int initial_tangent_sign` (0 or `+1`,
+`-1`). The draft had no way to trace the other orientation, which an arc needs — LI traces an arc
+that ends on an event at both ends from the same seed twice (LI contract §8, §9.5.5) — and the sign
+belongs to the problem, not to the options, because one batch typically holds both orientations of
+the same seeds. `ContinuationOptions` stays exactly the draft's seven fields, with no `struct_size`:
+it is an input struct, and §8.2 prices a change to one at a version bump. Added comments: the
+element-level / call-level error split and the §8.2 stride rule on `TraceFiberBatch`, the N = 0 /
+N = 1 cases and the closed-loop sample convention on `FiberResult`, each option's LI field and
+default. `EvaluatePath` gained the `face_count <= 64` bound and `ERR_UNKNOWN` for an allocation
+failure.
+
 ---
 
 ## 5. Conventions, errors, threading **(design)**
@@ -672,7 +744,11 @@ are never error codes; they are `status`/`reason` (§4.4).
   thread-safe, and spdlog's sinks lock internally. Each call builds its own `Crystal` and table on
   the stack or heap and shares nothing. Pinned by
   `PathEvaluationConcurrency.ConcurrentCallsMatchSerialResults` (eight threads, each building the
-  crystal and evaluating, bit-identical to a serial run).
+  crystal and evaluating, bit-identical to a serial run). The fiber functions add
+  `src/analytic/{fiber_continuation,path_fiber}.cpp` and the headers `path_chain.hpp`,
+  `so3.hpp`, `jet.hpp`: no `static` or `thread_local` variable in any of them; each call builds its
+  own table and result vectors. Pinned by
+  `PathFiberConcurrency.ConcurrentTracesMatchSerialResults` (eight threads, bit-identical to serial).
 - "Links all of `lumice_obj`" does not mean "goes through the simulator". The module calls the
   closed-form geometry and optics directly; it must not route through `Simulator`, the worker
   pool or the RNG infrastructure just because they are linked in. Those carry threads and state
@@ -725,6 +801,11 @@ were both excluded by evidence.
   margin expressions, so its validity boundaries are LI's. It is cross-checked against the
   simulator by a unit test that runs the float `HitSurface` chain on the same crystal and path
   (agreement to float precision), and against LI by the parity fixtures.
+- **The continuation keeps the margin** (2026-09-29). The corrector's root gate is the
+  `1e-11` residual tolerance; the evaluator's measured deviation from LI's is at most `0.054` of a
+  `1e-12` kinematic tolerance, about `5e-14` — 185 times smaller. Over LI's eight `trace_fiber`
+  fixtures the largest accepted residual is `4.6e-12` and no trace ended in a corrector failure, so
+  nothing in the continuation asks for more precision than this section's ruling provides.
 - **Face presence stays float** (§4.1): the engine's float closed form decides which faces exist,
   as for a simulated crystal. Only on a knife-edge input where a face appears or vanishes between
   float and double geometry could that differ from LI, which decides it in double.
@@ -1025,7 +1106,7 @@ functions. The first real module's work opens this list. **The state described h
 | # | Item | Decided by / when |
 |---|---|---|
 | 1 | ~~Seed search (discovery) in scope for v0?~~ **Answered** — yes, v0 includes seed search (author, 2026-09-28; §4.2). Spec: LI `docs/phase1-math-contract.md` §9.5. No MC ray-pose recording is required: Analyze's all-sky map is low resolution, seed density goes low first and is refined progressively. | Author and owner, 2026-09-28 |
-| 2 | Reference defaults of `ContinuationOptions`, each linked to convergence evidence (LI §10.1). | The first-module implementation |
+| 2 | ~~Reference defaults of `ContinuationOptions`, each linked to convergence evidence (LI §10.1).~~ **Answered** — every default is LI §10.1's, none deviates; the mapping and evidence are in §4.3 (`TraceFiber` as built). | The first-module implementation (`TraceFiber`, 2026-09-29) |
 | 3 | A refractive-index convenience function (Sellmeier). Default: not exposed (§4.2). | The first-module implementation, on LI's actual need |
 | 4 | ~~Semver, ABI and deprecation policy text; what 1.0 commits to.~~ **Answered** — see §8 (as built): one integer is the only version, `find_package` requires it exactly (§8.4), compatible/incompatible table (§8.2), no promise in 0.x (§8.3), deprecation (§8.5), graduation conditions (§8.6). | The packaging and version-policy work (done) |
 | 5 | ~~Export-list mechanism on each platform, Windows export path, header location, prefix gate in `check_policies.py`, the stripping flag.~~ **Answered** — see §2.5 (as built): `scripts/gen_export_list.py` + `lumice_apply_export_list`, `.def` on Windows, `src/include/lumice_analytic.h`, rule `analytic-symbol-scope`. | The target and export-list work (done) |
@@ -1033,11 +1114,11 @@ functions. The first real module's work opens this list. **The state described h
 | 7 | ~~External consumer smoke test (C + Python ctypes, install tree only), with `symmetry_semantics` in any fixture.~~ **Answered** — see §8.7 (as built): `test/e2e-correctness/test_external_consumer_smoke.py` + `external_consumer_smoke/`, consuming the prefix named by `LUMICE_ANALYTIC_INSTALL_DIR`; it compares no face sequence and says so, `symmetry_semantics: none`, in its docstrings (§3.3 rule 2). | The external-consumer smoke test (done) |
 | 8 | ~~Does `FiberResult` need LI §9.3's diagnostics and the entry cross-section `A_P`?~~ **Answered** — two steps (author, 2026-09-28): v0 returns the point list only; diagnostics + weights enter in wave 2 as a `struct_size`-compatible extension, once LI's explore `fiber-diagnostics-contract` has converged (§4.3, §10). | Author and owner, 2026-09-28 |
 | 9 | ~~Surface crystal *degradation* (apex collapse, dropped face) as result data, not only as a log line (§6).~~ **Answered for v0** — not surfaced: a dropped face shows only as that face number being rejected, an apex collapse only in the log. A result field for it goes with the wave-2 diagnostics extension (§4.1). | The first-module implementation (`EvaluatePath`, 2026-09-29) |
-| 10 | Parallelism inside `TraceFiberBatch` (v0: none; caller parallelises). Revisit only with a measured batch where binding-side threading is the bottleneck. | The first-module implementation |
-| 11 | Re-read LI `docs/phase1-math-contract.md` §9 before implementing: this draft mirrors it as of 2026-09-28, and LI's §12 lists open items that may move it. LI's §9.1 also says problem construction "MUST not import or invoke Lumice" — a rule LI revises on its side when it adopts this library. | The first-module implementation (and LI, on adoption) |
+| 10 | Parallelism inside `TraceFiberBatch` (v0: none; caller parallelises). Revisit only with a measured batch where binding-side threading is the bottleneck. **As built**: none; the batch shares one crystal build and starts no threads, and concurrent calls are safe (§5.3). No measurement has asked for more. | The first-module implementation (`TraceFiber`, 2026-09-29); reopen on a measured bottleneck |
+| 11 | ~~Re-read LI `docs/phase1-math-contract.md` §9 before implementing: this draft mirrors it as of 2026-09-28, and LI's §12 lists open items that may move it.~~ **Answered** — re-read at LI `bfbd042`: §9 unchanged in shape; §6.4 / §10.1 had moved (the step-aware closure trigger), and that is what is built (§4.3). LI's §9.1 also says problem construction "MUST not import or invoke Lumice" — a rule LI revises on its side when it adopts this library. | The first-module implementation (`TraceFiber`, 2026-09-29); LI, on adoption |
 | 12 | ~~Whether `PathEvaluation`/`FiberResult` should carry a `struct_size`/version field (Win32 `cbSize`, Vulkan `sType`+`pNext` are existing patterns) so a future field addition would not need an `LUMICE_ANALYTIC_API_VERSION` bump (§8).~~ **Answered** — yes: a leading `uint32_t struct_size`, the Win32 `cbSize` pattern (§4.5 draft, rules in §8.2). | The packaging and version-policy work (done) |
 | 13 | ~~Verify no thread-unsafe static cache in the called geometry/optics code (§5.3).~~ **Answered** — none on `EvaluatePath`'s call graph; pinned by a concurrency test (§5.3). | The first-module implementation (`EvaluatePath`, 2026-09-29) |
-| 14 | An optional batch-mode `FiberResult` variant that also returns per-point segment directions and interface transmittances (today only `EvaluatePath` returns those, §4.3), for a caller with many accepted poses who would otherwise pay one ctypes call per point to get them — in tension with §4.3's own binding-overhead concern. | The first-module implementation |
+| 14 | An optional batch-mode `FiberResult` variant that also returns per-point segment directions and interface transmittances (today only `EvaluatePath` returns those, §4.3), for a caller with many accepted poses who would otherwise pay one ctypes call per point to get them — in tension with §4.3's own binding-overhead concern. **Not built in v0**: `FiberResult` returns the point list only (§4.3); a caller that needs per-point segments calls `EvaluatePath` per pose. Still open. | Wave 2, with the diagnostics extension |
 
 ---
 
