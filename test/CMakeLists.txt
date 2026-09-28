@@ -248,7 +248,8 @@ add_executable(unit_correctness_test
   # since its load-time initialiser silences the engine's console sink for the whole process — the
   # wrapper is exercised through ctypes in test/e2e-correctness/test_analytic_evaluate_path.py.
   "${PROJ_SRC_DIR}/analytic/path_evaluation.cpp"
-  "${PROJ_TEST_DIR}/unit-correctness/analytic/test_path_evaluation.cpp")
+  "${PROJ_TEST_DIR}/unit-correctness/analytic/test_path_evaluation.cpp"
+  "${PROJ_TEST_DIR}/unit-correctness/analytic/test_jet.cpp")
 target_include_directories(unit_correctness_test
   PRIVATE ${PROJ_TEST_DIR})
 target_link_libraries(unit_correctness_test
