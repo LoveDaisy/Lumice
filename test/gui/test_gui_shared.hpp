@@ -647,6 +647,7 @@ void RegisterPreviewDisplayModeControlTests(ImGuiTestEngine* engine);
 void RegisterPerfTests(ImGuiTestEngine* engine);
 void RegisterFaceNumberOverlayTests(ImGuiTestEngine* engine);
 void RegisterRunLifecycleTests(ImGuiTestEngine* engine);
+void RegisterConfigChangePreviewTests(ImGuiTestEngine* engine);
 void RegisterStatusBarTests(ImGuiTestEngine* engine);
 void RegisterPreviewAnimationTests(ImGuiTestEngine* engine);
 void RegisterCaptureHarnessTests(ImGuiTestEngine* engine);

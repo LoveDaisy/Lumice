@@ -21,8 +21,8 @@
 
 | 档位 | 语义 | 机制（现状） | 触发者示例 |
 |---|---|---|---|
-| **T-struct·hard** | 拓扑变，清屏 + 抬 epoch floor 栅栏旧世代纹理 | `MarkStructHardDirty()`（gui_state.hpp:782；scrum-353.5 前名 `MarkFilterDirty`，被 S4 正名）= MarkDirty + snapshot_intensity=0 + p99_raw_y=0 + display_epoch_floor=committed_epoch | 编辑谓词/combine/增删类/增删 ref、filter 结构变、staged filter commit |
-| **T-struct·soft** | 配置脏但保留 carry-forward 纹理（不清屏） | `MarkDirty()`（gui_state.hpp:693）只置 dirty | 晶体几何/朝向、光谱、layer/prob、sim_resolution |
+| **T-struct·hard** | 拓扑变，抬 epoch floor 栅栏旧世代的迟到帧；**不清屏**，屏上画面保持到新世代替换（`gui-preview-lifecycle-architecture.md` §7.1） | `MarkStructHardDirty()`（`gui_state.hpp`；前名 `MarkFilterDirty`，被 S4 正名）= MarkDirty + display_epoch_floor=committed_epoch（2026-09-28 前还当场清零 snapshot_intensity / p99_raw_y，已去掉） | 编辑谓词/combine/增删类/增删 ref、filter 结构变、staged filter commit |
+| **T-struct·soft** | 配置脏但保留 carry-forward 纹理，旧世代迟到帧不设栅栏 | `MarkDirty()`（gui_state.hpp:693）只置 dirty | 晶体几何/朝向、光谱、layer/prob、sim_resolution |
 | **T-display** | 纯显示，即时下发 server，**不 dirty / 不 epoch** | `PushDisplayState`→`LUMICE_SetRaypathColors` | color rgb / visible / solo / z_order / composite mode |
 | **T-view** | 纯客户端，仅 preview shader 实时重投影 | 无 server 下发（仿真投影固定全天空 dual-fisheye） | lens / fov / view / exposure |
 | **T-session** | 会话偏好，不持久、不 dirty、不进 ConfigSnapshot | 直接改字段 | show_composite_preview / color_window_open / trackball |

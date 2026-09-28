@@ -127,6 +127,40 @@ owner 的三时钟直觉正确，但"生命周期"与"像素帧"成本差几个�
 
 一条铁律（P3 的落地）：**任何显示 gate 永不得压制一次生命周期跃迁。**
 
+### 7.1 配置编辑不清屏：规则 3 在编辑侧的落地（2026-09-28 owner 裁定）
+
+规则 3 说「epoch 前进时不立即丢旧帧」。编辑侧曾有一处与它直接矛盾：`MarkStructHardDirty()`
+（T-struct·hard 的唯一写入点，`src/gui/gui_state.hpp`）除了抬 `display_epoch_floor`，还**当场**把
+`snapshot_intensity` / `snapshot_emitted_energy` / `p99_raw_y` 清零——shader 的 mono 路径是
+`xyz *= u_intensity_scale`，清零即整片乘零变黑，发生在任何新 epoch 出现**之前**。现已去掉这一步，
+`MarkStructHardDirty()` = `MarkDirty()` + 抬 floor，别无其他。
+
+为什么那一步是错的：它隐含假设「清屏之后 70 ms 内必有一次提交把新一代推上屏」。运行中成立（live-edit
+自动提交），但**跑完之后不成立**——主循环只在 `kSimulating` 下自动提交，`kDone` + 编辑只会变成
+`kModified`，没有新 epoch、没有新帧 ⇒ 画面一直黑到用户按 Run。用户可见的症状是「跑完后 Duplicate 一个带
+filter 的 entry，画面瞬间消失」：`DuplicateEntryBelow` 只在原卡片带 filter 时往 `filters` 追加克隆槽位，
+整向量比较 ⇒ hard；不带 filter 的 Duplicate 走 soft，所以不消失。同一机制还让 **Revert 之后状态回到
+Done、画面却仍是黑的**（Revert 还原 config，不还原被清零的显示量）。
+
+现在的行为，全部由 §7 三条规则 + floor 栅栏给出，不再有编辑侧的额外动作：
+
+| 场景 | 画面 |
+|---|---|
+| 跑完后做任何 config 编辑（含 hard 档） | 保持当前画面；顶栏 `Modified` + Revert 是「已改、未重跑」的**唯一**提示——owner 裁定不在预览上另加角标 / 压暗 / 进度条 |
+| 运行中做 hard 编辑 | floor 拦住旧世代在飞的迟到帧；屏上旧帧保持到新世代首帧过质量门槛、或 500 ms 超时兜底强制上屏、或终帧救援（规则 1–3），中间无黑帧 |
+| 新配置零光线 / 极少光线（例如 filter 改成长于 `max_hits` 的路径） | 一旦开跑，新世代的空帧经超时兜底（最坏 500 ms）或终帧救援上屏，画面**如实变黑**——不会停在旧配置的图上被误读为「没生效」；跑完后尚未按 Run 时停在旧图 + `Modified`，是「尚未应用」的如实表达 |
+| Revert | 画面从未被清，与 `Done` 自然一致 |
+
+这推翻了更早一次「跑完（finite）+ 改 filter ⇒ 清屏」的保留结论，也否决了当时的替代形态「保留旧帧 +
+过期标记」中的**标记**部分：保留旧帧是规则 3 本身，而过期提示由已有的 `Modified` 状态承担。清屏最初要
+解决的问题（infinite + filter 改成空集时旧画面永远不走）今天已由规则 2 与超时兜底独立覆盖。
+
+回归：`test/gui/functional/test_config_change_preview.cpp`（`config_change_preview` 类：跑完后 Duplicate /
+改 filter / Duplicate 后 Revert 三例整窗零黑帧、运行中 Duplicate 零黑帧且新世代上屏、零光线 filter 1.5 s 内
+变黑），前四例在恢复清零的红态下全红；headless 的两条在
+`test/unit-correctness/gui/test_state_reconcile.cpp`（`ApplyingEffectsLetsAHardResetTakeOverFromAPlainReRun`）
+与 `test/composition-correctness/gui/test_run_lifecycle_chain.cpp`（`AStructuralEditFencesTheOldGenerationAndAScrubDoesNot`）。
+
 ---
 
 ## 8. Stop 响应性与超大 batch（③ 很粗时）

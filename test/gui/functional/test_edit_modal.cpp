@@ -824,9 +824,10 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
 
   // The same gate's positive branch, paired with the case above: a gate stuck closed would pass
   // that one on its own. Remove Filter is the edit because it is the cheapest change that must fire
-  // all four effects.
+  // all three effects (Modified, dirty, the epoch fence). The picture itself stays on screen — a
+  // hard edit no longer clears it (doc/gui-preview-lifecycle-architecture.md §7.1).
   {
-    ImGuiTest* t = IM_REGISTER_TEST(engine, "edit_modal", "ok_with_a_change_throws_the_result_away");
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "edit_modal", "ok_with_a_change_marks_the_result_out_of_date");
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
       const ScopedPopups popup_guard(ctx);
@@ -854,7 +855,7 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
       ctx->Yield(2);
 
       IM_CHECK_EQ(static_cast<int>(gui::g_state.sim_state), static_cast<int>(gui::GuiState::SimState::kModified));
-      IM_CHECK_EQ(gui::g_state.snapshot_intensity, 0.0f);
+      IM_CHECK_EQ(gui::g_state.snapshot_intensity, 0.5f);
       IM_CHECK_EQ(gui::g_state.display_epoch_floor, gui::g_state.committed_epoch);
       IM_CHECK(gui::g_state.dirty);
     };
@@ -912,13 +913,14 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
     };
   }
 
-  // The distinction Immediate mode exists for: a crystal tweak keeps accumulating onto the picture
-  // already on screen, while a filter change cannot (it changes which rays exist at all). One case
-  // rather than two because the whole claim is that the two edits differ — a build that cleared on
-  // both, or on neither, has to fail somewhere in here.
+  // The distinction Immediate mode exists for: a crystal tweak lets the old generation's frames keep
+  // arriving, while a filter change cannot (it changes which rays exist at all), so it raises the
+  // epoch fence. One case rather than two because the whole claim is that the two edits differ — a
+  // build that fenced on both, or on neither, has to fail somewhere in here. Neither clears the
+  // picture already on screen.
   {
-    ImGuiTest* t =
-        IM_REGISTER_TEST(engine, "edit_modal", "an_immediate_crystal_edit_keeps_the_display_a_filter_edit_clears_it");
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "edit_modal",
+                                    "an_immediate_crystal_edit_leaves_the_fence_down_a_filter_edit_raises_it");
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
       const ScopedPopups popup_guard(ctx);
@@ -955,7 +957,7 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
       ctx->Yield(4);
       ctx->ItemInputValue("**/##row_text_0", "3-1-5");
       ctx->Yield(2);
-      IM_CHECK_EQ(gui::g_state.snapshot_intensity, 0.0f);
+      IM_CHECK_GT(gui::g_state.snapshot_intensity, 0.0f);
       IM_CHECK_EQ(gui::g_state.display_epoch_floor, gui::g_state.committed_epoch);
 
       ctx->ItemClick(kClose);
