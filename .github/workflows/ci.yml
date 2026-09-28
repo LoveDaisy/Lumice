@@ -1293,6 +1293,27 @@ jobs:
       - name: Build
         run: cmake --build build --parallel
 
+      # The analytic library's install rules and package config (root CMakeLists.txt,
+      # doc/analytic-api.md section 8.4) run nowhere else in CI: the tests below read the build
+      # tree. Installing the `analytic` component alone into a scratch prefix and checking the
+      # files it must produce turns a broken install rule into a red leg rather than a silent
+      # gap. Whether an outside project can then find_package and link it is the
+      # external-consumer smoke test's question (test_external_consumer_smoke.py, run by the
+      # "Run slow E2E tests" step below against this same prefix), not this step's.
+      - name: Install analytic package (packaging smoke)
+        run: |
+          set -euo pipefail
+          cmake --install build --component analytic --prefix "$RUNNER_TEMP/analytic-install"
+          if [ "$RUNNER_OS" = "macOS" ]; then lib=lib/liblumice_analytic.dylib; else lib=lib/liblumice_analytic.so; fi
+          for f in include/lumice_analytic.h "$lib" \
+                   lib/cmake/LumiceAnalytic/LumiceAnalyticConfig.cmake \
+                   lib/cmake/LumiceAnalytic/LumiceAnalyticConfigVersion.cmake \
+                   lib/cmake/LumiceAnalytic/LumiceAnalyticTargets.cmake; do
+            test -f "$RUNNER_TEMP/analytic-install/$f" || { echo "::error::analytic install is missing $f"; exit 1; }
+          done
+          test ! -e "$RUNNER_TEMP/analytic-install/include/lumice.h" || { echo "::error::lumice.h was installed with the analytic package"; exit 1; }
+          find "$RUNNER_TEMP/analytic-install" -type f | sort
+
       - name: Setup Python
         uses: actions/setup-python@v7
         with:
@@ -1305,7 +1326,8 @@ jobs:
         # CLI-based Darwin slow gates (test_metal_throughput, test_metal_batch_invariance
         # exit-conservation) drive the `Lumice` CLI via runner.find_lumice_binary(), which
         # looks for build/cmake_install/static/Lumice or $LUMICE_BIN. This shared-lib build does
-        # not install, so point LUMICE_BIN at the build-tree binary (its build-tree rpath
+        # not install the CLI (the packaging step above installs only the analytic component,
+        # into a scratch prefix), so point LUMICE_BIN at the build-tree binary (its build-tree rpath
         # resolves liblumice; DYLD/LD_LIBRARY_PATH set as a belt-and-suspenders fallback).
         # No-op on legs where the binary is absent. (The parity leg uses the shared lib via
         # capi_runner and is unaffected; the Ubuntu leg has no CLI-based slow tests.)
@@ -1318,6 +1340,9 @@ jobs:
             export DYLD_LIBRARY_PATH="$libdir:${DYLD_LIBRARY_PATH:-}"
             export LD_LIBRARY_PATH="$libdir:${LD_LIBRARY_PATH:-}"
           fi
+          # The external-consumer smoke test (test_external_consumer_smoke.py) consumes the prefix the
+          # packaging step above installed, rather than installing a second copy of its own.
+          export LUMICE_ANALYTIC_INSTALL_DIR="$RUNNER_TEMP/analytic-install"
           # Phase 1 — parallel (pytest-xdist, -n 3). xdist runs each test in a
           # separate WORKER PROCESS, so capi_runner's process-global os.environ +
           # log callback stay per-process isolated (validated: the full slow suite
@@ -1357,6 +1382,139 @@ jobs:
         # sum is ~552 + 296 = 848s (~14.2min), so 25min leaves ~10min margin; 20 would
         # not survive a slow phase-1 day stacked on the phase-2 cost.
         timeout-minutes: 25
+
+  # Windows shared-library export sets, under both Windows compilers the release uses (cl.exe
+  # for the baseline engine, clang-cl for the v3 one). The three shared libraries — lumice,
+  # lumice_testapi and the published lumice_analytic — are linked from the same engine objects
+  # and differ only in their export lists (scripts/gen_export_list.py → a .def per library on
+  # Windows). No other Windows leg builds the shared flavor, so without this job nothing would
+  # check that a DLL exports exactly its header's functions rather than every engine symbol, or
+  # that lumice_analytic is produced and loads on Windows at all. e2e-slow covers the same test
+  # on Linux and macOS (its "rest" legs pick up test/e2e-correctness by directory).
+  #
+  # Narrow on purpose: configure + build + one pytest file that reads `dumpbin /exports` and
+  # loads each DLL through ctypes. It needs nothing but pytest — no numpy/Pillow, no test/e2e
+  # helpers — which is what keeps this from becoming a Windows e2e suite. Not CUDA (the
+  # analytic library is produced only without it) and baseline ISA (what it ships at).
+  #
+  # No job-level `if:` — relies on the workflow-level `on: push: branches: [main]`
+  # / `pull_request` triggers, so this gate runs once per PR and once per push to
+  # main.
+  windows-shared-export:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: MSVC
+            cache_key: windows-shared-msvc
+            compiler_args: ""
+          - name: clang-cl
+            cache_key: windows-shared-clangcl
+            # Named by full path, not put on PATH — same as windows-isa-v3-compile and release.yml.
+            compiler_args: >-
+              -DCMAKE_CXX_COMPILER="C:/Program Files/LLVM/bin/clang-cl.exe"
+              -DCMAKE_C_COMPILER="C:/Program Files/LLVM/bin/clang-cl.exe"
+    runs-on: windows-2022
+    timeout-minutes: 40
+    name: Windows shared export (${{ matrix.name }})
+    steps:
+      - uses: actions/checkout@v7
+
+      # Both legs: cl.exe / link.exe for the MSVC leg, and dumpbin.exe for the test on both.
+      - name: Set up MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+
+      # The LLVM pin mirrors windows-isa-v3-compile's and release.yml's.
+      - name: Install clang-cl (LLVM, pinned)
+        if: matrix.name == 'clang-cl'
+        shell: pwsh
+        run: |
+          choco install llvm --version=20.1.0 -y --no-progress --allow-downgrade
+          & "C:\Program Files\LLVM\bin\clang-cl.exe" --version
+
+      - name: Cache CPM dependencies
+        uses: actions/cache@v6
+        with:
+          path: cpm_cache
+          key: cpm-${{ matrix.cache_key }}-${{ hashFiles('**/CMakeLists.txt') }}
+          restore-keys: cpm-${{ matrix.cache_key }}-
+
+      # BUILD_TEST=ON (unlike e2e-slow's shared legs) so unit_correctness_test — the one CMake
+      # target that links lumice_obj directly rather than through the `lumice` DLL boundary
+      # (test/CMakeLists.txt's target_link_libraries(unit_correctness_test PRIVATE ... lumice_obj))
+      # — is actually compiled here. Without it, no CI leg ever built a lumice_obj-direct
+      # consumer together with BUILD_SHARED_LIBS=ON on Windows, so a wrong
+      # LUMICE_SHARED_DEFINE INTERFACE definition (this repo's CMakeLists.txt, `target_compile_
+      # definitions(lumice INTERFACE LUMICE_SHARED_DEFINE)`) could leak dllimport into such a
+      # consumer — which does not link the `lumice` import library — without any red CI to show
+      # it (an LNK2001/LNK2019 that only a build reaching this exact combination would surface).
+      - name: Configure (shared library, no CUDA)
+        run: >
+          cmake -S . -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DBUILD_TEST=ON
+          -DBUILD_GUI=OFF
+          -DBUILD_SHARED_LIBS=ON
+          -DLUMICE_ISA_LEVEL=baseline
+          ${{ matrix.compiler_args }}
+
+      # Named targets, not a plain `--parallel` build of everything BUILD_TEST=ON now pulls in:
+      # parity_test / golden_analytic_test don't need to be part of this leg (they carry no
+      # lumice_obj-direct-under-shared-config risk beyond what unit_correctness_test already
+      # covers), so building them here would only add Windows CI time for no new signal.
+      - name: Build
+        run: cmake --build build --target Lumice --target lumice_testapi --target lumice_analytic --target unit_correctness_test --parallel
+
+      # Same packaging smoke as e2e-slow's, for the DLL + import library layout (bin/ + lib/).
+      # `--component analytic` matters here: this leg builds named targets only, and a plain
+      # install would also run the install rules of targets it never built.
+      - name: Install analytic package (packaging smoke)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $prefix = Join-Path $env:RUNNER_TEMP 'analytic-install'
+          cmake --install build --component analytic --prefix $prefix
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $expected = @('include/lumice_analytic.h', 'bin/lumice_analytic.dll', 'lib/lumice_analytic.lib',
+                        'lib/cmake/LumiceAnalytic/LumiceAnalyticConfig.cmake',
+                        'lib/cmake/LumiceAnalytic/LumiceAnalyticConfigVersion.cmake',
+                        'lib/cmake/LumiceAnalytic/LumiceAnalyticTargets.cmake')
+          foreach ($f in $expected) {
+            if (-not (Test-Path (Join-Path $prefix $f) -PathType Leaf)) {
+              Write-Output "::error::analytic install is missing $f"
+              exit 1
+            }
+          }
+          if (Test-Path (Join-Path $prefix 'include/lumice.h')) {
+            Write-Output "::error::lumice.h was installed with the analytic package"
+            exit 1
+          }
+          Get-ChildItem -Recurse -File $prefix | ForEach-Object { $_.FullName }
+
+      - name: Setup Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+
+      - name: Install Python dependencies
+        run: pip install 'pytest<9'
+
+      # A skip is a failure on this leg: the test skips only when it finds no shared build (or,
+      # for lumice_analytic, a CUDA configure), and this leg has just built one without CUDA. So
+      # a skip here means the lookup missed the build — the green it would print is the one
+      # outcome this job exists to rule out.
+      # LUMICE_ANALYTIC_INSTALL_DIR hands the packaging step's prefix to the external-consumer
+      # smoke test; each run: block is a new shell, so the path is rebuilt, not read from $prefix.
+      - name: Check export sets, analytic log sink & external consumer smoke
+        shell: pwsh
+        run: |
+          $env:LUMICE_ANALYTIC_INSTALL_DIR = Join-Path $env:RUNNER_TEMP 'analytic-install'
+          python -m pytest test/e2e-correctness/test_export_symbol_scope.py test/e2e-correctness/test_analytic_log_sink.py test/e2e-correctness/test_external_consumer_smoke.py -v -m slow -rs 2>&1 | Tee-Object -Variable log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (($log | Out-String) -match '\bskipped\b') {
+            Write-Error "export-set test skipped on a leg that just built the shared flavor"
+            exit 1
+          }
 
   # The `push` guard STAYS here, and now reads as "main only" — which is the
   # intent: this job publishes the benchmark history to gh-pages, and a PR must

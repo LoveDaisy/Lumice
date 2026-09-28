@@ -304,13 +304,15 @@ check_ipo_supported(RESULT result OUTPUT output)
 # the shared engine cleanly (only DTPOFF64 relocations remain, which are fine in a shared
 # object), so the TPOFF32 exclusion no longer holds for the toolchain a release uses; the
 # CI shared leg builds with the same GCC and would surface a return of it as a link error.
-# clang-cl's LTO objects work with WINDOWS_EXPORT_ALL_SYMBOLS (the .def generator reads
-# them), so that tree gets IPO too. Real cl.exe does NOT: its /GL objects hold no symbol
-# table CMake's __create_def can read, and the DLL links "successfully" with an EMPTY export
+# clang-cl's LTO objects worked with WINDOWS_EXPORT_ALL_SYMBOLS (its .def generator read
+# them), so that tree gets IPO too. Real cl.exe did NOT: its /GL objects hold no symbol
+# table CMake's __create_def can read, and the DLL linked "successfully" with an EMPTY export
 # table — a baseline engine with zero exports, measured, not a hypothesis — so the cl.exe
-# baseline tree stays without IPO until the export surface is explicit rather than
-# harvested. Apple Clang shared builds stay excluded: no release ships them, and they have
-# not been measured either way.
+# baseline tree was left without IPO until the export surface was explicit rather than
+# harvested. It now is (lumice_apply_export_list below: a .def generated from lumice.h, no
+# symbol harvesting), so that reason no longer holds; turning IPO on for the cl.exe shared
+# tree is still a separate, measured change and is not made here. Apple Clang shared builds
+# stay excluded: no release ships them, and they have not been measured either way.
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
   set(_lumice_gcc_linux TRUE)
 else()
@@ -916,11 +918,12 @@ if(NOT MSVC)
   target_compile_options(lumice_obj PRIVATE
     -Wall -Wextra $<$<COMPILE_LANGUAGE:CXX>:-Werror=switch> -fexceptions -frtti)
   target_compile_definitions(lumice_obj PRIVATE __STDC_FORMAT_MACROS SPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_TRACE)
-  # -fvisibility=hidden: Release/MinSizeRel 下隐藏所有符号，仅导出 lumice.h 中
-  # 由 #pragma GCC visibility push(default) 标记的 C API 函数。
-  # Debug 构建不设置此标志，所有符号均可见，便于调试。
-  # NOTE: 当前仅支持 GCC/Clang。若需支持 MSVC 共享库，需将 pragma 改为
-  # LUMICE_API 宏（__declspec(dllexport/dllimport)），参见 lumice.h 中的注释。
+  # -fvisibility=hidden (Release/MinSizeRel): every engine symbol is hidden except the
+  # declarations the public headers mark LUMICE_API / LUMICE_TEST_API / LUMICE_ANALYTIC_API.
+  # That marks what a shared library MAY export; what each one DOES export is its own export
+  # list (lumice_apply_export_list below), because the same objects go into three libraries
+  # with three different surfaces. Debug leaves everything visible for debugging; the export
+  # lists still narrow each shared library to its surface there.
   target_compile_options(lumice_obj PRIVATE
     $<$<CONFIG:Debug>:-O0 -g -ggdb>
     $<$<CONFIG:Release>:-ffunction-sections -fdata-sections -fvisibility=hidden>
@@ -941,6 +944,53 @@ if(LUMICE_CLANG_CL)
   lumice_apply_isa_march(lumice_obj)
 endif()
 
+# The one way a shared library here decides what it exports: a list generated from the headers
+# that define its surface by scripts/gen_export_list.py (see its docstring), handed to the linker
+# in the platform's own form — a GNU version script, an ld64 -exported_symbols_list, or a Windows
+# .def. Per library, not per object: lumice, lumice_testapi and lumice_analytic are all linked
+# from lumice_obj's objects, so an export decision compiled into those objects (a dllexport, or
+# visibility alone) would give all three the union of their surfaces. The list is a whitelist on
+# every platform, so it also replaces WINDOWS_EXPORT_ALL_SYMBOLS, which exported every engine
+# symbol from the DLLs.
+#
+# LINK_DEPENDS makes an edited header relink the library on Linux/macOS (a link option naming a
+# file is not a build-graph edge by itself); on Windows the .def is a target source, which is.
+# The generator rewrites its output only when the content changes, and Ninja restats custom
+# command outputs, so an edit that does not change the function set relinks nothing.
+function(lumice_apply_export_list target)
+  set(_headers ${ARGN})
+  if(WIN32)
+    set(_format def)
+    set(_ext def)
+  elseif(APPLE)
+    set(_format darwin)
+    set(_ext exp)
+  else()
+    set(_format gnu)
+    set(_ext map)
+  endif()
+  set(_script "${CMAKE_SOURCE_DIR}/scripts/gen_export_list.py")
+  set(_out "${CMAKE_BINARY_DIR}/export_lists/${target}.${_ext}")
+  add_custom_command(
+    OUTPUT "${_out}"
+    COMMAND ${Python3_EXECUTABLE} "${_script}" --format ${_format} --output "${_out}" ${_headers}
+    DEPENDS ${_headers} "${_script}" "${CMAKE_SOURCE_DIR}/scripts/check_policies.py"
+    COMMENT "Generating export list for ${target}"
+    VERBATIM)
+  if(WIN32)
+    target_sources(${target} PRIVATE "${_out}")
+  else()
+    add_custom_target(${target}_export_list DEPENDS "${_out}")
+    add_dependencies(${target} ${target}_export_list)
+    set_property(TARGET ${target} APPEND PROPERTY LINK_DEPENDS "${_out}")
+    if(APPLE)
+      target_link_options(${target} PRIVATE "LINKER:-exported_symbols_list,${_out}")
+    else()
+      target_link_options(${target} PRIVATE "LINKER:--version-script=${_out}")
+    endif()
+  endif()
+endfunction()
+
 # Library target — static or shared per BUILD_SHARED_LIBS; reuses lumice_obj objects.
 add_library(lumice)
 target_link_libraries(lumice PUBLIC lumice_obj)
@@ -949,14 +999,15 @@ if(NOT MSVC)
     $<$<CONFIG:MinSizeRel>:$<$<CXX_COMPILER_ID:AppleClang,Clang>:-dead_strip>>
     $<$<CONFIG:MinSizeRel>:$<$<CXX_COMPILER_ID:GNU>:--gc-sections>>)
 endif()
+if(BUILD_SHARED_LIBS)
+  # Exactly the functions lumice.h declares, on every platform.
+  lumice_apply_export_list(lumice "${PROJ_SRC_DIR}/include/lumice.h")
+endif()
 if(WIN32 AND BUILD_SHARED_LIBS)
-  # scrum-309: the C API uses `#pragma GCC visibility` (gcc/clang only); MSVC
-  # exports nothing, so the shared lumice.dll has no usable symbols for the
-  # Python e2e/parity harness (ctypes) or any DLL consumer. Auto-export all
-  # symbols so the Windows DLL is loadable like the Unix .so/.dylib. (A proper
-  # explicit LUMICE_API __declspec export surface is a delivery concern; see
-  # backlog #133.)
-  set_target_properties(lumice PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
+  # Consumers that link the engine DLL (the two shells, gui_test) get lumice.h's dllimport;
+  # lumice_obj itself and the targets linking its objects directly do not (see lumice.h's
+  # LUMICE_API comment). INTERFACE, so the decision follows the link graph, not a global switch.
+  target_compile_definitions(lumice INTERFACE LUMICE_SHARED_DEFINE)
   # On Windows the shared engine is an INTERNAL component of the release, not a library
   # anyone links: the zip carries one shell per entry point (`Lumice.exe`, `LumiceGUI.exe`)
   # and two builds of this DLL, one per ISA tier, and the shell picks one by CPUID at start
@@ -1004,18 +1055,113 @@ if(BUILD_SHARED_LIBS)
   # PRIVATE: nothing links against this target — it is only ever dlopen'ed by ctypes.
   target_link_libraries(lumice_testapi PRIVATE lumice_obj)
   if(NOT MSVC)
-    # Same export discipline as lumice_obj: only the #pragma GCC visibility block in
-    # lumice_test_api.h (and, through lumice_obj's own objects, lumice.h) is exported.
+    # Same compile discipline as lumice_obj: hidden unless marked (LUMICE_TEST_API here).
     target_compile_options(lumice_testapi PRIVATE
       $<$<CONFIG:Release>:-fvisibility=hidden>
       $<$<CONFIG:MinSizeRel>:-fvisibility=hidden>)
   endif()
-  if(WIN32)
-    # Mirrors the `lumice` target's Windows block above: the pragma is a GCC/Clang mechanism, so
-    # MSVC needs the auto-export escape hatch to produce a loadable DLL at all.
-    set_target_properties(lumice_testapi PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
-  endif()
+  # lumice.h's functions plus the LUMICE_TEST_* hooks — the superset stand-in's whole surface.
+  lumice_apply_export_list(lumice_testapi
+    "${PROJ_SRC_DIR}/include/lumice.h" "${PROJ_TEST_DIR}/support/lumice_test_api.h")
   install(TARGETS lumice_testapi LIBRARY DESTINATION lib)
+endif()
+
+# The published analytic library (doc/analytic-api.md): the same lumice_obj objects again, its
+# own header (src/include/lumice_analytic.h), its own prefix, and an export list naming only the
+# LUMICE_ANALYTIC_* functions — so, unlike lumice_testapi, it does NOT re-export lumice.h. Its
+# own code lives in src/analytic/, outside lumice_obj, so the other two libraries never carry it.
+# Three rules from doc/analytic-api.md section 2:
+#   - only from a build without CUDA (2.3): with CUDA, lumice_obj links cudart PUBLIC, and the
+#     library would fail to load on any machine without the CUDA runtime, for a computation that
+#     never touches a GPU. The target does not exist in a CUDA configure.
+#   - dead-code stripping on (2.2): in Release every lumice_obj object otherwise goes in whole;
+#     the objects are already compiled with -ffunction-sections -fdata-sections. Release is the
+#     configuration it ships in; MinSizeRel matches what `lumice` does there.
+#   - the ISA tier is a property of the configure it is produced from (2.4): publish it from
+#     -DLUMICE_ISA_LEVEL=baseline, never from the local default `native`. Not enforced here.
+# Installed with a CMake package config, so an outside project finds it with
+# find_package(LumiceAnalytic <version>) and links Lumice::lumice_analytic (doc/analytic-api.md
+# section 8.4). Tests in this tree still load it from the build tree.
+if(BUILD_SHARED_LIBS AND NOT LUMICE_CUDA_ENABLED)
+  add_library(lumice_analytic SHARED "${PROJ_SRC_DIR}/analytic/analytic_api.cpp")
+  target_link_libraries(lumice_analytic PRIVATE lumice_obj)
+  if(NOT MSVC)
+    target_compile_options(lumice_analytic PRIVATE
+      $<$<CONFIG:Release>:-fvisibility=hidden>
+      $<$<CONFIG:MinSizeRel>:-fvisibility=hidden>)
+    # By linker, not by compiler: Clang on Linux drives GNU ld / lld, which want --gc-sections.
+    if(APPLE)
+      set(_analytic_strip "-Wl,-dead_strip")
+    else()
+      set(_analytic_strip "-Wl,--gc-sections")
+    endif()
+    target_link_options(lumice_analytic PRIVATE
+      $<$<OR:$<CONFIG:Release>,$<CONFIG:MinSizeRel>>:${_analytic_strip}>)
+  else()
+    # link.exe and lld-link strip unreferenced functions under /OPT:REF — their default unless
+    # /DEBUG is passed, which a RelWithDebInfo-style flag change would do; spelled out so the
+    # stripping does not depend on the rest of the link line.
+    target_link_options(lumice_analytic PRIVATE
+      $<$<OR:$<CONFIG:Release>,$<CONFIG:MinSizeRel>>:/OPT:REF>)
+  endif()
+  lumice_apply_export_list(lumice_analytic "${PROJ_SRC_DIR}/include/lumice_analytic.h")
+  if(WIN32)
+    target_compile_definitions(lumice_analytic INTERFACE LUMICE_ANALYTIC_SHARED_DEFINE)
+  endif()
+
+  # The target's own include interface. The engine's include directories reach it only through
+  # the PRIVATE link to lumice_obj, which a consumer never sees; install(EXPORT) needs a path that
+  # is relative to the install prefix, not this checkout's absolute source path.
+  target_include_directories(lumice_analytic PUBLIC
+    $<BUILD_INTERFACE:${PROJ_SRC_DIR}/include>
+    $<INSTALL_INTERFACE:include>)
+
+  # The package version IS the header's LUMICE_ANALYTIC_API_VERSION, read from the header rather
+  # than written a second time here: one counter, so the version a consumer's find_package
+  # accepts cannot drift from the one LUMICE_ANALYTIC_GetApiVersion() reports.
+  file(STRINGS "${PROJ_SRC_DIR}/include/lumice_analytic.h" _analytic_version_line
+    REGEX "^#define LUMICE_ANALYTIC_API_VERSION [0-9]+$")
+  string(REGEX MATCH "[0-9]+$" LUMICE_ANALYTIC_API_VERSION "${_analytic_version_line}")
+  if(NOT LUMICE_ANALYTIC_API_VERSION)
+    message(FATAL_ERROR "Could not parse LUMICE_ANALYTIC_API_VERSION from lumice_analytic.h")
+  endif()
+
+  # Standard bin/ + lib/ layout — deliberately not `lumice`'s DLL-at-the-prefix-root one, which
+  # serves the release shell loading its engine from its own directory. This is a library for
+  # other projects' builds (doc/analytic-api.md section 8.7 fixes these relative paths as a
+  # contract for non-CMake consumers). Every rule below is in the `analytic` component, so
+  # `cmake --install <build> --component analytic` installs exactly this package — from a tree
+  # that built only some targets (CI's windows-shared-export), or into a separate artifact.
+  install(TARGETS lumice_analytic EXPORT LumiceAnalyticTargets
+    RUNTIME DESTINATION bin COMPONENT analytic
+    LIBRARY DESTINATION lib COMPONENT analytic
+    ARCHIVE DESTINATION lib COMPONENT analytic)
+  # This one header only, never the whole src/include/: lumice.h is not published, and a
+  # consumer must not be able to compile both (doc/analytic-api.md section 2.6).
+  install(FILES "${PROJ_SRC_DIR}/include/lumice_analytic.h" DESTINATION include COMPONENT analytic)
+
+  # ExactVersion: in 0.x no two interface versions are promised compatible (section 8.3), so a
+  # request for any version other than the installed one is refused at configure time. Moving to
+  # SameMajorVersion is part of the 1.0 graduation (section 8.6), not before.
+  include(CMakePackageConfigHelpers)
+  write_basic_package_version_file(
+    "${CMAKE_CURRENT_BINARY_DIR}/LumiceAnalyticConfigVersion.cmake"
+    VERSION "${LUMICE_ANALYTIC_API_VERSION}"
+    COMPATIBILITY ExactVersion)
+  configure_package_config_file(
+    "${CMAKE_SOURCE_DIR}/cmake/LumiceAnalyticConfig.cmake.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/LumiceAnalyticConfig.cmake"
+    INSTALL_DESTINATION lib/cmake/LumiceAnalytic)
+  install(EXPORT LumiceAnalyticTargets
+    FILE LumiceAnalyticTargets.cmake
+    NAMESPACE Lumice::
+    DESTINATION lib/cmake/LumiceAnalytic
+    COMPONENT analytic)
+  install(FILES
+    "${CMAKE_CURRENT_BINARY_DIR}/LumiceAnalyticConfig.cmake"
+    "${CMAKE_CURRENT_BINARY_DIR}/LumiceAnalyticConfigVersion.cmake"
+    DESTINATION lib/cmake/LumiceAnalytic
+    COMPONENT analytic)
 endif()
 
 

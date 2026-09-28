@@ -7,12 +7,28 @@
 extern "C" {
 #endif
 
-// 符号可见性：配合 CMakeLists.txt 中 Release 构建的 -fvisibility=hidden，
-// 仅导出此 pragma 块内的 C API 函数，其余内部符号均隐藏。
-// NOTE: 当前为 GCC/Clang 专用。若需支持 MSVC 共享库（DLL），应替换为逐函数
-// LUMICE_API 宏（构建时 __declspec(dllexport)，使用时 __declspec(dllimport)）。
-#if !defined(_MSC_VER)
-#pragma GCC visibility push(default)
+// Symbol visibility. Which functions a shared library exports is decided at link time by that
+// library's export list, generated from this header by scripts/gen_export_list.py (root
+// CMakeLists.txt, lumice_apply_export_list) — liblumice exports exactly the functions declared
+// here, and liblumice_testapi / liblumice_analytic, built from the same objects, export their own
+// lists. LUMICE_API does not export anything; it only makes a declaration eligible:
+//   - GCC/Clang: default visibility. The engine objects are compiled with -fvisibility=hidden in
+//     Release, and a hidden symbol cannot be exported by any list. The generator refuses a
+//     declaration without the marker, so one cannot silently drop out of the library.
+//   - Windows: the .def file does the exporting (no __declspec(dllexport) anywhere), so what is
+//     left is the consumer-side dllimport, and only for a consumer that really links the engine
+//     DLL. LUMICE_SHARED_DEFINE is an INTERFACE definition of the shared `lumice` target, so the
+//     shells linking it see dllimport, while lumice_obj itself and every test/bench target that
+//     links lumice_obj's objects directly see an empty macro — a dllimport there would ask the
+//     linker for an __imp_ symbol no static link provides.
+#if defined(_WIN32)
+#if defined(LUMICE_SHARED_DEFINE)
+#define LUMICE_API __declspec(dllimport)
+#else
+#define LUMICE_API
+#endif
+#else
+#define LUMICE_API __attribute__((visibility("default")))
 #endif
 
 // =============== Constants ===============
@@ -770,12 +786,12 @@ typedef struct LUMICE_ServerConfig_ {
 } LUMICE_ServerConfig;
 
 // =============== Server Lifecycle ===============
-LUMICE_Server* LUMICE_CreateServer(void);
-LUMICE_Server* LUMICE_CreateServerEx(const LUMICE_ServerConfig* config);
-void LUMICE_DestroyServer(LUMICE_Server* server);
+LUMICE_API LUMICE_Server* LUMICE_CreateServer(void);
+LUMICE_API LUMICE_Server* LUMICE_CreateServerEx(const LUMICE_ServerConfig* config);
+LUMICE_API void LUMICE_DestroyServer(LUMICE_Server* server);
 
 // =============== Logging ===============
-void LUMICE_SetLogLevel(LUMICE_Server* server, LUMICE_LogLevel level);
+LUMICE_API void LUMICE_SetLogLevel(LUMICE_Server* server, LUMICE_LogLevel level);
 
 // Log callback: receives all Core log messages. Called from Core logging threads.
 // Parameters: level, logger name (e.g. "Server", "Simulator"), pre-formatted message.
@@ -784,7 +800,7 @@ typedef void (*LUMICE_LogCallback)(LUMICE_LogLevel level, const char* logger_nam
 
 // Register a log callback. Pass NULL to disable. Must be called BEFORE LUMICE_CreateServer()
 // for full coverage, but can also be called later (subsequent log messages will be forwarded).
-void LUMICE_SetLogCallback(LUMICE_LogCallback callback);
+LUMICE_API void LUMICE_SetLogCallback(LUMICE_LogCallback callback);
 
 // =============== Configuration bounds ===============
 // Per-kind soft capacity ceilings enforced by the Scene build API (LUMICE_SceneAdd* /
@@ -1494,20 +1510,20 @@ _Static_assert(sizeof(LUMICE_RenderParam) == 6460, "LUMICE_RenderParam layout ch
 // ---------- Lifecycle ----------
 // Allocate an empty scene. The caller owns the returned handle and MUST eventually pass it to
 // LUMICE_SceneDestroy. Returns NULL only on allocation failure.
-LUMICE_Scene* LUMICE_SceneCreate(void);
+LUMICE_API LUMICE_Scene* LUMICE_SceneCreate(void);
 
 // Deep-copy `scene` into a brand-new, fully independent handle (no aliasing with the original).
 // This is the value the old wide-struct semantics really bought — atomic modal edit / Cancel —
 // now a single call instead of a ~128 KB stack copy. Mutating the clone never affects the
 // original and vice versa; each must be Destroyed independently. Returns NULL if `scene` is
 // NULL or on allocation failure.
-LUMICE_Scene* LUMICE_SceneClone(const LUMICE_Scene* scene);
+LUMICE_API LUMICE_Scene* LUMICE_SceneClone(const LUMICE_Scene* scene);
 
 // Release a scene handle. NULL-safe no-op (same contract as LUMICE_DestroyServer). Each handle
 // must be Destroyed exactly once; destroying the same handle twice is undefined behavior (this
 // mirrors LUMICE_DestroyServer and every other handle in this API — there is no double-free
 // sentinel).
-void LUMICE_SceneDestroy(LUMICE_Scene* scene);
+LUMICE_API void LUMICE_SceneDestroy(LUMICE_Scene* scene);
 
 // ---------- Incremental build: leaf POD in, sequential id out ----------
 // Every Add* appends one item and writes its 0-based sequence id (its index among items of the
@@ -1521,19 +1537,21 @@ void LUMICE_SceneDestroy(LUMICE_Scene* scene);
 // left unchanged (no partial write). Returns LUMICE_ERR_NULL_ARG when scene / the input pointer
 // / out_id is NULL; LUMICE_ERR_INVALID_CONFIG on an invalid item (bad enum, out-of-range count,
 // or exceeding the soft per-kind capacity given by the matching LUMICE_MAX_CONFIG_*).
-LUMICE_ErrorCode LUMICE_SceneAddCrystal(LUMICE_Scene* scene, const LUMICE_CrystalParam* crystal, int* out_id);
+LUMICE_API LUMICE_ErrorCode LUMICE_SceneAddCrystal(LUMICE_Scene* scene, const LUMICE_CrystalParam* crystal,
+                                                   int* out_id);
 // SceneAddFilter handles the SIMPLE filter arms only (none/raypath/entry_exit/direction/crystal);
 // a filter with type == LUMICE_FILTER_TYPE_COMPLEX is rejected (LUMICE_ERR_INVALID_CONFIG) —
 // use LUMICE_SceneAddComplexFilter for those.
-LUMICE_ErrorCode LUMICE_SceneAddFilter(LUMICE_Scene* scene, const LUMICE_FilterParam* filter, int* out_id);
+LUMICE_API LUMICE_ErrorCode LUMICE_SceneAddFilter(LUMICE_Scene* scene, const LUMICE_FilterParam* filter, int* out_id);
 // Add a complex (sum-of-products) filter in one call: the filter identity plus its composition.
 // The Scene DEEP-COPIES composition->term_ids / term_counts into its own state immediately, so
 // the caller's LUMICE_ComplexComposition (and its heap arrays) can be released/reused right
 // after this returns. `filter->type` and `filter->composition_index` are ignored (type is
 // forced to complex; the composition is taken from `composition`, not looked up by index).
-LUMICE_ErrorCode LUMICE_SceneAddComplexFilter(LUMICE_Scene* scene, const LUMICE_FilterParam* filter,
-                                              const LUMICE_ComplexComposition* composition, int* out_id);
-LUMICE_ErrorCode LUMICE_SceneAddRenderer(LUMICE_Scene* scene, const LUMICE_RenderParam* renderer, int* out_id);
+LUMICE_API LUMICE_ErrorCode LUMICE_SceneAddComplexFilter(LUMICE_Scene* scene, const LUMICE_FilterParam* filter,
+                                                         const LUMICE_ComplexComposition* composition, int* out_id);
+LUMICE_API LUMICE_ErrorCode LUMICE_SceneAddRenderer(LUMICE_Scene* scene, const LUMICE_RenderParam* renderer,
+                                                    int* out_id);
 // Read one renderer back, the inverse of LUMICE_SceneAddRenderer: *out is the LUMICE_RenderParam
 // the engine will actually use for that entry — core's defaults applied for every key the source
 // omitted, enum-valued fields as LUMICE_LENS_TYPE_* / LUMICE_VISIBLE_* / LUMICE_EV_MODE_* /
@@ -1549,9 +1567,11 @@ LUMICE_ErrorCode LUMICE_SceneAddRenderer(LUMICE_Scene* scene, const LUMICE_Rende
 // Returns LUMICE_ERR_NULL_ARG for a NULL scene / out; LUMICE_ERR_INVALID_VALUE when `index` is
 // negative or >= the number of renderers (the natural loop terminator); LUMICE_ERR_INVALID_CONFIG
 // if the stored entry cannot be decoded (not reachable through this API's own writers).
-LUMICE_ErrorCode LUMICE_SceneGetRenderer(const LUMICE_Scene* scene, int index, LUMICE_RenderParam* out);
-LUMICE_ErrorCode LUMICE_SceneAddScatterLayer(LUMICE_Scene* scene, const LUMICE_ScatterLayer* layer, int* out_id);
-LUMICE_ErrorCode LUMICE_SceneAddColorClass(LUMICE_Scene* scene, const LUMICE_ColorClass* color_class, int* out_id);
+LUMICE_API LUMICE_ErrorCode LUMICE_SceneGetRenderer(const LUMICE_Scene* scene, int index, LUMICE_RenderParam* out);
+LUMICE_API LUMICE_ErrorCode LUMICE_SceneAddScatterLayer(LUMICE_Scene* scene, const LUMICE_ScatterLayer* layer,
+                                                        int* out_id);
+LUMICE_API LUMICE_ErrorCode LUMICE_SceneAddColorClass(LUMICE_Scene* scene, const LUMICE_ColorClass* color_class,
+                                                      int* out_id);
 
 // ---------- Scalar / whole-group settings, grouped by subsystem ----------
 // Each Set* is idempotent (last write wins) and callable in any order. Returns
@@ -1564,19 +1584,20 @@ LUMICE_ErrorCode LUMICE_SceneAddColorClass(LUMICE_Scene* scene, const LUMICE_Col
 // call orders (SetLightSource then SetCustomSpectrum, or the reverse) converge to the same
 // result. SceneSetCustomSpectrum with count == 0 clears the discrete spectrum (falls back to the
 // default "D65" string).
-LUMICE_ErrorCode LUMICE_SceneSetLightSource(LUMICE_Scene* scene, float sun_altitude, float sun_azimuth,
-                                            float sun_diameter, const char* spectrum);
-LUMICE_ErrorCode LUMICE_SceneSetCustomSpectrum(LUMICE_Scene* scene, const LUMICE_SpectrumEntry* entries, int count);
+LUMICE_API LUMICE_ErrorCode LUMICE_SceneSetLightSource(LUMICE_Scene* scene, float sun_altitude, float sun_azimuth,
+                                                       float sun_diameter, const char* spectrum);
+LUMICE_API LUMICE_ErrorCode LUMICE_SceneSetCustomSpectrum(LUMICE_Scene* scene, const LUMICE_SpectrumEntry* entries,
+                                                          int count);
 // scene.ray_allocation ("proportional" | "adaptive", doc/configuration.md) is deliberately NOT a
 // parameter of LUMICE_SceneSetSimParams (positional; adding one would break every caller). It has
 // its own setter below, LUMICE_SceneSetRayAllocation (v4.38); a handle that never calls it omits
 // the key, and LUMICE_SceneFromJson / ToJson still carry a document's spelling verbatim.
-LUMICE_ErrorCode LUMICE_SceneSetSimParams(LUMICE_Scene* scene, int infinite, LUMICE_RayCount ray_num, int max_hits,
-                                          int geom_clock);
+LUMICE_API LUMICE_ErrorCode LUMICE_SceneSetSimParams(LUMICE_Scene* scene, int infinite, LUMICE_RayCount ray_num,
+                                                     int max_hits, int geom_clock);
 // mode: LUMICE_RAY_ALLOCATION_PROPORTIONAL / _ADAPTIVE. Any other value is rejected with
 // LUMICE_ERR_INVALID_CONFIG and leaves the scene untouched.
-LUMICE_ErrorCode LUMICE_SceneSetRayAllocation(LUMICE_Scene* scene, int mode);
-LUMICE_ErrorCode LUMICE_SceneSetColorMode(LUMICE_Scene* scene, int raypath_color_mode);
+LUMICE_API LUMICE_ErrorCode LUMICE_SceneSetRayAllocation(LUMICE_Scene* scene, int mode);
+LUMICE_API LUMICE_ErrorCode LUMICE_SceneSetColorMode(LUMICE_Scene* scene, int raypath_color_mode);
 
 // ---------- Serialization: decoupled from commit ----------
 // These are the JSON authoring half of the handle API and are DELIBERATELY independent of
@@ -1590,7 +1611,8 @@ LUMICE_ErrorCode LUMICE_SceneSetColorMode(LUMICE_Scene* scene, int raypath_color
 // always reports the full, untruncated length. Returns LUMICE_ERR_NULL_ARG for a NULL scene,
 // LUMICE_ERR_INVALID_CONFIG if the scene cannot be serialized (e.g. a Set* call was fed a string
 // that is not valid UTF-8).
-LUMICE_ErrorCode LUMICE_SceneToJson(const LUMICE_Scene* scene, char* out_buf, size_t buf_size, size_t* out_len);
+LUMICE_API LUMICE_ErrorCode LUMICE_SceneToJson(const LUMICE_Scene* scene, char* out_buf, size_t buf_size,
+                                               size_t* out_len);
 
 // SceneFromJson / SceneFromJsonFile parse and validate a full scene JSON document and, on success,
 // allocate a brand-new handle written to *out_scene (the caller owns it and MUST eventually pass
@@ -1600,8 +1622,8 @@ LUMICE_ErrorCode LUMICE_SceneToJson(const LUMICE_Scene* scene, char* out_buf, si
 // error), LUMICE_ERR_MISSING_FIELD (a required field absent), LUMICE_ERR_INVALID_VALUE /
 // LUMICE_ERR_INVALID_CONFIG (bad enum / value / exceeds a LUMICE_MAX_CONFIG_* soft cap),
 // LUMICE_ERR_FILE_NOT_FOUND (SceneFromJsonFile: file cannot be opened).
-LUMICE_ErrorCode LUMICE_SceneFromJson(const char* json_str, LUMICE_Scene** out_scene);
-LUMICE_ErrorCode LUMICE_SceneFromJsonFile(const char* filename, LUMICE_Scene** out_scene);
+LUMICE_API LUMICE_ErrorCode LUMICE_SceneFromJson(const char* json_str, LUMICE_Scene** out_scene);
+LUMICE_API LUMICE_ErrorCode LUMICE_SceneFromJsonFile(const char* filename, LUMICE_Scene** out_scene);
 
 // ---------- Commit ----------
 // Commit `scene` to `server`. This is the ONE and only commit entry point of the API: v4.12
@@ -1626,7 +1648,7 @@ LUMICE_ErrorCode LUMICE_SceneFromJsonFile(const char* filename, LUMICE_Scene** o
 // LUMICE_ERR_SERVER for a server-side failure. On any error *out_reused is left untouched. Note
 // that no whole-scene re-validation happens here: each Add*/Set* call already validated its own
 // input, so what this can still surface is cross-field/semantic rejection from the core.
-LUMICE_ErrorCode LUMICE_CommitScene(LUMICE_Server* server, const LUMICE_Scene* scene, int* out_reused);
+LUMICE_API LUMICE_ErrorCode LUMICE_CommitScene(LUMICE_Server* server, const LUMICE_Scene* scene, int* out_reused);
 
 // =============== Complex-Composition storage lifecycle (task-host-abi-cpu-caps, BREAKING v4.9) ===============
 // Populate `comp` in one shot from an application-owned (clause_count, term_counts[], term_ids[])
@@ -1665,14 +1687,14 @@ LUMICE_ErrorCode LUMICE_CommitScene(LUMICE_Server* server, const LUMICE_Scene* s
 //     (the c_api / GUI writers already run this pre-check).
 //   - Allocator is calloc/free; callers must eventually release via
 //     LUMICE_CompositionReleaseClauses (or its config-wide sibling / RAII guard).
-LUMICE_ErrorCode LUMICE_CompositionSetClauses(LUMICE_ComplexComposition* comp, int clause_count, const int* term_counts,
-                                              const int* term_ids);
+LUMICE_API LUMICE_ErrorCode LUMICE_CompositionSetClauses(LUMICE_ComplexComposition* comp, int clause_count,
+                                                         const int* term_counts, const int* term_ids);
 
 // Release the term_ids / term_counts allocations owned by `comp`, if any. Idempotent and null-safe:
 //   - `comp == nullptr` → no-op.
 //   - Otherwise → free both pointers (either may already be null), then leave `comp` in the
 //     "OR of nothing" state (both nullptr, clause_count=0).
-void LUMICE_CompositionReleaseClauses(LUMICE_ComplexComposition* comp);
+LUMICE_API void LUMICE_CompositionReleaseClauses(LUMICE_ComplexComposition* comp);
 
 // Read-only convenience accessor: return a pointer to clause `clause_index`'s first AND-term
 // inside `comp->term_ids` (i.e. the address of `term_ids[prefix_sum(term_counts[0..clause_index))]`)
@@ -1691,7 +1713,8 @@ void LUMICE_CompositionReleaseClauses(LUMICE_ComplexComposition* comp);
 //     must not unconditionally dereference a non-null out_term_count as "safe to iterate".
 //     When `comp->term_ids` is non-null, the returned pointer (including for a 0-term clause) is a
 //     valid address into that buffer for the (possibly empty) slice.
-const int* LUMICE_CompositionClauseTerms(const LUMICE_ComplexComposition* comp, int clause_index, int* out_term_count);
+LUMICE_API const int* LUMICE_CompositionClauseTerms(const LUMICE_ComplexComposition* comp, int clause_index,
+                                                    int* out_term_count);
 
 // =============== Raypath Color Display-Time Setter (task-342.2) ===============
 // Display-time appearance of one color class (mutable without re-simulation): the RGB
@@ -1733,8 +1756,8 @@ typedef struct LUMICE_ColorClassDisplay_ {
 // (LUMICE_AcquireResultFrame, LUMICE_GetSimLifecycle, etc.). NOT thread-safe with a concurrent
 // LUMICE_CommitScene — the existing single-owner commit rule
 // (doc/capi-lifecycle-architecture.md §4) still applies to this setter.
-LUMICE_ErrorCode LUMICE_SetRaypathColors(LUMICE_Server* server, const LUMICE_ColorClassDisplay* classes,
-                                         int class_count, const int* z_order, int mode);
+LUMICE_API LUMICE_ErrorCode LUMICE_SetRaypathColors(LUMICE_Server* server, const LUMICE_ColorClassDisplay* classes,
+                                                    int class_count, const int* z_order, int mode);
 
 // task-345.3: display-time EV for the composite (raypath_color) path only.
 // `ev_total` is applied as `2^ev_total` inside the composite bake — a single scalar shared
@@ -1751,7 +1774,7 @@ LUMICE_ErrorCode LUMICE_SetRaypathColors(LUMICE_Server* server, const LUMICE_Col
 // (LUMICE_AcquireResultFrame, LUMICE_GetSimLifecycle, LUMICE_SetRaypathColors, etc.). NOT
 // thread-safe with concurrent LUMICE_CommitScene (same single-owner rule as the rest of the
 // display-time surface).
-LUMICE_ErrorCode LUMICE_SetCompositeExposure(LUMICE_Server* server, float ev_total);
+LUMICE_API LUMICE_ErrorCode LUMICE_SetCompositeExposure(LUMICE_Server* server, float ev_total);
 
 // Display-time background colour for the composite (raypath_color) path only. `background_linear` is a caller-owned
 // array of 3 floats, ADDITIVE **linear** RGB — the same convention the render config's `background` carries internally
@@ -1778,7 +1801,7 @@ LUMICE_ErrorCode LUMICE_SetCompositeExposure(LUMICE_Server* server, float ev_tot
 // (LUMICE_AcquireResultFrame, LUMICE_GetSimLifecycle, LUMICE_SetCompositeExposure, etc.). NOT
 // thread-safe with concurrent LUMICE_CommitScene (same single-owner rule as the rest of the
 // display-time surface).
-LUMICE_ErrorCode LUMICE_SetCompositeBackground(LUMICE_Server* server, const float* background_linear);
+LUMICE_API LUMICE_ErrorCode LUMICE_SetCompositeBackground(LUMICE_Server* server, const float* background_linear);
 
 // Per-color-class empty-arc detector (task-342.3 AC4). For each committed color class, reports
 // whether the class has any non-zero pixel in its snapshot Y-lane on any active RenderConsumer
@@ -1794,7 +1817,7 @@ LUMICE_ErrorCode LUMICE_SetCompositeBackground(LUMICE_Server* server, const floa
 // acquire a result frame first. O(W*H * class_count *
 // consumers) scan; intended for infrequent polls (commit-debounce cadence, ~1 Hz), not per
 // render frame.
-LUMICE_ErrorCode LUMICE_GetColorClassSignal(LUMICE_Server* server, int* out_flags, int class_count);
+LUMICE_API LUMICE_ErrorCode LUMICE_GetColorClassSignal(LUMICE_Server* server, int* out_flags, int class_count);
 
 // =============== Results ===============
 // See doc/capi-lifecycle-architecture.md §5 for sentinel contract.
@@ -1832,7 +1855,7 @@ LUMICE_ErrorCode LUMICE_GetColorClassSignal(LUMICE_Server* server, int* out_flag
 // LUMICE_ReleaseResultFrame. Returns LUMICE_ERR_NULL_ARG if `server` or `out_frame` is NULL.
 // On success *out_frame is never NULL, even before the first snapshot — such a frame simply
 // reads as "no results" (every FrameGet* writes its sentinel / all-zero struct).
-LUMICE_ErrorCode LUMICE_AcquireResultFrame(LUMICE_Server* server, LUMICE_ResultFrame** out_frame);
+LUMICE_API LUMICE_ErrorCode LUMICE_AcquireResultFrame(LUMICE_Server* server, LUMICE_ResultFrame** out_frame);
 
 // Release a frame handle. NULL-safe no-op (same contract as LUMICE_DestroyServer). Each
 // handle must be Released exactly once; releasing the same handle twice is undefined
@@ -1844,7 +1867,7 @@ LUMICE_ErrorCode LUMICE_AcquireResultFrame(LUMICE_Server* server, LUMICE_ResultF
 // reference-counted; and a leak is what ASan/LSan/valgrind already report, so no
 // project-specific machinery is needed to find one. After the Release, every pointer read
 // out of that frame is dangling; copy what you still need first.
-void LUMICE_ReleaseResultFrame(LUMICE_ResultFrame* frame);
+LUMICE_API void LUMICE_ReleaseResultFrame(LUMICE_ResultFrame* frame);
 
 // Read functions. Same (out, max_count) array shape and same sentinel contract as the
 // server-taking getters, so only the first argument differs. Any two reads from the SAME
@@ -1852,20 +1875,23 @@ void LUMICE_ReleaseResultFrame(LUMICE_ResultFrame* frame);
 // getter is needed to pair them. All return LUMICE_ERR_NULL_ARG on a NULL frame/out.
 
 // Raw XYZ float data + intensity scalars (xyz_buffer == NULL sentinel).
-LUMICE_ErrorCode LUMICE_FrameGetRawXyz(const LUMICE_ResultFrame* frame, LUMICE_RawXyzResult* out, int max_count);
+LUMICE_API LUMICE_ErrorCode LUMICE_FrameGetRawXyz(const LUMICE_ResultFrame* frame, LUMICE_RawXyzResult* out,
+                                                  int max_count);
 
 // Per-raypath composite sRGB images, one per colored renderer (img_buffer == NULL sentinel).
 // Empty (out[0] sentinel) when no `raypath_color` is configured — the mono path below is
 // unaffected. composite_p99_y is meaningful here (see its field docs).
-LUMICE_ErrorCode LUMICE_FrameGetComposite(const LUMICE_ResultFrame* frame, LUMICE_RenderResult* out, int max_count);
+LUMICE_API LUMICE_ErrorCode LUMICE_FrameGetComposite(const LUMICE_ResultFrame* frame, LUMICE_RenderResult* out,
+                                                     int max_count);
 
 // Mono / full-spectrum sRGB uint8 images (img_buffer == NULL sentinel). composite_p99_y is
 // left at 0 on this path and must be ignored.
-LUMICE_ErrorCode LUMICE_FrameGetRender(const LUMICE_ResultFrame* frame, LUMICE_RenderResult* out, int max_count);
+LUMICE_API LUMICE_ErrorCode LUMICE_FrameGetRender(const LUMICE_ResultFrame* frame, LUMICE_RenderResult* out,
+                                                  int max_count);
 
 // Simulation statistics. Single value, so no max_count: writes an all-zero struct when the
 // frame carries no stats (e.g. acquired before the first snapshot).
-LUMICE_ErrorCode LUMICE_FrameGetStats(const LUMICE_ResultFrame* frame, LUMICE_StatsResult* out);
+LUMICE_API LUMICE_ErrorCode LUMICE_FrameGetStats(const LUMICE_ResultFrame* frame, LUMICE_StatsResult* out);
 
 // Cheap O(1) live accumulated sim ray count — no snapshot, no render, no XYZ copy.
 // For progress polling (e.g. the --benchmark drain loop) that needs sim_ray_num
@@ -1873,17 +1899,17 @@ LUMICE_ErrorCode LUMICE_FrameGetStats(const LUMICE_ResultFrame* frame, LUMICE_St
 // does NOT trigger DoSnapshot/PostSnapshot, and it reads the running counter
 // directly, so it needs no external snapshot driver to stay fresh.
 // Writes 0 if no StatsConsumer (or none produced yet).
-LUMICE_ErrorCode LUMICE_GetSimRayCount(LUMICE_Server* server, LUMICE_RayCount* out);
+LUMICE_API LUMICE_ErrorCode LUMICE_GetSimRayCount(LUMICE_Server* server, LUMICE_RayCount* out);
 
 // =============== State & Control ===============
-LUMICE_ErrorCode LUMICE_QueryServerState(LUMICE_Server* server, LUMICE_ServerState* out);
+LUMICE_API LUMICE_ErrorCode LUMICE_QueryServerState(LUMICE_Server* server, LUMICE_ServerState* out);
 
 // Read the explicit simulation lifecycle + current epoch + session kind (single-source
 // truth). LUMICE_QueryServerState is a projection of this. After a synchronous commit,
 // call this to read back the just-minted epoch (no commit-signature change). Before a
 // commit, `session_kind` tells you whether the session it replaces was an analysis — the
 // term of the consumer-reuse decision a caller cannot otherwise observe.
-LUMICE_ErrorCode LUMICE_GetSimLifecycle(LUMICE_Server* server, LUMICE_SimLifecycleResult* out);
+LUMICE_API LUMICE_ErrorCode LUMICE_GetSimLifecycle(LUMICE_Server* server, LUMICE_SimLifecycleResult* out);
 
 // Read the consumer-side drain status (see LUMICE_DrainResult for the contract).
 // Cheap O(1) atomic read — same cost class as LUMICE_GetSimRayCount: no snapshot,
@@ -1893,7 +1919,7 @@ LUMICE_ErrorCode LUMICE_GetSimLifecycle(LUMICE_Server* server, LUMICE_SimLifecyc
 //   out.drained_epoch == out.current_epoch
 // and only then acquires a result frame. Waiting for LUMICE_SERVER_IDLE alone is
 // not sufficient and never was.
-LUMICE_ErrorCode LUMICE_GetDrainStatus(LUMICE_Server* server, LUMICE_DrainResult* out);
+LUMICE_API LUMICE_ErrorCode LUMICE_GetDrainStatus(LUMICE_Server* server, LUMICE_DrainResult* out);
 
 // task-gui-feedback-affordances Step 7 (AC1): synchronous readback of the
 // most recent commit's color-classification overflow counters (see the
@@ -1901,7 +1927,7 @@ LUMICE_ErrorCode LUMICE_GetDrainStatus(LUMICE_Server* server, LUMICE_DrainResult
 // after CommitConfigStruct returns OK; a non-zero component_overflow_count
 // triggers a modal "coloring degraded" prompt. LUMICE_OK on success;
 // LUMICE_ERR_NULL_ARG if server or out is null.
-LUMICE_ErrorCode LUMICE_GetColorOverflowInfo(LUMICE_Server* server, LUMICE_ColorOverflowInfo* out);
+LUMICE_API LUMICE_ErrorCode LUMICE_GetColorOverflowInfo(LUMICE_Server* server, LUMICE_ColorOverflowInfo* out);
 
 // Has the GPU backend stopped running partway through the current run?
 // Writes 1 to *out_fell_back once this server's GPU single-engine route has dropped
@@ -1915,9 +1941,9 @@ LUMICE_ErrorCode LUMICE_GetColorOverflowInfo(LUMICE_Server* server, LUMICE_Color
 // changes what the frame looks like for the first seconds (already-queued GPU-sized
 // batches carry one wavelength each on the CPU path). LUMICE_OK on success;
 // LUMICE_ERR_NULL_ARG if server or out_fell_back is null.
-LUMICE_ErrorCode LUMICE_GetBackendFallbackFlag(LUMICE_Server* server, int* out_fell_back);
+LUMICE_API LUMICE_ErrorCode LUMICE_GetBackendFallbackFlag(LUMICE_Server* server, int* out_fell_back);
 
-void LUMICE_StopServer(LUMICE_Server* server);
+LUMICE_API void LUMICE_StopServer(LUMICE_Server* server);
 
 // Continue the committed RENDER: trace more rays into the accumulation the last run left behind
 // (v4.44). LUMICE_CommitScene always starts from zero; this is the other way to start a run.
@@ -1952,7 +1978,8 @@ void LUMICE_StopServer(LUMICE_Server* server);
 // is in progress, or a just-completed run's last batches did not finish draining within the
 // internal wait bound (retry shortly; this is the "no traced ray is dropped" guarantee failing
 // safe rather than silently).
-LUMICE_ErrorCode LUMICE_ContinueRender(LUMICE_Server* server, int infinite, LUMICE_RayCount additional_ray_num);
+LUMICE_API LUMICE_ErrorCode LUMICE_ContinueRender(LUMICE_Server* server, int infinite,
+                                                  LUMICE_RayCount additional_ray_num);
 
 // =============== Crystal Mesh ===============
 // Get crystal wireframe mesh for 3D preview.
@@ -2014,8 +2041,8 @@ typedef struct LUMICE_CrystalMesh_ {
 //
 // Returns LUMICE_ERR_NULL_ARG if `crystal` or `out` is NULL; LUMICE_ERR_INVALID_VALUE
 // for an unknown crystal->type; LUMICE_ERR_INVALID_CONFIG if the shape cannot be parsed.
-LUMICE_ErrorCode LUMICE_GetCrystalMesh(const LUMICE_CrystalParam* crystal, unsigned long long sample_seed,
-                                       LUMICE_CrystalMesh* out);
+LUMICE_API LUMICE_ErrorCode LUMICE_GetCrystalMesh(const LUMICE_CrystalParam* crystal, unsigned long long sample_seed,
+                                                  LUMICE_CrystalMesh* out);
 
 // =============== Annotation Anchors ===============
 // Where a view's auxiliary-line LABELS and its reference-point MARKERS land, in pixels. The lines
@@ -2215,14 +2242,14 @@ typedef struct LUMICE_AnnotationAnchors_ {
 // non-zero count; LUMICE_ERR_INVALID_VALUE for an unknown lens_type / visible, a negative count,
 // a count past LUMICE_MAX_ANNOTATION_LINES / _CIRCLES / _MARKERS, or a marker id outside
 // [0, LUMICE_ANNOTATION_MARKER_COUNT); LUMICE_ERR_UNKNOWN on allocation failure.
-LUMICE_ErrorCode LUMICE_ComputeAnnotationAnchors(const LUMICE_AnnotationRequest* request,
-                                                 LUMICE_AnnotationAnchors* out);
+LUMICE_API LUMICE_ErrorCode LUMICE_ComputeAnnotationAnchors(const LUMICE_AnnotationRequest* request,
+                                                            LUMICE_AnnotationAnchors* out);
 
 // Release the storage a successful LUMICE_ComputeAnnotationAnchors allocated, and NULL out the
 // pointers so a double release is a no-op rather than a double free. NULL-safe, and safe on an
 // already-released or zero-initialized struct (same wording as LUMICE_SceneDestroy: calling it on
 // a live result exactly once is required; calling it on anything else does nothing).
-void LUMICE_ReleaseAnnotationAnchors(LUMICE_AnnotationAnchors* anchors);
+LUMICE_API void LUMICE_ReleaseAnnotationAnchors(LUMICE_AnnotationAnchors* anchors);
 
 // A named reference direction as a WORLD DIRECTION, for a caller that wants to POINT THE CAMERA at
 // it rather than find where it lands on a canvas. LUMICE_ComputeAnnotationAnchors answers the
@@ -2238,7 +2265,8 @@ void LUMICE_ReleaseAnnotationAnchors(LUMICE_AnnotationAnchors* anchors);
 //
 // Returns LUMICE_ERR_NULL_ARG if `sun_dir` or `out_dir` is NULL; LUMICE_ERR_INVALID_VALUE if
 // `marker_id` is outside [0, LUMICE_ANNOTATION_MARKER_COUNT). `*out_dir` is untouched on failure.
-LUMICE_ErrorCode LUMICE_ResolveAnnotationMarkerDirection(int marker_id, const float sun_dir[3], float out_dir[3]);
+LUMICE_API LUMICE_ErrorCode LUMICE_ResolveAnnotationMarkerDirection(int marker_id, const float sun_dir[3],
+                                                                    float out_dir[3]);
 
 // The sun's azimuth carried down to the horizon: the unit vector with the sun's horizontal
 // direction and zero altitude. Deliberately NOT a LUMICE_ANNOTATION_MARKER_* id and deliberately a
@@ -2252,7 +2280,7 @@ LUMICE_ErrorCode LUMICE_ResolveAnnotationMarkerDirection(int marker_id, const fl
 // azimuth is 180 degrees away from the one just short of it.
 //
 // Returns LUMICE_ERR_NULL_ARG if `sun_dir` or `out_dir` is NULL. `*out_dir` is untouched on failure.
-LUMICE_ErrorCode LUMICE_ResolveSunHorizonDirection(const float sun_dir[3], float out_dir[3]);
+LUMICE_API LUMICE_ErrorCode LUMICE_ResolveSunHorizonDirection(const float sun_dir[3], float out_dir[3]);
 
 // =============== Raypath Analysis Run ===============
 // The other kind of run a server can carry (doc/raypath-analysis-panel.md): no image, a
@@ -2479,8 +2507,8 @@ typedef struct LUMICE_RaypathAnalysisInfo_ {
 // stopped or replaced; LUMICE_ERR_SERVER when a render run is in progress (AC1 — stop it first).
 // Calling it while an ANALYSIS run is in progress restarts the analysis with the new scene and
 // request.
-LUMICE_ErrorCode LUMICE_StartRaypathAnalysis(LUMICE_Server* server, const LUMICE_Scene* scene,
-                                             const LUMICE_RaypathAnalysisRequest* request);
+LUMICE_API LUMICE_ErrorCode LUMICE_StartRaypathAnalysis(LUMICE_Server* server, const LUMICE_Scene* scene,
+                                                        const LUMICE_RaypathAnalysisRequest* request);
 
 // Frame-level view of the analysis result under `chain_id_symmetry` (a LUMICE_RAYPATH_SYMMETRY_*
 // bit set, 0..7). Every field but `entry_count` is independent of the symmetry; `entry_count` is
@@ -2489,8 +2517,8 @@ LUMICE_ErrorCode LUMICE_StartRaypathAnalysis(LUMICE_Server* server, const LUMICE
 // frame that is not an analysis frame — a render frame, or a frame acquired before the first
 // snapshot. Returns LUMICE_ERR_NULL_ARG on a NULL frame / out; LUMICE_ERR_INVALID_VALUE for a
 // symmetry outside 0..7 (nothing is written).
-LUMICE_ErrorCode LUMICE_FrameGetRaypathAnalysisInfo(const LUMICE_ResultFrame* frame, int chain_id_symmetry,
-                                                    LUMICE_RaypathAnalysisInfo* out);
+LUMICE_API LUMICE_ErrorCode LUMICE_FrameGetRaypathAnalysisInfo(const LUMICE_ResultFrame* frame, int chain_id_symmetry,
+                                                               LUMICE_RaypathAnalysisInfo* out);
 
 // The entries under `chain_id_symmetry` (0..7, as above): the frame's recorded chains with each
 // layer's face sequence reduced under it — with the D parameters of THAT layer's crystal, the
@@ -2509,8 +2537,8 @@ LUMICE_ErrorCode LUMICE_FrameGetRaypathAnalysisInfo(const LUMICE_ResultFrame* fr
 // the frame; the frame still has to be held for the duration of this call. Returns
 // LUMICE_ERR_NULL_ARG on a NULL frame / out; LUMICE_ERR_INVALID_VALUE for a symmetry outside 0..7
 // (nothing is written).
-LUMICE_ErrorCode LUMICE_FrameGetRaypathAnalysis(const LUMICE_ResultFrame* frame, int chain_id_symmetry,
-                                                LUMICE_RaypathHistogramEntry* out, int max_count);
+LUMICE_API LUMICE_ErrorCode LUMICE_FrameGetRaypathAnalysis(const LUMICE_ResultFrame* frame, int chain_id_symmetry,
+                                                           LUMICE_RaypathHistogramEntry* out, int max_count);
 
 // Pixel -> world direction, the inverse of the projection LUMICE_ComputeAnnotationAnchors and the
 // IN_FRAME membership test project with — for turning a click on a rendered canvas into a cone
@@ -2528,8 +2556,8 @@ LUMICE_ErrorCode LUMICE_FrameGetRaypathAnalysis(const LUMICE_ResultFrame* frame,
 // convention at LUMICE_ResolveAnnotationMarkerDirection); on 0 it is untouched. Returns
 // LUMICE_ERR_NULL_ARG for a NULL view / out_dir / out_valid, LUMICE_ERR_INVALID_VALUE for an
 // unknown lens_type / visible or a non-positive width / height.
-LUMICE_ErrorCode LUMICE_UnprojectPixel(const LUMICE_AnnotationView* view, int px, int py, float out_dir[3],
-                                       int* out_valid);
+LUMICE_API LUMICE_ErrorCode LUMICE_UnprojectPixel(const LUMICE_AnnotationView* view, int px, int py, float out_dir[3],
+                                                  int* out_valid);
 
 // World direction -> canvas position, the forward of LUMICE_UnprojectPixel above and the sampler
 // LUMICE_ComputeAnnotationAnchors' marker points come from, on a direction of the caller's own —
@@ -2554,8 +2582,8 @@ LUMICE_ErrorCode LUMICE_UnprojectPixel(const LUMICE_AnnotationView* view, int px
 // disappear as they do. `out_px` / `out_py` are written only on 1; on 0 they are untouched.
 // Returns LUMICE_ERR_NULL_ARG for a NULL view / dir / out_px / out_py / out_valid,
 // LUMICE_ERR_INVALID_VALUE for an unknown lens_type / visible or a non-positive width / height.
-LUMICE_ErrorCode LUMICE_ProjectDirection(const LUMICE_AnnotationView* view, const float dir[3], float* out_px,
-                                         float* out_py, int* out_valid);
+LUMICE_API LUMICE_ErrorCode LUMICE_ProjectDirection(const LUMICE_AnnotationView* view, const float dir[3],
+                                                    float* out_px, float* out_py, int* out_valid);
 
 // =============== Config ID Range ===============
 // Maximum value for LUMICE config IDs (matches core IdType = uint16_t max).
@@ -2583,7 +2611,7 @@ typedef enum LUMICE_CrystalKind_ {
 } LUMICE_CrystalKind;
 
 // Returns non-zero if `face` is a legal face number for the given crystal kind.
-int LUMICE_IsLegalFace(LUMICE_CrystalKind kind, int face);
+LUMICE_API int LUMICE_IsLegalFace(LUMICE_CrystalKind kind, int face);
 
 // Returns non-zero if shape-scalar `slot` (a LUMICE_SHAPE_SCALAR_* index) physically exists on
 // this crystal kind: a prism has .height + the six .face_distance, a pyramid has
@@ -2593,7 +2621,7 @@ int LUMICE_IsLegalFace(LUMICE_CrystalKind kind, int face);
 // scopes itself by when it zeroes a group declared on a slot the type does not have. Ask it rather
 // than reimplementing the rule: a GUI-side copy that drifted from core is what once made the
 // crystal table display a distribution the simulation did not use.
-int LUMICE_IsShapeScalarApplicable(LUMICE_CrystalKind kind, int slot);
+LUMICE_API int LUMICE_IsShapeScalarApplicable(LUMICE_CrystalKind kind, int slot);
 
 // Returns the JSON key naming shape-scalar `slot` — both inside a crystal's `shape` object and
 // inside its `shape.sync_group` sub-map, which name each scalar identically. NULL when the slot
@@ -2606,7 +2634,7 @@ int LUMICE_IsShapeScalarApplicable(LUMICE_CrystalKind kind, int slot);
 //
 // The name still says "sync" for compatibility with v4.13, which shipped it: the contract has not
 // changed, only the set of callers that ask.
-const char* LUMICE_ShapeScalarSyncKeyName(LUMICE_CrystalKind kind, int slot);
+LUMICE_API const char* LUMICE_ShapeScalarSyncKeyName(LUMICE_CrystalKind kind, int slot);
 
 // Returns the JSON key inside a crystal's `shape` object holding a pyramidal wedge angle, in
 // degrees — the upper one when `upper` is non-zero, the lower one otherwise. Never NULL; static
@@ -2616,13 +2644,13 @@ const char* LUMICE_ShapeScalarSyncKeyName(LUMICE_CrystalKind kind, int slot);
 // both wedge angles exist only on a pyramid, and a caller is already inside a pyramid branch
 // before it needs the key. Same reason there is no LUMICE_AXIS_/LUMICE_SHAPE_SCALAR_-style index
 // constant to go with it — two states, no third.
-const char* LUMICE_ShapeWedgeAngleKeyName(int upper);
+LUMICE_API const char* LUMICE_ShapeWedgeAngleKeyName(int upper);
 
 // Returns the JSON key inside a crystal's `shape` object holding a pyramidal face's Miller
 // indices — the legacy read-side spelling of the quantity LUMICE_ShapeWedgeAngleKeyName names. A
 // parser converts these three indices into an angle when the explicit wedge-angle key is absent;
 // write paths never emit it. Never NULL; static storage, do not free.
-const char* LUMICE_ShapeIndicesKeyName(int upper);
+LUMICE_API const char* LUMICE_ShapeIndicesKeyName(int upper);
 
 // =============== Axis Scalars ===============
 // Index space for the three distributions of a crystal's `axis` object, for LUMICE_AxisScalarKeyName.
@@ -2640,7 +2668,7 @@ const char* LUMICE_ShapeIndicesKeyName(int upper);
 //
 // Note LUMICE_AXIS_SCALAR_ZENITH names the wire quantity, which is the complement of core's
 // internal latitude (zenith = 90 - latitude): the key names the file format, not the field.
-const char* LUMICE_AxisScalarKeyName(int slot);
+LUMICE_API const char* LUMICE_AxisScalarKeyName(int slot);
 
 // Returns non-zero when D (the sigma-d mirror) is applicable to a crystal whose axis has this
 // azimuth distribution and this roll anchor. D needs the azimuth to be uniform over a full turn
@@ -2658,7 +2686,7 @@ const char* LUMICE_AxisScalarKeyName(int slot);
 // a GUI-side transcription is exactly what once let a checkbox report D as live while the engine
 // had already dropped it, the two having drifted to different float tolerances (1e-3 against
 // 1e-5) on a difference of 3.05e-5.
-int LUMICE_IsDApplicable(int azimuth_dist_type, float azimuth_full_range_deg, float roll_anchor_deg);
+LUMICE_API int LUMICE_IsDApplicable(int azimuth_dist_type, float azimuth_full_range_deg, float roll_anchor_deg);
 
 // Returns non-zero when P (the 60-degree rotation about the c-axis) is applicable to a crystal
 // whose axis has this roll distribution (v4.48). P rotates the roll angle, so it needs roll to be
@@ -2668,7 +2696,7 @@ int LUMICE_IsDApplicable(int azimuth_dist_type, float azimuth_full_range_deg, fl
 //   roll_dist_type      one of LUMICE_DIST_*, from the roll LUMICE_Distribution's .type
 //   roll_full_range_deg that distribution's .spread (for LUMICE_DIST_UNIFORM, the full width)
 // Core's own predicate, like LUMICE_IsDApplicable — ask it rather than transcribing the rule.
-int LUMICE_IsPApplicable(int roll_dist_type, float roll_full_range_deg);
+LUMICE_API int LUMICE_IsPApplicable(int roll_dist_type, float roll_full_range_deg);
 
 // Returns non-zero when B (the horizontal mirror: basal 1<->2, upper cone <-> lower cone) is
 // applicable to a crystal whose axis has this azimuth and zenith distribution (v4.48). B reverses
@@ -2680,8 +2708,8 @@ int LUMICE_IsPApplicable(int roll_dist_type, float roll_full_range_deg);
 //   zenith_center_deg   that distribution's .center, in the WIRE's zenith (not core's latitude)
 //   zenith_full_range_deg that distribution's .spread
 // Core's own predicate, like LUMICE_IsDApplicable — ask it rather than transcribing the rule.
-int LUMICE_IsBApplicable(int azimuth_dist_type, float azimuth_full_range_deg, int zenith_dist_type,
-                         float zenith_center_deg, float zenith_full_range_deg);
+LUMICE_API int LUMICE_IsBApplicable(int azimuth_dist_type, float azimuth_full_range_deg, int zenith_dist_type,
+                                    float zenith_center_deg, float zenith_full_range_deg);
 
 // Which symmetry elements a crystal's shape admits (v4.47). The raypath-analysis list's P/B/D
 // merges only the elements the request names AND the crystal allows — a prism with face_distance
@@ -2716,7 +2744,7 @@ typedef struct LUMICE_CrystalSymmetry_ {
 // argument; LUMICE_ERR_INVALID_VALUE on an unknown type; LUMICE_ERR_INVALID_CONFIG when the
 // parameters do not describe a crystal. This is core's own derivation, the one the analysis list's
 // reduction runs.
-LUMICE_ErrorCode LUMICE_GetCrystalSymmetry(const LUMICE_CrystalParam* crystal, LUMICE_CrystalSymmetry* out);
+LUMICE_API LUMICE_ErrorCode LUMICE_GetCrystalSymmetry(const LUMICE_CrystalParam* crystal, LUMICE_CrystalSymmetry* out);
 
 // Returns 0 when it is certain that no crystal drawn from `crystal` has face number `face` — its
 // shape leaves that face no area (face_distance [2, 1, 2, 1, 2, 1] does that to faces 3, 5 and 7),
@@ -2725,7 +2753,7 @@ LUMICE_ErrorCode LUMICE_GetCrystalSymmetry(const LUMICE_CrystalParam* crystal, L
 // unusable crystal, and for a face number not legal on the crystal's kind (LUMICE_IsLegalFace
 // answers that). The same check the engine logs as a warning when a scene binds such a filter to
 // such a crystal (v4.48).
-int LUMICE_CouldCrystalHaveFace(const LUMICE_CrystalParam* crystal, int face);
+LUMICE_API int LUMICE_CouldCrystalHaveFace(const LUMICE_CrystalParam* crystal, int face);
 
 // Returns 0 when a filter on `crystal` naming face `face` with P/B/D bit set `symmetry` (1 = P,
 // 2 = B, 4 = D, as LUMICE_FilterParam.symmetry) certainly matches no ray through it: neither the
@@ -2734,7 +2762,7 @@ int LUMICE_CouldCrystalHaveFace(const LUMICE_CrystalParam* crystal, int face);
 // [2, 1, 2, 1, 2, 1] answers non-zero for face 3 — P relabels it to faces 4, 6 and 8, which exist.
 // Non-zero in every case LUMICE_CouldCrystalHaveFace answers non-zero. The check behind the
 // engine's scene-parse warning (v4.49).
-int LUMICE_CouldFilterMatchFace(const LUMICE_CrystalParam* crystal, int face, int symmetry);
+LUMICE_API int LUMICE_CouldFilterMatchFace(const LUMICE_CrystalParam* crystal, int face, int symmetry);
 
 // The two meanings a P/B/D bit set has (v4.49). A FILTER's (and a colour ref's) is a label
 // equivalence: P relabels the prism faces by any multiple of 60 degrees, B swaps 1<->2 and the
@@ -2755,8 +2783,9 @@ int LUMICE_CouldFilterMatchFace(const LUMICE_CrystalParam* crystal, int face, in
 // 1..LUMICE_MAX_RAYPATH_SEGMENT_LEN; LUMICE_ERR_INVALID_CONFIG when the parameters do not describe
 // a crystal. The one way to tell whether an analysis row (a physical class) is also a label class
 // — what "exclude this row" needs to write a filter that removes exactly its members (v4.49).
-LUMICE_ErrorCode LUMICE_ExpandRaypathClass(const LUMICE_CrystalParam* crystal, const int* faces, int face_count,
-                                           int symmetry, int semantics, int* out_faces, int* out_member_count);
+LUMICE_API LUMICE_ErrorCode LUMICE_ExpandRaypathClass(const LUMICE_CrystalParam* crystal, const int* faces,
+                                                      int face_count, int symmetry, int semantics, int* out_faces,
+                                                      int* out_member_count);
 
 // =============== Raypath Validation ===============
 // Validation state for raypath text input (GUI border color + OK gate).
@@ -2774,9 +2803,9 @@ typedef enum LUMICE_RaypathValidationState_ {
 // out_msg: human-readable error description (empty on kValid/kIncomplete).
 //          Caller provides buffer; recommended size = 256.
 // Returns LUMICE_ERR_NULL_ARG if text, out_state, or out_msg is NULL.
-LUMICE_ErrorCode LUMICE_ValidateRaypathText(const char* text, LUMICE_CrystalKind kind,
-                                            LUMICE_RaypathValidationState* out_state, char* out_msg,
-                                            size_t msg_buf_size);
+LUMICE_API LUMICE_ErrorCode LUMICE_ValidateRaypathText(const char* text, LUMICE_CrystalKind kind,
+                                                       LUMICE_RaypathValidationState* out_state, char* out_msg,
+                                                       size_t msg_buf_size);
 
 // =============== Miller Index Conversion ===============
 // Verdict on one Miller-index triple offered as a pyramidal wedge angle.
@@ -2814,9 +2843,9 @@ typedef enum LUMICE_MillerConversionState_ {
 // h == 0 means.
 //
 // Returns LUMICE_ERR_NULL_ARG if out_state or out_angle_deg is NULL.
-LUMICE_ErrorCode LUMICE_ConvertMillerIndexToWedgeAngle(int h, int k, int l, int provided_count,
-                                                       LUMICE_MillerConversionState* out_state, float* out_angle_deg,
-                                                       int* out_invalid_index);
+LUMICE_API LUMICE_ErrorCode LUMICE_ConvertMillerIndexToWedgeAngle(int h, int k, int l, int provided_count,
+                                                                  LUMICE_MillerConversionState* out_state,
+                                                                  float* out_angle_deg, int* out_invalid_index);
 
 // =============== Lens Type ===============
 // Lens projection type. Values match Core's LensParam::LensType enum (index 0-10).
@@ -2837,7 +2866,7 @@ typedef enum LUMICE_LensType_ {
 
 // Returns the maximum valid FOV (degrees) for the given lens type.
 // Used by GUI to clamp the FOV slider upper bound when the user switches lens type.
-float LUMICE_MaxFov(LUMICE_LensType type);
+LUMICE_API float LUMICE_MaxFov(LUMICE_LensType type);
 
 // =============== Color Conversion ===============
 // Batch XYZ float -> sRGB uint8 conversion with per-pixel intensity scale.
@@ -2847,7 +2876,8 @@ float LUMICE_MaxFov(LUMICE_LensType type);
 // pixel_count:     number of pixels to convert.
 // intensity_scale: scalar applied per-pixel to XYZ before XYZ->sRGB conversion.
 // Returns LUMICE_ERR_NULL_ARG if xyz_in or out is NULL; LUMICE_OK otherwise.
-LUMICE_ErrorCode LUMICE_XyzToSrgbUint8(const float* xyz_in, unsigned char* out, int pixel_count, float intensity_scale);
+LUMICE_API LUMICE_ErrorCode LUMICE_XyzToSrgbUint8(const float* xyz_in, unsigned char* out, int pixel_count,
+                                                  float intensity_scale);
 
 // Same conversion with an additive background composited into it — the sibling an editor needs to
 // bake a frame that matches what the renderer put on screen, since the renderer paints the sky
@@ -2865,8 +2895,9 @@ LUMICE_ErrorCode LUMICE_XyzToSrgbUint8(const float* xyz_in, unsigned char* out, 
 //                    inline header function — no separate C API for this conversion); an external
 //                    C API consumer applies the standard sRGB EOTF inverse itself.
 // Returns LUMICE_ERR_NULL_ARG if any pointer argument is NULL; LUMICE_OK otherwise.
-LUMICE_ErrorCode LUMICE_XyzToSrgbUint8WithBackground(const float* xyz_in, unsigned char* out, int pixel_count,
-                                                     float intensity_scale, const float* background_linear);
+LUMICE_API LUMICE_ErrorCode LUMICE_XyzToSrgbUint8WithBackground(const float* xyz_in, unsigned char* out,
+                                                                int pixel_count, float intensity_scale,
+                                                                const float* background_linear);
 
 // =============== EV Auto Anchor ===============
 // P99 anchor of the auto-EV pipeline (doc/ev-pipeline-architecture.md §2.2/§2.5).
@@ -2884,14 +2915,14 @@ LUMICE_ErrorCode LUMICE_XyzToSrgbUint8WithBackground(const float* xyz_in, unsign
 // Y = channel 1), read only for the duration of the call; a raw pointer carries no length, so the
 // dimensions passed in are the only bound this function has. Returns 0 if no positive Y entries
 // exist.
-float LUMICE_ComputeP99Y(const float* xyz_data, int img_width, int img_height, int downsample_factor);
+LUMICE_API float LUMICE_ComputeP99Y(const float* xyz_data, int img_width, int img_height, int downsample_factor);
 
 // P99-anchored auto-EV in stops: log2(target_linear / (p99_raw_y / snapshot_intensity)), clamped
 // to [-6, 6]. target_linear is the sRGB reverse transform of target_white (0-255 scale). Feed it
 // the value LUMICE_ComputeP99Y returned, with the FINE snapshot_intensity even when that P99 came
 // from the coarse path — the /f^2 above is what makes the two consistent. Returns 0 if
 // snapshot_intensity or p99_raw_y is non-positive.
-float LUMICE_ComputeEvAuto(float p99_raw_y, float snapshot_intensity, float target_white);
+LUMICE_API float LUMICE_ComputeEvAuto(float p99_raw_y, float snapshot_intensity, float target_white);
 
 // =============== Preferred Trace Backend ===============
 // Stable backend identifiers. Future backends (e.g. CUDA) append new positive
@@ -2913,7 +2944,7 @@ float LUMICE_ComputeEvAuto(float p99_raw_y, float snapshot_intensity, float targ
 // (i.e. an empty or "legacy" env-var no longer forces CPU once this pref is
 //  set to LUMICE_BACKEND_METAL — use "cpu_backend" to hard-pin CPU in CI.)
 // On non-Apple platforms LUMICE_BACKEND_METAL is silently treated as CPU.
-void LUMICE_SetPreferredBackend(LUMICE_Server* server, int backend);
+LUMICE_API void LUMICE_SetPreferredBackend(LUMICE_Server* server, int backend);
 
 // Query whether a trace backend is available on this machine at runtime.
 //   backend = LUMICE_BACKEND_CPU   : always returns 1.
@@ -2925,7 +2956,7 @@ void LUMICE_SetPreferredBackend(LUMICE_Server* server, int backend);
 // per-frame GUI code.
 // To add a new backend (e.g. CUDA): append LUMICE_BACKEND_CUDA above and add a
 // matching branch here; CPU / Metal semantics are unchanged.
-int LUMICE_IsBackendAvailable(int backend);
+LUMICE_API int LUMICE_IsBackendAvailable(int backend);
 
 // The backend this server's simulation ACTUALLY runs on, as opposed to the one
 // LUMICE_SetPreferredBackend asked for. Writes LUMICE_BACKEND_CPU / _METAL / _CUDA. The two differ in
@@ -2935,7 +2966,7 @@ int LUMICE_IsBackendAvailable(int backend);
 // lost or never obtained (LUMICE_GetBackendFallbackFlag says which). Otherwise it is what the last
 // LUMICE_CommitScene resolved to, and LUMICE_BACKEND_CPU before any run. Cheap; safe to poll.
 // Returns LUMICE_ERR_NULL_ARG if server or out_backend is NULL.
-LUMICE_ErrorCode LUMICE_GetActiveBackend(LUMICE_Server* server, int* out_backend);
+LUMICE_API LUMICE_ErrorCode LUMICE_GetActiveBackend(LUMICE_Server* server, int* out_backend);
 
 // Query whether a server built with `preferred_backend` would take the GPU
 // single-engine route (worker_count=1) on this machine. Unlike
@@ -2946,7 +2977,7 @@ LUMICE_ErrorCode LUMICE_GetActiveBackend(LUMICE_Server* server, int* out_backend
 // Intended for the CLI `--benchmark` dual-pass: the GPU route is single-engine, so
 // its "single" (warmup) vs "multi" (steady) passes are NOT parallel — callers use
 // this to collapse the GPU benchmark to one steady pass. Returns 1 (GPU route) or 0.
-int LUMICE_WillUseGpuRoute(int preferred_backend);
+LUMICE_API int LUMICE_WillUseGpuRoute(int preferred_backend);
 
 // =============== Product Version ===============
 // The product version string: "X.Y.Z" for a tagged release build (LUMICE_RELEASE_BUILD=ON) or
@@ -2954,7 +2985,7 @@ int LUMICE_WillUseGpuRoute(int preferred_backend);
 // generated into a build-tree-only header by configure_file and read back here — the CLI's
 // `--version`, the GUI window title, both startup log lines and the .lmc `app_version` field all
 // call this instead of carrying their own copy. Never NULL; static storage, do not free.
-const char* LUMICE_GetVersionString(void);
+LUMICE_API const char* LUMICE_GetVersionString(void);
 
 // =============== Engine Build Provenance ===============
 // The ISA tier this engine was compiled for: "baseline", "x86-64-v3", "x86-64-v4" or "native".
@@ -2965,11 +2996,7 @@ const char* LUMICE_GetVersionString(void);
 // in a build where the engine is a shared library, it is the tier of the library that this
 // process actually loaded, which the executable's own compile cannot know. The CLI's
 // `[BENCHMARK]` JSON `isa` key is this string.
-const char* LUMICE_GetEngineIsaLevel(void);
-
-#if !defined(_MSC_VER)
-#pragma GCC visibility pop
-#endif
+LUMICE_API const char* LUMICE_GetEngineIsaLevel(void);
 
 #ifdef __cplusplus
 }

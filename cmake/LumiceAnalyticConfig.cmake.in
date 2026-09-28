@@ -1,0 +1,10 @@
+# Package config for liblumice_analytic: the input template of configure_package_config_file in
+# the root CMakeLists.txt. @PACKAGE_INIT@ expands to the boilerplate that resolves the install
+# prefix relative to this file, so an install tree can be moved after `cmake --install`.
+# Versioning is in the sibling LumiceAnalyticConfigVersion.cmake (ExactVersion — see
+# doc/analytic-api.md section 8.4).
+@PACKAGE_INIT@
+
+include("${CMAKE_CURRENT_LIST_DIR}/LumiceAnalyticTargets.cmake")
+
+check_required_components(LumiceAnalytic)

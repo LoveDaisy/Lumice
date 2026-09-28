@@ -23,7 +23,7 @@
 //
 // Flavor note: unit_correctness_test compiles lumice_test_api.cpp into a static, test-flavor
 // binary, while pytest loads the same source compiled into the shared-flavor liblumice_testapi.
-// The two differ only in export options (-fvisibility=hidden / WINDOWS_EXPORT_ALL_SYMBOLS), which
+// The two differ only in export options (-fvisibility=hidden and the library's export list), which
 // govern which symbols a dlopen can see and not what a function body computes; the parity pinned
 // here is taken to hold for the shared build on that basis.
 #include <gtest/gtest.h>

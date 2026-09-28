@@ -138,6 +138,17 @@ Checks:
      kept apart from the product C API on purpose: a test-only entry point in
      the product ABI is the shape the owner rejected. Comments are blanked
      first, so prose that names the prefix to explain this rule is not a hit.
+  18. analytic-symbol-scope — the boundary between the published analytic
+     surface (LUMICE_ANALYTIC_*, liblumice_analytic) and the engine's own C API
+     (LUMICE_*, liblumice) / the test surface (LUMICE_TEST_*), both directions:
+     (a) the LUMICE_ANALYTIC_ prefix appears under src/ only in its own header
+     (src/include/lumice_analytic.h) and its own directory (src/analytic/), so
+     it cannot leak into lumice.h or be called from engine/GUI code; (b) that
+     header names no other LUMICE_ identifier, so it shares no type with
+     lumice.h and a consumer of one never compiles against the other
+     (doc/analytic-api.md section 7). Each library's export list is generated
+     from its headers, so (a) is also what keeps an analytic function out of
+     liblumice's exports and a lumice.h function out of liblumice_analytic's.
 
 Add a new check as a function returning a list of Violation and append it to
 CHECKS, and add a numbered entry above. Keep each check deterministic and
@@ -1884,6 +1895,69 @@ def check_no_test_symbol_in_src() -> list[Violation]:
     return out
 
 
+# --- analytic-symbol-scope ---------------------------------------------------
+#
+# liblumice_analytic is the first library published for outside consumers; it is
+# linked from the same objects as liblumice but exports only what its own header
+# declares (scripts/gen_export_list.py). The prefix therefore IS the boundary:
+# where LUMICE_ANALYTIC_ may be spelled decides which export list a function can
+# land in, and what else the header spells decides whether a consumer of the
+# published header is dragged into the internal one. Unlike LUMICE_TEST_, the
+# prefix has a legitimate home under src/, so the rule is an allowlist rather
+# than a ban. Paths are derived from SRC at call time so a test can point SRC at
+# a scratch tree.
+ANALYTIC_SYMBOL_PREFIX = re.compile(r"\bLUMICE_ANALYTIC_")
+# Any LUMICE_ identifier that is not an analytic one — LUMICE_TEST_ included.
+NON_ANALYTIC_LUMICE_IDENT = re.compile(r"\bLUMICE_(?!ANALYTIC_)[A-Za-z0-9_]*")
+ANALYTIC_HEADER_REL = Path("include") / "lumice_analytic.h"
+ANALYTIC_DIR_REL = Path("analytic")
+
+
+def check_analytic_symbol_scope() -> list[Violation]:
+    """LUMICE_ANALYTIC_ stays in its header + src/analytic/; that header names no other LUMICE_.
+
+    Reads code_lines(), so comments are not hits in either direction — the
+    analytic header's own prose may mention lumice.h's names to explain the
+    split. Preprocessor lines are code: an `#include "lumice.h"` in the analytic
+    header is caught through the LUMICE_ identifiers it would have to use, not
+    by the include itself, which is the reason for this known limitation: an
+    include that the header then never uses is not reported.
+    """
+    header = SRC / ANALYTIC_HEADER_REL
+    home = SRC / ANALYTIC_DIR_REL
+    out: list[Violation] = []
+    for path in cxx_sources(SRC):
+        in_home = path == header or home in path.parents
+        for lineno, _orig, code in code_lines(path):
+            if not in_home and ANALYTIC_SYMBOL_PREFIX.search(code):
+                out.append(
+                    Violation(
+                        path,
+                        lineno,
+                        "analytic-symbol-scope",
+                        "LUMICE_ANALYTIC_* is the published analytic surface and may appear "
+                        "under src/ only in src/include/lumice_analytic.h and src/analytic/. "
+                        "Engine/GUI code and lumice.h do not reach it; its export list is "
+                        "generated from its own header.",
+                    )
+                )
+            if path == header:
+                m = NON_ANALYTIC_LUMICE_IDENT.search(code)
+                if m:
+                    out.append(
+                        Violation(
+                            path,
+                            lineno,
+                            "analytic-symbol-scope",
+                            f"`{m.group(0)}` in lumice_analytic.h: the published header shares "
+                            "no type or name with lumice.h / the test surface "
+                            "(doc/analytic-api.md section 7). Define an LUMICE_ANALYTIC_* "
+                            "counterpart instead.",
+                        )
+                    )
+    return out
+
+
 CHECKS = [
     check_getenv_centralization,
     check_env_knob_registration,
@@ -1902,6 +1976,7 @@ CHECKS = [
     check_pytest_invocation_marker,
     check_no_render_in_benchmark_poll,
     check_no_test_symbol_in_src,
+    check_analytic_symbol_scope,
 ]
 
 
@@ -1927,7 +2002,8 @@ def main() -> int:
         "gui-state-field-tier-registration, no-msvc-unsafe-builtin, "
         "no-default-constructed-crystal-slots, gui-test-suite-args-sync, no-bare-print, "
         "msvc-string-literal-limit, user-defaults-single-write-path, "
-        "pytest-invocation-marker, no-render-in-benchmark-poll, no-test-symbol-in-src)."
+        "pytest-invocation-marker, no-render-in-benchmark-poll, no-test-symbol-in-src, "
+        "analytic-symbol-scope)."
     )
     return 0
 

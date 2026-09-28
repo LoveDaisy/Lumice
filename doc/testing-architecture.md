@@ -1592,6 +1592,15 @@ the `isa` key reads `x86-64-v3`. That is the `windows-cuda-compile` shape plus a
 which is why it sits at the same scale as that row and not at `isa-v4-compile`'s; it still belongs in
 the "no" column of §7.0's head, since one benchmark invocation is not a test suite.
 
+`windows-shared-export` (two legs: cl.exe and clang-cl) post-dates it too. It is the only Windows job
+that builds the shared flavor: configure `BUILD_SHARED_LIBS=ON`, `BUILD_TEST=OFF`, `BUILD_GUI=OFF`,
+no CUDA, then one pytest file (`test/e2e-correctness/test_export_symbol_scope.py`) that reads each
+DLL's `dumpbin /exports` against its header and loads it. Expected spend, declared before its first
+run: per leg about `windows-isa-v3-compile`'s configure + build (~165s) plus Python setup and a
+one-second test, the clang-cl leg another ~80s for its LLVM install — roughly 3–5 minutes a leg,
+running in parallel with the matrix. Not measured yet; replace this estimate with the first runs'
+numbers. It belongs in the "no" column of §7.0's head: one narrow file, not a suite.
+
 ⚠️ **The `Ubuntu x86_64` row is still settling, and its history is worth more than its number.**
 That leg went 650s uncached → 657s (cold, nothing to restore) → 567s → 479s → 353s across five
 consecutive runs, and its ccache hit rate over the last three was 26.34% → 41.39% → **55.96%**, still

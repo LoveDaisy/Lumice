@@ -23,11 +23,15 @@
 extern "C" {
 #endif
 
-// Same export mechanism as lumice.h: with -fvisibility=hidden on the target, only this block is
-// exported from the shared library. MSVC has no equivalent pragma and the target is built with
-// WINDOWS_EXPORT_ALL_SYMBOLS instead.
-#if !defined(_MSC_VER)
-#pragma GCC visibility push(default)
+// Same export mechanism as lumice.h: the library's export list is generated from lumice.h and
+// this header together (root CMakeLists.txt, lumice_apply_export_list), and the marker below only
+// makes a declaration eligible for it — default visibility on GCC/Clang, where the target compiles
+// with -fvisibility=hidden. No dllimport branch: nothing links against this library, it is only
+// ever loaded by ctypes, so on Windows the marker is empty and the .def file does the exporting.
+#if defined(_WIN32)
+#define LUMICE_TEST_API
+#else
+#define LUMICE_TEST_API __attribute__((visibility("default")))
 #endif
 
 // The render-domain mask of one view: row-major width*height, indexed py * width + px, 1 where the
@@ -57,17 +61,13 @@ typedef struct LUMICE_TEST_RenderDomainMask_ {
 //
 // Returns LUMICE_ERR_NULL_ARG if `view` or `out` is NULL; LUMICE_ERR_INVALID_VALUE for an unknown
 // lens_type / visible; LUMICE_ERR_UNKNOWN on allocation failure.
-LUMICE_ErrorCode LUMICE_TEST_ComputeRenderDomainMask(const LUMICE_AnnotationView* view,
-                                                     LUMICE_TEST_RenderDomainMask* out);
+LUMICE_TEST_API LUMICE_ErrorCode LUMICE_TEST_ComputeRenderDomainMask(const LUMICE_AnnotationView* view,
+                                                                     LUMICE_TEST_RenderDomainMask* out);
 
 // Release the storage a successful LUMICE_TEST_ComputeRenderDomainMask allocated, and NULL out the
 // pointer so a double release is a no-op rather than a double free. NULL-safe, and safe on a
 // zero-initialized or already-released struct.
-void LUMICE_TEST_ReleaseRenderDomainMask(LUMICE_TEST_RenderDomainMask* mask);
-
-#if !defined(_MSC_VER)
-#pragma GCC visibility pop
-#endif
+LUMICE_TEST_API void LUMICE_TEST_ReleaseRenderDomainMask(LUMICE_TEST_RenderDomainMask* mask);
 
 #ifdef __cplusplus
 }
