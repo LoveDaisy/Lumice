@@ -277,6 +277,10 @@ legality rules); the header does not restate them.
   `LUMICE_ANALYTIC_ERR_INVALID_VALUE`, so a caller who fills the wrong fields hears about it.
 - A crystal that fails the closed-form validity gate (the engine would build an empty crystal and
   warn) is `LUMICE_ANALYTIC_ERR_INVALID_CONFIG`, never a silently empty result — see §6 for why.
+  Known limitation: on deliberately constructed degenerate inputs the closed-form pyramid can still
+  yield an open surface and pass `IsValidClosedFormPyramid`. This is a backlog item the owner
+  decided not to pick (2026-09-04); no user-configurable shape has been seen to hit it. No extra
+  gate is added.
 
 ### 4.2 Path, directions, pose **(design)**
 
@@ -297,13 +301,16 @@ legality rules); the header does not restate them.
 - **Crystal-frame sun direction** (the prototype's fiber coordinate, LI's `u`):
   `u = Rᵀ · (−incident_direction)`, toward the sun, in body coordinates.
 
-**Scope ruling: "single-path inversion" in v0 is continuation from a caller-supplied seed; seed
-search is not in v0.** LI's contract lists `seed` as a required `FiberProblem` field (§9.1) and its
-architecture lists seed search and predictor–corrector continuation as separate duties of the
-fiber solver (LI `docs/overview.md` §4 item 4). Continuation has a precise numerical contract today
-(§5–§10); discovery does not. v0 builds the half that has a contract. If the owner considers a
-root finder part of "inversion" from day one, LI first writes discovery's contract to the same
-standard and this section is revised (§9 item 1).
+**Scope ruling (author, 2026-09-28): v0 includes seed search.** "Single-path inversion" in v0 is
+seed search (discovery) **plus** continuation from a seed. LI's contract lists `seed` as a required
+`FiberProblem` field (§9.1) and its architecture lists seed search and predictor–corrector
+continuation as separate duties of the fiber solver (LI `docs/overview.md` §4 item 4); both are in.
+The normative source for discovery is the discovery section of LI's
+`docs/phase1-math-contract.md` (§9.5 "Discovery interface semantics", §9.5.1–§9.5.10; the v0 output
+subset is §9.5.8), written to the same standard as §5–§10 (LI task `discovery-contract`). This
+document cites it by path and does not restate it. The library does **not** require the Monte Carlo
+side to record ray poses: the Analyze all-sky map is low resolution, so seed density can start low
+and be refined progressively, which is not an interaction blocker (§9 item 1).
 
 ### 4.3 Two function families **(design)**
 
@@ -326,15 +333,14 @@ Python would be dominated by the binding. Whether the library also parallelises 
 is left open (§9 item 10): v0 starts no threads (§5.3), and a ctypes caller can already run
 batches from several threads, since ctypes releases the GIL for the duration of a foreign call.
 
-**Result scope — a deliberate narrowing that needs the owner's ruling.** LI's `FiberResult`
-(§9.3) also requires `jacobian_diagnostics`, `step_diagnostics`, `branch_diagnostics`,
+**Result scope (author, 2026-09-28): v0 returns the point list only.** LI's `FiberResult` (§9.3)
+also requires `jacobian_diagnostics`, `step_diagnostics`, `branch_diagnostics`,
 `closure_diagnostics`, `terminal_payload`, `conventions`, `weight_observables` and
 `component_scope`: the evidence LI's conformance matrix (§11) uses to decide whether a backend
-satisfies §5–§10. The v0 draft carries only the kinematic fields the product needs. That is enough
-for "LI reads the point list"; it is **not** enough for "LI uses this library as its continuation
-backend and certifies it against §11". Which of the two is the goal decides whether the
-diagnostics must be designed before the implementation is scheduled (§9 item 8). The draft does
-not pre-empt that decision: it has no diagnostics switch.
+satisfies §5–§10. v0 carries only the kinematic fields the product needs. Diagnostics and weights
+enter in wave 2 as a `struct_size`-compatible extension of the result structs (§8.2), after LI's
+explore `fiber-diagnostics-contract` has converged on their contract (§9 item 8). v0 has no
+diagnostics switch.
 
 ### 4.4 Memory and error conventions **(design)**
 
@@ -441,8 +447,8 @@ LUMICE_ANALYTIC_ErrorCode LUMICE_ANALYTIC_EvaluatePath(
 void LUMICE_ANALYTIC_ReleasePathEvaluation(LUMICE_ANALYTIC_PathEvaluation* eval); /* NULL-safe */
 
 /* ---------------------------------------------------------------------------------------------
- * Fiber continuation from a caller-supplied seed. Seed search is not in v0
- * (doc/analytic-api.md section 4.2).
+ * Fiber continuation from a seed. Seed search is in v0 (doc/analytic-api.md section 4.2); its
+ * function family is added with the seed-search work.
  * ------------------------------------------------------------------------------------------- */
 typedef struct LUMICE_ANALYTIC_FiberProblem_ {
   const int* faces;
@@ -907,17 +913,34 @@ functions. The first real module's work opens this list. **The state described h
 
 | # | Item | Decided by / when |
 |---|---|---|
-| 1 | Seed search (discovery) in scope for v0? v0 says no (§4.2). If yes, LI first writes discovery's contract to §5–§10 standard. | Owner, reviewing this document |
+| 1 | ~~Seed search (discovery) in scope for v0?~~ **Answered** — yes, v0 includes seed search (author, 2026-09-28; §4.2). Spec: LI `docs/phase1-math-contract.md` §9.5. No MC ray-pose recording is required: Analyze's all-sky map is low resolution, seed density goes low first and is refined progressively. | Author and owner, 2026-09-28 |
 | 2 | Reference defaults of `ContinuationOptions`, each linked to convergence evidence (LI §10.1). | The first-module implementation |
 | 3 | A refractive-index convenience function (Sellmeier). Default: not exposed (§4.2). | The first-module implementation, on LI's actual need |
 | 4 | ~~Semver, ABI and deprecation policy text; what 1.0 commits to.~~ **Answered** — see §8 (as built): one integer is the only version, `find_package` requires it exactly (§8.4), compatible/incompatible table (§8.2), no promise in 0.x (§8.3), deprecation (§8.5), graduation conditions (§8.6). | The packaging and version-policy work (done) |
 | 5 | ~~Export-list mechanism on each platform, Windows export path, header location, prefix gate in `check_policies.py`, the stripping flag.~~ **Answered** — see §2.5 (as built): `scripts/gen_export_list.py` + `lumice_apply_export_list`, `.def` on Windows, `src/include/lumice_analytic.h`, rule `analytic-symbol-scope`. | The target and export-list work (done) |
 | 6 | ~~Callback forwarding implementation; removing the console sink only in this library.~~ **Answered** — see §6 (as built): `GetDefaultConsoleSink()` removed at load time in `src/analytic/analytic_api.cpp`, `AnalyticCallbackSink` attached by `LUMICE_ANALYTIC_SetLogCallback`. | The log-sink work (done) |
 | 7 | ~~External consumer smoke test (C + Python ctypes, install tree only), with `symmetry_semantics` in any fixture.~~ **Answered** — see §8.7 (as built): `test/e2e-correctness/test_external_consumer_smoke.py` + `external_consumer_smoke/`, consuming the prefix named by `LUMICE_ANALYTIC_INSTALL_DIR`; it compares no face sequence and says so, `symmetry_semantics: none`, in its docstrings (§3.3 rule 2). | The external-consumer smoke test (done) |
-| 8 | **Does `FiberResult` need LI §9.3's diagnostics** (`jacobian_`/`step_`/`branch_`/`closure_diagnostics`, `terminal_payload`, `conventions`, `weight_observables`, `component_scope`) and the entry cross-section `A_P`? "LI reads point lists" → no, extend on demand; "LI certifies this library as its continuation backend against its §11" → yes, designed before the implementation is scheduled. | Owner, reviewing this document |
+| 8 | ~~Does `FiberResult` need LI §9.3's diagnostics and the entry cross-section `A_P`?~~ **Answered** — two steps (author, 2026-09-28): v0 returns the point list only; diagnostics + weights enter in wave 2 as a `struct_size`-compatible extension, once LI's explore `fiber-diagnostics-contract` has converged (§4.3, §10). | Author and owner, 2026-09-28 |
 | 9 | Surface crystal *degradation* (apex collapse, dropped face) as result data, not only as a log line (§6). | The first-module implementation |
 | 10 | Parallelism inside `TraceFiberBatch` (v0: none; caller parallelises). Revisit only with a measured batch where binding-side threading is the bottleneck. | The first-module implementation |
 | 11 | Re-read LI `docs/phase1-math-contract.md` §9 before implementing: this draft mirrors it as of 2026-09-28, and LI's §12 lists open items that may move it. LI's §9.1 also says problem construction "MUST not import or invoke Lumice" — a rule LI revises on its side when it adopts this library. | The first-module implementation (and LI, on adoption) |
 | 12 | ~~Whether `PathEvaluation`/`FiberResult` should carry a `struct_size`/version field (Win32 `cbSize`, Vulkan `sType`+`pNext` are existing patterns) so a future field addition would not need an `LUMICE_ANALYTIC_API_VERSION` bump (§8).~~ **Answered** — yes: a leading `uint32_t struct_size`, the Win32 `cbSize` pattern (§4.5 draft, rules in §8.2). | The packaging and version-policy work (done) |
 | 13 | Verify no thread-unsafe static cache in the called geometry/optics code (§5.3). | The first-module implementation |
 | 14 | An optional batch-mode `FiberResult` variant that also returns per-point segment directions and interface transmittances (today only `EvaluatePath` returns those, §4.3), for a caller with many accepted poses who would otherwise pay one ctypes call per point to get them — in tension with §4.3's own binding-overhead concern. | The first-module implementation |
+
+---
+
+## 10. Rollout in waves **(author and owner, 2026-09-28)**
+
+The library is filled one module per wave. Lumice implements a module first; LI switches its
+dependency one wave later.
+
+| Wave | Shared library (this repo) | Analyze function it serves (`doc/raypath-analysis.md` §5.1) | LI side |
+|---|---|---|---|
+| **1** | Module A v0: `EvaluatePath` + **seed search** + `TraceFiber[Batch]`, point list only | Function 1: fiber detail | Writes the discovery contract, exports parity fixtures, researches the diagnostics/weights contract; does not switch |
+| 2 | Module A v1 (diagnostics + weights, `struct_size`-compatible extension); module B (single-path S² binning + banded sum) | Function 2: single-path all-sky map | Certifies A v1, then switches fiber and retires the JAX continuation |
+| 3 | Module C (`dp_field` / `contour` / `focusing`, `Jet2` forward hyper-dual) | Function 3: preset points and mechanism labels | After ch12/12.1 are done with it: switch B, then C |
+
+**Parity fixtures flow LI → Lumice.** LI exports them at a pinned revision; this repo copies them in
+and runs them in CI. A change goes one way: LI changes first → re-export → this repo's parity goes
+red → fix the C++.

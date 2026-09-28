@@ -338,7 +338,7 @@ of One Bit Set」定义的两种口径中的一种，而不是同一口径的两
   `DeriveSymmetryGating(kPhysical)`）：形状（§2a）与取向集体（§2b）两个条件都成立才合并；
 - LI 的 `G_true`（`symmetry/crystal_group.py`）= L2 的形状那一半（姿态那一半由调用方的姿态分布决定），
   与面板同口径；LI 的 L1 标号轨道是 `symmetry/reflection_group.py` 的 `pbd_orbit`，与 filter 同口径。
-  ⚠️ LI 的 `path_class.pbd_orbit_hexprism` 名字里带 PBD，实际按所给晶体的 `G_true` 展开，是 **L2**；
+  ⚠️ LI 的 `path_class.g_true_orbit`（原名 `pbd_orbit_hexprism`，已改名，旧名保留为弃用别名）——旧名里带 PBD，但实际按所给晶体的 `G_true` 展开，是 **L2**；
   只在正六棱柱（`G_true` = 整个 D6h）上恰好等于 L1。即 LI 内部也同时维护两种口径，两仓四份实现按
   口径两两对应，不是「LI 一份、Lumice 一份」；
 - 即将发布的 `liblumice_analytic`（本节候选的第一个共享模块）只接受具体的面序列，不带对称参数、
@@ -356,6 +356,13 @@ of One Bit Set」定义的两种口径中的一种，而不是同一口径的两
 明确；细节见该文新增的一节。第一个候选模块是单光路反解 + fiber 行走——语义稳定（LI Phase I
 已于 2026-09-23 收官）、体量小、且 Analyze 一期本来就要在 C++ 里实现它（§5.1.8）。这部分已
 立项为本仓一个 scrum（尚未推进，owner 会先审阅其拆分）。
+
+**三波次推进（2026-09-28）**：共享库按模块分三波填充，每波 Lumice 先实现、LI 晚一波切换依赖：
+波次 1 = 模块 A v0（`EvaluatePath` + seed 搜索 + `TraceFiber[Batch]`，只返回点列，服务功能 1）；
+波次 2 = 模块 A v1（诊断 + 权重）与模块 B（单光路全天图，服务功能 2）；波次 3 = 模块 C（预设点与
+机制标签，服务功能 3）。parity fixture 方向为 LI → Lumice。波次表与两条裁定（v0 含 seed 搜索；
+诊断两步走）见 [`analytic-api.md`](analytic-api.md) §10 与 §4.2/§4.3/§9，LI 侧总览见其
+`docs/overview.md` §5.3。
 
 #### 5.1.7 已有素材与已知缺口
 
