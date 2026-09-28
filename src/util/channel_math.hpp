@@ -12,7 +12,7 @@ namespace lumice {
 // image editor, subtracting the red channel from the blue one of the finished sRGB image, and
 // showing the signed result as a grey offset:
 //
-//   gray = clamp(0.5 + 0.5 * (B_srgb - R_srgb), 0, 1)
+//   gray = clamp(0.5 + kChannelBrGain * (B_srgb - R_srgb), 0, 1),  kChannelBrGain = 2
 //
 // Mid grey is zero, bluer is lighter, redder is darker; R == B (any neutral pixel, black included)
 // is exactly mid grey. The inputs are POST-GAMMA sRGB values in [0, 1], i.e. the channels of the
@@ -22,6 +22,11 @@ namespace lumice {
 // Two consequences worth knowing, both of the formula rather than of any implementation: the value
 // moves with EV (B and R are exposed values), and once B or R clips at 1 the difference is
 // flattened, so two spots are only comparable at the same EV.
+//
+// The gain of 2 matches the pipeline users already run by hand (a monochrome channel mixer with B and
+// R at +/-200%), measured on a side-by-side against that editor at slope 1.998. Its cost is range:
+// the grey saturates once |B_srgb - R_srgb| >= 0.25 (at a gain of 0.5 only the two extremes did),
+// so a strongly tinted spot reads as flat black or white rather than as a graded value.
 //
 // ⚠️ This formula exists TWICE — here, and hand-transcribed as `channelMathBrGray()` in
 // preview_renderer.cpp's GLSL — for the constrained reason ink_transfer.hpp spells out: a shader
@@ -33,8 +38,10 @@ namespace lumice {
 // simulation or configuration semantics, which the GUI may include without crossing the C API
 // boundary.
 // =================================================================================================
+inline constexpr float kChannelBrGain = 2.0f;
+
 inline float ChannelMathBrGray(float r_srgb, float b_srgb) {
-  return std::clamp(0.5f + 0.5f * (b_srgb - r_srgb), 0.0f, 1.0f);
+  return std::clamp(0.5f + kChannelBrGain * (b_srgb - r_srgb), 0.0f, 1.0f);
 }
 
 }  // namespace lumice

@@ -976,14 +976,19 @@ const ParityScene kScenes[] = {
   // pixel WITH its sky, so a sky that one arm added before the mode and the other after would move
   // every empty pixel's grey.
   //
-  // THRESHOLD. bm4 mean 46.740 sigma 0.168 (N=7 category runs, range 46.47-47.01; whole-frame
-  // 37.59-37.71). 45.0 = mean - max(10 sigma, 1.0 dB) = mean - 1.68 dB, floored to 0.5 dB, and
-  // 1.47 dB below the worst honest run. Breaks, each applied to one arm only:
+  // THRESHOLD. bm4 mean 36.701 sigma 0.058 (N=8: 7 isolated runs of this row, range 36.64-36.80,
+  // plus one full-pool run at 36.64; whole-frame 25.98-26.15). 35.5 = mean - max(10 sigma, 1.0 dB)
+  // = mean - 1.0 dB, floored to 0.5 dB, and 1.14 dB below the worst honest run. The honest reading
+  // is the two arms' independent Monte Carlo noise seen through the formula, so it scales with
+  // kChannelBrGain: at the gain of 0.5 this row first shipped with it read 46.74, and setting BOTH
+  // copies back to 0.5 still reads 46.85-46.91 — the ~10 dB drop is the x4 gain amplifying that
+  // noise, not a disagreement between the copies. Re-measure this row whenever the gain changes.
+  // Breaks, each applied to one arm only, measured at gain 2:
   //
   //   break                                                         | bm4    | caught by
   //   --------------------------------------------------------------|--------|------------------
-  //   the CLI ignores the document's display_mode (renders normal)  | 10.50  | threshold, 34.5 dB clear
-  //   the GLSL copy's gain drifts 0.5 -> 0.45 (a 10% transcription) | 40.91  | threshold, 4.1 dB clear
+  //   the CLI ignores the document's display_mode (renders normal)  | 12.45  | threshold, 23.0 dB clear
+  //   the GLSL copy's gain drifts 2.0 -> 1.8 (a 10% transcription)  | 30.42  | threshold, 5.1 dB clear
   //
   // The second break is invisible to test_gui_preview_export_parity.cpp's channel case by
   // construction — both of that file's arms run the same shader — which is why the transcription is
@@ -995,7 +1000,7 @@ const ParityScene kScenes[] = {
    gui::AspectPreset::kFree, /*aspect_portrait=*/false, /*show_horizon=*/false, /*show_sun_circles=*/false,
    /*show_view_dist=*/false,
    /*show_grid=*/false, /*show_markers=*/false, /*exposure_offset=*/0.0f, /*grid_srgb=*/{ 1.0f, 1.0f, 1.0f },
-   /*ray_num_millions=*/32.0f, /*bm4_threshold=*/45.0, /*expect_w=*/1024, /*expect_h=*/512, /*display_mode=*/1},
+   /*ray_num_millions=*/32.0f, /*bm4_threshold=*/35.5, /*expect_w=*/1024, /*expect_h=*/512, /*display_mode=*/1},
 };
 // clang-format on
 // 512 -> a 1024x512 dual-equal-area simulation texture, the smallest this suite offers. Both the

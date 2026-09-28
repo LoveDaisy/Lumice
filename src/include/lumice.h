@@ -1202,7 +1202,7 @@ typedef struct LUMICE_ColorClass_ {
 
 // What the finished screen image is shown as (mirrors core RenderConfig::DisplayMode).
 //   NORMAL     — the image itself.
-//   CHANNEL_BR — the "bluer or redder here" diagnostic: gray = clamp(0.5 + 0.5 * (B - R), 0, 1) on
+//   CHANNEL_BR — the "bluer or redder here" diagnostic: gray = clamp(0.5 + 2 * (B - R), 0, 1) on
 //                the post-gamma sRGB channels of the NORMAL image (src/util/channel_math.hpp).
 // NORMAL == 0 is the default, so a zero-initialized LUMICE_RenderParam and a config with no
 // "display_mode" key both mean the existing picture.

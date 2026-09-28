@@ -77,7 +77,7 @@ hexagon. No struct changed; `LUMICE_IsDApplicable` keeps its meaning.
 (`LUMICE_DISPLAY_MODE_NORMAL` / `LUMICE_DISPLAY_MODE_CHANNEL_BR`) after `globe_back_fade`
 (sizeof 6456 → 6460); recompile. JSON key `render.display_mode`, `"normal"` or `"channel_br"`.
 `channel_br` shows the finished image as its post-gamma sRGB B − R on a grey offset
-(`clamp(0.5 + 0.5·(B − R), 0, 1)`, mid grey = no difference, lighter = bluer); it has no effect
+(`clamp(0.5 + 2·(B − R), 0, 1)`, mid grey = no difference, lighter = bluer); it has no effect
 under `tone: print`, and a colour-classed scene produces no raypath composite while it is on.
 Zero means normal, so a zero-initialized struct and a document without the key render as before.
 
