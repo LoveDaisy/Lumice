@@ -404,16 +404,18 @@ TEST(GuiStateReconcile, EveryRegisteredStructuralFieldIsActuallyDiffed) {
 }
 
 // Applying the effects: a hard reset is a superset of a re-run, so it takes over rather than
-// running alongside. The distinction is visible in what it clears — the epoch floor, which is what
-// stops the previous run's pixels being drawn, and the accumulated intensity the exposure is
-// derived from.
+// running alongside. The distinction is the epoch floor, which is what stops the previous
+// generation's late payloads being drawn. Neither clears what is already on screen: the
+// accumulated intensity and anchor the exposure is derived from stay, so the displayed frame keeps
+// its brightness until the new generation replaces it (blueprint §7). A hard edit after a finished
+// run is not followed by any commit, so clearing here would leave the preview blank until the next
+// Run.
 TEST(GuiStateReconcile, ApplyingEffectsLetsAHardResetTakeOverFromAPlainReRun) {
   struct Case {
     const char* name;
     GuiEffects effects;
     bool expect_dirty;
     uint64_t expect_floor;
-    float expect_p99;
   };
   const auto Effects = [](bool resim, bool hard_reset) {
     GuiEffects e;
@@ -422,9 +424,9 @@ TEST(GuiStateReconcile, ApplyingEffectsLetsAHardResetTakeOverFromAPlainReRun) {
     return e;
   };
   const Case kCases[] = {
-    { "nothing to do", GuiEffects{}, false, 0u, 1.5f },
-    { "re-run only", Effects(true, false), true, 0u, 1.5f },
-    { "hard reset", Effects(true, true), true, 5u, 0.0f },
+    { "nothing to do", GuiEffects{}, false, 0u },
+    { "re-run only", Effects(true, false), true, 0u },
+    { "hard reset", Effects(true, true), true, 5u },
   };
 
   for (const Case& c : kCases) {
@@ -434,13 +436,15 @@ TEST(GuiStateReconcile, ApplyingEffectsLetsAHardResetTakeOverFromAPlainReRun) {
     s.display_epoch_floor = 0;
     s.p99_raw_y = 1.5f;
     s.snapshot_intensity = 2.5f;
+    s.snapshot_emitted_energy = 7.0f;
 
     ApplyGuiEffects(s, nullptr, c.effects);
 
     EXPECT_EQ(s.dirty, c.expect_dirty);
     EXPECT_EQ(s.display_epoch_floor, c.expect_floor);
-    EXPECT_FLOAT_EQ(s.p99_raw_y, c.expect_p99);
-    EXPECT_FLOAT_EQ(s.snapshot_intensity, c.expect_p99 == 0.0f ? 0.0f : 2.5f);
+    EXPECT_FLOAT_EQ(s.p99_raw_y, 1.5f);
+    EXPECT_FLOAT_EQ(s.snapshot_intensity, 2.5f);
+    EXPECT_FLOAT_EQ(s.snapshot_emitted_energy, 7.0f);
   }
 }
 

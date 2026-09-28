@@ -4,7 +4,8 @@
 // Declarative field-tier registry for GuiState (scrum-gui-state-reconcile T0 geodetics).
 //
 // The tier classifies "how does a mutation to this field propagate to downstream effects":
-//   - kStructHard : re-sim + immediate display clear + raise display_epoch_floor
+//   - kStructHard : re-sim + raise display_epoch_floor (old generation's late payloads fenced;
+//                   the frame on screen stays until the new generation replaces it, §7)
 //   - kStructSoft : re-sim carry-forward (dirty=true; existing texture stays until new one arrives)
 //   - kDisplay    : display push (PushDisplayState / display-time toggle; no dirty/epoch touch)
 //   - kView       : pure client-side view preference (background, overlays, panel layout, logs)
@@ -123,7 +124,7 @@ inline constexpr FieldTierEntry kFieldTierTable[] = {
     // "Settings" with no further edit.
     { "worker_count",               FieldTier::kStructSoft, true, true, false },
 
-    // ==== T-struct·hard: re-sim + display clear + epoch floor bump ==============================
+    // ==== T-struct·hard: re-sim + epoch floor bump (no display clear) ============================
     { "filters",                    FieldTier::kStructHard, false },
     // raypath_color: T1 (task-color-migration) split ColorClassConfig into structural
     // (ColorClassStructState: combine/match) vs display (ColorClassDisplayState:

@@ -1,15 +1,17 @@
 // What the preview shows in the frames after the user changes the simulation config.
 //
-// Stage 1 of this file is an observation probe, not yet a regression gate: each arm runs a real
-// simulation, applies one config change through the path the user would take, and then records —
-// frame by frame, for a fixed wall-clock window — the quantities that decide what is on screen:
-// the shader's mono intensity scale (0 means the shader multiplies every texel by zero, i.e. a
-// black preview), the reconcile-derived sim state, the texture upload count, the committed epoch
-// and the display epoch floor. A read-back of the preview through the export FBO confirms the
-// white-box numbers against actual pixels at the start and at the end of the window.
+// A config edit never blanks the frame on screen; the new generation replaces it under
+// doc/gui-preview-lifecycle-architecture.md §7's rules (quality gate, 500 ms timeout fallback,
+// terminal frame always uploaded). Each case runs a real simulation, applies one config change
+// through the path the user takes, and watches the shader's mono intensity scale frame by frame for
+// a fixed wall-clock window (0 means the shader multiplies every texel by zero — a black preview).
+// A read-back through the export FBO at the end checks the white-box number against actual pixels.
 //
-// The printed `[config_change_probe]` lines are the evidence; the few IM_CHECKs only guard that the
-// arm actually reached the state it claims to be observing from.
+// The regression this pins: a filter-carrying Duplicate (or any other struct-hard edit) used to zero
+// the display intensity on the spot. On a finished run nothing commits afterwards, so the preview
+// stayed black until the next Run — and a Revert then reported "Done" over a black preview. The
+// zero-ray case pins the other half of the same rule: once a new config that lands no ray at all
+// actually runs, the preview does turn black, so an empty result is not mistaken for "not applied".
 
 #include <chrono>
 #include <cstdio>
@@ -114,22 +116,93 @@ double PreviewLitFraction(ImGuiTestContext* ctx, const char* tag) {
   return total > 0 ? static_cast<double>(lit) / static_cast<double>(total) : 0.0;
 }
 
-void PrintFrame(const char* arm, const char* when, double ms) {
-  fprintf(stderr,
-          "[config_change_probe] %s %s t=%.0fms state=%s si=%.4g scale=%.4g uploads=%llu epoch=%llu floor=%llu "
-          "dirty=%d\n",
-          arm, when, ms, SimStateName(gui::g_state.sim_state), gui::g_state.snapshot_intensity,
-          gui::g_preview_vp.params.exposure.intensity_scale, gui::g_state.texture_upload_count,
-          static_cast<unsigned long long>(gui::g_state.committed_epoch),
-          static_cast<unsigned long long>(gui::g_state.display_epoch_floor), gui::g_state.dirty ? 1 : 0);
-}
-
-struct ProbeArm {
-  const char* name;
-  void (*seed)();                   // before the first run
-  bool infinite;                    // false: observe from a finished run; true: from a running one
-  void (*edit)(ImGuiTestContext*);  // the config change under observation
+struct Observation {
+  int frames = 0;
+  int black_frames = 0;
+  double first_black_ms = -1.0;
+  unsigned long long uploads_delta = 0;
+  unsigned long long epoch_at_edit = 0;
+  unsigned long long epoch_at_end = 0;
+  SimState state_at_end = SimState::kIdle;
+  double end_lit = -1.0;
 };
+
+// Switches the test harness's copy of the real app's live-edit auto-commit on or off for one scope.
+struct ScopedMainLoopCommit {
+  explicit ScopedMainLoopCommit(bool on) : prev_(g_enable_main_loop_commit) { g_enable_main_loop_commit = on; }
+  ~ScopedMainLoopCommit() { g_enable_main_loop_commit = prev_; }
+  ScopedMainLoopCommit(const ScopedMainLoopCommit&) = delete;
+  ScopedMainLoopCommit& operator=(const ScopedMainLoopCommit&) = delete;
+
+ private:
+  bool prev_;
+};
+
+enum class RunStart { kFinished, kRunning };
+
+// Starts a run from the scene `seed` set up, applies `edit`, then watches the preview for
+// `window_ms` of wall clock. While running, the live-edit auto-commit of the real app's main loop
+// is switched on for the duration (it is what advances the epoch after an edit mid-run); after a
+// finished run the real app does not auto-commit, and neither does this.
+template <typename Seed, typename Edit>
+Observation ObserveEdit(ImGuiTestContext* ctx, RunStart start, Seed seed, Edit edit, double window_ms) {
+  Observation obs;
+  ScopedProbeScene scene;
+  IM_CHECK_RETV(scene.ok(), obs);
+  seed();
+  gui::g_state.sim.max_hits = 8;
+  gui::g_state.renderer.sim_resolution_index = 0;
+  const bool running = start == RunStart::kRunning;
+  gui::g_state.sim.infinite = running;
+  if (!running) {
+    gui::g_state.sim.ray_num_millions = 0.25f;
+  }
+  const ScopedMainLoopCommit auto_commit(running);
+  gui::DoRun(/*user_initiated=*/true);
+  bool reached = false;
+  if (running) {
+    reached = WaitForSimRestartAtLeast(ctx, 0, 10000);
+    ctx->Yield(10);
+  } else {
+    reached = DriveUntil(
+        ctx,
+        [] { return gui::g_state.sim_state == SimState::kDone && gui::g_state.run_intent == RunIntent::kRunCompleted; },
+        20);
+    ctx->Yield(3);
+  }
+  IM_CHECK_RETV(reached, obs);
+  const bool lit_before = gui::g_preview_vp.params.exposure.intensity_scale > 0.0f;
+
+  IM_CHECK_RETV(lit_before, obs);  // the case must start from a visible picture to prove anything
+
+  const unsigned long long uploads0 = gui::g_state.texture_upload_count;
+  obs.epoch_at_edit = gui::g_state.committed_epoch;
+  edit(ctx);
+  const auto t0 = std::chrono::steady_clock::now();
+  const auto Ms = [&t0] {
+    return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+  };
+  while (Ms() < window_ms) {
+    ctx->Yield();
+    ++obs.frames;
+    if (gui::g_preview_vp.params.exposure.intensity_scale == 0.0f) {
+      ++obs.black_frames;
+      if (obs.first_black_ms < 0) {
+        obs.first_black_ms = Ms();
+      }
+    }
+  }
+  obs.uploads_delta = gui::g_state.texture_upload_count - uploads0;
+  obs.epoch_at_end = gui::g_state.committed_epoch;
+  obs.state_at_end = gui::g_state.sim_state;
+  obs.end_lit = PreviewLitFraction(ctx, "end");
+  fprintf(stderr,
+          "[config_change_preview] frames=%d black_frames=%d first_black_ms=%.0f uploads_delta=%llu end_lit=%.3f "
+          "state=%s\n",
+          obs.frames, obs.black_frames, obs.first_black_ms, obs.uploads_delta, obs.end_lit,
+          SimStateName(obs.state_at_end));
+  return obs;
+}
 
 void AttachFilterToFirstCard() {
   gui::FilterConfig f;
@@ -137,146 +210,85 @@ void AttachFilterToFirstCard() {
   gui::SetFilter(gui::g_state, gui::g_state.layers[0].entries[0], f);
 }
 
+void SetFirstCardFilterPath(const char* path) {
+  gui::g_state.filters[static_cast<size_t>(*gui::g_state.layers[0].entries[0].filter_id)].SetRaypath(
+      gui::RaypathParams{ path });
+}
+
 void ClickDuplicate(ImGuiTestContext* ctx) {
   ctx->ItemClick(kDupFirstCard);
 }
 
-void RunProbe(ImGuiTestContext* ctx, const ProbeArm& arm) {
-  ScopedProbeScene scene;
-  IM_CHECK(scene.ok());
-  arm.seed();
-  gui::g_state.sim.max_hits = 8;
-  gui::g_state.renderer.sim_resolution_index = 0;
-  if (arm.infinite) {
-    gui::g_state.sim.infinite = true;
-  } else {
-    gui::g_state.sim.infinite = false;
-    gui::g_state.sim.ray_num_millions = 0.25f;
-  }
-  gui::DoRun(/*user_initiated=*/true);
-  if (arm.infinite) {
-    IM_CHECK(WaitForSimRestartAtLeast(ctx, 0, 10000));
-    ctx->Yield(10);
-  } else {
-    IM_CHECK(DriveUntil(
-        ctx,
-        [] { return gui::g_state.sim_state == SimState::kDone && gui::g_state.run_intent == RunIntent::kRunCompleted; },
-        20));
-    ctx->Yield(3);
-  }
-  PrintFrame(arm.name, "before", 0.0);
-  fprintf(stderr, "[config_change_probe] %s before lit=%.3f\n", arm.name, PreviewLitFraction(ctx, "before"));
-
-  const unsigned long long uploads0 = gui::g_state.texture_upload_count;
-  arm.edit(ctx);
-
-  const auto t0 = std::chrono::steady_clock::now();
-  const auto Ms = [&t0] {
-    return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
-  };
-  bool prev_black = gui::g_preview_vp.params.exposure.intensity_scale == 0.0f;
-  PrintFrame(arm.name, "after-edit", Ms());
-  int black_frames = 0;
-  int frames = 0;
-  double first_black_ms = -1.0;
-  double recovered_ms = -1.0;
-  while (Ms() < 3000.0) {
-    ctx->Yield();
-    ++frames;
-    const bool black = gui::g_preview_vp.params.exposure.intensity_scale == 0.0f;
-    if (black) {
-      ++black_frames;
-      if (first_black_ms < 0) {
-        first_black_ms = Ms();
-      }
-    }
-    if (!black && prev_black && first_black_ms >= 0 && recovered_ms < 0) {
-      recovered_ms = Ms();
-    }
-    if (black != prev_black) {
-      PrintFrame(arm.name, black ? "->black" : "->lit", Ms());
-    }
-    prev_black = black;
-  }
-  PrintFrame(arm.name, "end", Ms());
-  fprintf(stderr,
-          "[config_change_probe] %s summary frames=%d black_frames=%d first_black_ms=%.0f recovered_ms=%.0f "
-          "uploads_delta=%llu end_lit=%.3f\n",
-          arm.name, frames, black_frames, first_black_ms, recovered_ms, gui::g_state.texture_upload_count - uploads0,
-          PreviewLitFraction(ctx, "end"));
+// A struct-hard edit on a finished run: the picture stays up for the whole window and the top bar
+// says Modified. `edit` differs per case; the verdict does not.
+void CheckFinishedRunKeepsPicture(ImGuiTestContext* ctx, void (*edit)(ImGuiTestContext*), SimState expect_state) {
+  const Observation obs = ObserveEdit(ctx, RunStart::kFinished, AttachFilterToFirstCard, edit, 800.0);
+  IM_CHECK_EQ(obs.black_frames, 0);
+  IM_CHECK_GT(obs.end_lit, 0.0);
+  IM_CHECK_EQ(static_cast<int>(obs.state_at_end), static_cast<int>(expect_state));
 }
 
 }  // namespace
 
 void RegisterConfigChangePreviewTests(ImGuiTestEngine* engine) {
-  // AC1 arm 1: one crystal, no filter, finished run, Duplicate.
-  ImGuiTest* t1 = IM_REGISTER_TEST(engine, "config_change_probe", "dup_unfiltered_card_on_done");
-  t1->TestFunc = [](ImGuiTestContext* ctx) {
-    RunProbe(ctx, ProbeArm{ "dup_nofilter_done", [] {}, false, ClickDuplicate });
+  // The user's report: one crystal carrying a filter, finished run, Duplicate. The clone appends a
+  // filter slot, which is a struct-hard edit.
+  ImGuiTest* t = IM_REGISTER_TEST(engine, "config_change_preview", "dup_filtered_card_on_done_keeps_picture");
+  t->TestFunc = [](ImGuiTestContext* ctx) { CheckFinishedRunKeepsPicture(ctx, ClickDuplicate, SimState::kModified); };
+
+  // The same tier reached without a Duplicate: a filter text edit on a finished run.
+  t = IM_REGISTER_TEST(engine, "config_change_preview", "filter_edit_on_done_keeps_picture");
+  t->TestFunc = [](ImGuiTestContext* ctx) {
+    CheckFinishedRunKeepsPicture(
+        ctx,
+        [](ImGuiTestContext* c) {
+          // SetRaypath, not MutableRaypathText: FilterConfig equality reads the summand text, which
+          // only the former rewrites — the edit the editor itself makes.
+          SetFirstCardFilterPath("3-1-5-7");
+          c->Yield();
+        },
+        SimState::kModified);
   };
-  // AC1 arm 2: the user's report — one crystal WITH a filter, finished run, Duplicate.
-  ImGuiTest* t2 = IM_REGISTER_TEST(engine, "config_change_probe", "dup_filtered_card_on_done");
-  t2->TestFunc = [](ImGuiTestContext* ctx) {
-    RunProbe(ctx, ProbeArm{ "dup_filter_done", AttachFilterToFirstCard, false, ClickDuplicate });
+
+  // Duplicate, then Revert: the state returns to Done, and the picture must be the one Done refers to.
+  t = IM_REGISTER_TEST(engine, "config_change_preview", "dup_filtered_card_then_revert_keeps_picture");
+  t->TestFunc = [](ImGuiTestContext* ctx) {
+    CheckFinishedRunKeepsPicture(
+        ctx,
+        [](ImGuiTestContext* c) {
+          ClickDuplicate(c);
+          c->Yield(5);
+          c->ItemClick("##TopBar/Revert");
+        },
+        SimState::kDone);
   };
-  // AC1 arm 3: two crystals, the first filtered, finished run, Duplicate the filtered one.
-  ImGuiTest* t3 = IM_REGISTER_TEST(engine, "config_change_probe", "dup_filtered_card_among_two_on_done");
-  t3->TestFunc = [](ImGuiTestContext* ctx) {
-    RunProbe(ctx, ProbeArm{ "dup_filter_multi_done",
-                            [] {
-                              AttachFilterToFirstCard();
-                              gui::DuplicateEntryBelow(gui::g_state, 0, 0);
-                              gui::g_state.layers[0].entries[1].filter_id.reset();
-                            },
-                            false, ClickDuplicate });
+
+  // While running, the same Duplicate advances the epoch through the live-edit auto-commit. The old
+  // frame stays up until the new generation's first frame replaces it — no black frame in between.
+  t = IM_REGISTER_TEST(engine, "config_change_preview", "dup_filtered_card_while_running_has_no_black_frame");
+  t->TestFunc = [](ImGuiTestContext* ctx) {
+    const Observation obs = ObserveEdit(ctx, RunStart::kRunning, AttachFilterToFirstCard, ClickDuplicate, 1500.0);
+    IM_CHECK_EQ(obs.black_frames, 0);
+    IM_CHECK_GT(obs.uploads_delta, 0ull);  // the new generation did reach the screen
+    IM_CHECK_GT(obs.epoch_at_end, obs.epoch_at_edit);
+    IM_CHECK_GT(obs.end_lit, 0.0);
   };
-  // AC2 control: a filter text edit (a hard-tier change that is not a Duplicate) on a finished run.
-  ImGuiTest* t4 = IM_REGISTER_TEST(engine, "config_change_probe", "filter_text_edit_on_done");
-  t4->TestFunc = [](ImGuiTestContext* ctx) {
-    RunProbe(ctx, ProbeArm{ "filter_edit_done", AttachFilterToFirstCard, false, [](ImGuiTestContext* c) {
-                             // SetRaypath, not MutableRaypathText: FilterConfig equality reads the summand
-                             // text, which only the former rewrites — the edit the editor itself makes.
-                             gui::g_state.filters[static_cast<size_t>(*gui::g_state.layers[0].entries[0].filter_id)]
-                                 .SetRaypath(gui::RaypathParams{ "3-1-5-7" });
-                             c->Yield();
-                           } });
-  };
-  // AC2 control: a crystal parameter edit (soft tier) on a finished run.
-  ImGuiTest* t5 = IM_REGISTER_TEST(engine, "config_change_probe", "crystal_edit_on_done");
-  t5->TestFunc = [](ImGuiTestContext* ctx) {
-    RunProbe(ctx, ProbeArm{ "crystal_edit_done", [] {}, false,
-                            [](ImGuiTestContext* c) {
-                              gui::g_state.crystals[gui::g_state.layers[0].entries[0].crystal_id].height = 2.5f;
-                              c->Yield();
-                            } });
-  };
-  // AC1 arm 4: Duplicate a filtered card while an infinite run is still simulating (auto-commit path).
-  ImGuiTest* t6 = IM_REGISTER_TEST(engine, "config_change_probe", "dup_filtered_card_while_running");
-  t6->TestFunc = [](ImGuiTestContext* ctx) {
-    RunProbe(ctx, ProbeArm{ "dup_filter_running", AttachFilterToFirstCard, true, ClickDuplicate });
-  };
-  // AC2 control: Duplicate a filtered card on a finished run, then press Revert.
-  ImGuiTest* t8 = IM_REGISTER_TEST(engine, "config_change_probe", "dup_filtered_card_then_revert_on_done");
-  t8->TestFunc = [](ImGuiTestContext* ctx) {
-    RunProbe(ctx, ProbeArm{ "dup_filter_revert_done", AttachFilterToFirstCard, false, [](ImGuiTestContext* c) {
-                             ClickDuplicate(c);
-                             c->Yield(5);
-                             c->ItemClick("##TopBar/Revert");
-                           } });
-  };
-  // AC1 zero-ray control: while running, edit the filter to a path longer than max_hits (8), so the
-  // new configuration lands no ray at all — the case the immediate clear was originally for.
-  ImGuiTest* t9 = IM_REGISTER_TEST(engine, "config_change_probe", "filter_edited_to_zero_rays_while_running");
-  t9->TestFunc = [](ImGuiTestContext* ctx) {
-    RunProbe(ctx, ProbeArm{ "zero_ray_filter_running", AttachFilterToFirstCard, true, [](ImGuiTestContext* c) {
-                             gui::g_state.filters[static_cast<size_t>(*gui::g_state.layers[0].entries[0].filter_id)]
-                                 .SetRaypath(gui::RaypathParams{ "3-1-5-7-3-1-5-7-3-1" });
-                             c->Yield();
-                           } });
-  };
-  // Same while running, no filter.
-  ImGuiTest* t7 = IM_REGISTER_TEST(engine, "config_change_probe", "dup_unfiltered_card_while_running");
-  t7->TestFunc = [](ImGuiTestContext* ctx) {
-    RunProbe(ctx, ProbeArm{ "dup_nofilter_running", [] {}, true, ClickDuplicate });
+
+  // The case the old immediate clear existed for: while running, edit the filter to a path longer
+  // than max_hits (8), so the new config lands no ray at all. Once it runs, its empty frame reaches
+  // the screen (quality-gate timeout fallback, 500 ms) and the preview turns black rather than
+  // lingering on the previous config's picture.
+  t = IM_REGISTER_TEST(engine, "config_change_preview", "filter_edited_to_zero_rays_while_running_turns_black");
+  t->TestFunc = [](ImGuiTestContext* ctx) {
+    const Observation obs = ObserveEdit(
+        ctx, RunStart::kRunning, AttachFilterToFirstCard,
+        [](ImGuiTestContext* c) {
+          SetFirstCardFilterPath("3-1-5-7-3-1-5-7-3-1");
+          c->Yield();
+        },
+        2000.0);
+    IM_CHECK_GE(obs.first_black_ms, 0.0);
+    IM_CHECK_LT(obs.first_black_ms, 1500.0);
+    IM_CHECK_EQ(obs.end_lit, 0.0);
   };
 }

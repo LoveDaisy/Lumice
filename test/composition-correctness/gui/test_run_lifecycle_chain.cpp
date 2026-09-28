@@ -196,10 +196,12 @@ TEST(RunLifecycleChain, SelfPauseNeedsCompletionAndADrainedUnsupersededEpoch) {
 // E10 (edit-time half) — which kind of edit raises the fence, and what the user sees either way.
 //
 // The floor is raised by GuiState, read by the upload gate, and the pair of them is what decides
-// between two behaviours the user can tell apart at a glance. A filter change invalidates the
-// picture, so the old generation's frames must be fenced out and the canvas cleared immediately; a
-// crystal scrub does not, so the last frame must stay up or the preview strobes black under the
-// mouse. Neither half proves anything alone: MarkStructHardDirty raising the floor is only
+// between two behaviours. A filter change invalidates the old generation's output, so its late
+// frames must be fenced out; a crystal scrub does not, so they may keep flowing. Neither edit
+// clears the frame already on screen: it stays up until the new generation replaces it under §7's
+// rules (quality gate, timeout fallback, terminal frame always uploaded) — a clear here would leave
+// the preview blank until the next Run whenever the edit lands on a finished run, since nothing
+// commits then. Neither half proves anything alone: MarkStructHardDirty raising the floor is only
 // meaningful if the gate then rejects, and a gate that rejects is only correct if the other edit
 // leaves the floor alone.
 
@@ -219,12 +221,11 @@ TEST(RunLifecycleChain, AStructuralEditFencesTheOldGenerationAndAScrubDoesNot) {
     const char* name;
     bool structural;
     unsigned long long expect_floor;
-    float expect_intensity;
-    bool expect_old_frame_survives;
+    bool expect_late_old_payload_uploads;
   };
   const EditCase kCases[] = {
-    { "a filter change invalidates the picture", true, kGen, 0.0f, false },
-    { "a crystal scrub does not", false, 0, 1.0f, true },
+    { "a filter change fences the old generation", true, kGen, false },
+    { "a crystal scrub does not", false, 0, true },
   };
 
   for (const EditCase& c : kCases) {
@@ -238,8 +239,9 @@ TEST(RunLifecycleChain, AStructuralEditFencesTheOldGenerationAndAScrubDoesNot) {
       st.MarkDirty();
     }
     EXPECT_EQ(st.display_epoch_floor, c.expect_floor) << c.name;
-    EXPECT_EQ(st.snapshot_intensity, c.expect_intensity) << c.name;
-    EXPECT_EQ(ShouldUploadPayload(old_snap, /*last_serial=*/0, st.display_epoch_floor), c.expect_old_frame_survives)
+    EXPECT_EQ(st.snapshot_intensity, 1.0f) << c.name;  // the frame on screen is never cleared by an edit
+    EXPECT_EQ(ShouldUploadPayload(old_snap, /*last_serial=*/0, st.display_epoch_floor),
+              c.expect_late_old_payload_uploads)
         << c.name;
   }
 
