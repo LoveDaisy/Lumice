@@ -336,9 +336,11 @@ of One Bit Set」定义的两种口径中的一种，而不是同一口径的两
   形状、不看取向分布，六方标号规约、周期恒为 6；
 - Lumice 光路分析面板的行 = **L2 物理等价**（`SymmetrySemantics::kPhysical`，
   `DeriveSymmetryGating(kPhysical)`）：形状（§2a）与取向集体（§2b）两个条件都成立才合并；
-- LI 的 `G_true`（`symmetry/crystal_group.py`）= L2，与面板同口径；LI 的 `pbd_orbit_hexprism`
-  （`path_class.py`）= L1，与 filter 同口径——即 LI 内部也分别维护两份，两仓四份
-  实现按口径两两对应，不是「LI 一份、Lumice 一份」；
+- LI 的 `G_true`（`symmetry/crystal_group.py`）= L2 的形状那一半（姿态那一半由调用方的姿态分布决定），
+  与面板同口径；LI 的 L1 标号轨道是 `symmetry/reflection_group.py` 的 `pbd_orbit`，与 filter 同口径。
+  ⚠️ LI 的 `path_class.pbd_orbit_hexprism` 名字里带 PBD，实际按所给晶体的 `G_true` 展开，是 **L2**；
+  只在正六棱柱（`G_true` = 整个 D6h）上恰好等于 L1。即 LI 内部也同时维护两种口径，两仓四份实现按
+  口径两两对应，不是「LI 一份、Lumice 一份」；
 - 即将发布的 `liblumice_analytic`（本节候选的第一个共享模块）只接受具体的面序列，不带对称参数、
   不提供约化接口——对称约化属于原语与约定层，两仓各留一份、互为校验对象，不经共享库分发。调用方
   若要在这层接口之外自行做约化，必须说明用的是哪种口径；LI ↔ Lumice 的 parity fixture 命名同样
