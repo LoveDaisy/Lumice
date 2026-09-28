@@ -1270,3 +1270,69 @@ dependency one wave later.
 **Parity fixtures flow LI → Lumice.** LI exports them at a pinned revision; this repo copies them in
 and runs them in CI. A change goes one way: LI changes first → re-export → this repo's parity goes
 red → fix the C++.
+
+### 10.1 Parity with LI (as built)
+
+**Where it lives.** `test/fixtures/li-parity/` holds LI's export verbatim: one JSON per fixture, LI's
+`manifest.json`, and a `SOURCE` file naming the full LI commit, the export command, the date, the
+`--verify` result and whether a second export was byte-identical. The format, fields, recipes and
+tolerance basis are LI `docs/analytic-parity-fixtures.md`; this section does not restate them.
+`test/unit-correctness/analytic/test_li_parity.cpp` replays every fixture, one gtest case each
+(`LiParityEvaluatePath` / `LiParityTraceFiber` / `LiParitySeedSearch`), inside
+`unit_correctness_test`, so it runs wherever that target runs — including every leg of CI's `build`
+job, whose `ctest -L` selector includes `unit-correctness`. Placement follows
+`doc/testing-architecture.md` §3: the oracle is another implementation but not the legacy CPU
+backend, and it is not a closed form, so it is `unit-correctness`, not `parity-cross-backend` or
+`golden-analytic`.
+
+**What it proves and what it does not.** The cases call the kernels (`EvaluatePath`, `TraceFiber`,
+`IceDiscovery::DiscoverOnBand`), not the C ABI, because a `seed_search` fixture is a replay on LI's
+exported band and only the kernel accepts a band. So parity covers the kernels' semantics; the
+ABI's translation of `LUMICE_ANALYTIC_Crystal` and the v0 options block into them stays the
+subject of the ctypes tests (`test/e2e-correctness/test_analytic_*.py`). LI's continuation options
+have four fields the kernel has no knob for (`rotation_tolerance`, `dtype`, `sample_retention`,
+`diagnostic_level`); the reader asserts each holds the one value the kernel implements and fails on
+any field it does not know, so an option LI adds cannot be dropped silently. The comparison geometry
+(rotation distance, SO(3) log/exp, geodesic densification, Hausdorff) is written out in the test
+rather than taken from `src/analytic/so3.hpp`, so a defect there cannot also blind the ruler.
+
+**Tolerances are the fixture's.** Every bound is read from the fixture's `tolerance.<quantity>.value`.
+The file contains two recipe constants and no tolerance: the 1e-3 rad densification spacing (part
+of LI's curve-distance definition) and the 1e-12 absolute term LI's own verifier adds to a relative
+arclength comparison so a zero-length reference is comparable. Each case prints the measured error
+next to its bound, red or green, which is the running record of how much room the bounds leave.
+First run (LI `bfbd042`): all 35 fixtures green with no change to the C++; the largest margins used
+were 2.3e-3 of 0.012 rad (curve distance, near a critical point), 4.9e-4 of 2e-3 (arclength) and
+4.6e-12 of 1e-11 (residual); everything else sat at rounding level.
+
+**Two fixtures that look like gaps and are not.** `3-5-6-7__critical` has no files: the manifest
+records it as skipped with a reason (that path's `D_P` has no interior extremum on this crystal),
+and the manifest check accepts exactly that — a reason, and no listed file. The
+`13-15-26-28__near_boundary__seed_search` fixture expects a complete search with an empty band and no
+component: it is a negative case, and a search that invents a component there is a failure.
+
+**Updating.**
+
+1. In LI, on a clean checkout of the rev to adopt (a `git worktree` of `origin/main` keeps the
+   working tree out of it; `li_tracked_tree_clean` must be `true`):
+   `uv run python scripts/export_analytic_parity.py --output-dir <dir> --verify`. `--verify` must
+   pass. Export twice and compare with `diff -r`; the export is deterministic, so a difference is
+   itself something to report to LI.
+2. Replace the whole of `test/fixtures/li-parity/` with the output and rewrite `SOURCE` for the new
+   rev. Unchanged fixtures are byte-identical (sorted keys, shortest round-trip floats), so the diff
+   shows only what LI changed.
+3. Run the cases. A red is then read with three questions:
+   - Did LI change? Compare the red fixture with its previous version in git. A changed `expected`
+     or `tolerance` at a new `li_rev` means LI moved, and the C++ follows.
+   - Did this repo change? If the fixture is unchanged since the last green run, a red is a
+     regression here.
+   - Does LI still verify it? If `--verify` passes at that rev and the C++ disagrees, the C++ is
+     wrong. If LI's own read-back fails, the problem is LI's; report it there.
+4. Who changes first: LI. The C++ is fixed until green. Neither a fixture nor a bound is edited in
+   this repo, and no case is disabled to get green; a disagreement about a tolerance or a semantic
+   goes back to LI, is fixed there with its evidence, and comes back as a re-export.
+
+A `schema_version` other than 1 fails every case: read LI's updated page, change the reader, then
+re-export. A new fixture kind or cell needs no change here as long as the manifest lists it — cases
+are generated from `manifest.json`, and the manifest check fails if a file is present but not listed
+or listed but not present.
