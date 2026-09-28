@@ -241,7 +241,14 @@ add_executable(unit_correctness_test
   # Ray allocation (dealing by q_i with a per-entry weight correction) on every
   # TraceBackend arm: CpuTraceBackend always; Metal under `#if __APPLE__`,
   # CUDA under `#if LUMICE_CUDA_ENABLED` (self-skipping without a device).
-  "${PROJ_TEST_DIR}/unit-correctness/backend/test_ray_allocation_backends.cpp")
+  "${PROJ_TEST_DIR}/unit-correctness/backend/test_ray_allocation_backends.cpp"
+  # analytic/: liblumice_analytic's evaluator kernel, checked against independent physics. Its
+  # source is compiled in here directly because src/analytic/ is outside lumice_obj (root
+  # CMakeLists.txt: only lumice_analytic carries it); the C ABI wrapper (analytic_api.cpp) is not,
+  # since its load-time initialiser silences the engine's console sink for the whole process — the
+  # wrapper is exercised through ctypes in test/e2e-correctness/test_analytic_evaluate_path.py.
+  "${PROJ_SRC_DIR}/analytic/path_evaluation.cpp"
+  "${PROJ_TEST_DIR}/unit-correctness/analytic/test_path_evaluation.cpp")
 target_include_directories(unit_correctness_test
   PRIVATE ${PROJ_TEST_DIR})
 target_link_libraries(unit_correctness_test
