@@ -581,6 +581,53 @@ jobs:
         shell: bash
         run: ./scripts/ci_verify_cuda_test_tus.sh build "$CUDA_TU_GTEST_FILTER"
 
+  # The CUDA test cases, run. cuda-compile above proves they compile in and self-skip
+  # on a GPU-less runner; this job runs the same filter on a simulated GPU, so the
+  # device paths execute and the parity cases compare against the CPU oracle on
+  # every PR. PantheonSim (setup-pantheonsim) simulates an NVIDIA T4 on the runner's
+  # CPU: unmodified binaries, real results, no timing, so it checks correctness and
+  # never speed, and the reference machines stay the final word on GPU behavior.
+  # The two CudaRichExit cases skip here as they do on a real GPU (DrainExits
+  # returns no exits for them). CUDA 12.9 to match cuda-compile; the one build change
+  # is the shared CUDA runtime, which the simulator stands in for at run time.
+  cuda-simulated:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Simulated GPU (NVIDIA T4) and CUDA 12.9
+        uses: pantheongpu/setup-pantheonsim@v0
+        with:
+          gpu: nvidia/t4
+          cuda-toolkit: '12.9'
+
+      - name: Cache CPM dependencies
+        uses: actions/cache@v6
+        with:
+          path: cpm_cache
+          key: cpm-ubuntu-x64-${{ hashFiles('**/CMakeLists.txt') }}
+          restore-keys: cpm-ubuntu-x64-
+
+      - name: Configure (CUDA tests, shared CUDA runtime)
+        env:
+          CUDA_PATH: /usr/local/cuda-12.9
+        run: >
+          cmake -S . -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DBUILD_TEST=ON
+          -DBUILD_GUI=OFF
+          -DLUMICE_CUDA_ENABLED=ON
+          -DLUMICE_ISA_LEVEL=baseline
+          -DCMAKE_CUDA_RUNTIME_LIBRARY=Shared
+
+      - name: Build the two test binaries that hold the CUDA cases
+        run: cmake --build build --parallel --target unit_correctness_test parity_test
+
+      - name: Run the CUDA test cases on the simulated GPU
+        shell: bash
+        run: ./scripts/ci_verify_cuda_test_tus.sh build "$CUDA_TU_GTEST_FILTER"
+
   # Windows CUDA compile-only: nvcc + MSVC on windows-2022.
   #
   # Pin rationale (scrum-310 / task-win-cuda-ci-gate, 2026-07-01):
