@@ -17,6 +17,12 @@
 // face sequence and performs no symmetry reduction (doc/analytic-api.md section 3).
 //
 // Version notes, newest first (every bump says what changed, doc/analytic-api.md section 8.1):
+//   3  ADDED LUMICE_ANALYTIC_FiberProblem, LUMICE_ANALYTIC_ContinuationOptions,
+//      LUMICE_ANALYTIC_FiberStatus, LUMICE_ANALYTIC_Reason, LUMICE_ANALYTIC_FiberResult,
+//      LUMICE_ANALYTIC_TraceFiber, LUMICE_ANALYTIC_TraceFiberBatch, LUMICE_ANALYTIC_ReleaseFiberResult —
+//      fiber continuation from a seed. Against the section 4.5 draft, FiberProblem carries
+//      initial_tangent_sign. EvaluatePath now also rejects face_count > 64 (ERR_INVALID_VALUE) and
+//      returns ERR_UNKNOWN instead of letting an allocation failure escape.
 //   2  ADDED LUMICE_ANALYTIC_ErrorCode, LUMICE_ANALYTIC_Crystal, LUMICE_ANALYTIC_PathEvaluation,
 //      LUMICE_ANALYTIC_EvaluatePath, LUMICE_ANALYTIC_ReleasePathEvaluation — the first computation.
 //   1  LUMICE_ANALYTIC_GetApiVersion and LUMICE_ANALYTIC_SetLogCallback only.
@@ -47,7 +53,7 @@ extern "C" {
 
 // Interface version, a single integer bumped on every incompatible change (doc/analytic-api.md
 // section 8). Independent of lumice.h's LUMICE_API_VERSION.
-#define LUMICE_ANALYTIC_API_VERSION 2
+#define LUMICE_ANALYTIC_API_VERSION 3
 
 // Library version at run time; compare with LUMICE_ANALYTIC_API_VERSION to detect a
 // header/library mismatch. Also the minimal function the build, export and load chain is proven
@@ -126,12 +132,17 @@ typedef struct LUMICE_ANALYTIC_PathEvaluation_ {
 //
 // Call errors (out is zero-filled after struct_size, so Release is safe):
 //   ERR_NULL_ARG       crystal, faces, incident_direction, pose or out is NULL
-//   ERR_INVALID_VALUE  out->struct_size smaller than this struct; face_count < 2; a face number the
+//   ERR_INVALID_VALUE  out->struct_size smaller than this struct; face_count < 2 or > 64 (the
+//                      simulator's bound on hits per crystal); a face number the
 //                      crystal does not have (unknown, or absent from this crystal's shape);
 //                      refractive_index not finite and positive; incident_direction not finite or
 //                      its length off 1 by more than 1e-10; pose not finite, R^T R off I by more
 //                      than 1e-10 in any entry, or det(R) <= 0; a crystal field as described above
 //   ERR_INVALID_CONFIG crystal rejected by the engine's closed-form validity gate
+//   ERR_UNKNOWN        an internal failure (out of memory); out is zero-filled
+// Every bad input here is a call error, because the call evaluates one pose. TraceFiberBatch draws
+// the line differently: an input that belongs to one problem of a batch is that element's result,
+// not the call's (see there).
 // Re-entrant: safe to call concurrently on distinct outputs; keeps no state between calls.
 LUMICE_ANALYTIC_API LUMICE_ANALYTIC_ErrorCode LUMICE_ANALYTIC_EvaluatePath(
     const LUMICE_ANALYTIC_Crystal* crystal, const int* faces, int face_count, double refractive_index,
@@ -140,6 +151,131 @@ LUMICE_ANALYTIC_API LUMICE_ANALYTIC_ErrorCode LUMICE_ANALYTIC_EvaluatePath(
 // Frees what EvaluatePath allocated and zeroes the struct after struct_size. NULL-safe; a no-op on a
 // zero-filled struct.
 LUMICE_ANALYTIC_API void LUMICE_ANALYTIC_ReleasePathEvaluation(LUMICE_ANALYTIC_PathEvaluation* eval);
+
+// ---------------------------------------------------------------------------------------------
+// Fiber continuation from a seed (doc/analytic-api.md section 4.3): the component of
+// { R : outgoing_direction(R) = target_direction } reachable from seed_pose, traced by LI's
+// predictor-corrector reference solver (LI docs/phase1-math-contract.md sections 5-10). One call
+// traces one component from one seed; it never claims there is no other.
+// ---------------------------------------------------------------------------------------------
+typedef struct LUMICE_ANALYTIC_FiberProblem_ {
+  const int* faces;              // concrete Lumice face numbers: entry, internal reflections, exit
+  int face_count;                // 2..64
+  double refractive_index;       // finite, > 0
+  double incident_direction[3];  // world unit vector, propagation sun -> crystal (LI's s)
+  double target_direction[3];    // world unit vector, propagation crystal -> observer (LI's d)
+  double seed_pose[9];           // row-major rotation, body -> world; required
+  // +1 (or 0) traces in the library's seed orientation, -1 in the opposite one: the same component,
+  // samples in reverse order. An arc that ends on an event at both ends needs both traces from the
+  // same seed (LI contract section 8). The +1 orientation is deterministic and independent of the
+  // target basis, but it is not LI's, whose +1 is its LAPACK build's SVD sign.
+  int initial_tangent_sign;
+} LUMICE_ANALYTIC_FiberProblem;
+
+// NULL => every field at its reference default. A zero field also means "default". Defaults are LI
+// docs/phase1-math-contract.md section 10.1's reference-continuation-v1 values (that section is also
+// their convergence evidence); the solver's other options are fixed at their section 10.1 values.
+// A negative or non-finite field is ERR_INVALID_VALUE, and so is a combination LI's
+// ContinuationOptions rejects once the defaults are filled in (step_min <= step_initial <= step_max).
+typedef struct LUMICE_ANALYTIC_ContinuationOptions_ {
+  double seed_residual_tolerance;  // LI residual_tolerance, 1e-11: the seed gate, corrector root and
+                                   // acceptance all use it; residual = |basis^T (F - d)|
+  double step_initial;             // LI initial_step, 0.04 rad
+  double step_min;                 // LI minimum_step, 1e-5 rad
+  double step_max;                 // LI maximum_step, 0.12 rad
+  int max_accepted_steps;          // LI maximum_accepted_steps, 4000
+  int closure_min_steps;           // LI closure_minimum_steps, 3
+  double closure_pose_tolerance;   // LI closure_distance, 0.08 rad (SO(3) angle to the seed)
+} LUMICE_ANALYTIC_ContinuationOptions;
+
+// Closed set: exactly one of these, as in LI's phase1-math-contract.md section 9.4.
+typedef enum LUMICE_ANALYTIC_FiberStatus_ {
+  LUMICE_ANALYTIC_FIBER_CLOSED = 0,
+  LUMICE_ANALYTIC_FIBER_EVENT_TERMINATED = 1,
+  LUMICE_ANALYTIC_FIBER_NUMERICAL_FAILURE = 2,
+  LUMICE_ANALYTIC_FIBER_BUDGET_EXHAUSTED = 3,
+} LUMICE_ANALYTIC_FiberStatus;
+
+// OPEN set: values are grouped by status (0 / 100+ / 200+ / 300+); later versions may add values,
+// so a caller must handle an unknown value inside a known status — including
+// INVALID_NUMERICAL_INPUT, which is what an element-level bad input reports today. Precedence: a
+// known domain event outranks the numerical symptom it caused (LI section 9.4).
+typedef enum LUMICE_ANALYTIC_Reason_ {
+  LUMICE_ANALYTIC_REASON_UNKNOWN = -1,
+  LUMICE_ANALYTIC_REASON_CLOSED_LOOP = 0,
+  LUMICE_ANALYTIC_REASON_TIR_BOUNDARY = 100,
+  LUMICE_ANALYTIC_REASON_BRANCH_BOUNDARY = 101,
+  LUMICE_ANALYTIC_REASON_PATH_INFEASIBLE = 102,
+  LUMICE_ANALYTIC_REASON_VISIBILITY_BOUNDARY = 103,
+  LUMICE_ANALYTIC_REASON_CHART_BOUNDARY = 104,
+  LUMICE_ANALYTIC_REASON_RANK_LOSS = 105,
+  LUMICE_ANALYTIC_REASON_TOPOLOGY_AMBIGUITY = 106,
+  LUMICE_ANALYTIC_REASON_CORRECTOR_FAILURE = 200,
+  LUMICE_ANALYTIC_REASON_LINEAR_SOLVE_FAILURE = 201,
+  LUMICE_ANALYTIC_REASON_NON_FINITE = 202,
+  LUMICE_ANALYTIC_REASON_STEP_UNDERFLOW = 203,
+  LUMICE_ANALYTIC_REASON_INVALID_NUMERICAL_INPUT = 204,
+  LUMICE_ANALYTIC_REASON_STEP_BUDGET = 300,
+  LUMICE_ANALYTIC_REASON_ARCLENGTH_BUDGET = 301,
+  LUMICE_ANALYTIC_REASON_EVALUATION_BUDGET = 302,
+} LUMICE_ANALYTIC_Reason;
+
+// One traced component. N = pose_count accepted samples, the seed first. On a closed loop the last
+// sample is the closure-corrected pose back at the seed (it replaces the last step's end, not an
+// extra sample), so a closed result holds the seed twice, first and last. N = 0 when the seed itself
+// is rejected (not on the path's domain, not a regular root, the target's antipode); N = 1 when the
+// first step already ends the trace. Every array of length 0 is NULL; every other one points into
+// `storage`, one block of 17 N - 1 doubles.
+typedef struct LUMICE_ANALYTIC_FiberResult_ {
+  uint32_t struct_size;                        // caller sets sizeof(*out_result) (section 8.2)
+  int status;                                  // LUMICE_ANALYTIC_FiberStatus
+  int reason;                                  // LUMICE_ANALYTIC_Reason (open set)
+  int pose_count;                              // N accepted samples
+  const double* poses;                         // N * 9, row-major, body -> world
+  const double* crystal_frame_sun_directions;  // N * 3, u = R^T (-incident_direction)
+  const double* arclength_increments;          // N - 1, SO(3) geodesic angle between samples, radians
+  const double* residual_norms;                // N, |basis^T (outgoing - target)| in the target chart
+  const double* tangents;                      // N * 3, unit, body frame (right-trivialised), in order
+  void* storage;                               // opaque; LUMICE_ANALYTIC_ReleaseFiberResult
+} LUMICE_ANALYTIC_FiberResult;
+
+// TraceFiberBatch with count = 1 (the same code path): *out_result as that batch's one element.
+LUMICE_ANALYTIC_API LUMICE_ANALYTIC_ErrorCode
+LUMICE_ANALYTIC_TraceFiber(const LUMICE_ANALYTIC_Crystal* crystal, const LUMICE_ANALYTIC_FiberProblem* problem,
+                           const LUMICE_ANALYTIC_ContinuationOptions* options, LUMICE_ANALYTIC_FiberResult* out_result);
+
+// One crystal, one options block, `count` independent problems (typically one path swept over many
+// target directions). out_results: caller-allocated array of `count`; its stride is
+// out_results[0].struct_size, which every element must carry (section 8.2). Each element is filled
+// and released independently. The library starts no threads.
+//
+// What belongs to one problem is that element's result, never the call's return code: a problem
+// with face_count outside 2..64, a face number the crystal does not have, a non-finite or non-unit
+// direction, a seed that is not a rotation, refractive_index not finite and positive, or
+// initial_tangent_sign not in {-1, 0, 1} gets status NUMERICAL_FAILURE, reason
+// INVALID_NUMERICAL_INPUT and pose_count 0, and the other elements are traced as usual. (EvaluatePath
+// reports the same inputs as ERR_INVALID_VALUE: one pose, one call.) What happens along a fiber —
+// TIR, rank loss, a budget — is likewise status/reason.
+//
+// Call errors:
+//   ERR_INVALID_VALUE  count < 0 — returns at once without touching out_results, whose length is
+//                      unknown; out_results[0].struct_size smaller than this struct — only element
+//                      0 is zero-filled, as the stride is unusable; elements disagreeing on
+//                      struct_size; an invalid options block; a crystal field as for EvaluatePath
+//   ERR_NULL_ARG       crystal, problems or out_results NULL (count > 0); a problem with faces NULL
+//                      and face_count > 0
+//   ERR_INVALID_CONFIG crystal rejected by the engine's closed-form validity gate
+//   ERR_UNKNOWN        an internal failure (out of memory); every element released and zero-filled
+// On every call error but the two noted above, all `count` elements are zero-filled, so Release is
+// safe on each. `count == 0` is a legal empty batch: a no-op success that touches nothing.
+// Re-entrant: safe to call concurrently on distinct outputs; keeps no state between calls.
+LUMICE_ANALYTIC_API LUMICE_ANALYTIC_ErrorCode LUMICE_ANALYTIC_TraceFiberBatch(
+    const LUMICE_ANALYTIC_Crystal* crystal, const LUMICE_ANALYTIC_FiberProblem* problems, int count,
+    const LUMICE_ANALYTIC_ContinuationOptions* options, LUMICE_ANALYTIC_FiberResult* out_results);
+
+// Frees what TraceFiber / TraceFiberBatch allocated for one result and zeroes it after struct_size.
+// NULL-safe; a no-op on a zero-filled struct.
+LUMICE_ANALYTIC_API void LUMICE_ANALYTIC_ReleaseFiberResult(LUMICE_ANALYTIC_FiberResult* result);
 
 // Logging: the library writes nothing by default — no console, no file — until the host installs a
 // callback, which then receives the engine's diagnostics, including crystal-construction warnings

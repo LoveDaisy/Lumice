@@ -1085,7 +1085,9 @@ endif()
 if(BUILD_SHARED_LIBS AND NOT LUMICE_CUDA_ENABLED)
   add_library(lumice_analytic SHARED
     "${PROJ_SRC_DIR}/analytic/analytic_api.cpp"
-    "${PROJ_SRC_DIR}/analytic/path_evaluation.cpp")
+    "${PROJ_SRC_DIR}/analytic/fiber_continuation.cpp"
+    "${PROJ_SRC_DIR}/analytic/path_evaluation.cpp"
+    "${PROJ_SRC_DIR}/analytic/path_fiber.cpp")
   target_link_libraries(lumice_analytic PRIVATE lumice_obj)
   if(NOT MSVC)
     target_compile_options(lumice_analytic PRIVATE
