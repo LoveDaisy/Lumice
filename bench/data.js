@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1790561933413,
+  "lastUpdate": 1790561937531,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -4770,54 +4770,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "7a4c526050e74287deacd4473631926deabf13a9",
-          "message": "Merge pull request #337 from LoveDaisy/feat/print-mode-subtractive-ink\n\nfeat(render,gui): add a print tone that lays ink on paper instead of adding light to sky",
-          "timestamp": "2026-09-10T09:06:10+08:00",
-          "tree_id": "7d1fa0a3596ea0279c8d776fa7d4f0baaa8feab6",
-          "url": "https://github.com/LoveDaisy/ice_halo_sim/commit/7a4c526050e74287deacd4473631926deabf13a9"
-        },
-        "date": 1789003113626,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 839561.6,
-            "unit": "rays/sec",
-            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 1217551.3,
-            "unit": "rays/sec",
-            "extra": "CPU: Neoverse-N2\\nCores: 4"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 819537.5,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 7763 64-Core Processor\\nCores: 4"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 671185.8,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "ae46f7c283910d4fbb4e7a0f2949aef02e5f87df",
           "message": "Merge pull request #338 from LoveDaisy/feat/gui-display-rendering-regroup\n\nfix(gui): regroup the Display Rendering rows and pair the ground swatch with the mode",
           "timestamp": "2026-09-10T14:08:18+08:00",
@@ -9506,6 +9458,54 @@ window.BENCHMARK_DATA = {
             "value": 926714.4,
             "unit": "rays/sec",
             "extra": "CPU: AMD EPYC 9V45 96-Core Processor                \\nCores: 4"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "1b0a0361b3465b124b87fc0680bff113b21524d4",
+          "message": "Merge pull request #436 from LoveDaisy/task/restore-pb-label-equivalence\n\ncore: a filter's P/B/D is a label equivalence again; the analysis list keeps physical symmetry",
+          "timestamp": "2026-09-28T10:02:45+08:00",
+          "tree_id": "74c642836565436b225b79dbea5e311790408de7",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/1b0a0361b3465b124b87fc0680bff113b21524d4"
+        },
+        "date": 1790561936853,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 839981,
+            "unit": "rays/sec",
+            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 1025510.8,
+            "unit": "rays/sec",
+            "extra": "CPU: Neoverse-N2\\nCores: 4"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 929337.7,
+            "unit": "rays/sec",
+            "extra": "CPU: INTEL(R) XEON(R) PLATINUM 8573C\\nCores: 4"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 590540.2,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
           }
         ]
       }
