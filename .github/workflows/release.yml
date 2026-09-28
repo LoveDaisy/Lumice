@@ -5,6 +5,13 @@ on:
     tags: ['v*']
   workflow_dispatch:
 
+# Default GITHUB_TOKEN permissions for every job in this workflow, minimized to what
+# the common case needs (checkout). The one job that needs more (release, which
+# creates the GitHub release and uploads artifacts) declares its own job-level
+# `permissions:`, which overrides this top-level block for that job only.
+permissions:
+  contents: read
+
 env:
   CPM_SOURCE_CACHE: ${{ github.workspace }}/cpm_cache
 

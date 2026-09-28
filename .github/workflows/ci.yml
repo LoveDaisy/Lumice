@@ -29,6 +29,13 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Default GITHUB_TOKEN permissions for every job in this workflow, minimized to what
+# the common case needs (checkout). The one job that needs more (benchmark-summary,
+# which pushes to gh-pages and reads Actions run status) declares its own job-level
+# `permissions:`, which overrides this top-level block for that job only.
+permissions:
+  contents: read
+
 env:
   CPM_SOURCE_CACHE: ${{ github.workspace }}/cpm_cache
   # gtest suites contributed by the five CUDA-only test TUs, defined once here because both
