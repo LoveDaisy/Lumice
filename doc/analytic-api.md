@@ -593,7 +593,9 @@ are never error codes; they are `status`/`reason` (§4.4).
 - `SetLogCallback` writes process-wide state (the sink and the callback pointer). It is an
   initialisation call: made once, before computation, from one thread. The same holds for
   `LUMICE_SetLogCallback` in `lumice.h` today, whose first-call registration is an unsynchronised
-  static flag (`src/server/c_api.cpp:127-139`).
+  static flag (`src/server/c_api.cpp:127-139`); the analytic library's registration is a
+  function-local static initialiser, so concurrent first calls cannot attach its sink twice, and
+  the callback pointer is swapped under the sink's own lock.
 - **To verify during implementation, not verified here**: that the closed-form geometry and optics
   code the module will call (`geo3d_closedform.cpp`, `crystal.cpp`, `optics.cpp`) holds no
   thread-unsafe function-local cache. The re-entrancy promise is conditional on that check.
@@ -614,14 +616,14 @@ asks for double precision in geometry generation.
 
 ---
 
-## 6. Logging **(owner direction, design detail)**
+## 6. Logging **(owner direction, design detail; mechanism as built)**
 
 The library writes nothing by default; the host receives diagnostics through
 `LUMICE_ANALYTIC_SetLogCallback`. The mechanism is built with the log-sink work (the other
 binaries' behaviour does not change).
 
 **Does the first module have warning paths a silent default would swallow? Yes.** Checked in the
-code the module will call, all through the `LOG_WARNING` macro family (`src/util/logger.hpp:122`,
+code the module will call, all through the `LOG_WARNING` macro family (`src/util/logger.hpp:137`,
 routed to the global logger, which forwards to the process-wide shared sink):
 
 | Where | When |
@@ -632,7 +634,7 @@ routed to the global logger, which forwards to the process-wide shared sink):
 | `src/core/geo3d.cpp:417`, `:510` | the legacy coefficient path finds a zero-volume crystal or an empty pyramid region |
 
 Today these reach the default `stderr` console sink that every engine binary inherits
-(`GetSharedSink`, `src/util/logger.hpp:42-51`), at the global logger's default level, which lets
+(`GetDefaultConsoleSink` attached by `GetSharedSink`, `src/util/logger.hpp:40-66`), at the global logger's default level, which lets
 warnings through. A library that removes that sink and has no callback installed would turn all
 of them into silence. Two consequences for the design:
 
@@ -650,6 +652,32 @@ of them into silence. Two consequences for the design:
 If the module is later extended to call code beyond the closed-form geometry and optics (for
 example a higher-level crystal factory), this table must be re-checked; it describes the call
 graph planned today.
+
+**As built.** `src/util/logger.hpp` names the console sink (`GetDefaultConsoleSink()`), which
+`GetSharedSink()` still attaches by default — so `liblumice`, `liblumice_testapi`, the CLI and the
+GUI are unchanged. `src/analytic/analytic_api.cpp` holds a namespace-scope object whose
+constructor removes that sink from *this library's* copy of `GetSharedSink()` during the library's
+dynamic initialisation, i.e. before `dlopen` / `LoadLibrary` returns and before any
+`LUMICE_ANALYTIC_*` call can be made; the other libraries' copies are separate statics (§2.6) and
+never see the removal. `LUMICE_ANALYTIC_SetLogCallback` attaches
+`lumice::analytic::AnalyticCallbackSink` (`src/analytic/analytic_callback_sink.hpp`) on its first
+call and logs one INFO line, "log callback installed", through the engine's global logger; that
+line is what makes the silence testable at the library boundary — it must reach the callback and
+not stderr (`test/e2e-correctness/test_analytic_log_sink.py`). The warning-level path (a
+`LOG_WARNING` silent without a callback, delivered at `LUMICE_ANALYTIC_LOG_WARNING` with its text
+intact) is pinned in-process by
+`test/unit-correctness/util/test_logger_default_console_sink_removable.cpp`, because no function
+of the library can warn yet; driving a real crystal warning through the library is the first
+module's test to write.
+
+There is **one** receiver: a second `SetLogCallback` replaces the first, and there is no per-level
+filter or fan-out. That is sufficient for a host that owns the process; several independent
+listeners in one process would need a new call, not an extra parameter.
+
+The callback sink is a second copy of `lumice::CCallbackSink` (`src/util/callback_sink.hpp`) typed
+on this header's enum, for the same reason as the error codes (§5.2, §7): the two headers share no
+type. That makes two small types kept once per header — error codes and the log callback. If a
+third such pair appears, re-weigh a type-agnostic template shared by both over another copy.
 
 ---
 
@@ -708,7 +736,7 @@ graph planned today.
 | 3 | A refractive-index convenience function (Sellmeier). Default: not exposed (§4.2). | The first-module implementation, on LI's actual need |
 | 4 | Semver, ABI and deprecation policy text; what 1.0 commits to. | The packaging and version-policy work |
 | 5 | ~~Export-list mechanism on each platform, Windows export path, header location, prefix gate in `check_policies.py`, the stripping flag.~~ **Answered** — see §2.5 (as built): `scripts/gen_export_list.py` + `lumice_apply_export_list`, `.def` on Windows, `src/include/lumice_analytic.h`, rule `analytic-symbol-scope`. | The target and export-list work (done) |
-| 6 | Callback forwarding implementation; removing the console sink only in this library. | The log-sink work |
+| 6 | ~~Callback forwarding implementation; removing the console sink only in this library.~~ **Answered** — see §6 (as built): `GetDefaultConsoleSink()` removed at load time in `src/analytic/analytic_api.cpp`, `AnalyticCallbackSink` attached by `LUMICE_ANALYTIC_SetLogCallback`. | The log-sink work (done) |
 | 7 | External consumer smoke test (C + Python ctypes, install tree only), with `symmetry_semantics` in any fixture. | The external-consumer smoke test |
 | 8 | **Does `FiberResult` need LI §9.3's diagnostics** (`jacobian_`/`step_`/`branch_`/`closure_diagnostics`, `terminal_payload`, `conventions`, `weight_observables`, `component_scope`) and the entry cross-section `A_P`? "LI reads point lists" → no, extend on demand; "LI certifies this library as its continuation backend against its §11" → yes, designed before the implementation is scheduled. | Owner, reviewing this document |
 | 9 | Surface crystal *degradation* (apex collapse, dropped face) as result data, not only as a log line (§6). | The first-module implementation |
