@@ -6,8 +6,11 @@
 
 #include "analytic/path_chain.hpp"
 #include "core/crystal.hpp"
+#include "core/def.hpp"
 
 namespace lumice::analytic {
+
+static_assert(static_cast<size_t>(kMaxFaceCount) == kMaxHits, "the face-sequence bound is the simulator's");
 
 namespace {
 

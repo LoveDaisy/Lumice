@@ -39,6 +39,11 @@ enum class Status {
 constexpr int kMaxFaceSlots = kClosedFormPyramidFaceCnt;
 static_assert(kMaxFaceSlots >= kClosedFormPrismFaceCnt, "prism slots must fit the pyramid layout");
 
+// Longest face sequence the library accepts: the simulator's own bound on the hits one crystal can
+// record (core/def.hpp kMaxHits). A longer path is one no simulated ray can take, and the bound
+// keeps every size derived from face_count far from overflow.
+constexpr int kMaxFaceCount = 64;
+
 // Tolerances of the input checks, taken from LI's reference defaults (LI
 // docs/phase1-math-contract.md, "Precision and root": unit_tolerance = rotation_tolerance = 1e-10),
 // so a direction or pose LI accepts is accepted here.
