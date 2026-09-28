@@ -282,6 +282,32 @@ struct ClosedFormPyramidResult {
   uint16_t path_tag_union;
 };
 
+// Cone slope a = (√3/4) / tan(wedge) of a pyramidal face with wedge angle `wedge_deg` (degrees), the
+// quantity ComputeClosedFormPyramid's wedge entry point hands to the evaluator. One expression,
+// instantiated for float and double; the template parameter sets the precision of the two constants
+// (√3/4 and the degree-to-radian factor), and the arithmetic is double either way:
+//   - float: math::kSqrt3_4 / math::kDegreeToRad, exactly the expression the MC path has always
+//     evaluated — bit for bit the slope every simulated crystal is built with;
+//   - double: the constants to double precision, for liblumice_analytic, whose tolerances are set in
+//     double (doc/analytic-api.md section 5.4). The float constants alone put a ~1e-8 relative error
+//     on the slope, four orders above what that library must meet.
+// No legality gate here: the caller decides whether a cone exists (0.1..89.9 degrees, height > 0).
+template <typename Real>
+double ClosedFormConeSlopeFromWedgeDeg(Real wedge_deg);
+
+// Plane coefficients (a, b, c, d) of face slot `slot` of the hex-crystal family, in double, so that
+// the bounded half-space is a·x + b·y + c·z + d ≤ 0 — the single source of the per-slot formula.
+// Slot layout is the pyramid's (slots 0..7 coincide with the prism's). `a1` / `a2` are the upper /
+// lower cone slopes (read only for slots 8..13 / 14..19), `h2_2` half the prism-band height and
+// `dist_i` the face distance of the slot's direction (both read only for d; basal d is not a
+// function of these and comes back 0, the pyramid evaluator fills it after solving the basal cut).
+// (a, b, c) is an outward normal direction, not unit length.
+//
+// ComputeClosedFormPyramid rounds these to float for its plane_coef and normalises its
+// face_normal FROM the rounded values — its historical order, kept so simulated crystals do not
+// move by a bit. liblumice_analytic normalises the unrounded (a, b, c) instead.
+void ClosedFormHexFacePlane(int slot, double a1, double a2, double h2_2, double dist_i, double out[4]);
+
 // Evaluate the closed-form pyramid geometry — direct-wedge entry point.
 // Mirrors CreatePyramidMesh(upper_alpha, lower_alpha, h1, h2, h3, dist)
 // (geo3d.cpp:563). alpha is in degrees; the legal range [0.1°, 89.9°] matches
