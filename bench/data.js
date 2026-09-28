@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1790564453907,
+  "lastUpdate": 1790564456291,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9524,50 +9524,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "ae46f7c283910d4fbb4e7a0f2949aef02e5f87df",
-          "message": "Merge pull request #338 from LoveDaisy/feat/gui-display-rendering-regroup\n\nfix(gui): regroup the Display Rendering rows and pair the ground swatch with the mode",
-          "timestamp": "2026-09-10T14:08:18+08:00",
-          "tree_id": "eeaec146eaa0226974bb83e95e4e1b36f34970a9",
-          "url": "https://github.com/LoveDaisy/ice_halo_sim/commit/ae46f7c283910d4fbb4e7a0f2949aef02e5f87df"
-        },
-        "date": 1789021108360,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 93.4,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 99.7,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 94.3,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 89.5,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "3ad57411dc16f516b6785967efaba5266c88e7b8",
           "message": "Merge pull request #339 from LoveDaisy/feat/test-capi-lib\n\ntest: liblumice_testapi, a test-only export surface beside the product C API",
           "timestamp": "2026-09-10T16:59:47+08:00",
@@ -13867,6 +13823,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 94.6,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "1455e6aeb0201ab8b80fe2ef34ff16cf1ae2ed30",
+          "message": "Merge pull request #437 from LoveDaisy/chore/symmetry-two-meanings-cross-repo-docs\n\ndocs: state which symmetry meaning each repo's computation uses",
+          "timestamp": "2026-09-28T10:49:54+08:00",
+          "tree_id": "07236666f17979fcb194db2933d7e276e6f5c16e",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/1455e6aeb0201ab8b80fe2ef34ff16cf1ae2ed30"
+        },
+        "date": 1790564455658,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 95.2,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 99.9,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 98.7,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 93.8,
             "unit": "%"
           }
         ]
