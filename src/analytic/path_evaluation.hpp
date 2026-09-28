@@ -63,11 +63,25 @@ struct FaceNormalTable {
   int SlotOf(int fn) const;
 };
 
-// Stage 1. On kOk, `out` holds the crystal's present faces. On any other status `out` is empty.
-// Fields unused by `kind` must be zero (doc/analytic-api.md section 4.1); heights fold to their
-// absolute value, as the simulator folds them (simulator.cpp SamplePrismShapeScalars /
-// SamplePyramidShapeScalars).
-Status BuildFaceNormals(const LUMICE_ANALYTIC_Crystal& crystal, FaceNormalTable* out);
+// Upper bound on one face polygon's corners (the engine's CrystalGeom layout).
+constexpr int kMaxFaceCorners = 12;
+
+// Body-frame corner polygons of one crystal's present faces, by closed-form slot: the engine's float
+// closed-form corners, promoted to double. Only the finite-crystal entry measure reads them
+// (entry_measure.hpp); the optics read FaceNormalTable. `min_edge_length` is the shortest polygon
+// edge over every present face.
+struct FacePolygonTable {
+  int corner_cnt[kMaxFaceSlots]{};
+  double corner[kMaxFaceSlots][kMaxFaceCorners][3]{};
+  double min_edge_length = 0.0;
+};
+
+// Stage 1. On kOk, `out` holds the crystal's present faces and, when `polygons` is not null, their
+// corner polygons. On any other status both are empty. Fields unused by `kind` must be zero
+// (doc/analytic-api.md section 4.1); heights fold to their absolute value, as the simulator folds
+// them (simulator.cpp SamplePrismShapeScalars / SamplePyramidShapeScalars).
+Status BuildFaceNormals(const LUMICE_ANALYTIC_Crystal& crystal, FaceNormalTable* out,
+                        FacePolygonTable* polygons = nullptr);
 
 // Face numbers -> slots. kInvalidValue when face_count < 2 or any number is not a present face of
 // `table`. Consecutive repeats are not rejected: LI's evaluator accepts them, and the geometry

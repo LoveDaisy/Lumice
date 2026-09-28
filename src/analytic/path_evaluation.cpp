@@ -43,8 +43,11 @@ int FaceNormalTable::SlotOf(int fn) const {
   return -1;
 }
 
-Status BuildFaceNormals(const LUMICE_ANALYTIC_Crystal& crystal, FaceNormalTable* out) {
+Status BuildFaceNormals(const LUMICE_ANALYTIC_Crystal& crystal, FaceNormalTable* out, FacePolygonTable* polygons) {
   *out = FaceNormalTable{};
+  if (polygons != nullptr) {
+    *polygons = FacePolygonTable{};
+  }
   const double scalars[] = { crystal.height,           crystal.upper_h,          crystal.lower_h,
                              crystal.upper_wedge_deg,  crystal.lower_wedge_deg,  crystal.face_distance[0],
                              crystal.face_distance[1], crystal.face_distance[2], crystal.face_distance[3],
@@ -102,6 +105,29 @@ Status BuildFaceNormals(const LUMICE_ANALYTIC_Crystal& crystal, FaceNormalTable*
     for (int k = 0; k < 3; k++) {
       out->normal[s][k] = plane[k] / mag;
     }
+  }
+  if (polygons != nullptr) {
+    static_assert(kMaxFaceCorners == kCrystalGeomMaxVtxPerFace, "one face polygon must fit the engine's layout");
+    double min_edge = std::numeric_limits<double>::infinity();
+    for (int s = 0; s < g.face_cnt; s++) {
+      if (!g.face_present[s]) {
+        continue;
+      }
+      const int cnt = g.face_vtx_cnt[s];
+      polygons->corner_cnt[s] = cnt;
+      for (int k = 0; k < cnt; k++) {
+        for (int c = 0; c < 3; c++) {
+          polygons->corner[s][k][c] = g.face_vtx[(s * kCrystalGeomMaxVtxPerFace + k) * 3 + c];
+        }
+      }
+      for (int k = 0; k < cnt; k++) {
+        const double* p = polygons->corner[s][k];
+        const double* q = polygons->corner[s][(k + 1) % cnt];
+        const double e[3] = { q[0] - p[0], q[1] - p[1], q[2] - p[2] };
+        min_edge = std::fmin(min_edge, std::sqrt(Dot3(e, e)));
+      }
+    }
+    polygons->min_edge_length = min_edge;
   }
   return Status::kOk;
 }

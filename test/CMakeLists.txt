@@ -250,11 +250,13 @@ add_executable(unit_correctness_test
   "${PROJ_SRC_DIR}/analytic/path_evaluation.cpp"
   "${PROJ_SRC_DIR}/analytic/fiber_continuation.cpp"
   "${PROJ_SRC_DIR}/analytic/path_fiber.cpp"
+  "${PROJ_SRC_DIR}/analytic/entry_measure.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/analytic/test_path_evaluation.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/analytic/test_jet.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/analytic/test_so3.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/analytic/test_fiber_continuation.cpp"
-  "${PROJ_TEST_DIR}/unit-correctness/analytic/test_path_fiber.cpp")
+  "${PROJ_TEST_DIR}/unit-correctness/analytic/test_path_fiber.cpp"
+  "${PROJ_TEST_DIR}/unit-correctness/analytic/test_entry_measure.cpp")
 target_include_directories(unit_correctness_test
   PRIVATE ${PROJ_TEST_DIR})
 target_link_libraries(unit_correctness_test
