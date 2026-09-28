@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1790594370865,
+  "lastUpdate": 1790594373042,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9524,50 +9524,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "37b141504a40cc0be937f0d5bf071fef24759171",
-          "message": "Merge pull request #341 from LoveDaisy/test/defaults-panel-refs-reshoot\n\ntest(gui): pin the wedge add row in every preset scene, and re-shoot the two that were not",
-          "timestamp": "2026-09-10T18:49:54+08:00",
-          "tree_id": "42fe951d730ad0cd31b0d30b5c6fc14fa0ec2dc1",
-          "url": "https://github.com/LoveDaisy/ice_halo_sim/commit/37b141504a40cc0be937f0d5bf071fef24759171"
-        },
-        "date": 1789038034008,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 75.9,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 99.7,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 93.9,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 90.1,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "f860acc46471dee85057842a8611895cea64b88d",
           "message": "Merge pull request #343 from LoveDaisy/feat/gui-print-mode-label-ink\n\nfix(gui): draw overlay label text as ink under the print tone",
           "timestamp": "2026-09-10T20:57:53+08:00",
@@ -13867,6 +13823,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 94,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "01b9dd59561fea636f6f0a888b375d2e42e95374",
+          "message": "Merge pull request #442 from LoveDaisy/chore/release-4.7.1\n\nchore(release): cut 4.7.1",
+          "timestamp": "2026-09-28T19:04:03+08:00",
+          "tree_id": "67bb9062b1e0b8474469bb9b06c73e3f3b84ce30",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/01b9dd59561fea636f6f0a888b375d2e42e95374"
+        },
+        "date": 1790594372494,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 94.7,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 99.6,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 97.8,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 94.1,
             "unit": "%"
           }
         ]
