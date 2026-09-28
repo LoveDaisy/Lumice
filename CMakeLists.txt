@@ -1088,7 +1088,8 @@ if(BUILD_SHARED_LIBS AND NOT LUMICE_CUDA_ENABLED)
     "${PROJ_SRC_DIR}/analytic/fiber_continuation.cpp"
     "${PROJ_SRC_DIR}/analytic/path_evaluation.cpp"
     "${PROJ_SRC_DIR}/analytic/path_fiber.cpp"
-    "${PROJ_SRC_DIR}/analytic/entry_measure.cpp")
+    "${PROJ_SRC_DIR}/analytic/entry_measure.cpp"
+    "${PROJ_SRC_DIR}/analytic/discovery.cpp")
   target_link_libraries(lumice_analytic PRIVATE lumice_obj)
   if(NOT MSVC)
     target_compile_options(lumice_analytic PRIVATE
