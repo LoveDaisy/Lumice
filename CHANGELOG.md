@@ -133,6 +133,69 @@ it was thinking of and false of the C struct beside it.
 
 </details>
 
+## [4.7.1] - 2026-09-28
+
+### Added
+- **C API: `LUMICE_API_VERSION` 446 → 449** (#429, #430, #436). `LUMICE_GetCrystalSymmetry` /
+  `LUMICE_CrystalSymmetry` (v4.47) is a pure append: which of the P/B/D symmetry elements a
+  crystal's *shape* actually has (a prism with unequal alternating face distances has a
+  three-fold axis, not a six-fold one), for shape-aware hints in the GUI. **ABI** (v4.48):
+  `LUMICE_CrystalSymmetry` gains trailing `p_effective` / `b_effective` (sizeof 16 → 24) —
+  appended after `d_effective`, so no existing field moves; the struct itself was introduced
+  this same cycle by v4.47 above, so no 4.7.0 consumer has ever seen it, and this is not
+  written as a Breaking change. Added alongside: `LUMICE_CouldCrystalHaveFace` (can a filter
+  naming this face ever match through it, given the crystal's shape) and `LUMICE_IsPApplicable`
+  / `LUMICE_IsBApplicable`, the orientation-ensemble counterparts of the existing
+  `LUMICE_IsDApplicable`. **v4.49**: `LUMICE_CouldFilterMatchFace` (the face check above,
+  combined with a filter's own P/B/D) and `LUMICE_ExpandRaypathClass` with its
+  `LUMICE_SYMMETRY_SEMANTICS_*` / `LUMICE_MAX_RAYPATH_CLASS_MEMBERS` constants — the one way to
+  tell whether an analysis row is also a label class, which **Exclude this raypath** uses to
+  write a filter that removes exactly that row's members.
+
+### Changed
+- **The raypath-analysis list now groups rows by physical symmetry class; a filter's P/B/D
+  keeps its previous meaning** (#429, #430, #431, #436). The analysis list used to assume every
+  prism and pyramid has full six-fold symmetry regardless of the configured shape or orientation
+  distribution — on a prism with `face_distance: [1, d, 1, d, 1, d]` (`d != 1`), which really has
+  only a three-fold axis, P merged a near-face path with a far-face path that differ in energy by
+  2.4×. The list now intersects P/B/D with what the crystal's shape (`LUMICE_GetCrystalSymmetry`)
+  and its orientation ensemble (`LUMICE_IsPApplicable` / `LUMICE_IsBApplicable`) actually admit,
+  so a row that used to merge such paths can now split into several; the filter editor shows a
+  hint beside the P/B/D checkboxes when a tick would merge physically inequivalent paths on the
+  bound crystal (e.g. a Parry arc's lit 3-5 with its dark 4-6). **A filter's own P/B/D matching
+  behavior is unchanged from v4.7.0** — it stays a label equivalence (P: any 60° face relabeling;
+  B: 1↔2 and upper/lower cone swap) whatever the crystal's shape or orientation, exactly as
+  before this release; only the analysis list's grouping and the editor's hints are new. See
+  `doc/raypath-symmetry.md` §1.1/§2a for the two meanings of the same P/B/D bits.
+- **`sim.ray_allocation`'s Settings editor is a two-option combo instead of a bare checkbox**
+  (#434). The row's label was only the key path, so nothing said whether checked meant adaptive
+  or proportional; it is now an explicit `adaptive` / `proportional` combo. The underlying field
+  and the `.lmc` / JSON / C API wire formats are unchanged.
+- **Channel B−R display mode's contrast is 4× stronger** (#439). `gray = clamp(0.5 + 2·(B−R), 0,
+  1)` on the displayed sRGB channels, up from `0.5 + 0.5·(B−R)`, matching a researcher's
+  Photoshop channel-mixer workflow (measured slope 1.998 on their reference image; this project's
+  formula now fits at 1.941, was 0.484). Purely a diagnostic display transform — no ABI or struct
+  change, no config key change — but a saved `channel_br` screenshot or a config with
+  `display_mode: channel_br` now renders visibly steeper: `|B−R| >= 0.25` clips to pure
+  black/white where it did not before.
+
+### Fixed
+- **The `adaptive` ray-allocation mode no longer starves a filtered arc that is small in total
+  output but visually concentrated** (#435). Online Neyman allocation could drive a filtered
+  entry's ray share so low that its one visible arc turned visibly noisier than the rest of the
+  image — measured on a Parry-arc scene at 2.5× the proportional-mode noise on that arc. Each
+  entry's allocation now floors at half its proportional share (`q_i >= p_norm_i / 2`); the
+  Parry arc above drops to 0.455× its previous noise. This is a pre-existing v4.7.0 behavior, not
+  a regression introduced by this release.
+- **Duplicating a crystal card that carries a filter no longer blanks the whole preview after a
+  finished run** (#440). Any edit that structurally changes the committed scene (Duplicate on a
+  filtered entry is one way to trigger it) used to zero the displayed frame's intensity
+  immediately, on the assumption a new render would follow within its live-edit debounce window —
+  which does not hold once a run has already finished, so the preview stayed black until the next
+  **Run**. The old frame now stays on screen until the new one actually replaces it; the
+  "unsaved changes" cue is the existing top-bar **Modified** indicator and **Revert**, not a
+  blanked preview.
+
 ## [4.7.0] - 2026-09-26
 
 ### Added
@@ -2667,6 +2730,7 @@ it was thinking of and false of the C struct beside it.
 - Basic ice crystal halo simulation
 - Support for common crystal types (hexagonal prism, plate, column)
 
+[4.7.1]: https://github.com/LoveDaisy/ice_halo_sim/compare/v4.7.0...v4.7.1
 [4.7.0]: https://github.com/LoveDaisy/ice_halo_sim/compare/v4.6.1...v4.7.0
 [4.6.1]: https://github.com/LoveDaisy/ice_halo_sim/compare/v4.6.0...v4.6.1
 [4.6.0]: https://github.com/LoveDaisy/ice_halo_sim/compare/v4.5.1...v4.6.0
