@@ -491,9 +491,12 @@ LUMICE_ANALYTIC_ErrorCode LUMICE_ANALYTIC_TraceFiber(
 /* One crystal, one options block, `count` independent problems (typically one path swept over
  * many target directions). out_results: caller-allocated array of `count`; each element is filled
  * and released independently. A per-problem failure is that element's status/reason; the return
- * code reports only call-level errors (NULL crystal, NULL problems, count < 0, an invalid options
- * block). On a call-level error every element of out_results is zero-filled, so Release* is safe
- * to call on all `count` elements regardless of which error path was taken. */
+ * code reports only call-level errors. `count == 0` is a legal empty batch: a no-op success that
+ * touches nothing. `count < 0` is a call-level error and returns immediately without touching
+ * out_results at all -- its writable length is unknown, so there is nothing safe to zero-fill.
+ * For every other call-level error (NULL crystal, NULL problems, an invalid options block, with
+ * `count >= 0`), every element of out_results is zero-filled, so Release* is safe to call on all
+ * `count` elements regardless of which error path was taken. */
 LUMICE_ANALYTIC_ErrorCode LUMICE_ANALYTIC_TraceFiberBatch(
     const LUMICE_ANALYTIC_Crystal* crystal,
     const LUMICE_ANALYTIC_FiberProblem* problems, int count,
@@ -690,4 +693,5 @@ graph planned today.
 | 10 | Parallelism inside `TraceFiberBatch` (v0: none; caller parallelises). Revisit only with a measured batch where binding-side threading is the bottleneck. | The first-module implementation |
 | 11 | Re-read LI `docs/phase1-math-contract.md` §9 before implementing: this draft mirrors it as of 2026-09-28, and LI's §12 lists open items that may move it. LI's §9.1 also says problem construction "MUST not import or invoke Lumice" — a rule LI revises on its side when it adopts this library. | The first-module implementation (and LI, on adoption) |
 | 12 | Whether `PathEvaluation`/`FiberResult` should carry a `struct_size`/version field (Win32 `cbSize`, Vulkan `sType`+`pNext` are existing patterns) so a future field addition would not need an `LUMICE_ANALYTIC_API_VERSION` bump (§8). Until decided, appending a field to either struct is an incompatible change. | The packaging and version-policy work |
-| 12 | Verify no thread-unsafe static cache in the called geometry/optics code (§5.3). | The first-module implementation |
+| 13 | Verify no thread-unsafe static cache in the called geometry/optics code (§5.3). | The first-module implementation |
+| 14 | An optional batch-mode `FiberResult` variant that also returns per-point segment directions and interface transmittances (today only `EvaluatePath` returns those, §4.3), for a caller with many accepted poses who would otherwise pay one ctypes call per point to get them — in tension with §4.3's own binding-overhead concern. | The first-module implementation |
