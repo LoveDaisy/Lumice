@@ -506,6 +506,70 @@ TEST_F(PathEvaluationTest, AgreesWithTheSimulatorsHitSurfaceChain) {
 }
 
 // ---------------------------------------------------------------------------------------------
+// Regression pins from LI's float64 evaluator (Lumice Integral rev bfbd042,
+// parity_export.evaluate_path, incident (0.36, -0.48, -0.8), n = 1.31), taken once while this
+// evaluator was written. Not the parity suite — LI's exported fixtures are, and they supersede
+// these — but a fixed point that keeps a later edit from drifting away from LI unnoticed. At the time
+// they were taken, 24000 random poses over six (crystal, path) pairs agreed with LI to within 0.054
+// of LI's per-pose kinematic_atol (1e-12, widened near a Snell boundary), with no validity mismatch.
+// ---------------------------------------------------------------------------------------------
+
+struct LiPin {
+  const char* name;
+  LUMICE_ANALYTIC_Crystal crystal;
+  std::vector<int> faces;
+  std::array<double, 9> pose;
+  std::array<double, 3> outgoing;
+  double fresnel;
+};
+
+TEST_F(PathEvaluationTest, MatchesLiReferenceValues) {
+  auto irregular = Pyramid(0.4, 0.3, 0.7, 20.0, 61.7);
+  const double fd[6] = { 1.2, 0.7, 1.0, 0.4, 1.5, 0.9 };
+  std::memcpy(irregular.face_distance, fd, sizeof(fd));
+  const LiPin pins[] = {
+    { "prism 3-5",
+      Prism(1.0),
+      { 3, 5 },
+      { 0.0663720309507386, 0.9215718938337404, -0.38249182736781095, 0.5651461671302535, 0.2812000596610774,
+        0.775587735994188, 0.8223165833700897, -0.2676411234139845, -0.5021590044719326 },
+      { -0.03718867491292033, -0.6495809591238338, -0.759382367455277 },
+      0.9231796045844576 },
+    { "prism 3-5-6-7",
+      Prism(0.3),
+      { 3, 5, 6, 7 },
+      { -0.5408000095092916, -0.7297493844277124, -0.41833143037802545, 0.6020974578775274, 0.011451332692545946,
+        -0.7983404776140213, 0.5873789244875653, -0.6836188286661942, 0.4331873684225933 },
+      { 0.1617996779166292, 0.5147776677536923, 0.8419173457104585 },
+      0.175319657258382 },
+    { "pyramid 13-15-26-28",
+      Pyramid(0.5, 0.5, 0.5, 28.0, 28.0),
+      { 13, 15, 26, 28 },
+      { -0.23820952940492185, -0.15637893774929476, 0.9585415212337375, 0.09694674647588361, -0.9858514037998921,
+        -0.1367418662060837, 0.9663630520919279, 0.06035426624675297, 0.24999962819450278 },
+      { 0.08242049880135076, 0.6747540528360012, 0.7334260900450198 },
+      0.6771144887635017 },
+    { "irregular pyramid 3-1-26",
+      irregular,
+      { 3, 1, 26 },
+      { 0.664724037991075, -0.009743898649344607, 0.7470254411704804, 0.7212284735792927, -0.25243746206766693,
+        -0.6450618703995133, 0.19486262395678483, 0.9675641499063233, -0.1607736719762602 },
+      { -0.6891715858716958, -0.1151825467081706, -0.7153848657617179 },
+      0.7723306755566923 },
+  };
+  for (const auto& pin : pins) {
+    SCOPED_TRACE(pin.name);
+    Use(pin.crystal);
+    const auto e = Eval(pin.faces, kSun, pin.pose.data());
+    EXPECT_TRUE(e.valid);
+    for (int i = 0; i < 3; i++) {
+      EXPECT_NEAR(e.out[i], pin.outgoing[i], 1e-12);
+    }
+    EXPECT_NEAR(e.fresnel, pin.fresnel, 1e-12);
+  }
+}
+
+// ---------------------------------------------------------------------------------------------
 // Input validation
 // ---------------------------------------------------------------------------------------------
 
