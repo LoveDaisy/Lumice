@@ -9,6 +9,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstring>
@@ -16,6 +17,8 @@
 #include <thread>
 #include <vector>
 
+#include "analytic/jet.hpp"
+#include "analytic/path_chain.hpp"
 #include "analytic/path_evaluation.hpp"
 #include "core/crystal.hpp"
 #include "core/optics.hpp"
@@ -567,6 +570,198 @@ TEST_F(PathEvaluationTest, MatchesLiReferenceValues) {
     }
     EXPECT_NEAR(e.fresnel, pin.fresnel, 1e-12);
   }
+}
+
+// ---------------------------------------------------------------------------------------------
+// The chain's domain report (path_chain.hpp): what the fiber continuation reads as the event kind.
+// ---------------------------------------------------------------------------------------------
+
+// LI's _path_domain gate walk restated from the shape description (ExpectedNormal) rather than from
+// the kernel's table: margins in validity_margin_names order up to the failing gate, and the first
+// failure — non-finite before cosine before Snell discriminant at each interface.
+struct OracleDomain {
+  std::vector<double> margins;
+  ChainFailure failure = ChainFailure::kNone;
+};
+
+OracleDomain OracleGateWalk(const std::vector<int>& faces, const double* incident, const double* r) {
+  auto world = [r](int fn) {
+    const auto b = ExpectedNormal(fn, 0, 0);
+    std::array<double, 3> w{};
+    for (int i = 0; i < 3; i++) {
+      w[i] = r[i * 3 + 0] * b[0] + r[i * 3 + 1] * b[1] + r[i * 3 + 2] * b[2];
+    }
+    return w;
+  };
+  OracleDomain o;
+  auto fail = [&o](ChainFailure f) {
+    o.failure = f;
+    return o;
+  };
+  auto n = world(faces.front());
+  const double rr = 1.0 / kN;
+  const double c = -Dot(n.data(), incident);
+  const double disc = 1.0 - rr * rr * (1.0 - c * c);
+  o.margins = { c, disc };
+  if (!std::isfinite(c) || !std::isfinite(disc)) {
+    return fail(ChainFailure::kNonFinite);
+  }
+  if (c <= 0) {
+    return fail(ChainFailure::kPathInfeasible);
+  }
+  if (disc <= 0) {
+    return fail(ChainFailure::kTirBoundary);
+  }
+  double d[3];
+  for (int i = 0; i < 3; i++) {
+    d[i] = rr * incident[i] + (rr * c - std::sqrt(disc)) * n[i];
+  }
+  for (size_t k = 1; k + 1 < faces.size(); k++) {
+    n = world(faces[k]);
+    const double ci = Dot(n.data(), d);
+    o.margins.push_back(ci);
+    if (!std::isfinite(ci)) {
+      return fail(ChainFailure::kNonFinite);
+    }
+    if (ci <= 0) {
+      return fail(ChainFailure::kPathInfeasible);
+    }
+    for (int i = 0; i < 3; i++) {
+      d[i] -= 2 * ci * n[i];
+    }
+  }
+  n = world(faces.back());
+  const double ce = Dot(n.data(), d);
+  const double de = 1.0 - kN * kN * (1.0 - ce * ce);
+  o.margins.push_back(ce);
+  o.margins.push_back(de);
+  if (!std::isfinite(ce) || !std::isfinite(de)) {
+    return fail(ChainFailure::kNonFinite);
+  }
+  if (ce <= 0) {
+    return fail(ChainFailure::kPathInfeasible);
+  }
+  if (de <= 0) {
+    return fail(ChainFailure::kTirBoundary);
+  }
+  return o;
+}
+
+TEST_F(PathEvaluationTest, ChainReportsLiGateOrderMarginsAndFirstFailure) {
+  Use(Prism(0.6));
+  const std::vector<std::vector<int>> paths{ { 3, 5 }, { 3, 1, 5 }, { 3, 5, 6, 7 } };
+  std::mt19937_64 rng(29);
+  int seen[4] = { 0, 0, 0, 0 };
+  for (int t = 0; t < 6000; t++) {
+    const auto r = RandomRotation(rng);
+    for (const auto& faces : paths) {
+      const auto oracle = OracleGateWalk(faces, kSun, r.data());
+      bool near_zero = false;
+      for (double m : oracle.margins) {
+        near_zero = near_zero || std::fabs(m) < 1e-12;
+      }
+      if (near_zero) {
+        continue;  // a knife-edge gate may round either way between the two normal derivations
+      }
+      const int fc = static_cast<int>(faces.size());
+      std::vector<int> slots(faces.size());
+      if (ResolveFaceSequence(table_, faces.data(), fc, slots.data()) != Status::kOk) {
+        ADD_FAILURE() << "unresolved path";
+        continue;
+      }
+      std::vector<double> margins(faces.size() + 2, -99.0);
+      ChainDomain domain;
+      domain.margins = margins.data();
+      double out[3];
+      const bool valid = TracePathChain<double>(table_, slots.data(), fc, kN, kSun, r.data(), out, nullptr, &domain);
+      EXPECT_EQ(valid, oracle.failure == ChainFailure::kNone);
+      if (domain.failure != oracle.failure || domain.margin_count != static_cast<int>(oracle.margins.size())) {
+        ADD_FAILURE() << "failure " << static_cast<int>(domain.failure) << " vs oracle "
+                      << static_cast<int>(oracle.failure) << ", margins " << domain.margin_count << " vs "
+                      << oracle.margins.size();
+        continue;
+      }
+      for (int i = 0; i < domain.margin_count; i++) {
+        EXPECT_NEAR(margins[i], oracle.margins[i], 1e-13);
+      }
+      if (!valid) {
+        // The failing margin is one of those recorded (an interface records its cosine and Snell
+        // discriminant together, so it is not always the last), and it is not positive.
+        EXPECT_LE(domain.failure_margin, 0.0);
+        EXPECT_NE(std::find(margins.begin(), margins.begin() + domain.margin_count, domain.failure_margin),
+                  margins.begin() + domain.margin_count);
+      }
+      seen[static_cast<int>(oracle.failure)]++;
+    }
+  }
+  // Every class but non-finite occurs on random poses; each has enough samples to mean something.
+  EXPECT_GT(seen[static_cast<int>(ChainFailure::kNone)], 100);
+  EXPECT_GT(seen[static_cast<int>(ChainFailure::kPathInfeasible)], 100);
+  EXPECT_GT(seen[static_cast<int>(ChainFailure::kTirBoundary)], 100);
+}
+
+TEST_F(PathEvaluationTest, ChainReportsNonFiniteBeforeAnyGate) {
+  Use(Prism(1.0));
+  const int slots[2] = { table_.SlotOf(3), table_.SlotOf(5) };
+  double pose[9] = { 1, 0, 0, 0, 1, 0, 0, 0, 1 };
+  pose[0] = std::nan("");
+  double margins[4];
+  ChainDomain domain;
+  domain.margins = margins;
+  double out[3];
+  EXPECT_FALSE(TracePathChain<double>(table_, slots, 2, kN, kSun, pose, out, nullptr, &domain));
+  EXPECT_EQ(domain.failure, ChainFailure::kNonFinite);
+  EXPECT_EQ(domain.margin_count, 2);
+  EXPECT_TRUE(std::isnan(domain.failure_margin));
+}
+
+// EvaluatePath does not ask for the domain report; asking for it changes nothing it returns, and a
+// Jet<3> run of the same chain has the double run's values (to rounding: the double one may fuse
+// a multiply-add, see jet.hpp) — so the continuation's direction and its derivative are the
+// direction EvaluatePath reports.
+TEST_F(PathEvaluationTest, DomainReportAndJetRunLeaveTheDirectionUnchanged) {
+  Use(Pyramid(1.0, 0.3, 0.3, 28.0, 28.0));
+  const std::vector<std::vector<int>> paths{ { 3, 5 }, { 13, 15, 26, 28 }, { 3, 1, 5 } };
+  std::mt19937_64 rng(31);
+  int valid_count = 0;
+  for (int t = 0; t < 3000; t++) {
+    const auto r = RandomRotation(rng);
+    for (const auto& faces : paths) {
+      const auto e = Eval(faces, kSun, r.data());
+      const int fc = static_cast<int>(faces.size());
+      std::vector<int> slots(faces.size());
+      if (ResolveFaceSequence(table_, faces.data(), fc, slots.data()) != Status::kOk) {
+        ADD_FAILURE() << "unresolved path";
+        continue;
+      }
+      std::vector<double> margins(faces.size() + 2);
+      ChainDomain domain;
+      domain.margins = margins.data();
+      double out[3];
+      const bool valid = TracePathChain<double>(table_, slots.data(), fc, kN, kSun, r.data(), out, nullptr, &domain);
+      EXPECT_EQ(valid, e.valid);
+      if (!valid || !e.valid) {
+        continue;
+      }
+      valid_count++;
+      Jet<3> pose_jet[9];
+      for (int i = 0; i < 9; i++) {
+        pose_jet[i] = Jet<3>(r[i]);
+      }
+      Jet<3> out_jet[3];
+      if (!TracePathChain<Jet<3>>(table_, slots.data(), fc, kN, kSun, pose_jet, out_jet, nullptr, nullptr)) {
+        ADD_FAILURE() << "the Jet run took another branch";
+        continue;
+      }
+      for (int i = 0; i < 3; i++) {
+        EXPECT_EQ(out[i], e.out[i]);
+        // Measured up to ~5e-15 on this sample (FMA in the double build, amplified near a Snell
+        // boundary where the square root is steep); LI's kinematic_atol is 1e-12.
+        EXPECT_NEAR(out_jet[i].a, e.out[i], 1e-13);
+      }
+    }
+  }
+  EXPECT_GT(valid_count, 300);
 }
 
 // ---------------------------------------------------------------------------------------------

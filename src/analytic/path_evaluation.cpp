@@ -1,10 +1,11 @@
 #include "analytic/path_evaluation.hpp"
 
+#include <cassert>
 #include <cmath>
 #include <limits>
 
+#include "analytic/path_chain.hpp"
 #include "core/crystal.hpp"
-#include "core/shared/optics_shared.h"
 
 namespace lumice::analytic {
 
@@ -26,30 +27,6 @@ bool FitsFloat(double v) {
 
 double Dot3(const double a[3], const double b[3]) {
   return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-}
-
-// v_W = R v_B with R row-major.
-void BodyToWorld(const double r[9], const double v[3], double out[3]) {
-  for (int i = 0; i < 3; i++) {
-    out[i] = r[i * 3 + 0] * v[0] + r[i * 3 + 1] * v[1] + r[i * 3 + 2] * v[2];
-  }
-}
-
-// v_B = R^T v_W.
-void WorldToBody(const double r[9], const double v[3], double out[3]) {
-  for (int i = 0; i < 3; i++) {
-    out[i] = r[0 * 3 + i] * v[0] + r[1 * 3 + i] * v[1] + r[2 * 3 + i] * v[2];
-  }
-}
-
-// Unpolarised reflectance of an interface in HitSurface's variables: `cos_i` the incidence cosine
-// (> 0), `rr` the relative index along the ray (n_incident / n_transmitted) and `discriminant` =
-// 1 - rr^2 (1 - cos_i^2) = cos_t^2. GetReflectRatio's `delta` is discriminant / cos_i^2
-// (optics.cpp HitSurface), clamped at 0 as HitSurface clamps it, which makes a total reflection
-// R = 1 exactly.
-double Reflectance(double cos_i, double rr, double discriminant) {
-  const double delta = discriminant / (cos_i * cos_i);
-  return lm_optics::GetReflectRatioT<double>(delta > 0.0 ? delta : 0.0, rr);
 }
 
 }  // namespace
@@ -112,6 +89,10 @@ Status BuildFaceNormals(const LUMICE_ANALYTIC_Crystal& crystal, FaceNormalTable*
     if (!g.face_present[s]) {
       continue;
     }
+    // Coupled derivations: the simulator's prism takes these slots' normals from the kHexFace*
+    // direction tables (geo3d_closedform.cpp), not from this plane table. The two agree to within
+    // an ulp, and test_path_evaluation.cpp holds the result to the star directions at 1e-15 — a
+    // change to either derivation must keep that test green (doc/analytic-api.md section 5.4).
     double plane[4];
     ClosedFormHexFacePlane(s, a1, a2, 0.0, 0.0, plane);
     const double mag = std::sqrt(plane[0] * plane[0] + plane[1] * plane[1] + plane[2] * plane[2]);
@@ -163,80 +144,24 @@ bool ValidateRotation(const double r[9]) {
 
 bool EvaluatePath(const FaceNormalTable& table, const int* slots, int slot_count, double refractive_index,
                   const double incident_direction[3], const double pose[9], PathOutputs* out) {
-  const double n = refractive_index;
-  const int last = slot_count - 1;
-  double* seg = out->segment_directions;
-  double* trans = out->interface_transmittances;
-  double fresnel = 1.0;
-
-  // Entry: refraction into the crystal, normal toward the incident medium is the outward normal.
-  // Margin expressions are LI's _path_domain / refract_smooth, term for term.
-  double normal[3];
-  BodyToWorld(pose, table.normal[slots[0]], normal);
-  const double entry_rr = 1.0 / n;
-  const double entry_cos = -Dot3(normal, incident_direction);
-  const double entry_disc = 1.0 - entry_rr * entry_rr * (1.0 - entry_cos * entry_cos);
-  bool valid = entry_cos > 0.0 && entry_disc > 0.0;  // also false on NaN
-
-  double dir[3];
-  if (valid) {
-    WorldToBody(pose, incident_direction, seg);
-    const double k = entry_rr * entry_cos - std::sqrt(entry_disc);
-    for (int i = 0; i < 3; i++) {
-      dir[i] = entry_rr * incident_direction[i] + k * normal[i];
-    }
-    WorldToBody(pose, dir, seg + 3);
-    trans[0] = 1.0 - Reflectance(entry_cos, entry_rr, entry_disc);
-    fresnel *= trans[0];
+  assert(slot_count >= 2);
+  for (int k = 0; k < slot_count; k++) {
+    assert(slots[k] >= 0 && slots[k] < table.slot_cnt && table.present[slots[k]]);
   }
-
-  // Internal reflections: the ray must reach each face from inside; TIR or not, it reflects.
-  for (int k = 1; valid && k < last; k++) {
-    BodyToWorld(pose, table.normal[slots[k]], normal);
-    const double cos_i = Dot3(normal, dir);
-    const double disc = 1.0 - n * n * (1.0 - cos_i * cos_i);  // = -(LI's internal TIR discriminant)
-    if (!(cos_i > 0.0) || !std::isfinite(disc)) {
-      valid = false;
-      break;
-    }
-    for (int i = 0; i < 3; i++) {
-      dir[i] -= 2.0 * cos_i * normal[i];
-    }
-    WorldToBody(pose, dir, seg + 3 * (k + 1));
-    trans[k] = Reflectance(cos_i, n, disc);
-    fresnel *= trans[k];
-  }
-
-  // Exit: refraction out of the crystal, normal toward the incident (inner) medium is -outward.
-  if (valid) {
-    BodyToWorld(pose, table.normal[slots[last]], normal);
-    const double exit_cos = Dot3(normal, dir);
-    const double exit_disc = 1.0 - n * n * (1.0 - exit_cos * exit_cos);
-    valid = exit_cos > 0.0 && exit_disc > 0.0;
-    if (valid) {
-      const double k = n * exit_cos - std::sqrt(exit_disc);
-      for (int i = 0; i < 3; i++) {
-        out->outgoing_direction[i] = n * dir[i] - k * normal[i];
-      }
-      WorldToBody(pose, out->outgoing_direction, seg + 3 * (last + 1));
-      trans[last] = 1.0 - Reflectance(exit_cos, n, exit_disc);
-      fresnel *= trans[last];
-    }
-  }
-
+  const bool valid = TracePathChain<double>(table, slots, slot_count, refractive_index, incident_direction, pose,
+                                            out->outgoing_direction, out, nullptr);
   if (!valid) {
     for (int i = 0; i < 3; i++) {
       out->outgoing_direction[i] = 0.0;
     }
     for (int i = 0; i < 3 * (slot_count + 1); i++) {
-      seg[i] = 0.0;
+      out->segment_directions[i] = 0.0;
     }
     for (int i = 0; i < slot_count; i++) {
-      trans[i] = 0.0;
+      out->interface_transmittances[i] = 0.0;
     }
-    fresnel = 0.0;
+    out->fresnel_transmission = 0.0;
   }
-  out->fresnel_transmission = fresnel;
   return valid;
 }
 

@@ -14,7 +14,8 @@
 //      outward normal of every present face slot. A crystal the engine rejects is kInvalidConfig.
 //   2. EvaluatePath — per pose: no allocation, no crystal construction, no error codes. Its inputs
 //      are already validated (ResolveFaceSequence, ValidateUnitVector, ValidateRotation); what it
-//      reports is data, `valid`.
+//      reports is data, `valid`. The ray chain itself is path_chain.hpp's TracePathChain, which the
+//      fiber continuation also runs (in double for the domain, in Jet<3> for the derivative).
 //
 // Precision is double throughout. The engine's float closed-form result decides which faces exist;
 // the normals and the Fresnel factor come from the same formulas the simulator uses, instantiated
