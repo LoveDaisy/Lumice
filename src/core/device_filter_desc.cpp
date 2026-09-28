@@ -130,12 +130,15 @@ DeviceFilterDesc BuildDeviceFilterDesc(const FilterConfig& config, const Crystal
   desc.sigma_a = d_applicable ? detail::ComputeSigmaA(axis_dist.roll_dist.center) : 0;
   desc.fn_period = crystal.FnPeriod();
   // The one place the gating fields are computed; sub-descs and the canonical bytes copy them.
-  desc.p_applicable = detail::IsPApplicable(axis_dist) ? 1u : 0u;
-  desc.b_applicable = detail::IsBApplicable(axis_dist) ? 1u : 0u;
-  const GeometricSymmetry& geom = crystal.GeomSymmetry();
-  desc.shape_p_step = geom.p_step;
-  desc.shape_d_mirror_mask = geom.d_valid_sigma_mask;
-  desc.shape_b_applicable = geom.b_applicable ? 1u : 0u;
+  // A filter's P/B/D is a label equivalence (SymmetrySemantics::kLabel), exactly as on the CPU
+  // path (FilterSpec::Create): the shape half is the full D6h and P/B are admitted whatever the
+  // real shape and ensemble. D's ensemble half (d_applicable / sigma_a above) is not part of it.
+  const SymmetryGating gating = DeriveSymmetryGating(SymmetrySemantics::kLabel, crystal.GeomSymmetry(), axis_dist);
+  desc.p_applicable = gating.p_applicable ? 1u : 0u;
+  desc.b_applicable = gating.b_applicable ? 1u : 0u;
+  desc.shape_p_step = gating.geom.p_step;
+  desc.shape_d_mirror_mask = gating.geom.d_valid_sigma_mask;
+  desc.shape_b_applicable = gating.geom.b_applicable ? 1u : 0u;
 
   std::visit(TopVisitor{ crystal, desc }, config.param_);
   return desc;

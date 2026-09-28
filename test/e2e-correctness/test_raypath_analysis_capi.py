@@ -357,9 +357,6 @@ def test_unproject_pixel_round_trip_through_ctypes():
 # owner ruling 2026-09-13): `adaptive` binds the online Neyman deal to an analysis too. Three
 # prisms, proportions 100 / 100 / 0.2, each with one `filter_in` raypath, so the third crystal's
 # one row is rare under the population share: under `proportional` it gets 0.1% of the rays.
-# Each filter names faces its crystal really has: face_distance [2, 1, 2, 1, 2, 1] and
-# [2, 1, 1, 2, 1, 1] shrink the faces at distance 2 to zero width, and a raypath through them
-# could only ever match by a rotation the shape does not have (the reduction follows the shape).
 _CONFIG_CHALLENGE = str(
     get_project_root() / "test" / "e2e" / "configs" / "raypath_analysis_challenge_98_120_144.json")
 _RARE_CRYSTAL_ID = 3

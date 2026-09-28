@@ -41,22 +41,21 @@ Crystal MakeHexPrism() {
   return Crystal::CreatePrism(1.0f);
 }
 
-// d_applicable=true axis (roll anchored at 30°, sigma_a non-zero) vs the other variant (roll
-// anchored at 0). Same logic the Metal parity fixture uses
-// (test_metal_filter_match_parity.mm:MakeDApplicableAxis).
-// Both variants admit P and B as well (uniform azimuth, horizontal c-axis, full-turn uniform roll);
-// MakePOffAxis / MakeBOffAxis below are the ensembles that switch one of them off.
+// d_applicable=true axis (roll fixed, sigma_a non-zero) vs d_applicable=false
+// axis (roll uniform, sigma_a meaningless). Same logic the Metal parity
+// fixture uses (test_metal_filter_match_parity.mm:MakeDApplicableAxis).
+// A filter's P/B are label equivalences, so neither variant has to admit them physically.
 AxisDistribution MakeAxis(bool d_applicable) {
   AxisDistribution d{};
   d.azimuth_dist.type = DistributionType::kUniform;
   d.azimuth_dist.spread = 360.0f;
   d.azimuth_dist.center = 0.0f;
   d.latitude_dist.type = DistributionType::kNoRandom;
-  d.latitude_dist.center = 0.0f;
+  d.latitude_dist.center = 90.0f;
   if (d_applicable) {
-    d.roll_dist.type = DistributionType::kUniform;
+    d.roll_dist.type = DistributionType::kNoRandom;
     d.roll_dist.center = 30.0f;  // sigma_a=5 per kSigmaARollDeg inverse
-    d.roll_dist.spread = 360.0f;
+    d.roll_dist.spread = 0.0f;
   } else {
     d.roll_dist.type = DistributionType::kUniform;
     d.roll_dist.center = 0.0f;
@@ -65,9 +64,18 @@ AxisDistribution MakeAxis(bool d_applicable) {
   return d;
 }
 
+// An ensemble that admits P, B and D physically: uniform azimuth, horizontal c-axis, full-turn
+// uniform roll anchored at 30° (sigma_a 5).
+AxisDistribution MakeFullEnsembleAxis() {
+  AxisDistribution d = MakeAxis(/*d_applicable=*/false);
+  d.latitude_dist.center = 0.0f;
+  d.roll_dist.center = 30.0f;
+  return d;
+}
+
 // Roll confined to a 60° window: not a full turn, so detail::IsPApplicable is false (and D with it).
 AxisDistribution MakePOffAxis() {
-  AxisDistribution d = MakeAxis(/*d_applicable=*/false);
+  AxisDistribution d = MakeFullEnsembleAxis();
   d.roll_dist.spread = 60.0f;
   return d;
 }
@@ -75,7 +83,7 @@ AxisDistribution MakePOffAxis() {
 // C-axis tilted 30° above the horizon: the ensemble is not symmetric about it, so
 // detail::IsBApplicable is false while P and D keep their full-turn roll.
 AxisDistribution MakeBOffAxis() {
-  AxisDistribution d = MakeAxis(/*d_applicable=*/true);
+  AxisDistribution d = MakeFullEnsembleAxis();
   d.latitude_dist.center = 30.0f;
   return d;
 }
@@ -403,11 +411,11 @@ TEST(DeviceFilterCheckHost, RaypathEntryExitDirCrystalComplex_ParityWithFilterSp
   }
 }
 
-// The device reduction must narrow exactly where the host one does: to the elements the crystal's
-// shape has (GeometricSymmetry) and the orientation ensemble admits (IsPApplicable / IsBApplicable /
-// IsDApplicable). Shapes cover p_step 3 and 2, a single vertical mirror, and cones that differ (B
-// off); axes cover each ensemble condition switched off on the regular prism, where only the
-// ensemble can be the reason.
+// The device reduction must match the host one on shapes and ensembles that do NOT physically admit
+// P/B/D: a filter reduces under SymmetrySemantics::kLabel on both routes, so neither may narrow to
+// the shape (GeometricSymmetry) or to IsPApplicable / IsBApplicable — only D reads the ensemble.
+// Shapes cover p_step 3 and 2, a single vertical mirror, and cones that differ; axes cover each
+// ensemble condition switched off. LabelGatingIgnoresShapeAndEnsemble below pins the fields.
 TEST(DeviceFilterCheckHost, LowSymmetryShapesAndEnsembles_ParityWithFilterSpec) {
   const float three_fold[6]{ 1.0f, 1.2f, 1.0f, 1.2f, 1.0f, 1.2f };
   const float two_fold[6]{ 1.0f, 1.0f, 1.3f, 1.0f, 1.0f, 1.3f };
@@ -430,7 +438,7 @@ TEST(DeviceFilterCheckHost, LowSymmetryShapesAndEnsembles_ParityWithFilterSpec) 
   };
   const Ensemble ensembles[] = {
     { "full_sigma0", MakeAxis(false) },
-    { "full_sigma5", MakeAxis(true) },
+    { "full_sigma5", MakeFullEnsembleAxis() },
     { "p_off", MakePOffAxis() },
     { "b_off", MakeBOffAxis() },
   };
@@ -453,6 +461,42 @@ TEST(DeviceFilterCheckHost, LowSymmetryShapesAndEnsembles_ParityWithFilterSpec) 
       Fixture fx = BuildFixture(shape.crystal, ens.axis);
       const std::string label = std::string(shape.name) + "/" + ens.name;
       EXPECT_EQ(CountMismatches(fx, seed++, kPerCombo, label.c_str()), 0u) << label;
+    }
+  }
+}
+
+// A filter's device descriptor carries the label regime's gating whatever the crystal's shape and
+// orientation ensemble: full D6h shape fields and P/B admitted. Only D's ensemble half (d_applicable
+// / sigma_a) follows the axis. The shapes and axes here are ones whose PHYSICAL symmetry lacks P or
+// B (a three-fold prism with p_step 2, cones of different heights, a locked roll, a tilted c-axis) —
+// the fields must not narrow to any of them.
+TEST(DeviceFilterCheckHost, LabelGatingIgnoresShapeAndEnsemble) {
+  const float three_fold[6]{ 1.0f, 1.2f, 1.0f, 1.2f, 1.0f, 1.2f };
+  const Crystal shapes[] = {
+    Crystal::CreatePrism(1.0f, three_fold),
+    Crystal::CreatePyramid(28.0f, 40.0f, 0.4f, 1.0f, 0.4f),
+  };
+  ASSERT_NE(shapes[0].GeomSymmetry(), kFullHexagonalSymmetry);
+  ASSERT_FALSE(shapes[1].GeomSymmetry().b_applicable);
+  const AxisDistribution axes[] = { MakeAxis(true), MakePOffAxis(), MakeBOffAxis() };
+  ASSERT_FALSE(detail::IsPApplicable(axes[0]));
+  ASSERT_FALSE(detail::IsBApplicable(axes[0]));
+
+  FilterConfig cfg{};
+  cfg.symmetry_ = static_cast<uint8_t>(FilterConfig::kSymP | FilterConfig::kSymB | FilterConfig::kSymD);
+  cfg.action_ = FilterConfig::kFilterIn;
+  RaypathFilterParam p;
+  p.raypath_ = std::vector<IdType>{ 3, 5 };
+  cfg.param_ = p;
+  for (const auto& crystal : shapes) {
+    for (const auto& axis : axes) {
+      const DeviceFilterDesc desc = detail::BuildDeviceFilterDesc(cfg, crystal, axis);
+      EXPECT_EQ(desc.shape_p_step, 1);
+      EXPECT_EQ(desc.shape_d_mirror_mask, 0x3Fu);
+      EXPECT_EQ(desc.shape_b_applicable, 1u);
+      EXPECT_EQ(desc.p_applicable, 1u);
+      EXPECT_EQ(desc.b_applicable, 1u);
+      EXPECT_EQ(desc.d_applicable, detail::IsDApplicable(axis) ? 1u : 0u);
     }
   }
 }

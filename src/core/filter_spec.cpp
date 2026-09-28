@@ -143,10 +143,13 @@ bool RaypathOrbit::Contains(const RaypathRecorder& rp_input, const uint8_t* over
 
 namespace {
 
+// `geom` is the filter's shape gating (DeriveSymmetryGating(kLabel, ...).geom), never
+// crystal.GeomSymmetry(): a filter's P/B/D is a label equivalence that ignores the real shape.
 RaypathOrbit BuildOrbit(const Crystal& crystal, const std::vector<IdType>& rp, uint8_t symmetry, int sigma_a,
-                        bool d_applicable, bool p_applicable, bool b_applicable) {
+                        bool d_applicable, bool p_applicable, bool b_applicable, const GeometricSymmetry& geom) {
   RaypathOrbit orbit;
-  auto canonical_vec = crystal.ReduceRaypath(rp, symmetry, sigma_a, d_applicable, p_applicable, b_applicable);
+  auto canonical_vec =
+      ReduceRaypathByPeriod(rp, symmetry, sigma_a, d_applicable, p_applicable, b_applicable, crystal.FnPeriod(), geom);
   orbit.canonical_.Clear();
   for (auto fn : canonical_vec) {
     orbit.canonical_ << fn;
@@ -157,7 +160,7 @@ RaypathOrbit BuildOrbit(const Crystal& crystal, const std::vector<IdType>& rp, u
   orbit.p_applicable_ = p_applicable;
   orbit.b_applicable_ = b_applicable;
   orbit.fn_period_ = crystal.FnPeriod();
-  orbit.geom_symmetry_ = crystal.GeomSymmetry();
+  orbit.geom_symmetry_ = geom;
   return orbit;
 }
 
@@ -176,8 +179,8 @@ class NoneSpec : public FilterSpec {
 class RaypathSpec : public FilterSpec {
  public:
   RaypathSpec(const Crystal& crystal, const std::vector<IdType>& rp, uint8_t symmetry, int sigma_a, bool d_applicable,
-              bool p_applicable, bool b_applicable)
-      : orbit_(BuildOrbit(crystal, rp, symmetry, sigma_a, d_applicable, p_applicable, b_applicable)) {}
+              bool p_applicable, bool b_applicable, const GeometricSymmetry& geom)
+      : orbit_(BuildOrbit(crystal, rp, symmetry, sigma_a, d_applicable, p_applicable, b_applicable, geom)) {}
 
   bool Match(const RaySeg& /*ray*/, const RaypathRecorder& rec, const uint8_t* arena) const override {
     return orbit_.Contains(rec, arena);
@@ -191,10 +194,11 @@ class EntryExitSpec : public FilterSpec {
  public:
   EntryExitSpec(const Crystal& crystal, std::optional<IdType> entry, std::optional<IdType> exit, size_t min_len,
                 std::optional<size_t> max_len, uint8_t symmetry, int sigma_a, bool d_applicable, bool p_applicable,
-                bool b_applicable)
+                bool b_applicable, const GeometricSymmetry& geom)
       : min_len_(min_len), max_len_(max_len), has_entry_(entry.has_value()), has_exit_(exit.has_value()),
         has_orbit_(has_entry_ || has_exit_),
-        orbit_(BuildOrbitFromEnds(crystal, entry, exit, symmetry, sigma_a, d_applicable, p_applicable, b_applicable)) {}
+        orbit_(BuildOrbitFromEnds(crystal, entry, exit, symmetry, sigma_a, d_applicable, p_applicable, b_applicable,
+                                  geom)) {}
 
   bool Match(const RaySeg& /*ray*/, const RaypathRecorder& rec, const uint8_t* arena) const override {
     size_t size = rec.size_;
@@ -230,7 +234,7 @@ class EntryExitSpec : public FilterSpec {
  private:
   static RaypathOrbit BuildOrbitFromEnds(const Crystal& crystal, std::optional<IdType> entry,
                                          std::optional<IdType> exit, uint8_t symmetry, int sigma_a, bool d_applicable,
-                                         bool p_applicable, bool b_applicable) {
+                                         bool p_applicable, bool b_applicable, const GeometricSymmetry& geom) {
     std::vector<IdType> rp;
     if (entry.has_value() && exit.has_value()) {
       rp.push_back(*entry);
@@ -245,7 +249,7 @@ class EntryExitSpec : public FilterSpec {
     if (rp.empty()) {
       return RaypathOrbit{};
     }
-    return BuildOrbit(crystal, rp, symmetry, sigma_a, d_applicable, p_applicable, b_applicable);
+    return BuildOrbit(crystal, rp, symmetry, sigma_a, d_applicable, p_applicable, b_applicable, geom);
   }
 
   size_t min_len_;
@@ -287,7 +291,8 @@ class CrystalSpec : public FilterSpec {
 class ComplexSpec : public FilterSpec {
  public:
   ComplexSpec(const Crystal& crystal, const std::vector<std::vector<std::pair<IdType, SimpleFilterParam>>>& all_param,
-              uint8_t symmetry, int sigma_a, bool d_applicable, bool p_applicable, bool b_applicable);
+              uint8_t symmetry, int sigma_a, bool d_applicable, bool p_applicable, bool b_applicable,
+              const GeometricSymmetry& geom);
 
   bool Match(const RaySeg& ray, const RaypathRecorder& rec, const uint8_t* arena) const override {
     for (const auto& or_clause : filters_) {
@@ -344,15 +349,16 @@ struct SimpleSpecCreator {
   bool d_applicable_;
   bool p_applicable_;
   bool b_applicable_;
+  GeometricSymmetry geom_;
 
   std::unique_ptr<FilterSpec> operator()(const NoneFilterParam& /*p*/) const { return std::make_unique<NoneSpec>(); }
   std::unique_ptr<FilterSpec> operator()(const RaypathFilterParam& p) const {
     return std::make_unique<RaypathSpec>(crystal_, p.raypath_, symmetry_, sigma_a_, d_applicable_, p_applicable_,
-                                         b_applicable_);
+                                         b_applicable_, geom_);
   }
   std::unique_ptr<FilterSpec> operator()(const EntryExitFilterParam& p) const {
     return std::make_unique<EntryExitSpec>(crystal_, p.entry_, p.exit_, p.min_len_, p.max_len_, symmetry_, sigma_a_,
-                                           d_applicable_, p_applicable_, b_applicable_);
+                                           d_applicable_, p_applicable_, b_applicable_, geom_);
   }
   std::unique_ptr<FilterSpec> operator()(const DirectionFilterParam& p) const {
     return std::make_unique<DirectionSpec>(p.lon_, p.lat_, p.radii_);
@@ -364,14 +370,16 @@ struct SimpleSpecCreator {
 
 ComplexSpec::ComplexSpec(const Crystal& crystal,
                          const std::vector<std::vector<std::pair<IdType, SimpleFilterParam>>>& all_param,
-                         uint8_t symmetry, int sigma_a, bool d_applicable, bool p_applicable, bool b_applicable) {
+                         uint8_t symmetry, int sigma_a, bool d_applicable, bool p_applicable, bool b_applicable,
+                         const GeometricSymmetry& geom) {
   filters_.reserve(all_param.size());
   for (const auto& or_clause : all_param) {
     std::vector<std::unique_ptr<FilterSpec>> ands;
     ands.reserve(or_clause.size());
     for (const auto& and_entry : or_clause) {
-      ands.emplace_back(std::visit(
-          SimpleSpecCreator{ crystal, symmetry, sigma_a, d_applicable, p_applicable, b_applicable }, and_entry.second));
+      ands.emplace_back(
+          std::visit(SimpleSpecCreator{ crystal, symmetry, sigma_a, d_applicable, p_applicable, b_applicable, geom },
+                     and_entry.second));
     }
     filters_.emplace_back(std::move(ands));
   }
@@ -384,14 +392,15 @@ struct TopSpecCreator {
   bool d_applicable_;
   bool p_applicable_;
   bool b_applicable_;
+  GeometricSymmetry geom_;
 
   std::unique_ptr<FilterSpec> operator()(const SimpleFilterParam& p) const {
-    return std::visit(SimpleSpecCreator{ crystal_, symmetry_, sigma_a_, d_applicable_, p_applicable_, b_applicable_ },
-                      p);
+    return std::visit(
+        SimpleSpecCreator{ crystal_, symmetry_, sigma_a_, d_applicable_, p_applicable_, b_applicable_, geom_ }, p);
   }
   std::unique_ptr<FilterSpec> operator()(const ComplexFilterParam& p) const {
     return std::make_unique<ComplexSpec>(crystal_, p.filters_, symmetry_, sigma_a_, d_applicable_, p_applicable_,
-                                         b_applicable_);
+                                         b_applicable_, geom_);
   }
 };
 
@@ -399,15 +408,17 @@ struct TopSpecCreator {
 
 std::unique_ptr<FilterSpec> FilterSpec::Create(const FilterConfig& config, const Crystal& crystal,
                                                const AxisDistribution& axis_dist) {
-  // Same shared derivation MakeChainIdLayerContext uses (detail::DeriveDSymmetryParams).
+  // D's ensemble half is the same in both symmetry regimes (detail::DeriveDSymmetryParams, shared
+  // with MakeChainIdLayerContext) and is not part of SymmetryGating.
   auto d_params = detail::DeriveDSymmetryParams(axis_dist);
   bool d_applicable = d_params.d_applicable;
   int sigma_a = d_params.sigma_a;
-  // The P / B ensemble conditions, likewise shared with MakeChainIdLayerContext and the server's
-  // read-time reduction context.
-  const bool p_applicable = detail::IsPApplicable(axis_dist);
-  const bool b_applicable = detail::IsBApplicable(axis_dist);
-  auto spec = std::visit(TopSpecCreator{ crystal, config.symmetry_, sigma_a, d_applicable, p_applicable, b_applicable },
+  // A filter's P/B/D is a label equivalence (SymmetrySemantics::kLabel): the crystal's real shape
+  // and the ensemble's P/B conditions only drive GUI hints, never what a filter matches. The
+  // raypath-analysis panel's grouping is the kPhysical regime and does not come through here.
+  const SymmetryGating gating = DeriveSymmetryGating(SymmetrySemantics::kLabel, crystal.GeomSymmetry(), axis_dist);
+  auto spec = std::visit(TopSpecCreator{ crystal, config.symmetry_, sigma_a, d_applicable, gating.p_applicable,
+                                         gating.b_applicable, gating.geom },
                          config.param_);
   spec->action_ = config.action_;
   return spec;

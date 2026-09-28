@@ -308,18 +308,23 @@ RaypathReduceContext BuildRaypathReduceContext(const SceneConfig& scene) {
   for (const auto& layer : scene.ms_) {
     ctx.layer_multi_crystal_.push_back(layer.setting_.size() > 1);
     for (const auto& setting : layer.setting_) {
-      // Same derivations, in the same order, as FilterSpec::Create and
-      // MakeChainIdLayerContext. A crystal id reused across layers names the
-      // same config, so a second visit writes the same values.
+      // An analysis row is one physical class: this reduction is the
+      // SymmetrySemantics::kPhysical regime (the crystal's real shape AND the
+      // ensemble's own P/B conditions), unlike a filter on the same crystal,
+      // whose P/B/D is the kLabel regime (FilterSpec::Create). D's ensemble
+      // half is shared by both regimes. A crystal id reused across layers
+      // names the same config, so a second visit writes the same values.
       RaypathCrystalReduceParams p;
       p.d_applicable = detail::IsDApplicable(setting.crystal_.axis_);
       p.sigma_a = p.d_applicable ? detail::ComputeSigmaA(setting.crystal_.axis_.roll_dist.center) : 0;
-      p.p_applicable = detail::IsPApplicable(setting.crystal_.axis_);
-      p.b_applicable = detail::IsBApplicable(setting.crystal_.axis_);
       // The shape symmetry every drawn instance of this design carried
-      // (MakeCrystal stamps the same function's result), so the read-time
-      // reduction and a filter on this crystal reduce under one group.
-      p.geom = std::visit([](const auto& param) { return DeriveGeometricSymmetry(param); }, setting.crystal_.param_);
+      // (MakeCrystal stamps the same function's result).
+      const GeometricSymmetry shape =
+          std::visit([](const auto& param) { return DeriveGeometricSymmetry(param); }, setting.crystal_.param_);
+      const SymmetryGating gating = DeriveSymmetryGating(SymmetrySemantics::kPhysical, shape, setting.crystal_.axis_);
+      p.p_applicable = gating.p_applicable;
+      p.b_applicable = gating.b_applicable;
+      p.geom = gating.geom;
       ctx.crystal_params_[setting.crystal_.id_] = p;
     }
   }

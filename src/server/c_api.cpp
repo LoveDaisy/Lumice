@@ -4511,6 +4511,73 @@ int LUMICE_CouldCrystalHaveFace(const LUMICE_CrystalParam* crystal, int face) {
   return std::visit([fn](const auto& param) { return ns::CouldFaceExist(param, fn); }, config.param_) ? 1 : 0;
 }
 
+int LUMICE_CouldFilterMatchFace(const LUMICE_CrystalParam* crystal, int face, int symmetry) {
+  if (!crystal || (crystal->type != 0 && crystal->type != 1) || face < 0 || face > 255) {
+    return 1;
+  }
+  // The same wire -> core translation LUMICE_GetCrystalSymmetry takes.
+  ns::CrystalConfig config;
+  try {
+    config = CrystalToJson(*crystal, 0).get<ns::CrystalConfig>();
+  } catch (...) {
+    return 1;
+  }
+  const auto fn = static_cast<ns::IdType>(face);
+  const auto sym =
+      static_cast<uint8_t>(symmetry & (ns::FilterConfig::kSymP | ns::FilterConfig::kSymB | ns::FilterConfig::kSymD));
+  return std::visit([&](const auto& param) { return ns::CouldFilterMatchFace(param, config.axis_, fn, sym); },
+                    config.param_) ?
+             1 :
+             0;
+}
+
+
+LUMICE_ErrorCode LUMICE_ExpandRaypathClass(const LUMICE_CrystalParam* crystal, const int* faces, int face_count,
+                                           int symmetry, int semantics, int* out_faces, int* out_member_count) {
+  if (!crystal || !faces || !out_faces || !out_member_count) {
+    return LUMICE_ERR_NULL_ARG;
+  }
+  if ((crystal->type != 0 && crystal->type != 1) || face_count < 1 || face_count > LUMICE_MAX_RAYPATH_SEGMENT_LEN ||
+      (semantics != LUMICE_SYMMETRY_SEMANTICS_LABEL && semantics != LUMICE_SYMMETRY_SEMANTICS_PHYSICAL)) {
+    return LUMICE_ERR_INVALID_VALUE;
+  }
+  // The same wire -> core translation LUMICE_GetCrystalSymmetry takes.
+  ns::CrystalConfig config;
+  try {
+    config = CrystalToJson(*crystal, 0).get<ns::CrystalConfig>();
+  } catch (...) {
+    return LUMICE_ERR_INVALID_CONFIG;
+  }
+  const ns::GeometricSymmetry shape =
+      std::visit([](const auto& param) { return ns::DeriveGeometricSymmetry(param); }, config.param_);
+  const ns::SymmetryGating gating = ns::DeriveSymmetryGating(
+      semantics == LUMICE_SYMMETRY_SEMANTICS_LABEL ? ns::SymmetrySemantics::kLabel : ns::SymmetrySemantics::kPhysical,
+      shape, config.axis_);
+  const auto d = ns::detail::DeriveDSymmetryParams(config.axis_);
+  std::vector<ns::IdType> rp;
+  rp.reserve(static_cast<size_t>(face_count));
+  for (int i = 0; i < face_count; ++i) {
+    rp.push_back(static_cast<ns::IdType>(faces[i]));
+  }
+  const auto sym =
+      static_cast<uint8_t>(symmetry & (ns::FilterConfig::kSymP | ns::FilterConfig::kSymB | ns::FilterConfig::kSymD));
+  std::vector<std::vector<ns::IdType>> members;
+  for (auto& m : ns::ExpandRaypathByPeriod(rp, sym, d.sigma_a, d.d_applicable, gating.p_applicable, gating.b_applicable,
+                                           ns::kHexagonalFnPeriod, gating.geom)) {
+    if (std::find(members.begin(), members.end(), m) == members.end()) {
+      members.push_back(std::move(m));
+    }
+  }
+  // ExpandRaypathByPeriod yields at most 6 x 2 x 2 sequences; the cap is a guard, not a truncation.
+  const size_t n = std::min(members.size(), static_cast<size_t>(LUMICE_MAX_RAYPATH_CLASS_MEMBERS));
+  for (size_t k = 0; k < n; ++k) {
+    for (int i = 0; i < face_count; ++i) {
+      out_faces[k * static_cast<size_t>(face_count) + static_cast<size_t>(i)] = static_cast<int>(members[k][i]);
+    }
+  }
+  *out_member_count = static_cast<int>(n);
+  return LUMICE_OK;
+}
 
 // =============== Raypath Validation ===============
 LUMICE_ErrorCode LUMICE_ValidateRaypathText(const char* text, LUMICE_CrystalKind kind,

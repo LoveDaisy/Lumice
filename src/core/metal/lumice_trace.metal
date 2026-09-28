@@ -50,11 +50,11 @@ struct DeviceFilterDesc {
   uint   and_terms_start;        // Complex only: flat start index in and_term_counts_buf
   ushort or_clause_count;        // Complex only; 0 for non-Complex
   ushort _pad_or_tail;           // trailing padding
-  int    shape_p_step;           // Crystal::GeomSymmetry().p_step
-  uchar  shape_d_mirror_mask;    // Crystal::GeomSymmetry().d_valid_sigma_mask
-  uchar  shape_b_applicable;     // Crystal::GeomSymmetry().b_applicable
-  uchar  p_applicable;           // detail::IsPApplicable(axis)
-  uchar  b_applicable;           // detail::IsBApplicable(axis)
+  int    shape_p_step;           // DeriveSymmetryGating(...).geom.p_step
+  uchar  shape_d_mirror_mask;    // DeriveSymmetryGating(...).geom.d_valid_sigma_mask
+  uchar  shape_b_applicable;     // DeriveSymmetryGating(...).geom.b_applicable
+  uchar  p_applicable;           // DeriveSymmetryGating(...).p_applicable
+  uchar  b_applicable;           // DeriveSymmetryGating(...).b_applicable
 };
 
 // Device filter type tags. Mirror kDeviceFilterType* in device_filter_desc.hpp.

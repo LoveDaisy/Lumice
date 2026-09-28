@@ -42,6 +42,8 @@ static_assert(LUMICE_API_VERSION >= 439, "Lumice header too old for this integra
 
 公开符号集或结构体布局每发生一次 BREAKING 变更就 bump 一次。
 
+**v4.49** 是纯追加加一处行为恢复。新增 `LUMICE_CouldFilterMatchFace(crystal, face, symmetry)`——考虑 filter 自身 P/B/D 的 `LUMICE_CouldCrystalHaveFace`（没有面积的面仍可经由 filter 对称重新编号到的面匹配）——以及 `LUMICE_ExpandRaypathClass(crystal, faces, n, symmetry, semantics, out, &count)`，按两种含义之一（`LUMICE_SYMMETRY_SEMANTICS_LABEL` / `LUMICE_SYMMETRY_SEMANTICS_PHYSICAL`）给出一条光路在一组对称位下的等价类（至多 `LUMICE_MAX_RAYPATH_CLASS_MEMBERS` 个成员）。行为：**filter** 的 P/B/D 恢复为标号等价，与 v4.46 及以前相同——P、B 不论晶体形状与取向都生效，D 不变。下文 v4.47、v4.48 所述的收窄现在只适用于光路分析列表的分组；`LUMICE_GetCrystalSymmetry` 与 `LUMICE_IsPApplicable` / `LUMICE_IsBApplicable` 含义不变，服务于该分组与 filter 编辑器的提示（见 `raypath-symmetry.zh.md` §1.1）。没有结构体变化。
+
 **最近一次这样的 break 是 v4.48。** `LUMICE_CrystalSymmetry` 在 `d_effective` 之后新增尾部字段 `p_effective`、`b_effective`（sizeof 16 → 24）；`LUMICE_GetCrystalSymmetry` 会写满整个结构体，调用方需重新编译。同时新增 `LUMICE_IsPApplicable(roll 类型, roll 全宽)` 与 `LUMICE_IsBApplicable(方位角类型, 方位角全宽, zenith 类型, zenith 中心, zenith 全宽)`——P、B 的取向分布一半（对应 `LUMICE_IsDApplicable`）。光路约化现在只在 roll 对 60° 平移不变（满圈 uniform）时应用 P，只在 zenith 关于 90° 对称且方位角满圈 uniform 时应用 B：Parry 弧不再把 3-5 与 4-6 并为一行，板状晶体不再把 1-3 与 2-3 并为一行。`p_effective` / `b_effective` 是这两个条件再与形状相交（`rotation_step < 6` / `horizontal_mirror`）。
 
 **v4.46：** `LUMICE_RenderParam` 在 `globe_back_fade` 之后新增尾部字段 `display_mode`（`LUMICE_DISPLAY_MODE_NORMAL` / `LUMICE_DISPLAY_MODE_CHANNEL_BR`，sizeof 6456 → 6460），调用方需重新编译。JSON 键为 `render.display_mode`，取值 `"normal"` 或 `"channel_br"`。`channel_br` 把成品图显示为 gamma 之后的 sRGB B − R 灰度偏移（`clamp(0.5 + 0.5·(B − R), 0, 1)`，中灰 = 无差，越亮越偏蓝）；在 `tone: print` 下无效果，开启时带色类配置的场景不产出光路染色合成图。零值即 normal，所以零初始化的结构体和不含该键的文档渲染结果不变。

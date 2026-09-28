@@ -241,9 +241,10 @@ hexagonal crystal, where faces 0/2/4 must always equal each other and faces
   `i+3`) guarantees their distances sum to a value with the same sign
   structure they were configured with, which can reduce the geometric-validity
   rejection rate under strong face-distance randomization.
-- **Raypath symmetry follows the shape distribution**: a filter's or the
-  analysis list's P / B / D merges only paths the crystal's shape makes
-  equivalent (see `raypath-symmetry.md` §2a). That is decided on this whole
+- **The analysis list's raypath symmetry follows the shape distribution**:
+  the raypath-analysis list's P / B / D merges only paths the crystal's shape
+  makes equivalent (see `raypath-symmetry.md` §2a; a filter's P / B / D is a
+  label equivalence and does not read the shape, §1.1). That is decided on this whole
   distribution — values, spreads and sync groups — not on one draw: six
   independent, identically distributed `face_distance` values keep the full
   six-fold symmetry, while fixed alternating values or faces 0/2/4 synced

@@ -295,14 +295,12 @@ _RAW_THRESHOLDS = {
     "ms_multi_crystal_filtered_bd":       (0.97, 0.97),
     "parity_single_ms_complex_filter":    (0.97, 0.97),
     "ms_multi_crystal_complex_filter":    (0.97, 0.97),
-    # Low-symmetry filter rows: the device reduction must narrow to the elements the crystal's
-    # shape has (GeometricSymmetry), as the CPU one does. Before it did, Metal merged the far-face
-    # orbit {4,6} into a P filter on a three-fold prism and the lower cone into a B filter on
-    # unequal cones. Measured 2026-09-27 (seed 42), before -> after the device reduction read the
-    # shape's symmetry:
-    #   parity_low_symmetry_p_filter:    metal ds 0.9971 -> 0.9974, metal/legacy Y 1.4142 -> 1.0005
-    #   parity_asymmetric_cone_b_filter: metal ds 0.9369 -> 0.9864, metal/legacy Y (2M rays, 1.81 at
-    #     0.5M) -> 1.0036; ray_num 4M because at 2M the post-fix ds sat at 0.9750, too close to 0.97.
+    # Low-symmetry filter rows: a filter's P/B is a label equivalence on both routes, so the
+    # device must merge the far-face orbit {4,6} into a P filter on a three-fold prism and the
+    # lower cone into a B filter on unequal cones, exactly as the CPU does. A device reduction that
+    # narrowed to the shape's own symmetry (GeometricSymmetry) differs from the CPU in energy: on
+    # 2026-09-27 (seed 42), with the CPU narrowed and the device not, metal/legacy Y read 1.4142
+    # on the P row.
     # The P row's corr barely moves (the far-face orbit draws the same 22° ring); energy is its gate.
     "parity_low_symmetry_p_filter":       (0.97, 0.97),
     "parity_asymmetric_cone_b_filter":    (0.97, 0.97),
@@ -524,7 +522,7 @@ def test_parity_multi_ms_complex_filter():
     _assert_metal_self_consistency("ms_multi_crystal_complex_filter", metal, legacy)
 
 
-# --- Low-symmetry shapes: device reduction follows the shape's symmetry ---- #
+# --- Low-symmetry shapes: device reduction is the same label equivalence ---- #
 
 @pytest.mark.slow
 @pytest.mark.parametrize("config_name", ["parity_low_symmetry_p_filter", "parity_asymmetric_cone_b_filter"])

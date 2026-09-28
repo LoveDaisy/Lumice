@@ -2001,6 +2001,52 @@ TEST(CouldCrystalHaveFaceApi, AnswersForTheShapeAndErrsTowardYes) {
   EXPECT_NE(LUMICE_CouldCrystalHaveFace(nullptr, 3), 0);
 }
 
+// A filter's P relabels face 3 onto the present faces 4, 6 and 8; B and D (sigma_0 at roll 0) keep
+// it on itself.
+TEST(CouldFilterMatchFaceApi, ASymmetryReachingAPresentFaceAnswersYes) {
+  const float alternating[6]{ 2, 1, 2, 1, 2, 1 };
+  const auto c = SymmetryProbeCrystal(0, alternating, 0.0f);
+  EXPECT_EQ(LUMICE_CouldFilterMatchFace(&c, 3, 0), 0);
+  EXPECT_EQ(LUMICE_CouldFilterMatchFace(&c, 3, LUMICE_RAYPATH_SYMMETRY_B | LUMICE_RAYPATH_SYMMETRY_D), 0);
+  EXPECT_NE(LUMICE_CouldFilterMatchFace(&c, 3, LUMICE_RAYPATH_SYMMETRY_P), 0);
+  EXPECT_NE(LUMICE_CouldFilterMatchFace(&c, 4, 0), 0);
+  EXPECT_NE(LUMICE_CouldFilterMatchFace(nullptr, 3, 0), 0);
+}
+
+// The two meanings of one bit set on one crystal: a three-fold prism with a locked roll. Label P
+// is every 60-degree relabelling; physical P is nothing (the roll is locked). On a random
+// orientation physical P is the 120-degree rotations the shape has.
+TEST(ExpandRaypathClassApi, LabelAndPhysicalClassesDifferWhereTheCrystalLacksTheSymmetry) {
+  const float three_fold[6]{ 1.0f, 1.2f, 1.0f, 1.2f, 1.0f, 1.2f };
+  auto c = SymmetryProbeCrystal(0, three_fold, 0.0f);
+  const int rp[2]{ 3, 5 };
+  int out[LUMICE_MAX_RAYPATH_CLASS_MEMBERS * 2]{};
+  int n = 0;
+  ASSERT_EQ(LUMICE_ExpandRaypathClass(&c, rp, 2, LUMICE_RAYPATH_SYMMETRY_P, LUMICE_SYMMETRY_SEMANTICS_LABEL, out, &n),
+            LUMICE_OK);
+  EXPECT_EQ(n, 6);
+  EXPECT_EQ(out[0], 3);
+  EXPECT_EQ(out[1], 5);
+  ASSERT_EQ(
+      LUMICE_ExpandRaypathClass(&c, rp, 2, LUMICE_RAYPATH_SYMMETRY_P, LUMICE_SYMMETRY_SEMANTICS_PHYSICAL, out, &n),
+      LUMICE_OK);
+  EXPECT_EQ(n, 1) << "a locked roll admits no P";
+  c.roll = { LUMICE_DIST_UNIFORM, 0.0f, 360.0f };
+  ASSERT_EQ(
+      LUMICE_ExpandRaypathClass(&c, rp, 2, LUMICE_RAYPATH_SYMMETRY_P, LUMICE_SYMMETRY_SEMANTICS_PHYSICAL, out, &n),
+      LUMICE_OK);
+  ASSERT_EQ(n, 3);
+  std::set<std::pair<int, int>> members;
+  for (int k = 0; k < n; ++k) {
+    members.insert({ out[2 * k], out[2 * k + 1] });
+  }
+  EXPECT_EQ(members, (std::set<std::pair<int, int>>{ { 3, 5 }, { 5, 7 }, { 7, 3 } }));
+
+  EXPECT_EQ(LUMICE_ExpandRaypathClass(nullptr, rp, 2, 1, 0, out, &n), LUMICE_ERR_NULL_ARG);
+  EXPECT_EQ(LUMICE_ExpandRaypathClass(&c, rp, 0, 1, 0, out, &n), LUMICE_ERR_INVALID_VALUE);
+  EXPECT_EQ(LUMICE_ExpandRaypathClass(&c, rp, 2, 1, 7, out, &n), LUMICE_ERR_INVALID_VALUE);
+}
+
 TEST(GetCrystalSymmetryApi, RejectsNullAndUnknownType) {
   const float regular[6]{ 1, 1, 1, 1, 1, 1 };
   auto c = SymmetryProbeCrystal(0, regular, 0.0f);
