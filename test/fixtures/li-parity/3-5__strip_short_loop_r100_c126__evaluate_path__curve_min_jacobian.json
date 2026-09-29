@@ -1,0 +1,162 @@
+{
+ "cell": {
+  "category": "edge",
+  "label": "strip_short_loop_r100_c126",
+  "name": "3-5__strip_short_loop_r100_c126",
+  "path": "3-5",
+  "pose_label": "the traced pose with the smallest J_perp",
+  "rationale": "ch06 strip pixel (100, 126): a 1.645 rad loop shorter than pi that the retired absolute closure gate traversed twice (test_strip_short_loops_close_at_their_single_traversal_length)",
+  "selection": {
+   "components": 1,
+   "deviation_deg": 22.85933749624157,
+   "method": "the component seeds of seed search at the given target"
+  },
+  "serves": [
+   "C06",
+   "C15"
+  ]
+ },
+ "expected": {
+  "branch_margins": {
+   "entry_incidence_cosine": 0.6943647782282174,
+   "entry_snell_discriminant": 0.6982357935108221,
+   "exit_incidence_cosine": 0.8465016193873083,
+   "exit_snell_discriminant": 0.513597182128238
+  },
+  "diagnostics": {
+   "nearest_margin": "exit_snell_discriminant",
+   "nearest_margin_value": 0.513597182128238,
+   "validity_margins": {
+    "entry_incidence_cosine": 0.6943647782282174,
+    "entry_snell_discriminant": 0.6982357935108221,
+    "exit_incidence_cosine": 0.8465016193873083,
+    "exit_snell_discriminant": 0.513597182128238
+   }
+  },
+  "failed_gate": null,
+  "fresnel_transmission": 0.9502821173639963,
+  "interface_transmittances": [
+   0.9740702876889847,
+   0.9755785895272232
+  ],
+  "jacobian_available": true,
+  "normal_jacobian": 0.047401917983950985,
+  "outgoing_direction": [
+   -0.9906067002414436,
+   -0.000414352965065104,
+   0.13674133884227968
+  ],
+  "segment_directions": [
+   [
+    -0.6943647782282174,
+    0.6484749911193363,
+    -0.3119899688272907
+   ],
+   [
+    -0.8356050463651002,
+    0.49501907719033283,
+    -0.2381602815475502
+   ],
+   [
+    -0.8985125243924706,
+    0.30876771667552,
+    -0.31198996882729074
+   ]
+  ],
+  "singular_values": [
+   0.41985680116689955,
+   0.112900202764866
+  ],
+  "valid": true
+ },
+ "fixture_kind": "evaluate_path",
+ "format": "lumice-integral/analytic-parity",
+ "input": {
+  "crystal": {
+   "face_distance": [
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0
+   ],
+   "height": 1.0,
+   "kind": "prism",
+   "lower_h": 0.0,
+   "lower_wedge_deg": 0.0,
+   "upper_h": 0.0,
+   "upper_wedge_deg": 0.0
+  },
+  "faces": [
+   3,
+   5
+  ],
+  "incident_direction": [
+   -0.9659258262890683,
+   -0.0,
+   -0.25881904510252074
+  ],
+  "pose": [
+   0.8431276914397544,
+   -0.43402586601985166,
+   0.3174228151113058,
+   -0.2721169177202925,
+   0.1647489253871797,
+   0.9480559976468561,
+   -0.4637758930969525,
+   -0.8857083827137958,
+   0.020798600256670217
+  ],
+  "refractive_index": 1.31
+ },
+ "provenance": {
+  "conventions_sha256": "8083730f089e6493458cddfd8e15fc5096b961606a69c819456ac646bd87bcdf",
+  "li_rev": "fa8dadd222df45538a05ff2552d22f505c15a0fc",
+  "li_tracked_tree_clean": true
+ },
+ "schema_version": 1,
+ "symmetry_semantics": "none",
+ "tolerance": {
+  "branch_margins": {
+   "basis": "absolute, per named margin, the same key set; the margins are cosines and discriminants of the chain: float64 evaluation of the same closed-form refraction/reflection chain from bit-identical JSON inputs: a few ulp per interface (1e-12 leaves ~1e3 ulp of room), times 1/(2 sqrt(d)) for the smallest Snell discriminant d of the pose, the derivative of the refracted cosine sqrt(d) (kinematic_atol)",
+   "value": 1e-12
+  },
+  "failed_gate": {
+   "basis": "the gate name exactly, its (non-positive) margin as branch_margins",
+   "value": 1e-12
+  },
+  "fresnel_transmission": {
+   "basis": "float64 evaluation of the same closed-form refraction/reflection chain from bit-identical JSON inputs: a few ulp per interface (1e-12 leaves ~1e3 ulp of room), times 1/(2 sqrt(d)) for the smallest Snell discriminant d of the pose, the derivative of the refracted cosine sqrt(d) (kinematic_atol)",
+   "value": 1e-12
+  },
+  "interface_transmittances": {
+   "basis": "float64 evaluation of the same closed-form refraction/reflection chain from bit-identical JSON inputs: a few ulp per interface (1e-12 leaves ~1e3 ulp of room), times 1/(2 sqrt(d)) for the smallest Snell discriminant d of the pose, the derivative of the refracted cosine sqrt(d) (kinematic_atol)",
+   "value": 1e-12
+  },
+  "jacobian_available": {
+   "basis": "exact boolean: available exactly where the path is valid (contract section 9.3)",
+   "value": 0.0
+  },
+  "normal_jacobian": {
+   "basis": "relative, J_perp = sigma_1 sigma_2 of the 2 x 3 right-trivialised residual Jacobian (contract section 5.4) is one derivative above the directions, so the direction tolerance's Snell amplification 1/(2 sqrt(d)) enters squared: |error| <= 1e-12 max(1, 1/(4 d)) max(1, |value|) per value (jacobian_rtol); measured: LI's AD value agrees with an independent central difference (h = 1e-6) to 6e-9 relative, and a 1e-14 rad pose nudge moves it by at most 2.5e-12 relative away from Snell boundaries (4e-8 at d ~ 1e-8)",
+   "value": 1e-12
+  },
+  "outgoing_direction": {
+   "basis": "float64 evaluation of the same closed-form refraction/reflection chain from bit-identical JSON inputs: a few ulp per interface (1e-12 leaves ~1e3 ulp of room), times 1/(2 sqrt(d)) for the smallest Snell discriminant d of the pose, the derivative of the refracted cosine sqrt(d) (kinematic_atol)",
+   "value": 1e-12
+  },
+  "segment_directions": {
+   "basis": "float64 evaluation of the same closed-form refraction/reflection chain from bit-identical JSON inputs: a few ulp per interface (1e-12 leaves ~1e3 ulp of room), times 1/(2 sqrt(d)) for the smallest Snell discriminant d of the pose, the derivative of the refracted cosine sqrt(d) (kinematic_atol)",
+   "value": 1e-12
+  },
+  "singular_values": {
+   "basis": "relative, J_perp = sigma_1 sigma_2 of the 2 x 3 right-trivialised residual Jacobian (contract section 5.4) is one derivative above the directions, so the direction tolerance's Snell amplification 1/(2 sqrt(d)) enters squared: |error| <= 1e-12 max(1, 1/(4 d)) max(1, |value|) per value (jacobian_rtol); measured: LI's AD value agrees with an independent central difference (h = 1e-6) to 6e-9 relative, and a 1e-14 rad pose nudge moves it by at most 2.5e-12 relative away from Snell boundaries (4e-8 at d ~ 1e-8)",
+   "value": 1e-12
+  },
+  "valid": {
+   "basis": "exact boolean; the nearest gate exit_snell_discriminant has margin 0.514, far above the float64 rounding of a margin (~1e-15)",
+   "value": 0.0
+  }
+ }
+}
