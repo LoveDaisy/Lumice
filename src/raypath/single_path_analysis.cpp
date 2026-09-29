@@ -8,7 +8,6 @@
 #include "analytic/entry_measure.hpp"
 #include "analytic/fiber_continuation.hpp"
 #include "analytic/path_chain.hpp"
-#include "analytic/path_fiber.hpp"
 #include "analytic/so3.hpp"
 #include "raypath/scene_to_analytic.hpp"
 #include "util/sky_direction.hpp"
@@ -213,17 +212,6 @@ class PathContext {
 
   double EntryMeasure(const double incident_body[3]) { return corridor_.Evaluate(incident_body, n_).value; }
 
-  // Largest singular value of d(outgoing direction)/d(pose) at the pose putting the sun at u, in the
-  // continuation's own residual chart (so the rank reads exactly as the tracer's rank gate would).
-  double JacobianSigma1(const double u[3], const double out[3]) const {
-    const double incident[3] = { -u[0], -u[1], -u[2] };
-    const analytic::IcePathMap map(table_, slots_.data(), SlotCount(), n_, incident);
-    const analytic::TargetChart chart = analytic::MakeTargetChart(out);
-    double a[2][3];
-    analytic::fiber_detail::LocalResidualJacobian(map, chart, kIdentity, a);
-    return analytic::so3::SvdTwoByThree(a[0], a[1]).sigma1;
-  }
-
   PointDetail Detail(const double pose[9], double residual_norm) {
     PointDetail d;
     for (int i = 0; i < 9; i++) {
@@ -269,15 +257,20 @@ struct RankProbe {
   double first_valid_u[3]{};
 };
 
-// Rank 0 = the outgoing direction does not move with the pose anywhere the path is realisable. The
-// rank is the one the tracer's gate uses (fiber_continuation.hpp EvaluateRegularState: a singular
-// value of the residual Jacobian below ContinuationParams::singular_value_tolerance does not
-// count), probed on a quasi-uniform lattice of sun directions: by the equivariance about the sun,
-// the Jacobian's singular values at a pose depend on the pose only through u. Stops at the first
-// valid probe with a non-zero rank.
+// Rank 0 = the outgoing direction does not move with the pose anywhere the path is realisable. That
+// happens exactly when the deviation is 0 (or pi) at every valid pose: fix the sun's place u in the
+// crystal and turn the crystal about the sun — the outgoing ray turns about the sun with it, so an
+// outgoing direction that never moves must lie on the sun's axis; conversely an outgoing direction
+// equal to +-incident everywhere is one direction. The test reads the deviation itself, whose
+// rounding error stays at the double ulp scale, rather than the Jacobian's rank: an exact plate's
+// Jacobian singular value measures 1e-10..1e-8 near grazing incidence, where the Snell square root
+// amplifies rounding, which is the tracer's own 1e-8 rank gate. The tolerance is the kernel's for
+// "this direction is that unit vector". Probed on the antipodal Fibonacci lattice discovery samples
+// on; the deviation depends on the pose only through u.
 RankProbe ProbeRank(const PathContext& ctx) {
-  const double tolerance = analytic::ContinuationParams{}.singular_value_tolerance;
   RankProbe probe;
+  bool all_forward = true;   // deviation 0: outgoing == incident
+  bool all_backward = true;  // deviation pi: outgoing == -incident
   for (int i = 0; i < kRankProbeCount; i++) {
     double u[3];
     analytic::LatticePoint(kRankProbeCount, i, u);
@@ -290,7 +283,11 @@ RankProbe ProbeRank(const PathContext& ctx) {
         probe.first_valid_u[k] = u[k];
       }
     }
-    if (ctx.JacobianSigma1(u, out) >= tolerance) {
+    const double incident[3] = { -u[0], -u[1], -u[2] };
+    const double deviation = AngleBetween(out, incident);
+    all_forward = all_forward && deviation <= analytic::kUnitTolerance;
+    all_backward = all_backward && deviation >= kPi - analytic::kUnitTolerance;
+    if (!all_forward && !all_backward) {
       return probe;  // rank_zero stays false
     }
   }

@@ -413,11 +413,14 @@ TEST(SinglePathRankZero, AParallelFacePairIsAPointMass) {
 }
 
 // A 2-degree wedge between the entry and exit faces: nearly a plate, but the outgoing direction does
-// move with the pose, so the rank gate must not call it rank 0.
+// move with the pose, so it must not be called rank 0. Measured margins of the deviation test the
+// module uses: this path's deviation reaches 0.1..0.3 rad at some probe (a tolerance of 0.3 turns
+// this case red), an exact plate's stays below 1e-13 rad (a tolerance of 1e-14 turns the case above
+// red); the tolerance, 1e-10, sits between them.
 TEST(SinglePathRankZero, ANearlyParallelPairIsNotAPointMass) {
   SinglePathResult r;
-  ASSERT_TRUE(
-      AnalyzeSinglePath(Scene(Pyramid(1.0f, 0.5f, 0.0f, 2.0f, 28.0f)), Request({ 3, 16 }, 20.0, 25.0), &r).Ok());
+  const Error e = AnalyzeSinglePath(Scene(Pyramid(1.0f, 0.5f, 0.0f, 2.0f, 28.0f)), Request({ 3, 16 }, 20.0, 25.0), &r);
+  ASSERT_TRUE(e.Ok()) << e.message;
   EXPECT_EQ(r.outcome, Outcome::kDiscovered);
 }
 
