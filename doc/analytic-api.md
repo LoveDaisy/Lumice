@@ -1298,7 +1298,8 @@ red → fix the C++.
 `--verify` result and whether a second export was byte-identical. The format, fields, recipes and
 tolerance basis are LI `docs/analytic-parity-fixtures.md`; this section does not restate them.
 `test/unit-correctness/analytic/test_li_parity.cpp` replays every fixture, one gtest case each
-(`LiParityEvaluatePath` / `LiParityTraceFiber` / `LiParitySeedSearch`), inside
+(`LiParityEvaluatePath` / `LiParityTraceFiber` / `LiParitySeedSearch`, plus `LiParitySkipped` for
+content not compared yet, below), inside
 `unit_correctness_test`, so it runs wherever that target runs — including every leg of CI's `build`
 job, whose `ctest -L` selector includes `unit-correctness`. Placement follows
 `doc/testing-architecture.md` §3: the oracle is another implementation but not the legacy CPU
@@ -1324,6 +1325,35 @@ next to its bound, red or green, which is the running record of how much room th
 First run (LI `bfbd042`): all 35 fixtures green with no change to the C++; the largest margins used
 were 2.3e-3 of 0.012 rad (curve distance, near a critical point), 4.9e-4 of 2e-3 (arclength) and
 4.6e-12 of 1e-11 (residual); everything else sat at rounding level.
+Current set (LI `fa8dadd`, LI PR #43): 93 fixtures — 39 `evaluate_path`, 29 `trace_fiber`, 14
+`seed_search`, 11 `band_sum` — from 9 matrix cells, 10 edge cells (LI §6.1: short and
+boundary-hugging loops, TIR-cut arcs, rank loss, budgets, a cone crystal) and 11 band-sum cells. The
+82 fixtures of the three existing kinds are green with no change to the C++, the edge cells included.
+The largest margins used were 8.7e-4 of 2e-3 (arclength, the 0.19-long caustic loop), 4.6e-12 of
+1e-11 (residual) and 2.3e-3 of 0.012 rad (curve distance, unchanged). The one fixture value LI moved
+at this rev, `3-5__boundary_hugging_r780_c150__seed_search` (`raw_cluster_count` and
+`admissible_count` 15 → 13, from LI taking the lowest pool index as cluster centre, contract
+§9.5.4), matched without a change here, since `DiscoverOnBand` already took the lowest index.
+
+**Budget cells.** A `trace_fiber` fixture that carries `expected.reference_curve` (the
+`3-5__limits__trace_fiber__*_budget` variants) is compared by LI's budget recipe instead of curve and
+length equality: the pose count or arclength against the budget, and every pose within
+`curve_distance_rad` of the unbudgeted reference curve. Two step controllers reach different extents
+inside one budget, so equality would be a stricter test than the fixture's tolerance basis supports.
+
+**Carried but not compared.** Fixture content this repo has no implementation to compare yet is
+counted, not dropped: each fixture carrying it gets one `LiParitySkipped` case that checks the
+content is present with the shape LI gives it and then reports SKIPPED with a reason. Three reasons
+exist, named by constants in the test (`kSkipBandSumModuleNotImplemented`,
+`kSkipEvaluatePathWave2FieldsNotCompared`, `kSkipFiberPerPoseFieldsNotCompared`): every `band_sum`
+fixture, and the wave 2 fields of every `evaluate_path` and `trace_fiber` fixture (`branch_margins`,
+`failed_gate`, `normal_jacobian`, `singular_values`, and the per-pose arrays). The kind's own suite
+still compares the rest of the same fixture and never skips, so a skip cannot hide a red there. The
+work that implements one of these comparisons removes its reason and extends the kind's suite.
+Unknown keys: the reader ignores top-level manifest keys and fixture fields it does not know, as LI
+§2 requires (`LiParityFixtures.UnknownKeysAreIgnored`). A file listed only under an unknown manifest
+key is still caught, by the listed-equals-present check. An unknown `continuation` option is the
+exception and fails, because it is an input: dropping it would change the problem being solved.
 
 **Two fixtures that look like gaps and are not.** `3-5-6-7__critical` has no files: the manifest
 records it as skipped with a reason (that path's `D_P` has no interior extremum on this crystal),
