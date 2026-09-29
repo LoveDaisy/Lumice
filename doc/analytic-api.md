@@ -6,7 +6,8 @@
 > library from Python using the install tree alone (§8.7); and the whole of the first module's v0
 > (§4.3): `LUMICE_ANALYTIC_EvaluatePath` (header version 2), with its precision (§5.4) and
 > thread-safety (§5.3) decisions, fiber continuation `LUMICE_ANALYTIC_TraceFiber[Batch]` (version
-> 3) and component discovery `LUMICE_ANALYTIC_DiscoverComponents` (version 4). The module serves the
+> 3) and component discovery `LUMICE_ANALYTIC_DiscoverComponents` (version 4); and module A v1's
+> per-pose diagnostics on `FiberResult` (version 5, §4.3). The module serves the
 > Analyze workspace's first phase (`doc/raypath-analysis.md` §5.1.8). The library is not in any
 > download package yet: that is §8.8's checklist, not done.
 >
@@ -295,9 +296,10 @@ legality rules); the header does not restate them.
   their absolute value, as the simulator folds them.
 - **Degradation as data (§9 item 9): not in v0.** A dropped face is visible only as that face
   number being rejected; an apex collapse is invisible in the result (it changes no face normal,
-  only which faces exist and where). Both are still logged. A result field for it belongs with the
-  wave-2 diagnostics extension (§4.3, §10), where `TraceFiber`'s result gains its `struct_size`
-  fields; `PathEvaluation` can take the same field then.
+  only which faces exist and where). Both are still logged. A result field for it was expected to
+  come with the wave-2 diagnostics extension (§4.3, §10); the author's wave 2 field set (§10.0) does
+  not include it, so version 5 does not carry it either. It remains a `struct_size`-compatible
+  addition for `FiberResult` and `PathEvaluation` alike, when asked for.
 
 ### 4.2 Path, directions, pose **(design)**
 
@@ -399,8 +401,11 @@ left its output identical bit for bit (a hash over 24000 poses on six paths).
   corrector's border, the section coordinate, is differentiated the same way. No derivative is
   written by hand. The small linear algebra is in `so3.hpp`: `A`'s singular values from Lagrange's
   identity (`sigma1 sigma2 = |r0 x r1|`, so a `sigma2` at the `1e-8` rank gate keeps its relative
-  precision), the bordered system's 2-norm condition number from a one-sided Jacobi SVD, and a
-  pivoted solve.
+  precision) with `sigma1^2` the Gram matrix's larger eigenvalue in the `hypot` form — the
+  characteristic polynomial's discriminant cancels when `sigma1 ~ sigma2` and put `1e-8` relative
+  error into both on the analytic circle, whose values are `(1, 1)`; fixed in version 5, when the
+  singular values became output — the bordered system's 2-norm condition number from a one-sided
+  Jacobi SVD, and a pivoted solve.
 - **Options** (C field → LI field → reference default of LI §10.1, whose text and the tests it
   names are the convergence evidence; zero means the default):
   `seed_residual_tolerance` → `residual_tolerance` `1e-11` (seed gate, corrector root and
@@ -421,8 +426,8 @@ left its output identical bit for bit (a hash over 24000 poses on six paths).
   call errors because it evaluates one pose; both headers say so. A closed result's last sample is
   the closure-corrected pose (it replaces the last step's end, as in LI), N = 0 when the seed is
   rejected, N = 1 when the first trial ends the trace, and every zero-length array is NULL. The
-  result block is `17 N - 1` doubles. Face sequences are bounded at 64, the simulator's `kMaxHits`,
-  for `EvaluatePath` too.
+  version 4 arrays are `17 N - 1` doubles of one block. Face sequences are bounded at 64, the
+  simulator's `kMaxHits`, for `EvaluatePath` too.
 
 Checked by: `test/unit-correctness/analytic/test_fiber_continuation.cpp` (LI's conformance matrix,
 §11, restated on analytic maps: C01–C04, C06's first-traversal cases, C07, C08, C10–C12, the step
@@ -436,6 +441,48 @@ the orientations matched the accepted pose sequences are the same sequences, to 
 rad per pose, on all eight — one open arc (`3-5-6-7__near_boundary`) ends one sample earlier at
 its TIR end. Largest residual on an accepted pose over those traces: `4.6e-12`, against the
 `1e-11` gate. The standing check is the parity fixtures, once this repository replays them (§10).
+
+**Per-pose diagnostics as built** (API version 5; module A v1, §10.0). `FiberResult` appends
+`branch_margin_count`, `branch_margin_names`, `branch_margins` (N × k), `jacobian_available` (N),
+`normal_jacobian` (N) and `singular_values` (N × 2), aligned with `poses`, meaning at each pose what
+LI `docs/analytic-parity-fixtures.md` §3.1 gives the same fields of `evaluate_path`:
+
+- **Margins.** The path's validity margins in the order the chain meets them —
+  `entry_incidence_cosine`, `entry_snell_discriminant`, `internal_<j>_incidence_cosine`,
+  `exit_incidence_cosine`, `exit_snell_discriminant`, `k = face_count + 2`. The names are a
+  cross-repository contract, spelled once (`BranchMarginName`, `path_evaluation.cpp`) and pinned
+  letter for letter by a unit test and by the parity reader against LI's lists. They are the map's
+  `Domain` margins that accepted the pose, so a trace records them at no extra cost.
+- **Normal Jacobian.** `J_perp = sigma1 sigma2` and the two singular values of the 2 × 3 residual
+  Jacobian in the chart at the pose's **own** outgoing direction (LI contract §5.4), not the traced
+  target's, which a sample misses by its residual. `EvaluateRegularState` already evaluates the
+  direction once as a `Jet<3>` for the rank gate and the tangent; the same jet is projected on both
+  charts, so recording the diagnostics adds no evaluation (the parity suite's time did not move).
+  `NormalJacobianAt` is the one definition: the trace records it at each accepted pose (the
+  closure-replaced last one included), and `EvaluatePathDiagnostics` — the kernel's single-pose
+  entry, which also names the failed gate of an invalid pose — returns the same numbers bit for bit.
+- **Availability.** `jacobian_available` is 1 exactly where the normal Jacobian exists, which LI
+  defines as "the path is valid"; every accepted pose is, so a trace's flags are all 1 and 0 would
+  mean the derivative could not be formed. Unavailable values are NaN, never a plausible 0 or 1.
+  `EvaluatePath`'s C struct carries none of this: its fields are unchanged.
+- **Compatibility** (§8.2). The six fields are written only when `struct_size` covers all of them;
+  the version 4 layout (everything up to `storage`) is the smallest size accepted, as the batch
+  stride and by `ReleaseFiberResult`, and is served byte for byte as version 4 served it. The
+  storage is typed members (the doubles block, the flags, the name strings and their pointer
+  array), not a hand-laid byte block, so no alignment is computed by hand. `TraceFiber`,
+  `TraceFiberBatch` and `DiscoverComponents`'s nested results fill it through one function.
+
+Checked by: `test_fiber_continuation.cpp` (the circle's closed form `J = 1`, `(1, 1)`; own chart
+against target chart off the fiber, `cos 0.3`; NaN when unavailable; array shapes on every trace),
+`test_path_fiber.cpp` (names letter for letter; margins against the chain's own cosines and
+discriminants; `J_perp` and `sigma1` against a Richardson central difference; the failed gate of
+invalid poses; a trace's arrays equal to fresh single-pose evaluations bit for bit), `test_so3.cpp`
+(equal and nearly equal singular values to `1e-15`), the parity suite (§10.1: every `evaluate_path`
+fixture's wave 2 fields against LI's values, every `trace_fiber` pose against this library's own
+single-pose evaluation), and the ctypes cases — a version 4, a partial, a current and a newer
+caller in one batch, and the nested results of discovery. The storage writes were also run once
+under macOS guard malloc (every allocation flush against a protected page) through all three
+`struct_size`s and discovery: clean, with a one-double overrun as the control that crashes.
 
 **`DiscoverComponents` as built** (API version 4). LI `docs/phase1-math-contract.md` §9.5
 (`reference-discovery-v1`, LI `bfbd042`) makes every step order and gate normative, so that two
@@ -566,6 +613,7 @@ satisfies §5–§10. v0 carries only the kinematic fields the product needs. Di
 enter in wave 2 as a `struct_size`-compatible extension of the result structs (§8.2), after LI's
 explore `fiber-diagnostics-contract` has converged on their contract (§9 item 8). v0 has no
 diagnostics switch. The wave-2 field set (author, 2026-09-29) is fixed in §10 ("Wave 2 scope and certification"); it is narrower than the list above.
+Version 5 built it ("Per-pose diagnostics as built", above); there is still no switch.
 
 ### 4.4 Memory and error conventions **(design)**
 
@@ -738,6 +786,13 @@ typedef struct LUMICE_ANALYTIC_FiberResult_ {
   const double* residual_norms;               /* N */
   const double* tangents;                     /* N * 3 */
   void* storage;                              /* opaque; LUMICE_ANALYTIC_ReleaseFiberResult */
+  /* Version 5, appended under the struct_size rule (section 8.2). */
+  int branch_margin_count;                    /* k = face_count + 2; 0 when N is 0 */
+  const char* const* branch_margin_names;     /* k, LI's validity_margin_names */
+  const double* branch_margins;               /* N * k */
+  const int* jacobian_available;              /* N */
+  const double* normal_jacobian;              /* N, J_perp; NaN where unavailable */
+  const double* singular_values;              /* N * 2, sigma1 >= sigma2; NaN where unavailable */
 } LUMICE_ANALYTIC_FiberResult;
 
 LUMICE_ANALYTIC_ErrorCode LUMICE_ANALYTIC_TraceFiber(
@@ -829,6 +884,12 @@ and `IncompleteCause`, the `DiscoveredComponent` / `IncompleteCandidate` element
 their traces rather than embedding them, `DiscoveryResult` with `struct_size`, and
 `DiscoverComponents` / `ReleaseDiscoveryResult`. Why each shape: §4.3, "`DiscoverComponents` as
 built". Nothing existing changed.
+
+Version 5 appends the six per-pose diagnostic fields to `FiberResult` (the draft above shows them),
+the first use of the §8.2 `struct_size` rule; no function or other struct changed. The version 4
+layout stays the smallest `struct_size` accepted: before version 5 every size below the struct's
+own was refused, so a version 4 caller has only ever passed that one size, and gets exactly what it
+got. Why each field and each choice: §4.3, "Per-pose diagnostics as built".
 
 ---
 
@@ -1060,8 +1121,8 @@ subsections keep that number.
 ### 8.2 Compatible and incompatible changes
 
 An incompatible change bumps the integer. In 0.x a compatible one bumps it too — every addition so
-far has (versions 2, 3 and 4 each added functions and nothing else incompatible), and that is the
-rule: `find_package` accepts only the exact version (§8.4) and a ctypes binding pins the version it
+far has (versions 2, 3 and 4 each added functions and nothing else incompatible; version 5 appended
+fields to `FiberResult` under the `struct_size` rule below), and that is the rule: `find_package` accepts only the exact version (§8.4) and a ctypes binding pins the version it
 was written against, so the integer is the only way a consumer can tell which functions a library
 has. From 1.0, when compatibility is promised, a compatible change leaves the integer alone and the
 table below becomes the rule.
@@ -1090,7 +1151,11 @@ sized, and in the batch case into the next element. Each therefore begins with
 - The library writes only fields that lie wholly inside `struct_size` bytes; a field beyond it is
   one the caller does not know, and stays untouched. A caller newer than the library sees its
   extra fields left at zero, so every appended field must give zero the meaning "not provided".
-- `struct_size` smaller than the first published layout is a call-level `ERR_INVALID_VALUE`.
+  Fields appended together are written together: a `struct_size` that ends inside such a group
+  gets none of it (its bytes there are zero-filled, i.e. "not provided"), so a caller never sees
+  pointers into half of a result. `FiberResult`'s version 5 fields are one such group.
+- `struct_size` smaller than the first published layout is a call-level `ERR_INVALID_VALUE`. For
+  `FiberResult` that is the version 4 layout (up to and including `storage`).
 - Zero-filling on error (§4.4) zeroes everything after `struct_size`, never `struct_size` itself.
 - In `TraceFiberBatch` the array stride is `out_results[0].struct_size`, not the library's own
   `sizeof`; every element must carry the same value (a mismatch is a call-level error). The
@@ -1248,7 +1313,7 @@ functions. The first real module's work opens this list. **The state described h
 | 5 | ~~Export-list mechanism on each platform, Windows export path, header location, prefix gate in `check_policies.py`, the stripping flag.~~ **Answered** — see §2.5 (as built): `scripts/gen_export_list.py` + `lumice_apply_export_list`, `.def` on Windows, `src/include/lumice_analytic.h`, rule `analytic-symbol-scope`. | The target and export-list work (done) |
 | 6 | ~~Callback forwarding implementation; removing the console sink only in this library.~~ **Answered** — see §6 (as built): `GetDefaultConsoleSink()` removed at load time in `src/analytic/analytic_api.cpp`, `AnalyticCallbackSink` attached by `LUMICE_ANALYTIC_SetLogCallback`. | The log-sink work (done) |
 | 7 | ~~External consumer smoke test (C + Python ctypes, install tree only), with `symmetry_semantics` in any fixture.~~ **Answered** — see §8.7 (as built): `test/e2e-correctness/test_external_consumer_smoke.py` + `external_consumer_smoke/`, consuming the prefix named by `LUMICE_ANALYTIC_INSTALL_DIR`; it compares no face sequence and says so, `symmetry_semantics: none`, in its docstrings (§3.3 rule 2). | The external-consumer smoke test (done) |
-| 8 | ~~Does `FiberResult` need LI §9.3's diagnostics and the entry cross-section `A_P`?~~ **Answered** — two steps (author, 2026-09-28): v0 returns the point list only; diagnostics + weights enter in wave 2 as a `struct_size`-compatible extension, once LI's explore `fiber-diagnostics-contract` has converged (§4.3, §10). **Landing (author, 2026-09-29):** certification is by output comparison only, so the extension is the per-point `normal_jacobian` (`J_perp`), `singular_values`, `jacobian_available` and boundary margins; `step` / `closure` / `terminal` diagnostics and `component_scope` do not enter the C ABI (§10). | Author and owner, 2026-09-28 |
+| 8 | ~~Does `FiberResult` need LI §9.3's diagnostics and the entry cross-section `A_P`?~~ **Answered** — two steps (author, 2026-09-28): v0 returns the point list only; diagnostics + weights enter in wave 2 as a `struct_size`-compatible extension, once LI's explore `fiber-diagnostics-contract` has converged (§4.3, §10). **Landing (author, 2026-09-29):** certification is by output comparison only, so the extension is the per-point `normal_jacobian` (`J_perp`), `singular_values`, `jacobian_available` and boundary margins; `step` / `closure` / `terminal` diagnostics and `component_scope` do not enter the C ABI (§10). **Built** in API version 5 (§4.3, "Per-pose diagnostics as built"); weights stay LI's to compute from the poses. | Author and owner, 2026-09-28 |
 | 9 | ~~Surface crystal *degradation* (apex collapse, dropped face) as result data, not only as a log line (§6).~~ **Answered for v0** — not surfaced: a dropped face shows only as that face number being rejected, an apex collapse only in the log. A result field for it goes with the wave-2 diagnostics extension (§4.1). | The first-module implementation (`EvaluatePath`, 2026-09-29) |
 | 10 | Parallelism inside `TraceFiberBatch` (v0: none; caller parallelises). Revisit only with a measured batch where binding-side threading is the bottleneck. **As built**: none; the batch shares one crystal build and starts no threads, and concurrent calls are safe (§5.3). No measurement has asked for more. | The first-module implementation (`TraceFiber`, 2026-09-29); reopen on a measured bottleneck |
 | 11 | ~~Re-read LI `docs/phase1-math-contract.md` §9 before implementing: this draft mirrors it as of 2026-09-28, and LI's §12 lists open items that may move it.~~ **Answered** — re-read at LI `bfbd042`: §9 unchanged in shape; §6.4 / §10.1 had moved (the step-aware closure trigger), and that is what is built (§4.3). LI's §9.1 also says problem construction "MUST not import or invoke Lumice" — a rule LI revises on its side when it adopts this library. | The first-module implementation (`TraceFiber`, 2026-09-29); LI, on adoption |
@@ -1343,13 +1408,28 @@ inside one budget, so equality would be a stricter test than the fixture's toler
 
 **Carried but not compared.** Fixture content this repo has no implementation to compare yet is
 counted, not dropped: each fixture carrying it gets one `LiParitySkipped` case that checks the
-content is present with the shape LI gives it and then reports SKIPPED with a reason. Three reasons
-exist, named by constants in the test (`kSkipBandSumModuleNotImplemented`,
-`kSkipEvaluatePathWave2FieldsNotCompared`, `kSkipFiberPerPoseFieldsNotCompared`): every `band_sum`
-fixture, and the wave 2 fields of every `evaluate_path` and `trace_fiber` fixture (`branch_margins`,
-`failed_gate`, `normal_jacobian`, `singular_values`, and the per-pose arrays). The kind's own suite
-still compares the rest of the same fixture and never skips, so a skip cannot hide a red there. The
-work that implements one of these comparisons removes its reason and extends the kind's suite.
+content is present with the shape LI gives it and then reports SKIPPED with a reason. One reason
+remains, a constant in the test (`kSkipBandSumModuleNotImplemented`): every `band_sum` fixture (11).
+The kind's own suite still compares the rest of the same fixture and never skips, so a skip cannot
+hide a red there. The work that implements a comparison removes its reason and extends the kind's
+suite — as the per-pose diagnostics did for the other two reasons (39 + 29 skips), below.
+
+**Wave 2 fields.** Every `evaluate_path` fixture compares `jacobian_available`, the margins by name
+(absolute), `normal_jacobian` and both singular values (relative to `max(1, |value|)`) against LI's
+values, each scaled at the pose's smallest Snell discriminant `d` as LI §5 states, and for an
+invalid pose the failed gate's name and value; this is the certification against LI. Every
+`trace_fiber` pose compares its arrays with this library's own single-pose evaluation there (LI
+§4's `pointwise_consistency`: two backends step differently, so never sample against sample) and
+checks it is regular; the names equal LI's. First run: 36 valid and 3 invalid poses, all green with
+no C++ change beyond the diagnostics themselves; margins within `2.4e-15`, the failed-gate value
+within `3.2e-16`, `J_perp` and the singular values within `6.0e-16` relative wherever the bound is
+the unscaled `1e-12`. At the arc-end poses of the `curve_min_margin` fixtures `d` is `~5e-16`, so
+the `1/(4d)` scaling widens the Jacobian bound to `~450` relative — it constrains nothing there;
+the measured error at those poses is `4.0e-8`. Broken on purpose to see red against LI's values:
+`J_perp` or `sigma2` times `1 + 1e-9` (28 of 36), the Jacobian projected in a fixed chart instead of
+the pose's own (31 of 36), the failed gate shifted by one (2 of 3; the third is the last margin
+recorded and cannot shift); and against the trace recipe, a single `J_perp`, a swapped name, one
+availability flag and the rows shifted by one pose.
 Unknown keys: the reader ignores top-level manifest keys and fixture fields it does not know, as LI
 §2 requires (`LiParityFixtures.UnknownKeysAreIgnored`). A file listed only under an unknown manifest
 key is still caught, by the listed-equals-present check. An unknown `continuation` option is the
