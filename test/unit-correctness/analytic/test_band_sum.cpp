@@ -260,5 +260,104 @@ TEST(BandSum, RankZeroMassesOfThePrismsParallelPair) {
   EXPECT_LE(psi.error, 1e-6 * psi.m);
 }
 
+
+// The psi average against a brute-force oracle built another way: for each event a rotation R_0
+// with R_0 u = s_hat by Rodrigues' formula (not the twist frame band_sum.cpp derives), R_psi =
+// Rot(s_hat, psi) R_0, rho read off R_psi's third row, and the periodic trapezoid rule on 8192
+// points (spectrally accurate for a smooth periodic integrand; the narrowest peak here, sigma = 1
+// degree, spans ~50 points). A plate and a Parry density, so both the zenith window's two psi
+// intervals and the roll factor are exercised; a sub-sample of the prism's 3-6 events keeps it fast.
+void Rotation(const double axis[3], double angle, double r[9]) {
+  const double c = std::cos(angle);
+  const double s = std::sin(angle);
+  const double t = 1.0 - c;
+  const double x = axis[0];
+  const double y = axis[1];
+  const double z = axis[2];
+  const double m[9] = { t * x * x + c,     t * x * y - s * z, t * x * z + s * y,  //
+                        t * x * y + s * z, t * y * y + c,     t * y * z - s * x,  //
+                        t * x * z - s * y, t * y * z + s * x, t * z * z + c };
+  for (int i = 0; i < 9; i++) {
+    r[i] = m[i];
+  }
+}
+
+double BruteForcePsiAverage(const double u[3], const double sun[3], const PoseDensity& density) {
+  double axis[3] = { u[1] * sun[2] - u[2] * sun[1], u[2] * sun[0] - u[0] * sun[2], u[0] * sun[1] - u[1] * sun[0] };
+  const double sin_a = std::sqrt(axis[0] * axis[0] + axis[1] * axis[1] + axis[2] * axis[2]);
+  const double cos_a = u[0] * sun[0] + u[1] * sun[1] + u[2] * sun[2];
+  double r0[9];
+  if (sin_a < 1e-12) {
+    const double x[3] = { 1.0, 0.0, 0.0 };
+    Rotation(x, cos_a > 0.0 ? 0.0 : kPi, r0);
+  } else {
+    for (double& a : axis) {
+      a /= sin_a;
+    }
+    Rotation(axis, std::atan2(sin_a, cos_a), r0);
+  }
+  constexpr int kPoints = 8192;
+  double sum = 0.0;
+  for (int k = 0; k < kPoints; k++) {
+    double twist[9];
+    Rotation(sun, 2.0 * kPi * k / kPoints, twist);
+    double e[3] = { 0.0, 0.0, 0.0 };
+    for (int j = 0; j < 3; j++) {
+      for (int l = 0; l < 3; l++) {
+        e[j] += twist[6 + l] * r0[3 * l + j];
+      }
+    }
+    sum += density.Evaluate(e[0], e[1], e[2]);
+  }
+  return sum / kPoints;
+}
+
+TEST(BandSum, RankZeroPsiAverageMatchesABruteForceTwist) {
+  LUMICE_ANALYTIC_Crystal crystal{};
+  crystal.kind = LUMICE_ANALYTIC_CRYSTAL_PRISM;
+  crystal.height = 1.0;
+  for (double& x : crystal.face_distance) {
+    x = 1.0;
+  }
+  FaceNormalTable table;
+  FacePolygonTable polygons;
+  ASSERT_EQ(BuildFaceNormals(crystal, &table, &polygons), Status::kOk);
+  const int faces[2] = { 3, 6 };
+  int slots[2];
+  ASSERT_EQ(ResolveFaceSequence(table, faces, 2, slots), Status::kOk);
+  const double incident[3] = { -std::cos(15.0 * kPi / 180.0), 0.0, -std::sin(15.0 * kPi / 180.0) };
+  const double sun[3] = { -incident[0], -incident[1], -incident[2] };
+  IceDiscovery sampler(table, polygons, slots, 2, 1.31, incident);
+  const int n = 20000;
+  const std::vector<SampleEvent> all = sampler.BuildEvents(n);
+  std::vector<SampleEvent> events;
+  for (size_t i = 0; i < all.size(); i += 40) {
+    events.push_back(all[i]);
+  }
+  ASSERT_GE(events.size(), 50u);
+
+  PoseDensitySpec plate;
+  plate.family = PoseFamily::kPlate;
+  plate.zenith_std_deg = 1.0;
+  PoseDensitySpec parry;
+  parry.family = PoseFamily::kParry;
+  parry.zenith_mean_deg = 90.0;
+  parry.zenith_std_deg = 3.0;
+  parry.roll_std_deg = 5.0;
+  for (const PoseDensitySpec& spec : { plate, parry }) {
+    const PoseDensity density(spec);
+    double expected = 0.0;
+    for (const SampleEvent& e : events) {
+      expected += e.weight * BruteForcePsiAverage(e.event.u, sun, density);
+    }
+    expected /= n;
+    const PointMass got = RankZeroMass(events, n, incident, density);
+    SCOPED_TRACE(static_cast<int>(spec.family));
+    EXPECT_GT(expected, 0.0);
+    EXPECT_NEAR(got.m / expected, 1.0, 1e-6);
+    EXPECT_LE(got.error, 1e-6 * got.m);
+  }
+}
+
 }  // namespace
 }  // namespace lumice::analytic
