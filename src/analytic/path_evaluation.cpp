@@ -209,4 +209,26 @@ bool EvaluatePath(const FaceNormalTable& table, const int* slots, int slot_count
   return valid;
 }
 
+int BranchMarginCount(int face_count) {
+  return face_count + 2;
+}
+
+std::string BranchMarginName(int index, int face_count) {
+  const int last = BranchMarginCount(face_count) - 1;
+  assert(index >= 0 && index <= last);
+  if (index == 0) {
+    return "entry_incidence_cosine";
+  }
+  if (index == 1) {
+    return "entry_snell_discriminant";
+  }
+  if (index == last - 1) {
+    return "exit_incidence_cosine";
+  }
+  if (index == last) {
+    return "exit_snell_discriminant";
+  }
+  return "internal_" + std::to_string(index - 1) + "_incidence_cosine";
+}
+
 }  // namespace lumice::analytic

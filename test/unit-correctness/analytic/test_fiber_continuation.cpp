@@ -67,6 +67,16 @@ struct ConjugationMap : AlwaysValid {
   }
 };
 
+// A direction map that is never finite.
+struct NanMap : AlwaysValid {
+  template <class S>
+  void Direction(const S* /*r*/, S out[3]) const {
+    for (int i = 0; i < 3; i++) {
+      out[i] = S(std::nan(""));
+    }
+  }
+};
+
 constexpr double kConjugationAngle = kPi / 2.0;
 
 double ConjugationConeAngle(double loop_length) {
@@ -104,6 +114,11 @@ void ExpectShapes(const TraceResult& r) {
   EXPECT_EQ(r.poses.size(), 9 * n);
   EXPECT_EQ(r.tangents.size(), 3 * n);
   EXPECT_EQ(r.arclength_increments.size(), n == 0 ? 0 : n - 1);
+  // The per-pose diagnostics are aligned with the poses (N = 0 included: all empty).
+  EXPECT_EQ(r.branch_margins.size(), static_cast<size_t>(r.branch_margin_count) * n);
+  EXPECT_EQ(r.jacobian_available.size(), n);
+  EXPECT_EQ(r.normal_jacobian.size(), n);
+  EXPECT_EQ(r.singular_values.size(), 2 * n);
   for (double a : r.arclength_increments) {
     EXPECT_GE(a, 0.0);
   }
@@ -155,6 +170,48 @@ TEST(FiberContinuation, C01AnalyticJacobianHasUnitSingularValues) {
   EXPECT_NEAR(state.tangent[2], 1.0, 1e-14);
 }
 
+// The recorded normal Jacobian is taken in the chart at the pose's OWN direction (LI contract
+// section 5.4), not the traced target's. Off the fiber the two differ: at R = exp(0.3 e1), R e3 is
+// 0.3 rad from the target e3, and projecting its unit-singular-value derivative onto e3's tangent
+// plane shortens one singular value to cos(0.3), while the own chart keeps (1, 1).
+TEST(FiberContinuation, NormalJacobianUsesThePosesOwnDirection) {
+  const TargetChart chart = MakeTargetChart(kE3);
+  const Mat pose = Exp(0.3, 0.0, 0.0);
+  double a[2][3];
+  fiber_detail::LocalResidualJacobian(BodyAxisMap{}, chart, pose.data(), a);
+  const auto target_svd = so3::SvdTwoByThree(a[0], a[1]);
+  EXPECT_NEAR(target_svd.sigma1 * target_svd.sigma2, std::cos(0.3), 1e-14);
+
+  const NormalJacobian own = fiber_detail::NormalJacobianAt(BodyAxisMap{}, pose.data());
+  ASSERT_TRUE(own.available);
+  EXPECT_NEAR(own.singular_values[0], 1.0, 1e-14);
+  EXPECT_NEAR(own.singular_values[1], 1.0, 1e-14);
+  EXPECT_NEAR(own.value, 1.0, 1e-14);
+
+  // EvaluateRegularState records the same numbers from its one forward-mode evaluation.
+  const auto state =
+      fiber_detail::EvaluateRegularState(BodyAxisMap{}, chart, ContinuationParams{}, pose.data(), nullptr);
+  ASSERT_TRUE(state.accepted);
+  EXPECT_EQ(state.normal.value, own.value);
+  EXPECT_EQ(state.normal.singular_values[0], own.singular_values[0]);
+  EXPECT_EQ(state.normal.singular_values[1], own.singular_values[1]);
+}
+
+// A rank-0 map still has a normal Jacobian (J_perp = 0, available): availability says whether A
+// could be formed, not whether the pose is regular. A non-finite direction cannot form it: NaN, not
+// a plausible 0 or 1.
+TEST(FiberContinuation, NormalJacobianIsUnavailableOnlyWhenItCannotBeFormed) {
+  const NormalJacobian rank0 = fiber_detail::NormalJacobianAt(ConstantMap{}, kIdentity.data());
+  EXPECT_TRUE(rank0.available);
+  EXPECT_EQ(rank0.value, 0.0);
+
+  const NormalJacobian none = fiber_detail::NormalJacobianAt(NanMap{}, kIdentity.data());
+  EXPECT_FALSE(none.available);
+  EXPECT_TRUE(std::isnan(none.value));
+  EXPECT_TRUE(std::isnan(none.singular_values[0]));
+  EXPECT_TRUE(std::isnan(none.singular_values[1]));
+}
+
 // LI test_tangent_orientation_is_continuous.
 TEST(FiberContinuation, TangentOrientationFollowsThePreviousTangent) {
   const TargetChart chart = MakeTargetChart(kE3);
@@ -191,6 +248,17 @@ TEST(FiberContinuation, C02AnalyticCircleClosesAtTwoPi) {
     EXPECT_LE(so3::Distance(r.poses.data(), r.poses.data() + 9 * (n - 1)), 1e-12);
     for (int i = 0; i + 1 < n; i++) {
       EXPECT_GT(so3::Dot3(&r.tangents[3 * i], &r.tangents[3 * (i + 1)]), 0.999999999999);
+    }
+    // Per-pose diagnostics: J_perp = 1, singular values (1, 1) everywhere on the circle (C01's closed
+    // form), and every row — the closure-replaced last one included — is a fresh evaluation's.
+    EXPECT_EQ(r.branch_margin_count, 0);
+    for (int i = 0; i < n; i++) {
+      EXPECT_EQ(r.jacobian_available[i], 1);
+      EXPECT_NEAR(r.normal_jacobian[i], 1.0, 1e-13);
+      EXPECT_NEAR(r.singular_values[2 * i], 1.0, 1e-13);
+      EXPECT_NEAR(r.singular_values[2 * i + 1], 1.0, 1e-13);
+      const NormalJacobian fresh = fiber_detail::NormalJacobianAt(BodyAxisMap{}, &r.poses[9 * i]);
+      EXPECT_EQ(r.normal_jacobian[i], fresh.value) << i;
     }
   }
 }
@@ -343,6 +411,21 @@ TEST(FiberContinuation, C08DomainEventPrecedesTheUnsafeDirection) {
   // crossing trial); with it the step halves toward the boundary down to minimum_step.
   const double last_margin = 0.1 - std::atan2(r.poses[9 * (n - 1) + 3], r.poses[9 * (n - 1)]);
   EXPECT_LT(last_margin, 1e-3);
+}
+
+// The recorded margins are the map's Domain() margins at each pose, row by row.
+TEST(FiberContinuation, BranchMarginsAreTheDomainMarginsOfEachPose) {
+  const CappedBodyAxisMap map;
+  const TraceResult r = TraceFiber(map, MakeTargetChart(kE3), kIdentity.data(), ContinuationParams{});
+  ExpectShapes(r);
+  ASSERT_GE(r.PoseCount(), 2);
+  ASSERT_EQ(r.branch_margin_count, 1);
+  for (int i = 0; i < r.PoseCount(); i++) {
+    DomainEvaluation d;
+    map.Domain(&r.poses[9 * i], &d);
+    EXPECT_EQ(r.branch_margins[i], d.margins[0]) << i;
+    EXPECT_GT(r.branch_margins[i], 0.0) << i;
+  }
 }
 
 TEST(FiberContinuation, C08DomainEventIsOnlyBelievedInsideTheTrustRegion) {

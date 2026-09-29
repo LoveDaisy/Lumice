@@ -145,9 +145,30 @@ struct DomainEvaluation {
   double event_margin = 0.0;
 };
 
+// The normal Jacobian of a pose (LI docs/phase1-math-contract.md section 5.4; LI
+// docs/analytic-parity-fixtures.md section 3.1, `normal_jacobian` / `singular_values`): the singular
+// values of the 2 x 3 residual Jacobian A of the direction map under right-trivialised rotations
+// R exp([delta]_x), in the chart whose target is the pose's OWN direction — not the traced target,
+// which a sample misses by its residual — and J_perp = sigma1 sigma2, the coarea weight's
+// denominator. Basis-invariant, so it depends on the pose and the map only. `available` is false
+// when A cannot be formed (the direction or its derivative is not finite); the numbers are then NaN,
+// never a plausible 0 or 1.
+struct NormalJacobian {
+  bool available = false;
+  double value = std::numeric_limits<double>::quiet_NaN();
+  double singular_values[2] = { std::numeric_limits<double>::quiet_NaN(), std::numeric_limits<double>::quiet_NaN() };
+};
+
 // One trace's samples: N accepted poses (seed first; on closure the last is the corrected closing
 // pose), N residual norms |basis^T (F - d)|, N unit tangents, N - 1 arclength increments. N = 0 when
 // the seed itself is rejected.
+//
+// Per-pose diagnostics, aligned with `poses` and recorded from the same evaluation that accepted
+// the pose (LI docs/analytic-parity-fixtures.md section 3.2, "Wave 2 adds per-pose arrays"):
+// `branch_margins` is N x branch_margin_count, the map's domain margins at each pose (for the
+// ice-crystal path, the validity margins in BranchMarginName order); branch_margin_count is the
+// seed's count, and a later pose of a map whose count varies has its missing cells NaN.
+// `jacobian_available`, `normal_jacobian` and `singular_values` (N x 2) are NormalJacobian's.
 struct TraceResult {
   FiberStatus status = FiberStatus::kNumericalFailure;
   FiberReason reason = FiberReason::kInvalidNumericalInput;
@@ -155,6 +176,11 @@ struct TraceResult {
   std::vector<double> residual_norms;
   std::vector<double> tangents;
   std::vector<double> arclength_increments;
+  int branch_margin_count = 0;
+  std::vector<double> branch_margins;
+  std::vector<int> jacobian_available;
+  std::vector<double> normal_jacobian;
+  std::vector<double> singular_values;
   int PoseCount() const { return static_cast<int>(residual_norms.size()); }
 };
 
@@ -171,6 +197,7 @@ struct State {
   bool has_tangent = false;
   double tangent[3]{};
   double condition = kInf;  // sigma1 / sigma2 of the residual Jacobian
+  NormalJacobian normal;    // at the pose's own direction; set once the smooth output is accepted
   DomainEvaluation domain;
   FiberReason reason = FiberReason::kNonFinite;
 };
@@ -249,14 +276,18 @@ inline void ApplyCorrection(const double base[9], const double delta[3], double 
   so3::MatMul(base, e, out);
 }
 
-// continuation._local_residual_jacobian_kernel: A = d r(R exp(delta)) / d delta at delta = 0.
+// The direction F(R exp(delta)) at delta = 0 as a Jet<3>: its value is F(R), its gradient the
+// derivative every residual Jacobian below is a projection of. One forward-mode evaluation.
 template <class Map>
-void LocalResidualJacobian(const Map& map, const TargetChart& chart, const double r[9], double a[2][3]) {
+void DirectionJet(const Map& map, const double r[9], Jet<3> direction[3]) {
   const double zero[3] = { 0.0, 0.0, 0.0 };
   Jet<3> pose[9];
   JetPose(r, zero, pose);
-  Jet<3> direction[3];
   map.Direction(pose, direction);
+}
+
+// A = d r / d delta of a DirectionJet in `chart`.
+inline void ResidualJacobianOf(const TargetChart& chart, const Jet<3> direction[3], double a[2][3]) {
   Jet<3> residual[2];
   ChartResidual(chart, direction, residual);
   for (int i = 0; i < 2; i++) {
@@ -264,6 +295,49 @@ void LocalResidualJacobian(const Map& map, const TargetChart& chart, const doubl
       a[i][k] = residual[i].v[k];
     }
   }
+}
+
+// continuation._local_residual_jacobian_kernel: A = d r(R exp(delta)) / d delta at delta = 0.
+template <class Map>
+void LocalResidualJacobian(const Map& map, const TargetChart& chart, const double r[9], double a[2][3]) {
+  Jet<3> direction[3];
+  DirectionJet(map, r, direction);
+  ResidualJacobianOf(chart, direction, a);
+}
+
+// NormalJacobian of a DirectionJet: A in the chart at the jet's own value (MakeTargetChart, the same
+// tangent basis the traced target gets), its two singular values and their product.
+inline NormalJacobian NormalJacobianOf(const Jet<3> direction[3]) {
+  NormalJacobian out;
+  const double own[3] = { direction[0].a, direction[1].a, direction[2].a };
+  if (!std::isfinite(own[0]) || !std::isfinite(own[1]) || !std::isfinite(own[2])) {
+    return out;
+  }
+  double a[2][3];
+  ResidualJacobianOf(MakeTargetChart(own), direction, a);
+  for (const auto& row : a) {
+    for (double v : row) {
+      if (!std::isfinite(v)) {
+        return out;
+      }
+    }
+  }
+  const so3::TwoByThreeSvd svd = so3::SvdTwoByThree(a[0], a[1]);
+  out.available = true;
+  out.singular_values[0] = svd.sigma1;
+  out.singular_values[1] = svd.sigma2;
+  out.value = svd.sigma1 * svd.sigma2;
+  return out;
+}
+
+// NormalJacobian at pose `r`: the one definition EvaluateRegularState records for an accepted pose
+// and the single-pose diagnostics (path_fiber.hpp EvaluatePathDiagnostics) report, so a trace's
+// per-pose arrays and a fresh evaluation at the same pose are the same numbers.
+template <class Map>
+NormalJacobian NormalJacobianAt(const Map& map, const double r[9]) {
+  Jet<3> direction[3];
+  DirectionJet(map, r, direction);
+  return NormalJacobianOf(direction);
 }
 
 // continuation._evaluate_regular_state: one budgeted pose unit — domain, smooth output and its
@@ -291,8 +365,13 @@ State EvaluateRegularState(const Map& map, const TargetChart& chart, const Conti
     s.reason = smooth.reason;
     return s;
   }
+  // One forward-mode evaluation serves both Jacobians: A in the traced target's chart (the rank
+  // gate and the tangent) and the pose's own normal Jacobian (the recorded diagnostics).
+  Jet<3> direction_jet[3];
+  DirectionJet(map, rotation, direction_jet);
   double a[2][3];
-  LocalResidualJacobian(map, chart, rotation, a);
+  ResidualJacobianOf(chart, direction_jet, a);
+  s.normal = NormalJacobianOf(direction_jet);
   for (const auto& row : a) {
     for (double v : row) {
       if (!std::isfinite(v)) {
@@ -610,10 +689,31 @@ CorrectorOutcome CorrectClosure(const Map& map, const TargetChart& chart, const 
   return finish(p.closure_maximum_iterations, FiberReason::kCorrectorFailure);
 }
 
+// Writes pose `n`'s per-pose diagnostics; the arrays already hold n + 1 rows.
+inline void WriteDiagnostics(const State& s, size_t n, TraceResult* r) {
+  const size_t k = static_cast<size_t>(r->branch_margin_count);
+  for (size_t i = 0; i < k; i++) {
+    r->branch_margins[k * n + i] = static_cast<int>(i) < s.domain.margin_count ? s.domain.margins[i] : kNaN;
+  }
+  r->jacobian_available[n] = s.normal.available ? 1 : 0;
+  r->normal_jacobian[n] = s.normal.value;
+  r->singular_values[2 * n + 0] = s.normal.singular_values[0];
+  r->singular_values[2 * n + 1] = s.normal.singular_values[1];
+}
+
 inline void AppendState(const State& s, TraceResult* r) {
+  if (r->PoseCount() == 0) {
+    r->branch_margin_count = s.domain.margin_count;
+  }
+  const size_t n = r->residual_norms.size();
   r->poses.insert(r->poses.end(), s.rotation, s.rotation + 9);
   r->residual_norms.push_back(s.residual_norm);
   r->tangents.insert(r->tangents.end(), s.tangent, s.tangent + 3);
+  r->branch_margins.resize(r->branch_margins.size() + static_cast<size_t>(r->branch_margin_count));
+  r->jacobian_available.push_back(0);
+  r->normal_jacobian.push_back(kNaN);
+  r->singular_values.insert(r->singular_values.end(), 2, kNaN);
+  WriteDiagnostics(s, n, r);
 }
 
 inline void ReplaceLastState(const State& s, TraceResult* r) {
@@ -625,6 +725,7 @@ inline void ReplaceLastState(const State& s, TraceResult* r) {
   for (int i = 0; i < 3; i++) {
     r->tangents[3 * n + i] = s.tangent[i];
   }
+  WriteDiagnostics(s, n, r);
 }
 
 inline void Finish(FiberReason reason, TraceResult* r) {

@@ -23,6 +23,8 @@
 // optics_shared.h GetReflectRatioT) — doc/analytic-api.md section 5.4 has the measurement that ruled
 // out promoting the float normals.
 
+#include <string>
+
 #include "core/geo3d_closedform.hpp"
 #include "lumice_analytic.h"
 
@@ -139,6 +141,14 @@ struct PathOutputs {
 // unpolarised s/p average; `fresnel_transmission` is their product.
 bool EvaluatePath(const FaceNormalTable& table, const int* slots, int slot_count, double refractive_index,
                   const double incident_direction[3], const double pose[9], PathOutputs* out);
+
+// The names of a path's validity margins, in the order the chain records them (path_chain.hpp
+// ChainDomain): entry_incidence_cosine, entry_snell_discriminant, internal_<k>_incidence_cosine for
+// k = 1 .. face_count - 2, exit_incidence_cosine, exit_snell_discriminant — LI's
+// validity_margin_names (LI docs/analytic-parity-fixtures.md section 3.1, `branch_margins`). The
+// spelling is a cross-repository contract: LI reads these names. BranchMarginCount is face_count + 2.
+int BranchMarginCount(int face_count);
+std::string BranchMarginName(int index, int face_count);
 
 }  // namespace lumice::analytic
 

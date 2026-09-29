@@ -41,4 +41,30 @@ void IcePathMap::Domain(const double r[9], DomainEvaluation* out) const {
   }
 }
 
+PathDiagnostics EvaluatePathDiagnostics(const FaceNormalTable& table, const int* slots, int slot_count,
+                                        double refractive_index, const double incident_direction[3],
+                                        const double pose[9]) {
+  PathDiagnostics out;
+  ChainDomain chain;
+  chain.margins = out.margins;
+  double outgoing[3];
+  out.valid = TracePathChain<double>(table, slots, slot_count, refractive_index, incident_direction, pose, outgoing,
+                                     nullptr, &chain);
+  out.margin_count = chain.margin_count;
+  if (!out.valid) {
+    // The chain records a gate pair (entry, exit) before testing it, so the failed gate is the first
+    // recorded margin that is not > 0, not necessarily the last one recorded.
+    for (int i = 0; i < out.margin_count; i++) {
+      if (!(out.margins[i] > 0.0)) {
+        out.failed_gate = i;
+        break;
+      }
+    }
+    return out;
+  }
+  const IcePathMap map(table, slots, slot_count, refractive_index, incident_direction);
+  out.jacobian = fiber_detail::NormalJacobianAt(map, pose);
+  return out;
+}
+
 }  // namespace lumice::analytic
