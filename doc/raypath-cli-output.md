@@ -215,6 +215,33 @@ arcs, one of height 0.5 gives `[]` with `target_in_range: true` — the fiber ex
 prism passes no ray along it. At (20°, 140°), δ = 124.02° is beyond 120° and the result is `[]` with
 `target_in_range: false` for either height.
 
+### 3.10 Degenerate paths
+
+The level set of the deviation on the sun-direction sphere is the fiber for every path checked
+(prism `3-5`, with an internal reflection `3-5-6-7`, pyramid `13-15-26-28`), but for some paths
+the fiber and the orientation distribution stop being independent, and the document shows it:
+
+- **Latitude-invariant paths** (the middle faces compose to a turn about the c-axis, e.g.
+  `3-6-4-8`, or to the identity, e.g. `1-3-6-2`). D depends only on the sun's latitude in the
+  crystal frame, so every row of `sun_grid.deviation_rad` is constant (row range ≈ 0, to ~1e-11
+  rad) and the level set is a latitude circle. Nothing extra is written for this; a reader tests
+  the row range, or the range of `sun_in_crystal`'s latitude over a component.
+- **The fiber is an arc of that circle, not a loop.** The valid part of each circle is a fraction
+  of its longitude (about 36% for `3-6-4-8`), so components are `kind: "arc"`, both ends are
+  boundary events (`tir_boundary` / `path_infeasible`), and the curve's steps shrink to ~1e-5 at
+  the ends — plotted points cluster there. The same δ often has two such circles, mirrored about the
+  equator (`±lat`), and `sun_grid.valid` varies with longitude.
+- **A flat-plate orientation family lands on one sky point.** The plate's `u` also lies on a
+  latitude circle (latitude = the sun's altitude), so at δ = D(sun altitude) the whole family
+  reaches one point: for the plate `1-4-5-2` (the 120° parhelion under this repository's face
+  numbers) the fiber sits at latitude 20.000° for a sun at 20°, an arc of 60° in length. There is
+  no field for this; it is the coincidence of `components[*].points[*].sun_in_crystal` with the
+  orientation family, read by the consumer.
+- **Rank 0** (`1-2` on a plate): `outcome: "point_mass"`, no level set exists (D ≡ 0); show one
+  sky point and `target_separation_deg` rather than the "no components" wording of §3.9.
+
+Column crystals, Parry and Lowitz orientation families were not checked against the level sets.
+
 ## 4. Conventions
 
 - Frames: world `+z` is the zenith, azimuth counter-clockwise from `+x` seen from `+z`; body is the
