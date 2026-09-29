@@ -17,6 +17,12 @@
 // face sequence and performs no symmetry reduction (doc/analytic-api.md section 3).
 //
 // Version notes, newest first (every bump says what changed, doc/analytic-api.md section 8.1):
+//   5  APPENDED to LUMICE_ANALYTIC_FiberResult, under the struct_size rule: branch_margin_count,
+//      branch_margin_names, branch_margins, jacobian_available, normal_jacobian, singular_values —
+//      the per-pose diagnostics of LI docs/analytic-parity-fixtures.md section 3.2. A caller
+//      compiled against version 4 (struct_size = the version 4 sizeof) is accepted and served
+//      exactly as before; version 4 rejected any struct_size below its own sizeof, so no such
+//      caller could have passed less. The nested results of DiscoverComponents carry the fields.
 //   4  ADDED LUMICE_ANALYTIC_DiscoveryProblem, LUMICE_ANALYTIC_DiscoveryOptions,
 //      LUMICE_ANALYTIC_Completeness, LUMICE_ANALYTIC_ComponentKind, LUMICE_ANALYTIC_IncompleteCause,
 //      LUMICE_ANALYTIC_DiscoveredComponent, LUMICE_ANALYTIC_IncompleteCandidate,
@@ -59,7 +65,7 @@ extern "C" {
 
 // Interface version, a single integer (doc/analytic-api.md section 8.2): bumped on every
 // incompatible change, and in 0.x on every addition too. Independent of lumice.h's LUMICE_API_VERSION.
-#define LUMICE_ANALYTIC_API_VERSION 4
+#define LUMICE_ANALYTIC_API_VERSION 5
 
 // Library version at run time; compare with LUMICE_ANALYTIC_API_VERSION to detect a
 // header/library mismatch. Also the minimal function the build, export and load chain is proven
@@ -231,7 +237,32 @@ typedef enum LUMICE_ANALYTIC_Reason_ {
 // extra sample), so a closed result holds the seed twice, first and last. N = 0 when the seed itself
 // is rejected (not on the path's domain, not a regular root, the target's antipode); N = 1 when the
 // first step already ends the trace. Every array of length 0 is NULL; every other one points into
-// `storage`, one block of 17 N - 1 doubles.
+// `storage` and is valid until LUMICE_ANALYTIC_ReleaseFiberResult (for a nested result of
+// DiscoverComponents, until LUMICE_ANALYTIC_ReleaseDiscoveryResult).
+//
+// Per-pose diagnostics (version 5), aligned with `poses`; their meaning is the one EvaluatePath's
+// fields have at that pose in LI docs/analytic-parity-fixtures.md section 3.1:
+//   branch_margin_count  k = face_count + 2; 0 when N is 0.
+//   branch_margin_names  k NUL-terminated names, the validity margins in the order the path meets
+//                        them: entry_incidence_cosine, entry_snell_discriminant,
+//                        internal_<j>_incidence_cosine (j = 1 .. face_count - 2),
+//                        exit_incidence_cosine, exit_snell_discriminant. The spelling is LI's.
+//   branch_margins       N * k, row-major (pose, margin). Incidence cosines of the ray with the face
+//                        normal and Snell discriminants 1 - n_rel^2 (1 - cos^2); dimensionless, all
+//                        > 0 at an accepted pose, and the smallest says which boundary is nearest.
+//   jacobian_available   N; 1 where the normal Jacobian exists. Every accepted pose is on the smooth
+//                        branch, so 0 would mean it could not be formed (a non-finite derivative).
+//   normal_jacobian      N, J_perp = sigma1 * sigma2: the 2 x 3 derivative of the outgoing direction
+//                        under right-trivialised pose rotations, projected on the tangent plane at
+//                        the pose's OWN outgoing direction (not the target, which a sample misses by
+//                        its residual). Dimensionless, basis-invariant. NaN where unavailable — never
+//                        a plausible 0 or 1.
+//   singular_values      N * 2, (sigma1, sigma2), sigma1 >= sigma2 >= 0, of the same matrix. NaN
+//                        where unavailable.
+// These six are written only when struct_size covers all of them. A struct_size that ends inside
+// them gets none: its bytes there are zero-filled like every byte after struct_size's field, and
+// zero / NULL means "not provided" (section 8.2). A caller compiled against version 4 keeps the
+// version 4 behaviour.
 typedef struct LUMICE_ANALYTIC_FiberResult_ {
   uint32_t struct_size;                        // caller sets sizeof(*out_result) (section 8.2)
   int status;                                  // LUMICE_ANALYTIC_FiberStatus
@@ -243,6 +274,13 @@ typedef struct LUMICE_ANALYTIC_FiberResult_ {
   const double* residual_norms;                // N, |basis^T (outgoing - target)| in the target chart
   const double* tangents;                      // N * 3, unit, body frame (right-trivialised), in order
   void* storage;                               // opaque; LUMICE_ANALYTIC_ReleaseFiberResult
+  // Version 5 (see above).
+  int branch_margin_count;                 // k
+  const char* const* branch_margin_names;  // k names
+  const double* branch_margins;            // N * k
+  const int* jacobian_available;           // N
+  const double* normal_jacobian;           // N
+  const double* singular_values;           // N * 2
 } LUMICE_ANALYTIC_FiberResult;
 
 // TraceFiberBatch with count = 1 (the same code path): *out_result as that batch's one element.
@@ -252,8 +290,9 @@ LUMICE_ANALYTIC_TraceFiber(const LUMICE_ANALYTIC_Crystal* crystal, const LUMICE_
 
 // One crystal, one options block, `count` independent problems (typically one path swept over many
 // target directions). out_results: caller-allocated array of `count`; its stride is
-// out_results[0].struct_size, which every element must carry (section 8.2). Each element is filled
-// and released independently. The library starts no threads.
+// out_results[0].struct_size, which every element must carry (section 8.2), and which may be this
+// struct's sizeof or that of an earlier version (the version 4 layout is the smallest accepted).
+// Each element is filled and released independently. The library starts no threads.
 //
 // What belongs to one problem is that element's result, never the call's return code: a problem
 // with face_count outside 2..64, a face number the crystal does not have, a non-finite or non-unit
@@ -265,7 +304,7 @@ LUMICE_ANALYTIC_TraceFiber(const LUMICE_ANALYTIC_Crystal* crystal, const LUMICE_
 //
 // Call errors:
 //   ERR_INVALID_VALUE  count < 0 — returns at once without touching out_results, whose length is
-//                      unknown; out_results[0].struct_size smaller than this struct — only element
+//                      unknown; out_results[0].struct_size smaller than the version 4 layout — only element
 //                      0 is zero-filled, as the stride is unusable; elements disagreeing on
 //                      struct_size; an invalid options block; a crystal field as for EvaluatePath
 //   ERR_NULL_ARG       crystal, problems or out_results NULL (count > 0); a problem with faces NULL

@@ -1,8 +1,10 @@
+#include <cassert>
 #include <cmath>
 #include <cstddef>
 #include <cstring>
 #include <memory>
 #include <new>
+#include <string>
 #include <vector>
 
 #include "analytic/analytic_callback_sink.hpp"
@@ -67,10 +69,54 @@ struct PathEvaluationStorage {
   std::unique_ptr<double[]> values;
 };
 
-// The block behind FiberResult::storage: one allocation of 17 N - 1 doubles — poses (9 N), sun
-// directions (3 N), arclength increments (N - 1), residual norms (N), tangents (3 N).
+// The smallest FiberResult a caller may pass: the version 4 layout, everything up to the first
+// field version 5 appended (doc/analytic-api.md section 8.2). A struct_size from here up to, but not
+// including, sizeof(FiberResult) is served as version 4 was; the appended fields are written only
+// when all of them fit.
+constexpr size_t kFiberResultV4Size = offsetof(LUMICE_ANALYTIC_FiberResult, branch_margin_count);
+static_assert(kFiberResultV4Size == offsetof(LUMICE_ANALYTIC_FiberResult, storage) + sizeof(void*),
+              "the version 4 layout ends with `storage`: new fields go after it, never before");
+
+// Where each double array of one FiberResult sits in its storage block, for N poses and k margins.
+// The version 4 arrays keep their order — poses (9 N), sun directions (3 N), arclength increments
+// (N - 1), residual norms (N), tangents (3 N): 17 N - 1 doubles — and the version 5 double arrays
+// follow when requested: branch margins (N k), normal Jacobian (N), singular values (2 N).
+struct FiberDoubleLayout {
+  size_t poses = 0;
+  size_t sun = 0;
+  size_t arclength = 0;
+  size_t residuals = 0;
+  size_t tangents = 0;
+  size_t branch_margins = 0;
+  size_t normal_jacobian = 0;
+  size_t singular_values = 0;
+  size_t total = 0;
+};
+
+FiberDoubleLayout FiberDoubles(size_t n, size_t k, bool diagnostics) {
+  FiberDoubleLayout l;
+  l.sun = l.poses + 9 * n;
+  l.arclength = l.sun + 3 * n;
+  l.residuals = l.arclength + (n - 1);
+  l.tangents = l.residuals + n;
+  l.total = l.tangents + 3 * n;
+  if (diagnostics) {
+    l.branch_margins = l.total;
+    l.normal_jacobian = l.branch_margins + n * k;
+    l.singular_values = l.normal_jacobian + n;
+    l.total = l.singular_values + 2 * n;
+  }
+  return l;
+}
+
+// The block behind FiberResult::storage: the doubles (FiberDoubleLayout), and for a version 5
+// caller the availability flags and the margin names with the pointer array that lists them. Typed
+// members rather than one byte block, so no member's alignment is computed by hand.
 struct FiberResultStorage {
   std::unique_ptr<double[]> values;
+  std::vector<int> jacobian_available;
+  std::vector<std::string> names;
+  std::vector<const char*> name_pointers;
 };
 
 LUMICE_ANALYTIC_Reason ToReason(lumice::analytic::FiberReason reason) {
@@ -180,9 +226,11 @@ bool ValidProblem(const lumice::analytic::FaceNormalTable& table, const LUMICE_A
   return an::ResolveFaceSequence(table, problem.faces, problem.face_count, slots) == an::Status::kOk;
 }
 
-// Copies one trace into its result's storage block.
-void FillFiberResult(const lumice::analytic::TraceResult& trace, const double incident[3],
-                     LUMICE_ANALYTIC_FiberResult* out) {
+// Copies one trace of a `face_count`-face path into its result's storage block. `struct_size` is
+// the caller's (the nested results of DiscoverComponents pass the library's own): the version 5
+// fields are written only when it covers all of them.
+void FillFiberResult(const lumice::analytic::TraceResult& trace, const double incident[3], int face_count,
+                     size_t struct_size, LUMICE_ANALYTIC_FiberResult* out) {
   out->status = ToStatus(trace.status);
   out->reason = ToReason(trace.reason);
   const int n = trace.PoseCount();
@@ -190,14 +238,21 @@ void FillFiberResult(const lumice::analytic::TraceResult& trace, const double in
   if (n == 0) {
     return;
   }
+  const bool diagnostics = struct_size >= sizeof(LUMICE_ANALYTIC_FiberResult);
   const size_t un = static_cast<size_t>(n);
+  const size_t k = static_cast<size_t>(trace.branch_margin_count);
+  // Every margin row of an ice path has one name per BranchMarginName; the trace records the map's
+  // count, which for this map is that same number.
+  assert(!diagnostics || trace.branch_margin_count == lumice::analytic::BranchMarginCount(face_count));
+  const FiberDoubleLayout layout = FiberDoubles(un, k, diagnostics);
   auto storage = std::make_unique<FiberResultStorage>();
-  storage->values = std::make_unique<double[]>(17 * un - 1);
-  double* poses = storage->values.get();
-  double* sun = poses + 9 * un;
-  double* arclength = sun + 3 * un;
-  double* residuals = arclength + (un - 1);
-  double* tangents = residuals + un;
+  storage->values = std::make_unique<double[]>(layout.total);
+  double* values = storage->values.get();
+  double* poses = values + layout.poses;
+  double* sun = values + layout.sun;
+  double* arclength = values + layout.arclength;
+  double* residuals = values + layout.residuals;
+  double* tangents = values + layout.tangents;
   std::memcpy(poses, trace.poses.data(), 9 * un * sizeof(double));
   for (size_t i = 0; i < un; i++) {
     // u = R^T (-s): the sun direction seen from the crystal.
@@ -216,6 +271,32 @@ void FillFiberResult(const lumice::analytic::TraceResult& trace, const double in
   out->arclength_increments = un > 1 ? arclength : nullptr;
   out->residual_norms = residuals;
   out->tangents = tangents;
+  if (diagnostics) {
+    double* margins = values + layout.branch_margins;
+    double* normal_jacobian = values + layout.normal_jacobian;
+    double* singular_values = values + layout.singular_values;
+    if (k > 0) {
+      std::memcpy(margins, trace.branch_margins.data(), un * k * sizeof(double));
+    }
+    std::memcpy(normal_jacobian, trace.normal_jacobian.data(), un * sizeof(double));
+    std::memcpy(singular_values, trace.singular_values.data(), 2 * un * sizeof(double));
+    storage->jacobian_available = trace.jacobian_available;
+    storage->names.reserve(k);
+    for (size_t i = 0; i < k; i++) {
+      storage->names.push_back(lumice::analytic::BranchMarginName(static_cast<int>(i), face_count));
+    }
+    // Filled after the strings stop moving: each pointer is into its own std::string.
+    storage->name_pointers.reserve(k);
+    for (const std::string& name : storage->names) {
+      storage->name_pointers.push_back(name.c_str());
+    }
+    out->branch_margin_count = static_cast<int>(k);
+    out->branch_margin_names = k > 0 ? storage->name_pointers.data() : nullptr;
+    out->branch_margins = k > 0 ? margins : nullptr;
+    out->jacobian_available = storage->jacobian_available.data();
+    out->normal_jacobian = normal_jacobian;
+    out->singular_values = singular_values;
+  }
   out->storage = storage.release();
 }
 
@@ -265,7 +346,7 @@ LUMICE_ANALYTIC_ErrorCode TraceFiberBatchImpl(const LUMICE_ANALYTIC_Crystal* cry
     const an::IcePathMap map(table, slots, problem.face_count, problem.refractive_index, problem.incident_direction);
     const an::TraceResult trace =
         an::TraceFiber(map, an::MakeTargetChart(problem.target_direction), problem.seed_pose, params);
-    FillFiberResult(trace, problem.incident_direction, out);
+    FillFiberResult(trace, problem.incident_direction, problem.face_count, stride, out);
   }
   return LUMICE_ANALYTIC_OK;
 }
@@ -386,7 +467,7 @@ LUMICE_ANALYTIC_ErrorCode DiscoverComponentsImpl(const LUMICE_ANALYTIC_Crystal* 
   auto view = [&](const an::TraceResult& trace) -> const LUMICE_ANALYTIC_FiberResult* {
     LUMICE_ANALYTIC_FiberResult* r = &storage->traces[next++];
     r->struct_size = sizeof(LUMICE_ANALYTIC_FiberResult);
-    FillFiberResult(trace, problem->incident_direction, r);
+    FillFiberResult(trace, problem->incident_direction, problem->face_count, r->struct_size, r);
     // The block moves to the discovery storage: the nested result is a view, not an owner.
     storage->blocks.emplace_back(static_cast<FiberResultStorage*>(r->storage));
     r->storage = nullptr;
@@ -569,10 +650,10 @@ LUMICE_ANALYTIC_ErrorCode LUMICE_ANALYTIC_TraceFiberBatch(const LUMICE_ANALYTIC_
   if (out_results == nullptr) {
     return LUMICE_ANALYTIC_ERR_NULL_ARG;
   }
-  // The stride is the caller's sizeof (doc/analytic-api.md section 8.2). Below this struct's size it
-  // cannot be walked: only element 0 is known to exist.
+  // The stride is the caller's sizeof (doc/analytic-api.md section 8.2). Below the version 4 layout
+  // it cannot be walked: only element 0 is known to exist.
   const size_t stride = out_results[0].struct_size;
-  if (stride < sizeof(LUMICE_ANALYTIC_FiberResult)) {
+  if (stride < kFiberResultV4Size) {
     ZeroAfterStructSize(&out_results[0]);
     return LUMICE_ANALYTIC_ERR_INVALID_VALUE;
   }
@@ -610,7 +691,7 @@ LUMICE_ANALYTIC_ErrorCode LUMICE_ANALYTIC_TraceFiber(const LUMICE_ANALYTIC_Cryst
 }
 
 void LUMICE_ANALYTIC_ReleaseFiberResult(LUMICE_ANALYTIC_FiberResult* result) {
-  if (result == nullptr || result->struct_size < sizeof(LUMICE_ANALYTIC_FiberResult)) {
+  if (result == nullptr || result->struct_size < kFiberResultV4Size) {
     return;
   }
   ReleaseFiberStorage(result);
