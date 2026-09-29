@@ -20,6 +20,7 @@
 // symmetry_semantics: none — asserted per fixture (doc/analytic-api.md section 3.3 rule 2): a
 // fixture that carried a symmetry reduction would not describe one concrete face sequence.
 
+#include <gtest/gtest-spi.h>
 #include <gtest/gtest.h>
 
 #include <algorithm>
@@ -111,38 +112,147 @@ std::map<std::string, std::string> ReadSource() {
   return out;
 }
 
-// Every fixture file the manifest lists, in manifest order. Read at registration time so each
-// fixture is its own gtest case; a missing manifest yields no cases, which the manifest test below
-// then reports as a failure rather than a silent pass.
-std::vector<std::string> ManifestFiles() {
-  std::ifstream in(FixtureDir() / "manifest.json");
-  if (!in) {
-    return {};
-  }
-  const Json manifest = Json::parse(in, nullptr, false);
+// The manifest sections that list fixture files (LI section 2): the path x category matrix, the
+// wave 2 edge cells and the band-sum cells. Any other top-level key is ignored, as LI requires of a
+// reader; a file listed only under an unknown key is then on disk but unlisted, and the manifest
+// test's listed == present check goes red instead of the file being silently dropped.
+constexpr const char* kManifestSections[] = { "cells", "edge_cells", "band_sum_cells" };
+
+// Every fixture file `manifest` lists, in section then manifest order. Pure, so the unknown-key rule
+// is tested on this very function.
+std::vector<std::string> ManifestFilesOf(const Json& manifest) {
   std::vector<std::string> files;
-  if (!manifest.is_object() || !manifest.contains("cells")) {
+  if (!manifest.is_object()) {
     return files;
   }
-  for (const Json& cell : manifest["cells"]) {
-    if (!cell.is_object() || !cell.contains("files")) {
-      continue;  // a malformed cell surfaces in the manifest test, not as a crash at registration
+  for (const char* section : kManifestSections) {
+    if (!manifest.contains(section) || !manifest.at(section).is_array()) {
+      continue;  // a section an older export does not have
     }
-    for (const Json& f : cell.at("files")) {
-      files.push_back(f.get<std::string>());
+    for (const Json& cell : manifest.at(section)) {
+      if (!cell.is_object() || !cell.contains("files") || !cell.at("files").is_array()) {
+        continue;  // a malformed cell surfaces in the manifest test, not as a crash at registration
+      }
+      for (const Json& f : cell.at("files")) {
+        if (f.is_string()) {
+          files.push_back(f.get<std::string>());
+        }
+      }
     }
   }
   return files;
 }
 
+// Why a fixture's content is not (yet) compared. Each fixture that carries such content gets one
+// LiParitySkipped case that checks the content is present and then skips with the reason, so the
+// uncompared part is counted by gtest rather than dropped. Whoever implements a comparison removes
+// its reason here and adds the comparison to the kind's suite.
+constexpr const char* kSkipBandSumModuleNotImplemented = "band_sum: the band-sum module is not implemented yet";
+constexpr const char* kSkipFiberPerPoseFieldsNotCompared =
+    "trace_fiber: the wave 2 per-pose arrays (normal_jacobian, singular_values, branch_margins) are not "
+    "compared yet";
+constexpr const char* kSkipEvaluatePathWave2FieldsNotCompared =
+    "evaluate_path: the wave 2 fields (branch_margins, failed_gate, normal_jacobian, singular_values) are not "
+    "compared yet";
+
+// The wave 2 keys (LI sections 3.1 and 3.2). A fixture carrying any of them is claimed by the skip
+// suite, which then requires all of them.
+constexpr const char* kEvaluatePathWave2Keys[] = { "branch_margins", "failed_gate", "jacobian_available",
+                                                   "normal_jacobian", "singular_values" };
+constexpr const char* kTracePerPoseKeys[] = { "branch_margin_names", "branch_margins", "jacobian_available",
+                                              "normal_jacobian", "singular_values" };
+
+// What the reader knows about one fixture file: its kind (the JSON's `fixture_kind`, the only
+// authority; the file name is checked against it by LiParityProvenance) and the parts of it that are
+// not compared.
+struct FixtureInfo {
+  std::string file;
+  std::string kind;
+  std::string skip_reason;  // empty: everything the fixture carries is compared
+};
+
+// Pure: the same function reads the real fixtures and the synthetic ones of the unknown-key test.
+FixtureInfo FixtureInfoOf(const std::string& file, const Json& fixture) {
+  FixtureInfo info;
+  info.file = file;
+  if (!fixture.is_object()) {
+    return info;  // empty kind: counted as unknown by the manifest test
+  }
+  info.kind = fixture.value("fixture_kind", "");
+  const Json empty = Json::object();
+  const Json& expected = fixture.contains("expected") ? fixture.at("expected") : empty;
+  const auto has_any = [](const Json& j, const auto& keys) {
+    return j.is_object() && std::any_of(std::begin(keys), std::end(keys), [&](const char* k) { return j.contains(k); });
+  };
+  if (info.kind == "band_sum") {
+    info.skip_reason = kSkipBandSumModuleNotImplemented;
+  } else if (info.kind == "evaluate_path" && has_any(expected, kEvaluatePathWave2Keys)) {
+    info.skip_reason = kSkipEvaluatePathWave2FieldsNotCompared;
+  } else if (info.kind == "trace_fiber" && expected.contains("traces") && expected.at("traces").is_array()) {
+    const Json& traces = expected.at("traces");
+    if (std::any_of(traces.begin(), traces.end(), [&](const Json& t) { return has_any(t, kTracePerPoseKeys); })) {
+      info.skip_reason = kSkipFiberPerPoseFieldsNotCompared;
+    }
+  }
+  return info;
+}
+
+// Every listed fixture, parsed once. Read at registration time so each fixture is its own gtest
+// case; a missing manifest yields no cases, which the manifest test below then reports as a failure
+// rather than a silent pass. Parsing does not throw here: an unreadable fixture gets an empty kind,
+// which the manifest test reports.
+const std::vector<FixtureInfo>& FixtureIndex() {
+  static const std::vector<FixtureInfo> index = [] {
+    std::vector<FixtureInfo> out;
+    std::ifstream in(FixtureDir() / "manifest.json");
+    if (!in) {
+      return out;
+    }
+    for (const std::string& file : ManifestFilesOf(Json::parse(in, nullptr, false))) {
+      std::ifstream fin(FixtureDir() / file);
+      out.push_back(FixtureInfoOf(file, fin ? Json::parse(fin, nullptr, false) : Json()));
+    }
+    return out;
+  }();
+  return index;
+}
+
+std::vector<std::string> ManifestFiles() {
+  std::vector<std::string> out;
+  for (const FixtureInfo& info : FixtureIndex()) {
+    out.push_back(info.file);
+  }
+  return out;
+}
+
 std::vector<std::string> ManifestFilesOfKind(const std::string& kind) {
   std::vector<std::string> out;
-  for (const std::string& f : ManifestFiles()) {
-    if (f.find("__" + kind) != std::string::npos) {
-      out.push_back(f);
+  for (const FixtureInfo& info : FixtureIndex()) {
+    if (info.kind == kind) {
+      out.push_back(info.file);
     }
   }
   return out;
+}
+
+// The fixtures with an uncompared part.
+std::vector<std::string> FilesWithSkipReason() {
+  std::vector<std::string> out;
+  for (const FixtureInfo& info : FixtureIndex()) {
+    if (!info.skip_reason.empty()) {
+      out.push_back(info.file);
+    }
+  }
+  return out;
+}
+
+const FixtureInfo* InfoOf(const std::string& file) {
+  for (const FixtureInfo& info : FixtureIndex()) {
+    if (info.file == file) {
+      return &info;
+    }
+  }
+  return nullptr;
 }
 
 std::string CaseName(const testing::TestParamInfo<std::string>& info) {
@@ -619,15 +729,16 @@ TEST(LiParityFixtures, ManifestMatchesDirectoryAndSource) {
     EXPECT_TRUE(listed.insert(f).second) << "listed twice: " << f;
   }
   EXPECT_FALSE(listed.empty());
-  // Every listed file must be replayed by one of the suites below. A fixture kind LI adds later would
-  // otherwise pass provenance alone and be silently skipped; here it goes red and points at the reader.
-  size_t replayed = 0;
-  for (const char* kind : { "evaluate_path", "trace_fiber", "seed_search" }) {
+  // Every listed file must be claimed by one of the suites below: replayed by its kind's suite, or,
+  // for band_sum, counted by LiParitySkipped. A fixture kind LI adds later would otherwise pass
+  // provenance alone and be silently dropped; here it goes red and points at the reader.
+  size_t claimed = 0;
+  for (const char* kind : { "evaluate_path", "trace_fiber", "seed_search", "band_sum" }) {
     const size_t n = ManifestFilesOfKind(kind).size();
     EXPECT_GT(n, 0u) << "no fixture of kind " << kind;
-    replayed += n;
+    claimed += n;
   }
-  EXPECT_EQ(replayed, listed.size())
+  EXPECT_EQ(claimed, listed.size())
       << "the manifest lists a fixture kind this reader does not replay: extend the reader first "
          "(doc/analytic-api.md, Parity with LI)";
   std::set<std::string> present;
@@ -642,15 +753,54 @@ TEST(LiParityFixtures, ManifestMatchesDirectoryAndSource) {
   // A skipped fixture is a legal input, not a missing file: it carries its reason, and its cell
   // lists no file it did not export. On this matrix that is 3-5-6-7__critical (D_P has no interior
   // extremum on the canonical column — a physical fact, LI section 6).
-  for (const Json& cell : manifest.at("cells")) {
-    for (const Json& s : cell.at("skipped")) {
-      EXPECT_FALSE(s.value("reason", "").empty()) << cell.at("name");
-      EXPECT_TRUE(s.contains("fixture")) << cell.at("name");
-      if (s.value("fixture", "") == "all") {
-        EXPECT_TRUE(cell.at("files").empty()) << cell.at("name");
+  for (const char* section : kManifestSections) {
+    if (!manifest.contains(section)) {
+      ADD_FAILURE() << "manifest has no " << section;
+      continue;
+    }
+    for (const Json& cell : manifest.at(section)) {
+      for (const Json& s : cell.at("skipped")) {
+        EXPECT_FALSE(s.value("reason", "").empty()) << cell.at("name");
+        EXPECT_TRUE(s.contains("fixture")) << cell.at("name");
+        if (s.value("fixture", "") == "all") {
+          EXPECT_TRUE(cell.at("files").empty()) << cell.at("name");
+        }
       }
     }
   }
+}
+
+// LI section 2: a reader ignores top-level manifest keys and fixture fields it does not know, since
+// later waves add kinds under new keys and fields under old kinds. Checked on the production parsers
+// with synthetic input. The one deliberate exception is `continuation`: it is an input, and an LI
+// option this reader has no mapping for would change the problem being solved, so ParamsOf fails on
+// it (see its comment).
+TEST(LiParityFixtures, UnknownKeysAreIgnored) {
+  const Json manifest = Json::parse(R"({
+    "format": "lumice-integral/analytic-parity", "schema_version": 1, "future_top_level": {"x": 1},
+    "future_cells": [{"files": ["x__future_kind.json"]}],
+    "cells": [{"files": ["a__random__trace_fiber.json"], "future_cell_field": 2, "skipped": []}],
+    "edge_cells": [{"files": ["a__edge__seed_search.json"], "skipped": []}]
+  })");
+  EXPECT_EQ(ManifestFilesOf(manifest),
+            (std::vector<std::string>{ "a__random__trace_fiber.json", "a__edge__seed_search.json" }));
+
+  const Json fixture = Json::parse(R"({
+    "fixture_kind": "seed_search", "future_top_level": [1, 2],
+    "expected": {"completeness": "complete", "future_expected_field": {"y": 3}}
+  })");
+  const FixtureInfo info = FixtureInfoOf("a__edge__seed_search.json", fixture);
+  EXPECT_EQ(info.kind, "seed_search");
+  EXPECT_EQ(info.skip_reason, "");
+
+  // A v0 trace_fiber fixture (no wave 2 fields) is fully compared; one wave 2 key claims it for the skip suite.
+  Json trace = Json::parse(R"({"fixture_kind": "trace_fiber", "expected": {"traces": [{"poses": []}]}})");
+  EXPECT_EQ(FixtureInfoOf("t__trace_fiber.json", trace).skip_reason, "");
+  trace["expected"]["traces"][0]["normal_jacobian"] = Json::array();
+  EXPECT_EQ(FixtureInfoOf("t__trace_fiber.json", trace).skip_reason, kSkipFiberPerPoseFieldsNotCompared);
+
+  // ...but an unknown continuation option is not ignored.
+  EXPECT_NONFATAL_FAILURE(ParamsOf(Json::parse(R"({"future_option": 1})")), "has no mapping");
 }
 
 class LiParityProvenance : public testing::TestWithParam<std::string> {};
@@ -665,7 +815,9 @@ TEST_P(LiParityProvenance, HeaderFieldsAndSymmetrySemantics) {
   EXPECT_EQ(f.value("symmetry_semantics", ""), "none");
   EXPECT_EQ(f.at("provenance").at("li_rev").get<std::string>(), li_rev);
   EXPECT_TRUE(f.at("provenance").at("li_tracked_tree_clean").get<bool>());
+  // fixture_kind is what the suites dispatch on; the file name must agree with it.
   const std::string kind = f.value("fixture_kind", "");
+  ASSERT_FALSE(kind.empty()) << "no fixture_kind";
   EXPECT_NE(GetParam().find("__" + kind), std::string::npos) << "file name and fixture_kind disagree";
 }
 
@@ -752,6 +904,80 @@ Traced RunTraces(const IcePathMap& map, const TargetChart& chart, const double s
   return t;
 }
 
+// The curve, orientation-free, and the summed arclength, relative (LI section 4, trace_fiber).
+void CompareCurveAndLength(const std::string& name, const Json& f, const Traced& got) {
+  const Json& expected_traces = f.at("expected").at("traces");
+  Curve reference;
+  bool reference_closed = false;
+  if (expected_traces.at(0).at("status").get<std::string>() == "closed") {
+    reference_closed = true;
+    reference = Poses(expected_traces.at(0).at("poses"));
+  } else if (expected_traces.size() >= 2) {
+    reference = Stitch(Poses(expected_traces.at(0).at("poses")), Poses(expected_traces.at(1).at("poses")));
+  } else {
+    reference = Poses(expected_traces.at(0).at("poses"));
+  }
+  // Two traces that both accept no pose (rank_loss, chart_boundary at the seed) have distance 0; one
+  // with and one without poses, infinity (DistanceToSamples of an empty curve).
+  const double distance = CurveDistance(got.curve, got.closed, reference, reference_closed);
+  Report(name, "curve_distance_rad", distance, Tolerance(f, "curve_distance_rad"));
+  EXPECT_LE(distance, Tolerance(f, "curve_distance_rad"));
+
+  double length = 0.0;
+  for (const TraceResult& t : got.traces) {
+    length += Length(t);
+  }
+  double reference_length = 0.0;
+  for (const Json& t : expected_traces) {
+    reference_length += t.at("arclength").get<double>();
+  }
+  const double rtol = Tolerance(f, "arclength_relative");
+  const double difference = std::fabs(length - reference_length);
+  Report(name, "arclength_relative", reference_length > 0.0 ? difference / reference_length : difference, rtol);
+  EXPECT_TRUE(ArclengthWithin(length, reference_length, rtol)) << "arclength " << length << " vs " << reference_length;
+}
+
+// LI section 4, trace_fiber budgets: a budget_exhausted trace is compared by its extent against the
+// budget, and by its poses lying on the unbudgeted curve, instead of curve and length equality — two
+// step controllers reach different extents inside one budget.
+void CompareBudgetExtent(const std::string& name, const Json& f, const ContinuationParams& p, const Traced& got) {
+  ASSERT_EQ(Tolerance(f, "budget_extent"), 0.0);
+  for (const TraceResult& t : got.traces) {
+    if (t.status != FiberStatus::kBudgetExhausted) {
+      continue;
+    }
+    const std::string tag = "budget_extent(" + ReasonName(t.reason) + ")";
+    switch (t.reason) {
+      case FiberReason::kStepBudget:
+        Report(name, tag + ".poses", t.PoseCount() - (p.maximum_accepted_steps + 1), 0.0);
+        EXPECT_EQ(t.PoseCount(), p.maximum_accepted_steps + 1);
+        break;
+      case FiberReason::kArclengthBudget: {
+        const double length = Length(t);
+        Report(name, tag + ".arclength_over_budget", length - p.maximum_arclength, 0.0);
+        EXPECT_GT(length, p.maximum_arclength - p.maximum_advance);
+        EXPECT_LE(length, p.maximum_arclength);
+        break;
+      }
+      case FiberReason::kEvaluationBudget:
+        EXPECT_GE(t.PoseCount(), 1);
+        break;
+      default:
+        ADD_FAILURE() << "budget_exhausted with a non-budget reason " << ReasonName(t.reason);
+    }
+  }
+  const Json& ref = f.at("expected").at("reference_curve");
+  const Curve dense = Densify(Poses(ref.at("poses")), ref.at("closed").get<bool>(), kDensifySpacing);
+  double worst = 0.0;
+  for (const TraceResult& t : got.traces) {
+    for (const Pose& q : PosesOf(t)) {
+      worst = std::max(worst, DistanceToSamples(q, dense));
+    }
+  }
+  Report(name, "pose_to_reference_curve_rad", worst, Tolerance(f, "curve_distance_rad"));
+  EXPECT_LE(worst, Tolerance(f, "curve_distance_rad"));
+}
+
 class LiParityTraceFiber : public testing::TestWithParam<std::string> {};
 
 TEST_P(LiParityTraceFiber, MatchesLi) {
@@ -786,33 +1012,11 @@ TEST_P(LiParityTraceFiber, MatchesLi) {
   ASSERT_EQ(Tolerance(f, "status_reason"), 0.0);
   EXPECT_EQ(mine, theirs);
 
-  // The curve, orientation-free.
-  Curve reference;
-  bool reference_closed = false;
-  if (expected_traces.at(0).at("status").get<std::string>() == "closed") {
-    reference_closed = true;
-    reference = Poses(expected_traces.at(0).at("poses"));
-  } else if (expected_traces.size() >= 2) {
-    reference = Stitch(Poses(expected_traces.at(0).at("poses")), Poses(expected_traces.at(1).at("poses")));
+  if (f.at("expected").contains("reference_curve")) {
+    CompareBudgetExtent(GetParam(), f, params, got);
   } else {
-    reference = Poses(expected_traces.at(0).at("poses"));
+    CompareCurveAndLength(GetParam(), f, got);
   }
-  const double distance = CurveDistance(got.curve, got.closed, reference, reference_closed);
-  Report(GetParam(), "curve_distance_rad", distance, Tolerance(f, "curve_distance_rad"));
-  EXPECT_LE(distance, Tolerance(f, "curve_distance_rad"));
-
-  // Summed arclength, relative.
-  double length = 0.0;
-  for (const TraceResult& t : got.traces) {
-    length += Length(t);
-  }
-  double reference_length = 0.0;
-  for (const Json& t : expected_traces) {
-    reference_length += t.at("arclength").get<double>();
-  }
-  const double rtol = Tolerance(f, "arclength_relative");
-  Report(GetParam(), "arclength_relative", std::fabs(length - reference_length) / reference_length, rtol);
-  EXPECT_TRUE(ArclengthWithin(length, reference_length, rtol)) << "arclength " << length << " vs " << reference_length;
 
   // Every residual within the bound (a bound on this backend, not an equality with LI).
   double worst = 0.0;
@@ -960,6 +1164,57 @@ TEST_P(LiParitySeedSearch, MatchesLi) {
 }
 
 INSTANTIATE_TEST_SUITE_P(All, LiParitySeedSearch, testing::ValuesIn(ManifestFilesOfKind("seed_search")), CaseName);
+
+// ------------------------------------------------------------------------------------------------
+// What is carried but not compared: counted, with its reason, never dropped
+// ------------------------------------------------------------------------------------------------
+
+// One case per fixture that has an uncompared part (FixtureInfo::skip_reason). The case checks that
+// the uncompared content is there with the top-level shape LI section 3 gives it, so a fixture that
+// lost or renamed it goes red rather than skipping forever, and then skips with the reason. The
+// kind's own suite still compares everything else of the same fixture; nothing here skips there.
+class LiParitySkipped : public testing::TestWithParam<std::string> {};
+
+TEST_P(LiParitySkipped, CarriedButNotCompared) {
+  const FixtureInfo* info = InfoOf(GetParam());
+  ASSERT_NE(info, nullptr);
+  const Json f = LoadJson(GetParam());
+  const Json& input = f.at("input");
+  const Json& expected = f.at("expected");
+  const Json& tolerance = f.at("tolerance");
+  const auto null_or = [](const Json& j, bool (Json::*is)() const) { return j.is_null() || (j.*is)(); };
+  if (info->skip_reason == kSkipBandSumModuleNotImplemented) {
+    EXPECT_TRUE(input.at("pose_density").is_object());
+    EXPECT_TRUE(input.at("sample").is_object());
+    EXPECT_TRUE(input.at("pixels").is_object());
+    EXPECT_TRUE(expected.at("rank").is_number_integer());
+    EXPECT_TRUE(expected.at("pixels").is_array());
+    EXPECT_FALSE(tolerance.empty());
+  } else if (info->skip_reason == kSkipEvaluatePathWave2FieldsNotCompared) {
+    EXPECT_TRUE(expected.at("jacobian_available").is_boolean());
+    EXPECT_TRUE(null_or(expected.at("branch_margins"), &Json::is_object));
+    EXPECT_TRUE(null_or(expected.at("failed_gate"), &Json::is_object));
+    EXPECT_TRUE(null_or(expected.at("normal_jacobian"), &Json::is_number));
+    EXPECT_TRUE(null_or(expected.at("singular_values"), &Json::is_array));
+    for (const char* key :
+         { "branch_margins", "failed_gate", "jacobian_available", "normal_jacobian", "singular_values" }) {
+      EXPECT_TRUE(tolerance.contains(key)) << key;
+    }
+  } else if (info->skip_reason == kSkipFiberPerPoseFieldsNotCompared) {
+    for (const Json& t : expected.at("traces")) {
+      for (const char* key : kTracePerPoseKeys) {
+        EXPECT_TRUE(t.at(key).is_array()) << key;
+      }
+    }
+    EXPECT_TRUE(tolerance.contains("pointwise_consistency"));
+    EXPECT_TRUE(tolerance.contains("accepted_pose_regularity"));
+  } else {
+    FAIL() << "no content check for skip reason: " << info->skip_reason;
+  }
+  GTEST_SKIP() << info->skip_reason;
+}
+
+INSTANTIATE_TEST_SUITE_P(All, LiParitySkipped, testing::ValuesIn(FilesWithSkipReason()), CaseName);
 
 }  // namespace
 }  // namespace lumice::analytic
