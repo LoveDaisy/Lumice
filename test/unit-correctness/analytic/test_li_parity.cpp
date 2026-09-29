@@ -148,14 +148,6 @@ std::vector<std::string> ManifestFilesOf(const Json& manifest) {
 // uncompared part is counted by gtest rather than dropped. Whoever implements a comparison removes
 // its reason here and adds the comparison to the kind's suite.
 constexpr const char* kSkipBandSumModuleNotImplemented = "band_sum: the band-sum module is not implemented yet";
-constexpr const char* kSkipEvaluatePathWave2FieldsNotCompared =
-    "evaluate_path: the wave 2 fields (branch_margins, failed_gate, normal_jacobian, singular_values) are not "
-    "compared yet";
-
-// The wave 2 keys (LI sections 3.1 and 3.2). A fixture carrying any of them is claimed by the skip
-// suite, which then requires all of them.
-constexpr const char* kEvaluatePathWave2Keys[] = { "branch_margins", "failed_gate", "jacobian_available",
-                                                   "normal_jacobian", "singular_values" };
 
 // What the reader knows about one fixture file: its kind (the JSON's `fixture_kind`, the only
 // authority; the file name is checked against it by LiParityProvenance) and the parts of it that are
@@ -174,15 +166,8 @@ FixtureInfo FixtureInfoOf(const std::string& file, const Json& fixture) {
     return info;  // empty kind: counted as unknown by the manifest test
   }
   info.kind = fixture.value("fixture_kind", "");
-  const Json empty = Json::object();
-  const Json& expected = fixture.contains("expected") ? fixture.at("expected") : empty;
-  const auto has_any = [](const Json& j, const auto& keys) {
-    return j.is_object() && std::any_of(std::begin(keys), std::end(keys), [&](const char* k) { return j.contains(k); });
-  };
   if (info.kind == "band_sum") {
     info.skip_reason = kSkipBandSumModuleNotImplemented;
-  } else if (info.kind == "evaluate_path" && has_any(expected, kEvaluatePathWave2Keys)) {
-    info.skip_reason = kSkipEvaluatePathWave2FieldsNotCompared;
   }
   return info;
 }
@@ -817,6 +802,77 @@ INSTANTIATE_TEST_SUITE_P(All, LiParityProvenance, testing::ValuesIn(ManifestFile
 // evaluate_path (LI section 3.1)
 // ------------------------------------------------------------------------------------------------
 
+// The smallest Snell discriminant of a pose (entry or exit), from its validity margins in
+// BranchMarginName order: the `d` of LI section 5's tolerance scaling.
+double SmallestSnell(const double* margins, int count) {
+  return std::min(margins[1], margins[count - 1]);
+}
+
+// LI section 4, evaluate_path wave 2 fields, against LI's own values at the fixture pose — the
+// certification of the per-pose diagnostics against LI (a trace's per-pose arrays are then held to
+// this evaluation, ComparePerPoseArrays). jacobian_available is equal; when valid, the branch
+// margins by name to the `branch_margins` tolerance (absolute) and J_perp and each singular value
+// to theirs relative to max(1, |value|), both scaled at the pose's smallest Snell discriminant d
+// (LI section 5: 1 / (2 sqrt d) for margins, 1 / (4 d) for the Jacobian); when not, the failed
+// gate's name exactly and its value like a margin, and every wave 2 value LI leaves null is one
+// this evaluation does not provide.
+void CompareWave2Fields(const std::string& name, const Json& f, const Scene& scene, const double pose[9]) {
+  const Json& expected = f.at("expected");
+  const int count = scene.Count();
+  const PathDiagnostics d =
+      EvaluatePathDiagnostics(scene.table, scene.slots.data(), count, scene.refractive_index, scene.incident, pose);
+  ASSERT_EQ(Tolerance(f, "jacobian_available"), 0.0);
+  EXPECT_EQ(d.jacobian.available, expected.at("jacobian_available").get<bool>());
+  if (!d.valid || !expected.at("valid").get<bool>()) {
+    EXPECT_TRUE(expected.at("branch_margins").is_null());
+    EXPECT_TRUE(expected.at("normal_jacobian").is_null());
+    EXPECT_TRUE(expected.at("singular_values").is_null());
+    EXPECT_TRUE(std::isnan(d.jacobian.value));
+    const Json& gate = expected.at("failed_gate");
+    ASSERT_TRUE(gate.is_object()) << "LI's invalid pose carries no failed_gate";
+    ASSERT_GE(d.failed_gate, 0);
+    EXPECT_EQ(BranchMarginName(d.failed_gate, count), gate.at("name").get<std::string>());
+    // The entry Snell discriminant is always evaluated; the exit one only when the chain got there.
+    const double snell =
+        d.margin_count == BranchMarginCount(count) ? SmallestSnell(d.margins, d.margin_count) : d.margins[1];
+    const double tolerance = Tolerance(f, "failed_gate") * std::max(1.0, 1.0 / (2.0 * std::sqrt(snell)));
+    const double error = std::fabs(d.margins[d.failed_gate] - gate.at("value").get<double>());
+    Report(name, "failed_gate.value", error, tolerance);
+    EXPECT_LE(error, tolerance);
+    return;
+  }
+  EXPECT_TRUE(expected.at("failed_gate").is_null());
+  const Json& margins = expected.at("branch_margins");
+  ASSERT_EQ(static_cast<int>(margins.size()), d.margin_count) << "LI names a different number of margins";
+  const double snell = SmallestSnell(d.margins, d.margin_count);
+  const double margin_tolerance = Tolerance(f, "branch_margins") * std::max(1.0, 1.0 / (2.0 * std::sqrt(snell)));
+  double margin_error = 0.0;
+  for (int m = 0; m < d.margin_count; m++) {
+    const std::string key = BranchMarginName(m, count);
+    if (!margins.contains(key)) {
+      ADD_FAILURE() << "LI has no margin named " << key;
+      continue;
+    }
+    margin_error = std::max(margin_error, std::fabs(d.margins[m] - margins.at(key).get<double>()));
+  }
+  Report(name, "branch_margins", margin_error, margin_tolerance);
+  EXPECT_LE(margin_error, margin_tolerance);
+
+  const double scale = std::max(1.0, 1.0 / (4.0 * snell));
+  const double lj = expected.at("normal_jacobian").get<double>();
+  const double j_error = std::fabs(d.jacobian.value - lj) / std::max(1.0, std::fabs(lj));
+  Report(name, "normal_jacobian(relative)", j_error, Tolerance(f, "normal_jacobian") * scale);
+  EXPECT_LE(j_error, Tolerance(f, "normal_jacobian") * scale);
+  const std::vector<double> lsv = Numbers(expected.at("singular_values"));
+  ASSERT_EQ(lsv.size(), 2u);
+  double sv_error = 0.0;
+  for (int q = 0; q < 2; q++) {
+    sv_error = std::max(sv_error, std::fabs(d.jacobian.singular_values[q] - lsv[q]) / std::max(1.0, std::fabs(lsv[q])));
+  }
+  Report(name, "singular_values(relative)", sv_error, Tolerance(f, "singular_values") * scale);
+  EXPECT_LE(sv_error, Tolerance(f, "singular_values") * scale);
+}
+
 class LiParityEvaluatePath : public testing::TestWithParam<std::string> {};
 
 TEST_P(LiParityEvaluatePath, MatchesLi) {
@@ -863,6 +919,7 @@ TEST_P(LiParityEvaluatePath, MatchesLi) {
     Report(GetParam(), "fresnel_transmission(invalid)", error, 0.0);
     EXPECT_EQ(error, 0.0);
   }
+  CompareWave2Fields(GetParam(), f, scene, pose.data());
 }
 
 INSTANTIATE_TEST_SUITE_P(All, LiParityEvaluatePath, testing::ValuesIn(ManifestFilesOfKind("evaluate_path")), CaseName);
@@ -966,12 +1023,6 @@ void CompareBudgetExtent(const std::string& name, const Json& f, const Continuat
   }
   Report(name, "pose_to_reference_curve_rad", worst, Tolerance(f, "curve_distance_rad"));
   EXPECT_LE(worst, Tolerance(f, "curve_distance_rad"));
-}
-
-// The smallest Snell discriminant of a pose (entry or exit), from its validity margins in
-// BranchMarginName order: the `d` of LI section 5's tolerance scaling.
-double SmallestSnell(const double* margins, int count) {
-  return std::min(margins[1], margins[count - 1]);
 }
 
 // LI section 4, trace_fiber per-pose arrays: the names are LI's, and at each of this backend's own
@@ -1251,7 +1302,6 @@ TEST_P(LiParitySkipped, CarriedButNotCompared) {
   const Json& input = f.at("input");
   const Json& expected = f.at("expected");
   const Json& tolerance = f.at("tolerance");
-  const auto null_or = [](const Json& j, bool (Json::*is)() const) { return j.is_null() || (j.*is)(); };
   if (info->skip_reason == kSkipBandSumModuleNotImplemented) {
     EXPECT_TRUE(input.at("pose_density").is_object());
     EXPECT_TRUE(input.at("sample").is_object());
@@ -1259,16 +1309,6 @@ TEST_P(LiParitySkipped, CarriedButNotCompared) {
     EXPECT_TRUE(expected.at("rank").is_number_integer());
     EXPECT_TRUE(expected.at("pixels").is_array());
     EXPECT_FALSE(tolerance.empty());
-  } else if (info->skip_reason == kSkipEvaluatePathWave2FieldsNotCompared) {
-    EXPECT_TRUE(expected.at("jacobian_available").is_boolean());
-    EXPECT_TRUE(null_or(expected.at("branch_margins"), &Json::is_object));
-    EXPECT_TRUE(null_or(expected.at("failed_gate"), &Json::is_object));
-    EXPECT_TRUE(null_or(expected.at("normal_jacobian"), &Json::is_number));
-    EXPECT_TRUE(null_or(expected.at("singular_values"), &Json::is_array));
-    for (const char* key :
-         { "branch_margins", "failed_gate", "jacobian_available", "normal_jacobian", "singular_values" }) {
-      EXPECT_TRUE(tolerance.contains(key)) << key;
-    }
   } else {
     FAIL() << "no content check for skip reason: " << info->skip_reason;
   }
