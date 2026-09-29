@@ -152,6 +152,20 @@ TEST(So3, TwoByThreeSingularValuesKeepRelativePrecisionNearTheRankGate) {
     const double kernel[3] = { v[2], v[5], v[8] };
     EXPECT_NEAR(std::fabs(so3::Dot3(svd.null_vector, kernel)), 1.0, 1e-12) << s2;
   }
+  // Equal and nearly equal singular values: the characteristic polynomial's discriminant cancels
+  // there, and a square root of it would move both values by ~1e-8.
+  for (double s2 : { 1.3, 1.3 * (1.0 - 1e-9), 1.3 * (1.0 - 1e-6) }) {
+    const double s1 = 1.3;
+    double rows[2][3];
+    for (int j = 0; j < 3; j++) {
+      const double v0 = v[j * 3 + 0], v1 = v[j * 3 + 1];
+      rows[0][j] = c * s1 * v0 - s * s2 * v1;
+      rows[1][j] = s * s1 * v0 + c * s2 * v1;
+    }
+    const auto svd = so3::SvdTwoByThree(rows[0], rows[1]);
+    EXPECT_NEAR(svd.sigma1, s1, 1e-15) << s2;
+    EXPECT_NEAR(svd.sigma2, s2, 1e-15) << s2;
+  }
   const double zero[3] = { 0, 0, 0 };
   const auto rank0 = so3::SvdTwoByThree(zero, zero);
   EXPECT_EQ(rank0.sigma1, 0.0);

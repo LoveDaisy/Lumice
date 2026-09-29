@@ -157,9 +157,13 @@ inline void TangentBasis(const double direction[3], double basis[2][3]) {
 }
 
 // Singular values and null vector of a 2x3 matrix with rows r0, r1 (the residual Jacobian A).
-// sigma1 * sigma2 = |r0 x r1| (Lagrange's identity: no cancellation), sigma1^2 the larger root of
-// s^2 - (|r0|^2 + |r1|^2) s + |r0 x r1|^2, sigma2 = product / sigma1 — so a sigma2 near the 1e-8
-// rank gate keeps its relative precision, which det = |r0|^2 |r1|^2 - (r0.r1)^2 would not.
+// sigma1 * sigma2 = |r0 x r1| (Lagrange's identity: no cancellation), sigma1^2 the larger
+// eigenvalue of the Gram matrix G = A A^T, sigma2 = product / sigma1 — so a sigma2 near the 1e-8
+// rank gate keeps its relative precision, which det = |r0|^2 |r1|^2 - (r0.r1)^2 would not. The
+// eigenvalue is written as (g00 + g11) / 2 + hypot((g00 - g11) / 2, g01), not through the
+// characteristic polynomial's discriminant trace^2 - 4 det: that difference cancels when
+// sigma1 ~ sigma2 and its square root then carries ~sqrt(eps) = 1e-8 relative error into sigma1
+// (and sigma2) — measured on the analytic circle F(R) = R e3, whose singular values are (1, 1).
 // `null_vector` = (r0 x r1) / |r0 x r1|, the unit kernel direction with a deterministic sign; left
 // unset when the product is zero.
 struct TwoByThreeSvd {
@@ -173,10 +177,10 @@ inline TwoByThreeSvd SvdTwoByThree(const double r0[3], const double r1[3]) {
   double cross[3];
   Cross3(r0, r1, cross);
   const double product = Norm3(cross);
-  const double trace = Dot3(r0, r0) + Dot3(r1, r1);
-  double disc = trace * trace - 4.0 * product * product;
-  disc = disc > 0.0 ? disc : 0.0;
-  out.sigma1 = std::sqrt((trace + std::sqrt(disc)) / 2.0);
+  const double g00 = Dot3(r0, r0);
+  const double g11 = Dot3(r1, r1);
+  const double g01 = Dot3(r0, r1);
+  out.sigma1 = std::sqrt(0.5 * (g00 + g11) + std::hypot(0.5 * (g00 - g11), g01));
   out.sigma2 = out.sigma1 > 0.0 ? product / out.sigma1 : 0.0;
   if (product > 0.0) {
     for (int i = 0; i < 3; i++) {
