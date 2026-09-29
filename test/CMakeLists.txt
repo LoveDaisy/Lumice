@@ -241,7 +241,29 @@ add_executable(unit_correctness_test
   # Ray allocation (dealing by q_i with a per-entry weight correction) on every
   # TraceBackend arm: CpuTraceBackend always; Metal under `#if __APPLE__`,
   # CUDA under `#if LUMICE_CUDA_ENABLED` (self-skipping without a device).
-  "${PROJ_TEST_DIR}/unit-correctness/backend/test_ray_allocation_backends.cpp")
+  "${PROJ_TEST_DIR}/unit-correctness/backend/test_ray_allocation_backends.cpp"
+  # analytic/: liblumice_analytic's evaluator kernel, checked against independent physics. Its
+  # source is compiled in here directly because src/analytic/ is outside lumice_obj (root
+  # CMakeLists.txt: only lumice_analytic carries it); the C ABI wrapper (analytic_api.cpp) is not,
+  # since its load-time initialiser silences the engine's console sink for the whole process — the
+  # wrapper is exercised through ctypes in test/e2e-correctness/test_analytic_evaluate_path.py.
+  "${PROJ_SRC_DIR}/analytic/path_evaluation.cpp"
+  "${PROJ_SRC_DIR}/analytic/fiber_continuation.cpp"
+  "${PROJ_SRC_DIR}/analytic/path_fiber.cpp"
+  "${PROJ_SRC_DIR}/analytic/entry_measure.cpp"
+  "${PROJ_SRC_DIR}/analytic/discovery.cpp"
+  "${PROJ_TEST_DIR}/unit-correctness/analytic/test_path_evaluation.cpp"
+  "${PROJ_TEST_DIR}/unit-correctness/analytic/test_jet.cpp"
+  "${PROJ_TEST_DIR}/unit-correctness/analytic/test_so3.cpp"
+  "${PROJ_TEST_DIR}/unit-correctness/analytic/test_fiber_continuation.cpp"
+  "${PROJ_TEST_DIR}/unit-correctness/analytic/test_path_fiber.cpp"
+  "${PROJ_TEST_DIR}/unit-correctness/analytic/test_entry_measure.cpp"
+  "${PROJ_TEST_DIR}/unit-correctness/analytic/test_discovery.cpp"
+  # Parity with Lumice Integral: replays LI's exported fixtures (test/fixtures/li-parity/) against
+  # the same kernels. Unit-correctness rather than parity-cross-backend: that layer's oracle is the
+  # legacy CPU backend (doc/testing-architecture.md section 3, step 5), and this target already
+  # compiles the analytic kernels.
+  "${PROJ_TEST_DIR}/unit-correctness/analytic/test_li_parity.cpp")
 target_include_directories(unit_correctness_test
   PRIVATE ${PROJ_TEST_DIR})
 target_link_libraries(unit_correctness_test
@@ -252,7 +274,11 @@ target_link_libraries(unit_correctness_test
 # lumice_apply_isa_march), and the point of the test is that a consumer which cannot see the
 # macro still gets the right answer through the C API.
 target_compile_definitions(unit_correctness_test PRIVATE
-  "LUMICE_TEST_CONFIGURED_ISA_LEVEL=\"${LUMICE_ISA_LEVEL}\"")
+  "LUMICE_TEST_CONFIGURED_ISA_LEVEL=\"${LUMICE_ISA_LEVEL}\""
+  # A compile definition rather than the repo-root argv below, so the LI parity cases find their
+  # fixtures however the binary is started (the same reason gui_unit_test carries
+  # LUMICE_TEST_FIXTURE_DIR).
+  LUMICE_LI_PARITY_FIXTURE_DIR="${PROJ_TEST_DIR}/fixtures/li-parity")
 set_target_properties(unit_correctness_test PROPERTIES
   BUILD_RPATH "$<TARGET_FILE_DIR:GTest::gtest>")
 

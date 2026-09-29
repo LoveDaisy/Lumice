@@ -1,0 +1,158 @@
+{
+ "cell": {
+  "category": "near_boundary",
+  "name": "13-15-26-28__near_boundary",
+  "path": "13-15-26-28",
+  "rationale": "pyramid faces off the prism family on the asymmetric pyramid of tests/test_optics_crystal_native.py (focusing.classify reaches it, roadmap 2026-09-27); a pose 1e-3 inside the nearest validity gate (Snell/incidence), plus its mirror image outside",
+  "selection": {
+   "deviation_deg": 87.33157785717307,
+   "draws": 196,
+   "edge_geodesic_angle_deg": 45.674891354558504,
+   "inside_geodesic_angle_deg": 45.61120313808936,
+   "method": "bisected to a validity margin from the random cell's start",
+   "nearest_margin": "entry_incidence_cosine",
+   "nearest_margin_value": 0.0009999999999999523,
+   "outside_failure": "incident ray does not enter through face 13",
+   "rng_seed": 20260928,
+   "start_u": [
+    0.7013305397224517,
+    -0.7109503150467189,
+    0.05181817815772565
+   ],
+   "target_margin": 0.001,
+   "u": [
+    -0.018138015592317702,
+    -0.9991782083285794,
+    0.03624803983200876
+   ]
+  }
+ },
+ "expected": {
+  "admissible_count": 0,
+  "completeness": "complete",
+  "components": [],
+  "events": {
+   "arc_backward_closed_anomaly": 0,
+   "arc_backward_failed": 0,
+   "arc_stitched": 0,
+   "dedup_merged": 0,
+   "incomplete_not_converged": 0,
+   "incomplete_unnamed_event": 0
+  },
+  "extra_seed_count": 0,
+  "incomplete": [],
+  "pool_count": 0,
+  "raw_cluster_count": 0
+ },
+ "fixture_kind": "seed_search",
+ "format": "lumice-integral/analytic-parity",
+ "input": {
+  "band_half_width_deg": 0.2,
+  "cluster_radius_rad": 0.3,
+  "continuation": {
+   "closure_distance": 0.08,
+   "closure_maximum_iterations": 10,
+   "closure_minimum_arclength": 0.0,
+   "closure_minimum_steps": 3,
+   "closure_section_tolerance": 1e-11,
+   "closure_tangent_dot": 0.8,
+   "condition_limit": 100000000.0,
+   "corrector_maximum_iterations": 10,
+   "corrector_phase_tolerance": 1e-12,
+   "corrector_update_tolerance": 1e-12,
+   "diagnostic_level": "full",
+   "dtype": "float64",
+   "event_slowdown_margin": 0.02,
+   "growth_factor": 1.25,
+   "initial_step": 0.04,
+   "initial_tangent_sign": 1,
+   "maximum_accepted_steps": 4000,
+   "maximum_advance": 0.2,
+   "maximum_arclength": 20.0,
+   "maximum_correction": 0.2,
+   "maximum_evaluations": 100000,
+   "maximum_retries": 8,
+   "maximum_step": 0.12,
+   "minimum_step": 1e-05,
+   "minimum_tangent_dot": 0.8,
+   "relative_residual_tolerance": 0.0,
+   "residual_tolerance": 1e-11,
+   "rotation_tolerance": 1e-10,
+   "sample_retention": "all",
+   "shrink_factor": 0.5,
+   "singular_value_tolerance": 1e-08,
+   "unit_tolerance": 1e-10
+  },
+  "crystal": {
+   "face_distance": [
+    1.0,
+    1.1,
+    0.9,
+    1.0,
+    1.2,
+    0.95
+   ],
+   "height": 0.5,
+   "kind": "pyramid",
+   "lower_h": 0.6,
+   "lower_wedge_deg": 38.5704386184827,
+   "upper_h": 0.25,
+   "upper_wedge_deg": 27.996455531220374
+  },
+  "distance_threshold": 0.08,
+  "extra_seeds": [],
+  "faces": [
+   13,
+   15,
+   26,
+   28
+  ],
+  "incident_direction": [
+   -0.9659258262890683,
+   -0.0,
+   -0.25881904510252074
+  ],
+  "refractive_index": 1.31,
+  "sample": {
+   "band_deviation": [],
+   "band_phi": [],
+   "band_u": [],
+   "n": 100000,
+   "sampler": "antipodal Fibonacci lattice (docs/phase1-math-contract.md section 9.5.2), kept events w > 0"
+  },
+  "target_direction": [
+   -0.3035079672348435,
+   1.1102230246251565e-16,
+   0.9528289006033421
+  ]
+ },
+ "provenance": {
+  "conventions_sha256": "4af1326270649820be6ad4859d86d3cb54f05c6b677f1769e76c0c907e98c871",
+  "li_rev": "bfbd042a2234a80efb96950ce33375690a94fb07",
+  "li_tracked_tree_clean": true
+ },
+ "schema_version": 1,
+ "symmetry_semantics": "none",
+ "tolerance": {
+  "closed_arclength_relative": {
+   "basis": "docs/phase1-math-contract.md section 10.1: discrete lengths of one 3-5 loop span 0.0017 on 0.9645 (1.8e-3 relative) across initial steps 0.03-0.08; an arc's length is compared only from the same seed (section 9.5.6); arcs are not compared",
+   "value": 0.002
+  },
+  "counts_and_events": {
+   "basis": "exact: the pool is the exported band (section 9.5.8)",
+   "value": 0.0
+  },
+  "curve_distance_rad": {
+   "basis": "docs/phase1-math-contract.md section 10.1: bidirectional sampled-pose set distance below 0.012 rad between two step-controller settings on the 3-5 loop; measured here against the geodesic polyline (curve_distance), which removes the chord-sampling part of that distance",
+   "value": 0.012
+  },
+  "kind_status_reasons": {
+   "basis": "exact, per component in trace order (section 9.5.5); an arc's {reason, start_reason} unordered",
+   "value": 0.0
+  },
+  "seed_to_curve_rad": {
+   "basis": "the call's distance_threshold: the contract's own 'this pose is on that component' test (section 9.5.4 step 5)",
+   "value": 0.08
+  }
+ }
+}

@@ -1083,7 +1083,13 @@ endif()
 # find_package(LumiceAnalytic <version>) and links Lumice::lumice_analytic (doc/analytic-api.md
 # section 8.4). Tests in this tree still load it from the build tree.
 if(BUILD_SHARED_LIBS AND NOT LUMICE_CUDA_ENABLED)
-  add_library(lumice_analytic SHARED "${PROJ_SRC_DIR}/analytic/analytic_api.cpp")
+  add_library(lumice_analytic SHARED
+    "${PROJ_SRC_DIR}/analytic/analytic_api.cpp"
+    "${PROJ_SRC_DIR}/analytic/fiber_continuation.cpp"
+    "${PROJ_SRC_DIR}/analytic/path_evaluation.cpp"
+    "${PROJ_SRC_DIR}/analytic/path_fiber.cpp"
+    "${PROJ_SRC_DIR}/analytic/entry_measure.cpp"
+    "${PROJ_SRC_DIR}/analytic/discovery.cpp")
   target_link_libraries(lumice_analytic PRIVATE lumice_obj)
   if(NOT MSVC)
     target_compile_options(lumice_analytic PRIVATE

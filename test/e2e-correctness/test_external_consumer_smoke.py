@@ -23,8 +23,9 @@ skipped when there is none, or in a CUDA configure, which does not produce the l
 test/e2e's helpers and of numpy/Pillow, like its two siblings, so the Windows shared-export CI legs
 can run it too.
 
-symmetry_semantics: none — neither consumer compares a face sequence (doc/analytic-api.md
-section 3); both only round-trip the placeholder version query.
+symmetry_semantics: none — neither consumer compares a face sequence across a symmetry
+(doc/analytic-api.md section 3); besides the version query each evaluates one concrete path (3-5
+through a regular prism) and checks only that it comes back valid.
 """
 from __future__ import annotations
 
@@ -166,9 +167,11 @@ def test_c_consumer_builds_and_runs_against_install_tree_only(
 
     proc = _run([str(_find_executable(build))])
     assert f"LUMICE_ANALYTIC_GetApiVersion={expected_version}" in proc.stdout, proc.stdout
+    assert "LUMICE_ANALYTIC_EvaluatePath rc=0 valid=1 segments=3" in proc.stdout, proc.stdout
 
 
 def test_python_ctypes_consumer_loads_install_tree(install_prefix: Path, expected_version: int) -> None:
     env = dict(os.environ, **{_ENV: str(install_prefix)})
     proc = _run([sys.executable, str(SMOKE_DIR / "smoke.py")], env=env)
     assert f"LUMICE_ANALYTIC_GetApiVersion={expected_version}" in proc.stdout, proc.stdout
+    assert "LUMICE_ANALYTIC_EvaluatePath rc=0 valid=1 segments=3" in proc.stdout, proc.stdout

@@ -1,0 +1,155 @@
+{
+ "cell": {
+  "category": "critical",
+  "name": "13-15-26-28__critical",
+  "path": "13-15-26-28",
+  "pose_label": "the traced pose with the smallest validity margin",
+  "rationale": "pyramid faces off the prism family on the asymmetric pyramid of tests/test_optics_crystal_native.py (focusing.classify reaches it, roadmap 2026-09-27); next to an interior extremum of D_P (a caustic): a short loop around a Jacobian-degenerate point",
+  "selection": {
+   "deviation_deg": 148.73720035377954,
+   "extremum_deviation_deg": 149.23720035377946,
+   "extremum_kind": "maximum",
+   "extremum_u": [
+    0.6503697478340033,
+    -0.7401956883331182,
+    -0.1706737650472289
+   ],
+   "geodesic_angle_deg": 2.9860013377977017,
+   "level_offset_deg": -0.5,
+   "method": "lit side of an interior extremum of D_P",
+   "u": [
+    0.6103543195753254,
+    -0.7735742469973911,
+    -0.17044203987913664
+   ]
+  }
+ },
+ "expected": {
+  "diagnostics": {
+   "nearest_margin": "exit_snell_discriminant",
+   "nearest_margin_value": 0.17623354631895338,
+   "validity_margins": {
+    "entry_incidence_cosine": 0.5592647131306112,
+    "entry_snell_discriminant": 0.5995437441600519,
+    "exit_incidence_cosine": 0.7210947180508018,
+    "exit_snell_discriminant": 0.17623354631895338,
+    "internal_1_incidence_cosine": 0.7479547694052815,
+    "internal_1_tir_discriminant": -0.2439486980563086,
+    "internal_2_incidence_cosine": 0.6235634267465073,
+    "internal_2_tir_discriminant": 0.048826525111529184
+   }
+  },
+  "fresnel_transmission": 0.050037095235822594,
+  "interface_transmittances": [
+   0.9578020593164309,
+   0.056972877995164706,
+   1.0,
+   0.9169552999755404
+  ],
+  "outgoing_direction": [
+   0.6913516653306325,
+   -1.249000902703301e-16,
+   0.7225184252630243
+  ],
+  "segment_directions": [
+   [
+    -0.6916944324429498,
+    0.7138131893619698,
+    0.10967927251909747
+   ],
+   [
+    -0.83474162383414,
+    0.5448955643984503,
+    -0.07934258212106593
+   ],
+   [
+    -0.17431503921683322,
+    -0.5989968348279087,
+    -0.7815478609586106
+   ],
+   [
+    0.800741432151395,
+    -0.5989968348279089,
+    -0.003993833031079544
+   ],
+   [
+    0.8438032469161542,
+    -0.42932440295762236,
+    0.3219885673728755
+   ]
+  ],
+  "valid": true
+ },
+ "fixture_kind": "evaluate_path",
+ "format": "lumice-integral/analytic-parity",
+ "input": {
+  "crystal": {
+   "face_distance": [
+    1.0,
+    1.1,
+    0.9,
+    1.0,
+    1.2,
+    0.95
+   ],
+   "height": 0.5,
+   "kind": "pyramid",
+   "lower_h": 0.6,
+   "lower_wedge_deg": 38.5704386184827,
+   "upper_h": 0.25,
+   "upper_wedge_deg": 27.996455531220374
+  },
+  "faces": [
+   13,
+   15,
+   26,
+   28
+  ],
+  "incident_direction": [
+   -0.9659258262890683,
+   -0.0,
+   -0.25881904510252074
+  ],
+  "pose": [
+   0.5421753672102733,
+   -0.7796796519369303,
+   -0.3132818404343164,
+   0.5336161124175186,
+   0.6074897034652892,
+   -0.58839621408713,
+   0.6490760477469648,
+   0.15184169565425873,
+   0.7454155778503824
+  ],
+  "refractive_index": 1.31
+ },
+ "provenance": {
+  "conventions_sha256": "4af1326270649820be6ad4859d86d3cb54f05c6b677f1769e76c0c907e98c871",
+  "li_rev": "bfbd042a2234a80efb96950ce33375690a94fb07",
+  "li_tracked_tree_clean": true
+ },
+ "schema_version": 1,
+ "symmetry_semantics": "none",
+ "tolerance": {
+  "fresnel_transmission": {
+   "basis": "float64 evaluation of the same closed-form refraction/reflection chain from bit-identical JSON inputs: a few ulp per interface (1e-12 leaves ~1e3 ulp of room), times 1/(2 sqrt(d)) for the smallest Snell discriminant d of the pose, the derivative of the refracted cosine sqrt(d) (kinematic_atol)",
+   "value": 1.191038263871662e-12
+  },
+  "interface_transmittances": {
+   "basis": "float64 evaluation of the same closed-form refraction/reflection chain from bit-identical JSON inputs: a few ulp per interface (1e-12 leaves ~1e3 ulp of room), times 1/(2 sqrt(d)) for the smallest Snell discriminant d of the pose, the derivative of the refracted cosine sqrt(d) (kinematic_atol)",
+   "value": 1.191038263871662e-12
+  },
+  "outgoing_direction": {
+   "basis": "float64 evaluation of the same closed-form refraction/reflection chain from bit-identical JSON inputs: a few ulp per interface (1e-12 leaves ~1e3 ulp of room), times 1/(2 sqrt(d)) for the smallest Snell discriminant d of the pose, the derivative of the refracted cosine sqrt(d) (kinematic_atol)",
+   "value": 1.191038263871662e-12
+  },
+  "segment_directions": {
+   "basis": "float64 evaluation of the same closed-form refraction/reflection chain from bit-identical JSON inputs: a few ulp per interface (1e-12 leaves ~1e3 ulp of room), times 1/(2 sqrt(d)) for the smallest Snell discriminant d of the pose, the derivative of the refracted cosine sqrt(d) (kinematic_atol)",
+   "value": 1.191038263871662e-12
+  },
+  "valid": {
+   "basis": "exact boolean; the nearest gate exit_snell_discriminant has margin 0.176, far above the float64 rounding of a margin (~1e-15)",
+   "value": 0.0
+  }
+ }
+}

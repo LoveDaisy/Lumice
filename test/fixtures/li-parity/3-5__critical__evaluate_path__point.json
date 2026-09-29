@@ -1,0 +1,137 @@
+{
+ "cell": {
+  "category": "critical",
+  "name": "3-5__critical",
+  "path": "3-5",
+  "pose_label": "point",
+  "rationale": "no internal reflection: the 22 deg halo path on the canonical column (tests/test_discovery.py's production scene); next to an interior extremum of D_P (a caustic): a short loop around a Jacobian-degenerate point",
+  "selection": {
+   "deviation_deg": 22.33929990977301,
+   "extremum_deviation_deg": 21.83929990977304,
+   "extremum_kind": "minimum",
+   "extremum_u": [
+    0.7556288771612691,
+    -0.6549999999999998,
+    0.0
+   ],
+   "geodesic_angle_deg": 7.89075547579103,
+   "level_offset_deg": 0.5,
+   "method": "lit side of an interior extremum of D_P",
+   "u": [
+    0.6585528039187281,
+    -0.7525345204379541,
+    0.0
+   ]
+  }
+ },
+ "expected": {
+  "diagnostics": {
+   "nearest_margin": "entry_incidence_cosine",
+   "nearest_margin_value": 0.6585528039187281,
+   "validity_margins": {
+    "entry_incidence_cosine": 0.6585528039187281,
+    "entry_snell_discriminant": 0.6700027944462553,
+    "exit_incidence_cosine": 0.9067601042383295,
+    "exit_snell_discriminant": 0.6949012508599972
+   }
+  },
+  "fresnel_transmission": 0.952003436413546,
+  "interface_transmittances": [
+   0.9710860347294324,
+   0.9803492197051281
+  ],
+  "outgoing_direction": [
+   -0.9918070540212403,
+   -0.0,
+   0.1277449317730782
+  ],
+  "segment_directions": [
+   [
+    -0.6585528039187281,
+    0.7525345204379541,
+    0.0
+   ],
+   [
+    -0.8185369841651965,
+    0.5744538323953848,
+    0.0
+   ],
+   [
+    -0.8951592670424564,
+    0.445746437594303,
+    0.0
+   ]
+  ],
+  "valid": true
+ },
+ "fixture_kind": "evaluate_path",
+ "format": "lumice-integral/analytic-parity",
+ "input": {
+  "crystal": {
+   "face_distance": [
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0
+   ],
+   "height": 1.0,
+   "kind": "prism",
+   "lower_h": 0.0,
+   "lower_wedge_deg": 0.0,
+   "upper_h": 0.0,
+   "upper_wedge_deg": 0.0
+  },
+  "faces": [
+   3,
+   5
+  ],
+  "incident_direction": [
+   -0.9659258262890683,
+   -0.0,
+   -0.25881904510252074
+  ],
+  "pose": [
+   0.8308834272666147,
+   -0.5564465206052457,
+   0.0,
+   0.0,
+   0.0,
+   1.0,
+   -0.5564465206052452,
+   -0.8308834272666151,
+   0.0
+  ],
+  "refractive_index": 1.31
+ },
+ "provenance": {
+  "conventions_sha256": "4af1326270649820be6ad4859d86d3cb54f05c6b677f1769e76c0c907e98c871",
+  "li_rev": "bfbd042a2234a80efb96950ce33375690a94fb07",
+  "li_tracked_tree_clean": true
+ },
+ "schema_version": 1,
+ "symmetry_semantics": "none",
+ "tolerance": {
+  "fresnel_transmission": {
+   "basis": "float64 evaluation of the same closed-form refraction/reflection chain from bit-identical JSON inputs: a few ulp per interface (1e-12 leaves ~1e3 ulp of room), times 1/(2 sqrt(d)) for the smallest Snell discriminant d of the pose, the derivative of the refracted cosine sqrt(d) (kinematic_atol)",
+   "value": 1e-12
+  },
+  "interface_transmittances": {
+   "basis": "float64 evaluation of the same closed-form refraction/reflection chain from bit-identical JSON inputs: a few ulp per interface (1e-12 leaves ~1e3 ulp of room), times 1/(2 sqrt(d)) for the smallest Snell discriminant d of the pose, the derivative of the refracted cosine sqrt(d) (kinematic_atol)",
+   "value": 1e-12
+  },
+  "outgoing_direction": {
+   "basis": "float64 evaluation of the same closed-form refraction/reflection chain from bit-identical JSON inputs: a few ulp per interface (1e-12 leaves ~1e3 ulp of room), times 1/(2 sqrt(d)) for the smallest Snell discriminant d of the pose, the derivative of the refracted cosine sqrt(d) (kinematic_atol)",
+   "value": 1e-12
+  },
+  "segment_directions": {
+   "basis": "float64 evaluation of the same closed-form refraction/reflection chain from bit-identical JSON inputs: a few ulp per interface (1e-12 leaves ~1e3 ulp of room), times 1/(2 sqrt(d)) for the smallest Snell discriminant d of the pose, the derivative of the refracted cosine sqrt(d) (kinematic_atol)",
+   "value": 1e-12
+  },
+  "valid": {
+   "basis": "exact boolean; the nearest gate entry_incidence_cosine has margin 0.659, far above the float64 rounding of a margin (~1e-15)",
+   "value": 0.0
+  }
+ }
+}

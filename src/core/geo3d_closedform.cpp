@@ -14,6 +14,69 @@
 
 namespace lumice {
 
+template <typename Real>
+struct ConeSlopeConstants;
+
+template <>
+struct ConeSlopeConstants<float> {
+  static constexpr float kSqrt3_4 = math::kSqrt3_4;  // NOLINT(readability-identifier-naming) math notation √3/4
+  static constexpr float kDegreeToRad = math::kDegreeToRad;
+};
+
+template <>
+struct ConeSlopeConstants<double> {
+  static constexpr double kSqrt3_4 = 0.5 * kHexSqrt3Half;  // NOLINT(readability-identifier-naming) math notation √3/4
+  static constexpr double kDegreeToRad = 3.14159265358979323846 / 180.0;
+};
+
+template <typename Real>
+double ClosedFormConeSlopeFromWedgeDeg(Real wedge_deg) {
+  using C = ConeSlopeConstants<Real>;
+  return static_cast<double>(C::kSqrt3_4) /
+         std::tan(static_cast<double>(wedge_deg) * static_cast<double>(C::kDegreeToRad));
+}
+
+template double ClosedFormConeSlopeFromWedgeDeg<float>(float wedge_deg);
+template double ClosedFormConeSlopeFromWedgeDeg<double>(double wedge_deg);
+
+void ClosedFormHexFacePlane(int slot, double a1, double a2, double h2_2, double dist_i, double out[4]) {
+  if (slot < 2) {
+    out[0] = 0;
+    out[1] = 0;
+    out[2] = slot == 0 ? 1 : -1;
+    out[3] = 0;
+    return;
+  }
+  // Side direction i of the slot: prism 2+i, upper cone 8+i, lower cone 14+i.
+  const int i = (slot - 2) % 6;
+  // (x1, y1) = hexagon vertex at angle (i·60° − 30°) = kHexVtx[i].
+  // (x2, y2) = hexagon vertex at angle (i·60° + 30°); identity
+  //   (+30° + i·60°) ≡ (−30° + (i + 1)·60°) (mod 360°)
+  // lets us read this vertex from the same table.
+  const int i2 = (i + 1) % 6;
+  double x1 = 0.5 * kHexVtxCos[i];
+  double x2 = 0.5 * kHexVtxCos[i2];
+  double y1 = 0.5 * kHexVtxSin[i];
+  double y2 = 0.5 * kHexVtxSin[i2];
+  double det = x1 * y2 - x2 * y1;  // = √3/8
+  if (slot < 8) {
+    out[0] = y2 - y1;
+    out[1] = x1 - x2;
+    out[2] = 0;
+    out[3] = -dist_i * det;
+  } else if (slot < 14) {
+    out[0] = a1 * (y2 - y1);
+    out[1] = a1 * (x1 - x2);
+    out[2] = det;
+    out[3] = -(h2_2 + a1 * dist_i) * det;
+  } else {
+    out[0] = a2 * (y2 - y1);
+    out[1] = a2 * (x1 - x2);
+    out[2] = -det;
+    out[3] = -(h2_2 + a2 * dist_i) * det;
+  }
+}
+
 namespace {
 
 // ============================================================================
@@ -779,32 +842,20 @@ ClosedFormPyramidResult ComputeClosedFormPyramidInner(double a1, double a2, floa
   r.plane_coef[5] = 0;
   r.plane_coef[6] = -1;
   r.plane_coef[7] = 0;
+  const auto round_plane = [&r, a1, a2, h2_2, dist](int slot, int i) {
+    double coef[4];
+    ClosedFormHexFacePlane(slot, a1, a2, h2_2, static_cast<double>(dist[i]), coef);
+    for (int k = 0; k < 4; k++) {
+      r.plane_coef[slot * 4 + k] = static_cast<float>(coef[k]);
+    }
+  };
   for (int i = 0; i < 6; i++) {
-    // (x1, y1) = hexagon vertex at angle (i·60° − 30°) = kHexVtx[i].
-    // (x2, y2) = hexagon vertex at angle (i·60° + 30°); identity
-    //   (+30° + i·60°) ≡ (−30° + (i + 1)·60°) (mod 360°)
-    // lets us read this vertex from the same table.
-    const int i2 = (i + 1) % 6;
-    double x1 = 0.5 * kHexVtxCos[i];
-    double x2 = 0.5 * kHexVtxCos[i2];
-    double y1 = 0.5 * kHexVtxSin[i];
-    double y2 = 0.5 * kHexVtxSin[i2];
-    double det = x1 * y2 - x2 * y1;  // = √3/8
-    r.plane_coef[(2 + i) * 4 + 0] = static_cast<float>(y2 - y1);
-    r.plane_coef[(2 + i) * 4 + 1] = static_cast<float>(x1 - x2);
-    r.plane_coef[(2 + i) * 4 + 2] = 0;
-    r.plane_coef[(2 + i) * 4 + 3] = static_cast<float>(-static_cast<double>(dist[i]) * det);
+    round_plane(2 + i, i);
     if (has_upper) {
-      r.plane_coef[(8 + i) * 4 + 0] = static_cast<float>(a1 * (y2 - y1));
-      r.plane_coef[(8 + i) * 4 + 1] = static_cast<float>(a1 * (x1 - x2));
-      r.plane_coef[(8 + i) * 4 + 2] = static_cast<float>(det);
-      r.plane_coef[(8 + i) * 4 + 3] = static_cast<float>(-(h2_2 + a1 * static_cast<double>(dist[i])) * det);
+      round_plane(8 + i, i);
     }
     if (has_lower) {
-      r.plane_coef[(14 + i) * 4 + 0] = static_cast<float>(a2 * (y2 - y1));
-      r.plane_coef[(14 + i) * 4 + 1] = static_cast<float>(a2 * (x1 - x2));
-      r.plane_coef[(14 + i) * 4 + 2] = static_cast<float>(-det);
-      r.plane_coef[(14 + i) * 4 + 3] = static_cast<float>(-(h2_2 + a2 * static_cast<double>(dist[i])) * det);
+      round_plane(14 + i, i);
     }
   }
 
@@ -1410,12 +1461,10 @@ ClosedFormPyramidResult ComputeClosedFormPyramid(float upper_alpha, float lower_
   double a1 = -1.0;
   double a2 = -1.0;
   if (h1 > math::kFloatEps && upper_alpha >= kMinAlpha && upper_alpha <= kMaxAlpha) {
-    a1 = static_cast<double>(math::kSqrt3_4) /
-         std::tan(static_cast<double>(upper_alpha) * static_cast<double>(math::kDegreeToRad));
+    a1 = ClosedFormConeSlopeFromWedgeDeg(upper_alpha);
   }
   if (h3 > math::kFloatEps && lower_alpha >= kMinAlpha && lower_alpha <= kMaxAlpha) {
-    a2 = static_cast<double>(math::kSqrt3_4) /
-         std::tan(static_cast<double>(lower_alpha) * static_cast<double>(math::kDegreeToRad));
+    a2 = ClosedFormConeSlopeFromWedgeDeg(lower_alpha);
   }
   return ComputeClosedFormPyramidInner(a1, a2, h1, h2, h3, dist);
 }

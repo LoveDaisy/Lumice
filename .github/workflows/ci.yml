@@ -1512,11 +1512,11 @@ jobs:
       # outcome this job exists to rule out.
       # LUMICE_ANALYTIC_INSTALL_DIR hands the packaging step's prefix to the external-consumer
       # smoke test; each run: block is a new shell, so the path is rebuilt, not read from $prefix.
-      - name: Check export sets, analytic log sink & external consumer smoke
+      - name: Check export sets, analytic log sink, EvaluatePath ABI & external consumer smoke
         shell: pwsh
         run: |
           $env:LUMICE_ANALYTIC_INSTALL_DIR = Join-Path $env:RUNNER_TEMP 'analytic-install'
-          python -m pytest test/e2e-correctness/test_export_symbol_scope.py test/e2e-correctness/test_analytic_log_sink.py test/e2e-correctness/test_external_consumer_smoke.py -v -m slow -rs 2>&1 | Tee-Object -Variable log
+          python -m pytest test/e2e-correctness/test_export_symbol_scope.py test/e2e-correctness/test_analytic_log_sink.py test/e2e-correctness/test_analytic_evaluate_path.py test/e2e-correctness/test_external_consumer_smoke.py -v -m slow -rs 2>&1 | Tee-Object -Variable log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           if (($log | Out-String) -match '\bskipped\b') {
             Write-Error "export-set test skipped on a leg that just built the shared flavor"
