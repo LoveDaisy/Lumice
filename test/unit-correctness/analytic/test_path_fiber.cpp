@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <limits>
 #include <random>
 #include <thread>
 #include <utility>
@@ -20,6 +21,7 @@
 #include "analytic/path_evaluation.hpp"
 #include "analytic/path_fiber.hpp"
 #include "analytic/so3.hpp"
+#include "portable_normal.hpp"
 
 namespace lumice::analytic {
 namespace {
@@ -104,7 +106,7 @@ double SetDistance(const TraceResult& a, const TraceResult& b) {
 }
 
 std::array<double, 9> RandomRotation(std::mt19937_64& rng) {
-  std::normal_distribution<double> g;
+  PortableNormal g;  // same poses on every standard library
   double q[4] = { g(rng), g(rng), g(rng), g(rng) };
   const double m = std::sqrt(q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]);
   for (double& v : q) {
@@ -137,9 +139,12 @@ TEST(PathFiber, DirectionIsEvaluatePathsOutgoingDirection) {
         continue;
       }
       valid++;
+      // One source, two instantiations (double here, the value part of Jet<3> in the map): equal
+      // up to floating-point contraction, which GCC on aarch64 applies by default (fused
+      // multiply-add), so a few ulp of a unit vector rather than bit equality.
       const auto d = path.Outgoing(r);
       for (int i = 0; i < 3; i++) {
-        EXPECT_EQ(d[i], o.outgoing_direction[i]);
+        EXPECT_NEAR(d[i], o.outgoing_direction[i], 8 * std::numeric_limits<double>::epsilon());
       }
     }
     EXPECT_GT(valid, 50);
@@ -167,23 +172,34 @@ TEST(PathFiber, ResidualJacobianMatchesCentralDifference) {
       double a[2][3];
       fiber_detail::LocalResidualJacobian(p->Map(), chart, r.data(), a);
       for (int k = 0; k < 3; k++) {
-        const double h = 1e-6;
-        double wp[3] = { 0, 0, 0 };
-        double wm[3] = { 0, 0, 0 };
-        wp[k] = h;
-        wm[k] = -h;
-        Mat rp{};
-        Mat rm{};
-        fiber_detail::ApplyCorrection(r.data(), wp, rp.data());
-        fiber_detail::ApplyCorrection(r.data(), wm, rm.data());
-        const auto dp = p->Outgoing(rp);
-        const auto dm = p->Outgoing(rm);
-        double resp[2];
-        double resm[2];
-        fiber_detail::ChartResidual(chart, dp.data(), resp);
-        fiber_detail::ChartResidual(chart, dm.data(), resm);
+        // Central difference at h and h/2, Richardson-combined: truncation O(h^4) instead of
+        // O(h^2). A plain h = 1e-6 difference misses by ~1e-7 relative near the square-root
+        // corners of the path domain (TIR onset), where the third derivative is large.
+        auto central = [&](double h, double out[2]) {
+          double wp[3] = { 0, 0, 0 };
+          double wm[3] = { 0, 0, 0 };
+          wp[k] = h;
+          wm[k] = -h;
+          Mat rp{};
+          Mat rm{};
+          fiber_detail::ApplyCorrection(r.data(), wp, rp.data());
+          fiber_detail::ApplyCorrection(r.data(), wm, rm.data());
+          const auto dp = p->Outgoing(rp);
+          const auto dm = p->Outgoing(rm);
+          double resp[2];
+          double resm[2];
+          fiber_detail::ChartResidual(chart, dp.data(), resp);
+          fiber_detail::ChartResidual(chart, dm.data(), resm);
+          for (int i = 0; i < 2; i++) {
+            out[i] = (resp[i] - resm[i]) / (2.0 * h);
+          }
+        };
+        double coarse[2];
+        double fine[2];
+        central(1e-5, coarse);
+        central(5e-6, fine);
         for (int i = 0; i < 2; i++) {
-          const double fd = (resp[i] - resm[i]) / (2.0 * h);
+          const double fd = (4.0 * fine[i] - coarse[i]) / 3.0;
           EXPECT_NEAR(a[i][k], fd, 1e-8 * (1.0 + std::fabs(fd))) << "i " << i << " k " << k;
         }
       }

@@ -22,6 +22,7 @@
 #include "analytic/path_evaluation.hpp"
 #include "core/crystal.hpp"
 #include "core/optics.hpp"
+#include "portable_normal.hpp"
 
 namespace lumice::analytic {
 namespace {
@@ -88,9 +89,16 @@ double TextbookTransmittance(double n1, double cos_i, double n2, double cos_t) {
   return 1.0 - 0.5 * (rs * rs + rp * rp);
 }
 
+// The textbook formula and the kernel reach cos_t by different roundings, and the Fresnel
+// factor's sensitivity to cos_t grows like 1/cos_t toward the critical angle (a pose there gave
+// 1.39e-14 on MSVC, PR #444): the bound is 1e-14 scaled by that conditioning.
+double FresnelTolerance(double cos_t) {
+  return 1e-14 * std::max(1.0, 1.0 / std::max(cos_t, 1e-6));
+}
+
 // Uniform random rotation (row-major) from a unit quaternion.
 std::array<double, 9> RandomRotation(std::mt19937_64& rng) {
-  std::normal_distribution<double> g;
+  PortableNormal g;  // same poses on every standard library
   double q[4] = { g(rng), g(rng), g(rng), g(rng) };
   const double m = std::sqrt(q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]);
   for (double& v : q) {
@@ -238,7 +246,7 @@ TEST_F(PathEvaluationTest, SnellAndReflectionHoldAtEveryInterface) {
           EXPECT_GT(Dot(in, nrm.data()) * Dot(out, nrm.data()), 0.0);
           const double cos_i = std::fabs(Dot(in, nrm.data()));
           const double cos_t = std::fabs(Dot(out, nrm.data()));
-          EXPECT_NEAR(e.trans[k], TextbookTransmittance(n_in, cos_i, n_out, cos_t), 1e-14);
+          EXPECT_NEAR(e.trans[k], TextbookTransmittance(n_in, cos_i, n_out, cos_t), FresnelTolerance(cos_t));
         } else {
           EXPECT_NEAR(Norm(sin_in), Norm(sin_out), 1e-14) << "reflection at interface " << k;
           EXPECT_NEAR(Dot(in, nrm.data()), -Dot(out, nrm.data()), 1e-14);
@@ -246,7 +254,7 @@ TEST_F(PathEvaluationTest, SnellAndReflectionHoldAtEveryInterface) {
           const double sin2_t = kN * kN * (1.0 - cos_i * cos_i);
           const double r_expected =
               sin2_t >= 1.0 ? 1.0 : 1.0 - TextbookTransmittance(kN, cos_i, 1.0, std::sqrt(1.0 - sin2_t));
-          EXPECT_NEAR(e.trans[k], r_expected, 1e-14);
+          EXPECT_NEAR(e.trans[k], r_expected, sin2_t >= 1.0 ? 1e-14 : FresnelTolerance(std::sqrt(1.0 - sin2_t)));
         }
       }
       double product = 1.0;

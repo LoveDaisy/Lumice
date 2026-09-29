@@ -11,6 +11,7 @@
 
 #include "analytic/jet.hpp"
 #include "analytic/so3.hpp"
+#include "portable_normal.hpp"
 
 namespace lumice::analytic {
 namespace {
@@ -54,7 +55,7 @@ TEST(So3, ExpMatchesTheQuaternionRotationOnBothBranches) {
 
 TEST(So3, LogInvertsExpOnTheInjectivityDomain) {
   std::mt19937_64 rng(3);
-  std::normal_distribution<double> g;
+  PortableNormal g;  // same poses on every standard library
   for (double angle : { 1e-12, 1e-6, 1e-4, 0.2, 1.0, 2.5, 3.0 }) {
     for (int t = 0; t < 20; t++) {
       double axis[3] = { g(rng), g(rng), g(rng) };
