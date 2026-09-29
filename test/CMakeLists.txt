@@ -242,16 +242,11 @@ add_executable(unit_correctness_test
   # TraceBackend arm: CpuTraceBackend always; Metal under `#if __APPLE__`,
   # CUDA under `#if LUMICE_CUDA_ENABLED` (self-skipping without a device).
   "${PROJ_TEST_DIR}/unit-correctness/backend/test_ray_allocation_backends.cpp"
-  # analytic/: liblumice_analytic's evaluator kernel, checked against independent physics. Its
-  # source is compiled in here directly because src/analytic/ is outside lumice_obj (root
-  # CMakeLists.txt: only lumice_analytic carries it); the C ABI wrapper (analytic_api.cpp) is not,
-  # since its load-time initialiser silences the engine's console sink for the whole process — the
-  # wrapper is exercised through ctypes in test/e2e-correctness/test_analytic_evaluate_path.py.
-  "${PROJ_SRC_DIR}/analytic/path_evaluation.cpp"
-  "${PROJ_SRC_DIR}/analytic/fiber_continuation.cpp"
-  "${PROJ_SRC_DIR}/analytic/path_fiber.cpp"
-  "${PROJ_SRC_DIR}/analytic/entry_measure.cpp"
-  "${PROJ_SRC_DIR}/analytic/discovery.cpp"
+  # analytic/: liblumice_analytic's evaluator kernel, checked against independent physics. The
+  # kernel's objects come from the lumice_analytic_kernel OBJECT library linked below (src/analytic/
+  # is outside lumice_obj); the C ABI wrapper (analytic_api.cpp) is not linked, since its load-time
+  # initialiser silences the engine's console sink for the whole process — the wrapper is exercised
+  # through ctypes in test/e2e-correctness/test_analytic_evaluate_path.py.
   "${PROJ_TEST_DIR}/unit-correctness/analytic/test_path_evaluation.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/analytic/test_jet.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/analytic/test_so3.cpp"
@@ -262,19 +257,16 @@ add_executable(unit_correctness_test
   # Parity with Lumice Integral: replays LI's exported fixtures (test/fixtures/li-parity/) against
   # the same kernels. Unit-correctness rather than parity-cross-backend: that layer's oracle is the
   # legacy CPU backend (doc/testing-architecture.md section 3, step 5), and this target already
-  # compiles the analytic kernels.
+  # links the analytic kernels.
   "${PROJ_TEST_DIR}/unit-correctness/analytic/test_li_parity.cpp"
   # raypath/: the single-path analysis module (scene config -> the analytic kernel above -> fibers,
-  # per-pose detail, the sun-direction grid). Compiled in here for the same reason as the kernel: it
-  # is engine-internal C++ on top of src/analytic/, and no product target links it yet — the CLI and
-  # GUI shells reach the engine only through lumice.h.
-  "${PROJ_SRC_DIR}/raypath/scene_to_analytic.cpp"
-  "${PROJ_SRC_DIR}/raypath/single_path_analysis.cpp"
+  # per-pose detail, the sun-direction grid, its JSON form, its lumice.h entry point), from the
+  # lumice_raypath_obj OBJECT library linked below — the same objects liblumice carries.
   "${PROJ_TEST_DIR}/unit-correctness/raypath/test_single_path_analysis.cpp")
 target_include_directories(unit_correctness_test
   PRIVATE ${PROJ_TEST_DIR})
 target_link_libraries(unit_correctness_test
-  PRIVATE GTest::gtest ${CMAKE_THREAD_LIBS_INIT} lumice_obj)
+  PRIVATE GTest::gtest ${CMAKE_THREAD_LIBS_INIT} lumice_obj lumice_analytic_kernel lumice_raypath_obj)
 # The configure-time tier, for test_c_api_engine_isa_level.cpp to hold the engine's run-time
 # answer against. A test-side definition rather than a read of the engine's own
 # LUMICE_ISA_LEVEL_STR: that macro is PRIVATE to lumice_obj on purpose (root CMakeLists.txt,
