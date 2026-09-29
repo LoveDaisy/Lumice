@@ -193,7 +193,9 @@ struct FiberComponent {
   ComponentKind kind = ComponentKind::kClosed;
   double seed[9]{};
   TraceEnd forward;
-  TraceEnd backward;  // arc only (pose_count 0 for a closed component)
+  // Arc only. A closed component leaves it default-constructed (pose_count 0): its status and
+  // reason then mean nothing, and a shell reads `kind` before printing them.
+  TraceEnd backward;
   // One ordered point list. Closed: the forward trace, seed first, its last pose the corrected
   // closing pose. Arc: the backward trace reversed, then the forward trace — the seed appears once,
   // at `seed_index` — so the list runs from one boundary event to the other.
