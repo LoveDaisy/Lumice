@@ -105,7 +105,8 @@ _PRELUDE = textwrap.dedent(
 
     lib = ctypes.CDLL(LIB)
     lib.LUMICE_ANALYTIC_GetApiVersion.restype = c_int
-    assert lib.LUMICE_ANALYTIC_GetApiVersion() == 5, "these bindings are lumice_analytic.h version 5's"
+    # Version 6 only added the band sum; the fiber structs below are version 5's.
+    assert lib.LUMICE_ANALYTIC_GetApiVersion() == 6, "these bindings are lumice_analytic.h version 6's"
     lib.LUMICE_ANALYTIC_TraceFiberBatch.restype = c_int
     lib.LUMICE_ANALYTIC_TraceFiberBatch.argtypes = [POINTER(Crystal), POINTER(FiberProblem), c_int,
                                                     POINTER(Options), c_void_p]

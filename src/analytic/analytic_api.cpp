@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "analytic/analytic_callback_sink.hpp"
+#include "analytic/band_sum.hpp"
 #include "analytic/discovery.hpp"
 #include "analytic/fiber_continuation.hpp"
 #include "analytic/path_evaluation.hpp"
@@ -573,6 +574,148 @@ LUMICE_ANALYTIC_ErrorCode EvaluatePathImpl(const LUMICE_ANALYTIC_Crystal* crysta
   return LUMICE_ANALYTIC_OK;
 }
 
+// The block behind BandSumResult::storage: the pixel array.
+struct BandSumResultStorage {
+  std::vector<LUMICE_ANALYTIC_BandPixel> pixels;
+};
+
+bool ToPoseFamily(int family, lumice::analytic::PoseFamily* out) {
+  namespace an = lumice::analytic;
+  switch (family) {
+    case LUMICE_ANALYTIC_POSE_RANDOM:
+      *out = an::PoseFamily::kRandom;
+      return true;
+    case LUMICE_ANALYTIC_POSE_COLUMN:
+      *out = an::PoseFamily::kColumn;
+      return true;
+    case LUMICE_ANALYTIC_POSE_PLATE:
+      *out = an::PoseFamily::kPlate;
+      return true;
+    case LUMICE_ANALYTIC_POSE_PARRY:
+      *out = an::PoseFamily::kParry;
+      return true;
+    case LUMICE_ANALYTIC_POSE_LOWITZ:
+      *out = an::PoseFamily::kLowitz;
+      return true;
+    default:
+      return false;
+  }
+}
+
+LUMICE_ANALYTIC_BandPixelStatus ToBandPixelStatus(lumice::analytic::PixelStatus status) {
+  switch (status) {
+    case lumice::analytic::PixelStatus::kOk:
+      break;
+    case lumice::analytic::PixelStatus::kSingular:
+      return LUMICE_ANALYTIC_BAND_PIXEL_SINGULAR;
+    case lumice::analytic::PixelStatus::kPointMass:
+      return LUMICE_ANALYTIC_BAND_PIXEL_POINT_MASS;
+  }
+  return LUMICE_ANALYTIC_BAND_PIXEL_OK;
+}
+
+// The pixel table's own inputs: every centre and corner a unit vector, every solid angle finite and
+// positive.
+bool ValidPixels(const LUMICE_ANALYTIC_PixelTable& pixels) {
+  namespace an = lumice::analytic;
+  for (int p = 0; p < pixels.pixel_count; p++) {
+    const size_t i = static_cast<size_t>(p);
+    if (!an::ValidateUnitVector(pixels.centre + 3 * i)) {
+      return false;
+    }
+    for (int k = 0; k < 4; k++) {
+      if (!an::ValidateUnitVector(pixels.corners + 12 * i + 3 * static_cast<size_t>(k))) {
+        return false;
+      }
+    }
+    if (!std::isfinite(pixels.solid_angle[i]) || pixels.solid_angle[i] <= 0.0) {
+      return false;
+    }
+  }
+  return true;
+}
+
+LUMICE_ANALYTIC_ErrorCode BandSumImpl(const LUMICE_ANALYTIC_Crystal* crystal,
+                                      const LUMICE_ANALYTIC_BandSumProblem* problem,
+                                      LUMICE_ANALYTIC_BandSumResult* out) {
+  namespace an = lumice::analytic;
+  if (out->struct_size < sizeof(LUMICE_ANALYTIC_BandSumResult)) {
+    return LUMICE_ANALYTIC_ERR_INVALID_VALUE;
+  }
+  if (crystal == nullptr || problem == nullptr) {
+    return LUMICE_ANALYTIC_ERR_NULL_ARG;
+  }
+  const LUMICE_ANALYTIC_PixelTable& pixels = problem->pixels;
+  if ((problem->faces == nullptr && problem->face_count > 0) ||
+      (pixels.pixel_count > 0 &&
+       (pixels.centre == nullptr || pixels.corners == nullptr || pixels.solid_angle == nullptr))) {
+    return LUMICE_ANALYTIC_ERR_NULL_ARG;
+  }
+  an::PoseDensitySpec spec;
+  if (!ToPoseFamily(problem->pose_density.family, &spec.family)) {
+    return LUMICE_ANALYTIC_ERR_INVALID_VALUE;
+  }
+  spec.zenith_mean_deg = problem->pose_density.zenith_mean_deg;
+  spec.zenith_std_deg = problem->pose_density.zenith_std_deg;
+  spec.roll_mean_deg = problem->pose_density.roll_mean_deg;
+  spec.roll_std_deg = problem->pose_density.roll_std_deg;
+  if (an::PoseDensityError(spec)[0] != '\0') {
+    return LUMICE_ANALYTIC_ERR_INVALID_VALUE;
+  }
+  an::FaceNormalTable table;
+  an::FacePolygonTable polygons;
+  if (auto status = an::BuildFaceNormals(*crystal, &table, &polygons); status != an::Status::kOk) {
+    return ToErrorCode(status);
+  }
+  if (problem->face_count < 2 || problem->face_count > an::kMaxFaceCount || !std::isfinite(problem->refractive_index) ||
+      problem->refractive_index <= 0.0 || !an::ValidateUnitVector(problem->incident_direction) ||
+      problem->sample_count < 1 || problem->sample_count > LUMICE_ANALYTIC_MAX_BAND_SUM_SAMPLE_COUNT ||
+      pixels.pixel_count < 0 || !ValidPixels(pixels)) {
+    return LUMICE_ANALYTIC_ERR_INVALID_VALUE;
+  }
+  int slots[an::kMaxFaceCount];
+  if (an::ResolveFaceSequence(table, problem->faces, problem->face_count, slots) != an::Status::kOk) {
+    return LUMICE_ANALYTIC_ERR_INVALID_VALUE;
+  }
+
+  an::PixelTable kernel_pixels;
+  kernel_pixels.count = pixels.pixel_count;
+  kernel_pixels.centre = pixels.centre;
+  kernel_pixels.corners = pixels.corners;
+  kernel_pixels.solid_angle = pixels.solid_angle;
+  const an::BandSumOutput sum =
+      an::BandSum(table, polygons, slots, problem->face_count, problem->refractive_index, problem->incident_direction,
+                  problem->sample_count, kernel_pixels, an::PoseDensity(spec));
+
+  auto storage = std::make_unique<BandSumResultStorage>();
+  storage->pixels.reserve(sum.pixels.size());
+  for (const an::PixelValue& v : sum.pixels) {
+    LUMICE_ANALYTIC_BandPixel px{};
+    px.status = ToBandPixelStatus(v.status);
+    px.value = v.value;
+    px.delta = v.delta;
+    px.delta_lo = v.delta_lo;
+    px.delta_hi = v.delta_hi;
+    px.k = v.k;
+    px.k_rho_pos = v.k_rho_pos;
+    px.k_eff = v.k_eff;
+    storage->pixels.push_back(px);
+  }
+  out->rank_zero = sum.rank_zero ? 1 : 0;
+  out->kept_count = sum.kept_count;
+  out->pixel_count = static_cast<int>(storage->pixels.size());
+  out->pixels = storage->pixels.empty() ? nullptr : storage->pixels.data();
+  if (sum.rank_zero) {
+    out->point_mass = sum.m;
+    out->point_mass_error = sum.m_error;
+    out->point_mass_method = sum.method == an::PointMassMethod::kLatticeMean ? LUMICE_ANALYTIC_POINT_MASS_LATTICE_MEAN :
+                                                                               LUMICE_ANALYTIC_POINT_MASS_TWIST_AVERAGE;
+    out->point_mass_pixel = sum.point_mass_pixel;
+  }
+  out->storage = storage.release();
+  return LUMICE_ANALYTIC_OK;
+}
+
 
 }  // namespace
 
@@ -725,6 +868,34 @@ void LUMICE_ANALYTIC_ReleaseDiscoveryResult(LUMICE_ANALYTIC_DiscoveryResult* res
   }
   // Reclaims the block released to the caller by DiscoverComponents; destroyed at scope exit.
   std::unique_ptr<DiscoveryResultStorage> owned(static_cast<DiscoveryResultStorage*>(result->storage));
+  ZeroAfterStructSize(result);
+}
+
+LUMICE_ANALYTIC_ErrorCode LUMICE_ANALYTIC_BandSum(const LUMICE_ANALYTIC_Crystal* crystal,
+                                                  const LUMICE_ANALYTIC_BandSumProblem* problem,
+                                                  LUMICE_ANALYTIC_BandSumResult* out_result) {
+  if (out_result == nullptr) {
+    return LUMICE_ANALYTIC_ERR_NULL_ARG;
+  }
+  ZeroAfterStructSize(out_result);
+  // No exception crosses the C boundary; the storage is released to out_result only on success.
+  try {
+    const LUMICE_ANALYTIC_ErrorCode code = BandSumImpl(crystal, problem, out_result);
+    if (code != LUMICE_ANALYTIC_OK) {
+      ZeroAfterStructSize(out_result);
+    }
+    return code;
+  } catch (...) {
+    ZeroAfterStructSize(out_result);
+    return LUMICE_ANALYTIC_ERR_UNKNOWN;
+  }
+}
+
+void LUMICE_ANALYTIC_ReleaseBandSumResult(LUMICE_ANALYTIC_BandSumResult* result) {
+  if (result == nullptr || result->struct_size < sizeof(LUMICE_ANALYTIC_BandSumResult)) {
+    return;
+  }
+  std::unique_ptr<BandSumResultStorage> owned(static_cast<BandSumResultStorage*>(result->storage));
   ZeroAfterStructSize(result);
 }
 

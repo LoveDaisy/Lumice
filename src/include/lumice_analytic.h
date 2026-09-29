@@ -65,7 +65,7 @@ extern "C" {
 
 // Interface version, a single integer (doc/analytic-api.md section 8.2): bumped on every
 // incompatible change, and in 0.x on every addition too. Independent of lumice.h's LUMICE_API_VERSION.
-#define LUMICE_ANALYTIC_API_VERSION 5
+#define LUMICE_ANALYTIC_API_VERSION 6
 
 // Library version at run time; compare with LUMICE_ANALYTIC_API_VERSION to detect a
 // header/library mismatch. Also the minimal function the build, export and load chain is proven
@@ -463,6 +463,149 @@ LUMICE_ANALYTIC_API LUMICE_ANALYTIC_ErrorCode LUMICE_ANALYTIC_DiscoverComponents
 // Frees what DiscoverComponents allocated, nested traces included, and zeroes the struct after
 // struct_size. NULL-safe; a no-op on a zero-filled struct.
 LUMICE_ANALYTIC_API void LUMICE_ANALYTIC_ReleaseDiscoveryResult(LUMICE_ANALYTIC_DiscoveryResult* result);
+
+// ---------------------------------------------------------------------------------------------
+// Band sum: the single-path brightness map (doc/analytic-api.md section 4.6; LI
+// docs/band-sum-contract.md). For one concrete face sequence, one refractive index and one pose
+// density, the value of each pixel of a caller-given table: the power per steradian the path sends
+// toward that pixel from one crystal of the ensemble, per unit incident irradiance, for a crystal
+// of hexagon edge 1 (contract section 6). The sample is DiscoverComponents' lattice: `sample_count`
+// antipodal Fibonacci points of the sun direction in the crystal frame, kept where the path is
+// valid and w = A T > 0; each pixel sums the kept events whose deviation lies in its corner band,
+// posed at the pixel's azimuth and weighted by the density there. Deterministic: no random numbers.
+//
+// A rank-0 path (its reflections compose to the identity and entry and exit faces are parallel, so
+// every pose sends the light straight on) is not a band but a point mass `point_mass` in the sun's
+// own direction: the first pixel in table order containing the incident direction carries
+// point_mass / solid_angle, every other pixel 0.
+//
+// v1 is single-threaded, single-wavelength and holds every kept event of the sample at once (about
+// 64 bytes each), which is why sample_count has its own, lower bound.
+// ---------------------------------------------------------------------------------------------
+
+// The pose densities of contract section 2.2: a density on SO(3) relative to Haar measure that
+// reads a pose only through the c axis' zenith theta and its roll psi. Degrees. random: no
+// parameter (every field 0). column / plate: zenith_mean_deg in [0, 180] and zenith_std_deg > 0, a
+// Gaussian in theta taken as a sphere density (normalised with sin theta, as the engine samples its
+// gauss zenith); the roll fields must be 0. parry / lowitz: that zenith times a Gaussian in the
+// roll, roll_mean_deg finite and roll_std_deg > 0. Column and plate (parry and lowitz) differ only
+// by LI's default mean, which the C ABI does not apply: the mean is always the caller's.
+typedef enum LUMICE_ANALYTIC_PoseFamily_ {
+  LUMICE_ANALYTIC_POSE_RANDOM = 0,
+  LUMICE_ANALYTIC_POSE_COLUMN = 1,
+  LUMICE_ANALYTIC_POSE_PLATE = 2,
+  LUMICE_ANALYTIC_POSE_PARRY = 3,
+  LUMICE_ANALYTIC_POSE_LOWITZ = 4,
+} LUMICE_ANALYTIC_PoseFamily;
+
+typedef struct LUMICE_ANALYTIC_PoseDensity_ {
+  int family;  // LUMICE_ANALYTIC_PoseFamily
+  double zenith_mean_deg;
+  double zenith_std_deg;
+  double roll_mean_deg;
+  double roll_std_deg;
+} LUMICE_ANALYTIC_PoseDensity;
+
+// The pixel table (contract section 2.3). A pixel is the spherical quadrilateral with great-circle
+// edges through its four corners, given in cyclic order (either orientation). Every direction is a
+// world unit propagation direction — the sky point a pixel shows is its negative. Results come back
+// in table order, so the caller's own pixel labels stay the caller's.
+typedef struct LUMICE_ANALYTIC_PixelTable_ {
+  int pixel_count;            // >= 0
+  const double* centre;       // pixel_count x 3: fixes the pixel's azimuth about the sun and its deviation
+  const double* corners;      // pixel_count x 4 x 3
+  const double* solid_angle;  // pixel_count, steradians, finite and > 0; read by the point mass only
+} LUMICE_ANALYTIC_PixelTable;
+
+// Upper bound on BandSumProblem.sample_count (1e7): every kept event is held and sorted at once, and
+// the call cannot be cancelled, so a larger request is ERR_INVALID_VALUE. Lower than
+// LUMICE_ANALYTIC_MAX_DISCOVERY_SAMPLE_COUNT, which streams its sample.
+#define LUMICE_ANALYTIC_MAX_BAND_SUM_SAMPLE_COUNT 10000000
+
+typedef struct LUMICE_ANALYTIC_BandSumProblem_ {
+  const int* faces;              // concrete Lumice face numbers: entry, internal reflections, exit
+  int face_count;                // 2..64
+  double refractive_index;       // finite, > 0
+  double incident_direction[3];  // world unit vector, propagation sun -> crystal (LI's s)
+  int sample_count;              // lattice points N, 1..LUMICE_ANALYTIC_MAX_BAND_SUM_SAMPLE_COUNT; no default
+  LUMICE_ANALYTIC_PoseDensity pose_density;
+  LUMICE_ANALYTIC_PixelTable pixels;
+} LUMICE_ANALYTIC_BandSumProblem;
+
+typedef enum LUMICE_ANALYTIC_BandPixelStatus_ {
+  LUMICE_ANALYTIC_BAND_PIXEL_OK = 0,
+  LUMICE_ANALYTIC_BAND_PIXEL_SINGULAR = 1,    // the pixel contains the incident direction or its
+                                              // antipode, where the band sum has no value
+  LUMICE_ANALYTIC_BAND_PIXEL_POINT_MASS = 2,  // rank 0: the pixel carrying the point mass
+} LUMICE_ANALYTIC_BandPixelStatus;
+
+// One pixel (contract section 6). Band fields: delta is the centre's deviation from the incident
+// direction, [delta_lo, delta_hi) the band of the corners' deviations (radians); k the kept events
+// in the band, k_rho_pos those whose weighted contribution is > 0 (subnormals count: a thread with
+// flush-to-zero set gets smaller counts), k_eff Kish's effective sample size (S^2 / sum c^2, 0 for an
+// empty band). A SINGULAR pixel has value and k_eff NaN and zero counts. In a rank-0 result every
+// pixel has delta, delta_lo, delta_hi and k_eff NaN and zero counts, and value 0 except the
+// POINT_MASS pixel.
+typedef struct LUMICE_ANALYTIC_BandPixel_ {
+  int status;  // LUMICE_ANALYTIC_BandPixelStatus
+  double value;
+  double delta;
+  double delta_lo;
+  double delta_hi;
+  int k;
+  int k_rho_pos;
+  double k_eff;
+} LUMICE_ANALYTIC_BandPixel;
+
+// How a rank-0 mass was computed: under the random density the lattice mean of w (exact on the
+// sample); under any other the library's deterministic average over the twist about the sun of
+// each kept event, integrated to 1e-6 relative (point_mass_error is the change of its last
+// refinement). LI computes the latter by Monte Carlo; the two agree only statistically.
+typedef enum LUMICE_ANALYTIC_PointMassMethod_ {
+  LUMICE_ANALYTIC_POINT_MASS_LATTICE_MEAN = 0,
+  LUMICE_ANALYTIC_POINT_MASS_TWIST_AVERAGE = 1,
+} LUMICE_ANALYTIC_PointMassMethod;
+
+typedef struct LUMICE_ANALYTIC_BandSumResult_ {
+  uint32_t struct_size;  // caller sets sizeof(*out_result) (section 8.2)
+  int rank_zero;         // 1: the point-mass fields below apply and no pixel has band fields
+  int kept_count;        // kept events of the sample (w > 0), either rank
+  int pixel_count;
+  const LUMICE_ANALYTIC_BandPixel* pixels;  // table order; NULL when pixel_count is 0
+  // Rank 0 only (0 otherwise). point_mass_pixel is the index of the POINT_MASS pixel, or -1 when no
+  // pixel contains the incident direction (the mass is then reported but lands nowhere).
+  double point_mass;
+  double point_mass_error;
+  int point_mass_method;  // LUMICE_ANALYTIC_PointMassMethod
+  int point_mass_pixel;
+  void* storage;  // opaque; LUMICE_ANALYTIC_ReleaseBandSumResult
+} LUMICE_ANALYTIC_BandSumResult;
+
+// The band sum of `problem` on `crystal`. A path no pose realises is a success with kept_count 0
+// and every value 0; so are an empty band, a singular pixel and a rank-0 sun outside every pixel.
+//
+// Call errors (out_result is zero-filled after struct_size, so Release is safe):
+//   ERR_NULL_ARG       crystal, problem or out_result NULL; faces NULL with face_count > 0; a pixel
+//                      array NULL with pixel_count > 0
+//   ERR_INVALID_VALUE  out_result->struct_size smaller than this struct; face_count outside 2..64, a
+//                      face number the crystal does not have; refractive_index not finite and
+//                      positive; the incident direction, a pixel centre or a corner not finite or its
+//                      length off 1 by more than 1e-10; sample_count outside
+//                      1..LUMICE_ANALYTIC_MAX_BAND_SUM_SAMPLE_COUNT; pixel_count < 0; a solid angle
+//                      not finite and positive; a pose density with an unknown family, a missing or
+//                      non-positive width, a zenith mean outside [0, 180] or a field its family does
+//                      not use left non-zero; a crystal field as for EvaluatePath
+//   ERR_INVALID_CONFIG crystal rejected by the engine's closed-form validity gate
+//   ERR_UNKNOWN        an internal failure (out of memory)
+// Re-entrant: safe to call concurrently on distinct outputs; keeps no state between calls (the
+// sample is rebuilt on every call).
+LUMICE_ANALYTIC_API LUMICE_ANALYTIC_ErrorCode LUMICE_ANALYTIC_BandSum(const LUMICE_ANALYTIC_Crystal* crystal,
+                                                                      const LUMICE_ANALYTIC_BandSumProblem* problem,
+                                                                      LUMICE_ANALYTIC_BandSumResult* out_result);
+
+// Frees what BandSum allocated and zeroes the struct after struct_size. NULL-safe; a no-op on a
+// zero-filled struct.
+LUMICE_ANALYTIC_API void LUMICE_ANALYTIC_ReleaseBandSumResult(LUMICE_ANALYTIC_BandSumResult* result);
 
 // Logging: the library writes nothing by default — no console, no file — until the host installs a
 // callback, which then receives the engine's diagnostics, including crystal-construction warnings
