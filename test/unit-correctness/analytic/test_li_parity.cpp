@@ -148,9 +148,6 @@ std::vector<std::string> ManifestFilesOf(const Json& manifest) {
 // uncompared part is counted by gtest rather than dropped. Whoever implements a comparison removes
 // its reason here and adds the comparison to the kind's suite.
 constexpr const char* kSkipBandSumModuleNotImplemented = "band_sum: the band-sum module is not implemented yet";
-constexpr const char* kSkipFiberPerPoseFieldsNotCompared =
-    "trace_fiber: the wave 2 per-pose arrays (normal_jacobian, singular_values, branch_margins) are not "
-    "compared yet";
 constexpr const char* kSkipEvaluatePathWave2FieldsNotCompared =
     "evaluate_path: the wave 2 fields (branch_margins, failed_gate, normal_jacobian, singular_values) are not "
     "compared yet";
@@ -159,8 +156,6 @@ constexpr const char* kSkipEvaluatePathWave2FieldsNotCompared =
 // suite, which then requires all of them.
 constexpr const char* kEvaluatePathWave2Keys[] = { "branch_margins", "failed_gate", "jacobian_available",
                                                    "normal_jacobian", "singular_values" };
-constexpr const char* kTracePerPoseKeys[] = { "branch_margin_names", "branch_margins", "jacobian_available",
-                                              "normal_jacobian", "singular_values" };
 
 // What the reader knows about one fixture file: its kind (the JSON's `fixture_kind`, the only
 // authority; the file name is checked against it by LiParityProvenance) and the parts of it that are
@@ -188,11 +183,6 @@ FixtureInfo FixtureInfoOf(const std::string& file, const Json& fixture) {
     info.skip_reason = kSkipBandSumModuleNotImplemented;
   } else if (info.kind == "evaluate_path" && has_any(expected, kEvaluatePathWave2Keys)) {
     info.skip_reason = kSkipEvaluatePathWave2FieldsNotCompared;
-  } else if (info.kind == "trace_fiber" && expected.contains("traces") && expected.at("traces").is_array()) {
-    const Json& traces = expected.at("traces");
-    if (std::any_of(traces.begin(), traces.end(), [&](const Json& t) { return has_any(t, kTracePerPoseKeys); })) {
-      info.skip_reason = kSkipFiberPerPoseFieldsNotCompared;
-    }
   }
   return info;
 }
@@ -793,11 +783,11 @@ TEST(LiParityFixtures, UnknownKeysAreIgnored) {
   EXPECT_EQ(info.kind, "seed_search");
   EXPECT_EQ(info.skip_reason, "");
 
-  // A v0 trace_fiber fixture (no wave 2 fields) is fully compared; one wave 2 key claims it for the skip suite.
+  // A trace_fiber fixture is fully compared, its wave 2 per-pose arrays included.
   Json trace = Json::parse(R"({"fixture_kind": "trace_fiber", "expected": {"traces": [{"poses": []}]}})");
   EXPECT_EQ(FixtureInfoOf("t__trace_fiber.json", trace).skip_reason, "");
   trace["expected"]["traces"][0]["normal_jacobian"] = Json::array();
-  EXPECT_EQ(FixtureInfoOf("t__trace_fiber.json", trace).skip_reason, kSkipFiberPerPoseFieldsNotCompared);
+  EXPECT_EQ(FixtureInfoOf("t__trace_fiber.json", trace).skip_reason, "");
 
   // ...but an unknown continuation option is not ignored.
   EXPECT_NONFATAL_FAILURE(ParamsOf(Json::parse(R"({"future_option": 1})")), "has no mapping");
@@ -978,6 +968,84 @@ void CompareBudgetExtent(const std::string& name, const Json& f, const Continuat
   EXPECT_LE(worst, Tolerance(f, "curve_distance_rad"));
 }
 
+// The smallest Snell discriminant of a pose (entry or exit), from its validity margins in
+// BranchMarginName order: the `d` of LI section 5's tolerance scaling.
+double SmallestSnell(const double* margins, int count) {
+  return std::min(margins[1], margins[count - 1]);
+}
+
+// LI section 4, trace_fiber per-pose arrays: the names are LI's, and at each of this backend's own
+// poses its normal_jacobian, singular_values and branch_margins equal what its own single-pose
+// evaluation returns there, within the section 3.1 tolerances at that pose (`pointwise_consistency`
+// is their base); every accepted pose is regular (`accepted_pose_regularity`, exact). Two backends
+// step differently, so nothing here is compared with LI's samples: the certification against LI is
+// the evaluate_path suite's, at fixed poses.
+void ComparePerPoseArrays(const std::string& name, const Json& f, const Scene& scene, const Traced& got) {
+  const double base = Tolerance(f, "pointwise_consistency");
+  ASSERT_EQ(Tolerance(f, "accepted_pose_regularity"), 0.0);
+  const int count = scene.Count();
+  std::vector<std::string> names;
+  for (int i = 0; i < BranchMarginCount(count); i++) {
+    names.push_back(BranchMarginName(i, count));
+  }
+  for (const Json& t : f.at("expected").at("traces")) {
+    EXPECT_EQ(t.at("branch_margin_names").get<std::vector<std::string>>(), names);
+  }
+  double margin_ratio = 0.0;  // worst |error| / tolerance
+  double jacobian_ratio = 0.0;
+  int irregular = 0;
+  int poses = 0;
+  for (const TraceResult& trace : got.traces) {
+    const int k = trace.branch_margin_count;
+    if (trace.PoseCount() > 0) {
+      EXPECT_EQ(k, BranchMarginCount(count));
+    }
+    if (trace.branch_margins.size() != static_cast<size_t>(k) * trace.PoseCount() ||
+        trace.jacobian_available.size() != static_cast<size_t>(trace.PoseCount()) ||
+        trace.normal_jacobian.size() != static_cast<size_t>(trace.PoseCount()) ||
+        trace.singular_values.size() != 2 * static_cast<size_t>(trace.PoseCount())) {
+      ADD_FAILURE() << "per-pose arrays not aligned with the " << trace.PoseCount() << " poses";
+      continue;
+    }
+    for (int i = 0; i < trace.PoseCount(); i++) {
+      poses++;
+      const double* row = trace.branch_margins.data() + static_cast<size_t>(k) * i;
+      const bool available = trace.jacobian_available[i] != 0;
+      const double j = trace.normal_jacobian[i];
+      if (!available || !(j > 0.0) || !std::all_of(row, row + k, [](double m) { return m > 0.0; })) {
+        irregular++;
+      }
+      const PathDiagnostics d = EvaluatePathDiagnostics(scene.table, scene.slots.data(), count, scene.refractive_index,
+                                                        scene.incident, &trace.poses[9 * static_cast<size_t>(i)]);
+      if (!d.valid || d.margin_count != k || d.jacobian.available != available) {
+        ADD_FAILURE() << "pose " << i << ": single-pose evaluation valid=" << d.valid << " margins=" << d.margin_count
+                      << " available=" << d.jacobian.available;
+        continue;
+      }
+      const double snell = SmallestSnell(d.margins, d.margin_count);
+      const double margin_tolerance = base * std::max(1.0, 1.0 / (2.0 * std::sqrt(snell)));
+      const double jacobian_tolerance = base * std::max(1.0, 1.0 / (4.0 * snell));
+      for (int m = 0; m < k; m++) {
+        margin_ratio = std::max(margin_ratio, std::fabs(row[m] - d.margins[m]) / margin_tolerance);
+      }
+      const double mine[3] = { j, trace.singular_values[2 * i], trace.singular_values[2 * i + 1] };
+      const double fresh[3] = { d.jacobian.value, d.jacobian.singular_values[0], d.jacobian.singular_values[1] };
+      for (int q = 0; q < 3; q++) {
+        const double error = std::fabs(mine[q] - fresh[q]) / std::max(1.0, std::fabs(fresh[q]));
+        // NaN (a non-finite side) must read as a failure, not as a zero error.
+        jacobian_ratio = std::max(
+            jacobian_ratio, std::isnan(error) ? std::numeric_limits<double>::infinity() : error / jacobian_tolerance);
+      }
+    }
+  }
+  Report(name, "pointwise_consistency.branch_margins(error/tolerance)", margin_ratio, 1.0);
+  Report(name, "pointwise_consistency.jacobian(error/tolerance)", jacobian_ratio, 1.0);
+  Report(name, "accepted_pose_regularity.irregular_poses", irregular, 0.0);
+  EXPECT_LE(margin_ratio, 1.0);
+  EXPECT_LE(jacobian_ratio, 1.0);
+  EXPECT_EQ(irregular, 0) << "of " << poses << " accepted poses";
+}
+
 class LiParityTraceFiber : public testing::TestWithParam<std::string> {};
 
 TEST_P(LiParityTraceFiber, MatchesLi) {
@@ -1017,6 +1085,7 @@ TEST_P(LiParityTraceFiber, MatchesLi) {
   } else {
     CompareCurveAndLength(GetParam(), f, got);
   }
+  ComparePerPoseArrays(GetParam(), f, scene, got);
 
   // Every residual within the bound (a bound on this backend, not an equality with LI).
   double worst = 0.0;
@@ -1200,14 +1269,6 @@ TEST_P(LiParitySkipped, CarriedButNotCompared) {
          { "branch_margins", "failed_gate", "jacobian_available", "normal_jacobian", "singular_values" }) {
       EXPECT_TRUE(tolerance.contains(key)) << key;
     }
-  } else if (info->skip_reason == kSkipFiberPerPoseFieldsNotCompared) {
-    for (const Json& t : expected.at("traces")) {
-      for (const char* key : kTracePerPoseKeys) {
-        EXPECT_TRUE(t.at(key).is_array()) << key;
-      }
-    }
-    EXPECT_TRUE(tolerance.contains("pointwise_consistency"));
-    EXPECT_TRUE(tolerance.contains("accepted_pose_regularity"));
   } else {
     FAIL() << "no content check for skip reason: " << info->skip_reason;
   }
