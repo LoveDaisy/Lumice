@@ -20,6 +20,9 @@
 #include "server/server.hpp"
 #include "util/logger.hpp"
 
+static_assert(LUMICE_SINGLE_PATH_MAX_SAMPLE_COUNT == lumice::raypath::kMaxSampleCount,
+              "lumice.h's sample-count bound is the module's");
+
 struct LUMICE_SinglePathResult_ {
   std::string json;  // produced once in LUMICE_AnalyzeSinglePath, never changed afterwards
 };
