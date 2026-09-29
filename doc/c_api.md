@@ -43,6 +43,13 @@ static_assert(LUMICE_API_VERSION >= 440, "Lumice header too old for this integra
 
 It is bumped on every BREAKING change to the public symbol set or struct layout.
 
+**v4.50** is a pure append. Added: single-path analysis — `LUMICE_SinglePathRequest` (with a
+`struct_size` head), the opaque `LUMICE_SinglePathResult`, `LUMICE_AnalyzeSinglePath(scene, request,
+&out, err_buf, err_size)`, `LUMICE_SinglePathResultToJson` (the `LUMICE_SceneToJson` buffer contract)
+and `LUMICE_SinglePathResultDestroy`, plus `LUMICE_SINGLE_PATH_MAX_SAMPLE_COUNT`. The result is read
+through its JSON form, documented in `raypath-cli-output.md`. Behavior: `LUMICE_SetLogLevel(NULL,
+level)` now sets the engine-wide log level (it used to do nothing), for a caller with no server.
+
 **v4.49** is a pure append plus a behavior restoration. Added: `LUMICE_CouldFilterMatchFace(crystal,
 face, symmetry)` — `LUMICE_CouldCrystalHaveFace` with the filter's own P/B/D taken into account
 (a face with no area still matches through the faces the filter's symmetry relabels it to) — and

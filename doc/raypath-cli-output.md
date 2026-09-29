@@ -1,0 +1,195 @@
+# `Lumice raypath` output (schema_version 1)
+
+`Lumice raypath` analyses **one single-layer raypath of one crystal entry over one sky point**:
+the components of the fiber of crystal poses that send the sun into that point, each component's
+poses with per-pose detail, and the path's deviation over the whole sun-direction sphere
+(`doc/raypath-analysis.md` §5.1.8). `analyze` lists the raypaths that light the sky; `raypath` is
+what you ask about one of them.
+
+It writes one JSON document. This page is that document's field reference, and the one place a
+reader (the Analyze-workspace prototype, a script, the GUI later) should learn it from.
+
+## 1. Where the document comes from
+
+The CLI is a thin shell. The computation and the serialization both live in the engine:
+
+| Piece | Where |
+|---|---|
+| The analysis | `lumice::raypath::AnalyzeSinglePath` (`src/raypath/single_path_analysis.hpp`) over the analytic kernel (`src/analytic/`) |
+| The JSON form and the `--warm` reader | `lumice::raypath::ToJson` / `ParseWarmSeeds` (`src/raypath/single_path_json.hpp`) — one file, shared key names |
+| The public entry point | `LUMICE_AnalyzeSinglePath` → opaque `LUMICE_SinglePathResult` → `LUMICE_SinglePathResultToJson` (`lumice.h`, v4.50) |
+| The subcommand | `src/main.cpp` (`ParseRaypathOptions` / `RunRaypath`) |
+
+So the GUI, when it grows an Analyze workspace, reads **the same document** through the same
+`lumice.h` call; there is no second serializer to drift from this one. The result is exposed as
+JSON rather than as a C struct mirror on purpose: it holds variable-length nested lists whose
+fields an interface will keep adding to. Typed readers can be appended to `lumice.h` later.
+
+## 2. Command line
+
+```
+Lumice raypath -f <config> --crystal <id> --path <faces> --target <alt>,<az> [options]
+```
+
+| Option | Meaning |
+|---|---|
+| `--crystal <id>` | The crystal entry (config id). Required. |
+| `--path <faces>` | The raypath as `analyze` prints it: `3-5`, `3-6-4-8`; `C1(3-5)` if the layer names its crystal (must equal `--crystal`). Multi-layer chains (`(3-5) -> (1-3)`) are handed to the engine, which refuses them as `multi_layer_unsupported`. Required. |
+| `--target <alt>,<az>` | The sky point, degrees; azimuth measured as the sun's (the `analyze --center` convention). Required. |
+| `--wavelength <nm>` | In [350, 900]. Default: the config's, when its spectrum is exactly one wavelength; else 550. The choice is recorded in `meta.wavelength.source`. |
+| `--events <N>` | Seed events of the component search — poses sampled to locate the fiber, **not** traced rays. K/M suffix; at most 100M (`LUMICE_SINGLE_PATH_MAX_SAMPLE_COUNT`). Default 1M. |
+| `--grid <rows>` | Latitude rows of the sun-direction grid; longitude is twice that. [0, 720]; 0 leaves `sun_grid` out. Default 90. |
+| `--warm <file>` | An earlier output; its seeds start the search (§5). |
+| `-o <path>` | Write the document here instead of stdout (never both). |
+| `-v` / `-d` / `-h` | As for every subcommand. `--backend`, `--workers`, `--seed` are not options here: the analysis has one route, runs on the calling thread and draws no random numbers. |
+
+Exit status: 0 on success; 1 for a bad option (usage printed), a config that does not load, or a
+request the engine refuses — then stderr carries `Error: <reason>: <detail>`, where `<reason>` is
+one of `unknown_crystal_id`, `multi_layer_unsupported`, `invalid_path`, `face_not_in_crystal`,
+`wavelength_out_of_range`, `invalid_target`, `invalid_argument`, `crystal_rejected`,
+`path_infeasible`, `invalid_scene`.
+
+**Progress and Ctrl-C differ from `analyze`, deliberately.** The engine call has no cancellation
+point and no progress callback, so stderr gets one line when the analysis starts and one when it
+ends, and Ctrl-C ends the process without writing anything (there is no partial result to write).
+With `-o`, the document goes to `<path>.tmp` first and is renamed over `<path>`, so `<path>` is
+never half a document; an interrupted run may leave the `.tmp` behind. Measured cost (arm64 mac,
+`3-5`, grid 90): 1M events 0.03 s, 10M 0.28 s, 100M 2.8 s at 155 MB peak; a 720-row grid is a
+13 MB document.
+
+## 3. The document
+
+Keys appear in the order below. **Fields are only ever appended**; a reader ignores keys it does
+not know. `schema_version` is bumped only when a field changes meaning or is removed.
+
+### 3.1 Top level
+
+| Key | Type | Present | Meaning |
+|---|---|---|---|
+| `schema_version` | int | always | 1 |
+| `generator.lumice` | string | always | The Lumice version that wrote it |
+| `generator.analytic_api_version` | int | always | The analytic kernel's API version |
+| `conventions` | object of strings | always | This page's §4 in words, so a document explains itself: `frames`, `directions`, `target_azimuth`, `pose`, `angles`, `sun_in_crystal`, `units`, `null`, `sun_grid`, `completeness` |
+| `meta` | object | always | Every conversion from the scene to the kernel, as applied (§3.2) |
+| `outcome` | `"discovered"` \| `"point_mass"` | always | Which of the two branches below is present |
+| `point_mass` | object | `outcome == "point_mass"` | §3.5 |
+| `components` | array | `outcome == "discovered"` | §3.3; may be empty |
+| `incomplete` | array | `outcome == "discovered"` | §3.4; may be empty |
+| `discovery` | object | `outcome == "discovered"` | §3.6 |
+| `sun_grid` | object | `--grid` > 0 (either outcome) | §3.7 |
+
+### 3.2 `meta`
+
+| Key | Meaning |
+|---|---|
+| `crystal.id`, `crystal.kind` | The entry; `"prism"` or `"pyramid"` |
+| `crystal.shape[]` | Each shape scalar as the kernel got it: `name` (config key: `height`, `prism_h`, `upper_h`, `lower_h`, `face_distance[i]`), `value` (the distribution's centre: the fixed value, uniform midpoint, gauss mean, laplacian location), `distribution` (`fixed`, `uniform`, `gauss`, `zigzag`, `laplacian`, `gauss_legacy`), `spread` |
+| `crystal.shape_is_nominal` | True when any scalar has a non-zero spread: the fiber and grid belong to the nominal crystal, not the population the simulation samples |
+| `crystal.upper_wedge_deg`, `crystal.lower_wedge_deg` | Pyramid only |
+| `faces` | The analysed face sequence |
+| `sun.altitude_deg`, `sun.azimuth_deg`, `sun.diameter_deg` | From the config; the diameter is recorded, not used (the sun is a point here) |
+| `sun.incident_direction` | World propagation direction sun → crystal |
+| `target.altitude_deg`, `target.azimuth_deg`, `target.direction`, `target.deviation_deg` | The sky point; `direction` is crystal → observer; `deviation_deg` is the sun–target angle |
+| `wavelength.nm`, `wavelength.source` (`user` / `config` / `default`), `wavelength.refractive_index` | |
+| `discovery_settings.sample_count`, `band_half_width_rad`, `cluster_radius_rad`, `distance_threshold_rad`, `warm_seed_count` | The search as run |
+
+### 3.3 `components[]` — the fiber
+
+| Key | Meaning |
+|---|---|
+| `kind` | `"closed"` (a loop) or `"arc"` (ends on boundary events at both ends) |
+| `seed` | 9 numbers, the pose the component was traced from (§5) |
+| `forward` | `{status, reason, pose_count}` of the forward trace. `status`: `closed`, `event_terminated`, `numerical_failure`, `budget_exhausted`; `reason`: `closed_loop`, `tir_boundary`, `branch_boundary`, `path_infeasible`, `visibility_boundary`, `chart_boundary`, `rank_loss`, `topology_ambiguity`, `corrector_failure`, `linear_solve_failure`, `non_finite`, `step_underflow`, `invalid_numerical_input`, `step_budget`, `arclength_budget`, `evaluation_budget` |
+| `backward` | Same shape; **arc only** — a closed component never runs a backward trace, so the key is absent |
+| `seed_index` | Index of the seed in `points` (0 for a closed component) |
+| `arclength_increments` | Radians on SO(3) between consecutive points; `len(points) - 1` entries |
+| `points[]` | Ordered along the component: closed = the forward trace, seed first, last point the closing pose; arc = backward trace reversed, then forward, so the list runs from one boundary event to the other |
+
+Each point:
+
+| Key | Meaning |
+|---|---|
+| `pose` | 9 numbers, row-major body → world rotation |
+| `angles.zenith_deg`, `azimuth_deg`, `roll_deg`, `degenerate` | The pose as the config's orientation angles (§4) |
+| `sun_in_crystal` | Unit 3-vector: where the sun sits in the crystal frame. **This is the point to plot on the sun-direction sphere**: the component is a curve there, lying on the level set `sun_grid.deviation_rad == meta.target.deviation_deg` (in radians) |
+| `residual_norm` | The continuation's residual at this point |
+| `valid` | The path's direction-level validity at this pose |
+| `outgoing_direction` | World, crystal → observer (zeros when not valid) |
+| `segment_directions` | `(len(faces) + 1) × 3` numbers, body frame: incident, internal legs, outgoing |
+| `interface_transmittances` | One per face: T at entry and exit, R at internal faces |
+| `total_transmission` | Their product. Not a relative intensity on its own |
+| `entry_measure` | The entry cross-section (perpendicular to the incident direction) whose rays follow exactly this face sequence through the finite crystal, in the crystal's length unit squared |
+
+### 3.4 `incomplete[]`
+
+Candidates the search found but could not turn into a component: `cause` (`arc_backward_failed`,
+`arc_backward_closed_anomaly`, `unnamed_event`, `not_converged`), `seed`, `forward`, and
+`backward` only for the two `arc_backward_*` causes.
+
+### 3.5 `point_mass`
+
+Rank 0: the outgoing direction does not depend on the pose (e.g. `1-2`, a flat plate's two basal
+faces). No fiber exists to trace. `direction` (world), `altitude_deg` / `azimuth_deg` (the sky
+point it lands on), `target_separation_deg` (from the requested target).
+
+### 3.6 `discovery`
+
+`complete` and the search funnel's counters: `pool_count`, `extra_seed_count`,
+`raw_cluster_count`, `admissible_count`, `dedup_merged`, `arc_stitched`, `arc_backward_failed`,
+`arc_backward_closed_anomaly`, `incomplete_unnamed_event`, `incomplete_not_converged`.
+**`complete` is procedural, not a certificate** (`conventions.completeness` carries the sentence):
+it means every admissible candidate of this sample closed or became an arc, never that every
+component of the fiber was found.
+
+### 3.7 `sun_grid`
+
+`lat_count`, `lon_count` (= 2 × `lat_count`), and three flat row-major arrays of
+`lat_count × lon_count` cells: `deviation_rad` (the path's deviation with the sun at that cell;
+`null` where not valid), `valid` (0/1), `entry_measure` (0 where not valid). Cell `[i][j]` is at
+
+```
+lat_i = -90 + (i + 0.5) * 180 / lat_count
+lon_j = -180 + (j + 0.5) * 360 / lon_count
+u     = (cos lat cos lon, cos lat sin lon, sin lat)     # sun direction, body frame
+```
+
+No row sits on a pole, so no cell is degenerate; the longitude seam is periodic (a contour tracer
+should wrap it). The deviation depends on the pose only through `u`.
+
+## 4. Conventions
+
+- Frames: world `+z` is the zenith, azimuth counter-clockwise from `+x` seen from `+z`; body is the
+  crystal frame, `+z` its c-axis (`doc/coordinate-convention.md`).
+- Directions are propagation directions. The sky point a direction `d` comes from sits at altitude
+  `asin(-d.z)`.
+- Pose: `R = Rz(azimuth − 180) · Ry(−zenith) · Rz(roll)`, body → world, written row-major.
+- Angles: degrees; zenith in [0, 180], azimuth and roll in (−180, 180]. At zenith 0 or 180 only
+  azimuth ± roll is defined: roll is 0, azimuth carries the whole angle, `degenerate` is true.
+- Units: `_deg` degrees, `_rad` radians, `_nm` nanometres.
+- `null` = a number that is not defined (NaN).
+- Numbers are the shortest decimal that reads back as the same double, so `seed` round-trips
+  bit-exactly; the two numeric `sun_grid` arrays are rounded to 9 significant digits first (size).
+
+## 5. `--warm`
+
+`--warm <file>` reads `components[*].seed` and then `incomplete[*].seed` from an earlier output
+and passes them to the search as extra starting poses. Densifying the search is not monotone — a
+denser sample can lose a component a sparser one found — so feeding back seeds is how a
+component, once found, is kept. The file must carry the same `schema_version`, and every seed
+must be 9 numbers; otherwise the run fails with `invalid_argument: warm seeds: …`. A point-mass
+output is accepted and holds no seeds.
+
+A warm seed is a starting point, not a certificate. The engine's builds for different CPU tiers
+(the release's baseline and x86-64-v3 engines) are compiled with different floating-point
+contraction, so outputs of two tiers need not agree to the last bit.
+
+## 6. Reading it from a page
+
+```js
+const doc = await (await fetch("r.json")).json();
+if (doc.outcome === "discovered") {
+  const g = doc.sun_grid;                          // contour: g.deviation_rad at doc.meta.target.deviation_deg * PI/180
+  for (const c of doc.components)
+    plot(c.points.map(p => p.sun_in_crystal));    // each component is a curve on that contour
+}
+```

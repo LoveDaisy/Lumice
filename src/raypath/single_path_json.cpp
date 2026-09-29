@@ -71,8 +71,8 @@ const char* DistributionName(DistributionType type) {
 nlohmann::ordered_json Conventions() {
   return {
     { "frames",
-      "world: +z is the zenith, the sun at azimuth sun_azimuth_deg; body: the crystal frame, +z its c-axis "
-      "(doc/coordinate-convention.md)" },
+      "world: +z is the zenith, azimuth counter-clockwise from +x seen from +z; body: the crystal frame, +z its "
+      "c-axis (face 1's outward normal) (doc/coordinate-convention.md)" },
     { "directions",
       "unit 3-vectors are propagation directions: incident_direction runs sun -> crystal, target_direction and "
       "outgoing_direction crystal -> observer; the sky point a direction d comes from sits at altitude asin(-d.z)" },
