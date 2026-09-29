@@ -1,14 +1,15 @@
 # `liblumice_analytic`: the published analytic interface
 
-> Status: **partly built** (2026-09-29). As built: the target and its per-library export list
+> Status: **partly built** (2026-09-30). As built: the target and its per-library export list
 > (§2.5), logging handed to the host (§6), and packaging with a `find_package` config plus the
 > version policy (§8), and an external-consumer smoke test that builds a C program and loads the
 > library from Python using the install tree alone (§8.7); and the whole of the first module's v0
 > (§4.3): `LUMICE_ANALYTIC_EvaluatePath` (header version 2), with its precision (§5.4) and
 > thread-safety (§5.3) decisions, fiber continuation `LUMICE_ANALYTIC_TraceFiber[Batch]` (version
 > 3) and component discovery `LUMICE_ANALYTIC_DiscoverComponents` (version 4); and module A v1's
-> per-pose diagnostics on `FiberResult` (version 5, §4.3). The module serves the
-> Analyze workspace's first phase (`doc/raypath-analysis.md` §5.1.8). The library is not in any
+> per-pose diagnostics on `FiberResult` (version 5, §4.3); and module B v1, the band sum
+> `LUMICE_ANALYTIC_BandSum` (version 6, §4.6). Module A serves the Analyze workspace's first phase,
+> module B its second, the single-path all-sky map (`doc/raypath-analysis.md` §5.1.8). The library is not in any
 > download package yet: that is §8.8's checklist, not done.
 >
 > Every decision below is marked either **(owner)** — ruled by the owner on 2026-09-28, not open
@@ -523,13 +524,20 @@ backends given the same sample return the same components and counters; this is 
   internal direction. It is a port of LI's `geometry.entry_measure` over its corridor primitives,
   with LI's status names in LI's gate order, and it is a primitive-layer twin kept on purpose
   (§3, `doc/raypath-analysis.md` §5.1.6): LI keeps its own and the two are compared, not merged.
-  The corners are the engine's float closed-form face polygons promoted to double —
-  `BuildFaceNormals` returns them next to the normals — and `eps = 1e-6 * (shortest edge)^2` is
-  LI's. Measured once against LI on 12000 random poses over three crystals (a prism with `3-5` and
-  `3-5-6-7`, the asymmetric pyramid with `13-15-26-28`): the status agreed everywhere, and the
-  value equalled 0.25 times LI's (this library's crystals are half LI's size in length) to within
-  `1.4e-5` relative, the float corners' spread on the pyramid's smallest corridors. The value is
-  not in the v0 result; the gate uses `> eps`, and a wave-2 weight can read the same kernel.
+  The corners are computed in double — `BuildFaceNormals` returns them next to the normals:
+  which faces meet at a corner is the engine's float closed-form decision, as for every face
+  (§4.1), and the corner itself is the intersection of those three planes, whose offsets come from
+  the caller's double scalars through the engine's own closed-form formulas
+  (`ClosedFormHexFacePlane`; for the pyramid's basal cut `ClosedFormPyramidBasalHeights`, the double
+  entry of the helper the float factory also calls, so the float crystal is unchanged bit for bit).
+  `eps = 1e-6 * (shortest edge)^2` is LI's. Measured once against LI on 12000 random poses over
+  three crystals (a prism with `3-5` and `3-5-6-7`, the asymmetric pyramid with `13-15-26-28`): the
+  status agreed everywhere, and the value equalled 0.25 times LI's (this library's crystals are half
+  LI's size in length) to within `1.4e-5` relative while the corners were the float polygons
+  promoted to double. That spread was the float corners', and it would have put the band sum's
+  layer 2 (§4.6), whose value tolerance is `1e-10` relative, out of reach; with the double corners
+  the per-event weight agrees with LI's to `7e-15` (prism `3-5`), `1.1e-12` (`3-5-6-7`) and
+  `5.2e-12` (pyramid). The value is the band sum's weight (§4.6); discovery gates on `> eps`.
 - **Deterministic; no seed parameter.** The lattice has no random numbers, so the result is fixed
   by the inputs, which is what "reproducible" asked for. A random-number seed would be a knob no
   sampler reads (LI's i.i.d. sampler, the contract's alternative, is not built); a later random
@@ -891,6 +899,106 @@ layout stays the smallest `struct_size` accepted: before version 5 every size be
 own was refused, so a version 4 caller has only ever passed that one size, and gets exactly what it
 got. Why each field and each choice: §4.3, "Per-pose diagnostics as built".
 
+Version 6 adds module B: `PoseFamily`, `PoseDensity`, `PixelTable`, `BandSumProblem`, the closed
+sets `BandPixelStatus` and `PointMassMethod`, the `BandPixel` element, `BandSumResult` with
+`struct_size`, and `BandSum` / `ReleaseBandSumResult`. Nothing existing changed. §4.6 is the
+record of each shape.
+
+### 4.6 Module B: the band sum (as built, API version 6)
+
+The single-path brightness map of Analyze's second function. The specification is LI
+`docs/band-sum-contract.md` at `fa8dadd` (the rev the parity fixtures are pinned to; LI has since
+reworded only its §10 paragraph "Fiber and level set", with no change of meaning). This section
+records what is built and the choices the contract leaves to an implementation; it does not
+restate the contract.
+
+**Call.** `LUMICE_ANALYTIC_BandSum(crystal, problem, out_result)` and
+`LUMICE_ANALYTIC_ReleaseBandSumResult(result)`; the header comment is the complete list of call
+errors. The problem carries the path, index and incident direction as `DiscoverComponents`' does,
+the sample size `sample_count` (required, no default), a `PoseDensity` and a `PixelTable`. The
+result is one `BandPixel` per table entry in table order (`status`, `value`, `delta`, `delta_lo`,
+`delta_hi`, `k`, `k_rho_pos`, `k_eff`), `kept_count`, and for a rank-0 path `point_mass`,
+`point_mass_error`, `point_mass_method` and `point_mass_pixel`. The contract's per-pixel `label` is
+not echoed: results are in table order, so the caller's labels stay the caller's. Every outcome of
+the sum — a path no pose realises, an empty band, a singular pixel, a rank-0 sun outside every pixel
+— is result data, not an error (§4.4).
+
+**Kernel layout** (`src/analytic/band_sum.{hpp,cpp}`, `pose_density.{hpp,cpp}`, `path_rank.{hpp,cpp}`).
+The two conformance layers of the contract (§7) are two kernel entries: `BandSumOnEvents` is the
+estimator on given events (the parity reader feeds it LI's events), `BandSum` rebuilds the sample
+and runs the whole call. A red in layer 2 alone is the sampler or the fields; a red in both is the
+estimator — which is how the red-state checks below came out.
+
+- **One sampler** (contract §3). `IceDiscovery::EvaluateLatticePoint` is the lattice point, the
+  path chain, `D` and `T` at one index; `BuildBand` (discovery) and `BuildEvents` (the band sum)
+  both call it, so the two cannot disagree about what an event is. `BuildEvents` keeps every event
+  with `w = A·T > 0` in increasing `(D, index)`; a pixel's band is two binary searches on `D`,
+  left-closed right-open.
+- **Units.** Values are the contract's (§6: hexagon edge `a = 1`). This library's crystals are half
+  LI's in length, so the entry measure is a quarter of LI's; `kLiAreaPerEngineArea = 4` is applied
+  once, where `BuildEvents` forms `w`. Discovery keeps the native unit, since it only gates on
+  `A > 0`.
+- **Pose densities** (contract §2.2). `ρ` reads only the third row of the pose; the pixel half
+  (`W₃`) is computed once per pixel and the event half (the rows of `F`) once per event, so a
+  non-random density costs three dot products per event in the band. `I` and `Q` are LI's ±12σ
+  window with 400-point Gauss–Legendre, nodes computed by Newton iteration; against the fixtures'
+  `normalization_informative` they agree to rounding. The column/plate (parry/lowitz) distinction
+  is only LI's default mean; the C ABI applies no defaults, so the mean is always the caller's.
+- **Rank 0** (contract §5). The rank-0 criterion — the reflections compose to the identity and entry
+  and exit faces are parallel to `1e-9°` — has one implementation, `IsRankZeroPath`, which the
+  `raypath` subcommand's `ProbeRank` now also calls. Checked against an independent oracle (every
+  valid lattice pose deviates by at most `1e-10`) over every realisable 2–4-face path of the regular
+  prism and 2–3-face path of the fixture pyramid: no disagreement, so merging the two changed no
+  output of the subcommand. Under the random density the mass is the lattice mean of `w`; under any
+  other it is this library's **deterministic twist average**, the contract's recorded alternative to
+  LI's Haar Monte Carlo: per kept event, `⟨ρ⟩` over the twist ψ about the sun, integrated only over
+  the two ψ intervals where the c axis can reach the density's window (the zenith is
+  `c + A cos(ψ − φ)` in closed form), 16-point Gauss–Legendre panels doubled until the mass changes
+  by at most `1e-6` relative (capped at 1024 panels; the last change is `point_mass_error`). It
+  therefore agrees with LI only statistically. On `3-6` under plate σ = 1° it gives `0.17331`;
+  sampling the density itself (2e6 poses) gives `0.17359 ± 0.00027`, while LI's Haar stream gives
+  `0.1574 ± 0.0110` and a naive Haar stream here `0.1535 ± 0.0115` — both naive estimators low by
+  about 1.5σ, the usual skew of a heavy-tailed estimator, so the fixture's
+  `|m − m_LI| ≤ 5·√(σ_LI² + σ²)` passes (used 0.29 of it) and the twist average is the better number.
+- **Precision.** Double throughout, with gradual underflow: `K_rho_pos` counts subnormal
+  contributions (contract §4.5). No compile option of the kernel flushes denormals; a host thread
+  that sets flush-to-zero gets smaller counts, which the header states. The fixtures' per-pixel
+  `K_rho_pos_subnormal` allowance is exactly that count, so parity cannot see flush-to-zero; the
+  unit test `SubnormalContributionIsCounted` does.
+
+**Choices the contract leaves open.**
+
+- **`sample_count` at most `1e7`** (`LUMICE_ANALYTIC_MAX_BAND_SUM_SAMPLE_COUNT`), a tenth of
+  discovery's bound: the sum holds and sorts every kept event at once, about 64 bytes each. A larger
+  `N` would need a sum streamed per band, in conflict with the contract's summation order.
+- **Single-threaded, no sample reuse across calls.** The contract's §3 SHOULD (reuse one sample
+  across calls on the same crystal, path and sun) is not built: every call rebuilds the sample,
+  which the contract measures at 1.8 s against 0.2 s for `N = 1e6` over an L2 row's members. Open
+  item §9 #15.
+- **Configuration → density.** `raypath::ConvertAxisToPoseDensity` (`src/raypath/scene_to_analytic`)
+  maps a crystal's `axis` block to a density — full-sphere uniform → random; Gaussian zenith,
+  360° uniform azimuth and 360° uniform roll → column/plate; the same with a Gaussian roll →
+  parry/lowitz — and refuses, naming the distribution, everything the contract lists as
+  inexpressible (a `zigzag`, `laplacian`, partial `uniform`, `gauss_legacy` or fixed zenith; an
+  azimuth other than 360° uniform; any roll other than 360° uniform or Gaussian; a Gaussian roll
+  with a non-Gaussian zenith). There is no approximate fallback. It has no production caller yet
+  (the Analyze wiring is outside this wave), so it reports through its own result rather than
+  through the `raypath` subcommand's published error codes.
+
+**Evidence.** Parity: §10.1. Absolute scale against Lumice's own Monte Carlo (contract §8,
+`raw[p]/E = K_p·Î_p`, `K_p = N_sym·ȳ(550)·Ω_p/(S/2)`, nothing fitted), measured once and not kept
+as a test: prism `3-5`, random orientation, sun at 15°, 550 nm, a raypath filter admitting only
+`3-5` (`N_sym = 1`), a 41 × 41 linear window of 8° on the top of the 22° halo, pixel directions from
+LI's port of the Lumice linear camera, and this library at `N = 1e6`:
+two independent Lumice runs of `5e8` rays each (the CPU route, 81 s apiece on the M2 Max).
+Total flux over the window: Monte Carlo / analytic `1.0009` (all pixels), `1.0013` (the 899 pixels
+above 10 % of the peak), with the two runs `0.9996` of each other; by 0.5° bands of deviation from
+21.5° to 25°, `0.995`–`1.008`. Per pixel, the ratio's 10th–90th percentile is `0.949`–`1.055`
+around a median of `1.002`, which is what the two noise floors predict together (Monte Carlo `4.0 %`
+per pixel for the merged pair, the band sum's `1/√K_eff` `2.0 %`: `±1.28σ` of their sum is `±5.7 %`).
+The contract's §6 unit and §8 conversion therefore hold for this implementation with nothing fitted,
+which also checks the `kLiAreaPerEngineArea` factor and the weight's Fresnel factor end to end.
+
 ---
 
 ## 5. Conventions, errors, threading **(design)**
@@ -1121,8 +1229,8 @@ subsections keep that number.
 ### 8.2 Compatible and incompatible changes
 
 An incompatible change bumps the integer. In 0.x a compatible one bumps it too — every addition so
-far has (versions 2, 3 and 4 each added functions and nothing else incompatible; version 5 appended
-fields to `FiberResult` under the `struct_size` rule below), and that is the rule: `find_package` accepts only the exact version (§8.4) and a ctypes binding pins the version it
+far has (versions 2, 3, 4 and 6 each added functions and nothing else incompatible; version 5
+appended fields to `FiberResult` under the `struct_size` rule below), and that is the rule: `find_package` accepts only the exact version (§8.4) and a ctypes binding pins the version it
 was written against, so the integer is the only way a consumer can tell which functions a library
 has. From 1.0, when compatibility is promised, a compatible change leaves the integer alone and the
 table below becomes the rule.
@@ -1131,12 +1239,12 @@ table below becomes the rule.
 |---|---|
 | A new function | Compatible |
 | A new value in an open set (`LUMICE_ANALYTIC_Reason`, §4.4) | Compatible — callers must already handle an unknown reason |
-| A field appended at the end of `PathEvaluation`, `FiberResult` or `DiscoveryResult`, under the `struct_size` rule below | Compatible |
-| A field added to an element of a library-allocated array (`DiscoveredComponent`, `IncompleteCandidate`) | Incompatible — the caller indexes the array with its own `sizeof` |
+| A field appended at the end of `PathEvaluation`, `FiberResult`, `DiscoveryResult` or `BandSumResult`, under the `struct_size` rule below | Compatible |
+| A field added to an element of a library-allocated array (`DiscoveredComponent`, `IncompleteCandidate`, `BandPixel`) | Incompatible — the caller indexes the array with its own `sizeof` |
 | Growth of a library-allocated buffer reached through `storage` (`segment_directions`, `poses`, …) | Compatible — the caller never lays memory out for it |
 | A changed signature, a removed function, a renamed or reordered field | Incompatible |
-| Any field added to a caller-owned input struct (`Crystal`, `FiberProblem`, `ContinuationOptions`, `DiscoveryProblem`, `DiscoveryOptions`) | Incompatible — the library would read past what an older caller allocated |
-| Any change to a closed set (`LUMICE_ANALYTIC_FiberStatus`, `LUMICE_ANALYTIC_ErrorCode`, `LUMICE_ANALYTIC_Completeness`, `LUMICE_ANALYTIC_ComponentKind`, `LUMICE_ANALYTIC_IncompleteCause`) | Incompatible |
+| Any field added to a caller-owned input struct (`Crystal`, `FiberProblem`, `ContinuationOptions`, `DiscoveryProblem`, `DiscoveryOptions`, `BandSumProblem`, `PoseDensity`, `PixelTable`) | Incompatible — the library would read past what an older caller allocated |
+| Any change to a closed set (`LUMICE_ANALYTIC_FiberStatus`, `LUMICE_ANALYTIC_ErrorCode`, `LUMICE_ANALYTIC_Completeness`, `LUMICE_ANALYTIC_ComponentKind`, `LUMICE_ANALYTIC_IncompleteCause`, `LUMICE_ANALYTIC_PoseFamily`, `LUMICE_ANALYTIC_BandPixelStatus`, `LUMICE_ANALYTIC_PointMassMethod`) | Incompatible |
 | Any change to a convention the functions pass (frames, face numbers, pose chain — §5.1) | Incompatible, even with an unchanged signature |
 | A result field added other than by the `struct_size` rule | Incompatible |
 
@@ -1320,6 +1428,7 @@ functions. The first real module's work opens this list. **The state described h
 | 12 | ~~Whether `PathEvaluation`/`FiberResult` should carry a `struct_size`/version field (Win32 `cbSize`, Vulkan `sType`+`pNext` are existing patterns) so a future field addition would not need an `LUMICE_ANALYTIC_API_VERSION` bump (§8).~~ **Answered** — yes: a leading `uint32_t struct_size`, the Win32 `cbSize` pattern (§4.5 draft, rules in §8.2). | The packaging and version-policy work (done) |
 | 13 | ~~Verify no thread-unsafe static cache in the called geometry/optics code (§5.3).~~ **Answered** — none on `EvaluatePath`'s call graph; pinned by a concurrency test (§5.3). | The first-module implementation (`EvaluatePath`, 2026-09-29) |
 | 14 | An optional batch-mode `FiberResult` variant that also returns per-point segment directions and interface transmittances (today only `EvaluatePath` returns those, §4.3), for a caller with many accepted poses who would otherwise pay one ctypes call per point to get them — in tension with §4.3's own binding-overhead concern. **Not built in v0**: `FiberResult` returns the point list only (§4.3); a caller that needs per-point segments calls `EvaluatePath` per pose. Still open. | Wave 2, with the diagnostics extension |
+| 15 | Reuse of one band-sum sample across calls on the same crystal, path and sun (LI `band-sum-contract.md` §3, a SHOULD): a handle-style API that builds the sorted kept events once and sums several pixel tables or densities against them. **Not built in version 6** (§4.6): every `BandSum` call rebuilds its sample, which costs about 9× for an L2 row summed member by member (the contract's 1.8 s vs 0.2 s at `N = 1e6`). A handle is an API shape that freezes once published, so it waits for its consumer. | The Analyze all-sky map wiring, on its measured need |
 
 ---
 
@@ -1354,7 +1463,8 @@ red → fix the C++.
 - **Spec divergence rule** (LI `band-sum-contract.md` §10): if this implementation reads a different
   semantics than LI's, the spec and the parity data are changed (on LI's side), not either
   implementation patched locally to accommodate the other.
-- Signatures of the new C functions are written back here when they are implemented.
+- Signatures of the new C functions are written back here when they are implemented: module A v1
+  in §4.3 ("Per-pose diagnostics as built"), module B in §4.6.
 
 ### 10.1 Parity with LI (as built)
 
@@ -1363,8 +1473,8 @@ red → fix the C++.
 `--verify` result and whether a second export was byte-identical. The format, fields, recipes and
 tolerance basis are LI `docs/analytic-parity-fixtures.md`; this section does not restate them.
 `test/unit-correctness/analytic/test_li_parity.cpp` replays every fixture, one gtest case each
-(`LiParityEvaluatePath` / `LiParityTraceFiber` / `LiParitySeedSearch`, plus `LiParitySkipped` for
-content not compared yet, below), inside
+(`LiParityEvaluatePath` / `LiParityTraceFiber` / `LiParitySeedSearch` / `LiParityBandSum`, plus
+`LiParitySkipped` for content not compared yet, below), inside
 `unit_correctness_test`, so it runs wherever that target runs — including every leg of CI's `build`
 job, whose `ctest -L` selector includes `unit-correctness`. Placement follows
 `doc/testing-architecture.md` §3: the oracle is another implementation but not the legacy CPU
@@ -1372,7 +1482,7 @@ backend, and it is not a closed form, so it is `unit-correctness`, not `parity-c
 `golden-analytic`.
 
 **What it proves and what it does not.** The cases call the kernels (`EvaluatePath`, `TraceFiber`,
-`IceDiscovery::DiscoverOnBand`), not the C ABI, because a `seed_search` fixture is a replay on LI's
+`IceDiscovery::DiscoverOnBand`, `BandSumOnEvents` / `BandSum`), not the C ABI, because a `seed_search` fixture is a replay on LI's
 exported band and only the kernel accepts a band. So parity covers the kernels' semantics; the
 ABI's translation of `LUMICE_ANALYTIC_Crystal` and the v0 options block into them stays the
 subject of the ctypes tests (`test/e2e-correctness/test_analytic_*.py`). LI's continuation options
@@ -1409,10 +1519,33 @@ inside one budget, so equality would be a stricter test than the fixture's toler
 **Carried but not compared.** Fixture content this repo has no implementation to compare yet is
 counted, not dropped: each fixture carrying it gets one `LiParitySkipped` case that checks the
 content is present with the shape LI gives it and then reports SKIPPED with a reason. One reason
-remains, a constant in the test (`kSkipBandSumModuleNotImplemented`): every `band_sum` fixture (11).
-The kind's own suite still compares the rest of the same fixture and never skips, so a skip cannot
-hide a red there. The work that implements a comparison removes its reason and extends the kind's
-suite — as the per-pose diagnostics did for the other two reasons (39 + 29 skips), below.
+remains today: the band sum removed the last one (11 `band_sum` fixtures), as the per-pose
+diagnostics had removed the other two (39 + 29 skips, below). The mechanism stays for the next
+content LI exports ahead of this repo; with no reason in use its generator is empty, which the suite
+allows explicitly (`GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST`). A kind's own suite still
+compares the rest of a fixture and never skips, so a skip cannot hide a red there.
+
+**Band sum.** `LiParityBandSum` replays each of the 11 `band_sum` fixtures in both of the contract's
+layers (§7, and LI `analytic-parity-fixtures.md` §4's recipe): layer 1 feeds the fixture's own events
+to `BandSumOnEvents`, layer 2 runs `BandSum` end to end. Status is exact; `K` exact in layer 1 and
+within `allowance.K_layer2` in layer 2; `K_rho_pos` within `allowance.K_rho_pos_subnormal` and
+`K_rho_pos_layer2`; `value` and `K_eff` within the fixture's relative tolerances (`1e-10`) plus the
+layer-2 allowances. Rank 0: the lattice mean to `1e-10` relative in both layers; a non-random density
+(`3-6__band_sum_rank0_plate`) has only LI's Haar stream, and is compared as the fixture says,
+`|m − m_LI| ≤ 5·√(σ_LI² + σ²)`. First run: all 11 green; the largest share of a bound used by any
+band quantity was 0.029 (layer 2) and 0.019 (layer 1), and the rank-0 plate cell used 0.29 of its
+statistical bound. Getting there took one change outside the band sum — the entry measure's corners
+in double (§4.3), without which layer 2 is out of reach — and none to a fixture or a tolerance.
+Broken on purpose, each against the whole set: dropping `1/sin δ_c` (9 of 9 rank-2 fixtures, both
+layers), `w` without its Fresnel factor (10 fixtures, layer 2 only — the sampler), `I` times
+`1 + 1e-9` (6, both layers; the random family does not read `I`), the pose row's `e₁` and `e₂`
+swapped (only the Parry fixture, the one family that reads the roll), and the rank-0 mean over the
+kept count instead of `N` (the rank-0 cell). Three deliberate breaks the fixtures cannot see, by
+construction, are the unit tests' to catch: the band's closed end (no fixture event sits on a band
+edge), flush-to-zero (absorbed by the subnormal allowance) and the twist average's ψ intervals (the
+rank-0 plate cell is statistical); `test_band_sum.cpp` goes red on each. No break reddens layer 1
+alone: the estimator is shared, so an estimator defect shows in both layers, and the division reads
+"both layers → estimator, layer 2 only → sampler or fields".
 
 **Wave 2 fields.** Every `evaluate_path` fixture compares `jacobian_available`, the margins by name
 (absolute), `normal_jacobian` and both singular values (relative to `max(1, |value|)`) against LI's
