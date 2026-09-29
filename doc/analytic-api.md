@@ -502,7 +502,9 @@ backends given the same sample return the same components and counters; this is 
   candidate is `COMPLETE` with zero components. The post-hoc check LI offers (`check_band_coverage`,
   §9.5.6a) is not in v0.
 - **Options** (C field → LI → reference default of LI §9.5.9; zero means the default, negative or
-  non-finite is `ERR_INVALID_VALUE`): `sample_count` → `N`, `1000000`; `band_half_width` (radians;
+  non-finite is `ERR_INVALID_VALUE`): `sample_count` → `N`, `1000000`, at most
+  `LUMICE_ANALYTIC_MAX_DISCOVERY_SAMPLE_COUNT` (`1e8`: the call cannot be cancelled, and `1e8` is about
+  3 s of single-threaded sampling at the measured `28 ms` per `1e6`; above it is `ERR_INVALID_VALUE`); `band_half_width` (radians;
   LI's argument is in degrees) → `0.2°`; `cluster_radius` → `0.3` rad; `distance_threshold` →
   `closure_distance` of the call's continuation, `0.08` rad by default. LI requires `eta > 0`; here
   a negative one is rejected and zero selects the default, so the threshold in effect is always

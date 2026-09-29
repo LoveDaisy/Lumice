@@ -57,8 +57,8 @@ extern "C" {
 #define LUMICE_ANALYTIC_API __attribute__((visibility("default")))
 #endif
 
-// Interface version, a single integer bumped on every incompatible change (doc/analytic-api.md
-// section 8). Independent of lumice.h's LUMICE_API_VERSION.
+// Interface version, a single integer (doc/analytic-api.md section 8.2): bumped on every
+// incompatible change, and in 0.x on every addition too. Independent of lumice.h's LUMICE_API_VERSION.
 #define LUMICE_ANALYTIC_API_VERSION 4
 
 // Library version at run time; compare with LUMICE_ANALYTIC_API_VERSION to detect a
@@ -316,8 +316,12 @@ typedef struct LUMICE_ANALYTIC_DiscoveryProblem_ {
 
 // NULL => every field at its reference default (LI section 9.5.9). A zero field also means
 // "default"; a negative or non-finite one is ERR_INVALID_VALUE.
+// Upper bound on DiscoveryOptions.sample_count (1e8, about 3 s of single-threaded sampling at the
+// measured 28 ms per 1e6): the call cannot be cancelled, so a larger request is ERR_INVALID_VALUE.
+#define LUMICE_ANALYTIC_MAX_DISCOVERY_SAMPLE_COUNT 100000000
+
 typedef struct LUMICE_ANALYTIC_DiscoveryOptions_ {
-  int sample_count;           // lattice points N; default 1000000
+  int sample_count;           // lattice points N; default 1000000; at most LUMICE_ANALYTIC_MAX_DISCOVERY_SAMPLE_COUNT
   double band_half_width;     // rad; candidates are sample events whose deviation is within this
                               // of the target's; default 0.2 deg
   double cluster_radius;      // rad, SO(3) geodesic; default 0.3

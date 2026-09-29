@@ -356,6 +356,8 @@ def test_call_errors_zero_fill_the_result() -> None:
              lambda out: discover(problem([3, 5], T35, extra=[not_rotation]), out=out)[0]),
             ("negative sample_count", INVALID_VALUE,
              lambda out: discover(good, DiscoveryOptions(sample_count=-1), out=out)[0]),
+            ("sample_count above the cap", INVALID_VALUE,
+             lambda out: discover(good, DiscoveryOptions(sample_count=100000001), out=out)[0]),
             ("negative eta", INVALID_VALUE,
              lambda out: discover(good, DiscoveryOptions(distance_threshold=-0.08), out=out)[0]),
             ("NaN band", INVALID_VALUE,

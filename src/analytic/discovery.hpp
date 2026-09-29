@@ -24,6 +24,7 @@
 // (section 9.5.7): a denser call can lose a component a sparser one found, which is why extra seeds
 // exist.
 
+#include <array>
 #include <cmath>
 #include <utility>
 #include <vector>
@@ -332,7 +333,8 @@ class IceDiscovery {
 
  private:
   const FaceNormalTable* table_;
-  int slots_[kMaxFaceCount];
+  // Filled in the initialiser list, before map_ (declared below) stores a pointer to it.
+  std::array<int, kMaxFaceCount> slots_;
   int slot_count_;
   double refractive_index_;
   double incident_[3];

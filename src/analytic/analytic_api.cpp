@@ -304,7 +304,7 @@ bool ToDiscoverySettings(const LUMICE_ANALYTIC_DiscoveryOptions* options, double
     }
     return true;
   };
-  if (options->sample_count < 0) {
+  if (options->sample_count < 0 || options->sample_count > LUMICE_ANALYTIC_MAX_DISCOVERY_SAMPLE_COUNT) {
     return false;
   }
   if (options->sample_count > 0) {
@@ -379,6 +379,9 @@ LUMICE_ANALYTIC_ErrorCode DiscoverComponentsImpl(const LUMICE_ANALYTIC_Crystal* 
     trace_count += backward_run(c) ? 2 : 1;
   }
   storage->traces.resize(trace_count);
+  // Reserved up front: view() hands each block from a raw pointer to storage->blocks, and a
+  // reallocating emplace_back that threw there would leak that block.
+  storage->blocks.reserve(trace_count);
   size_t next = 0;
   auto view = [&](const an::TraceResult& trace) -> const LUMICE_ANALYTIC_FiberResult* {
     LUMICE_ANALYTIC_FiberResult* r = &storage->traces[next++];

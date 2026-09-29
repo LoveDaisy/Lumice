@@ -130,17 +130,27 @@ void CandidatePose(const double incident_direction[3], const double target_direc
   }
 }
 
+namespace {
+// The resolved face slots, copied by value so the path map can point at the owner's copy from the
+// moment it is constructed (no window in which it sees zeros).
+std::array<int, kMaxFaceCount> CopySlots(const int* slots, int slot_count) {
+  std::array<int, kMaxFaceCount> out{};
+  for (int k = 0; k < slot_count && k < kMaxFaceCount; k++) {
+    out[k] = slots[k];
+  }
+  return out;
+}
+}  // namespace
+
 IceDiscovery::IceDiscovery(const FaceNormalTable& table, const FacePolygonTable& polygons, const int* slots,
                            int slot_count, double refractive_index, const double incident_direction[3])
-    : table_(&table), slots_{}, slot_count_(slot_count), refractive_index_(refractive_index),
+    : table_(&table), slots_(CopySlots(slots, slot_count)), slot_count_(slot_count),
+      refractive_index_(refractive_index),
       incident_{ incident_direction[0], incident_direction[1], incident_direction[2] },
-      map_(table, slots_, slot_count, refractive_index, incident_direction),
+      map_(table, slots_.data(), slot_count, refractive_index, incident_direction),
       corridor_(table, polygons, slots, slot_count), segments_(3 * (static_cast<size_t>(slot_count) + 1)),
       transmittances_(static_cast<size_t>(slot_count)) {
   assert(slot_count >= 2 && slot_count <= kMaxFaceCount);
-  for (int k = 0; k < slot_count; k++) {
-    slots_[k] = slots[k];
-  }
 }
 
 std::vector<BandEvent> IceDiscovery::BuildBand(int sample_count, double delta, double half_width) {
@@ -158,8 +168,8 @@ std::vector<BandEvent> IceDiscovery::BuildBand(int sample_count, double delta, d
     // The fields depend on the pose only through u (section 9.5.2): at the identity pose the body and
     // world frames coincide and the incident propagation direction is -u.
     const double incident[3] = { -event.u[0], -event.u[1], -event.u[2] };
-    if (!TracePathChain<double>(*table_, slots_, slot_count_, refractive_index_, incident, identity, event.phi, &detail,
-                                nullptr)) {
+    if (!TracePathChain<double>(*table_, slots_.data(), slot_count_, refractive_index_, incident, identity, event.phi,
+                                &detail, nullptr)) {
       continue;
     }
     event.deviation = std::acos(Clamp1(so3::Dot3(event.phi, incident)));
@@ -186,8 +196,8 @@ bool IceDiscovery::Admit(const TargetChart& chart, const ContinuationParams& par
     return false;
   }
   double outgoing[3];
-  if (!TracePathChain<double>(*table_, slots_, slot_count_, refractive_index_, incident_, seed, outgoing, nullptr,
-                              nullptr)) {
+  if (!TracePathChain<double>(*table_, slots_.data(), slot_count_, refractive_index_, incident_, seed, outgoing,
+                              nullptr, nullptr)) {
     return false;
   }
   double s_body[3];
