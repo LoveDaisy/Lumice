@@ -240,7 +240,15 @@ the fiber and the orientation distribution stop being independent, and the docum
 - **Rank 0** (`1-2` on a plate): `outcome: "point_mass"`, no level set exists (D ≡ 0); show one
   sky point and `target_separation_deg` rather than the "no components" wording of §3.9.
 
-Column crystals, Parry and Lowitz orientation families were not checked against the level sets.
+Column crystals, Parry and Lowitz orientation families (checked on the prism `3-5` only, explore
+`level-set-degeneracy-column-parry-lowitz`): the family meets the fiber at isolated poses, judged in
+pose space from `components[*].points[*].pose` — column `R[2][2] = 0` and Lowitz `R[2][1] = 0`
+(codimension 1: a sign change along the fiber; two nearly merged roots = tangency, e.g. near the
+upper tangent arc's vertex), Parry `R·x = +z` (codimension 2: a minimum distance going to zero, not a
+sign change). The sun-sphere projection of a family (`sun_grid` band) is necessary but not
+sufficient (3 of 5 column targets were false positives). Other paths can collapse under these
+families as well: Lumice Integral found Parry-family collapse (roll 0) for paths whose fold matrix
+is `S_x`, e.g. `1-6-2` (its `focusing.family_pinned` label does not cover Parry yet).
 
 ## 4. Conventions
 
