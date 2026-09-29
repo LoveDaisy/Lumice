@@ -263,7 +263,14 @@ add_executable(unit_correctness_test
   # the same kernels. Unit-correctness rather than parity-cross-backend: that layer's oracle is the
   # legacy CPU backend (doc/testing-architecture.md section 3, step 5), and this target already
   # compiles the analytic kernels.
-  "${PROJ_TEST_DIR}/unit-correctness/analytic/test_li_parity.cpp")
+  "${PROJ_TEST_DIR}/unit-correctness/analytic/test_li_parity.cpp"
+  # raypath/: the single-path analysis module (scene config -> the analytic kernel above -> fibers,
+  # per-pose detail, the sun-direction grid). Compiled in here for the same reason as the kernel: it
+  # is engine-internal C++ on top of src/analytic/, and no product target links it yet — the CLI and
+  # GUI shells reach the engine only through lumice.h.
+  "${PROJ_SRC_DIR}/raypath/scene_to_analytic.cpp"
+  "${PROJ_SRC_DIR}/raypath/single_path_analysis.cpp"
+  "${PROJ_TEST_DIR}/unit-correctness/raypath/test_single_path_analysis.cpp")
 target_include_directories(unit_correctness_test
   PRIVATE ${PROJ_TEST_DIR})
 target_link_libraries(unit_correctness_test

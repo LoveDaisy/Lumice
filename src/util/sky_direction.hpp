@@ -27,17 +27,27 @@ constexpr float kRad2Deg = 180.0f / kPi;
 // Direction light travels -> (altitude, azimuth) in degrees of the sky point it comes from.
 // Altitude in [-90, 90]; azimuth wrapped into (-180, 180]. `dir` need not be normalized beyond
 // |z| <= 1 (z is clamped for the asin).
-inline void DirToAltAz(const float dir[3], float* alt_deg, float* az_deg) {
-  const float z = std::max(-1.0f, std::min(1.0f, dir[2]));
-  *alt_deg = std::asin(-z) * kRad2Deg;
-  float az = std::atan2(dir[1], dir[0]) * kRad2Deg - 180.0f;
-  while (az > 180.0f) {
-    az -= 360.0f;
+template <class T>
+inline void DirToAltAzT(const T dir[3], T* alt_deg, T* az_deg) {
+  const T rad2deg = static_cast<T>(180) / static_cast<T>(3.14159265358979323846);
+  const T z = std::max(T(-1), std::min(T(1), dir[2]));
+  *alt_deg = std::asin(-z) * rad2deg;
+  T az = std::atan2(dir[1], dir[0]) * rad2deg - T(180);
+  while (az > T(180)) {
+    az -= T(360);
   }
-  while (az < -180.0f) {
-    az += 360.0f;
+  while (az < T(-180)) {
+    az += T(360);
   }
   *az_deg = az;
+}
+
+inline void DirToAltAz(const float dir[3], float* alt_deg, float* az_deg) {
+  DirToAltAzT<float>(dir, alt_deg, az_deg);
+}
+
+inline void DirToAltAz(const double dir[3], double* alt_deg, double* az_deg) {
+  DirToAltAzT<double>(dir, alt_deg, az_deg);
 }
 
 // The inverse: (altitude, azimuth) in degrees of a sky point -> the unit direction light from it
@@ -45,13 +55,26 @@ inline void DirToAltAz(const float dir[3], float* alt_deg, float* az_deg) {
 //   altitude = asin(-z)          -> z = -sin(alt)
 //   azimuth  = atan2(y, x) - 180 -> x = -cos(alt)cos(az), y = -cos(alt)sin(az)
 // The same formula the annotation overlay's altitude curves use (core/annotation_overlay.cpp).
-inline void AltAzToDir(float alt_deg, float az_deg, float dir[3]) {
-  const float alt = alt_deg * kDeg2Rad;
-  const float az = az_deg * kDeg2Rad;
-  const float cos_alt = std::cos(alt);
+// One formula for both precisions: the float overload is what the C API's cone centre and the GUI
+// use; the double one feeds liblumice_analytic's kernel, which rejects a direction that is not unit
+// to 1e-10 — a float-rounded one is not.
+template <class T>
+inline void AltAzToDirT(T alt_deg, T az_deg, T dir[3]) {
+  const T deg2rad = static_cast<T>(3.14159265358979323846) / static_cast<T>(180);
+  const T alt = alt_deg * deg2rad;
+  const T az = az_deg * deg2rad;
+  const T cos_alt = std::cos(alt);
   dir[0] = -cos_alt * std::cos(az);
   dir[1] = -cos_alt * std::sin(az);
   dir[2] = -std::sin(alt);
+}
+
+inline void AltAzToDir(float alt_deg, float az_deg, float dir[3]) {
+  AltAzToDirT<float>(alt_deg, az_deg, dir);
+}
+
+inline void AltAzToDir(double alt_deg, double az_deg, double dir[3]) {
+  AltAzToDirT<double>(alt_deg, az_deg, dir);
 }
 
 }  // namespace lumice

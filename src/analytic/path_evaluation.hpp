@@ -83,6 +83,29 @@ struct FacePolygonTable {
 Status BuildFaceNormals(const LUMICE_ANALYTIC_Crystal& crystal, FaceNormalTable* out,
                         FacePolygonTable* polygons = nullptr);
 
+// The crystal as the kernel's own C++ callers pass it: the fields of LUMICE_ANALYTIC_Crystal with the
+// same meaning, units and validation (doc/analytic-api.md section 4.1). It exists because outside
+// src/analytic/ the published prefix may not be spelled (scripts/check_policies.py,
+// analytic-symbol-scope), so an in-tree caller such as the single-path analysis module
+// (src/raypath/) cannot fill the C struct; the overload below converts and forwards, so there is
+// still one BuildFaceNormals.
+enum class CrystalShapeKind { kPrism, kPyramid };
+
+struct CrystalShape {
+  CrystalShapeKind kind = CrystalShapeKind::kPrism;
+  double height = 0.0;
+  double face_distance[6]{};
+  double upper_h = 0.0;
+  double lower_h = 0.0;
+  double upper_wedge_deg = 0.0;
+  double lower_wedge_deg = 0.0;
+};
+
+Status BuildFaceNormals(const CrystalShape& shape, FaceNormalTable* out, FacePolygonTable* polygons = nullptr);
+
+// The kernel's interface version, for in-tree callers that record which kernel produced a result.
+constexpr int kApiVersion = LUMICE_ANALYTIC_API_VERSION;
+
 // Face numbers -> slots. kInvalidValue when face_count < 2 or any number is not a present face of
 // `table`. Consecutive repeats are not rejected: LI's evaluator accepts them, and the geometry
 // decides — a repeated face fails the "reaches the face from inside" gate, so the pose is simply
