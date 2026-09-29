@@ -51,7 +51,7 @@ struct LUMICE_Server_ {
 };
 
 
-static LUMICE_ErrorCode MapErrorCode(ns::ErrorCode code) {
+LUMICE_ErrorCode MapErrorCode(ns::ErrorCode code) {
   switch (code) {
     case ns::ErrorCode::kSuccess:
       return LUMICE_OK;

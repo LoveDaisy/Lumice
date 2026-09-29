@@ -2,8 +2,8 @@
 #define SERVER_C_API_INTERNAL_H_
 
 // Internal (non-public) declarations for c_api.cpp implementation details that unit
-// tests need to exercise directly. This is NOT part of the public C API surface
-// (include/lumice.h): do not include it from src/gui/ or ship it to consumers.
+// tests, and the C API's translation units outside c_api.cpp, need to reach directly. This is NOT part of the public C
+// API surface (include/lumice.h): do not include it from src/gui/ or ship it to consumers.
 
 #include <memory>
 #include <nlohmann/json.hpp>
@@ -18,6 +18,11 @@
 // verify SceneClone independence without waiting for a public scene-to-JSON serializer.
 // Precondition: scene != nullptr.
 const nlohmann::json& SceneRoot(const LUMICE_Scene* scene);
+
+// The server's Error vocabulary as a C API return code: the one mapping, shared by c_api.cpp and
+// the single-path bridge (c_api_single_path.cpp), which parses a scene through the same
+// lumice::ParseConfigManager.
+LUMICE_ErrorCode MapErrorCode(lumice::ErrorCode code);
 
 // =============== ConfigScratch: the demoted wide config struct ===============
 // This is the former public `LUMICE_Config` value struct, removed from the public ABI in v4.12
