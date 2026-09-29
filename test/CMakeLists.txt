@@ -262,7 +262,8 @@ add_executable(unit_correctness_test
   # raypath/: the single-path analysis module (scene config -> the analytic kernel above -> fibers,
   # per-pose detail, the sun-direction grid, its JSON form, its lumice.h entry point), from the
   # lumice_raypath_obj OBJECT library linked below — the same objects liblumice carries.
-  "${PROJ_TEST_DIR}/unit-correctness/raypath/test_single_path_analysis.cpp")
+  "${PROJ_TEST_DIR}/unit-correctness/raypath/test_single_path_analysis.cpp"
+  "${PROJ_TEST_DIR}/unit-correctness/raypath/test_single_path_json.cpp")
 target_include_directories(unit_correctness_test
   PRIVATE ${PROJ_TEST_DIR})
 target_link_libraries(unit_correctness_test

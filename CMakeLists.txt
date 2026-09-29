@@ -974,7 +974,8 @@ lumice_apply_engine_compile_options(lumice_analytic_kernel)
 # liblumice_analytic, whose surface is the kernel alone; that is why it sits outside lumice_obj.
 add_library(lumice_raypath_obj OBJECT
   "${PROJ_SRC_DIR}/raypath/scene_to_analytic.cpp"
-  "${PROJ_SRC_DIR}/raypath/single_path_analysis.cpp")
+  "${PROJ_SRC_DIR}/raypath/single_path_analysis.cpp"
+  "${PROJ_SRC_DIR}/raypath/single_path_json.cpp")
 target_link_libraries(lumice_raypath_obj PUBLIC lumice_analytic_kernel lumice_obj)
 lumice_apply_engine_compile_options(lumice_raypath_obj)
 
