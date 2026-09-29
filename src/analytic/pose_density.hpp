@@ -61,6 +61,9 @@ class PoseDensity {
   // I and Q (0 for a family that does not use them).
   double ZenithIntegral() const { return zenith_integral_; }
   double RollIntegral() const { return roll_integral_; }
+  // [lower, upper] of theta outside which rho is below exp(-72) of its peak (the +-12 sigma window
+  // of I, clipped to [0, pi]); [0, pi] for the random density.
+  void ZenithWindow(double* lower, double* upper) const;
   // The zenith and roll factors alone, for the rank-0 psi average.
   double ZenithFactor(double theta) const;
   double RollFactor(double psi) const;

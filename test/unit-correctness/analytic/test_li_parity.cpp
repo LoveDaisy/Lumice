@@ -10,10 +10,11 @@
 //    of the recipe that live here are the geodesic densification spacing (1e-3 rad, part of the
 //    curve-distance definition, LI section 4) and the absolute guard LI's own verifier adds to a
 //    relative arclength comparison so a zero-length reference is well defined.
-//  - The kernels are called directly (EvaluatePath, TraceFiber, IceDiscovery::DiscoverOnBand), not
-//    the C ABI: a seed_search fixture is a replay on LI's exported band, and only the kernel takes a
-//    band. The ABI's own translation (LUMICE_ANALYTIC_Crystal and the v0 options block into these
-//    kernels) is the ctypes e2e tests' subject (test/e2e-correctness/test_analytic_*.py).
+//  - The kernels are called directly (EvaluatePath, TraceFiber, IceDiscovery::DiscoverOnBand,
+//    BandSumOnEvents / BandSum), not the C ABI: a seed_search fixture is a replay on LI's exported
+//    band and a band_sum fixture's layer 1 on LI's exported events, and only the kernel takes them. The ABI's own
+//    translation (LUMICE_ANALYTIC_Crystal and the v0 options block into these kernels) is the ctypes e2e tests' subject
+//    (test/e2e-correctness/test_analytic_*.py).
 //  - The comparison geometry (rotation distance, SO(3) log/exp, densification, Hausdorff) is written
 //    out below independently of src/analytic/so3.hpp, so a defect there cannot also blind the ruler.
 //
@@ -38,10 +39,13 @@
 #include <string>
 #include <vector>
 
+#include "analytic/band_sum.hpp"
 #include "analytic/discovery.hpp"
 #include "analytic/fiber_continuation.hpp"
 #include "analytic/path_evaluation.hpp"
 #include "analytic/path_fiber.hpp"
+#include "analytic/path_rank.hpp"
+#include "analytic/pose_density.hpp"
 
 #ifndef LUMICE_LI_PARITY_FIXTURE_DIR
 #error "LUMICE_LI_PARITY_FIXTURE_DIR must name test/fixtures/li-parity (test/CMakeLists.txt)"
@@ -146,8 +150,8 @@ std::vector<std::string> ManifestFilesOf(const Json& manifest) {
 // Why a fixture's content is not (yet) compared. Each fixture that carries such content gets one
 // LiParitySkipped case that checks the content is present and then skips with the reason, so the
 // uncompared part is counted by gtest rather than dropped. Whoever implements a comparison removes
-// its reason here and adds the comparison to the kind's suite.
-constexpr const char* kSkipBandSumModuleNotImplemented = "band_sum: the band-sum module is not implemented yet";
+// its reason here and adds the comparison to the kind's suite. Every fixture kind of the current
+// set is compared in full, so there is no reason today; the machinery stays for the next wave.
 
 // What the reader knows about one fixture file: its kind (the JSON's `fixture_kind`, the only
 // authority; the file name is checked against it by LiParityProvenance) and the parts of it that are
@@ -166,9 +170,6 @@ FixtureInfo FixtureInfoOf(const std::string& file, const Json& fixture) {
     return info;  // empty kind: counted as unknown by the manifest test
   }
   info.kind = fixture.value("fixture_kind", "");
-  if (info.kind == "band_sum") {
-    info.skip_reason = kSkipBandSumModuleNotImplemented;
-  }
   return info;
 }
 
@@ -704,9 +705,9 @@ TEST(LiParityFixtures, ManifestMatchesDirectoryAndSource) {
     EXPECT_TRUE(listed.insert(f).second) << "listed twice: " << f;
   }
   EXPECT_FALSE(listed.empty());
-  // Every listed file must be claimed by one of the suites below: replayed by its kind's suite, or,
-  // for band_sum, counted by LiParitySkipped. A fixture kind LI adds later would otherwise pass
-  // provenance alone and be silently dropped; here it goes red and points at the reader.
+  // Every listed file must be claimed by one of the suites below, replayed by its kind's suite. A
+  // fixture kind LI adds later would otherwise pass provenance alone and be silently dropped; here it
+  // goes red and points at the reader.
   size_t claimed = 0;
   for (const char* kind : { "evaluate_path", "trace_fiber", "seed_search", "band_sum" }) {
     const size_t n = ManifestFilesOfKind(kind).size();
@@ -1286,6 +1287,243 @@ TEST_P(LiParitySeedSearch, MatchesLi) {
 INSTANTIATE_TEST_SUITE_P(All, LiParitySeedSearch, testing::ValuesIn(ManifestFilesOfKind("seed_search")), CaseName);
 
 // ------------------------------------------------------------------------------------------------
+// band_sum (LI section 3.4, contract band-sum-contract.md section 7): layer 1 on LI's events,
+// layer 2 on the regenerated sample
+// ------------------------------------------------------------------------------------------------
+
+// The fixture's pose density, every parameter as LI resolved it. An unknown family or parameter
+// fails: it would change the problem being solved (the same rule as ParamsOf). normalization_
+// informative is LI's I and Q, compared in test_pose_density.cpp, not here.
+PoseDensitySpec DensityOf(const Json& j) {
+  PoseDensitySpec spec;
+  const std::map<std::string, PoseFamily> families = {
+    { "random", PoseFamily::kRandom }, { "column", PoseFamily::kColumn }, { "plate", PoseFamily::kPlate },
+    { "parry", PoseFamily::kParry },   { "lowitz", PoseFamily::kLowitz },
+  };
+  const std::map<std::string, double*> fields = {
+    { "zenith_mean_deg", &spec.zenith_mean_deg },
+    { "zenith_std_deg", &spec.zenith_std_deg },
+    { "roll_mean_deg", &spec.roll_mean_deg },
+    { "roll_std_deg", &spec.roll_std_deg },
+  };
+  for (const auto& [key, value] : j.items()) {
+    if (key == "family") {
+      const auto it = families.find(value.get<std::string>());
+      if (it == families.end()) {
+        ADD_FAILURE() << "unknown pose density family " << value;
+      } else {
+        spec.family = it->second;
+      }
+    } else if (auto it = fields.find(key); it != fields.end()) {
+      *it->second = value.get<double>();
+    } else if (key != "normalization_informative") {
+      ADD_FAILURE() << "pose density field " << key << " has no mapping in this reader";
+    }
+  }
+  EXPECT_STREQ(PoseDensityError(spec), "");
+  return spec;
+}
+
+// The pixel table, owned.
+struct Pixels {
+  std::vector<double> centre;
+  std::vector<double> corners;
+  std::vector<double> solid_angle;
+  PixelTable Table() const {
+    PixelTable t;
+    t.count = static_cast<int>(solid_angle.size());
+    t.centre = centre.data();
+    t.corners = corners.data();
+    t.solid_angle = solid_angle.data();
+    return t;
+  }
+};
+
+Pixels PixelsOf(const Json& j) {
+  Pixels p;
+  p.centre = Numbers(j.at("centre"));
+  p.corners = Numbers(j.at("corners"));
+  p.solid_angle = Numbers(j.at("solid_angle"));
+  EXPECT_EQ(p.centre.size(), 3 * p.solid_angle.size());
+  EXPECT_EQ(p.corners.size(), 12 * p.solid_angle.size());
+  return p;
+}
+
+std::string PixelStatusName(PixelStatus s) {
+  switch (s) {
+    case PixelStatus::kOk:
+      return "ok";
+    case PixelStatus::kSingular:
+      return "singular";
+    case PixelStatus::kPointMass:
+      return "point_mass";
+  }
+  return "?";
+}
+
+// LI's layer-1 events in LI's order (increasing D, which BandSumOnEvents' binary search needs); the
+// position stands in for the lattice index. A rank-0 cell carries only `w`.
+std::vector<SampleEvent> EventsOf(const Json& j) {
+  const std::vector<double> w = Numbers(j.at("w"));
+  std::vector<SampleEvent> events(w.size());
+  const bool full = j.contains("u");
+  const std::vector<double> u = full ? Numbers(j.at("u")) : std::vector<double>{};
+  const std::vector<double> phi = full ? Numbers(j.at("phi")) : std::vector<double>{};
+  const std::vector<double> d = full ? Numbers(j.at("deviation")) : std::vector<double>{};
+  for (size_t i = 0; i < w.size(); i++) {
+    events[i].event.index = static_cast<int>(i);
+    events[i].weight = w[i];
+    if (full) {
+      events[i].event.deviation = d[i];
+      for (int k = 0; k < 3; k++) {
+        events[i].event.u[k] = u[3 * i + k];
+        events[i].event.phi[k] = phi[3 * i + k];
+      }
+      if (i > 0) {
+        EXPECT_LE(d[i - 1], d[i]) << "layer-1 events are not in increasing D at " << i;
+      }
+    }
+  }
+  return events;
+}
+
+// A rank-2 pixel against its expectation; `layer2` adds the fixture's per-pixel allowances.
+void CompareBandPixel(const std::string& name, const Json& f, const Json& ref, const PixelValue& got, bool layer2) {
+  EXPECT_EQ(PixelStatusName(got.status), ref.at("status").get<std::string>());
+  if (ref.at("status").get<std::string>() != "ok" || got.status != PixelStatus::kOk) {
+    return;
+  }
+  const Json& allowance = ref.at("allowance");
+  ASSERT_EQ(Tolerance(f, "K"), 0.0);
+  ASSERT_EQ(Tolerance(f, "K_rho_pos"), 0.0);
+  const int k_slack = layer2 ? allowance.at("K_layer2").get<int>() : 0;
+  const int k_rho_slack =
+      layer2 ? allowance.at("K_rho_pos_layer2").get<int>() : allowance.at("K_rho_pos_subnormal").get<int>();
+  EXPECT_LE(std::abs(got.k - ref.at("K").get<int>()), k_slack) << "K";
+  EXPECT_LE(std::abs(got.k_rho_pos - ref.at("K_rho_pos").get<int>()), k_rho_slack) << "K_rho_pos";
+
+  const double value = ref.at("value").get<double>();
+  const double value_bound =
+      Tolerance(f, "value_relative") * std::fabs(value) + (layer2 ? allowance.at("value_layer2").get<double>() : 0.0);
+  const double value_error = std::fabs(got.value - value);
+  const std::string tag = (layer2 ? "layer2." : "layer1.") + ref.at("label").dump() + ".";
+  Report(name, tag + "value", value_error, value_bound);
+  EXPECT_LE(value_error, value_bound) << "value " << got.value << " vs " << value;
+
+  const double k_eff = ref.at("K_eff").get<double>();
+  const double k_eff_bound =
+      Tolerance(f, "K_eff_relative") * std::fabs(k_eff) + (layer2 ? allowance.at("K_eff_layer2").get<double>() : 0.0);
+  const double k_eff_error = std::fabs(got.k_eff - k_eff);
+  Report(name, tag + "K_eff", k_eff_error, k_eff_bound);
+  EXPECT_LE(k_eff_error, k_eff_bound) << "K_eff " << got.k_eff << " vs " << k_eff;
+}
+
+// A rank-0 pixel: the status exactly, the value to `relative_bound` of the expected value (or the
+// matching absolute bound on the point-mass pixel of a statistical cell).
+void ComparePointMassPixel(const std::string& name, const Json& ref, const PixelValue& got, double absolute_bound_m,
+                           double solid_angle, const std::string& layer) {
+  EXPECT_EQ(PixelStatusName(got.status), ref.at("status").get<std::string>());
+  const double value = ref.at("value").get<double>();
+  const double bound = absolute_bound_m / solid_angle;
+  const double error = std::fabs(got.value - value);
+  Report(name, layer + "." + ref.at("label").dump() + ".value", error, bound);
+  EXPECT_LE(error, bound) << "value " << got.value << " vs " << value;
+}
+
+class LiParityBandSum : public testing::TestWithParam<std::string> {};
+
+TEST_P(LiParityBandSum, MatchesLi) {
+  const Json f = LoadJson(GetParam());
+  ASSERT_EQ(f.value("fixture_kind", ""), "band_sum");
+  const Json& input = f.at("input");
+  const Json& expected = f.at("expected");
+  Scene scene;
+  ASSERT_TRUE(scene.Init(input));
+  const PoseDensity density(DensityOf(input.at("pose_density")));
+  const Pixels pixels = PixelsOf(input.at("pixels"));
+  const PixelTable table = pixels.Table();
+  const int n = input.at("sample").at("n").get<int>();
+  const Json& expected_pixels = expected.at("pixels");
+  ASSERT_EQ(static_cast<int>(expected_pixels.size()), table.count);
+  ASSERT_EQ(Tolerance(f, "status"), 0.0);
+  const int rank = expected.at("rank").get<int>();
+  ASSERT_TRUE(rank == 0 || rank == 2) << rank;
+  EXPECT_EQ(IsRankZeroPath(scene.table, scene.slots.data(), scene.Count()), rank == 0);
+
+  const auto start = std::chrono::steady_clock::now();
+  const bool has_events = input.contains("events") && input.at("events").contains("w");
+  if (rank == 2) {
+    ASSERT_TRUE(has_events) << "a rank-2 cell carries its layer-1 events";
+    // Layer 1: the estimator on LI's events.
+    {
+      SCOPED_TRACE("layer 1");
+      std::vector<PixelValue> got;
+      BandSumOnEvents(EventsOf(input.at("events")), n, scene.incident, table, density, &got);
+      ASSERT_EQ(static_cast<int>(got.size()), table.count);
+      for (int p = 0; p < table.count; p++) {
+        SCOPED_TRACE("pixel " + expected_pixels.at(p).at("label").dump());
+        CompareBandPixel(GetParam(), f, expected_pixels.at(p), got[p], false);
+      }
+    }
+    // Layer 2: the whole call.
+    {
+      SCOPED_TRACE("layer 2");
+      const BandSumOutput out = BandSum(scene.table, scene.polygons, scene.slots.data(), scene.Count(),
+                                        scene.refractive_index, scene.incident, n, table, density);
+      EXPECT_FALSE(out.rank_zero);
+      ASSERT_EQ(static_cast<int>(out.pixels.size()), table.count);
+      for (int p = 0; p < table.count; p++) {
+        SCOPED_TRACE("pixel " + expected_pixels.at(p).at("label").dump());
+        CompareBandPixel(GetParam(), f, expected_pixels.at(p), out.pixels[p], true);
+      }
+    }
+  } else {
+    const Json& point_mass = expected.at("point_mass");
+    const double m_li = point_mass.at("m").get<double>();
+    const std::string method = point_mass.at("method").get<std::string>();
+    const double relative = Tolerance(f, "point_mass_relative");
+    ASSERT_TRUE(method == "lattice_mean" || method == "haar_stream") << method;
+    if (method == "lattice_mean") {
+      // Deterministic: layer 1 on LI's w, layer 2 on the regenerated lattice, both to 1e-10.
+      ASSERT_TRUE(density.IsUniform()) << "a lattice-mean cell is the random density";
+      ASSERT_TRUE(has_events);
+      const PointMass mass = RankZeroMass(EventsOf(input.at("events")), n, scene.incident, density);
+      Report(GetParam(), "layer1.m_relative", std::fabs(mass.m / m_li - 1.0), relative);
+      EXPECT_LE(std::fabs(mass.m - m_li), relative * std::fabs(m_li));
+      std::vector<PixelValue> got;
+      int pixel = -1;
+      PlacePointMass(mass.m, scene.incident, table, &got, &pixel);
+      for (int p = 0; p < table.count; p++) {
+        ComparePointMassPixel(GetParam(), expected_pixels.at(p), got[p], relative * std::fabs(m_li),
+                              pixels.solid_angle[p], "layer1");
+      }
+    } else {
+      EXPECT_FALSE(has_events) << "a statistical rank-0 cell carries no layer-1 events";
+    }
+    const BandSumOutput out = BandSum(scene.table, scene.polygons, scene.slots.data(), scene.Count(),
+                                      scene.refractive_index, scene.incident, n, table, density);
+    EXPECT_TRUE(out.rank_zero);
+    // lattice_mean: 1e-10 relative. haar_stream: `relative` is five of LI's standard errors, widened
+    // by this library's own estimator error to 5 sqrt(sigma_LI^2 + sigma^2).
+    const double bound = method == "lattice_mean" ?
+                             relative * std::fabs(m_li) :
+                             std::sqrt(std::pow(relative * std::fabs(m_li), 2) + 25.0 * out.m_error * out.m_error);
+    Report(GetParam(), "layer2.m", std::fabs(out.m - m_li), bound);
+    std::cout << "[li-parity] " << GetParam() << " layer2.m=" << out.m << " m_error=" << out.m_error << " m_li=" << m_li
+              << '\n';
+    EXPECT_LE(std::fabs(out.m - m_li), bound);
+    ASSERT_EQ(static_cast<int>(out.pixels.size()), table.count);
+    for (int p = 0; p < table.count; p++) {
+      ComparePointMassPixel(GetParam(), expected_pixels.at(p), out.pixels[p], bound, pixels.solid_angle[p], "layer2");
+    }
+  }
+  const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+  std::cout << "[li-parity] " << GetParam() << " elapsed_ms=" << ms << '\n';
+}
+
+INSTANTIATE_TEST_SUITE_P(All, LiParityBandSum, testing::ValuesIn(ManifestFilesOfKind("band_sum")), CaseName);
+
+// ------------------------------------------------------------------------------------------------
 // What is carried but not compared: counted, with its reason, never dropped
 // ------------------------------------------------------------------------------------------------
 
@@ -1302,19 +1540,16 @@ TEST_P(LiParitySkipped, CarriedButNotCompared) {
   const Json& input = f.at("input");
   const Json& expected = f.at("expected");
   const Json& tolerance = f.at("tolerance");
-  if (info->skip_reason == kSkipBandSumModuleNotImplemented) {
-    EXPECT_TRUE(input.at("pose_density").is_object());
-    EXPECT_TRUE(input.at("sample").is_object());
-    EXPECT_TRUE(input.at("pixels").is_object());
-    EXPECT_TRUE(expected.at("rank").is_number_integer());
-    EXPECT_TRUE(expected.at("pixels").is_array());
-    EXPECT_FALSE(tolerance.empty());
-  } else {
-    FAIL() << "no content check for skip reason: " << info->skip_reason;
-  }
-  GTEST_SKIP() << info->skip_reason;
+  // A reason added here needs its content check: that the uncompared part is present in `input`,
+  // `expected` and `tolerance` with the shape LI section 3 gives it.
+  (void)input;
+  (void)expected;
+  (void)tolerance;
+  FAIL() << "no content check for skip reason: " << info->skip_reason;
 }
 
+// Empty while every kind is compared in full; allowed to be, so the machinery can stay.
+GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(LiParitySkipped);
 INSTANTIATE_TEST_SUITE_P(All, LiParitySkipped, testing::ValuesIn(FilesWithSkipReason()), CaseName);
 
 }  // namespace

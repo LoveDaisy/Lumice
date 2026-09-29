@@ -126,8 +126,9 @@ PoseDensity::PoseDensity(const PoseDensitySpec& spec) : family_(spec.family) {
   }
   zenith_mean_ = spec.zenith_mean_deg * kDegToRad;
   zenith_std_ = spec.zenith_std_deg * kDegToRad;
-  const double lower = std::fmax(0.0, zenith_mean_ - kPoseDensityWindowSigmas * zenith_std_);
-  const double upper = std::fmin(kPi, zenith_mean_ + kPoseDensityWindowSigmas * zenith_std_);
+  double lower = 0.0;
+  double upper = 0.0;
+  ZenithWindow(&lower, &upper);
   zenith_integral_ = Integrate(lower, upper, [this](double theta) {
     const double d = theta - zenith_mean_;
     return std::exp(-(d * d) / (2.0 * zenith_std_ * zenith_std_)) * std::sin(theta);
@@ -149,6 +150,16 @@ PoseDensity::PoseDensity(const PoseDensitySpec& spec) : family_(spec.family) {
     offset -= kPi;
     return std::exp(-(offset * offset) / (2.0 * roll_std_ * roll_std_));
   });
+}
+
+void PoseDensity::ZenithWindow(double* lower, double* upper) const {
+  if (family_ == PoseFamily::kRandom) {
+    *lower = 0.0;
+    *upper = kPi;
+    return;
+  }
+  *lower = std::fmax(0.0, zenith_mean_ - kPoseDensityWindowSigmas * zenith_std_);
+  *upper = std::fmin(kPi, zenith_mean_ + kPoseDensityWindowSigmas * zenith_std_);
 }
 
 double PoseDensity::ZenithFactor(double theta) const {
