@@ -51,7 +51,7 @@ struct LUMICE_Server_ {
 };
 
 
-static LUMICE_ErrorCode MapErrorCode(ns::ErrorCode code) {
+LUMICE_ErrorCode MapErrorCode(ns::ErrorCode code) {
   switch (code) {
     case ns::ErrorCode::kSuccess:
       return LUMICE_OK;
@@ -104,9 +104,6 @@ void LUMICE_DestroyServer(LUMICE_Server* server) {
 
 // =============== Logging ===============
 void LUMICE_SetLogLevel(LUMICE_Server* server, LUMICE_LogLevel level) {
-  if (!server) {
-    return;
-  }
   static constexpr ns::LogLevel kLevelMap[] = {
     ns::LogLevel::kTrace,    // LUMICE_LOG_TRACE
     ns::LogLevel::kDebug,    // LUMICE_LOG_DEBUG
@@ -118,7 +115,9 @@ void LUMICE_SetLogLevel(LUMICE_Server* server, LUMICE_LogLevel level) {
   };
   if (level >= LUMICE_LOG_TRACE && level <= LUMICE_LOG_OFF) {
     auto mapped = kLevelMap[level];
-    server->server_->SetLogLevel(mapped);
+    if (server) {
+      server->server_->SetLogLevel(mapped);
+    }
     ns::GetGlobalLogger().SetLevel(mapped);
   }
 }

@@ -42,6 +42,8 @@ static_assert(LUMICE_API_VERSION >= 439, "Lumice header too old for this integra
 
 公开符号集或结构体布局每发生一次 BREAKING 变更就 bump 一次。
 
+**v4.50** 是纯追加。新增单光路分析：带 `struct_size` 头的 `LUMICE_SinglePathRequest`、不透明的 `LUMICE_SinglePathResult`、`LUMICE_AnalyzeSinglePath(scene, request, &out, err_buf, err_size)`、`LUMICE_SinglePathResultToJson`（与 `LUMICE_SceneToJson` 同一缓冲区契约）、`LUMICE_SinglePathResultDestroy`，以及 `LUMICE_SINGLE_PATH_MAX_SAMPLE_COUNT`。结果经其 JSON 形式读取，字段见 `raypath-cli-output.md`。行为：`LUMICE_SetLogLevel(NULL, level)` 现在设置引擎全局日志级别（原为什么都不做），供不建 server 的调用方使用。
+
 **v4.49** 是纯追加加一处行为恢复。新增 `LUMICE_CouldFilterMatchFace(crystal, face, symmetry)`——考虑 filter 自身 P/B/D 的 `LUMICE_CouldCrystalHaveFace`（没有面积的面仍可经由 filter 对称重新编号到的面匹配）——以及 `LUMICE_ExpandRaypathClass(crystal, faces, n, symmetry, semantics, out, &count)`，按两种含义之一（`LUMICE_SYMMETRY_SEMANTICS_LABEL` / `LUMICE_SYMMETRY_SEMANTICS_PHYSICAL`）给出一条光路在一组对称位下的等价类（至多 `LUMICE_MAX_RAYPATH_CLASS_MEMBERS` 个成员）。行为：**filter** 的 P/B/D 恢复为标号等价，与 v4.46 及以前相同——P、B 不论晶体形状与取向都生效，D 不变。下文 v4.47、v4.48 所述的收窄现在只适用于光路分析列表的分组；`LUMICE_GetCrystalSymmetry` 与 `LUMICE_IsPApplicable` / `LUMICE_IsBApplicable` 含义不变，服务于该分组与 filter 编辑器的提示（见 `raypath-symmetry.zh.md` §1.1）。没有结构体变化。
 
 **最近一次这样的 break 是 v4.48。** `LUMICE_CrystalSymmetry` 在 `d_effective` 之后新增尾部字段 `p_effective`、`b_effective`（sizeof 16 → 24）；`LUMICE_GetCrystalSymmetry` 会写满整个结构体，调用方需重新编译。同时新增 `LUMICE_IsPApplicable(roll 类型, roll 全宽)` 与 `LUMICE_IsBApplicable(方位角类型, 方位角全宽, zenith 类型, zenith 中心, zenith 全宽)`——P、B 的取向分布一半（对应 `LUMICE_IsDApplicable`）。光路约化现在只在 roll 对 60° 平移不变（满圈 uniform）时应用 P，只在 zenith 关于 90° 对称且方位角满圈 uniform 时应用 B：Parry 弧不再把 3-5 与 4-6 并为一行，板状晶体不再把 1-3 与 2-3 并为一行。`p_effective` / `b_effective` 是这两个条件再与形状相交（`rotation_step < 6` / `horizontal_mirror`）。

@@ -53,7 +53,7 @@ Two streams, on purpose: the product lines — `Saved:` / `Stats:` here, the `[B
 
 ## 4. All flags at a glance
 
-The CLI has three subcommands, `render`, `benchmark` and `analyze`. `render` is the default: `Lumice -f config.json` and `Lumice render -f config.json` are the same command, so every example above is a render. Each subcommand accepts only its own options; `Lumice <subcommand> -h` prints that subcommand's page.
+The CLI has four subcommands, `render`, `benchmark`, `analyze` and `raypath`. `render` is the default: `Lumice -f config.json` and `Lumice render -f config.json` are the same command, so every example above is a render. Each subcommand accepts only its own options; `Lumice <subcommand> -h` prints that subcommand's page.
 
 The complete set as printed by `Lumice -h` (anchor source: `./build/cmake_install/static/Lumice -h`):
 
@@ -61,6 +61,7 @@ The complete set as printed by `Lumice -h` (anchor source: `./build/cmake_instal
 Usage: ./build/cmake_install/static/Lumice [render] -f <config_file> [options]
        ./build/cmake_install/static/Lumice benchmark -f <config_file> [options]
        ./build/cmake_install/static/Lumice analyze -f <config_file> [options]
+       ./build/cmake_install/static/Lumice raypath -f <config_file> --crystal <id> --path <faces> --target <alt>,<az>
        ./build/cmake_install/static/Lumice --version
        ./build/cmake_install/static/Lumice <subcommand> -h
 
@@ -73,6 +74,9 @@ Subcommands:
                      (`./build/cmake_install/static/Lumice benchmark -h` for its options)
   analyze            List the raypath chains that light a region of the sky, as CSV
                      (`./build/cmake_install/static/Lumice analyze -h` for its options)
+  raypath            Analyse one raypath over one sky point: its fiber of crystal
+                     poses and its sun-direction sphere, as JSON
+                     (`./build/cmake_install/static/Lumice raypath -h` for its options)
 
 Options for render (the default subcommand):
   -f <file>          Specify the configuration file (required)
@@ -110,6 +114,7 @@ Examples:
   ./build/cmake_install/static/Lumice -f config.json -v
   ./build/cmake_install/static/Lumice benchmark -f examples/bench_config.json
   ./build/cmake_install/static/Lumice analyze -f config.json --roi cone --center 43,0 --radius 2
+  ./build/cmake_install/static/Lumice raypath -f config.json --crystal 1 --path 3-5 --target 20,25
 ```
 
 `Lumice benchmark -h`:
@@ -217,6 +222,35 @@ Examples:
   ./build/cmake_install/static/Lumice analyze -f config.json --symmetry none --rays 5M --seed 7
 ```
 
+`Lumice raypath -h` — the step *after* `analyze`: once you have picked one raypath from its listing, ask about that path alone. It takes one single-layer raypath of one crystal entry and one sky point, and writes one JSON document: the components of the fiber of crystal poses that send the sun into that point (each with per-pose detail), and the path's deviation over the whole sun-direction sphere. What the fields mean is in [`../raypath-cli-output.md`](../raypath-cli-output.md). Options:
+
+| Option | Meaning |
+|---|---|
+| `-f <file>` | The scene config (required). The crystal is taken at its nominal shape (the centre of each shape distribution) and the sun as a point. |
+| `--crystal <id>` | The crystal entry's config id (required). |
+| `--path <faces>` | The raypath as `analyze` prints it, e.g. `3-5`, `3-6-4-8` (required). Multi-layer chains are refused. |
+| `--target <alt>,<az>` | The sky point in degrees, azimuth measured as the sun's is (required; the `analyze --center` convention). |
+| `--wavelength <nm>` | In [350, 900]; default the config's when it has exactly one wavelength, else 550. |
+| `--events <N>` | Seed events of the component search (not traced rays); `K`/`M` suffix, at most 100M, default 1M. More events find smaller components. |
+| `--grid <rows>` | Latitude rows of the sun-direction grid (longitude twice that), 0–720, default 90; 0 leaves it out. |
+| `--warm <file>` | An earlier output; its seeds start the search so a component found before is not lost. |
+| `-o <path>` | Write the JSON here instead of stdout. |
+
+The output is deterministic (no `--seed`, no `--workers`). Progress is two lines on stderr; Ctrl-C ends the run and writes nothing.
+
+Two examples, both runnable as they stand from the repository root (crystal 1 is the height-1.2 prism, crystal 6 the height-0.3 plate of `examples/config_example.json`, sun at altitude 20°):
+
+```bash
+# A prism path over a sky point: one closed component.
+./build/cmake_install/static/Lumice raypath -f examples/config_example.json --crystal 1 --path 3-5 --target 20,25 -o r.json
+
+# A path where the crystal's shape matters: 3-6-4-8 on the plate.
+./build/cmake_install/static/Lumice raypath -f examples/config_example.json --crystal 6 --path 3-6-4-8 --target 20,120 -o r.json
+./build/cmake_install/static/Lumice raypath -f examples/config_example.json --crystal 6 --path 3-6-4-8 --target 20,140 -o r.json
+```
+
+The first gives `outcome: "discovered"` with one `closed` component. The other two are the degenerate case, and worth reading once. `3-6-4-8` is a turn about the c-axis, so its deviation depends only on the sun's latitude in the crystal frame: the level set is a latitude circle, and the fiber is an *arc* of it, not a closed loop. On the plate, both runs return `components: []`, told apart by `reach.target_in_range`: at `20,120` (deviation 108.9°) it is `true` — the fiber exists, but the short crystal passes no ray along it (the height-1.2 prism, crystal 1, finds two arcs at the same target) — while at `20,140` (deviation 124.0°, past this path's 120° maximum) it is `false`: no orientation of any such crystal can send the sun there. A path whose outgoing direction ignores the orientation altogether (a plate's `1-2`) comes back as `outcome: "point_mass"` instead. The full reading of the three empty results is the table in [`../raypath-cli-output.md`](../raypath-cli-output.md) §3.9.
+
 Notes:
 
 - `-f` is the only required flag. Without it, Lumice exits non-zero with a usage hint.
@@ -224,6 +258,7 @@ Notes:
 - `--backend <name>` asks for a trace backend; whether the run actually got it is on the `Stats:` line: `backend=<cpu|metal|cuda>` is what the run executed on, and `fell_back=true` means a GPU backend was obtained and then lost or refused (a device failure mid-run, or a config it could not serve) so the rest of the run went on the CPU path — the reason is a `WARN` on stderr. A backend this build or machine cannot provide at all (`--backend cuda` on a Mac, say) is not a fallback: the run is sized for the CPU route from the start and reads `backend=cpu, fell_back=false`, with a warning at startup. The `benchmark` subcommand's `[BENCHMARK]` JSON carries the same two fields. Multi-renderer configs (the GUI's exported documents carry two) run on the GPU route as one session — see [`../configuration.md`](../configuration.md#multiple-renderers-and-the-gpu-route).
 - `--workers <N>` overrides the automatic worker count (one per physical core on Linux/macOS, one per logical core on Windows, each capped at a measured per-platform ceiling; the cap applies to the automatic value only, never to an `N` you name). It is a switch rather than a config field on purpose: a worker count describes the machine, and a config file travels between machines. An illegal value (`0`, negative, non-numeric) exits non-zero rather than falling back to the default.
 - `Lumice analyze -f <config>` asks a question of the scene rather than rendering it: which raypath chains delivered energy into a region of the sky, as CSV on stdout (or `--csv <path>`). The config is the scene; the region, the symmetry the rows are merged under, the ray budget and the seed are all options, never config fields — so one config can be asked several questions from a script, and a `--seed` makes any of them reproducible. A scene whose `ray_num` is `"infinite"` runs until Ctrl-C and still writes its result; with `--csv` the file is rewritten atomically every second, so it is complete whenever it is read. Progress goes to stderr; stdout is the CSV alone.
+- `Lumice raypath -f <config> --crystal <id> --path <faces> --target <alt>,<az>` asks about one raypath rather than a listing: pick the path from `analyze`'s output, then ask where its crystal poses lie for one sky point. The answer is JSON on stdout (or `-o <path>`, written atomically); it is deterministic, so two runs of one question are byte-identical.
 - `Lumice benchmark -f <config>` is for performance regression testing — see [`../performance-testing.md`](../performance-testing.md). It is **not** how you run a normal simulation, and it takes only `-f`, `--backend`, `-v`, `-d`, `-h` (no `-o`: it writes nothing; no `--workers`: the worker counts are the measurement itself). The former `--benchmark` flag exits with a hint pointing here.
 
 ## 5. Performance expectations

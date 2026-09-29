@@ -167,24 +167,17 @@ class ServerImpl {
   }
 
  private:
-  // The one owner of "a JSON document becomes a ConfigManager, or a return code". Both
-  // submission entry points — CommitConfig (a render) and StartRaypathAnalysis (an analysis)
-  // — parse through here, so the four failure shapes map onto the Error vocabulary in exactly
-  // one place: nlohmann::json::out_of_range → MissingField, any other json exception →
-  // InvalidJson, std::exception → InvalidConfig, anything else → InvalidConfig. `validate`
-  // runs inside the same try on the parsed document (CommitConfig builds its colour tables
-  // there, which throw std::invalid_argument on a config error); nullptr for no extra step.
-  // On failure `*out` is untouched — the parse lands in a local first and is only moved into
-  // `out` once every step has passed — and so is every other member, status_ included: a
-  // rejected document is a return code, not a state. (CommitConfig used to write
-  // status_ = kError here. No projection ever read that value as anything but "not running",
-  // and while a session's workers were still tracing it made GetSimLifecycle report the run
-  // as over until the next Stop()/Start() rewrote it — a lie about a live run, and one the
-  // analysis path now reaches on purpose: a rejected scene over an analysis in flight must
-  // leave that analysis readable as in flight.) `caller` prefixes the log line so the two
-  // entry points stay distinguishable in a log.
+  // Parses through the shared ParseConfigManager (server.hpp), logging to this server's logger.
+  // A rejected document is a return code, not a state: on failure `*out` and every other member,
+  // status_ included, are untouched. (CommitConfig used to write status_ = kError here. No
+  // projection ever read that value as anything but "not running", and while a session's workers
+  // were still tracing it made GetSimLifecycle report the run as over until the next Stop()/Start()
+  // rewrote it — a lie about a live run, and one the analysis path now reaches on purpose: a
+  // rejected scene over an analysis in flight must leave that analysis readable as in flight.)
   Error ParseConfigManager(const nlohmann::json& config_json, const char* caller,
-                           const std::function<void(const ConfigManager&)>& validate, ConfigManager* out);
+                           const std::function<void(const ConfigManager&)>& validate, ConfigManager* out) {
+    return lumice::ParseConfigManager(config_json, caller, logger_, validate, out);
+  }
 
   // Single-engine orchestration — the GPU route's render group is exactly one
   // Simulator. The legacy kDefaultSimulatorCnt = PhysicalCoreCount() was removed
@@ -1170,8 +1163,8 @@ void WarnLowContrastHeadroom(Logger& logger, const std::map<IdType, RenderConfig
 
 }  // namespace
 
-Error ServerImpl::ParseConfigManager(const nlohmann::json& config_json, const char* caller,
-                                     const std::function<void(const ConfigManager&)>& validate, ConfigManager* out) {
+Error ParseConfigManager(const nlohmann::json& config_json, const char* caller, Logger& logger,
+                         const std::function<void(const ConfigManager&)>& validate, ConfigManager* out) {
   ConfigManager parsed;
   try {
     parsed = config_json.get<ConfigManager>();
@@ -1179,16 +1172,16 @@ Error ServerImpl::ParseConfigManager(const nlohmann::json& config_json, const ch
       validate(parsed);
     }
   } catch (const nlohmann::json::out_of_range& e) {
-    ILOG_ERROR(logger_, "{}: Missing field: {}", caller, e.what());
+    ILOG_ERROR(logger, "{}: Missing field: {}", caller, e.what());
     return Error::MissingField(e.what());
   } catch (const nlohmann::json::exception& e) {
-    ILOG_ERROR(logger_, "{}: JSON parsing error: {}", caller, e.what());
+    ILOG_ERROR(logger, "{}: JSON parsing error: {}", caller, e.what());
     return Error::InvalidJson(e.what());
   } catch (const std::exception& e) {
-    ILOG_ERROR(logger_, "{}: Configuration error: {}", caller, e.what());
+    ILOG_ERROR(logger, "{}: Configuration error: {}", caller, e.what());
     return Error::InvalidConfig(e.what());
   } catch (...) {
-    ILOG_ERROR(logger_, "{}: Unknown error", caller);
+    ILOG_ERROR(logger, "{}: Unknown error", caller);
     return Error::InvalidConfig("Unknown configuration error");
   }
   *out = std::move(parsed);

@@ -910,39 +910,75 @@ function(lumice_apply_isa_march target)
     "LUMICE_ISA_LEVEL_STR=\"$<IF:${_active_cond},${LUMICE_ISA_LEVEL},baseline>\"")
 endfunction()
 
-if(NOT MSVC)
-  # -Werror=switch is a GCC/Clang host flag; nvcc parses -Werror itself (does
-  # NOT forward it) and rejects "switch" as an invalid value. Scope it to CXX so
-  # the BackendKind exhaustiveness gate still applies to host TUs while the CUDA
-  # (.cu) TU compiles cleanly. The CXX TUs already cover every BackendKind switch.
-  target_compile_options(lumice_obj PRIVATE
-    -Wall -Wextra $<$<COMPILE_LANGUAGE:CXX>:-Werror=switch> -fexceptions -frtti)
-  target_compile_definitions(lumice_obj PRIVATE __STDC_FORMAT_MACROS SPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_TRACE)
-  # -fvisibility=hidden (Release/MinSizeRel): every engine symbol is hidden except the
-  # declarations the public headers mark LUMICE_API / LUMICE_TEST_API / LUMICE_ANALYTIC_API.
-  # That marks what a shared library MAY export; what each one DOES export is its own export
-  # list (lumice_apply_export_list below), because the same objects go into three libraries
-  # with three different surfaces. Debug leaves everything visible for debugging; the export
-  # lists still narrow each shared library to its surface there.
-  target_compile_options(lumice_obj PRIVATE
-    $<$<CONFIG:Debug>:-O0 -g -ggdb>
-    $<$<CONFIG:Release>:-ffunction-sections -fdata-sections -fvisibility=hidden>
-    $<$<CONFIG:MinSizeRel>:-ffunction-sections -fdata-sections -fvisibility=hidden>)
-  lumice_apply_isa_march(lumice_obj)
-endif()
+# The engine's compile discipline, one definition for every OBJECT library whose objects end up
+# in the engine libraries: lumice_obj, and the analytic kernel and single-path module below, which
+# live outside lumice_obj only so that each shared library links exactly the objects it needs.
+# A second hand-written copy would let a module go into liblumice without -fvisibility=hidden or
+# without its ISA tier's -march, and nothing would notice.
+function(lumice_apply_engine_compile_options target)
+  if(NOT MSVC)
+    # -Werror=switch is a GCC/Clang host flag; nvcc parses -Werror itself (does
+    # NOT forward it) and rejects "switch" as an invalid value. Scope it to CXX so
+    # the BackendKind exhaustiveness gate still applies to host TUs while the CUDA
+    # (.cu) TU compiles cleanly. The CXX TUs already cover every BackendKind switch.
+    target_compile_options(${target} PRIVATE
+      -Wall -Wextra $<$<COMPILE_LANGUAGE:CXX>:-Werror=switch> -fexceptions -frtti)
+    target_compile_definitions(${target} PRIVATE __STDC_FORMAT_MACROS SPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_TRACE)
+    # -fvisibility=hidden (Release/MinSizeRel): every engine symbol is hidden except the
+    # declarations the public headers mark LUMICE_API / LUMICE_TEST_API / LUMICE_ANALYTIC_API.
+    # That marks what a shared library MAY export; what each one DOES export is its own export
+    # list (lumice_apply_export_list below), because the same objects go into three libraries
+    # with three different surfaces. Debug leaves everything visible for debugging; the export
+    # lists still narrow each shared library to its surface there.
+    target_compile_options(${target} PRIVATE
+      $<$<CONFIG:Debug>:-O0 -g -ggdb>
+      $<$<CONFIG:Release>:-ffunction-sections -fdata-sections -fvisibility=hidden>
+      $<$<CONFIG:MinSizeRel>:-ffunction-sections -fdata-sections -fvisibility=hidden>)
+    lumice_apply_isa_march(${target})
+  endif()
 
-if(LUMICE_CLANG_CL)
-  # clang-cl reports MSVC=TRUE but IS a Clang frontend that honors -march: measured on the
-  # Windows reference box, -march=x86-64-v3 is ~2.26x real MSVC's release build at W=1, where
-  # cl.exe's own /arch flags move nothing (doc/performance-testing.md). Deliberately NOT folded
-  # into the if(NOT MSVC) block above: that block also turns on -Wall/-Werror=switch,
-  # SPDLOG_ACTIVE_LEVEL=TRACE and -fvisibility=hidden, none of which the Windows release needs
-  # or has been validated under clang-cl. The march-flag mapping itself is the shared
-  # lumice_apply_isa_march() above, not a second copy here. Nothing else: clang-cl otherwise
-  # takes the MSVC platform defaults (/EHsc, /GR, the static CRT chosen in the MSVC block),
-  # which is what makes it a drop-in for the .cu host side that still goes through cl.exe.
-  lumice_apply_isa_march(lumice_obj)
-endif()
+  if(LUMICE_CLANG_CL)
+    # clang-cl reports MSVC=TRUE but IS a Clang frontend that honors -march: measured on the
+    # Windows reference box, -march=x86-64-v3 is ~2.26x real MSVC's release build at W=1, where
+    # cl.exe's own /arch flags move nothing (doc/performance-testing.md). Deliberately NOT folded
+    # into the if(NOT MSVC) block above: that block also turns on -Wall/-Werror=switch,
+    # SPDLOG_ACTIVE_LEVEL=TRACE and -fvisibility=hidden, none of which the Windows release needs
+    # or has been validated under clang-cl. The march-flag mapping itself is the shared
+    # lumice_apply_isa_march() above, not a second copy here. Nothing else: clang-cl otherwise
+    # takes the MSVC platform defaults (/EHsc, /GR, the static CRT chosen in the MSVC block),
+    # which is what makes it a drop-in for the .cu host side that still goes through cl.exe.
+    lumice_apply_isa_march(${target})
+  endif()
+endfunction()
+
+lumice_apply_engine_compile_options(lumice_obj)
+
+# The analytic kernel (src/analytic/ minus its C ABI wrapper): the evaluator, the fiber
+# continuation, the entry measure and component discovery. Its own OBJECT library because three
+# targets link it and lumice_obj must not carry it: liblumice_analytic (behind analytic_api.cpp),
+# the engine libraries (behind the single-path module below), and unit_correctness_test. One list
+# of its sources, here, rather than one per consumer.
+set(lumice_analytic_kernel_src
+  "${PROJ_SRC_DIR}/analytic/path_evaluation.cpp"
+  "${PROJ_SRC_DIR}/analytic/fiber_continuation.cpp"
+  "${PROJ_SRC_DIR}/analytic/path_fiber.cpp"
+  "${PROJ_SRC_DIR}/analytic/entry_measure.cpp"
+  "${PROJ_SRC_DIR}/analytic/discovery.cpp")
+add_library(lumice_analytic_kernel OBJECT ${lumice_analytic_kernel_src})
+target_link_libraries(lumice_analytic_kernel PUBLIC lumice_obj)
+lumice_apply_engine_compile_options(lumice_analytic_kernel)
+
+# The single-path analysis module (src/raypath/: scene config -> the kernel above -> fibers,
+# per-pose detail, the sun-direction grid, its JSON form) and its lumice.h entry point. Linked into
+# liblumice and liblumice_testapi — the shells reach it only through lumice.h — and NOT into
+# liblumice_analytic, whose surface is the kernel alone; that is why it sits outside lumice_obj.
+add_library(lumice_raypath_obj OBJECT
+  "${PROJ_SRC_DIR}/raypath/scene_to_analytic.cpp"
+  "${PROJ_SRC_DIR}/raypath/single_path_analysis.cpp"
+  "${PROJ_SRC_DIR}/raypath/single_path_json.cpp"
+  "${PROJ_SRC_DIR}/server/c_api_single_path.cpp")
+target_link_libraries(lumice_raypath_obj PUBLIC lumice_analytic_kernel lumice_obj)
+lumice_apply_engine_compile_options(lumice_raypath_obj)
 
 # The one way a shared library here decides what it exports: a list generated from the headers
 # that define its surface by scripts/gen_export_list.py (see its docstring), handed to the linker
@@ -993,7 +1029,9 @@ endfunction()
 
 # Library target — static or shared per BUILD_SHARED_LIBS; reuses lumice_obj objects.
 add_library(lumice)
-target_link_libraries(lumice PUBLIC lumice_obj)
+# The single-path module and the kernel under it are linked by name, both of them: an OBJECT
+# library's objects go only into a target that links it directly, never transitively.
+target_link_libraries(lumice PUBLIC lumice_obj PRIVATE lumice_raypath_obj lumice_analytic_kernel)
 if(NOT MSVC)
   target_link_options(lumice PUBLIC
     $<$<CONFIG:MinSizeRel>:$<$<CXX_COMPILER_ID:AppleClang,Clang>:-dead_strip>>
@@ -1053,7 +1091,7 @@ if(BUILD_SHARED_LIBS)
   add_library(lumice_testapi SHARED
     "${PROJ_TEST_DIR}/support/lumice_test_api.cpp")
   # PRIVATE: nothing links against this target — it is only ever dlopen'ed by ctypes.
-  target_link_libraries(lumice_testapi PRIVATE lumice_obj)
+  target_link_libraries(lumice_testapi PRIVATE lumice_obj lumice_raypath_obj lumice_analytic_kernel)
   if(NOT MSVC)
     # Same compile discipline as lumice_obj: hidden unless marked (LUMICE_TEST_API here).
     target_compile_options(lumice_testapi PRIVATE
@@ -1069,7 +1107,9 @@ endif()
 # The published analytic library (doc/analytic-api.md): the same lumice_obj objects again, its
 # own header (src/include/lumice_analytic.h), its own prefix, and an export list naming only the
 # LUMICE_ANALYTIC_* functions — so, unlike lumice_testapi, it does NOT re-export lumice.h. Its
-# own code lives in src/analytic/, outside lumice_obj, so the other two libraries never carry it.
+# own code lives in src/analytic/, outside lumice_obj: the kernel (lumice_analytic_kernel) is also
+# linked into the other two libraries, behind the single-path module, but its C ABI wrapper
+# analytic_api.cpp is compiled here only, so neither of them exports a LUMICE_ANALYTIC_* symbol.
 # Three rules from doc/analytic-api.md section 2:
 #   - only from a build without CUDA (2.3): with CUDA, lumice_obj links cudart PUBLIC, and the
 #     library would fail to load on any machine without the CUDA runtime, for a computation that
@@ -1084,13 +1124,8 @@ endif()
 # section 8.4). Tests in this tree still load it from the build tree.
 if(BUILD_SHARED_LIBS AND NOT LUMICE_CUDA_ENABLED)
   add_library(lumice_analytic SHARED
-    "${PROJ_SRC_DIR}/analytic/analytic_api.cpp"
-    "${PROJ_SRC_DIR}/analytic/fiber_continuation.cpp"
-    "${PROJ_SRC_DIR}/analytic/path_evaluation.cpp"
-    "${PROJ_SRC_DIR}/analytic/path_fiber.cpp"
-    "${PROJ_SRC_DIR}/analytic/entry_measure.cpp"
-    "${PROJ_SRC_DIR}/analytic/discovery.cpp")
-  target_link_libraries(lumice_analytic PRIVATE lumice_obj)
+    "${PROJ_SRC_DIR}/analytic/analytic_api.cpp")
+  target_link_libraries(lumice_analytic PRIVATE lumice_analytic_kernel lumice_obj)
   if(NOT MSVC)
     target_compile_options(lumice_analytic PRIVATE
       $<$<CONFIG:Release>:-fvisibility=hidden>

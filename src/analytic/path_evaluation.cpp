@@ -34,6 +34,21 @@ double Dot3(const double a[3], const double b[3]) {
 
 }  // namespace
 
+Status BuildFaceNormals(const CrystalShape& shape, FaceNormalTable* out, FacePolygonTable* polygons) {
+  LUMICE_ANALYTIC_Crystal crystal{};
+  crystal.kind =
+      shape.kind == CrystalShapeKind::kPyramid ? LUMICE_ANALYTIC_CRYSTAL_PYRAMID : LUMICE_ANALYTIC_CRYSTAL_PRISM;
+  crystal.height = shape.height;
+  for (int i = 0; i < 6; i++) {
+    crystal.face_distance[i] = shape.face_distance[i];
+  }
+  crystal.upper_h = shape.upper_h;
+  crystal.lower_h = shape.lower_h;
+  crystal.upper_wedge_deg = shape.upper_wedge_deg;
+  crystal.lower_wedge_deg = shape.lower_wedge_deg;
+  return BuildFaceNormals(crystal, out, polygons);
+}
+
 int FaceNormalTable::SlotOf(int fn) const {
   for (int s = 0; s < slot_cnt; s++) {
     if (present[s] && face_number[s] == fn) {

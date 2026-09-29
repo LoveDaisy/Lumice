@@ -3,6 +3,7 @@
 
 #include <array>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <nlohmann/json_fwd.hpp>
@@ -99,6 +100,21 @@ struct Error {
 
   static Error ServerError(const std::string& msg) { return Error(ErrorCode::kServerError, msg); }
 };
+
+struct ConfigManager;
+
+// The one owner of "a JSON document becomes a ConfigManager, or a return code". Every entry point
+// that takes a scene document parses through here — the server's CommitConfig (a render) and
+// StartRaypathAnalysis (an analysis), and the C API's LUMICE_AnalyzeSinglePath — so the four
+// failure shapes map onto the Error vocabulary in exactly one place: nlohmann::json::out_of_range
+// → MissingField, any other json exception → InvalidJson, std::exception → InvalidConfig, anything
+// else → InvalidConfig. `validate` runs inside the same try on the parsed document (CommitConfig
+// builds its colour tables there, which throw std::invalid_argument on a config error); nullptr for
+// no extra step. On failure `*out` is untouched: the parse lands in a local first and is only
+// moved into `out` once every step has passed. `caller` prefixes the line logged to `logger` so
+// the entry points stay distinguishable in a log.
+Error ParseConfigManager(const nlohmann::json& config_json, const char* caller, Logger& logger,
+                         const std::function<void(const ConfigManager&)>& validate, ConfigManager* out);
 
 // =============== Result ===============
 struct NoneResult {};
