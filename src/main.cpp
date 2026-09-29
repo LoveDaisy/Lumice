@@ -243,6 +243,7 @@ constexpr int kBenchmarkDrainWindows = 10;
 constexpr std::string_view kSubcommandRender = "render";
 constexpr std::string_view kSubcommandBenchmark = "benchmark";
 constexpr std::string_view kSubcommandAnalyze = "analyze";
+constexpr std::string_view kSubcommandRaypath = "raypath";
 
 // The options every subcommand shares, as help-text fragments defined once so the
 // wording cannot drift between subcommands. Split in three because each subcommand
@@ -397,6 +398,64 @@ void PrintAnalyzeUsage(const char* prog_name) {
             << "  " << prog_name << " analyze -f config.json --symmetry none --rays 5M --seed 7\n";
 }
 
+// The CLI's own bound on --grid, below the engine's: the grid is written inline as JSON, three
+// numbers per cell, and 720 rows (a million cells, tens of MB) is already more than a page reading
+// the file wants to load.
+constexpr int kRaypathMaxGridRows = 720;
+
+void PrintRaypathUsage(const char* prog_name) {
+  std::cout << "Usage: " << prog_name
+            << " raypath -f <config_file> --crystal <id> --path <faces> --target <alt>,<az> [options]\n"
+            << "\n"
+            << "Analyse ONE single-layer raypath of one crystal entry over one sky point: the\n"
+            << "components of the fiber of crystal poses that send the sun into that point, each\n"
+            << "component's poses with per-pose detail (orientation angles, where the sun sits in\n"
+            << "the crystal, transmittances, entry area), and the path's deviation over the whole\n"
+            << "sun-direction sphere. `analyze` lists the raypaths that light the sky; `raypath`\n"
+            << "is what you ask about one of them. The crystal is taken at its nominal shape (the\n"
+            << "centre of every shape distribution) and the sun as a point; both are recorded in\n"
+            << "the output's meta block. Deterministic: the same inputs give the same output.\n"
+            << "\n"
+            << "Output: one JSON document (schema_version 1; fields in doc/raypath-cli-output.md)\n"
+            << "to stdout, or to -o <path> instead (never both). Progress goes to stderr: one line\n"
+            << "when the analysis starts and one when it ends. Unlike `analyze`, the analysis\n"
+            << "cannot be interrupted part-way and has no partial result: Ctrl-C ends the process\n"
+            << "and writes nothing. With -o the file is written to <path>.tmp and renamed over\n"
+            << "<path>, so <path> is never half a file; an interrupted run may leave the .tmp.\n"
+            << "\n"
+            << "Options:\n"
+            << kHelpConfigOption
+            << "  --crystal <id>     The crystal entry (its config id) the path runs through (required).\n"
+            << "  --path <faces>     The raypath as `analyze` prints it, e.g. 3-5 or 3-6-4-8 (face\n"
+            << "                     numbers joined by '-'; a C<id>(...) prefix must name --crystal).\n"
+            << "                     Required. Multi-layer chains ((3-5) -> (1-3)) are refused.\n"
+            << "  --target <alt>,<az>\n"
+            << "                     The sky point (required), as the altitude and azimuth in degrees\n"
+            << "                     — azimuth measured as the sun's is, the same convention as\n"
+            << "                     `analyze --center`.\n"
+            << "  --wavelength <nm>  The wavelength, in [350, 900]. Default: the config's, when its\n"
+            << "                     spectrum is exactly one wavelength; else 550.\n"
+            << "  --events <N>       Seed events of the component search (NOT traced rays: poses\n"
+            << "                     sampled to find where the fiber lies); N may carry a K or M\n"
+            << "                     suffix. At most " << LUMICE_SINGLE_PATH_MAX_SAMPLE_COUNT / 1000000
+            << "M. Default: 1M. More events find small components\n"
+            << "                     a sparser search misses, at a cost roughly linear in N.\n"
+            << "  --grid <rows>      Latitude rows of the sun-direction grid (longitude twice that),\n"
+            << "                     in [0, " << kRaypathMaxGridRows << "]; 0 leaves the grid out. Default: 90.\n"
+            << "  --warm <file>      An earlier output of this subcommand: its component seeds start\n"
+            << "                     the search, so a component found there is not lost. A starting\n"
+            << "                     point only, not a guarantee; outputs of builds for different CPU\n"
+            << "                     tiers need not agree to the last bit.\n"
+            << "  -o <path>          Write the JSON to this file instead of stdout.\n"
+            << kHelpLogAndHelpOptions << "\n"
+            << "Examples:\n"
+            << "  " << prog_name << " raypath -f config.json --crystal 1 --path 3-5 --target 20,25\n"
+            << "  " << prog_name
+            << " raypath -f config.json --crystal 1 --path 3-5 --target 20,25 --grid 180 -o r.json\n"
+            << "  " << prog_name
+            << " raypath -f config.json --crystal 1 --path 3-5 --target 20,25 --events 10M --warm r.json\n";
+}
+
 // Top-level `-h` (no subcommand named): the subcommand overview followed by the
 // implicit subcommand's full option list, so the help a user reaches from the
 // form they already know is complete on its own.
@@ -404,6 +463,7 @@ void PrintTopLevelUsage(const char* prog_name) {
   std::cout << "Usage: " << prog_name << " [render] -f <config_file> [options]\n"
             << "       " << prog_name << " benchmark -f <config_file> [options]\n"
             << "       " << prog_name << " analyze -f <config_file> [options]\n"
+            << "       " << prog_name << " raypath -f <config_file> --crystal <id> --path <faces> --target <alt>,<az>\n"
             << "       " << prog_name << " --version\n"
             << "       " << prog_name << " <subcommand> -h\n"
             << "\n"
@@ -416,6 +476,9 @@ void PrintTopLevelUsage(const char* prog_name) {
             << "                     (`" << prog_name << " benchmark -h` for its options)\n"
             << "  analyze            List the raypath chains that light a region of the sky, as CSV\n"
             << "                     (`" << prog_name << " analyze -h` for its options)\n"
+            << "  raypath            Analyse one raypath over one sky point: its fiber of crystal\n"
+            << "                     poses and its sun-direction sphere, as JSON\n"
+            << "                     (`" << prog_name << " raypath -h` for its options)\n"
             << "\n"
             << "Options for render (the default subcommand):\n";
   PrintRenderOptions();
@@ -1168,6 +1231,24 @@ struct AnalyzeOptions {
   int cli_workers = 0;             // 0 = automatic, as RenderOptions::cli_workers
 };
 
+struct RaypathOptions {
+  SharedOptions shared;
+  std::optional<int> crystal_id;
+  // The raypath as parsed from --path: every layer's faces concatenated, and each layer's count.
+  // More than one layer is kept (not refused here): the analysis refuses it, with its own reason.
+  std::vector<int> faces;
+  std::vector<int> layer_face_counts;
+  std::vector<int> path_crystals;  // the ids of layers written C<id>(...)
+  std::string path_text;           // as typed, for the progress line
+  std::optional<float> target_alt_deg;
+  std::optional<float> target_az_deg;
+  std::optional<float> wavelength_nm;  // nullopt = the engine's choice (recorded in the output)
+  int events = 0;                      // 0 = the engine's default
+  int grid_rows = 90;
+  std::filesystem::path warm_path;    // empty = no warm start
+  std::filesystem::path output_path;  // empty = stdout
+};
+
 // Outcome of offering argv[i] to the option set every subcommand shares.
 enum class SharedStep {
   kNotShared,  // not one of the shared options — the subcommand's own parser decides
@@ -1223,13 +1304,14 @@ SharedStep ParseSharedOption(int argc, char** argv, int& i, SharedOptions& out) 
 #ifdef _WIN32
 // Re-parse file paths from the wide-char command line for full Unicode support.
 // argv[i] on Windows uses the ANSI codepage, which loses non-ASCII characters.
-// Only path arguments (-f, -o, --csv) need wide-char re-parsing; ASCII-only args
+// Only path arguments (-f, -o, --csv, --warm) need wide-char re-parsing; ASCII-only args
 // (the subcommand token, --format, --raw-normalization, --quality, --workers, the
-// analyze request) are safe as-is. `output_dir` / `csv_path` are null for a subcommand that has no -o /
-// --csv: the option was already rejected by that subcommand's parser, so there is
-// nothing to re-read.
+// analyze and raypath requests) are safe as-is. `output_dir` / `csv_path` / `warm_path` are null
+// for a subcommand that has no -o / --csv / --warm: the option was already rejected by that
+// subcommand's parser, so there is nothing to re-read. (`raypath`'s -o names a file, not a
+// directory; it is re-read through `output_dir` all the same.)
 void ReparseWidePathArgs(std::filesystem::path& config_filename, std::filesystem::path* output_dir,
-                         std::filesystem::path* csv_path) {
+                         std::filesystem::path* csv_path, std::filesystem::path* warm_path = nullptr) {
   int wargc = 0;
   wchar_t** wargv = CommandLineToArgvW(GetCommandLineW(), &wargc);
   if (!wargv) {
@@ -1243,6 +1325,8 @@ void ReparseWidePathArgs(std::filesystem::path& config_filename, std::filesystem
       *output_dir = wargv[++i];
     } else if (csv_path && warg == L"--csv" && i + 1 < wargc) {
       *csv_path = wargv[++i];
+    } else if (warm_path && warg == L"--warm" && i + 1 < wargc) {
+      *warm_path = wargv[++i];
     }
   }
   LocalFree(wargv);
@@ -1777,6 +1861,211 @@ int ParseAnalyzeOptions(int argc, char** argv, int first, AnalyzeOptions& opts) 
   return -1;
 }
 
+// `--path <faces>`: the raypath text `analyze` prints — faces joined by '-' ("3-5"), a layer
+// optionally written as "C<id>(3-5)" or "(3-5)", layers joined by "->" (spaces around it are
+// optional). Fills the concatenated faces, the per-layer counts and, for every layer that names a
+// crystal, that id. False for anything else (the caller reports it).
+bool ParseRaypathText(std::string_view text, std::vector<int>* faces, std::vector<int>* layer_counts,
+                      std::vector<int>* named_crystals) {
+  auto trim = [](std::string_view v) {
+    while (!v.empty() && v.front() == ' ') {
+      v.remove_prefix(1);
+    }
+    while (!v.empty() && v.back() == ' ') {
+      v.remove_suffix(1);
+    }
+    return v;
+  };
+  while (true) {
+    const auto arrow = text.find("->");
+    std::string_view layer = trim(text.substr(0, arrow));
+    if (!layer.empty() && (layer.front() == 'C' || layer.front() == 'c')) {
+      const auto open = layer.find('(');
+      const auto id = open == std::string_view::npos ? std::nullopt : ParseStrictUnsigned(layer.substr(1, open - 1));
+      if (!id.has_value() || *id > static_cast<unsigned long long>(std::numeric_limits<int>::max())) {
+        return false;
+      }
+      named_crystals->push_back(static_cast<int>(*id));
+      layer.remove_prefix(open);
+    }
+    if (!layer.empty() && layer.front() == '(') {
+      if (layer.back() != ')') {
+        return false;
+      }
+      layer = layer.substr(1, layer.size() - 2);
+    }
+    int count = 0;
+    while (true) {
+      const auto dash = layer.find('-');
+      const auto face = ParseStrictUnsigned(layer.substr(0, dash));
+      if (!face.has_value() || *face > static_cast<unsigned long long>(std::numeric_limits<int>::max())) {
+        return false;
+      }
+      faces->push_back(static_cast<int>(*face));
+      count++;
+      if (dash == std::string_view::npos) {
+        break;
+      }
+      layer.remove_prefix(dash + 1);
+    }
+    layer_counts->push_back(count);
+    if (arrow == std::string_view::npos) {
+      return true;
+    }
+    text.remove_prefix(arrow + 2);
+  }
+}
+
+// Parses argv[first..) as the `raypath` option set: -f, -v, -d, -h and the request. --backend,
+// --workers and --seed are not options here (the analysis has one route, runs on the calling
+// thread and draws no random numbers), so they are unknown options rather than accepted and
+// ignored. Returns the process exit code, or -1 to proceed to RunRaypath.
+int ParseRaypathOptions(int argc, char** argv, int first, RaypathOptions& opts) {
+  for (int i = first; i < argc; i++) {
+    std::string_view arg = argv[i];
+    if (arg != "--backend") {
+      switch (ParseSharedOption(argc, argv, i, opts.shared)) {
+        case SharedStep::kConsumed:
+          continue;
+        case SharedStep::kHelp:
+          PrintRaypathUsage(argv[0]);
+          return 0;
+        case SharedStep::kError:
+          PrintRaypathUsage(argv[0]);
+          return 1;
+        case SharedStep::kNotShared:
+          break;
+      }
+    }
+    const bool takes_value = arg == "--crystal" || arg == "--path" || arg == "--target" || arg == "--wavelength" ||
+                             arg == "--events" || arg == "--grid" || arg == "--warm" || arg == "-o";
+    if (takes_value && i + 1 >= argc) {
+      std::cerr << "Error: " << arg << " requires an argument\n\n";
+      PrintRaypathUsage(argv[0]);
+      return 1;
+    }
+    if (arg == "--crystal") {
+      const std::string_view value = argv[++i];
+      const auto id = ParseStrictUnsigned(value);
+      if (!id.has_value() || *id > static_cast<unsigned long long>(std::numeric_limits<int>::max())) {
+        std::cerr << "Error: --crystal requires a non-negative integer (a crystal entry's id), got '" << value
+                  << "'\n\n";
+        PrintRaypathUsage(argv[0]);
+        return 1;
+      }
+      opts.crystal_id = static_cast<int>(*id);
+    } else if (arg == "--path") {
+      const std::string_view value = argv[++i];
+      opts.faces.clear();
+      opts.layer_face_counts.clear();
+      opts.path_crystals.clear();
+      if (!ParseRaypathText(value, &opts.faces, &opts.layer_face_counts, &opts.path_crystals)) {
+        std::cerr << "Error: --path must be face numbers joined by '-' (e.g. 3-5 or 3-6-4-8), got '" << value
+                  << "'\n\n";
+        PrintRaypathUsage(argv[0]);
+        return 1;
+      }
+      opts.path_text = std::string(value);
+    } else if (arg == "--target") {
+      const std::string_view value = argv[++i];
+      const auto comma = value.find(',');
+      const auto alt = comma == std::string_view::npos ? std::nullopt : ParseStrictFloat(value.substr(0, comma));
+      const auto az = comma == std::string_view::npos ? std::nullopt : ParseStrictFloat(value.substr(comma + 1));
+      if (!alt.has_value() || !az.has_value()) {
+        std::cerr << "Error: --target must be '<altitude_deg>,<azimuth_deg>' (two numbers), got '" << value << "'\n\n";
+        PrintRaypathUsage(argv[0]);
+        return 1;
+      }
+      if (*alt < -90.0f || *alt > 90.0f) {
+        std::cerr << "Error: --target altitude must be between -90 and 90 degrees, got " << *alt << "\n\n";
+        PrintRaypathUsage(argv[0]);
+        return 1;
+      }
+      opts.target_alt_deg = alt;
+      opts.target_az_deg = az;
+    } else if (arg == "--wavelength") {
+      const std::string_view value = argv[++i];
+      const auto nm = ParseStrictFloat(value);
+      // The range itself is the engine's to decide (it owns the refractive-index table).
+      if (!nm.has_value() || !(*nm > 0.0f)) {
+        std::cerr << "Error: --wavelength must be a positive number of nanometres, got '" << value << "'\n\n";
+        PrintRaypathUsage(argv[0]);
+        return 1;
+      }
+      opts.wavelength_nm = nm;
+    } else if (arg == "--events") {
+      const std::string_view value = argv[++i];
+      const auto events = ParseRayBudget(value);
+      if (!events.has_value() || *events > static_cast<LUMICE_RayCount>(LUMICE_SINGLE_PATH_MAX_SAMPLE_COUNT)) {
+        std::cerr << "Error: --events must be a positive integer with an optional K/M suffix, at most "
+                  << LUMICE_SINGLE_PATH_MAX_SAMPLE_COUNT / 1000000 << "M, got '" << value << "'\n\n";
+        PrintRaypathUsage(argv[0]);
+        return 1;
+      }
+      opts.events = static_cast<int>(*events);
+    } else if (arg == "--grid") {
+      const std::string_view value = argv[++i];
+      const auto rows = ParseStrictUnsigned(value);
+      if (!rows.has_value() || *rows > static_cast<unsigned long long>(kRaypathMaxGridRows)) {
+        std::cerr << "Error: --grid must be an integer in [0, " << kRaypathMaxGridRows << "], got '" << value
+                  << "'\n\n";
+        PrintRaypathUsage(argv[0]);
+        return 1;
+      }
+      opts.grid_rows = static_cast<int>(*rows);
+    } else if (arg == "--warm") {
+      opts.warm_path = argv[++i];
+      if (opts.warm_path.empty()) {
+        std::cerr << "Error: --warm requires a file path\n\n";
+        PrintRaypathUsage(argv[0]);
+        return 1;
+      }
+    } else if (arg == "-o") {
+      opts.output_path = argv[++i];
+      if (opts.output_path.empty()) {
+        std::cerr << "Error: -o requires a file path\n\n";
+        PrintRaypathUsage(argv[0]);
+        return 1;
+      }
+    } else {
+      std::cerr << "Error: unknown option: " << arg << "\n\n";
+      PrintRaypathUsage(argv[0]);
+      return 1;
+    }
+  }
+
+  // The request's required parts, each named when missing.
+  const char* missing = !opts.crystal_id.has_value()     ? "--crystal <id>" :
+                        opts.layer_face_counts.empty()   ? "--path <faces>" :
+                        !opts.target_alt_deg.has_value() ? "--target <alt>,<az>" :
+                                                           nullptr;
+  if (missing != nullptr && !opts.shared.config_filename.empty()) {
+    std::cerr << "Error: " << missing << " is required\n\n";
+    PrintRaypathUsage(argv[0]);
+    return 1;
+  }
+  // A single layer written as C<id>(...) names its crystal; it must be the one --crystal names
+  // (checked here, once both are in, so the two options read the same in either order). A chain
+  // of several layers is left alone: the analysis refuses it for being multi-layer.
+  for (const int id : opts.path_crystals) {
+    if (opts.layer_face_counts.size() == 1 && opts.crystal_id.has_value() && id != *opts.crystal_id) {
+      std::cerr << "Error: --path names crystal C" << id << " but --crystal is " << *opts.crystal_id << "\n\n";
+      PrintRaypathUsage(argv[0]);
+      return 1;
+    }
+  }
+
+#ifdef _WIN32
+  ReparseWidePathArgs(opts.shared.config_filename, &opts.output_path, /*csv_path=*/nullptr, &opts.warm_path);
+#endif
+
+  if (!FinishSharedOptions(opts.shared)) {
+    PrintRaypathUsage(argv[0]);
+    return 1;
+  }
+  return -1;
+}
+
 // --- Subcommand bodies ---------------------------------------------------------
 
 // Benchmark: dual-pass (single-worker + multi-worker) on the legacy CPU route, one steady pass
@@ -2295,6 +2584,111 @@ int RunAnalyze(const AnalyzeOptions& opts) {
   return rc;
 }
 
+// Raypath: one synchronous call into the engine (LUMICE_AnalyzeSinglePath), no server. There is
+// no progress to report mid-call and nothing to interrupt: the call has no cancellation point, so
+// Ctrl-C keeps its default meaning (the process ends, nothing is written) rather than the
+// write-what-you-have that `analyze` gives it.
+int RunRaypath(const RaypathOptions& opts) {
+  const SharedOptions& shared = opts.shared;
+  LUMICE_SetLogLevel(nullptr, shared.log_level);
+
+  LUMICE_Scene* raw_scene = nullptr;
+  if (auto err = LUMICE_SceneFromJsonFile(shared.config_filename.u8string().c_str(), &raw_scene); err != LUMICE_OK) {
+    std::cerr << "Error: failed to load configuration from file '" << shared.config_filename.u8string()
+              << "' (error code " << static_cast<int>(err) << ")\n";
+    return 1;
+  }
+  ScenePtr scene(raw_scene);
+
+  // The warm file is read as text and handed over whole: what it must contain is the engine's to
+  // check, where the writer of that format lives.
+  std::string warm_text;
+  if (!opts.warm_path.empty()) {
+    std::ifstream warm_file(opts.warm_path, std::ios::binary);
+    if (!warm_file.is_open()) {
+      std::cerr << "Error: cannot open --warm file: " << opts.warm_path.u8string() << "\n";
+      return 1;
+    }
+    std::ostringstream buffer;
+    buffer << warm_file.rdbuf();
+    warm_text = buffer.str();
+  }
+  // An -o target that cannot be written is found out before the analysis, not after it.
+  if (!opts.output_path.empty()) {
+    const auto parent = opts.output_path.parent_path();
+    if (!parent.empty() && !std::filesystem::is_directory(parent)) {
+      std::cerr << "Error: -o directory does not exist: " << parent.u8string() << "\n";
+      return 1;
+    }
+  }
+
+  LUMICE_SinglePathRequest request{};
+  request.struct_size = sizeof(request);
+  request.crystal_id = *opts.crystal_id;
+  request.faces = opts.faces.data();
+  request.face_count = static_cast<int>(opts.faces.size());
+  request.layer_face_counts = opts.layer_face_counts.data();
+  request.layer_count = static_cast<int>(opts.layer_face_counts.size());
+  request.target_altitude_deg = *opts.target_alt_deg;
+  request.target_azimuth_deg = *opts.target_az_deg;
+  request.wavelength_nm = opts.wavelength_nm.has_value() ? *opts.wavelength_nm : 0.0;
+  request.sample_count = opts.events;
+  request.sun_grid_lat_count = opts.grid_rows;
+  request.warm_json = warm_text.empty() ? nullptr : warm_text.data();
+  request.warm_json_len = warm_text.size();
+
+  std::cerr << "[raypath] crystal " << *opts.crystal_id << ", path " << opts.path_text << ", target "
+            << *opts.target_alt_deg << "," << *opts.target_az_deg << ": " << (opts.events > 0 ? opts.events : 1000000)
+            << " seed events, grid " << opts.grid_rows << "x" << 2 * opts.grid_rows
+            << (warm_text.empty() ? "" : ", warm start") << "\n";
+  const auto start = std::chrono::steady_clock::now();
+  LUMICE_SinglePathResult* raw_result = nullptr;
+  char err_buf[1024] = {};
+  if (auto err = LUMICE_AnalyzeSinglePath(scene.get(), &request, &raw_result, err_buf, sizeof(err_buf));
+      err != LUMICE_OK) {
+    if (err_buf[0] != '\0') {
+      std::cerr << "Error: " << err_buf << "\n";
+    } else {
+      std::cerr << "Error: single-path analysis failed (error code " << static_cast<int>(err) << ")\n";
+    }
+    return 1;
+  }
+  const std::unique_ptr<LUMICE_SinglePathResult, void (*)(LUMICE_SinglePathResult*)> result(
+      raw_result, LUMICE_SinglePathResultDestroy);
+  const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+
+  size_t len = 0;
+  LUMICE_SinglePathResultToJson(result.get(), nullptr, 0, &len);
+  std::string text(len + 1, '\0');
+  LUMICE_SinglePathResultToJson(result.get(), text.data(), text.size(), &len);
+  text.resize(len);
+  text += '\n';
+
+  // The closing line reads three top-level fields back — for the person at the terminal only; the
+  // document itself is the product.
+  {
+    const nlohmann::json doc = nlohmann::json::parse(text, nullptr, /*allow_exceptions=*/false);
+    std::cerr << "[raypath] done in " << std::fixed << std::setprecision(2) << seconds
+              << " s: " << doc.value("outcome", std::string("?"));
+    if (doc.contains("components")) {
+      std::cerr << ", " << doc["components"].size() << " component(s), " << doc["incomplete"].size() << " incomplete";
+    }
+    std::cerr << std::defaultfloat << "\n";
+  }
+
+  if (opts.output_path.empty()) {
+    std::cout << text;
+    std::cout.flush();
+    return std::cout.good() ? 0 : 1;
+  }
+  std::string error;
+  if (!WriteFileAtomically(opts.output_path, text, &error)) {
+    std::cerr << "Error: " << error << "\n";
+    return 1;
+  }
+  return 0;
+}
+
 }  // namespace
 
 
@@ -2317,7 +2711,7 @@ int main(int argc, char** argv) {
     std::cout << LUMICE_GetVersionString() << "\n";
     return 0;
   }
-  // The first log line of every real run (render / benchmark / analyze): which build wrote
+  // The first log line of every real run (render / benchmark / analyze / raypath): which build wrote
   // everything below it. stderr, like every other diagnostic; stdout stays the product's.
   LOG_INFO("Lumice {}", LUMICE_GetVersionString());
 
@@ -2340,6 +2734,14 @@ int main(int argc, char** argv) {
       return rc;
     }
     return RunAnalyze(opts);
+  }
+
+  if (subcommand == kSubcommandRaypath) {
+    RaypathOptions opts;
+    if (int rc = ParseRaypathOptions(argc, argv, /*first=*/2, opts); rc >= 0) {
+      return rc;
+    }
+    return RunRaypath(opts);
   }
 
   const bool explicit_render = subcommand == kSubcommandRender;

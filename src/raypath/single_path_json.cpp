@@ -19,7 +19,7 @@ constexpr const char* kKeySeed = "seed";
 constexpr int kSeedLength = 9;
 
 // A double as a JSON value: NaN and the infinities (which JSON cannot spell) become null.
-nlohmann::json Num(double x) {
+nlohmann::ordered_json Num(double x) {
   if (!std::isfinite(x)) {
     return nullptr;
   }
@@ -28,7 +28,7 @@ nlohmann::json Num(double x) {
 
 // Rounded to kSunGridSignificantDigits: the shortest decimal of the rounded double then has at most
 // that many digits, which is the whole point (size), and it reads back as the rounded value.
-nlohmann::json GridNum(double x) {
+nlohmann::ordered_json GridNum(double x) {
   if (!std::isfinite(x)) {
     return nullptr;
   }
@@ -37,15 +37,15 @@ nlohmann::json GridNum(double x) {
   return std::strtod(buf, nullptr);
 }
 
-nlohmann::json Array(const double* v, int n) {
-  nlohmann::json a = nlohmann::json::array();
+nlohmann::ordered_json Array(const double* v, int n) {
+  nlohmann::ordered_json a = nlohmann::ordered_json::array();
   for (int i = 0; i < n; i++) {
     a.push_back(Num(v[i]));
   }
   return a;
 }
 
-nlohmann::json Array(const std::vector<double>& v) {
+nlohmann::ordered_json Array(const std::vector<double>& v) {
   return Array(v.data(), static_cast<int>(v.size()));
 }
 
@@ -68,7 +68,7 @@ const char* DistributionName(DistributionType type) {
   return "unknown";
 }
 
-nlohmann::json Conventions() {
+nlohmann::ordered_json Conventions() {
   return {
     { "frames",
       "world: +z is the zenith, the sun at azimuth sun_azimuth_deg; body: the crystal frame, +z its c-axis "
@@ -94,15 +94,15 @@ nlohmann::json Conventions() {
   };
 }
 
-nlohmann::json MetaJson(const SinglePathMetadata& m) {
-  nlohmann::json shape = nlohmann::json::array();
+nlohmann::ordered_json MetaJson(const SinglePathMetadata& m) {
+  nlohmann::ordered_json shape = nlohmann::ordered_json::array();
   for (const auto& s : m.shape) {
     shape.push_back({ { "name", s.name },
                       { "value", Num(s.value) },
                       { "distribution", DistributionName(s.distribution) },
                       { "spread", Num(s.spread) } });
   }
-  nlohmann::json crystal = {
+  nlohmann::ordered_json crystal = {
     { "id", m.crystal_id },
     { "kind", m.crystal_kind },
     { "shape", shape },
@@ -138,13 +138,13 @@ nlohmann::json MetaJson(const SinglePathMetadata& m) {
   };
 }
 
-nlohmann::json TraceEndJson(const TraceEnd& e) {
+nlohmann::ordered_json TraceEndJson(const TraceEnd& e) {
   return { { "status", TraceStatusName(e.status) },
            { "reason", TraceReasonName(e.reason) },
            { "pose_count", e.pose_count } };
 }
 
-nlohmann::json PointJson(const PointDetail& p) {
+nlohmann::ordered_json PointJson(const PointDetail& p) {
   return {
     { "pose", Array(p.pose, 9) },
     { "angles",
@@ -163,8 +163,8 @@ nlohmann::json PointJson(const PointDetail& p) {
   };
 }
 
-nlohmann::json ComponentJson(const FiberComponent& c) {
-  nlohmann::json j = {
+nlohmann::ordered_json ComponentJson(const FiberComponent& c) {
+  nlohmann::ordered_json j = {
     { "kind", ComponentKindName(c.kind) },
     { kKeySeed, Array(c.seed, kSeedLength) },
     { "forward", TraceEndJson(c.forward) },
@@ -175,7 +175,7 @@ nlohmann::json ComponentJson(const FiberComponent& c) {
   }
   j["seed_index"] = c.seed_index;
   j["arclength_increments"] = Array(c.arclength_increments);
-  nlohmann::json points = nlohmann::json::array();
+  nlohmann::ordered_json points = nlohmann::ordered_json::array();
   for (const auto& p : c.points) {
     points.push_back(PointJson(p));
   }
@@ -183,8 +183,8 @@ nlohmann::json ComponentJson(const FiberComponent& c) {
   return j;
 }
 
-nlohmann::json IncompleteJson(const IncompleteComponent& c) {
-  nlohmann::json j = {
+nlohmann::ordered_json IncompleteJson(const IncompleteComponent& c) {
+  nlohmann::ordered_json j = {
     { "cause", IncompleteCauseName(c.cause) },
     { kKeySeed, Array(c.seed, kSeedLength) },
     { "forward", TraceEndJson(c.forward) },
@@ -196,7 +196,7 @@ nlohmann::json IncompleteJson(const IncompleteComponent& c) {
   return j;
 }
 
-nlohmann::json DiscoveryJson(const DiscoverySummary& d) {
+nlohmann::ordered_json DiscoveryJson(const DiscoverySummary& d) {
   return {
     { "complete", d.complete },
     { "pool_count", d.pool_count },
@@ -212,10 +212,10 @@ nlohmann::json DiscoveryJson(const DiscoverySummary& d) {
   };
 }
 
-nlohmann::json SunGridJson(const SunSphereGrid& g) {
-  nlohmann::json deviation = nlohmann::json::array();
-  nlohmann::json valid = nlohmann::json::array();
-  nlohmann::json entry = nlohmann::json::array();
+nlohmann::ordered_json SunGridJson(const SunSphereGrid& g) {
+  nlohmann::ordered_json deviation = nlohmann::ordered_json::array();
+  nlohmann::ordered_json valid = nlohmann::ordered_json::array();
+  nlohmann::ordered_json entry = nlohmann::ordered_json::array();
   for (size_t i = 0; i < g.deviation_rad.size(); i++) {
     deviation.push_back(GridNum(g.deviation_rad[i]));
     valid.push_back(static_cast<int>(g.valid[i]));
@@ -235,7 +235,7 @@ Error Invalid(const std::string& what) {
 }  // namespace
 
 std::string ToJson(const SinglePathResult& result, const std::string& product_version) {
-  nlohmann::json doc;
+  nlohmann::ordered_json doc;
   doc[kKeySchemaVersion] = result.meta.schema_version;
   doc["generator"] = { { "lumice", product_version }, { "analytic_api_version", result.meta.analytic_api_version } };
   doc["conventions"] = Conventions();
@@ -250,12 +250,12 @@ std::string ToJson(const SinglePathResult& result, const std::string& product_ve
                           { "target_separation_deg", Num(pm.target_separation_deg) } };
   } else {
     doc["outcome"] = "discovered";
-    nlohmann::json components = nlohmann::json::array();
+    nlohmann::ordered_json components = nlohmann::ordered_json::array();
     for (const auto& c : result.components) {
       components.push_back(ComponentJson(c));
     }
     doc[kKeyComponents] = std::move(components);
-    nlohmann::json incomplete = nlohmann::json::array();
+    nlohmann::ordered_json incomplete = nlohmann::ordered_json::array();
     for (const auto& c : result.incomplete) {
       incomplete.push_back(IncompleteJson(c));
     }
