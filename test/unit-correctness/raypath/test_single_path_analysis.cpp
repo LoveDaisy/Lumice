@@ -11,6 +11,7 @@
 
 #include <cmath>
 #include <random>
+#include <utility>
 #include <vector>
 
 #include "analytic/path_evaluation.hpp"
@@ -489,6 +490,91 @@ TEST(SinglePathDiscovery, ADarkTargetIsCompleteWithNoComponent) {
   EXPECT_TRUE(r.components.empty());
   EXPECT_TRUE(r.discovery.complete);
   EXPECT_EQ(r.discovery.pool_count, 0);
+  // And the reason is geometric: the target's deviation is below 3-5's minimum deviation.
+  EXPECT_FALSE(r.reach.target_in_range);
+  EXPECT_LT(r.reach.target_deviation_rad, r.reach.deviation_min_rad - r.reach.tolerance_rad);
+}
+
+// ---- reach: the two empty outcomes --------------------------------------------------------------
+
+// 3-6-4-8 (four prism faces: a turn about the c-axis) has D depending only on the sun's latitude in
+// the crystal, from 0 at the pole to exactly 120 degrees at the equator. At (20, 120), delta =
+// 108.94 degrees: a prism of height 0.8 passes rays along part of that fiber, one of height 0.5
+// passes none. At (20, 140), delta = 124.02 degrees exceeds every D: no pose of any crystal reaches
+// it. Both empty results look alike in `components`; reach tells them apart, and — validity being
+// direction-level — says the same thing about both heights.
+TEST(SinglePathReach, SeparatesUnreachableFromBlockedByTheFiniteCrystal) {
+  SinglePathResult tall;
+  SinglePathResult flat;
+  SinglePathResult beyond;
+  ASSERT_TRUE(AnalyzeSinglePath(Scene(Prism(0.8f)), Request({ 3, 6, 4, 8 }, 20.0, 120.0), &tall).Ok());
+  ASSERT_TRUE(AnalyzeSinglePath(Scene(Prism(0.5f)), Request({ 3, 6, 4, 8 }, 20.0, 120.0), &flat).Ok());
+  ASSERT_TRUE(AnalyzeSinglePath(Scene(Prism(0.5f)), Request({ 3, 6, 4, 8 }, 20.0, 140.0), &beyond).Ok());
+
+  EXPECT_FALSE(tall.components.empty());
+  EXPECT_TRUE(tall.reach.target_in_range);
+
+  EXPECT_TRUE(flat.components.empty());
+  EXPECT_TRUE(flat.reach.target_in_range);  // reachable, blocked by the finite crystal
+
+  EXPECT_TRUE(beyond.components.empty());
+  EXPECT_FALSE(beyond.reach.target_in_range);  // geometrically unreachable
+
+  // Direction-level: the crystal's height does not enter the range.
+  EXPECT_EQ(tall.reach.deviation_min_rad, flat.reach.deviation_min_rad);
+  EXPECT_EQ(tall.reach.deviation_max_rad, flat.reach.deviation_max_rad);
+  EXPECT_EQ(tall.reach.tolerance_rad, flat.reach.tolerance_rad);
+}
+
+// The probed range is made of attained values, and the tolerance reaches the exact range [0, 120 deg]
+// that the probe itself approaches from inside at both ends (a cone point at the pole, a smooth
+// maximum at the equator).
+TEST(SinglePathReach, ToleranceCoversTheExactRangeOfARotationPath) {
+  SinglePathResult r;
+  ASSERT_TRUE(AnalyzeSinglePath(Scene(Prism(1.0f)), Request({ 3, 6, 4, 8 }, 20.0, 120.0), &r).Ok());
+  EXPECT_EQ(r.reach.probe_lat_count, kReachProbeLatCount);
+  EXPECT_GT(r.reach.tolerance_rad, 0.0);
+  EXPECT_GE(r.reach.deviation_min_rad, 0.0);
+  EXPECT_LE(r.reach.deviation_max_rad, 2.0 * kPi / 3.0 + 1e-12);
+  EXPECT_LE(r.reach.deviation_min_rad - r.reach.tolerance_rad, 0.0);
+  EXPECT_GE(r.reach.deviation_max_rad + r.reach.tolerance_rad, 2.0 * kPi / 3.0);
+  EXPECT_NEAR(r.reach.target_deviation_rad, r.meta.target_deviation_deg * kDeg, 1e-12);
+}
+
+// A target on the anti-solar vertical (azimuth 180) at altitude a sits at delta = 160 - a degrees
+// from a sun at 20: a target a fraction of the tolerance beyond the probed maximum is still in range,
+// one two tolerances beyond is not.
+TEST(SinglePathReach, TheToleranceBandIsInclusive) {
+  const ConfigManager scene = Scene(Prism(1.0f));
+  SinglePathResult probe;
+  ASSERT_TRUE(AnalyzeSinglePath(scene, Request({ 3, 6, 4, 8 }, 20.0, 120.0), &probe).Ok());
+  const double max_deg = probe.reach.deviation_max_rad / kDeg;
+  const double tol_deg = probe.reach.tolerance_rad / kDeg;
+  for (const auto& [beyond_deg, in_range] : { std::pair{ 0.5 * tol_deg, true }, std::pair{ 2.0 * tol_deg, false } }) {
+    SinglePathResult r;
+    if (!AnalyzeSinglePath(scene, Request({ 3, 6, 4, 8 }, 160.0 - max_deg - beyond_deg, 180.0), &r).Ok()) {
+      ADD_FAILURE() << "analysis failed, beyond by " << beyond_deg << " deg";
+      continue;
+    }
+    EXPECT_EQ(r.reach.target_in_range, in_range) << "beyond by " << beyond_deg << " deg";
+  }
+}
+
+// Reach is geometry: neither the request's sun grid nor the sample count nor warm seeds move it.
+TEST(SinglePathReach, IsIndependentOfGridAndSampling) {
+  const ConfigManager scene = Scene(Prism(0.5f));
+  SinglePathRequest a = Request({ 3, 6, 4, 8 }, 20.0, 120.0);
+  SinglePathRequest b = a;
+  b.sun_grid_lat_count = 90;
+  b.sample_count = 1000;
+  SinglePathResult ra;
+  SinglePathResult rb;
+  ASSERT_TRUE(AnalyzeSinglePath(scene, a, &ra).Ok());
+  ASSERT_TRUE(AnalyzeSinglePath(scene, b, &rb).Ok());
+  EXPECT_EQ(ra.reach.deviation_min_rad, rb.reach.deviation_min_rad);
+  EXPECT_EQ(ra.reach.deviation_max_rad, rb.reach.deviation_max_rad);
+  EXPECT_EQ(ra.reach.tolerance_rad, rb.reach.tolerance_rad);
+  EXPECT_EQ(ra.reach.target_in_range, rb.reach.target_in_range);
 }
 
 // Seeds fed back are Gauss-Newton starts of their own clusters: a second call that has them cannot

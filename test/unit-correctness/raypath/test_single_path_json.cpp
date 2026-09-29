@@ -141,6 +141,12 @@ const char* const kDiscoveredKeys[] = {
   "/discovery/arc_backward_closed_anomaly",
   "/discovery/incomplete_unnamed_event",
   "/discovery/incomplete_not_converged",
+  "/reach/target_in_range",
+  "/reach/target_deviation_rad",
+  "/reach/deviation_min_rad",
+  "/reach/deviation_max_rad",
+  "/reach/tolerance_rad",
+  "/reach/probe_lat_count",
   "/sun_grid/lat_count",
   "/sun_grid/lon_count",
   "/sun_grid/deviation_rad",
@@ -162,6 +168,12 @@ TEST(SinglePathJson, EveryFieldOfADiscoveredResultHasItsKey) {
   EXPECT_EQ(doc["meta"]["crystal"]["shape"][0]["distribution"], "fixed");
   EXPECT_EQ(doc["meta"]["faces"], nlohmann::json({ 3, 5 }));
   EXPECT_FALSE(doc.contains("point_mass"));
+  EXPECT_TRUE(doc["conventions"].contains("reach"));
+  // reach is written right after discovery (fields are only appended).
+  const auto ordered = nlohmann::ordered_json::parse(ToJson(Halo(), "test-version"));
+  auto after_discovery = ordered.find("discovery");
+  ASSERT_NE(after_discovery, ordered.end());
+  EXPECT_EQ((++after_discovery).key(), "reach");
   // A prism carries no wedge angles.
   EXPECT_FALSE(doc["meta"]["crystal"].contains("upper_wedge_deg"));
 }
@@ -238,7 +250,7 @@ TEST(SinglePathJson, RankZeroWritesThePointMassAndNoDiscovery) {
     EXPECT_TRUE(doc.contains(nlohmann::json::json_pointer(key))) << key;
   }
   EXPECT_EQ(doc["point_mass"]["direction"].size(), 3u);
-  for (const char* key : { "components", "incomplete", "discovery" }) {
+  for (const char* key : { "components", "incomplete", "discovery", "reach" }) {
     EXPECT_FALSE(doc.contains(key)) << key;
   }
   // A point-mass output is still a valid warm-seed source: it simply holds none.

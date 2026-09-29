@@ -15,7 +15,11 @@ What is pinned — the subcommand's own contract; the analysis's physics is the 
     component and a rows × 2 rows grid, rank-0 ``1-2`` is a point mass;
   * refusals the analysis owns reach the user with their reason — a multi-layer chain is
     ``multi_layer_unsupported``;
-  * ``--warm`` — every seed of an earlier output comes back as a component seed.
+  * ``--warm`` — every seed of an earlier output comes back as a component seed;
+  * ``reach`` tells an unreachable target from a reachable one — ``3-5`` on its halo ring is in
+    range, ``3-6-4-8`` at 124° from the sun (beyond its 120° maximum deviation) is not, with no
+    component either way for the latter. Which empty result is which is the unit layer's to pin
+    with a finite crystal that blocks a reachable fiber; here only the deterministic flag is read.
 The field-level shape of the document is the unit layer's (test_single_path_json.cpp) and is
 not re-asserted here beyond what the CLI adds.
 """
@@ -109,7 +113,20 @@ def test_halo_path_is_discovered_with_a_closed_component_and_the_grid(halo):
     for key in ("deviation_rad", "valid", "entry_measure"):
         assert len(grid[key]) == _GRID_ROWS * 2 * _GRID_ROWS, key
     assert any(grid["valid"]), "a 3-5 path is valid somewhere on the sun sphere"
+    assert doc["reach"]["target_in_range"] is True
     assert "[raypath]" in halo.stderr
+
+
+def test_a_target_beyond_the_paths_deviation_range_is_out_of_reach():
+    # (20, 140) sits 124.02° from the sun; 3-6-4-8 deviates light by at most 120°.
+    result = _raypath("--crystal", "1", "--path", "3-6-4-8", "--target", "20,140", "--events", "1k", "--grid", "0")
+    assert result.returncode == 0, result.stderr
+    doc = json.loads(result.stdout)
+    assert doc["outcome"] == "discovered"
+    assert doc["components"] == []
+    reach = doc["reach"]
+    assert reach["target_in_range"] is False
+    assert reach["target_deviation_rad"] > reach["deviation_max_rad"] + reach["tolerance_rad"]
 
 
 def test_rank_zero_path_is_a_point_mass():
@@ -117,7 +134,7 @@ def test_rank_zero_path_is_a_point_mass():
     assert result.returncode == 0, result.stderr
     doc = json.loads(result.stdout)
     assert doc["outcome"] == "point_mass"
-    assert "components" not in doc and "sun_grid" not in doc
+    assert "components" not in doc and "sun_grid" not in doc and "reach" not in doc
     assert len(doc["point_mass"]["direction"]) == 3
 
 
