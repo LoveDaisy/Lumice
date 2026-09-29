@@ -116,6 +116,9 @@ TEST(SinglePathConvert, TakesTheCentreSlotOfEveryDistribution) {
 // The pyramid's fields reach the kernel in the simulator's factory order (simulator.cpp
 // CrystalMaker: CreatePyramid(wedge_u, wedge_l, h_pyr_u, h_prs, h_pyr_l, d)): with every height and
 // wedge distinct, a swapped field moves some corner, so equal corners slot by slot pin the mapping.
+// The kernel's corners are the engine's refined to double from the double fields (BuildFaceNormals),
+// so "equal" is to the engine's float rounding: 1e-6 of the crystal's size, where a swapped field
+// moves a corner by a tenth of it.
 TEST(SinglePathConvert, PyramidFieldsReachTheSimulatorsFactoryArguments) {
   PyramidCrystalParam p = Pyramid(0.8f, 0.3f, 0.6f, 28.0f, 40.0f);
   p.d_[1] = Fixed(1.2f);
@@ -149,7 +152,7 @@ TEST(SinglePathConvert, PyramidFieldsReachTheSimulatorsFactoryArguments) {
     }
     for (int k = 0; k < g.face_vtx_cnt[s]; k++) {
       for (int x = 0; x < 3; x++) {
-        EXPECT_EQ(polygons.corner[s][k][x], g.face_vtx[(s * kCrystalGeomMaxVtxPerFace + k) * 3 + x]);
+        EXPECT_NEAR(polygons.corner[s][k][x], g.face_vtx[(s * kCrystalGeomMaxVtxPerFace + k) * 3 + x], 1e-6);
       }
     }
   }

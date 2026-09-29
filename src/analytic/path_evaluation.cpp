@@ -32,6 +32,65 @@ double Dot3(const double a[3], const double b[3]) {
   return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 }
 
+// How far, relative to the crystal's size, a float closed-form corner may sit from a plane it lies
+// on: the engine rounds each corner coordinate to float (about 6e-8 relative), and its own vertex
+// merge works at 5 float epsilons of scale (geo3d_closedform.cpp GapToleranceForScale).
+constexpr double kCornerPlaneTolerance = 1e-5;
+
+double Det3(const double a[3], const double b[3], const double c[3]) {
+  return a[0] * (b[1] * c[2] - b[2] * c[1]) - a[1] * (b[0] * c[2] - b[2] * c[0]) + a[2] * (b[0] * c[1] - b[1] * c[0]);
+}
+
+// A face-polygon corner in double: the engine's float corner decides which planes meet there (the
+// face `slot` itself and every present face whose plane passes within `tolerance`), and the corner
+// is the intersection of the best-conditioned triple of them (the largest |det| of normals that
+// includes `slot`), solved in double from the double normals and `offsets`. Topology stays the
+// engine's float decision (doc/analytic-api.md section 4.1); only the coordinates are refined, from
+// about 1e-7 relative to the double rounding of the closed form. A corner with fewer than three
+// independent planes (no such corner exists on a closed-form crystal) keeps the float value.
+void RefineCorner(const FaceNormalTable& table, const double* offsets, int slot, double tolerance,
+                  const double corner[3], double out[3]) {
+  int on[kMaxFaceSlots];
+  int on_count = 0;
+  for (int t = 0; t < table.slot_cnt; t++) {
+    if (t != slot && table.present[t] && std::fabs(Dot3(table.normal[t], corner) - offsets[t]) <= tolerance) {
+      on[on_count++] = t;
+    }
+  }
+  double best = 0.0;
+  int best_i = -1;
+  int best_j = -1;
+  for (int i = 0; i < on_count; i++) {
+    for (int j = i + 1; j < on_count; j++) {
+      const double d = std::fabs(Det3(table.normal[slot], table.normal[on[i]], table.normal[on[j]]));
+      if (d > best) {
+        best = d;
+        best_i = on[i];
+        best_j = on[j];
+      }
+    }
+  }
+  for (int c = 0; c < 3; c++) {
+    out[c] = corner[c];
+  }
+  if (best_i < 0 || best < 1e-6) {
+    return;
+  }
+  // Cramer's rule on N x = o, rows the three normals.
+  const double* n0 = table.normal[slot];
+  const double* n1 = table.normal[best_i];
+  const double* n2 = table.normal[best_j];
+  const double o[3] = { offsets[slot], offsets[best_i], offsets[best_j] };
+  const double det = Det3(n0, n1, n2);
+  for (int c = 0; c < 3; c++) {
+    double col[3][3] = { { n0[0], n0[1], n0[2] }, { n1[0], n1[1], n1[2] }, { n2[0], n2[1], n2[2] } };
+    for (int r = 0; r < 3; r++) {
+      col[r][c] = o[r];
+    }
+    out[c] = Det3(col[0], col[1], col[2]) / det;
+  }
+}
+
 }  // namespace
 
 Status BuildFaceNormals(const CrystalShape& shape, FaceNormalTable* out, FacePolygonTable* polygons) {
@@ -123,6 +182,39 @@ Status BuildFaceNormals(const LUMICE_ANALYTIC_Crystal& crystal, FaceNormalTable*
   }
   if (polygons != nullptr) {
     static_assert(kMaxFaceCorners == kCrystalGeomMaxVtxPerFace, "one face polygon must fit the engine's layout");
+    // The plane offsets o_s (n_s . x <= o_s) in double from the caller's double inputs, by the
+    // engine's own closed-form formulas: side and cone faces by ClosedFormHexFacePlane, the basal
+    // cut by ClosedFormPyramidBasalHeights (the prism's is z = +-h/2, ComputeClosedFormPrism).
+    double offsets[kMaxFaceSlots]{};
+    const double height = std::fabs(crystal.height);
+    double z_top = 0.5 * height;
+    double z_bot = -0.5 * height;
+    if (crystal.kind == LUMICE_ANALYTIC_CRYSTAL_PYRAMID) {
+      ClosedFormPyramidBasalHeights(crystal.upper_wedge_deg, crystal.lower_wedge_deg, std::fabs(crystal.upper_h),
+                                    height, std::fabs(crystal.lower_h), crystal.face_distance, &z_top, &z_bot);
+    }
+    double scale = 0.0;
+    for (int s = 0; s < g.face_cnt; s++) {
+      if (!g.face_present[s]) {
+        continue;
+      }
+      if (s == 0) {
+        offsets[s] = z_top;
+      } else if (s == 1) {
+        offsets[s] = -z_bot;
+      } else {
+        double plane[4];
+        ClosedFormHexFacePlane(s, a1, a2, 0.5 * height, crystal.face_distance[(s - 2) % 6], plane);
+        offsets[s] = -plane[3] / std::sqrt(plane[0] * plane[0] + plane[1] * plane[1] + plane[2] * plane[2]);
+      }
+      for (int k = 0; k < g.face_vtx_cnt[s]; k++) {
+        for (int c = 0; c < 3; c++) {
+          scale = std::fmax(scale, std::fabs(g.face_vtx[(s * kCrystalGeomMaxVtxPerFace + k) * 3 + c]));
+        }
+      }
+    }
+    // A float corner lies on its planes to a few float ulps of the crystal's size.
+    const double corner_tolerance = kCornerPlaneTolerance * scale;
     double min_edge = std::numeric_limits<double>::infinity();
     for (int s = 0; s < g.face_cnt; s++) {
       if (!g.face_present[s]) {
@@ -131,9 +223,11 @@ Status BuildFaceNormals(const LUMICE_ANALYTIC_Crystal& crystal, FaceNormalTable*
       const int cnt = g.face_vtx_cnt[s];
       polygons->corner_cnt[s] = cnt;
       for (int k = 0; k < cnt; k++) {
+        double corner[3];
         for (int c = 0; c < 3; c++) {
-          polygons->corner[s][k][c] = g.face_vtx[(s * kCrystalGeomMaxVtxPerFace + k) * 3 + c];
+          corner[c] = g.face_vtx[(s * kCrystalGeomMaxVtxPerFace + k) * 3 + c];
         }
+        RefineCorner(*out, offsets, s, corner_tolerance, corner, polygons->corner[s][k]);
       }
       for (int k = 0; k < cnt; k++) {
         const double* p = polygons->corner[s][k];
