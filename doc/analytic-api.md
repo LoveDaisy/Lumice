@@ -565,7 +565,7 @@ also requires `jacobian_diagnostics`, `step_diagnostics`, `branch_diagnostics`,
 satisfies §5–§10. v0 carries only the kinematic fields the product needs. Diagnostics and weights
 enter in wave 2 as a `struct_size`-compatible extension of the result structs (§8.2), after LI's
 explore `fiber-diagnostics-contract` has converged on their contract (§9 item 8). v0 has no
-diagnostics switch.
+diagnostics switch. The wave-2 field set (author, 2026-09-29) is fixed in §10 ("Wave 2 scope and certification"); it is narrower than the list above.
 
 ### 4.4 Memory and error conventions **(design)**
 
@@ -1248,7 +1248,7 @@ functions. The first real module's work opens this list. **The state described h
 | 5 | ~~Export-list mechanism on each platform, Windows export path, header location, prefix gate in `check_policies.py`, the stripping flag.~~ **Answered** — see §2.5 (as built): `scripts/gen_export_list.py` + `lumice_apply_export_list`, `.def` on Windows, `src/include/lumice_analytic.h`, rule `analytic-symbol-scope`. | The target and export-list work (done) |
 | 6 | ~~Callback forwarding implementation; removing the console sink only in this library.~~ **Answered** — see §6 (as built): `GetDefaultConsoleSink()` removed at load time in `src/analytic/analytic_api.cpp`, `AnalyticCallbackSink` attached by `LUMICE_ANALYTIC_SetLogCallback`. | The log-sink work (done) |
 | 7 | ~~External consumer smoke test (C + Python ctypes, install tree only), with `symmetry_semantics` in any fixture.~~ **Answered** — see §8.7 (as built): `test/e2e-correctness/test_external_consumer_smoke.py` + `external_consumer_smoke/`, consuming the prefix named by `LUMICE_ANALYTIC_INSTALL_DIR`; it compares no face sequence and says so, `symmetry_semantics: none`, in its docstrings (§3.3 rule 2). | The external-consumer smoke test (done) |
-| 8 | ~~Does `FiberResult` need LI §9.3's diagnostics and the entry cross-section `A_P`?~~ **Answered** — two steps (author, 2026-09-28): v0 returns the point list only; diagnostics + weights enter in wave 2 as a `struct_size`-compatible extension, once LI's explore `fiber-diagnostics-contract` has converged (§4.3, §10). | Author and owner, 2026-09-28 |
+| 8 | ~~Does `FiberResult` need LI §9.3's diagnostics and the entry cross-section `A_P`?~~ **Answered** — two steps (author, 2026-09-28): v0 returns the point list only; diagnostics + weights enter in wave 2 as a `struct_size`-compatible extension, once LI's explore `fiber-diagnostics-contract` has converged (§4.3, §10). **Landing (author, 2026-09-29):** certification is by output comparison only, so the extension is the per-point `normal_jacobian` (`J_perp`), `singular_values`, `jacobian_available` and boundary margins; `step` / `closure` / `terminal` diagnostics and `component_scope` do not enter the C ABI (§10). | Author and owner, 2026-09-28 |
 | 9 | ~~Surface crystal *degradation* (apex collapse, dropped face) as result data, not only as a log line (§6).~~ **Answered for v0** — not surfaced: a dropped face shows only as that face number being rejected, an apex collapse only in the log. A result field for it goes with the wave-2 diagnostics extension (§4.1). | The first-module implementation (`EvaluatePath`, 2026-09-29) |
 | 10 | Parallelism inside `TraceFiberBatch` (v0: none; caller parallelises). Revisit only with a measured batch where binding-side threading is the bottleneck. **As built**: none; the batch shares one crystal build and starts no threads, and concurrent calls are safe (§5.3). No measurement has asked for more. | The first-module implementation (`TraceFiber`, 2026-09-29); reopen on a measured bottleneck |
 | 11 | ~~Re-read LI `docs/phase1-math-contract.md` §9 before implementing: this draft mirrors it as of 2026-09-28, and LI's §12 lists open items that may move it.~~ **Answered** — re-read at LI `bfbd042`: §9 unchanged in shape; §6.4 / §10.1 had moved (the step-aware closure trigger), and that is what is built (§4.3). LI's §9.1 also says problem construction "MUST not import or invoke Lumice" — a rule LI revises on its side when it adopts this library. | The first-module implementation (`TraceFiber`, 2026-09-29); LI, on adoption |
@@ -1272,6 +1272,24 @@ dependency one wave later.
 **Parity fixtures flow LI → Lumice.** LI exports them at a pinned revision; this repo copies them in
 and runs them in CI. A change goes one way: LI changes first → re-export → this repo's parity goes
 red → fix the C++.
+
+### 10.0 Wave 2 scope and certification **(author, 2026-09-29)**
+
+- **Certification is output comparison (parity only).** LI retires its JAX fiber continuation on
+  the strength of this library's outputs matching LI's parity fixtures, not on a conformance matrix
+  over internal diagnostics. LI `docs/phase1-math-contract.md` §11.1 gives the per-item output-level
+  criteria.
+- **Module A v1 field set.** `FiberResult` gains, as a `struct_size`-compatible extension (§8.2):
+  per-point `normal_jacobian` (`J_perp`), `singular_values`, `jacobian_available`, and boundary
+  margins. Field meaning follows LI `docs/analytic-parity-fixtures.md` §3.1 and §3.2 ("Wave 2 adds
+  per-pose arrays"). `step_diagnostics`, `closure_diagnostics`, `terminal_payload` and
+  `component_scope` are not part of the C ABI.
+- **Module B spec is LI `docs/band-sum-contract.md`** (LI main `fa8dadd`). v1 scope is its §1; it is
+  not restated here.
+- **Spec divergence rule** (LI `band-sum-contract.md` §10): if this implementation reads a different
+  semantics than LI's, the spec and the parity data are changed (on LI's side), not either
+  implementation patched locally to accommodate the other.
+- Signatures of the new C functions are written back here when they are implemented.
 
 ### 10.1 Parity with LI (as built)
 
