@@ -964,7 +964,8 @@ set(lumice_analytic_kernel_src
   "${PROJ_SRC_DIR}/analytic/path_fiber.cpp"
   "${PROJ_SRC_DIR}/analytic/entry_measure.cpp"
   "${PROJ_SRC_DIR}/analytic/discovery.cpp"
-  "${PROJ_SRC_DIR}/analytic/path_rank.cpp")
+  "${PROJ_SRC_DIR}/analytic/path_rank.cpp"
+  "${PROJ_SRC_DIR}/analytic/pose_density.cpp")
 add_library(lumice_analytic_kernel OBJECT ${lumice_analytic_kernel_src})
 target_link_libraries(lumice_analytic_kernel PUBLIC lumice_obj)
 lumice_apply_engine_compile_options(lumice_analytic_kernel)
