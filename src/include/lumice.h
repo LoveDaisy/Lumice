@@ -499,7 +499,14 @@ extern "C" {
 // only (one row = one physical class); LUMICE_GetCrystalSymmetry and LUMICE_IsPApplicable /
 // LUMICE_IsBApplicable keep their meaning and serve that grouping and the filter editor's hints.
 // No struct changed.
-#define LUMICE_API_VERSION 449
+//
+// ADDED (v4.50): single-path analysis, a pure append — LUMICE_SinglePathRequest,
+// LUMICE_SinglePathResult (opaque), LUMICE_AnalyzeSinglePath, LUMICE_SinglePathResultToJson and
+// LUMICE_SinglePathResultDestroy: the fiber, per-pose detail and sun-direction sphere of ONE
+// single-layer raypath of one crystal entry over one sky point (doc/raypath-analysis.md section
+// 5.1.8; the `Lumice raypath` subcommand; output fields in doc/raypath-cli-output.md). No existing
+// symbol or struct changed.
+#define LUMICE_API_VERSION 450
 #define LUMICE_MAX_RENDER_RESULTS 16
 #define LUMICE_MAX_STATS_RESULTS 1
 
@@ -2978,6 +2985,79 @@ LUMICE_API LUMICE_ErrorCode LUMICE_GetActiveBackend(LUMICE_Server* server, int* 
 // its "single" (warmup) vs "multi" (steady) passes are NOT parallel — callers use
 // this to collapse the GPU benchmark to one steady pass. Returns 1 (GPU route) or 0.
 LUMICE_API int LUMICE_WillUseGpuRoute(int preferred_backend);
+
+// =============== Single-Path Analysis ===============
+// Everything computed once ONE single-layer raypath of ONE crystal entry has been chosen: the
+// components of the fiber of crystal poses that send the sun into a given sky point, each
+// component's poses with per-pose detail, and the path's deviation over the whole sun-direction
+// sphere (doc/raypath-analysis.md section 5.1.8). Synchronous and deterministic (the same scene and
+// request give the same result); it runs on the calling thread, is independent of any
+// LUMICE_Server, and cannot be cancelled — sample_count bounds its cost.
+//
+// The result is an OPAQUE handle read through its JSON form (LUMICE_SinglePathResultToJson; the
+// fields are documented in doc/raypath-cli-output.md), not a C struct mirror. Deliberate: the result
+// holds variable-length nested lists (components -> points -> per-face arrays) whose fields a user
+// interface will keep adding to, and the engine is the one place it is serialized, so the CLI and
+// the GUI cannot each grow a copy. Typed readers may be appended later without changing this
+// handle. The JSON is produced once, inside LUMICE_AnalyzeSinglePath, and the handle is immutable
+// afterwards: ToJson only copies it, so concurrent reads are safe and the two calls of a
+// length-query-then-fetch always agree.
+
+// Request. `struct_size` MUST be set to sizeof(LUMICE_SinglePathRequest) of the header the caller
+// compiled against: fields are only ever appended, and a size smaller than this version's is
+// rejected (LUMICE_ERR_INVALID_VALUE).
+typedef struct LUMICE_SinglePathRequest {
+  size_t struct_size;
+  int crystal_id;  // a crystal entry of the scene
+  // The raypath as the user wrote it, in Lumice face numbers (entry, internal reflections, exit):
+  // `layer_count` scattering layers, layer i holding layer_face_counts[i] faces, all layers' faces
+  // concatenated in `faces` (face_count = the sum). Only a single layer is analysed; more than one
+  // is refused as multi_layer_unsupported by the analysis itself, so a shell hands over whatever it
+  // parsed and does not decide that on its own.
+  const int* faces;
+  int face_count;
+  const int* layer_face_counts;
+  int layer_count;
+  double target_altitude_deg;  // the sky point; azimuth measured as the sun's (`analyze --center`)
+  double target_azimuth_deg;
+  // <= 0 or NaN: unset — the scene's wavelength if its spectrum is exactly one discrete wavelength,
+  // else 550 nm. Otherwise must lie in [350, 900].
+  double wavelength_nm;
+  int sample_count;        // discovery seed events, [1, 100000000]; 0 = the default 1000000
+  int sun_grid_lat_count;  // latitude rows of the sun-direction grid (longitude twice that); 0 = no grid
+  // Warm starts: the text of an earlier LUMICE_SinglePathResultToJson output (its component seeds
+  // are read back); NULL or length 0 for none. The same JSON schema version is required.
+  const char* warm_json;
+  size_t warm_json_len;
+} LUMICE_SinglePathRequest;
+
+typedef struct LUMICE_SinglePathResult_ LUMICE_SinglePathResult;
+
+// Analyse. On LUMICE_OK *out is a new handle the caller owns (release with
+// LUMICE_SinglePathResultDestroy). On failure *out is NULL and, when err_buf is non-NULL and
+// err_size > 0, err_buf holds a NUL-terminated (possibly truncated) message of the form
+// "<reason>: <detail>", where <reason> is a stable lower-case name — for a request the analysis
+// refuses: unknown_crystal_id, multi_layer_unsupported, invalid_path, face_not_in_crystal,
+// wavelength_out_of_range, invalid_target, invalid_argument, crystal_rejected, path_infeasible;
+// for a scene that does not parse: invalid_scene; for NULL arguments: null_arg; for an internal
+// failure: internal. Return codes: LUMICE_ERR_NULL_ARG (NULL scene,
+// request or out; faces / layer_face_counts NULL with a non-zero count), LUMICE_ERR_INVALID_VALUE
+// (struct_size too small, layer_face_counts not summing to face_count,
+// or a request the analysis refuses — err_buf says which), LUMICE_ERR_INVALID_CONFIG /
+// _INVALID_JSON / _MISSING_FIELD (the scene does not parse, as LUMICE_CommitScene would report it),
+// LUMICE_ERR_UNKNOWN (an internal failure).
+LUMICE_API LUMICE_ErrorCode LUMICE_AnalyzeSinglePath(const LUMICE_Scene* scene, const LUMICE_SinglePathRequest* request,
+                                                     LUMICE_SinglePathResult** out, char* err_buf, size_t err_size);
+
+// The result's JSON document (UTF-8, schema_version 1), with the snprintf-style buffer contract of
+// LUMICE_SceneToJson: out_buf == NULL (or buf_size == 0) queries the length only; a too-small
+// buffer is truncated but always NUL-terminated; *out_len (when non-NULL) is always the full
+// length. LUMICE_ERR_NULL_ARG for a NULL result.
+LUMICE_API LUMICE_ErrorCode LUMICE_SinglePathResultToJson(const LUMICE_SinglePathResult* result, char* out_buf,
+                                                          size_t buf_size, size_t* out_len);
+
+// Release a result. NULL is a no-op.
+LUMICE_API void LUMICE_SinglePathResultDestroy(LUMICE_SinglePathResult* result);
 
 // =============== Product Version ===============
 // The product version string: "X.Y.Z" for a tagged release build (LUMICE_RELEASE_BUILD=ON) or
