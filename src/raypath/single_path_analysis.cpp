@@ -1,5 +1,6 @@
 #include "raypath/single_path_analysis.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <limits>
 #include <string>
@@ -210,6 +211,19 @@ class PathContext {
                                             nullptr);
   }
 
+  // D_P(u): the deviation between the incident and outgoing directions with the sun at u, as
+  // discovery's band measures it (discovery.cpp BuildBand). Returns validity; `deviation` is set
+  // only when valid. The one definition of D that the sun grid and the reach probe both read.
+  bool DeviationAtSun(const double u[3], double* deviation) const {
+    double out[3];
+    if (!EvaluateAtSun(u, out)) {
+      return false;
+    }
+    const double incident[3] = { -u[0], -u[1], -u[2] };
+    *deviation = std::acos(Clamp1(analytic::so3::Dot3(out, incident)));
+    return true;
+  }
+
   double EntryMeasure(const double incident_body[3]) { return corridor_.Evaluate(incident_body, n_).value; }
 
   PointDetail Detail(const double pose[9], double residual_norm) {
@@ -358,18 +372,125 @@ void BuildSunGrid(int lat_count, PathContext* ctx, SunSphereGrid* grid) {
     for (int j = 0; j < grid->lon_count; j++) {
       double u[3];
       SunSphereGridCellCentre(*grid, i, j, u);
-      double out[3];
-      if (!ctx->EvaluateAtSun(u, out)) {
+      double deviation = 0.0;
+      if (!ctx->DeviationAtSun(u, &deviation)) {
         continue;
       }
       const size_t cell = static_cast<size_t>(i) * static_cast<size_t>(grid->lon_count) + static_cast<size_t>(j);
       const double incident[3] = { -u[0], -u[1], -u[2] };
-      // Deviation as discovery's band measures it (discovery.cpp BuildBand).
-      grid->deviation_rad[cell] = std::acos(Clamp1(analytic::so3::Dot3(out, incident)));
+      grid->deviation_rad[cell] = deviation;
       grid->valid[cell] = 1;
       grid->entry_measure[cell] = ctx->EntryMeasure(incident);
     }
   }
+}
+
+// Bisection steps along one grid edge: the edge is at most one cell (0.5 deg at 360 rows) long, so
+// 50 halvings leave ~1e-17 rad, whose square root (D's behaviour at the boundary) is ~3e-9 rad.
+constexpr int kReachBisectionSteps = 50;
+
+struct DeviationRange {
+  bool any = false;
+  double lo = 0.0;
+  double hi = 0.0;
+  void Add(double d) {
+    lo = any ? std::min(lo, d) : d;
+    hi = any ? std::max(hi, d) : d;
+    any = true;
+  }
+};
+
+// The last valid point on the segment from a valid u_valid towards an invalid u_invalid (normalised
+// chords; both are one grid cell apart). Adds D there.
+void AddBoundaryDeviation(const PathContext& ctx, const double u_valid[3], const double u_invalid[3],
+                          DeviationRange* range) {
+  double a[3] = { u_valid[0], u_valid[1], u_valid[2] };
+  double b[3] = { u_invalid[0], u_invalid[1], u_invalid[2] };
+  double best = 0.0;
+  ctx.DeviationAtSun(a, &best);
+  for (int step = 0; step < kReachBisectionSteps; step++) {
+    double m[3] = { a[0] + b[0], a[1] + b[1], a[2] + b[2] };
+    const double norm = analytic::so3::Norm3(m);
+    for (double& c : m) {
+      c /= norm;
+    }
+    double deviation = 0.0;
+    if (ctx.DeviationAtSun(m, &deviation)) {
+      best = deviation;
+      std::copy(m, m + 3, a);
+    } else {
+      std::copy(m, m + 3, b);
+    }
+  }
+  range->Add(best);
+}
+
+// Range of D on the reach probe at `lat_count` rows: valid cell centres plus the bisected validity
+// boundary on every valid/invalid neighbour edge (latitude neighbours, and longitude neighbours
+// across the periodic seam).
+DeviationRange ProbeDeviationRange(const PathContext& ctx, int lat_count) {
+  SunSphereGrid layout;
+  layout.lat_count = lat_count;
+  layout.lon_count = 2 * lat_count;
+  const int lon_count = layout.lon_count;
+  const size_t cells = static_cast<size_t>(lat_count) * static_cast<size_t>(lon_count);
+  std::vector<double> centre(3 * cells);
+  std::vector<uint8_t> valid(cells, 0);
+  DeviationRange range;
+  for (int i = 0; i < lat_count; i++) {
+    for (int j = 0; j < lon_count; j++) {
+      const size_t cell = static_cast<size_t>(i) * static_cast<size_t>(lon_count) + static_cast<size_t>(j);
+      double* u = centre.data() + 3 * cell;
+      SunSphereGridCellCentre(layout, i, j, u);
+      double deviation = 0.0;
+      if (ctx.DeviationAtSun(u, &deviation)) {
+        valid[cell] = 1;
+        range.Add(deviation);
+      }
+    }
+  }
+  auto edge = [&](size_t p, size_t q) {
+    if (valid[p] != valid[q]) {
+      const size_t v = valid[p] ? p : q;
+      const size_t w = valid[p] ? q : p;
+      AddBoundaryDeviation(ctx, centre.data() + 3 * v, centre.data() + 3 * w, &range);
+    }
+  };
+  for (int i = 0; i < lat_count; i++) {
+    for (int j = 0; j < lon_count; j++) {
+      const size_t cell = static_cast<size_t>(i) * static_cast<size_t>(lon_count) + static_cast<size_t>(j);
+      edge(cell, static_cast<size_t>(i) * static_cast<size_t>(lon_count) + static_cast<size_t>((j + 1) % lon_count));
+      if (i + 1 < lat_count) {
+        edge(cell, cell + static_cast<size_t>(lon_count));
+      }
+    }
+  }
+  return range;
+}
+
+ReachSummary ProbeReach(const PathContext& ctx, double target_deviation) {
+  ReachSummary reach;
+  reach.probe_lat_count = kReachProbeLatCount;
+  reach.target_deviation_rad = target_deviation;
+  const DeviationRange fine = ProbeDeviationRange(ctx, kReachProbeLatCount);
+  const DeviationRange coarse = ProbeDeviationRange(ctx, kReachProbeLatCount / 2);
+  if (!fine.any) {
+    reach.deviation_min_rad = std::numeric_limits<double>::quiet_NaN();
+    reach.deviation_max_rad = std::numeric_limits<double>::quiet_NaN();
+    reach.tolerance_rad = std::numeric_limits<double>::quiet_NaN();
+    reach.target_in_range = true;
+    return reach;
+  }
+  reach.deviation_min_rad = fine.lo;
+  reach.deviation_max_rad = fine.hi;
+  // A coarse probe that sees nothing valid has no change to offer: nothing is excluded.
+  // Half-order convergence bound (single_path_analysis.hpp, ReachSummary): shortfall <= c / (sqrt 2 - 1).
+  constexpr double kHalfOrderBound = 2.41421356237309504880;  // 1 + sqrt 2
+  reach.tolerance_rad =
+      coarse.any ? kHalfOrderBound * std::max(std::fabs(fine.lo - coarse.lo), std::fabs(fine.hi - coarse.hi)) : kPi;
+  reach.target_in_range = target_deviation >= reach.deviation_min_rad - reach.tolerance_rad &&
+                          target_deviation <= reach.deviation_max_rad + reach.tolerance_rad;
+  return reach;
 }
 
 }  // namespace
@@ -525,6 +646,7 @@ Error AnalyzeSinglePath(const ConfigManager& config, const SinglePathRequest& re
 
   // ---- discovery and the fibers ----
   result.outcome = Outcome::kDiscovered;
+  result.reach = ProbeReach(ctx, delta);
   analytic::IceDiscovery discovery(table, polygons, ctx.Slots().data(), ctx.SlotCount(), ctx.Index(), ctx.Incident());
   const analytic::DiscoveryOutput found =
       discovery.Discover(meta.target_direction, request.sample_count, meta.band_half_width_rad,

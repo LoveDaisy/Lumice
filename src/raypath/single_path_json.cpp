@@ -91,6 +91,12 @@ nlohmann::ordered_json Conventions() {
       "lon_count, u = (cos lat cos lon, cos lat sin lon, sin lat) in the body frame; the longitude seam is periodic; "
       "arrays rounded to 9 significant digits" },
     { "completeness", kCompletenessNote },
+    { "reach",
+      "whether delta (target deviation) lies in the range of D over every valid sun direction, probed on its own "
+      "grid (independent of sun_grid) with the validity boundary bisected; false: delta is outside "
+      "[deviation_min_rad - tolerance_rad, deviation_max_rad + tolerance_rad], no pose of the infinite crystal "
+      "reaches the target at the probe's resolution; true: not excluded, which promises no component (the valid "
+      "set need not be connected, and the finite crystal may pass no ray along the fiber)" },
   };
 }
 
@@ -228,6 +234,14 @@ nlohmann::ordered_json SunGridJson(const SunSphereGrid& g) {
            { "entry_measure", std::move(entry) } };
 }
 
+nlohmann::ordered_json ReachJson(const ReachSummary& r) {
+  return {
+    { "target_in_range", r.target_in_range },          { "target_deviation_rad", Num(r.target_deviation_rad) },
+    { "deviation_min_rad", Num(r.deviation_min_rad) }, { "deviation_max_rad", Num(r.deviation_max_rad) },
+    { "tolerance_rad", Num(r.tolerance_rad) },         { "probe_lat_count", r.probe_lat_count },
+  };
+}
+
 Error Invalid(const std::string& what) {
   return { ErrorCode::kInvalidArgument, "warm seeds: " + what };
 }
@@ -261,6 +275,7 @@ std::string ToJson(const SinglePathResult& result, const std::string& product_ve
     }
     doc[kKeyIncomplete] = std::move(incomplete);
     doc["discovery"] = DiscoveryJson(result.discovery);
+    doc["reach"] = ReachJson(result.reach);
   }
   // Absent when the grid was not asked for (--grid 0).
   if (result.sun_grid.lat_count > 0) {

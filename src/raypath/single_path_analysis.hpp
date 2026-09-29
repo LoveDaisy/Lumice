@@ -261,6 +261,41 @@ struct SunSphereGrid {
 
 void SunSphereGridCellCentre(const SunSphereGrid& grid, int lat_index, int lon_index, double u[3]);
 
+// ---- whether the target's deviation is in the path's range at all ------------------------------
+
+// Separates the two empty outcomes a shell otherwise shows alike ("0 components"): the target's
+// deviation delta lies outside the range of D over every valid sun direction (no pose of the
+// infinite crystal reaches the target), or inside it (a pose may reach it; an empty component list
+// then means the finite crystal passes no ray along the fiber, or the search missed it).
+//
+// The range is probed on its own fixed grid, never on the request's sun_grid, so the answer does not
+// move with --grid. Samples are the valid cell centres (the sun_grid layout at kReachProbeLatCount
+// rows) plus, on every edge between a valid and an invalid neighbour cell, the validity boundary
+// found by bisection: D is square-root singular at a total-reflection or grazing boundary, where
+// cell centres alone converge at half order and no fixed tolerance covers their shortfall. The
+// tolerance is derived from the probe's own convergence: if an end's shortfall shrinks as h^p with
+// the cell size h, the change c between the half-resolution probe and the full one bounds the full
+// one's shortfall by c / (2^p - 1). tolerance_rad takes p = 1/2, the worst order D shows (measured
+// against a 2880-row reference on eleven prism and pyramid paths: shortfall / c peaks at 2.04, where
+// an extremum sits where a validity boundary meets another; a pole's cone point gives 0.88, a smooth
+// extremum less), so tolerance_rad = (1 + sqrt 2) c. A valid region thin enough to hold no cell
+// centre is still missed, so target_in_range == false means "not reached at the probe's
+// resolution", not a certificate.
+// target_in_range == true does not promise a component either: the valid set need not be connected.
+constexpr int kReachProbeLatCount = 360;
+
+struct ReachSummary {
+  int probe_lat_count = 0;
+  // Attained values of D (every sample is an evaluated valid direction); NaN when the probe finds no
+  // valid direction at all, in which case target_in_range is true (nothing is excluded).
+  double deviation_min_rad = 0.0;
+  double deviation_max_rad = 0.0;
+  double target_deviation_rad = 0.0;
+  double tolerance_rad = 0.0;
+  // delta in [deviation_min_rad - tolerance_rad, deviation_max_rad + tolerance_rad].
+  bool target_in_range = true;
+};
+
 // ---- result -----------------------------------------------------------------------------------
 
 enum class Outcome {
@@ -275,6 +310,7 @@ struct SinglePathResult {
   std::vector<FiberComponent> components;
   std::vector<IncompleteComponent> incomplete;
   DiscoverySummary discovery;
+  ReachSummary reach;  // kDiscovered only
   SunSphereGrid sun_grid;
 };
 
