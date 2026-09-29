@@ -69,13 +69,14 @@ not know. `schema_version` is bumped only when a field changes meaning or is rem
 | `schema_version` | int | always | 1 |
 | `generator.lumice` | string | always | The Lumice version that wrote it |
 | `generator.analytic_api_version` | int | always | The analytic kernel's API version |
-| `conventions` | object of strings | always | This page's §4 in words, so a document explains itself: `frames`, `directions`, `target_azimuth`, `pose`, `angles`, `sun_in_crystal`, `units`, `null`, `sun_grid`, `completeness` |
+| `conventions` | object of strings | always | This page's §4 in words, so a document explains itself: `frames`, `directions`, `target_azimuth`, `pose`, `angles`, `sun_in_crystal`, `units`, `null`, `sun_grid`, `completeness`, `reach` |
 | `meta` | object | always | Every conversion from the scene to the kernel, as applied (§3.2) |
 | `outcome` | `"discovered"` \| `"point_mass"` | always | Which of the two branches below is present |
 | `point_mass` | object | `outcome == "point_mass"` | §3.5 |
 | `components` | array | `outcome == "discovered"` | §3.3; may be empty |
 | `incomplete` | array | `outcome == "discovered"` | §3.4; may be empty |
 | `discovery` | object | `outcome == "discovered"` | §3.6 |
+| `reach` | object | `outcome == "discovered"` | §3.8; written whether or not `components` is empty |
 | `sun_grid` | object | `--grid` > 0 (either outcome) | §3.7 |
 
 ### 3.2 `meta`
@@ -156,6 +157,64 @@ u     = (cos lat cos lon, cos lat sin lon, sin lat)     # sun direction, body fr
 No row sits on a pole, so no cell is degenerate; the longitude seam is periodic (a contour tracer
 should wrap it). The deviation depends on the pose only through `u`.
 
+### 3.8 `reach`
+
+Whether the target's deviation δ (`meta.target.deviation_deg`, here in radians) lies in the range
+of the path's deviation D over **every** valid sun direction — that is, whether any pose of the
+*infinite* crystal could send the sun into the target at all.
+
+| Key | Meaning |
+|---|---|
+| `target_in_range` | `true` when δ ∈ [`deviation_min_rad` − `tolerance_rad`, `deviation_max_rad` + `tolerance_rad`] |
+| `target_deviation_rad` | δ |
+| `deviation_min_rad`, `deviation_max_rad` | The probed range of D; both are values D actually takes at an evaluated valid sun direction. `null` if the probe finds no valid direction (then `target_in_range` is `true`: nothing is excluded) |
+| `tolerance_rad` | How far the probed range may fall short of the true one (below) |
+| `probe_lat_count` | Rows of the probe grid (360; longitude twice that) |
+
+How it is probed. The probe has its own grid, the `sun_grid` layout at 360 rows, independent of
+`--grid`, `--events` and `--warm`: the same request gives the same `reach` whatever those are,
+including `--grid 0`. Its samples are the valid cell centres plus, on every edge between a valid
+and an invalid neighbouring cell, the validity boundary found by bisection. The boundary matters
+because D is square-root singular where the path reaches total reflection or grazing incidence:
+there cell centres alone approach the range's end at half order in the cell size (the `3-5`
+path's maximum still moves by 0.027 rad between 360 and 720 rows of centres), and no fixed
+tolerance covers that. The tolerance is read off the probe's own convergence: `tolerance_rad` =
+(1 + √2) × the change of the range's ends between a 180-row and the 360-row probe, which bounds the
+360-row shortfall whenever it shrinks at least as fast as the square root of the cell size.
+Measured against a 2880-row probe on eleven prism and pyramid paths, the actual shortfall is at
+most 0.85 × `tolerance_rad`; the largest ratios come from an extremum where two validity
+boundaries meet, the smallest from a smooth extremum. The probe costs about 0.01 s.
+
+What each answer means:
+
+- `false` — no valid sun direction reaches δ **at the probe's resolution**. It is not a
+  certificate: a valid region too thin to contain a single cell centre is missed entirely.
+- `true` — δ is not excluded. It does **not** promise a component: the valid set need not be
+  connected, so δ can lie between two pieces' ranges; and when D does reach δ, the finite crystal
+  may pass no ray along that fiber (below).
+
+`reach` is direction-level: validity depends on the face normals and the refractive index, not
+on the crystal's size. Two prisms of different height give the same `reach`; the effect of the
+finite crystal is read from `entry_measure`, not from here.
+
+### 3.9 Empty results
+
+A document can end with nothing to plot in three ways, told apart as follows:
+
+| `outcome` | `components` | `reach.target_in_range` | Reading |
+|---|---|---|---|
+| `point_mass` | absent | absent | Rank 0: the outgoing direction does not depend on the pose; there is no fiber. `point_mass.target_separation_deg` says how far the one sky point is from the target |
+| `discovered` | `[]` | `false` | Geometrically unreachable: no pose of the infinite crystal sends the sun into the target (at the probe's resolution) |
+| `discovered` | `[]` | `true` | Not excluded, none found: the fiber may exist while the finite crystal passes no ray along it (`entry_measure` is 0 everywhere on it), or the search missed a component (`discovery.complete` is procedural; try more `--events`), or the valid set's gaps leave δ unreached. This document does not tell these apart |
+| `discovered` | non-empty | `true` | Components found |
+
+Worked example, prism path `3-6-4-8` (four prism faces: a turn about the c-axis, whose D depends
+only on the sun's latitude in the crystal, from 0 at the pole to exactly 120° at the equator; sun
+at altitude 20°, 550 nm). At the target (20°, 120°), δ = 108.94°: a prism of height 0.8 gives two
+arcs, one of height 0.5 gives `[]` with `target_in_range: true` — the fiber exists, the shorter
+prism passes no ray along it. At (20°, 140°), δ = 124.02° is beyond 120° and the result is `[]` with
+`target_in_range: false` for either height.
+
 ## 4. Conventions
 
 - Frames: world `+z` is the zenith, azimuth counter-clockwise from `+x` seen from `+z`; body is the
@@ -188,6 +247,8 @@ contraction, so outputs of two tiers need not agree to the last bit.
 ```js
 const doc = await (await fetch("r.json")).json();
 if (doc.outcome === "discovered") {
+  if (doc.components.length === 0)                // §3.9: unreachable, or reachable and none found
+    note(doc.reach.target_in_range ? "no component found" : "target out of this path's reach");
   const g = doc.sun_grid;                          // contour: g.deviation_rad at doc.meta.target.deviation_deg * PI/180
   for (const c of doc.components)
     plot(c.points.map(p => p.sun_in_crystal));    // each component is a curve on that contour
