@@ -130,10 +130,12 @@ def test_a_target_beyond_the_paths_deviation_range_is_out_of_reach():
 
 
 def test_rank_zero_path_is_a_point_mass():
-    result = _raypath("--crystal", "1", "--path", "1-2", "--target", "20,25", "--grid", "0")
+    # A decimal target also pins that the request is recorded as typed (double, not a float round trip).
+    result = _raypath("--crystal", "1", "--path", "1-2", "--target", "20.1,25.3", "--grid", "0")
     assert result.returncode == 0, result.stderr
     doc = json.loads(result.stdout)
     assert doc["outcome"] == "point_mass"
+    assert (doc["meta"]["target"]["altitude_deg"], doc["meta"]["target"]["azimuth_deg"]) == (20.1, 25.3)
     assert "components" not in doc and "sun_grid" not in doc and "reach" not in doc
     assert len(doc["point_mass"]["direction"]) == 3
 
@@ -167,3 +169,12 @@ def test_warm_seeds_come_back_as_component_seeds(tmp_path, halo):
     found = [c["seed"] for c in second["components"]]
     for seed in seeds:
         assert any(max(abs(a - b) for a, b in zip(seed, s)) < 1e-9 for s in found), seed
+
+
+def test_an_empty_warm_file_is_refused_not_run_cold(tmp_path):
+    empty = tmp_path / "empty.json"
+    empty.write_text("")
+    result = _raypath(*_REQUEST, "--warm", str(empty))
+    assert result.returncode == 1
+    assert "--warm file is empty" in result.stderr, result.stderr
+    assert result.stdout == ""

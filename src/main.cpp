@@ -20,6 +20,7 @@
 #include <string_view>
 #include <system_error>
 #include <thread>
+#include <type_traits>
 #include <vector>
 // clang-format off
 #ifdef _WIN32
@@ -1240,10 +1241,10 @@ struct RaypathOptions {
   std::vector<int> layer_face_counts;
   std::vector<int> path_crystals;  // the ids of layers written C<id>(...)
   std::string path_text;           // as typed, for the progress line
-  std::optional<float> target_alt_deg;
-  std::optional<float> target_az_deg;
-  std::optional<float> wavelength_nm;  // nullopt = the engine's choice (recorded in the output)
-  int events = 0;                      // 0 = the engine's default
+  std::optional<double> target_alt_deg;
+  std::optional<double> target_az_deg;
+  std::optional<double> wavelength_nm;  // nullopt = the engine's choice (recorded in the output)
+  int events = 0;                       // 0 = the engine's default
   int grid_rows = 90;
   std::filesystem::path warm_path;    // empty = no warm start
   std::filesystem::path output_path;  // empty = stdout
@@ -1382,7 +1383,8 @@ std::optional<unsigned long long> ParseStrictUnsigned(std::string_view text) {
 // std::stof's "consume a prefix" behaviour is the same footgun, so the full-consumption check
 // applies. Leading whitespace is rejected as above. inf / nan spellings are rejected too — a
 // degree value is a number the user typed, not a special value.
-std::optional<float> ParseStrictFloat(std::string_view text) {
+template <typename Real>
+std::optional<Real> ParseStrictReal(std::string_view text) {
   if (text.empty()) {
     return std::nullopt;
   }
@@ -1392,9 +1394,13 @@ std::optional<float> ParseStrictFloat(std::string_view text) {
   }
   const std::string owned(text);
   std::size_t parsed_len = 0;
-  float value = 0.0f;
+  Real value = 0;
   try {
-    value = std::stof(owned, &parsed_len);
+    if constexpr (std::is_same_v<Real, float>) {
+      value = std::stof(owned, &parsed_len);
+    } else {
+      value = std::stod(owned, &parsed_len);
+    }
   } catch (const std::exception&) {
     return std::nullopt;
   }
@@ -1402,6 +1408,16 @@ std::optional<float> ParseStrictFloat(std::string_view text) {
     return std::nullopt;
   }
   return value;
+}
+
+std::optional<float> ParseStrictFloat(std::string_view text) {
+  return ParseStrictReal<float>(text);
+}
+
+// The same, in double: for values written back verbatim into a double-precision record
+// (`raypath`'s JSON `meta`), where a float round trip would show as 20.100000381469727.
+std::optional<double> ParseStrictDouble(std::string_view text) {
+  return ParseStrictReal<double>(text);
 }
 
 // The `--workers <N>` value at argv[i+1], for the two subcommands that size a CPU worker pool
@@ -1969,14 +1985,14 @@ int ParseRaypathOptions(int argc, char** argv, int first, RaypathOptions& opts) 
     } else if (arg == "--target") {
       const std::string_view value = argv[++i];
       const auto comma = value.find(',');
-      const auto alt = comma == std::string_view::npos ? std::nullopt : ParseStrictFloat(value.substr(0, comma));
-      const auto az = comma == std::string_view::npos ? std::nullopt : ParseStrictFloat(value.substr(comma + 1));
+      const auto alt = comma == std::string_view::npos ? std::nullopt : ParseStrictDouble(value.substr(0, comma));
+      const auto az = comma == std::string_view::npos ? std::nullopt : ParseStrictDouble(value.substr(comma + 1));
       if (!alt.has_value() || !az.has_value()) {
         std::cerr << "Error: --target must be '<altitude_deg>,<azimuth_deg>' (two numbers), got '" << value << "'\n\n";
         PrintRaypathUsage(argv[0]);
         return 1;
       }
-      if (*alt < -90.0f || *alt > 90.0f) {
+      if (*alt < -90.0 || *alt > 90.0) {
         std::cerr << "Error: --target altitude must be between -90 and 90 degrees, got " << *alt << "\n\n";
         PrintRaypathUsage(argv[0]);
         return 1;
@@ -1985,9 +2001,9 @@ int ParseRaypathOptions(int argc, char** argv, int first, RaypathOptions& opts) 
       opts.target_az_deg = az;
     } else if (arg == "--wavelength") {
       const std::string_view value = argv[++i];
-      const auto nm = ParseStrictFloat(value);
+      const auto nm = ParseStrictDouble(value);
       // The range itself is the engine's to decide (it owns the refractive-index table).
-      if (!nm.has_value() || !(*nm > 0.0f)) {
+      if (!nm.has_value() || !(*nm > 0.0)) {
         std::cerr << "Error: --wavelength must be a positive number of nanometres, got '" << value << "'\n\n";
         PrintRaypathUsage(argv[0]);
         return 1;
@@ -2612,6 +2628,12 @@ int RunRaypath(const RaypathOptions& opts) {
     std::ostringstream buffer;
     buffer << warm_file.rdbuf();
     warm_text = buffer.str();
+    // An empty file is most often a failed earlier `> r.json`: refuse it rather than quietly run
+    // cold (the plan's "fail loudly, never ignore" for --warm).
+    if (warm_text.empty()) {
+      std::cerr << "Error: --warm file is empty: " << opts.warm_path.u8string() << "\n";
+      return 1;
+    }
   }
   // An -o target that cannot be written is found out before the analysis, not after it.
   if (!opts.output_path.empty()) {
@@ -2664,17 +2686,10 @@ int RunRaypath(const RaypathOptions& opts) {
   text.resize(len);
   text += '\n';
 
-  // The closing line reads three top-level fields back — for the person at the terminal only; the
-  // document itself is the product.
-  {
-    const nlohmann::json doc = nlohmann::json::parse(text, nullptr, /*allow_exceptions=*/false);
-    std::cerr << "[raypath] done in " << std::fixed << std::setprecision(2) << seconds
-              << " s: " << doc.value("outcome", std::string("?"));
-    if (doc.contains("components")) {
-      std::cerr << ", " << doc["components"].size() << " component(s), " << doc["incomplete"].size() << " incomplete";
-    }
-    std::cerr << std::defaultfloat << "\n";
-  }
+  // The closing line reports time and size only: the document's schema is the engine's alone
+  // (single_path_json), so the shell does not read fields back out of it.
+  std::cerr << "[raypath] done in " << std::fixed << std::setprecision(2) << seconds << " s, " << text.size()
+            << " bytes" << std::defaultfloat << "\n";
 
   if (opts.output_path.empty()) {
     std::cout << text;

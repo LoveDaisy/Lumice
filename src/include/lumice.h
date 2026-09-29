@@ -3008,13 +3008,16 @@ LUMICE_API int LUMICE_WillUseGpuRoute(int preferred_backend);
 // afterwards: ToJson only copies it, so concurrent reads are safe and the two calls of a
 // length-query-then-fetch always agree.
 
-// Request. `struct_size` MUST be set to sizeof(LUMICE_SinglePathRequest) of the header the caller
-// compiled against: fields are only ever appended, and a size smaller than this version's is
-// rejected (LUMICE_ERR_INVALID_VALUE).
 // The largest sample_count a request may ask for: the call cannot be cancelled, so its cost is
 // bounded here instead.
 #define LUMICE_SINGLE_PATH_MAX_SAMPLE_COUNT 100000000
+// The largest sun_grid_lat_count a request may ask for (longitude is twice that): bounds the
+// grid's memory for any caller, not only the CLI (which caps --grid lower still).
+#define LUMICE_SINGLE_PATH_MAX_SUN_GRID_LAT_COUNT 1800
 
+// Request. `struct_size` MUST be set to sizeof(LUMICE_SinglePathRequest) of the header the caller
+// compiled against: fields are only ever appended, and a size smaller than this version's is
+// rejected (LUMICE_ERR_INVALID_VALUE).
 typedef struct LUMICE_SinglePathRequest {
   size_t struct_size;
   int crystal_id;  // a crystal entry of the scene
@@ -3033,7 +3036,8 @@ typedef struct LUMICE_SinglePathRequest {
   // else 550 nm. Otherwise must lie in [350, 900].
   double wavelength_nm;
   int sample_count;        // discovery seed events, [1, LUMICE_SINGLE_PATH_MAX_SAMPLE_COUNT]; 0 = default 1000000
-  int sun_grid_lat_count;  // latitude rows of the sun-direction grid (longitude twice that); 0 = no grid
+  int sun_grid_lat_count;  // latitude rows of the sun-direction grid (longitude twice that), [0,
+                           // LUMICE_SINGLE_PATH_MAX_SUN_GRID_LAT_COUNT]; 0 = no grid
   // Warm starts: the text of an earlier LUMICE_SinglePathResultToJson output (its component seeds
   // are read back); NULL or length 0 for none. The same JSON schema version is required.
   const char* warm_json;
