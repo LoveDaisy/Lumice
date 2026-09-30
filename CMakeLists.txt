@@ -593,6 +593,7 @@ set(lumice_core_src
   "${PROJ_SRC_DIR}/core/backend/cpu_trace_backend.cpp"
   "${PROJ_SRC_DIR}/core/chain_id_table.cpp"
   "${PROJ_SRC_DIR}/core/crystal.cpp"
+  "${PROJ_SRC_DIR}/core/crystal_param.cpp"
   "${PROJ_SRC_DIR}/core/device_filter_desc.cpp"
   "${PROJ_SRC_DIR}/core/filter_spec.cpp"
   "${PROJ_SRC_DIR}/core/geo3d.cpp"
