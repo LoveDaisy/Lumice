@@ -7,6 +7,7 @@
 // include it from src/gui/ or ship it to consumers.
 
 #include <nlohmann/json.hpp>
+#include <string>
 
 #include "include/lumice_scene.h"
 
@@ -199,5 +200,27 @@ nlohmann::json CrystalShapeToJson(const LUMICE_CrystalParam& cr);
 // whose symmetry queries read a wire crystal through core's CrystalConfig parser. Throws
 // std::invalid_argument on an invalid crystal.
 nlohmann::json CrystalToJson(const LUMICE_CrystalParam& cr, int id);
+
+// ---------- The codec's per-item halves the scene bridge also calls ----------
+// The Add*/Set* family builds the handle's root one item at a time through the SAME encoders
+// ConfigToJson is assembled from, the renderer getter reads one entry back through the same
+// decoder JsonToConfig runs over the whole array, and JsonToScene parses through JsonToConfig
+// itself. They are declared here only because the codec and the bridge are separate translation
+// units (scene_config_to_json.cpp / scene_json_to_config.cpp / c_api_scene.cpp); nothing outside
+// the scene layer should need them. Each keeps the contract stated at its definition.
+
+// Encoders, defined in scene_config_to_json.cpp.
+std::string SymmetryBitsToString(int bits);
+void EncodeSimpleFilterBody(const LUMICE_FilterParam& f, nlohmann::json& j);
+nlohmann::json CompositionArrayToJson(const LUMICE_ComplexComposition& comp);
+nlohmann::json RendererToJson(const LUMICE_RenderParam& r, int id);
+nlohmann::json ScatterLayerToJson(const LUMICE_ScatterLayer& layer);
+nlohmann::json ColorClassToJson(const LUMICE_ColorClass& cls);
+const char* ColorModeToString(int mode);
+const char* RayAllocationModeToString(int mode);
+
+// Decoders, defined in scene_json_to_config.cpp.
+LUMICE_ErrorCode JsonToRenderer(const nlohmann::json& rj, LUMICE_RenderParam* out);
+LUMICE_ErrorCode JsonToConfig(const nlohmann::json& root, ConfigScratch* out);
 
 #endif  // SERVER_C_API_SCENE_INTERNAL_H_
