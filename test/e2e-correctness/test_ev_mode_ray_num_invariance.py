@@ -5,20 +5,26 @@ picture" means two incompatible things, and the mode is the choice between them:
 
   absolute: the BRIGHTNESS holds. The scale is ``k / emitted_energy`` and emitted energy is a
             deterministic function of the ray budget, so the scale is exactly inversely
-            proportional to it: 30x the rays, 1/30 the scale, the same displayed image. The
+            proportional to it: 10x the rays, 1/10 the scale, the same displayed image. The
             config alone determines how bright the output is.
 
-  relative: the APPEARANCE holds. The scale is ``k / P99(this frame)``, which follows the picture
-            rather than the budget, so displayed brightness is NOT determined by the config --
-            the ray count co-determines it -- while the tonal distribution stays put.
+  relative: the APPEARANCE holds. The scale is ``k`` over the scene's sky P99 (``anchor_l99_sky``,
+            taken on a fixed full-sky plane), an order statistic of the accumulated Monte-Carlo
+            sky that follows the picture rather than the budget, so displayed brightness is NOT
+            determined by the config -- the ray count co-determines it -- while the tonal
+            distribution stays put.
 
 Both are asserted here, on one scene, and so is the fact that they are different measurements:
-the absolute anchor's ``scale x ray_num`` is constant to 0.13% while the relative anchor's is off
-by 13-23%. Without that third case, the first two could be one property measured twice.
+the absolute anchor's ``scale x ray_num`` is constant to 0.12% while the relative anchor's is off
+by 37-46% (seeds 42 / 7, 100k -> 1M rays). Without that third case, the first two could be one
+property measured twice. Those figures replace the 0.13% / 13-23% once recorded here: the high
+end of the sweep was 3M then, and the relative anchor was still the frame's own P99 before it
+moved to the sky plane. The high end is 1M because 500k is too close to the low end for the
+third case -- relative's drift there read 3.2% / 0.2%, under its 5% floor.
 
 Honest limit, stated so a later reader does not over-read case 3. On this fixture lit-p50 is
-stable in BOTH modes (absolute -0.08/-0.17 stop, relative -0.23/-0.22 stop over 30x rays), so the
-appearance caliber does NOT by itself separate them. Every measurement in this repo that HAS
+stable in BOTH modes (absolute -0.225/-0.212 stop, relative 0.000/+0.085 stop over 10x rays), so
+the appearance caliber does NOT by itself separate them. Every measurement in this repo that HAS
 separated them on the ray-count axis needed a far sparser scene than this one, where the f=8
 coarse anchor sits ~64x under the fine anchor. What separates the modes here is the anchor case,
 and the parity/additivity suites elsewhere. Case 3 says relative keeps its own promise; it does
@@ -48,24 +54,24 @@ BASE_CONFIG = get_project_root() / "test" / "e2e" / "configs" / "ev_mode_ray_num
 
 _SEED = 42
 _RAY_NUM_LOW = 100_000
-_RAY_NUM_HIGH = 3_000_000
+_RAY_NUM_HIGH = 1_000_000
 
-# scale x ray_num, as a deviation from constant. Absolute measures 0.13% on both seeds tried
-# (42 and 7) -- the residual of the recovery, not of the renderer, since the relation is exact.
-# The band is ~15x that and ~10x under what relative does.
+# scale x ray_num, as a deviation from constant. Absolute measures 0.12% / 0.11% on the two seeds
+# tried (42 and 7) -- the residual of the recovery, not of the renderer, since the relation is
+# exact. The band is ~17x that and ~19x under what relative does.
 _ABS_ANCHOR_INVARIANCE_MAX = 0.02
 
-# The same quantity for relative: 12.9% (seed 42) and 23.4% (seed 7). The floor sits between the
+# The same quantity for relative: 37.2% (seed 42) and 46.1% (seed 7). The floor sits between the
 # two bands rather than beside either, so neither number is doing the separating on its own.
 _REL_ANCHOR_DRIFT_MIN = 0.05
 
-# Displayed total energy, in stops. Absolute measures +0.008 / -0.029 -- the residual is the
+# Displayed total energy, in stops. Absolute measures -0.004 / +0.005 -- the residual is the
 # Monte-Carlo wobble in what fraction of emitted energy lands, which is a property of the
 # simulation and not of the anchor.
 _ABS_BRIGHTNESS_STOPS = 0.15
 
-# lit-p50, in stops. Relative measures -0.228 / -0.218 here. The band is ~2x that and inside the
-# -0.84 stop this repo has measured on a harsher scene, so it is a claim about THIS fixture.
+# lit-p50, in stops. Relative measures 0.000 / +0.085 here. The band is ~6x the larger and inside
+# the -0.84 stop this repo has measured on a harsher scene, so it is a claim about THIS fixture.
 _REL_APPEARANCE_STOPS = 0.5
 
 
@@ -118,7 +124,7 @@ def _scale_times_budget(parts: dict) -> float:
 
 @pytest.mark.slow
 def test_the_absolute_scale_is_exactly_inverse_to_the_ray_budget(sweep):
-    """Absolute: 30x the rays, 1/30 the scale. The relation is exact, not statistical."""
+    """Absolute: N times the rays, 1/N the scale. The relation is exact, not statistical."""
     parts = sweep["absolute"]
     budget_ratio = parts[_RAY_NUM_HIGH]["emitted"] / parts[_RAY_NUM_LOW]["emitted"]
     assert budget_ratio == pytest.approx(_RAY_NUM_HIGH / _RAY_NUM_LOW, rel=0.02), (
