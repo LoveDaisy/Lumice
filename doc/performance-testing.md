@@ -464,8 +464,10 @@ the gate. The next day's run is the second sample; every run's ratios are in the
 **Where to look.**
 
 - `~/.local/state/lumice-throughput-gate/results.jsonl` — one line per leg per run: status,
-  reason, ratios copied from the test's own summary line, commit, idle readings, durations,
-  trigger (`manual` / `launchd`).
+  reason, ratios and the absolute median rays/s of every arm (`median_mrps_*`) copied from the
+  test's own summary lines, commit, idle readings, durations, trigger (`manual` / `launchd`).
+  Read the absolute medians, not only the ratio: a run under different conditions can pass on
+  the ratio while every arm is several times slower (see the QoS note below).
 - `~/.local/state/lumice-throughput-gate/runs/<run_id>/` — the run's log, build and pytest logs,
   junit XML, and the collected remote directory (last 30 runs kept).
 - **GitHub issues**, the channel you are expected to see: titles
@@ -483,6 +485,13 @@ scripts/install_throughput_gate.sh --python "$(command -v python3)"   # an inter
 scripts/install_throughput_gate.sh --python ... --hour 3 --minute 30 --remote home-wsl
 scripts/install_throughput_gate.sh --uninstall
 ```
+
+⚠️ **The agent must run at `Interactive` process type, not `Background`.** `Background` (the
+natural choice for a nightly job) runs it at background QoS, which on Apple Silicon means the
+efficiency cores: measured under it, dual 9.75M and legacy 0.48M rays/s against 28.0M and 5.90M
+from a terminal on the same commit, and the ratio still **passed** (0.915 / 0.957) — the gate would
+have reported green on a condition it was never calibrated under. `Interactive` restored 29.5M /
+6.66M. The template pins it with the measurement beside it.
 
 The installer copies the script to `~/.local/share/lumice-throughput-gate/` (re-run it to update)
 and refuses a rendered plist that carries a test-only argument. Self-check that the schedule is

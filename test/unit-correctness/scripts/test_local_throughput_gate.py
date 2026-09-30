@@ -166,9 +166,16 @@ def test_issue_titles_are_distinct_per_namespace():
 # --- misc -----------------------------------------------------------------
 
 def test_extract_ratios_reads_the_tests_own_summary_line():
-    log = ("[metal-dual-throughput] dual/single_a=0.950 dual/single_b=0.908 (gate >= 0.85); "
+    log = ("x.py [metal-dual-throughput] dual: median=27.85M rays/s CoV=0.104 min=21.7M max=30.4M n=21\n"
+           "[metal-dual-throughput] single_a: median=29.30M rays/s CoV=0.113 min=21.3M max=32.2M n=21\n"
+           "[metal-dual-throughput] single_b: median=30.67M rays/s CoV=0.105 min=22.8M max=31.8M n=21\n"
+           "[metal-dual-throughput] dual/single_a=0.950 dual/single_b=0.908 (gate >= 0.85); "
            "legacy dual median=6.70M rays/s, dual metal/legacy=4.16x (sanity >= 2.0)\n")
-    assert g.extract_ratios(log) == {"ratio_a": 0.95, "ratio_b": 0.908, "vs_legacy": 4.16, "threshold": 0.85}
+    assert g.extract_ratios(log) == {
+        "ratio_a": 0.95, "ratio_b": 0.908, "vs_legacy": 4.16, "threshold": 0.85,
+        "median_mrps_dual": 27.85, "median_mrps_single_a": 29.30, "median_mrps_single_b": 30.67,
+        "median_mrps_legacy": 6.70,
+    }
     assert g.extract_ratios("nothing here") == {}
 
 

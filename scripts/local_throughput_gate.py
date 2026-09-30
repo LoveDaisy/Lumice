@@ -112,6 +112,8 @@ ISSUE_KINDS = ("fail", "error", "stale")
 _RATIO_RE = re.compile(r"dual/single_a=([0-9.]+) dual/single_b=([0-9.]+)")
 _LEGACY_RE = re.compile(r"/legacy=([0-9.]+)x")
 _GATE_RE = re.compile(r"gate >= ([0-9.]+)")
+_MEDIAN_RE = re.compile(r"\] (dual|single_a|single_b): median=([0-9.]+)M rays/s")
+_LEGACY_MEDIAN_RE = re.compile(r"legacy dual median=([0-9.]+)M rays/s")
 
 # A pytest plugin written into the run directory when --threshold-override is
 # given. It cannot live in the checkout under test: that commit predates this
@@ -331,6 +333,12 @@ def extract_ratios(log_text: str) -> dict:
         pass
     if m is not None:
         out["threshold"] = float(m.group(1))
+    # Absolute rates, recorded so a run under different conditions (throttled
+    # QoS, a thermal state, a slower build) is visible even when the ratio passes.
+    for m in _MEDIAN_RE.finditer(log_text):
+        out[f"median_mrps_{m.group(1)}"] = float(m.group(2))
+    for m in _LEGACY_MEDIAN_RE.finditer(log_text):
+        out["median_mrps_legacy"] = float(m.group(1))
     return out
 
 

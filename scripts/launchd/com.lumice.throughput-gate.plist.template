@@ -39,8 +39,12 @@
   <string>@STATE_DIR@/launchd.out.log</string>
   <key>StandardErrorPath</key>
   <string>@STATE_DIR@/launchd.err.log</string>
+  <!-- Interactive, NOT Background: Background QoS parks the job on efficiency
+       cores, and the gate then measured dual 9.75M rays/s and legacy 0.48M
+       against 28.0M / 5.90M from a terminal — a condition the 0.85 threshold
+       was never calibrated under. The ratio happened to pass; that is luck. -->
   <key>ProcessType</key>
-  <string>Background</string>
+  <string>Interactive</string>
   <key>RunAtLoad</key>
   <false/>
 </dict>
