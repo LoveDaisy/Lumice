@@ -12,8 +12,11 @@ Checks:
      (doc/env-var-policy.md).
   2. env-knob-registration — every LUMICE_* name read in env_knobs.cpp must be
      documented in doc/env-var-policy.md, so the knob is discoverable.
-  3. gui-api-boundary — src/gui/** must not #include "core/..." or "config/...";
-     the GUI talks to core only through the C API (src/include/lumice.h).
+  3. gui-api-boundary — src/gui/** must not #include "core/..." or "config/...",
+     and of the public headers under src/include/ it may include only the
+     engine's capability headers (lumice_base/scene/render/editor/engine/raypath.h:
+     the engine export surface of cmake/export_surfaces.cmake minus the analytic
+     family). The GUI talks to core only through the C API.
   4. reconciler-widget-include — gui_state_reconcile.cpp must not #include a
      second widget domain (only RECONCILE_ALLOWED_GUI_INCLUDES is permitted).
      The reconciler is the single owner of effects; a reverse dependency on a
@@ -407,11 +410,50 @@ def check_env_knob_registration() -> list[Violation]:
     return out
 
 
+GUI_INCLUDE_TARGET = re.compile(r'^\s*#\s*include\s*[<"]([^">]+)[">]')
+
+
+def _gui_capability_headers() -> set[str] | Violation:
+    """File names under src/include/ that src/gui/ may include: the engine export surface minus
+    the analytic family, both read from cmake/export_surfaces.cmake (the same partition
+    analytic-symbol-scope reads), so a new capability header needs no edit here."""
+    decl = REPO_ROOT / EXPORT_SURFACES_REL
+    try:
+        surfaces = parse_export_surfaces(decl.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return Violation(decl, 1, "gui-api-boundary", "export-surface declaration missing")
+    except RestrictedCMakeError as e:
+        return Violation(decl, e.line, "gui-api-boundary", f"unreadable export-surface declaration: {e}")
+    analytic = set(surfaces.get("ANALYTIC", []))
+    return {Path(rel).name for rel in surfaces.get("ENGINE", []) if rel not in analytic}
+
+
+def _public_header_name(path: Path, target: str) -> str | None:
+    """The src/include/ file name an include resolves to, or None when it resolves elsewhere.
+
+    Search order is the include path's: the including file's directory, then src/, then
+    src/include/. A spelling through `include/` names the public directory even when no such
+    file exists, so a header that was deleted cannot come back through the GUI unnoticed."""
+    public = (SRC / PUBLIC_INCLUDE_REL).resolve()
+    for base in (path.parent, SRC, SRC / PUBLIC_INCLUDE_REL):
+        candidate = (base / target).resolve()
+        if candidate.is_file():
+            return candidate.name if candidate.parent == public else None
+    parts = Path(target).parts
+    if len(parts) >= 2 and parts[-2] == PUBLIC_INCLUDE_REL.name:
+        return parts[-1]
+    return None
+
+
 def check_gui_api_boundary() -> list[Violation]:
     out: list[Violation] = []
     gui = SRC / "gui"
     if not gui.exists():
         return out
+    allowed = _gui_capability_headers()
+    if isinstance(allowed, Violation):
+        return [allowed]
+    listed = ", ".join(sorted(allowed))
     for path in cxx_sources(gui):
         for lineno, _orig, code in code_lines(path):
             m = GUI_FORBIDDEN_INCLUDE.search(code)
@@ -422,7 +464,22 @@ def check_gui_api_boundary() -> list[Violation]:
                         lineno,
                         "gui-api-boundary",
                         f'src/gui/ must not #include "{m.group(1)}/..."; use the C '
-                        "API (src/include/lumice.h) instead.",
+                        "API headers (src/include/lumice_*.h) instead.",
+                    )
+                )
+                continue
+            inc = GUI_INCLUDE_TARGET.match(code)
+            if not inc:
+                continue
+            name = _public_header_name(path, inc.group(1))
+            if name is not None and name not in allowed:
+                out.append(
+                    Violation(
+                        path,
+                        lineno,
+                        "gui-api-boundary",
+                        f"src/gui/ may include only the engine's capability headers from "
+                        f"src/include/ ({listed}); `{name}` is not one of them.",
                     )
                 )
     return out

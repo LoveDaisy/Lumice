@@ -7,7 +7,8 @@ Lumice is a C++17 ice halo ray-tracing simulator. It reproduces halo patterns by
 Core conventions:
 
 - namespace: `lumice`
-- public API boundary: `src/include/lumice.h`
+- public API boundary: the engine's capability headers `src/include/lumice_{base,scene,render,editor,engine,raypath}.h`
+  (one per capability; there is no umbrella header)
 - source layout: `.hpp` headers and `.cpp` implementations
 - build system: CMake + Ninja
 - dependency management: CPM.cmake
@@ -138,8 +139,12 @@ deleting its line, and an entry whose edge is gone fails the check.
   (the regen driver reads gui_test's `PSNR=` line). Device-side `printf` in a CUDA kernel stays a
   legitimate debugging tool — the gate does not stop you adding one while working, only from landing it.
 - Public API boundary: `src/gui/` code must only access core/config functionality
-  through the C API (`src/include/lumice.h`). Direct `#include` of `core/` or `config/`
-  headers from `src/gui/` is prohibited.
+  through the C API. Direct `#include` of `core/` or `config/` headers from `src/gui/` is
+  prohibited, and of the public headers under `src/include/` it may include only the engine's
+  capability headers, `src/include/lumice_*.h` (the engine export surface of
+  `cmake/export_surfaces.cmake` minus the analytic family — so not `lumice_analytic*.h`). Each file
+  includes the capability headers declaring what it uses, not a gathered set. Enforced by the
+  `gui-api-boundary` rule in `scripts/check_policies.py`.
   `src/util/` is deliberately outside that prohibition, and the exemption has a shape:
   what may live there and be included from both sides is a **pure, stateless helper that
   carries no simulation or configuration semantics** — `bit_utils.hpp`, `color_space.hpp`,
@@ -332,11 +337,11 @@ deleting its line, and an entry whose edge is gone fails the check.
     leg. Run them locally with `pytest -v -m slow` before opening a PR that touches the simulator
     core, query filter, or C API surface.
     That build produces **three** shared libraries, and pytest loads the second one. `liblumice` is
-    the product export surface: `src/include/lumice.h`, `LUMICE_*` only, and nothing that exists
+    the product export surface: the capability headers `src/include/lumice_*.h`, `LUMICE_*` only, and nothing that exists
     for a test's sake. `liblumice_testapi` (root `CMakeLists.txt`, target `lumice_testapi`; header
     `test/support/lumice_test_api.h`) is built from the **same `lumice_obj` objects** — so every
     product call behaves identically in it — and additionally exports the `LUMICE_TEST_*` hooks
-    a pytest fixture needs and `lumice.h` must never carry (today: the lens imaging-domain mask).
+    a pytest fixture needs and the product headers must never carry (today: the lens imaging-domain mask).
     It is a superset stand-in, not a companion library: `-fvisibility=hidden` leaves a side library
     nothing to link against, so the hooks ship with their own copy of the engine, and a test
     process loads exactly one of the two. `test/e2e/capi_runner.py::lib_candidates` is the single
@@ -762,7 +767,7 @@ Valuable design/architecture docs live in `doc/` (tracked). Consult the relevant
     `doc/user-manual/06-raypath-analysis.md`。
   - `raypath-cli-output.md` — **`Lumice raypath` 子命令与其 JSON 输出（schema_version 1）的字段参考**：
     单层光路 × 单晶体 × 单天空点的纤维分量、逐点详情、太阳方向球网格；计算与序列化都在引擎侧
-    （`src/raypath/`，`lumice.h` v4.50 `LUMICE_AnalyzeSinglePath` → 不透明结果 → JSON），CLI 与将来的
+    （`src/raypath/`，`lumice_raypath.h` v4.50 `LUMICE_AnalyzeSinglePath` → 不透明结果 → JSON），CLI 与将来的
     GUI 读同一份文档，⛔ 不另写序列化器。§3.8 `reach` + §3.9 空态三分 + §3.10 退化光路（纬线不变 / 圆弧纤维 / 片晶族重合）（`point_mass` / `discovered`+空+`target_in_range` false=几何不可达 / true=不排除但未找到，常见成因=有限晶体不放行）；⚠️ `reach` 与晶体尺寸无关，tol 取半阶收敛界 (1+√2)·Δ（sqrt 奇异边界下一阶界实测不保守）。字段只追加；`--warm` 回读契约；Ctrl-C / 进度与 `analyze`
     不同的理由（核无取消点）。改输出字段 / 子命令选项 / 该 C 入口前先读。
   - `print-mode-subtractive-ink.md` — **print 显示模式（减色/密度墨）的单一设计权威**（2026-09-09 收敛为 blueprint，2026-09-10 已整体 as-built）：诊断 = 背景色是**加性**进管线的（`render.cpp:899` / `preview_renderer.cpp:709` / `component_compositor.cpp:325` 三处同形 `+=`），`out = clamp(L·c + bg)` 对辐亮度**单调不减** ⇒ 白底恒等于白，⛔**放开前景色是无效方案**（`ray_color_` 在该算子下取黑只得到「不发光」而非「黑点」）。⭐真实症状是**「线在、晕没了」**而非整片白——annotation 走 lerp（`render.cpp:922`）不受影响，看起来像软件坏了 ⇒ 告警不是可选项。⭐**第二条法则**：`D = γ·log10(1+e)`、`e = Y·ExposureScale()`、`out_j = paper_j·10^(-D)`，**`γ = 11` 是定案值**（数据驱动：非零 `e` 的 P95 → `D=0.5` 反解，4 场景几何均值，owner 眼判接受），⛔ 实现途中不得自行重标定或写成「待定」；⚠️ `e` 典型只有 1e-3~1e-1 量级，直觉区间 γ∈[0.3,2] **全场景产出纯白**的假阴性坑。⭐`10^(-D) ≤ 1` ⇒ 减色永不亮过纸色，与加性是**结构性非包含**（不是同一公式的两个参数区间）⇒ 模式枚举躲不掉，⛔ 不做「按背景色自动切」。⭐灰度是**主动放弃色相**（「墨吸收互补色」`κ=1-ĉ` 会让白光 `κ=0` ⇒ 幻日环/日柱等中性特征在白纸上消失；灰度把 `κ` 降为常量使陷阱消失），代价 = 印刷图里「哪条弧」只能靠位置形状读；CZA 近日点核心趋近实心黑是**已接受取舍**。⭐`background`(天空) 与 `paper`(纸) **拆两个字段**，让「print + 默认黑底 ⇒ 整页黑」这个退化态**结构上不存在**（三条补救路径都是隐式规则或补丁）。⭐**一条规则 + 四个实例**：print 下 ink 接管色彩通道 ⇒ 背景照片 overlay / raypath 染色 / `ray_color` 互斥+告警，annotation **改走密度**（因而不需要 per-mode 调色板）。⭐余量谓词**单一**：screen 余量 `1-background`、print 余量 `paper` 本身，同一个 `src/util/` 纯函数两侧共用。⛔ 三条硬边界：**不是印刷仿真**（不碰 CMYK/ICC/网点扩大/纸白点）、**不改染色 composite 路算子**（会反转 `gui-custom-spectrum-and-raypath-color.md` §4.8 已定案的 z-order 一等性）、**曝光链一行不改**（发现「必须动」即前提被证伪，上抛而非扩范围）。含 owner 裁决 D1–D6 与 AI 推断 A1–A5 两张归属表，**两张表均已回写 as-built（2026-09-10，五块下游全落地）**：D1–D6 每条带 `file:line` 落点；A1/A3/A4 成立，**A2 与 A5 部分证伪且原推断文字保留**（A2：实际没复用 `use_real_color==false` 那半段，直接取 `xyz[1]` 跳过 D65 矩阵，所以预判的「规模上升」反向成真；A5：`rgb[j]=0.0f` 特例**没消失**，只是被 `if (!print_mode)` 卫护，print 走另一条分支达到同样效果 ⇒ 效果成立、机制不同）。⭐**跨切验收闸两处**：`test/unit-correctness/server/test_print_mode_dynamic_range_gate.cpp`（四数量级动态范围在 8-bit 里 print 全分开 / screen 白底全塌成同一个白）与 `test/gui/parity/test_gui_cli_export_parity.cpp` 的 `full_sky_dual_fisheye_print`（GLSL 手抄实现的漂移只能靠 CLI↔GUI 互比兜住）；⚠️ 后者所属 `parity` tag **没有 CI job 在跑**，只在有 GL context 的开发机上经 `./scripts/test.sh` 求值。⚠️ 灰度标量 Y vs 等权的对照**只在暖色光源场景做过**，⛔ 不得读成「已验证 Y 不压制蓝弧」。改 print 模式的字段链 / 算子 / 色彩通道互斥 / 余量告警前先读。
@@ -786,7 +791,7 @@ Valuable design/architecture docs live in `doc/` (tracked). Consult the relevant
     以及拆仓触发条件（真实外部消费者 / 不同授权策略 / 第二团队；且届时该拆的是 L0 而非 core|gui）。
     **§8（2026-09-28 更新）**：光路分析升级为第二产品核心后，「第二条产品线立项」与「真实外部
     消费者」两个触发信号同时响了（LI 经共享库消费单光路反解 / fiber 行走）；发布的是一个新窄
-    接口而非现在的 `lumice.h`，共享判据见 `raypath-analysis.md` §5.1.6。
+    接口而非现在的引擎 C API（`src/include/lumice_*.h`），共享判据见 `raypath-analysis.md` §5.1.6。
     考虑发布动态库、设计新产品线、或再次提起拆仓前先读。
   - `analytic-api.md` — **`liblumice_analytic` 设计（第一个对外发布的共享库；target / 导出列表 / 日志接管 / 打包与版本政策
     已 as-built，只用 install 树的外部消费者冒烟测试（C `find_package` + Python ctypes，`test/e2e-correctness/test_external_consumer_smoke.py`）已落地；模块 A（单光路反解 + fiber 行走 + seed 搜索，API v2–v5）与模块 B（带求和 / 单光路全天图，API v6，§4.6）已 as-built，尚不进下载包，2026-09-30）**：头文件 `lumice_analytic.h`、前缀 `LUMICE_ANALYTIC_`（owner 已定），⭐**§2.1/§2.2（2026-09-30 改）**：
@@ -807,7 +812,7 @@ Valuable design/architecture docs live in `doc/` (tracked). Consult the relevant
     ⭐**§8 版本与打包（as-built）**：`LUMICE_ANALYTIC_API_VERSION` 这一个整数就是唯一版本号，CMake
     从头文件读出它当 package 版本（不写第二份）；`find_package(LumiceAnalytic <n>)` 用 `ExactVersion`，
     版本不符在**配置期**被拒；链 `Lumice::lumice_analytic`，install 树只含 `lumice_analytic.h` 与它 include 的 `lumice_analytic_core.h`（⛔ 不装
-    `lumice.h`），布局 `bin/`+`lib/`（有意不同于 `lumice` 的 DLL 放 prefix 根）。0.x 不承诺任何两版兼容，
+    引擎的 `lumice_*.h` 能力头），布局 `bin/`+`lib/`（有意不同于 `lumice` 的 DLL 放 prefix 根）。0.x 不承诺任何两版兼容，
     但每次 bump 必须留说明；兼容/破坏判定表（§8.2）；两个调用方分配的结果 struct 打头 `struct_size`
     （Win32 `cbSize` 模式，batch 以 `out_results[0].struct_size` 为步长）使追加字段不必 bump；废弃流程与
     1.0 三条毕业条件（§8.5/§8.6）；非 CMake 消费者靠 install 树相对路径契约 + 建议变量名

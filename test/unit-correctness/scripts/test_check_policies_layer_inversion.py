@@ -66,12 +66,13 @@ def test_foundation_including_the_engine_is_flagged(tree: Path) -> None:
 
 
 def test_include_resolved_through_the_public_include_dir_is_an_edge(tree: Path) -> None:
-    """`#include "lumice.h"` resolves via src/include/, not relative to src/ — the path the
-    prototype of this gate did not search, which hid every edge into the C API header."""
-    _prepend(tree / "src" / "core" / "math.cpp", '#include "lumice.h"')
+    """`#include "lumice_engine.h"` resolves via src/include/, not relative to src/ — the path the
+    prototype of this gate did not search, which hid every edge into the C API headers."""
+    _prepend(tree / "src" / "core" / "math.cpp", '#include "lumice_engine.h"')
     msgs = _messages(tree)
     assert len(msgs) == 1
-    assert "core/math.cpp -> include/lumice.h" in msgs[0]
+    assert "core/math.cpp -> include/lumice_engine.h" in msgs[0]
+    assert "`foundation` includes the higher layer `engine`" in msgs[0]
 
 
 def test_directory_relative_include_is_an_edge(tree: Path) -> None:
@@ -98,10 +99,10 @@ def test_scene_bridge_reaching_for_the_server_is_flagged(tree: Path) -> None:
     assert "`scene` includes the higher layer `engine`" in msgs[0]
 
 
-@pytest.mark.parametrize("header", ["include/lumice.h", "server/c_api_internal.hpp"])
+@pytest.mark.parametrize("header", ["server/c_api_internal.hpp"])
 def test_bridge_including_an_aggregate_header_is_flagged(tree: Path, header: str) -> None:
-    """The umbrella and the internal aggregate sit at `capi`, above every bridge: a bridge that
-    took one would silently reach every layer through it."""
+    """The internal aggregate sits at `capi`, above every bridge: a bridge that took it would
+    silently reach every layer through it."""
     _prepend(tree / "src" / "server" / "c_api_render.cpp", f'#include "{header}"')
     msgs = _messages(tree)
     assert len(msgs) == 1

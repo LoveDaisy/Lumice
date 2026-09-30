@@ -26,11 +26,16 @@ import check_policies  # noqa: E402
 RULE = "analytic-symbol-scope"
 CORE = "include/lumice_analytic_core.h"
 UMBRELLA = "include/lumice_analytic.h"
-ENGINE = "include/lumice.h"
+# The engine family: the six capability headers. Every one of them is scanned, so the red case
+# below runs over each.
+ENGINE_HEADERS = [
+    f"include/lumice_{c}.h" for c in ("base", "scene", "render", "editor", "engine", "raypath")
+]
+ENGINE = "include/lumice_engine.h"
 DECL = REPO / "cmake" / "export_surfaces.cmake"
 
 _CLEAN = {
-    ENGINE: "#ifndef LUMICE_H_\n#define LUMICE_H_\nint LUMICE_GetVersion(void);\n#endif\n",
+    **{h: f"#ifndef GUARD_{i}_\n#define GUARD_{i}_\nint LUMICE_F{i}(void);\n#endif\n" for i, h in enumerate(ENGINE_HEADERS)},
     CORE: "#ifndef LUMICE_ANALYTIC_CORE_H_\n#define LUMICE_ANALYTIC_API_VERSION 6\n"
     "LUMICE_ANALYTIC_API int LUMICE_ANALYTIC_EvaluatePath(void);\n#endif\n",
     UMBRELLA: '#ifndef LUMICE_ANALYTIC_H_\n#include "lumice_analytic_core.h"\n'
@@ -66,17 +71,18 @@ def test_clean_scratch_tree_is_green(src_root: Path) -> None:
 # --- must stay red: an engine header naming the analytic prefix --------------
 
 
-def test_declaration_in_engine_header_is_flagged(src_root: Path) -> None:
-    """The shape the rule exists for: an analytic function declared in lumice.h, a second
-    definition next to lumice_analytic_core.h's."""
+@pytest.mark.parametrize("header", ENGINE_HEADERS)
+def test_declaration_in_engine_header_is_flagged(src_root: Path, header: str) -> None:
+    """The shape the rule exists for: an analytic function declared in a capability header, a
+    second definition next to lumice_analytic_core.h's."""
     out = _violations(
         src_root,
-        "#ifndef LUMICE_H_\nLUMICE_API int LUMICE_ANALYTIC_TraceFiber(void);\n#endif\n",
-        name=ENGINE,
+        "#ifndef GUARD_\nLUMICE_API int LUMICE_ANALYTIC_TraceFiber(void);\n#endif\n",
+        name=header,
     )
     assert len(out) == 1
     assert out[0].rule == RULE
-    assert out[0].path == src_root / ENGINE
+    assert out[0].path == src_root / header
     assert out[0].line == 2
 
 
@@ -96,9 +102,9 @@ def test_any_header_outside_the_declared_family_is_an_engine_header(src_root: Pa
 @pytest.mark.parametrize(
     "line",
     [
-        "LUMICE_ANALYTIC_API int LUMICE_ANALYTIC_F(LUMICE_Scene* s);",  # a lumice.h type
-        "LUMICE_ANALYTIC_API LUMICE_ErrorCode LUMICE_ANALYTIC_G(void);",  # lumice.h's error enum
-        "#define LUMICE_ANALYTIC_MAX LUMICE_MAX_CONFIG_CRYSTALS",  # a lumice.h macro
+        "LUMICE_ANALYTIC_API int LUMICE_ANALYTIC_F(LUMICE_Scene* s);",  # a lumice_base.h type
+        "LUMICE_ANALYTIC_API LUMICE_ErrorCode LUMICE_ANALYTIC_G(void);",  # lumice_base.h's error enum
+        "#define LUMICE_ANALYTIC_MAX LUMICE_MAX_CONFIG_CRYSTALS",  # a lumice_scene.h macro
         "LUMICE_ANALYTIC_API void LUMICE_ANALYTIC_H(LUMICE_TEST_RenderDomainMask* m);",  # test surface
     ],
 )
@@ -124,7 +130,7 @@ def test_code_calling_an_analytic_function_is_not_flagged(src_root: Path, name: 
 def test_comments_are_not_hits_in_either_direction(src_root: Path) -> None:
     out = _violations(
         src_root,
-        "// unlike LUMICE_Scene in lumice.h, this header shares no type\n"
+        "// unlike LUMICE_Scene in lumice_base.h, this header shares no type\n"
         "/* LUMICE_TEST_ hooks are elsewhere */\nint x;\n",
         name=CORE,
     )
@@ -170,8 +176,8 @@ def test_missing_declaration_is_a_violation(src_root: Path) -> None:
 @pytest.mark.parametrize(
     ("text", "fragment"),
     [
-        ('set(LUMICE_ENGINE_SURFACE_HEADERS\n  "src/include/lumice.h"\n)\n', "not one bare token"),
-        ("set(LUMICE_ENGINE_SURFACE_HEADERS\n  src/include/lumice.h src/x.h\n)\n", "not one bare token"),
+        ('set(LUMICE_ENGINE_SURFACE_HEADERS\n  "src/include/lumice_base.h"\n)\n', "not one bare token"),
+        ("set(LUMICE_ENGINE_SURFACE_HEADERS\n  src/include/lumice_base.h src/x.h\n)\n", "not one bare token"),
         ("if(APPLE)\nset(LUMICE_ENGINE_SURFACE_HEADERS\n  a.h\n)\nendif()\n", "expected `set("),
         ("set(SOMETHING_ELSE\n  a.h\n)\n", "is not LUMICE_<LIBRARY>_SURFACE_HEADERS"),
         ("set(LUMICE_A_SURFACE_HEADERS\n  a.h\n)\nset(LUMICE_A_SURFACE_HEADERS\n  b.h\n)\n", "declared twice"),
