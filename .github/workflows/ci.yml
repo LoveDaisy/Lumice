@@ -1426,8 +1426,17 @@ jobs:
           # include test/performance run this (the leg named "parity" lists files
           # explicitly and has no perf tests → skipped). Cheap (~2 gates); no -n
           # on purpose.
+          # --dual-gate-profile=ci: the dual-renderer gate here is the DISASTER
+          # floor (0.75 over 5 reps), not the precise 0.85 over 21 — a hosted
+          # runner's per-arm CoV (0.155-0.229) reads the precise number red with
+          # nothing wrong. A red here is a red PR. The precise gate runs on the
+          # reference machines on a schedule (doc/performance-testing.md,
+          # "Precise throughput gate (local schedule)"); why the two numbers:
+          # test/e2e/_multi_renderer_throughput.py. -rP keeps the gates' measured
+          # ratio/CoV lines in the log when they pass, which pytest otherwise drops.
           case "${{ matrix.pytest_args }}" in
-            *test/performance*) pytest test/performance -v -m slow --durations=20 \
+            *test/performance*) pytest test/performance -v -m slow --durations=20 -rP \
+              --dual-gate-profile=ci \
               -p duration_report_plugin --duration-report="$RUNNER_TEMP/durations-phase2.json" ;;
           esac
         # 25, not the original 15: phase 1 alone measured 500-552s on a slow runner day
@@ -1439,6 +1448,10 @@ jobs:
         # ~70s Metal-reference-machine number that does not apply here. Worst measured
         # sum is ~552 + 296 = 848s (~14.2min), so 25min leaves ~10min margin; 20 would
         # not survive a slow phase-1 day stacked on the phase-2 cost.
+        # Those 278-296s were the precise profile (21 reps). Phase 2 now runs the ci
+        # profile (5 reps; extrapolated 85-110s on this hardware, 28-41s on the Metal
+        # reference machine); the timeout is left at 25 until measured CI runs of the
+        # new shape say where it should go.
         timeout-minutes: 25
 
       - name: Check test durations
