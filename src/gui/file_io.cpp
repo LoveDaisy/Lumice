@@ -1490,7 +1490,7 @@ static void FillAxisDist(const AxisDist& src, LUMICE_Distribution* dst) {
 
 // Helper: fill a LUMICE_CrystalParam from GUI CrystalConfig.
 // `dst->id` is deliberately NOT set: LUMICE_SceneAddCrystal ignores any incoming .id and
-// assigns its own sequential id, returned via out_id (lumice.h "Incremental build" contract).
+// assigns its own sequential id, returned via out_id (lumice_scene.h "Incremental build" contract).
 // Field-sync guard: see the static_assert(sizeof(CrystalConfig) == 232) near
 // SerializeCrystal above. One copy guards both functions (same TU, identical
 // condition); this comment keeps the pairing obvious to readers.
@@ -1568,7 +1568,7 @@ static FilterExpansionOutcome ExpandFilterToScene(const FilterConfig& f, LUMICE_
         // document produced it. NONE is core's own name for the filter that passes everything.
         //
         // FillColorPredicate below has read the identical input this way for a while; it writes
-        // LUMICE_FILTER_TYPE_UNSET rather than NONE, and that is not a second opinion. lumice.h
+        // LUMICE_FILTER_TYPE_UNSET rather than NONE, and that is not a second opinion. lumice_scene.h
         // gives UNSET opposite meanings in the two structs — rejected at commit in a
         // LUMICE_FilterParam, match-all in a LUMICE_ColorPredicate — so the two spellings are the
         // same statement about what core will do.
@@ -1630,7 +1630,7 @@ static FilterExpansionOutcome ExpandFilterToScene(const FilterConfig& f, LUMICE_
   // Add the per-term simple filters first (clause order, term order within clause), collecting
   // the ids the Scene assigned. The composition then references THOSE ids rather than ids this
   // function predicts — the pre-handle version had to compute `next_filter_id + running` because
-  // it owned the id space; the Scene owns it now (lumice.h: "Cross-referencing fields the caller
+  // it owned the id space; the Scene owns it now (lumice_scene.h: "Cross-referencing fields the caller
   // constructs later ... MUST use these returned out_id values").
   const int clause_n = static_cast<int>(ef.clauses.size());
   std::vector<int> term_counts_vec;
@@ -1912,7 +1912,7 @@ ScenePtr BuildScene(const GuiState& state, SceneIntent intent, FilterOverflowInf
   // for an expanded multi-segment/multi-value filter). Both maps now store the id the SCENE
   // assigned (its out_id) rather than one the GUI computed: the pre-handle code derived crystal
   // ids as `pool_id + 1` and ran its own filter-id counter purely to fill LUMICE_Config's arrays
-  // consistently. The Scene owns id assignment (lumice.h: "The Scene assigns this id itself and
+  // consistently. The Scene owns id assignment (lumice_scene.h: "The Scene assigns this id itself and
   // IGNORES any `.id` field on the incoming POD"), so those two counters are gone. Ids stay
   // insertion-ordered either way, so the dedupe walk below is unchanged.
   // pool_id -> scene crystal id, decided BEFORE the walk by the same rule the walk follows (see
@@ -2112,7 +2112,7 @@ ScenePtr BuildScene(const GuiState& state, SceneIntent intent, FilterOverflowInf
     if (for_export) {
       // Both index the same enumeration by construction: kLensTypeNames is declared "order must
       // match Core's LensParam::LensType enum" (gui_state.hpp) and LUMICE_LENS_TYPE_* is that enum
-      // (lumice.h), so the GUI's combo index IS the C API constant. Same for kVisibleNames
+      // (lumice_scene.h), so the GUI's combo index IS the C API constant. Same for kVisibleNames
       // {Upper,Lower,Full} vs LUMICE_VISIBLE_{UPPER,LOWER,FULL} = {0,1,2}.
       dst.lens_type = r.lens_type;
       dst.lens_fov = r.fov;
@@ -2301,7 +2301,7 @@ ScenePtr BuildScene(const GuiState& state, SceneIntent intent, FilterOverflowInf
       dst.globe_back_fade = 0.0f;
       dst.horizon = 1;  // this arm annotates the texture itself; see kDivergingKeys
       // Core's defaults for the three family line switches, stated rather than left to the
-      // zero-init — which would mean the opposite (see the WARNING at the fields in lumice.h).
+      // zero-init — which would mean the opposite (see the WARNING at the fields in lumice_scene.h).
       // Unobservable on this arm either way: it writes no angle list, so there is no line for the
       // flags to gate. Written for the same reason `front` and `visible` above are: so the two
       // arms read as one deliberate divergence rather than as an omission on this one.

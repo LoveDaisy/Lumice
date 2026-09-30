@@ -143,7 +143,7 @@ Checks:
      first, so prose that names the prefix to explain this rule is not a hit.
   18. analytic-symbol-scope — the boundary between the two families of public
      headers under src/include/, both directions: (a) an engine header (the
-     lumice_*.h capability headers and the lumice.h umbrella: every
+     lumice_*.h capability headers: every
      src/include/*.h outside the analytic family) never spells
      LUMICE_ANALYTIC_ — declaring or naming an analytic function there would be
      a second definition of what lumice_analytic_core.h defines; (b) an analytic
@@ -1872,7 +1872,7 @@ def check_pytest_invocation_marker() -> list[Violation]:
 #
 # The banned names are the C API chokepoint plus this file's own three wrappers
 # around it. Since the legacy result getters were removed in favour of the
-# LUMICE_ResultFrame handle (see src/include/lumice.h), acquiring a frame is the
+# LUMICE_ResultFrame handle (see src/include/lumice_base.h), acquiring a frame is the
 # only way to reach a render, so the list is closed rather than a sample.
 BENCHMARK_PASS_SIGNATURE = re.compile(r"^void RunBenchmarkPass\s*\(", re.MULTILINE)
 RENDER_TRIGGERING_CALLS = (
@@ -1932,7 +1932,7 @@ def check_no_render_in_benchmark_poll() -> list[Violation]:
 #
 # The test-only export surface is spelled LUMICE_TEST_* and lives under test/
 # (test/support/lumice_test_api.h). Its whole reason to exist is that the product
-# ABI (src/include/lumice.h, liblumice) carries no test-only entry point; the
+# ABI (src/include/lumice_*.h, liblumice) carries no test-only entry point; the
 # prefix showing up anywhere under src/ means a hook is migrating into the
 # product surface, which is exactly the merge this split was made to prevent.
 # A bare prefix match rather than a symbol pattern: a declaration, a call, a
@@ -1945,7 +1945,7 @@ def check_no_test_symbol_in_src() -> list[Violation]:
     """No LUMICE_TEST_ identifier under src/ — the test surface stays in test/.
 
     Reads code_lines(), so a comment naming the prefix (this file's own rule
-    text, or a note in lumice.h pointing at the test header) is not a hit; a
+    text, or a note in a public header pointing at the test header) is not a hit; a
     string literal containing it would be, which fails toward a false positive
     someone investigates rather than toward green.
 
@@ -2078,7 +2078,7 @@ def parse_export_surfaces(text: str) -> dict[str, list[str]]:
 # is the header set liblumice_analytic exports (cmake/export_surfaces.cmake:
 # lumice_analytic_core.h, the capability, and lumice_analytic.h over it, which
 # adds the library's own management functions); every other header there is an
-# engine header (lumice.h). The prefix is the boundary between the two families:
+# engine header (lumice_*.h). The prefix is the boundary between the two families:
 # an engine header that declared or named a LUMICE_ANALYTIC_* function would be a
 # second definition of what lumice_analytic_core.h already defines, and an
 # analytic header naming a LUMICE_* identifier would drag a consumer of the
@@ -2099,7 +2099,7 @@ def check_analytic_symbol_scope() -> list[Violation]:
     cmake/export_surfaces.cmake; a listed header that does not exist is a
     violation, not a skipped file. Reads code_lines(), so comments are not hits
     in either direction — each family's prose may mention the other's names to
-    explain the split. Preprocessor lines are code: an `#include "lumice.h"` in
+    explain the split. Preprocessor lines are code: an `#include "lumice_base.h"` in
     an analytic header is caught through the LUMICE_ identifiers it would have
     to use, not by the include itself, which is the reason for this known
     limitation: an include that the header then never uses is not reported.

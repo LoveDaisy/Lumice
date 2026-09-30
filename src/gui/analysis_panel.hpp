@@ -7,7 +7,7 @@
 // on the preview), lists the raypath chains that delivered energy there, and turns a selected
 // single-crystal chain into a filter that excludes it.
 //
-// Pure C API consumer. Everything the window does reaches core through lumice.h — the run
+// Pure C API consumer. Everything the window does reaches core through the C API headers — the run
 // (LUMICE_StartRaypathAnalysis), the result (LUMICE_FrameGetRaypathAnalysis, read on the main
 // thread under the P/B/D symmetry the panel's checkboxes name — the reduction is the server's,
 // done on every read, so a toggle re-reads the result on hand and starts no run), and the
@@ -143,7 +143,7 @@ const LUMICE_RaypathHistogramEntry* SelectedAnalysisEntry(const GuiState& state)
 // A point on the preview panel, in logical points relative to the panel window's origin, to the
 // pixel index on the vp_w x vp_h canvas the annotation anchors and LUMICE_UnprojectPixel work in.
 // The DPI factors are the panel's own (PreviewViewport::dpi_scale_*): points times DPI is device
-// pixels, floored (lumice.h: "round a sub-pixel position down before calling"). nullopt when the
+// pixels, floored (lumice_render.h: "round a sub-pixel position down before calling"). nullopt when the
 // point falls outside the canvas.
 struct CanvasPixel {
   int px = 0;
@@ -271,7 +271,7 @@ std::string ExcludeAppendNotice(const GuiState& state);
 std::string FormatSegmentRaypathText(const LUMICE_RaypathChainSegment& segment);
 
 // The GUI's presentation of an entry's `display` text — the chain as core formats it, the C API
-// contract (lumice.h at LUMICE_RaypathHistogramEntry: layers joined by " -> "), the same bytes
+// contract (lumice_engine.h at LUMICE_RaypathHistogramEntry: layers joined by " -> "), the same bytes
 // the CLI prints. Every literal " -> " layer joiner is redrawn as an ICON_FA_ARROW_RIGHT glyph
 // framed by single spaces: the embedded body font (Roboto Medium) has no U+2192, so the core's
 // ASCII arrow is the one form that survives in every consumer, and this is the one place that

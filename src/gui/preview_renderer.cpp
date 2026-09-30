@@ -1250,7 +1250,7 @@ void main() {
 )glsl";
 
 // The `6` written into u_marker_screen_pos[6] / u_marker_color[6] and into the loop bound of
-// overlayAuxLines above. GLSL cannot include lumice.h, so the two spellings of the id-space size
+// overlayAuxLines above. GLSL cannot include lumice_render.h, so the two spellings of the id-space size
 // are pinned here instead of merely being expected to match: growing the marker family without
 // widening the arrays would upload six of N points and silently drop the rest.
 static_assert(LUMICE_ANNOTATION_MARKER_COUNT == 6,

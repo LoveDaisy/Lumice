@@ -1040,7 +1040,7 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
   // AC2, second case: a render in progress keeps Analyze shut, and the other direction — an
   // analysis in progress keeps Run shut on the top bar — with the window's own Stop ending it.
   // The scene is an INFINITE run on purpose: a whole-sky analysis of it has no end of its own
-  // (lumice.h: an infinite budget runs until LUMICE_StopServer), so the in-progress state is
+  // (lumice_engine.h: an infinite budget runs until LUMICE_StopServer), so the in-progress state is
   // held open for as long as the assertions need, and Stop is the only way out — which is the
   // path this case exists to drive.
   {

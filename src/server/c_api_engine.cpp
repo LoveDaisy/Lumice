@@ -155,7 +155,7 @@ LUMICE_ErrorCode LUMICE_SetRaypathColors(LUMICE_Server* server, const LUMICE_Col
 
 
 // Display-time EV multiplier for the composite path. See the
-// LUMICE_SetCompositeExposure comment in include/lumice.h for the semantics
+// LUMICE_SetCompositeExposure comment in include/lumice_engine.h for the semantics
 // (single scalar, mono path untouched, snapshot_dirty_ flipped so the next
 // acquired result frame rebakes the composite). No ev_total validation: the GUI is the
 // only in-tree caller and already clamps to [-6, 6]; server-side double-clamp
@@ -174,7 +174,7 @@ LUMICE_ErrorCode LUMICE_SetCompositeExposure(LUMICE_Server* server, float ev_tot
 
 
 // Display-time background colour for the composite path. See the
-// LUMICE_SetCompositeBackground comment in include/lumice.h for
+// LUMICE_SetCompositeBackground comment in include/lumice_engine.h for
 // the semantics (3 ADDITIVE linear floats, masked to the imaged region, mono
 // path untouched, snapshot_dirty_ flipped so the next acquired result frame
 // rebakes the composite). Unlike the exposure setter this one takes a pointer,
@@ -307,7 +307,7 @@ LUMICE_ErrorCode LUMICE_FrameGetRawXyz(const LUMICE_ResultFrame* frame, LUMICE_R
     out[i].effective_pixels = results[i].effective_pixels_;
     out[i].emitted_energy = results[i].snapshot_emitted_energy_;
     out[i].epoch = results[i].epoch_;
-    // Same value on every row — see the field's own contract in lumice.h. The one place it
+    // Same value on every row — see the field's own contract in lumice_engine.h. The one place it
     // is computed is AnchorConsumer::PrepareSnapshot; everything from there to here is a
     // copy, which is what keeps CLI and GUI on literally the same number.
     out[i].anchor_l99_sky = results[i].anchor_l99_sky_;
@@ -811,7 +811,7 @@ LUMICE_ErrorCode LUMICE_FrameGetRaypathAnalysis(const LUMICE_ResultFrame* frame,
       }
       dst.chain_len = static_cast<int>(layers);
       // A byte copy of the server's one FormatRaypathChainDisplay() output, never re-assembled here
-      // (lumice.h says why).
+      // (lumice_engine.h says why).
       const size_t n = std::min(src.display_.size(), sizeof(dst.display) - 1);
       truncated = truncated || n < src.display_.size();
       std::memcpy(dst.display, src.display_.data(), n);

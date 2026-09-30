@@ -548,7 +548,7 @@ void ServerPoller::PollOnce() {
     }
   }
 
-  // ---- Raypath analysis result (lumice.h "Raypath Analysis Run"), off the same frame. An
+  // ---- Raypath analysis result (lumice_engine.h "Raypath Analysis Run"), off the same frame. An
   // analysis frame carries no xyz buffer, so it never enters the texture branch above; this is
   // its own branch with its own generation cursor. `present` is a property of the frame and holds
   // on every poll of the session, so it is NOT the "new result" test — snapshot_generation is

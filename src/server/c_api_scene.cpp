@@ -107,7 +107,7 @@ static int SymmetryStringToBits(const std::string& s) {
 // filter identity. A predicate whose type is LUMICE_FILTER_TYPE_UNSET intentionally emits NO
 // arm fields at all: the resulting ref JSON is just {"layer", "crystal"} (plus optional
 // "symmetry" if non-default), which core RaypathColorRef::from_json interprets as match-all
-// (whole-crystal color). See lumice.h LUMICE_ColorPredicate for the UNSET-as-match-all
+// (whole-crystal color). See lumice_scene.h LUMICE_ColorPredicate for the UNSET-as-match-all
 // rationale.
 static void ColorPredicateToJson(const LUMICE_ColorPredicate& p, nlohmann::json& j) {
   switch (p.type) {
@@ -1185,7 +1185,7 @@ const nlohmann::json& SceneRoot(const LUMICE_Scene* scene) {
 
 // ---------- Serialization: decoupled from commit ----------
 // SceneToJson lives in the Scene section because it only depends on scene->root (no JsonToConfig).
-// Buffer contract is snprintf-style (see lumice.h). root.dump() can throw type_error if a
+// Buffer contract is snprintf-style (see lumice_scene.h). root.dump() can throw type_error if a
 // Set* stored a non-UTF-8 string (SetLightSource/SetCustomSpectrum take an unvalidated const char*),
 // so the dump is guarded — the exception must not cross the C ABI boundary.
 LUMICE_ErrorCode LUMICE_SceneToJson(const LUMICE_Scene* scene, char* out_buf, size_t buf_size, size_t* out_len) {
@@ -2438,7 +2438,7 @@ static LUMICE_ErrorCode JsonToRenderer(const nlohmann::json& rj, LUMICE_RenderPa
               r.id);
   }
   // The JSON key is sRGB (what a color picker shows); LUMICE_RenderParam::background is linear
-  // (what PostSnapshot's additive blend needs) — see the field's comment in lumice.h. The default
+  // (what PostSnapshot's additive blend needs) — see the field's comment in lumice_scene.h. The default
   // needs no conversion: 0 is a fixed point of both directions. Twin of the encode side in
   // RendererToJson, and of core's own conversion in config_manager.cpp::ParseRenderConfig.
   r.background[0] = r.background[1] = r.background[2] = 0.0f;

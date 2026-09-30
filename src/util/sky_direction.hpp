@@ -5,7 +5,7 @@
 
 namespace lumice {
 
-// The one convention every direction in the C API uses (lumice.h, the marker family and the
+// The one convention every direction in the C API uses (lumice_render.h, the marker family and the
 // raypath-analysis cone centre): a unit vector is the direction light TRAVELS, so the sky point
 // it comes FROM sits at altitude = asin(-z) (the zenith is z = -1) and its azimuth is measured as
 // the sun's is — the sun at azimuth 0 sits at lon 180, i.e. az = atan2(y, x) - 180.

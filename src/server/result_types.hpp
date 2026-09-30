@@ -278,7 +278,7 @@ struct RaypathHistogramEntry {
   // The chain as text. In the recorded (finest) result this is
   // ChainIdInterningTable::Format()'s diagnostic form and reaches no consumer;
   // ReduceRaypathHistogram rewrites it through FormatRaypathChainDisplay, the
-  // one authority for the text a user sees (lumice.h `display`).
+  // one authority for the text a user sees (lumice_engine.h `display`).
   std::string display_;
   double energy_ = 0.0;  ///< Σ over counted rays of Y(wavelength) · weight
   size_t count_ = 0;     ///< number of counted rays

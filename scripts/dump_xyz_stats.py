@@ -47,7 +47,7 @@ PERCENTILE_VALUES = [50.0, 70.0, 90.0, 95.0, 99.0, 99.3, 99.5, 99.7, 99.9, 99.95
 
 # ─── ctypes structs ───────────────────────────────────────────────────────────
 
-# Mirrors LUMICE_RawXyzResult from src/include/lumice.h:63-77
+# Mirrors LUMICE_RawXyzResult from src/include/lumice_engine.h
 # Layout verified by manual offset calculation (72 bytes on 64-bit macOS).
 class LUMICE_RawXyzResult(ctypes.Structure):
     _fields_ = [
@@ -71,10 +71,10 @@ class LUMICE_RawXyzResult(ctypes.Structure):
 
 assert ctypes.sizeof(LUMICE_RawXyzResult) == 72, (
     f"LUMICE_RawXyzResult size mismatch: {ctypes.sizeof(LUMICE_RawXyzResult)} != 72 — "
-    "check lumice.h and re-verify field layout"
+    "check lumice_engine.h and re-verify field layout"
 )
 
-# LUMICE_ServerState constants (lumice.h:47-51)
+# LUMICE_ServerState constants (lumice_engine.h)
 LUMICE_SERVER_IDLE      = 0
 LUMICE_SERVER_RUNNING   = 1
 LUMICE_SERVER_NOT_READY = 2

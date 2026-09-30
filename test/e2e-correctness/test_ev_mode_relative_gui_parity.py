@@ -61,7 +61,7 @@ which is built from the same ``mask_detail::PixelToWorld`` + ``VisibleByRange`` 
 predicate as the ``BuildVisibleMask`` the renderer bakes with. Mirroring the geometry in Python
 instead would put a second authority on which pixels the lens images, which is the class of defect
 this suite exists to catch rather than to add. It is read through a test-only hook rather than the
-product annotation API because a mask a test wants is not a reason for ``lumice.h`` to export
+product annotation API because a mask a test wants is not a reason for the product C API headers to export
 anything; the hook lives in ``liblumice_testapi``, the superset of ``liblumice`` this harness loads.
 
 Not necessarily byte-identical, and the residual is understood rather than tolerated: the GUI

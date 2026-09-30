@@ -37,7 +37,7 @@
 // Regression guard (task-fix-stats-ray-count-u32-overflow): ray-count fields must be
 // 64-bit so totals > 2^32 never truncate on Windows, where `unsigned long` is 32-bit
 // (the status-bar ray-count rollover reported by Windows users). These field-level
-// asserts complement the header-level guard in lumice.h: they verify the struct fields
+// asserts complement the header-level guard in lumice_engine.h: they verify the struct fields
 // actually use the 64-bit type, not just that the typedef is wide enough.
 static_assert(sizeof(((LUMICE_StatsResult*)nullptr)->sim_ray_num) >= 8, "stats sim_ray_num must be 64-bit");
 static_assert(sizeof(((LUMICE_StatsResult*)nullptr)->ray_seg_num) >= 8, "stats ray_seg_num must be 64-bit");

@@ -1,4 +1,4 @@
-// The analysis run's C API surface (lumice.h "Raypath Analysis Run"): request validation, the
+// The analysis run's C API surface (lumice_engine.h "Raypath Analysis Run"): request validation, the
 // two mutual-exclusion error codes, the frame getters end to end on the 22° halo scene, what a
 // render frame and an analysis frame each refuse to carry, the truncation branch of the entry
 // copy, and the pixel -> direction inverse against the forward projection it must invert.

@@ -45,7 +45,7 @@ AnnotationAnchors::ViewKey MakeAnnotationViewKey(const AnnotationViewInput& in, 
   const size_t nv = std::min(in.view_dist_deg.size(), static_cast<size_t>(kMaxAnnotationCircles));
   key.view_dist_deg.assign(in.view_dist_deg.begin(), in.view_dist_deg.begin() + nv);
   // Clamped to the API's own ceiling rather than passed through: a request past it is REJECTED,
-  // not truncated (lumice.h), which would drop the circles and the grid together over a limit only
+  // not truncated (lumice_render.h), which would drop the circles and the grid together over a limit only
   // one family exceeded. The narrowest FOV the GUI allows expands to 720 meridians, so this is a
   // reachable clamp and not a defensive one.
   const size_t ne = std::min(in.elevation_deg.size(), static_cast<size_t>(LUMICE_MAX_ANNOTATION_LINES));

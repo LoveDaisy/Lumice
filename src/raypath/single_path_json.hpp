@@ -2,7 +2,7 @@
 #define LUMICE_RAYPATH_SINGLE_PATH_JSON_HPP_
 
 // The JSON form of a SinglePathResult — the one serialization of it, which the `Lumice raypath`
-// subcommand writes and a GUI shell will read through the same lumice.h entry point — and its one
+// subcommand writes and a GUI shell will read through the same lumice_raypath.h entry point — and its one
 // reader, ParseWarmSeeds, which takes an earlier output back as warm starts. Writer and reader sit
 // in one file so the keys they share cannot drift apart. The field-by-field description is
 // doc/raypath-cli-output.md.

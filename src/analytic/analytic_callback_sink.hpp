@@ -12,7 +12,7 @@ namespace lumice::analytic {
 
 // Forwards spdlog messages to the host's LUMICE_ANALYTIC_LogCallback. The same shape as
 // lumice::CCallbackSink (src/util/callback_sink.hpp), deliberately not shared with it: that one is
-// typed on lumice.h's LUMICE_LogCallback, and this library's header shares no types with lumice.h
+// typed on lumice_base.h's LUMICE_LogCallback, and this library's header shares no types with the engine's
 // (doc/analytic-api.md section 7). A header of its own only so a unit test can drive this
 // class without linking analytic_lib.cpp, whose load-time silencing would mute the test binary.
 // callback-sink-template-threshold: if a third such pair of small, type-bound copies appears,

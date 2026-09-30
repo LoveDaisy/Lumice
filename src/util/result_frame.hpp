@@ -4,7 +4,7 @@
 // the result-frame API in this repo's production code (the CLI in src/main.cpp, and the GUI's
 // src/gui/app.cpp / src/gui/server_poller.cpp).
 //
-// The C API's contract is a plain acquire/release pair (lumice.h, LUMICE_ReleaseResultFrame) —
+// The C API's contract is a plain acquire/release pair (lumice_engine.h, LUMICE_ReleaseResultFrame) —
 // that is what a C caller writes, and this header does not change it. It exists because a C++
 // caller has early returns: three of these call sites bail out mid-function when a FrameGet*
 // rejects the frame, and a hand-placed release at the bottom is skipped on exactly those paths.
@@ -15,7 +15,7 @@
 // place both already include from (src/gui/ may not include core/ or config/ — see the API
 // boundary rule in AGENTS.md, enforced by scripts/check_policies.py). Note the layering is
 // unusual for this directory: everything else in util/ sits BELOW the C API, whereas this sits
-// above it, consuming lumice.h like any external caller would. It depends on nothing else in
+// above it, consuming the C API headers like any external caller would. It depends on nothing else in
 // util/, so it does not drag the rest of the directory across that line.
 //
 // test/support/scoped_result_frame.hpp is the test-side counterpart. The two are deliberately

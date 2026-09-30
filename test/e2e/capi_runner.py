@@ -14,7 +14,7 @@ Which library. This runner loads ``liblumice_testapi``, not ``liblumice``. The
 two are built from the same ``lumice_obj`` objects, so every ``LUMICE_*`` call
 behaves identically; the test library additionally exports the ``LUMICE_TEST_*``
 hooks declared in ``test/support/lumice_test_api.h`` -- test-only entry points
-that the product ABI (``src/include/lumice.h``) must never carry. It is a
+that the product ABI (``src/include/lumice_*.h``) must never carry. It is a
 superset stand-in rather than a companion: ``-fvisibility=hidden`` leaves a side
 library nothing to link against, so the hooks ship with their own copy of the
 engine, and a test process loads exactly ONE of the two (two would be two engines
@@ -55,7 +55,7 @@ from typing import List, Optional, Sequence
 import numpy as np
 
 
-# Mirrors LUMICE_RawXyzResult in src/include/lumice.h. Anchor fields removed
+# Mirrors LUMICE_RawXyzResult in src/include/lumice_engine.h. Anchor fields removed
 # in task-remove-anchor-lane (64 → 56 bytes); the trailing uint64 `epoch` field
 # (backend-lifecycle-epoch, 1.3) grew it back to 64 (48-byte effective_pixels +
 # 4 pad + 8-byte epoch, 8-aligned). `emitted_energy` then went into that 4-byte
@@ -84,7 +84,7 @@ class LUMICE_RawXyzResult(ctypes.Structure):
 
 
 assert ctypes.sizeof(LUMICE_RawXyzResult) == 72, (
-    "LUMICE_RawXyzResult size mismatch — verify lumice.h field layout"
+    "LUMICE_RawXyzResult size mismatch — verify lumice_engine.h field layout"
 )
 
 # Field OFFSETS, not just the total size. A field inserted at the wrong index
@@ -105,12 +105,12 @@ for _name, _offset in (
     _actual = getattr(LUMICE_RawXyzResult, _name).offset
     assert _actual == _offset, (
         f"LUMICE_RawXyzResult.{_name} at offset {_actual}, expected {_offset} — "
-        "the ctypes mirror and lumice.h disagree on field order"
+        "the ctypes mirror and lumice_engine.h disagree on field order"
     )
 
 
-# Mirrors LUMICE_RenderResult in src/include/lumice.h. task-345.3 grew this
-# struct by adding composite_p99_y (float at offset 24, 8-byte aligned = 32
+# Mirrors LUMICE_RenderResult in src/include/lumice_engine.h. The struct grew
+# by adding composite_p99_y (float at offset 24, 8-byte aligned = 32
 # bytes total); the ctypes mirror must include it or LUMICE_FrameGetRender
 # will overflow the out array by 8 bytes and corrupt the Python heap
 # (task-cuda-ctypes-teardown-crash root cause). C++-side static_assert lives
@@ -125,11 +125,11 @@ class LUMICE_RenderResult(ctypes.Structure):
     ]
 
 assert ctypes.sizeof(LUMICE_RenderResult) == 32, (
-    "LUMICE_RenderResult size mismatch — verify lumice.h field layout"
+    "LUMICE_RenderResult size mismatch — verify lumice_engine.h field layout"
 )
 
 
-# Mirrors LUMICE_StatsResult in src/include/lumice.h. All four fields are
+# Mirrors LUMICE_StatsResult in src/include/lumice_engine.h. All four fields are
 # LUMICE_RayCount = `unsigned long long` (64-bit on every platform, unlike
 # `unsigned long` on Windows — see the static_assert next to the typedef).
 class LUMICE_StatsResult(ctypes.Structure):
@@ -177,7 +177,7 @@ def _assert_stats_mirror_matches_header() -> None:
 _assert_stats_mirror_matches_header()
 
 
-# Mirrors LUMICE_DrainResult in src/include/lumice.h. Both fields are
+# Mirrors LUMICE_DrainResult in src/include/lumice_engine.h. Both fields are
 # `unsigned long long`; the current epoch is fully drained iff they are equal.
 class LUMICE_DrainResult(ctypes.Structure):
     _fields_ = [
@@ -187,16 +187,16 @@ class LUMICE_DrainResult(ctypes.Structure):
 
 
 assert ctypes.sizeof(LUMICE_DrainResult) == 16, (
-    "LUMICE_DrainResult size mismatch — verify lumice.h field layout"
+    "LUMICE_DrainResult size mismatch — verify lumice_engine.h field layout"
 )
 
-# Backend constants (lumice.h:391-392).
+# Backend constants (LUMICE_BACKEND_* in lumice_engine.h).
 LUMICE_BACKEND_CPU = 0
 LUMICE_BACKEND_METAL = 1
 LUMICE_BACKEND_CUDA = 2
 
 
-# Mirrors LUMICE_ServerConfig in src/include/lumice.h. Must include
+# Mirrors LUMICE_ServerConfig in src/include/lumice_engine.h. Must include
 # preferred_backend or LUMICE_CreateServerEx will read 4 bytes past the
 # ctypes-allocated struct (undefined behavior; contributed to the ctypes
 # teardown crash root cause).
@@ -209,11 +209,11 @@ class LUMICE_ServerConfig(ctypes.Structure):
 
 
 assert ctypes.sizeof(LUMICE_ServerConfig) == 12, (
-    "LUMICE_ServerConfig size mismatch — verify lumice.h field layout"
+    "LUMICE_ServerConfig size mismatch — verify lumice_engine.h field layout"
 )
 
 
-# ---- Raypath analysis run (lumice.h "Raypath Analysis Run", v4.29) ----
+# ---- Raypath analysis run (lumice_engine.h "Raypath Analysis Run", v4.29) ----
 # Sizes and offsets below are pinned to the C side twice: here against numbers measured
 # from the header, and in test/unit-correctness/server/test_c_api_raypath_analysis.cpp
 # by static_assert on the same numbers, so a field added on either side turns one of the
@@ -251,7 +251,7 @@ class LUMICE_AnnotationView(ctypes.Structure):
 
 
 assert ctypes.sizeof(LUMICE_AnnotationView) == 48, (
-    "LUMICE_AnnotationView size mismatch — verify lumice.h field layout"
+    "LUMICE_AnnotationView size mismatch — verify lumice_render.h field layout"
 )
 
 
@@ -274,12 +274,12 @@ class LUMICE_RaypathAnalysisRequest(ctypes.Structure):
 # struct's 8-byte alignment pads the tail to 96. (88 from v4.34 to v4.41: the cone stop target
 # gone, `infinite` moved up into its place, 4 bytes of padding before `ray_num`.)
 assert ctypes.sizeof(LUMICE_RaypathAnalysisRequest) == 96, (
-    "LUMICE_RaypathAnalysisRequest size mismatch — verify lumice.h field layout"
+    "LUMICE_RaypathAnalysisRequest size mismatch — verify lumice_engine.h field layout"
 )
 for _name, _offset in (("frame_view", 4), ("cone_center", 52), ("infinite", 72), ("ray_num", 80),
                        ("chain_capacity", 88)):
     assert getattr(LUMICE_RaypathAnalysisRequest, _name).offset == _offset, (
-        f"LUMICE_RaypathAnalysisRequest.{_name} offset drift — the mirror and lumice.h disagree"
+        f"LUMICE_RaypathAnalysisRequest.{_name} offset drift — the mirror and lumice_engine.h disagree"
     )
 
 
@@ -307,12 +307,12 @@ class LUMICE_RaypathHistogramEntry(ctypes.Structure):
 
 assert ctypes.sizeof(LUMICE_RaypathChainSegment) == 264
 assert ctypes.sizeof(LUMICE_RaypathHistogramEntry) == 5608, (
-    "LUMICE_RaypathHistogramEntry size mismatch — verify lumice.h field layout"
+    "LUMICE_RaypathHistogramEntry size mismatch — verify lumice_engine.h field layout"
 )
 for _name, _offset in (("chain_len", 2112), ("display", 2116), ("energy", 5320), ("count", 5328),
                        ("ring_energy", 5336), ("ring_count", 5592), ("error_bound", 5600)):
     assert getattr(LUMICE_RaypathHistogramEntry, _name).offset == _offset, (
-        f"LUMICE_RaypathHistogramEntry.{_name} offset drift — the mirror and lumice.h disagree"
+        f"LUMICE_RaypathHistogramEntry.{_name} offset drift — the mirror and lumice_engine.h disagree"
     )
 
 
@@ -339,7 +339,7 @@ assert ctypes.sizeof(LUMICE_RaypathAnalysisInfo) == 64
 for _name, _offset in (("snapshot_generation", 24), ("other_energy", 32), ("other_count", 40),
                        ("truncated_chain_count", 48), ("max_row_error", 56)):
     assert getattr(LUMICE_RaypathAnalysisInfo, _name).offset == _offset, (
-        f"LUMICE_RaypathAnalysisInfo.{_name} offset drift — the mirror and lumice.h disagree"
+        f"LUMICE_RaypathAnalysisInfo.{_name} offset drift — the mirror and lumice_engine.h disagree"
     )
 
 
@@ -370,7 +370,7 @@ class RaypathAnalysisResult:
     max_row_error: float = 0.0
 
 
-# LUMICE_ServerState constants (lumice.h)
+# LUMICE_ServerState constants (lumice_engine.h)
 # Drain-wait bounds for _read_sample_counts: how long to wait for the server's drain
 # signal after it reports IDLE (see the comment there). Timeout FAILS the read rather
 # than returning a partial total.
@@ -409,11 +409,11 @@ class SimResult:
     # The session's exposure anchor: P99 sky radiance per steradian, measured on
     # a fixed full-sky buffer rather than on this renderer's output. A property
     # of the scene, so it is the same on every row of one frame — see the field's
-    # contract in lumice.h.
+    # contract in lumice_engine.h.
     anchor_l99_sky: float = 0.0
     # On-axis per-pixel solid angle of THIS renderer's view, steradians. The unit bridge
     # between anchor_l99_sky (a radiance) and the pixel buffer (a radiance times a pixel's
-    # solid angle); see LUMICE_RawXyzResult in lumice.h.
+    # solid angle); see LUMICE_RawXyzResult in lumice_engine.h.
     axis_solid_angle: float = 0.0
     crystal_num: int = 0
     orientation_num: int = 0
@@ -569,7 +569,7 @@ def _find_lib() -> Path:
 _LIB_CACHE: Optional[ctypes.CDLL] = None
 
 
-# Log callback prototype matches LUMICE_LogCallback in lumice.h:105.
+# Log callback prototype matches LUMICE_LogCallback in lumice_base.h.
 # Signature: void(level, logger_name, message). Defined here (not inside
 # _load_lib) so the type object is stable across calls — the C-core retains
 # the function-pointer cast and a per-call rebind would re-trigger the cast.
@@ -695,7 +695,7 @@ def _load_lib() -> ctypes.CDLL:
 
 
 # Module-level callback bookkeeping. The C-core retains the function pointer
-# globally (lumice.h:107-109), so we register exactly once and route messages
+# globally (LUMICE_SetLogCallback in lumice_base.h), so we register exactly once and route messages
 # through a thread-safe dispatcher to the currently-active capture (or None).
 _LOG_LOCK = threading.Lock()
 _ACTIVE_LOG_SINK: Optional[List[str]] = None
@@ -786,7 +786,7 @@ def _read_backend_routing(lib, server, lines: List[str]) -> tuple[str, bool]:
 def _result_frame(lib, server):
     """Acquire a result frame, yield the handle, release it on the way out.
 
-    The C contract is a plain acquire/release pair (lumice.h). Python gets a context
+    The C contract is a plain acquire/release pair (lumice_engine.h). Python gets a context
     manager for the same reason the C++ tests get a scoped holder: an exception raised
     between the two calls would otherwise skip the release. Every field the FrameGet*
     functions hand back points into the frame, so any reading of those fields belongs
@@ -1078,7 +1078,7 @@ def run_raypath_analysis_capi(
 ) -> RaypathAnalysisResult:
     """Run one ANALYSIS run via the C API on a fresh server and copy the histogram out.
 
-    The lifecycle lumice.h describes, verbatim: create → LUMICE_StartRaypathAnalysis on
+    The lifecycle lumice_engine.h describes, verbatim: create → LUMICE_StartRaypathAnalysis on
     `config_path` (v4.36: the scene is the call's own — no commit precedes it, and the server
     this helper creates never commits anything) → wait for the drain signal → read one frame →
     destroy. The scene's own finite ray_num is the run's budget (an "infinite" config has no end
@@ -1233,7 +1233,7 @@ def _copy_rgb_image(rr: LUMICE_RenderResult, index: int, config: str) -> np.ndar
         raise RuntimeError(
             f"{config}: LUMICE_FrameGetRender returned an empty buffer for renderer[{index}]"
         )
-    # img_buffer is packed RGB uint8 (3 bytes/pixel, sRGB); per lumice.h:262.
+    # img_buffer is packed RGB uint8 (3 bytes/pixel, sRGB); per LUMICE_RenderResult in lumice_engine.h.
     n_rgb = w * h * 3
     return (
         np.frombuffer((ctypes.c_ubyte * n_rgb).from_address(addr), dtype=np.uint8)

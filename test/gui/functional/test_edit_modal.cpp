@@ -2724,7 +2724,7 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
   }
 
   // The leader rule, checked across the two ways "lowest slot index" can disagree with what a naive
-  // search finds. lumice.h defines a group's owner as its lowest-indexed applicable member, over
+  // search finds. lumice_scene.h defines a group's owner as its lowest-indexed applicable member, over
   // every slot the crystal type has; the GUI snapshots from that same slot so that what the user
   // sees on join is the value core will draw with.
   //   group 1 — slot order vs ROW order: Upper H is slot 1, Lower H slot 3, and Upper H is drawn
@@ -2800,7 +2800,7 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
     };
   }
 
-  // A hand-authored config MAY group a scalar the GUI offers no Sync control for — lumice.h runs no
+  // A hand-authored config MAY group a scalar the GUI offers no Sync control for — lumice_scene.h runs no
   // commensurability check and the GUI is not a second authority on what is legal. Once such a group
   // exists, core treats that scalar as an ordinary member (it is applicable, so normalization elects
   // it and writes over the rest of the group from it), and the GUI must report and propagate it the
@@ -2915,7 +2915,7 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
   // The mechanism that pins "the GUI's leader IS core's leader", as opposed to a comment asking the
   // next person to keep them in step.
   //
-  // The two rules are two implementations of one sentence in lumice.h, nothing structural forces
+  // The two rules are two implementations of one sentence in lumice_scene.h, nothing structural forces
   // them together, and they HAVE drifted apart once: a GUI-side affordance narrowing (some rows get
   // no Sync control) leaked into the leader search, so for a hand-authored group the table handed
   // out a distribution core discarded on commit. A test that hardcoded the expected leader could not

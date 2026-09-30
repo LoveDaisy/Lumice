@@ -1318,7 +1318,10 @@ jobs:
                    lib/cmake/LumiceAnalytic/LumiceAnalyticTargets.cmake; do
             test -f "$RUNNER_TEMP/analytic-install/$f" || { echo "::error::analytic install is missing $f"; exit 1; }
           done
-          test ! -e "$RUNNER_TEMP/analytic-install/include/lumice.h" || { echo "::error::lumice.h was installed with the analytic package"; exit 1; }
+          # The package's headers are exactly these two: no engine header (src/include/lumice_*.h)
+          # ships with it, so a consumer cannot compile against both (doc/analytic-api.md section 2.6).
+          headers="$(cd "$RUNNER_TEMP/analytic-install/include" && find . -type f | LC_ALL=C sort | tr '\n' ' ')"
+          test "$headers" = "./lumice_analytic.h ./lumice_analytic_core.h " || { echo "::error::analytic install ships headers [$headers], expected exactly lumice_analytic.h and lumice_analytic_core.h"; exit 1; }
           find "$RUNNER_TEMP/analytic-install" -type f | sort
 
       - name: Setup Python
@@ -1493,8 +1496,12 @@ jobs:
               exit 1
             }
           }
-          if (Test-Path (Join-Path $prefix 'include/lumice.h')) {
-            Write-Output "::error::lumice.h was installed with the analytic package"
+          # The package's headers are exactly these two: no engine header (src/include/lumice_*.h)
+          # ships with it (doc/analytic-api.md section 2.6).
+          $names = @(Get-ChildItem -Recurse -File (Join-Path $prefix 'include') | ForEach-Object { $_.Name })
+          $headers = $names -join ' '
+          if ($names.Count -ne 2 -or $names -notcontains 'lumice_analytic.h' -or $names -notcontains 'lumice_analytic_core.h') {
+            Write-Output "::error::analytic install ships headers [$headers], expected exactly lumice_analytic.h and lumice_analytic_core.h"
             exit 1
           }
           Get-ChildItem -Recurse -File $prefix | ForEach-Object { $_.FullName }

@@ -31,7 +31,7 @@ namespace lumice::test {
 // Scene IS a JSON tree — see LUMICE_Scene_ in c_api_scene_internal.hpp), so reading it is reading the scene's
 // state, not a re-encoding of it.
 //
-// Scene ids are 0-based and assigned by the Scene itself (lumice.h "Incremental build"), where
+// Scene ids are 0-based and assigned by the Scene itself (lumice_scene.h "Incremental build"), where
 // the pre-handle GUI code assigned crystals `pool_id + 1` and ran its own 1-based filter
 // counter. Assertions on emitted ids therefore start at 0 — the ids are internal cross-
 // references (scattering entry -> crystal/filter, composition term -> filter), never a

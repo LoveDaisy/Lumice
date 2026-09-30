@@ -610,7 +610,7 @@ void RenderRefRow(GuiState& state, ColorClassConfig& cls, size_t ref_idx, bool& 
 
 // Poll interval is intentionally coarse — LUMICE_GetColorClassSignal is
 // O(W*H*class_count*consumers), matching the "debounce cadence, not per-frame"
-// contract in lumice.h. 500 ms is fast enough for interactive editing feedback
+// contract in lumice_engine.h. 500 ms is fast enough for interactive editing feedback
 // and far below any user perception threshold.
 constexpr float kSignalPollIntervalSec = 0.5f;
 

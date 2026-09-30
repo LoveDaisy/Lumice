@@ -12,9 +12,9 @@
 // is declared once, in cmake/export_surfaces.cmake; the export lists are generated from them by
 // scripts/gen_export_list.py (root CMakeLists.txt, lumice_apply_export_list).
 //
-// Independent of lumice.h: it includes nothing from it and shares none of its types. A process
-// loads one of liblumice / liblumice_testapi / liblumice_analytic, never two: each carries its own
-// copy of the engine and its statics (doc/analytic-api.md section 2.6).
+// Independent of the engine's lumice_*.h headers: it includes nothing from them and shares none of their types. A
+// process loads one of liblumice / liblumice_testapi / liblumice_analytic, never two: each carries its own copy of the
+// engine and its statics (doc/analytic-api.md section 2.6).
 //
 // 0.x is experimental: the interface may change between versions (doc/analytic-api.md section 8).
 //
@@ -70,10 +70,10 @@ extern "C" {
 #endif
 
 // Interface version, a single integer (doc/analytic-api.md section 8.2): bumped on every
-// incompatible change, and in 0.x on every addition too. Independent of lumice.h's LUMICE_API_VERSION.
+// incompatible change, and in 0.x on every addition too. Independent of lumice_base.h's LUMICE_API_VERSION.
 #define LUMICE_ANALYTIC_API_VERSION 6
 
-// Return codes of the computation functions. The names shared with lumice.h's LUMICE_ErrorCode mean
+// Return codes of the computation functions. The names shared with lumice_base.h's LUMICE_ErrorCode mean
 // the same thing there; the type is this header's own (doc/analytic-api.md section 5.2). A numerical
 // outcome of a computation (an invalid path at a pose) is result data, never an error code.
 typedef enum LUMICE_ANALYTIC_ErrorCode_ {

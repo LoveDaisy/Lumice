@@ -1,7 +1,7 @@
 #ifndef LUMICE_TEST_API_H_
 #define LUMICE_TEST_API_H_
 
-// The TEST-ONLY export surface of liblumice_testapi: lumice.h plus a handful of LUMICE_TEST_*
+// The TEST-ONLY export surface of liblumice_testapi: the engine's C API plus a handful of LUMICE_TEST_*
 // hooks the pytest (ctypes) harness needs and the product ABI must never carry. Everything a test
 // can do through the product C API it still does through the product C API — the hooks here
 // exist only for what has no product-facing reason to be exported at all.
@@ -24,7 +24,7 @@
 extern "C" {
 #endif
 
-// Same export mechanism as lumice.h: the library's export list is generated from lumice.h and
+// Same export mechanism as the product headers: the library's export list is generated from them and
 // this header together (root CMakeLists.txt, lumice_apply_export_list), and the marker below only
 // makes a declaration eligible for it — default visibility on GCC/Clang, where the target compiles
 // with -fvisibility=hidden. No dllimport branch: nothing links against this library, it is only

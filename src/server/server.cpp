@@ -420,7 +420,7 @@ class ServerImpl {
   // reader, and the old frame dies when its last holder drops it.
   //
   // INVARIANT: never null. The constructor publishes an all-zero frame, so every reader
-  // dereferences unconditionally — that is what makes lumice.h's "all-zero struct if no
+  // dereferences unconditionally — that is what makes lumice_engine.h's "all-zero struct if no
   // snapshot has been taken yet" promise structural rather than a per-call null branch.
   std::shared_ptr<const ResultFrame> published_frame_;
 
@@ -820,7 +820,7 @@ ServerImpl::ServerImpl(int num_workers, uint32_t sim_seed, BackendKind preferred
   // Publish an empty frame up front so published_frame_ is never null. A
   // reader that arrives before the first snapshot then gets an honest "nothing yet"
   // (no results, nullopt stats) instead of forcing every read path to carry a null
-  // branch — and lumice.h's "all-zero struct if no snapshot has been taken yet" promise
+  // branch — and lumice_engine.h's "all-zero struct if no snapshot has been taken yet" promise
   // for the cached-stats read holds by construction.
   StorePublished(std::make_shared<const ResultFrame>());
   preferred_backend_.store(preferred_backend, std::memory_order_release);
@@ -1458,7 +1458,7 @@ Error ServerImpl::ContinueRun(size_t additional_ray_num) {
   // within one consumer pass, so the bound is a guard against a drain that never publishes,
   // not a latency anyone waits out — code review round 1, Major #1: proceeding anyway on
   // timeout silently dropped the undrained batches while this function's own doc comment (and
-  // lumice.h's) promises unconditionally that "no traced ray is dropped". Erroring out instead
+  // lumice_engine.h's) promises unconditionally that "no traced ray is dropped". Erroring out instead
   // keeps that promise true in every code path: a caller that hits this either gets the drain it
   // asked for, or a rejected call that (per the same doc comment) changed nothing — never a
   // silent LUMICE_OK sitting on top of a quiet loss. 5s is a generous multiple of a normal

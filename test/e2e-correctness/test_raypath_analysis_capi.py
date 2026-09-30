@@ -1,4 +1,4 @@
-"""The analysis run, end to end through the C API (lumice.h "Raypath Analysis Run").
+"""The analysis run, end to end through the C API (lumice_engine.h "Raypath Analysis Run").
 
 The scene is the 22° halo of ``test/e2e/configs/halo_22.json`` — same crystal, same sun —
 with a 200k-ray budget (``raypath_analysis_halo_22.json``), so the top chain the C++ white-box
@@ -50,7 +50,7 @@ _CONFIG = str(get_project_root() / "test" / "e2e" / "configs" / "raypath_analysi
 _CONFIG_PC_TWO_LAYER = str(get_project_root() / "test" / "e2e" / "configs" / "raypath_analysis_pc_two_layer.json")
 
 # The direction light travels for a sun at (altitude, azimuth) is the antipode of where the
-# sun sits — the convention every direction in the C API uses (lumice.h, the marker family).
+# sun sits — the convention every direction in the C API uses (lumice_render.h, the marker family).
 _SUN_ALTITUDE_DEG = 20.0
 # Where the 22° halo's energy sits, straight above the sun: the ring's minimum deviation is
 # 21.8°, its energy piles up just outside it, so +23° lands on the bright edge.
