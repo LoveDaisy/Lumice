@@ -39,7 +39,8 @@ pytest -v -m slow                         # slow e2e only (needs shared lib: ./s
 ./scripts/format.sh
 ./scripts/format.sh --check          # read-only: exit 1 if anything needs formatting (used by the pre-commit hook; CI runs the format-check job)
 
-# Engineering-policy gate (env-knob centralization/registration, GUI API boundary, using-namespace)
+# Engineering-policy gate (env-knob centralization/registration, GUI API boundary, using-namespace,
+# layer inversion)
 python3 scripts/check_policies.py    # whole-tree: what state is the repo in?
 python3 scripts/check_new_refs.py --staged        # diff-scoped: what did you just write?
 python3 scripts/check_new_refs.py --range A..B    # same, over a commit range (what CI runs)
@@ -82,6 +83,17 @@ before downloading into it).
   (header `src/include/lumice_analytic.h`, prefix `LUMICE_ANALYTIC_`; design in `doc/analytic-api.md`)
 - `src/include/`: public C API header
 - `test/`: unit tests, GUI tests, and E2E tests
+
+Layers: `cmake/lumice_layers.cmake` assigns every file under `src/` (the shell — `gui/`,
+`launcher/`, `main.cpp` — aside) to one of nine layers, lowest first: foundation, analytic, scene,
+view, sim, render, engine, raypath, capi. It is the single statement of the layering, read by both
+sides: CMake builds `lumice_foundation_obj` from its foundation list (`liblumice_analytic` links
+foundation and the analytic kernel only, `doc/analytic-api.md` §2.1), and
+`scripts/check_policies.py`'s `layer-inversion` rule rejects any `#include` that points at a
+higher layer, any `src/` file the manifest does not own, and any manifest entry naming no file. A
+new source file therefore goes into the manifest in the same change. The existing inversions are
+listed in `cmake/lumice_layer_allowlist.txt`, which only shrinks — fixing an inversion means
+deleting its line, and an entry whose edge is gone fails the check.
 
 ## Style and Engineering Rules
 
@@ -329,7 +341,8 @@ before downloading into it).
     authority on which file that is; `scripts/check_policies.py`'s `no-test-symbol-in-src` rule
     keeps the `LUMICE_TEST_` prefix out of `src/` so the two surfaces cannot grow back together.
     The third, `liblumice_analytic`, is the published analytic library (`doc/analytic-api.md`),
-    again the same objects, exporting only `LUMICE_ANALYTIC_*`; it is not produced by a CUDA
+    built from the engine's foundation objects and the analytic kernel only (not `lumice_obj`),
+    exporting only `LUMICE_ANALYTIC_*`; it is not produced by a CUDA
     configure. What each of the three exports is its own export list, generated from its headers
     by `scripts/gen_export_list.py` — declarations carry `LUMICE_API` / `LUMICE_TEST_API` /
     `LUMICE_ANALYTIC_API` and the generator refuses one without — and
@@ -774,8 +787,11 @@ Valuable design/architecture docs live in `doc/` (tracked). Consult the relevant
     接口而非现在的 `lumice.h`，共享判据见 `raypath-analysis.md` §5.1.6。
     考虑发布动态库、设计新产品线、或再次提起拆仓前先读。
   - `analytic-api.md` — **`liblumice_analytic` 设计（第一个对外发布的共享库；target / 导出列表 / 日志接管 / 打包与版本政策
-    已 as-built，只用 install 树的外部消费者冒烟测试（C `find_package` + Python ctypes，`test/e2e-correctness/test_external_consumer_smoke.py`）已落地；模块 A（单光路反解 + fiber 行走 + seed 搜索，API v2–v5）与模块 B（带求和 / 单光路全天图，API v6，§4.6）已 as-built，尚不进下载包，2026-09-30）**：头文件 `lumice_analytic.h`、前缀 `LUMICE_ANALYTIC_`（owner 已定），链整个
-    `lumice_obj` 的三条规矩（新 target 显式开死代码裁剪 / 只从无 CUDA 构建产出 / ISA 是**配置**的属性
+    已 as-built，只用 install 树的外部消费者冒烟测试（C `find_package` + Python ctypes，`test/e2e-correctness/test_external_consumer_smoke.py`）已落地；模块 A（单光路反解 + fiber 行走 + seed 搜索，API v2–v5）与模块 B（带求和 / 单光路全天图，API v6，§4.6）已 as-built，尚不进下载包，2026-09-30）**：头文件 `lumice_analytic.h`、前缀 `LUMICE_ANALYTIC_`（owner 已定），⭐**§2.1/§2.2（2026-09-30 改）**：
+    不再链整个 `lumice_obj`，只链 `lumice_foundation_obj` + `lumice_analytic_kernel`（foundation 由
+    `cmake/lumice_layers.cmake` 定义、`layer-inversion` 门禁守住），闭包由不裁剪的可执行
+    `lumice_analytic_link_probe` 检查（库自身的 `-dead_strip` 实测会掩盖跨层引用），裁剪只剩体积用途；
+    其余规矩（只从无 CUDA 构建产出 / ISA 是**配置**的属性
     ⇒ 从 `LUMICE_ISA_LEVEL=baseline` 的配置产出，⛔ 不从本地默认 `native`）+ 一进程只加载
     `liblumice` / `liblumice_testapi` / `liblumice_analytic` 之一。⭐**§3 对称性语义**（owner 硬要求）：
     接口只收具体面序列、不带对称参数、不提供约化——约化属原语层、两仓各留一份互校；调用方在接口外
@@ -783,8 +799,8 @@ Valuable design/architecture docs live in `doc/` (tracked). Consult the relevant
     L1 在 `D3h` `[3,5]` 过并 1.41×）。§4 首个模块（单光路反解 + fiber 行走）C 头文件草案：
     `EvaluatePath` + `TraceFiber[Batch]`，种子由调用方给（v0 不含 seed search），库分配 + 显式释放，
     `status` 封闭 / `reason` 开放。⚠️ §6：几何构造路径**有** `LOG_WARNING`（退化晶体 / 锥退化到顶点 /
-    丢面），默认静默会吞掉 ⇒ 回调须转发，且退化晶体同时以错误码返回。§7：三个共享库同链
-    `lumice_obj`，导出集合**只**由按库导出列表决定（`scripts/gen_export_list.py` 从各库头文件生成，
+    丢面），默认静默会吞掉 ⇒ 回调须转发，且退化晶体同时以错误码返回。§7：三个共享库共用引擎的
+    对象（analytic 只取 foundation + kernel），导出集合**只**由按库导出列表决定（`scripts/gen_export_list.py` 从各库头文件生成，
     as-built）；`WINDOWS_EXPORT_ALL_SYMBOLS` 与 visibility pragma 已移除。
     ⭐**§8 版本与打包（as-built）**：`LUMICE_ANALYTIC_API_VERSION` 这一个整数就是唯一版本号，CMake
     从头文件读出它当 package 版本（不写第二份）；`find_package(LumiceAnalytic <n>)` 用 `ExactVersion`，

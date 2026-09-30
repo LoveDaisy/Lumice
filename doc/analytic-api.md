@@ -82,43 +82,63 @@ vice versa (§7).
 
 ## 2. Link boundary
 
-### 2.1 The rule **(owner)**
+### 2.1 The rule **(owner; revised 2026-09-30)**
 
-The library links **all of `lumice_obj`**, the same object library `liblumice` and
-`liblumice_testapi` are made of (`CMakeLists.txt:819`), rather than carving objects out of it.
-This is the `liblumice_testapi` shape (`CMakeLists.txt:1001-1019`): same objects + its own header
-+ its own prefix + its own shared library. Three consequences follow, each checked against the
-build as it stands.
+The library is built from the engine's own objects, never from a second copy of its sources —
+the `liblumice_testapi` shape: same objects + its own header + its own prefix + its own shared
+library. What changed on 2026-09-30 is *which* objects. The first version linked **all of
+`lumice_obj`** and relied on the linker to strip what the analytic code never reached. It now
+links exactly two object libraries: **`lumice_foundation_obj`** (the engine's foundation layer —
+math, geometry, optics, the crystal and its shape parameters, the logger and the other `util/`
+pieces) and **`lumice_analytic_kernel`** (`src/analytic/` minus its C ABI wrapper), plus
+`analytic_api.cpp` itself. The rest of the engine does not reach it structurally.
 
-### 2.2 Dead-code stripping must be switched on for the new target
+Which files are foundation is not decided here. `cmake/lumice_layers.cmake` assigns every file
+under `src/` to a layer, and it is the one statement of that: CMake builds
+`lumice_foundation_obj` from its foundation list (and `lumice_obj` from the engine's source lists
+minus that one), and `scripts/check_policies.py`'s `layer-inversion` rule rejects any `#include`
+that points from a file to a higher layer. The analytic layer sits directly on foundation, so the
+gate is what keeps the library's closure closed at the source level.
 
-`-dead_strip` (Apple/Clang) and `--gc-sections` (GNU) are applied today only under
-`$<CONFIG:MinSizeRel>`, and only to the `lumice` target (`CMakeLists.txt:947-951`). In Release,
-every `.o` of the object library goes into the shared library whole; `-fvisibility=hidden`
-(`CMakeLists.txt:924-927`) decides what is *exported*, not what is *kept*. The objects are already
-compiled with `-ffunction-sections -fdata-sections` in Release (same lines), so the link flag is
-the only missing half.
+### 2.2 Why the closure is checked by an executable, and what stripping is still for
 
-Requirement: the new target sets the stripping link option itself, for the configuration it
-ships in. Stripping keeps static constructors and everything they reference (a spdlog registry,
-the shared sink, font tables), so it affects size only, never behaviour — a stripped and an
-unstripped build must behave identically, which is also how to test it.
+The gate reads `#include` lines; a function declared by hand and called across a layer never
+appears there. The linker catches that case, but not the library's own link: a GNU/Linux shared
+library may leave symbols undefined, and `-dead_strip` / `--gc-sections` drop an unreferenced
+function before its references are resolved — measured: a kernel function calling a scene-layer
+symbol left `liblumice_analytic.dylib` linking cleanly. So the closure is checked by
+**`lumice_analytic_link_probe`**, an executable made of exactly the library's objects and linked
+without stripping, which has neither escape. It is defined next to the library, under the same
+condition, and is part of the default build, so every configure that produces the library links
+it — CI's `e2e-slow` legs included. With Link-Time Optimization the compiler itself may delete
+dead code before resolution, which weakens it on the LTO-built Linux shared leg; the macOS legs
+build the shared flavor without LTO and are the unmasked check.
+
+Stripping (`-dead_strip` / `--gc-sections` in Release and MinSizeRel, `/OPT:REF` on Windows) is
+still set on the library, but it no longer carries the job of removing the engine — there is no
+engine left in the link to remove. What remains is size: the objects are compiled with
+`-ffunction-sections -fdata-sections`, and stripping drops the parts of foundation the analytic
+code does not call. It keeps static constructors and everything they reference (the spdlog
+registry, the shared sink), so a stripped and an unstripped build behave identically.
 
 ### 2.3 Only from a build without CUDA
 
 With `LUMICE_CUDA_ENABLED`, `lumice_obj` links `CUDA::cudart` **PUBLIC** and defines
-`LUMICE_CUDA_ENABLED=1` (`CMakeLists.txt:842-844`). A shared library linked from it carries a
-load-time dependency on the CUDA runtime, which stripping does not remove, and an LI Python
-process would then fail to load it on any machine without CUDA — for a computation that never
-touches a GPU. The published artifact is therefore produced only from a configure with
-`LUMICE_CUDA_ENABLED=OFF`. Metal on macOS (`CMakeLists.txt:832-833`) is a system framework and
+`LUMICE_CUDA_ENABLED=1`. A shared library linked from it would carry a load-time dependency on the
+CUDA runtime, and an LI Python process would then fail to load it on any machine without CUDA —
+for a computation that never touches a GPU. Since the library stopped linking `lumice_obj`
+(§2.1), that dependency no longer reaches it structurally: `lumice_foundation_obj` links no CUDA
+target. The target is still defined only in a configure with `LUMICE_CUDA_ENABLED=OFF`, and the
+published artifact is produced from one; lifting that condition is a packaging decision, not
+made here. Metal on macOS (`CMakeLists.txt:832-833`) is a system framework and
 imposes nothing on the consumer.
 
 ### 2.4 ISA: the baseline tier
 
-`lumice_apply_isa_march` (`CMakeLists.txt:886-909`) compiles **`lumice_obj` itself** for the tier
-in `LUMICE_ISA_LEVEL`. The new target links those objects; it has no compile of its own to apply
-a different tier to. So the ISA is a property of the **configure** the artifact is produced from,
+`lumice_apply_isa_march`, through `lumice_apply_engine_compile_options`, compiles every engine
+object library — `lumice_obj`, `lumice_foundation_obj`, the kernel — for the tier in
+`LUMICE_ISA_LEVEL`. The library links those objects; it has no compile of its own to apply a
+different tier to. So the ISA is a property of the **configure** the artifact is produced from,
 not of the target, and the rule is:
 
 - the published `liblumice_analytic` is produced from a configure with
@@ -141,9 +161,11 @@ What the artifact list is: one shared library per platform (`liblumice_analytic.
 from a Release, non-CUDA, baseline-ISA configure. The mechanisms, as built with the target:
 
 - **Target**: `lumice_analytic` in the root `CMakeLists.txt`, gated on
-  `BUILD_SHARED_LIBS AND NOT LUMICE_CUDA_ENABLED`, linking `lumice_obj` PRIVATE, with the stripping
-  flag of §2.2 in Release and MinSizeRel (`-dead_strip` / `--gc-sections` / `/OPT:REF`). Its own
-  code lives in `src/analytic/`, outside `lumice_obj`, so the other two libraries never carry it.
+  `BUILD_SHARED_LIBS AND NOT LUMICE_CUDA_ENABLED`, linking `lumice_foundation_obj` and
+  `lumice_analytic_kernel` PRIVATE (§2.1), with the stripping flag of §2.2 in Release and
+  MinSizeRel (`-dead_strip` / `--gc-sections` / `/OPT:REF`). Its own code lives in
+  `src/analytic/`, outside `lumice_obj`; the other two libraries carry the kernel (behind the
+  single-path module) but never its C ABI wrapper.
   Installed with a CMake package config (§8.4); the install layout is a contract (§8.7).
 - **Header**: `src/include/lumice_analytic.h`, next to `lumice.h`. Today it holds only
   `LUMICE_ANALYTIC_API_VERSION` and `LUMICE_ANALYTIC_GetApiVersion`; the §4 module arrives with
@@ -168,9 +190,9 @@ from a Release, non-CUDA, baseline-ISA configure. The mechanisms, as built with 
 
 ### 2.6 Consumer notice: one engine per process
 
-`liblumice`, `liblumice_testapi` and `liblumice_analytic` each contain their own complete copy of
-the engine, statics included (the shared log sink, the global logger, every function-local
-static). **A process loads exactly one of the three.** Loading two gives two independent sets of
+`liblumice` and `liblumice_testapi` each contain their own complete copy of the engine, and
+`liblumice_analytic` its own copy of the engine's foundation layer — statics included in all three
+(the shared log sink, the global logger, every function-local static). **A process loads exactly one of the three.** Loading two gives two independent sets of
 statics — two log sinks, two callback registrations — with nothing to report the split. This goes
 into the consumer-facing notes shipped with the library, verbatim.
 
@@ -1193,14 +1215,15 @@ third such pair appears, re-weigh a type-agnostic template shared by both over a
 - **The export set of `liblumice_analytic` is exactly the `LUMICE_ANALYTIC_*` functions.** This
   does not happen by itself: `lumice.h` marks every declaration `LUMICE_API` (default visibility
   on GCC/Clang), and `c_api.cpp` — part of `lumice_obj` — includes it, so every `LUMICE_*`
-  function is compiled with default visibility into the objects. A shared library linked from
-  those objects with `-fvisibility=hidden` alone would export the whole `lumice.h` surface next to
-  the analytic one. The guarantee comes from the **per-library export list** (§2.5: a version
+  function is compiled with default visibility into the objects. `liblumice_analytic` no longer
+  links `lumice_obj` (§2.1), so today there is no such object in its link; but nothing structural
+  keeps a default-visibility declaration out of foundation or the kernel either, and
+  `-fvisibility=hidden` alone would export whatever one of them marks. The guarantee comes from the **per-library export list** (§2.5: a version
   script / symbol list / `.def` naming only `LUMICE_ANALYTIC_*`), and its test is mechanical: list
   the dynamic symbol table of the built library and assert that every exported name matches
   `\bLUMICE_ANALYTIC_` and that at least one does (`test_export_symbol_scope.py`).
-- Both libraries run the same objects. A behaviour change in shared engine code reaches both; that
-  is intended (one implementation per semantics), and it is why §5.1 treats a convention change as
+- Both libraries run the same foundation and kernel objects. A behaviour change in that shared
+  code reaches both; that is intended (one implementation per semantics), and it is why §5.1 treats a convention change as
   an interface change.
 
 ---

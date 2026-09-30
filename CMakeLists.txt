@@ -1009,7 +1009,7 @@ target_link_libraries(lumice_foundation_obj
 lumice_apply_engine_compile_options(lumice_foundation_obj)
 
 # The analytic kernel (src/analytic/ minus its C ABI wrapper): the evaluator, the fiber
-# continuation, the entry measure and component discovery. Its own OBJECT library because three
+# continuation, the entry measure and component discovery. Its own OBJECT library because several
 # targets link it and lumice_obj must not carry it: liblumice_analytic (behind analytic_api.cpp),
 # the engine libraries (behind the single-path module below), and unit_correctness_test. One list
 # of its sources, here, rather than one per consumer.
@@ -1164,19 +1164,21 @@ if(BUILD_SHARED_LIBS)
   install(TARGETS lumice_testapi LIBRARY DESTINATION lib)
 endif()
 
-# The published analytic library (doc/analytic-api.md): the same lumice_obj objects again, its
-# own header (src/include/lumice_analytic.h), its own prefix, and an export list naming only the
+# The published analytic library (doc/analytic-api.md): the engine's foundation objects and the
+# analytic kernel — not lumice_obj, which it no longer links (section 2.1) — its own header
+# (src/include/lumice_analytic.h), its own prefix, and an export list naming only the
 # LUMICE_ANALYTIC_* functions — so, unlike lumice_testapi, it does NOT re-export lumice.h. Its
 # own code lives in src/analytic/, outside lumice_obj: the kernel (lumice_analytic_kernel) is also
 # linked into the other two libraries, behind the single-path module, but its C ABI wrapper
 # analytic_api.cpp is compiled here only, so neither of them exports a LUMICE_ANALYTIC_* symbol.
 # Three rules from doc/analytic-api.md section 2:
-#   - only from a build without CUDA (2.3): with CUDA, lumice_obj links cudart PUBLIC, and the
-#     library would fail to load on any machine without the CUDA runtime, for a computation that
-#     never touches a GPU. The target does not exist in a CUDA configure.
-#   - dead-code stripping on (2.2): in Release every lumice_obj object otherwise goes in whole;
-#     the objects are already compiled with -ffunction-sections -fdata-sections. Release is the
-#     configuration it ships in; MinSizeRel matches what `lumice` does there.
+#   - only from a build without CUDA (2.3): the published artifact must load on a machine without
+#     the CUDA runtime. foundation links no CUDA target, so this is no longer what keeps cudart
+#     out; the target still does not exist in a CUDA configure.
+#   - dead-code stripping (2.2) is for size only: with lumice_obj gone from the link there is no
+#     engine left for it to remove, and the closure is checked by lumice_analytic_link_probe below,
+#     which links the same objects without stripping. The objects are compiled with
+#     -ffunction-sections -fdata-sections; MinSizeRel matches what `lumice` does there.
 #   - the ISA tier is a property of the configure it is produced from (2.4): publish it from
 #     -DLUMICE_ISA_LEVEL=baseline, never from the local default `native`. Not enforced here.
 # Installed with a CMake package config, so an outside project finds it with
@@ -1224,7 +1226,7 @@ if(BUILD_SHARED_LIBS AND NOT LUMICE_CUDA_ENABLED)
   endif()
 
   # The target's own include interface. The engine's include directories reach it only through
-  # the PRIVATE link to lumice_obj, which a consumer never sees; install(EXPORT) needs a path that
+  # the PRIVATE links to the object libraries, which a consumer never sees; install(EXPORT) needs a path that
   # is relative to the install prefix, not this checkout's absolute source path.
   target_include_directories(lumice_analytic PUBLIC
     $<BUILD_INTERFACE:${PROJ_SRC_DIR}/include>
