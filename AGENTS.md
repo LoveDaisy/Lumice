@@ -314,6 +314,24 @@ deleting its line, and an entry whose edge is gone fails the check.
   the four defect-shape generalizations (syntax → fatality → loop order → parameter binding) that
   motivated it — a checker for only the first of those reads a clean scan as "does not occur
   here" on exactly the inputs it was meant to catch.
+- **Test-duration registry — a runtime gate, not a fifth diff-scoped checker.** In `e2e-test` and
+  the three `e2e-slow` legs, every test that took more than **30 s** in that CI run must have an
+  entry in `test/duration_registry.json` (`id`, `job`, `ci_seconds`, `reason`: which defect it guards
+  against and why it cannot be faster or move to a cheaper layer), or the job's final
+  "Check test durations" step (`scripts/check_test_durations.py`) goes red. It also goes red when a
+  registered test runs more than 2× its `ci_seconds`, when a registered test no longer runs in that
+  job (rename/move/delete — change the `id` in the same commit), and when a `reason` is empty or
+  `TODO`. A red prints the exact registry line to paste, with `reason: "TODO"` so it cannot be
+  committed as printed. Unlike the four checkers above it reads what a CI job just *measured*, so it
+  cannot run in the pre-commit hook and is not part of `check_policies.py`. The measurement comes from
+  `scripts/duration_report_plugin.py`, loaded explicitly per pytest call (`PYTHONPATH=scripts pytest
+  -p duration_report_plugin --duration-report=PATH`); a **new pytest job is not covered until it is
+  wired the same way**, and nothing checks that it was. Same discipline as the checkers above: no
+  flag, env var or inline marker exempts a test — the only way through is a registry entry, whose
+  diff is the evidence a reviewer reads — and the checker is the rule: if it passes, do not add
+  duration demands in review; if a threshold is wrong, change the constant in the script. Rules,
+  the reasoning behind 30 s and 2×, the shared-fixture entries and what is not covered:
+  `doc/testing-architecture.md` §7.7.
 - E2E test layout (purpose-primary; see `doc/testing-architecture.md` §6):
   - `test/e2e-correctness/` — full-stack correctness via CLI/PSNR (smoke, CLI behavior, raypath equivalence) + `references/*.jpg`
   - `test/parity-cross-backend/backend/` — backend-equivalence oracles (Metal exit-seam parity, device-gen default path, cpu_backend route, Metal batch invariance) + C++ siblings from 270.3
