@@ -1043,7 +1043,7 @@ add_library(lumice_raypath_obj OBJECT
   "${PROJ_SRC_DIR}/raypath/scene_to_analytic.cpp"
   "${PROJ_SRC_DIR}/raypath/single_path_analysis.cpp"
   "${PROJ_SRC_DIR}/raypath/single_path_json.cpp"
-  "${PROJ_SRC_DIR}/server/c_api_single_path.cpp")
+  "${PROJ_SRC_DIR}/server/c_api_raypath.cpp")
 target_link_libraries(lumice_raypath_obj PUBLIC lumice_analytic_kernel lumice_obj)
 lumice_apply_engine_compile_options(lumice_raypath_obj)
 

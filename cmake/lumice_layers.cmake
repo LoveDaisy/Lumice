@@ -233,12 +233,12 @@ set(LUMICE_LAYER_raypath_FILES
   raypath/single_path_analysis.hpp
   raypath/single_path_json.cpp
   raypath/single_path_json.hpp
+  server/c_api_raypath.cpp
 )
 
 set(LUMICE_LAYER_capi_FILES
   include/lumice.h
   server/c_api_internal.hpp
-  server/c_api_single_path.cpp
   util/raypath_analysis_display.hpp
   util/result_frame.hpp
 )
