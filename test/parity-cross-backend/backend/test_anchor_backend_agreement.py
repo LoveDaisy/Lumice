@@ -43,6 +43,7 @@ from pathlib import Path
 import pytest
 
 from test.e2e.capi_runner import run_scene_capi_buffered
+from test.e2e._config_overrides import write_config_with_ray_num
 from test.e2e.runner import get_project_root
 
 CONFIGS_DIR = get_project_root() / "test" / "e2e" / "configs"
@@ -107,6 +108,16 @@ _SCENE_SAMENESS_REL = {"metal": 1e-3, "cuda": 5e-2}[_DEVICE_ROUTE]
 
 _CONFIG = "cpu_backend_route"
 
+# Ray budget of the fixed-seed EQUALITY cases (host bit-identity, lens invariance), a tenth of
+# the config's committed 2M. Their bar is 1e-6 relative between two runs of one seed, so N does
+# not enter it: measured at 2M, 200k and 100k, the correct build reads rel 0.0 on all four and a
+# build that leaks the first renderer's output width into the anchor reads rel 0.5 on all three
+# lens routes, at every N. The lens cases' control (snapshot_intensity moving > 0.2 stop) reads
+# ~5.1 stop at every N. The STATISTICAL case (device route vs the legacy seed spread) keeps the
+# full 2M: its bound is a 3-sample range, and at 100k that range came out small enough by chance
+# to red a correct build. The config file stays at 2M for its other readers.
+_EQUALITY_RAY_NUM = 200_000
+
 
 def _run(config_path: str, route: str, seed: int = _SEED):
     return run_scene_capi_buffered(
@@ -117,14 +128,16 @@ def _run(config_path: str, route: str, seed: int = _SEED):
     )
 
 
-def _with_lens(config_path: Path, lens: dict, resolution: list) -> Path:
-    """Copy a config, replacing every renderer's lens and resolution.
+def _with_lens(config_path: Path, lens: dict, resolution: list, ray_num: int) -> Path:
+    """Copy a config, replacing every renderer's lens and resolution, at `ray_num` rays.
 
-    Only the RENDERER is touched — the scene, the ray budget and the seed are
-    left alone — so the sky being measured is identical between the two variants
-    and any movement in the anchor is attributable to the lens alone.
+    Besides the budget, only the RENDERER is touched — the scene and the seed are
+    left alone, and both variants of a comparison are given the same `ray_num` —
+    so the sky being measured is identical between the two variants and any
+    movement in the anchor is attributable to the lens alone.
     """
     doc = json.loads(config_path.read_text())
+    doc["scene"]["ray_num"] = ray_num
     for r in doc.get("render", []) if isinstance(doc.get("render"), list) else [doc["render"]]:
         r["lens"] = lens
         r["resolution"] = resolution
@@ -134,7 +147,7 @@ def _with_lens(config_path: Path, lens: dict, resolution: list) -> Path:
 
 
 @pytest.mark.slow
-def test_host_routes_publish_the_bit_identical_anchor():
+def test_host_routes_publish_the_bit_identical_anchor(tmp_path):
     """legacy vs cpu_backend: same rays, different transport, so no slack at all.
 
     These two routes draw from one RNG stream and trace the same sky; all that
@@ -144,9 +157,10 @@ def test_host_routes_publish_the_bit_identical_anchor():
     is a transport defect (a chunk that dropped the rays, an accumulation that
     scales with the commit grain), not noise.
     """
+    config = write_config_with_ray_num(CONFIGS_DIR / f"{_CONFIG}.json", tmp_path, _EQUALITY_RAY_NUM)
     results = {}
     for route in ("legacy", "cpu_backend"):
-        r = _run(str(CONFIGS_DIR / f"{_CONFIG}.json"), route)
+        r = _run(str(config), route)
         if r.fell_back:
             pytest.skip(f"{route}: backend fell back to legacy on this host — routes not distinct")
         results[route] = r
@@ -229,8 +243,8 @@ def test_device_fused_route_agrees_within_monte_carlo_noise():
 @pytest.mark.parametrize("route", _ROUTES)
 def test_anchor_does_not_move_with_the_lens(route):
     src = CONFIGS_DIR / f"{_CONFIG}.json"
-    narrow = _with_lens(src, {"type": "linear", "fov": 20.0}, [512, 512])
-    wide = _with_lens(src, {"type": "fisheye_equal_area", "fov": 180.0}, [1024, 1024])
+    narrow = _with_lens(src, {"type": "linear", "fov": 20.0}, [512, 512], _EQUALITY_RAY_NUM)
+    wide = _with_lens(src, {"type": "fisheye_equal_area", "fov": 180.0}, [1024, 1024], _EQUALITY_RAY_NUM)
 
     a = _run(str(narrow), route)
     b = _run(str(wide), route)
