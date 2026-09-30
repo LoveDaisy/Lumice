@@ -196,6 +196,7 @@ set(LUMICE_LAYER_sim_FILES
   core/worker_projection.hpp
   server/anchor_consumer.cpp
   server/anchor_consumer.hpp
+  server/c_api_crystal_mesh.cpp
   server/consumer.hpp
   server/ray_num_semantics.hpp
   server/raypath_histogram_consumer.cpp

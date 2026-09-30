@@ -758,6 +758,7 @@ endif()
 set(lumice_server_src
   "${PROJ_SRC_DIR}/server/anchor_consumer.cpp"
   "${PROJ_SRC_DIR}/server/c_api.cpp"
+  "${PROJ_SRC_DIR}/server/c_api_crystal_mesh.cpp"
   "${PROJ_SRC_DIR}/server/c_api_editor.cpp"
   "${PROJ_SRC_DIR}/server/c_api_scene.cpp"
   "${PROJ_SRC_DIR}/server/component_compositor.cpp"
