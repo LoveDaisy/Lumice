@@ -1206,6 +1206,19 @@ if(BUILD_SHARED_LIBS AND NOT LUMICE_CUDA_ENABLED)
       $<$<OR:$<CONFIG:Release>,$<CONFIG:MinSizeRel>>:/OPT:REF>)
   endif()
   lumice_apply_export_list(lumice_analytic "${PROJ_SRC_DIR}/include/lumice_analytic.h")
+
+  # Link probe: an executable built from exactly liblumice_analytic's objects (foundation, the
+  # kernel, and the C ABI wrapper), with no dead-code stripping. The library itself cannot serve:
+  # a GNU/Linux shared library may leave symbols undefined, and its --gc-sections would drop an
+  # unreferenced function before its references were ever resolved. An executable has neither
+  # escape, so if any of these objects reaches a symbol of a layer above foundation/analytic
+  # (cmake/lumice_layers.cmake), this target fails to link — in every build that produces the
+  # library, CI's e2e-slow legs included. Not installed; built only to be linked.
+  add_executable(lumice_analytic_link_probe
+    "${PROJ_TEST_DIR}/support/analytic_link_probe.cpp"
+    "${PROJ_SRC_DIR}/analytic/analytic_api.cpp")
+  target_link_libraries(lumice_analytic_link_probe PRIVATE lumice_foundation_obj lumice_analytic_kernel)
+  lumice_apply_engine_compile_options(lumice_analytic_link_probe)
   if(WIN32)
     target_compile_definitions(lumice_analytic INTERFACE LUMICE_ANALYTIC_SHARED_DEFINE)
   endif()
