@@ -18,7 +18,8 @@ inside one lifecycle, so each config runs at 100k rays instead of its own budget
 Re-measured on the pre-fix tree (5287efe^ with its own capi_runner, macOS arm64,
 2026-09-30): the process
 SIGSEGVs during lifecycle 2 at the configs' original 5M rays and at 100k alike,
-3 runs out of 3 each; 10k crashed during lifecycle 1. So the smaller budget does
+3 runs out of 3 each. (A 10k run crashing during lifecycle 1 comes from the
+explore inventory, not from this re-measurement.) So the smaller budget does
 not delay the crash on that machine. Whether ~31 still describes other platforms
 was not re-measured. 36 lifecycles are kept regardless: they cover the
 originally reported point and cost ~10 s at this budget.
