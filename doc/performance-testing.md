@@ -415,7 +415,27 @@ calibrated on the **reference machines'** noise (Metal CoV 6–10%, CUDA 10–17
 runner is slower and noisier than that; measured there, the same gate has read 0.845 and turned
 green on a re-run with nothing changed. So the precise gate does not run on CI. It runs **on the
 reference machines themselves, on a daily schedule**, driven from the Metal reference machine
-(role names: `machines.md`):
+(role names: `machines.md`).
+
+**Two gates, two failure paths.** The same test and statistic run in two profiles, chosen by the
+pytest option `--dual-gate-profile` (default `precise`; the numbers and the reasoning live once, in
+`test/e2e/_multi_renderer_throughput.py`):
+
+| Profile | Threshold × reps | Where | What catches it when red |
+|---|---|---|---|
+| `ci` — disaster floor | **0.75** × 5 | `E2E Slow (macOS ARM64 rest)` phase 2, every PR and every push to `main` | the PR's checks: a red here is a red PR, like any other test |
+| `precise` | **0.85** × 21 | the reference machines, daily (this section) | a `[throughput-gate] <leg> fail` GitHub issue (see "Where to look" below) |
+
+The floor exists so a change that makes the second plane cost a large fraction of the session
+cannot merge on a green PR and wait up to a day for the schedule: against a true ratio of 0.6 it
+fires with ≥ 99.9% probability on the hosted runner's measured noise (per-arm CoV 0.155–0.229), and
+it deliberately cannot see a 10% regression — that is the precise gate's job, and the only place a
+drift between 0.85 and 0.75 is reported. Demonstrated red on the Metal reference machine by real
+GPU contention during the dual arm only (dual/single 0.531 / 0.560 → red; the same harness without
+the load read 0.900 / 0.933 → green). The floor's power figure models within-run variance only;
+two CI runs' median ratios differed by 0.17, which it does not cover.
+
+The precise gate's legs:
 
 | Leg | Where it runs | What it runs |
 |---|---|---|
