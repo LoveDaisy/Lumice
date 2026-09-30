@@ -144,6 +144,7 @@ set(LUMICE_LAYER_scene_FILES
   config/render_config.hpp
   include/lumice_editor.h
   include/lumice_scene.h
+  server/c_api_editor.cpp
   server/c_api_scene.cpp
   server/c_api_scene_internal.hpp
 )
