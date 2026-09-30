@@ -26,12 +26,20 @@ both — the CMF ratios to five digits. Y/emitted: sun 0.102902 legacy vs 0.1027
 apart), sub-sun 0.0997818 vs 0.099148 (0.64%). The Metal route's own X/Y reads 0.43590 / 0.43642
 at 100M — a FIXED few-tenths-of-a-percent offset from the on-device fp32 atomics inside one drain
 window, which does not move with the budget and is not this defect; it is why the Metal arm is
-compared on Y/emitted at 1% and not held to the CMF bar. Both cases go red on the pre-fix build:
-the sun pixel reads X/Y 0.33833 there, and its Y/emitted sits +16.9% above Metal's.
+compared on Y/emitted at 1% and not held to the CMF bar. On the pre-fix build at 100M the sun pixel
+read X/Y 0.33833, and its Y/emitted sat +16.9% above Metal's.
 
-@pytest.mark.slow: needs the shared-lib build (``./scripts/build.sh -sj release``) and the legacy
-arm at 100M rays runs ~3.5 min (a fixed seed pins legacy to one worker). The Metal arm is
-Darwin-only and skips elsewhere; the CMF assertion on the legacy arm runs on every platform.
+The file runs at 10M rays, not 100M. Measured 2026-09-30 on macOS arm64, seeds 42 / 7 / 1234 /
+2026 / 99, pre-fix tree (a5aacbe9^) against this one: the CMF case goes red on every seed — the
+sun pixel 9.2-9.3x over the X/Y band, the sub-sun 4.2x, the rounding bias being nearly the same
+from seed to seed — and reads the CMF ratios to five digits on every seed after the fix, so the smaller
+budget cannot turn it into a false red. The Metal case is thinner at 10M: it also goes red on
+every seed, but only 1.06-1.21x over its 1% band (the fp32 drift of Y grows with the budget),
+against at most 0.27% after the fix. The CMF case is the load-bearing witness at this budget.
+
+@pytest.mark.slow: needs the shared-lib build (``./scripts/build.sh -sj release``); the legacy arm
+at 10M rays runs ~15 s (a fixed seed pins legacy to one worker). The Metal arm is Darwin-only and
+skips elsewhere; the CMF assertion on the legacy arm runs on every platform.
 """
 
 from __future__ import annotations
@@ -51,7 +59,7 @@ from test.e2e.runner import get_project_root
 BASE_CONFIG = get_project_root() / "test" / "e2e" / "configs" / "fp32_accum_subsun_550.json"
 
 _SEED = 42
-_RAY_NUM = 100_000_000
+_RAY_NUM = 10_000_000
 _TIMEOUT = 1800
 
 # CIE 1931 2-degree CMF at 550 nm (util/color_data.hpp: kCmfX/kCmfY/kCmfZ[550-360]).
@@ -126,7 +134,7 @@ def _assert_at(found: tuple, expected: tuple, name: str) -> None:
 
 
 @pytest.mark.slow
-def test_legacy_hot_pixels_hold_the_cmf_ratio_at_100m_rays(legacy_run):
+def test_legacy_hot_pixels_hold_the_cmf_ratio(legacy_run):
     """X/Y and Z/Y on the sun and the sub-sun equal the 550 nm CMF ratios — the beta defect's own bar."""
     pixels = _hot_pixels(legacy_run)
     _assert_at(pixels["sun"][0], _SUN_PX, "sun")
