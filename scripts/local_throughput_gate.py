@@ -758,8 +758,10 @@ touch "$OUT/pytest.done"
 def remote_start_phase(ctx: Ctx, phase: str, sha: str, rdir: str) -> bool:
     script = remote_phase_script(ctx, phase, sha, rdir)
     out = f"{ctx.args.remote_dir}/results/{rdir}"
+    # The braces matter: a bare trailing `&` backgrounds the whole && list, and a
+    # background job's stdin is /dev/null — `cat` then writes an empty script.
     remote_cmd = (f"mkdir -p {out} && cat > {out}/{phase}.sh && "
-                  f"setsid nohup bash {out}/{phase}.sh > {out}/{phase}.nohup 2>&1 < /dev/null &")
+                  f"{{ setsid nohup bash {out}/{phase}.sh > {out}/{phase}.nohup 2>&1 < /dev/null & }}")
     rc = run_logged(ctx, ssh_argv(ctx, remote_cmd), ctx.run_dir / "cuda-ssh.log",
                     timeout=120, stdin_text=script)
     return rc == 0
