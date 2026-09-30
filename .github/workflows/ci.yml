@@ -188,10 +188,10 @@ jobs:
       # 26.34% hit rate, i.e. the cap was evicting objects the next run needed. The two
       # configures compile a similar number of units and land roughly six times apart in
       # bytes, so neither leg's number transfers to the other. Measure per leg.
-      - name: Install ccache (Ubuntu x86_64)
-        if: matrix.cache_key == 'ubuntu-x64'
+      - name: Install ccache (Ubuntu x86_64 / ARM64, macOS)
+        if: matrix.cache_key == 'ubuntu-x64' || matrix.cache_key == 'ubuntu-arm64' || matrix.cache_key == 'macos-arm64'
         run: |
-          sudo apt-get install -y ccache
+          if [ "$RUNNER_OS" = "macOS" ]; then brew install ccache; else sudo apt-get install -y ccache; fi
           ccache --version
           echo "LUMICE_COMPILER_LAUNCHER_ARGS=-DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache" >> $GITHUB_ENV
           echo "CCACHE_DIR=$GITHUB_WORKSPACE/ccache_cache" >> $GITHUB_ENV
@@ -210,13 +210,19 @@ jobs:
       # word, chosen to contrast with `shared-gui-test-build`'s `BUILD_SHARED_LIBS=ON`
       # configure — this leg builds the static flavor, same sense as `-sj` meaning "shared
       # flavor" in the build script docs.
-      - name: Cache ccache directory (Ubuntu x86_64)
-        if: matrix.cache_key == 'ubuntu-x64'
+      - name: Cache ccache directory (Ubuntu x86_64 / ARM64, macOS)
+        if: matrix.cache_key == 'ubuntu-x64' || matrix.cache_key == 'ubuntu-arm64' || matrix.cache_key == 'macos-arm64'
         uses: actions/cache@v6
         with:
           path: ccache_cache
-          key: ccache-static-ubuntu-x64-${{ github.sha }}
-          restore-keys: ccache-static-ubuntu-x64-
+          key: ccache-static-${{ matrix.cache_key }}-${{ github.sha }}
+          restore-keys: ccache-static-${{ matrix.cache_key }}-
+
+      # Trial (explore build-time-levers): zero the counters so the statistics step below reports
+      # THIS run, not the accumulated history of every run the restored directory has seen.
+      - name: Zero ccache statistics
+        if: matrix.cache_key == 'ubuntu-x64' || matrix.cache_key == 'ubuntu-arm64' || matrix.cache_key == 'macos-arm64'
+        run: ccache -z
 
       # GLAD2 runs the Python code generator at CMake configure time (needs Jinja2).
       - name: Install GLAD2 Python dependencies (MSVC)
@@ -311,8 +317,8 @@ jobs:
       # slow Build was a cold cache or a real regression. Stopping the server afterwards
       # flushes its state to disk before actions/cache's post-step packs the directory; no
       # compilation happens after this point in the job.
-      - name: ccache statistics (Ubuntu x86_64)
-        if: always() && matrix.cache_key == 'ubuntu-x64'
+      - name: ccache statistics (Ubuntu x86_64 / ARM64, macOS)
+        if: always() && (matrix.cache_key == 'ubuntu-x64' || matrix.cache_key == 'ubuntu-arm64' || matrix.cache_key == 'macos-arm64')
         run: ccache --show-stats --verbose || true
 
       - name: sccache statistics (Windows MSVC)
@@ -1054,7 +1060,7 @@ jobs:
           sudo apt-get install -y ccache
           ccache --version
           echo "CCACHE_DIR=$GITHUB_WORKSPACE/ccache_cache" >> $GITHUB_ENV
-          echo "CCACHE_MAXSIZE=200M" >> $GITHUB_ENV
+          echo "CCACHE_MAXSIZE=800M" >> $GITHUB_ENV
 
       # Same key shape as the sccache entry: one per commit, with a prefix fallback to the
       # newest earlier one. The discriminator leads the platform for the reason spelled out
@@ -1070,6 +1076,9 @@ jobs:
       # The launcher flags are written out here rather than injected through an environment
       # variable: this job has exactly one Configure step, so the indirection the build job
       # needs (one step serving four matrix entries) would buy nothing here.
+      - name: Zero ccache statistics
+        run: ccache -z
+
       - name: Configure (shared + test + GUI)
         run: >
           cmake -S . -B build -G Ninja
