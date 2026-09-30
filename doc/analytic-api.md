@@ -1062,7 +1062,7 @@ are never error codes; they are `status`/`reason` (§4.4).
 - `SetLogCallback` writes process-wide state (the sink and the callback pointer). It is an
   initialisation call: made once, before computation, from one thread. The same holds for
   `LUMICE_SetLogCallback` in `lumice.h` today, whose first-call registration is an unsynchronised
-  static flag (`src/server/c_api.cpp:127-139`); the analytic library's registration is a
+  static flag (`src/server/c_api_engine.cpp`); the analytic library's registration is a
   function-local static initialiser, so concurrent first calls cannot attach its sink twice, and
   the callback pointer is swapped under the sink's own lock.
 - **Verified (as built, 2026-09-29)**: the code `EvaluatePath` reaches holds no mutable static
@@ -1225,7 +1225,7 @@ third such pair appears, re-weigh a type-agnostic template shared by both over a
   stays an internal interface of Lumice's own binaries.
 - **The export set of `liblumice_analytic` is exactly the `LUMICE_ANALYTIC_*` functions.** This
   does not happen by itself: `lumice.h` marks every declaration `LUMICE_API` (default visibility
-  on GCC/Clang), and `c_api.cpp` — part of `lumice_obj` — includes it, so every `LUMICE_*`
+  on GCC/Clang), and the C API bridges (`src/server/c_api_*.cpp`) — part of `lumice_obj` — include it, so every `LUMICE_*`
   function is compiled with default visibility into the objects. `liblumice_analytic` no longer
   links `lumice_obj` (§2.1), so today there is no such object in its link; but nothing structural
   keeps a default-visibility declaration out of foundation or the kernel either, and

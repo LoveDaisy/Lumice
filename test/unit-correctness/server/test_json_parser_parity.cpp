@@ -22,7 +22,7 @@
 #include "util/color_space.hpp"  // SrgbToLinear (the JSON boundary conversion under test)
 
 // Differential tests: core's native config parser (config/*::from_json) vs the C API JSON parser
-// behind ParseConfigString / LUMICE_SceneFromJson (server/c_api.cpp::JsonToConfig).
+// behind ParseConfigString / LUMICE_SceneFromJson (server/c_api_scene.cpp::JsonToConfig).
 //
 // Why this exists: once the handle path is the only way to feed a config into the library, it must
 // accept everything the core parser accepts and reject everything the core parser rejects — a
@@ -1472,7 +1472,7 @@ TEST(JsonParserParity, BackgroundColorDeadKeyWarnsViaCapiParser) {
 // LEGAL VALUES ONLY, and deliberately so: the two parsers diverge on an UNKNOWN tone by design —
 // core's ParseRenderConfig warns and falls back to "screen" (render_config.cpp's hand-written
 // RenderConfig::Tone::from_json), while this API's JsonToRenderers rejects with
-// LUMICE_ERR_INVALID_VALUE (c_api.cpp's IsKnownToneString, whose comment carries the argument).
+// LUMICE_ERR_INVALID_VALUE (c_api_scene.cpp's IsKnownToneString, whose comment carries the argument).
 // Each follows its own file's existing convention rather than the other's, so "the two decoders
 // must agree" is a claim about well-formed documents here. The reject half is pinned in
 // test_c_api_scene.cpp instead; this absence is a decision, not a missing case.

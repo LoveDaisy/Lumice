@@ -795,7 +795,7 @@ TEST(ParseConfigApi, FullConfigWithPyramidAndFilter) {
 
 // K-class: NLOHMANN_JSON_SERIALIZE_ENUM maps an unrecognized string to the FIRST table entry, so
 // the JSON string parse path pre-checks lens.type / visible against a hand-written known-value
-// list before decoding (IsKnownLensTypeString / IsKnownVisibleString in c_api.cpp) rather than
+// list before decoding (IsKnownLensTypeString / IsKnownVisibleString in c_api_scene.cpp) rather than
 // letting a typo silently become "linear" / "upper". LUMICE_SceneAddRenderer's struct entry point
 // is covered separately by SceneNegative.RendererInvalidEnumOrGridCountRejected (int, not string);
 // this pair covers the string-typed JSON path those tests don't reach.
@@ -1007,7 +1007,7 @@ TEST(ParseConfigApi, MissingCrystalSection) {
 // CLI actually runs, and it hands core a re-serialized document (ConfigToJson writes `prob`
 // unconditionally from the parsed struct), so a check that lives only in core would never see the
 // missing key — it would already have been filled in with the struct's zero. Deleting this test's
-// counterpart branch in c_api.cpp makes this red while core's own test stays green, which is the
+// counterpart branch in c_api_scene.cpp makes this red while core's own test stays green, which is the
 // whole reason both exist.
 TEST(ParseConfigApi, ScatteringMissingProbRejected) {
   auto root = nlohmann::json::parse(MakeFullConfigJson());
@@ -1024,7 +1024,7 @@ TEST(ParseConfigApi, ScatteringMissingProbRejected) {
 // by core's from_json. This parser is what the CLI actually runs, and core only ever sees this
 // parser's output re-encoded by ConfigToJson — which writes `type` unconditionally from the
 // struct, so the missing key would already have been filled in before core looked. Deleting the
-// counterpart branch in c_api.cpp makes this red while core's own test stays green, which is the
+// counterpart branch in c_api_scene.cpp makes this red while core's own test stays green, which is the
 // whole reason both exist (the `prob` narrowing established the pattern).
 //
 // One case per slot: before this narrowing each slot silently produced a different wrong answer,
@@ -1060,7 +1060,7 @@ TEST(ParseConfigApi, AxisWithoutZenithRejected) {
 // It reports MISSING_FIELD, not INVALID_CONFIG: the handle path parses the user's text at
 // SceneFromJson and hands core only the ConfigToJson re-encoding of what it accepted. Core's own
 // throw for these two documents is therefore structurally unreachable from here — ConfigToJson
-// always emits `type` — which is the same asymmetry that makes the c_api.cpp half mandatory.
+// always emits `type` — which is the same asymmetry that makes the c_api_scene.cpp half mandatory.
 TEST(AxisSlotCommit, MalformedAxisIsRejectedNotCrash) {
   struct Case {
     const char* label;
@@ -1522,7 +1522,7 @@ TEST_F(ServerLifecycleApi, FrameGetStats) {
   // After running 1000 rays through one crystal with single-pass scattering:
   EXPECT_GT(out.sim_ray_num, 0u);
   EXPECT_GT(out.crystal_num, 0u);
-  // The orientation half must be mapped too. c_api.cpp fills this struct with a
+  // The orientation half must be mapped too. c_api_engine.cpp fills this struct with a
   // hand-written field-by-field copy, which is the copy-paste shape where a new
   // field is easiest to forget — and forgetting it yields 0, which reads as
   // "this scene never randomizes orientation" rather than as a missing wire.
@@ -3156,7 +3156,7 @@ TEST(GeomClockStructPath, RoundTrip) {
   EXPECT_EQ(out.geom_clock, 16);
 }
 
-// JsonToDistribution's defensive {"type":"no_random",...} object branch (c_api.cpp) is read-side
+// JsonToDistribution's defensive {"type":"no_random",...} object branch (c_api_scene.cpp) is read-side
 // only — DistributionToJson never emits this shape (NO_RANDOM always writes a bare number). Cover
 // it directly through the public parse entry point so the branch can't silently bit-rot unnoticed.
 TEST(DistributionRoundTrip, NoRandomObjectFormAccepted) {

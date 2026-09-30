@@ -113,7 +113,7 @@ def test_analytic_header_naming_another_surface_is_flagged(src_root: Path, heade
 # --- must stay green: code calling the capability, and prose ----------------
 
 
-@pytest.mark.parametrize("name", ["gui/panel.cpp", "server/c_api.cpp", "main.cpp", "raypath/x.hpp"])
+@pytest.mark.parametrize("name", ["gui/panel.cpp", "server/c_api_engine.cpp", "main.cpp", "raypath/x.hpp"])
 def test_code_calling_an_analytic_function_is_not_flagged(src_root: Path, name: str) -> None:
     """Red under the rule's directory-allowlist form; the engine libraries now export the
     capability (lumice_analytic_core.h), so a shell or a bridge may call it."""

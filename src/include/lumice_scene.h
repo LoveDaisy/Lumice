@@ -56,7 +56,7 @@ extern "C" {
 // admit anything.
 // Spelled as a literal rather than as LUMICE_ANNOTATION_MARKER_COUNT because that macro is defined
 // in lumice_render.h's annotation section, which this header does not include, and the C
-// preprocessor needs it visible at the point of use; c_api.cpp carries the static_assert that pins
+// preprocessor needs it visible at the point of use; c_api_render.cpp carries the static_assert that pins
 // the two together, so a seventh id added to one side alone is a compile error rather than a
 // silently truncated array.
 #define LUMICE_MAX_CONFIG_MARKERS 6
@@ -71,7 +71,7 @@ extern "C" {
 // Distribution type constants for LUMICE_Distribution.type. Values deliberately match core
 // DistributionType's enum order (src/core/math.hpp) so "zero-init == not random" holds in both
 // layers with the same integer. The C API translates via a hand-written JSON string switch
-// (c_api.cpp), NOT an integer cast, so the values need only stay self-consistent here.
+// (c_api_scene.cpp), NOT an integer cast, so the values need only stay self-consistent here.
 #define LUMICE_DIST_NO_RANDOM 0
 #define LUMICE_DIST_UNIFORM 1
 #define LUMICE_DIST_GAUSS 2

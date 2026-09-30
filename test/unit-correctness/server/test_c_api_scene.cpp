@@ -1268,7 +1268,7 @@ TEST(SceneRenderTone, DecodeRoundTripsBothValues) {
   }
 }
 
-// The decode-side half of the divergence argued at IsKnownToneString (c_api.cpp): THIS decoder
+// The decode-side half of the divergence argued at IsKnownToneString (c_api_scene.cpp): THIS decoder
 // rejects an unknown tone, while core's ParseRenderConfig warns and falls back to "screen"
 // (pinned in test_json.cpp). Each follows its own file's convention — every other enum-valued
 // renderer field here (lens type, visible, ev_mode) rejects too, and a C API returning OK while
@@ -1655,7 +1655,7 @@ TEST(SceneSerializeNegative, ToJsonBufferTruncationContract) {
 
 // SetLightSource takes an unvalidated const char* spectrum; nlohmann::json accepts the raw bytes
 // at assignment time and only validates UTF-8 at dump() time. This exercises the catch path in
-// LUMICE_SceneToJson (c_api.cpp:966-971) that must not let the exception cross the C ABI boundary.
+// LUMICE_SceneToJson (c_api_scene.cpp) that must not let the exception cross the C ABI boundary.
 TEST(SceneSerializeNegative, ToJsonInvalidUtf8SpectrumReturnsInvalidConfig) {
   SceneGuard g;
   const char invalid_utf8[] = { '\xFF', '\xFE', '\0' };  // not a valid UTF-8 byte sequence

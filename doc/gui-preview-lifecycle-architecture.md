@@ -383,7 +383,7 @@ CUDA 超大 batch 中途无法响应。第一性原理：
 > 早已取到，统计只是从帧上读。
 >
 > **后半句（读取路径本身廉价）**：明示留白，非遗漏。廉价原语 `LUMICE_GetSimRayCount`
-> （`src/server/c_api.cpp`）只暴露 `sim_ray_num` 一个；`ray_seg_num`/`crystal_num`/
+> （`src/server/c_api_engine.cpp`）只暴露 `sim_ray_num` 一个；`ray_seg_num`/`crystal_num`/
 > `orientation_num` 在 C API 上仍无任何廉价读取路径——读它们仍须经 `AcquireResultFrame()` 触发
 > 的帧物化（`DoSnapshot()` 在 `!snapshot_dirty_` 时早退，缓解但不消除该依赖）。留白理由
 > （a04：举证责任在增加的一方）：今天没有任何调用方需要在不取帧的前提下读这三个计数；一旦发布到

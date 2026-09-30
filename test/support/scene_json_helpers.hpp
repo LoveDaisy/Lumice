@@ -26,7 +26,7 @@ namespace lumice::test {
 // LUMICE_Scene is opaque, so the pre-handle "fill a LUMICE_Config and assert cfg.<field>"
 // pattern becomes "BuildScene, serialize, assert on the JSON document". That is not a weaker
 // assertion medium: LUMICE_SceneToJson dumps the scene's own internal document verbatim (the
-// Scene IS a JSON tree — see LUMICE_Scene_ in c_api.cpp), so reading it is reading the scene's
+// Scene IS a JSON tree — see LUMICE_Scene_ in c_api_scene_internal.hpp), so reading it is reading the scene's
 // state, not a re-encoding of it.
 //
 // Scene ids are 0-based and assigned by the Scene itself (lumice.h "Incremental build"), where

@@ -1236,7 +1236,7 @@ quietly drifting into re-lighting pixels it cannot re-light.
 | `NeedsRebuild()` — layout field comparison | `render_config.cpp:165-175` |
 | `sizeof(RenderConfig)` static_assert (144) | `render_config.cpp:167` |
 | `DownsampleBoxSumY()` / `ComputeP99Y()` / `ComputeEvAuto()` / `NthElementP99()` / `TargetWhiteToLinear()` | `core/ev_anchor.hpp` |
-| `LUMICE_ComputeP99Y` / `LUMICE_ComputeEvAuto` (C API surface) | `include/lumice.h`, `c_api.cpp` |
+| `LUMICE_ComputeP99Y` / `LUMICE_ComputeEvAuto` (C API surface) | `include/lumice.h`, `c_api_render.cpp` |
 | `kMonoAnchorDownsampleFactor` (8) / `kAnchorTargetWhite` (135) | `core/ev_anchor.hpp` |
 | `AnchorL99Sky()` / anchor plane geometry | `core/anchor_buffer.hpp` |
 | `ComputeAxisSolidAngle()` — the per-view unit bridge | `core/lens_proj_build.hpp` |

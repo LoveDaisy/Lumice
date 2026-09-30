@@ -241,7 +241,7 @@ Server::GetResults()
 - `IConsume`: 消费者抽象接口
 - `RenderConsumer`: 渲染消费者，实现各种镜头投影算法
 - `StatsConsumer`: 统计消费者
-- `c_api.cpp`: C API 封装实现
+- `c_api_*.cpp`: C API 封装实现，每个能力头一个桥文件
 
 **特点**：
 - 线程安全的队列系统

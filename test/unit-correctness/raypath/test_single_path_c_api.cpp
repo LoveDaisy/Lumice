@@ -1,4 +1,4 @@
-// lumice.h's single-path entry point (src/server/c_api_single_path.cpp): argument checks, the
+// lumice.h's single-path entry point (src/server/c_api_raypath.cpp): argument checks, the
 // struct_size gate, the request -> module mapping (layers, unset wavelength, default sample count,
 // warm JSON), error reporting through err_buf, and the snprintf-style buffer contract of
 // LUMICE_SinglePathResultToJson. The analysis itself is test_single_path_analysis.cpp's subject and

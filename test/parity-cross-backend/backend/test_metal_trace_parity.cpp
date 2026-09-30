@@ -1286,7 +1286,7 @@ TEST(MetalTraceParity, DualFisheyeEA_Single_WithOverlap) {
   ForceHostGenForByteIdentity();
 
   // overlap = sin(5°) ≈ kDualFisheyeOverlap (gui_state.hpp:135) — matches the
-  // exact value the GUI live-preview path commits via c_api.cpp.
+  // exact value the GUI live-preview path commits via LUMICE_CommitScene.
   auto scene = MakeMetalScene(/*max_hits=*/8, /*ms_layers=*/1);
   auto render = MakeDualFisheyeEARender(/*overlap=*/0.0872f);
 

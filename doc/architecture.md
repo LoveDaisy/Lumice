@@ -244,7 +244,7 @@ The system uses a multi-threaded architecture:
 - `IConsume`: Abstract consumer interface
 - `RenderConsumer`: Render consumer; implements various lens projection algorithms
 - `StatsConsumer`: Statistics consumer
-- `c_api.cpp`: C API wrapper implementation
+- `c_api_*.cpp`: C API wrapper implementation, one bridge per capability header
 
 **Characteristics**:
 - Thread-safe queue system

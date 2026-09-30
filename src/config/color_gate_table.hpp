@@ -54,7 +54,7 @@ struct ColorGateTable {
   // during this build. Existing behavior (LOG_WARNING + assign kNoBit)
   // preserved; this counter lets ServerImpl carry the count out of
   // BuildColorGateTable so the GUI DoRun path can surface a user-visible
-  // "coloring degraded" modal (see server.cpp CommitConfig / c_api.cpp
+  // "coloring degraded" modal (see server.cpp CommitConfig / c_api_engine.cpp
   // LUMICE_GetColorOverflowInfo).
   size_t component_overflow_count_ = 0;
 };

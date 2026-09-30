@@ -22,7 +22,7 @@ sentinel-overflow protection. This document does **not** cover:
 
 ## §1 Overview
 
-The C API (`src/include/lumice.h`, implemented in `src/server/c_api.cpp`)
+The C API (`src/include/lumice.h`, implemented by the bridges `src/server/c_api_*.cpp`)
 wraps the internal C++ `Server` class and exposes an opaque-handle interface
 suitable for FFI consumption. It enforces:
 
@@ -40,7 +40,7 @@ Key source files:
 | File | Role |
 |------|------|
 | `src/include/lumice.h` | Public C API header — the stable ABI surface |
-| `src/server/c_api.cpp` | C API implementation; wraps `Server` methods |
+| `src/server/c_api_*.cpp` | C API implementation, one bridge per capability header; `c_api_engine.cpp` wraps `Server` methods |
 | `src/server/server.hpp` / `server.cpp` | `ServerImpl` — state machine, threading, consumer management |
 | `src/server/consumer.hpp` | `IConsume` interface |
 | `src/server/render.hpp` / `render.cpp` | `RenderConsumer` — accumulation, snapshot, XYZ→RGB |
@@ -116,7 +116,7 @@ Key observations:
 - **Side effects**: registers the global logger sink (`spdlog`). The
   `LUMICE_ServerConfig` struct allows setting `num_workers` and `sim_seed`;
   `NULL` config or zero fields use defaults.
-  (`c_api.cpp:75–93`)
+  (`c_api_engine.cpp` `LUMICE_CreateServer` / `LUMICE_CreateServerEx`)
 
 #### `LUMICE_DestroyServer(server)`
 
@@ -125,7 +125,7 @@ Key observations:
   `NULL` is a no-op.
 - **Side effects**: calls `Terminate()` which calls `Stop()` then destroys
   `ServerImpl`.
-  (`c_api.cpp:96–102`)
+  (`c_api_engine.cpp` `LUMICE_DestroyServer`)
 
 ### §3.2 Configuration APIs
 
@@ -212,7 +212,7 @@ tempted to reach back for a per-server cache.
   contract, not a gap). Forgetting to release leaks only that one frame — it cannot corrupt
   memory or affect any other reader, and the leak is exactly what ASan/LSan/valgrind already
   report.
-- **Internal**: `delete frame` (`c_api.cpp:2594`); the `LUMICE_ResultFrame_` wrapper's
+- **Internal**: `delete frame` (`c_api_engine.cpp` `LUMICE_ReleaseResultFrame`); the `LUMICE_ResultFrame_` wrapper's
   `shared_ptr<const ns::ResultFrame>` member drops one reference. The underlying `ResultFrame`
   and its pixel storage are freed only when the last holder — which may be a different reader's
   frame, or the server's own `published_frame_` if it has since re-published — drops its
@@ -225,7 +225,7 @@ tempted to reach back for a per-server cache.
   `FrameGetRender`, one per colored renderer for `FrameGetComposite`. Sentinel at `out[count]`
   if `count < max_count` (§5). `img_buffer` stays valid for as long as `frame` is held.
 - **Internal**: reads `frame->frame_->render_results_` / `composite_results_`, both already
-  materialized when the frame was built (`c_api.cpp:2661–2686` / `2632–2659`). No lock is taken
+  materialized when the frame was built (`c_api_engine.cpp` `LUMICE_FrameGetRender` / `LUMICE_FrameGetComposite`). No lock is taken
   here — the frame is immutable once published, so reading it needs no synchronization.
 
 #### `LUMICE_FrameGetRawXyz(frame, out, max_count)`
@@ -234,7 +234,7 @@ tempted to reach back for a per-server cache.
 - **Postcondition**: `out[0..count-1]` filled with raw XYZ float data plus metadata
   (`snapshot_intensity`, `intensity_factor`, `has_valid_data`, `snapshot_generation`,
   `effective_pixels`, `epoch`). `xyz_buffer` stays valid for as long as `frame` is held.
-- **Internal**: reads `frame->frame_->xyz_results_` (`c_api.cpp:2599–2628`), lock-free for the
+- **Internal**: reads `frame->frame_->xyz_results_` (`c_api_engine.cpp` `LUMICE_FrameGetRawXyz`), lock-free for the
   same reason as above.
 
 #### `LUMICE_FrameGetStats(frame, out)`
@@ -246,7 +246,7 @@ tempted to reach back for a per-server cache.
   call, so nothing dangles after `LUMICE_ReleaseResultFrame`. There is no separate
   "cached, may be stale" stats read anymore: a frame's stats ARE the stats of the snapshot it is.
 - **Internal**: `frame->frame_->stats_result_` is an `std::optional<StatsResult>`
-  (`c_api.cpp:2690–2707`).
+  (`c_api_engine.cpp` `LUMICE_FrameGetStats`).
 
 ### §3.4 State & Control APIs
 
@@ -258,14 +258,14 @@ tempted to reach back for a per-server cache.
 - **Internal**: maps `GetSimLifecycle()` (`kRunning` → `LUMICE_SERVER_RUNNING`, else
   `LUMICE_SERVER_IDLE`), which itself calls `GetStatus()` — reads `status_` under
   `status_mutex_`; if Running, also polls simulator idle state and `scene_gen_active_` flag.
-  (`c_api.cpp:2726–2738`, `server.cpp:978–1004` `GetStatus`, `server.cpp:1036–1049` `GetSimLifecycle`)
+  (`c_api_engine.cpp` `LUMICE_QueryServerState`, `server.cpp:978–1004` `GetStatus`, `server.cpp:1036–1049` `GetSimLifecycle`)
 
 #### `LUMICE_StopServer(server)`
 
 - **Precondition**: `server` is valid or `NULL` (null is safe).
 - **Postcondition**: server is Idle. Worker threads are drained (not
   terminated — they return to `cv.wait`).
-  (`c_api.cpp:2783–2789`, `server.cpp:922–976` `ServerImpl::Stop`)
+  (`c_api_engine.cpp` `LUMICE_StopServer`, `server.cpp:922–976` `ServerImpl::Stop`)
 
 ### §3.5 Stateless Utility APIs
 
@@ -404,8 +404,8 @@ When `max_count=1` and `results.size()=1`, `count=1 == max_count`, and
 the write to `out[1]` was out-of-bounds.
 
 **Fix** (originally applied to the removed server-taking getters; the same `count < max_count`
-guard carried forward into their v4.15 replacements at `c_api.cpp:2625`, `c_api.cpp:2654`,
-`c_api.cpp:2683`):
+guard carried forward into their v4.15 replacements, `LUMICE_FrameGetRawXyz`,
+`LUMICE_FrameGetComposite` and `LUMICE_FrameGetRender` in `c_api_engine.cpp`):
 
 ```cpp
 // AFTER (fixed)
@@ -801,13 +801,13 @@ to-do status.
 | Source location | Document section |
 |----------------|-----------------|
 | `src/include/lumice.h:971–1032` (result frame API block comment + declarations) | §3.3 Result Frame APIs, §5 Sentinel Pattern |
-| `src/server/c_api.cpp:2625` (`FrameGetRawXyz` sentinel) | §5.2 Overflow fix |
-| `src/server/c_api.cpp:2654` (`FrameGetComposite` sentinel) | §5.2 Overflow fix |
-| `src/server/c_api.cpp:2683` (`FrameGetRender` sentinel) | §5.2 Overflow fix |
+| `src/server/c_api_engine.cpp` (`LUMICE_FrameGetRawXyz` sentinel) | §5.2 Overflow fix |
+| `src/server/c_api_engine.cpp` (`LUMICE_FrameGetComposite` sentinel) | §5.2 Overflow fix |
+| `src/server/c_api_engine.cpp` (`LUMICE_FrameGetRender` sentinel) | §5.2 Overflow fix |
 | `src/server/server.hpp:189–222` (`ResultFrame` struct doc) | §9 Result Lifetime & Ownership |
 | `src/server/server.cpp:843–863` (`ServerImpl::AcquireResultFrame`) | §3.3, §9 |
-| `src/server/c_api.cpp` (`CommitJsonToServer` — the shared commit tail) | §6.2 Why it stays factored out |
-| `src/server/c_api.cpp` (`JsonToScene` — the JSON→handle double hop) | §3.2 Known technical debt |
+| `src/server/c_api_engine.cpp` (`CommitJsonToServer` — the shared commit tail) | §6.2 Why it stays factored out |
+| `src/server/c_api_scene.cpp` (`JsonToScene` — the JSON→handle double hop) | §3.2 Known technical debt |
 | `src/server/server.cpp:518` (`ServerImpl::CommitConfig` entry) | §7 SimData side effects |
 | `src/server/server.cpp:964` (`has_ever_consumed_ = false` in `Stop()`) | §7.1 Reset sequence |
 | `src/server/server.cpp` (`ServerImpl::ContinueRun`) | §7.1a The run start that skips the reset |

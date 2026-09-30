@@ -897,7 +897,7 @@ static std::optional<CrystalConfig> ParseCrystal(const json& j, const std::strin
           alpha = s[angle_key].get<float>();
         } else if (s.contains(indices_key) && s[indices_key].is_array()) {
           // Any array enters here, not just a three-element one — the same shape as the CLI's own
-          // reader (config/crystal_config.cpp, server/c_api.cpp): a wrong length is a verdict the
+          // reader (config/crystal_config.cpp, server/c_api_scene.cpp): a wrong length is a verdict the
           // C API makes, not a reason to leave the branch and let the default pass for a value.
           const auto& idx = s[indices_key];
           int hkl[3]{ 0, 0, 0 };
@@ -1135,7 +1135,7 @@ static json SerializeRendererForGui(const RenderConfig& r) {
   // read back verbatim, because RenderConfig::background is sRGB too. Same space as the
   // config-JSON contract's "background" key, but for a different reason and by a different
   // mechanism: there the key crosses into a struct that holds LINEAR RGB, so both config parsers
-  // convert at the boundary (config_manager.cpp, c_api.cpp); here the key and the field are one
+  // convert at the boundary (config_manager.cpp, c_api_scene.cpp); here the key and the field are one
   // and the same value, so there is nothing to convert and no second candidate space it could be
   // in. The conversion for this side happens later and elsewhere — at the point of use, where the
   // preview shader's uniform and the .lmc bake each ask for linear (app_panels.cpp, app.cpp).
@@ -1702,7 +1702,7 @@ static bool FillColorPredicate(LUMICE_ColorPredicate* dst, const ColorClassRefCo
   *dst = LUMICE_ColorPredicate{};
   // task-356.3 — symmetry bitmask (1=P, 2=B, 4=D). Applies uniformly to all
   // predicate types (UNSET/RAYPATH/ENTRY_EXIT) so it lives before the type
-  // dispatch. Literal 1/2/4 mirrors src/server/c_api.cpp SymmetryBitsToString
+  // dispatch. Literal 1/2/4 mirrors src/server/c_api_scene.cpp SymmetryBitsToString
   // (no named LUMICE_SYM_* constants in the public header today); keep in sync.
   dst->symmetry = (ref.sym_p ? 1 : 0) | (ref.sym_b ? 2 : 0) | (ref.sym_d ? 4 : 0);
   const std::string trimmed = TrimRaypathSegment(ref.predicate_text);
@@ -2583,7 +2583,7 @@ static bool TryReconstructComplexFilter(const json& jf, const std::map<int, json
   SumOfProducts sop;
   for (const auto& raw_product : jf["composition"]) {  // product = clause = AND of term ids
     // The core wire form writes a SINGLE-term clause as a bare id and a multi-term clause as an
-    // array of ids (core filter_config.cpp to_json / c_api.cpp CompositionArrayToJson); both are
+    // array of ids (core filter_config.cpp to_json / c_api_scene.cpp CompositionArrayToJson); both are
     // legal and mean the same thing. Normalize to the array form before walking terms. Until
     // 399.5 the GUI read back only its own emitter's output, which always wrote the array form,
     // so the bare form was silently unsupported — a config written by the CLI/core (or now by
@@ -2960,7 +2960,7 @@ bool DeserializeFromJson(const std::string& json_str, GuiState& state) {
       // shapes core RaypathColorConfig::from_json accepts: bare array (dominant-only) or
       // object {"mode": ..., "classes": [...]}. z_order defaults to physical index i (the
       // natural new-class placement) — the wire form has no z_order field (mirrors
-      // LUMICE_ColorClass / c_api.cpp ConfigToJson), so this default is what the plan's
+      // LUMICE_ColorClass / c_api_scene.cpp ConfigToJson), so this default is what the plan's
       // roundtrip test relies on to compare equal via ColorClassConfig::operator==.
       if (root.contains("raypath_color")) {
         const auto& jrc = root["raypath_color"];

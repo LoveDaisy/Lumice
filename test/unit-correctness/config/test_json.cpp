@@ -1322,7 +1322,7 @@ TEST_F(V3TestJson, RenderTone_PrintParses) {
 
 // The AC2 nail on the full core path: an unknown tone warns AND loads as `screen`. Loading is the
 // half worth stating — a malformed appearance value must not make the whole document unloadable,
-// which is why this is warn-and-fall-back here and a hard reject in c_api.cpp's independent
+// which is why this is warn-and-fall-back here and a hard reject in c_api_scene.cpp's independent
 // decoder (that one serves LUMICE_SceneFromJson and follows its own file's convention).
 TEST_F(V3TestJson, RenderTone_UnknownValueWarnsAndFallsBackToScreen) {
   auto j = config_json_;

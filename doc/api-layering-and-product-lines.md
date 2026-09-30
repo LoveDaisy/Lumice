@@ -55,7 +55,7 @@ L2 那一组最能说明问题：其中四个函数的返回值是 **JSON 键名
 
 顺带一个易撞名的历史包袱：`LUMICE_SceneSetSimParams(scene, int infinite, ...)`
 （`:747`）里的 `infinite` 指的是**光线数量**无限（`ray_num: "infinite"`，
-见 `src/server/c_api.cpp:1077-1078` 与 `src/server/c_api_internal.hpp:71`），
+见 `src/server/c_api_scene.cpp` 的 `LUMICE_SceneSetSimParams` 与 `src/server/c_api_scene_internal.hpp` 的 `ConfigScratch::infinite`），
 与光源距离无关。将来若要在 API 上表达光源距离，这个词位已被占用。
 
 ---

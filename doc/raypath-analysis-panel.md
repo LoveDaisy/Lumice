@@ -111,7 +111,7 @@ owner 在 2026-09-11 提出第三种形态，不再试图同时满足「渲染�
    都在 env override 之前短路成 CPU；`Simulator::SetAnalysisForceCpu(bool)`
    （`src/core/simulator.hpp:108`）写这条会话属性，`Simulator::ActiveBackend()`
    （`src/core/simulator.hpp:116`）发布解析后的实际后端，`LUMICE_GetActiveBackend`
-   （`src/include/lumice.h:2448`，`src/server/c_api.cpp:3320`）把它读出来给调用方核对「强制是否生效」。
+   （`src/include/lumice.h:2448`，`src/server/c_api_engine.cpp`）把它读出来给调用方核对「强制是否生效」。
    GUI 侧**没有**为这条加任何可见提示或按钮禁用——Analyze 在 GPU 偏好会话下一样可点，只是内部
    静默走 CPU、可能比渲染慢；这是子任务 5 范围内的非目标（GUI 的 GPU 路径体验留给未来子任务）。
    **多 worker（as-built，2026-09-13 起）**：CPU 路的分析本来就跑在多 worker 上；GPU 偏好的
@@ -584,7 +584,7 @@ GUI 与 CLI 若都要打印一条链，打印的是**同一个字符串**，而�
 的诊断格式，从不离开 core（`crystal1(3-5)` 这种写法是它的输出，仅供 core 内部调试用）。
 `RaypathHistogramConsumer::PrepareSnapshot` / `ReduceRaypathHistogram` 用 `FormatRaypathChainDisplay`
 给 `RaypathHistogramEntry::display_` 赋值，C API 的 `LUMICE_RaypathHistogramEntry::display` 是这个
-字符串的**逐字节拷贝**（`c_api.cpp` 只做截断，不重拼）。
+字符串的**逐字节拷贝**（`c_api_engine.cpp` 只做截断，不重拼）。
 
 当前格式规则（`FormatRaypathChainDisplay` 定义，此处只是复述）：
 

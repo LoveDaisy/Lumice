@@ -39,7 +39,7 @@
 // merged into one row per canonical chain, labelled in the one display format,
 // each merged row's error_bound_ the Σ of its finest rows' — so a reduced row
 // standing for an orbit of m finest chains is uncertain by at most m × E/k.
-// The C API calls them on every read (c_api.cpp LUMICE_FrameGetRaypathAnalysis),
+// The C API calls them on every read (c_api_engine.cpp LUMICE_FrameGetRaypathAnalysis),
 // which is what lets a GUI toggle P/B/D on a finished result without re-running.
 #ifndef CONSUMER_RAYPATH_HISTOGRAM_H_
 #define CONSUMER_RAYPATH_HISTOGRAM_H_

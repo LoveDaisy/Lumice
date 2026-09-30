@@ -354,7 +354,7 @@ deleting its line, and an entry whose edge is gone fails the check.
     `analytic-symbol-scope` rule.
     Existing pytest calls to product symbols are deliberately **not** migrated to the test header:
     their subject is the product C API contract itself, and wrapping them would test the wrapper.
-    - `test/regression-sentinel/test_capi_sentinel_overflow.py` — sentinel-overflow regression: 3-config × 12 rounds = 36 server lifecycles via `LUMICE_AcquireResultFrame` + `LUMICE_FrameGetRawXyz(max_count=1)`; guards against reintroduction of the c_api.cpp off-by-one sentinel write (fix: 5287efe)
+    - `test/regression-sentinel/test_capi_sentinel_overflow.py` — sentinel-overflow regression: 3-config × 12 rounds = 36 server lifecycles via `LUMICE_AcquireResultFrame` + `LUMICE_FrameGetRawXyz(max_count=1)`; guards against reintroduction of the C API's off-by-one sentinel write (fix: 5287efe)
     - `test/regression-sentinel/test_ms_filter_leak.py` — Design A filter-fail termination regression: confirms filter-fail rays do not propagate across MS layers
   - **Test-scope table** — which command fits a given situation:
 
