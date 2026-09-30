@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1790779828700,
+  "lastUpdate": 1790779831169,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9524,50 +9524,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "70eb8f5fad44336cf2b57da4d314a9aced4c8224",
-          "message": "Merge pull request #349 from LoveDaisy/feat/raypath-analysis-followups\n\nRaypath analysis follow-ups: fixed-seed reproducibility, session-kind rebuild predicate, joiner glyphs, debt sweep",
-          "timestamp": "2026-09-12T23:46:53+08:00",
-          "tree_id": "1570515bb91fdd1a4610a3ac00dc77a6ae1f7cca",
-          "url": "https://github.com/LoveDaisy/ice_halo_sim/commit/70eb8f5fad44336cf2b57da4d314a9aced4c8224"
-        },
-        "date": 1789228788442,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 84.5,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 99.4,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 96.7,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 88.1,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "c106292be4122b60092a9666131dde843f639b15",
           "message": "Merge pull request #348 from LoveDaisy/feat/crystal-ray-allocation\n\nfeat(core): adaptive ray allocation across crystal entries (scene.ray_allocation)",
           "timestamp": "2026-09-13T04:19:28+08:00",
@@ -13867,6 +13823,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 93.4,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "5a6e0df8340efd9cf0b86e005e69a70cd1d7bf5c",
+          "message": "Merge pull request #453 from LoveDaisy/scrum/capability-libs\n\nOrganize the C API and engine by capability",
+          "timestamp": "2026-09-30T22:20:49+08:00",
+          "tree_id": "e33e93629598cfbac336b950cd72445b26fb5b14",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/5a6e0df8340efd9cf0b86e005e69a70cd1d7bf5c"
+        },
+        "date": 1790779830503,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 83.8,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 100.5,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 98,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 95.4,
             "unit": "%"
           }
         ]
