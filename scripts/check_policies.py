@@ -149,6 +149,21 @@ Checks:
      (doc/analytic-api.md section 7). Each library's export list is generated
      from its headers, so (a) is also what keeps an analytic function out of
      liblumice's exports and a lumice.h function out of liblumice_analytic's.
+  19. layer-inversion — every `#include "..."` under src/ points at the same
+     or a lower layer. The layers and the files each one owns are declared in
+     ONE place, cmake/lumice_layers.cmake, which CMake also reads (the
+     foundation list is lumice_foundation_obj's source set, so what the gate
+     calls "foundation" and what liblumice_analytic links are the same list).
+     Three findings besides an inverted edge: a src/ file the manifest does not
+     own (UNOWNED — a new file must be placed, or the gate would silently stop
+     seeing it), a manifest entry naming no file, and a manifest line outside
+     the restricted syntax the header of that file states. Existing inversions
+     are listed in cmake/lumice_layer_allowlist.txt, which only shrinks: an
+     entry whose edge no longer exists is itself a violation (STALE), so a fix
+     cannot leave its exemption behind for the next inversion to reuse. The
+     shell (src/gui/, src/launcher/, src/main.cpp) is not layered here — the
+     gui-api-boundary rule owns it — but it counts as above every layer, so a
+     layered file including a shell file is an inversion too.
 
 Add a new check as a function returning a list of Violation and append it to
 CHECKS, and add a numbered entry above. Keep each check deterministic and
@@ -1958,6 +1973,223 @@ def check_analytic_symbol_scope() -> list[Violation]:
     return out
 
 
+# --- layer-inversion ----------------------------------------------------------
+#
+# The manifest is CMake (include()-able) in a deliberately tiny subset, so that
+# this parser and CMake cannot read it differently: comments, blank lines,
+# `set(NAME`, one bare token per line, and a lone `)`. Anything else is an error
+# here rather than a line skipped, because a skipped line is a file silently
+# unowned or a layer silently reordered. Paths are derived from REPO_ROOT / SRC
+# at call time so a test can point both at a scratch tree.
+LAYER_MANIFEST_REL = Path("cmake") / "lumice_layers.cmake"
+LAYER_ALLOWLIST_REL = Path("cmake") / "lumice_layer_allowlist.txt"
+LAYER_SCAN_SUFFIXES = {".cpp", ".hpp", ".h", ".mm", ".cu", ".cuh", ".metal", ".inl"}
+# What lumice_foundation_obj may compile: the CMake side filters its sources by
+# suffix, so an .mm or .cu entry would be dropped there without a word.
+FOUNDATION_SUFFIXES = {".cpp", ".hpp", ".h"}
+LAYER_SHELL_DIRS = ("gui", "launcher")
+LAYER_SHELL_FILES = ("main.cpp",)
+_MANIFEST_SET_OPEN = re.compile(r"^set\((LUMICE_LAYER_ORDER|LUMICE_LAYER_([a-z][a-z0-9_]*)_FILES)$")
+_MANIFEST_TOKEN = re.compile(r"^[A-Za-z0-9_./-]+$")
+_QUOTED_INCLUDE = re.compile(r'^\s*#\s*include\s*"([^"]+)"')
+
+
+class LayerManifestError(Exception):
+    def __init__(self, line: int, message: str):
+        super().__init__(message)
+        self.line = line
+
+
+def parse_layer_manifest(text: str) -> tuple[list[str], dict[str, str]]:
+    """Return (layer order lowest-first, {src-relative path: layer}).
+
+    Raises LayerManifestError on anything outside the restricted syntax, on a
+    duplicate path, on a FILES list for an undeclared layer (or before the
+    order), and on a declared layer without a FILES list.
+    """
+    order: list[str] = []
+    owner: dict[str, str] = {}
+    seen_lists: set[str] = set()
+    current: str | None = None  # "" while inside LUMICE_LAYER_ORDER
+    for lineno, raw in enumerate(text.splitlines(), start=1):
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if current is None:
+            m = _MANIFEST_SET_OPEN.match(line)
+            if not m:
+                raise LayerManifestError(lineno, f"expected `set(LUMICE_LAYER_...` here, got `{line}`")
+            if m.group(1) == "LUMICE_LAYER_ORDER":
+                if order or seen_lists:
+                    raise LayerManifestError(lineno, "LUMICE_LAYER_ORDER must be the first and only order list")
+                current = ""
+            else:
+                layer = m.group(2)
+                if layer not in order:
+                    raise LayerManifestError(lineno, f"FILES list for `{layer}`, which LUMICE_LAYER_ORDER does not declare")
+                if layer in seen_lists:
+                    raise LayerManifestError(lineno, f"second FILES list for `{layer}`")
+                seen_lists.add(layer)
+                current = layer
+            continue
+        if line == ")":
+            if current == "" and not order:
+                raise LayerManifestError(lineno, "LUMICE_LAYER_ORDER is empty")
+            current = None
+            continue
+        if not _MANIFEST_TOKEN.match(line):
+            raise LayerManifestError(lineno, f"`{line}` is not one bare token (no quotes, variables or commands)")
+        if current == "":
+            if line in order:
+                raise LayerManifestError(lineno, f"layer `{line}` declared twice")
+            order.append(line)
+        else:
+            if line in owner:
+                raise LayerManifestError(lineno, f"`{line}` is owned by both `{owner[line]}` and `{current}`")
+            if current == "foundation" and Path(line).suffix not in FOUNDATION_SUFFIXES:
+                raise LayerManifestError(
+                    lineno,
+                    f"`{line}`: foundation compiles only {sorted(FOUNDATION_SUFFIXES)} "
+                    "(lumice_foundation_obj would drop anything else silently)",
+                )
+            owner[line] = current
+    if current is not None:
+        raise LayerManifestError(len(text.splitlines()), "unterminated set( ... )")
+    missing = [layer for layer in order if layer not in seen_lists]
+    if missing:
+        raise LayerManifestError(len(text.splitlines()), f"no FILES list for layer(s) {missing}")
+    return order, owner
+
+
+def _is_layer_shell(rel: str) -> bool:
+    return rel.split("/")[0] in LAYER_SHELL_DIRS or rel in LAYER_SHELL_FILES
+
+
+def _resolve_include(rel_from: str, target: str) -> str | None:
+    """The src-relative path an #include "target" names, in the compiler's search order.
+
+    Quote includes search the including file's directory first, then the include
+    path, which for engine sources is src/ and src/include/ (lumice_obj's
+    target_include_directories). Returns None for a header outside src/
+    (a dependency's, or a generated one).
+    """
+    candidates = [
+        (SRC / rel_from).parent / target,
+        SRC / target,
+        SRC / "include" / target,
+    ]
+    for c in candidates:
+        if c.is_file():
+            try:
+                return c.resolve().relative_to(SRC.resolve()).as_posix()
+            except ValueError:
+                return None
+    return None
+
+
+def check_layer_inversion() -> list[Violation]:
+    """No #include under src/ points at a higher layer than its includer's.
+
+    Reads code_lines(), so an #include inside a comment is not an edge. Only the
+    quote form is read: every in-tree include is written that way, and an
+    angle-bracket include of an in-tree header would be a style violation that
+    clang-format's include grouping already surfaces. Known limitation: an
+    include hidden behind a macro (`#include MACRO`) is not an edge here.
+    """
+    manifest = REPO_ROOT / LAYER_MANIFEST_REL
+    allow_path = REPO_ROOT / LAYER_ALLOWLIST_REL
+    rule = "layer-inversion"
+    out: list[Violation] = []
+    try:
+        order, owner = parse_layer_manifest(manifest.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return [Violation(manifest, 1, rule, "layer manifest missing")]
+    except LayerManifestError as e:
+        return [Violation(manifest, e.line, rule, f"unreadable layer manifest: {e}")]
+    shell_rank = len(order)
+    rank = {layer: i for i, layer in enumerate(order)}
+
+    allow: dict[str, int] = {}
+    if allow_path.is_file():
+        for lineno, raw in enumerate(allow_path.read_text(encoding="utf-8").splitlines(), start=1):
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            parts = [p.strip() for p in line.split("->")]
+            if len(parts) != 2 or not all(parts):
+                out.append(Violation(allow_path, lineno, rule, f"expected `<includer> -> <included>`, got `{line}`"))
+                continue
+            allow[f"{parts[0]} -> {parts[1]}"] = lineno
+    used_allow: set[str] = set()
+
+    manifest_lines = {}
+    for lineno, raw in enumerate(manifest.read_text(encoding="utf-8").splitlines(), start=1):
+        manifest_lines.setdefault(raw.strip(), lineno)
+    for rel in sorted(owner):
+        if not (SRC / rel).is_file():
+            out.append(
+                Violation(manifest, manifest_lines.get(rel, 1), rule, f"`{rel}` is listed but does not exist under src/")
+            )
+
+    for path in sorted(SRC.rglob("*")):
+        if path.suffix not in LAYER_SCAN_SUFFIXES or not path.is_file():
+            continue
+        rel = path.relative_to(SRC).as_posix()
+        if _is_layer_shell(rel):
+            continue
+        if rel not in owner:
+            out.append(
+                Violation(
+                    path,
+                    1,
+                    rule,
+                    f"UNOWNED: no layer in {LAYER_MANIFEST_REL.as_posix()} owns this file; add it to the "
+                    "layer it belongs to (CMake builds lumice_foundation_obj from the foundation list)",
+                )
+            )
+            continue
+        my_rank = rank[owner[rel]]
+        for lineno, _orig, code in code_lines(path):
+            m = _QUOTED_INCLUDE.match(code)
+            if not m:
+                continue
+            tgt = _resolve_include(rel, m.group(1))
+            if tgt is None:
+                continue
+            if _is_layer_shell(tgt):
+                tgt_layer, tgt_rank = "shell", shell_rank
+            elif tgt in owner:
+                tgt_layer, tgt_rank = owner[tgt], rank[owner[tgt]]
+            else:
+                continue  # reported as UNOWNED at the target itself
+            if tgt_rank <= my_rank:
+                continue
+            key = f"{rel} -> {tgt}"
+            if key in allow:
+                used_allow.add(key)
+                continue
+            out.append(
+                Violation(
+                    path,
+                    lineno,
+                    rule,
+                    f"{key}: layer `{owner[rel]}` includes the higher layer `{tgt_layer}`. Move the "
+                    "shared piece down (or the includer up); the allowlist only shrinks.",
+                )
+            )
+    for key, lineno in sorted(allow.items(), key=lambda kv: kv[1]):
+        if key not in used_allow:
+            out.append(
+                Violation(
+                    allow_path,
+                    lineno,
+                    rule,
+                    f"STALE: `{key}` no longer exists as an inverted edge; delete this entry",
+                )
+            )
+    return out
+
+
 CHECKS = [
     check_getenv_centralization,
     check_env_knob_registration,
@@ -1977,6 +2209,7 @@ CHECKS = [
     check_no_render_in_benchmark_poll,
     check_no_test_symbol_in_src,
     check_analytic_symbol_scope,
+    check_layer_inversion,
 ]
 
 
@@ -2003,7 +2236,7 @@ def main() -> int:
         "no-default-constructed-crystal-slots, gui-test-suite-args-sync, no-bare-print, "
         "msvc-string-literal-limit, user-defaults-single-write-path, "
         "pytest-invocation-marker, no-render-in-benchmark-poll, no-test-symbol-in-src, "
-        "analytic-symbol-scope)."
+        "analytic-symbol-scope, layer-inversion)."
     )
     return 0
 

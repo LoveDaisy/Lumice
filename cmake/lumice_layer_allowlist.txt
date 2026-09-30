@@ -1,0 +1,13 @@
+# Existing layer inversions (`<includer> -> <included>`, src/-relative), grandfathered by the
+# layer-inversion rule in scripts/check_policies.py. SHRINK ONLY: never add an entry — move the
+# shared piece to a lower layer instead. An entry whose edge no longer exists fails the check
+# (STALE), so fixing an inversion means deleting its line here in the same change.
+
+# foundation -> capi: the logger's C-callback sink is typed on LUMICE_LogCallback / LUMICE_LogLevel.
+util/callback_sink.hpp -> include/lumice.h
+# sim -> engine: the consumers take the result types that server.hpp declares.
+server/consumer.hpp -> server/server.hpp
+server/raypath_histogram_consumer.hpp -> server/server.hpp
+server/stats.hpp -> server/server.hpp
+# view -> sim: the annotation overlay takes MakeCameraRotation from the scatter accumulator header.
+core/annotation_overlay.cpp -> core/scatter_accum.hpp

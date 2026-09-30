@@ -1,0 +1,227 @@
+# Layer manifest: which layer owns each file under src/ (paths relative to src/). The ONE source of
+# the layering — CMake include()s it (the foundation list is lumice_foundation_obj's source set,
+# which is what liblumice_analytic links) and scripts/check_policies.py's layer-inversion rule
+# parses it (every #include must point at the same or a lower layer; cmake/lumice_layer_allowlist.txt
+# lists the existing inversions and only shrinks).
+#
+# Restricted syntax, so that CMake and the Python parser cannot read it differently: `#` comments,
+# blank lines, `set(NAME` on its own line, one bare path per line (no quotes, no ${...}, no
+# commands), and `)` on its own line. The parser rejects anything else rather than skipping it.
+#
+# LUMICE_LAYER_ORDER comes first, lowest layer first. Every layer needs a LUMICE_LAYER_<name>_FILES
+# list. The foundation list may hold only .cpp/.hpp/.h: an .mm or .cu source would be dropped by
+# lumice_foundation_obj's suffix filter without a word. The shell (src/gui/, src/launcher/,
+# src/main.cpp) is not listed; the gui-api-boundary rule owns it.
+
+set(LUMICE_LAYER_ORDER
+  foundation
+  analytic
+  scene
+  view
+  sim
+  render
+  engine
+  raypath
+  capi
+)
+
+set(LUMICE_LAYER_foundation_FILES
+  core/buffer.hpp
+  core/chain_id_table.cpp
+  core/chain_id_table.hpp
+  core/crystal.cpp
+  core/crystal.hpp
+  core/crystal_kind.hpp
+  core/crystal_param.cpp
+  core/crystal_param.hpp
+  core/def.hpp
+  core/exit_seam.hpp
+  core/geo3d.cpp
+  core/geo3d.hpp
+  core/geo3d_closedform.cpp
+  core/geo3d_closedform.hpp
+  core/lat_lut.cpp
+  core/lat_lut.hpp
+  core/math.cpp
+  core/math.hpp
+  core/miller_wedge.cpp
+  core/miller_wedge.hpp
+  core/optics.cpp
+  core/optics.hpp
+  core/parallel_rows.cpp
+  core/parallel_rows.hpp
+  core/raypath.cpp
+  core/raypath.hpp
+  core/shared/accum_shared.h
+  core/shared/lat_path_selection.hpp
+  core/shared/lm_shims.h
+  core/shared/optics_shared.h
+  core/shared/pcg_shared.h
+  core/shared/projection_shared.h
+  core/shared/ray_allocation_shared.hpp
+  core/shared/traversal_shared.h
+  util/annotation_line_width.hpp
+  util/bit_utils.hpp
+  util/callback_sink.hpp
+  util/channel_math.hpp
+  util/color_data.hpp
+  util/color_space.cpp
+  util/color_space.hpp
+  util/contrast_headroom.hpp
+  util/cpu_info.cpp
+  util/cpu_info.hpp
+  util/env_knobs.cpp
+  util/env_knobs.hpp
+  util/fatal.hpp
+  util/illuminant.cpp
+  util/illuminant.hpp
+  util/illuminant_data.hpp
+  util/ink_transfer.hpp
+  util/label_viewport_clamp.hpp
+  util/lens_focal.hpp
+  util/lens_fov_default.hpp
+  util/logger.hpp
+  util/path_utils.hpp
+  util/queue.hpp
+  util/sky_direction.hpp
+  util/spdlog_levels.hpp
+  util/thousands_format.hpp
+  util/threading_pool.cpp
+  util/threading_pool.hpp
+)
+
+set(LUMICE_LAYER_analytic_FILES
+  analytic/analytic_api.cpp
+  analytic/analytic_callback_sink.hpp
+  analytic/band_sum.cpp
+  analytic/band_sum.hpp
+  analytic/discovery.cpp
+  analytic/discovery.hpp
+  analytic/entry_measure.cpp
+  analytic/entry_measure.hpp
+  analytic/fiber_continuation.cpp
+  analytic/fiber_continuation.hpp
+  analytic/jet.hpp
+  analytic/path_chain.hpp
+  analytic/path_evaluation.cpp
+  analytic/path_evaluation.hpp
+  analytic/path_fiber.cpp
+  analytic/path_fiber.hpp
+  analytic/path_rank.cpp
+  analytic/path_rank.hpp
+  analytic/pose_density.cpp
+  analytic/pose_density.hpp
+  analytic/so3.hpp
+  include/lumice_analytic.h
+)
+
+set(LUMICE_LAYER_scene_FILES
+  config/color_class_table.cpp
+  config/color_class_table.hpp
+  config/color_gate_table.cpp
+  config/color_gate_table.hpp
+  config/component_table.cpp
+  config/component_table.hpp
+  config/config_compare.hpp
+  config/config_manager.cpp
+  config/config_manager.hpp
+  config/crystal_config.cpp
+  config/crystal_config.hpp
+  config/filter_config.cpp
+  config/filter_config.hpp
+  config/light_config.cpp
+  config/light_config.hpp
+  config/proj_config.cpp
+  config/proj_config.hpp
+  config/raypath_color_config.cpp
+  config/raypath_color_config.hpp
+  config/raypath_validation.cpp
+  config/raypath_validation.hpp
+  config/render_config.cpp
+  config/render_config.hpp
+)
+
+set(LUMICE_LAYER_view_FILES
+  core/annotation_font.cpp
+  core/annotation_font.hpp
+  core/annotation_overlay.cpp
+  core/annotation_overlay.hpp
+  core/color_util.hpp
+  core/lens_proj.hpp
+  core/lens_proj_build.hpp
+  core/projection.cpp
+  core/projection.hpp
+)
+
+set(LUMICE_LAYER_sim_FILES
+  config/sim_data.cpp
+  config/sim_data.hpp
+  core/anchor_buffer.hpp
+  core/backend/backend_kind.hpp
+  core/backend/cpu_trace_backend.cpp
+  core/backend/cpu_trace_backend.hpp
+  core/backend/cuda_trace_backend.cu
+  core/backend/cuda_trace_backend.hpp
+  core/backend/cuda_trace_backend_test_hooks.hpp
+  core/backend/metal_trace_backend.hpp
+  core/backend/metal_trace_backend.mm
+  core/backend/metal_trace_backend_test_hooks.hpp
+  core/backend/rng_probe_stream.hpp
+  core/backend/trace_backend.hpp
+  core/backend/wl_pool.hpp
+  core/device_filter_desc.cpp
+  core/device_filter_desc.hpp
+  core/ev_anchor.hpp
+  core/filter_spec.cpp
+  core/filter_spec.hpp
+  core/metal/lumice_trace.metal
+  core/metal_filter_match_src.hpp
+  core/metal_filter_match_src.mm
+  core/scatter_accum.hpp
+  core/shared/filter_shared.h
+  core/simulator.cpp
+  core/simulator.hpp
+  core/trace_ops.hpp
+  core/wl_stratifier.hpp
+  core/worker_projection.cpp
+  core/worker_projection.hpp
+  server/anchor_consumer.cpp
+  server/anchor_consumer.hpp
+  server/consumer.hpp
+  server/ray_num_semantics.hpp
+  server/raypath_histogram_consumer.cpp
+  server/raypath_histogram_consumer.hpp
+  server/scene_batch_publish.hpp
+  server/stats.cpp
+  server/stats.hpp
+)
+
+set(LUMICE_LAYER_render_FILES
+  server/component_compositor.cpp
+  server/component_compositor.hpp
+  server/render.cpp
+  server/render.hpp
+)
+
+set(LUMICE_LAYER_engine_FILES
+  server/server.cpp
+  server/server.hpp
+)
+
+set(LUMICE_LAYER_raypath_FILES
+  raypath/scene_to_analytic.cpp
+  raypath/scene_to_analytic.hpp
+  raypath/single_path_analysis.cpp
+  raypath/single_path_analysis.hpp
+  raypath/single_path_json.cpp
+  raypath/single_path_json.hpp
+)
+
+set(LUMICE_LAYER_capi_FILES
+  include/lumice.h
+  server/c_api.cpp
+  server/c_api_internal.hpp
+  server/c_api_single_path.cpp
+  util/raypath_analysis_display.hpp
+  util/result_frame.hpp
+)
