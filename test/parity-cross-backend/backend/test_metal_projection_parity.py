@@ -57,8 +57,10 @@ _SEED = 42
 _SEED_B = 7
 _TIMEOUT = 180
 # Ray budget per run, a tenth of the baseline config's 10M. Every metric here is a
-# whole-frame statistic on a 4x4 block-mean image, and none of them moved with the
-# budget under the mutation probes this was sized against (see the note below).
+# whole-frame statistic on a 4x4 block-mean image, and under the mutation probes this
+# was sized against (global scale, r_scale, x mirror) no red/green verdict flipped
+# between 1M and 10M; only the absolute PSNR moved (~7 dB higher at 10M, far above
+# the 13 dB criterion). Other defect shapes were not probed.
 _PARITY_RAY_NUM = 1_000_000
 
 # Metal is Apple-only; on non-Darwin CI it falls back to legacy → the routing

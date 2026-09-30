@@ -38,7 +38,7 @@ every seed, but only 1.06-1.21x over its 1% band (the fp32 drift of Y grows with
 against at most 0.27% after the fix. The CMF case is the load-bearing witness at this budget.
 
 @pytest.mark.slow: needs the shared-lib build (``./scripts/build.sh -sj release``); the legacy arm
-at 10M rays runs ~15 s (a fixed seed pins legacy to one worker). The Metal arm is Darwin-only and
+at 10M rays runs ~15-20 s (a fixed seed pins legacy to one worker). The Metal arm is Darwin-only and
 skips elsewhere; the CMF assertion on the legacy arm runs on every platform.
 """
 
