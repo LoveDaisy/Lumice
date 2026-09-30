@@ -1,0 +1,44 @@
+name: Install sccache (Windows)
+description: >
+  Installs the pinned mozilla/sccache release on a Windows runner, checks it against its published
+  SHA-256, puts it on PATH and points SCCACHE_DIR at a workspace directory the caller caches with
+  actions/cache. It does not choose which compilers go through it: each caller names its
+  CMAKE_<LANG>_COMPILER_LAUNCHER flags in its own Configure step, because those differ per job
+  (the CUDA job also routes nvcc through it) and a variable set here for some callers and ignored
+  by others would be one more place to look when reading a configure line.
+
+  One copy, used by every Windows job that caches compilation. The version is not a free
+  parameter to bump: 0.17.0 is the version this repository's MSVC + Ninja + CPM combination was
+  measured against (doc/testing-architecture.md §7.1), and moving it means re-measuring.
+
+inputs:
+  cache-dir:
+    description: Directory, relative to the workspace, that sccache stores objects in.
+    required: false
+    default: sccache_cache
+  cache-size:
+    description: SCCACHE_CACHE_SIZE for this job. Size it from this job's own measured footprint.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Install sccache (pinned, SHA-256 checked)
+      shell: pwsh
+      run: |
+        $ErrorActionPreference = 'Stop'
+        $version = '0.17.0'
+        $asset = "sccache-v$version-x86_64-pc-windows-msvc"
+        $expected = 'e94cfc5b58cbe439302f586c1d1bd7980c2cd371d47bdf385ade657411e6f3ac'
+        $zip = Join-Path $env:RUNNER_TEMP "$asset.zip"
+        Invoke-WebRequest -Uri "https://github.com/mozilla/sccache/releases/download/v$version/$asset.zip" -OutFile $zip
+        $actual = (Get-FileHash -Algorithm SHA256 -Path $zip).Hash.ToLower()
+        if ($actual -ne $expected) {
+          throw "sccache archive SHA-256 mismatch: expected $expected, got $actual"
+        }
+        Expand-Archive -Path $zip -DestinationPath $env:RUNNER_TEMP -Force
+        $dir = Join-Path $env:RUNNER_TEMP $asset
+        & (Join-Path $dir 'sccache.exe') --version
+        echo $dir >> $env:GITHUB_PATH
+        echo "SCCACHE_DIR=$env:GITHUB_WORKSPACE\${{ inputs.cache-dir }}" >> $env:GITHUB_ENV
+        echo "SCCACHE_CACHE_SIZE=${{ inputs.cache-size }}" >> $env:GITHUB_ENV

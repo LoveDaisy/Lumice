@@ -70,7 +70,7 @@ jobs:
             os: ubuntu-24.04
             build_gui: ON
             cache_key: ubuntu-x64
-            benchmark_bin: build/Release/static/bin/Lumice
+            ccache: true
             # The one leg that both builds the GUI and has a headless GL stack available
             # (Xvfb + Mesa llvmpipe), so it is where the visual-regression layer actually
             # runs. Which reference groups it may run, and why not the others, is measured
@@ -81,13 +81,13 @@ jobs:
             os: ubuntu-24.04-arm
             build_gui: OFF
             cache_key: ubuntu-arm64
-            benchmark_bin: build/Release/static/bin/Lumice
+            ccache: true
 
           - name: macOS ARM64
             os: macos-15
             build_gui: ON
             cache_key: macos-arm64
-            benchmark_bin: build/Release/static/bin/Lumice
+            ccache: true
 
           # windows-2022, NOT windows-2025 — this leg must compile on the SAME
           # image release.yml's `windows-x64` artifact is built on. A build leg
@@ -114,7 +114,6 @@ jobs:
             build_gui: ON
             cache_key: windows-msvc-x64
             msvc: true
-            benchmark_bin: build/Release/static/bin/Lumice.exe
 
     runs-on: ${{ matrix.os }}
     name: ${{ matrix.name }}
@@ -141,57 +140,46 @@ jobs:
         if: matrix.msvc
         uses: ilammy/msvc-dev-cmd@v1
 
-      # sccache as a compiler launcher, on the one leg where compilation is most of the job
-      # (doc/testing-architecture.md §7.1). Installed from a pinned mozilla/sccache release
-      # asset and checked against its published SHA-256, so a replaced, truncated or
-      # redirected download fails this step loudly rather than silently installing something
-      # else. The version is not a free parameter to bump: 0.17.0 is the version this repo's
-      # MSVC + Ninja + CPM combination was measured against, and moving it means re-measuring.
+      # sccache as a compiler launcher on the Windows leg. The install itself (pinned release,
+      # SHA-256 checked) is the local composite action, the one copy every Windows job that
+      # caches compilation uses.
       #
       # LUMICE_COMPILER_LAUNCHER_ARGS follows the LUMICE_PYTHON_ARGS pattern below: matrix
       # entries that write it get a launcher, every other entry evaluates the unset variable
       # to an empty string, and the shared Configure step needs no branch of its own. The
-      # name is deliberately not tool-specific — the ubuntu-x64 entry writes the same
-      # variable with ccache, and two spellings for one thing is how they drift apart.
+      # name is deliberately not tool-specific — the ccache entries write the same variable,
+      # and two spellings for one thing is how they drift apart.
       - name: Install sccache (Windows MSVC)
         if: matrix.msvc
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $version = '0.17.0'
-          $asset = "sccache-v$version-x86_64-pc-windows-msvc"
-          $expected = 'e94cfc5b58cbe439302f586c1d1bd7980c2cd371d47bdf385ade657411e6f3ac'
-          $zip = Join-Path $env:RUNNER_TEMP "$asset.zip"
-          Invoke-WebRequest -Uri "https://github.com/mozilla/sccache/releases/download/v$version/$asset.zip" -OutFile $zip
-          $actual = (Get-FileHash -Algorithm SHA256 -Path $zip).Hash.ToLower()
-          if ($actual -ne $expected) {
-            throw "sccache archive SHA-256 mismatch: expected $expected, got $actual"
-          }
-          Expand-Archive -Path $zip -DestinationPath $env:RUNNER_TEMP -Force
-          $dir = Join-Path $env:RUNNER_TEMP $asset
-          & (Join-Path $dir 'sccache.exe') --version
-          echo $dir >> $env:GITHUB_PATH
-          echo "LUMICE_COMPILER_LAUNCHER_ARGS=-DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache" >> $env:GITHUB_ENV
-          echo "SCCACHE_DIR=$env:GITHUB_WORKSPACE\sccache_cache" >> $env:GITHUB_ENV
-          echo "SCCACHE_CACHE_SIZE=800M" >> $env:GITHUB_ENV
+        uses: ./.github/actions/install-sccache
+        with:
+          cache-size: 800M
 
-      # The same treatment for ubuntu-x64, which is this workflow's longest job once the
-      # shared-gui leg has a cache of its own. Deliberately the same shape as the sccache
-      # step above rather than a second invention: same launcher-via-env-var injection, and
-      # the same "one entry per commit with a prefix fallback" key. Only the ubuntu-x64
-      # matrix entry, because it is the only Linux entry in this job that is compile-bound.
+      - name: Route compilation through sccache (Windows MSVC)
+        if: matrix.msvc
+        shell: pwsh
+        run: echo "LUMICE_COMPILER_LAUNCHER_ARGS=-DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache" >> $env:GITHUB_ENV
+
+      # The same treatment for the three non-Windows entries (`ccache: true`). Deliberately
+      # the same shape as the sccache step above rather than a second invention: same
+      # launcher-via-env-var injection, and the same "one entry per commit with a prefix
+      # fallback" key. Every entry in this job is compile-bound once IPO is off (Configure
+      # below): the link that used to dominate is 2-6 s, so what is left of Build is
+      # compilation, which is exactly what a cache replays. macOS and ARM64 went uncached
+      # while the LTO link was the floor; with it gone they measured 403/325 s cold against
+      # 8-10 s warm.
       #
-      # CCACHE_MAXSIZE is 800M, and it is 800M because this leg was measured rather than
-      # assumed to resemble its neighbour. It first shipped at the 200M that fits
-      # shared-gui-test-build, whose directory settles at 37 MB; on this leg 200M was
+      # CCACHE_MAXSIZE is 800M, and it is 800M because the x64 leg was measured rather than
+      # assumed to resemble its neighbour. It first shipped at 200M; on this leg 200M was
       # immediately over-full — `ccache --show-stats` reported 110.3% of the cap and a
-      # 26.34% hit rate, i.e. the cap was evicting objects the next run needed. The two
-      # configures compile a similar number of units and land roughly six times apart in
-      # bytes, so neither leg's number transfers to the other. Measure per leg.
-      - name: Install ccache (Ubuntu x86_64)
-        if: matrix.cache_key == 'ubuntu-x64'
+      # 26.34% hit rate, i.e. the cap was evicting objects the next run needed. The same 800M
+      # serves the ARM64 and macOS entries, whose measured directories are far smaller
+      # (0.03 / 0.06 GB); a cap is an upper bound, and the quota is charged by what is
+      # actually stored, not by the cap.
+      - name: Install ccache (Ubuntu x86_64 / ARM64, macOS)
+        if: matrix.ccache
         run: |
-          sudo apt-get install -y ccache
+          if [ "$RUNNER_OS" = "macOS" ]; then brew install ccache; else sudo apt-get install -y ccache; fi
           ccache --version
           echo "LUMICE_COMPILER_LAUNCHER_ARGS=-DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache" >> $GITHUB_ENV
           echo "CCACHE_DIR=$GITHUB_WORKSPACE/ccache_cache" >> $GITHUB_ENV
@@ -210,13 +198,24 @@ jobs:
       # word, chosen to contrast with `shared-gui-test-build`'s `BUILD_SHARED_LIBS=ON`
       # configure — this leg builds the static flavor, same sense as `-sj` meaning "shared
       # flavor" in the build script docs.
-      - name: Cache ccache directory (Ubuntu x86_64)
-        if: matrix.cache_key == 'ubuntu-x64'
+      #
+      # Parameterized on cache_key, which for the x64 entry expands to the exact key it has
+      # always had (`ccache-static-ubuntu-x64-`), so its existing entries keep hitting. No
+      # entry's prefix is a prefix of another's: `ubuntu-x64-`, `ubuntu-arm64-` and
+      # `macos-arm64-` diverge before their first `-`.
+      - name: Cache ccache directory (Ubuntu x86_64 / ARM64, macOS)
+        if: matrix.ccache
         uses: actions/cache@v6
         with:
           path: ccache_cache
-          key: ccache-static-ubuntu-x64-${{ github.sha }}
-          restore-keys: ccache-static-ubuntu-x64-
+          key: ccache-static-${{ matrix.cache_key }}-${{ github.sha }}
+          restore-keys: ccache-static-${{ matrix.cache_key }}-
+
+      # The restored directory carries the counters of every run it has passed through; zero
+      # them so the statistics step after Build reports this run alone.
+      - name: Zero ccache statistics
+        if: matrix.ccache
+        run: ccache -z
 
       # GLAD2 runs the Python code generator at CMake configure time (needs Jinja2).
       - name: Install GLAD2 Python dependencies (MSVC)
@@ -292,11 +291,16 @@ jobs:
           key: sccache-windows-msvc-x64-${{ github.sha }}
           restore-keys: sccache-windows-msvc-x64-
 
+      # LUMICE_IPO=OFF: without it every test binary is a full-program LTO link of lumice_obj
+      # (140-363 s of this step per entry, 2-6 s without), and no compiler cache replays a link.
+      # These entries therefore test non-LTO code generation. Which jobs still build with IPO,
+      # and the one floating-point consequence already met, are on the `bench-ipo` job below.
       - name: Configure
         run: >
           cmake -S . -B build -G Ninja
           -DCMAKE_BUILD_TYPE=Release
           -DBUILD_TEST=ON
+          -DLUMICE_IPO=OFF
           -DBUILD_GUI=${{ matrix.build_gui }}
           -DLUMICE_ISA_LEVEL=baseline
           ${{ env.LUMICE_PYTHON_ARGS }}
@@ -310,8 +314,8 @@ jobs:
       # slow Build was a cold cache or a real regression. Stopping the server afterwards
       # flushes its state to disk before actions/cache's post-step packs the directory; no
       # compilation happens after this point in the job.
-      - name: ccache statistics (Ubuntu x86_64)
-        if: always() && matrix.cache_key == 'ubuntu-x64'
+      - name: ccache statistics (Ubuntu x86_64 / ARM64, macOS)
+        if: always() && matrix.ccache
         run: ccache --show-stats --verbose || true
 
       - name: sccache statistics (Windows MSVC)
@@ -442,41 +446,6 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-      - name: Benchmark
-        continue-on-error: true
-        timeout-minutes: 5
-        shell: bash
-        run: |
-          # Collect CPU model for reference
-          CPU_MODEL=""
-          case "$(uname -s)" in
-            Linux)  CPU_MODEL=$(lscpu | grep "Model name" | sed 's/.*: *//' | head -1) || true ;;
-            Darwin) CPU_MODEL=$(sysctl -n machdep.cpu.brand_string) || true ;;
-            *)      CPU_MODEL=$(powershell.exe -NoProfile -Command "(Get-CimInstance Win32_Processor).Name" | tr -d '\r') || true ;;
-          esac
-
-          # Run dual-mode benchmark (outputs two [BENCHMARK] JSON lines)
-          EXIT_CODE=0
-          ${{ matrix.benchmark_bin }} benchmark -f examples/bench_config.json > benchmark_stdout.txt 2>&1 || EXIT_CODE=$?
-          if [ $EXIT_CODE -ne 0 ]; then
-            echo '{"error": "exit_code='"$EXIT_CODE"'"}' > benchmark-result.txt
-          else
-            # Extract both benchmark lines, inject platform and cpu_model into each
-            grep '\[BENCHMARK\]' benchmark_stdout.txt | sed 's/^\[BENCHMARK\] //' | \
-              jq --arg p "${{ matrix.name }}" --arg cpu "${CPU_MODEL:-unknown}" \
-                 '. + {platform: $p, cpu_model: $cpu}' \
-              > benchmark-result.txt
-          fi
-          cat benchmark-result.txt
-
-      - name: Upload benchmark result
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: benchmark-${{ matrix.cache_key }}
-          path: benchmark-result.txt
-          retention-days: 30
-
       - name: Upload GUI test binary (MSVC)
         if: matrix.msvc && matrix.build_gui == 'ON'
         uses: actions/upload-artifact@v7
@@ -541,8 +510,34 @@ jobs:
           key: cpm-ubuntu-x64-${{ hashFiles('**/CMakeLists.txt') }}
           restore-keys: cpm-ubuntu-x64-
 
+      # ccache, including for nvcc (CMAKE_CUDA_COMPILER_LAUNCHER below): ccache 4.x caches
+      # nvcc invocations like any other compiler, and a warm run measured 212/212 direct hits
+      # with cuda_trace_backend.cu among them, Build 555 s -> 12 s. IPO was never this job's
+      # cost (turning it off alone moved nothing): the time is compilation, nvcc's above all.
+      #
+      # CCACHE_MAXSIZE 200M against a measured directory of ~30 MB. Own key namespace, with
+      # the discriminator before the platform for the reason given on the build job's ccache
+      # key.
+      - name: Install ccache
+        run: |
+          sudo apt-get install -y ccache
+          ccache --version
+          echo "CCACHE_DIR=$GITHUB_WORKSPACE/ccache_cache" >> $GITHUB_ENV
+          echo "CCACHE_MAXSIZE=200M" >> $GITHUB_ENV
+
+      - name: Cache ccache directory
+        uses: actions/cache@v6
+        with:
+          path: ccache_cache
+          key: ccache-cuda-ubuntu-x64-${{ github.sha }}
+          restore-keys: ccache-cuda-ubuntu-x64-
+
+      - name: Zero ccache statistics
+        run: ccache -z
+
       # BUILD_GUI=OFF avoids OpenGL/X11 deps. LUMICE_ISA_LEVEL=baseline matches the
-      # rest of CI.
+      # rest of CI. LUMICE_IPO=OFF as on the build job: this job compiles and links, it
+      # ships nothing, so the full-program link is cost with no signal.
       #
       # BUILD_TEST=ON, not OFF, and the reason is not "more coverage is nicer".
       # No .cu file lives under test/, so this job's older comment concluded its
@@ -568,15 +563,25 @@ jobs:
           cmake -S . -B build -G Ninja
           -DCMAKE_BUILD_TYPE=Release
           -DBUILD_TEST=ON
+          -DLUMICE_IPO=OFF
           -DBUILD_GUI=OFF
           -DLUMICE_CUDA_ENABLED=ON
           -DLUMICE_ISA_LEVEL=baseline
+          -DCMAKE_C_COMPILER_LAUNCHER=ccache
+          -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          -DCMAKE_CUDA_COMPILER_LAUNCHER=ccache
 
       # Builds the Lumice CLI plus the test binaries; this drives nvcc through
       # cuda_trace_backend.cu and links CUDA::cudart, exercising both compile and
       # link paths, and host-compiles the five CUDA test TUs with the macro on.
+      # A cache hit replays nvcc's recorded diagnostics too, so its warnings still appear.
       - name: Build (compiles cuda_trace_backend.cu + the CUDA test TUs)
         run: cmake --build build --parallel
+
+      # Diagnostics, never a gate: the hit rate separates a cold cache from a regression.
+      - name: ccache statistics
+        if: always()
+        run: ccache --show-stats --verbose || true
 
       # Compile coverage only — every case is expected to report SKIPPED, since no GPU is
       # attached. This step exists to prove the CUDA TUs are non-empty and that their skip
@@ -736,6 +741,21 @@ jobs:
           key: cpm-cuda-windows-msvc-x64-${{ hashFiles('**/CMakeLists.txt') }}
           restore-keys: cpm-cuda-windows-msvc-x64-
 
+      # sccache for cl.exe and nvcc alike — the Linux job's ccache, in the tool the Windows
+      # build leg already uses. Key namespace led by `cuda`, so it is not a prefix-subset of the
+      # build leg's `sccache-windows-msvc-x64-`.
+      - name: Install sccache
+        uses: ./.github/actions/install-sccache
+        with:
+          cache-size: 800M
+
+      - name: Cache sccache directory
+        uses: actions/cache@v6
+        with:
+          path: sccache_cache
+          key: sccache-cuda-windows-msvc-x64-${{ github.sha }}
+          restore-keys: sccache-cuda-windows-msvc-x64-
+
       # BUILD_GUI=OFF + BUILD_TEST=ON mirrors the Linux cuda-compile job: no
       # GLAD2/Python generator is invoked (that step is gated on
       # matrix.build_gui == 'ON' in the build job above), and the five
@@ -746,15 +766,20 @@ jobs:
       # This leg is the one that matters most for that gap: the historical
       # escapes it would have caught were MSVC-only source incompatibilities
       # (POSIX setenv/unsetenv, M_PI) in test code, which no other job compiles
-      # with CUDA on. LUMICE_ISA_LEVEL=baseline matches the rest of CI.
+      # with CUDA on. LUMICE_ISA_LEVEL=baseline matches the rest of CI; LUMICE_IPO=OFF for the
+      # reason on the Linux job.
       - name: Configure (CUDA compile-only)
         run: >
           cmake -S . -B build -G Ninja
           -DCMAKE_BUILD_TYPE=Release
           -DBUILD_TEST=ON
+          -DLUMICE_IPO=OFF
           -DBUILD_GUI=OFF
           -DLUMICE_CUDA_ENABLED=ON
           -DLUMICE_ISA_LEVEL=baseline
+          -DCMAKE_C_COMPILER_LAUNCHER=sccache
+          -DCMAKE_CXX_COMPILER_LAUNCHER=sccache
+          -DCMAKE_CUDA_COMPILER_LAUNCHER=sccache
 
       # Build the Lumice CLI plus the test binaries; this drives nvcc through
       # cuda_trace_backend.cu and links CUDA::cudart, exercising both compile and
@@ -762,6 +787,15 @@ jobs:
       # This step's log must show nvcc invocation for the .cu TU.
       - name: Build (compiles cuda_trace_backend.cu via nvcc + the CUDA test TUs)
         run: cmake --build build --parallel
+
+      # Diagnostics, never a gate. Stopping the server flushes its state before actions/cache's
+      # post-step packs the directory.
+      - name: sccache statistics
+        if: always()
+        shell: bash
+        run: |
+          sccache --show-stats || true
+          sccache --stop-server || true
 
       # Same gate as the Linux job, same script, same expectation: every selected case
       # SKIPPED because windows-2022 hosted runners have no GPU. `shell: bash` is deliberate —
@@ -1019,28 +1053,19 @@ jobs:
           key: cpm-sharedgui-ubuntu-x64-${{ hashFiles('**/CMakeLists.txt') }}
           restore-keys: cpm-sharedgui-ubuntu-x64-
 
-      # ccache on this leg, and on the plain `Ubuntu x86_64` leg in the build job below —
-      # both are compile-bound Linux legs, so both get one, each with its own independently
-      # measured CCACHE_MAXSIZE (see the comment on that leg's Install ccache step for why
-      # its number is 800M rather than this leg's 200M: the two configures land roughly six
-      # times apart in working-set bytes, so neither leg's number transfers to the other).
+      # ccache on this leg, as on the build job's non-Windows entries — both are compile-bound
+      # Linux legs, and each cap is sized from its own leg's measurement, never copied from a
+      # neighbour's.
       #
-      # CCACHE_MAXSIZE is 200M, and that number is measured rather than copied. A full cold
-      # compile of this configure — 291 objects, nothing restored — leaves a 37 MB directory,
-      # and 200M leaves room for several generations of objects to accumulate through the
-      # restore-keys fallback.
+      # CCACHE_MAXSIZE is 800M. It used to be 200M, sized from a 37 MB cold directory measured
+      # when this configure still built with IPO (GCC's LTO objects are IR, not machine code —
+      # the likely reason for the gap). Once IPO was off one cold compile left 0.3 GB, so 200M
+      # could not hold even a single generation: the cap sat at 100.1% with ~25k cleanups a run
+      # and a 17% hit rate, and it read as a slow leg, not a red. At 800M the same directory
+      # measured 42% of the cap and the warm Build fell from 681 s to 7-17 s.
       #
-      # Do NOT read this leg's 200M against the Windows leg's SCCACHE_CACHE_SIZE (800M today,
-      # 2G before this task) and take the ratio for a fact about either leg: those are caps,
-      # and a cache cap is not a footprint — the discipline stated in §7.1 of
-      # doc/testing-architecture.md, and the one an earlier draft of this very comment broke
-      # by calling 800M "about four times the working set here" (800/37 is ~22, and the 37 MB
-      # is this leg's directory, not that leg's). What the two legs actually differ by is
-      # measured working set, roughly six times apart, which is why each cap is sized from its
-      # own leg's measurement. The reason the Windows cap was worth touching at all is a
-      # measured footprint, not a ratio between caps: that directory used to reach its own
-      # 2 GiB ceiling, which made the namespace ~1.5 GB per entry and 80% of the repository's
-      # cache quota at the time, while this one costs a rounding error.
+      # A cap is not a footprint (doc/testing-architecture.md §7.1): the quota is charged by
+      # what is stored, so compare legs by their measured directories, not by their caps.
       #
       # If `ccache --show-stats` ever reports Cache size at Max cache size, the cap is
       # evicting live objects and has to go up. That shows up as a quietly lower hit rate and
@@ -1051,7 +1076,7 @@ jobs:
           sudo apt-get install -y ccache
           ccache --version
           echo "CCACHE_DIR=$GITHUB_WORKSPACE/ccache_cache" >> $GITHUB_ENV
-          echo "CCACHE_MAXSIZE=200M" >> $GITHUB_ENV
+          echo "CCACHE_MAXSIZE=800M" >> $GITHUB_ENV
 
       # Same key shape as the sccache entry: one per commit, with a prefix fallback to the
       # newest earlier one. The discriminator leads the platform for the reason spelled out
@@ -1064,14 +1089,20 @@ jobs:
           key: ccache-sharedgui-ubuntu-x64-${{ github.sha }}
           restore-keys: ccache-sharedgui-ubuntu-x64-
 
+      - name: Zero ccache statistics
+        run: ccache -z
+
       # The launcher flags are written out here rather than injected through an environment
       # variable: this job has exactly one Configure step, so the indirection the build job
-      # needs (one step serving four matrix entries) would buy nothing here.
+      # needs (one step serving four matrix entries) would buy nothing here. LUMICE_IPO=OFF:
+      # this leg's value is link structure, which IPO does not change, and the shared GCC LTO
+      # link it used to carry is still built on E2E Slow's Ubuntu entry.
       - name: Configure (shared + test + GUI)
         run: >
           cmake -S . -B build -G Ninja
           -DCMAKE_BUILD_TYPE=Release
           -DBUILD_TEST=ON
+          -DLUMICE_IPO=OFF
           -DBUILD_GUI=ON
           -DBUILD_SHARED_LIBS=ON
           -DLUMICE_ISA_LEVEL=baseline
@@ -1449,6 +1480,20 @@ jobs:
           key: cpm-${{ matrix.cache_key }}-${{ hashFiles('**/CMakeLists.txt') }}
           restore-keys: cpm-${{ matrix.cache_key }}-
 
+      # sccache for both compilers (it handles cl.exe and clang-cl alike). `windows-shared-msvc-`
+      # and `windows-shared-clangcl-` are not prefixes of each other or of any other sccache key.
+      - name: Install sccache
+        uses: ./.github/actions/install-sccache
+        with:
+          cache-size: 800M
+
+      - name: Cache sccache directory
+        uses: actions/cache@v6
+        with:
+          path: sccache_cache
+          key: sccache-${{ matrix.cache_key }}-${{ github.sha }}
+          restore-keys: sccache-${{ matrix.cache_key }}-
+
       # BUILD_TEST=ON (unlike e2e-slow's shared legs) so unit_correctness_test — the one CMake
       # target that links lumice_obj directly rather than through the `lumice` DLL boundary
       # (test/CMakeLists.txt's target_link_libraries(unit_correctness_test PRIVATE ... lumice_obj))
@@ -1458,6 +1503,13 @@ jobs:
       # definitions(lumice INTERFACE LUMICE_SHARED_DEFINE)`) could leak dllimport into such a
       # consumer — which does not link the `lumice` import library — without any red CI to show
       # it (an LNK2001/LNK2019 that only a build reaching this exact combination would surface).
+      #
+      # No LUMICE_IPO=OFF here, unlike the build and cuda jobs. This job reads the export
+      # tables of the DLLs it builds, and the clang-cl engine DLL the release ships is an LTO
+      # build; an LTO build is exactly where an export table once came out empty while the
+      # link "succeeded" (the cl.exe /GL history on the IPO block of CMakeLists.txt). Checking
+      # a non-LTO DLL would check a binary nobody ships. (The MSVC entry builds without IPO
+      # either way: cl.exe shared trees are excluded there.)
       - name: Configure (shared library, no CUDA)
         run: >
           cmake -S . -B build -G Ninja
@@ -1466,6 +1518,8 @@ jobs:
           -DBUILD_GUI=OFF
           -DBUILD_SHARED_LIBS=ON
           -DLUMICE_ISA_LEVEL=baseline
+          -DCMAKE_C_COMPILER_LAUNCHER=sccache
+          -DCMAKE_CXX_COMPILER_LAUNCHER=sccache
           ${{ matrix.compiler_args }}
 
       # Named targets, not a plain `--parallel` build of everything BUILD_TEST=ON now pulls in:
@@ -1474,6 +1528,13 @@ jobs:
       # covers), so building them here would only add Windows CI time for no new signal.
       - name: Build
         run: cmake --build build --target Lumice --target lumice_testapi --target lumice_analytic --target unit_correctness_test --parallel
+
+      - name: sccache statistics
+        if: always()
+        shell: bash
+        run: |
+          sccache --show-stats || true
+          sccache --stop-server || true
 
       # Same packaging smoke as e2e-slow's, for the DLL + import library layout (bin/ + lib/).
       # `--component analytic` matters here: this leg builds named targets only, and a plain
@@ -1531,12 +1592,128 @@ jobs:
             exit 1
           }
 
+  # The throughput benchmark, on main only, from an IPO build. It used to be a step of the
+  # `build` matrix; it moved here when that matrix turned IPO off (LUMICE_IPO=OFF), because the
+  # published curves are of what the release builds — with IPO — and switching the matrix's IPO
+  # by event instead (on for main, off for PRs) would have split its compiler-cache namespace in
+  # two and sent every PR's first run to a cold cache.
+  #
+  # Same four platforms, same `name`s and the same artifact names (`benchmark-<cache_key>`) as
+  # the matrix entries it came from, because benchmark-summary keys the gh-pages series on them:
+  # a renamed platform would start a new curve and orphan the old one. Only the CLI is built
+  # (BUILD_TEST=OFF, BUILD_GUI=OFF): neither switch changes what lumice_obj or the Lumice target
+  # compile — they only add targets — so the measured binary is the one the matrix used to
+  # measure. No compiler cache: this job never runs on a PR, so its duration is off every PR's
+  # critical path, and a cache here would be one more tenant of the 10 GB cache quota for no PR
+  # gain. The CPM directory is restored from the build job's namespace and never saved, for the
+  # same reason.
+  #
+  # Where CI still builds with IPO once the matrix does not (release.yml builds every release
+  # artifact with it besides):
+  #   - on every PR: e2e-test (GCC static; runs the e2e suite against it), E2E Slow Ubuntu
+  #     (GCC shared), bench-compile and isa-v4-compile (GCC static), windows-isa-v3-compile
+  #     (clang-cl static; runs the binary once), windows-shared-export clang-cl (clang-cl shared;
+  #     reads the DLL export tables);
+  #   - on main only, here: Apple Clang static and cl.exe /GL static, which no PR job builds.
+  # One consequence of the matrix going non-LTO has already been met: with different inlining,
+  # an FMA-contracted expression came out 1 ULP apart on ARM64, and a test that compared it
+  # bit-for-bit went red. Unit tests comparing floating-point results should use a tolerance.
+  #
+  # `github.ref` is checked as well as the event even though `on: push` is filtered to main:
+  # the condition says what it means rather than depending on a filter declared elsewhere.
+  bench-ipo:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Ubuntu x86_64
+            os: ubuntu-24.04
+            cache_key: ubuntu-x64
+            benchmark_bin: build/Release/static/bin/Lumice
+          - name: Ubuntu ARM64
+            os: ubuntu-24.04-arm
+            cache_key: ubuntu-arm64
+            benchmark_bin: build/Release/static/bin/Lumice
+          - name: macOS ARM64
+            os: macos-15
+            cache_key: macos-arm64
+            benchmark_bin: build/Release/static/bin/Lumice
+          # windows-2022 for the reason given on the build job's Windows entry.
+          - name: Windows MSVC x86_64
+            os: windows-2022
+            cache_key: windows-msvc-x64
+            msvc: true
+            benchmark_bin: build/Release/static/bin/Lumice.exe
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    name: Benchmark (${{ matrix.name }})
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up MSVC
+        if: matrix.msvc
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Restore CPM dependencies
+        uses: actions/cache/restore@v6
+        with:
+          path: cpm_cache
+          key: cpm-${{ matrix.cache_key }}-${{ hashFiles('**/CMakeLists.txt') }}
+          restore-keys: cpm-${{ matrix.cache_key }}-
+
+      - name: Configure (IPO, CLI only)
+        run: >
+          cmake -S . -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DBUILD_TEST=OFF
+          -DBUILD_GUI=OFF
+          -DLUMICE_ISA_LEVEL=baseline
+
+      - name: Build Lumice
+        run: cmake --build build --target Lumice --parallel
+
+      - name: Benchmark
+        continue-on-error: true
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          # Collect CPU model for reference
+          CPU_MODEL=""
+          case "$(uname -s)" in
+            Linux)  CPU_MODEL=$(lscpu | grep "Model name" | sed 's/.*: *//' | head -1) || true ;;
+            Darwin) CPU_MODEL=$(sysctl -n machdep.cpu.brand_string) || true ;;
+            *)      CPU_MODEL=$(powershell.exe -NoProfile -Command "(Get-CimInstance Win32_Processor).Name" | tr -d '\r') || true ;;
+          esac
+
+          # Run dual-mode benchmark (outputs two [BENCHMARK] JSON lines)
+          EXIT_CODE=0
+          ${{ matrix.benchmark_bin }} benchmark -f examples/bench_config.json > benchmark_stdout.txt 2>&1 || EXIT_CODE=$?
+          if [ $EXIT_CODE -ne 0 ]; then
+            echo '{"error": "exit_code='"$EXIT_CODE"'"}' > benchmark-result.txt
+          else
+            # Extract both benchmark lines, inject platform and cpu_model into each
+            grep '\[BENCHMARK\]' benchmark_stdout.txt | sed 's/^\[BENCHMARK\] //' | \
+              jq --arg p "${{ matrix.name }}" --arg cpu "${CPU_MODEL:-unknown}" \
+                 '. + {platform: $p, cpu_model: $cpu}' \
+              > benchmark-result.txt
+          fi
+          cat benchmark-result.txt
+
+      - name: Upload benchmark result
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: benchmark-${{ matrix.cache_key }}
+          path: benchmark-result.txt
+          retention-days: 30
+
   # The `push` guard STAYS here, and now reads as "main only" — which is the
   # intent: this job publishes the benchmark history to gh-pages, and a PR must
   # not write to it.
   benchmark-summary:
     if: always() && github.event_name == 'push'
-    needs: [build]
+    needs: [bench-ipo]
     runs-on: ubuntu-24.04
     permissions:
       contents: write

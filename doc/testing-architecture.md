@@ -1665,6 +1665,10 @@ Four things that table is for, none of which a single headline percentage says o
   sccache can ever take off this step is about 216s**, and a proposal that assumes it scales past
   that is wrong. A later controlled measurement (below) puts the slope at 1.10 s rather than 0.743 s
   and the floor higher; prefer those figures, and read the paragraph on why they differ.
+  **Since superseded:** most of that floor was the full-program LTO link of each test binary, not
+  object writing. With `LUMICE_IPO=OFF` on this leg (the `bench-ipo` job's comment in `ci.yml` says
+  which jobs still build with IPO) the link phase measured 363s → 3s and a warm `Build` 66s, so the
+  216s ceiling on what caching can save no longer applies.
 - **The win depends on the change, and the range is wide.** Against the 736s pre-sccache mean, the
   job totals above run −7% (cold), −18%, −28% and −43% (nothing to recompile). Quote the one that
   matches the change being discussed; −43% is a doc-only commit and is not what a code PR gets.
@@ -1706,9 +1710,12 @@ is the thing to watch — not the growth, which has stopped.
 one cannot be read off the other. At the time of the ceiling measurement above, `SCCACHE_CACHE_SIZE=2G`
 really did describe a ~1.5 GB entry, because that directory filled its cap. This task has since
 tightened that cap to `SCCACHE_CACHE_SIZE=800M` in `ci.yml`, so a fresh entry today caps out well
-under 1.5 GB instead of growing to fill 2 GiB. `CCACHE_MAXSIZE` on `shared-gui-test-build` is 200M
-and the directory after a full cold compile of 291 objects is **37 MB**. Quote the measured directory
-size, never the configured ceiling.
+under 1.5 GB instead of growing to fill 2 GiB. `CCACHE_MAXSIZE` on `shared-gui-test-build` was 200M
+and the directory after a full cold compile of 291 objects was **37 MB** — measured while that leg
+still built with IPO. With `LUMICE_IPO=OFF` the same cold compile leaves about 0.3 GB, so the 200M cap
+sat at 100.1% and evicted what the next run needed; it is 800M now and the directory measures 42% of
+it. The same number changed by ~8× with one build flag, which is the point: quote the measured
+directory size, never the configured ceiling, and re-measure it when the configure changes.
 
 **What sccache is worth, measured against a red arm rather than against history.** The table above
 compares runs that differ in cache state *and* in what they compiled *and* in which runner drew
