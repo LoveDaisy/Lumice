@@ -38,8 +38,8 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-launchctl bootout "$DOMAIN/$LABEL" 2>/dev/null || true
 if [ "$UNINSTALL" = 1 ]; then
+  launchctl bootout "$DOMAIN/$LABEL" 2>/dev/null || true
   rm -f "$PLIST"
   echo "removed $LABEL (results kept in $STATE_DIR)"
   exit 0
@@ -60,7 +60,8 @@ done
 AGENT_PATH="$(dirname "$(command -v gh)"):$(dirname "$(command -v git)"):/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
 mkdir -p "$SHARE_DIR" "$STATE_DIR" "$(dirname "$PLIST")"
-cp "$HERE/local_throughput_gate.py" "$SHARE_DIR/local_throughput_gate.py"
+NEW_PLIST="$(mktemp "${TMPDIR:-/tmp}/$LABEL.XXXXXX")"
+trap 'rm -f "$NEW_PLIST"' EXIT
 sed -e "s|@PYTHON@|$PYTHON|g" \
     -e "s|@SCRIPT@|$SHARE_DIR/local_throughput_gate.py|g" \
     -e "s|@REMOTE@|$REMOTE|g" \
@@ -68,12 +69,17 @@ sed -e "s|@PYTHON@|$PYTHON|g" \
     -e "s|@MINUTE@|$MINUTE|g" \
     -e "s|@PATH@|$AGENT_PATH|g" \
     -e "s|@STATE_DIR@|$STATE_DIR|g" \
-    "$HERE/launchd/$LABEL.plist.template" > "$PLIST"
-plutil -lint "$PLIST" >/dev/null
-if grep -qE 'threshold-override|issue-namespace' "$PLIST"; then
+    "$HERE/launchd/$LABEL.plist.template" > "$NEW_PLIST"
+plutil -lint "$NEW_PLIST" >/dev/null
+if grep -qE 'threshold-override|issue-namespace' "$NEW_PLIST"; then
   echo "refusing: the rendered plist carries a test-only argument" >&2
   exit 1
 fi
+# Everything is validated; only now touch the running agent, so a failed re-install
+# leaves the previous one loaded (there is no dead-man switch to notice it missing).
+cp "$HERE/local_throughput_gate.py" "$SHARE_DIR/local_throughput_gate.py"
+mv "$NEW_PLIST" "$PLIST"
+launchctl bootout "$DOMAIN/$LABEL" 2>/dev/null || true
 launchctl bootstrap "$DOMAIN" "$PLIST"
 echo "installed $LABEL: daily at $(printf '%02d:%02d' "$HOUR" "$MINUTE"), remote=$REMOTE"
 echo "check: launchctl print $DOMAIN/$LABEL | grep -E 'state|last exit'; tail -n 2 $STATE_DIR/results.jsonl"

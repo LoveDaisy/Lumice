@@ -404,13 +404,20 @@ def refreshes_last_real_run(status: str, synthetic: bool) -> bool:
 # =============================================================================
 
 
+GIT_TIMEOUT_S = 600
+GIT_CLONE_TIMEOUT_S = 3600
+
+
 def _run(cmd: Sequence[str], **kw) -> subprocess.CompletedProcess:
     return subprocess.run(list(cmd), capture_output=True, text=True, **kw)
 
 
 def _physical_cores() -> int:
     if platform.system() == "Darwin":
-        return int(_run(["sysctl", "-n", "hw.physicalcpu"]).stdout.strip())
+        try:
+            return int(_run(["sysctl", "-n", "hw.physicalcpu"]).stdout.strip())
+        except (ValueError, OSError):
+            return os.cpu_count() or 1
     pairs = set()
     phys = core = None
     with open("/proc/cpuinfo") as f:
@@ -492,7 +499,15 @@ def iso(t: dt.datetime) -> str:
 def load_state(state_dir: Path, now: dt.datetime) -> dict:
     p = state_dir / "state.json"
     if p.is_file():
-        return json.loads(p.read_text())
+        try:
+            st = json.loads(p.read_text())
+            if isinstance(st, dict) and "created" in st and "legs" in st:
+                st.setdefault("pending_notifications", [])
+                return st
+        except (ValueError, OSError):
+            pass
+        # Unreadable state must not kill an unattended run: keep it for inspection, start over.
+        p.replace(state_dir / f"state.json.corrupt-{now.strftime('%Y%m%dT%H%M%SZ')}")
     # First run: start the staleness clock now, not at the epoch.
     return {"created": iso(now), "legs": {}, "pending_notifications": []}
 
@@ -525,13 +540,15 @@ class Lock:
         self.fd = None
 
     def acquire(self) -> bool:
-        self.fd = open(self.path, "w")
+        self.fd = open(self.path, "a+")
         try:
             fcntl.flock(self.fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             self.fd.close()
             self.fd = None
             return False
+        self.fd.seek(0)
+        self.fd.truncate()
         self.fd.write(str(os.getpid()))
         self.fd.flush()
         return True
@@ -603,7 +620,7 @@ def wait_idle(ctx: Ctx, read: Callable[[], Readings], label: str) -> Tuple[bool,
 
 
 def git(repo: Path, *a: str) -> subprocess.CompletedProcess:
-    return _run(["git", "-C", str(repo), *a], env=clean_env({"GIT_LFS_SKIP_SMUDGE": "1"}))
+    return _run(["git", "-C", str(repo), *a], env=clean_env({"GIT_LFS_SKIP_SMUDGE": "1"}), timeout=GIT_TIMEOUT_S)
 
 
 def prepare_checkout(ctx: Ctx) -> str:
@@ -613,7 +630,7 @@ def prepare_checkout(ctx: Ctx) -> str:
         ctx.log(f"cloning {ctx.args.repo_url} into {repo}")
         repo.parent.mkdir(parents=True, exist_ok=True)
         p = _run(["git", "clone", "--no-checkout", ctx.args.repo_url, str(repo)],
-                 env=clean_env({"GIT_LFS_SKIP_SMUDGE": "1"}))
+                 env=clean_env({"GIT_LFS_SKIP_SMUDGE": "1"}), timeout=GIT_CLONE_TIMEOUT_S)
         if p.returncode != 0:
             raise RuntimeError(f"git clone failed: {p.stderr[-500:]}")
     p = git(repo, "fetch", "--quiet", "origin", "main")
@@ -705,7 +722,7 @@ def wait_idle_once(ctx: Ctx, read: Callable[[], Readings], label: str):
 
 def ssh_argv(ctx: Ctx, *remote: str) -> List[str]:
     return ["ssh", "-o", "BatchMode=yes", "-o", f"ConnectTimeout={ctx.args.ssh_connect_timeout}",
-            ctx.args.remote, *remote]
+            "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3", ctx.args.remote, *remote]
 
 
 def remote_readings(ctx: Ctx) -> Readings:
@@ -724,6 +741,8 @@ def remote_phase_script(ctx: Ctx, phase: str, sha: str, rdir: str) -> str:
     """A self-contained bash script that runs on the remote and leaves its result on remote disk."""
     base = ctx.args.remote_dir
     common = f"""set -u
+mkdir -p "$HOME/{base}/results/{rdir}"
+trap 'rc=$?; [ -f "$HOME/{base}/results/{rdir}/{phase}.done" ] || {{ echo "$rc" > "$HOME/{base}/results/{rdir}/{phase}.exit"; touch "$HOME/{base}/results/{rdir}/{phase}.done"; }}' EXIT
 source "$HOME/lumice-env.sh" >/dev/null
 REPO="$HOME/{base}/repo"
 OUT="$HOME/{base}/results/{rdir}"
@@ -830,7 +849,10 @@ def remote_sync_source(ctx: Ctx, sha: str) -> Optional[str]:
 def run_cuda(ctx: Ctx, sha: str, resume_rdir: Optional[str] = None) -> dict:
     rec: dict = {"remote": ctx.args.remote}
     if not ctx.args.dry_run:
-        p = _run(ssh_argv(ctx, "true"), timeout=ctx.args.ssh_connect_timeout + 15)
+        try:
+            p = _run(ssh_argv(ctx, "true"), timeout=ctx.args.ssh_connect_timeout + 15)
+        except (subprocess.TimeoutExpired, OSError) as e:
+            return {**rec, "status": "skipped", "reason": f"unreachable ({type(e).__name__})"}
         if p.returncode != 0:
             return {**rec, "status": "skipped", "reason": f"unreachable (ssh exit {p.returncode})"}
     rdir = resume_rdir or ctx.run_id
@@ -872,7 +894,10 @@ def run_cuda(ctx: Ctx, sha: str, resume_rdir: Optional[str] = None) -> dict:
     got = ctx.run_dir / "remote"
     junit = got / "junit.xml"
     exit_file = got / "pytest.exit"
-    rc = int(exit_file.read_text().strip()) if exit_file.is_file() else prc
+    try:
+        rc = int(exit_file.read_text().strip()) if exit_file.is_file() else prc
+    except ValueError:
+        rc = None
     if rc is None:
         return {**rec, "status": "error", "reason": "remote pytest result never appeared (lost run)"}
     status, reason = classify_pytest(None if rc == 124 else rc,
@@ -922,12 +947,27 @@ def apply_action(ctx: Ctx, leg: str, namespace: str, action: Action) -> None:
     ctx.log(f"notify: {action.op} {title!r}")
 
 
+PUBLIC_REASON_CATEGORIES = (
+    "busy", "unreachable", "dry-run", "locked", "no-test-executed", "no-junit", "junit-unparseable",
+    "pytest-did-not-finish", "pytest-exit", "build failed", "remote build failed", "remote pytest",
+    "could not start", "source", "internal", "metal leg needs macOS")
+
+
+def public_reason(reason: str) -> str:
+    """Category of a reason, safe for a public issue: the free text after it (process
+    command lines, local paths, git stderr) stays in the local jsonl."""
+    for c in PUBLIC_REASON_CATEGORIES:
+        if reason.startswith(c):
+            return c
+    return "unspecified"
+
+
 def issue_body(leg: str, rec: dict, stale_since: Optional[str]) -> str:
     lines = [
         f"Leg: `{leg}` — role: {'Metal reference machine' if leg == 'metal' else 'CUDA reference machine (Linux)'}",
         f"Commit: `{rec.get('sha', '?')}`",
         f"Run: `{rec.get('run_id')}`" + ("  (synthetic: threshold overridden)" if rec.get("synthetic") else ""),
-        f"Status: **{rec['status']}**" + (f" — {rec['reason']}" if rec.get("reason") else ""),
+        f"Status: **{rec['status']}**" + (f" — {public_reason(rec['reason'])}" if rec.get("reason") else ""),
     ]
     if "ratio_a" in rec:
         lines.append(f"dual/single_a = {rec['ratio_a']:.3f}, dual/single_b = {rec['ratio_b']:.3f}"
@@ -1068,26 +1108,34 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     sha = args.sha or "?"
     source_error = None
     try:
-        if args.dry_run and not (local_repo(ctx) / ".git").is_dir():
+        if args.collect_remote:
+            # Recovery only fetches an earlier remote run's results; that run measured a
+            # commit this checkout may no longer be at, so do not stamp the record with it.
+            sha = args.sha or "unknown (collect-remote)"
+        elif args.dry_run and not (local_repo(ctx) / ".git").is_dir():
             log("dry-run: gate clone absent; would clone and check out origin/main")
         else:
             sha = prepare_checkout(ctx)
-    except RuntimeError as e:
-        source_error = str(e)
+    except (RuntimeError, subprocess.TimeoutExpired, OSError) as e:
+        source_error = f"{type(e).__name__}: {e}"
     log(f"commit under test: {sha}")
 
     worst = 0
     for leg in legs:
         t0 = time.monotonic()
-        if source_error:
-            rec = {"status": "error", "reason": f"source: {source_error}"}
-        elif leg == "metal":
-            if platform.system() != "Darwin":
-                rec = {"status": "error", "reason": "metal leg needs macOS"}
+        try:
+            if source_error:
+                rec = {"status": "error", "reason": f"source: {source_error}"}
+            elif leg == "metal":
+                if platform.system() != "Darwin":
+                    rec = {"status": "error", "reason": "metal leg needs macOS"}
+                else:
+                    rec = run_metal(ctx, sha)
             else:
-                rec = run_metal(ctx, sha)
-        else:
-            rec = run_cuda(ctx, sha, resume_rdir=args.collect_remote)
+                rec = run_cuda(ctx, sha, resume_rdir=args.collect_remote)
+        except Exception as e:  # noqa: BLE001 - one leg must not take the other, or the state, down with it
+            log(f"{leg}: unexpected {type(e).__name__}: {e}")
+            rec = {"status": "error", "reason": f"internal: {type(e).__name__}: {e}"}
         rec = {**base, "leg": leg, "sha": sha, **rec, "seconds": round(time.monotonic() - t0, 1)}
         if refreshes_last_real_run(rec["status"], ctx.synthetic) and not args.dry_run:
             state["legs"].setdefault(leg, {})["last_real_run"] = iso(utcnow())
@@ -1102,8 +1150,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         append_record(state_dir, rec)
         if rec["status"] in ("fail", "error"):
             worst = 1
-    if not args.dry_run:
-        save_state(state_dir, state)
+        if not args.dry_run:
+            save_state(state_dir, state)  # per leg: a later leg's failure cannot lose this one's clock
     prune_run_dirs(runs_dir, KEEP_RUN_DIRS)
     return worst
 

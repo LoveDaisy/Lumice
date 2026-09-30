@@ -205,3 +205,24 @@ def test_override_plugin_rebinds_the_shared_threshold(tmp_path, monkeypatch):
         assert gate.T_DUAL_VS_SINGLE == 99.0
     finally:
         gate.T_DUAL_VS_SINGLE = before
+
+
+# --- public issue text / unattended-run robustness ---------------------------------
+
+def test_issue_body_carries_no_free_text_from_the_reason():
+    rec = {"status": "skipped", "run_id": "r", "sha": "abc",
+           "reason": "busy (pre-check): busy processes: 123 python: /Users/someone/work/x.py"}
+    body = g.issue_body("metal", rec, None)
+    assert "/Users/" not in body and "busy" in body
+
+
+def test_public_reason_unknown_text_is_not_published():
+    assert g.public_reason("git clone failed: fatal: /home/u/secret") == "unspecified"
+
+
+def test_corrupt_state_is_moved_aside_not_fatal(tmp_path):
+    now = dt.datetime(2026, 10, 1, tzinfo=dt.timezone.utc)
+    (tmp_path / "state.json").write_text("{not json")
+    st = g.load_state(tmp_path, now)
+    assert st["legs"] == {} and st["pending_notifications"] == []
+    assert any(p.name.startswith("state.json.corrupt-") for p in tmp_path.iterdir())
