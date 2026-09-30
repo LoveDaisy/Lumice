@@ -209,6 +209,7 @@ set(LUMICE_LAYER_sim_FILES
 
 set(LUMICE_LAYER_render_FILES
   include/lumice_render.h
+  server/c_api_render.cpp
   server/c_api_render_internal.hpp
   server/component_compositor.cpp
   server/component_compositor.hpp
