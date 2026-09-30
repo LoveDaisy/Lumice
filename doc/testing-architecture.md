@@ -2080,7 +2080,7 @@ made cheaper, lower or delete the entry in the same change.
 `E2E Slow (<matrix name>)`), each with the reports of all its pytest calls (phase 1 and, where the
 leg has one, phase 2). **Not covered**: ctest and `gui_test` (CI logs give ctest only per-binary
 times, and `gui_test` does not run in the build jobs; their growth shows up in the job's wall clock
-instead); the `windows-shared-export` job's four slow files; the `policy` job's script unit tests.
+instead); the `windows-shared-export` job's slow files; the `policy` job's script unit tests.
 A **new pytest job** is not covered until it is wired the same way — `-p duration_report_plugin
 --duration-report=...` on each pytest call and a "Check test durations" step at the end — and
 nothing checks that it was.
