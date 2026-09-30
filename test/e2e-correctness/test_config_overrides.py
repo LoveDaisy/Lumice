@@ -19,7 +19,7 @@ _CONFIGS_DIR = get_project_root() / "test" / "e2e" / "configs"
 
 
 @pytest.mark.parametrize(
-    "name", ["ms_multi_crystal", "illuminant_wavelength_parity", "multi_lens", "cpu_backend_route"]
+    "name", ["ms_multi_crystal", "multi_lens", "cpu_backend_route"]
 )
 def test_only_the_ray_budget_changes(tmp_path, name):
     src = _CONFIGS_DIR / f"{name}.json"

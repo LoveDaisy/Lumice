@@ -2,10 +2,11 @@
 
 Several configs under ``test/e2e/configs/`` are read by more than one test, and a
 test that wants a smaller ray budget than its neighbours must not edit the shared
-file to get it — the other readers (the CUDA energy-accounting battery, the batch
-invariance and CUDA filter parity files, ...) were calibrated on the committed
-value. The override is therefore written into a copy the caller owns, and this
-module is the one place that does it.
+file to get it — the other readers (a CUDA mirror of the same parity check, the
+C API smoke test, ...) were calibrated on the committed value. The override is
+therefore written into a copy the caller owns, and this module is the one place
+that does it. A config with a single reader needs none of this: change its
+``ray_num`` in place.
 
 The fixture configs carry no relative file references, so a copy in another
 directory loads exactly as the original does.

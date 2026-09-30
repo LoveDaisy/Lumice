@@ -62,7 +62,7 @@ _TIMEOUT = 180
 # matrix (no filter, three crystals, prob 0.8), so its readings barely move with N: at 500k
 # metal ds corr 0.9994 (bar 0.97), metal/legacy energy 0.997, cross-seed self gap 0 — against
 # 86.6 s -> 23.8 s for the whole test on an idle M-series machine. The config file itself keeps
-# 2M because test_metal_batch_invariance / test_cuda_filter_parity read it too. The sparse filter
+# 2M because test_cuda_multi_ms_parity.py reads it too. The sparse filter
 # scenes below are NOT shrunk the same way: their corr falls under the 0.97 bar as N drops
 # (parity_single_ms_bd_filter 0.905, parity_asymmetric_cone_b_filter 0.942 at 500k), so a
 # smaller budget there would have to be paid for with a looser bar.
