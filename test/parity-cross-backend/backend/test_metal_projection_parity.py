@@ -56,6 +56,12 @@ from test.e2e.runner import get_project_root
 _SEED = 42
 _SEED_B = 7
 _TIMEOUT = 180
+# Ray budget per run, a tenth of the baseline config's 10M. Every metric here is a
+# whole-frame statistic on a 4x4 block-mean image, and under the mutation probes this
+# was sized against (global scale, r_scale, x mirror) no red/green verdict flipped
+# between 1M and 10M; only the absolute PSNR moved (~7 dB higher at 10M, far above
+# the 13 dB criterion). Other defect shapes were not probed.
+_PARITY_RAY_NUM = 1_000_000
 
 # Metal is Apple-only; on non-Darwin CI it falls back to legacy → the routing
 # assertions would be false positives. Skip the whole module off macOS.
@@ -72,7 +78,7 @@ pytestmark = pytest.mark.skipif(
 def _proj_configs(tmp_path_factory) -> dict:
     """Generate one single-MS config per projection type (module-scoped)."""
     out_dir = tmp_path_factory.mktemp("proj_parity_metal")
-    return {t: write_projection_config(t, out_dir) for t in PROJECTION_TYPES}
+    return {t: write_projection_config(t, out_dir, ray_num=_PARITY_RAY_NUM) for t in PROJECTION_TYPES}
 
 
 def _raw_corr_ds(a: BufferedSimResult, b: BufferedSimResult) -> float:

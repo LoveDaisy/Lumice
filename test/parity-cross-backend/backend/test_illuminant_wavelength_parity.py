@@ -20,9 +20,14 @@ Two tests, two questions.
 wavelength per batch drawn independently, a 2M-ray frame is an average over ~15600 random
 wavelengths and ``R`` moved by percents between seeds — which is what made D65 unusable
 as a ledger check before, and what the stratified schedule removes. Measured on this
-config over 12 seeds: spread of ``R`` 0.053%, of ``x`` 0.00013, of ``y`` 0.00019. The
-bounds (0.2%, 0.0006, 0.0006) sit ~3-4x above that; a build with the stratifier reverted
-to independent draws reads 2.2%, 0.0020 and 0.0056 on the same four seeds.
+config at 2M rays over 12 seeds: spread of ``R`` 0.053%, of ``x`` 0.00013, of ``y`` 0.00019.
+The bounds (0.2%, 0.0006, 0.0006) sit ~3-4x above that; a build with the stratifier
+reverted to independent draws reads 2.2%, 0.0020 and 0.0056 on the same four seeds.
+
+The config now runs 500k rays, a quarter of that, and the bounds were left where they
+were: at 500k the four stability seeds read 0.037% / 0.00015 / 0.00017, still >=4x inside
+every bound, and the reverted-stratifier build reads 1.87% / 0.0100 / 0.0070, 9-17x past
+them. The smaller frame costs the stability test none of its discrimination.
 
 ``test_legacy_and_gpu_sample_the_same_wavelength_distribution`` compares the 6-seed means
 of the two routes. Measured on Metal over 12 seeds: ``R`` -0.064%, ``x`` -0.00006,
@@ -32,7 +37,9 @@ offset is 3.4 standard errors off zero and is the GPU table's midpoint quadratur
 colour-matching functions, not sampling noise; the bounds (0.3% on ``R``, 0.0008 on
 ``x``/``y``) are that offset plus five standard errors of a 6-seed GPU mean. A wavelength
 range or density that differs between the routes moves these statistics by percents; the
-reverted build above also fails here, on ``x`` (-0.00092), through its own seed scatter.
+reverted build above also fails here, on ``x`` (-0.00092 at 2M, -0.00094 at 500k), through
+its own seed scatter. At 500k the correct build reads ``R`` +0.018%, ``x`` -0.00017,
+``y`` -0.00013 on Metal.
 
 Requires the shared-lib build (``./scripts/build.sh -sj release``). The GPU test runs on
 Metal on macOS and on CUDA where ``LUMICE_HAS_CUDA=1``; elsewhere it skips.

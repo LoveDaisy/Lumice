@@ -204,6 +204,14 @@ discipline:
    reported 266–390 M rays/s against a true 13.9 M rays/s on 4% of runs of the same
    config (below). Rule 3's `ray_num` floor is still the remedy that gets you a *usable*
    number; the change only stops the estimator from inventing one.
+   The ladder itself — every basis above and the choice between them — is one pure function,
+   `EstimateBenchmarkRate` in `src/util/benchmark_rate.hpp`; `RunBenchmarkPass` only collects
+   the observations it takes. That is what makes `active_short` testable at all: a real run
+   reaches it only on the race described in rule 5, so
+   `test/unit-correctness/util/test_benchmark_rate.cpp` states the degenerate input as a
+   literal instead of repeating whole benchmark runs until the race comes up, and
+   `test/regression-sentinel/test_benchmark_rate_not_impossible.py` keeps only a few real runs
+   to check the wiring.
 
 5. **On a GPU backend, `ray_num` must exceed one drain quantum or the window has zero
    interior samples.** `sim_ray_num` is published in whole drains of
@@ -405,6 +413,127 @@ or a Python log callback wired into a hot path has previously doubled `DoSnapsho
 itself — the act of observing changed the number being observed. Route any new instrumentation
 around the critical path (sampling, a separate thread, a post-hoc counter), not through it.
 
+
+## Precise throughput gate (local schedule)
+
+The dual-renderer throughput gate — dual rays/s ≥ **0.85** × each single renderer's, median of
+21 interleaved reps (`test/e2e/_multi_renderer_throughput.py`; the Metal and CUDA test files
+`test/performance/test_metal_multi_renderer_throughput.py` and `test_cuda_throughput.py`) — is
+calibrated on the **reference machines'** noise (Metal CoV 6–10%, CUDA 10–17%). A GitHub-hosted
+runner is slower and noisier than that; measured there, the same gate has read 0.845 and turned
+green on a re-run with nothing changed. So the precise gate does not run on CI. It runs **on the
+reference machines themselves, on a daily schedule**, driven from the Metal reference machine
+(role names: `machines.md`).
+
+**Two gates, two failure paths.** The same test and statistic run in two profiles, chosen by the
+pytest option `--dual-gate-profile` (default `precise`; the numbers and the reasoning live once, in
+`test/e2e/_multi_renderer_throughput.py`):
+
+| Profile | Threshold × reps | Where | What catches it when red |
+|---|---|---|---|
+| `ci` — disaster floor | **0.75** × 5 | `E2E Slow (macOS ARM64 rest)` phase 2, every PR and every push to `main` | the PR's checks: a red here is a red PR, like any other test |
+| `precise` | **0.85** × 21 | the reference machines, daily (this section) | a `[throughput-gate] <leg> fail` GitHub issue (see "Where to look" below) |
+
+The floor exists so a change that makes the second plane cost a large fraction of the session
+cannot merge on a green PR and wait up to a day for the schedule: against a true ratio of 0.6 it
+fires with ≥ 99.9% probability on the hosted runner's measured noise (per-arm CoV 0.155–0.229), and
+it deliberately cannot see a 10% regression — that is the precise gate's job, and the only place a
+drift between 0.85 and 0.75 is reported. Demonstrated red on the Metal reference machine by real
+GPU contention during the dual arm only (dual/single 0.531 / 0.560 → red; the same harness without
+the load read 0.900 / 0.933 → green). The floor's power figure models within-run variance only;
+two CI runs' median ratios differed by 0.17, which it does not cover.
+
+The precise gate's legs:
+
+| Leg | Where it runs | What it runs |
+|---|---|---|
+| `metal` | Metal reference machine, locally | `test_metal_dual_renderer_throughput` |
+| `cuda` | CUDA reference machine (Linux role), dispatched over ssh; only when reachable | `test_cuda_dual_renderer_throughput` |
+
+The CUDA reference machine's **Windows** role is **not covered**: dispatching there means
+PowerShell 5.1 and Smart App Control's new-hash verdicts on every rebuilt binary (`machines.md`),
+for a second path to the same GPU. The Linux-role leg still checks the Windows side for load before
+it measures (see "idle" below), because the two roles are one physical machine.
+
+**What one run does** — `scripts/local_throughput_gate.py`, one entry point, fixed order per leg:
+check out `origin/main`'s tip in the gate's **own clone** (`~/.cache/lumice-throughput-gate/repo`,
+never a developer worktree) → idle pre-check → build → cool-down → idle re-check → pytest → record
+→ notify. The CUDA leg pushes the commit into a persistent repo on the remote (so the remote build
+stays incremental), tops up the remote's CPM source cache from this machine's, and runs the build
+and the test there under `nohup`, each writing its log, exit code and a done-marker to the
+**remote disk** (`~/Codes/lumice-throughput-gate/results/<run_id>/`); this machine polls the marker
+with short independent ssh sessions and copies the directory back when it appears. A dropped ssh
+session costs one poll, not the result, and `--collect-remote <run_id>` re-attaches to a run whose
+local driver died.
+
+**Four outcomes per leg, and only two of them are measurements.** `pass` and `fail` come from the
+test's own verdict (exit code + junit XML, target test actually executed). `skipped` (busy /
+unreachable / locked) and `error` (build failure, test not executed or skipped, lost remote run,
+timeout) are infrastructure, kept apart from `fail` so a broken build is never read as a throughput
+regression — and an exit-0 run whose target test was skipped is an `error`, not a pass (the silent
+green of a missing binary or an unset `LUMICE_HAS_CUDA`).
+
+**Idle.** A measurement taken while something else loads the machine is a false red, so a leg only
+measures when its machine is idle, and only the re-check **after** the build decides (the
+pre-check just avoids building on a busy machine). Idle means all of: 1-minute load average per
+physical core below a threshold; no build/test/bench executable running (`ninja`, compilers,
+`Lumice`, `gui_test`, …) and no python process running pytest or an agent drive runner — the
+gate's own process tree and its ancestors excepted; and, for the CUDA leg, the Windows host's CPU
+load, process table and the GPU's utilization, read from inside WSL through interop
+(`powershell.exe`, `nvidia-smi`). A reading that cannot be taken counts as busy. Thresholds are the
+script's `--load-per-core` / `--host-cpu-percent` / `--gpu-util-percent`; every record carries the
+thresholds and the readings it was judged on. The cross-machine exclusion is best effort: check
+and run are not atomic, so each record also keeps a reading taken right after the test.
+
+**How often, and what makes noise.** Once a day (launchd, 03:30 by default). There is no
+confirmation re-run on red: a same-state re-run is highly correlated with the first and weakens
+the gate. The next day's run is the second sample; every run's ratios are in the record.
+
+**Where to look.**
+
+- `~/.local/state/lumice-throughput-gate/results.jsonl` — one line per leg per run: status,
+  reason, ratios and the absolute median rays/s of every arm (`median_mrps_*`) copied from the
+  test's own summary lines, commit, idle readings, durations, trigger (`manual` / `launchd`).
+  Read the absolute medians, not only the ratio: a run under different conditions can pass on
+  the ratio while every arm is several times slower (see the QoS note below).
+- `~/.local/state/lumice-throughput-gate/runs/<run_id>/` — the run's log, build and pytest logs,
+  junit XML, and the collected remote directory (last 30 runs kept).
+- **GitHub issues**, the channel you are expected to see: titles
+  `[throughput-gate] <leg> fail|error|stale`, one open issue per title. A repeated fail comments on
+  the open one (numbers only); a repeated error does nothing; the leg's next real `pass` comments and
+  closes all three. **`stale`** opens when a leg has had no real measurement (`pass` or `fail`) for
+  3 days (`--stale-days`) — the only thing standing between "skipped every night" and "never runs".
+  If posting fails (offline, `gh` not authenticated), the action is queued in `state.json` and
+  retried at the start of the next run.
+
+**Install / update / remove** (per machine; the rendered plist is not tracked):
+
+```bash
+scripts/install_throughput_gate.sh --python "$(command -v python3)"   # an interpreter that has pytest
+scripts/install_throughput_gate.sh --python ... --hour 3 --minute 30 --remote home-wsl
+scripts/install_throughput_gate.sh --uninstall
+```
+
+⚠️ **The agent must run at `Interactive` process type, not `Background`.** `Background` (the
+natural choice for a nightly job) runs it at background QoS, which on Apple Silicon means the
+efficiency cores: measured under it, dual 9.75M and legacy 0.48M rays/s against 28.0M and 5.90M
+from a terminal on the same commit, and the ratio still **passed** (0.915 / 0.957) — the gate would
+have reported green on a condition it was never calibrated under. `Interactive` restored 29.5M /
+6.66M. The template pins it with the measurement beside it.
+
+The installer copies the script to `~/.local/share/lumice-throughput-gate/` (re-run it to update)
+and refuses a rendered plist that carries a test-only argument. Self-check that the schedule is
+alive — the stale alarm cannot fire if the agent itself never runs:
+
+```bash
+launchctl print gui/$(id -u)/com.lumice.throughput-gate | grep -E 'state|runs|last exit'
+tail -n 2 ~/.local/state/lumice-throughput-gate/results.jsonl
+```
+
+**Manual runs and drills.** `python3 scripts/local_throughput_gate.py --leg metal|cuda|all
+[--dry-run]`. `--threshold-override X --issue-namespace test` makes a synthetic run whose issues
+carry a `[TEST]` prefix, which never counts as a real measurement and never closes a real issue;
+`--help` lists the rest.
 
 ## GPU utilization ceiling: register pressure is a real cost, not compiler slack
 

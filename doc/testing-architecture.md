@@ -1473,16 +1473,39 @@ another — is §4.11's table, not this section's; this section only prices runn
 
 ### §7.0 What this section covers, and what it does not
 
+**Where a test runs: five places, and no nightly.** Everything below prices one of these. They are
+listed because "it is tested" only means something once it says *where*, and a test that moved out
+of the PR layer has to have landed in one of the other rows, or it was deleted without anyone
+saying so.
+
+| Tier | Trigger | What runs there and nowhere cheaper | What a red produces |
+|---|---|---|---|
+| PR | every commit of a pull request (`ci.yml`, and once more on the push to `main`) | the platform matrix, the fast e2e set, the three `E2E Slow` legs — including the throughput gate's `ci` profile, the disaster floor — and the duration registry (§7.7) | a red PR |
+| `main` only | the push to `main` of a merge (`ci.yml` jobs guarded to `push`) | `bench-ipo`: the `Lumice benchmark` run, from an IPO build on the four platforms, feeding `benchmark-summary`'s gh-pages history | a red `main` run; the benchmark curve |
+| Local schedule | daily, on the reference machines (`doc/performance-testing.md`, "Precise throughput gate (local schedule)") | the throughput gate's `precise` profile (0.85 × 21), Metal on the Metal reference machine and CUDA on a CUDA reference machine when it is reachable; a leg the idle check finds busy is skipped and recorded | a `[throughput-gate] <leg> fail` GitHub issue, and a staleness alert when a leg has not really run for too long |
+| Release | a `v*` tag (`release.yml`) | every release artifact, built with IPO; the export-surface check on each packaged engine file | no release |
+| Developer machine | `./scripts/test.sh {quick,full,pr}` | the 36 `gui_test` categories CI never runs, the `parity` tag (§7.5) and the real-timing pool | whatever the developer does next |
+
+**There is no nightly tier.** No workflow in this repository has a `schedule:` trigger, and none
+is needed for what the PR layer gave up: the tests that made the PR run long were made **cheaper
+where they stand** — smaller fixtures, each with a red-state probe showing the smaller one still
+catches the defect it is there for — not moved out of the PR layer. Exactly two things left it,
+and each has a row above: the precise throughput gate (to the local schedule) and the benchmark run
+(to `main` only). A test that is moved out of the PR layer later needs a row that runs it and a red
+that someone sees before it moves; "a nightly" is not one until a workflow exists and its failures
+reach a person.
+
 This is **not** an audit of the suite, and must not be cited as one. It looks at the head of the
 cost distribution and states the tail it did not look at:
 
-- **Covered in depth**: the three local scopes end to end, and the 8 CI jobs of 456s or longer —
-  4246s of the 4950s of machine time in §7.1's table, i.e. **86%**.
-- **Listed but not analyzed**: the 7 remaining CI jobs, together 704s, i.e. **14%**. Three are
-  second-scale gates (`policy` 27s, `format-check` 13s, `new-refs` 7s) and three are compile-only
-  jobs (`windows-cuda-compile` 221s, `cuda-compile` 164s, `bench-compile` 85s) whose duration says
-  nothing about which tests should run, plus `Ubuntu ARM64` (187s), the cheapest leg of the build
-  matrix. Both proportions are recomputable from that table.
+- **Covered in depth**: the three local scopes end to end, and the 10 CI jobs that took 180s or
+  longer in any of the three runs §7.1's table is built from — 3198s of 3869s, 2987s of 3559s and
+  3068s of 3580s of machine time, i.e. **83–86%**.
+- **Listed but not analyzed**: the 9 remaining CI jobs, together 14–17%. Three are second-scale
+  gates (`policy`, `format-check`, `new-refs`), four are compile-only (`cuda-compile`,
+  `bench-compile`, `isa-v4-compile`, `shared-gui-test-build`), plus `Ubuntu ARM64`, the cheapest leg
+  of the build matrix, and the MSVC leg of `windows-shared-export`. Both proportions are recomputable
+  from that table.
 - **Not enumerated at all**: the individual cases inside a scope. `gui_test` runs 344 cases across
   38 categories (338 in its correctness pool, 6 in the real-timing pool, per the binary's own run
   summary); the fast e2e set collects 105; neither was gone through case by case. One
@@ -1535,6 +1558,11 @@ extraction of the two `gui_test` filters from `scripts/build.sh`, and the probe 
 A standalone `quick` measured 172s on the previous day on the same machine, against 179s inside
 this run: treat single-run figures here as accurate to roughly ±5%, not better.
 
+The `pr` rows predate the fixture reductions that brought CI under its budget (the slow set's
+largest fixtures shrank several-fold; phase 2 locally still runs the throughput gate's `precise`
+profile, unchanged). Read the slow-e2e phase-1 figure as an upper bound until it is
+re-measured; `quick` and `full` do not run that set and are unaffected.
+
 **Compile is not in the table above, and is not negligible.** Measured on the same machine:
 a cold configure-plus-build of the static flavor with GUI and tests is **167s**; an incremental
 rebuild after touching one leaf `.cpp` is **33s**; after touching `src/core/math.hpp`, included by
@@ -1542,100 +1570,67 @@ rebuild after touching one leaf `.cpp` is **33s**; after touching `src/core/math
 350s, and its steady-state cost during an edit-test loop is about 210s.
 
 **CI.** Runners: GitHub-hosted, per job (`ubuntu-24.04`, `ubuntu-24.04-arm`, `macos-15`,
-`windows-2022`). Cache state: CPM dependencies come from `actions/cache` on every leg, so warmth
-**depends on that run's cache hit** and is not guaranteed. `Windows MSVC x86_64` additionally runs
-its compiler through **sccache**, whose disk cache is a second `actions/cache` entry in a key
-namespace of its own — so that one leg's duration is a function of cache state in a way the others
-are not, and the table below says which state it was measured in. Concurrency: the jobs below run
-in parallel as a matrix, so the run's wall clock is its **longest job**, not the sum; within a job,
-the fast e2e leg runs `pytest` serially and the slow e2e legs run `-n 3` (with the throughput gates
-re-run serially afterwards, so they do not measure under load).
+`windows-2022`). Concurrency: the jobs below run in parallel, so the run's wall clock is its
+**longest job** plus the time the first job waited for a runner, not the sum; within a job, the
+fast e2e leg runs `pytest` serially and the slow e2e legs run `-n 3`, with the throughput gates
+re-run serially afterwards so they do not measure under load.
 
-The figures are one pull-request run (`039653eb`, run 34375283294, 2026-09-09), read off the GitHub
-Actions job and step timestamps, with both compiler caches warm. The cold column is a different run
-of the same branch — every cache in the repository was destroyed midway through this measurement,
-which turned "what a cold start costs" from a hypothetical into an observation. The two are reported
-separately because the difference is large enough to change which job is the longest. One run rather than the union of two, which earlier editions of this table needed:
-every job in the workflow now runs on a `pull_request` event, so a single run yields every row and
-the rows can be added up. `benchmark-summary` is the exception and is absent below — it is guarded
-to `push` on `main` because it writes the gh-pages benchmark history.
+**The budget.** A pull request's CI run has an owner-set wall-clock budget of **10 minutes**, from
+the run's creation to its last job's completion. The fallback is 12 minutes and it is not a second
+target: a run that needs more than 12 minutes is answered by removing tests, not by moving the
+number. Nothing enforces this per run — §7.7 enforces its per-test half — so it is checked by
+measurement, as below, and re-checked whenever a change adds a job or lengthens the longest one.
 
-| CI job | Warm | Cold | In §7.0's covered head? |
-|---|---|---|---|
-| macOS ARM64 | **631** | 598 | yes — longest job, but see the spread below |
-| E2E Slow (macOS ARM64 parity) | 552 | 586 | yes |
-| Windows MSVC x86_64 | 522 | 728 | yes — sccache; see the cache states below |
-| E2E Slow (Ubuntu x86_64) | 432 | 452 | yes |
-| e2e-test | 425 | 424 | yes |
-| windows-cuda-compile | 412 | 467 | no — compile-only |
-| E2E Slow (macOS ARM64 rest) | 411 | 485 | yes |
-| Ubuntu x86_64 | **353** | 682 | yes — ccache |
-| cuda-compile | 299 | 286 | no — compile-only |
-| Ubuntu ARM64 | 171 | 196 | no |
-| bench-compile | 94 | 85 | no — compile-only |
-| shared-gui-test-build | **39** | 606 | yes — ccache; 93% of it was compile |
-| policy | 33 | 29 | no — second-scale gate |
-| format-check | 16 | 10 | no — second-scale gate |
-| new-refs | 11 | 11 | no — second-scale gate |
-| | **4401s** | 5645s | warm head = 3365s (76%) |
+**Measured.** Three pull-request runs of the change that brought the workflow under that budget,
+on its final code (`4a51607e`, run 36774339307) and on two follow-ups that changed only the
+duration registry and documentation (`8160a9e3`, run 36775693230; `197897d3`, run 36778934726),
+2026-10-01, read off the GitHub Actions job timestamps. `ci.yml` has no path filter, so a
+documentation commit runs every job; the three runs executed the same 19. All used compiler caches
+restored from a previous run of the same branch; the two longest jobs have no compiler cache and
+restored only their CPM sources. Before that change, `main` ran 16.6 min (run 36710150908) and
+20.6 min (run 36737901403).
 
-`isa-v4-compile` (the `-march=x86-64-v4` compile-only leg added for the two-variant Linux release)
-post-dates this table. Its first run, with nothing under its own cache key to restore, took **71s**
-(run 34574596545); the same shape as `bench-compile` — narrow configure, `BUILD_TEST=OFF`,
-`BUILD_GUI=OFF`, compile and link only — and in the same "no — compile-only" column of §7.0's head.
+| CI job | 36774339307 | 36775693230 | 36778934726 | Where its time goes |
+|---|---|---|---|---|
+| **E2E Slow (macOS ARM64 rest)** | **548** | **579** | 581 | `Run slow E2E tests` 421 / 451 / 458 (phase 2's throughput gate included); `Build` 90–95 |
+| **e2e-test** | 517 | 388 | **591** | `Run E2E tests` 418 / 312 / 474, serial; `Build` 55–83 |
+| windows-isa-v3-compile | 463 | 408 | 427 | `Build` 213 / 199 / 231; LLVM install 81–99 |
+| Windows MSVC x86_64 | 296 | 255 | 230 | `Test` 89–106; `Build` 53–76 |
+| Windows shared export (clang-cl) | 281 | 262 | 313 | `Build` 103 / 131 / 140; LLVM install 78–95 |
+| E2E Slow (Ubuntu x86_64) | 256 | 228 | 170 | tests 77–117; `Build` 67–108 |
+| E2E Slow (macOS ARM64 parity) | 251 | 234 | 188 | `Build` 76–107; tests 81–91 |
+| Ubuntu x86_64 | 215 | 237 | 196 | `Test` 60–70 |
+| windows-cuda-compile | 189 | 170 | 174 | CUDA toolkit install 64–84 |
+| macOS ARM64 | 182 | 226 | 198 | `Test` 116–149 |
+| Windows shared export (MSVC) | 156 | 107 | 122 | |
+| isa-v4-compile | 104 | 96 | 73 | |
+| bench-compile | 96 | 111 | 76 | |
+| shared-gui-test-build | 95 | 88 | 51 | GUI dependency install 22–45; `Build` 5–21 |
+| Ubuntu ARM64 | 92 | 58 | 62 | |
+| cuda-compile | 62 | 36 | 51 | |
+| policy | 44 | 55 | 52 | |
+| format-check | 14 | 13 | 14 | |
+| new-refs | 8 | 8 | 11 | |
+| | **3869s** | **3559s** | **3580s** | |
+| **Run wall clock** (creation → last completion) | **9.27 min** | **9.78 min** | **9.92 min** | first job started 2–4s after creation |
 
-`windows-isa-v3-compile` (the clang-cl `-march=x86-64-v3` × nvcc/cl.exe leg added for the two-variant
-Windows release) post-dates it as well. Its first run, with nothing under its own cache key, took
-**338s** (run 34587240975): LLVM 20.1.0 from Chocolatey 79s, CUDA toolkit 59s, configure 42s, build
-122s, and 11s for the one thing that makes it more than compile-only — a `Lumice benchmark` run asserting
-the `isa` key reads `x86-64-v3`. That is the `windows-cuda-compile` shape plus a compiler install,
-which is why it sits at the same scale as that row and not at `isa-v4-compile`'s; it still belongs in
-the "no" column of §7.0's head, since one benchmark invocation is not a test suite.
+Median 9.78 min, maximum 9.92 min: inside the budget, by 5 seconds in the worst run.
+`bench-ipo` and `benchmark-summary` do not run on a pull request (§7.0's `main`-only row) and are
+not in the table. Three runs are the whole sample and `e2e-test` alone moved by 203s across them on
+the same code, so read every row as ±25%.
 
-`windows-shared-export` (two legs: cl.exe and clang-cl) post-dates it too. It is the only Windows job
-that builds the shared flavor: configure `BUILD_SHARED_LIBS=ON`, `BUILD_TEST=OFF`, `BUILD_GUI=OFF`,
-no CUDA, then one pytest file (`test/e2e-correctness/test_export_symbol_scope.py`) that reads each
-DLL's `dumpbin /exports` against its header and loads it. Expected spend, declared before its first
-run: per leg about `windows-isa-v3-compile`'s configure + build (~165s) plus Python setup and a
-one-second test, the clang-cl leg another ~80s for its LLVM install — roughly 3–5 minutes a leg,
-running in parallel with the matrix. Not measured yet; replace this estimate with the first runs'
-numbers. It belongs in the "no" column of §7.0's head: one narrow file, not a suite.
+One lesson from an earlier edition of this table outlives its numbers. A compiler cache can report
+a successful restore on every run while evicting most of what it stores: `Ubuntu x86_64`'s ccache
+sat at 110% of a cap borrowed from another leg and the leg ran 567s where the settled cache gave
+353s — no red, no warning, indistinguishable from a slow runner by wall clock. The only number that
+shows it is `Cache size` against `Max cache size` in the step that prints the cache's statistics.
 
-⚠️ **The `Ubuntu x86_64` row is still settling, and its history is worth more than its number.**
-That leg went 650s uncached → 657s (cold, nothing to restore) → 567s → 479s → 353s across five
-consecutive runs, and its ccache hit rate over the last three was 26.34% → 41.39% → **55.96%**, still
-climbing, with the directory at 36.7% of its cap. So **353s is an upper bound on the steady state**.
-(The table's Cold column above reads 682s rather than 657s — that number is from a different, earlier
-cold event: the day the whole repository's Actions cache was accidentally emptied, before this leg
-had ccache at all. 657s is this leg's own cold start once ccache was in place but its directory was
-still empty; the two are colds of different things and neither supersedes the other.)
-The 567s step is the one to remember: the cache was present and reporting a successful restore on
-every run while sitting at **110.3% of a 200M cap** — a cap borrowed from `shared-gui-test-build`,
-whose directory settles at 37 MB — and therefore evicting the objects the next run needed.
-
-Two things to carry from that. The failure mode is a cache that works, reports a restore, and is
-quietly throwing away much of what it stores: no red, no warning, and indistinguishable from a slow
-runner by wall clock. The only number that shows it is `Cache size` against `Max cache size`. And a
-cap measured on one leg does not transfer to another — these two configures compile a similar number
-of translation units and their directories land about six times apart, 37 MB against more than
-220 MB, which nothing about "both Linux, both GUI, both tests" predicts.
-
-⚠️ **The `E2E Slow (macOS ARM64 rest)` row (411s warm / 485s cold) predates the Metal dual-renderer
-throughput gate and is now stale.** That gate measured 278s alone on this hardware, on top of a
-phase-1 cost that swings 361-552s by runner day (see the leg-balancing comment above the `e2e-slow`
-job's matrix in `ci.yml`), so total job duration measured 746s on an ordinary-phase-1 run (run
-35169897211, 2026-09-17) — a different, later run than this table's own baseline, so it is not
-directly comparable to the other rows above, but it is well past both 411s and 485s. The leg's
-"Run slow E2E tests" step timeout was raised from 15 to 25 minutes for this reason. Whether this
-leg is now the run's longest job (ahead of `shared-gui-test-build`'s 39-606s spread) has not been
-re-measured against a single run the way the table above was; that re-measurement, and any
-resulting re-pack of the two macOS legs, is a separate follow-up.
-
-The cold column is not a hypothetical. Every cache in the repository was destroyed while this table
-was being measured, so the two runs are the same commit range on the same branch, one with nothing
-to restore and one with everything. Read it as the honest price of a cold start rather than as
-run-to-run noise: the two compiler-cached legs move by 606→39 and 728→522, and nothing else moves
-by more than about 160s.
+**The Windows compiler-cache measurements below predate `LUMICE_IPO=OFF` on that leg.** They were
+taken while every test binary still paid a full-program LTO link of ~250s, which no compiler cache
+can replay; with IPO off the link measured 363s → 3s and the leg's `Build` is 68–76s in the table
+above. What stays valid is the method — a red arm that never installs the cache, a runner-speed
+control, a break-even computed from the slope — and the facts about the cache pool; the seconds
+are history. Re-derive them before using them in an argument about today's leg.
 
 **`Windows MSVC x86_64` has two durations now, and quoting one of them alone is a mistake.** Its
 compiler cache is keyed per commit with a prefix fallback, so the exact key essentially never hits
@@ -1665,6 +1660,10 @@ Four things that table is for, none of which a single headline percentage says o
   sccache can ever take off this step is about 216s**, and a proposal that assumes it scales past
   that is wrong. A later controlled measurement (below) puts the slope at 1.10 s rather than 0.743 s
   and the floor higher; prefer those figures, and read the paragraph on why they differ.
+  **Since superseded:** most of that floor was the full-program LTO link of each test binary, not
+  object writing. With `LUMICE_IPO=OFF` on this leg (the `bench-ipo` job's comment in `ci.yml` says
+  which jobs still build with IPO) the link phase measured 363s → 3s and a warm `Build` 66s, so the
+  216s ceiling on what caching can save no longer applies.
 - **The win depends on the change, and the range is wide.** Against the 736s pre-sccache mean, the
   job totals above run −7% (cold), −18%, −28% and −43% (nothing to recompile). Quote the one that
   matches the change being discussed; −43% is a doc-only commit and is not what a code PR gets.
@@ -1706,9 +1705,12 @@ is the thing to watch — not the growth, which has stopped.
 one cannot be read off the other. At the time of the ceiling measurement above, `SCCACHE_CACHE_SIZE=2G`
 really did describe a ~1.5 GB entry, because that directory filled its cap. This task has since
 tightened that cap to `SCCACHE_CACHE_SIZE=800M` in `ci.yml`, so a fresh entry today caps out well
-under 1.5 GB instead of growing to fill 2 GiB. `CCACHE_MAXSIZE` on `shared-gui-test-build` is 200M
-and the directory after a full cold compile of 291 objects is **37 MB**. Quote the measured directory
-size, never the configured ceiling.
+under 1.5 GB instead of growing to fill 2 GiB. `CCACHE_MAXSIZE` on `shared-gui-test-build` was 200M
+and the directory after a full cold compile of 291 objects was **37 MB** — measured while that leg
+still built with IPO. With `LUMICE_IPO=OFF` the same cold compile leaves about 0.3 GB, so the 200M cap
+sat at 100.1% and evicted what the next run needed; it is 800M now and the directory measures 42% of
+it. The same number changed by ~8× with one build flag, which is the point: quote the measured
+directory size, never the configured ceiling, and re-measure it when the configure changes.
 
 **What sccache is worth, measured against a red arm rather than against history.** The table above
 compares runs that differ in cache state *and* in what they compiled *and* in which runner drew
@@ -1753,62 +1755,43 @@ history, 486 non-merge commits, classified by what each touches: 30.0% tier 1, 6
 tier 3. Weighting instead by the 73 merges to `main` (21.9% / 64.4% / 13.7%) gives 120 s/run, so the
 figure does not hinge on which granularity is chosen.
 
-Where a job's time goes differs by job, and the split cannot be assumed. `Windows MSVC x86_64` was
-71% compile (374s of 528s) before this table's revision, down from 78% before sccache, which is what
-a cache that only touches compilation does to a ratio — and the ratio keeps falling as the cache
-gets better, which is the point. Step-level timestamps from an earlier run for the rest:
-`shared-gui-test-build`, which runs nothing, was 92% compile (589s of 641s) before it got a cache;
-`E2E Slow (macOS rest)` 8% compile and **89% test execution** (612s of 686s); `e2e-test` 84% test
-execution (377s of 450s). Those come from different runs than the totals above and are shape, not
-precision.
+**Two facts about the table at the top of this subsection that any CI-time proposal has to answer to.**
 
-The two compile-bound legs are the reason the ratios matter: a leg that is 92% compile is one a
-compiler cache can take almost all of, and one that is 89% test execution is one it cannot touch at
-all. That is the whole of why `shared-gui-test-build` fell to 41s and why no amount of caching will
-move the `E2E Slow` legs.
-
-**Two facts about this table that any CI-time proposal has to answer to.**
-
-1. **The critical path is `macOS ARM64` (631s) and, behind it, `E2E Slow (macOS ARM64 parity)`
-   (552s) — with a caveat this table has not needed before.** `macOS ARM64` measured 437, 522, 598,
-   600 and 631s across five runs of this branch while the macOS `E2E Slow` legs held 552–599s, so the
-   gap between the top two is inside the noise of the first. Treat "the ceiling is one of the two
-   macOS legs, around 550–630s" as the finding, and re-measure before optimising either.** A run's wall clock is its longest job and nothing else. Therefore: *any proposal to
-   "shorten CI" that does not touch those two jobs buys zero wall clock*, however much machine time
-   it saves. Anywhere a claim of the form "this saves N seconds of CI" is made — in a plan, a PR
-   description, or a review comment — it must first answer **"does it shorten the longest job?"**.
-   This is the fourth job to hold the title, and the last two handovers both happened inside this
-   change; the first happened earlier, in a prior change that gave the Windows leg sccache.
-   `Windows MSVC x86_64` held it at 736s mean (n=14) until that earlier change; `shared-gui-test-build`
-   held it at 734s until this change gave it ccache and took it to 39s; `Ubuntu x86_64` held it for
-   exactly as long as it
-   took this change to give that leg a cache too, which dropped it from 650s to 353s. Anything
-   written against a superseded ordering — "the Windows leg is the ceiling", "the shared-gui leg is the ceiling",
-   "this is free because it lands on Ubuntu" — has to be re-derived, not carried forward.
-   Note what that pattern implies: **caching moved the ceiling onto legs no compiler cache can
-   touch.** The two macOS legs are 8% and 89% test execution. Further CI-time work on this workflow
-   has to be about test execution or about macOS, and a sixth compiler-cache proposal now buys
-   nothing at all.
-   **That instruction has already been disregarded once, by a change to this very file.** The commit
-   that first put ccache on `shared-gui-test-build` argued for *not* caching `Ubuntu x86_64` on the
-   grounds that its 530s sat under the next-longest job — a figure quoted from the previous revision
-   of the table above rather than re-measured. It was 650s. The stale number did not look stale, and
-   it produced a decision that was exactly backwards; re-measuring took one API call. Prefer that to
-   trusting this paragraph, including the version of it you are reading.
-   The corollary that keeps catching people: rebalancing two shards against each other is worth CI
-   time only while one of them **is** the longest job. The two `E2E Slow` macOS legs now sit 79s and
-   220s under the ceiling (`ci.yml`'s `e2e-slow` matrix comment carries the same statement next to
-   the code it constrains) — but the parity leg's 79s margin is inside the ceiling's own run-to-run
-   spread, so unlike in previous revisions of this table that gap can no longer be treated as
-   comfortable. As the compile-bound legs got cheaper, the test-bound ones stopped being clear of
-   the ceiling.
-2. **A floor sits under the `E2E Slow (macOS ARM64 parity)` leg that no repacking removes.**
-   `test_capi_sentinel_overflow` is **one indivisible pytest case** (3 configs × 12 rounds inside a
-   single function) that pins one xdist worker for the leg's whole duration — ~204s in the grouping
-   that shipped — which is what puts that leg near 600s. Splitting files across legs cannot go below
-   it; only splitting that case could. Quote this number **with its grouping**: the case's cost is a
-   property of the file *and its co-tenants*, and the same case measured 376s when it was starved
-   beside the exit-seam parity file. Costs never survive a regrouping; re-derive them after one.
+1. **The critical path is two jobs, and the margin is gone.** `E2E Slow (macOS ARM64 rest)` was
+   the longest job in two of the three runs (548s, 579s) and `e2e-test` in the third (591s against
+   the rest leg's 581s). Both are test execution — the rest leg's `Run slow E2E tests` is 421–458s,
+   the throughput gate's `ci` profile in phase 2 included; `e2e-test`'s serial `pytest` is 312–474s
+   — so no compiler cache moves either. Against the 10-minute budget the three runs left **5–44
+   seconds**, and `e2e-test` swung 203s on identical code, so which of the two sets the wall clock
+   is decided by runner noise. Shortening one of them alone buys nothing once it drops under the
+   other. `e2e-test`'s test step also sits at 474s of its own 10-minute step budget (§7.6).
+   A run's wall clock is its longest job and nothing else. Therefore *any proposal to "shorten CI"
+   that does not touch the longest job buys zero wall clock*, however much machine time it saves,
+   and anywhere a claim of the form "this saves N seconds of CI" is made — a plan, a PR description,
+   a review comment — it must first answer **"does it shorten the longest job?"**, against a table
+   re-measured for the purpose.
+   Seven jobs have now held that title: `Windows MSVC x86_64` (736s mean) until it got sccache,
+   `shared-gui-test-build` (734s) and `Ubuntu x86_64` (650s) until they got ccache, `macOS ARM64`
+   (~630s) and `E2E Slow (macOS ARM64 parity)` (~550s), and then the `rest` leg, which grew to
+   ~20 minutes as throughput gates and larger fixtures landed on it, and now shares it with
+   `e2e-test`. The pattern to carry: **caching
+   moved the ceiling onto legs no compiler cache can touch, and turning LTO off for correctness legs
+   moved it further** — the rest leg's own `Build` is 90–95s of 548–581s. Further CI-time work on this
+   workflow is about test execution. A statement written against an older ordering ("the Windows
+   leg is the ceiling", "this is free because it lands on Ubuntu") has to be re-derived, not carried
+   forward: an earlier edition of this subsection argued against caching `Ubuntu x86_64` from a
+   530s figure quoted rather than re-measured, and the leg was at 650s. Re-measuring took one API
+   call. Prefer that to trusting this paragraph, including the version of it you are reading.
+   Rebalancing two shards against each other is worth CI time only while one of them **is** the
+   longest job; the `parity` leg (188–251s) is now far below the ceiling.
+2. **The rest leg is no longer bounded by one indivisible case, but it is bounded.** The parity
+   leg's old floor — `test_capi_sentinel_overflow`, one pytest case pinning an xdist worker for
+   ~204s — is gone: that case now runs a smaller fixture that still reproduces its defect, and the
+   whole parity leg's test step is 81–91s. What sits on the rest leg now is the sum of many
+   reduced fixtures under `-n 3`, plus a serial phase 2 whose throughput gate cannot run under load
+   and costs 104–124s of it at the `ci` profile's 5 reps. Quote any per-test cost here **with its
+   grouping**: the same case has measured nearly twice as long beside a different co-tenant, so
+   costs do not survive a regrouping and have to be re-derived after one.
 
 ### §7.2 What each scope catches that the one below it cannot
 
@@ -1889,6 +1872,9 @@ This section is the first change written under the rule, and it says so rather t
 rule as established practice: earlier changes in this repository carry no such declaration, and none
 was back-filled for them.
 
+The per-test part of this question is also asked mechanically: a PR-layer test over 60 s has to be
+registered, with a reason, or CI goes red. See §7.7; it reinforces this rule and does not replace it.
+
 ### §7.4 Independent re-verification is a fixed-cost multiplier
 
 **The rule.** A change's own report about itself does not settle whether the work is done. An
@@ -1948,8 +1934,8 @@ filter to it is a measurement someone still has to take rather than a free win. 
 if `export_parity` were enabled is not the blocker either: its
 filter takes 24.6s on the 12-core machine of §7.1, which extrapolates to roughly 70–90s on
 a 4-vCPU runner — **an extrapolation, not a measurement** — and it would land inside the
-`Ubuntu x86_64` leg, which sits at 530s — 204s below the `shared-gui-test-build` ceiling — so by
-§7.1's fact 1 it would still cost close to zero wall clock. The blocker is the known red, so the sequence
+`Ubuntu x86_64` leg, which measured 215–237s against a 548–579s longest job (§7.1), so by §7.1's
+fact 1 it would still cost close to zero wall clock. The blocker is the known red, so the sequence
 is: close the upstream ray-count shortfall first, re-measure on a real runner, then widen the
 filter. Widening it is a measurement, not an edit. (`preview_export_parity` costs 0.2s wall on that
 same machine, process start included — it waits for no run — so its own cost never enters this
@@ -1957,8 +1943,10 @@ question.)
 
 ### §7.6 A red against the timeout budget: what to do, and what not to do
 
-The `e2e-test` job's `timeout-minutes: 10` (and `e2e-slow`'s `timeout-minutes: 15`) are **owner-set
-budgets, not hang detectors**. The distinction matters because the two call for opposite responses.
+The `e2e-test` job's `timeout-minutes: 10` on its test step (and `e2e-slow`'s `timeout-minutes: 25`
+on its) are **owner-set budgets, not hang detectors**. They are step budgets and sit above the
+whole run's 10-minute budget of §7.1, which no timeout enforces: a run can blow that budget with
+every step inside its own, so a green run is not evidence the run budget holds — §7.1's table is. The distinction matters because the two call for opposite responses.
 A hang detector firing means something got stuck — a rerun is a reasonable first move. A budget
 firing means the suite it is timing no longer fits in the time allotted to it, which a rerun cannot
 fix: the suite is still that size on the next run, and rerunning a red without reading why only
@@ -1993,3 +1981,103 @@ is there: "how many cores this run actually had" is otherwise a number nobody ha
 claim about the suite being CPU-starved a guess rather than a measurement. It is diagnostic-only —
 printing it does not imply the suite should or should not run under `pytest-xdist`; that is a
 separate, not-yet-made decision.
+
+### §7.7 The duration registry: every slow PR-layer test is argued for, mechanically
+
+§7.3 asks the author a question before a change and makes them reconcile the answer after it. It
+cannot stop anything: two slow tests that together cost about 12.8 minutes of CI entered the PR layer
+while it was in force. This section is the mechanical half. It does not replace §7.3, which still
+decides when the question is asked (before the change, not after CI has turned red).
+
+**The rule.** In every CI job wired to it (list below), each test that took longer than **T = 60 s**
+in that run must have an entry in `test/duration_registry.json`, and that entry must carry a reason.
+`scripts/check_test_durations.py` compares the job's measured durations against the registry in a
+step at the end of the job, and turns the job red when, for that job:
+
+1. a test **not registered** for the job took more than T;
+2. a **registered** test took more than **2×** its registered `ci_seconds`;
+3. a registered test **did not run** in the job at all: renamed, moved or deleted. (A test skipped on
+   that runner still counts as present, at ~0 s, so a platform skip is never read as stale.) If none
+   of a job's entries appear, the message says the `--job` name in `ci.yml` probably does not match
+   the registry's `job` field, rather than listing every entry as stale;
+4. the registry is malformed (unknown or missing field, duplicate `id`+`job`, non-positive seconds),
+   or an entry's `reason` is empty or the placeholder `TODO`.
+
+A registered test that ran in **less than half** its registered `ci_seconds` is a notice, not a red:
+the entry is probably set too high, and an entry set too high lets the test slow down unnoticed.
+Whether to lower or delete it is the author's decision. A registered test that merely ran under T
+says nothing — most entries do (see below).
+
+**What is measured.** Setup + call + teardown of each test, written by the pytest plugin
+`scripts/duration_report_plugin.py`, which CI loads explicitly (`PYTHONPATH=scripts pytest -p
+duration_report_plugin --duration-report=PATH`); nothing else loads it, and without the option it
+does nothing. Setup is counted because that is where the most expensive fixtures spend their time.
+One refinement makes that stable under `pytest-xdist`: the setup of a **module-, class-, package- or
+session-scoped fixture** is not charged to the test that happened to create it, but reported as an
+entry of its own, `<where it is defined>::<fixture:NAME>` (with `[<param index>]` for a parametrized
+fixture), taking the largest value if several workers each created it. Under xdist's default
+`--dist load`, which test first requests a shared fixture on a worker changes from run to run
+(measured: the same module fixture landed on a different parametrized case on each of three `-n 3`
+runs), so charging it to the test would make that test's number jump by the fixture's cost for no
+reason in the code. `--dist loadfile` would also stabilise it, but by putting a whole file on one
+worker, which lengthens the very wall clock this gate protects. A shared fixture over T is registered
+like a test, by its fixture id. A unittest-style `setUpClass` shows up the same way, as
+`...::<fixture:_unittest_setUpClass_fixture_<Class>>`. What is not split out: a shared fixture's
+teardown, and lazy one-time costs outside fixtures (the first library load in a process), which stay
+with whichever test incurred them.
+
+**Why these numbers.** They are set by how much one test's wall clock moves between CI runs with
+nothing changed, measured on this workflow's own runners before the gate was switched on:
+up to **1.25×** on the serial `e2e-test` job (a whole run took 405 s on one runner and 502 s on
+another, every test scaled alike), and up to **1.9×** on the `e2e-slow` legs, whose `-n 3` workers
+contend for the runner's cores and, on macOS, its GPU (a test measured at 44.8 s in one run and
+84.1 s in another on the Ubuntu leg; a test that never exceeded 20 s in four macOS runs took 35.2 s
+in the fifth). A threshold therefore has to sit about 2× above the slowest test it leaves
+unregistered, or unrelated PRs go red on runner noise. The gate was first switched on at T = 30 s
+and did exactly that on its first trial run, which is why T is **60 s**; the smaller figure first
+proposed for it only works where runs are that much quieter. 2× for a registered test is chosen
+against the same spread: 1.5× would go red on noise, and not checking at all would let an entry
+registered at 40 s grow to 400 s in silence. Registered values are the **largest** of several CI
+runs, rounded up to a multiple of 5 s. For the same reason the registry's initial contents are
+every (job, test) that reached **24 s** in any sampled run (T/2.5, so that even a 1.9× excursion of
+an unregistered test stays under T), not only those over T: most of those entries read under T on
+most runs, and that is expected. Both factors are constants in the script, so changing them is a
+reviewable diff, not a setting.
+
+**Registering a test.** The red message for an unregistered test prints the exact line to paste,
+with `ci_seconds` already filled in and `reason` set to `TODO`, which the checker rejects — so the
+line cannot be committed as printed. Replace `TODO` with one sentence: which defect the test guards
+against, and why it cannot be faster or move to a cheaper layer. Before registering, consider doing
+neither: making the test faster, or moving it to a layer that runs less often, removes the cost
+instead of recording it. When you **rename or move** a registered test (`git mv test/a.py test/b.py`,
+renaming a function, changing a parametrize id), change its `id` in the same commit; the stale rule
+will otherwise go red and name the new id it can see for the same function. When an entry's test is
+made cheaper, lower or delete the entry in the same change.
+
+**Where it runs.** `e2e-test` (job name `e2e-test`) and the three `e2e-slow` legs (job name
+`E2E Slow (<matrix name>)`), each with the reports of all its pytest calls (phase 1 and, where the
+leg has one, phase 2). **Not covered**: ctest and `gui_test` (CI logs give ctest only per-binary
+times, and `gui_test` does not run in the build jobs; their growth shows up in the job's wall clock
+instead); the `windows-shared-export` job's slow files; the `policy` job's script unit tests.
+A **new pytest job** is not covered until it is wired the same way — `-p duration_report_plugin
+--duration-report=...` on each pytest call and a "Check test durations" step at the end — and
+nothing checks that it was.
+
+**A runtime check, not a diff check.** The four checkers AGENTS.md lists (`check_policies.py`,
+`check_new_refs.py`, `check_new_gui_tests.py`, `check_loop_fatal_asserts.py`) read the source or a
+diff, so they also run in the pre-commit hook. This one reads what a CI job just measured; its input
+does not exist anywhere else, so it cannot run before commit and is not part of `check_policies.py`.
+
+**No exemption, and the checker is the rule.** There is no flag, environment variable or inline
+marker to let a slow test through; the only way is a registry entry, and the registry's diff is the
+evidence a reviewer reads. If the check passes, the change is compliant with respect to test
+duration — review does not add duration demands beyond it. If a threshold is wrong, change the
+constant in the script.
+
+**Relation to §7.3.** §7.3 still has no ceiling, and its reason — a ceiling produces estimates shaped
+to fit it — still holds, because this gate has no ceiling either: a test over T is allowed to stay,
+it only has to be argued for in a file someone reviews. What changed is that the per-test half of
+the question is now asked by the machine every run, instead of relying on someone remembering to.
+
+The gate's own cost is the few seconds of the final step (reading two small JSON files) plus the
+plugin's bookkeeping during the run; it adds no job and no runner.

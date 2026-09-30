@@ -314,6 +314,24 @@ deleting its line, and an entry whose edge is gone fails the check.
   the four defect-shape generalizations (syntax → fatality → loop order → parameter binding) that
   motivated it — a checker for only the first of those reads a clean scan as "does not occur
   here" on exactly the inputs it was meant to catch.
+- **Test-duration registry — a runtime gate, not a fifth diff-scoped checker.** In `e2e-test` and
+  the three `e2e-slow` legs, every test that took more than **60 s** in that CI run must have an
+  entry in `test/duration_registry.json` (`id`, `job`, `ci_seconds`, `reason`: which defect it guards
+  against and why it cannot be faster or move to a cheaper layer), or the job's final
+  "Check test durations" step (`scripts/check_test_durations.py`) goes red. It also goes red when a
+  registered test runs more than 2× its `ci_seconds`, when a registered test no longer runs in that
+  job (rename/move/delete — change the `id` in the same commit), and when a `reason` is empty or
+  `TODO`. A red prints the exact registry line to paste, with `reason: "TODO"` so it cannot be
+  committed as printed. Unlike the four checkers above it reads what a CI job just *measured*, so it
+  cannot run in the pre-commit hook and is not part of `check_policies.py`. The measurement comes from
+  `scripts/duration_report_plugin.py`, loaded explicitly per pytest call (`PYTHONPATH=scripts pytest
+  -p duration_report_plugin --duration-report=PATH`); a **new pytest job is not covered until it is
+  wired the same way**, and nothing checks that it was. Same discipline as the checkers above: no
+  flag, env var or inline marker exempts a test — the only way through is a registry entry, whose
+  diff is the evidence a reviewer reads — and the checker is the rule: if it passes, do not add
+  duration demands in review; if a threshold is wrong, change the constant in the script. Rules,
+  the reasoning behind 60 s and 2× (measured runner-to-runner spread up to 1.9×), the shared-fixture entries and what is not covered:
+  `doc/testing-architecture.md` §7.7.
 - E2E test layout (purpose-primary; see `doc/testing-architecture.md` §6):
   - `test/e2e-correctness/` — full-stack correctness via CLI/PSNR (smoke, CLI behavior, raypath equivalence) + `references/*.jpg`
   - `test/parity-cross-backend/backend/` — backend-equivalence oracles (Metal exit-seam parity, device-gen default path, cpu_backend route, Metal batch invariance) + C++ siblings from 270.3
@@ -378,6 +396,10 @@ deleting its line, and an entry whose edge is gone fails the check.
     structurally unable to report, and the budget rule naming who has to answer for the spend and
     when, are in `doc/testing-architecture.md` §7. They are deliberately not duplicated here: two
     copies of a measurement drift apart, and the copy in this table would be the stale one.
+    The same section says where each test runs beyond these commands — the PR layer, `main` only,
+    the reference machines' daily schedule, release, a developer machine; there is no nightly —
+    and states the PR run's owner-set wall-clock budget with the runs that measure it (§7.0, §7.1).
+    Moving a test out of the PR layer means giving it one of those places first.
 
   - **Judgment discipline**: a command's exit code is the only thing that says pass/fail, and two
     common habits obscure it in different ways. A pipe (`cmd | tail`) leaves `$?` reporting
@@ -867,7 +889,7 @@ Valuable design/architecture docs live in `doc/` (tracked). Consult the relevant
     仍然只在参照机上按本节协议手动跑 ⇒ 动 `test/` 或 `bench/` 后，语法与可移植性有自动信号了，
     但别拿 CI 的绿推断 CUDA 运行时行为也验过。
     与 `windows-remote-testing.md`（GUI VSync 物理桌面）场景正交。
-  - `testing-architecture.md` — **authoritative test-organization spec**: verification-purpose primary axis × subsystem tag, seven layers (unit-correctness / golden-analytic / parity-cross-backend / e2e-correctness / performance / gui / regression-sentinel), the "how to add a test" decision tree, cross-cutting rules (perf denominator = legacy CPU; parity metric-masks-bugs battery; reference ownership), and the layer×subsystem physical-layout blueprint. **§7 is the test-scope contract**: measured per-scope cost (local `quick`/`full`/`pr` and all 16 CI jobs), what each scope catches that the cheaper one structurally cannot, the budget rule (who declares expected test spend, and when they reconcile it), and why independent re-verification is a fixed-cost multiplier that makes cutting base suite cost worth more than its face value. **§4.11 is the comparison-ruler master table**: category → ruler → threshold shape → red/green sample → margin for all four image-comparison categories in this tree (deterministic screenshots' `maxcc`, lines-only parity's membership-mask `maxcc`, `export_parity`'s simulation-scene block-mean PSNR, `lens_proj`'s unchanged whole-frame PSNR), plus the two footguns each ruler is for the others (block-mean reads a deterministic drift as more passing; whole-frame PSNR/SSIM sign-reverses on a darkened stochastic arm) and why `lens_proj` was measured and left alone. Read before adding or reorganizing any test — and before claiming any change shortens CI, or before picking a ruler for a new image comparison.
+  - `testing-architecture.md` — **authoritative test-organization spec**: verification-purpose primary axis × subsystem tag, seven layers (unit-correctness / golden-analytic / parity-cross-backend / e2e-correctness / performance / gui / regression-sentinel), the "how to add a test" decision tree, cross-cutting rules (perf denominator = legacy CPU; parity metric-masks-bugs battery; reference ownership), and the layer×subsystem physical-layout blueprint. **§7 is the test-scope contract**: where each test runs (PR / `main` only / local schedule / release / developer machine; no nightly), the PR run's wall-clock budget, measured per-scope cost (local `quick`/`full`/`pr` and every CI job), what each scope catches that the cheaper one structurally cannot, the budget rule (who declares expected test spend, and when they reconcile it), and why independent re-verification is a fixed-cost multiplier that makes cutting base suite cost worth more than its face value. **§4.11 is the comparison-ruler master table**: category → ruler → threshold shape → red/green sample → margin for all four image-comparison categories in this tree (deterministic screenshots' `maxcc`, lines-only parity's membership-mask `maxcc`, `export_parity`'s simulation-scene block-mean PSNR, `lens_proj`'s unchanged whole-frame PSNR), plus the two footguns each ruler is for the others (block-mean reads a deterministic drift as more passing; whole-frame PSNR/SSIM sign-reverses on a darkened stochastic arm) and why `lens_proj` was measured and left alone. Read before adding or reorganizing any test — and before claiming any change shortens CI, or before picking a ruler for a new image comparison.
 - **Engineering policy**: `env-var-policy.md` — **环境变量使用策略**: user-facing behavior switches must NOT live only in env vars (they cause silent per-machine drift / undebuggable bugs); use CLI/config/API instead. A-class runtime knobs (`LUMICE_TRACE_BACKEND` + 6 perf knobs, with file:line) vs B-class test/build infra (leave alone); three disposition rules; and the **decision gate to answer before adding any new `getenv`**. Read before introducing a new env knob.
 - Example config: `examples/config_example.json`
 

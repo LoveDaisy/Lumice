@@ -33,7 +33,7 @@
       "diameter": 0.5,
       "spectrum": "D65"
     },
-    "ray_num": 2000000,
+    "ray_num": 500000,
     "max_hits": 7,
     "scattering": [
       { "prob": 0.0, "entries": [ {"crystal": 1, "proportion": 100.0} ] }

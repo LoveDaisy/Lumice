@@ -21,7 +21,9 @@ at ~1.06× legacy.
 
 @pytest.mark.slow — needs the release binary; Darwin-only (Metal). ~70 s on the Metal
 reference machine above; measured 278 s on a GitHub-hosted macOS CI runner (PR run
-35169897211) — do not reuse the 70 s figure for CI timeout budgeting.
+35169897211) with the precise profile — do not reuse the 70 s figure for CI timeout
+budgeting. CI runs the ``ci`` profile (``--dual-gate-profile=ci``: 0.75 over 5 reps),
+not the numbers above; see the shared module's docstring for why.
 """
 
 from __future__ import annotations
@@ -42,5 +44,12 @@ _TIMEOUT = 240
 
 
 @pytest.mark.slow
-def test_metal_dual_renderer_throughput(tmp_path):
-    run_dual_renderer_gate(_CONFIGS_DIR, tmp_path, "metal", _TIMEOUT, "metal-dual-throughput")
+def test_metal_dual_renderer_throughput(tmp_path, request):
+    run_dual_renderer_gate(
+        _CONFIGS_DIR,
+        tmp_path,
+        "metal",
+        _TIMEOUT,
+        "metal-dual-throughput",
+        profile=request.config.getoption("--dual-gate-profile"),
+    )

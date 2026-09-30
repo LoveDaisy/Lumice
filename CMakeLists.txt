@@ -284,6 +284,14 @@ elseif(MSVC AND BUILD_SHARED_LIBS)
   set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
 endif()
 
+# LUMICE_IPO=OFF drops IPO from the whole tree, and it is the only way to drop it: the LTO objects
+# live in lumice_obj, which every target links, so IPO cannot be switched off for one target and
+# kept for another. Default ON, so every build that does not ask — build.sh, release.yml — is
+# unchanged. CI passes OFF on its correctness legs, where a full-program LTO link per test binary
+# was most of the Build step (140-363 s per leg, 2-6 s without) and, unlike compilation, no
+# compiler cache can replay it. What CI gives up by that, and which jobs still build with IPO,
+# is spelled out on the `bench-ipo` job in .github/workflows/ci.yml.
+option(LUMICE_IPO "Enable inter-procedural optimization (LTO) on Release builds" ON)
 include(CheckIPOSupported)
 check_ipo_supported(RESULT result OUTPUT output)
 
@@ -303,7 +311,8 @@ check_ipo_supported(RESULT result OUTPUT output)
 # In both cases the whole gap is LTO, none of it the library boundary. GCC 13's LTO links
 # the shared engine cleanly (only DTPOFF64 relocations remain, which are fine in a shared
 # object), so the TPOFF32 exclusion no longer holds for the toolchain a release uses; the
-# CI shared leg builds with the same GCC and would surface a return of it as a link error.
+# CI shared leg that keeps IPO on (E2E Slow's Ubuntu x86_64 entry; shared-gui-test-build passes
+# LUMICE_IPO=OFF) builds with the same GCC and would surface a return of it as a link error.
 # clang-cl's LTO objects worked with WINDOWS_EXPORT_ALL_SYMBOLS (its .def generator read
 # them), so that tree gets IPO too. Real cl.exe did NOT: its /GL objects hold no symbol
 # table CMake's __create_def can read, and the DLL linked "successfully" with an EMPTY export
@@ -318,7 +327,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
 else()
   set(_lumice_gcc_linux FALSE)
 endif()
-if(result AND "${CMAKE_BUILD_TYPE}" STREQUAL "Release"
+if(LUMICE_IPO AND result AND "${CMAKE_BUILD_TYPE}" STREQUAL "Release"
    AND (NOT BUILD_SHARED_LIBS OR LUMICE_CLANG_CL OR _lumice_gcc_linux))
   message(STATUS "IPO supported. Enable inter-procedural optimization.")
   set(CMAKE_INTERPROCEDURAL_OPTIMIZATION TRUE)

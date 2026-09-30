@@ -33,7 +33,7 @@ from __future__ import annotations
 import copy
 import json
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from test.e2e.runner import get_project_root
 
@@ -85,7 +85,8 @@ _VIEW_ELEVATION = 20.0
 _RESOLUTION = [512, 256]
 
 # Baseline single-MS scene reused as the template (single prism, prob=0.0 pure
-# single-scatter, 10M rays, sun altitude 20, D65). Only lens/view are swapped.
+# single-scatter, 10M rays, sun altitude 20, D65). Only lens/view are swapped,
+# plus the ray budget when a caller passes ``ray_num``.
 _BASE_CONFIG = get_project_root() / "test" / "e2e" / "configs" / "dual_fisheye_ref.json"
 
 
@@ -99,12 +100,14 @@ T_SELF_MARGIN = 0.02
 T_PSNR_DB = 13.0
 
 
-def write_projection_config(lens_type: str, out_dir: Path) -> Path:
+def write_projection_config(lens_type: str, out_dir: Path, *, ray_num: Optional[int] = None) -> Path:
     """Materialise a single-MS parity config for ``lens_type`` under ``out_dir``.
 
     Derived from the shared ``dual_fisheye_ref`` baseline by swapping only
     ``render[0].lens.{type,fov}``, ``render[0].view.elevation`` and
-    ``render[0].resolution``. Returns the written path.
+    ``render[0].resolution``. ``ray_num``, when given, overrides the baseline's
+    ``scene.ray_num``; left out, the baseline's own budget stands. Returns the
+    written path.
     """
     if lens_type not in _FOV_BY_TYPE:
         raise ValueError(f"unknown lens type {lens_type!r}; not in PROJECTION_TYPES")
@@ -116,6 +119,8 @@ def write_projection_config(lens_type: str, out_dir: Path) -> Path:
     render["lens"] = {"type": lens_type, "fov": _FOV_BY_TYPE[lens_type]}
     render["resolution"] = list(_RESOLUTION)
     render.setdefault("view", {})["elevation"] = _VIEW_ELEVATION
+    if ray_num is not None:
+        cfg["scene"]["ray_num"] = ray_num
 
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / f"proj_{lens_type}.json"

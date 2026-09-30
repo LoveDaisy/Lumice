@@ -11,7 +11,6 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
-#include <limits>
 #include <random>
 #include <string>
 #include <thread>
@@ -22,7 +21,7 @@
 #include "analytic/path_evaluation.hpp"
 #include "analytic/path_fiber.hpp"
 #include "analytic/so3.hpp"
-#include "portable_normal.hpp"
+#include "support/portable_random.hpp"
 
 namespace lumice::analytic {
 namespace {
@@ -107,8 +106,9 @@ double SetDistance(const TraceResult& a, const TraceResult& b) {
 }
 
 std::array<double, 9> RandomRotation(std::mt19937_64& rng) {
-  PortableNormal g;  // same poses on every standard library
-  double q[4] = { g(rng), g(rng), g(rng), g(rng) };
+  // Same poses on every standard library.
+  double q[4] = { test::PortableGaussianDouble(rng), test::PortableGaussianDouble(rng),
+                  test::PortableGaussianDouble(rng), test::PortableGaussianDouble(rng) };
   const double m = std::sqrt(q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]);
   for (double& v : q) {
     v /= m;
@@ -140,12 +140,12 @@ TEST(PathFiber, DirectionIsEvaluatePathsOutgoingDirection) {
         continue;
       }
       valid++;
-      // One source, two instantiations (double here, the value part of Jet<3> in the map): equal
-      // up to floating-point contraction, which GCC on aarch64 applies by default (fused
-      // multiply-add), so a few ulp of a unit vector rather than bit equality.
+      // What this checks is the adapter's wiring (table, slots, index, incident, pose handed to the
+      // chain in the right places): a mis-wired map is off by O(1). The arithmetic is one template
+      // either way, so agreement is asked at LI's kinematic_atol, not to the last bit.
       const auto d = path.Outgoing(r);
       for (int i = 0; i < 3; i++) {
-        EXPECT_NEAR(d[i], o.outgoing_direction[i], 8 * std::numeric_limits<double>::epsilon());
+        EXPECT_NEAR(d[i], o.outgoing_direction[i], 1e-12);
       }
     }
     EXPECT_GT(valid, 50);

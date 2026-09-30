@@ -65,8 +65,9 @@ _HEAVY_CONFIGS = [
 # cannot manufacture a false green here — but the earlier `active_short` defect
 # could and did: that basis used to divide by IDLE-detection latency and reported
 # 266-390M rays/s on 4% of Metal runs, multiplying this ratio by ~20x with nothing
-# wrong. Fixed in `RunBenchmarkPass` (main.cpp), guarded by
-# test/regression-sentinel/test_benchmark_rate_not_impossible.py.
+# wrong. Fixed in `EstimateBenchmarkRate` (src/util/benchmark_rate.hpp), guarded by
+# test/unit-correctness/util/test_benchmark_rate.cpp (the branch itself) and
+# test/regression-sentinel/test_benchmark_rate_not_impossible.py (its wiring).
 #
 # THIS RATIO HAS A MOVING DENOMINATOR, and that has now bitten once. The floor
 # was 3.0, derived from a measured nominal of ~8-10x (bench_throughput.py

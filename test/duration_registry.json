@@ -1,0 +1,167 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "id": "test/e2e-correctness/test_raypath_analysis_capi.py::test_adaptive_allocation_cuts_rare_row_noise_without_moving_the_means",
+      "job": "E2E Slow (Ubuntu x86_64)",
+      "ci_seconds": 40,
+      "reason": "Guards that adaptive allocation in an analysis run cuts the rare row's cross-session noise at least 5x without biasing any row's mean; the claim is statistical, so it needs two arms of thirty full sessions and cannot shrink without losing the power to see a 5x variance ratio."
+    },
+    {
+      "id": "test/regression-sentinel/test_relative_ev_breaks_additivity.py::<fixture:anchors>",
+      "job": "E2E Slow (Ubuntu x86_64)",
+      "ci_seconds": 35,
+      "reason": "Shared setup of the relative-anchor additivity sentinel: six runs (the whole scene and its two halves, under each exposure anchor), which the file's tests all read; the opposition between the two anchors is only visible across all six."
+    },
+    {
+      "id": "test/e2e-correctness/test_raypath_analysis_capi.py::test_fixed_seed_analysis_is_bit_identical_across_ten_sessions_of_one_server[pc_two_layer]",
+      "job": "E2E Slow (Ubuntu x86_64)",
+      "ci_seconds": 30,
+      "reason": "Guards the fixed-seed contract of analysis runs across ten sessions of one server (a worker RNG that was not re-seeded broke it); ten sessions is the shape of the defect, since it only appears after the first."
+    },
+    {
+      "id": "test/parity-cross-backend/backend/test_anchor_backend_agreement.py::test_device_fused_route_agrees_within_monte_carlo_noise",
+      "job": "E2E Slow (Ubuntu x86_64)",
+      "ci_seconds": 30,
+      "reason": "Guards that the device-fused GPU route publishes the same exposure anchor as legacy CPU, judged against the anchor's own measured seed-to-seed spread; that spread has to be measured in the test, which costs several full runs per route."
+    },
+    {
+      "id": "test/e2e-correctness/test_fp32_accum_hot_pixel.py::<fixture:legacy_run>",
+      "job": "E2E Slow (Ubuntu x86_64)",
+      "ci_seconds": 25,
+      "reason": "Shared setup of the fp32 accumulation hot-pixel test: one long legacy CPU run, because the defect (a float32 running sum drifting a hot pixel's colour) only appears once a pixel has taken about 1e7 adds; already cut to the smallest budget that still shows it."
+    },
+    {
+      "id": "test/parity-cross-backend/backend/test_metal_projection_parity.py::test_metal_projection_no_fallback_detector",
+      "job": "E2E Slow (macOS ARM64 parity)",
+      "ci_seconds": 40,
+      "reason": "Proves the projection battery's routing assertion can fail, by requesting a route the build cannot honour; without it every per-projection Metal parity result could be a silent legacy fallback, and observing the route needs real sessions."
+    },
+    {
+      "id": "test/regression-sentinel/test_gpu_color_mask_batch_leak.py::test_multi_batch_per_class_ratio_cpu_vs_metal_within_band",
+      "job": "E2E Slow (macOS ARM64 parity)",
+      "ci_seconds": 30,
+      "reason": "Guards against the GPU colour-mask batch leak (a layer-0 carried mask never reset between batches, which skewed per-class ratios 3-7x between CPU and Metal); the leak only shows once a run spans many dispatch batches, so the 4M-ray budget is what makes it reachable."
+    },
+    {
+      "id": "test/performance/test_metal_multi_renderer_throughput.py::test_metal_dual_renderer_throughput",
+      "job": "E2E Slow (macOS ARM64 rest)",
+      "ci_seconds": 124,
+      "reason": "Guards against a Metal session serving two renderers collapsing to a fraction of single-renderer throughput (CI runs the disaster profile: 0.75 over 5 interleaved reps; the precise 0.85 over 21 runs on the reference machines on a schedule). Its cost is the interleaved repetitions a median ratio needs on a runner whose per-arm CoV is 0.155-0.229; fewer reps raise the false-red rate at this threshold."
+    },
+    {
+      "id": "test/parity-cross-backend/backend/test_metal_exit_seam_parity.py::test_parity_multi_ms_prob08",
+      "job": "E2E Slow (macOS ARM64 rest)",
+      "ci_seconds": 40,
+      "reason": "Metal exit-seam parity against legacy CPU on a multi-scattering scene at ms_prob 0.8, the deepest cross-layer transit in the battery; the legacy CPU oracle arm dominates the cost and the ray budget is what lets block-mean correlation separate a real mismatch from Monte-Carlo speckle."
+    },
+    {
+      "id": "test/e2e-correctness/test_raypath_analysis_capi.py::test_adaptive_allocation_cuts_rare_row_noise_without_moving_the_means",
+      "job": "E2E Slow (macOS ARM64 rest)",
+      "ci_seconds": 40,
+      "reason": "Guards that adaptive allocation in an analysis run cuts the rare row's cross-session noise at least 5x without biasing any row's mean; the claim is statistical, so it needs two arms of thirty full sessions and cannot shrink without losing the power to see a 5x variance ratio."
+    },
+    {
+      "id": "test/parity-cross-backend/backend/test_metal_multi_renderer_parity.py::test_metal_multi_renderer_parity[multi_renderer_parity_dual]",
+      "job": "E2E Slow (macOS ARM64 rest)",
+      "ci_seconds": 60,
+      "reason": "Per-renderer Metal-vs-legacy-CPU parity when one session serves several renderers (N device planes); the only coverage of the N-plane path, and each renderer's plane has to be compared against its own legacy oracle run."
+    },
+    {
+      "id": "test/parity-cross-backend/backend/test_metal_batch_invariance.py::test_metal_batch_invariance[ms_multi_crystal_filtered]",
+      "job": "E2E Slow (macOS ARM64 rest)",
+      "ci_seconds": 55,
+      "reason": "Guards that changing the Metal dispatch batch does not change the statistical result and that commits conserve rays; it has to run the same scene at several batch sizes, each a full run."
+    },
+    {
+      "id": "test/parity-cross-backend/backend/test_metal_exit_seam_parity.py::test_parity_low_symmetry_filters[parity_asymmetric_cone_b_filter]",
+      "job": "E2E Slow (macOS ARM64 rest)",
+      "ci_seconds": 55,
+      "reason": "Metal exit-seam parity against legacy CPU on a low-symmetry cone crystal with a B filter, the case where label and physical symmetry diverge; a filtered sparse scene needs this ray budget before its correlation threshold means anything."
+    },
+    {
+      "id": "test/e2e-correctness/test_raypath_analysis_capi.py::test_fixed_seed_analysis_is_bit_identical_across_ten_sessions_of_one_server[pc_two_layer]",
+      "job": "E2E Slow (macOS ARM64 rest)",
+      "ci_seconds": 50,
+      "reason": "Guards the fixed-seed contract of analysis runs across ten sessions of one server (a worker RNG that was not re-seeded broke it); ten sessions is the shape of the defect, since it only appears after the first."
+    },
+    {
+      "id": "test/parity-cross-backend/backend/test_metal_exit_seam_parity.py::test_parity_multi_ms_complex_filter",
+      "job": "E2E Slow (macOS ARM64 rest)",
+      "ci_seconds": 50,
+      "reason": "Metal exit-seam parity against legacy CPU for multi-scattering with a compound filter expression; the only end-to-end check that both routes apply the same filter grammar across layers, on a sparse image that needs this budget."
+    },
+    {
+      "id": "test/parity-cross-backend/backend/test_metal_exit_seam_parity.py::test_parity_multi_ms_prob08_filter",
+      "job": "E2E Slow (macOS ARM64 rest)",
+      "ci_seconds": 50,
+      "reason": "Metal exit-seam parity against legacy CPU for multi-scattering at ms_prob 0.8 with a raypath filter, which is where filter-fail rays must stop propagating across layers on both routes; sparse filtered output needs this budget to be judged."
+    },
+    {
+      "id": "test/parity-cross-backend/backend/test_metal_exit_seam_parity.py::test_metal_fallback_detector",
+      "job": "E2E Slow (macOS ARM64 rest)",
+      "ci_seconds": 45,
+      "reason": "Proves the routing assertion every other Metal parity test relies on can fail (a request the build cannot honour reads back as a different route); without it a silent fallback to legacy CPU would make the whole battery vacuous, and it has to create real sessions to observe the route."
+    },
+    {
+      "id": "test/parity-cross-backend/backend/test_anchor_backend_agreement.py::test_device_fused_route_agrees_within_monte_carlo_noise",
+      "job": "E2E Slow (macOS ARM64 rest)",
+      "ci_seconds": 35,
+      "reason": "Guards that the device-fused GPU route publishes the same exposure anchor as legacy CPU, judged against the anchor's own measured seed-to-seed spread; that spread has to be measured in the test, which costs several full runs per route."
+    },
+    {
+      "id": "test/parity-cross-backend/backend/test_globe_far_side_backend_parity.py::test_globe_far_side_clip_matches_legacy_cpu[metal]",
+      "job": "E2E Slow (macOS ARM64 rest)",
+      "ci_seconds": 35,
+      "reason": "Guards that a device-fused GPU route hands over the globe's far-side energy plane (dropping it silently draws the wrong clip, with no error); compared on the finished CLI image against legacy CPU, which is the only place the defect is visible."
+    },
+    {
+      "id": "test/regression-sentinel/test_relative_ev_breaks_additivity.py::<fixture:anchors>",
+      "job": "E2E Slow (macOS ARM64 rest)",
+      "ci_seconds": 35,
+      "reason": "Shared setup of the relative-anchor additivity sentinel: six runs (the whole scene and its two halves, under each exposure anchor), which the file's tests all read; the opposition between the two anchors is only visible across all six."
+    },
+    {
+      "id": "test/e2e-correctness/test_fp32_accum_hot_pixel.py::<fixture:legacy_run>",
+      "job": "E2E Slow (macOS ARM64 rest)",
+      "ci_seconds": 30,
+      "reason": "Shared setup of the fp32 accumulation hot-pixel test: one long legacy CPU run, because the defect (a float32 running sum drifting a hot pixel's colour) only appears once a pixel has taken about 1e7 adds; already cut to the smallest budget that still shows it."
+    },
+    {
+      "id": "test/e2e-correctness/test_smoke.py::TestSmoke::test_config_color",
+      "job": "e2e-test",
+      "ci_seconds": 65,
+      "reason": "Smoke render of the colour-class example config against its committed reference at a calibrated PSNR threshold; the threshold was calibrated at this ray budget, so cutting the budget means reshooting the reference and recalibrating."
+    },
+    {
+      "id": "test/e2e-correctness/test_smoke.py::TestSmoke::test_config_multi_scatter",
+      "job": "e2e-test",
+      "ci_seconds": 45,
+      "reason": "Smoke render of the multi-scattering example config against its committed reference at a calibrated PSNR threshold; the threshold was calibrated at this ray budget, so cutting the budget means reshooting the reference and recalibrating."
+    },
+    {
+      "id": "test/e2e-correctness/test_ray_allocation_narrow_arc_starvation.py::TestRayAllocationNarrowArcStarvation::<fixture:_unittest_setUpClass_fixture_TestRayAllocationNarrowArcStarvation>",
+      "job": "e2e-test",
+      "ci_seconds": 35,
+      "reason": "Shared setup of the narrow-arc starvation test: proportional and adaptive renders of a Parry-arc scene with a rarely-passing filtered entry, repeated enough to measure the arc's noise under each; removing the relative floor in adaptive allocation is what it catches."
+    },
+    {
+      "id": "test/e2e-correctness/test_incidence_sampling_convergence.py::TestIncidenceSamplingConvergence::test_self_consistency_halo_22",
+      "job": "e2e-test",
+      "ci_seconds": 30,
+      "reason": "End-to-end sanity for entry-point incidence sampling on the 22-degree halo scene: two independent CLI renders must agree to the Monte-Carlo noise floor; the analytic oracles are the primary judge, and this leg needs a budget where that floor is measurable."
+    },
+    {
+      "id": "test/e2e-correctness/test_incidence_sampling_convergence.py::TestIncidenceSamplingConvergence::test_self_consistency_parhelion",
+      "job": "e2e-test",
+      "ci_seconds": 30,
+      "reason": "End-to-end sanity for entry-point incidence sampling on the plate parhelion scene: two independent CLI renders must agree to the Monte-Carlo noise floor; the analytic oracles are the primary judge, and this leg needs a budget where that floor is measurable."
+    },
+    {
+      "id": "test/e2e-correctness/test_ray_allocation_regression.py::TestRayAllocationRegression::<fixture:_unittest_setUpClass_fixture_TestRayAllocationRegression>",
+      "job": "e2e-test",
+      "ci_seconds": 30,
+      "reason": "Shared setup of the adaptive-allocation regression test: proportional and adaptive renders of two scenes, one to show adaptive moves no expected pixel (PSNR pair) and one to show the mechanism actually ran; both need full renders."
+    }
+  ]
+}
