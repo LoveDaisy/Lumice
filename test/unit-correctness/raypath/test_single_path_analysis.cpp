@@ -116,6 +116,9 @@ TEST(SinglePathConvert, TakesTheCentreSlotOfEveryDistribution) {
 // The pyramid's fields reach the kernel in the simulator's factory order (simulator.cpp
 // CrystalMaker: CreatePyramid(wedge_u, wedge_l, h_pyr_u, h_prs, h_pyr_l, d)): with every height and
 // wedge distinct, a swapped field moves some corner, so equal corners slot by slot pin the mapping.
+// The kernel's corners are the engine's refined to double from the double fields (BuildFaceNormals),
+// so "equal" is to the engine's float rounding: 1e-6 of the crystal's size, where a swapped field
+// moves a corner by a tenth of it.
 TEST(SinglePathConvert, PyramidFieldsReachTheSimulatorsFactoryArguments) {
   PyramidCrystalParam p = Pyramid(0.8f, 0.3f, 0.6f, 28.0f, 40.0f);
   p.d_[1] = Fixed(1.2f);
@@ -149,7 +152,7 @@ TEST(SinglePathConvert, PyramidFieldsReachTheSimulatorsFactoryArguments) {
     }
     for (int k = 0; k < g.face_vtx_cnt[s]; k++) {
       for (int x = 0; x < 3; x++) {
-        EXPECT_EQ(polygons.corner[s][k][x], g.face_vtx[(s * kCrystalGeomMaxVtxPerFace + k) * 3 + x]);
+        EXPECT_NEAR(polygons.corner[s][k][x], g.face_vtx[(s * kCrystalGeomMaxVtxPerFace + k) * 3 + x], 1e-6);
       }
     }
   }
@@ -595,6 +598,87 @@ TEST(SinglePathDiscovery, WarmSeedsKeepEveryComponent) {
   EXPECT_EQ(second.discovery.extra_seed_count, static_cast<int>(first.components.size()));
   EXPECT_GE(second.components.size(), first.components.size());
   ExpectFibersLandOnTheTarget(second);
+}
+
+// ---- axis distribution -> band-sum pose density ----
+// The five GUI presets, mirrored by hand from src/gui/axis_presets.hpp (raypath may not include the
+// GUI) in the config file's external spelling: zenith is the c axis' zenith angle, stored internally
+// as latitude = 90 - zenith (math.cpp from_json(AxisDistribution)).
+AxisDistribution Axis(Distribution zenith_external, Distribution azimuth, Distribution roll) {
+  AxisDistribution a;
+  a.latitude_dist = zenith_external;
+  a.latitude_dist.center = 90.0f - zenith_external.center;
+  a.azimuth_dist = azimuth;
+  a.roll_dist = roll;
+  return a;
+}
+
+constexpr Distribution kFullTurn{ DistributionType::kUniform, 0.0f, 360.0f };
+constexpr Distribution kLockedRoll{ DistributionType::kGaussian, 0.0f, 1.0f };
+
+Distribution Gauss(float mean, float std) {
+  return { DistributionType::kGaussian, mean, std };
+}
+
+TEST(AxisToPoseDensity, TheFivePresetsMapToTheirFamilies) {
+  struct Case {
+    const char* name;
+    AxisDistribution axis;
+    analytic::PoseFamily family;
+    double zenith_mean;
+    double zenith_std;
+    double roll_std;
+  };
+  const Case cases[] = {
+    { "random", Axis(kFullTurn, kFullTurn, kFullTurn), analytic::PoseFamily::kRandom, 0.0, 0.0, 0.0 },
+    { "column", Axis(Gauss(90.0f, 1.0f), kFullTurn, kFullTurn), analytic::PoseFamily::kColumn, 90.0, 1.0, 0.0 },
+    { "plate", Axis(Gauss(0.0f, 1.0f), kFullTurn, kFullTurn), analytic::PoseFamily::kPlate, 0.0, 1.0, 0.0 },
+    { "parry", Axis(Gauss(90.0f, 1.0f), kFullTurn, kLockedRoll), analytic::PoseFamily::kParry, 90.0, 1.0, 1.0 },
+    { "lowitz", Axis(Gauss(0.0f, 40.0f), kFullTurn, kLockedRoll), analytic::PoseFamily::kLowitz, 0.0, 40.0, 1.0 },
+  };
+  for (const Case& c : cases) {
+    SCOPED_TRACE(c.name);
+    const PoseDensityConversion got = ConvertAxisToPoseDensity(c.axis);
+    EXPECT_TRUE(got.Ok()) << got.unsupported;
+    EXPECT_EQ(got.spec.family, c.family);
+    EXPECT_DOUBLE_EQ(got.spec.zenith_mean_deg, c.zenith_mean);
+    EXPECT_DOUBLE_EQ(got.spec.zenith_std_deg, c.zenith_std);
+    EXPECT_DOUBLE_EQ(got.spec.roll_mean_deg, 0.0);
+    EXPECT_DOUBLE_EQ(got.spec.roll_std_deg, c.roll_std);
+    EXPECT_STREQ(analytic::PoseDensityError(got.spec), "");
+  }
+}
+
+// Every class the contract lists as not expressible in v1 (section 2.2) is refused, naming what it
+// got; none falls back to a nearby family.
+TEST(AxisToPoseDensity, InexpressibleAxesAreRefusedByName) {
+  struct Case {
+    AxisDistribution axis;
+    const char* expected_fragment;
+  };
+  const Case cases[] = {
+    { Axis({ DistributionType::kZigzag, 0.0f, 40.0f }, kFullTurn, kLockedRoll), "zenith of type zigzag" },
+    { Axis({ DistributionType::kLaplacian, 90.0f, 1.0f }, kFullTurn, kFullTurn), "zenith of type laplacian" },
+    { Axis({ DistributionType::kUniform, 90.0f, 20.0f }, kFullTurn, kFullTurn), "zenith of type uniform" },
+    { Axis({ DistributionType::kGaussianLegacy, 90.0f, 1.0f }, kFullTurn, kFullTurn), "zenith of type gauss_legacy" },
+    { Axis(Fixed(90.0f), kFullTurn, kFullTurn), "zenith of type fixed" },
+    { Axis(Gauss(90.0f, 1.0f), { DistributionType::kUniform, 0.0f, 180.0f }, kFullTurn),
+      "azimuth of type uniform over 180" },
+    { Axis(Gauss(90.0f, 1.0f), Gauss(0.0f, 10.0f), kFullTurn), "azimuth of type gauss" },
+    // A Gaussian roll with a uniform (even full-range) zenith.
+    { Axis(kFullTurn, kFullTurn, kLockedRoll), "zenith of type uniform" },
+    { Axis(Gauss(90.0f, 1.0f), kFullTurn, Fixed(0.0f)), "roll of type fixed" },
+    { Axis(Gauss(90.0f, 1.0f), kFullTurn, { DistributionType::kUniform, 0.0f, 90.0f }),
+      "roll of type uniform over 90" },
+    { Axis(Gauss(90.0f, 1.0f), kFullTurn, { DistributionType::kZigzag, 0.0f, 5.0f }), "roll of type zigzag" },
+    { Axis(Gauss(90.0f, 0.0f), kFullTurn, kFullTurn), "zenith_std_deg" },
+  };
+  for (const Case& c : cases) {
+    SCOPED_TRACE(c.expected_fragment);
+    const PoseDensityConversion got = ConvertAxisToPoseDensity(c.axis);
+    EXPECT_FALSE(got.Ok());
+    EXPECT_NE(got.unsupported.find(c.expected_fragment), std::string::npos) << got.unsupported;
+  }
 }
 
 }  // namespace

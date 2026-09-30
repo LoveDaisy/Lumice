@@ -287,6 +287,20 @@ struct BandEvent {
   double phi[3]{};
 };
 
+// One kept event of the whole sample (LI docs/band-sum-contract.md section 3): the lattice point's
+// fields and its weight w = A T > 0, with A in LI's normalisation (hexagon edge a = 1).
+struct SampleEvent {
+  BandEvent event;
+  double weight = 0.0;
+};
+
+// This library's closed-form crystals are half LI's in length (face distance 1 is a hexagon of
+// apothem sqrt(3)/4, edge 1/2; LI's has edge 1), so an entry measure, an area, is a quarter of LI's
+// (doc/analytic-api.md section 4.4). The band sum's weights are in LI's normalisation, which is
+// where its values are defined (contract section 6); discovery only gates on A > 0 and keeps the
+// native unit.
+constexpr double kLiAreaPerEngineArea = 4.0;
+
 // Deviation delta = angle(s, d), as LI's StoreSeeds.candidates computes it.
 double TargetDeviation(const double incident_direction[3], const double target_direction[3]);
 
@@ -312,6 +326,17 @@ class IceDiscovery {
   // events are kept, and the entry measure is evaluated only for them (A does not change D, so the
   // band of the kept events is the kept events of the band, in the same order).
   std::vector<BandEvent> BuildBand(int sample_count, double delta, double half_width);
+
+  // LI docs/band-sum-contract.md section 3: every kept event (w = A T > 0) of the n-point lattice, in
+  // increasing (D, index), with w in LI's normalisation (kLiAreaPerEngineArea). The same lattice
+  // point, path chain, deviation and gates as BuildBand (one EvaluateLatticePoint), without the band.
+  std::vector<SampleEvent> BuildEvents(int sample_count);
+
+  // Lattice point i of n: u, phi = Phi_P(-u), D and the index into `event`, the Fresnel factor T into
+  // `transmission`. False when the path is not valid at that point (nothing else is set then).
+  bool EvaluateLatticePoint(int sample_count, int i, BandEvent* event, double* transmission);
+  // The entry measure A at the event's u, in this library's length unit.
+  double EntryMeasureAt(const BandEvent& event);
 
   // Section 9.5.4 step 3-4: Gauss-Newton from `raw`, then admissible iff the residual is at most
   // tau = residual_tolerance + relative_residual_tolerance, the path domain is valid (every

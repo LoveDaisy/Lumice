@@ -5,8 +5,9 @@ The continuation itself is checked in-process by test/unit-correctness/analytic/
 parity-fixture pins), which compile the kernel but not the C wrapper. This file owns what only the
 wrapper does (doc/analytic-api.md sections 4.3, 4.4, 8.2): one batch call over independent problems,
 element-level versus call-level errors, per-problem initial_tangent_sign, the N = 0 / N = 1 pointer
-rules, u = R^T (-incident), the result block and its release, the struct_size stride of the batch,
-and the zero-fill on every call error.
+rules, u = R^T (-incident), the result block and its release, the struct_size stride of the batch
+(for a version 4, a partial, a current and a newer caller), the version 5 per-pose diagnostics as
+read through the struct, and the zero-fill on every call error.
 
 Each case runs in a child interpreter so a crash in the library is a failed case, not a dead
 pytest. Needs a shared build (`./scripts/build.sh -sj release`); skipped when there is none, or in
@@ -85,17 +86,27 @@ _PRELUDE = textwrap.dedent(
                     ("step_max", c_double), ("max_accepted_steps", c_int), ("closure_min_steps", c_int),
                     ("closure_pose_tolerance", c_double)]
 
-    class FiberResult(Structure):
+    # The version 4 layout, and the current one: version 5 appended the per-pose diagnostics.
+    class FiberResultV4(Structure):
         _fields_ = [("struct_size", c_uint32), ("status", c_int), ("reason", c_int), ("pose_count", c_int),
                     ("poses", POINTER(c_double)), ("crystal_frame_sun_directions", POINTER(c_double)),
                     ("arclength_increments", POINTER(c_double)), ("residual_norms", POINTER(c_double)),
                     ("tangents", POINTER(c_double)), ("storage", c_void_p)]
+
+    class FiberResult(Structure):
+        _fields_ = FiberResultV4._fields_ + [
+            ("branch_margin_count", c_int), ("branch_margin_names", POINTER(ctypes.c_char_p)),
+            ("branch_margins", POINTER(c_double)), ("jacobian_available", POINTER(c_int)),
+            ("normal_jacobian", POINTER(c_double)), ("singular_values", POINTER(c_double))]
 
     OK, NULL_ARG, INVALID_VALUE, INVALID_CONFIG = 0, 1, 2, 3
     CLOSED, EVENT, NUMERICAL, BUDGET = 0, 1, 2, 3
     R_CLOSED, R_TIR, R_INFEASIBLE, R_INVALID_INPUT, R_STEP_BUDGET = 0, 100, 102, 204, 300
 
     lib = ctypes.CDLL(LIB)
+    lib.LUMICE_ANALYTIC_GetApiVersion.restype = c_int
+    # Version 6 only added the band sum; the fiber structs below are version 5's.
+    assert lib.LUMICE_ANALYTIC_GetApiVersion() == 6, "these bindings are lumice_analytic.h version 6's"
     lib.LUMICE_ANALYTIC_TraceFiberBatch.restype = c_int
     lib.LUMICE_ANALYTIC_TraceFiberBatch.argtypes = [POINTER(Crystal), POINTER(FiberProblem), c_int,
                                                     POINTER(Options), c_void_p]
@@ -164,8 +175,8 @@ _PRELUDE = textwrap.dedent(
                     inc=take(r.arclength_increments, max(n - 1, 0)), res=take(r.residual_norms, n),
                     tan=take(r.tangents, 3 * n))
 
-    def check_result(r, incident=SUN):
-        # Shapes, pointer rules and u = R^T (-s) for any result.
+    def check_result(r, incident=SUN, faces=(3, 5)):
+        # Shapes, pointer rules and u = R^T (-s) for any result; the diagnostics when struct_size has them.
         n = r.pose_count
         a = arrays(r)
         if n == 0:
@@ -184,7 +195,32 @@ _PRELUDE = textwrap.dedent(
             assert a["res"][i] <= 1e-11
         if n > 1:
             assert all(x >= 0.0 for x in a["inc"])
+        if r.struct_size >= sizeof(FiberResult):
+            check_diagnostics(r, faces)
         return a
+
+    def diagnostics(r):
+        n, k = r.pose_count, r.branch_margin_count
+        take = lambda p, m: [p[i] for i in range(m)] if p else None
+        return dict(k=k, names=[r.branch_margin_names[i].decode() for i in range(k)] if r.branch_margin_names else None,
+                    margins=take(r.branch_margins, n * k), available=take(r.jacobian_available, n),
+                    j=take(r.normal_jacobian, n), sv=take(r.singular_values, 2 * n))
+
+    def check_diagnostics(r, faces):
+        # The version 5 per-pose arrays (LI analytic-parity-fixtures 3.2): LI's margin names in chain
+        # order, and every accepted pose regular — all margins > 0, J_perp = s1 s2 > 0, s1 >= s2.
+        n, d = r.pose_count, diagnostics(r)
+        if n == 0:
+            assert d == dict(k=0, names=None, margins=None, available=None, j=None, sv=None), d
+            return
+        m = len(faces)
+        assert d["names"] == (["entry_incidence_cosine", "entry_snell_discriminant"]
+                              + [f"internal_{j}_incidence_cosine" for j in range(1, m - 1)]
+                              + ["exit_incidence_cosine", "exit_snell_discriminant"]), d["names"]
+        assert d["available"] == [1] * n and all(x > 0.0 for x in d["margins"]), d
+        for i in range(n):
+            s1, s2 = d["sv"][2 * i], d["sv"][2 * i + 1]
+            assert s1 >= s2 > 0.0 and abs(d["j"][i] - s1 * s2) <= 1e-15 * d["j"][i], (i, s1, s2, d["j"][i])
     """
 )
 
@@ -228,7 +264,7 @@ def test_one_batch_traces_every_problem_independently() -> None:
 
         # 3-5-6-7: an arc cut by exit TIR at both ends; each orientation ends on its own event.
         for r in (out[3], out[4]):
-            check_result(r)
+            check_result(r, faces=P3567["faces"])
             assert (r.status, r.reason) == (EVENT, R_TIR), got
             assert r.pose_count > 1
 
@@ -276,7 +312,7 @@ def test_n0_and_n1_results_follow_the_pointer_rules() -> None:
         assert len(ones) == 1, [(r.status, r.reason, r.pose_count) for r in out]
         one = ones[0]
         assert (one.status, one.reason) == (EVENT, R_TIR)
-        check_result(one)
+        check_result(one, faces=P3567["faces"])
         assert not one.arclength_increments and one.storage
         for r in list(out) + list(arc):
             release(r)
@@ -294,7 +330,7 @@ def test_trace_fiber_is_the_batch_of_one() -> None:
         rc, out = batch([p])
         assert rc == OK
         assert (single.status, single.reason, single.pose_count) == (out[0].status, out[0].reason, out[0].pose_count)
-        assert arrays(single) == arrays(out[0])
+        assert arrays(single) == arrays(out[0]) and diagnostics(single) == diagnostics(out[0])
         release(single)
         release(out[0])
         """
@@ -382,25 +418,71 @@ def test_call_errors_zero_fill_every_element() -> None:
     )
 
 
-def test_a_newer_callers_larger_struct_sets_the_stride() -> None:
+def test_every_callers_struct_size_sets_the_stride() -> None:
     _run_child(
         """
-        # A caller compiled against a header with one more trailing field (section 8.2): the stride
-        # is its struct_size, and the field the library does not know stays as the caller left it.
+        probs = (FiberProblem * 2)(problem(P35, 1), problem(P3567, 1))
+        rc, current = batch([problem(P35, 1), problem(P3567, 1)])
+        assert rc == OK, rc
+
+        # A caller compiled against version 4 (section 8.2): the stride is the version 4 sizeof, the
+        # results are the current ones field for field, and nothing past the last element is written
+        # (a 0x5A tail stands where a version 5 struct would have its appended fields).
+        class V4Batch(Structure):
+            _fields_ = [("items", FiberResultV4 * 2), ("tail", ctypes.c_ubyte * 64)]
+        old = V4Batch()
+        ctypes.memset(ctypes.addressof(old), 0x5A, sizeof(old))
+        for r in old.items:
+            r.struct_size = sizeof(FiberResultV4)
+        rc = lib.LUMICE_ANALYTIC_TraceFiberBatch(byref(prism()), probs, 2, None, ctypes.addressof(old))
+        assert rc == OK, rc
+        assert bytes(old.tail) == bytes([0x5A]) * 64
+        for r, c in zip(old.items, current):
+            assert (r.status, r.reason, r.pose_count) == (c.status, c.reason, c.pose_count)
+            assert arrays(r) == arrays(c)
+        single = FiberResultV4(struct_size=sizeof(FiberResultV4))
+        assert lib.LUMICE_ANALYTIC_TraceFiber(byref(prism()), byref(probs[0]), None,
+                                              ctypes.cast(ctypes.pointer(single), POINTER(FiberResult))) == OK
+        assert arrays(single) == arrays(current[0])
+        for r in list(old.items) + [single]:
+            release(r)
+            assert r.struct_size == sizeof(FiberResultV4) and not r.storage and r.pose_count == 0
+
+        # A struct_size that ends inside the appended fields gets none of them: they read as zero /
+        # NULL ("not provided"), and the version 4 part is served as usual.
+        class Partial(Structure):
+            _fields_ = FiberResultV4._fields_ + [("branch_margin_count", c_int), ("branch_margin_names", c_void_p)]
+        part = (Partial * 2)()
+        ctypes.memset(part, 0x5A, sizeof(part))
+        for r in part:
+            r.struct_size = sizeof(Partial)
+        rc = lib.LUMICE_ANALYTIC_TraceFiberBatch(byref(prism()), probs, 2, None, addr(part))
+        assert rc == OK, rc
+        for r, c in zip(part, current):
+            assert (r.branch_margin_count, r.branch_margin_names) == (0, None)
+            assert arrays(r) == arrays(c)
+            release(r)
+
+        # A caller compiled against a header with one more trailing field: the stride is its
+        # struct_size, it gets every field the library knows, and the one it does not know stays as
+        # the caller left it.
         class Newer(Structure):
             _fields_ = FiberResult._fields_ + [("future", c_double)]
         arr = (Newer * 2)()
         for r in arr:
             r.struct_size = sizeof(Newer)
             r.future = 42.0
-        probs = (FiberProblem * 2)(problem(P35, 1), problem(P3567, 1))
         rc = lib.LUMICE_ANALYTIC_TraceFiberBatch(byref(prism()), probs, 2, None, addr(arr))
         assert rc == OK, rc
         assert (arr[0].status, arr[0].reason) == (CLOSED, R_CLOSED)
         assert (arr[1].status, arr[1].reason) == (EVENT, R_TIR)
         assert arr[0].future == 42.0 and arr[1].future == 42.0
+        for r, c in zip(arr, current):
+            assert diagnostics(r) == diagnostics(c) and diagnostics(r)["k"] > 0
         for r in arr:
             release(r)
             assert r.future == 42.0
+        for r in current:
+            release(r)
         """
     )

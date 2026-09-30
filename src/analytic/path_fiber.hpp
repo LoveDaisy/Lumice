@@ -57,6 +57,30 @@ class IcePathMap {
   double incident_[3];
 };
 
+// The wave 2 diagnostics of one pose (LI docs/analytic-parity-fixtures.md section 3.1:
+// `branch_margins`, `failed_gate`, `jacobian_available`, `normal_jacobian`, `singular_values`), from
+// the same chain EvaluatePath runs and the same fiber_detail::NormalJacobianAt a trace records at each accepted
+// pose — so a trace's per-pose arrays can be checked against a fresh evaluation at its poses.
+//   valid:        EvaluatePath's `valid` (no Snell event tolerance: that is continuation's, not the
+//                 path's).
+//   margins:      the validity margins in BranchMarginName order. All BranchMarginCount of them when
+//                 valid; when not, the ones the chain evaluated before it stopped.
+//   failed_gate:  when not valid, the index of the first margin that is not > 0 (LI's order); -1 when
+//                 valid.
+//   jacobian:     available exactly when valid (the normal Jacobian exists only on the smooth branch);
+//                 otherwise unavailable with NaN numbers.
+struct PathDiagnostics {
+  bool valid = false;
+  int margin_count = 0;
+  double margins[kMaxFaceCount + 2]{};
+  int failed_gate = -1;
+  NormalJacobian jacobian;
+};
+
+PathDiagnostics EvaluatePathDiagnostics(const FaceNormalTable& table, const int* slots, int slot_count,
+                                        double refractive_index, const double incident_direction[3],
+                                        const double pose[9]);
+
 }  // namespace lumice::analytic
 
 #endif  // LUMICE_ANALYTIC_PATH_FIBER_HPP_

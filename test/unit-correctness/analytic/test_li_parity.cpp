@@ -10,16 +10,18 @@
 //    of the recipe that live here are the geodesic densification spacing (1e-3 rad, part of the
 //    curve-distance definition, LI section 4) and the absolute guard LI's own verifier adds to a
 //    relative arclength comparison so a zero-length reference is well defined.
-//  - The kernels are called directly (EvaluatePath, TraceFiber, IceDiscovery::DiscoverOnBand), not
-//    the C ABI: a seed_search fixture is a replay on LI's exported band, and only the kernel takes a
-//    band. The ABI's own translation (LUMICE_ANALYTIC_Crystal and the v0 options block into these
-//    kernels) is the ctypes e2e tests' subject (test/e2e-correctness/test_analytic_*.py).
+//  - The kernels are called directly (EvaluatePath, TraceFiber, IceDiscovery::DiscoverOnBand,
+//    BandSumOnEvents / BandSum), not the C ABI: a seed_search fixture is a replay on LI's exported
+//    band and a band_sum fixture's layer 1 on LI's exported events, and only the kernel takes them. The ABI's own
+//    translation (LUMICE_ANALYTIC_Crystal and the v0 options block into these kernels) is the ctypes e2e tests' subject
+//    (test/e2e-correctness/test_analytic_*.py).
 //  - The comparison geometry (rotation distance, SO(3) log/exp, densification, Hausdorff) is written
 //    out below independently of src/analytic/so3.hpp, so a defect there cannot also blind the ruler.
 //
 // symmetry_semantics: none — asserted per fixture (doc/analytic-api.md section 3.3 rule 2): a
 // fixture that carried a symmetry reduction would not describe one concrete face sequence.
 
+#include <gtest/gtest-spi.h>
 #include <gtest/gtest.h>
 
 #include <algorithm>
@@ -37,10 +39,13 @@
 #include <string>
 #include <vector>
 
+#include "analytic/band_sum.hpp"
 #include "analytic/discovery.hpp"
 #include "analytic/fiber_continuation.hpp"
 #include "analytic/path_evaluation.hpp"
 #include "analytic/path_fiber.hpp"
+#include "analytic/path_rank.hpp"
+#include "analytic/pose_density.hpp"
 
 #ifndef LUMICE_LI_PARITY_FIXTURE_DIR
 #error "LUMICE_LI_PARITY_FIXTURE_DIR must name test/fixtures/li-parity (test/CMakeLists.txt)"
@@ -111,38 +116,119 @@ std::map<std::string, std::string> ReadSource() {
   return out;
 }
 
-// Every fixture file the manifest lists, in manifest order. Read at registration time so each
-// fixture is its own gtest case; a missing manifest yields no cases, which the manifest test below
-// then reports as a failure rather than a silent pass.
-std::vector<std::string> ManifestFiles() {
-  std::ifstream in(FixtureDir() / "manifest.json");
-  if (!in) {
-    return {};
-  }
-  const Json manifest = Json::parse(in, nullptr, false);
+// The manifest sections that list fixture files (LI section 2): the path x category matrix, the
+// wave 2 edge cells and the band-sum cells. Any other top-level key is ignored, as LI requires of a
+// reader; a file listed only under an unknown key is then on disk but unlisted, and the manifest
+// test's listed == present check goes red instead of the file being silently dropped.
+constexpr const char* kManifestSections[] = { "cells", "edge_cells", "band_sum_cells" };
+
+// Every fixture file `manifest` lists, in section then manifest order. Pure, so the unknown-key rule
+// is tested on this very function.
+std::vector<std::string> ManifestFilesOf(const Json& manifest) {
   std::vector<std::string> files;
-  if (!manifest.is_object() || !manifest.contains("cells")) {
+  if (!manifest.is_object()) {
     return files;
   }
-  for (const Json& cell : manifest["cells"]) {
-    if (!cell.is_object() || !cell.contains("files")) {
-      continue;  // a malformed cell surfaces in the manifest test, not as a crash at registration
+  for (const char* section : kManifestSections) {
+    if (!manifest.contains(section) || !manifest.at(section).is_array()) {
+      continue;  // a section an older export does not have
     }
-    for (const Json& f : cell.at("files")) {
-      files.push_back(f.get<std::string>());
+    for (const Json& cell : manifest.at(section)) {
+      if (!cell.is_object() || !cell.contains("files") || !cell.at("files").is_array()) {
+        continue;  // a malformed cell surfaces in the manifest test, not as a crash at registration
+      }
+      for (const Json& f : cell.at("files")) {
+        if (f.is_string()) {
+          files.push_back(f.get<std::string>());
+        }
+      }
     }
   }
   return files;
 }
 
+// Why a fixture's content is not (yet) compared. Each fixture that carries such content gets one
+// LiParitySkipped case that checks the content is present and then skips with the reason, so the
+// uncompared part is counted by gtest rather than dropped. Whoever implements a comparison removes
+// its reason here and adds the comparison to the kind's suite. Every fixture kind of the current
+// set is compared in full, so there is no reason today; the machinery stays for the next wave.
+
+// What the reader knows about one fixture file: its kind (the JSON's `fixture_kind`, the only
+// authority; the file name is checked against it by LiParityProvenance) and the parts of it that are
+// not compared.
+struct FixtureInfo {
+  std::string file;
+  std::string kind;
+  std::string skip_reason;  // empty: everything the fixture carries is compared
+};
+
+// Pure: the same function reads the real fixtures and the synthetic ones of the unknown-key test.
+FixtureInfo FixtureInfoOf(const std::string& file, const Json& fixture) {
+  FixtureInfo info;
+  info.file = file;
+  if (!fixture.is_object()) {
+    return info;  // empty kind: counted as unknown by the manifest test
+  }
+  info.kind = fixture.value("fixture_kind", "");
+  return info;
+}
+
+// Every listed fixture, parsed once. Read at registration time so each fixture is its own gtest
+// case; a missing manifest yields no cases, which the manifest test below then reports as a failure
+// rather than a silent pass. Parsing does not throw here: an unreadable fixture gets an empty kind,
+// which the manifest test reports.
+const std::vector<FixtureInfo>& FixtureIndex() {
+  static const std::vector<FixtureInfo> index = [] {
+    std::vector<FixtureInfo> out;
+    std::ifstream in(FixtureDir() / "manifest.json");
+    if (!in) {
+      return out;
+    }
+    for (const std::string& file : ManifestFilesOf(Json::parse(in, nullptr, false))) {
+      std::ifstream fin(FixtureDir() / file);
+      out.push_back(FixtureInfoOf(file, fin ? Json::parse(fin, nullptr, false) : Json()));
+    }
+    return out;
+  }();
+  return index;
+}
+
+std::vector<std::string> ManifestFiles() {
+  std::vector<std::string> out;
+  for (const FixtureInfo& info : FixtureIndex()) {
+    out.push_back(info.file);
+  }
+  return out;
+}
+
 std::vector<std::string> ManifestFilesOfKind(const std::string& kind) {
   std::vector<std::string> out;
-  for (const std::string& f : ManifestFiles()) {
-    if (f.find("__" + kind) != std::string::npos) {
-      out.push_back(f);
+  for (const FixtureInfo& info : FixtureIndex()) {
+    if (info.kind == kind) {
+      out.push_back(info.file);
     }
   }
   return out;
+}
+
+// The fixtures with an uncompared part.
+std::vector<std::string> FilesWithSkipReason() {
+  std::vector<std::string> out;
+  for (const FixtureInfo& info : FixtureIndex()) {
+    if (!info.skip_reason.empty()) {
+      out.push_back(info.file);
+    }
+  }
+  return out;
+}
+
+const FixtureInfo* InfoOf(const std::string& file) {
+  for (const FixtureInfo& info : FixtureIndex()) {
+    if (info.file == file) {
+      return &info;
+    }
+  }
+  return nullptr;
 }
 
 std::string CaseName(const testing::TestParamInfo<std::string>& info) {
@@ -619,15 +705,16 @@ TEST(LiParityFixtures, ManifestMatchesDirectoryAndSource) {
     EXPECT_TRUE(listed.insert(f).second) << "listed twice: " << f;
   }
   EXPECT_FALSE(listed.empty());
-  // Every listed file must be replayed by one of the suites below. A fixture kind LI adds later would
-  // otherwise pass provenance alone and be silently skipped; here it goes red and points at the reader.
-  size_t replayed = 0;
-  for (const char* kind : { "evaluate_path", "trace_fiber", "seed_search" }) {
+  // Every listed file must be claimed by one of the suites below, replayed by its kind's suite. A
+  // fixture kind LI adds later would otherwise pass provenance alone and be silently dropped; here it
+  // goes red and points at the reader.
+  size_t claimed = 0;
+  for (const char* kind : { "evaluate_path", "trace_fiber", "seed_search", "band_sum" }) {
     const size_t n = ManifestFilesOfKind(kind).size();
     EXPECT_GT(n, 0u) << "no fixture of kind " << kind;
-    replayed += n;
+    claimed += n;
   }
-  EXPECT_EQ(replayed, listed.size())
+  EXPECT_EQ(claimed, listed.size())
       << "the manifest lists a fixture kind this reader does not replay: extend the reader first "
          "(doc/analytic-api.md, Parity with LI)";
   std::set<std::string> present;
@@ -642,15 +729,54 @@ TEST(LiParityFixtures, ManifestMatchesDirectoryAndSource) {
   // A skipped fixture is a legal input, not a missing file: it carries its reason, and its cell
   // lists no file it did not export. On this matrix that is 3-5-6-7__critical (D_P has no interior
   // extremum on the canonical column — a physical fact, LI section 6).
-  for (const Json& cell : manifest.at("cells")) {
-    for (const Json& s : cell.at("skipped")) {
-      EXPECT_FALSE(s.value("reason", "").empty()) << cell.at("name");
-      EXPECT_TRUE(s.contains("fixture")) << cell.at("name");
-      if (s.value("fixture", "") == "all") {
-        EXPECT_TRUE(cell.at("files").empty()) << cell.at("name");
+  for (const char* section : kManifestSections) {
+    if (!manifest.contains(section)) {
+      ADD_FAILURE() << "manifest has no " << section;
+      continue;
+    }
+    for (const Json& cell : manifest.at(section)) {
+      for (const Json& s : cell.at("skipped")) {
+        EXPECT_FALSE(s.value("reason", "").empty()) << cell.at("name");
+        EXPECT_TRUE(s.contains("fixture")) << cell.at("name");
+        if (s.value("fixture", "") == "all") {
+          EXPECT_TRUE(cell.at("files").empty()) << cell.at("name");
+        }
       }
     }
   }
+}
+
+// LI section 2: a reader ignores top-level manifest keys and fixture fields it does not know, since
+// later waves add kinds under new keys and fields under old kinds. Checked on the production parsers
+// with synthetic input. The one deliberate exception is `continuation`: it is an input, and an LI
+// option this reader has no mapping for would change the problem being solved, so ParamsOf fails on
+// it (see its comment).
+TEST(LiParityFixtures, UnknownKeysAreIgnored) {
+  const Json manifest = Json::parse(R"({
+    "format": "lumice-integral/analytic-parity", "schema_version": 1, "future_top_level": {"x": 1},
+    "future_cells": [{"files": ["x__future_kind.json"]}],
+    "cells": [{"files": ["a__random__trace_fiber.json"], "future_cell_field": 2, "skipped": []}],
+    "edge_cells": [{"files": ["a__edge__seed_search.json"], "skipped": []}]
+  })");
+  EXPECT_EQ(ManifestFilesOf(manifest),
+            (std::vector<std::string>{ "a__random__trace_fiber.json", "a__edge__seed_search.json" }));
+
+  const Json fixture = Json::parse(R"({
+    "fixture_kind": "seed_search", "future_top_level": [1, 2],
+    "expected": {"completeness": "complete", "future_expected_field": {"y": 3}}
+  })");
+  const FixtureInfo info = FixtureInfoOf("a__edge__seed_search.json", fixture);
+  EXPECT_EQ(info.kind, "seed_search");
+  EXPECT_EQ(info.skip_reason, "");
+
+  // A trace_fiber fixture is fully compared, its wave 2 per-pose arrays included.
+  Json trace = Json::parse(R"({"fixture_kind": "trace_fiber", "expected": {"traces": [{"poses": []}]}})");
+  EXPECT_EQ(FixtureInfoOf("t__trace_fiber.json", trace).skip_reason, "");
+  trace["expected"]["traces"][0]["normal_jacobian"] = Json::array();
+  EXPECT_EQ(FixtureInfoOf("t__trace_fiber.json", trace).skip_reason, "");
+
+  // ...but an unknown continuation option is not ignored.
+  EXPECT_NONFATAL_FAILURE(ParamsOf(Json::parse(R"({"future_option": 1})")), "has no mapping");
 }
 
 class LiParityProvenance : public testing::TestWithParam<std::string> {};
@@ -665,7 +791,9 @@ TEST_P(LiParityProvenance, HeaderFieldsAndSymmetrySemantics) {
   EXPECT_EQ(f.value("symmetry_semantics", ""), "none");
   EXPECT_EQ(f.at("provenance").at("li_rev").get<std::string>(), li_rev);
   EXPECT_TRUE(f.at("provenance").at("li_tracked_tree_clean").get<bool>());
+  // fixture_kind is what the suites dispatch on; the file name must agree with it.
   const std::string kind = f.value("fixture_kind", "");
+  ASSERT_FALSE(kind.empty()) << "no fixture_kind";
   EXPECT_NE(GetParam().find("__" + kind), std::string::npos) << "file name and fixture_kind disagree";
 }
 
@@ -674,6 +802,77 @@ INSTANTIATE_TEST_SUITE_P(All, LiParityProvenance, testing::ValuesIn(ManifestFile
 // ------------------------------------------------------------------------------------------------
 // evaluate_path (LI section 3.1)
 // ------------------------------------------------------------------------------------------------
+
+// The smallest Snell discriminant of a pose (entry or exit), from its validity margins in
+// BranchMarginName order: the `d` of LI section 5's tolerance scaling.
+double SmallestSnell(const double* margins, int count) {
+  return std::min(margins[1], margins[count - 1]);
+}
+
+// LI section 4, evaluate_path wave 2 fields, against LI's own values at the fixture pose — the
+// certification of the per-pose diagnostics against LI (a trace's per-pose arrays are then held to
+// this evaluation, ComparePerPoseArrays). jacobian_available is equal; when valid, the branch
+// margins by name to the `branch_margins` tolerance (absolute) and J_perp and each singular value
+// to theirs relative to max(1, |value|), both scaled at the pose's smallest Snell discriminant d
+// (LI section 5: 1 / (2 sqrt d) for margins, 1 / (4 d) for the Jacobian); when not, the failed
+// gate's name exactly and its value like a margin, and every wave 2 value LI leaves null is one
+// this evaluation does not provide.
+void CompareWave2Fields(const std::string& name, const Json& f, const Scene& scene, const double pose[9]) {
+  const Json& expected = f.at("expected");
+  const int count = scene.Count();
+  const PathDiagnostics d =
+      EvaluatePathDiagnostics(scene.table, scene.slots.data(), count, scene.refractive_index, scene.incident, pose);
+  ASSERT_EQ(Tolerance(f, "jacobian_available"), 0.0);
+  EXPECT_EQ(d.jacobian.available, expected.at("jacobian_available").get<bool>());
+  if (!d.valid || !expected.at("valid").get<bool>()) {
+    EXPECT_TRUE(expected.at("branch_margins").is_null());
+    EXPECT_TRUE(expected.at("normal_jacobian").is_null());
+    EXPECT_TRUE(expected.at("singular_values").is_null());
+    EXPECT_TRUE(std::isnan(d.jacobian.value));
+    const Json& gate = expected.at("failed_gate");
+    ASSERT_TRUE(gate.is_object()) << "LI's invalid pose carries no failed_gate";
+    ASSERT_GE(d.failed_gate, 0);
+    EXPECT_EQ(BranchMarginName(d.failed_gate, count), gate.at("name").get<std::string>());
+    // The entry Snell discriminant is always evaluated; the exit one only when the chain got there.
+    const double snell =
+        d.margin_count == BranchMarginCount(count) ? SmallestSnell(d.margins, d.margin_count) : d.margins[1];
+    const double tolerance = Tolerance(f, "failed_gate") * std::max(1.0, 1.0 / (2.0 * std::sqrt(snell)));
+    const double error = std::fabs(d.margins[d.failed_gate] - gate.at("value").get<double>());
+    Report(name, "failed_gate.value", error, tolerance);
+    EXPECT_LE(error, tolerance);
+    return;
+  }
+  EXPECT_TRUE(expected.at("failed_gate").is_null());
+  const Json& margins = expected.at("branch_margins");
+  ASSERT_EQ(static_cast<int>(margins.size()), d.margin_count) << "LI names a different number of margins";
+  const double snell = SmallestSnell(d.margins, d.margin_count);
+  const double margin_tolerance = Tolerance(f, "branch_margins") * std::max(1.0, 1.0 / (2.0 * std::sqrt(snell)));
+  double margin_error = 0.0;
+  for (int m = 0; m < d.margin_count; m++) {
+    const std::string key = BranchMarginName(m, count);
+    if (!margins.contains(key)) {
+      ADD_FAILURE() << "LI has no margin named " << key;
+      continue;
+    }
+    margin_error = std::max(margin_error, std::fabs(d.margins[m] - margins.at(key).get<double>()));
+  }
+  Report(name, "branch_margins", margin_error, margin_tolerance);
+  EXPECT_LE(margin_error, margin_tolerance);
+
+  const double scale = std::max(1.0, 1.0 / (4.0 * snell));
+  const double lj = expected.at("normal_jacobian").get<double>();
+  const double j_error = std::fabs(d.jacobian.value - lj) / std::max(1.0, std::fabs(lj));
+  Report(name, "normal_jacobian(relative)", j_error, Tolerance(f, "normal_jacobian") * scale);
+  EXPECT_LE(j_error, Tolerance(f, "normal_jacobian") * scale);
+  const std::vector<double> lsv = Numbers(expected.at("singular_values"));
+  ASSERT_EQ(lsv.size(), 2u);
+  double sv_error = 0.0;
+  for (int q = 0; q < 2; q++) {
+    sv_error = std::max(sv_error, std::fabs(d.jacobian.singular_values[q] - lsv[q]) / std::max(1.0, std::fabs(lsv[q])));
+  }
+  Report(name, "singular_values(relative)", sv_error, Tolerance(f, "singular_values") * scale);
+  EXPECT_LE(sv_error, Tolerance(f, "singular_values") * scale);
+}
 
 class LiParityEvaluatePath : public testing::TestWithParam<std::string> {};
 
@@ -721,6 +920,7 @@ TEST_P(LiParityEvaluatePath, MatchesLi) {
     Report(GetParam(), "fresnel_transmission(invalid)", error, 0.0);
     EXPECT_EQ(error, 0.0);
   }
+  CompareWave2Fields(GetParam(), f, scene, pose.data());
 }
 
 INSTANTIATE_TEST_SUITE_P(All, LiParityEvaluatePath, testing::ValuesIn(ManifestFilesOfKind("evaluate_path")), CaseName);
@@ -750,6 +950,152 @@ Traced RunTraces(const IcePathMap& map, const TargetChart& chart, const double s
   t.traces.push_back(TraceFiber(map, chart, seed, reversed));
   t.curve = Stitch(PosesOf(t.traces[0]), PosesOf(t.traces[1]));
   return t;
+}
+
+// The curve, orientation-free, and the summed arclength, relative (LI section 4, trace_fiber).
+void CompareCurveAndLength(const std::string& name, const Json& f, const Traced& got) {
+  const Json& expected_traces = f.at("expected").at("traces");
+  Curve reference;
+  bool reference_closed = false;
+  if (expected_traces.at(0).at("status").get<std::string>() == "closed") {
+    reference_closed = true;
+    reference = Poses(expected_traces.at(0).at("poses"));
+  } else if (expected_traces.size() >= 2) {
+    reference = Stitch(Poses(expected_traces.at(0).at("poses")), Poses(expected_traces.at(1).at("poses")));
+  } else {
+    reference = Poses(expected_traces.at(0).at("poses"));
+  }
+  // Two traces that both accept no pose (rank_loss, chart_boundary at the seed) have distance 0; one
+  // with and one without poses, infinity (DistanceToSamples of an empty curve).
+  const double distance = CurveDistance(got.curve, got.closed, reference, reference_closed);
+  Report(name, "curve_distance_rad", distance, Tolerance(f, "curve_distance_rad"));
+  EXPECT_LE(distance, Tolerance(f, "curve_distance_rad"));
+
+  double length = 0.0;
+  for (const TraceResult& t : got.traces) {
+    length += Length(t);
+  }
+  double reference_length = 0.0;
+  for (const Json& t : expected_traces) {
+    reference_length += t.at("arclength").get<double>();
+  }
+  const double rtol = Tolerance(f, "arclength_relative");
+  const double difference = std::fabs(length - reference_length);
+  Report(name, "arclength_relative", reference_length > 0.0 ? difference / reference_length : difference, rtol);
+  EXPECT_TRUE(ArclengthWithin(length, reference_length, rtol)) << "arclength " << length << " vs " << reference_length;
+}
+
+// LI section 4, trace_fiber budgets: a budget_exhausted trace is compared by its extent against the
+// budget, and by its poses lying on the unbudgeted curve, instead of curve and length equality — two
+// step controllers reach different extents inside one budget.
+void CompareBudgetExtent(const std::string& name, const Json& f, const ContinuationParams& p, const Traced& got) {
+  ASSERT_EQ(Tolerance(f, "budget_extent"), 0.0);
+  for (const TraceResult& t : got.traces) {
+    if (t.status != FiberStatus::kBudgetExhausted) {
+      continue;
+    }
+    const std::string tag = "budget_extent(" + ReasonName(t.reason) + ")";
+    switch (t.reason) {
+      case FiberReason::kStepBudget:
+        Report(name, tag + ".poses", t.PoseCount() - (p.maximum_accepted_steps + 1), 0.0);
+        EXPECT_EQ(t.PoseCount(), p.maximum_accepted_steps + 1);
+        break;
+      case FiberReason::kArclengthBudget: {
+        const double length = Length(t);
+        Report(name, tag + ".arclength_over_budget", length - p.maximum_arclength, 0.0);
+        EXPECT_GT(length, p.maximum_arclength - p.maximum_advance);
+        EXPECT_LE(length, p.maximum_arclength);
+        break;
+      }
+      case FiberReason::kEvaluationBudget:
+        EXPECT_GE(t.PoseCount(), 1);
+        break;
+      default:
+        ADD_FAILURE() << "budget_exhausted with a non-budget reason " << ReasonName(t.reason);
+    }
+  }
+  const Json& ref = f.at("expected").at("reference_curve");
+  const Curve dense = Densify(Poses(ref.at("poses")), ref.at("closed").get<bool>(), kDensifySpacing);
+  double worst = 0.0;
+  for (const TraceResult& t : got.traces) {
+    for (const Pose& q : PosesOf(t)) {
+      worst = std::max(worst, DistanceToSamples(q, dense));
+    }
+  }
+  Report(name, "pose_to_reference_curve_rad", worst, Tolerance(f, "curve_distance_rad"));
+  EXPECT_LE(worst, Tolerance(f, "curve_distance_rad"));
+}
+
+// LI section 4, trace_fiber per-pose arrays: the names are LI's, and at each of this backend's own
+// poses its normal_jacobian, singular_values and branch_margins equal what its own single-pose
+// evaluation returns there, within the section 3.1 tolerances at that pose (`pointwise_consistency`
+// is their base); every accepted pose is regular (`accepted_pose_regularity`, exact). Two backends
+// step differently, so nothing here is compared with LI's samples: the certification against LI is
+// the evaluate_path suite's, at fixed poses.
+void ComparePerPoseArrays(const std::string& name, const Json& f, const Scene& scene, const Traced& got) {
+  const double base = Tolerance(f, "pointwise_consistency");
+  ASSERT_EQ(Tolerance(f, "accepted_pose_regularity"), 0.0);
+  const int count = scene.Count();
+  std::vector<std::string> names;
+  for (int i = 0; i < BranchMarginCount(count); i++) {
+    names.push_back(BranchMarginName(i, count));
+  }
+  for (const Json& t : f.at("expected").at("traces")) {
+    EXPECT_EQ(t.at("branch_margin_names").get<std::vector<std::string>>(), names);
+  }
+  double margin_ratio = 0.0;  // worst |error| / tolerance
+  double jacobian_ratio = 0.0;
+  int irregular = 0;
+  int poses = 0;
+  for (const TraceResult& trace : got.traces) {
+    const int k = trace.branch_margin_count;
+    if (trace.PoseCount() > 0) {
+      EXPECT_EQ(k, BranchMarginCount(count));
+    }
+    if (trace.branch_margins.size() != static_cast<size_t>(k) * trace.PoseCount() ||
+        trace.jacobian_available.size() != static_cast<size_t>(trace.PoseCount()) ||
+        trace.normal_jacobian.size() != static_cast<size_t>(trace.PoseCount()) ||
+        trace.singular_values.size() != 2 * static_cast<size_t>(trace.PoseCount())) {
+      ADD_FAILURE() << "per-pose arrays not aligned with the " << trace.PoseCount() << " poses";
+      continue;
+    }
+    for (int i = 0; i < trace.PoseCount(); i++) {
+      poses++;
+      const double* row = trace.branch_margins.data() + static_cast<size_t>(k) * i;
+      const bool available = trace.jacobian_available[i] != 0;
+      const double j = trace.normal_jacobian[i];
+      if (!available || !(j > 0.0) || !std::all_of(row, row + k, [](double m) { return m > 0.0; })) {
+        irregular++;
+      }
+      const PathDiagnostics d = EvaluatePathDiagnostics(scene.table, scene.slots.data(), count, scene.refractive_index,
+                                                        scene.incident, &trace.poses[9 * static_cast<size_t>(i)]);
+      if (!d.valid || d.margin_count != k || d.jacobian.available != available) {
+        ADD_FAILURE() << "pose " << i << ": single-pose evaluation valid=" << d.valid << " margins=" << d.margin_count
+                      << " available=" << d.jacobian.available;
+        continue;
+      }
+      const double snell = SmallestSnell(d.margins, d.margin_count);
+      const double margin_tolerance = base * std::max(1.0, 1.0 / (2.0 * std::sqrt(snell)));
+      const double jacobian_tolerance = base * std::max(1.0, 1.0 / (4.0 * snell));
+      for (int m = 0; m < k; m++) {
+        margin_ratio = std::max(margin_ratio, std::fabs(row[m] - d.margins[m]) / margin_tolerance);
+      }
+      const double mine[3] = { j, trace.singular_values[2 * i], trace.singular_values[2 * i + 1] };
+      const double fresh[3] = { d.jacobian.value, d.jacobian.singular_values[0], d.jacobian.singular_values[1] };
+      for (int q = 0; q < 3; q++) {
+        const double error = std::fabs(mine[q] - fresh[q]) / std::max(1.0, std::fabs(fresh[q]));
+        // NaN (a non-finite side) must read as a failure, not as a zero error.
+        jacobian_ratio = std::max(
+            jacobian_ratio, std::isnan(error) ? std::numeric_limits<double>::infinity() : error / jacobian_tolerance);
+      }
+    }
+  }
+  Report(name, "pointwise_consistency.branch_margins(error/tolerance)", margin_ratio, 1.0);
+  Report(name, "pointwise_consistency.jacobian(error/tolerance)", jacobian_ratio, 1.0);
+  Report(name, "accepted_pose_regularity.irregular_poses", irregular, 0.0);
+  EXPECT_LE(margin_ratio, 1.0);
+  EXPECT_LE(jacobian_ratio, 1.0);
+  EXPECT_EQ(irregular, 0) << "of " << poses << " accepted poses";
 }
 
 class LiParityTraceFiber : public testing::TestWithParam<std::string> {};
@@ -786,33 +1132,12 @@ TEST_P(LiParityTraceFiber, MatchesLi) {
   ASSERT_EQ(Tolerance(f, "status_reason"), 0.0);
   EXPECT_EQ(mine, theirs);
 
-  // The curve, orientation-free.
-  Curve reference;
-  bool reference_closed = false;
-  if (expected_traces.at(0).at("status").get<std::string>() == "closed") {
-    reference_closed = true;
-    reference = Poses(expected_traces.at(0).at("poses"));
-  } else if (expected_traces.size() >= 2) {
-    reference = Stitch(Poses(expected_traces.at(0).at("poses")), Poses(expected_traces.at(1).at("poses")));
+  if (f.at("expected").contains("reference_curve")) {
+    CompareBudgetExtent(GetParam(), f, params, got);
   } else {
-    reference = Poses(expected_traces.at(0).at("poses"));
+    CompareCurveAndLength(GetParam(), f, got);
   }
-  const double distance = CurveDistance(got.curve, got.closed, reference, reference_closed);
-  Report(GetParam(), "curve_distance_rad", distance, Tolerance(f, "curve_distance_rad"));
-  EXPECT_LE(distance, Tolerance(f, "curve_distance_rad"));
-
-  // Summed arclength, relative.
-  double length = 0.0;
-  for (const TraceResult& t : got.traces) {
-    length += Length(t);
-  }
-  double reference_length = 0.0;
-  for (const Json& t : expected_traces) {
-    reference_length += t.at("arclength").get<double>();
-  }
-  const double rtol = Tolerance(f, "arclength_relative");
-  Report(GetParam(), "arclength_relative", std::fabs(length - reference_length) / reference_length, rtol);
-  EXPECT_TRUE(ArclengthWithin(length, reference_length, rtol)) << "arclength " << length << " vs " << reference_length;
+  ComparePerPoseArrays(GetParam(), f, scene, got);
 
   // Every residual within the bound (a bound on this backend, not an equality with LI).
   double worst = 0.0;
@@ -960,6 +1285,272 @@ TEST_P(LiParitySeedSearch, MatchesLi) {
 }
 
 INSTANTIATE_TEST_SUITE_P(All, LiParitySeedSearch, testing::ValuesIn(ManifestFilesOfKind("seed_search")), CaseName);
+
+// ------------------------------------------------------------------------------------------------
+// band_sum (LI section 3.4, contract band-sum-contract.md section 7): layer 1 on LI's events,
+// layer 2 on the regenerated sample
+// ------------------------------------------------------------------------------------------------
+
+// The fixture's pose density, every parameter as LI resolved it. An unknown family or parameter
+// fails: it would change the problem being solved (the same rule as ParamsOf). normalization_
+// informative is LI's I and Q, compared in test_pose_density.cpp, not here.
+PoseDensitySpec DensityOf(const Json& j) {
+  PoseDensitySpec spec;
+  const std::map<std::string, PoseFamily> families = {
+    { "random", PoseFamily::kRandom }, { "column", PoseFamily::kColumn }, { "plate", PoseFamily::kPlate },
+    { "parry", PoseFamily::kParry },   { "lowitz", PoseFamily::kLowitz },
+  };
+  const std::map<std::string, double*> fields = {
+    { "zenith_mean_deg", &spec.zenith_mean_deg },
+    { "zenith_std_deg", &spec.zenith_std_deg },
+    { "roll_mean_deg", &spec.roll_mean_deg },
+    { "roll_std_deg", &spec.roll_std_deg },
+  };
+  for (const auto& [key, value] : j.items()) {
+    if (key == "family") {
+      const auto it = families.find(value.get<std::string>());
+      if (it == families.end()) {
+        ADD_FAILURE() << "unknown pose density family " << value;
+      } else {
+        spec.family = it->second;
+      }
+    } else if (auto it = fields.find(key); it != fields.end()) {
+      *it->second = value.get<double>();
+    } else if (key != "normalization_informative") {
+      ADD_FAILURE() << "pose density field " << key << " has no mapping in this reader";
+    }
+  }
+  EXPECT_STREQ(PoseDensityError(spec), "");
+  return spec;
+}
+
+// The pixel table, owned.
+struct Pixels {
+  std::vector<double> centre;
+  std::vector<double> corners;
+  std::vector<double> solid_angle;
+  PixelTable Table() const {
+    PixelTable t;
+    t.count = static_cast<int>(solid_angle.size());
+    t.centre = centre.data();
+    t.corners = corners.data();
+    t.solid_angle = solid_angle.data();
+    return t;
+  }
+};
+
+Pixels PixelsOf(const Json& j) {
+  Pixels p;
+  p.centre = Numbers(j.at("centre"));
+  p.corners = Numbers(j.at("corners"));
+  p.solid_angle = Numbers(j.at("solid_angle"));
+  EXPECT_EQ(p.centre.size(), 3 * p.solid_angle.size());
+  EXPECT_EQ(p.corners.size(), 12 * p.solid_angle.size());
+  return p;
+}
+
+std::string PixelStatusName(PixelStatus s) {
+  switch (s) {
+    case PixelStatus::kOk:
+      return "ok";
+    case PixelStatus::kSingular:
+      return "singular";
+    case PixelStatus::kPointMass:
+      return "point_mass";
+  }
+  return "?";
+}
+
+// LI's layer-1 events in LI's order (increasing D, which BandSumOnEvents' binary search needs); the
+// position stands in for the lattice index. A rank-0 cell carries only `w`.
+std::vector<SampleEvent> EventsOf(const Json& j) {
+  const std::vector<double> w = Numbers(j.at("w"));
+  std::vector<SampleEvent> events(w.size());
+  const bool full = j.contains("u");
+  const std::vector<double> u = full ? Numbers(j.at("u")) : std::vector<double>{};
+  const std::vector<double> phi = full ? Numbers(j.at("phi")) : std::vector<double>{};
+  const std::vector<double> d = full ? Numbers(j.at("deviation")) : std::vector<double>{};
+  for (size_t i = 0; i < w.size(); i++) {
+    events[i].event.index = static_cast<int>(i);
+    events[i].weight = w[i];
+    if (full) {
+      events[i].event.deviation = d[i];
+      for (int k = 0; k < 3; k++) {
+        events[i].event.u[k] = u[3 * i + k];
+        events[i].event.phi[k] = phi[3 * i + k];
+      }
+      if (i > 0) {
+        EXPECT_LE(d[i - 1], d[i]) << "layer-1 events are not in increasing D at " << i;
+      }
+    }
+  }
+  return events;
+}
+
+// A rank-2 pixel against its expectation; `layer2` adds the fixture's per-pixel allowances.
+void CompareBandPixel(const std::string& name, const Json& f, const Json& ref, const PixelValue& got, bool layer2) {
+  EXPECT_EQ(PixelStatusName(got.status), ref.at("status").get<std::string>());
+  if (ref.at("status").get<std::string>() != "ok" || got.status != PixelStatus::kOk) {
+    return;
+  }
+  const Json& allowance = ref.at("allowance");
+  ASSERT_EQ(Tolerance(f, "K"), 0.0);
+  ASSERT_EQ(Tolerance(f, "K_rho_pos"), 0.0);
+  const int k_slack = layer2 ? allowance.at("K_layer2").get<int>() : 0;
+  const int k_rho_slack =
+      layer2 ? allowance.at("K_rho_pos_layer2").get<int>() : allowance.at("K_rho_pos_subnormal").get<int>();
+  EXPECT_LE(std::abs(got.k - ref.at("K").get<int>()), k_slack) << "K";
+  EXPECT_LE(std::abs(got.k_rho_pos - ref.at("K_rho_pos").get<int>()), k_rho_slack) << "K_rho_pos";
+
+  const double value = ref.at("value").get<double>();
+  const double value_bound =
+      Tolerance(f, "value_relative") * std::fabs(value) + (layer2 ? allowance.at("value_layer2").get<double>() : 0.0);
+  const double value_error = std::fabs(got.value - value);
+  const std::string tag = (layer2 ? "layer2." : "layer1.") + ref.at("label").dump() + ".";
+  Report(name, tag + "value", value_error, value_bound);
+  EXPECT_LE(value_error, value_bound) << "value " << got.value << " vs " << value;
+
+  const double k_eff = ref.at("K_eff").get<double>();
+  const double k_eff_bound =
+      Tolerance(f, "K_eff_relative") * std::fabs(k_eff) + (layer2 ? allowance.at("K_eff_layer2").get<double>() : 0.0);
+  const double k_eff_error = std::fabs(got.k_eff - k_eff);
+  Report(name, tag + "K_eff", k_eff_error, k_eff_bound);
+  EXPECT_LE(k_eff_error, k_eff_bound) << "K_eff " << got.k_eff << " vs " << k_eff;
+}
+
+// A rank-0 pixel: the status exactly, the value to `relative_bound` of the expected value (or the
+// matching absolute bound on the point-mass pixel of a statistical cell).
+void ComparePointMassPixel(const std::string& name, const Json& ref, const PixelValue& got, double absolute_bound_m,
+                           double solid_angle, const std::string& layer) {
+  EXPECT_EQ(PixelStatusName(got.status), ref.at("status").get<std::string>());
+  const double value = ref.at("value").get<double>();
+  const double bound = absolute_bound_m / solid_angle;
+  const double error = std::fabs(got.value - value);
+  Report(name, layer + "." + ref.at("label").dump() + ".value", error, bound);
+  EXPECT_LE(error, bound) << "value " << got.value << " vs " << value;
+}
+
+class LiParityBandSum : public testing::TestWithParam<std::string> {};
+
+TEST_P(LiParityBandSum, MatchesLi) {
+  const Json f = LoadJson(GetParam());
+  ASSERT_EQ(f.value("fixture_kind", ""), "band_sum");
+  const Json& input = f.at("input");
+  const Json& expected = f.at("expected");
+  Scene scene;
+  ASSERT_TRUE(scene.Init(input));
+  const PoseDensity density(DensityOf(input.at("pose_density")));
+  const Pixels pixels = PixelsOf(input.at("pixels"));
+  const PixelTable table = pixels.Table();
+  const int n = input.at("sample").at("n").get<int>();
+  const Json& expected_pixels = expected.at("pixels");
+  ASSERT_EQ(static_cast<int>(expected_pixels.size()), table.count);
+  ASSERT_EQ(Tolerance(f, "status"), 0.0);
+  const int rank = expected.at("rank").get<int>();
+  ASSERT_TRUE(rank == 0 || rank == 2) << rank;
+  EXPECT_EQ(IsRankZeroPath(scene.table, scene.slots.data(), scene.Count()), rank == 0);
+
+  const auto start = std::chrono::steady_clock::now();
+  const bool has_events = input.contains("events") && input.at("events").contains("w");
+  if (rank == 2) {
+    ASSERT_TRUE(has_events) << "a rank-2 cell carries its layer-1 events";
+    // Layer 1: the estimator on LI's events.
+    {
+      SCOPED_TRACE("layer 1");
+      std::vector<PixelValue> got;
+      BandSumOnEvents(EventsOf(input.at("events")), n, scene.incident, table, density, &got);
+      ASSERT_EQ(static_cast<int>(got.size()), table.count);
+      for (int p = 0; p < table.count; p++) {
+        SCOPED_TRACE("pixel " + expected_pixels.at(p).at("label").dump());
+        CompareBandPixel(GetParam(), f, expected_pixels.at(p), got[p], false);
+      }
+    }
+    // Layer 2: the whole call.
+    {
+      SCOPED_TRACE("layer 2");
+      const BandSumOutput out = BandSum(scene.table, scene.polygons, scene.slots.data(), scene.Count(),
+                                        scene.refractive_index, scene.incident, n, table, density);
+      EXPECT_FALSE(out.rank_zero);
+      ASSERT_EQ(static_cast<int>(out.pixels.size()), table.count);
+      for (int p = 0; p < table.count; p++) {
+        SCOPED_TRACE("pixel " + expected_pixels.at(p).at("label").dump());
+        CompareBandPixel(GetParam(), f, expected_pixels.at(p), out.pixels[p], true);
+      }
+    }
+  } else {
+    const Json& point_mass = expected.at("point_mass");
+    const double m_li = point_mass.at("m").get<double>();
+    const std::string method = point_mass.at("method").get<std::string>();
+    const double relative = Tolerance(f, "point_mass_relative");
+    ASSERT_TRUE(method == "lattice_mean" || method == "haar_stream") << method;
+    if (method == "lattice_mean") {
+      // Deterministic: layer 1 on LI's w, layer 2 on the regenerated lattice, both to 1e-10.
+      ASSERT_TRUE(density.IsUniform()) << "a lattice-mean cell is the random density";
+      ASSERT_TRUE(has_events);
+      const PointMass mass = RankZeroMass(EventsOf(input.at("events")), n, scene.incident, density);
+      Report(GetParam(), "layer1.m_relative", std::fabs(mass.m / m_li - 1.0), relative);
+      EXPECT_LE(std::fabs(mass.m - m_li), relative * std::fabs(m_li));
+      std::vector<PixelValue> got;
+      int pixel = -1;
+      PlacePointMass(mass.m, scene.incident, table, &got, &pixel);
+      for (int p = 0; p < table.count; p++) {
+        ComparePointMassPixel(GetParam(), expected_pixels.at(p), got[p], relative * std::fabs(m_li),
+                              pixels.solid_angle[p], "layer1");
+      }
+    } else {
+      EXPECT_FALSE(has_events) << "a statistical rank-0 cell carries no layer-1 events";
+    }
+    const BandSumOutput out = BandSum(scene.table, scene.polygons, scene.slots.data(), scene.Count(),
+                                      scene.refractive_index, scene.incident, n, table, density);
+    EXPECT_TRUE(out.rank_zero);
+    // lattice_mean: 1e-10 relative. haar_stream: `relative` is five of LI's standard errors, widened
+    // by this library's own estimator error to 5 sqrt(sigma_LI^2 + sigma^2).
+    const double bound = method == "lattice_mean" ?
+                             relative * std::fabs(m_li) :
+                             std::sqrt(std::pow(relative * std::fabs(m_li), 2) + 25.0 * out.m_error * out.m_error);
+    Report(GetParam(), "layer2.m", std::fabs(out.m - m_li), bound);
+    std::cout << "[li-parity] " << GetParam() << " layer2.m=" << out.m << " m_error=" << out.m_error << " m_li=" << m_li
+              << '\n';
+    EXPECT_LE(std::fabs(out.m - m_li), bound);
+    ASSERT_EQ(static_cast<int>(out.pixels.size()), table.count);
+    for (int p = 0; p < table.count; p++) {
+      ComparePointMassPixel(GetParam(), expected_pixels.at(p), out.pixels[p], bound, pixels.solid_angle[p], "layer2");
+    }
+  }
+  const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+  std::cout << "[li-parity] " << GetParam() << " elapsed_ms=" << ms << '\n';
+}
+
+INSTANTIATE_TEST_SUITE_P(All, LiParityBandSum, testing::ValuesIn(ManifestFilesOfKind("band_sum")), CaseName);
+
+// ------------------------------------------------------------------------------------------------
+// What is carried but not compared: counted, with its reason, never dropped
+// ------------------------------------------------------------------------------------------------
+
+// One case per fixture that has an uncompared part (FixtureInfo::skip_reason). The case checks that
+// the uncompared content is there with the top-level shape LI section 3 gives it, so a fixture that
+// lost or renamed it goes red rather than skipping forever, and then skips with the reason. The
+// kind's own suite still compares everything else of the same fixture; nothing here skips there.
+class LiParitySkipped : public testing::TestWithParam<std::string> {};
+
+TEST_P(LiParitySkipped, CarriedButNotCompared) {
+  const FixtureInfo* info = InfoOf(GetParam());
+  ASSERT_NE(info, nullptr);
+  const Json f = LoadJson(GetParam());
+  const Json& input = f.at("input");
+  const Json& expected = f.at("expected");
+  const Json& tolerance = f.at("tolerance");
+  // A reason added here needs its content check: that the uncompared part is present in `input`,
+  // `expected` and `tolerance` with the shape LI section 3 gives it.
+  (void)input;
+  (void)expected;
+  (void)tolerance;
+  FAIL() << "no content check for skip reason: " << info->skip_reason;
+}
+
+// Empty while every kind is compared in full; allowed to be, so the machinery can stay.
+GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(LiParitySkipped);
+INSTANTIATE_TEST_SUITE_P(All, LiParitySkipped, testing::ValuesIn(FilesWithSkipReason()), CaseName);
 
 }  // namespace
 }  // namespace lumice::analytic

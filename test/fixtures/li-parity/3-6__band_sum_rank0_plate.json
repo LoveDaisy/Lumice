@@ -1,0 +1,182 @@
+{
+ "cell": {
+  "label": "rank0_plate",
+  "name": "3-6__band_sum_rank0_plate",
+  "path": "3-6",
+  "rank": 0,
+  "rationale": "the same point mass under the plate family: m from LI's Haar stream, compared statistically"
+ },
+ "expected": {
+  "pixels": [
+   {
+    "label": [
+     4,
+     4
+    ],
+    "status": "point_mass",
+    "value": 405.5990610736025
+   },
+   {
+    "label": [
+     4,
+     5
+    ],
+    "status": "ok",
+    "value": 0.0
+   }
+  ],
+  "point_mass": {
+   "error_estimate": 0.010999913346839696,
+   "m": 0.1574348342005257,
+   "method": "haar_stream",
+   "rng": "numpy.random.default_rng(rng_seed); path_class.haar_domain_batches, 200000 per batch",
+   "rng_seed": 20260916,
+   "sample_count": 4000000
+  },
+  "rank": 0
+ },
+ "fixture_kind": "band_sum",
+ "format": "lumice-integral/analytic-parity",
+ "input": {
+  "crystal": {
+   "face_distance": [
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0
+   ],
+   "height": 1.0,
+   "kind": "prism",
+   "lower_h": 0.0,
+   "lower_wedge_deg": 0.0,
+   "upper_h": 0.0,
+   "upper_wedge_deg": 0.0
+  },
+  "faces": [
+   3,
+   6
+  ],
+  "incident_direction": [
+   -0.9659258262890683,
+   -0.0,
+   -0.25881904510252074
+  ],
+  "pixels": {
+   "centre": [
+    [
+     -0.9659258262890683,
+     -0.0,
+     -0.25881904510252074
+    ],
+    [
+     -0.9657383623783911,
+     0.01970066437890133,
+     -0.2587688142990448
+    ]
+   ],
+   "corners": [
+    [
+     [
+      -0.9632825789084989,
+      -0.00985057117501092,
+      -0.26830885080242445
+     ],
+     [
+      -0.9632825789084989,
+      0.00985057117501092,
+      -0.26830885080242445
+     ],
+     [
+      -0.9683816097589604,
+      0.00985057117501092,
+      -0.24927900859914104
+     ],
+     [
+      -0.9683816097589604,
+      -0.00985057117501092,
+      -0.24927900859914104
+     ]
+    ],
+    [
+     [
+      -0.9632825789084989,
+      0.00985057117501092,
+      -0.26830885080242445
+     ],
+     [
+      -0.962907898512207,
+      0.029548845593934715,
+      -0.2682074657925674
+     ],
+     [
+      -0.968006434512543,
+      0.029548845593934715,
+      -0.24917947039509436
+     ],
+     [
+      -0.9683816097589604,
+      0.00985057117501092,
+      -0.24927900859914104
+     ]
+    ]
+   ],
+   "labels": [
+    [
+     4,
+     4
+    ],
+    [
+     4,
+     5
+    ]
+   ],
+   "projection": {
+    "centre_sky": [
+     0.9659258262890683,
+     0.0,
+     0.25881904510252074
+    ],
+    "field_radius_deg": 5.0,
+    "kind": "lambert_azimuthal_equal_area",
+    "label_meaning": "(y, x): pixel [x, x + 1) x [y, y + 1), y down, up = zenith on the tangent plane, right = centre x up",
+    "size": 9
+   },
+   "solid_angle": [
+    0.00038815384282153605,
+    0.00038815384282153605
+   ]
+  },
+  "pose_density": {
+   "family": "plate",
+   "normalization_informative": {
+    "zenith_marginal_integral": 0.0003045864910802201
+   },
+   "zenith_mean_deg": 0.0,
+   "zenith_std_deg": 1.0
+  },
+  "refractive_index": 1.31,
+  "sample": {
+   "n": 20000,
+   "sampler": "antipodal Fibonacci lattice (docs/phase1-math-contract.md section 9.5.2), kept events w = A T > 0"
+  }
+ },
+ "provenance": {
+  "conventions_sha256": "8083730f089e6493458cddfd8e15fc5096b961606a69c819456ac646bd87bcdf",
+  "li_rev": "fa8dadd222df45538a05ff2552d22f505c15a0fc",
+  "li_tracked_tree_clean": true
+ },
+ "schema_version": 1,
+ "symmetry_semantics": "none",
+ "tolerance": {
+  "point_mass_relative": {
+   "basis": "statistical: 5 standard errors of LI's Haar-stream mean, relative; a backend widens it by its own error, |m - m_LI| <= 5 sqrt(sigma_LI^2 + sigma_backend^2) (docs/band-sum-contract.md section 5)",
+   "value": 0.34934814149291255
+  },
+  "status": {
+   "basis": "exact: the point mass sits on the pixel containing s (docs/band-sum-contract.md section 5), every other pixel is 0",
+   "value": 0.0
+  }
+ }
+}

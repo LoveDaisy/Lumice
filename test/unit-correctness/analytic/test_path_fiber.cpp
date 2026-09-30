@@ -13,6 +13,7 @@
 #include <cmath>
 #include <limits>
 #include <random>
+#include <string>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -316,6 +317,241 @@ struct Synthetic35 {
   TargetChart chart = OracleChart(path.Outgoing(seed));
   TraceResult Trace(const ContinuationParams& p) const { return TraceFiber(path.Map(), chart, seed.data(), p); }
 };
+
+// ---------------------------------------------------------------------------------------------
+// Per-pose diagnostics (LI docs/analytic-parity-fixtures.md sections 3.1 and 3.2, wave 2)
+// ---------------------------------------------------------------------------------------------
+
+// The names are a cross-repository contract; spelled out here rather than generated, so a change to
+// the generator cannot also change the expectation. The 4-face list is the one LI's 3-5-6-7 fixtures
+// carry.
+TEST(PathFiber, BranchMarginNamesAreLisInChainOrder) {
+  const std::vector<std::string> two = { "entry_incidence_cosine", "entry_snell_discriminant", "exit_incidence_cosine",
+                                         "exit_snell_discriminant" };
+  const std::vector<std::string> four = { "entry_incidence_cosine",      "entry_snell_discriminant",
+                                          "internal_1_incidence_cosine", "internal_2_incidence_cosine",
+                                          "exit_incidence_cosine",       "exit_snell_discriminant" };
+  for (const auto& expected : { two, four }) {
+    const int face_count = static_cast<int>(expected.size()) - 2;
+    if (BranchMarginCount(face_count) != static_cast<int>(expected.size())) {
+      ADD_FAILURE() << "BranchMarginCount(" << face_count << ") = " << BranchMarginCount(face_count);
+      continue;
+    }
+    for (int i = 0; i < BranchMarginCount(face_count); i++) {
+      EXPECT_EQ(BranchMarginName(i, face_count), expected[i]);
+    }
+  }
+  EXPECT_EQ(BranchMarginName(11, 12), "internal_10_incidence_cosine");
+}
+
+// The margins are the chain's own, in the named order: entry cosine and Snell discriminant, each
+// internal cosine, exit cosine and Snell discriminant, recomputed here from the body-frame segments
+// EvaluatePath reports and the face normals.
+TEST(PathFiber, DiagnosticMarginsAreTheNamedChainQuantities) {
+  const std::array<double, 3> sun = { 0.36, -0.48, -0.8 };
+  const std::vector<int> faces = { 3, 5, 6, 7 };
+  const Path path(faces, sun);
+  const int count = static_cast<int>(faces.size());
+  std::mt19937_64 rng(23);
+  int checked = 0;
+  for (int t = 0; t < 20000 && checked < 20; t++) {
+    const auto r = RandomRotation(rng);
+    std::vector<double> seg(3 * (faces.size() + 1));
+    std::vector<double> trans(faces.size());
+    PathOutputs o{};
+    o.segment_directions = seg.data();
+    o.interface_transmittances = trans.data();
+    if (!EvaluatePath(path.table, path.slots.data(), count, kN, sun.data(), r.data(), &o)) {
+      continue;
+    }
+    const PathDiagnostics d = EvaluatePathDiagnostics(path.table, path.slots.data(), count, kN, sun.data(), r.data());
+    if (!d.valid || d.margin_count != count + 2) {
+      ADD_FAILURE() << "EvaluatePath valid but diagnostics valid=" << d.valid << " margin_count=" << d.margin_count;
+      continue;
+    }
+    EXPECT_EQ(d.failed_gate, -1);
+    // Segment k with face k's outward normal: -(v . n) is the entry cosine, v . n inside and at exit.
+    auto cos_at = [&](int k) {
+      const double* v = &seg[3 * k];
+      const double* n = path.table.normal[path.slots[k]];
+      return v[0] * n[0] + v[1] * n[1] + v[2] * n[2];
+    };
+    // Segment k is the ray arriving at face k (0 = incident).
+    const double entry_cos = -cos_at(0);
+    const double exit_cos = cos_at(count - 1);
+    EXPECT_NEAR(d.margins[0], entry_cos, 1e-14);
+    EXPECT_NEAR(d.margins[1], 1.0 - (1.0 - entry_cos * entry_cos) / (kN * kN), 1e-14);
+    for (int k = 1; k + 1 < count; k++) {
+      EXPECT_NEAR(d.margins[1 + k], cos_at(k), 1e-14) << k;
+    }
+    EXPECT_NEAR(d.margins[count], exit_cos, 1e-14);
+    EXPECT_NEAR(d.margins[count + 1], 1.0 - kN * kN * (1.0 - exit_cos * exit_cos), 1e-14);
+    checked++;
+  }
+  EXPECT_GE(checked, 20);
+}
+
+// J_perp and the singular values against an independent derivative: the outgoing direction's
+// Richardson-combined central difference, projected on an orthonormal basis of the tangent plane
+// at the pose's own direction (not MakeTargetChart's, so the basis choice is exercised too), then
+// the singular values of the 2 x 3 matrix from its Gram matrix.
+TEST(PathFiber, NormalJacobianMatchesCentralDifference) {
+  const Path path({ 3, 5 }, MinimumDeviationIncident());
+  const Path path4({ 3, 5, 6, 7 }, { 0.36, -0.48, -0.8 });
+  std::mt19937_64 rng(11);
+  int checked = 0;
+  for (int t = 0; t < 4000 && checked < 40; t++) {
+    const auto r = RandomRotation(rng);
+    for (const Path* p : { &path, &path4 }) {
+      const int count = static_cast<int>(p->slots.size());
+      const PathDiagnostics d =
+          EvaluatePathDiagnostics(p->table, p->slots.data(), count, p->n, p->incident.data(), r.data());
+      if (!d.valid) {
+        continue;
+      }
+      if (!d.jacobian.available) {
+        ADD_FAILURE() << "valid pose without a normal Jacobian";
+        continue;
+      }
+      const auto own = p->Outgoing(r);
+      const TargetChart chart = OracleChart(own);
+      double a[2][3];
+      for (int k = 0; k < 3; k++) {
+        auto central = [&](double h, double out[3]) {
+          double wp[3] = { 0, 0, 0 };
+          double wm[3] = { 0, 0, 0 };
+          wp[k] = h;
+          wm[k] = -h;
+          Mat rp{};
+          Mat rm{};
+          fiber_detail::ApplyCorrection(r.data(), wp, rp.data());
+          fiber_detail::ApplyCorrection(r.data(), wm, rm.data());
+          const auto dp = p->Outgoing(rp);
+          const auto dm = p->Outgoing(rm);
+          for (int i = 0; i < 3; i++) {
+            out[i] = (dp[i] - dm[i]) / (2.0 * h);
+          }
+        };
+        double coarse[3];
+        double fine[3];
+        central(1e-5, coarse);
+        central(5e-6, fine);
+        double df[3];
+        for (int i = 0; i < 3; i++) {
+          df[i] = (4.0 * fine[i] - coarse[i]) / 3.0;
+        }
+        for (int i = 0; i < 2; i++) {
+          a[i][k] = so3::Dot3(chart.basis[i], df);
+        }
+      }
+      const double g00 = so3::Dot3(a[0], a[0]);
+      const double g11 = so3::Dot3(a[1], a[1]);
+      const double g01 = so3::Dot3(a[0], a[1]);
+      const double half_trace = 0.5 * (g00 + g11);
+      const double root = std::sqrt(0.25 * (g00 - g11) * (g00 - g11) + g01 * g01);
+      const double s1 = std::sqrt(half_trace + root);
+      const double j = std::sqrt(std::fmax(g00 * g11 - g01 * g01, 0.0));
+      EXPECT_NEAR(d.jacobian.singular_values[0], s1, 1e-7 * (1.0 + s1));
+      EXPECT_NEAR(d.jacobian.value, j, 1e-7 * (1.0 + j));
+      EXPECT_NEAR(d.jacobian.value, d.jacobian.singular_values[0] * d.jacobian.singular_values[1], 1e-15 * (1.0 + j));
+      EXPECT_GE(d.jacobian.singular_values[0], d.jacobian.singular_values[1]);
+      checked++;
+    }
+  }
+  EXPECT_GE(checked, 40);
+}
+
+// An invalid pose: no Jacobian (NaN, never a plausible number), and the failed gate is the first
+// non-positive margin in the named order — also at entry, where the chain records the incidence
+// cosine and the Snell discriminant before testing either.
+TEST(PathFiber, DiagnosticsOfAnInvalidPoseNameTheFirstFailedGate) {
+  const std::array<double, 3> sun = { 0.36, -0.48, -0.8 };
+  const std::vector<int> faces = { 3, 5, 6, 7 };
+  const Path path(faces, sun);
+  const int count = static_cast<int>(faces.size());
+  std::mt19937_64 rng(29);
+  int entry_failures = 0;
+  int later_failures = 0;
+  for (int t = 0; t < 3000; t++) {
+    const auto r = RandomRotation(rng);
+    const PathDiagnostics d = EvaluatePathDiagnostics(path.table, path.slots.data(), count, kN, sun.data(), r.data());
+    if (d.valid) {
+      continue;
+    }
+    EXPECT_FALSE(d.jacobian.available);
+    EXPECT_TRUE(std::isnan(d.jacobian.value));
+    EXPECT_TRUE(std::isnan(d.jacobian.singular_values[0]));
+    EXPECT_TRUE(std::isnan(d.jacobian.singular_values[1]));
+    if (d.failed_gate < 0 || d.failed_gate >= d.margin_count) {
+      ADD_FAILURE() << "failed_gate " << d.failed_gate << " outside [0, " << d.margin_count << ")";
+      continue;
+    }
+    EXPECT_LE(d.margins[d.failed_gate], 0.0);
+    for (int i = 0; i < d.failed_gate; i++) {
+      EXPECT_GT(d.margins[i], 0.0) << i;
+    }
+    (d.failed_gate == 0 ? entry_failures : later_failures)++;
+  }
+  EXPECT_GT(entry_failures, 0);
+  EXPECT_GT(later_failures, 0);
+}
+
+// A trace's per-pose arrays are what a fresh single-pose evaluation returns at its poses, bit for
+// bit (one chain, one NormalJacobianAt), including the closure-replaced last pose, and every
+// accepted pose is regular (LI section 4, accepted_pose_regularity).
+TEST(PathFiber, TracePerPoseArraysAreFreshDiagnosticsAtItsPoses) {
+  const Synthetic35 s;
+  const TraceResult closed = s.Trace(ContinuationParams{});
+  ASSERT_EQ(closed.status, FiberStatus::kClosed);
+
+  const std::array<double, 3> sun = { 0.36, -0.48, -0.8 };
+  const Path path4({ 3, 5, 6, 7 }, sun);
+  std::mt19937_64 rng(31);
+  Mat seed4{};
+  for (int t = 0; t < 20000; t++) {
+    seed4 = RandomRotation(rng);
+    DomainEvaluation dom;
+    path4.Map().Domain(seed4.data(), &dom);
+    if (dom.valid) {
+      break;
+    }
+  }
+  const auto target4 = path4.Outgoing(seed4);
+  const TraceResult open4 =
+      TraceFiber(path4.Map(), MakeTargetChart(target4.data()), seed4.data(), ContinuationParams{});
+  ASSERT_GE(open4.PoseCount(), 2);
+
+  const struct {
+    const Path* path;
+    const TraceResult* trace;
+  } cases[] = { { &s.path, &closed }, { &path4, &open4 } };
+  for (const auto& c : cases) {
+    const int count = static_cast<int>(c.path->slots.size());
+    const TraceResult& r = *c.trace;
+    if (r.branch_margin_count != BranchMarginCount(count) ||
+        r.branch_margins.size() != static_cast<size_t>(r.branch_margin_count * r.PoseCount())) {
+      ADD_FAILURE() << "branch_margin_count " << r.branch_margin_count << ", " << r.branch_margins.size() << " margins";
+      continue;
+    }
+    for (int i = 0; i < r.PoseCount(); i++) {
+      const PathDiagnostics d = EvaluatePathDiagnostics(c.path->table, c.path->slots.data(), count, c.path->n,
+                                                        c.path->incident.data(), &r.poses[9 * i]);
+      if (!d.valid || d.margin_count != r.branch_margin_count) {
+        ADD_FAILURE() << "pose " << i << ": valid=" << d.valid << " margin_count=" << d.margin_count;
+        continue;
+      }
+      for (int k = 0; k < d.margin_count; k++) {
+        EXPECT_EQ(r.branch_margins[r.branch_margin_count * i + k], d.margins[k]) << i << " " << k;
+        EXPECT_GT(r.branch_margins[r.branch_margin_count * i + k], 0.0);
+      }
+      EXPECT_EQ(r.jacobian_available[i], 1);
+      EXPECT_EQ(r.normal_jacobian[i], d.jacobian.value) << i;
+      EXPECT_EQ(r.singular_values[2 * i], d.jacobian.singular_values[0]) << i;
+      EXPECT_EQ(r.singular_values[2 * i + 1], d.jacobian.singular_values[1]) << i;
+      EXPECT_GT(r.normal_jacobian[i], 0.0);
+    }
+  }
+}
 
 TEST(PathFiber, C05Synthetic35ClosesUnderEverySafeStep) {
   const Synthetic35 s;

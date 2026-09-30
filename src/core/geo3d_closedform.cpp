@@ -801,6 +801,77 @@ void AppendFaceVtx(ClosedFormPyramidResult* r, int face_slot, int vtx_idx) {
   r->face_vtx[face_slot][(*cnt)++] = vtx_idx;
 }
 
+// A cone's slope when the wedge-angle entry point builds that cone, -1 (absent) otherwise: FillHexCrystalCoef's
+// legality gate (geo3d.cpp:381-382), for the float factory and for ClosedFormPyramidBasalHeights' double inputs.
+template <typename Real>
+double ConeSlopeOrAbsent(Real h, Real alpha) {
+  constexpr Real kMinAlpha = static_cast<Real>(0.1f);
+  constexpr Real kMaxAlpha = static_cast<Real>(89.9f);
+  if (h > math::kFloatEps && alpha >= kMinAlpha && alpha <= kMaxAlpha) {
+    return ClosedFormConeSlopeFromWedgeDeg(alpha);
+  }
+  return -1.0;
+}
+
+// Where each cone side is cut (ComputeClosedFormPyramidInner, ClosedFormPyramidBasalHeights).
+struct PyramidBasalCut {
+  ApexLPResult apex;
+  double m_requested_top = 0.0;
+  double m_requested_bot = 0.0;
+  bool upper_apex_collapsed = false;
+  bool lower_apex_collapsed = false;
+  double m_at_top = 0.0;
+  double m_at_bot = 0.0;
+  double z_top = 0.0;
+  double z_bot = 0.0;
+};
+
+// `dist` (float) feeds only the apex-collapse gate, which is a float decision of the engine;
+// `dist_scaled` = (√3/4)·dist in the caller's precision feeds the LP and everything after it.
+PyramidBasalCut ResolvePyramidBasalCut(bool has_upper, bool has_lower, double a1, double a2, double h1, double h2_2,
+                                       double h3, const float dist[kClosedFormPyramidSideCnt],
+                                       const double dist_scaled[kClosedFormPyramidSideCnt]) {
+  PyramidBasalCut cut;
+  // Apex heights (LP-max of m); u, v of the apex vertex captured for the
+  // apex-collapse special case where SolveHexCrossSection returns empty.
+  // Upper and lower use the SAME LP result (both cones have the same
+  // horizontal hex — the LP depends only on dist_scaled, not on a1/a2 or
+  // h1/h3): compute once, reuse both sides. The apex u/v is identical on
+  // both sides (it's a horizontal-plane property).
+  if (has_upper || has_lower) {
+    cut.apex = MaxFeasibleInsetLP(dist_scaled);
+  }
+  const ApexLPResult& apex = cut.apex;
+  const double m_apex_upper = has_upper ? apex.m : 0.0;
+  const double m_apex_lower = has_lower ? apex.m : 0.0;
+  // The truncation each side ASKS for, from its height fraction. Named apart
+  // from the effective inset below because the two differ exactly when the apex
+  // collapses, and report_apex_rescue needs this one.
+  cut.m_requested_top = has_upper ? std::min(h1 * m_apex_upper, m_apex_upper) : 0.0;
+  cut.m_requested_bot = has_lower ? std::min(h3 * m_apex_lower, m_apex_lower) : 0.0;
+  // Apex-collapse decision, taken here rather than at the emission site because
+  // a collapsed side's truncation inset IS the apex inset: resolving m before z,
+  // inset_at_* and the basal d are derived from it keeps the whole solid — the
+  // emitted vertices, the plane the basal d describes and the inset the caller
+  // reads back — consistent with the one decision, instead of emitting an apex
+  // tip while still reporting a truncation plane a hair below it.
+  //
+  // The requested truncation is at most one gate width below the apex when this
+  // fires (see ApexCollapsedAt), so the snap moves the tip by at most that, and
+  // it is exactly what an h ≥ 1 request already got from the std::min above.
+  cut.upper_apex_collapsed = has_upper && ApexCollapsedAt(dist, cut.m_requested_top, apex.m);
+  cut.lower_apex_collapsed = has_lower && ApexCollapsedAt(dist, cut.m_requested_bot, apex.m);
+  // The EFFECTIVE insets. Everything downstream — z_top/z_bot, inset_at_*,
+  // plane_coef[3,7], every emit_ring and apex enumeration below — reads these,
+  // and they exist only from here on, after the decision (see
+  // ResolveTruncationInset).
+  cut.m_at_top = ResolveTruncationInset(cut.upper_apex_collapsed, cut.m_requested_top, apex.m);
+  cut.m_at_bot = ResolveTruncationInset(cut.lower_apex_collapsed, cut.m_requested_bot, apex.m);
+  cut.z_top = has_upper ? (h2_2 + a1 * cut.m_at_top) : h2_2;
+  cut.z_bot = has_lower ? (-h2_2 - a2 * cut.m_at_bot) : -h2_2;
+  return cut;
+}
+
 // Internal: shared pyramid implementation with a1/a2 already resolved (both
 // public entry points funnel here so the "given a1/a2, solve" pipeline is
 // exercised by both arms — the plan's design point 5).
@@ -885,43 +956,22 @@ ClosedFormPyramidResult ComputeClosedFormPyramidInner(double a1, double a2, floa
     dist_scaled[i] = kInsetK * static_cast<double>(dist[i]);
   }
 
-  // Apex heights (LP-max of m); u, v of the apex vertex captured for the
-  // apex-collapse special case where SolveHexCrossSection returns empty.
-  // Upper and lower use the SAME LP result (both cones have the same
-  // horizontal hex — the LP depends only on dist_scaled, not on a1/a2 or
-  // h1/h3): compute once, reuse both sides. The apex u/v is identical on
-  // both sides (it's a horizontal-plane property).
-  ApexLPResult apex{};
-  if (has_upper || has_lower) {
-    apex = MaxFeasibleInsetLP(dist_scaled);
-  }
+  // Apex, requested and effective insets, and the basal cut heights: one resolution shared with
+  // ClosedFormPyramidBasalHeights (the double-precision entry liblumice_analytic reads), so the two
+  // cannot disagree about where a cone is cut.
+  const PyramidBasalCut cut = ResolvePyramidBasalCut(has_upper, has_lower, a1, a2, static_cast<double>(h1), h2_2,
+                                                     static_cast<double>(h3), dist, dist_scaled);
+  const ApexLPResult& apex = cut.apex;
   const double m_apex_upper = has_upper ? apex.m : 0.0;
   const double m_apex_lower = has_lower ? apex.m : 0.0;
-  // The truncation each side ASKS for, from its height fraction. Named apart
-  // from the effective inset below because the two differ exactly when the apex
-  // collapses, and report_apex_rescue needs this one.
-  const double m_requested_top = has_upper ? std::min(static_cast<double>(h1) * m_apex_upper, m_apex_upper) : 0.0;
-  const double m_requested_bot = has_lower ? std::min(static_cast<double>(h3) * m_apex_lower, m_apex_lower) : 0.0;
-  // Apex-collapse decision, taken here rather than at the emission site because
-  // a collapsed side's truncation inset IS the apex inset: resolving m before z,
-  // inset_at_* and the basal d are derived from it keeps the whole solid — the
-  // emitted vertices, the plane the basal d describes and the inset the caller
-  // reads back — consistent with the one decision, instead of emitting an apex
-  // tip while still reporting a truncation plane a hair below it.
-  //
-  // The requested truncation is at most one gate width below the apex when this
-  // fires (see ApexCollapsedAt), so the snap moves the tip by at most that, and
-  // it is exactly what an h ≥ 1 request already got from the std::min above.
-  const bool upper_apex_collapsed = has_upper && ApexCollapsedAt(dist, m_requested_top, apex.m);
-  const bool lower_apex_collapsed = has_lower && ApexCollapsedAt(dist, m_requested_bot, apex.m);
-  // The EFFECTIVE insets. Everything downstream — z_top/z_bot, inset_at_*,
-  // plane_coef[3,7], every emit_ring and apex enumeration below — reads these,
-  // and they exist only from here on, after the decision (see
-  // ResolveTruncationInset).
-  const double m_at_top = ResolveTruncationInset(upper_apex_collapsed, m_requested_top, apex.m);
-  const double m_at_bot = ResolveTruncationInset(lower_apex_collapsed, m_requested_bot, apex.m);
-  const double z_top = has_upper ? (h2_2 + a1 * m_at_top) : h2_2;
-  const double z_bot = has_lower ? (-h2_2 - a2 * m_at_bot) : -h2_2;
+  const double m_requested_top = cut.m_requested_top;
+  const double m_requested_bot = cut.m_requested_bot;
+  const bool upper_apex_collapsed = cut.upper_apex_collapsed;
+  const bool lower_apex_collapsed = cut.lower_apex_collapsed;
+  const double m_at_top = cut.m_at_top;
+  const double m_at_bot = cut.m_at_bot;
+  const double z_top = cut.z_top;
+  const double z_bot = cut.z_bot;
   r.inset_at_top = static_cast<float>(m_at_top);
   r.inset_at_bottom = static_cast<float>(m_at_bot);
   // Basal d values, matching FillHexCrystalCoef's convention (d = -z_top for
@@ -1455,17 +1505,8 @@ ClosedFormPrismResult ComputeClosedFormPrism(float h, const float dist[6]) {
 
 ClosedFormPyramidResult ComputeClosedFormPyramid(float upper_alpha, float lower_alpha, float h1, float h2, float h3,
                                                  const float dist[6]) {
-  // Match FillHexCrystalCoef's legality gate (geo3d.cpp:381-382).
-  constexpr float kMinAlpha = 0.1f;
-  constexpr float kMaxAlpha = 89.9f;
-  double a1 = -1.0;
-  double a2 = -1.0;
-  if (h1 > math::kFloatEps && upper_alpha >= kMinAlpha && upper_alpha <= kMaxAlpha) {
-    a1 = ClosedFormConeSlopeFromWedgeDeg(upper_alpha);
-  }
-  if (h3 > math::kFloatEps && lower_alpha >= kMinAlpha && lower_alpha <= kMaxAlpha) {
-    a2 = ClosedFormConeSlopeFromWedgeDeg(lower_alpha);
-  }
+  const double a1 = ConeSlopeOrAbsent(h1, upper_alpha);
+  const double a2 = ConeSlopeOrAbsent(h3, lower_alpha);
   return ComputeClosedFormPyramidInner(a1, a2, h1, h2, h3, dist);
 }
 
@@ -1499,6 +1540,24 @@ ClosedFormPyramidResult ComputeClosedFormPyramid(int upper_i1, int upper_i4, int
     a2 = static_cast<double>(lower_i1) * static_cast<double>(kIceCrystalC) / (2.0 * static_cast<double>(lower_i4));
   }
   return ComputeClosedFormPyramidInner(a1, a2, h1, h2, h3, dist);
+}
+
+void ClosedFormPyramidBasalHeights(double upper_wedge_deg, double lower_wedge_deg, double h1, double h2, double h3,
+                                   const double dist[6], double* z_top, double* z_bot) {
+  const double a1 = ConeSlopeOrAbsent(h1, upper_wedge_deg);
+  const double a2 = ConeSlopeOrAbsent(h3, lower_wedge_deg);
+  const bool has_upper = a1 > 0 && h1 > math::kFloatEps;
+  const bool has_lower = a2 > 0 && h3 > math::kFloatEps;
+  float dist_f[kClosedFormPyramidSideCnt];
+  double dist_scaled[kClosedFormPyramidSideCnt];
+  for (int i = 0; i < kClosedFormPyramidSideCnt; i++) {
+    dist_f[i] = static_cast<float>(dist[i]);
+    dist_scaled[i] = kInsetK * dist[i];
+  }
+  const PyramidBasalCut cut =
+      ResolvePyramidBasalCut(has_upper, has_lower, a1, a2, h1, 0.5 * h2, h3, dist_f, dist_scaled);
+  *z_top = cut.z_top;
+  *z_bot = cut.z_bot;
 }
 
 }  // namespace lumice

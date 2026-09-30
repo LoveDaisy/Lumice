@@ -153,39 +153,75 @@ IceDiscovery::IceDiscovery(const FaceNormalTable& table, const FacePolygonTable&
   assert(slot_count >= 2 && slot_count <= kMaxFaceCount);
 }
 
-std::vector<BandEvent> IceDiscovery::BuildBand(int sample_count, double delta, double half_width) {
-  std::vector<BandEvent> band;
-  const double lo = delta - half_width;
-  const double hi = delta + half_width;
+bool IceDiscovery::EvaluateLatticePoint(int sample_count, int i, BandEvent* event, double* transmission) {
+  event->index = i;
+  LatticePoint(sample_count, i, event->u);
+  // The fields depend on the pose only through u (section 9.5.2): at the identity pose the body and
+  // world frames coincide and the incident propagation direction is -u.
+  const double incident[3] = { -event->u[0], -event->u[1], -event->u[2] };
   const double identity[9] = { 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0 };
   PathOutputs detail{};
   detail.segment_directions = segments_.data();
   detail.interface_transmittances = transmittances_.data();
+  if (!TracePathChain<double>(*table_, slots_.data(), slot_count_, refractive_index_, incident, identity, event->phi,
+                              &detail, nullptr)) {
+    return false;
+  }
+  event->deviation = std::acos(Clamp1(so3::Dot3(event->phi, incident)));
+  *transmission = detail.fresnel_transmission;
+  return true;
+}
+
+double IceDiscovery::EntryMeasureAt(const BandEvent& event) {
+  const double incident[3] = { -event.u[0], -event.u[1], -event.u[2] };
+  return corridor_.Evaluate(incident, refractive_index_).value;
+}
+
+namespace {
+bool ByDeviationThenIndex(const BandEvent& a, const BandEvent& b) {
+  return a.deviation < b.deviation || (a.deviation == b.deviation && a.index < b.index);
+}
+}  // namespace
+
+std::vector<BandEvent> IceDiscovery::BuildBand(int sample_count, double delta, double half_width) {
+  std::vector<BandEvent> band;
+  const double lo = delta - half_width;
+  const double hi = delta + half_width;
   for (int i = 0; i < sample_count; i++) {
     BandEvent event;
-    event.index = i;
-    LatticePoint(sample_count, i, event.u);
-    // The fields depend on the pose only through u (section 9.5.2): at the identity pose the body and
-    // world frames coincide and the incident propagation direction is -u.
-    const double incident[3] = { -event.u[0], -event.u[1], -event.u[2] };
-    if (!TracePathChain<double>(*table_, slots_.data(), slot_count_, refractive_index_, incident, identity, event.phi,
-                                &detail, nullptr)) {
+    double transmission = 0.0;
+    if (!EvaluateLatticePoint(sample_count, i, &event, &transmission)) {
       continue;
     }
-    event.deviation = std::acos(Clamp1(so3::Dot3(event.phi, incident)));
     if (!(event.deviation >= lo && event.deviation <= hi)) {
       continue;
     }
     // w = A T > 0.
-    if (!(detail.fresnel_transmission > 0.0) || corridor_.Evaluate(incident, refractive_index_).value <= 0.0) {
+    if (!(transmission > 0.0) || EntryMeasureAt(event) <= 0.0) {
       continue;
     }
     band.push_back(event);
   }
-  std::sort(band.begin(), band.end(), [](const BandEvent& a, const BandEvent& b) {
-    return a.deviation < b.deviation || (a.deviation == b.deviation && a.index < b.index);
-  });
+  std::sort(band.begin(), band.end(), ByDeviationThenIndex);
   return band;
+}
+
+std::vector<SampleEvent> IceDiscovery::BuildEvents(int sample_count) {
+  std::vector<SampleEvent> events;
+  for (int i = 0; i < sample_count; i++) {
+    SampleEvent event;
+    double transmission = 0.0;
+    if (!EvaluateLatticePoint(sample_count, i, &event.event, &transmission)) {
+      continue;
+    }
+    event.weight = kLiAreaPerEngineArea * EntryMeasureAt(event.event) * transmission;
+    if (event.weight > 0.0) {
+      events.push_back(event);
+    }
+  }
+  std::sort(events.begin(), events.end(),
+            [](const SampleEvent& a, const SampleEvent& b) { return ByDeviationThenIndex(a.event, b.event); });
+  return events;
 }
 
 bool IceDiscovery::Admit(const TargetChart& chart, const ContinuationParams& params, const double raw[9],

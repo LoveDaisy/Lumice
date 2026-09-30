@@ -1,4 +1,325 @@
 {
+ "band_sum_cells": [
+  {
+   "crystal": {
+    "face_distance": [
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0
+    ],
+    "height": 1.0,
+    "kind": "prism",
+    "lower_h": 0.0,
+    "lower_wedge_deg": 0.0,
+    "upper_h": 0.0,
+    "upper_wedge_deg": 0.0
+   },
+   "files": [
+    "3-5__band_sum_random.json"
+   ],
+   "label": "random",
+   "name": "3-5__band_sum_random",
+   "path": "3-5",
+   "pose_density": "random",
+   "projection": "linear",
+   "rank": 2,
+   "rationale": "no internal reflection, Haar-uniform poses, linear lens: the sun pixel (singular), a pixel inside the 22 deg halo (empty band) and the halo's inner edge and tail",
+   "skipped": []
+  },
+  {
+   "crystal": {
+    "face_distance": [
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0
+    ],
+    "height": 1.0,
+    "kind": "prism",
+    "lower_h": 0.0,
+    "lower_wedge_deg": 0.0,
+    "upper_h": 0.0,
+    "upper_wedge_deg": 0.0
+   },
+   "files": [
+    "3-5__band_sum_plate.json"
+   ],
+   "label": "plate",
+   "name": "3-5__band_sum_plate",
+   "path": "3-5",
+   "pose_density": "plate",
+   "projection": "lambert_azimuthal_equal_area",
+   "rank": 2,
+   "rationale": "a narrow zenith family (plate, 1 deg) on a Lambert view: the parhelion of the single path 3-5 (one side only), its tails down to 1e-88, the mirror side where every band event has rho = 0 (K_rho_pos = 0 < K), an empty band inside the halo, and the sun pixel",
+   "skipped": []
+  },
+  {
+   "crystal": {
+    "face_distance": [
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0
+    ],
+    "height": 1.0,
+    "kind": "prism",
+    "lower_h": 0.0,
+    "lower_wedge_deg": 0.0,
+    "upper_h": 0.0,
+    "upper_wedge_deg": 0.0
+   },
+   "files": [
+    "3-5__band_sum_parry.json"
+   ],
+   "label": "parry",
+   "name": "3-5__band_sum_parry",
+   "path": "3-5",
+   "pose_density": "parry",
+   "projection": "linear",
+   "rank": 2,
+   "rationale": "the roll-locked family (Parry, zenith and roll 1 deg): the density reads all three body-axis zenith components (the roll atan2(-e2, e1)); the upper Parry arc, tails to 1e-238 and a dark pixel",
+   "skipped": []
+  },
+  {
+   "crystal": {
+    "face_distance": [
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0
+    ],
+    "height": 1.0,
+    "kind": "prism",
+    "lower_h": 0.0,
+    "lower_wedge_deg": 0.0,
+    "upper_h": 0.0,
+    "upper_wedge_deg": 0.0
+   },
+   "files": [
+    "3-5-6-7__band_sum_random.json"
+   ],
+   "label": "random",
+   "name": "3-5-6-7__band_sum_random",
+   "path": "3-5-6-7",
+   "pose_density": "random",
+   "projection": "lambert_azimuthal_equal_area",
+   "rank": 2,
+   "rationale": "two internal reflections weighted by Fresnel R on a Lambert view about the antisun: the antisolar pixel (delta = pi, singular), the lit ring and a dark pixel beyond the path's largest deviation",
+   "skipped": []
+  },
+  {
+   "crystal": {
+    "face_distance": [
+     1.0,
+     1.1,
+     0.9,
+     1.0,
+     1.2,
+     0.95
+    ],
+    "height": 0.5,
+    "kind": "pyramid",
+    "lower_h": 0.6,
+    "lower_wedge_deg": 38.5704386184827,
+    "upper_h": 0.25,
+    "upper_wedge_deg": 27.996455531220374
+   },
+   "files": [
+    "13-15-26-28__band_sum_random.json"
+   ],
+   "label": "random",
+   "name": "13-15-26-28__band_sum_random",
+   "path": "13-15-26-28",
+   "pose_density": "random",
+   "projection": "lambert_azimuthal_equal_area",
+   "rank": 2,
+   "rationale": "pyramid faces off the prism family on the asymmetric pyramid (the matrix's crystal): the lit ring (D 121-149 deg), a pixel on each side of it and the antisolar pixel",
+   "skipped": []
+  },
+  {
+   "crystal": {
+    "face_distance": [
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0
+    ],
+    "height": 1.0,
+    "kind": "prism",
+    "lower_h": 0.0,
+    "lower_wedge_deg": 0.0,
+    "upper_h": 0.0,
+    "upper_wedge_deg": 0.0
+   },
+   "files": [
+    "3-6__band_sum_rank0.json"
+   ],
+   "label": "rank0",
+   "name": "3-6__band_sum_rank0",
+   "path": "3-6",
+   "pose_density": "random",
+   "projection": "lambert_azimuthal_equal_area",
+   "rank": 0,
+   "rationale": "a rank-0 path (3-6, parallel faces): a point mass m on the pixel containing the sun, 0 elsewhere; under the random density m is the lattice mean of w, deterministic",
+   "skipped": []
+  },
+  {
+   "crystal": {
+    "face_distance": [
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0
+    ],
+    "height": 1.0,
+    "kind": "prism",
+    "lower_h": 0.0,
+    "lower_wedge_deg": 0.0,
+    "upper_h": 0.0,
+    "upper_wedge_deg": 0.0
+   },
+   "files": [
+    "3-6__band_sum_rank0_plate.json"
+   ],
+   "label": "rank0_plate",
+   "name": "3-6__band_sum_rank0_plate",
+   "path": "3-6",
+   "pose_density": "plate",
+   "projection": "lambert_azimuthal_equal_area",
+   "rank": 0,
+   "rationale": "the same point mass under the plate family: m from LI's Haar stream, compared statistically",
+   "skipped": []
+  },
+  {
+   "crystal": {
+    "face_distance": [
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0
+    ],
+    "height": 1.0,
+    "kind": "prism",
+    "lower_h": 0.0,
+    "lower_wedge_deg": 0.0,
+    "upper_h": 0.0,
+    "upper_wedge_deg": 0.0
+   },
+   "files": [
+    "3-6-4-8__band_sum_plate.json"
+   ],
+   "label": "plate",
+   "name": "3-6-4-8__band_sum_plate",
+   "path": "3-6-4-8",
+   "pose_density": "plate",
+   "projection": "lambert_azimuthal_equal_area",
+   "rank": 2,
+   "rationale": "family pinned, reflection group element 6 (fold matrix R_z(120 deg)): the 120 deg parhelion at D = 113.548 deg, its spot centre, the four neighbours, the vertical and horizontal tails down to 1e-26",
+   "skipped": []
+  },
+  {
+   "crystal": {
+    "face_distance": [
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0
+    ],
+    "height": 1.0,
+    "kind": "prism",
+    "lower_h": 0.0,
+    "lower_wedge_deg": 0.0,
+    "upper_h": 0.0,
+    "upper_wedge_deg": 0.0
+   },
+   "files": [
+    "3-6-4-8__band_sum_plate_sigma_0.5.json"
+   ],
+   "label": "plate_sigma_0.5",
+   "name": "3-6-4-8__band_sum_plate_sigma_0.5",
+   "path": "3-6-4-8",
+   "pose_density": "plate",
+   "projection": "lambert_azimuthal_equal_area",
+   "rank": 2,
+   "rationale": "the same view and pixels at half the zenith spread: the centre brightens, the tails fall to 1e-92 (the spot's width scales with sigma; the 3-5 parhelion's does not)",
+   "skipped": []
+  },
+  {
+   "crystal": {
+    "face_distance": [
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0
+    ],
+    "height": 0.2,
+    "kind": "prism",
+    "lower_h": 0.0,
+    "lower_wedge_deg": 0.0,
+    "upper_h": 0.0,
+    "upper_wedge_deg": 0.0
+   },
+   "files": [
+    "1-2-1__band_sum_plate.json"
+   ],
+   "label": "plate",
+   "name": "1-2-1__band_sum_plate",
+   "path": "1-2-1",
+   "pose_density": "plate",
+   "projection": "lambert_azimuthal_equal_area",
+   "rank": 2,
+   "rationale": "family pinned, element 11 (a basal reflection) on a thin plate: the subsun at D = 30 deg, lit along the vertical, falling to 1e-15 across it (the column crystal has no valid pose on this family)",
+   "skipped": []
+  },
+  {
+   "crystal": {
+    "face_distance": [
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0
+    ],
+    "height": 0.2,
+    "kind": "prism",
+    "lower_h": 0.0,
+    "lower_wedge_deg": 0.0,
+    "upper_h": 0.0,
+    "upper_wedge_deg": 0.0
+   },
+   "files": [
+    "1-2-3-4-1__band_sum_plate.json"
+   ],
+   "label": "plate",
+   "name": "1-2-3-4-1__band_sum_plate",
+   "path": "1-2-3-4-1",
+   "pose_density": "plate",
+   "projection": "lambert_azimuthal_equal_area",
+   "rank": 2,
+   "rationale": "family pinned, element 5 on a thin plate: the 120 deg subparhelion at D = 122.242 deg, a pixel on the path's smallest deviation (120 deg) and an empty band beyond it",
+   "skipped": []
+  }
+ ],
  "cells": [
   {
    "category": "random",
@@ -403,10 +724,446 @@
    "skipped": []
   }
  ],
+ "edge_cells": [
+  {
+   "crystal": {
+    "face_distance": [
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0
+    ],
+    "height": 1.0,
+    "kind": "prism",
+    "lower_h": 0.0,
+    "lower_wedge_deg": 0.0,
+    "upper_h": 0.0,
+    "upper_wedge_deg": 0.0
+   },
+   "files": [
+    "3-5__short_loop__evaluate_path__point.json",
+    "3-5__short_loop__trace_fiber.json",
+    "3-5__short_loop__evaluate_path__curve_min_margin.json",
+    "3-5__short_loop__evaluate_path__curve_min_jacobian.json",
+    "3-5__short_loop__trace_fiber__initial_step_0.03.json",
+    "3-5__short_loop__trace_fiber__initial_step_0.08.json",
+    "3-5__short_loop__trace_fiber__controller_thresholds.json"
+   ],
+   "label": "short_loop",
+   "name": "3-5__short_loop",
+   "path": "3-5",
+   "point": "critical_offset",
+   "rationale": "a 0.165 rad loop 0.01 deg above the 3-5 minimum deviation, about four initial steps long: the step-aware closure must close it on its first traversal (a loop below the 2 x initial_step closure extent is traversed twice by design, contract section 6.4), and J_perp is smallest here (caustic)",
+   "selection": {
+    "deviation_deg": 21.849299909773006,
+    "extremum_deviation_deg": 21.83929990977304,
+    "extremum_kind": "minimum",
+    "extremum_u": [
+     0.7556288771612691,
+     -0.6549999999999998,
+     0.0
+    ],
+    "geodesic_angle_deg": 1.0947683192368256,
+    "level_offset_deg": 0.01,
+    "method": "lit side of an interior extremum of D_P",
+    "u": [
+     0.7429764176703024,
+     -0.6693175948574821,
+     0.0
+    ]
+   },
+   "serves": [
+    "C05",
+    "C06",
+    "C14"
+   ],
+   "skipped": []
+  },
+  {
+   "crystal": {
+    "face_distance": [
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0
+    ],
+    "height": 1.0,
+    "kind": "prism",
+    "lower_h": 0.0,
+    "lower_wedge_deg": 0.0,
+    "upper_h": 0.0,
+    "upper_wedge_deg": 0.0
+   },
+   "files": [
+    "3-5__strip_short_loop_r100_c126__trace_fiber.json",
+    "3-5__strip_short_loop_r100_c126__evaluate_path__curve_min_margin.json",
+    "3-5__strip_short_loop_r100_c126__evaluate_path__curve_min_jacobian.json",
+    "3-5__strip_short_loop_r100_c126__seed_search.json"
+   ],
+   "label": "strip_short_loop_r100_c126",
+   "name": "3-5__strip_short_loop_r100_c126",
+   "path": "3-5",
+   "point": "target",
+   "rationale": "ch06 strip pixel (100, 126): a 1.645 rad loop shorter than pi that the retired absolute closure gate traversed twice (test_strip_short_loops_close_at_their_single_traversal_length)",
+   "selection": {
+    "components": 1,
+    "deviation_deg": 22.85933749624157,
+    "method": "the component seeds of seed search at the given target"
+   },
+   "serves": [
+    "C06",
+    "C15"
+   ],
+   "skipped": []
+  },
+  {
+   "crystal": {
+    "face_distance": [
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0
+    ],
+    "height": 1.0,
+    "kind": "prism",
+    "lower_h": 0.0,
+    "lower_wedge_deg": 0.0,
+    "upper_h": 0.0,
+    "upper_wedge_deg": 0.0
+   },
+   "files": [
+    "3-5__caustic_loop_r49_c0__trace_fiber.json",
+    "3-5__caustic_loop_r49_c0__evaluate_path__curve_min_margin.json",
+    "3-5__caustic_loop_r49_c0__evaluate_path__curve_min_jacobian.json",
+    "3-5__caustic_loop_r49_c0__seed_search.json"
+   ],
+   "label": "caustic_loop_r49_c0",
+   "name": "3-5__caustic_loop_r49_c0",
+   "path": "3-5",
+   "point": "target",
+   "rationale": "ch06 strip pixel (49, 0): a 0.19 rad loop at the caustic edge whose extra seeds used to end on a spurious event (test_caustic_edge_pixels_are_single_short_closed_loops)",
+   "selection": {
+    "components": 1,
+    "deviation_deg": 21.852480997118178,
+    "method": "the component seeds of seed search at the given target"
+   },
+   "serves": [
+    "C06",
+    "C15"
+   ],
+   "skipped": []
+  },
+  {
+   "crystal": {
+    "face_distance": [
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0
+    ],
+    "height": 1.0,
+    "kind": "prism",
+    "lower_h": 0.0,
+    "lower_wedge_deg": 0.0,
+    "upper_h": 0.0,
+    "upper_wedge_deg": 0.0
+   },
+   "files": [
+    "3-5__boundary_hugging_r700_c150__trace_fiber.json",
+    "3-5__boundary_hugging_r700_c150__evaluate_path__curve_min_margin.json",
+    "3-5__boundary_hugging_r700_c150__evaluate_path__curve_min_jacobian.json",
+    "3-5__boundary_hugging_r700_c150__seed_search.json"
+   ],
+   "label": "boundary_hugging_r700_c150",
+   "name": "3-5__boundary_hugging_r700_c150",
+   "path": "3-5",
+   "point": "target",
+   "rationale": "ch06 strip pixel (700, 150): a loop running along the exit TIR boundary (exit Snell discriminant below event_slowdown_margin) that exhausted the step budget before the rate-based event slowdown",
+   "selection": {
+    "components": 1,
+    "deviation_deg": 37.14473231029642,
+    "method": "the component seeds of seed search at the given target"
+   },
+   "serves": [
+    "C06",
+    "C08",
+    "C16"
+   ],
+   "skipped": []
+  },
+  {
+   "crystal": {
+    "face_distance": [
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0
+    ],
+    "height": 1.0,
+    "kind": "prism",
+    "lower_h": 0.0,
+    "lower_wedge_deg": 0.0,
+    "upper_h": 0.0,
+    "upper_wedge_deg": 0.0
+   },
+   "files": [
+    "3-5__boundary_hugging_r780_c150__trace_fiber.json",
+    "3-5__boundary_hugging_r780_c150__evaluate_path__curve_min_margin.json",
+    "3-5__boundary_hugging_r780_c150__evaluate_path__curve_min_jacobian.json",
+    "3-5__boundary_hugging_r780_c150__seed_search.json"
+   ],
+   "label": "boundary_hugging_r780_c150",
+   "name": "3-5__boundary_hugging_r780_c150",
+   "path": "3-5",
+   "point": "target",
+   "rationale": "ch06 strip pixel (780, 150): the second boundary-hugging loop of test_boundary_hugging_pixels_fold_every_candidate_into_one_closed_loop",
+   "selection": {
+    "components": 1,
+    "deviation_deg": 39.020551859649174,
+    "method": "the component seeds of seed search at the given target"
+   },
+   "serves": [
+    "C06",
+    "C08",
+    "C16"
+   ],
+   "skipped": []
+  },
+  {
+   "crystal": {
+    "face_distance": [
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0
+    ],
+    "height": 1.0,
+    "kind": "prism",
+    "lower_h": 0.0,
+    "lower_wedge_deg": 0.0,
+    "upper_h": 0.0,
+    "upper_wedge_deg": 0.0
+   },
+   "files": [
+    "1-3__two_arcs_60deg__trace_fiber__component_0.json",
+    "1-3__two_arcs_60deg__trace_fiber__component_1.json",
+    "1-3__two_arcs_60deg__evaluate_path__curve_min_margin.json",
+    "1-3__two_arcs_60deg__evaluate_path__curve_min_jacobian.json",
+    "1-3__two_arcs_60deg__trace_fiber__initial_step_0.03.json",
+    "1-3__two_arcs_60deg__trace_fiber__initial_step_0.08.json",
+    "1-3__two_arcs_60deg__seed_search.json"
+   ],
+   "label": "two_arcs_60deg",
+   "name": "1-3__two_arcs_60deg",
+   "path": "1-3",
+   "point": "target",
+   "rationale": "path 1-3 at delta = 60 deg: two distinct components, each an arc cut by exit TIR at one end and by the entry ray leaving face 1 (path_infeasible) at the other (test_path_1_3_at_60_deg_is_two_distinct_components)",
+   "selection": {
+    "components": 2,
+    "deviation_deg": 59.999999999999986,
+    "method": "the component seeds of seed search at the given target"
+   },
+   "serves": [
+    "C06",
+    "C08",
+    "C17",
+    "C18"
+   ],
+   "skipped": []
+  },
+  {
+   "crystal": {
+    "face_distance": [
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0
+    ],
+    "height": 1.0,
+    "kind": "prism",
+    "lower_h": 0.0,
+    "lower_wedge_deg": 0.0,
+    "upper_h": 0.0,
+    "upper_wedge_deg": 0.0
+   },
+   "files": [
+    "3-5__rank_loss_extremum__evaluate_path__point.json",
+    "3-5__rank_loss_extremum__trace_fiber.json"
+   ],
+   "label": "rank_loss_extremum",
+   "name": "3-5__rank_loss_extremum",
+   "path": "3-5",
+   "point": "extremum",
+   "rationale": "the seed is the interior minimum of D_P itself, where the fiber degenerates to a point: sigma_2 ~ 1e-16, far below any rank gate, so the trace must end rank_loss with no accepted pose",
+   "selection": {
+    "deviation_deg": 21.83929990977297,
+    "extremum_deviation_deg": 21.83929990977304,
+    "extremum_kind": "minimum",
+    "method": "the first interior extremum of D_P itself",
+    "u": [
+     0.7556288771612691,
+     -0.6549999999999998,
+     0.0
+    ]
+   },
+   "serves": [
+    "C07"
+   ],
+   "skipped": []
+  },
+  {
+   "crystal": {
+    "face_distance": [
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0
+    ],
+    "height": 1.0,
+    "kind": "prism",
+    "lower_h": 0.0,
+    "lower_wedge_deg": 0.0,
+    "upper_h": 0.0,
+    "upper_wedge_deg": 0.0
+   },
+   "files": [
+    "3-5__limits__evaluate_path__point.json",
+    "3-5__limits__trace_fiber.json",
+    "3-5__limits__evaluate_path__curve_min_margin.json",
+    "3-5__limits__evaluate_path__curve_min_jacobian.json",
+    "3-5__limits__trace_fiber__step_budget.json",
+    "3-5__limits__trace_fiber__arclength_budget.json",
+    "3-5__limits__trace_fiber__evaluation_budget.json",
+    "3-5__limits__trace_fiber__corrector_failure.json",
+    "3-5__limits__trace_fiber__step_underflow.json"
+   ],
+   "label": "limits",
+   "name": "3-5__limits",
+   "path": "3-5",
+   "point": "random",
+   "rationale": "the 3-5 random seed under options that end the trace early: each budget, a corrector that cannot meet maximum_advance, and a step that falls below minimum_step",
+   "selection": {
+    "deviation_deg": 39.32018385540372,
+    "draws": 9,
+    "method": "first admissible uniform draw",
+    "rng": "numpy.random.default_rng",
+    "rng_seed": 20260928,
+    "u": [
+     0.07443562131389585,
+     -0.9208915320040145,
+     -0.38264621331317694
+    ]
+   },
+   "serves": [
+    "C09",
+    "C11"
+   ],
+   "skipped": []
+  },
+  {
+   "crystal": {
+    "face_distance": [
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0
+    ],
+    "height": 1.0,
+    "kind": "prism",
+    "lower_h": 0.0,
+    "lower_wedge_deg": 0.0,
+    "upper_h": 0.0,
+    "upper_wedge_deg": 0.0
+   },
+   "files": [
+    "3-5__antipodal_target__evaluate_path__point.json",
+    "3-5__antipodal_target__trace_fiber.json"
+   ],
+   "label": "antipodal_target",
+   "name": "3-5__antipodal_target",
+   "path": "3-5",
+   "point": "antipodal_target",
+   "rationale": "the 3-5 random pose aimed at the antipode -d of its own outgoing direction: an algebraic zero of the projected residual that the target-neighbourhood gate must reject",
+   "selection": {
+    "deviation_deg": 39.32018385540372,
+    "draws": 9,
+    "method": "first admissible uniform draw",
+    "rng": "numpy.random.default_rng",
+    "rng_seed": 20260928,
+    "target": "the antipode -d of the pose's own outgoing direction d",
+    "u": [
+     0.07443562131389585,
+     -0.9208915320040145,
+     -0.38264621331317694
+    ]
+   },
+   "serves": [
+    "C04"
+   ],
+   "skipped": []
+  },
+  {
+   "crystal": {
+    "face_distance": [
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0
+    ],
+    "height": 0.5,
+    "kind": "pyramid",
+    "lower_h": 0.5,
+    "lower_wedge_deg": 27.999371488023023,
+    "upper_h": 0.5,
+    "upper_wedge_deg": 27.999371488023023
+   },
+   "files": [
+    "13-24-26__boundary_arc_90deg__trace_fiber.json",
+    "13-24-26__boundary_arc_90deg__evaluate_path__curve_min_margin.json",
+    "13-24-26__boundary_arc_90deg__evaluate_path__curve_min_jacobian.json",
+    "13-24-26__boundary_arc_90deg__seed_search.json"
+   ],
+   "label": "boundary_arc_90deg",
+   "name": "13-24-26__boundary_arc_90deg",
+   "path": "13-24-26",
+   "point": "target",
+   "rationale": "pyramid 13-24-26 on the reference pyramid at 90 deg: one arc cut by the path domain at both ends, no interior critical point (test_pyramid_boundary_only_path_is_one_arc_up_to_its_boundary_extremum)",
+   "selection": {
+    "components": 1,
+    "deviation_deg": 90.0,
+    "method": "the component seeds of seed search at the given target"
+   },
+   "serves": [
+    "C18",
+    "C19"
+   ],
+   "skipped": []
+  }
+ ],
  "format": "lumice-integral/analytic-parity",
  "provenance": {
-  "conventions_sha256": "4af1326270649820be6ad4859d86d3cb54f05c6b677f1769e76c0c907e98c871",
-  "li_rev": "bfbd042a2234a80efb96950ce33375690a94fb07",
+  "conventions_sha256": "8083730f089e6493458cddfd8e15fc5096b961606a69c819456ac646bd87bcdf",
+  "li_rev": "fa8dadd222df45538a05ff2552d22f505c15a0fc",
   "li_tracked_tree_clean": true
  },
  "schema_version": 1,

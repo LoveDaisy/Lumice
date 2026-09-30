@@ -86,7 +86,11 @@ _PRELUDE = textwrap.dedent(
         _fields_ = [("struct_size", c_uint32), ("status", c_int), ("reason", c_int), ("pose_count", c_int),
                     ("poses", POINTER(c_double)), ("crystal_frame_sun_directions", POINTER(c_double)),
                     ("arclength_increments", POINTER(c_double)), ("residual_norms", POINTER(c_double)),
-                    ("tangents", POINTER(c_double)), ("storage", c_void_p)]
+                    ("tangents", POINTER(c_double)), ("storage", c_void_p),
+                    # Version 5: the per-pose diagnostics (test_analytic_trace_fiber.py reads them).
+                    ("branch_margin_count", c_int), ("branch_margin_names", POINTER(ctypes.c_char_p)),
+                    ("branch_margins", POINTER(c_double)), ("jacobian_available", POINTER(c_int)),
+                    ("normal_jacobian", POINTER(c_double)), ("singular_values", POINTER(c_double))]
 
     class DiscoveryProblem(Structure):
         _fields_ = [("faces", POINTER(c_int)), ("face_count", c_int), ("refractive_index", c_double),
@@ -185,10 +189,12 @@ _PRELUDE = textwrap.dedent(
 
     def check_trace(t):
         # A nested FiberResult is a view: the library's struct_size, no storage of its own, and the
-        # usual arrays with u = R^T (-s).
+        # usual arrays with u = R^T (-s), the version 5 diagnostics included (same fill as TraceFiber).
         assert t.struct_size == sizeof(FiberResult) and not t.storage
         n = t.pose_count
         assert n >= 1 and t.poses and t.residual_norms and t.tangents and t.crystal_frame_sun_directions
+        assert t.branch_margin_count >= 4 and t.branch_margin_names[0] == b"entry_incidence_cosine"
+        assert all(t.jacobian_available[i] == 1 and t.normal_jacobian[i] > 0.0 for i in range(n))
         for i in range(n):
             R = [t.poses[9 * i + k] for k in range(9)]
             u = [-(R[0 * 3 + k] * SUN[0] + R[1 * 3 + k] * SUN[1] + R[2 * 3 + k] * SUN[2]) for k in range(3)]

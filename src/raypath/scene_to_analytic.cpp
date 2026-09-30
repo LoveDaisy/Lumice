@@ -136,4 +136,71 @@ Error ResolveSingleLayerPath(const std::vector<std::vector<int>>& layers, const 
   return {};
 }
 
+namespace {
+
+// A distribution's type as the config file spells it ("fixed" for a scalar, which the file writes
+// as a bare number and the enum's JSON table does not name).
+std::string DistributionTypeText(DistributionType type) {
+  if (type == DistributionType::kNoRandom) {
+    return "fixed";
+  }
+  return nlohmann::json(type).get<std::string>();
+}
+
+std::string Describe(const char* slot, const Distribution& d) {
+  return std::string(slot) + " of type " + DistributionTypeText(d.type);
+}
+
+}  // namespace
+
+PoseDensityConversion ConvertAxisToPoseDensity(const AxisDistribution& axis) {
+  PoseDensityConversion out;
+  if (axis.IsFullSphereUniform()) {
+    out.spec.family = analytic::PoseFamily::kRandom;
+    return out;
+  }
+  if (!axis.IsAzRotationallySymmetric()) {
+    out.unsupported = "the azimuth must be uniform over 360 degrees (got " + Describe("an azimuth", axis.azimuth_dist) +
+                      (axis.azimuth_dist.type == DistributionType::kUniform ?
+                           " over " + std::to_string(axis.azimuth_dist.spread) + " degrees" :
+                           std::string()) +
+                      ")";
+    return out;
+  }
+  const Distribution& zenith = axis.latitude_dist;
+  if (zenith.type != DistributionType::kGaussian) {
+    out.unsupported = "the zenith must be a Gaussian (got " + Describe("a zenith", zenith) +
+                      "); a uniform zenith is expressible only as the full-sphere random axis";
+    return out;
+  }
+  const bool roll_free = axis.IsRollRotationallySymmetric();
+  if (!roll_free && axis.roll_dist.type != DistributionType::kGaussian) {
+    out.unsupported = "the roll must be uniform over 360 degrees or a Gaussian (got " +
+                      Describe("a roll", axis.roll_dist) +
+                      (axis.roll_dist.type == DistributionType::kUniform ?
+                           " over " + std::to_string(axis.roll_dist.spread) + " degrees" :
+                           std::string()) +
+                      ")";
+    return out;
+  }
+  // Internal latitude -> external zenith (math.cpp to_json(AxisDistribution)).
+  const double zenith_mean = 90.0 - static_cast<double>(zenith.center);
+  const bool near_vertical = zenith_mean < 45.0;
+  analytic::PoseDensitySpec& spec = out.spec;
+  spec.zenith_mean_deg = zenith_mean;
+  spec.zenith_std_deg = zenith.spread;
+  if (roll_free) {
+    spec.family = near_vertical ? analytic::PoseFamily::kPlate : analytic::PoseFamily::kColumn;
+  } else {
+    spec.family = near_vertical ? analytic::PoseFamily::kLowitz : analytic::PoseFamily::kParry;
+    spec.roll_mean_deg = axis.roll_dist.center;
+    spec.roll_std_deg = axis.roll_dist.spread;
+  }
+  const char* invalid = analytic::PoseDensityError(spec);
+  if (invalid[0] != '\0') {
+    out.unsupported = std::string("the axis maps to an invalid pose density: ") + invalid;
+  }
+  return out;
+}
+
 }  // namespace lumice::raypath

@@ -1,0 +1,185 @@
+{
+ "cell": {
+  "category": "edge",
+  "label": "antipodal_target",
+  "name": "3-5__antipodal_target",
+  "path": "3-5",
+  "rationale": "the 3-5 random pose aimed at the antipode -d of its own outgoing direction: an algebraic zero of the projected residual that the target-neighbourhood gate must reject",
+  "seed_label": "trace_fiber",
+  "selection": {
+   "deviation_deg": 39.32018385540372,
+   "draws": 9,
+   "method": "first admissible uniform draw",
+   "rng": "numpy.random.default_rng",
+   "rng_seed": 20260928,
+   "target": "the antipode -d of the pose's own outgoing direction d",
+   "u": [
+    0.07443562131389585,
+    -0.9208915320040145,
+    -0.38264621331317694
+   ]
+  },
+  "serves": [
+   "C04"
+  ]
+ },
+ "expected": {
+  "traces": [
+   {
+    "arclength": 0.0,
+    "arclength_increments": [],
+    "branch_margin_names": [
+     "entry_incidence_cosine",
+     "entry_snell_discriminant",
+     "exit_incidence_cosine",
+     "exit_snell_discriminant"
+    ],
+    "branch_margins": [],
+    "crystal_frame_sun_directions": [],
+    "initial_tangent_sign": 1,
+    "jacobian_available": [],
+    "normal_jacobian": [],
+    "poses": [],
+    "reason": "chart_boundary",
+    "residual_norms": [],
+    "singular_values": [],
+    "status": "event_terminated",
+    "tangents": []
+   },
+   {
+    "arclength": 0.0,
+    "arclength_increments": [],
+    "branch_margin_names": [
+     "entry_incidence_cosine",
+     "entry_snell_discriminant",
+     "exit_incidence_cosine",
+     "exit_snell_discriminant"
+    ],
+    "branch_margins": [],
+    "crystal_frame_sun_directions": [],
+    "initial_tangent_sign": -1,
+    "jacobian_available": [],
+    "normal_jacobian": [],
+    "poses": [],
+    "reason": "chart_boundary",
+    "residual_norms": [],
+    "singular_values": [],
+    "status": "event_terminated",
+    "tangents": []
+   }
+  ]
+ },
+ "fixture_kind": "trace_fiber",
+ "format": "lumice-integral/analytic-parity",
+ "input": {
+  "continuation": {
+   "closure_distance": 0.08,
+   "closure_maximum_iterations": 10,
+   "closure_minimum_arclength": 0.0,
+   "closure_minimum_steps": 3,
+   "closure_section_tolerance": 1e-11,
+   "closure_tangent_dot": 0.8,
+   "condition_limit": 100000000.0,
+   "corrector_maximum_iterations": 10,
+   "corrector_phase_tolerance": 1e-12,
+   "corrector_update_tolerance": 1e-12,
+   "diagnostic_level": "full",
+   "dtype": "float64",
+   "event_slowdown_margin": 0.02,
+   "growth_factor": 1.25,
+   "initial_step": 0.04,
+   "initial_tangent_sign": 1,
+   "maximum_accepted_steps": 4000,
+   "maximum_advance": 0.2,
+   "maximum_arclength": 20.0,
+   "maximum_correction": 0.2,
+   "maximum_evaluations": 100000,
+   "maximum_retries": 8,
+   "maximum_step": 0.12,
+   "minimum_step": 1e-05,
+   "minimum_tangent_dot": 0.8,
+   "relative_residual_tolerance": 0.0,
+   "residual_tolerance": 1e-11,
+   "rotation_tolerance": 1e-10,
+   "sample_retention": "all",
+   "shrink_factor": 0.5,
+   "singular_value_tolerance": 1e-08,
+   "unit_tolerance": 1e-10
+  },
+  "crystal": {
+   "face_distance": [
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0
+   ],
+   "height": 1.0,
+   "kind": "prism",
+   "lower_h": 0.0,
+   "lower_wedge_deg": 0.0,
+   "upper_h": 0.0,
+   "upper_wedge_deg": 0.0
+  },
+  "faces": [
+   3,
+   5
+  ],
+  "incident_direction": [
+   -0.9659258262890683,
+   -0.0,
+   -0.25881904510252074
+  ],
+  "refractive_index": 1.31,
+  "seed_pose": [
+   0.3258565506826661,
+   -0.8542836236664049,
+   -0.4049901217469277,
+   0.17797600617978254,
+   -0.36528256190089714,
+   0.9137248990781696,
+   -0.9285160470349928,
+   -0.36982176829726143,
+   0.03301227183938536
+  ],
+  "target_direction": [
+   0.9112582539764014,
+   -8.326672684688674e-17,
+   -0.41183539741003355
+  ]
+ },
+ "provenance": {
+  "conventions_sha256": "8083730f089e6493458cddfd8e15fc5096b961606a69c819456ac646bd87bcdf",
+  "li_rev": "fa8dadd222df45538a05ff2552d22f505c15a0fc",
+  "li_tracked_tree_clean": true
+ },
+ "schema_version": 1,
+ "symmetry_semantics": "none",
+ "tolerance": {
+  "accepted_pose_regularity": {
+   "basis": "exact: at every accepted pose every branch margin is positive and normal_jacobian > 0 (contract sections 6.1 and 5.4: an accepted pose is on the smooth branch and regular)",
+   "value": 0.0
+  },
+  "arclength_relative": {
+   "basis": "docs/phase1-math-contract.md section 10.1: discrete lengths of one 3-5 loop span 0.0017 on 0.9645 (1.8e-3 relative) across initial steps 0.03-0.08; an arc's length is compared only from the same seed (section 9.5.6)",
+   "value": 0.002
+  },
+  "curve_distance_rad": {
+   "basis": "docs/phase1-math-contract.md section 10.1: bidirectional sampled-pose set distance below 0.012 rad between two step-controller settings on the 3-5 loop; measured here against the geodesic polyline (curve_distance), which removes the chord-sampling part of that distance",
+   "value": 0.012
+  },
+  "pointwise_consistency": {
+   "basis": "per trace and pose i: jacobian_available[i] is true, and normal_jacobian[i], singular_values[i] and branch_margins[i] equal the backend's own EvaluatePath at poses[i] within the evaluate_path tolerances at that pose (value 1e-12 is their base: kinematic_atol for margins, jacobian_rtol for J_perp); a per-sample comparison with LI is not made, because two backends step differently",
+   "value": 1e-12
+  },
+  "residual_norm_bound": {
+   "basis": "every accepted pose: residual_tolerance + relative_residual_tolerance (section 10.1)",
+   "value": 1e-11
+  },
+  "status_reason": {
+   "basis": "exact; with two traces the pair {reason of each} is compared unordered, because the seed tangent sign is deterministic per LAPACK build only (docs/phase1-math-contract.md section 10.1, seed orientation)",
+   "value": 0.0
+  }
+ }
+}

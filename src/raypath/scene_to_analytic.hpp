@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "analytic/path_evaluation.hpp"
+#include "analytic/pose_density.hpp"
 #include "config/crystal_config.hpp"
 #include "config/light_config.hpp"
 #include "raypath/single_path_analysis.hpp"
@@ -48,6 +49,23 @@ void SunIncidentDirection(const SunParam& sun, double out[3]);
 // face the crystal lacks.
 Error ResolveSingleLayerPath(const std::vector<std::vector<int>>& layers, const analytic::FaceNormalTable& table,
                              std::vector<int>* slots);
+
+// A crystal's axis distribution as the band sum's pose density (LI docs/band-sum-contract.md section
+// 2.2; the one-to-one table is LI ch11-pose-density-families.md section 1). A full-sphere uniform
+// axis is `random`; otherwise the azimuth must be uniform over 360 degrees, the zenith a Gaussian
+// (the sphere density the engine samples with its sin(theta) Jacobian), and the roll either uniform
+// over 360 degrees (a zenith-only family) or a Gaussian (a zenith x roll family). Anything else is
+// not expressible in v1 and is reported, with the distribution named, in `unsupported`; there is no
+// approximate fallback. The family is a label only — the zenith mean is carried explicitly, so
+// column and plate (parry and lowitz) are the same density for the same numbers; it is named after
+// the nearer of the two presets' means (90 / 0 degrees).
+struct PoseDensityConversion {
+  analytic::PoseDensitySpec spec;
+  std::string unsupported;  // empty when `spec` is valid
+  bool Ok() const { return unsupported.empty(); }
+};
+
+PoseDensityConversion ConvertAxisToPoseDensity(const AxisDistribution& axis);
 
 }  // namespace lumice::raypath
 

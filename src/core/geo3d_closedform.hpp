@@ -308,6 +308,18 @@ double ClosedFormConeSlopeFromWedgeDeg(Real wedge_deg);
 // move by a bit. liblumice_analytic normalises the unrounded (a, b, c) instead.
 void ClosedFormHexFacePlane(int slot, double a1, double a2, double h2_2, double dist_i, double out[4]);
 
+// Basal cut heights of the closed-form pyramid (the upper basal plane is z = z_top, the lower
+// z = z_bot), from double inputs with the same resolution the wedge-angle ComputeClosedFormPyramid
+// applies to its float ones: the wedge angles in degrees (outside [0.1, 89.9], or a zero height
+// fraction: no cone that side), `h1` / `h3` the cone height fractions, `h2` the prism band height,
+// `dist` the six face distances. Without a cone on a side
+// the cut is the shoulder, z = ±h2/2. The apex-collapse gate is evaluated on `dist` rounded to
+// float, as the engine evaluates it (it decides topology, which stays the engine's float decision);
+// everything else is double. liblumice_analytic reads it to place its face polygons in double
+// (doc/analytic-api.md section 5.4).
+void ClosedFormPyramidBasalHeights(double upper_wedge_deg, double lower_wedge_deg, double h1, double h2, double h3,
+                                   const double dist[6], double* z_top, double* z_bot);
+
 // Evaluate the closed-form pyramid geometry — direct-wedge entry point.
 // Mirrors CreatePyramidMesh(upper_alpha, lower_alpha, h1, h2, h3, dist)
 // (geo3d.cpp:563). alpha is in degrees; the legal range [0.1°, 89.9°] matches

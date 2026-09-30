@@ -19,6 +19,14 @@
   }
  },
  "expected": {
+  "branch_margins": {
+   "entry_incidence_cosine": 0.9110635614966401,
+   "entry_snell_discriminant": 0.9009596253638729,
+   "exit_incidence_cosine": 0.740210175025903,
+   "exit_snell_discriminant": 0.22417024422190368,
+   "internal_1_incidence_cosine": 0.7402101750259034,
+   "internal_2_incidence_cosine": 0.20897875525292825
+  },
   "diagnostics": {
    "nearest_margin": "internal_2_incidence_cosine",
    "nearest_margin_value": 0.20897875525292825,
@@ -33,6 +41,7 @@
     "internal_2_tir_discriminant": 0.6411542746156247
    }
   },
+  "failed_gate": null,
   "fresnel_transmission": 0.057945702115428856,
   "interface_transmittances": [
    0.9816003989711201,
@@ -40,6 +49,8 @@
    1.0,
    0.936999010436912
   ],
+  "jacobian_available": true,
+  "normal_jacobian": 1.0197105124074002,
   "outgoing_direction": [
    0.6275025327724766,
    -5.551115123125783e-17,
@@ -71,6 +82,10 @@
     -0.8480115769498119,
     -0.09236600134529152
    ]
+  ],
+  "singular_values": [
+   1.9127796596618207,
+   0.5331040129251923
   ],
   "valid": true
  },
@@ -118,13 +133,21 @@
   "refractive_index": 1.31
  },
  "provenance": {
-  "conventions_sha256": "4af1326270649820be6ad4859d86d3cb54f05c6b677f1769e76c0c907e98c871",
-  "li_rev": "bfbd042a2234a80efb96950ce33375690a94fb07",
+  "conventions_sha256": "8083730f089e6493458cddfd8e15fc5096b961606a69c819456ac646bd87bcdf",
+  "li_rev": "fa8dadd222df45538a05ff2552d22f505c15a0fc",
   "li_tracked_tree_clean": true
  },
  "schema_version": 1,
  "symmetry_semantics": "none",
  "tolerance": {
+  "branch_margins": {
+   "basis": "absolute, per named margin, the same key set; the margins are cosines and discriminants of the chain: float64 evaluation of the same closed-form refraction/reflection chain from bit-identical JSON inputs: a few ulp per interface (1e-12 leaves ~1e3 ulp of room), times 1/(2 sqrt(d)) for the smallest Snell discriminant d of the pose, the derivative of the refracted cosine sqrt(d) (kinematic_atol)",
+   "value": 1.0560415888758733e-12
+  },
+  "failed_gate": {
+   "basis": "the gate name exactly, its (non-positive) margin as branch_margins",
+   "value": 1.0560415888758733e-12
+  },
   "fresnel_transmission": {
    "basis": "float64 evaluation of the same closed-form refraction/reflection chain from bit-identical JSON inputs: a few ulp per interface (1e-12 leaves ~1e3 ulp of room), times 1/(2 sqrt(d)) for the smallest Snell discriminant d of the pose, the derivative of the refracted cosine sqrt(d) (kinematic_atol)",
    "value": 1.0560415888758733e-12
@@ -133,6 +156,14 @@
    "basis": "float64 evaluation of the same closed-form refraction/reflection chain from bit-identical JSON inputs: a few ulp per interface (1e-12 leaves ~1e3 ulp of room), times 1/(2 sqrt(d)) for the smallest Snell discriminant d of the pose, the derivative of the refracted cosine sqrt(d) (kinematic_atol)",
    "value": 1.0560415888758733e-12
   },
+  "jacobian_available": {
+   "basis": "exact boolean: available exactly where the path is valid (contract section 9.3)",
+   "value": 0.0
+  },
+  "normal_jacobian": {
+   "basis": "relative, J_perp = sigma_1 sigma_2 of the 2 x 3 right-trivialised residual Jacobian (contract section 5.4) is one derivative above the directions, so the direction tolerance's Snell amplification 1/(2 sqrt(d)) enters squared: |error| <= 1e-12 max(1, 1/(4 d)) max(1, |value|) per value (jacobian_rtol); measured: LI's AD value agrees with an independent central difference (h = 1e-6) to 6e-9 relative, and a 1e-14 rad pose nudge moves it by at most 2.5e-12 relative away from Snell boundaries (4e-8 at d ~ 1e-8)",
+   "value": 1.1152238374354793e-12
+  },
   "outgoing_direction": {
    "basis": "float64 evaluation of the same closed-form refraction/reflection chain from bit-identical JSON inputs: a few ulp per interface (1e-12 leaves ~1e3 ulp of room), times 1/(2 sqrt(d)) for the smallest Snell discriminant d of the pose, the derivative of the refracted cosine sqrt(d) (kinematic_atol)",
    "value": 1.0560415888758733e-12
@@ -140,6 +171,10 @@
   "segment_directions": {
    "basis": "float64 evaluation of the same closed-form refraction/reflection chain from bit-identical JSON inputs: a few ulp per interface (1e-12 leaves ~1e3 ulp of room), times 1/(2 sqrt(d)) for the smallest Snell discriminant d of the pose, the derivative of the refracted cosine sqrt(d) (kinematic_atol)",
    "value": 1.0560415888758733e-12
+  },
+  "singular_values": {
+   "basis": "relative, J_perp = sigma_1 sigma_2 of the 2 x 3 right-trivialised residual Jacobian (contract section 5.4) is one derivative above the directions, so the direction tolerance's Snell amplification 1/(2 sqrt(d)) enters squared: |error| <= 1e-12 max(1, 1/(4 d)) max(1, |value|) per value (jacobian_rtol); measured: LI's AD value agrees with an independent central difference (h = 1e-6) to 6e-9 relative, and a 1e-14 rad pose nudge moves it by at most 2.5e-12 relative away from Snell boundaries (4e-8 at d ~ 1e-8)",
+   "value": 1.1152238374354793e-12
   },
   "valid": {
    "basis": "exact boolean; the nearest gate internal_2_incidence_cosine has margin 0.209, far above the float64 rounding of a margin (~1e-15)",

@@ -774,7 +774,7 @@ Valuable design/architecture docs live in `doc/` (tracked). Consult the relevant
     接口而非现在的 `lumice.h`，共享判据见 `raypath-analysis.md` §5.1.6。
     考虑发布动态库、设计新产品线、或再次提起拆仓前先读。
   - `analytic-api.md` — **`liblumice_analytic` 设计（第一个对外发布的共享库；target / 导出列表 / 日志接管 / 打包与版本政策
-    已 as-built，只用 install 树的外部消费者冒烟测试（C `find_package` + Python ctypes，`test/e2e-correctness/test_external_consumer_smoke.py`）已落地；首个解析模块未建，尚不进下载包，2026-09-28）**：头文件 `lumice_analytic.h`、前缀 `LUMICE_ANALYTIC_`（owner 已定），链整个
+    已 as-built，只用 install 树的外部消费者冒烟测试（C `find_package` + Python ctypes，`test/e2e-correctness/test_external_consumer_smoke.py`）已落地；模块 A（单光路反解 + fiber 行走 + seed 搜索，API v2–v5）与模块 B（带求和 / 单光路全天图，API v6，§4.6）已 as-built，尚不进下载包，2026-09-30）**：头文件 `lumice_analytic.h`、前缀 `LUMICE_ANALYTIC_`（owner 已定），链整个
     `lumice_obj` 的三条规矩（新 target 显式开死代码裁剪 / 只从无 CUDA 构建产出 / ISA 是**配置**的属性
     ⇒ 从 `LUMICE_ISA_LEVEL=baseline` 的配置产出，⛔ 不从本地默认 `native`）+ 一进程只加载
     `liblumice` / `liblumice_testapi` / `liblumice_analytic` 之一。⭐**§3 对称性语义**（owner 硬要求）：

@@ -1,9 +1,9 @@
 # LI analytic parity fixtures, copied verbatim from a Lumice Integral export.
 # Read by test/unit-correctness/analytic/test_li_parity.cpp, which requires every fixture's
 # provenance.li_rev to equal li_rev below. Update flow: doc/analytic-api.md "Parity with LI".
-li_rev: bfbd042a2234a80efb96950ce33375690a94fb07
-li_ref: origin/main (LI PR #42, scrum analytic-lib-wave1-spec)
-export_command: uv run python scripts/export_analytic_parity.py --output-dir <dir> --verify
+li_rev: fa8dadd222df45538a05ff2552d22f505c15a0fc
+li_ref: origin/main (LI PR #43, scrum analytic-lib-wave2-spec)
+export_command: uv run python scripts/export_analytic_parity.py --output-dir "<dir>" --verify
 export_date: 2026-09-29
-verify: 35/35 fixtures pass (238 comparisons)
+verify: 93/93 fixtures pass (12974 comparisons)
 reexport_byte_identical: yes (a second export of the same rev, compared with diff -r)

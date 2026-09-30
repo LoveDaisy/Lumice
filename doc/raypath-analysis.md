@@ -363,6 +363,8 @@ of One Bit Set」定义的两种口径中的一种，而不是同一口径的两
 机制标签，服务功能 3）。parity fixture 方向为 LI → Lumice。波次表与两条裁定（v0 含 seed 搜索；
 诊断两步走）见 [`analytic-api.md`](analytic-api.md) §10 与 §4.2/§4.3/§9，LI 侧总览见其
 `docs/overview.md` §5.3。
+波次 2 规格已由 LI `fa8dadd` 提供（纤维认证裁定为只看输出对照，见 `analytic-api.md` §10.0），本仓实现按该规格进行。
+模块 B（带求和 `LUMICE_ANALYTIC_BandSum`，API 版本 6）已 as-built，见 `analytic-api.md` §4.6；功能 2 的 GUI 接入不在该波次内。
 
 #### 5.1.7 已有素材与已知缺口
 

@@ -9,6 +9,7 @@
 #include "analytic/entry_measure.hpp"
 #include "analytic/fiber_continuation.hpp"
 #include "analytic/path_chain.hpp"
+#include "analytic/path_rank.hpp"
 #include "analytic/so3.hpp"
 #include "raypath/scene_to_analytic.hpp"
 #include "util/sky_direction.hpp"
@@ -252,6 +253,7 @@ class PathContext {
   }
 
   const std::vector<int>& Slots() const { return slots_; }
+  const analytic::FaceNormalTable& Table() const { return table_; }
   const double* Incident() const { return incident_; }
   double Index() const { return n_; }
 
@@ -271,20 +273,16 @@ struct RankProbe {
   double first_valid_u[3]{};
 };
 
-// Rank 0 = the outgoing direction does not move with the pose anywhere the path is realisable. That
-// happens exactly when the deviation is 0 (or pi) at every valid pose: fix the sun's place u in the
-// crystal and turn the crystal about the sun — the outgoing ray turns about the sun with it, so an
-// outgoing direction that never moves must lie on the sun's axis; conversely an outgoing direction
-// equal to +-incident everywhere is one direction. The test reads the deviation itself, whose
-// rounding error stays at the double ulp scale, rather than the Jacobian's rank: an exact plate's
-// Jacobian singular value measures 1e-10..1e-8 near grazing incidence, where the Snell square root
-// amplifies rounding, which is the tracer's own 1e-8 rank gate. The tolerance is the kernel's for
-// "this direction is that unit vector". Probed on the antipodal Fibonacci lattice discovery samples
-// on; the deviation depends on the pose only through u.
+// Rank 0 is the analytic library's criterion (analytic/path_rank.hpp: fold matrix I and zero wedge,
+// LI docs/band-sum-contract.md section 5), the one the band sum's point mass reads too. It is a
+// property of the geometry; what the probe adds is whether the path is realisable at all and a sun
+// direction where it is, sampled on the antipodal Fibonacci lattice discovery samples on (the
+// fields depend on the pose only through u). The rank-0 set equals "the deviation is 0 at every
+// valid probed pose" on every realisable path of up to four faces on the prism and three on the
+// pyramid (test_path_rank.cpp). A deviation of pi at every pose would need M = -I (three mutually
+// perpendicular reflecting faces), which no closed-form crystal has.
 RankProbe ProbeRank(const PathContext& ctx) {
   RankProbe probe;
-  bool all_forward = true;   // deviation 0: outgoing == incident
-  bool all_backward = true;  // deviation pi: outgoing == -incident
   for (int i = 0; i < kRankProbeCount; i++) {
     double u[3];
     analytic::LatticePoint(kRankProbeCount, i, u);
@@ -297,15 +295,8 @@ RankProbe ProbeRank(const PathContext& ctx) {
         probe.first_valid_u[k] = u[k];
       }
     }
-    const double incident[3] = { -u[0], -u[1], -u[2] };
-    const double deviation = AngleBetween(out, incident);
-    all_forward = all_forward && deviation <= analytic::kUnitTolerance;
-    all_backward = all_backward && deviation >= kPi - analytic::kUnitTolerance;
-    if (!all_forward && !all_backward) {
-      return probe;  // rank_zero stays false
-    }
   }
-  probe.rank_zero = probe.valid_count > 0;
+  probe.rank_zero = probe.valid_count > 0 && analytic::IsRankZeroPath(ctx.Table(), ctx.Slots().data(), ctx.SlotCount());
   return probe;
 }
 
