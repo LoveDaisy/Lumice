@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Rendered by scripts/install_throughput_gate.sh; the rendered copy lives in
+  ~/Library/LaunchAgents and is per machine. @NAME@ placeholders are filled in by
+  the installer. The argument list is fixed on purpose: a threshold override or a
+  test issue namespace must never reach the scheduled run.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.lumice.throughput-gate</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>@PYTHON@</string>
+    <string>@SCRIPT@</string>
+    <string>--leg</string>
+    <string>all</string>
+    <string>--remote</string>
+    <string>@REMOTE@</string>
+    <string>--trigger</string>
+    <string>launchd</string>
+  </array>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>@HOUR@</integer>
+    <key>Minute</key>
+    <integer>@MINUTE@</integer>
+  </dict>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>@PATH@</string>
+  </dict>
+  <key>WorkingDirectory</key>
+  <string>@STATE_DIR@</string>
+  <key>StandardOutPath</key>
+  <string>@STATE_DIR@/launchd.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>@STATE_DIR@/launchd.err.log</string>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>RunAtLoad</key>
+  <false/>
+</dict>
+</plist>

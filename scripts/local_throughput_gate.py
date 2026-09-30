@@ -84,19 +84,22 @@ BUSY_EXECUTABLES = frozenset({
     "cc1plus", "cc1", "clang", "clang++", "c++", "g++", "gcc", "ld", "lld",
     "nvcc", "cicc", "ptxas", "fatbinary", "nvlink",
 })
-# Matched as a substring of the full command line: the drive runners and pytest
-# run under a generic interpreter name, so their executable name says nothing.
-BUSY_ARG_MARKERS = (
-    "task_drive.py", "chore.py", "scrum_drive.py", "explore_drive.py", "pytest",
-)
+# The drive runners and pytest run under a generic interpreter name, so they are
+# recognised from the ARGV of a python process: a script whose basename is one of
+# these, or `-m pytest`. Only python processes are read this way — a shell whose
+# command TEXT merely mentions pytest (an agent's `zsh -c "..."`) once made the
+# gate call itself busy.
+BUSY_PY_SCRIPTS = frozenset({
+    "task_drive.py", "chore.py", "scrum_drive.py", "explore_drive.py", "pytest", "py.test",
+})
 # The Windows host of the WSL remote, read through WSL interop.
 HOST_BUSY_EXECUTABLES = frozenset({
     "lumice", "lumicegui", "gui_test", "cl", "link", "nvcc", "cicc", "ptxas",
     "ninja", "cmake", "msbuild", "nsys", "ncu",
 })
-HOST_BUSY_ARG_MARKERS = ("pytest", "win_bench", "bench_throughput")
+HOST_BUSY_ARG_MARKERS = ("win_bench", "bench_throughput")
 
-DEFAULT_LOAD_PER_CORE = 0.25      # 1-min loadavg / physical cores
+DEFAULT_LOAD_PER_CORE = 0.5       # 1-min loadavg / physical cores; desktop baseline 0.24-0.36
 DEFAULT_HOST_CPU_PERCENT = 25.0   # Windows host instantaneous CPU %
 DEFAULT_GPU_UTIL_PERCENT = 10.0   # nvidia-smi utilization.gpu %
 DEFAULT_STALE_DAYS = 3.0
@@ -194,13 +197,34 @@ def own_tree(procs: Sequence[Proc], self_pid: int) -> set:
     return excluded
 
 
+def runs_python_workload(exe: str, args: str) -> bool:
+    """A python process running pytest or a drive runner (see BUSY_PY_SCRIPTS)."""
+    base = exe.lower()
+    if base.endswith(".exe"):
+        base = base[:-4]
+    if base in ("pytest", "py.test"):
+        return True
+    if not base.startswith("python"):
+        return False
+    tokens = args.split()[1:]
+    for i, t in enumerate(tokens):
+        if t == "-m":
+            return i + 1 < len(tokens) and tokens[i + 1] in ("pytest", "py.test")
+        if t.startswith("-"):
+            continue
+        # The first positional argument is the script (`python /venv/bin/pytest` is
+        # how a pytest entry point shows up); later ones are its own arguments.
+        return os.path.basename(t.replace("\\", "/")) in BUSY_PY_SCRIPTS
+    return False
+
+
 def busy_processes(procs: Sequence[Proc], self_pid: int) -> List[str]:
     skip = own_tree(procs, self_pid)
     out = []
     for p in procs:
         if p.pid in skip:
             continue
-        if p.exe in BUSY_EXECUTABLES or any(m in p.args for m in BUSY_ARG_MARKERS):
+        if p.exe in BUSY_EXECUTABLES or runs_python_workload(p.exe, p.args):
             out.append(f"{p.pid} {p.exe}: {p.args[:120]}")
     return out
 
@@ -211,7 +235,8 @@ def host_busy_processes(names_and_args: Sequence[Tuple[str, str]]) -> List[str]:
         base = name.lower()
         if base.endswith(".exe"):
             base = base[:-4]
-        if base in HOST_BUSY_EXECUTABLES or any(m in (args or "") for m in HOST_BUSY_ARG_MARKERS):
+        if (base in HOST_BUSY_EXECUTABLES or runs_python_workload(name, args or "")
+                or any(m in (args or "") for m in HOST_BUSY_ARG_MARKERS)):
             out.append(f"{name}: {(args or '')[:120]}")
     return out
 

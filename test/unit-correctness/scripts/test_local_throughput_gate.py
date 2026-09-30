@@ -101,6 +101,18 @@ def test_own_build_and_ancestors_are_not_busy_but_siblings_are():
     assert pids == {40, 50}
 
 
+@pytest.mark.parametrize("exe,args,busy", [
+    ("python3.11", "python3.11 -m pytest test/performance", True),
+    ("python", "/usr/bin/python /x/drive/runners/task_drive.py --task t", True),
+    ("pytest", "pytest -q", True),
+    # a shell whose command TEXT mentions pytest is not running it (measured false positive)
+    ("zsh", "/bin/zsh -c python -m pytest --version && echo", False),
+    ("python", "python some_server.py --flag pytest", False),
+])
+def test_python_workload_is_read_from_argv_of_python_processes_only(exe, args, busy):
+    assert bool(g.busy_processes([P(99, 1, exe, args)], self_pid=5)) is busy
+
+
 def test_host_names_match_exactly_not_by_substring():
     busy = g.host_busy_processes([("atieclxx.exe", ""), ("cl.exe", "cl /c x.cpp"),
                                   ("python.exe", "python -m pytest test"), ("python.exe", "python idle.py")])
