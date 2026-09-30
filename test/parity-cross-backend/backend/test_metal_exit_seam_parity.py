@@ -25,6 +25,8 @@ requires subprocess isolation.
 Thresholds: raw corr (block-mean ds) / render PSNR per scene calibrated from
 baseline.md (258.6.2 measurement on 2026-06-10). See `_RAW_THRESHOLDS` below.
 """
+from __future__ import annotations
+
 import math
 import os
 import platform
@@ -34,6 +36,7 @@ import numpy as np
 import pytest
 
 from test.e2e.capi_runner import BufferedSimResult, run_scene_capi_buffered
+from test.e2e._config_overrides import write_config_with_ray_num
 
 # Block-mean downsample metric (258.6.2) — single source of truth hoisted into
 # a tracked module (see _parity_metrics.py header for why it no longer lives in
@@ -54,6 +57,16 @@ _SEED = 42
 # the exact value doesn't matter as long as it's not _SEED.
 _SEED_B = 7
 _TIMEOUT = 180
+
+# ms_multi_crystal runs at a quarter of its committed 2M budget. It is the densest scene in the
+# matrix (no filter, three crystals, prob 0.8), so its readings barely move with N: at 500k
+# metal ds corr 0.9994 (bar 0.97), metal/legacy energy 0.997, cross-seed self gap 0 — against
+# 86.6 s -> 23.8 s for the whole test on an idle M-series machine. The config file itself keeps
+# 2M because test_metal_batch_invariance / test_cuda_filter_parity read it too. The sparse filter
+# scenes below are NOT shrunk the same way: their corr falls under the 0.97 bar as N drops
+# (parity_single_ms_bd_filter 0.905, parity_asymmetric_cone_b_filter 0.942 at 500k), so a
+# smaller budget there would have to be paid for with a looser bar.
+_MS_MULTI_CRYSTAL_RAY_NUM = 500_000
 
 # --- Multi-MS test hardening (post Task 3 device-resident transit bugfix) --- #
 # The transit-PCG stream-reuse bug (gp.gen_ray_base=0 across SimBatches) showed
@@ -138,8 +151,12 @@ def _render_psnr(a: BufferedSimResult, b: BufferedSimResult) -> float:
 # Backend execution helper
 # --------------------------------------------------------------------------- #
 
-def _run(config_name: str, backend: str, seed: int = _SEED) -> BufferedSimResult:
-    cfg = str(CONFIGS_DIR / f"{config_name}.json")
+def _run(
+    config_name: str, backend: str, seed: int = _SEED, config_path: Path | None = None
+) -> BufferedSimResult:
+    """Run `config_name` on `backend`. `config_path` substitutes a per-test copy of that config
+    (e.g. one with a smaller ray budget); `config_name` still names the scene in every message."""
+    cfg = str(config_path or CONFIGS_DIR / f"{config_name}.json")
     return run_scene_capi_buffered(cfg, sim_seed=seed, backend=backend, timeout_sec=_TIMEOUT)
 
 
@@ -321,6 +338,7 @@ def _parity_axes(config_name: str) -> tuple[float, float, float, float]:
 
 def _run_parity(
     config_name: str,
+    config_path: Path | None = None,
 ) -> tuple[
     tuple[BufferedSimResult, BufferedSimResult, BufferedSimResult],
     tuple[float, float, float, float],
@@ -330,9 +348,9 @@ def _run_parity(
     tuple. Used by tests that need the raw buffers for additional assertions
     (self-consistency, energy conservation) beyond the four parity axes.
     """
-    legacy = _run(config_name, "legacy")
-    metal = _run(config_name, "metal")
-    cpu = _run(config_name, "cpu_backend")
+    legacy = _run(config_name, "legacy", config_path=config_path)
+    metal = _run(config_name, "metal", config_path=config_path)
+    cpu = _run(config_name, "cpu_backend", config_path=config_path)
 
     _assert_routed(legacy, "legacy", config_name)
     _assert_routed(metal, "metal", config_name)
@@ -351,16 +369,32 @@ def _assert_metal_self_consistency(
     config_name: str,
     metal_s1: BufferedSimResult,
     legacy_s1: BufferedSimResult,
+    config_path: Path | None = None,
 ) -> None:
     """Cross-seed self-consistency: metal_self must be within legacy_self -
-    SELF_MARGIN. Catches orientation under-sampling (e.g. transit-PCG stream
-    reuse) that the legacy-vs-metal corr metric is blind to.
+    SELF_MARGIN. Catches orientation under-sampling that the legacy-vs-metal
+    corr metric is blind to.
 
     Re-runs metal + legacy with `_SEED_B` and compares to the seed-A buffers
-    passed in. Costs 2 extra sims per protected test.
+    passed in. Costs 2 extra sims per protected test, so it is kept only where
+    it is measured to catch something the other assertions do not.
+
+    What it has been measured to catch, and what not (mutation probes on this
+    file's eight scenes, seed 42 / 7):
+      - root stream not advancing across SimBatches (every batch's root rays
+        replayed): metal_self collapses on every scene. On five of them the
+        parity corr is already red under the same mutation (0.63-0.95), so this
+        assertion is redundant there and was removed; on ms_multi_crystal_filtered
+        and ms_multi_crystal_complex_filter corr stays green (0.98) and this is
+        the ONLY assertion that fires (gap 0.036 > 0.02).
+      - transit stream reuse (gp.gen_ray_base pinned to 0, the defect described
+        above _RAW_THRESHOLDS): blind on EVERY scene, including the ones that keep
+        this assertion (gap -0.011..+0.005). No assertion in this file currently
+        covers that defect class; its name in the failure message below is
+        history, not a claim of coverage.
     """
-    metal_s2 = _run(config_name, "metal", seed=_SEED_B)
-    legacy_s2 = _run(config_name, "legacy", seed=_SEED_B)
+    metal_s2 = _run(config_name, "metal", seed=_SEED_B, config_path=config_path)
+    legacy_s2 = _run(config_name, "legacy", seed=_SEED_B, config_path=config_path)
     _assert_routed(metal_s2, "metal", config_name)
     _assert_routed(legacy_s2, "legacy", config_name)
     metal_self = _raw_corr_ds(metal_s1, metal_s2)
@@ -432,14 +466,17 @@ def test_parity_single_ms_filter():
 # --- Multi MS prob=0.8, no filter ----------------------------------------- #
 
 @pytest.mark.slow
-def test_parity_multi_ms_prob08():
-    (legacy, metal, _cpu), (cm, pm, cc, pc) = _run_parity("ms_multi_crystal")
+def test_parity_multi_ms_prob08(tmp_path):
+    cfg = write_config_with_ray_num(
+        CONFIGS_DIR / "ms_multi_crystal.json", tmp_path, _MS_MULTI_CRYSTAL_RAY_NUM
+    )
+    (legacy, metal, _cpu), (cm, pm, cc, pc) = _run_parity("ms_multi_crystal", cfg)
     print(f"[parity] ms_multi_crystal: metal ds={cm:.4f} psnr={pm:.2f}dB | cpu_backend ds={cc:.4f} psnr={pc:.2f}dB")
     _assert_parity("ms_multi_crystal", cm, pm, cc, pc)
     # Task 3 device-resident continuation hardening: cross-seed self-consistency
     # + total-Y energy conservation cover corr-blind under-sampling / energy bugs.
     _assert_energy_conservation("ms_multi_crystal", metal, legacy)
-    _assert_metal_self_consistency("ms_multi_crystal", metal, legacy)
+    _assert_metal_self_consistency("ms_multi_crystal", metal, legacy, cfg)
 
 
 # --- Multi MS prob=0.8 + filter ------------------------------------------- #
@@ -484,7 +521,9 @@ def test_parity_single_ms_bd_filter():
     print(f"[parity] parity_single_ms_bd_filter: metal ds={cm:.4f} psnr={pm:.2f}dB | cpu_backend ds={cc:.4f} psnr={pc:.2f}dB")
     _assert_parity("parity_single_ms_bd_filter", cm, pm, cc, pc)
     _assert_energy_conservation("parity_single_ms_bd_filter", metal, legacy)
-    _assert_metal_self_consistency("parity_single_ms_bd_filter", metal, legacy)
+    # No cross-seed self-consistency rerun here: under the root-stream-not-advancing mutation
+    # this scene's parity corr is already red, and the transit-stream-reuse mutation is blind to
+    # the self check on every scene (see _assert_metal_self_consistency).
 
 
 # --- Multi MS + BD filter (267.4 matrix extension) ------------------------ #
@@ -495,7 +534,9 @@ def test_parity_multi_ms_bd_filter():
     print(f"[parity] ms_multi_crystal_filtered_bd: metal ds={cm:.4f} psnr={pm:.2f}dB | cpu_backend ds={cc:.4f} psnr={pc:.2f}dB")
     _assert_parity("ms_multi_crystal_filtered_bd", cm, pm, cc, pc)
     _assert_energy_conservation("ms_multi_crystal_filtered_bd", metal, legacy)
-    _assert_metal_self_consistency("ms_multi_crystal_filtered_bd", metal, legacy)
+    # No cross-seed self-consistency rerun here: under the root-stream-not-advancing mutation
+    # this scene's parity corr is already red, and the transit-stream-reuse mutation is blind to
+    # the self check on every scene (see _assert_metal_self_consistency).
 
 
 # --- Single MS + complex filter (267.4 matrix extension) ------------------ #
@@ -505,9 +546,10 @@ def test_parity_single_ms_complex_filter():
     (legacy, metal, _cpu), (cm, pm, cc, pc) = _run_parity("parity_single_ms_complex_filter")
     print(f"[parity] parity_single_ms_complex_filter: metal ds={cm:.4f} psnr={pm:.2f}dB | cpu_backend ds={cc:.4f} psnr={pc:.2f}dB")
     _assert_parity("parity_single_ms_complex_filter", cm, pm, cc, pc)
-    # plan §C-A: single-MS energy/self are conditional hard asserts (see above).
     _assert_energy_conservation("parity_single_ms_complex_filter", metal, legacy)
-    _assert_metal_self_consistency("parity_single_ms_complex_filter", metal, legacy)
+    # No cross-seed self-consistency rerun here: under the root-stream-not-advancing mutation
+    # this scene's parity corr is already red, and the transit-stream-reuse mutation is blind to
+    # the self check on every scene (see _assert_metal_self_consistency).
 
 
 # --- Multi MS + complex filter (267.4 matrix extension) ------------------- #
