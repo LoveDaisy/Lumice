@@ -188,7 +188,7 @@ static int SymmetryStringToBits(const std::string& s) {
   return bits;
 }
 
-// Emit the arm fields of a Color Predicate (task-342.2, symmetry added task-356.2). Mirrors
+// Emit the arm fields of a Color Predicate (its symmetry key included). Mirrors
 // the raypath / entry_exit / direction / crystal switch in JsonToFilter/ConfigToJson but
 // WITHOUT id/action/composition — Design 2 color predicates are single-atom and carry no
 // filter identity. A predicate whose type is LUMICE_FILTER_TYPE_UNSET intentionally emits NO
@@ -871,7 +871,7 @@ nlohmann::json ConfigToJson(const ConfigScratch& c) {
     root["render"].push_back(RendererToJson(c.renderers[i], c.renderers[i].id));
   }
 
-  // Raypath color classes (task-342.2). Only emit when non-empty so the mono/no-color case
+  // Raypath color classes. Only emit when non-empty so the mono/no-color case
   // matches the pre-v4.7 JSON shape byte-for-byte (AC4). The wire form always uses the object
   // shape `{"mode": ..., "classes": [...]}` — core RaypathColorConfig::from_json accepts both
   // the bare-array (dominant-only) and object shapes, so emitting the object form does not
@@ -1305,7 +1305,7 @@ LUMICE_ErrorCode LUMICE_SceneToJson(const LUMICE_Scene* scene, char* out_buf, si
 
 
 // Display-time color update: see doc/capi-lifecycle-architecture.md §4 / §6.4.
-// task-342.2: does NOT restart the simulation — accumulator, epoch, and consumers are
+// It does NOT restart the simulation — accumulator, epoch, and consumers are
 // untouched. Only the next acquired result frame re-composites with the new appearance.
 LUMICE_ErrorCode LUMICE_SetRaypathColors(LUMICE_Server* server, const LUMICE_ColorClassDisplay* classes,
                                          int class_count, const int* z_order, int mode) {
@@ -1349,7 +1349,7 @@ LUMICE_ErrorCode LUMICE_SetRaypathColors(LUMICE_Server* server, const LUMICE_Col
 }
 
 
-// task-345.3: display-time EV multiplier for the composite path. See the
+// Display-time EV multiplier for the composite path. See the
 // LUMICE_SetCompositeExposure comment in include/lumice.h for the semantics
 // (single scalar, mono path untouched, snapshot_dirty_ flipped so the next
 // acquired result frame rebakes the composite). No ev_total validation: the GUI is the
@@ -1389,7 +1389,7 @@ LUMICE_ErrorCode LUMICE_SetCompositeBackground(LUMICE_Server* server, const floa
 }
 
 
-// task-342.3 AC4: per-color-class empty-arc detector.
+// Per-color-class empty-arc detector.
 LUMICE_ErrorCode LUMICE_GetColorClassSignal(LUMICE_Server* server, int* out_flags, int class_count) {
   if (!server) {
     return LUMICE_ERR_NULL_ARG;
@@ -1464,7 +1464,7 @@ void ConfigReleaseColorClasses(ConfigScratch* cfg) {
 }
 
 
-// =============== Complex-Composition storage lifecycle (task-host-abi-cpu-caps, BREAKING v4.9) ===============
+// =============== Complex-Composition storage lifecycle (BREAKING v4.9) ===============
 // calloc/free (not new[]/delete[]) deliberately: LUMICE_ComplexComposition crosses the C ABI,
 // and non-C++ bindings must be able to release the composition storage without a C++ runtime —
 // a documented exception to the "no raw new/delete" project rule (AGENTS.md).
@@ -1975,7 +1975,7 @@ static LUMICE_ErrorCode JsonToFilter(const nlohmann::json& fj, LUMICE_FilterPara
 // C-API commit path re-serializes as "no predicate fields on the wire", the same form
 // core RaypathColorRef::from_json treats as NoneFilterParam / whole-crystal. The `symmetry`
 // key is parsed at the tail and is independent of the arm type — including match-all, where
-// (UNSET + non-default symmetry) is a legal state (task-356.2).
+// (UNSET + non-default symmetry) is a legal state.
 static LUMICE_ErrorCode JsonToColorPredicate(const nlohmann::json& j, LUMICE_ColorPredicate* p) {
   std::memset(p, 0, sizeof(*p));
   p->ee_entry = -1;
@@ -2901,7 +2901,7 @@ static LUMICE_ErrorCode JsonToComplexComposition(const nlohmann::json& fj, Confi
     return LUMICE_ERR_MISSING_FIELD;
   }
   const auto& cmp = fj.at("composition");
-  // v4.9 (task-host-abi-cpu-caps): build the full (term_counts, term_ids) triple on the
+  // v4.9: build the full (term_counts, term_ids) triple on the
   // stack first, then commit atomically via LUMICE_CompositionSetClauses AFTER all
   // validation succeeds. This also removes the pre-v4.9 "composition_count++ before
   // per-clause validation" partial-write hazard (§3.5 in the plan).
@@ -2962,7 +2962,7 @@ static LUMICE_ErrorCode JsonToConfig(const nlohmann::json& root, ConfigScratch* 
   // calls, memset would clobber the pointer without freeing it — release first so the
   // memset that follows sees a defensibly-null field. Release is null-safe / idempotent.
   ConfigReleaseColorClasses(out);
-  // v4.9 (task-host-abi-cpu-caps): compositions[i].term_ids/term_counts are also owning
+  // v4.9: compositions[i].term_ids/term_counts are also owning
   // heap pointers — same memset-would-leak hazard as raypath_color; release first.
   ConfigReleaseCompositions(out);
   std::memset(out, 0, sizeof(ConfigScratch));
@@ -3032,7 +3032,7 @@ static LUMICE_ErrorCode JsonToConfig(const nlohmann::json& root, ConfigScratch* 
     return err;
   }
 
-  // Raypath color classes (optional, Design 2 / task-342.2)
+  // Raypath color classes (optional, Design 2)
   if (root.contains("raypath_color")) {
     err = JsonToRaypathColor(root.at("raypath_color"), out);
     if (err != LUMICE_OK) {
@@ -3395,7 +3395,7 @@ LUMICE_ErrorCode LUMICE_GetDrainStatus(LUMICE_Server* server, LUMICE_DrainResult
 // synchronous host-side count written inside CommitConfig; the three GPU-only
 // caps (symmetry-group / OR-summand / color-class) are published asynchronously
 // from the worker's first batch (server ConsumeData) and read atomically here,
-// so a GUI poll tick picks them up after DoRun. task-color-degrade-gui-surfacing.
+// so a GUI poll tick picks them up after DoRun.
 LUMICE_ErrorCode LUMICE_GetColorOverflowInfo(LUMICE_Server* server, LUMICE_ColorOverflowInfo* out) {
   if (!server || !out) {
     return LUMICE_ERR_NULL_ARG;
@@ -3486,7 +3486,7 @@ int LUMICE_IsBackendAvailable(int backend) {
         return 1;
       case ns::BackendKind::kMetal:
 #if defined(__APPLE__)
-        // task-282: deepen the gate from device-presence to trial-compile +
+        // Deepen the gate from device-presence to trial-compile +
         // entry-point lookup. MetalDeviceAvailable returned true on macOS 26.5 /
         // M1 Max where MSL compilation succeeded but newFunctionWithName
         // ("trace_layer_kernel") returned nil, letting the GUI "Use GPU"
@@ -3504,7 +3504,7 @@ int LUMICE_IsBackendAvailable(int backend) {
         // CUDA backend AND a usable NVIDIA device is present at runtime (probed via
         // the driver). Non-CUDA builds and GPU-less hosts return 0, so the GUI
         // "Use GPU" toggle stays hidden and BeginSession never routes to a missing
-        // device (the CUDA analog of task-282's Metal nil-PSO guard).
+        // device (the CUDA analog of the Metal nil-PSO guard above).
         return lumice::CudaDeviceAvailable() ? 1 : 0;
 #else
         return 0;
