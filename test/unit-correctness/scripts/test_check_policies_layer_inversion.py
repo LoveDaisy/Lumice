@@ -88,6 +88,27 @@ def test_layered_file_including_the_shell_is_flagged(tree: Path) -> None:
     assert "higher layer `shell`" in msgs[0]
 
 
+def test_scene_bridge_reaching_for_the_server_is_flagged(tree: Path) -> None:
+    """The C API bridges are registered at the layer of the header they implement, so this rule is
+    what holds each one to its layer: the scene bridge may not touch the engine."""
+    _prepend(tree / "src" / "server" / "c_api_scene.cpp", '#include "server/server.hpp"')
+    msgs = _messages(tree)
+    assert len(msgs) == 1
+    assert "server/c_api_scene.cpp -> server/server.hpp" in msgs[0]
+    assert "`scene` includes the higher layer `engine`" in msgs[0]
+
+
+@pytest.mark.parametrize("header", ["include/lumice.h", "server/c_api_internal.hpp"])
+def test_bridge_including_an_aggregate_header_is_flagged(tree: Path, header: str) -> None:
+    """The umbrella and the internal aggregate sit at `capi`, above every bridge: a bridge that
+    took one would silently reach every layer through it."""
+    _prepend(tree / "src" / "server" / "c_api_render.cpp", f'#include "{header}"')
+    msgs = _messages(tree)
+    assert len(msgs) == 1
+    assert f"server/c_api_render.cpp -> {header}" in msgs[0]
+    assert "`render` includes the higher layer `capi`" in msgs[0]
+
+
 def test_same_layer_and_downward_edges_pass(tree: Path) -> None:
     _prepend(tree / "src" / "server" / "server.cpp", '#include "core/optics.hpp"')
     _prepend(tree / "src" / "core" / "optics.cpp", '#include "core/math.hpp"')
