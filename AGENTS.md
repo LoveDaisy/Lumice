@@ -315,7 +315,7 @@ deleting its line, and an entry whose edge is gone fails the check.
   motivated it — a checker for only the first of those reads a clean scan as "does not occur
   here" on exactly the inputs it was meant to catch.
 - **Test-duration registry — a runtime gate, not a fifth diff-scoped checker.** In `e2e-test` and
-  the three `e2e-slow` legs, every test that took more than **30 s** in that CI run must have an
+  the three `e2e-slow` legs, every test that took more than **60 s** in that CI run must have an
   entry in `test/duration_registry.json` (`id`, `job`, `ci_seconds`, `reason`: which defect it guards
   against and why it cannot be faster or move to a cheaper layer), or the job's final
   "Check test durations" step (`scripts/check_test_durations.py`) goes red. It also goes red when a
@@ -330,7 +330,7 @@ deleting its line, and an entry whose edge is gone fails the check.
   flag, env var or inline marker exempts a test — the only way through is a registry entry, whose
   diff is the evidence a reviewer reads — and the checker is the rule: if it passes, do not add
   duration demands in review; if a threshold is wrong, change the constant in the script. Rules,
-  the reasoning behind 30 s and 2×, the shared-fixture entries and what is not covered:
+  the reasoning behind 60 s and 2× (measured runner-to-runner spread up to 1.9×), the shared-fixture entries and what is not covered:
   `doc/testing-architecture.md` §7.7.
 - E2E test layout (purpose-primary; see `doc/testing-architecture.md` §6):
   - `test/e2e-correctness/` — full-stack correctness via CLI/PSNR (smoke, CLI behavior, raypath equivalence) + `references/*.jpg`

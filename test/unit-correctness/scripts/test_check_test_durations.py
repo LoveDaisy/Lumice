@@ -43,7 +43,8 @@ def test_unregistered_over_threshold_is_red_and_prints_a_pasteable_skeleton():
     assert len(errors) == 2  # the slow one + t.py::other being absent from the report
     slow = next(e for e in errors if "t.py::slow" in e)
     line = slow.splitlines()[-1].strip()
-    assert json.loads(line) == {"id": "t.py::slow", "job": JOB, "ci_seconds": 35, "reason": "TODO"}
+    assert json.loads(line) == {"id": "t.py::slow", "job": JOB, "ci_seconds": ctd.round_up(T + 0.1), "reason": "TODO"}
+    assert ctd.round_up(T + 0.1) > T
 
 
 def test_exactly_at_threshold_is_green():
@@ -52,7 +53,7 @@ def test_exactly_at_threshold_is_green():
 
 
 def test_registered_for_another_job_does_not_cover_this_job():
-    errors, _ = run({"t.py::slow": 45}, [entry("t.py::slow", 50, job="e2e-test")])
+    errors, _ = run({"t.py::slow": T + 15}, [entry("t.py::slow", T + 20, job="e2e-test")])
     assert any("t.py::slow" in e and "not registered" in e for e in errors)
 
 
@@ -68,16 +69,21 @@ def test_registered_beyond_slowdown_factor_is_red():
     assert len(errors) == 1 and "more than 2x" in errors[0]
 
 
-def test_registered_but_now_fast_is_a_notice_not_red():
-    errors, notices = run({"t.py::slow": 3.0, "t.py::b": 50}, [entry("t.py::slow", 40), entry("t.py::b", 50)])
+def test_registered_but_now_much_faster_is_a_notice_not_red():
+    errors, notices = run({"t.py::slow": 19.9, "t.py::b": 50}, [entry("t.py::slow", 40), entry("t.py::b", 50)])
     assert errors == []
-    assert any("t.py::slow" in n for n in notices)
+    assert [n for n in notices if "t.py::" in n] == [n for n in notices if "t.py::slow" in n] != []
+
+
+def test_registered_under_threshold_but_near_its_entry_says_nothing():
+    errors, notices = run({"t.py::a": 25.0}, [entry("t.py::a", 30)])
+    assert errors == [] and notices == []
 
 
 # --- rule 3: stale entries -------------------------------------------------
 
 def test_registered_but_absent_is_red_and_names_sibling_parametrizations():
-    durations = {"t.py::f[new]": 45, "t.py::keep": 50}
+    durations = {"t.py::f[new]": T + 15, "t.py::keep": 50}
     errors, _ = run(durations, [entry("t.py::f[old]", 45), entry("t.py::keep", 50)])
     assert len(errors) == 2
     stale = next(e for e in errors if "t.py::f[old]" in e)
