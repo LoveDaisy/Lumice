@@ -757,9 +757,9 @@ endif()
 
 set(lumice_server_src
   "${PROJ_SRC_DIR}/server/anchor_consumer.cpp"
-  "${PROJ_SRC_DIR}/server/c_api.cpp"
   "${PROJ_SRC_DIR}/server/c_api_crystal_mesh.cpp"
   "${PROJ_SRC_DIR}/server/c_api_editor.cpp"
+  "${PROJ_SRC_DIR}/server/c_api_engine.cpp"
   "${PROJ_SRC_DIR}/server/c_api_render.cpp"
   "${PROJ_SRC_DIR}/server/c_api_scene.cpp"
   "${PROJ_SRC_DIR}/server/component_compositor.cpp"
@@ -802,7 +802,7 @@ add_custom_command(
 # --- Product version string ------------------------------------------------------------------------
 # project(VERSION) above is the single source (scripts/version.py reads and writes it); this bakes
 # it -- plus the "-dev" suffix unless LUMICE_RELEASE_BUILD -- into a build-tree-only header whose
-# one consumer is src/server/c_api.cpp's LUMICE_GetVersionString(). Plain configure_file: it is a
+# one consumer is src/server/c_api_engine.cpp's LUMICE_GetVersionString(). Plain configure_file: it is a
 # string substitution, so unlike the font embed above it needs no custom command or Python.
 if(LUMICE_RELEASE_BUILD)
   set(LUMICE_PRODUCT_VERSION "${PROJECT_VERSION}")
@@ -873,7 +873,7 @@ target_link_libraries(lumice_obj PUBLIC nlohmann_json::nlohmann_json spdlog::spd
 # detail of the label drawing, and no public header names an stb type.
 target_include_directories(lumice_obj PRIVATE "${stb_SOURCE_DIR}")
 # generated/server/version_gen.hpp (configure_file above). PRIVATE and outside the if(APPLE) block
-# below: every platform's c_api.cpp includes it, and no public header does.
+# below: every platform's c_api_engine.cpp includes it, and no public header does.
 target_include_directories(lumice_obj PRIVATE "${CMAKE_BINARY_DIR}/generated")
 if(APPLE)
   target_link_libraries(lumice_obj PUBLIC "-framework Metal" "-framework Foundation")
@@ -939,7 +939,7 @@ function(lumice_apply_isa_march target)
   target_compile_options(${target} PRIVATE
     $<$<CONFIG:Release>:$<${_active_cond}:${_march_flag}>>)
   # PRIVATE on purpose: the macro is read in exactly one place, LUMICE_GetEngineIsaLevel()
-  # in src/server/c_api.cpp (an object of lumice_obj), and the executables ask through that
+  # in src/server/c_api_engine.cpp (an object of lumice_obj), and the executables ask through that
   # function. It used to be PUBLIC so src/main.cpp could read it directly, and that was the
   # defect: on Windows the engine is a DLL chosen by CPUID at start-up while the executable
   # is compiled once for the baseline tier, so a macro reaching main.cpp named the shell's
@@ -949,7 +949,7 @@ function(lumice_apply_isa_march target)
   # and "baseline" otherwise (Debug, MinSizeRel, or the baseline tier itself), so what the
   # engine reports is what it was compiled with, never what was merely asked for. No
   # counterpart for real MSVC cl.exe: neither block below runs there, the macro is never
-  # defined, and c_api.cpp's #else falls back to "baseline".
+  # defined, and c_api_engine.cpp's #else falls back to "baseline".
   target_compile_definitions(${target} PRIVATE
     "LUMICE_ISA_LEVEL_STR=\"$<IF:${_active_cond},${LUMICE_ISA_LEVEL},baseline>\"")
 endfunction()

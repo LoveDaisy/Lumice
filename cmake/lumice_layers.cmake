@@ -219,6 +219,7 @@ set(LUMICE_LAYER_render_FILES
 
 set(LUMICE_LAYER_engine_FILES
   include/lumice_engine.h
+  server/c_api_engine.cpp
   server/c_api_engine_internal.hpp
   server/server.cpp
   server/server.hpp
@@ -236,7 +237,6 @@ set(LUMICE_LAYER_raypath_FILES
 
 set(LUMICE_LAYER_capi_FILES
   include/lumice.h
-  server/c_api.cpp
   server/c_api_internal.hpp
   server/c_api_single_path.cpp
   util/raypath_analysis_display.hpp

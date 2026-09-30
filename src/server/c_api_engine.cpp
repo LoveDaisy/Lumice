@@ -1,47 +1,39 @@
+// C API bridge for lumice_engine.h: server lifecycle, scene commit, result frames, run state and
+// control, backend selection, and the raypath analysis run. Registered at the engine layer.
+//
+// Also home to the four lumice_base.h functions (LUMICE_SetLogLevel, LUMICE_SetLogCallback,
+// LUMICE_GetVersionString, LUMICE_GetEngineIsaLevel), whose header sits at the foundation layer.
+// They cannot live there: a foundation .cpp is compiled into lumice_foundation_obj and so into
+// liblumice_analytic, SetLogLevel needs the Server, and version_gen.hpp and LUMICE_ISA_LEVEL_STR
+// are visible to lumice_obj's objects only.
+
 #include <algorithm>
 #include <climits>
 #include <cmath>
 #include <cstdint>
-#include <cstdio>
-#include <cstdlib>
 #include <cstring>
-#include <fstream>
-#include <map>
 #include <memory>
 #include <nlohmann/json.hpp>
-#include <stdexcept>
-#include <string>
 #include <utility>
-#include <variant>
 #include <vector>
 
-#include "config/crystal_config.hpp"        // ns::PrismCrystalParam / PyramidCrystalParam (LUMICE_GetCrystalMesh)
-#include "config/raypath_color_config.hpp"  // ns::kDefaultCompositeMode (single-source default)
-#include "config/raypath_validation.hpp"
-#include "config/render_config.hpp"
-#include "core/annotation_overlay.hpp"  // annotation::ComputeAnchors (LUMICE_ComputeAnnotationAnchors)
-#include "core/crystal.hpp"
-#include "core/ev_anchor.hpp"
-#include "core/geo3d.hpp"
-#include "core/lens_proj_build.hpp"  // mask_detail::PixelToWorld + the display clips (LUMICE_UnprojectPixel)
-#include "core/miller_wedge.hpp"
-#include "core/scatter_accum.hpp"  // MakeCameraRotation (LUMICE_UnprojectPixel)
-#include "core/trace_ops.hpp"      // ns::MakeCrystal (core single-source crystal sampler)
 #if defined(__APPLE__)
 #include "core/backend/metal_trace_backend.hpp"
 #endif
 #if defined(LUMICE_CUDA_ENABLED)
 #include "core/backend/cuda_trace_backend.hpp"  // CudaDeviceAvailable() for LUMICE_IsBackendAvailable
 #endif
-#include "include/lumice.h"
-#include "server/c_api_internal.hpp"
+#include "core/annotation_overlay.hpp"
+#include "include/lumice_base.h"
+#include "include/lumice_engine.h"
+#include "server/c_api_engine_internal.hpp"
+#include "server/c_api_render_internal.hpp"
+#include "server/c_api_scene_internal.hpp"
 #include "server/raypath_histogram_consumer.hpp"  // ReduceRaypathHistogram (the analysis reads)
 #include "server/server.hpp"
 #include "server/version_gen.hpp"  // kLumiceProductVersion, configure_file'd from project(VERSION)
 #include "util/callback_sink.hpp"
-#include "util/color_space.hpp"
 #include "util/logger.hpp"
-#include "util/path_utils.hpp"
 
 namespace ns = lumice;
 
@@ -116,14 +108,6 @@ void LUMICE_SetLogCallback(LUMICE_LogCallback callback) {
   }
 }
 
-
-// LUMICE_MAX_CONFIG_MARKERS is spelled as a literal 6 in the header, because the id-count macro is
-// defined further down the file than the renderer struct that needs it and the preprocessor reads
-// top to bottom. That literal is not a second opinion about how many ids there are: the renderer's
-// array is EXACTLY the id space, since duplicates are rejected. This is the line that makes adding
-// a seventh id to one side a compile error rather than a list that silently cannot hold them all.
-static_assert(LUMICE_MAX_CONFIG_MARKERS == LUMICE_ANNOTATION_MARKER_COUNT,
-              "LUMICE_RenderParam::markers must have room for exactly the marker id space");
 
 // Display-time color update: see doc/capi-lifecycle-architecture.md §4 / §6.4.
 // It does NOT restart the simulation — accumulator, epoch, and consumers are
