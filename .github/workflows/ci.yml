@@ -1192,6 +1192,8 @@ jobs:
           set -o pipefail
           python3 scripts/check_test_durations.py --emit-candidates --job "e2e-test" \
             --report "$RUNNER_TEMP/durations.json" | tee -a "$GITHUB_STEP_SUMMARY"
+          python3 scripts/check_test_durations.py --job "e2e-test" --report "$RUNNER_TEMP/durations.json" \
+            || echo "::warning::duration registry preview is red (not enforced yet)"
 
   e2e-slow:
     if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
@@ -1455,6 +1457,8 @@ jobs:
           fi
           python3 scripts/check_test_durations.py --emit-candidates --job "E2E Slow (${{ matrix.name }})" \
             "${reports[@]}" | tee -a "$GITHUB_STEP_SUMMARY"
+          python3 scripts/check_test_durations.py --job "E2E Slow (${{ matrix.name }})" "${reports[@]}" \
+            || echo "::warning::duration registry preview is red (not enforced yet)"
 
   # Windows shared-library export sets, under both Windows compilers the release uses (cl.exe
   # for the baseline engine, clang-cl for the v3 one). The three shared libraries — lumice,
