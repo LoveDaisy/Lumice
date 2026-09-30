@@ -38,6 +38,7 @@
 #include "launcher/win_engine_loader.h"
 #endif
 #include "core/color_util.hpp"  // kNormScale: the normalized raw-export scale reuses the renderer's own constant
+#include "util/benchmark_rate.hpp"
 #include "util/cpu_info.hpp"
 #include "util/logger.hpp"
 #include "util/raypath_analysis_display.hpp"
@@ -1058,60 +1059,28 @@ void RunBenchmarkPass(const std::string& config_str, int num_workers, const char
       double setup_sec = std::chrono::duration<double>(t_active_start - t_run_start).count();
       double active_sec = std::chrono::duration<double>(t_end - t_active_start).count();
 
-      // rate_basis ladder:
-      //   drain_count_mode true  -> `drain_aligned` (window closed) or
-      //                             `too_few_drains` (infinite path exited early
-      //                             w/o observing N+1 drains — unexpected).
-      //   drain_count_mode false -> `steady` / `active_short` / `wall_fallback`
-      //                             (task-fix-throughput-bench-honesty ladder).
-      // The two branches are independent enums; downstream (docs, gate) parses
-      // them by drain_count_mode / config context, not by string equality.
-      double rays_per_sec = 0.0;
-      const char* rate_basis = "wall_fallback";
-      double window_sec = 0.0;
-      LUMICE_RayCount window_rays = 0;
-      // Shared by `active_short` and `wall_fallback`: both degrade to a wall-clock
-      // lower bound (see the `active_short` branch comment below for why). Computed
-      // once so the two branches cannot silently diverge if only one is edited later.
-      const double wall_bounded_rate = wall_sec > 0 ? static_cast<double>(r_end) / wall_sec : 0.0;
-      if (drain_count_mode) {
-        if (window_closed && t_final_drain > t_first_drain && rays_at_final_drain > rays_at_first_drain) {
-          window_sec = std::chrono::duration<double>(t_final_drain - t_first_drain).count();
-          window_rays = rays_at_final_drain - rays_at_first_drain;
-          rays_per_sec = static_cast<double>(window_rays) / window_sec;
-          rate_basis = "drain_aligned";
-        } else {
-          rays_per_sec = wall_sec > 0 ? static_cast<double>(r_end) / wall_sec : 0.0;
-          rate_basis = "too_few_drains";
-        }
-      } else if (active_sec > 1e-4 && r_end > rays_at_active_start) {
-        rays_per_sec = static_cast<double>(r_end - rays_at_active_start) / active_sec;
-        rate_basis = "steady";
-      } else if (active_started && active_sec > 1e-4) {
-        // Degenerate window: sim_ray_num was observed exactly ONCE (r_end ==
-        // rays_at_active_start), so there is no interior sample and `active_sec` measures
-        // IDLE-detection latency, not trace duration. On a GPU backend this is not
-        // hypothetical: sim_ray_num advances in whole drain quanta
-        // (kDefaultXyzDrainBatches * dispatch_size = 64 * 32768 = 2,097,152 rays with the
-        // Metal default), so a config whose entire ray_num is below one quantum publishes
-        // its counter exactly once, at the end — whether that publish shares a poll with
-        // the IDLE transition or precedes it by one is a race, which is why the same
-        // binary/config/machine alternated between `wall_fallback` and a measured 14-29x
-        // phantom rate at ~4% of runs when this branch divided by `active_sec` itself. Use
-        // the wall-clock denominator instead — it is a real duration that provably contains
-        // the whole trace, so the number is a conservative LOWER bound on the true rate
-        // rather than an unbounded upward fantasy. Same formula as `wall_fallback`, but
-        // the basis label is deliberately kept distinct: the two say different things
-        // (`active_short` = exactly one counter publish observed; `wall_fallback` = no
-        // usable active window at all), and merging them would change the rate_basis
-        // value set for no gain. See doc/performance-testing.md §C rule 5 for the full
-        // derivation (quantum value, 240-run measurement, short-window bias decay curve).
-        rays_per_sec = wall_bounded_rate;
-        rate_basis = "active_short";
-      } else {
-        rays_per_sec = wall_bounded_rate;
-        rate_basis = "wall_fallback";
-      }
+      // rate_basis ladder (drain_aligned / too_few_drains on the infinite-ray_num path, steady /
+      // active_short / wall_fallback on the finite one): decided by EstimateBenchmarkRate
+      // (src/util/benchmark_rate.hpp), where every branch is unit-tested with literal inputs. This
+      // loop only hands it the observations. The two paths' bases are independent enums;
+      // downstream (docs, gate) parses them by drain_count_mode / config context, not by string
+      // equality.
+      lumice::RateObservation obs;
+      obs.wall_sec = wall_sec;
+      obs.r_end = r_end;
+      obs.active_started = active_started;
+      obs.active_sec = active_sec;
+      obs.rays_at_active_start = rays_at_active_start;
+      obs.drain_count_mode = drain_count_mode;
+      obs.window_closed = window_closed;
+      obs.drain_window_sec = std::chrono::duration<double>(t_final_drain - t_first_drain).count();
+      obs.rays_at_first_drain = rays_at_first_drain;
+      obs.rays_at_final_drain = rays_at_final_drain;
+      const lumice::RateEstimate est = lumice::EstimateBenchmarkRate(obs);
+      const double rays_per_sec = est.rays_per_sec;
+      const char* rate_basis = lumice::RateBasisName(est.basis);
+      const double window_sec = est.window_sec;
+      const LUMICE_RayCount window_rays = est.window_rays;
 
       nlohmann::json result;
       result["mode"] = mode;
