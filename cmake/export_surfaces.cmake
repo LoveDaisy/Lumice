@@ -7,8 +7,8 @@
 # relative to the repository root.
 #
 # The engine's own surface is its capability headers, one per capability, in dependency order:
-# base, scene, render, editor, engine, raypath. lumice.h only includes them and is not listed —
-# it declares nothing (scripts/check_header_split.py, which reads its family from this list: the
+# base, scene, render, editor, engine, raypath. There is no header gathering them: an includer names
+# the ones declaring what it uses (scripts/check_header_split.py reads the family from this list: the
 # engine surface minus the analytic headers). The engine libraries host the analytic capability
 # (lumice_analytic_core.h) next to them; lumice_analytic.h's two library-management functions (its
 # version and log callback) stay with liblumice_analytic alone, because in the engine the logging

@@ -264,7 +264,7 @@ add_executable(unit_correctness_test
   # links the analytic kernels.
   "${PROJ_TEST_DIR}/unit-correctness/analytic/test_li_parity.cpp"
   # raypath/: the single-path analysis module (scene config -> the analytic kernel above -> fibers,
-  # per-pose detail, the sun-direction grid, its JSON form, its lumice.h entry point), from the
+  # per-pose detail, the sun-direction grid, its JSON form, its lumice_raypath.h entry point), from the
   # lumice_raypath_obj OBJECT library linked below — the same objects liblumice carries.
   "${PROJ_TEST_DIR}/unit-correctness/raypath/test_single_path_analysis.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/raypath/test_single_path_json.cpp"
@@ -297,8 +297,8 @@ add_test(NAME "LumiceUnitCorrectnessTest" COMMAND unit_correctness_test
 set_tests_properties("LumiceUnitCorrectnessTest" PROPERTIES LABELS "unit-correctness")
 
 # --------------------------------------------------------------------------------------------------
-# capi_header_self_containment_test (unit-correctness): every engine surface header, and the lumice.h
-# umbrella, compiles when it is the ONLY thing a translation unit includes — once as C, once as C++.
+# capi_header_self_containment_test (unit-correctness): every engine surface header compiles when it
+# is the ONLY thing a translation unit includes — once as C, once as C++.
 # The headers are the engine's export surface (cmake/export_surfaces.cmake), so a new capability
 # header is covered by being listed there. The include path is src/include/ alone, the directory a
 # consumer of the C API has, so a header that leans on src/ (or on an include its includer happened
@@ -306,7 +306,7 @@ set_tests_properties("LumiceUnitCorrectnessTest" PROPERTIES LABELS "unit-correct
 # is registered with ctest so a build that skipped it is visible as a missing test.
 set(_self_contained_dir "${CMAKE_CURRENT_BINARY_DIR}/capi_header_self_containment")
 set(_self_contained_sources "")
-foreach(_rel IN LISTS LUMICE_ENGINE_SURFACE_HEADERS ITEMS src/include/lumice.h)
+foreach(_rel IN LISTS LUMICE_ENGINE_SURFACE_HEADERS)
   get_filename_component(_name "${_rel}" NAME_WE)
   get_filename_component(_file "${_rel}" NAME)
   foreach(_ext IN ITEMS c cpp)

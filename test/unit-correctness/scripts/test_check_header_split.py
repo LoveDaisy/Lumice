@@ -1,6 +1,5 @@
 """Unit tests for `scripts/check_header_split.py`, the standing invariants of the engine's
-capability headers (one declaring header per name, an acyclic include graph, an umbrella that
-declares nothing and gathers every header). Scratch trees for the red states; the real tree for
+capability headers (one declaring header per name, an acyclic include graph). Scratch trees for the red states; the real tree for
 the green one. No build needed.
 """
 from __future__ import annotations
@@ -46,15 +45,7 @@ LUMICE_API int LUMICE_B(const LUMICE_Thing* t);
 #endif
 """
 
-UMBRELLA = """#ifndef LUMICE_H_
-#define LUMICE_H_
-#include "lumice_a.h"
-#include "lumice_b.h"
-#endif
-"""
-
-
-def _tree(tmp_path: Path, a: str = A_H, b: str = B_H, umbrella: str | None = UMBRELLA) -> Path:
+def _tree(tmp_path: Path, a: str = A_H, b: str = B_H) -> Path:
     (tmp_path / "cmake").mkdir()
     (tmp_path / "cmake" / "export_surfaces.cmake").write_text(SURFACES)
     inc = tmp_path / "src" / "include"
@@ -62,8 +53,6 @@ def _tree(tmp_path: Path, a: str = A_H, b: str = B_H, umbrella: str | None = UMB
     (inc / "lumice_a.h").write_text(a)
     (inc / "lumice_b.h").write_text(b)
     (inc / "lumice_analytic_core.h").write_text("#define LUMICE_ANALYTIC_API\n")
-    if umbrella is not None:
-        (inc / "lumice.h").write_text(umbrella)
     return tmp_path
 
 
@@ -102,28 +91,6 @@ def test_include_cycle_is_red(tmp_path: Path) -> None:
     a = A_H.replace("#define LUMICE_A_H_\n", '#define LUMICE_A_H_\n#include "lumice_b.h"\n')
     msgs = chs.check(_tree(tmp_path, a=a))
     assert any(m.startswith("include cycle:") and "lumice_a.h" in m and "lumice_b.h" in m for m in msgs), msgs
-
-
-def test_capability_header_including_umbrella_is_a_cycle(tmp_path: Path) -> None:
-    b = B_H.replace('#include "lumice_a.h"', '#include "lumice.h"')
-    msgs = chs.check(_tree(tmp_path, b=b))
-    assert any(m.startswith("include cycle:") for m in msgs), msgs
-
-
-def test_umbrella_declaring_something_is_red(tmp_path: Path) -> None:
-    umbrella = UMBRELLA.replace("#endif\n", "#define LUMICE_STRAY 1\n#endif\n")
-    msgs = chs.check(_tree(tmp_path, umbrella=umbrella))
-    assert any("lumice.h: declares LUMICE_STRAY" in m for m in msgs), msgs
-
-
-def test_umbrella_missing_a_header_is_red(tmp_path: Path) -> None:
-    umbrella = UMBRELLA.replace('#include "lumice_b.h"\n', "")
-    msgs = chs.check(_tree(tmp_path, umbrella=umbrella))
-    assert msgs == ["src/include/lumice.h: does not include lumice_b.h"]
-
-
-def test_no_umbrella_is_fine(tmp_path: Path) -> None:
-    assert chs.check(_tree(tmp_path, umbrella=None)) == []
 
 
 def test_listed_header_missing_is_red(tmp_path: Path) -> None:

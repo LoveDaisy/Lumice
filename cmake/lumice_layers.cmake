@@ -237,7 +237,6 @@ set(LUMICE_LAYER_raypath_FILES
 )
 
 set(LUMICE_LAYER_capi_FILES
-  include/lumice.h
   server/c_api_internal.hpp
   util/raypath_analysis_display.hpp
   util/result_frame.hpp

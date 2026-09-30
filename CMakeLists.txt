@@ -1036,8 +1036,8 @@ target_link_libraries(lumice_analytic_kernel PUBLIC lumice_foundation_obj)
 lumice_apply_engine_compile_options(lumice_analytic_kernel)
 
 # The single-path analysis module (src/raypath/: scene config -> the kernel above -> fibers,
-# per-pose detail, the sun-direction grid, its JSON form) and its lumice.h entry point. Linked into
-# liblumice and liblumice_testapi — the shells reach it only through lumice.h — and NOT into
+# per-pose detail, the sun-direction grid, its JSON form) and its lumice_raypath.h entry point. Linked
+# into liblumice and liblumice_testapi — the shells reach it only through lumice_raypath.h — and NOT into
 # liblumice_analytic, whose surface is the kernel alone; that is why it sits outside lumice_obj.
 add_library(lumice_raypath_obj OBJECT
   "${PROJ_SRC_DIR}/raypath/scene_to_analytic.cpp"
@@ -1161,7 +1161,7 @@ if(BUILD_SHARED_LIBS)
 endif()
 
 # Test-only export surface: the same lumice_obj objects liblumice is made of, plus the handful of
-# LUMICE_TEST_* hooks pytest needs and lumice.h must never carry (a test-only entry point in the
+# LUMICE_TEST_* hooks pytest needs and the product headers must never carry (a test-only entry point in the
 # product ABI is the shape the owner rejected). It is a SUPERSET STAND-IN for liblumice, not a
 # companion: -fvisibility=hidden leaves nothing for a side library to link against, so the hooks
 # must ship with their own copy of the engine, and the ctypes harness loads this one library
@@ -1191,7 +1191,7 @@ endif()
 # analytic kernel — not lumice_obj, which it no longer links (section 2.1) — its own header
 # (src/include/lumice_analytic.h over lumice_analytic_core.h), its own prefix, and an export list
 # naming only the LUMICE_ANALYTIC_* functions — so, unlike lumice_testapi, it does NOT re-export
-# lumice.h. Its own code lives in src/analytic/, outside lumice_obj. The kernel, with the
+# the engine's capability headers. Its own code lives in src/analytic/, outside lumice_obj. The kernel, with the
 # capability's C ABI (analytic_capi.cpp), is also linked into the other two libraries, which
 # export that capability too (cmake/export_surfaces.cmake). The library's management TU
 # analytic_lib.cpp — GetApiVersion, SetLogCallback, and the load-time object that removes the
@@ -1279,7 +1279,7 @@ if(BUILD_SHARED_LIBS AND NOT LUMICE_CUDA_ENABLED)
     LIBRARY DESTINATION lib COMPONENT analytic
     ARCHIVE DESTINATION lib COMPONENT analytic)
   # These two headers only (lumice_analytic.h includes the core one), never the whole
-  # src/include/: lumice.h is not published, and a consumer must not be able to compile both
+  # src/include/: the engine's lumice_*.h capability headers are not published, and a consumer must not be able to compile both
   # (doc/analytic-api.md section 2.6).
   install(FILES
     "${PROJ_SRC_DIR}/include/lumice_analytic.h"

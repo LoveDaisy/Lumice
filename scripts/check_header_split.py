@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Invariants of the engine's capability headers: the lumice_*.h family that lumice.h gathers.
+"""Invariants of the engine's capability headers: the lumice_*.h family under src/include/.
 
 The engine's C API is declared across one header per capability (base, scene, render, editor,
-engine, raypath). Which headers they are is not restated here: it is the engine's export surface
-(LUMICE_ENGINE_SURFACE_HEADERS in cmake/export_surfaces.cmake) minus the analytic headers it shares
-with liblumice_analytic. Three invariants hold for that family, none of which depends on how many
-declarations there are, so the API can grow without touching this script:
+engine, raypath); there is no header gathering them, and an includer names the capability headers
+declaring what it uses. Which headers they are is not restated here: it is the engine's export
+surface (LUMICE_ENGINE_SURFACE_HEADERS in cmake/export_surfaces.cmake) minus the analytic headers
+it shares with liblumice_analytic. Two invariants hold for that family, neither of which depends on
+how many declarations there are, so the API can grow without touching this script:
 
   1. Every name is declared by exactly one header. Kinds: exported functions (the same parse that
      generates the export lists, scripts/gen_export_list.py), typedef / struct / enum / union
@@ -13,13 +14,7 @@ declarations there are, so the API can grow without touching this script:
      an identical typedef (C11) and an identical #define without a word, so a declaration copied
      into a second header instead of moved would compile, export and run — and then the two
      copies would drift. This is the check that notices.
-  2. The #include graph between the family's headers and lumice.h has no cycle.
-  3. lumice.h, while it exists, declares nothing and includes every header of the family: it is
-     only a gathering point for the includers not yet moved to a specific header.
-
-`--against <git-rev>` additionally compares the family's declarations with a single
-src/include/lumice.h at that revision — a one-off reconciliation for the commit that split the
-header, not a standing check (it names a revision, and the API is allowed to grow after it).
+  2. The #include graph between the family's headers has no cycle.
 
 Exit status 0 when everything holds, 1 otherwise; each finding is printed on its own line.
 """
@@ -28,7 +23,6 @@ from __future__ import annotations
 import argparse
 import collections
 import re
-import subprocess
 import sys
 from pathlib import Path
 
@@ -38,7 +32,7 @@ import gen_export_list  # noqa: E402
 from check_policies import EXPORT_SURFACES_REL, parse_export_surfaces, strip_comments  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-UMBRELLA_REL = "src/include/lumice.h"
+INCLUDE_DIR_REL = "src/include"
 
 _DEFINE = re.compile(r"^\s*#\s*define\s+(\w+)")
 _IFNDEF = re.compile(r"^\s*#\s*ifndef\s+(\w+)")
@@ -157,10 +151,9 @@ def _find_cycle(graph: dict[str, list[str]]) -> list[str] | None:
 
 
 def check(repo_root: Path) -> list[str]:
-    """Findings for the three standing invariants (empty when they hold)."""
+    """Findings for the two standing invariants (empty when they hold)."""
     out: list[str] = []
     family = family_headers(repo_root)
-    umbrella = repo_root / UMBRELLA_REL
     texts: dict[str, str] = {}
     for rel in family:
         path = repo_root / rel
@@ -168,8 +161,6 @@ def check(repo_root: Path) -> list[str]:
             out.append(f"{rel}: listed in {EXPORT_SURFACES_REL} but does not exist")
             continue
         texts[rel] = path.read_text(encoding="utf-8")
-    if umbrella.is_file():
-        texts[UMBRELLA_REL] = umbrella.read_text(encoding="utf-8")
 
     # 1. one declaring header per name
     owners: dict[tuple[str, str], list[str]] = collections.defaultdict(list)
@@ -182,77 +173,30 @@ def check(repo_root: Path) -> list[str]:
         for kind in KINDS:
             for name in sorted(set(decls[kind])):
                 owners[(kind, name)].append(rel)
-        if rel == UMBRELLA_REL and any(decls[k] for k in KINDS):
-            named = ", ".join(n for k in KINDS for n in decls[k])
-            out.append(f"{rel}: declares {named}; it only gathers the capability headers")
     for (kind, name), rels in sorted(owners.items()):
         if len(rels) > 1:
             out.append(f"{kind} {name} is declared in {len(rels)} headers: {', '.join(rels)}")
 
     # 2. acyclic include graph, within src/include/
-    include_dir = (repo_root / UMBRELLA_REL).parent
+    include_dir = (repo_root / INCLUDE_DIR_REL).resolve()
     graph: dict[str, list[str]] = {}
     for rel, text in texts.items():
         graph[rel] = []
         for target in quoted_includes(text):
             path = (repo_root / rel).parent / target
-            if path.is_file() and path.resolve().parent == include_dir.resolve():
+            if path.is_file() and path.resolve().parent == include_dir:
                 graph[rel].append(path.resolve().relative_to(repo_root.resolve()).as_posix())
     cycle = _find_cycle(graph)
     if cycle:
         out.append("include cycle: " + " -> ".join(cycle))
-
-    # 3. the umbrella gathers every capability header
-    if UMBRELLA_REL in texts:
-        missing = [rel for rel in family if rel in texts and rel not in graph[UMBRELLA_REL]]
-        for rel in missing:
-            out.append(f"{UMBRELLA_REL}: does not include {Path(rel).name}")
     return out
-
-
-def reconcile(repo_root: Path, rev: str) -> tuple[list[str], dict[str, tuple[int, int]]]:
-    """Compare the family's declarations with src/include/lumice.h at `rev`.
-
-    Returns (findings, {kind: (count at rev, count now)}). Counts are occurrences: a macro
-    defined in two #if branches counts twice on both sides, so they must match exactly.
-    """
-    old_text = subprocess.run(
-        ["git", "-C", str(repo_root), "show", f"{rev}:{UMBRELLA_REL}"],
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout
-    old = declarations(old_text, f"{rev}:{UMBRELLA_REL}")
-    new: dict[str, list[str]] = {k: [] for k in KINDS}
-    rels = family_headers(repo_root) + ([UMBRELLA_REL] if (repo_root / UMBRELLA_REL).is_file() else [])
-    for rel in rels:
-        path = repo_root / rel
-        if path.is_file():
-            for kind, names in declarations(path.read_text(encoding="utf-8"), rel).items():
-                new[kind].extend(names)
-    out: list[str] = []
-    counts: dict[str, tuple[int, int]] = {}
-    for kind in KINDS:
-        before, after = collections.Counter(old[kind]), collections.Counter(new[kind])
-        counts[kind] = (sum(before.values()), sum(after.values()))
-        for name in sorted((before - after).keys()):
-            out.append(f"{kind} {name}: declared at {rev}, missing now")
-        for name in sorted((after - before).keys()):
-            out.append(f"{kind} {name}: not declared at {rev}, or declared more often now")
-    return out, counts
 
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
     ap.add_argument("--repo-root", type=Path, default=REPO_ROOT)
-    ap.add_argument("--against", metavar="REV", help="one-off: reconcile with src/include/lumice.h at REV")
     args = ap.parse_args(argv)
     findings = check(args.repo_root)
-    if args.against:
-        more, counts = reconcile(args.repo_root, args.against)
-        findings += more
-        for kind, (before, after) in counts.items():
-            print(f"{kind}: {before} at {args.against}, {after} now")
     for f in findings:
         print(f"check_header_split.py: {f}", file=sys.stderr)
     return 1 if findings else 0
