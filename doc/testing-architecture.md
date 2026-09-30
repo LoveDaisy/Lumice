@@ -1630,6 +1630,10 @@ directly comparable to the other rows above, but it is well past both 411s and 4
 leg is now the run's longest job (ahead of `shared-gui-test-build`'s 39-606s spread) has not been
 re-measured against a single run the way the table above was; that re-measurement, and any
 resulting re-pack of the two macOS legs, is a separate follow-up.
+Those 278s were the gate's precise profile (0.85 over 21 reps). CI now runs its `ci` profile
+(`--dual-gate-profile=ci`, 0.75 over 5 reps — the disaster floor; the precise gate runs on the
+reference machines on a schedule, `performance-testing.md` "Precise throughput gate (local
+schedule)"), measured at 104s for the gate and 124s for the whole of phase 2 on run 36756401783.
 
 The cold column is not a hypothetical. Every cache in the repository was destroyed while this table
 was being measured, so the two runs are the same commit range on the same branch, one with nothing
