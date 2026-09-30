@@ -23,6 +23,7 @@
 #if defined(LUMICE_CUDA_ENABLED)
 #include "core/backend/cuda_trace_backend.hpp"  // CudaDeviceAvailable() for LUMICE_IsBackendAvailable
 #endif
+#include "config/filter_config.hpp"  // FilterConfig::kSym* (the raypath symmetry bits)
 #include "core/annotation_overlay.hpp"
 #include "include/lumice_base.h"
 #include "include/lumice_engine.h"
