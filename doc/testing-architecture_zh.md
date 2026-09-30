@@ -1029,7 +1029,7 @@ T，属预期。两个系数都是脚本常量，改它就是一个可评审的 
 **覆盖范围。** `e2e-test`（job 名 `e2e-test`）与 `e2e-slow` 三条腿（job 名
 `E2E Slow (<matrix name>)`），各自合并其所有 pytest 调用的报告（phase 1，以及有 phase 2 的腿的
 phase 2）。**未覆盖**：ctest 与 `gui_test`（CI 日志里 ctest 只有二进制粒度，`gui_test` 在 build job
-中不运行；它们的膨胀由 job 墙钟体现）、`windows-shared-export` 的四个 slow 文件、`policy` job 的脚本
+中不运行；它们的膨胀由 job 墙钟体现）、`windows-shared-export` 的 slow 文件、`policy` job 的脚本
 单测。**新增的 pytest job** 在同样接线之前不受覆盖——每个 pytest 调用加
 `-p duration_report_plugin --duration-report=...`、job 末尾加 "Check test durations" step——而且
 没有任何东西检查它是否接线了。
