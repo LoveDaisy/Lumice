@@ -764,6 +764,8 @@ set(lumice_server_src
   "${PROJ_SRC_DIR}/server/c_api_scene.cpp"
   "${PROJ_SRC_DIR}/server/component_compositor.cpp"
   "${PROJ_SRC_DIR}/server/render.cpp"
+  "${PROJ_SRC_DIR}/server/scene_config_to_json.cpp"
+  "${PROJ_SRC_DIR}/server/scene_json_to_config.cpp"
   "${PROJ_SRC_DIR}/server/server.cpp"
   "${PROJ_SRC_DIR}/server/stats.cpp"
   "${PROJ_SRC_DIR}/server/raypath_histogram_consumer.cpp")

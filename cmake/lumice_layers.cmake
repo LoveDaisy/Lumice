@@ -147,6 +147,8 @@ set(LUMICE_LAYER_scene_FILES
   server/c_api_editor.cpp
   server/c_api_scene.cpp
   server/c_api_scene_internal.hpp
+  server/scene_config_to_json.cpp
+  server/scene_json_to_config.cpp
 )
 
 set(LUMICE_LAYER_view_FILES

@@ -1462,7 +1462,7 @@ import-warning popup rather than only writing to its log panel. Both name the sa
 which field, why it was refused, and what angle was kept — they just say it differently.
 
 The command-line config reader and the C API (`src/config/crystal_config.cpp`,
-`src/server/c_api_scene.cpp`):
+`src/server/scene_json_to_config.cpp`):
 ```text
 Crystal shape "upper_indices": [1,0,-1,1] is not a usable wedge angle (invalid, offending
 index -1); keeping 28.00.

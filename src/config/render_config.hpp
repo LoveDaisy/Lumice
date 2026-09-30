@@ -90,7 +90,7 @@ void from_json(const nlohmann::json& j, MarkerStyleParam& m);
 //
 // An ARRAY-level rule, so it cannot live in MarkerStyleParam::from_json — that function sees one
 // entry and has no way to look at its siblings. Shared by both JSON decoders (config_manager.cpp
-// and c_api_scene.cpp) rather than implemented twice: two independent duplicate checks are two chances
+// and scene_json_to_config.cpp) rather than implemented twice: two independent duplicate checks are two chances
 // to disagree, and test_json_parser_parity.cpp exists precisely because that has happened before.
 bool HasDuplicateMarkerId(const std::vector<MarkerStyleParam>& markers, MarkerRefId* dup);
 

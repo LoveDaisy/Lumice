@@ -71,7 +71,8 @@ extern "C" {
 // Distribution type constants for LUMICE_Distribution.type. Values deliberately match core
 // DistributionType's enum order (src/core/math.hpp) so "zero-init == not random" holds in both
 // layers with the same integer. The C API translates via a hand-written JSON string switch
-// (c_api_scene.cpp), NOT an integer cast, so the values need only stay self-consistent here.
+// (scene_json_to_config.cpp / scene_config_to_json.cpp), NOT an integer cast, so the values need only stay
+// self-consistent here.
 #define LUMICE_DIST_NO_RANDOM 0
 #define LUMICE_DIST_UNIFORM 1
 #define LUMICE_DIST_GAUSS 2

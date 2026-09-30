@@ -1006,7 +1006,7 @@ RenderConsumer::AnnotationLayers RenderConsumer::BuildAnnotationLayers() const {
   // that decides it. A non-empty markers_ wins outright; zenith_nadir_ is consulted only when
   // markers_ is empty. It happens HERE, at the consumer, rather than in either JSON decoder,
   // because RenderConfig has three producers (this file's own callers, config_manager.cpp,
-  // c_api_scene.cpp) and a rule applied by producers is a rule each of them can forget.
+  // scene_json_to_config.cpp) and a rule applied by producers is a rule each of them can forget.
   //
   // Not a merge: a config that lists markers is describing its whole marker set, and quietly
   // adding two more rings from a legacy field it also carries would draw something nobody asked
