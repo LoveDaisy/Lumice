@@ -284,6 +284,8 @@ elseif(MSVC AND BUILD_SHARED_LIBS)
   set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
 endif()
 
+# Trial knob (explore build-time-levers): CI legs that only compile/link may opt out of IPO.
+option(LUMICE_IPO "Enable inter-procedural optimization on Release builds" ON)
 include(CheckIPOSupported)
 check_ipo_supported(RESULT result OUTPUT output)
 
@@ -318,7 +320,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
 else()
   set(_lumice_gcc_linux FALSE)
 endif()
-if(result AND "${CMAKE_BUILD_TYPE}" STREQUAL "Release"
+if(LUMICE_IPO AND result AND "${CMAKE_BUILD_TYPE}" STREQUAL "Release"
    AND (NOT BUILD_SHARED_LIBS OR LUMICE_CLANG_CL OR _lumice_gcc_linux))
   message(STATUS "IPO supported. Enable inter-procedural optimization.")
   set(CMAKE_INTERPROCEDURAL_OPTIMIZATION TRUE)

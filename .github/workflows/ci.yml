@@ -297,6 +297,7 @@ jobs:
           cmake -S . -B build -G Ninja
           -DCMAKE_BUILD_TYPE=Release
           -DBUILD_TEST=ON
+          -DLUMICE_IPO=OFF
           -DBUILD_GUI=${{ matrix.build_gui }}
           -DLUMICE_ISA_LEVEL=baseline
           ${{ env.LUMICE_PYTHON_ARGS }}
@@ -568,6 +569,7 @@ jobs:
           cmake -S . -B build -G Ninja
           -DCMAKE_BUILD_TYPE=Release
           -DBUILD_TEST=ON
+          -DLUMICE_IPO=OFF
           -DBUILD_GUI=OFF
           -DLUMICE_CUDA_ENABLED=ON
           -DLUMICE_ISA_LEVEL=baseline
@@ -752,6 +754,7 @@ jobs:
           cmake -S . -B build -G Ninja
           -DCMAKE_BUILD_TYPE=Release
           -DBUILD_TEST=ON
+          -DLUMICE_IPO=OFF
           -DBUILD_GUI=OFF
           -DLUMICE_CUDA_ENABLED=ON
           -DLUMICE_ISA_LEVEL=baseline
@@ -1072,6 +1075,7 @@ jobs:
           cmake -S . -B build -G Ninja
           -DCMAKE_BUILD_TYPE=Release
           -DBUILD_TEST=ON
+          -DLUMICE_IPO=OFF
           -DBUILD_GUI=ON
           -DBUILD_SHARED_LIBS=ON
           -DLUMICE_ISA_LEVEL=baseline
@@ -1460,6 +1464,7 @@ jobs:
           cmake -S . -B build -G Ninja
           -DCMAKE_BUILD_TYPE=Release
           -DBUILD_TEST=ON
+          -DLUMICE_IPO=OFF
           -DBUILD_GUI=OFF
           -DBUILD_SHARED_LIBS=ON
           -DLUMICE_ISA_LEVEL=baseline
