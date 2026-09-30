@@ -10,9 +10,23 @@ Lumice 提供了完整的C接口，方便与其他语言集成。C接口封装�
 
 ### 头文件
 
+Lumice 的 C API 按能力拆成六个头文件，每个能力一个；按用到的内容包含对应的头，没有伞头。
+
+| 头文件 | 内容 |
+|---|---|
+| `lumice_base.h` | 符号可见性、`LUMICE_API_VERSION`、不透明句柄、错误码、日志、产品版本；其余各头都包含它 |
+| `lumice_scene.h` | 场景描述值类型与 `LUMICE_Scene` 的构建 / JSON API |
+| `lumice_render.h` | 渲染参数、标注、投影 |
+| `lumice_editor.h` | 编辑器支撑：键名、合法性检查、晶体网格、光路文本校验、Miller 指数转换 |
+| `lumice_engine.h` | 服务器生命周期、提交场景、结果帧、光路分析运行、后端选择 |
+| `lumice_raypath.h` | 单光路分析（不透明结果 + JSON） |
+
 ```c
-#include "lumice.h"
+#include "lumice_engine.h"  // 同时包含 lumice_base.h、lumice_render.h、lumice_scene.h
 ```
+
+下文示例需要 `lumice_engine.h`（服务器、提交、结果）与 `lumice_scene.h`（构建场景），
+前者已包含后者。
 
 ### 链接库
 
@@ -29,7 +43,7 @@ Lumice 提供了完整的C接口，方便与其他语言集成。C接口封装�
 ### 常量
 
 ```c
-#define LUMICE_API_VERSION 448        // ABI 版本，编码为 major*100 + minor（v4.48）
+#define LUMICE_API_VERSION 450        // ABI 版本，编码为 major*100 + minor（v4.50）
 #define LUMICE_MAX_RENDER_RESULTS 16  // 渲染结果数组最大容量
 #define LUMICE_MAX_STATS_RESULTS 1    // 统计结果数组最大容量
 ```
@@ -562,7 +576,7 @@ void LUMICE_StopServer(LUMICE_Server* server);
 ### 基础示例
 
 ```c
-#include "lumice.h"
+#include "lumice_engine.h"
 #include <stdio.h>
 
 int main() {
@@ -626,7 +640,7 @@ int main() {
 ### 完整示例（包含错误处理）
 
 ```c
-#include "lumice.h"
+#include "lumice_engine.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>

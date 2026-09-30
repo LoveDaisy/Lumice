@@ -266,7 +266,7 @@ absolute path, never PATH or cwd, so a same-named DLL planted in either location
 This is a single-process model: there is no separate launcher process re-`CreateProcess`-ing a
 sidecar and relaying its exit code, unlike the retired form described in the previous paragraph.
 The engine DLL is an internal implementation detail — its ABI is not a stable, versioned contract,
-it is not a supported interface on its own, and `lumice.h` does not ship with it. Because the
+it is not a supported interface on its own, and the engine's `lumice_*.h` headers do not ship with it. Because the
 shell's own compile-time tier is always baseline and says nothing about which engine DLL actually
 loaded, the `"isa"` field this benchmark reports (rule 3 below) is answered by the *loaded engine*
 at runtime through the `LUMICE_GetEngineIsaLevel()` C API, not read off a compile-time macro in the

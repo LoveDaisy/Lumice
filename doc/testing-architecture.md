@@ -1721,7 +1721,7 @@ base was a frozen branch, so `refs/pull/N/merge` could not drift as `main` moved
 |---|---|---|---|---|---|
 | 1 | nothing a compiler reads | 99.66% | 1 | 327s | 496s |
 | 2 | two C++ files — the median commit touches two | 92.18% | 23 | 345s | 371s |
-| 3 | `src/include/lumice.h` | 59.52% | 119 | 445s | 508s |
+| 3 | `src/include/lumice.h` (measured before the header split; today the nearest equivalent is `lumice_base.h`, which every other capability header includes) | 59.52% | 119 | 445s | 508s |
 
 **Read no wall clock off that table without the next paragraph.** Tier 2's red arm is *faster* than
 tier 1's — 371s against 496s for very nearly the same full compile — because it drew a faster runner.
@@ -1840,7 +1840,7 @@ the dynamic-symbol resolution, the rpath and the C API's cross-boundary object l
 exercised here and nowhere else. The file loaded is `liblumice_testapi`, not `liblumice`: the shared
 build produces both, from the same `lumice_obj` objects, and the test library is the product one
 plus the `LUMICE_TEST_*` hooks of `test/support/lumice_test_api.h` — test-only entry points (the
-lens imaging-domain mask, today) that `lumice.h` carries no product reason to export. Because
+lens imaging-domain mask, today) that the engine's capability headers carry no product reason to export. Because
 `-fvisibility=hidden` gives a side library nothing to link to, the hooks ship with their own copy
 of the engine, and a test process loads exactly one of the two; every product `LUMICE_*` call
 behaves identically in either, which is what makes the stand-in honest. `lib_candidates()` is the

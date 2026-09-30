@@ -178,8 +178,8 @@ mechanism (§2.6, §4, §7).
 | EV source | `src/gui/app.cpp` — `SyncFromPoller()` | Maps `p99_y` + `snapshot_intensity` → `ev_auto` |
 | Mode-aware exposure (single owner) | `src/gui/mono_exposure_scale.hpp` | `ComputeMonoExposure()` — branches on `ev_mode`; feeds display, export, and `.lmc` thumbnail |
 | GUI display | `src/gui/app_panels.cpp` | Mode combo, EV readout text |
-| C API fields | `src/include/lumice.h` — `LUMICE_RawXyzResult` | `xyz_buffer`, `snapshot_intensity`, `emitted_energy` |
-| C API fields | `src/include/lumice.h` — `LUMICE_RenderParam` | `ev_mode` (`LUMICE_EV_MODE_RELATIVE` / `LUMICE_EV_MODE_ABSOLUTE`) |
+| C API fields | `src/include/lumice_engine.h` — `LUMICE_RawXyzResult` | `xyz_buffer`, `snapshot_intensity`, `emitted_energy` |
+| C API fields | `src/include/lumice_scene.h` — `LUMICE_RenderParam` | `ev_mode` (`LUMICE_EV_MODE_RELATIVE` / `LUMICE_EV_MODE_ABSOLUTE`) |
 
 ### Related Documentation
 

@@ -31,6 +31,8 @@ GUI 编辑器服务的 schema 助手函数。三个高度共用一个平面，�
 
 ## 2. 证据：三个高度，一个平面
 
+> 本节及 §8 引用的 `lumice.h` 与行号是 2026-08 的证据快照——该头文件此后已拆为六个能力头并删除（§9），行号不再对应任何文件。
+
 | 高度 | 性质 | C API 中的代表（`src/include/lumice.h`） |
 |---|---|---|
 | **L0 引擎** | 与冰晕无关的通用能力：几何、求交、折射、采样、后端调度 | *C API 中没有独立出口*——只能透过 L1 间接触及 |
@@ -218,3 +220,96 @@ L1 的渲染与标注（11 天 13 次，几乎都落在 `LUMICE_RenderParam`）�
 install / export 打包、LI 侧 binding 冒烟测试兼作「第三方消费者」样例）；共享库的实际内容随
 第一个成熟算法模块一起进去，不做没有内容、只为发布而发布的库。第一个候选模块是单光路反解 +
 fiber 行走——语义稳定、体量小。这部分已立项为本仓一个 scrum（尚未推进）。
+
+---
+
+## 9. 按能力划分库与头文件（as-built，2026-09-30）
+
+§2 批评的「三个高度，一个平面」现在有了结构性的回应。本节记录落地后的真实状态；§4 的顺序
+约束（先定产品线形状，再冻结 API）没有变，被松动的只有「一个平面」这一半。
+
+### 9.1 两个正交维度
+
+- **代码怎么切**：按层与能力切。层次的单一声明是 `cmake/lumice_layers.cmake`（foundation →
+  analytic → scene → view → sim → render → engine → raypath → capi 九层，由低到高），
+  `scripts/check_policies.py` 的 `layer-inversion` 规则拒绝任何指向更高层的 `#include`、
+  清单不认识的 `src/` 文件、以及指向不存在文件的清单项；存量逆层边只剩
+  `cmake/lumice_layer_allowlist.txt` 里的记录，该文件只减不增。
+- **打包成哪些二进制**：由外部约束决定，不由能力划分决定。当前两条：① 对外分发——LI 需要
+  `liblumice_analytic` 作 shared lib；② 运行时 ISA 分派——linux-x64 / windows-x64 发布版引擎
+  是 shared lib 且编 baseline 与 x86-64-v3 两份，macOS 与 linux-arm64 整体 static。
+  两条约束都不要求「一个能力一个动态库」，反而反对它：ISA 分派要求引擎是一整份可整体替换的
+  二进制，一进程一引擎（§9.4）要求 foundation 的单例只存在一份。
+
+### 9.2 头文件：六个能力头，没有伞头
+
+原 `lumice.h`（3098 行、84 个函数）已按功能拆开并**删除**，不存在收拢它们的头；每个
+includer 只包含自己用到的能力头。这个头集合不对外发布，所以拆分不构成 API 冻结。
+
+| 头 | 承载 | 对 §2 的回应 |
+|---|---|---|
+| `lumice_base.h` | 符号可见性宏、`LUMICE_API_VERSION` 及其变更史、不透明句柄、错误码、日志、产品版本 | 其余各头都包含它，它不包含任何一个 |
+| `lumice_scene.h` | 场景描述值类型与 `LUMICE_Scene` 的构建 / JSON API | L1 冰晕域模型 |
+| `lumice_render.h` | 渲染参数、标注、投影 | L1 中变动最快的一块（§8 的 11 天 13 次），现在单独成头 |
+| `lumice_editor.h` | 编辑器支撑：键名、合法性、mesh、`LUMICE_ValidateRaypathText` 等 | L2 与仿真执行分开 |
+| `lumice_engine.h` | 服务器生命周期、提交场景、结果帧、光路分析运行、后端选择 | 引擎的执行面 |
+| `lumice_raypath.h` | 单光路分析入口，结果为不透明句柄 + JSON | 第二产品核心的接入面 |
+
+依赖只有一个方向：`base` ← `scene` ← `render` ← `engine`，`editor` 与 `raypath` 各自向下。
+每个头都有「单独编译、C 与 C++ 各一次」的自含性测试。`src/gui/` 只许包含这些引擎能力头
+（`gui-api-boundary` 规则），白名单由 `cmake/export_surfaces.cmake` 推导，不另写一份。
+
+L0 引擎（几何、求交、折射、采样）仍然**没有**独立的 C 出口：它现在以 `foundation` 层的
+形式存在于代码里（`liblumice_analytic` 只链它加解析核），对外则经 `lumice_analytic_core.h`
+的计算函数暴露。§2 表中「L0 无独立出口」这一格因此从「没有」变成「只有解析这一条窄出口」，
+这是有意的：L0 里被外部消费者需要的部分，就是解析核。
+
+### 9.3 C 桥按头拆开，桥属于 capi 层
+
+原 `src/server/c_api.cpp`（4679 行）已按头拆为 `c_api_{scene,editor,crystal_mesh,render,engine,raypath}.cpp`
+六个桥并删除，内部头也按层拆开。`c_api_raypath.cpp` 原名 `c_api_single_path.cpp`，曾编进
+`lumice_raypath_obj` 却依赖 `server/` 的内部类型，现在归位 raypath 层；`ParseConfigManager`
+只剩一个名字，`MapErrorCode` 改为 `lumice::capi::ToCApiErrorCode`（inline、不再外部链接）。
+
+### 9.4 三个打包各自导出什么
+
+导出集合的单一声明是 `cmake/export_surfaces.cmake`，导出表由 `scripts/gen_export_list.py`
+从各库的头文件生成，`scripts/check_export_surface.py` 是「导出表 == 头文件声明」的唯一对账者，
+测试（`test_export_symbol_scope.py`）与 release 共用它；release 对 Linux 与 Windows 的 ISA 双份
+引擎逐文件核对。
+
+| 打包 | 链接 | 导出（函数个数） |
+|---|---|---|
+| `liblumice`（Windows 为 `lumice-engine.<tier>.dll`） | `lumice_obj` + foundation + raypath + 解析核 | 六个能力头 + `lumice_analytic_core.h`（93） |
+| `liblumice_testapi` | 同上，同一批对象 | 引擎全集 + `LUMICE_TEST_*` 钩子（95） |
+| `liblumice_analytic` | 只有 foundation + 解析核 | `lumice_analytic.h` 加 `lumice_analytic_core.h`（11） |
+
+要点：
+
+- **解析核是 Lumice 自己的产品能力**，引擎打包导出它的计算函数，壳可以直接使用；
+  `liblumice_analytic` 只是给外部的分发通道。⛔ 不在引擎头里再包一套同语义的函数（同一语义
+  只允许一个权威实现）。
+- **库管理函数属于打包而不属于能力**：`LUMICE_ANALYTIC_GetApiVersion` / `SetLogCallback`
+  （含加载时摘除 console sink）只在 `liblumice_analytic` 导出；在引擎里，日志与版本就是
+  `lumice_base.h` 的 `LUMICE_SetLogCallback` / `LUMICE_GetVersionString`。这一分离靠
+  「core 头 / 管理头」两个头实现，consumer 的 `#include <lumice_analytic.h>` 与所有符号、
+  布局不变，所以 `LUMICE_ANALYTIC_API_VERSION` 没有 bump。
+- **一进程一引擎不变**：同一进程不得同时加载引擎与 `liblumice_analytic`（两份含 foundation
+  的打包会有两份 logger 等单例）；测试进程也只加载三库之一，
+  `test/e2e/capi_runner.py::lib_candidates` 是唯一权威。
+
+### 9.5 结果形态与版本号：两条已定结论
+
+- **结果的对外形态 = JSON 文档 + `schema_version`**（例：`LUMICE_SinglePathResultToJson`，
+  字段参考 `raypath-cli-output.md`）。它与 §2 批评的「返回配置键名的函数」不是一回事：
+  后者是编辑器与序列化格式之间的契约，前者是引擎对调用者的结果契约，字段只追加，
+  不改 ABI。类型化读取器可以以后追加，不与 JSON 冲突。
+- **`LUMICE_API_VERSION` 与 `LUMICE_ANALYTIC_API_VERSION` 不统一**：它们量的是不同的东西
+  （引擎 ABI 的变动速率比解析接口快一个数量级，见 `analytic-api.md` §8.1），一个消费者
+  不应把另一个的变动读成自己的版本变化。
+
+### 9.6 仍未做的
+
+各能力层成为独立的 OBJECT 库（scene / view / sim / render / engine）尚未做：目前 `lumice_obj`
+仍是一整块，层次靠清单与 `layer-inversion` 规则守护，而不是靠 CMake 依赖。它排在构建侧改动
+合入之后；在那之前，「层」是被检查的声明，不是被链接器强制的边界。

@@ -906,7 +906,7 @@ this, because the two spellings never meant different things.
 
 The C API field was renamed to match (`LUMICE_RenderParam.angular_dist` / `angular_dist_count`,
 was `central_grid` / `central_grid_count`). That is a source-compatibility break with no layout
-change; see the BREAKING note at `LUMICE_API_VERSION` in `src/include/lumice.h`.
+change; see the BREAKING note at `LUMICE_API_VERSION` in `src/include/lumice_base.h`.
 
 **What the four line families draw, and what they ignore**
 

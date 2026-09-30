@@ -22,7 +22,7 @@ sentinel-overflow protection. This document does **not** cover:
 
 ## §1 Overview
 
-The C API (`src/include/lumice.h`, implemented by the bridges `src/server/c_api_*.cpp`)
+The C API (the capability headers `src/include/lumice_*.h`, implemented by the bridges `src/server/c_api_*.cpp`)
 wraps the internal C++ `Server` class and exposes an opaque-handle interface
 suitable for FFI consumption. It enforces:
 
@@ -39,7 +39,7 @@ Key source files:
 
 | File | Role |
 |------|------|
-| `src/include/lumice.h` | Public C API header — the stable ABI surface |
+| `src/include/lumice_*.h` | C API headers, one per capability (result frames: `lumice_engine.h`) — the ABI surface |
 | `src/server/c_api_*.cpp` | C API implementation, one bridge per capability header; `c_api_engine.cpp` wraps `Server` methods |
 | `src/server/server.hpp` / `server.cpp` | `ServerImpl` — state machine, threading, consumer management |
 | `src/server/consumer.hpp` | `IConsume` interface |
@@ -190,7 +190,7 @@ tempted to reach back for a per-server cache.
   removed getters shared), then writes a handle to `*out_frame`. The caller owns that handle
   and MUST eventually pass it to `LUMICE_ReleaseResultFrame`. `*out_frame` is **never** `NULL`
   on success, even before the first snapshot — such a frame simply reads as "no results" from
-  every `FrameGet*` call, making the `lumice.h` "all-zero struct if no snapshot" promise
+  every `FrameGet*` call, making the `lumice_engine.h` "all-zero struct if no snapshot" promise
   structural rather than a per-call null branch (`published_frame_` is published once, non-null,
   in the constructor — see `server.hpp:210–222`).
 - **Internal**: `ServerImpl::AcquireResultFrame()` (`server.cpp:843–863`) calls `DoSnapshot()`
@@ -739,7 +739,7 @@ the record is kept because the *reason* each failed generalizes past this one AC
 |---|---|---|
 | v1 | A runtime "live frame count" counter | Replaces a contract with runtime detection, and the counter itself needs a lifetime story — it reintroduced the exact class of defect (a `shared_ptr<ServerImpl*>` deleter capturing a raw pointer) that this scrum exists to remove |
 | v2 | C++ RAII wrapper + a `check_policies.py` gate requiring its use | **There is no RAII in C.** This promoted a C++ convenience for THIS project's own C++ consumers into the acceptance bar for the **C API surface**, and the gate it proposed cannot see, let alone enforce, anything about an actual external C caller — zero guarantee on the API surface it was meant to protect |
-| **v3 (landed)** | Copy the API's own existing house rule (`lumice.h` `LUMICE_SceneDestroy`): NULL-safe no-op, release exactly once, double-release is UB with **no sentinel** | acquire/release pairing IS the idiomatic C contract already used elsewhere in this API — not a defect to engineer away with C++ machinery |
+| **v3 (landed)** | Copy the API's own existing house rule (`lumice_scene.h` `LUMICE_SceneDestroy`): NULL-safe no-op, release exactly once, double-release is UB with **no sentinel** | acquire/release pairing IS the idiomatic C contract already used elsewhere in this API — not a defect to engineer away with C++ machinery |
 
 **Two mechanism lessons, not just a design footnote:**
 - A plan-review evaluates a plan **against the issue's stated acceptance criteria**. When an AC
@@ -800,7 +800,7 @@ to-do status.
 
 | Source location | Document section |
 |----------------|-----------------|
-| `src/include/lumice.h:971–1032` (result frame API block comment + declarations) | §3.3 Result Frame APIs, §5 Sentinel Pattern |
+| `src/include/lumice_engine.h` (result frame API block comment + declarations; line numbers cited before the header split are gone) | §3.3 Result Frame APIs, §5 Sentinel Pattern |
 | `src/server/c_api_engine.cpp` (`LUMICE_FrameGetRawXyz` sentinel) | §5.2 Overflow fix |
 | `src/server/c_api_engine.cpp` (`LUMICE_FrameGetComposite` sentinel) | §5.2 Overflow fix |
 | `src/server/c_api_engine.cpp` (`LUMICE_FrameGetRender` sentinel) | §5.2 Overflow fix |

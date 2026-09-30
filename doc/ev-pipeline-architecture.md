@@ -123,7 +123,7 @@ brightness baseline and re-shooting every visual reference.
 
 ### §2.4 C API Surface
 
-`LUMICE_RawXyzResult` (`lumice.h:66-78`) exposes the following EV-relevant fields:
+`LUMICE_RawXyzResult` (`lumice_engine.h`) exposes the following EV-relevant fields:
 
 | Field | Source |
 |-------|--------|
@@ -1217,8 +1217,8 @@ quietly drifting into re-lighting pixels it cannot re-light.
 | `ExposureScale()` / `ParticipatingExposureScale()` / `CompositeAnchorScale()` | `server/render.{hpp,cpp}` |
 | `SimData::emitted_energy_` | `config/sim_data.hpp` |
 | `MeanIlluminantWeight()` (band-expectation charge) | `util/illuminant.{hpp,cpp}` |
-| `LUMICE_RawXyzResult::emitted_energy` (C API) | `include/lumice.h` |
-| `LUMICE_RenderParam::ev_mode`, `LUMICE_EV_MODE_*` (C API) | `include/lumice.h` |
+| `LUMICE_RawXyzResult::emitted_energy` (C API) | `include/lumice_engine.h` |
+| `LUMICE_RenderParam::ev_mode`, `LUMICE_EV_MODE_*` (C API) | `include/lumice_scene.h` |
 | `ComputeMonoExposure()` / `MonoExposureInput` / `MonoEvMode` (GUI mono exposure, single owner) | `gui/mono_exposure_scale.hpp` |
 | `Consume()` — single-lane accumulation | `render.cpp:336` |
 | Overlap dual-write (pass 2) | `render.cpp:452-486` |
@@ -1230,13 +1230,13 @@ quietly drifting into re-lighting pixels it cannot re-light.
 | `ResetWith()` — config update + reset | `render.cpp:621` |
 | Constructor — eager buffer allocation | `render.cpp:321-333` |
 | `RawXyzResult` (internal struct) | `server.hpp:134` |
-| `LUMICE_RawXyzResult` (C API) | `lumice.h:66-78` |
+| `LUMICE_RawXyzResult` (C API) | `lumice_engine.h` |
 | `CommitConfig()` — Stop→Reset/Rebuild | `server.cpp:227` |
 | `Stop()` — `has_ever_consumed_` reset | `server.cpp:487,529` |
 | `NeedsRebuild()` — layout field comparison | `render_config.cpp:165-175` |
 | `sizeof(RenderConfig)` static_assert (144) | `render_config.cpp:167` |
 | `DownsampleBoxSumY()` / `ComputeP99Y()` / `ComputeEvAuto()` / `NthElementP99()` / `TargetWhiteToLinear()` | `core/ev_anchor.hpp` |
-| `LUMICE_ComputeP99Y` / `LUMICE_ComputeEvAuto` (C API surface) | `include/lumice.h`, `c_api_render.cpp` |
+| `LUMICE_ComputeP99Y` / `LUMICE_ComputeEvAuto` (C API surface) | `include/lumice_render.h`, `c_api_render.cpp` |
 | `kMonoAnchorDownsampleFactor` (8) / `kAnchorTargetWhite` (135) | `core/ev_anchor.hpp` |
 | `AnchorL99Sky()` / anchor plane geometry | `core/anchor_buffer.hpp` |
 | `ComputeAxisSolidAngle()` — the per-view unit bridge | `core/lens_proj_build.hpp` |

@@ -18,7 +18,7 @@
 > is now in `src/include/lumice_analytic.h` (§4.5 lists what the built header adds).
 
 Related: `doc/api-layering-and-product-lines.md` (why a new narrow interface and not
-`lumice.h`; §8 is the 2026-09-28 update), `doc/raypath-analysis.md` §5.1.6 (repository roles and
+the engine's headers; §8 is the 2026-09-28 update), `doc/raypath-analysis.md` §5.1.6 (repository roles and
 the sharing criterion), `doc/raypath-symmetry.md` §1.1 (the two meanings of P/B/D),
 `doc/coordinate-convention.md` (frames, face numbers, pose chain).
 
@@ -32,7 +32,7 @@ the primitive and convention layer (crystal geometry, face numbering, symmetry r
 Snell/Fresnel) is kept as two deliberately independent copies; an algorithmic module, once it has
 matured, converges to one Lumice C++ implementation that LI consumes through a shared library.
 `liblumice_analytic` is that library. It is the **first** Lumice library published to an external
-consumer, and it is deliberately **not** `lumice.h`: of the 23 incompatible changes classified in
+consumer, and it is deliberately **not** the engine's C API: of the 23 incompatible changes classified in
 `doc/api-layering-and-product-lines.md` §8, the L1 rendering/annotation surface moves an order of
 magnitude faster than anything an external consumer should be pinned to. **(owner)**
 
@@ -75,8 +75,8 @@ therefore exclude the longer prefix explicitly. Recorded here so the gate added 
 does not rediscover it.
 
 Where the header lives, and what the gate checks, is decided with the target (§2.5); this
-document's constraint on it is only that `lumice.h` must not include `lumice_analytic.h` and
-vice versa (§7).
+document's constraint on it is only that the engine headers and `lumice_analytic_core.h` include
+each other in neither direction (§7).
 
 ---
 
@@ -168,22 +168,22 @@ from a Release, non-CUDA, baseline-ISA configure. The mechanisms, as built with 
   (`analytic_capi.cpp`) and export the capability too (below), but never the management TU
   `analytic_lib.cpp` — `GetApiVersion`, `SetLogCallback` and the load-time console removal of §6.
   Installed with a CMake package config (§8.4); the install layout is a contract (§8.7).
-- **Header**: `src/include/lumice_analytic.h`, next to `lumice.h` — the published header. It
+- **Header**: `src/include/lumice_analytic.h`, next to the engine headers — the published header. It
   includes `src/include/lumice_analytic_core.h` (the visibility macro, `LUMICE_ANALYTIC_API_VERSION`
   with the version notes, every type and the computation functions) and adds the two
   library-management functions (`GetApiVersion`, the log callback). The split is the packaging
-  boundary: the engine libraries export the core header's functions next to `lumice.h`'s, and only
+  boundary: the engine libraries export the core header's functions next to the engine headers', and only
   `liblumice_analytic` exports the management two. A consumer's `#include <lumice_analytic.h>`
   and every symbol, type and layout are unchanged by it.
 - **Export surfaces**: which headers each library's list is generated from is declared once, in
-  `cmake/export_surfaces.cmake` — engine = `lumice.h` + core, `liblumice_testapi` = engine +
+  `cmake/export_surfaces.cmake` — engine = the six capability headers + core, `liblumice_testapi` = engine +
   `test/support/lumice_test_api.h`, `liblumice_analytic` = `lumice_analytic.h` + core. CMake,
   the export test below and the prefix gate all read that one file.
 - **Export list, every platform**: one list per shared library, generated from that library's
   headers by `scripts/gen_export_list.py` and passed as a GNU version script, an ld64
   `-exported_symbols_list`, or a Windows `.def` (`lumice_apply_export_list`). This replaced both
   `WINDOWS_EXPORT_ALL_SYMBOLS` (which exported every engine symbol from the DLLs) and
-  `lumice.h`'s `#pragma GCC visibility`, for all three libraries.
+  the engine header's former `#pragma GCC visibility`, for all three libraries.
 - **Header macros**: `LUMICE_API` / `LUMICE_TEST_API` / `LUMICE_ANALYTIC_API` on each declaration.
   They do not export: on GCC/Clang they give default visibility (the objects are compiled with
   `-fvisibility=hidden`, and a hidden symbol cannot be listed), on Windows they are the
@@ -252,7 +252,7 @@ side's shared boundary"). The reductions stay where they are:
 | Who | Meaning | Where |
 |---|---|---|
 | Lumice filter language | L1 | the filter's own `symmetry` field |
-| Lumice analysis panel | L2 | `LUMICE_ExpandRaypathClass` (`lumice.h`, v4.49) |
+| Lumice analysis panel | L2 | `LUMICE_ExpandRaypathClass` (`lumice_editor.h`, v4.49) |
 | LI | L1 | `symmetry.reflection_group.pbd_orbit` |
 | LI | L2 (shape half) | `symmetry.crystal_group.true_symmetry_group` (`G_true`); the pose half is the caller's pose density |
 
@@ -297,10 +297,10 @@ conventions only. Sources: LI
 
 ### 4.1 Crystal: deterministic closed-form scalars, not `LUMICE_CrystalParam` **(design)**
 
-`LUMICE_CrystalParam` (`lumice.h`) is built for MC sampling: `height`, `face_distance[6]`,
+`LUMICE_CrystalParam` (`lumice_scene.h`) is built for MC sampling: `height`, `face_distance[6]`,
 `zenith`, `azimuth`, `roll` are all `LUMICE_Distribution`, and `sync_group[]` carries the RNG
 bookkeeping. An inversion needs one fixed crystal and an explicit pose; every distribution wrapper
-would have to be `NO_RANDOM` and the pose fields ignored. Reusing it would also pull `lumice.h`
+would have to be `NO_RANDOM` and the pose fields ignored. Reusing it would also pull `lumice_scene.h`
 into the header, which §7 forbids.
 
 The new `LUMICE_ANALYTIC_Crystal` carries the closed-form scalars one to one with LI's
@@ -312,7 +312,7 @@ legality rules); the header does not restate them.
 
 - Wedge angles are the **final angle in degrees**, as `LUMICE_CrystalParam.upper_wedge_angle`
   already is. A caller holding Miller indices converts first (`doc/configuration.md`; LI does
-  this in `Pyramid.from_lumice`). There is no public Miller converter in `lumice.h` today, and
+  this in `Pyramid.from_lumice`). The engine's only Miller conversion is the editor's (`lumice_editor.h`), and
   adding one here would put a primitive-layer rule into the shared surface.
 - No absolute size. Directions and Fresnel factors are scale-free; an entry cross-section, if it is
   ever added (§9 item 8), is reported in units of the hexagon edge `a = 1`, LI's convention.
@@ -693,7 +693,7 @@ Version 5 built it ("Per-pose diagnostics as built", above); there is still no s
 ```c
 /* lumice_analytic.h -- DRAFT for review (doc/analytic-api.md section 4.5). Not a file in src/.
  *
- * The published analytic interface of Lumice. Independent of lumice.h: it includes nothing from
+ * The published analytic interface of Lumice. Independent of the engine headers: it includes nothing from
  * it and uses none of its types (no Scene/Server handles, no Distribution, no RNG).
  * 0.x is experimental: layouts may change between versions (doc/analytic-api.md section 8).
  *
@@ -1056,8 +1056,8 @@ incompatible change of this interface even if no signature moves, and bumps
 
 `LUMICE_ANALYTIC_ErrorCode` is this header's own enum, not `LUMICE_ErrorCode`: the names that
 exist in both (`OK`, `ERR_NULL_ARG`, `ERR_INVALID_VALUE`, `ERR_INVALID_CONFIG`, `ERR_UNKNOWN`)
-mean the same thing, but the JSON-, file- and server-related codes of `lumice.h` have no meaning
-here, and sharing the type would mean including `lumice.h`. Numerical outcomes of a computation
+mean the same thing, but the JSON-, file- and server-related codes of the engine headers have no meaning
+here, and sharing the type would mean including `lumice_base.h`. Numerical outcomes of a computation
 are never error codes; they are `status`/`reason` (§4.4).
 
 ### 5.3 Thread safety and re-entrancy
@@ -1068,7 +1068,7 @@ are never error codes; they are `status`/`reason` (§4.4).
   themselves, and the library **starts no threads** of its own.
 - `SetLogCallback` writes process-wide state (the sink and the callback pointer). It is an
   initialisation call: made once, before computation, from one thread. The same holds for
-  `LUMICE_SetLogCallback` in `lumice.h` today, whose first-call registration is an unsynchronised
+  `LUMICE_SetLogCallback` in `lumice_base.h` today, whose first-call registration is an unsynchronised
   static flag (`src/server/c_api_engine.cpp`); the analytic library's registration is a
   function-local static initialiser, so concurrent first calls cannot attach its sink twice, and
   the callback pointer is swapped under the sink's own lock.
@@ -1224,22 +1224,46 @@ third such pair appears, re-weigh a type-agnostic template shared by both over a
 
 ---
 
-## 7. Relation to `lumice.h`
+## 7. Relation to the engine's capability headers
 
-- `lumice_analytic.h` does **not** include `lumice.h`, and `lumice.h` does not include it. The two
-  headers share no type. A consumer of one never compiles against the other.
-- `lumice.h` is not published by this work. It moves to explicit exports too **(owner)**, but
-  stays an internal interface of Lumice's own binaries.
-- **The export set of `liblumice_analytic` is exactly the `LUMICE_ANALYTIC_*` functions.** This
-  does not happen by itself: `lumice.h` marks every declaration `LUMICE_API` (default visibility
-  on GCC/Clang), and the C API bridges (`src/server/c_api_*.cpp`) — part of `lumice_obj` — include it, so every `LUMICE_*`
-  function is compiled with default visibility into the objects. `liblumice_analytic` no longer
-  links `lumice_obj` (§2.1), so today there is no such object in its link; but nothing structural
-  keeps a default-visibility declaration out of foundation or the kernel either, and
-  `-fvisibility=hidden` alone would export whatever one of them marks. The guarantee comes from the **per-library export list** (§2.5: a version
-  script / symbol list / `.def` naming only `LUMICE_ANALYTIC_*`), and its test is mechanical: list
-  the dynamic symbol table of the built library and assert that every exported name matches
-  `\bLUMICE_ANALYTIC_` and that at least one does (`test_export_symbol_scope.py`).
+The engine's C API is no longer one header: it is six capability headers, `lumice_base.h`,
+`lumice_scene.h`, `lumice_render.h`, `lumice_editor.h`, `lumice_engine.h` and `lumice_raypath.h`
+(`doc/api-layering-and-product-lines.md` §9); the umbrella `lumice.h` this section used to name is
+gone. Throughout this document, "the engine headers" means that set.
+
+- **Analytic is Lumice's own capability, not a separate product.** The engine libraries
+  (`liblumice`, `liblumice_testapi`) export `lumice_analytic_core.h`'s functions next to the engine
+  headers', so Lumice's own shells can call `LUMICE_ANALYTIC_*` directly; `liblumice_analytic` is
+  the distribution packaging of the same code for an external consumer. There is one
+  implementation of each semantics: the engine headers do not wrap a second copy of a fiber walk
+  or a band sum.
+- **What stays with `liblumice_analytic` alone** is the library management, in `lumice_analytic.h`:
+  `LUMICE_ANALYTIC_GetApiVersion` and `LUMICE_ANALYTIC_SetLogCallback` (with the load-time console
+  removal of §6). In the engine the log callback and the version are `lumice_base.h`'s
+  `LUMICE_SetLogCallback` and `LUMICE_GetVersionString`, and a second registration path would
+  fight it. The split is by header, not by symbol: a consumer's `#include <lumice_analytic.h>`
+  still sees every type and function, and `LUMICE_ANALYTIC_API_VERSION` was not bumped for it (§8).
+- **The headers still share no type.** `lumice_analytic_core.h` includes nothing from the engine
+  headers and they do not include it; a consumer of one never compiles against the other.
+- **The engine headers are not published by this work.** They stay an internal interface of
+  Lumice's own binaries (`CMakeLists.txt` installs only `lumice_analytic.h` and the core header
+  it includes).
+- **The export set of each library is exactly what its surface headers declare**, and this does
+  not happen by itself: `LUMICE_API` marks a declaration with default visibility on GCC/Clang, and
+  the C API bridges (`src/server/c_api_*.cpp`), part of `lumice_obj`, include the engine headers, so
+  every engine function is compiled with default visibility into the objects. `liblumice_analytic`
+  no longer links `lumice_obj` (§2.1), but nothing structural keeps a default-visibility
+  declaration out of foundation or the kernel either, and `-fvisibility=hidden` alone would export
+  whatever one of them marks. The guarantee comes from the **per-library export list** (§2.5),
+  declared once in `cmake/export_surfaces.cmake`: engine = the six engine headers plus
+  `lumice_analytic_core.h` (93 names), `liblumice_testapi` = engine plus the `LUMICE_TEST_*` hooks
+  (95), `liblumice_analytic` = `lumice_analytic.h` plus the core header (11). Its test is
+  mechanical: `scripts/check_export_surface.py` compares a built binary's export table with the
+  names its surface headers declare, and both `test_export_symbol_scope.py` and `release.yml`
+  (every packaged engine file, both ISA builds) run it.
+- **One process loads one engine.** The engine libraries and `liblumice_analytic` carry the same
+  foundation objects and so the same singletons (the logger among them); a process loads exactly
+  one of them.
 - Both libraries run the same foundation and kernel objects. A behaviour change in that shared
   code reaches both; that is intended (one implementation per semantics), and it is why §5.1 treats a convention change as
   an interface change.
@@ -1254,12 +1278,12 @@ subsections keep that number.
 ### 8.1 What the version is
 
 - **An independent counter**, `LUMICE_ANALYTIC_API_VERSION`, not tied to `LUMICE_API_VERSION`.
-  The two surfaces change at rates an order of magnitude apart (`lumice.h` is at 449 after the
+  The two surfaces change at rates an order of magnitude apart (the engine's `LUMICE_API_VERSION` is at 450 after the
   classified churn in `doc/api-layering-and-product-lines.md` §8), and a consumer of one must not
   see the other's churn as a version bump.
 - **A single integer, and the only version.** It is bumped on every incompatible change (§8.2),
   with a one-line note at the top of the header saying what changed — the same style as the
-  `BREAKING` / `ADDED` / `BEHAVIOR` notes above `LUMICE_API_VERSION` in `lumice.h`. There is no
+  `BREAKING` / `ADDED` / `BEHAVIOR` notes above `LUMICE_API_VERSION` in `lumice_base.h`. There is no
   second, three-part semver number beside it: the CMake package version is this integer (§8.4),
   read from the header by the build rather than written a second time, so the version a build
   accepts and the version `LUMICE_ANALYTIC_GetApiVersion()` reports cannot drift apart.
@@ -1326,7 +1350,7 @@ about compatibility, never about disclosure.
 A shared, non-CUDA configure (§2.3) installs, relative to `CMAKE_INSTALL_PREFIX`:
 
 ```
-include/lumice_analytic.h                      the published header; lumice.h is never installed with it
+include/lumice_analytic.h                      the published header; the engine headers are never installed with it
 include/lumice_analytic_core.h                 included by it (types, version macro, computations)
 lib/liblumice_analytic.so | .dylib             Linux / macOS
 bin/lumice_analytic.dll + lib/lumice_analytic.lib   Windows: DLL + import library

@@ -84,7 +84,9 @@ before downloading into it).
   (header `src/include/lumice_analytic.h` over `lumice_analytic_core.h`, prefix `LUMICE_ANALYTIC_`;
   design in `doc/analytic-api.md`). The engine libraries export the capability too: which headers
   each shared library exports is declared once in `cmake/export_surfaces.cmake`.
-- `src/include/`: public C API header
+- `src/include/`: the C API, one header per capability — `lumice_{base,scene,render,editor,engine,raypath}.h`
+  (the engine surface; no umbrella header) plus `lumice_analytic{,_core}.h` (the analytic capability). The C
+  bridges are `src/server/c_api_<capability>.cpp`, one per header.
 - `test/`: unit tests, GUI tests, and E2E tests
 
 Layers: `cmake/lumice_layers.cmake` assigns every file under `src/` (the shell — `gui/`,
@@ -793,7 +795,12 @@ Valuable design/architecture docs live in `doc/` (tracked). Consult the relevant
     **§8（2026-09-28 更新）**：光路分析升级为第二产品核心后，「第二条产品线立项」与「真实外部
     消费者」两个触发信号同时响了（LI 经共享库消费单光路反解 / fiber 行走）；发布的是一个新窄
     接口而非现在的引擎 C API（`src/include/lumice_*.h`），共享判据见 `raypath-analysis.md` §5.1.6。
-    考虑发布动态库、设计新产品线、或再次提起拆仓前先读。
+    **§9（2026-09-30，as-built）**：「三个高度一个平面」的结构性回应——两个正交维度（代码按层/能力切 vs
+    打包由外部约束决定）、`lumice.h` 已拆为六个能力头并删除、`c_api.cpp` 按头拆为六个桥、三个打包各自
+    导出什么（引擎 93 / testapi 95 / analytic 11）、库管理函数属打包不属能力、一进程一引擎；两条已定结论：
+    结果对外形态 = JSON + `schema_version`，`LUMICE_API_VERSION` 与 `LUMICE_ANALYTIC_API_VERSION` 不统一。
+    ⚠️ 尚未做：各层成独立 OBJECT 库（`lumice_obj` 仍一整块，层次靠清单 + `layer-inversion` 规则守，不靠链接器）。
+    考虑发布动态库、设计新产品线、新增/移动 C API 函数到哪个头、或再次提起拆仓前先读。
   - `analytic-api.md` — **`liblumice_analytic` 设计（第一个对外发布的共享库；target / 导出列表 / 日志接管 / 打包与版本政策
     已 as-built，只用 install 树的外部消费者冒烟测试（C `find_package` + Python ctypes，`test/e2e-correctness/test_external_consumer_smoke.py`）已落地；模块 A（单光路反解 + fiber 行走 + seed 搜索，API v2–v5）与模块 B（带求和 / 单光路全天图，API v6，§4.6）已 as-built，尚不进下载包，2026-09-30）**：头文件 `lumice_analytic.h`、前缀 `LUMICE_ANALYTIC_`（owner 已定），⭐**§2.1/§2.2（2026-09-30 改）**：
     不再链整个 `lumice_obj`，只链 `lumice_foundation_obj` + `lumice_analytic_kernel`（foundation 由
@@ -820,6 +827,10 @@ Valuable design/architecture docs live in `doc/` (tracked). Consult the relevant
     `LUMICE_ANALYTIC_INSTALL_DIR`（只由消费者读，⛔ 不进 `src/`，§8.7）；进下载包的改动清单（§8.8，
     首个真实模块的任务执行，动手前先重读 `release.yml`）。
     §9 未决项表（seed search、`FiberResult` 是否补 LI §9.3 诊断字段两条待 owner 裁定）。
+    ⭐**§7（as-built，2026-09-30）**：analytic 是 Lumice 自有能力，引擎打包导出 `lumice_analytic_core.h`
+    的计算函数、壳可直接调用；只有 `liblumice_analytic` 额外导出库管理两函数（`GetApiVersion` / `SetLogCallback`），
+    引擎里日志与版本是 `lumice_base.h` 的；两个头互不包含、不共享类型；各库导出 = 其 surface 头文件，
+    由 `check_export_surface.py` 对账（test 与 release 共用）。
     实现新库 target / 导出列表 / 日志接管 / 打包 / 首个解析模块前先读。
 - **GPU / Metal route** (read these before touching the GPU path):
   - **🔒 设计纪律（GPU 后端实现硬约束）**：按 `seam-design.md` 蓝图走，**不要自己重新发明**。几何遍历 / 出射 seam / per-ray 旋转上传 / 单引擎大 dispatch — **复用已验证的实现**：参考当前 Metal（`gpu-single-engine-implementation.md` as-built）+ legacy `PropagateSlab`（`optics.cpp` 的 polygon-slab 遍历）。**蓝图是最终判据**：Metal/legacy 与蓝图冲突处以蓝图为准（如历史 Metal 投影焊进 trace 已被 §4.1/scrum-258 纠正，别照搬旧形态）。教训：CUDA #295 自创 Möller-Trumbore 遍历复现了 task-275~278 已解决的绝对-ε 漏面 bug（energy 0.735）；详见 `scratchpad/backlog.md`「MVP 落地后的架构发现」。

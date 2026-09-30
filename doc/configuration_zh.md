@@ -846,7 +846,7 @@ v4.26 起可用——那一版给每族加了自己的 `*_line` 开关：`label:
 
 C API 字段同步改名（`LUMICE_RenderParam.angular_dist` / `angular_dist_count`，原
 `central_grid` / `central_grid_count`）。这是**源码级**兼容性破坏，内存布局不变；详见
-`src/include/lumice.h` 中 `LUMICE_API_VERSION` 处的 BREAKING 说明。
+`src/include/lumice_base.h` 中 `LUMICE_API_VERSION` 处的 BREAKING 说明。
 
 **四族线各自画什么、忽略什么**
 
