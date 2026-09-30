@@ -4459,7 +4459,7 @@ void CudaTraceBackend::BeginSession(const SessionSpec& spec) {
     // BeginSession. trace_single_ms_kernel reads planes_[r].desc through
     // d_renderers_ via lm_proj::ProjectExitToPixel, identical to the CPU parity
     // oracle ScatterOutgoingToXyz. The camera rotation is inlined here (mirrors
-    // MakeCameraRotation in scatter_accum.hpp) to keep the .cu host-include
+    // MakeCameraRotation in camera_rotation.hpp) to keep the .cu host-include
     // surface narrow. The plane / lane-region offsets are prefix sums over the
     // renderers before it — the packing the shared accumulation buffers use
     // (see EnsureXyzBuf / EnsureClassLaneBuf).

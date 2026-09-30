@@ -57,12 +57,12 @@
 #include "core/geo3d.hpp"
 #include "core/shared/projection_shared.h"
 #include "server/consumer.hpp"
-#include "server/server.hpp"
+#include "server/result_types.hpp"
 #include "util/logger.hpp"
 
 namespace lumice {
 
-// RaypathRoiSpec (the request) is declared in server/server.hpp, next to
+// RaypathRoiSpec (the request) is declared in server/result_types.hpp, next to
 // RaypathRoiMode: it is also half of RaypathAnalysisRequest, which Server takes.
 
 struct SceneConfig;

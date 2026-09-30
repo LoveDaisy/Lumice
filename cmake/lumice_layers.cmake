@@ -148,6 +148,7 @@ set(LUMICE_LAYER_view_FILES
   core/annotation_font.hpp
   core/annotation_overlay.cpp
   core/annotation_overlay.hpp
+  core/camera_rotation.hpp
   core/color_util.hpp
   core/lens_proj.hpp
   core/lens_proj_build.hpp
@@ -193,6 +194,7 @@ set(LUMICE_LAYER_sim_FILES
   server/ray_num_semantics.hpp
   server/raypath_histogram_consumer.cpp
   server/raypath_histogram_consumer.hpp
+  server/result_types.hpp
   server/scene_batch_publish.hpp
   server/stats.cpp
   server/stats.hpp
