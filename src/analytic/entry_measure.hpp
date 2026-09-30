@@ -14,10 +14,9 @@
 // against each other (doc/analytic-api.md section 3), which is why this is a second implementation
 // by design, not a fork to be merged.
 //
-// Two deliberate differences, both documented at their site: the corners are the engine's float
-// closed-form polygons promoted to double (LI builds its own polyhedron in double); and the exit gate
-// uses the call's refractive index, where LI's uses its package constant N_ICE = 1.31 (the two agree
-// at 1.31, the index of every LI fixture).
+// One deliberate difference, documented at its site: the corners are the engine's float closed-form
+// polygons promoted to double (LI builds its own polyhedron in double). The exit gate uses the call's
+// refractive index, as LI's does.
 
 #include <vector>
 

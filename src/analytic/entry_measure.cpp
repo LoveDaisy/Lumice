@@ -162,8 +162,8 @@ EntryMeasure Corridor::Evaluate(const double s_body[3], double refractive_index)
     d_in[i] = eta * s_body[i] + k * entry_normal_[i];
   }
   const double cos_t = -Dot3(entry_normal_, d_in);
-  // Exit gate (LI exit_ok): d_in . n~_b >= cos(theta_c). LI takes theta_c from its package constant
-  // N_ICE; the call's index is the one the ray actually crosses, so it is used here.
+  // Exit gate (LI exit_ok): d_in . n~_b >= cos(theta_c), with theta_c from the call's index, the one
+  // the ray actually crosses (as in LI).
   const double cos_critical = std::sqrt(1.0 - 1.0 / (refractive_index * refractive_index));
   if (!(Dot3(d_in, exit_normal_) >= cos_critical)) {
     m.status = EntryMeasureStatus::kExitCriticalAngle;

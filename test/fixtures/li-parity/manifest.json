@@ -318,6 +318,35 @@
    "rank": 2,
    "rationale": "family pinned, element 5 on a thin plate: the 120 deg subparhelion at D = 122.242 deg, a pixel on the path's smallest deviation (120 deg) and an empty band beyond it",
    "skipped": []
+  },
+  {
+   "crystal": {
+    "face_distance": [
+     1.5,
+     1.0,
+     1.0,
+     1.5,
+     1.0,
+     1.0
+    ],
+    "height": 0.3,
+    "kind": "prism",
+    "lower_h": 0.0,
+    "lower_wedge_deg": 0.0,
+    "upper_h": 0.0,
+    "upper_wedge_deg": 0.0
+   },
+   "files": [
+    "1-3-4-2__band_sum_plate_n1.307.json"
+   ],
+   "label": "plate_n1.307",
+   "name": "1-3-4-2__band_sum_plate_n1.307",
+   "path": "1-3-4-2",
+   "pose_density": "plate",
+   "projection": "lambert_azimuthal_equal_area",
+   "rank": 2,
+   "rationale": "a refractive index other than 1.31 (n = 1.307): the grazing slab 1-3-4-2 on a plate with the sun on the horizon, where the exit gate's critical angle must follow n (an exit gate at 1.31 zeroes every event); the spot's vertical streak at azimuth 120 deg, its horizontal tails and an empty band beside it",
+   "skipped": []
   }
  ],
  "cells": [
@@ -1162,8 +1191,8 @@
  ],
  "format": "lumice-integral/analytic-parity",
  "provenance": {
-  "conventions_sha256": "8083730f089e6493458cddfd8e15fc5096b961606a69c819456ac646bd87bcdf",
-  "li_rev": "fa8dadd222df45538a05ff2552d22f505c15a0fc",
+  "conventions_sha256": "0f4f1e65d95ec2a8ae929a1b015fb7361adaf334a8a690d8a5e97cb519936948",
+  "li_rev": "31c682e05e642d14e4d980e63a2e74ab850f219c",
   "li_tracked_tree_clean": true
  },
  "schema_version": 1,

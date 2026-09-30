@@ -568,10 +568,10 @@ backends given the same sample return the same components and counters; this is 
 - **Guarded where LI is not.** A target at `0` or `pi` from the incident direction (LI §9.5.3 needs
   a component of `d` normal to `s`, and LI's reference does not guard it, its §12) is
   `ERR_INVALID_VALUE`.
-- **Two differences from LI, both inert on every LI fixture.** The entry measure's exit gate uses
-  the call's refractive index where LI's uses its package constant `N_ICE = 1.31` (they agree at
-  1.31, the index of every fixture). And this library's direction is NaN outside the path's
-  domain, where LI's JAX evaluator returns whatever the formulas give; a Gauss-Newton iterate that
+- **One difference from LI, inert on every LI fixture.** (The entry measure's exit gate used to be a
+  second one: LI took its package constant `N_ICE = 1.31`; since LI #48 it takes the call's index,
+  as this library does, and the `n1.307` band-sum fixture pins it.) This library's direction is NaN
+  outside the path's domain, where LI's JAX evaluator returns whatever the formulas give; a Gauss-Newton iterate that
   leaves the domain therefore ends inadmissible here, where LI could in principle come back. No
   fixture reaches that branch.
 - **Result layout.** `DiscoveryResult` (a `struct_size` struct, §8.2) holds the counters and two
@@ -1441,7 +1441,7 @@ dependency one wave later.
 |---|---|---|---|
 | **1** | Module A v0: `EvaluatePath` + **seed search** + `TraceFiber[Batch]`, point list only | Function 1: fiber detail | Writes the discovery contract, exports parity fixtures, researches the diagnostics/weights contract; does not switch |
 | 2 | Module A v1 (diagnostics + weights, `struct_size`-compatible extension); module B (single-path S² binning + banded sum) | Function 2: single-path all-sky map | Certifies A v1, then switches fiber and retires the JAX continuation |
-| 3 | Module C (`dp_field` / `contour` / `focusing`, `Jet2` forward hyper-dual) | Function 3: preset points and mechanism labels | After ch12/12.1 are done with it: switch B, then C |
+| 3 | Module C (`dp_field` / `contour` / `focusing`, `Jet2` forward hyper-dual). Spec source: LI `docs/chromatic-module-c.md` (LI #49, 2026-09-30): three kinds of critical line — `D_P` critical points, the boundary `∂U_P`, and the weight kinks (TIR onset of an internal reflection, `DPField.weight_kinks`, not part of `∂U_P`) — plus the two-index colour criterion (`N_RED` / `N_BLUE`, the `ChromaticFeature` table); no per-pose field is added, so modules A and B do not change | Function 3: preset points and mechanism labels | After ch12/12.1 are done with it: switch B, then C |
 
 **Parity fixtures flow LI → Lumice.** LI exports them at a pinned revision; this repo copies them in
 and runs them in CI. A change goes one way: LI changes first → re-export → this repo's parity goes
@@ -1500,9 +1500,14 @@ next to its bound, red or green, which is the running record of how much room th
 First run (LI `bfbd042`): all 35 fixtures green with no change to the C++; the largest margins used
 were 2.3e-3 of 0.012 rad (curve distance, near a critical point), 4.9e-4 of 2e-3 (arclength) and
 4.6e-12 of 1e-11 (residual); everything else sat at rounding level.
-Current set (LI `fa8dadd`, LI PR #43): 93 fixtures — 39 `evaluate_path`, 29 `trace_fiber`, 14
-`seed_search`, 11 `band_sum` — from 9 matrix cells, 10 edge cells (LI §6.1: short and
-boundary-hugging loops, TIR-cut arcs, rank loss, budgets, a cone crystal) and 11 band-sum cells. The
+Current set (LI `31c682e`, LI PRs #45/#46): 94 fixtures — 39 `evaluate_path`, 29 `trace_fiber`, 14
+`seed_search`, 12 `band_sum` — from 9 matrix cells, 10 edge cells (LI §6.1: short and
+boundary-hugging loops, TIR-cut arcs, rank loss, budgets, a cone crystal) and 12 band-sum cells.
+The twelfth, `1-3-4-2__band_sum_plate_n1.307`, is the first fixture at an index other than 1.31: it
+exercises the entry measure's exit gate at the call's refractive index, the one place LI used to
+hold its package constant. All 196 `LiParity*` cases are green with no C++ change and none skipped;
+the 93 older fixtures differ from the previous export only in their provenance (`li_rev`,
+`conventions_sha256`). The
 82 fixtures of the three existing kinds are green with no change to the C++, the edge cells included.
 The largest margins used were 8.7e-4 of 2e-3 (arclength, the 0.19-long caustic loop), 4.6e-12 of
 1e-11 (residual) and 2.3e-3 of 0.012 rad (curve distance, unchanged). The one fixture value LI moved
@@ -1519,13 +1524,13 @@ inside one budget, so equality would be a stricter test than the fixture's toler
 **Carried but not compared.** Fixture content this repo has no implementation to compare yet is
 counted, not dropped: each fixture carrying it gets one `LiParitySkipped` case that checks the
 content is present with the shape LI gives it and then reports SKIPPED with a reason. One reason
-remains today: the band sum removed the last one (11 `band_sum` fixtures), as the per-pose
+remains today: the band sum removed the last one (12 `band_sum` fixtures), as the per-pose
 diagnostics had removed the other two (39 + 29 skips, below). The mechanism stays for the next
 content LI exports ahead of this repo; with no reason in use its generator is empty, which the suite
 allows explicitly (`GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST`). A kind's own suite still
 compares the rest of a fixture and never skips, so a skip cannot hide a red there.
 
-**Band sum.** `LiParityBandSum` replays each of the 11 `band_sum` fixtures in both of the contract's
+**Band sum.** `LiParityBandSum` replays each of the 12 `band_sum` fixtures in both of the contract's
 layers (§7, and LI `analytic-parity-fixtures.md` §4's recipe): layer 1 feeds the fixture's own events
 to `BandSumOnEvents`, layer 2 runs `BandSum` end to end. Status is exact; `K` exact in layer 1 and
 within `allowance.K_layer2` in layer 2; `K_rho_pos` within `allowance.K_rho_pos_subnormal` and
