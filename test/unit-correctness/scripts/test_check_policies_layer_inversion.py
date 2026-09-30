@@ -103,11 +103,15 @@ def test_commented_out_include_is_not_an_edge(tree: Path) -> None:
 
 
 def test_removing_an_allowlist_entry_reddens_its_edge(tree: Path) -> None:
+    # The committed allowlist may be empty, so the case plants its own grandfathered edge rather
+    # than relying on one the tree happens to carry.
+    _prepend(tree / "src" / "server" / "stats.hpp", '#include "server/server.hpp"')
     allow = tree / "cmake" / "lumice_layer_allowlist.txt"
     entry = "server/stats.hpp -> server/server.hpp"
     text = allow.read_text(encoding="utf-8")
-    assert entry in text
-    allow.write_text(text.replace(entry + "\n", ""), encoding="utf-8")
+    allow.write_text(text + entry + "\n", encoding="utf-8")
+    assert _messages(tree) == []
+    allow.write_text(text, encoding="utf-8")
     msgs = _messages(tree)
     assert len(msgs) == 1
     assert msgs[0].startswith("src/server/stats.hpp:")

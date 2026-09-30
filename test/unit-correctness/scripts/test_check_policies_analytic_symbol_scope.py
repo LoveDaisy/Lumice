@@ -201,7 +201,15 @@ def test_real_declaration_is_the_expected_partition() -> None:
     capability, the test library is a superset of the engine, and liblumice_analytic alone adds the
     library-management header."""
     s = check_policies.parse_export_surfaces(DECL.read_text(encoding="utf-8"))
-    assert s["ENGINE"] == ["src/include/lumice.h", "src/include/lumice_analytic_core.h"]
+    assert s["ENGINE"] == [
+        "src/include/lumice_base.h",
+        "src/include/lumice_scene.h",
+        "src/include/lumice_render.h",
+        "src/include/lumice_editor.h",
+        "src/include/lumice_engine.h",
+        "src/include/lumice_raypath.h",
+        "src/include/lumice_analytic_core.h",
+    ]
     assert s["TESTAPI"] == s["ENGINE"] + ["test/support/lumice_test_api.h"]
     assert s["ANALYTIC"] == ["src/include/lumice_analytic_core.h", "src/include/lumice_analytic.h"]
 

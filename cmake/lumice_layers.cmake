@@ -60,6 +60,7 @@ set(LUMICE_LAYER_foundation_FILES
   core/shared/projection_shared.h
   core/shared/ray_allocation_shared.hpp
   core/shared/traversal_shared.h
+  include/lumice_base.h
   util/annotation_line_width.hpp
   util/bit_utils.hpp
   util/callback_sink.hpp
@@ -141,6 +142,8 @@ set(LUMICE_LAYER_scene_FILES
   config/raypath_validation.hpp
   config/render_config.cpp
   config/render_config.hpp
+  include/lumice_editor.h
+  include/lumice_scene.h
 )
 
 set(LUMICE_LAYER_view_FILES
@@ -201,6 +204,7 @@ set(LUMICE_LAYER_sim_FILES
 )
 
 set(LUMICE_LAYER_render_FILES
+  include/lumice_render.h
   server/component_compositor.cpp
   server/component_compositor.hpp
   server/render.cpp
@@ -208,11 +212,13 @@ set(LUMICE_LAYER_render_FILES
 )
 
 set(LUMICE_LAYER_engine_FILES
+  include/lumice_engine.h
   server/server.cpp
   server/server.hpp
 )
 
 set(LUMICE_LAYER_raypath_FILES
+  include/lumice_raypath.h
   raypath/scene_to_analytic.cpp
   raypath/scene_to_analytic.hpp
   raypath/single_path_analysis.cpp

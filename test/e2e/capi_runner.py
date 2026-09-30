@@ -142,7 +142,7 @@ class LUMICE_StatsResult(ctypes.Structure):
 
 
 def _assert_stats_mirror_matches_header() -> None:
-    """Cross-check this mirror against the field list in lumice.h.
+    """Cross-check this mirror against the field list in lumice_engine.h.
 
     A plain ``assert ctypes.sizeof(...) == N`` — which is what guarded this
     struct until orientation_num was added — compares the mirror to a number
@@ -154,7 +154,7 @@ def _assert_stats_mirror_matches_header() -> None:
     end of the buffer. Read the header instead, so the next added field turns this red
     at import time rather than corrupting memory in whichever test runs first.
     """
-    header = Path(__file__).resolve().parents[2] / "src" / "include" / "lumice.h"
+    header = Path(__file__).resolve().parents[2] / "src" / "include" / "lumice_engine.h"
     if not header.is_file():  # source tree not available (e.g. installed wheel)
         return
     body = re.search(
@@ -162,13 +162,13 @@ def _assert_stats_mirror_matches_header() -> None:
         header.read_text(encoding="utf-8"),
         re.DOTALL,
     )
-    assert body is not None, "could not locate LUMICE_StatsResult in lumice.h"
+    assert body is not None, "could not locate LUMICE_StatsResult in lumice_engine.h"
     # Field declarations only: strip // comments, then take `<type> <name>;`.
     decls = re.sub(r"//.*", "", body.group(1))
     header_fields = re.findall(r"LUMICE_RayCount\s+(\w+)\s*;", decls)
     mirror_fields = [name for name, _ in LUMICE_StatsResult._fields_]
     assert header_fields == mirror_fields, (
-        f"LUMICE_StatsResult drift — lumice.h has {header_fields}, "
+        f"LUMICE_StatsResult drift — lumice_engine.h has {header_fields}, "
         f"this mirror has {mirror_fields}. Update the mirror (and any code "
         f"reading the struct) before the C API writes past the Python buffer."
     )

@@ -6,9 +6,14 @@
 # analytic-symbol-scope rule reads the analytic list as the analytic header family. Paths are
 # relative to the repository root.
 #
-# The engine libraries host the analytic capability (lumice_analytic_core.h) next to lumice.h;
-# lumice_analytic.h's two library-management functions (its version and log callback) stay with
-# liblumice_analytic alone, because in the engine the logging and the version are lumice.h's.
+# The engine's own surface is its capability headers, one per capability, in dependency order:
+# base, scene, render, editor, engine, raypath. lumice.h only includes them and is not listed —
+# it declares nothing (scripts/check_header_split.py, which reads its family from this list: the
+# engine surface minus the analytic headers). The engine libraries host the analytic capability
+# (lumice_analytic_core.h) next to them; lumice_analytic.h's two library-management functions (its
+# version and log callback) stay with liblumice_analytic alone, because in the engine the logging
+# and the version are lumice_base.h's. The order of a list does not reach the export list, which
+# is sorted.
 #
 # Restricted syntax, so that CMake and the Python parser (check_policies.parse_export_surfaces)
 # cannot read it differently: `#` comments, blank lines, `set(LUMICE_<LIBRARY>_SURFACE_HEADERS` on
@@ -20,7 +25,12 @@
 
 # liblumice (on Windows lumice-engine.<tier>.dll, one per ISA tier).
 set(LUMICE_ENGINE_SURFACE_HEADERS
-  src/include/lumice.h
+  src/include/lumice_base.h
+  src/include/lumice_scene.h
+  src/include/lumice_render.h
+  src/include/lumice_editor.h
+  src/include/lumice_engine.h
+  src/include/lumice_raypath.h
   src/include/lumice_analytic_core.h
 )
 
