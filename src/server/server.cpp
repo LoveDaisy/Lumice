@@ -167,18 +167,6 @@ class ServerImpl {
   }
 
  private:
-  // Parses through the shared ParseConfigManager (server.hpp), logging to this server's logger.
-  // A rejected document is a return code, not a state: on failure `*out` and every other member,
-  // status_ included, are untouched. (CommitConfig used to write status_ = kError here. No
-  // projection ever read that value as anything but "not running", and while a session's workers
-  // were still tracing it made GetSimLifecycle report the run as over until the next Stop()/Start()
-  // rewrote it — a lie about a live run, and one the analysis path now reaches on purpose: a
-  // rejected scene over an analysis in flight must leave that analysis readable as in flight.)
-  Error ParseConfigManager(const nlohmann::json& config_json, const char* caller,
-                           const std::function<void(const ConfigManager&)>& validate, ConfigManager* out) {
-    return lumice::ParseConfigManager(config_json, caller, logger_, validate, out);
-  }
-
   // Single-engine orchestration — the GPU route's render group is exactly one
   // Simulator. The legacy kDefaultSimulatorCnt = PhysicalCoreCount() was removed
   // along with the 12-worker queue-per-Simulator pattern. num_workers sizes the CPU
@@ -1241,7 +1229,14 @@ Error ServerImpl::CommitConfig(const nlohmann::json& config_json, bool* out_reus
     class_table = BuildColorClassTable(parsed.raypath_color_, parsed.scene_, color_gate_table);
     composite_mode = ParseCompositeMode(parsed.raypath_color_.mode_);
   };
-  if (const Error err = ParseConfigManager(config_json, "CommitConfig", build_colour_tables, &new_config)) {
+  // Parsed through the shared lumice::ParseConfigManager (server.hpp), logging to this server's
+  // logger. A rejected document is a return code, not a state: on failure `new_config` and every
+  // member, status_ included, are untouched. (CommitConfig used to write status_ = kError here. No
+  // projection ever read that value as anything but "not running", and while a session's workers
+  // were still tracing it made GetSimLifecycle report the run as over until the next Stop()/Start()
+  // rewrote it — a lie about a live run, and one the analysis path now reaches on purpose: a
+  // rejected scene over an analysis in flight must leave that analysis readable as in flight.)
+  if (const Error err = ParseConfigManager(config_json, "CommitConfig", logger_, build_colour_tables, &new_config)) {
     return err;
   }
 
@@ -1565,7 +1560,7 @@ Error ServerImpl::StartRaypathAnalysis(const nlohmann::json& scene_json, const R
   // consumer constructor's, and it degrades with a log line rather than failing — the
   // request still names a well-defined ROI.
   ConfigManager new_config;
-  if (const Error err = ParseConfigManager(scene_json, "StartRaypathAnalysis", nullptr, &new_config)) {
+  if (const Error err = ParseConfigManager(scene_json, "StartRaypathAnalysis", logger_, nullptr, &new_config)) {
     return err;
   }
   // The scene facts the read-time reduction needs, from the scene this run will trace — the
