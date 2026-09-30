@@ -3040,10 +3040,9 @@ void RenderEditModals(GuiState& state, GLFWwindow* window) {
     if (state.modal_immediate_mode) {
       // Staged → Immediate: commit in-flight buffer to state so any pending
       // edits become the live baseline. Use the Immediate path (not
-      // CommitAllBuffers) to avoid routing crystal-only changes through
-      // MarkStructHardDirty — its epoch fence would drop the old generation's
-      // in-flight frames at the exact moment the user wants to start observing
-      // live changes.
+      // CommitAllBuffers) to avoid MarkStructHardDirty clearing the display on
+      // crystal-only changes — that would zero infinite-rays accumulation
+      // at the exact moment the user wants to start observing live changes.
       CommitAllBuffersImmediate(state);
       // Current frame is still inside BeginPopupModal (dispatch at frame-start
       // used the old mode). CloseCurrentPopup keeps the popup stack clean;

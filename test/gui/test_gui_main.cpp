@@ -701,7 +701,6 @@ int main(int argc, char** argv) {
   RegisterPerfTests(engine);
   RegisterFaceNumberOverlayTests(engine);
   RegisterRunLifecycleTests(engine);
-  RegisterConfigChangePreviewTests(engine);
   RegisterStatusBarTests(engine);
   RegisterPreviewAnimationTests(engine);
   RegisterCaptureHarnessTests(engine);

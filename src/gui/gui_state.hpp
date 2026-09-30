@@ -1620,25 +1620,21 @@ struct GuiState {
   // next struct commit to rebuild the server (epoch++) rather than reuse consumers. Named
   // "struct-hard" to align with doc/gui-state-governance.md §档位表 T-struct·hard; the
   // pre-353.5 name `MarkFilterDirty` was misleading (it never was filter-only — any struct
-  // hard-reset routed through here). Beyond MarkDirty it raises display_epoch_floor to the
-  // current committed_epoch, so any payload still being produced by the OLD generation
-  // (epoch <= committed_epoch) is blocked by the upload gate (payload_epoch > floor). The next
-  // commit mints epoch+1, whose payloads clear the floor and reach the screen. This replaces the
-  // old intensity_locked boolean with a monotone epoch key (blueprint §7 / I1).
-  //
-  // It deliberately does NOT clear the display (snapshot_intensity / snapshot_emitted_energy /
-  // p99_raw_y stay as they are). The frame on screen stays up until the new generation replaces
-  // it under blueprint §7's rules — quality gate, 500 ms timeout fallback, terminal frame always
-  // uploaded — which is also how a zero-ray new config still turns the preview black once it
-  // runs. An immediate clear used to live here; it assumed a new commit always follows within
-  // the 70 ms live-edit debounce, which is false once a run has finished (no auto-commit on
-  // kModified), so a hard edit after a finished run blanked the preview until the next Run —
-  // and a Revert then restored "Done" over a black preview. The "config changed, not re-run"
-  // cue is the top bar's Modified state + Revert, not a blank frame.
-  // MarkDirty (crystal/sun scrub) does not raise the floor, so the previous generation's
-  // late payloads keep flowing for soft edits (carry-forward, §3.3).
+  // hard-reset routed through here). This does two orthogonal things:
+  //   (a) immediate display clear — snapshot_intensity/p99 reset so the shader renders black
+  //       right away (a legitimate display action, not a lock);
+  //   (b) raise display_epoch_floor to the current committed_epoch so any payload still being
+  //       produced by the OLD generation (epoch <= committed_epoch) is blocked by the upload
+  //       gate (payload_epoch > floor). The next commit mints epoch+1, whose payloads clear
+  //       the floor and reach the screen. This replaces the old intensity_locked boolean with
+  //       a monotone epoch key (blueprint §7 / I1).
+  // MarkDirty (crystal/sun scrub) deliberately does NOT raise the floor, so carry-forward of
+  // the previous generation's texture keeps the preview alive with no black flicker (§3.3).
   void MarkStructHardDirty() {
     MarkDirty();
+    snapshot_intensity = 0;
+    snapshot_emitted_energy = 0;
+    p99_raw_y = 0.0f;
     display_epoch_floor = committed_epoch;
   }
 
@@ -1938,8 +1934,7 @@ struct GuiState {
   uint64_t committed_epoch = 0;             // epoch the GUI last committed (DoRun reads it back)
   // Epoch floor for the display upload gate (blueprint §7). A payload uploads only when
   // payload_epoch > display_epoch_floor. Raised by MarkStructHardDirty to committed_epoch to fence
-  // off the old generation's late payloads (the texture already on screen stays up); monotone. Replaces the old
-  // intensity_locked boolean.
+  // off the old generation's textures; monotone. Replaces the old intensity_locked boolean.
   uint64_t display_epoch_floor = 0;
   // Consumer-side exact-once upload cursor (migrated from a SyncFromPoller file-scope static in
   // 1.4). SyncFromPoller uploads a payload only when its snapshot texture_serial differs.

@@ -182,7 +182,7 @@ void DiffAgainstCommitBaseline(const GuiState& state, GuiEffects& effects, bool 
     effects.need_resim = true;
   }
 
-  // T-struct·hard: re-sim + hard reset (raise the epoch floor; the display is not cleared).
+  // T-struct·hard: re-sim + hard reset (clear display + raise epoch floor).
   // AnyEntryFilterPresenceChanged closes S6's presence-toggle gap: pick-link and Remove-Filter
   // rebind entry.filter_id without touching the filters pool, so they would otherwise be
   // silently downgraded to soft (T2 plan §3 design 2).

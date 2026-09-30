@@ -731,9 +731,7 @@ void RegisterEntryManagementTests(ImGuiTestEngine* engine) {
 
       IM_CHECK_EQ(static_cast<int>(gui::g_state.layers[0].entries.size()), 2);
       IM_CHECK_EQ(static_cast<int>(gui::g_state.sim_state), static_cast<int>(gui::GuiState::SimState::kModified));
-      // A hard edit fences the old generation but does not clear the picture on screen: on a finished
-      // run nothing commits until the user presses Run, so a clear would leave the preview blank.
-      IM_CHECK_EQ(gui::g_state.snapshot_intensity, 0.5f);
+      IM_CHECK_EQ(gui::g_state.snapshot_intensity, 0.0f);
       IM_CHECK_EQ(gui::g_state.display_epoch_floor, gui::g_state.committed_epoch);
       IM_CHECK(gui::g_state.dirty);
     };
