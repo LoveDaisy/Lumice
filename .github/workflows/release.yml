@@ -235,7 +235,8 @@ jobs:
       # check is the counterpart of the Windows step's `$ErrorActionPreference = 'Stop'`:
       # a missing source file must be a red job, not a tarball short of one file. The
       # manifest is exported for the dependency check below so that "which files this build
-      # is supposed to ship" is written down once.
+      # is supposed to ship" is written down once, and its engine subset for the export-surface
+      # check the same way.
       - name: Merge ISA variants (linux-x64, shells + hwcaps engine layout)
         if: matrix.isa_split && runner.os == 'Linux'
         run: |
@@ -245,7 +246,8 @@ jobs:
           cp install-baseline/lib/liblumice.so install/lib/liblumice.so
           cp install-v4/lib/liblumice.so install/lib/glibc-hwcaps/x86-64-v4/liblumice.so
           chmod +x install/Lumice
-          expected_files="Lumice lib/liblumice.so lib/glibc-hwcaps/x86-64-v4/liblumice.so"
+          engine_files="lib/liblumice.so lib/glibc-hwcaps/x86-64-v4/liblumice.so"
+          expected_files="Lumice $engine_files"
           if [ "${{ matrix.build_gui }}" = "ON" ]; then
             cp install-baseline/LumiceGUI install/LumiceGUI
             chmod +x install/LumiceGUI
@@ -255,6 +257,7 @@ jobs:
             test -f "install/$f" || { echo "::error::merge produced an incomplete package: missing $f"; exit 1; }
           done
           echo "LUMICE_PACKAGE_FILES=$expected_files" >> "$GITHUB_ENV"
+          echo "LUMICE_ENGINE_FILES=$engine_files" >> "$GITHUB_ENV"
           ls -lR install
 
       # The merge check above asks "are the files we expect present"; this asks the question
@@ -295,6 +298,24 @@ jobs:
             echo "::error::package would not start: NEEDED libraries neither packaged nor system:$bad"
             exit 1
           fi
+
+      # The two checks above ask whether the package is complete and whether it starts; neither
+      # asks whether each engine exports what the headers declare. That is the one defect no link
+      # step reports on this platform: GNU ld drops a name its version script does not match
+      # without a word, and the engine links, loads and runs until the first caller of that name.
+      # scripts/check_export_surface.py reads each file's dynamic export table (never loads it:
+      # the x86-64-v4 engine does not load on a runner without AVX-512) and compares it with the
+      # declared engine surface — the same code test_export_symbol_scope.py runs on the build
+      # tree. Both engines, because an export table does not depend on the ISA tier: each must
+      # equal the same set on its own. The file list is the merge step's, and the script fails on
+      # an empty one.
+      - name: Check every packaged engine's export surface (linux-x64)
+        if: matrix.isa_split && runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          files=""
+          for f in $LUMICE_ENGINE_FILES; do files="$files install/$f"; done
+          python3 scripts/check_export_surface.py engine $files
 
       # One run of the CLI shell, the only run this workflow makes of the Linux package. It is
       # safe on any runner: without the tunable the loader takes the v4 engine only on a CPU
@@ -424,15 +445,17 @@ jobs:
             Copy-Item "install-baseline\$name.exe" "install\$name.exe"
             $expected += "$name.exe"
           }
-          Copy-Item "install-baseline\lumice-engine.baseline.dll" "install\lumice-engine.baseline.dll"
-          Copy-Item "install-v3\lumice-engine.x86-64-v3.dll" "install\lumice-engine.x86-64-v3.dll"
-          $expected += "lumice-engine.baseline.dll", "lumice-engine.x86-64-v3.dll"
+          $engines = @('lumice-engine.baseline.dll', 'lumice-engine.x86-64-v3.dll')
+          Copy-Item "install-baseline\$($engines[0])" "install\$($engines[0])"
+          Copy-Item "install-v3\$($engines[1])" "install\$($engines[1])"
+          $expected += $engines
           Get-ChildItem install
           $missing = $expected | Where-Object { -not (Test-Path "install\$_") }
           if ($missing) {
             Write-Error "Merge produced an incomplete package, missing: $($missing -join ', ')"
             exit 1
           }
+          "LUMICE_ENGINE_FILES=$($engines -join ' ')" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       # Bundle the dynamic CUDA runtime next to the executables so the CUDA
       # backend loads on a user machine that has an NVIDIA driver but no CUDA
@@ -482,6 +505,20 @@ jobs:
             Write-Error "Package would not start: imported DLLs neither packaged nor system: $($bad -join '; ')"
             exit 1
           }
+
+      # Each packaged engine DLL's export table against the declared engine surface — the
+      # Linux step above, for the same reason (the export table does not depend on the tier, so
+      # both DLLs must equal the same set) and with the same script; `dumpbin` comes from the
+      # MSVC environment set up for the build. Read, never loaded: this runner's CPU is not
+      # asked whether it could run the x86-64-v3 DLL. The file list is the merge step's.
+      - name: Check every packaged engine's export surface (windows-x64)
+        if: matrix.isa_split && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $files = $env:LUMICE_ENGINE_FILES -split ' ' | Where-Object { $_ } | ForEach-Object { "install\$_" }
+          python scripts/check_export_surface.py engine @files
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
 
       # macOS code signing + notarization (Developer ID Application certificate).
       # Runs only on macOS and only when signing secrets are configured.
