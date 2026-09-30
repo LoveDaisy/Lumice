@@ -4,7 +4,7 @@
     {
       "id": "test/e2e-correctness/test_raypath_analysis_capi.py::test_adaptive_allocation_cuts_rare_row_noise_without_moving_the_means",
       "job": "E2E Slow (Ubuntu x86_64)",
-      "ci_seconds": 85,
+      "ci_seconds": 40,
       "reason": "Guards that adaptive allocation in an analysis run cuts the rare row's cross-session noise at least 5x without biasing any row's mean; the claim is statistical, so it needs two arms of thirty full sessions and cannot shrink without losing the power to see a 5x variance ratio."
     },
     {
@@ -12,12 +12,6 @@
       "job": "E2E Slow (Ubuntu x86_64)",
       "ci_seconds": 35,
       "reason": "Shared setup of the relative-anchor additivity sentinel: six runs (the whole scene and its two halves, under each exposure anchor), which the file's tests all read; the opposition between the two anchors is only visible across all six."
-    },
-    {
-      "id": "test/e2e-correctness/test_ev_mode_ray_num_invariance.py::<fixture:sweep>",
-      "job": "E2E Slow (Ubuntu x86_64)",
-      "ci_seconds": 30,
-      "reason": "Shared setup of the ev_mode ray-count invariance tests: four runs, both exposure modes at a low and a 30x higher ray count, since what each mode keeps still is only defined across the two budgets."
     },
     {
       "id": "test/e2e-correctness/test_raypath_analysis_capi.py::test_fixed_seed_analysis_is_bit_identical_across_ten_sessions_of_one_server[pc_two_layer]",
@@ -30,12 +24,6 @@
       "job": "E2E Slow (Ubuntu x86_64)",
       "ci_seconds": 30,
       "reason": "Guards that the device-fused GPU route publishes the same exposure anchor as legacy CPU, judged against the anchor's own measured seed-to-seed spread; that spread has to be measured in the test, which costs several full runs per route."
-    },
-    {
-      "id": "test/parity-cross-backend/backend/test_illuminant_wavelength_parity.py::test_legacy_illuminant_frame_statistics_are_seed_stable",
-      "job": "E2E Slow (Ubuntu x86_64)",
-      "ci_seconds": 30,
-      "reason": "Guards the stratified wavelength schedule of the legacy CPU route (reverting to independent draws moves R by 2.2% against a 0.2% bound); it needs several seeds of a 2M-ray frame to measure a spread that small."
     },
     {
       "id": "test/e2e-correctness/test_fp32_accum_hot_pixel.py::<fixture:legacy_run>",
@@ -64,32 +52,20 @@
     {
       "id": "test/parity-cross-backend/backend/test_metal_exit_seam_parity.py::test_parity_multi_ms_prob08",
       "job": "E2E Slow (macOS ARM64 rest)",
-      "ci_seconds": 195,
+      "ci_seconds": 40,
       "reason": "Metal exit-seam parity against legacy CPU on a multi-scattering scene at ms_prob 0.8, the deepest cross-layer transit in the battery; the legacy CPU oracle arm dominates the cost and the ray budget is what lets block-mean correlation separate a real mismatch from Monte-Carlo speckle."
     },
     {
       "id": "test/e2e-correctness/test_raypath_analysis_capi.py::test_adaptive_allocation_cuts_rare_row_noise_without_moving_the_means",
       "job": "E2E Slow (macOS ARM64 rest)",
-      "ci_seconds": 105,
+      "ci_seconds": 40,
       "reason": "Guards that adaptive allocation in an analysis run cuts the rare row's cross-session noise at least 5x without biasing any row's mean; the claim is statistical, so it needs two arms of thirty full sessions and cannot shrink without losing the power to see a 5x variance ratio."
-    },
-    {
-      "id": "test/parity-cross-backend/backend/test_anchor_backend_agreement.py::test_anchor_does_not_move_with_the_lens[cpu_backend]",
-      "job": "E2E Slow (macOS ARM64 rest)",
-      "ci_seconds": 65,
-      "reason": "Guards that the relative-exposure anchor is a property of the scene, identical whichever lens renders it, on each backend route; it needs several full renders of one scene under different lenses, and the order-statistic anchor needs this budget to be stable."
     },
     {
       "id": "test/parity-cross-backend/backend/test_metal_multi_renderer_parity.py::test_metal_multi_renderer_parity[multi_renderer_parity_dual]",
       "job": "E2E Slow (macOS ARM64 rest)",
       "ci_seconds": 60,
       "reason": "Per-renderer Metal-vs-legacy-CPU parity when one session serves several renderers (N device planes); the only coverage of the N-plane path, and each renderer's plane has to be compared against its own legacy oracle run."
-    },
-    {
-      "id": "test/parity-cross-backend/backend/test_illuminant_wavelength_parity.py::test_legacy_and_gpu_sample_the_same_wavelength_distribution[metal]",
-      "job": "E2E Slow (macOS ARM64 rest)",
-      "ci_seconds": 55,
-      "reason": "Guards that legacy CPU and the GPU route sample the same wavelength distribution under a standard illuminant, by comparing 6-seed means on each route; the bounds are five standard errors of that mean, so fewer seeds would widen them past the defects they catch."
     },
     {
       "id": "test/parity-cross-backend/backend/test_metal_batch_invariance.py::test_metal_batch_invariance[ms_multi_crystal_filtered]",
@@ -110,12 +86,6 @@
       "reason": "Guards the fixed-seed contract of analysis runs across ten sessions of one server (a worker RNG that was not re-seeded broke it); ten sessions is the shape of the defect, since it only appears after the first."
     },
     {
-      "id": "test/parity-cross-backend/backend/test_illuminant_wavelength_parity.py::test_legacy_illuminant_frame_statistics_are_seed_stable",
-      "job": "E2E Slow (macOS ARM64 rest)",
-      "ci_seconds": 50,
-      "reason": "Guards the stratified wavelength schedule of the legacy CPU route (reverting to independent draws moves R by 2.2% against a 0.2% bound); it needs several seeds of a 2M-ray frame to measure a spread that small."
-    },
-    {
       "id": "test/parity-cross-backend/backend/test_metal_exit_seam_parity.py::test_parity_multi_ms_complex_filter",
       "job": "E2E Slow (macOS ARM64 rest)",
       "ci_seconds": 50,
@@ -132,30 +102,6 @@
       "job": "E2E Slow (macOS ARM64 rest)",
       "ci_seconds": 45,
       "reason": "Proves the routing assertion every other Metal parity test relies on can fail (a request the build cannot honour reads back as a different route); without it a silent fallback to legacy CPU would make the whole battery vacuous, and it has to create real sessions to observe the route."
-    },
-    {
-      "id": "test/parity-cross-backend/backend/test_metal_exit_seam_parity.py::test_parity_single_ms_bd_filter",
-      "job": "E2E Slow (macOS ARM64 rest)",
-      "ci_seconds": 45,
-      "reason": "Metal exit-seam parity against legacy CPU for a single-layer B/D-filtered scene; the filter leaves a sparse image, so the ray budget is set by what block-mean correlation needs to reject noise rather than a real mismatch."
-    },
-    {
-      "id": "test/parity-cross-backend/backend/test_metal_exit_seam_parity.py::test_parity_multi_ms_bd_filter",
-      "job": "E2E Slow (macOS ARM64 rest)",
-      "ci_seconds": 40,
-      "reason": "Metal exit-seam parity against legacy CPU for a multi-scattering B/D-filtered scene; sparse filtered output across layers needs this budget before the correlation threshold separates defects from speckle."
-    },
-    {
-      "id": "test/parity-cross-backend/backend/test_metal_multi_renderer_parity.py::test_metal_multi_renderer_parity[multi_lens]",
-      "job": "E2E Slow (macOS ARM64 rest)",
-      "ci_seconds": 40,
-      "reason": "Per-renderer Metal-vs-legacy-CPU parity when one session serves several renderers (N device planes); the only coverage of the N-plane path, and each renderer's plane has to be compared against its own legacy oracle run."
-    },
-    {
-      "id": "test/e2e-correctness/test_ev_mode_ray_num_invariance.py::<fixture:sweep>",
-      "job": "E2E Slow (macOS ARM64 rest)",
-      "ci_seconds": 35,
-      "reason": "Shared setup of the ev_mode ray-count invariance tests: four runs, both exposure modes at a low and a 30x higher ray count, since what each mode keeps still is only defined across the two budgets."
     },
     {
       "id": "test/parity-cross-backend/backend/test_anchor_backend_agreement.py::test_device_fused_route_agrees_within_monte_carlo_noise",
