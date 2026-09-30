@@ -194,4 +194,10 @@ nlohmann::json ConfigToJson(const ConfigScratch& c);
 // a dedicated test asserts they are absent so the boundary cannot silently drift.
 nlohmann::json CrystalShapeToJson(const LUMICE_CrystalParam& cr);
 
+// The full crystal object: CrystalShapeToJson's {"type", "shape"} plus "id" and the axis
+// distributions — one entry of ConfigToJson's "crystal" array. Shared with the editor bridge,
+// whose symmetry queries read a wire crystal through core's CrystalConfig parser. Throws
+// std::invalid_argument on an invalid crystal.
+nlohmann::json CrystalToJson(const LUMICE_CrystalParam& cr, int id);
+
 #endif  // SERVER_C_API_SCENE_INTERNAL_H_
