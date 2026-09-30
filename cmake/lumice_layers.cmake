@@ -144,6 +144,7 @@ set(LUMICE_LAYER_scene_FILES
   config/render_config.hpp
   include/lumice_editor.h
   include/lumice_scene.h
+  server/c_api_scene_internal.hpp
 )
 
 set(LUMICE_LAYER_view_FILES
@@ -205,6 +206,7 @@ set(LUMICE_LAYER_sim_FILES
 
 set(LUMICE_LAYER_render_FILES
   include/lumice_render.h
+  server/c_api_render_internal.hpp
   server/component_compositor.cpp
   server/component_compositor.hpp
   server/render.cpp
@@ -213,6 +215,7 @@ set(LUMICE_LAYER_render_FILES
 
 set(LUMICE_LAYER_engine_FILES
   include/lumice_engine.h
+  server/c_api_engine_internal.hpp
   server/server.cpp
   server/server.hpp
 )

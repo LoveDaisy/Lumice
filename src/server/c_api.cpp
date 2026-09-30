@@ -582,19 +582,6 @@ static std::vector<ns::GridLineParam> GridLinesToCore(const LUMICE_GridLine* lin
   return out;
 }
 
-// Is `id` one of the LUMICE_ANNOTATION_MARKER_* values? Shared by every place that accepts an id
-// from a caller — the renderer's markers[] on both the encode and the decode side, and
-// ReadMarkerIdList for the annotation request. One predicate, so a seventh id cannot be admitted by
-// one entry point and rejected by another.
-//
-// The check is not redundant with core's own handling: annotation::ResolveMarkerDir answers an
-// unknown id with the zenith rather than an error, deliberately (core does not assume its C++
-// callers validated). Turning a caller's bad id into a REPORTED error instead of a silent fallback
-// is this boundary's job.
-static bool IsValidMarkerId(int id) {
-  return id >= 0 && id < LUMICE_ANNOTATION_MARKER_COUNT;
-}
-
 // LUMICE_MAX_CONFIG_MARKERS is spelled as a literal 6 in the header, because the id-count macro is
 // defined further down the file than the renderer struct that needs it and the preprocessor reads
 // top to bottom. That literal is not a second opinion about how many ids there are: the renderer's
@@ -646,7 +633,7 @@ static nlohmann::json RendererToJson(const LUMICE_RenderParam& r, int id) {
     throw std::invalid_argument("LUMICE_RenderParam markers_count out of range: " + std::to_string(r.markers_count));
   }
   for (int i = 0; i < r.markers_count; i++) {
-    if (!IsValidMarkerId(r.markers[i].id)) {
+    if (!ns::capi::IsValidMarkerId(r.markers[i].id)) {
       throw std::invalid_argument("LUMICE_RenderParam markers[" + std::to_string(i) +
                                   "].id out of range: " + std::to_string(r.markers[i].id));
     }
@@ -904,15 +891,6 @@ nlohmann::json ConfigToJson(const ConfigScratch& c) {
 }
 
 // =============== Scene (opaque handle) ===============
-// LUMICE_Scene_ wraps an nlohmann::json `root` that is byte-isomorphic with the config wire
-// format ConfigToJson emits (root["crystal"]/["filter"]/["scene"]/["render"]/["raypath_color"]).
-// The Add*/Set* family reuses the SAME per-item encoders as ConfigToJson (single source), just
-// one item at a time. Lifecycle mirrors LUMICE_Server_ (new/delete); the json copy constructor
-// is a deep copy, so SceneClone is a one-liner with no hand-written field copying.
-struct LUMICE_Scene_ {
-  nlohmann::json root;
-};
-
 // Empty-scene skeleton: the same shape ConfigToJson emits for a zero-initialized ConfigScratch,
 // minus the optional raypath_color (absent until SetColorMode/AddColorClass — the same
 // "count == 0 → omit the key" isomorphism the batch path keeps). Scene scalars default to a
@@ -3870,7 +3848,7 @@ bool ReadMarkerIdList(const int* data, int count, std::vector<lumice::annotation
   out->clear();
   out->reserve(static_cast<size_t>(count));
   for (int i = 0; i < count; ++i) {
-    if (!IsValidMarkerId(data[i])) {
+    if (!ns::capi::IsValidMarkerId(data[i])) {
       *err = LUMICE_ERR_INVALID_VALUE;
       return false;
     }
@@ -4020,7 +3998,7 @@ LUMICE_ErrorCode LUMICE_ResolveAnnotationMarkerDirection(int marker_id, const fl
   // Not redundant with ResolveMarkerDir's own default branch: core answers an unknown id with the
   // zenith by design, and turning that into a REPORTED error is this boundary's job — the same
   // reasoning ReadMarkerIdList's range check carries.
-  if (!IsValidMarkerId(marker_id)) {
+  if (!ns::capi::IsValidMarkerId(marker_id)) {
     return LUMICE_ERR_INVALID_VALUE;
   }
   float unit[3];
@@ -4060,20 +4038,6 @@ static_assert(LUMICE_MAX_RAYPATH_SEGMENT_LEN == ns::kMaxHits,
               "LUMICE_MAX_RAYPATH_SEGMENT_LEN must equal core's kMaxHits, or a legal chain gets truncated");
 static_assert(LUMICE_MAX_RAYPATH_CHAIN_LAYERS == LUMICE_MAX_CONFIG_SCATTER_LAYERS, "one segment per scattering layer");
 
-namespace {
-
-// The view validation LUMICE_ComputeAnnotationAnchors applies, for the two other takers of a
-// LUMICE_AnnotationView here (the IN_FRAME request and LUMICE_UnprojectPixel).
-bool AnnotationViewEnumsValid(const LUMICE_AnnotationView& v) {
-  if (v.lens_type < 0 || v.lens_type > LUMICE_LENS_TYPE_GLOBE) {
-    return false;
-  }
-  return v.visible == LUMICE_VISIBLE_UPPER || v.visible == LUMICE_VISIBLE_LOWER || v.visible == LUMICE_VISIBLE_FULL;
-}
-
-}  // namespace
-
-
 LUMICE_ErrorCode LUMICE_StartRaypathAnalysis(LUMICE_Server* server, const LUMICE_Scene* scene,
                                              const LUMICE_RaypathAnalysisRequest* request) {
   if (!server || !scene || !request) {
@@ -4085,7 +4049,7 @@ LUMICE_ErrorCode LUMICE_StartRaypathAnalysis(LUMICE_Server* server, const LUMICE
       req.roi_.mode_ = ns::RaypathRoiMode::kFullSky;
       break;
     case LUMICE_RAYPATH_ROI_IN_FRAME:
-      if (!AnnotationViewEnumsValid(request->frame_view) || request->frame_view.width <= 0 ||
+      if (!ns::capi::AnnotationViewEnumsValid(request->frame_view) || request->frame_view.width <= 0 ||
           request->frame_view.height <= 0) {
         return LUMICE_ERR_INVALID_VALUE;
       }
@@ -4261,7 +4225,7 @@ LUMICE_ErrorCode LUMICE_UnprojectPixel(const LUMICE_AnnotationView* view, int px
   if (!view || !out_dir || !out_valid) {
     return LUMICE_ERR_NULL_ARG;
   }
-  if (!AnnotationViewEnumsValid(*view) || view->width <= 0 || view->height <= 0) {
+  if (!ns::capi::AnnotationViewEnumsValid(*view) || view->width <= 0 || view->height <= 0) {
     return LUMICE_ERR_INVALID_VALUE;
   }
   *out_valid = 0;
@@ -4298,7 +4262,7 @@ LUMICE_ErrorCode LUMICE_ProjectDirection(const LUMICE_AnnotationView* view, cons
   if (!view || !dir || !out_px || !out_py || !out_valid) {
     return LUMICE_ERR_NULL_ARG;
   }
-  if (!AnnotationViewEnumsValid(*view) || view->width <= 0 || view->height <= 0) {
+  if (!ns::capi::AnnotationViewEnumsValid(*view) || view->width <= 0 || view->height <= 0) {
     return LUMICE_ERR_INVALID_VALUE;
   }
   // Core's marker sampler on a caller-supplied direction: the projection, the canvas clamp and
