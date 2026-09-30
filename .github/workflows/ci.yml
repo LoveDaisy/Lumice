@@ -548,6 +548,23 @@ jobs:
           key: cpm-ubuntu-x64-${{ hashFiles('**/CMakeLists.txt') }}
           restore-keys: cpm-ubuntu-x64-
 
+      - name: Install ccache (CUDA compile, H11 trial)
+        run: |
+          sudo apt-get install -y ccache
+          ccache --version
+          echo "CCACHE_DIR=$GITHUB_WORKSPACE/ccache_cache" >> $GITHUB_ENV
+          echo "CCACHE_MAXSIZE=800M" >> $GITHUB_ENV
+
+      - name: Cache ccache directory (CUDA compile, H11 trial)
+        uses: actions/cache@v6
+        with:
+          path: ccache_cache
+          key: ccache-cuda-ubuntu-x64-${{ github.sha }}
+          restore-keys: ccache-cuda-ubuntu-x64-
+
+      - name: Zero ccache statistics
+        run: ccache -z
+
       # BUILD_GUI=OFF avoids OpenGL/X11 deps. LUMICE_ISA_LEVEL=baseline matches the
       # rest of CI.
       #
@@ -579,12 +596,19 @@ jobs:
           -DBUILD_GUI=OFF
           -DLUMICE_CUDA_ENABLED=ON
           -DLUMICE_ISA_LEVEL=baseline
+          -DCMAKE_C_COMPILER_LAUNCHER=ccache
+          -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          -DCMAKE_CUDA_COMPILER_LAUNCHER=ccache
 
       # Builds the Lumice CLI plus the test binaries; this drives nvcc through
       # cuda_trace_backend.cu and links CUDA::cudart, exercising both compile and
       # link paths, and host-compiles the five CUDA test TUs with the macro on.
       - name: Build (compiles cuda_trace_backend.cu + the CUDA test TUs)
         run: cmake --build build --parallel
+
+      - name: ccache statistics (CUDA compile, H11 trial)
+        if: always()
+        run: ccache --show-stats --verbose || true
 
       # Compile coverage only — every case is expected to report SKIPPED, since no GPU is
       # attached. This step exists to prove the CUDA TUs are non-empty and that their skip
