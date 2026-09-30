@@ -80,7 +80,9 @@ before downloading into it).
 - `src/server/`: server-side render, consumer, stats, C API bridge
 - `src/util/`: logger, threading, queue, arguments, color data
 - `src/analytic/`: implementation of the published analytic library `liblumice_analytic`
-  (header `src/include/lumice_analytic.h`, prefix `LUMICE_ANALYTIC_`; design in `doc/analytic-api.md`)
+  (header `src/include/lumice_analytic.h` over `lumice_analytic_core.h`, prefix `LUMICE_ANALYTIC_`;
+  design in `doc/analytic-api.md`). The engine libraries export the capability too: which headers
+  each shared library exports is declared once in `cmake/export_surfaces.cmake`.
 - `src/include/`: public C API header
 - `test/`: unit tests, GUI tests, and E2E tests
 
@@ -804,7 +806,7 @@ Valuable design/architecture docs live in `doc/` (tracked). Consult the relevant
     as-built）；`WINDOWS_EXPORT_ALL_SYMBOLS` 与 visibility pragma 已移除。
     ⭐**§8 版本与打包（as-built）**：`LUMICE_ANALYTIC_API_VERSION` 这一个整数就是唯一版本号，CMake
     从头文件读出它当 package 版本（不写第二份）；`find_package(LumiceAnalytic <n>)` 用 `ExactVersion`，
-    版本不符在**配置期**被拒；链 `Lumice::lumice_analytic`，install 树只含 `lumice_analytic.h`（⛔ 不装
+    版本不符在**配置期**被拒；链 `Lumice::lumice_analytic`，install 树只含 `lumice_analytic.h` 与它 include 的 `lumice_analytic_core.h`（⛔ 不装
     `lumice.h`），布局 `bin/`+`lib/`（有意不同于 `lumice` 的 DLL 放 prefix 根）。0.x 不承诺任何两版兼容，
     但每次 bump 必须留说明；兼容/破坏判定表（§8.2）；两个调用方分配的结果 struct 打头 `struct_size`
     （Win32 `cbSize` 模式，batch 以 `out_results[0].struct_size` 为步长）使追加字段不必 bump；废弃流程与
