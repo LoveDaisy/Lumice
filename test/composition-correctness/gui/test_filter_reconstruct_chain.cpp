@@ -26,7 +26,7 @@
 #include "gui/file_io.hpp"
 #include "gui/gui_state.hpp"
 #include "gui/raypath_segments.hpp"
-#include "lumice.h"
+#include "lumice_scene.h"
 #include "support/scene_json_helpers.hpp"
 
 namespace lumice::gui {
@@ -621,7 +621,7 @@ TEST(FilterReconstructChain, AnEmptyRaypathArrayInsideACompositionIsRefusedToo) 
 // by the two sides being given two things that merely look alike.
 //
 // The two encoders reach match-all by different spellings on the wire, and that difference is
-// deliberate rather than a leftover: lumice.h states that LUMICE_FilterParam's UNSET is rejected at
+// deliberate rather than a leftover: lumice_scene.h states that LUMICE_FilterParam's UNSET is rejected at
 // commit while LUMICE_ColorPredicate's UNSET *is* match-all. So the comparison below is of what
 // core will do with each document, not of the bytes.
 TEST(FilterReconstructChain, TheFilterPathAndTheColourPathAgreeOnWhatAnEmptyRaypathMeans) {

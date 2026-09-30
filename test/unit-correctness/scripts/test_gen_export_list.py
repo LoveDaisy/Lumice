@@ -154,8 +154,14 @@ def test_cli_fails_on_unmarked_declaration(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     ("headers", "prefix"),
     [
-        (["src/include/lumice.h"], "LUMICE_"),
+        (["src/include/lumice_base.h"], "LUMICE_"),
+        (["src/include/lumice_scene.h"], "LUMICE_"),
+        (["src/include/lumice_render.h"], "LUMICE_"),
+        (["src/include/lumice_editor.h"], "LUMICE_"),
+        (["src/include/lumice_engine.h"], "LUMICE_"),
+        (["src/include/lumice_raypath.h"], "LUMICE_"),
         (["src/include/lumice_analytic.h"], "LUMICE_ANALYTIC_"),
+        (["src/include/lumice_analytic_core.h"], "LUMICE_ANALYTIC_"),
         (["test/support/lumice_test_api.h"], "LUMICE_TEST_"),
     ],
 )

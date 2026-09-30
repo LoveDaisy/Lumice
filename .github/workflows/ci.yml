@@ -1312,13 +1312,16 @@ jobs:
           set -euo pipefail
           cmake --install build --component analytic --prefix "$RUNNER_TEMP/analytic-install"
           if [ "$RUNNER_OS" = "macOS" ]; then lib=lib/liblumice_analytic.dylib; else lib=lib/liblumice_analytic.so; fi
-          for f in include/lumice_analytic.h "$lib" \
+          for f in include/lumice_analytic.h include/lumice_analytic_core.h "$lib" \
                    lib/cmake/LumiceAnalytic/LumiceAnalyticConfig.cmake \
                    lib/cmake/LumiceAnalytic/LumiceAnalyticConfigVersion.cmake \
                    lib/cmake/LumiceAnalytic/LumiceAnalyticTargets.cmake; do
             test -f "$RUNNER_TEMP/analytic-install/$f" || { echo "::error::analytic install is missing $f"; exit 1; }
           done
-          test ! -e "$RUNNER_TEMP/analytic-install/include/lumice.h" || { echo "::error::lumice.h was installed with the analytic package"; exit 1; }
+          # The package's headers are exactly these two: no engine header (src/include/lumice_*.h)
+          # ships with it, so a consumer cannot compile against both (doc/analytic-api.md section 2.6).
+          headers="$(cd "$RUNNER_TEMP/analytic-install/include" && find . -type f | LC_ALL=C sort | tr '\n' ' ')"
+          test "$headers" = "./lumice_analytic.h ./lumice_analytic_core.h " || { echo "::error::analytic install ships headers [$headers], expected exactly lumice_analytic.h and lumice_analytic_core.h"; exit 1; }
           find "$RUNNER_TEMP/analytic-install" -type f | sort
 
       - name: Setup Python
@@ -1482,7 +1485,8 @@ jobs:
           $prefix = Join-Path $env:RUNNER_TEMP 'analytic-install'
           cmake --install build --component analytic --prefix $prefix
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $expected = @('include/lumice_analytic.h', 'bin/lumice_analytic.dll', 'lib/lumice_analytic.lib',
+          $expected = @('include/lumice_analytic.h', 'include/lumice_analytic_core.h',
+                        'bin/lumice_analytic.dll', 'lib/lumice_analytic.lib',
                         'lib/cmake/LumiceAnalytic/LumiceAnalyticConfig.cmake',
                         'lib/cmake/LumiceAnalytic/LumiceAnalyticConfigVersion.cmake',
                         'lib/cmake/LumiceAnalytic/LumiceAnalyticTargets.cmake')
@@ -1492,8 +1496,12 @@ jobs:
               exit 1
             }
           }
-          if (Test-Path (Join-Path $prefix 'include/lumice.h')) {
-            Write-Output "::error::lumice.h was installed with the analytic package"
+          # The package's headers are exactly these two: no engine header (src/include/lumice_*.h)
+          # ships with it (doc/analytic-api.md section 2.6).
+          $names = @(Get-ChildItem -Recurse -File (Join-Path $prefix 'include') | ForEach-Object { $_.Name })
+          $headers = $names -join ' '
+          if ($names.Count -ne 2 -or $names -notcontains 'lumice_analytic.h' -or $names -notcontains 'lumice_analytic_core.h') {
+            Write-Output "::error::analytic install ships headers [$headers], expected exactly lumice_analytic.h and lumice_analytic_core.h"
             exit 1
           }
           Get-ChildItem -Recurse -File $prefix | ForEach-Object { $_.FullName }
@@ -1512,11 +1520,11 @@ jobs:
       # outcome this job exists to rule out.
       # LUMICE_ANALYTIC_INSTALL_DIR hands the packaging step's prefix to the external-consumer
       # smoke test; each run: block is a new shell, so the path is rebuilt, not read from $prefix.
-      - name: Check export sets, analytic log sink, EvaluatePath ABI & external consumer smoke
+      - name: Check export sets, engine-hosted analytic capability, analytic log sink, EvaluatePath ABI & external consumer smoke
         shell: pwsh
         run: |
           $env:LUMICE_ANALYTIC_INSTALL_DIR = Join-Path $env:RUNNER_TEMP 'analytic-install'
-          python -m pytest test/e2e-correctness/test_export_symbol_scope.py test/e2e-correctness/test_analytic_log_sink.py test/e2e-correctness/test_analytic_evaluate_path.py test/e2e-correctness/test_external_consumer_smoke.py -v -m slow -rs 2>&1 | Tee-Object -Variable log
+          python -m pytest test/e2e-correctness/test_export_symbol_scope.py test/e2e-correctness/test_engine_hosts_analytic_capability.py test/e2e-correctness/test_analytic_log_sink.py test/e2e-correctness/test_analytic_evaluate_path.py test/e2e-correctness/test_external_consumer_smoke.py -v -m slow -rs 2>&1 | Tee-Object -Variable log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           if (($log | Out-String) -match '\bskipped\b') {
             Write-Error "export-set test skipped on a leg that just built the shared flavor"

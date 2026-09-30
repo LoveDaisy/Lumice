@@ -22,7 +22,7 @@
 #include <algorithm>
 
 #include "gui/gui_state.hpp"
-#include "include/lumice.h"
+#include "include/lumice_scene.h"
 #include "util/contrast_headroom.hpp"
 
 namespace gui = lumice::gui;

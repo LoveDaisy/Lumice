@@ -61,7 +61,7 @@ which is built from the same ``mask_detail::PixelToWorld`` + ``VisibleByRange`` 
 predicate as the ``BuildVisibleMask`` the renderer bakes with. Mirroring the geometry in Python
 instead would put a second authority on which pixels the lens images, which is the class of defect
 this suite exists to catch rather than to add. It is read through a test-only hook rather than the
-product annotation API because a mask a test wants is not a reason for ``lumice.h`` to export
+product annotation API because a mask a test wants is not a reason for the product C API headers to export
 anything; the hook lives in ``liblumice_testapi``, the superset of ``liblumice`` this harness loads.
 
 Not necessarily byte-identical, and the residual is understood rather than tolerated: the GUI
@@ -128,7 +128,7 @@ _CONTROL_MIN_DIFFERING_FRACTION = 1e-2
 # docstring for why the GUI arm needs it at all.
 #
 # These two ctypes structs mirror their headers field for field: _AnnotationView is a product type
-# (lumice.h), _RenderDomainMask a test-only one (test/support/lumice_test_api.h). The mirror
+# (lumice_render.h), _RenderDomainMask a test-only one (test/support/lumice_test_api.h). The mirror
 # matters more here than for a read-only result struct: the CALLER allocates the mask struct and
 # core fills it, so a mirror short by one field is not a wrong number but a write past the end of
 # Python's storage. _assert_mirrors_match_header() below reads each header and checks the field
@@ -162,11 +162,13 @@ class _RenderDomainMask(ctypes.Structure):
     ]
 
 
-_HEADER = get_project_root() / "src" / "include" / "lumice.h"
+# Each product declaration is read from the capability header that declares it.
+_RENDER_HEADER = get_project_root() / "src" / "include" / "lumice_render.h"  # LUMICE_AnnotationView
+_SCENE_HEADER = get_project_root() / "src" / "include" / "lumice_scene.h"  # LUMICE_LENS_TYPE_* / LUMICE_VISIBLE_*
 _TEST_API_HEADER = get_project_root() / "test" / "support" / "lumice_test_api.h"
 
 
-def _header_struct_fields(tag: str, header: Path = _HEADER) -> list[str] | None:
+def _header_struct_fields(tag: str, header: Path) -> list[str] | None:
     """Field names of one `typedef struct <tag>_ { ... } <tag>;` in `header`, in order."""
     if not header.is_file():  # source tree not available (e.g. installed wheel)
         return None
@@ -187,7 +189,7 @@ def _header_struct_fields(tag: str, header: Path = _HEADER) -> list[str] | None:
 
 def _assert_mirrors_match_header() -> None:
     for tag, mirror, header in (
-        ("LUMICE_AnnotationView", _AnnotationView, _HEADER),
+        ("LUMICE_AnnotationView", _AnnotationView, _RENDER_HEADER),
         ("LUMICE_TEST_RenderDomainMask", _RenderDomainMask, _TEST_API_HEADER),
     ):
         header_fields = _header_struct_fields(tag, header)
@@ -215,7 +217,7 @@ def _header_enum_map(prefix: str) -> dict[str, int]:
     actual enum values to compute the mask, not just a drift check to skip, so there is nothing
     correct to return in that case -- this parity test requires the source tree to run.
     """
-    text = _HEADER.read_text(encoding="utf-8")
+    text = _SCENE_HEADER.read_text(encoding="utf-8")
     return {
         name.lower(): int(value)
         for name, value in re.findall(rf"^#define {prefix}(\w+)\s+(\d+)$", text, re.MULTILINE)

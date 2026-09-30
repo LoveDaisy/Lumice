@@ -178,7 +178,7 @@ The reusable recipes, so the next person does not re-derive them:
   > **Trap, retired 2026-08-10:** this bullet used to warn that on a *no-filter* scene the C API's
   > `unfiltered_xyz_buffer` was a `0x1` sentinel whose dereference segfaults. Both the old getter
   > (`LUMICE_GetRawXyzResults`) and that field are gone — `LUMICE_RawXyzResult` now carries a
-  > single `xyz_buffer` with a plain `NULL` sentinel (`src/include/lumice.h:215-229`). Kept as a
+  > single `xyz_buffer` with a plain `NULL` sentinel (拆分前的 `src/include/lumice.h:215-229`). Kept as a
   > note only because the measurement recipe above was written against the old shape.
 
 ## 5. The two configs this pins down

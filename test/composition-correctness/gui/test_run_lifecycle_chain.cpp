@@ -26,7 +26,8 @@
 #include "gui/app.hpp"
 #include "gui/gui_state.hpp"
 #include "gui/server_poller.hpp"
-#include "include/lumice.h"
+#include "include/lumice_base.h"
+#include "include/lumice_engine.h"
 
 namespace lumice::gui {
 namespace {

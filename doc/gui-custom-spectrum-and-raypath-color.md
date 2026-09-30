@@ -117,14 +117,14 @@ owner 计划扩展两个相关但不同的功能：
 
 **空弧反馈（footgun 可见化，v1 纳入）**：颜色谓词可引用被物理门挡掉的路径 → 空弧。每个颜色类显示"匹配 N 条光线"，N=0 标警告（具体形式 = 全量计数 vs 仅空警告，落地时定）。
 
-**preview 合成 v1（as-built 白捡）**：core 已合成且已由 `LUMICE_GetCompositeResults()`（`lumice.h:436`）暴露（有 `raypath_color` 才非空）。v1 = poller 切 `GetCompositeResults` + 复用**已存在**的 sRGB 上传路径（当时的 `UploadTexture`，二态 `u_xyz_mode=0`），**零 shader 改、零新读 API**。多 lane shader（host 侧瞬时切模式 / per-class 透明度）延后到证明需要（a05/a14）。
+**preview 合成 v1（as-built 白捡）**：core 已合成且已由 `LUMICE_GetCompositeResults()`（`lumice_engine.h`；行号为头文件拆分前的旧引用，已废）暴露（有 `raypath_color` 才非空）。v1 = poller 切 `GetCompositeResults` + 复用**已存在**的 sRGB 上传路径（当时的 `UploadTexture`，二态 `u_xyz_mode=0`），**零 shader 改、零新读 API**。多 lane shader（host 侧瞬时切模式 / per-class 透明度）延后到证明需要（a05/a14）。
 
 > ⚠️ **这一段是 v1 的设计设想，其"零 shader 改"部分已被后续改动作废**：合成图现在走 `UploadRadianceTexture`（`TextureMode::kSrgbRadiance`），天空色与镜头相对照度由 shader 在显示时统一补上——见下方 ④ as-built 的"上传分流"条。这里保留原文只作设计推理记录，不要当作 as-built 读。
 
 **API 按 re-sim 边界拆（seam 上焊死契约，a09）**：
 - 改**成员/谓词**（哪些 component、any↔all） → config commit（dirty → 预览重累积，同改物理谓词）。
 - 改**颜色 rgb / 合成模式 / 可见性 / z-order** → **独立 display-time setter**（`LUMICE_SetRaypathColors` 之类），只重合成、**绝不重启仿真累积**（不能因换个色丢掉收敛好的图）。
-- C API 承载："成员" 进 `LUMICE_Config`（镜像 `compositions[]` 先例，`lumice.h:336-338`）；颜色/模式走独立 setter。
+- C API 承载："成员" 进 `LUMICE_Config`（镜像 `compositions[]` 先例，拆分前的 `lumice.h`）；颜色/模式走独立 setter。
 
 **UX 契约总表（rule-lane binning 的内在结果，非本次新增）**：
 
@@ -141,12 +141,12 @@ owner 计划扩展两个相关但不同的功能：
 - **⭐z-order 与 Y-lane 物理下标解耦（关键正确性决策，白盒发现的陷阱）**：`ColorClass` 加 `int z_order_` 显示态字段（`BuildColorClassTable` 默认 = list 位置，`NeedsRebuild` 不比较它）。compositor `GatherActiveClasses` 按 `z_order_` 排序遍历，但**始终用原始下标 i 取 `GetColorClassLaneY(i)`**——遍历顺序（可被 setter 改）与 lane 物理绑定（构造时永久固定）彻底解耦。**天真地重排 `classes_` vector 会造成静默错误染色**（某条弧被涂错色），回归钉在 `test_component_compositor.cpp::ZOrderReordersDrawButNotLaneBinding`。
 - **pre-existing 观察（不在本任务修）**：`CommitConfig` 在 `consumer_mutex_` 锁外写 `active_class_table_`/`active_composite_mode_`，与 `DoSnapshot`/`SetRaypathColors`（锁内）间有既有竞态（单-owner 规则本就假设 `CommitConfig` 不与他调用并发）。
 
-**⭐as-built（③GUI 颜色窗，task-gui-color-window / task-342.3）**：`src/gui/color_window.{hpp,cpp}` 落地非模态浮动窗 `RenderColorWindow`，顶栏按钮开关，只经 `include/lumice.h` 访问 core（GUI API 边界门禁）：
+**⭐as-built（③GUI 颜色窗）**：`src/gui/color_window.{hpp,cpp}` 落地非模态浮动窗 `RenderColorWindow`，顶栏按钮开关，只经 `include/lumice_*.h` 能力头访问 core（GUI API 边界门禁）：
 - **外壳 + 类行**：按 `z_order` 升序展示，每行 = 上/下箭头 / 色块 `ColorEdit3` / 可见性（眼睛图标，普通点击 toggle `visible`，**Alt+click = 唯一 solo**，再次 Alt+click 复原全可见）/ 空弧警告 ⚠️ / delete。窗头下拉切合成模式（`dominant/additive/painter`）。**独立的 solo 列已删除**（task-list-row-ergonomics ③，owner 拍板）：`ColorClassConfig.solo` 字段与 compositor 的"有 solo 则取 solo 集"合成语义都不动，只是 UI 保证同一时刻至多一个类进入该集合；从旧配置文件加载的多 solo 状态不做启动时归一化，等用户下次 Alt+click 时才收敛为互斥（AC4 owner 复验清单需知悉）。
 - **z-order/物理下标解耦在 GUI 层的复现**：`SwapZOrder(state, phys_a, phys_b)` 只交换两个 class 的 `z_order` 标量字段，`state.raypath_color[]` vector 物理顺序永不变；这是 §4.0 上方"z-order 与 Y-lane 物理下标解耦"契约在 GUI 层的镜像，回归钉在 `test_gui_color_window.cpp`（`swap_zorder_*` 系列用例）——**2026-08-10 更新**：该文件已随 GUI 套件重写退役，此契约现钉在 `test/unit-correctness/gui/test_color_window_logic.cpp` 的 `ColorWindow.ReorderingAndCompactingRewriteTheLayerNumbersAndNeverMoveTheClasses`（同时覆盖 `SwapZOrder` 与 `CompactZOrder`）。删除类后 `CompactZOrder` 把留空的 `z_order` 压缩回 `[0,N)` 排列（`LUMICE_SetRaypathColors` 的 `z_order` 参数硬要求）。
 - **ref 编辑器**：per-class 展开区含 combine（any/all）+ per-ref layer/crystal 下拉（从当前 layer 已有 placement 反查去重，从源头消除孤儿引用）+ whole-crystal checkbox + 谓词文本框，复用 333/334 已建的 H5 SoP 单-atom 校验（`ValidateSingleAtomText`：空文本=whole-crystal 合法、单 raypath 合法、多 factor 或 `;`-OR 拒绝——一条 ref 只能是单谓词原子，跨谓词的 AND 走 combine:all 的多条 ref，不进单条文本框）。**whole checkbox 勾选时谓词文本框冻结**（`BeginDisabled` 灰化而非隐藏）而非清空/消失（task-list-row-ergonomics ④），取消勾选后恢复可用且保留原文本；`SetRefMatchAll` 只改 `match_all` 一位，`file_io.cpp:1337` `FillColorPredicate` 优先判 `match_all` 后再读 `predicate_text`，冻结态陈留文本不进 commit（序列化安全性已白盒核验）。
 - **从 filter 导入**：`BuildClassFromFilter` 把一个物理 filter 的 SoP 逐行转 ref，单-factor 行转 ref，多-factor 行跳过并计入 `skipped_rows`（复用既有 Import Warning 弹窗提示）；`combine` 默认 `any`（§4.0"Design 1 的价值保留为非绑定便捷"——只是预填模板，非结构耦合）。
-- **AC4 空弧警告**：轮询 `LUMICE_GetColorClassSignal`，500ms 节流（`kSignalPollIntervalSec`，对齐 lumice.h 头注释"debounce cadence, not per-frame"契约），`match_count>0 && signal==0` 时显示 ⚠️。
+- **AC4 空弧警告**：轮询 `LUMICE_GetColorClassSignal`，500ms 节流（`kSignalPollIntervalSec`，对齐 `lumice_engine.h` 头注释"debounce cadence, not per-frame"契约），`match_count>0 && signal==0` 时显示 ⚠️。
 - **写路径分流**（§4.0"API 按 re-sim 边界拆"在 GUI 侧的落地）：色/可见/solo/z_order/合成模式 → 立即调 `LUMICE_SetRaypathColors`（display-time，不重仿真）；谓词/combine/加删类/加删 ref → `MarkStructHardDirty()`（scrum-353.5 前名 `MarkFilterDirty`，走既有 debounce commit 管线）。
 - **测试**：`test/gui/functional/test_gui_color_window.cpp`（10 例，直接调 4 个纯 helper，无需驱动 ImGui 交互；**2026-08-10：这批"无需真实帧"的用例已迁至 `test/unit-correctness/gui/test_color_window_logic.cpp`，需要真实帧的同族留在 `test/gui/functional/test_color_window.cpp`**）+ Step 3/4 的 21 例 struct/JSON 结构等价 + `test_raypath_color.py` 端到端 PSNR 回归。AC6（owner on-screen 手感验收：拖 z-order、编谓词、导入、切模式）留给 owner 亲验，非 CI 可判定。
 
@@ -187,7 +187,7 @@ owner 计划扩展两个相关但不同的功能：
 - **ABI 改**：`LUMICE_ColorClass raypath_color[64]` → `LUMICE_ColorClass* raypath_color;`（`raypath_color_count` / `_mode` 保留；`match[32]` 继续内联，owner 明确不缩容）。`sizeof(LUMICE_Config)` 从 467 KB 降至 **~113 KB**（`static_assert` 上限 160 KB，保 ~40% headroom）。C/C++ 侧的 `cfg.raypath_color[i]` 下标语法保持源码兼容——指针支持相同下标；只有 value-init/copy 语义变化（零初始化后 `raypath_color == NULL`，而非 64 个零初始化 `LUMICE_ColorClass`）。
 - **两个新 C API + RAII guard**：`LUMICE_ConfigCreateColorClasses(cfg, count)` / `LUMICE_ConfigReleaseColorClasses(cfg)`（`calloc`/`free`，跨 C ABI 边界故刻意不用 `new[]`/`delete[]`；Create 幂等 create-or-replace；Release null-safe / 对已释放的 cfg 幂等）。C++ 侧 `src/include/lumice_config_scope.hpp::lumice::ConfigColorGuard` 是非拷贝/非移动 RAII scope guard，构造引用宿主 `LUMICE_Config`、析构调 `Release`，覆盖 `IM_CHECK`/`ASSERT_EQ` 早退路径（同一模式在 `learnings/code-quality/imgui-modal-test.md` 已记录）。GUI/tests 全数改为"声明 `LUMICE_Config` 后紧跟一行 `lumice::ConfigColorGuard`"。
 - **隐式分配契约**（本任务白盒审计后补齐的语义）：`LUMICE_ParseConfigString` / `LUMICE_ParseConfigFile` / GUI 的 `FillLumiceConfig`（以及测试工厂 `MakeOneColorClassConfig`）**内部自动**调 `Create`（大小由被解析的 JSON `classes` 长度或 `GuiState.raypath_color.size()` 决定）——调用方无需预先知道 count，但**必须**在使用完 `out` 后 `Release`（推荐经 `ConfigColorGuard`）。这打破了"调用方总是主动 Create"的单一叙事，是"先解析才知道大小"这一约束下唯一可行的形状。
-- **memset-before-Release 潜伏泄漏**（白盒新发现，非 342 遗留 bug）：`c_api.cpp::JsonToConfig` 和 `file_io.cpp::FillLumiceConfig` 开头都有 `std::memset(out, 0, sizeof(LUMICE_Config))`。若 `out` 已持有先前分配的 `raypath_color` 堆块，`memset` 会清指针字段而不释放，造成孤儿堆块。当前代码无调用点会喂同一 `LUMICE_Config` 两次而不重新声明（已逐一审计），故属**潜伏但尚未触发**的隐患。修复：两处 `memset` 前各插一行 `LUMICE_ConfigReleaseColorClasses(out)`（Release 对空指针是 no-op，首次调用路径无副作用）；code-review 阶段跑一次强制 valgrind 交叉验证并把结果写入 SUMMARY。
+- **memset-before-Release 潜伏泄漏**（白盒新发现，非 342 遗留 bug）：`c_api_scene.cpp::JsonToConfig` 和 `file_io.cpp::FillLumiceConfig` 开头都有 `std::memset(out, 0, sizeof(LUMICE_Config))`。若 `out` 已持有先前分配的 `raypath_color` 堆块，`memset` 会清指针字段而不释放，造成孤儿堆块。当前代码无调用点会喂同一 `LUMICE_Config` 两次而不重新声明（已逐一审计），故属**潜伏但尚未触发**的隐患。修复：两处 `memset` 前各插一行 `LUMICE_ConfigReleaseColorClasses(out)`（Release 对空指针是 no-op，首次调用路径无副作用）；code-review 阶段跑一次强制 valgrind 交叉验证并把结果写入 SUMMARY。
 - **按值拷贝的结构性门禁**：`raypath_color` 指针化后，`LUMICE_Config` 从"数组内联、按值拷贝安全"变为"raw pointer 拥有堆内存、按值拷贝即别名"——任何拷贝构造、按值传参、赋值都会在两份副本各自 Release 时触发 double-free。落实 a09（软约束须固化为自动化门禁），`scripts/check_policies.py` 新增静态规则 `no-config-by-value-copy`，覆盖 5 类语法（copy-init `a = b`、direct-init `a(b)`、list-init `a{b}`、by-value 参数、以及两个同类型本地变量之间的后置赋值 `b = a`），扫描 `src/` + `test/`。已知局限：不覆盖 `std::vector<LUMICE_Config>` 等容器持有该 struct 的场景（代码库当前无此用法，留待后续任务）。
 - **回归口径**：AC2 硬约束"全量 `-gtj` 不带 `--filter`"——342.3 的 targeted 跑法曾把这个栈溢出掩过一次，本任务的验收闸不再接受任何 `--filter` 快跑。
 

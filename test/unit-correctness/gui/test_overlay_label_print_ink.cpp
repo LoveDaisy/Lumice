@@ -33,7 +33,8 @@
 #include "gui/gui_constants.hpp"
 #include "gui/gui_state.hpp"
 #include "gui/overlay_labels.hpp"
-#include "lumice.h"
+#include "lumice_render.h"
+#include "lumice_scene.h"
 
 namespace gui = lumice::gui;
 

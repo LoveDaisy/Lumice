@@ -288,7 +288,9 @@
 #include <vector>
 
 #include "gui/gui_constants.hpp"
-#include "include/lumice.h"
+#include "include/lumice_base.h"
+#include "include/lumice_engine.h"
+#include "include/lumice_render.h"
 #include "support/block_mean_psnr.hpp"
 #include "support/pixel_diff_metrics.hpp"
 #include "test_gui_shared.hpp"

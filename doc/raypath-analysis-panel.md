@@ -111,7 +111,7 @@ owner 在 2026-09-11 提出第三种形态，不再试图同时满足「渲染�
    都在 env override 之前短路成 CPU；`Simulator::SetAnalysisForceCpu(bool)`
    （`src/core/simulator.hpp:108`）写这条会话属性，`Simulator::ActiveBackend()`
    （`src/core/simulator.hpp:116`）发布解析后的实际后端，`LUMICE_GetActiveBackend`
-   （`src/include/lumice.h:2448`，`src/server/c_api.cpp:3320`）把它读出来给调用方核对「强制是否生效」。
+   （`src/include/lumice_engine.h`，`src/server/c_api_engine.cpp`）把它读出来给调用方核对「强制是否生效」。
    GUI 侧**没有**为这条加任何可见提示或按钮禁用——Analyze 在 GPU 偏好会话下一样可点，只是内部
    静默走 CPU、可能比渲染慢；这是子任务 5 范围内的非目标（GUI 的 GPU 路径体验留给未来子任务）。
    **多 worker（as-built，2026-09-13 起）**：CPU 路的分析本来就跑在多 worker 上；GPU 偏好的
@@ -306,14 +306,14 @@ config = scene、flags = request：ROI / 锥心 / 半径 / 对称位 / 预算 / 
 GUI 把 ROI 放 session tier 不进文档是同一个判断。展示层派生（环累加 `RingsWithinRadius` / `SumRingEnergy`、
 排序与累计百分比 `ComputeRaypathDisplayOrder`）和 CSV 拼装（`BuildRaypathAnalysisCsv`）的**单一实现**在
 `src/util/raypath_analysis_display.hpp`，alt/az ↔ 行进方向的换算在 `src/util/sky_direction.hpp`；两者都是只碰
-`lumice.h` 类型的 `inline` 头，GUI（`src/gui/analysis_panel.cpp`，薄封装）与 CLI 各调同一份，因此两边对同一次
+`lumice_*.h` 类型的 `inline` 头，GUI（`src/gui/analysis_panel.cpp`，薄封装）与 CLI 各调同一份，因此两边对同一次
 运行写出的 CSV 逐字节相同，由 `test/unit-correctness/util/test_raypath_analysis_display.cpp` 与
 `test/unit-correctness/gui/test_analysis_panel_logic.cpp` 持同一组期望字符串钉住。CLI 没有半径滑杆，显示半径恒等于
 请求半径（所有环累加）；环数与 GUI 同取 `lumice::kRaypathAnalysisConeRingCount`（=30）。`--roi frame` 的
 `LUMICE_AnnotationView` 由 `LUMICE_SceneGetRenderer`（v4.40，`LUMICE_SceneAddRenderer` 的对称读回；按数组下标寻址，
 `--render-id` 与读回的 `LUMICE_RenderParam::id` 逐条比较）读回的 `LUMICE_RenderParam` 逐字段拷入：core 的默认值在
 引擎解码时已经应用、lens/visible 已是 `LUMICE_*` 常量，CLI 侧不解析配置文件、不持有第二份枚举拼写表或默认值规则——
-`src/main.cpp` 只含 `lumice.h` 与 `src/util/` 头，这是「CLI 是 C API 的第二个消费者」这一前提成立的机械证据。
+`src/main.cpp` 对引擎只含 `lumice_*.h` 能力头（另有 `core/color_util.hpp` 一个常量与 `launcher/` 的 Windows 装载器），其余是 `src/util/` 头，这是「CLI 是 C API 的第二个消费者」这一前提成立的机械证据。
 
 ### 3.4 ROI 三档的实现落点
 
@@ -341,7 +341,7 @@ GUI 把 ROI 放 session tier 不进文档是同一个判断。展示层派生（
 子累加器。这三类都是标量或定长小数组，不随分辨率或桶数线性增长——这正是本形态相对于
 「每桶一张全分辨率图」的内存优势的直接体现。**as-built**：`RaypathHistogramEntry`
 （`src/server/server.hpp:264`）与 `RaypathChainSegment`（`:232`）承载这些字段；C 结构体侧
-`LUMICE_RaypathHistogramEntry`（`src/include/lumice.h`，「Raypath Analysis Run」一节）逐字节
+`LUMICE_RaypathHistogramEntry`（`src/include/lumice_engine.h`，「Raypath Analysis Run」一节）逐字节
 镜像。
 
 ### 3.6 有界记录（Space-Saving，v4.35 as-built）
@@ -376,7 +376,7 @@ GUI 把 ROI 放 session tier 不进文档是同一个判断。展示层派生（
   的产物——被 Space-Saving 接管的能量已经算进接管行的 `error_bound`，不会重复计入 `other`。
   `LUMICE_RaypathAnalysisInfo::other_energy`/`other_count` 是这个桶；`truncated_chain_count`
   计的是**到达次数**（同一条被拒的链每次再来都会重新计数，因为它从未被记住），不是「有多少条
-  不同的链被截断」——这条语义在实施期被量测暴露后修正，`lumice.h`/`server.hpp`/GUI 文案已统一
+  不同的链被截断」——这条语义在实施期被量测暴露后修正，`lumice_engine.h`/`server.hpp`/GUI 文案已统一
   措辞。`max_row_error` 是当前 symmetry 下所有行 `error_bound` 的最大值，0 表示这一帧从未发生
   接管（等价于无界记录）。
 - **约化（P/B/D）与截断的交互**：约化发生在读侧，对合并进同一行的多个 finest 行，`error_bound`
@@ -567,7 +567,7 @@ entry 共享）/ 多个 Out 槽位 / 还有未筛选子组分别措辞。实施�
   （`doc/user-manual/06-raypath-analysis{,_zh}.md` §6）。若日后要在记录层拒绝，根因（数值鲁棒性）
   与容量无关，应另开任务。同批还观察到每档各 ~73 条「0.2° 细网格也判不可行」的链，疑似同源，只记录。
 - **反投影走 C API 还是 `src/util/`**（未决问题，非裁决）——**已裁定：C API**。子任务 4 新增
-  `LUMICE_UnprojectPixel(view, px, py, out_dir[3])`（`src/include/lumice.h:2139`），签名从
+  `LUMICE_UnprojectPixel(view, px, py, out_dir[3])`（`src/include/lumice_render.h`），签名从
   plan 字面的 `float px, py` 改为 `int px, py`（整数像素坐标）——用浮点签名会在 bridge 层复制一份
   `PixelToWorld` 内部换算，违反「反投影只有一个实现」的硬约束。11 个 lens 分支的
   forward∘inverse **精确相等**（无需容差）。函数没有搬进 `src/util/`：`PixelToWorld`
@@ -584,7 +584,7 @@ GUI 与 CLI 若都要打印一条链，打印的是**同一个字符串**，而�
 的诊断格式，从不离开 core（`crystal1(3-5)` 这种写法是它的输出，仅供 core 内部调试用）。
 `RaypathHistogramConsumer::PrepareSnapshot` / `ReduceRaypathHistogram` 用 `FormatRaypathChainDisplay`
 给 `RaypathHistogramEntry::display_` 赋值，C API 的 `LUMICE_RaypathHistogramEntry::display` 是这个
-字符串的**逐字节拷贝**（`c_api.cpp` 只做截断，不重拼）。
+字符串的**逐字节拷贝**（`c_api_engine.cpp` 只做截断，不重拼）。
 
 当前格式规则（`FormatRaypathChainDisplay` 定义，此处只是复述）：
 
@@ -607,7 +607,7 @@ C 结构体里的 `chain[]`/`segment[]` 与 `display` 描述同一条链，前�
 `LUMICE_RAYPATH_DISPLAY_MAX`(=3200) 的病态链，每次读帧时 WARN 一次），正常场景下两者互为镜像。
 
 **连接符的分工：core 给 ASCII，GUI 只在绘制时做呈现映射。** 层间连接符在 `display` 里是 ASCII
-` -> `，这是 C API 契约（`lumice.h` 在 `LUMICE_RaypathHistogramEntry` 处写明）、CLI 打印的原样、
+` -> `，这是 C API 契约（`lumice_engine.h` 在 `LUMICE_RaypathHistogramEntry` 处写明）、CLI 打印的原样、
 也是 Exclude 生成的 filter 名称（`"Exclude " + display`）里的字节——不放 U+2192，因为内嵌 body
 字体 Roboto Medium 的 cmap 没有这个字形（Arrows 块整块缺失，fontTools 一手核过），放了在 GUI 上
 只会渲染成 `?`。GUI 结果列表的行标签则经 `JoinerForDisplay`（`src/gui/analysis_panel.cpp`）把

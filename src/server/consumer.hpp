@@ -4,7 +4,7 @@
 #include <memory>
 
 #include "config/sim_data.hpp"
-#include "server/server.hpp"
+#include "server/result_types.hpp"
 
 namespace lumice {
 

@@ -26,7 +26,8 @@
 #include "gui/file_io.hpp"
 #include "gui/gui_state.hpp"
 #include "gui/panels.hpp"
-#include "lumice.h"
+#include "lumice_base.h"
+#include "lumice_engine.h"
 
 namespace lumice::gui {
 namespace {

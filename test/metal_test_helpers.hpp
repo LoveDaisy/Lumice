@@ -60,7 +60,7 @@ inline RenderConfig MakeRectangularRender() {
 }
 
 // Dual-fisheye equal-area RenderConfig matching the GUI's mandatory wire
-// format (c_api.cpp:295: fov180 / full-globe / el=0). `overlap` mirrors
+// format (fov180 / full-globe / el=0). `overlap` mirrors
 // kDualFisheyeOverlap on the GUI side (set 0 for the no-overlap variant).
 inline RenderConfig MakeDualFisheyeEARender(float overlap = 0.0f) {
   RenderConfig cfg;

@@ -12,8 +12,7 @@
 #include <utility>
 #include <vector>
 
-#include "config/crystal_config.hpp"
-#include "config/filter_config.hpp"
+#include "core/crystal_param.hpp"
 #include "core/def.hpp"
 #include "core/geo3d.hpp"
 #include "core/geo3d_closedform.hpp"
@@ -582,15 +581,15 @@ std::vector<IdType> PCanonicalShiftByPeriod(const std::vector<IdType>& rp, int f
 // `b_applicable` / `d_applicable` are the orientation ensemble's halves (detail::Is*Applicable);
 // `geom` (including geom.b_applicable) is the shape's.
 bool PActive(uint8_t symmetry, bool p_applicable) {
-  return (symmetry & FilterConfig::kSymP) && p_applicable;
+  return (symmetry & sym::kSymP) && p_applicable;
 }
 
 bool DActive(uint8_t symmetry, int sigma_a, bool d_applicable, const GeometricSymmetry& geom) {
-  return (symmetry & FilterConfig::kSymD) && DMirrorActive(d_applicable, sigma_a, geom);
+  return (symmetry & sym::kSymD) && DMirrorActive(d_applicable, sigma_a, geom);
 }
 
 bool BActive(uint8_t symmetry, bool b_applicable, const GeometricSymmetry& geom) {
-  return (symmetry & FilterConfig::kSymB) && b_applicable && geom.b_applicable;
+  return (symmetry & sym::kSymB) && b_applicable && geom.b_applicable;
 }
 
 }  // namespace
@@ -599,7 +598,7 @@ bool BActive(uint8_t symmetry, bool b_applicable, const GeometricSymmetry& geom)
 std::vector<IdType> ReduceRaypathByPeriod(const std::vector<IdType>& rp, uint8_t symmetry, int sigma_a,
                                           bool d_applicable, bool p_applicable, bool b_applicable, int fn_period,
                                           const GeometricSymmetry& geom) {
-  if (symmetry == FilterConfig::kSymNone || fn_period < 0) {
+  if (symmetry == sym::kSymNone || fn_period < 0) {
     return rp;
   }
 
@@ -676,7 +675,7 @@ std::vector<std::vector<IdType>> ExpandRaypathByPeriod(const std::vector<IdType>
                                                        int fn_period, const GeometricSymmetry& geom) {
   std::vector<std::vector<IdType>> result;
   result.emplace_back(rp);
-  if (symmetry == FilterConfig::kSymNone || fn_period < 0) {
+  if (symmetry == sym::kSymNone || fn_period < 0) {
     return result;
   }
 

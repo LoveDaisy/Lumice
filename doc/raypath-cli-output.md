@@ -17,13 +17,13 @@ The CLI is a thin shell. The computation and the serialization both live in the 
 |---|---|
 | The analysis | `lumice::raypath::AnalyzeSinglePath` (`src/raypath/single_path_analysis.hpp`) over the analytic kernel (`src/analytic/`) |
 | The JSON form and the `--warm` reader | `lumice::raypath::ToJson` / `ParseWarmSeeds` (`src/raypath/single_path_json.hpp`) — one file, shared key names |
-| The public entry point | `LUMICE_AnalyzeSinglePath` → opaque `LUMICE_SinglePathResult` → `LUMICE_SinglePathResultToJson` (`lumice.h`, v4.50) |
+| The public entry point | `LUMICE_AnalyzeSinglePath` → opaque `LUMICE_SinglePathResult` → `LUMICE_SinglePathResultToJson` (`lumice_raypath.h`, v4.50) |
 | The subcommand | `src/main.cpp` (`ParseRaypathOptions` / `RunRaypath`) |
 
 So the GUI, when it grows an Analyze workspace, reads **the same document** through the same
-`lumice.h` call; there is no second serializer to drift from this one. The result is exposed as
+`lumice_raypath.h` call; there is no second serializer to drift from this one. The result is exposed as
 JSON rather than as a C struct mirror on purpose: it holds variable-length nested lists whose
-fields an interface will keep adding to. Typed readers can be appended to `lumice.h` later.
+fields an interface will keep adding to. Typed readers can be appended to `lumice_raypath.h` later.
 
 ## 2. Command line
 

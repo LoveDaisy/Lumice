@@ -6,7 +6,7 @@
 #include <mutex>
 #include <string>
 
-#include "include/lumice.h"
+#include "include/lumice_base.h"
 
 namespace lumice {
 

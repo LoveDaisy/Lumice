@@ -460,7 +460,7 @@ TEST(ShapeScalarDomain, EverySlotKeepsTheDomainItsCallSiteUsedToSpell) {
 
 TEST(ShapeScalarDomain, EverySlotHasANonEmptyDomain) {
   // Total over the enum rather than over the rows the crystal modal happens to draw: a slot added
-  // to lumice.h without a domain here would otherwise stay invisible until someone opened the tab
+  // to lumice_scene.h without a domain here would otherwise stay invisible until someone opened the tab
   // that renders it.
   for (int slot = 0; slot < LUMICE_SHAPE_SCALAR_COUNT; ++slot) {
     const ShapeScalarDomain& d = ShapeScalarDomainFor(slot);

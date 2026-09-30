@@ -6,6 +6,7 @@
 #include <memory>
 
 #include "config/render_config.hpp"
+#include "core/camera_rotation.hpp"  // MakeCameraRotation, re-exported to this header's includers
 #include "core/color_util.hpp"
 #include "core/geo3d.hpp"
 #include "core/lens_proj_build.hpp"
@@ -13,17 +14,6 @@
 #include "core/shared/projection_shared.h"
 
 namespace lumice {
-
-// Camera rotation for a RenderConfig — matches RenderConsumer ctor.
-inline Rotation MakeCameraRotation(const RenderConfig& cfg) {
-  Rotation rot;
-  float ax_z[3]{ 0, 0, 1 };
-  float ax_y[3]{ 0, 1, 0 };
-  rot.Chain({ ax_z, (-90.0f + cfg.view_.ro_) * math::kDegreeToRad })
-      .Chain({ ax_y, (90.0f - cfg.view_.el_) * math::kDegreeToRad })
-      .Chain({ ax_z, cfg.view_.az_ * math::kDegreeToRad });
-  return rot;
-}
 
 // Project `count` outgoing rays (d[3*i..], w[i]) through the lens described
 // by `cfg` and scatter-add their CIE 1931 contribution at `wl` into the

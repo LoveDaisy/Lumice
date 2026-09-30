@@ -26,7 +26,7 @@
 #include "gui/panels.hpp"               // SliderScale
 #include "gui/slider_format_rules.hpp"  // FormatIsFineEnough -- the fmt/scale pairing gate
 #include "gui/slider_mapping.hpp"       // kLogLinearX0 -- the kLogLinear rows' domain requirement
-#include "include/lumice.h"             // LUMICE_SHAPE_SCALAR_*
+#include "include/lumice_scene.h"       // LUMICE_SHAPE_SCALAR_*
 
 namespace lumice::gui {
 
@@ -38,7 +38,7 @@ struct ShapeScalarDomain {
   SliderScale scale = SliderScale::kLinear;
 };
 
-// Indexed by LUMICE_SHAPE_SCALAR_* — the enum's own order, so a new slot added to lumice.h that
+// Indexed by LUMICE_SHAPE_SCALAR_* — the enum's own order, so a new slot added to lumice_scene.h that
 // is not given a row here fails the static_assert below rather than silently reading a neighbour.
 inline constexpr ShapeScalarDomain kShapeScalarDomains[] = {
   // HEIGHT — prism height spans six orders of magnitude, hence the hybrid law rather than a plain
@@ -50,7 +50,7 @@ inline constexpr ShapeScalarDomain kShapeScalarDomains[] = {
   // keeps a 10x margin above that gate, so an endpoint value survives the round trip through the
   // config and back with room to spare. The two numbers are deliberately NOT the same constant:
   // src/gui/ reaches core only through the C API (see the public-API boundary rule), so quoting
-  // core's epsilon here would mean publishing an implementation detail through lumice.h to buy a
+  // core's epsilon here would mean publishing an implementation detail through the C API to buy a
   // single source of truth for a number that has not changed in the project's lifetime. The cost
   // accepted instead is this cross-reference: if core's epsilon ever moves, re-check this floor.
   //

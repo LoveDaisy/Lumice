@@ -323,7 +323,7 @@ namespace detail {
 //!   but not the struct can ask without assembling a stand-in object whose unread members are a
 //!   contract no compiler checks. Its direct callers are the two AxisDistribution members below
 //!   and detail::IsDApplicableParams (crystal.cpp); the reason the raw-field form exists at all
-//!   is two hops further out — LUMICE_IsDApplicable (c_api.cpp) reaches it through
+//!   is two hops further out — LUMICE_IsDApplicable (c_api_editor.cpp) reaches it through
 //!   IsDApplicableParams, and the GUI consults that instead of keeping its own copy of this rule.
 //!   `full_range_deg` is read type-erased (the raw `Distribution::spread`, not
 //!   UniformFullRange()) because it is passed unconditionally, before the type has been

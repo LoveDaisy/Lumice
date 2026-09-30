@@ -2,7 +2,7 @@
 
 // Header-only test support: holds a LUMICE_ResultFrame for the duration of a scope.
 //
-// The C API's contract is a plain acquire/release pair (lumice.h, LUMICE_ReleaseResultFrame) —
+// The C API's contract is a plain acquire/release pair (lumice_engine.h, LUMICE_ReleaseResultFrame) —
 // the same shape as LUMICE_SceneDestroy and every other handle there. That contract is not what
 // this header exists for. It exists because a gtest ASSERT_* / IM_CHECK_* returns from the middle
 // of a case, so a hand-placed LUMICE_ReleaseResultFrame() at the bottom of a test body is skipped
@@ -15,7 +15,8 @@
 // ${PROJ_TEST_DIR} on their include path, so `#include "support/scoped_result_frame.hpp"` is one
 // spelling valid in all of them.
 
-#include "lumice.h"
+#include "lumice_base.h"
+#include "lumice_engine.h"
 
 namespace lumice::test {
 

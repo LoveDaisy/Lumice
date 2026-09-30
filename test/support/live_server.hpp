@@ -24,7 +24,9 @@
 #include <cstdint>
 #include <thread>
 
-#include "lumice.h"
+#include "lumice_base.h"
+#include "lumice_engine.h"
+#include "lumice_scene.h"
 #include "support/scoped_result_frame.hpp"
 
 namespace lumice::test {

@@ -30,7 +30,8 @@
 #include "gui/gui_state.hpp"
 #include "gui/panels.hpp"
 #include "gui/raypath_segments.hpp"
-#include "lumice.h"
+#include "lumice_editor.h"
+#include "lumice_scene.h"
 
 namespace gui = lumice::gui;
 

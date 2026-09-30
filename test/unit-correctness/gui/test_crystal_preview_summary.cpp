@@ -20,7 +20,7 @@
 #include "gui/edit_modals.hpp"
 #include "gui/gui_state.hpp"
 #include "gui/shape_scalar_domain.hpp"
-#include "include/lumice.h"
+#include "include/lumice_scene.h"
 
 namespace gui = lumice::gui;
 

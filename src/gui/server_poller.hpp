@@ -9,7 +9,8 @@
 #include <thread>
 
 #include "gui/analysis_result.hpp"
-#include "include/lumice.h"
+#include "include/lumice_base.h"
+#include "include/lumice_engine.h"
 
 namespace lumice::gui {
 
@@ -149,7 +150,7 @@ struct PreviewSnapshot {
   // Descriptive bit: did THIS poll just materialize a texture? Behavior-equivalent / observable;
   // the actual upload gate is driven by texture_serial dedup (§5), not this flag.
   bool has_new_texture = false;
-  // The raypath analysis result, when the server is in an analysis session (lumice.h "Raypath
+  // The raypath analysis result, when the server is in an analysis session (lumice_engine.h "Raypath
   // Analysis Run"). Read off the SAME frame as everything above, materialized only when its
   // snapshot_generation differs from the last one materialized, and otherwise carried forward
   // like `payload` — so the main thread sees one immutable object per new result and dedups on

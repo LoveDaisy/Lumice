@@ -846,7 +846,7 @@ v4.26 起可用——那一版给每族加了自己的 `*_line` 开关：`label:
 
 C API 字段同步改名（`LUMICE_RenderParam.angular_dist` / `angular_dist_count`，原
 `central_grid` / `central_grid_count`）。这是**源码级**兼容性破坏，内存布局不变；详见
-`src/include/lumice.h` 中 `LUMICE_API_VERSION` 处的 BREAKING 说明。
+`src/include/lumice_base.h` 中 `LUMICE_API_VERSION` 处的 BREAKING 说明。
 
 **四族线各自画什么、忽略什么**
 
@@ -1387,7 +1387,7 @@ number for a fixed angle (e.g. "zenith": 20) or as an object naming the distribu
 弹窗，而不只是写进日志面板。两边说的是同一件事——哪个字段、为什么被拒绝、保留了多少度——
 只是措辞不同。
 
-命令行配置解析与 C API（`src/config/crystal_config.cpp`、`src/server/c_api.cpp`）：
+命令行配置解析与 C API（`src/config/crystal_config.cpp`、`src/server/c_api_scene.cpp`）：
 ```text
 Crystal shape "upper_indices": [1,0,-1,1] is not a usable wedge angle (invalid, offending
 index -1); keeping 28.00.

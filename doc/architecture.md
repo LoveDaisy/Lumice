@@ -244,7 +244,7 @@ The system uses a multi-threaded architecture:
 - `IConsume`: Abstract consumer interface
 - `RenderConsumer`: Render consumer; implements various lens projection algorithms
 - `StatsConsumer`: Statistics consumer
-- `c_api.cpp`: C API wrapper implementation
+- `c_api_*.cpp`: C API wrapper implementation, one bridge per capability header
 
 **Characteristics**:
 - Thread-safe queue system
@@ -278,7 +278,7 @@ The system uses a multi-threaded architecture:
 
 **Key Design Decisions**:
 - GUI logic lives in `lumice::gui` namespace with global state (`g_state`, `g_preview`, etc.)
-- Communicates with the simulation core via `lumice.h` C API (same interface as the CLI)
+- Communicates with the simulation core via the C API (`lumice_*.h`, same interface as the CLI)
 - `lumice_gui_obj` OBJECT library shares compiled GUI + ImGui code between `LumiceGUI` and `gui_test`
 
 **Dependencies**:
@@ -292,13 +292,13 @@ The system uses a multi-threaded architecture:
 
 **Responsibility**: Public C API header files
 
-- `lumice.h`: Public C interface header using an opaque pointer pattern
+- `lumice_{base,scene,render,editor,engine,raypath}.h`: Public C interface headers, one per capability, using an opaque pointer pattern
 
 ## Program Entry Points
 
 **`main.cpp` → `Lumice`** (CLI)
 - Purpose: Command-line simulation program
-- Interacts with the core library through the `lumice.h` public API
+- Interacts with the core library through the public C API (`lumice_*.h`)
 - Usage:
   ```bash
   ./build/cmake_install/static/Lumice -f examples/config_example.json
@@ -320,7 +320,7 @@ Build targets:
 
 ## C API
 
-The public API is exposed through a C interface (`lumice.h`) using an opaque pointer pattern. Most APIs return a `LUMICE_ErrorCode` error code, with actual output passed via pointer parameters:
+The public API is exposed through a C interface (`lumice_*.h`, one header per capability) using an opaque pointer pattern. Most APIs return a `LUMICE_ErrorCode` error code, with actual output passed via pointer parameters:
 
 ```c
 // Server lifecycle

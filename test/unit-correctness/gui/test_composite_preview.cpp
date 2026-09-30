@@ -34,7 +34,9 @@
 #include "gui/gui_state.hpp"
 #include "gui/gui_state_reconcile.hpp"
 #include "gui/server_poller.hpp"
-#include "lumice.h"
+#include "lumice_base.h"
+#include "lumice_engine.h"
+#include "lumice_scene.h"
 #include "support/live_server.hpp"
 
 namespace gui = lumice::gui;

@@ -26,7 +26,9 @@
 #include "gui/app.hpp"
 #include "gui/gui_state.hpp"
 #include "gui/server_poller.hpp"
-#include "lumice.h"
+#include "lumice_base.h"
+#include "lumice_engine.h"
+#include "lumice_scene.h"
 #include "support/live_server.hpp"
 
 namespace gui = lumice::gui;
@@ -858,7 +860,7 @@ TEST(ServerPollerShutdown, StopQuiescesTheHeartbeatBeforeReturning) {
 //
 // An analysis session's frames carry a histogram and no image, so they never enter the texture
 // branch; the poller reads them on a branch of their own keyed on the frame's snapshot_generation
-// (lumice.h v4.30). Three things a consumer relies on, pinned against a real analysis run:
+// (lumice_base.h v4.30). Three things a consumer relies on, pinned against a real analysis run:
 //   1. a poll on a new generation publishes a fresh AnalysisPayload naming the frame — identity
 //      and echo fields, and NO entries: those are the main thread's to read under the symmetry
 //      it chooses (v4.33, analysis_panel.hpp RefreshAnalysisEntries);

@@ -3,7 +3,7 @@
 
 #include "gui/crystal_renderer.hpp"
 #include "imgui.h"
-#include "include/lumice.h"
+#include "include/lumice_editor.h"
 
 namespace lumice::gui {
 

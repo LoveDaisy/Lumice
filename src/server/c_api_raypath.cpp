@@ -1,8 +1,8 @@
-// lumice.h's single-path analysis entry point: a LUMICE_Scene and a C request in, the module's
-// result (src/raypath/single_path_analysis.hpp) out as an opaque handle holding its one JSON form
-// (src/raypath/single_path_json.hpp). A translation unit of its own, outside c_api.cpp, because it
-// belongs to the lumice_raypath_obj OBJECT library: liblumice and liblumice_testapi link that
-// library, liblumice_analytic links lumice_obj without it, and c_api.cpp is part of lumice_obj.
+// C API bridge for lumice_raypath.h, the single-path analysis entry point: a LUMICE_Scene and a C
+// request in, the module's result (src/raypath/single_path_analysis.hpp) out as an opaque handle
+// holding its one JSON form (src/raypath/single_path_json.hpp). Registered at the raypath layer,
+// and compiled into the lumice_raypath_obj OBJECT library rather than lumice_obj: liblumice and
+// liblumice_testapi link that library, and liblumice_analytic links neither.
 
 #include <algorithm>
 #include <cstddef>
@@ -13,17 +13,18 @@
 #include <vector>
 
 #include "config/config_manager.hpp"
-#include "include/lumice.h"
+#include "include/lumice_raypath.h"
 #include "raypath/single_path_analysis.hpp"
 #include "raypath/single_path_json.hpp"
-#include "server/c_api_internal.hpp"
+#include "server/c_api_engine_internal.hpp"  // lumice::capi::ToCApiErrorCode
+#include "server/c_api_scene_internal.hpp"   // SceneRoot
 #include "server/server.hpp"
 #include "util/logger.hpp"
 
 static_assert(LUMICE_SINGLE_PATH_MAX_SAMPLE_COUNT == lumice::raypath::kMaxSampleCount,
-              "lumice.h's sample-count bound is the module's");
+              "lumice_raypath.h's sample-count bound is the module's");
 static_assert(LUMICE_SINGLE_PATH_MAX_SUN_GRID_LAT_COUNT == lumice::raypath::kMaxSunGridLatCount,
-              "lumice.h and the single-path module must agree on the sun-grid bound");
+              "lumice_raypath.h and the single-path module must agree on the sun-grid bound");
 
 struct LUMICE_SinglePathResult_ {
   std::string json;  // produced once in LUMICE_AnalyzeSinglePath, never changed afterwards
@@ -95,7 +96,7 @@ LUMICE_ErrorCode Analyze(const LUMICE_Scene* scene, const LUMICE_SinglePathReque
   if (const lumice::Error err = lumice::ParseConfigManager(SceneRoot(scene), "LUMICE_AnalyzeSinglePath",
                                                            lumice::GetGlobalLogger(), nullptr, &config)) {
     WriteError(err_buf, err_size, "invalid_scene: " + err.message);
-    return MapErrorCode(err.code);
+    return lumice::capi::ToCApiErrorCode(err.code);
   }
 
   rp::SinglePathResult result;

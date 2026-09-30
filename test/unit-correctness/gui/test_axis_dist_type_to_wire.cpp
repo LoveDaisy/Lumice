@@ -10,7 +10,7 @@
 #include <gtest/gtest.h>
 
 #include "gui/gui_state.hpp"
-#include "include/lumice.h"
+#include "include/lumice_scene.h"
 
 namespace {
 

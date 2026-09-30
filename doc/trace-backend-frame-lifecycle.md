@@ -192,7 +192,7 @@ ring scene). The `ΣY/kCmfY` total-landed-weight formula
 
 ## 7. Public-API impact
 
-None. The frame lifecycle is entirely internal to `core`. `src/include/lumice.h`,
+None. The frame lifecycle is entirely internal to `core`. the `src/include/lumice_*.h` capability headers,
 `src/gui/`, and `src/server/` are unchanged and unaware of which backend or frame
 convention is in use (seam invariant 5).
 

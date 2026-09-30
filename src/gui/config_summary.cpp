@@ -16,7 +16,8 @@
 #include "gui/panels.hpp"
 #include "gui/raypath_segments.hpp"
 #include "gui/shape_scalar_domain.hpp"
-#include "include/lumice.h"
+#include "include/lumice_base.h"
+#include "include/lumice_scene.h"
 
 namespace lumice::gui {
 

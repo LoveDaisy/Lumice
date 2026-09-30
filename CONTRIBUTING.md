@@ -142,7 +142,7 @@ The release produces platform-specific packages:
   them: glibc's own dynamic-linker hwcaps mechanism (glibc ≥ 2.33) picks the `x86-64-v4` copy when
   the running CPU and glibc both qualify, and falls back to the baseline copy otherwise. The
   engine library is an internal implementation detail — its ABI changes freely between versions,
-  it is not a supported interface, and `lumice.h` does not ship with it — see
+  it is not a supported interface, and its C API headers (`src/include/lumice_*.h`) do not ship with it — see
   `doc/performance-testing.md`, "A local build is not the shipped binary"
 - **Linux ARM64**: `.tar.gz` with CLI executable (excludes GUI due to runner GPU limitations)
 - **macOS ARM64**: `.tar.gz` with CLI executable and `LumiceGUI.app` bundle

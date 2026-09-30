@@ -2,9 +2,11 @@
 """Generate a shared library's export list from the C headers that define its surface.
 
 The single authority on what each of Lumice's shared libraries exports. Every library —
-liblumice (src/include/lumice.h), liblumice_testapi (lumice.h + test/support/lumice_test_api.h)
-and liblumice_analytic (src/include/lumice_analytic.h) — gets its list from this script, called
-by the root CMakeLists.txt's lumice_apply_export_list(); nobody writes a list by hand. The same
+liblumice (the src/include/lumice_*.h capability headers and the analytic capability),
+liblumice_testapi (the same plus test/support/lumice_test_api.h) and liblumice_analytic
+(src/include/lumice_analytic.h over its core header), as cmake/export_surfaces.cmake lists them —
+gets its list from this script, called by the root CMakeLists.txt's lumice_apply_export_list();
+nobody writes a list by hand. The same
 objects (lumice_obj) go into all three libraries, so what a library exports cannot be decided by
 an attribute compiled into those objects — it is decided at link time, per library, by the list
 this script writes:

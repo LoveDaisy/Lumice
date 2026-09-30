@@ -2,8 +2,8 @@
 
 Fix commit: 5287efe (fix(capi-sentinel-overflow): guard sentinel write past max_count)
 
-Root cause: c_api.cpp wrote a sentinel at out[count] when count == max_count,
-overflowing the caller's buffer by one LUMICE_RawXyzResult (72 bytes). With
+Root cause: the C API bridge (then src/server/c_api.cpp) wrote a sentinel at
+out[count] when count == max_count, overflowing the caller's buffer by one LUMICE_RawXyzResult (72 bytes). With
 3 distinct configs in rotation, the heap layout evolved such that the overflow
 hit a live allocation at approximately lifecycle 31, causing SIGSEGV.
 

@@ -27,4 +27,4 @@ add_executable(lumice_bench
 target_include_directories(lumice_bench
   PRIVATE "${PROJ_ROOT}")
 target_link_libraries(lumice_bench
-  PRIVATE benchmark::benchmark ${CMAKE_THREAD_LIBS_INIT} lumice_obj)
+  PRIVATE benchmark::benchmark ${CMAKE_THREAD_LIBS_INIT} lumice_obj lumice_foundation_obj)

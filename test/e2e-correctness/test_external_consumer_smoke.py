@@ -85,13 +85,16 @@ def install_prefix(tmp_path_factory: pytest.TempPathFactory) -> Path:
         prefix = tmp_path_factory.mktemp("analytic") / "install"
         print(f"{_ENV} unset: installing component analytic of {build} into {prefix}")
         _run(["cmake", "--install", str(build), "--component", "analytic", "--prefix", str(prefix)])
-    assert (prefix / "include" / "lumice_analytic.h").is_file(), f"no lumice_analytic.h under {prefix}"
+    # The published header and the capability header it includes: both must be installed.
+    for name in ("lumice_analytic.h", "lumice_analytic_core.h"):
+        assert (prefix / "include" / name).is_file(), f"no {name} under {prefix}"
     return prefix.resolve()
 
 
 @pytest.fixture(scope="module")
 def expected_version(install_prefix: Path) -> int:
-    header = (install_prefix / "include" / "lumice_analytic.h").read_text(encoding="utf-8")
+    # The version macro lives in the capability header, which lumice_analytic.h includes.
+    header = (install_prefix / "include" / "lumice_analytic_core.h").read_text(encoding="utf-8")
     m = re.search(r"^#define LUMICE_ANALYTIC_API_VERSION ([0-9]+)$", header, re.MULTILINE)
     assert m, "LUMICE_ANALYTIC_API_VERSION not found in the installed header"
     return int(m.group(1))

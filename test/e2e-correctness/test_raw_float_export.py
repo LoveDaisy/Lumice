@@ -58,7 +58,7 @@ SIDECAR_KEYS = {
 
 # kNormScale, src/core/color_util.hpp. The `normalized` mode's scale is
 # kNormScale * total_pixels / emitted_energy, the absolute-mode exposure scale at
-# intensity_factor = 1 (LUMICE_RawXyzResult::emitted_energy's comment in src/include/lumice.h).
+# intensity_factor = 1 (LUMICE_RawXyzResult::emitted_energy's comment in src/include/lumice_engine.h).
 K_NORM_SCALE = np.float32(0.08)
 
 # The production colour chain's constants, copied from src/util/color_data.hpp

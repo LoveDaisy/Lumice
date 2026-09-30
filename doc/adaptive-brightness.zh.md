@@ -131,8 +131,8 @@ composite 在同一 EV 下依然可比。
 | EV 数据源 | `src/gui/app.cpp` — `SyncFromPoller()` | 将 `p99_y` + `snapshot_intensity` 映射为 `ev_auto` |
 | 模式感知曝光（单一 owner） | `src/gui/mono_exposure_scale.hpp` | `ComputeMonoExposure()`——按 `ev_mode` 分叉；供显示/导出/`.lmc` 缩略图共用 |
 | GUI 显示 | `src/gui/app_panels.cpp` | Mode 下拉、EV 读数文本 |
-| C API 字段 | `src/include/lumice.h` — `LUMICE_RawXyzResult` | `xyz_buffer`, `snapshot_intensity`, `emitted_energy` |
-| C API 字段 | `src/include/lumice.h` — `LUMICE_RenderParam` | `ev_mode`（`LUMICE_EV_MODE_RELATIVE` / `LUMICE_EV_MODE_ABSOLUTE`） |
+| C API 字段 | `src/include/lumice_engine.h` — `LUMICE_RawXyzResult` | `xyz_buffer`, `snapshot_intensity`, `emitted_energy` |
+| C API 字段 | `src/include/lumice_scene.h` — `LUMICE_RenderParam` | `ev_mode`（`LUMICE_EV_MODE_RELATIVE` / `LUMICE_EV_MODE_ABSOLUTE`） |
 
 ### 相关文档
 

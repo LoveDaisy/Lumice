@@ -1,3 +1,8 @@
+// The C ABI of the analytic capability: the functions lumice_analytic_core.h declares. No static
+// object with a side effect lives here, so this TU goes into lumice_analytic_kernel and with it into
+// every library that hosts the capability — the engine libraries as well as liblumice_analytic.
+// Anything that manages liblumice_analytic itself belongs in analytic_lib.cpp instead.
+
 #include <cassert>
 #include <cmath>
 #include <cstddef>
@@ -7,36 +12,14 @@
 #include <string>
 #include <vector>
 
-#include "analytic/analytic_callback_sink.hpp"
 #include "analytic/band_sum.hpp"
 #include "analytic/discovery.hpp"
 #include "analytic/fiber_continuation.hpp"
 #include "analytic/path_evaluation.hpp"
 #include "analytic/path_fiber.hpp"
-#include "lumice_analytic.h"
-#include "util/logger.hpp"
+#include "lumice_analytic_core.h"
 
 namespace {
-
-// This library's own sink singleton — a separate object from liblumice's GetCallbackSink(), as
-// every static here is (each shared library carries its own copy of the engine).
-std::shared_ptr<lumice::analytic::AnalyticCallbackSink>& GetAnalyticCallbackSink() {
-  static auto sink = std::make_shared<lumice::analytic::AnalyticCallbackSink>();
-  return sink;
-}
-
-// Removes the default console sink from this library's copy of GetSharedSink(). Nothing references
-// this object, and that is the point: its constructor is the one place the library goes silent, and
-// deleting it makes every engine warning (crystal.cpp, geo3d_closedform.cpp, ...) print to the
-// host's stderr again. It runs during dynamic initialisation of the library, which completes before
-// dlopen / LoadLibrary returns, so no LUMICE_ANALYTIC_* call can precede it; the linker keeps it
-// because initialiser tables are GC roots under dead-code stripping. On Windows it runs inside
-// DllMain under the loader lock; it only allocates and edits a sink list, which is safe there. The
-// engine logs nothing at static-initialisation time, so no message can slip out before it runs.
-struct SilenceDefaultConsoleSink {
-  SilenceDefaultConsoleSink() { lumice::GetSharedSink()->remove_sink(lumice::GetDefaultConsoleSink()); }
-};
-const SilenceDefaultConsoleSink kSilenceDefaultConsoleSink;
 
 // Zero-fills a caller-allocated result struct after its leading struct_size field, within the bytes
 // the caller declared (doc/analytic-api.md section 8.2) — so a caller older than the library keeps
@@ -716,37 +699,9 @@ LUMICE_ANALYTIC_ErrorCode BandSumImpl(const LUMICE_ANALYTIC_Crystal* crystal,
   return LUMICE_ANALYTIC_OK;
 }
 
-
 }  // namespace
 
 extern "C" {
-
-int LUMICE_ANALYTIC_GetApiVersion(void) {
-  return LUMICE_ANALYTIC_API_VERSION;
-}
-
-
-void LUMICE_ANALYTIC_SetLogCallback(LUMICE_ANALYTIC_LogCallback callback) {
-  auto& sink = GetAnalyticCallbackSink();
-  sink->SetCallback(callback);
-
-  // Attach the sink on first call. A sink added after Logger::set_formatter does not inherit the
-  // logger's formatter, so it gets the engine's pattern here.
-  static const bool kRegistered = [&sink] {
-    sink->set_formatter(lumice::CreateLumiceFormatter(lumice::kLogPattern));
-    lumice::GetSharedSink()->add_sink(sink);
-    return true;
-  }();
-  (void)kRegistered;
-
-  // One line through the engine's own logger, so a host can see its callback is wired up — and so
-  // this library's silence is observable at its boundary: the line must reach the callback and
-  // never the host's stderr (test/e2e-correctness/test_analytic_log_sink.py).
-  if (callback != nullptr) {
-    LOG_INFO("liblumice_analytic {}: log callback installed", LUMICE_ANALYTIC_API_VERSION);
-  }
-}
-
 
 LUMICE_ANALYTIC_ErrorCode LUMICE_ANALYTIC_EvaluatePath(const LUMICE_ANALYTIC_Crystal* crystal, const int* faces,
                                                        int face_count, double refractive_index,

@@ -13,7 +13,7 @@ namespace lumice {
 // Default composite mode string — single source of truth for the wire-format
 // default (`raypath_color` value with no explicit "mode" field) across the
 // core `from_json`/`to_json` paths and the C API JSON bridge
-// (server/c_api.cpp::JsonToRaypathColor). GUI-side defaults live in
+// (server/c_api_scene.cpp::JsonToRaypathColor). GUI-side defaults live in
 // src/gui/{gui_state,file_io}.cpp — the GUI layer cannot include this header
 // per AGENTS.md (GUI→core goes through the C API), so those literals are
 // mirrored there and kept in sync by convention. See

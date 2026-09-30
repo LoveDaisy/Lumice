@@ -8,7 +8,8 @@
 #include <vector>
 
 #include "gui/preview_renderer.hpp"
-#include "include/lumice.h"
+#include "include/lumice_base.h"
+#include "include/lumice_scene.h"
 
 namespace lumice::gui {
 
@@ -109,7 +110,7 @@ ScenePtr BuildScene(const GuiState& state, SceneIntent intent, FilterOverflowInf
 
 // Which crystal-pool slots BuildScene commits, and the id core knows each one by:
 // crystal pool index -> the scene's crystal id. The scene numbers crystals 0..n-1 in the order they
-// are added (lumice.h "sequential id out"), and BuildScene adds them in first-reference order
+// are added (lumice_scene.h "sequential id out"), and BuildScene adds them in first-reference order
 // walking layers then entries, under LUMICE_MAX_CONFIG_SCATTER_LAYERS / _ENTRIES / _CRYSTALS —
 // so the map is a pure function of the document, computed here and used by BuildScene itself,
 // which checks the id the scene hands back against it rather than deriving a second numbering.

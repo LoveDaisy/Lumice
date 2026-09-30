@@ -1,0 +1,456 @@
+#ifndef SERVER_RESULT_TYPES_H_
+#define SERVER_RESULT_TYPES_H_
+
+// The server's error vocabulary and the result types a snapshot publishes (ResultFrame and
+// everything it holds). Split out of server/server.hpp so the consumers, which produce these
+// results, depend on the types alone rather than on the engine that drives them;
+// server/server.hpp includes this header, so its includers see the same declarations.
+
+#include <array>
+#include <cstdint>
+#include <memory>
+#include <mutex>
+#include <optional>
+#include <string>
+#include <unordered_map>
+#include <variant>
+#include <vector>
+
+#include "config/render_config.hpp"  // RaypathRoiSpec::frame_config_
+#include "core/crystal.hpp"          // GeometricSymmetry
+#include "core/def.hpp"              // IdType, kInvalidId
+
+namespace lumice {
+
+// =============== Error ===============
+/**
+ * @brief Error code enumeration
+ */
+enum class ErrorCode {
+  kSuccess,         ///< Success (no error)
+  kInvalidJson,     ///< JSON format error
+  kInvalidConfig,   ///< Configuration content error
+  kMissingField,    ///< Missing required field
+  kInvalidValue,    ///< Invalid field value
+  kServerNotReady,  ///< Server not ready
+  kServerError,     ///< Server internal error
+};
+
+/**
+ * @brief Error structure for error handling
+ * @details Contains error code, message, and optional field name
+ */
+struct Error {
+  ErrorCode code;       ///< Error code
+  std::string message;  ///< Error message
+  std::string field;    ///< Field name where error occurred (optional)
+
+  /**
+   * @brief Default constructor: success state
+   */
+  Error() : code(ErrorCode::kSuccess) {}
+
+  /**
+   * @brief Constructor with error code and message
+   * @param c Error code
+   * @param msg Error message
+   * @param f Field name (optional)
+   */
+  Error(ErrorCode c, const std::string& msg, const std::string& f = "") : code(c), message(msg), field(f) {}
+
+  /**
+   * @brief Check if operation was successful
+   * @return true if success, false if error
+   */
+  bool IsSuccess() const { return code == ErrorCode::kSuccess; }
+
+  /**
+   * @brief Check if there was an error
+   * @return true if error, false if success
+   */
+  bool IsError() const { return code != ErrorCode::kSuccess; }
+
+  /**
+   * @brief Boolean conversion operator
+   * @return true if error, false if success
+   * @note Allows usage: if (err) { ... }
+   */
+  explicit operator bool() const { return IsError(); }
+
+  // Factory methods for common error types
+  static Error Success() { return Error(); }
+
+  static Error InvalidJson(const std::string& msg) { return Error(ErrorCode::kInvalidJson, msg); }
+
+  static Error InvalidConfig(const std::string& msg) { return Error(ErrorCode::kInvalidConfig, msg); }
+
+  static Error MissingField(const std::string& field) {
+    return Error(ErrorCode::kMissingField, "Missing required field: " + field, field);
+  }
+
+  static Error InvalidValue(const std::string& field, const std::string& msg) {
+    return Error(ErrorCode::kInvalidValue, msg, field);
+  }
+
+  static Error ServerNotReady(const std::string& msg = "Server is not ready") {
+    return Error(ErrorCode::kServerNotReady, msg);
+  }
+
+  static Error ServerError(const std::string& msg) { return Error(ErrorCode::kServerError, msg); }
+};
+
+// =============== Result ===============
+struct NoneResult {};
+
+/**
+ * @brief Render result containing rendered image data
+ * @details Contains metadata and pixel data for a rendered image
+ */
+struct RenderResult {
+  int renderer_id_;  ///< Renderer ID
+  int img_width_;    ///< Image width in pixels
+  int img_height_;   ///< Image height in pixels
+
+  /**
+   * @brief Image data buffer (read-only)
+   * @details
+   * - Format: RGB, 3 bytes per pixel, row-major order
+   * - Size: img_width_ * img_height_ * 3 bytes
+   * - Ownership: Managed internally by Server, user should not free
+   * - Lifetime: Valid for as long as the ResultFrame this view came from is held
+   * - Usage: For long-term storage, use CopyBuffer() to copy the data
+   *
+   * @warning Do not access this pointer outside its lifetime, undefined behavior may occur
+   */
+  const uint8_t* img_buffer_;
+
+  // The composite path's auto-EV anchor — P99 over the union of
+  // NON-ZERO UNEXPOSED (raw lane) Y values across every participating class.
+  // ONLY populated by the composite path; mono paths leave this
+  // at 0 and consumers ignore it (see doc/ev-pipeline-architecture.md §2.4
+  // for why this is a composite-only field).
+  float composite_p99_y_ = 0.0f;
+
+  /**
+   * @brief Copy image data to a new vector
+   * @return Vector containing image data (RGB format)
+   * @details Use this method when you need to store the image data for an extended period
+   */
+  std::vector<uint8_t> CopyBuffer() const {
+    if (!img_buffer_ || img_width_ <= 0 || img_height_ <= 0) {
+      return std::vector<uint8_t>();
+    }
+    size_t size = static_cast<size_t>(img_width_) * static_cast<size_t>(img_height_) * 3;
+    return std::vector<uint8_t>(img_buffer_, img_buffer_ + size);
+  }
+};
+
+struct RawXyzResult {
+  int renderer_id_;
+  int img_width_;
+  int img_height_;
+  const float* xyz_buffer_;  // Points to snapshot_xyz_ (not color-converted)
+  float snapshot_intensity_;
+  float intensity_factor_;
+  bool has_valid_data_ = false;       // True after first ConsumeData; reset on Stop
+  uint64_t snapshot_generation_ = 0;  // Increments on each new snapshot
+  int effective_pixels_ = 0;          // Non-zero pixel count for adaptive normalization
+  // Total energy the light source emitted into this snapshot, RAW (not divided
+  // by kNormScale · total_pixels the way snapshot_intensity_ above is). This is
+  // the denominator the renderer normalizes by; a consumer wanting to reproduce
+  // that normalization itself needs the raw total, not a per-pixel figure.
+  float snapshot_emitted_energy_ = 0.0f;
+  // The session's exposure anchor: P99 sky radiance per steradian, measured on the fixed
+  // full-sky anchor buffer (core/anchor_buffer.hpp) rather than on this renderer's own
+  // output. IDENTICAL on every row of a frame by construction — it describes the scene, not
+  // the renderer — and carried per row only because that is where a caller already looks.
+  float anchor_l99_sky_ = 0.0f;
+  // On-axis per-pixel solid angle of THIS renderer's view, in steradians — the factor that turns
+  // the radiance above into the units xyz_buffer_ holds. Per-renderer, unlike anchor_l99_sky_.
+  float axis_solid_angle_ = 0.0f;
+  // Lifecycle epoch (committed_epoch_ at snapshot time). Stamped when the frame is
+  // acquired; consumed by the GUI display-keying in 1.5. See
+  // doc/gui-preview-lifecycle-architecture.md §4/§5.
+  uint64_t epoch_ = 0;
+};
+
+struct StatsResult {
+  size_t ray_seg_num_;
+  size_t sim_ray_num_;
+  size_t crystal_num_;
+  // Distinct crystal ORIENTATIONS sampled, alongside the geometry count above.
+  // Not derivable from crystal_num_ — see SimData for the field-level contract.
+  size_t orientation_num_;
+};
+
+// =============== Raypath histogram (analysis run) ===============
+// Which exit directions the raypath histogram counts. Lives here rather than in
+// the consumer's own header because RaypathHistogramResult echoes it.
+enum class RaypathRoiMode : uint8_t {
+  kFullSky,  ///< every outgoing ray
+  kInFrame,  ///< rays that land inside the frame a RenderConfig describes (lens, view, visible, front)
+  kCone,     ///< rays within an angular radius of a world-space centre direction, binned by angular distance
+};
+
+// The request: which rays count. Only the fields of the chosen mode are read.
+// Lives here rather than in raypath_histogram_consumer.hpp because it is also
+// the ROI half of RaypathAnalysisRequest, the argument Server::StartRaypathAnalysis
+// takes — and that header includes this one, not the other way round.
+struct RaypathRoiSpec {
+  RaypathRoiMode mode_ = RaypathRoiMode::kFullSky;
+  // kInFrame: the frame whose lens / view / visible / front decide membership.
+  RenderConfig frame_config_;
+  // kCone: world-space centre direction (normalised at construction; a zero
+  // vector is rejected), angular radius and ring count.
+  float cone_center_[3]{ 0.0f, 0.0f, 1.0f };
+  float cone_radius_rad_ = 0.0f;
+  int cone_ring_count_ = 1;
+};
+
+// What Server::StartRaypathAnalysis takes: the ROI and the ray budget. There is
+// deliberately NO symmetry in it: the run records every chain at its finest
+// (FilterConfig::kSymNone — each face sequence its own chain), and the P/B/D
+// reduction is applied when a result is READ (ReduceRaypathHistogram,
+// raypath_histogram_consumer.hpp), so a reader can change the reduction on a
+// finished result without re-running.
+struct RaypathAnalysisRequest {
+  RaypathRoiSpec roi_;
+  // The run's own ray budget, in the scene's representation (total across every
+  // wavelength; kInfSize = unlimited). nullopt = trace the committed scene's own
+  // ray_num_, which is what every analysis run did before the request carried one.
+  // Never written back into the scene: an analysis session does not edit the
+  // document it reports on.
+  std::optional<size_t> ray_num_;
+  // The run's chain-record capacity: how many distinct finest chains it keeps
+  // exact. nullopt = ChainIdInterningTable::kDefaultCapacity on BOTH halves of
+  // the record. A value sizes both halves too — the per-worker interning table
+  // (Simulator::SetAnalysisChainId) and the server's histogram
+  // (RaypathHistogramConsumer) — and ServerImpl::StartRaypathAnalysis is the
+  // one place that derives the number both are handed, so the two bounds
+  // cannot be given different values by any caller.
+  std::optional<size_t> chain_capacity_;
+};
+
+// One MS layer of a chain: which crystal, and the face sequence through it —
+// the same triple the interning table keys on (core/chain_id_table.hpp), minus
+// the ids. As recorded the sequence is the finest (unreduced) one; after
+// ReduceRaypathHistogram it is the canonical form under the reader's symmetry.
+struct RaypathChainSegment {
+  IdType crystal_id = kInvalidId;
+  std::vector<IdType> segment;
+};
+
+// What the read-time reduction needs to know about the scene the run traced,
+// captured by Server::StartRaypathAnalysis from the committed scene and
+// published with every snapshot of the result, so a reader reduces against
+// the scene the chains were recorded on even after the next commit.
+//
+// Two kinds of fact, keyed two different ways on purpose:
+//  - crystal_params_: the axis-derived D parameters and the shape symmetry
+//    (DeriveGeometricSymmetry of the crystal's param) of each crystal DESIGN,
+//    keyed by CrystalConfig::id_. A property of the crystal alone (the same
+//    config object wherever the scene reuses it), so one entry per id is
+//    exact.
+//  - layer_multi_crystal_: whether scattering layer i holds more than one
+//    crystal, indexed by the LAYER (ms_[i]). A property of the layer, not of
+//    the crystal: one crystal id can be the only crystal of layer 0 and share
+//    layer 1 with another, so keying this by crystal id would let the layer
+//    walked last overwrite the answer for the layer walked first. A chain's
+//    segment i was recorded on layer i (simulator.cpp's hit loop walks ms_ in
+//    order and interns one segment per layer), so the display formatter
+//    indexes this by the segment's position in the chain.
+struct RaypathCrystalReduceParams {
+  int sigma_a = 0;
+  // The orientation ensemble's D / P / B conditions (detail::Is*Applicable).
+  bool d_applicable = false;
+  bool p_applicable = false;
+  bool b_applicable = false;
+  // Default admits nothing: a crystal the context does not describe is not reduced.
+  GeometricSymmetry geom{};
+};
+struct RaypathReduceContext {
+  std::unordered_map<IdType, RaypathCrystalReduceParams> crystal_params_;
+  std::vector<bool> layer_multi_crystal_;
+};
+
+struct RaypathHistogramEntry {
+  std::vector<RaypathChainSegment> chain_;  ///< root -> leaf, one per MS layer traversed
+  // The chain as text. In the recorded (finest) result this is
+  // ChainIdInterningTable::Format()'s diagnostic form and reaches no consumer;
+  // ReduceRaypathHistogram rewrites it through FormatRaypathChainDisplay, the
+  // one authority for the text a user sees (lumice_engine.h `display`).
+  std::string display_;
+  double energy_ = 0.0;  ///< Σ over counted rays of Y(wavelength) · weight
+  size_t count_ = 0;     ///< number of counted rays
+  // kCone only: energy_ split by angular-distance ring, ring_energy_.size() ==
+  // cone_ring_count_ and Σ ring_energy_ == energy_ (up to summation order).
+  // Empty in the other two modes.
+  std::vector<double> ring_energy_;
+  // How much of energy_ may belong to some OTHER chain: the consumer keeps a
+  // bounded number of rows (raypath_histogram_consumer.hpp, Space-Saving) and
+  // a row that took over an evicted row's slot inherits that row's energy as
+  // its own uncertainty. The chain's true energy lies in
+  // [energy_ - error_bound_, energy_]. 0 for a row that never took a slot over.
+  // In a reduced result it is the Σ over the finest rows the row merged.
+  double error_bound_ = 0.0;
+};
+
+struct RaypathHistogramResult {
+  // Sorted by energy_ descending, ties by display_ ascending — so equal
+  // energies still order the same way on every run.
+  std::vector<RaypathHistogramEntry> entries_;
+  // What the bounded record could not keep as a row of its own, as one bucket:
+  // the rays whose chain the producer's interning table turned away
+  // (ChainIdInterningTable::kOverflowChainId). A row the consumer evicted is
+  // not here — its content lives on in the row that took its slot, as that
+  // row's error_bound_ — so Σ entries_.energy_ + other_energy_ is the energy
+  // of every counted ray, and likewise for count_. Not a chain: it has no
+  // segments and no ring split, and the read-time reduction passes it through
+  // unchanged.
+  double other_energy_ = 0.0;
+  size_t other_count_ = 0;
+  // How many times the producers' tables turned a chain away over the run (Σ
+  // SimData::chain_id_overflow_count_): arrivals at a full table, not distinct
+  // chains (a turned-away chain is not remembered, so it counts again when it
+  // comes back) — an upper bound on the distinct chains the "other" bucket
+  // stands for, and the measure of how often the producer-side cut hit. Rows
+  // evicted on the consumer side are not chains lost — they can come back —
+  // and are not in this number.
+  size_t truncated_chain_count_ = 0;
+  // max over entries_ of error_bound_ — of THIS result's entries, so a reduced
+  // result's is over its merged rows; 0 when no row ever took a slot over,
+  // which is the "no eviction happened" signal.
+  double max_row_error_ = 0.0;
+  // Echo of the request the entries were counted under.
+  RaypathRoiMode roi_mode_ = RaypathRoiMode::kFullSky;
+  int cone_ring_count_ = 0;
+  float cone_radius_rad_ = 0.0f;
+  // The scene facts the read-time reduction and the display text need (above).
+  RaypathReduceContext reduce_ctx_;
+};
+
+using Result = std::variant<NoneResult, RenderResult, StatsResult, RaypathHistogramResult>;
+
+/**
+ * @brief One composited per-raypath colored image.
+ * @details Produced by DoSnapshot Phase 2 for every RenderConsumer with a non-zero
+ *          ColoredMask(). The pixels are held through a shared_ptr so that copying a
+ *          ResultFrame (see below) never copies image data.
+ */
+struct CompositeResult {
+  int renderer_id_ = 0;
+  int w_ = 0;
+  int h_ = 0;
+  std::shared_ptr<const std::vector<uint8_t>> rgb_;  ///< W*H*3 sRGB, owned by the frame
+  // P99 over the union of NON-ZERO UNEXPOSED (raw lane) Y values across
+  // every participating class. The composite-path auto-EV anchor consumed by the GUI
+  // (mono path keeps its xyz-derived P99). 0 when no participating class carries
+  // any positive Y.
+  float p99_y_ = 0.0f;
+};
+
+/**
+ * @brief Immutable, reference-counted publication unit of one snapshot.
+ * @details THE ownership answer of this API: a reader holding a
+ *          `shared_ptr<const ResultFrame>` holds a real share of the data's lifetime,
+ *          so the view pointers inside RenderResult/RawXyzResult/CompositeResult stay
+ *          valid for exactly as long as the frame does — no matter how many further
+ *          snapshots the server publishes meanwhile. DoSnapshot() PUBLISHES a new frame
+ *          rather than overwriting a mutable cache; the old frame dies when its last
+ *          holder drops it.
+ *
+ *          The two `*_storage_` vectors are the lifetime anchors for the mono image /
+ *          raw XYZ buffers that RenderConsumer hands over per snapshot (see
+ *          FrameBufferPool in render.hpp). The view structs keep their non-owning raw
+ *          pointer fields unchanged — `render_results_[i].img_buffer_` is
+ *          `render_storage_[i].get()`, `xyz_results_[i].xyz_buffer_` is
+ *          `xyz_storage_[i].get()`.
+ *
+ *          Copying a ResultFrame is cheap by construction (every pixel payload sits
+ *          behind a shared_ptr) — relied upon by ServerImpl::AcquireResultFrame, which
+ *          re-stamps the read-time lifecycle fields onto a shallow copy.
+ *
+ *          ⛔ OBJECT IDENTITY IS NOT FRAME IDENTITY. Never substitute a pointer/address
+ *          comparison for a `snapshot_generation_` comparison when asking "is this the
+ *          same frame as last time". Both directions of that inference are wrong, for
+ *          two different reasons at the two layers:
+ *          - C++ (`shared_ptr<const ResultFrame>` from ServerImpl::AcquireResultFrame):
+ *            two acquisitions of ONE unchanged snapshot may return the same object OR
+ *            different objects. The re-stamp path above allocates a fresh ResultFrame
+ *            whenever the read-time fields (`has_valid_data_`, `epoch_`) have moved,
+ *            even though `snapshot_generation_` and every pixel payload are identical.
+ *            => different address does NOT mean new frame.
+ *          - C (`LUMICE_ResultFrame*` from LUMICE_AcquireResultFrame): the C wrapper
+ *            heap-allocates unconditionally on every call, so two acquisitions NEVER
+ *            share an address even when they wrap the very same C++ object.
+ *            => address equality is useless there; it is always false. Worse, an
+ *            address freed by LUMICE_ReleaseResultFrame can be handed back out by a
+ *            later allocation, so an address match can even be accidentally true
+ *            across two genuinely different frames.
+ *          `snapshot_generation_` is the only sameness test.
+ */
+struct ResultFrame {
+  std::vector<RenderResult> render_results_;
+  std::vector<RawXyzResult> xyz_results_;
+  std::vector<CompositeResult> composite_results_;
+  std::optional<StatsResult> stats_result_;
+  // The analysis run's result (Server::StartRaypathAnalysis). Set only when the
+  // consumer set that produced this snapshot held a RaypathHistogramConsumer,
+  // i.e. only for frames of an analysis session; a render session's frame has no
+  // such consumer and leaves it nullopt — there is no cross-snapshot cache that a
+  // stale value could survive in.
+  std::optional<RaypathHistogramResult> raypath_histogram_result_;
+  // The read-time reduction of raypath_histogram_result_, memoized per symmetry so the two
+  // C API reads a consumer makes per (frame, symmetry) — the row count, then the rows — cost
+  // one reduction rather than two (ReduceRaypathHistogram is O(rows), and an unreduced
+  // multi-scatter record has hundreds of thousands).
+  //
+  // ONE SLOT PER SYMMETRY, not one global slot: symmetry is a 3-bit bitmask (P|B|D, 0..7), so
+  // this is a small bounded array, not "one per caller". A single shared slot lets two real
+  // callers with different, both-fixed-for-their-lifetime symmetries starve each other:
+  // server_poller.cpp polls this frame at a fixed symmetry=0 (it never reads entry_count, only
+  // present/roi_mode/cone_*/snapshot_generation — see its own comment — but
+  // LUMICE_FrameGetRaypathAnalysisInfo still has to fill entry_count, so it still triggers a
+  // reduction), while the GUI main thread reads the same frame at whatever symmetry the
+  // panel's checkboxes name (analysis_panel.cpp::RefreshAnalysisEntries). With one slot, each
+  // read evicted the other's cached result, turning "reduce once per (frame, symmetry)" back
+  // into "reduce on every poll and every refresh" — measured in the hundreds of milliseconds
+  // to low seconds on a multi-scatter scene with hundreds of thousands of finest chains. Eight
+  // slots (one per possible bitmask value) means the poller's fixed symmetry and the GUI's
+  // currently-selected symmetry each keep their own memo and never evict each other.
+  //
+  // The reduction itself runs OUTSIDE the mutex (see ReducedRaypathHistogramOf): holding the
+  // lock for the ~1.6s worst-case computation would block every other reader of this frame —
+  // including the render/GUI thread — for that long. A race where two threads miss the same
+  // empty slot at once recomputes twice and keeps whichever result is published first; both
+  // are equal (the reduction is a pure function of the frame + symmetry), so this trades a
+  // rare duplicate computation for never blocking a reader on another reader's compute.
+  //
+  // Behind a shared_ptr so the shallow copies AcquireResultFrame makes share it; guarded by
+  // its own mutex since frames are read from any thread. Allocated by DoSnapshot alongside the
+  // result; null on a render frame.
+  struct RaypathReduceCache {
+    std::mutex mutex_;
+    std::array<std::shared_ptr<const RaypathHistogramResult>, 8> slots_;
+  };
+  std::shared_ptr<RaypathReduceCache> raypath_reduce_cache_;
+
+  // Lifetime anchors, parallel to render_results_ / xyz_results_.
+  std::vector<std::shared_ptr<const uint8_t[]>> render_storage_;
+  std::vector<std::shared_ptr<const float[]>> xyz_storage_;
+
+  uint64_t snapshot_generation_ = 0;  ///< snapshot_generation_ this frame was built under
+  uint64_t epoch_ = 0;                ///< committed_epoch_ as seen by the reader (see AcquireResultFrame)
+  bool has_valid_data_ = false;       ///< has_ever_consumed_ as seen by the reader
+
+  /// The session's exposure anchor for this snapshot: the P99 sky radiance, per steradian
+  /// (core/anchor_buffer.hpp). A FRAME-level scalar, held once here and broadcast into every
+  /// row of xyz_results_ on the way out — the AnchorConsumer computes it exactly once per
+  /// snapshot and this is the only place it is read from, so no consumer of the API can end
+  /// up anchoring to a second, almost-identical number.
+  float anchor_l99_sky_ = 0.0f;
+};
+
+}  // namespace lumice
+
+#endif  // SERVER_RESULT_TYPES_H_

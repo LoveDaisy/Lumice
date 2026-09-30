@@ -29,7 +29,11 @@
 #endif
 // clang-format on
 
-#include "lumice.h"
+#include "lumice_base.h"
+#include "lumice_engine.h"
+#include "lumice_raypath.h"
+#include "lumice_render.h"
+#include "lumice_scene.h"
 #if defined(LUMICE_ENGINE_DELAY_LOADED)
 #include "launcher/win_engine_loader.h"
 #endif
@@ -805,12 +809,12 @@ void SaveRawFloatResults(LUMICE_Server* server, const LUMICE_Scene* scene, const
     // The only operator between the accumulator and the file, and only under kNormalized:
     //   scale = kNormScale * total_pixels / emitted_energy
     // which is the absolute-mode exposure scale at intensity_factor = 1 exactly as
-    // LUMICE_RawXyzResult::emitted_energy documents it (src/include/lumice.h, "a consumer can
+    // LUMICE_RawXyzResult::emitted_energy documents it (src/include/lumice_engine.h, "a consumer can
     // reproduce that scale as ...") and as RenderConsumer::ExposureScale computes it. Hand-copied
     // here -- not extracted into a shared core/color_util.hpp free function -- because this CLI
     // feature is deliberately kept out of src/core/ entirely; if that comment or that function
     // ever changes the formula, this line changes with them, same as the existing
-    // config_manager.cpp/c_api.cpp dual-decoder pattern this mirrors.
+    // config_manager.cpp/c_api_scene.cpp dual-decoder pattern this mirrors.
     const float* payload = row.xyz_buffer;
     if (mode == RawExportMode::kNormalized) {
       const auto scale =
@@ -2282,7 +2286,7 @@ void HandleAnalyzeSigint(int /*signal*/) {
 // defaults already applied, the lens and visible-range enums already LUMICE_* constants — and
 // the copy below is field for field, with no parsing, no default and no enum table of this
 // CLI's own. `render_id` is matched against LUMICE_RenderParam::id, which is NOT the array
-// index it is read at (lumice.h, at the getter): a document's render[] keeps the ids it
+// index it is read at (lumice_scene.h, at the getter): a document's render[] keeps the ids it
 // declared, so the entries are enumerated and compared. On failure `error` says what, and the
 // caller exits 1 before the analysis starts.
 bool BuildFrameViewFromScene(const LUMICE_Scene* scene, std::optional<int> render_id, LUMICE_AnnotationView* out,
@@ -2514,7 +2518,7 @@ int RunAnalyze(const AnalyzeOptions& opts) {
 
   // Ctrl-C ends the run and still writes what it accumulated: the handler only raises the
   // flag; the loop below sees it, stops the server (the frame published after
-  // LUMICE_StopServer returns carries the histogram consumed up to the stop — lumice.h v4.34)
+  // LUMICE_StopServer returns carries the histogram consumed up to the stop — lumice_base.h v4.34)
   // and falls through to the same final write a completed run makes. Installed after the run
   // is started so a Ctrl-C during setup keeps the default disposition (exit, nothing written).
   g_analyze_stop_requested.store(false, std::memory_order_relaxed);

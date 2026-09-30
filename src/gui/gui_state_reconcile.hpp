@@ -1,7 +1,7 @@
 #ifndef LUMICE_GUI_STATE_RECONCILE_HPP
 #define LUMICE_GUI_STATE_RECONCILE_HPP
 
-#include "include/lumice.h"  // LUMICE_Server (opaque handle in ApplyGuiEffects signature)
+#include "include/lumice_base.h"  // LUMICE_Server (opaque handle in ApplyGuiEffects signature)
 
 // GUI-state reconciler (scrum-gui-state-reconcile T0 geodetics). Blueprint doc:
 // doc/gui-state-governance.md. Field-tier registry: gui_state_tiers.hpp.

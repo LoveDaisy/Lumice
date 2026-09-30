@@ -4,7 +4,7 @@
 #include <set>
 #include <string>
 
-#include "include/lumice.h"
+#include "include/lumice_base.h"
 
 // LUMICE_GetEngineIsaLevel() is the engine's own run-time answer to "which ISA tier was I
 // compiled for", the value the CLI's [BENCHMARK] `isa` key reports. This test pins the two

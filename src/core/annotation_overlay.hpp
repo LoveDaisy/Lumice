@@ -90,7 +90,7 @@ enum LabelKind : int {
 // horizon — deliberately does NOT appear below; see SunHorizonDir for why.
 //
 // The numeric values are part of the C API surface (LUMICE_ANNOTATION_MARKER_*) and are pinned to
-// it by static_assert at the one place that converts between them, c_api.cpp's ReadMarkerIdList.
+// it by static_assert at the one place that converts between them, c_api_render.cpp's ReadMarkerIdList.
 enum MarkerId : int {
   kMarkerZenith = 0,
   kMarkerNadir = 1,

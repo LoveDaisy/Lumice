@@ -2,7 +2,7 @@
 
 Locates the library purely by the install-tree layout doc/analytic-api.md section 8.7 fixes as a
 contract, via the environment variable it names (LUMICE_ANALYTIC_INSTALL_DIR). Uses nothing from
-lumice.h or test/e2e/capi_runner.py: this is the *published* engine, a distinct copy of every
+the engine's C API headers or test/e2e/capi_runner.py: this is the *published* engine, a distinct copy of every
 static from the test-only liblumice_testapi (section 2.6).
 
 symmetry_semantics: none — this fixture compares no face sequence across a symmetry

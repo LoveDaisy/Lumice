@@ -10,9 +10,24 @@ Lumice provides a complete C interface for easy integration with other languages
 
 ### Header File
 
+Lumice's C API is split by capability into six headers, one per capability; include the ones
+declaring what you use. There is no umbrella header.
+
+| Header | Holds |
+|---|---|
+| `lumice_base.h` | Symbol visibility, `LUMICE_API_VERSION`, opaque handles, error codes, logging, product version. Every other header includes it |
+| `lumice_scene.h` | Scene description value types and the `LUMICE_Scene` build / JSON API |
+| `lumice_render.h` | Renderer parameters, annotation, projection |
+| `lumice_editor.h` | Editor support: key names, legality checks, crystal mesh, raypath text validation, Miller conversion |
+| `lumice_engine.h` | Server lifecycle, committing a scene, result frames, raypath analysis run, trace backend selection |
+| `lumice_raypath.h` | Single-path analysis (opaque result + JSON) |
+
 ```c
-#include "lumice.h"
+#include "lumice_engine.h"  // includes lumice_base.h, lumice_render.h and lumice_scene.h
 ```
+
+The examples below need `lumice_engine.h` (server, commit, results) and `lumice_scene.h`
+(building a scene); the first already includes the second.
 
 ### Link Library
 
@@ -29,7 +44,7 @@ Link against the `lumice` static library.
 ### Constants
 
 ```c
-#define LUMICE_API_VERSION 448        // ABI version, encoded major*100 + minor (v4.48)
+#define LUMICE_API_VERSION 450        // ABI version, encoded major*100 + minor (v4.50)
 #define LUMICE_MAX_RENDER_RESULTS 16  // Maximum capacity of the render result array
 #define LUMICE_MAX_STATS_RESULTS 1    // Maximum capacity of the stats result array
 ```
@@ -412,7 +427,7 @@ Two deliberate exceptions:
   the reporting point differs.
 
 Separately from the core's own rules, the C API enforces per-kind soft capacity ceilings
-(`LUMICE_MAX_CONFIG_*`, listed in `lumice.h`) at `Add*` / parse time — e.g. at most
+(`LUMICE_MAX_CONFIG_*`, listed in `lumice_scene.h`) at `Add*` / parse time — e.g. at most
 `LUMICE_MAX_CONFIG_COLOR_REFS` match refs on one color class. Exceeding one returns
 `LUMICE_ERR_INVALID_CONFIG`.
 
@@ -1119,7 +1134,7 @@ allocation, no storage handle, designed to be called per frame from a hover test
 ### Basic Example
 
 ```c
-#include "lumice.h"
+#include "lumice_engine.h"
 #include <stdio.h>
 
 int main() {
@@ -1183,7 +1198,7 @@ int main() {
 ### Full Example (with Error Handling)
 
 ```c
-#include "lumice.h"
+#include "lumice_engine.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>

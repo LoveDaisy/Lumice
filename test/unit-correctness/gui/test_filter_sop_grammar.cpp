@@ -20,7 +20,7 @@
 
 #include "gui/gui_state.hpp"
 #include "gui/raypath_segments.hpp"
-#include "include/lumice.h"
+#include "include/lumice_editor.h"
 
 namespace lumice::gui {
 namespace {

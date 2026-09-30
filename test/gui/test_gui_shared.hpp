@@ -15,7 +15,7 @@
 #include "imgui.h"
 #include "imgui_te_context.h"
 #include "imgui_te_engine.h"
-#include "include/lumice.h"
+#include "include/lumice_base.h"
 #include "test_screenshot.hpp"
 
 namespace gui = lumice::gui;

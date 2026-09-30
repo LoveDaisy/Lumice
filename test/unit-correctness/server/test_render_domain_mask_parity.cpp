@@ -33,7 +33,9 @@
 #include <vector>
 
 #include "core/annotation_overlay.hpp"
-#include "include/lumice.h"
+#include "include/lumice_base.h"
+#include "include/lumice_render.h"
+#include "include/lumice_scene.h"
 #include "server/c_api_internal.hpp"  // ToAnnotationViewSnapshot
 #include "support/lumice_test_api.h"
 #include "support/thread_budget.hpp"

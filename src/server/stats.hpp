@@ -4,7 +4,7 @@
 #include <cstddef>
 
 #include "server/consumer.hpp"
-#include "server/server.hpp"
+#include "server/result_types.hpp"
 
 namespace lumice {
 

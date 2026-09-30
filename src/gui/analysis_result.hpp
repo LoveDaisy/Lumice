@@ -21,7 +21,8 @@
 
 #include <vector>
 
-#include "include/lumice.h"
+#include "include/lumice_base.h"
+#include "include/lumice_engine.h"
 
 namespace lumice::gui {
 

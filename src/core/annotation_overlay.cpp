@@ -4,10 +4,10 @@
 #include <cmath>
 #include <cstdio>
 
+#include "core/camera_rotation.hpp"
 #include "core/geo3d.hpp"
 #include "core/math.hpp"
 #include "core/parallel_rows.hpp"
-#include "core/scatter_accum.hpp"  // MakeCameraRotation
 
 namespace lumice::annotation {
 

@@ -9,6 +9,7 @@
 #include <variant>
 #include <vector>
 
+#include "core/crystal_param.hpp"
 #include "core/def.hpp"
 
 namespace lumice {
@@ -46,10 +47,12 @@ struct ComplexFilterParam {
 using FilterParam = std::variant<SimpleFilterParam, ComplexFilterParam>;
 
 struct FilterConfig {
-  static constexpr uint8_t kSymNone = 0;
-  static constexpr uint8_t kSymP = 1;
-  static constexpr uint8_t kSymB = 2;
-  static constexpr uint8_t kSymD = 4;
+  // Compatibility aliases: the bits are defined once, in core (lumice::sym, core/crystal_param.hpp),
+  // because core consumes them and must not include config.
+  static constexpr uint8_t kSymNone = sym::kSymNone;
+  static constexpr uint8_t kSymP = sym::kSymP;
+  static constexpr uint8_t kSymB = sym::kSymB;
+  static constexpr uint8_t kSymD = sym::kSymD;
 
   enum Action {
     kFilterIn,

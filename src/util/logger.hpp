@@ -53,7 +53,7 @@ inline std::shared_ptr<spdlog::sinks::stderr_color_sink_mt>& GetDefaultConsoleSi
 //
 // It starts with GetDefaultConsoleSink() attached, and every binary linking the engine keeps it —
 // with one exception: liblumice_analytic removes it while the library loads, so that library is
-// silent until its host installs a callback (src/analytic/analytic_api.cpp,
+// silent until its host installs a callback (src/analytic/analytic_lib.cpp,
 // doc/analytic-api.md section 6). Each shared library has its own copy of this singleton, so that
 // removal never reaches liblumice, the CLI or the GUI.
 inline std::shared_ptr<spdlog::sinks::dist_sink_mt>& GetSharedSink() {

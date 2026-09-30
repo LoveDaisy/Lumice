@@ -167,18 +167,6 @@ class ServerImpl {
   }
 
  private:
-  // Parses through the shared ParseConfigManager (server.hpp), logging to this server's logger.
-  // A rejected document is a return code, not a state: on failure `*out` and every other member,
-  // status_ included, are untouched. (CommitConfig used to write status_ = kError here. No
-  // projection ever read that value as anything but "not running", and while a session's workers
-  // were still tracing it made GetSimLifecycle report the run as over until the next Stop()/Start()
-  // rewrote it — a lie about a live run, and one the analysis path now reaches on purpose: a
-  // rejected scene over an analysis in flight must leave that analysis readable as in flight.)
-  Error ParseConfigManager(const nlohmann::json& config_json, const char* caller,
-                           const std::function<void(const ConfigManager&)>& validate, ConfigManager* out) {
-    return lumice::ParseConfigManager(config_json, caller, logger_, validate, out);
-  }
-
   // Single-engine orchestration — the GPU route's render group is exactly one
   // Simulator. The legacy kDefaultSimulatorCnt = PhysicalCoreCount() was removed
   // along with the 12-worker queue-per-Simulator pattern. num_workers sizes the CPU
@@ -432,7 +420,7 @@ class ServerImpl {
   // reader, and the old frame dies when its last holder drops it.
   //
   // INVARIANT: never null. The constructor publishes an all-zero frame, so every reader
-  // dereferences unconditionally — that is what makes lumice.h's "all-zero struct if no
+  // dereferences unconditionally — that is what makes lumice_engine.h's "all-zero struct if no
   // snapshot has been taken yet" promise structural rather than a per-call null branch.
   std::shared_ptr<const ResultFrame> published_frame_;
 
@@ -832,7 +820,7 @@ ServerImpl::ServerImpl(int num_workers, uint32_t sim_seed, BackendKind preferred
   // Publish an empty frame up front so published_frame_ is never null. A
   // reader that arrives before the first snapshot then gets an honest "nothing yet"
   // (no results, nullopt stats) instead of forcing every read path to carry a null
-  // branch — and lumice.h's "all-zero struct if no snapshot has been taken yet" promise
+  // branch — and lumice_engine.h's "all-zero struct if no snapshot has been taken yet" promise
   // for the cached-stats read holds by construction.
   StorePublished(std::make_shared<const ResultFrame>());
   preferred_backend_.store(preferred_backend, std::memory_order_release);
@@ -1241,7 +1229,14 @@ Error ServerImpl::CommitConfig(const nlohmann::json& config_json, bool* out_reus
     class_table = BuildColorClassTable(parsed.raypath_color_, parsed.scene_, color_gate_table);
     composite_mode = ParseCompositeMode(parsed.raypath_color_.mode_);
   };
-  if (const Error err = ParseConfigManager(config_json, "CommitConfig", build_colour_tables, &new_config)) {
+  // Parsed through the shared lumice::ParseConfigManager (server.hpp), logging to this server's
+  // logger. A rejected document is a return code, not a state: on failure `new_config` and every
+  // member, status_ included, are untouched. (CommitConfig used to write status_ = kError here. No
+  // projection ever read that value as anything but "not running", and while a session's workers
+  // were still tracing it made GetSimLifecycle report the run as over until the next Stop()/Start()
+  // rewrote it — a lie about a live run, and one the analysis path now reaches on purpose: a
+  // rejected scene over an analysis in flight must leave that analysis readable as in flight.)
+  if (const Error err = ParseConfigManager(config_json, "CommitConfig", logger_, build_colour_tables, &new_config)) {
     return err;
   }
 
@@ -1463,7 +1458,7 @@ Error ServerImpl::ContinueRun(size_t additional_ray_num) {
   // within one consumer pass, so the bound is a guard against a drain that never publishes,
   // not a latency anyone waits out — code review round 1, Major #1: proceeding anyway on
   // timeout silently dropped the undrained batches while this function's own doc comment (and
-  // lumice.h's) promises unconditionally that "no traced ray is dropped". Erroring out instead
+  // lumice_engine.h's) promises unconditionally that "no traced ray is dropped". Erroring out instead
   // keeps that promise true in every code path: a caller that hits this either gets the drain it
   // asked for, or a rejected call that (per the same doc comment) changed nothing — never a
   // silent LUMICE_OK sitting on top of a quiet loss. 5s is a generous multiple of a normal
@@ -1565,7 +1560,7 @@ Error ServerImpl::StartRaypathAnalysis(const nlohmann::json& scene_json, const R
   // consumer constructor's, and it degrades with a log line rather than failing — the
   // request still names a well-defined ROI.
   ConfigManager new_config;
-  if (const Error err = ParseConfigManager(scene_json, "StartRaypathAnalysis", nullptr, &new_config)) {
+  if (const Error err = ParseConfigManager(scene_json, "StartRaypathAnalysis", logger_, nullptr, &new_config)) {
     return err;
   }
   // The scene facts the read-time reduction needs, from the scene this run will trace — the

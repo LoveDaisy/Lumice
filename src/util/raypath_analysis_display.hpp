@@ -8,7 +8,7 @@
 // two implementations being kept in step.
 //
 // Lives in src/util/ under the shape AGENTS.md admits there: pure, stateless, no core or config
-// type — it reads only lumice.h types, like util/result_frame.hpp beside it. Every function is
+// type — it reads only C API types, like util/result_frame.hpp beside it. Every function is
 // `inline` on purpose: src/gui/ and its test targets link `lumice` / `lumice_gui_obj`, never
 // `lumice_obj`, and the shared build's -fvisibility=hidden leaves a .cpp definition here with no
 // exported symbol for them to reach (src/gui/color_space.hpp records the same lesson).
@@ -27,7 +27,8 @@
 #include <utility>
 #include <vector>
 
-#include "lumice.h"
+#include "lumice_base.h"
+#include "lumice_engine.h"
 #include "util/sky_direction.hpp"
 
 namespace lumice {

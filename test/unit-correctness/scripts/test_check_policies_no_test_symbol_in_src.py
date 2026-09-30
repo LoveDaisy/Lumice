@@ -12,7 +12,7 @@ the first thing a reader saw.
 
 The other reason is the one the issue named: a policy gate's red state has to be
 demonstrated, not assumed. The temporary "write a `LUMICE_TEST_` line into
-lumice.h and watch the checker go red" probe is done once by hand and then
+a capability header and watch the checker go red" probe is done once by hand and then
 undone; this file is that probe made permanent.
 """
 from __future__ import annotations
@@ -49,11 +49,11 @@ def _violations(src_root: Path, body: str, name: str = "scratch.cpp") -> list:
 
 
 def test_declaration_in_public_header_is_flagged(src_root: Path) -> None:
-    """The exact shape the rule exists for: a hook declared in lumice.h."""
+    """The exact shape the rule exists for: a hook declared in a public C API header."""
     out = _violations(
         src_root,
-        "#ifndef LUMICE_H_\nvoid LUMICE_TEST_ComputeRenderDomainMask(void);\n#endif\n",
-        name="include/lumice.h",
+        "#ifndef LUMICE_ENGINE_H_\nvoid LUMICE_TEST_ComputeRenderDomainMask(void);\n#endif\n",
+        name="include/lumice_engine.h",
     )
     assert len(out) == 1
     assert out[0].rule == RULE

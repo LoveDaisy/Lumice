@@ -1,0 +1,4 @@
+# Existing layer inversions (`<includer> -> <included>`, src/-relative), grandfathered by the
+# layer-inversion rule in scripts/check_policies.py. SHRINK ONLY: never add an entry — move the
+# shared piece to a lower layer instead. An entry whose edge no longer exists fails the check
+# (STALE), so fixing an inversion means deleting its line here in the same change.

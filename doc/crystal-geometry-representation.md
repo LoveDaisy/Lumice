@@ -191,7 +191,7 @@ Precisely, as-built after PR #214 (do not over-read "as-built" as "every §1 art
   per-face representation carries face vertices (`kCrystalGeomMaxVtxPerFace`) with
   `poly_face_n_` no longer populated from a back-derived table. The **two-hop face-number
   reversal is deleted** — `FillPerFaceTopology` and `poly_face_tri_id_` survive only as
-  historical comments (`c_api.cpp` / `crystal.hpp`), not live code. The `C(n,3)` solver + dedup
+  historical comments (`c_api_crystal_mesh.cpp` / `crystal.hpp`), not live code. The `C(n,3)` solver + dedup
   no longer feed the prism/pyramid factories. GUI required zero changes (C-API boundary).
 - **Retained-then-deleted.** At PR #214 landing, `Crystal::PolygonFaceOfTri` (triangle →
   polygon-face) was still live: the triangle mesh was still generated (fan-triangulated from the

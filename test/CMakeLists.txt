@@ -244,9 +244,10 @@ add_executable(unit_correctness_test
   "${PROJ_TEST_DIR}/unit-correctness/backend/test_ray_allocation_backends.cpp"
   # analytic/: liblumice_analytic's evaluator kernel, checked against independent physics. The
   # kernel's objects come from the lumice_analytic_kernel OBJECT library linked below (src/analytic/
-  # is outside lumice_obj); the C ABI wrapper (analytic_api.cpp) is not linked, since its load-time
-  # initialiser silences the engine's console sink for the whole process — the wrapper is exercised
-  # through ctypes in test/e2e-correctness/test_analytic_evaluate_path.py.
+  # is outside lumice_obj), the capability's C ABI (analytic_capi.cpp) among them; the library's
+  # management TU (analytic_lib.cpp) is not linked, since its load-time initialiser silences the
+  # engine's console sink for the whole process — it is exercised through ctypes in
+  # test/e2e-correctness/test_analytic_log_sink.py.
   "${PROJ_TEST_DIR}/unit-correctness/analytic/test_path_evaluation.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/analytic/test_jet.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/analytic/test_so3.cpp"
@@ -263,7 +264,7 @@ add_executable(unit_correctness_test
   # links the analytic kernels.
   "${PROJ_TEST_DIR}/unit-correctness/analytic/test_li_parity.cpp"
   # raypath/: the single-path analysis module (scene config -> the analytic kernel above -> fibers,
-  # per-pose detail, the sun-direction grid, its JSON form, its lumice.h entry point), from the
+  # per-pose detail, the sun-direction grid, its JSON form, its lumice_raypath.h entry point), from the
   # lumice_raypath_obj OBJECT library linked below — the same objects liblumice carries.
   "${PROJ_TEST_DIR}/unit-correctness/raypath/test_single_path_analysis.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/raypath/test_single_path_json.cpp"
@@ -271,7 +272,7 @@ add_executable(unit_correctness_test
 target_include_directories(unit_correctness_test
   PRIVATE ${PROJ_TEST_DIR})
 target_link_libraries(unit_correctness_test
-  PRIVATE GTest::gtest ${CMAKE_THREAD_LIBS_INIT} lumice_obj lumice_analytic_kernel lumice_raypath_obj)
+  PRIVATE GTest::gtest ${CMAKE_THREAD_LIBS_INIT} lumice_obj lumice_foundation_obj lumice_analytic_kernel lumice_raypath_obj)
 # The configure-time tier, for test_c_api_engine_isa_level.cpp to hold the engine's run-time
 # answer against. A test-side definition rather than a read of the engine's own
 # LUMICE_ISA_LEVEL_STR: that macro is PRIVATE to lumice_obj on purpose (root CMakeLists.txt,
@@ -294,6 +295,31 @@ add_test(NAME "LumiceUnitCorrectnessTest" COMMAND unit_correctness_test
   "${CMAKE_CURRENT_BINARY_DIR}"
   "${CMAKE_SOURCE_DIR}")
 set_tests_properties("LumiceUnitCorrectnessTest" PROPERTIES LABELS "unit-correctness")
+
+# --------------------------------------------------------------------------------------------------
+# capi_header_self_containment_test (unit-correctness): every engine surface header compiles when it
+# is the ONLY thing a translation unit includes — once as C, once as C++.
+# The headers are the engine's export surface (cmake/export_surfaces.cmake), so a new capability
+# header is covered by being listed there. The include path is src/include/ alone, the directory a
+# consumer of the C API has, so a header that leans on src/ (or on an include its includer happened
+# to make first) fails to build here. The check is the compile: the executable only returns 0, and
+# is registered with ctest so a build that skipped it is visible as a missing test.
+set(_self_contained_dir "${CMAKE_CURRENT_BINARY_DIR}/capi_header_self_containment")
+set(_self_contained_sources "")
+foreach(_rel IN LISTS LUMICE_ENGINE_SURFACE_HEADERS)
+  get_filename_component(_name "${_rel}" NAME_WE)
+  get_filename_component(_file "${_rel}" NAME)
+  foreach(_ext IN ITEMS c cpp)
+    set(_tu "${_self_contained_dir}/${_name}.${_ext}")
+    file(CONFIGURE OUTPUT "${_tu}" CONTENT "#include \"${_file}\"\n" @ONLY)
+    list(APPEND _self_contained_sources "${_tu}")
+  endforeach()
+endforeach()
+file(CONFIGURE OUTPUT "${_self_contained_dir}/main.c" CONTENT "int main(void) { return 0; }\n" @ONLY)
+add_executable(capi_header_self_containment_test ${_self_contained_sources} "${_self_contained_dir}/main.c")
+target_include_directories(capi_header_self_containment_test PRIVATE "${CMAKE_SOURCE_DIR}/src/include")
+add_test(NAME "LumiceCapiHeaderSelfContainment" COMMAND capi_header_self_containment_test)
+set_tests_properties("LumiceCapiHeaderSelfContainment" PROPERTIES LABELS "unit-correctness")
 
 # --------------------------------------------------------------------------------------------------
 # parity_test (parity-cross-backend layer; label abbreviated per §5)
@@ -337,7 +363,7 @@ endif()
 target_include_directories(parity_test
   PRIVATE ${PROJ_TEST_DIR})
 target_link_libraries(parity_test
-  PRIVATE GTest::gtest ${CMAKE_THREAD_LIBS_INIT} lumice_obj)
+  PRIVATE GTest::gtest ${CMAKE_THREAD_LIBS_INIT} lumice_obj lumice_foundation_obj)
 set_target_properties(parity_test PROPERTIES
   BUILD_RPATH "$<TARGET_FILE_DIR:GTest::gtest>")
 
@@ -378,7 +404,7 @@ add_executable(golden_analytic_test
 target_include_directories(golden_analytic_test
   PRIVATE ${PROJ_TEST_DIR})
 target_link_libraries(golden_analytic_test
-  PRIVATE GTest::gtest ${CMAKE_THREAD_LIBS_INIT} lumice_obj)
+  PRIVATE GTest::gtest ${CMAKE_THREAD_LIBS_INIT} lumice_obj lumice_foundation_obj)
 if(APPLE)
   target_link_libraries(golden_analytic_test PRIVATE "-framework Metal" "-framework Foundation")
 endif()
@@ -525,7 +551,7 @@ if(BUILD_GUI)
   #
   # gui_test does NOT need this exemption — it links plain `lumice` (see test/gui/CMakeLists.txt).
   target_link_libraries(gui_unit_test
-    PRIVATE GTest::gtest ${CMAKE_THREAD_LIBS_INIT} lumice_gui_obj lumice_obj)
+    PRIVATE GTest::gtest ${CMAKE_THREAD_LIBS_INIT} lumice_gui_obj lumice_obj lumice_foundation_obj)
   set_target_properties(gui_unit_test PROPERTIES
     BUILD_RPATH "$<TARGET_FILE_DIR:GTest::gtest>")
 
@@ -616,7 +642,7 @@ if(BUILD_GUI)
   # composition chain that cross-checks the GUI against core's own primitives needs the internal
   # symbols that liblumice.dylib's -fvisibility=hidden does not export.
   target_link_libraries(composition_correctness_test
-    PRIVATE GTest::gtest ${CMAKE_THREAD_LIBS_INIT} lumice_gui_obj lumice_obj)
+    PRIVATE GTest::gtest ${CMAKE_THREAD_LIBS_INIT} lumice_gui_obj lumice_obj lumice_foundation_obj)
   set_target_properties(composition_correctness_test PROPERTIES
     BUILD_RPATH "$<TARGET_FILE_DIR:GTest::gtest>")
 

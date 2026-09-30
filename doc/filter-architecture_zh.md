@@ -247,7 +247,7 @@ P99.5 在 poller 线程中计算（`server_poller.cpp::PollOnce`），基于 sta
 | Simulator 端 filter 检查（Design A 门控） | `src/core/simulator.cpp` — `CollectData()` |
 | 空批次 consumer 契约（Design A） | `src/server/render.cpp` — `RenderConsumer::Consume()` |
 | FilterSpec 算法接口 | `src/core/filter_spec.hpp` |
-| C API anchor 字段（F1 anchor lane） | `src/include/lumice.h` — `LUMICE_RawXyzResult.anchor_p995_y` / `anchor_snapshot_intensity` |
+| C API anchor 字段（F1 anchor lane） | `src/include/lumice_engine.h` — `LUMICE_RawXyzResult.anchor_p995_y` / `anchor_snapshot_intensity` |
 | Filter JSON schema | `doc/configuration.md` |
 | Raypath 语义、P/B/D filter 开关 | `doc/raypath-symmetry.md` |
 | 自适应亮度 Off 模式、可加性 | `doc/adaptive-brightness.md` |

@@ -11,7 +11,7 @@
 #include "gui/slider_format_rules.hpp"
 #include "gui/theme.hpp"
 #include "imgui.h"
-#include "include/lumice.h"
+#include "include/lumice_render.h"
 #include "util/fatal.hpp"
 
 namespace lumice::gui {

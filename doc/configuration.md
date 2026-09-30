@@ -906,7 +906,7 @@ this, because the two spellings never meant different things.
 
 The C API field was renamed to match (`LUMICE_RenderParam.angular_dist` / `angular_dist_count`,
 was `central_grid` / `central_grid_count`). That is a source-compatibility break with no layout
-change; see the BREAKING note at `LUMICE_API_VERSION` in `src/include/lumice.h`.
+change; see the BREAKING note at `LUMICE_API_VERSION` in `src/include/lumice_base.h`.
 
 **What the four line families draw, and what they ignore**
 
@@ -1462,7 +1462,7 @@ import-warning popup rather than only writing to its log panel. Both name the sa
 which field, why it was refused, and what angle was kept — they just say it differently.
 
 The command-line config reader and the C API (`src/config/crystal_config.cpp`,
-`src/server/c_api.cpp`):
+`src/server/c_api_scene.cpp`):
 ```text
 Crystal shape "upper_indices": [1,0,-1,1] is not a usable wedge angle (invalid, offending
 index -1); keeping 28.00.

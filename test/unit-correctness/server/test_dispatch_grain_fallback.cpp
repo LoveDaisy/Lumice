@@ -34,7 +34,9 @@
 
 #include "core/def.hpp"
 #include "core/simulator.hpp"
-#include "lumice.h"
+#include "lumice_base.h"
+#include "lumice_engine.h"
+#include "lumice_scene.h"
 #include "server/server.hpp"
 #include "util/queue.hpp"
 

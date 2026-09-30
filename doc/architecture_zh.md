@@ -241,7 +241,7 @@ Server::GetResults()
 - `IConsume`: 消费者抽象接口
 - `RenderConsumer`: 渲染消费者，实现各种镜头投影算法
 - `StatsConsumer`: 统计消费者
-- `c_api.cpp`: C API 封装实现
+- `c_api_*.cpp`: C API 封装实现，每个能力头一个桥文件
 
 **特点**：
 - 线程安全的队列系统
@@ -275,7 +275,7 @@ Server::GetResults()
 
 **关键设计决策**：
 - GUI 逻辑位于 `lumice::gui` 命名空间，使用全局状态（`g_state`、`g_preview` 等）
-- 通过 `lumice.h` C API 与模拟核心通信（与 CLI 使用相同接口）
+- 通过 C API（`lumice_*.h`）与模拟核心通信（与 CLI 使用相同接口）
 - `lumice_gui_obj` OBJECT library 在 `LumiceGUI` 和 `gui_test` 间共享编译产物
 
 **依赖**：
@@ -289,13 +289,13 @@ Server::GetResults()
 
 **职责**：公共 C API 头文件
 
-- `lumice.h`: 对外暴露的 C 接口头文件，使用不透明指针（opaque pointer）模式
+- `lumice_{base,scene,render,editor,engine,raypath}.h`: 对外暴露的 C 接口头文件，每个能力一个，使用不透明指针（opaque pointer）模式
 
 ## 程序入口
 
 **`main.cpp` → `Lumice`**（CLI）
 - 功能：命令行模拟程序
-- 通过 `lumice.h` 公共 API 与核心库交互
+- 通过公共 C API（`lumice_*.h`） 与核心库交互
 - 使用方式：
   ```bash
   ./build/cmake_install/static/Lumice -f examples/config_example.json
@@ -317,7 +317,7 @@ Server::GetResults()
 
 ## C API
 
-公共 API 通过 C 接口（`lumice.h`）暴露，使用不透明指针模式。大多数 API 返回 `LUMICE_ErrorCode` 错误码，实际输出通过指针参数传递：
+公共 API 通过 C 接口（`lumice_*.h`，每个能力一个头）暴露，使用不透明指针模式。大多数 API 返回 `LUMICE_ErrorCode` 错误码，实际输出通过指针参数传递：
 
 ```c
 // 服务器生命周期

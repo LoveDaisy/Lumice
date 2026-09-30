@@ -19,7 +19,7 @@
 #include "gui/gui_state.hpp"
 #include "gui/gui_state_reconcile.hpp"
 #include "gui/raypath_segments.hpp"
-#include "lumice.h"
+#include "lumice_engine.h"
 #include "support/scene_json_helpers.hpp"
 
 namespace lumice::gui {

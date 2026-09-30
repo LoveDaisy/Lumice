@@ -31,7 +31,7 @@
 #include "gui/app.hpp"
 #include "gui/gui_state.hpp"
 #include "gui/sim_state_rules.hpp"
-#include "lumice.h"
+#include "lumice_engine.h"
 
 namespace lumice::gui {
 namespace {

@@ -12,8 +12,11 @@ Checks:
      (doc/env-var-policy.md).
   2. env-knob-registration — every LUMICE_* name read in env_knobs.cpp must be
      documented in doc/env-var-policy.md, so the knob is discoverable.
-  3. gui-api-boundary — src/gui/** must not #include "core/..." or "config/...";
-     the GUI talks to core only through the C API (src/include/lumice.h).
+  3. gui-api-boundary — src/gui/** must not #include "core/..." or "config/...",
+     and of the public headers under src/include/ it may include only the
+     engine's capability headers (lumice_base/scene/render/editor/engine/raypath.h:
+     the engine export surface of cmake/export_surfaces.cmake minus the analytic
+     family). The GUI talks to core only through the C API.
   4. reconciler-widget-include — gui_state_reconcile.cpp must not #include a
      second widget domain (only RECONCILE_ALLOWED_GUI_INCLUDES is permitted).
      The reconciler is the single owner of effects; a reverse dependency on a
@@ -132,23 +135,42 @@ Checks:
      by 1.01x and Metal by 0.88x — no wall-clock oracle in this repo can see it,
      while "did the pass acquire a frame at all" is answerable without a run.
   17. no-test-symbol-in-src — the LUMICE_TEST_ prefix must not appear in any
-     source under src/, src/include/lumice.h included. It names the test-only
+     source under src/, the public headers in src/include/ included. It names the test-only
      export surface (test/support/lumice_test_api.h, built into the
      liblumice_testapi shared library for the pytest ctypes harness), which is
      kept apart from the product C API on purpose: a test-only entry point in
      the product ABI is the shape the owner rejected. Comments are blanked
      first, so prose that names the prefix to explain this rule is not a hit.
-  18. analytic-symbol-scope — the boundary between the published analytic
-     surface (LUMICE_ANALYTIC_*, liblumice_analytic) and the engine's own C API
-     (LUMICE_*, liblumice) / the test surface (LUMICE_TEST_*), both directions:
-     (a) the LUMICE_ANALYTIC_ prefix appears under src/ only in its own header
-     (src/include/lumice_analytic.h) and its own directory (src/analytic/), so
-     it cannot leak into lumice.h or be called from engine/GUI code; (b) that
-     header names no other LUMICE_ identifier, so it shares no type with
-     lumice.h and a consumer of one never compiles against the other
-     (doc/analytic-api.md section 7). Each library's export list is generated
-     from its headers, so (a) is also what keeps an analytic function out of
-     liblumice's exports and a lumice.h function out of liblumice_analytic's.
+  18. analytic-symbol-scope — the boundary between the two families of public
+     headers under src/include/, both directions: (a) an engine header (the
+     lumice_*.h capability headers: every
+     src/include/*.h outside the analytic family) never spells
+     LUMICE_ANALYTIC_ — declaring or naming an analytic function there would be
+     a second definition of what lumice_analytic_core.h defines; (b) an analytic
+     header (the family is LUMICE_ANALYTIC_SURFACE_HEADERS of
+     cmake/export_surfaces.cmake: lumice_analytic_core.h + lumice_analytic.h)
+     names no other LUMICE_ identifier, so it shares no type with the engine headers and a
+     consumer of the published header never compiles against the engine's
+     (doc/analytic-api.md section 7). Code is not restricted: the engine
+     libraries export the analytic capability (lumice_analytic_core.h), so
+     shells and bridges may call it. Each library's export list is generated
+     from the headers export_surfaces.cmake gives it, so (a) is also what keeps
+     a second copy of an analytic declaration out of liblumice's exports.
+  19. layer-inversion — every `#include "..."` under src/ points at the same
+     or a lower layer. The layers and the files each one owns are declared in
+     ONE place, cmake/lumice_layers.cmake, which CMake also reads (the
+     foundation list is lumice_foundation_obj's source set, so what the gate
+     calls "foundation" and what liblumice_analytic links are the same list).
+     Three findings besides an inverted edge: a src/ file the manifest does not
+     own (UNOWNED — a new file must be placed, or the gate would silently stop
+     seeing it), a manifest entry naming no file, and a manifest line outside
+     the restricted syntax the header of that file states. Existing inversions
+     are listed in cmake/lumice_layer_allowlist.txt, which only shrinks: an
+     entry whose edge no longer exists is itself a violation (STALE), so a fix
+     cannot leave its exemption behind for the next inversion to reuse. The
+     shell (src/gui/, src/launcher/, src/main.cpp) is not layered here — the
+     gui-api-boundary rule owns it — but it counts as above every layer, so a
+     layered file including a shell file is an inversion too.
 
 Add a new check as a function returning a list of Violation and append it to
 CHECKS, and add a numbered entry above. Keep each check deterministic and
@@ -388,11 +410,50 @@ def check_env_knob_registration() -> list[Violation]:
     return out
 
 
+GUI_INCLUDE_TARGET = re.compile(r'^\s*#\s*include\s*[<"]([^">]+)[">]')
+
+
+def _gui_capability_headers() -> set[str] | Violation:
+    """File names under src/include/ that src/gui/ may include: the engine export surface minus
+    the analytic family, both read from cmake/export_surfaces.cmake (the same partition
+    analytic-symbol-scope reads), so a new capability header needs no edit here."""
+    decl = REPO_ROOT / EXPORT_SURFACES_REL
+    try:
+        surfaces = parse_export_surfaces(decl.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return Violation(decl, 1, "gui-api-boundary", "export-surface declaration missing")
+    except RestrictedCMakeError as e:
+        return Violation(decl, e.line, "gui-api-boundary", f"unreadable export-surface declaration: {e}")
+    analytic = set(surfaces.get("ANALYTIC", []))
+    return {Path(rel).name for rel in surfaces.get("ENGINE", []) if rel not in analytic}
+
+
+def _public_header_name(path: Path, target: str) -> str | None:
+    """The src/include/ file name an include resolves to, or None when it resolves elsewhere.
+
+    Search order is the include path's: the including file's directory, then src/, then
+    src/include/. A spelling through `include/` names the public directory even when no such
+    file exists, so a header that was deleted cannot come back through the GUI unnoticed."""
+    public = (SRC / PUBLIC_INCLUDE_REL).resolve()
+    for base in (path.parent, SRC, SRC / PUBLIC_INCLUDE_REL):
+        candidate = (base / target).resolve()
+        if candidate.is_file():
+            return candidate.name if candidate.parent == public else None
+    parts = Path(target).parts
+    if len(parts) >= 2 and parts[-2] == PUBLIC_INCLUDE_REL.name:
+        return parts[-1]
+    return None
+
+
 def check_gui_api_boundary() -> list[Violation]:
     out: list[Violation] = []
     gui = SRC / "gui"
     if not gui.exists():
         return out
+    allowed = _gui_capability_headers()
+    if isinstance(allowed, Violation):
+        return [allowed]
+    listed = ", ".join(sorted(allowed))
     for path in cxx_sources(gui):
         for lineno, _orig, code in code_lines(path):
             m = GUI_FORBIDDEN_INCLUDE.search(code)
@@ -403,7 +464,22 @@ def check_gui_api_boundary() -> list[Violation]:
                         lineno,
                         "gui-api-boundary",
                         f'src/gui/ must not #include "{m.group(1)}/..."; use the C '
-                        "API (src/include/lumice.h) instead.",
+                        "API headers (src/include/lumice_*.h) instead.",
+                    )
+                )
+                continue
+            inc = GUI_INCLUDE_TARGET.match(code)
+            if not inc:
+                continue
+            name = _public_header_name(path, inc.group(1))
+            if name is not None and name not in allowed:
+                out.append(
+                    Violation(
+                        path,
+                        lineno,
+                        "gui-api-boundary",
+                        f"src/gui/ may include only the engine's capability headers from "
+                        f"src/include/ ({listed}); `{name}` is not one of them.",
                     )
                 )
     return out
@@ -1796,7 +1872,7 @@ def check_pytest_invocation_marker() -> list[Violation]:
 #
 # The banned names are the C API chokepoint plus this file's own three wrappers
 # around it. Since the legacy result getters were removed in favour of the
-# LUMICE_ResultFrame handle (see src/include/lumice.h), acquiring a frame is the
+# LUMICE_ResultFrame handle (see src/include/lumice_base.h), acquiring a frame is the
 # only way to reach a render, so the list is closed rather than a sample.
 BENCHMARK_PASS_SIGNATURE = re.compile(r"^void RunBenchmarkPass\s*\(", re.MULTILINE)
 RENDER_TRIGGERING_CALLS = (
@@ -1856,7 +1932,7 @@ def check_no_render_in_benchmark_poll() -> list[Violation]:
 #
 # The test-only export surface is spelled LUMICE_TEST_* and lives under test/
 # (test/support/lumice_test_api.h). Its whole reason to exist is that the product
-# ABI (src/include/lumice.h, liblumice) carries no test-only entry point; the
+# ABI (src/include/lumice_*.h, liblumice) carries no test-only entry point; the
 # prefix showing up anywhere under src/ means a hook is migrating into the
 # product surface, which is exactly the merge this split was made to prevent.
 # A bare prefix match rather than a symbol pattern: a declaration, a call, a
@@ -1869,7 +1945,7 @@ def check_no_test_symbol_in_src() -> list[Violation]:
     """No LUMICE_TEST_ identifier under src/ — the test surface stays in test/.
 
     Reads code_lines(), so a comment naming the prefix (this file's own rule
-    text, or a note in lumice.h pointing at the test header) is not a hit; a
+    text, or a note in a public header pointing at the test header) is not a hit; a
     string literal containing it would be, which fails toward a false positive
     someone investigates rather than toward green.
 
@@ -1895,66 +1971,391 @@ def check_no_test_symbol_in_src() -> list[Violation]:
     return out
 
 
+# --- restricted CMake set() lists --------------------------------------------
+#
+# Two files are CMake that a Python checker also has to read: the layer manifest
+# (cmake/lumice_layers.cmake) and the export-surface declaration
+# (cmake/export_surfaces.cmake). Both are written in one deliberately tiny
+# subset, so that this parser and CMake cannot read them differently: `#`
+# comments, blank lines, `set(NAME` on its own line, one bare token per line,
+# and a lone `)`. Anything else is an error here rather than a line skipped. One
+# parser for both, so the subset cannot drift between them; each caller adds its
+# own semantics (which names, which tokens) on top.
+_RESTRICTED_SET_OPEN = re.compile(r"^set\(([A-Za-z_][A-Za-z0-9_]*)$")
+_RESTRICTED_TOKEN = re.compile(r"^[A-Za-z0-9_./-]+$")
+# A whole-list reference, `${NAME}` alone on its line: in CMake an unquoted list
+# variable expands to its elements. Only callers that pass allow_refs accept it.
+_RESTRICTED_REF = re.compile(r"^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$")
+
+
+class RestrictedCMakeError(Exception):
+    def __init__(self, line: int, message: str):
+        super().__init__(message)
+        self.line = line
+
+
+def parse_restricted_set_lists(text: str, allow_refs: bool = False) -> list[tuple[int, str, list[tuple[int, str]]]]:
+    """Return [(line of `set(`, NAME, [(line, token), ...]), ...] in file order.
+
+    With allow_refs, a `${NAME}` token is returned as is; resolving it is the
+    caller's job. Raises RestrictedCMakeError on anything outside the subset.
+    """
+    lists: list[tuple[int, str, list[tuple[int, str]]]] = []
+    current: list[tuple[int, str]] | None = None
+    for lineno, raw in enumerate(text.splitlines(), start=1):
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if current is None:
+            m = _RESTRICTED_SET_OPEN.match(line)
+            if not m:
+                raise RestrictedCMakeError(lineno, f"expected `set(NAME` on its own line here, got `{line}`")
+            current = []
+            lists.append((lineno, m.group(1), current))
+            continue
+        if line == ")":
+            current = None
+            continue
+        if not (_RESTRICTED_TOKEN.match(line) or (allow_refs and _RESTRICTED_REF.match(line))):
+            raise RestrictedCMakeError(lineno, f"`{line}` is not one bare token (no quotes, variables or commands)")
+        current.append((lineno, line))
+    if current is not None:
+        raise RestrictedCMakeError(len(text.splitlines()), "unterminated set( ... )")
+    return lists
+
+
+# --- export surfaces ----------------------------------------------------------
+#
+# cmake/export_surfaces.cmake declares, once, which headers each shared library
+# exports: the root CMakeLists.txt include()s it and hands each list to
+# lumice_apply_export_list(), test/e2e-correctness/test_export_symbol_scope.py
+# reads it through parse_export_surfaces() below to know what each built binary
+# must export, and analytic-symbol-scope reads it to know which headers form the
+# analytic family. Paths are relative to the repository root.
+EXPORT_SURFACES_REL = Path("cmake") / "export_surfaces.cmake"
+_EXPORT_SURFACE_NAME = re.compile(r"^LUMICE_([A-Z]+)_SURFACE_HEADERS$")
+
+
+def parse_export_surfaces(text: str) -> dict[str, list[str]]:
+    """Return {library key (`ENGINE`, `TESTAPI`, `ANALYTIC`): [repo-relative header, ...]}.
+
+    `${LUMICE_<X>_SURFACE_HEADERS}` expands to a list declared EARLIER in the
+    file, as CMake would. Raises RestrictedCMakeError on a name outside
+    LUMICE_<X>_SURFACE_HEADERS, a list declared twice, a reference to an
+    undeclared (or later) list, or a header named twice in one expanded list.
+    """
+    out: dict[str, list[str]] = {}
+    for open_line, name, tokens in parse_restricted_set_lists(text, allow_refs=True):
+        m = _EXPORT_SURFACE_NAME.match(name)
+        if not m:
+            raise RestrictedCMakeError(open_line, f"`{name}` is not LUMICE_<LIBRARY>_SURFACE_HEADERS")
+        key = m.group(1)
+        if key in out:
+            raise RestrictedCMakeError(open_line, f"`{name}` declared twice")
+        headers: list[str] = []
+        for lineno, token in tokens:
+            ref = _RESTRICTED_REF.match(token)
+            if ref:
+                rm = _EXPORT_SURFACE_NAME.match(ref.group(1))
+                if not rm or rm.group(1) not in out:
+                    raise RestrictedCMakeError(lineno, f"`{token}` names no surface list declared above it")
+                expanded = out[rm.group(1)]
+            else:
+                expanded = [token]
+            for header in expanded:
+                if header in headers:
+                    raise RestrictedCMakeError(lineno, f"`{header}` named twice in `{name}`")
+                headers.append(header)
+        if not headers:
+            raise RestrictedCMakeError(open_line, f"`{name}` is empty")
+        out[key] = headers
+    return out
+
+
 # --- analytic-symbol-scope ---------------------------------------------------
 #
-# liblumice_analytic is the first library published for outside consumers; it is
-# linked from the same objects as liblumice but exports only what its own header
-# declares (scripts/gen_export_list.py). The prefix therefore IS the boundary:
-# where LUMICE_ANALYTIC_ may be spelled decides which export list a function can
-# land in, and what else the header spells decides whether a consumer of the
-# published header is dragged into the internal one. Unlike LUMICE_TEST_, the
-# prefix has a legitimate home under src/, so the rule is an allowlist rather
-# than a ban. Paths are derived from SRC at call time so a test can point SRC at
-# a scratch tree.
+# The public headers under src/include/ form two families. The analytic family
+# is the header set liblumice_analytic exports (cmake/export_surfaces.cmake:
+# lumice_analytic_core.h, the capability, and lumice_analytic.h over it, which
+# adds the library's own management functions); every other header there is an
+# engine header (lumice_*.h). The prefix is the boundary between the two families:
+# an engine header that declared or named a LUMICE_ANALYTIC_* function would be a
+# second definition of what lumice_analytic_core.h already defines, and an
+# analytic header naming a LUMICE_* identifier would drag a consumer of the
+# published header into the engine's. Code is not a family: the engine libraries
+# export the capability (export_surfaces.cmake), so the shells, the bridges and
+# the engine may call LUMICE_ANALYTIC_* functions. Paths are derived from
+# REPO_ROOT / SRC at call time so a test can point both at a scratch tree.
 ANALYTIC_SYMBOL_PREFIX = re.compile(r"\bLUMICE_ANALYTIC_")
 # Any LUMICE_ identifier that is not an analytic one — LUMICE_TEST_ included.
 NON_ANALYTIC_LUMICE_IDENT = re.compile(r"\bLUMICE_(?!ANALYTIC_)[A-Za-z0-9_]*")
-ANALYTIC_HEADER_REL = Path("include") / "lumice_analytic.h"
-ANALYTIC_DIR_REL = Path("analytic")
+PUBLIC_INCLUDE_REL = Path("include")
 
 
 def check_analytic_symbol_scope() -> list[Violation]:
-    """LUMICE_ANALYTIC_ stays in its header + src/analytic/; that header names no other LUMICE_.
+    """Engine headers do not spell LUMICE_ANALYTIC_; analytic headers spell no other LUMICE_.
 
-    Reads code_lines(), so comments are not hits in either direction — the
-    analytic header's own prose may mention lumice.h's names to explain the
-    split. Preprocessor lines are code: an `#include "lumice.h"` in the analytic
-    header is caught through the LUMICE_ identifiers it would have to use, not
-    by the include itself, which is the reason for this known limitation: an
-    include that the header then never uses is not reported.
+    The analytic family is LUMICE_ANALYTIC_SURFACE_HEADERS of
+    cmake/export_surfaces.cmake; a listed header that does not exist is a
+    violation, not a skipped file. Reads code_lines(), so comments are not hits
+    in either direction — each family's prose may mention the other's names to
+    explain the split. Preprocessor lines are code: an `#include "lumice_base.h"` in
+    an analytic header is caught through the LUMICE_ identifiers it would have
+    to use, not by the include itself, which is the reason for this known
+    limitation: an include that the header then never uses is not reported.
     """
-    header = SRC / ANALYTIC_HEADER_REL
-    home = SRC / ANALYTIC_DIR_REL
+    rule = "analytic-symbol-scope"
+    decl = REPO_ROOT / EXPORT_SURFACES_REL
+    try:
+        surfaces = parse_export_surfaces(decl.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return [Violation(decl, 1, rule, "export-surface declaration missing")]
+    except RestrictedCMakeError as e:
+        return [Violation(decl, e.line, rule, f"unreadable export-surface declaration: {e}")]
+    if "ANALYTIC" not in surfaces:
+        return [Violation(decl, 1, rule, "declares no LUMICE_ANALYTIC_SURFACE_HEADERS")]
     out: list[Violation] = []
-    for path in cxx_sources(SRC):
-        in_home = path == header or home in path.parents
+    analytic_headers: set[Path] = set()
+    for rel in surfaces["ANALYTIC"]:
+        path = REPO_ROOT / rel
+        if not path.is_file():
+            out.append(Violation(decl, 1, rule, f"LUMICE_ANALYTIC_SURFACE_HEADERS names `{rel}`, which does not exist"))
+            continue
+        analytic_headers.add(path)
+    engine_headers = set((SRC / PUBLIC_INCLUDE_REL).glob("*.h")) - analytic_headers
+    for path in sorted(engine_headers | analytic_headers):
         for lineno, _orig, code in code_lines(path):
-            if not in_home and ANALYTIC_SYMBOL_PREFIX.search(code):
+            if path in engine_headers and ANALYTIC_SYMBOL_PREFIX.search(code):
                 out.append(
                     Violation(
                         path,
                         lineno,
-                        "analytic-symbol-scope",
-                        "LUMICE_ANALYTIC_* is the published analytic surface and may appear "
-                        "under src/ only in src/include/lumice_analytic.h and src/analytic/. "
-                        "Engine/GUI code and lumice.h do not reach it; its export list is "
-                        "generated from its own header.",
+                        rule,
+                        "LUMICE_ANALYTIC_* is declared by the analytic headers only "
+                        "(lumice_analytic_core.h, lumice_analytic.h); an engine header naming it "
+                        "would be a second definition of the same function. The engine exports "
+                        "the capability through lumice_analytic_core.h (cmake/export_surfaces.cmake).",
                     )
                 )
-            if path == header:
+            if path in analytic_headers:
                 m = NON_ANALYTIC_LUMICE_IDENT.search(code)
                 if m:
                     out.append(
                         Violation(
                             path,
                             lineno,
-                            "analytic-symbol-scope",
-                            f"`{m.group(0)}` in lumice_analytic.h: the published header shares "
-                            "no type or name with lumice.h / the test surface "
+                            rule,
+                            f"`{m.group(0)}` in an analytic header: the published headers share "
+                            "no type or name with the engine headers / the test surface "
                             "(doc/analytic-api.md section 7). Define an LUMICE_ANALYTIC_* "
                             "counterpart instead.",
                         )
                     )
+    return out
+
+
+# --- layer-inversion ----------------------------------------------------------
+#
+# The manifest is CMake (include()-able) in the restricted subset read by
+# parse_restricted_set_lists() above, without `${...}` references. Anything else
+# is an error here rather than a line skipped, because a skipped line is a file
+# silently unowned or a layer silently reordered. Paths are derived from REPO_ROOT / SRC
+# at call time so a test can point both at a scratch tree.
+LAYER_MANIFEST_REL = Path("cmake") / "lumice_layers.cmake"
+LAYER_ALLOWLIST_REL = Path("cmake") / "lumice_layer_allowlist.txt"
+LAYER_SCAN_SUFFIXES = {".cpp", ".hpp", ".h", ".mm", ".cu", ".cuh", ".metal", ".inl"}
+# What lumice_foundation_obj may compile: the CMake side filters its sources by
+# suffix, so an .mm or .cu entry would be dropped there without a word.
+FOUNDATION_SUFFIXES = {".cpp", ".hpp", ".h"}
+LAYER_SHELL_DIRS = ("gui", "launcher")
+LAYER_SHELL_FILES = ("main.cpp",)
+_MANIFEST_SET_OPEN = re.compile(r"^set\((LUMICE_LAYER_ORDER|LUMICE_LAYER_([a-z][a-z0-9_]*)_FILES)$")
+_QUOTED_INCLUDE = re.compile(r'^\s*#\s*include\s*"([^"]+)"')
+
+
+class LayerManifestError(Exception):
+    def __init__(self, line: int, message: str):
+        super().__init__(message)
+        self.line = line
+
+
+def parse_layer_manifest(text: str) -> tuple[list[str], dict[str, str]]:
+    """Return (layer order lowest-first, {src-relative path: layer}).
+
+    Raises LayerManifestError on anything outside the restricted syntax
+    (parse_restricted_set_lists, no `${...}` references), on a duplicate path,
+    on a FILES list for an undeclared layer (or before the order), and on a
+    declared layer without a FILES list.
+    """
+    try:
+        lists = parse_restricted_set_lists(text)
+    except RestrictedCMakeError as e:
+        raise LayerManifestError(e.line, str(e)) from None
+    order: list[str] = []
+    owner: dict[str, str] = {}
+    seen_lists: set[str] = set()
+    for open_line, name, tokens in lists:
+        m = _MANIFEST_SET_OPEN.match(f"set({name}")
+        if not m:
+            raise LayerManifestError(open_line, f"expected `set(LUMICE_LAYER_...` here, got `set({name}`")
+        if m.group(1) == "LUMICE_LAYER_ORDER":
+            if order or seen_lists:
+                raise LayerManifestError(open_line, "LUMICE_LAYER_ORDER must be the first and only order list")
+            if not tokens:
+                raise LayerManifestError(open_line, "LUMICE_LAYER_ORDER is empty")
+            for lineno, token in tokens:
+                if token in order:
+                    raise LayerManifestError(lineno, f"layer `{token}` declared twice")
+                order.append(token)
+            continue
+        layer = m.group(2)
+        if layer not in order:
+            raise LayerManifestError(open_line, f"FILES list for `{layer}`, which LUMICE_LAYER_ORDER does not declare")
+        if layer in seen_lists:
+            raise LayerManifestError(open_line, f"second FILES list for `{layer}`")
+        seen_lists.add(layer)
+        for lineno, token in tokens:
+            if token in owner:
+                raise LayerManifestError(lineno, f"`{token}` is owned by both `{owner[token]}` and `{layer}`")
+            if layer == "foundation" and Path(token).suffix not in FOUNDATION_SUFFIXES:
+                raise LayerManifestError(
+                    lineno,
+                    f"`{token}`: foundation compiles only {sorted(FOUNDATION_SUFFIXES)} "
+                    "(lumice_foundation_obj would drop anything else silently)",
+                )
+            owner[token] = layer
+    missing = [layer for layer in order if layer not in seen_lists]
+    if missing:
+        raise LayerManifestError(len(text.splitlines()), f"no FILES list for layer(s) {missing}")
+    return order, owner
+
+
+def _is_layer_shell(rel: str) -> bool:
+    return rel.split("/")[0] in LAYER_SHELL_DIRS or rel in LAYER_SHELL_FILES
+
+
+def _resolve_include(rel_from: str, target: str) -> str | None:
+    """The src-relative path an #include "target" names, in the compiler's search order.
+
+    Quote includes search the including file's directory first, then the include
+    path, which for engine sources is src/ and src/include/ (lumice_obj's
+    target_include_directories). Returns None for a header outside src/
+    (a dependency's, or a generated one).
+    """
+    candidates = [
+        (SRC / rel_from).parent / target,
+        SRC / target,
+        SRC / "include" / target,
+    ]
+    for c in candidates:
+        if c.is_file():
+            try:
+                return c.resolve().relative_to(SRC.resolve()).as_posix()
+            except ValueError:
+                return None
+    return None
+
+
+def check_layer_inversion() -> list[Violation]:
+    """No #include under src/ points at a higher layer than its includer's.
+
+    Reads code_lines(), so an #include inside a comment is not an edge. Only the
+    quote form is read: every in-tree include is written that way, and an
+    angle-bracket include of an in-tree header would be a style violation that
+    clang-format's include grouping already surfaces. Known limitation: an
+    include hidden behind a macro (`#include MACRO`) is not an edge here.
+    """
+    manifest = REPO_ROOT / LAYER_MANIFEST_REL
+    allow_path = REPO_ROOT / LAYER_ALLOWLIST_REL
+    rule = "layer-inversion"
+    out: list[Violation] = []
+    try:
+        order, owner = parse_layer_manifest(manifest.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return [Violation(manifest, 1, rule, "layer manifest missing")]
+    except LayerManifestError as e:
+        return [Violation(manifest, e.line, rule, f"unreadable layer manifest: {e}")]
+    shell_rank = len(order)
+    rank = {layer: i for i, layer in enumerate(order)}
+
+    allow: dict[str, int] = {}
+    if allow_path.is_file():
+        for lineno, raw in enumerate(allow_path.read_text(encoding="utf-8").splitlines(), start=1):
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            parts = [p.strip() for p in line.split("->")]
+            if len(parts) != 2 or not all(parts):
+                out.append(Violation(allow_path, lineno, rule, f"expected `<includer> -> <included>`, got `{line}`"))
+                continue
+            allow[f"{parts[0]} -> {parts[1]}"] = lineno
+    used_allow: set[str] = set()
+
+    manifest_lines = {}
+    for lineno, raw in enumerate(manifest.read_text(encoding="utf-8").splitlines(), start=1):
+        manifest_lines.setdefault(raw.strip(), lineno)
+    for rel in sorted(owner):
+        if not (SRC / rel).is_file():
+            out.append(
+                Violation(manifest, manifest_lines.get(rel, 1), rule, f"`{rel}` is listed but does not exist under src/")
+            )
+
+    for path in sorted(SRC.rglob("*")):
+        if path.suffix not in LAYER_SCAN_SUFFIXES or not path.is_file():
+            continue
+        rel = path.relative_to(SRC).as_posix()
+        if _is_layer_shell(rel):
+            continue
+        if rel not in owner:
+            out.append(
+                Violation(
+                    path,
+                    1,
+                    rule,
+                    f"UNOWNED: no layer in {LAYER_MANIFEST_REL.as_posix()} owns this file; add it to the "
+                    "layer it belongs to (CMake builds lumice_foundation_obj from the foundation list)",
+                )
+            )
+            continue
+        my_rank = rank[owner[rel]]
+        for lineno, _orig, code in code_lines(path):
+            m = _QUOTED_INCLUDE.match(code)
+            if not m:
+                continue
+            tgt = _resolve_include(rel, m.group(1))
+            if tgt is None:
+                continue
+            if _is_layer_shell(tgt):
+                tgt_layer, tgt_rank = "shell", shell_rank
+            elif tgt in owner:
+                tgt_layer, tgt_rank = owner[tgt], rank[owner[tgt]]
+            else:
+                continue  # reported as UNOWNED at the target itself
+            if tgt_rank <= my_rank:
+                continue
+            key = f"{rel} -> {tgt}"
+            if key in allow:
+                used_allow.add(key)
+                continue
+            out.append(
+                Violation(
+                    path,
+                    lineno,
+                    rule,
+                    f"{key}: layer `{owner[rel]}` includes the higher layer `{tgt_layer}`. Move the "
+                    "shared piece down (or the includer up); the allowlist only shrinks.",
+                )
+            )
+    for key, lineno in sorted(allow.items(), key=lambda kv: kv[1]):
+        if key not in used_allow:
+            out.append(
+                Violation(
+                    allow_path,
+                    lineno,
+                    rule,
+                    f"STALE: `{key}` no longer exists as an inverted edge; delete this entry",
+                )
+            )
     return out
 
 
@@ -1977,6 +2378,7 @@ CHECKS = [
     check_no_render_in_benchmark_poll,
     check_no_test_symbol_in_src,
     check_analytic_symbol_scope,
+    check_layer_inversion,
 ]
 
 
@@ -2003,7 +2405,7 @@ def main() -> int:
         "no-default-constructed-crystal-slots, gui-test-suite-args-sync, no-bare-print, "
         "msvc-string-literal-limit, user-defaults-single-write-path, "
         "pytest-invocation-marker, no-render-in-benchmark-poll, no-test-symbol-in-src, "
-        "analytic-symbol-scope)."
+        "analytic-symbol-scope, layer-inversion)."
     )
     return 0
 

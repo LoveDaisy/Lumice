@@ -897,7 +897,7 @@ static std::optional<CrystalConfig> ParseCrystal(const json& j, const std::strin
           alpha = s[angle_key].get<float>();
         } else if (s.contains(indices_key) && s[indices_key].is_array()) {
           // Any array enters here, not just a three-element one — the same shape as the CLI's own
-          // reader (config/crystal_config.cpp, server/c_api.cpp): a wrong length is a verdict the
+          // reader (config/crystal_config.cpp, server/c_api_scene.cpp): a wrong length is a verdict the
           // C API makes, not a reason to leave the branch and let the default pass for a value.
           const auto& idx = s[indices_key];
           int hkl[3]{ 0, 0, 0 };
@@ -1135,7 +1135,7 @@ static json SerializeRendererForGui(const RenderConfig& r) {
   // read back verbatim, because RenderConfig::background is sRGB too. Same space as the
   // config-JSON contract's "background" key, but for a different reason and by a different
   // mechanism: there the key crosses into a struct that holds LINEAR RGB, so both config parsers
-  // convert at the boundary (config_manager.cpp, c_api.cpp); here the key and the field are one
+  // convert at the boundary (config_manager.cpp, c_api_scene.cpp); here the key and the field are one
   // and the same value, so there is nothing to convert and no second candidate space it could be
   // in. The conversion for this side happens later and elsewhere — at the point of use, where the
   // preview shader's uniform and the .lmc bake each ask for linear (app_panels.cpp, app.cpp).
@@ -1490,7 +1490,7 @@ static void FillAxisDist(const AxisDist& src, LUMICE_Distribution* dst) {
 
 // Helper: fill a LUMICE_CrystalParam from GUI CrystalConfig.
 // `dst->id` is deliberately NOT set: LUMICE_SceneAddCrystal ignores any incoming .id and
-// assigns its own sequential id, returned via out_id (lumice.h "Incremental build" contract).
+// assigns its own sequential id, returned via out_id (lumice_scene.h "Incremental build" contract).
 // Field-sync guard: see the static_assert(sizeof(CrystalConfig) == 232) near
 // SerializeCrystal above. One copy guards both functions (same TU, identical
 // condition); this comment keeps the pairing obvious to readers.
@@ -1568,7 +1568,7 @@ static FilterExpansionOutcome ExpandFilterToScene(const FilterConfig& f, LUMICE_
         // document produced it. NONE is core's own name for the filter that passes everything.
         //
         // FillColorPredicate below has read the identical input this way for a while; it writes
-        // LUMICE_FILTER_TYPE_UNSET rather than NONE, and that is not a second opinion. lumice.h
+        // LUMICE_FILTER_TYPE_UNSET rather than NONE, and that is not a second opinion. lumice_scene.h
         // gives UNSET opposite meanings in the two structs — rejected at commit in a
         // LUMICE_FilterParam, match-all in a LUMICE_ColorPredicate — so the two spellings are the
         // same statement about what core will do.
@@ -1630,7 +1630,7 @@ static FilterExpansionOutcome ExpandFilterToScene(const FilterConfig& f, LUMICE_
   // Add the per-term simple filters first (clause order, term order within clause), collecting
   // the ids the Scene assigned. The composition then references THOSE ids rather than ids this
   // function predicts — the pre-handle version had to compute `next_filter_id + running` because
-  // it owned the id space; the Scene owns it now (lumice.h: "Cross-referencing fields the caller
+  // it owned the id space; the Scene owns it now (lumice_scene.h: "Cross-referencing fields the caller
   // constructs later ... MUST use these returned out_id values").
   const int clause_n = static_cast<int>(ef.clauses.size());
   std::vector<int> term_counts_vec;
@@ -1702,7 +1702,7 @@ static bool FillColorPredicate(LUMICE_ColorPredicate* dst, const ColorClassRefCo
   *dst = LUMICE_ColorPredicate{};
   // task-356.3 — symmetry bitmask (1=P, 2=B, 4=D). Applies uniformly to all
   // predicate types (UNSET/RAYPATH/ENTRY_EXIT) so it lives before the type
-  // dispatch. Literal 1/2/4 mirrors src/server/c_api.cpp SymmetryBitsToString
+  // dispatch. Literal 1/2/4 mirrors src/server/c_api_scene.cpp SymmetryBitsToString
   // (no named LUMICE_SYM_* constants in the public header today); keep in sync.
   dst->symmetry = (ref.sym_p ? 1 : 0) | (ref.sym_b ? 2 : 0) | (ref.sym_d ? 4 : 0);
   const std::string trimmed = TrimRaypathSegment(ref.predicate_text);
@@ -1912,7 +1912,7 @@ ScenePtr BuildScene(const GuiState& state, SceneIntent intent, FilterOverflowInf
   // for an expanded multi-segment/multi-value filter). Both maps now store the id the SCENE
   // assigned (its out_id) rather than one the GUI computed: the pre-handle code derived crystal
   // ids as `pool_id + 1` and ran its own filter-id counter purely to fill LUMICE_Config's arrays
-  // consistently. The Scene owns id assignment (lumice.h: "The Scene assigns this id itself and
+  // consistently. The Scene owns id assignment (lumice_scene.h: "The Scene assigns this id itself and
   // IGNORES any `.id` field on the incoming POD"), so those two counters are gone. Ids stay
   // insertion-ordered either way, so the dedupe walk below is unchanged.
   // pool_id -> scene crystal id, decided BEFORE the walk by the same rule the walk follows (see
@@ -2112,7 +2112,7 @@ ScenePtr BuildScene(const GuiState& state, SceneIntent intent, FilterOverflowInf
     if (for_export) {
       // Both index the same enumeration by construction: kLensTypeNames is declared "order must
       // match Core's LensParam::LensType enum" (gui_state.hpp) and LUMICE_LENS_TYPE_* is that enum
-      // (lumice.h), so the GUI's combo index IS the C API constant. Same for kVisibleNames
+      // (lumice_scene.h), so the GUI's combo index IS the C API constant. Same for kVisibleNames
       // {Upper,Lower,Full} vs LUMICE_VISIBLE_{UPPER,LOWER,FULL} = {0,1,2}.
       dst.lens_type = r.lens_type;
       dst.lens_fov = r.fov;
@@ -2301,7 +2301,7 @@ ScenePtr BuildScene(const GuiState& state, SceneIntent intent, FilterOverflowInf
       dst.globe_back_fade = 0.0f;
       dst.horizon = 1;  // this arm annotates the texture itself; see kDivergingKeys
       // Core's defaults for the three family line switches, stated rather than left to the
-      // zero-init — which would mean the opposite (see the WARNING at the fields in lumice.h).
+      // zero-init — which would mean the opposite (see the WARNING at the fields in lumice_scene.h).
       // Unobservable on this arm either way: it writes no angle list, so there is no line for the
       // flags to gate. Written for the same reason `front` and `visible` above are: so the two
       // arms read as one deliberate divergence rather than as an omission on this one.
@@ -2583,7 +2583,7 @@ static bool TryReconstructComplexFilter(const json& jf, const std::map<int, json
   SumOfProducts sop;
   for (const auto& raw_product : jf["composition"]) {  // product = clause = AND of term ids
     // The core wire form writes a SINGLE-term clause as a bare id and a multi-term clause as an
-    // array of ids (core filter_config.cpp to_json / c_api.cpp CompositionArrayToJson); both are
+    // array of ids (core filter_config.cpp to_json / c_api_scene.cpp CompositionArrayToJson); both are
     // legal and mean the same thing. Normalize to the array form before walking terms. Until
     // 399.5 the GUI read back only its own emitter's output, which always wrote the array form,
     // so the bare form was silently unsupported — a config written by the CLI/core (or now by
@@ -2960,7 +2960,7 @@ bool DeserializeFromJson(const std::string& json_str, GuiState& state) {
       // shapes core RaypathColorConfig::from_json accepts: bare array (dominant-only) or
       // object {"mode": ..., "classes": [...]}. z_order defaults to physical index i (the
       // natural new-class placement) — the wire form has no z_order field (mirrors
-      // LUMICE_ColorClass / c_api.cpp ConfigToJson), so this default is what the plan's
+      // LUMICE_ColorClass / c_api_scene.cpp ConfigToJson), so this default is what the plan's
       // roundtrip test relies on to compare equal via ColorClassConfig::operator==.
       if (root.contains("raypath_color")) {
         const auto& jrc = root["raypath_color"];

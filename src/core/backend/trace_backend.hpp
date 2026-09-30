@@ -66,7 +66,7 @@ namespace lumice {
 //      orthogonal). See `core/backend/metal_trace_backend.hpp`.
 //
 //   5) Public C API stability. The backend split is an internal-to-core
-//      refactor. `src/include/lumice.h` is unchanged; `src/gui/` and
+//      refactor. the public C API headers are unchanged; `src/gui/` and
 //      `src/server/` are unaware of which backend is in use.
 //
 //   6) Ray-frame lifecycle. Rays crossing the seam are ALWAYS in world space:

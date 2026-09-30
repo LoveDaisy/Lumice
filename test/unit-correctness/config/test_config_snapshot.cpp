@@ -274,7 +274,7 @@ TEST(ConfigSnapshot, StatsRayCountsNotClearedByApplyTo) {
   // state, so ApplyTo (which restores config fields) must leave them untouched — here
   // shown with > 2^32 values that ApplyTo preserves verbatim.
   // NOTE: the 64-bit *width* guarantee (the actual Windows truncation fix) is enforced
-  // at compile time by the static_asserts in lumice.h and test_c_api.cpp, NOT by this
+  // at compile time by the static_asserts in lumice_base.h and test_c_api.cpp, NOT by this
   // test — on a 64-bit-`unsigned long` platform (Mac/Linux) this passes even pre-fix.
   GuiState source = InitDefaultState();
   auto snap = GuiState::ConfigSnapshot::From(source);

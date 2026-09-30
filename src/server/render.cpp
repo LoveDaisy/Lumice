@@ -1006,7 +1006,7 @@ RenderConsumer::AnnotationLayers RenderConsumer::BuildAnnotationLayers() const {
   // that decides it. A non-empty markers_ wins outright; zenith_nadir_ is consulted only when
   // markers_ is empty. It happens HERE, at the consumer, rather than in either JSON decoder,
   // because RenderConfig has three producers (this file's own callers, config_manager.cpp,
-  // c_api.cpp) and a rule applied by producers is a rule each of them can forget.
+  // c_api_scene.cpp) and a rule applied by producers is a rule each of them can forget.
   //
   // Not a merge: a config that lists markers is describing its whole marker set, and quietly
   // adding two more rings from a legacy field it also carries would draw something nobody asked
@@ -1574,7 +1574,7 @@ void RenderConsumer::ResetWith(const RenderConfig& new_config, const SunParam& n
 // close a cycle). This translation unit is the only place the two meet, so the equality that makes
 // the cast below sound is asserted right here rather than described in a comment somewhere:
 // reordering either side, or adding an id to one of them alone, becomes a compile error instead of
-// a marker that silently resolves to the wrong direction. Same shape as c_api.cpp's assertions for
+// a marker that silently resolves to the wrong direction. Same shape as c_api_render.cpp's assertions for
 // the OTHER pairing of this id space, MarkerId against LUMICE_ANNOTATION_MARKER_*.
 static_assert(static_cast<int>(MarkerRefId::kZenith) == static_cast<int>(annotation::kMarkerZenith),
               "MarkerRefId and annotation::MarkerId have diverged");

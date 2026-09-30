@@ -2,7 +2,7 @@
 #define LUMICE_GUI_CRYSTAL_PREVIEW_HPP
 
 #include "gui/axis_presets.hpp"
-#include "include/lumice.h"
+#include "include/lumice_editor.h"
 
 namespace lumice::gui {
 

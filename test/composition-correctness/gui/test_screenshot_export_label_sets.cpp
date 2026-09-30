@@ -26,7 +26,7 @@
 #include "gui/gui_state.hpp"
 #include "gui/overlay_labels.hpp"
 #include "gui/screenshot_export_options.hpp"
-#include "lumice.h"
+#include "lumice_render.h"
 
 namespace gui = lumice::gui;
 

@@ -28,7 +28,8 @@
 #include "gui/gui_state.hpp"
 #include "gui/log_sink.hpp"
 #include "gui/preview_renderer.hpp"
-#include "lumice.h"
+#include "lumice_base.h"
+#include "lumice_engine.h"
 #include "support/scoped_result_frame.hpp"
 
 namespace gui = lumice::gui;

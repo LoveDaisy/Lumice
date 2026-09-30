@@ -30,7 +30,9 @@
 // imgui_internal.h "Reload user buf (WIP #2890)"). An ImGui upgrade that promotes or renames it
 // must update that one function.
 #include "imgui_internal.h"
-#include "lumice.h"
+#include "lumice_editor.h"
+#include "lumice_engine.h"
+#include "lumice_scene.h"
 
 namespace lumice::gui {
 
@@ -875,7 +877,7 @@ bool IsShapeScalarVisible(CrystalType type, int slot) {
 // against IsShapeScalarVisible and does not read this predicate at all.
 //
 // Barring these two rows is therefore a UI affordance only: storage still permits such a group
-// (lumice.h runs no commensurability check), a hand-authored config carrying one keeps it, and the
+// (lumice_scene.h runs no commensurability check), a hand-authored config carrying one keeps it, and the
 // GUI reports it faithfully — it simply offers no way to build one. NextUnusedSyncGroup deliberately
 // does NOT use this predicate either: new ids must not collide with a dormant one.
 bool IsShapeScalarSyncable(CrystalType type, int slot) {
@@ -883,7 +885,7 @@ bool IsShapeScalarSyncable(CrystalType type, int slot) {
 }
 
 // The slot whose value the group carries: the lowest-indexed applicable member. This is not a GUI
-// approximation of the core rule — it IS the core rule (lumice.h LUMICE_CrystalParam::sync_group:
+// approximation of the core rule — it IS the core rule (lumice_scene.h LUMICE_CrystalParam::sync_group:
 // "the group's first applicable member (lowest LUMICE_SHAPE_SCALAR_* index) consumes the RNG and
 // owns the distribution"), evaluated over the same applicable set: core's NormalizeSyncGroupsImpl
 // takes the argmin over the slots its slot table admits, and IsShapeScalarVisible queries that very

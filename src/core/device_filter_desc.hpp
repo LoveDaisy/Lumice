@@ -67,7 +67,7 @@ constexpr uint8_t kDeviceFilterMaxOrClauses = 8;
 // so a config that somehow slips a wildly out-of-range clause count past the
 // host ABI layer is flagged instead of silently overrunning the buffer.
 //
-// Value aligned with host `LUMICE_MAX_CONFIG_CLAUSES` (`src/include/lumice.h`);
+// Value aligned with host `LUMICE_MAX_CONFIG_CLAUSES` (`src/include/lumice_scene.h`);
 // the two are intentionally decoupled at include-time — we do not include the
 // public C API header from `src/core/` to preserve the existing one-way
 // dependency (core does not depend on the public API). The static_assert below
@@ -76,7 +76,7 @@ constexpr uint16_t kDeviceFilterOrClauseSanityCap = 4096;
 static_assert(kDeviceFilterOrClauseSanityCap >= kDeviceFilterMaxOrClauses,
               "filter sanity cap must not shrink below the legacy color-path bound");
 static_assert(kDeviceFilterOrClauseSanityCap >= 4096,
-              "keep in sync with host LUMICE_MAX_CONFIG_CLAUSES (see src/include/lumice.h)");
+              "keep in sync with host LUMICE_MAX_CONFIG_CLAUSES (see src/include/lumice_scene.h)");
 
 // Plain-data descriptor uploaded to the Metal `filter_desc_buf_` (per filter).
 //

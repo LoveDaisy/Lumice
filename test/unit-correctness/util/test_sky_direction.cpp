@@ -24,7 +24,7 @@ void ExpectDir(float alt_deg, float az_deg, float x, float y, float z) {
 
 }  // namespace
 
-// Absolute values, by hand from the convention stated in lumice.h: light from the horizon point at
+// Absolute values, by hand from the convention stated in lumice_render.h: light from the horizon point at
 // azimuth 0 travels along -x; from the zenith, straight down (z = -1); from azimuth 90, along -y.
 TEST(SkyDirection, AltAzToDirPinsTheConvention) {
   ExpectDir(0.0f, 0.0f, -1.0f, 0.0f, 0.0f);

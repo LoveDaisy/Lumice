@@ -19,7 +19,7 @@
 #include <vector>
 
 #include "gui/raypath_segments.hpp"
-#include "include/lumice.h"
+#include "include/lumice_base.h"
 
 namespace lumice::gui {
 

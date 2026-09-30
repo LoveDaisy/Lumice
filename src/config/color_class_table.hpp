@@ -70,7 +70,7 @@ ColorClassTable BuildColorClassTable(const RaypathColorConfig& color_cfg, const 
 
 // Display-time appearance patch for one color class (task-342.2). Mirrors the C-API
 // LUMICE_ColorClassDisplay but lives in server-facing C++ land so ServerImpl does not need
-// to include lumice.h. Fed into ServerImpl::SetRaypathColors along with a z-order override
+// to include lumice_engine.h. Fed into ServerImpl::SetRaypathColors along with a z-order override
 // and a composite mode.
 struct ColorClassDisplay {
   float color_[3]{};
