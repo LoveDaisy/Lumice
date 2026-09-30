@@ -1896,6 +1896,9 @@ This section is the first change written under the rule, and it says so rather t
 rule as established practice: earlier changes in this repository carry no such declaration, and none
 was back-filled for them.
 
+The per-test part of this question is also asked mechanically: a PR-layer test over 30 s has to be
+registered, with a reason, or CI goes red. See §7.7; it reinforces this rule and does not replace it.
+
 ### §7.4 Independent re-verification is a fixed-cost multiplier
 
 **The rule.** A change's own report about itself does not settle whether the work is done. An
@@ -2000,3 +2003,93 @@ is there: "how many cores this run actually had" is otherwise a number nobody ha
 claim about the suite being CPU-starved a guess rather than a measurement. It is diagnostic-only —
 printing it does not imply the suite should or should not run under `pytest-xdist`; that is a
 separate, not-yet-made decision.
+
+### §7.7 The duration registry: every slow PR-layer test is argued for, mechanically
+
+§7.3 asks the author a question before a change and makes them reconcile the answer after it. It
+cannot stop anything: two slow tests that together cost about 12.8 minutes of CI entered the PR layer
+while it was in force. This section is the mechanical half. It does not replace §7.3, which still
+decides when the question is asked (before the change, not after CI has turned red).
+
+**The rule.** In every CI job wired to it (list below), each test that took longer than **T = 30 s**
+in that run must have an entry in `test/duration_registry.json`, and that entry must carry a reason.
+`scripts/check_test_durations.py` compares the job's measured durations against the registry in a
+step at the end of the job, and turns the job red when, for that job:
+
+1. a test **not registered** for the job took more than T;
+2. a **registered** test took more than **2×** its registered `ci_seconds`;
+3. a registered test **did not run** in the job at all: renamed, moved or deleted. (A test skipped on
+   that runner still counts as present, at ~0 s, so a platform skip is never read as stale.) If none
+   of a job's entries appear, the message says the `--job` name in `ci.yml` probably does not match
+   the registry's `job` field, rather than listing every entry as stale;
+4. the registry is malformed (unknown or missing field, duplicate `id`+`job`, non-positive seconds),
+   or an entry's `reason` is empty or the placeholder `TODO`.
+
+A registered test that ran **under** T is a notice, not a red: a test near the threshold would
+otherwise force its entry in and out on alternate runs. Whether to delete such an entry is the
+author's decision.
+
+**What is measured.** Setup + call + teardown of each test, written by the pytest plugin
+`scripts/duration_report_plugin.py`, which CI loads explicitly (`PYTHONPATH=scripts pytest -p
+duration_report_plugin --duration-report=PATH`); nothing else loads it, and without the option it
+does nothing. Setup is counted because that is where the most expensive fixtures spend their time.
+One refinement makes that stable under `pytest-xdist`: the setup of a **module-, class-, package- or
+session-scoped fixture** is not charged to the test that happened to create it, but reported as an
+entry of its own, `<where it is defined>::<fixture:NAME>` (with `[<param index>]` for a parametrized
+fixture), taking the largest value if several workers each created it. Under xdist's default
+`--dist load`, which test first requests a shared fixture on a worker changes from run to run
+(measured: the same module fixture landed on a different parametrized case on each of three `-n 3`
+runs), so charging it to the test would make that test's number jump by the fixture's cost for no
+reason in the code. `--dist loadfile` would also stabilise it, but by putting a whole file on one
+worker, which lengthens the very wall clock this gate protects. A shared fixture over T is registered
+like a test, by its fixture id. A unittest-style `setUpClass` shows up the same way, as
+`...::<fixture:_unittest_setUpClass_fixture_<Class>>`. What is not split out: a shared fixture's
+teardown, and lazy one-time costs outside fixtures (the first library load in a process), which stay
+with whichever test incurred them.
+
+**Why these numbers.** T = 30 s is about where the busiest leg's `--durations=20` list ends (its
+twentieth entry measured 28–32 s across runs), which keeps the registry to the tests that actually
+dominate a leg rather than a long tail, and it sits above the 20–30 s band where the same macOS test measured up to 1.7× apart across
+runs, so a test in that band does not drift in and out of registration. 2× for a registered test is
+chosen against the same 1.7× spread: 1.5× would go red on runner noise, and not checking at all would
+let an entry registered at 40 s grow to 400 s in silence. Registered values are the **largest** of
+several CI runs, rounded up to a multiple of 5 s. Both factors are constants in the script, so
+changing them is a reviewable diff, not a setting.
+
+**Registering a test.** The red message for an unregistered test prints the exact line to paste,
+with `ci_seconds` already filled in and `reason` set to `TODO`, which the checker rejects — so the
+line cannot be committed as printed. Replace `TODO` with one sentence: which defect the test guards
+against, and why it cannot be faster or move to a cheaper layer. Before registering, consider doing
+neither: making the test faster, or moving it to a layer that runs less often, removes the cost
+instead of recording it. When you **rename or move** a registered test (`git mv test/a.py test/b.py`,
+renaming a function, changing a parametrize id), change its `id` in the same commit; the stale rule
+will otherwise go red and name the new id it can see for the same function. When an entry's test is
+made cheaper, lower or delete the entry in the same change.
+
+**Where it runs.** `e2e-test` (job name `e2e-test`) and the three `e2e-slow` legs (job name
+`E2E Slow (<matrix name>)`), each with the reports of all its pytest calls (phase 1 and, where the
+leg has one, phase 2). **Not covered**: ctest and `gui_test` (CI logs give ctest only per-binary
+times, and `gui_test` does not run in the build jobs; their growth shows up in the job's wall clock
+instead); the `windows-shared-export` job's four slow files; the `policy` job's script unit tests.
+A **new pytest job** is not covered until it is wired the same way — `-p duration_report_plugin
+--duration-report=...` on each pytest call and a "Check test durations" step at the end — and
+nothing checks that it was.
+
+**A runtime check, not a diff check.** The four checkers AGENTS.md lists (`check_policies.py`,
+`check_new_refs.py`, `check_new_gui_tests.py`, `check_loop_fatal_asserts.py`) read the source or a
+diff, so they also run in the pre-commit hook. This one reads what a CI job just measured; its input
+does not exist anywhere else, so it cannot run before commit and is not part of `check_policies.py`.
+
+**No exemption, and the checker is the rule.** There is no flag, environment variable or inline
+marker to let a slow test through; the only way is a registry entry, and the registry's diff is the
+evidence a reviewer reads. If the check passes, the change is compliant with respect to test
+duration — review does not add duration demands beyond it. If a threshold is wrong, change the
+constant in the script.
+
+**Relation to §7.3.** §7.3 still has no ceiling, and its reason — a ceiling produces estimates shaped
+to fit it — still holds, because this gate has no ceiling either: a test over T is allowed to stay,
+it only has to be argued for in a file someone reviews. What changed is that the per-test half of
+the question is now asked by the machine every run, instead of relying on someone remembering to.
+
+The gate's own cost is the few seconds of the final step (reading two small JSON files) plus the
+plugin's bookkeeping during the run; it adds no job and no runner.

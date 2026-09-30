@@ -1171,7 +1171,7 @@ jobs:
         # decision). `--durations=20` makes the slowest cases visible in the log —
         # see the timeout-minutes comment below for why that matters.
         # `-p duration_report_plugin --duration-report` writes every test's cost for
-        # the "Check test durations" step below (doc/testing-architecture.md §7.6).
+        # the "Check test durations" step below (doc/testing-architecture.md §7.7).
         run: |
           nproc
           PYTHONPATH=scripts pytest -v -m "not slow" --durations=20 \
@@ -1186,7 +1186,7 @@ jobs:
       - name: Check test durations
         # Runtime gate, not a diff check: every test over the threshold in this run
         # must be registered in test/duration_registry.json with a reason
-        # (doc/testing-architecture.md §7.6). On red, the log names the test and
+        # (doc/testing-architecture.md §7.7). On red, the log names the test and
         # prints the registry line to add — or make the test faster instead.
         run: |
           set -o pipefail

@@ -973,3 +973,70 @@ parity 相关（次）。
 `e2e-test` job 的日志顶部还打印了一次 `nproc`，理由与加 `--durations=20` 相同："这次 run 到底有
 几个核"原本没人知道，这让任何"套件被 CPU 饿着了"的说法都只是猜测，而不是实测。它只是诊断信息——
 打印这一行不代表这套测试该不该接 `pytest-xdist`；那是另一件尚未定夺的事。
+
+## §7.7 耗时登记表：PR 层的每条慢测试都要被机械地举证
+
+> 与 §7.6 相同，本节编号与英文版 §7.7 对齐；英文版为权威，此处同步其规则要点。
+
+§7.3（英文版）的预算纪律是在改动前问作者、改动后让作者对账——它拦不住任何东西：两条合计约
+12.8 分钟 CI 的慢测试就是在它生效期间进入 PR 层的。本节是它的机械那一半，**补强而不替代**
+§7.3：§7.3 仍负责在改动之前（而不是 CI 红了之后）把这个问题提出来。
+
+**规则。** 在接线了本闸的每个 CI job 里，本次 run 中耗时超过 **T = 30 s** 的每条测试，都必须在
+`test/duration_registry.json` 中有一条带理由的登记。`scripts/check_test_durations.py` 在 job 末尾
+一个 step 里把本 job 的实测耗时与登记表比对，以下任一情况判红：
+
+1. 未为本 job 登记的测试耗时超过 T；
+2. 已登记的测试耗时超过其登记值 `ci_seconds` 的 **2 倍**；
+3. 已登记的测试在本 job 中**根本没有运行**（改名、移动或删除）；在该 runner 上被 skip 的测试仍算
+   存在（约 0 s），平台 skip 不会被当成陈旧。若本 job 的登记条目一条都没出现，报错改为提示
+   `ci.yml` 里的 `--job` 名与登记表 `job` 字段可能不一致；
+4. 登记表格式错误（字段多/少、`id`+`job` 重复、秒数非正），或 `reason` 为空或占位符 `TODO`。
+
+已登记但本次低于 T 的只给 notice、不判红，避免在阈值附近的测试来回增删条目。
+
+**量的是什么。** 每条测试的 setup + call + teardown，由 pytest 插件
+`scripts/duration_report_plugin.py` 写出；CI 显式加载（`PYTHONPATH=scripts pytest -p
+duration_report_plugin --duration-report=PATH`），别处不加载，不带该选项时它什么也不做。
+**module / class / package / session 作用域 fixture 的 setup** 不记在恰好触发它的测试头上，而是
+单独成条：`<定义处>::<fixture:NAME>`（参数化 fixture 附 `[<param 序号>]`），多个 worker 各建一次时
+取最大值。原因：xdist 默认 `--dist load` 下，哪条测试先在某个 worker 上请求共享 fixture 每次 run
+都不同（实测三次 `-n 3` 运行，同一个 module fixture 落在三条不同的参数化用例上）。`--dist loadfile`
+也能稳定它，但代价是把整个文件压到一个 worker 上，拉长的正是本闸要守的墙钟。unittest 的
+`setUpClass` 同样以 `...::<fixture:_unittest_setUpClass_fixture_<Class>>` 的形式出现。未拆出的：
+共享 fixture 的 teardown，以及 fixture 之外的一次性懒加载成本。
+
+**为什么是这两个数。** T = 30 s 大约落在最忙那条腿 `--durations=20` 列表的末尾（第 20 名跨 run 实测 28–32 s），
+使登记表只收真正主导一条腿的测试；又高于 20–30 s 这一段——那里同一条 macOS 测试跨 run 实测相差可达 1.7 倍。
+2 倍也是对着这 1.7 倍定的：1.5 倍会因 runner 噪声假红，完全不查则登记 40 s 的条目可以无声地长到
+400 s。登记值取多次 CI run 的**最大值**，向上取整到 5 s 的倍数。两个系数都是脚本常量，改它就是
+一个可评审的 diff。
+
+**如何登记。** 未登记超阈的红态信息会直接打印一行可粘贴的 JSON，`ci_seconds` 已填好、`reason` 为
+`TODO`——checker 拒绝 `TODO`，所以原样提交不会通过。把它换成一句话：防的是什么缺陷，为什么不能更
+快、也不能下沉到更便宜的层。登记之前先考虑两者都不做：让测试变快或下沉，是消除成本而不是记录
+成本。**改名或移动**已登记的测试（`git mv test/a.py test/b.py`、改函数名、改参数化 id）时，在同一
+提交里改它的 `id`；否则陈旧规则会判红，并给出同一函数在本次 run 中的新 id。测试变便宜后，在同一
+改动里下调或删除其条目。
+
+**覆盖范围。** `e2e-test`（job 名 `e2e-test`）与 `e2e-slow` 三条腿（job 名
+`E2E Slow (<matrix name>)`），各自合并其所有 pytest 调用的报告（phase 1，以及有 phase 2 的腿的
+phase 2）。**未覆盖**：ctest 与 `gui_test`（CI 日志里 ctest 只有二进制粒度，`gui_test` 在 build job
+中不运行；它们的膨胀由 job 墙钟体现）、`windows-shared-export` 的四个 slow 文件、`policy` job 的脚本
+单测。**新增的 pytest job** 在同样接线之前不受覆盖——每个 pytest 调用加
+`-p duration_report_plugin --duration-report=...`、job 末尾加 "Check test durations" step——而且
+没有任何东西检查它是否接线了。
+
+**运行时检查，不是 diff 检查。** AGENTS.md 列出的四个 checker 读源码或 diff，所以也能在
+pre-commit 中运行；本闸读的是 CI job 刚量出来的耗时，这份输入别处不存在，所以不能在提交前运行，
+也不并入 `check_policies.py`。
+
+**无豁免，checker 即规则。** 没有 flag、环境变量或 inline 标记可以放行慢测试；唯一的办法是登记，
+登记表的 diff 就是评审要读的证据。本检查通过，则该改动在测试耗时方面即为合规——评审不在其外追加
+耗时要求。阈值不对，就改脚本里的常量。
+
+**与 §7.3 的关系。** §7.3 仍然不设上限，其理由（上限会催生迎合上限的估算）依然成立，因为本闸同样
+没有上限：超过 T 的测试可以留下，只是必须在一份有人评审的文件里被论证。变化在于：逐条测试的那一
+半问题，现在由机器在每次 run 中提出，而不再依赖有人记得去问。
+
+本闸自身开销：末尾 step 读两份小 JSON 的几秒，加上插件在运行中的记账；不新增 job，也不新增 runner。
