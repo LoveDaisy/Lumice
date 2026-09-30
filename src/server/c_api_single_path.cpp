@@ -95,7 +95,7 @@ LUMICE_ErrorCode Analyze(const LUMICE_Scene* scene, const LUMICE_SinglePathReque
   if (const lumice::Error err = lumice::ParseConfigManager(SceneRoot(scene), "LUMICE_AnalyzeSinglePath",
                                                            lumice::GetGlobalLogger(), nullptr, &config)) {
     WriteError(err_buf, err_size, "invalid_scene: " + err.message);
-    return MapErrorCode(err.code);
+    return lumice::capi::ToCApiErrorCode(err.code);
   }
 
   rp::SinglePathResult result;

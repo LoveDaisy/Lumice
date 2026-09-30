@@ -19,10 +19,32 @@
 // Precondition: scene != nullptr.
 const nlohmann::json& SceneRoot(const LUMICE_Scene* scene);
 
-// The server's Error vocabulary as a C API return code: the one mapping, shared by c_api.cpp and
-// the single-path bridge (c_api_single_path.cpp), which parses a scene through the same
-// lumice::ParseConfigManager.
-LUMICE_ErrorCode MapErrorCode(lumice::ErrorCode code);
+namespace lumice::capi {
+
+// The server's Error vocabulary as a C API return code: the one mapping, shared by every bridge
+// that reports a lumice::Error — the single-path bridge among them, which parses a scene through
+// the same lumice::ParseConfigManager. Inline in an internal namespace: it is no global symbol of
+// the engine, and no export list can pick it up.
+inline LUMICE_ErrorCode ToCApiErrorCode(ErrorCode code) {
+  switch (code) {
+    case ErrorCode::kSuccess:
+      return LUMICE_OK;
+    case ErrorCode::kInvalidJson:
+      return LUMICE_ERR_INVALID_JSON;
+    case ErrorCode::kInvalidConfig:
+      return LUMICE_ERR_INVALID_CONFIG;
+    case ErrorCode::kMissingField:
+      return LUMICE_ERR_MISSING_FIELD;
+    case ErrorCode::kInvalidValue:
+      return LUMICE_ERR_INVALID_VALUE;
+    case ErrorCode::kServerNotReady:
+    case ErrorCode::kServerError:
+    default:
+      return LUMICE_ERR_SERVER;
+  }
+}
+
+}  // namespace lumice::capi
 
 // =============== ConfigScratch: the demoted wide config struct ===============
 // This is the former public `LUMICE_Config` value struct, removed from the public ABI in v4.12

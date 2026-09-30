@@ -50,27 +50,6 @@ struct LUMICE_Server_ {
   std::unique_ptr<ns::Server> server_;
 };
 
-
-LUMICE_ErrorCode MapErrorCode(ns::ErrorCode code) {
-  switch (code) {
-    case ns::ErrorCode::kSuccess:
-      return LUMICE_OK;
-    case ns::ErrorCode::kInvalidJson:
-      return LUMICE_ERR_INVALID_JSON;
-    case ns::ErrorCode::kInvalidConfig:
-      return LUMICE_ERR_INVALID_CONFIG;
-    case ns::ErrorCode::kMissingField:
-      return LUMICE_ERR_MISSING_FIELD;
-    case ns::ErrorCode::kInvalidValue:
-      return LUMICE_ERR_INVALID_VALUE;
-    case ns::ErrorCode::kServerNotReady:
-    case ns::ErrorCode::kServerError:
-    default:
-      return LUMICE_ERR_SERVER;
-  }
-}
-
-
 // =============== Server Lifecycle ===============
 LUMICE_Server* LUMICE_CreateServer() {
   auto* s = new LUMICE_Server;
@@ -1386,7 +1365,7 @@ LUMICE_ErrorCode LUMICE_SetRaypathColors(LUMICE_Server* server, const LUMICE_Col
   auto err = server->server_->SetRaypathColors(internal.data(), class_count, z_order, composite_mode);
   if (err) {
     LOG_ERROR("LUMICE_SetRaypathColors failed: {}", err.message);
-    return MapErrorCode(err.code);
+    return ns::capi::ToCApiErrorCode(err.code);
   }
   return LUMICE_OK;
 }
@@ -1405,7 +1384,7 @@ LUMICE_ErrorCode LUMICE_SetCompositeExposure(LUMICE_Server* server, float ev_tot
   auto err = server->server_->SetCompositeExposure(ev_total);
   if (err) {
     LOG_ERROR("LUMICE_SetCompositeExposure failed: {}", err.message);
-    return MapErrorCode(err.code);
+    return ns::capi::ToCApiErrorCode(err.code);
   }
   return LUMICE_OK;
 }
@@ -1426,7 +1405,7 @@ LUMICE_ErrorCode LUMICE_SetCompositeBackground(LUMICE_Server* server, const floa
   auto err = server->server_->SetCompositeBackground(background_linear);
   if (err) {
     LOG_ERROR("LUMICE_SetCompositeBackground failed: {}", err.message);
-    return MapErrorCode(err.code);
+    return ns::capi::ToCApiErrorCode(err.code);
   }
   return LUMICE_OK;
 }
@@ -1447,7 +1426,7 @@ LUMICE_ErrorCode LUMICE_GetColorClassSignal(LUMICE_Server* server, int* out_flag
   auto err = server->server_->GetColorClassSignals(tmp.data(), class_count);
   if (err) {
     LOG_ERROR("LUMICE_GetColorClassSignal failed: {}", err.message);
-    return MapErrorCode(err.code);
+    return ns::capi::ToCApiErrorCode(err.code);
   }
   for (int i = 0; i < class_count; i++) {
     out_flags[i] = tmp[static_cast<size_t>(i)] ? 1 : 0;
@@ -1662,7 +1641,7 @@ static LUMICE_ErrorCode CommitJsonToServer(LUMICE_Server* server, const nlohmann
   auto err = server->server_->CommitConfig(root, &reused);
   if (err) {
     LOG_ERROR("Failed to commit configuration ({}): {}", source, err.message);
-    return MapErrorCode(err.code);
+    return ns::capi::ToCApiErrorCode(err.code);
   }
   if (out_reused) {
     *out_reused = reused ? 1 : 0;
@@ -3501,7 +3480,7 @@ LUMICE_ErrorCode LUMICE_ContinueRender(LUMICE_Server* server, int infinite, LUMI
   auto err = server->server_->ContinueRun(budget);
   if (err) {
     LOG_ERROR("Failed to continue the render: {}", err.message);
-    return MapErrorCode(err.code);
+    return ns::capi::ToCApiErrorCode(err.code);
   }
   return LUMICE_OK;
 }
@@ -4160,7 +4139,7 @@ LUMICE_ErrorCode LUMICE_StartRaypathAnalysis(LUMICE_Server* server, const LUMICE
   // The same document LUMICE_CommitScene hands the server (scene->root): the two entry
   // points share one grammar and one parser, so a scene that commits analyses, and vice versa.
   const ns::Error err = server->server_->StartRaypathAnalysis(scene->root, req);
-  return MapErrorCode(err.code);
+  return ns::capi::ToCApiErrorCode(err.code);
 }
 
 
