@@ -314,6 +314,10 @@ pass 没有做原型：既然只加 bounds 的版本已是净亏，拆分在单�
 - **`ray_num="infinite"`**（GPU 趟，task-gpu-bench-drain-aligned-rate）：`drain_aligned`（恰好
   测了 N 个整 drain 窗口）或 `too_few_drains`（未凑满 N drain 就退出——异常/不可信）。见下方
   drain-count-driven canonical。两套阶梯不共用同一字符串空间。
+- 两套阶梯的判定是同一个纯函数 `EstimateBenchmarkRate`（`src/util/benchmark_rate.hpp`），
+  `RunBenchmarkPass` 只负责采集观测。`active_short` 在真实运行里只靠调度竞态才到达，所以它由
+  `test/unit-correctness/util/test_benchmark_rate.cpp` 以字面输入确定覆盖；
+  `test/regression-sentinel/test_benchmark_rate_not_impossible.py` 只留几次真实运行检查接线。
 
 **术语**："workers"指 simulator 线程（执行光线追踪的线程）。每个 server 实例还有 2 个
 内部线程（场景生成 + 数据消费），总线程数 = workers + 2。

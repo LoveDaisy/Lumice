@@ -68,22 +68,10 @@
       "reason": "Metal exit-seam parity against legacy CPU on a multi-scattering scene at ms_prob 0.8, the deepest cross-layer transit in the battery; the legacy CPU oracle arm dominates the cost and the ray budget is what lets block-mean correlation separate a real mismatch from Monte-Carlo speckle."
     },
     {
-      "id": "test/regression-sentinel/test_benchmark_rate_not_impossible.py::test_reported_rate_is_physically_possible[ms_multi_crystal_complex_filter]",
-      "job": "E2E Slow (macOS ARM64 rest)",
-      "ci_seconds": 110,
-      "reason": "Guards that `Lumice benchmark` never reports a rate the run had no time for (the active_short branch once reported 20x the true rate); reaching that branch is a scheduling race, so the test needs whole heavy benchmark runs, and this entry should be lowered if the test is made deterministic."
-    },
-    {
       "id": "test/e2e-correctness/test_raypath_analysis_capi.py::test_adaptive_allocation_cuts_rare_row_noise_without_moving_the_means",
       "job": "E2E Slow (macOS ARM64 rest)",
       "ci_seconds": 105,
       "reason": "Guards that adaptive allocation in an analysis run cuts the rare row's cross-session noise at least 5x without biasing any row's mean; the claim is statistical, so it needs two arms of thirty full sessions and cannot shrink without losing the power to see a 5x variance ratio."
-    },
-    {
-      "id": "test/regression-sentinel/test_benchmark_rate_not_impossible.py::test_reported_rate_is_physically_possible[ms_multi_crystal_filtered_bd]",
-      "job": "E2E Slow (macOS ARM64 rest)",
-      "ci_seconds": 105,
-      "reason": "Guards that `Lumice benchmark` never reports a rate the run had no time for (the active_short branch once reported 20x the true rate); reaching that branch is a scheduling race, so the test needs whole heavy benchmark runs, and this entry should be lowered if the test is made deterministic."
     },
     {
       "id": "test/parity-cross-backend/backend/test_anchor_backend_agreement.py::test_anchor_does_not_move_with_the_lens[cpu_backend]",

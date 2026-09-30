@@ -204,6 +204,14 @@ discipline:
    reported 266–390 M rays/s against a true 13.9 M rays/s on 4% of runs of the same
    config (below). Rule 3's `ray_num` floor is still the remedy that gets you a *usable*
    number; the change only stops the estimator from inventing one.
+   The ladder itself — every basis above and the choice between them — is one pure function,
+   `EstimateBenchmarkRate` in `src/util/benchmark_rate.hpp`; `RunBenchmarkPass` only collects
+   the observations it takes. That is what makes `active_short` testable at all: a real run
+   reaches it only on the race described in rule 5, so
+   `test/unit-correctness/util/test_benchmark_rate.cpp` states the degenerate input as a
+   literal instead of repeating whole benchmark runs until the race comes up, and
+   `test/regression-sentinel/test_benchmark_rate_not_impossible.py` keeps only a few real runs
+   to check the wiring.
 
 5. **On a GPU backend, `ray_num` must exceed one drain quantum or the window has zero
    interior samples.** `sim_ray_num` is published in whole drains of
