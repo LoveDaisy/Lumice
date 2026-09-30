@@ -1896,7 +1896,7 @@ This section is the first change written under the rule, and it says so rather t
 rule as established practice: earlier changes in this repository carry no such declaration, and none
 was back-filled for them.
 
-The per-test part of this question is also asked mechanically: a PR-layer test over 30 s has to be
+The per-test part of this question is also asked mechanically: a PR-layer test over 60 s has to be
 registered, with a reason, or CI goes red. See §7.7; it reinforces this rule and does not replace it.
 
 ### §7.4 Independent re-verification is a fixed-cost multiplier
@@ -2011,7 +2011,7 @@ cannot stop anything: two slow tests that together cost about 12.8 minutes of CI
 while it was in force. This section is the mechanical half. It does not replace §7.3, which still
 decides when the question is asked (before the change, not after CI has turned red).
 
-**The rule.** In every CI job wired to it (list below), each test that took longer than **T = 30 s**
+**The rule.** In every CI job wired to it (list below), each test that took longer than **T = 60 s**
 in that run must have an entry in `test/duration_registry.json`, and that entry must carry a reason.
 `scripts/check_test_durations.py` compares the job's measured durations against the registry in a
 step at the end of the job, and turns the job red when, for that job:
@@ -2025,9 +2025,10 @@ step at the end of the job, and turns the job red when, for that job:
 4. the registry is malformed (unknown or missing field, duplicate `id`+`job`, non-positive seconds),
    or an entry's `reason` is empty or the placeholder `TODO`.
 
-A registered test that ran **under** T is a notice, not a red: a test near the threshold would
-otherwise force its entry in and out on alternate runs. Whether to delete such an entry is the
-author's decision.
+A registered test that ran in **less than half** its registered `ci_seconds` is a notice, not a red:
+the entry is probably set too high, and an entry set too high lets the test slow down unnoticed.
+Whether to lower or delete it is the author's decision. A registered test that merely ran under T
+says nothing — most entries do (see below).
 
 **What is measured.** Setup + call + teardown of each test, written by the pytest plugin
 `scripts/duration_report_plugin.py`, which CI loads explicitly (`PYTHONPATH=scripts pytest -p
@@ -2047,19 +2048,23 @@ like a test, by its fixture id. A unittest-style `setUpClass` shows up the same 
 teardown, and lazy one-time costs outside fixtures (the first library load in a process), which stay
 with whichever test incurred them.
 
-**Why these numbers.** T = 30 s is about where the busiest leg's `--durations=20` list ends (its
-twentieth entry measured 28–32 s across runs), which keeps the registry to the tests that actually
-dominate a leg rather than a long tail, and it sits above the 20–30 s band where the same macOS test measured up to 1.7× apart across
-runs, so a test in that band does not drift in and out of registration. 2× for a registered test is
-chosen against the same 1.7× spread: 1.5× would go red on runner noise, and not checking at all would
-let an entry registered at 40 s grow to 400 s in silence. Registered values are the **largest** of
-several CI runs, rounded up to a multiple of 5 s. The registry's initial contents are every (job, test) that
-reached **24 s (0.8 T)** in any of the sampled runs, not only those over T, because the measured
-run-to-run spread was up to 1.25× on `e2e-test` (a whole run 405 s on one runner, 502 s on another,
-every test scaled alike), 1.4× on the macOS rest leg and **1.9×** on the Ubuntu leg, whose `-n 3`
-workers contend for four cores; a test measured at 26 s there is one slow runner away from red. Such
-an entry reads under T on most runs and produces a notice, not a red; that is expected. Both factors are constants in the script, so
-changing them is a reviewable diff, not a setting.
+**Why these numbers.** They are set by how much one test's wall clock moves between CI runs with
+nothing changed, measured on this workflow's own runners before the gate was switched on:
+up to **1.25×** on the serial `e2e-test` job (a whole run took 405 s on one runner and 502 s on
+another, every test scaled alike), and up to **1.9×** on the `e2e-slow` legs, whose `-n 3` workers
+contend for the runner's cores and, on macOS, its GPU (a test measured at 44.8 s in one run and
+84.1 s in another on the Ubuntu leg; a test that never exceeded 20 s in four macOS runs took 35.2 s
+in the fifth). A threshold therefore has to sit about 2× above the slowest test it leaves
+unregistered, or unrelated PRs go red on runner noise. The gate was first switched on at T = 30 s
+and did exactly that on its first trial run, which is why T is **60 s**; the smaller figure first
+proposed for it only works where runs are that much quieter. 2× for a registered test is chosen
+against the same spread: 1.5× would go red on noise, and not checking at all would let an entry
+registered at 40 s grow to 400 s in silence. Registered values are the **largest** of several CI
+runs, rounded up to a multiple of 5 s. For the same reason the registry's initial contents are
+every (job, test) that reached **24 s** in any sampled run (T/2.5, so that even a 1.9× excursion of
+an unregistered test stays under T), not only those over T: most of those entries read under T on
+most runs, and that is expected. Both factors are constants in the script, so changing them is a
+reviewable diff, not a setting.
 
 **Registering a test.** The red message for an unregistered test prints the exact line to paste,
 with `ci_seconds` already filled in and `reason` set to `TODO`, which the checker rejects — so the

@@ -13,9 +13,11 @@ someone has argued for. Red when, for the job named by `--job`:
    test is still present, with ~0 s, so a platform skip never reads as stale;
 4. the registry itself is malformed, or an entry's reason is empty or "TODO".
 
-A registered id that ran under THRESHOLD_S is reported as a notice, not red, so a
-test hovering at the threshold does not force its entry in and out on alternate
-runs. Deleting the entry is the author's call.
+A registered id that ran in less than 1/SLOWDOWN_FACTOR of its registered seconds
+is reported as a notice, not red: its entry is probably set too high, which would
+let the test slow down unnoticed. Lowering or deleting the entry is the author's
+call. A registered id merely under THRESHOLD_S is normal and says nothing: runs of
+one test spread up to ~2x across CI runners, so tests are registered well below T.
 
 This is a RUNTIME check, unlike the four diff-scoped checkers named in AGENTS.md:
 its input exists only after a CI job has run the tests, so it cannot run in the
@@ -41,7 +43,11 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_REGISTRY = REPO_ROOT / "test" / "duration_registry.json"
 
-THRESHOLD_S = 30.0
+# 60 s rather than a lower figure because a single test's wall clock under the
+# e2e-slow legs' `-n 3` workers was measured to spread up to 1.9x between CI runs
+# (up to 1.25x on the serial e2e-test job): a threshold has to sit about 2x above
+# the slowest test it leaves unregistered, or unrelated PRs go red on runner noise.
+THRESHOLD_S = 60.0
 SLOWDOWN_FACTOR = 2.0
 # Registered seconds are rounded up to this step, so re-measuring does not churn
 # the file over a second or two.
@@ -166,10 +172,10 @@ def check(job: str, durations: dict[str, float], entries: list[dict]) -> tuple[l
                 f"{entry['ci_seconds']}s. Find out why it slowed down; if the new cost is justified, raise "
                 "'ci_seconds' in test/duration_registry.json in the same change"
             )
-        elif seconds <= THRESHOLD_S:
+        elif seconds < entry["ci_seconds"] / SLOWDOWN_FACTOR:
             notices.append(
-                f"{test_id} is registered for job {job!r} but took {seconds:.1f}s, under the "
-                f"{THRESHOLD_S:.0f}s threshold; its registry entry may no longer be needed"
+                f"{test_id} is registered for job {job!r} at {entry['ci_seconds']}s but took {seconds:.1f}s; "
+                "if it is now reliably faster, lower or remove its registry entry"
             )
 
     if not registered:
