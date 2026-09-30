@@ -1188,12 +1188,7 @@ jobs:
         # must be registered in test/duration_registry.json with a reason
         # (doc/testing-architecture.md §7.7). On red, the log names the test and
         # prints the registry line to add — or make the test faster instead.
-        run: |
-          set -o pipefail
-          python3 scripts/check_test_durations.py --emit-candidates --job "e2e-test" \
-            --report "$RUNNER_TEMP/durations.json" | tee -a "$GITHUB_STEP_SUMMARY"
-          python3 scripts/check_test_durations.py --job "e2e-test" --report "$RUNNER_TEMP/durations.json" \
-            || echo "::warning::duration registry preview is red (not enforced yet)"
+        run: python3 scripts/check_test_durations.py --job "e2e-test" --report "$RUNNER_TEMP/durations.json"
 
   e2e-slow:
     if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
@@ -1450,15 +1445,11 @@ jobs:
         # Same runtime gate as e2e-test's step of this name; phase 2 writes its
         # report only on legs that run it, so the second --report is conditional.
         run: |
-          set -o pipefail
           reports=(--report "$RUNNER_TEMP/durations-phase1.json")
           if [ -f "$RUNNER_TEMP/durations-phase2.json" ]; then
             reports+=(--report "$RUNNER_TEMP/durations-phase2.json")
           fi
-          python3 scripts/check_test_durations.py --emit-candidates --job "E2E Slow (${{ matrix.name }})" \
-            "${reports[@]}" | tee -a "$GITHUB_STEP_SUMMARY"
-          python3 scripts/check_test_durations.py --job "E2E Slow (${{ matrix.name }})" "${reports[@]}" \
-            || echo "::warning::duration registry preview is red (not enforced yet)"
+          python3 scripts/check_test_durations.py --job "E2E Slow (${{ matrix.name }})" "${reports[@]}"
 
   # Windows shared-library export sets, under both Windows compilers the release uses (cl.exe
   # for the baseline engine, clang-cl for the v3 one). The three shared libraries — lumice,

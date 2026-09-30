@@ -2053,7 +2053,12 @@ dominate a leg rather than a long tail, and it sits above the 20–30 s band whe
 runs, so a test in that band does not drift in and out of registration. 2× for a registered test is
 chosen against the same 1.7× spread: 1.5× would go red on runner noise, and not checking at all would
 let an entry registered at 40 s grow to 400 s in silence. Registered values are the **largest** of
-several CI runs, rounded up to a multiple of 5 s. Both factors are constants in the script, so
+several CI runs, rounded up to a multiple of 5 s. The registry's initial contents are every (job, test) that
+reached **24 s (0.8 T)** in any of the sampled runs, not only those over T, because the measured
+run-to-run spread was up to 1.25× on `e2e-test` (a whole run 405 s on one runner, 502 s on another,
+every test scaled alike), 1.4× on the macOS rest leg and **1.9×** on the Ubuntu leg, whose `-n 3`
+workers contend for four cores; a test measured at 26 s there is one slow runner away from red. Such
+an entry reads under T on most runs and produces a notice, not a red; that is expected. Both factors are constants in the script, so
 changing them is a reviewable diff, not a setting.
 
 **Registering a test.** The red message for an unregistered test prints the exact line to paste,

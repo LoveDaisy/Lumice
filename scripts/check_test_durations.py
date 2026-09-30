@@ -46,9 +46,6 @@ SLOWDOWN_FACTOR = 2.0
 # Registered seconds are rounded up to this step, so re-measuring does not churn
 # the file over a second or two.
 ROUND_TO_S = 5
-# Emitted with --emit-candidates only: below THRESHOLD_S but close enough that
-# the threshold's margin is worth watching.
-BORDERLINE_FLOOR_S = 20.0
 
 REGISTRY_VERSION = 1
 ENTRY_FIELDS = ("id", "job", "ci_seconds", "reason")
@@ -180,37 +177,15 @@ def check(job: str, durations: dict[str, float], entries: list[dict]) -> tuple[l
     return errors, notices
 
 
-def emit_candidates(job: str, durations: dict[str, float]) -> None:
-    over = sorted(((t, i) for i, t in durations.items() if t > THRESHOLD_S), reverse=True)
-    near = sorted(
-        ((t, i) for i, t in durations.items() if BORDERLINE_FLOOR_S < t <= THRESHOLD_S), reverse=True
-    )
-    print(f"### Duration candidates for job `{job}` (> {THRESHOLD_S:.0f}s: {len(over)})")
-    print("```")
-    for seconds, test_id in over:
-        print(f"{seconds:8.1f}  {skeleton(test_id, job, seconds)}")
-    print("```")
-    print(f"### Borderline ({BORDERLINE_FLOOR_S:.0f}-{THRESHOLD_S:.0f}s: {len(near)})")
-    print("```")
-    for seconds, test_id in near:
-        print(f"{seconds:8.1f}  {test_id}")
-    print("```")
-
-
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--job", required=True, help="this CI job's name, as written in the registry")
     parser.add_argument("--report", type=Path, action="append", required=True,
                         help="a duration report written by duration_report_plugin (repeatable)")
     parser.add_argument("--registry", type=Path, default=DEFAULT_REGISTRY)
-    parser.add_argument("--emit-candidates", action="store_true",
-                        help="print the ids over (and near) the threshold as registry skeletons; never red")
     args = parser.parse_args(argv)
 
     durations = load_reports(args.report)
-    if args.emit_candidates:
-        emit_candidates(args.job, durations)
-        return 0
     try:
         entries = load_registry(args.registry)
     except RegistryError as e:
