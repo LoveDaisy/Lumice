@@ -271,7 +271,7 @@ add_executable(unit_correctness_test
 target_include_directories(unit_correctness_test
   PRIVATE ${PROJ_TEST_DIR})
 target_link_libraries(unit_correctness_test
-  PRIVATE GTest::gtest ${CMAKE_THREAD_LIBS_INIT} lumice_obj lumice_analytic_kernel lumice_raypath_obj)
+  PRIVATE GTest::gtest ${CMAKE_THREAD_LIBS_INIT} lumice_obj lumice_foundation_obj lumice_analytic_kernel lumice_raypath_obj)
 # The configure-time tier, for test_c_api_engine_isa_level.cpp to hold the engine's run-time
 # answer against. A test-side definition rather than a read of the engine's own
 # LUMICE_ISA_LEVEL_STR: that macro is PRIVATE to lumice_obj on purpose (root CMakeLists.txt,
@@ -337,7 +337,7 @@ endif()
 target_include_directories(parity_test
   PRIVATE ${PROJ_TEST_DIR})
 target_link_libraries(parity_test
-  PRIVATE GTest::gtest ${CMAKE_THREAD_LIBS_INIT} lumice_obj)
+  PRIVATE GTest::gtest ${CMAKE_THREAD_LIBS_INIT} lumice_obj lumice_foundation_obj)
 set_target_properties(parity_test PROPERTIES
   BUILD_RPATH "$<TARGET_FILE_DIR:GTest::gtest>")
 
@@ -378,7 +378,7 @@ add_executable(golden_analytic_test
 target_include_directories(golden_analytic_test
   PRIVATE ${PROJ_TEST_DIR})
 target_link_libraries(golden_analytic_test
-  PRIVATE GTest::gtest ${CMAKE_THREAD_LIBS_INIT} lumice_obj)
+  PRIVATE GTest::gtest ${CMAKE_THREAD_LIBS_INIT} lumice_obj lumice_foundation_obj)
 if(APPLE)
   target_link_libraries(golden_analytic_test PRIVATE "-framework Metal" "-framework Foundation")
 endif()
@@ -525,7 +525,7 @@ if(BUILD_GUI)
   #
   # gui_test does NOT need this exemption — it links plain `lumice` (see test/gui/CMakeLists.txt).
   target_link_libraries(gui_unit_test
-    PRIVATE GTest::gtest ${CMAKE_THREAD_LIBS_INIT} lumice_gui_obj lumice_obj)
+    PRIVATE GTest::gtest ${CMAKE_THREAD_LIBS_INIT} lumice_gui_obj lumice_obj lumice_foundation_obj)
   set_target_properties(gui_unit_test PROPERTIES
     BUILD_RPATH "$<TARGET_FILE_DIR:GTest::gtest>")
 
@@ -616,7 +616,7 @@ if(BUILD_GUI)
   # composition chain that cross-checks the GUI against core's own primitives needs the internal
   # symbols that liblumice.dylib's -fvisibility=hidden does not export.
   target_link_libraries(composition_correctness_test
-    PRIVATE GTest::gtest ${CMAKE_THREAD_LIBS_INIT} lumice_gui_obj lumice_obj)
+    PRIVATE GTest::gtest ${CMAKE_THREAD_LIBS_INIT} lumice_gui_obj lumice_obj lumice_foundation_obj)
   set_target_properties(composition_correctness_test PROPERTIES
     BUILD_RPATH "$<TARGET_FILE_DIR:GTest::gtest>")
 

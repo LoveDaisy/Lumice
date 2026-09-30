@@ -815,11 +815,50 @@ set(lumice_src
   ${lumice_server_src} ${lumice_util_src}
   "${LUMICE_LABEL_FONT_EMBED_CPP}")
 
+# --- Layer manifest: the foundation layer is its own OBJECT library ---------------------------
+# cmake/lumice_layers.cmake is the one statement of which layer owns each src/ file; the
+# layer-inversion rule in scripts/check_policies.py enforces it on every #include. Its foundation
+# list is the set of engine sources that include nothing above foundation, so it is exactly what a
+# library can be built from without the rest of the engine: lumice_foundation_obj below compiles
+# those sources and lumice_obj compiles the others. liblumice_analytic links foundation and the
+# analytic kernel only — the engine does not reach it structurally, rather than being linked in
+# and stripped again. The source lists above stay the one list of what the engine compiles; the
+# foundation files are subtracted from it here, never written a second time.
+include("${CMAKE_SOURCE_DIR}/cmake/lumice_layers.cmake")
+set(lumice_foundation_src "")
+foreach(_rel IN LISTS LUMICE_LAYER_foundation_FILES)
+  set(_abs "${PROJ_SRC_DIR}/${_rel}")
+  if(NOT EXISTS "${_abs}")
+    message(FATAL_ERROR "[layers] cmake/lumice_layers.cmake lists ${_rel}, which does not exist.")
+  endif()
+  get_filename_component(_ext "${_rel}" LAST_EXT)
+  if(NOT _ext MATCHES "^\\.(cpp|hpp|h)$")
+    # An .mm or .cu entry would be compiled by nothing: lumice_foundation_obj takes .cpp only.
+    message(FATAL_ERROR "[layers] foundation may hold only .cpp/.hpp/.h sources; ${_rel} is not one.")
+  endif()
+  if(_ext STREQUAL ".cpp")
+    list(FIND lumice_src "${_abs}" _idx)
+    if(_idx EQUAL -1)
+      message(FATAL_ERROR "[layers] foundation lists ${_rel}, but no engine source list above "
+                          "compiles it; add it there (the manifest assigns a layer, it does not "
+                          "add a source).")
+    endif()
+    list(APPEND lumice_foundation_src "${_abs}")
+  endif()
+endforeach()
+list(REMOVE_ITEM lumice_src ${lumice_foundation_src})
+
 # ==================================================================================================
 # OBJECT library — compile sources once, reuse .o files across targets (library, test, bench).
 # test/bench link lumice_obj directly so all symbols are accessible regardless of
 # -fvisibility=hidden (visibility only affects shared-library export, not executable linking).
 add_library(lumice_obj OBJECT ${lumice_src})
+# Usage requirements only: an OBJECT library linking another OBJECT library gets its include
+# directories, definitions and dependencies, never its objects. Every final target that links
+# lumice_obj therefore links lumice_foundation_obj by name as well (the same rule the kernel and
+# the single-path module below already follow) — once, and only there, so each binary holds one
+# copy of the foundation objects and of the logger's statics among them.
+target_link_libraries(lumice_obj PUBLIC lumice_foundation_obj)
 target_include_directories(lumice_obj
   PUBLIC
     $<BUILD_INTERFACE:${PROJ_SRC_DIR}/include>
@@ -954,6 +993,21 @@ endfunction()
 
 lumice_apply_engine_compile_options(lumice_obj)
 
+# The foundation layer (see the manifest block above): math, geometry, optics, the crystal and
+# its shape parameters, the logger and the other util/ pieces. The same public include
+# directories and dependencies as lumice_obj — nothing the rest of the engine adds privately
+# (stb, the generated headers, Metal, CUDA) is needed by a file the manifest calls foundation,
+# because the layer gate keeps every such file from including anything above foundation.
+add_library(lumice_foundation_obj OBJECT ${lumice_foundation_src})
+target_include_directories(lumice_foundation_obj
+  PUBLIC
+    $<BUILD_INTERFACE:${PROJ_SRC_DIR}/include>
+    $<INSTALL_INTERFACE:include>
+    ${lumice_include})
+target_link_libraries(lumice_foundation_obj
+  PUBLIC nlohmann_json::nlohmann_json spdlog::spdlog_header_only tl::expected Threads::Threads)
+lumice_apply_engine_compile_options(lumice_foundation_obj)
+
 # The analytic kernel (src/analytic/ minus its C ABI wrapper): the evaluator, the fiber
 # continuation, the entry measure and component discovery. Its own OBJECT library because three
 # targets link it and lumice_obj must not carry it: liblumice_analytic (behind analytic_api.cpp),
@@ -969,7 +1023,9 @@ set(lumice_analytic_kernel_src
   "${PROJ_SRC_DIR}/analytic/pose_density.cpp"
   "${PROJ_SRC_DIR}/analytic/band_sum.cpp")
 add_library(lumice_analytic_kernel OBJECT ${lumice_analytic_kernel_src})
-target_link_libraries(lumice_analytic_kernel PUBLIC lumice_obj)
+# Foundation only: the kernel is the analytic layer, which sits directly on foundation
+# (cmake/lumice_layers.cmake), and liblumice_analytic links nothing else of the engine.
+target_link_libraries(lumice_analytic_kernel PUBLIC lumice_foundation_obj)
 lumice_apply_engine_compile_options(lumice_analytic_kernel)
 
 # The single-path analysis module (src/raypath/: scene config -> the kernel above -> fibers,
@@ -1035,7 +1091,7 @@ endfunction()
 add_library(lumice)
 # The single-path module and the kernel under it are linked by name, both of them: an OBJECT
 # library's objects go only into a target that links it directly, never transitively.
-target_link_libraries(lumice PUBLIC lumice_obj PRIVATE lumice_raypath_obj lumice_analytic_kernel)
+target_link_libraries(lumice PUBLIC lumice_obj PRIVATE lumice_foundation_obj lumice_raypath_obj lumice_analytic_kernel)
 if(NOT MSVC)
   target_link_options(lumice PUBLIC
     $<$<CONFIG:MinSizeRel>:$<$<CXX_COMPILER_ID:AppleClang,Clang>:-dead_strip>>
@@ -1095,7 +1151,7 @@ if(BUILD_SHARED_LIBS)
   add_library(lumice_testapi SHARED
     "${PROJ_TEST_DIR}/support/lumice_test_api.cpp")
   # PRIVATE: nothing links against this target — it is only ever dlopen'ed by ctypes.
-  target_link_libraries(lumice_testapi PRIVATE lumice_obj lumice_raypath_obj lumice_analytic_kernel)
+  target_link_libraries(lumice_testapi PRIVATE lumice_obj lumice_foundation_obj lumice_raypath_obj lumice_analytic_kernel)
   if(NOT MSVC)
     # Same compile discipline as lumice_obj: hidden unless marked (LUMICE_TEST_API here).
     target_compile_options(lumice_testapi PRIVATE
@@ -1129,7 +1185,7 @@ endif()
 if(BUILD_SHARED_LIBS AND NOT LUMICE_CUDA_ENABLED)
   add_library(lumice_analytic SHARED
     "${PROJ_SRC_DIR}/analytic/analytic_api.cpp")
-  target_link_libraries(lumice_analytic PRIVATE lumice_analytic_kernel lumice_obj)
+  target_link_libraries(lumice_analytic PRIVATE lumice_analytic_kernel lumice_foundation_obj)
   if(NOT MSVC)
     target_compile_options(lumice_analytic PRIVATE
       $<$<CONFIG:Release>:-fvisibility=hidden>
