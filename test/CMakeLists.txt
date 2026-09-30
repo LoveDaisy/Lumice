@@ -297,6 +297,31 @@ add_test(NAME "LumiceUnitCorrectnessTest" COMMAND unit_correctness_test
 set_tests_properties("LumiceUnitCorrectnessTest" PROPERTIES LABELS "unit-correctness")
 
 # --------------------------------------------------------------------------------------------------
+# capi_header_self_containment_test (unit-correctness): every engine surface header, and the lumice.h
+# umbrella, compiles when it is the ONLY thing a translation unit includes — once as C, once as C++.
+# The headers are the engine's export surface (cmake/export_surfaces.cmake), so a new capability
+# header is covered by being listed there. The include path is src/include/ alone, the directory a
+# consumer of the C API has, so a header that leans on src/ (or on an include its includer happened
+# to make first) fails to build here. The check is the compile: the executable only returns 0, and
+# is registered with ctest so a build that skipped it is visible as a missing test.
+set(_self_contained_dir "${CMAKE_CURRENT_BINARY_DIR}/capi_header_self_containment")
+set(_self_contained_sources "")
+foreach(_rel IN LISTS LUMICE_ENGINE_SURFACE_HEADERS ITEMS src/include/lumice.h)
+  get_filename_component(_name "${_rel}" NAME_WE)
+  get_filename_component(_file "${_rel}" NAME)
+  foreach(_ext IN ITEMS c cpp)
+    set(_tu "${_self_contained_dir}/${_name}.${_ext}")
+    file(CONFIGURE OUTPUT "${_tu}" CONTENT "#include \"${_file}\"\n" @ONLY)
+    list(APPEND _self_contained_sources "${_tu}")
+  endforeach()
+endforeach()
+file(CONFIGURE OUTPUT "${_self_contained_dir}/main.c" CONTENT "int main(void) { return 0; }\n" @ONLY)
+add_executable(capi_header_self_containment_test ${_self_contained_sources} "${_self_contained_dir}/main.c")
+target_include_directories(capi_header_self_containment_test PRIVATE "${CMAKE_SOURCE_DIR}/src/include")
+add_test(NAME "LumiceCapiHeaderSelfContainment" COMMAND capi_header_self_containment_test)
+set_tests_properties("LumiceCapiHeaderSelfContainment" PROPERTIES LABELS "unit-correctness")
+
+# --------------------------------------------------------------------------------------------------
 # parity_test (parity-cross-backend layer; label abbreviated per §5)
 add_executable(parity_test
   "${PROJ_TEST_DIR}/test_main.cpp"
