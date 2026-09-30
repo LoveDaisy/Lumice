@@ -163,7 +163,7 @@ Key observations:
   authoring and committing are separate entry points at all: a config can be
   validated or edited without disturbing a running simulation.
 - **Implementation note (known technical debt).** These parse into an internal
-  `ConfigScratch` (`src/server/c_api_internal.hpp` — the former public
+  `ConfigScratch` (`src/server/c_api_scene_internal.hpp` — the former public
   `LUMICE_Config`, demoted in v4.12) via `JsonToConfig`, then re-encode that
   struct through `ConfigToJson` into the new handle's root. That double hop —
   text → `ConfigScratch` → JSON root — is deliberate, not an oversight:

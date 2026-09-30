@@ -814,7 +814,7 @@ void SaveRawFloatResults(LUMICE_Server* server, const LUMICE_Scene* scene, const
     // here -- not extracted into a shared core/color_util.hpp free function -- because this CLI
     // feature is deliberately kept out of src/core/ entirely; if that comment or that function
     // ever changes the formula, this line changes with them, same as the existing
-    // config_manager.cpp/c_api_scene.cpp dual-decoder pattern this mirrors.
+    // config_manager.cpp/scene_json_to_config.cpp dual-decoder pattern this mirrors.
     const float* payload = row.xyz_buffer;
     if (mode == RawExportMode::kNormalized) {
       const auto scale =

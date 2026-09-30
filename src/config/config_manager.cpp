@@ -155,7 +155,7 @@ RenderConfig ParseRenderConfig(const nlohmann::json& j_render, const ConfigManag
     }
     // The other three families' line switches. Nothing is written when the key is absent: the
     // members already default to true, which is what makes a document that predates these keys
-    // render exactly as it did. Twin of the same three reads in c_api_scene.cpp's decoder.
+    // render exactly as it did. Twin of the same three reads in scene_json_to_config.cpp.
     if (j_grid.contains("elevation_line")) {
       j_grid.at("elevation_line").get_to(render.elevation_grid_line_);
     }
@@ -188,7 +188,7 @@ RenderConfig ParseRenderConfig(const nlohmann::json& j_render, const ConfigManag
     }
     // The marker family. Note what is NOT here: no rewriting of "zenith_nadir" into two markers_
     // entries. The arbitration between the two lives in RenderConsumer, so that every path which
-    // produces a RenderConfig — this parser, c_api_scene.cpp's, and direct C++ construction — gets the
+    // produces a RenderConfig — this parser, scene_json_to_config.cpp's, and direct C++ construction — gets the
     // same rule instead of each producer having to remember to apply it.
     if (j_grid.contains("markers")) {
       // get_to appends element by element and rethrows on the first bad one, so a list whose third

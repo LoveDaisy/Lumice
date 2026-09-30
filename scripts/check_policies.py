@@ -29,7 +29,7 @@ Checks:
      reorders that sizeof-based `static_assert`s do not detect (scrum-328.2
      Step 6).
   7. no-config-by-value-copy — ConfigScratch (the internal parse buffer in
-     server/c_api_internal.hpp, formerly the public LUMICE_Config) owns heap
+     server/c_api_scene_internal.hpp, formerly the public LUMICE_Config) owns heap
      allocations via its raypath_color pointer (v4.8) AND each
      compositions[i]'s term_ids/term_counts pointers (v4.9). The check also covers LUMICE_ComplexComposition (each record is now
      an owning type on its own). Copying either struct by value (copy-init,

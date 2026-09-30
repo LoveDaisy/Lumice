@@ -1271,7 +1271,7 @@ TEST(SceneRenderTone, DecodeRoundTripsBothValues) {
   }
 }
 
-// The decode-side half of the divergence argued at IsKnownToneString (c_api_scene.cpp): THIS decoder
+// The decode-side half of the divergence argued at IsKnownToneString (scene_json_to_config.cpp): THIS decoder
 // rejects an unknown tone, while core's ParseRenderConfig warns and falls back to "screen"
 // (pinned in test_json.cpp). Each follows its own file's convention — every other enum-valued
 // renderer field here (lens type, visible, ev_mode) rejects too, and a C API returning OK while
