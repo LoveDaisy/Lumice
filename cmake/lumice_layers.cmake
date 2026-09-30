@@ -91,8 +91,9 @@ set(LUMICE_LAYER_foundation_FILES
 )
 
 set(LUMICE_LAYER_analytic_FILES
-  analytic/analytic_api.cpp
   analytic/analytic_callback_sink.hpp
+  analytic/analytic_capi.cpp
+  analytic/analytic_lib.cpp
   analytic/band_sum.cpp
   analytic/band_sum.hpp
   analytic/discovery.cpp
@@ -113,6 +114,7 @@ set(LUMICE_LAYER_analytic_FILES
   analytic/pose_density.hpp
   analytic/so3.hpp
   include/lumice_analytic.h
+  include/lumice_analytic_core.h
 )
 
 set(LUMICE_LAYER_scene_FILES

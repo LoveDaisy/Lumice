@@ -244,9 +244,10 @@ add_executable(unit_correctness_test
   "${PROJ_TEST_DIR}/unit-correctness/backend/test_ray_allocation_backends.cpp"
   # analytic/: liblumice_analytic's evaluator kernel, checked against independent physics. The
   # kernel's objects come from the lumice_analytic_kernel OBJECT library linked below (src/analytic/
-  # is outside lumice_obj); the C ABI wrapper (analytic_api.cpp) is not linked, since its load-time
-  # initialiser silences the engine's console sink for the whole process — the wrapper is exercised
-  # through ctypes in test/e2e-correctness/test_analytic_evaluate_path.py.
+  # is outside lumice_obj), the capability's C ABI (analytic_capi.cpp) among them; the library's
+  # management TU (analytic_lib.cpp) is not linked, since its load-time initialiser silences the
+  # engine's console sink for the whole process — it is exercised through ctypes in
+  # test/e2e-correctness/test_analytic_log_sink.py.
   "${PROJ_TEST_DIR}/unit-correctness/analytic/test_path_evaluation.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/analytic/test_jet.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/analytic/test_so3.cpp"

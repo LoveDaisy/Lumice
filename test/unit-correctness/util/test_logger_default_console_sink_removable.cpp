@@ -11,7 +11,7 @@
 
 // liblumice_analytic goes silent by removing GetDefaultConsoleSink() from its copy of
 // GetSharedSink() while it loads, and hands diagnostics to the host through AnalyticCallbackSink
-// (src/analytic/analytic_api.cpp, doc/analytic-api.md section 6). These cases drive the same two
+// (src/analytic/analytic_lib.cpp, doc/analytic-api.md section 6). These cases drive the same two
 // steps in this process, through the same LOG_WARNING macro the engine's real warnings use
 // (crystal.cpp, geo3d_closedform.cpp): the library exposes no function that warns yet, so the
 // mechanism is pinned here. That the library really runs the removal at load time is pinned at the

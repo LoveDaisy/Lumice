@@ -2,16 +2,19 @@
 
 liblumice, liblumice_testapi and liblumice_analytic are linked from the same engine objects, so
 what separates their surfaces is nothing but each library's export list, generated from its
-headers by scripts/gen_export_list.py (root CMakeLists.txt, lumice_apply_export_list). A green
+headers by scripts/gen_export_list.py (root CMakeLists.txt, lumice_apply_export_list). Which
+headers those are is declared once, in cmake/export_surfaces.cmake; this test reads that same
+declaration (scripts/check_policies.py's parse_export_surfaces), never a copy of it. A green
 build says nothing about whether that worked: a list the linker ignored, a whitelist that let the
 engine's C++ symbols through, or a Windows DLL still exporting everything all link fine. So this
 reads the dynamic symbol table of each built library with the platform's own tool — `nm -D` on
 Linux, `nm -gU` on macOS, `dumpbin /exports` on Windows — and compares it with the generator's own
 parse of the headers:
 
-    liblumice           == the functions lumice.h declares
-    liblumice_testapi   == lumice.h + test/support/lumice_test_api.h
-    liblumice_analytic  == lumice_analytic.h, every name LUMICE_ANALYTIC_*, and at least one
+    liblumice           == LUMICE_ENGINE_SURFACE_HEADERS   (lumice.h + lumice_analytic_core.h)
+    liblumice_testapi   == LUMICE_TESTAPI_SURFACE_HEADERS  (the engine's + lumice_test_api.h)
+    liblumice_analytic  == LUMICE_ANALYTIC_SURFACE_HEADERS (lumice_analytic.h + its core header),
+                           every name LUMICE_ANALYTIC_*, and at least one
 
 The expected side reuses the generator's parser on purpose (one authority for "what a header
 declares"). What that cannot see — a declaration that lost its visibility marker, gone from both
@@ -20,6 +23,8 @@ sides at once — the generator itself refuses at build time.
 Each library is also loaded, in a child process so its engine copy never shares this process with
 the test library the rest of the suite loads (doc/analytic-api.md section 2.6), and the analytic
 placeholder is called: its answer must equal the header's LUMICE_ANALYTIC_API_VERSION.
+Separately, the engine must not carry liblumice_analytic's management functions: linked in, the
+management TU would remove the engine's console sink at load.
 
 Needs a shared build (`./scripts/build.sh -sj release`); skipped when there is none at all. When a
 shared build exists, a missing library is a failure rather than a skip — a lookup that silently
@@ -40,14 +45,13 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
 
+import check_policies  # noqa: E402
 import gen_export_list  # noqa: E402
 
 pytestmark = pytest.mark.slow
 
 SHARED_OUT = ROOT / "build" / "Release" / "shared"
-LUMICE_H = ROOT / "src" / "include" / "lumice.h"
-TEST_API_H = ROOT / "test" / "support" / "lumice_test_api.h"
-ANALYTIC_H = ROOT / "src" / "include" / "lumice_analytic.h"
+ANALYTIC_CORE_H = ROOT / "src" / "include" / "lumice_analytic_core.h"
 
 # File-name patterns per library and platform. On Windows the `lumice` target is named after its
 # ISA tier (lumice-engine.<tier>.dll, root CMakeLists.txt) — the one irregular name.
@@ -65,11 +69,12 @@ _PATTERNS = {
     },
 }
 
-_EXPECTED_HEADERS = {
-    "lumice": [LUMICE_H],
-    "lumice_testapi": [LUMICE_H, TEST_API_H],
-    "lumice_analytic": [ANALYTIC_H],
-}
+# The declaration's library keys (LUMICE_<KEY>_SURFACE_HEADERS) by target name.
+_SURFACE_KEY = {"lumice": "ENGINE", "lumice_testapi": "TESTAPI", "lumice_analytic": "ANALYTIC"}
+_SURFACES = check_policies.parse_export_surfaces(
+    (ROOT / check_policies.EXPORT_SURFACES_REL).read_text(encoding="utf-8")
+)
+_EXPECTED_HEADERS = {lib: [ROOT / rel for rel in _SURFACES[key]] for lib, key in _SURFACE_KEY.items()}
 
 # Symbols GNU ld defines in every shared object's dynamic table on its own, whatever the version
 # script says. Named one by one so that anything else unexpected still fails.
@@ -182,9 +187,26 @@ def test_library_loads_and_resolves_every_declared_function(lib: str) -> None:
     _load_in_child(path, f"for n in {names!r}:\n    getattr(lib, n)")
 
 
+def test_declaration_names_every_library() -> None:
+    """The declaration is the authority on every library this test checks: a library it did not
+    declare would otherwise be compared against nothing."""
+    assert set(_SURFACES) == set(_SURFACE_KEY.values())
+
+
+def test_engine_carries_no_library_management_function() -> None:
+    """The engine libraries export lumice_analytic_core.h, never lumice_analytic.h's own two
+    functions: those are liblumice_analytic's, and their TU (analytic_lib.cpp) also silences the
+    console at load. The set equality above already implies this; stated on its own so the reason
+    survives an edit of the declaration."""
+    management = set(gen_export_list.parse_headers([ROOT / "src" / "include" / "lumice_analytic.h"]))
+    assert management == {"LUMICE_ANALYTIC_GetApiVersion", "LUMICE_ANALYTIC_SetLogCallback"}
+    for lib in ("lumice", "lumice_testapi"):
+        assert not (_exported(_find(lib)) & management), lib
+
+
 def test_analytic_placeholder_returns_header_version() -> None:
-    m = re.search(r"#define\s+LUMICE_ANALYTIC_API_VERSION\s+(\d+)", ANALYTIC_H.read_text(encoding="utf-8"))
-    assert m, "LUMICE_ANALYTIC_API_VERSION not found in lumice_analytic.h"
+    m = re.search(r"#define\s+LUMICE_ANALYTIC_API_VERSION\s+(\d+)", ANALYTIC_CORE_H.read_text(encoding="utf-8"))
+    assert m, "LUMICE_ANALYTIC_API_VERSION not found in lumice_analytic_core.h"
     out = _load_in_child(
         _find("lumice_analytic"),
         "lib.LUMICE_ANALYTIC_GetApiVersion.restype = ctypes.c_int\n"

@@ -26,7 +26,7 @@
 #include <string>
 
 #include "core/geo3d_closedform.hpp"
-#include "lumice_analytic.h"
+#include "lumice_analytic_core.h"
 
 namespace lumice::analytic {
 

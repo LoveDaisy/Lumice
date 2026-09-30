@@ -1008,11 +1008,11 @@ target_link_libraries(lumice_foundation_obj
   PUBLIC nlohmann_json::nlohmann_json spdlog::spdlog_header_only tl::expected Threads::Threads)
 lumice_apply_engine_compile_options(lumice_foundation_obj)
 
-# The analytic kernel (src/analytic/ minus its C ABI wrapper): the evaluator, the fiber
-# continuation, the entry measure and component discovery. Its own OBJECT library because several
-# targets link it and lumice_obj must not carry it: liblumice_analytic (behind analytic_api.cpp),
-# the engine libraries (behind the single-path module below), and unit_correctness_test. One list
-# of its sources, here, rather than one per consumer.
+# The analytic kernel (src/analytic/ minus liblumice_analytic's management TU): the evaluator, the
+# fiber continuation, the entry measure, component discovery, and their C ABI. Its own OBJECT library because several
+# targets link it and lumice_obj must not carry it: liblumice_analytic, the engine libraries (which
+# export its C ABI and also call it behind the single-path module below), and
+# unit_correctness_test. One list of its sources, here, rather than one per consumer.
 set(lumice_analytic_kernel_src
   "${PROJ_SRC_DIR}/analytic/path_evaluation.cpp"
   "${PROJ_SRC_DIR}/analytic/fiber_continuation.cpp"
@@ -1021,7 +1021,10 @@ set(lumice_analytic_kernel_src
   "${PROJ_SRC_DIR}/analytic/discovery.cpp"
   "${PROJ_SRC_DIR}/analytic/path_rank.cpp"
   "${PROJ_SRC_DIR}/analytic/pose_density.cpp"
-  "${PROJ_SRC_DIR}/analytic/band_sum.cpp")
+  "${PROJ_SRC_DIR}/analytic/band_sum.cpp"
+  # The capability's C ABI (lumice_analytic_core.h). No static object with a side effect, so it
+  # may go wherever the kernel goes; the library-management TU (analytic_lib.cpp) may not.
+  "${PROJ_SRC_DIR}/analytic/analytic_capi.cpp")
 add_library(lumice_analytic_kernel OBJECT ${lumice_analytic_kernel_src})
 # Foundation only: the kernel is the analytic layer, which sits directly on foundation
 # (cmake/lumice_layers.cmake), and liblumice_analytic links nothing else of the engine.
@@ -1053,8 +1056,20 @@ lumice_apply_engine_compile_options(lumice_raypath_obj)
 # file is not a build-graph edge by itself); on Windows the .def is a target source, which is.
 # The generator rewrites its output only when the content changes, and Ninja restats custom
 # command outputs, so an edit that does not change the function set relinks nothing.
+#
+# Which headers each library's list is generated from is not decided at the call sites below but
+# in cmake/export_surfaces.cmake, one list per library, which the export test and the policy
+# checker read too. The arguments are those repo-relative paths.
+include("${CMAKE_SOURCE_DIR}/cmake/export_surfaces.cmake")
 function(lumice_apply_export_list target)
-  set(_headers ${ARGN})
+  set(_headers "")
+  foreach(_rel IN LISTS ARGN)
+    set(_abs "${CMAKE_SOURCE_DIR}/${_rel}")
+    if(NOT EXISTS "${_abs}")
+      message(FATAL_ERROR "[export surfaces] ${target}: cmake/export_surfaces.cmake names ${_rel}, which does not exist.")
+    endif()
+    list(APPEND _headers "${_abs}")
+  endforeach()
   if(WIN32)
     set(_format def)
     set(_ext def)
@@ -1098,14 +1113,19 @@ if(NOT MSVC)
     $<$<CONFIG:MinSizeRel>:$<$<CXX_COMPILER_ID:GNU>:--gc-sections>>)
 endif()
 if(BUILD_SHARED_LIBS)
-  # Exactly the functions lumice.h declares, on every platform.
-  lumice_apply_export_list(lumice "${PROJ_SRC_DIR}/include/lumice.h")
+  # Exactly the functions its surface headers declare (lumice.h and the analytic capability,
+  # cmake/export_surfaces.cmake), on every platform.
+  lumice_apply_export_list(lumice ${LUMICE_ENGINE_SURFACE_HEADERS})
 endif()
 if(WIN32 AND BUILD_SHARED_LIBS)
   # Consumers that link the engine DLL (the two shells, gui_test) get lumice.h's dllimport;
   # lumice_obj itself and the targets linking its objects directly do not (see lumice.h's
   # LUMICE_API comment). INTERFACE, so the decision follows the link graph, not a global switch.
   target_compile_definitions(lumice INTERFACE LUMICE_SHARED_DEFINE)
+  # The same for the analytic capability the engine DLL also exports (lumice_analytic_core.h's
+  # LUMICE_ANALYTIC_API): a shell calling it through this DLL needs the dllimport. The objects
+  # that define those functions (lumice_analytic_kernel) link no DLL target and so never see it.
+  target_compile_definitions(lumice INTERFACE LUMICE_ANALYTIC_SHARED_DEFINE)
   # On Windows the shared engine is an INTERNAL component of the release, not a library
   # anyone links: the zip carries one shell per entry point (`Lumice.exe`, `LumiceGUI.exe`)
   # and two builds of this DLL, one per ISA tier, and the shell picks one by CPUID at start
@@ -1158,19 +1178,21 @@ if(BUILD_SHARED_LIBS)
       $<$<CONFIG:Release>:-fvisibility=hidden>
       $<$<CONFIG:MinSizeRel>:-fvisibility=hidden>)
   endif()
-  # lumice.h's functions plus the LUMICE_TEST_* hooks — the superset stand-in's whole surface.
-  lumice_apply_export_list(lumice_testapi
-    "${PROJ_SRC_DIR}/include/lumice.h" "${PROJ_TEST_DIR}/support/lumice_test_api.h")
+  # liblumice's surface plus the LUMICE_TEST_* hooks — the superset stand-in's whole surface.
+  lumice_apply_export_list(lumice_testapi ${LUMICE_TESTAPI_SURFACE_HEADERS})
   install(TARGETS lumice_testapi LIBRARY DESTINATION lib)
 endif()
 
 # The published analytic library (doc/analytic-api.md): the engine's foundation objects and the
 # analytic kernel — not lumice_obj, which it no longer links (section 2.1) — its own header
-# (src/include/lumice_analytic.h), its own prefix, and an export list naming only the
-# LUMICE_ANALYTIC_* functions — so, unlike lumice_testapi, it does NOT re-export lumice.h. Its
-# own code lives in src/analytic/, outside lumice_obj: the kernel (lumice_analytic_kernel) is also
-# linked into the other two libraries, behind the single-path module, but its C ABI wrapper
-# analytic_api.cpp is compiled here only, so neither of them exports a LUMICE_ANALYTIC_* symbol.
+# (src/include/lumice_analytic.h over lumice_analytic_core.h), its own prefix, and an export list
+# naming only the LUMICE_ANALYTIC_* functions — so, unlike lumice_testapi, it does NOT re-export
+# lumice.h. Its own code lives in src/analytic/, outside lumice_obj. The kernel, with the
+# capability's C ABI (analytic_capi.cpp), is also linked into the other two libraries, which
+# export that capability too (cmake/export_surfaces.cmake). The library's management TU
+# analytic_lib.cpp — GetApiVersion, SetLogCallback, and the load-time object that removes the
+# console sink — is a direct source of this target and nothing else: linked into the engine it
+# would silence the engine's console, which no export table shows.
 # Three rules from doc/analytic-api.md section 2:
 #   - only from a build without CUDA (2.3): the published artifact must load on a machine without
 #     the CUDA runtime. foundation links no CUDA target, so this is no longer what keeps cudart
@@ -1186,7 +1208,7 @@ endif()
 # section 8.4). Tests in this tree still load it from the build tree.
 if(BUILD_SHARED_LIBS AND NOT LUMICE_CUDA_ENABLED)
   add_library(lumice_analytic SHARED
-    "${PROJ_SRC_DIR}/analytic/analytic_api.cpp")
+    "${PROJ_SRC_DIR}/analytic/analytic_lib.cpp")
   target_link_libraries(lumice_analytic PRIVATE lumice_analytic_kernel lumice_foundation_obj)
   if(NOT MSVC)
     target_compile_options(lumice_analytic PRIVATE
@@ -1207,10 +1229,10 @@ if(BUILD_SHARED_LIBS AND NOT LUMICE_CUDA_ENABLED)
     target_link_options(lumice_analytic PRIVATE
       $<$<OR:$<CONFIG:Release>,$<CONFIG:MinSizeRel>>:/OPT:REF>)
   endif()
-  lumice_apply_export_list(lumice_analytic "${PROJ_SRC_DIR}/include/lumice_analytic.h")
+  lumice_apply_export_list(lumice_analytic ${LUMICE_ANALYTIC_SURFACE_HEADERS})
 
   # Link probe: an executable built from exactly liblumice_analytic's objects (foundation, the
-  # kernel, and the C ABI wrapper), with no dead-code stripping. The library itself cannot serve:
+  # kernel with the capability's C ABI, and the management TU), with no dead-code stripping. The library itself cannot serve:
   # a GNU/Linux shared library may leave symbols undefined, and its --gc-sections would drop an
   # unreferenced function before its references were ever resolved. An executable has neither
   # escape, so if any of these objects reaches a symbol of a layer above foundation/analytic
@@ -1218,7 +1240,7 @@ if(BUILD_SHARED_LIBS AND NOT LUMICE_CUDA_ENABLED)
   # library, CI's e2e-slow legs included. Not installed; built only to be linked.
   add_executable(lumice_analytic_link_probe
     "${PROJ_TEST_DIR}/support/analytic_link_probe.cpp"
-    "${PROJ_SRC_DIR}/analytic/analytic_api.cpp")
+    "${PROJ_SRC_DIR}/analytic/analytic_lib.cpp")
   target_link_libraries(lumice_analytic_link_probe PRIVATE lumice_foundation_obj lumice_analytic_kernel)
   lumice_apply_engine_compile_options(lumice_analytic_link_probe)
   if(WIN32)
@@ -1235,11 +1257,11 @@ if(BUILD_SHARED_LIBS AND NOT LUMICE_CUDA_ENABLED)
   # The package version IS the header's LUMICE_ANALYTIC_API_VERSION, read from the header rather
   # than written a second time here: one counter, so the version a consumer's find_package
   # accepts cannot drift from the one LUMICE_ANALYTIC_GetApiVersion() reports.
-  file(STRINGS "${PROJ_SRC_DIR}/include/lumice_analytic.h" _analytic_version_line
+  file(STRINGS "${PROJ_SRC_DIR}/include/lumice_analytic_core.h" _analytic_version_line
     REGEX "^#define LUMICE_ANALYTIC_API_VERSION [0-9]+$")
   string(REGEX MATCH "[0-9]+$" LUMICE_ANALYTIC_API_VERSION "${_analytic_version_line}")
   if(NOT LUMICE_ANALYTIC_API_VERSION)
-    message(FATAL_ERROR "Could not parse LUMICE_ANALYTIC_API_VERSION from lumice_analytic.h")
+    message(FATAL_ERROR "Could not parse LUMICE_ANALYTIC_API_VERSION from lumice_analytic_core.h")
   endif()
 
   # Standard bin/ + lib/ layout — deliberately not `lumice`'s DLL-at-the-prefix-root one, which
@@ -1252,9 +1274,13 @@ if(BUILD_SHARED_LIBS AND NOT LUMICE_CUDA_ENABLED)
     RUNTIME DESTINATION bin COMPONENT analytic
     LIBRARY DESTINATION lib COMPONENT analytic
     ARCHIVE DESTINATION lib COMPONENT analytic)
-  # This one header only, never the whole src/include/: lumice.h is not published, and a
-  # consumer must not be able to compile both (doc/analytic-api.md section 2.6).
-  install(FILES "${PROJ_SRC_DIR}/include/lumice_analytic.h" DESTINATION include COMPONENT analytic)
+  # These two headers only (lumice_analytic.h includes the core one), never the whole
+  # src/include/: lumice.h is not published, and a consumer must not be able to compile both
+  # (doc/analytic-api.md section 2.6).
+  install(FILES
+    "${PROJ_SRC_DIR}/include/lumice_analytic.h"
+    "${PROJ_SRC_DIR}/include/lumice_analytic_core.h"
+    DESTINATION include COMPONENT analytic)
 
   # ExactVersion: in 0.x no two interface versions are promised compatible (section 8.3), so a
   # request for any version other than the installed one is refused at configure time. Moving to

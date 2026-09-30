@@ -138,17 +138,20 @@ Checks:
      kept apart from the product C API on purpose: a test-only entry point in
      the product ABI is the shape the owner rejected. Comments are blanked
      first, so prose that names the prefix to explain this rule is not a hit.
-  18. analytic-symbol-scope — the boundary between the published analytic
-     surface (LUMICE_ANALYTIC_*, liblumice_analytic) and the engine's own C API
-     (LUMICE_*, liblumice) / the test surface (LUMICE_TEST_*), both directions:
-     (a) the LUMICE_ANALYTIC_ prefix appears under src/ only in its own header
-     (src/include/lumice_analytic.h) and its own directory (src/analytic/), so
-     it cannot leak into lumice.h or be called from engine/GUI code; (b) that
-     header names no other LUMICE_ identifier, so it shares no type with
-     lumice.h and a consumer of one never compiles against the other
-     (doc/analytic-api.md section 7). Each library's export list is generated
-     from its headers, so (a) is also what keeps an analytic function out of
-     liblumice's exports and a lumice.h function out of liblumice_analytic's.
+  18. analytic-symbol-scope — the boundary between the two families of public
+     headers under src/include/, both directions: (a) an engine header (lumice.h,
+     every src/include/*.h outside the analytic family) never spells
+     LUMICE_ANALYTIC_ — declaring or naming an analytic function there would be
+     a second definition of what lumice_analytic_core.h defines; (b) an analytic
+     header (the family is LUMICE_ANALYTIC_SURFACE_HEADERS of
+     cmake/export_surfaces.cmake: lumice_analytic_core.h + lumice_analytic.h)
+     names no other LUMICE_ identifier, so it shares no type with lumice.h and a
+     consumer of the published header never compiles against the engine's
+     (doc/analytic-api.md section 7). Code is not restricted: the engine
+     libraries export the analytic capability (lumice_analytic_core.h), so
+     shells and bridges may call it. Each library's export list is generated
+     from the headers export_surfaces.cmake gives it, so (a) is also what keeps
+     a second copy of an analytic declaration out of liblumice's exports.
   19. layer-inversion — every `#include "..."` under src/ points at the same
      or a lower layer. The layers and the files each one owns are declared in
      ONE place, cmake/lumice_layers.cmake, which CMake also reads (the
@@ -1910,61 +1913,181 @@ def check_no_test_symbol_in_src() -> list[Violation]:
     return out
 
 
+# --- restricted CMake set() lists --------------------------------------------
+#
+# Two files are CMake that a Python checker also has to read: the layer manifest
+# (cmake/lumice_layers.cmake) and the export-surface declaration
+# (cmake/export_surfaces.cmake). Both are written in one deliberately tiny
+# subset, so that this parser and CMake cannot read them differently: `#`
+# comments, blank lines, `set(NAME` on its own line, one bare token per line,
+# and a lone `)`. Anything else is an error here rather than a line skipped. One
+# parser for both, so the subset cannot drift between them; each caller adds its
+# own semantics (which names, which tokens) on top.
+_RESTRICTED_SET_OPEN = re.compile(r"^set\(([A-Za-z_][A-Za-z0-9_]*)$")
+_RESTRICTED_TOKEN = re.compile(r"^[A-Za-z0-9_./-]+$")
+# A whole-list reference, `${NAME}` alone on its line: in CMake an unquoted list
+# variable expands to its elements. Only callers that pass allow_refs accept it.
+_RESTRICTED_REF = re.compile(r"^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$")
+
+
+class RestrictedCMakeError(Exception):
+    def __init__(self, line: int, message: str):
+        super().__init__(message)
+        self.line = line
+
+
+def parse_restricted_set_lists(text: str, allow_refs: bool = False) -> list[tuple[int, str, list[tuple[int, str]]]]:
+    """Return [(line of `set(`, NAME, [(line, token), ...]), ...] in file order.
+
+    With allow_refs, a `${NAME}` token is returned as is; resolving it is the
+    caller's job. Raises RestrictedCMakeError on anything outside the subset.
+    """
+    lists: list[tuple[int, str, list[tuple[int, str]]]] = []
+    current: list[tuple[int, str]] | None = None
+    for lineno, raw in enumerate(text.splitlines(), start=1):
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if current is None:
+            m = _RESTRICTED_SET_OPEN.match(line)
+            if not m:
+                raise RestrictedCMakeError(lineno, f"expected `set(NAME` on its own line here, got `{line}`")
+            current = []
+            lists.append((lineno, m.group(1), current))
+            continue
+        if line == ")":
+            current = None
+            continue
+        if not (_RESTRICTED_TOKEN.match(line) or (allow_refs and _RESTRICTED_REF.match(line))):
+            raise RestrictedCMakeError(lineno, f"`{line}` is not one bare token (no quotes, variables or commands)")
+        current.append((lineno, line))
+    if current is not None:
+        raise RestrictedCMakeError(len(text.splitlines()), "unterminated set( ... )")
+    return lists
+
+
+# --- export surfaces ----------------------------------------------------------
+#
+# cmake/export_surfaces.cmake declares, once, which headers each shared library
+# exports: the root CMakeLists.txt include()s it and hands each list to
+# lumice_apply_export_list(), test/e2e-correctness/test_export_symbol_scope.py
+# reads it through parse_export_surfaces() below to know what each built binary
+# must export, and analytic-symbol-scope reads it to know which headers form the
+# analytic family. Paths are relative to the repository root.
+EXPORT_SURFACES_REL = Path("cmake") / "export_surfaces.cmake"
+_EXPORT_SURFACE_NAME = re.compile(r"^LUMICE_([A-Z]+)_SURFACE_HEADERS$")
+
+
+def parse_export_surfaces(text: str) -> dict[str, list[str]]:
+    """Return {library key (`ENGINE`, `TESTAPI`, `ANALYTIC`): [repo-relative header, ...]}.
+
+    `${LUMICE_<X>_SURFACE_HEADERS}` expands to a list declared EARLIER in the
+    file, as CMake would. Raises RestrictedCMakeError on a name outside
+    LUMICE_<X>_SURFACE_HEADERS, a list declared twice, a reference to an
+    undeclared (or later) list, or a header named twice in one expanded list.
+    """
+    out: dict[str, list[str]] = {}
+    for open_line, name, tokens in parse_restricted_set_lists(text, allow_refs=True):
+        m = _EXPORT_SURFACE_NAME.match(name)
+        if not m:
+            raise RestrictedCMakeError(open_line, f"`{name}` is not LUMICE_<LIBRARY>_SURFACE_HEADERS")
+        key = m.group(1)
+        if key in out:
+            raise RestrictedCMakeError(open_line, f"`{name}` declared twice")
+        headers: list[str] = []
+        for lineno, token in tokens:
+            ref = _RESTRICTED_REF.match(token)
+            if ref:
+                rm = _EXPORT_SURFACE_NAME.match(ref.group(1))
+                if not rm or rm.group(1) not in out:
+                    raise RestrictedCMakeError(lineno, f"`{token}` names no surface list declared above it")
+                expanded = out[rm.group(1)]
+            else:
+                expanded = [token]
+            for header in expanded:
+                if header in headers:
+                    raise RestrictedCMakeError(lineno, f"`{header}` named twice in `{name}`")
+                headers.append(header)
+        if not headers:
+            raise RestrictedCMakeError(open_line, f"`{name}` is empty")
+        out[key] = headers
+    return out
+
+
 # --- analytic-symbol-scope ---------------------------------------------------
 #
-# liblumice_analytic is the first library published for outside consumers; it is
-# linked from the same objects as liblumice but exports only what its own header
-# declares (scripts/gen_export_list.py). The prefix therefore IS the boundary:
-# where LUMICE_ANALYTIC_ may be spelled decides which export list a function can
-# land in, and what else the header spells decides whether a consumer of the
-# published header is dragged into the internal one. Unlike LUMICE_TEST_, the
-# prefix has a legitimate home under src/, so the rule is an allowlist rather
-# than a ban. Paths are derived from SRC at call time so a test can point SRC at
-# a scratch tree.
+# The public headers under src/include/ form two families. The analytic family
+# is the header set liblumice_analytic exports (cmake/export_surfaces.cmake:
+# lumice_analytic_core.h, the capability, and lumice_analytic.h over it, which
+# adds the library's own management functions); every other header there is an
+# engine header (lumice.h). The prefix is the boundary between the two families:
+# an engine header that declared or named a LUMICE_ANALYTIC_* function would be a
+# second definition of what lumice_analytic_core.h already defines, and an
+# analytic header naming a LUMICE_* identifier would drag a consumer of the
+# published header into the engine's. Code is not a family: the engine libraries
+# export the capability (export_surfaces.cmake), so the shells, the bridges and
+# the engine may call LUMICE_ANALYTIC_* functions. Paths are derived from
+# REPO_ROOT / SRC at call time so a test can point both at a scratch tree.
 ANALYTIC_SYMBOL_PREFIX = re.compile(r"\bLUMICE_ANALYTIC_")
 # Any LUMICE_ identifier that is not an analytic one — LUMICE_TEST_ included.
 NON_ANALYTIC_LUMICE_IDENT = re.compile(r"\bLUMICE_(?!ANALYTIC_)[A-Za-z0-9_]*")
-ANALYTIC_HEADER_REL = Path("include") / "lumice_analytic.h"
-ANALYTIC_DIR_REL = Path("analytic")
+PUBLIC_INCLUDE_REL = Path("include")
 
 
 def check_analytic_symbol_scope() -> list[Violation]:
-    """LUMICE_ANALYTIC_ stays in its header + src/analytic/; that header names no other LUMICE_.
+    """Engine headers do not spell LUMICE_ANALYTIC_; analytic headers spell no other LUMICE_.
 
-    Reads code_lines(), so comments are not hits in either direction — the
-    analytic header's own prose may mention lumice.h's names to explain the
-    split. Preprocessor lines are code: an `#include "lumice.h"` in the analytic
-    header is caught through the LUMICE_ identifiers it would have to use, not
-    by the include itself, which is the reason for this known limitation: an
-    include that the header then never uses is not reported.
+    The analytic family is LUMICE_ANALYTIC_SURFACE_HEADERS of
+    cmake/export_surfaces.cmake; a listed header that does not exist is a
+    violation, not a skipped file. Reads code_lines(), so comments are not hits
+    in either direction — each family's prose may mention the other's names to
+    explain the split. Preprocessor lines are code: an `#include "lumice.h"` in
+    an analytic header is caught through the LUMICE_ identifiers it would have
+    to use, not by the include itself, which is the reason for this known
+    limitation: an include that the header then never uses is not reported.
     """
-    header = SRC / ANALYTIC_HEADER_REL
-    home = SRC / ANALYTIC_DIR_REL
+    rule = "analytic-symbol-scope"
+    decl = REPO_ROOT / EXPORT_SURFACES_REL
+    try:
+        surfaces = parse_export_surfaces(decl.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return [Violation(decl, 1, rule, "export-surface declaration missing")]
+    except RestrictedCMakeError as e:
+        return [Violation(decl, e.line, rule, f"unreadable export-surface declaration: {e}")]
+    if "ANALYTIC" not in surfaces:
+        return [Violation(decl, 1, rule, "declares no LUMICE_ANALYTIC_SURFACE_HEADERS")]
     out: list[Violation] = []
-    for path in cxx_sources(SRC):
-        in_home = path == header or home in path.parents
+    analytic_headers: set[Path] = set()
+    for rel in surfaces["ANALYTIC"]:
+        path = REPO_ROOT / rel
+        if not path.is_file():
+            out.append(Violation(decl, 1, rule, f"LUMICE_ANALYTIC_SURFACE_HEADERS names `{rel}`, which does not exist"))
+            continue
+        analytic_headers.add(path)
+    engine_headers = set((SRC / PUBLIC_INCLUDE_REL).glob("*.h")) - analytic_headers
+    for path in sorted(engine_headers | analytic_headers):
         for lineno, _orig, code in code_lines(path):
-            if not in_home and ANALYTIC_SYMBOL_PREFIX.search(code):
+            if path in engine_headers and ANALYTIC_SYMBOL_PREFIX.search(code):
                 out.append(
                     Violation(
                         path,
                         lineno,
-                        "analytic-symbol-scope",
-                        "LUMICE_ANALYTIC_* is the published analytic surface and may appear "
-                        "under src/ only in src/include/lumice_analytic.h and src/analytic/. "
-                        "Engine/GUI code and lumice.h do not reach it; its export list is "
-                        "generated from its own header.",
+                        rule,
+                        "LUMICE_ANALYTIC_* is declared by the analytic headers only "
+                        "(lumice_analytic_core.h, lumice_analytic.h); an engine header naming it "
+                        "would be a second definition of the same function. The engine exports "
+                        "the capability through lumice_analytic_core.h (cmake/export_surfaces.cmake).",
                     )
                 )
-            if path == header:
+            if path in analytic_headers:
                 m = NON_ANALYTIC_LUMICE_IDENT.search(code)
                 if m:
                     out.append(
                         Violation(
                             path,
                             lineno,
-                            "analytic-symbol-scope",
-                            f"`{m.group(0)}` in lumice_analytic.h: the published header shares "
+                            rule,
+                            f"`{m.group(0)}` in an analytic header: the published headers share "
                             "no type or name with lumice.h / the test surface "
                             "(doc/analytic-api.md section 7). Define an LUMICE_ANALYTIC_* "
                             "counterpart instead.",
@@ -1975,11 +2098,10 @@ def check_analytic_symbol_scope() -> list[Violation]:
 
 # --- layer-inversion ----------------------------------------------------------
 #
-# The manifest is CMake (include()-able) in a deliberately tiny subset, so that
-# this parser and CMake cannot read it differently: comments, blank lines,
-# `set(NAME`, one bare token per line, and a lone `)`. Anything else is an error
-# here rather than a line skipped, because a skipped line is a file silently
-# unowned or a layer silently reordered. Paths are derived from REPO_ROOT / SRC
+# The manifest is CMake (include()-able) in the restricted subset read by
+# parse_restricted_set_lists() above, without `${...}` references. Anything else
+# is an error here rather than a line skipped, because a skipped line is a file
+# silently unowned or a layer silently reordered. Paths are derived from REPO_ROOT / SRC
 # at call time so a test can point both at a scratch tree.
 LAYER_MANIFEST_REL = Path("cmake") / "lumice_layers.cmake"
 LAYER_ALLOWLIST_REL = Path("cmake") / "lumice_layer_allowlist.txt"
@@ -1990,7 +2112,6 @@ FOUNDATION_SUFFIXES = {".cpp", ".hpp", ".h"}
 LAYER_SHELL_DIRS = ("gui", "launcher")
 LAYER_SHELL_FILES = ("main.cpp",)
 _MANIFEST_SET_OPEN = re.compile(r"^set\((LUMICE_LAYER_ORDER|LUMICE_LAYER_([a-z][a-z0-9_]*)_FILES)$")
-_MANIFEST_TOKEN = re.compile(r"^[A-Za-z0-9_./-]+$")
 _QUOTED_INCLUDE = re.compile(r'^\s*#\s*include\s*"([^"]+)"')
 
 
@@ -2003,58 +2124,48 @@ class LayerManifestError(Exception):
 def parse_layer_manifest(text: str) -> tuple[list[str], dict[str, str]]:
     """Return (layer order lowest-first, {src-relative path: layer}).
 
-    Raises LayerManifestError on anything outside the restricted syntax, on a
-    duplicate path, on a FILES list for an undeclared layer (or before the
-    order), and on a declared layer without a FILES list.
+    Raises LayerManifestError on anything outside the restricted syntax
+    (parse_restricted_set_lists, no `${...}` references), on a duplicate path,
+    on a FILES list for an undeclared layer (or before the order), and on a
+    declared layer without a FILES list.
     """
+    try:
+        lists = parse_restricted_set_lists(text)
+    except RestrictedCMakeError as e:
+        raise LayerManifestError(e.line, str(e)) from None
     order: list[str] = []
     owner: dict[str, str] = {}
     seen_lists: set[str] = set()
-    current: str | None = None  # "" while inside LUMICE_LAYER_ORDER
-    for lineno, raw in enumerate(text.splitlines(), start=1):
-        line = raw.strip()
-        if not line or line.startswith("#"):
+    for open_line, name, tokens in lists:
+        m = _MANIFEST_SET_OPEN.match(f"set({name}")
+        if not m:
+            raise LayerManifestError(open_line, f"expected `set(LUMICE_LAYER_...` here, got `set({name}`")
+        if m.group(1) == "LUMICE_LAYER_ORDER":
+            if order or seen_lists:
+                raise LayerManifestError(open_line, "LUMICE_LAYER_ORDER must be the first and only order list")
+            if not tokens:
+                raise LayerManifestError(open_line, "LUMICE_LAYER_ORDER is empty")
+            for lineno, token in tokens:
+                if token in order:
+                    raise LayerManifestError(lineno, f"layer `{token}` declared twice")
+                order.append(token)
             continue
-        if current is None:
-            m = _MANIFEST_SET_OPEN.match(line)
-            if not m:
-                raise LayerManifestError(lineno, f"expected `set(LUMICE_LAYER_...` here, got `{line}`")
-            if m.group(1) == "LUMICE_LAYER_ORDER":
-                if order or seen_lists:
-                    raise LayerManifestError(lineno, "LUMICE_LAYER_ORDER must be the first and only order list")
-                current = ""
-            else:
-                layer = m.group(2)
-                if layer not in order:
-                    raise LayerManifestError(lineno, f"FILES list for `{layer}`, which LUMICE_LAYER_ORDER does not declare")
-                if layer in seen_lists:
-                    raise LayerManifestError(lineno, f"second FILES list for `{layer}`")
-                seen_lists.add(layer)
-                current = layer
-            continue
-        if line == ")":
-            if current == "" and not order:
-                raise LayerManifestError(lineno, "LUMICE_LAYER_ORDER is empty")
-            current = None
-            continue
-        if not _MANIFEST_TOKEN.match(line):
-            raise LayerManifestError(lineno, f"`{line}` is not one bare token (no quotes, variables or commands)")
-        if current == "":
-            if line in order:
-                raise LayerManifestError(lineno, f"layer `{line}` declared twice")
-            order.append(line)
-        else:
-            if line in owner:
-                raise LayerManifestError(lineno, f"`{line}` is owned by both `{owner[line]}` and `{current}`")
-            if current == "foundation" and Path(line).suffix not in FOUNDATION_SUFFIXES:
+        layer = m.group(2)
+        if layer not in order:
+            raise LayerManifestError(open_line, f"FILES list for `{layer}`, which LUMICE_LAYER_ORDER does not declare")
+        if layer in seen_lists:
+            raise LayerManifestError(open_line, f"second FILES list for `{layer}`")
+        seen_lists.add(layer)
+        for lineno, token in tokens:
+            if token in owner:
+                raise LayerManifestError(lineno, f"`{token}` is owned by both `{owner[token]}` and `{layer}`")
+            if layer == "foundation" and Path(token).suffix not in FOUNDATION_SUFFIXES:
                 raise LayerManifestError(
                     lineno,
-                    f"`{line}`: foundation compiles only {sorted(FOUNDATION_SUFFIXES)} "
+                    f"`{token}`: foundation compiles only {sorted(FOUNDATION_SUFFIXES)} "
                     "(lumice_foundation_obj would drop anything else silently)",
                 )
-            owner[line] = current
-    if current is not None:
-        raise LayerManifestError(len(text.splitlines()), "unterminated set( ... )")
+            owner[token] = layer
     missing = [layer for layer in order if layer not in seen_lists]
     if missing:
         raise LayerManifestError(len(text.splitlines()), f"no FILES list for layer(s) {missing}")

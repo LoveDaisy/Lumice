@@ -1312,7 +1312,7 @@ jobs:
           set -euo pipefail
           cmake --install build --component analytic --prefix "$RUNNER_TEMP/analytic-install"
           if [ "$RUNNER_OS" = "macOS" ]; then lib=lib/liblumice_analytic.dylib; else lib=lib/liblumice_analytic.so; fi
-          for f in include/lumice_analytic.h "$lib" \
+          for f in include/lumice_analytic.h include/lumice_analytic_core.h "$lib" \
                    lib/cmake/LumiceAnalytic/LumiceAnalyticConfig.cmake \
                    lib/cmake/LumiceAnalytic/LumiceAnalyticConfigVersion.cmake \
                    lib/cmake/LumiceAnalytic/LumiceAnalyticTargets.cmake; do
@@ -1482,7 +1482,8 @@ jobs:
           $prefix = Join-Path $env:RUNNER_TEMP 'analytic-install'
           cmake --install build --component analytic --prefix $prefix
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $expected = @('include/lumice_analytic.h', 'bin/lumice_analytic.dll', 'lib/lumice_analytic.lib',
+          $expected = @('include/lumice_analytic.h', 'include/lumice_analytic_core.h',
+                        'bin/lumice_analytic.dll', 'lib/lumice_analytic.lib',
                         'lib/cmake/LumiceAnalytic/LumiceAnalyticConfig.cmake',
                         'lib/cmake/LumiceAnalytic/LumiceAnalyticConfigVersion.cmake',
                         'lib/cmake/LumiceAnalytic/LumiceAnalyticTargets.cmake')

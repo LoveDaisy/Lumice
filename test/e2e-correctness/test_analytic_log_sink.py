@@ -2,7 +2,7 @@
 
 Every engine binary inherits a console sink on stderr from util/logger.hpp's GetSharedSink().
 liblumice_analytic takes that sink out of its own copy while the library loads (a namespace-scope
-object in src/analytic/analytic_api.cpp) and hands diagnostics to the host only through
+object in src/analytic/analytic_lib.cpp) and hands diagnostics to the host only through
 LUMICE_ANALYTIC_SetLogCallback (doc/analytic-api.md section 6).
 
 What this proves, and what it does not. LUMICE_ANALYTIC_SetLogCallback logs one INFO line through
