@@ -22,7 +22,7 @@
 #include "analytic/path_evaluation.hpp"
 #include "analytic/path_fiber.hpp"
 #include "analytic/so3.hpp"
-#include "portable_normal.hpp"
+#include "support/portable_random.hpp"
 
 namespace lumice::analytic {
 namespace {
@@ -107,8 +107,9 @@ double SetDistance(const TraceResult& a, const TraceResult& b) {
 }
 
 std::array<double, 9> RandomRotation(std::mt19937_64& rng) {
-  PortableNormal g;  // same poses on every standard library
-  double q[4] = { g(rng), g(rng), g(rng), g(rng) };
+  // Same poses on every standard library.
+  double q[4] = { test::PortableGaussianDouble(rng), test::PortableGaussianDouble(rng),
+                  test::PortableGaussianDouble(rng), test::PortableGaussianDouble(rng) };
   const double m = std::sqrt(q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]);
   for (double& v : q) {
     v /= m;

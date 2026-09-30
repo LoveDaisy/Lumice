@@ -15,7 +15,7 @@
 #include <vector>
 
 #include "analytic/pose_density.hpp"
-#include "portable_normal.hpp"
+#include "support/portable_random.hpp"
 
 namespace lumice::analytic {
 namespace {
@@ -134,7 +134,6 @@ TEST(PoseDensity, HaarMeanIsOne) {
   for (const PoseDensitySpec& spec : specs) {
     const PoseDensity d(spec);
     std::mt19937_64 rng(20260930);
-    PortableNormal normal;
     constexpr int kSamples = 200000;
     double sum = 0.0;
     double sum2 = 0.0;
@@ -142,7 +141,7 @@ TEST(PoseDensity, HaarMeanIsOne) {
       double q[4];
       double n2 = 0.0;
       for (double& c : q) {
-        c = normal(rng);
+        c = test::PortableGaussianDouble(rng);  // same poses on every standard library
         n2 += c * c;
       }
       const double inv = 1.0 / std::sqrt(n2);
