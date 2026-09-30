@@ -196,7 +196,14 @@ from a Release, non-CUDA, baseline-ISA configure. The mechanisms, as built with 
   is not restricted — the shells and bridges may call the capability the engine exports.
 - **Test**: `test/e2e-correctness/test_export_symbol_scope.py` compares each built library's
   export table (`nm -D` / `nm -gU` / `dumpbin /exports`) with its headers and loads it; it runs in
-  CI on Linux, macOS, and Windows under both cl.exe and clang-cl.
+  CI on Linux, macOS, and Windows under both cl.exe and clang-cl. The reading and comparing is
+  `scripts/check_export_surface.py`, which `.github/workflows/release.yml` also runs on every
+  engine file it packages — both ISA builds on linux-x64 and on windows-x64, read and never
+  loaded, since the export table does not depend on the tier. That is the check for the one
+  failure no link step reports: GNU ld silently leaving out a name its version script does not
+  match. A mislinked `analytic_lib.cpp` changes no export table at all;
+  `test/e2e-correctness/test_engine_hosts_analytic_capability.py` catches it by behaviour (the
+  engine's own warnings must still reach stderr).
 
 ### 2.6 Consumer notice: one engine per process
 

@@ -355,7 +355,8 @@ deleting its line, and an entry whose edge is gone fails the check.
     `LUMICE_ANALYTIC_API` and the generator refuses one without — and
     `test/e2e-correctness/test_export_symbol_scope.py` reads the built binaries' export tables
     against those headers (Linux/macOS in `e2e-slow`, Windows cl.exe + clang-cl in
-    `windows-shared-export`). The prefix boundary itself is `check_policies.py`'s
+    `windows-shared-export`), through `scripts/check_export_surface.py` — the same script
+    `release.yml` runs on each packaged engine file, both ISA builds included. The prefix boundary itself is `check_policies.py`'s
     `analytic-symbol-scope` rule.
     Existing pytest calls to product symbols are deliberately **not** migrated to the test header:
     their subject is the product C API contract itself, and wrapping them would test the wrapper.
