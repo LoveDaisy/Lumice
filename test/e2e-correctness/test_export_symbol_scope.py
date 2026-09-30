@@ -11,7 +11,7 @@ reads the dynamic symbol table of each built library with the platform's own too
 Linux, `nm -gU` on macOS, `dumpbin /exports` on Windows — and compares it with the generator's own
 parse of the headers:
 
-    liblumice           == LUMICE_ENGINE_SURFACE_HEADERS   (lumice.h + lumice_analytic_core.h)
+    liblumice           == LUMICE_ENGINE_SURFACE_HEADERS   (six lumice_*.h + lumice_analytic_core.h)
     liblumice_testapi   == LUMICE_TESTAPI_SURFACE_HEADERS  (the engine's + lumice_test_api.h)
     liblumice_analytic  == LUMICE_ANALYTIC_SURFACE_HEADERS (lumice_analytic.h + its core header),
                            every name LUMICE_ANALYTIC_*, and at least one

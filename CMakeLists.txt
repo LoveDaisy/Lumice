@@ -309,8 +309,8 @@ check_ipo_supported(RESULT result OUTPUT output)
 # table CMake's __create_def can read, and the DLL linked "successfully" with an EMPTY export
 # table — a baseline engine with zero exports, measured, not a hypothesis — so the cl.exe
 # baseline tree was left without IPO until the export surface was explicit rather than
-# harvested. It now is (lumice_apply_export_list below: a .def generated from lumice.h, no
-# symbol harvesting), so that reason no longer holds; turning IPO on for the cl.exe shared
+# harvested. It now is (lumice_apply_export_list below: a .def generated from the surface
+# headers, no symbol harvesting), so that reason no longer holds; turning IPO on for the cl.exe shared
 # tree is still a separate, measured change and is not made here. Apple Clang shared builds
 # stay excluded: no release ships them, and they have not been measured either way.
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
@@ -1113,13 +1113,13 @@ if(NOT MSVC)
     $<$<CONFIG:MinSizeRel>:$<$<CXX_COMPILER_ID:GNU>:--gc-sections>>)
 endif()
 if(BUILD_SHARED_LIBS)
-  # Exactly the functions its surface headers declare (lumice.h and the analytic capability,
-  # cmake/export_surfaces.cmake), on every platform.
+  # Exactly the functions its surface headers declare (the lumice_*.h capability headers and the
+  # analytic capability, cmake/export_surfaces.cmake), on every platform.
   lumice_apply_export_list(lumice ${LUMICE_ENGINE_SURFACE_HEADERS})
 endif()
 if(WIN32 AND BUILD_SHARED_LIBS)
-  # Consumers that link the engine DLL (the two shells, gui_test) get lumice.h's dllimport;
-  # lumice_obj itself and the targets linking its objects directly do not (see lumice.h's
+  # Consumers that link the engine DLL (the two shells, gui_test) get LUMICE_API's dllimport;
+  # lumice_obj itself and the targets linking its objects directly do not (see lumice_base.h's
   # LUMICE_API comment). INTERFACE, so the decision follows the link graph, not a global switch.
   target_compile_definitions(lumice INTERFACE LUMICE_SHARED_DEFINE)
   # The same for the analytic capability the engine DLL also exports (lumice_analytic_core.h's

@@ -132,20 +132,21 @@ Checks:
      by 1.01x and Metal by 0.88x — no wall-clock oracle in this repo can see it,
      while "did the pass acquire a frame at all" is answerable without a run.
   17. no-test-symbol-in-src — the LUMICE_TEST_ prefix must not appear in any
-     source under src/, src/include/lumice.h included. It names the test-only
+     source under src/, the public headers in src/include/ included. It names the test-only
      export surface (test/support/lumice_test_api.h, built into the
      liblumice_testapi shared library for the pytest ctypes harness), which is
      kept apart from the product C API on purpose: a test-only entry point in
      the product ABI is the shape the owner rejected. Comments are blanked
      first, so prose that names the prefix to explain this rule is not a hit.
   18. analytic-symbol-scope — the boundary between the two families of public
-     headers under src/include/, both directions: (a) an engine header (lumice.h,
-     every src/include/*.h outside the analytic family) never spells
+     headers under src/include/, both directions: (a) an engine header (the
+     lumice_*.h capability headers and the lumice.h umbrella: every
+     src/include/*.h outside the analytic family) never spells
      LUMICE_ANALYTIC_ — declaring or naming an analytic function there would be
      a second definition of what lumice_analytic_core.h defines; (b) an analytic
      header (the family is LUMICE_ANALYTIC_SURFACE_HEADERS of
      cmake/export_surfaces.cmake: lumice_analytic_core.h + lumice_analytic.h)
-     names no other LUMICE_ identifier, so it shares no type with lumice.h and a
+     names no other LUMICE_ identifier, so it shares no type with the engine headers and a
      consumer of the published header never compiles against the engine's
      (doc/analytic-api.md section 7). Code is not restricted: the engine
      libraries export the analytic capability (lumice_analytic_core.h), so
@@ -2088,7 +2089,7 @@ def check_analytic_symbol_scope() -> list[Violation]:
                             lineno,
                             rule,
                             f"`{m.group(0)}` in an analytic header: the published headers share "
-                            "no type or name with lumice.h / the test surface "
+                            "no type or name with the engine headers / the test surface "
                             "(doc/analytic-api.md section 7). Define an LUMICE_ANALYTIC_* "
                             "counterpart instead.",
                         )

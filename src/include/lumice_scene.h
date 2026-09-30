@@ -301,8 +301,9 @@ _Static_assert(sizeof(LUMICE_SpectrumEntry) == 2 * sizeof(float),
 // each ref is a placement-scoped predicate {layer, crystal, predicate} that decides which
 // surviving rays get color-tagged. Predicate types are a NARROWED reuse of LUMICE_FilterParam
 // (raypath / entry_exit / direction / crystal / none) — no id, action, composition, complex.
-// Per-ref symmetry (P/B/D bitmask) is carried as a common field on the predicate (v4.9): matching semantics mirror the
-// physical filter's symmetry (both feed the same Crystal::ReduceRaypath expansion on the core side).
+// Per-ref symmetry (P/B/D bitmask) is carried as a common field on the predicate (v4.9):
+// matching semantics mirror the physical filter's symmetry (both feed the same
+// Crystal::ReduceRaypath expansion on the core side).
 
 // A predicate is a match rule, not a filter. Field naming mirrors the equivalent arms of
 // LUMICE_FilterParam. type selects the active arm:
