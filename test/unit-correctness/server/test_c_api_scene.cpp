@@ -6,7 +6,10 @@
 #include <string>
 #include <vector>
 
-#include "include/lumice.h"
+#include "include/lumice_base.h"
+#include "include/lumice_engine.h"
+#include "include/lumice_render.h"
+#include "include/lumice_scene.h"
 #include "server/c_api_internal.hpp"  // ConfigScratch(+Guard) + ConfigToJson + SceneRoot (internal)
 #include "util/color_space.hpp"       // LinearToSrgb (the struct-is-linear / key-is-sRGB split)
 

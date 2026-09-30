@@ -30,7 +30,7 @@
 #include "gui/file_io.hpp"
 #include "gui/gui_state_tiers.hpp"
 #include "gui/shape_scalar_domain.hpp"
-#include "include/lumice.h"
+#include "include/lumice_scene.h"
 
 namespace gui = lumice::gui;
 

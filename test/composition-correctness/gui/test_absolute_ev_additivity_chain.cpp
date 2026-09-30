@@ -50,7 +50,10 @@
 #include "gui/gui_constants.hpp"
 #include "gui/gui_state.hpp"
 #include "gui/mono_exposure_scale.hpp"
-#include "lumice.h"
+#include "lumice_base.h"
+#include "lumice_engine.h"
+#include "lumice_render.h"
+#include "lumice_scene.h"
 
 namespace lumice::gui {
 namespace {

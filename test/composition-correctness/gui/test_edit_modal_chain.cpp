@@ -20,7 +20,7 @@
 
 #include "gui/crystal_preview.hpp"
 #include "gui/gui_state.hpp"
-#include "include/lumice.h"
+#include "include/lumice_scene.h"
 
 namespace lumice::gui {
 namespace {

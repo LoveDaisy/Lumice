@@ -34,7 +34,8 @@
 #include <vector>
 
 #include "gui/gui_constants.hpp"
-#include "include/lumice.h"
+#include "include/lumice_base.h"
+#include "include/lumice_engine.h"
 #include "test_gui_shared.hpp"
 
 namespace {

@@ -17,7 +17,8 @@
 // rule keeps the LUMICE_TEST_ prefix out of src/, so a hook cannot migrate into the product
 // surface by accident.
 
-#include "lumice.h"
+#include "lumice_base.h"
+#include "lumice_render.h"
 
 #ifdef __cplusplus
 extern "C" {

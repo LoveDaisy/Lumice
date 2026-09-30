@@ -15,7 +15,8 @@
 // ${PROJ_TEST_DIR} on their include path, so `#include "support/scoped_result_frame.hpp"` is one
 // spelling valid in all of them.
 
-#include "lumice.h"
+#include "lumice_base.h"
+#include "lumice_engine.h"
 
 namespace lumice::test {
 

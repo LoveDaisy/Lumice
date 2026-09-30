@@ -18,7 +18,7 @@
 #include "gui/app.hpp"
 #include "gui/config_summary.hpp"
 #include "gui/config_summary_window.hpp"
-#include "include/lumice.h"
+#include "include/lumice_scene.h"
 #include "test_gui_shared.hpp"
 
 namespace {

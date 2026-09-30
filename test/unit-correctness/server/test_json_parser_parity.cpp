@@ -16,7 +16,9 @@
 
 #include "config/config_compare.hpp"
 #include "config/config_manager.hpp"
-#include "include/lumice.h"
+#include "include/lumice_base.h"
+#include "include/lumice_engine.h"
+#include "include/lumice_scene.h"
 #include "server/c_api_internal.hpp"  // ConfigScratch + ParseConfigString + ConfigToJson (internal)
 #include "support/log_capture.hpp"
 #include "util/color_space.hpp"  // SrgbToLinear (the JSON boundary conversion under test)

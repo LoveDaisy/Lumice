@@ -16,7 +16,9 @@
 #include <string>
 #include <vector>
 
-#include "include/lumice.h"
+#include "include/lumice_base.h"
+#include "include/lumice_raypath.h"
+#include "include/lumice_scene.h"
 
 namespace {
 

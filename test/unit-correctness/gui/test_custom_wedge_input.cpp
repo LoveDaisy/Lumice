@@ -24,7 +24,8 @@
 #include <string>
 
 #include "gui/edit_modals.hpp"
-#include "include/lumice.h"
+#include "include/lumice_base.h"
+#include "include/lumice_editor.h"
 
 namespace gui = lumice::gui;
 

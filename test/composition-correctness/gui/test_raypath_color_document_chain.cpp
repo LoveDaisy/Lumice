@@ -31,7 +31,7 @@
 #include "gui/app.hpp"
 #include "gui/file_io.hpp"
 #include "gui/gui_state.hpp"
-#include "lumice.h"
+#include "lumice_scene.h"
 #include "support/scene_json_helpers.hpp"
 
 namespace lumice::gui {

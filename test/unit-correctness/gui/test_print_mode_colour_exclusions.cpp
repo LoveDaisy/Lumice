@@ -26,7 +26,7 @@
 #include "gui/field_editor_registry.hpp"
 #include "gui/file_io.hpp"
 #include "gui/gui_state.hpp"
-#include "include/lumice.h"
+#include "include/lumice_scene.h"
 
 namespace gui = lumice::gui;
 

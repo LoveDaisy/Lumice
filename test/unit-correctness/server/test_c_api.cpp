@@ -25,7 +25,11 @@
 #include "config/render_config.hpp"         // core RenderConfig, for the marker family's non-zero defaults
 #include "core/crystal.hpp"
 #include "core/def.hpp"
-#include "include/lumice.h"
+#include "include/lumice_base.h"
+#include "include/lumice_editor.h"
+#include "include/lumice_engine.h"
+#include "include/lumice_render.h"
+#include "include/lumice_scene.h"
 #include "server/c_api_internal.hpp"  // ConfigScratch(+Guard) + ParseConfigString + ConfigToJson (internal)
 #include "support/env_var.hpp"
 #include "support/log_capture.hpp"

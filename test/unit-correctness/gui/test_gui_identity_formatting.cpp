@@ -25,7 +25,6 @@
 #include "gui/app.hpp"
 #include "gui/color_window.hpp"
 #include "gui/gui_state.hpp"
-#include "lumice.h"
 
 namespace gui = lumice::gui;
 

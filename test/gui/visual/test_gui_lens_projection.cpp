@@ -29,7 +29,9 @@
 #include "gui/app.hpp"
 #include "gui/export_fbo_renderer.hpp"
 #include "gui/gui_constants.hpp"
-#include "include/lumice.h"
+#include "include/lumice_base.h"
+#include "include/lumice_engine.h"
+#include "include/lumice_render.h"
 #include "test_gui_shared.hpp"
 #include "util/color_space.hpp"
 

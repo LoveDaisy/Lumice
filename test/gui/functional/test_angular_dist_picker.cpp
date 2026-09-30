@@ -28,7 +28,8 @@
 #include "gui/app.hpp"
 #include "gui/gui_constants.hpp"
 #include "gui/gui_state.hpp"
-#include "include/lumice.h"
+#include "include/lumice_base.h"
+#include "include/lumice_render.h"
 #include "test_gui_shared.hpp"
 
 namespace {

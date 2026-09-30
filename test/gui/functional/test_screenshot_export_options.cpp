@@ -26,7 +26,7 @@
 #include "gui/app.hpp"
 #include "gui/gui_state.hpp"
 #include "gui/screenshot_export_options.hpp"
-#include "lumice.h"
+#include "lumice_scene.h"
 #include "test_gui_shared.hpp"
 
 namespace {

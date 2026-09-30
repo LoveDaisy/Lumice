@@ -27,7 +27,10 @@
 #include "core/annotation_overlay.hpp"  // annotation::ToRenderConfig
 #include "core/lens_proj_build.hpp"     // BuildProjParams
 #include "core/scatter_accum.hpp"       // MakeCameraRotation
-#include "include/lumice.h"
+#include "include/lumice_base.h"
+#include "include/lumice_engine.h"
+#include "include/lumice_render.h"
+#include "include/lumice_scene.h"
 #include "server/c_api_internal.hpp"              // ToAnnotationViewSnapshot, WrapResultFrameForTest
 #include "server/raypath_histogram_consumer.hpp"  // FormatRaypathChainDisplay (the truncation fixture premise)
 #include "server/server.hpp"

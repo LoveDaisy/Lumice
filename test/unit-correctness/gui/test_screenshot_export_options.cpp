@@ -22,7 +22,8 @@
 #include "gui/gui_state.hpp"
 #include "gui/preview_renderer.hpp"
 #include "gui/screenshot_export_options.hpp"
-#include "lumice.h"
+#include "lumice_render.h"
+#include "lumice_scene.h"
 
 namespace gui = lumice::gui;
 

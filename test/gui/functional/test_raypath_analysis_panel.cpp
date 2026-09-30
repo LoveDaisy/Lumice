@@ -32,7 +32,9 @@
 #include "gui/sim_state_rules.hpp"
 #include "gui/theme.hpp"
 #include "imgui_internal.h"
-#include "include/lumice.h"
+#include "include/lumice_base.h"
+#include "include/lumice_engine.h"
+#include "include/lumice_render.h"
 #include "test_gui_shared.hpp"
 #include "util/raypath_analysis_display.hpp"
 
