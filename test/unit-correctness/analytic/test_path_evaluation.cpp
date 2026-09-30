@@ -762,7 +762,7 @@ TEST_F(PathEvaluationTest, DomainReportAndJetRunLeaveTheDirectionUnchanged) {
         continue;
       }
       for (int i = 0; i < 3; i++) {
-        EXPECT_EQ(out[i], e.out[i]);
+        EXPECT_NEAR(out[i], e.out[i], 1e-13);
         // Measured up to ~5e-15 on this sample (FMA in the double build, amplified near a Snell
         // boundary where the square root is steep); LI's kinematic_atol is 1e-12.
         EXPECT_NEAR(out_jet[i].a, e.out[i], 1e-13);
