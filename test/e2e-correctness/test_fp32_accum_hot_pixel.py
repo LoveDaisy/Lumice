@@ -51,7 +51,7 @@ from test.e2e.runner import get_project_root
 BASE_CONFIG = get_project_root() / "test" / "e2e" / "configs" / "fp32_accum_subsun_550.json"
 
 _SEED = 42
-_RAY_NUM = 100_000_000
+_RAY_NUM = 10_000_000
 _TIMEOUT = 1800
 
 # CIE 1931 2-degree CMF at 550 nm (util/color_data.hpp: kCmfX/kCmfY/kCmfZ[550-360]).

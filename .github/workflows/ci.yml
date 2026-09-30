@@ -1377,7 +1377,7 @@ jobs:
           # explicitly and has no perf tests → skipped). Cheap (~2 gates); no -n
           # on purpose.
           case "${{ matrix.pytest_args }}" in
-            *test/performance*) pytest test/performance -v -m slow --durations=20 ;;
+            *test/performance*) pytest test/performance -v -m slow --durations=20 -s ;;
           esac
         # 25, not the original 15: phase 1 alone measured 500-552s on a slow runner day
         # (vs. 361s on a fast day) and phase 2's Metal dual-renderer throughput gate

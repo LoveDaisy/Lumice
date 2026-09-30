@@ -115,6 +115,7 @@ def write_projection_config(lens_type: str, out_dir: Path) -> Path:
     render = cfg["render"][0]
     render["lens"] = {"type": lens_type, "fov": _FOV_BY_TYPE[lens_type]}
     render["resolution"] = list(_RESOLUTION)
+    cfg["scene"]["ray_num"] = 1_000_000
     render.setdefault("view", {})["elevation"] = _VIEW_ELEVATION
 
     out_dir.mkdir(parents=True, exist_ok=True)

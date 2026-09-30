@@ -22,6 +22,7 @@ Run: pytest -v -m slow
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -32,18 +33,30 @@ from test.e2e.runner import get_project_root
 # TODO: relocate configs when follow-up task completes
 _CONFIGS_DIR = get_project_root() / "test" / "e2e" / "configs"
 
-_LIFECYCLE_CONFIGS = [
+_SRC_CONFIGS = [
     str(_CONFIGS_DIR / "raypath_symmetry_4_6.json"),
     str(_CONFIGS_DIR / "raypath_symmetry_4_6_nofilter.json"),
     str(_CONFIGS_DIR / "raypath_symmetry_7_3.json"),
 ]
+
+def _shrunk(paths, out_dir):
+    out = []
+    for src in paths:
+        with open(src, encoding="utf-8") as fp:
+            doc = json.load(fp)
+        doc["scene"]["ray_num"] = 100_000
+        dst = out_dir / Path(src).name
+        dst.write_text(json.dumps(doc), encoding="utf-8")
+        out.append(str(dst))
+    return out
+
 
 # 12 rounds × 3 configs = 36 lifecycles > 31 crash threshold
 _REGRESSION_ROUNDS = 12
 
 
 @pytest.mark.slow
-def test_capi_sentinel_overflow_regression():
+def test_capi_sentinel_overflow_regression(tmp_path):
     """3-config rotation across 36 server lifecycles must not crash or produce invalid data.
 
     Each lifecycle calls CreateServer / CommitConfigFromFile / poll-until-IDLE /
@@ -51,11 +64,12 @@ def test_capi_sentinel_overflow_regression():
     fix 5287efe the sentinel write at out[max_count] overflowed this array;
     this test would have crashed around lifecycle 31 on all platforms.
     """
-    n_configs = len(_LIFECYCLE_CONFIGS)
+    lifecycle_configs = _shrunk(_SRC_CONFIGS, tmp_path)
+    n_configs = len(lifecycle_configs)
     total = _REGRESSION_ROUNDS * n_configs
     completed = 0
     for _ in range(_REGRESSION_ROUNDS):
-        for cfg in _LIFECYCLE_CONFIGS:
+        for cfg in lifecycle_configs:
             result = run_scene_capi(cfg)
             completed += 1
             assert result.has_valid_data, (

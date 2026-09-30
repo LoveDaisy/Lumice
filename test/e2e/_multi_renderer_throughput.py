@@ -90,6 +90,8 @@ def run_dual_renderer_gate(
             _assert_on_device(r, backend_env, arm, rep)
             samples[arm].append(r.multi_rps)
 
+    for arm, v in samples.items():
+        print(f"[{label}] raw {arm}: {[round(x) for x in v]}")
     medians = {arm: statistics.median(v) for arm, v in samples.items()}
     covs = {arm: statistics.stdev(v) / statistics.mean(v) for arm, v in samples.items()}
     ratio_a = medians["dual"] / medians["single_a"]
