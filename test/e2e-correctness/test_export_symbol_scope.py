@@ -9,7 +9,9 @@ build says nothing about whether that worked: a list the linker ignored, a white
 engine's C++ symbols through, or a Windows DLL still exporting everything all link fine. So this
 reads the dynamic symbol table of each built library with the platform's own tool — `nm -D` on
 Linux, `nm -gU` on macOS, `dumpbin /exports` on Windows — and compares it with the generator's own
-parse of the headers:
+parse of the headers. Reading the table and computing both sides is scripts/check_export_surface.py,
+the same code the release workflow runs on every engine file it packages; every file a lookup
+finds is checked, so a tree holding more than one engine (one DLL per ISA tier) has each compared:
 
     liblumice           == LUMICE_ENGINE_SURFACE_HEADERS   (six lumice_*.h + lumice_analytic_core.h)
     liblumice_testapi   == LUMICE_TESTAPI_SURFACE_HEADERS  (the engine's + lumice_test_api.h)
@@ -35,7 +37,6 @@ so the Windows CI legs can run it with nothing but pytest installed.
 from __future__ import annotations
 
 import re
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -45,7 +46,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-import check_policies  # noqa: E402
+import check_export_surface as ces  # noqa: E402
 import gen_export_list  # noqa: E402
 
 pytestmark = pytest.mark.slow
@@ -53,112 +54,51 @@ pytestmark = pytest.mark.slow
 SHARED_OUT = ROOT / "build" / "Release" / "shared"
 ANALYTIC_CORE_H = ROOT / "src" / "include" / "lumice_analytic_core.h"
 
-# File-name patterns per library and platform. On Windows the `lumice` target is named after its
-# ISA tier (lumice-engine.<tier>.dll, root CMakeLists.txt) — the one irregular name.
-_PATTERNS = {
-    "lumice": {"win32": "lumice-engine.*.dll", "darwin": "liblumice.dylib", "linux": "liblumice.so"},
-    "lumice_testapi": {
-        "win32": "lumice_testapi.dll",
-        "darwin": "liblumice_testapi.dylib",
-        "linux": "liblumice_testapi.so",
-    },
-    "lumice_analytic": {
-        "win32": "lumice_analytic.dll",
-        "darwin": "liblumice_analytic.dylib",
-        "linux": "liblumice_analytic.so",
-    },
-}
-
-# The declaration's library keys (LUMICE_<KEY>_SURFACE_HEADERS) by target name.
-_SURFACE_KEY = {"lumice": "ENGINE", "lumice_testapi": "TESTAPI", "lumice_analytic": "ANALYTIC"}
-_SURFACES = check_policies.parse_export_surfaces(
-    (ROOT / check_policies.EXPORT_SURFACES_REL).read_text(encoding="utf-8")
-)
-_EXPECTED_HEADERS = {lib: [ROOT / rel for rel in _SURFACES[key]] for lib, key in _SURFACE_KEY.items()}
-
-# Symbols GNU ld defines in every shared object's dynamic table on its own, whatever the version
-# script says. Named one by one so that anything else unexpected still fails.
-_GNU_LINKER_DEFINED = frozenset({"_init", "_fini", "__bss_start", "_edata", "_end"})
+_LIBS = sorted(ces.PATTERNS)
 
 
-def _platform() -> str:
-    if sys.platform.startswith("win"):
-        return "win32"
-    if sys.platform == "darwin":
-        return "darwin"
-    return "linux"
-
-
-def _cuda_configured() -> bool:
-    """True if a shared configure in this tree has CUDA on (liblumice_analytic is then absent)."""
-    for cache in (ROOT / "build" / "CMakeCache.txt", ROOT / "build" / "cmake_build" / "shared" / "CMakeCache.txt"):
-        if cache.is_file():
-            text = cache.read_text(encoding="utf-8", errors="replace")
-            if "BUILD_SHARED_LIBS:BOOL=ON" in text and "LUMICE_CUDA_ENABLED:BOOL=ON" in text:
-                return True
-    return False
+def _find_all(lib: str) -> list[Path]:
+    """Every built file of `lib`. More than one is legitimate only for the engine on Windows (one
+    DLL per ISA tier); each is checked."""
+    if not SHARED_OUT.is_dir():
+        pytest.skip(f"no shared build at {SHARED_OUT} (./scripts/build.sh -sj release)")
+    hits = ces.find_all(SHARED_OUT, lib)
+    if not hits:
+        if lib == "lumice_analytic" and ces.cuda_configured(ROOT):
+            pytest.skip("CUDA configure: liblumice_analytic is not produced (doc/analytic-api.md 2.3)")
+        pattern = ces.PATTERNS[lib][ces.platform_key()]
+        pytest.fail(f"{pattern} not found under {SHARED_OUT} although a shared build exists there")
+    return hits
 
 
 def _find(lib: str) -> Path:
-    if not SHARED_OUT.is_dir():
-        pytest.skip(f"no shared build at {SHARED_OUT} (./scripts/build.sh -sj release)")
-    pattern = _PATTERNS[lib][_platform()]
-    hits = sorted(p for p in SHARED_OUT.rglob(pattern) if p.is_file())
-    if not hits:
-        if lib == "lumice_analytic" and _cuda_configured():
-            pytest.skip("CUDA configure: liblumice_analytic is not produced (doc/analytic-api.md 2.3)")
-        pytest.fail(f"{pattern} not found under {SHARED_OUT} although a shared build exists there")
+    """The one built file of `lib`, for the checks that load it."""
+    hits = _find_all(lib)
     if len(hits) > 1:
-        pytest.fail(f"more than one {pattern} under {SHARED_OUT}: {hits}")
+        pytest.fail(f"more than one {lib} under {SHARED_OUT}: {hits}")
     return hits[0]
 
 
-def _run(cmd: list[str]) -> str:
-    if shutil.which(cmd[0]) is None:
-        pytest.fail(f"`{cmd[0]}` not on PATH — needed to read the export table")
-    proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
-    assert proc.returncode == 0, f"{cmd} failed ({proc.returncode}):\n{proc.stderr}"
-    return proc.stdout
-
-
 def _exported(path: Path) -> set[str]:
-    plat = _platform()
-    names: set[str] = set()
-    if plat == "win32":
-        # dumpbin table rows: `ordinal hint RVA name`, the name possibly followed by `= forwarder`.
-        row = re.compile(r"^\s+\d+\s+[0-9A-Fa-f]+\s+[0-9A-Fa-f]+\s+(\S+)")
-        for line in _run(["dumpbin", "/nologo", "/exports", str(path)]).splitlines():
-            m = row.match(line)
-            if m:
-                names.add(m.group(1))
-        return names
-    cmd = ["nm", "-gU", str(path)] if plat == "darwin" else ["nm", "-D", "--defined-only", str(path)]
-    for line in _run(cmd).splitlines():
-        parts = line.split()
-        if len(parts) < 3:
-            continue
-        name = parts[-1]
-        if plat == "darwin":
-            name = name[1:] if name.startswith("_") else name  # Mach-O C mangling
-        elif name in _GNU_LINKER_DEFINED:
-            continue
-        names.add(name)
-    return names
+    try:
+        return ces.exported(path)
+    except ces.ExportTableError as e:
+        pytest.fail(str(e))
 
 
 def _expected(lib: str) -> set[str]:
-    return set(gen_export_list.parse_headers(_EXPECTED_HEADERS[lib]))
+    return ces.expected(ces.SURFACE_KEY[lib])
 
 
-@pytest.mark.parametrize("lib", sorted(_PATTERNS))
+@pytest.mark.parametrize("lib", _LIBS)
 def test_export_set_equals_header_declarations(lib: str) -> None:
-    path = _find(lib)
-    actual = _exported(path)
     expected = _expected(lib)
-    assert actual == expected, (
-        f"{path.name}: exported but not declared: {sorted(actual - expected)}; "
-        f"declared but not exported: {sorted(expected - actual)}"
-    )
+    bad = []
+    for path in _find_all(lib):
+        extra, missing = ces.compare(_exported(path), expected)
+        if extra or missing:
+            bad.append(ces.describe(path.name, extra, missing))
+    assert not bad, "\n".join(bad)
 
 
 def test_analytic_exports_only_its_own_prefix() -> None:
@@ -180,7 +120,7 @@ def _load_in_child(path: Path, body: str) -> str:
     return proc.stdout
 
 
-@pytest.mark.parametrize("lib", sorted(_PATTERNS))
+@pytest.mark.parametrize("lib", _LIBS)
 def test_library_loads_and_resolves_every_declared_function(lib: str) -> None:
     path = _find(lib)
     names = sorted(_expected(lib))
@@ -190,7 +130,7 @@ def test_library_loads_and_resolves_every_declared_function(lib: str) -> None:
 def test_declaration_names_every_library() -> None:
     """The declaration is the authority on every library this test checks: a library it did not
     declare would otherwise be compared against nothing."""
-    assert set(_SURFACES) == set(_SURFACE_KEY.values())
+    assert set(ces.surfaces()) == set(ces.SURFACE_KEY.values())
 
 
 def test_engine_carries_no_library_management_function() -> None:
@@ -201,7 +141,8 @@ def test_engine_carries_no_library_management_function() -> None:
     management = set(gen_export_list.parse_headers([ROOT / "src" / "include" / "lumice_analytic.h"]))
     assert management == {"LUMICE_ANALYTIC_GetApiVersion", "LUMICE_ANALYTIC_SetLogCallback"}
     for lib in ("lumice", "lumice_testapi"):
-        assert not (_exported(_find(lib)) & management), lib
+        for path in _find_all(lib):
+            assert not (_exported(path) & management), path.name
 
 
 def test_analytic_placeholder_returns_header_version() -> None:
