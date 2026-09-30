@@ -1235,16 +1235,16 @@ jobs:
         # 1.53x on two runs of identical code (mean ~1.39x). A single run cannot
         # judge either number — the same leg has been seen to swing 10-30%.
         #
-        # A floor sits under the parity leg that no repacking removes:
-        # test_capi_sentinel_overflow is ONE indivisible case that pins a worker
-        # for the whole run (~204s in this grouping), leaving projection-parity's
-        # 12 evenly-sized cases (63-82s each) two workers, i.e. ~430s of
-        # makespan; with build and setup on top the leg lands near 600s. So at
-        # whole-file granularity the ratio cannot go far below ~1.4x no matter
-        # how the files are dealt. Going below it means splitting one file
-        # case-by-case, which costs the "both legs' union is unchanged" check
-        # the mechanical simplicity that makes it worth running — and per the
-        # numbers above, buys no wall-clock in exchange.
+        # The parity leg used to carry a floor no repacking removed:
+        # test_capi_sentinel_overflow, ONE indivisible case, pinned a worker
+        # for ~204s while projection-parity's 12 cases (63-82s each) shared the
+        # other two, landing the leg near 600s. Both fixtures were cut on
+        # 2026-09-30 — the sentinel to 100k rays per lifecycle (36 lifecycles
+        # kept), projection parity to 1M rays per case — and the same three
+        # files measured ~61s of pytest and a 158s job on the trial run of
+        # PR #449 (macOS runner, this grouping). That floor is gone; the job
+        # numbers in this comment that predate 2026-09-30 describe the old
+        # fixtures and are stale for this leg.
         #
         # ⛔ Bin packing alone is NOT sufficient, and getting this wrong turns a
         # leg RED, not merely slow. Two constraints sit on top of it:
@@ -1262,6 +1262,9 @@ jobs:
         #       a single indivisible case that pins one worker for the whole run
         #       (376s while starved beside exit-seam, ~204s in the grouping that
         #       shipped), and pairing them made an exit-seam scene cross 180s.
+        #       Those numbers are from its old 5M-rays-per-lifecycle budget; at
+        #       today's 100k it ran ~10s, so this pairing rule's cause is likely
+        #       gone, but no grouping was re-measured to retire it.
         # Practical rule when regrouping: keep the two heavyweight capi_runner
         # parity files (exit-seam, projection) on opposite legs, and keep
         # test_capi_sentinel_overflow off the exit-seam leg.
