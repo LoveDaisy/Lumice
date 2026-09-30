@@ -30,7 +30,7 @@
 
 #include "gui/gui_state.hpp"
 #include "gui/preview_renderer.hpp"
-#include "include/lumice.h"
+#include "include/lumice_render.h"
 
 namespace lumice::gui {
 

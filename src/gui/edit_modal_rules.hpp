@@ -19,7 +19,7 @@
 #include <string>
 
 #include "gui/raypath_segments.hpp"  // GuiValidationResult
-#include "include/lumice.h"          // LUMICE_RaypathValidationState
+#include "include/lumice_editor.h"   // LUMICE_RaypathValidationState
 
 namespace lumice::gui {
 

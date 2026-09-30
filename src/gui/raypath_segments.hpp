@@ -9,7 +9,7 @@
 #include <vector>
 
 #include "gui/gui_state.hpp"  // Factor / SummandText / SumOfProducts / FormatEntryExitFactorText
-#include "include/lumice.h"
+#include "include/lumice_editor.h"
 
 namespace lumice::gui {
 

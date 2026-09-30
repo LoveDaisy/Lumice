@@ -39,7 +39,10 @@
 #include "gui/symmetry_ui.hpp"
 #include "gui/theme.hpp"
 #include "imgui.h"
-#include "include/lumice.h"
+#include "include/lumice_base.h"
+#include "include/lumice_editor.h"
+#include "include/lumice_engine.h"
+#include "include/lumice_scene.h"
 
 namespace lumice::gui {
 

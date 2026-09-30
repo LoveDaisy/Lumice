@@ -37,7 +37,10 @@
 #include "gui/user_defaults.hpp"
 #include "gui/window_sizing.hpp"
 #include "imgui.h"
-#include "include/lumice.h"
+#include "include/lumice_base.h"
+#include "include/lumice_editor.h"
+#include "include/lumice_engine.h"
+#include "include/lumice_scene.h"
 
 namespace lumice::gui {
 

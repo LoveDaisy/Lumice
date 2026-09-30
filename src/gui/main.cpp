@@ -35,7 +35,8 @@
 #include "imgui.h"
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_opengl3.h"
-#include "include/lumice.h"  // LUMICE_GetVersionString (window title, startup log line)
+#include "include/lumice_base.h"    // LUMICE_GetVersionString (window title, startup log line)
+#include "include/lumice_engine.h"  // LUMICE_GetVersionString (window title, startup log line)
 #if defined(LUMICE_ENGINE_DELAY_LOADED)
 #include "launcher/win_engine_loader.h"
 #endif

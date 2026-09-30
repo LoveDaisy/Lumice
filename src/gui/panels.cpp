@@ -30,7 +30,9 @@
 // imgui_internal.h "Reload user buf (WIP #2890)"). An ImGui upgrade that promotes or renames it
 // must update that one function.
 #include "imgui_internal.h"
-#include "lumice.h"
+#include "lumice_editor.h"
+#include "lumice_engine.h"
+#include "lumice_scene.h"
 
 namespace lumice::gui {
 

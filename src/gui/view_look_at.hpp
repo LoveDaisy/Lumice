@@ -2,7 +2,7 @@
 #define LUMICE_GUI_VIEW_LOOK_AT_HPP
 
 #include "gui/field_editor_registry.hpp"  // FieldEditorConstraint — the sliders' own bounds
-#include "include/lumice.h"               // LUMICE_ANNOTATION_MARKER_* — the id space the first six entries ARE
+#include "include/lumice_render.h"        // LUMICE_ANNOTATION_MARKER_* — the id space the first six entries ARE
 
 namespace lumice::gui {
 

@@ -6,7 +6,7 @@
 #include <vector>
 
 #include "gui/gui_state.hpp"
-#include "include/lumice.h"
+#include "include/lumice_editor.h"
 
 struct GLFWwindow;
 

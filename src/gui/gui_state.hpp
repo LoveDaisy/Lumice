@@ -17,7 +17,10 @@
 
 #include "gui/analysis_result.hpp"
 #include "gui/gui_constants.hpp"
-#include "include/lumice.h"  // LUMICE_RayCount (64-bit ray-count type)
+#include "include/lumice_base.h"    // LUMICE_RayCount (64-bit ray-count type)
+#include "include/lumice_engine.h"  // LUMICE_RayCount (64-bit ray-count type)
+#include "include/lumice_render.h"  // LUMICE_RayCount (64-bit ray-count type)
+#include "include/lumice_scene.h"   // LUMICE_RayCount (64-bit ray-count type)
 #include "util/contrast_headroom.hpp"
 
 namespace lumice::gui {

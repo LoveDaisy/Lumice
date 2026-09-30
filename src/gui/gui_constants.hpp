@@ -3,7 +3,8 @@
 
 #include <cstddef>
 
-#include "include/lumice.h"                   // LUMICE_MAX_ANNOTATION_CIRCLES (kMaxAnnotationCircles invariant below)
+#include "include/lumice_engine.h"            // LUMICE_MAX_ANNOTATION_CIRCLES (kMaxAnnotationCircles invariant below)
+#include "include/lumice_render.h"            // LUMICE_MAX_ANNOTATION_CIRCLES (kMaxAnnotationCircles invariant below)
 #include "util/raypath_analysis_display.hpp"  // kRaypathAnalysisConeRingCount (kAnalysisConeRingCount below)
 
 namespace lumice::gui {

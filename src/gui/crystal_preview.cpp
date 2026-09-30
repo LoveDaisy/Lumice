@@ -7,7 +7,9 @@
 #include "gui/app.hpp"
 #include "gui/gui_constants.hpp"
 #include "gui/gui_state.hpp"
-#include "lumice.h"
+#include "lumice_base.h"
+#include "lumice_editor.h"
+#include "lumice_scene.h"
 
 namespace lumice::gui {
 

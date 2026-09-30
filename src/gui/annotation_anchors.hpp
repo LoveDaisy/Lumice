@@ -5,7 +5,7 @@
 #include <string>
 #include <vector>
 
-#include "include/lumice.h"  // LUMICE_ANNOTATION_MARKER_COUNT — the id space the marker table is indexed by
+#include "include/lumice_render.h"  // LUMICE_ANNOTATION_MARKER_COUNT — the id space the marker table is indexed by
 
 namespace lumice::gui {
 

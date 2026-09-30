@@ -29,7 +29,11 @@
 #endif
 // clang-format on
 
-#include "lumice.h"
+#include "lumice_base.h"
+#include "lumice_engine.h"
+#include "lumice_raypath.h"
+#include "lumice_render.h"
+#include "lumice_scene.h"
 #if defined(LUMICE_ENGINE_DELAY_LOADED)
 #include "launcher/win_engine_loader.h"
 #endif

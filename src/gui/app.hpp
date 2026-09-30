@@ -21,7 +21,8 @@
 #include "gui/screenshot_export_options.hpp"
 #include "gui/server_poller.hpp"
 #include "gui/thumbnail_cache.hpp"
-#include "include/lumice.h"
+#include "include/lumice_base.h"
+#include "include/lumice_engine.h"
 
 struct GLFWwindow;
 

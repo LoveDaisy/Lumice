@@ -25,7 +25,8 @@
 
 #include <memory>
 
-#include "lumice.h"
+#include "lumice_base.h"
+#include "lumice_engine.h"
 
 namespace lumice {
 

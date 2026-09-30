@@ -26,7 +26,7 @@
 #include "gui/panels.hpp"               // SliderScale
 #include "gui/slider_format_rules.hpp"  // FormatIsFineEnough -- the fmt/scale pairing gate
 #include "gui/slider_mapping.hpp"       // kLogLinearX0 -- the kLogLinear rows' domain requirement
-#include "include/lumice.h"             // LUMICE_SHAPE_SCALAR_*
+#include "include/lumice_scene.h"       // LUMICE_SHAPE_SCALAR_*
 
 namespace lumice::gui {
 

@@ -7,7 +7,8 @@
 #include "gui/gui_constants.hpp"
 #include "gui/gui_logger.hpp"
 #include "gui/preview_renderer.hpp"  // kOverlaySentinel (the shader's "no marker here" position)
-#include "lumice.h"
+#include "lumice_base.h"
+#include "lumice_render.h"
 
 namespace lumice::gui {
 

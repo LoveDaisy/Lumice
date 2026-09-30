@@ -8,7 +8,8 @@
 #include <vector>
 
 #include "gui/preview_renderer.hpp"
-#include "include/lumice.h"
+#include "include/lumice_base.h"
+#include "include/lumice_scene.h"
 
 namespace lumice::gui {
 

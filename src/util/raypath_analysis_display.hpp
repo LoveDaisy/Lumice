@@ -27,7 +27,8 @@
 #include <utility>
 #include <vector>
 
-#include "lumice.h"
+#include "lumice_base.h"
+#include "lumice_engine.h"
 #include "util/sky_direction.hpp"
 
 namespace lumice {
