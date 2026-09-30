@@ -14,7 +14,9 @@ this layer; the checks themselves live in ``test/e2e/_multi_renderer_parity.py``
 Two scenes, chosen for what they reach rather than for symmetry:
 
   * ``multi_lens`` — 3 renderers (linear / fisheye_equal_area /
-    dual_fisheye_equal_area, all 256²), single wavelength (550 nm), 10M rays.
+    dual_fisheye_equal_area, all 256²), single wavelength (550 nm), 10M rays in
+    the config, run here at 1M (``_RAY_NUM``; the config keeps 10M for the CUDA
+    mirror).
     A count strictly between 1 and the device cap (``kMaxRenderersDevice`` = 4),
     dense enough that the battery's 4×4 block ruler is informative, and the one
     scene here whose scalar ledger is a constant, so the two-ledger check runs
@@ -126,19 +128,38 @@ readings are deterministic per backend for a fixed seed):
 PSNR and energy bars and the 4×4 corr floor are the battery's, not re-derived
 here; the 16×16 floor and the ledger bars are calibrated above.
 
+``multi_lens`` at 1M instead of 10M. What this scene exists to catch are
+factor defects in the N-plane path, and those read the same at either budget
+— measured by breaking the Metal kernel three ways and running both:
+  plane misrouting, every renderer into plane 0: renderer[0] corr 0.868 /
+    energy 4.00 / R 4.00, renderers[1,2] corr 0 / energy 0, at 10M and 1M alike;
+  plane misrouting, renderer r into plane r+1: corr 0.003 / 0.964 / 0.003,
+    energy 1.74 / 0.80 / 0.72, at 10M and 1M alike (renderer[1]'s corr alone
+    stays above 0.95 — its energy and ledger are what red it);
+  landed-weight slots merged into slot 0: R[0] 0.250, R[1] and R[2] without a
+    denominator, with corr / energy green, at 10M and 1M alike.
+The correct build's readings barely move either: corr 0.9866 / 0.9904 / 0.9999
+and |R ratio − 1| ≤ 1.1e-4 at 1M, PSNR 33.0 / 33.2 / 39.9 dB against the 13 dB
+bar. What the smaller budget does give up is headroom for a PARTIAL defect —
+one that moves a plane's energy or ledger by a few percent rather than a
+factor — which none of the probes above were sized to measure; the bars, not
+the budget, set how small a defect can be caught, and they did not move.
+
 @pytest.mark.slow (shared-lib build: ``./scripts/build.sh -sj release``),
 Darwin-only. Runs serially (capi_runner mutates os.environ + a process-global
-log callback). Cost is the legacy oracle: ~10 s for ``multi_lens``, ~35 s for
-the dual scene (a fixed seed pins legacy to one worker).
+log callback). Cost is the legacy oracle: ~3 s for ``multi_lens`` at 1M, ~35 s
+for the dual scene (a fixed seed pins legacy to one worker).
 """
 
 from __future__ import annotations
 
 import platform
+from pathlib import Path
 
 import pytest
 
 from test.e2e.capi_runner import BufferedSimResult, run_scene_capi_buffered
+from test.e2e._config_overrides import write_config_with_ray_num
 from test.e2e._multi_renderer_parity import Scene, check_multi_renderer_parity, lens_types
 from test.e2e._parity_metrics import _DS_BH, _DS_BW
 from test.e2e._projection_battery import T_RAW_CORR_DS
@@ -155,13 +176,24 @@ _SCENES = [
     Scene("multi_renderer_parity_dual", 2, block=16, corr_floor=0.65, ledger_tol=0.05),
 ]
 
+# Per-scene ray budget where this file runs a scene below its config's own (see the module
+# docstring for multi_lens). The dual scene is absent: at 10M its renderer[0] corr sits 0.10 over
+# the 0.65 floor and at 5M it reads 0.52, so 20M is already the budget that floor was set for.
+_RAY_NUM = {"multi_lens": 1_000_000}
+
 pytestmark = pytest.mark.skipif(
     platform.system() != "Darwin", reason="Metal backend is only available on macOS"
 )
 
 
-def _run(config_name: str, backend: str, num_renderers: int) -> BufferedSimResult:
-    cfg = _CONFIGS_DIR / f"{config_name}.json"
+def _config(config_name: str, tmp_path: Path) -> Path:
+    src = _CONFIGS_DIR / f"{config_name}.json"
+    if config_name not in _RAY_NUM:
+        return src
+    return write_config_with_ray_num(src, tmp_path, _RAY_NUM[config_name])
+
+
+def _run(cfg: Path, backend: str, num_renderers: int) -> BufferedSimResult:
     return run_scene_capi_buffered(
         str(cfg), sim_seed=_SEED, backend=backend, timeout_sec=_TIMEOUT, num_renderers=num_renderers
     )
@@ -169,11 +201,12 @@ def _run(config_name: str, backend: str, num_renderers: int) -> BufferedSimResul
 
 @pytest.mark.slow
 @pytest.mark.parametrize("scene", _SCENES, ids=lambda s: s.config)
-def test_metal_multi_renderer_parity(scene: Scene):
+def test_metal_multi_renderer_parity(scene: Scene, tmp_path):
     """Each renderer's Metal plane matches its legacy plane; each ledger pair agrees."""
     lens = lens_types(_CONFIGS_DIR, scene.config)
-    legacy = _run(scene.config, "legacy", scene.num_renderers)
-    metal = _run(scene.config, "metal", scene.num_renderers)
+    cfg = _config(scene.config, tmp_path)
+    legacy = _run(cfg, "legacy", scene.num_renderers)
+    metal = _run(cfg, "metal", scene.num_renderers)
 
     assert legacy.routed_backend == "legacy" and not legacy.fell_back, (
         f"{scene.config}: legacy oracle routed={legacy.routed_backend!r} "
