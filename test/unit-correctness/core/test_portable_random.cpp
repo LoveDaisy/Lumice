@@ -23,7 +23,9 @@
 namespace lumice {
 namespace {
 
+using test::PortableCanonicalDouble;
 using test::PortableCanonicalFloat;
+using test::PortableGaussianDouble;
 using test::PortableGaussianFloat;
 using test::PortableUniformFloat;
 using test::PortableUniformInt;
@@ -196,6 +198,52 @@ TEST(PortableRandom, GaussianIsStatelessAcrossReseeding) {
     }
   }
   EXPECT_EQ(mismatches, 0) << "the sampler carried state across a reseed";
+}
+
+// The double helpers on std::mt19937_64, in one case: the same four propositions as the float
+// ones above (reproducible, in range, right moments, exactly the declared draws with no state
+// carried across a reseed), at a sample size that costs about a millisecond.
+TEST(PortableRandom, DoubleHelpersKeepTheFloatHelpersContract) {
+  std::mt19937_64 rng(kSeed);
+  constexpr int kN = 20000;
+  double sum = 0.0;
+  double sum_sq = 0.0;
+  int out_of_range = 0;
+  std::vector<double> first;
+  for (int i = 0; i < kN; ++i) {
+    const double u = PortableCanonicalDouble(rng);
+    out_of_range += (u >= 0.0 && u < 1.0) ? 0 : 1;
+    const double x = PortableGaussianDouble(rng);
+    if (i < 16) {
+      first.push_back(x);
+    }
+    sum += x;
+    sum_sq += x * x;
+  }
+  EXPECT_EQ(out_of_range, 0) << "a canonical double left [0, 1)";
+  const double mean = sum / kN;
+  // Standard error of the mean is 1/sqrt(N) = 7.1e-3 (of the deviation, ~5e-3); +-0.05 is 7 sigma
+  // or more — "is it the right distribution", not "is it this exact sample".
+  EXPECT_NEAR(mean, 0.0, 0.05);
+  EXPECT_NEAR(std::sqrt(sum_sq / kN - mean * mean), 1.0, 0.05);
+
+  std::mt19937_64 used(kSeed);
+  std::mt19937_64 reference(kSeed);
+  constexpr int kCalls = 64;
+  for (int i = 0; i < kCalls; ++i) {
+    (void)PortableCanonicalDouble(used);
+    (void)PortableGaussianDouble(used);
+  }
+  reference.discard(3ull * kCalls);
+  EXPECT_EQ(used(), reference()) << "the double helpers did not consume 1 + 2 draws per call pair";
+
+  used.seed(kSeed);
+  int mismatches = 0;
+  for (size_t i = 0; i < first.size(); ++i) {
+    (void)PortableCanonicalDouble(used);
+    mismatches += PortableGaussianDouble(used) != first[i] ? 1 : 0;
+  }
+  EXPECT_EQ(mismatches, 0) << "the double sampler carried state across a reseed";
 }
 
 }  // namespace
