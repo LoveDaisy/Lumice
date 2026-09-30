@@ -360,6 +360,12 @@ def test_unproject_pixel_round_trip_through_ctypes():
 _CONFIG_CHALLENGE = str(
     get_project_root() / "test" / "e2e" / "configs" / "raypath_analysis_challenge_98_120_144.json")
 _RARE_CRYSTAL_ID = 3
+# The analysis runs this scene at half its committed 1M-ray budget (the config file keeps 1M for
+# test_filter_label_symmetry.py). The thresholds below were NOT moved for it: at 500k the rare
+# row's rel_sd ratio read 10.3× / 8.7× / 13.0× over three 30-session repeats (9.5–14.1× at 1M)
+# and the worst row's z 1.36 / 1.69 / 1.33 against the Šidák threshold 3.32. 250k was rejected:
+# its worst z reached 2.27, too close to the threshold for a family-wise test to stay quiet.
+_CHALLENGE_RAY_NUM = 500_000
 # Measured on this scene at its 1M-ray budget, one server, sessions back to back, sim_seed=0:
 # the rare row's relative standard deviation across sessions is ~0.2 under proportional and
 # ~0.02 under adaptive — 10.5× on the first measurement — and every row's mean agrees between
@@ -456,6 +462,7 @@ def _score_rows(energies_p, energies_a, rows):
 def _run_arm(tmp_path, ray_allocation: str, sessions: int = _CHALLENGE_SESSIONS):
     doc = json.loads(Path(_CONFIG_CHALLENGE).read_text(encoding="utf-8"))
     doc["scene"]["ray_allocation"] = ray_allocation
+    doc["scene"]["ray_num"] = _CHALLENGE_RAY_NUM
     path = tmp_path / f"challenge_{ray_allocation}.json"
     path.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
     # sim_seed=0: a fresh random stream per session, so the spread ACROSS sessions is the
@@ -470,8 +477,8 @@ def test_adaptive_allocation_cuts_rare_row_noise_without_moving_the_means(tmp_pa
     """`adaptive` on an analysis: the rare row's share is ≥5× less noisy across sessions than
     under `proportional`, and no row's mean energy moved between the arms.
 
-    Two arms of thirty sessions each on one server per arm, sim_seed=0 (random), the scene's
-    own 1M-ray budget. The first assertion is the reason the analysis binds the online deal at
+    Two arms of thirty sessions each on one server per arm, sim_seed=0 (random), the scene at
+    `_CHALLENGE_RAY_NUM` rays. The first assertion is the reason the analysis binds the online deal at
     all (the histogram's Σ(Y·w) carries the p/q correction, so what changes is variance, not
     expectation); the second is that unbiasedness, per row, as the worst row's z over the two
     arms' pooled standard error against a Šidák threshold at `_FAMILY_ALPHA` family-wise, a red
@@ -482,7 +489,7 @@ def test_adaptive_allocation_cuts_rare_row_noise_without_moving_the_means(tmp_pa
     prop = _run_arm(tmp_path, "proportional")
     adap = _run_arm(tmp_path, "adaptive")
     assert len(prop) == _CHALLENGE_SESSIONS and len(adap) == _CHALLENGE_SESSIONS
-    assert prop[0].sim_ray_num == 1_000_000, "the scene's own budget"
+    assert prop[0].sim_ray_num == _CHALLENGE_RAY_NUM, "the budget _run_arm wrote"
 
     # The bind itself, off the log lines the server emits (their wording is pinned by the C++
     # unit test on the same site, test_ray_allocation_online_analysis.cpp).
