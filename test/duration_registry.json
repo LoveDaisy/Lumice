@@ -46,8 +46,14 @@
     {
       "id": "test/parity-cross-backend/backend/test_metal_projection_parity.py::test_metal_projection_no_fallback_detector",
       "job": "E2E Slow (macOS ARM64 parity)",
-      "ci_seconds": 30,
+      "ci_seconds": 40,
       "reason": "Proves the projection battery's routing assertion can fail, by requesting a route the build cannot honour; without it every per-projection Metal parity result could be a silent legacy fallback, and observing the route needs real sessions."
+    },
+    {
+      "id": "test/regression-sentinel/test_gpu_color_mask_batch_leak.py::test_multi_batch_per_class_ratio_cpu_vs_metal_within_band",
+      "job": "E2E Slow (macOS ARM64 parity)",
+      "ci_seconds": 30,
+      "reason": "Guards against the GPU colour-mask batch leak (a layer-0 carried mask never reset between batches, which skewed per-class ratios 3-7x between CPU and Metal); the leak only shows once a run spans many dispatch batches, so the 4M-ray budget is what makes it reachable."
     },
     {
       "id": "test/performance/test_metal_multi_renderer_throughput.py::test_metal_dual_renderer_throughput",
