@@ -30,7 +30,13 @@
 // are two complementary halves: any new assertion built on these should still be a band
 // (`EXPECT_LT(ratio, ceiling)`), never an exact equality on a computed float.
 //
-// Interface shape — free functions taking `std::mt19937&`, deliberately unlike the production
+// Two engines, two widths. The float helpers draw from `std::mt19937` (32-bit outputs, enough for
+// a float mantissa); the double helpers draw from `std::mt19937_64`, whose output sequence the
+// standard pins the same way, so that a double sample can carry a full 53-bit mantissa. Each pair
+// pins its own sequence — a test picks the engine matching the precision it samples in and never
+// mixes the two on one engine.
+//
+// Interface shape — free functions taking `std::mt19937&` / `std::mt19937_64&`, deliberately unlike the production
 // `RandomNumberGenerator` (src/core/math.hpp), which owns `gauss_dist_` / `uniform_dist_` members.
 // The difference is the point: the whole purpose here is to avoid the adaptor members that class
 // holds. This is not an inconsistency waiting to be unified — production's own portability question
@@ -93,6 +99,22 @@ inline float PortableGaussianFloat(std::mt19937& rng, float mean, float stddev) 
   constexpr float kTwoPi = 6.28318530717958647692f;
   const float radius = std::sqrt(-2.0f * std::log(u1));
   return mean + stddev * radius * std::cos(kTwoPi * u2);
+}
+
+// Uniform double in [0, 1). The top 53 bits of one 64-bit engine draw — a double's mantissa width,
+// by the same reasoning as PortableCanonicalFloat.
+inline double PortableCanonicalDouble(std::mt19937_64& rng) {
+  return static_cast<double>(rng() >> 11) * (1.0 / 9007199254740992.0);
+}
+
+// Standard normal deviate (mean 0, standard deviation 1) in double, by Box-Muller: the double
+// counterpart of PortableGaussianFloat, with the same shape and for the same reasons — exactly two
+// engine draws per call, the sine partner discarded, and 1 - u keeping std::log's argument in (0, 1].
+inline double PortableGaussianDouble(std::mt19937_64& rng) {
+  const double u1 = 1.0 - PortableCanonicalDouble(rng);
+  const double u2 = PortableCanonicalDouble(rng);
+  constexpr double kTwoPi = 6.283185307179586476925286766559;
+  return std::sqrt(-2.0 * std::log(u1)) * std::cos(kTwoPi * u2);
 }
 
 }  // namespace test
