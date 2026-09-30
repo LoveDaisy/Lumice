@@ -1633,7 +1633,8 @@ resulting re-pack of the two macOS legs, is a separate follow-up.
 Those 278s were the gate's precise profile (0.85 over 21 reps). CI now runs its `ci` profile
 (`--dual-gate-profile=ci`, 0.75 over 5 reps — the disaster floor; the precise gate runs on the
 reference machines on a schedule, `performance-testing.md` "Precise throughput gate (local
-schedule)"), measured at 104s for the gate and 124s for the whole of phase 2 on run 36756401783.
+schedule)"), measured at 104s / 124s for the gate and 124s / 147s for the whole of phase 2 on runs
+36756401783 / 36758254351.
 
 The cold column is not a hypothetical. Every cache in the repository was destroyed while this table
 was being measured, so the two runs are the same commit range on the same branch, one with nothing

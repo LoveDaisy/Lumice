@@ -58,7 +58,7 @@
     {
       "id": "test/performance/test_metal_multi_renderer_throughput.py::test_metal_dual_renderer_throughput",
       "job": "E2E Slow (macOS ARM64 rest)",
-      "ci_seconds": 110,
+      "ci_seconds": 124,
       "reason": "Guards against a Metal session serving two renderers collapsing to a fraction of single-renderer throughput (CI runs the disaster profile: 0.75 over 5 interleaved reps; the precise 0.85 over 21 runs on the reference machines on a schedule). Its cost is the interleaved repetitions a median ratio needs on a runner whose per-arm CoV is 0.155-0.229; fewer reps raise the false-red rate at this threshold."
     },
     {

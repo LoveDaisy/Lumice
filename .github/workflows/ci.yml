@@ -1449,9 +1449,9 @@ jobs:
         # sum is ~552 + 296 = 848s (~14.2min), so 25min leaves ~10min margin; 20 would
         # not survive a slow phase-1 day stacked on the phase-2 cost.
         # Those 278-296s were the precise profile (21 reps). Phase 2 now runs the ci
-        # profile (5 reps; extrapolated 85-110s on this hardware, 28-41s on the Metal
-        # reference machine); the timeout is left at 25 until measured CI runs of the
-        # new shape say where it should go.
+        # profile (5 reps): the gate measured 104s / 124s and phase 2 124s / 147s on runs
+        # 36756401783 / 36758254351 (28-41s on the Metal reference machine), job totals
+        # 811s / 830s. The timeout is left at 25; where it should go is a whole-leg call.
         timeout-minutes: 25
 
       - name: Check test durations
