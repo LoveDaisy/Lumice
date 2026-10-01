@@ -1634,9 +1634,11 @@ alone taking 995s and 971s. The workflow now restores caches on both event types
 after a successful push to `main`, and only when the exact key missed. Pull requests therefore
 consume the stable default-branch seed without admitting one-use SHA snapshots. The first `main`
 run under that policy (36841251449) completed in **556s**, reused the content-addressed CPM entries,
-and successfully wrote all nine commit-keyed compiler-cache seeds. This protects the warm-cache
-precondition; it does not make a genuinely cold build cheap, so a missing default-branch seed still
-invalidates the table for first-run forecasting.
+and successfully wrote all nine commit-keyed compiler-cache seeds. The first run of the next,
+previously unseen pull-request scope (36842632185) restored each of those nine seeds, wrote no cache
+entry of its own, and completed in **543s**. This protects the warm-cache precondition; it does not
+make a genuinely cold build cheap, so a missing default-branch seed still invalidates the table for
+first-run forecasting.
 
 One lesson from an earlier edition of this table outlives its numbers. A compiler cache can report
 a successful restore on every run while evicting most of what it stores: `Ubuntu x86_64`'s ccache
