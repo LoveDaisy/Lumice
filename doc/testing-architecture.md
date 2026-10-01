@@ -1583,12 +1583,14 @@ target: a run that needs more than 12 minutes is answered by removing tests, not
 number. Nothing enforces this per run — §7.7 enforces its per-test half — so it is checked by
 measurement, as below, and re-checked whenever a change adds a job or lengthens the longest one.
 
-**Measured.** The final acceptance cohort contains five successful runs of the same workflow and
+**Measured.** The final acceptance cohort contains five successful runs of the final workflow and
 test configuration on 2026-10-01: four pull-request events and the intervening push to `main`.
-The wall clock below is computed from the run's creation timestamp to the latest job completion
-timestamp, not the run object's slightly later `updated_at`. `ci.yml` has no path filter, so the
-documentation-only commits still ran the complete matrix. Before the time-governance changes,
-`main` ran 16.6 min (run 36710150908) and 20.6 min (run 36737901403).
+The push additionally enables the main-only benchmark jobs; mixing the two event types in this
+cohort is the owner-set acceptance scope, not a claim that their job sets are identical. The wall
+clock below is computed from the run's creation timestamp to the latest job completion timestamp,
+not the run object's slightly later `updated_at`. `ci.yml` has no path filter, so the
+documentation-only commits still ran the complete pull-request matrix. Before the time-governance
+changes, `main` ran 16.6 min (run 36710150908) and 20.6 min (run 36737901403).
 
 | Run | Event | Head | Wall clock | Critical-path job |
 |---|---|---|---:|---|
@@ -1597,6 +1599,35 @@ documentation-only commits still ran the complete matrix. Before the time-govern
 | 36842632185 | pull request | `0cb6f242` | **543s (9.05 min)** | E2E Slow (macOS ARM64 rest), 534s |
 | 36843865859 | pull request | `3020c725` | **560s (9.33 min)** | E2E Slow (macOS ARM64 rest), 554s |
 | 36845103301 | pull request | `5144941e` | **619s (10.32 min)** | E2E Slow (macOS ARM64 rest), 609s |
+
+The per-job elapsed seconds below retain the complete 19-job pull-request matrix. `new-refs` is
+event-specific and therefore skipped on the push sample; the four main-only benchmark matrix jobs
+and their summary are reported separately below rather than mixed into the PR matrix.
+
+| CI job | 36840162237 | 36841251449 | 36842632185 | 36843865859 | 36845103301 | Range |
+|---|---:|---:|---:|---:|---:|---:|
+| **E2E Slow (macOS ARM64 rest)** | **567** | **537** | **534** | **554** | **609** | **534–609** |
+| e2e-test | 339 | 415 | 408 | 419 | 502 | 339–502 |
+| windows-isa-v3-compile | 404 | 397 | 428 | 417 | 424 | 397–428 |
+| Windows shared export (clang-cl) | 263 | 271 | 238 | 273 | 265 | 238–273 |
+| E2E Slow (Ubuntu x86_64) | 257 | 256 | 181 | 262 | 262 | 181–262 |
+| E2E Slow (macOS ARM64 parity) | 260 | 213 | 197 | 140 | 180 | 140–260 |
+| Windows MSVC x86_64 | 239 | 251 | 239 | 219 | 231 | 219–251 |
+| macOS ARM64 | 189 | 207 | 240 | 175 | 203 | 175–240 |
+| Ubuntu x86_64 | 185 | 185 | 195 | 175 | 171 | 171–195 |
+| windows-cuda-compile | 151 | 155 | 118 | 123 | 135 | 118–155 |
+| isa-v4-compile | 98 | 79 | 104 | 97 | 77 | 77–104 |
+| bench-compile | 74 | 90 | 99 | 82 | 99 | 74–99 |
+| Windows shared export (MSVC) | 70 | 83 | 85 | 83 | 86 | 70–86 |
+| Ubuntu ARM64 | 57 | 64 | 61 | 56 | 70 | 56–70 |
+| shared-gui-test-build | 40 | 57 | 44 | 42 | 51 | 40–57 |
+| policy | 43 | 51 | 44 | 55 | 39 | 39–55 |
+| cuda-compile | 34 | 43 | 35 | 50 | 39 | 34–50 |
+| format-check | 15 | 10 | 10 | 16 | 17 | 10–17 |
+| new-refs | 7 | — | 10 | 11 | 8 | 7–11 |
+
+The push sample's main-only jobs also succeeded: Benchmark Ubuntu ARM64 81s, Windows MSVC x86_64
+140s, Ubuntu x86_64 113s, macOS ARM64 100s, and `benchmark-summary` 20s.
 
 The median is **560s (9.33 min)** and the maximum is **619s (10.32 min)**. The cohort therefore
 meets the owner-set acceptance rule at the 10-minute median, but one run missed the per-run target
