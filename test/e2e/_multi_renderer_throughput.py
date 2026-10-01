@@ -143,6 +143,12 @@ def run_dual_renderer_gate(
             r = run_benchmark(infinite[arm], backend_env, timeout_sec)
             _assert_on_device(r, backend_env, arm, rep)
             samples[arm].append(r.multi_rps)
+        print(
+            f"[{label}] rep={rep + 1}/{n_reps} "
+            f"dual_rps={samples['dual'][-1]:.6f} "
+            f"single_a_rps={samples['single_a'][-1]:.6f} "
+            f"single_b_rps={samples['single_b'][-1]:.6f}"
+        )
 
     medians = {arm: statistics.median(v) for arm, v in samples.items()}
     covs = {arm: statistics.stdev(v) / statistics.mean(v) for arm, v in samples.items()}

@@ -92,3 +92,15 @@ def test_the_printed_line_still_parses_for_the_local_gate(monkeypatch, tmp_path,
     assert parsed["threshold"] == gate.T_DUAL_VS_SINGLE
     assert parsed["median_mrps_dual"] == pytest.approx(9.0)
     assert parsed["median_mrps_legacy"] == pytest.approx(1.0)
+
+
+def test_each_interleaved_rep_prints_a_machine_readable_triplet(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(gate, "N_REPS", 2)
+    _run_gate(monkeypatch, tmp_path, 0.9, "precise")
+    rep_lines = [line for line in capsys.readouterr().out.splitlines() if " rep=" in line]
+    assert rep_lines == [
+        "[unit] rep=1/2 dual_rps=9000000.000000 single_a_rps=10000000.000000 "
+        "single_b_rps=10000000.000000",
+        "[unit] rep=2/2 dual_rps=9000000.000000 single_a_rps=10000000.000000 "
+        "single_b_rps=10000000.000000",
+    ]
