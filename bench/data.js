@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1790850729749,
+  "lastUpdate": 1790850732277,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9524,50 +9524,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "7a68880e398137ef91895edbb6d4ff0c997923e4",
-          "message": "Merge pull request #352 from LoveDaisy/chore/regen-refs-deterministic-single-shot\n\nchore(regen-refs): shoot deterministic groups once, share runs across groups, refuse stale-base reshoots",
-          "timestamp": "2026-09-13T05:31:09+08:00",
-          "tree_id": "5e9ceaec07873c2b9154175e6d957784999b8820",
-          "url": "https://github.com/LoveDaisy/ice_halo_sim/commit/7a68880e398137ef91895edbb6d4ff0c997923e4"
-        },
-        "date": 1789249344475,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 85.6,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 99.7,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 94.3,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 90.7,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "365409776ad9761a5ebf3402cf9cde48f573e9d8",
           "message": "Merge pull request #353 from LoveDaisy/fix/render-consumer-label-flake-root-cause\n\nfix(test): root-cause the RenderConsumerLabel flake — an uninitialized SunParam azimuth",
           "timestamp": "2026-09-13T05:47:24+08:00",
@@ -13867,6 +13823,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 90.6,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "0abb8e9bdc05a0db2723e33dd75904da10092d52",
+          "message": "Merge pull request #463 from LoveDaisy/scrum/ci-time-governance-acceptance\n\ndocs(ci): close time-governance acceptance",
+          "timestamp": "2026-10-01T18:29:14+08:00",
+          "tree_id": "ad1f485ce54ff636e4d44ade48dbe43ca58fc4ff",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/0abb8e9bdc05a0db2723e33dd75904da10092d52"
+        },
+        "date": 1790850731448,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 88.1,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 99.8,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 98.7,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 94.6,
             "unit": "%"
           }
         ]
