@@ -142,25 +142,25 @@
     {
       "id": "test/e2e-correctness/test_ray_allocation_narrow_arc_starvation.py::TestRayAllocationNarrowArcStarvation::<fixture:_unittest_setUpClass_fixture_TestRayAllocationNarrowArcStarvation>",
       "job": "e2e-test",
-      "ci_seconds": 35,
+      "ci_seconds": 25,
       "reason": "Shared setup of the narrow-arc starvation test: proportional and adaptive renders of a Parry-arc scene with a rarely-passing filtered entry, repeated enough to measure the arc's noise under each; removing the relative floor in adaptive allocation is what it catches."
     },
     {
       "id": "test/e2e-correctness/test_incidence_sampling_convergence.py::TestIncidenceSamplingConvergence::test_self_consistency_halo_22",
       "job": "e2e-test",
-      "ci_seconds": 30,
+      "ci_seconds": 25,
       "reason": "End-to-end sanity for entry-point incidence sampling on the 22-degree halo scene: two independent CLI renders must agree to the Monte-Carlo noise floor; the analytic oracles are the primary judge, and this leg needs a budget where that floor is measurable."
     },
     {
       "id": "test/e2e-correctness/test_incidence_sampling_convergence.py::TestIncidenceSamplingConvergence::test_self_consistency_parhelion",
       "job": "e2e-test",
-      "ci_seconds": 30,
+      "ci_seconds": 25,
       "reason": "End-to-end sanity for entry-point incidence sampling on the plate parhelion scene: two independent CLI renders must agree to the Monte-Carlo noise floor; the analytic oracles are the primary judge, and this leg needs a budget where that floor is measurable."
     },
     {
       "id": "test/e2e-correctness/test_ray_allocation_regression.py::TestRayAllocationRegression::<fixture:_unittest_setUpClass_fixture_TestRayAllocationRegression>",
       "job": "e2e-test",
-      "ci_seconds": 30,
+      "ci_seconds": 25,
       "reason": "Shared setup of the adaptive-allocation regression test: proportional and adaptive renders of two scenes, one to show adaptive moves no expected pixel (PSNR pair) and one to show the mechanism actually ran; both need full renders."
     }
   ]
