@@ -1159,22 +1159,22 @@ jobs:
         # numpy is imported at module top in several test modules and
         # test/e2e/capi_runner.py (BufferedSimResult dataclass), so pytest
         # collection needs it even when the slow tests themselves are skipped.
-        run: pip install Pillow pytest numpy
+        run: pip install Pillow pytest numpy pytest-xdist
 
       - name: Run E2E tests
         # `-m "not slow"` excludes shared-lib-based tests which require
         # BUILD_SHARED_LIBS=ON and a separate build flavor (see e2e-slow job).
         # Test paths come from pyproject.toml [tool.pytest.ini_options] testpaths.
-        # `nproc` records this runner's actual core count once per run, so "how
-        # many cores are idle" is measured instead of inferred (this pytest
-        # invocation has no -n; whether to add one is a separate, not-yet-made
-        # decision). `--durations=20` makes the slowest cases visible in the log —
+        # `nproc` records this runner's actual core count once per run. `-n 2` is
+        # the controlled SMT tier for the measured nproc=4 / 2-physical-core
+        # runner, not a default parallelism policy; three PR runs decide whether
+        # it stays. `--durations=20` makes the slowest cases visible in the log —
         # see the timeout-minutes comment below for why that matters.
         # `-p duration_report_plugin --duration-report` writes every test's cost for
         # the "Check test durations" step below (doc/testing-architecture.md §7.7).
         run: |
           nproc
-          PYTHONPATH=scripts pytest -v -m "not slow" --durations=20 \
+          PYTHONPATH=scripts pytest -n 2 -v -m "not slow" --durations=20 \
             -p duration_report_plugin --duration-report="$RUNNER_TEMP/durations.json"
         # This is an owner-set BUDGET, not a hang detector (see doc/testing-architecture.md
         # §7): if the suite cannot fit in 10 minutes, that means the suite is too
@@ -1182,6 +1182,20 @@ jobs:
         # --durations=20 output first to decide what to trim or fix — do not just
         # rerun; see doc/testing-architecture.md §7 for the full disposition rule.
         timeout-minutes: 10
+
+      - name: Show E2E duration report
+        if: always()
+        # `--durations=20` is a truncated view. Keep the controller-written full
+        # report in the log so registry calibration and all three acceptance
+        # samples are auditable without guessing which cases missed the top 20.
+        run: |
+          if [ -f "$RUNNER_TEMP/durations.json" ]; then
+            echo "::group::Full E2E duration report"
+            python3 -m json.tool "$RUNNER_TEMP/durations.json"
+            echo "::endgroup::"
+          else
+            echo "::warning::E2E duration report was not produced"
+          fi
 
       - name: Check test durations
         # Runtime gate, not a diff check: every test over the threshold in this run
