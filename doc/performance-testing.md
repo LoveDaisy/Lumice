@@ -416,14 +416,16 @@ around the critical path (sampling, a separate thread, a post-hoc counter), not 
 
 ## Precise throughput gate (local schedule)
 
-The dual-renderer throughput gate — dual rays/s ≥ **0.85** × each single renderer's, median of
-21 interleaved reps (`test/e2e/_multi_renderer_throughput.py`; the Metal and CUDA test files
-`test/performance/test_metal_multi_renderer_throughput.py` and `test_cuda_throughput.py`) — is
-calibrated on the **reference machines'** noise (Metal CoV 6–10%, CUDA 10–17%). A GitHub-hosted
-runner is slower and noisier than that; measured there, the same gate has read 0.845 and turned
-green on a re-run with nothing changed. So the precise gate does not run on CI. It runs **on the
-reference machines themselves, on a daily schedule**, driven from the Metal reference machine
-(role names: `machines.md`).
+The dual-renderer throughput gate requires dual rays/s ≥ **0.85** × each single renderer's
+(`test/e2e/_multi_renderer_throughput.py`; the Metal and CUDA test files
+`test/performance/test_metal_multi_renderer_throughput.py` and `test_cuda_throughput.py`). Its
+estimator is calibrated separately for each **reference machine's** noise: Metal uses the ratio
+of medians from 21 interleaved reps; CUDA, whose per-sample CoV is 10–17%, uses a 10% winsorized
+mean of 63 interleaved paired ratios. A GitHub-hosted runner is slower and noisier than either
+reference condition; measured there, the 0.85 gate has read 0.845 and turned green on a re-run
+with nothing changed. So the precise gate does not run on CI. It runs **on the reference machines
+themselves, on a daily schedule**, driven from the Metal reference machine (role names:
+`machines.md`).
 
 **Two gates, two failure paths.** The same test and statistic run in two profiles, chosen by the
 pytest option `--dual-gate-profile` (default `precise`; the numbers and the reasoning live once, in
@@ -432,7 +434,7 @@ pytest option `--dual-gate-profile` (default `precise`; the numbers and the reas
 | Profile | Threshold × reps | Where | What catches it when red |
 |---|---|---|---|
 | `ci` — disaster floor | **0.75** × 5 | `E2E Slow (macOS ARM64 rest)` phase 2, every PR and every push to `main` | the PR's checks: a red here is a red PR, like any other test |
-| `precise` | **0.85** × 21 | the reference machines, daily (this section) | a `[throughput-gate] <leg> fail` GitHub issue (see "Where to look" below) |
+| `precise` | **0.85**; Metal: 21 ratio-of-median reps; CUDA: 63 reps, 10% winsorized paired-ratio mean | the reference machines, daily (this section) | a `[throughput-gate] <leg> fail` GitHub issue (see "Where to look" below) |
 
 The floor exists so a change that makes the second plane cost a large fraction of the session
 cannot merge on a green PR and wait up to a day for the schedule: against a true ratio of 0.6 it
@@ -442,6 +444,18 @@ drift between 0.85 and 0.75 is reported. Demonstrated red on the Metal reference
 GPU contention during the dual arm only (dual/single 0.531 / 0.560 → red; the same harness without
 the load read 0.900 / 0.933 → green). The floor's power figure models within-run variance only;
 two CI runs' median ratios differed by 0.17, which it does not cover.
+
+**CUDA calibration.** Fourteen idle same-commit runs of the old 21-rep
+ratio-of-medians statistic put the worst-arm ratio at mean 0.911, sample standard deviation 0.045,
+and range 0.848–0.971; one of the 14 runs was red. The three arms did not slow together, the ratio
+had no material association with absolute throughput, and the faster single arm changed between
+runs. That evidence classified GitHub issue #458 as run-to-run variance, not an idle-check miss or
+a CUDA regression. Run-level resampling of all 294 measured paired triples selected the current
+63-rep winsorized statistic: estimated joint false-red probability 0.74%, and 80% single-run power
+for a 10.7% true ratio regression. A controlled 6.7 ms multi-plane-only window-tail delay at that
+boundary made 5/5 strictly idle runs red; the unmodified control passed 6/6. The 14-run baseline
+covered about two hours, so the bootstrap is a calibration estimate rather than a guarantee about
+the long-term tail; the daily record remains the authority for future drift.
 
 The precise gate's legs:
 
@@ -485,9 +499,12 @@ script's `--load-per-core` / `--host-cpu-percent` / `--gpu-util-percent`; every 
 thresholds and the readings it was judged on. The cross-machine exclusion is best effort: check
 and run are not atomic, so each record also keeps a reading taken right after the test.
 
-**How often, and what makes noise.** Once a day (launchd, 03:30 by default). There is no
-confirmation re-run on red: a same-state re-run is highly correlated with the first and weakens
-the gate. The next day's run is the second sample; every run's ratios are in the record.
+**How often, and what makes noise.** Once a day (launchd, 03:30 by default). CUDA's unlocked boost
+clock makes individual drain-aligned windows noisy even when the host and GPU are idle; interleaving
+the arms removes common drift, and the paired winsorized statistic prevents one arm's outlier from
+turning that noise into a daily false red. There is no confirmation re-run on red: a same-state
+re-run is highly correlated with the first and weakens the gate. The next day's run is the second
+sample; every run's ratios are in the record.
 
 **Where to look.**
 

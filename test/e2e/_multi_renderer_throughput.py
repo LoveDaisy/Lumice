@@ -28,8 +28,11 @@ CUDA ``precise`` instead forms each interleaved rep's dual/single ratio and
 uses a 10% winsorized mean over 63 reps: on 14 idle same-commit runs the old
 ratio of medians crossed 0.85 once (estimated joint false-red rate 8.4%), while
 resampling the measured paired triples puts this statistic's joint false-red
-rate at about 0.7%. The threshold remains the design target; only CUDA's noisy
-estimator gets backend-specific precision.
+rate at about 0.7%. The same resampling gives 80% single-run power for a 10.7%
+true ratio regression. A controlled 6.7 ms multi-plane-only window-tail delay
+at that boundary was detected in 5/5 idle runs; the unmodified control passed
+6/6. The threshold remains the design target; only CUDA's noisy estimator gets
+backend-specific precision.
 
 Denominator. Legacy CPU on the same dual config (finite 5M rays, the
 committed fixture as-is; the GPU arms run its ``ray_num = "infinite"`` twin
@@ -83,6 +86,9 @@ from test.e2e.benchmark_cli import BenchmarkResult, run_benchmark, write_infinit
 T_DUAL_VS_SINGLE = 0.85
 T_LEGACY_SANITY = 2.0
 N_REPS = 21
+# CUDA reference-machine calibration: 14 idle same-commit runs, 70,000
+# run-level resamples -> about 0.7% joint false red and 80% power at a 10.7%
+# true ratio regression.  Metal keeps the independently calibrated 21 reps.
 N_REPS_CUDA_PRECISE = 63
 N_LEGACY_REPS = 3
 
