@@ -8,26 +8,22 @@ machine.
 Honesty note on this backend's margin. The CUDA reference machine
 (``doc/machines.md``: RTX 5090 D under WSL2) does not lock its clocks — the SM
 clock boosts 180→2407 MHz on demand — and a drain-aligned sample there carries
-a CoV of 0.10–0.17, against Metal's 0.06–0.10. The N-plane port measured the
-ratio at n=7 as 0.708 / 0.842 (below the gate) and at n=21 paired as
-0.889 / 0.974 (above it, with the interquartile range straddling 0.85). The
-gate here uses the ratio of medians over 21 interleaved reps per arm, the
-highest-power form of that measurement, and keeps 0.85: the number is the
-design target, and a gate that reads red on this machine is reporting the
-machine's noise floor, not a licence to lower the bar. The figures below are
-what this file measured when it was written; a red should be read against
-them (and re-run) before anything else.
+a CoV of 0.10–0.17, against Metal's 0.06–0.10. Fourteen idle same-commit runs
+of the old 21-rep ratio-of-medians statistic measured the worst arm at mean
+0.911, standard deviation 0.045, range 0.848–0.971, with one false red. The
+three absolute arm rates did not fall together, the ratio had no material
+correlation with absolute throughput, and the faster single arm changed
+between runs: GitHub issue #458 was CUDA run-to-run variance, not interference
+or a backend regression.
 
-Measured (CUDA reference machine, Linux role — RTX 5090 D under WSL2, CUDA
-12.9, `sm_120` SASS; the same fixtures and drain-aligned rate as the Metal
-file; two consecutive runs of this gate, 21 interleaved reps each):
-    run 1  dual 282.84M (CoV 0.148)  single_a 312.29M (0.164)  single_b 285.13M (0.135)
-           dual/single_a = 0.906, dual/single_b = 0.992; legacy 13.41M → 21.1×
-    run 2  dual 265.01M (CoV 0.144)  single_a 300.38M (0.120)  single_b 292.65M (0.132)
-           dual/single_a = 0.882, dual/single_b = 0.906; legacy 13.94M → 19.0×
-Both runs pass; the run-to-run swing of the ratio (0.906→0.882, 0.992→0.906)
-is the noise floor described above, and is why the gate is a median over 21
-samples and not a single pair.
+The CUDA precise gate therefore keeps the 0.85 design target but uses 63
+interleaved reps and the 10% winsorized mean of each rep's paired dual/single
+ratios. Run-level resampling of the measured triples estimates about 0.7%
+joint false-red probability and 80% single-run power for a 10.7% true ratio
+regression. A controlled multi-plane-only tail-delay probe at that boundary
+made the gate red in 5/5 idle runs; the unmodified control passed 6/6. These
+figures calibrate this reference machine, not every CUDA device, and the daily
+record remains the long-term check on drift.
 
 Requires (same gate as the CUDA parity files): Linux/Windows,
 ``LUMICE_HAS_CUDA=1``, a ``LUMICE_CUDA_ENABLED=ON`` build and an NVIDIA device.

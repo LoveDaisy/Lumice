@@ -20,13 +20,19 @@ Statistic, and why it is not one sample per arm. A drain-aligned GPU rate on
 this scene has a per-sample CoV of 6–10% on Metal (15 interleaved reps:
 dual 23.2–30.1M, single 26.8–32.1M rays/s) and 10–17% on CUDA (clocks boost
 freely, 180→2407 MHz) — a single dual/single pair can read 0.74 on a machine
-whose true ratio is 0.93. So each arm is sampled ``N_REPS`` times with the
+whose true ratio is 0.93. So each arm is sampled repeatedly with the
 three arms INTERLEAVED (dual, single_a, single_b, dual, ...) so that a thermal
-or clock drift over the run lands on all three equally, and the gate compares
-MEDIANS. At N_REPS = 21 the standard error of a median is ~1.25·CoV/√21 ≈
-2.4% per arm on Metal, ~4% on CUDA; the ratio then sits ~2σ (Metal) above
-0.85, and about 1σ on CUDA — the CUDA file says so in its own words rather
-than moving the number.
+or clock drift over the run lands on all three. Metal ``precise`` and the
+Metal-only ``ci`` profile compare arm medians (21 and 5 reps respectively).
+CUDA ``precise`` instead forms each interleaved rep's dual/single ratio and
+uses a 10% winsorized mean over 63 reps: on 14 idle same-commit runs the old
+ratio of medians crossed 0.85 once (estimated joint false-red rate 8.4%), while
+resampling the measured paired triples puts this statistic's joint false-red
+rate at about 0.7%. The same resampling gives 80% single-run power for a 10.7%
+true ratio regression. A controlled 6.7 ms multi-plane-only window-tail delay
+at that boundary was detected in 5/5 idle runs; the unmodified control passed
+6/6. The threshold remains the design target; only CUDA's noisy estimator gets
+backend-specific precision.
 
 Denominator. Legacy CPU on the same dual config (finite 5M rays, the
 committed fixture as-is; the GPU arms run its ``ray_num = "infinite"`` twin
@@ -43,7 +49,8 @@ The gate's own routing guard is the [BENCHMARK] JSON's ``backend`` /
 ``fell_back`` (the C API's answer, printed by the CLI), on every sample.
 
 Two profiles: the precise gate and the CI disaster gate. Everything above
-describes the ``precise`` profile (``T_DUAL_VS_SINGLE`` x ``N_REPS``), which is
+describes the ``precise`` profile (``T_DUAL_VS_SINGLE`` with backend-specific
+sampling), which is
 the default: every caller that names no profile — the reference machines, the
 CUDA file, the local scheduled gate (``scripts/local_throughput_gate.py``) —
 gets it. The ``ci`` profile (``T_DISASTER`` x ``N_REPS_DISASTER``) exists
@@ -72,14 +79,20 @@ from __future__ import annotations
 
 import statistics
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from test.e2e.benchmark_cli import BenchmarkResult, run_benchmark, write_infinite_variant
 
 T_DUAL_VS_SINGLE = 0.85
 T_LEGACY_SANITY = 2.0
 N_REPS = 21
+# CUDA reference-machine calibration: 14 idle same-commit runs, 70,000
+# run-level resamples -> about 0.7% joint false red and 80% power at a 10.7%
+# true ratio regression.  Metal keeps the independently calibrated 21 reps.
+N_REPS_CUDA_PRECISE = 63
 N_LEGACY_REPS = 3
+
+CUDA_PRECISE_WINSOR_FRACTION = 0.10
 
 T_DISASTER = 0.75
 N_REPS_DISASTER = 5
@@ -106,10 +119,15 @@ def _assert_on_device(r: BenchmarkResult, expected_backend: str, arm: str, rep: 
     )
 
 
-def profile_params(profile: str) -> Tuple[float, int]:
-    """(dual-vs-single threshold, reps per arm) for a profile, read at call time."""
+def profile_params(profile: str, backend_env: Optional[str] = None) -> Tuple[float, int]:
+    """(dual-vs-single threshold, reps per arm), read at call time.
+
+    The backend is an orthogonal precision dimension, not another profile:
+    only CUDA precise needs more samples.  Reading the threshold dynamically
+    preserves the local gate's test-only threshold override.
+    """
     if profile == "precise":
-        return T_DUAL_VS_SINGLE, N_REPS
+        return T_DUAL_VS_SINGLE, N_REPS_CUDA_PRECISE if backend_env == "cuda" else N_REPS
     if profile == "ci":
         return T_DISASTER, N_REPS_DISASTER
     raise ValueError(f"unknown dual-renderer gate profile {profile!r}; expected one of {PROFILES}")
@@ -121,6 +139,45 @@ def ratio_verdict(medians: Dict[str, float], profile: str) -> Tuple[float, float
     ratio_a = medians["dual"] / medians["single_a"]
     ratio_b = medians["dual"] / medians["single_b"]
     return ratio_a, ratio_b, ratio_a >= threshold and ratio_b >= threshold
+
+
+def _winsorized_mean(values: List[float], fraction: float) -> float:
+    """Mean after clamping each tail to its nearest retained observation."""
+    ordered = sorted(values)
+    trim_each_tail = int(len(ordered) * fraction)
+    if trim_each_tail == 0:
+        return statistics.mean(ordered)
+    retained_low = ordered[trim_each_tail]
+    retained_high = ordered[-trim_each_tail - 1]
+    winsorized = (
+        [retained_low] * trim_each_tail
+        + ordered[trim_each_tail:-trim_each_tail]
+        + [retained_high] * trim_each_tail
+    )
+    return statistics.mean(winsorized)
+
+
+def sample_ratio_verdict(
+    samples: Dict[str, List[float]], medians: Dict[str, float], backend_env: str, profile: str
+) -> Tuple[float, float, bool, str]:
+    """Return the backend/profile statistic and its human-readable name."""
+    threshold, _ = profile_params(profile, backend_env)
+    if backend_env == "cuda" and profile == "precise":
+        ratio_a = _winsorized_mean(
+            [dual / single for dual, single in zip(samples["dual"], samples["single_a"])],
+            CUDA_PRECISE_WINSOR_FRACTION,
+        )
+        ratio_b = _winsorized_mean(
+            [dual / single for dual, single in zip(samples["dual"], samples["single_b"])],
+            CUDA_PRECISE_WINSOR_FRACTION,
+        )
+        statistic = (
+            f"10% winsorized mean of {len(samples['dual'])} interleaved paired ratios"
+        )
+    else:
+        ratio_a, ratio_b, _ = ratio_verdict(medians, profile)
+        statistic = f"ratio of medians over {len(samples['dual'])} interleaved samples"
+    return ratio_a, ratio_b, ratio_a >= threshold and ratio_b >= threshold, statistic
 
 
 def run_dual_renderer_gate(
@@ -135,7 +192,7 @@ def run_dual_renderer_gate(
 
     Returns the summary (medians, ratios) the caller may print or record.
     """
-    threshold, n_reps = profile_params(profile)
+    threshold, n_reps = profile_params(profile, backend_env)
     infinite = {arm: write_infinite_variant(fixture_path(configs_dir, arm), tmp_dir) for arm in _ARMS}
     samples: Dict[str, List[float]] = {arm: [] for arm in _ARMS}
     for rep in range(n_reps):
@@ -143,10 +200,18 @@ def run_dual_renderer_gate(
             r = run_benchmark(infinite[arm], backend_env, timeout_sec)
             _assert_on_device(r, backend_env, arm, rep)
             samples[arm].append(r.multi_rps)
+        print(
+            f"[{label}] rep={rep + 1}/{n_reps} "
+            f"dual_rps={samples['dual'][-1]:.6f} "
+            f"single_a_rps={samples['single_a'][-1]:.6f} "
+            f"single_b_rps={samples['single_b'][-1]:.6f}"
+        )
 
     medians = {arm: statistics.median(v) for arm, v in samples.items()}
     covs = {arm: statistics.stdev(v) / statistics.mean(v) for arm, v in samples.items()}
-    ratio_a, ratio_b, ratios_pass = ratio_verdict(medians, profile)
+    ratio_a, ratio_b, ratios_pass, statistic = sample_ratio_verdict(
+        samples, medians, backend_env, profile
+    )
 
     legacy_samples = []
     for rep in range(N_LEGACY_REPS):
@@ -165,7 +230,7 @@ def run_dual_renderer_gate(
         )
     print(
         f"[{label}] dual/single_a={ratio_a:.3f} dual/single_b={ratio_b:.3f} (gate >= {threshold}, "
-        f"profile={profile}); "
+        f"profile={profile}, statistic={statistic}); "
         f"legacy dual median={legacy_median / 1e6:.2f}M rays/s, dual {backend_env}/legacy={vs_legacy:.2f}x "
         f"(sanity >= {T_LEGACY_SANITY})"
     )
@@ -176,7 +241,7 @@ def run_dual_renderer_gate(
     )
     assert ratios_pass, (
         f"dual-renderer throughput {ratio_a:.3f}x / {ratio_b:.3f}x of the single-renderer arms "
-        f"(medians of {n_reps} interleaved samples; {profile} profile, gate >= {threshold}). Serving the "
+        f"({statistic}; {profile} profile, gate >= {threshold}). Serving the "
         f"second plane costs more than the design study's bound — check the exit tail's "
         f"per-renderer loop and the per-renderer landed-weight reduction."
     )

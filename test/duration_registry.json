@@ -130,13 +130,13 @@
     {
       "id": "test/e2e-correctness/test_smoke.py::TestSmoke::test_config_color",
       "job": "e2e-test",
-      "ci_seconds": 65,
+      "ci_seconds": 80,
       "reason": "Smoke render of the colour-class example config against its committed reference at a calibrated PSNR threshold; the threshold was calibrated at this ray budget, so cutting the budget means reshooting the reference and recalibrating."
     },
     {
       "id": "test/e2e-correctness/test_smoke.py::TestSmoke::test_config_multi_scatter",
       "job": "e2e-test",
-      "ci_seconds": 45,
+      "ci_seconds": 55,
       "reason": "Smoke render of the multi-scattering example config against its committed reference at a calibrated PSNR threshold; the threshold was calibrated at this ray budget, so cutting the budget means reshooting the reference and recalibrating."
     },
     {

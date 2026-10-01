@@ -59,7 +59,7 @@ def run_lumice(args, timeout=DEFAULT_TIMEOUT):
 
     Args:
         args: List of command-line arguments (excluding the binary itself).
-        timeout: Timeout in seconds (default 120). Raises subprocess.TimeoutExpired on timeout.
+        timeout: Timeout in seconds (default 300). Raises subprocess.TimeoutExpired on timeout.
 
     Returns:
         subprocess.CompletedProcess with stdout and stderr captured as strings.

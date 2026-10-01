@@ -1,15 +1,14 @@
 """The dual-renderer throughput gate's two profiles, judged without a GPU.
 
-`test/e2e/_multi_renderer_throughput.py` holds two gates over one statistic: the
-precise one (0.85 over 21 reps, reference machines and the local scheduled
-gate) and the CI disaster floor (0.75 over 5 reps). These cases pin what each
-profile passes and fails, that the precise profile still follows the local
-gate's threshold-override plugin (it rebinds the module constant), and that the
-line the local gate parses keeps its shape. The benchmark runs are replaced by
-a fake that returns fixed rates, so the whole gate function runs end to end.
+`test/e2e/_multi_renderer_throughput.py` holds a precise gate (0.85) and a CI
+disaster floor (0.75). The precise profile uses a backend-specific sample count
+and statistic; the CI profile remains five ratio-of-median samples. These cases
+pin those contracts, the local gate's threshold-override plugin, and the parsed
+output line. Benchmark runs are replaced by fixed fake rates.
 """
 
 import importlib
+import statistics
 import sys
 from pathlib import Path
 
@@ -70,9 +69,42 @@ def test_profiles_sample_their_own_rep_counts(monkeypatch, tmp_path):
     assert len(precise) == 3 * gate.N_REPS + gate.N_LEGACY_REPS
 
 
+def test_cuda_precise_has_backend_specific_reps_without_changing_metal_or_ci():
+    assert gate.profile_params("precise", "cuda") == (
+        gate.T_DUAL_VS_SINGLE,
+        gate.N_REPS_CUDA_PRECISE,
+    )
+    assert gate.profile_params("precise", "metal") == (gate.T_DUAL_VS_SINGLE, gate.N_REPS)
+    assert gate.profile_params("ci", "cuda") == (gate.T_DISASTER, gate.N_REPS_DISASTER)
+
+
+def test_cuda_precise_winsorizes_interleaved_paired_ratios():
+    # Six observations in each tail are exactly 10% of 63 after truncation.
+    # Winsorization clamps both tails to the 51 central 0.9 ratios.
+    paired_ratios = [0.1] * 6 + [0.9] * 51 + [10.0] * 6
+    single_windows = [float(1 + index % 7) for index in range(len(paired_ratios))]
+    samples = {
+        "dual": [
+            ratio * single
+            for ratio, single in zip(paired_ratios, single_windows)
+        ],
+        "single_a": list(single_windows),
+        "single_b": list(single_windows),
+    }
+    medians = {arm: statistics.median(values) for arm, values in samples.items()}
+    ratio_a, ratio_b, passes, statistic = gate.sample_ratio_verdict(
+        samples, medians, "cuda", "precise"
+    )
+    assert ratio_a == pytest.approx(0.9)
+    assert ratio_b == pytest.approx(0.9)
+    assert passes is True
+    assert statistic == "10% winsorized mean of 63 interleaved paired ratios"
+
+
 def test_threshold_override_reaches_precise_but_not_ci(monkeypatch):
     monkeypatch.setattr(gate, "T_DUAL_VS_SINGLE", 0.95)
     assert gate.profile_params("precise") == (0.95, gate.N_REPS)
+    assert gate.profile_params("precise", "cuda") == (0.95, gate.N_REPS_CUDA_PRECISE)
     assert gate.profile_params("ci") == (gate.T_DISASTER, gate.N_REPS_DISASTER)
     medians = {"dual": 9.0, "single_a": 10.0, "single_b": 10.0}
     assert gate.ratio_verdict(medians, "precise")[2] is False
@@ -92,3 +124,15 @@ def test_the_printed_line_still_parses_for_the_local_gate(monkeypatch, tmp_path,
     assert parsed["threshold"] == gate.T_DUAL_VS_SINGLE
     assert parsed["median_mrps_dual"] == pytest.approx(9.0)
     assert parsed["median_mrps_legacy"] == pytest.approx(1.0)
+
+
+def test_each_interleaved_rep_prints_a_machine_readable_triplet(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(gate, "N_REPS", 2)
+    _run_gate(monkeypatch, tmp_path, 0.9, "precise")
+    rep_lines = [line for line in capsys.readouterr().out.splitlines() if " rep=" in line]
+    assert rep_lines == [
+        "[unit] rep=1/2 dual_rps=9000000.000000 single_a_rps=10000000.000000 "
+        "single_b_rps=10000000.000000",
+        "[unit] rep=2/2 dual_rps=9000000.000000 single_a_rps=10000000.000000 "
+        "single_b_rps=10000000.000000",
+    ]

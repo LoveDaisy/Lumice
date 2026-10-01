@@ -203,9 +203,10 @@ jobs:
       # always had (`ccache-static-ubuntu-x64-`), so its existing entries keep hitting. No
       # entry's prefix is a prefix of another's: `ubuntu-x64-`, `ubuntu-arm64-` and
       # `macos-arm64-` diverge before their first `-`.
-      - name: Cache ccache directory (Ubuntu x86_64 / ARM64, macOS)
+      - name: Restore ccache directory (Ubuntu x86_64 / ARM64, macOS)
         if: matrix.ccache
-        uses: actions/cache@v6
+        id: ccache_restore
+        uses: actions/cache/restore@v6
         with:
           path: ccache_cache
           key: ccache-static-${{ matrix.cache_key }}-${{ github.sha }}
@@ -267,8 +268,9 @@ jobs:
             libgtk-3-dev \
             xvfb libgl1-mesa-dri libglx-mesa0
 
-      - name: Cache CPM dependencies
-        uses: actions/cache@v6
+      - name: Restore CPM dependencies
+        id: cpm_restore
+        uses: actions/cache/restore@v6
         with:
           path: cpm_cache
           key: cpm-${{ matrix.cache_key }}-${{ hashFiles('**/CMakeLists.txt') }}
@@ -280,12 +282,13 @@ jobs:
       # that fully determine what it holds; an sccache directory has no such key, since it
       # accumulates whatever this run happened to compile. So the closest correct shape is
       # "one entry per commit, falling back to the newest earlier one": the exact key never
-      # hits on a new commit, which is what makes the post-step save a fresh entry, and
-      # restore-keys then supplies the previous commit's directory, where the objects for
-      # every file this commit did not touch still hit.
-      - name: Cache sccache directory (Windows MSVC)
+      # hits on a new commit, which lets a successful main push save a fresh seed, while
+      # restore-keys supplies the previous main entry to both main and PR runs. PR runs do not
+      # save their per-SHA working copy.
+      - name: Restore sccache directory (Windows MSVC)
         if: matrix.msvc
-        uses: actions/cache@v6
+        id: sccache_restore
+        uses: actions/cache/restore@v6
         with:
           path: sccache_cache
           key: sccache-windows-msvc-x64-${{ github.sha }}
@@ -312,8 +315,8 @@ jobs:
       # Diagnostics, never a gate — hence the `|| true` on both calls. The hit rate is the one
       # number the step timestamps cannot supply: it is what tells a later reader whether a
       # slow Build was a cold cache or a real regression. Stopping the server afterwards
-      # flushes its state to disk before actions/cache's post-step packs the directory; no
-      # compilation happens after this point in the job.
+      # flushes its state to disk before the explicit main-only save at the end of the job; no
+      # compilation happens after this point.
       - name: ccache statistics (Ubuntu x86_64 / ARM64, macOS)
         if: always() && matrix.ccache
         run: ccache --show-stats --verbose || true
@@ -457,6 +460,29 @@ jobs:
             build/Release/static/bin/Lumice.exe
           retention-days: 7
 
+      # Pull requests restore the default branch's entries but never create per-SHA copies.
+      # Only a successful push to main may refresh the shared cache seeds.
+      - name: Save ccache directory (main only)
+        if: success() && matrix.ccache && github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.ccache_restore.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: ccache_cache
+          key: ${{ steps.ccache_restore.outputs.cache-primary-key }}
+
+      - name: Save CPM dependencies (main only)
+        if: success() && github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.cpm_restore.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: cpm_cache
+          key: ${{ steps.cpm_restore.outputs.cache-primary-key }}
+
+      - name: Save sccache directory (main only)
+        if: success() && matrix.msvc && github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.sccache_restore.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: sccache_cache
+          key: ${{ steps.sccache_restore.outputs.cache-primary-key }}
+
   # CUDA compile-only: nvcc actually compiles the .cu translation units on every
   # PR and every push to main. No GPU is required (nvcc emits PTX/object from CPU). Runtime and
   # parity validation still need a GPU runner and are intentionally
@@ -503,8 +529,9 @@ jobs:
       # CMakeLists.txt hash → same dependency set. The CUDA-enabled configure
       # does not pull in new CPM packages (CUDA toolkit is system-installed
       # above, not via CPM), so cache hit rate is preserved.
-      - name: Cache CPM dependencies
-        uses: actions/cache@v6
+      - name: Restore CPM dependencies
+        id: cpm_restore
+        uses: actions/cache/restore@v6
         with:
           path: cpm_cache
           key: cpm-ubuntu-x64-${{ hashFiles('**/CMakeLists.txt') }}
@@ -525,8 +552,9 @@ jobs:
           echo "CCACHE_DIR=$GITHUB_WORKSPACE/ccache_cache" >> $GITHUB_ENV
           echo "CCACHE_MAXSIZE=200M" >> $GITHUB_ENV
 
-      - name: Cache ccache directory
-        uses: actions/cache@v6
+      - name: Restore ccache directory
+        id: ccache_restore
+        uses: actions/cache/restore@v6
         with:
           path: ccache_cache
           key: ccache-cuda-ubuntu-x64-${{ github.sha }}
@@ -592,6 +620,20 @@ jobs:
       - name: Verify CUDA test TUs compile in and self-skip (SKIPPED expected, not a GPU check)
         shell: bash
         run: ./scripts/ci_verify_cuda_test_tus.sh build "$CUDA_TU_GTEST_FILTER"
+
+      - name: Save CPM dependencies (main only)
+        if: success() && github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.cpm_restore.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: cpm_cache
+          key: ${{ steps.cpm_restore.outputs.cache-primary-key }}
+
+      - name: Save ccache directory (main only)
+        if: success() && github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.ccache_restore.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: ccache_cache
+          key: ${{ steps.ccache_restore.outputs.cache-primary-key }}
 
   # Windows CUDA compile-only: nvcc + MSVC on windows-2022.
   #
@@ -734,8 +776,9 @@ jobs:
       # while the log still reads "Cache restored from key". Nothing about that
       # failure is visible as a red — see the sibling comments on the two
       # ubuntu-x64 sub-jobs below, which had the same shape.
-      - name: Cache CPM dependencies
-        uses: actions/cache@v6
+      - name: Restore CPM dependencies
+        id: cpm_restore
+        uses: actions/cache/restore@v6
         with:
           path: cpm_cache
           key: cpm-cuda-windows-msvc-x64-${{ hashFiles('**/CMakeLists.txt') }}
@@ -749,8 +792,9 @@ jobs:
         with:
           cache-size: 800M
 
-      - name: Cache sccache directory
-        uses: actions/cache@v6
+      - name: Restore sccache directory
+        id: sccache_restore
+        uses: actions/cache/restore@v6
         with:
           path: sccache_cache
           key: sccache-cuda-windows-msvc-x64-${{ github.sha }}
@@ -788,8 +832,8 @@ jobs:
       - name: Build (compiles cuda_trace_backend.cu via nvcc + the CUDA test TUs)
         run: cmake --build build --parallel
 
-      # Diagnostics, never a gate. Stopping the server flushes its state before actions/cache's
-      # post-step packs the directory.
+      # Diagnostics, never a gate. Stopping the server flushes its state before the explicit
+      # main-only save at the end of the job.
       - name: sccache statistics
         if: always()
         shell: bash
@@ -803,6 +847,20 @@ jobs:
       - name: Verify CUDA test TUs compile in and self-skip (SKIPPED expected, not a GPU check)
         shell: bash
         run: ./scripts/ci_verify_cuda_test_tus.sh build "$CUDA_TU_GTEST_FILTER"
+
+      - name: Save CPM dependencies (main only)
+        if: success() && github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.cpm_restore.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: cpm_cache
+          key: ${{ steps.cpm_restore.outputs.cache-primary-key }}
+
+      - name: Save sccache directory (main only)
+        if: success() && github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.sccache_restore.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: sccache_cache
+          key: ${{ steps.sccache_restore.outputs.cache-primary-key }}
 
   # Bench compile-only: builds the `lumice_bench` target so BUILD_BENCH=ON cannot
   # rot again. It does NOT run the benchmarks — numbers off a shared, throttled
@@ -840,8 +898,9 @@ jobs:
       # job's narrow entry, restore an almost-empty cpm_cache and re-download
       # everything, reporting a hit the whole time. (This job's own restore-keys
       # were never the problem — they have always been the narrower prefix.)
-      - name: Cache CPM dependencies
-        uses: actions/cache@v6
+      - name: Restore CPM dependencies
+        id: cpm_restore
+        uses: actions/cache/restore@v6
         with:
           path: cpm_cache
           key: cpm-bench-ubuntu-x64-${{ hashFiles('**/CMakeLists.txt') }}
@@ -865,6 +924,13 @@ jobs:
       # without building the CLI/install artifacts the build job already covers.
       - name: Build lumice_bench (compile + link only, no run)
         run: cmake --build build --target lumice_bench --parallel
+
+      - name: Save CPM dependencies (main only)
+        if: success() && github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.cpm_restore.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: cpm_cache
+          key: ${{ steps.cpm_restore.outputs.cache-primary-key }}
 
   # x86-64-v4 compile-only. The Linux release ships a second, AVX-512 build of the engine
   # (release.yml, linux-x64 row: two configures at LUMICE_ISA_LEVEL=baseline and =x86-64-v4,
@@ -893,8 +959,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Cache CPM dependencies
-        uses: actions/cache@v6
+      - name: Restore CPM dependencies
+        id: cpm_restore
+        uses: actions/cache/restore@v6
         with:
           path: cpm_cache
           key: cpm-isa-v4-ubuntu-x64-${{ hashFiles('**/CMakeLists.txt') }}
@@ -913,6 +980,13 @@ jobs:
       # release's dispatch is glibc's hwcaps lookup, with no code of ours to compile.)
       - name: Build (compile + link only, no run)
         run: cmake --build build --parallel
+
+      - name: Save CPM dependencies (main only)
+        if: success() && github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.cpm_restore.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: cpm_cache
+          key: ${{ steps.cpm_restore.outputs.cache-primary-key }}
 
   # x86-64-v3 under clang-cl, with CUDA on. The Windows release ships a second build of the
   # engine compiled by clang-cl at -march=x86-64-v3 (release.yml, windows-x64 row: two
@@ -964,8 +1038,9 @@ jobs:
           method: 'network'
           sub-packages: '["nvcc", "cudart"]'
 
-      - name: Cache CPM dependencies
-        uses: actions/cache@v6
+      - name: Restore CPM dependencies
+        id: cpm_restore
+        uses: actions/cache/restore@v6
         with:
           path: cpm_cache
           key: cpm-isa-v3-windows-x64-${{ hashFiles('**/CMakeLists.txt') }}
@@ -1003,6 +1078,13 @@ jobs:
             exit 1
           }
           Write-Host "isa key reports x86-64-v3 (clang-cl, -march applied)."
+
+      - name: Save CPM dependencies (main only)
+        if: success() && github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.cpm_restore.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: cpm_cache
+          key: ${{ steps.cpm_restore.outputs.cache-primary-key }}
 
   # Shared + tests + GUI compile-only: the one combination no other job builds.
   # The `build` job builds tests and the GUI but only statically; `e2e-slow` is the
@@ -1046,8 +1128,9 @@ jobs:
       # same reason as the bench job above: under the older
       # `cpm-ubuntu-x64-shared-gui-test-` spelling this namespace was a prefix-subset
       # of `cpm-ubuntu-x64-`, so "independent" held in name only.
-      - name: Cache CPM dependencies
-        uses: actions/cache@v6
+      - name: Restore CPM dependencies
+        id: cpm_restore
+        uses: actions/cache/restore@v6
         with:
           path: cpm_cache
           key: cpm-sharedgui-ubuntu-x64-${{ hashFiles('**/CMakeLists.txt') }}
@@ -1082,8 +1165,9 @@ jobs:
       # newest earlier one. The discriminator leads the platform for the reason spelled out
       # on the cpm keys — `ccache-ubuntu-x64-...` would become a prefix-subset the moment the
       # plain ubuntu-x64 leg ever gets a cache of its own.
-      - name: Cache ccache directory
-        uses: actions/cache@v6
+      - name: Restore ccache directory
+        id: ccache_restore
+        uses: actions/cache/restore@v6
         with:
           path: ccache_cache
           key: ccache-sharedgui-ubuntu-x64-${{ github.sha }}
@@ -1120,6 +1204,20 @@ jobs:
         if: always()
         run: ccache --show-stats --verbose || true
 
+      - name: Save CPM dependencies (main only)
+        if: success() && github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.cpm_restore.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: cpm_cache
+          key: ${{ steps.cpm_restore.outputs.cache-primary-key }}
+
+      - name: Save ccache directory (main only)
+        if: success() && github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.ccache_restore.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: ccache_cache
+          key: ${{ steps.ccache_restore.outputs.cache-primary-key }}
+
   e2e-test:
     if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
@@ -1128,8 +1226,9 @@ jobs:
         with:
           lfs: true  # E2E reference images are stored in LFS
 
-      - name: Cache CPM dependencies
-        uses: actions/cache@v6
+      - name: Restore CPM dependencies
+        id: cpm_restore
+        uses: actions/cache/restore@v6
         with:
           path: cpm_cache
           key: cpm-ubuntu-x64-${{ hashFiles('**/CMakeLists.txt') }}
@@ -1159,22 +1258,22 @@ jobs:
         # numpy is imported at module top in several test modules and
         # test/e2e/capi_runner.py (BufferedSimResult dataclass), so pytest
         # collection needs it even when the slow tests themselves are skipped.
-        run: pip install Pillow pytest numpy
+        run: pip install Pillow pytest numpy pytest-xdist
 
       - name: Run E2E tests
         # `-m "not slow"` excludes shared-lib-based tests which require
         # BUILD_SHARED_LIBS=ON and a separate build flavor (see e2e-slow job).
         # Test paths come from pyproject.toml [tool.pytest.ini_options] testpaths.
-        # `nproc` records this runner's actual core count once per run, so "how
-        # many cores are idle" is measured instead of inferred (this pytest
-        # invocation has no -n; whether to add one is a separate, not-yet-made
-        # decision). `--durations=20` makes the slowest cases visible in the log —
+        # `nproc` records this runner's actual core count once per run. `-n 2` is
+        # the controlled SMT tier for the measured nproc=4 / 2-physical-core
+        # runner, not a default parallelism policy; three PR runs decide whether
+        # it stays. `--durations=20` makes the slowest cases visible in the log —
         # see the timeout-minutes comment below for why that matters.
         # `-p duration_report_plugin --duration-report` writes every test's cost for
         # the "Check test durations" step below (doc/testing-architecture.md §7.7).
         run: |
           nproc
-          PYTHONPATH=scripts pytest -v -m "not slow" --durations=20 \
+          PYTHONPATH=scripts pytest -n 2 -v -m "not slow" --durations=20 \
             -p duration_report_plugin --duration-report="$RUNNER_TEMP/durations.json"
         # This is an owner-set BUDGET, not a hang detector (see doc/testing-architecture.md
         # §7): if the suite cannot fit in 10 minutes, that means the suite is too
@@ -1183,12 +1282,33 @@ jobs:
         # rerun; see doc/testing-architecture.md §7 for the full disposition rule.
         timeout-minutes: 10
 
+      - name: Show E2E duration report
+        if: always()
+        # `--durations=20` is a truncated view. Keep the controller-written full
+        # report in the log so registry calibration and all three acceptance
+        # samples are auditable without guessing which cases missed the top 20.
+        run: |
+          if [ -f "$RUNNER_TEMP/durations.json" ]; then
+            echo "::group::Full E2E duration report"
+            python3 -m json.tool "$RUNNER_TEMP/durations.json"
+            echo "::endgroup::"
+          else
+            echo "::warning::E2E duration report was not produced"
+          fi
+
       - name: Check test durations
         # Runtime gate, not a diff check: every test over the threshold in this run
         # must be registered in test/duration_registry.json with a reason
         # (doc/testing-architecture.md §7.7). On red, the log names the test and
         # prints the registry line to add — or make the test faster instead.
         run: python3 scripts/check_test_durations.py --job "e2e-test" --report "$RUNNER_TEMP/durations.json"
+
+      - name: Save CPM dependencies (main only)
+        if: success() && github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.cpm_restore.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: cpm_cache
+          key: ${{ steps.cpm_restore.outputs.cache-primary-key }}
 
   e2e-slow:
     if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
@@ -1325,8 +1445,9 @@ jobs:
         with:
           lfs: true
 
-      - name: Cache CPM dependencies
-        uses: actions/cache@v6
+      - name: Restore CPM dependencies
+        id: cpm_restore
+        uses: actions/cache/restore@v6
         with:
           path: cpm_cache
           key: cpm-${{ matrix.cache_key }}-${{ hashFiles('**/CMakeLists.txt') }}
@@ -1464,6 +1585,13 @@ jobs:
           fi
           python3 scripts/check_test_durations.py --job "E2E Slow (${{ matrix.name }})" "${reports[@]}"
 
+      - name: Save CPM dependencies (main only)
+        if: success() && github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.cpm_restore.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: cpm_cache
+          key: ${{ steps.cpm_restore.outputs.cache-primary-key }}
+
   # Windows shared-library export sets, under both Windows compilers the release uses (cl.exe
   # for the baseline engine, clang-cl for the v3 one). The three shared libraries — lumice,
   # lumice_testapi and the published lumice_analytic — are linked from the same engine objects
@@ -1513,8 +1641,9 @@ jobs:
           choco install llvm --version=20.1.0 -y --no-progress --allow-downgrade
           & "C:\Program Files\LLVM\bin\clang-cl.exe" --version
 
-      - name: Cache CPM dependencies
-        uses: actions/cache@v6
+      - name: Restore CPM dependencies
+        id: cpm_restore
+        uses: actions/cache/restore@v6
         with:
           path: cpm_cache
           key: cpm-${{ matrix.cache_key }}-${{ hashFiles('**/CMakeLists.txt') }}
@@ -1527,8 +1656,9 @@ jobs:
         with:
           cache-size: 800M
 
-      - name: Cache sccache directory
-        uses: actions/cache@v6
+      - name: Restore sccache directory
+        id: sccache_restore
+        uses: actions/cache/restore@v6
         with:
           path: sccache_cache
           key: sccache-${{ matrix.cache_key }}-${{ github.sha }}
@@ -1631,6 +1761,20 @@ jobs:
             Write-Error "export-set test skipped on a leg that just built the shared flavor"
             exit 1
           }
+
+      - name: Save CPM dependencies (main only)
+        if: success() && github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.cpm_restore.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: cpm_cache
+          key: ${{ steps.cpm_restore.outputs.cache-primary-key }}
+
+      - name: Save sccache directory (main only)
+        if: success() && github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.sccache_restore.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: sccache_cache
+          key: ${{ steps.sccache_restore.outputs.cache-primary-key }}
 
   # The throughput benchmark, on main only, from an IPO build. It used to be a step of the
   # `build` matrix; it moved here when that matrix turned IPO off (LUMICE_IPO=OFF), because the
