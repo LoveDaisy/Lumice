@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1790846132019,
+  "lastUpdate": 1790846134717,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9524,50 +9524,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "d5c230764f43779ffb32bc75e454ec07f2159a03",
-          "message": "Merge pull request #351 from LoveDaisy/fix/exposure-mode-combo-fixed-separation\n\ntest(gui): prove exposure-mode separation with an intensity probe, not a seed-dependent gap",
-          "timestamp": "2026-09-13T05:13:06+08:00",
-          "tree_id": "8da3f1ccd7d22ef20d6fff6dff9a5c615f8e013d",
-          "url": "https://github.com/LoveDaisy/ice_halo_sim/commit/d5c230764f43779ffb32bc75e454ec07f2159a03"
-        },
-        "date": 1789248088818,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 77.4,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 99.6,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 96.5,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 90.5,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "7a68880e398137ef91895edbb6d4ff0c997923e4",
           "message": "Merge pull request #352 from LoveDaisy/chore/regen-refs-deterministic-single-shot\n\nchore(regen-refs): shoot deterministic groups once, share runs across groups, refuse stale-base reshoots",
           "timestamp": "2026-09-13T05:31:09+08:00",
@@ -13867,6 +13823,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 95.6,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "7f16d97d16354d0b0e38424d0ee0c8cd2e53acf4",
+          "message": "Merge pull request #462 from LoveDaisy/scrum/ci-time-governance\n\nci: continue time-governance calibration",
+          "timestamp": "2026-10-01T17:12:50+08:00",
+          "tree_id": "e0ea583d7775397055133bfe6213ee233562a204",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/7f16d97d16354d0b0e38424d0ee0c8cd2e53acf4"
+        },
+        "date": 1790846133917,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 98.9,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 99.9,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 96.3,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 90.6,
             "unit": "%"
           }
         ]
