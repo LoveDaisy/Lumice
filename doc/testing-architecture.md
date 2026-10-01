@@ -1770,8 +1770,9 @@ figure does not hinge on which granularity is chosen.
    step's own 10-minute timeout, with all three runs green, but it did **not** make the whole
    workflow fit the owner target: the runs left +58 / −6 / −55s against ten minutes. The rest
    leg is test execution plus an 89–118s build, so compiler caching is not the next large lever.
-   A run's wall clock is its longest job and nothing else. Therefore *any proposal to "shorten CI"
-   that does not touch the longest job buys zero wall clock*, however much machine time it saves,
+   When runner queue and startup delays are negligible, a run's wall clock is dominated by its
+   longest job. Therefore *any proposal to "shorten CI" that does not touch the longest job buys no
+   reduction in the execution ceiling*, however much machine time it saves,
    and anywhere a claim of the form "this saves N seconds of CI" is made — a plan, a PR description,
    a review comment — it must first answer **"does it shorten the longest job?"**, against a table
    re-measured for the purpose.
