@@ -1638,7 +1638,9 @@ and successfully wrote all nine commit-keyed compiler-cache seeds. The first run
 previously unseen pull-request scope (36842632185) restored each of those nine seeds, wrote no cache
 entry of its own, and completed in **543s**. This protects the warm-cache precondition; it does not
 make a genuinely cold build cheap, so a missing default-branch seed still invalidates the table for
-first-run forecasting.
+first-run forecasting. The next push to that pull request (36843865859) completed in **560s** and
+again wrote no cache entry; all nine compiler seeds and all eleven default-branch CPM entries were
+still present afterwards.
 
 One lesson from an earlier edition of this table outlives its numbers. A compiler cache can report
 a successful restore on every run while evicting most of what it stores: `Ubuntu x86_64`'s ccache
