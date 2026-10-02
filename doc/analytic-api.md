@@ -315,8 +315,12 @@ legality rules); the header does not restate them.
   already is. A caller holding Miller indices converts first (`doc/configuration.md`; LI does
   this in `Pyramid.from_lumice`). The engine's only Miller conversion is the editor's (`lumice_editor.h`), and
   adding one here would put a primitive-layer rule into the shared surface.
-- No absolute size. Directions and Fresnel factors are scale-free; an entry cross-section, if it is
-  ever added (§9 item 8), is reported in units of the hexagon edge `a = 1`, LI's convention.
+- No absolute size. Directions and Fresnel factors are scale-free. `DiagnosticField.entry_measure`
+  uses native engine geometry length squared: a regular crystal with face distances 1 has hexagon
+  edge 1/2. Multiply this raw area by 4 for LI's hexagon-edge `a = 1` convention. Band-sum weights
+  already apply that conversion; their area convention is described in §4.6. Scene measure uses
+  native area for both the path corridor and the sampled crystal's total surface, so its
+  dimensionless `2*A_path/S_total` needs no conversion.
 - One flat struct with a `kind` discriminator rather than a tagged union: a ctypes `Structure`
   maps a flat struct field for field, where a union needs a nested declaration per member on every
   binding. Fields not used by `kind` must be zero; a non-zero unused field is

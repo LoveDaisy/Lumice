@@ -168,7 +168,8 @@ struct SceneMeasureLayerRow {
   double outgoing_direction[3]{};
   double crystal_share = 0.0;
   double continuation_mass = 0.0;
-  // The sampled finite crystal's complete surface area in the analytic a=1 length unit squared.
+  // The sampled finite crystal's complete surface area in native engine geometry length squared.
+  // Entry measure uses the same unit; LI's hexagon-edge a=1 convention multiplies both areas by 4.
   // The product renderer normalizes entry sampling by half of this area for every sampled shape.
   double total_surface_area = 0.0;
   double entry_measure = 0.0;
