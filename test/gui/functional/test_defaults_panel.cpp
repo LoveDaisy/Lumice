@@ -47,11 +47,14 @@
 #include <vector>
 
 #include "IconsFontAwesome6.h"
+#include "gui/app.hpp"
 #include "gui/axis_presets.hpp"
 #include "gui/defaults_diff.hpp"
 #include "gui/defaults_panel.hpp"
 #include "gui/edit_modals.hpp"
 #include "gui/field_editor_registry.hpp"
+#include "gui/gui_constants.hpp"
+#include "gui/theme.hpp"
 #include "gui/user_defaults.hpp"
 #include "imgui_internal.h"
 #include "imgui_te_utils.h"
@@ -1391,8 +1394,8 @@ void RegisterDefaultsPanelTests(ImGuiTestEngine* engine) {
     // what the "(this window: N%)" note beside it exists to show. The case asserts that divergence
     // is what happens, not that the two agree.
     //
-    // What the harness cannot show is the rescale itself: the frame loop that reacts to
-    // g_ui_scale_dirty is the product's (main.cpp), so here the flag is observed, not consumed.
+    // The harness frame loop calls the same RebuildForUiScale entry as the product, so every pick
+    // below must consume dirty and install the new style/window geometry before the next assertion.
     ImGuiTest* t =
         IM_REGISTER_TEST(engine, "defaults_panel", "the_ui_scale_preference_applies_now_and_is_stored_on_save");
     t->TestFunc = [](ImGuiTestContext* ctx) {
@@ -1428,10 +1431,10 @@ void RegisterDefaultsPanelTests(ImGuiTestEngine* engine) {
       IM_CHECK(ctx->ItemExists(kScaleCombo));
 
       pick("150%");
-      // Applied to this session now — and flagged for the product's rebuild — while nothing has
-      // reached disk.
+      // Applied to this session now and consumed by the shared rebuild while nothing reached disk.
       IM_CHECK_EQ(gui::g_ui_scale_multiplier, 1.5f);
-      IM_CHECK(gui::g_ui_scale_dirty);
+      IM_CHECK(!gui::g_ui_scale_dirty);
+      IM_CHECK_FLOAT_EQ_EPS(gui::CurrentUiScale(), 1.5f);
       IM_CHECK(!ReadOverlayFile(panel.dir()).contains("app"));
 
       SaveDefaultsPanel(ctx);
@@ -1444,26 +1447,49 @@ void RegisterDefaultsPanelTests(ImGuiTestEngine* engine) {
       IM_CHECK_FLOAT_EQ_EPS(gui::LoadUiScaleMultiplierAtStartup(panel.dir()), 1.5f);
 
       // Try another step, do not save, close, reopen: the combo is back on the saved 150%, the
-      // window is still at the tried 200%, and the note says so.
-      pick("200%");
-      IM_CHECK_EQ(gui::g_ui_scale_multiplier, 2.0f);
-      panel.Close();
-      IM_CHECK_FLOAT_EQ_EPS(ReadOverlayFile(panel.dir())["app"]["ui_scale_multiplier"].get<float>(), 1.5f);
-      IM_CHECK_EQ(gui::g_ui_scale_multiplier, 2.0f);
-      panel.OpenOn(gui::DefaultsPanelSection::kSettings);
-      IM_CHECK_EQ(gui::g_ui_scale_multiplier, 2.0f);
-      // The combo is back on the file's 150%: ImGui's Combo reports a change only when the clicked
-      // item differs from the shown one, so re-picking 150% is a no-op that leaves the window at
-      // 200% — had the combo still shown 200%, this click would have moved it to 1.5.
-      pick("150%");
-      IM_CHECK_EQ(gui::g_ui_scale_multiplier, 2.0f);
-      // ...and it is live, not stuck: a different step still applies.
+      // window is still at the tried 125%, and the note says so. Staying below the harness's
+      // 1600x980 design basis also keeps this state-isolation case from changing the shared test
+      // window size merely to prove a preference-flow property.
       pick("125%");
       IM_CHECK_EQ(gui::g_ui_scale_multiplier, 1.25f);
+      IM_CHECK(!gui::g_ui_scale_dirty);
+      IM_CHECK_FLOAT_EQ_EPS(gui::CurrentUiScale(), 1.25f);
+      panel.Close();
+      IM_CHECK_FLOAT_EQ_EPS(ReadOverlayFile(panel.dir())["app"]["ui_scale_multiplier"].get<float>(), 1.5f);
+      IM_CHECK_EQ(gui::g_ui_scale_multiplier, 1.25f);
+      panel.OpenOn(gui::DefaultsPanelSection::kSettings);
+      IM_CHECK_EQ(gui::g_ui_scale_multiplier, 1.25f);
+      // The combo is back on the file's 150%: ImGui's Combo reports a change only when the clicked
+      // item differs from the shown one, so re-picking 150% is a no-op that leaves the window at
+      // 125% — had the combo still shown 125%, this click would have moved it to 1.5.
+      pick("150%");
+      IM_CHECK_EQ(gui::g_ui_scale_multiplier, 1.25f);
+      // ...and it is live, not stuck: a different step still applies. An active preset survives
+      // that product rebuild; this is the state transition that a dirty-only test could not see.
+      gui::g_state.aspect_preset = gui::AspectPreset::k16x9;
+      pick("100%");
+      IM_CHECK_EQ(gui::g_ui_scale_multiplier, 1.0f);
+      IM_CHECK(!gui::g_ui_scale_dirty);
+      IM_CHECK_FLOAT_EQ_EPS(gui::CurrentUiScale(), 1.0f);
+      IM_CHECK_EQ(gui::g_state.aspect_preset, gui::AspectPreset::k16x9);
 
       // The two sibling rows are untouched by all of this.
       IM_CHECK(!ReadOverlayFile(panel.dir())["app"].contains("use_gpu_backend"));
       IM_CHECK(!ReadOverlayFile(panel.dir())["app"].contains("worker_count"));
+
+      // The saved overlay remains 150%; the unsaved 100% choice above is intentionally discarded
+      // on close, while the process-wide visual language is already back at the reference basis.
+      // Restore the shared GLFW window on its owning thread so later pool cases inherit neither
+      // this preset nor its ratio-resized geometry.
+      gui::g_state.aspect_preset = gui::AspectPreset::kFree;
+      g_window_size_test.width = gui::kInitWindowWidth;
+      g_window_size_test.height = gui::kInitWindowHeight;
+      g_window_size_test.done.store(false);
+      g_window_size_test.requested.store(true);
+      while (!g_window_size_test.done.load()) {
+        ctx->Yield();
+      }
+      ctx->Yield(2);
     };
   }
 

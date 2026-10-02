@@ -327,6 +327,14 @@ TEST(AspectRatioRules, FlipIsOfferedOnlyByPresetsWithTwoOrientations) {
   EXPECT_EQ(disabled_count, 3);
 }
 
+TEST(AspectRatioRules, OrientationIgnoresStalePortraitForDisabledPresets) {
+  using lumice::gui::ApplyAspectOrientation;
+  EXPECT_FLOAT_EQ(ApplyAspectOrientation(AspectPreset::k16x9, true, 16.0f / 9.0f), 9.0f / 16.0f);
+  EXPECT_FLOAT_EQ(ApplyAspectOrientation(AspectPreset::k16x9, false, 16.0f / 9.0f), 16.0f / 9.0f);
+  EXPECT_FLOAT_EQ(ApplyAspectOrientation(AspectPreset::k1x1, true, 1.0f), 1.0f);
+  EXPECT_FLOAT_EQ(ApplyAspectOrientation(AspectPreset::kMatchBg, true, 2650.0f / 1580.0f), 2650.0f / 1580.0f);
+}
+
 // ---- Sun-circle (angular distance) overlay rules ----
 
 TEST(AngularDistRules, DuplicateTestUsesTheHundredthDegreeBand) {
@@ -977,7 +985,7 @@ TEST(SliderFormatGate, NothingTheBoundAcceptsMeasuresFrozen) {
 }
 
 using lumice::gui::AspectFitResult;
-using lumice::gui::ClampWindowSizeToWorkarea;
+using lumice::gui::ClampWindowPositionToWorkarea;
 using lumice::gui::kAspectClampTolerance;
 using lumice::gui::kLeftPanelWidth;
 using lumice::gui::kMinWindowHeight;
@@ -985,37 +993,11 @@ using lumice::gui::kMinWindowWidth;
 using lumice::gui::kRightPanelWidth;
 using lumice::gui::kStatusBarHeight;
 using lumice::gui::kTopBarHeight;
+using lumice::gui::MakeWindowGeometryConstraints;
 using lumice::gui::MonitorRect;
 using lumice::gui::ResolveAspectFit;
 using lumice::gui::SelectMonitorIndexByCenter;
-
-// The startup window size, over the workareas that decide it. A 50px margin comes off each
-// dimension before the desired size is honoured, and kMinWindow{Width,Height} is a floor beneath
-// that — a workarea small enough to push through it must not shrink the window below the documented
-// minimum.
-TEST(WindowSizingTest, TheDesiredSizeIsClampedToTheWorkareaAndFlooredAtTheMinimum) {
-  struct Case {
-    const char* name;
-    int work_w;
-    int work_h;
-    int expect_w;
-    int expect_h;
-  };
-  const Case kCases[] = {
-    // 1080p laptop workarea ≈ 1920×900 after menubar/Dock: only the height clamps (900 - 50).
-    { "constrained 1080p", 1920, 900, 1600, 850 },
-    { "high-DPI dev monitor", 2880, 1800, 1600, 980 },
-    { "1366x768 laptop, both dimensions", 1366, 768, 1316, 718 },
-    { "pathologically small workarea", 800, 600, kMinWindowWidth, kMinWindowHeight },
-    // workarea - margin == desired, so nothing moves.
-    { "exact boundary", 1650, 1030, 1600, 980 },
-  };
-  for (const Case& c : kCases) {
-    auto [w, h] = ClampWindowSizeToWorkarea(1600, 980, c.work_w, c.work_h);
-    EXPECT_EQ(w, c.expect_w) << c.name;
-    EXPECT_EQ(h, c.expect_h) << c.name;
-  }
-}
+using lumice::gui::WindowFrameInsets;
 
 // How the window's floor and size follow the UI scale (PlanWindowSizeForScale). The floor handed to
 // glfwSetWindowSizeLimits is the scaled minimum clamped to the work area FIRST — a hard floor above
@@ -1035,7 +1017,7 @@ TEST(WindowSizingTest, TheFloorFollowsTheScaleAndIsClampedToTheWorkareaFirst) {
     const WindowSizePlan p = PlanWindowSizeForScale(1.0f, kInitWindowWidth, kInitWindowHeight, 2880, 1800);
     EXPECT_EQ(p.min_w, kMinWindowWidth);
     EXPECT_EQ(p.min_h, kMinWindowHeight);
-    EXPECT_FALSE(p.grow);
+    EXPECT_FALSE(p.resize);
     EXPECT_EQ(p.target_w, kInitWindowWidth);
     EXPECT_EQ(p.target_h, kInitWindowHeight);
   }
@@ -1045,7 +1027,7 @@ TEST(WindowSizingTest, TheFloorFollowsTheScaleAndIsClampedToTheWorkareaFirst) {
     const WindowSizePlan p = PlanWindowSizeForScale(1.5f, 1500, kInitWindowHeight, 2880, 1800);
     EXPECT_EQ(p.min_w, 1536);
     EXPECT_EQ(p.min_h, 960);
-    EXPECT_TRUE(p.grow);
+    EXPECT_TRUE(p.resize);
     EXPECT_EQ(p.target_w, 1536);
     EXPECT_EQ(p.target_h, kInitWindowHeight);
   }
@@ -1054,7 +1036,7 @@ TEST(WindowSizingTest, TheFloorFollowsTheScaleAndIsClampedToTheWorkareaFirst) {
     const WindowSizePlan p = PlanWindowSizeForScale(1.5f, 2000, 1200, 2880, 1800);
     EXPECT_EQ(p.min_w, 1536);
     EXPECT_EQ(p.min_h, 960);
-    EXPECT_FALSE(p.grow);
+    EXPECT_FALSE(p.resize);
     EXPECT_EQ(p.target_w, 2000);
     EXPECT_EQ(p.target_h, 1200);
   }
@@ -1064,7 +1046,7 @@ TEST(WindowSizingTest, TheFloorFollowsTheScaleAndIsClampedToTheWorkareaFirst) {
     const WindowSizePlan p = PlanWindowSizeForScale(2.0f, 1316, 718, 1366, 768);
     EXPECT_EQ(p.min_w, 1366 - kWindowDecorationMargin);
     EXPECT_EQ(p.min_h, 768 - kWindowDecorationMargin);
-    EXPECT_FALSE(p.grow) << "already at the work area: nothing to grow into";
+    EXPECT_FALSE(p.resize) << "already at the work area: nothing to resize";
     EXPECT_EQ(p.target_w, 1316);
     EXPECT_EQ(p.target_h, 718);
   }
@@ -1073,7 +1055,7 @@ TEST(WindowSizingTest, TheFloorFollowsTheScaleAndIsClampedToTheWorkareaFirst) {
     const WindowSizePlan p = PlanWindowSizeForScale(1.5f, 1024, 640, kInf, kInf);
     EXPECT_EQ(p.min_w, 1536);
     EXPECT_EQ(p.min_h, 960);
-    EXPECT_TRUE(p.grow);
+    EXPECT_TRUE(p.resize);
     EXPECT_EQ(p.target_w, 1536);
     EXPECT_EQ(p.target_h, 960);
   }
@@ -1089,6 +1071,42 @@ TEST(WindowSizingTest, TheFloorFollowsTheScaleAndIsClampedToTheWorkareaFirst) {
     EXPECT_EQ(600 - at_one.min_h, kWindowDecorationMargin);
     EXPECT_EQ(600 - at_two.min_h, kWindowDecorationMargin);
   }
+}
+
+TEST(WindowSizingTest, ActualFrameInsetsBoundSizeAndPositionInsideTheWorkarea) {
+  const auto constraints = MakeWindowGeometryConstraints(
+      /*layout_scale=*/2.0f, /*workarea=*/{ 100, -50, 1366, 768 },
+      /*frame=*/WindowFrameInsets{ 8, 31, 8, 8 });
+  EXPECT_TRUE(constraints.workarea_known);
+  EXPECT_EQ(constraints.max_w, 1350);
+  EXPECT_EQ(constraints.max_h, 729);
+  EXPECT_EQ(constraints.min_w, constraints.max_w);
+  EXPECT_EQ(constraints.min_h, constraints.max_h);
+
+  const auto before = ClampWindowPositionToWorkarea(/*x=*/-500, /*y=*/-500, /*window_w=*/1000,
+                                                    /*window_h=*/600, constraints);
+  EXPECT_EQ(before.x, 108);
+  EXPECT_EQ(before.y, -19);
+  const auto after = ClampWindowPositionToWorkarea(/*x=*/2000, /*y=*/2000, /*window_w=*/1000,
+                                                   /*window_h=*/600, constraints);
+  EXPECT_EQ(after.x, 458);
+  EXPECT_EQ(after.y, 110);
+}
+
+TEST(WindowSizingTest, UnknownWorkareaLeavesPositionAndScaledFloorUnbounded) {
+  constexpr int kInf = std::numeric_limits<int>::max();
+  const auto constraints = MakeWindowGeometryConstraints(
+      /*layout_scale=*/1.5f, /*workarea=*/{ 0, 0, kInf, kInf },
+      /*frame=*/WindowFrameInsets{ 8, 31, 8, 8 });
+  EXPECT_FALSE(constraints.workarea_known);
+  EXPECT_EQ(constraints.min_w, 1536);
+  EXPECT_EQ(constraints.min_h, 960);
+  EXPECT_EQ(constraints.max_w, kInf);
+  EXPECT_EQ(constraints.max_h, kInf);
+  const auto unchanged =
+      ClampWindowPositionToWorkarea(/*x=*/-1234, /*y=*/5678, /*window_w=*/1600, /*window_h=*/980, constraints);
+  EXPECT_EQ(unchanged.x, -1234);
+  EXPECT_EQ(unchanged.y, 5678);
 }
 
 // ========== Monitor selection (multi-monitor aspect ratio fix) ==========
@@ -1204,6 +1222,89 @@ TEST(AspectFitTest, ChromeExceedsHeightYieldsBenignDefault) {
   // pathological branch.
   EXPECT_FALSE(fit.was_clamped);
   EXPECT_FLOAT_EQ(fit.achieved_preview_ratio, fit.requested_preview_ratio);
+}
+
+// Windows applies glfwSetWindowSizeLimits after an aspect resize.  At 150% the content floor is
+// 1536x960, so planning a shorter window is not merely optimistic: Win32 silently raises it back
+// to 960 and leaves the requested width unchanged, distorting the preview.  The aspect planner
+// must therefore consume the same scaled floor as the size-limit path before it asks GLFW.
+TEST(AspectFitTest, ScaledWindowFloorParticipatesInTheAspectSolution) {
+  constexpr float kLayoutScale = 1.5f;
+  constexpr float kBackgroundRatio = 2650.0f / 1580.0f;
+  const int scaled_min_h = static_cast<int>(std::lround(kMinWindowHeight * kLayoutScale));
+  const auto constraints = MakeWindowGeometryConstraints(kLayoutScale, /*workarea=*/{ 0, 0, 3840, 2160 },
+                                                         /*frame=*/WindowFrameInsets{ 8, 31, 8, 8 });
+
+  const AspectFitResult fit = ResolveAspectFit(
+      /*current_win_w=*/2398, kBackgroundRatio, constraints, kLeftPanelWidth * kLayoutScale,
+      kRightPanelWidth * kLayoutScale, kTopBarHeight * kLayoutScale, kStatusBarHeight * kLayoutScale);
+
+  EXPECT_GE(fit.target_h, scaled_min_h);
+  EXPECT_NEAR(fit.achieved_preview_ratio, kBackgroundRatio, 1.0f / static_cast<float>(fit.target_h));
+  EXPECT_FALSE(fit.was_clamped);
+}
+
+TEST(AspectFitTest, EveryPresetOrientationAndScaleUsesOneConstraintSolution) {
+  using lumice::gui::ApplyAspectOrientation;
+  using lumice::gui::AspectPreset;
+  using lumice::gui::GetAspectRatio;
+  struct PresetCase {
+    const char* name;
+    AspectPreset preset;
+    float ratio;
+  };
+  const PresetCase kPresets[] = {
+    { "16:9", AspectPreset::k16x9, GetAspectRatio(AspectPreset::k16x9) },
+    { "3:2", AspectPreset::k3x2, GetAspectRatio(AspectPreset::k3x2) },
+    { "4:3", AspectPreset::k4x3, GetAspectRatio(AspectPreset::k4x3) },
+    { "1:1", AspectPreset::k1x1, GetAspectRatio(AspectPreset::k1x1) },
+    { "2:1", AspectPreset::k2x1, GetAspectRatio(AspectPreset::k2x1) },
+    { "background", AspectPreset::kMatchBg, 2650.0f / 1580.0f },
+  };
+  constexpr float kScales[] = { 1.0f, 1.25f, 1.5f, 2.0f };
+  for (float scale : kScales) {
+    const auto constraints = MakeWindowGeometryConstraints(scale, /*workarea=*/{ 0, 0, 5120, 2880 },
+                                                           /*frame=*/WindowFrameInsets{ 8, 31, 8, 8 });
+    const float left = kLeftPanelWidth * scale;
+    const float right = kRightPanelWidth * scale;
+    const float top = kTopBarHeight * scale;
+    const float bottom = kStatusBarHeight * scale;
+    for (const PresetCase& preset : kPresets) {
+      for (bool portrait : { false, true }) {
+        const float ratio = ApplyAspectOrientation(preset.preset, portrait, preset.ratio);
+        const AspectFitResult fit =
+            ResolveAspectFit(/*current_win_w=*/2398, ratio, constraints, left, right, top, bottom);
+        EXPECT_GE(fit.target_w, constraints.min_w) << preset.name << " @" << scale;
+        EXPECT_LE(fit.target_w, constraints.max_w) << preset.name << " @" << scale;
+        EXPECT_GE(fit.target_h, constraints.min_h) << preset.name << " @" << scale;
+        EXPECT_LE(fit.target_h, constraints.max_h) << preset.name << " @" << scale;
+        const float preview_h = static_cast<float>(fit.target_h) - top - bottom;
+        EXPECT_NEAR(fit.achieved_preview_ratio, ratio, 2.0f / std::max(1.0f, preview_h))
+            << preset.name << " portrait=" << portrait << " @" << scale;
+        EXPECT_FALSE(fit.was_clamped) << preset.name << " portrait=" << portrait << " @" << scale;
+      }
+    }
+  }
+}
+
+TEST(AspectFitTest, ReadbackMeasuresTheWindowThatExistsRatherThanTheRequestedSize) {
+  constexpr float kScale = 1.5f;
+  constexpr float kRatio = 2650.0f / 1580.0f;
+  const float left = kLeftPanelWidth * kScale;
+  const float right = kRightPanelWidth * kScale;
+  const float top = kTopBarHeight * kScale;
+  const float bottom = kStatusBarHeight * kScale;
+  const auto constraints = MakeWindowGeometryConstraints(kScale, /*workarea=*/{ 0, 0, 3840, 2160 },
+                                                         /*frame=*/WindowFrameInsets{ 8, 31, 8, 8 });
+
+  const AspectFitResult planned =
+      ResolveAspectFit(/*current_win_w=*/2398, kRatio, constraints, left, right, top, bottom);
+  EXPECT_FALSE(planned.was_clamped);
+  const AspectFitResult old_win32_result =
+      lumice::gui::MeasureAspectFit(/*window_w=*/2398, /*window_h=*/960, kRatio, left, right, top, bottom);
+  EXPECT_TRUE(old_win32_result.was_clamped);
+  EXPECT_LT(old_win32_result.achieved_preview_ratio, kRatio);
+  EXPECT_NE(planned.target_w, old_win32_result.target_w);
 }
 
 

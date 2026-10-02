@@ -23,7 +23,7 @@ bool GetCurrentMonitorWorkArea(GLFWwindow* win, MonitorRect* out) {
     // hotplug). GLFW does not guarantee every pointer is non-null even when
     // the top-level array is; skip invalid entries rather than dereferencing.
     if (mons[i] == nullptr) {
-      rects.push_back(r);
+      rects.push_back({ 0, 0, 0, 0 });
       continue;
     }
     glfwGetMonitorWorkarea(mons[i], &r.x, &r.y, &r.w, &r.h);
@@ -43,6 +43,18 @@ bool GetCurrentMonitorWorkArea(GLFWwindow* win, MonitorRect* out) {
   }
   *out = rects[idx];
   return true;
+}
+
+WindowGeometryConstraints GetCurrentWindowGeometryConstraints(GLFWwindow* win, float layout_scale) {
+  MonitorRect workarea{};
+  if (!GetCurrentMonitorWorkArea(win, &workarea)) {
+    workarea = { 0, 0, INT_MAX, INT_MAX };
+  }
+  WindowFrameInsets frame{};
+  if (win != nullptr) {
+    glfwGetWindowFrameSize(win, &frame.left, &frame.top, &frame.right, &frame.bottom);
+  }
+  return MakeWindowGeometryConstraints(layout_scale, workarea, frame);
 }
 
 }  // namespace lumice::gui

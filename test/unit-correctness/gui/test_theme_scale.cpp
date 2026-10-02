@@ -16,7 +16,9 @@
 
 #include <vector>
 
+#include "gui/app.hpp"
 #include "gui/theme.hpp"
+#include "gui/ui_scale.hpp"
 #include "imgui.h"
 
 namespace {
@@ -175,6 +177,43 @@ TEST_F(ThemeScale, RasterDensityChangesNoMetric) {
   // The one thing that IS allowed to change: the atlas holds more texels per glyph.
   EXPECT_GT(io.Fonts->TexWidth * io.Fonts->TexHeight, tex_area_at_one)
       << "sanity: the density did reach the rasterizer — a denser atlas is a larger one";
+}
+
+TEST(UiScalePolicy, MonitorAndUserInputsStayInTheirPlatformSpecificUnits) {
+  const gui::UiScaleParams params = gui::ResolveUiScaleParams(/*monitor_scale=*/1.5f,
+                                                              /*user_multiplier=*/1.25f);
+#if defined(__APPLE__)
+  EXPECT_FLOAT_EQ(params.layout_scale, 1.25f);
+  EXPECT_FLOAT_EQ(params.raster_density, 1.5f);
+#else
+  EXPECT_FLOAT_EQ(params.layout_scale, 1.875f);
+  EXPECT_FLOAT_EQ(params.raster_density, 1.0f);
+#endif
+}
+
+TEST(WindowResizeState, ManualResizeSelectsFreeAndClearsTheClamp) {
+  gui::g_state = {};
+  gui::g_state.aspect_preset = gui::AspectPreset::k16x9;
+  gui::g_state.aspect_clamp.was_clamped = true;
+  gui::g_programmatic_resize = 0;
+
+  gui::WindowSizeCallback(nullptr, /*width=*/1400, /*height=*/900);
+
+  EXPECT_EQ(gui::g_state.aspect_preset, gui::AspectPreset::kFree);
+  EXPECT_FALSE(gui::g_state.aspect_clamp.was_clamped);
+  gui::g_state = {};
+}
+
+TEST(WindowResizeState, ProgrammaticResizePreservesThePreset) {
+  gui::g_state = {};
+  gui::g_state.aspect_preset = gui::AspectPreset::k16x9;
+  gui::g_programmatic_resize = 1;
+
+  gui::WindowSizeCallback(nullptr, /*width=*/1400, /*height=*/900);
+
+  EXPECT_EQ(gui::g_programmatic_resize, 0);
+  EXPECT_EQ(gui::g_state.aspect_preset, gui::AspectPreset::k16x9);
+  gui::g_state = {};
 }
 
 // WindowResizeCondForScale — the shared rule behind defaults_panel.cpp/analysis_panel.cpp/

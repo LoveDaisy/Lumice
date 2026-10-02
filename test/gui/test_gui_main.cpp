@@ -40,6 +40,7 @@
 #include "gui/panels.hpp"
 #include "gui/theme.hpp"
 #include "gui/theme_test_hooks.hpp"
+#include "gui/ui_scale.hpp"
 #include "gui/user_defaults.hpp"
 #include "imgui.h"
 #include "imgui_impl_glfw.h"
@@ -58,6 +59,7 @@ BgOverlayTestState g_bg_test;
 LeftPanelCaptureState g_left_panel_capture;
 FullFrameCaptureState g_fullframe_capture;
 AutoEvExportState g_auto_ev_export;
+WindowSizeTestState g_window_size_test;
 int g_core_log_level = LUMICE_LOG_INFO;
 int g_gui_log_level = LUMICE_LOG_INFO;
 bool g_enable_visible = false;
@@ -197,12 +199,12 @@ void ResetTestState() {
   gui::g_preview_vp.active = false;
   gui::g_preview_vp.curve_labels.clear();
   gui::g_programmatic_resize = 0;
-  // The user's UI scale multiplier is process-wide and applied by the product's frame loop, not
-  // by this harness (every reference is a 1x capture, see the ApplyVisualLanguage call in main).
-  // A case that turns the Settings dial leaves the value behind, and the "(this window: N%)" note
-  // in the very next defaults_panel_layout capture would read it.
+  // The user's UI scale multiplier is process-wide. The harness runs the product rebuild at the
+  // frame boundary, while every reference still begins at the 1x basis. A case that changes the
+  // dial must restore it or the next case would inherit both its style and status note.
   gui::g_ui_scale_multiplier = gui::kFactoryUiScaleMultiplier;
-  gui::g_ui_scale_dirty = false;
+  gui::g_ui_scale_dirty = gui::CurrentUiScale() != 1.0f;
+  g_window_size_test.Reset();
 
   // Runtime state
   gui::g_show_unsaved_popup = false;
@@ -577,7 +579,7 @@ int main(int argc, char** argv) {
   // Pinned at 1.0 / 1.0, never read from the display: every reference image is a capture at the
   // 1x design basis, and the harness's window is created and compared at that size. The product
   // reads the monitor here (main.cpp); the harness deliberately does not.
-  gui::ApplyVisualLanguage(io, /*layout_scale=*/1.0f, /*raster_density=*/1.0f);
+  gui::ApplyUiScaleInputs(io, /*monitor_scale_x=*/1.0f, /*monitor_scale_y=*/1.0f);
   if (use_contrast_palette) {
     gui::ApplyContrastPaletteForTest(ImGui::GetStyle());
   }
@@ -725,6 +727,22 @@ int main(int argc, char** argv) {
   while (true) {
     glfwPollEvents();
     gui::SyncFromPoller();  // Sync server data for perf tests (no-op when g_server is null)
+
+    if (g_window_size_test.requested.exchange(false)) {
+      glfwSetWindowSize(window, g_window_size_test.width, g_window_size_test.height);
+      g_window_size_test.done.store(true);
+    }
+
+    // The same frame-boundary rebuild the product runs: Settings tests exercise atlas/style,
+    // window geometry and active aspect reconciliation rather than stopping at the dirty flag.
+    if (gui::g_ui_scale_dirty) {
+      if (gui::RebuildForUiScale(window, io, /*monitor_scale_x=*/1.0f, /*monitor_scale_y=*/1.0f) &&
+          use_contrast_palette) {
+        // This harness-only palette is deliberately applied after the product language, at startup
+        // and after every runtime rebuild, so a scale case cannot change later contrast snapshots.
+        gui::ApplyContrastPaletteForTest(ImGui::GetStyle());
+      }
+    }
 
     // Auto-commit on main thread (matches real app's main.cpp:284-301).
     // When enabled, DoRun() blocks the main loop just like in the real app,
