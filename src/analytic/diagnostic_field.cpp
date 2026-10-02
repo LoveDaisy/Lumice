@@ -236,8 +236,8 @@ void DiagnosticField::FillDerivatives(const DiagnosticRowInput& input, const Val
         DiagnosticRowInput sample = input;
         PerturbPose(input.pose, a, signs[k][0] * kPoseStep, b, signs[k][1] * kPoseStep, sample.pose);
         corners[k] = EvaluateValues(sample);
-        direction_hessian =
-            direction_hessian && corners[k].path_status == DiagnosticPathStatus::kOk && Finite(corners[k].outgoing, 3);
+        direction_hessian = direction_hessian && HasStablePathMargins(corners[k].domain_margins) &&
+                            corners[k].path_status == DiagnosticPathStatus::kOk && Finite(corners[k].outgoing, 3);
       }
       for (int component = 0; component < 3; component++) {
         const double mixed = (corners[0].outgoing[component] - corners[1].outgoing[component] -
@@ -268,8 +268,10 @@ void DiagnosticField::FillDerivatives(const DiagnosticRowInput& input, const Val
       std::fill(gradient, gradient + 3, 0.0);
     }
   };
-  auto path_compatible = [](const Values& lo, const Values& hi) {
-    return lo.path_status == DiagnosticPathStatus::kOk && hi.path_status == DiagnosticPathStatus::kOk;
+  auto path_compatible = [&base](const Values& lo, const Values& hi) {
+    return HasStablePathMargins(base.domain_margins) && HasStablePathMargins(lo.domain_margins) &&
+           HasStablePathMargins(hi.domain_margins) && lo.path_status == DiagnosticPathStatus::kOk &&
+           hi.path_status == DiagnosticPathStatus::kOk;
   };
   for (size_t i = 0; i < out->domain_margins.size(); i++) {
     fill_pose_scalar(
@@ -296,7 +298,8 @@ void DiagnosticField::FillDerivatives(const DiagnosticRowInput& input, const Val
         &out->interfaces[i].pose_derivative_available, out->interfaces[i].pose_gradient, coefficient_compatible);
   }
   auto entry_compatible = [&](const Values& lo, const Values& hi) {
-    return lo.entry_status == DiagnosticEntryStatus::kOk && hi.entry_status == DiagnosticEntryStatus::kOk &&
+    return base.entry_status == DiagnosticEntryStatus::kOk && lo.entry_status == DiagnosticEntryStatus::kOk &&
+           hi.entry_status == DiagnosticEntryStatus::kOk &&
            lo.entry_topology_signature == base.entry_topology_signature &&
            hi.entry_topology_signature == base.entry_topology_signature;
   };
@@ -345,10 +348,10 @@ void DiagnosticField::FillDerivatives(const DiagnosticRowInput& input, const Val
     fill_index_scalar(lo.coefficients[i], hi.coefficients[i], &out->interfaces[i].index_derivative_available,
                       &out->interfaces[i].index_derivative, index_path && same_side);
   }
-  const bool entry_index = lo.entry_status == DiagnosticEntryStatus::kOk &&
-                           hi.entry_status == DiagnosticEntryStatus::kOk &&
-                           lo.entry_topology_signature == base.entry_topology_signature &&
-                           hi.entry_topology_signature == base.entry_topology_signature;
+  const bool entry_index =
+      base.entry_status == DiagnosticEntryStatus::kOk && lo.entry_status == DiagnosticEntryStatus::kOk &&
+      hi.entry_status == DiagnosticEntryStatus::kOk && lo.entry_topology_signature == base.entry_topology_signature &&
+      hi.entry_topology_signature == base.entry_topology_signature;
   fill_index_scalar(lo.entry_measure, hi.entry_measure, &out->entry_index_derivative_available,
                     &out->entry_index_derivative, entry_index);
 }
