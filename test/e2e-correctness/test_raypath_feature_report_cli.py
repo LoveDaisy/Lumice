@@ -97,6 +97,9 @@ def test_rhombic_plate_keeps_plus_and_minus_120_separate_from_spherical_distance
     assert sorted(position["relative_solar_azimuth_deg"] for position in positions) == [-120.0, 120.0]
     for position in positions:
         assert position["spherical_separation_deg"] == pytest.approx(117.599764152, abs=1e-9)
+    expected_red = 0.0008701214984864252
+    expected_blue = 0.0008910040533079951
+    expected_ratio = 1.023999584952096
     for member in doc["physical_l2_members"]:
         wavelengths = {sample["wavelength"]["nm"]: sample for sample in member["wavelengths"]}
         assert sorted(wavelengths) == pytest.approx([430.019737408, 694.362898124], abs=1e-9)
@@ -108,6 +111,11 @@ def test_rhombic_plate_keeps_plus_and_minus_120_separate_from_spherical_distance
             assert brightness["absolute_difference"] < 3e-9
             assert len(brightness["fixed_outgoing_direction"]) == 3
             assert brightness["direction_residual_max_rad"] < 1e-12
+        red = wavelengths[694.3628981235904]["brightness"]["fine_mean_A_times_T"]
+        blue = wavelengths[430.0197374077313]["brightness"]["fine_mean_A_times_T"]
+        assert red == pytest.approx(expected_red, abs=1e-9)
+        assert blue == pytest.approx(expected_blue, abs=1e-9)
+        assert blue / red == pytest.approx(expected_ratio, abs=1e-9)
 
 
 def test_rhombic_plate_1352_keeps_the_blue_l2_members_and_tint_values():
