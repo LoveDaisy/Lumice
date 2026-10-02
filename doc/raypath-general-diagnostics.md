@@ -24,7 +24,7 @@ Raypath 诊断以当前场景的实际映射和测度为对象，不以路径、
 
 场景 spectrum 模式直接使用离散节点及其原始权重；illuminant 模式对产品的 `[380,780)` 均匀波长测度做分层节点积分，并在每个节点乘同一个 `GetIlluminantSpd` 权威函数。显式 diagnostic spectrum 是独立模式，不改写场景观测谱。零权重节点保留为 `zero_weight` 行。太阳直径为零时是中心方向质量为 1 的原子；非零时是产品球冠上的单位概率测度，各节点质量之和仍为 1。太阳直径改变方向分布而不隐式改变源总能量；另行需要 radiance/solid-angle 模式时必须由独立输入明确给出，不能借用默认场景语义。
 
-每个唯一生成 latent 分别记录 base measure（原子计数、单位区间、Lebesgue 或 Bernoulli 计数）、重放坐标、proposal/target 密度或质量、映射 Jacobian 和数值状态。同步 shape scalar 共享 leader latent；height 的绝对值 fold、latitude LUT 的 inverse-CDF 与 flip 分支、GaussianLegacy 极点 fold、azimuth/roll 耦合和 degree→radian 映射都在同一记录中。姿态局部结构是 field 使用的 `(longitude, latitude, roll)` 到行主序旋转矩阵的 `3×9` 微分，支持 rank 由实际生成坐标的 SO(3) 切映射求得。
+每个唯一生成 latent 分别记录 base measure（原子计数、单位区间、Lebesgue 或 Bernoulli 计数）、重放坐标、proposal/target 密度或质量、映射 Jacobian 和数值状态。同步 shape scalar 共享首见 leader 的分布与 latent；height 的绝对值 fold、latitude LUT 的 inverse-CDF 与 flip 分支、GaussianLegacy 极点 fold、azimuth/roll 耦合和 degree→radian 映射都在同一记录中。姿态局部结构是 field 使用的 `(longitude, latitude, roll)` 到行主序旋转矩阵的解析 `3×9` 微分，支持 rank 由实际生成坐标的 SO(3) 切映射求得；极点处 longitude 与 roll 的同向生成元按精确图结构合并，若正展宽 latitude 的 float 样本恰落在奇异图上则 rank 为 `-1`（局部不可用），不能误报成严格低维支持。
 
 每条测度行分别保存全局权重、`joint_sample_mass=1/N`、与之分离的连续/离散 joint proposal、每层条件质量、`A`、逐接口 Fresnel 结果、实际 shape/pose/member 和来源 id。总体量使用 `A*T` 与上述质量相乘；单位为 analytic kernel 的 `a=1` 相对有限晶体面积单位乘原始场景谱权重，不是 `m²` 或 `sr`。联合样本、太阳节点和 illuminant 节点分别给误差估计；field 自身的导数 availability 和 margin 状态仍是局部数值证据，两者不得混写。一个有限太阳或 illuminant 只有一个节点时，结果明确为 `numerical_incomplete`。
 

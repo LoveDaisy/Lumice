@@ -140,6 +140,9 @@ struct SceneMeasureLayerRow {
   std::vector<int> faces;
   std::vector<ShapeScalarSample> shape;
   double pose_lon_lat_roll_rad[3]{};
+  // Dimension of the generated pose support in SO(3). -1 means the sampled float landed on a
+  // singular longitude/latitude/roll chart while a positive-width generator spans nearby poses,
+  // so one local differential cannot state the support dimension without understating it.
   int pose_support_rank = 0;
   // Derivatives of the field's row-major 3x3 pose matrix with respect to the three sampled
   // longitude/latitude/roll coordinates: [coordinate][matrix element]. This is the actual SO(3)

@@ -179,32 +179,45 @@ void AddFactorDescriptors(int layer_index, const CrystalConfig& crystal, LayerIn
   std::fill(std::begin(layer->pose_latent), std::end(layer->pose_latent), -1);
   const CrystalKind kind = KindOf(crystal.param_);
   const int* sync = ShapeSyncGroups(crystal.param_);
-  std::vector<std::pair<int, int>> group_latents;
+  struct ShapeLatentGroup {
+    int sync_group = 0;
+    int leader_slot = -1;
+    int latent_id = -1;
+    const Distribution* distribution = nullptr;
+  };
+  std::vector<ShapeLatentGroup> groups;
   for (int slot = 0; slot < kShapeScalarCount; slot++) {
-    const Distribution* distribution = ShapeDistribution(crystal.param_, slot);
-    if (distribution == nullptr) {
+    const Distribution* declared_distribution = ShapeDistribution(crystal.param_, slot);
+    if (declared_distribution == nullptr) {
       continue;
     }
+    const Distribution* generator_distribution = declared_distribution;
     int latent = -1;
-    if (DistributionHasPositiveWidth(*distribution)) {
-      if (sync[slot] != 0) {
-        const auto found = std::find_if(group_latents.begin(), group_latents.end(),
-                                        [&](const auto& item) { return item.first == sync[slot]; });
-        if (found != group_latents.end()) {
-          latent = found->second;
-        } else {
+    int leader_slot = slot;
+    if (sync[slot] != 0) {
+      const auto found = std::find_if(groups.begin(), groups.end(),
+                                      [&](const ShapeLatentGroup& group) { return group.sync_group == sync[slot]; });
+      if (found == groups.end()) {
+        if (DistributionHasPositiveWidth(*generator_distribution)) {
           latent = (*next_latent)++;
-          group_latents.emplace_back(sync[slot], latent);
         }
+        groups.push_back({ sync[slot], slot, latent, generator_distribution });
       } else {
-        latent = (*next_latent)++;
+        leader_slot = found->leader_slot;
+        latent = found->latent_id;
+        generator_distribution = found->distribution;
       }
+    } else if (DistributionHasPositiveWidth(*generator_distribution)) {
+      latent = (*next_latent)++;
     }
+    const bool has_positive_width = DistributionHasPositiveWidth(*generator_distribution);
     layer->shape_latent[slot] = latent;
-    factors->push_back({ layer_index, "shape." + ShapeName(kind, slot), distribution->type, latent,
-                         DistributionHasPositiveWidth(*distribution) ? 1 : 0, distribution->center,
-                         distribution->spread, "product shape scalar", DistributionMeasure(*distribution, false),
-                         "unit probability mass" });
+    factors->push_back({ layer_index, "shape." + ShapeName(kind, slot), generator_distribution->type, latent,
+                         has_positive_width ? 1 : 0, generator_distribution->center, generator_distribution->spread,
+                         leader_slot == slot ?
+                             "product shape scalar" :
+                             "synchronized shape scalar driven by shape." + ShapeName(kind, leader_slot),
+                         DistributionMeasure(*generator_distribution, false), "unit probability mass" });
   }
 
   const Distribution axis[3] = { crystal.axis_.latitude_dist, crystal.axis_.azimuth_dist, crystal.axis_.roll_dist };
@@ -560,7 +573,7 @@ analytic::CrystalShape SampleShape(RandomNumberGenerator& rng, const CrystalPara
       },
       param);
   for (const ShapeScalarTrace& trace : traces) {
-    const Distribution* distribution = ShapeDistribution(param, trace.slot);
+    const Distribution* distribution = ShapeDistribution(param, trace.leader_slot);
     if (distribution == nullptr) {
       continue;
     }
@@ -577,39 +590,60 @@ analytic::CrystalShape SampleShape(RandomNumberGenerator& rng, const CrystalPara
   return shape;
 }
 
-int PoseSupportRank(const float pose[3], const bool active[3], double derivatives[27]) {
-  constexpr double kStep = 1e-4;
-  std::vector<std::vector<double>> basis;
-  for (int coordinate = 0; coordinate < 3; coordinate++) {
-    float plus[3] = { pose[0], pose[1], pose[2] };
-    float minus[3] = { pose[0], pose[1], pose[2] };
-    plus[coordinate] += static_cast<float>(kStep);
-    minus[coordinate] -= static_cast<float>(kStep);
-    const Rotation plus_rotation = BuildCrystalRotation(plus[0], plus[1], plus[2]);
-    const Rotation minus_rotation = BuildCrystalRotation(minus[0], minus[1], minus[2]);
-    std::vector<double> tangent(9);
-    for (int element = 0; element < 9; element++) {
-      tangent[element] = (plus_rotation.GetMat()[element] - minus_rotation.GetMat()[element]) / (2.0 * kStep);
-      derivatives[coordinate * 9 + element] = tangent[element];
-    }
-    if (!active[coordinate]) {
-      continue;
-    }
-    for (const auto& previous : basis) {
-      const double projection = std::inner_product(tangent.begin(), tangent.end(), previous.begin(), 0.0);
-      for (int element = 0; element < 9; element++) {
-        tangent[element] -= projection * previous[element];
+void MultiplyMatrix3(const double lhs[9], const double rhs[9], double out[9]) {
+  for (int row = 0; row < 3; row++) {
+    for (int column = 0; column < 3; column++) {
+      out[row * 3 + column] = 0.0;
+      for (int inner = 0; inner < 3; inner++) {
+        out[row * 3 + column] += lhs[row * 3 + inner] * rhs[inner * 3 + column];
       }
-    }
-    const double norm = std::sqrt(std::inner_product(tangent.begin(), tangent.end(), tangent.begin(), 0.0));
-    if (norm > 1e-5) {
-      for (double& value : tangent) {
-        value /= norm;
-      }
-      basis.push_back(std::move(tangent));
     }
   }
-  return static_cast<int>(basis.size());
+}
+
+void FillPoseTangent(const float pose[3], double derivatives[27]) {
+  const double azimuth = static_cast<double>(pose[0]) - math::kPi;
+  const double latitude = static_cast<double>(pose[1]) - math::kPi_2;
+  const double roll = pose[2];
+  const double ca = std::cos(azimuth);
+  const double sa = std::sin(azimuth);
+  const double cl = std::cos(latitude);
+  const double sl = std::sin(latitude);
+  const double cr = std::cos(roll);
+  const double sr = std::sin(roll);
+  const double rz_azimuth[9] = { ca, -sa, 0.0, sa, ca, 0.0, 0.0, 0.0, 1.0 };
+  const double ry_latitude[9] = { cl, 0.0, sl, 0.0, 1.0, 0.0, -sl, 0.0, cl };
+  const double rz_roll[9] = { cr, -sr, 0.0, sr, cr, 0.0, 0.0, 0.0, 1.0 };
+  const double drz_azimuth[9] = { -sa, -ca, 0.0, ca, -sa, 0.0, 0.0, 0.0, 0.0 };
+  const double dry_latitude[9] = { -sl, 0.0, cl, 0.0, 0.0, 0.0, -cl, 0.0, -sl };
+  const double drz_roll[9] = { -sr, -cr, 0.0, cr, -sr, 0.0, 0.0, 0.0, 0.0 };
+  double intermediate[9]{};
+  MultiplyMatrix3(drz_azimuth, ry_latitude, intermediate);
+  MultiplyMatrix3(intermediate, rz_roll, derivatives);
+  MultiplyMatrix3(rz_azimuth, dry_latitude, intermediate);
+  MultiplyMatrix3(intermediate, rz_roll, derivatives + 9);
+  MultiplyMatrix3(rz_azimuth, ry_latitude, intermediate);
+  MultiplyMatrix3(intermediate, drz_roll, derivatives + 18);
+}
+
+int PoseSupportRank(const float pose[3], const bool active[3], double derivatives[27]) {
+  FillPoseTangent(pose, derivatives);
+  const int active_count = static_cast<int>(active[0]) + static_cast<int>(active[1]) + static_cast<int>(active[2]);
+  if (active_count < 2) {
+    return active_count;
+  }
+
+  // In this Z-Y-Z chart, longitude and roll generate the same rotation direction exactly at a
+  // pole. Test the chart identity rather than a floating Gram-Schmidt residual. If latitude also
+  // has positive width, the sampled float can round onto the singular chart even though nearby
+  // generator coordinates span all of SO(3); report that local rank as unavailable instead of
+  // misclassifying the continuous support as strictly two-dimensional.
+  const float pole_remainder = std::remainder(pose[1] - math::kPi_2, math::kPi);
+  const bool at_pole = pole_remainder == 0.0f;
+  if (!at_pole || !active[0] || !active[2]) {
+    return active_count;
+  }
+  return active[1] ? -1 : active_count - 1;
 }
 
 void AppendPoseLatents(const AxisDistribution& axis, const LayerInput& input, int layer_index,
@@ -673,11 +707,10 @@ SceneMeasureLayerRow EvaluateLayer(RandomNumberGenerator& rng, const LayerInput&
       RandomSampler::SampleAxisPoseWithTrace(rng, input.setting->crystal_.axis_, pose_values);
   AppendPoseLatents(input.setting->crystal_.axis_, input, layer_index, pose_trace, latents);
   std::copy(pose_values, pose_values + 3, out.pose_lon_lat_roll_rad);
-  const bool active_pose_coordinates[3] = {
-    !pose_trace.longitude.atom && pose_trace.longitude.mapping_jacobian > 0.0,
-    !pose_trace.latitude.atom && pose_trace.latitude.mapping_jacobian > 0.0,
-    !pose_trace.roll.atom && pose_trace.roll.mapping_jacobian > 0.0,
-  };
+  const AxisDistribution& axis = input.setting->crystal_.axis_;
+  const bool active_pose_coordinates[3] = { DistributionHasPositiveWidth(axis.azimuth_dist),
+                                            DistributionHasPositiveWidth(axis.latitude_dist),
+                                            DistributionHasPositiveWidth(axis.roll_dist) };
   out.pose_support_rank = PoseSupportRank(pose_values, active_pose_coordinates, out.pose_tangent_drotation);
 
   analytic::FaceNormalTable normals;
@@ -794,16 +827,18 @@ Error BuildSceneMeasure(const ConfigManager& config, const SceneMeasureRequest& 
   if (const Error error = ResolveLayers(config, request, &layers, &result.factors); !error.Ok()) {
     return error;
   }
+  const bool continuous_sun = request.source_sun_nodes.empty() && config.scene_.light_source_.param_.diameter_ > 0.0f;
+  const bool continuous_spectrum = request.spectrum_source == SceneSpectrumSource::kScene &&
+                                   std::holds_alternative<IlluminantType>(config.scene_.light_source_.spectrum_);
+  result.factors.insert(result.factors.begin(),
+                        { -1, "sun_disc", DistributionType::kNoRandom, -1, continuous_sun ? 2 : 0,
+                          config.scene_.light_source_.param_.diameter_, 0.0, "spherical cap diameter (degrees)",
+                          continuous_sun ? "normalized spherical-cap source" : "enumerated source atoms",
+                          "unit source probability mass" });
   result.factors.insert(
       result.factors.begin(),
-      { -1, "sun_disc", DistributionType::kNoRandom, -1, config.scene_.light_source_.param_.diameter_ == 0.0f ? 0 : 2,
-        config.scene_.light_source_.param_.diameter_, 0.0, "spherical cap diameter (degrees)",
-        config.scene_.light_source_.param_.diameter_ == 0.0f ? "atom" : "normalized spherical-cap source",
-        "unit source probability mass" });
-  result.factors.insert(
-      result.factors.begin(),
-      { -1, "spectrum", DistributionType::kNoRandom, -1, 1, 0.0, 0.0, "wavelength node",
-        request.spectrum_source == SceneSpectrumSource::kScene ? "scene spectrum" : "explicit diagnostic spectrum",
+      { -1, "spectrum", DistributionType::kNoRandom, -1, continuous_spectrum ? 1 : 0, 0.0, 0.0, "wavelength node",
+        continuous_spectrum ? "continuous scene illuminant quadrature" : "enumerated spectrum atoms",
         "raw spectral weight" });
   if (const Error error = BuildSpectrumNodes(config.scene_.light_source_, request, &result.spectrum_nodes);
       !error.Ok()) {
@@ -825,12 +860,11 @@ Error BuildSceneMeasure(const ConfigManager& config, const SceneMeasureRequest& 
   bool any_nonzero_source = false;
   bool any_unreachable = false;
   bool any_numerical = false;
-  const bool has_continuous_factor = std::any_of(
-      result.factors.begin(), result.factors.end(),
-      [](const MeasureFactorDescriptor& factor) { return factor.layer_index >= 0 && factor.support_dimension > 0; });
-  const bool approximate_sun = request.source_sun_nodes.empty() && config.scene_.light_source_.param_.diameter_ > 0.0f;
-  const bool approximate_spectrum =
-      !result.spectrum_nodes.empty() && result.spectrum_nodes.front().source == "scene_illuminant_uniform_380_780";
+  const bool has_continuous_factor =
+      std::any_of(result.factors.begin(), result.factors.end(),
+                  [](const MeasureFactorDescriptor& factor) { return factor.support_dimension > 0; });
+  const bool approximate_sun = continuous_sun;
+  const bool approximate_spectrum = continuous_spectrum;
   double sun_partition_contribution[2]{};
   double sun_partition_mass[2]{};
   for (const SunMeasureNode& node : result.sun_nodes) {

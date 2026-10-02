@@ -6,6 +6,7 @@
 #include <numeric>
 #include <vector>
 
+#include "core/trace_ops.hpp"
 #include "raypath/scene_measure.hpp"
 
 namespace lumice::raypath {
@@ -76,6 +77,152 @@ double ShapeValue(const SceneMeasureLayerRow& row, const char* name) {
                                   [name](const ShapeScalarSample& sample) { return sample.name == name; });
   EXPECT_NE(found, row.shape.end()) << name;
   return found == row.shape.end() ? 0.0 : found->value;
+}
+
+TEST(SceneMeasure, SyncLeaderDeterminesFollowerSupportRatherThanItsDeclaredDistribution) {
+  CrystalConfig crystal = Prism(1);
+  auto& shape = std::get<PrismCrystalParam>(crystal.param_);
+  shape.sync_group_[kShapeScalarHeight] = 7;
+  shape.sync_group_[kShapeScalarFace0] = 7;
+  shape.d_[0] = { DistributionType::kGaussian, 9.0f, 0.5f };
+  const auto result = Build(Scene({ crystal }, { 0.0f }), Request({ 1 }, { { 3, 5 } }, 2));
+  const auto follower = std::find_if(result.factors.begin(), result.factors.end(),
+                                     [](const auto& factor) { return factor.name == "shape.face_distance[0]"; });
+  ASSERT_NE(follower, result.factors.end());
+  EXPECT_EQ(follower->support_dimension, 0);
+  for (const auto& row : result.rows) {
+    EXPECT_DOUBLE_EQ(ShapeValue(row.layers.front(), "face_distance[0]"), 1.0);
+  }
+}
+
+TEST(SceneMeasure, SyncRandomLeaderIsCountedOnceEvenWhenFollowerDeclaresAnAtom) {
+  CrystalConfig crystal = Prism(1);
+  auto& shape = std::get<PrismCrystalParam>(crystal.param_);
+  shape.h_ = { DistributionType::kGaussian, 1.0f, 0.1f };
+  shape.sync_group_[kShapeScalarHeight] = 7;
+  shape.sync_group_[kShapeScalarFace0] = 7;
+  const auto result = Build(Scene({ crystal }, { 0.0f }), Request({ 1 }, { { 3, 5 } }, 2));
+  const auto leader = std::find_if(result.factors.begin(), result.factors.end(),
+                                   [](const auto& factor) { return factor.name == "shape.height"; });
+  const auto follower = std::find_if(result.factors.begin(), result.factors.end(),
+                                     [](const auto& factor) { return factor.name == "shape.face_distance[0]"; });
+  ASSERT_NE(leader, result.factors.end());
+  ASSERT_NE(follower, result.factors.end());
+  EXPECT_EQ(follower->support_dimension, 1);
+  EXPECT_EQ(follower->latent_id, leader->latent_id);
+  for (const auto& row : result.rows) {
+    const auto density = std::find_if(row.latents.begin(), row.latents.end(),
+                                      [](const auto& latent) { return latent.name == "shape.height"; });
+    if (density == row.latents.end()) {
+      ADD_FAILURE() << "the actual leader latent must be present";
+      continue;
+    }
+    EXPECT_NEAR(row.joint_proposal_density, density->proposal_density_or_mass, 1e-12);
+  }
+}
+
+TEST(SceneMeasure, PoleLongitudeAndRollHaveOneRotationSupportDimension) {
+  AxisDistribution axis;
+  axis.latitude_dist = { DistributionType::kNoRandom, 90.0f, 0.0f };
+  axis.azimuth_dist = kFullTurn;
+  axis.roll_dist = kFullTurn;
+  const auto result = Build(Scene({ Prism(1, axis) }, { 0.0f }), Request({ 1 }, { { 3, 5 } }, 32));
+  // At the north pole, longitude and roll rotate about the same world axis.
+  // Their sum spans one rotation circle, independent of the chosen angular chart.
+  EXPECT_TRUE(std::all_of(result.rows.begin(), result.rows.end(),
+                          [](const auto& row) { return row.layers.front().pose_support_rank == 1; }));
+}
+
+TEST(SceneMeasure, FiniteLatitudeWidthAtAPoleIsNotAStrictSupportCollapse) {
+  AxisDistribution axis;
+  axis.latitude_dist = { DistributionType::kGaussianLegacy, 90.0f, 1e-8f };
+  axis.azimuth_dist = kFullTurn;
+  axis.roll_dist = kFullTurn;
+  const auto result = Build(Scene({ Prism(1, axis) }, { 0.0f }), Request({ 1 }, { { 3, 5 } }, 32));
+  // All three independent angles have positive width. The intended physical support has
+  // dimension three; loss of resolution in a float angular chart must stay unavailable.
+  EXPECT_TRUE(std::all_of(result.rows.begin(), result.rows.end(), [](const auto& row) {
+    const int rank = row.layers.front().pose_support_rank;
+    return rank == 3 || rank == -1;
+  }));
+}
+
+TEST(SceneMeasure, PoseTangentMatchesIndependentRotationDifferenceAwayFromChartSingularity) {
+  AxisDistribution axis;
+  axis.latitude_dist = { DistributionType::kNoRandom, 33.0f, 0.0f };
+  axis.azimuth_dist = { DistributionType::kNoRandom, 17.0f, 0.0f };
+  axis.roll_dist = { DistributionType::kNoRandom, 29.0f, 0.0f };
+  const auto result = Build(Scene({ Prism(1, axis) }, { 0.0f }), Request({ 1 }, { { 3, 5 } }, 2));
+  ASSERT_FALSE(result.rows.empty());
+  ASSERT_FALSE(result.rows.front().layers.empty());
+  const auto& layer = result.rows.front().layers.front();
+  constexpr float kStep = 1e-3f;
+  for (int coordinate = 0; coordinate < 3; coordinate++) {
+    float plus[3] = { static_cast<float>(layer.pose_lon_lat_roll_rad[0]),
+                      static_cast<float>(layer.pose_lon_lat_roll_rad[1]),
+                      static_cast<float>(layer.pose_lon_lat_roll_rad[2]) };
+    float minus[3] = { plus[0], plus[1], plus[2] };
+    plus[coordinate] += kStep;
+    minus[coordinate] -= kStep;
+    const Rotation plus_rotation = BuildCrystalRotation(plus[0], plus[1], plus[2]);
+    const Rotation minus_rotation = BuildCrystalRotation(minus[0], minus[1], minus[2]);
+    for (int element = 0; element < 9; element++) {
+      const double finite_difference =
+          (plus_rotation.GetMat()[element] - minus_rotation.GetMat()[element]) / (2.0 * kStep);
+      EXPECT_NEAR(layer.pose_tangent_drotation[coordinate * 9 + element], finite_difference, 5e-4)
+          << "coordinate=" << coordinate << " element=" << element;
+    }
+  }
+}
+
+TEST(SceneMeasure, FiniteSourceNoHitDoesNotClaimAtomicExhaustion) {
+  auto config = Scene({ Prism(1) }, { 0.0f });
+  config.scene_.light_source_.param_.diameter_ = 180.0f;
+  auto request = Request({ 1 }, { { 3, 5 } }, 2);
+  request.sun_node_count = 1;
+  bool observed_no_hit = false;
+  for (uint32_t seed = 1; seed <= 16; seed++) {
+    request.seed = seed;
+    const auto result = Build(config, request);
+    if (result.status_counts.confirmed != 0) {
+      continue;
+    }
+    observed_no_hit = true;
+    EXPECT_EQ(result.status, SceneMeasureStatus::kNumericalIncomplete);
+    const auto sun = std::find_if(result.factors.begin(), result.factors.end(),
+                                  [](const auto& factor) { return factor.name == "sun_disc"; });
+    if (sun == result.factors.end()) {
+      ADD_FAILURE() << "finite solar source descriptor is missing";
+      continue;
+    }
+    EXPECT_EQ(sun->support_dimension, 2);
+  }
+  EXPECT_TRUE(observed_no_hit);
+
+  request.path_layers = { { 99 } };
+  SunMeasureNode source_atom;
+  source_atom.incident_direction[2] = -1.0;
+  source_atom.mass = 1.0;
+  request.source_sun_nodes = { source_atom };
+  const auto enumerated_source = Build(config, request);
+  EXPECT_EQ(enumerated_source.status, SceneMeasureStatus::kPhysicallyUnreachable);
+  const auto sun = std::find_if(enumerated_source.factors.begin(), enumerated_source.factors.end(),
+                                [](const auto& factor) { return factor.name == "sun_disc"; });
+  ASSERT_NE(sun, enumerated_source.factors.end());
+  EXPECT_EQ(sun->support_dimension, 0);
+}
+
+TEST(SceneMeasure, ContinuousIlluminantNoHitDoesNotClaimAtomicExhaustion) {
+  auto config = Scene({ Prism(1) }, { 0.0f });
+  config.scene_.light_source_.spectrum_ = IlluminantType::kD65;
+  auto request = Request({ 1 }, { { 99 } }, 2);
+  request.illuminant_node_count = 1;
+  const auto result = Build(config, request);
+  EXPECT_EQ(result.status, SceneMeasureStatus::kNumericalIncomplete);
+  const auto spectrum = std::find_if(result.factors.begin(), result.factors.end(),
+                                     [](const auto& factor) { return factor.name == "spectrum"; });
+  ASSERT_NE(spectrum, result.factors.end());
+  EXPECT_EQ(spectrum->support_dimension, 1);
 }
 
 TEST(SceneMeasure, SceneSpectrumWeightsScaleOnceAndKeepZeroNodes) {
