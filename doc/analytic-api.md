@@ -1110,7 +1110,11 @@ result's `struct_size` is the byte stride and every row repeats it; a bad row is
 `row_error`, while a common crystal/path/layout error fails the call and leaves every walkable row
 release-safe. `LUMICE_ANALYTIC_ReleaseDiagnosticFieldResult` releases one row, zeroes everything
 after its size field and is NULL-safe and idempotent. `count == 0` succeeds without touching any
-pointer. The header's declaration comment is the exhaustive call-error and lifetime contract.
+pointer. Version 7 is this result's first published layout: its frozen minimum prefix ends with the
+existing `storage` field. A smaller size is rejected because it cannot own and release the variable
+arrays; a later library may append fields after `storage`, but a version 7 caller keeps its original
+stride and receives the entire version 7 prefix. The header's declaration comment is the exhaustive
+call-error and lifetime contract.
 
 **Call.** `LUMICE_ANALYTIC_BandSum(crystal, problem, out_result)` and
 `LUMICE_ANALYTIC_ReleaseBandSumResult(result)`; the header comment is the complete list of call
@@ -1489,11 +1493,17 @@ sized, and in the batch case into the next element. Each therefore begins with
   gets none of it (its bytes there are zero-filled, i.e. "not provided"), so a caller never sees
   pointers into half of a result. `FiberResult`'s version 5 fields are one such group.
 - `struct_size` smaller than the first published layout is a call-level `ERR_INVALID_VALUE`. For
-  `FiberResult` that is the version 4 layout (up to and including `storage`).
+  `FiberResult` that is the version 4 layout (up to and including its original `storage`); for
+  `DiagnosticFieldResult` it is the complete version 7 layout, likewise through `storage`. There is
+  no historical shorter diagnostic-field layout. These boundaries are frozen at their original
+  trailing fields rather than recomputed from a future header's larger `sizeof`.
 - Zero-filling on error (§4.4) zeroes everything after `struct_size`, never `struct_size` itself.
-- In `TraceFiberBatch` the array stride is `out_results[0].struct_size`, not the library's own
-  `sizeof`; every element must carry the same value (a mismatch is a call-level error). The
-  library cannot index an array of structs smaller or larger than its own any other way.
+- In `TraceFiberBatch` and `EvaluateDiagnosticFieldBatch` the array stride is
+  `out_results[0].struct_size`, not the library's own `sizeof`; every element must carry the same
+  value (a mismatch is a call-level error). The library cannot index an array of structs smaller or
+  larger than its own any other way. Each field or append-only field group is written only when that
+  stride contains it completely; `storage` is reachable in every accepted first-published prefix so
+  both normal and error cleanup remain release-safe.
 - New fields go at the end only. Input structs get no `struct_size`: they are small, fixed, and a
   change to them is rare enough that a version bump is the honest price (the table above).
 

@@ -111,7 +111,9 @@ _PRELUDE = textwrap.dedent(
                     ("pose_derivative_available", c_int), ("index_derivative_available", c_int),
                     ("pose_gradient", c_double * 3), ("index_derivative", c_double)]
 
-    class Result(Structure):
+    # Frozen, explicit mirror of the first published version 7 layout. Keep this definition and
+    # size fixed when the current C header grows: it is the old-consumer compatibility fixture.
+    class ResultV7(Structure):
         _fields_ = [("struct_size", c_uint32), ("row_error", c_int), ("path_status", c_int),
                     ("entry_status", c_int), ("outgoing_direction", c_double * 3),
                     ("entry_measure", c_double), ("fresnel_weight", c_double),
@@ -127,6 +129,10 @@ _PRELUDE = textwrap.dedent(
                     ("direction_index_derivative", c_double * 3),
                     ("entry_pose_gradient", c_double * 3), ("entry_index_derivative", c_double),
                     ("storage", c_void_p)]
+
+    RESULT_V7_SIZE = 480
+    assert sizeof(ResultV7) == RESULT_V7_SIZE
+    assert ResultV7.storage.offset + sizeof(c_void_p) == RESULT_V7_SIZE
 
     OK, NULL_ARG, INVALID_VALUE = 0, 1, 2
     PATH_OK, ENTRY_OK = 0, 1
@@ -157,7 +163,7 @@ _PRELUDE = textwrap.dedent(
     def row(index=1.31, incident=INCIDENT, pose=POSE):
         return Row(index, (c_double * 3)(*incident), (c_double * 9)(*pose))
 
-    def results(count, result_type=Result):
+    def results(count, result_type=ResultV7):
         values = (result_type * count)()
         for value in values:
             ctypes.memset(byref(value), 0x5A, sizeof(value))
@@ -354,9 +360,18 @@ def test_ctypes_batch_stride_errors_pyramid_and_concurrent_calls() -> None:
         assert lib.LUMICE_ANALYTIC_EvaluateDiagnosticFieldBatch(None, None, 0, None, 0, None) == OK
 
         class PaddedResult(Structure):
-            _fields_ = Result._fields_ + [("tail", c_uint64)]
+            _fields_ = ResultV7._fields_ + [("tail", c_uint64)]
 
-        padded = results(2, PaddedResult)
+        class GuardedPaddedBatch(Structure):
+            _fields_ = [("before", c_uint64), ("rows", PaddedResult * 2), ("after", c_uint64)]
+
+        guarded = GuardedPaddedBatch()
+        guarded.before = 0x13579BDF2468ACE0
+        guarded.after = 0x02468ACE13579BDF
+        padded = guarded.rows
+        for result in padded:
+            ctypes.memset(byref(result), 0x5A, sizeof(result))
+            result.struct_size = sizeof(PaddedResult)
         padded[0].tail = 0x123456789ABCDEF0
         padded[1].tail = 0x0FEDCBA987654321
         rows = (Row * 2)(row(), row(index=1.32))
@@ -365,15 +380,44 @@ def test_ctypes_batch_stride_errors_pyramid_and_concurrent_calls() -> None:
         assert padded[0].tail == 0x123456789ABCDEF0 and padded[1].tail == 0x0FEDCBA987654321
         for result in padded:
             lib.LUMICE_ANALYTIC_ReleaseDiagnosticFieldResult(byref(result))
+            assert not result.storage and result.interface_count == 0
+            lib.LUMICE_ANALYTIC_ReleaseDiagnosticFieldResult(byref(result))
+        assert padded[0].tail == 0x123456789ABCDEF0 and padded[1].tail == 0x0FEDCBA987654321
+        assert guarded.before == 0x13579BDF2468ACE0 and guarded.after == 0x02468ACE13579BDF
 
         nonuniform = results(2)
-        nonuniform[1].struct_size = sizeof(Result) - sizeof(c_void_p)
+        nonuniform[1].struct_size = RESULT_V7_SIZE - sizeof(c_void_p)
         assert call(prism(), FACES, rows, nonuniform) == INVALID_VALUE
         assert not nonuniform[0].storage and nonuniform[0].row_error == 0
+
+        class ShortResult(Structure):
+            _fields_ = [("struct_size", c_uint32),
+                        ("payload", ctypes.c_ubyte * (RESULT_V7_SIZE - sizeof(c_void_p) - sizeof(c_uint32)))]
+
+        assert sizeof(ShortResult) == RESULT_V7_SIZE - sizeof(c_void_p)
+
+        class GuardedShortBatch(Structure):
+            _fields_ = [("before", c_uint64), ("rows", ShortResult * 2), ("after", c_uint64)]
+
+        short_guarded = GuardedShortBatch()
+        ctypes.memset(byref(short_guarded), 0xA5, sizeof(short_guarded))
+        short_guarded.before = 0x1122334455667788
+        short_guarded.after = 0x8877665544332211
+        short = short_guarded.rows
+        short[0].struct_size = sizeof(ShortResult)
+        short[1].struct_size = sizeof(ShortResult)
+        assert call(prism(), FACES, rows, short) == INVALID_VALUE
+        assert bytes(short[0].payload) == bytes(len(short[0].payload))
+        assert bytes(short[1].payload) == bytes([0xA5]) * len(short[1].payload)
+        assert short_guarded.before == 0x1122334455667788 and short_guarded.after == 0x8877665544332211
 
         bad_faces = results(2)
         assert call(prism(), (3, 99), rows, bad_faces) == INVALID_VALUE
         assert all(not result.storage and result.row_error == 0 for result in bad_faces)
+        for result in bad_faces:
+            assert ctypes.string_at(ctypes.addressof(result) + sizeof(c_uint32),
+                                    RESULT_V7_SIZE - sizeof(c_uint32)) == bytes(
+                                        RESULT_V7_SIZE - sizeof(c_uint32))
 
         pyramid = Crystal(kind=1, height=0.5, upper_h=0.25, lower_h=0.6,
                           upper_wedge_deg=27.996455531220374, lower_wedge_deg=38.5704386184827)

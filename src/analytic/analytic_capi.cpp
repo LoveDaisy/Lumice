@@ -63,6 +63,14 @@ constexpr size_t kFiberResultV4Size = offsetof(LUMICE_ANALYTIC_FiberResult, bran
 static_assert(kFiberResultV4Size == offsetof(LUMICE_ANALYTIC_FiberResult, storage) + sizeof(void*),
               "the version 4 layout ends with `storage`: new fields go after it, never before");
 
+// The first published DiagnosticFieldResult layout is version 7, through and including `storage`.
+// Keep this boundary independent of sizeof(current header): compatible fields may be appended after
+// it without making a version 7 caller too small to evaluate or release.
+constexpr size_t kDiagnosticFieldResultV7Size =
+    offsetof(LUMICE_ANALYTIC_DiagnosticFieldResult, storage) + sizeof(void*);
+static_assert(kDiagnosticFieldResultV7Size == sizeof(LUMICE_ANALYTIC_DiagnosticFieldResult),
+              "the version 7 diagnostic-field layout ends with `storage`; append new fields after it");
+
 // Where each double array of one FiberResult sits in its storage block, for N poses and k margins.
 // The version 4 arrays keep their order — poses (9 N), sun directions (3 N), arclength increments
 // (N - 1), residual norms (N), tangents (3 N): 17 N - 1 doubles — and the version 5 double arrays
@@ -922,7 +930,9 @@ LUMICE_ANALYTIC_ErrorCode LUMICE_ANALYTIC_EvaluateDiagnosticFieldBatch(
     return LUMICE_ANALYTIC_ERR_NULL_ARG;
   }
   const size_t stride = out_results[0].struct_size;
-  if (stride < sizeof(LUMICE_ANALYTIC_DiagnosticFieldResult)) {
+  // A version 7 result is the frozen first-published prefix. Future appended fields are optional;
+  // the caller's size remains the stride and bounds every write through ZeroAfterStructSize.
+  if (stride < kDiagnosticFieldResultV7Size) {
     ZeroAfterStructSize(&out_results[0]);
     return LUMICE_ANALYTIC_ERR_INVALID_VALUE;
   }
@@ -953,7 +963,7 @@ LUMICE_ANALYTIC_ErrorCode LUMICE_ANALYTIC_EvaluateDiagnosticFieldBatch(
 }
 
 void LUMICE_ANALYTIC_ReleaseDiagnosticFieldResult(LUMICE_ANALYTIC_DiagnosticFieldResult* result) {
-  if (result == nullptr || result->struct_size < sizeof(LUMICE_ANALYTIC_DiagnosticFieldResult)) {
+  if (result == nullptr || result->struct_size < kDiagnosticFieldResultV7Size) {
     return;
   }
   ReleaseDiagnosticFieldStorage(result);

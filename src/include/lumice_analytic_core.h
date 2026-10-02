@@ -223,10 +223,12 @@ typedef struct LUMICE_ANALYTIC_DiagnosticMargin_ {
 } LUMICE_ANALYTIC_DiagnosticMargin;
 
 typedef struct LUMICE_ANALYTIC_DiagnosticFieldResult_ {
-  uint32_t struct_size;  // caller sets sizeof(*out); also the batch stride
-  int row_error;         // LUMICE_ANALYTIC_ErrorCode; bad rows do not fail the batch
-  int path_status;       // LUMICE_ANALYTIC_DiagnosticPathStatus
-  int entry_status;      // LUMICE_ANALYTIC_DiagnosticEntryStatus
+  // Caller sets sizeof(*out); also the batch stride. The version 7 minimum layout runs through
+  // `storage`. Later fields may be appended after it under doc/analytic-api.md section 8.2.
+  uint32_t struct_size;
+  int row_error;     // LUMICE_ANALYTIC_ErrorCode; bad rows do not fail the batch
+  int path_status;   // LUMICE_ANALYTIC_DiagnosticPathStatus
+  int entry_status;  // LUMICE_ANALYTIC_DiagnosticEntryStatus
   double outgoing_direction[3];
   double entry_measure;  // crystal length unit squared; 0 unless entry_status is ENTRY_OK
   double fresnel_weight;
@@ -260,9 +262,9 @@ typedef struct LUMICE_ANALYTIC_DiagnosticFieldResult_ {
 //
 // Call errors (every walkable output is zero-filled after struct_size, so Release is safe):
 //   ERR_NULL_ARG       crystal, faces, rows or out_results is NULL when count > 0
-//   ERR_INVALID_VALUE  count < 0 (touches nothing); first struct_size smaller than this result;
-//                      non-uniform result struct_size; face_count outside 2..64; an absent face;
-//                      a crystal field as for EvaluatePath
+//   ERR_INVALID_VALUE  count < 0 (touches nothing); first struct_size smaller than the complete
+//                      version 7 layout through storage; non-uniform result struct_size;
+//                      face_count outside 2..64; an absent face; a crystal field as for EvaluatePath
 //   ERR_INVALID_CONFIG crystal rejected by the engine's closed-form validity gate
 //   ERR_UNKNOWN        an internal failure; any completed row storage is reclaimed
 // count == 0 succeeds and touches no pointer. The first result's struct_size is the byte stride and
