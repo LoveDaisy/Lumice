@@ -160,6 +160,23 @@ TEST(PathFeatureReport, AComputedBrightnessOutsideTheFixedDetectorCaseDoesNotCla
   EXPECT_EQ(report.coverage.back().status, CoverageStatus::kNotSupported);
 }
 
+TEST(PathFeatureReport, TirBandRequiresTwoDistinctRefractiveIndices) {
+  PathFeatureReportRequest request;
+  request.crystal_id = 1;
+  request.path_layers = { { 3, 1, 5 } };
+  request.wavelengths_nm = { 550.0 };
+  request.sample_count = 8192;
+  PathFeatureReport report;
+  const Error error = AnalyzePathFeatureReport(Scene(true, false, false), request, &report);
+  ASSERT_TRUE(error.Ok()) << error.message;
+  EXPECT_EQ(Feature(report, "random_regular.3-1-5.antisolar_tir_blue_band"), nullptr);
+  const auto coverage = std::find_if(report.coverage.begin(), report.coverage.end(), [](const CoverageItem& item) {
+    return item.subject == "3-1-5 antisolar TIR band";
+  });
+  ASSERT_NE(coverage, report.coverage.end());
+  EXPECT_EQ(coverage->status, CoverageStatus::kNotSupported);
+}
+
 TEST(PathFeatureReportJson, UsesASeparateSchemaAndDoesNotAcquireATarget) {
   const PathFeatureReport report = Analyse(Scene(true, false, false), { 3, 5 }, 64);
   const nlohmann::json doc = nlohmann::json::parse(PathFeatureReportToJson(report, "test-version"));

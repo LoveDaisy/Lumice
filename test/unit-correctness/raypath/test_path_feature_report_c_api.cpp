@@ -114,6 +114,19 @@ TEST(PathFeatureReportCApi, StructSizeAndLayerShapeAreValidated) {
   outcome = Analyse(scene.get(), &multi_layer.c);
   EXPECT_EQ(outcome.code, LUMICE_ERR_INVALID_VALUE);
   EXPECT_NE(outcome.error.find("layer face counts"), std::string::npos);
+
+  Request empty_path;
+  empty_path.c.face_count = 0;
+  empty_path.c.faces = nullptr;
+  outcome = Analyse(scene.get(), &empty_path.c);
+  EXPECT_EQ(outcome.code, LUMICE_ERR_INVALID_VALUE);
+  EXPECT_NE(outcome.error.find("non-empty layer"), std::string::npos);
+
+  Request no_layers;
+  no_layers.c.layer_count = 0;
+  outcome = Analyse(scene.get(), &no_layers.c);
+  EXPECT_EQ(outcome.code, LUMICE_ERR_INVALID_VALUE);
+  EXPECT_NE(outcome.error.find("one non-empty layer"), std::string::npos);
 }
 
 TEST(PathFeatureReportCApi, SerializesOnceAndKeepsTheResultImmutable) {

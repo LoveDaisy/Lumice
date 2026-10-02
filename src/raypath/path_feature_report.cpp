@@ -42,6 +42,7 @@ constexpr double kRad2Deg = 180.0 / kPi;
 constexpr double kReferenceRedNm = 694.3628981235904;   // IceRefractiveIndex::Get == 1.307
 constexpr double kReferenceBlueNm = 430.0197374077313;  // IceRefractiveIndex::Get == 1.317
 constexpr int kMinimumSampleCount = 64;
+constexpr double kRelativeConvergenceTolerance = 0.25;
 
 double Clamp1(double x) {
   return std::max(-1.0, std::min(1.0, x));
@@ -271,7 +272,6 @@ BrightnessEstimate MeasureMember(const analytic::FaceNormalTable& normals, const
     out.reason = "brightness integration currently supports only the random Haar and exact horizontal Rz families";
     return out;
   }
-  out.status = fine.positive_count == 0 ? CoverageStatus::kPhysicallyUnreachable : CoverageStatus::kSupported;
   out.fine_valid_count = fine.valid_count;
   out.fine_positive_count = fine.positive_count;
   out.coarse_mean_at = coarse.mean_at;
@@ -281,10 +281,39 @@ BrightnessEstimate MeasureMember(const analytic::FaceNormalTable& normals, const
   out.has_fixed_direction = fine.has_direction && fine.direction_residual_max <= 1e-10;
   std::copy(fine.direction, fine.direction + 3, out.fixed_direction);
   out.direction_residual_max = fine.direction_residual_max;
-  if (out.status == CoverageStatus::kPhysicallyUnreachable) {
+  if (fine.positive_count == 0) {
+    out.status = CoverageStatus::kNotDetectedAtResolution;
     out.reason = "no positive finite-crystal A*T sample was found at the requested resolution";
+  } else if (out.absolute_difference >
+             kRelativeConvergenceTolerance * std::max(std::fabs(fine.mean_at), std::fabs(coarse.mean_at))) {
+    out.status = CoverageStatus::kNumericalIncomplete;
+    out.reason = "coarse and fine finite-crystal A*T estimates did not satisfy the convergence tolerance";
+  } else {
+    out.status = CoverageStatus::kSupported;
   }
   return out;
+}
+
+bool HasNumericalIncomplete(const PathFeatureReport& report) {
+  for (const PhysicalMemberReport& member : report.members) {
+    for (const MemberWavelengthReport& row : member.wavelengths) {
+      if (row.brightness.status == CoverageStatus::kNumericalIncomplete) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+bool HasDistinctRefractiveIndices(const std::vector<ReportWavelength>& wavelengths) {
+  for (size_t first = 0; first < wavelengths.size(); first++) {
+    for (size_t second = first + 1; second < wavelengths.size(); second++) {
+      if (std::fabs(wavelengths[first].refractive_index - wavelengths[second].refractive_index) > 1e-12) {
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 PathFeature OrdinaryEdge(const std::vector<ReportWavelength>& wavelengths, const std::string& id,
@@ -550,10 +579,13 @@ void AddPlateFeatures(PathFeatureReport* report) {
       FeaturePosition position;
       position.wavelength_nm = report->wavelengths[w].wavelength_nm;
       position.refractive_index = report->wavelengths[w].refractive_index;
-      position.altitude_deg = first.altitude;
-      position.azimuth_deg = first.azimuth;
-      position.relative_solar_azimuth_deg = WrapDeg(first.azimuth - report->meta.sun_azimuth_deg);
       const auto& brightness = report->members[first.member].wavelengths[w].brightness;
+      double altitude = 0.0;
+      double azimuth = 0.0;
+      DirToAltAz(brightness.fixed_direction, &altitude, &azimuth);
+      position.altitude_deg = altitude;
+      position.azimuth_deg = azimuth;
+      position.relative_solar_azimuth_deg = WrapDeg(azimuth - report->meta.sun_azimuth_deg);
       position.spherical_separation_deg =
           AngleBetween(report->meta.incident_direction, brightness.fixed_direction) * kRad2Deg;
       feature.positions.push_back(position);
@@ -651,7 +683,12 @@ Error AnalyzePathFeatureReport(const ConfigManager& config, const PathFeatureRep
     result.members.push_back(std::move(member));
   }
 
-  if (random && IsReferenceRegularPrism(crystal) && SameFaces(result.meta.requested_faces, { 3, 5 })) {
+  const bool numerical_incomplete = HasNumericalIncomplete(result);
+  if (numerical_incomplete) {
+    result.coverage.push_back({ "positioned_features", CoverageStatus::kNumericalIncomplete,
+                                "one or more member/wavelength finite-crystal estimates failed the coarse/fine "
+                                "convergence tolerance" });
+  } else if (random && IsReferenceRegularPrism(crystal) && SameFaces(result.meta.requested_faces, { 3, 5 })) {
     result.features.push_back(
         OrdinaryEdge(wavelengths, "random_regular.3-5.inner_edge",
                      "finite jump at a non-degenerate minimum; not a divergent Jacobian caustic"));
@@ -667,8 +704,12 @@ Error AnalyzePathFeatureReport(const ConfigManager& config, const PathFeatureRep
     caustic.evidence_status = "candidate";
     caustic.mechanism = "DPField boundary critical record";
     result.features.push_back(std::move(caustic));
-    if (const auto tir = TirFeature(normals, polygons, requested_slots, wavelengths, request.sample_count);
-        tir.has_value()) {
+    if (!HasDistinctRefractiveIndices(wavelengths)) {
+      result.coverage.push_back({ "3-1-5 antisolar TIR band", CoverageStatus::kNotSupported,
+                                  "the TIR blue-band counterfactual requires at least two distinct refractive-index "
+                                  "wavelengths" });
+    } else if (const auto tir = TirFeature(normals, polygons, requested_slots, wavelengths, request.sample_count);
+               tir.has_value()) {
       result.features.push_back(*tir);
       result.coverage.push_back({ "3-1-5 antisolar TIR band", CoverageStatus::kSupported,
                                   "internal-reflectance counterfactual evaluated on the same sampled poses" });

@@ -134,6 +134,12 @@ LUMICE_ErrorCode AnalyzeReport(const LUMICE_Scene* scene, const LUMICE_PathFeatu
   if (request.face_count < 0 || request.layer_count < 0 || request.wavelength_count < 0) {
     return Refuse({ rp::ErrorCode::kInvalidArgument, "negative face, layer or wavelength count" }, err_buf, err_size);
   }
+  if (request.layer_count != 1 || request.face_count <= 0 || request.faces == nullptr ||
+      request.layer_face_counts == nullptr) {
+    return Refuse({ rp::ErrorCode::kInvalidPath,
+                    "a path feature report requires one non-empty layer with a non-null face sequence" },
+                  err_buf, err_size);
+  }
   if (request.wavelength_count > rp::kMaxFeatureReportWavelengthCount) {
     return Refuse({ rp::ErrorCode::kInvalidArgument, "at most " + std::to_string(rp::kMaxFeatureReportWavelengthCount) +
                                                          " wavelengths may be requested" },
