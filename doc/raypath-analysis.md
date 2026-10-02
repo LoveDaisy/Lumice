@@ -31,7 +31,7 @@
 |---|---|---|---|
 | **(i) 识别**：列出一个区域里各光路成分与占比 | ✅ 已交付（PR #347） | 完整链 id、专用分析运行、CPU 路 | §3；[`raypath-analysis-panel.md`](raypath-analysis-panel.md) |
 | **(ii) 剥离**：在渲染图上即时开关某个桶 | ⏸ 搁置（owner 2026-08-26 裁定） | 每桶真实辐射量（内存墙所在） | §4 |
-| **选定光路后的三功能**：① 光路详情（fiber） ② 单光路全天图（产品形态见 §5.1.8） ③ 预设点 | 🔜 规划中（升级为第二产品核心，见 §5.1 产品形态；①一期落地，②与③的大部分随二期，见 §5.1.8「两期」） | 一期：晶体几何 + Lumice C++ 单光路反解 / fiber 行走（parity 对照 LI，见 §5.1.6「仓库定位」）；二期：S² `D_P` 场（LI Phase II） | §5.1 |
+| **选定光路后的三功能**：① 光路详情（fiber） ② 单光路全天图（产品形态见 §5.1.8） ③ 预设点 | 🟡 计算接口部分交付：①已有目标点 C API/CLI；③已有 target-free 最小 feature report；GUI、全天图和通用特征枚举仍未交付 | 已交付部分：Lumice C++ 单光路反解 / fiber、物理 L2 成员亮度及固定案例机制；后续：S² `D_P` 场与更一般的特征检测 | §5.1 |
 | (i) 面板的四个机制级升级点 | 🔜 各有触发条件，未触发 | 同 (i) | §5.2；[`raypath-analysis-panel.md`](raypath-analysis-panel.md) §8 |
 
 ## 2. 拆分决策：(i) 识别 vs (ii) 剥离
@@ -535,6 +535,12 @@ Analyze 窗口正式排期即满足 §5.1.6 移植触发的第一个条件（「
 > 一期「选定光路之后」的计算已由 `Lumice raypath` 子命令与其背后的单光路分析模块
 > （`src/raypath/`，C API `LUMICE_AnalyzeSinglePath`）提供，界面复用同一模块与同一份 JSON
 > （字段见 `doc/raypath-cli-output.md`，用法见 `doc/user-manual/03-cli-quickstart.md`）。
+
+`Lumice raypath --report` 与 `LUMICE_AnalyzePathFeatureReport` 另提供不带 target 的最小路径级
+feature report。它按配置实际允许的物理 L2 成员和波长积分有限晶体 `A*T`，并只在已有固定数值证据的
+范围内定位普通色散边、`3-1-5` 的内部反射 TIR 蓝带，以及理想水平菱形薄板的两个 ±120°分支。
+它不是全天特征枚举器；未支持、当前分辨率未检出、数值未完成与物理不可达由 coverage 分开表达。
+旧的目标点接口仍负责 fiber 与晶体内逐段详情，两份 JSON schema 彼此独立。
 
 **窗口关系与场景同步（2026-09-27 owner 裁定）**：
 

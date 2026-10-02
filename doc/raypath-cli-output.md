@@ -1,4 +1,4 @@
-# `Lumice raypath` output (schema_version 1)
+# `Lumice raypath` output contracts
 
 `Lumice raypath` analyses **one single-layer raypath of one crystal entry over one sky point**:
 the components of the fiber of crystal poses that send the sun into that point, each component's
@@ -8,6 +8,11 @@ what you ask about one of them.
 
 It writes one JSON document. This page is that document's field reference, and the one place a
 reader (the Analyze-workspace prototype, a script, the GUI later) should learn it from.
+
+There are two deliberately separate documents. `--target` writes the original target-fiber
+document (`schema_version: 1`, sections 1–6); its keys, ordering, and `--warm` behavior are
+unchanged. `--report` writes the target-free `lumice.path-feature-report` document in section 7.
+Neither mode silently substitutes for the other.
 
 ## 1. Where the document comes from
 
@@ -289,3 +294,71 @@ if (doc.outcome === "discovered") {
     plot(c.points.map(p => p.sun_in_crystal));    // each component is a curve on that contour
 }
 ```
+
+## 7. Target-free path feature report
+
+```
+Lumice raypath -f <config> --crystal <id> --path <faces> --report [options]
+```
+
+This mode answers a different question from `--target`: what fixture-backed brightness features
+the selected path has under the configured crystal shape and orientation ensemble. It accepts no
+sky target, `--grid`, or `--warm`. `--events` is the even integration resolution in `[64, 1000000]`
+(default 8192), not a fiber seed count. With no `--wavelength`, the report uses the diagnostic
+endpoints whose refractive indices are 1.307 and 1.317; one explicit `--wavelength <nm>` replaces
+them. The C API accepts up to 32 wavelength/weight pairs.
+
+The public entry point is `LUMICE_AnalyzePathFeatureReport`, returning an immutable opaque
+`LUMICE_PathFeatureReport`. `LUMICE_PathFeatureReportToJson` has the same length-query/fetch and
+NUL-termination contract as `LUMICE_SinglePathResultToJson`. CLI and C callers therefore consume
+the same serialization.
+
+### 7.1 Top-level shape
+
+| Key | Meaning |
+|---|---|
+| `schema`, `schema_version` | `"lumice.path-feature-report"`, version 1. This is not the target-fiber schema 1. |
+| `generator` | Lumice version and analytic-kernel API version. |
+| `conventions` | Member identity, brightness normalization, direction, and coverage wording carried with the document. |
+| `meta` | Nominal crystal scalars, requested face sequence, sun direction, orientation measure, and fine sample count. There is no target. |
+| `wavelengths[]` | `{nm, weight, refractive_index}` in request order. |
+| `physical_l2_members[]` | Concrete members admitted by the configured shape and orientation ensemble's physical P/B/D gating. This is never an L1/PBD label orbit. |
+| `features[]` | Positioned records supported by the detector matrix below. |
+| `coverage[]` | `{subject, status, reason}`; a non-success is stated rather than converted to an empty-feature claim. |
+| `limitations[]` | Stable non-claims that bound how the report may be interpreted. |
+
+Each member has its concrete `faces` and one row per wavelength. `brightness` contains the named
+orientation `measure`, coarse/fine sample counts, valid and positive sample counts, coarse/fine
+means of finite-crystal `A*T`, their absolute difference, and the wavelength-weighted fine mean.
+The area uses LI's `a=1` normalization. When a horizontal-family branch has one constant outgoing
+direction, the row also carries `fixed_outgoing_direction` and its maximum direction residual.
+Coarse/fine differences and boundary residuals are convergence evidence, not exact error bounds.
+
+### 7.2 Positioned features and evidence
+
+The initial detector matrix is intentionally narrow:
+
+- Random regular-prism `3-5`: the ordinary minimum-deviation dispersion edge, described as a
+  finite jump rather than a divergent Jacobian caustic.
+- Random regular-prism `3-1-5`: the solar-side ordinary dispersion edge; a separately labelled
+  caustic candidate; the confirmed antisolar internal-reflection TIR blue band; and the moving exit
+  gate recorded as assessed not visible. The TIR record compares the same boundary poses and
+  finite-crystal area with only internal reflectance removed, exposing both blue/red ratios.
+- The fixed rhombic-prism, 9°-sun, exact-horizontal `Rz(theta)` case: constant-direction branches
+  with positive finite-crystal support. A position records sky altitude/azimuth, relative solar
+  azimuth, and true spherical separation separately. Its two labels are ±120° in relative azimuth
+  while their spherical separation is about 117.599764°.
+
+`evidence_status` distinguishes `confirmed` from `candidate`; `visible` is present only when the
+detector has made that assessment. The report does not promote a label-orbit result to physical L2
+equivalence, does not use a direction residual as a theta-dependent integration mask, and does not
+treat internal TIR as a path-validity gate.
+
+### 7.3 Coverage and limitations
+
+Coverage statuses are `supported`, `not_supported`, `not_detected_at_resolution`,
+`numerical_incomplete`, and `physically_unreachable`. Consumers must display the status and reason;
+an empty `features` array alone never means that no physical feature exists. Current limitations
+include general all-sky enumeration, arbitrary oriented kink curves, open/multiple components,
+cone-crystal empty results, rank-0 feature discovery, solar-disc convolution, and prominence
+relative to other paths.
