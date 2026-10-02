@@ -126,7 +126,7 @@ TEST(DiagnosticField, InvalidPathKeepsPartialNamedMarginsWithoutDerivatives) {
   const DiagnosticFieldResult result = field.Evaluate(input);
 
   EXPECT_EQ(result.path_status, DiagnosticPathStatus::kPathInfeasible);
-  EXPECT_EQ(result.entry_status, DiagnosticEntryStatus::kNotEvaluated);
+  EXPECT_EQ(result.entry_status, DiagnosticEntryStatus::kEntryBackface);
   ASSERT_EQ(result.domain_margins.size(), 4u);
   EXPECT_LT(result.domain_margins[0].value, 0.0);
   EXPECT_TRUE(std::isfinite(result.domain_margins[1].value));

@@ -15,6 +15,7 @@ namespace {
 constexpr double kPoseStep = 2.0e-4;
 constexpr double kIndexRelativeStep = 1.0e-6;
 constexpr double kTirCoefficientDerivativeGuard = 1.0e-4;
+constexpr double kDerivativeGateGuard = 1.0e-4;
 
 double QuietNan() {
   return std::numeric_limits<double>::quiet_NaN();
@@ -77,6 +78,11 @@ bool IsSmoothTirCoefficientSample(double centre, double low, double high) {
          std::fabs(low) > kTirCoefficientDerivativeGuard && std::fabs(high) > kTirCoefficientDerivativeGuard;
 }
 
+bool HasStablePathMargins(const std::vector<double>& margins) {
+  return std::all_of(margins.begin(), margins.end(),
+                     [](double value) { return std::isfinite(value) && value > kDerivativeGateGuard; });
+}
+
 }  // namespace
 
 struct DiagnosticField::Values {
@@ -103,6 +109,19 @@ DiagnosticField::Values DiagnosticField::EvaluateValues(const DiagnosticRowInput
   values.domain_margins.assign(BranchMarginCount(face_count), QuietNan());
   values.tir_margins.assign(std::max(0, face_count - 2), QuietNan());
 
+  // Finite support is a distinct diagnostic: a direction-domain failure must not erase its
+  // independently decidable entry state.
+  double incident_body[3];
+  for (int i = 0; i < 3; i++) {
+    incident_body[i] = input.pose[0 * 3 + i] * input.incident_direction[0] +
+                       input.pose[1 * 3 + i] * input.incident_direction[1] +
+                       input.pose[2 * 3 + i] * input.incident_direction[2];
+  }
+  const EntryMeasure entry = corridor_.Evaluate(incident_body, input.refractive_index);
+  values.entry_status = ToEntryStatus(entry.status);
+  values.entry_topology_signature = entry.topology_signature;
+  values.entry_measure = entry.status == EntryMeasureStatus::kOk ? entry.value : 0.0;
+
   std::vector<double> segments(3 * static_cast<size_t>(face_count + 1), QuietNan());
   PathOutputs detail{};
   detail.fresnel_transmission = QuietNan();
@@ -114,31 +133,21 @@ DiagnosticField::Values DiagnosticField::EvaluateValues(const DiagnosticRowInput
       TracePathChain<double>(normals_, slots_.data(), face_count, input.refractive_index, input.incident_direction,
                              input.pose, detail.outgoing_direction, &detail, &domain);
   values.path_status = ToPathStatus(domain.failure);
-  if (!valid) {
-    return values;
-  }
-  for (int i = 0; i < 3; i++) {
-    values.outgoing[i] = detail.outgoing_direction[i];
-  }
-  values.fresnel_weight = detail.fresnel_transmission;
   for (int k = 1; k < face_count - 1; k++) {
     const double* normal = normals_.normal[slots_[k]];
     const double* incoming = segments.data() + 3 * static_cast<size_t>(k);
+    if (!Finite(incoming, 3)) {
+      continue;
+    }
     const double cosine = normal[0] * incoming[0] + normal[1] * incoming[1] + normal[2] * incoming[2];
     values.tir_margins[static_cast<size_t>(k - 1)] =
         1.0 - input.refractive_index * input.refractive_index * (1.0 - cosine * cosine);
   }
-
-  double incident_body[3];
-  for (int i = 0; i < 3; i++) {
-    incident_body[i] = input.pose[0 * 3 + i] * input.incident_direction[0] +
-                       input.pose[1 * 3 + i] * input.incident_direction[1] +
-                       input.pose[2 * 3 + i] * input.incident_direction[2];
+  if (!valid) {
+    return values;
   }
-  const EntryMeasure entry = corridor_.Evaluate(incident_body, input.refractive_index);
-  values.entry_status = ToEntryStatus(entry.status);
-  values.entry_topology_signature = entry.topology_signature;
-  values.entry_measure = entry.status == EntryMeasureStatus::kOk ? entry.value : 0.0;
+  std::copy(detail.outgoing_direction, detail.outgoing_direction + 3, values.outgoing);
+  values.fresnel_weight = detail.fresnel_transmission;
   return values;
 }
 
@@ -195,9 +204,11 @@ void DiagnosticField::FillDerivatives(const DiagnosticRowInput& input, const Val
     PerturbPose(input.pose, axis, kPoseStep, -1, 0.0, hi.pose);
     minus[axis] = EvaluateValues(lo);
     plus[axis] = EvaluateValues(hi);
-    direction_pose = direction_pose && minus[axis].path_status == DiagnosticPathStatus::kOk &&
-                     plus[axis].path_status == DiagnosticPathStatus::kOk && Finite(minus[axis].outgoing, 3) &&
-                     Finite(plus[axis].outgoing, 3);
+    direction_pose =
+        direction_pose && HasStablePathMargins(base.domain_margins) &&
+        HasStablePathMargins(minus[axis].domain_margins) && HasStablePathMargins(plus[axis].domain_margins) &&
+        minus[axis].path_status == DiagnosticPathStatus::kOk && plus[axis].path_status == DiagnosticPathStatus::kOk &&
+        Finite(minus[axis].outgoing, 3) && Finite(plus[axis].outgoing, 3);
   }
   if (direction_pose) {
     out->direction_pose_jacobian_available = 1;
@@ -303,7 +314,9 @@ void DiagnosticField::FillDerivatives(const DiagnosticRowInput& input, const Val
   hi_input.refractive_index += index_step;
   const Values lo = EvaluateValues(lo_input);
   const Values hi = EvaluateValues(hi_input);
-  const bool index_path = lo.path_status == DiagnosticPathStatus::kOk && hi.path_status == DiagnosticPathStatus::kOk;
+  const bool index_path = HasStablePathMargins(base.domain_margins) && HasStablePathMargins(lo.domain_margins) &&
+                          HasStablePathMargins(hi.domain_margins) && lo.path_status == DiagnosticPathStatus::kOk &&
+                          hi.path_status == DiagnosticPathStatus::kOk;
   if (index_path && Finite(lo.outgoing, 3) && Finite(hi.outgoing, 3)) {
     out->direction_index_derivative_available = 1;
     for (int component = 0; component < 3; component++) {

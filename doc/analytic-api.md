@@ -1013,7 +1013,10 @@ gradient per scalar margin/coefficient.  Index derivatives are with respect to t
 refractive-index argument.  Each derivative family has an availability bit/flag.  A changed path
 branch, changed finite-corridor status, internal Fresnel/TIR side switch, non-finite sample, or
 unresolved clipping active-set change makes the affected derivative unavailable; an unavailable
-number is not encoded as a physical zero.
+number is not encoded as a physical zero.  The current general finite-difference kernel additionally
+requires the centre and both samples of every direction-domain margin to exceed the documented
+`1e-4` guard before publishing a direction or index derivative; this deliberately rejects a
+near-Snell result rather than treating an un-crossed fixed step as proof of smoothness.
 
 Direction-domain status, finite-support status and internal TIR evidence remain separate.  Entry
 backface, exit critical angle and an empty corridor are finite-support outcomes; an internal TIR

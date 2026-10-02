@@ -75,8 +75,8 @@ void EnsureCcw(std::vector<double>* p, int count) {
 // LI _clip_halfplane: one Sutherland-Hodgman step, keeping the left side of the directed edge a -> b.
 // Per input corner i, in ring order: the corner itself when inside, then the crossing of edge
 // i -> i+1 when that edge crosses the line.
-int ClipHalfplane(const std::vector<double>& in, int count, const double a[2], const double b[2],
-                  std::vector<double>* out) {
+int ClipHalfplane(const std::vector<double>& in, int count, const double a[2], const double b[2], int constraint_id,
+                  uint64_t* active_constraints, std::vector<double>* out) {
   out->clear();
   const double ex = b[0] - a[0];
   const double ey = b[1] - a[1];
@@ -95,6 +95,10 @@ int ClipHalfplane(const std::vector<double>& in, int count, const double a[2], c
       out->push_back(py);
     }
     if (in_p != in_q) {
+      // A crossing makes this directed clip edge active.  The active constraint set, rather than
+      // only the surviving vertex count, is part of the derivative topology certificate.
+      *active_constraints ^= static_cast<uint64_t>(constraint_id * 1024 + i + 1);
+      *active_constraints *= 1099511628211ULL;
       const double t = s_p / (s_p - s_q);
       out->push_back(px + t * (qx - px));
       out->push_back(py + t * (qy - py));
@@ -211,7 +215,7 @@ EntryMeasure Corridor::Evaluate(const double s_body[3], double refractive_index)
     record_topology(clip_count);
     for (int i = 0; i < clip_count; i++) {
       const int j = (i + 1) % clip_count;
-      count = ClipHalfplane(poly_, count, &clip_[2 * i], &clip_[2 * j], &next_);
+      count = ClipHalfplane(poly_, count, &clip_[2 * i], &clip_[2 * j], poly * 64 + i, &topology, &next_);
       poly_.swap(next_);
       record_topology(count);
     }
