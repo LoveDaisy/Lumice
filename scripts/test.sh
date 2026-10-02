@@ -282,7 +282,11 @@ layer_fast_e2e() {
 # Phase 2 runs even if phase 1 failed (same no-fail-fast reasoning as the layers).
 layer_slow_e2e_cmd() {
   local rc1=0 rc2=0
-  pytest --ignore=test/performance -n 3 -m slow || rc1=$?
+  # test/performance is one of pyproject.toml's top-level testpaths. pytest does
+  # not apply --ignore to a path supplied as an initial collection root, so the
+  # exact directory would still enter this parallel phase. The glob is matched
+  # against collected descendants and keeps the throughput gates isolated.
+  pytest --ignore-glob='*/performance/*' -n 3 -m slow || rc1=$?
   pytest test/performance -m slow || rc2=$?
   [[ ${rc1} -eq 0 ]] || return ${rc1}
   return ${rc2}

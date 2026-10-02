@@ -351,7 +351,16 @@ Each sampled row carries the concrete member chain, wavelength and sun node, per
 shape and pose, incident/outgoing directions, raw finite entry area `entry_measure`, the sampled
 shape's `total_surface_area`, the product-native
 `normalized_entry_factor=2*entry_measure/total_surface_area`, transmittance, field status, interfaces
-and boundary margins. Each unique generator latent records its base measure, replay
+and boundary margins. A layer's `selected_crystal_share` is the sum of every matching
+`crystal_id` entry divided by the positive mass of all entries in that layer. Its
+`crystal_share` is the remaining accepted share after each matching entry independently applies
+the runtime physical filter. The ordered `entries` provenance records each entry index and filter
+id, raw proportion, pre-filter and accepted shares, whether it was evaluated and accepted, and
+its type/action/symmetry. Rejection does not renormalize the surviving entries; rejection of the
+whole layer terminates that member chain. `filter_rejection_certified` is true only when the
+acceptance predicate is constant on the unenumerated support. A sampled no-hit for a
+direction-dependent filter therefore remains `numerical_incomplete`, not a global zero certificate.
+Each unique generator latent records its base measure, replay
 coordinate, proposal/target density or mass, mapping Jacobian and status; synchronized shape
 scalars share one leader latent. Pose rows expose the full SO(3) rotation differential including
 roll and its support rank. `joint_sample_mass` is separate from joint proposal/target density and

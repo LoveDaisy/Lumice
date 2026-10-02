@@ -228,6 +228,16 @@ TEST(PathFeatureReportJson, UsesASeparateSchemaAndDoesNotAcquireATarget) {
   ASSERT_FALSE(sampled_row["layers"].empty());
   EXPECT_TRUE(sampled_row["layers"][0].contains("total_surface_area"));
   EXPECT_TRUE(sampled_row["layers"][0].contains("normalized_entry_factor"));
+  EXPECT_TRUE(sampled_row["layers"][0].contains("selected_crystal_share"));
+  ASSERT_EQ(sampled_row["layers"][0]["entries"].size(), 1u);
+  EXPECT_EQ(sampled_row["layers"][0]["entries"][0]["entry_index"], 0);
+  EXPECT_TRUE(sampled_row["layers"][0]["entries"][0].contains("accepted_share"));
+  EXPECT_TRUE(sampled_row["layers"][0]["entries"][0].contains("acceptance_support_constant"));
+  const auto evaluated_row = std::find_if(
+      doc["scene_measure"]["sampled_rows"].begin(), doc["scene_measure"]["sampled_rows"].end(),
+      [](const auto& row) { return !row["layers"].empty() && row["layers"][0]["entries"][0]["filter_evaluated"]; });
+  ASSERT_NE(evaluated_row, doc["scene_measure"]["sampled_rows"].end());
+  EXPECT_TRUE((*evaluated_row)["layers"][0]["entries"][0]["accepted"]);
   EXPECT_TRUE(doc["scene_measure"].contains("total_contribution_status"));
   EXPECT_TRUE(doc["scene_measure"].contains("absolute_error_estimate_status"));
   EXPECT_EQ(doc["generator"]["lumice"], "test-version");

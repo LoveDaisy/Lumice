@@ -144,6 +144,25 @@ struct ShapeScalarSample {
   double mapping_jacobian = 1.0;
 };
 
+// One scattering-entry component of a selected physical crystal. Several scene entries may
+// legally reference the same crystal id while carrying independent proportions and filters; the
+// actual conditional mass is their accepted-share sum, not the first matching entry's share.
+struct SceneMeasureEntryRow {
+  int entry_index = -1;
+  IdType filter_id = kInvalidId;
+  double crystal_proportion = 0.0;
+  double scene_share = 0.0;
+  double accepted_share = 0.0;
+  bool filter_evaluated = false;
+  bool accepted = false;
+  // True when the predicate depends only on the fixed member/crystal identity for this request,
+  // so rejection is a support-wide zero certificate rather than a finite-sample observation.
+  bool acceptance_support_constant = false;
+  std::string filter_type;
+  std::string filter_action;
+  std::string filter_symmetry;
+};
+
 struct SceneMeasureLayerRow {
   int layer_index = 0;
   int source_sun_node_id = 0;
@@ -166,8 +185,15 @@ struct SceneMeasureLayerRow {
   double pose_tangent_drotation[27]{};
   double incident_direction[3]{};
   double outgoing_direction[3]{};
+  // Share of all non-negative scene entry mass carried by every entry referencing crystal_id,
+  // before physical filters are evaluated for this concrete row.
+  double selected_crystal_share = 0.0;
+  // Accepted share after evaluating every matching entry's runtime physical filter. Equal to
+  // selected_crystal_share for an unfiltered crystal and zero when every matching entry rejects.
   double crystal_share = 0.0;
   double continuation_mass = 0.0;
+  std::vector<SceneMeasureEntryRow> entries;
+  bool filter_rejection_certified = false;
   // The sampled finite crystal's complete surface area in native engine geometry length squared.
   // Entry measure uses the same unit; LI's hexagon-edge a=1 convention multiplies both areas by 4.
   // The product renderer normalizes entry sampling by half of this area for every sampled shape.

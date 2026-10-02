@@ -1,6 +1,7 @@
 #include "raypath/scene_measure.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstddef>
 #include <limits>
@@ -11,6 +12,7 @@
 
 #include "analytic/path_evaluation.hpp"
 #include "core/crystal.hpp"
+#include "core/filter_spec.hpp"
 #include "core/geo3d.hpp"
 #include "core/optics.hpp"
 #include "core/shared/lat_path_selection.hpp"
@@ -77,8 +79,15 @@ constexpr size_t kMaxStoredSceneMeasureRows = 64;
 constexpr size_t kMaxMemberChains = 4096;
 
 struct LayerInput {
+  struct Entry {
+    const ScatteringSetting* setting = nullptr;
+    int entry_index = -1;
+    double scene_share = 0.0;
+  };
+
   const MsInfo* ms = nullptr;
   const ScatteringSetting* setting = nullptr;
+  std::vector<Entry> entries;
   double crystal_share = 0.0;
   double continuation_mass = 0.0;
   int shape_latent[kShapeScalarCount]{};
@@ -419,28 +428,41 @@ Error ResolveLayers(const ConfigManager& config, const SceneMeasureRequest& requ
   for (size_t i = 0; i < request.path_layers.size(); i++) {
     const MsInfo& ms = config.scene_.ms_[i];
     const IdType crystal_id = request.layer_crystal_ids[i];
-    const auto found = std::find_if(ms.setting_.begin(), ms.setting_.end(),
-                                    [crystal_id](const ScatteringSetting& s) { return s.crystal_.id_ == crystal_id; });
-    if (found == ms.setting_.end()) {
-      return { ErrorCode::kUnknownCrystalId,
-               "layer " + std::to_string(i) + " has no crystal entry with id " + std::to_string(crystal_id) };
-    }
     double total = 0.0;
-    for (const ScatteringSetting& setting : ms.setting_) {
+    double selected_total = 0.0;
+    LayerInput layer;
+    layer.ms = &ms;
+    for (size_t entry_index = 0; entry_index < ms.setting_.size(); ++entry_index) {
+      const ScatteringSetting& setting = ms.setting_[entry_index];
       if (!std::isfinite(setting.crystal_proportion_)) {
         return { ErrorCode::kInvalidArgument, "layer " + std::to_string(i) + " has a non-finite crystal proportion" };
       }
-      total += std::max(0.0, static_cast<double>(setting.crystal_proportion_));
+      const double proportion = std::max(0.0, static_cast<double>(setting.crystal_proportion_));
+      total += proportion;
+      if (setting.crystal_.id_ == crystal_id) {
+        if (layer.setting == nullptr) {
+          layer.setting = &setting;
+        }
+        layer.entries.push_back({ &setting, static_cast<int>(entry_index), proportion });
+        selected_total += proportion;
+      }
+    }
+    if (layer.setting == nullptr) {
+      return { ErrorCode::kUnknownCrystalId,
+               "layer " + std::to_string(i) + " has no crystal entry with id " + std::to_string(crystal_id) };
+    }
+    if (!std::isfinite(total) || !std::isfinite(selected_total)) {
+      return { ErrorCode::kInvalidArgument, "layer " + std::to_string(i) + " has overflowing crystal proportions" };
     }
     if (!std::isfinite(ms.prob_) || ms.prob_ < 0.0f || ms.prob_ > 1.0f) {
       return { ErrorCode::kInvalidArgument, "layer " + std::to_string(i) + " has an invalid continuation probability" };
     }
-    LayerInput layer;
-    layer.ms = &ms;
-    layer.setting = &*found;
-    layer.crystal_share = total > 0.0 ? std::max(0.0, static_cast<double>(found->crystal_proportion_)) / total : 0.0;
+    layer.crystal_share = total > 0.0 ? selected_total / total : 0.0;
+    for (LayerInput::Entry& entry : layer.entries) {
+      entry.scene_share = total > 0.0 ? entry.scene_share / total : 0.0;
+    }
     layer.continuation_mass = i + 1 < request.path_layers.size() ? ms.prob_ : 1.0 - ms.prob_;
-    AddFactorDescriptors(static_cast<int>(i), found->crystal_, &layer, &next_latent, factors);
+    AddFactorDescriptors(static_cast<int>(i), layer.setting->crystal_, &layer, &next_latent, factors);
     layers->push_back(layer);
   }
   return {};
@@ -873,6 +895,108 @@ Crystal ProductCrystal(const analytic::CrystalShape& shape) {
                                 static_cast<float>(std::fabs(shape.lower_h)), distances);
 }
 
+const char* SimpleFilterTypeName(const SimpleFilterParam& param) {
+  if (std::holds_alternative<NoneFilterParam>(param)) {
+    return "none";
+  }
+  if (std::holds_alternative<RaypathFilterParam>(param)) {
+    return "raypath";
+  }
+  if (std::holds_alternative<EntryExitFilterParam>(param)) {
+    return "entry_exit";
+  }
+  if (std::holds_alternative<DirectionFilterParam>(param)) {
+    return "direction";
+  }
+  return "crystal";
+}
+
+const char* FilterTypeName(const FilterParam& param) {
+  if (const auto* simple = std::get_if<SimpleFilterParam>(&param)) {
+    return SimpleFilterTypeName(*simple);
+  }
+  return "complex";
+}
+
+bool FilterAcceptanceSupportConstant(const FilterConfig& filter) {
+  if (filter.symmetry_ != FilterConfig::kSymNone) {
+    return false;
+  }
+  const auto simple_is_constant = [](const SimpleFilterParam& param) {
+    return !std::holds_alternative<DirectionFilterParam>(param);
+  };
+  if (const auto* simple = std::get_if<SimpleFilterParam>(&filter.param_)) {
+    return simple_is_constant(*simple);
+  }
+  const auto& complex = std::get<ComplexFilterParam>(filter.param_);
+  return std::all_of(complex.filters_.begin(), complex.filters_.end(), [&](const auto& clause) {
+    return std::all_of(clause.begin(), clause.end(), [&](const auto& term) { return simple_is_constant(term.second); });
+  });
+}
+
+void PopulateEntryRows(const LayerInput& input, SceneMeasureLayerRow* out) {
+  out->entries.reserve(input.entries.size());
+  for (const LayerInput::Entry& input_entry : input.entries) {
+    const FilterConfig& filter = input_entry.setting->filter_;
+    out->entries.push_back({ input_entry.entry_index, filter.id_,
+                             std::max(0.0, static_cast<double>(input_entry.setting->crystal_proportion_)),
+                             input_entry.scene_share, 0.0, false, false, FilterAcceptanceSupportConstant(filter),
+                             FilterTypeName(filter.param_),
+                             filter.action_ == FilterConfig::kFilterIn ? "filter_in" : "filter_out",
+                             FilterSymmetryToString(filter.symmetry_) });
+  }
+}
+
+void ApplyPhysicalEntryMixture(const LayerInput& input, const Crystal& crystal, const std::vector<int>& faces,
+                               SceneMeasureLayerRow* out) {
+  RaypathRecorder recorder;
+  recorder.Clear();
+  std::array<uint8_t, kMaxHits> overflow{};
+  const uint8_t* overflow_ptr = nullptr;
+  if (faces.size() <= RaypathRecorder::kInlineCap) {
+    for (const int face : faces) {
+      recorder << static_cast<IdType>(face);
+    }
+  } else {
+    recorder.size_ = static_cast<uint8_t>(faces.size());
+    recorder.overflow_idx_ = 0;
+    for (size_t index = 0; index < faces.size(); ++index) {
+      overflow[index] = static_cast<uint8_t>(faces[index] & 0xff);
+    }
+    overflow_ptr = overflow.data();
+  }
+
+  RaySeg ray{};
+  for (int coordinate = 0; coordinate < 3; ++coordinate) {
+    ray.d_[coordinate] = static_cast<float>(out->outgoing_direction[coordinate]);
+  }
+  ray.w_ = 1.0f;
+  ray.from_face_ = kInvalidId;
+  ray.to_face_ = kInvalidId;
+  ray.crystal_idx_ = 0;
+  ray.crystal_config_id_ = input.setting->crystal_.id_;
+
+  double accepted_share = 0.0;
+  for (size_t entry_index = 0; entry_index < input.entries.size(); ++entry_index) {
+    const LayerInput::Entry& input_entry = input.entries[entry_index];
+    const FilterConfig& filter = input_entry.setting->filter_;
+    const auto spec = FilterSpec::Create(filter, crystal, input_entry.setting->crystal_.axis_);
+    const bool accepted = spec->Check(ray, recorder, overflow_ptr);
+    const double entry_accepted_share = accepted ? input_entry.scene_share : 0.0;
+    accepted_share += entry_accepted_share;
+    out->entries[entry_index].accepted_share = entry_accepted_share;
+    out->entries[entry_index].filter_evaluated = true;
+    out->entries[entry_index].accepted = accepted;
+  }
+  out->crystal_share = accepted_share;
+  out->filter_rejection_certified =
+      accepted_share == 0.0 &&
+      std::all_of(out->entries.begin(), out->entries.end(), [](const SceneMeasureEntryRow& entry) {
+        return entry.scene_share == 0.0 ||
+               (entry.filter_evaluated && !entry.accepted && entry.acceptance_support_constant);
+      });
+}
+
 SceneMeasureLayerRow EvaluateLayer(RandomNumberGenerator& rng, const LayerInput& input, int layer_index,
                                    const std::vector<int>& faces, double refractive_index, const double incident[3],
                                    bool include_derivatives, std::vector<LatentMeasureSample>* latents) {
@@ -881,8 +1005,10 @@ SceneMeasureLayerRow EvaluateLayer(RandomNumberGenerator& rng, const LayerInput&
   out.crystal_id = input.setting->crystal_.id_;
   out.crystal_kind = KindOf(input.setting->crystal_.param_) == CrystalKind::kPrism ? "prism" : "pyramid";
   out.faces = faces;
+  out.selected_crystal_share = input.crystal_share;
   out.crystal_share = input.crystal_share;
   out.continuation_mass = input.continuation_mass;
+  PopulateEntryRows(input, &out);
   std::copy(incident, incident + 3, out.incident_direction);
 
   const analytic::CrystalShape shape =
@@ -914,6 +1040,11 @@ SceneMeasureLayerRow EvaluateLayer(RandomNumberGenerator& rng, const LayerInput&
     out.reason = "sampled crystal surface area is not a positive finite value";
     return out;
   }
+  if (faces.size() > kMaxHits) {
+    out.status = SceneMeasureStatus::kNotSupported;
+    out.reason = "the requested path exceeds the runtime kMaxHits filter domain";
+    return out;
+  }
   std::vector<int> slots;
   if (const Error error = ResolveSingleLayerPath({ faces }, normals, &slots); !error.Ok()) {
     out.status = SceneMeasureStatus::kPhysicallyUnreachable;
@@ -939,6 +1070,13 @@ SceneMeasureLayerRow EvaluateLayer(RandomNumberGenerator& rng, const LayerInput&
     if (!std::isfinite(out.normalized_entry_factor) || out.normalized_entry_factor < 0.0) {
       out.status = SceneMeasureStatus::kNumericalIncomplete;
       out.reason = "native entry normalization is not a finite non-negative value";
+    }
+  }
+  if (out.status == SceneMeasureStatus::kConfirmed) {
+    ApplyPhysicalEntryMixture(input, product_crystal, faces, &out);
+    if (out.crystal_share == 0.0) {
+      out.status = SceneMeasureStatus::kZeroWeight;
+      out.reason = "every selected scattering entry rejected the physical filter";
     }
   }
   return out;
@@ -1068,6 +1206,8 @@ Error BuildSceneMeasure(const ConfigManager& config, const SceneMeasureRequest& 
   bool any_confirmed = false;
   bool any_nonzero_source = false;
   bool any_positive_path_measure = false;
+  bool any_filter_rejected = false;
+  bool any_uncertified_filter_rejection = false;
   bool any_unreachable = false;
   bool any_numerical = false;
   std::string numerical_reason;
@@ -1147,18 +1287,19 @@ Error BuildSceneMeasure(const ConfigManager& config, const SceneMeasureRequest& 
             mark_row_numerical(&row, "global spectrum and sun weight product is not representable");
           }
 
-          const NumericValue conditional_measure_mass = conditional_measure.product;
+          const NumericValue known_conditional_measure_mass = conditional_measure.product;
           if (conditional_measure.first_zero_layer >= 0) {
             row.status = SceneMeasureStatus::kZeroWeight;
             row.reason = "layer " + std::to_string(conditional_measure.first_zero_layer) + " has zero " +
                          conditional_measure.first_zero_factor;
-          } else if (!IsRepresentable(conditional_measure_mass)) {
+          } else if (!IsRepresentable(known_conditional_measure_mass)) {
             mark_row_numerical(&row, "complete layer conditional mass product is not representable");
           }
 
           RandomNumberGenerator rng(row.replay_seed);
           double incident[3] = { sun.incident_direction[0], sun.incident_direction[1], sun.incident_direction[2] };
           NumericValue conditional_weight{ 1.0, SceneMeasureNumericStatus::kAvailable };
+          NumericValue row_conditional_measure_mass{ 1.0, SceneMeasureNumericStatus::kAvailable };
           for (size_t layer_index = 0; layer_index < layers.size(); layer_index++) {
             SceneMeasureLayerRow layer =
                 EvaluateLayer(rng, layers[layer_index], static_cast<int>(layer_index),
@@ -1169,6 +1310,7 @@ Error BuildSceneMeasure(const ConfigManager& config, const SceneMeasureRequest& 
             layer.source_wavelength_nm = spectrum.wavelength_nm;
             const NumericValue layer_mass =
                 CheckedMultiply(CheckedNonnegative(layer.crystal_share), CheckedNonnegative(layer.continuation_mass));
+            row_conditional_measure_mass = CheckedMultiply(row_conditional_measure_mass, layer_mass);
             conditional_weight = CheckedMultiply(conditional_weight, layer_mass);
             if (!IsRepresentable(conditional_weight)) {
               mark_row_numerical(&row, "layer conditional and optical weight product is not representable");
@@ -1177,6 +1319,11 @@ Error BuildSceneMeasure(const ConfigManager& config, const SceneMeasureRequest& 
               row.status = SceneMeasureStatus::kZeroWeight;
               row.reason = "layer " + std::to_string(layer_index) + " has zero crystal-share or continuation/exit mass";
             }
+            const bool filter_rejected =
+                layer.status == SceneMeasureStatus::kZeroWeight &&
+                std::any_of(layer.entries.begin(), layer.entries.end(), [](const SceneMeasureEntryRow& entry) {
+                  return entry.filter_evaluated && !entry.accepted;
+                });
             if (layer.status == SceneMeasureStatus::kConfirmed) {
               const NumericValue optical_weight = CheckedMultiply(CheckedNonnegative(layer.normalized_entry_factor),
                                                                   CheckedNonnegative(layer.fresnel_weight));
@@ -1185,6 +1332,12 @@ Error BuildSceneMeasure(const ConfigManager& config, const SceneMeasureRequest& 
                 mark_row_numerical(&row, "layer optical weight product is not representable");
               }
               std::copy(layer.outgoing_direction, layer.outgoing_direction + 3, incident);
+            } else if (filter_rejected) {
+              any_filter_rejected = true;
+              any_uncertified_filter_rejection = any_uncertified_filter_rejection || !layer.filter_rejection_certified;
+              conditional_weight = {};
+              row.status = SceneMeasureStatus::kZeroWeight;
+              row.reason = "layer " + std::to_string(layer_index) + ": " + layer.reason;
             } else {
               conditional_weight = {};
               row.evaluation_status = layer.status;
@@ -1200,6 +1353,9 @@ Error BuildSceneMeasure(const ConfigManager& config, const SceneMeasureRequest& 
             if (IsRepresentable(conditional_weight) && conditional_weight.value == 0.0) {
               break;
             }
+          }
+          if (conditional_measure.first_zero_layer >= 0) {
+            row_conditional_measure_mass = {};
           }
           if (spectrum.weight > 0.0 && sun.mass > 0.0 && conditional_measure.strictly_positive) {
             any_positive_path_measure = true;
@@ -1278,7 +1434,7 @@ Error BuildSceneMeasure(const ConfigManager& config, const SceneMeasureRequest& 
             mark_row_numerical(&row, "row contribution is not representable as a finite double");
           }
           const NumericValue row_measure_mass =
-              CheckedMultiply(CheckedMultiply(global_weight, sample_mass), conditional_measure_mass);
+              CheckedMultiply(CheckedMultiply(global_weight, sample_mass), row_conditional_measure_mass);
           sampled_measure_mass = CheckedAdd(sampled_measure_mass, row_measure_mass);
           if (!IsRepresentable(sampled_measure_mass)) {
             mark_row_numerical(&row, "sampled measure mass accumulation exceeds the finite double range");
@@ -1358,6 +1514,14 @@ Error BuildSceneMeasure(const ConfigManager& config, const SceneMeasureRequest& 
     result.status = SceneMeasureStatus::kNumericalIncomplete;
     result.reason = numerical_reason.empty() ? "at least one evaluated row ended in a numerical-incomplete state" :
                                                numerical_reason;
+  } else if (!any_confirmed && any_filter_rejected && has_continuous_factor && any_uncertified_filter_rejection) {
+    result.status = SceneMeasureStatus::kNumericalIncomplete;
+    result.reason =
+        "finite random sampling found no filter-accepted row; continuous support was not exhausted, so zero "
+        "accepted measure is not certified";
+  } else if (!any_confirmed && any_filter_rejected) {
+    result.status = SceneMeasureStatus::kZeroWeight;
+    result.reason = "the fully enumerated atomic member/source support was rejected by the physical filters";
   } else if (!any_confirmed && any_unreachable && has_continuous_factor) {
     result.status = SceneMeasureStatus::kNumericalIncomplete;
     result.reason =

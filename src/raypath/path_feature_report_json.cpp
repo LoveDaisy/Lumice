@@ -206,6 +206,20 @@ nlohmann::ordered_json SceneMeasureJson(const SceneMeasureResult& measure) {
         tir_margins.push_back(
             { { "name", margin.name }, { "interface_index", margin.interface_index }, { "value", Num(margin.value) } });
       }
+      nlohmann::ordered_json entries = nlohmann::ordered_json::array();
+      for (const SceneMeasureEntryRow& entry : layer.entries) {
+        entries.push_back({ { "entry_index", entry.entry_index },
+                            { "filter_id", entry.filter_id },
+                            { "crystal_proportion", Num(entry.crystal_proportion) },
+                            { "scene_share", Num(entry.scene_share) },
+                            { "accepted_share", Num(entry.accepted_share) },
+                            { "filter_evaluated", entry.filter_evaluated },
+                            { "accepted", entry.accepted },
+                            { "acceptance_support_constant", entry.acceptance_support_constant },
+                            { "filter_type", entry.filter_type },
+                            { "filter_action", entry.filter_action },
+                            { "filter_symmetry", entry.filter_symmetry } });
+      }
       nlohmann::ordered_json layer_json = {
         { "layer_index", layer.layer_index },
         { "source_sun_node_id", layer.source_sun_node_id },
@@ -220,8 +234,11 @@ nlohmann::ordered_json SceneMeasureJson(const SceneMeasureResult& measure) {
         { "pose_tangent_drotation", Array(layer.pose_tangent_drotation, 27) },
         { "incident_direction", Array(layer.incident_direction, 3) },
         { "outgoing_direction", Array(layer.outgoing_direction, 3) },
+        { "selected_crystal_share", Num(layer.selected_crystal_share) },
         { "crystal_share", Num(layer.crystal_share) },
         { "continuation_mass", Num(layer.continuation_mass) },
+        { "entries", entries },
+        { "filter_rejection_certified", layer.filter_rejection_certified },
         { "total_surface_area", Num(layer.total_surface_area) },
         { "entry_measure", Num(layer.entry_measure) },
         { "normalized_entry_factor", Num(layer.normalized_entry_factor) },

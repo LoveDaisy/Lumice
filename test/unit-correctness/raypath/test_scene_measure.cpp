@@ -6,6 +6,7 @@
 #include <numeric>
 #include <vector>
 
+#include "core/math.hpp"
 #include "core/trace_ops.hpp"
 #include "raypath/scene_measure.hpp"
 
@@ -509,6 +510,195 @@ TEST(SceneMeasure, ZeroCrystalEnergyLayerHasAValidZeroMeasure) {
   ASSERT_TRUE(error.Ok()) << error.message;
   EXPECT_EQ(result.status, SceneMeasureStatus::kZeroWeight);
   EXPECT_DOUBLE_EQ(result.total_contribution, 0.0);
+}
+
+TEST(SceneMeasure, SplittingOneCrystalIntoLinkedEntriesPreservesItsMeasure) {
+  AxisDistribution axis;
+  axis.latitude_dist = { DistributionType::kNoRandom, 90.0f, 0.0f };
+  axis.azimuth_dist = { DistributionType::kNoRandom, 180.0f, 0.0f };
+  axis.roll_dist = { DistributionType::kNoRandom, 0.0f, 0.0f };
+  auto config = Scene({ Prism(1, axis) }, { 0.0f });
+  config.scene_.ms_[0].setting_[0].crystal_proportion_ = 4.0f;
+  auto request = Request({ 1 }, { { 3, 6 } }, 2);
+  request.member_selection = SceneMemberSelection::kExplicitChains;
+  request.explicit_member_chains = { { { 3, 6 } } };
+  const auto unsplit = Build(config, request);
+  ASSERT_GT(unsplit.total_contribution, 0.0);
+  auto linked = config.scene_.ms_[0].setting_[0];
+  linked.crystal_proportion_ = 3.0f;
+  config.scene_.ms_[0].setting_[0].crystal_proportion_ = 1.0f;
+  config.scene_.ms_[0].setting_.push_back(linked);
+  const auto split = Build(config, request);
+  EXPECT_NEAR(split.total_contribution, unsplit.total_contribution, 1e-12);
+}
+
+TEST(SceneMeasure, AZeroFirstLinkedEntryDoesNotHideAnotherPositiveEntry) {
+  AxisDistribution axis;
+  axis.latitude_dist = { DistributionType::kNoRandom, 90.0f, 0.0f };
+  axis.azimuth_dist = { DistributionType::kNoRandom, 180.0f, 0.0f };
+  axis.roll_dist = { DistributionType::kNoRandom, 0.0f, 0.0f };
+  auto config = Scene({ Prism(1, axis) }, { 0.0f });
+  auto request = Request({ 1 }, { { 3, 6 } }, 2);
+  request.member_selection = SceneMemberSelection::kExplicitChains;
+  request.explicit_member_chains = { { { 3, 6 } } };
+  const auto positive = Build(config, request);
+  ASSERT_GT(positive.total_contribution, 0.0);
+  const auto linked = config.scene_.ms_[0].setting_[0];
+  config.scene_.ms_[0].setting_[0].crystal_proportion_ = 0.0f;
+  config.scene_.ms_[0].setting_.push_back(linked);
+  const auto with_zero = Build(config, request);
+  EXPECT_EQ(with_zero.status, SceneMeasureStatus::kConfirmed);
+  EXPECT_NEAR(with_zero.total_contribution, positive.total_contribution, 1e-12);
+}
+
+TEST(SceneMeasure, PhysicalEntryExitFilterMasksTheActualPathMeasure) {
+  AxisDistribution axis;
+  axis.latitude_dist = { DistributionType::kNoRandom, 90.0f, 0.0f };
+  axis.azimuth_dist = { DistributionType::kNoRandom, 180.0f, 0.0f };
+  axis.roll_dist = { DistributionType::kNoRandom, 0.0f, 0.0f };
+  auto config = Scene({ Prism(1, axis) }, { 0.0f });
+  auto request = Request({ 1 }, { { 3, 6 } }, 2);
+  request.member_selection = SceneMemberSelection::kExplicitChains;
+  request.explicit_member_chains = { { { 3, 6 } } };
+  const auto admitted = Build(config, request);
+  ASSERT_GT(admitted.total_contribution, 0.0);
+  EntryExitFilterParam predicate;
+  predicate.entry_ = 1;
+  predicate.exit_ = 2;
+  config.scene_.ms_[0].setting_[0].filter_ = { 7, FilterConfig::kSymNone, FilterConfig::kFilterIn,
+                                               SimpleFilterParam{ predicate } };
+  const auto rejected = Build(config, request);
+  EXPECT_EQ(rejected.status, SceneMeasureStatus::kZeroWeight);
+  EXPECT_DOUBLE_EQ(rejected.total_contribution, 0.0);
+  predicate.entry_ = 3;
+  predicate.exit_ = 6;
+  config.scene_.ms_[0].setting_[0].filter_.param_ = SimpleFilterParam{ predicate };
+  const auto restored = Build(config, request);
+  EXPECT_NEAR(restored.total_contribution, admitted.total_contribution, 1e-12);
+}
+
+TEST(SceneMeasure, LinkedEntriesRetainIndependentFilterMassAndOrder) {
+  AxisDistribution axis;
+  axis.latitude_dist = { DistributionType::kNoRandom, 90.0f, 0.0f };
+  axis.azimuth_dist = { DistributionType::kNoRandom, 180.0f, 0.0f };
+  axis.roll_dist = { DistributionType::kNoRandom, 0.0f, 0.0f };
+  auto config = Scene({ Prism(1, axis) }, { 0.0f });
+  const auto request = Request({ 1 }, { { 3, 6 } }, 2);
+  const auto baseline = Build(config, request);
+  ASSERT_GT(baseline.total_contribution, 0.0);
+
+  EntryExitFilterParam rejected_predicate;
+  rejected_predicate.entry_ = 1;
+  rejected_predicate.exit_ = 2;
+  config.scene_.ms_[0].setting_[0].crystal_proportion_ = 1.0f;
+  config.scene_.ms_[0].setting_[0].filter_ = { 7, FilterConfig::kSymNone, FilterConfig::kFilterIn,
+                                               SimpleFilterParam{ rejected_predicate } };
+  ScatteringSetting accepted = config.scene_.ms_[0].setting_[0];
+  accepted.crystal_proportion_ = 3.0f;
+  EntryExitFilterParam accepted_predicate;
+  accepted_predicate.entry_ = 3;
+  accepted_predicate.exit_ = 6;
+  accepted.filter_ = { 8, FilterConfig::kSymNone, FilterConfig::kFilterIn, SimpleFilterParam{ accepted_predicate } };
+  config.scene_.ms_[0].setting_.push_back(accepted);
+
+  ScatteringSetting other = accepted;
+  other.crystal_ = Prism(2, axis);
+  other.crystal_proportion_ = 4.0f;
+  other.filter_ = {};
+  config.crystals_.emplace(2, other.crystal_);
+  config.scene_.ms_[0].setting_.push_back(other);
+
+  const auto mixed = Build(config, request);
+  EXPECT_NEAR(mixed.total_contribution, 0.375 * baseline.total_contribution, 1e-12);
+  ASSERT_FALSE(mixed.rows.empty());
+  ASSERT_EQ(mixed.rows.front().layers.front().entries.size(), 2u);
+  EXPECT_FALSE(mixed.rows.front().layers.front().entries[0].accepted);
+  EXPECT_TRUE(mixed.rows.front().layers.front().entries[1].accepted);
+  EXPECT_DOUBLE_EQ(mixed.rows.front().layers.front().selected_crystal_share, 0.5);
+  EXPECT_DOUBLE_EQ(mixed.rows.front().layers.front().crystal_share, 0.375);
+
+  std::reverse(config.scene_.ms_[0].setting_.begin(), config.scene_.ms_[0].setting_.end());
+  const auto reversed = Build(config, request);
+  EXPECT_NEAR(reversed.total_contribution, mixed.total_contribution, 1e-12);
+}
+
+TEST(SceneMeasure, PhysicalFiltersReuseRuntimeActionCompoundDirectionAndSymmetry) {
+  AxisDistribution axis;
+  axis.latitude_dist = { DistributionType::kNoRandom, 90.0f, 0.0f };
+  axis.azimuth_dist = { DistributionType::kNoRandom, 180.0f, 0.0f };
+  axis.roll_dist = { DistributionType::kNoRandom, 0.0f, 0.0f };
+  auto config = Scene({ Prism(1, axis) }, { 0.0f });
+  const auto request = Request({ 1 }, { { 3, 6 } }, 2);
+  const auto baseline = Build(config, request);
+  ASSERT_GT(baseline.total_contribution, 0.0);
+  ASSERT_FALSE(baseline.rows.empty());
+
+  RaypathFilterParam rotated_path;
+  rotated_path.raypath_ = { 4, 7 };
+  config.scene_.ms_[0].setting_[0].filter_ = { 10, FilterConfig::kSymNone, FilterConfig::kFilterIn,
+                                               SimpleFilterParam{ rotated_path } };
+  EXPECT_EQ(Build(config, request).status, SceneMeasureStatus::kZeroWeight);
+  config.scene_.ms_[0].setting_[0].filter_.symmetry_ = FilterConfig::kSymP;
+  EXPECT_NEAR(Build(config, request).total_contribution, baseline.total_contribution, 1e-12);
+  config.scene_.ms_[0].setting_[0].filter_.action_ = FilterConfig::kFilterOut;
+  EXPECT_EQ(Build(config, request).status, SceneMeasureStatus::kZeroWeight);
+
+  EntryExitFilterParam entry_exit;
+  entry_exit.entry_ = 3;
+  entry_exit.exit_ = 6;
+  ComplexFilterParam compound;
+  compound.filters_ = { { { 11, SimpleFilterParam{ entry_exit } },
+                          { 12, SimpleFilterParam{ CrystalFilterParam{ 1 } } } } };
+  config.scene_.ms_[0].setting_[0].filter_ = { 13, FilterConfig::kSymNone, FilterConfig::kFilterIn, compound };
+  EXPECT_NEAR(Build(config, request).total_contribution, baseline.total_contribution, 1e-12);
+  std::get<ComplexFilterParam>(config.scene_.ms_[0].setting_[0].filter_.param_).filters_[0][1].second =
+      SimpleFilterParam{ CrystalFilterParam{ 2 } };
+  EXPECT_EQ(Build(config, request).status, SceneMeasureStatus::kZeroWeight);
+
+  const double* outgoing = baseline.rows.front().layers.front().outgoing_direction;
+  DirectionFilterParam direction;
+  direction.lon_ = static_cast<float>(std::atan2(outgoing[1], outgoing[0]) * math::kRadToDegree);
+  direction.lat_ = static_cast<float>(std::asin(std::clamp(outgoing[2], -1.0, 1.0)) * math::kRadToDegree);
+  direction.radii_ = 0.1f;
+  config.scene_.ms_[0].setting_[0].filter_ = { 14, FilterConfig::kSymNone, FilterConfig::kFilterIn,
+                                               SimpleFilterParam{ direction } };
+  EXPECT_NEAR(Build(config, request).total_contribution, baseline.total_contribution, 1e-12);
+  config.scene_.ms_[0].setting_[0].filter_.action_ = FilterConfig::kFilterOut;
+  EXPECT_EQ(Build(config, request).status, SceneMeasureStatus::kZeroWeight);
+}
+
+TEST(SceneMeasure, FilterFailureTerminatesAMultiLayerChain) {
+  AxisDistribution axis;
+  axis.latitude_dist = { DistributionType::kNoRandom, 90.0f, 0.0f };
+  axis.azimuth_dist = { DistributionType::kNoRandom, 180.0f, 0.0f };
+  axis.roll_dist = { DistributionType::kNoRandom, 0.0f, 0.0f };
+  auto config = Scene({ Prism(1, axis), Prism(2, axis) }, { 1.0f, 0.0f });
+  EntryExitFilterParam rejected;
+  rejected.entry_ = 1;
+  rejected.exit_ = 2;
+  config.scene_.ms_[0].setting_[0].filter_ = { 15, FilterConfig::kSymNone, FilterConfig::kFilterIn,
+                                               SimpleFilterParam{ rejected } };
+  const auto result = Build(config, Request({ 1, 2 }, { { 3, 6 }, { 3, 6 } }, 2));
+  EXPECT_EQ(result.status, SceneMeasureStatus::kZeroWeight);
+  EXPECT_DOUBLE_EQ(result.total_contribution, 0.0);
+  EXPECT_TRUE(std::all_of(result.rows.begin(), result.rows.end(), [](const SceneMeasureRow& row) {
+    return row.status == SceneMeasureStatus::kZeroWeight && row.evaluation_status == SceneMeasureStatus::kConfirmed &&
+           row.layers.size() == 1u && row.layers.front().filter_rejection_certified;
+  }));
+}
+
+TEST(SceneMeasure, ContinuousDirectionSamplingWithoutAHitDoesNotCertifyZeroMeasure) {
+  auto config = Scene({ Prism(1, RandomAxis()) }, { 0.0f });
+  DirectionFilterParam direction{ 0.0f, 90.0f, 0.0001f };
+  config.scene_.ms_[0].setting_[0].filter_ = { 16, FilterConfig::kSymNone, FilterConfig::kFilterIn,
+                                               SimpleFilterParam{ direction } };
+  const auto result = Build(config, Request({ 1 }, { { 3, 6 } }, 2));
+  EXPECT_EQ(result.status, SceneMeasureStatus::kNumericalIncomplete);
+  EXPECT_DOUBLE_EQ(result.total_contribution, 0.0);
+  EXPECT_NE(result.reason.find("continuous support was not exhausted"), std::string::npos);
+  EXPECT_TRUE(std::all_of(result.rows.begin(), result.rows.end(), [](const SceneMeasureRow& row) {
+    return !row.layers.empty() && !row.layers.front().filter_rejection_certified;
+  }));
 }
 
 TEST(SceneMeasure, PositiveConditionalMassUnderflowIsNotAnExactZeroMeasure) {
