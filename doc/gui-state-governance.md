@@ -609,7 +609,9 @@ S1–S8 是立项时的种子，S9 / S10 是 S3 / S4 两个待核实分支核实
 应用共享窗口几何、重协调 active non-Free preset，最后才清 dirty。`main.cpp` 只拥有 monitor 输入与帧循环
 调度，`gui_test` 也调用这个入口；另写测试专用缩放算式或只断言 dirty 都不构成行为覆盖。
 
-`g_programmatic_resize` 是 GLFW callback 边界上的短期事务标记：被它覆盖的 callback 更新 actual clamp，
-但不把 preset 改成 Free；标记之外的 callback 才代表用户接管窗口。它不落盘，也不是另一份画幅状态。
+`WindowResizeEvents` 将程序化请求与目标尺寸、同步 readback 关联，支持同步和延迟 callback；
+已结算请求在 event-poll 边界退休，同尺寸 no-op 不预支任何 callback。未匹配尺寸事件先记录，待
+`FinishWindowEventPoll` 看完本轮 content-scale 事件后才判为手工 resize：Win32 的 DPI 调整先报告尺寸、
+后报告 scale，不能在第一个 callback 就清掉画幅意图。这个状态不落盘，也不是另一份画幅状态。
 JSON export 对固定 preset 使用与窗口相同的 `ApplyAspectOrientation` 规则；Free/Match Background 没有可跨机器
 复现的固定导出比例，仍保留既有 2:1 fallback，这与屏幕上的 Match Background 跟图像比例不是同一个承诺。

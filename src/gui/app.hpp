@@ -200,9 +200,10 @@ void JoinPendingCalibration();
 bool CalibrationPending();
 
 // Aspect ratio state
-// Pending callbacks from a GLFW resize initiated by the product. WindowSizeCallback consumes them
-// without changing the active aspect preset; a genuinely different user size still selects Free.
-extern int g_programmatic_resize;
+// Settle resize provenance after a full GLFW event poll, before scale rebuilding or NewFrame.
+void FinishWindowEventPoll();
+void NotifyWindowContentScaleChanged();
+void ResetWindowResizeEvents();
 
 // Unsaved changes popup state
 extern bool g_show_unsaved_popup;

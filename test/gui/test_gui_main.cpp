@@ -42,6 +42,7 @@
 #include "gui/theme_test_hooks.hpp"
 #include "gui/ui_scale.hpp"
 #include "gui/user_defaults.hpp"
+#include "gui/window_sizing.hpp"
 #include "imgui.h"
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_opengl3.h"
@@ -198,7 +199,7 @@ void ResetTestState() {
   gui::g_state.modal_immediate_mode = false;
   gui::g_preview_vp.active = false;
   gui::g_preview_vp.curve_labels.clear();
-  gui::g_programmatic_resize = 0;
+  gui::ResetWindowResizeEvents();
   // The user's UI scale multiplier is process-wide. The harness runs the product rebuild at the
   // frame boundary, while every reference still begins at the 1x basis. A case that changes the
   // dial must restore it or the next case would inherit both its style and status note.
@@ -729,9 +730,24 @@ int main(int argc, char** argv) {
     gui::SyncFromPoller();  // Sync server data for perf tests (no-op when g_server is null)
 
     if (g_window_size_test.requested.exchange(false)) {
-      glfwSetWindowSize(window, g_window_size_test.width, g_window_size_test.height);
+      if (g_window_size_test.apply_aspect) {
+        gui::ApplyAspectRatio(window, gui::g_state.aspect_preset, gui::g_state.aspect_portrait);
+      } else {
+        glfwSetWindowSize(window, g_window_size_test.width, g_window_size_test.height);
+      }
+      if (g_window_size_test.content_scale_change) {
+        // Reproduce GLFW's Win32 size-before-content-scale order on the owning thread.
+        gui::NotifyWindowContentScaleChanged();
+      }
+      glfwGetWindowSize(window, &g_window_size_test.width, &g_window_size_test.height);
+      const auto limits = gui::GetCurrentWindowGeometryConstraints(window, gui::CurrentUiScale());
+      g_window_size_test.min_width = limits.min_w;
+      g_window_size_test.min_height = limits.min_h;
+      g_window_size_test.max_width = limits.max_w;
+      g_window_size_test.max_height = limits.max_h;
       g_window_size_test.done.store(true);
     }
+    gui::FinishWindowEventPoll();
 
     // The same frame-boundary rebuild the product runs: Settings tests exercise atlas/style,
     // window geometry and active aspect reconciliation rather than stopping at the dirty flag.

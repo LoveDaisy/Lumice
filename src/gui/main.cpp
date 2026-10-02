@@ -236,7 +236,7 @@ int main(int argc, char** argv) {
     if (xscale > 0.0f) {
       g_monitor_scale_x = xscale;
       g_monitor_scale_y = yscale;
-      gui::g_ui_scale_dirty = true;
+      gui::NotifyWindowContentScaleChanged();
     }
   });
   glfwMakeContextCurrent(window);
@@ -395,6 +395,7 @@ int main(int argc, char** argv) {
   while (!glfwWindowShouldClose(window)) {
     auto frame_start = std::chrono::steady_clock::now();
     glfwPollEvents();
+    gui::FinishWindowEventPoll();
 
     // Sync data from background server poller (non-blocking)
     gui::SyncFromPoller();

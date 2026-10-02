@@ -149,12 +149,20 @@ struct BgOverlayTestState {
 struct WindowSizeTestState {
   int width = 0;
   int height = 0;
+  bool apply_aspect = false;
+  bool content_scale_change = false;
+  int min_width = 0;
+  int min_height = 0;
+  int max_width = 0;
+  int max_height = 0;
   std::atomic<bool> requested{ false };
   std::atomic<bool> done{ false };
 
   void Reset() {
     width = 0;
     height = 0;
+    apply_aspect = false;
+    content_scale_change = false;
     requested.store(false);
     done.store(false);
   }

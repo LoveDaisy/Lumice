@@ -157,7 +157,9 @@ bool CalibrationPending() {
          g_calibration_future.wait_for(std::chrono::seconds(0)) != std::future_status::ready;
 }
 
-int g_programmatic_resize = 0;
+namespace {
+WindowResizeEvents g_window_resize_events;
+}
 
 bool g_show_unsaved_popup = false;
 PendingAction g_pending_action = PendingAction::kNone;
@@ -266,10 +268,16 @@ void UpdateAspectClampFromActualSize(int window_w, int window_h) {
 }
 
 void SetProgrammaticWindowSize(GLFWwindow* window, int width, int height) {
-  // Win32/Cocoa normally deliver the callback synchronously; X11 may deliver it after the next
-  // event poll. Keep a bounded allowance for an intermediate constrained size and the final one.
-  g_programmatic_resize = 2;
+  int actual_w = 0;
+  int actual_h = 0;
+  glfwGetWindowSize(window, &actual_w, &actual_h);
+  if (actual_w == width && actual_h == height) {
+    return;
+  }
+  g_window_resize_events.BeginRequest(width, height);
   glfwSetWindowSize(window, width, height);
+  glfwGetWindowSize(window, &actual_w, &actual_h);
+  g_window_resize_events.EndRequest(actual_w, actual_h);
 }
 
 void ClampLiveWindowPosition(GLFWwindow* window, const WindowGeometryConstraints& constraints) {
@@ -288,9 +296,22 @@ void ClampLiveWindowPosition(GLFWwindow* window, const WindowGeometryConstraints
 }  // namespace
 
 void WindowSizeCallback(GLFWwindow* /*window*/, int width, int height) {
-  if (g_programmatic_resize > 0) {
-    g_programmatic_resize--;
+  if (g_window_resize_events.RecordResize(width, height)) {
     UpdateAspectClampFromActualSize(width, height);
+  }
+}
+
+void NotifyWindowContentScaleChanged() {
+  g_window_resize_events.RecordContentScaleChange();
+  g_ui_scale_dirty = true;
+}
+
+void ResetWindowResizeEvents() {
+  g_window_resize_events = {};
+}
+
+void FinishWindowEventPoll() {
+  if (!g_window_resize_events.FinishEventPoll()) {
     return;
   }
   if (g_state.aspect_preset != AspectPreset::kFree) {
@@ -344,10 +365,14 @@ void ApplyWindowGeometryForScale(GLFWwindow* window, float layout_scale) {
   glfwGetWindowSize(window, &cur_w, &cur_h);
   const WindowGeometryConstraints constraints = GetCurrentWindowGeometryConstraints(window, layout_scale);
   const WindowSizePlan plan = PlanWindowSizeForScale(cur_w, cur_h, constraints);
+  // Updating limits can itself synchronously resize Win32 windows, before SetWindowSize runs.
+  g_window_resize_events.BeginRequest(plan.target_w, plan.target_h);
   glfwSetWindowSizeLimits(window, plan.min_w, plan.min_h, GLFW_DONT_CARE, GLFW_DONT_CARE);
   if (plan.resize) {
-    SetProgrammaticWindowSize(window, plan.target_w, plan.target_h);
+    glfwSetWindowSize(window, plan.target_w, plan.target_h);
   }
+  glfwGetWindowSize(window, &cur_w, &cur_h);
+  g_window_resize_events.EndRequest(cur_w, cur_h);
   ClampLiveWindowPosition(window, constraints);
 }
 

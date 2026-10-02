@@ -19,6 +19,7 @@
 #include "gui/app.hpp"
 #include "gui/theme.hpp"
 #include "gui/ui_scale.hpp"
+#include "gui/window_sizing.hpp"
 #include "imgui.h"
 
 namespace {
@@ -195,25 +196,70 @@ TEST(WindowResizeState, ManualResizeSelectsFreeAndClearsTheClamp) {
   gui::g_state = {};
   gui::g_state.aspect_preset = gui::AspectPreset::k16x9;
   gui::g_state.aspect_clamp.was_clamped = true;
-  gui::g_programmatic_resize = 0;
+  gui::ResetWindowResizeEvents();
 
   gui::WindowSizeCallback(nullptr, /*width=*/1400, /*height=*/900);
+  gui::FinishWindowEventPoll();
 
   EXPECT_EQ(gui::g_state.aspect_preset, gui::AspectPreset::kFree);
   EXPECT_FALSE(gui::g_state.aspect_clamp.was_clamped);
   gui::g_state = {};
 }
 
-TEST(WindowResizeState, ProgrammaticResizePreservesThePreset) {
+TEST(WindowResizeState, SizeBeforeContentScalePreservesIntentUntilTheNextManualResize) {
   gui::g_state = {};
   gui::g_state.aspect_preset = gui::AspectPreset::k16x9;
-  gui::g_programmatic_resize = 1;
-
+  gui::ResetWindowResizeEvents();
+  // GLFW Win32's WM_DPICHANGED calls SetWindowPos before its content-scale notification.
   gui::WindowSizeCallback(nullptr, /*width=*/1400, /*height=*/900);
-
-  EXPECT_EQ(gui::g_programmatic_resize, 0);
+  gui::NotifyWindowContentScaleChanged();
+  gui::FinishWindowEventPoll();
   EXPECT_EQ(gui::g_state.aspect_preset, gui::AspectPreset::k16x9);
+  EXPECT_TRUE(gui::g_ui_scale_dirty);
+  gui::g_ui_scale_dirty = false;
+  gui::WindowSizeCallback(nullptr, /*width=*/1350, /*height=*/880);
+  gui::FinishWindowEventPoll();
+  EXPECT_EQ(gui::g_state.aspect_preset, gui::AspectPreset::kFree);
   gui::g_state = {};
+}
+
+TEST(WindowResizeEvents, ZeroOneOrTwoSynchronousCallbacksCannotExemptTheNextManualSize) {
+  for (int callback_count : { 0, 1, 2 }) {
+    SCOPED_TRACE(callback_count);
+    gui::WindowResizeEvents events;
+    events.BeginRequest(1400, 900);
+    for (int i = 0; i < callback_count; ++i) {
+      EXPECT_TRUE(events.RecordResize(1400, 900));
+    }
+    events.EndRequest(1400, 900);
+    EXPECT_FALSE(events.FinishEventPoll());
+    EXPECT_FALSE(events.RecordResize(1350, 880));
+    EXPECT_TRUE(events.FinishEventPoll());
+  }
+}
+
+TEST(WindowResizeEvents, DelayedRequestsRemainCorrelatedAcrossQuietPolls) {
+  gui::WindowResizeEvents events;
+  events.BeginRequest(1400, 900);
+  events.EndRequest(1600, 980);
+  EXPECT_FALSE(events.FinishEventPoll());
+  events.BeginRequest(1500, 940);
+  events.EndRequest(1600, 980);
+  EXPECT_TRUE(events.RecordResize(1400, 900));
+  EXPECT_TRUE(events.RecordResize(1500, 940));
+  EXPECT_FALSE(events.FinishEventPoll());
+  EXPECT_FALSE(events.RecordResize(1450, 920));
+  EXPECT_TRUE(events.FinishEventPoll());
+}
+
+TEST(WindowResizeEvents, AManualSizeSupersedesAnUnacknowledgedRequest) {
+  gui::WindowResizeEvents events;
+  events.BeginRequest(1400, 900);
+  events.EndRequest(1600, 980);
+  EXPECT_FALSE(events.RecordResize(1350, 880));
+  EXPECT_TRUE(events.FinishEventPoll());
+  EXPECT_FALSE(events.RecordResize(1400, 900));
+  EXPECT_TRUE(events.FinishEventPoll());
 }
 
 // WindowResizeCondForScale — the shared rule behind defaults_panel.cpp/analysis_panel.cpp/
