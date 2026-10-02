@@ -88,6 +88,10 @@ def test_rhombic_plate_keeps_plus_and_minus_120_separate_from_spherical_distance
     assert result.returncode == 0, result.stderr
     doc = json.loads(result.stdout)
     assert len(doc["physical_l2_members"]) == 2
+    assert {tuple(member["faces"]) for member in doc["physical_l2_members"]} == {
+        (1, 3, 4, 2),
+        (1, 3, 8, 2),
+    }
     assert len(doc["features"]) == 2
     positions = [feature["positions"][0] for feature in doc["features"]]
     assert sorted(position["relative_solar_azimuth_deg"] for position in positions) == [-120.0, 120.0]
