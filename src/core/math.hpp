@@ -299,13 +299,15 @@ struct AxisPoseSampleTrace {
 class RandomSampler {
  public:
   //! Sample one complete product axis pose with an explicit RNG. This is the deterministic,
-  //! replayable form used by diagnostics; the runtime batch helpers below delegate to it so the
-  //! latitude Jacobian, pole fold and roll coupling have one owner.
+  //! replayable form used by diagnostics. The parameterized runtime batch helper below delegates
+  //! to it; InitRay_rot retains the product's established split between its orientation stream and
+  //! its shape/light stream while sharing these transforms.
   static void SampleAxisPose(RandomNumberGenerator& rng, const AxisDistribution& axis_dist, float out[3],
                              const LatLut* lat_lut = nullptr);
 
   // Same product sampler and RNG order as SampleAxisPose, with the generator-coordinate
-  // push-forward exposed for diagnostics.  Existing runtime sampling delegates to this function.
+  // push-forward exposed for diagnostics. Parameterized runtime orientation sampling delegates to
+  // this function without merging the two independently seeded product streams.
   static AxisPoseSampleTrace SampleAxisPoseWithTrace(RandomNumberGenerator& rng, const AxisDistribution& axis_dist,
                                                      float out[3], const LatLut* lat_lut = nullptr);
 
