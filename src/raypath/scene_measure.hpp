@@ -45,6 +45,19 @@ enum class SceneMeasureStatus {
 
 const char* SceneMeasureStatusName(SceneMeasureStatus status);
 
+// Describes whether a reported scalar is directly representable as a double.  Product densities
+// retain their logarithm when the linear value underflows or overflows, so those two states are
+// recoverable diagnostics rather than aliases for an exact zero or an unspecified null.
+enum class SceneMeasureNumericStatus {
+  kAvailable,
+  kExactZero,
+  kUnderflow,
+  kOverflow,
+  kInvalid,
+};
+
+const char* SceneMeasureNumericStatusName(SceneMeasureNumericStatus status);
+
 struct SunMeasureNode {
   int node_id = 0;
   double incident_direction[3]{};
@@ -170,9 +183,17 @@ struct SceneMeasureRow {
   double sun_mass = 0.0;
   double joint_sample_mass = 0.0;
   double joint_proposal_density = 0.0;
+  double joint_target_density = 0.0;
+  double joint_log_proposal_density = 0.0;
+  double joint_log_target_density = 0.0;
   double joint_importance_weight = 0.0;
   double global_weight = 0.0;
   double contribution = 0.0;
+  SceneMeasureNumericStatus joint_proposal_density_status = SceneMeasureNumericStatus::kInvalid;
+  SceneMeasureNumericStatus joint_target_density_status = SceneMeasureNumericStatus::kInvalid;
+  SceneMeasureNumericStatus joint_importance_weight_status = SceneMeasureNumericStatus::kInvalid;
+  SceneMeasureNumericStatus global_weight_status = SceneMeasureNumericStatus::kInvalid;
+  SceneMeasureNumericStatus contribution_status = SceneMeasureNumericStatus::kInvalid;
   SceneMeasureStatus status = SceneMeasureStatus::kNotSupported;
   SceneMeasureStatus evaluation_status = SceneMeasureStatus::kNotSupported;
   std::string reason;
@@ -210,6 +231,13 @@ struct SceneMeasureResult {
   double sun_node_error_estimate = 0.0;
   double spectrum_node_error_estimate = 0.0;
   double sampled_measure_mass = 0.0;
+  SceneMeasureNumericStatus coarse_contribution_status = SceneMeasureNumericStatus::kInvalid;
+  SceneMeasureNumericStatus total_contribution_status = SceneMeasureNumericStatus::kInvalid;
+  SceneMeasureNumericStatus absolute_error_estimate_status = SceneMeasureNumericStatus::kInvalid;
+  SceneMeasureNumericStatus joint_sampling_error_estimate_status = SceneMeasureNumericStatus::kInvalid;
+  SceneMeasureNumericStatus sun_node_error_estimate_status = SceneMeasureNumericStatus::kInvalid;
+  SceneMeasureNumericStatus spectrum_node_error_estimate_status = SceneMeasureNumericStatus::kInvalid;
+  SceneMeasureNumericStatus sampled_measure_mass_status = SceneMeasureNumericStatus::kInvalid;
   SceneMeasureStatusCounts status_counts;
   SceneMeasureStatus status = SceneMeasureStatus::kNotSupported;
   std::string reason;

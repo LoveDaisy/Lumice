@@ -347,8 +347,11 @@ shape and pose, incident/outgoing directions, finite entry area, transmittance, 
 interfaces and boundary margins. Each unique generator latent records its base measure, replay
 coordinate, proposal/target density or mass, mapping Jacobian and status; synchronized shape
 scalars share one leader latent. Pose rows expose the full SO(3) rotation differential including
-roll and its support rank. `joint_sample_mass` is separate from joint proposal density and
-importance weight. `evaluated_row_count` is the streamed integration count, while
+roll and its support rank. `joint_sample_mass` is separate from joint proposal/target density and
+importance weight. Joint products also expose log-density and a numeric status, so a linear
+underflow is distinguishable from an exact zero; contribution totals and error estimates carry the
+same availability status and force `numerical_incomplete` when their double representation fails.
+`evaluated_row_count` is the streamed integration count, while
 `stored_row_count` is a deterministic bottom-k hash sample retained for inspection.
 `sampled_rows_truncated` states when the integral contains more rows than the JSON shows. Internal
 consumers needing the complete field use deterministic replay or the row visitor. Status counts

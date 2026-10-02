@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <nlohmann/json.hpp>
 #include <string>
 #include <vector>
@@ -193,6 +194,14 @@ TEST(PathFeatureReportJson, UsesASeparateSchemaAndDoesNotAcquireATarget) {
   EXPECT_EQ(doc["schema_version"], 3);
   EXPECT_EQ(doc["scene_measure"]["spectrum_nodes"].size(), 1u);
   EXPECT_EQ(doc["scene_measure"]["spectrum_nodes"][0]["source"], "scene_discrete");
+  ASSERT_FALSE(doc["scene_measure"]["sampled_rows"].empty());
+  const auto& sampled_row = doc["scene_measure"]["sampled_rows"][0];
+  EXPECT_TRUE(sampled_row.contains("joint_target_density"));
+  EXPECT_TRUE(sampled_row.contains("joint_log_proposal_density"));
+  EXPECT_TRUE(sampled_row.contains("joint_log_target_density"));
+  EXPECT_EQ(sampled_row["joint_importance_weight_status"], "available");
+  EXPECT_TRUE(doc["scene_measure"].contains("total_contribution_status"));
+  EXPECT_TRUE(doc["scene_measure"].contains("absolute_error_estimate_status"));
   EXPECT_EQ(doc["generator"]["lumice"], "test-version");
   EXPECT_EQ(doc["meta"]["requested_faces"], nlohmann::json({ 3, 5 }));
   EXPECT_FALSE(doc["meta"].contains("target"));
@@ -200,6 +209,19 @@ TEST(PathFeatureReportJson, UsesASeparateSchemaAndDoesNotAcquireATarget) {
   EXPECT_FALSE(doc["physical_l2_members"].empty());
   EXPECT_FALSE(doc["coverage"].empty());
   EXPECT_FALSE(doc["limitations"].empty());
+}
+
+TEST(PathFeatureReportJson, NonFiniteMeasureValuesCarryAnExplicitNumericalStatus) {
+  PathFeatureReport report;
+  report.scene_measure.status = SceneMeasureStatus::kNumericalIncomplete;
+  report.scene_measure.reason = "total contribution accumulation exceeds the finite double range";
+  report.scene_measure.total_contribution = std::numeric_limits<double>::infinity();
+  report.scene_measure.total_contribution_status = SceneMeasureNumericStatus::kOverflow;
+  const nlohmann::json doc = nlohmann::json::parse(PathFeatureReportToJson(report, "test-version"));
+  EXPECT_EQ(doc["scene_measure"]["status"], "numerical_incomplete");
+  EXPECT_TRUE(doc["scene_measure"]["total_contribution"].is_null());
+  EXPECT_EQ(doc["scene_measure"]["total_contribution_status"], "overflow");
+  EXPECT_EQ(doc["scene_measure"]["reason"], report.scene_measure.reason);
 }
 
 }  // namespace

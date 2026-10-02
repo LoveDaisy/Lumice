@@ -38,6 +38,22 @@ const char* SceneMeasureStatusName(SceneMeasureStatus status) {
   return "not_supported";
 }
 
+const char* SceneMeasureNumericStatusName(SceneMeasureNumericStatus status) {
+  switch (status) {
+    case SceneMeasureNumericStatus::kAvailable:
+      return "available";
+    case SceneMeasureNumericStatus::kExactZero:
+      return "exact_zero";
+    case SceneMeasureNumericStatus::kUnderflow:
+      return "underflow";
+    case SceneMeasureNumericStatus::kOverflow:
+      return "overflow";
+    case SceneMeasureNumericStatus::kInvalid:
+      return "invalid";
+  }
+  return "invalid";
+}
+
 const char* LatentBaseMeasureName(LatentBaseMeasure measure) {
   switch (measure) {
     case LatentBaseMeasure::kAtomCounting:
@@ -86,6 +102,128 @@ uint32_t RowSeed(uint32_t seed, int spectrum, int sun, int member, int sample) {
   seed = MixSeed(seed, static_cast<uint32_t>(sun));
   seed = MixSeed(seed, static_cast<uint32_t>(member));
   return MixSeed(seed, static_cast<uint32_t>(sample));
+}
+
+struct NumericValue {
+  double value = 0.0;
+  SceneMeasureNumericStatus status = SceneMeasureNumericStatus::kExactZero;
+};
+
+bool IsRepresentable(const NumericValue& value) {
+  return value.status == SceneMeasureNumericStatus::kAvailable || value.status == SceneMeasureNumericStatus::kExactZero;
+}
+
+NumericValue CheckedNonnegative(double value) {
+  if (!std::isfinite(value) || value < 0.0) {
+    return { std::numeric_limits<double>::quiet_NaN(), SceneMeasureNumericStatus::kInvalid };
+  }
+  return { value, value == 0.0 ? SceneMeasureNumericStatus::kExactZero : SceneMeasureNumericStatus::kAvailable };
+}
+
+NumericValue CheckedMultiply(const NumericValue& lhs, const NumericValue& rhs) {
+  if (!IsRepresentable(lhs)) {
+    return lhs;
+  }
+  if (!IsRepresentable(rhs)) {
+    return rhs;
+  }
+  if (lhs.value == 0.0 || rhs.value == 0.0) {
+    return {};
+  }
+  if (lhs.value > std::numeric_limits<double>::max() / rhs.value) {
+    return { std::numeric_limits<double>::infinity(), SceneMeasureNumericStatus::kOverflow };
+  }
+  const double product = lhs.value * rhs.value;
+  if (product == 0.0) {
+    return { 0.0, SceneMeasureNumericStatus::kUnderflow };
+  }
+  return CheckedNonnegative(product);
+}
+
+NumericValue CheckedMultiply(const NumericValue& lhs, double rhs) {
+  return CheckedMultiply(lhs, CheckedNonnegative(rhs));
+}
+
+NumericValue CheckedAdd(const NumericValue& lhs, const NumericValue& rhs) {
+  if (!IsRepresentable(lhs)) {
+    return lhs;
+  }
+  if (!IsRepresentable(rhs)) {
+    return rhs;
+  }
+  if (lhs.value > std::numeric_limits<double>::max() - rhs.value) {
+    return { std::numeric_limits<double>::infinity(), SceneMeasureNumericStatus::kOverflow };
+  }
+  return CheckedNonnegative(lhs.value + rhs.value);
+}
+
+NumericValue CheckedDivide(const NumericValue& numerator, const NumericValue& denominator) {
+  if (!IsRepresentable(numerator)) {
+    return numerator;
+  }
+  if (!IsRepresentable(denominator) || denominator.value == 0.0) {
+    return { std::numeric_limits<double>::quiet_NaN(), SceneMeasureNumericStatus::kInvalid };
+  }
+  if (numerator.value == 0.0) {
+    return {};
+  }
+  const double quotient = numerator.value / denominator.value;
+  if (!std::isfinite(quotient)) {
+    return { quotient, SceneMeasureNumericStatus::kOverflow };
+  }
+  if (quotient == 0.0) {
+    return { 0.0, SceneMeasureNumericStatus::kUnderflow };
+  }
+  return CheckedNonnegative(quotient);
+}
+
+NumericValue CheckedAbsoluteDifference(const NumericValue& lhs, const NumericValue& rhs) {
+  if (!IsRepresentable(lhs)) {
+    return lhs;
+  }
+  if (!IsRepresentable(rhs)) {
+    return rhs;
+  }
+  return CheckedNonnegative(std::fabs(lhs.value - rhs.value));
+}
+
+NumericValue CheckedMax(const NumericValue& first, const NumericValue& second, const NumericValue& third) {
+  for (const NumericValue* value : { &first, &second, &third }) {
+    if (!IsRepresentable(*value)) {
+      return *value;
+    }
+  }
+  return CheckedNonnegative(std::max({ first.value, second.value, third.value }));
+}
+
+NumericValue MaterializeLogProduct(double log_value, bool exact_zero) {
+  if (exact_zero) {
+    return {};
+  }
+  if (!std::isfinite(log_value)) {
+    return { std::numeric_limits<double>::quiet_NaN(), SceneMeasureNumericStatus::kInvalid };
+  }
+  static const double kLogMax = std::log(std::numeric_limits<double>::max());
+  static const double kLogMin = std::log(std::numeric_limits<double>::denorm_min());
+  if (log_value > kLogMax) {
+    return { std::numeric_limits<double>::infinity(), SceneMeasureNumericStatus::kOverflow };
+  }
+  if (log_value < kLogMin) {
+    return { 0.0, SceneMeasureNumericStatus::kUnderflow };
+  }
+  const double value = std::exp(log_value);
+  if (!std::isfinite(value)) {
+    return { value, SceneMeasureNumericStatus::kOverflow };
+  }
+  if (value == 0.0) {
+    return { 0.0, SceneMeasureNumericStatus::kUnderflow };
+  }
+  return { value, SceneMeasureNumericStatus::kAvailable };
+}
+
+void AssignNumeric(const NumericValue& source, double* value, SceneMeasureNumericStatus* status) {
+  *value = source.value;
+  *status = source.status;
 }
 
 std::string DistributionMeasure(const Distribution& distribution, bool spherical_latitude) {
@@ -790,14 +928,20 @@ void StoreRepresentativeRow(const SceneMeasureRow& row, uint32_t priority, std::
   result->rows_truncated = true;
 }
 
-double SplitError(const double contribution[2], const double mass[2]) {
-  if (!(mass[0] > 0.0) || !(mass[1] > 0.0)) {
-    return 0.0;
+NumericValue SplitError(const NumericValue contribution[2], const NumericValue mass[2]) {
+  if (!IsRepresentable(mass[0])) {
+    return mass[0];
   }
-  const double total_mass = mass[0] + mass[1];
-  const double estimate0 = contribution[0] * total_mass / mass[0];
-  const double estimate1 = contribution[1] * total_mass / mass[1];
-  return 0.5 * std::fabs(estimate0 - estimate1);
+  if (!IsRepresentable(mass[1])) {
+    return mass[1];
+  }
+  if (!(mass[0].value > 0.0) || !(mass[1].value > 0.0)) {
+    return {};
+  }
+  const NumericValue total_mass = CheckedAdd(mass[0], mass[1]);
+  const NumericValue estimate0 = CheckedMultiply(contribution[0], CheckedDivide(total_mass, mass[0]));
+  const NumericValue estimate1 = CheckedMultiply(contribution[1], CheckedDivide(total_mass, mass[1]));
+  return CheckedMultiply(CheckedAbsoluteDifference(estimate0, estimate1), 0.5);
 }
 
 }  // namespace
@@ -860,21 +1004,52 @@ Error BuildSceneMeasure(const ConfigManager& config, const SceneMeasureRequest& 
   bool any_nonzero_source = false;
   bool any_unreachable = false;
   bool any_numerical = false;
+  std::string numerical_reason;
+  const auto note_result_numerical = [&](const std::string& reason) {
+    any_numerical = true;
+    if (numerical_reason.empty()) {
+      numerical_reason = reason;
+    }
+  };
+  const auto mark_row_numerical = [&](SceneMeasureRow* row, const std::string& reason) {
+    note_result_numerical(reason);
+    row->evaluation_status = SceneMeasureStatus::kNumericalIncomplete;
+    if (row->evaluation_reason.empty()) {
+      row->evaluation_reason = reason;
+    } else if (row->evaluation_reason.find(reason) == std::string::npos) {
+      row->evaluation_reason += "; " + reason;
+    }
+    if (row->status != SceneMeasureStatus::kZeroWeight) {
+      row->status = SceneMeasureStatus::kNumericalIncomplete;
+      row->reason = row->evaluation_reason;
+    }
+  };
   const bool has_continuous_factor =
       std::any_of(result.factors.begin(), result.factors.end(),
                   [](const MeasureFactorDescriptor& factor) { return factor.support_dimension > 0; });
   const bool approximate_sun = continuous_sun;
   const bool approximate_spectrum = continuous_spectrum;
-  double sun_partition_contribution[2]{};
-  double sun_partition_mass[2]{};
+  NumericValue sun_partition_contribution[2];
+  NumericValue sun_partition_mass[2];
   for (const SunMeasureNode& node : result.sun_nodes) {
-    sun_partition_mass[node.node_id & 1] += node.mass;
+    NumericValue& partition = sun_partition_mass[node.node_id & 1];
+    partition = CheckedAdd(partition, CheckedNonnegative(node.mass));
+    if (!IsRepresentable(partition)) {
+      note_result_numerical("sun partition mass is not representable as a finite double");
+    }
   }
-  double spectrum_partition_contribution[2]{};
-  double spectrum_partition_mass[2]{};
+  NumericValue spectrum_partition_contribution[2];
+  NumericValue spectrum_partition_mass[2];
   for (const SpectrumMeasureNode& node : result.spectrum_nodes) {
-    spectrum_partition_mass[node.node_id & 1] += node.weight;
+    NumericValue& partition = spectrum_partition_mass[node.node_id & 1];
+    partition = CheckedAdd(partition, CheckedNonnegative(node.weight));
+    if (!IsRepresentable(partition)) {
+      note_result_numerical("spectrum partition mass is not representable as a finite double");
+    }
   }
+  NumericValue coarse_contribution;
+  NumericValue total_contribution;
+  NumericValue sampled_measure_mass;
   std::vector<uint32_t> stored_priorities;
   for (const SpectrumMeasureNode& spectrum : result.spectrum_nodes) {
     for (const SunMeasureNode& sun : result.sun_nodes) {
@@ -891,9 +1066,6 @@ Error BuildSceneMeasure(const ConfigManager& config, const SceneMeasureRequest& 
           row.spectrum_weight = spectrum.weight;
           row.sun_mass = sun.mass;
           row.joint_sample_mass = 1.0 / request.sample_count;
-          row.joint_proposal_density = 1.0;
-          row.joint_importance_weight = 1.0;
-          row.global_weight = spectrum.weight * sun.mass;
           row.status = spectrum.weight == 0.0 || sun.mass == 0.0 ? SceneMeasureStatus::kZeroWeight :
                                                                    SceneMeasureStatus::kConfirmed;
           row.evaluation_status = SceneMeasureStatus::kConfirmed;
@@ -902,10 +1074,17 @@ Error BuildSceneMeasure(const ConfigManager& config, const SceneMeasureRequest& 
           }
           any_nonzero_source = any_nonzero_source || (spectrum.weight > 0.0 && sun.mass > 0.0);
 
+          const NumericValue global_weight =
+              CheckedMultiply(CheckedNonnegative(spectrum.weight), CheckedNonnegative(sun.mass));
+          AssignNumeric(global_weight, &row.global_weight, &row.global_weight_status);
+          if (!IsRepresentable(global_weight)) {
+            mark_row_numerical(&row, "global spectrum and sun weight product is not representable");
+          }
+
           RandomNumberGenerator rng(row.replay_seed);
           double incident[3] = { sun.incident_direction[0], sun.incident_direction[1], sun.incident_direction[2] };
-          double conditional_weight = 1.0;
-          double conditional_measure_mass = 1.0;
+          NumericValue conditional_weight{ 1.0, SceneMeasureNumericStatus::kAvailable };
+          NumericValue conditional_measure_mass{ 1.0, SceneMeasureNumericStatus::kAvailable };
           for (size_t layer_index = 0; layer_index < layers.size(); layer_index++) {
             SceneMeasureLayerRow layer =
                 EvaluateLayer(rng, layers[layer_index], static_cast<int>(layer_index),
@@ -914,13 +1093,25 @@ Error BuildSceneMeasure(const ConfigManager& config, const SceneMeasureRequest& 
             layer.source_sun_node_id = sun.node_id;
             layer.source_spectrum_node_id = spectrum.node_id;
             layer.source_wavelength_nm = spectrum.wavelength_nm;
-            conditional_weight *= layer.crystal_share * layer.continuation_mass;
-            conditional_measure_mass *= layer.crystal_share * layer.continuation_mass;
+            const NumericValue layer_mass =
+                CheckedMultiply(CheckedNonnegative(layer.crystal_share), CheckedNonnegative(layer.continuation_mass));
+            conditional_weight = CheckedMultiply(conditional_weight, layer_mass);
+            conditional_measure_mass = CheckedMultiply(conditional_measure_mass, layer_mass);
+            if (!IsRepresentable(conditional_weight) || !IsRepresentable(conditional_measure_mass)) {
+              mark_row_numerical(&row, "layer conditional mass product is not representable");
+            }
             if (layer.status == SceneMeasureStatus::kConfirmed) {
-              conditional_weight *= analytic::kLiAreaPerEngineArea * layer.entry_measure * layer.fresnel_weight;
+              const NumericValue optical_weight =
+                  CheckedMultiply(CheckedMultiply(CheckedNonnegative(analytic::kLiAreaPerEngineArea),
+                                                  CheckedNonnegative(layer.entry_measure)),
+                                  CheckedNonnegative(layer.fresnel_weight));
+              conditional_weight = CheckedMultiply(conditional_weight, optical_weight);
+              if (!IsRepresentable(conditional_weight)) {
+                mark_row_numerical(&row, "layer optical weight product is not representable");
+              }
               std::copy(layer.outgoing_direction, layer.outgoing_direction + 3, incident);
             } else {
-              conditional_weight = 0.0;
+              conditional_weight = {};
               row.evaluation_status = layer.status;
               row.evaluation_reason = "layer " + std::to_string(layer_index) + ": " + layer.reason;
               if (row.status != SceneMeasureStatus::kZeroWeight) {
@@ -931,35 +1122,106 @@ Error BuildSceneMeasure(const ConfigManager& config, const SceneMeasureRequest& 
               any_numerical = any_numerical || layer.status == SceneMeasureStatus::kNumericalIncomplete;
             }
             row.layers.push_back(std::move(layer));
-            if (conditional_weight == 0.0) {
+            if (IsRepresentable(conditional_weight) && conditional_weight.value == 0.0) {
               break;
             }
           }
-          double target_density = 1.0;
+          double proposal_log_density = 0.0;
+          double target_log_density = 0.0;
+          double importance_log_weight = 0.0;
+          bool proposal_is_zero = false;
+          bool target_is_zero = false;
+          bool proposal_log_invalid = false;
+          bool target_log_invalid = false;
+          bool importance_log_invalid = false;
           for (const LatentMeasureSample& latent : row.latents) {
-            row.joint_proposal_density *= latent.proposal_density_or_mass;
-            target_density *= latent.target_density_or_mass;
             if (latent.status == SceneMeasureStatus::kNumericalIncomplete) {
-              row.evaluation_status = SceneMeasureStatus::kNumericalIncomplete;
-              row.evaluation_reason = "a generator latent has a non-finite density or mapping Jacobian";
-              if (row.status != SceneMeasureStatus::kZeroWeight) {
-                row.status = row.evaluation_status;
-                row.reason = row.evaluation_reason;
-              }
-              conditional_weight = 0.0;
-              any_numerical = true;
+              mark_row_numerical(&row, "a generator latent has a non-finite density or mapping Jacobian");
+              conditional_weight = { std::numeric_limits<double>::quiet_NaN(), SceneMeasureNumericStatus::kInvalid };
+            }
+            const double proposal = latent.proposal_density_or_mass;
+            const double target = latent.target_density_or_mass;
+            double proposal_log_term = 0.0;
+            double target_log_term = 0.0;
+            if (!(proposal > 0.0)) {
+              proposal_is_zero = proposal_is_zero || proposal == 0.0;
+              proposal_log_invalid = proposal_log_invalid || proposal < 0.0 || !std::isfinite(proposal);
+            } else {
+              proposal_log_term = std::log(proposal);
+              proposal_log_density += proposal_log_term;
+              proposal_log_invalid = proposal_log_invalid || !std::isfinite(proposal_log_density);
+            }
+            if (!(target > 0.0)) {
+              target_is_zero = target_is_zero || target == 0.0;
+              target_log_invalid = target_log_invalid || target < 0.0 || !std::isfinite(target);
+            } else {
+              target_log_term = std::log(target);
+              target_log_density += target_log_term;
+              target_log_invalid = target_log_invalid || !std::isfinite(target_log_density);
+            }
+            if (proposal > 0.0 && target > 0.0) {
+              importance_log_weight += target_log_term - proposal_log_term;
+              importance_log_invalid = importance_log_invalid || !std::isfinite(importance_log_weight);
             }
           }
-          row.joint_importance_weight =
-              row.joint_proposal_density > 0.0 ? target_density / row.joint_proposal_density : 0.0;
-          row.contribution = row.global_weight * row.joint_sample_mass * conditional_weight;
-          result.sampled_measure_mass += row.global_weight * row.joint_sample_mass * conditional_measure_mass;
-          result.total_contribution += row.contribution;
-          if (sample < coarse_count) {
-            result.coarse_contribution += 2.0 * row.contribution;
+
+          row.joint_log_proposal_density =
+              proposal_is_zero ? std::numeric_limits<double>::quiet_NaN() : proposal_log_density;
+          row.joint_log_target_density = target_is_zero ? std::numeric_limits<double>::quiet_NaN() : target_log_density;
+          NumericValue proposal_density =
+              proposal_log_invalid ?
+                  NumericValue{ std::numeric_limits<double>::quiet_NaN(), SceneMeasureNumericStatus::kInvalid } :
+                  MaterializeLogProduct(proposal_log_density, proposal_is_zero);
+          NumericValue target_density = target_log_invalid ? NumericValue{ std::numeric_limits<double>::quiet_NaN(),
+                                                                           SceneMeasureNumericStatus::kInvalid } :
+                                                             MaterializeLogProduct(target_log_density, target_is_zero);
+          NumericValue importance_weight;
+          if (proposal_log_invalid || target_log_invalid || importance_log_invalid || proposal_is_zero) {
+            importance_weight = { std::numeric_limits<double>::quiet_NaN(), SceneMeasureNumericStatus::kInvalid };
+          } else {
+            importance_weight = MaterializeLogProduct(importance_log_weight, target_is_zero);
           }
-          sun_partition_contribution[sun.node_id & 1] += row.contribution;
-          spectrum_partition_contribution[spectrum.node_id & 1] += row.contribution;
+          AssignNumeric(proposal_density, &row.joint_proposal_density, &row.joint_proposal_density_status);
+          AssignNumeric(target_density, &row.joint_target_density, &row.joint_target_density_status);
+          AssignNumeric(importance_weight, &row.joint_importance_weight, &row.joint_importance_weight_status);
+          if (!IsRepresentable(importance_weight)) {
+            mark_row_numerical(&row, "joint importance weight is not representable from the generator densities");
+            conditional_weight = { std::numeric_limits<double>::quiet_NaN(), SceneMeasureNumericStatus::kInvalid };
+          }
+
+          const NumericValue sample_mass = CheckedNonnegative(row.joint_sample_mass);
+          const NumericValue contribution =
+              CheckedMultiply(CheckedMultiply(global_weight, sample_mass), conditional_weight);
+          AssignNumeric(contribution, &row.contribution, &row.contribution_status);
+          if (!IsRepresentable(contribution)) {
+            mark_row_numerical(&row, "row contribution is not representable as a finite double");
+          }
+          const NumericValue row_measure_mass =
+              CheckedMultiply(CheckedMultiply(global_weight, sample_mass), conditional_measure_mass);
+          sampled_measure_mass = CheckedAdd(sampled_measure_mass, row_measure_mass);
+          if (!IsRepresentable(sampled_measure_mass)) {
+            mark_row_numerical(&row, "sampled measure mass accumulation exceeds the finite double range");
+          }
+          total_contribution = CheckedAdd(total_contribution, contribution);
+          if (!IsRepresentable(total_contribution)) {
+            mark_row_numerical(&row, "total contribution accumulation exceeds the finite double range");
+          }
+          if (sample < coarse_count) {
+            coarse_contribution = CheckedAdd(coarse_contribution, CheckedMultiply(contribution, 2.0));
+            if (!IsRepresentable(coarse_contribution)) {
+              mark_row_numerical(&row, "coarse contribution accumulation exceeds the finite double range");
+            }
+          }
+          NumericValue& sun_contribution = sun_partition_contribution[sun.node_id & 1];
+          sun_contribution = CheckedAdd(sun_contribution, contribution);
+          if (!IsRepresentable(sun_contribution)) {
+            mark_row_numerical(&row, "sun partition contribution accumulation exceeds the finite double range");
+          }
+          NumericValue& spectrum_contribution = spectrum_partition_contribution[spectrum.node_id & 1];
+          spectrum_contribution = CheckedAdd(spectrum_contribution, contribution);
+          if (!IsRepresentable(spectrum_contribution)) {
+            mark_row_numerical(&row, "spectrum partition contribution accumulation exceeds the finite double range");
+          }
           any_confirmed = any_confirmed || row.status == SceneMeasureStatus::kConfirmed;
           CountStatus(row.status, &result.status_counts);
           if (row.status == SceneMeasureStatus::kZeroWeight &&
@@ -979,23 +1241,39 @@ Error BuildSceneMeasure(const ConfigManager& config, const SceneMeasureRequest& 
 
   result.stored_row_count = static_cast<int>(result.rows.size());
   result.rows_truncated = result.evaluated_row_count > result.stored_row_count;
-  result.joint_sampling_error_estimate = std::fabs(result.total_contribution - result.coarse_contribution);
-  result.sun_node_error_estimate = approximate_sun ? SplitError(sun_partition_contribution, sun_partition_mass) : 0.0;
-  result.spectrum_node_error_estimate =
-      approximate_spectrum ? SplitError(spectrum_partition_contribution, spectrum_partition_mass) : 0.0;
-  result.absolute_error_estimate = std::max(
-      { result.joint_sampling_error_estimate, result.sun_node_error_estimate, result.spectrum_node_error_estimate });
-  const double scale = std::max(std::fabs(result.total_contribution), std::fabs(result.coarse_contribution));
+  AssignNumeric(coarse_contribution, &result.coarse_contribution, &result.coarse_contribution_status);
+  AssignNumeric(total_contribution, &result.total_contribution, &result.total_contribution_status);
+  AssignNumeric(sampled_measure_mass, &result.sampled_measure_mass, &result.sampled_measure_mass_status);
+  const NumericValue joint_sampling_error = CheckedAbsoluteDifference(total_contribution, coarse_contribution);
+  const NumericValue sun_node_error =
+      approximate_sun ? SplitError(sun_partition_contribution, sun_partition_mass) : NumericValue{};
+  const NumericValue spectrum_node_error =
+      approximate_spectrum ? SplitError(spectrum_partition_contribution, spectrum_partition_mass) : NumericValue{};
+  const NumericValue absolute_error = CheckedMax(joint_sampling_error, sun_node_error, spectrum_node_error);
+  AssignNumeric(joint_sampling_error, &result.joint_sampling_error_estimate,
+                &result.joint_sampling_error_estimate_status);
+  AssignNumeric(sun_node_error, &result.sun_node_error_estimate, &result.sun_node_error_estimate_status);
+  AssignNumeric(spectrum_node_error, &result.spectrum_node_error_estimate, &result.spectrum_node_error_estimate_status);
+  AssignNumeric(absolute_error, &result.absolute_error_estimate, &result.absolute_error_estimate_status);
+  if (!IsRepresentable(joint_sampling_error) || !IsRepresentable(sun_node_error) ||
+      !IsRepresentable(spectrum_node_error) || !IsRepresentable(absolute_error)) {
+    note_result_numerical("one or more integration error estimates are not representable as finite doubles");
+  }
+  const double scale = IsRepresentable(total_contribution) && IsRepresentable(coarse_contribution) ?
+                           std::max(total_contribution.value, coarse_contribution.value) :
+                           0.0;
   const bool source_resolution_incomplete =
       (approximate_sun && result.sun_nodes.size() < 2) || (approximate_spectrum && result.spectrum_nodes.size() < 2) ||
-      (approximate_sun && (!(sun_partition_mass[0] > 0.0) || !(sun_partition_mass[1] > 0.0))) ||
-      (approximate_spectrum && (!(spectrum_partition_mass[0] > 0.0) || !(spectrum_partition_mass[1] > 0.0)));
+      (approximate_sun && (!(sun_partition_mass[0].value > 0.0) || !(sun_partition_mass[1].value > 0.0))) ||
+      (approximate_spectrum &&
+       (!(spectrum_partition_mass[0].value > 0.0) || !(spectrum_partition_mass[1].value > 0.0)));
   if (!any_nonzero_source) {
     result.status = SceneMeasureStatus::kZeroWeight;
     result.reason = "every spectrum node has zero weight";
   } else if (any_numerical) {
     result.status = SceneMeasureStatus::kNumericalIncomplete;
-    result.reason = "at least one evaluated row ended in a numerical-incomplete state";
+    result.reason = numerical_reason.empty() ? "at least one evaluated row ended in a numerical-incomplete state" :
+                                               numerical_reason;
   } else if (!any_confirmed && any_unreachable && has_continuous_factor) {
     result.status = SceneMeasureStatus::kNumericalIncomplete;
     result.reason =

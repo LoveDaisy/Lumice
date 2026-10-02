@@ -26,7 +26,7 @@ Raypath 诊断以当前场景的实际映射和测度为对象，不以路径、
 
 每个唯一生成 latent 分别记录 base measure（原子计数、单位区间、Lebesgue 或 Bernoulli 计数）、重放坐标、proposal/target 密度或质量、映射 Jacobian 和数值状态。同步 shape scalar 共享首见 leader 的分布与 latent；height 的绝对值 fold、latitude LUT 的 inverse-CDF 与 flip 分支、GaussianLegacy 极点 fold、azimuth/roll 耦合和 degree→radian 映射都在同一记录中。姿态局部结构是 field 使用的 `(longitude, latitude, roll)` 到行主序旋转矩阵的解析 `3×9` 微分，支持 rank 由实际生成坐标的 SO(3) 切映射求得；极点处 longitude 与 roll 的同向生成元按精确图结构合并，若正展宽 latitude 的 float 样本恰落在奇异图上则 rank 为 `-1`（局部不可用），不能误报成严格低维支持。
 
-每条测度行分别保存全局权重、`joint_sample_mass=1/N`、与之分离的连续/离散 joint proposal、每层条件质量、`A`、逐接口 Fresnel 结果、实际 shape/pose/member 和来源 id。总体量使用 `A*T` 与上述质量相乘；单位为 analytic kernel 的 `a=1` 相对有限晶体面积单位乘原始场景谱权重，不是 `m²` 或 `sr`。联合样本、太阳节点和 illuminant 节点分别给误差估计；field 自身的导数 availability 和 margin 状态仍是局部数值证据，两者不得混写。一个有限太阳或 illuminant 只有一个节点时，结果明确为 `numerical_incomplete`。
+每条测度行分别保存全局权重、`joint_sample_mass=1/N`、与之分离的连续/离散 joint proposal/target、每层条件质量、`A`、逐接口 Fresnel 结果、实际 shape/pose/member 和来源 id。proposal/target 的联合积同时保存 log-density；importance 按逐因子 log-ratio 累积，而不是先算两个可能下溢的乘积再相除。每个线性 joint 值及总体量都携带 `available`、`exact_zero`、`underflow`、`overflow` 或 `invalid` 状态：下溢的线性密度可由有限 log-density 区分于真实零，非有限贡献、累计量或误差则使结果成为 `numerical_incomplete`，不得以 JSON `null` 配合 `confirmed` 掩盖。总体量使用 `A*T` 与上述质量相乘；单位为 analytic kernel 的 `a=1` 相对有限晶体面积单位乘原始场景谱权重，不是 `m²` 或 `sr`。联合样本、太阳节点和 illuminant 节点分别给误差估计；field 自身的导数 availability 和 margin 状态仍是局部数值证据，两者不得混写。一个有限太阳或 illuminant 只有一个节点时，结果明确为 `numerical_incomplete`。
 
 行级 `status` 保留源零权重，`evaluation_status` 独立保留 field/生成数值失败；结果级计数同时汇总两者。连续支持的有限随机样本全部未命中只能得到 `numerical_incomplete`，只有完整原子枚举才可据此声明 `physically_unreachable`。积分流式处理全部行，JSON 只保存确定性 bottom-k hash 代表样本；内部消费者通过同 seed 重放或逐行 visitor 读取完整场，不得把代表样本当作全集。
 

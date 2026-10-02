@@ -225,6 +225,90 @@ TEST(SceneMeasure, ContinuousIlluminantNoHitDoesNotClaimAtomicExhaustion) {
   EXPECT_EQ(spectrum->support_dimension, 1);
 }
 
+TEST(SceneMeasure, EqualProposalAndTargetRemainUnitImportanceInManyLayers) {
+  constexpr int kLayerCount = 64;
+  std::vector<CrystalConfig> crystals;
+  std::vector<IdType> ids;
+  std::vector<float> continuation(kLayerCount, 1.0f);
+  continuation.back() = 0.0f;
+  std::vector<std::vector<int>> forward(kLayerCount, { 3, 6 });
+  std::vector<std::vector<int>> backward(kLayerCount, { 6, 3 });
+  AxisDistribution axis;
+  axis.latitude_dist = { DistributionType::kGaussianLegacy, 90.0f, 1e-8f };
+  axis.azimuth_dist = { DistributionType::kGaussianLegacy, 180.0f, 1e-8f };
+  axis.roll_dist = { DistributionType::kGaussianLegacy, 0.0f, 1e-8f };
+  for (int i = 0; i < kLayerCount; i++) {
+    ids.push_back(i + 1);
+    auto crystal = Prism(i + 1, axis);
+    auto& shape = std::get<PrismCrystalParam>(crystal.param_);
+    shape.h_ = { DistributionType::kGaussian, 1.0f, 1e-8f };
+    for (auto& distance : shape.d_) {
+      distance = { DistributionType::kGaussian, 1.0f, 1e-8f };
+    }
+    crystals.push_back(std::move(crystal));
+  }
+  auto request = Request(ids, forward, 2);
+  request.member_selection = SceneMemberSelection::kExplicitChains;
+  request.explicit_member_chains = { forward, backward };
+  const auto result = Build(Scene(std::move(crystals), continuation), request);
+  bool saw_complete_chain = false;
+  bool saw_density_underflow = false;
+  for (const auto& row : result.rows) {
+    if (row.layers.size() != kLayerCount || row.evaluation_status != SceneMeasureStatus::kConfirmed) {
+      continue;
+    }
+    saw_complete_chain = true;
+    // Each latent has exactly the same proposal and target. Their ratio is one even when
+    // separate products of hundreds of Gaussian densities underflow in floating arithmetic.
+    EXPECT_DOUBLE_EQ(row.joint_importance_weight, 1.0);
+    EXPECT_EQ(row.joint_importance_weight_status, SceneMeasureNumericStatus::kAvailable);
+    EXPECT_TRUE(std::isfinite(row.joint_log_proposal_density));
+    EXPECT_DOUBLE_EQ(row.joint_log_proposal_density, row.joint_log_target_density);
+    EXPECT_EQ(row.joint_proposal_density_status, row.joint_target_density_status);
+    saw_density_underflow =
+        saw_density_underflow || row.joint_proposal_density_status == SceneMeasureNumericStatus::kUnderflow;
+  }
+  EXPECT_TRUE(saw_complete_chain);
+  EXPECT_TRUE(saw_density_underflow);
+}
+
+TEST(SceneMeasure, OverflowingFiniteSourceWeightHasANumericalStatus) {
+  constexpr int kLayerCount = 64;
+  std::vector<CrystalConfig> crystals;
+  std::vector<IdType> ids;
+  std::vector<float> continuation(kLayerCount, 1.0f);
+  continuation.back() = 0.0f;
+  std::vector<std::vector<int>> forward(kLayerCount, { 3, 6 });
+  std::vector<std::vector<int>> backward(kLayerCount, { 6, 3 });
+  AxisDistribution axis;
+  axis.latitude_dist = { DistributionType::kNoRandom, 90.0f, 0.0f };
+  axis.azimuth_dist = { DistributionType::kNoRandom, 180.0f, 0.0f };
+  axis.roll_dist = { DistributionType::kNoRandom, 0.0f, 0.0f };
+  for (int i = 0; i < kLayerCount; i++) {
+    ids.push_back(i + 1);
+    auto crystal = Prism(i + 1, axis);
+    std::get<PrismCrystalParam>(crystal.param_).h_ = { DistributionType::kNoRandom, 1.0f, 0.0f };
+    crystals.push_back(std::move(crystal));
+  }
+  auto request = Request(ids, forward, 2);
+  request.member_selection = SceneMemberSelection::kExplicitChains;
+  request.explicit_member_chains = { forward, backward };
+  request.spectrum_source = SceneSpectrumSource::kDiagnostic;
+  request.diagnostic_wavelengths_nm = { 550.0 };
+  request.diagnostic_wavelength_weights = { std::numeric_limits<double>::max() };
+  const auto result = Build(Scene(std::move(crystals), continuation), request);
+  EXPECT_TRUE(std::any_of(result.rows.begin(), result.rows.end(), [](const auto& row) {
+    return row.layers.size() == kLayerCount && std::all_of(row.layers.begin(), row.layers.end(), [](const auto& layer) {
+             return layer.status == SceneMeasureStatus::kConfirmed;
+           });
+  }));
+  EXPECT_EQ(result.status, SceneMeasureStatus::kNumericalIncomplete);
+  EXPECT_NE(result.reason.find("finite double range"), std::string::npos);
+  EXPECT_TRUE(result.total_contribution_status == SceneMeasureNumericStatus::kOverflow ||
+              result.coarse_contribution_status == SceneMeasureNumericStatus::kOverflow ||
+              result.sampled_measure_mass_status == SceneMeasureNumericStatus::kOverflow);
+}
+
 TEST(SceneMeasure, SceneSpectrumWeightsScaleOnceAndKeepZeroNodes) {
   const ConfigManager config = Scene({ Prism(1, RandomAxis()) }, { 0.0f }, { { 550.0f, 2.0f }, { 600.0f, 0.0f } });
   SceneMeasureRequest request = Request({ 1 }, { { 3, 5 } });
