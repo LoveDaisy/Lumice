@@ -357,7 +357,44 @@ detector has made that assessment. The report does not promote a label-orbit res
 equivalence, does not use a direction residual as a theta-dependent integration mask, and does not
 treat internal TIR as a path-validity gate.
 
-### 7.3 Coverage and limitations
+### 7.3 Observed CLI example
+
+This command is a runnable example against the checked-in fixed input:
+
+```bash
+build/cmake_install/static/Lumice raypath \
+  -f test/e2e/configs/raypath_feature_random_regular.json \
+  --crystal 1 --path 3-1-5 --report --events 8192
+```
+
+It writes one JSON document to stdout and progress to stderr. The stable parts
+of the observed document are shaped like this (numeric values shown are the
+fixed-input observation, not general constants):
+
+```json
+{
+  "schema": "lumice.path-feature-report",
+  "schema_version": 1,
+  "meta": {"requested_faces": [3, 1, 5], "sample_count": 8192},
+  "features": [
+    {"id": "random_regular.3-1-5.solar_dispersion_edge",
+     "evidence_status": "confirmed", "location": "solar side"},
+    {"id": "random_regular.3-1-5.solar_caustic_candidate",
+     "evidence_status": "candidate", "location": "solar side"},
+    {"id": "random_regular.3-1-5.antisolar_tir_blue_band",
+     "evidence_status": "confirmed", "visible": true},
+    {"id": "random_regular.3-1-5.exit_gate",
+     "evidence_status": "confirmed", "visible": false}
+  ]
+}
+```
+
+The full output also carries the physical-L2 member list, per-member and
+per-wavelength `A*T` brightness rows, `coverage`, and `limitations`. Scripts
+must consume those fields rather than infer unsupported coverage from the four
+feature ids alone.
+
+### 7.4 Coverage and limitations
 
 Coverage statuses are `supported`, `not_supported`, `not_detected_at_resolution`,
 `numerical_incomplete`, and `physically_unreachable`. Consumers must display the status and reason;

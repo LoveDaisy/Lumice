@@ -115,9 +115,38 @@ def repeats(name):  # any layer whose face sequence repeats a face consecutively
 clean = [r for r in rows if r[0] != "other (not recorded)" and not repeats(r[0])]
 ```
 
+## 7. Path feature reports from the CLI
+
+The GUI's Raypath Analysis window ranks the energy of complete raypaths in an
+ROI. It does not yet show path-feature reports or connect a feature to a
+clickable point in the preview. For the supported path-level diagnostic cases,
+use the CLI separately:
+
+```bash
+build/cmake_install/static/Lumice raypath \
+  -f test/e2e/configs/raypath_feature_random_regular.json \
+  --crystal 1 --path 3-1-5 --report --events 8192
+```
+
+`--report` has no sky target: it writes a separate JSON document describing
+physical L2 members, requested wavelengths, finite-crystal `A*T` brightness,
+positioned features, coverage, and limitations. It cannot be combined with
+`--target`, `--grid`, or `--warm`; use the existing target command when you
+need the fiber and per-pose detail at one point.
+
+The initial detector set is intentionally small. On the fixed regular-prism
+case, the output distinguishes a confirmed solar-side dispersion edge, a
+separate caustic candidate, a confirmed antisolar TIR blue band, and an
+assessed-but-not-visible exit gate. It does not enumerate all sky features,
+convolve the solar disc, decide general oriented kink curves, or discover
+open/multiple components, cone-crystal empty cases, or rank-0 features. Read
+`coverage` and `limitations`; an empty `features` list is not a proof that the
+path has no physical feature.
+
 ## Further reading
 
 - Full panel reference → [`../gui-guide.md`](../gui-guide.md)
 - Filter syntax used by "Exclude this raypath" → [`../gui-guide.md`](../gui-guide.md) §"Filter Tab"
 - Design record and mechanism detail → [`../raypath-analysis-panel.md`](../raypath-analysis-panel.md)
 - Why the feature is split the way it is, and where it is heading (Chinese) → [`../raypath-analysis.md`](../raypath-analysis.md)
+- Full CLI report fields and boundaries → [`../raypath-cli-output.md`](../raypath-cli-output.md) §7

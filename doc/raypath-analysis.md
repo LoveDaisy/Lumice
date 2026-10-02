@@ -249,11 +249,14 @@ LI Phase II 把光路上所有权重对姿态的依赖收拢成一个方向（�
 3. **内部 TIR 权重折线**：部分反射逐渐变为全反射的位置。路径在折线两侧仍可有效，能量连续，
    只是 Fresnel 权重的导数折断；它既不是能量跳变，也不能与有效域边界混称。
 
-颜色说明同样必须带范围。LI 对随机取向 `3-1-5` 的既有「无红边」结论只覆盖已检查的出射门和
-反日侧 `δ = 100–150°` 区域；同一检查在约 `δ = 130–142°` 给出 TIR 权重折线对应的蓝带，不能
-外推为全天无红边。太阳侧约 22° 的红边是本轮新观察；其是否为普通色散内缘或最小偏折角附近的
-聚光仍待核验。内反射折线在已检查路径上偏向蓝色，但这不是所有颜色机制的通则。判据、符号约定与
-特征分类仍以 LI `docs/chromatic-module-c.md` 和 `docs/conventions.md` #22 为准，本文不重新推导。
+颜色说明同样必须带范围。LI 固定诊断 reference 的
+[`6a6c592`](https://github.com/LoveDaisy/Lumice-Integral/blob/6a6c592a653fd9b4aa38b3d418143526de58a5a7/docs/raypath-diagnostic-reference.md)
+明确：随机取向 `3-1-5` 的“无红边”只指已检查的反日侧出射门，不能外推为全天无红边，也不能说
+路径“只有蓝色”。同一 reference 在约 `δ = 130–142°` 给出 TIR 权重折线对应的蓝带；本仓固定
+report 进一步确认太阳侧约 22° 的普通最小偏折色散红--蓝边，并把同位置的 caustic 保留为 candidate。
+内反射折线在该检查范围内偏向蓝色，但这不是所有颜色机制的通则。判据、符号约定与特征分类仍以 LI
+[`chromatic-module-c.md`](https://github.com/LoveDaisy/Lumice-Integral/blob/6a6c592a653fd9b4aa38b3d418143526de58a5a7/docs/chromatic-module-c.md)
+和 `docs/conventions.md` #22 为准，本文不重新推导。
 
 空结果也不构成机制结论。`reach.target_in_range: true`、空 `components` 或
 `discovery.complete: true` 各自都不能单独证明有限晶体不放行，或已完全枚举全部分量；各自能说明
@@ -543,6 +546,20 @@ feature report。它按配置实际允许的物理 L2 成员和波长积分有�
 超出该预算的请求以 `invalid_argument` 拒绝，不产生部分 report。
 它不是全天特征枚举器；未支持、当前分辨率未检出、数值未完成与物理不可达由 coverage 分开表达。
 旧的目标点接口仍负责 fiber 与晶体内逐段详情，两份 JSON schema 彼此独立。
+
+**已验收的诊断边界（2026-10-01）**：固定随机正六棱柱下，`3-5` 的普通最小偏折红内缘以及
+`3-1-5` 的太阳侧色散边已确认；后者的焦散只保留为 candidate。`3-1-5` 的反日特征则是独立确认的
+内部反射 TIR 蓝带，不是路径失效：同一边界姿态去掉内部反射后蓝/红比会翻转，而 exit gate 已评估为
+不可见。理想水平菱形薄板的 ±120°分支同时报告相对太阳方位和真实球面夹角，不能把两者混同；每个
+物理 L2 成员、波长和有限晶体 `A*T` 都是独立证据。`--target` 已验证有限 arc、多 arc、开 arc 和
+`point_mass` 的点级表示，但后两类及锥晶空结果并没有被升级为 report 的 feature discovery。
+完整固定输入、命令、数值和哈希记录见
+[`raypath-feature-diagnostic-acceptance.md`](raypath-feature-diagnostic-acceptance.md)。
+
+**尚未交付的交互层**：当前 GUI 不消费 feature report，也没有把「亮度分布 + 多个位置化特征 +
+对应机制」联动到 Analyze 工作区。布局、选择语义和退化交互仍是设计问题；不得以 HTML 原型或目标点
+fiber 查询冒充这一 GUI 能力。未来界面应显示 report 的 coverage 与 limitations，并在用户选择
+`representative_target` 后再调用旧目标点接口获取 fiber 详情。
 
 **窗口关系与场景同步（2026-09-27 owner 裁定）**：
 

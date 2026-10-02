@@ -5,7 +5,8 @@ observational, not a cross-machine visual golden or a claim about all scenes.
 
 ## Reproduction envelope
 
-- Binary: `build/cmake_install/static/Lumice`.
+- Binary: `build/cmake_install/static/Lumice`, built from product revision
+  `9af04880618ea7d095a31f3d7d8b48203877a0be`.
 - Report inputs: `test/e2e/configs/raypath_feature_random_regular.json` and
   `test/e2e/configs/raypath_feature_rhombic_plate.json`, with `--events 8192`.
 - The 3-1-5 render used a regular prism (height and all face distances 1), a
@@ -17,6 +18,19 @@ observational, not a cross-machine visual golden or a claim about all scenes.
   altitude 20, plus a randomized prism/pyramid target scene at sun altitude
   15. They ran at 1k--200k events as appropriate to the target query.
 
+The frozen input SHA-256 values are below. They identify the configurations
+rather than claiming that Monte Carlo images are byte-identical across
+machines.
+
+| Input | SHA-256 |
+|---|---|
+| `test/e2e/configs/raypath_feature_random_regular.json` | `60031d0534c8767cbaf5bcee9bc953adc3363640d4b04ef11aff5354ded30920` |
+| `test/e2e/configs/raypath_feature_rhombic_plate.json` | `e46e3399f5f4a4ad6c5a80737206fc2d744147655f5bad1906a7403a9f2cccf0` |
+| horizontal-plate target input | `ba82129135ae3420f108aa25676077b5c6cc37b7c68f5a03f6b3767902662b9b` |
+| prism/pyramid target input | `e478608db03d138422f690157ba3bb5f8421cc792ada042acf1d93817c113d33` |
+| 5M overview render input | `155f05c5717459ae63fdc356266b8087c3ddaec235acdc1aca5adf0416202e82` |
+| 10M focused-render input | `0778b5240fe6eac19519da5a1f917340b91948b0a98335dd3a6e20100a7428f1` |
+
 Representative report commands are:
 
 ```bash
@@ -24,6 +38,15 @@ build/cmake_install/static/Lumice raypath -f test/e2e/configs/raypath_feature_ra
 build/cmake_install/static/Lumice raypath -f test/e2e/configs/raypath_feature_random_regular.json --crystal 1 --path 3-5 --report --events 8192
 build/cmake_install/static/Lumice raypath -f test/e2e/configs/raypath_feature_rhombic_plate.json --crystal 1 --path 1-3-4-2 --report --events 8192
 ```
+
+The three commands exited 0 and emitted their JSON document to stdout. Their
+observed report times were about 0.04 s, 0.01 s, and 0.00 s respectively;
+these are acceptance-machine observations, not a performance promise. The
+larger render commands exited 0 as well: the 5M overview and raw NPY each took
+about 8.7 s, while the two 10M focused views took 17.3 s together. The stable
+output names and hashes appear below; the full image, NPY, and JSON evidence is
+kept out of the source distribution because it is scientific acceptance data,
+not a portable reference asset.
 
 ## Accepted observations
 

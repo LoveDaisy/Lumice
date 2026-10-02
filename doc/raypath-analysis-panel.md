@@ -522,6 +522,16 @@ entry 共享）/ 多个 Out 槽位 / 还有未筛选子组分别措辞。实施�
 
 逐条标注归属与落地状态（owner 裁决 / assistant 推断 → 已确认 / 已证伪 / 仍待办）：
 
+**路径特征 report 的交接状态（2026-10-01）**：CLI/C API 已有单路径、无 target 的
+`LUMICE_AnalyzePathFeatureReport`，它为固定案例返回物理 L2 成员、波长、有限晶体 `A*T`、位置化
+feature、coverage 和 limitations；字段与验收范围见
+[`raypath-cli-output.md`](raypath-cli-output.md) §7 和
+[`raypath-feature-diagnostic-acceptance.md`](raypath-feature-diagnostic-acceptance.md)。本面板尚未读取该
+document：没有 report 列表、特征到预览的选择联动、机制卡片或 coverage 呈现。HTML 原型仍只记录布局和
+交互假设，不得改写为产品已经提供这些物理能力。实施 GUI 时需要先决定窄屏布局、特征选择如何调用
+target fiber 详情、以及 unsupported / not-detected / numerical-incomplete 的退化显示；在这些决定落地前，
+CLI report 与现有 Analyze 能量列表是两条独立入口。
+
 - **GPU 不覆盖**（owner 裁决，§2 第 1 条）——**已确认，且已裁定 UI 处置**：v1 只有 CPU 路能
   产出分析结果，子任务 4 强制走 CPU（见 §2 第 1 条 as-built）。子任务 5 的裁定是**不禁用、不提示**：
   Analyze 按钮在 GPU 偏好会话下同样可点，静默走 CPU，只是可能更慢；没有加报错/警告/禁用态。
