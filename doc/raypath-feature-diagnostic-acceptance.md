@@ -47,7 +47,10 @@ The recorded product JSON SHA-256 values were
 
 ## Probe and compatibility
 
-Temporarily changing the report's all-sky limitation text made the dedicated
-capability test fail, then restoring it produced 12 passing report-CLI tests.
+Temporarily changing the production `solar_dispersion_edge` feature id made
+`test_random_315_report_is_a_separate_document_with_both_feature_mechanisms`
+fail with its expected missing-feature `KeyError`; restoring the production id
+and rebuilding produced 12 passing report-CLI tests. This is a single-feature
+red probe of the solar-side product assertion, not a limitation-text-only test.
 The acceptance changed no CLI, JSON schema, or `--warm` contract; the existing
 report-option rejection tests retain the target-only and legacy-option boundary.

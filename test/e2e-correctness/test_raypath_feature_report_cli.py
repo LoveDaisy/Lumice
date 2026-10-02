@@ -98,8 +98,9 @@ def test_rhombic_plate_keeps_plus_and_minus_120_separate_from_spherical_distance
     for position in positions:
         assert position["spherical_separation_deg"] == pytest.approx(117.599764152, abs=1e-9)
     for member in doc["physical_l2_members"]:
-        assert len(member["wavelengths"]) == 2
-        for wavelength in member["wavelengths"]:
+        wavelengths = {sample["wavelength"]["nm"]: sample for sample in member["wavelengths"]}
+        assert sorted(wavelengths) == pytest.approx([430.019737408, 694.362898124], abs=1e-9)
+        for wavelength in wavelengths.values():
             brightness = wavelength["brightness"]
             assert brightness["status"] == "supported"
             assert brightness["fine_positive_count"] > 0
