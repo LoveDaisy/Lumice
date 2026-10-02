@@ -675,6 +675,7 @@ TEST(SceneMeasure, ZeroWidthTypedDistributionsRemainAtomicMeasureFactors) {
       continue;
     }
     EXPECT_EQ(factor->support_dimension, 0);
+    EXPECT_EQ(factor->measure, "atom");
     for (const SceneMeasureRow& row : result.rows) {
       const auto latent = std::find_if(row.latents.begin(), row.latents.end(),
                                        [](const auto& item) { return item.name == "shape.face_distance[0]"; });
@@ -736,19 +737,59 @@ TEST(SceneMeasure, GeneralPoseDistributionsAreMeasuredWithoutFamilyWhitelist) {
                           [](double value) { return std::fabs(value) > 1e-4; }));
 }
 
-TEST(SceneMeasure, ZeroWidthPoseGeneratorsHaveRankZeroDespiteTheirDistributionNames) {
-  AxisDistribution axis;
-  axis.latitude_dist = { DistributionType::kGaussian, 45.0f, 0.0f };
-  axis.azimuth_dist = { DistributionType::kUniform, 12.0f, 0.0f };
-  axis.roll_dist = { DistributionType::kZigzag, 7.0f, 0.0f };
-  const SceneMeasureResult result = Build(Scene({ Prism(1, axis) }, { 0.0f }), Request({ 1 }, { { 3, 5 } }, 2));
-  ASSERT_FALSE(result.rows.empty());
-  EXPECT_TRUE(std::all_of(result.rows.begin(), result.rows.end(), [](const SceneMeasureRow& row) {
-    return !row.layers.empty() && row.layers[0].pose_support_rank == 0;
-  }));
-  EXPECT_TRUE(std::all_of(result.factors.begin(), result.factors.end(), [](const MeasureFactorDescriptor& factor) {
-    return factor.layer_index < 0 || factor.name.rfind("pose.", 0) != 0 || factor.support_dimension == 0;
-  }));
+TEST(SceneMeasure, ZeroWidthPoseGeneratorsRemainAtomicAndFixedAcrossDistributionTypes) {
+  constexpr DistributionType kTypes[] = {
+    DistributionType::kUniform, DistributionType::kGaussian,  DistributionType::kGaussianLegacy,
+    DistributionType::kZigzag,  DistributionType::kLaplacian,
+  };
+  for (const DistributionType type : kTypes) {
+    SCOPED_TRACE(static_cast<int>(type));
+    AxisDistribution axis;
+    axis.latitude_dist = { type, 45.0f, 0.0f };
+    axis.azimuth_dist = { type, 12.0f, 0.0f };
+    axis.roll_dist = { type, 7.0f, 0.0f };
+    const SceneMeasureResult result = Build(Scene({ Prism(1, axis) }, { 0.0f }), Request({ 1 }, { { 3, 5 } }, 4));
+    if (result.rows.empty()) {
+      ADD_FAILURE() << "missing zero-width pose rows";
+      continue;
+    }
+    if (result.rows.front().layers.empty()) {
+      ADD_FAILURE() << "missing first zero-width pose layer";
+      continue;
+    }
+    const auto& fixed_pose = result.rows.front().layers.front().pose_lon_lat_roll_rad;
+    for (const SceneMeasureRow& row : result.rows) {
+      if (row.layers.empty()) {
+        ADD_FAILURE() << "missing zero-width pose layer";
+        continue;
+      }
+      EXPECT_EQ(row.layers[0].pose_support_rank, 0);
+      EXPECT_EQ(row.layers[0].pose_lon_lat_roll_rad[0], fixed_pose[0]);
+      EXPECT_EQ(row.layers[0].pose_lon_lat_roll_rad[1], fixed_pose[1]);
+      EXPECT_EQ(row.layers[0].pose_lon_lat_roll_rad[2], fixed_pose[2]);
+      for (const char* name : { "pose.latitude", "pose.azimuth", "pose.roll" }) {
+        const auto latent = std::find_if(row.latents.begin(), row.latents.end(),
+                                         [name](const auto& item) { return item.name == name; });
+        if (latent == row.latents.end()) {
+          ADD_FAILURE() << "missing zero-width pose latent " << name;
+          continue;
+        }
+        EXPECT_EQ(latent->base_measure, LatentBaseMeasure::kAtomCounting) << name;
+        EXPECT_DOUBLE_EQ(latent->proposal_density_or_mass, 1.0) << name;
+        EXPECT_DOUBLE_EQ(latent->target_density_or_mass, 1.0) << name;
+      }
+    }
+    for (const char* name : { "pose.latitude", "pose.azimuth", "pose.roll" }) {
+      const auto factor = std::find_if(result.factors.begin(), result.factors.end(),
+                                       [name](const auto& item) { return item.name == name; });
+      if (factor == result.factors.end()) {
+        ADD_FAILURE() << "missing zero-width pose factor " << name;
+        continue;
+      }
+      EXPECT_EQ(factor->support_dimension, 0) << name;
+      EXPECT_EQ(factor->measure, "atom") << name;
+    }
+  }
 }
 
 TEST(SceneMeasure, EveryProductDistributionTypeUsesTheSamePoseAndShapeRoute) {

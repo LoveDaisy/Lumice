@@ -553,9 +553,34 @@ AxisPoseSampleTrace RandomSampler::SampleAxisPoseWithTrace(RandomNumberGenerator
 
   const DistributionType lat_type = axis_dist.latitude_dist.type;
   const auto decision = lat_path::SelectLatPath(axis_dist);
+  const auto has_positive_width = [](const Distribution& distribution) {
+    switch (distribution.type) {
+      case DistributionType::kNoRandom:
+        return false;
+      case DistributionType::kUniform:
+        return distribution.UniformFullRange() != 0.0f;
+      case DistributionType::kGaussian:
+      case DistributionType::kGaussianLegacy:
+        return distribution.Std() != 0.0f;
+      case DistributionType::kZigzag:
+        return distribution.Amplitude() != 0.0f;
+      case DistributionType::kLaplacian:
+        return distribution.Scale() != 0.0f;
+    }
+    return false;
+  };
   float phi = 0.0f;
   bool flip = false;
-  if (decision.kind == lat_path::LatPathKind::kLutInverseCdf) {
+  if (!has_positive_width(axis_dist.latitude_dist)) {
+    trace.latitude = rng.Sample(axis_dist.latitude_dist);
+    phi = trace.latitude.value * math::kDegreeToRad;
+    trace.latitude.mapping_jacobian *= math::kDegreeToRad;
+    if (lat_type == DistributionType::kGaussianLegacy) {
+      auto [normal_phi, normal_flip] = detail::NormalizeLatitude(phi);
+      phi = normal_phi;
+      flip = normal_flip;
+    }
+  } else if (decision.kind == lat_path::LatPathKind::kLutInverseCdf) {
     trace.latitude_lut = true;
     const LatLut& lut = lat_lut != nullptr ? *lat_lut : *GetSharedLatLut(axis_dist.latitude_dist);
     trace.latitude.atom = false;

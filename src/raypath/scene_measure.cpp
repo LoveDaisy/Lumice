@@ -255,8 +255,10 @@ void AssignNumeric(const NumericValue& source, double* value, SceneMeasureNumeri
   *status = source.status;
 }
 
+bool DistributionHasPositiveWidth(const Distribution& distribution);
+
 std::string DistributionMeasure(const Distribution& distribution, bool spherical_latitude) {
-  if (distribution.type == DistributionType::kNoRandom) {
+  if (!DistributionHasPositiveWidth(distribution)) {
     return "atom";
   }
   if (spherical_latitude && distribution.type != DistributionType::kGaussianLegacy) {

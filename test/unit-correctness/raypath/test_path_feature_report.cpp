@@ -275,6 +275,30 @@ TEST(PathFeatureReportJson, ShapeSamplesExposeTheDistributionJacobianAfterSyncAn
   EXPECT_EQ((*atom)["mapping_jacobian"], 0.0);
 }
 
+TEST(PathFeatureReportJson, ZeroWidthTypedPoseFactorsSerializeAsAtoms) {
+  ConfigManager config = Scene(false, false, false);
+  AxisDistribution axis;
+  axis.latitude_dist = { DistributionType::kGaussian, 45.0f, 0.0f };
+  axis.azimuth_dist = { DistributionType::kUniform, 12.0f, 0.0f };
+  axis.roll_dist = { DistributionType::kLaplacian, 7.0f, 0.0f };
+  config.crystals_.at(1).axis_ = axis;
+  config.scene_.ms_[0].setting_[0].crystal_.axis_ = axis;
+
+  const PathFeatureReport report = Analyse(config, { 3, 5 }, 64);
+  const nlohmann::json doc = nlohmann::json::parse(PathFeatureReportToJson(report, "test-version"));
+  const auto& factors = doc["scene_measure"]["factors"];
+  for (const char* name : { "pose.latitude", "pose.azimuth", "pose.roll" }) {
+    const auto factor =
+        std::find_if(factors.begin(), factors.end(), [name](const auto& item) { return item["name"] == name; });
+    if (factor == factors.end()) {
+      ADD_FAILURE() << "missing JSON pose factor " << name;
+      continue;
+    }
+    EXPECT_EQ((*factor)["support_dimension"], 0) << name;
+    EXPECT_EQ((*factor)["measure"], "atom") << name;
+  }
+}
+
 TEST(PathFeatureReportJson, NonFiniteMeasureValuesCarryAnExplicitNumericalStatus) {
   PathFeatureReport report;
   report.scene_measure.status = SceneMeasureStatus::kNumericalIncomplete;
