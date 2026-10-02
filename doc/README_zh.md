@@ -14,6 +14,7 @@ doc/
 ├── filter-architecture.md / _zh.md                  # Filter 子系统设计约束（Design A）
 ├── adaptive-brightness.md / .zh.md                  # 自适应亮度：算法、双模式语义、可加性
 ├── raypath-symmetry.md / _zh.md                     # Raypath 对称性：P/B/D 过滤器语义
+├── raypath-general-diagnostics.md                    # 通用 Raypath 诊断契约
 ├── c_api.md / _zh.md                                # C接口使用文档
 ├── developer-guide.md / _zh.md                      # 开发指南
 ├── gui-guide.md / _zh.md                            # GUI 使用指南
@@ -59,6 +60,8 @@ doc/
   - P、B、D 的精确语义与启用条件
   - σ-by-roll-mean 推导与参考表
   - GUI 提示行为说明
+
+- **[通用 Raypath 诊断](raypath-general-diagnostics.md)**: 实际输入测度、候选证据、数值状态和 analytic consumer 契约
 
 - **[系统架构文档](architecture_zh.md)**: 系统架构设计
   - 服务器-消费者架构说明

@@ -14,6 +14,7 @@ doc/
 ├── filter-architecture.md / _zh.md                  # Filter subsystem design constraints (Design A)
 ├── adaptive-brightness.md / .zh.md                  # Adaptive Brightness: algorithm, modes, additivity
 ├── raypath-symmetry.md / _zh.md                     # Raypath symmetry: P/B/D filter semantics
+├── raypath-general-diagnostics.md                    # General raypath diagnostic contract
 ├── c_api.md / _zh.md                                # C API reference
 ├── developer-guide.md / _zh.md                      # Developer guide
 ├── gui-guide.md / _zh.md                            # GUI application guide
@@ -60,6 +61,8 @@ For users of this project:
   - Precise semantics and enabling conditions for P, B, and D
   - σ-by-roll-mean derivation and reference table
   - GUI indicator behavior
+
+- **[General Raypath Diagnostics](raypath-general-diagnostics.md)**: input measure, candidate evidence, numerical-status, and analytic-consumer contract
 
 - **[System Architecture](architecture.md)**: System architecture design
   - Server-Consumer architecture
