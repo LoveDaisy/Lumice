@@ -476,6 +476,42 @@ TEST(SceneMeasure, ZeroCrystalEnergyLayerHasAValidZeroMeasure) {
   EXPECT_DOUBLE_EQ(result.total_contribution, 0.0);
 }
 
+TEST(SceneMeasure, PositiveConditionalMassUnderflowIsNotAnExactZeroMeasure) {
+  constexpr int kLayerCount = 64;
+  AxisDistribution axis;
+  axis.latitude_dist = { DistributionType::kNoRandom, 90.0f, 0.0f };
+  axis.azimuth_dist = { DistributionType::kNoRandom, 180.0f, 0.0f };
+  axis.roll_dist = { DistributionType::kNoRandom, 0.0f, 0.0f };
+  std::vector<CrystalConfig> crystals;
+  std::vector<IdType> ids;
+  std::vector<float> continuation(kLayerCount, 1e-8f);
+  continuation.back() = 0.0f;
+  for (int layer = 0; layer < kLayerCount; ++layer) {
+    crystals.push_back(Prism(layer + 1, axis));
+    ids.push_back(layer + 1);
+  }
+  const auto result = Build(Scene(std::move(crystals), continuation),
+                            Request(ids, std::vector<std::vector<int>>(kLayerCount, { 3, 6 }), 2));
+  EXPECT_EQ(result.status, SceneMeasureStatus::kNumericalIncomplete);
+  EXPECT_EQ(result.status_counts.zero_weight, 0);
+  EXPECT_TRUE(std::any_of(result.rows.begin(), result.rows.end(), [](const auto& row) {
+    return row.layers.size() == kLayerCount && std::all_of(row.layers.begin(), row.layers.end(), [](const auto& layer) {
+             return layer.status == SceneMeasureStatus::kConfirmed && layer.crystal_share > 0.0 &&
+                    layer.continuation_mass > 0.0;
+           });
+  }));
+}
+
+TEST(SceneMeasure, AZeroLaterConditionIsKnownEvenWhenAnEarlierFieldIsInvalid) {
+  const auto request = Request({ 1, 2 }, { { 99 }, { 3, 6 } }, 2);
+  const auto zero = Build(Scene({ Prism(1), Prism(2) }, { 0.5f, 1.0f }), request);
+  EXPECT_EQ(zero.status, SceneMeasureStatus::kZeroWeight);
+  EXPECT_TRUE(std::all_of(zero.rows.begin(), zero.rows.end(),
+                          [](const auto& row) { return row.status == SceneMeasureStatus::kZeroWeight; }));
+  const auto positive_mass_control = Build(Scene({ Prism(1), Prism(2) }, { 0.5f, 0.0f }), request);
+  EXPECT_EQ(positive_mass_control.status, SceneMeasureStatus::kPhysicallyUnreachable);
+}
+
 TEST(SceneMeasure, SelectedZeroShareIsZeroMeasureWithinAPositiveMixture) {
   AxisDistribution axis;
   axis.latitude_dist = { DistributionType::kNoRandom, 90.0f, 0.0f };

@@ -142,6 +142,37 @@ NumericValue CheckedMultiply(const NumericValue& lhs, double rhs) {
   return CheckedMultiply(lhs, CheckedNonnegative(rhs));
 }
 
+struct ConditionalMeasureLedger {
+  NumericValue product{ 1.0, SceneMeasureNumericStatus::kAvailable };
+  bool strictly_positive = true;
+  int first_zero_layer = -1;
+  std::string first_zero_factor;
+};
+
+ConditionalMeasureLedger BuildConditionalMeasureLedger(const std::vector<LayerInput>& layers) {
+  ConditionalMeasureLedger ledger;
+  for (size_t layer_index = 0; layer_index < layers.size(); ++layer_index) {
+    const NumericValue crystal_share = CheckedNonnegative(layers[layer_index].crystal_share);
+    const NumericValue continuation_mass = CheckedNonnegative(layers[layer_index].continuation_mass);
+    if (crystal_share.status == SceneMeasureNumericStatus::kExactZero && ledger.first_zero_layer < 0) {
+      ledger.first_zero_layer = static_cast<int>(layer_index);
+      ledger.first_zero_factor = "crystal share";
+    } else if (continuation_mass.status == SceneMeasureNumericStatus::kExactZero && ledger.first_zero_layer < 0) {
+      ledger.first_zero_layer = static_cast<int>(layer_index);
+      ledger.first_zero_factor = "continuation/exit mass";
+    }
+    ledger.strictly_positive = ledger.strictly_positive && crystal_share.value > 0.0 && continuation_mass.value > 0.0;
+    ledger.product = CheckedMultiply(ledger.product, CheckedMultiply(crystal_share, continuation_mass));
+  }
+  // An exact zero anywhere in the complete factor ledger is authoritative even if an earlier
+  // positive prefix underflowed. This is a statement about the measure, not floating-point
+  // representability or how far field evaluation happened to progress.
+  if (ledger.first_zero_layer >= 0) {
+    ledger.product = {};
+  }
+  return ledger;
+}
+
 NumericValue CheckedAdd(const NumericValue& lhs, const NumericValue& rhs) {
   if (!IsRepresentable(lhs)) {
     return lhs;
@@ -1027,6 +1058,7 @@ Error BuildSceneMeasure(const ConfigManager& config, const SceneMeasureRequest& 
   }
 
   const int coarse_count = request.sample_count / 2;
+  const ConditionalMeasureLedger conditional_measure = BuildConditionalMeasureLedger(layers);
   bool any_confirmed = false;
   bool any_nonzero_source = false;
   bool any_positive_path_measure = false;
@@ -1109,10 +1141,18 @@ Error BuildSceneMeasure(const ConfigManager& config, const SceneMeasureRequest& 
             mark_row_numerical(&row, "global spectrum and sun weight product is not representable");
           }
 
+          const NumericValue conditional_measure_mass = conditional_measure.product;
+          if (conditional_measure.first_zero_layer >= 0) {
+            row.status = SceneMeasureStatus::kZeroWeight;
+            row.reason = "layer " + std::to_string(conditional_measure.first_zero_layer) + " has zero " +
+                         conditional_measure.first_zero_factor;
+          } else if (!IsRepresentable(conditional_measure_mass)) {
+            mark_row_numerical(&row, "complete layer conditional mass product is not representable");
+          }
+
           RandomNumberGenerator rng(row.replay_seed);
           double incident[3] = { sun.incident_direction[0], sun.incident_direction[1], sun.incident_direction[2] };
           NumericValue conditional_weight{ 1.0, SceneMeasureNumericStatus::kAvailable };
-          NumericValue conditional_measure_mass{ 1.0, SceneMeasureNumericStatus::kAvailable };
           for (size_t layer_index = 0; layer_index < layers.size(); layer_index++) {
             SceneMeasureLayerRow layer =
                 EvaluateLayer(rng, layers[layer_index], static_cast<int>(layer_index),
@@ -1124,9 +1164,8 @@ Error BuildSceneMeasure(const ConfigManager& config, const SceneMeasureRequest& 
             const NumericValue layer_mass =
                 CheckedMultiply(CheckedNonnegative(layer.crystal_share), CheckedNonnegative(layer.continuation_mass));
             conditional_weight = CheckedMultiply(conditional_weight, layer_mass);
-            conditional_measure_mass = CheckedMultiply(conditional_measure_mass, layer_mass);
-            if (!IsRepresentable(conditional_weight) || !IsRepresentable(conditional_measure_mass)) {
-              mark_row_numerical(&row, "layer conditional mass product is not representable");
+            if (!IsRepresentable(conditional_weight)) {
+              mark_row_numerical(&row, "layer conditional and optical weight product is not representable");
             }
             if (IsRepresentable(layer_mass) && layer_mass.value == 0.0) {
               row.status = SceneMeasureStatus::kZeroWeight;
@@ -1156,8 +1195,7 @@ Error BuildSceneMeasure(const ConfigManager& config, const SceneMeasureRequest& 
               break;
             }
           }
-          if (spectrum.weight > 0.0 && sun.mass > 0.0 && IsRepresentable(conditional_measure_mass) &&
-              conditional_measure_mass.value > 0.0) {
+          if (spectrum.weight > 0.0 && sun.mass > 0.0 && conditional_measure.strictly_positive) {
             any_positive_path_measure = true;
           }
           double proposal_log_density = 0.0;
