@@ -391,14 +391,17 @@ TEST(SceneMeasure, FiniteSourceNoHitDoesNotClaimAtomicExhaustion) {
   request.path_layers = { { 99 } };
   SunMeasureNode source_atom;
   source_atom.incident_direction[2] = -1.0;
-  source_atom.mass = 1.0;
-  request.source_sun_nodes = { source_atom };
-  const auto enumerated_source = Build(config, request);
-  EXPECT_EQ(enumerated_source.status, SceneMeasureStatus::kPhysicallyUnreachable);
-  const auto sun = std::find_if(enumerated_source.factors.begin(), enumerated_source.factors.end(),
+  source_atom.mass = 0.5;
+  SunMeasureNode second_source_atom = source_atom;
+  second_source_atom.incident_direction[0] = 1.0;
+  second_source_atom.incident_direction[2] = 0.0;
+  request.source_sun_nodes = { source_atom, second_source_atom };
+  const auto injected_quadrature = Build(config, request);
+  EXPECT_EQ(injected_quadrature.status, SceneMeasureStatus::kNumericalIncomplete);
+  const auto sun = std::find_if(injected_quadrature.factors.begin(), injected_quadrature.factors.end(),
                                 [](const auto& factor) { return factor.name == "sun_disc"; });
-  ASSERT_NE(sun, enumerated_source.factors.end());
-  EXPECT_EQ(sun->support_dimension, 0);
+  ASSERT_NE(sun, injected_quadrature.factors.end());
+  EXPECT_EQ(sun->support_dimension, 2);
 }
 
 TEST(SceneMeasure, ContinuousIlluminantNoHitDoesNotClaimAtomicExhaustion) {
@@ -788,6 +791,20 @@ TEST(SceneMeasure, ZeroWidthPoseGeneratorsRemainAtomicAndFixedAcrossDistribution
       }
       EXPECT_EQ(factor->support_dimension, 0) << name;
       EXPECT_EQ(factor->measure, "atom") << name;
+    }
+    EXPECT_EQ(std::count_if(result.factors.begin(), result.factors.end(),
+                            [](const auto& factor) { return factor.name == "pose.latitude_fold_branch"; }),
+              0);
+    for (const SceneMeasureRow& row : result.rows) {
+      for (const MeasureFactorDescriptor& factor : result.factors) {
+        if (factor.latent_id < 0) {
+          continue;
+        }
+        EXPECT_NE(std::find_if(row.latents.begin(), row.latents.end(),
+                               [&](const auto& latent) { return latent.latent_id == factor.latent_id; }),
+                  row.latents.end())
+            << factor.name;
+      }
     }
   }
 }

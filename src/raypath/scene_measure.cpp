@@ -398,7 +398,8 @@ void AddFactorDescriptors(int layer_index, const CrystalConfig& crystal, LayerIn
                          axis[i].center, axis[i].spread, i == 0 ? "spherical latitude" : "angle",
                          DistributionMeasure(axis[i], i == 0), "unit probability mass" });
   }
-  if (lat_path::SelectLatPath(crystal.axis_).kind == lat_path::LatPathKind::kLutInverseCdf) {
+  if (DistributionHasPositiveWidth(crystal.axis_.latitude_dist) &&
+      lat_path::SelectLatPath(crystal.axis_).kind == lat_path::LatPathKind::kLutInverseCdf) {
     layer->pose_flip_latent = (*next_latent)++;
     factors->push_back({ layer_index, "pose.latitude_fold_branch", DistributionType::kNoRandom, layer->pose_flip_latent,
                          0, 0.0, 0.0, "Bernoulli branch",
@@ -1031,7 +1032,7 @@ Error BuildSceneMeasure(const ConfigManager& config, const SceneMeasureRequest& 
   if (const Error error = ResolveLayers(config, request, &layers, &result.factors); !error.Ok()) {
     return error;
   }
-  const bool continuous_sun = request.source_sun_nodes.empty() && config.scene_.light_source_.param_.diameter_ > 0.0f;
+  const bool continuous_sun = config.scene_.light_source_.param_.diameter_ > 0.0f;
   const bool continuous_spectrum = request.spectrum_source == SceneSpectrumSource::kScene &&
                                    std::holds_alternative<IlluminantType>(config.scene_.light_source_.spectrum_);
   result.factors.insert(result.factors.begin(),
