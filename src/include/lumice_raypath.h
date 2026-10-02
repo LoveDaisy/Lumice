@@ -1,6 +1,8 @@
 #ifndef LUMICE_RAYPATH_H_
 #define LUMICE_RAYPATH_H_
 
+#include <stdint.h>
+
 // Single-path analysis: one single-layer raypath of one crystal entry, computed synchronously and
 // independently of any server.
 
@@ -103,7 +105,21 @@ LUMICE_API void LUMICE_SinglePathResultDestroy(LUMICE_SinglePathResult* result);
 // requested resolution and at half that resolution. This bounds their combined synchronous work.
 #define LUMICE_PATH_FEATURE_REPORT_MAX_SAMPLE_EVALUATIONS 16777216
 
+typedef enum LUMICE_PathFeatureMemberSelection {
+  LUMICE_PATH_FEATURE_MEMBERS_ALL_PHYSICAL = 0,
+  LUMICE_PATH_FEATURE_MEMBERS_CONCRETE = 1,
+  LUMICE_PATH_FEATURE_MEMBERS_PHYSICAL_MASK = 2,
+} LUMICE_PathFeatureMemberSelection;
+
+typedef enum LUMICE_PathFeatureSpectrumSource {
+  LUMICE_PATH_FEATURE_SPECTRUM_SCENE = 0,
+  LUMICE_PATH_FEATURE_SPECTRUM_DIAGNOSTIC = 1,
+  LUMICE_PATH_FEATURE_SPECTRUM_LEGACY_REFERENCE = 2,
+} LUMICE_PathFeatureSpectrumSource;
+
 typedef struct LUMICE_PathFeatureReportRequest {
+  // Set to sizeof of the caller's struct. Layout v1 (through sample_count) remains accepted;
+  // fields appended after it are read only when struct_size reaches their published v2 extent.
   size_t struct_size;
   int crystal_id;
   const int* faces;
@@ -121,6 +137,23 @@ typedef struct LUMICE_PathFeatureReportRequest {
   // most LUMICE_PATH_FEATURE_REPORT_MAX_SAMPLE_EVALUATIONS: physical-L2 members × wavelengths ×
   // (sample_count + sample_count / 2).
   int sample_count;
+
+  // v2 append-only scene-measure fields. One crystal id per path layer; NULL/count 0 retains the
+  // legacy one-layer crystal_id field. Multi-layer requests require a full array.
+  const int* layer_crystal_ids;
+  int layer_crystal_id_count;
+  int member_selection;  // LUMICE_PathFeatureMemberSelection; zero = all physical members.
+  uint64_t physical_member_mask;
+  // wavelength_count > 0 always selects the explicit diagnostic nodes above. With no explicit
+  // nodes, this selects the actual scene spectrum by default; LEGACY_REFERENCE is the named
+  // compatibility mode for the historical red/blue pair.
+  int spectrum_source;  // LUMICE_PathFeatureSpectrumSource
+  // Joint scene-measure samples (shape + pose across all layers); 0 = 64. Independent of the
+  // legacy fixture-detector sample_count above.
+  int scene_measure_sample_count;
+  int sun_node_count;         // 0 = 8 for a finite disc; ignored for a zero-diameter sun.
+  int illuminant_node_count;  // 0 = 8 midpoint-stratified nodes over [380, 780).
+  uint32_t seed;              // 0 is a valid deterministic seed.
 } LUMICE_PathFeatureReportRequest;
 
 typedef struct LUMICE_PathFeatureReport_ LUMICE_PathFeatureReport;
@@ -133,7 +166,7 @@ LUMICE_API LUMICE_ErrorCode LUMICE_AnalyzePathFeatureReport(const LUMICE_Scene* 
                                                             LUMICE_PathFeatureReport** out, char* err_buf,
                                                             size_t err_size);
 
-// UTF-8 JSON with schema "lumice.path-feature-report", schema_version 1. Uses the same
+// UTF-8 JSON with schema "lumice.path-feature-report", schema_version 2. Uses the same
 // length-query/fetch and truncation contract as LUMICE_SinglePathResultToJson.
 LUMICE_API LUMICE_ErrorCode LUMICE_PathFeatureReportToJson(const LUMICE_PathFeatureReport* result, char* out_buf,
                                                            size_t buf_size, size_t* out_len);

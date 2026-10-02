@@ -44,7 +44,7 @@ Link against the `lumice` static library.
 ### Constants
 
 ```c
-#define LUMICE_API_VERSION 451        // ABI version, encoded major*100 + minor (v4.51)
+#define LUMICE_API_VERSION 452        // ABI version, encoded major*100 + minor (v4.52)
 #define LUMICE_MAX_RENDER_RESULTS 16  // Maximum capacity of the render result array
 #define LUMICE_MAX_STATS_RESULTS 1    // Maximum capacity of the stats result array
 ```
@@ -57,6 +57,12 @@ static_assert(LUMICE_API_VERSION >= 440, "Lumice header too old for this integra
 ```
 
 It is bumped when the public symbol set grows and on every BREAKING struct-layout change.
+
+**v4.52** appends an optional v2 tail to `LUMICE_PathFeatureReportRequest`: per-layer crystal ids,
+physical-member selection, scene/diagnostic/legacy spectrum selection, deterministic measure
+sample counts, sun and illuminant quadrature counts, and a seed. The v4.51 prefix size is still
+accepted and retains its legacy endpoint behavior. Full-size requests default to the configured
+scene spectrum and produce path-feature-report JSON schema 2 with `scene_measure`.
 
 **v4.51** is a pure append. Added the target-free path feature report:
 `LUMICE_PathFeatureReportRequest`, the opaque `LUMICE_PathFeatureReport`,

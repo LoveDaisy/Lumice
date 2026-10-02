@@ -48,6 +48,7 @@ namespace {
 // that a field appended later does not raise it.
 constexpr size_t kRequestSizeV450 = offsetof(LUMICE_SinglePathRequest, warm_json_len) + sizeof(size_t);
 constexpr size_t kFeatureReportRequestSizeV1 = offsetof(LUMICE_PathFeatureReportRequest, sample_count) + sizeof(int);
+constexpr size_t kFeatureReportRequestSizeV2 = offsetof(LUMICE_PathFeatureReportRequest, seed) + sizeof(uint32_t);
 
 void WriteError(char* err_buf, size_t err_size, const std::string& message) {
   if (err_buf == nullptr || err_size == 0) {
@@ -125,6 +126,7 @@ LUMICE_ErrorCode Analyze(const LUMICE_Scene* scene, const LUMICE_SinglePathReque
 LUMICE_ErrorCode AnalyzeReport(const LUMICE_Scene* scene, const LUMICE_PathFeatureReportRequest& request,
                                LUMICE_PathFeatureReport** out, char* err_buf, size_t err_size) {
   namespace rp = lumice::raypath;
+  const bool has_v2 = request.struct_size >= kFeatureReportRequestSizeV2;
 
   rp::PathFeatureReportRequest req;
   req.crystal_id = static_cast<lumice::IdType>(request.crystal_id);
@@ -133,13 +135,14 @@ LUMICE_ErrorCode AnalyzeReport(const LUMICE_Scene* scene, const LUMICE_PathFeatu
         { rp::ErrorCode::kUnknownCrystalId, "no crystal entry with id " + std::to_string(request.crystal_id) }, err_buf,
         err_size);
   }
-  if (request.face_count < 0 || request.layer_count < 0 || request.wavelength_count < 0) {
+  if (request.face_count < 0 || request.layer_count < 0 || request.wavelength_count < 0 ||
+      (has_v2 && (request.layer_crystal_id_count < 0 || request.scene_measure_sample_count < 0 ||
+                  request.sun_node_count < 0 || request.illuminant_node_count < 0))) {
     return Refuse({ rp::ErrorCode::kInvalidArgument, "negative face, layer or wavelength count" }, err_buf, err_size);
   }
-  if (request.layer_count != 1 || request.face_count <= 0 || request.faces == nullptr ||
+  if (request.layer_count <= 0 || request.face_count <= 0 || request.faces == nullptr ||
       request.layer_face_counts == nullptr) {
-    return Refuse({ rp::ErrorCode::kInvalidPath,
-                    "a path feature report requires one non-empty layer with a non-null face sequence" },
+    return Refuse({ rp::ErrorCode::kInvalidPath, "a path feature report requires at least one non-empty layer" },
                   err_buf, err_size);
   }
   if (request.wavelength_count > rp::kMaxFeatureReportWavelengthCount) {
@@ -160,6 +163,26 @@ LUMICE_ErrorCode AnalyzeReport(const LUMICE_Scene* scene, const LUMICE_PathFeatu
   if (consumed != request.face_count) {
     return Refuse({ rp::ErrorCode::kInvalidPath, "layer face counts do not add up to face_count" }, err_buf, err_size);
   }
+  if (has_v2 && request.layer_crystal_id_count > 0) {
+    if (request.layer_crystal_id_count != request.layer_count) {
+      return Refuse({ rp::ErrorCode::kInvalidPath, "layer_crystal_id_count must equal layer_count" }, err_buf,
+                    err_size);
+    }
+    req.layer_crystal_ids.reserve(static_cast<size_t>(request.layer_crystal_id_count));
+    for (int i = 0; i < request.layer_crystal_id_count; i++) {
+      const int id = request.layer_crystal_ids[i];
+      const lumice::IdType converted = static_cast<lumice::IdType>(id);
+      if (id < 0 || id != static_cast<int>(converted)) {
+        return Refuse({ rp::ErrorCode::kUnknownCrystalId, "invalid layer crystal id " + std::to_string(id) }, err_buf,
+                      err_size);
+      }
+      req.layer_crystal_ids.push_back(converted);
+    }
+  } else if (request.layer_count == 1) {
+    req.layer_crystal_ids = { req.crystal_id };
+  } else {
+    return Refuse({ rp::ErrorCode::kInvalidPath, "multi-layer requests require layer_crystal_ids" }, err_buf, err_size);
+  }
   if (request.wavelength_count > 0) {
     req.wavelengths_nm.assign(request.wavelengths_nm, request.wavelengths_nm + request.wavelength_count);
   }
@@ -167,6 +190,43 @@ LUMICE_ErrorCode AnalyzeReport(const LUMICE_Scene* scene, const LUMICE_PathFeatu
     req.wavelength_weights.assign(request.wavelength_weights, request.wavelength_weights + request.wavelength_count);
   }
   req.sample_count = request.sample_count == 0 ? rp::kDefaultFeatureReportSampleCount : request.sample_count;
+  if (has_v2) {
+    switch (request.member_selection) {
+      case LUMICE_PATH_FEATURE_MEMBERS_ALL_PHYSICAL:
+        req.member_selection = rp::SceneMemberSelection::kAllPhysical;
+        break;
+      case LUMICE_PATH_FEATURE_MEMBERS_CONCRETE:
+        req.member_selection = rp::SceneMemberSelection::kConcrete;
+        break;
+      case LUMICE_PATH_FEATURE_MEMBERS_PHYSICAL_MASK:
+        req.member_selection = rp::SceneMemberSelection::kPhysicalMask;
+        break;
+      default:
+        return Refuse({ rp::ErrorCode::kInvalidArgument, "unknown member_selection" }, err_buf, err_size);
+    }
+    req.physical_member_mask = request.physical_member_mask;
+    switch (request.spectrum_source) {
+      case LUMICE_PATH_FEATURE_SPECTRUM_SCENE:
+        req.scene_spectrum_source = rp::SceneSpectrumSource::kScene;
+        break;
+      case LUMICE_PATH_FEATURE_SPECTRUM_DIAGNOSTIC:
+        req.scene_spectrum_source = rp::SceneSpectrumSource::kDiagnostic;
+        break;
+      case LUMICE_PATH_FEATURE_SPECTRUM_LEGACY_REFERENCE:
+        req.scene_spectrum_source = rp::SceneSpectrumSource::kLegacyReferenceEndpoints;
+        break;
+      default:
+        return Refuse({ rp::ErrorCode::kInvalidArgument, "unknown spectrum_source" }, err_buf, err_size);
+    }
+    req.scene_measure_sample_count = request.scene_measure_sample_count == 0 ? 64 : request.scene_measure_sample_count;
+    req.sun_node_count = request.sun_node_count == 0 ? 8 : request.sun_node_count;
+    req.illuminant_node_count = request.illuminant_node_count == 0 ? 8 : request.illuminant_node_count;
+    req.seed = request.seed;
+  } else {
+    req.member_selection = rp::SceneMemberSelection::kAllPhysical;
+    req.scene_spectrum_source = request.wavelength_count == 0 ? rp::SceneSpectrumSource::kLegacyReferenceEndpoints :
+                                                                rp::SceneSpectrumSource::kDiagnostic;
+  }
 
   lumice::ConfigManager config;
   if (const lumice::Error err = lumice::ParseConfigManager(SceneRoot(scene), "LUMICE_AnalyzePathFeatureReport",
@@ -266,9 +326,10 @@ LUMICE_ErrorCode LUMICE_AnalyzePathFeatureReport(const LUMICE_Scene* scene,
   }
   if ((request->faces == nullptr && request->face_count > 0) ||
       (request->layer_face_counts == nullptr && request->layer_count > 0) ||
-      (request->wavelengths_nm == nullptr && request->wavelength_count > 0)) {
-    WriteError(err_buf, err_size,
-               "null_arg: faces, layer_face_counts and wavelengths_nm must not be NULL with a non-zero count");
+      (request->wavelengths_nm == nullptr && request->wavelength_count > 0) ||
+      (request->struct_size >= kFeatureReportRequestSizeV2 && request->layer_crystal_ids == nullptr &&
+       request->layer_crystal_id_count > 0)) {
+    WriteError(err_buf, err_size, "null_arg: counted request arrays must not be NULL with a non-zero count");
     return LUMICE_ERR_NULL_ARG;
   }
   try {

@@ -320,11 +320,12 @@ the same serialization.
 
 | Key | Meaning |
 |---|---|
-| `schema`, `schema_version` | `"lumice.path-feature-report"`, version 1. This is not the target-fiber schema 1. |
+| `schema`, `schema_version` | `"lumice.path-feature-report"`, version 2. This is not the target-fiber schema 1. |
 | `generator` | Lumice version and analytic-kernel API version. |
 | `conventions` | Member identity, brightness normalization, direction, and coverage wording carried with the document. |
-| `meta` | Nominal crystal scalars, requested face sequence, sun direction, orientation measure, and fine sample count. There is no target. |
+| `meta` | Nominal crystal scalars, requested face sequence, per-layer crystal ids, sun direction, orientation measure, and fine sample count. There is no target. |
 | `wavelengths[]` | `{nm, weight, refractive_index}` in request order. |
+| `scene_measure` | The deterministic integral over the actual scene distributions, described below. |
 | `physical_l2_members[]` | Concrete members admitted by the configured shape and orientation ensemble's physical P/B/D gating. This is never an L1/PBD label orbit. |
 | `features[]` | Positioned records supported by the detector matrix below. |
 | `coverage[]` | `{subject, status, reason}`; a non-success is stated rather than converted to an empty-feature claim. |
@@ -336,6 +337,22 @@ means of finite-crystal `A*T`, their absolute difference, and the wavelength-wei
 The area uses LI's `a=1` normalization. When a horizontal-family branch has one constant outgoing
 direction, the row also carries `fixed_outgoing_direction` and its maximum direction residual.
 Coarse/fine differences and boundary residuals are convergence evidence, not exact error bounds.
+
+`scene_measure` is the general measurement result. It records its status, SI units (`m^2 sr`),
+normalization, seed, sample counts, coarse/fine totals and absolute difference. Its factors expose
+the crystal-mixture shares, shape/pose measures, solar-disc solid angle and spectral quadrature.
+Each sampled row carries the concrete member chain, wavelength and sun node, per-layer sampled
+shape and pose, incident/outgoing directions, finite entry area, transmittance, field status,
+interfaces and boundary margins. Rows are a bounded diagnostic sample; `sampled_rows_truncated`
+states when the integral contains more rows than the JSON shows.
+
+The configured spectrum is the default. An explicit `--wavelength` selects a diagnostic delta
+spectrum. The top-level `wavelengths` and legacy positioned-feature brightness remain the compact
+fixture detector's wavelength list; consumers of the general integral use
+`scene_measure.spectrum_nodes`. The solar disc is integrated by solid-angle quadrature, and every
+shape and pose distribution is sampled with deterministic product coordinates. In a multi-layer
+chain, the outgoing direction and transmitted mass of one layer feed the next; global sun and
+spectrum weights are applied once, not once per layer.
 
 ### 7.2 Positioned features and evidence
 
@@ -374,7 +391,7 @@ fixed-input observation, not general constants):
 ```json
 {
   "schema": "lumice.path-feature-report",
-  "schema_version": 1,
+  "schema_version": 2,
   "meta": {"requested_faces": [3, 1, 5], "sample_count": 8192},
   "features": [
     {"id": "random_regular.3-1-5.solar_dispersion_edge",
@@ -389,7 +406,7 @@ fixed-input observation, not general constants):
 }
 ```
 
-The full output also carries the physical-L2 member list, per-member and
+The full output also carries `scene_measure`, the physical-L2 member list, per-member and
 per-wavelength `A*T` brightness rows, `coverage`, and `limitations`. Scripts
 must consume those fields rather than infer unsupported coverage from the four
 feature ids alone.

@@ -128,17 +128,19 @@ build/cmake_install/static/Lumice raypath \
   --crystal 1 --path 3-1-5 --report --events 8192
 ```
 
-`--report` has no sky target: it writes a separate JSON document describing
-physical L2 members, requested wavelengths, finite-crystal `A*T` brightness,
-positioned features, coverage, and limitations. It cannot be combined with
+`--report` has no sky target: it writes a schema-2 JSON document describing
+physical L2 members, finite-crystal `A*T` brightness, and an `m^2 sr` scene measure that integrates
+the configured shape and pose distributions, solar disc, spectrum, and scattering layers.
+It also includes the narrower positioned-feature detector, coverage, and limitations. It cannot be combined with
 `--target`, `--grid`, or `--warm`; use the existing target command when you
 need the fiber and per-pose detail at one point.
 
 The initial detector set is intentionally small. On the fixed regular-prism
 case, the output distinguishes a confirmed solar-side dispersion edge, a
 separate caustic candidate, a confirmed antisolar TIR blue band, and an
-assessed-but-not-visible exit gate. It does not enumerate all sky features,
-convolve the solar disc, decide general oriented kink curves, or discover
+assessed-but-not-visible exit gate. That detector does not enumerate all sky features or
+decide general oriented kink curves, while the independent `scene_measure` does integrate the
+solar disc and actual distributions. Neither subsystem discovers
 open/multiple components, cone-crystal empty cases, or rank-0 features. Read
 `coverage` and `limitations`; an empty `features` list is not a proof that the
 path has no physical feature.

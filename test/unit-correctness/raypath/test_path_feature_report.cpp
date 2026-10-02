@@ -45,6 +45,13 @@ ConfigManager Scene(bool random, bool horizontal, bool rhombic) {
   config.crystals_.emplace(1, crystal);
   config.scene_.light_source_.param_ = SunParam{ horizontal ? 9.0f : 20.0f, horizontal ? 180.0f : 0.0f, 0.5f };
   config.scene_.light_source_.spectrum_ = std::vector<WlParam>{ { 550.0f, 1.0f } };
+  ScatteringSetting setting{};
+  setting.crystal_ = crystal;
+  setting.crystal_proportion_ = 1.0f;
+  MsInfo layer{};
+  layer.prob_ = 0.0f;
+  layer.setting_.push_back(std::move(setting));
+  config.scene_.ms_.push_back(std::move(layer));
   return config;
 }
 
@@ -141,8 +148,10 @@ TEST(PathFeatureReport, RhombicPlateReportsTwoPhysicalMembersAtSeparate120Degree
 TEST(PathFeatureReport, UnsupportedOrientationIsCoverageNotAnAbsenceClaim) {
   const PathFeatureReport report = Analyse(Scene(false, false, false), { 3, 5 }, 64);
   ASSERT_FALSE(report.coverage.empty());
-  EXPECT_EQ(report.coverage.front().subject, "orientation_measure");
-  EXPECT_EQ(report.coverage.front().status, CoverageStatus::kNotSupported);
+  const auto orientation = std::find_if(report.coverage.begin(), report.coverage.end(),
+                                        [](const CoverageItem& item) { return item.subject == "orientation_measure"; });
+  ASSERT_NE(orientation, report.coverage.end());
+  EXPECT_EQ(orientation->status, CoverageStatus::kNotSupported);
   EXPECT_TRUE(report.features.empty());
   ASSERT_FALSE(report.members.empty());
   EXPECT_EQ(report.members.front().wavelengths.front().brightness.status, CoverageStatus::kNotSupported);
@@ -181,7 +190,9 @@ TEST(PathFeatureReportJson, UsesASeparateSchemaAndDoesNotAcquireATarget) {
   const PathFeatureReport report = Analyse(Scene(true, false, false), { 3, 5 }, 64);
   const nlohmann::json doc = nlohmann::json::parse(PathFeatureReportToJson(report, "test-version"));
   EXPECT_EQ(doc["schema"], "lumice.path-feature-report");
-  EXPECT_EQ(doc["schema_version"], 1);
+  EXPECT_EQ(doc["schema_version"], 2);
+  EXPECT_EQ(doc["scene_measure"]["spectrum_nodes"].size(), 1u);
+  EXPECT_EQ(doc["scene_measure"]["spectrum_nodes"][0]["source"], "scene_discrete");
   EXPECT_EQ(doc["generator"]["lumice"], "test-version");
   EXPECT_EQ(doc["meta"]["requested_faces"], nlohmann::json({ 3, 5 }));
   EXPECT_FALSE(doc["meta"].contains("target"));

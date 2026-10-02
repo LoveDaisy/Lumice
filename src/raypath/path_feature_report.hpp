@@ -13,11 +13,12 @@
 #include <vector>
 
 #include "config/config_manager.hpp"
+#include "raypath/scene_measure.hpp"
 #include "raypath/single_path_analysis.hpp"
 
 namespace lumice::raypath {
 
-constexpr int kFeatureReportSchemaVersion = 1;
+constexpr int kFeatureReportSchemaVersion = 2;
 constexpr int kDefaultFeatureReportSampleCount = 8192;
 constexpr int kMaxFeatureReportSampleCount = 1000000;
 constexpr int kMaxFeatureReportWavelengthCount = 32;
@@ -25,10 +26,18 @@ constexpr uint64_t kMaxFeatureReportSampleEvaluations = 16777216;
 
 struct PathFeatureReportRequest {
   IdType crystal_id = 0;
+  std::vector<IdType> layer_crystal_ids;
   std::vector<std::vector<int>> path_layers;
   std::vector<double> wavelengths_nm;
   std::vector<double> wavelength_weights;
   int sample_count = kDefaultFeatureReportSampleCount;
+  SceneMemberSelection member_selection = SceneMemberSelection::kAllPhysical;
+  uint64_t physical_member_mask = ~uint64_t{ 0 };
+  SceneSpectrumSource scene_spectrum_source = SceneSpectrumSource::kScene;
+  int scene_measure_sample_count = 64;
+  int sun_node_count = 8;
+  int illuminant_node_count = 8;
+  uint32_t seed = 1;
 };
 
 enum class CoverageStatus {
@@ -111,10 +120,12 @@ struct FeatureReportMetadata {
   int schema_version = kFeatureReportSchemaVersion;
   int analytic_api_version = 0;
   IdType crystal_id = 0;
+  std::vector<IdType> layer_crystal_ids;
   std::string crystal_kind;
   std::vector<NominalShapeScalar> shape;
   bool shape_is_nominal = false;
   std::vector<int> requested_faces;
+  std::vector<std::vector<int>> requested_path_layers;
   double sun_altitude_deg = 0.0;
   double sun_azimuth_deg = 0.0;
   double incident_direction[3]{};
@@ -124,6 +135,7 @@ struct FeatureReportMetadata {
 
 struct PathFeatureReport {
   FeatureReportMetadata meta;
+  SceneMeasureResult scene_measure;
   std::vector<ReportWavelength> wavelengths;
   std::vector<PhysicalMemberReport> members;
   std::vector<PathFeature> features;

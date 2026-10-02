@@ -413,18 +413,19 @@ void PrintRaypathUsage(const char* prog_name, std::ostream& output = std::cout) 
   output << "Usage: " << prog_name
          << " raypath -f <config_file> --crystal <id> --path <faces> (--target <alt>,<az> | --report) [options]\n"
          << "\n"
-         << "Analyse ONE single-layer raypath of one crystal entry over one sky point: the\n"
+         << "Analyse one raypath over one sky point, or measure a path through the configured scene:\n"
          << "components of the fiber of crystal poses that send the sun into that point, each\n"
          << "component's poses with per-pose detail (orientation angles, where the sun sits in\n"
          << "the crystal, transmittances, entry area), and the path's deviation over the whole\n"
          << "sun-direction sphere. With --report it instead produces a target-free physical-L2\n"
-         << "member/wavelength brightness and positioned-feature report with explicit coverage.\n"
+         << "member brightness, actual scene measure, and positioned-feature report with explicit coverage.\n"
          << "`analyze` lists the raypaths that light the sky; `raypath` is what you ask about one\n"
-         << "of them. The crystal is taken at its nominal shape (the\n"
-         << "centre of every shape distribution) and the sun as a point; both are recorded in\n"
-         << "the output's meta block. Deterministic: the same inputs give the same output.\n"
+         << "of them. Target mode uses nominal shape and a point sun. Report mode integrates the\n"
+         << "configured shape/pose distributions, solar disc, spectrum, and scattering layers.\n"
+         << "Deterministic: the same inputs give the same output.\n"
          << "\n"
-         << "Output: one JSON document (schema_version 1; fields in doc/raypath-cli-output.md)\n"
+         << "Output: one JSON document (target schema 1 or report schema 2; fields in\n"
+         << "doc/raypath-cli-output.md)\n"
          << "to stdout, or to -o <path> instead (never both). Progress goes to stderr: one line\n"
          << "when the analysis starts and one when it ends. Unlike `analyze`, the analysis\n"
          << "cannot be interrupted part-way and has no partial result: Ctrl-C ends the process\n"
@@ -436,16 +437,16 @@ void PrintRaypathUsage(const char* prog_name, std::ostream& output = std::cout) 
          << "  --crystal <id>     The crystal entry (its config id) the path runs through (required).\n"
          << "  --path <faces>     The raypath as `analyze` prints it, e.g. 3-5 or 3-6-4-8 (face\n"
          << "                     numbers joined by '-'; a C<id>(...) prefix must name --crystal).\n"
-         << "                     Required. Multi-layer chains ((3-5) -> (1-3)) are refused.\n"
+         << "                     Required. Multi-layer chains ((3-5) -> (1-3)) are report-only.\n"
          << "  --target <alt>,<az>\n"
          << "                     The sky point (required unless --report), as altitude and azimuth in degrees\n"
          << "                     — azimuth measured as the sun's is, the same convention as\n"
          << "                     `analyze --center`.\n"
-         << "  --report           Produce the separate target-free path feature report (schema 1).\n"
+         << "  --report           Produce the separate target-free path feature report (schema 2).\n"
          << "                     It does not accept --target, --grid or --warm.\n"
          << "  --wavelength <nm>  The wavelength, in [350, 900]. Target mode defaults to the\n"
          << "                     config's single wavelength or 550; report mode without this\n"
-         << "                     option uses its documented red/blue diagnostic endpoints.\n"
+         << "                     option measures the configured scene spectrum.\n"
          << "  --events <N>       Target mode: SO(3) seed events (default 1M; max 100M). Report\n"
          << "                     mode: even integration samples (default 8192; range 64..1M).\n"
          << "                     An optional K/M suffix is accepted in either mode.\n"
@@ -2665,6 +2666,9 @@ int RunRaypath(const RaypathOptions& opts) {
     request.face_count = static_cast<int>(opts.faces.size());
     request.layer_face_counts = opts.layer_face_counts.data();
     request.layer_count = static_cast<int>(opts.layer_face_counts.size());
+    const std::vector<int> layer_crystal_ids(static_cast<size_t>(request.layer_count), *opts.crystal_id);
+    request.layer_crystal_ids = layer_crystal_ids.data();
+    request.layer_crystal_id_count = request.layer_count;
     double wavelength = opts.wavelength_nm.value_or(0.0);
     request.wavelengths_nm = opts.wavelength_nm.has_value() ? &wavelength : nullptr;
     request.wavelength_count = opts.wavelength_nm.has_value() ? 1 : 0;

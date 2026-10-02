@@ -1,5 +1,6 @@
 #include "raypath/path_feature_report_json.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <nlohmann/json.hpp>
 
@@ -116,6 +117,153 @@ nlohmann::ordered_json FeatureJson(const PathFeature& feature) {
   return out;
 }
 
+const char* DiagnosticPathStatusName(analytic::DiagnosticPathStatus status) {
+  switch (status) {
+    case analytic::DiagnosticPathStatus::kOk:
+      return "ok";
+    case analytic::DiagnosticPathStatus::kPathInfeasible:
+      return "path_infeasible";
+    case analytic::DiagnosticPathStatus::kRefractionCritical:
+      return "refraction_critical";
+    case analytic::DiagnosticPathStatus::kNonFinite:
+      return "non_finite";
+  }
+  return "non_finite";
+}
+
+const char* DiagnosticEntryStatusName(analytic::DiagnosticEntryStatus status) {
+  switch (status) {
+    case analytic::DiagnosticEntryStatus::kNotEvaluated:
+      return "not_evaluated";
+    case analytic::DiagnosticEntryStatus::kOk:
+      return "ok";
+    case analytic::DiagnosticEntryStatus::kEntryBackface:
+      return "entry_backface";
+    case analytic::DiagnosticEntryStatus::kExitCriticalAngle:
+      return "exit_critical_angle";
+    case analytic::DiagnosticEntryStatus::kCorridorEmpty:
+      return "corridor_empty";
+  }
+  return "not_evaluated";
+}
+
+nlohmann::ordered_json SceneMeasureJson(const SceneMeasureResult& measure) {
+  nlohmann::ordered_json factors = nlohmann::ordered_json::array();
+  for (const MeasureFactorDescriptor& factor : measure.factors) {
+    factors.push_back({ { "layer_index", factor.layer_index },
+                        { "name", factor.name },
+                        { "distribution", DistributionName(factor.distribution) },
+                        { "latent_id", factor.latent_id },
+                        { "support_dimension", factor.support_dimension },
+                        { "measure", factor.measure },
+                        { "normalization", factor.normalization } });
+  }
+  nlohmann::ordered_json spectrum = nlohmann::ordered_json::array();
+  for (const SpectrumMeasureNode& node : measure.spectrum_nodes) {
+    spectrum.push_back({ { "node_id", node.node_id },
+                         { "source", node.source },
+                         { "wavelength_nm", Num(node.wavelength_nm) },
+                         { "weight", Num(node.weight) },
+                         { "refractive_index", Num(node.refractive_index) } });
+  }
+  nlohmann::ordered_json sun = nlohmann::ordered_json::array();
+  for (const SunMeasureNode& node : measure.sun_nodes) {
+    sun.push_back({ { "node_id", node.node_id },
+                    { "mass", Num(node.mass) },
+                    { "incident_direction", Array(node.incident_direction, 3) } });
+  }
+  constexpr size_t kMaxJsonRows = 64;
+  nlohmann::ordered_json rows = nlohmann::ordered_json::array();
+  for (size_t row_index = 0; row_index < std::min(kMaxJsonRows, measure.rows.size()); row_index++) {
+    const SceneMeasureRow& row = measure.rows[row_index];
+    nlohmann::ordered_json layers = nlohmann::ordered_json::array();
+    for (const SceneMeasureLayerRow& layer : row.layers) {
+      nlohmann::ordered_json shape = nlohmann::ordered_json::array();
+      for (const ShapeScalarSample& scalar : layer.shape) {
+        shape.push_back({ { "name", scalar.name }, { "value", Num(scalar.value) }, { "latent_id", scalar.latent_id } });
+      }
+      nlohmann::ordered_json interfaces = nlohmann::ordered_json::array();
+      for (const analytic::DiagnosticInterface& interface : layer.field.interfaces) {
+        interfaces.push_back({ { "face", interface.face_number }, { "coefficient", Num(interface.coefficient) } });
+      }
+      nlohmann::ordered_json domain_margins = nlohmann::ordered_json::array();
+      for (const analytic::DiagnosticMargin& margin : layer.field.domain_margins) {
+        domain_margins.push_back(
+            { { "name", margin.name }, { "interface_index", margin.interface_index }, { "value", Num(margin.value) } });
+      }
+      nlohmann::ordered_json tir_margins = nlohmann::ordered_json::array();
+      for (const analytic::DiagnosticMargin& margin : layer.field.tir_margins) {
+        tir_margins.push_back(
+            { { "name", margin.name }, { "interface_index", margin.interface_index }, { "value", Num(margin.value) } });
+      }
+      nlohmann::ordered_json layer_json = {
+        { "layer_index", layer.layer_index },
+        { "crystal_id", layer.crystal_id },
+        { "faces", layer.faces },
+        { "shape", shape },
+        { "pose_lon_lat_roll_rad", Array(layer.pose_lon_lat_roll_rad, 3) },
+        { "incident_direction", Array(layer.incident_direction, 3) },
+        { "outgoing_direction", Array(layer.outgoing_direction, 3) },
+        { "crystal_share", Num(layer.crystal_share) },
+        { "continuation_mass", Num(layer.continuation_mass) },
+        { "entry_measure", Num(layer.entry_measure) },
+        { "fresnel_weight", Num(layer.fresnel_weight) },
+        { "status", SceneMeasureStatusName(layer.status) },
+        { "field",
+          { { "path_status", DiagnosticPathStatusName(layer.field.path_status) },
+            { "entry_status", DiagnosticEntryStatusName(layer.field.entry_status) },
+            { "interfaces", interfaces },
+            { "domain_margins", domain_margins },
+            { "tir_margins", tir_margins } } },
+      };
+      if (!layer.reason.empty()) {
+        layer_json["reason"] = layer.reason;
+      }
+      layers.push_back(std::move(layer_json));
+    }
+    nlohmann::ordered_json row_json = {
+      { "spectrum_node_id", row.spectrum_node_id },
+      { "sun_node_id", row.sun_node_id },
+      { "member_chain_index", row.member_chain_index },
+      { "sample_index", row.sample_index },
+      { "wavelength_nm", Num(row.wavelength_nm) },
+      { "spectrum_weight", Num(row.spectrum_weight) },
+      { "sun_mass", Num(row.sun_mass) },
+      { "joint_sample_mass", Num(row.joint_sample_mass) },
+      { "global_weight", Num(row.global_weight) },
+      { "contribution", Num(row.contribution) },
+      { "status", SceneMeasureStatusName(row.status) },
+      { "layers", layers },
+    };
+    if (!row.reason.empty()) {
+      row_json["reason"] = row.reason;
+    }
+    rows.push_back(std::move(row_json));
+  }
+  nlohmann::ordered_json out = {
+    { "status", SceneMeasureStatusName(measure.status) },
+    { "seed", measure.seed },
+    { "requested_sample_count", measure.requested_sample_count },
+    { "evaluated_row_count", measure.evaluated_row_count },
+    { "units", measure.units },
+    { "normalization", measure.normalization },
+    { "factors", factors },
+    { "spectrum_nodes", spectrum },
+    { "sun_nodes", sun },
+    { "member_chains", measure.member_chains },
+    { "coarse_contribution", Num(measure.coarse_contribution) },
+    { "total_contribution", Num(measure.total_contribution) },
+    { "absolute_error_estimate", Num(measure.absolute_error_estimate) },
+    { "sampled_measure_mass", Num(measure.sampled_measure_mass) },
+    { "sampled_rows", rows },
+    { "sampled_rows_truncated", measure.rows.size() > kMaxJsonRows },
+  };
+  if (!measure.reason.empty()) {
+    out["reason"] = measure.reason;
+  }
+  return out;
+}
+
 }  // namespace
 
 std::string PathFeatureReportToJson(const PathFeatureReport& result, const char* lumice_version) {
@@ -168,6 +316,8 @@ std::string PathFeatureReportToJson(const PathFeatureReport& result, const char*
             { "shape", shape },
             { "shape_is_nominal", result.meta.shape_is_nominal } } },
         { "requested_faces", result.meta.requested_faces },
+        { "requested_path_layers", result.meta.requested_path_layers },
+        { "layer_crystal_ids", result.meta.layer_crystal_ids },
         { "sun",
           { { "altitude_deg", Num(result.meta.sun_altitude_deg) },
             { "azimuth_deg", Num(result.meta.sun_azimuth_deg) },
@@ -175,6 +325,7 @@ std::string PathFeatureReportToJson(const PathFeatureReport& result, const char*
         { "orientation_measure", result.meta.orientation_measure },
         { "sample_count", result.meta.sample_count } } },
     { "wavelengths", wavelengths },
+    { "scene_measure", SceneMeasureJson(result.scene_measure) },
     { "physical_l2_members", members },
     { "features", features },
     { "coverage", coverage },

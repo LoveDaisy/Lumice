@@ -43,7 +43,7 @@ Lumice 的 C API 按能力拆成六个头文件，每个能力一个；按用到
 ### 常量
 
 ```c
-#define LUMICE_API_VERSION 451        // ABI 版本，编码为 major*100 + minor（v4.51）
+#define LUMICE_API_VERSION 452        // ABI 版本，编码为 major*100 + minor（v4.52）
 #define LUMICE_MAX_RENDER_RESULTS 16  // 渲染结果数组最大容量
 #define LUMICE_MAX_STATS_RESULTS 1    // 统计结果数组最大容量
 ```
@@ -55,6 +55,10 @@ static_assert(LUMICE_API_VERSION >= 439, "Lumice header too old for this integra
 ```
 
 公开符号集增加或结构体布局发生 BREAKING 变更时都会 bump。
+
+**v4.52** 在 `LUMICE_PathFeatureReportRequest` 尾部追加可选 v2 字段：逐层晶体 id、物理成员选择、
+scene/diagnostic/legacy 光谱选择、确定性测度采样数、太阳与光源积分节点数及 seed。v4.51 的前缀尺寸
+仍被接受并保留旧的端点行为；完整尺寸默认使用场景光谱，输出含 `scene_measure` 的 report schema 2。
 
 **v4.51** 是纯追加。新增不接受天空 target 的路径级 feature report：
 `LUMICE_PathFeatureReportRequest`、不透明的 `LUMICE_PathFeatureReport`、

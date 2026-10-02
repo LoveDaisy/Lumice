@@ -519,7 +519,11 @@ extern "C" {
 // LUMICE_AnalyzePathFeatureReport, LUMICE_PathFeatureReportToJson and
 // LUMICE_PathFeatureReportDestroy, plus their sample/wavelength bounds. The new JSON schema is
 // separate from the unchanged v4.50 target-fiber schema.
-#define LUMICE_API_VERSION 451
+//
+// ADDED (v4.52): append-only v2 tail fields on LUMICE_PathFeatureReportRequest for
+// multi-layer crystal ids, physical-member selection, scene-spectrum selection and
+// deterministic scene-measure quadrature. The v4.51 request prefix remains accepted.
+#define LUMICE_API_VERSION 452
 #define LUMICE_MAX_RENDER_RESULTS 16
 #define LUMICE_MAX_STATS_RESULTS 1
 

@@ -3,6 +3,7 @@
 
 #include <gtest/gtest.h>
 
+#include <cstddef>
 #include <cstring>
 #include <memory>
 #include <nlohmann/json.hpp>
@@ -33,6 +34,27 @@ constexpr const char* kSceneJson = R"({
   "render": []
 })";
 
+constexpr const char* kMultiSceneJson = R"({
+  "crystal": [{
+    "id": 1, "type": "prism", "shape": {"height": 1},
+    "axis": {
+      "zenith": {"type": "uniform", "mean": 0, "std": 360},
+      "azimuth": {"type": "uniform", "mean": 0, "std": 360},
+      "roll": {"type": "uniform", "mean": 0, "std": 360}
+    }
+  }],
+  "filter": [],
+  "scene": {
+    "light_source": {"type": "sun", "altitude": 20, "azimuth": 0, "spectrum": "D65"},
+    "ray_num": 1000, "max_hits": 7,
+    "scattering": [
+      {"prob": 1, "entries": [{"crystal": 1, "proportion": 1}]},
+      {"prob": 0, "entries": [{"crystal": 1, "proportion": 1}]}
+    ]
+  },
+  "render": []
+})";
+
 struct SceneDeleter {
   void operator()(LUMICE_Scene* scene) const { LUMICE_SceneDestroy(scene); }
 };
@@ -42,9 +64,9 @@ struct ReportDeleter {
 using ScenePtr = std::unique_ptr<LUMICE_Scene, SceneDeleter>;
 using ReportPtr = std::unique_ptr<LUMICE_PathFeatureReport, ReportDeleter>;
 
-ScenePtr MakeScene() {
+ScenePtr MakeScene(const char* json = kSceneJson) {
   LUMICE_Scene* scene = nullptr;
-  EXPECT_EQ(LUMICE_SceneFromJson(kSceneJson, &scene), LUMICE_OK);
+  EXPECT_EQ(LUMICE_SceneFromJson(json, &scene), LUMICE_OK);
   return ScenePtr(scene);
 }
 
@@ -105,7 +127,7 @@ TEST(PathFeatureReportCApi, NullArgumentsAndPointersAreRejected) {
 TEST(PathFeatureReportCApi, StructSizeAndLayerShapeAreValidated) {
   const ScenePtr scene = MakeScene();
   Request short_request;
-  short_request.c.struct_size = sizeof(short_request.c) - 2 * sizeof(int);
+  short_request.c.struct_size = offsetof(LUMICE_PathFeatureReportRequest, sample_count);
   Outcome outcome = Analyse(scene.get(), &short_request.c);
   EXPECT_EQ(outcome.code, LUMICE_ERR_INVALID_VALUE);
   EXPECT_NE(outcome.error.find("struct_size"), std::string::npos);
@@ -127,7 +149,7 @@ TEST(PathFeatureReportCApi, StructSizeAndLayerShapeAreValidated) {
   no_layers.c.layer_count = 0;
   outcome = Analyse(scene.get(), &no_layers.c);
   EXPECT_EQ(outcome.code, LUMICE_ERR_INVALID_VALUE);
-  EXPECT_NE(outcome.error.find("one non-empty layer"), std::string::npos);
+  EXPECT_NE(outcome.error.find("at least one non-empty layer"), std::string::npos);
 }
 
 TEST(PathFeatureReportCApi, SerializesOnceAndKeepsTheResultImmutable) {
@@ -141,15 +163,63 @@ TEST(PathFeatureReportCApi, SerializesOnceAndKeepsTheResultImmutable) {
   EXPECT_EQ(Json(outcome.report.get()), first);
   const nlohmann::json doc = nlohmann::json::parse(first);
   EXPECT_EQ(doc["schema"], "lumice.path-feature-report");
-  EXPECT_EQ(doc["schema_version"], 1);
+  EXPECT_EQ(doc["schema_version"], 2);
   EXPECT_EQ(doc["meta"]["sample_count"], 64);
   EXPECT_EQ(doc["wavelengths"].size(), 2u);
+  EXPECT_EQ(doc["scene_measure"]["spectrum_nodes"].size(), 8u);
+  EXPECT_EQ(doc["scene_measure"]["spectrum_nodes"][0]["source"], "scene_illuminant_uniform_380_780");
 
   char small[8];
   size_t full_length = 0;
   ASSERT_EQ(LUMICE_PathFeatureReportToJson(outcome.report.get(), small, sizeof(small), &full_length), LUMICE_OK);
   EXPECT_EQ(std::strlen(small), sizeof(small) - 1);
   EXPECT_EQ(full_length, first.size());
+}
+
+TEST(PathFeatureReportCApi, V1SizeRetainsTheNamedLegacySpectrumCompatibilityMode) {
+  const ScenePtr scene = MakeScene();
+  Request request;
+  request.c.struct_size = offsetof(LUMICE_PathFeatureReportRequest, sample_count) + sizeof(int);
+  const Outcome outcome = Analyse(scene.get(), &request.c);
+  ASSERT_EQ(outcome.code, LUMICE_OK) << outcome.error;
+  const nlohmann::json doc = nlohmann::json::parse(Json(outcome.report.get()));
+  ASSERT_EQ(doc["scene_measure"]["spectrum_nodes"].size(), 2u);
+  EXPECT_EQ(doc["scene_measure"]["spectrum_nodes"][0]["source"], "legacy_reference_endpoint");
+}
+
+TEST(PathFeatureReportCApi, PhysicalMemberMaskAndMultiLayerIdsReachTheSceneMeasure) {
+  {
+    const ScenePtr scene = MakeScene();
+    Request request;
+    request.c.member_selection = LUMICE_PATH_FEATURE_MEMBERS_PHYSICAL_MASK;
+    request.c.physical_member_mask = uint64_t{ 1 } << 1;
+    const Outcome outcome = Analyse(scene.get(), &request.c);
+    ASSERT_EQ(outcome.code, LUMICE_OK) << outcome.error;
+    const nlohmann::json doc = nlohmann::json::parse(Json(outcome.report.get()));
+    EXPECT_EQ(doc["scene_measure"]["member_chains"].size(), 1u);
+    EXPECT_EQ(doc["physical_l2_members"].size(), 1u);
+  }
+
+  const ScenePtr scene = MakeScene(kMultiSceneJson);
+  Request request;
+  int faces[4] = { 3, 5, 3, 5 };
+  int layer_counts[2] = { 2, 2 };
+  int layer_crystals[2] = { 1, 1 };
+  request.c.faces = faces;
+  request.c.face_count = 4;
+  request.c.layer_face_counts = layer_counts;
+  request.c.layer_count = 2;
+  request.c.layer_crystal_ids = layer_crystals;
+  request.c.layer_crystal_id_count = 2;
+  request.c.member_selection = LUMICE_PATH_FEATURE_MEMBERS_CONCRETE;
+  request.c.scene_measure_sample_count = 64;
+  const Outcome outcome = Analyse(scene.get(), &request.c);
+  ASSERT_EQ(outcome.code, LUMICE_OK) << outcome.error;
+  const nlohmann::json doc = nlohmann::json::parse(Json(outcome.report.get()));
+  EXPECT_EQ(doc["meta"]["layer_crystal_ids"], nlohmann::json({ 1, 1 }));
+  EXPECT_EQ(doc["meta"]["requested_path_layers"], nlohmann::json({ { 3, 5 }, { 3, 5 } }));
+  EXPECT_EQ(doc["scene_measure"]["member_chains"].size(), 1u);
+  EXPECT_EQ(doc["scene_measure"]["evaluated_row_count"], 8 * 64);
 }
 
 TEST(PathFeatureReportCApi, AcceptsExplicitWavelengthsAndRejectsInvalidCounts) {

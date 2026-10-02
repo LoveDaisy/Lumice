@@ -38,7 +38,8 @@ def test_random_315_report_is_a_separate_document_with_both_feature_mechanisms()
     assert result.returncode == 0, result.stderr
     doc = json.loads(result.stdout)
     assert doc["schema"] == "lumice.path-feature-report"
-    assert doc["schema_version"] == 1
+    assert doc["schema_version"] == 2
+    assert doc["scene_measure"]["spectrum_nodes"][0]["source"] == "scene_illuminant_uniform_380_780"
     assert "target" not in doc["meta"]
     assert len(doc["physical_l2_members"]) == 24
     features = {feature["id"]: feature for feature in doc["features"]}
