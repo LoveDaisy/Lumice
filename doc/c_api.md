@@ -61,7 +61,7 @@ It is bumped when the public symbol set grows and on every BREAKING struct-layou
 **v4.51** is a pure append. Added the target-free path feature report:
 `LUMICE_PathFeatureReportRequest`, the opaque `LUMICE_PathFeatureReport`,
 `LUMICE_AnalyzePathFeatureReport`, `LUMICE_PathFeatureReportToJson`, and
-`LUMICE_PathFeatureReportDestroy`, plus sample- and wavelength-count bounds. It evaluates
+`LUMICE_PathFeatureReportDestroy`, plus sample-, wavelength-count, and combined-work bounds. It evaluates
 finite-crystal `A*T` by concrete physical-L2 member and discrete wavelength and uses the separate
 `lumice.path-feature-report` JSON schema. The v4.50 target request, JSON, and warm-start contract
 acquire no fields. See `raypath-cli-output.md` section 7.

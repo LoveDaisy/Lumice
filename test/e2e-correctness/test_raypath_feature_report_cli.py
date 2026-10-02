@@ -87,4 +87,5 @@ def test_report_rejects_target_only_options(extra, named):
     result = _report(_RANDOM, "3-5", *extra)
     assert result.returncode == 1
     assert named in result.stderr
-    assert result.stdout == "" or "Usage:" in result.stdout
+    assert "Usage:" in result.stderr
+    assert result.stdout == ""

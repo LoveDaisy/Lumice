@@ -7,6 +7,7 @@
 #include <memory>
 #include <nlohmann/json.hpp>
 #include <string>
+#include <vector>
 
 #include "include/lumice_base.h"
 #include "include/lumice_raypath.h"
@@ -168,6 +169,20 @@ TEST(PathFeatureReportCApi, AcceptsExplicitWavelengthsAndRejectsInvalidCounts) {
   request.c.wavelengths_nm = nullptr;
   outcome = Analyse(scene.get(), &request.c);
   EXPECT_EQ(outcome.code, LUMICE_ERR_NULL_ARG);
+}
+
+TEST(PathFeatureReportCApi, RejectsCombinedMemberWavelengthAndSampleWorkAboveThePublicBudget) {
+  const ScenePtr scene = MakeScene();
+  Request request;
+  std::vector<double> wavelengths(LUMICE_PATH_FEATURE_REPORT_MAX_WAVELENGTH_COUNT, 550.0);
+  request.c.wavelengths_nm = wavelengths.data();
+  request.c.wavelength_count = static_cast<int>(wavelengths.size());
+  request.c.sample_count = LUMICE_PATH_FEATURE_REPORT_MAX_SAMPLE_COUNT;
+
+  const Outcome outcome = Analyse(scene.get(), &request.c);
+  EXPECT_EQ(outcome.code, LUMICE_ERR_INVALID_VALUE);
+  EXPECT_EQ(outcome.report, nullptr);
+  EXPECT_NE(outcome.error.find("sample-evaluation budget"), std::string::npos);
 }
 
 }  // namespace

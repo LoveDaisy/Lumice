@@ -7,6 +7,7 @@
 // member at every requested wavelength, and reports the small set of positioned features whose
 // mechanisms have an implemented, fixture-backed detector.
 
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <vector>
@@ -20,6 +21,7 @@ constexpr int kFeatureReportSchemaVersion = 1;
 constexpr int kDefaultFeatureReportSampleCount = 8192;
 constexpr int kMaxFeatureReportSampleCount = 1000000;
 constexpr int kMaxFeatureReportWavelengthCount = 32;
+constexpr uint64_t kMaxFeatureReportSampleEvaluations = 16777216;
 
 struct PathFeatureReportRequest {
   IdType crystal_id = 0;

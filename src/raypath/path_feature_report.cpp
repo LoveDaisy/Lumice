@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdint>
 #include <limits>
 #include <numeric>
 #include <string>
@@ -43,6 +44,16 @@ constexpr double kReferenceRedNm = 694.3628981235904;   // IceRefractiveIndex::G
 constexpr double kReferenceBlueNm = 430.0197374077313;  // IceRefractiveIndex::Get == 1.317
 constexpr int kMinimumSampleCount = 64;
 constexpr double kRelativeConvergenceTolerance = 0.25;
+
+bool ExceedsSampleEvaluationBudget(size_t member_count, size_t wavelength_count, int sample_count) {
+  if (member_count == 0 || wavelength_count == 0) {
+    return false;
+  }
+  const uint64_t fine_and_coarse = static_cast<uint64_t>(sample_count) + static_cast<uint64_t>(sample_count / 2);
+  const uint64_t max = kMaxFeatureReportSampleEvaluations;
+  return member_count > max || wavelength_count > max / member_count ||
+         fine_and_coarse > max / (static_cast<uint64_t>(member_count) * wavelength_count);
+}
 
 double Clamp1(double x) {
   return std::max(-1.0, std::min(1.0, x));
@@ -665,6 +676,12 @@ Error AnalyzePathFeatureReport(const ConfigManager& config, const PathFeatureRep
   if (!wavelength_error.Ok()) {
     return wavelength_error;
   }
+  const std::vector<std::vector<int>> members = ExpandPhysicalMembers(crystal_config, request.path_layers.front());
+  if (ExceedsSampleEvaluationBudget(members.size(), wavelengths.size(), request.sample_count)) {
+    return { ErrorCode::kInvalidArgument, "physical-L2 members × wavelengths × (fine + coarse) exceeds the " +
+                                              std::to_string(kMaxFeatureReportSampleEvaluations) +
+                                              " sample-evaluation budget" };
+  }
 
   PathFeatureReport result;
   result.meta.analytic_api_version = analytic::kApiVersion;
@@ -693,7 +710,6 @@ Error AnalyzePathFeatureReport(const ConfigManager& config, const PathFeatureRep
                               "members use the crystal shape and orientation ensemble's physical P/B/D gating; no L1 "
                               "label equivalence is claimed" });
 
-  const std::vector<std::vector<int>> members = ExpandPhysicalMembers(crystal_config, result.meta.requested_faces);
   for (const std::vector<int>& faces : members) {
     std::vector<int> slots;
     const Error path_error = ResolveSingleLayerPath({ faces }, normals, &slots);

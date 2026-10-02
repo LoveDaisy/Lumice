@@ -409,61 +409,60 @@ void PrintAnalyzeUsage(const char* prog_name) {
 // the file wants to load.
 constexpr int kRaypathMaxGridRows = 720;
 
-void PrintRaypathUsage(const char* prog_name) {
-  std::cout << "Usage: " << prog_name
-            << " raypath -f <config_file> --crystal <id> --path <faces> (--target <alt>,<az> | --report) [options]\n"
-            << "\n"
-            << "Analyse ONE single-layer raypath of one crystal entry over one sky point: the\n"
-            << "components of the fiber of crystal poses that send the sun into that point, each\n"
-            << "component's poses with per-pose detail (orientation angles, where the sun sits in\n"
-            << "the crystal, transmittances, entry area), and the path's deviation over the whole\n"
-            << "sun-direction sphere. With --report it instead produces a target-free physical-L2\n"
-            << "member/wavelength brightness and positioned-feature report with explicit coverage.\n"
-            << "`analyze` lists the raypaths that light the sky; `raypath` is what you ask about one\n"
-            << "of them. The crystal is taken at its nominal shape (the\n"
-            << "centre of every shape distribution) and the sun as a point; both are recorded in\n"
-            << "the output's meta block. Deterministic: the same inputs give the same output.\n"
-            << "\n"
-            << "Output: one JSON document (schema_version 1; fields in doc/raypath-cli-output.md)\n"
-            << "to stdout, or to -o <path> instead (never both). Progress goes to stderr: one line\n"
-            << "when the analysis starts and one when it ends. Unlike `analyze`, the analysis\n"
-            << "cannot be interrupted part-way and has no partial result: Ctrl-C ends the process\n"
-            << "and writes nothing. With -o the file is written to <path>.tmp and renamed over\n"
-            << "<path>, so <path> is never half a file; an interrupted run may leave the .tmp.\n"
-            << "\n"
-            << "Options:\n"
-            << kHelpConfigOption
-            << "  --crystal <id>     The crystal entry (its config id) the path runs through (required).\n"
-            << "  --path <faces>     The raypath as `analyze` prints it, e.g. 3-5 or 3-6-4-8 (face\n"
-            << "                     numbers joined by '-'; a C<id>(...) prefix must name --crystal).\n"
-            << "                     Required. Multi-layer chains ((3-5) -> (1-3)) are refused.\n"
-            << "  --target <alt>,<az>\n"
-            << "                     The sky point (required unless --report), as altitude and azimuth in degrees\n"
-            << "                     — azimuth measured as the sun's is, the same convention as\n"
-            << "                     `analyze --center`.\n"
-            << "  --report           Produce the separate target-free path feature report (schema 1).\n"
-            << "                     It does not accept --target, --grid or --warm.\n"
-            << "  --wavelength <nm>  The wavelength, in [350, 900]. Target mode defaults to the\n"
-            << "                     config's single wavelength or 550; report mode without this\n"
-            << "                     option uses its documented red/blue diagnostic endpoints.\n"
-            << "  --events <N>       Target mode: SO(3) seed events (default 1M; max 100M). Report\n"
-            << "                     mode: even integration samples (default 8192; range 64..1M).\n"
-            << "                     An optional K/M suffix is accepted in either mode.\n"
-            << "  --grid <rows>      Latitude rows of the sun-direction grid (longitude twice that),\n"
-            << "                     in [0, " << kRaypathMaxGridRows << "]; 0 leaves the grid out. Default: 90.\n"
-            << "  --warm <file>      An earlier output of this subcommand: its component seeds start\n"
-            << "                     the search, so a component found there is not lost. A starting\n"
-            << "                     point only, not a guarantee; outputs of builds for different CPU\n"
-            << "                     tiers need not agree to the last bit.\n"
-            << "  -o <path>          Write the JSON to this file instead of stdout.\n"
-            << kHelpLogAndHelpOptions << "\n"
-            << "Examples:\n"
-            << "  " << prog_name << " raypath -f config.json --crystal 1 --path 3-5 --target 20,25\n"
-            << "  " << prog_name << " raypath -f config.json --crystal 1 --path 3-1-5 --report\n"
-            << "  " << prog_name
-            << " raypath -f config.json --crystal 1 --path 3-5 --target 20,25 --grid 180 -o r.json\n"
-            << "  " << prog_name
-            << " raypath -f config.json --crystal 1 --path 3-5 --target 20,25 --events 10M --warm r.json\n";
+void PrintRaypathUsage(const char* prog_name, std::ostream& output = std::cout) {
+  output << "Usage: " << prog_name
+         << " raypath -f <config_file> --crystal <id> --path <faces> (--target <alt>,<az> | --report) [options]\n"
+         << "\n"
+         << "Analyse ONE single-layer raypath of one crystal entry over one sky point: the\n"
+         << "components of the fiber of crystal poses that send the sun into that point, each\n"
+         << "component's poses with per-pose detail (orientation angles, where the sun sits in\n"
+         << "the crystal, transmittances, entry area), and the path's deviation over the whole\n"
+         << "sun-direction sphere. With --report it instead produces a target-free physical-L2\n"
+         << "member/wavelength brightness and positioned-feature report with explicit coverage.\n"
+         << "`analyze` lists the raypaths that light the sky; `raypath` is what you ask about one\n"
+         << "of them. The crystal is taken at its nominal shape (the\n"
+         << "centre of every shape distribution) and the sun as a point; both are recorded in\n"
+         << "the output's meta block. Deterministic: the same inputs give the same output.\n"
+         << "\n"
+         << "Output: one JSON document (schema_version 1; fields in doc/raypath-cli-output.md)\n"
+         << "to stdout, or to -o <path> instead (never both). Progress goes to stderr: one line\n"
+         << "when the analysis starts and one when it ends. Unlike `analyze`, the analysis\n"
+         << "cannot be interrupted part-way and has no partial result: Ctrl-C ends the process\n"
+         << "and writes nothing. With -o the file is written to <path>.tmp and renamed over\n"
+         << "<path>, so <path> is never half a file; an interrupted run may leave the .tmp.\n"
+         << "\n"
+         << "Options:\n"
+         << kHelpConfigOption
+         << "  --crystal <id>     The crystal entry (its config id) the path runs through (required).\n"
+         << "  --path <faces>     The raypath as `analyze` prints it, e.g. 3-5 or 3-6-4-8 (face\n"
+         << "                     numbers joined by '-'; a C<id>(...) prefix must name --crystal).\n"
+         << "                     Required. Multi-layer chains ((3-5) -> (1-3)) are refused.\n"
+         << "  --target <alt>,<az>\n"
+         << "                     The sky point (required unless --report), as altitude and azimuth in degrees\n"
+         << "                     — azimuth measured as the sun's is, the same convention as\n"
+         << "                     `analyze --center`.\n"
+         << "  --report           Produce the separate target-free path feature report (schema 1).\n"
+         << "                     It does not accept --target, --grid or --warm.\n"
+         << "  --wavelength <nm>  The wavelength, in [350, 900]. Target mode defaults to the\n"
+         << "                     config's single wavelength or 550; report mode without this\n"
+         << "                     option uses its documented red/blue diagnostic endpoints.\n"
+         << "  --events <N>       Target mode: SO(3) seed events (default 1M; max 100M). Report\n"
+         << "                     mode: even integration samples (default 8192; range 64..1M).\n"
+         << "                     An optional K/M suffix is accepted in either mode.\n"
+         << "  --grid <rows>      Latitude rows of the sun-direction grid (longitude twice that),\n"
+         << "                     in [0, " << kRaypathMaxGridRows << "]; 0 leaves the grid out. Default: 90.\n"
+         << "  --warm <file>      An earlier output of this subcommand: its component seeds start\n"
+         << "                     the search, so a component found there is not lost. A starting\n"
+         << "                     point only, not a guarantee; outputs of builds for different CPU\n"
+         << "                     tiers need not agree to the last bit.\n"
+         << "  -o <path>          Write the JSON to this file instead of stdout.\n"
+         << kHelpLogAndHelpOptions << "\n"
+         << "Examples:\n"
+         << "  " << prog_name << " raypath -f config.json --crystal 1 --path 3-5 --target 20,25\n"
+         << "  " << prog_name << " raypath -f config.json --crystal 1 --path 3-1-5 --report\n"
+         << "  " << prog_name << " raypath -f config.json --crystal 1 --path 3-5 --target 20,25 --grid 180 -o r.json\n"
+         << "  " << prog_name
+         << " raypath -f config.json --crystal 1 --path 3-5 --target 20,25 --events 10M --warm r.json\n";
 }
 
 // Top-level `-h` (no subcommand named): the subcommand overview followed by the
@@ -2055,19 +2054,19 @@ int ParseRaypathOptions(int argc, char** argv, int first, RaypathOptions& opts) 
   }
   if (opts.feature_report && opts.target_alt_deg.has_value()) {
     std::cerr << "Error: --report does not accept --target; use one mode or the other\n\n";
-    PrintRaypathUsage(argv[0]);
+    PrintRaypathUsage(argv[0], std::cerr);
     return 1;
   }
   if (opts.feature_report && (!opts.warm_path.empty() || opts.grid_given)) {
     std::cerr << "Error: --report does not accept --warm or --grid; those options belong to target-fiber analysis\n\n";
-    PrintRaypathUsage(argv[0]);
+    PrintRaypathUsage(argv[0], std::cerr);
     return 1;
   }
   if (opts.feature_report && opts.events != 0 &&
       (opts.events < 64 || opts.events > LUMICE_PATH_FEATURE_REPORT_MAX_SAMPLE_COUNT || opts.events % 2 != 0)) {
     std::cerr << "Error: --events for --report must be an even integer in [64, "
               << LUMICE_PATH_FEATURE_REPORT_MAX_SAMPLE_COUNT << "]\n\n";
-    PrintRaypathUsage(argv[0]);
+    PrintRaypathUsage(argv[0], std::cerr);
     return 1;
   }
 

@@ -307,6 +307,9 @@ sky target, `--grid`, or `--warm`. `--events` is the even integration resolution
 (default 8192), not a fiber seed count. With no `--wavelength`, the report uses the diagnostic
 endpoints whose refractive indices are 1.307 and 1.317; one explicit `--wavelength <nm>` replaces
 them. The C API accepts up to 32 wavelength/weight pairs.
+The synchronous report also rejects a request when physical-L2 members × wavelengths ×
+(fine samples + half-resolution coarse samples) would exceed 16,777,216 evaluations; rejection
+produces no partial report.
 
 The public entry point is `LUMICE_AnalyzePathFeatureReport`, returning an immutable opaque
 `LUMICE_PathFeatureReport`. `LUMICE_PathFeatureReportToJson` has the same length-query/fetch and

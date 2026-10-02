@@ -59,7 +59,7 @@ static_assert(LUMICE_API_VERSION >= 439, "Lumice header too old for this integra
 **v4.51** 是纯追加。新增不接受天空 target 的路径级 feature report：
 `LUMICE_PathFeatureReportRequest`、不透明的 `LUMICE_PathFeatureReport`、
 `LUMICE_AnalyzePathFeatureReport`、`LUMICE_PathFeatureReportToJson`、
-`LUMICE_PathFeatureReportDestroy`，以及采样数和波长数上限。请求按具体物理 L2 成员与离散波长计算
+`LUMICE_PathFeatureReportDestroy`，以及采样数、波长数和组合工作量上限。请求按具体物理 L2 成员与离散波长计算
 有限晶体 `A*T`，结果使用独立的 `lumice.path-feature-report` schema；v4.50 的目标点请求、JSON 与
 warm-start 合约没有增加字段。字段和 coverage 边界见 `raypath-cli-output.md` §7。
 

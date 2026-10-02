@@ -31,6 +31,8 @@ static_assert(LUMICE_PATH_FEATURE_REPORT_MAX_SAMPLE_COUNT == lumice::raypath::kM
               "lumice_raypath.h and the feature-report module must agree on the sample bound");
 static_assert(LUMICE_PATH_FEATURE_REPORT_MAX_WAVELENGTH_COUNT == lumice::raypath::kMaxFeatureReportWavelengthCount,
               "lumice_raypath.h and the feature-report module must agree on the wavelength bound");
+static_assert(LUMICE_PATH_FEATURE_REPORT_MAX_SAMPLE_EVALUATIONS == lumice::raypath::kMaxFeatureReportSampleEvaluations,
+              "lumice_raypath.h and the feature-report module must agree on the total-work bound");
 
 struct LUMICE_SinglePathResult_ {
   std::string json;  // produced once in LUMICE_AnalyzeSinglePath, never changed afterwards

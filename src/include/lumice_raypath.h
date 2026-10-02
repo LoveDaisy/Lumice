@@ -99,6 +99,9 @@ LUMICE_API void LUMICE_SinglePathResultDestroy(LUMICE_SinglePathResult* result);
 
 #define LUMICE_PATH_FEATURE_REPORT_MAX_SAMPLE_COUNT 1000000
 #define LUMICE_PATH_FEATURE_REPORT_MAX_WAVELENGTH_COUNT 32
+// The report evaluates every admitted physical-L2 member at every wavelength twice: at the
+// requested resolution and at half that resolution. This bounds their combined synchronous work.
+#define LUMICE_PATH_FEATURE_REPORT_MAX_SAMPLE_EVALUATIONS 16777216
 
 typedef struct LUMICE_PathFeatureReportRequest {
   size_t struct_size;
@@ -114,7 +117,9 @@ typedef struct LUMICE_PathFeatureReportRequest {
   const double* wavelength_weights;
   int wavelength_count;
   // Even integer in [64, LUMICE_PATH_FEATURE_REPORT_MAX_SAMPLE_COUNT]; 0 selects 8192. The report
-  // records both this fine resolution and its half-resolution estimate.
+  // records both this fine resolution and its half-resolution estimate. The combined work is at
+  // most LUMICE_PATH_FEATURE_REPORT_MAX_SAMPLE_EVALUATIONS: physical-L2 members × wavelengths ×
+  // (sample_count + sample_count / 2).
   int sample_count;
 } LUMICE_PathFeatureReportRequest;
 
