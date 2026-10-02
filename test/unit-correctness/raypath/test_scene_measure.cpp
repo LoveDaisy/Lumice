@@ -737,6 +737,117 @@ TEST(SceneMeasure, AZeroLaterConditionIsKnownEvenWhenAnEarlierFieldIsInvalid) {
   EXPECT_EQ(positive_mass_control.status, SceneMeasureStatus::kPhysicallyUnreachable);
 }
 
+TEST(SceneMeasure, AConstantFilterZeroIsKnownWhenItsOwnFieldIsUnreachable) {
+  AxisDistribution axis;
+  axis.latitude_dist = { DistributionType::kNoRandom, 90.0f, 0.0f };
+  axis.azimuth_dist = { DistributionType::kNoRandom, 180.0f, 0.0f };
+  axis.roll_dist = { DistributionType::kNoRandom, 0.0f, 0.0f };
+  auto config = Scene({ Prism(1, axis) }, { 0.0f });
+  auto request = Request({ 1 }, { { 1, 2 } }, 2);
+  request.member_selection = SceneMemberSelection::kExplicitChains;
+  request.explicit_member_chains = { { { 1, 2 } } };
+  EXPECT_EQ(Build(config, request).status, SceneMeasureStatus::kPhysicallyUnreachable);
+  EntryExitFilterParam predicate;
+  predicate.entry_ = 3;
+  predicate.exit_ = 6;
+  config.scene_.ms_[0].setting_[0].filter_ = { 91, FilterConfig::kSymNone, FilterConfig::kFilterIn,
+                                               SimpleFilterParam{ predicate } };
+  const auto zero = Build(config, request);
+  EXPECT_EQ(zero.status, SceneMeasureStatus::kZeroWeight);
+  EXPECT_DOUBLE_EQ(zero.total_contribution, 0.0);
+  EXPECT_DOUBLE_EQ(zero.sampled_measure_mass, 0.0);
+  EXPECT_EQ(zero.sampled_measure_mass_status, SceneMeasureNumericStatus::kExactZero);
+  EXPECT_TRUE(std::all_of(zero.rows.begin(), zero.rows.end(),
+                          [](const auto& row) { return row.status == SceneMeasureStatus::kZeroWeight; }));
+}
+
+TEST(SceneMeasure, AConstantLaterFilterZeroIsKnownBeforeAnEarlierFieldFailure) {
+  AxisDistribution axis;
+  axis.latitude_dist = { DistributionType::kNoRandom, 90.0f, 0.0f };
+  axis.azimuth_dist = { DistributionType::kNoRandom, 180.0f, 0.0f };
+  axis.roll_dist = { DistributionType::kNoRandom, 0.0f, 0.0f };
+  auto config = Scene({ Prism(1, axis), Prism(2, axis) }, { 0.5f, 0.0f });
+  auto request = Request({ 1, 2 }, { { 1, 2 }, { 3, 6 } }, 2);
+  request.member_selection = SceneMemberSelection::kExplicitChains;
+  request.explicit_member_chains = { { { 1, 2 }, { 3, 6 } } };
+  EXPECT_EQ(Build(config, request).status, SceneMeasureStatus::kPhysicallyUnreachable);
+  EntryExitFilterParam predicate;
+  predicate.entry_ = 1;
+  predicate.exit_ = 2;
+  config.scene_.ms_[1].setting_[0].filter_ = { 92, FilterConfig::kSymNone, FilterConfig::kFilterIn,
+                                               SimpleFilterParam{ predicate } };
+  const auto zero = Build(config, request);
+  EXPECT_EQ(zero.status, SceneMeasureStatus::kZeroWeight);
+  EXPECT_DOUBLE_EQ(zero.total_contribution, 0.0);
+  EXPECT_DOUBLE_EQ(zero.sampled_measure_mass, 0.0);
+  EXPECT_EQ(zero.sampled_measure_mass_status, SceneMeasureNumericStatus::kExactZero);
+  EXPECT_TRUE(std::all_of(zero.rows.begin(), zero.rows.end(), [](const auto& row) {
+    return row.status == SceneMeasureStatus::kZeroWeight &&
+           row.evaluation_status == SceneMeasureStatus::kPhysicallyUnreachable;
+  }));
+}
+
+TEST(SceneMeasure, FixedFilterLedgerNeedsEveryPositiveLinkedEntryToReject) {
+  AxisDistribution axis;
+  axis.latitude_dist = { DistributionType::kNoRandom, 90.0f, 0.0f };
+  axis.azimuth_dist = { DistributionType::kNoRandom, 180.0f, 0.0f };
+  axis.roll_dist = { DistributionType::kNoRandom, 0.0f, 0.0f };
+  auto config = Scene({ Prism(1, axis) }, { 0.0f });
+  auto request = Request({ 1 }, { { 1, 2 } }, 2);
+  request.member_selection = SceneMemberSelection::kExplicitChains;
+  request.explicit_member_chains = { { { 1, 2 } } };
+
+  EntryExitFilterParam rejected;
+  rejected.entry_ = 3;
+  rejected.exit_ = 6;
+  config.scene_.ms_[0].setting_[0].filter_ = { 93, FilterConfig::kSymNone, FilterConfig::kFilterIn,
+                                               SimpleFilterParam{ rejected } };
+  ScatteringSetting second = config.scene_.ms_[0].setting_[0];
+  second.filter_ = {};
+  config.scene_.ms_[0].setting_.push_back(second);
+  EXPECT_EQ(Build(config, request).status, SceneMeasureStatus::kPhysicallyUnreachable);
+
+  DirectionFilterParam unknown_direction{ 0.0f, 0.0f, 0.1f };
+  config.scene_.ms_[0].setting_[1].filter_ = { 94, FilterConfig::kSymNone, FilterConfig::kFilterIn,
+                                               SimpleFilterParam{ unknown_direction } };
+  EXPECT_EQ(Build(config, request).status, SceneMeasureStatus::kPhysicallyUnreachable);
+
+  config.scene_.ms_[0].setting_[1].filter_ = { 95, FilterConfig::kSymNone, FilterConfig::kFilterIn,
+                                               SimpleFilterParam{ CrystalFilterParam{ 2 } } };
+  EXPECT_EQ(Build(config, request).status, SceneMeasureStatus::kZeroWeight);
+}
+
+TEST(SceneMeasure, FixedFilterLedgerUsesRuntimeCompoundActionAndConservativeSymmetry) {
+  AxisDistribution axis;
+  axis.latitude_dist = { DistributionType::kNoRandom, 90.0f, 0.0f };
+  axis.azimuth_dist = { DistributionType::kNoRandom, 180.0f, 0.0f };
+  axis.roll_dist = { DistributionType::kNoRandom, 0.0f, 0.0f };
+  auto config = Scene({ Prism(1, axis) }, { 0.0f });
+  auto request = Request({ 1 }, { { 1, 2 } }, 2);
+  request.member_selection = SceneMemberSelection::kExplicitChains;
+  request.explicit_member_chains = { { { 1, 2 } } };
+
+  RaypathFilterParam different_path;
+  different_path.raypath_ = { 3, 6 };
+  config.scene_.ms_[0].setting_[0].filter_ = { 96, FilterConfig::kSymNone, FilterConfig::kFilterIn,
+                                               SimpleFilterParam{ different_path } };
+  EXPECT_EQ(Build(config, request).status, SceneMeasureStatus::kZeroWeight);
+  config.scene_.ms_[0].setting_[0].filter_.action_ = FilterConfig::kFilterOut;
+  EXPECT_EQ(Build(config, request).status, SceneMeasureStatus::kPhysicallyUnreachable);
+
+  EntryExitFilterParam matching_ends;
+  matching_ends.entry_ = 1;
+  matching_ends.exit_ = 2;
+  ComplexFilterParam compound;
+  compound.filters_ = { { { 97, SimpleFilterParam{ matching_ends } },
+                          { 98, SimpleFilterParam{ CrystalFilterParam{ 2 } } } } };
+  config.scene_.ms_[0].setting_[0].filter_ = { 99, FilterConfig::kSymNone, FilterConfig::kFilterIn, compound };
+  EXPECT_EQ(Build(config, request).status, SceneMeasureStatus::kZeroWeight);
+
+  config.scene_.ms_[0].setting_[0].filter_.symmetry_ = FilterConfig::kSymP;
+  EXPECT_EQ(Build(config, request).status, SceneMeasureStatus::kPhysicallyUnreachable);
+}
+
 TEST(SceneMeasure, SelectedZeroShareIsZeroMeasureWithinAPositiveMixture) {
   AxisDistribution axis;
   axis.latitude_dist = { DistributionType::kNoRandom, 90.0f, 0.0f };

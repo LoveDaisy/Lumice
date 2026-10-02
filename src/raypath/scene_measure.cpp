@@ -934,6 +934,106 @@ bool FilterAcceptanceSupportConstant(const FilterConfig& filter) {
   });
 }
 
+struct FixedFilterEntryDecision {
+  bool evaluated = false;
+  bool accepted = false;
+};
+
+struct FixedFilterLayerLedger {
+  std::vector<FixedFilterEntryDecision> entries;
+  bool rejection_certified = false;
+};
+
+struct FixedFilterLedger {
+  std::vector<FixedFilterLayerLedger> layers;
+  int first_zero_layer = -1;
+};
+
+const uint8_t* PopulateFilterRecorder(const std::vector<int>& faces, RaypathRecorder* recorder,
+                                      std::array<uint8_t, kMaxHits>* overflow) {
+  recorder->Clear();
+  if (faces.size() <= RaypathRecorder::kInlineCap) {
+    for (const int face : faces) {
+      *recorder << static_cast<IdType>(face);
+    }
+    return nullptr;
+  }
+  recorder->size_ = static_cast<uint8_t>(faces.size());
+  recorder->overflow_idx_ = 0;
+  for (size_t index = 0; index < faces.size(); ++index) {
+    (*overflow)[index] = static_cast<uint8_t>(faces[index] & 0xff);
+  }
+  return overflow->data();
+}
+
+RaySeg FilterRay(IdType crystal_id, const double* outgoing_direction) {
+  RaySeg ray{};
+  if (outgoing_direction != nullptr) {
+    for (int coordinate = 0; coordinate < 3; ++coordinate) {
+      ray.d_[coordinate] = static_cast<float>(outgoing_direction[coordinate]);
+    }
+  }
+  ray.w_ = 1.0f;
+  ray.from_face_ = kInvalidId;
+  ray.to_face_ = kInvalidId;
+  ray.crystal_idx_ = 0;
+  ray.crystal_config_id_ = crystal_id;
+  return ray;
+}
+
+FixedFilterLayerLedger EvaluateFixedFilterLayer(const LayerInput& input, const std::vector<int>& faces) {
+  FixedFilterLayerLedger ledger;
+  ledger.entries.resize(input.entries.size());
+  if (faces.size() > kMaxHits) {
+    return ledger;
+  }
+
+  // Support-constant filters have neither direction predicates nor label-symmetry expansion, so
+  // their Check result depends only on the fixed member recorder and crystal config id. Use an
+  // isolated product draw solely to drive the runtime FilterSpec factory; its geometry cannot
+  // affect this deliberately conservative subset, and the scene-measure replay RNG is untouched.
+  RandomNumberGenerator probe_rng(1);
+  const Crystal probe_crystal = MakeCrystal(probe_rng, input.setting->crystal_.param_);
+  RaypathRecorder recorder;
+  std::array<uint8_t, kMaxHits> overflow{};
+  const uint8_t* overflow_ptr = PopulateFilterRecorder(faces, &recorder, &overflow);
+  const RaySeg ray = FilterRay(input.setting->crystal_.id_, nullptr);
+
+  bool has_positive_share = false;
+  bool every_positive_share_rejected = true;
+  for (size_t entry_index = 0; entry_index < input.entries.size(); ++entry_index) {
+    const LayerInput::Entry& input_entry = input.entries[entry_index];
+    if (!(input_entry.scene_share > 0.0)) {
+      continue;
+    }
+    has_positive_share = true;
+    const FilterConfig& filter = input_entry.setting->filter_;
+    if (!FilterAcceptanceSupportConstant(filter)) {
+      every_positive_share_rejected = false;
+      continue;
+    }
+    const auto spec = FilterSpec::Create(filter, probe_crystal, input_entry.setting->crystal_.axis_);
+    const bool accepted = spec->Check(ray, recorder, overflow_ptr);
+    ledger.entries[entry_index] = { true, accepted };
+    every_positive_share_rejected = every_positive_share_rejected && !accepted;
+  }
+  ledger.rejection_certified = has_positive_share && every_positive_share_rejected;
+  return ledger;
+}
+
+FixedFilterLedger BuildFixedFilterLedger(const std::vector<LayerInput>& layers,
+                                         const std::vector<std::vector<int>>& member_chain) {
+  FixedFilterLedger ledger;
+  ledger.layers.reserve(layers.size());
+  for (size_t layer_index = 0; layer_index < layers.size(); ++layer_index) {
+    ledger.layers.push_back(EvaluateFixedFilterLayer(layers[layer_index], member_chain[layer_index]));
+    if (ledger.first_zero_layer < 0 && ledger.layers.back().rejection_certified) {
+      ledger.first_zero_layer = static_cast<int>(layer_index);
+    }
+  }
+  return ledger;
+}
+
 void PopulateEntryRows(const LayerInput& input, SceneMeasureLayerRow* out) {
   out->entries.reserve(input.entries.size());
   for (const LayerInput::Entry& input_entry : input.entries) {
@@ -947,34 +1047,26 @@ void PopulateEntryRows(const LayerInput& input, SceneMeasureLayerRow* out) {
   }
 }
 
+void ApplyFixedFilterLedger(const FixedFilterLayerLedger& ledger, SceneMeasureLayerRow* out) {
+  for (size_t entry_index = 0; entry_index < ledger.entries.size(); ++entry_index) {
+    const FixedFilterEntryDecision& decision = ledger.entries[entry_index];
+    if (!decision.evaluated) {
+      continue;
+    }
+    SceneMeasureEntryRow& entry = out->entries[entry_index];
+    entry.filter_evaluated = true;
+    entry.accepted = decision.accepted;
+    entry.accepted_share = decision.accepted ? entry.scene_share : 0.0;
+  }
+  out->filter_rejection_certified = ledger.rejection_certified;
+}
+
 void ApplyPhysicalEntryMixture(const LayerInput& input, const Crystal& crystal, const std::vector<int>& faces,
                                SceneMeasureLayerRow* out) {
   RaypathRecorder recorder;
-  recorder.Clear();
   std::array<uint8_t, kMaxHits> overflow{};
-  const uint8_t* overflow_ptr = nullptr;
-  if (faces.size() <= RaypathRecorder::kInlineCap) {
-    for (const int face : faces) {
-      recorder << static_cast<IdType>(face);
-    }
-  } else {
-    recorder.size_ = static_cast<uint8_t>(faces.size());
-    recorder.overflow_idx_ = 0;
-    for (size_t index = 0; index < faces.size(); ++index) {
-      overflow[index] = static_cast<uint8_t>(faces[index] & 0xff);
-    }
-    overflow_ptr = overflow.data();
-  }
-
-  RaySeg ray{};
-  for (int coordinate = 0; coordinate < 3; ++coordinate) {
-    ray.d_[coordinate] = static_cast<float>(out->outgoing_direction[coordinate]);
-  }
-  ray.w_ = 1.0f;
-  ray.from_face_ = kInvalidId;
-  ray.to_face_ = kInvalidId;
-  ray.crystal_idx_ = 0;
-  ray.crystal_config_id_ = input.setting->crystal_.id_;
+  const uint8_t* overflow_ptr = PopulateFilterRecorder(faces, &recorder, &overflow);
+  const RaySeg ray = FilterRay(input.setting->crystal_.id_, out->outgoing_direction);
 
   double accepted_share = 0.0;
   for (size_t entry_index = 0; entry_index < input.entries.size(); ++entry_index) {
@@ -999,7 +1091,8 @@ void ApplyPhysicalEntryMixture(const LayerInput& input, const Crystal& crystal, 
 
 SceneMeasureLayerRow EvaluateLayer(RandomNumberGenerator& rng, const LayerInput& input, int layer_index,
                                    const std::vector<int>& faces, double refractive_index, const double incident[3],
-                                   bool include_derivatives, std::vector<LatentMeasureSample>* latents) {
+                                   bool include_derivatives, const FixedFilterLayerLedger& fixed_filter_ledger,
+                                   std::vector<LatentMeasureSample>* latents) {
   SceneMeasureLayerRow out;
   out.layer_index = layer_index;
   out.crystal_id = input.setting->crystal_.id_;
@@ -1009,7 +1102,15 @@ SceneMeasureLayerRow EvaluateLayer(RandomNumberGenerator& rng, const LayerInput&
   out.crystal_share = input.crystal_share;
   out.continuation_mass = input.continuation_mass;
   PopulateEntryRows(input, &out);
+  ApplyFixedFilterLedger(fixed_filter_ledger, &out);
   std::copy(incident, incident + 3, out.incident_direction);
+
+  if (out.filter_rejection_certified) {
+    out.crystal_share = 0.0;
+    out.status = SceneMeasureStatus::kZeroWeight;
+    out.reason = "every selected scattering entry has a support-constant rejecting physical filter";
+    return out;
+  }
 
   const analytic::CrystalShape shape =
       SampleShape(rng, input.setting->crystal_.param_, input, layer_index, &out.shape, latents);
@@ -1201,6 +1302,12 @@ Error BuildSceneMeasure(const ConfigManager& config, const SceneMeasureRequest& 
     return { ErrorCode::kInvalidArgument, "spectrum × sun × member chains × samples exceeds the 16777216-row budget" };
   }
 
+  std::vector<FixedFilterLedger> fixed_filter_ledgers;
+  fixed_filter_ledgers.reserve(result.member_chains.size());
+  for (const auto& member_chain : result.member_chains) {
+    fixed_filter_ledgers.push_back(BuildFixedFilterLedger(layers, member_chain));
+  }
+
   const int coarse_count = request.sample_count / 2;
   const ConditionalMeasureLedger conditional_measure = BuildConditionalMeasureLedger(layers);
   bool any_confirmed = false;
@@ -1260,6 +1367,7 @@ Error BuildSceneMeasure(const ConfigManager& config, const SceneMeasureRequest& 
   for (const SpectrumMeasureNode& spectrum : result.spectrum_nodes) {
     for (const SunMeasureNode& sun : result.sun_nodes) {
       for (size_t member_index = 0; member_index < result.member_chains.size(); member_index++) {
+        const FixedFilterLedger& fixed_filter_ledger = fixed_filter_ledgers[member_index];
         for (int sample = 0; sample < request.sample_count; sample++) {
           SceneMeasureRow row;
           row.spectrum_node_id = spectrum.node_id;
@@ -1295,6 +1403,12 @@ Error BuildSceneMeasure(const ConfigManager& config, const SceneMeasureRequest& 
           } else if (!IsRepresentable(known_conditional_measure_mass)) {
             mark_row_numerical(&row, "complete layer conditional mass product is not representable");
           }
+          if (fixed_filter_ledger.first_zero_layer >= 0) {
+            row.status = SceneMeasureStatus::kZeroWeight;
+            row.reason = "layer " + std::to_string(fixed_filter_ledger.first_zero_layer) +
+                         " has a support-constant zero physical-filter acceptance mass";
+            any_filter_rejected = true;
+          }
 
           RandomNumberGenerator rng(row.replay_seed);
           double incident[3] = { sun.incident_direction[0], sun.incident_direction[1], sun.incident_direction[2] };
@@ -1304,7 +1418,7 @@ Error BuildSceneMeasure(const ConfigManager& config, const SceneMeasureRequest& 
             SceneMeasureLayerRow layer =
                 EvaluateLayer(rng, layers[layer_index], static_cast<int>(layer_index),
                               result.member_chains[member_index][layer_index], spectrum.refractive_index, incident,
-                              request.include_derivatives, &row.latents);
+                              request.include_derivatives, fixed_filter_ledger.layers[layer_index], &row.latents);
             layer.source_sun_node_id = sun.node_id;
             layer.source_spectrum_node_id = spectrum.node_id;
             layer.source_wavelength_nm = spectrum.wavelength_nm;
@@ -1345,16 +1459,16 @@ Error BuildSceneMeasure(const ConfigManager& config, const SceneMeasureRequest& 
               if (row.status != SceneMeasureStatus::kZeroWeight) {
                 row.status = layer.status;
                 row.reason = row.evaluation_reason;
+                any_unreachable = any_unreachable || layer.status == SceneMeasureStatus::kPhysicallyUnreachable;
+                any_numerical = any_numerical || layer.status == SceneMeasureStatus::kNumericalIncomplete;
               }
-              any_unreachable = any_unreachable || layer.status == SceneMeasureStatus::kPhysicallyUnreachable;
-              any_numerical = any_numerical || layer.status == SceneMeasureStatus::kNumericalIncomplete;
             }
             row.layers.push_back(std::move(layer));
             if (IsRepresentable(conditional_weight) && conditional_weight.value == 0.0) {
               break;
             }
           }
-          if (conditional_measure.first_zero_layer >= 0) {
+          if (conditional_measure.first_zero_layer >= 0 || fixed_filter_ledger.first_zero_layer >= 0) {
             row_conditional_measure_mass = {};
           }
           if (spectrum.weight > 0.0 && sun.mass > 0.0 && conditional_measure.strictly_positive) {
@@ -1514,12 +1628,13 @@ Error BuildSceneMeasure(const ConfigManager& config, const SceneMeasureRequest& 
     result.status = SceneMeasureStatus::kNumericalIncomplete;
     result.reason = numerical_reason.empty() ? "at least one evaluated row ended in a numerical-incomplete state" :
                                                numerical_reason;
-  } else if (!any_confirmed && any_filter_rejected && has_continuous_factor && any_uncertified_filter_rejection) {
+  } else if (!any_confirmed && !any_unreachable && any_filter_rejected && has_continuous_factor &&
+             any_uncertified_filter_rejection) {
     result.status = SceneMeasureStatus::kNumericalIncomplete;
     result.reason =
         "finite random sampling found no filter-accepted row; continuous support was not exhausted, so zero "
         "accepted measure is not certified";
-  } else if (!any_confirmed && any_filter_rejected) {
+  } else if (!any_confirmed && !any_unreachable && any_filter_rejected) {
     result.status = SceneMeasureStatus::kZeroWeight;
     result.reason = "the fully enumerated atomic member/source support was rejected by the physical filters";
   } else if (!any_confirmed && any_unreachable && has_continuous_factor) {
