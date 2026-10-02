@@ -22,6 +22,17 @@ LUMICE_ANALYTIC_Crystal Prism() {
   return c;
 }
 
+LUMICE_ANALYTIC_Crystal RhombicPlate() {
+  LUMICE_ANALYTIC_Crystal c{};
+  c.kind = LUMICE_ANALYTIC_CRYSTAL_PRISM;
+  c.height = 1.0;
+  const double fd[6] = { 1.5, 1.0, 1.0, 1.5, 1.0, 1.0 };
+  for (int i = 0; i < 6; i++) {
+    c.face_distance[i] = fd[i];
+  }
+  return c;
+}
+
 LUMICE_ANALYTIC_Crystal AsymmetricPyramid() {
   LUMICE_ANALYTIC_Crystal c{};
   c.kind = LUMICE_ANALYTIC_CRYSTAL_PYRAMID;
@@ -83,6 +94,20 @@ TEST(EntryMeasure, EpsIsRelativeToTheShortestEdge) {
   Corridor corridor(b.table, b.polygons, b.slots.data(), 2);
   EXPECT_GT(b.polygons.min_edge_length, 0.0);
   EXPECT_DOUBLE_EQ(corridor.Eps(), 1e-6 * b.polygons.min_edge_length * b.polygons.min_edge_length);
+}
+
+TEST(EntryMeasure, MatchesRhombicPlateDiagnosticSnapshot) {
+  const Built b = Build(RhombicPlate(), { 1, 3, 4, 2 });
+  Corridor corridor(b.table, b.polygons, b.slots.data(), 4);
+  const double incident[3] = { 0.9876883405951378, 0.0, -0.15643446504023087 };
+  const double pose[9] = { 0.258942519, 0.965892733, 0.0, -0.965892733, 0.258942519, 0.0, 0.0, 0.0, 1.0 };
+  double incident_body[3]{};
+  for (int i = 0; i < 3; i++) {
+    incident_body[i] = pose[0 * 3 + i] * incident[0] + pose[1 * 3 + i] * incident[1] + pose[2 * 3 + i] * incident[2];
+  }
+  const EntryMeasure m = corridor.Evaluate(incident_body, 1.307);
+  ASSERT_EQ(m.status, EntryMeasureStatus::kOk);
+  EXPECT_NEAR(m.value, 0.25 * 0.00620221727, 2e-8);
 }
 
 // Pins from LI's geometry.entry_measure at li_rev bfbd042 (the fixture crystals of 3-5__random,

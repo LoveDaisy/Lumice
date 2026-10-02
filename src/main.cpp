@@ -411,14 +411,16 @@ constexpr int kRaypathMaxGridRows = 720;
 
 void PrintRaypathUsage(const char* prog_name) {
   std::cout << "Usage: " << prog_name
-            << " raypath -f <config_file> --crystal <id> --path <faces> --target <alt>,<az> [options]\n"
+            << " raypath -f <config_file> --crystal <id> --path <faces> (--target <alt>,<az> | --report) [options]\n"
             << "\n"
             << "Analyse ONE single-layer raypath of one crystal entry over one sky point: the\n"
             << "components of the fiber of crystal poses that send the sun into that point, each\n"
             << "component's poses with per-pose detail (orientation angles, where the sun sits in\n"
             << "the crystal, transmittances, entry area), and the path's deviation over the whole\n"
-            << "sun-direction sphere. `analyze` lists the raypaths that light the sky; `raypath`\n"
-            << "is what you ask about one of them. The crystal is taken at its nominal shape (the\n"
+            << "sun-direction sphere. With --report it instead produces a target-free physical-L2\n"
+            << "member/wavelength brightness and positioned-feature report with explicit coverage.\n"
+            << "`analyze` lists the raypaths that light the sky; `raypath` is what you ask about one\n"
+            << "of them. The crystal is taken at its nominal shape (the\n"
             << "centre of every shape distribution) and the sun as a point; both are recorded in\n"
             << "the output's meta block. Deterministic: the same inputs give the same output.\n"
             << "\n"
@@ -436,16 +438,17 @@ void PrintRaypathUsage(const char* prog_name) {
             << "                     numbers joined by '-'; a C<id>(...) prefix must name --crystal).\n"
             << "                     Required. Multi-layer chains ((3-5) -> (1-3)) are refused.\n"
             << "  --target <alt>,<az>\n"
-            << "                     The sky point (required), as the altitude and azimuth in degrees\n"
+            << "                     The sky point (required unless --report), as altitude and azimuth in degrees\n"
             << "                     — azimuth measured as the sun's is, the same convention as\n"
             << "                     `analyze --center`.\n"
-            << "  --wavelength <nm>  The wavelength, in [350, 900]. Default: the config's, when its\n"
-            << "                     spectrum is exactly one wavelength; else 550.\n"
-            << "  --events <N>       Seed events of the component search (NOT traced rays: poses\n"
-            << "                     sampled to find where the fiber lies); N may carry a K or M\n"
-            << "                     suffix. At most " << LUMICE_SINGLE_PATH_MAX_SAMPLE_COUNT / 1000000
-            << "M. Default: 1M. More events find small components\n"
-            << "                     a sparser search misses, at a cost roughly linear in N.\n"
+            << "  --report           Produce the separate target-free path feature report (schema 1).\n"
+            << "                     It does not accept --target, --grid or --warm.\n"
+            << "  --wavelength <nm>  The wavelength, in [350, 900]. Target mode defaults to the\n"
+            << "                     config's single wavelength or 550; report mode without this\n"
+            << "                     option uses its documented red/blue diagnostic endpoints.\n"
+            << "  --events <N>       Target mode: SO(3) seed events (default 1M; max 100M). Report\n"
+            << "                     mode: even integration samples (default 8192; range 64..1M).\n"
+            << "                     An optional K/M suffix is accepted in either mode.\n"
             << "  --grid <rows>      Latitude rows of the sun-direction grid (longitude twice that),\n"
             << "                     in [0, " << kRaypathMaxGridRows << "]; 0 leaves the grid out. Default: 90.\n"
             << "  --warm <file>      An earlier output of this subcommand: its component seeds start\n"
@@ -456,6 +459,7 @@ void PrintRaypathUsage(const char* prog_name) {
             << kHelpLogAndHelpOptions << "\n"
             << "Examples:\n"
             << "  " << prog_name << " raypath -f config.json --crystal 1 --path 3-5 --target 20,25\n"
+            << "  " << prog_name << " raypath -f config.json --crystal 1 --path 3-1-5 --report\n"
             << "  " << prog_name
             << " raypath -f config.json --crystal 1 --path 3-5 --target 20,25 --grid 180 -o r.json\n"
             << "  " << prog_name
@@ -469,7 +473,8 @@ void PrintTopLevelUsage(const char* prog_name) {
   std::cout << "Usage: " << prog_name << " [render] -f <config_file> [options]\n"
             << "       " << prog_name << " benchmark -f <config_file> [options]\n"
             << "       " << prog_name << " analyze -f <config_file> [options]\n"
-            << "       " << prog_name << " raypath -f <config_file> --crystal <id> --path <faces> --target <alt>,<az>\n"
+            << "       " << prog_name
+            << " raypath -f <config_file> --crystal <id> --path <faces> (--target <alt>,<az> | --report)\n"
             << "       " << prog_name << " --version\n"
             << "       " << prog_name << " <subcommand> -h\n"
             << "\n"
@@ -482,8 +487,8 @@ void PrintTopLevelUsage(const char* prog_name) {
             << "                     (`" << prog_name << " benchmark -h` for its options)\n"
             << "  analyze            List the raypath chains that light a region of the sky, as CSV\n"
             << "                     (`" << prog_name << " analyze -h` for its options)\n"
-            << "  raypath            Analyse one raypath over one sky point: its fiber of crystal\n"
-            << "                     poses and its sun-direction sphere, as JSON\n"
+            << "  raypath            Analyse one raypath over one sky point, or produce its target-free\n"
+            << "                     physical-member feature report, as JSON\n"
             << "                     (`" << prog_name << " raypath -h` for its options)\n"
             << "\n"
             << "Options for render (the default subcommand):\n";
@@ -1216,9 +1221,11 @@ struct RaypathOptions {
   std::string path_text;           // as typed, for the progress line
   std::optional<double> target_alt_deg;
   std::optional<double> target_az_deg;
+  bool feature_report = false;
   std::optional<double> wavelength_nm;  // nullopt = the engine's choice (recorded in the output)
   int events = 0;                       // 0 = the engine's default
   int grid_rows = 90;
+  bool grid_given = false;
   std::filesystem::path warm_path;    // empty = no warm start
   std::filesystem::path output_path;  // empty = stdout
 };
@@ -1933,7 +1940,9 @@ int ParseRaypathOptions(int argc, char** argv, int first, RaypathOptions& opts) 
       PrintRaypathUsage(argv[0]);
       return 1;
     }
-    if (arg == "--crystal") {
+    if (arg == "--report") {
+      opts.feature_report = true;
+    } else if (arg == "--crystal") {
       const std::string_view value = argv[++i];
       const auto id = ParseStrictUnsigned(value);
       if (!id.has_value() || *id > static_cast<unsigned long long>(std::numeric_limits<int>::max())) {
@@ -2002,6 +2011,7 @@ int ParseRaypathOptions(int argc, char** argv, int first, RaypathOptions& opts) 
         return 1;
       }
       opts.grid_rows = static_cast<int>(*rows);
+      opts.grid_given = true;
     } else if (arg == "--warm") {
       opts.warm_path = argv[++i];
       if (opts.warm_path.empty()) {
@@ -2024,10 +2034,10 @@ int ParseRaypathOptions(int argc, char** argv, int first, RaypathOptions& opts) 
   }
 
   // The request's required parts, each named when missing.
-  const char* missing = !opts.crystal_id.has_value()     ? "--crystal <id>" :
-                        opts.layer_face_counts.empty()   ? "--path <faces>" :
-                        !opts.target_alt_deg.has_value() ? "--target <alt>,<az>" :
-                                                           nullptr;
+  const char* missing = !opts.crystal_id.has_value()                             ? "--crystal <id>" :
+                        opts.layer_face_counts.empty()                           ? "--path <faces>" :
+                        !opts.feature_report && !opts.target_alt_deg.has_value() ? "--target <alt>,<az>" :
+                                                                                   nullptr;
   if (missing != nullptr && !opts.shared.config_filename.empty()) {
     std::cerr << "Error: " << missing << " is required\n\n";
     PrintRaypathUsage(argv[0]);
@@ -2042,6 +2052,23 @@ int ParseRaypathOptions(int argc, char** argv, int first, RaypathOptions& opts) 
       PrintRaypathUsage(argv[0]);
       return 1;
     }
+  }
+  if (opts.feature_report && opts.target_alt_deg.has_value()) {
+    std::cerr << "Error: --report does not accept --target; use one mode or the other\n\n";
+    PrintRaypathUsage(argv[0]);
+    return 1;
+  }
+  if (opts.feature_report && (!opts.warm_path.empty() || opts.grid_given)) {
+    std::cerr << "Error: --report does not accept --warm or --grid; those options belong to target-fiber analysis\n\n";
+    PrintRaypathUsage(argv[0]);
+    return 1;
+  }
+  if (opts.feature_report && opts.events != 0 &&
+      (opts.events < 64 || opts.events > LUMICE_PATH_FEATURE_REPORT_MAX_SAMPLE_COUNT || opts.events % 2 != 0)) {
+    std::cerr << "Error: --events for --report must be an even integer in [64, "
+              << LUMICE_PATH_FEATURE_REPORT_MAX_SAMPLE_COUNT << "]\n\n";
+    PrintRaypathUsage(argv[0]);
+    return 1;
   }
 
 #ifdef _WIN32
@@ -2615,6 +2642,57 @@ int RunRaypath(const RaypathOptions& opts) {
       std::cerr << "Error: -o directory does not exist: " << parent.u8string() << "\n";
       return 1;
     }
+  }
+
+  if (opts.feature_report) {
+    LUMICE_PathFeatureReportRequest request{};
+    request.struct_size = sizeof(request);
+    request.crystal_id = *opts.crystal_id;
+    request.faces = opts.faces.data();
+    request.face_count = static_cast<int>(opts.faces.size());
+    request.layer_face_counts = opts.layer_face_counts.data();
+    request.layer_count = static_cast<int>(opts.layer_face_counts.size());
+    double wavelength = opts.wavelength_nm.value_or(0.0);
+    request.wavelengths_nm = opts.wavelength_nm.has_value() ? &wavelength : nullptr;
+    request.wavelength_count = opts.wavelength_nm.has_value() ? 1 : 0;
+    request.sample_count = opts.events;
+
+    std::cerr << "[raypath report] crystal " << *opts.crystal_id << ", path " << opts.path_text << ": "
+              << (opts.events > 0 ? opts.events : 8192) << " integration samples\n";
+    const auto start = std::chrono::steady_clock::now();
+    LUMICE_PathFeatureReport* raw_report = nullptr;
+    char err_buf[1024] = {};
+    if (auto err = LUMICE_AnalyzePathFeatureReport(scene.get(), &request, &raw_report, err_buf, sizeof(err_buf));
+        err != LUMICE_OK) {
+      if (err_buf[0] != '\0') {
+        std::cerr << "Error: " << err_buf << "\n";
+      } else {
+        std::cerr << "Error: path feature report failed (error code " << static_cast<int>(err) << ")\n";
+      }
+      return 1;
+    }
+    const std::unique_ptr<LUMICE_PathFeatureReport, void (*)(LUMICE_PathFeatureReport*)> report(
+        raw_report, LUMICE_PathFeatureReportDestroy);
+    size_t len = 0;
+    LUMICE_PathFeatureReportToJson(report.get(), nullptr, 0, &len);
+    std::string text(len + 1, '\0');
+    LUMICE_PathFeatureReportToJson(report.get(), text.data(), text.size(), &len);
+    text.resize(len);
+    text += '\n';
+    const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+    std::cerr << "[raypath report] done in " << std::fixed << std::setprecision(2) << seconds << " s, " << text.size()
+              << " bytes" << std::defaultfloat << "\n";
+    if (opts.output_path.empty()) {
+      std::cout << text;
+      std::cout.flush();
+      return std::cout.good() ? 0 : 1;
+    }
+    std::string error;
+    if (!WriteFileAtomically(opts.output_path, text, &error)) {
+      std::cerr << "Error: " << error << "\n";
+      return 1;
+    }
+    return 0;
   }
 
   LUMICE_SinglePathRequest request{};
