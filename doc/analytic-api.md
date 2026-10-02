@@ -968,6 +968,76 @@ every visual feature has been classified. Module C remains wave 3 (§10): its LI
 fixtures are a prerequisite for a stable public analytic surface, not evidence that it is already
 part of API version 6.
 
+### 4.8 General diagnostic field (consumer contract before ABI freeze)
+
+This section fixes the consumer-facing mathematics for the general field without yet fixing a C
+signature.  It is the implementation hand-off for the next analytic API version.  The signature is
+allowed to change until the independent consumer described below calls the built library; the
+coordinate, ownership and fail-closed rules are not.
+
+**Geometry adaptation.**  The analytic library continues to accept the engine's deterministic
+closed-form prism and pyramid scalars.  An LI `Polyhedron` is losslessly adaptable only when all of
+the following hold:
+
+| LI input property | Analytic representation | Required check |
+|---|---|---|
+| body-frame vertices and planar faces | `Crystal` closed-form scalars, with polygons rebuilt by the engine factory | every LI plane matches one present Lumice face plane after one positive uniform scale |
+| face identity | Lumice face number | the map is one-to-one; no inference from polygon order |
+| concrete path | the same ordered face-number sequence | entry/internal/exit roles are positions in this sequence, not properties of a face number |
+| coordinates | body frame, then active body-to-world `pose` | LI and Lumice normals have the same outward orientation and right-handed axes |
+| length | arbitrary common length unit | directions and optical terms are dimensionless; entry measure is in that unit squared |
+
+A mesh with an extra bevel, a missing closed-form face, a non-uniform affine transform, a plane
+whose normal or offset cannot be reproduced, a non-convex face, or an ambiguous face-number map is
+`not_supported`.  It is never projected onto the nearest prism/pyramid.  The non-reference fixture
+used by the independent consumer is a six-distance asymmetric prism; its planes and face numbers
+round-trip through this matrix before any optical expectation is evaluated.
+
+**One field row.**  Geometry and one concrete face sequence are shared by a batch.  Each row carries
+its own refractive index, world propagation direction (sun to crystal), and row-major active
+body-to-world rotation.  A successful row exposes the world outgoing propagation direction, the
+finite entry measure, the ordered coefficient at every interface (`T` at entry/exit, `R` at every
+internal reflection), all direction-domain margins, and every internal-interface TIR discriminant.
+Names contain the interface position; face numbers are returned separately.  Thus neither
+`margins[2]` nor `transmittances[1]` can describe the result.
+
+Pose derivatives use the right-trivialised chart `R exp([delta]_x)`, with `delta` in radians and
+axes in body coordinates.  Arrays are row-major: outgoing Jacobian `[world_component][delta_axis]`,
+outgoing Hessian `[world_component][delta_axis_0][delta_axis_1]`, and one three-component pose
+gradient per scalar margin/coefficient.  Index derivatives are with respect to the dimensionless
+refractive-index argument.  Each derivative family has an availability bit/flag.  A changed path
+branch, changed finite-corridor status, internal Fresnel/TIR side switch, non-finite sample, or
+unresolved clipping active-set change makes the affected derivative unavailable; an unavailable
+number is not encoded as a physical zero.
+
+Direction-domain status, finite-support status and internal TIR evidence remain separate.  Entry
+backface, exit critical angle and an empty corridor are finite-support outcomes; an internal TIR
+discriminant below zero is a valid path with `R = 1`, not a direction-domain failure.  Rows with bad
+index/direction/pose input carry a row error while other rows in the same call continue.  Invalid
+common geometry/path data is a call error.  Result storage is library-owned, released per row, and
+all result structs use `struct_size` as their caller stride.  Calls keep no writable global state
+and concurrent calls with distinct outputs are valid.
+
+**Consumer matrix and access trace.**  The Python consumer is intentionally independent of scene,
+engine and GUI configuration.  Its oracle restates rotations, prism planes, Snell/reflection and
+Fresnel equations in Python and never calls an analytic helper to compute an expected value.  The
+pre-ABI fixtures are:
+
+| family | path / variation | field evidence read |
+|---|---|---|
+| asymmetric prism | two-face transmission, non-identity pose | direction, both interfaces, entry measure, pose/index derivatives |
+| asymmetric prism | four-face path | all four coefficients/margins and both internal TIR discriminants |
+| asymmetric pyramid | cone-to-cone multi-reflection | face identity, variable counts and Hessian layout |
+| critical neighbourhood | the second internal interface crosses TIR while the path remains valid | signed TIR margin, coefficient-side change and derivative availability |
+| mixed batch | valid row plus bad index and bad rotation | independent row errors and safe release |
+
+The first workload groups many poses of one geometry/path: one call, all rows read, and no result is
+reused after release.  A second workload alternates geometry/path families and therefore makes one
+call per group.  This trace makes a batch with shared geometry/path the direct candidate.  A
+prepared handle remains only a candidate until a probe using the real field kernel measures a
+repeatable advantage across calls and accounts for creation, resident memory, release and
+concurrent reads.
+
 **Call.** `LUMICE_ANALYTIC_BandSum(crystal, problem, out_result)` and
 `LUMICE_ANALYTIC_ReleaseBandSumResult(result)`; the header comment is the complete list of call
 errors. The problem carries the path, index and incident direction as `DiscoverComponents`' does,
