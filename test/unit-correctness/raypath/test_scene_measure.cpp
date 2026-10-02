@@ -79,6 +79,163 @@ double ShapeValue(const SceneMeasureLayerRow& row, const char* name) {
   return found == row.shape.end() ? 0.0 : found->value;
 }
 
+double SurfaceArea(const CrystalGeom& geometry) {
+  double surface_area = 0.0;
+  for (int face = 0; face < geometry.face_cnt; ++face) {
+    const float* vertices = geometry.face_vtx + face * kCrystalGeomMaxVtxPerFace * 3;
+    for (int vertex = 1; vertex + 1 < geometry.face_vtx_cnt[face]; ++vertex) {
+      double edge0[3]{};
+      double edge1[3]{};
+      for (int coordinate = 0; coordinate < 3; ++coordinate) {
+        edge0[coordinate] = static_cast<double>(vertices[3 * vertex + coordinate]) - vertices[coordinate];
+        edge1[coordinate] = static_cast<double>(vertices[3 * (vertex + 1) + coordinate]) - vertices[coordinate];
+      }
+      const double cross[3] = { edge0[1] * edge1[2] - edge0[2] * edge1[1], edge0[2] * edge1[0] - edge0[0] * edge1[2],
+                                edge0[0] * edge1[1] - edge0[1] * edge1[0] };
+      surface_area += 0.5 * std::sqrt(cross[0] * cross[0] + cross[1] * cross[1] + cross[2] * cross[2]);
+    }
+  }
+  return surface_area;
+}
+
+TEST(SceneMeasure, NativeContributionUsesActualSurfaceNormalizationAndIsScaleInvariant) {
+  AxisDistribution axis;
+  axis.latitude_dist = { DistributionType::kNoRandom, 90.0f, 0.0f };
+  axis.azimuth_dist = { DistributionType::kNoRandom, 180.0f, 0.0f };
+  axis.roll_dist = { DistributionType::kNoRandom, 0.0f, 0.0f };
+  const auto request = Request({ 1 }, { { 3, 6 } }, 2);
+  double contributions[2]{};
+  double entry_areas[2]{};
+  const float scales[2] = { 1.0f, 8.0f };
+  for (int trial = 0; trial < 2; ++trial) {
+    const float scale = scales[trial];
+    CrystalConfig crystal = Prism(1, axis);
+    auto& param = std::get<PrismCrystalParam>(crystal.param_);
+    param.h_.center *= scale;
+    float distances[6]{};
+    for (int face = 0; face < 6; ++face) {
+      param.d_[face].center *= scale;
+      distances[face] = param.d_[face].center;
+    }
+    const auto geometry = Crystal::CreatePrism(param.h_.center, distances);
+    const double surface_area = SurfaceArea(geometry.CfGeom());
+    const auto result = Build(Scene({ crystal }, { 0.0f }), request);
+    EXPECT_EQ(result.status, SceneMeasureStatus::kConfirmed);
+    EXPECT_GT(result.total_contribution, 0.0);
+    double expected = 0.0;
+    for (const auto& row : result.rows) {
+      EXPECT_EQ(row.layers.size(), 1u);
+      if (row.layers.size() != 1u) {
+        continue;
+      }
+      const auto& layer = row.layers.front();
+      EXPECT_EQ(layer.status, SceneMeasureStatus::kConfirmed);
+      EXPECT_NEAR(layer.total_surface_area, surface_area, 1e-7 * surface_area);
+      EXPECT_DOUBLE_EQ(layer.normalized_entry_factor, 2.0 * layer.entry_measure / layer.total_surface_area);
+      EXPECT_NEAR(layer.normalized_entry_factor, 2.0 * layer.entry_measure / surface_area,
+                  1e-7 * layer.normalized_entry_factor);
+      expected += row.global_weight * row.joint_sample_mass * row.joint_importance_weight * layer.crystal_share *
+                  layer.continuation_mass * (2.0 * layer.entry_measure / surface_area) * layer.fresnel_weight;
+      entry_areas[trial] = layer.entry_measure;
+    }
+    EXPECT_NEAR(result.total_contribution, expected, 1e-7 * expected);
+    contributions[trial] = result.total_contribution;
+  }
+  EXPECT_NEAR(entry_areas[1], 64.0 * entry_areas[0], 1e-8 * entry_areas[1]);
+  EXPECT_NEAR(contributions[1], contributions[0], 1e-7 * contributions[0]);
+}
+
+TEST(SceneMeasure, NativeNormalizationUsesEveryRandomShapeAndPyramidSurface) {
+  AxisDistribution axis;
+  axis.latitude_dist = { DistributionType::kNoRandom, 90.0f, 0.0f };
+  axis.azimuth_dist = { DistributionType::kNoRandom, 180.0f, 0.0f };
+  axis.roll_dist = { DistributionType::kNoRandom, 0.0f, 0.0f };
+
+  CrystalConfig random_prism = Prism(1, axis);
+  auto& prism = std::get<PrismCrystalParam>(random_prism.param_);
+  prism.h_ = { DistributionType::kUniform, 1.0f, 0.4f };
+  for (int face = 0; face < 6; ++face) {
+    prism.d_[face] = { DistributionType::kUniform, 0.9f + 0.05f * face, 0.2f };
+  }
+  const auto prism_result = Build(Scene({ random_prism }, { 0.0f }), Request({ 1 }, { { 3, 6 } }, 32));
+  double min_surface = std::numeric_limits<double>::infinity();
+  double max_surface = 0.0;
+  int checked_prisms = 0;
+  for (const auto& row : prism_result.rows) {
+    const auto& layer = row.layers.front();
+    if (layer.status != SceneMeasureStatus::kConfirmed) {
+      continue;
+    }
+    float distances[6];
+    for (int face = 0; face < 6; ++face) {
+      const std::string name = "face_distance[" + std::to_string(face) + "]";
+      distances[face] = static_cast<float>(ShapeValue(layer, name.c_str()));
+    }
+    const auto geometry = Crystal::CreatePrism(static_cast<float>(ShapeValue(layer, "height")), distances);
+    const double expected_surface = SurfaceArea(geometry.CfGeom());
+    EXPECT_NEAR(layer.total_surface_area, expected_surface, 1e-6 * expected_surface);
+    EXPECT_DOUBLE_EQ(layer.normalized_entry_factor, 2.0 * layer.entry_measure / layer.total_surface_area);
+    min_surface = std::min(min_surface, expected_surface);
+    max_surface = std::max(max_surface, expected_surface);
+    checked_prisms++;
+  }
+  EXPECT_GT(checked_prisms, 1);
+  EXPECT_GT(max_surface - min_surface, 1e-3);
+
+  PyramidCrystalParam pyramid;
+  pyramid.h_pyr_u_ = { DistributionType::kNoRandom, 0.4f, 0.0f };
+  pyramid.h_prs_ = { DistributionType::kNoRandom, 1.0f, 0.0f };
+  pyramid.h_pyr_l_ = { DistributionType::kNoRandom, 0.5f, 0.0f };
+  const float pyramid_distances[6] = { 1.0f, 1.1f, 0.9f, 1.2f, 0.8f, 1.05f };
+  for (int face = 0; face < 6; ++face) {
+    pyramid.d_[face] = { DistributionType::kNoRandom, pyramid_distances[face], 0.0f };
+  }
+  pyramid.wedge_angle_u_ = 22.0f;
+  pyramid.wedge_angle_l_ = 31.0f;
+  CrystalConfig pyramid_crystal;
+  pyramid_crystal.id_ = 2;
+  pyramid_crystal.param_ = pyramid;
+  pyramid_crystal.axis_ = axis;
+  const auto pyramid_result = Build(Scene({ pyramid_crystal }, { 0.0f }), Request({ 2 }, { { 3, 6 } }, 2));
+  const auto geometry = Crystal::CreatePyramid(pyramid.wedge_angle_u_, pyramid.wedge_angle_l_, pyramid.h_pyr_u_.center,
+                                               pyramid.h_prs_.center, pyramid.h_pyr_l_.center, pyramid_distances);
+  const double expected_surface = SurfaceArea(geometry.CfGeom());
+  const auto confirmed = std::find_if(pyramid_result.rows.begin(), pyramid_result.rows.end(), [](const auto& row) {
+    return !row.layers.empty() && row.layers.front().status == SceneMeasureStatus::kConfirmed;
+  });
+  ASSERT_NE(confirmed, pyramid_result.rows.end());
+  EXPECT_NEAR(confirmed->layers.front().total_surface_area, expected_surface, 1e-6 * expected_surface);
+  EXPECT_DOUBLE_EQ(confirmed->layers.front().normalized_entry_factor,
+                   2.0 * confirmed->layers.front().entry_measure / confirmed->layers.front().total_surface_area);
+}
+
+TEST(SceneMeasure, NativeContributionMultipliesEachLayerNormalization) {
+  AxisDistribution axis;
+  axis.latitude_dist = { DistributionType::kNoRandom, 90.0f, 0.0f };
+  axis.azimuth_dist = { DistributionType::kNoRandom, 180.0f, 0.0f };
+  axis.roll_dist = { DistributionType::kNoRandom, 0.0f, 0.0f };
+  const auto result =
+      Build(Scene({ Prism(1, axis), Prism(2, axis) }, { 1.0f, 0.0f }), Request({ 1, 2 }, { { 3, 6 }, { 3, 6 } }, 2));
+  double expected = 0.0;
+  int complete_rows = 0;
+  for (const auto& row : result.rows) {
+    if (row.layers.size() != 2u || !std::all_of(row.layers.begin(), row.layers.end(), [](const auto& layer) {
+          return layer.status == SceneMeasureStatus::kConfirmed;
+        })) {
+      continue;
+    }
+    double contribution = row.global_weight * row.joint_sample_mass * row.joint_importance_weight;
+    for (const auto& layer : row.layers) {
+      contribution *=
+          layer.crystal_share * layer.continuation_mass * layer.normalized_entry_factor * layer.fresnel_weight;
+    }
+    expected += contribution;
+    complete_rows++;
+  }
+  EXPECT_GT(complete_rows, 0);
+  EXPECT_NEAR(result.total_contribution, expected, 1e-12 * std::max(1.0, expected));
+}
+
 TEST(SceneMeasure, SyncLeaderDeterminesFollowerSupportRatherThanItsDeclaredDistribution) {
   CrystalConfig crystal = Prism(1);
   auto& shape = std::get<PrismCrystalParam>(crystal.param_);
@@ -307,6 +464,66 @@ TEST(SceneMeasure, OverflowingFiniteSourceWeightHasANumericalStatus) {
   EXPECT_TRUE(result.total_contribution_status == SceneMeasureNumericStatus::kOverflow ||
               result.coarse_contribution_status == SceneMeasureNumericStatus::kOverflow ||
               result.sampled_measure_mass_status == SceneMeasureNumericStatus::kOverflow);
+}
+
+TEST(SceneMeasure, ZeroCrystalEnergyLayerHasAValidZeroMeasure) {
+  auto config = Scene({ Prism(1) }, { 0.0f });
+  config.scene_.ms_[0].setting_[0].crystal_proportion_ = 0.0f;
+  SceneMeasureResult result;
+  const auto error = BuildSceneMeasure(config, Request({ 1 }, { { 3, 6 } }, 2), &result);
+  ASSERT_TRUE(error.Ok()) << error.message;
+  EXPECT_EQ(result.status, SceneMeasureStatus::kZeroWeight);
+  EXPECT_DOUBLE_EQ(result.total_contribution, 0.0);
+}
+
+TEST(SceneMeasure, SelectedZeroShareIsZeroMeasureWithinAPositiveMixture) {
+  AxisDistribution axis;
+  axis.latitude_dist = { DistributionType::kNoRandom, 90.0f, 0.0f };
+  axis.azimuth_dist = { DistributionType::kNoRandom, 180.0f, 0.0f };
+  axis.roll_dist = { DistributionType::kNoRandom, 0.0f, 0.0f };
+  auto config = Scene({ Prism(1, axis) }, { 0.0f });
+  config.scene_.ms_[0].setting_[0].crystal_proportion_ = 0.0f;
+  ScatteringSetting positive{};
+  positive.crystal_ = Prism(2, axis);
+  positive.crystal_proportion_ = 1.0f;
+  config.scene_.ms_[0].setting_.push_back(positive);
+  config.crystals_.emplace(2, positive.crystal_);
+  const auto result = Build(config, Request({ 1 }, { { 3, 6 } }, 2));
+  EXPECT_EQ(result.status, SceneMeasureStatus::kZeroWeight);
+  EXPECT_DOUBLE_EQ(result.total_contribution, 0.0);
+  EXPECT_TRUE(std::all_of(result.rows.begin(), result.rows.end(),
+                          [](const auto& row) { return row.status == SceneMeasureStatus::kZeroWeight; }));
+  const auto control = Build(config, Request({ 2 }, { { 3, 6 } }, 2));
+  EXPECT_GT(control.total_contribution, 0.0);
+}
+
+TEST(SceneMeasure, ZeroExitProbabilityIsZeroPathMeasure) {
+  AxisDistribution axis;
+  axis.latitude_dist = { DistributionType::kNoRandom, 90.0f, 0.0f };
+  axis.azimuth_dist = { DistributionType::kNoRandom, 180.0f, 0.0f };
+  axis.roll_dist = { DistributionType::kNoRandom, 0.0f, 0.0f };
+  const auto zero = Build(Scene({ Prism(1, axis) }, { 1.0f }), Request({ 1 }, { { 3, 6 } }, 2));
+  EXPECT_EQ(zero.status, SceneMeasureStatus::kZeroWeight);
+  EXPECT_DOUBLE_EQ(zero.total_contribution, 0.0);
+  const auto control = Build(Scene({ Prism(1, axis) }, { 0.0f }), Request({ 1 }, { { 3, 6 } }, 2));
+  EXPECT_GT(control.total_contribution, 0.0);
+}
+
+TEST(SceneMeasure, ZeroContinuationMakesTheWholeMultiLayerChainAZeroMeasure) {
+  AxisDistribution axis;
+  axis.latitude_dist = { DistributionType::kNoRandom, 90.0f, 0.0f };
+  axis.azimuth_dist = { DistributionType::kNoRandom, 180.0f, 0.0f };
+  axis.roll_dist = { DistributionType::kNoRandom, 0.0f, 0.0f };
+  const auto request = Request({ 1, 2 }, { { 3, 6 }, { 3, 6 } }, 2);
+  const auto zero = Build(Scene({ Prism(1, axis), Prism(2, axis) }, { 0.0f, 0.0f }), request);
+  EXPECT_EQ(zero.status, SceneMeasureStatus::kZeroWeight);
+  EXPECT_DOUBLE_EQ(zero.total_contribution, 0.0);
+  EXPECT_TRUE(std::all_of(zero.rows.begin(), zero.rows.end(), [](const auto& row) {
+    return row.status == SceneMeasureStatus::kZeroWeight && !row.layers.empty() &&
+           row.layers.front().continuation_mass == 0.0;
+  }));
+  const auto control = Build(Scene({ Prism(1, axis), Prism(2, axis) }, { 1.0f, 0.0f }), request);
+  EXPECT_GT(control.total_contribution, 0.0);
 }
 
 TEST(SceneMeasure, SceneSpectrumWeightsScaleOnceAndKeepZeroNodes) {

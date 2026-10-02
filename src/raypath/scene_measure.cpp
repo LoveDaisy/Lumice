@@ -4,13 +4,11 @@
 #include <cmath>
 #include <cstddef>
 #include <limits>
-#include <numeric>
 #include <string>
 #include <type_traits>
 #include <utility>
 #include <variant>
 
-#include "analytic/entry_measure.hpp"
 #include "analytic/path_evaluation.hpp"
 #include "core/crystal.hpp"
 #include "core/geo3d.hpp"
@@ -393,12 +391,12 @@ Error ResolveLayers(const ConfigManager& config, const SceneMeasureRequest& requ
       return { ErrorCode::kUnknownCrystalId,
                "layer " + std::to_string(i) + " has no crystal entry with id " + std::to_string(crystal_id) };
     }
-    const double total =
-        std::accumulate(ms.setting_.begin(), ms.setting_.end(), 0.0, [](double sum, const ScatteringSetting& s) {
-          return sum + std::max(0.0, static_cast<double>(s.crystal_proportion_));
-        });
-    if (!(total > 0.0)) {
-      return { ErrorCode::kInvalidArgument, "layer " + std::to_string(i) + " has zero total crystal proportion" };
+    double total = 0.0;
+    for (const ScatteringSetting& setting : ms.setting_) {
+      if (!std::isfinite(setting.crystal_proportion_)) {
+        return { ErrorCode::kInvalidArgument, "layer " + std::to_string(i) + " has a non-finite crystal proportion" };
+      }
+      total += std::max(0.0, static_cast<double>(setting.crystal_proportion_));
     }
     if (!std::isfinite(ms.prob_) || ms.prob_ < 0.0f || ms.prob_ > 1.0f) {
       return { ErrorCode::kInvalidArgument, "layer " + std::to_string(i) + " has an invalid continuation probability" };
@@ -406,7 +404,7 @@ Error ResolveLayers(const ConfigManager& config, const SceneMeasureRequest& requ
     LayerInput layer;
     layer.ms = &ms;
     layer.setting = &*found;
-    layer.crystal_share = std::max(0.0, static_cast<double>(found->crystal_proportion_)) / total;
+    layer.crystal_share = total > 0.0 ? std::max(0.0, static_cast<double>(found->crystal_proportion_)) / total : 0.0;
     layer.continuation_mass = i + 1 < request.path_layers.size() ? ms.prob_ : 1.0 - ms.prob_;
     AddFactorDescriptors(static_cast<int>(i), found->crystal_, &layer, &next_latent, factors);
     layers->push_back(layer);
@@ -827,6 +825,20 @@ SceneMeasureStatus FieldStatus(const analytic::DiagnosticFieldResult& field, std
   return SceneMeasureStatus::kConfirmed;
 }
 
+Crystal ProductCrystal(const analytic::CrystalShape& shape) {
+  float distances[6];
+  for (int face = 0; face < 6; face++) {
+    distances[face] = static_cast<float>(shape.face_distance[face]);
+  }
+  if (shape.kind == analytic::CrystalShapeKind::kPrism) {
+    return Crystal::CreatePrism(static_cast<float>(std::fabs(shape.height)), distances);
+  }
+  return Crystal::CreatePyramid(static_cast<float>(shape.upper_wedge_deg), static_cast<float>(shape.lower_wedge_deg),
+                                static_cast<float>(std::fabs(shape.upper_h)),
+                                static_cast<float>(std::fabs(shape.height)),
+                                static_cast<float>(std::fabs(shape.lower_h)), distances);
+}
+
 SceneMeasureLayerRow EvaluateLayer(RandomNumberGenerator& rng, const LayerInput& input, int layer_index,
                                    const std::vector<int>& faces, double refractive_index, const double incident[3],
                                    bool include_derivatives, std::vector<LatentMeasureSample>* latents) {
@@ -858,6 +870,13 @@ SceneMeasureLayerRow EvaluateLayer(RandomNumberGenerator& rng, const LayerInput&
     out.reason = "sampled crystal is rejected by the closed-form geometry gate";
     return out;
   }
+  const Crystal product_crystal = ProductCrystal(shape);
+  out.total_surface_area = EntrySamplingSurfaceArea(product_crystal.CfGeom());
+  if (!(out.total_surface_area > 0.0) || !std::isfinite(out.total_surface_area)) {
+    out.status = SceneMeasureStatus::kNumericalIncomplete;
+    out.reason = "sampled crystal surface area is not a positive finite value";
+    return out;
+  }
   std::vector<int> slots;
   if (const Error error = ResolveSingleLayerPath({ faces }, normals, &slots); !error.Ok()) {
     out.status = SceneMeasureStatus::kPhysicallyUnreachable;
@@ -878,6 +897,13 @@ SceneMeasureLayerRow EvaluateLayer(RandomNumberGenerator& rng, const LayerInput&
   out.fresnel_weight = out.field.fresnel_weight;
   std::copy(out.field.outgoing_direction, out.field.outgoing_direction + 3, out.outgoing_direction);
   out.status = FieldStatus(out.field, &out.reason);
+  if (out.status == SceneMeasureStatus::kConfirmed) {
+    out.normalized_entry_factor = 2.0 * out.entry_measure / out.total_surface_area;
+    if (!std::isfinite(out.normalized_entry_factor) || out.normalized_entry_factor < 0.0) {
+      out.status = SceneMeasureStatus::kNumericalIncomplete;
+      out.reason = "native entry normalization is not a finite non-negative value";
+    }
+  }
   return out;
 }
 
@@ -962,10 +988,11 @@ Error BuildSceneMeasure(const ConfigManager& config, const SceneMeasureRequest& 
   result.requested_sample_count = request.sample_count;
   result.stored_row_selection =
       "deterministic bottom-k hash reservoir over all evaluated source/member/sample row identities";
-  result.units = "LI a=1 relative finite-crystal area times raw spectral weight";
+  result.units = "dimensionless product-native entry and Fresnel measure times raw spectral weight";
   result.normalization =
       "shape, pose and the product finite solar source are unit probability measures; spectrum and physical "
-      "members retain their explicit weights; atoms carry counting mass rather than continuous density";
+      "members retain their explicit weights; every layer uses 2*A_path/S_total for its sampled shape; atoms "
+      "carry counting mass rather than continuous density";
 
   std::vector<LayerInput> layers;
   if (const Error error = ResolveLayers(config, request, &layers, &result.factors); !error.Ok()) {
@@ -1002,6 +1029,7 @@ Error BuildSceneMeasure(const ConfigManager& config, const SceneMeasureRequest& 
   const int coarse_count = request.sample_count / 2;
   bool any_confirmed = false;
   bool any_nonzero_source = false;
+  bool any_positive_path_measure = false;
   bool any_unreachable = false;
   bool any_numerical = false;
   std::string numerical_reason;
@@ -1100,11 +1128,13 @@ Error BuildSceneMeasure(const ConfigManager& config, const SceneMeasureRequest& 
             if (!IsRepresentable(conditional_weight) || !IsRepresentable(conditional_measure_mass)) {
               mark_row_numerical(&row, "layer conditional mass product is not representable");
             }
+            if (IsRepresentable(layer_mass) && layer_mass.value == 0.0) {
+              row.status = SceneMeasureStatus::kZeroWeight;
+              row.reason = "layer " + std::to_string(layer_index) + " has zero crystal-share or continuation/exit mass";
+            }
             if (layer.status == SceneMeasureStatus::kConfirmed) {
-              const NumericValue optical_weight =
-                  CheckedMultiply(CheckedMultiply(CheckedNonnegative(analytic::kLiAreaPerEngineArea),
-                                                  CheckedNonnegative(layer.entry_measure)),
-                                  CheckedNonnegative(layer.fresnel_weight));
+              const NumericValue optical_weight = CheckedMultiply(CheckedNonnegative(layer.normalized_entry_factor),
+                                                                  CheckedNonnegative(layer.fresnel_weight));
               conditional_weight = CheckedMultiply(conditional_weight, optical_weight);
               if (!IsRepresentable(conditional_weight)) {
                 mark_row_numerical(&row, "layer optical weight product is not representable");
@@ -1125,6 +1155,10 @@ Error BuildSceneMeasure(const ConfigManager& config, const SceneMeasureRequest& 
             if (IsRepresentable(conditional_weight) && conditional_weight.value == 0.0) {
               break;
             }
+          }
+          if (spectrum.weight > 0.0 && sun.mass > 0.0 && IsRepresentable(conditional_measure_mass) &&
+              conditional_measure_mass.value > 0.0) {
+            any_positive_path_measure = true;
           }
           double proposal_log_density = 0.0;
           double target_log_density = 0.0;
@@ -1270,6 +1304,9 @@ Error BuildSceneMeasure(const ConfigManager& config, const SceneMeasureRequest& 
   if (!any_nonzero_source) {
     result.status = SceneMeasureStatus::kZeroWeight;
     result.reason = "every spectrum node has zero weight";
+  } else if (!any_positive_path_measure) {
+    result.status = SceneMeasureStatus::kZeroWeight;
+    result.reason = "every positive source row has zero crystal-share or continuation/exit mass";
   } else if (any_numerical) {
     result.status = SceneMeasureStatus::kNumericalIncomplete;
     result.reason = numerical_reason.empty() ? "at least one evaluated row ended in a numerical-incomplete state" :

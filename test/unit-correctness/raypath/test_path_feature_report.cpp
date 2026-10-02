@@ -200,6 +200,9 @@ TEST(PathFeatureReportJson, UsesASeparateSchemaAndDoesNotAcquireATarget) {
   EXPECT_TRUE(sampled_row.contains("joint_log_proposal_density"));
   EXPECT_TRUE(sampled_row.contains("joint_log_target_density"));
   EXPECT_EQ(sampled_row["joint_importance_weight_status"], "available");
+  ASSERT_FALSE(sampled_row["layers"].empty());
+  EXPECT_TRUE(sampled_row["layers"][0].contains("total_surface_area"));
+  EXPECT_TRUE(sampled_row["layers"][0].contains("normalized_entry_factor"));
   EXPECT_TRUE(doc["scene_measure"].contains("total_contribution_status"));
   EXPECT_TRUE(doc["scene_measure"].contains("absolute_error_estimate_status"));
   EXPECT_EQ(doc["generator"]["lumice"], "test-version");

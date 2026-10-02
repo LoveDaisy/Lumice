@@ -338,13 +338,15 @@ The area uses LI's `a=1` normalization. When a horizontal-family branch has one 
 direction, the row also carries `fixed_outgoing_direction` and its maximum direction residual.
 Coarse/fine differences and boundary residuals are convergence evidence, not exact error bounds.
 
-`scene_measure` is the general measurement result. It records its status, LI `a=1` relative-area
-units times raw spectral weight, normalization, seed, sample counts, coarse/fine totals and error
-estimates split across joint samples, sun nodes, and spectrum nodes. Its factors expose the
+`scene_measure` is the general measurement result. It records its status, dimensionless
+product-native entry/Fresnel measure times raw spectral weight, normalization, seed, sample counts,
+coarse/fine totals and error estimates split across joint samples, sun nodes, and spectrum nodes. Its factors expose the
 crystal-mixture shares, shape/pose measures, normalized solar-source measure and spectral quadrature.
 Each sampled row carries the concrete member chain, wavelength and sun node, per-layer sampled
-shape and pose, incident/outgoing directions, finite entry area, transmittance, field status,
-interfaces and boundary margins. Each unique generator latent records its base measure, replay
+shape and pose, incident/outgoing directions, raw finite entry area `entry_measure`, the sampled
+shape's `total_surface_area`, the product-native
+`normalized_entry_factor=2*entry_measure/total_surface_area`, transmittance, field status, interfaces
+and boundary margins. Each unique generator latent records its base measure, replay
 coordinate, proposal/target density or mass, mapping Jacobian and status; synchronized shape
 scalars share one leader latent. Pose rows expose the full SO(3) rotation differential including
 roll and its support rank. `joint_sample_mass` is separate from joint proposal/target density and

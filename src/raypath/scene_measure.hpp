@@ -165,7 +165,13 @@ struct SceneMeasureLayerRow {
   double outgoing_direction[3]{};
   double crystal_share = 0.0;
   double continuation_mass = 0.0;
+  // The sampled finite crystal's complete surface area in the analytic a=1 length unit squared.
+  // The product renderer normalizes entry sampling by half of this area for every sampled shape.
+  double total_surface_area = 0.0;
   double entry_measure = 0.0;
+  // The product-native dimensionless entry factor 2 * entry_measure / total_surface_area.  The raw
+  // analytic entry_measure remains available above for LI consumers.
+  double normalized_entry_factor = 0.0;
   double fresnel_weight = 0.0;
   SceneMeasureStatus status = SceneMeasureStatus::kNotSupported;
   std::string reason;

@@ -133,7 +133,22 @@ void BuildEntrySubTris(const CrystalGeom& cf, EntrySubTri* out) {
   }
 }
 
+float SumEntrySubTriAreas(const EntrySubTri* subtri, size_t count) {
+  float total = 0.0f;
+  for (size_t index = 0; index < count; index++) {
+    total += subtri[index].area;
+  }
+  return total;
+}
+
 }  // namespace detail
+
+float EntrySamplingSurfaceArea(const CrystalGeom& geometry) {
+  const size_t count = detail::CountEntrySubTris(geometry);
+  std::vector<detail::EntrySubTri> subtri(count);
+  detail::BuildEntrySubTris(geometry, subtri.data());
+  return detail::SumEntrySubTriAreas(subtri.data(), subtri.size());
+}
 
 void InitRay_p_fid(const Crystal& curr_crystal, RayBuffer* ray_buf_ptr) {
   if (!ray_buf_ptr) {
@@ -199,10 +214,7 @@ void InitRay_p_fid(const Crystal& curr_crystal, RayBuffer* ray_buf_ptr) {
   // place, so it relies on w_ already holding the ray's birth weight
   // (InitRay_d_w_previdx on the first layer, the carried-in weight on later
   // ones); both callers set it before calling here.
-  float s_total = 0.0f;
-  for (size_t j = 0; j < subtri_cnt; j++) {
-    s_total += subtri[j].area;
-  }
+  const float s_total = detail::SumEntrySubTriAreas(subtri, subtri_cnt);
   for (auto& r : ray_buf) {
     const auto* d = r.d_;
     float proj_sum = 0.0f;

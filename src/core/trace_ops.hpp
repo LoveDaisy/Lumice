@@ -29,6 +29,11 @@ class FilterSpec;
 // be set on the buffer.
 void InitRay_p_fid(const Crystal& curr_crystal, RayBuffer* ray_buf_ptr);
 
+// The complete fan-triangulated surface area used as S_total by InitRay_p_fid's
+// projected-area entry normalization. Kept as a product primitive so diagnostic
+// integrations use the same float geometry and accumulation as traced rays.
+float EntrySamplingSurfaceArea(const CrystalGeom& geometry);
+
 // Set initial direction d (sampled from light source), weight w, and
 // prev_ray_idx for `ray_num` rays. `weight_correction` is the ray-allocation
 // correction of the entry these rays are born into (see
