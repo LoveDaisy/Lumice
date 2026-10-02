@@ -16,6 +16,7 @@
 #include "core/crystal.hpp"
 #include "core/optics.hpp"
 #include "raypath/scene_to_analytic.hpp"
+#include "util/illuminant.hpp"
 #include "util/sky_direction.hpp"
 
 namespace lumice::raypath {
@@ -152,10 +153,42 @@ bool IsExactHorizontalFamily(const AxisDistribution& axis) {
 std::vector<ReportWavelength> ResolveWavelengths(const LightSourceConfig& light,
                                                  const PathFeatureReportRequest& request, Error* error) {
   std::vector<double> wavelengths = request.wavelengths_nm;
-  if (wavelengths.empty()) {
-    wavelengths = { kReferenceRedNm, kReferenceBlueNm };
-  }
   std::vector<double> weights = request.wavelength_weights;
+  if (wavelengths.empty() && request.scene_spectrum_source == SceneSpectrumSource::kLegacyReferenceEndpoints) {
+    wavelengths = { kReferenceRedNm, kReferenceBlueNm };
+    weights = { 1.0, 1.0 };
+  }
+  if (wavelengths.empty() && request.scene_spectrum_source == SceneSpectrumSource::kDiagnostic) {
+    *error = { ErrorCode::kInvalidArgument, "diagnostic spectrum requires at least one wavelength" };
+    return {};
+  }
+  if (wavelengths.empty() && request.scene_spectrum_source == SceneSpectrumSource::kScene) {
+    if (const auto* discrete = std::get_if<std::vector<WlParam>>(&light.spectrum_); discrete != nullptr) {
+      wavelengths.reserve(discrete->size());
+      weights.reserve(discrete->size());
+      for (const WlParam& node : *discrete) {
+        wavelengths.push_back(node.wl_);
+        weights.push_back(node.weight_);
+      }
+    } else {
+      if (request.illuminant_node_count < 1 || request.illuminant_node_count > 256) {
+        *error = { ErrorCode::kInvalidArgument, "illuminant_node_count must be in [1, 256]" };
+        return {};
+      }
+      const IlluminantType illuminant = std::get<IlluminantType>(light.spectrum_);
+      wavelengths.reserve(static_cast<size_t>(request.illuminant_node_count));
+      weights.reserve(static_cast<size_t>(request.illuminant_node_count));
+      for (int i = 0; i < request.illuminant_node_count; i++) {
+        const double wavelength = 380.0 + (static_cast<double>(i) + 0.5) * 400.0 / request.illuminant_node_count;
+        wavelengths.push_back(wavelength);
+        weights.push_back(GetIlluminantSpd(illuminant, static_cast<float>(wavelength)) / request.illuminant_node_count);
+      }
+    }
+  }
+  if (wavelengths.empty()) {
+    *error = { ErrorCode::kInvalidArgument, "scene spectrum has no wavelength nodes" };
+    return {};
+  }
   if (weights.empty()) {
     weights.assign(wavelengths.size(), 1.0);
   }

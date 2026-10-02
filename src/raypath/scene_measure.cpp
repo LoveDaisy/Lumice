@@ -1262,8 +1262,8 @@ Error BuildSceneMeasure(const ConfigManager& config, const SceneMeasureRequest& 
           }
 
           const NumericValue sample_mass = CheckedNonnegative(row.joint_sample_mass);
-          const NumericValue contribution =
-              CheckedMultiply(CheckedMultiply(global_weight, sample_mass), conditional_weight);
+          const NumericValue contribution = CheckedMultiply(
+              CheckedMultiply(CheckedMultiply(global_weight, sample_mass), importance_weight), conditional_weight);
           AssignNumeric(contribution, &row.contribution, &row.contribution_status);
           if (!IsRepresentable(contribution)) {
             mark_row_numerical(&row, "row contribution is not representable as a finite double");

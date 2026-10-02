@@ -213,8 +213,12 @@ TEST(PathFeatureReportCApi, SerializesOnceAndKeepsTheResultImmutable) {
   EXPECT_EQ(doc["schema"], "lumice.path-feature-report");
   EXPECT_EQ(doc["schema_version"], 3);
   EXPECT_EQ(doc["meta"]["sample_count"], 64);
-  EXPECT_EQ(doc["wavelengths"].size(), 2u);
+  EXPECT_EQ(doc["wavelengths"].size(), 8u);
   EXPECT_EQ(doc["scene_measure"]["spectrum_nodes"].size(), 8u);
+  for (size_t index = 0; index < doc["wavelengths"].size(); index++) {
+    EXPECT_EQ(doc["wavelengths"][index]["nm"], doc["scene_measure"]["spectrum_nodes"][index]["wavelength_nm"]);
+    EXPECT_EQ(doc["wavelengths"][index]["weight"], doc["scene_measure"]["spectrum_nodes"][index]["weight"]);
+  }
   EXPECT_EQ(doc["scene_measure"]["spectrum_nodes"][0]["source"], "scene_illuminant_uniform_380_780");
 
   char small[8];

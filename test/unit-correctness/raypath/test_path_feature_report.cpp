@@ -56,11 +56,13 @@ ConfigManager Scene(bool random, bool horizontal, bool rhombic) {
   return config;
 }
 
-PathFeatureReport Analyse(const ConfigManager& config, std::vector<int> faces, int samples = 8192) {
+PathFeatureReport Analyse(const ConfigManager& config, std::vector<int> faces, int samples = 8192,
+                          SceneSpectrumSource spectrum_source = SceneSpectrumSource::kScene) {
   PathFeatureReportRequest request;
   request.crystal_id = 1;
   request.path_layers = { std::move(faces) };
   request.sample_count = samples;
+  request.scene_spectrum_source = spectrum_source;
   PathFeatureReport report;
   const Error error = AnalyzePathFeatureReport(config, request, &report);
   EXPECT_TRUE(error.Ok()) << error.message;
@@ -81,7 +83,8 @@ double Metric(const PathFeature& feature, const std::string& name) {
 }
 
 TEST(PathFeatureReport, RandomRegular315KeepsTheTwoMechanismsAndCounterfactualSeparate) {
-  const PathFeatureReport report = Analyse(Scene(true, false, false), { 3, 1, 5 });
+  const PathFeatureReport report =
+      Analyse(Scene(true, false, false), { 3, 1, 5 }, 8192, SceneSpectrumSource::kLegacyReferenceEndpoints);
   EXPECT_EQ(report.members.size(), 24u);
 
   const PathFeature* ordinary = Feature(report, "random_regular.3-1-5.solar_dispersion_edge");
@@ -113,7 +116,8 @@ TEST(PathFeatureReport, RandomRegular315KeepsTheTwoMechanismsAndCounterfactualSe
 }
 
 TEST(PathFeatureReport, RhombicPlateReportsTwoPhysicalMembersAtSeparate120DegreeLocations) {
-  const PathFeatureReport report = Analyse(Scene(false, true, true), { 1, 3, 4, 2 });
+  const PathFeatureReport report =
+      Analyse(Scene(false, true, true), { 1, 3, 4, 2 }, 8192, SceneSpectrumSource::kLegacyReferenceEndpoints);
   ASSERT_EQ(report.members.size(), 2u);
   ASSERT_EQ(report.features.size(), 2u);
   std::vector<double> relative_azimuths;
@@ -185,6 +189,27 @@ TEST(PathFeatureReport, TirBandRequiresTwoDistinctRefractiveIndices) {
   });
   ASSERT_NE(coverage, report.coverage.end());
   EXPECT_EQ(coverage->status, CoverageStatus::kNotSupported);
+}
+
+TEST(PathFeatureReport, DefaultDetectorSpectrumMatchesTheSceneMeasureSpectrum) {
+  ConfigManager config = Scene(true, false, false);
+  config.scene_.light_source_.spectrum_ = std::vector<WlParam>{ { 500.0f, 0.25f }, { 620.0f, 0.75f } };
+  const PathFeatureReport report = Analyse(config, { 3, 5 }, 64);
+
+  ASSERT_EQ(report.wavelengths.size(), 2u);
+  ASSERT_EQ(report.scene_measure.spectrum_nodes.size(), report.wavelengths.size());
+  for (size_t index = 0; index < report.wavelengths.size(); index++) {
+    EXPECT_DOUBLE_EQ(report.wavelengths[index].wavelength_nm, report.scene_measure.spectrum_nodes[index].wavelength_nm);
+    EXPECT_DOUBLE_EQ(report.wavelengths[index].weight, report.scene_measure.spectrum_nodes[index].weight);
+  }
+  ASSERT_FALSE(report.members.empty());
+  ASSERT_EQ(report.members.front().wavelengths.size(), report.wavelengths.size());
+  for (size_t index = 0; index < report.wavelengths.size(); index++) {
+    EXPECT_DOUBLE_EQ(report.members.front().wavelengths[index].wavelength.wavelength_nm,
+                     report.scene_measure.spectrum_nodes[index].wavelength_nm);
+    EXPECT_DOUBLE_EQ(report.members.front().wavelengths[index].wavelength.weight,
+                     report.scene_measure.spectrum_nodes[index].weight);
+  }
 }
 
 TEST(PathFeatureReportJson, UsesASeparateSchemaAndDoesNotAcquireATarget) {
