@@ -256,6 +256,20 @@ class RandomNumberGenerator {
   //! @param n the exclusive upper bound; must be > 0
   size_t GetUniformIndex(size_t n);
 
+  // A draw together with the coordinate and density of the actual generator primitive.  The
+  // coordinate is deliberately before any downstream fold (for example a crystal-height abs()).
+  // This makes the product sampler replayable without pretending that a pushed-forward value has
+  // the unfurled distribution's density.
+  struct DistributionSample {
+    float value = 0.0f;
+    float latent_coordinate = 0.0f;
+    double latent_proposal_density = 1.0;
+    double latent_target_density = 1.0;
+    double mapping_jacobian = 0.0;
+    bool atom = true;
+  };
+
+  DistributionSample Sample(Distribution dist);
   float Get(Distribution dist);
   void Reset();
   void SetSeed(uint32_t seed);
@@ -272,6 +286,16 @@ class RandomNumberGenerator {
 
 struct LatLut;  // core/lat_lut.hpp — prebuilt inverse-CDF table for kLutInverseCdf sampling.
 
+struct AxisPoseSampleTrace {
+  RandomNumberGenerator::DistributionSample longitude;
+  RandomNumberGenerator::DistributionSample latitude;
+  RandomNumberGenerator::DistributionSample roll;
+  bool full_sphere = false;
+  bool latitude_lut = false;
+  bool latitude_flipped = false;
+  double latitude_flip_mass = 1.0;
+};
+
 class RandomSampler {
  public:
   //! Sample one complete product axis pose with an explicit RNG. This is the deterministic,
@@ -279,6 +303,11 @@ class RandomSampler {
   //! latitude Jacobian, pole fold and roll coupling have one owner.
   static void SampleAxisPose(RandomNumberGenerator& rng, const AxisDistribution& axis_dist, float out[3],
                              const LatLut* lat_lut = nullptr);
+
+  // Same product sampler and RNG order as SampleAxisPose, with the generator-coordinate
+  // push-forward exposed for diagnostics.  Existing runtime sampling delegates to this function.
+  static AxisPoseSampleTrace SampleAxisPoseWithTrace(RandomNumberGenerator& rng, const AxisDistribution& axis_dist,
+                                                     float out[3], const LatLut* lat_lut = nullptr);
 
   /*! @brief Generate points distributed uniformly on sphere, in spherical form, (lon, lat).
    *

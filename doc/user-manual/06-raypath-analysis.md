@@ -128,8 +128,8 @@ build/cmake_install/static/Lumice raypath \
   --crystal 1 --path 3-1-5 --report --events 8192
 ```
 
-`--report` has no sky target: it writes a schema-2 JSON document describing
-physical L2 members, finite-crystal `A*T` brightness, and an `m^2 sr` scene measure that integrates
+`--report` has no sky target: it writes a schema-3 JSON document describing
+physical L2 members, finite-crystal `A*T` brightness, and an LI `a=1` relative-area scene measure that integrates
 the configured shape and pose distributions, solar disc, spectrum, and scattering layers.
 It also includes the narrower positioned-feature detector, coverage, and limitations. It cannot be combined with
 `--target`, `--grid`, or `--warm`; use the existing target command when you

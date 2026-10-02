@@ -190,7 +190,7 @@ TEST(PathFeatureReportJson, UsesASeparateSchemaAndDoesNotAcquireATarget) {
   const PathFeatureReport report = Analyse(Scene(true, false, false), { 3, 5 }, 64);
   const nlohmann::json doc = nlohmann::json::parse(PathFeatureReportToJson(report, "test-version"));
   EXPECT_EQ(doc["schema"], "lumice.path-feature-report");
-  EXPECT_EQ(doc["schema_version"], 2);
+  EXPECT_EQ(doc["schema_version"], 3);
   EXPECT_EQ(doc["scene_measure"]["spectrum_nodes"].size(), 1u);
   EXPECT_EQ(doc["scene_measure"]["spectrum_nodes"][0]["source"], "scene_discrete");
   EXPECT_EQ(doc["generator"]["lumice"], "test-version");

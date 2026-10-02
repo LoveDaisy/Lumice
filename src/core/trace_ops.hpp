@@ -2,6 +2,7 @@
 #define CORE_TRACE_OPS_H_
 
 #include <cstddef>
+#include <vector>
 
 #include "config/light_config.hpp"
 #include "config/proj_config.hpp"
@@ -139,11 +140,27 @@ RayBuffer AllocateAllData(const SceneConfig& config, size_t ray_num);
 // Returns h (already abs()'d); dist_out receives the 6 signed face distances.
 float SamplePrismShapeScalars(RandomNumberGenerator& rng, const PrismCrystalParam& p, float dist_out[6]);
 
+struct ShapeScalarTrace {
+  int slot = -1;
+  int sync_group = 0;
+  int leader_slot = -1;
+  RandomNumberGenerator::DistributionSample draw;
+  float raw_value = 0.0f;
+  float mapped_value = 0.0f;
+  bool absolute_value_fold = false;
+  double mapping_jacobian = 1.0;
+};
+
+float SamplePrismShapeScalarsWithTrace(RandomNumberGenerator& rng, const PrismCrystalParam& p, float dist_out[6],
+                                       std::vector<ShapeScalarTrace>* trace);
+
 // Same for pyramid. Draw order is h_pyr_u_ -> h_prs_ -> h_pyr_l_ ->
 // face_distance[0..5] — NOT the struct declaration order; see ShapeScalar.
 // h1/h2/h3 are already abs()'d.
 void SamplePyramidShapeScalars(RandomNumberGenerator& rng, const PyramidCrystalParam& p, float& h1, float& h2,
                                float& h3, float dist_out[6]);
+void SamplePyramidShapeScalarsWithTrace(RandomNumberGenerator& rng, const PyramidCrystalParam& p, float& h1, float& h2,
+                                        float& h3, float dist_out[6], std::vector<ShapeScalarTrace>* trace);
 
 // Build a Crystal from a CrystalParam variant using the given RNG. Matches
 // the file-local CrystalMaker visitor used by Simulator (for non-deterministic

@@ -186,8 +186,11 @@ nlohmann::ordered_json SceneMeasureJson(const SceneMeasureResult& measure) {
         shape.push_back({ { "name", scalar.name },
                           { "value", Num(scalar.value) },
                           { "latent_id", scalar.latent_id },
-                          { "proposal_density", Num(scalar.proposal_density) },
-                          { "jacobian", Num(scalar.jacobian) } });
+                          { "sync_group", scalar.sync_group },
+                          { "leader_slot", scalar.leader_slot },
+                          { "raw_value", Num(scalar.raw_value) },
+                          { "absolute_value_fold", scalar.absolute_value_fold },
+                          { "mapping_jacobian", Num(scalar.mapping_jacobian) } });
       }
       nlohmann::ordered_json interfaces = nlohmann::ordered_json::array();
       for (const analytic::DiagnosticInterface& interface : layer.field.interfaces) {
@@ -212,8 +215,8 @@ nlohmann::ordered_json SceneMeasureJson(const SceneMeasureResult& measure) {
         { "faces", layer.faces },
         { "shape", shape },
         { "pose_lon_lat_roll_rad", Array(layer.pose_lon_lat_roll_rad, 3) },
-        { "pose_local_density", Array(layer.pose_local_density, 3) },
-        { "pose_tangent_basis", Array(layer.pose_tangent_basis, 6) },
+        { "pose_support_rank", layer.pose_support_rank },
+        { "pose_tangent_drotation", Array(layer.pose_tangent_drotation, 27) },
         { "incident_direction", Array(layer.incident_direction, 3) },
         { "outgoing_direction", Array(layer.outgoing_direction, 3) },
         { "crystal_share", Num(layer.crystal_share) },
@@ -233,6 +236,19 @@ nlohmann::ordered_json SceneMeasureJson(const SceneMeasureResult& measure) {
       }
       layers.push_back(std::move(layer_json));
     }
+    nlohmann::ordered_json latents = nlohmann::ordered_json::array();
+    for (const LatentMeasureSample& latent : row.latents) {
+      latents.push_back({ { "latent_id", latent.latent_id },
+                          { "layer_index", latent.layer_index },
+                          { "name", latent.name },
+                          { "base_measure", LatentBaseMeasureName(latent.base_measure) },
+                          { "coordinate", Num(latent.coordinate) },
+                          { "proposal_density_or_mass", Num(latent.proposal_density_or_mass) },
+                          { "target_density_or_mass", Num(latent.target_density_or_mass) },
+                          { "mapping_jacobian", Num(latent.mapping_jacobian) },
+                          { "mapping", latent.mapping },
+                          { "status", SceneMeasureStatusName(latent.status) } });
+    }
     nlohmann::ordered_json row_json = {
       { "spectrum_node_id", row.spectrum_node_id },
       { "sun_node_id", row.sun_node_id },
@@ -248,10 +264,15 @@ nlohmann::ordered_json SceneMeasureJson(const SceneMeasureResult& measure) {
       { "global_weight", Num(row.global_weight) },
       { "contribution", Num(row.contribution) },
       { "status", SceneMeasureStatusName(row.status) },
+      { "evaluation_status", SceneMeasureStatusName(row.evaluation_status) },
+      { "latents", latents },
       { "layers", layers },
     };
     if (!row.reason.empty()) {
       row_json["reason"] = row.reason;
+    }
+    if (!row.evaluation_reason.empty()) {
+      row_json["evaluation_reason"] = row.evaluation_reason;
     }
     rows.push_back(std::move(row_json));
   }
@@ -261,6 +282,7 @@ nlohmann::ordered_json SceneMeasureJson(const SceneMeasureResult& measure) {
     { "requested_sample_count", measure.requested_sample_count },
     { "evaluated_row_count", measure.evaluated_row_count },
     { "stored_row_count", measure.stored_row_count },
+    { "stored_row_selection", measure.stored_row_selection },
     { "units", measure.units },
     { "normalization", measure.normalization },
     { "factors", factors },
@@ -270,7 +292,16 @@ nlohmann::ordered_json SceneMeasureJson(const SceneMeasureResult& measure) {
     { "coarse_contribution", Num(measure.coarse_contribution) },
     { "total_contribution", Num(measure.total_contribution) },
     { "absolute_error_estimate", Num(measure.absolute_error_estimate) },
+    { "joint_sampling_error_estimate", Num(measure.joint_sampling_error_estimate) },
+    { "sun_node_error_estimate", Num(measure.sun_node_error_estimate) },
+    { "spectrum_node_error_estimate", Num(measure.spectrum_node_error_estimate) },
     { "sampled_measure_mass", Num(measure.sampled_measure_mass) },
+    { "status_counts",
+      { { "confirmed", measure.status_counts.confirmed },
+        { "zero_weight", measure.status_counts.zero_weight },
+        { "physically_unreachable", measure.status_counts.physically_unreachable },
+        { "numerical_incomplete", measure.status_counts.numerical_incomplete },
+        { "not_supported", measure.status_counts.not_supported } } },
     { "sampled_rows", rows },
     { "sampled_rows_truncated", measure.rows_truncated || measure.rows.size() > kMaxJsonRows },
   };

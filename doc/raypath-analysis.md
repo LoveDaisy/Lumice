@@ -540,16 +540,18 @@ Analyze 窗口正式排期即满足 §5.1.6 移植触发的第一个条件（「
 > （字段见 `doc/raypath-cli-output.md`，用法见 `doc/user-manual/03-cli-quickstart.md`）。
 
 `Lumice raypath --report` 与 `LUMICE_AnalyzePathFeatureReport` 另提供不带 target 的路径级
-feature report。schema 2 的 `scene_measure` 对场景实际 shape / pose 分布、太阳圆盘与光谱做确定性
+feature report。schema 3 的 `scene_measure` 对场景实际 shape / pose 分布、太阳圆盘与光谱做确定性
 乘积积分；每层从晶体混合份额开始，上一层出射方向与透射质量成为下一层输入，全局太阳和光谱权重只
-乘一次。结果以 `m^2 sr` 报告，并带归一化、coarse/fine 差、逐层样本与 field 状态。它按配置实际
+乘一次。结果以 LI `a=1` 相对有限晶体面积乘原始谱权重报告，并分别携带联合样本、太阳节点和光谱
+节点误差、结构化 latent、逐层样本与 field 状态。默认有限太阳盘是总质量为 1 的源概率测度。它按配置实际
 允许的物理 L2 成员积分有限晶体 `A*T`，并只在已有固定数值证据的
 范围内定位普通色散边、`3-1-5` 的内部反射 TIR 蓝带，以及理想水平菱形薄板的两个 ±120°分支。
 为保持同步 C API 的可预测成本，主积分的成员 × 波长 ×（fine + coarse）评估总数最多为 16,777,216；
 超出该预算的请求以 `invalid_argument` 拒绝，不产生部分 report。
 它不是全天特征枚举器；未支持、当前分辨率未检出、数值未完成与物理不可达由 coverage 分开表达。
 旧的目标点接口仍负责 fiber 与晶体内逐段详情，两份 JSON schema 彼此独立。v4.51 请求前缀仍可调用
-report，并保持旧的诊断端点行为；v4.52 尾字段可选择具体成员、物理成员 mask、光谱来源和积分节点。
+report，并保持旧的诊断端点行为；v4.52 尾字段可选择具体成员、物理成员 mask、光谱来源和积分节点，
+v4.53 尾字段增加逐层 mask 与逐值使用的显式多层 member chain。
 
 **已验收的诊断边界（2026-10-01）**：固定随机正六棱柱下，`3-5` 的普通最小偏折红内缘以及
 `3-1-5` 的太阳侧色散边已确认；后者的焦散只保留为 candidate。`3-1-5` 的反日特征则是独立确认的

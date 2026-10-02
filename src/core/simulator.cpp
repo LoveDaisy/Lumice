@@ -411,33 +411,46 @@ class SyncGroupSampler {
  public:
   explicit SyncGroupSampler(RandomNumberGenerator& rng) : rng_(rng) {}
 
-  float Draw(int group, const Distribution& dist) {
+  float Draw(int group, const Distribution& dist, int slot, ShapeScalarTrace* trace) {
+    RandomNumberGenerator::DistributionSample sample;
+    int leader_slot = slot;
     if (group == 0) {
-      return rng_.Get(dist);
-    }
-    for (int i = 0; i < cached_cnt_; i++) {
-      if (cached_group_[i] == group) {
-        return cached_value_[i];
+      sample = rng_.Sample(dist);
+    } else {
+      for (int i = 0; i < cached_cnt_; i++) {
+        if (cached_group_[i] == group) {
+          sample = cached_sample_[i];
+          leader_slot = cached_leader_slot_[i];
+          if (trace != nullptr) {
+            *trace = { slot, group, leader_slot, sample, sample.value, sample.value, false, 1.0 };
+          }
+          return sample.value;
+        }
       }
+      sample = rng_.Sample(dist);
+      if (cached_cnt_ >= kShapeScalarCount) {
+        // Unreachable: each insert is a distinct group first seen at a distinct
+        // slot, and there are exactly kShapeScalarCount slots. Trapping rather
+        // than dropping the entry — a dropped entry would silently re-draw for a
+        // later member of the same group, i.e. break the group's whole contract.
+        FatalAbort("SyncGroupSampler cache overflow: %d groups over %d shape scalars", cached_cnt_, kShapeScalarCount);
+      }
+      cached_group_[cached_cnt_] = group;
+      cached_sample_[cached_cnt_] = sample;
+      cached_leader_slot_[cached_cnt_] = slot;
+      cached_cnt_++;
     }
-    const float value = rng_.Get(dist);
-    if (cached_cnt_ >= kShapeScalarCount) {
-      // Unreachable: each insert is a distinct group first seen at a distinct
-      // slot, and there are exactly kShapeScalarCount slots. Trapping rather
-      // than dropping the entry — a dropped entry would silently re-draw for a
-      // later member of the same group, i.e. break the group's whole contract.
-      FatalAbort("SyncGroupSampler cache overflow: %d groups over %d shape scalars", cached_cnt_, kShapeScalarCount);
+    if (trace != nullptr) {
+      *trace = { slot, group, leader_slot, sample, sample.value, sample.value, false, 1.0 };
     }
-    cached_group_[cached_cnt_] = group;
-    cached_value_[cached_cnt_] = value;
-    cached_cnt_++;
-    return value;
+    return sample.value;
   }
 
  private:
   RandomNumberGenerator& rng_;
   int cached_group_[kShapeScalarCount]{};
-  float cached_value_[kShapeScalarCount]{};
+  RandomNumberGenerator::DistributionSample cached_sample_[kShapeScalarCount]{};
+  int cached_leader_slot_[kShapeScalarCount]{};
   int cached_cnt_ = 0;
 };
 
@@ -451,26 +464,63 @@ class SyncGroupSampler {
 // Crystal::CreatePrism's Euler-manifold gate; degenerate combos are rejected as
 // zero-triangle Crystals rather than silently absolute-valued at the sampler
 // boundary, which was hiding an entire input path from the geometry pipeline).
-float SamplePrismShapeScalars(RandomNumberGenerator& rng, const PrismCrystalParam& p, float dist_out[6]) {
+float SamplePrismShapeScalarsWithTrace(RandomNumberGenerator& rng, const PrismCrystalParam& p, float dist_out[6],
+                                       std::vector<ShapeScalarTrace>* trace) {
   SyncGroupSampler sampler{ rng };
-  const float h = std::abs(sampler.Draw(p.sync_group_[kShapeScalarHeight], p.h_));
+  ShapeScalarTrace item;
+  const float raw_h = sampler.Draw(p.sync_group_[kShapeScalarHeight], p.h_, kShapeScalarHeight, &item);
+  const float h = std::abs(raw_h);
+  item.mapped_value = h;
+  item.absolute_value_fold = true;
+  if (trace != nullptr) {
+    trace->push_back(item);
+  }
   for (int i = 0; i < 6; i++) {
-    dist_out[i] = sampler.Draw(p.sync_group_[kShapeScalarFace0 + i], p.d_[i]);
+    const int slot = kShapeScalarFace0 + i;
+    dist_out[i] = sampler.Draw(p.sync_group_[slot], p.d_[i], slot, &item);
+    if (trace != nullptr) {
+      trace->push_back(item);
+    }
   }
   return h;
 }
 
 
+float SamplePrismShapeScalars(RandomNumberGenerator& rng, const PrismCrystalParam& p, float dist_out[6]) {
+  return SamplePrismShapeScalarsWithTrace(rng, p, dist_out, nullptr);
+}
+
+
 // Same rationale as the prism branch: heights fold, face_distance is signed.
+void SamplePyramidShapeScalarsWithTrace(RandomNumberGenerator& rng, const PyramidCrystalParam& p, float& h1, float& h2,
+                                        float& h3, float dist_out[6], std::vector<ShapeScalarTrace>* trace) {
+  SyncGroupSampler sampler{ rng };
+  ShapeScalarTrace item;
+  auto draw_height = [&](int slot, const Distribution& distribution) {
+    const float value = std::abs(sampler.Draw(p.sync_group_[slot], distribution, slot, &item));
+    item.mapped_value = value;
+    item.absolute_value_fold = true;
+    if (trace != nullptr) {
+      trace->push_back(item);
+    }
+    return value;
+  };
+  h1 = draw_height(kShapeScalarUpperH, p.h_pyr_u_);
+  h2 = draw_height(kShapeScalarPrismH, p.h_prs_);
+  h3 = draw_height(kShapeScalarLowerH, p.h_pyr_l_);
+  for (int i = 0; i < 6; i++) {
+    const int slot = kShapeScalarFace0 + i;
+    dist_out[i] = sampler.Draw(p.sync_group_[slot], p.d_[i], slot, &item);
+    if (trace != nullptr) {
+      trace->push_back(item);
+    }
+  }
+}
+
+
 void SamplePyramidShapeScalars(RandomNumberGenerator& rng, const PyramidCrystalParam& p, float& h1, float& h2,
                                float& h3, float dist_out[6]) {
-  SyncGroupSampler sampler{ rng };
-  h1 = std::abs(sampler.Draw(p.sync_group_[kShapeScalarUpperH], p.h_pyr_u_));
-  h2 = std::abs(sampler.Draw(p.sync_group_[kShapeScalarPrismH], p.h_prs_));
-  h3 = std::abs(sampler.Draw(p.sync_group_[kShapeScalarLowerH], p.h_pyr_l_));
-  for (int i = 0; i < 6; i++) {
-    dist_out[i] = sampler.Draw(p.sync_group_[kShapeScalarFace0 + i], p.d_[i]);
-  }
+  SamplePyramidShapeScalarsWithTrace(rng, p, h1, h2, h3, dist_out, nullptr);
 }
 
 

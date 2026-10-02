@@ -320,7 +320,7 @@ the same serialization.
 
 | Key | Meaning |
 |---|---|
-| `schema`, `schema_version` | `"lumice.path-feature-report"`, version 2. This is not the target-fiber schema 1. |
+| `schema`, `schema_version` | `"lumice.path-feature-report"`, version 3. This is not the target-fiber schema 1. |
 | `generator` | Lumice version and analytic-kernel API version. |
 | `conventions` | Member identity, brightness normalization, direction, and coverage wording carried with the document. |
 | `meta` | Nominal crystal scalars, requested face sequence, per-layer crystal ids, sun direction, orientation measure, and fine sample count. There is no target. |
@@ -338,22 +338,32 @@ The area uses LI's `a=1` normalization. When a horizontal-family branch has one 
 direction, the row also carries `fixed_outgoing_direction` and its maximum direction residual.
 Coarse/fine differences and boundary residuals are convergence evidence, not exact error bounds.
 
-`scene_measure` is the general measurement result. It records its status, SI units (`m^2 sr`),
-normalization, seed, sample counts, coarse/fine totals and absolute difference. Its factors expose
-the crystal-mixture shares, shape/pose measures, solar-disc solid angle and spectral quadrature.
+`scene_measure` is the general measurement result. It records its status, LI `a=1` relative-area
+units times raw spectral weight, normalization, seed, sample counts, coarse/fine totals and error
+estimates split across joint samples, sun nodes, and spectrum nodes. Its factors expose the
+crystal-mixture shares, shape/pose measures, normalized solar-source measure and spectral quadrature.
 Each sampled row carries the concrete member chain, wavelength and sun node, per-layer sampled
 shape and pose, incident/outgoing directions, finite entry area, transmittance, field status,
-interfaces and boundary margins. Factor records include their parameterization, center and spread;
-rows state the deterministic proposal density and importance weight. `evaluated_row_count` is the
-streamed integration count, while `stored_row_count` is the bounded diagnostic sample retained for
-inspection. `sampled_rows_truncated` states when the integral contains more rows than the JSON
-shows. A physical-member mask addresses stable entry-face IDs in each layer, never an internal
-member-chain enumeration position.
+interfaces and boundary margins. Each unique generator latent records its base measure, replay
+coordinate, proposal/target density or mass, mapping Jacobian and status; synchronized shape
+scalars share one leader latent. Pose rows expose the full SO(3) rotation differential including
+roll and its support rank. `joint_sample_mass` is separate from joint proposal density and
+importance weight. `evaluated_row_count` is the streamed integration count, while
+`stored_row_count` is a deterministic bottom-k hash sample retained for inspection.
+`sampled_rows_truncated` states when the integral contains more rows than the JSON shows. Internal
+consumers needing the complete field use deterministic replay or the row visitor. Status counts
+separate zero source weight, physical unreachability, and numerical incompleteness; a zero-weight
+row can retain an independent non-successful evaluation status.
+
+A physical-member mask addresses stable entry-face IDs in each layer, never an internal
+member-chain enumeration position. Schema 3 also accepts one mask per layer and exact member
+chains. Exact chains are used verbatim, are not symmetry-expanded, can distinguish sequences with
+the same entry face, and can express non-Cartesian multi-layer selections.
 
 The configured spectrum is the default. An explicit `--wavelength` selects a diagnostic delta
 spectrum. The top-level `wavelengths` and legacy positioned-feature brightness remain the compact
 fixture detector's wavelength list; consumers of the general integral use
-`scene_measure.spectrum_nodes`. The solar disc is integrated by solid-angle quadrature, and every
+`scene_measure.spectrum_nodes`. The finite solar disc is a unit-mass source probability measure, and every
 shape and pose distribution is sampled with deterministic product coordinates. In a multi-layer
 chain, the outgoing direction and transmitted mass of one layer feed the next; global sun and
 spectrum weights are applied once, not once per layer.
@@ -395,7 +405,7 @@ fixed-input observation, not general constants):
 ```json
 {
   "schema": "lumice.path-feature-report",
-  "schema_version": 2,
+  "schema_version": 3,
   "meta": {"requested_faces": [3, 1, 5], "sample_count": 8192},
   "features": [
     {"id": "random_regular.3-1-5.solar_dispersion_edge",

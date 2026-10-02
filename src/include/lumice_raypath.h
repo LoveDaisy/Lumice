@@ -109,6 +109,7 @@ typedef enum LUMICE_PathFeatureMemberSelection {
   LUMICE_PATH_FEATURE_MEMBERS_ALL_PHYSICAL = 0,
   LUMICE_PATH_FEATURE_MEMBERS_CONCRETE = 1,
   LUMICE_PATH_FEATURE_MEMBERS_PHYSICAL_MASK = 2,
+  LUMICE_PATH_FEATURE_MEMBERS_EXPLICIT_CHAINS = 3,
 } LUMICE_PathFeatureMemberSelection;
 
 typedef enum LUMICE_PathFeatureSpectrumSource {
@@ -119,7 +120,7 @@ typedef enum LUMICE_PathFeatureSpectrumSource {
 
 typedef struct LUMICE_PathFeatureReportRequest {
   // Set to sizeof of the caller's struct. Layout v1 (through sample_count) remains accepted;
-  // fields appended after it are read only when struct_size reaches their published v2 extent.
+  // appended fields are read only when struct_size reaches their published v2 or v3 extent.
   size_t struct_size;
   int crystal_id;
   const int* faces;
@@ -156,6 +157,21 @@ typedef struct LUMICE_PathFeatureReportRequest {
   int sun_node_count;         // 0 = 8 for a finite disc; ignored for a zero-diameter sun.
   int illuminant_node_count;  // 0 = 8 midpoint-stratified nodes over [380, 780).
   uint32_t seed;              // 0 is a valid deterministic seed.
+
+  // v3 append-only member-selection fields. For PHYSICAL_MASK, an empty array retains the v2
+  // physical_member_mask behavior; otherwise there must be one mask per path layer. For
+  // EXPLICIT_CHAINS, explicit_member_layer_face_counts has explicit_member_chain_count *
+  // layer_count entries (chain-major, then layer-major), whose sum is explicit_member_face_count;
+  // explicit_member_faces concatenates those exact face sequences. The call only borrows all
+  // arrays for its duration. Explicit chains are not symmetry-expanded and therefore can express
+  // non-Cartesian multi-layer selections and distinguish sequences sharing one entry face.
+  const uint64_t* physical_member_masks;
+  int physical_member_mask_count;
+  const int* explicit_member_faces;
+  int explicit_member_face_count;
+  const int* explicit_member_layer_face_counts;
+  int explicit_member_layer_face_count;
+  int explicit_member_chain_count;
 } LUMICE_PathFeatureReportRequest;
 
 typedef struct LUMICE_PathFeatureReport_ LUMICE_PathFeatureReport;
@@ -168,7 +184,7 @@ LUMICE_API LUMICE_ErrorCode LUMICE_AnalyzePathFeatureReport(const LUMICE_Scene* 
                                                             LUMICE_PathFeatureReport** out, char* err_buf,
                                                             size_t err_size);
 
-// UTF-8 JSON with schema "lumice.path-feature-report", schema_version 2. Uses the same
+// UTF-8 JSON with schema "lumice.path-feature-report", schema_version 3. Uses the same
 // length-query/fetch and truncation contract as LUMICE_SinglePathResultToJson.
 LUMICE_API LUMICE_ErrorCode LUMICE_PathFeatureReportToJson(const LUMICE_PathFeatureReport* result, char* out_buf,
                                                            size_t buf_size, size_t* out_len);

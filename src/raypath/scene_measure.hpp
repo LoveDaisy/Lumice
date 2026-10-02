@@ -6,6 +6,7 @@
 // members are retained as data, rather than collapsed into a named pose family or nominal shape.
 
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -29,6 +30,9 @@ enum class SceneMemberSelection {
   // As above, then retain every layer-local physical L2 member whose stable entry-face bit is
   // set in physical_member_mask. The mask never addresses an implementation-order chain index.
   kPhysicalMask,
+  // Use explicit_member_chains verbatim. Each chain contains exactly one concrete face sequence
+  // per requested layer; no symmetry expansion or Cartesian product is applied.
+  kExplicitChains,
 };
 
 enum class SceneMeasureStatus {
@@ -41,11 +45,19 @@ enum class SceneMeasureStatus {
 
 const char* SceneMeasureStatusName(SceneMeasureStatus status);
 
+struct SunMeasureNode {
+  int node_id = 0;
+  double incident_direction[3]{};
+  double mass = 0.0;
+};
+
 struct SceneMeasureRequest {
   std::vector<IdType> layer_crystal_ids;
   std::vector<std::vector<int>> path_layers;
   SceneMemberSelection member_selection = SceneMemberSelection::kConcrete;
   uint64_t physical_member_mask = ~uint64_t{ 0 };
+  std::vector<uint64_t> physical_member_masks;
+  std::vector<std::vector<std::vector<int>>> explicit_member_chains;
 
   SceneSpectrumSource spectrum_source = SceneSpectrumSource::kScene;
   std::vector<double> diagnostic_wavelengths_nm;
@@ -58,6 +70,11 @@ struct SceneMeasureRequest {
   int illuminant_node_count = 8;
   uint32_t seed = 1;
   bool include_derivatives = false;
+
+  // Optional precomputed global-source nodes. Empty selects the product sun sampler. Non-empty
+  // nodes are consumed verbatim (including their masses), which supplies a reusable integration
+  // primitive for controlled source quadrature and independent counterfactual tests.
+  std::vector<SunMeasureNode> source_sun_nodes;
 };
 
 struct MeasureFactorDescriptor {
@@ -81,19 +98,37 @@ struct SpectrumMeasureNode {
   std::string source;
 };
 
-struct SunMeasureNode {
-  int node_id = 0;
-  double incident_direction[3]{};
-  double mass = 0.0;
+enum class LatentBaseMeasure {
+  kAtomCounting,
+  kLebesgue,
+  kUnitInterval,
+  kBernoulliCounting,
+};
+
+const char* LatentBaseMeasureName(LatentBaseMeasure measure);
+
+struct LatentMeasureSample {
+  int latent_id = -1;
+  int layer_index = -1;
+  std::string name;
+  LatentBaseMeasure base_measure = LatentBaseMeasure::kAtomCounting;
+  double coordinate = 0.0;
+  double proposal_density_or_mass = 1.0;
+  double target_density_or_mass = 1.0;
+  double mapping_jacobian = 0.0;
+  std::string mapping;
+  SceneMeasureStatus status = SceneMeasureStatus::kConfirmed;
 };
 
 struct ShapeScalarSample {
   std::string name;
   double value = 0.0;
   int latent_id = -1;
-  // Correlated scalars share latent_id and count once in a joint density.
-  double proposal_density = 0.0;
-  double jacobian = 1.0;
+  int sync_group = 0;
+  int leader_slot = -1;
+  double raw_value = 0.0;
+  bool absolute_value_fold = false;
+  double mapping_jacobian = 1.0;
 };
 
 struct SceneMeasureLayerRow {
@@ -105,8 +140,11 @@ struct SceneMeasureLayerRow {
   std::vector<int> faces;
   std::vector<ShapeScalarSample> shape;
   double pose_lon_lat_roll_rad[3]{};
-  double pose_local_density[3]{};
-  double pose_tangent_basis[6]{};
+  int pose_support_rank = 0;
+  // Derivatives of the field's row-major 3x3 pose matrix with respect to the three sampled
+  // longitude/latitude/roll coordinates: [coordinate][matrix element]. This is the actual SO(3)
+  // tangent map, including roll, rather than two tangent vectors for the crystal axis alone.
+  double pose_tangent_drotation[27]{};
   double incident_direction[3]{};
   double outgoing_direction[3]{};
   double crystal_share = 0.0;
@@ -133,8 +171,19 @@ struct SceneMeasureRow {
   double global_weight = 0.0;
   double contribution = 0.0;
   SceneMeasureStatus status = SceneMeasureStatus::kNotSupported;
+  SceneMeasureStatus evaluation_status = SceneMeasureStatus::kNotSupported;
   std::string reason;
+  std::string evaluation_reason;
+  std::vector<LatentMeasureSample> latents;
   std::vector<SceneMeasureLayerRow> layers;
+};
+
+struct SceneMeasureStatusCounts {
+  int confirmed = 0;
+  int zero_weight = 0;
+  int physically_unreachable = 0;
+  int numerical_incomplete = 0;
+  int not_supported = 0;
 };
 
 struct SceneMeasureResult {
@@ -143,6 +192,7 @@ struct SceneMeasureResult {
   int evaluated_row_count = 0;
   int stored_row_count = 0;
   bool rows_truncated = false;
+  std::string stored_row_selection;
   std::string units;
   std::string normalization;
   std::vector<MeasureFactorDescriptor> factors;
@@ -153,12 +203,24 @@ struct SceneMeasureResult {
   double coarse_contribution = 0.0;
   double total_contribution = 0.0;
   double absolute_error_estimate = 0.0;
+  double joint_sampling_error_estimate = 0.0;
+  double sun_node_error_estimate = 0.0;
+  double spectrum_node_error_estimate = 0.0;
   double sampled_measure_mass = 0.0;
+  SceneMeasureStatusCounts status_counts;
   SceneMeasureStatus status = SceneMeasureStatus::kNotSupported;
   std::string reason;
 };
 
 Error BuildSceneMeasure(const ConfigManager& config, const SceneMeasureRequest& request, SceneMeasureResult* out);
+
+using SceneMeasureRowVisitor = std::function<void(const SceneMeasureRow&)>;
+
+// Visits every evaluated row before the bounded representative-row store is applied. The same
+// seed and request replay the same sequence; consumers that need the complete numerical field use
+// this overload instead of treating SceneMeasureResult::rows as the full dataset.
+Error BuildSceneMeasure(const ConfigManager& config, const SceneMeasureRequest& request,
+                        const SceneMeasureRowVisitor& visitor, SceneMeasureResult* out);
 
 }  // namespace lumice::raypath
 

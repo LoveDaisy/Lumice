@@ -440,31 +440,63 @@ size_t RandomNumberGenerator::GetUniformIndex(size_t n) {
 }
 
 
-float RandomNumberGenerator::Get(Distribution dist) {
+RandomNumberGenerator::DistributionSample RandomNumberGenerator::Sample(Distribution dist) {
+  DistributionSample sample;
   switch (dist.type) {
-    case DistributionType::kUniform:
-      return (GetUniform() - 0.5f) * dist.UniformFullRange() + dist.UniformCenter();
+    case DistributionType::kUniform: {
+      sample.atom = false;
+      sample.latent_coordinate = GetUniform();
+      sample.mapping_jacobian = std::abs(static_cast<double>(dist.UniformFullRange()));
+      sample.value = (sample.latent_coordinate - 0.5f) * dist.UniformFullRange() + dist.UniformCenter();
+      return sample;
+    }
     case DistributionType::kGaussian:
-    case DistributionType::kGaussianLegacy:
-      return GetGaussian() * dist.Std() + dist.Mean();
-    case DistributionType::kZigzag:
+    case DistributionType::kGaussianLegacy: {
+      sample.atom = false;
+      sample.latent_coordinate = GetGaussian();
+      sample.latent_proposal_density =
+          std::exp(-0.5 * static_cast<double>(sample.latent_coordinate) * sample.latent_coordinate) /
+          std::sqrt(2.0 * static_cast<double>(math::kPi));
+      sample.latent_target_density = sample.latent_proposal_density;
+      sample.mapping_jacobian = std::abs(static_cast<double>(dist.Std()));
+      sample.value = sample.latent_coordinate * dist.Std() + dist.Mean();
+      return sample;
+    }
+    case DistributionType::kZigzag: {
       // Rectified arcsine: |A·sin(2πU) + B| where A is the amplitude and B the tilt offset.
       // The abs() is intentional: fold (flip=true) is unconditionally skipped — abs() guarantees
       // phi >= 0 for all kZigzag inputs regardless of the amplitude / tilt values.
-      return std::abs(dist.Amplitude() * std::sin(GetUniform() * 2.0f * math::kPi) + dist.Tilt());
+      sample.atom = false;
+      sample.latent_coordinate = GetUniform();
+      const float phase = sample.latent_coordinate * 2.0f * math::kPi;
+      const float raw = dist.Amplitude() * std::sin(phase) + dist.Tilt();
+      sample.mapping_jacobian = std::abs(static_cast<double>(dist.Amplitude()) * 2.0 * math::kPi * std::cos(phase));
+      sample.value = std::abs(raw);
+      return sample;
+    }
     case DistributionType::kLaplacian: {
       // Laplace inverse CDF: μ - b·sign(U-0.5)·ln(1-2|U-0.5|), returns degrees.
-      float u = GetUniform();
-      float sign = (u < 0.5f) ? -1.0f : 1.0f;
-      float arg = 1.0f - 2.0f * std::abs(u - 0.5f);
+      sample.atom = false;
+      sample.latent_coordinate = GetUniform();
+      const float sign = (sample.latent_coordinate < 0.5f) ? -1.0f : 1.0f;
+      float arg = 1.0f - 2.0f * std::abs(sample.latent_coordinate - 0.5f);
       arg = std::max(arg, std::numeric_limits<float>::min());  // Clamp to avoid ln(0).
-      return dist.Location() - dist.Scale() * sign * std::log(arg);
+      sample.mapping_jacobian = 2.0 * std::abs(static_cast<double>(dist.Scale())) / arg;
+      sample.value = dist.Location() - dist.Scale() * sign * std::log(arg);
+      return sample;
     }
     case DistributionType::kNoRandom:
-      return dist.Value();
+      sample.value = dist.Value();
+      sample.latent_coordinate = dist.Value();
+      return sample;
     default:
-      return 0.0f;
+      return sample;
   }
+}
+
+
+float RandomNumberGenerator::Get(Distribution dist) {
+  return Sample(dist).value;
 }
 
 
@@ -491,14 +523,28 @@ void RandomSampler::SampleSphericalPointsSph(float* data, size_t num, size_t ste
 }
 
 
-void RandomSampler::SampleAxisPose(RandomNumberGenerator& rng, const AxisDistribution& axis_dist, float out[3],
-                                   const LatLut* lat_lut) {
+AxisPoseSampleTrace RandomSampler::SampleAxisPoseWithTrace(RandomNumberGenerator& rng,
+                                                           const AxisDistribution& axis_dist, float out[3],
+                                                           const LatLut* lat_lut) {
+  AxisPoseSampleTrace trace;
   if (axis_dist.IsFullSphereUniform()) {
-    const float u = std::max(-1.0f, std::min(1.0f, rng.GetUniform() * 2.0f - 1.0f));
-    out[0] = rng.GetUniform() * 2.0f * math::kPi;
+    trace.full_sphere = true;
+    trace.latitude.atom = false;
+    trace.latitude.latent_coordinate = rng.GetUniform();
+    const float u = std::max(-1.0f, std::min(1.0f, trace.latitude.latent_coordinate * 2.0f - 1.0f));
     out[1] = std::asin(u);
-    out[2] = rng.Get(axis_dist.roll_dist) * math::kDegreeToRad;
-    return;
+    trace.latitude.value = out[1];
+    trace.latitude.mapping_jacobian = 2.0 / std::max(1e-30, static_cast<double>(std::cos(out[1])));
+    trace.longitude.atom = false;
+    trace.longitude.latent_coordinate = rng.GetUniform();
+    trace.longitude.value = trace.longitude.latent_coordinate * 2.0f * math::kPi;
+    trace.longitude.mapping_jacobian = 2.0 * math::kPi;
+    out[0] = trace.longitude.value;
+    trace.roll = rng.Sample(axis_dist.roll_dist);
+    out[2] = trace.roll.value * math::kDegreeToRad;
+    trace.roll.mapping_jacobian *= math::kDegreeToRad;
+    trace.roll.value = out[2];
+    return trace;
   }
 
   const DistributionType lat_type = axis_dist.latitude_dist.type;
@@ -506,29 +552,57 @@ void RandomSampler::SampleAxisPose(RandomNumberGenerator& rng, const AxisDistrib
   float phi = 0.0f;
   bool flip = false;
   if (decision.kind == lat_path::LatPathKind::kLutInverseCdf) {
+    trace.latitude_lut = true;
     const LatLut& lut = lat_lut != nullptr ? *lat_lut : *GetSharedLatLut(axis_dist.latitude_dist);
-    const float theta_z = lm_pcg::invert_lat_lut(rng.GetUniform(), lut.theta.data(), lut.cdf.data(), LatLut::kNodes);
+    trace.latitude.atom = false;
+    trace.latitude.latent_coordinate = rng.GetUniform();
+    const float theta_z =
+        lm_pcg::invert_lat_lut(trace.latitude.latent_coordinate, lut.theta.data(), lut.cdf.data(), LatLut::kNodes);
     phi = math::kPi_2 - theta_z;
     const uint32_t bin = lm_pcg::lat_lut_bin(theta_z, lut.theta.data(), LatLut::kNodes);
-    flip = rng.GetUniform() < lut.flip_prob[bin];
+    const double dcdf = static_cast<double>(lut.cdf[bin + 1]) - lut.cdf[bin];
+    const double dtheta = static_cast<double>(lut.theta[bin + 1]) - lut.theta[bin];
+    trace.latitude.mapping_jacobian = dtheta / std::max(dcdf, std::numeric_limits<double>::min());
+    const double flip_probability = lut.flip_prob[bin];
+    flip = rng.GetUniform() < flip_probability;
+    trace.latitude_flip_mass = flip ? flip_probability : 1.0 - flip_probability;
   } else if (lat_type == DistributionType::kGaussianLegacy) {
-    phi = rng.Get(axis_dist.latitude_dist) * math::kDegreeToRad;
+    trace.latitude = rng.Sample(axis_dist.latitude_dist);
+    phi = trace.latitude.value * math::kDegreeToRad;
+    trace.latitude.mapping_jacobian *= math::kDegreeToRad;
     auto [normal_phi, normal_flip] = detail::NormalizeLatitude(phi);
     phi = normal_phi;
     flip = normal_flip;
   } else {
-    phi = rng.Get(axis_dist.latitude_dist) * math::kDegreeToRad;
+    trace.latitude = rng.Sample(axis_dist.latitude_dist);
+    phi = trace.latitude.value * math::kDegreeToRad;
+    trace.latitude.mapping_jacobian *= math::kDegreeToRad;
   }
 
-  float lambda = rng.Get(axis_dist.azimuth_dist) * math::kDegreeToRad;
-  float roll = rng.Get(axis_dist.roll_dist) * math::kDegreeToRad;
+  trace.latitude.value = phi;
+  trace.longitude = rng.Sample(axis_dist.azimuth_dist);
+  trace.roll = rng.Sample(axis_dist.roll_dist);
+  float lambda = trace.longitude.value * math::kDegreeToRad;
+  float roll = trace.roll.value * math::kDegreeToRad;
+  trace.longitude.mapping_jacobian *= math::kDegreeToRad;
+  trace.roll.mapping_jacobian *= math::kDegreeToRad;
   if (flip) {
     lambda += math::kPi;
     roll += math::kPi;
   }
+  trace.latitude_flipped = flip;
+  trace.longitude.value = lambda;
+  trace.roll.value = roll;
   out[0] = lambda;
   out[1] = phi;
   out[2] = roll;
+  return trace;
+}
+
+
+void RandomSampler::SampleAxisPose(RandomNumberGenerator& rng, const AxisDistribution& axis_dist, float out[3],
+                                   const LatLut* lat_lut) {
+  (void)SampleAxisPoseWithTrace(rng, axis_dist, out, lat_lut);
 }
 
 

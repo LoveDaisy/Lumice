@@ -663,6 +663,8 @@ Error AnalyzePathFeatureReport(const ConfigManager& config, const PathFeatureRep
   measure_request.path_layers = request.path_layers;
   measure_request.member_selection = request.member_selection;
   measure_request.physical_member_mask = request.physical_member_mask;
+  measure_request.physical_member_masks = request.physical_member_masks;
+  measure_request.explicit_member_chains = request.explicit_member_chains;
   measure_request.spectrum_source =
       request.wavelengths_nm.empty() ? request.scene_spectrum_source : SceneSpectrumSource::kDiagnostic;
   measure_request.diagnostic_wavelengths_nm = request.wavelengths_nm;

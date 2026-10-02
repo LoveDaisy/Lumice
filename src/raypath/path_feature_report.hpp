@@ -18,7 +18,7 @@
 
 namespace lumice::raypath {
 
-constexpr int kFeatureReportSchemaVersion = 2;
+constexpr int kFeatureReportSchemaVersion = 3;
 constexpr int kDefaultFeatureReportSampleCount = 8192;
 constexpr int kMaxFeatureReportSampleCount = 1000000;
 constexpr int kMaxFeatureReportWavelengthCount = 32;
@@ -33,6 +33,8 @@ struct PathFeatureReportRequest {
   int sample_count = kDefaultFeatureReportSampleCount;
   SceneMemberSelection member_selection = SceneMemberSelection::kAllPhysical;
   uint64_t physical_member_mask = ~uint64_t{ 0 };
+  std::vector<uint64_t> physical_member_masks;
+  std::vector<std::vector<std::vector<int>>> explicit_member_chains;
   SceneSpectrumSource scene_spectrum_source = SceneSpectrumSource::kScene;
   int scene_measure_sample_count = 64;
   int sun_node_count = 8;

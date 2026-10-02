@@ -8,6 +8,7 @@
 #include <cstddef>
 #include <cstring>
 #include <exception>
+#include <limits>
 #include <memory>
 #include <string>
 #include <vector>
@@ -49,6 +50,8 @@ namespace {
 constexpr size_t kRequestSizeV450 = offsetof(LUMICE_SinglePathRequest, warm_json_len) + sizeof(size_t);
 constexpr size_t kFeatureReportRequestSizeV1 = offsetof(LUMICE_PathFeatureReportRequest, sample_count) + sizeof(int);
 constexpr size_t kFeatureReportRequestSizeV2 = offsetof(LUMICE_PathFeatureReportRequest, seed) + sizeof(uint32_t);
+constexpr size_t kFeatureReportRequestSizeV3 =
+    offsetof(LUMICE_PathFeatureReportRequest, explicit_member_chain_count) + sizeof(int);
 
 void WriteError(char* err_buf, size_t err_size, const std::string& message) {
   if (err_buf == nullptr || err_size == 0) {
@@ -127,6 +130,7 @@ LUMICE_ErrorCode AnalyzeReport(const LUMICE_Scene* scene, const LUMICE_PathFeatu
                                LUMICE_PathFeatureReport** out, char* err_buf, size_t err_size) {
   namespace rp = lumice::raypath;
   const bool has_v2 = request.struct_size >= kFeatureReportRequestSizeV2;
+  const bool has_v3 = request.struct_size >= kFeatureReportRequestSizeV3;
 
   rp::PathFeatureReportRequest req;
   req.crystal_id = static_cast<lumice::IdType>(request.crystal_id);
@@ -138,13 +142,24 @@ LUMICE_ErrorCode AnalyzeReport(const LUMICE_Scene* scene, const LUMICE_PathFeatu
   }
   if (request.face_count < 0 || request.layer_count < 0 || request.wavelength_count < 0 ||
       (has_v2 && (request.layer_crystal_id_count < 0 || request.scene_measure_sample_count < 0 ||
-                  request.sun_node_count < 0 || request.illuminant_node_count < 0))) {
+                  request.sun_node_count < 0 || request.illuminant_node_count < 0)) ||
+      (has_v3 && (request.physical_member_mask_count < 0 || request.explicit_member_face_count < 0 ||
+                  request.explicit_member_layer_face_count < 0 || request.explicit_member_chain_count < 0))) {
     return Refuse({ rp::ErrorCode::kInvalidArgument, "negative face, layer or wavelength count" }, err_buf, err_size);
   }
   if (request.layer_count <= 0 || request.face_count <= 0 || request.faces == nullptr ||
       request.layer_face_counts == nullptr) {
     return Refuse({ rp::ErrorCode::kInvalidPath, "a path feature report requires at least one non-empty layer" },
                   err_buf, err_size);
+  }
+  if (has_v3 && request.physical_member_mask_count > 0 && request.physical_member_masks == nullptr) {
+    WriteError(err_buf, err_size, "physical_member_masks is null with a positive count");
+    return LUMICE_ERR_NULL_ARG;
+  }
+  if (has_v3 && request.explicit_member_chain_count > 0 &&
+      (request.explicit_member_faces == nullptr || request.explicit_member_layer_face_counts == nullptr)) {
+    WriteError(err_buf, err_size, "explicit member chain arrays are null with a positive count");
+    return LUMICE_ERR_NULL_ARG;
   }
   if (request.wavelength_count > rp::kMaxFeatureReportWavelengthCount) {
     return Refuse({ rp::ErrorCode::kInvalidArgument, "at most " + std::to_string(rp::kMaxFeatureReportWavelengthCount) +
@@ -202,10 +217,62 @@ LUMICE_ErrorCode AnalyzeReport(const LUMICE_Scene* scene, const LUMICE_PathFeatu
       case LUMICE_PATH_FEATURE_MEMBERS_PHYSICAL_MASK:
         req.member_selection = rp::SceneMemberSelection::kPhysicalMask;
         break;
+      case LUMICE_PATH_FEATURE_MEMBERS_EXPLICIT_CHAINS:
+        if (!has_v3) {
+          return Refuse({ rp::ErrorCode::kInvalidArgument, "explicit member chains require the v3 request extent" },
+                        err_buf, err_size);
+        }
+        req.member_selection = rp::SceneMemberSelection::kExplicitChains;
+        break;
       default:
         return Refuse({ rp::ErrorCode::kInvalidArgument, "unknown member_selection" }, err_buf, err_size);
     }
     req.physical_member_mask = request.physical_member_mask;
+    if (has_v3 && request.physical_member_mask_count > 0) {
+      if (request.physical_member_mask_count != request.layer_count) {
+        return Refuse({ rp::ErrorCode::kInvalidArgument, "physical_member_mask_count must equal layer_count" }, err_buf,
+                      err_size);
+      }
+      req.physical_member_masks.assign(request.physical_member_masks,
+                                       request.physical_member_masks + request.physical_member_mask_count);
+    }
+    if (has_v3 && request.explicit_member_chain_count > 0) {
+      const int64_t expected_layer_counts_wide =
+          static_cast<int64_t>(request.explicit_member_chain_count) * request.layer_count;
+      if (expected_layer_counts_wide > std::numeric_limits<int>::max()) {
+        return Refuse({ rp::ErrorCode::kInvalidArgument, "explicit member chain dimensions overflow" }, err_buf,
+                      err_size);
+      }
+      const int expected_layer_counts = static_cast<int>(expected_layer_counts_wide);
+      if (request.explicit_member_layer_face_count != expected_layer_counts) {
+        return Refuse(
+            { rp::ErrorCode::kInvalidPath, "explicit_member_layer_face_count must equal chain_count * layer_count" },
+            err_buf, err_size);
+      }
+      int face_offset = 0;
+      req.explicit_member_chains.reserve(static_cast<size_t>(request.explicit_member_chain_count));
+      for (int chain_index = 0; chain_index < request.explicit_member_chain_count; chain_index++) {
+        std::vector<std::vector<int>> chain;
+        chain.reserve(static_cast<size_t>(request.layer_count));
+        for (int layer_index = 0; layer_index < request.layer_count; layer_index++) {
+          const int count = request.explicit_member_layer_face_counts[chain_index * request.layer_count + layer_index];
+          if (count <= 0 || count > request.explicit_member_face_count - face_offset) {
+            return Refuse({ rp::ErrorCode::kInvalidPath,
+                            "explicit member layer face counts do not add up to explicit_member_face_count" },
+                          err_buf, err_size);
+          }
+          chain.emplace_back(request.explicit_member_faces + face_offset,
+                             request.explicit_member_faces + face_offset + count);
+          face_offset += count;
+        }
+        req.explicit_member_chains.push_back(std::move(chain));
+      }
+      if (face_offset != request.explicit_member_face_count) {
+        return Refuse({ rp::ErrorCode::kInvalidPath,
+                        "explicit member layer face counts do not add up to explicit_member_face_count" },
+                      err_buf, err_size);
+      }
+    }
     switch (request.spectrum_source) {
       case LUMICE_PATH_FEATURE_SPECTRUM_SCENE:
         req.scene_spectrum_source = rp::SceneSpectrumSource::kScene;
@@ -329,7 +396,13 @@ LUMICE_ErrorCode LUMICE_AnalyzePathFeatureReport(const LUMICE_Scene* scene,
       (request->layer_face_counts == nullptr && request->layer_count > 0) ||
       (request->wavelengths_nm == nullptr && request->wavelength_count > 0) ||
       (request->struct_size >= kFeatureReportRequestSizeV2 && request->layer_crystal_ids == nullptr &&
-       request->layer_crystal_id_count > 0)) {
+       request->layer_crystal_id_count > 0) ||
+      (request->struct_size >= kFeatureReportRequestSizeV3 && request->physical_member_masks == nullptr &&
+       request->physical_member_mask_count > 0) ||
+      (request->struct_size >= kFeatureReportRequestSizeV3 && request->explicit_member_faces == nullptr &&
+       request->explicit_member_face_count > 0) ||
+      (request->struct_size >= kFeatureReportRequestSizeV3 && request->explicit_member_layer_face_counts == nullptr &&
+       request->explicit_member_layer_face_count > 0)) {
     WriteError(err_buf, err_size, "null_arg: counted request arrays must not be NULL with a non-zero count");
     return LUMICE_ERR_NULL_ARG;
   }

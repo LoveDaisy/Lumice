@@ -20,11 +20,15 @@ Raypath 诊断以当前场景的实际映射和测度为对象，不以路径、
 
 姿态的三个产品分布按实际球面积分语义抽样，支持切维数由随机变量本身决定，不由 `random`、`plate` 等名称或 Gaussian 数量推断。shape 的适用 scalar 共享产品的 `sync_group` 潜变量：同组复用同一个原始 draw，height 再做绝对值 fold，face distance 保持有符号；固定 scalar 是同一生成流程的零维退化输入。每层之间的 shape 与 pose 独立，除非产品配置未来显式声明跨层关联。
 
-成员选择有三种明确形式：具体 L2 face sequence、按本层实际 shape/axis 的 physical P/B/D gate 展开后的全集、以及该全集上的显式 mask。label/L1 等价不参与这一选择。层内晶体质量是非负 `crystal_proportion` 在该层的归一份额；跨层链还乘以前置层的 continuation probability 和末层的 exit probability。
+成员选择有四种明确形式：具体 L2 face sequence、按本层实际 shape/axis 的 physical P/B/D gate 展开后的全集、该全集上的逐层显式 mask，以及逐条列出的多层 member chain。具体和显式 chain 均按 face sequence 本身标识并逐值使用，不经过 P/B/D 扩展；P/B/D gate 只定义等价成员展开，不是任意合法 face sequence 的可达性白名单。显式 chain 因而能选择同入口面但内部序列不同的成员，也能表达非笛卡尔积的多层组合。label/L1 等价不参与这一选择。层内晶体质量是非负 `crystal_proportion` 在该层的归一份额；跨层链还乘以前置层的 continuation probability 和末层的 exit probability。
 
-场景 spectrum 模式直接使用离散节点及其原始权重；illuminant 模式对产品的 `[380,780)` 均匀波长测度做分层节点积分，并在每个节点乘同一个 `GetIlluminantSpd` 权威函数。显式 diagnostic spectrum 是独立模式，不改写场景观测谱。零权重节点保留为 `zero_weight` 行。太阳直径为零时是中心方向原子；非零时条件方向分布在产品球冠上归一，但整体测度保留太阳盘立体角，结果单位因此包含 `sr`。
+场景 spectrum 模式直接使用离散节点及其原始权重；illuminant 模式对产品的 `[380,780)` 均匀波长测度做分层节点积分，并在每个节点乘同一个 `GetIlluminantSpd` 权威函数。显式 diagnostic spectrum 是独立模式，不改写场景观测谱。零权重节点保留为 `zero_weight` 行。太阳直径为零时是中心方向质量为 1 的原子；非零时是产品球冠上的单位概率测度，各节点质量之和仍为 1。太阳直径改变方向分布而不隐式改变源总能量；另行需要 radiance/solid-angle 模式时必须由独立输入明确给出，不能借用默认场景语义。
 
-每条测度行分别保存全局权重、联合样本质量、每层条件质量、`A`、逐接口 Fresnel 结果、实际 shape/pose/member 和来源 id。总体量使用 `A*T` 与上述质量相乘；单位为 analytic kernel 的 `a=1` 有限晶体面积单位乘场景谱权重。粗/细联合样本给总体积分误差，field 自身的导数 availability 和 margin 状态仍是局部数值证据，两者不得混写。
+每个唯一生成 latent 分别记录 base measure（原子计数、单位区间、Lebesgue 或 Bernoulli 计数）、重放坐标、proposal/target 密度或质量、映射 Jacobian 和数值状态。同步 shape scalar 共享 leader latent；height 的绝对值 fold、latitude LUT 的 inverse-CDF 与 flip 分支、GaussianLegacy 极点 fold、azimuth/roll 耦合和 degree→radian 映射都在同一记录中。姿态局部结构是 field 使用的 `(longitude, latitude, roll)` 到行主序旋转矩阵的 `3×9` 微分，支持 rank 由实际生成坐标的 SO(3) 切映射求得。
+
+每条测度行分别保存全局权重、`joint_sample_mass=1/N`、与之分离的连续/离散 joint proposal、每层条件质量、`A`、逐接口 Fresnel 结果、实际 shape/pose/member 和来源 id。总体量使用 `A*T` 与上述质量相乘；单位为 analytic kernel 的 `a=1` 相对有限晶体面积单位乘原始场景谱权重，不是 `m²` 或 `sr`。联合样本、太阳节点和 illuminant 节点分别给误差估计；field 自身的导数 availability 和 margin 状态仍是局部数值证据，两者不得混写。一个有限太阳或 illuminant 只有一个节点时，结果明确为 `numerical_incomplete`。
+
+行级 `status` 保留源零权重，`evaluation_status` 独立保留 field/生成数值失败；结果级计数同时汇总两者。连续支持的有限随机样本全部未命中只能得到 `numerical_incomplete`，只有完整原子枚举才可据此声明 `physically_unreachable`。积分流式处理全部行，JSON 只保存确定性 bottom-k hash 代表样本；内部消费者通过同 seed 重放或逐行 visitor 读取完整场，不得把代表样本当作全集。
 
 ## 候选与证据
 

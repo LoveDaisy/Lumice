@@ -523,7 +523,10 @@ extern "C" {
 // ADDED (v4.52): append-only v2 tail fields on LUMICE_PathFeatureReportRequest for
 // multi-layer crystal ids, physical-member selection, scene-spectrum selection and
 // deterministic scene-measure quadrature. The v4.51 request prefix remains accepted.
-#define LUMICE_API_VERSION 452
+//
+// ADDED (v4.53): append-only v3 tail fields on LUMICE_PathFeatureReportRequest for per-layer
+// physical-member masks and exact, non-Cartesian multi-layer member-chain selection.
+#define LUMICE_API_VERSION 453
 #define LUMICE_MAX_RENDER_RESULTS 16
 #define LUMICE_MAX_STATS_RESULTS 1
 

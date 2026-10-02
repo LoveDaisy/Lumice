@@ -169,7 +169,7 @@ TEST(PathFeatureReportCApi, SerializesOnceAndKeepsTheResultImmutable) {
   EXPECT_EQ(Json(outcome.report.get()), first);
   const nlohmann::json doc = nlohmann::json::parse(first);
   EXPECT_EQ(doc["schema"], "lumice.path-feature-report");
-  EXPECT_EQ(doc["schema_version"], 2);
+  EXPECT_EQ(doc["schema_version"], 3);
   EXPECT_EQ(doc["meta"]["sample_count"], 64);
   EXPECT_EQ(doc["wavelengths"].size(), 2u);
   EXPECT_EQ(doc["scene_measure"]["spectrum_nodes"].size(), 8u);
@@ -191,6 +191,18 @@ TEST(PathFeatureReportCApi, V1SizeRetainsTheNamedLegacySpectrumCompatibilityMode
   const nlohmann::json doc = nlohmann::json::parse(Json(outcome.report.get()));
   ASSERT_EQ(doc["scene_measure"]["spectrum_nodes"].size(), 2u);
   EXPECT_EQ(doc["scene_measure"]["spectrum_nodes"][0]["source"], "legacy_reference_endpoint");
+}
+
+TEST(PathFeatureReportCApi, V2ExtentDoesNotReadV3MemberArrays) {
+  const ScenePtr scene = MakeScene();
+  Request request;
+  request.c.struct_size = offsetof(LUMICE_PathFeatureReportRequest, seed) + sizeof(request.c.seed);
+  request.c.member_selection = LUMICE_PATH_FEATURE_MEMBERS_CONCRETE;
+  const Outcome outcome = Analyse(scene.get(), &request.c);
+  ASSERT_EQ(outcome.code, LUMICE_OK) << outcome.error;
+  const nlohmann::json doc = nlohmann::json::parse(Json(outcome.report.get()));
+  ASSERT_EQ(doc["scene_measure"]["member_chains"].size(), 1u);
+  EXPECT_EQ(doc["scene_measure"]["member_chains"][0], nlohmann::json({ { 3, 1, 5 } }));
 }
 
 TEST(PathFeatureReportCApi, PhysicalMemberMaskAndMultiLayerIdsReachTheSceneMeasure) {
@@ -228,6 +240,40 @@ TEST(PathFeatureReportCApi, PhysicalMemberMaskAndMultiLayerIdsReachTheSceneMeasu
   EXPECT_EQ(doc["meta"]["requested_path_layers"], nlohmann::json({ { 3, 5 }, { 3, 5 } }));
   EXPECT_EQ(doc["scene_measure"]["member_chains"].size(), 1u);
   EXPECT_EQ(doc["scene_measure"]["evaluated_row_count"], 8 * 64);
+}
+
+TEST(PathFeatureReportCApi, ExplicitMemberChainsPreserveExactNonCartesianLayerSelections) {
+  const ScenePtr scene = MakeScene(kMultiSceneJson);
+  Request request;
+  int requested_faces[4] = { 3, 5, 4, 2 };
+  int requested_layer_counts[2] = { 2, 2 };
+  int layer_crystals[2] = { 1, 1 };
+  int explicit_faces[10] = { 3, 5, 4, 2, 3, 1, 5, 4, 0, 2 };
+  int explicit_layer_counts[4] = { 2, 2, 3, 3 };
+  request.c.faces = requested_faces;
+  request.c.face_count = 4;
+  request.c.layer_face_counts = requested_layer_counts;
+  request.c.layer_count = 2;
+  request.c.layer_crystal_ids = layer_crystals;
+  request.c.layer_crystal_id_count = 2;
+  request.c.member_selection = LUMICE_PATH_FEATURE_MEMBERS_EXPLICIT_CHAINS;
+  request.c.explicit_member_faces = explicit_faces;
+  request.c.explicit_member_face_count = 10;
+  request.c.explicit_member_layer_face_counts = explicit_layer_counts;
+  request.c.explicit_member_layer_face_count = 4;
+  request.c.explicit_member_chain_count = 2;
+  request.c.scene_measure_sample_count = 2;
+  const Outcome outcome = Analyse(scene.get(), &request.c);
+  ASSERT_EQ(outcome.code, LUMICE_OK) << outcome.error;
+  const nlohmann::json doc = nlohmann::json::parse(Json(outcome.report.get()));
+  EXPECT_EQ(doc["scene_measure"]["member_chains"],
+            nlohmann::json({ { { 3, 5 }, { 4, 2 } }, { { 3, 1, 5 }, { 4, 0, 2 } } }));
+
+  request.c.explicit_member_faces = nullptr;
+  EXPECT_EQ(Analyse(scene.get(), &request.c).code, LUMICE_ERR_NULL_ARG);
+  request.c.explicit_member_faces = explicit_faces;
+  request.c.explicit_member_layer_face_count = 3;
+  EXPECT_EQ(Analyse(scene.get(), &request.c).code, LUMICE_ERR_INVALID_VALUE);
 }
 
 TEST(PathFeatureReportCApi, AcceptsExplicitWavelengthsAndRejectsInvalidCounts) {

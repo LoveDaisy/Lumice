@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <numeric>
 #include <vector>
 
@@ -122,6 +123,18 @@ TEST(SceneMeasure, ShapeSyncGroupSharesRawDrawAndHeightFoldUsesTheActualSample) 
     differs_from_center = differs_from_center || std::fabs(height - 1.0) > 1e-4;
   }
   EXPECT_TRUE(differs_from_center);
+  ASSERT_FALSE(result.rows.front().latents.empty());
+  const auto& first_layer = result.rows.front().layers.front();
+  const auto height_sample = std::find_if(first_layer.shape.begin(), first_layer.shape.end(),
+                                          [](const auto& sample) { return sample.name == "height"; });
+  const auto face_sample = std::find_if(first_layer.shape.begin(), first_layer.shape.end(),
+                                        [](const auto& sample) { return sample.name == "face_distance[0]"; });
+  ASSERT_NE(height_sample, first_layer.shape.end());
+  ASSERT_NE(face_sample, first_layer.shape.end());
+  EXPECT_EQ(height_sample->latent_id, face_sample->latent_id);
+  EXPECT_EQ(height_sample->leader_slot, face_sample->leader_slot);
+  EXPECT_TRUE(height_sample->absolute_value_fold);
+  EXPECT_DOUBLE_EQ(height_sample->raw_value, face_sample->raw_value);
   const auto height_factor = std::find_if(result.factors.begin(), result.factors.end(),
                                           [](const auto& factor) { return factor.name == "shape.height"; });
   const auto face_factor = std::find_if(result.factors.begin(), result.factors.end(),
@@ -156,6 +169,38 @@ TEST(SceneMeasure, GeneralPoseDistributionsAreMeasuredWithoutFamilyWhitelist) {
             result.factors.end());
   EXPECT_TRUE(std::any_of(result.rows.begin(), result.rows.end(), [](const SceneMeasureRow& row) {
     return std::fabs(row.layers[0].pose_lon_lat_roll_rad[2]) > 1e-4;
+  }));
+  EXPECT_TRUE(std::all_of(result.rows.begin(), result.rows.end(), [](const SceneMeasureRow& row) {
+    if (row.layers.empty() || row.layers[0].pose_support_rank != 3) {
+      return false;
+    }
+    return std::all_of(row.latents.begin(), row.latents.end(), [](const LatentMeasureSample& latent) {
+      return std::isfinite(latent.coordinate) && std::isfinite(latent.proposal_density_or_mass) &&
+             std::isfinite(latent.target_density_or_mass) && std::isfinite(latent.mapping_jacobian);
+    });
+  }));
+  EXPECT_TRUE(std::any_of(result.rows.front().latents.begin(), result.rows.front().latents.end(),
+                          [](const LatentMeasureSample& latent) {
+                            return latent.name == "pose.latitude_fold_branch" &&
+                                   latent.base_measure == LatentBaseMeasure::kBernoulliCounting;
+                          }));
+  EXPECT_TRUE(std::any_of(std::begin(result.rows.front().layers[0].pose_tangent_drotation),
+                          std::end(result.rows.front().layers[0].pose_tangent_drotation),
+                          [](double value) { return std::fabs(value) > 1e-4; }));
+}
+
+TEST(SceneMeasure, ZeroWidthPoseGeneratorsHaveRankZeroDespiteTheirDistributionNames) {
+  AxisDistribution axis;
+  axis.latitude_dist = { DistributionType::kGaussian, 45.0f, 0.0f };
+  axis.azimuth_dist = { DistributionType::kUniform, 12.0f, 0.0f };
+  axis.roll_dist = { DistributionType::kZigzag, 7.0f, 0.0f };
+  const SceneMeasureResult result = Build(Scene({ Prism(1, axis) }, { 0.0f }), Request({ 1 }, { { 3, 5 } }, 2));
+  ASSERT_FALSE(result.rows.empty());
+  EXPECT_TRUE(std::all_of(result.rows.begin(), result.rows.end(), [](const SceneMeasureRow& row) {
+    return !row.layers.empty() && row.layers[0].pose_support_rank == 0;
+  }));
+  EXPECT_TRUE(std::all_of(result.factors.begin(), result.factors.end(), [](const MeasureFactorDescriptor& factor) {
+    return factor.layer_index < 0 || factor.name.rfind("pose.", 0) != 0 || factor.support_dimension == 0;
   }));
 }
 
@@ -236,6 +281,37 @@ TEST(SceneMeasure, PhysicalMaskUsesStableLayerLocalEntryFaces) {
   EXPECT_EQ(selected.rows.size(), selected.member_chains.size() * 2u);
 }
 
+TEST(SceneMeasure, ExplicitMemberChainsAreVerbatimAndNeedNotBeACartesianProduct) {
+  const ConfigManager config = Scene({ Prism(1), Prism(2) }, { 1.0f, 0.0f });
+  SceneMeasureRequest request = Request({ 1, 2 }, { { 3, 5 }, { 4, 2 } }, 2);
+  request.member_selection = SceneMemberSelection::kExplicitChains;
+  request.explicit_member_chains = { { { 3, 5 }, { 4, 2 } }, { { 3, 1, 5 }, { 4, 0, 2 } } };
+  const SceneMeasureResult result = Build(config, request);
+  EXPECT_EQ(result.member_chains, request.explicit_member_chains);
+  EXPECT_EQ(result.evaluated_row_count, 2 * 2);
+}
+
+TEST(SceneMeasure, VisitorReceivesTheCompleteReplayableFieldBeyondRepresentativeStorage) {
+  const ConfigManager config = Scene({ Prism(1, RandomAxis()) }, { 0.0f });
+  SceneMeasureRequest request = Request({ 1 }, { { 3, 5 } }, 128);
+  int visited = 0;
+  double visited_sum = 0.0;
+  SceneMeasureResult result;
+  const Error error = BuildSceneMeasure(
+      config, request,
+      [&](const SceneMeasureRow& row) {
+        visited++;
+        visited_sum += row.contribution;
+      },
+      &result);
+  ASSERT_TRUE(error.Ok()) << error.message;
+  EXPECT_EQ(visited, result.evaluated_row_count);
+  EXPECT_EQ(result.stored_row_count, 64);
+  EXPECT_TRUE(result.rows_truncated);
+  EXPECT_NEAR(visited_sum, result.total_contribution, 1e-12 * std::max(1.0, std::fabs(result.total_contribution)));
+  EXPECT_NE(result.stored_row_selection.find("bottom-k hash"), std::string::npos);
+}
+
 TEST(SceneMeasure, CrossLayerRowsCarryOutgoingDirectionAndGlobalWeightsOnlyOnce) {
   ConfigManager config = Scene({ Prism(1, RandomAxis()), Prism(2, RandomAxis()) }, { 1.0f, 0.0f });
   config.scene_.light_source_.param_.diameter_ = 1.0f;
@@ -268,7 +344,90 @@ TEST(SceneMeasure, CrossLayerRowsCarryOutgoingDirectionAndGlobalWeightsOnlyOnce)
   }));
 }
 
-TEST(SceneMeasure, FiniteSolarDiscRetainsItsSolidAngleRatherThanItsCenter) {
+TEST(SceneMeasure, SourceNodeWeightsActOnceAndCrossLayerRowsRetainTheirSourceIdentity) {
+  ConfigManager config = Scene({ Prism(1, RandomAxis()), Prism(2, RandomAxis()) }, { 1.0f, 0.0f });
+  SceneMeasureRequest request = Request({ 1, 2 }, { { 3, 5 }, { 3, 5 } }, 512);
+  request.spectrum_source = SceneSpectrumSource::kDiagnostic;
+  request.diagnostic_wavelengths_nm = { 550.0 };
+  const SceneMeasureResult default_source = Build(config, request);
+  ASSERT_EQ(default_source.sun_nodes.size(), 1u);
+  SunMeasureNode first = default_source.sun_nodes.front();
+  SunMeasureNode second = first;
+  first.mass = 0.2;
+  second.mass = 0.8;
+  request.source_sun_nodes = { first, second };
+
+  double unit_by_source[2]{};
+  SceneMeasureResult unit;
+  Error error = BuildSceneMeasure(
+      config, request,
+      [&](const SceneMeasureRow& row) {
+        unit_by_source[row.sun_node_id] += row.contribution;
+        for (const auto& layer : row.layers) {
+          EXPECT_EQ(layer.source_sun_node_id, row.sun_node_id);
+          EXPECT_EQ(layer.source_spectrum_node_id, row.spectrum_node_id);
+        }
+        if (row.layers.size() == 2u) {
+          for (int i = 0; i < 3; i++) {
+            EXPECT_DOUBLE_EQ(row.layers[1].incident_direction[i], row.layers[0].outgoing_direction[i]);
+          }
+        }
+      },
+      &unit);
+  ASSERT_TRUE(error.Ok()) << error.message;
+  ASSERT_GT(unit_by_source[0], 0.0);
+  ASSERT_GT(unit_by_source[1], 0.0);
+
+  request.source_sun_nodes[0].mass = 0.4;
+  double changed_by_source[2]{};
+  SceneMeasureResult changed;
+  error = BuildSceneMeasure(
+      config, request, [&](const SceneMeasureRow& row) { changed_by_source[row.sun_node_id] += row.contribution; },
+      &changed);
+  ASSERT_TRUE(error.Ok()) << error.message;
+  EXPECT_NEAR(changed_by_source[0], 2.0 * unit_by_source[0], 1e-12 * std::max(1.0, unit_by_source[0]));
+  EXPECT_NEAR(changed_by_source[1], unit_by_source[1], 1e-12 * std::max(1.0, unit_by_source[1]));
+}
+
+TEST(SceneMeasure, StatusSeparatesZeroSourceFromNumericalEvaluationAndNoHitProof) {
+  CrystalConfig bad = Prism(1);
+  std::get<PrismCrystalParam>(bad.param_).h_ = { DistributionType::kNoRandom, std::numeric_limits<float>::quiet_NaN(),
+                                                 0.0f };
+  const SceneMeasureResult zero =
+      Build(Scene({ bad }, { 0.0f }, { { 550.0f, 0.0f } }), Request({ 1 }, { { 3, 5 } }, 2));
+  EXPECT_EQ(zero.status, SceneMeasureStatus::kZeroWeight);
+  EXPECT_GT(zero.status_counts.zero_weight, 0);
+  EXPECT_GT(zero.status_counts.numerical_incomplete, 0);
+  ASSERT_FALSE(zero.rows.empty());
+  EXPECT_EQ(zero.rows.front().status, SceneMeasureStatus::kZeroWeight);
+  EXPECT_EQ(zero.rows.front().evaluation_status, SceneMeasureStatus::kNumericalIncomplete);
+
+  const SceneMeasureResult random_miss =
+      Build(Scene({ Prism(1, RandomAxis()) }, { 0.0f }), Request({ 1 }, { { 99 } }, 2));
+  EXPECT_EQ(random_miss.status, SceneMeasureStatus::kNumericalIncomplete);
+  const SceneMeasureResult atomic_miss = Build(Scene({ Prism(1) }, { 0.0f }), Request({ 1 }, { { 99 } }, 2));
+  EXPECT_EQ(atomic_miss.status, SceneMeasureStatus::kPhysicallyUnreachable);
+}
+
+TEST(SceneMeasure, SourceResolutionIsPartOfTheResultStatusAndErrorBudget) {
+  ConfigManager finite_sun = Scene({ Prism(1, RandomAxis()) }, { 0.0f });
+  finite_sun.scene_.light_source_.param_.diameter_ = 1.0f;
+  SceneMeasureRequest sun_request = Request({ 1 }, { { 3, 5 } }, 128);
+  sun_request.sun_node_count = 1;
+  const SceneMeasureResult sun = Build(finite_sun, sun_request);
+  EXPECT_EQ(sun.status, SceneMeasureStatus::kNumericalIncomplete);
+  EXPECT_DOUBLE_EQ(sun.sun_node_error_estimate, 0.0);
+
+  ConfigManager illuminant = Scene({ Prism(1, RandomAxis()) }, { 0.0f });
+  illuminant.scene_.light_source_.spectrum_ = IlluminantType::kD65;
+  SceneMeasureRequest spectrum_request = Request({ 1 }, { { 3, 5 } }, 128);
+  spectrum_request.illuminant_node_count = 1;
+  const SceneMeasureResult spectrum = Build(illuminant, spectrum_request);
+  EXPECT_EQ(spectrum.status, SceneMeasureStatus::kNumericalIncomplete);
+  EXPECT_DOUBLE_EQ(spectrum.spectrum_node_error_estimate, 0.0);
+}
+
+TEST(SceneMeasure, FiniteSolarDiscIsANormalizedSourceMeasureRatherThanAnAreaFactor) {
   ConfigManager config = Scene({ Prism(1, RandomAxis()) }, { 0.0f });
   config.scene_.light_source_.param_.diameter_ = 1.0f;
   SceneMeasureRequest request = Request({ 1 }, { { 3, 5 } }, 2);
@@ -277,8 +436,7 @@ TEST(SceneMeasure, FiniteSolarDiscRetainsItsSolidAngleRatherThanItsCenter) {
   ASSERT_EQ(result.sun_nodes.size(), 8u);
   const double mass = std::accumulate(result.sun_nodes.begin(), result.sun_nodes.end(), 0.0,
                                       [](double sum, const SunMeasureNode& node) { return sum + node.mass; });
-  const double radius_rad = config.scene_.light_source_.param_.diameter_ * M_PI / 360.0;
-  EXPECT_NEAR(mass, 2.0 * M_PI * (1.0 - std::cos(radius_rad)), 1e-14);
+  EXPECT_NEAR(mass, 1.0, 1e-14);
   EXPECT_TRUE(std::any_of(result.sun_nodes.begin() + 1, result.sun_nodes.end(), [&](const SunMeasureNode& node) {
     return std::fabs(node.incident_direction[0] - result.sun_nodes[0].incident_direction[0]) > 1e-7 ||
            std::fabs(node.incident_direction[1] - result.sun_nodes[0].incident_direction[1]) > 1e-7 ||
