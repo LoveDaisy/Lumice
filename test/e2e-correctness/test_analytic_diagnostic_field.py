@@ -1,8 +1,7 @@
-"""Independent consumer and oracle coverage for the general diagnostic field.
+"""Independent consumer and C ABI coverage for the general diagnostic field.
 
-The pre-ABI test below fixes the non-reference geometry, multi-reflection and non-first-interface
-coverage without loading Lumice.  The C ABI tests in this file are enabled after the field entry
-point is built and compare it with the same independent oracle.
+The fast test fixes the oracle's input matrix without loading Lumice. Slow cases run the final
+ctypes consumer in child interpreters against only liblumice_analytic.
 
 symmetry_semantics: none — every fixture names one concrete physical face sequence.
 """
@@ -10,8 +9,18 @@ symmetry_semantics: none — every fixture names one concrete physical face sequ
 from __future__ import annotations
 
 import math
+import subprocess
+import sys
+import textwrap
+from pathlib import Path
+
+import pytest
 
 from test.e2e.diagnostic_field_oracle import exp_rotation, prism_planes, trace_path
+
+ROOT = Path(__file__).resolve().parents[2]
+SHARED_OUT = ROOT / "build" / "Release" / "shared"
+_PATTERN = {"win32": "lumice_analytic.dll", "darwin": "liblumice_analytic.dylib", "linux": "liblumice_analytic.so"}
 
 
 def _find_four_face_pose() -> tuple[tuple[float, ...], object]:
@@ -53,3 +62,281 @@ def test_independent_oracle_covers_the_pre_abi_consumer_matrix() -> None:
     assert pyramid.valid
     assert len(pyramid.coefficients) == 4 and len(pyramid.tir_margins) == 2
 
+
+def _platform() -> str:
+    if sys.platform.startswith("win"):
+        return "win32"
+    if sys.platform == "darwin":
+        return "darwin"
+    return "linux"
+
+
+def _find_library() -> Path:
+    if not SHARED_OUT.is_dir():
+        pytest.skip(f"no shared build at {SHARED_OUT} (./scripts/build.sh -sj release)")
+    hits = sorted(path for path in SHARED_OUT.rglob(_PATTERN[_platform()]) if path.is_file())
+    if not hits:
+        pytest.skip("shared analytic library is not present in this build")
+    assert len(hits) == 1, hits
+    return hits[0]
+
+
+_PRELUDE = textwrap.dedent(
+    """
+    import ctypes, math, sys
+    from concurrent.futures import ThreadPoolExecutor
+    from ctypes import POINTER, Structure, byref, c_char_p, c_double, c_int, c_uint32, c_uint64, c_void_p, sizeof
+
+    sys.path.insert(0, ROOT)
+    from test.e2e.diagnostic_field_oracle import entry_measure_prism, right_perturb, trace_path
+
+    class Crystal(Structure):
+        _fields_ = [("kind", c_int), ("height", c_double), ("face_distance", c_double * 6),
+                    ("upper_h", c_double), ("lower_h", c_double),
+                    ("upper_wedge_deg", c_double), ("lower_wedge_deg", c_double)]
+
+    class Row(Structure):
+        _fields_ = [("refractive_index", c_double), ("incident_direction", c_double * 3),
+                    ("pose", c_double * 9)]
+
+    class Interface(Structure):
+        _fields_ = [("interface_index", c_int), ("face_number", c_int), ("kind", c_int),
+                    ("coefficient", c_double), ("pose_derivative_available", c_int),
+                    ("index_derivative_available", c_int), ("pose_gradient", c_double * 3),
+                    ("index_derivative", c_double)]
+
+    class Margin(Structure):
+        _fields_ = [("name", c_char_p), ("interface_index", c_int), ("value", c_double),
+                    ("pose_derivative_available", c_int), ("index_derivative_available", c_int),
+                    ("pose_gradient", c_double * 3), ("index_derivative", c_double)]
+
+    class Result(Structure):
+        _fields_ = [("struct_size", c_uint32), ("row_error", c_int), ("path_status", c_int),
+                    ("entry_status", c_int), ("outgoing_direction", c_double * 3),
+                    ("entry_measure", c_double), ("fresnel_weight", c_double),
+                    ("interface_count", c_int), ("interfaces", POINTER(Interface)),
+                    ("domain_margin_count", c_int), ("domain_margins", POINTER(Margin)),
+                    ("tir_margin_count", c_int), ("tir_margins", POINTER(Margin)),
+                    ("direction_pose_jacobian_available", c_int),
+                    ("direction_pose_hessian_available", c_int),
+                    ("direction_index_derivative_available", c_int),
+                    ("entry_pose_gradient_available", c_int), ("entry_index_derivative_available", c_int),
+                    ("direction_pose_jacobian", c_double * 9),
+                    ("direction_pose_hessian", c_double * 27),
+                    ("direction_index_derivative", c_double * 3),
+                    ("entry_pose_gradient", c_double * 3), ("entry_index_derivative", c_double),
+                    ("storage", c_void_p)]
+
+    OK, NULL_ARG, INVALID_VALUE = 0, 1, 2
+    PATH_OK, ENTRY_OK = 0, 1
+    ENTRY_T, INTERNAL_R, EXIT_T = 0, 1, 2
+
+    lib = ctypes.CDLL(LIB)
+    lib.LUMICE_ANALYTIC_GetApiVersion.restype = c_int
+    assert lib.LUMICE_ANALYTIC_GetApiVersion() == 7
+    lib.LUMICE_ANALYTIC_EvaluateDiagnosticFieldBatch.restype = c_int
+    lib.LUMICE_ANALYTIC_EvaluateDiagnosticFieldBatch.argtypes = [POINTER(Crystal), POINTER(c_int), c_int,
+                                                                 POINTER(Row), c_int, c_void_p]
+    lib.LUMICE_ANALYTIC_ReleaseDiagnosticFieldResult.restype = None
+    lib.LUMICE_ANALYTIC_ReleaseDiagnosticFieldResult.argtypes = [c_void_p]
+
+    DISTANCES = (1.37, 0.91, 1.12, 1.46, 0.83, 1.05)
+    INCIDENT = (-0.9659258262890683, 0.0, -0.25881904510252074)
+    POSE = (0.9290709982052409, -0.36839005431024047, 0.033404313781536035,
+            0.35559103306313394, 0.91435424672714, 0.19367841567179747,
+            -0.1018925782332082, -0.168062724532665, 0.9804962127023475)
+    FACES = (3, 5, 6, 7)
+
+    def prism():
+        crystal = Crystal(kind=0, height=0.73)
+        for index, value in enumerate(DISTANCES):
+            crystal.face_distance[index] = value
+        return crystal
+
+    def row(index=1.31, incident=INCIDENT, pose=POSE):
+        return Row(index, (c_double * 3)(*incident), (c_double * 9)(*pose))
+
+    def results(count, result_type=Result):
+        values = (result_type * count)()
+        for value in values:
+            ctypes.memset(byref(value), 0x5A, sizeof(value))
+            value.struct_size = sizeof(result_type)
+        return values
+
+    def call(crystal, faces, rows, out):
+        face_array = (c_int * len(faces))(*faces) if faces is not None else None
+        return lib.LUMICE_ANALYTIC_EvaluateDiagnosticFieldBatch(
+            byref(crystal) if crystal is not None else None, face_array, len(faces) if faces is not None else 0,
+            rows, len(rows), ctypes.addressof(out))
+
+    def close(a, b, tolerance):
+        assert abs(a - b) <= tolerance, (a, b, tolerance)
+    """
+)
+
+
+def _run_child(body: str) -> None:
+    code = f"LIB = {str(_find_library())!r}\nROOT = {str(ROOT)!r}\n" + _PRELUDE + textwrap.dedent(body)
+    proc = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=120)
+    assert proc.returncode == 0, f"child failed (rc={proc.returncode}):\n{proc.stdout}\n{proc.stderr}"
+
+
+@pytest.mark.slow
+def test_ctypes_consumer_matches_independent_field_and_derivative_oracles() -> None:
+    _run_child(
+        """
+        bad_pose = list(POSE)
+        bad_pose[0] = 2.0
+        rows = (Row * 4)(row(), row(index=0.0), row(pose=bad_pose), row(index=1.32))
+        out = results(4)
+        assert call(prism(), FACES, rows, out) == OK
+        assert out[0].row_error == OK and out[0].path_status == PATH_OK and out[0].entry_status == ENTRY_OK
+        assert out[1].row_error == INVALID_VALUE and not out[1].storage
+        assert out[2].row_error == INVALID_VALUE and not out[2].storage
+        assert out[3].row_error == OK and out[3].storage
+
+        expected = trace_path(FACES, 1.31, INCIDENT, POSE)
+        assert expected.valid
+        for got, want in zip(out[0].outgoing_direction, expected.outgoing):
+            close(got, want, 3e-12)
+        assert out[0].interface_count == 4 and out[0].domain_margin_count == 6 and out[0].tir_margin_count == 2
+        assert [out[0].interfaces[i].kind for i in range(4)] == [ENTRY_T, INTERNAL_R, INTERNAL_R, EXIT_T]
+        assert [out[0].interfaces[i].face_number for i in range(4)] == list(FACES)
+        for index, want in enumerate(expected.coefficients):
+            close(out[0].interfaces[index].coefficient, want, 3e-12)
+        for index, want in enumerate(expected.domain_margins):
+            close(out[0].domain_margins[index].value, want, 3e-12)
+        for index, want in enumerate(expected.tir_margins):
+            close(out[0].tir_margins[index].value, want, 3e-12)
+        assert [out[0].domain_margins[i].name.decode() for i in range(6)] == [
+            "entry_incidence_cosine", "entry_snell_discriminant", "internal_1_incidence_cosine",
+            "internal_2_incidence_cosine", "exit_incidence_cosine", "exit_snell_discriminant"]
+        close(out[0].entry_measure, entry_measure_prism(DISTANCES, 0.73, FACES, 1.31, INCIDENT, POSE), 2e-10)
+        close(out[0].fresnel_weight, math.prod(expected.coefficients), 3e-12)
+
+        pose_step = 5e-5
+        direction_samples = []
+        for axis in range(3):
+            delta = [0.0, 0.0, 0.0]
+            delta[axis] = pose_step
+            hi = trace_path(FACES, 1.31, INCIDENT, right_perturb(POSE, tuple(delta)))
+            delta[axis] = -pose_step
+            lo = trace_path(FACES, 1.31, INCIDENT, right_perturb(POSE, tuple(delta)))
+            direction_samples.append((lo, hi))
+            for component in range(3):
+                want = (hi.outgoing[component] - lo.outgoing[component]) / (2 * pose_step)
+                close(out[0].direction_pose_jacobian[3 * component + axis], want, 2e-6)
+            want_margin = (hi.domain_margins[-1] - lo.domain_margins[-1]) / (2 * pose_step)
+            close(out[0].domain_margins[5].pose_gradient[axis], want_margin, 2e-6)
+            want_tir = (hi.tir_margins[1] - lo.tir_margins[1]) / (2 * pose_step)
+            close(out[0].tir_margins[1].pose_gradient[axis], want_tir, 2e-6)
+            want_coeff = (hi.coefficients[1] - lo.coefficients[1]) / (2 * pose_step)
+            close(out[0].interfaces[1].pose_gradient[axis], want_coeff, 2e-6)
+            entry_hi = entry_measure_prism(DISTANCES, 0.73, FACES, 1.31, INCIDENT,
+                                           right_perturb(POSE, tuple(-x for x in delta)))
+            entry_lo = entry_measure_prism(DISTANCES, 0.73, FACES, 1.31, INCIDENT,
+                                           right_perturb(POSE, tuple(delta)))
+            close(out[0].entry_pose_gradient[axis], (entry_hi - entry_lo) / (2 * pose_step), 2e-5)
+
+        hessian_step = 5e-4
+        for component in range(3):
+            for axis in range(3):
+                delta = [0.0, 0.0, 0.0]
+                delta[axis] = hessian_step
+                hi = trace_path(FACES, 1.31, INCIDENT, right_perturb(POSE, tuple(delta))).outgoing[component]
+                delta[axis] = -hessian_step
+                lo = trace_path(FACES, 1.31, INCIDENT, right_perturb(POSE, tuple(delta))).outgoing[component]
+                want = (hi - 2 * expected.outgoing[component] + lo) / (hessian_step * hessian_step)
+                close(out[0].direction_pose_hessian[9 * component + 3 * axis + axis], want, 2e-3)
+
+        index_step = 1e-5
+        index_lo = trace_path(FACES, 1.31 - index_step, INCIDENT, POSE)
+        index_hi = trace_path(FACES, 1.31 + index_step, INCIDENT, POSE)
+        for component in range(3):
+            want = (index_hi.outgoing[component] - index_lo.outgoing[component]) / (2 * index_step)
+            close(out[0].direction_index_derivative[component], want, 2e-6)
+        assert out[0].direction_pose_jacobian_available and out[0].direction_pose_hessian_available
+        assert out[0].direction_index_derivative_available and out[0].entry_pose_gradient_available
+
+        kink_pose = (-0.49760634739842935, -0.8471133033132857, 0.1865126654638934,
+                     -0.6613497486591641, 0.23139308033739314, -0.713494045049034,
+                     0.5612525572122176, -0.47838927007367726, -0.6753808357520372)
+        kink_rows = (Row * 1)(row(pose=kink_pose))
+        kink_out = results(1)
+        assert call(prism(), (1, 5, 2, 3), kink_rows, kink_out) == OK
+        assert kink_out[0].path_status == PATH_OK and kink_out[0].tir_margin_count == 2
+        close(kink_out[0].tir_margins[1].value, 2.8686495105012533e-05, 2e-12)
+        assert kink_out[0].tir_margins[1].pose_derivative_available
+        assert not kink_out[0].interfaces[2].pose_derivative_available
+        assert not kink_out[0].interfaces[2].index_derivative_available
+        lib.LUMICE_ANALYTIC_ReleaseDiagnosticFieldResult(byref(kink_out[0]))
+
+        for result in out:
+            lib.LUMICE_ANALYTIC_ReleaseDiagnosticFieldResult(byref(result))
+            assert not result.storage and result.interface_count == 0
+            lib.LUMICE_ANALYTIC_ReleaseDiagnosticFieldResult(byref(result))
+        """
+    )
+
+
+@pytest.mark.slow
+def test_ctypes_batch_stride_errors_pyramid_and_concurrent_calls() -> None:
+    _run_child(
+        """
+        assert lib.LUMICE_ANALYTIC_EvaluateDiagnosticFieldBatch(None, None, 0, None, 0, None) == OK
+
+        class PaddedResult(Structure):
+            _fields_ = Result._fields_ + [("tail", c_uint64)]
+
+        padded = results(2, PaddedResult)
+        padded[0].tail = 0x123456789ABCDEF0
+        padded[1].tail = 0x0FEDCBA987654321
+        rows = (Row * 2)(row(), row(index=1.32))
+        assert call(prism(), FACES, rows, padded) == OK
+        assert padded[0].storage and padded[1].storage
+        assert padded[0].tail == 0x123456789ABCDEF0 and padded[1].tail == 0x0FEDCBA987654321
+        for result in padded:
+            lib.LUMICE_ANALYTIC_ReleaseDiagnosticFieldResult(byref(result))
+
+        nonuniform = results(2)
+        nonuniform[1].struct_size = sizeof(Result) - sizeof(c_void_p)
+        assert call(prism(), FACES, rows, nonuniform) == INVALID_VALUE
+        assert not nonuniform[0].storage and nonuniform[0].row_error == 0
+
+        bad_faces = results(2)
+        assert call(prism(), (3, 99), rows, bad_faces) == INVALID_VALUE
+        assert all(not result.storage and result.row_error == 0 for result in bad_faces)
+
+        pyramid = Crystal(kind=1, height=0.5, upper_h=0.25, lower_h=0.6,
+                          upper_wedge_deg=27.996455531220374, lower_wedge_deg=38.5704386184827)
+        for index, value in enumerate((1.0, 1.1, 0.9, 1.0, 1.2, 0.95)):
+            pyramid.face_distance[index] = value
+        pyramid_pose = (0.5428686575453007, -0.8316390089186302, -0.11691954284807132,
+                        0.4876689198046398, 0.42550852801054295, -0.7623132671329267,
+                        0.6837197125368983, 0.3568179527926528, 0.6365597405219098)
+        pyramid_faces = (13, 15, 26, 28)
+        pyramid_rows = (Row * 1)(row(pose=pyramid_pose))
+        pyramid_out = results(1)
+        assert call(pyramid, pyramid_faces, pyramid_rows, pyramid_out) == OK
+        expected = trace_path(pyramid_faces, 1.31, INCIDENT, pyramid_pose,
+                              upper_wedge_deg=pyramid.upper_wedge_deg, lower_wedge_deg=pyramid.lower_wedge_deg)
+        assert expected.valid and pyramid_out[0].path_status == PATH_OK
+        for got, want in zip(pyramid_out[0].outgoing_direction, expected.outgoing):
+            close(got, want, 3e-12)
+        assert pyramid_out[0].interfaces[2].face_number == 26 and pyramid_out[0].tir_margin_count == 2
+        lib.LUMICE_ANALYTIC_ReleaseDiagnosticFieldResult(byref(pyramid_out[0]))
+
+        def worker(index):
+            local_rows = (Row * 4)(*[row(index=1.31 + index * 1e-5) for _ in range(4)])
+            local_out = results(4)
+            rc = call(prism(), FACES, local_rows, local_out)
+            values = tuple(local_out[0].outgoing_direction)
+            for result in local_out:
+                lib.LUMICE_ANALYTIC_ReleaseDiagnosticFieldResult(byref(result))
+            return rc, values
+
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            concurrent = list(pool.map(worker, range(8)))
+        assert all(rc == OK and all(math.isfinite(x) for x in values) for rc, values in concurrent)
+        """
+    )

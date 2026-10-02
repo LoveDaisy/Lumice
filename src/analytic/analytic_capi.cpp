@@ -3,6 +3,7 @@
 // every library that hosts the capability — the engine libraries as well as liblumice_analytic.
 // Anything that manages liblumice_analytic itself belongs in analytic_lib.cpp instead.
 
+#include <algorithm>
 #include <cassert>
 #include <cmath>
 #include <cstddef>
@@ -13,6 +14,7 @@
 #include <vector>
 
 #include "analytic/band_sum.hpp"
+#include "analytic/diagnostic_field.hpp"
 #include "analytic/discovery.hpp"
 #include "analytic/fiber_continuation.hpp"
 #include "analytic/path_evaluation.hpp"
@@ -557,6 +559,178 @@ LUMICE_ANALYTIC_ErrorCode EvaluatePathImpl(const LUMICE_ANALYTIC_Crystal* crysta
   return LUMICE_ANALYTIC_OK;
 }
 
+struct DiagnosticFieldResultStorage {
+  std::vector<LUMICE_ANALYTIC_DiagnosticInterface> interfaces;
+  std::vector<LUMICE_ANALYTIC_DiagnosticMargin> domain_margins;
+  std::vector<LUMICE_ANALYTIC_DiagnosticMargin> tir_margins;
+  std::vector<std::string> names;
+};
+
+LUMICE_ANALYTIC_DiagnosticPathStatus ToDiagnosticPathStatus(lumice::analytic::DiagnosticPathStatus status) {
+  using S = lumice::analytic::DiagnosticPathStatus;
+  switch (status) {
+    case S::kOk:
+      return LUMICE_ANALYTIC_DIAGNOSTIC_PATH_OK;
+    case S::kPathInfeasible:
+      return LUMICE_ANALYTIC_DIAGNOSTIC_PATH_INFEASIBLE;
+    case S::kRefractionCritical:
+      return LUMICE_ANALYTIC_DIAGNOSTIC_PATH_REFRACTION_CRITICAL;
+    case S::kNonFinite:
+      return LUMICE_ANALYTIC_DIAGNOSTIC_PATH_NON_FINITE;
+  }
+  return LUMICE_ANALYTIC_DIAGNOSTIC_PATH_NON_FINITE;
+}
+
+LUMICE_ANALYTIC_DiagnosticEntryStatus ToDiagnosticEntryStatus(lumice::analytic::DiagnosticEntryStatus status) {
+  using S = lumice::analytic::DiagnosticEntryStatus;
+  switch (status) {
+    case S::kNotEvaluated:
+      return LUMICE_ANALYTIC_DIAGNOSTIC_ENTRY_NOT_EVALUATED;
+    case S::kOk:
+      return LUMICE_ANALYTIC_DIAGNOSTIC_ENTRY_OK;
+    case S::kEntryBackface:
+      return LUMICE_ANALYTIC_DIAGNOSTIC_ENTRY_BACKFACE;
+    case S::kExitCriticalAngle:
+      return LUMICE_ANALYTIC_DIAGNOSTIC_ENTRY_EXIT_CRITICAL;
+    case S::kCorridorEmpty:
+      return LUMICE_ANALYTIC_DIAGNOSTIC_ENTRY_CORRIDOR_EMPTY;
+  }
+  return LUMICE_ANALYTIC_DIAGNOSTIC_ENTRY_NOT_EVALUATED;
+}
+
+LUMICE_ANALYTIC_DiagnosticInterfaceKind ToDiagnosticInterfaceKind(lumice::analytic::DiagnosticInterfaceKind kind) {
+  using K = lumice::analytic::DiagnosticInterfaceKind;
+  switch (kind) {
+    case K::kEntryTransmission:
+      return LUMICE_ANALYTIC_DIAGNOSTIC_ENTRY_TRANSMISSION;
+    case K::kInternalReflection:
+      return LUMICE_ANALYTIC_DIAGNOSTIC_INTERNAL_REFLECTION;
+    case K::kExitTransmission:
+      return LUMICE_ANALYTIC_DIAGNOSTIC_EXIT_TRANSMISSION;
+  }
+  return LUMICE_ANALYTIC_DIAGNOSTIC_ENTRY_TRANSMISSION;
+}
+
+void FillDiagnosticMargin(const lumice::analytic::DiagnosticMargin& source, const char* name,
+                          LUMICE_ANALYTIC_DiagnosticMargin* target) {
+  target->name = name;
+  target->interface_index = source.interface_index;
+  target->value = source.value;
+  target->pose_derivative_available = source.pose_derivative_available;
+  target->index_derivative_available = source.index_derivative_available;
+  std::copy(source.pose_gradient, source.pose_gradient + 3, target->pose_gradient);
+  target->index_derivative = source.index_derivative;
+}
+
+void FillDiagnosticFieldResult(const lumice::analytic::DiagnosticFieldResult& source,
+                               LUMICE_ANALYTIC_DiagnosticFieldResult* out) {
+  auto storage = std::make_unique<DiagnosticFieldResultStorage>();
+  storage->interfaces.reserve(source.interfaces.size());
+  storage->domain_margins.resize(source.domain_margins.size());
+  storage->tir_margins.resize(source.tir_margins.size());
+  storage->names.reserve(source.domain_margins.size() + source.tir_margins.size());
+  for (const auto& margin : source.domain_margins) {
+    storage->names.push_back(margin.name);
+  }
+  for (const auto& margin : source.tir_margins) {
+    storage->names.push_back(margin.name);
+  }
+  for (size_t i = 0; i < source.interfaces.size(); i++) {
+    const auto& item = source.interfaces[i];
+    LUMICE_ANALYTIC_DiagnosticInterface target{};
+    target.interface_index = static_cast<int>(i);
+    target.face_number = item.face_number;
+    target.kind = ToDiagnosticInterfaceKind(item.kind);
+    target.coefficient = item.coefficient;
+    target.pose_derivative_available = item.pose_derivative_available;
+    target.index_derivative_available = item.index_derivative_available;
+    std::copy(item.pose_gradient, item.pose_gradient + 3, target.pose_gradient);
+    target.index_derivative = item.index_derivative;
+    storage->interfaces.push_back(target);
+  }
+  for (size_t i = 0; i < source.domain_margins.size(); i++) {
+    FillDiagnosticMargin(source.domain_margins[i], storage->names[i].c_str(), &storage->domain_margins[i]);
+  }
+  const size_t name_offset = source.domain_margins.size();
+  for (size_t i = 0; i < source.tir_margins.size(); i++) {
+    FillDiagnosticMargin(source.tir_margins[i], storage->names[name_offset + i].c_str(), &storage->tir_margins[i]);
+  }
+
+  out->path_status = ToDiagnosticPathStatus(source.path_status);
+  out->entry_status = ToDiagnosticEntryStatus(source.entry_status);
+  std::copy(source.outgoing_direction, source.outgoing_direction + 3, out->outgoing_direction);
+  out->entry_measure = source.entry_measure;
+  out->fresnel_weight = source.fresnel_weight;
+  out->interface_count = static_cast<int>(storage->interfaces.size());
+  out->interfaces = storage->interfaces.empty() ? nullptr : storage->interfaces.data();
+  out->domain_margin_count = static_cast<int>(storage->domain_margins.size());
+  out->domain_margins = storage->domain_margins.empty() ? nullptr : storage->domain_margins.data();
+  out->tir_margin_count = static_cast<int>(storage->tir_margins.size());
+  out->tir_margins = storage->tir_margins.empty() ? nullptr : storage->tir_margins.data();
+  out->direction_pose_jacobian_available = source.direction_pose_jacobian_available;
+  out->direction_pose_hessian_available = source.direction_pose_hessian_available;
+  out->direction_index_derivative_available = source.direction_index_derivative_available;
+  out->entry_pose_gradient_available = source.entry_pose_gradient_available;
+  out->entry_index_derivative_available = source.entry_index_derivative_available;
+  std::copy(source.direction_pose_jacobian, source.direction_pose_jacobian + 9, out->direction_pose_jacobian);
+  std::copy(source.direction_pose_hessian, source.direction_pose_hessian + 27, out->direction_pose_hessian);
+  std::copy(source.direction_index_derivative, source.direction_index_derivative + 3, out->direction_index_derivative);
+  std::copy(source.entry_pose_gradient, source.entry_pose_gradient + 3, out->entry_pose_gradient);
+  out->entry_index_derivative = source.entry_index_derivative;
+  out->storage = storage.release();
+}
+
+LUMICE_ANALYTIC_DiagnosticFieldResult* DiagnosticElementAt(LUMICE_ANALYTIC_DiagnosticFieldResult* base, size_t stride,
+                                                           int index) {
+  return reinterpret_cast<LUMICE_ANALYTIC_DiagnosticFieldResult*>(reinterpret_cast<unsigned char*>(base) +
+                                                                  stride * static_cast<size_t>(index));
+}
+
+void ReleaseDiagnosticFieldStorage(LUMICE_ANALYTIC_DiagnosticFieldResult* result) {
+  std::unique_ptr<DiagnosticFieldResultStorage> owned(static_cast<DiagnosticFieldResultStorage*>(result->storage));
+  ZeroAfterStructSize(result);
+}
+
+LUMICE_ANALYTIC_ErrorCode EvaluateDiagnosticFieldBatchImpl(const LUMICE_ANALYTIC_Crystal* crystal, const int* faces,
+                                                           int face_count,
+                                                           const LUMICE_ANALYTIC_DiagnosticFieldRow* rows, int count,
+                                                           LUMICE_ANALYTIC_DiagnosticFieldResult* out_results,
+                                                           size_t stride) {
+  namespace an = lumice::analytic;
+  if (crystal == nullptr || faces == nullptr || rows == nullptr) {
+    return LUMICE_ANALYTIC_ERR_NULL_ARG;
+  }
+  an::FaceNormalTable normals;
+  an::FacePolygonTable polygons;
+  if (const auto status = an::BuildFaceNormals(*crystal, &normals, &polygons); status != an::Status::kOk) {
+    return ToErrorCode(status);
+  }
+  if (face_count < 2 || face_count > an::kMaxFaceCount) {
+    return LUMICE_ANALYTIC_ERR_INVALID_VALUE;
+  }
+  int slots[an::kMaxFaceCount];
+  if (an::ResolveFaceSequence(normals, faces, face_count, slots) != an::Status::kOk) {
+    return LUMICE_ANALYTIC_ERR_INVALID_VALUE;
+  }
+
+  an::DiagnosticField field(normals, polygons, faces, slots, face_count);
+  for (int i = 0; i < count; i++) {
+    LUMICE_ANALYTIC_DiagnosticFieldResult* out = DiagnosticElementAt(out_results, stride, i);
+    const auto& row = rows[i];
+    if (!std::isfinite(row.refractive_index) || row.refractive_index <= 0.0 ||
+        !an::ValidateUnitVector(row.incident_direction) || !an::ValidateRotation(row.pose)) {
+      out->row_error = LUMICE_ANALYTIC_ERR_INVALID_VALUE;
+      continue;
+    }
+    an::DiagnosticRowInput input;
+    input.refractive_index = row.refractive_index;
+    std::copy(row.incident_direction, row.incident_direction + 3, input.incident_direction);
+    std::copy(row.pose, row.pose + 9, input.pose);
+    FillDiagnosticFieldResult(field.Evaluate(input), out);
+  }
+  return LUMICE_ANALYTIC_OK;
+}
+
 // The block behind BandSumResult::storage: the pixel array.
 struct BandSumResultStorage {
   std::vector<LUMICE_ANALYTIC_BandPixel> pixels;
@@ -733,6 +907,56 @@ void LUMICE_ANALYTIC_ReleasePathEvaluation(LUMICE_ANALYTIC_PathEvaluation* eval)
   // Reclaims the block released to the caller by EvaluatePath; destroyed at scope exit.
   std::unique_ptr<PathEvaluationStorage> owned(static_cast<PathEvaluationStorage*>(eval->storage));
   ZeroAfterStructSize(eval);
+}
+
+LUMICE_ANALYTIC_ErrorCode LUMICE_ANALYTIC_EvaluateDiagnosticFieldBatch(
+    const LUMICE_ANALYTIC_Crystal* crystal, const int* faces, int face_count,
+    const LUMICE_ANALYTIC_DiagnosticFieldRow* rows, int count, LUMICE_ANALYTIC_DiagnosticFieldResult* out_results) {
+  if (count < 0) {
+    return LUMICE_ANALYTIC_ERR_INVALID_VALUE;
+  }
+  if (count == 0) {
+    return LUMICE_ANALYTIC_OK;
+  }
+  if (out_results == nullptr) {
+    return LUMICE_ANALYTIC_ERR_NULL_ARG;
+  }
+  const size_t stride = out_results[0].struct_size;
+  if (stride < sizeof(LUMICE_ANALYTIC_DiagnosticFieldResult)) {
+    ZeroAfterStructSize(&out_results[0]);
+    return LUMICE_ANALYTIC_ERR_INVALID_VALUE;
+  }
+  bool uniform = true;
+  for (int i = 0; i < count; i++) {
+    LUMICE_ANALYTIC_DiagnosticFieldResult* out = DiagnosticElementAt(out_results, stride, i);
+    uniform = uniform && out->struct_size == stride;
+    ZeroAfterStructSize(out);
+  }
+  if (!uniform) {
+    return LUMICE_ANALYTIC_ERR_INVALID_VALUE;
+  }
+  try {
+    const LUMICE_ANALYTIC_ErrorCode code =
+        EvaluateDiagnosticFieldBatchImpl(crystal, faces, face_count, rows, count, out_results, stride);
+    if (code != LUMICE_ANALYTIC_OK) {
+      for (int i = 0; i < count; i++) {
+        ReleaseDiagnosticFieldStorage(DiagnosticElementAt(out_results, stride, i));
+      }
+    }
+    return code;
+  } catch (...) {
+    for (int i = 0; i < count; i++) {
+      ReleaseDiagnosticFieldStorage(DiagnosticElementAt(out_results, stride, i));
+    }
+    return LUMICE_ANALYTIC_ERR_UNKNOWN;
+  }
+}
+
+void LUMICE_ANALYTIC_ReleaseDiagnosticFieldResult(LUMICE_ANALYTIC_DiagnosticFieldResult* result) {
+  if (result == nullptr || result->struct_size < sizeof(LUMICE_ANALYTIC_DiagnosticFieldResult)) {
+    return;
+  }
+  ReleaseDiagnosticFieldStorage(result);
 }
 
 LUMICE_ANALYTIC_ErrorCode LUMICE_ANALYTIC_TraceFiberBatch(const LUMICE_ANALYTIC_Crystal* crystal,

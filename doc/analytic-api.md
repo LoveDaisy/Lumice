@@ -1,6 +1,6 @@
 # `liblumice_analytic`: the published analytic interface
 
-> Status: **partly built** (2026-09-30). As built: the target and its per-library export list
+> Status: **partly built** (2026-10-02). As built: the target and its per-library export list
 > (§2.5), logging handed to the host (§6), and packaging with a `find_package` config plus the
 > version policy (§8), and an external-consumer smoke test that builds a C program and loads the
 > library from Python using the install tree alone (§8.7); and the whole of the first module's v0
@@ -8,7 +8,8 @@
 > thread-safety (§5.3) decisions, fiber continuation `LUMICE_ANALYTIC_TraceFiber[Batch]` (version
 > 3) and component discovery `LUMICE_ANALYTIC_DiscoverComponents` (version 4); and module A v1's
 > per-pose diagnostics on `FiberResult` (version 5, §4.3); and module B v1, the band sum
-> `LUMICE_ANALYTIC_BandSum` (version 6, §4.6). Module A serves the Analyze workspace's first phase,
+> `LUMICE_ANALYTIC_BandSum` (version 6, §4.6), and the general diagnostic-field direct batch
+> (version 7, §4.8). Module A serves the Analyze workspace's first phase,
 > module B its second, the single-path all-sky map (`doc/raypath-analysis.md` §5.1.8). The library is not in any
 > download package yet: that is §8.8's checklist, not done.
 >
@@ -943,6 +944,11 @@ sets `BandPixelStatus` and `PointMassMethod`, the `BandPixel` element, `BandSumR
 `struct_size`, and `BandSum` / `ReleaseBandSumResult`. Nothing existing changed. §4.6 is the
 record of each shape.
 
+Version 7 adds the general diagnostic-field row/result records, variable per-interface and margin
+records, `EvaluateDiagnosticFieldBatch` and `ReleaseDiagnosticFieldResult`. Nothing existing
+changed. §4.8 is the record of the direct-batch decision and every coordinate, status, derivative,
+ownership and concurrency rule.
+
 ### 4.6 Module B: the band sum (as built, API version 6)
 
 The single-path brightness map of Analyze's second function. The specification is LI
@@ -968,12 +974,11 @@ every visual feature has been classified. Module C remains wave 3 (§10): its LI
 fixtures are a prerequisite for a stable public analytic surface, not evidence that it is already
 part of API version 6.
 
-### 4.8 General diagnostic field (consumer contract before ABI freeze)
+### 4.8 General diagnostic field (as built, API version 7)
 
-This section fixes the consumer-facing mathematics for the general field without yet fixing a C
-signature.  It is the implementation hand-off for the next analytic API version.  The signature is
-allowed to change until the independent consumer described below calls the built library; the
-coordinate, ownership and fail-closed rules are not.
+This section fixes the consumer-facing mathematics and the version 7 direct-batch C ABI for the
+general field. The independent consumer below calls the built library; the coordinate, ownership
+and fail-closed rules are the public contract.
 
 **Geometry adaptation.**  The analytic library continues to accept the engine's deterministic
 closed-form prism and pyramid scalars.  An LI `Polyhedron` is losslessly adaptable only when all of
@@ -1063,6 +1068,18 @@ consumer trace.  There is no persistent prepared handle, global cache, handle re
 cross-call lifetime.  Independent calls own independent scratch and may run concurrently.  The
 probe can be rerun with `diagnostic_field_probe`; the rejected prepared option can be added in a
 later API version if a measured consumer workload changes the balance.
+
+**C shape.** `LUMICE_ANALYTIC_EvaluateDiagnosticFieldBatch(crystal, faces, face_count, rows,
+count, out_results)` is the only evaluation entry. `DiagnosticFieldRow` is the fixed
+`refractive_index` / `incident_direction[3]` / `pose[9]` input described above. Every
+`DiagnosticFieldResult` begins with `struct_size`, carries a `row_error`, the separate path/entry
+statuses and scalar/tensor fields, and points at library-owned arrays of `DiagnosticInterface` and
+`DiagnosticMargin`. A margin owns its NUL-terminated name through the result storage. The first
+result's `struct_size` is the byte stride and every row repeats it; a bad row is zero except for
+`row_error`, while a common crystal/path/layout error fails the call and leaves every walkable row
+release-safe. `LUMICE_ANALYTIC_ReleaseDiagnosticFieldResult` releases one row, zeroes everything
+after its size field and is NULL-safe and idempotent. `count == 0` succeeds without touching any
+pointer. The header's declaration comment is the exhaustive call-error and lifetime contract.
 
 **Call.** `LUMICE_ANALYTIC_BandSum(crystal, problem, out_result)` and
 `LUMICE_ANALYTIC_ReleaseBandSumResult(result)`; the header comment is the complete list of call
@@ -1407,7 +1424,7 @@ subsections keep that number.
 ### 8.2 Compatible and incompatible changes
 
 An incompatible change bumps the integer. In 0.x a compatible one bumps it too — every addition so
-far has (versions 2, 3, 4 and 6 each added functions and nothing else incompatible; version 5
+far has (versions 2, 3, 4, 6 and 7 each added functions and nothing else incompatible; version 5
 appended fields to `FiberResult` under the `struct_size` rule below), and that is the rule: `find_package` accepts only the exact version (§8.4) and a ctypes binding pins the version it
 was written against, so the integer is the only way a consumer can tell which functions a library
 has. From 1.0, when compatibility is promised, a compatible change leaves the integer alone and the
@@ -1417,17 +1434,17 @@ table below becomes the rule.
 |---|---|
 | A new function | Compatible |
 | A new value in an open set (`LUMICE_ANALYTIC_Reason`, §4.4) | Compatible — callers must already handle an unknown reason |
-| A field appended at the end of `PathEvaluation`, `FiberResult`, `DiscoveryResult` or `BandSumResult`, under the `struct_size` rule below | Compatible |
-| A field added to an element of a library-allocated array (`DiscoveredComponent`, `IncompleteCandidate`, `BandPixel`) | Incompatible — the caller indexes the array with its own `sizeof` |
+| A field appended at the end of `PathEvaluation`, `FiberResult`, `DiscoveryResult`, `BandSumResult` or `DiagnosticFieldResult`, under the `struct_size` rule below | Compatible |
+| A field added to an element of a library-allocated array (`DiscoveredComponent`, `IncompleteCandidate`, `BandPixel`, `DiagnosticInterface`, `DiagnosticMargin`) | Incompatible — the caller indexes the array with its own `sizeof` |
 | Growth of a library-allocated buffer reached through `storage` (`segment_directions`, `poses`, …) | Compatible — the caller never lays memory out for it |
 | A changed signature, a removed function, a renamed or reordered field | Incompatible |
-| Any field added to a caller-owned input struct (`Crystal`, `FiberProblem`, `ContinuationOptions`, `DiscoveryProblem`, `DiscoveryOptions`, `BandSumProblem`, `PoseDensity`, `PixelTable`) | Incompatible — the library would read past what an older caller allocated |
-| Any change to a closed set (`LUMICE_ANALYTIC_FiberStatus`, `LUMICE_ANALYTIC_ErrorCode`, `LUMICE_ANALYTIC_Completeness`, `LUMICE_ANALYTIC_ComponentKind`, `LUMICE_ANALYTIC_IncompleteCause`, `LUMICE_ANALYTIC_PoseFamily`, `LUMICE_ANALYTIC_BandPixelStatus`, `LUMICE_ANALYTIC_PointMassMethod`) | Incompatible |
+| Any field added to a caller-owned input struct (`Crystal`, `FiberProblem`, `ContinuationOptions`, `DiscoveryProblem`, `DiscoveryOptions`, `BandSumProblem`, `PoseDensity`, `PixelTable`, `DiagnosticFieldRow`) | Incompatible — the library would read past what an older caller allocated |
+| Any change to a closed set (`LUMICE_ANALYTIC_FiberStatus`, `LUMICE_ANALYTIC_ErrorCode`, `LUMICE_ANALYTIC_Completeness`, `LUMICE_ANALYTIC_ComponentKind`, `LUMICE_ANALYTIC_IncompleteCause`, `LUMICE_ANALYTIC_PoseFamily`, `LUMICE_ANALYTIC_BandPixelStatus`, `LUMICE_ANALYTIC_PointMassMethod`, and the diagnostic path/entry/interface enums) | Incompatible |
 | Any change to a convention the functions pass (frames, face numbers, pose chain — §5.1) | Incompatible, even with an unchanged signature |
 | A result field added other than by the `struct_size` rule | Incompatible |
 
-**The `struct_size` rule** (answers §9 item 12). The two result structs are caller-allocated —
-passed by pointer, or as a caller-allocated array in `TraceFiberBatch` (§4.4) — so a library built
+**The `struct_size` rule** (answers §9 item 12). The result structs are caller-allocated — passed by
+pointer, or as a caller-allocated array in the batch entries (§4.4 and §4.8) — so a library built
 against a header with more fields would, without a guard, write past the memory an older caller
 sized, and in the batch case into the next element. Each therefore begins with
 `uint32_t struct_size`, the Win32 `cbSize` pattern:

@@ -23,6 +23,11 @@
 // face sequence and performs no symmetry reduction (doc/analytic-api.md section 3).
 //
 // Version notes, newest first (every bump says what changed, doc/analytic-api.md section 8.1):
+//   7  ADDED LUMICE_ANALYTIC_DiagnosticFieldRow, LUMICE_ANALYTIC_DiagnosticFieldResult and their
+//      variable interface/margin records, LUMICE_ANALYTIC_EvaluateDiagnosticFieldBatch, and
+//      LUMICE_ANALYTIC_ReleaseDiagnosticFieldResult. Nothing existing changed.
+//   6  ADDED LUMICE_ANALYTIC_BandSumProblem, LUMICE_ANALYTIC_BandSumResult,
+//      LUMICE_ANALYTIC_BandSum, and LUMICE_ANALYTIC_ReleaseBandSumResult. Nothing existing changed.
 //   5  APPENDED to LUMICE_ANALYTIC_FiberResult, under the struct_size rule: branch_margin_count,
 //      branch_margin_names, branch_margins, jacobian_available, normal_jacobian, singular_values —
 //      the per-pose diagnostics of LI docs/analytic-parity-fixtures.md section 3.2. A caller
@@ -71,7 +76,7 @@ extern "C" {
 
 // Interface version, a single integer (doc/analytic-api.md section 8.2): bumped on every
 // incompatible change, and in 0.x on every addition too. Independent of lumice_base.h's LUMICE_API_VERSION.
-#define LUMICE_ANALYTIC_API_VERSION 6
+#define LUMICE_ANALYTIC_API_VERSION 7
 
 // Return codes of the computation functions. The names shared with lumice_base.h's LUMICE_ErrorCode mean
 // the same thing there; the type is this header's own (doc/analytic-api.md section 5.2). A numerical
@@ -164,6 +169,109 @@ LUMICE_ANALYTIC_API LUMICE_ANALYTIC_ErrorCode LUMICE_ANALYTIC_EvaluatePath(
 // Frees what EvaluatePath allocated and zeroes the struct after struct_size. NULL-safe; a no-op on a
 // zero-filled struct.
 LUMICE_ANALYTIC_API void LUMICE_ANALYTIC_ReleasePathEvaluation(LUMICE_ANALYTIC_PathEvaluation* eval);
+
+// ---------------------------------------------------------------------------------------------
+// General diagnostic field over one concrete geometry/path (doc/analytic-api.md section 4.8).
+// Geometry and `faces` are shared by a batch; each row supplies its own optical and pose state.
+// ---------------------------------------------------------------------------------------------
+typedef struct LUMICE_ANALYTIC_DiagnosticFieldRow_ {
+  double refractive_index;       // finite, > 0
+  double incident_direction[3];  // world unit propagation direction, sun -> crystal
+  double pose[9];                // row-major active rotation, body -> world
+} LUMICE_ANALYTIC_DiagnosticFieldRow;
+
+typedef enum LUMICE_ANALYTIC_DiagnosticPathStatus_ {
+  LUMICE_ANALYTIC_DIAGNOSTIC_PATH_OK = 0,
+  LUMICE_ANALYTIC_DIAGNOSTIC_PATH_INFEASIBLE = 1,
+  LUMICE_ANALYTIC_DIAGNOSTIC_PATH_REFRACTION_CRITICAL = 2,
+  LUMICE_ANALYTIC_DIAGNOSTIC_PATH_NON_FINITE = 3,
+} LUMICE_ANALYTIC_DiagnosticPathStatus;
+
+typedef enum LUMICE_ANALYTIC_DiagnosticEntryStatus_ {
+  LUMICE_ANALYTIC_DIAGNOSTIC_ENTRY_NOT_EVALUATED = 0,
+  LUMICE_ANALYTIC_DIAGNOSTIC_ENTRY_OK = 1,
+  LUMICE_ANALYTIC_DIAGNOSTIC_ENTRY_BACKFACE = 2,
+  LUMICE_ANALYTIC_DIAGNOSTIC_ENTRY_EXIT_CRITICAL = 3,
+  LUMICE_ANALYTIC_DIAGNOSTIC_ENTRY_CORRIDOR_EMPTY = 4,
+} LUMICE_ANALYTIC_DiagnosticEntryStatus;
+
+typedef enum LUMICE_ANALYTIC_DiagnosticInterfaceKind_ {
+  LUMICE_ANALYTIC_DIAGNOSTIC_ENTRY_TRANSMISSION = 0,
+  LUMICE_ANALYTIC_DIAGNOSTIC_INTERNAL_REFLECTION = 1,
+  LUMICE_ANALYTIC_DIAGNOSTIC_EXIT_TRANSMISSION = 2,
+} LUMICE_ANALYTIC_DiagnosticInterfaceKind;
+
+typedef struct LUMICE_ANALYTIC_DiagnosticInterface_ {
+  int interface_index;  // position in faces, 0..face_count-1
+  int face_number;
+  int kind;  // LUMICE_ANALYTIC_DiagnosticInterfaceKind
+  double coefficient;
+  int pose_derivative_available;
+  int index_derivative_available;
+  double pose_gradient[3];  // body-axis gradient in the right-trivialised pose chart
+  double index_derivative;
+} LUMICE_ANALYTIC_DiagnosticInterface;
+
+typedef struct LUMICE_ANALYTIC_DiagnosticMargin_ {
+  const char* name;  // NUL-terminated, owned by the result
+  int interface_index;
+  double value;
+  int pose_derivative_available;
+  int index_derivative_available;
+  double pose_gradient[3];
+  double index_derivative;
+} LUMICE_ANALYTIC_DiagnosticMargin;
+
+typedef struct LUMICE_ANALYTIC_DiagnosticFieldResult_ {
+  uint32_t struct_size;  // caller sets sizeof(*out); also the batch stride
+  int row_error;         // LUMICE_ANALYTIC_ErrorCode; bad rows do not fail the batch
+  int path_status;       // LUMICE_ANALYTIC_DiagnosticPathStatus
+  int entry_status;      // LUMICE_ANALYTIC_DiagnosticEntryStatus
+  double outgoing_direction[3];
+  double entry_measure;  // crystal length unit squared; 0 unless entry_status is ENTRY_OK
+  double fresnel_weight;
+  int interface_count;
+  const LUMICE_ANALYTIC_DiagnosticInterface* interfaces;
+  int domain_margin_count;
+  const LUMICE_ANALYTIC_DiagnosticMargin* domain_margins;
+  int tir_margin_count;
+  const LUMICE_ANALYTIC_DiagnosticMargin* tir_margins;
+  int direction_pose_jacobian_available;
+  int direction_pose_hessian_available;
+  int direction_index_derivative_available;
+  int entry_pose_gradient_available;
+  int entry_index_derivative_available;
+  double direction_pose_jacobian[9];     // [world component][body delta axis]
+  double direction_pose_hessian[27];     // [world component][body axis 0][body axis 1]
+  double direction_index_derivative[3];  // world components
+  double entry_pose_gradient[3];         // body delta axes
+  double entry_index_derivative;
+  void* storage;  // opaque; LUMICE_ANALYTIC_ReleaseDiagnosticFieldResult
+} LUMICE_ANALYTIC_DiagnosticFieldResult;
+
+// Evaluates `rows[0..count)` for one deterministic crystal and concrete face sequence. The call
+// constructs one internal field and reuses its geometry/path preparation across all rows; there is
+// no persistent handle or global cache. Direction, pose and refractive-index validation is per row:
+// a bad row has row_error = ERR_INVALID_VALUE and otherwise zero fields while later rows continue.
+// A path/entry numerical outcome is result data with row_error = OK.
+//
+// Call errors (every walkable output is zero-filled after struct_size, so Release is safe):
+//   ERR_NULL_ARG       crystal, faces, rows or out_results is NULL when count > 0
+//   ERR_INVALID_VALUE  count < 0 (touches nothing); first struct_size smaller than this result;
+//                      non-uniform result struct_size; face_count outside 2..64; an absent face;
+//                      a crystal field as for EvaluatePath
+//   ERR_INVALID_CONFIG crystal rejected by the engine's closed-form validity gate
+//   ERR_UNKNOWN        an internal failure; any completed row storage is reclaimed
+// count == 0 succeeds and touches no pointer. The first result's struct_size is the byte stride and
+// every element must repeat it. Result arrays and names are valid until that row is released.
+// Re-entrant: concurrent calls with distinct outputs own independent mutable scratch.
+LUMICE_ANALYTIC_API LUMICE_ANALYTIC_ErrorCode LUMICE_ANALYTIC_EvaluateDiagnosticFieldBatch(
+    const LUMICE_ANALYTIC_Crystal* crystal, const int* faces, int face_count,
+    const LUMICE_ANALYTIC_DiagnosticFieldRow* rows, int count, LUMICE_ANALYTIC_DiagnosticFieldResult* out_results);
+
+// Frees one row's variable records and zeroes it after struct_size. NULL-safe, safe on a zero-filled
+// row, and idempotent because the first release clears storage.
+LUMICE_ANALYTIC_API void LUMICE_ANALYTIC_ReleaseDiagnosticFieldResult(LUMICE_ANALYTIC_DiagnosticFieldResult* result);
 
 // ---------------------------------------------------------------------------------------------
 // Fiber continuation from a seed (doc/analytic-api.md section 4.3): the component of
