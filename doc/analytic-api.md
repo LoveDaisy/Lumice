@@ -951,6 +951,23 @@ reworded only its §10 paragraph "Fiber and level set", with no change of meanin
 records what is built and the choices the contract leaves to an implementation; it does not
 restate the contract.
 
+### 4.7 Product diagnostic boundary (as built, API version 6)
+
+The engine's target-free `LUMICE_AnalyzePathFeatureReport` is a product C API, not a new
+`liblumice_analytic` module. It composes the engine scene with the built module-A/module-B
+capabilities to report finite-crystal, physical-L2-member and wavelength-scoped `A*T` evidence for
+a deliberately small set of fixed cases. Its separate schema and coverage states are documented in
+[`raypath-cli-output.md`](raypath-cli-output.md) §7.
+
+This distinction matters for scope. Version 6 provides one path/class at a time and the caller's
+explicit spectrum; it does not publish Module C's `dp_field`, contour, focusing, chromatic
+classification, solar-disc convolution, all-sky enumeration, or general orientation-family
+detectors. The current report can therefore confirm the fixed ordinary-dispersion and TIR cases,
+and expose a horizontal-family location with per-member/wavelength evidence, without claiming that
+every visual feature has been classified. Module C remains wave 3 (§10): its LI contract and parity
+fixtures are a prerequisite for a stable public analytic surface, not evidence that it is already
+part of API version 6.
+
 **Call.** `LUMICE_ANALYTIC_BandSum(crystal, problem, out_result)` and
 `LUMICE_ANALYTIC_ReleaseBandSumResult(result)`; the header comment is the complete list of call
 errors. The problem carries the path, index and incident direction as `DiscoverComponents`' does,

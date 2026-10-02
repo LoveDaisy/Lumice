@@ -19,7 +19,7 @@ Lumice 的 C API 按能力拆成六个头文件，每个能力一个；按用到
 | `lumice_render.h` | 渲染参数、标注、投影 |
 | `lumice_editor.h` | 编辑器支撑：键名、合法性检查、晶体网格、光路文本校验、Miller 指数转换 |
 | `lumice_engine.h` | 服务器生命周期、提交场景、结果帧、光路分析运行、后端选择 |
-| `lumice_raypath.h` | 单光路分析（不透明结果 + JSON） |
+| `lumice_raypath.h` | 单光路目标点分析与 target-free feature report（不透明结果 + JSON） |
 
 ```c
 #include "lumice_engine.h"  // 同时包含 lumice_base.h、lumice_render.h、lumice_scene.h
@@ -43,7 +43,7 @@ Lumice 的 C API 按能力拆成六个头文件，每个能力一个；按用到
 ### 常量
 
 ```c
-#define LUMICE_API_VERSION 450        // ABI 版本，编码为 major*100 + minor（v4.50）
+#define LUMICE_API_VERSION 451        // ABI 版本，编码为 major*100 + minor（v4.51）
 #define LUMICE_MAX_RENDER_RESULTS 16  // 渲染结果数组最大容量
 #define LUMICE_MAX_STATS_RESULTS 1    // 统计结果数组最大容量
 ```
@@ -54,7 +54,14 @@ Lumice 的 C API 按能力拆成六个头文件，每个能力一个；按用到
 static_assert(LUMICE_API_VERSION >= 439, "Lumice header too old for this integration");
 ```
 
-公开符号集或结构体布局每发生一次 BREAKING 变更就 bump 一次。
+公开符号集增加或结构体布局发生 BREAKING 变更时都会 bump。
+
+**v4.51** 是纯追加。新增不接受天空 target 的路径级 feature report：
+`LUMICE_PathFeatureReportRequest`、不透明的 `LUMICE_PathFeatureReport`、
+`LUMICE_AnalyzePathFeatureReport`、`LUMICE_PathFeatureReportToJson`、
+`LUMICE_PathFeatureReportDestroy`，以及采样数、波长数和组合工作量上限。请求按具体物理 L2 成员与离散波长计算
+有限晶体 `A*T`，结果使用独立的 `lumice.path-feature-report` schema；v4.50 的目标点请求、JSON 与
+warm-start 合约没有增加字段。字段和 coverage 边界见 `raypath-cli-output.md` §7。
 
 **v4.50** 是纯追加。新增单光路分析：带 `struct_size` 头的 `LUMICE_SinglePathRequest`、不透明的 `LUMICE_SinglePathResult`、`LUMICE_AnalyzeSinglePath(scene, request, &out, err_buf, err_size)`、`LUMICE_SinglePathResultToJson`（与 `LUMICE_SceneToJson` 同一缓冲区契约）、`LUMICE_SinglePathResultDestroy`，以及 `LUMICE_SINGLE_PATH_MAX_SAMPLE_COUNT`。结果经其 JSON 形式读取，字段见 `raypath-cli-output.md`。行为：`LUMICE_SetLogLevel(NULL, level)` 现在设置引擎全局日志级别（原为什么都不做），供不建 server 的调用方使用。
 

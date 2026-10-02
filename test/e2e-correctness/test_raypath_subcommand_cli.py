@@ -62,7 +62,17 @@ def halo():
 def test_help_names_the_request_options():
     result = run_lumice(["raypath", "-h"])
     assert result.returncode == 0
-    for option in ("--crystal", "--path", "--target", "--wavelength", "--events", "--grid", "--warm", "-o"):
+    for option in (
+        "--crystal",
+        "--path",
+        "--target",
+        "--report",
+        "--wavelength",
+        "--events",
+        "--grid",
+        "--warm",
+        "-o",
+    ):
         assert option in result.stdout, option
     # The top-level page lists the subcommand.
     assert "raypath" in run_lumice(["-h"]).stdout

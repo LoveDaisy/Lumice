@@ -203,9 +203,30 @@ def repeats(name):  # any layer whose face sequence repeats a face consecutively
 clean = [r for r in rows if r[0] != "other (not recorded)" and not repeats(r[0])]
 ```
 
+## 7. 从 CLI 读取路径特征报告
+
+GUI 的 Raypath Analysis 窗口按 ROI 对完整光路的能量排序；它目前**不会**显示路径特征报告，也不会把
+某个特征联动成预览中的可点击点。对于已支持的路径级诊断，请单独使用 CLI：
+
+```bash
+build/cmake_install/static/Lumice raypath \
+  -f test/e2e/configs/raypath_feature_random_regular.json \
+  --crystal 1 --path 3-1-5 --report --events 8192
+```
+
+`--report` 没有天空 target：它输出一份独立 JSON，包含物理 L2 成员、请求波长、有限晶体 `A*T`
+亮度、有位置的特征、coverage 和 limitations。它不能与 `--target`、`--grid` 或 `--warm` 混用；需要
+某一点的 fiber 与逐位姿详情时，仍使用原有的 target 命令。
+
+首批 detector 的范围刻意很小。固定正六棱柱例子会把已确认的太阳侧色散边、独立的焦散 candidate、
+已确认的反日 TIR 蓝带和“已评估但不可见”的 exit gate 分开写出。它不枚举全天特征、不卷积太阳盘、
+不判断一般定向 kink 曲线，也不发现 open/multiple component、锥晶空态或 rank-0 特征。必须读取
+`coverage` 与 `limitations`：空的 `features` 绝不是“该路径没有物理特征”的证明。
+
 ## 延伸阅读
 
 - 完整面板参考 → [`../gui-guide.md`](../gui-guide.md)
 - 「Exclude this raypath」用到的 filter 语法 → [`../gui-guide.md`](../gui-guide.md) 「Filter Tab」一节
 - 设计记录与机制细节 → [`../raypath-analysis-panel.md`](../raypath-analysis-panel.md)
 - 功能为什么这么拆、接下来往哪走 → [`../raypath-analysis.md`](../raypath-analysis.md)
+- CLI report 的完整字段与边界 → [`../raypath-cli-output.md`](../raypath-cli-output.md) §7

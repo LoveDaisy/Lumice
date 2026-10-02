@@ -20,7 +20,7 @@ declaring what you use. There is no umbrella header.
 | `lumice_render.h` | Renderer parameters, annotation, projection |
 | `lumice_editor.h` | Editor support: key names, legality checks, crystal mesh, raypath text validation, Miller conversion |
 | `lumice_engine.h` | Server lifecycle, committing a scene, result frames, raypath analysis run, trace backend selection |
-| `lumice_raypath.h` | Single-path analysis (opaque result + JSON) |
+| `lumice_raypath.h` | Target-point single-path analysis and target-free feature reports (opaque results + JSON) |
 
 ```c
 #include "lumice_engine.h"  // includes lumice_base.h, lumice_render.h and lumice_scene.h
@@ -44,7 +44,7 @@ Link against the `lumice` static library.
 ### Constants
 
 ```c
-#define LUMICE_API_VERSION 450        // ABI version, encoded major*100 + minor (v4.50)
+#define LUMICE_API_VERSION 451        // ABI version, encoded major*100 + minor (v4.51)
 #define LUMICE_MAX_RENDER_RESULTS 16  // Maximum capacity of the render result array
 #define LUMICE_MAX_STATS_RESULTS 1    // Maximum capacity of the stats result array
 ```
@@ -56,7 +56,15 @@ mismatch instead of hitting silent UB from a struct-layout drift, e.g.:
 static_assert(LUMICE_API_VERSION >= 440, "Lumice header too old for this integration");
 ```
 
-It is bumped on every BREAKING change to the public symbol set or struct layout.
+It is bumped when the public symbol set grows and on every BREAKING struct-layout change.
+
+**v4.51** is a pure append. Added the target-free path feature report:
+`LUMICE_PathFeatureReportRequest`, the opaque `LUMICE_PathFeatureReport`,
+`LUMICE_AnalyzePathFeatureReport`, `LUMICE_PathFeatureReportToJson`, and
+`LUMICE_PathFeatureReportDestroy`, plus sample-, wavelength-count, and combined-work bounds. It evaluates
+finite-crystal `A*T` by concrete physical-L2 member and discrete wavelength and uses the separate
+`lumice.path-feature-report` JSON schema. The v4.50 target request, JSON, and warm-start contract
+acquire no fields. See `raypath-cli-output.md` section 7.
 
 **v4.50** is a pure append. Added: single-path analysis — `LUMICE_SinglePathRequest` (with a
 `struct_size` head), the opaque `LUMICE_SinglePathResult`, `LUMICE_AnalyzeSinglePath(scene, request,

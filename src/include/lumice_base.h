@@ -513,7 +513,13 @@ extern "C" {
 // symbol or struct changed. ADDED alongside: LUMICE_SINGLE_PATH_MAX_SAMPLE_COUNT.
 // BEHAVIOR (v4.50): LUMICE_SetLogLevel accepts a NULL server and then
 // sets the engine-wide log level (it used to do nothing), since a single-path caller has no server.
-#define LUMICE_API_VERSION 450
+//
+// ADDED (v4.51): target-free path feature reports, a pure append —
+// LUMICE_PathFeatureReportRequest, LUMICE_PathFeatureReport (opaque),
+// LUMICE_AnalyzePathFeatureReport, LUMICE_PathFeatureReportToJson and
+// LUMICE_PathFeatureReportDestroy, plus their sample/wavelength bounds. The new JSON schema is
+// separate from the unchanged v4.50 target-fiber schema.
+#define LUMICE_API_VERSION 451
 #define LUMICE_MAX_RENDER_RESULTS 16
 #define LUMICE_MAX_STATS_RESULTS 1
 

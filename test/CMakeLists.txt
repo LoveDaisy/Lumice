@@ -269,7 +269,9 @@ add_executable(unit_correctness_test
   # lumice_raypath_obj OBJECT library linked below — the same objects liblumice carries.
   "${PROJ_TEST_DIR}/unit-correctness/raypath/test_single_path_analysis.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/raypath/test_single_path_json.cpp"
-  "${PROJ_TEST_DIR}/unit-correctness/raypath/test_single_path_c_api.cpp")
+  "${PROJ_TEST_DIR}/unit-correctness/raypath/test_single_path_c_api.cpp"
+  "${PROJ_TEST_DIR}/unit-correctness/raypath/test_path_feature_report.cpp"
+  "${PROJ_TEST_DIR}/unit-correctness/raypath/test_path_feature_report_c_api.cpp")
 target_include_directories(unit_correctness_test
   PRIVATE ${PROJ_TEST_DIR})
 target_link_libraries(unit_correctness_test
