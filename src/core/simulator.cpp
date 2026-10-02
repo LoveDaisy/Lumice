@@ -442,7 +442,7 @@ class SyncGroupSampler {
           sample = cached_sample_[i];
           leader_slot = cached_leader_slot_[i];
           if (trace != nullptr) {
-            *trace = { slot, group, leader_slot, sample, sample.value, sample.value, false, 1.0 };
+            *trace = { slot, group, leader_slot, sample, sample.value, sample.value, false, sample.mapping_jacobian };
           }
           return sample.value;
         }
@@ -461,7 +461,7 @@ class SyncGroupSampler {
       cached_cnt_++;
     }
     if (trace != nullptr) {
-      *trace = { slot, group, leader_slot, sample, sample.value, sample.value, false, 1.0 };
+      *trace = { slot, group, leader_slot, sample, sample.value, sample.value, false, sample.mapping_jacobian };
     }
     return sample.value;
   }

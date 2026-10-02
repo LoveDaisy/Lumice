@@ -48,10 +48,24 @@ namespace {
 // The v4.50 request, the smallest `struct_size` this build reads: through its last v4.50 field, so
 // that a field appended later does not raise it.
 constexpr size_t kRequestSizeV450 = offsetof(LUMICE_SinglePathRequest, warm_json_len) + sizeof(size_t);
-constexpr size_t kFeatureReportRequestSizeV1 = offsetof(LUMICE_PathFeatureReportRequest, sample_count) + sizeof(int);
+struct PathFeatureReportRequestV451 {
+  size_t struct_size;
+  int crystal_id;
+  const int* faces;
+  int face_count;
+  const int* layer_face_counts;
+  int layer_count;
+  const double* wavelengths_nm;
+  const double* wavelength_weights;
+  int wavelength_count;
+  int sample_count;
+};
+constexpr size_t kFeatureReportRequestSizeV1 = sizeof(PathFeatureReportRequestV451);
 constexpr size_t kFeatureReportRequestSizeV2 = offsetof(LUMICE_PathFeatureReportRequest, seed) + sizeof(uint32_t);
 constexpr size_t kFeatureReportRequestSizeV3 =
     offsetof(LUMICE_PathFeatureReportRequest, explicit_member_chain_count) + sizeof(int);
+static_assert(kFeatureReportRequestSizeV1 == offsetof(LUMICE_PathFeatureReportRequest, layer_crystal_ids),
+              "the frozen v4.51 request extent includes its trailing ABI padding");
 
 void WriteError(char* err_buf, size_t err_size, const std::string& message) {
   if (err_buf == nullptr || err_size == 0) {
@@ -133,6 +147,7 @@ LUMICE_ErrorCode AnalyzeReport(const LUMICE_Scene* scene, const LUMICE_PathFeatu
   const bool has_v3 = request.struct_size >= kFeatureReportRequestSizeV3;
 
   rp::PathFeatureReportRequest req;
+  req.schema_version = has_v2 ? rp::kFeatureReportSchemaVersion : 1;
   req.crystal_id = static_cast<lumice::IdType>(request.crystal_id);
   const bool has_layer_crystal_ids = has_v2 && request.layer_crystal_id_count > 0;
   if (!has_layer_crystal_ids && (request.crystal_id < 0 || request.crystal_id != static_cast<int>(req.crystal_id))) {

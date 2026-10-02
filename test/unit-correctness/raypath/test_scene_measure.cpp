@@ -278,6 +278,38 @@ TEST(SceneMeasure, SyncRandomLeaderIsCountedOnceEvenWhenFollowerDeclaresAnAtom) 
   }
 }
 
+TEST(SceneMeasure, ShapeTraceCarriesTheLeaderDistributionJacobianThroughSyncAndHeightFold) {
+  CrystalConfig crystal = Prism(1);
+  auto& shape = std::get<PrismCrystalParam>(crystal.param_);
+  shape.h_ = { DistributionType::kUniform, -0.25f, 0.25f };
+  shape.sync_group_[kShapeScalarHeight] = 7;
+  shape.sync_group_[kShapeScalarFace0] = 7;
+  const auto result = Build(Scene({ crystal }, { 0.0f }), Request({ 1 }, { { 3, 5 } }, 2));
+  ASSERT_FALSE(result.rows.empty());
+  const auto expect_trace = [](const auto& row) {
+    ASSERT_FALSE(row.layers.empty());
+    const auto& samples = row.layers.front().shape;
+    const auto height =
+        std::find_if(samples.begin(), samples.end(), [](const auto& sample) { return sample.name == "height"; });
+    const auto follower = std::find_if(samples.begin(), samples.end(),
+                                       [](const auto& sample) { return sample.name == "face_distance[0]"; });
+    const auto atom = std::find_if(samples.begin(), samples.end(),
+                                   [](const auto& sample) { return sample.name == "face_distance[1]"; });
+    ASSERT_NE(height, samples.end());
+    ASSERT_NE(follower, samples.end());
+    ASSERT_NE(atom, samples.end());
+    EXPECT_TRUE(height->absolute_value_fold);
+    EXPECT_LT(height->raw_value, 0.0);
+    EXPECT_DOUBLE_EQ(height->mapping_jacobian, 0.25);
+    EXPECT_DOUBLE_EQ(follower->mapping_jacobian, 0.25);
+    EXPECT_DOUBLE_EQ(atom->mapping_jacobian, 0.0);
+    EXPECT_EQ(height->latent_id, follower->latent_id);
+  };
+  for (const auto& row : result.rows) {
+    expect_trace(row);
+  }
+}
+
 TEST(SceneMeasure, PoleLongitudeAndRollHaveOneRotationSupportDimension) {
   AxisDistribution axis;
   axis.latitude_dist = { DistributionType::kNoRandom, 90.0f, 0.0f };

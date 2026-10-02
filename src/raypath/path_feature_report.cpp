@@ -55,6 +55,35 @@ bool ExceedsSampleEvaluationBudget(size_t member_count, size_t wavelength_count,
          fine_and_coarse > max / (static_cast<uint64_t>(member_count) * wavelength_count);
 }
 
+std::vector<std::vector<int>> ExpandPhysicalMembers(const CrystalConfig& crystal, const std::vector<int>& faces) {
+  const GeometricSymmetry shape =
+      std::visit([](const auto& param) { return DeriveGeometricSymmetry(param); }, crystal.param_);
+  const SymmetryGating gating = DeriveSymmetryGating(SymmetrySemantics::kPhysical, shape, crystal.axis_);
+  const auto d = detail::DeriveDSymmetryParams(crystal.axis_);
+  std::vector<IdType> path;
+  path.reserve(faces.size());
+  for (int face : faces) {
+    path.push_back(static_cast<IdType>(face));
+  }
+  const uint8_t symmetry = kSymmetryPrism | kSymmetryBasal | kSymmetryDirection;
+  std::vector<std::vector<int>> out;
+  for (const auto& member : ExpandRaypathByPeriod(path, symmetry, d.sigma_a, d.d_applicable, gating.p_applicable,
+                                                  gating.b_applicable, kHexagonalFnPeriod, gating.geom)) {
+    std::vector<int> converted;
+    converted.reserve(member.size());
+    for (IdType face : member) {
+      converted.push_back(static_cast<int>(face));
+    }
+    if (std::find(out.begin(), out.end(), converted) == out.end()) {
+      out.push_back(std::move(converted));
+    }
+  }
+  if (out.empty()) {
+    out.push_back(faces);
+  }
+  return out;
+}
+
 double Clamp1(double x) {
   return std::max(-1.0, std::min(1.0, x));
 }
@@ -631,6 +660,10 @@ void AddPlateFeatures(PathFeatureReport* report) {
 Error AnalyzePathFeatureReport(const ConfigManager& config, const PathFeatureReportRequest& request,
                                PathFeatureReport* out) {
   *out = PathFeatureReport{};
+  if (request.schema_version != 1 && request.schema_version != kFeatureReportSchemaVersion) {
+    return { ErrorCode::kInvalidArgument, "unsupported path feature report schema version" };
+  }
+  const bool legacy_schema = request.schema_version == 1;
   if (request.sample_count < kMinimumSampleCount || request.sample_count > kMaxFeatureReportSampleCount ||
       request.sample_count % 2 != 0) {
     return { ErrorCode::kInvalidArgument, "sample_count must be an even integer in [" +
@@ -643,6 +676,9 @@ Error AnalyzePathFeatureReport(const ConfigManager& config, const PathFeatureRep
   }
   if (request.path_layers.empty()) {
     return { ErrorCode::kInvalidPath, "a path feature report requires at least one non-empty layer" };
+  }
+  if (legacy_schema && request.path_layers.size() != 1) {
+    return { ErrorCode::kInvalidPath, "schema 1 path feature reports require exactly one path layer" };
   }
   std::vector<IdType> layer_crystal_ids = request.layer_crystal_ids;
   if (layer_crystal_ids.empty() && request.path_layers.size() == 1) {
@@ -658,30 +694,33 @@ Error AnalyzePathFeatureReport(const ConfigManager& config, const PathFeatureRep
     return { ErrorCode::kUnknownCrystalId, "no crystal entry with id " + std::to_string(primary_crystal_id) };
   }
 
-  SceneMeasureRequest measure_request;
-  measure_request.layer_crystal_ids = layer_crystal_ids;
-  measure_request.path_layers = request.path_layers;
-  measure_request.member_selection = request.member_selection;
-  measure_request.physical_member_mask = request.physical_member_mask;
-  measure_request.physical_member_masks = request.physical_member_masks;
-  measure_request.explicit_member_chains = request.explicit_member_chains;
-  measure_request.spectrum_source =
-      request.wavelengths_nm.empty() ? request.scene_spectrum_source : SceneSpectrumSource::kDiagnostic;
-  measure_request.diagnostic_wavelengths_nm = request.wavelengths_nm;
-  measure_request.diagnostic_wavelength_weights = request.wavelength_weights;
-  measure_request.sample_count = request.scene_measure_sample_count;
-  measure_request.sun_node_count = request.sun_node_count;
-  measure_request.illuminant_node_count = request.illuminant_node_count;
-  measure_request.seed = request.seed;
   SceneMeasureResult scene_measure;
-  if (const Error error = BuildSceneMeasure(config, measure_request, &scene_measure); !error.Ok()) {
-    return error;
+  if (!legacy_schema) {
+    SceneMeasureRequest measure_request;
+    measure_request.layer_crystal_ids = layer_crystal_ids;
+    measure_request.path_layers = request.path_layers;
+    measure_request.member_selection = request.member_selection;
+    measure_request.physical_member_mask = request.physical_member_mask;
+    measure_request.physical_member_masks = request.physical_member_masks;
+    measure_request.explicit_member_chains = request.explicit_member_chains;
+    measure_request.spectrum_source =
+        request.wavelengths_nm.empty() ? request.scene_spectrum_source : SceneSpectrumSource::kDiagnostic;
+    measure_request.diagnostic_wavelengths_nm = request.wavelengths_nm;
+    measure_request.diagnostic_wavelength_weights = request.wavelength_weights;
+    measure_request.sample_count = request.scene_measure_sample_count;
+    measure_request.sun_node_count = request.sun_node_count;
+    measure_request.illuminant_node_count = request.illuminant_node_count;
+    measure_request.seed = request.seed;
+    if (const Error error = BuildSceneMeasure(config, measure_request, &scene_measure); !error.Ok()) {
+      return error;
+    }
   }
 
   const CrystalConfig& crystal_config = crystal_it->second;
   const CrystalConversion crystal = ConvertCrystal(crystal_config.param_);
   PathFeatureReport result;
   result.scene_measure = std::move(scene_measure);
+  result.meta.schema_version = request.schema_version;
   result.meta.analytic_api_version = analytic::kApiVersion;
   result.meta.crystal_id = primary_crystal_id;
   result.meta.layer_crystal_ids = layer_crystal_ids;
@@ -694,10 +733,12 @@ Error AnalyzePathFeatureReport(const ConfigManager& config, const PathFeatureRep
   result.meta.sun_azimuth_deg = config.scene_.light_source_.param_.azimuth_;
   SunIncidentDirection(config.scene_.light_source_.param_, result.meta.incident_direction);
   result.meta.sample_count = request.sample_count;
-  result.coverage.push_back({ "actual_scene_measure", MeasureCoverage(result.scene_measure.status),
-                              result.scene_measure.reason.empty() ?
-                                  "actual shape, pose, sun, spectrum and selected physical members were assembled" :
-                                  result.scene_measure.reason });
+  if (!legacy_schema) {
+    result.coverage.push_back({ "actual_scene_measure", MeasureCoverage(result.scene_measure.status),
+                                result.scene_measure.reason.empty() ?
+                                    "actual shape, pose, sun, spectrum and selected physical members were assembled" :
+                                    result.scene_measure.reason });
+  }
 
   if (request.path_layers.size() > 1) {
     result.coverage.push_back(
@@ -727,10 +768,14 @@ Error AnalyzePathFeatureReport(const ConfigManager& config, const PathFeatureRep
     return wavelength_error;
   }
   std::vector<std::vector<int>> members;
-  members.reserve(result.scene_measure.member_chains.size());
-  for (const auto& chain : result.scene_measure.member_chains) {
-    if (!chain.empty()) {
-      members.push_back(chain.front());
+  if (legacy_schema) {
+    members = ExpandPhysicalMembers(crystal_config, request.path_layers.front());
+  } else {
+    members.reserve(result.scene_measure.member_chains.size());
+    for (const auto& chain : result.scene_measure.member_chains) {
+      if (!chain.empty()) {
+        members.push_back(chain.front());
+      }
     }
   }
   if (ExceedsSampleEvaluationBudget(members.size(), wavelengths.size(), request.sample_count)) {

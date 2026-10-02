@@ -150,6 +150,43 @@ def test_report_output_file_is_atomic_and_stdout_stays_empty(tmp_path):
     assert not Path(str(output) + ".tmp").exists()
 
 
+def test_report_events_controls_the_actual_scene_measure_budget():
+    documents = []
+    for events in (64, 128):
+        result = _report(_RANDOM, "3-5", "--events", str(events))
+        assert result.returncode == 0, result.stderr
+        document = json.loads(result.stdout)
+        measure = document["scene_measure"]
+        assert measure["requested_sample_count"] == events
+        expected_rows = (
+            len(measure["member_chains"])
+            * len(measure["spectrum_nodes"])
+            * len(measure["sun_nodes"])
+            * events
+        )
+        assert measure["evaluated_row_count"] == expected_rows
+        assert f"{events} integration samples" in result.stderr
+        documents.append(document)
+    assert (
+        documents[1]["scene_measure"]["evaluated_row_count"]
+        == 2 * documents[0]["scene_measure"]["evaluated_row_count"]
+    )
+
+
+def test_report_default_budget_and_help_describe_schema_three_scene_sampling():
+    result = _report(_RANDOM, "3-5", "--wavelength", "550")
+    assert result.returncode == 0, result.stderr
+    document = json.loads(result.stdout)
+    assert document["schema_version"] == 3
+    assert document["scene_measure"]["requested_sample_count"] == 8192
+    assert "8192 integration samples" in result.stderr
+
+    help_result = run_lumice(["raypath", "-h"])
+    assert help_result.returncode == 0
+    assert "report schema 3" in help_result.stdout
+    assert "joint scene-measure samples" in help_result.stdout
+
+
 @pytest.mark.parametrize(
     "extra, named",
     [

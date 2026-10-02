@@ -119,8 +119,10 @@ typedef enum LUMICE_PathFeatureSpectrumSource {
 } LUMICE_PathFeatureSpectrumSource;
 
 typedef struct LUMICE_PathFeatureReportRequest {
-  // Set to sizeof of the caller's struct. Layout v1 (through sample_count) remains accepted;
-  // appended fields are read only when struct_size reaches their published v2 or v3 extent.
+  // Set to sizeof of the caller's struct. The frozen v4.51 layout v1 (through sample_count,
+  // including its trailing ABI padding) remains accepted and produces schema 1 with the legacy
+  // diagnostic endpoints and no scene_measure. Appended fields are read only when struct_size
+  // reaches their published v2 or v3 extent; those requests produce schema 3.
   size_t struct_size;
   int crystal_id;
   const int* faces;
@@ -184,8 +186,9 @@ LUMICE_API LUMICE_ErrorCode LUMICE_AnalyzePathFeatureReport(const LUMICE_Scene* 
                                                             LUMICE_PathFeatureReport** out, char* err_buf,
                                                             size_t err_size);
 
-// UTF-8 JSON with schema "lumice.path-feature-report", schema_version 3. Uses the same
-// length-query/fetch and truncation contract as LUMICE_SinglePathResultToJson.
+// UTF-8 JSON with schema "lumice.path-feature-report". A frozen v4.51 request prefix produces
+// schema_version 1; v2/v3 requests produce schema_version 3. Uses the same length-query/fetch and
+// truncation contract as LUMICE_SinglePathResultToJson.
 LUMICE_API LUMICE_ErrorCode LUMICE_PathFeatureReportToJson(const LUMICE_PathFeatureReport* result, char* out_buf,
                                                            size_t buf_size, size_t* out_len);
 

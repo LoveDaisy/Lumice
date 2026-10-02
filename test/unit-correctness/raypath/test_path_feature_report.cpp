@@ -214,6 +214,42 @@ TEST(PathFeatureReportJson, UsesASeparateSchemaAndDoesNotAcquireATarget) {
   EXPECT_FALSE(doc["limitations"].empty());
 }
 
+TEST(PathFeatureReportJson, ShapeSamplesExposeTheDistributionJacobianAfterSyncAndHeightFold) {
+  ConfigManager config = Scene(true, false, false);
+  auto& shape = std::get<PrismCrystalParam>(config.crystals_.at(1).param_);
+  shape.h_ = { DistributionType::kUniform, -0.25f, 0.25f };
+  shape.sync_group_[kShapeScalarHeight] = 7;
+  shape.sync_group_[kShapeScalarFace0] = 7;
+  config.scene_.ms_[0].setting_[0].crystal_.param_ = shape;
+
+  PathFeatureReportRequest request;
+  request.crystal_id = 1;
+  request.path_layers = { { 3, 5 } };
+  request.wavelengths_nm = { 550.0 };
+  request.sample_count = 64;
+  request.member_selection = SceneMemberSelection::kConcrete;
+  request.scene_measure_sample_count = 2;
+  PathFeatureReport report;
+  const Error error = AnalyzePathFeatureReport(config, request, &report);
+  ASSERT_TRUE(error.Ok()) << error.message;
+
+  const nlohmann::json doc = nlohmann::json::parse(PathFeatureReportToJson(report, "test-version"));
+  ASSERT_FALSE(doc["scene_measure"]["sampled_rows"].empty());
+  const auto& samples = doc["scene_measure"]["sampled_rows"][0]["layers"][0]["shape"];
+  const auto by_name = [&](const char* name) {
+    return std::find_if(samples.begin(), samples.end(), [name](const auto& sample) { return sample["name"] == name; });
+  };
+  const auto height = by_name("height");
+  const auto follower = by_name("face_distance[0]");
+  const auto atom = by_name("face_distance[1]");
+  ASSERT_NE(height, samples.end());
+  ASSERT_NE(follower, samples.end());
+  ASSERT_NE(atom, samples.end());
+  EXPECT_EQ((*height)["mapping_jacobian"], 0.25);
+  EXPECT_EQ((*follower)["mapping_jacobian"], 0.25);
+  EXPECT_EQ((*atom)["mapping_jacobian"], 0.0);
+}
+
 TEST(PathFeatureReportJson, NonFiniteMeasureValuesCarryAnExplicitNumericalStatus) {
   PathFeatureReport report;
   report.scene_measure.status = SceneMeasureStatus::kNumericalIncomplete;

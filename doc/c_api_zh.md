@@ -62,7 +62,8 @@ static_assert(LUMICE_API_VERSION >= 439, "Lumice header too old for this integra
 
 **v4.52** 在 `LUMICE_PathFeatureReportRequest` 尾部追加可选 v2 字段：逐层晶体 id、物理成员选择、
 scene/diagnostic/legacy 光谱选择、确定性测度采样数、太阳与光源积分节点数及 seed。v4.51 的前缀尺寸
-仍被接受并保留旧的端点行为；完整尺寸默认使用场景光谱并输出含 `scene_measure` 的 report。
+按其包含尾部 ABI padding 的冻结 `sizeof` 继续接受：输出 JSON schema 1、保留旧的端点行为、不要求场景
+scattering，并省略 `scene_measure`。完整尺寸默认使用场景光谱并输出含 `scene_measure` 的 schema 3 report。
 
 **v4.51** 是纯追加。新增不接受天空 target 的路径级 feature report：
 `LUMICE_PathFeatureReportRequest`、不透明的 `LUMICE_PathFeatureReport`、

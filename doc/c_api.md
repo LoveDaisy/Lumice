@@ -66,8 +66,9 @@ product. The v1 and v2 extents remain accepted. Full-size reports use JSON schem
 **v4.52** appends an optional v2 tail to `LUMICE_PathFeatureReportRequest`: per-layer crystal ids,
 physical-member selection, scene/diagnostic/legacy spectrum selection, deterministic measure
 sample counts, sun and illuminant quadrature counts, and a seed. The v4.51 prefix size is still
-accepted and retains its legacy endpoint behavior. Full-size requests default to the configured
-scene spectrum and produce a path-feature-report with `scene_measure`.
+accepted as its frozen `sizeof` including trailing ABI padding. It produces JSON schema 1, retains
+the legacy endpoint behavior, needs no scene scattering, and omits `scene_measure`. Full-size
+requests default to the configured scene spectrum and produce schema 3 with `scene_measure`.
 
 **v4.51** is a pure append. Added the target-free path feature report:
 `LUMICE_PathFeatureReportRequest`, the opaque `LUMICE_PathFeatureReport`,

@@ -550,8 +550,9 @@ feature report。schema 3 的 `scene_measure` 对场景实际 shape / pose 分�
 超出该预算的请求以 `invalid_argument` 拒绝，不产生部分 report。
 它不是全天特征枚举器；未支持、当前分辨率未检出、数值未完成与物理不可达由 coverage 分开表达。
 旧的目标点接口仍负责 fiber 与晶体内逐段详情，两份 JSON schema 彼此独立。v4.51 请求前缀仍可调用
-report，并保持旧的诊断端点行为；v4.52 尾字段可选择具体成员、物理成员 mask、光谱来源和积分节点，
-v4.53 尾字段增加逐层 mask 与逐值使用的显式多层 member chain。
+report，并保持 schema 1、旧的诊断端点行为与“不要求场景 scattering”的旧合约，不含 `scene_measure`；
+v4.52 尾字段可选择具体成员、物理成员 mask、光谱来源和积分节点并进入 schema 3，v4.53 尾字段增加
+逐层 mask 与逐值使用的显式多层 member chain。
 
 **已验收的诊断边界（2026-10-01）**：固定随机正六棱柱下，`3-5` 的普通最小偏折红内缘以及
 `3-1-5` 的太阳侧色散边已确认；后者的焦散只保留为 candidate。`3-1-5` 的反日特征则是独立确认的

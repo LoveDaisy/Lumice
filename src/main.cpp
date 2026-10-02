@@ -408,6 +408,7 @@ void PrintAnalyzeUsage(const char* prog_name) {
 // numbers per cell, and 720 rows (a million cells, tens of MB) is already more than a page reading
 // the file wants to load.
 constexpr int kRaypathMaxGridRows = 720;
+constexpr int kRaypathDefaultReportSampleCount = 8192;
 
 void PrintRaypathUsage(const char* prog_name, std::ostream& output = std::cout) {
   output << "Usage: " << prog_name
@@ -424,7 +425,7 @@ void PrintRaypathUsage(const char* prog_name, std::ostream& output = std::cout) 
          << "configured shape/pose distributions, solar disc, spectrum, and scattering layers.\n"
          << "Deterministic: the same inputs give the same output.\n"
          << "\n"
-         << "Output: one JSON document (target schema 1 or report schema 2; fields in\n"
+         << "Output: one JSON document (target schema 1 or report schema 3; fields in\n"
          << "doc/raypath-cli-output.md)\n"
          << "to stdout, or to -o <path> instead (never both). Progress goes to stderr: one line\n"
          << "when the analysis starts and one when it ends. Unlike `analyze`, the analysis\n"
@@ -442,13 +443,14 @@ void PrintRaypathUsage(const char* prog_name, std::ostream& output = std::cout) 
          << "                     The sky point (required unless --report), as altitude and azimuth in degrees\n"
          << "                     — azimuth measured as the sun's is, the same convention as\n"
          << "                     `analyze --center`.\n"
-         << "  --report           Produce the separate target-free path feature report (schema 2).\n"
+         << "  --report           Produce the separate target-free path feature report (schema 3).\n"
          << "                     It does not accept --target, --grid or --warm.\n"
          << "  --wavelength <nm>  The wavelength, in [350, 900]. Target mode defaults to the\n"
          << "                     config's single wavelength or 550; report mode without this\n"
          << "                     option measures the configured scene spectrum.\n"
          << "  --events <N>       Target mode: SO(3) seed events (default 1M; max 100M). Report\n"
-         << "                     mode: even integration samples (default 8192; range 64..1M).\n"
+         << "                     mode: both detector and joint scene-measure samples (default 8192;\n"
+         << "                     range 64..1M; total scene rows also multiply members/source nodes).\n"
          << "                     An optional K/M suffix is accepted in either mode.\n"
          << "  --grid <rows>      Latitude rows of the sun-direction grid (longitude twice that),\n"
          << "                     in [0, " << kRaypathMaxGridRows << "]; 0 leaves the grid out. Default: 90.\n"
@@ -2672,10 +2674,12 @@ int RunRaypath(const RaypathOptions& opts) {
     double wavelength = opts.wavelength_nm.value_or(0.0);
     request.wavelengths_nm = opts.wavelength_nm.has_value() ? &wavelength : nullptr;
     request.wavelength_count = opts.wavelength_nm.has_value() ? 1 : 0;
-    request.sample_count = opts.events;
+    const int sample_count = opts.events > 0 ? opts.events : kRaypathDefaultReportSampleCount;
+    request.sample_count = sample_count;
+    request.scene_measure_sample_count = sample_count;
 
-    std::cerr << "[raypath report] crystal " << *opts.crystal_id << ", path " << opts.path_text << ": "
-              << (opts.events > 0 ? opts.events : 8192) << " integration samples\n";
+    std::cerr << "[raypath report] crystal " << *opts.crystal_id << ", path " << opts.path_text << ": " << sample_count
+              << " integration samples\n";
     const auto start = std::chrono::steady_clock::now();
     LUMICE_PathFeatureReport* raw_report = nullptr;
     char err_buf[1024] = {};

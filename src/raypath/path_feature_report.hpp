@@ -25,6 +25,7 @@ constexpr int kMaxFeatureReportWavelengthCount = 32;
 constexpr uint64_t kMaxFeatureReportSampleEvaluations = 16777216;
 
 struct PathFeatureReportRequest {
+  int schema_version = kFeatureReportSchemaVersion;
   IdType crystal_id = 0;
   std::vector<IdType> layer_crystal_ids;
   std::vector<std::vector<int>> path_layers;

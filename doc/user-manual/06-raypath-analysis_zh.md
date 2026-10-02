@@ -216,7 +216,8 @@ build/cmake_install/static/Lumice raypath \
 
 `--report` 没有天空 target：它输出一份独立 JSON，包含物理 L2 成员、请求波长、有限晶体 `A*T`
 亮度、有位置的特征、coverage 和 limitations。它不能与 `--target`、`--grid` 或 `--warm` 混用；需要
-某一点的 fiber 与逐位姿详情时，仍使用原有的 target 命令。
+某一点的 fiber 与逐位姿详情时，仍使用原有的 target 命令。`--events` 同时控制有位置特征 detector 的
+fine 分辨率与联合 scene-measure 样本数；实际 scene rows 还会乘以成员链、光谱节点和太阳节点数。
 
 首批 detector 的范围刻意很小。固定正六棱柱例子会把已确认的太阳侧色散边、独立的焦散 candidate、
 已确认的反日 TIR 蓝带和“已评估但不可见”的 exit gate 分开写出。它不枚举全天特征、不卷积太阳盘、

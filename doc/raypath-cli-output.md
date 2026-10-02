@@ -304,9 +304,11 @@ Lumice raypath -f <config> --crystal <id> --path <faces> --report [options]
 This mode answers a different question from `--target`: what fixture-backed brightness features
 the selected path has under the configured crystal shape and orientation ensemble. It accepts no
 sky target, `--grid`, or `--warm`. `--events` is the even integration resolution in `[64, 1000000]`
-(default 8192), not a fiber seed count. With no `--wavelength`, the report uses the diagnostic
-endpoints whose refractive indices are 1.307 and 1.317; one explicit `--wavelength <nm>` replaces
-them. The C API accepts up to 32 wavelength/weight pairs.
+(default 8192), not a fiber seed count. The same value drives both the positioned-feature detector's
+fine resolution and the joint scene-measure sample count; the latter's evaluated row count also
+multiplies by selected member chains, spectrum nodes, and sun nodes. With no `--wavelength`, the CLI
+uses the configured scene spectrum; one explicit `--wavelength <nm>` selects that diagnostic node.
+The C API accepts up to 32 wavelength/weight pairs.
 The synchronous report also rejects a request when physical-L2 members × wavelengths ×
 (fine samples + half-resolution coarse samples) would exceed 16,777,216 evaluations; rejection
 produces no partial report.
@@ -314,7 +316,10 @@ produces no partial report.
 The public entry point is `LUMICE_AnalyzePathFeatureReport`, returning an immutable opaque
 `LUMICE_PathFeatureReport`. `LUMICE_PathFeatureReportToJson` has the same length-query/fetch and
 NUL-termination contract as `LUMICE_SinglePathResultToJson`. CLI and C callers therefore consume
-the same serialization.
+the same serialization. The frozen v4.51 C request prefix is the compatibility exception: it emits
+schema 1, uses the historical red/blue endpoints when none are supplied, does not require scene
+scattering, and omits `scene_measure` plus the later per-layer metadata. v2 and v3 request extents,
+including every CLI request, emit schema 3.
 
 ### 7.1 Top-level shape
 

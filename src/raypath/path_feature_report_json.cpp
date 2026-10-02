@@ -362,6 +362,21 @@ std::string PathFeatureReportToJson(const PathFeatureReport& result, const char*
     coverage.push_back(
         { { "subject", item.subject }, { "status", CoverageStatusName(item.status) }, { "reason", item.reason } });
   }
+  nlohmann::ordered_json meta = nlohmann::ordered_json::object();
+  meta["crystal"] = { { "id", result.meta.crystal_id },
+                      { "kind", result.meta.crystal_kind },
+                      { "shape", shape },
+                      { "shape_is_nominal", result.meta.shape_is_nominal } };
+  meta["requested_faces"] = result.meta.requested_faces;
+  if (result.meta.schema_version >= 3) {
+    meta["requested_path_layers"] = result.meta.requested_path_layers;
+    meta["layer_crystal_ids"] = result.meta.layer_crystal_ids;
+  }
+  meta["sun"] = { { "altitude_deg", Num(result.meta.sun_altitude_deg) },
+                  { "azimuth_deg", Num(result.meta.sun_azimuth_deg) },
+                  { "incident_direction", Array(result.meta.incident_direction, 3) } };
+  meta["orientation_measure"] = result.meta.orientation_measure;
+  meta["sample_count"] = result.meta.sample_count;
   nlohmann::ordered_json document = {
     { "schema", "lumice.path-feature-report" },
     { "schema_version", result.meta.schema_version },
@@ -375,21 +390,7 @@ std::string PathFeatureReportToJson(const PathFeatureReport& result, const char*
         { "coverage",
           "unsupported, unresolved, not detected at a stated resolution and physically unreachable are distinct "
           "states" } } },
-    { "meta",
-      { { "crystal",
-          { { "id", result.meta.crystal_id },
-            { "kind", result.meta.crystal_kind },
-            { "shape", shape },
-            { "shape_is_nominal", result.meta.shape_is_nominal } } },
-        { "requested_faces", result.meta.requested_faces },
-        { "requested_path_layers", result.meta.requested_path_layers },
-        { "layer_crystal_ids", result.meta.layer_crystal_ids },
-        { "sun",
-          { { "altitude_deg", Num(result.meta.sun_altitude_deg) },
-            { "azimuth_deg", Num(result.meta.sun_azimuth_deg) },
-            { "incident_direction", Array(result.meta.incident_direction, 3) } } },
-        { "orientation_measure", result.meta.orientation_measure },
-        { "sample_count", result.meta.sample_count } } },
+    { "meta", meta },
     { "wavelengths", wavelengths },
     { "scene_measure", SceneMeasureJson(result.scene_measure) },
     { "physical_l2_members", members },
@@ -397,6 +398,9 @@ std::string PathFeatureReportToJson(const PathFeatureReport& result, const char*
     { "coverage", coverage },
     { "limitations", result.limitations },
   };
+  if (result.meta.schema_version < 3) {
+    document.erase("scene_measure");
+  }
   return document.dump();
 }
 

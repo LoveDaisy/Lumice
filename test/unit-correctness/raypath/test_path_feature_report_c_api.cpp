@@ -55,6 +55,41 @@ constexpr const char* kMultiSceneJson = R"({
   "render": []
 })";
 
+constexpr const char* kLegacyNoScatteringSceneJson = R"({
+  "crystal": [{
+    "id": 1, "type": "prism", "shape": {"height": 1},
+    "axis": {
+      "zenith": {"type": "uniform", "mean": 0, "std": 360},
+      "azimuth": {"type": "uniform", "mean": 0, "std": 360},
+      "roll": {"type": "uniform", "mean": 0, "std": 360}
+    }
+  }],
+  "filter": [],
+  "scene": {
+    "light_source": {"type": "sun", "altitude": 0, "azimuth": 0, "spectrum": "D65"},
+    "ray_num": 1000, "max_hits": 7,
+    "scattering": []
+  },
+  "render": []
+})";
+
+// Frozen from the public v4.51 header. This is intentionally not an alias of the current request:
+// its sizeof (including tail padding) is the ABI extent an already-compiled caller sends.
+struct PathFeatureReportRequestV451 {
+  size_t struct_size;
+  int crystal_id;
+  const int* faces;
+  int face_count;
+  const int* layer_face_counts;
+  int layer_count;
+  const double* wavelengths_nm;
+  const double* wavelength_weights;
+  int wavelength_count;
+  int sample_count;
+};
+
+static_assert(sizeof(PathFeatureReportRequestV451) == offsetof(LUMICE_PathFeatureReportRequest, layer_crystal_ids));
+
 struct SceneDeleter {
   void operator()(LUMICE_Scene* scene) const { LUMICE_SceneDestroy(scene); }
 };
@@ -98,6 +133,13 @@ Outcome Analyse(const LUMICE_Scene* scene, const LUMICE_PathFeatureReportRequest
   std::memset(error, 'x', sizeof(error));
   const LUMICE_ErrorCode code = LUMICE_AnalyzePathFeatureReport(scene, request, &raw, error, sizeof(error));
   return { code, ReportPtr(raw), std::string(error) };
+}
+
+Outcome AnalyseV451(const LUMICE_Scene* scene, const PathFeatureReportRequestV451& legacy) {
+  LUMICE_PathFeatureReportRequest request;
+  std::memset(&request, 0xa5, sizeof(request));
+  std::memcpy(&request, &legacy, sizeof(legacy));
+  return Analyse(scene, &request);
 }
 
 std::string Json(const LUMICE_PathFeatureReport* report) {
@@ -182,15 +224,82 @@ TEST(PathFeatureReportCApi, SerializesOnceAndKeepsTheResultImmutable) {
   EXPECT_EQ(full_length, first.size());
 }
 
-TEST(PathFeatureReportCApi, V1SizeRetainsTheNamedLegacySpectrumCompatibilityMode) {
+TEST(PathFeatureReportCApi, V1SizeRetainsSchemaOneAndLegacySpectrumEndpoints) {
   const ScenePtr scene = MakeScene();
   Request request;
-  request.c.struct_size = offsetof(LUMICE_PathFeatureReportRequest, sample_count) + sizeof(int);
+  request.c.struct_size = sizeof(PathFeatureReportRequestV451);
   const Outcome outcome = Analyse(scene.get(), &request.c);
   ASSERT_EQ(outcome.code, LUMICE_OK) << outcome.error;
   const nlohmann::json doc = nlohmann::json::parse(Json(outcome.report.get()));
-  ASSERT_EQ(doc["scene_measure"]["spectrum_nodes"].size(), 2u);
-  EXPECT_EQ(doc["scene_measure"]["spectrum_nodes"][0]["source"], "legacy_reference_endpoint");
+  EXPECT_EQ(doc["schema_version"], 1);
+  EXPECT_FALSE(doc.contains("scene_measure"));
+  ASSERT_EQ(doc["wavelengths"].size(), 2u);
+  EXPECT_DOUBLE_EQ(doc["wavelengths"][0]["nm"], 694.3628981235904);
+  EXPECT_DOUBLE_EQ(doc["wavelengths"][1]["nm"], 430.0197374077313);
+}
+
+TEST(PathFeatureReportCApi, FrozenV451RequestRetainsSchemaOneWithoutScattering) {
+  const ScenePtr scene = MakeScene(kLegacyNoScatteringSceneJson);
+  int faces[2] = { 3, 5 };
+  int layer_counts[1] = { 2 };
+  PathFeatureReportRequestV451 request{};
+  request.struct_size = sizeof(request);
+  request.crystal_id = 1;
+  request.faces = faces;
+  request.face_count = 2;
+  request.layer_face_counts = layer_counts;
+  request.layer_count = 1;
+  request.sample_count = 64;
+
+  Outcome outcome = AnalyseV451(scene.get(), request);
+  ASSERT_EQ(outcome.code, LUMICE_OK) << outcome.error;
+  ASSERT_NE(outcome.report, nullptr);
+  const std::string first = Json(outcome.report.get());
+  EXPECT_EQ(Json(outcome.report.get()), first);
+  nlohmann::json doc = nlohmann::json::parse(first);
+  EXPECT_EQ(doc["schema_version"], 1);
+  EXPECT_FALSE(doc.contains("scene_measure"));
+  EXPECT_FALSE(doc["meta"].contains("requested_path_layers"));
+  EXPECT_FALSE(doc["meta"].contains("layer_crystal_ids"));
+  ASSERT_EQ(doc["wavelengths"].size(), 2u);
+  EXPECT_DOUBLE_EQ(doc["wavelengths"][0]["nm"], 694.3628981235904);
+  EXPECT_DOUBLE_EQ(doc["wavelengths"][1]["nm"], 430.0197374077313);
+
+  const double wavelength = 500.0;
+  const double weight = 0.25;
+  request.wavelengths_nm = &wavelength;
+  request.wavelength_weights = &weight;
+  request.wavelength_count = 1;
+  outcome = AnalyseV451(scene.get(), request);
+  ASSERT_EQ(outcome.code, LUMICE_OK) << outcome.error;
+  doc = nlohmann::json::parse(Json(outcome.report.get()));
+  ASSERT_EQ(doc["wavelengths"].size(), 1u);
+  EXPECT_DOUBLE_EQ(doc["wavelengths"][0]["nm"], wavelength);
+  EXPECT_DOUBLE_EQ(doc["wavelengths"][0]["weight"], weight);
+}
+
+TEST(PathFeatureReportCApi, AFutureTailIsIgnoredAfterTheKnownV3Extent) {
+  struct FutureRequest {
+    LUMICE_PathFeatureReportRequest current;
+    unsigned char future[32];
+  } request{};
+  int faces[2] = { 3, 5 };
+  int layer_counts[1] = { 2 };
+  request.current.struct_size = sizeof(request);
+  request.current.crystal_id = 1;
+  request.current.faces = faces;
+  request.current.face_count = 2;
+  request.current.layer_face_counts = layer_counts;
+  request.current.layer_count = 1;
+  request.current.sample_count = 64;
+  std::memset(request.future, 0xa5, sizeof(request.future));
+
+  const ScenePtr scene = MakeScene();
+  const Outcome outcome = Analyse(scene.get(), &request.current);
+  ASSERT_EQ(outcome.code, LUMICE_OK) << outcome.error;
+  const nlohmann::json doc = nlohmann::json::parse(Json(outcome.report.get()));
+  EXPECT_EQ(doc["schema_version"], 3);
+  EXPECT_TRUE(doc.contains("scene_measure"));
 }
 
 TEST(PathFeatureReportCApi, V2ExtentDoesNotReadV3MemberArrays) {
