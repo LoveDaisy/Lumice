@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1790918103106,
+  "lastUpdate": 1790918106020,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -4770,54 +4770,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "365409776ad9761a5ebf3402cf9cde48f573e9d8",
-          "message": "Merge pull request #353 from LoveDaisy/fix/render-consumer-label-flake-root-cause\n\nfix(test): root-cause the RenderConsumerLabel flake — an uninitialized SunParam azimuth",
-          "timestamp": "2026-09-13T05:47:24+08:00",
-          "tree_id": "2a620f7705b88d7f56d29a1cf923e190e358fd9e",
-          "url": "https://github.com/LoveDaisy/ice_halo_sim/commit/365409776ad9761a5ebf3402cf9cde48f573e9d8"
-        },
-        "date": 1789250200819,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 1119652.5,
-            "unit": "rays/sec",
-            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 1187489.7,
-            "unit": "rays/sec",
-            "extra": "CPU: Neoverse-N2\\nCores: 4"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 865896.2,
-            "unit": "rays/sec",
-            "extra": "CPU: INTEL(R) XEON(R) PLATINUM 8573C\\nCores: 4"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 812746.2,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 9V74 80-Core Processor                \\nCores: 4"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "35235a01c6962917a905abe105b458ee0ba444ab",
           "message": "Merge pull request #354 from LoveDaisy/feat/ray-num-slider-100b-log-scale\n\nfeat(gui): Rays(M) slider spans 0.1..100 000 M on a kLog track, one domain for both rows",
           "timestamp": "2026-09-13T06:17:09+08:00",
@@ -9506,6 +9458,54 @@ window.BENCHMARK_DATA = {
             "value": 592120.6,
             "unit": "rays/sec",
             "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "4f133865f5df1f6ebbca26757196056d78e762bc",
+          "message": "Merge pull request #464 from LoveDaisy/scrum/raypath-feature-diagnostics\n\nAdd target-free raypath feature diagnostics and scientific acceptance",
+          "timestamp": "2026-10-02T13:12:28+08:00",
+          "tree_id": "e5a02d2855e8ff1e8e73ae6d2a5f6ad04f028841",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/4f133865f5df1f6ebbca26757196056d78e762bc"
+        },
+        "date": 1790918105581,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 953082.3,
+            "unit": "rays/sec",
+            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 1026567.6,
+            "unit": "rays/sec",
+            "extra": "CPU: Neoverse-N2\\nCores: 4"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 724835.1,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 7763 64-Core Processor\\nCores: 4"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 708621.3,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 9V74 80-Core Processor                \\nCores: 4"
           }
         ]
       }
