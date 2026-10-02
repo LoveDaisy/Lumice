@@ -22,6 +22,8 @@ Raypath 诊断以当前场景的实际映射和测度为对象，不以路径、
 
 成员选择有四种明确形式：具体 L2 face sequence、按本层实际 shape/axis 的 physical P/B/D gate 展开后的全集、该全集上的逐层显式 mask，以及逐条列出的多层 member chain。具体和显式 chain 均按 face sequence 本身标识并逐值使用，不经过 P/B/D 扩展；P/B/D gate 只定义等价成员展开，不是任意合法 face sequence 的可达性白名单。显式 chain 因而能选择同入口面但内部序列不同的成员，也能表达非笛卡尔积的多层组合。label/L1 等价不参与这一选择。层内晶体质量是该层所有正 `crystal_proportion` 的总和作分母、同一 `crystal_id` 的全部 entry 各自贡献质量的混合，不能用首个匹配 entry 代表整组；每个 linked entry 仍独立执行产品 `FilterSpec` 的 raypath、entry/exit、direction、crystal、compound、action 和 symmetry 语义。filter 拒绝把对应 entry 的接受质量置零但不重新归一，其后整层无剩余质量时终止该 chain。跨层链还乘以前置层的 continuation probability 和末层的 exit probability。
 
+每层成员序列必须含 `2..kMaxHits` 个 face。晶体种类不允许的 face，以及在该 shape 分布全部支持上都不可能出现的 face，在积分前作为非法输入拒绝；只在部分随机 shape 上消失的 face 仍是合法 ensemble 输入，并在对应实际 draw 上记为 `physically_unreachable`。固定 filter 的严格零证书只能在该行每层实际 sampled shape 都已通过 `BuildFaceNormals` 与 `ResolveSingleLayerPath` 后使用，因此非法或本次 draw 缺面的成员不能借 filter 早退伪装成 `zero_weight`。
+
 场景 spectrum 模式直接使用离散节点及其原始权重；illuminant 模式对产品的 `[380,780)` 均匀波长测度做分层节点积分，并在每个节点乘同一个 `GetIlluminantSpd` 权威函数。显式 diagnostic spectrum 是独立模式，不改写场景观测谱。零权重节点保留为 `zero_weight` 行。太阳直径为零时是中心方向质量为 1 的原子；非零时是产品球冠上的单位概率测度，各节点质量之和仍为 1。太阳直径改变方向分布而不隐式改变源总能量；另行需要 radiance/solid-angle 模式时必须由独立输入明确给出，不能借用默认场景语义。
 
 每个唯一生成 latent 分别记录 base measure（原子计数、单位区间、Lebesgue 或 Bernoulli 计数）、重放坐标、proposal/target 密度或质量、映射 Jacobian 和数值状态。同步 shape scalar 共享首见 leader 的分布与 latent；height 的绝对值 fold、latitude LUT 的 inverse-CDF 与 flip 分支、GaussianLegacy 极点 fold、azimuth/roll 耦合和 degree→radian 映射都在同一记录中。姿态局部结构是 field 使用的 `(longitude, latitude, roll)` 到行主序旋转矩阵的解析 `3×9` 微分，支持 rank 由实际生成坐标的 SO(3) 切映射求得；极点处 longitude 与 roll 的同向生成元按精确图结构合并，若正展宽 latitude 的 float 样本恰落在奇异图上则 rank 为 `-1`（局部不可用），不能误报成严格低维支持。

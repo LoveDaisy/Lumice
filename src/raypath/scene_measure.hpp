@@ -13,11 +13,13 @@
 
 #include "analytic/diagnostic_field.hpp"
 #include "config/config_manager.hpp"
+#include "core/def.hpp"
 #include "raypath/single_path_analysis.hpp"
 
 namespace lumice::raypath {
 
 constexpr std::size_t kMaxSceneMeasureMemberChainCount = 4096;
+constexpr std::size_t kMaxSceneMeasureFacesPerLayer = kMaxHits;
 
 enum class SceneSpectrumSource {
   kScene,

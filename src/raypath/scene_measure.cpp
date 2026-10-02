@@ -488,8 +488,39 @@ std::vector<std::vector<int>> ExpandPhysicalMembers(const CrystalConfig& crystal
   return out;
 }
 
+bool CouldFaceExistInShapeSupport(const CrystalParam& param, int face) {
+  return std::visit([face](const auto& shape) { return CouldFaceExist(shape, static_cast<IdType>(face)); }, param);
+}
+
+Error ValidateMemberSequence(const LayerInput& layer, const std::vector<int>& faces, const std::string& name) {
+  if (faces.size() < 2 || faces.size() > kMaxSceneMeasureFacesPerLayer) {
+    return { ErrorCode::kInvalidPath,
+             name + " must contain 2 to " + std::to_string(kMaxSceneMeasureFacesPerLayer) + " faces" };
+  }
+  const CrystalParam& param = layer.setting->crystal_.param_;
+  const CrystalKind kind = KindOf(param);
+  for (const int face : faces) {
+    if (!IsLegalFace(kind, face)) {
+      return { ErrorCode::kInvalidPath,
+               name + " contains face " + std::to_string(face) + ", which is not legal for this crystal kind" };
+    }
+    if (!CouldFaceExistInShapeSupport(param, face)) {
+      return { ErrorCode::kInvalidPath, name + " contains face " + std::to_string(face) +
+                                            ", which cannot exist in this crystal's shape support" };
+    }
+  }
+  return {};
+}
+
 Error BuildMemberChains(const SceneMeasureRequest& request, const std::vector<LayerInput>& layers,
                         std::vector<std::vector<std::vector<int>>>* out) {
+  for (size_t layer_index = 0; layer_index < layers.size(); ++layer_index) {
+    if (const Error error = ValidateMemberSequence(layers[layer_index], request.path_layers[layer_index],
+                                                   "requested path layer " + std::to_string(layer_index));
+        !error.Ok()) {
+      return error;
+    }
+  }
   if (request.member_selection == SceneMemberSelection::kExplicitChains) {
     if (request.explicit_member_chains.empty()) {
       return { ErrorCode::kInvalidArgument, "explicit member selection requires at least one member chain" };
@@ -503,8 +534,13 @@ Error BuildMemberChains(const SceneMeasureRequest& request, const std::vector<La
         return { ErrorCode::kInvalidPath, "explicit member chain " + std::to_string(chain_index) +
                                               " must contain exactly one face sequence per layer" };
       }
-      if (std::any_of(chain.begin(), chain.end(), [](const auto& faces) { return faces.empty(); })) {
-        return { ErrorCode::kInvalidPath, "explicit member chains cannot contain an empty layer face sequence" };
+      for (size_t layer_index = 0; layer_index < chain.size(); ++layer_index) {
+        if (const Error error = ValidateMemberSequence(
+                layers[layer_index], chain[layer_index],
+                "explicit member chain " + std::to_string(chain_index) + " layer " + std::to_string(layer_index));
+            !error.Ok()) {
+          return error;
+        }
       }
     }
     *out = request.explicit_member_chains;
@@ -1043,6 +1079,29 @@ FixedFilterLedger BuildFixedFilterLedger(const std::vector<LayerInput>& layers,
   return ledger;
 }
 
+bool MemberChainExistsInSample(uint32_t replay_seed, const std::vector<LayerInput>& layers,
+                               const std::vector<std::vector<int>>& member_chain) {
+  RandomNumberGenerator rng(replay_seed);
+  for (size_t layer_index = 0; layer_index < layers.size(); ++layer_index) {
+    std::vector<ShapeScalarSample> shape_samples;
+    std::vector<LatentMeasureSample> latents;
+    const analytic::CrystalShape shape =
+        SampleShape(rng, layers[layer_index].setting->crystal_.param_, layers[layer_index],
+                    static_cast<int>(layer_index), &shape_samples, &latents);
+    float pose_values[3]{};
+    RandomSampler::SampleAxisPoseWithTrace(rng, layers[layer_index].setting->crystal_.axis_, pose_values);
+    analytic::FaceNormalTable normals;
+    if (analytic::BuildFaceNormals(shape, &normals) != analytic::Status::kOk) {
+      return false;
+    }
+    std::vector<int> slots;
+    if (!ResolveSingleLayerPath({ member_chain[layer_index] }, normals, &slots).Ok()) {
+      return false;
+    }
+  }
+  return true;
+}
+
 void PopulateEntryRows(const LayerInput& input, SceneMeasureLayerRow* out) {
   out->entries.reserve(input.entries.size());
   for (const LayerInput::Entry& input_entry : input.entries) {
@@ -1111,15 +1170,7 @@ SceneMeasureLayerRow EvaluateLayer(RandomNumberGenerator& rng, const LayerInput&
   out.crystal_share = input.crystal_share;
   out.continuation_mass = input.continuation_mass;
   PopulateEntryRows(input, &out);
-  ApplyFixedFilterLedger(fixed_filter_ledger, &out);
   std::copy(incident, incident + 3, out.incident_direction);
-
-  if (out.filter_rejection_certified) {
-    out.crystal_share = 0.0;
-    out.status = SceneMeasureStatus::kZeroWeight;
-    out.reason = "every selected scattering entry has a support-constant rejecting physical filter";
-    return out;
-  }
 
   const analytic::CrystalShape shape =
       SampleShape(rng, input.setting->crystal_.param_, input, layer_index, &out.shape, latents);
@@ -1159,6 +1210,13 @@ SceneMeasureLayerRow EvaluateLayer(RandomNumberGenerator& rng, const LayerInput&
   if (const Error error = ResolveSingleLayerPath({ faces }, normals, &slots); !error.Ok()) {
     out.status = SceneMeasureStatus::kPhysicallyUnreachable;
     out.reason = error.message;
+    return out;
+  }
+  ApplyFixedFilterLedger(fixed_filter_ledger, &out);
+  if (out.filter_rejection_certified) {
+    out.crystal_share = 0.0;
+    out.status = SceneMeasureStatus::kZeroWeight;
+    out.reason = "every selected scattering entry has a support-constant rejecting physical filter";
     return out;
   }
 
@@ -1385,6 +1443,11 @@ Error BuildSceneMeasure(const ConfigManager& config, const SceneMeasureRequest& 
           row.sample_index = sample;
           row.replay_seed =
               RowSeed(request.seed, spectrum.node_id, sun.node_id, static_cast<int>(member_index), sample);
+          const bool fixed_filter_paths_valid =
+              fixed_filter_ledger.first_zero_layer < 0 ||
+              MemberChainExistsInSample(row.replay_seed, layers, result.member_chains[member_index]);
+          const bool has_validated_fixed_filter_zero =
+              fixed_filter_ledger.first_zero_layer >= 0 && fixed_filter_paths_valid;
           row.wavelength_nm = spectrum.wavelength_nm;
           row.spectrum_weight = spectrum.weight;
           row.sun_mass = sun.mass;
@@ -1412,7 +1475,7 @@ Error BuildSceneMeasure(const ConfigManager& config, const SceneMeasureRequest& 
           } else if (!IsRepresentable(known_conditional_measure_mass)) {
             mark_row_numerical(&row, "complete layer conditional mass product is not representable");
           }
-          if (fixed_filter_ledger.first_zero_layer >= 0) {
+          if (has_validated_fixed_filter_zero) {
             row.status = SceneMeasureStatus::kZeroWeight;
             row.reason = "layer " + std::to_string(fixed_filter_ledger.first_zero_layer) +
                          " has a support-constant zero physical-filter acceptance mass";
@@ -1423,11 +1486,14 @@ Error BuildSceneMeasure(const ConfigManager& config, const SceneMeasureRequest& 
           double incident[3] = { sun.incident_direction[0], sun.incident_direction[1], sun.incident_direction[2] };
           NumericValue conditional_weight{ 1.0, SceneMeasureNumericStatus::kAvailable };
           NumericValue row_conditional_measure_mass{ 1.0, SceneMeasureNumericStatus::kAvailable };
+          const FixedFilterLayerLedger empty_fixed_filter_layer;
           for (size_t layer_index = 0; layer_index < layers.size(); layer_index++) {
+            const FixedFilterLayerLedger& validated_fixed_filter_layer =
+                fixed_filter_paths_valid ? fixed_filter_ledger.layers[layer_index] : empty_fixed_filter_layer;
             SceneMeasureLayerRow layer =
                 EvaluateLayer(rng, layers[layer_index], static_cast<int>(layer_index),
                               result.member_chains[member_index][layer_index], spectrum.refractive_index, incident,
-                              request.include_derivatives, fixed_filter_ledger.layers[layer_index], &row.latents);
+                              request.include_derivatives, validated_fixed_filter_layer, &row.latents);
             layer.source_sun_node_id = sun.node_id;
             layer.source_spectrum_node_id = spectrum.node_id;
             layer.source_wavelength_nm = spectrum.wavelength_nm;
@@ -1477,7 +1543,7 @@ Error BuildSceneMeasure(const ConfigManager& config, const SceneMeasureRequest& 
               break;
             }
           }
-          if (conditional_measure.first_zero_layer >= 0 || fixed_filter_ledger.first_zero_layer >= 0) {
+          if (conditional_measure.first_zero_layer >= 0 || has_validated_fixed_filter_zero) {
             row_conditional_measure_mass = {};
           }
           if (spectrum.weight > 0.0 && sun.mass > 0.0 && conditional_measure.strictly_positive) {

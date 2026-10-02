@@ -389,7 +389,7 @@ TEST(SceneMeasure, FiniteSourceNoHitDoesNotClaimAtomicExhaustion) {
   }
   EXPECT_TRUE(observed_no_hit);
 
-  request.path_layers = { { 99 } };
+  request.path_layers = { { 3, 3 } };
   SunMeasureNode source_atom;
   source_atom.incident_direction[2] = -1.0;
   source_atom.mass = 0.5;
@@ -408,7 +408,7 @@ TEST(SceneMeasure, FiniteSourceNoHitDoesNotClaimAtomicExhaustion) {
 TEST(SceneMeasure, ContinuousIlluminantNoHitDoesNotClaimAtomicExhaustion) {
   auto config = Scene({ Prism(1) }, { 0.0f });
   config.scene_.light_source_.spectrum_ = IlluminantType::kD65;
-  auto request = Request({ 1 }, { { 99 } }, 2);
+  auto request = Request({ 1 }, { { 3, 3 } }, 2);
   request.illuminant_node_count = 1;
   const auto result = Build(config, request);
   EXPECT_EQ(result.status, SceneMeasureStatus::kNumericalIncomplete);
@@ -728,12 +728,16 @@ TEST(SceneMeasure, PositiveConditionalMassUnderflowIsNotAnExactZeroMeasure) {
 }
 
 TEST(SceneMeasure, AZeroLaterConditionIsKnownEvenWhenAnEarlierFieldIsInvalid) {
-  const auto request = Request({ 1, 2 }, { { 99 }, { 3, 6 } }, 2);
-  const auto zero = Build(Scene({ Prism(1), Prism(2) }, { 0.5f, 1.0f }), request);
+  AxisDistribution axis;
+  axis.latitude_dist = { DistributionType::kNoRandom, 90.0f, 0.0f };
+  axis.azimuth_dist = { DistributionType::kNoRandom, 180.0f, 0.0f };
+  axis.roll_dist = { DistributionType::kNoRandom, 0.0f, 0.0f };
+  const auto request = Request({ 1, 2 }, { { 1, 2 }, { 3, 6 } }, 2);
+  const auto zero = Build(Scene({ Prism(1, axis), Prism(2, axis) }, { 0.5f, 1.0f }), request);
   EXPECT_EQ(zero.status, SceneMeasureStatus::kZeroWeight);
   EXPECT_TRUE(std::all_of(zero.rows.begin(), zero.rows.end(),
                           [](const auto& row) { return row.status == SceneMeasureStatus::kZeroWeight; }));
-  const auto positive_mass_control = Build(Scene({ Prism(1), Prism(2) }, { 0.5f, 0.0f }), request);
+  const auto positive_mass_control = Build(Scene({ Prism(1, axis), Prism(2, axis) }, { 0.5f, 0.0f }), request);
   EXPECT_EQ(positive_mass_control.status, SceneMeasureStatus::kPhysicallyUnreachable);
 }
 
@@ -759,6 +763,84 @@ TEST(SceneMeasure, AConstantFilterZeroIsKnownWhenItsOwnFieldIsUnreachable) {
   EXPECT_EQ(zero.sampled_measure_mass_status, SceneMeasureNumericStatus::kExactZero);
   EXPECT_TRUE(std::all_of(zero.rows.begin(), zero.rows.end(),
                           [](const auto& row) { return row.status == SceneMeasureStatus::kZeroWeight; }));
+}
+
+TEST(SceneMeasure, AnInvalidRepresentableFaceCannotReceiveAFilterZeroCertificate) {
+  auto config = Scene({ Prism(1) }, { 0.0f });
+  EntryExitFilterParam predicate;
+  predicate.entry_ = 3;
+  predicate.exit_ = 5;
+  config.scene_.ms_[0].setting_[0].filter_ = { 93, FilterConfig::kSymNone, FilterConfig::kFilterIn,
+                                               SimpleFilterParam{ predicate } };
+  auto request = Request({ 1 }, { { 3, 5 } }, 2);
+  request.member_selection = SceneMemberSelection::kExplicitChains;
+  request.explicit_member_chains = { { { 99, 5 } } };
+  SceneMeasureResult result;
+  const Error error = BuildSceneMeasure(config, request, &result);
+  EXPECT_FALSE(error.Ok());
+  EXPECT_NE(error.message.find("face"), std::string::npos) << error.message;
+}
+
+TEST(SceneMeasure, StaticMissingFacesAreRejectedButPartialRandomSupportIsAdmitted) {
+  CrystalConfig crystal = Prism(1);
+  auto& prism = std::get<PrismCrystalParam>(crystal.param_);
+  prism.d_[0] = { DistributionType::kNoRandom, 3.0f, 0.0f };
+  const auto request = Request({ 1 }, { { 3, 5 } }, 2);
+  SceneMeasureResult result;
+  Error error = BuildSceneMeasure(Scene({ crystal }, { 0.0f }), request, &result);
+  EXPECT_FALSE(error.Ok());
+  EXPECT_NE(error.message.find("cannot exist"), std::string::npos) << error.message;
+
+  prism.d_[0] = { DistributionType::kUniform, 2.0f, 1.0f };
+  error = BuildSceneMeasure(Scene({ crystal }, { 0.0f }), request, &result);
+  EXPECT_TRUE(error.Ok()) << error.message;
+
+  PyramidCrystalParam pyramid;
+  pyramid.h_pyr_u_ = { DistributionType::kNoRandom, 0.0f, 0.0f };
+  pyramid.h_prs_ = { DistributionType::kNoRandom, 1.0f, 0.0f };
+  pyramid.h_pyr_l_ = { DistributionType::kNoRandom, 0.5f, 0.0f };
+  for (auto& distance : pyramid.d_) {
+    distance = { DistributionType::kNoRandom, 1.0f, 0.0f };
+  }
+  pyramid.wedge_angle_u_ = 22.0f;
+  pyramid.wedge_angle_l_ = 31.0f;
+  CrystalConfig pyramid_crystal;
+  pyramid_crystal.id_ = 2;
+  pyramid_crystal.param_ = pyramid;
+  error = BuildSceneMeasure(Scene({ pyramid_crystal }, { 0.0f }), Request({ 2 }, { { 13, 3 } }, 2), &result);
+  EXPECT_FALSE(error.Ok());
+  EXPECT_NE(error.message.find("cannot exist"), std::string::npos) << error.message;
+
+  pyramid.h_pyr_u_ = { DistributionType::kUniform, 0.5f, 0.5f };
+  pyramid_crystal.param_ = pyramid;
+  error = BuildSceneMeasure(Scene({ pyramid_crystal }, { 0.0f }), Request({ 2 }, { { 13, 3 } }, 2), &result);
+  EXPECT_TRUE(error.Ok()) << error.message;
+}
+
+TEST(SceneMeasure, FilterZeroCertificateRequiresTheFaceToExistInTheActualShapeDraw) {
+  CrystalConfig crystal = Prism(1);
+  auto& prism = std::get<PrismCrystalParam>(crystal.param_);
+  prism.d_[0] = { DistributionType::kUniform, 2.0f, 1.0f };
+  auto config = Scene({ crystal }, { 0.0f });
+  EntryExitFilterParam predicate;
+  predicate.entry_ = 1;
+  predicate.exit_ = 2;
+  config.scene_.ms_[0].setting_[0].filter_ = { 94, FilterConfig::kSymNone, FilterConfig::kFilterIn,
+                                               SimpleFilterParam{ predicate } };
+  auto request = Request({ 1 }, { { 3, 5 } }, 64);
+  request.member_selection = SceneMemberSelection::kExplicitChains;
+  request.explicit_member_chains = { { { 3, 5 } } };
+  const SceneMeasureResult result = Build(config, request);
+  const auto absent = std::find_if(result.rows.begin(), result.rows.end(), [](const auto& row) {
+    return !row.layers.empty() && row.layers.front().status == SceneMeasureStatus::kPhysicallyUnreachable &&
+           row.layers.front().reason.find("face 3") != std::string::npos;
+  });
+  ASSERT_NE(absent, result.rows.end());
+  EXPECT_FALSE(absent->layers.front().filter_rejection_certified);
+  EXPECT_TRUE(std::any_of(result.rows.begin(), result.rows.end(), [](const auto& row) {
+    return !row.layers.empty() && row.layers.front().status == SceneMeasureStatus::kZeroWeight &&
+           row.layers.front().filter_rejection_certified;
+  }));
 }
 
 TEST(SceneMeasure, AConstantLaterFilterZeroIsKnownBeforeAnEarlierFieldFailure) {
@@ -1194,13 +1276,13 @@ TEST(SceneMeasure, ExplicitMemberChainsAreVerbatimAndNeedNotBeACartesianProduct)
   const ConfigManager config = Scene({ Prism(1), Prism(2) }, { 1.0f, 0.0f });
   SceneMeasureRequest request = Request({ 1, 2 }, { { 3, 5 }, { 4, 2 } }, 2);
   request.member_selection = SceneMemberSelection::kExplicitChains;
-  request.explicit_member_chains = { { { 3, 5 }, { 4, 2 } }, { { 3, 1, 5 }, { 4, 0, 2 } } };
+  request.explicit_member_chains = { { { 3, 5 }, { 4, 2 } }, { { 3, 1, 5 }, { 4, 6, 2 } } };
   const SceneMeasureResult result = Build(config, request);
   EXPECT_EQ(result.member_chains, request.explicit_member_chains);
   EXPECT_EQ(result.evaluated_row_count, 2 * 2);
 }
 
-TEST(SceneMeasure, RejectsInvalidExplicitMemberFaceBeforeFixedFilterLedger) {
+TEST(SceneMeasure, RejectsStaticallyIllegalExplicitMemberFaceBeforeFixedFilterLedger) {
   const ConfigManager config = Scene({ Prism(1) }, { 0.0f });
   SceneMeasureRequest request = Request({ 1 }, { { 3, 5 } }, 2);
   request.member_selection = SceneMemberSelection::kExplicitChains;
@@ -1209,11 +1291,8 @@ TEST(SceneMeasure, RejectsInvalidExplicitMemberFaceBeforeFixedFilterLedger) {
 
   SceneMeasureResult result;
   const Error error = BuildSceneMeasure(config, request, &result);
-  EXPECT_TRUE(error.Ok()) << error.message;
-  EXPECT_EQ(result.status, SceneMeasureStatus::kPhysicallyUnreachable);
-  ASSERT_FALSE(result.rows.empty());
-  EXPECT_EQ(result.rows.front().status, SceneMeasureStatus::kPhysicallyUnreachable);
-  EXPECT_NE(result.rows.front().reason.find("face 259"), std::string::npos);
+  EXPECT_FALSE(error.Ok());
+  EXPECT_NE(error.message.find("face 259"), std::string::npos);
 }
 
 TEST(SceneMeasure, VisitorReceivesTheCompleteReplayableFieldBeyondRepresentativeStorage) {
@@ -1328,9 +1407,9 @@ TEST(SceneMeasure, StatusSeparatesZeroSourceFromNumericalEvaluationAndNoHitProof
   EXPECT_EQ(zero.rows.front().evaluation_status, SceneMeasureStatus::kNumericalIncomplete);
 
   const SceneMeasureResult random_miss =
-      Build(Scene({ Prism(1, RandomAxis()) }, { 0.0f }), Request({ 1 }, { { 99 } }, 2));
+      Build(Scene({ Prism(1, RandomAxis()) }, { 0.0f }), Request({ 1 }, { { 3, 3 } }, 2));
   EXPECT_EQ(random_miss.status, SceneMeasureStatus::kNumericalIncomplete);
-  const SceneMeasureResult atomic_miss = Build(Scene({ Prism(1) }, { 0.0f }), Request({ 1 }, { { 99 } }, 2));
+  const SceneMeasureResult atomic_miss = Build(Scene({ Prism(1) }, { 0.0f }), Request({ 1 }, { { 3, 3 } }, 2));
   EXPECT_EQ(atomic_miss.status, SceneMeasureStatus::kPhysicallyUnreachable);
 }
 

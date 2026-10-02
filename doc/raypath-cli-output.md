@@ -309,6 +309,10 @@ fine resolution and the joint scene-measure sample count; the latter's evaluated
 multiplies by selected member chains, spectrum nodes, and sun nodes. With no `--wavelength`, the CLI
 uses the configured scene spectrum; one explicit `--wavelength <nm>` selects that diagnostic node.
 The C API accepts up to 32 wavelength/weight pairs.
+Before copying any request array, the C bridge checks the layer count against the parsed scene
+(the frozen schema-1 prefix retains its one-layer no-scattering exception), requires every path and
+explicit-member layer to contain 2 through 64 faces, and verifies all aggregate dimensions with
+checked arithmetic. Explicit selection remains bounded to 4096 member chains.
 The synchronous report also rejects a request when physical-L2 members × wavelengths ×
 (fine samples + half-resolution coarse samples) would exceed 16,777,216 evaluations; rejection
 produces no partial report.

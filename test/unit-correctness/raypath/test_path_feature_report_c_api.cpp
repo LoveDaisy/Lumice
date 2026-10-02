@@ -5,6 +5,7 @@
 
 #include <cstddef>
 #include <cstring>
+#include <limits>
 #include <memory>
 #include <nlohmann/json.hpp>
 #include <string>
@@ -399,7 +400,7 @@ TEST(PathFeatureReportCApi, ExplicitMemberChainsPreserveExactNonCartesianLayerSe
   int requested_faces[4] = { 3, 5, 4, 2 };
   int requested_layer_counts[2] = { 2, 2 };
   int layer_crystals[2] = { 1, 1 };
-  int explicit_faces[10] = { 3, 5, 4, 2, 3, 1, 5, 4, 0, 2 };
+  int explicit_faces[10] = { 3, 5, 4, 2, 3, 1, 5, 4, 6, 2 };
   int explicit_layer_counts[4] = { 2, 2, 3, 3 };
   request.c.faces = requested_faces;
   request.c.face_count = 4;
@@ -418,7 +419,7 @@ TEST(PathFeatureReportCApi, ExplicitMemberChainsPreserveExactNonCartesianLayerSe
   ASSERT_EQ(outcome.code, LUMICE_OK) << outcome.error;
   const nlohmann::json doc = nlohmann::json::parse(Json(outcome.report.get()));
   EXPECT_EQ(doc["scene_measure"]["member_chains"],
-            nlohmann::json({ { { 3, 5 }, { 4, 2 } }, { { 3, 1, 5 }, { 4, 0, 2 } } }));
+            nlohmann::json({ { { 3, 5 }, { 4, 2 } }, { { 3, 1, 5 }, { 4, 6, 2 } } }));
 
   request.c.explicit_member_faces = nullptr;
   EXPECT_EQ(Analyse(scene.get(), &request.c).code, LUMICE_ERR_NULL_ARG);
@@ -475,6 +476,102 @@ TEST(PathFeatureReportCApi, RejectsExplicitChainBudgetBeforeDecodingItsArrays) {
   EXPECT_EQ(boundary.report, nullptr);
   EXPECT_EQ(boundary.error.find("exceeds"), std::string::npos) << boundary.error;
   EXPECT_NE(boundary.error.find("face counts"), std::string::npos) << boundary.error;
+}
+
+TEST(PathFeatureReportCApi, InvalidRepresentableMemberFacesAreRejectedBeforeFixedFilters) {
+  auto config = nlohmann::json::parse(kSceneJson);
+  config["filter"] = { { { "id", 93 }, { "type", "entry_exit" }, { "entry", 3 }, { "exit", 5 } } };
+  config["scene"]["scattering"][0]["entries"][0]["filter"] = 93;
+  const std::string text = config.dump();
+  const ScenePtr scene = MakeScene(text.c_str());
+  Request request;
+  const int faces[2] = { 99, 5 };
+  const int counts[1] = { 2 };
+  request.c.member_selection = LUMICE_PATH_FEATURE_MEMBERS_EXPLICIT_CHAINS;
+  request.c.explicit_member_faces = faces;
+  request.c.explicit_member_face_count = 2;
+  request.c.explicit_member_layer_face_counts = counts;
+  request.c.explicit_member_layer_face_count = 1;
+  request.c.explicit_member_chain_count = 1;
+  const Outcome outcome = Analyse(scene.get(), &request.c);
+  EXPECT_EQ(outcome.code, LUMICE_ERR_INVALID_VALUE) << outcome.error;
+  EXPECT_EQ(outcome.report, nullptr);
+}
+
+TEST(PathFeatureReportCApi, OversizedPathEncodingIsRefusedBeforePerLayerDecoding) {
+  const ScenePtr scene = MakeScene();
+  Request request;
+  const std::vector<int> faces(65, 3);
+  const int counts[1] = { 0 };
+  request.c.faces = faces.data();
+  request.c.face_count = static_cast<int>(faces.size());
+  request.c.layer_face_counts = counts;
+  const Outcome outcome = Analyse(scene.get(), &request.c);
+  EXPECT_EQ(outcome.code, LUMICE_ERR_INVALID_VALUE);
+  EXPECT_EQ(outcome.report, nullptr);
+  EXPECT_NE(outcome.error.find("64"), std::string::npos) << outcome.error;
+}
+
+TEST(PathFeatureReportCApi, OversizedExplicitEncodingIsRefusedBeforePerLayerDecoding) {
+  const ScenePtr scene = MakeScene();
+  Request request;
+  const std::vector<int> faces(65, 3);
+  const int counts[1] = { 0 };
+  request.c.member_selection = LUMICE_PATH_FEATURE_MEMBERS_EXPLICIT_CHAINS;
+  request.c.explicit_member_faces = faces.data();
+  request.c.explicit_member_face_count = static_cast<int>(faces.size());
+  request.c.explicit_member_layer_face_counts = counts;
+  request.c.explicit_member_layer_face_count = 1;
+  request.c.explicit_member_chain_count = 1;
+  const Outcome outcome = Analyse(scene.get(), &request.c);
+  EXPECT_EQ(outcome.code, LUMICE_ERR_INVALID_VALUE);
+  EXPECT_EQ(outcome.report, nullptr);
+  EXPECT_NE(outcome.error.find("64"), std::string::npos) << outcome.error;
+}
+
+TEST(PathFeatureReportCApi, SceneDepthAndFaceBoundsAreValidatedBeforeArrayCopies) {
+  const ScenePtr scene = MakeScene();
+  Request request;
+  const int counts[2] = { 2, 2 };
+  request.c.layer_count = 2;
+  request.c.layer_face_counts = counts;
+  request.c.face_count = 4;
+  const Outcome too_many_layers = Analyse(scene.get(), &request.c);
+  EXPECT_EQ(too_many_layers.code, LUMICE_ERR_INVALID_VALUE);
+  EXPECT_NE(too_many_layers.error.find("scattering layers"), std::string::npos) << too_many_layers.error;
+
+  request.c.layer_count = std::numeric_limits<int>::max();
+  request.c.face_count = 2;
+  const Outcome hostile_dimension = Analyse(scene.get(), &request.c);
+  EXPECT_EQ(hostile_dimension.code, LUMICE_ERR_INVALID_VALUE);
+  EXPECT_NE(hostile_dimension.error.find("scattering layers"), std::string::npos) << hostile_dimension.error;
+
+  request.c.layer_count = 1;
+  request.c.face_count = 1;
+  const int short_count[1] = { 1 };
+  request.c.layer_face_counts = short_count;
+  const Outcome too_short = Analyse(scene.get(), &request.c);
+  EXPECT_EQ(too_short.code, LUMICE_ERR_INVALID_VALUE);
+  EXPECT_NE(too_short.error.find("[2, 64]"), std::string::npos) << too_short.error;
+}
+
+TEST(PathFeatureReportCApi, SixtyFourFaceBoundaryIsAcceptedForPathAndExplicitChain) {
+  const ScenePtr scene = MakeScene();
+  Request request;
+  const std::vector<int> faces(LUMICE_PATH_FEATURE_REPORT_MAX_FACES_PER_LAYER, 3);
+  const int counts[1] = { LUMICE_PATH_FEATURE_REPORT_MAX_FACES_PER_LAYER };
+  request.c.faces = faces.data();
+  request.c.face_count = static_cast<int>(faces.size());
+  request.c.layer_face_counts = counts;
+  request.c.member_selection = LUMICE_PATH_FEATURE_MEMBERS_EXPLICIT_CHAINS;
+  request.c.explicit_member_faces = faces.data();
+  request.c.explicit_member_face_count = static_cast<int>(faces.size());
+  request.c.explicit_member_layer_face_counts = counts;
+  request.c.explicit_member_layer_face_count = 1;
+  request.c.explicit_member_chain_count = 1;
+  const Outcome outcome = Analyse(scene.get(), &request.c);
+  EXPECT_EQ(outcome.code, LUMICE_OK) << outcome.error;
+  EXPECT_NE(outcome.report, nullptr);
 }
 
 TEST(PathFeatureReportCApi, RejectsCombinedMemberWavelengthAndSampleWorkAboveThePublicBudget) {

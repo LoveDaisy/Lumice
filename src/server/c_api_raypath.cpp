@@ -17,6 +17,7 @@
 #include "include/lumice_raypath.h"
 #include "raypath/path_feature_report.hpp"
 #include "raypath/path_feature_report_json.hpp"
+#include "raypath/scene_measure.hpp"
 #include "raypath/single_path_analysis.hpp"
 #include "raypath/single_path_json.hpp"
 #include "server/c_api_engine_internal.hpp"  // lumice::capi::ToCApiErrorCode
@@ -34,6 +35,8 @@ static_assert(LUMICE_PATH_FEATURE_REPORT_MAX_WAVELENGTH_COUNT == lumice::raypath
               "lumice_raypath.h and the feature-report module must agree on the wavelength bound");
 static_assert(LUMICE_PATH_FEATURE_REPORT_MAX_MEMBER_CHAIN_COUNT == lumice::raypath::kMaxSceneMeasureMemberChainCount,
               "lumice_raypath.h and the scene-measure module must agree on the member-chain bound");
+static_assert(LUMICE_PATH_FEATURE_REPORT_MAX_FACES_PER_LAYER == lumice::raypath::kMaxSceneMeasureFacesPerLayer,
+              "lumice_raypath.h and the scene-measure module must agree on the per-layer face bound");
 static_assert(LUMICE_PATH_FEATURE_REPORT_MAX_SAMPLE_EVALUATIONS == lumice::raypath::kMaxFeatureReportSampleEvaluations,
               "lumice_raypath.h and the feature-report module must agree on the total-work bound");
 
@@ -104,6 +107,43 @@ void WriteError(char* err_buf, size_t err_size, const std::string& message) {
 LUMICE_ErrorCode Refuse(const lumice::raypath::Error& e, char* err_buf, size_t err_size) {
   WriteError(err_buf, err_size, std::string(lumice::raypath::ErrorCodeName(e.code)) + ": " + e.message);
   return LUMICE_ERR_INVALID_VALUE;
+}
+
+bool CheckedMultiply(size_t lhs, size_t rhs, size_t* out) {
+  if (rhs != 0 && lhs > std::numeric_limits<size_t>::max() / rhs) {
+    return false;
+  }
+  *out = lhs * rhs;
+  return true;
+}
+
+lumice::raypath::Error ValidateFaceEncoding(const int* layer_face_counts, size_t layer_face_count,
+                                            int declared_face_count, const std::string& name) {
+  namespace rp = lumice::raypath;
+  size_t max_face_count = 0;
+  if (!CheckedMultiply(layer_face_count, rp::kMaxSceneMeasureFacesPerLayer, &max_face_count) ||
+      static_cast<size_t>(declared_face_count) > max_face_count) {
+    return { rp::ErrorCode::kInvalidPath,
+             name + " exceeds " + std::to_string(rp::kMaxSceneMeasureFacesPerLayer) + " faces per layer" };
+  }
+
+  size_t consumed = 0;
+  for (size_t index = 0; index < layer_face_count; ++index) {
+    const int count = layer_face_counts[index];
+    if (count < 2 || static_cast<size_t>(count) > rp::kMaxSceneMeasureFacesPerLayer) {
+      return { rp::ErrorCode::kInvalidPath, name + " layer face counts must each be in [2, " +
+                                                std::to_string(rp::kMaxSceneMeasureFacesPerLayer) + "]" };
+    }
+    const size_t declared = static_cast<size_t>(declared_face_count);
+    if (consumed > declared || static_cast<size_t>(count) > declared - consumed) {
+      return { rp::ErrorCode::kInvalidPath, name + " layer face counts do not add up to the declared face count" };
+    }
+    consumed += static_cast<size_t>(count);
+  }
+  if (consumed != static_cast<size_t>(declared_face_count)) {
+    return { rp::ErrorCode::kInvalidPath, name + " layer face counts do not add up to the declared face count" };
+  }
+  return {};
 }
 
 LUMICE_ErrorCode Analyze(const LUMICE_Scene* scene, const LUMICE_SinglePathRequest& request,
@@ -212,18 +252,56 @@ LUMICE_ErrorCode AnalyzeReport(const LUMICE_Scene* scene, const LUMICE_PathFeatu
                                                          " wavelengths may be requested" },
                   err_buf, err_size);
   }
-  int consumed = 0;
-  for (int i = 0; i < request.layer_count; i++) {
-    const int count = request.layer_face_counts[i];
-    if (count <= 0 || count > request.face_count - consumed) {
-      return Refuse({ rp::ErrorCode::kInvalidPath, "layer face counts do not add up to face_count" }, err_buf,
+
+  // Resolve the scene before touching any caller-owned face array. Its actual scattering depth is
+  // the dimensional authority for v2/v3 requests; v1 retains its historical one-layer,
+  // no-scattering report path.
+  lumice::ConfigManager config;
+  if (const lumice::Error err = lumice::ParseConfigManager(SceneRoot(scene), "LUMICE_AnalyzePathFeatureReport",
+                                                           lumice::GetGlobalLogger(), nullptr, &config)) {
+    WriteError(err_buf, err_size, "invalid_scene: " + err.message);
+    return lumice::capi::ToCApiErrorCode(err.code);
+  }
+  if ((!has_v2 && request.layer_count != 1) ||
+      (has_v2 && static_cast<size_t>(request.layer_count) > config.scene_.ms_.size())) {
+    return Refuse(
+        { rp::ErrorCode::kInvalidPath, has_v2 ? "layer_count exceeds the scene's available scattering layers" :
+                                                "legacy path feature reports require exactly one layer" },
+        err_buf, err_size);
+  }
+  if (const rp::Error error = ValidateFaceEncoding(request.layer_face_counts, static_cast<size_t>(request.layer_count),
+                                                   request.face_count, "path encoding");
+      !error.Ok()) {
+    return Refuse(error, err_buf, err_size);
+  }
+
+  size_t explicit_layer_face_count = 0;
+  if (has_v3 && request.explicit_member_chain_count > 0) {
+    if (!CheckedMultiply(static_cast<size_t>(request.explicit_member_chain_count),
+                         static_cast<size_t>(request.layer_count), &explicit_layer_face_count) ||
+        explicit_layer_face_count > static_cast<size_t>(std::numeric_limits<int>::max())) {
+      return Refuse({ rp::ErrorCode::kInvalidArgument, "explicit member chain dimensions overflow" }, err_buf,
                     err_size);
     }
+    if (static_cast<size_t>(request.explicit_member_layer_face_count) != explicit_layer_face_count) {
+      return Refuse(
+          { rp::ErrorCode::kInvalidPath, "explicit_member_layer_face_count must equal chain_count * layer_count" },
+          err_buf, err_size);
+    }
+    if (const rp::Error error =
+            ValidateFaceEncoding(request.explicit_member_layer_face_counts, explicit_layer_face_count,
+                                 request.explicit_member_face_count, "explicit member encoding");
+        !error.Ok()) {
+      return Refuse(error, err_buf, err_size);
+    }
+  }
+
+  size_t consumed = 0;
+  req.path_layers.reserve(static_cast<size_t>(request.layer_count));
+  for (int i = 0; i < request.layer_count; i++) {
+    const size_t count = static_cast<size_t>(request.layer_face_counts[i]);
     req.path_layers.emplace_back(request.faces + consumed, request.faces + consumed + count);
     consumed += count;
-  }
-  if (consumed != request.face_count) {
-    return Refuse({ rp::ErrorCode::kInvalidPath, "layer face counts do not add up to face_count" }, err_buf, err_size);
   }
   if (has_v2 && request.layer_crystal_id_count > 0) {
     if (request.layer_crystal_id_count != request.layer_count) {
@@ -283,40 +361,19 @@ LUMICE_ErrorCode AnalyzeReport(const LUMICE_Scene* scene, const LUMICE_PathFeatu
                                        request.physical_member_masks + request.physical_member_mask_count);
     }
     if (has_v3 && request.explicit_member_chain_count > 0) {
-      const int64_t expected_layer_counts_wide =
-          static_cast<int64_t>(request.explicit_member_chain_count) * request.layer_count;
-      if (expected_layer_counts_wide > std::numeric_limits<int>::max()) {
-        return Refuse({ rp::ErrorCode::kInvalidArgument, "explicit member chain dimensions overflow" }, err_buf,
-                      err_size);
-      }
-      const int expected_layer_counts = static_cast<int>(expected_layer_counts_wide);
-      if (request.explicit_member_layer_face_count != expected_layer_counts) {
-        return Refuse(
-            { rp::ErrorCode::kInvalidPath, "explicit_member_layer_face_count must equal chain_count * layer_count" },
-            err_buf, err_size);
-      }
-      int face_offset = 0;
+      size_t face_offset = 0;
       req.explicit_member_chains.reserve(static_cast<size_t>(request.explicit_member_chain_count));
       for (int chain_index = 0; chain_index < request.explicit_member_chain_count; chain_index++) {
         std::vector<std::vector<int>> chain;
         chain.reserve(static_cast<size_t>(request.layer_count));
         for (int layer_index = 0; layer_index < request.layer_count; layer_index++) {
-          const int count = request.explicit_member_layer_face_counts[chain_index * request.layer_count + layer_index];
-          if (count <= 0 || count > request.explicit_member_face_count - face_offset) {
-            return Refuse({ rp::ErrorCode::kInvalidPath,
-                            "explicit member layer face counts do not add up to explicit_member_face_count" },
-                          err_buf, err_size);
-          }
+          const size_t count = static_cast<size_t>(
+              request.explicit_member_layer_face_counts[chain_index * request.layer_count + layer_index]);
           chain.emplace_back(request.explicit_member_faces + face_offset,
                              request.explicit_member_faces + face_offset + count);
           face_offset += count;
         }
         req.explicit_member_chains.push_back(std::move(chain));
-      }
-      if (face_offset != request.explicit_member_face_count) {
-        return Refuse({ rp::ErrorCode::kInvalidPath,
-                        "explicit member layer face counts do not add up to explicit_member_face_count" },
-                      err_buf, err_size);
       }
     }
     switch (request.spectrum_source) {
@@ -342,12 +399,6 @@ LUMICE_ErrorCode AnalyzeReport(const LUMICE_Scene* scene, const LUMICE_PathFeatu
                                                                 rp::SceneSpectrumSource::kDiagnostic;
   }
 
-  lumice::ConfigManager config;
-  if (const lumice::Error err = lumice::ParseConfigManager(SceneRoot(scene), "LUMICE_AnalyzePathFeatureReport",
-                                                           lumice::GetGlobalLogger(), nullptr, &config)) {
-    WriteError(err_buf, err_size, "invalid_scene: " + err.message);
-    return lumice::capi::ToCApiErrorCode(err.code);
-  }
   rp::PathFeatureReport report;
   if (const rp::Error e = rp::AnalyzePathFeatureReport(config, req, &report); !e.Ok()) {
     return Refuse(e, err_buf, err_size);
