@@ -89,3 +89,20 @@ def test_report_rejects_target_only_options(extra, named):
     assert named in result.stderr
     assert "Usage:" in result.stderr
     assert result.stdout == ""
+
+
+@pytest.mark.parametrize(
+    "args, named",
+    [
+        (["--report", "--path", "3-5"], "--crystal"),
+        (["--report", "--crystal", "1"], "--path"),
+        (["--report", "--crystal", "not-an-id", "--path", "3-5"], "--crystal"),
+        (["--crystal", "1", "--path", "3-5", "--events", "63", "--report"], "--events"),
+    ],
+)
+def test_report_parse_errors_write_usage_only_to_stderr_regardless_of_option_order(args, named):
+    result = run_lumice(["raypath", "-f", str(_RANDOM), *args])
+    assert result.returncode == 1
+    assert named in result.stderr
+    assert "Usage:" in result.stderr
+    assert result.stdout == ""

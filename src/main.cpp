@@ -1916,6 +1916,20 @@ bool ParseRaypathText(std::string_view text, std::vector<int>* faces, std::vecto
 // thread and draws no random numbers), so they are unknown options rather than accepted and
 // ignored. Returns the process exit code, or -1 to proceed to RunRaypath.
 int ParseRaypathOptions(int argc, char** argv, int first, RaypathOptions& opts) {
+  // `--report` changes the error-output contract as well as the accepted option
+  // set. Discover it before parsing so a preceding malformed option cannot
+  // leak usage text to stdout merely because the parser has not reached the
+  // flag yet. Help remains stdout regardless of its position.
+  const bool report_requested =
+      std::any_of(argv + first, argv + argc, [](const char* arg) { return std::string_view(arg) == "--report"; });
+  const auto print_error_usage = [&] {
+    if (report_requested) {
+      PrintRaypathUsage(argv[0], std::cerr);
+    } else {
+      PrintRaypathUsage(argv[0]);
+    }
+  };
+
   for (int i = first; i < argc; i++) {
     std::string_view arg = argv[i];
     if (arg != "--backend") {
@@ -1926,7 +1940,7 @@ int ParseRaypathOptions(int argc, char** argv, int first, RaypathOptions& opts) 
           PrintRaypathUsage(argv[0]);
           return 0;
         case SharedStep::kError:
-          PrintRaypathUsage(argv[0]);
+          print_error_usage();
           return 1;
         case SharedStep::kNotShared:
           break;
@@ -1936,7 +1950,7 @@ int ParseRaypathOptions(int argc, char** argv, int first, RaypathOptions& opts) 
                              arg == "--events" || arg == "--grid" || arg == "--warm" || arg == "-o";
     if (takes_value && i + 1 >= argc) {
       std::cerr << "Error: " << arg << " requires an argument\n\n";
-      PrintRaypathUsage(argv[0]);
+      print_error_usage();
       return 1;
     }
     if (arg == "--report") {
@@ -1947,7 +1961,7 @@ int ParseRaypathOptions(int argc, char** argv, int first, RaypathOptions& opts) 
       if (!id.has_value() || *id > static_cast<unsigned long long>(std::numeric_limits<int>::max())) {
         std::cerr << "Error: --crystal requires a non-negative integer (a crystal entry's id), got '" << value
                   << "'\n\n";
-        PrintRaypathUsage(argv[0]);
+        print_error_usage();
         return 1;
       }
       opts.crystal_id = static_cast<int>(*id);
@@ -1959,7 +1973,7 @@ int ParseRaypathOptions(int argc, char** argv, int first, RaypathOptions& opts) 
       if (!ParseRaypathText(value, &opts.faces, &opts.layer_face_counts, &opts.path_crystals)) {
         std::cerr << "Error: --path must be face numbers joined by '-' (e.g. 3-5 or 3-6-4-8), got '" << value
                   << "'\n\n";
-        PrintRaypathUsage(argv[0]);
+        print_error_usage();
         return 1;
       }
       opts.path_text = std::string(value);
@@ -1970,12 +1984,12 @@ int ParseRaypathOptions(int argc, char** argv, int first, RaypathOptions& opts) 
       const auto az = comma == std::string_view::npos ? std::nullopt : ParseStrictDouble(value.substr(comma + 1));
       if (!alt.has_value() || !az.has_value()) {
         std::cerr << "Error: --target must be '<altitude_deg>,<azimuth_deg>' (two numbers), got '" << value << "'\n\n";
-        PrintRaypathUsage(argv[0]);
+        print_error_usage();
         return 1;
       }
       if (*alt < -90.0 || *alt > 90.0) {
         std::cerr << "Error: --target altitude must be between -90 and 90 degrees, got " << *alt << "\n\n";
-        PrintRaypathUsage(argv[0]);
+        print_error_usage();
         return 1;
       }
       opts.target_alt_deg = alt;
@@ -1986,7 +2000,7 @@ int ParseRaypathOptions(int argc, char** argv, int first, RaypathOptions& opts) 
       // The range itself is the engine's to decide (it owns the refractive-index table).
       if (!nm.has_value() || !(*nm > 0.0)) {
         std::cerr << "Error: --wavelength must be a positive number of nanometres, got '" << value << "'\n\n";
-        PrintRaypathUsage(argv[0]);
+        print_error_usage();
         return 1;
       }
       opts.wavelength_nm = nm;
@@ -1996,7 +2010,7 @@ int ParseRaypathOptions(int argc, char** argv, int first, RaypathOptions& opts) 
       if (!events.has_value() || *events > static_cast<LUMICE_RayCount>(LUMICE_SINGLE_PATH_MAX_SAMPLE_COUNT)) {
         std::cerr << "Error: --events must be a positive integer with an optional K/M suffix, at most "
                   << LUMICE_SINGLE_PATH_MAX_SAMPLE_COUNT / 1000000 << "M, got '" << value << "'\n\n";
-        PrintRaypathUsage(argv[0]);
+        print_error_usage();
         return 1;
       }
       opts.events = static_cast<int>(*events);
@@ -2006,7 +2020,7 @@ int ParseRaypathOptions(int argc, char** argv, int first, RaypathOptions& opts) 
       if (!rows.has_value() || *rows > static_cast<unsigned long long>(kRaypathMaxGridRows)) {
         std::cerr << "Error: --grid must be an integer in [0, " << kRaypathMaxGridRows << "], got '" << value
                   << "'\n\n";
-        PrintRaypathUsage(argv[0]);
+        print_error_usage();
         return 1;
       }
       opts.grid_rows = static_cast<int>(*rows);
@@ -2015,19 +2029,19 @@ int ParseRaypathOptions(int argc, char** argv, int first, RaypathOptions& opts) 
       opts.warm_path = argv[++i];
       if (opts.warm_path.empty()) {
         std::cerr << "Error: --warm requires a file path\n\n";
-        PrintRaypathUsage(argv[0]);
+        print_error_usage();
         return 1;
       }
     } else if (arg == "-o") {
       opts.output_path = argv[++i];
       if (opts.output_path.empty()) {
         std::cerr << "Error: -o requires a file path\n\n";
-        PrintRaypathUsage(argv[0]);
+        print_error_usage();
         return 1;
       }
     } else {
       std::cerr << "Error: unknown option: " << arg << "\n\n";
-      PrintRaypathUsage(argv[0]);
+      print_error_usage();
       return 1;
     }
   }
@@ -2039,7 +2053,7 @@ int ParseRaypathOptions(int argc, char** argv, int first, RaypathOptions& opts) 
                                                                                    nullptr;
   if (missing != nullptr && !opts.shared.config_filename.empty()) {
     std::cerr << "Error: " << missing << " is required\n\n";
-    PrintRaypathUsage(argv[0]);
+    print_error_usage();
     return 1;
   }
   // A single layer written as C<id>(...) names its crystal; it must be the one --crystal names
@@ -2048,25 +2062,25 @@ int ParseRaypathOptions(int argc, char** argv, int first, RaypathOptions& opts) 
   for (const int id : opts.path_crystals) {
     if (opts.layer_face_counts.size() == 1 && opts.crystal_id.has_value() && id != *opts.crystal_id) {
       std::cerr << "Error: --path names crystal C" << id << " but --crystal is " << *opts.crystal_id << "\n\n";
-      PrintRaypathUsage(argv[0]);
+      print_error_usage();
       return 1;
     }
   }
   if (opts.feature_report && opts.target_alt_deg.has_value()) {
     std::cerr << "Error: --report does not accept --target; use one mode or the other\n\n";
-    PrintRaypathUsage(argv[0], std::cerr);
+    print_error_usage();
     return 1;
   }
   if (opts.feature_report && (!opts.warm_path.empty() || opts.grid_given)) {
     std::cerr << "Error: --report does not accept --warm or --grid; those options belong to target-fiber analysis\n\n";
-    PrintRaypathUsage(argv[0], std::cerr);
+    print_error_usage();
     return 1;
   }
   if (opts.feature_report && opts.events != 0 &&
       (opts.events < 64 || opts.events > LUMICE_PATH_FEATURE_REPORT_MAX_SAMPLE_COUNT || opts.events % 2 != 0)) {
     std::cerr << "Error: --events for --report must be an even integer in [64, "
               << LUMICE_PATH_FEATURE_REPORT_MAX_SAMPLE_COUNT << "]\n\n";
-    PrintRaypathUsage(argv[0], std::cerr);
+    print_error_usage();
     return 1;
   }
 
@@ -2075,7 +2089,7 @@ int ParseRaypathOptions(int argc, char** argv, int first, RaypathOptions& opts) 
 #endif
 
   if (!FinishSharedOptions(opts.shared)) {
-    PrintRaypathUsage(argv[0]);
+    print_error_usage();
     return 1;
   }
   return -1;
