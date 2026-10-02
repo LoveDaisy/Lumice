@@ -76,7 +76,6 @@ constexpr int kMaxSceneMeasureSampleCount = 1000000;
 constexpr int kMaxSourceNodeCount = 256;
 constexpr uint64_t kMaxSceneMeasureRows = 16777216;
 constexpr size_t kMaxStoredSceneMeasureRows = 64;
-constexpr size_t kMaxMemberChains = 4096;
 
 struct LayerInput {
   struct Entry {
@@ -495,7 +494,7 @@ Error BuildMemberChains(const SceneMeasureRequest& request, const std::vector<La
     if (request.explicit_member_chains.empty()) {
       return { ErrorCode::kInvalidArgument, "explicit member selection requires at least one member chain" };
     }
-    if (request.explicit_member_chains.size() > kMaxMemberChains) {
+    if (request.explicit_member_chains.size() > kMaxSceneMeasureMemberChainCount) {
       return { ErrorCode::kInvalidArgument, "explicit member selection exceeds the 4096-chain bound" };
     }
     for (size_t chain_index = 0; chain_index < request.explicit_member_chains.size(); chain_index++) {
@@ -542,7 +541,8 @@ Error BuildMemberChains(const SceneMeasureRequest& request, const std::vector<La
   out->push_back({});
   for (const auto& members : per_layer) {
     std::vector<std::vector<std::vector<int>>> next;
-    if (members.size() > kMaxMemberChains || out->size() > kMaxMemberChains / members.size()) {
+    if (members.size() > kMaxSceneMeasureMemberChainCount ||
+        out->size() > kMaxSceneMeasureMemberChainCount / members.size()) {
       return { ErrorCode::kInvalidArgument, "physical member-chain expansion exceeds the 4096-chain bound" };
     }
     for (const auto& prefix : *out) {

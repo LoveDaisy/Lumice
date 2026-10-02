@@ -446,6 +446,37 @@ TEST(PathFeatureReportCApi, AcceptsExplicitWavelengthsAndRejectsInvalidCounts) {
   EXPECT_EQ(outcome.code, LUMICE_ERR_NULL_ARG);
 }
 
+TEST(PathFeatureReportCApi, RejectsExplicitChainBudgetBeforeDecodingItsArrays) {
+  const ScenePtr scene = MakeScene();
+  Request request;
+  // Invalid per-chain counts make traversal distinguishable from the outer budget rejection.
+  // Supply real storage for the whole declared extent so the pre-fix failure is safe to run.
+  std::vector<int> counts(LUMICE_PATH_FEATURE_REPORT_MAX_MEMBER_CHAIN_COUNT + 1, 0);
+  const int faces[2] = { 3, 5 };
+  // The encoded tail is bounded regardless of the selected interpretation.
+  request.c.member_selection = LUMICE_PATH_FEATURE_MEMBERS_CONCRETE;
+  request.c.explicit_member_faces = faces;
+  request.c.explicit_member_face_count = 2;
+  request.c.explicit_member_layer_face_counts = counts.data();
+  request.c.explicit_member_layer_face_count = static_cast<int>(counts.size());
+  request.c.explicit_member_chain_count = static_cast<int>(counts.size());
+  const Outcome outcome = Analyse(scene.get(), &request.c);
+  EXPECT_EQ(outcome.code, LUMICE_ERR_INVALID_VALUE);
+  EXPECT_EQ(outcome.report, nullptr);
+  EXPECT_NE(outcome.error.find(std::to_string(LUMICE_PATH_FEATURE_REPORT_MAX_MEMBER_CHAIN_COUNT)), std::string::npos)
+      << outcome.error;
+
+  counts.resize(LUMICE_PATH_FEATURE_REPORT_MAX_MEMBER_CHAIN_COUNT);
+  request.c.member_selection = LUMICE_PATH_FEATURE_MEMBERS_EXPLICIT_CHAINS;
+  request.c.explicit_member_layer_face_count = static_cast<int>(counts.size());
+  request.c.explicit_member_chain_count = static_cast<int>(counts.size());
+  const Outcome boundary = Analyse(scene.get(), &request.c);
+  EXPECT_EQ(boundary.code, LUMICE_ERR_INVALID_VALUE);
+  EXPECT_EQ(boundary.report, nullptr);
+  EXPECT_EQ(boundary.error.find("exceeds"), std::string::npos) << boundary.error;
+  EXPECT_NE(boundary.error.find("face counts"), std::string::npos) << boundary.error;
+}
+
 TEST(PathFeatureReportCApi, RejectsCombinedMemberWavelengthAndSampleWorkAboveThePublicBudget) {
   const ScenePtr scene = MakeScene();
   Request request;

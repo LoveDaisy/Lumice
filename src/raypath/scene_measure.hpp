@@ -5,6 +5,7 @@
 // input contract consumed by general raypath discovery: product distributions and concrete L2
 // members are retained as data, rather than collapsed into a named pose family or nominal shape.
 
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <string>
@@ -15,6 +16,8 @@
 #include "raypath/single_path_analysis.hpp"
 
 namespace lumice::raypath {
+
+constexpr std::size_t kMaxSceneMeasureMemberChainCount = 4096;
 
 enum class SceneSpectrumSource {
   kScene,

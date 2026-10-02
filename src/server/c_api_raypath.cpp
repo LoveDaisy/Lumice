@@ -32,6 +32,8 @@ static_assert(LUMICE_PATH_FEATURE_REPORT_MAX_SAMPLE_COUNT == lumice::raypath::kM
               "lumice_raypath.h and the feature-report module must agree on the sample bound");
 static_assert(LUMICE_PATH_FEATURE_REPORT_MAX_WAVELENGTH_COUNT == lumice::raypath::kMaxFeatureReportWavelengthCount,
               "lumice_raypath.h and the feature-report module must agree on the wavelength bound");
+static_assert(LUMICE_PATH_FEATURE_REPORT_MAX_MEMBER_CHAIN_COUNT == lumice::raypath::kMaxSceneMeasureMemberChainCount,
+              "lumice_raypath.h and the scene-measure module must agree on the member-chain bound");
 static_assert(LUMICE_PATH_FEATURE_REPORT_MAX_SAMPLE_EVALUATIONS == lumice::raypath::kMaxFeatureReportSampleEvaluations,
               "lumice_raypath.h and the feature-report module must agree on the total-work bound");
 
@@ -184,6 +186,12 @@ LUMICE_ErrorCode AnalyzeReport(const LUMICE_Scene* scene, const LUMICE_PathFeatu
       (has_v3 && (request.physical_member_mask_count < 0 || request.explicit_member_face_count < 0 ||
                   request.explicit_member_layer_face_count < 0 || request.explicit_member_chain_count < 0))) {
     return Refuse({ rp::ErrorCode::kInvalidArgument, "negative face, layer or wavelength count" }, err_buf, err_size);
+  }
+  if (has_v3 && static_cast<size_t>(request.explicit_member_chain_count) > rp::kMaxSceneMeasureMemberChainCount) {
+    return Refuse(
+        { rp::ErrorCode::kInvalidArgument, "explicit member selection exceeds the " +
+                                               std::to_string(rp::kMaxSceneMeasureMemberChainCount) + "-chain bound" },
+        err_buf, err_size);
   }
   if (request.layer_count <= 0 || request.face_count <= 0 || request.faces == nullptr ||
       request.layer_face_counts == nullptr) {

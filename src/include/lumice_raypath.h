@@ -101,6 +101,8 @@ LUMICE_API void LUMICE_SinglePathResultDestroy(LUMICE_SinglePathResult* result);
 
 #define LUMICE_PATH_FEATURE_REPORT_MAX_SAMPLE_COUNT 1000000
 #define LUMICE_PATH_FEATURE_REPORT_MAX_WAVELENGTH_COUNT 32
+// The largest number of explicit physical-L2 member chains accepted by one report request.
+#define LUMICE_PATH_FEATURE_REPORT_MAX_MEMBER_CHAIN_COUNT 4096
 // The report evaluates every admitted physical-L2 member at every wavelength twice: at the
 // requested resolution and at half that resolution. This bounds their combined synchronous work.
 #define LUMICE_PATH_FEATURE_REPORT_MAX_SAMPLE_EVALUATIONS 16777216
