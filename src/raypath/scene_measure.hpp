@@ -26,7 +26,8 @@ enum class SceneMemberSelection {
   kConcrete,
   // Expand each sequence only under that layer's physical P/B/D gates.
   kAllPhysical,
-  // As above, then retain combined member-chain indices selected by physical_member_mask.
+  // As above, then retain every layer-local physical L2 member whose stable entry-face bit is
+  // set in physical_member_mask. The mask never addresses an implementation-order chain index.
   kPhysicalMask,
 };
 
@@ -65,6 +66,9 @@ struct MeasureFactorDescriptor {
   DistributionType distribution = DistributionType::kNoRandom;
   int latent_id = -1;
   int support_dimension = 0;
+  double center = 0.0;
+  double spread = 0.0;
+  std::string parameterization;
   std::string measure;
   std::string normalization;
 };
@@ -115,6 +119,8 @@ struct SceneMeasureRow {
   double spectrum_weight = 0.0;
   double sun_mass = 0.0;
   double joint_sample_mass = 0.0;
+  double joint_proposal_density = 0.0;
+  double joint_importance_weight = 0.0;
   double global_weight = 0.0;
   double contribution = 0.0;
   SceneMeasureStatus status = SceneMeasureStatus::kNotSupported;
@@ -126,6 +132,8 @@ struct SceneMeasureResult {
   uint32_t seed = 0;
   int requested_sample_count = 0;
   int evaluated_row_count = 0;
+  int stored_row_count = 0;
+  bool rows_truncated = false;
   std::string units;
   std::string normalization;
   std::vector<MeasureFactorDescriptor> factors;

@@ -44,6 +44,7 @@ constexpr double kReferenceBlueNm = 430.0197374077313;
 constexpr int kMaxSceneMeasureSampleCount = 1000000;
 constexpr int kMaxSourceNodeCount = 256;
 constexpr uint64_t kMaxSceneMeasureRows = 16777216;
+constexpr size_t kMaxStoredSceneMeasureRows = 64;
 constexpr size_t kMaxMemberChains = 4096;
 
 struct LayerInput {
@@ -166,8 +167,9 @@ void AddFactorDescriptors(int layer_index, const CrystalConfig& crystal, LayerIn
     }
     layer->shape_latent[slot] = latent;
     factors->push_back({ layer_index, "shape." + ShapeName(kind, slot), distribution->type, latent,
-                         distribution->type == DistributionType::kNoRandom ? 0 : 1,
-                         DistributionMeasure(*distribution, false), "unit probability mass" });
+                         distribution->type == DistributionType::kNoRandom ? 0 : 1, distribution->center,
+                         distribution->spread, "product shape scalar", DistributionMeasure(*distribution, false),
+                         "unit probability mass" });
   }
 
   const Distribution axis[3] = { crystal.axis_.latitude_dist, crystal.axis_.azimuth_dist, crystal.axis_.roll_dist };
@@ -175,7 +177,8 @@ void AddFactorDescriptors(int layer_index, const CrystalConfig& crystal, LayerIn
   for (int i = 0; i < 3; i++) {
     const int latent = axis[i].type == DistributionType::kNoRandom ? -1 : (*next_latent)++;
     factors->push_back({ layer_index, kNames[i], axis[i].type, latent,
-                         axis[i].type == DistributionType::kNoRandom ? 0 : 1, DistributionMeasure(axis[i], i == 0),
+                         axis[i].type == DistributionType::kNoRandom ? 0 : 1, axis[i].center, axis[i].spread,
+                         i == 0 ? "spherical latitude" : "angle", DistributionMeasure(axis[i], i == 0),
                          "unit probability mass" });
   }
 }
@@ -248,6 +251,21 @@ Error BuildMemberChains(const SceneMeasureRequest& request, const std::vector<La
       per_layer.push_back({ request.path_layers[i] });
     } else {
       per_layer.push_back(ExpandPhysicalMembers(layers[i].setting->crystal_, request.path_layers[i]));
+      if (request.member_selection == SceneMemberSelection::kPhysicalMask) {
+        auto& members = per_layer.back();
+        members.erase(std::remove_if(members.begin(), members.end(),
+                                     [&](const std::vector<int>& member) {
+                                       if (member.empty() || member.front() < 0 || member.front() >= 64) {
+                                         return true;
+                                       }
+                                       return (request.physical_member_mask & (uint64_t{ 1 } << member.front())) == 0;
+                                     }),
+                      members.end());
+        if (members.empty()) {
+          return { ErrorCode::kInvalidArgument,
+                   "physical_member_mask selects no physical L2 entry-face member in layer " + std::to_string(i) };
+        }
+      }
     }
   }
   out->push_back({});
@@ -264,18 +282,6 @@ Error BuildMemberChains(const SceneMeasureRequest& request, const std::vector<La
       }
     }
     *out = std::move(next);
-  }
-  if (request.member_selection == SceneMemberSelection::kPhysicalMask) {
-    if (out->size() > 64) {
-      return { ErrorCode::kInvalidArgument, "physical_member_mask can address at most 64 combined member chains" };
-    }
-    std::vector<std::vector<std::vector<int>>> selected;
-    for (size_t i = 0; i < out->size(); i++) {
-      if ((request.physical_member_mask & (uint64_t{ 1 } << i)) != 0) {
-        selected.push_back((*out)[i]);
-      }
-    }
-    *out = std::move(selected);
   }
   if (out->empty()) {
     return { ErrorCode::kInvalidArgument, "member selection contains no physical member chain" };
@@ -382,13 +388,15 @@ Error BuildSunNodes(const SunParam& sun, const SceneMeasureRequest& request, std
     return { ErrorCode::kInvalidArgument, "sun_node_count must be in [1, 256] for a finite solar disc" };
   }
   RandomNumberGenerator rng(MixSeed(request.seed, 0x53554eu));
+  const double radius_rad = static_cast<double>(sun.diameter_) * M_PI / 360.0;
+  const double solid_angle = 2.0 * M_PI * (1.0 - std::cos(radius_rad));
   out->resize(static_cast<size_t>(request.sun_node_count));
   for (int i = 0; i < request.sun_node_count; i++) {
     float direction[3]{};
     SampleSphCapPointWithRng(rng, sun.azimuth_ + 180.0f, -sun.altitude_, sun.diameter_ / 2.0f, direction);
     SunMeasureNode& node = (*out)[static_cast<size_t>(i)];
     node.node_id = i;
-    node.mass = 1.0 / request.sun_node_count;
+    node.mass = solid_angle / request.sun_node_count;
     std::copy(direction, direction + 3, node.incident_direction);
   }
   return {};
@@ -513,9 +521,10 @@ Error BuildSceneMeasure(const ConfigManager& config, const SceneMeasureRequest& 
   SceneMeasureResult result;
   result.seed = request.seed;
   result.requested_sample_count = request.sample_count;
-  result.units = "LI a=1 finite-crystal area times scene spectral weight";
+  result.units = "LI a=1 finite-crystal area times scene spectral weight times solar solid angle (m^2 sr)";
   result.normalization =
-      "sun, shape and pose are unit probability measures; spectrum and physical members retain raw weights";
+      "shape and pose are unit probability measures; finite solar discs retain solid angle, while spectrum and "
+      "physical members retain raw weights";
 
   std::vector<LayerInput> layers;
   if (const Error error = ResolveLayers(config, request, &layers, &result.factors); !error.Ok()) {
@@ -524,11 +533,12 @@ Error BuildSceneMeasure(const ConfigManager& config, const SceneMeasureRequest& 
   result.factors.insert(
       result.factors.begin(),
       { -1, "sun_disc", DistributionType::kNoRandom, -1, config.scene_.light_source_.param_.diameter_ == 0.0f ? 0 : 2,
-        config.scene_.light_source_.param_.diameter_ == 0.0f ? "atom" : "normalized spherical cap",
+        config.scene_.light_source_.param_.diameter_, 0.0, "spherical cap diameter (degrees)",
+        config.scene_.light_source_.param_.diameter_ == 0.0f ? "atom" : "spherical cap with solid-angle mass",
         "unit probability mass" });
   result.factors.insert(
       result.factors.begin(),
-      { -1, "spectrum", DistributionType::kNoRandom, -1, 1,
+      { -1, "spectrum", DistributionType::kNoRandom, -1, 1, 0.0, 0.0, "wavelength node",
         request.spectrum_source == SceneSpectrumSource::kScene ? "scene spectrum" : "explicit diagnostic spectrum",
         "raw spectral weight" });
   if (const Error error = BuildSpectrumNodes(config.scene_.light_source_, request, &result.spectrum_nodes);
@@ -563,6 +573,8 @@ Error BuildSceneMeasure(const ConfigManager& config, const SceneMeasureRequest& 
           row.spectrum_weight = spectrum.weight;
           row.sun_mass = sun.mass;
           row.joint_sample_mass = 1.0 / request.sample_count;
+          row.joint_proposal_density = row.joint_sample_mass;
+          row.joint_importance_weight = 1.0;
           row.global_weight = spectrum.weight * sun.mass;
           row.status = spectrum.weight == 0.0 ? SceneMeasureStatus::kZeroWeight : SceneMeasureStatus::kConfirmed;
           any_nonzero_source = any_nonzero_source || spectrum.weight > 0.0;
@@ -600,13 +612,18 @@ Error BuildSceneMeasure(const ConfigManager& config, const SceneMeasureRequest& 
             result.coarse_contribution += 2.0 * row.contribution;
           }
           any_confirmed = any_confirmed || row.status == SceneMeasureStatus::kConfirmed;
-          result.rows.push_back(std::move(row));
+          result.evaluated_row_count++;
+          if (result.rows.size() < kMaxStoredSceneMeasureRows) {
+            result.rows.push_back(std::move(row));
+          } else {
+            result.rows_truncated = true;
+          }
         }
       }
     }
   }
 
-  result.evaluated_row_count = static_cast<int>(result.rows.size());
+  result.stored_row_count = static_cast<int>(result.rows.size());
   result.absolute_error_estimate = std::fabs(result.total_contribution - result.coarse_contribution);
   const double scale = std::max(std::fabs(result.total_contribution), std::fabs(result.coarse_contribution));
   if (!any_nonzero_source) {

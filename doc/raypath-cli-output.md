@@ -343,8 +343,12 @@ normalization, seed, sample counts, coarse/fine totals and absolute difference. 
 the crystal-mixture shares, shape/pose measures, solar-disc solid angle and spectral quadrature.
 Each sampled row carries the concrete member chain, wavelength and sun node, per-layer sampled
 shape and pose, incident/outgoing directions, finite entry area, transmittance, field status,
-interfaces and boundary margins. Rows are a bounded diagnostic sample; `sampled_rows_truncated`
-states when the integral contains more rows than the JSON shows.
+interfaces and boundary margins. Factor records include their parameterization, center and spread;
+rows state the deterministic proposal density and importance weight. `evaluated_row_count` is the
+streamed integration count, while `stored_row_count` is the bounded diagnostic sample retained for
+inspection. `sampled_rows_truncated` states when the integral contains more rows than the JSON
+shows. A physical-member mask addresses stable entry-face IDs in each layer, never an internal
+member-chain enumeration position.
 
 The configured spectrum is the default. An explicit `--wavelength` selects a diagnostic delta
 spectrum. The top-level `wavelengths` and legacy positioned-feature brightness remain the compact

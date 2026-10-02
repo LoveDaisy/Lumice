@@ -130,7 +130,8 @@ LUMICE_ErrorCode AnalyzeReport(const LUMICE_Scene* scene, const LUMICE_PathFeatu
 
   rp::PathFeatureReportRequest req;
   req.crystal_id = static_cast<lumice::IdType>(request.crystal_id);
-  if (request.crystal_id < 0 || request.crystal_id != static_cast<int>(req.crystal_id)) {
+  const bool has_layer_crystal_ids = has_v2 && request.layer_crystal_id_count > 0;
+  if (!has_layer_crystal_ids && (request.crystal_id < 0 || request.crystal_id != static_cast<int>(req.crystal_id))) {
     return Refuse(
         { rp::ErrorCode::kUnknownCrystalId, "no crystal entry with id " + std::to_string(request.crystal_id) }, err_buf,
         err_size);
@@ -153,7 +154,7 @@ LUMICE_ErrorCode AnalyzeReport(const LUMICE_Scene* scene, const LUMICE_PathFeatu
   int consumed = 0;
   for (int i = 0; i < request.layer_count; i++) {
     const int count = request.layer_face_counts[i];
-    if (count < 0 || count > request.face_count - consumed) {
+    if (count <= 0 || count > request.face_count - consumed) {
       return Refuse({ rp::ErrorCode::kInvalidPath, "layer face counts do not add up to face_count" }, err_buf,
                     err_size);
     }

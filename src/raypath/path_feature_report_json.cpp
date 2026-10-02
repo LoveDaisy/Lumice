@@ -155,6 +155,9 @@ nlohmann::ordered_json SceneMeasureJson(const SceneMeasureResult& measure) {
                         { "distribution", DistributionName(factor.distribution) },
                         { "latent_id", factor.latent_id },
                         { "support_dimension", factor.support_dimension },
+                        { "center", Num(factor.center) },
+                        { "spread", Num(factor.spread) },
+                        { "parameterization", factor.parameterization },
                         { "measure", factor.measure },
                         { "normalization", factor.normalization } });
   }
@@ -230,6 +233,8 @@ nlohmann::ordered_json SceneMeasureJson(const SceneMeasureResult& measure) {
       { "spectrum_weight", Num(row.spectrum_weight) },
       { "sun_mass", Num(row.sun_mass) },
       { "joint_sample_mass", Num(row.joint_sample_mass) },
+      { "joint_proposal_density", Num(row.joint_proposal_density) },
+      { "joint_importance_weight", Num(row.joint_importance_weight) },
       { "global_weight", Num(row.global_weight) },
       { "contribution", Num(row.contribution) },
       { "status", SceneMeasureStatusName(row.status) },
@@ -245,6 +250,7 @@ nlohmann::ordered_json SceneMeasureJson(const SceneMeasureResult& measure) {
     { "seed", measure.seed },
     { "requested_sample_count", measure.requested_sample_count },
     { "evaluated_row_count", measure.evaluated_row_count },
+    { "stored_row_count", measure.stored_row_count },
     { "units", measure.units },
     { "normalization", measure.normalization },
     { "factors", factors },
@@ -256,7 +262,7 @@ nlohmann::ordered_json SceneMeasureJson(const SceneMeasureResult& measure) {
     { "absolute_error_estimate", Num(measure.absolute_error_estimate) },
     { "sampled_measure_mass", Num(measure.sampled_measure_mass) },
     { "sampled_rows", rows },
-    { "sampled_rows_truncated", measure.rows.size() > kMaxJsonRows },
+    { "sampled_rows_truncated", measure.rows_truncated || measure.rows.size() > kMaxJsonRows },
   };
   if (!measure.reason.empty()) {
     out["reason"] = measure.reason;

@@ -150,6 +150,12 @@ TEST(PathFeatureReportCApi, StructSizeAndLayerShapeAreValidated) {
   outcome = Analyse(scene.get(), &no_layers.c);
   EXPECT_EQ(outcome.code, LUMICE_ERR_INVALID_VALUE);
   EXPECT_NE(outcome.error.find("at least one non-empty layer"), std::string::npos);
+
+  Request empty_layer;
+  empty_layer.layers[0] = 0;
+  outcome = Analyse(scene.get(), &empty_layer.c);
+  EXPECT_EQ(outcome.code, LUMICE_ERR_INVALID_VALUE);
+  EXPECT_NE(outcome.error.find("layer face counts"), std::string::npos);
 }
 
 TEST(PathFeatureReportCApi, SerializesOnceAndKeepsTheResultImmutable) {
@@ -192,12 +198,13 @@ TEST(PathFeatureReportCApi, PhysicalMemberMaskAndMultiLayerIdsReachTheSceneMeasu
     const ScenePtr scene = MakeScene();
     Request request;
     request.c.member_selection = LUMICE_PATH_FEATURE_MEMBERS_PHYSICAL_MASK;
-    request.c.physical_member_mask = uint64_t{ 1 } << 1;
+    request.c.physical_member_mask = uint64_t{ 1 } << 3;
     const Outcome outcome = Analyse(scene.get(), &request.c);
     ASSERT_EQ(outcome.code, LUMICE_OK) << outcome.error;
     const nlohmann::json doc = nlohmann::json::parse(Json(outcome.report.get()));
-    EXPECT_EQ(doc["scene_measure"]["member_chains"].size(), 1u);
-    EXPECT_EQ(doc["physical_l2_members"].size(), 1u);
+    ASSERT_FALSE(doc["scene_measure"]["member_chains"].empty());
+    EXPECT_TRUE(std::all_of(doc["scene_measure"]["member_chains"].begin(), doc["scene_measure"]["member_chains"].end(),
+                            [](const auto& chain) { return chain[0][0] == 3; }));
   }
 
   const ScenePtr scene = MakeScene(kMultiSceneJson);
@@ -211,6 +218,7 @@ TEST(PathFeatureReportCApi, PhysicalMemberMaskAndMultiLayerIdsReachTheSceneMeasu
   request.c.layer_count = 2;
   request.c.layer_crystal_ids = layer_crystals;
   request.c.layer_crystal_id_count = 2;
+  request.c.crystal_id = -1;  // v2 layer ids are authoritative; the v1 fallback is not consulted.
   request.c.member_selection = LUMICE_PATH_FEATURE_MEMBERS_CONCRETE;
   request.c.scene_measure_sample_count = 64;
   const Outcome outcome = Analyse(scene.get(), &request.c);

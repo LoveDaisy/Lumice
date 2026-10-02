@@ -142,7 +142,9 @@ typedef struct LUMICE_PathFeatureReportRequest {
   // legacy one-layer crystal_id field. Multi-layer requests require a full array.
   const int* layer_crystal_ids;
   int layer_crystal_id_count;
-  int member_selection;  // LUMICE_PathFeatureMemberSelection; zero = all physical members.
+  // LUMICE_PathFeatureMemberSelection; zero = all physical members. For PHYSICAL_MASK, bit N
+  // selects physical L2 members with entry face N in every layer; it is never a chain-order index.
+  int member_selection;
   uint64_t physical_member_mask;
   // wavelength_count > 0 always selects the explicit diagnostic nodes above. With no explicit
   // nodes, this selects the actual scene spectrum by default; LEGACY_REFERENCE is the named
