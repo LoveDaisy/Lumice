@@ -116,8 +116,14 @@ def _plane_face_polygon(planes: dict[int, tuple[Vector, float]], face: int) -> t
                                                           dot(u, add(p, scale(-1.0, centre))))))
 
 
-def _clip_halfplane(polygon: list[tuple[float, float]], a: float, b: float,
-                    limit: float) -> list[tuple[float, float]]:
+def _clip_halfplane(
+    polygon: list[tuple[float, float]],
+    a: float,
+    b: float,
+    limit: float,
+    constraint: tuple[int, int] | None = None,
+    active_constraints: set[tuple[int, int]] | None = None,
+) -> list[tuple[float, float]]:
     if not polygon:
         return []
     out: list[tuple[float, float]] = []
@@ -126,6 +132,8 @@ def _clip_halfplane(polygon: list[tuple[float, float]], a: float, b: float,
     for current in polygon:
         current_value = a * current[0] + b * current[1] - limit
         if (previous_value <= 0.0) != (current_value <= 0.0):
+            if constraint is not None and active_constraints is not None:
+                active_constraints.add(constraint)
             fraction = previous_value / (previous_value - current_value)
             out.append((previous[0] + fraction * (current[0] - previous[0]),
                         previous[1] + fraction * (current[1] - previous[1])))
@@ -135,24 +143,30 @@ def _clip_halfplane(polygon: list[tuple[float, float]], a: float, b: float,
     return out
 
 
-def entry_measure_prism(
+@dataclass(frozen=True)
+class EntryMeasureTrace:
+    value: float
+    active_constraints: tuple[tuple[int, int], ...]
+
+
+def trace_entry_measure_prism(
     face_distance: tuple[float, ...],
     height: float,
     faces: tuple[int, ...],
     refractive_index: float,
     incident: Vector,
     pose: Matrix,
-) -> float:
+) -> EntryMeasureTrace:
     """Finite entry area by direct affine ray/face intersections, independent of unfolding."""
     planes = prism_planes(face_distance, height)
     entry_polygon = _plane_face_polygon(planes, faces[0])
     if not entry_polygon:
-        return 0.0
+        return EntryMeasureTrace(0.0, ())
     entry_normal, entry_offset = planes[faces[0]]
     incident_body = tuple(sum(pose[3 * j + i] * incident[j] for j in range(3)) for i in range(3))
     cos_i = -dot(entry_normal, incident_body)
     if cos_i <= 0.0:
-        return 0.0
+        return EntryMeasureTrace(0.0, ())
     discriminant = 1.0 - (1.0 - cos_i * cos_i) / (refractive_index * refractive_index)
     cos_t = math.sqrt(discriminant)
     direction = add(scale(1.0 / refractive_index, incident_body),
@@ -168,25 +182,43 @@ def entry_measure_prism(
     affine_origin = origin
     affine_u = u
     affine_v = v
+    active_constraints: set[tuple[int, int]] = set()
     for path_index, face in enumerate(faces[1:], start=1):
         normal, offset = planes[face]
         denominator = dot(normal, direction)
         if denominator <= 0.0:
-            return 0.0
+            return EntryMeasureTrace(0.0, ())
         affine_origin = add(affine_origin, scale((offset - dot(normal, affine_origin)) / denominator, direction))
         affine_u = add(affine_u, scale(-dot(normal, affine_u) / denominator, direction))
         affine_v = add(affine_v, scale(-dot(normal, affine_v) / denominator, direction))
         for bound_face, (bound_normal, bound_offset) in planes.items():
             if bound_face == face:
                 continue  # the affine hit is on this plane by construction
-            polygon = _clip_halfplane(polygon, dot(bound_normal, affine_u), dot(bound_normal, affine_v),
-                                      bound_offset - dot(bound_normal, affine_origin))
+            polygon = _clip_halfplane(
+                polygon,
+                dot(bound_normal, affine_u),
+                dot(bound_normal, affine_v),
+                bound_offset - dot(bound_normal, affine_origin),
+                (path_index, bound_face),
+                active_constraints,
+            )
         if path_index + 1 < len(faces):
             direction = add(direction, scale(-2.0 * dot(normal, direction), normal))
     area = abs(sum(polygon[i][0] * polygon[(i + 1) % len(polygon)][1] -
                    polygon[(i + 1) % len(polygon)][0] * polygon[i][1]
                    for i in range(len(polygon)))) / 2.0 if len(polygon) >= 3 else 0.0
-    return area * cos_i
+    return EntryMeasureTrace(area * cos_i, tuple(sorted(active_constraints)))
+
+
+def entry_measure_prism(
+    face_distance: tuple[float, ...],
+    height: float,
+    faces: tuple[int, ...],
+    refractive_index: float,
+    incident: Vector,
+    pose: Matrix,
+) -> float:
+    return trace_entry_measure_prism(face_distance, height, faces, refractive_index, incident, pose).value
 
 
 def _transmission(n1: float, cos_i: float, n2: float, cos_t: float) -> float:

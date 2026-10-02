@@ -209,7 +209,7 @@ DiagnosticFieldResult DiagnosticField::Evaluate(const DiagnosticRowInput& input)
     margin.interface_index = static_cast<int>(i + 1);
     margin.value = base.tir_margins[i];
   }
-  if (base.path_status == DiagnosticPathStatus::kOk) {
+  if (base.path_status == DiagnosticPathStatus::kOk || base.entry_status == DiagnosticEntryStatus::kOk) {
     FillDerivatives(input, base, &out);
   }
   return out;
@@ -325,7 +325,8 @@ void DiagnosticField::FillDerivatives(const DiagnosticRowInput& input, const Val
     std::fill(out->direction_pose_hessian, out->direction_pose_hessian + 27, 0.0);
   }
 
-  auto fill_pose_scalar = [&](double centre, auto getter, int* available, double gradient[3], auto compatible) {
+  auto fill_pose_scalar = [&](double centre, auto getter, int* available, double gradient[3], auto compatible,
+                              double absolute_error) {
     bool ok = std::isfinite(centre);
     double derivatives[kLevelCount][3]{};
     for (int level = 0; level < kLevelCount; level++) {
@@ -338,8 +339,8 @@ void DiagnosticField::FillDerivatives(const DiagnosticRowInput& input, const Val
       }
     }
     for (int axis = 0; axis < 3; axis++) {
-      const auto estimate = diagnostic_field_detail::RichardsonEstimate(
-          derivatives[0][axis], derivatives[1][axis], kPoseFirstAbsoluteError, kPoseFirstRelativeError);
+      const auto estimate = diagnostic_field_detail::RichardsonEstimate(derivatives[0][axis], derivatives[1][axis],
+                                                                        absolute_error, kPoseFirstRelativeError);
       ok = ok && estimate.converged;
       gradient[axis] = estimate.value;
     }
@@ -352,12 +353,14 @@ void DiagnosticField::FillDerivatives(const DiagnosticRowInput& input, const Val
   for (size_t i = 0; i < out->domain_margins.size(); i++) {
     fill_pose_scalar(
         base.domain_margins[i], [i](const Values& v) { return v.domain_margins[i]; },
-        &out->domain_margins[i].pose_derivative_available, out->domain_margins[i].pose_gradient, path_compatible);
+        &out->domain_margins[i].pose_derivative_available, out->domain_margins[i].pose_gradient, path_compatible,
+        kPoseFirstAbsoluteError);
   }
   for (size_t i = 0; i < out->tir_margins.size(); i++) {
     fill_pose_scalar(
         base.tir_margins[i], [i](const Values& v) { return v.tir_margins[i]; },
-        &out->tir_margins[i].pose_derivative_available, out->tir_margins[i].pose_gradient, path_compatible);
+        &out->tir_margins[i].pose_derivative_available, out->tir_margins[i].pose_gradient, path_compatible,
+        kPoseFirstAbsoluteError);
   }
   for (size_t i = 0; i < out->interfaces.size(); i++) {
     auto coefficient_compatible = [i, &base, &path_compatible](const Values& lo, const Values& hi) {
@@ -371,7 +374,8 @@ void DiagnosticField::FillDerivatives(const DiagnosticRowInput& input, const Val
     };
     fill_pose_scalar(
         base.coefficients[i], [i](const Values& v) { return v.coefficients[i]; },
-        &out->interfaces[i].pose_derivative_available, out->interfaces[i].pose_gradient, coefficient_compatible);
+        &out->interfaces[i].pose_derivative_available, out->interfaces[i].pose_gradient, coefficient_compatible,
+        kPoseFirstAbsoluteError);
   }
   auto entry_compatible = [&](const Values& lo, const Values& hi) {
     return base.entry_status == DiagnosticEntryStatus::kOk && lo.entry_status == DiagnosticEntryStatus::kOk &&
@@ -379,9 +383,14 @@ void DiagnosticField::FillDerivatives(const DiagnosticRowInput& input, const Val
            lo.entry_topology_signature == base.entry_topology_signature &&
            hi.entry_topology_signature == base.entry_topology_signature;
   };
+  // The entry value and its derivatives carry length^2.  Scale the absolute part of the error gate
+  // with a geometry-only area reference instead of the centre value, which may approach zero at a
+  // legitimate corridor boundary.  Corridor::Eps() is kEntryMeasureEpsRel times the shortest
+  // crystal edge squared, so this reference follows any common change of length unit exactly.
+  const double entry_area_scale = corridor_.Eps() / kEntryMeasureEpsRel;
   fill_pose_scalar(
       base.entry_measure, [](const Values& v) { return v.entry_measure; }, &out->entry_pose_gradient_available,
-      out->entry_pose_gradient, entry_compatible);
+      out->entry_pose_gradient, entry_compatible, kPoseFirstAbsoluteError * entry_area_scale);
 
   struct IndexSamples {
     double step = 0.0;
@@ -426,7 +435,8 @@ void DiagnosticField::FillDerivatives(const DiagnosticRowInput& input, const Val
   } else {
     std::fill(out->direction_index_derivative, out->direction_index_derivative + 3, 0.0);
   }
-  auto fill_index_scalar = [&](auto getter, int* available, double* derivative, auto compatible) {
+  auto fill_index_scalar = [&](auto getter, int* available, double* derivative, auto compatible,
+                               double absolute_error) {
     bool ok = true;
     double derivatives[kLevelCount]{};
     for (int level = 0; level < kLevelCount; level++) {
@@ -436,8 +446,8 @@ void DiagnosticField::FillDerivatives(const DiagnosticRowInput& input, const Val
       ok = ok && compatible(samples.minus, samples.plus) && std::isfinite(low) && std::isfinite(high);
       derivatives[level] = (high - low) / (2.0 * samples.step);
     }
-    const auto estimate = diagnostic_field_detail::RichardsonEstimate(derivatives[0], derivatives[1],
-                                                                      kIndexAbsoluteError, kIndexRelativeError);
+    const auto estimate = diagnostic_field_detail::RichardsonEstimate(derivatives[0], derivatives[1], absolute_error,
+                                                                      kIndexRelativeError);
     ok = ok && estimate.converged;
     if (ok) {
       *derivative = estimate.value;
@@ -449,12 +459,12 @@ void DiagnosticField::FillDerivatives(const DiagnosticRowInput& input, const Val
   for (size_t i = 0; i < out->domain_margins.size(); i++) {
     fill_index_scalar([i](const Values& v) { return v.domain_margins[i]; },
                       &out->domain_margins[i].index_derivative_available, &out->domain_margins[i].index_derivative,
-                      path_compatible);
+                      path_compatible, kIndexAbsoluteError);
   }
   for (size_t i = 0; i < out->tir_margins.size(); i++) {
     fill_index_scalar([i](const Values& v) { return v.tir_margins[i]; },
                       &out->tir_margins[i].index_derivative_available, &out->tir_margins[i].index_derivative,
-                      path_compatible);
+                      path_compatible, kIndexAbsoluteError);
   }
   for (size_t i = 0; i < out->interfaces.size(); i++) {
     auto coefficient_compatible = [i, &base, &path_compatible](const Values& lo, const Values& hi) {
@@ -466,7 +476,7 @@ void DiagnosticField::FillDerivatives(const DiagnosticRowInput& input, const Val
     };
     fill_index_scalar([i](const Values& v) { return v.coefficients[i]; },
                       &out->interfaces[i].index_derivative_available, &out->interfaces[i].index_derivative,
-                      coefficient_compatible);
+                      coefficient_compatible, kIndexAbsoluteError);
   }
   auto entry_index_compatible = [&base](const Values& lo, const Values& hi) {
     return base.entry_status == DiagnosticEntryStatus::kOk && lo.entry_status == DiagnosticEntryStatus::kOk &&
@@ -475,7 +485,7 @@ void DiagnosticField::FillDerivatives(const DiagnosticRowInput& input, const Val
            hi.entry_topology_signature == base.entry_topology_signature;
   };
   fill_index_scalar([](const Values& v) { return v.entry_measure; }, &out->entry_index_derivative_available,
-                    &out->entry_index_derivative, entry_index_compatible);
+                    &out->entry_index_derivative, entry_index_compatible, kIndexAbsoluteError * entry_area_scale);
 }
 
 }  // namespace lumice::analytic

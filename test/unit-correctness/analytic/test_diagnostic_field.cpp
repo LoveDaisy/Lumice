@@ -24,19 +24,32 @@ LUMICE_ANALYTIC_Crystal AsymmetricPrism() {
   return crystal;
 }
 
+LUMICE_ANALYTIC_Crystal ScaledAsymmetricPrism(double scale) {
+  LUMICE_ANALYTIC_Crystal crystal = AsymmetricPrism();
+  crystal.height *= scale;
+  for (double& distance : crystal.face_distance) {
+    distance *= scale;
+  }
+  return crystal;
+}
+
 struct Fixture {
   FaceNormalTable normals;
   FacePolygonTable polygons;
   std::vector<int> slots;
 };
 
-Fixture Build(const std::vector<int>& faces) {
+Fixture Build(const LUMICE_ANALYTIC_Crystal& crystal, const std::vector<int>& faces) {
   Fixture fixture;
-  EXPECT_EQ(BuildFaceNormals(AsymmetricPrism(), &fixture.normals, &fixture.polygons), Status::kOk);
+  EXPECT_EQ(BuildFaceNormals(crystal, &fixture.normals, &fixture.polygons), Status::kOk);
   fixture.slots.resize(faces.size());
   EXPECT_EQ(ResolveFaceSequence(fixture.normals, faces.data(), static_cast<int>(faces.size()), fixture.slots.data()),
             Status::kOk);
   return fixture;
+}
+
+Fixture Build(const std::vector<int>& faces) {
+  return Build(AsymmetricPrism(), faces);
 }
 
 DiagnosticRowInput Row(const double pose[9]) {
@@ -58,6 +71,37 @@ void Perturb(const double pose[9], int axis, double amount, double out[9]) {
   double increment[9];
   so3::Exp(delta, increment);
   so3::MatMul(pose, increment, out);
+}
+
+void ExpectStablePoseSamples(DiagnosticField* field, const DiagnosticRowInput& input, double minimum_margin) {
+  for (double step : { 4.0e-4, 2.0e-4 }) {
+    for (int axis = 0; axis < 3; axis++) {
+      for (double sign : { -1.0, 1.0 }) {
+        DiagnosticRowInput sample = input;
+        Perturb(input.pose, axis, sign * step, sample.pose);
+        const DiagnosticFieldResult result = field->Evaluate(sample);
+        EXPECT_EQ(result.path_status, DiagnosticPathStatus::kOk);
+        for (const DiagnosticMargin& margin : result.domain_margins) {
+          EXPECT_GT(margin.value, minimum_margin);
+        }
+      }
+    }
+  }
+}
+
+void ExpectStableIndexSamples(DiagnosticField* field, const DiagnosticRowInput& input, double minimum_margin) {
+  const double fine_step = 1.0e-6 * std::max(1.0, std::fabs(input.refractive_index));
+  for (double step : { 2.0 * fine_step, fine_step }) {
+    for (double sign : { -1.0, 1.0 }) {
+      DiagnosticRowInput sample = input;
+      sample.refractive_index += sign * step;
+      const DiagnosticFieldResult result = field->Evaluate(sample);
+      EXPECT_EQ(result.path_status, DiagnosticPathStatus::kOk);
+      for (const DiagnosticMargin& margin : result.domain_margins) {
+        EXPECT_GT(margin.value, minimum_margin);
+      }
+    }
+  }
 }
 
 TEST(DiagnosticField, FourFaceRowReturnsEveryInterfaceAndMargin) {
@@ -158,6 +202,99 @@ TEST(DiagnosticFieldNumerics, RichardsonEstimateReportsErrorAndRejectsNonConverg
   EXPECT_GT(unstable.error, 0.3);
 }
 
+TEST(DiagnosticFieldNumerics, PublicDirectionDerivativeRejectsNonConvergenceOnAStableBranch) {
+  const std::vector<int> faces = { 3, 5 };
+  Fixture fixture = Build(faces);
+  DiagnosticField field(fixture.normals, fixture.polygons, faces.data(), fixture.slots.data(),
+                        static_cast<int>(faces.size()));
+  const double pose[9] = { 0.965299175273876,    -0.24238479774432437, -0.09719625526746277,
+                           0.21881440907585153,  0.547563436712245,    0.8076475327496896,
+                           -0.14254036830442351, -0.8008894384359916,  0.5815998201558535 };
+  DiagnosticRowInput input = Row(pose);
+  input.refractive_index = 1.4650258857410854;
+  const DiagnosticFieldResult result = field.Evaluate(input);
+
+  ASSERT_EQ(result.path_status, DiagnosticPathStatus::kOk);
+  ExpectStablePoseSamples(&field, input, 1.0e-2);
+  EXPECT_FALSE(result.direction_pose_jacobian_available);
+  EXPECT_TRUE(std::all_of(std::begin(result.direction_pose_jacobian), std::end(result.direction_pose_jacobian),
+                          [](double value) { return value == 0.0; }));
+  EXPECT_TRUE(result.direction_pose_hessian_available);
+}
+
+TEST(DiagnosticFieldNumerics, PublicScalarPoseDerivativeRejectsNonConvergenceOnAStableBranch) {
+  const std::vector<int> faces = { 3, 5 };
+  Fixture fixture = Build(faces);
+  DiagnosticField field(fixture.normals, fixture.polygons, faces.data(), fixture.slots.data(),
+                        static_cast<int>(faces.size()));
+  const double pose[9] = { 0.8892503164034372,  -0.44956594229729063, 0.08440579543334724,
+                           0.45083377646243805, 0.830191399730927,    -0.3279194196954804,
+                           0.07734843745676649, 0.32965543122956936,  0.9409274764209212 };
+  DiagnosticRowInput input = Row(pose);
+  input.refractive_index = 1.3616948255014758;
+  const DiagnosticFieldResult result = field.Evaluate(input);
+
+  ASSERT_EQ(result.path_status, DiagnosticPathStatus::kOk);
+  ASSERT_EQ(result.interfaces.size(), 2u);
+  ExpectStablePoseSamples(&field, input, 1.0e-2);
+  EXPECT_TRUE(result.direction_pose_jacobian_available);
+  EXPECT_FALSE(result.interfaces[1].pose_derivative_available);
+  EXPECT_TRUE(std::all_of(std::begin(result.interfaces[1].pose_gradient), std::end(result.interfaces[1].pose_gradient),
+                          [](double value) { return value == 0.0; }));
+}
+
+TEST(DiagnosticFieldNumerics, PublicScalarIndexDerivativeRejectsNonConvergenceOnAStableBranch) {
+  const std::vector<int> faces = { 3, 5 };
+  Fixture fixture = Build(faces);
+  DiagnosticField field(fixture.normals, fixture.polygons, faces.data(), fixture.slots.data(),
+                        static_cast<int>(faces.size()));
+  const double pose[9] = { 0.8642011404007943,   0.1200439016309499, 0.4886162610998384,
+                           0.1922639758599871,   0.8186355047860818, -0.5411750861691135,
+                           -0.46496338836136003, 0.5616274316527424, 0.6843856190034001 };
+  DiagnosticRowInput input = Row(pose);
+  input.refractive_index = 1.0000026742626695;
+  const DiagnosticFieldResult result = field.Evaluate(input);
+
+  ASSERT_EQ(result.path_status, DiagnosticPathStatus::kOk);
+  ASSERT_EQ(result.interfaces.size(), 2u);
+  ExpectStableIndexSamples(&field, input, 1.0e-2);
+  EXPECT_TRUE(result.direction_index_derivative_available);
+  EXPECT_FALSE(result.interfaces[1].index_derivative_available);
+  EXPECT_DOUBLE_EQ(result.interfaces[1].index_derivative, 0.0);
+}
+
+TEST(DiagnosticFieldNumerics, EntryDerivativeGateIsInvariantUnderCommonLengthUnitChanges) {
+  const std::vector<int> faces = { 3, 5 };
+  const double pose[9] = { 0.7204904865724651,  -0.6914459954202334,  0.05287621559732775,
+                           0.6340874179135871,  0.6877519257467668,   0.35345499724193113,
+                           -0.2807607615074663, -0.22113281992715655, 0.9339559254851437 };
+  DiagnosticRowInput input = Row(pose);
+  input.refractive_index = 1.2427044850879065;
+  auto evaluate = [&](double scale) {
+    Fixture fixture = Build(ScaledAsymmetricPrism(scale), faces);
+    DiagnosticField field(fixture.normals, fixture.polygons, faces.data(), fixture.slots.data(),
+                          static_cast<int>(faces.size()));
+    return field.Evaluate(input);
+  };
+
+  const DiagnosticFieldResult reference = evaluate(1.0);
+  ASSERT_EQ(reference.entry_status, DiagnosticEntryStatus::kOk);
+  ASSERT_TRUE(reference.entry_pose_gradient_available);
+  ASSERT_TRUE(reference.entry_index_derivative_available);
+  for (double scale : { 1.0e-3, 1.0e3 }) {
+    const DiagnosticFieldResult scaled = evaluate(scale);
+    const double area_scale = scale * scale;
+    EXPECT_EQ(scaled.entry_status, DiagnosticEntryStatus::kOk);
+    EXPECT_EQ(scaled.entry_pose_gradient_available, reference.entry_pose_gradient_available);
+    EXPECT_EQ(scaled.entry_index_derivative_available, reference.entry_index_derivative_available);
+    EXPECT_NEAR(scaled.entry_measure / area_scale, reference.entry_measure, 2.0e-10);
+    for (int axis = 0; axis < 3; axis++) {
+      EXPECT_NEAR(scaled.entry_pose_gradient[axis] / area_scale, reference.entry_pose_gradient[axis], 2.0e-8);
+    }
+    EXPECT_NEAR(scaled.entry_index_derivative / area_scale, reference.entry_index_derivative, 2.0e-8);
+  }
+}
+
 TEST(DiagnosticField, CorridorTopologyChangeSuppressesEntryDerivatives) {
   const std::vector<int> faces = { 3, 5, 6, 7 };
   Fixture fixture = Build(faces);
@@ -216,6 +353,30 @@ TEST(DiagnosticField, InvalidPathKeepsPartialNamedMarginsWithoutDerivatives) {
   EXPECT_LT(result.domain_margins[0].value, 0.0);
   EXPECT_TRUE(std::isfinite(result.domain_margins[1].value));
   EXPECT_TRUE(std::isnan(result.domain_margins[2].value));
+  EXPECT_FALSE(result.direction_pose_jacobian_available);
+  EXPECT_FALSE(result.direction_pose_hessian_available);
+  EXPECT_FALSE(result.direction_index_derivative_available);
+}
+
+TEST(DiagnosticField, InvalidRepeatedFacePathKeepsIndependentEntryDerivatives) {
+  // Repeated faces are legal concrete input.  The optical chain cannot reach the same face again,
+  // while the independently projected finite corridor remains non-empty and smooth.
+  const std::vector<int> faces = { 3, 7, 7, 7 };
+  Fixture fixture = Build(faces);
+  DiagnosticField field(fixture.normals, fixture.polygons, faces.data(), fixture.slots.data(),
+                        static_cast<int>(faces.size()));
+  const double pose[9] = { 0.9528507753336312,   -0.028754374054210774, 0.3020738087270204,
+                           0.2441192873885814,   0.663911192480992,     -0.7068434777398448,
+                           -0.18022534081252045, 0.7472583987291262,    0.6396277918116074 };
+  DiagnosticRowInput input = Row(pose);
+  input.refractive_index = 1.0966873551331053;
+  const DiagnosticFieldResult result = field.Evaluate(input);
+
+  EXPECT_EQ(result.path_status, DiagnosticPathStatus::kPathInfeasible);
+  EXPECT_EQ(result.entry_status, DiagnosticEntryStatus::kOk);
+  EXPECT_GT(result.entry_measure, 0.07);
+  EXPECT_TRUE(result.entry_pose_gradient_available);
+  EXPECT_TRUE(result.entry_index_derivative_available);
   EXPECT_FALSE(result.direction_pose_jacobian_available);
   EXPECT_FALSE(result.direction_pose_hessian_available);
   EXPECT_FALSE(result.direction_index_derivative_available);

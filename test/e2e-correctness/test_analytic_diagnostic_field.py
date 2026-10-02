@@ -88,7 +88,8 @@ _PRELUDE = textwrap.dedent(
     from ctypes import POINTER, Structure, byref, c_char_p, c_double, c_int, c_uint32, c_uint64, c_void_p, sizeof
 
     sys.path.insert(0, ROOT)
-    from test.e2e.diagnostic_field_oracle import entry_measure_prism, right_perturb, trace_path
+    from test.e2e.diagnostic_field_oracle import (
+        entry_measure_prism, right_perturb, trace_entry_measure_prism, trace_path)
 
     class Crystal(Structure):
         _fields_ = [("kind", c_int), ("height", c_double), ("face_distance", c_double * 6),
@@ -271,8 +272,38 @@ def test_ctypes_consumer_matches_independent_field_and_derivative_oracles() -> N
         for component in range(3):
             want = (index_hi.outgoing[component] - index_lo.outgoing[component]) / (2 * index_step)
             close(out[0].direction_index_derivative[component], want, 2e-6)
+        for index in range(out[0].interface_count):
+            assert out[0].interfaces[index].index_derivative_available
+            want = (index_hi.coefficients[index] - index_lo.coefficients[index]) / (2 * index_step)
+            close(out[0].interfaces[index].index_derivative, want, 2e-6)
+        for index in range(out[0].domain_margin_count):
+            assert out[0].domain_margins[index].index_derivative_available
+            want = (index_hi.domain_margins[index] - index_lo.domain_margins[index]) / (2 * index_step)
+            close(out[0].domain_margins[index].index_derivative, want, 2e-6)
+        for index in range(out[0].tir_margin_count):
+            assert out[0].tir_margins[index].index_derivative_available
+            want = (index_hi.tir_margins[index] - index_lo.tir_margins[index]) / (2 * index_step)
+            close(out[0].tir_margins[index].index_derivative, want, 2e-6)
+        entry_index_lo = entry_measure_prism(DISTANCES, 0.73, FACES, 1.31 - index_step, INCIDENT, POSE)
+        entry_index_hi = entry_measure_prism(DISTANCES, 0.73, FACES, 1.31 + index_step, INCIDENT, POSE)
+        assert out[0].entry_index_derivative_available
+        close(out[0].entry_index_derivative, (entry_index_hi - entry_index_lo) / (2 * index_step), 2e-5)
         assert out[0].direction_pose_jacobian_available and out[0].direction_pose_hessian_available
         assert out[0].direction_index_derivative_available and out[0].entry_pose_gradient_available
+
+        domain_faces = (3, 5)
+        domain_pose = (0.048986947498166344, -0.9981838880720896, -0.03506001380630651,
+                       -0.9819637714270643, -0.054549356672966676, 0.1810290564834884,
+                       -0.18261278865278968, 0.02555960249792641, -0.9828526217803968)
+        domain_rows = (Row * 1)(row(index=1.3632360204317753, pose=domain_pose))
+        domain_out = results(1)
+        assert call(prism(), domain_faces, domain_rows, domain_out) == OK
+        assert domain_out[0].path_status == PATH_OK
+        assert 0.0 < min(domain_out[0].domain_margins[i].value for i in range(4)) < 1.0e-4
+        assert not domain_out[0].direction_index_derivative_available
+        assert all(not domain_out[0].interfaces[i].index_derivative_available for i in range(2))
+        assert all(not domain_out[0].domain_margins[i].index_derivative_available for i in range(4))
+        lib.LUMICE_ANALYTIC_ReleaseDiagnosticFieldResult(byref(domain_out[0]))
 
         kink_pose = (-0.49760634739842935, -0.8471133033132857, 0.1865126654638934,
                      -0.6613497486591641, 0.23139308033739314, -0.713494045049034,
@@ -286,6 +317,27 @@ def test_ctypes_consumer_matches_independent_field_and_derivative_oracles() -> N
         assert not kink_out[0].interfaces[2].pose_derivative_available
         assert not kink_out[0].interfaces[2].index_derivative_available
         lib.LUMICE_ANALYTIC_ReleaseDiagnosticFieldResult(byref(kink_out[0]))
+
+        topology_faces = (3, 5, 6)
+        topology_index = 1.0565260582028604
+        topology_pose = (0.9868343484263193, 0.08505714790749298, 0.13756180558514317,
+                         -0.15974959411732936, 0.6454506154525829, 0.746909345363432,
+                         -0.025259373415633023, -0.7590512397735246, 0.6505406823965161)
+        topology_rows = (Row * 1)(row(index=topology_index, pose=topology_pose))
+        topology_out = results(1)
+        assert call(prism(), topology_faces, topology_rows, topology_out) == OK
+        assert topology_out[0].path_status == PATH_OK and topology_out[0].entry_status == ENTRY_OK
+        assert topology_out[0].direction_index_derivative_available
+        assert not topology_out[0].entry_index_derivative_available
+        topology_step = 2.0e-6 * topology_index
+        active_sets = {
+            trace_entry_measure_prism(DISTANCES, 0.73, topology_faces, topology_index + offset,
+                                      INCIDENT, topology_pose).active_constraints
+            for offset in (-topology_step, -topology_step / 2.0, 0.0,
+                           topology_step / 2.0, topology_step)
+        }
+        assert len(active_sets) > 1
+        lib.LUMICE_ANALYTIC_ReleaseDiagnosticFieldResult(byref(topology_out[0]))
 
         for result in out:
             lib.LUMICE_ANALYTIC_ReleaseDiagnosticFieldResult(byref(result))

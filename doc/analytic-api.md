@@ -1020,10 +1020,16 @@ Pose first derivatives and every diagonal/mixed Hessian component use `h = 4e-4`
 radians; index derivatives use `h = 2e-6 * max(1, |n|)` and half that value.  If `D_h` and
 `D_h2` are the two estimates, the returned value is the Richardson correction
 `D_h2 + (D_h2 - D_h) / 3`, and `|(D_h2 - D_h) / 3|` is its local numerical-error estimate.  The
-estimate must not exceed an absolute-plus-relative gate: `2e-6 + 2e-5 * scale` for pose first
-derivatives, `5e-5 + 2e-4 * scale` for pose Hessians, and `2e-8 + 2e-6 * scale` for index
-derivatives, where `scale = max(|D_h|, |D_h2|, |D_returned|)`.  These calibrated local cancellation
-and truncation checks are an availability test, not a global mathematical error certificate.
+estimate must not exceed an absolute-plus-relative gate: `2e-6 + 2e-5 * scale` for dimensionless
+pose first derivatives, `5e-5 + 2e-4 * scale` for pose Hessians, and
+`2e-8 + 2e-6 * scale` for dimensionless index derivatives, where
+`scale = max(|D_h|, |D_h2|, |D_returned|)`.  Entry measure and both of its derivatives carry the
+crystal length unit squared, so their corresponding absolute terms are multiplied by
+`min_edge_length^2`; unlike the centre entry area, this geometry-only scale remains nonzero and
+stable as a corridor approaches empty.  Consequently a common change of crystal length unit
+scales the entry value, derivative and absolute error gate together without changing availability.
+These calibrated local cancellation and truncation checks are an availability test, not a global
+mathematical error certificate.
 
 Every sample at both scales must also satisfy the field's applicable differentiability semantics.
 Direction and optical derivatives require every direction-domain margin at the centre and samples
@@ -1032,6 +1038,11 @@ coefficient additionally keeps its own TIR discriminant on one side and outside 
 Entry-measure derivatives instead require an `ENTRY_OK` corridor with an unchanged clipping
 topology, because finite support remains independently computable even when the optical path is not.
 Thus an un-crossed gate at one fixed scale is never by itself evidence that a derivative is smooth.
+The implementation schedules derivative sampling when either the optical path or the entry corridor
+is valid; entry publication never consults `path_status`.  This distinction is observable for legal
+repeated-face sequences: the optical chain fails when asked to reach the same physical face again,
+while its independently projected corridor can remain non-empty and have available pose/index
+derivatives.
 
 Direction-domain status, finite-support status and internal TIR evidence remain separate.  Entry
 backface, exit critical angle and an empty corridor are finite-support outcomes; an internal TIR
