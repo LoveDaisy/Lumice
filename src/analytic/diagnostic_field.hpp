@@ -101,6 +101,9 @@ class DiagnosticField {
                   int face_count);
 
   DiagnosticFieldResult Evaluate(const DiagnosticRowInput& input);
+  // Bulk integration needs the same field values and status records without paying for the
+  // finite-difference stencil. Discovery can request Evaluate for retained local rows.
+  DiagnosticFieldResult EvaluateWithoutDerivatives(const DiagnosticRowInput& input);
 
  private:
   struct Values;

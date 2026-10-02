@@ -1055,6 +1055,7 @@ add_library(lumice_raypath_obj OBJECT
   "${PROJ_SRC_DIR}/raypath/path_feature_report.cpp"
   "${PROJ_SRC_DIR}/raypath/path_feature_report_json.cpp"
   "${PROJ_SRC_DIR}/raypath/scene_to_analytic.cpp"
+  "${PROJ_SRC_DIR}/raypath/scene_measure.cpp"
   "${PROJ_SRC_DIR}/raypath/single_path_analysis.cpp"
   "${PROJ_SRC_DIR}/raypath/single_path_json.cpp"
   "${PROJ_SRC_DIR}/server/c_api_raypath.cpp")

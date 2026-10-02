@@ -51,6 +51,12 @@ void SampleSphCapPoint(float lon, float lat, float cap_radii, float* out_pt,    
                        size_t sample_num = 1, size_t step = 3 * sizeof(float),  //
                        AngleUnit unit = AngleUnit::kDegree);                    //
 
+// Replayable form of SampleSphCapPoint. The geometry and draw order are identical; only the RNG
+// owner is explicit so a diagnostic integration cannot perturb the renderer's thread-local stream.
+void SampleSphCapPointWithRng(RandomNumberGenerator& rng, float lon, float lat, float cap_radii, float* out_pt,
+                              size_t sample_num = 1, size_t step = 3 * sizeof(float),
+                              AngleUnit unit = AngleUnit::kDegree);
+
 void SampleSph(float radii, float* out_pt, size_t sample_num = 1);
 
 void SampleBall(float radii, float* out_pt, size_t sample_num = 1);

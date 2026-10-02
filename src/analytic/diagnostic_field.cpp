@@ -174,6 +174,15 @@ DiagnosticField::Values DiagnosticField::EvaluateValues(const DiagnosticRowInput
 }
 
 DiagnosticFieldResult DiagnosticField::Evaluate(const DiagnosticRowInput& input) {
+  DiagnosticFieldResult out = EvaluateWithoutDerivatives(input);
+  const Values base = EvaluateValues(input);
+  if (base.path_status == DiagnosticPathStatus::kOk || base.entry_status == DiagnosticEntryStatus::kOk) {
+    FillDerivatives(input, base, &out);
+  }
+  return out;
+}
+
+DiagnosticFieldResult DiagnosticField::EvaluateWithoutDerivatives(const DiagnosticRowInput& input) {
   const Values base = EvaluateValues(input);
   DiagnosticFieldResult out;
   out.path_status = base.path_status;
@@ -208,9 +217,6 @@ DiagnosticFieldResult DiagnosticField::Evaluate(const DiagnosticRowInput& input)
     margin.name = "internal_" + std::to_string(i + 1) + "_tir_discriminant";
     margin.interface_index = static_cast<int>(i + 1);
     margin.value = base.tir_margins[i];
-  }
-  if (base.path_status == DiagnosticPathStatus::kOk || base.entry_status == DiagnosticEntryStatus::kOk) {
-    FillDerivatives(input, base, &out);
   }
   return out;
 }

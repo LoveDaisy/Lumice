@@ -491,68 +491,52 @@ void RandomSampler::SampleSphericalPointsSph(float* data, size_t num, size_t ste
 }
 
 
+void RandomSampler::SampleAxisPose(RandomNumberGenerator& rng, const AxisDistribution& axis_dist, float out[3],
+                                   const LatLut* lat_lut) {
+  if (axis_dist.IsFullSphereUniform()) {
+    const float u = std::max(-1.0f, std::min(1.0f, rng.GetUniform() * 2.0f - 1.0f));
+    out[0] = rng.GetUniform() * 2.0f * math::kPi;
+    out[1] = std::asin(u);
+    out[2] = rng.Get(axis_dist.roll_dist) * math::kDegreeToRad;
+    return;
+  }
+
+  const DistributionType lat_type = axis_dist.latitude_dist.type;
+  const auto decision = lat_path::SelectLatPath(axis_dist);
+  float phi = 0.0f;
+  bool flip = false;
+  if (decision.kind == lat_path::LatPathKind::kLutInverseCdf) {
+    const LatLut& lut = lat_lut != nullptr ? *lat_lut : *GetSharedLatLut(axis_dist.latitude_dist);
+    const float theta_z = lm_pcg::invert_lat_lut(rng.GetUniform(), lut.theta.data(), lut.cdf.data(), LatLut::kNodes);
+    phi = math::kPi_2 - theta_z;
+    const uint32_t bin = lm_pcg::lat_lut_bin(theta_z, lut.theta.data(), LatLut::kNodes);
+    flip = rng.GetUniform() < lut.flip_prob[bin];
+  } else if (lat_type == DistributionType::kGaussianLegacy) {
+    phi = rng.Get(axis_dist.latitude_dist) * math::kDegreeToRad;
+    auto [normal_phi, normal_flip] = detail::NormalizeLatitude(phi);
+    phi = normal_phi;
+    flip = normal_flip;
+  } else {
+    phi = rng.Get(axis_dist.latitude_dist) * math::kDegreeToRad;
+  }
+
+  float lambda = rng.Get(axis_dist.azimuth_dist) * math::kDegreeToRad;
+  float roll = rng.Get(axis_dist.roll_dist) * math::kDegreeToRad;
+  if (flip) {
+    lambda += math::kPi;
+    roll += math::kPi;
+  }
+  out[0] = lambda;
+  out[1] = phi;
+  out[2] = roll;
+}
+
+
 void RandomSampler::SampleSphericalPointsSph(const AxisDistribution& axis_dist, float* data, size_t num,
                                              const LatLut* lat_lut) {
   auto& rng = RandomNumberGenerator::GetInstance();
-
-  // Latitude sampling with the spherical-area Jacobian p(phi) ∝ proposal(phi) × cos(phi),
-  // where cos(phi) = sin(colatitude) is the area element. Since 330.3 every non-degenerate
-  // distribution routes to the unified inverse-CDF area-measure LUT (kLutInverseCdf); the
-  // remaining explicit paths are kGaussianLegacy (legacy no-Jacobian Gaussian) and kNoRandom
-  // (single deterministic orientation, no Jacobian needed). Path selection is single-sourced
-  // with the two GPU backends via lat_path::SelectLatPath (scrum-328.2 Step 4).
-  auto lat_type = axis_dist.latitude_dist.type;
-  auto decision = lat_path::SelectLatPath(axis_dist);
-
   for (size_t i = 0; i < num; i++) {
-    float phi = 0;
-    bool flip = false;
-
-    if (decision.kind == lat_path::LatPathKind::kFullSphere) {
-      // Full-sphere uniform (IsFullSphereUniform()==true) reaching the parameterized overload —
-      // e.g. the Jacobian-correction unit test; production routes such axes through the dedicated
-      // SampleSphericalPointsSph(full-sphere) overload from simulator.cpp. Sample latitude directly
-      // with the area measure: phi = asin(u), u ~ U(-1,1), giving the uniform-on-sphere
-      // distribution. Matches the device sample_lat_lon_roll kLatPathFullSphere branch
-      // (pcg_shared.h). Before 330.3 this case fell through to the generic Jacobian-rejection branch
-      // (now retired), which reached the same distribution via cos(phi) rejection.
-      float u = std::max(-1.0f, std::min(1.0f, rng.GetUniform() * 2.0f - 1.0f));
-      phi = std::asin(u);
-    } else if (decision.kind == lat_path::LatPathKind::kLutInverseCdf) {
-      // Unified area-measure inverse-CDF LUT (330.2). One uniform draw + fixed binary search
-      // (no rejection loop); flip reproduces the pole-crossing azimuth flip via the per-bin
-      // flip probability. The LUT is amortized once per axis distribution, never per ray.
-      // Shares lm_pcg::invert_lat_lut / lat_lut_bin with the device kernels. Production
-      // (InitRay_rot) resolves the LUT once per crystal-batch and passes it in; the nullptr
-      // fallback routes to the shared build-once cache (task-335) so low-frequency callers
-      // (unit tests) still share one LUT instead of thrashing the old single-entry cache.
-      const LatLut& lut = (lat_lut != nullptr) ? *lat_lut : *GetSharedLatLut(axis_dist.latitude_dist);
-      const float xi = rng.GetUniform();
-      const float theta_z = lm_pcg::invert_lat_lut(xi, lut.theta.data(), lut.cdf.data(), LatLut::kNodes);
-      phi = math::kPi_2 - theta_z;
-      const uint32_t bin = lm_pcg::lat_lut_bin(theta_z, lut.theta.data(), LatLut::kNodes);
-      flip = rng.GetUniform() < lut.flip_prob[bin];
-    } else if (lat_type == DistributionType::kGaussianLegacy) {
-      // Legacy Gaussian: sample without Jacobian rejection (reproduces old behavior).
-      phi = rng.Get(axis_dist.latitude_dist) * math::kDegreeToRad;
-      auto [norm_phi, norm_flip] = detail::NormalizeLatitude(phi);
-      phi = norm_phi;
-      flip = norm_flip;
-    } else {
-      // kNoRandom: no Jacobian needed (single deterministic orientation).
-      phi = rng.Get(axis_dist.latitude_dist) * math::kDegreeToRad;
-    }
-
-    float lambda = rng.Get(axis_dist.azimuth_dist) * math::kDegreeToRad;
-    float roll = rng.Get(axis_dist.roll_dist) * math::kDegreeToRad;
-    if (flip) {
-      lambda += math::kPi;
-      roll += math::kPi;
-    }
-
-    data[i * 3 + 0] = lambda;
-    data[i * 3 + 1] = phi;
-    data[i * 3 + 2] = roll;
+    SampleAxisPose(rng, axis_dist, data + i * 3, lat_lut);
   }
 }
 

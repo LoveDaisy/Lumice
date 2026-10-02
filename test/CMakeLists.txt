@@ -272,7 +272,8 @@ add_executable(unit_correctness_test
   "${PROJ_TEST_DIR}/unit-correctness/raypath/test_single_path_json.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/raypath/test_single_path_c_api.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/raypath/test_path_feature_report.cpp"
-  "${PROJ_TEST_DIR}/unit-correctness/raypath/test_path_feature_report_c_api.cpp")
+  "${PROJ_TEST_DIR}/unit-correctness/raypath/test_path_feature_report_c_api.cpp"
+  "${PROJ_TEST_DIR}/unit-correctness/raypath/test_scene_measure.cpp")
 target_include_directories(unit_correctness_test
   PRIVATE ${PROJ_TEST_DIR})
 target_link_libraries(unit_correctness_test

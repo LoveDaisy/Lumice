@@ -274,6 +274,12 @@ struct LatLut;  // core/lat_lut.hpp — prebuilt inverse-CDF table for kLutInver
 
 class RandomSampler {
  public:
+  //! Sample one complete product axis pose with an explicit RNG. This is the deterministic,
+  //! replayable form used by diagnostics; the runtime batch helpers below delegate to it so the
+  //! latitude Jacobian, pole fold and roll coupling have one owner.
+  static void SampleAxisPose(RandomNumberGenerator& rng, const AxisDistribution& axis_dist, float out[3],
+                             const LatLut* lat_lut = nullptr);
+
   /*! @brief Generate points distributed uniformly on sphere, in spherical form, (lon, lat).
    *
    * @param data output data, (lon, lat), in rad

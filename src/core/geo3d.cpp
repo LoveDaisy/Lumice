@@ -193,13 +193,18 @@ void SampleTrianglePoint(const float* vertices, float* out_pt, size_t sample_num
 void SampleSphCapPoint(float lon, float lat, float cap_radii, float* out_pt,  //
                        size_t sample_num, size_t step,                        //
                        AngleUnit unit) {
+  SampleSphCapPointWithRng(RandomNumberGenerator::GetInstance(), lon, lat, cap_radii, out_pt, sample_num, step, unit);
+}
+
+
+void SampleSphCapPointWithRng(RandomNumberGenerator& rng, float lon, float lat, float cap_radii, float* out_pt,
+                              size_t sample_num, size_t step, AngleUnit unit) {
   if (unit == AngleUnit::kDegree) {
     lon *= math::kDegreeToRad;
     lat *= math::kDegreeToRad;
     cap_radii *= math::kDegreeToRad;
   }
 
-  auto& rng = RandomNumberGenerator::GetInstance();
   float c_cap = std::cos(cap_radii);
   float c_lon = std::cos(lon);
   float s_lon = std::sin(lon);

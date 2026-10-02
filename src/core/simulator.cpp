@@ -276,19 +276,12 @@ void InitRay_rot(RandomNumberGenerator& rng, const AxisDistribution& crystal_axi
   // pointer into the per-ray sampler (task-335). Only the LUT-routed families
   // need it; full-sphere / legacy-gauss / no-random take their own sampler
   // branch and ignore a nullptr.
-  const bool full_sphere = crystal_axis.IsFullSphereUniform();
   const LatLut* lat_lut = nullptr;
-  if (!full_sphere && lat_path::SelectLatPath(crystal_axis).kind == lat_path::LatPathKind::kLutInverseCdf) {
+  if (lat_path::SelectLatPath(crystal_axis).kind == lat_path::LatPathKind::kLutInverseCdf) {
     lat_lut = GetSharedLatLut(crystal_axis.latitude_dist);
   }
   for (auto& r : buffer_data[0]) {
-    if (!full_sphere) {
-      RandomSampler::SampleSphericalPointsSph(crystal_axis, lon_lat_roll, 1, lat_lut);
-    } else {
-      // Randomly sample on sphere (with asin(u) Jacobian correction); roll sampled separately below.
-      RandomSampler::SampleSphericalPointsSph(lon_lat_roll);
-      lon_lat_roll[2] = rng.Get(crystal_axis.roll_dist) * math::kDegreeToRad;
-    }
+    RandomSampler::SampleAxisPose(rng, crystal_axis, lon_lat_roll, lat_lut);
     r.crystal_rot_ = BuildCrystalRotation(lon_lat_roll[0], lon_lat_roll[1], lon_lat_roll[2]);
   }
 }

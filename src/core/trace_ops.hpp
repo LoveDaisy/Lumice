@@ -38,6 +38,8 @@ void InitRay_d_w_previdx(const SunParam& light_param, const WlParam& wl_param, s
 
 // Sample per-ray crystal-orientation rotation matrices, writing into
 // buffer_data[0]. buffer_data[1] is unused.
+Rotation BuildCrystalRotation(float azimuth_rad, float latitude_rad, float roll_rad);
+
 void InitRay_rot(RandomNumberGenerator& rng, const AxisDistribution& crystal_axis, RayBuffer buffer_data[2]);
 
 // Fill crystal_idx_/crystal_config_id_/root_ray_idx_/recorder state for the
