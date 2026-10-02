@@ -966,6 +966,12 @@ const uint8_t* PopulateFilterRecorder(const std::vector<int>& faces, RaypathReco
   return overflow->data();
 }
 
+bool FitsFilterRecorder(const std::vector<int>& faces) {
+  return faces.size() <= kMaxHits && std::all_of(faces.begin(), faces.end(), [](int face) {
+           return face >= 0 && face <= static_cast<int>(std::numeric_limits<IdType>::max());
+         });
+}
+
 RaySeg FilterRay(IdType crystal_id, const double* outgoing_direction) {
   RaySeg ray{};
   if (outgoing_direction != nullptr) {
@@ -984,7 +990,10 @@ RaySeg FilterRay(IdType crystal_id, const double* outgoing_direction) {
 FixedFilterLayerLedger EvaluateFixedFilterLayer(const LayerInput& input, const std::vector<int>& faces) {
   FixedFilterLayerLedger ledger;
   ledger.entries.resize(input.entries.size());
-  if (faces.size() > kMaxHits) {
+  // The path resolver validates a member against its sampled crystal later. Until then, do not
+  // narrow an unrepresentable public face id into the uint8_t recorder: it could alias a different
+  // valid member and incorrectly certify a zero filter weight.
+  if (!FitsFilterRecorder(faces)) {
     return ledger;
   }
 

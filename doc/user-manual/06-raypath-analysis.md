@@ -129,8 +129,10 @@ build/cmake_install/static/Lumice raypath \
 ```
 
 `--report` has no sky target: it writes a schema-3 JSON document describing
-physical L2 members, finite-crystal `A*T` brightness, and an LI `a=1` relative-area scene measure that integrates
-the configured shape and pose distributions, solar disc, spectrum, and scattering layers.
+physical L2 members, finite-crystal `A*T` brightness, and a product-native, dimensionless scene measure that integrates
+the configured shape and pose distributions, solar disc, spectrum, and scattering layers. Each layer uses
+`2*A_path/S_total` and retains the raw spectral weight; this is distinct from a separately consumed LI `a=1`
+relative-area normalization.
 It also includes the narrower positioned-feature detector, coverage, and limitations. It cannot be combined with
 `--target`, `--grid`, or `--warm`; use the existing target command when you
 need the fiber and per-pose detail at one point.

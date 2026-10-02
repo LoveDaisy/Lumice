@@ -1200,6 +1200,22 @@ TEST(SceneMeasure, ExplicitMemberChainsAreVerbatimAndNeedNotBeACartesianProduct)
   EXPECT_EQ(result.evaluated_row_count, 2 * 2);
 }
 
+TEST(SceneMeasure, RejectsInvalidExplicitMemberFaceBeforeFixedFilterLedger) {
+  const ConfigManager config = Scene({ Prism(1) }, { 0.0f });
+  SceneMeasureRequest request = Request({ 1 }, { { 3, 5 } }, 2);
+  request.member_selection = SceneMemberSelection::kExplicitChains;
+  // 259 would previously be narrowed to IdType/uint8_t before the later path resolver ran.
+  request.explicit_member_chains = { { { 259, 5 } } };
+
+  SceneMeasureResult result;
+  const Error error = BuildSceneMeasure(config, request, &result);
+  EXPECT_TRUE(error.Ok()) << error.message;
+  EXPECT_EQ(result.status, SceneMeasureStatus::kPhysicallyUnreachable);
+  ASSERT_FALSE(result.rows.empty());
+  EXPECT_EQ(result.rows.front().status, SceneMeasureStatus::kPhysicallyUnreachable);
+  EXPECT_NE(result.rows.front().reason.find("face 259"), std::string::npos);
+}
+
 TEST(SceneMeasure, VisitorReceivesTheCompleteReplayableFieldBeyondRepresentativeStorage) {
   const ConfigManager config = Scene({ Prism(1, RandomAxis()) }, { 0.0f });
   SceneMeasureRequest request = Request({ 1 }, { { 3, 5 } }, 128);
