@@ -183,7 +183,11 @@ nlohmann::ordered_json SceneMeasureJson(const SceneMeasureResult& measure) {
     for (const SceneMeasureLayerRow& layer : row.layers) {
       nlohmann::ordered_json shape = nlohmann::ordered_json::array();
       for (const ShapeScalarSample& scalar : layer.shape) {
-        shape.push_back({ { "name", scalar.name }, { "value", Num(scalar.value) }, { "latent_id", scalar.latent_id } });
+        shape.push_back({ { "name", scalar.name },
+                          { "value", Num(scalar.value) },
+                          { "latent_id", scalar.latent_id },
+                          { "proposal_density", Num(scalar.proposal_density) },
+                          { "jacobian", Num(scalar.jacobian) } });
       }
       nlohmann::ordered_json interfaces = nlohmann::ordered_json::array();
       for (const analytic::DiagnosticInterface& interface : layer.field.interfaces) {
@@ -201,10 +205,15 @@ nlohmann::ordered_json SceneMeasureJson(const SceneMeasureResult& measure) {
       }
       nlohmann::ordered_json layer_json = {
         { "layer_index", layer.layer_index },
+        { "source_sun_node_id", layer.source_sun_node_id },
+        { "source_spectrum_node_id", layer.source_spectrum_node_id },
+        { "source_wavelength_nm", Num(layer.source_wavelength_nm) },
         { "crystal_id", layer.crystal_id },
         { "faces", layer.faces },
         { "shape", shape },
         { "pose_lon_lat_roll_rad", Array(layer.pose_lon_lat_roll_rad, 3) },
+        { "pose_local_density", Array(layer.pose_local_density, 3) },
+        { "pose_tangent_basis", Array(layer.pose_tangent_basis, 6) },
         { "incident_direction", Array(layer.incident_direction, 3) },
         { "outgoing_direction", Array(layer.outgoing_direction, 3) },
         { "crystal_share", Num(layer.crystal_share) },
@@ -229,6 +238,7 @@ nlohmann::ordered_json SceneMeasureJson(const SceneMeasureResult& measure) {
       { "sun_node_id", row.sun_node_id },
       { "member_chain_index", row.member_chain_index },
       { "sample_index", row.sample_index },
+      { "replay_seed", row.replay_seed },
       { "wavelength_nm", Num(row.wavelength_nm) },
       { "spectrum_weight", Num(row.spectrum_weight) },
       { "sun_mass", Num(row.sun_mass) },

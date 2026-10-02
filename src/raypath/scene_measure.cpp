@@ -95,6 +95,33 @@ std::string DistributionMeasure(const Distribution& distribution, bool spherical
   return "unknown";
 }
 
+double DistributionDensity(const Distribution& distribution, double value) {
+  constexpr double kSqrtTwoPi = 2.5066282746310005024;
+  switch (distribution.type) {
+    case DistributionType::kNoRandom:
+      return 1.0;
+    case DistributionType::kUniform:
+      return distribution.spread > 0.0f ? 1.0 / distribution.spread : 0.0;
+    case DistributionType::kGaussian:
+    case DistributionType::kGaussianLegacy: {
+      if (!(distribution.spread > 0.0f)) {
+        return 0.0;
+      }
+      const double z = (value - distribution.center) / distribution.spread;
+      return std::exp(-0.5 * z * z) / (distribution.spread * kSqrtTwoPi);
+    }
+    case DistributionType::kLaplacian:
+      return distribution.spread > 0.0f ?
+                 std::exp(-std::fabs(value - distribution.center) / distribution.spread) / (2.0 * distribution.spread) :
+                 0.0;
+    case DistributionType::kZigzag:
+      // The folded arcsine density has multiple roots; replay_seed plus the canonical
+      // distribution parameters is its lossless representation.
+      return std::numeric_limits<double>::quiet_NaN();
+  }
+  return std::numeric_limits<double>::quiet_NaN();
+}
+
 const Distribution* ShapeDistribution(const CrystalParam& param, int slot) {
   return std::visit(
       [slot](const auto& p) -> const Distribution* {
@@ -407,7 +434,9 @@ analytic::CrystalShape SampleShape(RandomNumberGenerator& rng, const CrystalPara
   analytic::CrystalShape shape;
   const CrystalKind kind = KindOf(param);
   auto add = [&](int slot, double value) {
-    samples->push_back({ ShapeName(kind, slot), value, layer.shape_latent[slot] });
+    const Distribution* distribution = ShapeDistribution(param, slot);
+    samples->push_back({ ShapeName(kind, slot), value, layer.shape_latent[slot],
+                         distribution == nullptr ? 0.0 : DistributionDensity(*distribution, value), 1.0 });
   };
   std::visit(
       [&](const auto& p) {
@@ -442,6 +471,10 @@ analytic::CrystalShape SampleShape(RandomNumberGenerator& rng, const CrystalPara
 }
 
 SceneMeasureStatus FieldStatus(const analytic::DiagnosticFieldResult& field, std::string* reason) {
+  if (field.path_status == analytic::DiagnosticPathStatus::kNonFinite) {
+    *reason = "analytic field produced a non-finite numerical result";
+    return SceneMeasureStatus::kNumericalIncomplete;
+  }
   if (field.path_status != analytic::DiagnosticPathStatus::kOk) {
     *reason = "analytic path is infeasible or at a refraction critical state";
     return SceneMeasureStatus::kPhysicallyUnreachable;
@@ -483,6 +516,18 @@ SceneMeasureLayerRow EvaluateLayer(RandomNumberGenerator& rng, const LayerInput&
   float pose_values[3]{};
   RandomSampler::SampleAxisPose(rng, input.setting->crystal_.axis_, pose_values);
   std::copy(pose_values, pose_values + 3, out.pose_lon_lat_roll_rad);
+  const Distribution pose[3] = { input.setting->crystal_.axis_.azimuth_dist,
+                                 input.setting->crystal_.axis_.latitude_dist, input.setting->crystal_.axis_.roll_dist };
+  for (int i = 0; i < 3; i++) {
+    out.pose_local_density[i] = DistributionDensity(pose[i], pose_values[i] / math::kDegreeToRad);
+  }
+  const double lon = pose_values[0];
+  const double lat = pose_values[1];
+  out.pose_tangent_basis[0] = -std::sin(lon);
+  out.pose_tangent_basis[1] = std::cos(lon);
+  out.pose_tangent_basis[3] = -std::cos(lon) * std::sin(lat);
+  out.pose_tangent_basis[4] = -std::sin(lon) * std::sin(lat);
+  out.pose_tangent_basis[5] = std::cos(lat);
   const Rotation rotation = BuildCrystalRotation(pose_values[0], pose_values[1], pose_values[2]);
   analytic::DiagnosticRowInput row_input;
   row_input.refractive_index = refractive_index;
@@ -535,7 +580,7 @@ Error BuildSceneMeasure(const ConfigManager& config, const SceneMeasureRequest& 
       { -1, "sun_disc", DistributionType::kNoRandom, -1, config.scene_.light_source_.param_.diameter_ == 0.0f ? 0 : 2,
         config.scene_.light_source_.param_.diameter_, 0.0, "spherical cap diameter (degrees)",
         config.scene_.light_source_.param_.diameter_ == 0.0f ? "atom" : "spherical cap with solid-angle mass",
-        "unit probability mass" });
+        config.scene_.light_source_.param_.diameter_ == 0.0f ? "unit atomic mass" : "solar solid-angle mass" });
   result.factors.insert(
       result.factors.begin(),
       { -1, "spectrum", DistributionType::kNoRandom, -1, 1, 0.0, 0.0, "wavelength node",
@@ -569,6 +614,8 @@ Error BuildSceneMeasure(const ConfigManager& config, const SceneMeasureRequest& 
           row.sun_node_id = sun.node_id;
           row.member_chain_index = static_cast<int>(member_index);
           row.sample_index = sample;
+          row.replay_seed =
+              RowSeed(request.seed, spectrum.node_id, sun.node_id, static_cast<int>(member_index), sample);
           row.wavelength_nm = spectrum.wavelength_nm;
           row.spectrum_weight = spectrum.weight;
           row.sun_mass = sun.mass;
@@ -579,8 +626,7 @@ Error BuildSceneMeasure(const ConfigManager& config, const SceneMeasureRequest& 
           row.status = spectrum.weight == 0.0 ? SceneMeasureStatus::kZeroWeight : SceneMeasureStatus::kConfirmed;
           any_nonzero_source = any_nonzero_source || spectrum.weight > 0.0;
 
-          RandomNumberGenerator rng(
-              RowSeed(request.seed, spectrum.node_id, sun.node_id, static_cast<int>(member_index), sample));
+          RandomNumberGenerator rng(row.replay_seed);
           double incident[3] = { sun.incident_direction[0], sun.incident_direction[1], sun.incident_direction[2] };
           double conditional_weight = 1.0;
           double conditional_measure_mass = 1.0;
@@ -589,6 +635,9 @@ Error BuildSceneMeasure(const ConfigManager& config, const SceneMeasureRequest& 
                 EvaluateLayer(rng, layers[layer_index], static_cast<int>(layer_index),
                               result.member_chains[member_index][layer_index], spectrum.refractive_index, incident,
                               request.include_derivatives);
+            layer.source_sun_node_id = sun.node_id;
+            layer.source_spectrum_node_id = spectrum.node_id;
+            layer.source_wavelength_nm = spectrum.wavelength_nm;
             conditional_weight *= layer.crystal_share * layer.continuation_mass;
             conditional_measure_mass *= layer.crystal_share * layer.continuation_mass;
             if (layer.status == SceneMeasureStatus::kConfirmed) {

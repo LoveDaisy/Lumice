@@ -237,18 +237,25 @@ TEST(SceneMeasure, PhysicalMaskUsesStableLayerLocalEntryFaces) {
 }
 
 TEST(SceneMeasure, CrossLayerRowsCarryOutgoingDirectionAndGlobalWeightsOnlyOnce) {
-  const ConfigManager config = Scene({ Prism(1, RandomAxis()), Prism(2, RandomAxis()) }, { 1.0f, 0.0f });
+  ConfigManager config = Scene({ Prism(1, RandomAxis()), Prism(2, RandomAxis()) }, { 1.0f, 0.0f });
+  config.scene_.light_source_.param_.diameter_ = 1.0f;
   SceneMeasureRequest request = Request({ 1, 2 }, { { 3, 5 }, { 3, 5 } }, 512);
   request.spectrum_source = SceneSpectrumSource::kDiagnostic;
   request.diagnostic_wavelengths_nm = { 520.0, 550.0 };
   request.diagnostic_wavelength_weights = { 0.5, 1.0 };
   const SceneMeasureResult unit = Build(config, request);
+  ASSERT_EQ(unit.sun_nodes.size(), 4u);
   const auto complete = std::find_if(unit.rows.begin(), unit.rows.end(),
                                      [](const SceneMeasureRow& row) { return row.layers.size() == 2u; });
   ASSERT_NE(complete, unit.rows.end());
   for (int i = 0; i < 3; i++) {
     EXPECT_DOUBLE_EQ(complete->layers[1].incident_direction[i], complete->layers[0].outgoing_direction[i]);
   }
+  EXPECT_EQ(complete->layers[0].source_sun_node_id, complete->sun_node_id);
+  EXPECT_EQ(complete->layers[1].source_sun_node_id, complete->sun_node_id);
+  EXPECT_EQ(complete->layers[0].source_spectrum_node_id, complete->spectrum_node_id);
+  EXPECT_EQ(complete->layers[1].source_spectrum_node_id, complete->spectrum_node_id);
+  EXPECT_DOUBLE_EQ(complete->global_weight, complete->spectrum_weight * complete->sun_mass);
 
   request.diagnostic_wavelength_weights = { 2.0, 4.0 };
   const SceneMeasureResult quadruple = Build(config, request);

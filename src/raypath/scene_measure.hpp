@@ -91,14 +91,22 @@ struct ShapeScalarSample {
   std::string name;
   double value = 0.0;
   int latent_id = -1;
+  // Correlated scalars share latent_id and count once in a joint density.
+  double proposal_density = 0.0;
+  double jacobian = 1.0;
 };
 
 struct SceneMeasureLayerRow {
   int layer_index = 0;
+  int source_sun_node_id = 0;
+  int source_spectrum_node_id = 0;
+  double source_wavelength_nm = 0.0;
   IdType crystal_id = 0;
   std::vector<int> faces;
   std::vector<ShapeScalarSample> shape;
   double pose_lon_lat_roll_rad[3]{};
+  double pose_local_density[3]{};
+  double pose_tangent_basis[6]{};
   double incident_direction[3]{};
   double outgoing_direction[3]{};
   double crystal_share = 0.0;
@@ -115,6 +123,7 @@ struct SceneMeasureRow {
   int sun_node_id = 0;
   int member_chain_index = 0;
   int sample_index = 0;
+  uint32_t replay_seed = 0;
   double wavelength_nm = 0.0;
   double spectrum_weight = 0.0;
   double sun_mass = 0.0;
