@@ -291,6 +291,14 @@ target_compile_definitions(unit_correctness_test PRIVATE
 set_target_properties(unit_correctness_test PROPERTIES
   BUILD_RPATH "$<TARGET_FILE_DIR:GTest::gtest>")
 
+# ABI-shape probe for the analytic diagnostic field. It is intentionally not a CTest: its timing
+# and allocation output is decision evidence, not a pass/fail gate.
+add_executable(diagnostic_field_probe
+  "${PROJ_TEST_DIR}/support/diagnostic_field_probe.cpp")
+target_link_libraries(diagnostic_field_probe
+  PRIVATE lumice_analytic_kernel lumice_foundation_obj Threads::Threads)
+lumice_apply_engine_compile_options(diagnostic_field_probe)
+
 # 3rd argv = repository root. test_json_parser_parity.cpp enumerates the on-disk config corpora
 # (examples/, test/e2e/configs/, test/fixtures/) from it, so newly added corpus files are covered
 # automatically without editing a hard-coded file list.

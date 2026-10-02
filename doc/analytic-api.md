@@ -1038,6 +1038,32 @@ prepared handle remains only a candidate until a probe using the real field kern
 repeatable advantage across calls and accounts for creation, resident memory, release and
 concurrent reads.
 
+**Probe decision (as built).**  The retained probe is `diagnostic_field_probe`, built only with the
+test targets.  On 2026-10-02 it was run three times from an optimised native build on a 12-thread
+Apple host.  The asymmetric-prism/four-interface workload evaluates the complete field, including
+all finite-difference derivatives; medians are taken within each run:
+
+| rows per geometry/path group | prepared across calls (us) | direct batch (us) | preparation share |
+|---:|---:|---:|---:|
+| 1 | 8.32–10.87 | 9.45–11.39 | 4.55–11.95% |
+| 8 | 65.17–74.15 | 64.88–73.45 | -2.46–-0.46% |
+| 64 | 519.32–538.08 | 525.98–557.94 | 0.33–3.56% |
+
+The prepared kernel retained 11 allocations / 836 bytes for this four-face path.  One warmed field
+row allocated 93 blocks / 5,649 bytes while producing its variable results; these numbers are
+allocation volume measured by the probe, not a process-RSS or peak-live-byte claim.  Eight threads
+evaluating eight rows each took 163–190 us when every direct call owned a local kernel, versus
+650–704 us when one prepared object was protected by the mutex required for its mutable corridor
+scratch.  Per-thread prepared copies recover parallelism but multiply resident state, creation and
+release; a workload that alternates geometry/path groups has no reuse with which to repay that cost.
+
+Therefore the public ABI is a **direct batch with geometry/path shared by the call**.  It constructs
+one internal field per call and amortises preparation over the rows already present in the real
+consumer trace.  There is no persistent prepared handle, global cache, handle release function or
+cross-call lifetime.  Independent calls own independent scratch and may run concurrently.  The
+probe can be rerun with `diagnostic_field_probe`; the rejected prepared option can be added in a
+later API version if a measured consumer workload changes the balance.
+
 **Call.** `LUMICE_ANALYTIC_BandSum(crystal, problem, out_result)` and
 `LUMICE_ANALYTIC_ReleaseBandSumResult(result)`; the header comment is the complete list of call
 errors. The problem carries the path, index and incident direction as `DiscoverComponents`' does,
