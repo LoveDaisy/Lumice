@@ -122,7 +122,7 @@ typedef struct LUMICE_PathFeatureReportRequest {
   // Set to sizeof of the caller's struct. The frozen v4.51 layout v1 (through sample_count,
   // including its trailing ABI padding) remains accepted and produces schema 1 with the legacy
   // diagnostic endpoints and no scene_measure. Appended fields are read only when struct_size
-  // reaches their published v2 or v3 extent; those requests produce schema 3.
+  // reaches their published v2 or v3 extent; partial extension layouts are rejected. Those requests produce schema 3.
   size_t struct_size;
   int crystal_id;
   const int* faces;

@@ -407,6 +407,15 @@ LUMICE_ErrorCode LUMICE_AnalyzePathFeatureReport(const LUMICE_Scene* scene,
                    "); set it to sizeof(LUMICE_PathFeatureReportRequest)");
     return LUMICE_ERR_INVALID_VALUE;
   }
+  const bool is_v1 = request->struct_size == kFeatureReportRequestSizeV1;
+  const bool is_v2 = request->struct_size == kFeatureReportRequestSizeV2;
+  const bool has_v3_or_future_tail = request->struct_size >= kFeatureReportRequestSizeV3;
+  if (!is_v1 && !is_v2 && !has_v3_or_future_tail) {
+    WriteError(err_buf, err_size,
+               "invalid_argument: struct_size must be the complete v1 or v2 request extent, or at least the "
+               "complete v3 extent");
+    return LUMICE_ERR_INVALID_VALUE;
+  }
   if ((request->faces == nullptr && request->face_count > 0) ||
       (request->layer_face_counts == nullptr && request->layer_count > 0) ||
       (request->wavelengths_nm == nullptr && request->wavelength_count > 0) ||

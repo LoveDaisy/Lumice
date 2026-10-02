@@ -318,6 +318,22 @@ TEST(PathFeatureReportCApi, V2ExtentDoesNotReadV3MemberArrays) {
   EXPECT_EQ(doc["scene_measure"]["member_chains"][0], nlohmann::json({ { 3, 1, 5 } }));
 }
 
+TEST(PathFeatureReportCApi, RejectsPartialExtensionLayoutsBeforeReadingTheirFields) {
+  constexpr size_t kV1Extent = sizeof(PathFeatureReportRequestV451);
+  constexpr size_t kV2Extent = offsetof(LUMICE_PathFeatureReportRequest, seed) + sizeof(uint32_t);
+  constexpr size_t kV3Extent = offsetof(LUMICE_PathFeatureReportRequest, explicit_member_chain_count) + sizeof(int);
+  static_assert(kV1Extent < kV2Extent && kV2Extent < kV3Extent);
+
+  const ScenePtr scene = MakeScene();
+  for (const size_t partial_extent : { kV1Extent + 1, kV2Extent - 1, kV2Extent + 1, kV3Extent - 1 }) {
+    Request request;
+    request.c.struct_size = partial_extent;
+    const Outcome outcome = Analyse(scene.get(), &request.c);
+    EXPECT_EQ(outcome.code, LUMICE_ERR_INVALID_VALUE) << partial_extent;
+    EXPECT_NE(outcome.error.find("complete"), std::string::npos) << partial_extent;
+  }
+}
+
 TEST(PathFeatureReportCApi, PhysicalMemberMaskAndMultiLayerIdsReachTheSceneMeasure) {
   {
     const ScenePtr scene = MakeScene();
