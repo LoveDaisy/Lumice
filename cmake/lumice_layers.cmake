@@ -238,6 +238,7 @@ set(LUMICE_LAYER_raypath_FILES
   raypath/path_feature_report_json.hpp
   raypath/scene_to_analytic.cpp
   raypath/scene_to_analytic.hpp
+  raypath/scene_measure.hpp
   raypath/single_path_analysis.cpp
   raypath/single_path_analysis.hpp
   raypath/single_path_json.cpp

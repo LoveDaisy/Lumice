@@ -10,6 +10,22 @@ Raypath 诊断以当前场景的实际映射和测度为对象，不以路径、
 
 多层路径须由逐层条件转移和权重组成：后一层的入射方向来自前一层输出，每层使用该层真实分布。单层方向映射不能替代整链模型。
 
+### 场景测度的可计算分解
+
+场景全局变量为 `g=(s0, λ, sun_node_id, spectrum_node_id)`。太阳盘方向 `s0` 和波长 `λ` 在整条复合路径只生成一次；其权重 `w_sun*w_spectrum` 也只计一次。固定 `g` 后，传播方向满足
+
+`d0=s0, d_l=F_l(d_{l-1}, λ, shape_l, pose_l, member_l)`。
+
+第 `l` 层的条件核只承载该层的晶体份额、shape/pose 分布、具体成员、有限入口和逐接口光学权重。前一层的 `outgoing_direction` 必须逐值成为后一层的 `incident_direction`；源太阳方向只作为 provenance 保留，不能重新充当后续入射。离散谱、太阳盘、层内连续分布和原子都保留各自的质量，失败分支不重新归一成成功分支。
+
+姿态的三个产品分布按实际球面积分语义抽样，支持切维数由随机变量本身决定，不由 `random`、`plate` 等名称或 Gaussian 数量推断。shape 的适用 scalar 共享产品的 `sync_group` 潜变量：同组复用同一个原始 draw，height 再做绝对值 fold，face distance 保持有符号；固定 scalar 是同一生成流程的零维退化输入。每层之间的 shape 与 pose 独立，除非产品配置未来显式声明跨层关联。
+
+成员选择有三种明确形式：具体 L2 face sequence、按本层实际 shape/axis 的 physical P/B/D gate 展开后的全集、以及该全集上的显式 mask。label/L1 等价不参与这一选择。层内晶体质量是非负 `crystal_proportion` 在该层的归一份额；跨层链还乘以前置层的 continuation probability 和末层的 exit probability。
+
+场景 spectrum 模式直接使用离散节点及其原始权重；illuminant 模式对产品的 `[380,780)` 均匀波长测度做分层节点积分，并在每个节点乘同一个 `GetIlluminantSpd` 权威函数。显式 diagnostic spectrum 是独立模式，不改写场景观测谱。零权重节点保留为 `zero_weight` 行。太阳直径为零时是中心方向原子；非零时是产品球冠上的归一面积测度。
+
+每条测度行分别保存全局权重、联合样本质量、每层条件质量、`A`、逐接口 Fresnel 结果、实际 shape/pose/member 和来源 id。总体量使用 `A*T` 与上述质量相乘；单位为 analytic kernel 的 `a=1` 有限晶体面积单位乘场景谱权重。粗/细联合样本给总体积分误差，field 自身的导数 availability 和 margin 状态仍是局部数值证据，两者不得混写。
+
 ## 候选与证据
 
 自动发现至少检查下列来源：
