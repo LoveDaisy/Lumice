@@ -1211,6 +1211,9 @@ Error BuildSceneMeasure(const ConfigManager& config, const SceneMeasureRequest& 
               mark_row_numerical(&row, "a generator latent has a non-finite density or mapping Jacobian");
               conditional_weight = { std::numeric_limits<double>::quiet_NaN(), SceneMeasureNumericStatus::kInvalid };
             }
+            if (latent.base_measure == LatentBaseMeasure::kAtomCounting) {
+              continue;
+            }
             const double proposal = latent.proposal_density_or_mass;
             const double target = latent.target_density_or_mass;
             double proposal_log_term = 0.0;

@@ -660,6 +660,37 @@ TEST(SceneMeasure, ShapeSyncGroupSharesRawDrawAndHeightFoldUsesTheActualSample) 
   EXPECT_EQ(height_factor->latent_id, face_factor->latent_id);
 }
 
+TEST(SceneMeasure, ZeroWidthTypedDistributionsRemainAtomicMeasureFactors) {
+  const DistributionType types[] = { DistributionType::kUniform, DistributionType::kGaussian,
+                                     DistributionType::kGaussianLegacy, DistributionType::kZigzag,
+                                     DistributionType::kLaplacian };
+  for (const DistributionType type : types) {
+    CrystalConfig crystal = Prism(1);
+    std::get<PrismCrystalParam>(crystal.param_).d_[0] = { type, 1.0f, 0.0f };
+    const SceneMeasureResult result = Build(Scene({ crystal }, { 0.0f }), Request({ 1 }, { { 3, 6 } }, 2));
+    const auto factor = std::find_if(result.factors.begin(), result.factors.end(),
+                                     [](const auto& item) { return item.name == "shape.face_distance[0]"; });
+    if (factor == result.factors.end()) {
+      ADD_FAILURE() << "missing zero-width shape factor";
+      continue;
+    }
+    EXPECT_EQ(factor->support_dimension, 0);
+    for (const SceneMeasureRow& row : result.rows) {
+      const auto latent = std::find_if(row.latents.begin(), row.latents.end(),
+                                       [](const auto& item) { return item.name == "shape.face_distance[0]"; });
+      if (latent == row.latents.end()) {
+        ADD_FAILURE() << "missing zero-width shape latent";
+        continue;
+      }
+      EXPECT_EQ(latent->base_measure, LatentBaseMeasure::kAtomCounting);
+      EXPECT_DOUBLE_EQ(latent->proposal_density_or_mass, 1.0);
+      EXPECT_DOUBLE_EQ(latent->target_density_or_mass, 1.0);
+      EXPECT_DOUBLE_EQ(row.joint_proposal_density, 1.0);
+      EXPECT_DOUBLE_EQ(row.joint_target_density, 1.0);
+    }
+  }
+}
+
 TEST(SceneMeasure, GeneralPoseDistributionsAreMeasuredWithoutFamilyWhitelist) {
   AxisDistribution axis;
   axis.latitude_dist = { DistributionType::kLaplacian, 62.0f, 4.0f };

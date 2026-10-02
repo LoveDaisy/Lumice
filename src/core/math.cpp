@@ -444,15 +444,14 @@ RandomNumberGenerator::DistributionSample RandomNumberGenerator::Sample(Distribu
   DistributionSample sample;
   switch (dist.type) {
     case DistributionType::kUniform: {
-      sample.atom = false;
       sample.latent_coordinate = GetUniform();
       sample.mapping_jacobian = std::abs(static_cast<double>(dist.UniformFullRange()));
       sample.value = (sample.latent_coordinate - 0.5f) * dist.UniformFullRange() + dist.UniformCenter();
+      sample.atom = dist.UniformFullRange() == 0.0f;
       return sample;
     }
     case DistributionType::kGaussian:
     case DistributionType::kGaussianLegacy: {
-      sample.atom = false;
       sample.latent_coordinate = GetGaussian();
       sample.latent_proposal_density =
           std::exp(-0.5 * static_cast<double>(sample.latent_coordinate) * sample.latent_coordinate) /
@@ -460,29 +459,34 @@ RandomNumberGenerator::DistributionSample RandomNumberGenerator::Sample(Distribu
       sample.latent_target_density = sample.latent_proposal_density;
       sample.mapping_jacobian = std::abs(static_cast<double>(dist.Std()));
       sample.value = sample.latent_coordinate * dist.Std() + dist.Mean();
+      sample.atom = dist.Std() == 0.0f;
+      if (sample.atom) {
+        sample.latent_proposal_density = 1.0;
+        sample.latent_target_density = 1.0;
+      }
       return sample;
     }
     case DistributionType::kZigzag: {
       // Rectified arcsine: |A·sin(2πU) + B| where A is the amplitude and B the tilt offset.
       // The abs() is intentional: fold (flip=true) is unconditionally skipped — abs() guarantees
       // phi >= 0 for all kZigzag inputs regardless of the amplitude / tilt values.
-      sample.atom = false;
       sample.latent_coordinate = GetUniform();
       const float phase = sample.latent_coordinate * 2.0f * math::kPi;
       const float raw = dist.Amplitude() * std::sin(phase) + dist.Tilt();
       sample.mapping_jacobian = std::abs(static_cast<double>(dist.Amplitude()) * 2.0 * math::kPi * std::cos(phase));
       sample.value = std::abs(raw);
+      sample.atom = dist.Amplitude() == 0.0f;
       return sample;
     }
     case DistributionType::kLaplacian: {
       // Laplace inverse CDF: μ - b·sign(U-0.5)·ln(1-2|U-0.5|), returns degrees.
-      sample.atom = false;
       sample.latent_coordinate = GetUniform();
       const float sign = (sample.latent_coordinate < 0.5f) ? -1.0f : 1.0f;
       float arg = 1.0f - 2.0f * std::abs(sample.latent_coordinate - 0.5f);
       arg = std::max(arg, std::numeric_limits<float>::min());  // Clamp to avoid ln(0).
       sample.mapping_jacobian = 2.0 * std::abs(static_cast<double>(dist.Scale())) / arg;
       sample.value = dist.Location() - dist.Scale() * sign * std::log(arg);
+      sample.atom = dist.Scale() == 0.0f;
       return sample;
     }
     case DistributionType::kNoRandom:
