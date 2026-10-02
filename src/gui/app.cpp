@@ -306,6 +306,10 @@ void NotifyWindowContentScaleChanged() {
   g_ui_scale_dirty = true;
 }
 
+unsigned int WindowContentScaleRevision() {
+  return g_window_resize_events.ContentScaleRevision();
+}
+
 void ResetWindowResizeEvents() {
   g_window_resize_events = {};
 }

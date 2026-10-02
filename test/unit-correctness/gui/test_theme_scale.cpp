@@ -211,9 +211,11 @@ TEST(WindowResizeState, SizeBeforeContentScalePreservesIntentUntilTheNextManualR
   gui::g_state.aspect_preset = gui::AspectPreset::k16x9;
   gui::ResetWindowResizeEvents();
   // GLFW Win32's WM_DPICHANGED calls SetWindowPos before its content-scale notification.
+  const unsigned int revision = gui::WindowContentScaleRevision();
   gui::WindowSizeCallback(nullptr, /*width=*/1400, /*height=*/900);
   gui::NotifyWindowContentScaleChanged();
   gui::FinishWindowEventPoll();
+  EXPECT_NE(gui::WindowContentScaleRevision(), revision);
   EXPECT_EQ(gui::g_state.aspect_preset, gui::AspectPreset::k16x9);
   EXPECT_TRUE(gui::g_ui_scale_dirty);
   gui::g_ui_scale_dirty = false;

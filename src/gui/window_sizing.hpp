@@ -48,7 +48,12 @@ class WindowResizeEvents {
     return false;
   }
 
-  void RecordContentScaleChange() { content_scale_changed_ = true; }
+  void RecordContentScaleChange() {
+    content_scale_changed_ = true;
+    ++content_scale_revision_;
+  }
+
+  unsigned int ContentScaleRevision() const { return content_scale_revision_; }
 
   bool FinishEventPoll() {
     const bool manual_resize = unmatched_resize_ && !content_scale_changed_;
@@ -78,6 +83,7 @@ class WindowResizeEvents {
   bool saw_synchronous_callback_ = false;
   bool unmatched_resize_ = false;
   bool content_scale_changed_ = false;
+  unsigned int content_scale_revision_ = 0;
 };
 
 // A monitor work area is expressed in GLFW screen coordinates. Window sizes below are content

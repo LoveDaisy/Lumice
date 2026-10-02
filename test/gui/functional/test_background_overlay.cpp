@@ -255,6 +255,8 @@ void RegisterBackgroundOverlayTests(ImGuiTestEngine* engine) {
     ImGuiTest* t =
         IM_REGISTER_TEST(engine, "background_overlay", "aspect_resize_and_dpi_events_preserve_manual_control");
     t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      ctx->Yield(2);
       const auto request = [ctx](bool apply_aspect, bool content_scale_change, int width, int height) {
         g_window_size_test.apply_aspect = apply_aspect;
         g_window_size_test.content_scale_change = content_scale_change;

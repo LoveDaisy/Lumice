@@ -725,8 +725,20 @@ int main(int argc, char** argv) {
   ImGuiTestEngine_QueueTests(engine, ImGuiTestGroup_Tests, test_filter);
 
   // Main loop — runs until all tests complete
+  bool window_size_reply_pending = false;
   while (true) {
     glfwPollEvents();
+    gui::FinishWindowEventPoll();
+    if (window_size_reply_pending) {
+      glfwGetWindowSize(window, &g_window_size_test.width, &g_window_size_test.height);
+      const auto limits = gui::GetCurrentWindowGeometryConstraints(window, gui::CurrentUiScale());
+      g_window_size_test.min_width = limits.min_w;
+      g_window_size_test.min_height = limits.min_h;
+      g_window_size_test.max_width = limits.max_w;
+      g_window_size_test.max_height = limits.max_h;
+      g_window_size_test.done.store(true);
+      window_size_reply_pending = false;
+    }
     gui::SyncFromPoller();  // Sync server data for perf tests (no-op when g_server is null)
 
     if (g_window_size_test.requested.exchange(false)) {
@@ -739,15 +751,8 @@ int main(int argc, char** argv) {
         // Reproduce GLFW's Win32 size-before-content-scale order on the owning thread.
         gui::NotifyWindowContentScaleChanged();
       }
-      glfwGetWindowSize(window, &g_window_size_test.width, &g_window_size_test.height);
-      const auto limits = gui::GetCurrentWindowGeometryConstraints(window, gui::CurrentUiScale());
-      g_window_size_test.min_width = limits.min_w;
-      g_window_size_test.min_height = limits.min_h;
-      g_window_size_test.max_width = limits.max_w;
-      g_window_size_test.max_height = limits.max_h;
-      g_window_size_test.done.store(true);
+      window_size_reply_pending = true;
     }
-    gui::FinishWindowEventPoll();
 
     // The same frame-boundary rebuild the product runs: Settings tests exercise atlas/style,
     // window geometry and active aspect reconciliation rather than stopping at the dirty flag.

@@ -203,6 +203,7 @@ bool CalibrationPending();
 // Settle resize provenance after a full GLFW event poll, before scale rebuilding or NewFrame.
 void FinishWindowEventPoll();
 void NotifyWindowContentScaleChanged();
+unsigned int WindowContentScaleRevision();
 void ResetWindowResizeEvents();
 
 // Unsaved changes popup state

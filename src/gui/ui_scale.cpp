@@ -22,6 +22,8 @@ UiScaleParams ApplyUiScaleInputs(ImGuiIO& io, float monitor_scale_x, float monit
 }
 
 bool RebuildForUiScale(GLFWwindow* window, ImGuiIO& io, float monitor_scale_x, float monitor_scale_y) {
+  const unsigned int scale_revision = WindowContentScaleRevision();
+  const float user_multiplier = g_ui_scale_multiplier;
   const UiScaleParams params = ApplyUiScaleInputs(io, monitor_scale_x, monitor_scale_y);
   ImGui_ImplOpenGL3_DestroyFontsTexture();
   if (!ImGui_ImplOpenGL3_CreateFontsTexture()) {
@@ -41,7 +43,9 @@ bool RebuildForUiScale(GLFWwindow* window, ImGuiIO& io, float monitor_scale_x, f
     ApplyAspectRatio(window, active_preset, portrait, background_ratio);
     g_state.aspect_preset = active_preset;
   }
-  g_ui_scale_dirty = false;
+  // Resizing/repositioning can synchronously trigger another monitor notification. Complete only
+  // the inputs captured by this rebuild; a newer input must survive for the next frame.
+  g_ui_scale_dirty = WindowContentScaleRevision() != scale_revision || g_ui_scale_multiplier != user_multiplier;
   return true;
 }
 

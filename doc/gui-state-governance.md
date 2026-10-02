@@ -608,6 +608,8 @@ S1–S8 是立项时的种子，S9 / S10 是 S3 / S4 两个待核实分支核实
 运行期的唯一编排入口是 `src/gui/ui_scale.cpp::RebuildForUiScale`：应用 visual language、重传字体纹理、
 应用共享窗口几何、重协调 active non-Free preset，最后才清 dirty。`main.cpp` 只拥有 monitor 输入与帧循环
 调度，`gui_test` 也调用这个入口；另写测试专用缩放算式或只断言 dirty 都不构成行为覆盖。
+重建仅结算入口时的输入代际；若窗口调整期间又上报 content-scale，新的 dirty 保留到下一帧，
+不能被当前重建尾部的清理覆盖。
 
 `WindowResizeEvents` 将程序化请求与目标尺寸、同步 readback 关联，支持同步和延迟 callback；
 已结算请求在 event-poll 边界退休，同尺寸 no-op 不预支任何 callback。未匹配尺寸事件先记录，待
