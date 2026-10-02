@@ -13,8 +13,10 @@ struct GLFWwindow;
 namespace lumice::gui {
 
 // GLFW can report a resize inside SetWindowSize or during a later event poll. Correlate delayed
-// events with concrete requests, and decide whether an unmatched event was manual only after all
-// content-scale callbacks in that poll have arrived (Win32 reports size before DPI).
+// events with concrete requests through the next event poll, and decide whether an unmatched event
+// was manual only after all content-scale callbacks in that poll have arrived (Win32 reports size
+// before DPI). Unconfirmed requests expire at that boundary: rejected requests must not exempt a
+// later user resize. An event arriving after settlement is treated as a new external resize.
 class WindowResizeEvents {
  public:
   void BeginRequest(int width, int height) {
@@ -39,7 +41,7 @@ class WindowResizeEvents {
     }
     for (auto& request : requests_) {
       if ((width == request.target_w && height == request.target_h) ||
-          (width == request.actual_w && height == request.actual_h)) {
+          (request.completed && width == request.actual_w && height == request.actual_h)) {
         request.completed = true;
         return true;
       }
@@ -57,14 +59,9 @@ class WindowResizeEvents {
 
   bool FinishEventPoll() {
     const bool manual_resize = unmatched_resize_ && !content_scale_changed_;
-    if (manual_resize) {
-      // The user superseded outstanding requests; none can exempt a future manual event.
-      requests_.clear();
-    } else {
-      requests_.erase(
-          std::remove_if(requests_.begin(), requests_.end(), [](const Request& request) { return request.completed; }),
-          requests_.end());
-    }
+    // Success, rejection and silence all settle here. The old readback of a rejected request is
+    // never evidence of a programmatic event, and no historical target survives into another poll.
+    requests_.clear();
     unmatched_resize_ = false;
     content_scale_changed_ = false;
     return manual_resize;

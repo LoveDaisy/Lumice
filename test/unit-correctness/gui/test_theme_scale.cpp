@@ -240,17 +240,35 @@ TEST(WindowResizeEvents, ZeroOneOrTwoSynchronousCallbacksCannotExemptTheNextManu
   }
 }
 
-TEST(WindowResizeEvents, DelayedRequestsRemainCorrelatedAcrossQuietPolls) {
+TEST(WindowResizeEvents, DelayedRequestsRemainCorrelatedWithinTheNextPoll) {
   gui::WindowResizeEvents events;
   events.BeginRequest(1400, 900);
   events.EndRequest(1600, 980);
-  EXPECT_FALSE(events.FinishEventPoll());
   events.BeginRequest(1500, 940);
   events.EndRequest(1600, 980);
   EXPECT_TRUE(events.RecordResize(1400, 900));
   EXPECT_TRUE(events.RecordResize(1500, 940));
   EXPECT_FALSE(events.FinishEventPoll());
   EXPECT_FALSE(events.RecordResize(1450, 920));
+  EXPECT_TRUE(events.FinishEventPoll());
+}
+
+TEST(WindowResizeEvents, UnacknowledgedRequestsCannotExemptOldReadbackOrLaterManualTargets) {
+  for (int manual_width : { 1400, 1600 }) {
+    SCOPED_TRACE(manual_width);
+    gui::WindowResizeEvents events;
+    events.BeginRequest(1400, 900);
+    events.EndRequest(1600, 980);
+    EXPECT_FALSE(events.FinishEventPoll());
+    EXPECT_FALSE(events.FinishEventPoll());
+    EXPECT_FALSE(events.RecordResize(manual_width, manual_width == 1400 ? 900 : 980));
+    EXPECT_TRUE(events.FinishEventPoll());
+  }
+
+  gui::WindowResizeEvents events;
+  events.BeginRequest(1400, 900);
+  events.EndRequest(1600, 980);
+  EXPECT_FALSE(events.RecordResize(1600, 980));
   EXPECT_TRUE(events.FinishEventPoll());
 }
 
