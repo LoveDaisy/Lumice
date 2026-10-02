@@ -74,8 +74,8 @@
 > 也是 `gui_test` 参考图的拍摄尺度），不是跨平台不变的物理量。`ui_scale = 显示器内容缩放 × 用户倍率`，
 > 单一 owner 是 `src/gui/theme.{hpp,cpp}`：`ApplyVisualLanguage(io, layout_scale, raster_density)`
 > 每次从 `ImGuiStyle()` 基线重派生 style（`ScaleAllSizes`）、按 `round(15 × layout_scale)` 重建 atlas，
-> 其余所有屏幕像素字面量在使用处经 `UiPx()`/`UiPxI()` 取值。两个参数按平台拆分（策略在 `main.cpp`
-> 的 `ResolveUiScaleParams`，机制在 `theme.cpp`）：Windows/Linux 的 GLFW 窗口坐标就是物理像素，
+> 其余所有屏幕像素字面量在使用处经 `UiPx()`/`UiPxI()` 取值。两个参数按平台拆分（策略与运行期编排在
+> `ui_scale.{hpp,cpp}`，视觉机制在 `theme.cpp`）：Windows/Linux 的 GLFW 窗口坐标就是物理像素，
 > `layout_scale = monitor × multiplier`、`raster_density = 1`；macOS 的窗口坐标是逻辑点、OS 已经把
 > 布局放大过，`layout_scale = multiplier`、`raster_density = monitor`——后者只提高 atlas 栅格化密度
 > （`ImFontConfig::RasterizerDensity`）不改任何度量，Retina 上字形变清晰而窗口尺寸不变（已真机核对）。
@@ -83,10 +83,18 @@
 > 读它）；`app.cpp` 的 `g_ui_scale_multiplier`（用户倍率，`user_defaults.json` 的 `app.ui_scale_multiplier`
 > 在窗口创建前由 `LoadUiScaleMultiplierAtStartup` 读入，Settings 面板经 `SetUiScaleMultiplierImmediate`
 > 改写）；`main.cpp` 的 `g_monitor_scale_x/y`（`glfwGetWindowContentScale` 的最近一次读数，跨屏回调只改
-> 它并置 `g_ui_scale_dirty`）。任一输入变化都走同一条路：下一帧顶部 `RebuildForUiScale` 重跑
-> `ApplyVisualLanguage` → 重传字体纹理 → `PlanWindowSizeForScale` 抬高窗口下限并在必要时放大窗口。
+> 它并置 `g_ui_scale_dirty`）。任一输入变化都走同一条路：下一帧顶部的共享入口
+> `RebuildForUiScale` 重跑 `ApplyVisualLanguage` → 重传字体纹理 → 协调主窗口几何 → 重新满足当前
+> 非 Free 画幅；只有整条链成功后才清 dirty。产品与 `gui_test` 调同一入口，测试不再只观察标志位。
 > `UiPx()` 出口没有机械门禁（新写一个裸像素字面量不会被 checker 拦下），靠 code review 惯例维持，
 > 这是已知取舍。
+
+> **单位边界不得折叠。** 设计常量和 ImGui/GLFW window coordinate 属于逻辑布局域；Windows/Linux
+> 的 monitor scale 进入 `layout_scale`，macOS 的 monitor scale 只进入 `raster_density`。OpenGL
+> framebuffer、preview viewport、截图 FBO/PNG 属于设备像素域，只能在既有 `dpi_scale_*`、
+> `ScreenDeltaToNdcDelta`、`PreviewPointToCanvasPixel` 等具名边界换算。UI 倍率不得改写固定导出尺寸、
+> 仿真分辨率或光学参数。背景拖动/取色、annotation 命中和 screenshot 因而继续消费 framebuffer
+> scale，而不是再次乘 `CurrentUiScale()`。
 
 **4.2 尺寸节奏（量化）** —— 全部取值为 4 的倍数；关键在于**行距比现状更紧而非更松**，以抵消更大字号：
 
@@ -294,3 +302,24 @@ ImGui 对「半可变」的表达只有一句：`SetNextWindowSizeConstraints(Im
 两种窗口都要给 `gui_test` 一条复位口（`ResetXxxTestState()`，挂进 `ResetTestState()`）：
 ImGui 记住的尺寸跨用例存活，不复位就是「隔离单跑绿、全量跑红」家族的又一个字段变体（Pos / Scroll /
 InputText 缓冲之外的第四个：Size）。
+
+### 9.5 主窗口几何：一个约束快照，三个消费者
+
+主窗口不属于四档浮窗，但它的启动尺寸、运行期 scale 变化和画幅预设必须共享一套约束。唯一模型是
+`window_sizing.hpp` 的 `WindowGeometryConstraints`：当前窗口中心所属 monitor 的 workarea、
+`glfwGetWindowFrameSize` 给出的实际 non-client frame、`kMinWindow* × layout_scale` 的 content floor，
+以及由前三者得到的 content maximum。窗口尚未创建时只能用保守 frame estimate；创建后所有路径都换成
+实际 frame。monitor 不可得时只把 maximum 退化为无界，不偷偷改用 primary monitor。
+
+- 启动与 scale rebuild 用 `PlanWindowSizeForScale` 设置同一 floor/max，并把窗口位置连外框一起约束在
+  workarea 内；不能把 OS title bar 当成会随用户倍率变大的 UI。
+- `ApplyAspectRatio` 用同一快照求 preview ratio 的可行区间。可行时整数舍入误差不超过一个像素；不可行时
+  保留用户选的 preset，并以 `glfwSetWindowSize` 后读回的实际 content size 计算 `aspect_clamp`，不能把
+  请求尺寸当成已经发生的事实。
+- 程序化 floor/preset 协调不改变用户意图；真正的手工 resize 才把 preset 转为 Free。scale rebuild 在
+  更新 style/font 之后重应用 active preset，因此放大与缩小都不会留下一个名称仍是固定画幅、实际 preview
+  却已经变形的状态。
+
+二级窗口维持 §9.2 的既有策略：Settings、Analysis、Colors 的 `WindowResizeCondForScale` 会在 scale
+变化时重新应用 `UiPx()` 尺寸；Edit Entry 的 tracker 回到内容跟随；Summary 每帧按最新 `UiPx()` 和
+工作区高度计算约束；`AlwaysAutoResize` 与主 shell 每帧无条件定位的窗口天然不持有旧 scale 尺寸。
