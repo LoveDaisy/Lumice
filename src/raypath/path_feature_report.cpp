@@ -294,15 +294,39 @@ BrightnessEstimate MeasureMember(const analytic::FaceNormalTable& normals, const
   return out;
 }
 
-bool HasNumericalIncomplete(const PathFeatureReport& report) {
+CoverageStatus AggregateFeatureEvidence(const PathFeatureReport& report) {
+  bool has_not_supported = false;
+  bool has_not_detected = false;
+  bool has_numerical_incomplete = false;
   for (const PhysicalMemberReport& member : report.members) {
     for (const MemberWavelengthReport& row : member.wavelengths) {
-      if (row.brightness.status == CoverageStatus::kNumericalIncomplete) {
-        return true;
+      switch (row.brightness.status) {
+        case CoverageStatus::kSupported:
+          break;
+        case CoverageStatus::kNotSupported:
+          has_not_supported = true;
+          break;
+        case CoverageStatus::kNotDetectedAtResolution:
+          has_not_detected = true;
+          break;
+        case CoverageStatus::kNumericalIncomplete:
+          has_numerical_incomplete = true;
+          break;
+        case CoverageStatus::kPhysicallyUnreachable:
+          return CoverageStatus::kPhysicallyUnreachable;
       }
     }
   }
-  return false;
+  if (has_numerical_incomplete) {
+    return CoverageStatus::kNumericalIncomplete;
+  }
+  if (has_not_detected) {
+    return CoverageStatus::kNotDetectedAtResolution;
+  }
+  if (has_not_supported) {
+    return CoverageStatus::kNotSupported;
+  }
+  return CoverageStatus::kSupported;
 }
 
 bool HasDistinctRefractiveIndices(const std::vector<ReportWavelength>& wavelengths) {
@@ -546,7 +570,12 @@ void AddPlateFeatures(PathFeatureReport* report) {
   std::vector<LocatedMember> located;
   for (size_t m = 0; m < report->members.size(); m++) {
     const auto& rows = report->members[m].wavelengths;
-    if (!rows.empty() && rows.front().brightness.has_fixed_direction) {
+    const bool all_wavelengths_located =
+        rows.size() == report->wavelengths.size() &&
+        std::all_of(rows.begin(), rows.end(), [](const MemberWavelengthReport& row) {
+          return row.brightness.status == CoverageStatus::kSupported && row.brightness.has_fixed_direction;
+        });
+    if (all_wavelengths_located) {
       double altitude = 0.0;
       double azimuth = 0.0;
       DirToAltAz(rows.front().brightness.fixed_direction, &altitude, &azimuth);
@@ -683,11 +712,11 @@ Error AnalyzePathFeatureReport(const ConfigManager& config, const PathFeatureRep
     result.members.push_back(std::move(member));
   }
 
-  const bool numerical_incomplete = HasNumericalIncomplete(result);
-  if (numerical_incomplete) {
-    result.coverage.push_back({ "positioned_features", CoverageStatus::kNumericalIncomplete,
-                                "one or more member/wavelength finite-crystal estimates failed the coarse/fine "
-                                "convergence tolerance" });
+  const CoverageStatus feature_evidence = AggregateFeatureEvidence(result);
+  if (feature_evidence != CoverageStatus::kSupported) {
+    result.coverage.push_back({ "positioned_features", feature_evidence,
+                                "member/wavelength finite-crystal evidence is insufficient for confirmed positioned "
+                                "features at the requested resolution" });
   } else if (random && IsReferenceRegularPrism(crystal) && SameFaces(result.meta.requested_faces, { 3, 5 })) {
     result.features.push_back(
         OrdinaryEdge(wavelengths, "random_regular.3-5.inner_edge",
@@ -732,8 +761,8 @@ Error AnalyzePathFeatureReport(const ConfigManager& config, const PathFeatureRep
     AddPlateFeatures(&result);
     result.coverage.push_back(
         { "horizontal constant-direction locations",
-          result.features.empty() ? CoverageStatus::kPhysicallyUnreachable : CoverageStatus::kSupported,
-          result.features.empty() ? "no physical member had positive finite-crystal support" :
+          result.features.empty() ? CoverageStatus::kNotDetectedAtResolution : CoverageStatus::kSupported,
+          result.features.empty() ? "no physical member had a stable fixed direction at the requested resolution" :
                                     "locations and energy are computed per physical member and wavelength" });
   } else {
     result.coverage.push_back({ "positioned_features", CoverageStatus::kNotSupported,
