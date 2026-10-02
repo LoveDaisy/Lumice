@@ -879,6 +879,7 @@ SceneMeasureLayerRow EvaluateLayer(RandomNumberGenerator& rng, const LayerInput&
   SceneMeasureLayerRow out;
   out.layer_index = layer_index;
   out.crystal_id = input.setting->crystal_.id_;
+  out.crystal_kind = KindOf(input.setting->crystal_.param_) == CrystalKind::kPrism ? "prism" : "pyramid";
   out.faces = faces;
   out.crystal_share = input.crystal_share;
   out.continuation_mass = input.continuation_mass;
@@ -886,6 +887,8 @@ SceneMeasureLayerRow EvaluateLayer(RandomNumberGenerator& rng, const LayerInput&
 
   const analytic::CrystalShape shape =
       SampleShape(rng, input.setting->crystal_.param_, input, layer_index, &out.shape, latents);
+  out.upper_wedge_deg = shape.upper_wedge_deg;
+  out.lower_wedge_deg = shape.lower_wedge_deg;
   float pose_values[3]{};
   const AxisPoseSampleTrace pose_trace =
       RandomSampler::SampleAxisPoseWithTrace(rng, input.setting->crystal_.axis_, pose_values);

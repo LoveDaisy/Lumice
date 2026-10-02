@@ -299,6 +299,74 @@ TEST(PathFeatureReportJson, ZeroWidthTypedPoseFactorsSerializeAsAtoms) {
   }
 }
 
+TEST(PathFeatureReportJson, MultiLayerPyramidRowsCarryReconstructibleShapeProvenance) {
+  const auto pyramid = [](IdType id, float upper_wedge, float lower_wedge) {
+    PyramidCrystalParam shape;
+    shape.h_pyr_u_ = { DistributionType::kNoRandom, 0.4f, 0.0f };
+    shape.h_prs_ = { DistributionType::kNoRandom, 1.0f, 0.0f };
+    shape.h_pyr_l_ = { DistributionType::kNoRandom, 0.5f, 0.0f };
+    for (Distribution& distance : shape.d_) {
+      distance = { DistributionType::kNoRandom, 1.0f, 0.0f };
+    }
+    shape.wedge_angle_u_ = upper_wedge;
+    shape.wedge_angle_l_ = lower_wedge;
+    CrystalConfig crystal;
+    crystal.id_ = id;
+    crystal.param_ = shape;
+    crystal.axis_.latitude_dist = { DistributionType::kNoRandom, 90.0f, 0.0f };
+    crystal.axis_.azimuth_dist = { DistributionType::kNoRandom, 180.0f, 0.0f };
+    crystal.axis_.roll_dist = { DistributionType::kNoRandom, 0.0f, 0.0f };
+    return crystal;
+  };
+  const CrystalConfig first = pyramid(1, 22.0f, 31.0f);
+  const CrystalConfig second = pyramid(2, 27.0f, 36.0f);
+  ConfigManager config;
+  config.scene_.light_source_.param_ = SunParam{ 20.0f, 17.0f, 0.0f };
+  config.scene_.light_source_.spectrum_ = std::vector<WlParam>{ { 550.0f, 1.0f } };
+  for (const CrystalConfig* crystal : { &first, &second }) {
+    config.crystals_.emplace(crystal->id_, *crystal);
+    ScatteringSetting setting{};
+    setting.crystal_ = *crystal;
+    setting.crystal_proportion_ = 1.0f;
+    MsInfo layer{};
+    layer.prob_ = crystal->id_ == first.id_ ? 1.0f : 0.0f;
+    layer.setting_.push_back(std::move(setting));
+    config.scene_.ms_.push_back(std::move(layer));
+  }
+
+  PathFeatureReportRequest request;
+  request.crystal_id = first.id_;
+  request.layer_crystal_ids = { first.id_, second.id_ };
+  request.path_layers = { { 3, 6 }, { 3, 6 } };
+  request.wavelengths_nm = { 550.0 };
+  request.sample_count = 64;
+  request.scene_measure_sample_count = 2;
+  request.member_selection = SceneMemberSelection::kConcrete;
+  PathFeatureReport report;
+  const Error error = AnalyzePathFeatureReport(config, request, &report);
+  ASSERT_TRUE(error.Ok()) << error.message;
+
+  const nlohmann::json doc = nlohmann::json::parse(PathFeatureReportToJson(report, "test-version"));
+  const auto& rows = doc["scene_measure"]["sampled_rows"];
+  const auto row = std::find_if(rows.begin(), rows.end(), [](const auto& item) { return item["layers"].size() == 2; });
+  ASSERT_NE(row, rows.end());
+  for (const auto& layer : (*row)["layers"]) {
+    if (layer["crystal_kind"] != "pyramid") {
+      ADD_FAILURE() << "multi-layer provenance must identify pyramid geometry";
+      continue;
+    }
+    const int id = layer["crystal_id"];
+    if (id != first.id_ && id != second.id_) {
+      ADD_FAILURE() << "unexpected crystal id in multi-layer provenance";
+      continue;
+    }
+    const CrystalConfig& expected = id == first.id_ ? first : second;
+    const auto& expected_shape = std::get<PyramidCrystalParam>(expected.param_);
+    EXPECT_EQ(layer["upper_wedge_deg"], expected_shape.wedge_angle_u_);
+    EXPECT_EQ(layer["lower_wedge_deg"], expected_shape.wedge_angle_l_);
+  }
+}
+
 TEST(PathFeatureReportJson, NonFiniteMeasureValuesCarryAnExplicitNumericalStatus) {
   PathFeatureReport report;
   report.scene_measure.status = SceneMeasureStatus::kNumericalIncomplete;

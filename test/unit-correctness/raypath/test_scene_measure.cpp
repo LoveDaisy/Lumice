@@ -858,6 +858,9 @@ TEST(SceneMeasure, PyramidRowsCarryAllRandomHeightsAndDeterministicWedges) {
   const SceneMeasureResult result = Build(Scene({ crystal }, { 0.0f }), Request({ 1 }, { { 13, 3, 5 } }, 16));
   ASSERT_FALSE(result.rows.empty());
   const SceneMeasureLayerRow& layer = result.rows.front().layers.front();
+  EXPECT_EQ(layer.crystal_kind, "pyramid");
+  EXPECT_DOUBLE_EQ(layer.upper_wedge_deg, pyramid.wedge_angle_u_);
+  EXPECT_DOUBLE_EQ(layer.lower_wedge_deg, pyramid.wedge_angle_l_);
   EXPECT_TRUE(std::isfinite(ShapeValue(layer, "upper_h")));
   EXPECT_TRUE(std::isfinite(ShapeValue(layer, "prism_h")));
   EXPECT_TRUE(std::isfinite(ShapeValue(layer, "lower_h")));

@@ -212,6 +212,7 @@ nlohmann::ordered_json SceneMeasureJson(const SceneMeasureResult& measure) {
         { "source_spectrum_node_id", layer.source_spectrum_node_id },
         { "source_wavelength_nm", Num(layer.source_wavelength_nm) },
         { "crystal_id", layer.crystal_id },
+        { "crystal_kind", layer.crystal_kind },
         { "faces", layer.faces },
         { "shape", shape },
         { "pose_lon_lat_roll_rad", Array(layer.pose_lon_lat_roll_rad, 3) },
@@ -235,6 +236,10 @@ nlohmann::ordered_json SceneMeasureJson(const SceneMeasureResult& measure) {
       };
       if (!layer.reason.empty()) {
         layer_json["reason"] = layer.reason;
+      }
+      if (layer.crystal_kind == "pyramid") {
+        layer_json["upper_wedge_deg"] = Num(layer.upper_wedge_deg);
+        layer_json["lower_wedge_deg"] = Num(layer.lower_wedge_deg);
       }
       layers.push_back(std::move(layer_json));
     }

@@ -150,6 +150,9 @@ struct SceneMeasureLayerRow {
   int source_spectrum_node_id = 0;
   double source_wavelength_nm = 0.0;
   IdType crystal_id = 0;
+  std::string crystal_kind;
+  double upper_wedge_deg = 0.0;
+  double lower_wedge_deg = 0.0;
   std::vector<int> faces;
   std::vector<ShapeScalarSample> shape;
   double pose_lon_lat_roll_rad[3]{};
