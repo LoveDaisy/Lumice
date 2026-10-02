@@ -8,6 +8,7 @@
 
 #include "analytic/diagnostic_field.hpp"
 #include "analytic/path_evaluation.hpp"
+#include "analytic/so3.hpp"
 
 namespace lumice::analytic {
 namespace {
@@ -49,6 +50,14 @@ DiagnosticRowInput Row(const double pose[9]) {
     row.pose[i] = pose[i];
   }
   return row;
+}
+
+void Perturb(const double pose[9], int axis, double amount, double out[9]) {
+  double delta[3]{};
+  delta[axis] = amount;
+  double increment[9];
+  so3::Exp(delta, increment);
+  so3::MatMul(pose, increment, out);
 }
 
 TEST(DiagnosticField, FourFaceRowReturnsEveryInterfaceAndMargin) {
@@ -111,6 +120,82 @@ TEST(DiagnosticField, NonFirstTirKinkSuppressesOnlyTheCoefficientDerivative) {
   EXPECT_TRUE(result.direction_pose_hessian_available);
   EXPECT_FALSE(result.interfaces[2].pose_derivative_available);
   EXPECT_TRUE(result.interfaces[1].pose_derivative_available);
+}
+
+TEST(DiagnosticField, DomainGuardSuppressesEveryInterfacePoseDerivativeBeforeTheGateCrosses) {
+  const std::vector<int> faces = { 3, 5, 6, 7 };
+  Fixture fixture = Build(faces);
+  DiagnosticField field(fixture.normals, fixture.polygons, faces.data(), fixture.slots.data(),
+                        static_cast<int>(faces.size()));
+  const double pose[9] = { 0.1607738167827848, -0.5169504537544563, 0.8407817839369246,
+                           0.18942835438805,   -0.8198654102527329, -0.5403125092249418,
+                           0.9686426990335141, 0.24613601409419814, -0.03388781749965317 };
+  const DiagnosticFieldResult result = field.Evaluate(Row(pose));
+
+  ASSERT_EQ(result.path_status, DiagnosticPathStatus::kOk);
+  ASSERT_EQ(result.domain_margins.size(), 6u);
+  const auto closest =
+      std::min_element(result.domain_margins.begin(), result.domain_margins.end(),
+                       [](const DiagnosticMargin& a, const DiagnosticMargin& b) { return a.value < b.value; });
+  EXPECT_GT(closest->value, 0.0);
+  EXPECT_FALSE(result.direction_pose_jacobian_available);
+  EXPECT_FALSE(result.direction_pose_hessian_available);
+  for (const DiagnosticInterface& interface : result.interfaces) {
+    EXPECT_FALSE(interface.pose_derivative_available);
+  }
+}
+
+TEST(DiagnosticFieldNumerics, RichardsonEstimateReportsErrorAndRejectsNonConvergence) {
+  const diagnostic_field_detail::CentralDifferenceEstimate stable =
+      diagnostic_field_detail::RichardsonEstimate(1.0003, 1.000075, 1.0e-4, 0.0);
+  EXPECT_TRUE(stable.converged);
+  EXPECT_NEAR(stable.value, 1.0, 1.0e-15);
+  EXPECT_NEAR(stable.error, 7.5e-5, 1.0e-15);
+
+  const diagnostic_field_detail::CentralDifferenceEstimate unstable =
+      diagnostic_field_detail::RichardsonEstimate(1.0, 2.0, 1.0e-6, 1.0e-6);
+  EXPECT_FALSE(unstable.converged);
+  EXPECT_GT(unstable.error, 0.3);
+}
+
+TEST(DiagnosticField, CorridorTopologyChangeSuppressesEntryDerivatives) {
+  const std::vector<int> faces = { 3, 5, 6, 7 };
+  Fixture fixture = Build(faces);
+  DiagnosticField field(fixture.normals, fixture.polygons, faces.data(), fixture.slots.data(),
+                        static_cast<int>(faces.size()));
+  const double pose[9] = { 0.9290709982052409,  -0.36839005431024047, 0.033404313781536035,
+                           0.35559103306313394, 0.91435424672714,     0.19367841567179747,
+                           -0.1018925782332082, -0.168062724532665,   0.9804962127023475 };
+  const DiagnosticRowInput input = Row(pose);
+  const DiagnosticFieldResult result = field.Evaluate(input);
+
+  Corridor corridor(fixture.normals, fixture.polygons, fixture.slots.data(), static_cast<int>(faces.size()));
+  auto entry_at = [&](const DiagnosticRowInput& row) {
+    double incident_body[3];
+    for (int i = 0; i < 3; i++) {
+      incident_body[i] = row.pose[i] * row.incident_direction[0] + row.pose[3 + i] * row.incident_direction[1] +
+                         row.pose[6 + i] * row.incident_direction[2];
+    }
+    return corridor.Evaluate(incident_body, row.refractive_index);
+  };
+  const EntryMeasure base_entry = entry_at(input);
+  bool topology_changed = false;
+  for (double step : { 4.0e-4, 2.0e-4 }) {
+    for (int axis = 0; axis < 3; axis++) {
+      for (double sign : { -1.0, 1.0 }) {
+        DiagnosticRowInput sample = input;
+        Perturb(input.pose, axis, sign * step, sample.pose);
+        const EntryMeasure entry = entry_at(sample);
+        topology_changed = topology_changed || entry.topology_signature != base_entry.topology_signature;
+      }
+    }
+  }
+
+  ASSERT_EQ(result.path_status, DiagnosticPathStatus::kOk);
+  ASSERT_EQ(result.entry_status, DiagnosticEntryStatus::kOk);
+  EXPECT_TRUE(result.direction_pose_jacobian_available);
+  EXPECT_TRUE(topology_changed);
+  EXPECT_FALSE(result.entry_pose_gradient_available);
 }
 
 TEST(DiagnosticField, InvalidPathKeepsPartialNamedMarginsWithoutDerivatives) {

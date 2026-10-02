@@ -13,6 +13,21 @@
 
 namespace lumice::analytic {
 
+namespace diagnostic_field_detail {
+
+struct CentralDifferenceEstimate {
+  double value = 0.0;
+  double error = 0.0;
+  bool converged = false;
+};
+
+// Combines O(h^2) and O((h/2)^2) central-difference estimates. This is exposed only through the
+// internal C++ header so the rejection rule can be tested independently of a particular path.
+CentralDifferenceEstimate RichardsonEstimate(double coarse, double fine, double absolute_tolerance,
+                                             double relative_tolerance);
+
+}  // namespace diagnostic_field_detail
+
 enum class DiagnosticPathStatus {
   kOk,
   kPathInfeasible,

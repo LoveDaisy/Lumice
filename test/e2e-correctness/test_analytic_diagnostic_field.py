@@ -142,9 +142,9 @@ _PRELUDE = textwrap.dedent(
 
     DISTANCES = (1.37, 0.91, 1.12, 1.46, 0.83, 1.05)
     INCIDENT = (-0.9659258262890683, 0.0, -0.25881904510252074)
-    POSE = (0.9290709982052409, -0.36839005431024047, 0.033404313781536035,
-            0.35559103306313394, 0.91435424672714, 0.19367841567179747,
-            -0.1018925782332082, -0.168062724532665, 0.9804962127023475)
+    POSE = (0.6813748546859479, -0.19119700588730165, 0.7065210629142165,
+            -0.6591854405220774, -0.579842196951831, 0.47880850205253056,
+            0.3181239733270946, -0.7919764716036737, -0.521124175241158)
     FACES = (3, 5, 6, 7)
 
     def prism():
@@ -238,16 +238,32 @@ def test_ctypes_consumer_matches_independent_field_and_derivative_oracles() -> N
                                            right_perturb(POSE, tuple(delta)))
             close(out[0].entry_pose_gradient[axis], (entry_hi - entry_lo) / (2 * pose_step), 2e-5)
 
+        # Validate all 27 entries independently.  In particular the 18 off-diagonal slots use
+        # four oracle evaluations rather than treating the implementation's symmetry as an oracle.
         hessian_step = 5e-4
         for component in range(3):
-            for axis in range(3):
-                delta = [0.0, 0.0, 0.0]
-                delta[axis] = hessian_step
-                hi = trace_path(FACES, 1.31, INCIDENT, right_perturb(POSE, tuple(delta))).outgoing[component]
-                delta[axis] = -hessian_step
-                lo = trace_path(FACES, 1.31, INCIDENT, right_perturb(POSE, tuple(delta))).outgoing[component]
-                want = (hi - 2 * expected.outgoing[component] + lo) / (hessian_step * hessian_step)
-                close(out[0].direction_pose_hessian[9 * component + 3 * axis + axis], want, 2e-3)
+            for axis0 in range(3):
+                for axis1 in range(3):
+                    if axis0 == axis1:
+                        delta = [0.0, 0.0, 0.0]
+                        delta[axis0] = hessian_step
+                        hi = trace_path(FACES, 1.31, INCIDENT,
+                                        right_perturb(POSE, tuple(delta))).outgoing[component]
+                        delta[axis0] = -hessian_step
+                        lo = trace_path(FACES, 1.31, INCIDENT,
+                                        right_perturb(POSE, tuple(delta))).outgoing[component]
+                        want = (hi - 2 * expected.outgoing[component] + lo) / (hessian_step * hessian_step)
+                    else:
+                        corners = []
+                        for sign0, sign1 in ((1.0, 1.0), (1.0, -1.0), (-1.0, 1.0), (-1.0, -1.0)):
+                            delta = [0.0, 0.0, 0.0]
+                            delta[axis0] = sign0 * hessian_step
+                            delta[axis1] = sign1 * hessian_step
+                            corners.append(trace_path(
+                                FACES, 1.31, INCIDENT, right_perturb(POSE, tuple(delta))).outgoing[component])
+                        want = (corners[0] - corners[1] - corners[2] + corners[3]) / (
+                            4 * hessian_step * hessian_step)
+                    close(out[0].direction_pose_hessian[9 * component + 3 * axis0 + axis1], want, 2e-3)
 
         index_step = 1e-5
         index_lo = trace_path(FACES, 1.31 - index_step, INCIDENT, POSE)

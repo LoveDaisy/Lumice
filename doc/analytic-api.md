@@ -1013,10 +1013,25 @@ gradient per scalar margin/coefficient.  Index derivatives are with respect to t
 refractive-index argument.  Each derivative family has an availability bit/flag.  A changed path
 branch, changed finite-corridor status, internal Fresnel/TIR side switch, non-finite sample, or
 unresolved clipping active-set change makes the affected derivative unavailable; an unavailable
-number is not encoded as a physical zero.  The current general finite-difference kernel additionally
-requires the centre and both samples of every direction-domain margin to exceed the documented
-`1e-4` guard before publishing a direction or index derivative; this deliberately rejects a
-near-Snell result rather than treating an un-crossed fixed step as proof of smoothness.
+number is not encoded as a physical zero.
+
+The general kernel uses two second-order central-difference scales for every published derivative.
+Pose first derivatives and every diagonal/mixed Hessian component use `h = 4e-4` and `h/2 = 2e-4`
+radians; index derivatives use `h = 2e-6 * max(1, |n|)` and half that value.  If `D_h` and
+`D_h2` are the two estimates, the returned value is the Richardson correction
+`D_h2 + (D_h2 - D_h) / 3`, and `|(D_h2 - D_h) / 3|` is its local numerical-error estimate.  The
+estimate must not exceed an absolute-plus-relative gate: `2e-6 + 2e-5 * scale` for pose first
+derivatives, `5e-5 + 2e-4 * scale` for pose Hessians, and `2e-8 + 2e-6 * scale` for index
+derivatives, where `scale = max(|D_h|, |D_h2|, |D_returned|)`.  These calibrated local cancellation
+and truncation checks are an availability test, not a global mathematical error certificate.
+
+Every sample at both scales must also satisfy the field's applicable differentiability semantics.
+Direction and optical derivatives require every direction-domain margin at the centre and samples
+to exceed `1e-4`; all interface coefficients apply that full path gate, while an internal
+coefficient additionally keeps its own TIR discriminant on one side and outside its `1e-4` guard.
+Entry-measure derivatives instead require an `ENTRY_OK` corridor with an unchanged clipping
+topology, because finite support remains independently computable even when the optical path is not.
+Thus an un-crossed gate at one fixed scale is never by itself evidence that a derivative is smooth.
 
 Direction-domain status, finite-support status and internal TIR evidence remain separate.  Entry
 backface, exit critical angle and an empty corridor are finite-support outcomes; an internal TIR
@@ -1048,8 +1063,8 @@ concurrent reads.
 
 **Probe decision (as built).**  The retained probe is `diagnostic_field_probe`, built only with the
 test targets.  On 2026-10-02 it was run three times from an optimised native build on a 12-thread
-Apple host.  The asymmetric-prism/four-interface workload evaluates the complete field, including
-all finite-difference derivatives; medians are taken within each run:
+Apple host.  The asymmetric-prism/four-interface workload evaluated the then-current complete field,
+including its single-scale finite-difference derivatives; medians are taken within each run:
 
 | rows per geometry/path group | prepared across calls (us) | direct batch (us) | preparation share |
 |---:|---:|---:|---:|
@@ -1069,7 +1084,9 @@ Therefore the public ABI is a **direct batch with geometry/path shared by the ca
 one internal field per call and amortises preparation over the rows already present in the real
 consumer trace.  There is no persistent prepared handle, global cache, handle release function or
 cross-call lifetime.  Independent calls own independent scratch and may run concurrently.  The
-probe can be rerun with `diagnostic_field_probe`; the rejected prepared option can be added in a
+later two-scale reliability gate increases the same per-row evaluation work in both candidates and
+does not create any new cross-call preparation to amortise, so it does not reverse this decision.
+The probe can be rerun with `diagnostic_field_probe`; the rejected prepared option can be added in a
 later API version if a measured consumer workload changes the balance.
 
 **C shape.** `LUMICE_ANALYTIC_EvaluateDiagnosticFieldBatch(crystal, faces, face_count, rows,

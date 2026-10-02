@@ -236,6 +236,9 @@ typedef struct LUMICE_ANALYTIC_DiagnosticFieldResult_ {
   const LUMICE_ANALYTIC_DiagnosticMargin* domain_margins;
   int tir_margin_count;
   const LUMICE_ANALYTIC_DiagnosticMargin* tir_margins;
+  // A derivative is available only when both finite-difference scales keep the applicable path,
+  // TIR and finite-support branch stable and their Richardson local-error estimate converges.
+  // See doc/analytic-api.md section 4.8 for steps, tolerances and tensor layout.
   int direction_pose_jacobian_available;
   int direction_pose_hessian_available;
   int direction_index_derivative_available;

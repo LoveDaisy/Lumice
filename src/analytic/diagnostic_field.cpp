@@ -1,6 +1,7 @@
 #include "analytic/diagnostic_field.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <limits>
 #include <utility>
@@ -12,10 +13,16 @@ namespace lumice::analytic {
 
 namespace {
 
-constexpr double kPoseStep = 2.0e-4;
-constexpr double kIndexRelativeStep = 1.0e-6;
+constexpr double kPoseFineStep = 2.0e-4;
+constexpr double kIndexFineRelativeStep = 1.0e-6;
 constexpr double kTirCoefficientDerivativeGuard = 1.0e-4;
 constexpr double kDerivativeGateGuard = 1.0e-4;
+constexpr double kPoseFirstAbsoluteError = 2.0e-6;
+constexpr double kPoseFirstRelativeError = 2.0e-5;
+constexpr double kPoseSecondAbsoluteError = 5.0e-5;
+constexpr double kPoseSecondRelativeError = 2.0e-4;
+constexpr double kIndexAbsoluteError = 2.0e-8;
+constexpr double kIndexRelativeError = 2.0e-6;
 
 double QuietNan() {
   return std::numeric_limits<double>::quiet_NaN();
@@ -84,6 +91,21 @@ bool HasStablePathMargins(const std::vector<double>& margins) {
 }
 
 }  // namespace
+
+diagnostic_field_detail::CentralDifferenceEstimate diagnostic_field_detail::RichardsonEstimate(
+    double coarse, double fine, double absolute_tolerance, double relative_tolerance) {
+  CentralDifferenceEstimate out;
+  if (!std::isfinite(coarse) || !std::isfinite(fine) || !(absolute_tolerance >= 0.0) || !(relative_tolerance >= 0.0)) {
+    return out;
+  }
+  const double correction = (fine - coarse) / 3.0;
+  out.value = fine + correction;
+  out.error = std::fabs(correction);
+  const double scale = std::max({ std::fabs(coarse), std::fabs(fine), std::fabs(out.value) });
+  out.converged = std::isfinite(out.value) && std::isfinite(out.error) &&
+                  out.error <= absolute_tolerance + relative_tolerance * scale;
+  return out;
+}
 
 struct DiagnosticField::Values {
   DiagnosticPathStatus path_status = DiagnosticPathStatus::kNonFinite;
@@ -194,61 +216,110 @@ DiagnosticFieldResult DiagnosticField::Evaluate(const DiagnosticRowInput& input)
 }
 
 void DiagnosticField::FillDerivatives(const DiagnosticRowInput& input, const Values& base, DiagnosticFieldResult* out) {
-  Values minus[3];
-  Values plus[3];
-  bool direction_pose = true;
-  for (int axis = 0; axis < 3; axis++) {
-    DiagnosticRowInput lo = input;
-    DiagnosticRowInput hi = input;
-    PerturbPose(input.pose, axis, -kPoseStep, -1, 0.0, lo.pose);
-    PerturbPose(input.pose, axis, kPoseStep, -1, 0.0, hi.pose);
-    minus[axis] = EvaluateValues(lo);
-    plus[axis] = EvaluateValues(hi);
-    direction_pose =
-        direction_pose && HasStablePathMargins(base.domain_margins) &&
-        HasStablePathMargins(minus[axis].domain_margins) && HasStablePathMargins(plus[axis].domain_margins) &&
-        minus[axis].path_status == DiagnosticPathStatus::kOk && plus[axis].path_status == DiagnosticPathStatus::kOk &&
-        Finite(minus[axis].outgoing, 3) && Finite(plus[axis].outgoing, 3);
-  }
-  if (direction_pose) {
-    out->direction_pose_jacobian_available = 1;
-    for (int component = 0; component < 3; component++) {
-      for (int axis = 0; axis < 3; axis++) {
-        out->direction_pose_jacobian[3 * component + axis] =
-            (plus[axis].outgoing[component] - minus[axis].outgoing[component]) / (2.0 * kPoseStep);
+  constexpr int kLevelCount = 2;
+  constexpr int kMixedPairCount = 3;
+  constexpr int kMixedAxes[kMixedPairCount][2] = { { 0, 1 }, { 0, 2 }, { 1, 2 } };
+  constexpr double kCornerSigns[4][2] = { { 1.0, 1.0 }, { 1.0, -1.0 }, { -1.0, 1.0 }, { -1.0, -1.0 } };
+  struct PoseSamples {
+    double step = 0.0;
+    std::array<Values, 3> minus;
+    std::array<Values, 3> plus;
+    std::array<std::array<Values, 4>, kMixedPairCount> corners;
+  };
+  std::array<PoseSamples, kLevelCount> pose_samples;
+  pose_samples[0].step = 2.0 * kPoseFineStep;
+  pose_samples[1].step = kPoseFineStep;
+  for (PoseSamples& level : pose_samples) {
+    for (int axis = 0; axis < 3; axis++) {
+      DiagnosticRowInput lo = input;
+      DiagnosticRowInput hi = input;
+      PerturbPose(input.pose, axis, -level.step, -1, 0.0, lo.pose);
+      PerturbPose(input.pose, axis, level.step, -1, 0.0, hi.pose);
+      level.minus[axis] = EvaluateValues(lo);
+      level.plus[axis] = EvaluateValues(hi);
+    }
+    for (int pair = 0; pair < kMixedPairCount; pair++) {
+      const int a = kMixedAxes[pair][0];
+      const int b = kMixedAxes[pair][1];
+      for (int corner = 0; corner < 4; corner++) {
+        DiagnosticRowInput sample = input;
+        PerturbPose(input.pose, a, kCornerSigns[corner][0] * level.step, b, kCornerSigns[corner][1] * level.step,
+                    sample.pose);
+        level.corners[pair][corner] = EvaluateValues(sample);
       }
     }
   }
 
-  bool direction_hessian = direction_pose;
-  for (int component = 0; component < 3; component++) {
+  auto path_compatible = [&base](const Values& lo, const Values& hi) {
+    return HasStablePathMargins(base.domain_margins) && HasStablePathMargins(lo.domain_margins) &&
+           HasStablePathMargins(hi.domain_margins) && lo.path_status == DiagnosticPathStatus::kOk &&
+           hi.path_status == DiagnosticPathStatus::kOk;
+  };
+
+  bool direction_pose = true;
+  double jacobian[kLevelCount][9]{};
+  for (int level = 0; level < kLevelCount; level++) {
+    const PoseSamples& samples = pose_samples[level];
     for (int axis = 0; axis < 3; axis++) {
-      out->direction_pose_hessian[9 * component + 3 * axis + axis] =
-          (plus[axis].outgoing[component] - 2.0 * base.outgoing[component] + minus[axis].outgoing[component]) /
-          (kPoseStep * kPoseStep);
+      direction_pose = direction_pose && path_compatible(samples.minus[axis], samples.plus[axis]) &&
+                       Finite(samples.minus[axis].outgoing, 3) && Finite(samples.plus[axis].outgoing, 3);
+      for (int component = 0; component < 3; component++) {
+        jacobian[level][3 * component + axis] =
+            (samples.plus[axis].outgoing[component] - samples.minus[axis].outgoing[component]) / (2.0 * samples.step);
+      }
     }
   }
-  for (int a = 0; a < 3; a++) {
-    for (int b = a + 1; b < 3; b++) {
-      Values corners[4];
-      const double signs[4][2] = { { 1.0, 1.0 }, { 1.0, -1.0 }, { -1.0, 1.0 }, { -1.0, -1.0 } };
-      for (int k = 0; k < 4; k++) {
-        DiagnosticRowInput sample = input;
-        PerturbPose(input.pose, a, signs[k][0] * kPoseStep, b, signs[k][1] * kPoseStep, sample.pose);
-        corners[k] = EvaluateValues(sample);
-        direction_hessian = direction_hessian && HasStablePathMargins(corners[k].domain_margins) &&
-                            corners[k].path_status == DiagnosticPathStatus::kOk && Finite(corners[k].outgoing, 3);
+  for (int i = 0; i < 9; i++) {
+    const auto estimate = diagnostic_field_detail::RichardsonEstimate(jacobian[0][i], jacobian[1][i],
+                                                                      kPoseFirstAbsoluteError, kPoseFirstRelativeError);
+    direction_pose = direction_pose && estimate.converged;
+    out->direction_pose_jacobian[i] = estimate.value;
+  }
+  if (direction_pose) {
+    out->direction_pose_jacobian_available = 1;
+  } else {
+    std::fill(out->direction_pose_jacobian, out->direction_pose_jacobian + 9, 0.0);
+  }
+
+  bool direction_hessian = true;
+  double hessian[kLevelCount][27]{};
+  for (int level = 0; level < kLevelCount; level++) {
+    const PoseSamples& samples = pose_samples[level];
+    for (int axis = 0; axis < 3; axis++) {
+      direction_hessian = direction_hessian && path_compatible(samples.minus[axis], samples.plus[axis]) &&
+                          Finite(samples.minus[axis].outgoing, 3) && Finite(samples.plus[axis].outgoing, 3);
+      for (int component = 0; component < 3; component++) {
+        hessian[level][9 * component + 3 * axis + axis] =
+            (samples.plus[axis].outgoing[component] - 2.0 * base.outgoing[component] +
+             samples.minus[axis].outgoing[component]) /
+            (samples.step * samples.step);
+      }
+    }
+    for (int pair = 0; pair < kMixedPairCount; pair++) {
+      const int a = kMixedAxes[pair][0];
+      const int b = kMixedAxes[pair][1];
+      const auto& corners = samples.corners[pair];
+      for (const Values& corner : corners) {
+        direction_hessian = direction_hessian && HasStablePathMargins(base.domain_margins) &&
+                            HasStablePathMargins(corner.domain_margins) &&
+                            corner.path_status == DiagnosticPathStatus::kOk && Finite(corner.outgoing, 3);
       }
       for (int component = 0; component < 3; component++) {
         const double mixed = (corners[0].outgoing[component] - corners[1].outgoing[component] -
                               corners[2].outgoing[component] + corners[3].outgoing[component]) /
-                             (4.0 * kPoseStep * kPoseStep);
-        out->direction_pose_hessian[9 * component + 3 * a + b] = mixed;
-        out->direction_pose_hessian[9 * component + 3 * b + a] = mixed;
+                             (4.0 * samples.step * samples.step);
+        hessian[level][9 * component + 3 * a + b] = mixed;
+        hessian[level][9 * component + 3 * b + a] = mixed;
       }
     }
   }
-  if (direction_hessian && Finite(out->direction_pose_hessian, 27)) {
+  for (int i = 0; i < 27; i++) {
+    const auto estimate = diagnostic_field_detail::RichardsonEstimate(
+        hessian[0][i], hessian[1][i], kPoseSecondAbsoluteError, kPoseSecondRelativeError);
+    direction_hessian = direction_hessian && estimate.converged;
+    out->direction_pose_hessian[i] = estimate.value;
+  }
+  if (direction_hessian) {
     out->direction_pose_hessian_available = 1;
   } else {
     std::fill(out->direction_pose_hessian, out->direction_pose_hessian + 27, 0.0);
@@ -256,22 +327,27 @@ void DiagnosticField::FillDerivatives(const DiagnosticRowInput& input, const Val
 
   auto fill_pose_scalar = [&](double centre, auto getter, int* available, double gradient[3], auto compatible) {
     bool ok = std::isfinite(centre);
+    double derivatives[kLevelCount][3]{};
+    for (int level = 0; level < kLevelCount; level++) {
+      const PoseSamples& samples = pose_samples[level];
+      for (int axis = 0; axis < 3; axis++) {
+        const double lo = getter(samples.minus[axis]);
+        const double hi = getter(samples.plus[axis]);
+        ok = ok && compatible(samples.minus[axis], samples.plus[axis]) && std::isfinite(lo) && std::isfinite(hi);
+        derivatives[level][axis] = (hi - lo) / (2.0 * samples.step);
+      }
+    }
     for (int axis = 0; axis < 3; axis++) {
-      const double lo = getter(minus[axis]);
-      const double hi = getter(plus[axis]);
-      ok = ok && compatible(minus[axis], plus[axis]) && std::isfinite(lo) && std::isfinite(hi);
-      gradient[axis] = (hi - lo) / (2.0 * kPoseStep);
+      const auto estimate = diagnostic_field_detail::RichardsonEstimate(
+          derivatives[0][axis], derivatives[1][axis], kPoseFirstAbsoluteError, kPoseFirstRelativeError);
+      ok = ok && estimate.converged;
+      gradient[axis] = estimate.value;
     }
     if (ok && Finite(gradient, 3)) {
       *available = 1;
     } else {
       std::fill(gradient, gradient + 3, 0.0);
     }
-  };
-  auto path_compatible = [&base](const Values& lo, const Values& hi) {
-    return HasStablePathMargins(base.domain_margins) && HasStablePathMargins(lo.domain_margins) &&
-           HasStablePathMargins(hi.domain_margins) && lo.path_status == DiagnosticPathStatus::kOk &&
-           hi.path_status == DiagnosticPathStatus::kOk;
   };
   for (size_t i = 0; i < out->domain_margins.size(); i++) {
     fill_pose_scalar(
@@ -284,8 +360,8 @@ void DiagnosticField::FillDerivatives(const DiagnosticRowInput& input, const Val
         &out->tir_margins[i].pose_derivative_available, out->tir_margins[i].pose_gradient, path_compatible);
   }
   for (size_t i = 0; i < out->interfaces.size(); i++) {
-    auto coefficient_compatible = [i, &base](const Values& lo, const Values& hi) {
-      if (lo.path_status != DiagnosticPathStatus::kOk || hi.path_status != DiagnosticPathStatus::kOk) {
+    auto coefficient_compatible = [i, &base, &path_compatible](const Values& lo, const Values& hi) {
+      if (!path_compatible(lo, hi)) {
         return false;
       }
       if (i == 0 || i + 1 == lo.coefficients.size()) {
@@ -307,53 +383,99 @@ void DiagnosticField::FillDerivatives(const DiagnosticRowInput& input, const Val
       base.entry_measure, [](const Values& v) { return v.entry_measure; }, &out->entry_pose_gradient_available,
       out->entry_pose_gradient, entry_compatible);
 
-  const double index_step = kIndexRelativeStep * std::max(1.0, std::fabs(input.refractive_index));
-  if (!(input.refractive_index > index_step)) {
+  struct IndexSamples {
+    double step = 0.0;
+    Values minus;
+    Values plus;
+  };
+  std::array<IndexSamples, kLevelCount> index_samples;
+  index_samples[0].step = 2.0 * kIndexFineRelativeStep * std::max(1.0, std::fabs(input.refractive_index));
+  index_samples[1].step = kIndexFineRelativeStep * std::max(1.0, std::fabs(input.refractive_index));
+  if (!(input.refractive_index > index_samples[0].step)) {
     return;
   }
-  DiagnosticRowInput lo_input = input;
-  DiagnosticRowInput hi_input = input;
-  lo_input.refractive_index -= index_step;
-  hi_input.refractive_index += index_step;
-  const Values lo = EvaluateValues(lo_input);
-  const Values hi = EvaluateValues(hi_input);
-  const bool index_path = HasStablePathMargins(base.domain_margins) && HasStablePathMargins(lo.domain_margins) &&
-                          HasStablePathMargins(hi.domain_margins) && lo.path_status == DiagnosticPathStatus::kOk &&
-                          hi.path_status == DiagnosticPathStatus::kOk;
-  if (index_path && Finite(lo.outgoing, 3) && Finite(hi.outgoing, 3)) {
-    out->direction_index_derivative_available = 1;
-    for (int component = 0; component < 3; component++) {
-      out->direction_index_derivative[component] =
-          (hi.outgoing[component] - lo.outgoing[component]) / (2.0 * index_step);
-    }
+  for (IndexSamples& samples : index_samples) {
+    DiagnosticRowInput lo_input = input;
+    DiagnosticRowInput hi_input = input;
+    lo_input.refractive_index -= samples.step;
+    hi_input.refractive_index += samples.step;
+    samples.minus = EvaluateValues(lo_input);
+    samples.plus = EvaluateValues(hi_input);
   }
-  auto fill_index_scalar = [&](double low, double high, int* available, double* derivative, bool compatible) {
-    if (compatible && std::isfinite(low) && std::isfinite(high)) {
-      *derivative = (high - low) / (2.0 * index_step);
-      *available = std::isfinite(*derivative) ? 1 : 0;
+  bool index_path[kLevelCount]{};
+  for (int level = 0; level < kLevelCount; level++) {
+    index_path[level] = path_compatible(index_samples[level].minus, index_samples[level].plus);
+  }
+  bool direction_index = true;
+  for (int component = 0; component < 3; component++) {
+    double derivatives[kLevelCount]{};
+    for (int level = 0; level < kLevelCount; level++) {
+      const IndexSamples& samples = index_samples[level];
+      direction_index =
+          direction_index && index_path[level] && Finite(samples.minus.outgoing, 3) && Finite(samples.plus.outgoing, 3);
+      derivatives[level] =
+          (samples.plus.outgoing[component] - samples.minus.outgoing[component]) / (2.0 * samples.step);
+    }
+    const auto estimate = diagnostic_field_detail::RichardsonEstimate(derivatives[0], derivatives[1],
+                                                                      kIndexAbsoluteError, kIndexRelativeError);
+    direction_index = direction_index && estimate.converged;
+    out->direction_index_derivative[component] = estimate.value;
+  }
+  if (direction_index) {
+    out->direction_index_derivative_available = 1;
+  } else {
+    std::fill(out->direction_index_derivative, out->direction_index_derivative + 3, 0.0);
+  }
+  auto fill_index_scalar = [&](auto getter, int* available, double* derivative, auto compatible) {
+    bool ok = true;
+    double derivatives[kLevelCount]{};
+    for (int level = 0; level < kLevelCount; level++) {
+      const IndexSamples& samples = index_samples[level];
+      const double low = getter(samples.minus);
+      const double high = getter(samples.plus);
+      ok = ok && compatible(samples.minus, samples.plus) && std::isfinite(low) && std::isfinite(high);
+      derivatives[level] = (high - low) / (2.0 * samples.step);
+    }
+    const auto estimate = diagnostic_field_detail::RichardsonEstimate(derivatives[0], derivatives[1],
+                                                                      kIndexAbsoluteError, kIndexRelativeError);
+    ok = ok && estimate.converged;
+    if (ok) {
+      *derivative = estimate.value;
+      *available = 1;
+    } else {
+      *derivative = 0.0;
     }
   };
   for (size_t i = 0; i < out->domain_margins.size(); i++) {
-    fill_index_scalar(lo.domain_margins[i], hi.domain_margins[i], &out->domain_margins[i].index_derivative_available,
-                      &out->domain_margins[i].index_derivative, index_path);
+    fill_index_scalar([i](const Values& v) { return v.domain_margins[i]; },
+                      &out->domain_margins[i].index_derivative_available, &out->domain_margins[i].index_derivative,
+                      path_compatible);
   }
   for (size_t i = 0; i < out->tir_margins.size(); i++) {
-    fill_index_scalar(lo.tir_margins[i], hi.tir_margins[i], &out->tir_margins[i].index_derivative_available,
-                      &out->tir_margins[i].index_derivative, index_path);
+    fill_index_scalar([i](const Values& v) { return v.tir_margins[i]; },
+                      &out->tir_margins[i].index_derivative_available, &out->tir_margins[i].index_derivative,
+                      path_compatible);
   }
   for (size_t i = 0; i < out->interfaces.size(); i++) {
-    const bool same_side =
-        i == 0 || i + 1 == out->interfaces.size() ||
-        IsSmoothTirCoefficientSample(base.tir_margins[i - 1], lo.tir_margins[i - 1], hi.tir_margins[i - 1]);
-    fill_index_scalar(lo.coefficients[i], hi.coefficients[i], &out->interfaces[i].index_derivative_available,
-                      &out->interfaces[i].index_derivative, index_path && same_side);
+    auto coefficient_compatible = [i, &base, &path_compatible](const Values& lo, const Values& hi) {
+      if (!path_compatible(lo, hi)) {
+        return false;
+      }
+      return i == 0 || i + 1 == lo.coefficients.size() ||
+             IsSmoothTirCoefficientSample(base.tir_margins[i - 1], lo.tir_margins[i - 1], hi.tir_margins[i - 1]);
+    };
+    fill_index_scalar([i](const Values& v) { return v.coefficients[i]; },
+                      &out->interfaces[i].index_derivative_available, &out->interfaces[i].index_derivative,
+                      coefficient_compatible);
   }
-  const bool entry_index =
-      base.entry_status == DiagnosticEntryStatus::kOk && lo.entry_status == DiagnosticEntryStatus::kOk &&
-      hi.entry_status == DiagnosticEntryStatus::kOk && lo.entry_topology_signature == base.entry_topology_signature &&
-      hi.entry_topology_signature == base.entry_topology_signature;
-  fill_index_scalar(lo.entry_measure, hi.entry_measure, &out->entry_index_derivative_available,
-                    &out->entry_index_derivative, entry_index);
+  auto entry_index_compatible = [&base](const Values& lo, const Values& hi) {
+    return base.entry_status == DiagnosticEntryStatus::kOk && lo.entry_status == DiagnosticEntryStatus::kOk &&
+           hi.entry_status == DiagnosticEntryStatus::kOk &&
+           lo.entry_topology_signature == base.entry_topology_signature &&
+           hi.entry_topology_signature == base.entry_topology_signature;
+  };
+  fill_index_scalar([](const Values& v) { return v.entry_measure; }, &out->entry_index_derivative_available,
+                    &out->entry_index_derivative, entry_index_compatible);
 }
 
 }  // namespace lumice::analytic
