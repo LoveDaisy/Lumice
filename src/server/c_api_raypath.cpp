@@ -60,12 +60,35 @@ struct PathFeatureReportRequestV451 {
   int wavelength_count;
   int sample_count;
 };
+struct PathFeatureReportRequestV452 {
+  size_t struct_size;
+  int crystal_id;
+  const int* faces;
+  int face_count;
+  const int* layer_face_counts;
+  int layer_count;
+  const double* wavelengths_nm;
+  const double* wavelength_weights;
+  int wavelength_count;
+  int sample_count;
+  const int* layer_crystal_ids;
+  int layer_crystal_id_count;
+  int member_selection;
+  uint64_t physical_member_mask;
+  int spectrum_source;
+  int scene_measure_sample_count;
+  int sun_node_count;
+  int illuminant_node_count;
+  uint32_t seed;
+};
 constexpr size_t kFeatureReportRequestSizeV1 = sizeof(PathFeatureReportRequestV451);
-constexpr size_t kFeatureReportRequestSizeV2 = offsetof(LUMICE_PathFeatureReportRequest, seed) + sizeof(uint32_t);
+constexpr size_t kFeatureReportRequestSizeV2 = sizeof(PathFeatureReportRequestV452);
 constexpr size_t kFeatureReportRequestSizeV3 =
     offsetof(LUMICE_PathFeatureReportRequest, explicit_member_chain_count) + sizeof(int);
 static_assert(kFeatureReportRequestSizeV1 == offsetof(LUMICE_PathFeatureReportRequest, layer_crystal_ids),
               "the frozen v4.51 request extent includes its trailing ABI padding");
+static_assert(kFeatureReportRequestSizeV2 == offsetof(LUMICE_PathFeatureReportRequest, physical_member_masks),
+              "the frozen v4.52 request extent includes its trailing ABI padding");
 
 void WriteError(char* err_buf, size_t err_size, const std::string& message) {
   if (err_buf == nullptr || err_size == 0) {

@@ -87,8 +87,30 @@ struct PathFeatureReportRequestV451 {
   int wavelength_count;
   int sample_count;
 };
+struct PathFeatureReportRequestV452 {
+  size_t struct_size;
+  int crystal_id;
+  const int* faces;
+  int face_count;
+  const int* layer_face_counts;
+  int layer_count;
+  const double* wavelengths_nm;
+  const double* wavelength_weights;
+  int wavelength_count;
+  int sample_count;
+  const int* layer_crystal_ids;
+  int layer_crystal_id_count;
+  int member_selection;
+  uint64_t physical_member_mask;
+  int spectrum_source;
+  int scene_measure_sample_count;
+  int sun_node_count;
+  int illuminant_node_count;
+  uint32_t seed;
+};
 
 static_assert(sizeof(PathFeatureReportRequestV451) == offsetof(LUMICE_PathFeatureReportRequest, layer_crystal_ids));
+static_assert(sizeof(PathFeatureReportRequestV452) == offsetof(LUMICE_PathFeatureReportRequest, physical_member_masks));
 
 struct SceneDeleter {
   void operator()(LUMICE_Scene* scene) const { LUMICE_SceneDestroy(scene); }
@@ -309,7 +331,7 @@ TEST(PathFeatureReportCApi, AFutureTailIsIgnoredAfterTheKnownV3Extent) {
 TEST(PathFeatureReportCApi, V2ExtentDoesNotReadV3MemberArrays) {
   const ScenePtr scene = MakeScene();
   Request request;
-  request.c.struct_size = offsetof(LUMICE_PathFeatureReportRequest, seed) + sizeof(request.c.seed);
+  request.c.struct_size = sizeof(PathFeatureReportRequestV452);
   request.c.member_selection = LUMICE_PATH_FEATURE_MEMBERS_CONCRETE;
   const Outcome outcome = Analyse(scene.get(), &request.c);
   ASSERT_EQ(outcome.code, LUMICE_OK) << outcome.error;
@@ -320,7 +342,7 @@ TEST(PathFeatureReportCApi, V2ExtentDoesNotReadV3MemberArrays) {
 
 TEST(PathFeatureReportCApi, RejectsPartialExtensionLayoutsBeforeReadingTheirFields) {
   constexpr size_t kV1Extent = sizeof(PathFeatureReportRequestV451);
-  constexpr size_t kV2Extent = offsetof(LUMICE_PathFeatureReportRequest, seed) + sizeof(uint32_t);
+  constexpr size_t kV2Extent = sizeof(PathFeatureReportRequestV452);
   constexpr size_t kV3Extent = offsetof(LUMICE_PathFeatureReportRequest, explicit_member_chain_count) + sizeof(int);
   static_assert(kV1Extent < kV2Extent && kV2Extent < kV3Extent);
 
