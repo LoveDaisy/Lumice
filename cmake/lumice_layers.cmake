@@ -100,6 +100,8 @@ set(LUMICE_LAYER_analytic_FILES
   analytic/band_sum.hpp
   analytic/discovery.cpp
   analytic/discovery.hpp
+  analytic/diagnostic_field.cpp
+  analytic/diagnostic_field.hpp
   analytic/entry_measure.cpp
   analytic/entry_measure.hpp
   analytic/fiber_continuation.cpp

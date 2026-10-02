@@ -18,6 +18,7 @@
 // polygons promoted to double (LI builds its own polyhedron in double). The exit gate uses the call's
 // refractive index, as LI's does.
 
+#include <cstdint>
 #include <vector>
 
 #include "analytic/path_evaluation.hpp"
@@ -38,6 +39,9 @@ struct EntryMeasure {
   double value = 0.0;  // A_P, absolute area in the crystal's length unit squared; 0 unless kOk
   EntryMeasureStatus status = EntryMeasureStatus::kEntryBackface;
   double area_perp_internal = 0.0;  // the corridor footprint perpendicular to the internal direction
+  // FNV-1a digest of the clipping active-set trace. Equal digests are a necessary condition for a
+  // finite-difference derivative of `value` to belong to one smooth corridor branch.
+  uint64_t topology_signature = 0;
 };
 
 // The unfolded corridor of one face sequence (LI corridor_polygons): the entry face polygon, each

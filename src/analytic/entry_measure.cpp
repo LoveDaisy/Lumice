@@ -147,6 +147,13 @@ Corridor::Corridor(const FaceNormalTable& normals, const FacePolygonTable& polyg
 
 EntryMeasure Corridor::Evaluate(const double s_body[3], double refractive_index) {
   EntryMeasure m;
+  constexpr uint64_t kFnvOffset = 1469598103934665603ULL;
+  constexpr uint64_t kFnvPrime = 1099511628211ULL;
+  uint64_t topology = kFnvOffset;
+  auto record_topology = [&](int value) {
+    topology ^= static_cast<uint64_t>(value);
+    topology *= kFnvPrime;
+  };
   // Entry gate: the incident side has no critical angle (LI entry_ok with cos_tc = 0, and cos_i > 0).
   const double cos_i = -Dot3(entry_normal_, s_body);
   if (!(cos_i > 0.0)) {
@@ -197,15 +204,19 @@ EntryMeasure Corridor::Evaluate(const double s_body[3], double refractive_index)
     return count;
   };
   int count = project(0, &poly_);
+  record_topology(count);
   const int polygon_count = static_cast<int>(offsets_.size()) - 1;
   for (int poly = 1; poly < polygon_count; poly++) {
     const int clip_count = project(poly, &clip_);
+    record_topology(clip_count);
     for (int i = 0; i < clip_count; i++) {
       const int j = (i + 1) % clip_count;
       count = ClipHalfplane(poly_, count, &clip_[2 * i], &clip_[2 * j], &next_);
       poly_.swap(next_);
+      record_topology(count);
     }
   }
+  m.topology_signature = topology;
   m.area_perp_internal = PolygonArea(poly_, count);
   if (m.area_perp_internal <= eps_) {
     m.status = EntryMeasureStatus::kCorridorEmpty;

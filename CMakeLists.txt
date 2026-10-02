@@ -1030,6 +1030,7 @@ lumice_apply_engine_compile_options(lumice_foundation_obj)
 # unit_correctness_test. One list of its sources, here, rather than one per consumer.
 set(lumice_analytic_kernel_src
   "${PROJ_SRC_DIR}/analytic/path_evaluation.cpp"
+  "${PROJ_SRC_DIR}/analytic/diagnostic_field.cpp"
   "${PROJ_SRC_DIR}/analytic/fiber_continuation.cpp"
   "${PROJ_SRC_DIR}/analytic/path_fiber.cpp"
   "${PROJ_SRC_DIR}/analytic/entry_measure.cpp"
