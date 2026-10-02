@@ -110,6 +110,28 @@ def test_rhombic_plate_keeps_plus_and_minus_120_separate_from_spherical_distance
             assert brightness["direction_residual_max_rad"] < 1e-12
 
 
+def test_rhombic_plate_1352_keeps_the_blue_l2_members_and_tint_values():
+    result = _report(_PLATE, "1-3-5-2", "--events", "8192")
+    assert result.returncode == 0, result.stderr
+    doc = json.loads(result.stdout)
+    assert doc["meta"]["sun"]["altitude_deg"] == pytest.approx(9.0)
+    assert doc["meta"]["orientation_measure"] == "Rz(theta), theta uniform under dtheta/(2*pi); c axis exactly vertical"
+    assert {tuple(member["faces"]) for member in doc["physical_l2_members"]} == {
+        (1, 3, 5, 2),
+        (1, 3, 7, 2),
+    }
+    expected_red = 0.0001104536442463968
+    expected_blue = 0.0001803007775026744
+    expected_ratio = 1.6323660367462811
+    for member in doc["physical_l2_members"]:
+        samples = {sample["wavelength"]["nm"]: sample for sample in member["wavelengths"]}
+        red = samples[694.3628981235904]["brightness"]["fine_mean_A_times_T"]
+        blue = samples[430.0197374077313]["brightness"]["fine_mean_A_times_T"]
+        assert red == pytest.approx(expected_red, abs=1e-9)
+        assert blue == pytest.approx(expected_blue, abs=1e-9)
+        assert blue / red == pytest.approx(expected_ratio, abs=1e-9)
+
+
 def test_report_output_file_is_atomic_and_stdout_stays_empty(tmp_path):
     output = tmp_path / "feature-report.json"
     result = _report(_RANDOM, "3-5", "--events", "64", "-o", str(output))

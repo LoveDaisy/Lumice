@@ -41,6 +41,7 @@ not retained and are intentionally not reconstructed.
 | `Lumice raypath -f test/e2e/configs/raypath_feature_random_regular.json --crystal 1 --path 3-1-5 --report --events 8192 -o $OUT/report-random-315.json` | 8192 | `report-random-315.json` |
 | `Lumice raypath -f test/e2e/configs/raypath_feature_random_regular.json --crystal 1 --path 3-5 --report --events 8192 -o $OUT/report-random-35.json` | 8192 | `report-random-35.json` |
 | `Lumice raypath -f test/e2e/configs/raypath_feature_rhombic_plate.json --crystal 1 --path 1-3-4-2 --report --events 8192 -o $OUT/report-rhombic-1342.json` | 8192 | `report-rhombic-1342.json` |
+| `Lumice raypath -f test/e2e/configs/raypath_feature_rhombic_plate.json --crystal 1 --path 1-3-5-2 --report --events 8192 -o $OUT/root-blue-1352.json` | 8192 | `root-blue-1352.json` |
 | `Lumice raypath -f test/e2e/configs/raypath_feature_plate_target.json --crystal 1 --path 1-4-5-2 --target 20,120 --events 200k --grid 180 -o $OUT/target-plate-1452.json` | 200k | `target-plate-1452.json` |
 | `Lumice raypath -f test/e2e/configs/raypath_feature_plate_target.json --crystal 1 --path 1-2 --target 20,120 --events 1k --grid 0 -o $OUT/target-plate-rank0.json` | 1k | `target-plate-rank0.json` |
 | `Lumice raypath -f test/e2e/configs/raypath_feature_canonical_target.json --crystal 1 --path 1-3 --target '-45,0' --events 100k --grid 0 -o $OUT/target-prism-13-two-arcs.json` | 100k | `target-prism-13-two-arcs.json` |
@@ -58,6 +59,7 @@ acceptance evidence, not tracked reference assets. Their preserved digests are:
 | `report-random-315.json` | `aa4fc0cc98441e0153e61795cb52064dbc3c5343b4e1c1cf489ce98b10aa040a` |
 | `report-random-35.json` | `ac4af3c8c07ddc7db1ecfa181eb117003f18226aebac1349d488292ba6ecd381` |
 | `report-rhombic-1342.json` | `8d1fa0c786adfa2e8939fabaaf6b0ba62fa74824aef9c921d4a5d68c79170320` |
+| `root-blue-1352.json` | `de42256063ff8d4bb8c9059c5bbf6b974ae433a8e876d91092d896073310d996` |
 | `target-plate-1452.json` | `5ed430a6946726af4fba96f95a911492125addaa8ca713a04bfe123229f61075` |
 | `target-plate-rank0.json` | `d958dc3641950606af9f8f70e4301120f95223a54191bd0e2a6c96e78e0eb286` |
 | `target-prism-13-two-arcs.json` | `40c4c5c9ec66c59a9300e8fb2ba91b8ac7a74a74f7952a322067a5b3e02f16b9` |
@@ -76,7 +78,8 @@ acceptance evidence, not tracked reference assets. Their preserved digests are:
 | Random regular `3-1-5` | `solar_dispersion_edge` is confirmed at 21.612019265 and 22.371148713 degrees; `solar_caustic_candidate` remains a candidate. | The edge is a minimum-deviation dispersion result, not a confirmed Jacobian caustic. |
 | Same path, antisolar side | `antisolar_tir_blue_band` is confirmed from 130.358885186 to 138.854666882 degrees; production blue/red is above one and the no-internal-R comparison is below one. `exit_gate.visible` is false. | Separate features prevent a primary verdict from hiding either result. |
 | Random regular `3-5` | One confirmed ordinary minimum-deviation edge has the same red/blue boundary values. | The numeric tolerance is `1e-5` degrees, from the analytic fixed reference. |
-| Horizontal rhombic plate | Relative solar azimuths are -120 and +120 degrees, spherical separation is 117.599764152 degrees, and the physical L2 members are `1-3-4-2` and `1-3-8-2`. | The report separately checks azimuth labels, sphere distance, colour samples and fixed outgoing direction. |
+| Horizontal rhombic plate, white 1342 class | Relative solar azimuths are -120 and +120 degrees, spherical separation is 117.599764152 degrees, and the physical L2 members are `1-3-4-2` and `1-3-8-2`. Red and blue finite-crystal `A*T` are 0.000870121498 and 0.000891004053 (blue/red about 1.024). | This is the fixed rhombic-prism shape, 9-degree sun, ideal horizontal `Rz` family, two named wavelengths and 8192 samples; it separately checks azimuth labels, sphere distance, colour samples and fixed outgoing direction. |
+| Horizontal rhombic plate, blue 1352 class | The physical L2 members are `1-3-5-2` and `1-3-7-2`. Each has red `A*T` 0.0001104536442463968 and blue `A*T` 0.0001803007775026744, or blue/red 1.6323660367462811; the same positions are at relative solar azimuths -120 and +120 degrees and 117.599764152-degree spherical separation. | This is a tint difference at one fixed sky position, not a spatial red/blue edge and not the aggregate L1-class ratio. It applies only to the fixed rhombic-prism shape, 9-degree sun, ideal horizontal `Rz` family, two wavelengths and 8192 samples. |
 | Fixed target cases | The finite arc has 13 samples and infeasible endpoints; the other target cases show two arcs, a TIR-bounded open arc, an empty cone result and rank-0 `point_mass`. | Empty or complete target results do not establish full enumeration or physical impossibility. |
 
 ## Probe and compatibility
