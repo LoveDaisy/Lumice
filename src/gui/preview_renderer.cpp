@@ -266,7 +266,7 @@ vec3 subtractiveInk(float e, vec3 paper) {
 // HAND-TRANSCRIBED from src/util/channel_math.hpp (kChannelBrGain / ChannelMathBrGray), which is
 // the authority; it MUST equal that function, and kChannelBrGain below MUST equal
 // lumice::kChannelBrGain. GLSL cannot #include a C++ header, so this is a copy, held to the C++
-// one by the preview/export/CLI parity tests under test/gui/parity/.
+// one by deterministic GL pixel oracles in preview_background and the output-routing parity tests.
 const float kChannelBrGain = 2.0;
 float channelMathBrGray(float r_srgb, float b_srgb) {
     return clamp(0.5 + kChannelBrGain * (b_srgb - r_srgb), 0.0, 1.0);

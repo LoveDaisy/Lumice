@@ -31,8 +31,8 @@ namespace lumice {
 // ⚠️ This formula exists TWICE — here, and hand-transcribed as `channelMathBrGray()` in
 // preview_renderer.cpp's GLSL — for the constrained reason ink_transfer.hpp spells out: a shader
 // cannot include a C++ header. That is the exception, not this repository's pattern. The pair is
-// held together by the "MUST equal" note at the shader copy and by the preview/export/CLI parity
-// tests (test/gui/parity/). Everything that CAN link this header does.
+// held together by the "MUST equal" note, deterministic GL pixel oracles in preview_background,
+// and the preview/export/CLI routing parity tests. Everything that CAN link this header does.
 //
 // It lives in src/util/ for the exemption AGENTS.md names: a pure, stateless function with no
 // simulation or configuration semantics, which the GUI may include without crossing the C API
