@@ -176,6 +176,50 @@ check_pytest_addopts() {
     || die "pyproject.toml addopts no longer pins 'not slow' — bare pytest would run the FULL suite: ${block}"
 }
 
+# Read the positive collection roots from the same configuration pytest uses.
+# --ignore does not exclude a root named in testpaths, only discovered children.
+# Keep only the dedicated performance root here, not a second list of E2E roots.
+PYTEST_PERFORMANCE_ROOT="test/performance"
+PYTEST_SLOW_CORRECTNESS_ROOTS=()
+
+preflight_pytest_slow_pools() {
+  local roots root performance_count=0
+  roots=$(python3 - <<'PYTHON'
+import sys
+
+if sys.version_info >= (3, 11):
+    import tomllib
+else:
+    import tomli as tomllib  # pytest's TOML dependency on Python 3.9/3.10
+
+with open("pyproject.toml", "rb") as source:
+    roots = tomllib.load(source)["tool"]["pytest"]["ini_options"]["testpaths"]
+if not isinstance(roots, list) or not roots or any(
+    not isinstance(root, str) or not root or "\n" in root or "\r" in root
+    for root in roots
+):
+    sys.exit("testpaths must be a nonempty array of nonempty, single-line paths")
+print("\n".join(roots))
+PYTHON
+) || die "pytest slow pools: could not read pyproject.toml testpaths — fix that array and ensure python3 has pytest's TOML dependencies"
+  PYTEST_SLOW_CORRECTNESS_ROOTS=()
+  while IFS= read -r root; do
+    if [[ ${root} == "${PYTEST_PERFORMANCE_ROOT}" ]]; then
+      performance_count=$(( performance_count + 1 ))
+    else
+      PYTEST_SLOW_CORRECTNESS_ROOTS+=("${root}")
+    fi
+  done <<EOF
+${roots}
+EOF
+  [[ ${performance_count} -eq 1 ]] \
+    || die "pytest slow pools: testpaths must name ${PYTEST_PERFORMANCE_ROOT} exactly once (got ${performance_count}); roots:
+${roots}"
+  [[ ${#PYTEST_SLOW_CORRECTNESS_ROOTS[@]} -gt 0 ]] \
+    || die "pytest slow pools: testpaths must include at least one correctness root besides ${PYTEST_PERFORMANCE_ROOT}; roots:
+${roots}"
+}
+
 # ---------------------------------------------------------------------------
 # gui_test pools
 # ---------------------------------------------------------------------------
@@ -281,9 +325,14 @@ layer_fast_e2e() {
 # under the concurrent load of the parallel phase, so they run alone afterwards.
 # Phase 2 runs even if phase 1 failed (same no-fail-fast reasoning as the layers).
 layer_slow_e2e_cmd() {
-  local rc1=0 rc2=0
-  pytest --ignore=test/performance -n 3 -m slow || rc1=$?
-  pytest test/performance -m slow || rc2=$?
+  local rc1=0 rc2=0 start=${SECONDS}
+  printf '\n---------- slow-e2e/correctness (parallel) ----------\n'
+  pytest "${PYTEST_SLOW_CORRECTNESS_ROOTS[@]}" -n 3 -m slow || rc1=$?
+  printf 'slow-e2e/correctness: exit=%s elapsed=%ss\n' "${rc1}" "$(( SECONDS - start ))"
+  start=${SECONDS}
+  printf '\n---------- slow-e2e/performance (serial) ----------\n'
+  pytest "${PYTEST_PERFORMANCE_ROOT}" -m slow || rc2=$?
+  printf 'slow-e2e/performance: exit=%s elapsed=%ss\n' "${rc2}" "$(( SECONDS - start ))"
   [[ ${rc1} -eq 0 ]] || return ${rc1}
   return ${rc2}
 }
@@ -457,6 +506,7 @@ fi
 # Same reasoning as preflight_gui_filters: resolved before any layer runs, so a
 # read failure costs nothing already spent. Only the pr scope consults it.
 if [[ ${SCOPE} == pr ]]; then
+  preflight_pytest_slow_pools
   SHARED_LIB_CANDIDATES=$(read_shared_lib_candidates) || exit $?
 fi
 

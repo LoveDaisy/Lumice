@@ -164,3 +164,26 @@ def test_non_pr_scopes_do_not_require_performance_root(tree, scope):
     assert result.returncode == 0, result.stdout + result.stderr
     assert "RESULT: PASS" in result.stdout
     assert len(calls) == 1
+
+
+def test_testpaths_uses_toml_semantics_not_line_layout(tree):
+    root, _ = tree
+    config = root / "pyproject.toml"
+    config.write_text("[tool.pytest.ini_options]\n"
+                      "testpaths = ['test/e2e-correctness', 'test/performance', 'test/extra correctness'] # roots\n"
+                      'addopts = ["-m", "not slow"]\nmarkers = ["slow: slow pool"]\n', encoding="utf-8")
+    result, calls = _run(tree)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert len(calls) == 3
+    assert calls[1]["argv"] == [ROOTS[0], ROOTS[2], "-n", "3", "-m", "slow"]
+
+
+@pytest.mark.parametrize("setting", ["", 'testpaths = "test/performance"\n', 'testpaths = [\n'])
+def test_unreadable_testpaths_fails_before_any_layer(tree, setting):
+    root, _ = tree
+    _write(root / "pyproject.toml", '[tool.pytest.ini_options]\naddopts = ["-m", "not slow"]\n' + setting)
+    result, calls = _run(tree)
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert "could not read pyproject.toml testpaths" in result.stderr
+    assert not calls
+    assert "[RUN]" not in result.stdout
