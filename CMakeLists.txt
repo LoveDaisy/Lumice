@@ -1036,6 +1036,7 @@ set(lumice_analytic_kernel_src
   "${PROJ_SRC_DIR}/analytic/path_fiber.cpp"
   "${PROJ_SRC_DIR}/analytic/entry_measure.cpp"
   "${PROJ_SRC_DIR}/analytic/discovery.cpp"
+  "${PROJ_SRC_DIR}/analytic/feature_discovery.cpp"
   "${PROJ_SRC_DIR}/analytic/path_rank.cpp"
   "${PROJ_SRC_DIR}/analytic/pose_density.cpp"
   "${PROJ_SRC_DIR}/analytic/band_sum.cpp"
@@ -1053,6 +1054,7 @@ lumice_apply_engine_compile_options(lumice_analytic_kernel)
 # into liblumice and liblumice_testapi — the shells reach it only through lumice_raypath.h — and NOT into
 # liblumice_analytic, whose surface is the kernel alone; that is why it sits outside lumice_obj.
 add_library(lumice_raypath_obj OBJECT
+  "${PROJ_SRC_DIR}/raypath/feature_discovery_adapter.cpp"
   "${PROJ_SRC_DIR}/raypath/path_feature_report.cpp"
   "${PROJ_SRC_DIR}/raypath/path_feature_report_json.cpp"
   "${PROJ_SRC_DIR}/raypath/scene_to_analytic.cpp"

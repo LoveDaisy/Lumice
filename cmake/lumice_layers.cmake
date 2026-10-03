@@ -106,6 +106,8 @@ set(LUMICE_LAYER_analytic_FILES
   analytic/entry_measure.hpp
   analytic/external_reflection.cpp
   analytic/external_reflection.hpp
+  analytic/feature_discovery.cpp
+  analytic/feature_discovery.hpp
   analytic/fiber_continuation.cpp
   analytic/fiber_continuation.hpp
   analytic/jet.hpp
@@ -234,6 +236,8 @@ set(LUMICE_LAYER_engine_FILES
 
 set(LUMICE_LAYER_raypath_FILES
   include/lumice_raypath.h
+  raypath/feature_discovery_adapter.cpp
+  raypath/feature_discovery_adapter.hpp
   raypath/path_feature_report.cpp
   raypath/path_feature_report.hpp
   raypath/path_feature_report_json.cpp
