@@ -80,6 +80,13 @@ topology edges 和同步 callback，并返回 candidates、mechanism records 与
 增加参数物理角色与 joint/conditional scope 记录，并通过平行查询返回候选作用域而不改变既有
 candidate 数组步长。版本 1–3 的原始前缀仍可读，旧调用方默认 joint scope；版本 1 的 16 维上限不扩展到新版本。
 
+产品 adapter 为每个实际测度行声明 spectrum、source、shape 和逐层 pose 角色。原始 cell 覆盖全部
+活动坐标并标为 joint；每层的活动 shape 或 pose 轴另组成 conditional cell，其余坐标固定在该行的
+真实 source/spectrum/其他层状态。条件候选不重复累计输入测度质量。schema 3 的
+`feature_discovery.candidates[].scope` 序列化 scope id/kind、活动坐标的角色和层，以及固定的
+spectrum/source node id，因此有限太阳造成的联合展宽不会抹去固定太阳节点下的姿态聚焦，也不会
+被误报为联合 rank loss。
+
 只加载 `liblumice_analytic` 的 ctypes consumer 用独立等面积求和和约束根 oracle 验证数组布局、
 stride/version/pointer 错误、回调借用期、释放幂等、访问顺序和并发调用。产品 JSON 不是这一数值契约的替代品。
 

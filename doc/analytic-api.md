@@ -1306,6 +1306,10 @@ conditional slice with the other coordinates fixed at the row's actual state. Ca
 stride remains frozen: `LUMICE_ANALYTIC_GetFeatureCandidateScope` returns parallel scope id/kind,
 active coordinates and their role/group records from the result-owned storage. Version-1/2/3
 callers retain the legacy joint scope with unspecified roles.
+The engine adapter publishes one joint cell per materialized row plus conditional shape/pose cells
+grouped by physical layer. The report keeps the fixed spectrum/source provenance beside the active
+parameter records, and conditional candidates carry zero accumulated mass so that evidence from a
+slice cannot be mistaken for another draw from the input measure.
 
 ---
 

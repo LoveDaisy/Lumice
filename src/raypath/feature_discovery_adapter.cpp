@@ -415,7 +415,8 @@ double CoordinateStep(int coordinate, const std::vector<double>& coordinates, co
   const double center = coordinates[static_cast<size_t>(coordinate)];
   const bool pose = factor->name.rfind("pose.", 0) == 0;
   const double unit = pose ? kPi / 180.0 : 1.0;
-  double step = std::fabs(factor->spread) * unit * 0.025;
+  const double relative_step = pose && std::fabs(factor->spread) >= 100.0 ? 0.005 : 0.025;
+  double step = std::fabs(factor->spread) * unit * relative_step;
   step = std::max(step, (std::fabs(center) + 1.0) * 1e-5);
   if (factor->distribution == DistributionType::kUniform) {
     const double midpoint = factor->center * unit;
@@ -611,6 +612,73 @@ void FillLocalCells(const std::map<BranchKey, SceneMeasureRow>& rows, const Repl
   }
 }
 
+void DescribeSupportParameters(const ReplayContext& context, analytic::FeatureSupportBatch* batch) {
+  batch->parameter_descriptors.assign(static_cast<size_t>(batch->coordinate_dimension), {});
+  if (batch->coordinate_dimension > 0) {
+    batch->parameter_descriptors[0].role = analytic::FeatureParameterRole::kSpectrum;
+  }
+  for (int coordinate : { 1, 2 }) {
+    if (coordinate < batch->coordinate_dimension) {
+      batch->parameter_descriptors[static_cast<size_t>(coordinate)].role = analytic::FeatureParameterRole::kSource;
+    }
+  }
+  for (const MeasureFactorDescriptor& factor : context.factors) {
+    const int coordinate = CoordinateIndex(factor);
+    if (coordinate < 0 || coordinate >= batch->coordinate_dimension || factor.layer_index < 0) {
+      continue;
+    }
+    analytic::FeatureParameterDescriptor& descriptor = batch->parameter_descriptors[static_cast<size_t>(coordinate)];
+    if (factor.name.rfind("shape.", 0) == 0) {
+      descriptor.role = analytic::FeatureParameterRole::kShape;
+      descriptor.group_id = factor.layer_index;
+    } else if (factor.name.rfind("pose.", 0) == 0) {
+      descriptor.role = analytic::FeatureParameterRole::kPose;
+      descriptor.group_id = factor.layer_index;
+    }
+  }
+}
+
+void AddSupportScopes(size_t original_count, analytic::FeatureSupportBatch* batch) {
+  int next_cell_id = static_cast<int>(original_count);
+  int next_scope_id = 0;
+  const std::vector<analytic::FeatureSupportCellAxis> joint_axes = batch->cell_axes;
+  for (size_t center = 0; center < original_count; ++center) {
+    std::vector<const analytic::FeatureSupportCellAxis*> axes;
+    for (const analytic::FeatureSupportCellAxis& axis : joint_axes) {
+      if (axis.center == static_cast<int>(center)) {
+        axes.push_back(&axis);
+      }
+    }
+    if (axes.empty()) {
+      continue;
+    }
+    const int joint_cell_id = axes.front()->cell_id;
+    batch->scopes.push_back({ next_scope_id++, joint_cell_id, analytic::FeatureSupportScopeKind::kJoint });
+
+    using ConditionalGroup = std::pair<analytic::FeatureParameterRole, int>;
+    std::map<ConditionalGroup, std::vector<const analytic::FeatureSupportCellAxis*>> conditional_axes;
+    for (const analytic::FeatureSupportCellAxis* axis : axes) {
+      const analytic::FeatureParameterDescriptor& descriptor =
+          batch->parameter_descriptors[static_cast<size_t>(axis->coordinate_index)];
+      if (descriptor.role == analytic::FeatureParameterRole::kShape ||
+          descriptor.role == analytic::FeatureParameterRole::kPose) {
+        conditional_axes[{ descriptor.role, descriptor.group_id }].push_back(axis);
+      }
+    }
+    for (const auto& [group, group_axes] : conditional_axes) {
+      (void)group;
+      const int conditional_cell_id = next_cell_id++;
+      for (const analytic::FeatureSupportCellAxis* axis : group_axes) {
+        analytic::FeatureSupportCellAxis conditional = *axis;
+        conditional.cell_id = conditional_cell_id;
+        batch->cell_axes.push_back(conditional);
+      }
+      batch->scopes.push_back(
+          { next_scope_id++, conditional_cell_id, analytic::FeatureSupportScopeKind::kConditional });
+    }
+  }
+}
+
 }  // namespace
 
 Error BuildFeatureSupportBatch(const ConfigManager& config, const SceneMeasureRequest& request,
@@ -656,6 +724,7 @@ Error BuildFeatureSupportBatch(const ConfigManager& config, const SceneMeasureRe
   context->sun_node_count = measure->sun_nodes.size();
   batch->version = analytic::kFeatureSupportBatchVersion;
   batch->coordinate_dimension = context->coordinate_dimension;
+  DescribeSupportParameters(*context, batch);
   batch->visited_row_count = visited;
   batch->complete_visit = visited == static_cast<uint64_t>(measure->evaluated_row_count);
 
@@ -671,6 +740,7 @@ Error BuildFeatureSupportBatch(const ConfigManager& config, const SceneMeasureRe
       [context](const analytic::FeatureReevaluationRequest& request_value, FeatureSupportSample* sample,
                 std::string* callback_error) { return Reevaluate(context, request_value, sample, callback_error); };
   FillLocalCells(context->rows, *context, raw_callback, batch);
+  AddSupportScopes(rows.size(), batch);
   std::map<int, std::set<int>> cell_coordinates;
   for (const analytic::FeatureSupportCellAxis& axis : batch->cell_axes) {
     cell_coordinates[axis.center].insert(axis.coordinate_index);

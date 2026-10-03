@@ -372,6 +372,116 @@ def test_callback_rejects_wrong_branch_and_coordinates() -> None:
     )
 
 
+def test_continuous_cell_search_localizes_unbracketed_rank_losses() -> None:
+    _run_child(
+        """
+        keep = []
+
+        def normalized_graph(u, graph, graph_u, graph_v):
+            raw = (1.0, u, graph)
+            norm = math.sqrt(sum(value * value for value in raw))
+            direction = tuple(value / norm for value in raw)
+            columns = []
+            for derivative in ((0.0, 1.0, graph_u), (0.0, 0.0, graph_v)):
+                radial = sum(direction[i] * derivative[i] for i in range(3))
+                columns.append([(derivative[i] - direction[i] * radial) / norm for i in range(3)])
+            return direction, [columns[column][component] for component in range(3) for column in range(2)]
+
+        def off_axis_ring(coordinates):
+            u, v = coordinates
+            graph = ((u - 0.5) ** 2 - 0.04) * v + (v - 0.5) ** 3 / 3.0
+            return normalized_graph(u, graph, 2.0 * (u - 0.5) * v,
+                                    (u - 0.5) ** 2 + (v - 0.5) ** 2 - 0.04)
+
+        def even_minor(coordinates):
+            u, v = coordinates
+            return normalized_graph(u, v ** 3, 0.0, 3.0 * v * v)
+
+        def stationary_cubic(coordinates):
+            x = coordinates[0]
+            phase = x ** 3
+            slope = 3.0 * x * x
+            return ((math.cos(phase), math.sin(phase), 0.0),
+                    [-slope * math.sin(phase), slope * math.cos(phase), 0.0])
+
+        def sample(index, coordinates, function, original):
+            dimension = len(coordinates)
+            coordinate_values = (c_double * dimension)(*coordinates)
+            active = (c_int * dimension)(*range(dimension))
+            direction, derivative = function(coordinates)
+            jacobian = (c_double * (3 * dimension))(*derivative)
+            available = (c_uint8 * dimension)(*[1] * dimension)
+            keep.extend((coordinate_values, active, jacobian, available))
+            value = Sample()
+            value.struct_size = sizeof(Sample)
+            value.sample_id = index + 1
+            value.measure_kind = CONTINUOUS
+            value.support_dimension = dimension
+            value.coordinates = coordinate_values
+            value.active_coordinates = active
+            value.direction[:] = direction
+            value.weight = float(original)
+            value.direction_jacobian_available = 1
+            value.direction_jacobian = jacobian
+            value.direction_jacobian_column_available = available
+            value.direction_jacobian_resolution = 1.0e-6
+            value.constraint_stride = sizeof(Constraint)
+            value.numerically_available = 1
+            value.accumulates_measure = int(original)
+            return value
+
+        def run(function, center, lower, upper, direction_component):
+            dimension = len(center)
+            values = [sample(0, center, function, True)]
+            axes = []
+            edges = []
+            for axis in range(dimension):
+                low = list(center)
+                high = list(center)
+                low[axis], high[axis] = lower[axis], upper[axis]
+                low_index, high_index = len(values), len(values) + 1
+                values.extend((sample(low_index, low, function, False),
+                               sample(high_index, high, function, False)))
+                axes.append(CellAxis(1, axis, low_index, 0, high_index, upper[axis] - lower[axis]))
+                edges.extend((Edge(low_index, 0, center[axis] - lower[axis]),
+                              Edge(0, high_index, upper[axis] - center[axis])))
+            sample_array = (Sample * len(values))(*values)
+            axis_array = (CellAxis * len(axes))(*axes)
+            edge_array = (Edge * len(edges))(*edges)
+            batch = Batch(sizeof(Batch), 3, dimension, 1, 1, 1, len(values), sizeof(Sample),
+                          sample_array, len(edges), edge_array, len(axes), axis_array)
+            callback_count = 0
+
+            @CALLBACK
+            def refine(request, output, user_data):
+                nonlocal callback_count
+                callback_count += 1
+                coordinates = [request.contents.coordinates[i] for i in range(dimension)]
+                value = sample(100 + callback_count, coordinates, function, False)
+                value.provenance = request.contents.provenance
+                output[0] = value
+                return 1
+
+            opts = options()
+            opts.maximum_refinement_steps = 512
+            result = output()
+            assert lib.LUMICE_ANALYTIC_DiscoverFeatures(byref(batch), byref(opts), refine, None,
+                                                        byref(result)) == OK
+            folds = [result.candidates[i] for i in range(result.candidate_count)
+                     if result.candidates[i].mechanism == 0]
+            assert callback_count > 0 and callback_count <= 512
+            assert any(candidate.status == CONFIRMED and candidate.residual < 1.0e-4
+                       and abs(candidate.direction[direction_component]) < 1.0e-6
+                       for candidate in folds)
+            lib.LUMICE_ANALYTIC_ReleaseFeatureDiscoveryResult(byref(result))
+
+        run(off_axis_ring, [0.0, 0.0], [-1.0, -1.0], [1.0, 1.0], 2)
+        run(even_minor, [0.25, 0.25], [-0.75, -0.75], [1.25, 1.25], 2)
+        run(stationary_cubic, [0.1], [-0.3], [0.5], 1)
+        """
+    )
+
+
 def test_exact_mapping_certificate_is_required_for_a_continuous_atom() -> None:
     _run_child(
         """

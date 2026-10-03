@@ -62,6 +62,17 @@ TEST(FeatureDiscoveryAdapter, ConsumesEveryVisitorRowAndKeepsContinuousSupportDi
   EXPECT_GT(batch.coordinate_dimension, batch.samples.front().support_dimension);
   EXPECT_FALSE(batch.edges.empty());
   EXPECT_FALSE(batch.cell_axes.empty());
+  ASSERT_EQ(batch.parameter_descriptors.size(), static_cast<size_t>(batch.coordinate_dimension));
+  ASSERT_EQ(batch.samples.front().active_coordinates.size(), 1u);
+  const int pose_coordinate = batch.samples.front().active_coordinates.front();
+  EXPECT_EQ(batch.parameter_descriptors[static_cast<size_t>(pose_coordinate)].role,
+            analytic::FeatureParameterRole::kPose);
+  EXPECT_EQ(batch.parameter_descriptors[static_cast<size_t>(pose_coordinate)].group_id, 0);
+  EXPECT_TRUE(std::any_of(batch.scopes.begin(), batch.scopes.end(),
+                          [](const auto& scope) { return scope.kind == analytic::FeatureSupportScopeKind::kJoint; }));
+  EXPECT_TRUE(std::any_of(batch.scopes.begin(), batch.scopes.end(), [](const auto& scope) {
+    return scope.kind == analytic::FeatureSupportScopeKind::kConditional;
+  }));
   EXPECT_TRUE(std::all_of(batch.cell_axes.begin(), batch.cell_axes.end(), [&](const auto& axis) {
     return !batch.samples[static_cast<size_t>(axis.lower)].accumulates_measure &&
            batch.samples[static_cast<size_t>(axis.center)].accumulates_measure &&
@@ -296,6 +307,76 @@ TEST(FeatureDiscoveryAdapter, DifferentiatesTheComposedDirectionThroughBothLayer
     EXPECT_NE(callback_sample.direction_jacobian_column_available[static_cast<size_t>(coordinate)], 0)
         << "the arbitrary callback point must retain every full-chain active column";
   }
+}
+
+TEST(FeatureDiscoveryAdapter, ReportsConditionalPoseFoldInsideTheActualFiniteSolarSource) {
+  PrismCrystalParam prism;
+  prism.h_ = { DistributionType::kNoRandom, 0.73f, 0.0f };
+  const float face_distances[6] = { 1.37f, 0.91f, 1.12f, 1.46f, 0.83f, 1.05f };
+  for (int face = 0; face < 6; ++face) {
+    prism.d_[static_cast<size_t>(face)] = { DistributionType::kNoRandom, face_distances[face], 0.0f };
+  }
+  CrystalConfig crystal;
+  crystal.id_ = 1;
+  crystal.param_ = prism;
+  crystal.axis_.latitude_dist = { DistributionType::kNoRandom, 90.0f, 0.0f };
+  crystal.axis_.azimuth_dist = { DistributionType::kNoRandom, 0.0f, 0.0f };
+  crystal.axis_.roll_dist = { DistributionType::kUniform, 0.0f, 360.0f };
+
+  ConfigManager config;
+  config.crystals_.emplace(1, crystal);
+  config.scene_.light_source_.param_ = SunParam{ 9.0f, 17.0f, 0.53f };
+  config.scene_.light_source_.spectrum_ = std::vector<WlParam>{ { 550.0f, 1.0f } };
+  config.scene_.max_hits_ = 2;
+  ScatteringSetting setting{};
+  setting.crystal_ = crystal;
+  setting.crystal_proportion_ = 1.0f;
+  MsInfo layer{};
+  layer.setting_.push_back(std::move(setting));
+  config.scene_.ms_.push_back(std::move(layer));
+
+  SceneMeasureRequest request;
+  request.layer_crystal_ids = { 1 };
+  request.path_layers = { { 3, 5 } };
+  request.sample_count = 64;
+  request.sun_node_count = 8;
+  request.illuminant_node_count = 8;
+  request.seed = 0;
+
+  analytic::FeatureSupportBatch batch;
+  SceneMeasureResult measure;
+  analytic::FeatureReevaluateFn reevaluate;
+  const Error error = BuildFeatureSupportBatch(config, request, &batch, &measure, &reevaluate);
+  ASSERT_TRUE(error.Ok()) << error.message;
+  ASSERT_TRUE(reevaluate);
+  EXPECT_EQ(batch.visited_row_count, 512u);
+  EXPECT_EQ(measure.evaluated_row_count, 512);
+  EXPECT_GT(measure.total_contribution, 0.0);
+  EXPECT_EQ(batch.parameter_descriptors[1].role, analytic::FeatureParameterRole::kSource);
+  EXPECT_EQ(batch.parameter_descriptors[2].role, analytic::FeatureParameterRole::kSource);
+
+  const analytic::FeatureDiscoveryResult discovery = analytic::DiscoverFeatures(batch, {}, reevaluate);
+  const auto conditional_fold =
+      std::find_if(discovery.candidates.begin(), discovery.candidates.end(), [](const auto& candidate) {
+        return candidate.mechanism == analytic::FeatureMechanism::kInteriorRankLoss &&
+               candidate.status == analytic::FeatureEvidenceStatus::kConfirmed &&
+               candidate.scope_kind == analytic::FeatureSupportScopeKind::kConditional &&
+               !candidate.scope_parameters.empty() &&
+               std::all_of(
+                   candidate.scope_parameters.begin(), candidate.scope_parameters.end(),
+                   [](const auto& parameter) { return parameter.role == analytic::FeatureParameterRole::kPose; });
+      });
+  ASSERT_NE(conditional_fold, discovery.candidates.end());
+  EXPECT_EQ(conditional_fold->provenance.spectrum_node_id, 0);
+  EXPECT_GE(conditional_fold->provenance.source_node_id, 0);
+  EXPECT_LT(conditional_fold->provenance.source_node_id, 8);
+  EXPECT_DOUBLE_EQ(conditional_fold->weighted_mass, 0.0)
+      << "conditional evidence must not duplicate source-measure mass";
+  EXPECT_FALSE(std::any_of(discovery.candidates.begin(), discovery.candidates.end(), [](const auto& candidate) {
+    return candidate.mechanism == analytic::FeatureMechanism::kInteriorRankLoss &&
+           candidate.status == analytic::FeatureEvidenceStatus::kConfirmed &&
+           candidate.scope_kind == analytic::FeatureSupportScopeKind::kJoint;
+  })) << "the two finite-source tangent directions keep the joint mapping regular";
 }
 
 TEST(FeatureDiscoveryAdapter, PhysicalDirectionFilterCreatesItsOwnBoundaryMechanism) {

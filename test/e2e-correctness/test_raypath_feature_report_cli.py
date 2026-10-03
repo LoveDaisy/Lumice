@@ -17,6 +17,7 @@ from test.e2e.runner import find_lumice_binary, get_project_root, run_lumice
 _ROOT = get_project_root()
 _RANDOM = _ROOT / "test" / "e2e" / "configs" / "raypath_feature_random_regular.json"
 _PLATE = _ROOT / "test" / "e2e" / "configs" / "raypath_feature_rhombic_plate.json"
+_FINITE_SUN_FOLD = _ROOT / "test" / "e2e" / "configs" / "raypath_feature_finite_sun_fold.json"
 _REFERENCE_WAVELENGTHS = (694.3628981235904, 430.0197374077313)
 
 
@@ -133,6 +134,37 @@ def test_multiple_internal_reflections_keep_nonfirst_interface_provenance():
         candidate["provenance"]["layer_index"] == 0
         and candidate["provenance"]["interface_index"] == 2
         for candidate in optical_kinks
+    )
+
+
+def test_finite_solar_source_reports_conditional_pose_fold_without_joint_rank_loss():
+    result = _report(_FINITE_SUN_FOLD, "3-5", "--events", "64", "--wavelength", "550")
+    assert result.returncode == 0, result.stderr
+    doc = json.loads(result.stdout)
+    assert doc["scene_measure"]["evaluated_row_count"] == 512
+    assert doc["scene_measure"]["total_contribution"] == pytest.approx(0.00730355653482653)
+    folds = [
+        candidate
+        for candidate in doc["feature_discovery"]["candidates"]
+        if candidate["mechanism"] == "interior_rank_loss"
+    ]
+    conditional = [
+        candidate
+        for candidate in folds
+        if candidate["status"] == "confirmed" and candidate["scope"]["kind"] == "conditional"
+    ]
+    assert conditional
+    assert all(
+        parameter["role"] == "pose"
+        for candidate in conditional
+        for parameter in candidate["scope"]["active_parameters"]
+    )
+    assert {candidate["scope"]["fixed_spectrum_node_id"] for candidate in conditional} == {0}
+    assert all(0 <= candidate["scope"]["fixed_source_node_id"] < 8 for candidate in conditional)
+    assert all(candidate["weighted_mass"] == 0 for candidate in conditional)
+    assert not any(
+        candidate["status"] == "confirmed" and candidate["scope"]["kind"] == "joint"
+        for candidate in folds
     )
 
 

@@ -125,9 +125,38 @@ nlohmann::ordered_json ProvenanceJson(const analytic::FeatureProvenance& provena
   };
 }
 
+const char* ScopeKindName(analytic::FeatureSupportScopeKind kind) {
+  return kind == analytic::FeatureSupportScopeKind::kConditional ? "conditional" : "joint";
+}
+
+const char* ParameterRoleName(analytic::FeatureParameterRole role) {
+  switch (role) {
+    case analytic::FeatureParameterRole::kSpectrum:
+      return "spectrum";
+    case analytic::FeatureParameterRole::kSource:
+      return "source";
+    case analytic::FeatureParameterRole::kShape:
+      return "shape";
+    case analytic::FeatureParameterRole::kPose:
+      return "pose";
+    case analytic::FeatureParameterRole::kUnspecified:
+      return "unspecified";
+  }
+  return "unspecified";
+}
+
 nlohmann::ordered_json DiscoveryJson(const analytic::FeatureDiscoveryResult& discovery) {
   nlohmann::ordered_json candidates = nlohmann::ordered_json::array();
   for (const analytic::FeatureCandidate& candidate : discovery.candidates) {
+    nlohmann::ordered_json scope_parameters = nlohmann::ordered_json::array();
+    for (size_t index = 0; index < candidate.scope_active_coordinates.size(); ++index) {
+      const analytic::FeatureParameterDescriptor descriptor = index < candidate.scope_parameters.size() ?
+                                                                  candidate.scope_parameters[index] :
+                                                                  analytic::FeatureParameterDescriptor{};
+      scope_parameters.push_back({ { "coordinate", candidate.scope_active_coordinates[index] },
+                                   { "role", ParameterRoleName(descriptor.role) },
+                                   { "layer_index", descriptor.group_id } });
+    }
     nlohmann::ordered_json value = {
       { "mechanism", analytic::FeatureMechanismName(candidate.mechanism) },
       { "status", analytic::FeatureEvidenceStatusName(candidate.status) },
@@ -140,6 +169,12 @@ nlohmann::ordered_json DiscoveryJson(const analytic::FeatureDiscoveryResult& dis
       { "residual", Num(candidate.residual) },
       { "resolution", Num(candidate.resolution) },
       { "active_constraints", candidate.active_constraints },
+      { "scope",
+        { { "id", candidate.scope_id },
+          { "kind", ScopeKindName(candidate.scope_kind) },
+          { "active_parameters", scope_parameters },
+          { "fixed_spectrum_node_id", candidate.provenance.spectrum_node_id },
+          { "fixed_source_node_id", candidate.provenance.source_node_id } } },
       { "reason", candidate.reason },
     };
     if (candidate.has_weight_sides) {

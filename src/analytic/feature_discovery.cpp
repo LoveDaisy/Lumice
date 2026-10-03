@@ -64,7 +64,13 @@ double Dot(const double first[3], const double second[3]) {
 S2Differential RestrictedS2Differential(const FeatureSupportSample& sample, int coordinate_dimension,
                                         const std::vector<int>& active_coordinates, double relative_tolerance) {
   S2Differential out;
-  if (!sample.direction_jacobian_available || active_coordinates.empty()) {
+  if (active_coordinates.empty() ||
+      sample.direction_jacobian.size() != 3u * static_cast<size_t>(coordinate_dimension) ||
+      sample.direction_jacobian_column_available.size() != static_cast<size_t>(coordinate_dimension) ||
+      std::any_of(active_coordinates.begin(), active_coordinates.end(), [&](int coordinate) {
+        return coordinate < 0 || coordinate >= coordinate_dimension ||
+               sample.direction_jacobian_column_available[static_cast<size_t>(coordinate)] == 0;
+      })) {
     return out;
   }
   int anchor_index = 0;
@@ -115,6 +121,9 @@ S2Differential RestrictedS2Differential(const FeatureSupportSample& sample, int 
 
 S2Differential RestrictedS2Differential(const FeatureSupportSample& sample, int coordinate_dimension,
                                         double relative_tolerance) {
+  if (!sample.direction_jacobian_available) {
+    return {};
+  }
   return RestrictedS2Differential(sample, coordinate_dimension, sample.active_coordinates, relative_tolerance);
 }
 
@@ -792,6 +801,9 @@ void ApplyCandidateScope(const FeatureSupportBatch& batch, int cell_id, const st
   const FeatureSupportScope scope = ScopeForCell(batch, cell_id);
   candidate->scope_kind = scope.kind;
   candidate->scope_id = scope.scope_id;
+  if (scope.kind == FeatureSupportScopeKind::kConditional) {
+    candidate->weighted_mass = 0.0;
+  }
   candidate->scope_active_coordinates = active_coordinates;
   candidate->scope_parameters.clear();
   candidate->scope_parameters.reserve(active_coordinates.size());
