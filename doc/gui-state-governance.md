@@ -614,6 +614,10 @@ S1–S8 是立项时的种子，S9 / S10 是 S3 / S4 两个待核实分支核实
 `WindowResizeEvents` 将程序化请求与目标尺寸、同步 readback 关联，支持同步和延迟 callback；
 请求只关联到下一次 event poll，无论成功、拒绝或没有 callback 都在该边界退休；未生效请求的旧
 readback 不参与匹配，迟于结算的尺寸通知按新的外部 resize 处理。同尺寸 no-op 不预支任何 callback。
+GLFW 不提供 callback 的操作来源；下一 poll 内未确认请求的第一个非旧 readback 尺寸优先作为其
+实际结果，允许 OS 调整为不同于 target 的尺寸，并立即重算 clamp。结算后只识别 target 与已确认
+actual；其他未知尺寸按外部操作处理。同一短窗口中的用户操作若先于异步结果到达，也服从这项
+优先级；它不会延续到下一 poll，不保留历史尺寸豁免。
 未匹配尺寸事件先记录，待
 `FinishWindowEventPoll` 看完本轮 content-scale 事件后才判为手工 resize：Win32 的 DPI 调整先报告尺寸、
 后报告 scale，不能在第一个 callback 就清掉画幅意图。这个状态不落盘，也不是另一份画幅状态。

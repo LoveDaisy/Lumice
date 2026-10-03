@@ -274,10 +274,10 @@ void SetProgrammaticWindowSize(GLFWwindow* window, int width, int height) {
   if (actual_w == width && actual_h == height) {
     return;
   }
-  g_window_resize_events.BeginRequest(width, height);
+  BeginProgrammaticWindowResize(width, height);
   glfwSetWindowSize(window, width, height);
   glfwGetWindowSize(window, &actual_w, &actual_h);
-  g_window_resize_events.EndRequest(actual_w, actual_h);
+  EndProgrammaticWindowResize(actual_w, actual_h);
 }
 
 void ClampLiveWindowPosition(GLFWwindow* window, const WindowGeometryConstraints& constraints) {
@@ -312,6 +312,14 @@ unsigned int WindowContentScaleRevision() {
 
 void ResetWindowResizeEvents() {
   g_window_resize_events = {};
+}
+
+void BeginProgrammaticWindowResize(int target_width, int target_height) {
+  g_window_resize_events.BeginRequest(target_width, target_height);
+}
+
+void EndProgrammaticWindowResize(int actual_width, int actual_height) {
+  g_window_resize_events.EndRequest(actual_width, actual_height);
 }
 
 void FinishWindowEventPoll() {
@@ -370,13 +378,13 @@ void ApplyWindowGeometryForScale(GLFWwindow* window, float layout_scale) {
   const WindowGeometryConstraints constraints = GetCurrentWindowGeometryConstraints(window, layout_scale);
   const WindowSizePlan plan = PlanWindowSizeForScale(cur_w, cur_h, constraints);
   // Updating limits can itself synchronously resize Win32 windows, before SetWindowSize runs.
-  g_window_resize_events.BeginRequest(plan.target_w, plan.target_h);
+  BeginProgrammaticWindowResize(plan.target_w, plan.target_h);
   glfwSetWindowSizeLimits(window, plan.min_w, plan.min_h, GLFW_DONT_CARE, GLFW_DONT_CARE);
   if (plan.resize) {
     glfwSetWindowSize(window, plan.target_w, plan.target_h);
   }
   glfwGetWindowSize(window, &cur_w, &cur_h);
-  g_window_resize_events.EndRequest(cur_w, cur_h);
+  EndProgrammaticWindowResize(cur_w, cur_h);
   ClampLiveWindowPosition(window, constraints);
 }
 

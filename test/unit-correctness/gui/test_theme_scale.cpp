@@ -272,13 +272,31 @@ TEST(WindowResizeEvents, UnacknowledgedRequestsCannotExemptOldReadbackOrLaterMan
   EXPECT_TRUE(events.FinishEventPoll());
 }
 
-TEST(WindowResizeEvents, AManualSizeSupersedesAnUnacknowledgedRequest) {
+TEST(WindowResizeEvents, AManualSizeAfterSettlementSupersedesAnUnacknowledgedRequest) {
   gui::WindowResizeEvents events;
   events.BeginRequest(1400, 900);
   events.EndRequest(1600, 980);
+  EXPECT_FALSE(events.FinishEventPoll());
   EXPECT_FALSE(events.RecordResize(1350, 880));
   EXPECT_TRUE(events.FinishEventPoll());
   EXPECT_FALSE(events.RecordResize(1400, 900));
+  EXPECT_TRUE(events.FinishEventPoll());
+}
+
+TEST(WindowResizeEvents, AdjustedAsynchronousResultSettlesOnceAndDoesNotExemptTheNextManualSize) {
+  gui::WindowResizeEvents events;
+  events.BeginRequest(1400, 900);
+  events.EndRequest(1600, 980);
+  EXPECT_TRUE(events.RecordResize(1420, 910));
+  EXPECT_TRUE(events.RecordResize(1420, 910));
+  EXPECT_FALSE(events.FinishEventPoll());
+  EXPECT_FALSE(events.RecordResize(1430, 910));
+  EXPECT_TRUE(events.FinishEventPoll());
+
+  events.BeginRequest(1400, 900);
+  events.EndRequest(1600, 980);
+  EXPECT_TRUE(events.RecordResize(1420, 910));
+  EXPECT_FALSE(events.RecordResize(1430, 910));
   EXPECT_TRUE(events.FinishEventPoll());
 }
 

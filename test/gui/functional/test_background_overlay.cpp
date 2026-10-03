@@ -287,6 +287,17 @@ void RegisterBackgroundOverlayTests(ImGuiTestEngine* engine) {
       IM_CHECK(!gui::g_ui_scale_dirty);
       request(false, false, width - 24, height);
       IM_CHECK_EQ(gui::g_state.aspect_preset, gui::AspectPreset::kFree);
+
+      gui::g_state.aspect_preset = gui::AspectPreset::k16x9;
+      g_window_size_test.adjusted_async_resize = true;
+      request(false, false, width - 128, height);
+      IM_CHECK_EQ(gui::g_state.aspect_preset, gui::AspectPreset::k16x9);
+      const float actual_ratio = (g_window_size_test.width - gui::UiPx(gui::kLeftPanelWidth + gui::kRightPanelWidth)) /
+                                 (g_window_size_test.height - gui::UiPx(gui::kTopBarHeight + gui::kStatusBarHeight));
+      IM_CHECK(std::abs(gui::g_state.aspect_clamp.achieved_preview_ratio - actual_ratio) < 1e-5f);
+      IM_CHECK(gui::g_state.aspect_clamp.was_clamped);
+      request(false, false, width - 136, height);
+      IM_CHECK_EQ(gui::g_state.aspect_preset, gui::AspectPreset::kFree);
       request(false, false, gui::kInitWindowWidth, gui::kInitWindowHeight);
     };
   }

@@ -745,6 +745,16 @@ int main(int argc, char** argv) {
       if (g_window_size_test.apply_aspect) {
         gui::ApplyAspectRatio(window, gui::g_state.aspect_preset, gui::g_state.aspect_portrait);
       } else {
+        if (g_window_size_test.adjusted_async_resize) {
+          // Inject a pending request with stale readback; the real GLFW callback below delivers
+          // a third size, as an asynchronous window manager that adjusted the request would.
+          int previous_w = 0;
+          int previous_h = 0;
+          glfwGetWindowSize(window, &previous_w, &previous_h);
+          gui::BeginProgrammaticWindowResize(g_window_size_test.width + 64, g_window_size_test.height + 32);
+          gui::EndProgrammaticWindowResize(previous_w, previous_h);
+          g_window_size_test.adjusted_async_resize = false;
+        }
         glfwSetWindowSize(window, g_window_size_test.width, g_window_size_test.height);
       }
       if (g_window_size_test.content_scale_change) {

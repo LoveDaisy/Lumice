@@ -46,6 +46,17 @@ class WindowResizeEvents {
         return true;
       }
     }
+    // An asynchronous window manager can adjust the requested size. GLFW supplies no event-source
+    // token, so the first changed result in this bounded window belongs to an unconfirmed request.
+    // The stale readback is not a changed result; later unmatched events retain manual semantics.
+    for (auto& request : requests_) {
+      if (!request.completed && (width != request.actual_w || height != request.actual_h)) {
+        request.actual_w = width;
+        request.actual_h = height;
+        request.completed = true;
+        return true;
+      }
+    }
     unmatched_resize_ = true;
     return false;
   }
