@@ -114,7 +114,7 @@ TEST(FilterReconstructChain, ExpressibleCompositionsComeBackAsEditableRows) {
   for (const Case& c : kCases) {
     SCOPED_TRACE(c.name);
     SeedOneEntryDocument();
-    ClearImportComplexFilterWarning();
+    ClearLoadNotice();
     g_state.filters[0] = c.make();
 
     const std::string emitted = CoreJson(g_state);
@@ -140,7 +140,7 @@ TEST(FilterReconstructChain, ExpressibleCompositionsComeBackAsEditableRows) {
     for (size_t i = 0; i < c.expected_rows.size(); ++i) {
       EXPECT_EQ(f.param[i].text, c.expected_rows[i]) << "row " << i;
     }
-    EXPECT_TRUE(PeekImportComplexFilterWarning().empty()) << "a representable filter warned anyway";
+    EXPECT_TRUE(PeekLoadNotice().empty()) << "a representable filter warned anyway";
     EXPECT_EQ(nlohmann::json::parse(emitted)["filter"], nlohmann::json::parse(CoreJson(loaded))["filter"])
         << "the rebuilt filter no longer emits what the file said";
   }
@@ -151,7 +151,7 @@ TEST(FilterReconstructChain, ExpressibleCompositionsComeBackAsEditableRows) {
 // becomes no filter.
 TEST(FilterReconstructChain, AnAndClauseBecomesOneRow) {
   DoNew();
-  ClearImportComplexFilterWarning();
+  ClearLoadNotice();
   GuiState loaded = InitDefaultState();
   ASSERT_TRUE(
       DeserializeFromJson(CoreDocWithFilters(R"([{"id": 1, "type": "raypath", "action": "filter_in", "raypath": [3, 5]},
@@ -167,7 +167,7 @@ TEST(FilterReconstructChain, AnAndClauseBecomesOneRow) {
   EXPECT_TRUE(std::holds_alternative<RaypathParams>(f.param[0].factors[0]));
   EXPECT_TRUE(std::holds_alternative<RaypathParams>(f.param[0].factors[1]));
   EXPECT_EQ(f.param[0].text, std::string("3-5 & 1-3"));
-  EXPECT_TRUE(PeekImportComplexFilterWarning().empty());
+  EXPECT_TRUE(PeekLoadNotice().empty());
 
   // Compared against an explicit expectation rather than the input document: the emitter owns the
   // id space (0-based, so 1..3 renumbers to 0..2) and always writes `symmetry` where the input
@@ -208,7 +208,7 @@ TEST(FilterReconstructChain, AMatchAllAlternativeSurvivesBesideARealOne) {
   for (const Case& c : kCases) {
     SCOPED_TRACE(c.name);
     DoNew();
-    ClearImportComplexFilterWarning();
+    ClearLoadNotice();
     GuiState wildcard = InitDefaultState();
     const std::string filters = std::string("[") + c.wildcard_child +
                                 R"(, {"id": 2, "type": "raypath", "action": "filter_in", "raypath": [3, 5]},
@@ -230,7 +230,7 @@ TEST(FilterReconstructChain, AMatchAllAlternativeSurvivesBesideARealOne) {
     EXPECT_TRUE(std::holds_alternative<RaypathParams>(w.param[0].factors[0]));
     EXPECT_TRUE(std::get<RaypathParams>(w.param[0].factors[0]).raypath_text.empty());
     EXPECT_EQ(w.param[1].text, std::string("3-5"));
-    EXPECT_TRUE(PeekImportComplexFilterWarning().empty());
+    EXPECT_TRUE(PeekLoadNotice().empty());
 
     // The rebuilt rows are only half the round trip. What the simulator is handed is the other
     // half, and it is the half the wildcard can be lost in: the expansion path drops a row that
@@ -295,7 +295,7 @@ TEST(FilterReconstructChain, UnrepresentableCompositionsAreRefusedLoudly) {
   for (const Case& c : kCases) {
     SCOPED_TRACE(c.name);
     DoNew();
-    ClearImportComplexFilterWarning();
+    ClearLoadNotice();
     GuiState loaded = InitDefaultState();
 
     if (!DeserializeFromJson(CoreDocWithFilters(c.filters, c.main_id), loaded)) {
@@ -309,8 +309,10 @@ TEST(FilterReconstructChain, UnrepresentableCompositionsAreRefusedLoudly) {
     }
     EXPECT_FALSE(loaded.layers[0].entries.at(0).filter_id.has_value())
         << "an unrepresentable filter was materialized as something else";
-    EXPECT_FALSE(PeekImportComplexFilterWarning().empty()) << "the filter vanished with nothing said about it";
-    ClearImportComplexFilterWarning();
+    EXPECT_NE(PeekLoadNotice().find("CLI"), std::string::npos) << "the notice lost the config-specific remedy";
+    EXPECT_EQ(PeekLoadNotice().find("Run to regenerate"), std::string::npos)
+        << "a simulation cannot restore a dropped filter";
+    ClearLoadNotice();
   }
 }
 
@@ -533,7 +535,7 @@ TEST(FilterReconstructChain, EitherSpellingOfCoresMatchAllStillPassesEveryRayAft
   for (const Case& c : kCases) {
     SCOPED_TRACE(c.name);
     DoNew();
-    ClearImportComplexFilterWarning();
+    ClearLoadNotice();
     GuiState loaded = InitDefaultState();
     if (!DeserializeFromJson(CoreDocWithFilters(c.filters, 1), loaded)) {
       ADD_FAILURE() << c.name << ": the document did not open at all";
@@ -572,20 +574,20 @@ TEST(FilterReconstructChain, EitherSpellingOfCoresMatchAllStillPassesEveryRayAft
 // between this and the inversion it replaces.
 TEST(FilterReconstructChain, ATopLevelEmptyRaypathArrayIsRefusedRatherThanReadAsItsOpposite) {
   DoNew();
-  ClearImportComplexFilterWarning();
+  ClearLoadNotice();
   GuiState loaded = InitDefaultState();
   ASSERT_TRUE(DeserializeFromJson(
       CoreDocWithFilters(R"([{"id": 1, "type": "raypath", "action": "filter_in", "raypath": []}])", 1), loaded));
 
   EXPECT_FALSE(loaded.layers.at(0).entries.at(0).filter_id.has_value())
       << "a filter core matches no ray with came back as an editable row";
-  EXPECT_FALSE(PeekImportComplexFilterWarning().empty()) << "the filter was dropped with nothing said about it";
+  EXPECT_FALSE(PeekLoadNotice().empty()) << "the filter was dropped with nothing said about it";
 
   const nlohmann::json committed = CommitSceneJson(loaded);
   ASSERT_FALSE(committed.is_null()) << "the document did not commit at all";
   EXPECT_TRUE(committed["filter"].empty())
       << "the refused filter reached the simulator anyway: " << committed["filter"].dump();
-  ClearImportComplexFilterWarning();
+  ClearLoadNotice();
 }
 
 // The same shape one level down, as a term of a composition. It arrives through a SECOND decoder
@@ -596,7 +598,7 @@ TEST(FilterReconstructChain, ATopLevelEmptyRaypathArrayIsRefusedRatherThanReadAs
 // take.
 TEST(FilterReconstructChain, AnEmptyRaypathArrayInsideACompositionIsRefusedToo) {
   DoNew();
-  ClearImportComplexFilterWarning();
+  ClearLoadNotice();
   GuiState loaded = InitDefaultState();
   ASSERT_TRUE(
       DeserializeFromJson(CoreDocWithFilters(R"([{"id": 1, "type": "raypath", "action": "filter_in", "raypath": []},
@@ -607,8 +609,8 @@ TEST(FilterReconstructChain, AnEmptyRaypathArrayInsideACompositionIsRefusedToo) 
 
   EXPECT_FALSE(loaded.layers.at(0).entries.at(0).filter_id.has_value())
       << "the composition was rebuilt around a term the editor cannot say";
-  EXPECT_FALSE(PeekImportComplexFilterWarning().empty()) << "the composition vanished with nothing said about it";
-  ClearImportComplexFilterWarning();
+  EXPECT_FALSE(PeekLoadNotice().empty()) << "the composition vanished with nothing said about it";
+  ClearLoadNotice();
 }
 
 // AC5: one input, two commit paths, one answer.
@@ -628,7 +630,7 @@ TEST(FilterReconstructChain, TheFilterPathAndTheColourPathAgreeOnWhatAnEmptyRayp
   const RaypathParams kEmptyRaypath{};  // the one input, built once
 
   SeedOneEntryDocument();
-  ClearImportComplexFilterWarning();
+  ClearLoadNotice();
   FilterConfig f;
   f.SetRaypath(kEmptyRaypath);
   g_state.filters[0] = f;

@@ -500,5 +500,40 @@ TEST(LegacyDocumentChain, TheRayBudgetsDomainBoundsSurviveExportAndImport) {
   }
 }
 
+// File capability is decoded data, not an age test: even a current container can carry an old
+// byte cache, and an old container without pixels has no texture limitation to announce.
+TEST(LegacyDocumentChain, TextureNoticesFollowDecodedCapability) {
+  using Mode = PreviewRenderer::TextureMode;
+  for (auto mode : { Mode::kSrgbComposited, Mode::kSrgbRadiance, Mode::kXyz }) {
+    for (bool pixels : { false, true }) {
+      LmcTexture tex;
+      tex.mode = mode;
+      tex.width = tex.height = pixels ? 1 : 0;
+      if (pixels) {
+        if (mode == Mode::kXyz) {
+          tex.xyz = { 0, 0, 0 };
+        } else {
+          tex.srgb = { 0, 0, 0 };
+        }
+      }
+      const auto notice = TextureLoadNotice(tex);
+      if (!pixels || mode == Mode::kXyz) {
+        EXPECT_TRUE(notice.empty());
+      } else {
+        EXPECT_NE(notice.find("still viewable"), std::string::npos);
+        EXPECT_NE(notice.find("Run"), std::string::npos);
+        EXPECT_NE(notice.find("Save"), std::string::npos);
+        EXPECT_NE(notice.find("Saving alone cannot recover"), std::string::npos);
+        EXPECT_NE(notice.find("EV and Print"), std::string::npos);
+        EXPECT_EQ(notice.find("cannot accurately") != std::string::npos, mode == Mode::kSrgbComposited);
+        EXPECT_EQ(notice.find("Channel B-R excludes") != std::string::npos, mode == Mode::kSrgbRadiance);
+      }
+    }
+  }
+  ClearLoadNotice();
+  AppendLoadNotice("");
+  EXPECT_TRUE(PeekLoadNotice().empty());
+}
+
 }  // namespace
 }  // namespace lumice::gui

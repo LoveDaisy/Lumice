@@ -781,27 +781,27 @@ void RegisterFileOpsTests(ImGuiTestEngine* engine) {
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
       ctx->Yield(2);
-      IM_CHECK(!ImGui::IsPopupOpen("Import Warning"));
+      IM_CHECK(!ImGui::IsPopupOpen("Load Notice"));
 
-      gui::SetImportComplexFilterWarning("first thing that did not fit");
-      gui::SetImportComplexFilterWarning("second thing that did not fit");
+      gui::AppendLoadNotice("first thing that did not fit");
+      gui::AppendLoadNotice("second thing that did not fit");
       // Both messages are still queued: nothing is consumed until a frame draws the modal.
-      IM_CHECK(gui::PeekImportComplexFilterWarning().find("first") != std::string::npos);
-      IM_CHECK(gui::PeekImportComplexFilterWarning().find("second") != std::string::npos);
+      IM_CHECK(gui::PeekLoadNotice().find("first") != std::string::npos);
+      IM_CHECK(gui::PeekLoadNotice().find("second") != std::string::npos);
 
       ctx->Yield(2);
-      IM_CHECK(ImGui::IsPopupOpen("Import Warning"));
+      IM_CHECK(ImGui::IsPopupOpen("Load Notice"));
       // One modal, and the queue drained into it — a second warning must not be waiting to pop
       // again the moment this one closes.
-      IM_CHECK(gui::PeekImportComplexFilterWarning().empty());
+      IM_CHECK(gui::PeekLoadNotice().empty());
 
-      ctx->ItemClick("Import Warning/OK");
+      ctx->ItemClick("Load Notice/OK");
       ctx->Yield(2);
-      IM_CHECK(!ImGui::IsPopupOpen("Import Warning"));
+      IM_CHECK(!ImGui::IsPopupOpen("Load Notice"));
 
       // And it stays closed: the trigger is the queued message, not a flag that survives the modal.
       ctx->Yield(4);
-      IM_CHECK(!ImGui::IsPopupOpen("Import Warning"));
+      IM_CHECK(!ImGui::IsPopupOpen("Load Notice"));
     };
   }
 
@@ -903,7 +903,9 @@ void RegisterFileOpsTests(ImGuiTestEngine* engine) {
       const auto serial = previous.staged_serial();
 
       gui::DoOpen(path);
+      IM_CHECK(gui::PeekLoadNotice().empty());
       ExpectPreviousDocumentGone(ctx, serial);
+      IM_CHECK(!ImGui::IsPopupOpen("Load Notice"));
 
       std::remove(path.c_str());
     };
@@ -947,6 +949,13 @@ void RegisterFileOpsTests(ImGuiTestEngine* engine) {
       s_open_path = path;
       YieldUntilTrue(ctx, kSettleYieldLimit, [] { return s_open_done; });
       IM_CHECK(s_open_done);
+      ctx->Yield(2);
+      IM_CHECK(ImGui::IsPopupOpen("Load Notice"));
+      IM_CHECK(gui::PeekLoadNotice().empty());
+      IM_CHECK_EQ(static_cast<int>(gui::g_state.run_intent), static_cast<int>(gui::RunIntent::kLoaded));
+      ctx->ItemClick("Load Notice/OK");
+      ctx->Yield(2);
+      IM_CHECK(!ImGui::IsPopupOpen("Load Notice"));
 
       // The staged composite is fenced, exactly as on the branches that blank the screen...
       const auto snap = gui::g_server_poller.LoadSnapshot();
@@ -1039,6 +1048,8 @@ void RegisterFileOpsTests(ImGuiTestEngine* engine) {
       IM_CHECK_EQ(static_cast<int>(g_gl_op.center_r), 0x00);
       IM_CHECK_EQ(static_cast<int>(g_gl_op.center_g), 0x00);
       IM_CHECK_EQ(static_cast<int>(g_gl_op.center_b), 0x00);
+      IM_CHECK(gui::PeekLoadNotice().empty());
+      IM_CHECK(!ImGui::IsPopupOpen("Load Notice"));
     };
   }
 

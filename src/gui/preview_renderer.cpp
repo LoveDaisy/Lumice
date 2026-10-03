@@ -260,13 +260,13 @@ vec3 subtractiveInk(float e, vec3 paper) {
     return paper * pow(10.0, -density);
 }
 
-// The channel-B-R display mode (u_display_mode == 1): the post-gamma sRGB B - R of the pixel the
-// normal mode would show, as a grey offset — mid grey is zero, bluer is lighter, redder is darker.
+// The channel-B-R display mode (u_display_mode == 1): halo-only post-gamma sRGB B - R at the same
+// exposure and view, as a grey offset — mid grey is zero, bluer is lighter, redder is darker.
 //
 // HAND-TRANSCRIBED from src/util/channel_math.hpp (kChannelBrGain / ChannelMathBrGray), which is
 // the authority; it MUST equal that function, and kChannelBrGain below MUST equal
 // lumice::kChannelBrGain. GLSL cannot #include a C++ header, so this is a copy, held to the C++
-// one by the preview/export/CLI parity tests under test/gui/parity/.
+// one by deterministic GL pixel oracles in preview_background and the output-routing parity tests.
 const float kChannelBrGain = 2.0;
 float channelMathBrGray(float r_srgb, float b_srgb) {
     return clamp(0.5 + kChannelBrGain * (b_srgb - r_srgb), 0.0, 1.0);
@@ -1203,14 +1203,17 @@ void main() {
           // See doc/print-mode-subtractive-ink.md.
           tex_color = clampAndGamma(radiance_linear + u_background);
         } else {
-          tex_color = clampAndGamma(radiance_linear + u_background);
+          // Both texture modes have halo-only linear light here, after visibility and vignetting.
+          // B-R must read it before sky is added, not try to subtract sky after gamma/clipping.
+          tex_color = u_display_mode == 1 ? clampAndGamma(radiance_linear)
+                                        : clampAndGamma(radiance_linear + u_background);
         }
       }
       final_color = tex_color;
     }
   }
 
-  // The channel-B-R display mode, on the finished pixel of the normal picture — sky included, and
+  // The channel-B-R display mode, on halo-only post-gamma channels (sky excluded), and
   // on EVERY pixel, the unimaged ones too: their zero-energy black is R == B and reads mid grey, the
   // same rule RenderConsumer::PostSnapshot applies on all of its frame paths (ApplyDisplayMode in
   // src/server/render.cpp). final_color is already post-gamma here, so no round trip is needed; the
@@ -1218,6 +1221,8 @@ void main() {
   // the markers and the lens border are drawn ON the diagnostic image in their own colours. Inert
   // under print, which never computes R and B separately. The background PHOTO is excluded one
   // level up (BgPhotoOnScreen, app.cpp), so u_bg_enabled is never set together with this.
+  // Legacy composited texels have no recoverable halo-only signal: diagnose the baked pixel as
+  // before. The load notice reports this limitation; no inverse sky subtraction is attempted.
   if (u_display_mode == 1 && u_tone != 1) {
     final_color = vec3(channelMathBrGray(final_color.r, final_color.b));
   }

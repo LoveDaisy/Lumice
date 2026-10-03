@@ -141,7 +141,7 @@ TEST(JsonImportContractChain, ImportingAJsonThatDegradesLeavesTheSourceFileByteI
   const std::string before = ReadAllBytes(doc.path);
   ASSERT_FALSE(before.empty()) << "premise: the fixture was written";
 
-  ClearImportComplexFilterWarning();
+  ClearLoadNotice();
   DoOpen(doc.path);
 
   ASSERT_FALSE(g_state.crystals.empty()) << "premise: the document imported at all";
@@ -165,7 +165,7 @@ TEST(JsonImportContractChain, ImportingAJsonThatDegradesLeavesTheSourceFileByteI
 // are pinned unevenly.
 TEST(JsonImportContractChain, AnImportedJsonIsNotTheSaveTarget) {
   const TempFile json_doc = WriteTempFile("lumice_json_import_contract_target.json", UniformHeightDoc());
-  ClearImportComplexFilterWarning();
+  ClearLoadNotice();
   DoOpen(json_doc.path);
   EXPECT_TRUE(g_state.current_file_path.empty())
       << "an imported .json became the save target, so Save would overwrite it with a lossy "
@@ -182,13 +182,15 @@ TEST(JsonImportContractChain, AnImportedJsonIsNotTheSaveTarget) {
 // nothing at all.
 TEST(JsonImportContractChain, ADowngradeDuringJsonImportReachesTheUser) {
   const TempFile doc = WriteTempFile("lumice_json_import_contract_notice.json", GaussHeightDoc());
-  ClearImportComplexFilterWarning();
+  ClearLoadNotice();
   DoOpen(doc.path);
 
-  const std::string warning = PeekImportComplexFilterWarning();
+  const std::string warning = PeekLoadNotice();
   EXPECT_FALSE(warning.empty()) << "the shape-distribution downgrade was performed but never surfaced";
   EXPECT_NE(warning.find("uniform"), std::string::npos) << "must name what happened, got: " << warning;
-  ClearImportComplexFilterWarning();
+  EXPECT_NE(warning.find("CLI"), std::string::npos);
+  EXPECT_EQ(warning.find("Run to regenerate"), std::string::npos);
+  ClearLoadNotice();
 }
 
 // (3b) …and only its own. The counter is process-wide and take-on-read, so anything that ran the
@@ -205,13 +207,13 @@ TEST(JsonImportContractChain, AJsonImportDoesNotInheritAnEarlierReadsDowngrade) 
       << "premise: the seeding read left a downgrade count behind";
 
   const TempFile doc = WriteTempFile("lumice_json_import_contract_carryover.json", UniformHeightDoc());
-  ClearImportComplexFilterWarning();
+  ClearLoadNotice();
   DoOpen(doc.path);
 
   ASSERT_EQ(ImportedHeight().type, ShapeDistType::kUniform);
-  EXPECT_TRUE(PeekImportComplexFilterWarning().empty())
-      << "this document degraded nothing; the notice describes an earlier read: " << PeekImportComplexFilterWarning();
-  ClearImportComplexFilterWarning();
+  EXPECT_TRUE(PeekLoadNotice().empty()) << "this document degraded nothing; the notice describes an earlier read: "
+                                        << PeekLoadNotice();
+  ClearLoadNotice();
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -283,11 +285,11 @@ TEST(JsonImportContractChain, TwoCrystalsMissingIdDoNotSilentlyCollide) {
     {"type": "prism", "shape": {"height": 5.0, "face_distance": [1, 1, 1, 1, 1, 1]}}
   ])");
 
-  ClearImportComplexFilterWarning();
+  ClearLoadNotice();
   GuiState scratch;
   ASSERT_TRUE(DeserializeFromJson(doc, scratch)) << "the document still loads; only the two crystals are refused";
 
-  const std::string warning = PeekImportComplexFilterWarning();
+  const std::string warning = PeekLoadNotice();
   EXPECT_FALSE(warning.empty()) << "two crystals collided on one map key and the user was told nothing";
   EXPECT_NE(warning.find("id"), std::string::npos) << "must name the field that was missing, got: " << warning;
 
@@ -296,7 +298,7 @@ TEST(JsonImportContractChain, TwoCrystalsMissingIdDoNotSilentlyCollide) {
   EXPECT_FLOAT_EQ(center, CrystalConfig{}.height.center)
       << "the surviving crystal is one of the two the document wrote (height " << center
       << "), so one of them was silently overwritten by the other";
-  ClearImportComplexFilterWarning();
+  ClearLoadNotice();
 }
 
 // D-2: `type` is the discriminant — it decides whether `shape.*` is read as a prism's keys or a
@@ -307,18 +309,18 @@ TEST(JsonImportContractChain, AJsonCrystalMissingTypeIsDroppedNotAssumedPrism) {
     {"id": 0, "shape": {"height": 5.0, "face_distance": [1, 1, 1, 1, 1, 1]}}
   ])");
 
-  ClearImportComplexFilterWarning();
+  ClearLoadNotice();
   GuiState scratch;
   ASSERT_TRUE(DeserializeFromJson(doc, scratch));
 
-  const std::string warning = PeekImportComplexFilterWarning();
+  const std::string warning = PeekLoadNotice();
   EXPECT_FALSE(warning.empty()) << "a crystal with no `type` was assumed to be a prism, silently";
   EXPECT_NE(warning.find("type"), std::string::npos) << "must name the field that was missing, got: " << warning;
 
   ASSERT_EQ(scratch.crystals.size(), 1u);
   EXPECT_FLOAT_EQ(scratch.crystals.at(0).height.center, CrystalConfig{}.height.center)
       << "the refused crystal was loaded anyway, as a prism nobody asked for";
-  ClearImportComplexFilterWarning();
+  ClearLoadNotice();
 }
 
 // The same refusal, reached through the OTHER caller of the shared crystal parse: the GUI-native
@@ -334,7 +336,7 @@ TEST(JsonImportContractChain, ALmcInlineCrystalMissingTypeFallsBackToADefaultSlo
     ]}]
   })";
 
-  ClearImportComplexFilterWarning();
+  ClearLoadNotice();
   GuiState scratch;
   ASSERT_TRUE(DeserializeGuiStateJson(lmc, scratch));
 
@@ -344,9 +346,8 @@ TEST(JsonImportContractChain, ALmcInlineCrystalMissingTypeFallsBackToADefaultSlo
   EXPECT_EQ(scratch.layers.at(0).entries.at(0).crystal_id, 0);
   EXPECT_FLOAT_EQ(scratch.crystals.at(0).height.center, CrystalConfig{}.height.center)
       << "the inline crystal was accepted as a prism instead of refused";
-  EXPECT_NE(PeekImportComplexFilterWarning().find("type"), std::string::npos)
-      << "got: " << PeekImportComplexFilterWarning();
-  ClearImportComplexFilterWarning();
+  EXPECT_NE(PeekLoadNotice().find("type"), std::string::npos) << "got: " << PeekLoadNotice();
+  ClearLoadNotice();
 }
 
 // D-5: a shape scalar written as a distribution object with no `type`. Core requires it there
@@ -363,7 +364,7 @@ TEST(JsonImportContractChain, AJsonShapeDistMissingTypeLoadsAtNoRandomAndWarns) 
      "shape": {"height": 2.0, "face_distance": [{"mean": 2.0, "std": 0.1}, 1, 1, 1, 1, 1]}}
   ])");
 
-  ClearImportComplexFilterWarning();
+  ClearLoadNotice();
   GuiState scratch;
   ASSERT_TRUE(DeserializeFromJson(doc, scratch));
   ASSERT_EQ(scratch.crystals.size(), 1u) << "premise: the crystal itself was accepted";
@@ -372,12 +373,12 @@ TEST(JsonImportContractChain, AJsonShapeDistMissingTypeLoadsAtNoRandomAndWarns) 
   EXPECT_EQ(fd0.type, ShapeDist{}.type) << "the value loads at the owning struct's default, unchanged by this fix";
   EXPECT_FLOAT_EQ(fd0.center, 2.0f) << "the `mean` the document did state must survive";
 
-  const std::string warning = PeekImportComplexFilterWarning();
+  const std::string warning = PeekLoadNotice();
   EXPECT_FALSE(warning.empty()) << "the shape half of the rule stayed silent while the axis half reports";
   EXPECT_NE(warning.find("type"), std::string::npos) << "must name the field that was missing, got: " << warning;
   EXPECT_NE(warning.find("face_distance"), std::string::npos)
       << "must name WHICH slot was rewritten, the way the axis twin does, got: " << warning;
-  ClearImportComplexFilterWarning();
+  ClearLoadNotice();
 }
 
 // The one shape scalar deliberately left out of the rule above, and the contrast is the point: on
@@ -394,7 +395,7 @@ TEST(JsonImportContractChain, AJsonPrismHMissingTypeStaysSilentUnlikeOtherShapeD
      "shape": {"prism_h": {"mean": 2.0, "std": 0.1}, "face_distance": [1, 1, 1, 1, 1, 1]}}
   ])");
 
-  ClearImportComplexFilterWarning();
+  ClearLoadNotice();
   GuiState scratch;
   ASSERT_TRUE(DeserializeFromJson(doc, scratch));
   ASSERT_EQ(scratch.crystals.size(), 1u) << "premise: the crystal itself was accepted";
@@ -403,9 +404,9 @@ TEST(JsonImportContractChain, AJsonPrismHMissingTypeStaysSilentUnlikeOtherShapeD
   EXPECT_EQ(prism_h.type, ShapeDist{}.type) << "the value it loads at is unchanged from before this fix";
   EXPECT_FLOAT_EQ(prism_h.center, 2.0f);
 
-  EXPECT_EQ(PeekImportComplexFilterWarning().find("prism_h"), std::string::npos)
-      << "prism_h is held out of the rule until core settles it; got: " << PeekImportComplexFilterWarning();
-  ClearImportComplexFilterWarning();
+  EXPECT_EQ(PeekLoadNotice().find("prism_h"), std::string::npos)
+      << "prism_h is held out of the rule until core settles it; got: " << PeekLoadNotice();
+  ClearLoadNotice();
 }
 
 // The Miller-index fallback is the one import-time downgrade in ParseCrystal that reported only to
@@ -436,7 +437,7 @@ TEST(JsonImportContractChain, AJsonMillerIndexRefusalReachesTheUserNotOnlyTheLog
                                             row.indices_json + R"(}}
   ])");
 
-    ClearImportComplexFilterWarning();
+    ClearLoadNotice();
     GuiState scratch;
     // Non-fatal + `continue` rather than ASSERT: a premise that fails on one row must not take the
     // other three rows' verdicts with it, which is what returning out of the function would do.
@@ -452,7 +453,7 @@ TEST(JsonImportContractChain, AJsonMillerIndexRefusalReachesTheUserNotOnlyTheLog
     EXPECT_FLOAT_EQ(scratch.crystals.at(0).upper_alpha, CrystalConfig{}.upper_alpha)
         << "a refused triple must leave the angle where it was, not half-apply -- " << row.why;
 
-    const std::string warning = PeekImportComplexFilterWarning();
+    const std::string warning = PeekLoadNotice();
     EXPECT_FALSE(warning.empty()) << "the log panel is not where an import problem is looked for -- " << row.why;
     EXPECT_NE(warning.find("upper_indices"), std::string::npos)
         << "must name the field that was refused, got: " << warning;
@@ -462,7 +463,7 @@ TEST(JsonImportContractChain, AJsonMillerIndexRefusalReachesTheUserNotOnlyTheLog
     expected_angle << std::fixed << std::setprecision(2) << CrystalConfig{}.upper_alpha;
     EXPECT_NE(warning.find(expected_angle.str()), std::string::npos)
         << "must say which angle was kept, or the user cannot tell a refusal from a stated value, got: " << warning;
-    ClearImportComplexFilterWarning();
+    ClearLoadNotice();
   }
 }
 
@@ -475,15 +476,14 @@ TEST(JsonImportContractChain, AJsonMillerIndexWithNoConeIsNotAnImportWarning) {
      "shape": {"prism_h": 1.0, "upper_h": 0.3, "lower_h": 0.3, "upper_indices": [0, 0, 1]}}
   ])");
 
-  ClearImportComplexFilterWarning();
+  ClearLoadNotice();
   GuiState scratch;
   ASSERT_TRUE(DeserializeFromJson(doc, scratch));
   ASSERT_EQ(scratch.crystals.size(), 1u) << "premise: the crystal was accepted";
 
   EXPECT_FLOAT_EQ(scratch.crystals.at(0).upper_alpha, 0.0f) << "h == 0 means no cone, which is an angle of 0";
-  EXPECT_TRUE(PeekImportComplexFilterWarning().empty())
-      << "a legal document must import in silence, got: " << PeekImportComplexFilterWarning();
-  ClearImportComplexFilterWarning();
+  EXPECT_TRUE(PeekLoadNotice().empty()) << "a legal document must import in silence, got: " << PeekLoadNotice();
+  ClearLoadNotice();
 }
 
 // D-4: `spectrum` is the key that decides how the rest of that object reads — a string names one of
@@ -497,17 +497,17 @@ TEST(JsonImportContractChain, AJsonMillerIndexWithNoConeIsNotAnImportWarning) {
 TEST(JsonImportContractChain, AJsonLightSourceMissingSpectrumWarnsAndKeepsDefault) {
   const std::string doc = DocWithParts(R"({"type": "sun", "altitude": 20})", kWellFormedRender, "");
 
-  ClearImportComplexFilterWarning();
+  ClearLoadNotice();
   GuiState scratch;
   ASSERT_TRUE(DeserializeFromJson(doc, scratch));
 
   EXPECT_EQ(scratch.sun.spectrum_index, SunConfig{}.spectrum_index) << "the value it loads at is unchanged";
   EXPECT_FLOAT_EQ(scratch.sun.altitude, 20.0f) << "premise: the light_source object was read at all";
 
-  const std::string warning = PeekImportComplexFilterWarning();
+  const std::string warning = PeekLoadNotice();
   EXPECT_FALSE(warning.empty()) << "a spectrum was chosen for the user and never mentioned";
   EXPECT_NE(warning.find("spectrum"), std::string::npos) << "must name the field, got: " << warning;
-  ClearImportComplexFilterWarning();
+  ClearLoadNotice();
 }
 
 // D-6: same shape as D-4 one level over — `lens.type` selects the whole projection branch the
@@ -521,17 +521,17 @@ TEST(JsonImportContractChain, AJsonRenderLensMissingTypeWarnsAndKeepsLinear) {
   const std::string doc =
       DocWithParts(kWellFormedLightSource, R"([{"id": 1, "lens": {"fov": 60}, "resolution": [64, 64]}])", "");
 
-  ClearImportComplexFilterWarning();
+  ClearLoadNotice();
   GuiState scratch;
   ASSERT_TRUE(DeserializeFromJson(doc, scratch));
 
   EXPECT_EQ(scratch.renderer.lens_type, RenderConfig{}.lens_type) << "the value it loads at is unchanged";
   EXPECT_FLOAT_EQ(scratch.renderer.fov, 60.0f) << "premise: the lens object was read at all";
 
-  const std::string warning = PeekImportComplexFilterWarning();
+  const std::string warning = PeekLoadNotice();
   EXPECT_FALSE(warning.empty()) << "a projection was chosen for the user and never mentioned";
   EXPECT_NE(warning.find("lens"), std::string::npos) << "must name the object, got: " << warning;
-  ClearImportComplexFilterWarning();
+  ClearLoadNotice();
 }
 
 // D-6b: a lens that states neither `fov` nor `f`. Core's LensParam::from_json loads such a document
@@ -546,25 +546,25 @@ TEST(JsonImportContractChain, AJsonRenderLensMissingFovAndFDefaultsAndWarns) {
   const std::string doc =
       DocWithParts(kWellFormedLightSource, R"([{"id": 1, "lens": {"type": "linear"}, "resolution": [64, 64]}])", "");
 
-  ClearImportComplexFilterWarning();
+  ClearLoadNotice();
   GuiState scratch;
   ASSERT_TRUE(DeserializeFromJson(doc, scratch));
 
   EXPECT_EQ(scratch.renderer.lens_type, kLensTypeLinear) << "premise: the lens object was read at all";
   EXPECT_FLOAT_EQ(scratch.renderer.fov, lumice::LensDefaultFovDegrees(false));
 
-  const std::string warning = PeekImportComplexFilterWarning();
+  const std::string warning = PeekLoadNotice();
   EXPECT_FALSE(warning.empty()) << "an angle was chosen for the user and never mentioned";
   EXPECT_NE(warning.find("fov"), std::string::npos) << "must name the field, got: " << warning;
   EXPECT_EQ(warning.find("no \"type\""), std::string::npos) << "the document DID state its type, got: " << warning;
-  ClearImportComplexFilterWarning();
+  ClearLoadNotice();
 }
 
 TEST(JsonImportContractChain, AJsonRenderLensMissingFovAndFOnGlobeDefaultsToThirty) {
   const std::string doc =
       DocWithParts(kWellFormedLightSource, R"([{"id": 1, "lens": {"type": "globe"}, "resolution": [64, 64]}])", "");
 
-  ClearImportComplexFilterWarning();
+  ClearLoadNotice();
   GuiState scratch;
   ASSERT_TRUE(DeserializeFromJson(doc, scratch));
 
@@ -573,22 +573,22 @@ TEST(JsonImportContractChain, AJsonRenderLensMissingFovAndFOnGlobeDefaultsToThir
   EXPECT_NE(scratch.renderer.fov, RenderConfig{}.fov)
       << "control: the globe default must differ from the GUI's own flat default, or this row proves nothing";
 
-  const std::string warning = PeekImportComplexFilterWarning();
+  const std::string warning = PeekLoadNotice();
   EXPECT_NE(warning.find("fov"), std::string::npos) << "must name the field, got: " << warning;
   EXPECT_NE(warning.find("30"), std::string::npos) << "must name the angle it chose, got: " << warning;
-  ClearImportComplexFilterWarning();
+  ClearLoadNotice();
 }
 
 // Control for D-6b: a lens that does state `fov` is not told it was defaulted.
 TEST(JsonImportContractChain, AJsonRenderLensWithStatedFovIsSilent) {
   const std::string doc = DocWithParts(kWellFormedLightSource, kWellFormedRender, "");
 
-  ClearImportComplexFilterWarning();
+  ClearLoadNotice();
   GuiState scratch;
   ASSERT_TRUE(DeserializeFromJson(doc, scratch));
 
   EXPECT_FLOAT_EQ(scratch.renderer.fov, 60.0f);
-  EXPECT_TRUE(PeekImportComplexFilterWarning().empty()) << PeekImportComplexFilterWarning();
+  EXPECT_TRUE(PeekLoadNotice().empty()) << PeekLoadNotice();
 }
 
 // D-6c: a lens that states `f` (focal length) instead of `fov`. Core converts it per projection in
@@ -622,7 +622,7 @@ TEST(JsonImportContractChain, AJsonRenderLensWithStatedFLoadsAtCoresFov) {
         nlohmann::json::array({ { { "id", 1 }, { "lens", lens }, { "resolution", { 64, 64 } } } });
     const std::string doc = DocWithParts(kWellFormedLightSource, render.dump().c_str(), "");
 
-    ClearImportComplexFilterWarning();
+    ClearLoadNotice();
     GuiState scratch;
     EXPECT_TRUE(DeserializeFromJson(doc, scratch)) << row.type;
 
@@ -630,10 +630,10 @@ TEST(JsonImportContractChain, AJsonRenderLensWithStatedFLoadsAtCoresFov) {
     EXPECT_FLOAT_EQ(scratch.renderer.fov, core_lens.fov_) << row.type << " f=" << row.f;
     EXPECT_NE(scratch.renderer.fov, lumice::LensDefaultFovDegrees(false))
         << row.type << ": control — the row must not coincide with the no-fov default, or it proves nothing";
-    EXPECT_TRUE(PeekImportComplexFilterWarning().empty())
-        << row.type << ": the author wrote how wide the lens is; got: " << PeekImportComplexFilterWarning();
+    EXPECT_TRUE(PeekLoadNotice().empty())
+        << row.type << ": the author wrote how wide the lens is; got: " << PeekLoadNotice();
   }
-  ClearImportComplexFilterWarning();
+  ClearLoadNotice();
 }
 
 // The GUI's own LensType → formula-family map is a second copy of core's (the enums are different
@@ -655,14 +655,14 @@ TEST(JsonImportContractChain, AJsonRenderLensWithStatedFOnASharedFamilyMemberMat
         nlohmann::json::array({ { { "id", 1 }, { "lens", lens }, { "resolution", { 64, 64 } } } });
     const std::string doc = DocWithParts(kWellFormedLightSource, render.dump().c_str(), "");
 
-    ClearImportComplexFilterWarning();
+    ClearLoadNotice();
     GuiState scratch;
     EXPECT_TRUE(DeserializeFromJson(doc, scratch)) << row.type;
 
     const lumice::LensParam core_lens = lens.get<lumice::LensParam>();
     EXPECT_FLOAT_EQ(scratch.renderer.fov, core_lens.fov_) << row.type << " f=" << row.f;
   }
-  ClearImportComplexFilterWarning();
+  ClearLoadNotice();
 }
 
 // The domain edge: an `f` too short for its projection to reach the frame edge at all. Core rejects
@@ -674,20 +674,20 @@ TEST(JsonImportContractChain, AJsonRenderLensWithATooShortFWarnsAndDefaults) {
       DocWithParts(kWellFormedLightSource,
                    R"([{"id": 1, "lens": {"type": "fisheye_equal_area", "f": 4}, "resolution": [64, 64]}])", "");
 
-  ClearImportComplexFilterWarning();
+  ClearLoadNotice();
   GuiState scratch;
   ASSERT_TRUE(DeserializeFromJson(doc, scratch));
 
   EXPECT_EQ(scratch.renderer.lens_type, kLensTypeFisheyeEqualArea) << "premise: the lens object was read at all";
   EXPECT_FLOAT_EQ(scratch.renderer.fov, lumice::LensDefaultFovDegrees(false));
 
-  const std::string warning = PeekImportComplexFilterWarning();
+  const std::string warning = PeekLoadNotice();
   EXPECT_FALSE(warning.empty()) << "an angle was chosen for the user and never mentioned";
   EXPECT_NE(warning.find("\"f\""), std::string::npos) << "must name the field it could not use, got: " << warning;
   EXPECT_NE(warning.find("too short"), std::string::npos)
       << "must say WHY it could not use it — the no-fov-no-f wording also names \"f\", got: " << warning;
   EXPECT_NE(warning.find("90"), std::string::npos) << "must name the angle it chose, got: " << warning;
-  ClearImportComplexFilterWarning();
+  ClearLoadNotice();
 }
 
 // D-7: a colour class with no colour. No colour is the neutral one — black and white both read as
@@ -781,17 +781,17 @@ TEST(JsonImportContractChain, AJsonRenderToneOfAnUnknownValueWarnsAndLoadsAsScre
       kWellFormedLightSource,
       R"([{"id": 1, "lens": {"type": "linear", "fov": 60}, "resolution": [64, 64], "tone": "glossy"}])", "");
 
-  ClearImportComplexFilterWarning();
+  ClearLoadNotice();
   GuiState scratch;
   scratch.renderer.tone = 1;  // seed non-default so a reader that never wrote the field is visible
   ASSERT_TRUE(DeserializeFromJson(doc, scratch)) << "a malformed appearance value must not sink the document";
 
   EXPECT_EQ(scratch.renderer.tone, 0) << "an unrecognised tone must land on screen";
 
-  const std::string warning = PeekImportComplexFilterWarning();
+  const std::string warning = PeekLoadNotice();
   EXPECT_FALSE(warning.empty()) << "a display mode was chosen for the user and never mentioned";
   EXPECT_NE(warning.find("tone"), std::string::npos) << "must name the field, got: " << warning;
-  ClearImportComplexFilterWarning();
+  ClearLoadNotice();
 }
 
 // The control arm: a RECOGNISED tone must be silent. Without it, a decoder that warned on every
@@ -801,12 +801,12 @@ TEST(JsonImportContractChain, AJsonRenderToneOfAKnownValueIsSilent) {
       kWellFormedLightSource,
       R"([{"id": 1, "lens": {"type": "linear", "fov": 60}, "resolution": [64, 64], "tone": "print"}])", "");
 
-  ClearImportComplexFilterWarning();
+  ClearLoadNotice();
   GuiState scratch;
   ASSERT_TRUE(DeserializeFromJson(doc, scratch));
   EXPECT_EQ(scratch.renderer.tone, 1);
-  EXPECT_TRUE(PeekImportComplexFilterWarning().empty()) << PeekImportComplexFilterWarning();
-  ClearImportComplexFilterWarning();
+  EXPECT_TRUE(PeekLoadNotice().empty()) << PeekLoadNotice();
+  ClearLoadNotice();
 }
 
 TEST(JsonImportContractChain, AJsonColorClassMissingColorIsDroppedNotDefaultColored) {
@@ -816,7 +816,7 @@ TEST(JsonImportContractChain, AJsonColorClassMissingColorIsDroppedNotDefaultColo
       {"color": [0.25, 0.5, 0.75], "match": [{"crystal": 0, "layer": 0}]}
     ]})");
 
-  ClearImportComplexFilterWarning();
+  ClearLoadNotice();
   GuiState scratch;
   ASSERT_TRUE(DeserializeFromJson(doc, scratch));
 
@@ -826,10 +826,10 @@ TEST(JsonImportContractChain, AJsonColorClassMissingColorIsDroppedNotDefaultColo
       << "z_order came from the source array index, so dropping a class left a hole in a range that "
          "must be a compact permutation of [0, size)";
 
-  const std::string warning = PeekImportComplexFilterWarning();
+  const std::string warning = PeekLoadNotice();
   EXPECT_FALSE(warning.empty()) << "a colour class was dropped and the user was told nothing";
   EXPECT_NE(warning.find("color"), std::string::npos) << "must name the field, got: " << warning;
-  ClearImportComplexFilterWarning();
+  ClearLoadNotice();
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -875,16 +875,16 @@ TEST(JsonImportContractChain, AJsonSunAzimuthIsRefusedOutLoudNotDroppedInSilence
   const std::string doc =
       DocWithParts(R"({"type": "sun", "altitude": 20, "azimuth": 30, "spectrum": "D65"})", kWellFormedRender, "");
 
-  ClearImportComplexFilterWarning();
+  ClearLoadNotice();
   GuiState scratch;
   ASSERT_TRUE(DeserializeFromJson(doc, scratch));
 
   EXPECT_FLOAT_EQ(scratch.sun.altitude, 20.0f) << "premise: the light_source object was read at all";
 
-  const std::string warning = PeekImportComplexFilterWarning();
+  const std::string warning = PeekLoadNotice();
   EXPECT_FALSE(warning.empty()) << "the sky was rotated back to azimuth 0 and the user was told nothing";
   EXPECT_NE(warning.find("azimuth"), std::string::npos) << "must name the field, got: " << warning;
-  ClearImportComplexFilterWarning();
+  ClearLoadNotice();
 }
 
 // The other side of B-1, and the reason the warning is conditional rather than unconditional: a
@@ -899,19 +899,18 @@ TEST(JsonImportContractChain, AJsonSunAzimuthOfZeroIsNotWorthMentioning) {
   for (const char* light_source : kRows) {
     const std::string doc = DocWithParts(light_source, kWellFormedRender, "");
 
-    ClearImportComplexFilterWarning();
+    ClearLoadNotice();
     GuiState scratch;
     if (!DeserializeFromJson(doc, scratch)) {
       // Non-fatal: a fatal assert here would hide the second row entirely.
       ADD_FAILURE() << "the import rejected the document outright: " << light_source;
       continue;
     }
-    EXPECT_TRUE(PeekImportComplexFilterWarning().empty())
-        << "nothing was lost, so there is nothing to report: " << light_source << " -> "
-        << PeekImportComplexFilterWarning();
-    ClearImportComplexFilterWarning();
+    EXPECT_TRUE(PeekLoadNotice().empty())
+        << "nothing was lost, so there is nothing to report: " << light_source << " -> " << PeekLoadNotice();
+    ClearLoadNotice();
   }
-  ClearImportComplexFilterWarning();
+  ClearLoadNotice();
 }
 
 // scene.ray_allocation now has a home in the document (SimConfig::ray_allocation_adaptive), so a
@@ -941,7 +940,7 @@ TEST(JsonImportContractChain, AJsonSceneRayAllocationIsImportedAndAbsenceMeansTh
     if (row.spelled) {
       doc["scene"]["ray_allocation"] = row.spelled;
     }
-    ClearImportComplexFilterWarning();
+    ClearLoadNotice();
     GuiState scratch;
     scratch.sim.ray_allocation_adaptive = !row.expected_adaptive;  // seed off the expectation
     if (!DeserializeFromJson(doc.dump(), scratch)) {
@@ -950,12 +949,12 @@ TEST(JsonImportContractChain, AJsonSceneRayAllocationIsImportedAndAbsenceMeansTh
       continue;
     }
     EXPECT_EQ(scratch.sim.ray_allocation_adaptive, row.expected_adaptive) << row.label;
-    EXPECT_TRUE(PeekImportComplexFilterWarning().empty())
-        << row.label << ": the key has a home now, so nothing was lost and nothing is worth a notice; got: "
-        << PeekImportComplexFilterWarning();
-    ClearImportComplexFilterWarning();
+    EXPECT_TRUE(PeekLoadNotice().empty())
+        << row.label
+        << ": the key has a home now, so nothing was lost and nothing is worth a notice; got: " << PeekLoadNotice();
+    ClearLoadNotice();
   }
-  ClearImportComplexFilterWarning();
+  ClearLoadNotice();
 }
 
 // B-2: `render[].lens_shift` moves the optical axis off the image centre. The export arm has
@@ -967,16 +966,16 @@ TEST(JsonImportContractChain, AJsonLensShiftIsRefusedOutLoudNotDroppedInSilence)
       kWellFormedLightSource,
       R"([{"id": 1, "lens": {"type": "linear", "fov": 60}, "lens_shift": [8, -12], "resolution": [64, 64]}])", "");
 
-  ClearImportComplexFilterWarning();
+  ClearLoadNotice();
   GuiState scratch;
   ASSERT_TRUE(DeserializeFromJson(doc, scratch));
 
   EXPECT_FLOAT_EQ(scratch.renderer.fov, 60.0f) << "premise: the render object was read at all";
 
-  const std::string warning = PeekImportComplexFilterWarning();
+  const std::string warning = PeekLoadNotice();
   EXPECT_FALSE(warning.empty()) << "the optical axis was recentred and the user was told nothing";
   EXPECT_NE(warning.find("lens_shift"), std::string::npos) << "must name the field, got: " << warning;
-  ClearImportComplexFilterWarning();
+  ClearLoadNotice();
 }
 
 // A zero shift is what the GUI does anyway, on both components. Same reason as the azimuth twin.
@@ -985,13 +984,12 @@ TEST(JsonImportContractChain, AJsonLensShiftOfZeroIsNotWorthMentioning) {
       kWellFormedLightSource,
       R"([{"id": 1, "lens": {"type": "linear", "fov": 60}, "lens_shift": [0, 0], "resolution": [64, 64]}])", "");
 
-  ClearImportComplexFilterWarning();
+  ClearLoadNotice();
   GuiState scratch;
   ASSERT_TRUE(DeserializeFromJson(doc, scratch));
 
-  EXPECT_TRUE(PeekImportComplexFilterWarning().empty())
-      << "nothing was lost, so there is nothing to report: " << PeekImportComplexFilterWarning();
-  ClearImportComplexFilterWarning();
+  EXPECT_TRUE(PeekLoadNotice().empty()) << "nothing was lost, so there is nothing to report: " << PeekLoadNotice();
+  ClearLoadNotice();
 }
 
 // B-3: `scene.geom_clock` selects core's GPU K-shape pool size. The GUI commits 0 (the pool
@@ -1000,29 +998,28 @@ TEST(JsonImportContractChain, AJsonLensShiftOfZeroIsNotWorthMentioning) {
 TEST(JsonImportContractChain, AJsonGeomClockIsRefusedOutLoudNotDroppedInSilence) {
   const std::string doc = DocWithSceneExtra(R"(, "geom_clock": 64)");
 
-  ClearImportComplexFilterWarning();
+  ClearLoadNotice();
   GuiState scratch;
   ASSERT_TRUE(DeserializeFromJson(doc, scratch));
 
   EXPECT_EQ(scratch.sim.max_hits, 8) << "premise: the scene object was read at all";
 
-  const std::string warning = PeekImportComplexFilterWarning();
+  const std::string warning = PeekLoadNotice();
   EXPECT_FALSE(warning.empty()) << "the shape pool was disabled and the user was told nothing";
   EXPECT_NE(warning.find("geom_clock"), std::string::npos) << "must name the field, got: " << warning;
-  ClearImportComplexFilterWarning();
+  ClearLoadNotice();
 }
 
 // geom_clock 0 IS "pool disabled", which is what the GUI commits. Same reason as the two twins.
 TEST(JsonImportContractChain, AJsonGeomClockOfZeroIsNotWorthMentioning) {
   const std::string doc = DocWithSceneExtra(R"(, "geom_clock": 0)");
 
-  ClearImportComplexFilterWarning();
+  ClearLoadNotice();
   GuiState scratch;
   ASSERT_TRUE(DeserializeFromJson(doc, scratch));
 
-  EXPECT_TRUE(PeekImportComplexFilterWarning().empty())
-      << "nothing was lost, so there is nothing to report: " << PeekImportComplexFilterWarning();
-  ClearImportComplexFilterWarning();
+  EXPECT_TRUE(PeekLoadNotice().empty()) << "nothing was lost, so there is nothing to report: " << PeekLoadNotice();
+  ClearLoadNotice();
 }
 
 // ---------------------------------------------------------------------------------------------

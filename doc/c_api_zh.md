@@ -69,7 +69,12 @@ warm-start 合约没有增加字段。字段和 coverage 边界见 `raypath-cli-
 
 **最近一次这样的 break 是 v4.48。** `LUMICE_CrystalSymmetry` 在 `d_effective` 之后新增尾部字段 `p_effective`、`b_effective`（sizeof 16 → 24）；`LUMICE_GetCrystalSymmetry` 会写满整个结构体，调用方需重新编译。同时新增 `LUMICE_IsPApplicable(roll 类型, roll 全宽)` 与 `LUMICE_IsBApplicable(方位角类型, 方位角全宽, zenith 类型, zenith 中心, zenith 全宽)`——P、B 的取向分布一半（对应 `LUMICE_IsDApplicable`）。光路约化现在只在 roll 对 60° 平移不变（满圈 uniform）时应用 P，只在 zenith 关于 90° 对称且方位角满圈 uniform 时应用 B：Parry 弧不再把 3-5 与 4-6 并为一行，板状晶体不再把 1-3 与 2-3 并为一行。`p_effective` / `b_effective` 是这两个条件再与形状相交（`rotation_step < 6` / `horizontal_mirror`）。
 
-**v4.46：** `LUMICE_RenderParam` 在 `globe_back_fade` 之后新增尾部字段 `display_mode`（`LUMICE_DISPLAY_MODE_NORMAL` / `LUMICE_DISPLAY_MODE_CHANNEL_BR`，sizeof 6456 → 6460），调用方需重新编译。JSON 键为 `render.display_mode`，取值 `"normal"` 或 `"channel_br"`。`channel_br` 把成品图显示为 gamma 之后的 sRGB B − R 灰度偏移（`clamp(0.5 + 2·(B − R), 0, 1)`，中灰 = 无差，越亮越偏蓝）；在 `tone: print` 下无效果，开启时带色类配置的场景不产出光路染色合成图。零值即 normal，所以零初始化的结构体和不含该键的文档渲染结果不变。
+**v4.46：** `LUMICE_RenderParam` 在 `globe_back_fade` 之后新增尾部字段 `display_mode`（`LUMICE_DISPLAY_MODE_NORMAL` / `LUMICE_DISPLAY_MODE_CHANNEL_BR`，sizeof 6456 → 6460），调用方需重新编译。JSON 键为 `render.display_mode`，取值 `"normal"` 或 `"channel_br"`。该字段引入 gamma 之后的 sRGB B − R 灰度诊断；在 `tone: print` 下无效果，开启时带色类配置的场景不产出光路染色合成图。零值即 normal，所以零初始化的结构体和不含该键的文档渲染结果不变。
+
+**当前 `channel_br` 契约（后续语义修正，不改结构体布局）：** `clamp(0.5 + 2·(B − R), 0, 1)`
+读取同一曝光和视角下、**未叠加天空底色的晕图** gamma 后 sRGB 通道，排除天空底色与背景照片，
+也不在计算后加回底色；空天空为中灰。结果仍随曝光与裁剪变化，须在同一 EV 下比较；叠加层保留原色。
+这不是对 v4.46 当时含天空输入语义的追溯改写。
 
 **v4.45 就是一次这样的 break。** `LUMICE_RenderParam` 在 `view_dist_label` 之后追加 `float globe_back_fade`（sizeof 6452 → 6456），调用方需重新编译。它是 `globe` 镜头的背面渐隐范围——球的背面在轮廓之后多深的范围内仍然可见、随离相机的距离渐隐（JSON 键 `globe_back_fade`，见 `configuration.md`）。其余镜头忽略它；0（零初始化值与 JSON 默认值）只显示朝向相机的半球，即此前各版本的画面。没有任何移除或重排。
 

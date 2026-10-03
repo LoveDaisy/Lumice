@@ -787,7 +787,7 @@ static ShapeDist ParseShapeDist(const json& j, float default_center, const std::
                               ShapeDistTypeToString(ShapeDist{}.type) +
                               " (core rejects this document outright, since Distribution requires \"type\").";
       GUI_LOG_WARNING("[FileIO] ParseShapeDist: {}", msg);
-      SetImportComplexFilterWarning(msg);
+      AppendLoadNotice(msg + " Re-enter the intended shape distribution in the source config before loading it.");
     } else {
       d.type = ParseShapeDistType(j.value("type", ShapeDistTypeToString(ShapeDist{}.type)));
     }
@@ -825,7 +825,7 @@ static AxisDist ParseAxisDist(const json& j, const std::string& crystal_label, c
                               AxisDistTypeToString(AxisDist{}.type) +
                               " (core rejects this document outright now that \"type\" is required).";
       GUI_LOG_WARNING("[FileIO] ParseAxisDist: {}", msg);
-      SetImportComplexFilterWarning(msg);
+      AppendLoadNotice(msg + " Re-enter the intended orientation distribution in the source config before loading it.");
     } else {
       a.type = ParseAxisDistType(j.at("type").get<std::string>());
     }
@@ -852,7 +852,7 @@ static std::optional<CrystalConfig> ParseCrystal(const json& j, const std::strin
                             "loaded as a prism (core rejects this document outright, "
                             "since \"type\" decides how the rest of the crystal reads).";
     GUI_LOG_WARNING("[FileIO] ParseCrystal: {}", msg);
-    SetImportComplexFilterWarning(msg);
+    AppendLoadNotice(msg + " Set the intended crystal type in the source config before loading it.");
     return std::nullopt;
   }
 
@@ -930,7 +930,7 @@ static std::optional<CrystalConfig> ParseCrystal(const json& j, const std::strin
                                     ", which is not a usable wedge angle: " + reason + ". Keeping " +
                                     FormatAngleDegrees(alpha) + " degrees.";
             GUI_LOG_WARNING("[FileIO] ParseCrystal: {}", msg);
-            SetImportComplexFilterWarning(msg);
+            AppendLoadNotice(msg + " Correct the wedge angle in the source config or the crystal editor.");
           }
         }
       }
@@ -1007,7 +1007,7 @@ static void ParseCrystalIntoMap(const json& jc, std::map<int, CrystalConfig>& cr
         "guessed one (core rejects this document outright, and the id is what "
         "the scattering entries reference).";
     GUI_LOG_WARNING("[FileIO] ParseCrystalIntoMap: {}", msg);
-    SetImportComplexFilterWarning(msg);
+    AppendLoadNotice(msg + " Give this crystal an id and repair its scattering references in the source config.");
     return;
   }
   const int id = jc.at("id").get<int>();
@@ -1035,7 +1035,8 @@ static int LensTypeFromString(const std::string& s) {
       return i;
   }
   GUI_LOG_WARNING("[FileIO] Unrecognized renderer.lens_type \"{}\"; loading as linear.", s);
-  SetImportComplexFilterWarning("renderer.lens_type states an unrecognized value \"" + s + "\"; loaded as linear.");
+  AppendLoadNotice("renderer.lens_type states an unrecognized value \"" + s +
+                   "\"; loaded as linear. Choose the intended lens in the GUI or correct the source config.");
   return 0;  // default: linear
 }
 
@@ -1070,7 +1071,8 @@ static int ToneFromString(const std::string& s) {
       return i;
   }
   GUI_LOG_WARNING("[FileIO] Unrecognized renderer.tone \"{}\"; loading as screen.", s);
-  SetImportComplexFilterWarning("renderer.tone states an unrecognized value \"" + s + "\"; loaded as screen.");
+  AppendLoadNotice("renderer.tone states an unrecognized value \"" + s +
+                   "\"; loaded as screen. Choose Screen or Print in the GUI or correct the source config.");
   return 0;
 }
 
@@ -1082,7 +1084,8 @@ static int DisplayModeFromString(const std::string& s) {
       return i;
   }
   GUI_LOG_WARNING("[FileIO] Unrecognized renderer.display_mode \"{}\"; loading as normal.", s);
-  SetImportComplexFilterWarning("renderer.display_mode states an unrecognized value \"" + s + "\"; loaded as normal.");
+  AppendLoadNotice("renderer.display_mode states an unrecognized value \"" + s +
+                   "\"; loaded as normal. Choose a supported display mode in the GUI or correct the source config.");
   return 0;
 }
 
@@ -2684,12 +2687,13 @@ static bool TryReconstructComplexFilter(const json& jf, const std::map<int, json
 // failure to read the file.
 static void WarnUnsupportedByDesign(const std::string& field, const std::string& doc_value,
                                     const std::string& gui_behavior) {
-  const std::string msg = field + " is set to " + doc_value + ", which this editor has no control for and does not " +
-                          "carry: " + gui_behavior + ". That is deliberate — the command-line renderer keeps the " +
-                          "freedom this editor does not, so the two are not expected to match field for field. The " +
-                          "value was dropped; the source file is untouched.";
+  const std::string msg =
+      field + " is set to " + doc_value + ", which this editor has no control for and does not " +
+      "carry: " + gui_behavior + ". That is deliberate — the command-line renderer keeps the " +
+      "freedom this editor does not, so the two are not expected to match field for field. The " +
+      "value was dropped; the source file is untouched. Use the original config with the CLI to keep this setting.";
   GUI_LOG_WARNING("[FileIO] DeserializeFromJson: {}", msg);
-  SetImportComplexFilterWarning(msg);
+  AppendLoadNotice(msg);
 }
 
 bool DeserializeFromJson(const std::string& json_str, GuiState& state) {
@@ -2757,9 +2761,9 @@ bool DeserializeFromJson(const std::string& json_str, GuiState& state) {
             "Filter id=" + std::to_string(id) +
             " has an explicitly empty \"raypath\" array, which matches no ray at all — the editor has no way to "
             "write that, and its empty row means the opposite, so the filter was dropped rather than shown as its "
-            "reverse. Any entry using it now has no filter.";
+            "reverse. Any entry using it now has no filter. Use the original config with the CLI to keep this rule.";
         GUI_LOG_WARNING("[FileIO] {}", msg);
-        SetImportComplexFilterWarning(msg);
+        AppendLoadNotice(msg);
         continue;
       }
       if (form == CoreRaypathForm::kMatchAll || form == CoreRaypathForm::kRaypathWithNoArray) {
@@ -2806,7 +2810,9 @@ bool DeserializeFromJson(const std::string& json_str, GuiState& state) {
         filter_map[id] = rebuilt;
       } else {
         GUI_LOG_WARNING("[FileIO] {}", fail_reason);
-        SetImportComplexFilterWarning(fail_reason);
+        AppendLoadNotice(fail_reason +
+                         ". This filter was omitted. Rebuild a supported rule in the Filter tab, or use the original "
+                         "config with the CLI.");
       }
     }
   }
@@ -2851,7 +2857,7 @@ bool DeserializeFromJson(const std::string& json_str, GuiState& state) {
                                 kSpectrumNames[SunConfig{}.spectrum_index] +
                                 " (core rejects this document outright, since it requires it).";
         GUI_LOG_WARNING("[FileIO] DeserializeFromJson: {}", msg);
-        SetImportComplexFilterWarning(msg);
+        AppendLoadNotice(msg + " Set the intended spectrum in the source config or Sun panel.");
       }
     }
 
@@ -2896,9 +2902,7 @@ bool DeserializeFromJson(const std::string& json_str, GuiState& state) {
         // not the engine, so it loads such a file anyway — but at core's own historical value
         // (0.0f, also Layer{}.probability), never at a value core never used. The user is told,
         // because a silently substituted probability is a physics change they did not ask for.
-        // SetImportComplexFilterWarning is reused deliberately: it is the import-warning
-        // accumulator, not a complex-filter-specific channel — the name is narrower than the
-        // mechanism, and renaming it is out of scope here.
+        // The same load-notice accumulator also carries texture and filter limitations.
         if (jlayer.contains("prob")) {
           layer.probability = jlayer.at("prob").get<float>();
         } else {
@@ -2907,7 +2911,7 @@ bool DeserializeFromJson(const std::string& json_str, GuiState& state) {
                                   " is missing \"prob\"; loaded as 0 (the value core used before the "
                                   "field became required).";
           GUI_LOG_WARNING("[FileIO] DeserializeFromJson: {}", msg);
-          SetImportComplexFilterWarning(msg);
+          AppendLoadNotice(msg + " Set the intended scattering probability in the source config or layer editor.");
         }
         if (jlayer.contains("entries") && jlayer["entries"].is_array()) {
           const auto& jentries = jlayer["entries"];
@@ -3003,7 +3007,8 @@ bool DeserializeFromJson(const std::string& json_str, GuiState& state) {
                                       " states no usable \"color\" (three numbers); the class is dropped rather "
                                       "than given one nobody chose (core rejects this document outright).";
               GUI_LOG_WARNING("[FileIO] DeserializeFromJson: {}", msg);
-              SetImportComplexFilterWarning(msg);
+              AppendLoadNotice(msg +
+                               " Re-add the class with its intended colour in the Colors panel or source config.");
               continue;
             }
             ColorClassConfig cls;
@@ -3124,7 +3129,7 @@ bool DeserializeFromJson(const std::string& json_str, GuiState& state) {
                                 kLensTypeJsonNames[RenderConfig{}.lens_type] +
                                 " (core rejects this document outright, since it requires it).";
         GUI_LOG_WARNING("[FileIO] DeserializeFromJson: {}", msg);
-        SetImportComplexFilterWarning(msg);
+        AppendLoadNotice(msg + " Choose the intended lens in the GUI or correct the source config.");
       }
       if (jlens.contains("fov")) {
         r.fov = jlens.at("fov").get<float>();
@@ -3180,7 +3185,7 @@ bool DeserializeFromJson(const std::string& json_str, GuiState& state) {
                                   std::to_string(static_cast<int>(r.fov)) +
                                   " degrees (core's default for this lens type; core rejects this document outright).";
           GUI_LOG_WARNING("[FileIO] DeserializeFromJson: {}", msg);
-          SetImportComplexFilterWarning(msg);
+          AppendLoadNotice(msg + " Set the intended FOV in the GUI or correct the source config.");
         }
       } else {
         // The default is the one core's LensParam::from_json also takes, from the one function both
@@ -3194,7 +3199,7 @@ bool DeserializeFromJson(const std::string& json_str, GuiState& state) {
                                 std::to_string(static_cast<int>(r.fov)) +
                                 " degrees (core's default for this lens type, and what the CLI renders it at).";
         GUI_LOG_WARNING("[FileIO] DeserializeFromJson: {}", msg);
-        SetImportComplexFilterWarning(msg);
+        AppendLoadNotice(msg + " Set the intended FOV in the GUI or correct the source config.");
       }
     }
 
@@ -3309,7 +3314,7 @@ bool DeserializeFromJson(const std::string& json_str, GuiState& state) {
                               "does not read this field. The value was kept; it takes effect again under "
                               "tone=screen.";
       GUI_LOG_WARNING("[FileIO] DeserializeFromJson: {}", msg);
-      SetImportComplexFilterWarning(msg);
+      AppendLoadNotice(msg);
     }
 
     state.renderer = r;

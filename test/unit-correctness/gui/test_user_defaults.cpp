@@ -1557,7 +1557,7 @@ TEST_F(UserDefaults, ALoadTimeClampTellsTheUserWhichValueItReplacedAndWithWhat) 
 
   for (const SurfacedCase& c : kCases) {
     ResetUserDefaultsChannels();
-    gui::ClearImportComplexFilterWarning();
+    gui::ClearLoadNotice();
     json doc;
     doc["presets"]["axis"][c.preset_key]["zenith_std"] = c.stored;
     const auto dir = DirWith("clamp_surfaced", doc);
@@ -1565,13 +1565,13 @@ TEST_F(UserDefaults, ALoadTimeClampTellsTheUserWhichValueItReplacedAndWithWhat) 
 
     gui::DoNew();
 
-    const std::string warning = gui::PeekImportComplexFilterWarning();
+    const std::string warning = gui::PeekLoadNotice();
     EXPECT_FALSE(warning.empty()) << c.name;
     EXPECT_NE(warning.find(c.preset_label), std::string::npos) << c.name;
     EXPECT_NE(warning.find(c.stored_text), std::string::npos) << c.name;
     // And the value they actually got, not merely that something was wrong.
     EXPECT_NE(warning.find(c.clamped_text), std::string::npos) << c.name << ": got \"" << warning << "\"";
-    gui::ClearImportComplexFilterWarning();
+    gui::ClearLoadNotice();
   }
 
   // The negative half: a clean override file, and a first run with no file at all, must produce
@@ -1582,10 +1582,10 @@ TEST_F(UserDefaults, ALoadTimeClampTellsTheUserWhichValueItReplacedAndWithWhat) 
   clean["bg_alpha"] = 0.42f;
   for (const auto& quiet_dir : { DirWith("clamp_quiet", clean), FreshOverlayDir("clamp_quiet_empty") }) {
     ResetUserDefaultsChannels();
-    gui::ClearImportComplexFilterWarning();
+    gui::ClearLoadNotice();
     ScopedUserConfigSource guard(gui::UserConfigSource::kExplicitDir, quiet_dir);
     gui::DoNew();
-    EXPECT_TRUE(gui::PeekImportComplexFilterWarning().empty()) << quiet_dir;
+    EXPECT_TRUE(gui::PeekLoadNotice().empty()) << quiet_dir;
   }
 }
 
@@ -1595,7 +1595,7 @@ TEST_F(UserDefaults, ALoadTimeClampTellsTheUserWhichValueItReplacedAndWithWhat) 
 // filled would misattribute them to the NEXT New. Draining is the only correct handling, and
 // this pins it: the import must leave the channel empty.
 TEST_F(UserDefaults, json_import_does_not_leak_downgrades_into_the_next_new) {
-  gui::ClearImportComplexFilterWarning();
+  gui::ClearLoadNotice();
   const auto dir = FreshOverlayDir("import_leak");
   ScopedUserConfigSource guard(gui::UserConfigSource::kExplicitDir, dir);
 
@@ -1618,9 +1618,9 @@ TEST_F(UserDefaults, json_import_does_not_leak_downgrades_into_the_next_new) {
   // file gets cleaned is not the subject here, so it is emptied directly rather than through a
   // preset-shaped edit.
   EXPECT_TRUE(gui::WriteUserDefaultsFile(dir, json::object()));
-  gui::ClearImportComplexFilterWarning();
+  gui::ClearLoadNotice();
   gui::DoNew();
-  EXPECT_TRUE(gui::PeekImportComplexFilterWarning().empty());
+  EXPECT_TRUE(gui::PeekLoadNotice().empty());
 }
 
 // ================================================================================

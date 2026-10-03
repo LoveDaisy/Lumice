@@ -106,10 +106,15 @@ hexagon. No struct changed; `LUMICE_IsDApplicable` keeps its meaning.
 **v4.46** `LUMICE_RenderParam` gains a trailing `display_mode`
 (`LUMICE_DISPLAY_MODE_NORMAL` / `LUMICE_DISPLAY_MODE_CHANNEL_BR`) after `globe_back_fade`
 (sizeof 6456 → 6460); recompile. JSON key `render.display_mode`, `"normal"` or `"channel_br"`.
-`channel_br` shows the finished image as its post-gamma sRGB B − R on a grey offset
-(`clamp(0.5 + 2·(B − R), 0, 1)`, mid grey = no difference, lighter = bluer); it has no effect
+The field introduced a post-gamma sRGB B − R diagnostic; it has no effect
 under `tone: print`, and a colour-classed scene produces no raypath composite while it is on.
 Zero means normal, so a zero-initialized struct and a document without the key render as before.
+
+**Current `channel_br` contract (subsequent semantic correction, no layout change):**
+`clamp(0.5 + 2·(B − R), 0, 1)` reads the **halo-only** post-gamma sRGB channels at the same
+exposure and view, excluding sky colour and background photos. Sky is not added back afterwards;
+empty sky is mid grey. Exposure and clipping still affect the diagnostic; compare at the same EV.
+Overlays retain their own colours. This does not retroactively describe v4.46's sky-inclusive input.
 
 **v4.45 is such a break.** `LUMICE_RenderParam` gains a trailing `float globe_back_fade` after
 `view_dist_label` (sizeof 6452 → 6456), so callers recompile. It is the `globe` lens's far-side

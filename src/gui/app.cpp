@@ -932,6 +932,22 @@ constexpr const char* kShapeDistDowngradeNotice =
     "edits uniform distributions only, so they were loaded as uniform. Edit the config file / "
     "CLI directly to keep other distribution types.";
 
+std::string TextureLoadNotice(const LmcTexture& texture) {
+  if (!texture.HasPixels() || texture.mode == PreviewRenderer::TextureMode::kXyz) {
+    return {};
+  }
+  if (texture.mode == PreviewRenderer::TextureMode::kSrgbComposited) {
+    return "This cached preview is still viewable, but its sky colour and exposure are baked in.\n"
+           "Channel B-R cannot accurately exclude that sky. Original XYZ data is missing,\n"
+           "so EV and Print cannot be fully applied to this preview.\n"
+           "Run to regenerate the data, then Save to update the file. Saving alone cannot recover it.";
+  }
+  return "This cached halo-only preview is still viewable; Channel B-R excludes the sky colour.\n"
+         "Exposure is baked in and original XYZ data is missing, so EV and Print cannot be\n"
+         "fully applied to this preview. Run to regenerate the data, then Save to update\n"
+         "the file. Saving alone cannot recover it.";
+}
+
 void DoOpen() {
   DoOpen(ShowOpenDialog());
 }
@@ -981,7 +997,7 @@ void DoOpen(const std::filesystem::path& path) {
       // (gauss/laplacian/...), and until this call the downgrade happened with nothing said. The
       // wording is shared with that branch — one downgrade, one sentence, wherever it is read from.
       if (TakeShapeDistDowngradeCount() > 0) {
-        SetImportComplexFilterWarning(kShapeDistDowngradeNotice);
+        AppendLoadNotice(kShapeDistDowngradeNotice);
       }
     }
     return;
@@ -1010,6 +1026,7 @@ void DoOpen(const std::filesystem::path& path) {
       g_state.run_intent = RunIntent::kNone;
       ResetFrontendState(g_state, FrontendResetReason::kOpenLmcBlank);
     }
+    AppendLoadNotice(TextureLoadNotice(tex));
     GUI_LOG_INFO("[GUI] DoOpen: {}", PathToU8(path));
 
     // Background image restore from saved path — DATA recovery (not a frontend reset). Uses
@@ -1019,7 +1036,7 @@ void DoOpen(const std::filesystem::path& path) {
 
     // Notify: same downgrade, same sentence as the JSON-import branch above (kShapeDistDowngradeNotice).
     if (TakeShapeDistDowngradeCount() > 0) {
-      SetImportComplexFilterWarning(kShapeDistDowngradeNotice);
+      AppendLoadNotice(kShapeDistDowngradeNotice);
     }
 
     // Notify: a filter object in the file described no rule a reader could use (an empty summands
@@ -1028,7 +1045,7 @@ void DoOpen(const std::filesystem::path& path) {
     // the latter hides every ray, and a black picture says nothing about why. Same one-time popup
     // as the shape-distribution notice above; the two append rather than replace each other.
     if (TakeFilterNoPredicateDowngradeCount() > 0) {
-      SetImportComplexFilterWarning(
+      AppendLoadNotice(
           "Some filters in this file described no rule (no ray paths and no entry/exit faces). They "
           "were loaded as no filter at all, so the entries they belonged to now let every ray "
           "through. Re-add the rule in the entry's Filter tab if the file was meant to carry one.");
@@ -1040,7 +1057,7 @@ void DoOpen(const std::filesystem::path& path) {
     // what it cannot make sense of, so "3--5" loaded as the path 3-5: a path that looks entirely
     // reasonable and is not the one the file states. Same one-time popup as the two notices above.
     if (TakeInvalidSummandRowCount() > 0) {
-      SetImportComplexFilterWarning(
+      AppendLoadNotice(
           "Some filter rows in this file were not valid filter expressions (for example a face path "
           "with an empty step, like \"3--5\"). Those rows were dropped rather than guessed at, so "
           "the filters they belonged to now match less than the file described. Re-enter the "
@@ -1066,7 +1083,8 @@ void SurfaceUserDefaultsDowngrades() {
   if (notices.empty()) {
     msg += "\n  - your personal defaults file could not be read; this document uses the built-in values.";
   }
-  SetImportComplexFilterWarning(msg);
+  msg += "\nCheck the Settings values and save the intended personal defaults again.";
+  AppendLoadNotice(msg);
 }
 
 void DoNew() {

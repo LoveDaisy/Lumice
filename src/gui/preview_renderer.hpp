@@ -197,7 +197,7 @@ struct PreviewParams {
   // before, the same guarantee background_color_linear's all-zero default gives.
   int tone = 0;
 
-  // What the finished picture is shown as: 0 = normal, 1 = the channel-B-R diagnostic. Same int
+  // Display: 0 = normal with sky, 1 = halo-only post-gamma channel-B-R (same exposure/view). Same int
   // spelling as config::RenderConfig::DisplayMode and GuiState::RenderConfig::display_mode, and the
   // same "0 renders exactly as before" default as `tone` above.
   int display_mode = 0;
@@ -239,7 +239,7 @@ class PreviewRenderer {
     // view rendered through, on the same bytes.
     kXyz = 1,
     // 8-bit sRGB texels carrying the halo's radiance ALONE — exposure already applied, no sky.
-    // The shader applies the target lens's relative illumination and then the sky, by the same
+    // The shader applies the target lens's relative illumination, then sky only in Normal, by the same
     // lines and in the same order as the XYZ branch. Producers: the raypath-colour composite the
     // server bakes, and a v4 .lmc (the format that baked exposure into 8 bits).
     kSrgbRadiance = 2,

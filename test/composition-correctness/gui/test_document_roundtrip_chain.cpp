@@ -1213,7 +1213,7 @@ TEST(DocumentRoundtripChain, ADroppedSummandRowIsAnnouncedWhenTheDocumentIsOpene
   const RoundtripTempFile bad{ std::filesystem::temp_directory_path() / "lumice_roundtrip_bad_summand.lmc" };
   ASSERT_NO_FATAL_FAILURE(SaveDocumentWithSummandRows(bad.path, { "3--5", "1-3" }));
 
-  ClearImportComplexFilterWarning();
+  ClearLoadNotice();
   DoOpen(bad.path);
 
   ASSERT_EQ(g_state.filters.size(), 1u);
@@ -1221,11 +1221,11 @@ TEST(DocumentRoundtripChain, ADroppedSummandRowIsAnnouncedWhenTheDocumentIsOpene
       << "premise: the bad row was dropped and the good one kept, so the filter still states a rule "
          "and the no-predicate notice next door stays quiet";
 
-  const std::string warning = PeekImportComplexFilterWarning();
+  const std::string warning = PeekLoadNotice();
   EXPECT_FALSE(warning.empty()) << "the row was dropped and the user was told nothing about it";
   EXPECT_NE(warning.find("not valid filter expressions"), std::string::npos)
       << "the popup did not carry THIS notice's sentence, so something else raised it: " << warning;
-  ClearImportComplexFilterWarning();
+  ClearLoadNotice();
 }
 
 // ...and only about its own load. The counter is process-wide and take-on-read, so a count left by
@@ -1241,14 +1241,13 @@ TEST(DocumentRoundtripChain, ACleanDocumentDoesNotInheritAnEarlierReadsDroppedRo
   const RoundtripTempFile good{ std::filesystem::temp_directory_path() / "lumice_roundtrip_good_summand.lmc" };
   ASSERT_NO_FATAL_FAILURE(SaveDocumentWithSummandRows(good.path, { "3-5" }));
 
-  ClearImportComplexFilterWarning();
+  ClearLoadNotice();
   DoOpen(good.path);
 
   ASSERT_EQ(g_state.filters.size(), 1u);
   EXPECT_EQ(g_state.filters.at(0).param.size(), 1u) << "premise: this document's row is valid and loaded";
-  EXPECT_TRUE(PeekImportComplexFilterWarning().empty())
-      << "a clean load announced an earlier read's dropped row: " << PeekImportComplexFilterWarning();
-  ClearImportComplexFilterWarning();
+  EXPECT_TRUE(PeekLoadNotice().empty()) << "a clean load announced an earlier read's dropped row: " << PeekLoadNotice();
+  ClearLoadNotice();
 }
 
 // The other half: the gate must not refuse anything the editor can write.
@@ -1557,14 +1556,14 @@ TEST(DocumentRoundtripChain, LensTypeIsSpelledOnDiskTheWayCoreSpellsIt) {
     }
     GuiState read_back = MinimalDocument();
     read_back.renderer.lens_type = kLensTypeGlobe;  // seed non-default so a no-op read is visible
-    ClearImportComplexFilterWarning();
+    ClearLoadNotice();
     const char* label = variant[0] == '\0' ? "<absent>" : variant;
     if (!DeserializeGuiStateJson(on_disk.dump(), read_back)) {
       ADD_FAILURE() << label << ": an unrecognised lens_type must load, not fail the whole document";
       continue;
     }
     EXPECT_EQ(read_back.renderer.lens_type, 0) << "variant: " << label;
-    const std::string notice = PeekImportComplexFilterWarning();
+    const std::string notice = PeekLoadNotice();
     if (variant[0] == '\0') {
       EXPECT_EQ(notice, "") << "an absent key lost nothing and must not warn";
     } else {
@@ -1572,7 +1571,7 @@ TEST(DocumentRoundtripChain, LensTypeIsSpelledOnDiskTheWayCoreSpellsIt) {
           << "the notice must name the value it could not read, got: " << notice;
     }
   }
-  ClearImportComplexFilterWarning();
+  ClearLoadNotice();
 }
 
 // A layer reordered in the GUI keeps that order in both documents that leave it: the .lmc JSON

@@ -208,12 +208,15 @@ std::vector<uint8_t> ExpectedImage(const RenderConfig& cfg, const float* xyz_raw
       ScaledXyzToLinearRgb(cfg, xyz_raw, i, scale, rgb);
     }
     for (int j = 0; j < 3; j++) {
-      if (paint_bg && !print_mode) {
-        rgb[j] += cfg.background_[j];
+      if (!print_mode) {
+        if (!paint_bg) {
+          rgb[j] = 0.0f;
+        } else if (cfg.display_mode_ == RenderConfig::kDisplayNormal) {
+          rgb[j] += cfg.background_[j];
+        }
       }
     }
-    // The channel-B-R display mode: after the background, on the post-gamma R and B of the pixel
-    // the Normal mode would show, carried back to linear for the final clamp and gamma below.
+    // B-R reads halo-only post-gamma channels, carried back to linear for the final gamma below.
     if (cfg.display_mode_ == RenderConfig::kDisplayChannelBr && !print_mode) {
       const float r_srgb = LinearToSrgb(std::clamp(rgb[0], 0.0f, 1.0f));
       const float b_srgb = LinearToSrgb(std::clamp(rgb[2], 0.0f, 1.0f));
@@ -372,20 +375,17 @@ TEST(RenderConsumerPostSnapshotFusion, PrintToneSubtractive) {
 
 
 // -----------------------------------------------------------------------------
-// 4b. The channel-B-R display mode over a non-zero background. Non-zero on purpose: the mode reads
-//     B - R off the picture the Normal mode would show, sky included, so this redder-than-blue
-//     background moves the grey of every empty imaged pixel below mid grey — and must NOT move the
-//     48 unimaged corners, which get no background and stay neutral. A zero background would make
-//     "added before the mode" and "ignored" agree.
+// 4b. B-R ignores a non-zero sky background, both on lit pixels and on empty sky. The 48
+//     unimaged corners remain neutral too; the independent black-background reference is unchanged.
 // -----------------------------------------------------------------------------
-TEST(RenderConsumerPostSnapshotFusion, ChannelBrOverNonzeroBackground) {
+TEST(RenderConsumerPostSnapshotFusion, ChannelBrIgnoresNonzeroBackground) {
   RenderConfig cfg = MakeSnapshotRenderConfig();
   cfg.display_mode_ = RenderConfig::kDisplayChannelBr;
   cfg.background_[0] = 0.3f;
   cfg.background_[1] = 0.25f;
   cfg.background_[2] = 0.1f;
   Coverage cov;
-  RunAndCompare(cfg, { 0.5f, 0.7f, 0.3f, 0.9f }, "ChannelBrOverNonzeroBackground", &cov);
+  RunAndCompare(cfg, { 0.5f, 0.7f, 0.3f, 0.9f }, "ChannelBrIgnoresNonzeroBackground", &cov);
   EXPECT_GT(cov.nonzero_bytes, 0u) << "an all-black image would make the byte comparison vacuous";
   EXPECT_EQ(cov.unimaged_pixels, 48u);
 }

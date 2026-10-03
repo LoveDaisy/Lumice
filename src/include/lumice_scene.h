@@ -427,10 +427,11 @@ typedef struct LUMICE_ColorClass_ {
 #define LUMICE_TONE_SCREEN 0
 #define LUMICE_TONE_PRINT 1
 
-// What the finished screen image is shown as (mirrors core RenderConfig::DisplayMode).
+// How to display the screen signal (mirrors core RenderConfig::DisplayMode).
 //   NORMAL     — the image itself.
 //   CHANNEL_BR — the "bluer or redder here" diagnostic: gray = clamp(0.5 + 2 * (B - R), 0, 1) on
-//                the post-gamma sRGB channels of the NORMAL image (src/util/channel_math.hpp).
+//                halo-only post-gamma sRGB channels at the same exposure/view, WITHOUT sky colour
+//                or background photos (src/util/channel_math.hpp). Overlays keep their own colours.
 // NORMAL == 0 is the default, so a zero-initialized LUMICE_RenderParam and a config with no
 // "display_mode" key both mean the existing picture.
 #define LUMICE_DISPLAY_MODE_NORMAL 0

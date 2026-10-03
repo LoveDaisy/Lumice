@@ -166,12 +166,11 @@ struct RenderConfig {
     kPrint,
   };
 
-  // What the finished screen image is SHOWN as — a post-process on the pixels kScreen already
-  // produced, not a third tone operator, which is why this is a field of its own and not a Tone
-  // enumerator:
+  // How to display the screen signal, not a third tone operator. B-R diagnoses the halo at the
+  // same exposure and view BEFORE sky background is added; Normal retains that background:
   //   kDisplayNormal    — the image itself.
   //   kDisplayChannelBr — a diagnostic of "bluer or redder here": the post-gamma sRGB B - R of each
-  //                       pixel, shown as a grey offset (mid grey = 0, bluer is lighter, redder is
+  //                       halo-only pixel, shown as a grey offset (mid grey = 0, bluer is lighter, redder is
   //                       darker). The formula's single owner is src/util/channel_math.hpp.
   // It needs the R and B the screen operator computes; kPrint never computes them separately (it
   // reads the scalar Y alone), so under kPrint this field is kept but inert, and the server warns.
