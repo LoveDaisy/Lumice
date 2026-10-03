@@ -10,7 +10,7 @@
 > per-pose diagnostics on `FiberResult` (version 5, §4.3); and module B v1, the band sum
 > `LUMICE_ANALYTIC_BandSum` (version 6, §4.6), the general diagnostic-field direct batch
 > (version 8, §4.8; its result layout remains the frozen version 7 layout), and support-driven
-> general feature discovery (version 13, §4.9). Module A serves the Analyze workspace's first phase,
+> general feature discovery (version 14, §4.9). Module A serves the Analyze workspace's first phase,
 > module B its second, the single-path all-sky map (`doc/raypath-analysis.md` §5.1.8). The library is not in any
 > download package yet: that is §8.8's checklist, not done.
 >
@@ -1236,7 +1236,7 @@ per pixel for the merged pair, the band sum's `1/√K_eff` `2.0 %`: `±1.28σ` o
 The contract's §6 unit and §8 conversion therefore hold for this implementation with nothing fitted,
 which also checks the `kLiAreaPerEngineArea` factor and the weight's Fresnel factor end to end.
 
-### 4.9 General support-driven feature discovery (as built, API version 13)
+### 4.9 General support-driven feature discovery (as built, API version 14)
 
 `LUMICE_ANALYTIC_DiscoverFeatures` consumes a finite description of an actual scene measure. A
 support row identifies its discrete provenance, continuous embedding coordinates and active tangent
@@ -1318,6 +1318,19 @@ the same underlying event are separate candidates sharing a stable query-local `
 conditional candidates retain zero `weighted_mass`. The candidate array stride is unchanged.
 Every search strategy for one cell/scope consumes one shared callback budget. Exhausted or
 insufficient coverage is `NUMERICAL_INCOMPLETE`, not a no-feature certificate.
+
+Version 14 adds two result-owned coverage queries without changing `FeatureDiscoveryResult` or
+candidate array strides. Each cell/scope record exposes physical coordinates and roles, parameter
+bounds, declared grid resolution, materialized-node and callback-query counts, shared budget,
+covered/total subcell counts, status, and a distinct no-callback/callback-failure/budget-exhausted
+reason. The default two-dimensional 24-query search first covers a joint 4×4 subcell grid; a clean
+grid is only `NOT_DETECTED_AT_RESOLUTION` at its reported scale, never a continuous-domain proof.
+Exact complete-cell mapping certificates remain eligible to bypass numerical search.
+
+The same version reserves negative scope ids so current input cannot be confused with the legacy
+unspecified scope: `-2` is point-measure joint evidence, `-3` is full-scene sky aggregation, and
+`-4` is a branch aggregate such as finite-width concentration. Only version-1/2/3 inputs retain
+legacy `-1`. `GetFeatureCandidateScope` returns these ids through its unchanged version-13 layout.
 
 ---
 

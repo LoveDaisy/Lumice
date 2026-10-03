@@ -23,6 +23,9 @@
 // face sequence and performs no symmetry reduction (doc/analytic-api.md section 3).
 //
 // Version notes, newest first (every bump says what changed, doc/analytic-api.md section 8.1):
+//   14 ADDED result-owned continuous-cell coverage records and explicit current-version scope
+//      origins for point measures, full-scene aggregation and branch aggregation. Candidate and
+//      result array strides remain unchanged.
 //   13 APPENDED evidence_id to the struct_size-protected FeatureCandidateScope query record. The
 //      candidate array stride, version 1/2/3/4 inputs and version 12 scope prefix are unchanged.
 //   12 ADDED feature-support version 4 parameter-role and support-scope records, plus
@@ -92,7 +95,7 @@ extern "C" {
 
 // Interface version, a single integer (doc/analytic-api.md section 8.2): bumped on every
 // incompatible change, and in 0.x on every addition too. Independent of lumice_base.h's LUMICE_API_VERSION.
-#define LUMICE_ANALYTIC_API_VERSION 13
+#define LUMICE_ANALYTIC_API_VERSION 14
 
 // Return codes of the computation functions. The names shared with lumice_base.h's LUMICE_ErrorCode mean
 // the same thing there; the type is this header's own (doc/analytic-api.md section 5.2). A numerical
@@ -810,6 +813,23 @@ typedef enum LUMICE_ANALYTIC_FeatureSupportScopeKind_ {
   LUMICE_ANALYTIC_FEATURE_SCOPE_CONDITIONAL = 1,
 } LUMICE_ANALYTIC_FeatureSupportScopeKind;
 
+// Negative ids are reserved result-owned origins. Version 1-3 inputs use LEGACY; current-version
+// inputs use the other values when evidence does not belong to a caller-supplied non-negative cell
+// scope. They remain joint evidence and do not change the meaning of conditional scopes.
+typedef enum LUMICE_ANALYTIC_FeatureScopeOrigin_ {
+  LUMICE_ANALYTIC_FEATURE_SCOPE_ORIGIN_LEGACY = -1,
+  LUMICE_ANALYTIC_FEATURE_SCOPE_ORIGIN_POINT_MEASURE = -2,
+  LUMICE_ANALYTIC_FEATURE_SCOPE_ORIGIN_FULL_SCENE = -3,
+  LUMICE_ANALYTIC_FEATURE_SCOPE_ORIGIN_BRANCH_AGGREGATE = -4,
+} LUMICE_ANALYTIC_FeatureScopeOrigin;
+
+typedef enum LUMICE_ANALYTIC_FeatureCoverageIncompleteReason_ {
+  LUMICE_ANALYTIC_FEATURE_COVERAGE_COMPLETE = 0,
+  LUMICE_ANALYTIC_FEATURE_COVERAGE_NO_CALLBACK = 1,
+  LUMICE_ANALYTIC_FEATURE_COVERAGE_CALLBACK_FAILURE = 2,
+  LUMICE_ANALYTIC_FEATURE_COVERAGE_BUDGET_EXHAUSTED = 3,
+} LUMICE_ANALYTIC_FeatureCoverageIncompleteReason;
+
 typedef struct LUMICE_ANALYTIC_FeatureProvenance_ {
   int member_index;
   int layer_index;
@@ -1000,6 +1020,30 @@ typedef struct LUMICE_ANALYTIC_FeatureCandidateScope_ {
   uint64_t evidence_id;
 } LUMICE_ANALYTIC_FeatureCandidateScope;
 
+// One result-owned account of the continuous search performed for a support cell/scope. Bounds,
+// resolution and parameter roles have coordinate_count entries and remain valid until result
+// release. NOT_DETECTED means every reported subcell was evaluated at grid_resolution; it is not
+// a proof over the unsampled continuous domain.
+typedef struct LUMICE_ANALYTIC_FeatureCoverage_ {
+  uint32_t struct_size;
+  int cell_id;
+  int scope_id;
+  int kind;  // LUMICE_ANALYTIC_FeatureSupportScopeKind
+  int coordinate_count;
+  const int* active_coordinates;
+  const LUMICE_ANALYTIC_FeatureParameterDescriptor* parameters;
+  const double* lower_bounds;
+  const double* upper_bounds;
+  const double* grid_resolution;
+  int materialized_node_count;
+  int callback_query_count;
+  int callback_budget;
+  int covered_subcell_count;
+  int total_subcell_count;
+  int status;             // LUMICE_ANALYTIC_FeatureEvidenceStatus
+  int incomplete_reason;  // LUMICE_ANALYTIC_FeatureCoverageIncompleteReason
+} LUMICE_ANALYTIC_FeatureCoverage;
+
 // Input rows and nested constraints are walked with their declared strides. Counts must be
 // non-negative, every stride must cover the selected support version's layout, and every required
 // pointer must be non-NULL. A semantically malformed support is ERR_INVALID_VALUE rather than a discovery
@@ -1015,6 +1059,14 @@ LUMICE_ANALYTIC_API LUMICE_ANALYTIC_ErrorCode LUMICE_ANALYTIC_DiscoverFeatures(
 LUMICE_ANALYTIC_API LUMICE_ANALYTIC_ErrorCode
 LUMICE_ANALYTIC_GetFeatureCandidateScope(const LUMICE_ANALYTIC_FeatureDiscoveryResult* result, int candidate_index,
                                          LUMICE_ANALYTIC_FeatureCandidateScope* out_scope);
+
+// Coverage records use an indexed query so the published FeatureDiscoveryResult layout remains
+// frozen. The count query writes one integer; each record is struct_size guarded.
+LUMICE_ANALYTIC_API LUMICE_ANALYTIC_ErrorCode
+LUMICE_ANALYTIC_GetFeatureCoverageCount(const LUMICE_ANALYTIC_FeatureDiscoveryResult* result, int* out_count);
+LUMICE_ANALYTIC_API LUMICE_ANALYTIC_ErrorCode
+LUMICE_ANALYTIC_GetFeatureCoverage(const LUMICE_ANALYTIC_FeatureDiscoveryResult* result, int coverage_index,
+                                   LUMICE_ANALYTIC_FeatureCoverage* out_coverage);
 
 // Frees all candidate strings/arrays, mechanism records and sky nodes, then zeroes the result after
 // struct_size. NULL-safe and idempotent on a zero-filled result.

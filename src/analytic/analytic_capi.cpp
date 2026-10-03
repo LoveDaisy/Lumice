@@ -109,6 +109,10 @@ static_assert(static_cast<int>(lumice::analytic::FeatureSupportScopeKind::kJoint
                   LUMICE_ANALYTIC_FEATURE_SCOPE_JOINT &&
               static_cast<int>(lumice::analytic::FeatureSupportScopeKind::kConditional) ==
                   LUMICE_ANALYTIC_FEATURE_SCOPE_CONDITIONAL);
+static_assert(static_cast<int>(lumice::analytic::FeatureCoverageIncompleteReason::kNone) ==
+                  LUMICE_ANALYTIC_FEATURE_COVERAGE_COMPLETE &&
+              static_cast<int>(lumice::analytic::FeatureCoverageIncompleteReason::kBudgetExhausted) ==
+                  LUMICE_ANALYTIC_FEATURE_COVERAGE_BUDGET_EXHAUSTED);
 
 // Where each double array of one FiberResult sits in its storage block, for N poses and k margins.
 // The version 4 arrays keep their order — poses (9 N), sun directions (3 N), arclength increments
@@ -1215,6 +1219,12 @@ struct FeatureDiscoveryResultStorage {
   std::vector<LUMICE_ANALYTIC_FeatureCandidate> candidates;
   std::vector<LUMICE_ANALYTIC_FeatureMechanismRecord> mechanisms;
   std::vector<LUMICE_ANALYTIC_SkyFieldNode> sky_field;
+  std::vector<std::vector<int>> coverage_coordinates;
+  std::vector<std::vector<LUMICE_ANALYTIC_FeatureParameterDescriptor>> coverage_parameters;
+  std::vector<std::vector<double>> coverage_lower_bounds;
+  std::vector<std::vector<double>> coverage_upper_bounds;
+  std::vector<std::vector<double>> coverage_grid_resolution;
+  std::vector<LUMICE_ANALYTIC_FeatureCoverage> coverage;
 };
 
 LUMICE_ANALYTIC_ErrorCode FillFeatureDiscoveryResult(const lumice::analytic::FeatureDiscoveryResult& result,
@@ -1295,6 +1305,42 @@ LUMICE_ANALYTIC_ErrorCode FillFeatureDiscoveryResult(const lumice::analytic::Fea
     node.sample_count = input.sample_count;
     node.status = static_cast<int>(input.status);
     storage->sky_field.push_back(node);
+  }
+  const size_t coverage_count = result.coverage.size();
+  storage->coverage_coordinates.reserve(coverage_count);
+  storage->coverage_parameters.reserve(coverage_count);
+  storage->coverage_lower_bounds.reserve(coverage_count);
+  storage->coverage_upper_bounds.reserve(coverage_count);
+  storage->coverage_grid_resolution.reserve(coverage_count);
+  storage->coverage.reserve(coverage_count);
+  for (const lumice::analytic::FeatureCoverageRecord& input : result.coverage) {
+    storage->coverage_coordinates.push_back(input.active_coordinates);
+    storage->coverage_parameters.emplace_back();
+    for (const lumice::analytic::FeatureParameterDescriptor& parameter : input.parameters) {
+      storage->coverage_parameters.back().push_back({ static_cast<int>(parameter.role), parameter.group_id });
+    }
+    storage->coverage_lower_bounds.push_back(input.lower_bounds);
+    storage->coverage_upper_bounds.push_back(input.upper_bounds);
+    storage->coverage_grid_resolution.push_back(input.grid_resolution);
+    LUMICE_ANALYTIC_FeatureCoverage coverage{};
+    coverage.struct_size = sizeof(coverage);
+    coverage.cell_id = input.cell_id;
+    coverage.scope_id = input.scope_id;
+    coverage.kind = static_cast<int>(input.scope_kind);
+    coverage.coordinate_count = static_cast<int>(input.active_coordinates.size());
+    coverage.active_coordinates = storage->coverage_coordinates.back().data();
+    coverage.parameters = storage->coverage_parameters.back().data();
+    coverage.lower_bounds = storage->coverage_lower_bounds.back().data();
+    coverage.upper_bounds = storage->coverage_upper_bounds.back().data();
+    coverage.grid_resolution = storage->coverage_grid_resolution.back().data();
+    coverage.materialized_node_count = input.materialized_node_count;
+    coverage.callback_query_count = input.callback_query_count;
+    coverage.callback_budget = input.callback_budget;
+    coverage.covered_subcell_count = input.covered_subcell_count;
+    coverage.total_subcell_count = input.total_subcell_count;
+    coverage.status = static_cast<int>(input.status);
+    coverage.incomplete_reason = static_cast<int>(input.incomplete_reason);
+    storage->coverage.push_back(coverage);
   }
   out->visited_row_count = result.visited_row_count;
   out->evaluated_sample_count = result.evaluated_sample_count;
@@ -1608,6 +1654,45 @@ LUMICE_ANALYTIC_ErrorCode LUMICE_ANALYTIC_GetFeatureCandidateScope(const LUMICE_
   LUMICE_ANALYTIC_FeatureCandidateScope value = storage->candidate_scopes[static_cast<size_t>(candidate_index)];
   value.struct_size = static_cast<uint32_t>(caller_size);
   std::memcpy(out_scope, &value, std::min(caller_size, sizeof(value)));
+  return LUMICE_ANALYTIC_OK;
+}
+
+LUMICE_ANALYTIC_ErrorCode LUMICE_ANALYTIC_GetFeatureCoverageCount(const LUMICE_ANALYTIC_FeatureDiscoveryResult* result,
+                                                                  int* out_count) {
+  if (result == nullptr || out_count == nullptr) {
+    return LUMICE_ANALYTIC_ERR_NULL_ARG;
+  }
+  if (result->struct_size < sizeof(LUMICE_ANALYTIC_FeatureDiscoveryResult) || result->storage == nullptr) {
+    return LUMICE_ANALYTIC_ERR_INVALID_VALUE;
+  }
+  const auto* storage = static_cast<const FeatureDiscoveryResultStorage*>(result->storage);
+  *out_count = static_cast<int>(storage->coverage.size());
+  return LUMICE_ANALYTIC_OK;
+}
+
+LUMICE_ANALYTIC_ErrorCode LUMICE_ANALYTIC_GetFeatureCoverage(const LUMICE_ANALYTIC_FeatureDiscoveryResult* result,
+                                                             int coverage_index,
+                                                             LUMICE_ANALYTIC_FeatureCoverage* out_coverage) {
+  if (result == nullptr || out_coverage == nullptr) {
+    return LUMICE_ANALYTIC_ERR_NULL_ARG;
+  }
+  const size_t caller_size = out_coverage->struct_size;
+  if (caller_size < sizeof(LUMICE_ANALYTIC_FeatureCoverage)) {
+    ZeroAfterStructSize(out_coverage);
+    return LUMICE_ANALYTIC_ERR_INVALID_VALUE;
+  }
+  ZeroAfterStructSize(out_coverage);
+  if (result->struct_size < sizeof(LUMICE_ANALYTIC_FeatureDiscoveryResult) || result->storage == nullptr ||
+      coverage_index < 0) {
+    return LUMICE_ANALYTIC_ERR_INVALID_VALUE;
+  }
+  const auto* storage = static_cast<const FeatureDiscoveryResultStorage*>(result->storage);
+  if (static_cast<size_t>(coverage_index) >= storage->coverage.size()) {
+    return LUMICE_ANALYTIC_ERR_INVALID_VALUE;
+  }
+  LUMICE_ANALYTIC_FeatureCoverage value = storage->coverage[static_cast<size_t>(coverage_index)];
+  value.struct_size = static_cast<uint32_t>(caller_size);
+  std::memcpy(out_coverage, &value, sizeof(value));
   return LUMICE_ANALYTIC_OK;
 }
 

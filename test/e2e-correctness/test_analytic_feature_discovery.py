@@ -144,6 +144,16 @@ _PRELUDE = textwrap.dedent(
     class CandidateScopeV12Buffer(Structure):
         _fields_ = [("scope", CandidateScopeV12), ("guard", c_uint64)]
 
+    class Coverage(Structure):
+        _fields_ = [("struct_size", c_uint32), ("cell_id", c_int), ("scope_id", c_int),
+                    ("kind", c_int), ("coordinate_count", c_int),
+                    ("active_coordinates", POINTER(c_int)), ("parameters", POINTER(Parameter)),
+                    ("lower_bounds", POINTER(c_double)), ("upper_bounds", POINTER(c_double)),
+                    ("grid_resolution", POINTER(c_double)), ("materialized_node_count", c_int),
+                    ("callback_query_count", c_int), ("callback_budget", c_int),
+                    ("covered_subcell_count", c_int), ("total_subcell_count", c_int),
+                    ("status", c_int), ("incomplete_reason", c_int)]
+
     OK, NULL_ARG, INVALID_VALUE = 0, 1, 2
     CONFIRMED, CANDIDATE, NUMERICAL_INCOMPLETE = 0, 1, 3
     ATOM, CONTINUOUS = 0, 1
@@ -154,7 +164,7 @@ _PRELUDE = textwrap.dedent(
 
     lib = ctypes.CDLL(LIB)
     lib.LUMICE_ANALYTIC_GetApiVersion.restype = c_int
-    assert lib.LUMICE_ANALYTIC_GetApiVersion() == 13
+    assert lib.LUMICE_ANALYTIC_GetApiVersion() == 14
     lib.LUMICE_ANALYTIC_DiscoverFeatures.restype = c_int
     lib.LUMICE_ANALYTIC_DiscoverFeatures.argtypes = [POINTER(Batch), POINTER(Options), CALLBACK, c_void_p,
                                                       POINTER(Result)]
@@ -162,6 +172,10 @@ _PRELUDE = textwrap.dedent(
     lib.LUMICE_ANALYTIC_ReleaseFeatureDiscoveryResult.argtypes = [POINTER(Result)]
     lib.LUMICE_ANALYTIC_GetFeatureCandidateScope.restype = c_int
     lib.LUMICE_ANALYTIC_GetFeatureCandidateScope.argtypes = [POINTER(Result), c_int, POINTER(CandidateScope)]
+    lib.LUMICE_ANALYTIC_GetFeatureCoverageCount.restype = c_int
+    lib.LUMICE_ANALYTIC_GetFeatureCoverageCount.argtypes = [POINTER(Result), POINTER(c_int)]
+    lib.LUMICE_ANALYTIC_GetFeatureCoverage.restype = c_int
+    lib.LUMICE_ANALYTIC_GetFeatureCoverage.argtypes = [POINTER(Result), c_int, POINTER(Coverage)]
 
     def options():
         return Options(sizeof(Options), 0.0, 0.0, 0.0, 0, 8, 16)
@@ -238,6 +252,36 @@ def test_equal_area_oracle_order_independence_release_and_threads() -> None:
         with ThreadPoolExecutor(max_workers=4) as pool:
             snapshots = list(pool.map(lambda index: one(bool(index & 1)), range(12)))
         assert all(snapshot == snapshots[0] for snapshot in snapshots)
+        """
+    )
+
+
+def test_current_point_and_full_scene_scope_origins_are_not_legacy() -> None:
+    _run_child(
+        """
+        batch, samples = sky_batch()
+        coordinates = [(c_double * 1)(550.0) for _ in range(batch.sample_count)]
+        for index in range(batch.sample_count):
+            samples[index].coordinates = coordinates[index]
+        parameters = (Parameter * 1)(Parameter(1, -1))
+        batch.version = 4
+        batch.coordinate_dimension = 1
+        batch.parameter_descriptor_count = 1
+        batch.parameter_descriptors = parameters
+        rc, result = discover(batch)
+        assert rc == OK
+        origins = {MEASURE_ATOM: set(), BRIGHTNESS_MAXIMUM: set()}
+        for index in range(result.candidate_count):
+            candidate = result.candidates[index]
+            if candidate.mechanism not in origins:
+                continue
+            metadata = CandidateScope()
+            metadata.struct_size = sizeof(CandidateScope)
+            assert lib.LUMICE_ANALYTIC_GetFeatureCandidateScope(byref(result), index, byref(metadata)) == OK
+            origins[candidate.mechanism].add(metadata.scope_id)
+        assert origins[MEASURE_ATOM] == {-2}
+        assert origins[BRIGHTNESS_MAXIMUM] == {-3}
+        lib.LUMICE_ANALYTIC_ReleaseFeatureDiscoveryResult(byref(result))
         """
     )
 
@@ -634,10 +678,24 @@ def test_v4_conditional_scope_metadata_uses_parallel_candidate_query() -> None:
                 assert legacy_buffer.guard == 0xC0DEC0DEC0DEC0DE
                 found = True
         assert found
+        coverage_count = c_int()
+        assert lib.LUMICE_ANALYTIC_GetFeatureCoverageCount(byref(result), byref(coverage_count)) == OK
+        assert coverage_count.value == 1
+        coverage = Coverage()
+        coverage.struct_size = sizeof(Coverage)
+        assert lib.LUMICE_ANALYTIC_GetFeatureCoverage(byref(result), 0, byref(coverage)) == OK
+        assert (coverage.cell_id, coverage.scope_id, coverage.kind, coverage.coordinate_count) == (7, 42, SCOPE_CONDITIONAL, 1)
+        assert coverage.active_coordinates[0] == 0
+        assert coverage.parameters[0].role == PARAMETER_POSE and coverage.parameters[0].group_id == 3
+        assert coverage.lower_bounds[0] == -0.75 and coverage.upper_bounds[0] == 1.25
+        assert coverage.grid_resolution[0] > 0.0
+        assert coverage.materialized_node_count == 3
+        assert coverage.callback_query_count <= coverage.callback_budget == 3
         lib.LUMICE_ANALYTIC_ReleaseFeatureDiscoveryResult(byref(result))
         metadata = CandidateScope()
         metadata.struct_size = sizeof(CandidateScope)
         assert lib.LUMICE_ANALYTIC_GetFeatureCandidateScope(byref(result), 0, byref(metadata)) == INVALID_VALUE
+        assert lib.LUMICE_ANALYTIC_GetFeatureCoverageCount(byref(result), byref(coverage_count)) == INVALID_VALUE
         """
     )
 

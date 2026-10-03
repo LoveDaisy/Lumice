@@ -74,6 +74,18 @@ enum class FeatureSupportScopeKind {
   kConditional,
 };
 
+constexpr int kLegacyFeatureScopeId = -1;
+constexpr int kPointMeasureFeatureScopeId = -2;
+constexpr int kFullSceneFeatureScopeId = -3;
+constexpr int kBranchAggregateFeatureScopeId = -4;
+
+enum class FeatureCoverageIncompleteReason {
+  kNone,
+  kNoCallback,
+  kCallbackFailure,
+  kBudgetExhausted,
+};
+
 const char* FeatureEvidenceStatusName(FeatureEvidenceStatus status);
 const char* FeatureMechanismName(FeatureMechanism mechanism);
 const char* SupportMeasureKindName(SupportMeasureKind kind);
@@ -247,6 +259,24 @@ struct SkyFieldNode {
   FeatureEvidenceStatus status = FeatureEvidenceStatus::kNotDetectedAtResolution;
 };
 
+struct FeatureCoverageRecord {
+  int cell_id = -1;
+  int scope_id = kLegacyFeatureScopeId;
+  FeatureSupportScopeKind scope_kind = FeatureSupportScopeKind::kJoint;
+  std::vector<int> active_coordinates;
+  std::vector<FeatureParameterDescriptor> parameters;
+  std::vector<double> lower_bounds;
+  std::vector<double> upper_bounds;
+  std::vector<double> grid_resolution;
+  int materialized_node_count = 0;
+  int callback_query_count = 0;
+  int callback_budget = 0;
+  int covered_subcell_count = 0;
+  int total_subcell_count = 0;
+  FeatureEvidenceStatus status = FeatureEvidenceStatus::kNumericalIncomplete;
+  FeatureCoverageIncompleteReason incomplete_reason = FeatureCoverageIncompleteReason::kNone;
+};
+
 struct FeatureDiscoveryResult {
   uint64_t visited_row_count = 0;
   int evaluated_sample_count = 0;
@@ -255,6 +285,7 @@ struct FeatureDiscoveryResult {
   std::vector<FeatureCandidate> candidates;
   std::vector<FeatureMechanismRecord> mechanisms;
   std::vector<SkyFieldNode> sky_field;
+  std::vector<FeatureCoverageRecord> coverage;
 };
 
 // Returns false only for a malformed call contract.  A valid empty or numerically unavailable

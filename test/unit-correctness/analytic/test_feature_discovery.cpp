@@ -670,9 +670,12 @@ TEST(FeatureDiscoveryDifferential, LocalizesAnOffAxisRankLossWithoutACenterOrEnd
   FeatureDiscoveryOptions default_options;
   const FeatureDiscoveryResult default_result = DiscoverFeatures(batch, default_options, callback);
   const FeatureCandidate* default_rank_loss = Candidate(default_result, FeatureMechanism::kInteriorRankLoss);
-  EXPECT_TRUE(default_rank_loss != nullptr ||
-              default_result.mechanisms[static_cast<size_t>(FeatureMechanism::kInteriorRankLoss)].status ==
-                  FeatureEvidenceStatus::kNumericalIncomplete);
+  if (default_rank_loss == nullptr) {
+    EXPECT_EQ(default_result.mechanisms[static_cast<size_t>(FeatureMechanism::kInteriorRankLoss)].status,
+              FeatureEvidenceStatus::kNotDetectedAtResolution);
+    ASSERT_EQ(default_result.coverage.size(), 1u);
+    EXPECT_EQ(default_result.coverage[0].covered_subcell_count, default_result.coverage[0].total_subcell_count);
+  }
   EXPECT_TRUE(std::any_of(callback_coordinates.begin(), callback_coordinates.end(), [](const auto& coordinates) {
     return std::fabs(coordinates.first) > 1e-12 && std::fabs(coordinates.second) > 1e-12;
   }));
@@ -812,6 +815,83 @@ TEST(FeatureDiscoveryDifferential, PositiveInputAtomsAccumulateMassAtOneSkyLocat
   EXPECT_EQ(atoms[0]->status, FeatureEvidenceStatus::kConfirmed);
   EXPECT_EQ(atoms[1]->status, FeatureEvidenceStatus::kConfirmed);
   EXPECT_NE(atoms[0]->evidence_id, atoms[1]->evidence_id);
+}
+
+TEST(FeatureDiscoveryDifferential, RecordsJointGridCoverageAndDistinguishesMissingCallback) {
+  const auto regular_sample = [](uint64_t id, double u, double v, bool accumulates_measure) {
+    return GraphSample(id, u, v, 0.0, 0.0, 1.0, accumulates_measure);
+  };
+  FeatureSupportBatch batch;
+  batch.coordinate_dimension = 2;
+  batch.visited_row_count = 1;
+  batch.complete_visit = true;
+  batch.samples = { regular_sample(1, 0.0, 0.0, true), regular_sample(2, -1.0, 0.0, false),
+                    regular_sample(3, 1.0, 0.0, false), regular_sample(4, 0.0, -1.0, false),
+                    regular_sample(5, 0.0, 1.0, false) };
+  batch.cell_axes = { { 7, 0, 1, 0, 2, 2.0 }, { 7, 1, 3, 0, 4, 2.0 } };
+  batch.parameter_descriptors = { { FeatureParameterRole::kShape, 0 }, { FeatureParameterRole::kPose, 0 } };
+  batch.scopes = { { 42, 7, FeatureSupportScopeKind::kJoint } };
+
+  const FeatureDiscoveryResult missing = DiscoverFeatures(batch, {});
+  ASSERT_EQ(missing.coverage.size(), 1u);
+  EXPECT_EQ(missing.coverage[0].status, FeatureEvidenceStatus::kNumericalIncomplete);
+  EXPECT_EQ(missing.coverage[0].incomplete_reason, FeatureCoverageIncompleteReason::kNoCallback);
+  EXPECT_EQ(missing.coverage[0].materialized_node_count, 5);
+  EXPECT_EQ(missing.mechanisms[0].status, FeatureEvidenceStatus::kNumericalIncomplete);
+
+  std::vector<std::pair<double, double>> queries;
+  const FeatureReevaluateFn callback = [&](const FeatureReevaluationRequest& request, FeatureSupportSample* sample,
+                                           std::string*) {
+    queries.emplace_back(request.coordinates[0], request.coordinates[1]);
+    *sample = regular_sample(100 + queries.size(), request.coordinates[0], request.coordinates[1], false);
+    sample->provenance = request.provenance;
+    return true;
+  };
+  FeatureDiscoveryOptions options;
+  options.maximum_refinement_steps = 24;
+  const FeatureDiscoveryResult covered = DiscoverFeatures(batch, options, callback);
+  ASSERT_EQ(covered.coverage.size(), 1u);
+  const FeatureCoverageRecord& record = covered.coverage[0];
+  EXPECT_EQ(record.cell_id, 7);
+  EXPECT_EQ(record.scope_id, 42);
+  EXPECT_EQ(record.active_coordinates, std::vector<int>({ 0, 1 }));
+  EXPECT_EQ(record.lower_bounds, std::vector<double>({ -1.0, -1.0 }));
+  EXPECT_EQ(record.upper_bounds, std::vector<double>({ 1.0, 1.0 }));
+  EXPECT_EQ(record.status, FeatureEvidenceStatus::kNotDetectedAtResolution);
+  EXPECT_EQ(record.incomplete_reason, FeatureCoverageIncompleteReason::kNone);
+  EXPECT_EQ(record.covered_subcell_count, record.total_subcell_count);
+  EXPECT_LE(record.callback_query_count, record.callback_budget);
+  for (bool positive_u : { false, true }) {
+    for (bool positive_v : { false, true }) {
+      EXPECT_NE(std::find_if(queries.begin(), queries.end(),
+                             [&](const auto& query) {
+                               return (query.first > 0.0) == positive_u && (query.second > 0.0) == positive_v;
+                             }),
+                queries.end());
+    }
+  }
+}
+
+TEST(FeatureDiscoveryDifferential, CurrentVersionImplicitScopesHaveDistinctOrigins) {
+  FeatureSupportBatch batch =
+      DenseSkyBatch(8, 16, [](int z, int azimuth) { return (z == 3 && azimuth == 8) ? 20.0 : 1.0; });
+  batch.coordinate_dimension = 1;
+  batch.parameter_descriptors = { { FeatureParameterRole::kSpectrum, -1 } };
+  for (FeatureSupportSample& sample : batch.samples) {
+    sample.coordinates = { 550.0 };
+  }
+
+  const FeatureDiscoveryResult result = DiscoverFeatures(batch, {});
+  ASSERT_FALSE(Candidates(result, FeatureMechanism::kMeasureAtom).empty());
+  for (const FeatureCandidate* atom : Candidates(result, FeatureMechanism::kMeasureAtom)) {
+    EXPECT_EQ(atom->scope_id, kPointMeasureFeatureScopeId);
+  }
+  ASSERT_FALSE(Candidates(result, FeatureMechanism::kBrightnessMaximum).empty());
+  for (FeatureMechanism mechanism : { FeatureMechanism::kBrightnessMaximum, FeatureMechanism::kBrightnessRidge }) {
+    for (const FeatureCandidate* candidate : Candidates(result, mechanism)) {
+      EXPECT_EQ(candidate->scope_id, kFullSceneFeatureScopeId);
+    }
+  }
 }
 
 TEST(FeatureDiscoveryConstraints, RefinesANonFirstInterfaceKinkThroughTheCallerCallback) {

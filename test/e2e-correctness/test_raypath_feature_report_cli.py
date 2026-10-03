@@ -74,6 +74,19 @@ def test_random_315_report_is_a_separate_document_with_general_mechanism_records
     assert mechanisms["finite_width_concentration"]["candidate_count"] == 0
     assert mechanisms["brightness_maximum"]["status"] == "candidate"
     assert mechanisms["brightness_maximum"]["candidate_count"] > 0
+    assert all(
+        candidate["scope"]["origin"] == "full_scene"
+        for candidate in discovery["candidates"]
+        if candidate["mechanism"] in {"brightness_maximum", "brightness_ridge"}
+    )
+    coverage = discovery["continuous_coverage"]
+    assert coverage
+    assert all(item["callback_query_count"] <= item["callback_budget"] for item in coverage)
+    assert all(
+        {"coordinate", "role", "layer_index", "lower", "upper", "grid_resolution"} <= set(parameter)
+        for item in coverage
+        for parameter in item["parameters"]
+    )
     assert all(feature["id"].startswith("general.") for feature in doc["features"])
     assert all(feature["location"] == "computed sky position" for feature in doc["features"])
     assert not any(feature["id"].startswith("random_regular.") for feature in doc["features"])

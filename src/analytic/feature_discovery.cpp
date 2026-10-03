@@ -323,11 +323,41 @@ bool EvaluateRankSearchSample(const FeatureReevaluateFn& reevaluate, const Featu
          CallbackSampleMatchesRequest(*sample, request, expected, static_cast<int>(coordinates.size()));
 }
 
+struct FeatureEvaluationCache {
+  std::vector<std::pair<std::vector<double>, FeatureSupportSample>> samples;
+  std::vector<std::vector<double>> failures;
+};
+
+bool EvaluateCachedSample(const FeatureReevaluateFn& reevaluate, const FeatureSupportSample& expected,
+                          const std::vector<double>& coordinates, int maximum_calls, int* calls,
+                          FeatureEvaluationCache* cache, FeatureSupportSample* sample) {
+  const auto found = std::find_if(cache->samples.begin(), cache->samples.end(),
+                                  [&](const auto& item) { return item.first == coordinates; });
+  if (found != cache->samples.end()) {
+    *sample = found->second;
+    return true;
+  }
+  if (std::find(cache->failures.begin(), cache->failures.end(), coordinates) != cache->failures.end()) {
+    return false;
+  }
+  // A phase-local limit may reserve the remaining shared cell budget for another search strategy.
+  // Do not turn that reservation into a permanent callback failure in the cell cache.
+  if (*calls >= maximum_calls) {
+    return false;
+  }
+  if (!EvaluateRankSearchSample(reevaluate, expected, coordinates, maximum_calls, calls, sample)) {
+    cache->failures.push_back(coordinates);
+    return false;
+  }
+  cache->samples.emplace_back(coordinates, *sample);
+  return true;
+}
+
 bool EvaluateRankSearchColumn(const FeatureReevaluateFn& reevaluate, const FeatureSupportSample& expected,
                               const std::vector<double>& coordinates, int coordinate_dimension, int coordinate_index,
                               double bracket_width, int maximum_calls, int* calls, FeatureSupportSample* sample,
-                              TangentColumn* column) {
-  if (!EvaluateRankSearchSample(reevaluate, expected, coordinates, maximum_calls, calls, sample)) {
+                              TangentColumn* column, FeatureEvaluationCache* cache) {
+  if (!EvaluateCachedSample(reevaluate, expected, coordinates, maximum_calls, calls, cache, sample)) {
     return false;
   }
   *column = RestrictedS2Column(*sample, coordinate_dimension, coordinate_index);
@@ -345,8 +375,8 @@ bool EvaluateRankSearchColumn(const FeatureReevaluateFn& reevaluate, const Featu
   upper_coordinates[static_cast<size_t>(coordinate_index)] += step;
   FeatureSupportSample lower;
   FeatureSupportSample upper;
-  if (!EvaluateRankSearchSample(reevaluate, expected, lower_coordinates, maximum_calls, calls, &lower) ||
-      !EvaluateRankSearchSample(reevaluate, expected, upper_coordinates, maximum_calls, calls, &upper)) {
+  if (!EvaluateCachedSample(reevaluate, expected, lower_coordinates, maximum_calls, calls, cache, &lower) ||
+      !EvaluateCachedSample(reevaluate, expected, upper_coordinates, maximum_calls, calls, cache, &upper)) {
     return false;
   }
   double raw[3]{};
@@ -366,7 +396,8 @@ bool EvaluateRankSearchColumn(const FeatureReevaluateFn& reevaluate, const Featu
 bool RefineOneDimensionalRankLoss(const FeatureSupportBatch& batch, const FeatureSupportCellAxis& axis,
                                   const FeatureDiscoveryOptions& options, const FeatureReevaluateFn& reevaluate,
                                   bool globally_complete, int callback_call_limit, int* callback_calls,
-                                  FeatureCandidate* candidate, bool* numerical_incomplete) {
+                                  FeatureCandidate* candidate, bool* numerical_incomplete,
+                                  FeatureEvaluationCache* cache) {
   const FeatureSupportSample* nodes[3] = {
     &batch.samples[static_cast<size_t>(axis.lower)],
     &batch.samples[static_cast<size_t>(axis.center)],
@@ -431,7 +462,7 @@ bool RefineOneDimensionalRankLoss(const FeatureSupportBatch& batch, const Featur
     FeatureSupportSample evaluated;
     TangentColumn evaluated_column;
     if (!EvaluateRankSearchColumn(reevaluate, *lower_node, midpoint, batch.coordinate_dimension, axis.coordinate_index,
-                                  width, callback_call_limit, callback_calls, &evaluated, &evaluated_column)) {
+                                  width, callback_call_limit, callback_calls, &evaluated, &evaluated_column, cache)) {
       *numerical_incomplete = true;
       return false;
     }
@@ -504,7 +535,7 @@ bool RefineMultidimensionalRankLossLine(const FeatureSupportSample& first, const
                                         int coordinate_dimension, int regular_rank,
                                         const FeatureDiscoveryOptions& options, const FeatureReevaluateFn& reevaluate,
                                         bool globally_complete, int* callback_calls, FeatureCandidate* candidate,
-                                        bool* numerical_incomplete) {
+                                        bool* numerical_incomplete, FeatureEvaluationCache* cache) {
   if (regular_rank != 2 || first.active_coordinates.size() < 2u || !reevaluate) {
     return false;
   }
@@ -553,8 +584,8 @@ bool RefineMultidimensionalRankLossLine(const FeatureSupportSample& first, const
                                 interpolation * (upper_coordinates[coordinate] - lower_coordinates[coordinate]);
     }
     FeatureSupportSample evaluated;
-    if (!EvaluateRankSearchSample(reevaluate, first, coordinates, options.maximum_refinement_steps, callback_calls,
-                                  &evaluated) ||
+    if (!EvaluateCachedSample(reevaluate, first, coordinates, options.maximum_refinement_steps, callback_calls, cache,
+                              &evaluated) ||
         !evaluated.direction_jacobian_available) {
       *numerical_incomplete = true;
       return false;
@@ -623,10 +654,16 @@ double RankLossObjective(const S2Differential& differential, int regular_rank) {
 bool SearchCellRankLoss(const FeatureSupportBatch& batch, const std::vector<const FeatureSupportCellAxis*>& axes,
                         const FeatureDiscoveryOptions& options, const FeatureReevaluateFn& reevaluate,
                         bool globally_complete, int callback_call_limit, int* callback_calls,
-                        FeatureCandidate* candidate, bool* numerical_incomplete) {
+                        FeatureCandidate* candidate, bool* numerical_incomplete, FeatureCoverageRecord* coverage,
+                        FeatureEvaluationCache* cache) {
+  coverage->callback_budget = callback_call_limit;
+  coverage->materialized_node_count = 1 + 2 * static_cast<int>(axes.size());
   if (!reevaluate || axes.empty() || options.maximum_refinement_steps < 3) {
-    if (!axes.empty() && options.maximum_refinement_steps < 3) {
+    if (!axes.empty()) {
       *numerical_incomplete = true;
+      coverage->status = FeatureEvidenceStatus::kNumericalIncomplete;
+      coverage->incomplete_reason =
+          reevaluate ? FeatureCoverageIncompleteReason::kBudgetExhausted : FeatureCoverageIncompleteReason::kNoCallback;
     }
     return false;
   }
@@ -668,18 +705,32 @@ bool SearchCellRankLoss(const FeatureSupportBatch& batch, const std::vector<cons
   }
 
   const int dimension = static_cast<int>(ordered_axes.size());
-  int grid_extent = 3;
+  int grid_extent = 1;
+  bool use_interior_lattice = false;
   if (dimension == 1) {
-    grid_extent = std::min(33, std::max(5, callback_call_limit / 2 + 2));
+    grid_extent = std::min(33, std::max(1, callback_call_limit / 2));
   } else if (dimension == 2) {
-    grid_extent = std::min(21, static_cast<int>(std::sqrt(callback_call_limit)));
+    if (callback_call_limit >= 128) {
+      grid_extent = std::min(21, static_cast<int>(std::sqrt(callback_call_limit)));
+      if ((grid_extent & 1) == 0) {
+        --grid_extent;
+      }
+      use_interior_lattice = true;
+    } else {
+      grid_extent = std::min(21, std::max(1, static_cast<int>(std::sqrt(callback_call_limit * 2 / 3))));
+    }
   } else {
-    grid_extent = static_cast<int>(
-        std::floor(std::pow(std::max(3, callback_call_limit / 2), 1.0 / static_cast<double>(dimension))));
+    grid_extent = 1;
   }
-  grid_extent = std::max(3, grid_extent);
-  if ((grid_extent & 1) == 0) {
-    --grid_extent;
+  const int grid_axis_points = use_interior_lattice ? grid_extent - 2 : grid_extent;
+  const int grid_point_count = dimension <= 2 ? static_cast<int>(std::pow(grid_axis_points, dimension)) :
+                                                std::max(1, callback_call_limit * 2 / 3);
+  coverage->total_subcell_count = grid_point_count;
+  coverage->grid_resolution.resize(static_cast<size_t>(dimension));
+  for (int axis_index = 0; axis_index < dimension; ++axis_index) {
+    coverage->grid_resolution[static_cast<size_t>(axis_index)] =
+        (upper[static_cast<size_t>(axis_index)] - lower[static_cast<size_t>(axis_index)]) /
+        static_cast<double>(dimension <= 2 ? (use_interior_lattice ? grid_extent - 1 : grid_extent) : grid_point_count);
   }
 
   FeatureSupportSample best;
@@ -688,22 +739,36 @@ bool SearchCellRankLoss(const FeatureSupportBatch& batch, const std::vector<cons
   double best_objective = std::numeric_limits<double>::infinity();
   bool callback_failed = false;
   bool grid_complete = false;
-  std::vector<int> grid_indices(static_cast<size_t>(dimension), 1);
-  while (*callback_calls < callback_call_limit) {
+  std::vector<int> grid_indices(static_cast<size_t>(dimension), 0);
+  for (int grid_point = 0; grid_point < grid_point_count && *callback_calls < callback_call_limit; ++grid_point) {
     std::vector<double> coordinates = center.coordinates;
     for (int axis_index = 0; axis_index < dimension; ++axis_index) {
-      const double fraction =
-          static_cast<double>(grid_indices[static_cast<size_t>(axis_index)]) / static_cast<double>(grid_extent - 1);
+      double fraction = 0.0;
+      if (dimension <= 2) {
+        fraction = use_interior_lattice ? (static_cast<double>(grid_indices[static_cast<size_t>(axis_index)]) + 1.0) /
+                                              static_cast<double>(grid_extent - 1) :
+                                          (static_cast<double>(grid_indices[static_cast<size_t>(axis_index)]) + 0.5) /
+                                              static_cast<double>(grid_extent);
+      } else {
+        // A deterministic, non-tensor lattice keeps high-dimensional work bounded while varying
+        // every coordinate jointly. It is coverage evidence at the reported per-axis scale, not
+        // an exhaustive 2^D corner enumeration.
+        const double irrational_stride =
+            std::sqrt(static_cast<double>(axis_index + 2)) + std::sqrt(static_cast<double>(axis_index + 3));
+        fraction = std::fmod((static_cast<double>(grid_point) + 0.5) * irrational_stride, 1.0);
+      }
       coordinates[static_cast<size_t>(scoped_coordinates[static_cast<size_t>(axis_index)])] =
           lower[static_cast<size_t>(axis_index)] +
           fraction * (upper[static_cast<size_t>(axis_index)] - lower[static_cast<size_t>(axis_index)]);
     }
     FeatureSupportSample evaluated;
-    if (!EvaluateRankSearchSample(reevaluate, center, coordinates, callback_call_limit, callback_calls, &evaluated) ||
+    if (!EvaluateCachedSample(reevaluate, center, coordinates, callback_call_limit, callback_calls, cache,
+                              &evaluated) ||
         !evaluated.direction_jacobian_available) {
       callback_failed = true;
       break;
     }
+    ++coverage->covered_subcell_count;
     const S2Differential differential = RestrictedS2Differential(evaluated, batch.coordinate_dimension,
                                                                  scoped_coordinates, options.rank_relative_tolerance);
     const double objective = RankLossObjective(differential, regular_rank);
@@ -714,22 +779,26 @@ bool SearchCellRankLoss(const FeatureSupportBatch& batch, const std::vector<cons
       best_objective = objective;
     }
 
-    int carry_axis = dimension - 1;
-    for (; carry_axis >= 0; --carry_axis) {
-      int& index = grid_indices[static_cast<size_t>(carry_axis)];
-      ++index;
-      if (index < grid_extent - 1) {
-        break;
+    if (dimension <= 2) {
+      int carry_axis = dimension - 1;
+      for (; carry_axis >= 0; --carry_axis) {
+        int& index = grid_indices[static_cast<size_t>(carry_axis)];
+        ++index;
+        if (index < grid_axis_points) {
+          break;
+        }
+        index = 0;
       }
-      index = 1;
-    }
-    if (carry_axis < 0) {
-      grid_complete = true;
-      break;
+      if (carry_axis < 0) {
+        grid_complete = true;
+      }
     }
   }
+  grid_complete = coverage->covered_subcell_count == coverage->total_subcell_count;
+  coverage->callback_query_count = *callback_calls;
   if (callback_failed) {
     *numerical_incomplete = true;
+    coverage->incomplete_reason = FeatureCoverageIncompleteReason::kCallbackFailure;
   }
   if (best_coordinates.empty()) {
     if (!grid_complete || *callback_calls >= callback_call_limit) {
@@ -742,7 +811,16 @@ bool SearchCellRankLoss(const FeatureSupportBatch& batch, const std::vector<cons
   for (int axis_index = 0; axis_index < dimension; ++axis_index) {
     steps[static_cast<size_t>(axis_index)] =
         (upper[static_cast<size_t>(axis_index)] - lower[static_cast<size_t>(axis_index)]) /
-        static_cast<double>(grid_extent - 1);
+        static_cast<double>(dimension <= 2 ? (use_interior_lattice ? grid_extent - 1 : grid_extent) : grid_point_count);
+  }
+  // Completing the declared grid is a valid negative result at that grid's resolution. Local
+  // minimization is reserved for a sampled objective that is materially below the regular scale;
+  // otherwise spending the remaining budget cannot strengthen the coverage statement.
+  if (best_differential.rank >= regular_rank && best_objective >= 0.05 * regular_scale && grid_complete &&
+      !callback_failed) {
+    coverage->status = FeatureEvidenceStatus::kNotDetectedAtResolution;
+    coverage->incomplete_reason = FeatureCoverageIncompleteReason::kNone;
+    return false;
   }
   bool local_converged = false;
   for (int sweep = 0; *callback_calls < callback_call_limit; ++sweep) {
@@ -760,8 +838,8 @@ bool SearchCellRankLoss(const FeatureSupportBatch& batch, const std::vector<cons
           continue;
         }
         FeatureSupportSample evaluated;
-        if (!EvaluateRankSearchSample(reevaluate, center, coordinates, callback_call_limit, callback_calls,
-                                      &evaluated) ||
+        if (!EvaluateCachedSample(reevaluate, center, coordinates, callback_call_limit, callback_calls, cache,
+                                  &evaluated) ||
             !evaluated.direction_jacobian_available) {
           *numerical_incomplete = true;
           continue;
@@ -791,7 +869,12 @@ bool SearchCellRankLoss(const FeatureSupportBatch& batch, const std::vector<cons
   if (best_differential.rank >= regular_rank) {
     if (callback_failed || !grid_complete || !local_converged || *callback_calls >= callback_call_limit) {
       *numerical_incomplete = true;
+      coverage->status = FeatureEvidenceStatus::kNumericalIncomplete;
+      if (coverage->incomplete_reason == FeatureCoverageIncompleteReason::kNone) {
+        coverage->incomplete_reason = FeatureCoverageIncompleteReason::kBudgetExhausted;
+      }
     }
+    coverage->callback_query_count = *callback_calls;
     return false;
   }
 
@@ -812,6 +895,11 @@ bool SearchCellRankLoss(const FeatureSupportBatch& batch, const std::vector<cons
   if (globally_complete && candidate->residual <= tolerance) {
     candidate->status = FeatureEvidenceStatus::kConfirmed;
   }
+  coverage->callback_query_count = *callback_calls;
+  coverage->status =
+      grid_complete ? FeatureEvidenceStatus::kNotDetectedAtResolution : FeatureEvidenceStatus::kNumericalIncomplete;
+  coverage->incomplete_reason =
+      grid_complete ? FeatureCoverageIncompleteReason::kNone : FeatureCoverageIncompleteReason::kBudgetExhausted;
   return true;
 }
 
@@ -962,13 +1050,32 @@ void ApplyLegacyJointScope(const FeatureSupportBatch& batch, const std::vector<i
   }
 }
 
+int ImplicitCurrentScopeId(const FeatureCandidate& candidate) {
+  if (candidate.mechanism == FeatureMechanism::kBrightnessMaximum ||
+      candidate.mechanism == FeatureMechanism::kBrightnessRidge) {
+    return kFullSceneFeatureScopeId;
+  }
+  if (candidate.mechanism == FeatureMechanism::kFiniteWidthConcentration) {
+    return kBranchAggregateFeatureScopeId;
+  }
+  return candidate.support_dimension == 0 ? kPointMeasureFeatureScopeId : kBranchAggregateFeatureScopeId;
+}
+
+void ApplyImplicitJointScope(const FeatureSupportBatch& batch, const std::vector<int>& active_coordinates,
+                             FeatureCandidate* candidate) {
+  ApplyLegacyJointScope(batch, active_coordinates, candidate);
+  if (batch.version == kFeatureSupportBatchVersion) {
+    candidate->scope_id = ImplicitCurrentScopeId(*candidate);
+  }
+}
+
 void AddCandidateForScopes(const FeatureSupportBatch& batch,
                            const std::map<int, std::vector<const FeatureSupportCellAxis*>>& cell_axes,
                            const std::vector<int>& cell_ids, const FeatureCandidate& candidate, double merge_tolerance,
                            FeatureDiscoveryResult* out) {
   if (cell_ids.empty()) {
     FeatureCandidate scoped = candidate;
-    ApplyLegacyJointScope(batch, candidate.scope_active_coordinates, &scoped);
+    ApplyImplicitJointScope(batch, candidate.scope_active_coordinates, &scoped);
     AddCandidate(scoped, merge_tolerance, out);
     return;
   }
@@ -1039,7 +1146,7 @@ FeatureCandidate ConstraintCandidate(const FeatureSupportSample& sample, const S
 bool RefineConstraintRoot(const FeatureSupportSample& first, const FeatureSupportSample& second,
                           const SupportConstraint& target, const FeatureDiscoveryOptions& options,
                           const FeatureReevaluateFn& reevaluate, int* callback_calls, FeatureCandidate* candidate,
-                          bool* numerical_incomplete) {
+                          bool* numerical_incomplete, FeatureEvaluationCache* cache) {
   if (!reevaluate || first.coordinates.size() != second.coordinates.size()) {
     return false;
   }
@@ -1072,8 +1179,8 @@ bool RefineConstraintRoot(const FeatureSupportSample& first, const FeatureSuppor
       request_coordinates[coordinate] = 0.5 * (lo[coordinate] + hi[coordinate]);
     }
     FeatureSupportSample evaluated;
-    if (!EvaluateRankSearchSample(reevaluate, first, request_coordinates, options.maximum_refinement_steps,
-                                  callback_calls, &evaluated)) {
+    if (!EvaluateCachedSample(reevaluate, first, request_coordinates, options.maximum_refinement_steps, callback_calls,
+                              cache, &evaluated)) {
       *numerical_incomplete = true;
       candidate->status = FeatureEvidenceStatus::kNumericalIncomplete;
       return false;
@@ -1300,7 +1407,7 @@ void DiscoverSkyFeatures(const FeatureSupportBatch& batch, const FeatureDiscover
         candidate.evidence_id = GlobalEvidenceId(mechanism, z_index * fine.azimuth_bins + azimuth_index);
         std::vector<int> active_coordinates(static_cast<size_t>(batch.coordinate_dimension));
         std::iota(active_coordinates.begin(), active_coordinates.end(), 0);
-        ApplyLegacyJointScope(batch, active_coordinates, &candidate);
+        ApplyImplicitJointScope(batch, active_coordinates, &candidate);
         candidate.reason = mechanism == FeatureMechanism::kBrightnessMaximum ?
                                "a complete equal-area sky neighborhood has a local brightness maximum" :
                                "the sky-field Hessian has transverse negative curvature and a small normal gradient";
@@ -1400,7 +1507,7 @@ void DiscoverFiniteWidthConcentrations(const FeatureSupportBatch& batch, const F
       return ScopeForCell(batch, cell_id).kind == FeatureSupportScopeKind::kJoint;
     });
     if (joint == cells.end()) {
-      ApplyLegacyJointScope(batch, samples.front()->active_coordinates, &candidate);
+      ApplyImplicitJointScope(batch, samples.front()->active_coordinates, &candidate);
     } else {
       ApplyCandidateScope(batch, *joint, ScopeCoordinatesForCell(batch, cell_axes, *joint), &candidate);
     }
@@ -1802,6 +1909,9 @@ FeatureDiscoveryResult DiscoverFeatures(const FeatureSupportBatch& batch, const 
   }
   std::map<int, int> cell_regular_ranks;
   std::map<int, int> cell_callback_calls;
+  std::map<int, FeatureEvaluationCache> cell_evaluation_caches;
+  std::map<int, size_t> cell_coverage_indices;
+  out.coverage.reserve(cell_axes.size());
   for (const auto& [cell_id, axes] : cell_axes) {
     int regular_rank = -1;
     std::vector<int> scoped_coordinates = ScopeCoordinatesForCell(batch, cell_axes, cell_id);
@@ -1815,6 +1925,38 @@ FeatureDiscoveryResult DiscoverFeatures(const FeatureSupportBatch& batch, const 
     }
     cell_regular_ranks[cell_id] = regular_rank;
     cell_callback_calls[cell_id] = 0;
+    FeatureEvaluationCache& evaluation_cache = cell_evaluation_caches[cell_id];
+    for (const FeatureSupportCellAxis* axis : axes) {
+      for (int sample_index : { axis->lower, axis->center, axis->upper }) {
+        const FeatureSupportSample& sample = batch.samples[static_cast<size_t>(sample_index)];
+        if (std::none_of(evaluation_cache.samples.begin(), evaluation_cache.samples.end(),
+                         [&](const auto& item) { return item.first == sample.coordinates; })) {
+          evaluation_cache.samples.emplace_back(sample.coordinates, sample);
+        }
+      }
+    }
+
+    FeatureCoverageRecord coverage;
+    coverage.cell_id = cell_id;
+    const FeatureSupportScope scope = ScopeForCell(batch, cell_id);
+    coverage.scope_id = scope.scope_id;
+    coverage.scope_kind = scope.kind;
+    coverage.active_coordinates = scoped_coordinates;
+    coverage.callback_budget = options.maximum_refinement_steps;
+    coverage.materialized_node_count = 1 + 2 * static_cast<int>(axes.size());
+    for (const FeatureSupportCellAxis* axis : axes) {
+      const int coordinate = axis->coordinate_index;
+      coverage.parameters.push_back(batch.parameter_descriptors.empty() ?
+                                        FeatureParameterDescriptor{} :
+                                        batch.parameter_descriptors[static_cast<size_t>(coordinate)]);
+      coverage.lower_bounds.push_back(
+          batch.samples[static_cast<size_t>(axis->lower)].coordinates[static_cast<size_t>(coordinate)]);
+      coverage.upper_bounds.push_back(
+          batch.samples[static_cast<size_t>(axis->upper)].coordinates[static_cast<size_t>(coordinate)]);
+      coverage.grid_resolution.push_back(axis->parameter_span);
+    }
+    cell_coverage_indices[cell_id] = out.coverage.size();
+    out.coverage.push_back(std::move(coverage));
   }
   std::set<int> cells_with_constraint_crossings;
   for (const FeatureSupportEdge& edge : batch.edges) {
@@ -1844,23 +1986,62 @@ FeatureDiscoveryResult DiscoverFeatures(const FeatureSupportBatch& batch, const 
     const int rank_callback_limit = reserve_constraint_budget ? std::max(1, options.maximum_refinement_steps / 4) :
                                                                 options.maximum_refinement_steps;
     int& callback_calls = cell_callback_calls[cell_id];
+    FeatureEvaluationCache& evaluation_cache = cell_evaluation_caches[cell_id];
+    const FeatureSupportSample& cell_center = batch.samples[static_cast<size_t>(axes.front()->center)];
+    if (cell_center.mapping_evidence_kind == MappingEvidenceKind::kExactImageDimensionUpperBound &&
+        cell_center.mapping_error_bound == 0.0) {
+      FeatureCoverageRecord& coverage = out.coverage[cell_coverage_indices[cell_id]];
+      coverage.status = FeatureEvidenceStatus::kConfirmed;
+      coverage.incomplete_reason = FeatureCoverageIncompleteReason::kNone;
+      coverage.total_subcell_count = 0;
+      coverage.covered_subcell_count = 0;
+      continue;
+    }
     if (axes.size() == 1u) {
       FeatureCandidate bracketed_candidate;
       if (RefineOneDimensionalRankLoss(batch, *axes.front(), options, reevaluate, globally_complete,
                                        rank_callback_limit, &callback_calls, &bracketed_candidate,
-                                       &rank_numerically_incomplete)) {
+                                       &rank_numerically_incomplete, &evaluation_cache)) {
         bracketed_candidate.evidence_id =
             LocatedEvidenceId(batch.samples[static_cast<size_t>(axes.front()->center)], bracketed_candidate.mechanism,
                               bracketed_candidate.direction);
         ApplyCandidateScope(batch, cell_id, scoped_coordinates, &bracketed_candidate);
         AddCandidate(bracketed_candidate, options.sky_merge_tolerance, &out);
+        FeatureCoverageRecord& coverage = out.coverage[cell_coverage_indices[cell_id]];
+        coverage.callback_query_count = callback_calls;
+        coverage.covered_subcell_count = 1;
+        coverage.total_subcell_count = 1;
+        coverage.grid_resolution[0] = bracketed_candidate.resolution;
+        coverage.status = bracketed_candidate.status;
+        coverage.incomplete_reason = FeatureCoverageIncompleteReason::kNone;
         searched_rank_loss_cells.insert(cell_id);
         continue;
       }
     }
+    // Preserve a signed axial bracket's precise localization before the general joint grid. The
+    // grid still runs below to account for cell coverage and to find non-axis/unsigned losses.
+    if (axes.size() >= 2u && cells_with_constraint_crossings.find(cell_id) == cells_with_constraint_crossings.end()) {
+      const int regular_rank = cell_regular_ranks[cell_id];
+      for (const FeatureSupportCellAxis* axis : axes) {
+        FeatureCandidate bracketed_candidate;
+        if (RefineMultidimensionalRankLossLine(
+                batch.samples[static_cast<size_t>(axis->lower)], batch.samples[static_cast<size_t>(axis->upper)],
+                batch.coordinate_dimension, regular_rank, options, reevaluate, globally_complete, &callback_calls,
+                &bracketed_candidate, &rank_numerically_incomplete, &evaluation_cache)) {
+          bracketed_candidate.evidence_id =
+              LocatedEvidenceId(batch.samples[static_cast<size_t>(axis->center)], bracketed_candidate.mechanism,
+                                bracketed_candidate.direction);
+          ApplyCandidateScope(batch, cell_id, scoped_coordinates, &bracketed_candidate);
+          AddCandidate(bracketed_candidate, options.sky_merge_tolerance, &out);
+          searched_rank_loss_cells.insert(cell_id);
+          break;
+        }
+      }
+    }
     FeatureCandidate searched_candidate;
+    FeatureCoverageRecord& coverage = out.coverage[cell_coverage_indices[cell_id]];
     if (SearchCellRankLoss(batch, axes, options, reevaluate, globally_complete, rank_callback_limit, &callback_calls,
-                           &searched_candidate, &rank_numerically_incomplete)) {
+                           &searched_candidate, &rank_numerically_incomplete, &coverage, &evaluation_cache)) {
       searched_candidate.evidence_id = LocatedEvidenceId(batch.samples[static_cast<size_t>(axes.front()->center)],
                                                          searched_candidate.mechanism, searched_candidate.direction);
       ApplyCandidateScope(batch, cell_id, scoped_coordinates, &searched_candidate);
@@ -1892,8 +2073,8 @@ FeatureDiscoveryResult DiscoverFeatures(const FeatureSupportBatch& batch, const 
       }
       for (const std::vector<double>* coordinates : { &lower_coordinates, &upper_coordinates }) {
         FeatureSupportSample endpoint;
-        if (EvaluateRankSearchSample(reevaluate, center, *coordinates, options.maximum_refinement_steps,
-                                     &callback_calls, &endpoint) &&
+        if (EvaluateCachedSample(reevaluate, center, *coordinates, options.maximum_refinement_steps, &callback_calls,
+                                 &evaluation_cache, &endpoint) &&
             endpoint.direction_jacobian_available) {
           cell_regular_ranks[cell_id] = std::max(
               cell_regular_ranks[cell_id], RestrictedS2Differential(endpoint, batch.coordinate_dimension,
@@ -1918,7 +2099,7 @@ FeatureDiscoveryResult DiscoverFeatures(const FeatureSupportBatch& batch, const 
       if (RefineMultidimensionalRankLossLine(
               batch.samples[static_cast<size_t>(axis->lower)], batch.samples[static_cast<size_t>(axis->upper)],
               batch.coordinate_dimension, regular_rank, options, reevaluate, globally_complete, &callback_calls,
-              &candidate, &rank_numerically_incomplete)) {
+              &candidate, &rank_numerically_incomplete, &evaluation_cache)) {
         candidate.evidence_id = LocatedEvidenceId(center, candidate.mechanism, candidate.direction);
         ApplyCandidateScope(batch, cell_id, scoped_coordinates, &candidate);
         AddCandidate(candidate, options.sky_merge_tolerance, &out);
@@ -1928,7 +2109,7 @@ FeatureDiscoveryResult DiscoverFeatures(const FeatureSupportBatch& batch, const 
       FeatureCandidate candidate;
       if (RefineMultidimensionalRankLossLine(joint_endpoints[0], joint_endpoints[1], batch.coordinate_dimension,
                                              regular_rank, options, reevaluate, globally_complete, &callback_calls,
-                                             &candidate, &rank_numerically_incomplete)) {
+                                             &candidate, &rank_numerically_incomplete, &evaluation_cache)) {
         candidate.evidence_id = LocatedEvidenceId(center, candidate.mechanism, candidate.direction);
         ApplyCandidateScope(batch, cell_id, scoped_coordinates, &candidate);
         AddCandidate(candidate, options.sky_merge_tolerance, &out);
@@ -2012,7 +2193,7 @@ FeatureDiscoveryResult DiscoverFeatures(const FeatureSupportBatch& batch, const 
       }
       const auto apply_scope = [&](FeatureCandidate* candidate) {
         if (cell_id < 0) {
-          ApplyLegacyJointScope(batch, scoped_coordinates, candidate);
+          ApplyImplicitJointScope(batch, scoped_coordinates, candidate);
         } else {
           ApplyCandidateScope(batch, cell_id, scoped_coordinates, candidate);
         }
@@ -2073,8 +2254,13 @@ FeatureDiscoveryResult DiscoverFeatures(const FeatureSupportBatch& batch, const 
       edge_cells.push_back(-1);
     }
     int legacy_callback_calls = 0;
+    FeatureEvaluationCache legacy_evaluation_cache;
+    legacy_evaluation_cache.samples.emplace_back(first.coordinates, first);
+    legacy_evaluation_cache.samples.emplace_back(second.coordinates, second);
     for (int cell_id : edge_cells) {
       int& callback_calls = cell_id < 0 ? legacy_callback_calls : cell_callback_calls[cell_id];
+      FeatureEvaluationCache& evaluation_cache =
+          cell_id < 0 ? legacy_evaluation_cache : cell_evaluation_caches[cell_id];
       std::vector<std::string> crossing_constraints;
       FeatureCandidate first_crossing;
       bool have_first_crossing = false;
@@ -2109,12 +2295,12 @@ FeatureDiscoveryResult DiscoverFeatures(const FeatureSupportBatch& batch, const 
         candidate.residual = 0.0;
         candidate.resolution = edge.parameter_distance;
         if (cell_id < 0) {
-          ApplyLegacyJointScope(batch, first.active_coordinates, &candidate);
+          ApplyImplicitJointScope(batch, first.active_coordinates, &candidate);
         } else {
           ApplyCandidateScope(batch, cell_id, ScopeCoordinatesForCell(batch, cell_axes, cell_id), &candidate);
         }
         if (RefineConstraintRoot(first, second, first_constraint, options, reevaluate, &callback_calls, &candidate,
-                                 &constraint_numerically_incomplete) &&
+                                 &constraint_numerically_incomplete, &evaluation_cache) &&
             globally_complete) {
           candidate.status = FeatureEvidenceStatus::kConfirmed;
         }
@@ -2148,6 +2334,18 @@ FeatureDiscoveryResult DiscoverFeatures(const FeatureSupportBatch& batch, const 
   DiscoverWeightKinks(batch, options, &out, &constraint_numerically_incomplete);
 
   DiscoverSkyFeatures(batch, options, globally_complete, &out);
+
+  for (const auto& [cell_id, calls] : cell_callback_calls) {
+    FeatureCoverageRecord& coverage = out.coverage[cell_coverage_indices[cell_id]];
+    coverage.callback_query_count = calls;
+    coverage.callback_budget = options.maximum_refinement_steps;
+    if (coverage.status == FeatureEvidenceStatus::kNumericalIncomplete &&
+        coverage.incomplete_reason == FeatureCoverageIncompleteReason::kNone) {
+      coverage.incomplete_reason = calls >= options.maximum_refinement_steps ?
+                                       FeatureCoverageIncompleteReason::kBudgetExhausted :
+                                       FeatureCoverageIncompleteReason::kCallbackFailure;
+    }
+  }
 
   for (const FeatureCandidate& candidate : out.candidates) {
     FeatureMechanismRecord& record = out.mechanisms[static_cast<size_t>(MechanismIndex(candidate.mechanism))];

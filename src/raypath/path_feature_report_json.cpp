@@ -145,6 +145,35 @@ const char* ParameterRoleName(analytic::FeatureParameterRole role) {
   return "unspecified";
 }
 
+const char* ScopeOriginName(int scope_id) {
+  switch (scope_id) {
+    case analytic::kPointMeasureFeatureScopeId:
+      return "point_measure";
+    case analytic::kFullSceneFeatureScopeId:
+      return "full_scene";
+    case analytic::kBranchAggregateFeatureScopeId:
+      return "branch_aggregate";
+    case analytic::kLegacyFeatureScopeId:
+      return "legacy";
+    default:
+      return "input_scope";
+  }
+}
+
+const char* CoverageIncompleteReasonName(analytic::FeatureCoverageIncompleteReason reason) {
+  switch (reason) {
+    case analytic::FeatureCoverageIncompleteReason::kNone:
+      return "none";
+    case analytic::FeatureCoverageIncompleteReason::kNoCallback:
+      return "no_callback";
+    case analytic::FeatureCoverageIncompleteReason::kCallbackFailure:
+      return "callback_failure";
+    case analytic::FeatureCoverageIncompleteReason::kBudgetExhausted:
+      return "budget_exhausted";
+  }
+  return "callback_failure";
+}
+
 nlohmann::ordered_json DiscoveryJson(const analytic::FeatureDiscoveryResult& discovery) {
   nlohmann::ordered_json candidates = nlohmann::ordered_json::array();
   for (const analytic::FeatureCandidate& candidate : discovery.candidates) {
@@ -171,6 +200,7 @@ nlohmann::ordered_json DiscoveryJson(const analytic::FeatureDiscoveryResult& dis
       { "active_constraints", candidate.active_constraints },
       { "scope",
         { { "id", candidate.scope_id },
+          { "origin", ScopeOriginName(candidate.scope_id) },
           { "kind", ScopeKindName(candidate.scope_kind) },
           { "evidence_id", candidate.evidence_id },
           { "active_parameters", scope_parameters },
@@ -202,6 +232,32 @@ nlohmann::ordered_json DiscoveryJson(const analytic::FeatureDiscoveryResult& dis
                           { "sample_count", node.sample_count },
                           { "status", analytic::FeatureEvidenceStatusName(node.status) } });
   }
+  nlohmann::ordered_json coverage = nlohmann::ordered_json::array();
+  for (const analytic::FeatureCoverageRecord& item : discovery.coverage) {
+    nlohmann::ordered_json parameters = nlohmann::ordered_json::array();
+    for (size_t index = 0; index < item.active_coordinates.size(); ++index) {
+      const analytic::FeatureParameterDescriptor descriptor =
+          index < item.parameters.size() ? item.parameters[index] : analytic::FeatureParameterDescriptor{};
+      parameters.push_back({ { "coordinate", item.active_coordinates[index] },
+                             { "role", ParameterRoleName(descriptor.role) },
+                             { "layer_index", descriptor.group_id },
+                             { "lower", Num(item.lower_bounds[index]) },
+                             { "upper", Num(item.upper_bounds[index]) },
+                             { "grid_resolution", Num(item.grid_resolution[index]) } });
+    }
+    coverage.push_back({ { "cell_id", item.cell_id },
+                         { "scope_id", item.scope_id },
+                         { "scope_origin", ScopeOriginName(item.scope_id) },
+                         { "scope_kind", ScopeKindName(item.scope_kind) },
+                         { "parameters", parameters },
+                         { "materialized_node_count", item.materialized_node_count },
+                         { "callback_query_count", item.callback_query_count },
+                         { "callback_budget", item.callback_budget },
+                         { "covered_subcell_count", item.covered_subcell_count },
+                         { "total_subcell_count", item.total_subcell_count },
+                         { "status", analytic::FeatureEvidenceStatusName(item.status) },
+                         { "incomplete_reason", CoverageIncompleteReasonName(item.incomplete_reason) } });
+  }
   return {
     { "visited_row_count", discovery.visited_row_count },
     { "evaluated_sample_count", discovery.evaluated_sample_count },
@@ -210,6 +266,7 @@ nlohmann::ordered_json DiscoveryJson(const analytic::FeatureDiscoveryResult& dis
     { "candidates", candidates },
     { "mechanisms", mechanisms },
     { "sky_field", sky_field },
+    { "continuous_coverage", coverage },
   };
 }
 

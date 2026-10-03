@@ -72,13 +72,17 @@ schema 1 请求仍保留历史 fixture 输出作为 ABI 兼容前缀；该兼容
 
 ## 共享数值边界
 
-独立 analytic 库提供可批量消费的数值，不导出产品 report。API version 13 的
+独立 analytic 库提供可批量消费的数值，不导出产品 report。API version 14 的
 `LUMICE_ANALYTIC_DiscoverFeatures` 接收 `struct_size`/stride 版本化的 support rows、constraints、
 topology edges 和同步 callback，并返回 candidates、mechanism records 与 sky field；所有输出和字符串
 由单一 result storage 持有并通过 `LUMICE_ANALYTIC_ReleaseFeatureDiscoveryResult` 释放。通用发现所需的行数据包括具体几何/成员/波长/姿态、方向与坐标约定、有限入口测度、逐接口 `T/R`、命名的有效域和 TIR margin、必要的一阶/二阶切导数和折射率导数，以及逐行数值状态。
 版本 2 support batch 将坐标维度改为动态，追加了 `accumulates_measure` 和显式局部胞元轴；版本 4
 增加参数物理角色与 joint/conditional scope 记录，并通过平行查询返回候选作用域而不改变既有
 candidate 数组步长。版本 1–3 的原始前缀仍可读，旧调用方默认 joint scope；版本 1 的 16 维上限不扩展到新版本。
+版本 14 另以结果拥有的平行查询公开连续 cell 的覆盖账本：参数范围/角色、实际网格尺度、已物化节点、
+callback 查询数与共享预算、覆盖子胞元数，以及无 callback、callback 失败或预算耗尽原因。默认二维预算
+先覆盖联合子胞元；只有完成所声明尺度的网格才可报告 `not_detected_at_resolution`。当前版本的点测度、
+全场景天空聚合和无 cell 分支聚合分别使用 `-2`、`-3`、`-4` 来源 id；只有旧输入继续使用 `-1`。
 
 产品 adapter 为每个实际测度行声明 spectrum、source、shape 和逐层 pose 角色。原始 cell 覆盖全部
 活动坐标并标为 joint；每层的活动 shape 或 pose 轴另组成 conditional cell，其余坐标固定在该行的
