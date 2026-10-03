@@ -72,7 +72,7 @@ schema 1 请求仍保留历史 fixture 输出作为 ABI 兼容前缀；该兼容
 
 ## 共享数值边界
 
-独立 analytic 库提供可批量消费的数值，不导出产品 report。API version 14 的
+独立 analytic 库提供可批量消费的数值，不导出产品 report。API version 15 的
 `LUMICE_ANALYTIC_DiscoverFeatures` 接收 `struct_size`/stride 版本化的 support rows、constraints、
 topology edges 和同步 callback，并返回 candidates、mechanism records 与 sky field；所有输出和字符串
 由单一 result storage 持有并通过 `LUMICE_ANALYTIC_ReleaseFeatureDiscoveryResult` 释放。通用发现所需的行数据包括具体几何/成员/波长/姿态、方向与坐标约定、有限入口测度、逐接口 `T/R`、命名的有效域和 TIR margin、必要的一阶/二阶切导数和折射率导数，以及逐行数值状态。
@@ -83,6 +83,10 @@ candidate 数组步长。版本 1–3 的原始前缀仍可读，旧调用方默
 callback 查询数与共享预算、覆盖子胞元数，以及无 callback、callback 失败或预算耗尽原因。默认二维预算
 先覆盖联合子胞元；只有完成所声明尺度的网格才可报告 `not_detected_at_resolution`。当前版本的点测度、
 全场景天空聚合和无 cell 分支聚合分别使用 `-2`、`-3`、`-4` 来源 id；只有旧输入继续使用 `-1`。
+当前 v4 cell 即使省略显式 scope，也优先用自身非负 cell id 形成 joint scope；若与另一 cell 的显式
+scope id 冲突，则改用唯一的非负结果 id。覆盖账本另区分证据不可用与
+支持边界；局部候选可已确认而完整零集覆盖仍未完成。prism shape-only 的闭式证书只证明固定实际
+face 序列在可达支持上的方向映射，不证明整个参数 box 可达，也不替代约束边界或积分完整性记录。
 
 产品 adapter 为每个实际测度行声明 spectrum、source、shape 和逐层 pose 角色。原始 cell 覆盖全部
 活动坐标并标为 joint；每层的活动 shape 或 pose 轴另组成 conditional cell，其余坐标固定在该行的

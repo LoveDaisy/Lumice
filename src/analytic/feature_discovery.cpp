@@ -92,6 +92,15 @@ uint64_t GlobalEvidenceId(FeatureMechanism mechanism, int stable_index) {
   return FinishEvidenceId(hash);
 }
 
+uint64_t AggregateEvidenceId(const std::vector<const FeatureSupportSample*>& samples, FeatureMechanism mechanism) {
+  uint64_t hash = kFnvOffset;
+  HashValue(mechanism, &hash);
+  for (const FeatureSupportSample* sample : samples) {
+    HashValue(sample->sample_id, &hash);
+  }
+  return FinishEvidenceId(hash);
+}
+
 uint64_t LocatedEvidenceId(const FeatureSupportSample& sample, FeatureMechanism mechanism, const double direction[3]) {
   uint64_t hash = SampleEvidenceId(sample, mechanism);
   for (int component = 0; component < 3; ++component) {
@@ -701,6 +710,8 @@ bool SearchCellRankLoss(const FeatureSupportBatch& batch, const std::vector<cons
   }
   if (regular_rank <= 0) {
     *numerical_incomplete = true;
+    coverage->status = FeatureEvidenceStatus::kNumericalIncomplete;
+    coverage->incomplete_reason = FeatureCoverageIncompleteReason::kEvidenceUnavailable;
     return false;
   }
 
@@ -842,6 +853,7 @@ bool SearchCellRankLoss(const FeatureSupportBatch& batch, const std::vector<cons
                                   &evaluated) ||
             !evaluated.direction_jacobian_available) {
           *numerical_incomplete = true;
+          callback_failed = true;
           continue;
         }
         const S2Differential differential = RestrictedS2Differential(
@@ -896,10 +908,14 @@ bool SearchCellRankLoss(const FeatureSupportBatch& batch, const std::vector<cons
     candidate->status = FeatureEvidenceStatus::kConfirmed;
   }
   coverage->callback_query_count = *callback_calls;
-  coverage->status =
-      grid_complete ? FeatureEvidenceStatus::kNotDetectedAtResolution : FeatureEvidenceStatus::kNumericalIncomplete;
-  coverage->incomplete_reason =
-      grid_complete ? FeatureCoverageIncompleteReason::kNone : FeatureCoverageIncompleteReason::kBudgetExhausted;
+  coverage->status = candidate->status;
+  if (callback_failed) {
+    coverage->incomplete_reason = FeatureCoverageIncompleteReason::kCallbackFailure;
+  } else if (!grid_complete || !local_converged || *callback_calls >= callback_call_limit) {
+    coverage->incomplete_reason = FeatureCoverageIncompleteReason::kBudgetExhausted;
+  } else {
+    coverage->incomplete_reason = FeatureCoverageIncompleteReason::kNone;
+  }
   return true;
 }
 
@@ -958,7 +974,37 @@ FeatureCandidate CandidateFromSample(const FeatureSupportSample& sample, Feature
 FeatureSupportScope ScopeForCell(const FeatureSupportBatch& batch, int cell_id) {
   const auto found = std::find_if(batch.scopes.begin(), batch.scopes.end(),
                                   [cell_id](const FeatureSupportScope& scope) { return scope.cell_id == cell_id; });
-  return found == batch.scopes.end() ? FeatureSupportScope{} : *found;
+  if (found != batch.scopes.end()) {
+    return *found;
+  }
+  FeatureSupportScope implicit;
+  implicit.cell_id = cell_id;
+  if (batch.version == kFeatureSupportBatchVersion && cell_id >= 0) {
+    implicit.scope_id = cell_id;
+    std::set<int> explicit_scope_ids;
+    int maximum_declared_id = cell_id;
+    for (const FeatureSupportScope& scope : batch.scopes) {
+      explicit_scope_ids.insert(scope.scope_id);
+      maximum_declared_id = std::max(maximum_declared_id, std::max(scope.scope_id, scope.cell_id));
+    }
+    for (const FeatureSupportCellAxis& axis : batch.cell_axes) {
+      maximum_declared_id = std::max(maximum_declared_id, axis.cell_id);
+    }
+    if (explicit_scope_ids.find(cell_id) != explicit_scope_ids.end()) {
+      std::set<int> remapped_cells;
+      for (const FeatureSupportCellAxis& axis : batch.cell_axes) {
+        const bool has_explicit_scope =
+            std::any_of(batch.scopes.begin(), batch.scopes.end(),
+                        [&](const FeatureSupportScope& scope) { return scope.cell_id == axis.cell_id; });
+        if (!has_explicit_scope && explicit_scope_ids.find(axis.cell_id) != explicit_scope_ids.end()) {
+          remapped_cells.insert(axis.cell_id);
+        }
+      }
+      implicit.scope_id = maximum_declared_id + 1 +
+                          static_cast<int>(std::distance(remapped_cells.begin(), remapped_cells.find(cell_id)));
+    }
+  }
+  return implicit;
 }
 
 void ApplyCandidateScope(const FeatureSupportBatch& batch, int cell_id, const std::vector<int>& active_coordinates,
@@ -1039,7 +1085,7 @@ std::vector<int> CellsForEdge(const std::map<int, std::vector<const FeatureSuppo
 void ApplyLegacyJointScope(const FeatureSupportBatch& batch, const std::vector<int>& active_coordinates,
                            FeatureCandidate* candidate) {
   candidate->scope_kind = FeatureSupportScopeKind::kJoint;
-  candidate->scope_id = -1;
+  candidate->scope_id = kLegacyFeatureScopeId;
   candidate->scope_active_coordinates = active_coordinates;
   candidate->scope_parameters.clear();
   candidate->scope_parameters.reserve(active_coordinates.size());
@@ -1420,7 +1466,6 @@ void DiscoverSkyFeatures(const FeatureSupportBatch& batch, const FeatureDiscover
 using ConcentrationBranch = std::tuple<int, int, int>;
 
 void DiscoverFiniteWidthConcentrations(const FeatureSupportBatch& batch, const FeatureDiscoveryOptions& options,
-                                       const std::map<int, std::vector<const FeatureSupportCellAxis*>>& cell_axes,
                                        bool globally_complete, FeatureDiscoveryResult* out,
                                        bool* resolution_incomplete) {
   std::map<ConcentrationBranch, std::vector<const FeatureSupportSample*>> branches;
@@ -1496,21 +1541,22 @@ void DiscoverFiniteWidthConcentrations(const FeatureSupportBatch& batch, const F
         CandidateFromSample(*samples.front(), FeatureMechanism::kFiniteWidthConcentration,
                             globally_complete && split_error <= spread + 1e-12 ? FeatureEvidenceStatus::kConfirmed :
                                                                                  FeatureEvidenceStatus::kCandidate,
-                            "positive-width input mass is concentrated in a stable local sky neighborhood");
+                            "positive-width branch mass is concentrated in a stable local sky neighborhood");
     std::copy(weighted_direction, weighted_direction + 3, candidate.direction);
     candidate.weighted_mass = total_weight;
     candidate.residual = split_error;
     candidate.resolution = spread;
-    const int center_index = static_cast<int>(samples.front() - batch.samples.data());
-    const std::vector<int> cells = CellsForCenter(cell_axes, center_index);
-    const auto joint = std::find_if(cells.begin(), cells.end(), [&](int cell_id) {
-      return ScopeForCell(batch, cell_id).kind == FeatureSupportScopeKind::kJoint;
-    });
-    if (joint == cells.end()) {
-      ApplyImplicitJointScope(batch, samples.front()->active_coordinates, &candidate);
-    } else {
-      ApplyCandidateScope(batch, *joint, ScopeCoordinatesForCell(batch, cell_axes, *joint), &candidate);
+    candidate.provenance.sample_index = -1;
+    candidate.evidence_id = AggregateEvidenceId(samples, candidate.mechanism);
+    std::vector<int> aggregate_coordinates;
+    for (const FeatureSupportSample* sample : samples) {
+      aggregate_coordinates.insert(aggregate_coordinates.end(), sample->active_coordinates.begin(),
+                                   sample->active_coordinates.end());
     }
+    std::sort(aggregate_coordinates.begin(), aggregate_coordinates.end());
+    aggregate_coordinates.erase(std::unique(aggregate_coordinates.begin(), aggregate_coordinates.end()),
+                                aggregate_coordinates.end());
+    ApplyImplicitJointScope(batch, aggregate_coordinates, &candidate);
     AddCandidate(candidate, options.sky_merge_tolerance, out);
   }
 }
@@ -1837,8 +1883,8 @@ bool ValidateFeatureSupportBatch(const FeatureSupportBatch& batch, std::string* 
     }
   }
   if (!batch.scopes.empty()) {
-    if (batch.version != kFeatureSupportBatchVersion || batch.parameter_descriptors.empty()) {
-      return Fail("explicit support scopes require current-version parameter descriptors", error);
+    if (batch.version != kFeatureSupportBatchVersion) {
+      return Fail("explicit support scopes require a current-version batch", error);
     }
     std::set<int> scope_ids;
     std::set<int> scoped_cells;
@@ -1991,10 +2037,14 @@ FeatureDiscoveryResult DiscoverFeatures(const FeatureSupportBatch& batch, const 
     if (cell_center.mapping_evidence_kind == MappingEvidenceKind::kExactImageDimensionUpperBound &&
         cell_center.mapping_error_bound == 0.0) {
       FeatureCoverageRecord& coverage = out.coverage[cell_coverage_indices[cell_id]];
-      coverage.status = FeatureEvidenceStatus::kConfirmed;
-      coverage.incomplete_reason = FeatureCoverageIncompleteReason::kNone;
+      coverage.status = FeatureEvidenceStatus::kNumericalIncomplete;
+      coverage.incomplete_reason =
+          cells_with_constraint_crossings.find(cell_id) != cells_with_constraint_crossings.end() ?
+              FeatureCoverageIncompleteReason::kSupportBoundary :
+              FeatureCoverageIncompleteReason::kEvidenceUnavailable;
       coverage.total_subcell_count = 0;
       coverage.covered_subcell_count = 0;
+      rank_numerically_incomplete = true;
       continue;
     }
     if (axes.size() == 1u) {
@@ -2214,9 +2264,9 @@ FeatureDiscoveryResult DiscoverFeatures(const FeatureSupportBatch& batch, const 
           AddCandidate(candidate, options.sky_merge_tolerance, &out);
         }
         if (exact_mapping_bound && sample.image_dimension_upper_bound == 0 && sample.weight > 0.0) {
-          FeatureCandidate atom =
-              CandidateFromSample(sample, FeatureMechanism::kMeasureAtom, direct_status,
-                                  "an exact complete-cell mapping certificate proves constant sky direction");
+          FeatureCandidate atom = CandidateFromSample(
+              sample, FeatureMechanism::kMeasureAtom, FeatureEvidenceStatus::kConfirmed,
+              "an exact mapping certificate proves constant sky direction on the reachable support");
           atom.mapping_rank = 0;
           apply_scope(&atom);
           AddCandidate(atom, options.sky_merge_tolerance, &out);
@@ -2329,8 +2379,7 @@ FeatureDiscoveryResult DiscoverFeatures(const FeatureSupportBatch& batch, const 
     }
   }
 
-  DiscoverFiniteWidthConcentrations(batch, options, cell_axes, globally_complete, &out,
-                                    &concentration_resolution_incomplete);
+  DiscoverFiniteWidthConcentrations(batch, options, globally_complete, &out, &concentration_resolution_incomplete);
   DiscoverWeightKinks(batch, options, &out, &constraint_numerically_incomplete);
 
   DiscoverSkyFeatures(batch, options, globally_complete, &out);
@@ -2343,7 +2392,7 @@ FeatureDiscoveryResult DiscoverFeatures(const FeatureSupportBatch& batch, const 
         coverage.incomplete_reason == FeatureCoverageIncompleteReason::kNone) {
       coverage.incomplete_reason = calls >= options.maximum_refinement_steps ?
                                        FeatureCoverageIncompleteReason::kBudgetExhausted :
-                                       FeatureCoverageIncompleteReason::kCallbackFailure;
+                                       FeatureCoverageIncompleteReason::kEvidenceUnavailable;
     }
   }
 

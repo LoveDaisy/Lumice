@@ -170,6 +170,10 @@ const char* CoverageIncompleteReasonName(analytic::FeatureCoverageIncompleteReas
       return "callback_failure";
     case analytic::FeatureCoverageIncompleteReason::kBudgetExhausted:
       return "budget_exhausted";
+    case analytic::FeatureCoverageIncompleteReason::kEvidenceUnavailable:
+      return "evidence_unavailable";
+    case analytic::FeatureCoverageIncompleteReason::kSupportBoundary:
+      return "support_boundary";
   }
   return "callback_failure";
 }

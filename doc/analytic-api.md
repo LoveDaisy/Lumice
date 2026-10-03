@@ -10,7 +10,7 @@
 > per-pose diagnostics on `FiberResult` (version 5, §4.3); and module B v1, the band sum
 > `LUMICE_ANALYTIC_BandSum` (version 6, §4.6), the general diagnostic-field direct batch
 > (version 8, §4.8; its result layout remains the frozen version 7 layout), and support-driven
-> general feature discovery (version 14, §4.9). Module A serves the Analyze workspace's first phase,
+> general feature discovery (version 15, §4.9). Module A serves the Analyze workspace's first phase,
 > module B its second, the single-path all-sky map (`doc/raypath-analysis.md` §5.1.8). The library is not in any
 > download package yet: that is §8.8's checklist, not done.
 >
@@ -1236,7 +1236,7 @@ per pixel for the merged pair, the band sum's `1/√K_eff` `2.0 %`: `±1.28σ` o
 The contract's §6 unit and §8 conversion therefore hold for this implementation with nothing fitted,
 which also checks the `kLiAreaPerEngineArea` factor and the weight's Fresnel factor end to end.
 
-### 4.9 General support-driven feature discovery (as built, API version 14)
+### 4.9 General support-driven feature discovery (as built, API version 15)
 
 `LUMICE_ANALYTIC_DiscoverFeatures` consumes a finite description of an actual scene measure. A
 support row identifies its discrete provenance, continuous embedding coordinates and active tangent
@@ -1284,11 +1284,16 @@ resolution remain numerical outcomes rather than absence proofs.
 Finite Jacobian samples never prove that a continuous branch is constant on positive measure. A
 confirmed continuous `MEASURE_ATOM` requires the version-3 row's
 `EXACT_IMAGE_DIMENSION_UPPER_BOUND` certificate with bound zero, zero error, positive mass, and a
-complete local cell covering every active coordinate. The same certificate can prove strict image
+local cell identifying every active coordinate. The certificate proves a statement about the map on
+the reachable support; it does not prove that the full parameter box is reachable, that no support
+boundary crosses it, or that quadrature/materialization is complete. The same certificate can prove strict image
 confinement with a bound below two; one-dimensional support is strictly confined by dimension alone.
 Without such a proof, sampled low rank remains a candidate. The product adapter emits the exact
 zero-dimensional certificate only when every active continuous input changes prism shape distances
-while the fixed face-normal sequence makes the composed outgoing direction independent of them.
+and every evaluated layer retains a concrete prism face sequence whose diagnostic interfaces match
+those faces. Prism face normals are fixed by face id, independent of height and face distances, so
+the composed outgoing direction is constant wherever that sequence is reachable. Support
+availability, constraint crossings and measure completeness remain separate.
 
 Every variable input row has a leading `struct_size`; rows and nested constraints use explicit
 strides. Version 10 introduced support-batch version 2: the legacy 16-coordinate ceiling is retained
@@ -1301,7 +1306,7 @@ id is a call-level `ERR_INVALID_VALUE`/`ERR_NULL_ARG`, with the output zero-fill
 `struct_size`. Valid physical emptiness and unavailable local numerics are result states instead.
 
 Version 12 adds support-batch version 4. Optional per-coordinate descriptors identify spectrum,
-source, shape and per-layer pose roles; explicit cell scopes distinguish joint support from a
+source, shape and per-layer pose roles; absent descriptors leave roles unspecified. Explicit cell scopes distinguish joint support from a
 conditional slice with the other coordinates fixed at the row's actual state. Candidate array
 stride remains frozen: `LUMICE_ANALYTIC_GetFeatureCandidateScope` returns parallel scope id/kind,
 active coordinates and their role/group records from the result-owned storage. Version-1/2/3
@@ -1325,12 +1330,23 @@ bounds, declared grid resolution, materialized-node and callback-query counts, s
 covered/total subcell counts, status, and a distinct no-callback/callback-failure/budget-exhausted
 reason. The default two-dimensional 24-query search first covers a joint 4×4 subcell grid; a clean
 grid is only `NOT_DETECTED_AT_RESOLUTION` at its reported scale, never a continuous-domain proof.
-Exact complete-cell mapping certificates remain eligible to bypass numerical search.
+Exact reachable-support mapping certificates remain eligible to bypass numerical rank search, but
+do not mark support/search coverage complete by themselves.
 
 The same version reserves negative scope ids so current input cannot be confused with the legacy
 unspecified scope: `-2` is point-measure joint evidence, `-3` is full-scene sky aggregation, and
 `-4` is a branch aggregate such as finite-width concentration. Only version-1/2/3 inputs retain
 legacy `-1`. `GetFeatureCandidateScope` returns these ids through its unchanged version-13 layout.
+
+Version 15 adds typed `EVIDENCE_UNAVAILABLE` and `SUPPORT_BOUNDARY` coverage reasons without
+changing any struct layout. A localized rank-loss candidate is reported as candidate/confirmed in
+the corresponding coverage record; a non-complete reason can coexist with that status because local
+localization does not prove complete zero-set coverage. A current version-4 cell with no explicit
+scope receives a result-owned joint scope whose id is its non-negative `cell_id`; a collision with
+another cell's explicit scope id is remapped to a unique non-negative result id. Only version-1/2/3
+inputs use legacy `-1`. Finite-width concentration across multiple measure rows is a branch aggregate
+with `sample_index=-1`, the union of participant coordinates, and origin `-4`, never the first row's
+cell scope. Exact mapping certificates no longer mark search/support coverage complete by themselves.
 
 ---
 

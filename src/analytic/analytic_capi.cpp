@@ -111,8 +111,8 @@ static_assert(static_cast<int>(lumice::analytic::FeatureSupportScopeKind::kJoint
                   LUMICE_ANALYTIC_FEATURE_SCOPE_CONDITIONAL);
 static_assert(static_cast<int>(lumice::analytic::FeatureCoverageIncompleteReason::kNone) ==
                   LUMICE_ANALYTIC_FEATURE_COVERAGE_COMPLETE &&
-              static_cast<int>(lumice::analytic::FeatureCoverageIncompleteReason::kBudgetExhausted) ==
-                  LUMICE_ANALYTIC_FEATURE_COVERAGE_BUDGET_EXHAUSTED);
+              static_cast<int>(lumice::analytic::FeatureCoverageIncompleteReason::kSupportBoundary) ==
+                  LUMICE_ANALYTIC_FEATURE_COVERAGE_SUPPORT_BOUNDARY);
 
 // Where each double array of one FiberResult sits in its storage block, for N poses and k margins.
 // The version 4 arrays keep their order — poses (9 N), sun directions (3 N), arclength increments

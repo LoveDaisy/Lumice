@@ -84,6 +84,8 @@ enum class FeatureCoverageIncompleteReason {
   kNoCallback,
   kCallbackFailure,
   kBudgetExhausted,
+  kEvidenceUnavailable,
+  kSupportBoundary,
 };
 
 const char* FeatureEvidenceStatusName(FeatureEvidenceStatus status);
@@ -193,7 +195,9 @@ struct FeatureSupportBatch {
   // Empty descriptors preserve the version-1/2/3 behavior: all coordinates are unspecified.
   // A current-version batch may identify every embedding coordinate's physical role and layer.
   std::vector<FeatureParameterDescriptor> parameter_descriptors;
-  // A cell without an explicit entry retains the legacy joint-support interpretation.
+  // A current-version cell without an explicit entry receives a result-owned joint scope whose id
+  // is the cell id when that does not alias an explicit scope id; collisions receive another unique
+  // non-negative id. Only version-1/2/3 batches retain the legacy -1 scope.
   std::vector<FeatureSupportScope> scopes;
 };
 

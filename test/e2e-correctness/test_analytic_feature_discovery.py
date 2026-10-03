@@ -164,7 +164,7 @@ _PRELUDE = textwrap.dedent(
 
     lib = ctypes.CDLL(LIB)
     lib.LUMICE_ANALYTIC_GetApiVersion.restype = c_int
-    assert lib.LUMICE_ANALYTIC_GetApiVersion() == 14
+    assert lib.LUMICE_ANALYTIC_GetApiVersion() == 15
     lib.LUMICE_ANALYTIC_DiscoverFeatures.restype = c_int
     lib.LUMICE_ANALYTIC_DiscoverFeatures.argtypes = [POINTER(Batch), POINTER(Options), CALLBACK, c_void_p,
                                                       POINTER(Result)]
@@ -775,6 +775,104 @@ def test_direct_evidence_expands_scopes_with_shared_id_and_old_prefix() -> None:
             assert joint[4] != 0 and joint[4] == conditional[4], (joint, conditional)
         total_mass = sum(result.sky_field[index].value for index in range(result.sky_field_count))
         assert abs(total_mass - 1.0) < 1e-12, total_mass
+        lib.LUMICE_ANALYTIC_ReleaseFeatureDiscoveryResult(byref(result))
+        """
+    )
+
+
+def test_current_implicit_scope_aggregate_origin_and_typed_coverage_reason() -> None:
+    _run_child(
+        """
+        keep = []
+
+        def point(index, coordinates, active_coordinate, original):
+            coordinate_values = (c_double * 2)(*coordinates)
+            active = (c_int * 1)(active_coordinate)
+            jacobian = (c_double * 6)(*([0.0] * 6))
+            available = (c_uint8 * 2)(1, 1)
+            keep.extend((coordinate_values, active, jacobian, available))
+            value = Sample()
+            value.struct_size = sizeof(Sample)
+            value.sample_id = index
+            value.provenance = Provenance(3, -1, -1, 5, 7, index - 1)
+            value.measure_kind = CONTINUOUS
+            value.support_dimension = 1
+            value.finite_width = 1
+            value.coordinates = coordinate_values
+            value.active_coordinates = active
+            value.direction[:] = (1.0, 0.001 * (index - 2), 0.0)
+            norm = math.hypot(value.direction[0], value.direction[1])
+            value.direction[0] /= norm
+            value.direction[1] /= norm
+            value.weight = float(original)
+            value.direction_jacobian_available = 1
+            value.direction_jacobian = jacobian
+            value.direction_jacobian_column_available = available
+            value.direction_jacobian_resolution = 1.0e-6
+            value.constraint_stride = sizeof(Constraint)
+            value.numerically_available = 1
+            value.accumulates_measure = int(original)
+            return value
+
+        samples = (Sample * 3)(point(1, [0.0, 0.0], 0, True),
+                               point(2, [-1.0, 0.0], 0, False),
+                               point(3, [1.0, 0.0], 0, False))
+        samples[0].mapping_evidence_kind = EXACT_IMAGE_DIMENSION_UPPER_BOUND
+        samples[0].image_dimension_upper_bound = 0
+        axes = (CellAxis * 1)(CellAxis(7, 0, 1, 0, 2, 2.0))
+        batch = Batch(sizeof(Batch), 4, 2, 1, 1, 1, 3, sizeof(Sample), samples, 0, None, 1, axes)
+        rc, result = discover(batch)
+        assert rc == OK, ("implicit", rc)
+        coverage = Coverage(); coverage.struct_size = sizeof(Coverage)
+        assert lib.LUMICE_ANALYTIC_GetFeatureCoverage(byref(result), 0, byref(coverage)) == OK, "coverage query"
+        assert coverage.scope_id == 7 and coverage.incomplete_reason == 4, (
+            coverage.scope_id, coverage.incomplete_reason)
+        ids = []
+        for index in range(result.candidate_count):
+            if result.candidates[index].mechanism not in (MEASURE_ATOM, 7):
+                continue
+            scope = CandidateScope(); scope.struct_size = sizeof(CandidateScope)
+            assert lib.LUMICE_ANALYTIC_GetFeatureCandidateScope(byref(result), index, byref(scope)) == OK
+            ids.append(scope.scope_id)
+        assert ids and set(ids) == {7}, ("candidate scopes", ids)
+        lib.LUMICE_ANALYTIC_ReleaseFeatureDiscoveryResult(byref(result))
+
+        # A callback exists, but regular rank is unavailable before any query. This is evidence
+        # unavailability, not callback failure or budget exhaustion.
+        samples[0].mapping_evidence_kind = NO_MAPPING_EVIDENCE
+        samples[0].image_dimension_upper_bound = 0
+        calls = []
+        @CALLBACK
+        def unused_callback(request, output, user_data):
+            calls.append(1)
+            return 1
+        result = output(); opts = options(); opts.maximum_refinement_steps = 24
+        assert lib.LUMICE_ANALYTIC_DiscoverFeatures(byref(batch), byref(opts), unused_callback, None,
+                                                    byref(result)) == OK, "unavailable discovery"
+        coverage = Coverage(); coverage.struct_size = sizeof(Coverage)
+        assert lib.LUMICE_ANALYTIC_GetFeatureCoverage(byref(result), 0, byref(coverage)) == OK
+        assert not calls and coverage.incomplete_reason == 4, (calls, coverage.incomplete_reason)
+        lib.LUMICE_ANALYTIC_ReleaseFeatureDiscoveryResult(byref(result))
+
+        aggregate_samples = (Sample * 4)(
+            point(10, [-0.003, 0.0], 0, True), point(11, [-0.001, 0.0], 1, True),
+            point(12, [0.001, 0.0], 0, True), point(13, [0.003, 0.0], 1, True))
+        for index in range(4):
+            aggregate_samples[index].provenance.sample_index = index
+        aggregate_batch = Batch(sizeof(Batch), 4, 2, 4, 1, 1, 4, sizeof(Sample), aggregate_samples,
+                                0, None, 0, None)
+        rc, result = discover(aggregate_batch)
+        assert rc == OK, ("aggregate", rc)
+        matches = []
+        for index in range(result.candidate_count):
+            candidate = result.candidates[index]
+            if candidate.mechanism != 8:
+                continue
+            scope = CandidateScope(); scope.struct_size = sizeof(CandidateScope)
+            assert lib.LUMICE_ANALYTIC_GetFeatureCandidateScope(byref(result), index, byref(scope)) == OK
+            matches.append((scope.scope_id, candidate.provenance.sample_index, candidate.weighted_mass,
+                            [scope.active_coordinates[i] for i in range(scope.active_coordinate_count)]))
+        assert matches == [(-4, -1, 4.0, [0, 1])], matches
         lib.LUMICE_ANALYTIC_ReleaseFeatureDiscoveryResult(byref(result))
         """
     )

@@ -23,6 +23,10 @@
 // face sequence and performs no symmetry reduction (doc/analytic-api.md section 3).
 //
 // Version notes, newest first (every bump says what changed, doc/analytic-api.md section 8.1):
+//   15 ADDED typed evidence-unavailable/support-boundary coverage reasons. Current version-4 cells
+//      without explicit scopes now use a non-negative implicit joint scope (their cell id unless it
+//      aliases an explicit scope), and finite-width branch aggregates use the reserved aggregate
+//      origin. No struct layout changed.
 //   14 ADDED result-owned continuous-cell coverage records and explicit current-version scope
 //      origins for point measures, full-scene aggregation and branch aggregation. Candidate and
 //      result array strides remain unchanged.
@@ -95,7 +99,7 @@ extern "C" {
 
 // Interface version, a single integer (doc/analytic-api.md section 8.2): bumped on every
 // incompatible change, and in 0.x on every addition too. Independent of lumice_base.h's LUMICE_API_VERSION.
-#define LUMICE_ANALYTIC_API_VERSION 14
+#define LUMICE_ANALYTIC_API_VERSION 15
 
 // Return codes of the computation functions. The names shared with lumice_base.h's LUMICE_ErrorCode mean
 // the same thing there; the type is this header's own (doc/analytic-api.md section 5.2). A numerical
@@ -828,6 +832,8 @@ typedef enum LUMICE_ANALYTIC_FeatureCoverageIncompleteReason_ {
   LUMICE_ANALYTIC_FEATURE_COVERAGE_NO_CALLBACK = 1,
   LUMICE_ANALYTIC_FEATURE_COVERAGE_CALLBACK_FAILURE = 2,
   LUMICE_ANALYTIC_FEATURE_COVERAGE_BUDGET_EXHAUSTED = 3,
+  LUMICE_ANALYTIC_FEATURE_COVERAGE_EVIDENCE_UNAVAILABLE = 4,
+  LUMICE_ANALYTIC_FEATURE_COVERAGE_SUPPORT_BOUNDARY = 5,
 } LUMICE_ANALYTIC_FeatureCoverageIncompleteReason;
 
 typedef struct LUMICE_ANALYTIC_FeatureProvenance_ {
@@ -921,8 +927,8 @@ typedef struct LUMICE_ANALYTIC_FeatureSupportBatch_ {
   // ADDED version 10; required by feature-support version 2, absent from version 1's frozen prefix.
   int cell_axis_count;
   const LUMICE_ANALYTIC_FeatureSupportCellAxis* cell_axes;
-  // ADDED version 12; read only by feature-support version 4. Empty arrays preserve the legacy
-  // all-unspecified, joint-support interpretation.
+  // ADDED version 12; read only by feature-support version 4. Empty descriptors leave parameter
+  // roles unspecified; empty scopes request result-owned joint scopes.
   int parameter_descriptor_count;
   const LUMICE_ANALYTIC_FeatureParameterDescriptor* parameter_descriptors;
   int scope_count;
@@ -1023,7 +1029,9 @@ typedef struct LUMICE_ANALYTIC_FeatureCandidateScope_ {
 // One result-owned account of the continuous search performed for a support cell/scope. Bounds,
 // resolution and parameter roles have coordinate_count entries and remain valid until result
 // release. NOT_DETECTED means every reported subcell was evaluated at grid_resolution; it is not
-// a proof over the unsampled continuous domain.
+// a proof over the unsampled continuous domain. A detected candidate may coexist with a non-COMPLETE
+// reason: local feature localization does not certify that the complete zero set or support domain
+// was covered.
 typedef struct LUMICE_ANALYTIC_FeatureCoverage_ {
   uint32_t struct_size;
   int cell_id;

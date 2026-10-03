@@ -208,9 +208,21 @@ std::vector<double> Coordinates(const SceneMeasureRow& row, const ReplayContext&
   return coordinates;
 }
 
-bool HasExactShapeOnlyConstantDirectionProof(const SceneMeasureRow& row, const ReplayContext& context) {
+bool HasExactShapeOnlyReachableSupportDirectionProof(const SceneMeasureRow& row, const ReplayContext& context) {
   if (context.active_coordinates.empty()) {
     return false;
+  }
+  for (const SceneMeasureLayerRow& layer : row.layers) {
+    if (layer.crystal_kind != "prism" || layer.analytic_shape.kind != analytic::CrystalShapeKind::kPrism ||
+        layer.faces.empty() || layer.field.interfaces.size() != layer.faces.size()) {
+      return false;
+    }
+    for (size_t interface_index = 0; interface_index < layer.faces.size(); ++interface_index) {
+      const int face = layer.faces[interface_index];
+      if (face < 1 || face > 8 || layer.field.interfaces[interface_index].face_number != face) {
+        return false;
+      }
+    }
   }
   for (int coordinate : context.active_coordinates) {
     if (coordinate < 4) {
@@ -750,7 +762,7 @@ Error BuildFeatureSupportBatch(const ConfigManager& config, const SceneMeasureRe
     const std::set<int> active(sample.active_coordinates.begin(), sample.active_coordinates.end());
     const auto axes = cell_coordinates.find(static_cast<int>(sample_index));
     if (axes != cell_coordinates.end() && axes->second == active &&
-        HasExactShapeOnlyConstantDirectionProof(rows[sample_index], *context)) {
+        HasExactShapeOnlyReachableSupportDirectionProof(rows[sample_index], *context)) {
       sample.mapping_evidence_kind = analytic::MappingEvidenceKind::kExactImageDimensionUpperBound;
       sample.image_dimension_upper_bound = 0;
       sample.mapping_error_bound = 0.0;

@@ -707,6 +707,10 @@ TEST(FeatureDiscoveryDifferential, LocalizesAnOffAxisRankLossWithoutACenterOrEnd
   }));
   EXPECT_GT(callback_count, 0);
   EXPECT_LE(callback_count, options.maximum_refinement_steps);
+  ASSERT_EQ(result.coverage.size(), 1u);
+  EXPECT_EQ(result.coverage[0].status, rank_loss->status);
+  EXPECT_NE(result.coverage[0].status, FeatureEvidenceStatus::kNotDetectedAtResolution);
+  EXPECT_EQ(result.coverage[0].incomplete_reason, FeatureCoverageIncompleteReason::kNone);
 }
 
 TEST(FeatureDiscoveryDifferential, LocalizesAnEvenMinorRankLossWithoutASignChange) {
@@ -870,6 +874,119 @@ TEST(FeatureDiscoveryDifferential, RecordsJointGridCoverageAndDistinguishesMissi
                 queries.end());
     }
   }
+}
+
+TEST(FeatureDiscoveryDifferential, DistinguishesUnavailableRankEvidenceFromCallbackFailure) {
+  FeatureSupportBatch batch;
+  batch.coordinate_dimension = 1;
+  batch.visited_row_count = 1;
+  batch.complete_visit = true;
+  batch.samples = { Sample(1, 0.0), Sample(2, -1.0), Sample(3, 1.0) };
+  for (FeatureSupportSample& sample : batch.samples) {
+    sample.direction_jacobian = { 0.0, 0.0, 0.0 };
+    sample.accumulates_measure = sample.sample_id == 1;
+  }
+  batch.cell_axes = { { 7, 0, 1, 0, 2, 2.0 } };
+  int callback_count = 0;
+  const FeatureReevaluateFn callback = [&](const FeatureReevaluationRequest&, FeatureSupportSample*, std::string*) {
+    ++callback_count;
+    return true;
+  };
+
+  const FeatureDiscoveryResult result = DiscoverFeatures(batch, {}, callback);
+  ASSERT_EQ(result.coverage.size(), 1u);
+  EXPECT_EQ(callback_count, 0);
+  EXPECT_EQ(result.coverage[0].status, FeatureEvidenceStatus::kNumericalIncomplete);
+  EXPECT_EQ(result.coverage[0].incomplete_reason, FeatureCoverageIncompleteReason::kEvidenceUnavailable);
+}
+
+TEST(FeatureDiscoveryDifferential, CurrentVersionImplicitCellUsesItsOwnJointScope) {
+  FeatureSupportBatch batch;
+  batch.coordinate_dimension = 1;
+  batch.visited_row_count = 1;
+  batch.complete_visit = true;
+  batch.samples = { Sample(1, 0.0), Sample(2, -1.0), Sample(3, 1.0) };
+  batch.samples[0].mapping_evidence_kind = MappingEvidenceKind::kExactImageDimensionUpperBound;
+  batch.samples[0].image_dimension_upper_bound = 0;
+  for (size_t index = 1; index < batch.samples.size(); ++index) {
+    batch.samples[index].accumulates_measure = false;
+    batch.samples[index].weight = 0.0;
+  }
+  batch.cell_axes = { { 7, 0, 1, 0, 2, 2.0 } };
+
+  const FeatureDiscoveryResult result = DiscoverFeatures(batch, {});
+  ASSERT_EQ(result.coverage.size(), 1u);
+  EXPECT_EQ(result.coverage[0].scope_id, 7);
+  for (FeatureMechanism mechanism : { FeatureMechanism::kMeasureAtom, FeatureMechanism::kStrictConfinement }) {
+    const FeatureCandidate* candidate = Candidate(result, mechanism);
+    if (candidate == nullptr) {
+      ADD_FAILURE() << "missing candidate for mechanism " << static_cast<int>(mechanism);
+      continue;
+    }
+    EXPECT_EQ(candidate->scope_id, 7);
+    EXPECT_EQ(candidate->scope_kind, FeatureSupportScopeKind::kJoint);
+    if (candidate->scope_parameters.size() != 1u) {
+      ADD_FAILURE() << "unexpected scope parameter count for mechanism " << static_cast<int>(mechanism) << ": "
+                    << candidate->scope_parameters.size();
+      continue;
+    }
+    EXPECT_EQ(candidate->scope_parameters[0].role, FeatureParameterRole::kUnspecified);
+  }
+}
+
+TEST(FeatureDiscoveryDifferential, ImplicitCellScopeDoesNotAliasAnExplicitScopeId) {
+  FeatureSupportBatch batch;
+  batch.coordinate_dimension = 1;
+  batch.visited_row_count = 2;
+  batch.complete_visit = true;
+  batch.samples = { Sample(1, 0.0), Sample(2, -1.0), Sample(3, 1.0), Sample(4, 0.0), Sample(5, -1.0), Sample(6, 1.0) };
+  for (size_t index = 0; index < batch.samples.size(); ++index) {
+    FeatureSupportSample& sample = batch.samples[index];
+    sample.provenance.member_index = static_cast<int>(index / 3u);
+    sample.accumulates_measure = index % 3u == 0u;
+    sample.weight = sample.accumulates_measure ? 1.0 : 0.0;
+  }
+  for (size_t index : { 0u, 3u }) {
+    batch.samples[index].mapping_evidence_kind = MappingEvidenceKind::kExactImageDimensionUpperBound;
+    batch.samples[index].image_dimension_upper_bound = 0;
+  }
+  batch.cell_axes = { { 7, 0, 1, 0, 2, 2.0 }, { 42, 0, 4, 3, 5, 2.0 } };
+  batch.scopes = { { 42, 7, FeatureSupportScopeKind::kJoint } };
+
+  const FeatureDiscoveryResult result = DiscoverFeatures(batch, {});
+  ASSERT_EQ(result.coverage.size(), 2u);
+  EXPECT_EQ(result.coverage[0].cell_id, 7);
+  EXPECT_EQ(result.coverage[0].scope_id, 42);
+  EXPECT_EQ(result.coverage[1].cell_id, 42);
+  EXPECT_GE(result.coverage[1].scope_id, 0);
+  EXPECT_NE(result.coverage[1].scope_id, result.coverage[0].scope_id);
+}
+
+TEST(FeatureDiscoveryDifferential, ExactMappingProofDoesNotClaimCompleteSupportCoverage) {
+  FeatureSupportBatch batch;
+  batch.coordinate_dimension = 1;
+  batch.visited_row_count = 1;
+  batch.complete_visit = true;
+  batch.samples = { Sample(1, 0.0), Sample(2, -1.0), Sample(3, 1.0) };
+  batch.samples[0].mapping_evidence_kind = MappingEvidenceKind::kExactImageDimensionUpperBound;
+  batch.samples[0].image_dimension_upper_bound = 0;
+  batch.samples[1].constraints[0].value = -1.0;
+  for (size_t index = 1; index < batch.samples.size(); ++index) {
+    batch.samples[index].accumulates_measure = false;
+    batch.samples[index].weight = 0.0;
+  }
+  batch.cell_axes = { { 7, 0, 1, 0, 2, 2.0 } };
+  batch.edges = { { 1, 0, 1.0 }, { 0, 2, 1.0 } };
+
+  const FeatureDiscoveryResult result = DiscoverFeatures(batch, {});
+  const FeatureCandidate* atom = Candidate(result, FeatureMechanism::kMeasureAtom);
+  ASSERT_NE(atom, nullptr);
+  EXPECT_EQ(atom->status, FeatureEvidenceStatus::kConfirmed);
+  EXPECT_NE(atom->reason.find("reachable support"), std::string::npos);
+  ASSERT_EQ(result.coverage.size(), 1u);
+  EXPECT_EQ(result.coverage[0].status, FeatureEvidenceStatus::kNumericalIncomplete);
+  EXPECT_EQ(result.coverage[0].incomplete_reason, FeatureCoverageIncompleteReason::kSupportBoundary);
+  EXPECT_NE(Candidate(result, FeatureMechanism::kSupportBoundary), nullptr);
 }
 
 TEST(FeatureDiscoveryDifferential, CurrentVersionImplicitScopesHaveDistinctOrigins) {
@@ -1060,6 +1177,42 @@ TEST(FeatureDiscoveryConcentration, RejectsDiffuseFiniteWidthAndKeepsStableNarro
   ASSERT_NE(concentration, nullptr);
   EXPECT_EQ(concentration->status, FeatureEvidenceStatus::kConfirmed);
   EXPECT_LT(concentration->resolution, 0.01);
+}
+
+TEST(FeatureDiscoveryConcentration, AggregatesAcrossCellsWithoutInheritingTheFirstCellScope) {
+  FeatureSupportBatch batch;
+  batch.coordinate_dimension = 2;
+  batch.complete_visit = true;
+  batch.materialization_complete = true;
+  for (int index = 0; index < 4; ++index) {
+    FeatureSupportSample sample;
+    sample.sample_id = static_cast<uint64_t>(index + 1);
+    sample.provenance.member_index = 3;
+    sample.provenance.spectrum_node_id = 5;
+    sample.provenance.source_node_id = 7;
+    sample.provenance.sample_index = index;
+    sample.support_dimension = 1;
+    sample.finite_width = true;
+    sample.coordinates = { static_cast<double>(index), static_cast<double>(index) };
+    sample.active_coordinates = { index % 2 };
+    sample.direction[0] = 1.0;
+    sample.direction[1] = 0.001 * static_cast<double>(index - 1);
+    const double norm = std::hypot(sample.direction[0], sample.direction[1]);
+    sample.direction[0] /= norm;
+    sample.direction[1] /= norm;
+    sample.weight = 1.0;
+    batch.samples.push_back(std::move(sample));
+  }
+  batch.visited_row_count = batch.samples.size();
+
+  const FeatureDiscoveryResult result = DiscoverFeatures(batch, {});
+  const FeatureCandidate* concentration = Candidate(result, FeatureMechanism::kFiniteWidthConcentration);
+  ASSERT_NE(concentration, nullptr);
+  EXPECT_EQ(concentration->scope_id, kBranchAggregateFeatureScopeId);
+  EXPECT_EQ(concentration->scope_kind, FeatureSupportScopeKind::kJoint);
+  EXPECT_EQ(concentration->scope_active_coordinates, std::vector<int>({ 0, 1 }));
+  EXPECT_EQ(concentration->provenance.sample_index, -1);
+  EXPECT_DOUBLE_EQ(concentration->weighted_mass, 4.0);
 }
 
 TEST(FeatureDiscoverySkyField, FindsResolutionStableMaximumAndIsVisitOrderIndependent) {

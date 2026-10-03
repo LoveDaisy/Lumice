@@ -276,6 +276,73 @@ TEST(FeatureDiscoveryAdapter, ReplaysTwentyOneIndependentShapeCoordinatesThrough
   EXPECT_NE(callback_error.find("does not name a materialized product branch"), std::string::npos);
 }
 
+TEST(FeatureDiscoveryAdapter, ShapeOnlyProofDoesNotPromoteReachableSupportIntoCompleteCoverage) {
+  PrismCrystalParam prism;
+  prism.h_ = { DistributionType::kNoRandom, 1.0f, 0.0f };
+  prism.d_[0] = { DistributionType::kUniform, -1.0f, 0.4f };
+  prism.d_[1] = { DistributionType::kNoRandom, 1.0f, 0.0f };
+  prism.d_[2] = { DistributionType::kNoRandom, 1.0f, 0.0f };
+  prism.d_[3] = { DistributionType::kNoRandom, 1.0f, 0.0f };
+  prism.d_[4] = { DistributionType::kNoRandom, 1.0f, 0.0f };
+  prism.d_[5] = { DistributionType::kNoRandom, 1.0f, 0.0f };
+
+  CrystalConfig crystal;
+  crystal.id_ = 1;
+  crystal.param_ = prism;
+  crystal.axis_.latitude_dist = { DistributionType::kNoRandom, 90.0f, 0.0f };
+  crystal.axis_.azimuth_dist = { DistributionType::kNoRandom, 0.0f, 0.0f };
+  crystal.axis_.roll_dist = { DistributionType::kNoRandom, 0.0f, 0.0f };
+
+  ConfigManager config;
+  config.crystals_.emplace(1, crystal);
+  config.scene_.light_source_.param_ = SunParam{ 90.0f, 0.0f, 0.0f };
+  config.scene_.light_source_.spectrum_ = std::vector<WlParam>{ { 550.0f, 1.0f } };
+  config.scene_.max_hits_ = 2;
+  ScatteringSetting setting{};
+  setting.crystal_ = crystal;
+  setting.crystal_proportion_ = 1.0f;
+  MsInfo layer{};
+  layer.setting_.push_back(std::move(setting));
+  config.scene_.ms_.push_back(std::move(layer));
+
+  SceneMeasureRequest request;
+  request.layer_crystal_ids = { 1 };
+  request.path_layers = { { 1, 2 } };
+  request.sample_count = 8;
+  request.seed = 0x64945u;
+
+  analytic::FeatureSupportBatch batch;
+  SceneMeasureResult measure;
+  analytic::FeatureReevaluateFn reevaluate;
+  const Error error = BuildFeatureSupportBatch(config, request, &batch, &measure, &reevaluate);
+  ASSERT_TRUE(error.Ok()) << error.message;
+  ASSERT_TRUE(reevaluate);
+  EXPECT_FALSE(batch.materialization_complete)
+      << "the sampled shape support crosses the real prism validity boundary and must not be called complete";
+  const auto center = std::find_if(batch.samples.begin(), batch.samples.end(), [](const auto& sample) {
+    return sample.mapping_evidence_kind == analytic::MappingEvidenceKind::kExactImageDimensionUpperBound &&
+           sample.accumulates_measure && sample.numerically_available && sample.weight > 0.0;
+  });
+  ASSERT_NE(center, batch.samples.end())
+      << "the reachable side of the same product support must retain a positive-mass exact direction proof";
+  const int center_index = static_cast<int>(std::distance(batch.samples.begin(), center));
+  const analytic::FeatureDiscoveryResult discovery = analytic::DiscoverFeatures(batch, {}, reevaluate);
+  const auto coverage = std::find_if(discovery.coverage.begin(), discovery.coverage.end(), [&](const auto& record) {
+    return record.cell_id == center_index && record.scope_kind == analytic::FeatureSupportScopeKind::kJoint;
+  });
+  ASSERT_NE(coverage, discovery.coverage.end());
+  EXPECT_EQ(coverage->status, analytic::FeatureEvidenceStatus::kNumericalIncomplete);
+  EXPECT_TRUE(coverage->incomplete_reason == analytic::FeatureCoverageIncompleteReason::kSupportBoundary ||
+              coverage->incomplete_reason == analytic::FeatureCoverageIncompleteReason::kEvidenceUnavailable);
+
+  const auto atom = std::find_if(discovery.candidates.begin(), discovery.candidates.end(), [&](const auto& candidate) {
+    return candidate.mechanism == analytic::FeatureMechanism::kMeasureAtom &&
+           candidate.status == analytic::FeatureEvidenceStatus::kConfirmed;
+  });
+  ASSERT_NE(atom, discovery.candidates.end());
+  EXPECT_NE(atom->reason.find("reachable support"), std::string::npos);
+}
+
 TEST(FeatureDiscoveryAdapter, DifferentiatesTheComposedDirectionThroughBothLayers) {
   ConfigManager config = Scene();
   CrystalConfig second = config.crystals_.at(1);

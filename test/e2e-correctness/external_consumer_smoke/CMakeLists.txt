@@ -7,7 +7,7 @@ project(LumiceAnalyticExternalConsumerSmoke C)
 
 # ExactVersion while at 0.x: this must equal the installed LUMICE_ANALYTIC_API_VERSION
 # (doc/analytic-api.md sections 8.3 / 8.4).
-find_package(LumiceAnalytic 14 REQUIRED)
+find_package(LumiceAnalytic 15 REQUIRED)
 
 add_executable(external_consumer_smoke main.c)
 target_link_libraries(external_consumer_smoke PRIVATE Lumice::lumice_analytic)
