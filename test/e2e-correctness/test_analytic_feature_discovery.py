@@ -65,7 +65,8 @@ _PRELUDE = textwrap.dedent(
                     ("direction_jacobian_error", c_double), ("direction_jacobian_resolution", c_double),
                     ("constraint_count", c_int), ("constraint_stride", c_uint32),
                     ("constraints", POINTER(Constraint)), ("numerically_available", c_int),
-                    ("accumulates_measure", c_int)]
+                    ("accumulates_measure", c_int), ("mapping_evidence_kind", c_int),
+                    ("image_dimension_upper_bound", c_int), ("mapping_error_bound", c_double)]
 
     class Edge(Structure):
         _fields_ = [("first", c_int), ("second", c_int), ("parameter_distance", c_double)]
@@ -125,10 +126,11 @@ _PRELUDE = textwrap.dedent(
     ATOM, CONTINUOUS = 0, 1
     TIR = 2
     OPTICAL_KINK, MEASURE_ATOM, BRIGHTNESS_MAXIMUM = 3, 6, 9
+    NO_MAPPING_EVIDENCE, EXACT_IMAGE_DIMENSION_UPPER_BOUND = 0, 1
 
     lib = ctypes.CDLL(LIB)
     lib.LUMICE_ANALYTIC_GetApiVersion.restype = c_int
-    assert lib.LUMICE_ANALYTIC_GetApiVersion() == 10
+    assert lib.LUMICE_ANALYTIC_GetApiVersion() == 11
     lib.LUMICE_ANALYTIC_DiscoverFeatures.restype = c_int
     lib.LUMICE_ANALYTIC_DiscoverFeatures.argtypes = [POINTER(Batch), POINTER(Options), CALLBACK, c_void_p,
                                                       POINTER(Result)]
@@ -167,7 +169,7 @@ _PRELUDE = textwrap.dedent(
         if reverse:
             samples.reverse()
         array = (Sample * len(samples))(*samples)
-        batch = Batch(sizeof(Batch), 2, 0, len(samples), 1, 1, len(samples), sizeof(Sample), array, 0, None, 0, None)
+        batch = Batch(sizeof(Batch), 3, 0, len(samples), 1, 1, len(samples), sizeof(Sample), array, 0, None, 0, None)
         return batch, array
 
     def discover(batch, callback=CALLBACK()):
@@ -242,7 +244,7 @@ def test_callback_refines_nonfirst_interface_and_preserves_owned_strings() -> No
             samples.append(sample)
         sample_array = (Sample * 2)(*samples)
         edges = (Edge * 1)(Edge(0, 1, 2.0))
-        batch = Batch(sizeof(Batch), 2, 1, 2, 1, 1, 2, sizeof(Sample), sample_array, 1, edges, 0, None)
+        batch = Batch(sizeof(Batch), 3, 1, 2, 1, 1, 2, sizeof(Sample), sample_array, 1, edges, 0, None)
 
         @CALLBACK
         def refine(request, out, user_data):
@@ -277,6 +279,59 @@ def test_callback_refines_nonfirst_interface_and_preserves_owned_strings() -> No
         assert candidate.residual <= 1.0e-8 and abs(candidate.direction[0] - 1.0) <= 1.0e-12
         assert candidate.active_constraints[0] == b"layer[1].internal[2].tir"
         assert b"callback refinement" in candidate.reason
+        lib.LUMICE_ANALYTIC_ReleaseFeatureDiscoveryResult(byref(result))
+        """
+    )
+
+
+def test_exact_mapping_certificate_is_required_for_a_continuous_atom() -> None:
+    _run_child(
+        """
+        keep = []
+        samples = []
+        for index, x in enumerate((-1.0, 0.0, 1.0)):
+            coordinates = (c_double * 1)(x)
+            active = (c_int * 1)(0)
+            jacobian = (c_double * 3)(0.0, 0.0, 0.0)
+            available = (c_uint8 * 1)(1)
+            keep.extend((coordinates, active, jacobian, available))
+            sample = Sample()
+            sample.struct_size = sizeof(Sample)
+            sample.sample_id = index + 1
+            sample.measure_kind = CONTINUOUS
+            sample.support_dimension = 1
+            sample.coordinates = coordinates
+            sample.active_coordinates = active
+            sample.direction[:] = (1.0, 0.0, 0.0)
+            sample.weight = 1.0 if index == 1 else 0.0
+            sample.direction_jacobian_available = 1
+            sample.direction_jacobian = jacobian
+            sample.direction_jacobian_column_available = available
+            sample.direction_jacobian_resolution = 1.0e-4
+            sample.constraint_stride = sizeof(Constraint)
+            sample.numerically_available = 1
+            sample.accumulates_measure = int(index == 1)
+            samples.append(sample)
+        samples[1].mapping_evidence_kind = EXACT_IMAGE_DIMENSION_UPPER_BOUND
+        samples[1].image_dimension_upper_bound = 0
+        sample_array = (Sample * 3)(*samples)
+        edges = (Edge * 2)(Edge(0, 1, 1.0), Edge(1, 2, 1.0))
+        axes = (CellAxis * 1)(CellAxis(7, 0, 0, 1, 2, 2.0))
+        batch = Batch(sizeof(Batch), 3, 1, 1, 1, 1, 3, sizeof(Sample), sample_array,
+                      2, edges, 1, axes)
+
+        rc, result = discover(batch)
+        assert rc == OK
+        atoms = [result.candidates[i] for i in range(result.candidate_count)
+                 if result.candidates[i].mechanism == MEASURE_ATOM]
+        assert len(atoms) == 1 and atoms[0].status == CONFIRMED and atoms[0].weighted_mass == 1.0
+        lib.LUMICE_ANALYTIC_ReleaseFeatureDiscoveryResult(byref(result))
+
+        sample_array[1].mapping_evidence_kind = NO_MAPPING_EVIDENCE
+        rc, result = discover(batch)
+        assert rc == OK
+        assert not [result.candidates[i] for i in range(result.candidate_count)
+                    if result.candidates[i].mechanism == MEASURE_ATOM]
         lib.LUMICE_ANALYTIC_ReleaseFeatureDiscoveryResult(byref(result))
         """
     )
@@ -331,7 +386,7 @@ def test_v2_dynamic_coordinates_and_frozen_v1_prefix() -> None:
         sample.numerically_available = 1
         sample.accumulates_measure = 1
         samples = (Sample * 1)(sample)
-        batch = Batch(sizeof(Batch), 2, dimension, 1, 1, 1, 1, sizeof(Sample), samples, 0, None, 0, None)
+        batch = Batch(sizeof(Batch), 3, dimension, 1, 1, 1, 1, sizeof(Sample), samples, 0, None, 0, None)
         rc, result = discover(batch)
         assert rc == OK and result.evaluated_sample_count == 1
         lib.LUMICE_ANALYTIC_ReleaseFeatureDiscoveryResult(byref(result))
@@ -344,9 +399,30 @@ def test_v2_dynamic_coordinates_and_frozen_v1_prefix() -> None:
         assert lib.LUMICE_ANALYTIC_DiscoverFeatures(byref(batch), byref(opts), CALLBACK(), None,
                                                     byref(result)) == INVALID_VALUE
 
-        # A real version-1 caller's frozen prefixes remain accepted by the version-10 library.
+        # A real version-2 caller's frozen sample prefix remains accepted without acquiring evidence.
+        class Version2Sample(Structure):
+            _fields_ = Sample._fields_[:-3]
+
+        version2_sample = Version2Sample()
+        version2_sample.struct_size = sizeof(Version2Sample)
+        version2_sample.sample_id = 2
+        version2_sample.measure_kind = ATOM
+        version2_sample.direction[:] = (1.0, 0.0, 0.0)
+        version2_sample.weight = 0.5
+        version2_sample.constraint_stride = sizeof(Constraint)
+        version2_sample.numerically_available = 1
+        version2_sample.accumulates_measure = 1
+        version2_samples = (Version2Sample * 1)(version2_sample)
+        version2_batch = Batch(sizeof(Batch), 2, 0, 1, 1, 1, 1, sizeof(Version2Sample),
+                               ctypes.cast(version2_samples, POINTER(Sample)), 0, None, 0, None)
+        result = output()
+        assert lib.LUMICE_ANALYTIC_DiscoverFeatures(byref(version2_batch), byref(opts), CALLBACK(), None,
+                                                    byref(result)) == OK
+        lib.LUMICE_ANALYTIC_ReleaseFeatureDiscoveryResult(byref(result))
+
+        # A real version-1 caller's frozen prefixes remain accepted by the version-11 library.
         class LegacySample(Structure):
-            _fields_ = Sample._fields_[:-1]
+            _fields_ = Sample._fields_[:-4]
 
         class LegacyBatch(Structure):
             _fields_ = Batch._fields_[:-2]

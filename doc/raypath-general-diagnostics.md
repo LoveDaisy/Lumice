@@ -72,7 +72,7 @@ schema 1 请求仍保留历史 fixture 输出作为 ABI 兼容前缀；该兼容
 
 ## 共享数值边界
 
-独立 analytic 库提供可批量消费的数值，不导出产品 report。API version 10 的
+独立 analytic 库提供可批量消费的数值，不导出产品 report。API version 11 的
 `LUMICE_ANALYTIC_DiscoverFeatures` 接收 `struct_size`/stride 版本化的 support rows、constraints、
 topology edges 和同步 callback，并返回 candidates、mechanism records 与 sky field；所有输出和字符串
 由单一 result storage 持有并通过 `LUMICE_ANALYTIC_ReleaseFeatureDiscoveryResult` 释放。通用发现所需的行数据包括具体几何/成员/波长/姿态、方向与坐标约定、有限入口测度、逐接口 `T/R`、命名的有效域和 TIR margin、必要的一阶/二阶切导数和折射率导数，以及逐行数值状态。

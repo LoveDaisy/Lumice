@@ -16,7 +16,8 @@ namespace lumice::analytic {
 
 constexpr int kLegacyFeatureDiscoveryCoordinateDimension = 16;
 constexpr uint32_t kFeatureSupportBatchVersionV1 = 1;
-constexpr uint32_t kFeatureSupportBatchVersion = 2;
+constexpr uint32_t kFeatureSupportBatchVersionV2 = 2;
+constexpr uint32_t kFeatureSupportBatchVersion = 3;
 
 enum class FeatureEvidenceStatus {
   kConfirmed,
@@ -44,6 +45,11 @@ enum class FeatureMechanism {
 enum class SupportMeasureKind {
   kAtom,
   kContinuous,
+};
+
+enum class MappingEvidenceKind {
+  kNone,
+  kExactImageDimensionUpperBound,
 };
 
 enum class ConstraintKind {
@@ -106,6 +112,12 @@ struct FeatureSupportSample {
   double direction_jacobian_resolution = 0.0;
   std::vector<SupportConstraint> constraints;
   bool numerically_available = true;
+  // This is a mathematical certificate about the complete continuous support cell, not an
+  // inference from finitely many Jacobian samples. An exact upper bound of zero can therefore
+  // certify a positive-mass continuous atom; sampled rank zero alone cannot.
+  MappingEvidenceKind mapping_evidence_kind = MappingEvidenceKind::kNone;
+  int image_dimension_upper_bound = -1;
+  double mapping_error_bound = 0.0;
 };
 
 struct FeatureSupportEdge {

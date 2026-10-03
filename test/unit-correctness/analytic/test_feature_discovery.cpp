@@ -170,6 +170,38 @@ TEST(FeatureDiscoveryModel, RejectsAnUnknownBatchVersion) {
   EXPECT_NE(error.find("version"), std::string::npos);
 }
 
+TEST(FeatureDiscoveryModel, RequiresExactMappingEvidenceToCoverACompleteCell) {
+  FeatureSupportBatch batch;
+  batch.coordinate_dimension = 1;
+  batch.visited_row_count = 1;
+  batch.complete_visit = true;
+  FeatureSupportSample center = Sample(1, 0.0);
+  center.direction_jacobian = { 0.0, 0.0, 0.0 };
+  center.mapping_evidence_kind = MappingEvidenceKind::kExactImageDimensionUpperBound;
+  center.image_dimension_upper_bound = 0;
+  FeatureSupportSample lower = center;
+  lower.sample_id = 2;
+  lower.coordinates[0] = -1.0;
+  lower.accumulates_measure = false;
+  lower.mapping_evidence_kind = MappingEvidenceKind::kNone;
+  lower.image_dimension_upper_bound = -1;
+  FeatureSupportSample upper = lower;
+  upper.sample_id = 3;
+  upper.coordinates[0] = 1.0;
+  batch.samples = { center, lower, upper };
+
+  std::string error;
+  EXPECT_FALSE(ValidateFeatureSupportBatch(batch, &error));
+  EXPECT_NE(error.find("complete support cell"), std::string::npos) << error;
+
+  batch.cell_axes.push_back({ 0, 0, 1, 0, 2, 2.0 });
+  EXPECT_TRUE(ValidateFeatureSupportBatch(batch, &error)) << error;
+
+  batch.samples[0].image_dimension_upper_bound = 2;
+  EXPECT_FALSE(ValidateFeatureSupportBatch(batch, &error));
+  EXPECT_NE(error.find("exact valid bound"), std::string::npos) << error;
+}
+
 TEST(FeatureDiscoveryModel, NamesAllPublicStatesAndMechanisms) {
   EXPECT_STREQ(FeatureEvidenceStatusName(FeatureEvidenceStatus::kNumericalIncomplete), "numerical_incomplete");
   EXPECT_STREQ(FeatureMechanismName(FeatureMechanism::kOpticalKink), "optical_kink");
@@ -260,6 +292,104 @@ TEST(FeatureDiscoveryDifferential, RealCellNeighborhoodConfirmsRankLossAgainstIt
   EXPECT_EQ(rank_loss->mapping_rank, 1);
 }
 
+TEST(FeatureDiscoveryDifferential, RefinesABracketedFoldBetweenMaterializedNodes) {
+  FeatureSupportBatch batch;
+  batch.coordinate_dimension = 1;
+  batch.visited_row_count = 1;
+  batch.complete_visit = true;
+  auto fold_sample = [](uint64_t id, double x, bool accumulates_measure) {
+    FeatureSupportSample sample = Sample(id, x);
+    const double phase = x * x;
+    sample.accumulates_measure = accumulates_measure;
+    sample.direction[0] = std::cos(phase);
+    sample.direction[1] = std::sin(phase);
+    sample.direction_jacobian = { -2.0 * x * std::sin(phase), 2.0 * x * std::cos(phase), 0.0 };
+    return sample;
+  };
+  batch.samples = { fold_sample(1, 0.25, true), fold_sample(2, -0.75, false), fold_sample(3, 1.25, false) };
+  batch.cell_axes.push_back({ 1, 0, 1, 0, 2, 2.0 });
+  int callback_count = 0;
+  const FeatureReevaluateFn callback = [&](const FeatureReevaluationRequest& request, FeatureSupportSample* sample,
+                                           std::string*) {
+    ++callback_count;
+    *sample = fold_sample(100 + static_cast<uint64_t>(callback_count), request.coordinates[0], false);
+    sample->provenance = request.provenance;
+    return true;
+  };
+
+  const FeatureDiscoveryResult result = DiscoverFeatures(batch, {}, callback);
+  const FeatureCandidate* rank_loss = Candidate(result, FeatureMechanism::kInteriorRankLoss);
+  ASSERT_NE(rank_loss, nullptr);
+  EXPECT_EQ(rank_loss->status, FeatureEvidenceStatus::kConfirmed);
+  EXPECT_EQ(rank_loss->mapping_rank, 0);
+  EXPECT_NEAR(rank_loss->direction[0], 1.0, 1e-12);
+  EXPECT_NEAR(rank_loss->direction[1], 0.0, 1e-12);
+  EXPECT_GT(callback_count, 0);
+  EXPECT_LE(callback_count, FeatureDiscoveryOptions{}.maximum_refinement_steps);
+}
+
+TEST(FeatureDiscoveryDifferential, DoesNotInvokeRefinementWithoutASignedFoldBracket) {
+  FeatureSupportBatch batch;
+  batch.coordinate_dimension = 1;
+  batch.visited_row_count = 1;
+  batch.complete_visit = true;
+  auto regular_sample = [](uint64_t id, double x, bool accumulates_measure) {
+    FeatureSupportSample sample = Sample(id, x);
+    sample.accumulates_measure = accumulates_measure;
+    sample.direction[0] = std::cos(x);
+    sample.direction[1] = std::sin(x);
+    sample.direction_jacobian = { -std::sin(x), std::cos(x), 0.0 };
+    return sample;
+  };
+  batch.samples = { regular_sample(1, 0.0, true), regular_sample(2, -0.5, false), regular_sample(3, 0.5, false) };
+  batch.cell_axes.push_back({ 1, 0, 1, 0, 2, 1.0 });
+  int callback_count = 0;
+  const FeatureReevaluateFn callback = [&](const FeatureReevaluationRequest&, FeatureSupportSample*, std::string*) {
+    ++callback_count;
+    return false;
+  };
+
+  const FeatureDiscoveryResult result = DiscoverFeatures(batch, {}, callback);
+  EXPECT_EQ(Candidate(result, FeatureMechanism::kInteriorRankLoss), nullptr);
+  EXPECT_EQ(callback_count, 0);
+}
+
+TEST(FeatureDiscoveryDifferential, ReportsIncompleteWhenAFoldCallbackExhaustsItsBudget) {
+  FeatureSupportBatch batch;
+  batch.coordinate_dimension = 1;
+  batch.visited_row_count = 1;
+  batch.complete_visit = true;
+  auto fold_sample = [](uint64_t id, double x, bool accumulates_measure) {
+    FeatureSupportSample sample = Sample(id, x);
+    const double phase = x * x;
+    sample.accumulates_measure = accumulates_measure;
+    sample.direction[0] = std::cos(phase);
+    sample.direction[1] = std::sin(phase);
+    sample.direction_jacobian = { -2.0 * x * std::sin(phase), 2.0 * x * std::cos(phase), 0.0 };
+    return sample;
+  };
+  batch.samples = { fold_sample(1, 0.25, true), fold_sample(2, -0.75, false), fold_sample(3, 1.25, false) };
+  batch.cell_axes.push_back({ 1, 0, 1, 0, 2, 2.0 });
+  int callback_count = 0;
+  const FeatureReevaluateFn callback = [&](const FeatureReevaluationRequest& request, FeatureSupportSample* sample,
+                                           std::string*) {
+    ++callback_count;
+    *sample = fold_sample(100, request.coordinates[0], false);
+    sample->provenance = request.provenance;
+    sample->direction_jacobian_available = false;
+    sample->direction_jacobian.clear();
+    sample->direction_jacobian_column_available.clear();
+    return true;
+  };
+  FeatureDiscoveryOptions options;
+  options.maximum_refinement_steps = 1;
+
+  const FeatureDiscoveryResult result = DiscoverFeatures(batch, options, callback);
+  EXPECT_EQ(Candidate(result, FeatureMechanism::kInteriorRankLoss), nullptr);
+  EXPECT_EQ(callback_count, 1);
+  EXPECT_EQ(result.mechanisms.front().status, FeatureEvidenceStatus::kNumericalIncomplete);
+}
+
 TEST(FeatureDiscoveryDifferential, PositiveMeasureConstantBranchIsAnAtomNotRankLossEverywhere) {
   FeatureSupportBatch batch;
   batch.coordinate_dimension = 1;
@@ -272,6 +402,8 @@ TEST(FeatureDiscoveryDifferential, PositiveMeasureConstantBranchIsAnAtomNotRankL
     batch.samples.push_back(std::move(sample));
   }
   batch.cell_axes.push_back({ 0, 0, 0, 1, 2, 2.0 });
+  batch.samples[1].mapping_evidence_kind = MappingEvidenceKind::kExactImageDimensionUpperBound;
+  batch.samples[1].image_dimension_upper_bound = 0;
 
   const FeatureDiscoveryResult result = DiscoverFeatures(batch, {});
   EXPECT_EQ(Candidate(result, FeatureMechanism::kInteriorRankLoss), nullptr);
@@ -279,6 +411,109 @@ TEST(FeatureDiscoveryDifferential, PositiveMeasureConstantBranchIsAnAtomNotRankL
   ASSERT_NE(atom, nullptr);
   EXPECT_EQ(atom->status, FeatureEvidenceStatus::kConfirmed);
   ASSERT_NE(Candidate(result, FeatureMechanism::kStrictConfinement), nullptr);
+}
+
+TEST(FeatureDiscoveryDifferential, AxisRankZeroDoesNotProveAContinuousAtomOnAJointSupport) {
+  FeatureSupportBatch batch;
+  batch.coordinate_dimension = 2;
+  batch.visited_row_count = 1;
+  batch.complete_visit = true;
+  auto joint_sample = [](uint64_t id, double x, double y, bool accumulates_measure) {
+    FeatureSupportSample sample;
+    sample.sample_id = id;
+    sample.support_dimension = 2;
+    sample.coordinates = { x, y };
+    sample.active_coordinates = { 0, 1 };
+    const double phase = x * x * y * y;
+    const double slopes[2] = { 2.0 * x * y * y, 2.0 * y * x * x };
+    sample.direction[0] = std::cos(phase);
+    sample.direction[1] = std::sin(phase);
+    sample.weight = accumulates_measure ? 1.0 : 0.0;
+    sample.accumulates_measure = accumulates_measure;
+    sample.direction_jacobian_available = true;
+    sample.direction_jacobian = { -std::sin(phase) * slopes[0],
+                                  -std::sin(phase) * slopes[1],
+                                  std::cos(phase) * slopes[0],
+                                  std::cos(phase) * slopes[1],
+                                  0.0,
+                                  0.0 };
+    sample.direction_jacobian_column_available = { 1, 1 };
+    sample.direction_jacobian_resolution = 1e-4;
+    return sample;
+  };
+  batch.samples = { joint_sample(1, 0.0, 0.0, true), joint_sample(2, -1.0, 0.0, false),
+                    joint_sample(3, 1.0, 0.0, false), joint_sample(4, 0.0, -1.0, false),
+                    joint_sample(5, 0.0, 1.0, false) };
+  batch.cell_axes = { { 0, 0, 1, 0, 2, 2.0 }, { 0, 1, 3, 0, 4, 2.0 } };
+  int callback_count = 0;
+  const FeatureReevaluateFn callback = [&](const FeatureReevaluationRequest& request, FeatureSupportSample* sample,
+                                           std::string*) {
+    ++callback_count;
+    *sample = joint_sample(100 + static_cast<uint64_t>(callback_count), request.coordinates[0], request.coordinates[1],
+                           false);
+    sample->provenance = request.provenance;
+    return true;
+  };
+
+  const FeatureDiscoveryResult result = DiscoverFeatures(batch, {}, callback);
+  EXPECT_EQ(Candidate(result, FeatureMechanism::kMeasureAtom), nullptr);
+  EXPECT_GT(callback_count, 0) << "joint support search must inspect coordinates away from the axial probes";
+}
+
+TEST(FeatureDiscoveryDifferential, RefinesAMultidimensionalRankLossUsingTheCompleteTangentMap) {
+  FeatureSupportBatch batch;
+  batch.coordinate_dimension = 2;
+  batch.visited_row_count = 1;
+  batch.complete_visit = true;
+  auto fold_sample = [](uint64_t id, double u, double v, bool accumulates_measure) {
+    FeatureSupportSample sample;
+    sample.sample_id = id;
+    sample.support_dimension = 2;
+    sample.coordinates = { u, v };
+    sample.active_coordinates = { 0, 1 };
+    const double phase = v * v;
+    sample.direction[0] = std::cos(u) * std::cos(phase);
+    sample.direction[1] = std::sin(u) * std::cos(phase);
+    sample.direction[2] = std::sin(phase);
+    sample.weight = accumulates_measure ? 1.0 : 0.0;
+    sample.accumulates_measure = accumulates_measure;
+    sample.direction_jacobian_available = true;
+    sample.direction_jacobian = {
+      -std::sin(u) * std::cos(phase),
+      -2.0 * v * std::cos(u) * std::sin(phase),
+      std::cos(u) * std::cos(phase),
+      -2.0 * v * std::sin(u) * std::sin(phase),
+      0.0,
+      2.0 * v * std::cos(phase),
+    };
+    sample.direction_jacobian_column_available = { 1, 1 };
+    sample.direction_jacobian_resolution = 1e-4;
+    return sample;
+  };
+  batch.samples = { fold_sample(1, 0.2, 0.25, true), fold_sample(2, -0.8, 0.25, false),
+                    fold_sample(3, 1.2, 0.25, false), fold_sample(4, 0.2, -0.75, false),
+                    fold_sample(5, 0.2, 1.25, false) };
+  batch.cell_axes = { { 0, 0, 1, 0, 2, 2.0 }, { 0, 1, 3, 0, 4, 2.0 } };
+  int callback_count = 0;
+  const FeatureReevaluateFn callback = [&](const FeatureReevaluationRequest& request, FeatureSupportSample* sample,
+                                           std::string*) {
+    ++callback_count;
+    *sample =
+        fold_sample(100 + static_cast<uint64_t>(callback_count), request.coordinates[0], request.coordinates[1], false);
+    sample->provenance = request.provenance;
+    return true;
+  };
+
+  const FeatureDiscoveryResult result = DiscoverFeatures(batch, {}, callback);
+  const FeatureCandidate* rank_loss = Candidate(result, FeatureMechanism::kInteriorRankLoss);
+  ASSERT_NE(rank_loss, nullptr);
+  EXPECT_EQ(rank_loss->status, FeatureEvidenceStatus::kConfirmed);
+  EXPECT_EQ(rank_loss->mapping_rank, 1);
+  EXPECT_NEAR(rank_loss->direction[0], std::cos(0.2), 1e-10);
+  EXPECT_NEAR(rank_loss->direction[1], std::sin(0.2), 1e-10);
+  EXPECT_NEAR(rank_loss->direction[2], 0.0, 1e-10);
+  EXPECT_GT(callback_count, 0);
+  EXPECT_LE(callback_count, FeatureDiscoveryOptions{}.maximum_refinement_steps);
 }
 
 TEST(FeatureDiscoveryDifferential, IsolatedRankZeroDoesNotBecomeAPointMass) {

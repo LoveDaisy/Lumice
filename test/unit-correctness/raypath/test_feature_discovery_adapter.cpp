@@ -162,6 +162,8 @@ TEST(FeatureDiscoveryAdapter, ReplaysTwentyOneIndependentShapeCoordinatesThrough
   });
   ASSERT_NE(positive, batch.samples.end()) << measure.reason;
   EXPECT_EQ(positive->support_dimension, 21);
+  EXPECT_EQ(positive->mapping_evidence_kind, analytic::MappingEvidenceKind::kExactImageDimensionUpperBound);
+  EXPECT_EQ(positive->image_dimension_upper_bound, 0);
   ASSERT_TRUE(positive->direction_jacobian_available);
   for (int coordinate : positive->active_coordinates) {
     double norm2 = 0.0;
@@ -180,6 +182,14 @@ TEST(FeatureDiscoveryAdapter, ReplaysTwentyOneIndependentShapeCoordinatesThrough
     const double upper = batch.samples[static_cast<size_t>(axis.upper)].weight;
     return std::fabs(lower - upper) > 1e-12;
   })) << "native 2A/S weight must be recomputed when a sampled shape coordinate changes";
+
+  const analytic::FeatureDiscoveryResult discovery = analytic::DiscoverFeatures(batch, {}, reevaluate);
+  const auto atom = std::find_if(discovery.candidates.begin(), discovery.candidates.end(), [](const auto& candidate) {
+    return candidate.mechanism == analytic::FeatureMechanism::kMeasureAtom &&
+           candidate.status == analytic::FeatureEvidenceStatus::kConfirmed;
+  });
+  EXPECT_NE(atom, discovery.candidates.end())
+      << "the exact shape-only direction proof must preserve real positive-mass continuous atoms";
 
   analytic::FeatureReevaluationRequest invalid_request;
   invalid_request.provenance = positive->provenance;

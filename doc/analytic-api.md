@@ -10,7 +10,7 @@
 > per-pose diagnostics on `FiberResult` (version 5, §4.3); and module B v1, the band sum
 > `LUMICE_ANALYTIC_BandSum` (version 6, §4.6), the general diagnostic-field direct batch
 > (version 8, §4.8; its result layout remains the frozen version 7 layout), and support-driven
-> general feature discovery (version 10, §4.9). Module A serves the Analyze workspace's first phase,
+> general feature discovery (version 11, §4.9). Module A serves the Analyze workspace's first phase,
 > module B its second, the single-path all-sky map (`doc/raypath-analysis.md` §5.1.8). The library is not in any
 > download package yet: that is §8.8's checklist, not done.
 >
@@ -1236,7 +1236,7 @@ per pixel for the merged pair, the band sum's `1/√K_eff` `2.0 %`: `±1.28σ` o
 The contract's §6 unit and §8 conversion therefore hold for this implementation with nothing fitted,
 which also checks the `kLiAreaPerEngineArea` factor and the weight's Fresnel factor end to end.
 
-### 4.9 General support-driven feature discovery (as built, API version 10)
+### 4.9 General support-driven feature discovery (as built, API version 11)
 
 `LUMICE_ANALYTIC_DiscoverFeatures` consumes a finite description of an actual scene measure. A
 support row identifies its discrete provenance, continuous embedding coordinates and active tangent
@@ -1272,11 +1272,27 @@ strings are owned by one result storage block until `ReleaseFeatureDiscoveryResu
 NULL-safe and idempotent. Calls keep no writable global state and are re-entrant for distinct output
 and callback state.
 
+Continuous critical points are searched inside real support cells rather than only at materialized
+nodes. One-dimensional cells refine signed tangent-derivative brackets; higher-dimensional cells
+refine signed S² tangent minors and accept a result only when the complete restricted differential
+actually loses rank. Callback calls share the configured refinement budget, and failures or exhausted
+resolution remain numerical outcomes rather than absence proofs.
+
+Finite Jacobian samples never prove that a continuous branch is constant on positive measure. A
+confirmed continuous `MEASURE_ATOM` requires the version-3 row's
+`EXACT_IMAGE_DIMENSION_UPPER_BOUND` certificate with bound zero, zero error, positive mass, and a
+complete local cell covering every active coordinate. The same certificate can prove strict image
+confinement with a bound below two; one-dimensional support is strictly confined by dimension alone.
+Without such a proof, sampled low rank remains a candidate. The product adapter emits the exact
+zero-dimensional certificate only when every active continuous input changes prism shape distances
+while the fixed face-normal sequence makes the composed outgoing direction independent of them.
+
 Every variable input row has a leading `struct_size`; rows and nested constraints use explicit
-strides. Version 10 introduces support-batch version 2: the legacy 16-coordinate ceiling is retained
+strides. Version 10 introduced support-batch version 2: the legacy 16-coordinate ceiling is retained
 only for version-1 batches, while version 2 has dynamic coordinate storage, an explicit
-`accumulates_measure` flag and explicit local cell axes. A genuine version-1 prefix remains readable;
-version-2 rows and batches require their complete appended extents. A bad version,
+`accumulates_measure` flag and explicit local cell axes. Version 11 adds support-batch version 3 and
+the mapping-certificate fields at the end of each sample. Genuine version-1 and version-2 prefixes
+remain readable and default to no certificate; version-3 rows require their complete appended extent. A bad version,
 extent, stride, enum, pointer, non-finite scalar, unit direction, topology edge or duplicated sample
 id is a call-level `ERR_INVALID_VALUE`/`ERR_NULL_ARG`, with the output zero-filled after its preserved
 `struct_size`. Valid physical emptiness and unavailable local numerics are result states instead.

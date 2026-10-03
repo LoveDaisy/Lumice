@@ -85,7 +85,7 @@ extern "C" {
 
 // Interface version, a single integer (doc/analytic-api.md section 8.2): bumped on every
 // incompatible change, and in 0.x on every addition too. Independent of lumice_base.h's LUMICE_API_VERSION.
-#define LUMICE_ANALYTIC_API_VERSION 10
+#define LUMICE_ANALYTIC_API_VERSION 11
 
 // Return codes of the computation functions. The names shared with lumice_base.h's LUMICE_ErrorCode mean
 // the same thing there; the type is this header's own (doc/analytic-api.md section 5.2). A numerical
@@ -743,8 +743,9 @@ LUMICE_ANALYTIC_API void LUMICE_ANALYTIC_ReleaseBandSumResult(LUMICE_ANALYTIC_Ba
 // (crystal -> observer), so their displayed sky points are their negatives.
 // ---------------------------------------------------------------------------------------------
 #define LUMICE_ANALYTIC_FEATURE_SUPPORT_VERSION_V1 1
-#define LUMICE_ANALYTIC_FEATURE_SUPPORT_VERSION 2
-// Version 1's frozen cap. Version 2 uses checked dynamic buffers and has no dimension-only cap.
+#define LUMICE_ANALYTIC_FEATURE_SUPPORT_VERSION_V2 2
+#define LUMICE_ANALYTIC_FEATURE_SUPPORT_VERSION 3
+// Version 1's frozen cap. Versions 2 and 3 use checked dynamic buffers and have no dimension-only cap.
 #define LUMICE_ANALYTIC_MAX_FEATURE_COORDINATE_DIMENSION 16
 
 typedef enum LUMICE_ANALYTIC_FeatureEvidenceStatus_ {
@@ -774,6 +775,11 @@ typedef enum LUMICE_ANALYTIC_SupportMeasureKind_ {
   LUMICE_ANALYTIC_SUPPORT_ATOM = 0,
   LUMICE_ANALYTIC_SUPPORT_CONTINUOUS = 1,
 } LUMICE_ANALYTIC_SupportMeasureKind;
+
+typedef enum LUMICE_ANALYTIC_MappingEvidenceKind_ {
+  LUMICE_ANALYTIC_MAPPING_EVIDENCE_NONE = 0,
+  LUMICE_ANALYTIC_MAPPING_EVIDENCE_EXACT_IMAGE_DIMENSION_UPPER_BOUND = 1,
+} LUMICE_ANALYTIC_MappingEvidenceKind;
 
 typedef enum LUMICE_ANALYTIC_ConstraintKind_ {
   LUMICE_ANALYTIC_CONSTRAINT_DOMAIN = 0,
@@ -825,6 +831,12 @@ typedef struct LUMICE_ANALYTIC_FeatureSupportSample_ {
   const LUMICE_ANALYTIC_SupportConstraint* constraints;
   int numerically_available;
   int accumulates_measure;  // ADDED version 10; 0 for local probes, 1 for input-measure rows
+  // ADDED version 11. This certifies the complete continuous support cell; it is not inferred
+  // from finite probes. NONE uses zero-filled trailing fields; EXACT requires mapping_error_bound == 0 and a
+  // bound in [0,min(2,support_dimension)].
+  int mapping_evidence_kind;  // LUMICE_ANALYTIC_MappingEvidenceKind
+  int image_dimension_upper_bound;
+  double mapping_error_bound;
 } LUMICE_ANALYTIC_FeatureSupportSample;
 
 typedef struct LUMICE_ANALYTIC_FeatureSupportEdge_ {

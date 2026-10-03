@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <map>
 #include <memory>
+#include <set>
 #include <string>
 #include <tuple>
 #include <utility>
@@ -203,6 +204,25 @@ std::vector<double> Coordinates(const SceneMeasureRow& row, const ReplayContext&
     }
   }
   return coordinates;
+}
+
+bool HasExactShapeOnlyConstantDirectionProof(const SceneMeasureRow& row, const ReplayContext& context) {
+  if (context.active_coordinates.empty()) {
+    return false;
+  }
+  for (int coordinate : context.active_coordinates) {
+    if (coordinate < 4) {
+      return false;
+    }
+    const MeasureFactorDescriptor* factor = FindFactor(context.factors, coordinate - 4);
+    if (factor == nullptr || factor->name.rfind("shape.", 0) != 0 || factor->layer_index < 0 ||
+        factor->layer_index >= static_cast<int>(row.layers.size()) ||
+        row.layers[static_cast<size_t>(factor->layer_index)].analytic_shape.kind !=
+            analytic::CrystalShapeKind::kPrism) {
+      return false;
+    }
+  }
+  return true;
 }
 
 FeatureSupportSample ConvertRow(const SceneMeasureRow& row, const ReplayContext& context,
@@ -480,8 +500,30 @@ void FillLocalCells(const std::map<BranchKey, SceneMeasureRow>& rows, const Scen
         const double correction = (fine - coarse) / 3.0;
         base.direction_jacobian[static_cast<size_t>(component * batch->coordinate_dimension + coordinate)] =
             fine + correction;
+        FeatureSupportSample& lower_sample = batch->samples[static_cast<size_t>(lower_index)];
+        FeatureSupportSample& upper_sample = batch->samples[static_cast<size_t>(upper_index)];
+        if (lower_sample.direction_jacobian.empty()) {
+          lower_sample.direction_jacobian.assign(3u * static_cast<size_t>(batch->coordinate_dimension), 0.0);
+          lower_sample.direction_jacobian_column_available.assign(static_cast<size_t>(batch->coordinate_dimension), 0);
+        }
+        if (upper_sample.direction_jacobian.empty()) {
+          upper_sample.direction_jacobian.assign(3u * static_cast<size_t>(batch->coordinate_dimension), 0.0);
+          upper_sample.direction_jacobian_column_available.assign(static_cast<size_t>(batch->coordinate_dimension), 0);
+        }
+        lower_sample.direction_jacobian[static_cast<size_t>(component * batch->coordinate_dimension + coordinate)] =
+            (-3.0 * lower_sample.direction[component] + 4.0 * lower_fine.direction[component] -
+             base.direction[component]) /
+            step;
+        upper_sample.direction_jacobian[static_cast<size_t>(component * batch->coordinate_dimension + coordinate)] =
+            (3.0 * upper_sample.direction[component] - 4.0 * upper_fine.direction[component] +
+             base.direction[component]) /
+            step;
         column_error = std::max(column_error, std::fabs(correction));
       }
+      batch->samples[static_cast<size_t>(lower_index)]
+          .direction_jacobian_column_available[static_cast<size_t>(coordinate)] = 1;
+      batch->samples[static_cast<size_t>(upper_index)]
+          .direction_jacobian_column_available[static_cast<size_t>(coordinate)] = 1;
       base.direction_jacobian_column_available[static_cast<size_t>(coordinate)] = 1;
       maximum_error = std::max(maximum_error, column_error);
       maximum_resolution = std::max(maximum_resolution, 0.5 * step);
@@ -555,6 +597,21 @@ Error BuildFeatureSupportBatch(const ConfigManager& config, const SceneMeasureRe
     return Reevaluate(context, request_value, sample, callback_error);
   };
   FillLocalCells(context->rows, *measure, *context, callback, batch);
+  std::map<int, std::set<int>> cell_coordinates;
+  for (const analytic::FeatureSupportCellAxis& axis : batch->cell_axes) {
+    cell_coordinates[axis.center].insert(axis.coordinate_index);
+  }
+  for (size_t sample_index = 0; sample_index < rows.size(); ++sample_index) {
+    FeatureSupportSample& sample = batch->samples[sample_index];
+    const std::set<int> active(sample.active_coordinates.begin(), sample.active_coordinates.end());
+    const auto axes = cell_coordinates.find(static_cast<int>(sample_index));
+    if (axes != cell_coordinates.end() && axes->second == active &&
+        HasExactShapeOnlyConstantDirectionProof(rows[sample_index], *context)) {
+      sample.mapping_evidence_kind = analytic::MappingEvidenceKind::kExactImageDimensionUpperBound;
+      sample.image_dimension_upper_bound = 0;
+      sample.mapping_error_bound = 0.0;
+    }
+  }
   if (reevaluate != nullptr) {
     *reevaluate = callback;
   }
