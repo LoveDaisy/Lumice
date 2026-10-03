@@ -5,6 +5,7 @@
 // input contract consumed by general raypath discovery: product distributions and concrete L2
 // members are retained as data, rather than collapsed into a named pose family or nominal shape.
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -139,6 +140,7 @@ struct LatentMeasureSample {
 };
 
 struct ShapeScalarSample {
+  int slot = -1;
   std::string name;
   double value = 0.0;
   int latent_id = -1;
@@ -147,6 +149,18 @@ struct ShapeScalarSample {
   double raw_value = 0.0;
   bool absolute_value_fold = false;
   double mapping_jacobian = 1.0;
+};
+
+// A concrete point in the same branch as an already evaluated row.  The values are physical
+// state, not generator coordinates: shapes retain the pre-fold scalar in ShapeScalarSample,
+// poses use the product sampler's (azimuth, latitude, roll) radians, and incident_direction is a
+// world propagation direction.  Re-evaluation deliberately goes back through BuildSceneMeasure's
+// production geometry, filter and weight ledger instead of maintaining a second raypath model.
+struct SceneMeasureReplayState {
+  double wavelength_nm = 0.0;
+  double incident_direction[3]{};
+  std::vector<analytic::CrystalShape> shapes;
+  std::vector<std::array<double, 3>> poses;
 };
 
 // One scattering-entry component of a selected physical crystal. Several scene entries may
@@ -298,6 +312,13 @@ using SceneMeasureRowVisitor = std::function<void(const SceneMeasureRow&)>;
 // this overload instead of treating SceneMeasureResult::rows as the full dataset.
 Error BuildSceneMeasure(const ConfigManager& config, const SceneMeasureRequest& request,
                         const SceneMeasureRowVisitor& visitor, SceneMeasureResult* out);
+
+// Re-evaluates one concrete member/source branch at caller-supplied physical state.  The returned
+// row keeps the template's provenance and original Monte-Carlo sample mass.  This call is
+// synchronous and owns no pointer into config/request after it returns.
+Error ReevaluateSceneMeasureRow(const ConfigManager& config, const SceneMeasureRequest& request,
+                                const SceneMeasureRow& row_template, const SceneMeasureReplayState& state,
+                                SceneMeasureRow* out);
 
 }  // namespace lumice::raypath
 

@@ -12,7 +12,8 @@ namespace lumice::raypath {
 constexpr uint64_t kMaxMaterializedFeatureSupportRows = 1048576;
 
 Error BuildFeatureSupportBatch(const ConfigManager& config, const SceneMeasureRequest& request,
-                               analytic::FeatureSupportBatch* batch, SceneMeasureResult* measure);
+                               analytic::FeatureSupportBatch* batch, SceneMeasureResult* measure,
+                               analytic::FeatureReevaluateFn* reevaluate = nullptr);
 
 }  // namespace lumice::raypath
 

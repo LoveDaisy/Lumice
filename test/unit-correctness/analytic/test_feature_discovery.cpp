@@ -160,7 +160,7 @@ TEST(FeatureDiscoveryDifferential, RanksOnlyTheTwoDimensionalSkyTangent) {
       << "the 3x3 embedding determinant is zero on every S2 map but its tangent rank is two";
 }
 
-TEST(FeatureDiscoveryDifferential, DetectsRestrictedRankLossWithTwoScaleEvidence) {
+TEST(FeatureDiscoveryDifferential, IsolatedRestrictedRankLossRemainsACandidateWithoutANeighborhood) {
   FeatureSupportBatch batch;
   batch.coordinate_dimension = 2;
   batch.visited_row_count = 1;
@@ -183,9 +183,61 @@ TEST(FeatureDiscoveryDifferential, DetectsRestrictedRankLossWithTwoScaleEvidence
   const FeatureCandidate* rank_loss = Candidate(result, FeatureMechanism::kInteriorRankLoss);
   ASSERT_NE(rank_loss, nullptr);
   EXPECT_EQ(rank_loss->mapping_rank, 1);
-  EXPECT_EQ(rank_loss->status, FeatureEvidenceStatus::kConfirmed);
+  EXPECT_EQ(rank_loss->status, FeatureEvidenceStatus::kCandidate);
   EXPECT_DOUBLE_EQ(rank_loss->singular_values[0], 1.0);
   EXPECT_DOUBLE_EQ(rank_loss->singular_values[1], 0.0);
+}
+
+TEST(FeatureDiscoveryDifferential, RealCellNeighborhoodConfirmsRankLossAgainstItsLocalRegularRank) {
+  FeatureSupportBatch batch;
+  batch.coordinate_dimension = 2;
+  batch.visited_row_count = 1;
+  batch.complete_visit = true;
+  for (int index = 0; index < 3; ++index) {
+    FeatureSupportSample sample;
+    sample.sample_id = static_cast<uint64_t>(index + 1);
+    sample.support_dimension = 2;
+    sample.coordinates = { static_cast<double>(index - 1), 0.0 };
+    sample.active_coordinates = { 0, 1 };
+    sample.direction[2] = 1.0;
+    sample.weight = 1.0;
+    sample.accumulates_measure = index == 1;
+    sample.direction_jacobian_available = true;
+    sample.direction_jacobian = index == 1 ? std::vector<double>{ 1.0, 0.0, 0.0, 0.0, 0.0, 0.0 } :
+                                             std::vector<double>{ 1.0, 0.0, 0.0, 1.0, 0.0, 0.0 };
+    sample.direction_jacobian_column_available = { 1, 1 };
+    sample.direction_jacobian_error = 1e-12;
+    sample.direction_jacobian_resolution = 1e-4;
+    batch.samples.push_back(std::move(sample));
+  }
+  batch.cell_axes.push_back({ 0, 0, 0, 1, 2, 2.0 });
+
+  const FeatureDiscoveryResult result = DiscoverFeatures(batch, {});
+  const FeatureCandidate* rank_loss = Candidate(result, FeatureMechanism::kInteriorRankLoss);
+  ASSERT_NE(rank_loss, nullptr);
+  EXPECT_EQ(rank_loss->status, FeatureEvidenceStatus::kConfirmed);
+  EXPECT_EQ(rank_loss->mapping_rank, 1);
+}
+
+TEST(FeatureDiscoveryDifferential, PositiveMeasureConstantBranchIsAnAtomNotRankLossEverywhere) {
+  FeatureSupportBatch batch;
+  batch.coordinate_dimension = 1;
+  batch.visited_row_count = 1;
+  batch.complete_visit = true;
+  for (int index = 0; index < 3; ++index) {
+    FeatureSupportSample sample = Sample(static_cast<uint64_t>(index + 1), static_cast<double>(index - 1));
+    sample.accumulates_measure = index == 1;
+    sample.direction_jacobian = { 0.0, 0.0, 0.0 };
+    batch.samples.push_back(std::move(sample));
+  }
+  batch.cell_axes.push_back({ 0, 0, 0, 1, 2, 2.0 });
+
+  const FeatureDiscoveryResult result = DiscoverFeatures(batch, {});
+  EXPECT_EQ(Candidate(result, FeatureMechanism::kInteriorRankLoss), nullptr);
+  const FeatureCandidate* atom = Candidate(result, FeatureMechanism::kMeasureAtom);
+  ASSERT_NE(atom, nullptr);
+  EXPECT_EQ(atom->status, FeatureEvidenceStatus::kConfirmed);
+  ASSERT_NE(Candidate(result, FeatureMechanism::kStrictConfinement), nullptr);
 }
 
 TEST(FeatureDiscoveryDifferential, IsolatedRankZeroDoesNotBecomeAPointMass) {
@@ -301,8 +353,41 @@ TEST(FeatureDiscoveryConstraints, PreservesFilterSideWeightsAndDetectsExactCorne
   const FeatureDiscoveryResult corner_result = DiscoverFeatures(corner_batch, {});
   const FeatureCandidate* corner = Candidate(corner_result, FeatureMechanism::kSupportCorner);
   ASSERT_NE(corner, nullptr);
-  EXPECT_EQ(corner->status, FeatureEvidenceStatus::kConfirmed);
+  EXPECT_EQ(corner->status, FeatureEvidenceStatus::kCandidate);
   EXPECT_EQ(corner->active_constraints.size(), 2u);
+}
+
+TEST(FeatureDiscoveryConcentration, RejectsDiffuseFiniteWidthAndKeepsStableNarrowMass) {
+  auto make_batch = [](bool narrow) {
+    FeatureSupportBatch batch;
+    batch.coordinate_dimension = 1;
+    batch.complete_visit = true;
+    batch.materialization_complete = true;
+    for (int index = 0; index < 8; ++index) {
+      const double angle = narrow ? 0.002 * (index - 3.5) : index * 2.0 * 3.14159265358979323846 / 8.0;
+      FeatureSupportSample sample;
+      sample.sample_id = static_cast<uint64_t>(index + 1);
+      sample.provenance.sample_index = index;
+      sample.support_dimension = 1;
+      sample.finite_width = true;
+      sample.coordinates = { static_cast<double>(index) };
+      sample.active_coordinates = { 0 };
+      sample.direction[0] = std::cos(angle);
+      sample.direction[1] = std::sin(angle);
+      sample.weight = 0.125;
+      batch.samples.push_back(std::move(sample));
+    }
+    batch.visited_row_count = batch.samples.size();
+    return batch;
+  };
+
+  const FeatureDiscoveryResult diffuse = DiscoverFeatures(make_batch(false), {});
+  EXPECT_EQ(Candidate(diffuse, FeatureMechanism::kFiniteWidthConcentration), nullptr);
+  const FeatureDiscoveryResult narrow = DiscoverFeatures(make_batch(true), {});
+  const FeatureCandidate* concentration = Candidate(narrow, FeatureMechanism::kFiniteWidthConcentration);
+  ASSERT_NE(concentration, nullptr);
+  EXPECT_EQ(concentration->status, FeatureEvidenceStatus::kConfirmed);
+  EXPECT_LT(concentration->resolution, 0.01);
 }
 
 TEST(FeatureDiscoverySkyField, FindsResolutionStableMaximumAndIsVisitOrderIndependent) {

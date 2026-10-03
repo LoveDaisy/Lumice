@@ -64,17 +64,23 @@ _PRELUDE = textwrap.dedent(
                     ("direction_jacobian_column_available", POINTER(c_uint8)),
                     ("direction_jacobian_error", c_double), ("direction_jacobian_resolution", c_double),
                     ("constraint_count", c_int), ("constraint_stride", c_uint32),
-                    ("constraints", POINTER(Constraint)), ("numerically_available", c_int)]
+                    ("constraints", POINTER(Constraint)), ("numerically_available", c_int),
+                    ("accumulates_measure", c_int)]
 
     class Edge(Structure):
         _fields_ = [("first", c_int), ("second", c_int), ("parameter_distance", c_double)]
+
+    class CellAxis(Structure):
+        _fields_ = [("cell_id", c_int), ("coordinate_index", c_int), ("lower", c_int),
+                    ("center", c_int), ("upper", c_int), ("parameter_span", c_double)]
 
     class Batch(Structure):
         _fields_ = [("struct_size", c_uint32), ("version", c_uint32), ("coordinate_dimension", c_int),
                     ("visited_row_count", c_uint64), ("complete_visit", c_int),
                     ("materialization_complete", c_int), ("sample_count", c_int),
                     ("sample_stride", c_uint32), ("samples", POINTER(Sample)), ("edge_count", c_int),
-                    ("edges", POINTER(Edge))]
+                    ("edges", POINTER(Edge)), ("cell_axis_count", c_int),
+                    ("cell_axes", POINTER(CellAxis))]
 
     class Request(Structure):
         _fields_ = [("provenance", Provenance), ("coordinate_dimension", c_int),
@@ -122,7 +128,7 @@ _PRELUDE = textwrap.dedent(
 
     lib = ctypes.CDLL(LIB)
     lib.LUMICE_ANALYTIC_GetApiVersion.restype = c_int
-    assert lib.LUMICE_ANALYTIC_GetApiVersion() == 9
+    assert lib.LUMICE_ANALYTIC_GetApiVersion() == 10
     lib.LUMICE_ANALYTIC_DiscoverFeatures.restype = c_int
     lib.LUMICE_ANALYTIC_DiscoverFeatures.argtypes = [POINTER(Batch), POINTER(Options), CALLBACK, c_void_p,
                                                       POINTER(Result)]
@@ -156,11 +162,12 @@ _PRELUDE = textwrap.dedent(
                 sample.weight = density * solid_angle
                 sample.constraint_stride = sizeof(Constraint)
                 sample.numerically_available = 1
+                sample.accumulates_measure = 1
                 samples.append(sample)
         if reverse:
             samples.reverse()
         array = (Sample * len(samples))(*samples)
-        batch = Batch(sizeof(Batch), 1, 0, len(samples), 1, 1, len(samples), sizeof(Sample), array, 0, None)
+        batch = Batch(sizeof(Batch), 2, 0, len(samples), 1, 1, len(samples), sizeof(Sample), array, 0, None, 0, None)
         return batch, array
 
     def discover(batch, callback=CALLBACK()):
@@ -231,10 +238,11 @@ def test_callback_refines_nonfirst_interface_and_preserves_owned_strings() -> No
             sample.constraint_stride = sizeof(Constraint)
             sample.constraints = constraint_array
             sample.numerically_available = 1
+            sample.accumulates_measure = 1
             samples.append(sample)
         sample_array = (Sample * 2)(*samples)
         edges = (Edge * 1)(Edge(0, 1, 2.0))
-        batch = Batch(sizeof(Batch), 1, 1, 2, 1, 1, 2, sizeof(Sample), sample_array, 1, edges)
+        batch = Batch(sizeof(Batch), 2, 1, 2, 1, 1, 2, sizeof(Sample), sample_array, 1, edges, 0, None)
 
         @CALLBACK
         def refine(request, out, user_data):
@@ -256,6 +264,7 @@ def test_callback_refines_nonfirst_interface_and_preserves_owned_strings() -> No
             value.constraint_stride = sizeof(Constraint)
             value.constraints = constraint_array
             value.numerically_available = 1
+            value.accumulates_measure = 0
             return 1
 
         rc, result = discover(batch, refine)
@@ -292,5 +301,72 @@ def test_malformed_stride_version_and_required_pointer_are_call_errors() -> None
         assert lib.LUMICE_ANALYTIC_DiscoverFeatures(byref(batch), byref(opts), CALLBACK(), None, byref(out)) == NULL_ARG
         assert lib.LUMICE_ANALYTIC_DiscoverFeatures(None, byref(opts), CALLBACK(), None, byref(out)) == NULL_ARG
         assert lib.LUMICE_ANALYTIC_DiscoverFeatures(byref(batch), byref(opts), CALLBACK(), None, None) == NULL_ARG
+        """
+    )
+
+
+def test_v2_dynamic_coordinates_and_frozen_v1_prefix() -> None:
+    _run_child(
+        """
+        dimension = 21
+        coordinates = (c_double * dimension)(*([0.0] * dimension))
+        active = (c_int * dimension)(*range(dimension))
+        jacobian = (c_double * (3 * dimension))(*([0.0] * (3 * dimension)))
+        available = (c_uint8 * dimension)(*([1] * dimension))
+        sample = Sample()
+        sample.struct_size = sizeof(Sample)
+        sample.sample_id = 1
+        sample.measure_kind = CONTINUOUS
+        sample.support_dimension = dimension
+        sample.finite_width = 1
+        sample.coordinates = coordinates
+        sample.active_coordinates = active
+        sample.direction[:] = (0.0, 0.0, 1.0)
+        sample.weight = 1.0
+        sample.direction_jacobian_available = 1
+        sample.direction_jacobian = jacobian
+        sample.direction_jacobian_column_available = available
+        sample.direction_jacobian_resolution = 1.0e-4
+        sample.constraint_stride = sizeof(Constraint)
+        sample.numerically_available = 1
+        sample.accumulates_measure = 1
+        samples = (Sample * 1)(sample)
+        batch = Batch(sizeof(Batch), 2, dimension, 1, 1, 1, 1, sizeof(Sample), samples, 0, None, 0, None)
+        rc, result = discover(batch)
+        assert rc == OK and result.evaluated_sample_count == 1
+        lib.LUMICE_ANALYTIC_ReleaseFeatureDiscoveryResult(byref(result))
+
+        # The version-1 contract keeps its published 16-coordinate ceiling even when passed in
+        # the new, larger outer structs.
+        batch.version = 1
+        result = output()
+        opts = options()
+        assert lib.LUMICE_ANALYTIC_DiscoverFeatures(byref(batch), byref(opts), CALLBACK(), None,
+                                                    byref(result)) == INVALID_VALUE
+
+        # A real version-1 caller's frozen prefixes remain accepted by the version-10 library.
+        class LegacySample(Structure):
+            _fields_ = Sample._fields_[:-1]
+
+        class LegacyBatch(Structure):
+            _fields_ = Batch._fields_[:-2]
+
+        legacy_sample = LegacySample()
+        legacy_sample.struct_size = sizeof(LegacySample)
+        legacy_sample.sample_id = 2
+        legacy_sample.measure_kind = ATOM
+        legacy_sample.direction[:] = (1.0, 0.0, 0.0)
+        legacy_sample.weight = 0.5
+        legacy_sample.constraint_stride = sizeof(Constraint)
+        legacy_sample.numerically_available = 1
+        legacy_samples = (LegacySample * 1)(legacy_sample)
+        legacy_batch = LegacyBatch(sizeof(LegacyBatch), 1, 0, 1, 1, 1, 1, sizeof(LegacySample),
+                                   ctypes.cast(legacy_samples, POINTER(Sample)), 0, None)
+        result = output()
+        assert lib.LUMICE_ANALYTIC_DiscoverFeatures(
+            ctypes.cast(byref(legacy_batch), POINTER(Batch)), byref(opts), CALLBACK(), None,
+            byref(result)) == OK
+        assert result.evaluated_sample_count == 1
+        lib.LUMICE_ANALYTIC_ReleaseFeatureDiscoveryResult(byref(result))
         """
     )

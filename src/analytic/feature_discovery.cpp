@@ -2,9 +2,11 @@
 
 #include <cmath>
 #include <limits>
+#include <map>
 #include <numeric>
 #include <set>
 #include <string>
+#include <tuple>
 #include <utility>
 
 namespace lumice::analytic {
@@ -217,6 +219,11 @@ bool RefineConstraintRoot(const FeatureSupportSample& first, const FeatureSuppor
   }
   std::vector<double> lo = first.coordinates;
   std::vector<double> hi = second.coordinates;
+  double initial_resolution2 = 0.0;
+  for (size_t coordinate = 0; coordinate < lo.size(); ++coordinate) {
+    const double delta = hi[coordinate] - lo[coordinate];
+    initial_resolution2 += delta * delta;
+  }
   double lo_value = target.value;
   const SupportConstraint* second_constraint = FindConstraint(second, target);
   if (second_constraint == nullptr || !second_constraint->numerically_available) {
@@ -269,6 +276,11 @@ bool RefineConstraintRoot(const FeatureSupportSample& first, const FeatureSuppor
     candidate->resolution += delta * delta;
   }
   candidate->resolution = std::sqrt(candidate->resolution);
+  if (target.kind == ConstraintKind::kFilter) {
+    const double attainable = std::sqrt(initial_resolution2) * std::ldexp(1.0, -options.maximum_refinement_steps);
+    candidate->residual = 0.0;
+    return candidate->resolution <= std::max(options.margin_tolerance, 2.0 * attainable);
+  }
   return best_residual <= options.margin_tolerance;
 }
 
@@ -321,7 +333,7 @@ SkyGrid BuildSkyGrid(const FeatureSupportBatch& batch, int z_bins, int azimuth_b
   });
   for (size_t sample_index : order) {
     const FeatureSupportSample& sample = batch.samples[sample_index];
-    if (!sample.numerically_available) {
+    if (!sample.numerically_available || !sample.accumulates_measure) {
       continue;
     }
     SkyGridCell& cell = grid.cells[static_cast<size_t>(SkyCellIndex(sample.direction, z_bins, azimuth_bins))];
@@ -458,6 +470,135 @@ void DiscoverSkyFeatures(const FeatureSupportBatch& batch, const FeatureDiscover
   }
 }
 
+using ConcentrationBranch = std::tuple<int, int, int>;
+
+void DiscoverFiniteWidthConcentrations(const FeatureSupportBatch& batch, const FeatureDiscoveryOptions& options,
+                                       bool globally_complete, FeatureDiscoveryResult* out,
+                                       bool* resolution_incomplete) {
+  std::map<ConcentrationBranch, std::vector<const FeatureSupportSample*>> branches;
+  for (const FeatureSupportSample& sample : batch.samples) {
+    if (sample.accumulates_measure && sample.finite_width && sample.numerically_available) {
+      branches[{ sample.provenance.member_index, sample.provenance.spectrum_node_id, sample.provenance.source_node_id }]
+          .push_back(&sample);
+    }
+  }
+  for (const auto& [branch, samples] : branches) {
+    (void)branch;
+    if (samples.size() < 4u) {
+      *resolution_incomplete = true;
+      continue;
+    }
+    double weighted_direction[3]{};
+    double parity_direction[2][3]{};
+    double total_weight = 0.0;
+    double parity_weight[2]{};
+    for (const FeatureSupportSample* sample : samples) {
+      if (!(sample->weight > 0.0)) {
+        continue;
+      }
+      const int parity = sample->provenance.sample_index & 1;
+      total_weight += sample->weight;
+      parity_weight[parity] += sample->weight;
+      for (int component = 0; component < 3; ++component) {
+        weighted_direction[component] += sample->weight * sample->direction[component];
+        parity_direction[parity][component] += sample->weight * sample->direction[component];
+      }
+    }
+    if (!(total_weight > 0.0) || !(parity_weight[0] > 0.0) || !(parity_weight[1] > 0.0)) {
+      *resolution_incomplete = true;
+      continue;
+    }
+    const double resultant = std::sqrt(Dot(weighted_direction, weighted_direction));
+    const double concentration = resultant / total_weight;
+    if (!(resultant > 0.0) || concentration < 0.95) {
+      continue;
+    }
+    for (double& component : weighted_direction) {
+      component /= resultant;
+    }
+    double parity_unit[2][3]{};
+    for (int parity = 0; parity < 2; ++parity) {
+      const double norm = std::sqrt(Dot(parity_direction[parity], parity_direction[parity]));
+      if (!(norm > 0.0)) {
+        *resolution_incomplete = true;
+        continue;
+      }
+      for (int component = 0; component < 3; ++component) {
+        parity_unit[parity][component] = parity_direction[parity][component] / norm;
+      }
+    }
+    const double split_error = DirectionDistance(parity_unit[0], parity_unit[1]);
+    double spread2 = 0.0;
+    for (const FeatureSupportSample* sample : samples) {
+      if (sample->weight > 0.0) {
+        const double angle = DirectionDistance(weighted_direction, sample->direction);
+        spread2 += sample->weight * angle * angle;
+      }
+    }
+    const double spread = std::sqrt(spread2 / total_weight);
+    const double sky_resolution = std::sqrt(4.0 * kPi / (options.sky_z_bins * options.sky_azimuth_bins));
+    if (spread > 2.0 * sky_resolution || split_error > sky_resolution) {
+      continue;
+    }
+    FeatureCandidate candidate =
+        CandidateFromSample(*samples.front(), FeatureMechanism::kFiniteWidthConcentration,
+                            globally_complete && split_error <= spread + 1e-12 ? FeatureEvidenceStatus::kConfirmed :
+                                                                                 FeatureEvidenceStatus::kCandidate,
+                            "positive-width input mass is concentrated in a stable local sky neighborhood");
+    std::copy(weighted_direction, weighted_direction + 3, candidate.direction);
+    candidate.weighted_mass = total_weight;
+    candidate.residual = split_error;
+    candidate.resolution = spread;
+    AddCandidate(candidate, options.sky_merge_tolerance, out);
+  }
+}
+
+void DiscoverWeightKinks(const FeatureSupportBatch& batch, const FeatureDiscoveryOptions& options,
+                         FeatureDiscoveryResult* out, bool* numerical_incomplete) {
+  for (const FeatureSupportCellAxis& axis : batch.cell_axes) {
+    const FeatureSupportSample& lower = batch.samples[static_cast<size_t>(axis.lower)];
+    const FeatureSupportSample& center = batch.samples[static_cast<size_t>(axis.center)];
+    const FeatureSupportSample& upper = batch.samples[static_cast<size_t>(axis.upper)];
+    if (!lower.numerically_available || !center.numerically_available || !upper.numerically_available) {
+      *numerical_incomplete = true;
+      continue;
+    }
+    const double half_span = 0.5 * axis.parameter_span;
+    for (const SupportConstraint& center_weight : center.constraints) {
+      if (center_weight.kind != ConstraintKind::kWeight || !center_weight.numerically_available) {
+        continue;
+      }
+      const SupportConstraint* lower_weight = FindConstraint(lower, center_weight);
+      const SupportConstraint* upper_weight = FindConstraint(upper, center_weight);
+      if (lower_weight == nullptr || upper_weight == nullptr || !lower_weight->numerically_available ||
+          !upper_weight->numerically_available) {
+        *numerical_incomplete = true;
+        continue;
+      }
+      const double left_slope = (center_weight.value - lower_weight->value) / half_span;
+      const double right_slope = (upper_weight->value - center_weight.value) / half_span;
+      const double jump = std::fabs(right_slope - left_slope);
+      const double scale = std::max({ std::fabs(left_slope), std::fabs(right_slope), 1e-12 });
+      const double relative_second_difference =
+          std::fabs(upper_weight->value - 2.0 * center_weight.value + lower_weight->value) /
+          std::max({ std::fabs(lower_weight->value), std::fabs(center_weight.value), std::fabs(upper_weight->value),
+                     1e-12 });
+      if (jump <= 1e-8 || relative_second_difference <= 0.1 || jump <= 0.25 * scale) {
+        continue;
+      }
+      FeatureCandidate candidate = ConstraintCandidate(
+          center, center_weight, FeatureEvidenceStatus::kCandidate,
+          "two sides of one real parameter cell show a non-smooth change in an actual weight factor");
+      candidate.has_weight_sides = true;
+      candidate.weight_sides[0] = lower_weight->value;
+      candidate.weight_sides[1] = upper_weight->value;
+      candidate.residual = jump;
+      candidate.resolution = axis.parameter_span;
+      AddCandidate(candidate, options.sky_merge_tolerance, out);
+    }
+  }
+}
+
 }  // namespace
 
 const char* FeatureEvidenceStatusName(FeatureEvidenceStatus status) {
@@ -536,14 +677,18 @@ bool ValidateFeatureSupportBatch(const FeatureSupportBatch& batch, std::string* 
   if (error != nullptr) {
     error->clear();
   }
-  if (batch.version != kFeatureSupportBatchVersion) {
+  if (batch.version != kFeatureSupportBatchVersionV1 && batch.version != kFeatureSupportBatchVersion) {
     return Fail("unsupported feature support batch version", error);
   }
-  if (batch.coordinate_dimension < 0 || batch.coordinate_dimension > kMaxFeatureDiscoveryCoordinateDimension) {
+  if (batch.coordinate_dimension < 0 || (batch.version == kFeatureSupportBatchVersionV1 &&
+                                         batch.coordinate_dimension > kLegacyFeatureDiscoveryCoordinateDimension)) {
     return Fail("coordinate_dimension is outside the supported range", error);
   }
-  if (batch.visited_row_count < batch.samples.size()) {
-    return Fail("visited_row_count is smaller than the materialized sample count", error);
+  const size_t measure_sample_count =
+      static_cast<size_t>(std::count_if(batch.samples.begin(), batch.samples.end(),
+                                        [](const FeatureSupportSample& sample) { return sample.accumulates_measure; }));
+  if (batch.visited_row_count < measure_sample_count) {
+    return Fail("visited_row_count is smaller than the materialized input-measure sample count", error);
   }
 
   std::set<uint64_t> sample_ids;
@@ -628,6 +773,23 @@ bool ValidateFeatureSupportBatch(const FeatureSupportBatch& batch, std::string* 
       return Fail("support edge parameter_distance must be finite and positive", error);
     }
   }
+  for (const FeatureSupportCellAxis& axis : batch.cell_axes) {
+    if (axis.cell_id < 0 || axis.coordinate_index < 0 || axis.coordinate_index >= batch.coordinate_dimension ||
+        axis.lower < 0 || axis.center < 0 || axis.upper < 0 || axis.lower == axis.center || axis.center == axis.upper ||
+        axis.lower == axis.upper || axis.lower >= static_cast<int>(batch.samples.size()) ||
+        axis.center >= static_cast<int>(batch.samples.size()) || axis.upper >= static_cast<int>(batch.samples.size()) ||
+        !std::isfinite(axis.parameter_span) || !(axis.parameter_span > 0.0)) {
+      return Fail("support cell axes require three distinct samples and one valid parameter coordinate", error);
+    }
+    const FeatureSupportSample& lower = batch.samples[static_cast<size_t>(axis.lower)];
+    const FeatureSupportSample& center = batch.samples[static_cast<size_t>(axis.center)];
+    const FeatureSupportSample& upper = batch.samples[static_cast<size_t>(axis.upper)];
+    if (!center.accumulates_measure || lower.accumulates_measure || upper.accumulates_measure ||
+        !SameProvenanceBranch(lower.provenance, center.provenance) ||
+        !SameProvenanceBranch(center.provenance, upper.provenance)) {
+      return Fail("support cell axes must attach two non-measure probes to one input-measure center", error);
+    }
+  }
   return true;
 }
 
@@ -663,7 +825,27 @@ FeatureDiscoveryResult DiscoverFeatures(const FeatureSupportBatch& batch, const 
   const bool globally_complete = batch.complete_visit && batch.materialization_complete;
   bool rank_numerically_incomplete = false;
   bool constraint_numerically_incomplete = false;
+  bool concentration_resolution_incomplete = false;
+  std::vector<S2Differential> differentials;
+  differentials.reserve(batch.samples.size());
   for (const FeatureSupportSample& sample : batch.samples) {
+    differentials.push_back(
+        RestrictedS2Differential(sample, batch.coordinate_dimension, options.rank_relative_tolerance));
+  }
+  std::vector<int> regular_ranks(batch.samples.size(), -1);
+  for (const FeatureSupportCellAxis& axis : batch.cell_axes) {
+    int local_rank = -1;
+    for (int index : { axis.lower, axis.center, axis.upper }) {
+      local_rank = std::max(local_rank, differentials[static_cast<size_t>(index)].rank);
+    }
+    regular_ranks[static_cast<size_t>(axis.center)] =
+        std::max(regular_ranks[static_cast<size_t>(axis.center)], local_rank);
+  }
+  for (size_t sample_index = 0; sample_index < batch.samples.size(); ++sample_index) {
+    const FeatureSupportSample& sample = batch.samples[sample_index];
+    if (!sample.accumulates_measure) {
+      continue;
+    }
     if (!sample.numerically_available) {
       rank_numerically_incomplete = true;
       continue;
@@ -676,34 +858,22 @@ FeatureDiscoveryResult DiscoverFeatures(const FeatureSupportBatch& batch, const 
       candidate.mapping_rank = 0;
       AddCandidate(candidate, options.sky_merge_tolerance, &out);
     }
-    if (sample.measure_kind == SupportMeasureKind::kContinuous && sample.support_dimension < 2) {
-      AddCandidate(CandidateFromSample(sample, FeatureMechanism::kStrictConfinement, direct_status,
-                                       "the actual continuous support has dimension below the sky tangent dimension"),
-                   options.sky_merge_tolerance, &out);
-    }
-    if (sample.finite_width) {
-      AddCandidate(
-          CandidateFromSample(sample, FeatureMechanism::kFiniteWidthConcentration, FeatureEvidenceStatus::kCandidate,
-                              "positive-width support is a resolution-dependent concentration, not an atom"),
-          options.sky_merge_tolerance, &out);
-    }
-
     std::vector<const SupportConstraint*> active_constraints;
     for (const SupportConstraint& constraint : sample.constraints) {
       if (!constraint.numerically_available) {
         constraint_numerically_incomplete = true;
         continue;
       }
-      if (std::fabs(constraint.value) <= options.margin_tolerance) {
+      if (constraint.kind != ConstraintKind::kWeight && std::fabs(constraint.value) <= options.margin_tolerance) {
         active_constraints.push_back(&constraint);
-        AddCandidate(ConstraintCandidate(sample, constraint, direct_status,
-                                         "a named support margin is active at a materialized support point"),
+        AddCandidate(ConstraintCandidate(sample, constraint, FeatureEvidenceStatus::kCandidate,
+                                         "a named support margin is active but still requires two-sided evidence"),
                      options.sky_merge_tolerance, &out);
       }
     }
     if (active_constraints.size() >= 2u) {
       FeatureCandidate corner =
-          CandidateFromSample(sample, FeatureMechanism::kSupportCorner, direct_status,
+          CandidateFromSample(sample, FeatureMechanism::kSupportCorner, FeatureEvidenceStatus::kCandidate,
                               "two or more independent named constraints are active at the same support point");
       for (const SupportConstraint* constraint : active_constraints) {
         corner.active_constraints.push_back(constraint->name);
@@ -718,13 +888,31 @@ FeatureDiscoveryResult DiscoverFeatures(const FeatureSupportBatch& batch, const 
       rank_numerically_incomplete = true;
       continue;
     }
-    const S2Differential differential =
-        RestrictedS2Differential(sample, batch.coordinate_dimension, options.rank_relative_tolerance);
-    const int regular_rank = std::min(2, sample.support_dimension);
+    const S2Differential& differential = differentials[sample_index];
+    const bool neighborhood_rank_available = regular_ranks[sample_index] >= 0;
+    const int regular_rank =
+        neighborhood_rank_available ? regular_ranks[sample_index] : std::min(2, sample.support_dimension);
+    if (!neighborhood_rank_available) {
+      rank_numerically_incomplete = true;
+    }
+    if (neighborhood_rank_available && sample.measure_kind == SupportMeasureKind::kContinuous && regular_rank < 2) {
+      AddCandidate(
+          CandidateFromSample(sample, FeatureMechanism::kStrictConfinement, direct_status,
+                              "the local support image has stable dimension below the two-dimensional sky tangent"),
+          options.sky_merge_tolerance, &out);
+      if (regular_rank == 0 && sample.weight > 0.0) {
+        FeatureCandidate atom =
+            CandidateFromSample(sample, FeatureMechanism::kMeasureAtom, direct_status,
+                                "a positive-measure continuous branch is locally constant in sky direction");
+        atom.mapping_rank = 0;
+        AddCandidate(atom, options.sky_merge_tolerance, &out);
+      }
+    }
     if (differential.rank < regular_rank) {
       const double numerical_residual = std::max(differential.tangent_residual, sample.direction_jacobian_error);
       const FeatureEvidenceStatus status =
-          globally_complete && numerical_residual <= std::max(1e-8, 10.0 * options.rank_relative_tolerance) ?
+          globally_complete && neighborhood_rank_available &&
+                  numerical_residual <= std::max(1e-8, 10.0 * options.rank_relative_tolerance) ?
               FeatureEvidenceStatus::kConfirmed :
               FeatureEvidenceStatus::kCandidate;
       FeatureCandidate candidate =
@@ -749,6 +937,9 @@ FeatureDiscoveryResult DiscoverFeatures(const FeatureSupportBatch& batch, const 
     FeatureCandidate first_crossing;
     bool have_first_crossing = false;
     for (const SupportConstraint& first_constraint : first.constraints) {
+      if (first_constraint.kind == ConstraintKind::kWeight) {
+        continue;
+      }
       const SupportConstraint* second_constraint = FindConstraint(second, first_constraint);
       if (!first_constraint.numerically_available || second_constraint == nullptr ||
           !second_constraint->numerically_available) {
@@ -794,6 +985,9 @@ FeatureDiscoveryResult DiscoverFeatures(const FeatureSupportBatch& batch, const 
     }
   }
 
+  DiscoverFiniteWidthConcentrations(batch, options, globally_complete, &out, &concentration_resolution_incomplete);
+  DiscoverWeightKinks(batch, options, &out, &constraint_numerically_incomplete);
+
   DiscoverSkyFeatures(batch, options, globally_complete, &out);
 
   for (const FeatureCandidate& candidate : out.candidates) {
@@ -822,6 +1016,12 @@ FeatureDiscoveryResult DiscoverFeatures(const FeatureSupportBatch& batch, const 
         record.reason = "at least one named constraint margin was unavailable on the supplied support";
       }
     }
+  }
+  FeatureMechanismRecord& concentration_record =
+      out.mechanisms[static_cast<size_t>(MechanismIndex(FeatureMechanism::kFiniteWidthConcentration))];
+  if (concentration_resolution_incomplete && concentration_record.candidate_count == 0) {
+    concentration_record.status = FeatureEvidenceStatus::kNumericalIncomplete;
+    concentration_record.reason = "finite-width concentration needs at least four positive local measure samples";
   }
   if (!globally_complete) {
     for (FeatureMechanismRecord& record : out.mechanisms) {

@@ -73,6 +73,13 @@ constexpr size_t kDiagnosticFieldResultV7Size =
 static_assert(kDiagnosticFieldResultV7Size == sizeof(LUMICE_ANALYTIC_DiagnosticFieldResult),
               "the version 7 diagnostic-field layout ends with `storage`; append new fields after it");
 
+constexpr size_t kFeatureSupportSampleV9Size = offsetof(LUMICE_ANALYTIC_FeatureSupportSample, accumulates_measure);
+constexpr size_t kFeatureSupportBatchV9Size = offsetof(LUMICE_ANALYTIC_FeatureSupportBatch, cell_axis_count);
+static_assert(kFeatureSupportSampleV9Size ==
+              offsetof(LUMICE_ANALYTIC_FeatureSupportSample, numerically_available) + sizeof(int));
+static_assert(kFeatureSupportBatchV9Size ==
+              offsetof(LUMICE_ANALYTIC_FeatureSupportBatch, edges) + sizeof(const LUMICE_ANALYTIC_FeatureSupportEdge*));
+
 static_assert(static_cast<int>(lumice::analytic::FeatureEvidenceStatus::kConfirmed) ==
                   LUMICE_ANALYTIC_FEATURE_CONFIRMED &&
               static_cast<int>(lumice::analytic::FeatureEvidenceStatus::kNotSupported) ==
@@ -934,11 +941,11 @@ bool ToConstraintKind(int value, lumice::analytic::ConstraintKind* out) {
 }
 
 LUMICE_ANALYTIC_ErrorCode ToFeatureSupportSample(const LUMICE_ANALYTIC_FeatureSupportSample& value,
-                                                 int coordinate_dimension,
+                                                 int coordinate_dimension, bool version_two,
                                                  lumice::analytic::FeatureSupportSample* out) {
   namespace an = lumice::analytic;
-  if (value.struct_size < sizeof(LUMICE_ANALYTIC_FeatureSupportSample) || value.support_dimension < 0 ||
-      value.constraint_count < 0) {
+  const size_t required_size = version_two ? sizeof(LUMICE_ANALYTIC_FeatureSupportSample) : kFeatureSupportSampleV9Size;
+  if (value.struct_size < required_size || value.support_dimension < 0 || value.constraint_count < 0) {
     return LUMICE_ANALYTIC_ERR_INVALID_VALUE;
   }
   if ((coordinate_dimension > 0 && value.coordinates == nullptr) ||
@@ -949,7 +956,8 @@ LUMICE_ANALYTIC_ErrorCode ToFeatureSupportSample(const LUMICE_ANALYTIC_FeatureSu
   if (value.measure_kind < LUMICE_ANALYTIC_SUPPORT_ATOM || value.measure_kind > LUMICE_ANALYTIC_SUPPORT_CONTINUOUS ||
       (value.finite_width != 0 && value.finite_width != 1) ||
       (value.direction_jacobian_available != 0 && value.direction_jacobian_available != 1) ||
-      (value.numerically_available != 0 && value.numerically_available != 1)) {
+      (value.numerically_available != 0 && value.numerically_available != 1) ||
+      (version_two && value.accumulates_measure != 0 && value.accumulates_measure != 1)) {
     return LUMICE_ANALYTIC_ERR_INVALID_VALUE;
   }
   if (value.direction_jacobian != nullptr && value.direction_jacobian_column_available == nullptr) {
@@ -967,6 +975,7 @@ LUMICE_ANALYTIC_ErrorCode ToFeatureSupportSample(const LUMICE_ANALYTIC_FeatureSu
   out->measure_kind = static_cast<an::SupportMeasureKind>(value.measure_kind);
   out->support_dimension = value.support_dimension;
   out->finite_width = value.finite_width != 0;
+  out->accumulates_measure = version_two ? value.accumulates_measure != 0 : true;
   if (coordinate_dimension > 0) {
     out->coordinates.assign(value.coordinates, value.coordinates + coordinate_dimension);
   }
@@ -1027,17 +1036,37 @@ LUMICE_ANALYTIC_ErrorCode ToFeatureSupportBatch(const LUMICE_ANALYTIC_FeatureSup
   if (input == nullptr) {
     return LUMICE_ANALYTIC_ERR_NULL_ARG;
   }
-  if (input->struct_size < sizeof(LUMICE_ANALYTIC_FeatureSupportBatch) || input->sample_count < 0 ||
-      input->edge_count < 0 || input->coordinate_dimension < 0 ||
-      input->coordinate_dimension > LUMICE_ANALYTIC_MAX_FEATURE_COORDINATE_DIMENSION ||
-      (input->complete_visit != 0 && input->complete_visit != 1) ||
+  if (input->struct_size < kFeatureSupportBatchV9Size || input->sample_count < 0 || input->edge_count < 0 ||
+      input->coordinate_dimension < 0 || (input->complete_visit != 0 && input->complete_visit != 1) ||
       (input->materialization_complete != 0 && input->materialization_complete != 1)) {
+    return LUMICE_ANALYTIC_ERR_INVALID_VALUE;
+  }
+  const bool version_two = input->version == LUMICE_ANALYTIC_FEATURE_SUPPORT_VERSION;
+  if (input->version != LUMICE_ANALYTIC_FEATURE_SUPPORT_VERSION_V1 && !version_two) {
+    return LUMICE_ANALYTIC_ERR_INVALID_VALUE;
+  }
+  if ((!version_two && input->coordinate_dimension > LUMICE_ANALYTIC_MAX_FEATURE_COORDINATE_DIMENSION) ||
+      (version_two && input->struct_size < sizeof(LUMICE_ANALYTIC_FeatureSupportBatch))) {
+    return LUMICE_ANALYTIC_ERR_INVALID_VALUE;
+  }
+  constexpr size_t kMaximumInputScalars = 64u * 1024u * 1024u;
+  if (input->coordinate_dimension > 0 && static_cast<size_t>(input->sample_count) >
+                                             kMaximumInputScalars / static_cast<size_t>(input->coordinate_dimension)) {
+    return LUMICE_ANALYTIC_ERR_INVALID_VALUE;
+  }
+  const int cell_axis_count = version_two ? input->cell_axis_count : 0;
+  if (cell_axis_count < 0) {
     return LUMICE_ANALYTIC_ERR_INVALID_VALUE;
   }
   if ((input->sample_count > 0 && input->samples == nullptr) || (input->edge_count > 0 && input->edges == nullptr)) {
     return LUMICE_ANALYTIC_ERR_NULL_ARG;
   }
-  if (input->sample_count > 0 && (input->sample_stride < sizeof(LUMICE_ANALYTIC_FeatureSupportSample) ||
+  if (version_two && cell_axis_count > 0 && input->cell_axes == nullptr) {
+    return LUMICE_ANALYTIC_ERR_NULL_ARG;
+  }
+  const size_t required_sample_size =
+      version_two ? sizeof(LUMICE_ANALYTIC_FeatureSupportSample) : kFeatureSupportSampleV9Size;
+  if (input->sample_count > 0 && (input->sample_stride < required_sample_size ||
                                   input->sample_stride % alignof(LUMICE_ANALYTIC_FeatureSupportSample) != 0)) {
     return LUMICE_ANALYTIC_ERR_INVALID_VALUE;
   }
@@ -1050,7 +1079,7 @@ LUMICE_ANALYTIC_ErrorCode ToFeatureSupportBatch(const LUMICE_ANALYTIC_FeatureSup
   for (int index = 0; index < input->sample_count; ++index) {
     an::FeatureSupportSample sample;
     const LUMICE_ANALYTIC_ErrorCode code = ToFeatureSupportSample(
-        *StrideElement(input->samples, input->sample_stride, index), input->coordinate_dimension, &sample);
+        *StrideElement(input->samples, input->sample_stride, index), input->coordinate_dimension, version_two, &sample);
     if (code != LUMICE_ANALYTIC_OK) {
       return code;
     }
@@ -1060,6 +1089,12 @@ LUMICE_ANALYTIC_ErrorCode ToFeatureSupportBatch(const LUMICE_ANALYTIC_FeatureSup
   for (int index = 0; index < input->edge_count; ++index) {
     const LUMICE_ANALYTIC_FeatureSupportEdge& edge = input->edges[index];
     out->edges.push_back({ edge.first, edge.second, edge.parameter_distance });
+  }
+  out->cell_axes.reserve(static_cast<size_t>(cell_axis_count));
+  for (int index = 0; index < cell_axis_count; ++index) {
+    const LUMICE_ANALYTIC_FeatureSupportCellAxis& axis = input->cell_axes[index];
+    out->cell_axes.push_back(
+        { axis.cell_id, axis.coordinate_index, axis.lower, axis.center, axis.upper, axis.parameter_span });
   }
   std::string error;
   return an::ValidateFeatureSupportBatch(*out, &error) ? LUMICE_ANALYTIC_OK : LUMICE_ANALYTIC_ERR_INVALID_VALUE;
@@ -1199,9 +1234,10 @@ LUMICE_ANALYTIC_ErrorCode DiscoverFeaturesImpl(const LUMICE_ANALYTIC_FeatureSupp
   an::FeatureReevaluateFn kernel_callback;
   if (reevaluate != nullptr) {
     const int coordinate_dimension = kernel_batch.coordinate_dimension;
-    kernel_callback = [reevaluate, user_data, coordinate_dimension](const an::FeatureReevaluationRequest& request,
-                                                                    an::FeatureSupportSample* sample,
-                                                                    std::string* error) {
+    const bool version_two = kernel_batch.version == an::kFeatureSupportBatchVersion;
+    kernel_callback = [reevaluate, user_data, coordinate_dimension, version_two](
+                          const an::FeatureReevaluationRequest& request, an::FeatureSupportSample* sample,
+                          std::string* error) {
       LUMICE_ANALYTIC_FeatureReevaluationRequest c_request{};
       c_request.provenance = FromFeatureProvenance(request.provenance);
       c_request.coordinate_dimension = coordinate_dimension;
@@ -1214,7 +1250,8 @@ LUMICE_ANALYTIC_ErrorCode DiscoverFeaturesImpl(const LUMICE_ANALYTIC_FeatureSupp
         }
         return false;
       }
-      const LUMICE_ANALYTIC_ErrorCode code = ToFeatureSupportSample(c_sample, coordinate_dimension, sample);
+      const LUMICE_ANALYTIC_ErrorCode code =
+          ToFeatureSupportSample(c_sample, coordinate_dimension, version_two, sample);
       if (code != LUMICE_ANALYTIC_OK && error != nullptr) {
         *error = "the feature re-evaluation callback returned a malformed sample";
       }

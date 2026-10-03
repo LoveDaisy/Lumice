@@ -83,6 +83,32 @@ double Metric(const PathFeature& feature, const std::string& name) {
   return it == feature.metrics.end() ? 0.0 : it->value;
 }
 
+TEST(PathFeatureReport, GeneralProjectionUsesTheDisplayedSkyPointForAnAsymmetricSun) {
+  ConfigManager config = Scene(false, false, false);
+  config.scene_.light_source_.param_ = SunParam{ 35.0f, 47.0f, 0.0f };
+  PathFeatureReportRequest request;
+  request.schema_version = 3;
+  request.crystal_id = 1;
+  request.layer_crystal_ids = { 1 };
+  request.path_layers = { { 1, 2 } };
+  request.member_selection = SceneMemberSelection::kConcrete;
+  request.scene_measure_sample_count = 8;
+  request.seed = 0x64945u;
+  PathFeatureReport report;
+  const Error error = AnalyzePathFeatureReport(config, request, &report);
+  ASSERT_TRUE(error.Ok()) << error.message;
+  const auto found = std::find_if(report.features.begin(), report.features.end(), [](const PathFeature& feature) {
+    return feature.mechanism == "measure_atom" && !feature.positions.empty();
+  });
+  ASSERT_NE(found, report.features.end());
+  ASSERT_TRUE(found->positions.front().altitude_deg.has_value());
+  ASSERT_TRUE(found->positions.front().azimuth_deg.has_value());
+  EXPECT_NEAR(*found->positions.front().altitude_deg, 35.0, 1e-4);
+  EXPECT_NEAR(*found->positions.front().azimuth_deg, 47.0, 1e-4);
+  ASSERT_TRUE(found->positions.front().spherical_separation_deg.has_value());
+  EXPECT_NEAR(*found->positions.front().spherical_separation_deg, 0.0, 1e-5);
+}
+
 TEST(PathFeatureReport, RandomRegular315KeepsTheTwoMechanismsAndCounterfactualSeparate) {
   const PathFeatureReport report =
       Analyse(Scene(true, false, false), { 3, 1, 5 }, 8192, SceneSpectrumSource::kLegacyReferenceEndpoints);

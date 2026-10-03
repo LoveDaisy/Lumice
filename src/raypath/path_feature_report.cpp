@@ -417,8 +417,19 @@ void ProjectGeneralDiscovery(PathFeatureReport* report) {
   for (const SpectrumMeasureNode& node : report->scene_measure.spectrum_nodes) {
     report->wavelengths.push_back({ node.wavelength_nm, node.weight, node.refractive_index });
   }
-  report->coverage.push_back({ "general_feature_discovery", CoverageStatus::kSupported,
-                               "all mechanism records come from the support-driven analytic kernel" });
+  const bool discovery_complete = report->discovery.complete_visit && report->discovery.materialization_complete;
+  const bool any_supported = std::any_of(
+      report->discovery.mechanisms.begin(), report->discovery.mechanisms.end(),
+      [](const auto& mechanism) { return mechanism.status != analytic::FeatureEvidenceStatus::kNotSupported; });
+  report->coverage.push_back(
+      { "general_feature_discovery",
+        !any_supported ? CoverageStatus::kNotSupported :
+                         (discovery_complete ? CoverageStatus::kSupported : CoverageStatus::kNumericalIncomplete),
+        !any_supported ?
+            "the analytic kernel rejected the supplied support contract" :
+            (discovery_complete ?
+                 "all mechanism records come from complete materialized local support cells" :
+                 "the analytic kernel ran, but the visitor or local-cell materialization was incomplete") });
   for (const analytic::FeatureMechanismRecord& mechanism : report->discovery.mechanisms) {
     report->coverage.push_back(
         { "feature_mechanism." + std::string(analytic::FeatureMechanismName(mechanism.mechanism)),
@@ -443,9 +454,10 @@ void ProjectGeneralDiscovery(PathFeatureReport* report) {
       position.wavelength_nm = spectrum->wavelength_nm;
       position.refractive_index = spectrum->refractive_index;
     }
-    double altitude = 0.0;
-    double azimuth = 0.0;
-    DirToAltAz(candidate.direction, &altitude, &azimuth);
+    const double sky_direction[3] = { -candidate.direction[0], -candidate.direction[1], -candidate.direction[2] };
+    const double sky_radius = std::hypot(sky_direction[0], sky_direction[1]);
+    const double altitude = std::atan2(sky_direction[2], sky_radius) * kRad2Deg;
+    const double azimuth = WrapDeg(std::atan2(sky_direction[1], sky_direction[0]) * kRad2Deg);
     position.altitude_deg = altitude;
     position.azimuth_deg = azimuth;
     position.relative_solar_azimuth_deg = WrapDeg(azimuth - report->meta.sun_azimuth_deg);
@@ -805,6 +817,7 @@ Error AnalyzePathFeatureReport(const ConfigManager& config, const PathFeatureRep
 
   SceneMeasureResult scene_measure;
   analytic::FeatureSupportBatch feature_support;
+  analytic::FeatureReevaluateFn feature_reevaluate;
   if (!legacy_schema) {
     SceneMeasureRequest measure_request;
     measure_request.layer_crystal_ids = layer_crystal_ids;
@@ -821,7 +834,8 @@ Error AnalyzePathFeatureReport(const ConfigManager& config, const PathFeatureRep
     measure_request.sun_node_count = request.sun_node_count;
     measure_request.illuminant_node_count = request.illuminant_node_count;
     measure_request.seed = request.seed;
-    if (const Error error = BuildFeatureSupportBatch(config, measure_request, &feature_support, &scene_measure);
+    if (const Error error =
+            BuildFeatureSupportBatch(config, measure_request, &feature_support, &scene_measure, &feature_reevaluate);
         !error.Ok()) {
       return error;
     }
@@ -858,7 +872,7 @@ Error AnalyzePathFeatureReport(const ConfigManager& config, const PathFeatureRep
     analytic::FeatureDiscoveryOptions discovery_options;
     discovery_options.sky_merge_tolerance =
         std::sqrt(4.0 * kPi / (discovery_options.sky_z_bins * discovery_options.sky_azimuth_bins));
-    result.discovery = analytic::DiscoverFeatures(feature_support, discovery_options);
+    result.discovery = analytic::DiscoverFeatures(feature_support, discovery_options, feature_reevaluate);
     result.meta.orientation_measure = "actual configured scene measure; see scene_measure.factors";
     ProjectGeneralDiscovery(&result);
     result.limitations = {

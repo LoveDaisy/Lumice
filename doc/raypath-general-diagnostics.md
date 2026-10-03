@@ -53,8 +53,11 @@ Raypath 诊断以当前场景的实际映射和测度为对象，不以路径、
 产品 adapter 在 report 的 schema 3 路径中通过 `SceneMeasure` 的完整 visitor 构造版本化
 support batch；`visited_row_count` 在任何物化上限判断之前递增，因此 JSON 保存的代表行不参与发现。
 batch 保留实际 member chain、层/接口、谱/太阳节点、support 坐标、命名 margin、权重和完整链输出方向。
-多层姿态方向导数通过同一行状态上的双尺度扰动传播完整 `outgoing→incident` 链，再投影到天空
-`S²` 的二维切基判秩；三维嵌入矩阵的恒零行列式不作为临界证据。
+adapter 对每个物理活动坐标从同一 provenance 分支生成 lower/centre/upper 局部胞元，通过
+`SceneMeasure` 的生产几何、filter 和原生权重 ledger 重求值；这些探针行显式不累加天空测度。
+因此邻接关系来自真实局部胞元，而不是 visitor 遍历顺序。多层方向导数通过同一行状态上的双尺度扰动
+传播完整 `outgoing→incident` 链，对 shape、pose、太阳和谱的所有活动坐标计算二维天空切映射的正则秩与受限秩；
+三维嵌入矩阵的恒零行列式不作为临界证据。
 
 analytic kernel 对每个命名约束检查活动点和邻接边上的两侧符号，分别产生 support、TIR、filter
 和 weight 机制；多个同点活动约束另外产生 corner。没有同分支 callback 细化的交叉只保留
@@ -69,10 +72,11 @@ schema 1 请求仍保留历史 fixture 输出作为 ABI 兼容前缀；该兼容
 
 ## 共享数值边界
 
-独立 analytic 库提供可批量消费的数值，不导出产品 report。API version 9 的
+独立 analytic 库提供可批量消费的数值，不导出产品 report。API version 10 的
 `LUMICE_ANALYTIC_DiscoverFeatures` 接收 `struct_size`/stride 版本化的 support rows、constraints、
 topology edges 和同步 callback，并返回 candidates、mechanism records 与 sky field；所有输出和字符串
 由单一 result storage 持有并通过 `LUMICE_ANALYTIC_ReleaseFeatureDiscoveryResult` 释放。通用发现所需的行数据包括具体几何/成员/波长/姿态、方向与坐标约定、有限入口测度、逐接口 `T/R`、命名的有效域和 TIR margin、必要的一阶/二阶切导数和折射率导数，以及逐行数值状态。
+版本 2 support batch 将坐标维度改为动态，追加了 `accumulates_measure` 和显式局部胞元轴；版本 1 的原始前缀仍可读，其 16 维上限不扩展到新版本。
 
 只加载 `liblumice_analytic` 的 ctypes consumer 用独立等面积求和和约束根 oracle 验证数组布局、
 stride/version/pointer 错误、回调借用期、释放幂等、访问顺序和并发调用。产品 JSON 不是这一数值契约的替代品。

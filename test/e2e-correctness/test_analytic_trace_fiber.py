@@ -106,7 +106,7 @@ _PRELUDE = textwrap.dedent(
     lib = ctypes.CDLL(LIB)
     lib.LUMICE_ANALYTIC_GetApiVersion.restype = c_int
     # Versions 6 and 7 added independent capabilities; the fiber structs below are version 5's.
-    assert lib.LUMICE_ANALYTIC_GetApiVersion() == 9, "these bindings require lumice_analytic.h version 9"
+    assert lib.LUMICE_ANALYTIC_GetApiVersion() == 10, "these bindings require lumice_analytic.h version 10"
     lib.LUMICE_ANALYTIC_TraceFiberBatch.restype = c_int
     lib.LUMICE_ANALYTIC_TraceFiberBatch.argtypes = [POINTER(Crystal), POINTER(FiberProblem), c_int,
                                                     POINTER(Options), c_void_p]

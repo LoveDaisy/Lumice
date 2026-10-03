@@ -23,6 +23,9 @@
 // face sequence and performs no symmetry reduction (doc/analytic-api.md section 3).
 //
 // Version notes, newest first (every bump says what changed, doc/analytic-api.md section 8.1):
+//   10 ADDED feature-support version 2: dynamic coordinate extents, an append-only
+//      accumulates_measure flag, and explicit local cell-axis topology. Version 1 keeps its
+//      published 16-coordinate limit and layouts. Nothing else changed.
 //   9  ADDED the general support-driven feature-discovery structs, re-evaluation callback,
 //      LUMICE_ANALYTIC_DiscoverFeatures and LUMICE_ANALYTIC_ReleaseFeatureDiscoveryResult.
 //      Nothing existing changed.
@@ -82,7 +85,7 @@ extern "C" {
 
 // Interface version, a single integer (doc/analytic-api.md section 8.2): bumped on every
 // incompatible change, and in 0.x on every addition too. Independent of lumice_base.h's LUMICE_API_VERSION.
-#define LUMICE_ANALYTIC_API_VERSION 9
+#define LUMICE_ANALYTIC_API_VERSION 10
 
 // Return codes of the computation functions. The names shared with lumice_base.h's LUMICE_ErrorCode mean
 // the same thing there; the type is this header's own (doc/analytic-api.md section 5.2). A numerical
@@ -739,7 +742,9 @@ LUMICE_ANALYTIC_API void LUMICE_ANALYTIC_ReleaseBandSumResult(LUMICE_ANALYTIC_Ba
 // classification and equal-area sky aggregation. Directions are world propagation directions
 // (crystal -> observer), so their displayed sky points are their negatives.
 // ---------------------------------------------------------------------------------------------
-#define LUMICE_ANALYTIC_FEATURE_SUPPORT_VERSION 1
+#define LUMICE_ANALYTIC_FEATURE_SUPPORT_VERSION_V1 1
+#define LUMICE_ANALYTIC_FEATURE_SUPPORT_VERSION 2
+// Version 1's frozen cap. Version 2 uses checked dynamic buffers and has no dimension-only cap.
 #define LUMICE_ANALYTIC_MAX_FEATURE_COORDINATE_DIMENSION 16
 
 typedef enum LUMICE_ANALYTIC_FeatureEvidenceStatus_ {
@@ -816,9 +821,10 @@ typedef struct LUMICE_ANALYTIC_FeatureSupportSample_ {
   double direction_jacobian_error;
   double direction_jacobian_resolution;
   int constraint_count;
-  uint32_t constraint_stride;  // sizeof(LUMICE_ANALYTIC_SupportConstraint) for version 9
+  uint32_t constraint_stride;  // sizeof(LUMICE_ANALYTIC_SupportConstraint)
   const LUMICE_ANALYTIC_SupportConstraint* constraints;
   int numerically_available;
+  int accumulates_measure;  // ADDED version 10; 0 for local probes, 1 for input-measure rows
 } LUMICE_ANALYTIC_FeatureSupportSample;
 
 typedef struct LUMICE_ANALYTIC_FeatureSupportEdge_ {
@@ -826,6 +832,15 @@ typedef struct LUMICE_ANALYTIC_FeatureSupportEdge_ {
   int second;
   double parameter_distance;
 } LUMICE_ANALYTIC_FeatureSupportEdge;
+
+typedef struct LUMICE_ANALYTIC_FeatureSupportCellAxis_ {
+  int cell_id;
+  int coordinate_index;
+  int lower;
+  int center;
+  int upper;
+  double parameter_span;
+} LUMICE_ANALYTIC_FeatureSupportCellAxis;
 
 typedef struct LUMICE_ANALYTIC_FeatureSupportBatch_ {
   uint32_t struct_size;
@@ -835,10 +850,13 @@ typedef struct LUMICE_ANALYTIC_FeatureSupportBatch_ {
   int complete_visit;
   int materialization_complete;
   int sample_count;
-  uint32_t sample_stride;  // sizeof(LUMICE_ANALYTIC_FeatureSupportSample) for version 9
+  uint32_t sample_stride;  // caller sample layout stride; version 1 accepts its frozen v9 prefix
   const LUMICE_ANALYTIC_FeatureSupportSample* samples;
   int edge_count;
   const LUMICE_ANALYTIC_FeatureSupportEdge* edges;
+  // ADDED version 10; required by feature-support version 2, absent from version 1's frozen prefix.
+  int cell_axis_count;
+  const LUMICE_ANALYTIC_FeatureSupportCellAxis* cell_axes;
 } LUMICE_ANALYTIC_FeatureSupportBatch;
 
 typedef struct LUMICE_ANALYTIC_FeatureReevaluationRequest_ {
@@ -917,8 +935,8 @@ typedef struct LUMICE_ANALYTIC_FeatureDiscoveryResult_ {
 } LUMICE_ANALYTIC_FeatureDiscoveryResult;
 
 // Input rows and nested constraints are walked with their declared strides. Counts must be
-// non-negative, every stride must cover the complete version 9 struct, and every required pointer
-// must be non-NULL. A semantically malformed support is ERR_INVALID_VALUE rather than a discovery
+// non-negative, every stride must cover the selected support version's layout, and every required
+// pointer must be non-NULL. A semantically malformed support is ERR_INVALID_VALUE rather than a discovery
 // status. The callback and user_data are borrowed synchronously; NULL disables refinement.
 // Re-entrant: concurrent calls with distinct outputs own independent storage and callback state.
 LUMICE_ANALYTIC_API LUMICE_ANALYTIC_ErrorCode LUMICE_ANALYTIC_DiscoverFeatures(

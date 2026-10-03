@@ -14,8 +14,9 @@
 
 namespace lumice::analytic {
 
-constexpr int kMaxFeatureDiscoveryCoordinateDimension = 16;
-constexpr uint32_t kFeatureSupportBatchVersion = 1;
+constexpr int kLegacyFeatureDiscoveryCoordinateDimension = 16;
+constexpr uint32_t kFeatureSupportBatchVersionV1 = 1;
+constexpr uint32_t kFeatureSupportBatchVersion = 2;
 
 enum class FeatureEvidenceStatus {
   kConfirmed,
@@ -86,6 +87,10 @@ struct FeatureSupportSample {
   // distribution keeps positive support_dimension; only a true atom has dimension zero.
   int support_dimension = 0;
   bool finite_width = false;
+  // False for local cell probes produced by controlled re-evaluation. Such probes are evidence
+  // for topology, derivatives and two-sided mechanisms, but are not new draws from the input
+  // measure and therefore must never be accumulated into the sky field or point mass.
+  bool accumulates_measure = true;
   std::vector<double> coordinates;
   // Embedding-coordinate columns that span the actual continuous support tangent. Its extent is
   // support_dimension; discrete provenance coordinates are deliberately absent.
@@ -109,6 +114,18 @@ struct FeatureSupportEdge {
   double parameter_distance = 0.0;
 };
 
+// One real axis of a caller-supplied local parameter cell. The three sample indices share one
+// provenance branch and differ only in coordinate_index. This is the topology contract used for
+// derivatives and non-smooth weight evidence; traversal order is never interpreted as adjacency.
+struct FeatureSupportCellAxis {
+  int cell_id = -1;
+  int coordinate_index = -1;
+  int lower = -1;
+  int center = -1;
+  int upper = -1;
+  double parameter_span = 0.0;
+};
+
 struct FeatureSupportBatch {
   uint32_t version = kFeatureSupportBatchVersion;
   int coordinate_dimension = 0;
@@ -122,6 +139,7 @@ struct FeatureSupportBatch {
   bool materialization_complete = true;
   std::vector<FeatureSupportSample> samples;
   std::vector<FeatureSupportEdge> edges;
+  std::vector<FeatureSupportCellAxis> cell_axes;
 };
 
 // A re-evaluation request stays in the caller's parameterization and identifies the concrete

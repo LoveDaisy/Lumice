@@ -10,7 +10,7 @@
 > per-pose diagnostics on `FiberResult` (version 5, §4.3); and module B v1, the band sum
 > `LUMICE_ANALYTIC_BandSum` (version 6, §4.6), the general diagnostic-field direct batch
 > (version 8, §4.8; its result layout remains the frozen version 7 layout), and support-driven
-> general feature discovery (version 9, §4.9). Module A serves the Analyze workspace's first phase,
+> general feature discovery (version 10, §4.9). Module A serves the Analyze workspace's first phase,
 > module B its second, the single-path all-sky map (`doc/raypath-analysis.md` §5.1.8). The library is not in any
 > download package yet: that is §8.8's checklist, not done.
 >
@@ -1236,12 +1236,15 @@ per pixel for the merged pair, the band sum's `1/√K_eff` `2.0 %`: `±1.28σ` o
 The contract's §6 unit and §8 conversion therefore hold for this implementation with nothing fitted,
 which also checks the `kLiAreaPerEngineArea` factor and the weight's Fresnel factor end to end.
 
-### 4.9 General support-driven feature discovery (as built, API version 9)
+### 4.9 General support-driven feature discovery (as built, API version 10)
 
 `LUMICE_ANALYTIC_DiscoverFeatures` consumes a finite description of an actual scene measure. A
 support row identifies its discrete provenance, continuous embedding coordinates and active tangent
 coordinates, output direction, quadrature weight, optional full-chain direction Jacobian, and named
-domain/entry/TIR/filter/weight margins. Edges describe the caller's support topology. This contract
+domain/entry/TIR/filter/weight margins. Explicit local cell axes describe the caller's support
+topology: each names one physical coordinate, its lower/centre/upper samples and its parameter span.
+Edges remain available for constraint-crossing searches, but are no longer interpreted as an ordered
+visitor traversal. This contract
 does not accept a pose-family name, nominal halo angle, crystal name, or target direction, so those
 labels cannot silently restrict what is searched.
 
@@ -1252,8 +1255,9 @@ global no-feature certificate. Atomic measure, positive-width continuous support
 low-dimensional confinement, the restricted S² differential rank, named constraint zero sets and
 crossings, and scene-level brightness structure remain separate mechanisms and records.
 
-The sky field uses equal-area `(z, azimuth)` cells. It marginalizes every supplied member, source,
-spectrum and support row by the caller's weights, reports both cell mass and density per steradian,
+The sky field uses equal-area `(z, azimuth)` cells. It marginalizes every measure-carrying member,
+source, spectrum and support row by the caller's weights; finite-difference probe rows are marked as
+non-measure support and cannot add brightness. It reports both cell mass and density per steradian,
 and computes local gradients and Hessian eigenvalues. A brightness maximum or ridge is confirmed
 only when a complete fine neighborhood agrees with the corresponding half-resolution field;
 otherwise it remains a candidate. Samples are accumulated in `sample_id` order, so caller chunking
@@ -1269,7 +1273,10 @@ NULL-safe and idempotent. Calls keep no writable global state and are re-entrant
 and callback state.
 
 Every variable input row has a leading `struct_size`; rows and nested constraints use explicit
-strides. Version 9 requires each stride to cover the full first-published structure. A bad version,
+strides. Version 10 introduces support-batch version 2: the legacy 16-coordinate ceiling is retained
+only for version-1 batches, while version 2 has dynamic coordinate storage, an explicit
+`accumulates_measure` flag and explicit local cell axes. A genuine version-1 prefix remains readable;
+version-2 rows and batches require their complete appended extents. A bad version,
 extent, stride, enum, pointer, non-finite scalar, unit direction, topology edge or duplicated sample
 id is a call-level `ERR_INVALID_VALUE`/`ERR_NULL_ARG`, with the output zero-filled after its preserved
 `struct_size`. Valid physical emptiness and unavailable local numerics are result states instead.

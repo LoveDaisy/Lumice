@@ -807,8 +807,8 @@ analytic::CrystalShape SampleShape(RandomNumberGenerator& rng, const CrystalPara
     }
     const int latent_id = layer.shape_latent[trace.slot];
     const std::string name = ShapeName(kind, trace.slot);
-    samples->push_back({ name, trace.mapped_value, latent_id, trace.sync_group, trace.leader_slot, trace.raw_value,
-                         trace.absolute_value_fold, trace.mapping_jacobian });
+    samples->push_back({ trace.slot, name, trace.mapped_value, latent_id, trace.sync_group, trace.leader_slot,
+                         trace.raw_value, trace.absolute_value_fold, trace.mapping_jacobian });
     AppendLatent(latent_id, layer_index, "shape." + ShapeName(kind, trace.leader_slot),
                  DistributionBaseMeasure(*distribution, trace.draw), trace.draw,
                  trace.sync_group == 0 ? "distribution latent -> scalar" :
@@ -1316,6 +1316,62 @@ NumericValue SplitError(const NumericValue contribution[2], const NumericValue m
   return CheckedMultiply(CheckedAbsoluteDifference(estimate0, estimate1), 0.5);
 }
 
+Distribution FixedDistribution(double value) {
+  return { DistributionType::kNoRandom, static_cast<float>(value), 0.0f };
+}
+
+void SetDeterministicShape(const analytic::CrystalShape& shape, CrystalParam* param) {
+  if (auto* prism = std::get_if<PrismCrystalParam>(param); prism != nullptr) {
+    prism->h_ = FixedDistribution(shape.height);
+    for (int face = 0; face < 6; ++face) {
+      prism->d_[face] = FixedDistribution(shape.face_distance[face]);
+    }
+    std::fill(std::begin(prism->sync_group_), std::end(prism->sync_group_), 0);
+    return;
+  }
+  auto& pyramid = std::get<PyramidCrystalParam>(*param);
+  pyramid.h_pyr_u_ = FixedDistribution(shape.upper_h);
+  pyramid.h_prs_ = FixedDistribution(shape.height);
+  pyramid.h_pyr_l_ = FixedDistribution(shape.lower_h);
+  for (int face = 0; face < 6; ++face) {
+    pyramid.d_[face] = FixedDistribution(shape.face_distance[face]);
+  }
+  std::fill(std::begin(pyramid.sync_group_), std::end(pyramid.sync_group_), 0);
+  pyramid.wedge_angle_u_ = static_cast<float>(shape.upper_wedge_deg);
+  pyramid.wedge_angle_l_ = static_cast<float>(shape.lower_wedge_deg);
+}
+
+void SetDeterministicPose(const std::array<double, 3>& pose, AxisDistribution* axis) {
+  axis->azimuth_dist = FixedDistribution(pose[0] * math::kRadToDegree);
+  axis->latitude_dist = FixedDistribution(pose[1] * math::kRadToDegree);
+  axis->roll_dist = FixedDistribution(pose[2] * math::kRadToDegree);
+}
+
+bool SameCrystalId(const CrystalConfig& crystal, IdType id) {
+  return crystal.id_ == id;
+}
+
+void ApplyReplayStateToConfig(const SceneMeasureRequest& request, const SceneMeasureReplayState& state,
+                              ConfigManager* config) {
+  for (size_t layer_index = 0; layer_index < request.layer_crystal_ids.size(); ++layer_index) {
+    const IdType crystal_id = request.layer_crystal_ids[layer_index];
+    if (layer_index < config->scene_.ms_.size()) {
+      for (ScatteringSetting& setting : config->scene_.ms_[layer_index].setting_) {
+        if (!SameCrystalId(setting.crystal_, crystal_id)) {
+          continue;
+        }
+        SetDeterministicShape(state.shapes[layer_index], &setting.crystal_.param_);
+        SetDeterministicPose(state.poses[layer_index], &setting.crystal_.axis_);
+      }
+    }
+    const auto crystal = config->crystals_.find(crystal_id);
+    if (crystal != config->crystals_.end()) {
+      SetDeterministicShape(state.shapes[layer_index], &crystal->second.param_);
+      SetDeterministicPose(state.poses[layer_index], &crystal->second.axis_);
+    }
+  }
+}
+
 }  // namespace
 
 Error BuildSceneMeasure(const ConfigManager& config, const SceneMeasureRequest& request, SceneMeasureResult* out) {
@@ -1734,6 +1790,89 @@ Error BuildSceneMeasure(const ConfigManager& config, const SceneMeasureRequest& 
     result.status = SceneMeasureStatus::kConfirmed;
   }
   *out = std::move(result);
+  return {};
+}
+
+Error ReevaluateSceneMeasureRow(const ConfigManager& config, const SceneMeasureRequest& request,
+                                const SceneMeasureRow& row_template, const SceneMeasureReplayState& state,
+                                SceneMeasureRow* out) {
+  if (out == nullptr) {
+    return { ErrorCode::kInvalidArgument, "scene-measure replay requires an output row" };
+  }
+  *out = SceneMeasureRow{};
+  if (state.shapes.size() != request.layer_crystal_ids.size() ||
+      state.poses.size() != request.layer_crystal_ids.size() ||
+      row_template.layers.size() != request.layer_crystal_ids.size()) {
+    return { ErrorCode::kInvalidArgument, "scene-measure replay state must describe every requested layer" };
+  }
+  if (!std::isfinite(state.wavelength_nm) ||
+      !std::all_of(std::begin(state.incident_direction), std::end(state.incident_direction),
+                   [](double value) { return std::isfinite(value); })) {
+    return { ErrorCode::kInvalidArgument, "scene-measure replay source state must be finite" };
+  }
+  const double incident_norm =
+      std::sqrt(std::inner_product(std::begin(state.incident_direction), std::end(state.incident_direction),
+                                   std::begin(state.incident_direction), 0.0));
+  if (!(incident_norm > 0.0)) {
+    return { ErrorCode::kInvalidArgument, "scene-measure replay incident direction must be non-zero" };
+  }
+
+  ConfigManager replay_config = config;
+  ApplyReplayStateToConfig(request, state, &replay_config);
+  SceneMeasureRequest replay_request = request;
+  replay_request.member_selection = SceneMemberSelection::kExplicitChains;
+  replay_request.explicit_member_chains = { {} };
+  replay_request.explicit_member_chains.front().reserve(row_template.layers.size());
+  for (const SceneMeasureLayerRow& layer : row_template.layers) {
+    replay_request.explicit_member_chains.front().push_back(layer.faces);
+  }
+  replay_request.spectrum_source = SceneSpectrumSource::kDiagnostic;
+  replay_request.diagnostic_wavelengths_nm = { state.wavelength_nm };
+  replay_request.diagnostic_wavelength_weights = { row_template.spectrum_weight };
+  SunMeasureNode sun;
+  sun.mass = row_template.sun_mass;
+  for (int component = 0; component < 3; ++component) {
+    sun.incident_direction[component] = state.incident_direction[component] / incident_norm;
+  }
+  replay_request.source_sun_nodes = { sun };
+  replay_request.sample_count = 2;
+  replay_request.include_derivatives = false;
+
+  SceneMeasureRow replayed;
+  bool saw_row = false;
+  SceneMeasureResult ignored;
+  const Error error = BuildSceneMeasure(
+      replay_config, replay_request,
+      [&](const SceneMeasureRow& row) {
+        if (!saw_row) {
+          replayed = row;
+          saw_row = true;
+        }
+      },
+      &ignored);
+  if (!error.Ok()) {
+    return error;
+  }
+  if (!saw_row) {
+    return { ErrorCode::kInvalidArgument, "scene-measure replay produced no row" };
+  }
+
+  const double sample_mass_scale = 2.0 / static_cast<double>(request.sample_count);
+  replayed.spectrum_node_id = row_template.spectrum_node_id;
+  replayed.sun_node_id = row_template.sun_node_id;
+  replayed.member_chain_index = row_template.member_chain_index;
+  replayed.sample_index = row_template.sample_index;
+  replayed.replay_seed = row_template.replay_seed;
+  replayed.joint_sample_mass = row_template.joint_sample_mass;
+  if (replayed.contribution_status == SceneMeasureNumericStatus::kAvailable) {
+    replayed.contribution *= sample_mass_scale;
+  }
+  replayed.latents = row_template.latents;
+  for (SceneMeasureLayerRow& layer : replayed.layers) {
+    layer.source_sun_node_id = row_template.sun_node_id;
+    layer.source_spectrum_node_id = row_template.spectrum_node_id;
+  }
+  *out = std::move(replayed);
   return {};
 }
 
