@@ -260,8 +260,8 @@ vec3 subtractiveInk(float e, vec3 paper) {
     return paper * pow(10.0, -density);
 }
 
-// The channel-B-R display mode (u_display_mode == 1): the post-gamma sRGB B - R of the pixel the
-// normal mode would show, as a grey offset — mid grey is zero, bluer is lighter, redder is darker.
+// The channel-B-R display mode (u_display_mode == 1): halo-only post-gamma sRGB B - R at the same
+// exposure and view, as a grey offset — mid grey is zero, bluer is lighter, redder is darker.
 //
 // HAND-TRANSCRIBED from src/util/channel_math.hpp (kChannelBrGain / ChannelMathBrGray), which is
 // the authority; it MUST equal that function, and kChannelBrGain below MUST equal
