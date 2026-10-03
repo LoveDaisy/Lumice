@@ -229,11 +229,11 @@ TEST(WindowResizeEvents, ZeroOneOrTwoSynchronousCallbacksCannotExemptTheNextManu
   for (int callback_count : { 0, 1, 2 }) {
     SCOPED_TRACE(callback_count);
     gui::WindowResizeEvents events;
-    events.BeginRequest(1400, 900);
+    events.BeginRequest(/*resize_expected=*/true);
     for (int i = 0; i < callback_count; ++i) {
       EXPECT_TRUE(events.RecordResize(1400, 900));
     }
-    events.EndRequest(1400, 900);
+    events.EndRequest();
     EXPECT_FALSE(events.FinishEventPoll());
     EXPECT_FALSE(events.RecordResize(1350, 880));
     EXPECT_TRUE(events.FinishEventPoll());
@@ -242,10 +242,10 @@ TEST(WindowResizeEvents, ZeroOneOrTwoSynchronousCallbacksCannotExemptTheNextManu
 
 TEST(WindowResizeEvents, DelayedRequestsRemainCorrelatedWithinTheNextPoll) {
   gui::WindowResizeEvents events;
-  events.BeginRequest(1400, 900);
-  events.EndRequest(1600, 980);
-  events.BeginRequest(1500, 940);
-  events.EndRequest(1600, 980);
+  events.BeginRequest(/*resize_expected=*/true);
+  events.EndRequest();
+  events.BeginRequest(/*resize_expected=*/true);
+  events.EndRequest();
   EXPECT_TRUE(events.RecordResize(1400, 900));
   EXPECT_TRUE(events.RecordResize(1500, 940));
   EXPECT_FALSE(events.FinishEventPoll());
@@ -257,8 +257,8 @@ TEST(WindowResizeEvents, UnacknowledgedRequestsCannotExemptOldReadbackOrLaterMan
   for (int manual_width : { 1400, 1600 }) {
     SCOPED_TRACE(manual_width);
     gui::WindowResizeEvents events;
-    events.BeginRequest(1400, 900);
-    events.EndRequest(1600, 980);
+    events.BeginRequest(/*resize_expected=*/true);
+    events.EndRequest();
     EXPECT_FALSE(events.FinishEventPoll());
     EXPECT_FALSE(events.FinishEventPoll());
     EXPECT_FALSE(events.RecordResize(manual_width, manual_width == 1400 ? 900 : 980));
@@ -266,16 +266,16 @@ TEST(WindowResizeEvents, UnacknowledgedRequestsCannotExemptOldReadbackOrLaterMan
   }
 
   gui::WindowResizeEvents events;
-  events.BeginRequest(1400, 900);
-  events.EndRequest(1600, 980);
-  EXPECT_FALSE(events.RecordResize(1600, 980));
-  EXPECT_TRUE(events.FinishEventPoll());
+  events.BeginRequest(/*resize_expected=*/true);
+  events.EndRequest();
+  EXPECT_TRUE(events.RecordResize(1600, 980));
+  EXPECT_FALSE(events.FinishEventPoll());
 }
 
 TEST(WindowResizeEvents, AManualSizeAfterSettlementSupersedesAnUnacknowledgedRequest) {
   gui::WindowResizeEvents events;
-  events.BeginRequest(1400, 900);
-  events.EndRequest(1600, 980);
+  events.BeginRequest(/*resize_expected=*/true);
+  events.EndRequest();
   EXPECT_FALSE(events.FinishEventPoll());
   EXPECT_FALSE(events.RecordResize(1350, 880));
   EXPECT_TRUE(events.FinishEventPoll());
@@ -285,18 +285,48 @@ TEST(WindowResizeEvents, AManualSizeAfterSettlementSupersedesAnUnacknowledgedReq
 
 TEST(WindowResizeEvents, AdjustedAsynchronousResultSettlesOnceAndDoesNotExemptTheNextManualSize) {
   gui::WindowResizeEvents events;
-  events.BeginRequest(1400, 900);
-  events.EndRequest(1600, 980);
+  events.BeginRequest(/*resize_expected=*/true);
+  events.EndRequest();
   EXPECT_TRUE(events.RecordResize(1420, 910));
   EXPECT_TRUE(events.RecordResize(1420, 910));
   EXPECT_FALSE(events.FinishEventPoll());
   EXPECT_FALSE(events.RecordResize(1430, 910));
   EXPECT_TRUE(events.FinishEventPoll());
 
-  events.BeginRequest(1400, 900);
-  events.EndRequest(1600, 980);
+  events.BeginRequest(/*resize_expected=*/true);
+  events.EndRequest();
   EXPECT_TRUE(events.RecordResize(1420, 910));
-  EXPECT_FALSE(events.RecordResize(1430, 910));
+  EXPECT_TRUE(events.RecordResize(1430, 910));
+  EXPECT_FALSE(events.FinishEventPoll());
+  EXPECT_FALSE(events.RecordResize(1440, 910));
+  EXPECT_TRUE(events.FinishEventPoll());
+}
+
+TEST(WindowResizeEvents, TargetThenAdjustedResultsStayInTheTransactionAndSettleAtThePollBoundary) {
+  gui::WindowResizeEvents events;
+  events.BeginRequest(/*resize_expected=*/true);
+  events.EndRequest();
+  EXPECT_TRUE(events.RecordResize(1400, 900));
+  EXPECT_TRUE(events.RecordResize(1420, 910));
+  EXPECT_TRUE(events.RecordResize(1440, 920));
+  EXPECT_FALSE(events.FinishEventPoll());
+  EXPECT_FALSE(events.RecordResize(1440, 920));
+  EXPECT_TRUE(events.FinishEventPoll());
+}
+
+TEST(WindowResizeEvents, NoOpWithoutCallbacksCannotExemptManualInputEvenBeforeSettlement) {
+  gui::WindowResizeEvents events;
+  events.BeginRequest(/*resize_expected=*/false);
+  events.EndRequest();
+  EXPECT_FALSE(events.RecordResize(1350, 880));
+  EXPECT_TRUE(events.FinishEventPoll());
+
+  events.BeginRequest(/*resize_expected=*/false);
+  EXPECT_TRUE(events.RecordResize(1350, 880));
+  events.EndRequest();
+  EXPECT_TRUE(events.RecordResize(1370, 890));
+  EXPECT_FALSE(events.FinishEventPoll());
+  EXPECT_FALSE(events.RecordResize(1360, 880));
   EXPECT_TRUE(events.FinishEventPoll());
 }
 

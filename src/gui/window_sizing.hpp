@@ -4,7 +4,6 @@
 #include <algorithm>
 #include <climits>
 #include <cmath>
-#include <vector>
 
 #include "gui/gui_constants.hpp"
 
@@ -12,50 +11,29 @@ struct GLFWwindow;
 
 namespace lumice::gui {
 
-// GLFW can report a resize inside SetWindowSize or during a later event poll. Correlate delayed
-// events with concrete requests through the next event poll, and decide whether an unmatched event
-// was manual only after all content-scale callbacks in that poll have arrived (Win32 reports size
-// before DPI). Unconfirmed requests expire at that boundary: rejected requests must not exempt a
-// later user resize. An event arriving after settlement is treated as a new external resize.
+// GLFW may deliver several adjusted sizes for one operation, synchronously or in the next poll.
+// It supplies no event-source token, so a resize transaction owns that whole bounded interval.
+// All requests expire at FinishEventPoll; a no-op with no callback never opens that interval.
 class WindowResizeEvents {
  public:
-  void BeginRequest(int width, int height) {
-    requests_.push_back({ width, height, width, height, false });
+  void BeginRequest(bool resize_expected) {
     issuing_ = true;
+    resize_expected_ = resize_expected;
     saw_synchronous_callback_ = false;
   }
 
-  void EndRequest(int actual_width, int actual_height) {
-    auto& request = requests_.back();
-    request.actual_w = actual_width;
-    request.actual_h = actual_height;
-    request.completed =
-        saw_synchronous_callback_ || (actual_width == request.target_w && actual_height == request.target_h);
+  void EndRequest() {
+    programmatic_pending_ = programmatic_pending_ || resize_expected_ || saw_synchronous_callback_;
     issuing_ = false;
   }
 
-  bool RecordResize(int width, int height) {
+  bool RecordResize(int /*width*/, int /*height*/) {
     if (issuing_) {
       saw_synchronous_callback_ = true;
       return true;
     }
-    for (auto& request : requests_) {
-      if ((width == request.target_w && height == request.target_h) ||
-          (request.completed && width == request.actual_w && height == request.actual_h)) {
-        request.completed = true;
-        return true;
-      }
-    }
-    // An asynchronous window manager can adjust the requested size. GLFW supplies no event-source
-    // token, so the first changed result in this bounded window belongs to an unconfirmed request.
-    // The stale readback is not a changed result; later unmatched events retain manual semantics.
-    for (auto& request : requests_) {
-      if (!request.completed && (width != request.actual_w || height != request.actual_h)) {
-        request.actual_w = width;
-        request.actual_h = height;
-        request.completed = true;
-        return true;
-      }
+    if (programmatic_pending_) {
+      return true;
     }
     unmatched_resize_ = true;
     return false;
@@ -70,25 +48,17 @@ class WindowResizeEvents {
 
   bool FinishEventPoll() {
     const bool manual_resize = unmatched_resize_ && !content_scale_changed_;
-    // Success, rejection and silence all settle here. The old readback of a rejected request is
-    // never evidence of a programmatic event, and no historical target survives into another poll.
-    requests_.clear();
+    programmatic_pending_ = false;
     unmatched_resize_ = false;
     content_scale_changed_ = false;
     return manual_resize;
   }
 
  private:
-  struct Request {
-    int target_w;
-    int target_h;
-    int actual_w;
-    int actual_h;
-    bool completed;
-  };
-  std::vector<Request> requests_;
   bool issuing_ = false;
+  bool resize_expected_ = false;
   bool saw_synchronous_callback_ = false;
+  bool programmatic_pending_ = false;
   bool unmatched_resize_ = false;
   bool content_scale_changed_ = false;
   unsigned int content_scale_revision_ = 0;

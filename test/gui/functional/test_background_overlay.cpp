@@ -292,11 +292,22 @@ void RegisterBackgroundOverlayTests(ImGuiTestEngine* engine) {
       g_window_size_test.adjusted_async_resize = true;
       request(false, false, width - 128, height);
       IM_CHECK_EQ(gui::g_state.aspect_preset, gui::AspectPreset::k16x9);
-      const float actual_ratio = (g_window_size_test.width - gui::UiPx(gui::kLeftPanelWidth + gui::kRightPanelWidth)) /
-                                 (g_window_size_test.height - gui::UiPx(gui::kTopBarHeight + gui::kStatusBarHeight));
-      IM_CHECK(std::abs(gui::g_state.aspect_clamp.achieved_preview_ratio - actual_ratio) < 1e-5f);
+      const auto actual_ratio = [] {
+        return (g_window_size_test.width - gui::UiPx(gui::kLeftPanelWidth + gui::kRightPanelWidth)) /
+               (g_window_size_test.height - gui::UiPx(gui::kTopBarHeight + gui::kStatusBarHeight));
+      };
+      IM_CHECK(std::abs(gui::g_state.aspect_clamp.achieved_preview_ratio - actual_ratio()) < 1e-5f);
       IM_CHECK(gui::g_state.aspect_clamp.was_clamped);
       request(false, false, width - 136, height);
+      IM_CHECK_EQ(gui::g_state.aspect_preset, gui::AspectPreset::kFree);
+      gui::g_state.aspect_preset = gui::AspectPreset::k16x9;
+      g_window_size_test.adjusted_async_resize = true;
+      g_window_size_test.report_target_first = true;
+      request(false, false, width - 144, height);
+      IM_CHECK_EQ(gui::g_state.aspect_preset, gui::AspectPreset::k16x9);
+      IM_CHECK(std::abs(gui::g_state.aspect_clamp.achieved_preview_ratio - actual_ratio()) < 1e-5f);
+      IM_CHECK(gui::g_state.aspect_clamp.was_clamped);
+      request(false, false, width - 152, height);
       IM_CHECK_EQ(gui::g_state.aspect_preset, gui::AspectPreset::kFree);
       request(false, false, gui::kInitWindowWidth, gui::kInitWindowHeight);
     };

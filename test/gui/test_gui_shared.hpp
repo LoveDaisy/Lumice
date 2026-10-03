@@ -152,6 +152,7 @@ struct WindowSizeTestState {
   bool apply_aspect = false;
   bool content_scale_change = false;
   bool adjusted_async_resize = false;
+  bool report_target_first = false;
   int min_width = 0;
   int min_height = 0;
   int max_width = 0;
@@ -165,6 +166,7 @@ struct WindowSizeTestState {
     apply_aspect = false;
     content_scale_change = false;
     adjusted_async_resize = false;
+    report_target_first = false;
     requested.store(false);
     done.store(false);
   }

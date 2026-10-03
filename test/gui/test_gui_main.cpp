@@ -746,13 +746,14 @@ int main(int argc, char** argv) {
         gui::ApplyAspectRatio(window, gui::g_state.aspect_preset, gui::g_state.aspect_portrait);
       } else {
         if (g_window_size_test.adjusted_async_resize) {
-          // Inject a pending request with stale readback; the real GLFW callback below delivers
-          // a third size, as an asynchronous window manager that adjusted the request would.
-          int previous_w = 0;
-          int previous_h = 0;
-          glfwGetWindowSize(window, &previous_w, &previous_h);
-          gui::BeginProgrammaticWindowResize(g_window_size_test.width + 64, g_window_size_test.height + 32);
-          gui::EndProgrammaticWindowResize(previous_w, previous_h);
+          // Inject an asynchronous transaction, optionally its target callback, then let the real
+          // GLFW adjustment below deliver the final actual size through the product callback.
+          gui::BeginProgrammaticWindowResize(/*resize_expected=*/true);
+          gui::EndProgrammaticWindowResize();
+          if (g_window_size_test.report_target_first) {
+            gui::WindowSizeCallback(window, g_window_size_test.width + 64, g_window_size_test.height + 32);
+            g_window_size_test.report_target_first = false;
+          }
           g_window_size_test.adjusted_async_resize = false;
         }
         glfwSetWindowSize(window, g_window_size_test.width, g_window_size_test.height);

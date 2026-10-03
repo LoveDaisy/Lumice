@@ -611,15 +611,14 @@ S1–S8 是立项时的种子，S9 / S10 是 S3 / S4 两个待核实分支核实
 重建仅结算入口时的输入代际；若窗口调整期间又上报 content-scale，新的 dirty 保留到下一帧，
 不能被当前重建尾部的清理覆盖。
 
-`WindowResizeEvents` 将程序化请求与目标尺寸、同步 readback 关联，支持同步和延迟 callback；
-请求只关联到下一次 event poll，无论成功、拒绝或没有 callback 都在该边界退休；未生效请求的旧
-readback 不参与匹配，迟于结算的尺寸通知按新的外部 resize 处理。同尺寸 no-op 不预支任何 callback。
-GLFW 不提供 callback 的操作来源；下一 poll 内未确认请求的第一个非旧 readback 尺寸优先作为其
-实际结果，允许 OS 调整为不同于 target 的尺寸，并立即重算 clamp。结算后只识别 target 与已确认
-actual；其他未知尺寸按外部操作处理。同一短窗口中的用户操作若先于异步结果到达，也服从这项
-优先级；它不会延续到下一 poll，不保留历史尺寸豁免。
-未匹配尺寸事件先记录，待
-`FinishWindowEventPoll` 看完本轮 content-scale 事件后才判为手工 resize：Win32 的 DPI 调整先报告尺寸、
-后报告 scale，不能在第一个 callback 就清掉画幅意图。这个状态不落盘，也不是另一份画幅状态。
+`WindowResizeEvents` 以操作的下一次 event poll 为有界事务，同步 callback 与该 poll 内全部尺寸通知
+都归属于程序化操作；每个结果立即重算 actual clamp，覆盖 target → OS 调整后的最终尺寸等多阶段
+序列。无论成功、拒绝或没有 callback，事务都在该 poll 边界退休，不累计次数或保留历史尺寸。
+无 resize 预期且没有同步 callback 的操作不打开事务；同尺寸 no-op 不获得任何回调豁免。
+GLFW 不提供 callback 的操作来源，因此这段短窗口中的手工输入也服从程序化事务优先级；
+下一 poll 恢复普通手工 resize → Free 语义。迟于结算的通知按新的外部 resize 处理。
+事务外的尺寸事件先记录，待 `FinishWindowEventPoll` 看完本轮 content-scale 通知后再判手工 resize：
+Win32 的 DPI 调整先报告尺寸、后报告 scale，不能在第一个 callback 就清掉画幅意图。
+这个状态不落盘，也不是另一份画幅状态。
 JSON export 对固定 preset 使用与窗口相同的 `ApplyAspectOrientation` 规则；Free/Match Background 没有可跨机器
 复现的固定导出比例，仍保留既有 2:1 fallback，这与屏幕上的 Match Background 跟图像比例不是同一个承诺。

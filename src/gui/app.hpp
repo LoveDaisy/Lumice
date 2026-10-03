@@ -206,8 +206,8 @@ void NotifyWindowContentScaleChanged();
 unsigned int WindowContentScaleRevision();
 void ResetWindowResizeEvents();
 // Scope a programmatic operation whose callbacks may arrive during the next event poll.
-void BeginProgrammaticWindowResize(int target_width, int target_height);
-void EndProgrammaticWindowResize(int actual_width, int actual_height);
+void BeginProgrammaticWindowResize(bool resize_expected);
+void EndProgrammaticWindowResize();
 
 // Unsaved changes popup state
 extern bool g_show_unsaved_popup;
