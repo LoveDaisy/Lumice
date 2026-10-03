@@ -62,9 +62,9 @@ double Dot(const double first[3], const double second[3]) {
 }
 
 S2Differential RestrictedS2Differential(const FeatureSupportSample& sample, int coordinate_dimension,
-                                        double relative_tolerance) {
+                                        const std::vector<int>& active_coordinates, double relative_tolerance) {
   S2Differential out;
-  if (!sample.direction_jacobian_available || sample.support_dimension <= 0) {
+  if (!sample.direction_jacobian_available || active_coordinates.empty()) {
     return out;
   }
   int anchor_index = 0;
@@ -88,7 +88,7 @@ S2Differential RestrictedS2Differential(const FeatureSupportSample& sample, int 
   double gram01 = 0.0;
   double gram11 = 0.0;
   out.tangent_residual = 0.0;
-  for (int coordinate : sample.active_coordinates) {
+  for (int coordinate : active_coordinates) {
     const double column[3] = {
       sample.direction_jacobian[static_cast<size_t>(0 * coordinate_dimension + coordinate)],
       sample.direction_jacobian[static_cast<size_t>(1 * coordinate_dimension + coordinate)],
@@ -111,6 +111,11 @@ S2Differential RestrictedS2Differential(const FeatureSupportSample& sample, int 
   out.rank =
       static_cast<int>(out.singular_values[0] > threshold) + static_cast<int>(out.singular_values[1] > threshold);
   return out;
+}
+
+S2Differential RestrictedS2Differential(const FeatureSupportSample& sample, int coordinate_dimension,
+                                        double relative_tolerance) {
+  return RestrictedS2Differential(sample, coordinate_dimension, sample.active_coordinates, relative_tolerance);
 }
 
 bool SameProvenanceBranch(const FeatureProvenance& first, const FeatureProvenance& second) {
@@ -529,6 +534,197 @@ bool RefineMultidimensionalRankLossLine(const FeatureSupportSample& first, const
   candidate->resolution = refinement_resolution;
   candidate->reason = "a signed S2 tangent minor bracket was refined and the complete support differential lost rank";
   const double tolerance = std::max(1e-10, 10.0 * options.rank_relative_tolerance * determinant_scale);
+  if (globally_complete && candidate->residual <= tolerance) {
+    candidate->status = FeatureEvidenceStatus::kConfirmed;
+  }
+  return true;
+}
+
+double RankLossObjective(const S2Differential& differential, int regular_rank) {
+  if (differential.rank < 0 || regular_rank < 1 || regular_rank > 2) {
+    return std::numeric_limits<double>::infinity();
+  }
+  return differential.singular_values[regular_rank - 1];
+}
+
+bool SearchCellRankLoss(const FeatureSupportBatch& batch, const std::vector<const FeatureSupportCellAxis*>& axes,
+                        const FeatureDiscoveryOptions& options, const FeatureReevaluateFn& reevaluate,
+                        bool globally_complete, FeatureCandidate* candidate, bool* numerical_incomplete) {
+  if (!reevaluate || axes.empty() || options.maximum_refinement_steps < 3) {
+    return false;
+  }
+
+  const FeatureSupportSample& center = batch.samples[static_cast<size_t>(axes.front()->center)];
+  std::vector<const FeatureSupportCellAxis*> ordered_axes = axes;
+  std::sort(ordered_axes.begin(), ordered_axes.end(),
+            [](const FeatureSupportCellAxis* first, const FeatureSupportCellAxis* second) {
+              return first->coordinate_index < second->coordinate_index;
+            });
+  std::vector<int> scoped_coordinates;
+  std::vector<double> lower;
+  std::vector<double> upper;
+  scoped_coordinates.reserve(ordered_axes.size());
+  lower.reserve(ordered_axes.size());
+  upper.reserve(ordered_axes.size());
+  for (const FeatureSupportCellAxis* axis : ordered_axes) {
+    scoped_coordinates.push_back(axis->coordinate_index);
+    lower.push_back(
+        batch.samples[static_cast<size_t>(axis->lower)].coordinates[static_cast<size_t>(axis->coordinate_index)]);
+    upper.push_back(
+        batch.samples[static_cast<size_t>(axis->upper)].coordinates[static_cast<size_t>(axis->coordinate_index)]);
+  }
+
+  int regular_rank = -1;
+  double regular_scale = 0.0;
+  for (const FeatureSupportCellAxis* axis : ordered_axes) {
+    for (int sample_index : { axis->lower, axis->center, axis->upper }) {
+      const S2Differential differential =
+          RestrictedS2Differential(batch.samples[static_cast<size_t>(sample_index)], batch.coordinate_dimension,
+                                   scoped_coordinates, options.rank_relative_tolerance);
+      regular_rank = std::max(regular_rank, differential.rank);
+      regular_scale = std::max(regular_scale, differential.singular_values[std::max(0, differential.rank - 1)]);
+    }
+  }
+  if (regular_rank <= 0) {
+    *numerical_incomplete = true;
+    return false;
+  }
+
+  const int dimension = static_cast<int>(ordered_axes.size());
+  int grid_extent = 3;
+  if (dimension == 1) {
+    grid_extent = std::min(65, options.maximum_refinement_steps + 2);
+  } else if (dimension == 2) {
+    grid_extent = std::min(21, static_cast<int>(std::sqrt(options.maximum_refinement_steps)));
+  } else {
+    grid_extent = static_cast<int>(
+        std::floor(std::pow(std::max(3, options.maximum_refinement_steps / 2), 1.0 / static_cast<double>(dimension))));
+  }
+  grid_extent = std::max(3, grid_extent);
+  if ((grid_extent & 1) == 0) {
+    --grid_extent;
+  }
+
+  FeatureSupportSample best;
+  S2Differential best_differential;
+  std::vector<double> best_coordinates;
+  double best_objective = std::numeric_limits<double>::infinity();
+  int callback_calls = 0;
+  bool callback_failed = false;
+  std::vector<int> grid_indices(static_cast<size_t>(dimension), 1);
+  while (callback_calls < options.maximum_refinement_steps) {
+    std::vector<double> coordinates = center.coordinates;
+    for (int axis_index = 0; axis_index < dimension; ++axis_index) {
+      const double fraction =
+          static_cast<double>(grid_indices[static_cast<size_t>(axis_index)]) / static_cast<double>(grid_extent - 1);
+      coordinates[static_cast<size_t>(scoped_coordinates[static_cast<size_t>(axis_index)])] =
+          lower[static_cast<size_t>(axis_index)] +
+          fraction * (upper[static_cast<size_t>(axis_index)] - lower[static_cast<size_t>(axis_index)]);
+    }
+    FeatureSupportSample evaluated;
+    if (!EvaluateRankSearchSample(reevaluate, center, coordinates, options.maximum_refinement_steps, &callback_calls,
+                                  &evaluated) ||
+        !evaluated.direction_jacobian_available) {
+      callback_failed = true;
+      break;
+    }
+    const S2Differential differential = RestrictedS2Differential(evaluated, batch.coordinate_dimension,
+                                                                 scoped_coordinates, options.rank_relative_tolerance);
+    const double objective = RankLossObjective(differential, regular_rank);
+    if (objective < best_objective) {
+      best = std::move(evaluated);
+      best_differential = differential;
+      best_coordinates = coordinates;
+      best_objective = objective;
+    }
+
+    int carry_axis = dimension - 1;
+    for (; carry_axis >= 0; --carry_axis) {
+      int& index = grid_indices[static_cast<size_t>(carry_axis)];
+      ++index;
+      if (index < grid_extent - 1) {
+        break;
+      }
+      index = 1;
+    }
+    if (carry_axis < 0) {
+      break;
+    }
+  }
+  if (callback_failed) {
+    *numerical_incomplete = true;
+  }
+  if (best_coordinates.empty()) {
+    return false;
+  }
+
+  std::vector<double> steps(static_cast<size_t>(dimension));
+  for (int axis_index = 0; axis_index < dimension; ++axis_index) {
+    steps[static_cast<size_t>(axis_index)] =
+        (upper[static_cast<size_t>(axis_index)] - lower[static_cast<size_t>(axis_index)]) /
+        static_cast<double>(grid_extent - 1);
+  }
+  for (int sweep = 0; callback_calls < options.maximum_refinement_steps; ++sweep) {
+    bool improved = false;
+    for (int axis_index = 0; axis_index < dimension && callback_calls < options.maximum_refinement_steps;
+         ++axis_index) {
+      const int coordinate = scoped_coordinates[static_cast<size_t>(axis_index)];
+      for (double sign : { -1.0, 1.0 }) {
+        if (callback_calls >= options.maximum_refinement_steps) {
+          break;
+        }
+        std::vector<double> coordinates = best_coordinates;
+        coordinates[static_cast<size_t>(coordinate)] += sign * steps[static_cast<size_t>(axis_index)];
+        if (!(coordinates[static_cast<size_t>(coordinate)] > lower[static_cast<size_t>(axis_index)]) ||
+            !(coordinates[static_cast<size_t>(coordinate)] < upper[static_cast<size_t>(axis_index)])) {
+          continue;
+        }
+        FeatureSupportSample evaluated;
+        if (!EvaluateRankSearchSample(reevaluate, center, coordinates, options.maximum_refinement_steps,
+                                      &callback_calls, &evaluated) ||
+            !evaluated.direction_jacobian_available) {
+          *numerical_incomplete = true;
+          continue;
+        }
+        const S2Differential differential = RestrictedS2Differential(
+            evaluated, batch.coordinate_dimension, scoped_coordinates, options.rank_relative_tolerance);
+        const double objective = RankLossObjective(differential, regular_rank);
+        if (objective < best_objective) {
+          best = std::move(evaluated);
+          best_differential = differential;
+          best_coordinates = std::move(coordinates);
+          best_objective = objective;
+          improved = true;
+        }
+      }
+    }
+    if (!improved) {
+      for (double& step : steps) {
+        step *= 0.5;
+      }
+    }
+    if (sweep > 0 && *std::max_element(steps.begin(), steps.end()) <= 1e-12) {
+      break;
+    }
+  }
+  if (best_differential.rank >= regular_rank) {
+    return false;
+  }
+
+  candidate->mechanism = FeatureMechanism::kInteriorRankLoss;
+  candidate->status = FeatureEvidenceStatus::kCandidate;
+  candidate->provenance = best.provenance;
+  std::copy(best.direction, best.direction + 3, candidate->direction);
+  candidate->support_dimension = best.support_dimension;
+  candidate->mapping_rank = best_differential.rank;
+  candidate->singular_values[0] = best_differential.singular_values[0];
+  candidate->singular_values[1] = best_differential.singular_values[1];
+  candidate->weighted_mass = best.weight;
+  candidate->residual = std::max({ best_objective, best_differential.tangent_residual, best.direction_jacobian_error });
+  candidate->resolution = *std::max_element(steps.begin(), steps.end());
+  candidate->reason =
+      "a bounded joint search of the continuous support cell localized an interior differential rank loss";
+  const double tolerance = std::max(1e-10, 10.0 * options.rank_relative_tolerance * regular_scale);
   if (globally_complete && candidate->residual <= tolerance) {
     candidate->status = FeatureEvidenceStatus::kConfirmed;
   }
@@ -1418,16 +1614,24 @@ FeatureDiscoveryResult DiscoverFeatures(const FeatureSupportBatch& batch, const 
   for (const FeatureSupportCellAxis& axis : batch.cell_axes) {
     cell_axes[axis.cell_id].push_back(&axis);
   }
+  std::set<int> searched_rank_loss_cells;
   for (const auto& [cell_id, axes] : cell_axes) {
-    if (axes.size() < 2u) {
-      continue;
-    }
     std::vector<int> scoped_coordinates;
     scoped_coordinates.reserve(axes.size());
     for (const FeatureSupportCellAxis* axis : axes) {
       scoped_coordinates.push_back(axis->coordinate_index);
     }
     std::sort(scoped_coordinates.begin(), scoped_coordinates.end());
+    FeatureCandidate searched_candidate;
+    if (SearchCellRankLoss(batch, axes, options, reevaluate, globally_complete, &searched_candidate,
+                           &rank_numerically_incomplete)) {
+      ApplyCandidateScope(batch, cell_id, scoped_coordinates, &searched_candidate);
+      AddCandidate(searched_candidate, options.sky_merge_tolerance, &out);
+      searched_rank_loss_cells.insert(cell_id);
+    }
+    if (axes.size() < 2u) {
+      continue;
+    }
     const int center_index = axes.front()->center;
     const FeatureSupportSample& center = batch.samples[static_cast<size_t>(center_index)];
     if (center.support_dimension < 2) {
@@ -1464,6 +1668,9 @@ FeatureDiscoveryResult DiscoverFeatures(const FeatureSupportBatch& batch, const 
       }
     }
     const int regular_rank = regular_ranks[static_cast<size_t>(center_index)];
+    if (searched_rank_loss_cells.find(cell_id) != searched_rank_loss_cells.end()) {
+      continue;
+    }
     for (const FeatureSupportCellAxis* axis : axes) {
       FeatureCandidate candidate;
       if (RefineMultidimensionalRankLossLine(
@@ -1485,7 +1692,8 @@ FeatureDiscoveryResult DiscoverFeatures(const FeatureSupportBatch& batch, const 
     }
   }
   for (const FeatureSupportCellAxis& axis : batch.cell_axes) {
-    if (cell_axes[axis.cell_id].size() != 1u) {
+    if (cell_axes[axis.cell_id].size() != 1u ||
+        searched_rank_loss_cells.find(axis.cell_id) != searched_rank_loss_cells.end()) {
       continue;
     }
     FeatureCandidate candidate;

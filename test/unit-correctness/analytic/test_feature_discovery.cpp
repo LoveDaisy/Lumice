@@ -51,6 +51,38 @@ FeatureSupportSample Sample(uint64_t id, double x) {
   return sample;
 }
 
+FeatureSupportSample GraphSample(uint64_t id, double u, double v, double graph, double graph_u, double graph_v,
+                                 bool accumulates_measure) {
+  FeatureSupportSample sample;
+  sample.sample_id = id;
+  sample.support_dimension = 2;
+  sample.coordinates = { u, v };
+  sample.active_coordinates = { 0, 1 };
+  const double raw[3] = { 1.0, u, graph };
+  const double norm = std::sqrt(raw[0] * raw[0] + raw[1] * raw[1] + raw[2] * raw[2]);
+  for (int component = 0; component < 3; ++component) {
+    sample.direction[component] = raw[component] / norm;
+  }
+  const double raw_columns[2][3] = { { 0.0, 1.0, graph_u }, { 0.0, 0.0, graph_v } };
+  sample.direction_jacobian.resize(6);
+  for (int coordinate = 0; coordinate < 2; ++coordinate) {
+    double projection = 0.0;
+    for (int component = 0; component < 3; ++component) {
+      projection += sample.direction[component] * raw_columns[coordinate][component];
+    }
+    for (int component = 0; component < 3; ++component) {
+      sample.direction_jacobian[static_cast<size_t>(component * 2 + coordinate)] =
+          (raw_columns[coordinate][component] - sample.direction[component] * projection) / norm;
+    }
+  }
+  sample.weight = accumulates_measure ? 1.0 : 0.0;
+  sample.accumulates_measure = accumulates_measure;
+  sample.direction_jacobian_available = true;
+  sample.direction_jacobian_column_available = { 1, 1 };
+  sample.direction_jacobian_resolution = 1e-6;
+  return sample;
+}
+
 FeatureSupportBatch DenseSkyBatch(int z_bins, int azimuth_bins, const std::function<double(int, int)>& density) {
   constexpr double kPi = 3.14159265358979323846;
   FeatureSupportBatch batch;
@@ -370,7 +402,7 @@ TEST(FeatureDiscoveryDifferential, PreservesConditionalScopeAndParameterRoles) {
   EXPECT_NE(error.find("group"), std::string::npos);
 }
 
-TEST(FeatureDiscoveryDifferential, DoesNotInvokeRefinementWithoutASignedFoldBracket) {
+TEST(FeatureDiscoveryDifferential, SearchesAContinuousCellWithoutASignedFoldBracket) {
   FeatureSupportBatch batch;
   batch.coordinate_dimension = 1;
   batch.visited_row_count = 1;
@@ -386,14 +418,18 @@ TEST(FeatureDiscoveryDifferential, DoesNotInvokeRefinementWithoutASignedFoldBrac
   batch.samples = { regular_sample(1, 0.0, true), regular_sample(2, -0.5, false), regular_sample(3, 0.5, false) };
   batch.cell_axes.push_back({ 1, 0, 1, 0, 2, 1.0 });
   int callback_count = 0;
-  const FeatureReevaluateFn callback = [&](const FeatureReevaluationRequest&, FeatureSupportSample*, std::string*) {
+  const FeatureReevaluateFn callback = [&](const FeatureReevaluationRequest& request, FeatureSupportSample* sample,
+                                           std::string*) {
     ++callback_count;
-    return false;
+    *sample = regular_sample(100 + static_cast<uint64_t>(callback_count), request.coordinates[0], false);
+    sample->provenance = request.provenance;
+    return true;
   };
 
   const FeatureDiscoveryResult result = DiscoverFeatures(batch, {}, callback);
   EXPECT_EQ(Candidate(result, FeatureMechanism::kInteriorRankLoss), nullptr);
-  EXPECT_EQ(callback_count, 0);
+  EXPECT_GT(callback_count, 0);
+  EXPECT_LE(callback_count, FeatureDiscoveryOptions{}.maximum_refinement_steps);
 }
 
 TEST(FeatureDiscoveryDifferential, ReportsIncompleteWhenAFoldCallbackExhaustsItsBudget) {
@@ -556,6 +592,114 @@ TEST(FeatureDiscoveryDifferential, RefinesAMultidimensionalRankLossUsingTheCompl
   EXPECT_NEAR(rank_loss->direction[2], 0.0, 1e-10);
   EXPECT_GT(callback_count, 0);
   EXPECT_LE(callback_count, FeatureDiscoveryOptions{}.maximum_refinement_steps);
+}
+
+TEST(FeatureDiscoveryDifferential, LocalizesAnOffAxisRankLossWithoutACenterOrEndpointBracket) {
+  auto sample_at = [](uint64_t id, double u, double v, bool accumulates_measure) {
+    const double graph = ((u - 0.5) * (u - 0.5) - 0.04) * v + (v - 0.5) * (v - 0.5) * (v - 0.5) / 3.0;
+    const double graph_u = 2.0 * (u - 0.5) * v;
+    const double graph_v = (u - 0.5) * (u - 0.5) + (v - 0.5) * (v - 0.5) - 0.04;
+    return GraphSample(id, u, v, graph, graph_u, graph_v, accumulates_measure);
+  };
+  FeatureSupportBatch batch;
+  batch.coordinate_dimension = 2;
+  batch.visited_row_count = 1;
+  batch.complete_visit = true;
+  batch.samples = { sample_at(1, 0.0, 0.0, true), sample_at(2, -1.0, 0.0, false), sample_at(3, 1.0, 0.0, false),
+                    sample_at(4, 0.0, -1.0, false), sample_at(5, 0.0, 1.0, false) };
+  batch.cell_axes = { { 0, 0, 1, 0, 2, 2.0 }, { 0, 1, 3, 0, 4, 2.0 } };
+  int callback_count = 0;
+  const FeatureReevaluateFn callback = [&](const FeatureReevaluationRequest& request, FeatureSupportSample* sample,
+                                           std::string*) {
+    ++callback_count;
+    *sample =
+        sample_at(100 + static_cast<uint64_t>(callback_count), request.coordinates[0], request.coordinates[1], false);
+    sample->provenance = request.provenance;
+    return true;
+  };
+  FeatureDiscoveryOptions options;
+  options.maximum_refinement_steps = 512;
+
+  const FeatureDiscoveryResult result = DiscoverFeatures(batch, options, callback);
+  const FeatureCandidate* rank_loss = Candidate(result, FeatureMechanism::kInteriorRankLoss);
+  ASSERT_NE(rank_loss, nullptr);
+  EXPECT_EQ(rank_loss->status, FeatureEvidenceStatus::kConfirmed);
+  EXPECT_LT(rank_loss->residual, 1e-10);
+  EXPECT_NEAR(rank_loss->direction[1] / rank_loss->direction[0], 0.3, 1e-10);
+  EXPECT_GT(callback_count, 0);
+  EXPECT_LE(callback_count, options.maximum_refinement_steps);
+}
+
+TEST(FeatureDiscoveryDifferential, LocalizesAnEvenMinorRankLossWithoutASignChange) {
+  auto sample_at = [](uint64_t id, double u, double v, bool accumulates_measure) {
+    return GraphSample(id, u, v, v * v * v, 0.0, 3.0 * v * v, accumulates_measure);
+  };
+  FeatureSupportBatch batch;
+  batch.coordinate_dimension = 2;
+  batch.visited_row_count = 1;
+  batch.complete_visit = true;
+  batch.samples = { sample_at(1, 0.25, 0.25, true), sample_at(2, -0.75, 0.25, false), sample_at(3, 1.25, 0.25, false),
+                    sample_at(4, 0.25, -0.75, false), sample_at(5, 0.25, 1.25, false) };
+  batch.cell_axes = { { 0, 0, 1, 0, 2, 2.0 }, { 0, 1, 3, 0, 4, 2.0 } };
+  int callback_count = 0;
+  const FeatureReevaluateFn callback = [&](const FeatureReevaluationRequest& request, FeatureSupportSample* sample,
+                                           std::string*) {
+    ++callback_count;
+    *sample =
+        sample_at(100 + static_cast<uint64_t>(callback_count), request.coordinates[0], request.coordinates[1], false);
+    sample->provenance = request.provenance;
+    return true;
+  };
+  FeatureDiscoveryOptions options;
+  options.maximum_refinement_steps = 512;
+
+  const FeatureDiscoveryResult result = DiscoverFeatures(batch, options, callback);
+  const FeatureCandidate* rank_loss = Candidate(result, FeatureMechanism::kInteriorRankLoss);
+  ASSERT_NE(rank_loss, nullptr);
+  EXPECT_EQ(rank_loss->status, FeatureEvidenceStatus::kConfirmed);
+  EXPECT_LT(rank_loss->residual, 1e-10);
+  EXPECT_NEAR(rank_loss->direction[2], 0.0, 1e-10);
+  EXPECT_GT(callback_count, 0);
+  EXPECT_LE(callback_count, options.maximum_refinement_steps);
+}
+
+TEST(FeatureDiscoveryDifferential, LocalizesAStationaryCubicWithoutASignChange) {
+  auto sample_at = [](uint64_t id, double x, bool accumulates_measure) {
+    FeatureSupportSample sample = Sample(id, x);
+    const double phase = x * x * x;
+    const double slope = 3.0 * x * x;
+    sample.accumulates_measure = accumulates_measure;
+    sample.weight = accumulates_measure ? 1.0 : 0.0;
+    sample.direction[0] = std::cos(phase);
+    sample.direction[1] = std::sin(phase);
+    sample.direction_jacobian = { -slope * std::sin(phase), slope * std::cos(phase), 0.0 };
+    return sample;
+  };
+  FeatureSupportBatch batch;
+  batch.coordinate_dimension = 1;
+  batch.visited_row_count = 1;
+  batch.complete_visit = true;
+  batch.samples = { sample_at(1, 0.1, true), sample_at(2, -0.3, false), sample_at(3, 0.5, false) };
+  batch.cell_axes.push_back({ 0, 0, 1, 0, 2, 0.8 });
+  int callback_count = 0;
+  const FeatureReevaluateFn callback = [&](const FeatureReevaluationRequest& request, FeatureSupportSample* sample,
+                                           std::string*) {
+    ++callback_count;
+    *sample = sample_at(100 + static_cast<uint64_t>(callback_count), request.coordinates[0], false);
+    sample->provenance = request.provenance;
+    return true;
+  };
+  FeatureDiscoveryOptions options;
+  options.maximum_refinement_steps = 512;
+
+  const FeatureDiscoveryResult result = DiscoverFeatures(batch, options, callback);
+  const FeatureCandidate* rank_loss = Candidate(result, FeatureMechanism::kInteriorRankLoss);
+  ASSERT_NE(rank_loss, nullptr);
+  EXPECT_EQ(rank_loss->status, FeatureEvidenceStatus::kConfirmed);
+  EXPECT_LT(rank_loss->residual, 1e-10);
+  EXPECT_NEAR(rank_loss->direction[1], 0.0, 1e-10);
+  EXPECT_GT(callback_count, 0);
+  EXPECT_LE(callback_count, options.maximum_refinement_steps);
 }
 
 TEST(FeatureDiscoveryDifferential, IsolatedRankZeroDoesNotBecomeAPointMass) {
