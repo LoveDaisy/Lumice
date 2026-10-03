@@ -133,7 +133,16 @@ _PRELUDE = textwrap.dedent(
         _fields_ = [("struct_size", c_uint32), ("scope_id", c_int), ("kind", c_int),
                     ("active_coordinate_count", c_int), ("active_coordinates", POINTER(c_int)),
                     ("active_parameters", POINTER(Parameter)), ("fixed_spectrum_node_id", c_int),
+                    ("fixed_source_node_id", c_int), ("evidence_id", c_uint64)]
+
+    class CandidateScopeV12(Structure):
+        _fields_ = [("struct_size", c_uint32), ("scope_id", c_int), ("kind", c_int),
+                    ("active_coordinate_count", c_int), ("active_coordinates", POINTER(c_int)),
+                    ("active_parameters", POINTER(Parameter)), ("fixed_spectrum_node_id", c_int),
                     ("fixed_source_node_id", c_int)]
+
+    class CandidateScopeV12Buffer(Structure):
+        _fields_ = [("scope", CandidateScopeV12), ("guard", c_uint64)]
 
     OK, NULL_ARG, INVALID_VALUE = 0, 1, 2
     CONFIRMED, CANDIDATE, NUMERICAL_INCOMPLETE = 0, 1, 3
@@ -145,7 +154,7 @@ _PRELUDE = textwrap.dedent(
 
     lib = ctypes.CDLL(LIB)
     lib.LUMICE_ANALYTIC_GetApiVersion.restype = c_int
-    assert lib.LUMICE_ANALYTIC_GetApiVersion() == 12
+    assert lib.LUMICE_ANALYTIC_GetApiVersion() == 13
     lib.LUMICE_ANALYTIC_DiscoverFeatures.restype = c_int
     lib.LUMICE_ANALYTIC_DiscoverFeatures.argtypes = [POINTER(Batch), POINTER(Options), CALLBACK, c_void_p,
                                                       POINTER(Result)]
@@ -287,7 +296,7 @@ def test_callback_refines_nonfirst_interface_and_preserves_owned_strings() -> No
             return 1
 
         rc, result = discover(batch, refine)
-        assert rc == OK
+        assert rc == OK, rc
         matches = [result.candidates[i] for i in range(result.candidate_count)
                    if result.candidates[i].mechanism == OPTICAL_KINK]
         assert len(matches) == 1
@@ -586,15 +595,22 @@ def test_v4_conditional_scope_metadata_uses_parallel_candidate_query() -> None:
         batch.scope_count = 1
         batch.scopes = scopes
 
+        calls = []
+
         @CALLBACK
         def refine(request, output, user_data):
+            calls.append(request.contents.coordinates[0])
             value = fold(100, request.contents.coordinates[0], False)
             value.provenance = request.contents.provenance
             output[0] = value
             return 1
 
-        rc, result = discover(batch, refine)
+        result = output()
+        opts = options()
+        opts.maximum_refinement_steps = 3
+        rc = lib.LUMICE_ANALYTIC_DiscoverFeatures(byref(batch), byref(opts), refine, None, byref(result))
         assert rc == OK
+        assert len(calls) <= 3, calls
         found = False
         for index in range(result.candidate_count):
             if result.candidates[index].mechanism != 0:
@@ -607,12 +623,101 @@ def test_v4_conditional_scope_metadata_uses_parallel_candidate_query() -> None:
                 assert metadata.active_coordinates[0] == 0
                 assert metadata.active_parameters[0].role == PARAMETER_POSE
                 assert metadata.active_parameters[0].group_id == 3
+                assert metadata.evidence_id != 0
+                legacy_buffer = CandidateScopeV12Buffer()
+                legacy_buffer.scope.struct_size = sizeof(CandidateScopeV12)
+                legacy_buffer.guard = 0xC0DEC0DEC0DEC0DE
+                legacy_pointer = ctypes.cast(byref(legacy_buffer.scope), POINTER(CandidateScope))
+                assert lib.LUMICE_ANALYTIC_GetFeatureCandidateScope(byref(result), index, legacy_pointer) == OK
+                assert legacy_buffer.scope.struct_size == sizeof(CandidateScopeV12)
+                assert legacy_buffer.scope.scope_id == 42 and legacy_buffer.scope.kind == SCOPE_CONDITIONAL
+                assert legacy_buffer.guard == 0xC0DEC0DEC0DEC0DE
                 found = True
         assert found
         lib.LUMICE_ANALYTIC_ReleaseFeatureDiscoveryResult(byref(result))
         metadata = CandidateScope()
         metadata.struct_size = sizeof(CandidateScope)
         assert lib.LUMICE_ANALYTIC_GetFeatureCandidateScope(byref(result), 0, byref(metadata)) == INVALID_VALUE
+        """
+    )
+
+
+def test_direct_evidence_expands_scopes_with_shared_id_and_old_prefix() -> None:
+    _run_child(
+        """
+        keep = []
+
+        def constant(index, x, original):
+            coordinate = (c_double * 1)(x)
+            active = (c_int * 1)(0)
+            jacobian = (c_double * 3)(0.0, 0.0, 0.0)
+            available = (c_uint8 * 1)(1)
+            keep.extend((coordinate, active, jacobian, available))
+            value = Sample()
+            value.struct_size = sizeof(Sample)
+            value.sample_id = index
+            value.measure_kind = CONTINUOUS
+            value.support_dimension = 1
+            value.coordinates = coordinate
+            value.active_coordinates = active
+            value.direction[:] = (1.0, 0.0, 0.0)
+            value.weight = float(original)
+            value.direction_jacobian_available = 1
+            value.direction_jacobian = jacobian
+            value.direction_jacobian_column_available = available
+            value.direction_jacobian_resolution = 1.0e-6
+            value.constraint_stride = sizeof(Constraint)
+            value.numerically_available = 1
+            value.accumulates_measure = int(original)
+            if original:
+                value.mapping_evidence_kind = EXACT_IMAGE_DIMENSION_UPPER_BOUND
+                value.image_dimension_upper_bound = 0
+            return value
+
+        samples = (Sample * 3)(constant(1, 0.0, True), constant(2, -1.0, False),
+                               constant(3, 1.0, False))
+        axes = (CellAxis * 2)(CellAxis(7, 0, 1, 0, 2, 2.0), CellAxis(8, 0, 1, 0, 2, 2.0))
+        parameters = (Parameter * 1)(Parameter(PARAMETER_POSE, 2))
+        scopes = (Scope * 2)(Scope(42, 7, 0), Scope(43, 8, SCOPE_CONDITIONAL))
+        batch = Batch()
+        batch.struct_size = sizeof(Batch)
+        batch.version = 4
+        batch.coordinate_dimension = 1
+        batch.visited_row_count = 1
+        batch.complete_visit = 1
+        batch.materialization_complete = 1
+        batch.sample_count = 3
+        batch.sample_stride = sizeof(Sample)
+        batch.samples = samples
+        batch.cell_axis_count = 2
+        batch.cell_axes = axes
+        batch.parameter_descriptor_count = 1
+        batch.parameter_descriptors = parameters
+        batch.scope_count = 2
+        batch.scopes = scopes
+
+        rc, result = discover(batch)
+        assert rc == OK, rc
+        for mechanism in (MEASURE_ATOM, 7):
+            matches = []
+            for index in range(result.candidate_count):
+                candidate = result.candidates[index]
+                if candidate.mechanism != mechanism:
+                    continue
+                metadata = CandidateScope()
+                metadata.struct_size = sizeof(CandidateScope)
+                assert lib.LUMICE_ANALYTIC_GetFeatureCandidateScope(byref(result), index, byref(metadata)) == OK
+                matches.append((candidate.weighted_mass, metadata.scope_id, metadata.kind,
+                                metadata.active_parameters[0].role, metadata.evidence_id))
+            assert len(matches) == 2, (mechanism, matches)
+            joint = next(item for item in matches if item[2] == 0)
+            conditional = next(item for item in matches if item[2] == SCOPE_CONDITIONAL)
+            assert joint[:4] == (1.0, 42, 0, PARAMETER_POSE), joint
+            assert conditional[:4] == (0.0, 43, SCOPE_CONDITIONAL, PARAMETER_POSE), conditional
+            assert joint[4] != 0 and joint[4] == conditional[4], (joint, conditional)
+        total_mass = sum(result.sky_field[index].value for index in range(result.sky_field_count))
+        assert abs(total_mass - 1.0) < 1e-12, total_mass
+        lib.LUMICE_ANALYTIC_ReleaseFeatureDiscoveryResult(byref(result))
         """
     )
 

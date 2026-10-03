@@ -1,6 +1,7 @@
 #include "analytic/feature_discovery.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <limits>
 #include <map>
@@ -32,6 +33,71 @@ bool NearlyEqual(double first, double second) {
   constexpr double kRelativeTolerance = 1e-12;
   const double scale = std::max({ 1.0, std::fabs(first), std::fabs(second) });
   return std::fabs(first - second) <= kRelativeTolerance * scale;
+}
+
+constexpr uint64_t kFnvOffset = 1469598103934665603ULL;
+constexpr uint64_t kFnvPrime = 1099511628211ULL;
+
+void HashBytes(const void* data, size_t size, uint64_t* hash) {
+  const auto* bytes = static_cast<const unsigned char*>(data);
+  for (size_t index = 0; index < size; ++index) {
+    *hash ^= bytes[index];
+    *hash *= kFnvPrime;
+  }
+}
+
+template <typename T>
+void HashValue(const T& value, uint64_t* hash) {
+  HashBytes(&value, sizeof(value), hash);
+}
+
+void HashString(const std::string& value, uint64_t* hash) {
+  HashBytes(value.data(), value.size(), hash);
+}
+
+uint64_t FinishEvidenceId(uint64_t hash) {
+  return hash == 0 ? 1 : hash;
+}
+
+uint64_t SampleEvidenceId(const FeatureSupportSample& sample, FeatureMechanism mechanism,
+                          const std::string& event_name = {}) {
+  uint64_t hash = kFnvOffset;
+  HashValue(sample.sample_id, &hash);
+  HashValue(mechanism, &hash);
+  HashValue(sample.provenance.member_index, &hash);
+  HashValue(sample.provenance.layer_index, &hash);
+  HashValue(sample.provenance.interface_index, &hash);
+  HashString(event_name, &hash);
+  return FinishEvidenceId(hash);
+}
+
+uint64_t EdgeEvidenceId(const FeatureSupportSample& first, const FeatureSupportSample& second,
+                        FeatureMechanism mechanism, const std::string& event_name = {}) {
+  uint64_t hash = kFnvOffset;
+  const std::array<uint64_t, 2> sample_ids = {
+    std::min(first.sample_id, second.sample_id),
+    std::max(first.sample_id, second.sample_id),
+  };
+  HashValue(sample_ids[0], &hash);
+  HashValue(sample_ids[1], &hash);
+  HashValue(mechanism, &hash);
+  HashString(event_name, &hash);
+  return FinishEvidenceId(hash);
+}
+
+uint64_t GlobalEvidenceId(FeatureMechanism mechanism, int stable_index) {
+  uint64_t hash = kFnvOffset;
+  HashValue(mechanism, &hash);
+  HashValue(stable_index, &hash);
+  return FinishEvidenceId(hash);
+}
+
+uint64_t LocatedEvidenceId(const FeatureSupportSample& sample, FeatureMechanism mechanism, const double direction[3]) {
+  uint64_t hash = SampleEvidenceId(sample, mechanism);
+  for (int component = 0; component < 3; ++component) {
+    HashValue(direction[component], &hash);
+  }
+  return FinishEvidenceId(hash);
 }
 
 bool SameActiveCoordinates(const FeatureSupportSample& first, const FeatureSupportSample& second) {
@@ -299,7 +365,8 @@ bool EvaluateRankSearchColumn(const FeatureReevaluateFn& reevaluate, const Featu
 
 bool RefineOneDimensionalRankLoss(const FeatureSupportBatch& batch, const FeatureSupportCellAxis& axis,
                                   const FeatureDiscoveryOptions& options, const FeatureReevaluateFn& reevaluate,
-                                  bool globally_complete, FeatureCandidate* candidate, bool* numerical_incomplete) {
+                                  bool globally_complete, int callback_call_limit, int* callback_calls,
+                                  FeatureCandidate* candidate, bool* numerical_incomplete) {
   const FeatureSupportSample* nodes[3] = {
     &batch.samples[static_cast<size_t>(axis.lower)],
     &batch.samples[static_cast<size_t>(axis.center)],
@@ -351,9 +418,7 @@ bool RefineOneDimensionalRankLoss(const FeatureSupportBatch& batch, const Featur
   double upper_sign = TransportedDot(reference, *upper_node, columns[bracket + 1]);
   double refinement_resolution = std::fabs(upper_coordinates[static_cast<size_t>(axis.coordinate_index)] -
                                            lower_coordinates[static_cast<size_t>(axis.coordinate_index)]);
-  int callback_calls = 0;
-  for (int step = 0; step < options.maximum_refinement_steps && callback_calls < options.maximum_refinement_steps;
-       ++step) {
+  for (int step = 0; step < options.maximum_refinement_steps && *callback_calls < callback_call_limit; ++step) {
     const double interpolation = std::clamp(lower_sign / (lower_sign - upper_sign), 0.1, 0.9);
     std::vector<double> midpoint(lower_coordinates.size());
     for (size_t coordinate = 0; coordinate < midpoint.size(); ++coordinate) {
@@ -366,8 +431,7 @@ bool RefineOneDimensionalRankLoss(const FeatureSupportBatch& batch, const Featur
     FeatureSupportSample evaluated;
     TangentColumn evaluated_column;
     if (!EvaluateRankSearchColumn(reevaluate, *lower_node, midpoint, batch.coordinate_dimension, axis.coordinate_index,
-                                  width, options.maximum_refinement_steps, &callback_calls, &evaluated,
-                                  &evaluated_column)) {
+                                  width, callback_call_limit, callback_calls, &evaluated, &evaluated_column)) {
       *numerical_incomplete = true;
       return false;
     }
@@ -558,8 +622,12 @@ double RankLossObjective(const S2Differential& differential, int regular_rank) {
 
 bool SearchCellRankLoss(const FeatureSupportBatch& batch, const std::vector<const FeatureSupportCellAxis*>& axes,
                         const FeatureDiscoveryOptions& options, const FeatureReevaluateFn& reevaluate,
-                        bool globally_complete, FeatureCandidate* candidate, bool* numerical_incomplete) {
+                        bool globally_complete, int callback_call_limit, int* callback_calls,
+                        FeatureCandidate* candidate, bool* numerical_incomplete) {
   if (!reevaluate || axes.empty() || options.maximum_refinement_steps < 3) {
+    if (!axes.empty() && options.maximum_refinement_steps < 3) {
+      *numerical_incomplete = true;
+    }
     return false;
   }
 
@@ -602,12 +670,12 @@ bool SearchCellRankLoss(const FeatureSupportBatch& batch, const std::vector<cons
   const int dimension = static_cast<int>(ordered_axes.size());
   int grid_extent = 3;
   if (dimension == 1) {
-    grid_extent = std::min(65, options.maximum_refinement_steps + 2);
+    grid_extent = std::min(33, std::max(5, callback_call_limit / 2 + 2));
   } else if (dimension == 2) {
-    grid_extent = std::min(21, static_cast<int>(std::sqrt(options.maximum_refinement_steps)));
+    grid_extent = std::min(21, static_cast<int>(std::sqrt(callback_call_limit)));
   } else {
     grid_extent = static_cast<int>(
-        std::floor(std::pow(std::max(3, options.maximum_refinement_steps / 2), 1.0 / static_cast<double>(dimension))));
+        std::floor(std::pow(std::max(3, callback_call_limit / 2), 1.0 / static_cast<double>(dimension))));
   }
   grid_extent = std::max(3, grid_extent);
   if ((grid_extent & 1) == 0) {
@@ -618,10 +686,10 @@ bool SearchCellRankLoss(const FeatureSupportBatch& batch, const std::vector<cons
   S2Differential best_differential;
   std::vector<double> best_coordinates;
   double best_objective = std::numeric_limits<double>::infinity();
-  int callback_calls = 0;
   bool callback_failed = false;
+  bool grid_complete = false;
   std::vector<int> grid_indices(static_cast<size_t>(dimension), 1);
-  while (callback_calls < options.maximum_refinement_steps) {
+  while (*callback_calls < callback_call_limit) {
     std::vector<double> coordinates = center.coordinates;
     for (int axis_index = 0; axis_index < dimension; ++axis_index) {
       const double fraction =
@@ -631,8 +699,7 @@ bool SearchCellRankLoss(const FeatureSupportBatch& batch, const std::vector<cons
           fraction * (upper[static_cast<size_t>(axis_index)] - lower[static_cast<size_t>(axis_index)]);
     }
     FeatureSupportSample evaluated;
-    if (!EvaluateRankSearchSample(reevaluate, center, coordinates, options.maximum_refinement_steps, &callback_calls,
-                                  &evaluated) ||
+    if (!EvaluateRankSearchSample(reevaluate, center, coordinates, callback_call_limit, callback_calls, &evaluated) ||
         !evaluated.direction_jacobian_available) {
       callback_failed = true;
       break;
@@ -657,6 +724,7 @@ bool SearchCellRankLoss(const FeatureSupportBatch& batch, const std::vector<cons
       index = 1;
     }
     if (carry_axis < 0) {
+      grid_complete = true;
       break;
     }
   }
@@ -664,6 +732,9 @@ bool SearchCellRankLoss(const FeatureSupportBatch& batch, const std::vector<cons
     *numerical_incomplete = true;
   }
   if (best_coordinates.empty()) {
+    if (!grid_complete || *callback_calls >= callback_call_limit) {
+      *numerical_incomplete = true;
+    }
     return false;
   }
 
@@ -673,13 +744,13 @@ bool SearchCellRankLoss(const FeatureSupportBatch& batch, const std::vector<cons
         (upper[static_cast<size_t>(axis_index)] - lower[static_cast<size_t>(axis_index)]) /
         static_cast<double>(grid_extent - 1);
   }
-  for (int sweep = 0; callback_calls < options.maximum_refinement_steps; ++sweep) {
+  bool local_converged = false;
+  for (int sweep = 0; *callback_calls < callback_call_limit; ++sweep) {
     bool improved = false;
-    for (int axis_index = 0; axis_index < dimension && callback_calls < options.maximum_refinement_steps;
-         ++axis_index) {
+    for (int axis_index = 0; axis_index < dimension && *callback_calls < callback_call_limit; ++axis_index) {
       const int coordinate = scoped_coordinates[static_cast<size_t>(axis_index)];
       for (double sign : { -1.0, 1.0 }) {
-        if (callback_calls >= options.maximum_refinement_steps) {
+        if (*callback_calls >= callback_call_limit) {
           break;
         }
         std::vector<double> coordinates = best_coordinates;
@@ -689,8 +760,8 @@ bool SearchCellRankLoss(const FeatureSupportBatch& batch, const std::vector<cons
           continue;
         }
         FeatureSupportSample evaluated;
-        if (!EvaluateRankSearchSample(reevaluate, center, coordinates, options.maximum_refinement_steps,
-                                      &callback_calls, &evaluated) ||
+        if (!EvaluateRankSearchSample(reevaluate, center, coordinates, callback_call_limit, callback_calls,
+                                      &evaluated) ||
             !evaluated.direction_jacobian_available) {
           *numerical_incomplete = true;
           continue;
@@ -713,10 +784,14 @@ bool SearchCellRankLoss(const FeatureSupportBatch& batch, const std::vector<cons
       }
     }
     if (sweep > 0 && *std::max_element(steps.begin(), steps.end()) <= 1e-12) {
+      local_converged = true;
       break;
     }
   }
   if (best_differential.rank >= regular_rank) {
+    if (callback_failed || !grid_complete || !local_converged || *callback_calls >= callback_call_limit) {
+      *numerical_incomplete = true;
+    }
     return false;
   }
 
@@ -748,10 +823,11 @@ double DirectionDistance(const double first[3], const double second[3]) {
 void AddCandidate(const FeatureCandidate& candidate, double merge_tolerance, FeatureDiscoveryResult* out) {
   for (FeatureCandidate& existing : out->candidates) {
     if (existing.mechanism == candidate.mechanism && SameProvenanceBranch(existing.provenance, candidate.provenance) &&
-        existing.scope_kind == candidate.scope_kind && existing.scope_id == candidate.scope_id &&
+        existing.evidence_id == candidate.evidence_id && existing.scope_kind == candidate.scope_kind &&
+        existing.scope_id == candidate.scope_id &&
         existing.scope_active_coordinates == candidate.scope_active_coordinates &&
         DirectionDistance(existing.direction, candidate.direction) <= merge_tolerance) {
-      existing.weighted_mass += candidate.weighted_mass;
+      existing.weighted_mass = std::max(existing.weighted_mass, candidate.weighted_mass);
       existing.residual = std::max(existing.residual, candidate.residual);
       existing.resolution = std::max(existing.resolution, candidate.resolution);
       if (candidate.has_weight_sides) {
@@ -786,6 +862,7 @@ FeatureCandidate CandidateFromSample(const FeatureSupportSample& sample, Feature
   candidate.resolution = sample.direction_jacobian_resolution;
   candidate.scope_active_coordinates = sample.active_coordinates;
   candidate.scope_parameters.resize(sample.active_coordinates.size());
+  candidate.evidence_id = SampleEvidenceId(sample, mechanism);
   candidate.reason = std::move(reason);
   return candidate;
 }
@@ -811,6 +888,94 @@ void ApplyCandidateScope(const FeatureSupportBatch& batch, int cell_id, const st
     candidate->scope_parameters.push_back(batch.parameter_descriptors.empty() ?
                                               FeatureParameterDescriptor{} :
                                               batch.parameter_descriptors[static_cast<size_t>(coordinate)]);
+  }
+}
+
+std::vector<int> ActiveCoordinatesForCell(const std::map<int, std::vector<const FeatureSupportCellAxis*>>& cell_axes,
+                                          int cell_id) {
+  std::vector<int> coordinates;
+  const auto found = cell_axes.find(cell_id);
+  if (found == cell_axes.end()) {
+    return coordinates;
+  }
+  coordinates.reserve(found->second.size());
+  for (const FeatureSupportCellAxis* axis : found->second) {
+    coordinates.push_back(axis->coordinate_index);
+  }
+  std::sort(coordinates.begin(), coordinates.end());
+  return coordinates;
+}
+
+std::vector<int> ScopeCoordinatesForCell(const FeatureSupportBatch& batch,
+                                         const std::map<int, std::vector<const FeatureSupportCellAxis*>>& cell_axes,
+                                         int cell_id) {
+  const auto found = cell_axes.find(cell_id);
+  if (found == cell_axes.end() || found->second.empty()) {
+    return {};
+  }
+  const bool has_explicit_scope =
+      std::any_of(batch.scopes.begin(), batch.scopes.end(),
+                  [cell_id](const FeatureSupportScope& scope) { return scope.cell_id == cell_id; });
+  if (!has_explicit_scope) {
+    return batch.samples[static_cast<size_t>(found->second.front()->center)].active_coordinates;
+  }
+  return ActiveCoordinatesForCell(cell_axes, cell_id);
+}
+
+std::vector<int> CellsForCenter(const std::map<int, std::vector<const FeatureSupportCellAxis*>>& cell_axes,
+                                int center_index) {
+  std::vector<int> cells;
+  for (const auto& [cell_id, axes] : cell_axes) {
+    if (!axes.empty() && axes.front()->center == center_index) {
+      cells.push_back(cell_id);
+    }
+  }
+  return cells;
+}
+
+std::vector<int> CellsForEdge(const std::map<int, std::vector<const FeatureSupportCellAxis*>>& cell_axes,
+                              int first_index, int second_index) {
+  std::vector<int> cells;
+  for (const auto& [cell_id, axes] : cell_axes) {
+    const bool owns_edge = std::any_of(axes.begin(), axes.end(), [&](const FeatureSupportCellAxis* axis) {
+      return (axis->lower == first_index && axis->center == second_index) ||
+             (axis->center == first_index && axis->upper == second_index);
+    });
+    if (owns_edge) {
+      cells.push_back(cell_id);
+    }
+  }
+  return cells;
+}
+
+void ApplyLegacyJointScope(const FeatureSupportBatch& batch, const std::vector<int>& active_coordinates,
+                           FeatureCandidate* candidate) {
+  candidate->scope_kind = FeatureSupportScopeKind::kJoint;
+  candidate->scope_id = -1;
+  candidate->scope_active_coordinates = active_coordinates;
+  candidate->scope_parameters.clear();
+  candidate->scope_parameters.reserve(active_coordinates.size());
+  for (int coordinate : active_coordinates) {
+    candidate->scope_parameters.push_back(batch.parameter_descriptors.empty() ?
+                                              FeatureParameterDescriptor{} :
+                                              batch.parameter_descriptors[static_cast<size_t>(coordinate)]);
+  }
+}
+
+void AddCandidateForScopes(const FeatureSupportBatch& batch,
+                           const std::map<int, std::vector<const FeatureSupportCellAxis*>>& cell_axes,
+                           const std::vector<int>& cell_ids, const FeatureCandidate& candidate, double merge_tolerance,
+                           FeatureDiscoveryResult* out) {
+  if (cell_ids.empty()) {
+    FeatureCandidate scoped = candidate;
+    ApplyLegacyJointScope(batch, candidate.scope_active_coordinates, &scoped);
+    AddCandidate(scoped, merge_tolerance, out);
+    return;
+  }
+  for (int cell_id : cell_ids) {
+    FeatureCandidate scoped = candidate;
+    ApplyCandidateScope(batch, cell_id, ScopeCoordinatesForCell(batch, cell_axes, cell_id), &scoped);
+    AddCandidate(scoped, merge_tolerance, out);
   }
 }
 
@@ -873,9 +1038,14 @@ FeatureCandidate ConstraintCandidate(const FeatureSupportSample& sample, const S
 
 bool RefineConstraintRoot(const FeatureSupportSample& first, const FeatureSupportSample& second,
                           const SupportConstraint& target, const FeatureDiscoveryOptions& options,
-                          const FeatureReevaluateFn& reevaluate, FeatureCandidate* candidate,
+                          const FeatureReevaluateFn& reevaluate, int* callback_calls, FeatureCandidate* candidate,
                           bool* numerical_incomplete) {
   if (!reevaluate || first.coordinates.size() != second.coordinates.size()) {
+    return false;
+  }
+  if (*callback_calls >= options.maximum_refinement_steps) {
+    *numerical_incomplete = true;
+    candidate->status = FeatureEvidenceStatus::kNumericalIncomplete;
     return false;
   }
   std::vector<double> lo = first.coordinates;
@@ -895,17 +1065,15 @@ bool RefineConstraintRoot(const FeatureSupportSample& first, const FeatureSuppor
   double hi_value = second_constraint->value;
   FeatureSupportSample best;
   double best_residual = std::numeric_limits<double>::infinity();
-  std::string callback_error;
-  for (int step = 0; step < options.maximum_refinement_steps; ++step) {
-    FeatureReevaluationRequest request;
-    request.provenance = first.provenance;
-    request.coordinates.resize(lo.size());
+  for (int step = 0; step < options.maximum_refinement_steps && *callback_calls < options.maximum_refinement_steps;
+       ++step) {
+    std::vector<double> request_coordinates(lo.size());
     for (size_t coordinate = 0; coordinate < lo.size(); ++coordinate) {
-      request.coordinates[coordinate] = 0.5 * (lo[coordinate] + hi[coordinate]);
+      request_coordinates[coordinate] = 0.5 * (lo[coordinate] + hi[coordinate]);
     }
     FeatureSupportSample evaluated;
-    if (!reevaluate(request, &evaluated, &callback_error) ||
-        !CallbackSampleMatchesRequest(evaluated, request, first, static_cast<int>(request.coordinates.size()))) {
+    if (!EvaluateRankSearchSample(reevaluate, first, request_coordinates, options.maximum_refinement_steps,
+                                  callback_calls, &evaluated)) {
       *numerical_incomplete = true;
       candidate->status = FeatureEvidenceStatus::kNumericalIncomplete;
       return false;
@@ -925,10 +1093,10 @@ bool RefineConstraintRoot(const FeatureSupportSample& first, const FeatureSuppor
       break;
     }
     if (std::signbit(constraint->value) == std::signbit(lo_value)) {
-      lo = request.coordinates;
+      lo = request_coordinates;
       lo_value = constraint->value;
     } else {
-      hi = request.coordinates;
+      hi = request_coordinates;
       hi_value = constraint->value;
     }
   }
@@ -1129,6 +1297,10 @@ void DiscoverSkyFeatures(const FeatureSupportBatch& batch, const FeatureDiscover
         candidate.residual =
             mechanism == FeatureMechanism::kBrightnessMaximum ? node.gradient_norm : differential.ridge_residual;
         candidate.resolution = node.resolution;
+        candidate.evidence_id = GlobalEvidenceId(mechanism, z_index * fine.azimuth_bins + azimuth_index);
+        std::vector<int> active_coordinates(static_cast<size_t>(batch.coordinate_dimension));
+        std::iota(active_coordinates.begin(), active_coordinates.end(), 0);
+        ApplyLegacyJointScope(batch, active_coordinates, &candidate);
         candidate.reason = mechanism == FeatureMechanism::kBrightnessMaximum ?
                                "a complete equal-area sky neighborhood has a local brightness maximum" :
                                "the sky-field Hessian has transverse negative curvature and a small normal gradient";
@@ -1141,6 +1313,7 @@ void DiscoverSkyFeatures(const FeatureSupportBatch& batch, const FeatureDiscover
 using ConcentrationBranch = std::tuple<int, int, int>;
 
 void DiscoverFiniteWidthConcentrations(const FeatureSupportBatch& batch, const FeatureDiscoveryOptions& options,
+                                       const std::map<int, std::vector<const FeatureSupportCellAxis*>>& cell_axes,
                                        bool globally_complete, FeatureDiscoveryResult* out,
                                        bool* resolution_incomplete) {
   std::map<ConcentrationBranch, std::vector<const FeatureSupportSample*>> branches;
@@ -1150,12 +1323,16 @@ void DiscoverFiniteWidthConcentrations(const FeatureSupportBatch& batch, const F
           .push_back(&sample);
     }
   }
-  for (const auto& [branch, samples] : branches) {
+  for (auto& [branch, samples] : branches) {
     (void)branch;
     if (samples.size() < 4u) {
       *resolution_incomplete = true;
       continue;
     }
+    std::sort(samples.begin(), samples.end(),
+              [](const FeatureSupportSample* first, const FeatureSupportSample* second) {
+                return first->sample_id < second->sample_id;
+              });
     double weighted_direction[3]{};
     double parity_direction[2][3]{};
     double total_weight = 0.0;
@@ -1217,6 +1394,16 @@ void DiscoverFiniteWidthConcentrations(const FeatureSupportBatch& batch, const F
     candidate.weighted_mass = total_weight;
     candidate.residual = split_error;
     candidate.resolution = spread;
+    const int center_index = static_cast<int>(samples.front() - batch.samples.data());
+    const std::vector<int> cells = CellsForCenter(cell_axes, center_index);
+    const auto joint = std::find_if(cells.begin(), cells.end(), [&](int cell_id) {
+      return ScopeForCell(batch, cell_id).kind == FeatureSupportScopeKind::kJoint;
+    });
+    if (joint == cells.end()) {
+      ApplyLegacyJointScope(batch, samples.front()->active_coordinates, &candidate);
+    } else {
+      ApplyCandidateScope(batch, *joint, ScopeCoordinatesForCell(batch, cell_axes, *joint), &candidate);
+    }
     AddCandidate(candidate, options.sky_merge_tolerance, out);
   }
 }
@@ -1262,6 +1449,8 @@ void DiscoverWeightKinks(const FeatureSupportBatch& batch, const FeatureDiscover
       candidate.weight_sides[1] = upper_weight->value;
       candidate.residual = jump;
       candidate.resolution = axis.parameter_span;
+      candidate.evidence_id = SampleEvidenceId(center, candidate.mechanism, center_weight.name);
+      ApplyCandidateScope(batch, axis.cell_id, { axis.coordinate_index }, &candidate);
       AddCandidate(candidate, options.sky_merge_tolerance, out);
     }
   }
@@ -1607,24 +1796,40 @@ FeatureDiscoveryResult DiscoverFeatures(const FeatureSupportBatch& batch, const 
   bool rank_numerically_incomplete = false;
   bool constraint_numerically_incomplete = false;
   bool concentration_resolution_incomplete = false;
-  std::vector<S2Differential> differentials;
-  differentials.reserve(batch.samples.size());
-  for (const FeatureSupportSample& sample : batch.samples) {
-    differentials.push_back(
-        RestrictedS2Differential(sample, batch.coordinate_dimension, options.rank_relative_tolerance));
-  }
-  std::vector<int> regular_ranks(batch.samples.size(), -1);
-  for (const FeatureSupportCellAxis& axis : batch.cell_axes) {
-    int local_rank = -1;
-    for (int index : { axis.lower, axis.center, axis.upper }) {
-      local_rank = std::max(local_rank, differentials[static_cast<size_t>(index)].rank);
-    }
-    regular_ranks[static_cast<size_t>(axis.center)] =
-        std::max(regular_ranks[static_cast<size_t>(axis.center)], local_rank);
-  }
   std::map<int, std::vector<const FeatureSupportCellAxis*>> cell_axes;
   for (const FeatureSupportCellAxis& axis : batch.cell_axes) {
     cell_axes[axis.cell_id].push_back(&axis);
+  }
+  std::map<int, int> cell_regular_ranks;
+  std::map<int, int> cell_callback_calls;
+  for (const auto& [cell_id, axes] : cell_axes) {
+    int regular_rank = -1;
+    std::vector<int> scoped_coordinates = ScopeCoordinatesForCell(batch, cell_axes, cell_id);
+    for (const FeatureSupportCellAxis* axis : axes) {
+      for (int index : { axis->lower, axis->center, axis->upper }) {
+        regular_rank = std::max(regular_rank, RestrictedS2Differential(batch.samples[static_cast<size_t>(index)],
+                                                                       batch.coordinate_dimension, scoped_coordinates,
+                                                                       options.rank_relative_tolerance)
+                                                  .rank);
+      }
+    }
+    cell_regular_ranks[cell_id] = regular_rank;
+    cell_callback_calls[cell_id] = 0;
+  }
+  std::set<int> cells_with_constraint_crossings;
+  for (const FeatureSupportEdge& edge : batch.edges) {
+    const FeatureSupportSample& first = batch.samples[static_cast<size_t>(edge.first)];
+    const FeatureSupportSample& second = batch.samples[static_cast<size_t>(edge.second)];
+    const bool crosses_constraint =
+        std::any_of(first.constraints.begin(), first.constraints.end(), [&](const SupportConstraint& constraint) {
+          const SupportConstraint* other = FindConstraint(second, constraint);
+          return constraint.kind != ConstraintKind::kWeight && constraint.numerically_available && other != nullptr &&
+                 other->numerically_available && std::signbit(constraint.value) != std::signbit(other->value);
+        });
+    if (crosses_constraint) {
+      const std::vector<int> cells = CellsForEdge(cell_axes, edge.first, edge.second);
+      cells_with_constraint_crossings.insert(cells.begin(), cells.end());
+    }
   }
   std::set<int> searched_rank_loss_cells;
   for (const auto& [cell_id, axes] : cell_axes) {
@@ -1634,9 +1839,30 @@ FeatureDiscoveryResult DiscoverFeatures(const FeatureSupportBatch& batch, const 
       scoped_coordinates.push_back(axis->coordinate_index);
     }
     std::sort(scoped_coordinates.begin(), scoped_coordinates.end());
+    const bool reserve_constraint_budget =
+        cells_with_constraint_crossings.find(cell_id) != cells_with_constraint_crossings.end();
+    const int rank_callback_limit = reserve_constraint_budget ? std::max(1, options.maximum_refinement_steps / 4) :
+                                                                options.maximum_refinement_steps;
+    int& callback_calls = cell_callback_calls[cell_id];
+    if (axes.size() == 1u) {
+      FeatureCandidate bracketed_candidate;
+      if (RefineOneDimensionalRankLoss(batch, *axes.front(), options, reevaluate, globally_complete,
+                                       rank_callback_limit, &callback_calls, &bracketed_candidate,
+                                       &rank_numerically_incomplete)) {
+        bracketed_candidate.evidence_id =
+            LocatedEvidenceId(batch.samples[static_cast<size_t>(axes.front()->center)], bracketed_candidate.mechanism,
+                              bracketed_candidate.direction);
+        ApplyCandidateScope(batch, cell_id, scoped_coordinates, &bracketed_candidate);
+        AddCandidate(bracketed_candidate, options.sky_merge_tolerance, &out);
+        searched_rank_loss_cells.insert(cell_id);
+        continue;
+      }
+    }
     FeatureCandidate searched_candidate;
-    if (SearchCellRankLoss(batch, axes, options, reevaluate, globally_complete, &searched_candidate,
-                           &rank_numerically_incomplete)) {
+    if (SearchCellRankLoss(batch, axes, options, reevaluate, globally_complete, rank_callback_limit, &callback_calls,
+                           &searched_candidate, &rank_numerically_incomplete)) {
+      searched_candidate.evidence_id = LocatedEvidenceId(batch.samples[static_cast<size_t>(axes.front()->center)],
+                                                         searched_candidate.mechanism, searched_candidate.direction);
       ApplyCandidateScope(batch, cell_id, scoped_coordinates, &searched_candidate);
       AddCandidate(searched_candidate, options.sky_merge_tolerance, &out);
       searched_rank_loss_cells.insert(cell_id);
@@ -1649,13 +1875,12 @@ FeatureDiscoveryResult DiscoverFeatures(const FeatureSupportBatch& batch, const 
     if (center.support_dimension < 2) {
       continue;
     }
-    int callback_calls = 0;
     std::vector<FeatureSupportSample> joint_endpoints;
-    if (regular_ranks[static_cast<size_t>(center_index)] < std::min(2, center.support_dimension) &&
+    if (cell_regular_ranks[cell_id] < std::min(2, static_cast<int>(scoped_coordinates.size())) &&
         center.mapping_evidence_kind == MappingEvidenceKind::kNone && !reevaluate) {
       rank_numerically_incomplete = true;
     }
-    if (regular_ranks[static_cast<size_t>(center_index)] < std::min(2, center.support_dimension) &&
+    if (cell_regular_ranks[cell_id] < std::min(2, static_cast<int>(scoped_coordinates.size())) &&
         center.mapping_evidence_kind == MappingEvidenceKind::kNone && reevaluate) {
       std::vector<double> lower_coordinates = center.coordinates;
       std::vector<double> upper_coordinates = center.coordinates;
@@ -1670,17 +1895,22 @@ FeatureDiscoveryResult DiscoverFeatures(const FeatureSupportBatch& batch, const 
         if (EvaluateRankSearchSample(reevaluate, center, *coordinates, options.maximum_refinement_steps,
                                      &callback_calls, &endpoint) &&
             endpoint.direction_jacobian_available) {
-          regular_ranks[static_cast<size_t>(center_index)] = std::max(
-              regular_ranks[static_cast<size_t>(center_index)],
-              RestrictedS2Differential(endpoint, batch.coordinate_dimension, options.rank_relative_tolerance).rank);
+          cell_regular_ranks[cell_id] = std::max(
+              cell_regular_ranks[cell_id], RestrictedS2Differential(endpoint, batch.coordinate_dimension,
+                                                                    scoped_coordinates, options.rank_relative_tolerance)
+                                               .rank);
           joint_endpoints.push_back(std::move(endpoint));
         } else {
           rank_numerically_incomplete = true;
         }
       }
     }
-    const int regular_rank = regular_ranks[static_cast<size_t>(center_index)];
+    const int regular_rank = cell_regular_ranks[cell_id];
     if (searched_rank_loss_cells.find(cell_id) != searched_rank_loss_cells.end()) {
+      continue;
+    }
+    if (cells_with_constraint_crossings.find(cell_id) != cells_with_constraint_crossings.end()) {
+      rank_numerically_incomplete = true;
       continue;
     }
     for (const FeatureSupportCellAxis* axis : axes) {
@@ -1689,6 +1919,7 @@ FeatureDiscoveryResult DiscoverFeatures(const FeatureSupportBatch& batch, const 
               batch.samples[static_cast<size_t>(axis->lower)], batch.samples[static_cast<size_t>(axis->upper)],
               batch.coordinate_dimension, regular_rank, options, reevaluate, globally_complete, &callback_calls,
               &candidate, &rank_numerically_incomplete)) {
+        candidate.evidence_id = LocatedEvidenceId(center, candidate.mechanism, candidate.direction);
         ApplyCandidateScope(batch, cell_id, scoped_coordinates, &candidate);
         AddCandidate(candidate, options.sky_merge_tolerance, &out);
       }
@@ -1698,21 +1929,10 @@ FeatureDiscoveryResult DiscoverFeatures(const FeatureSupportBatch& batch, const 
       if (RefineMultidimensionalRankLossLine(joint_endpoints[0], joint_endpoints[1], batch.coordinate_dimension,
                                              regular_rank, options, reevaluate, globally_complete, &callback_calls,
                                              &candidate, &rank_numerically_incomplete)) {
+        candidate.evidence_id = LocatedEvidenceId(center, candidate.mechanism, candidate.direction);
         ApplyCandidateScope(batch, cell_id, scoped_coordinates, &candidate);
         AddCandidate(candidate, options.sky_merge_tolerance, &out);
       }
-    }
-  }
-  for (const FeatureSupportCellAxis& axis : batch.cell_axes) {
-    if (cell_axes[axis.cell_id].size() != 1u ||
-        searched_rank_loss_cells.find(axis.cell_id) != searched_rank_loss_cells.end()) {
-      continue;
-    }
-    FeatureCandidate candidate;
-    if (RefineOneDimensionalRankLoss(batch, axis, options, reevaluate, globally_complete, &candidate,
-                                     &rank_numerically_incomplete)) {
-      ApplyCandidateScope(batch, axis.cell_id, { axis.coordinate_index }, &candidate);
-      AddCandidate(candidate, options.sky_merge_tolerance, &out);
     }
   }
   for (size_t sample_index = 0; sample_index < batch.samples.size(); ++sample_index) {
@@ -1726,11 +1946,12 @@ FeatureDiscoveryResult DiscoverFeatures(const FeatureSupportBatch& batch, const 
     }
     const FeatureEvidenceStatus direct_status =
         globally_complete ? FeatureEvidenceStatus::kConfirmed : FeatureEvidenceStatus::kCandidate;
+    const std::vector<int> sample_cells = CellsForCenter(cell_axes, static_cast<int>(sample_index));
     if (sample.measure_kind == SupportMeasureKind::kAtom && sample.weight > 0.0) {
       FeatureCandidate candidate = CandidateFromSample(sample, FeatureMechanism::kMeasureAtom, direct_status,
                                                        "positive input atom contributes mass at this direction");
       candidate.mapping_rank = 0;
-      AddCandidate(candidate, options.sky_merge_tolerance, &out);
+      AddCandidateForScopes(batch, cell_axes, sample_cells, candidate, options.sky_merge_tolerance, &out);
     }
     std::vector<const SupportConstraint*> active_constraints;
     for (const SupportConstraint& constraint : sample.constraints) {
@@ -1740,9 +1961,11 @@ FeatureDiscoveryResult DiscoverFeatures(const FeatureSupportBatch& batch, const 
       }
       if (constraint.kind != ConstraintKind::kWeight && std::fabs(constraint.value) <= options.margin_tolerance) {
         active_constraints.push_back(&constraint);
-        AddCandidate(ConstraintCandidate(sample, constraint, FeatureEvidenceStatus::kCandidate,
-                                         "a named support margin is active but still requires two-sided evidence"),
-                     options.sky_merge_tolerance, &out);
+        FeatureCandidate candidate =
+            ConstraintCandidate(sample, constraint, FeatureEvidenceStatus::kCandidate,
+                                "a named support margin is active but still requires two-sided evidence");
+        candidate.evidence_id = SampleEvidenceId(sample, candidate.mechanism, constraint.name);
+        AddCandidateForScopes(batch, cell_axes, sample_cells, candidate, options.sky_merge_tolerance, &out);
       }
     }
     if (active_constraints.size() >= 2u) {
@@ -1752,7 +1975,14 @@ FeatureDiscoveryResult DiscoverFeatures(const FeatureSupportBatch& batch, const 
       for (const SupportConstraint* constraint : active_constraints) {
         corner.active_constraints.push_back(constraint->name);
       }
-      AddCandidate(corner, options.sky_merge_tolerance, &out);
+      std::sort(corner.active_constraints.begin(), corner.active_constraints.end());
+      std::string event_name;
+      for (const std::string& name : corner.active_constraints) {
+        event_name += name;
+        event_name.push_back('\0');
+      }
+      corner.evidence_id = SampleEvidenceId(sample, corner.mechanism, event_name);
+      AddCandidateForScopes(batch, cell_axes, sample_cells, corner, options.sky_merge_tolerance, &out);
     }
 
     if (sample.support_dimension <= 0) {
@@ -1762,54 +1992,72 @@ FeatureDiscoveryResult DiscoverFeatures(const FeatureSupportBatch& batch, const 
       rank_numerically_incomplete = true;
       continue;
     }
-    const S2Differential& differential = differentials[sample_index];
-    const bool neighborhood_rank_available = regular_ranks[sample_index] >= 0;
-    const int regular_rank =
-        neighborhood_rank_available ? regular_ranks[sample_index] : std::min(2, sample.support_dimension);
-    if (!neighborhood_rank_available) {
-      rank_numerically_incomplete = true;
-    }
     const bool exact_mapping_bound =
         sample.mapping_evidence_kind == MappingEvidenceKind::kExactImageDimensionUpperBound &&
         sample.mapping_error_bound == 0.0;
-    if (sample.measure_kind == SupportMeasureKind::kContinuous) {
-      const bool proven_strict_confinement =
-          sample.support_dimension == 1 ||
-          (exact_mapping_bound && sample.image_dimension_upper_bound >= 0 && sample.image_dimension_upper_bound < 2);
-      const bool sampled_strict_confinement = neighborhood_rank_available && regular_rank < 2;
-      if (proven_strict_confinement || sampled_strict_confinement) {
-        AddCandidate(
-            CandidateFromSample(
-                sample, FeatureMechanism::kStrictConfinement,
-                proven_strict_confinement ? direct_status : FeatureEvidenceStatus::kCandidate,
-                proven_strict_confinement ?
-                    "the support dimension or exact mapping certificate bounds the sky image below dimension two" :
-                    "finite local differentials suggest confinement but do not prove a global image-dimension bound"),
-            options.sky_merge_tolerance, &out);
-      }
-      if (exact_mapping_bound && sample.image_dimension_upper_bound == 0 && sample.weight > 0.0) {
-        FeatureCandidate atom =
-            CandidateFromSample(sample, FeatureMechanism::kMeasureAtom, direct_status,
-                                "an exact complete-cell mapping certificate proves constant sky direction");
-        atom.mapping_rank = 0;
-        AddCandidate(atom, options.sky_merge_tolerance, &out);
-      }
+    std::vector<int> scoped_cells = sample_cells;
+    if (scoped_cells.empty()) {
+      scoped_cells.push_back(-1);
     }
-    if (differential.rank < regular_rank) {
-      const double numerical_residual = std::max(differential.tangent_residual, sample.direction_jacobian_error);
-      const FeatureEvidenceStatus status =
-          globally_complete && neighborhood_rank_available &&
-                  numerical_residual <= std::max(1e-8, 10.0 * options.rank_relative_tolerance) ?
-              FeatureEvidenceStatus::kConfirmed :
-              FeatureEvidenceStatus::kCandidate;
-      FeatureCandidate candidate =
-          CandidateFromSample(sample, FeatureMechanism::kInteriorRankLoss, status,
-                              "the complete-chain differential restricted to the actual support loses S2 tangent rank");
-      candidate.mapping_rank = differential.rank;
-      candidate.singular_values[0] = differential.singular_values[0];
-      candidate.singular_values[1] = differential.singular_values[1];
-      candidate.residual = numerical_residual;
-      AddCandidate(candidate, options.sky_merge_tolerance, &out);
+    for (int cell_id : scoped_cells) {
+      const std::vector<int> scoped_coordinates =
+          cell_id < 0 ? sample.active_coordinates : ScopeCoordinatesForCell(batch, cell_axes, cell_id);
+      const S2Differential differential = RestrictedS2Differential(sample, batch.coordinate_dimension,
+                                                                   scoped_coordinates, options.rank_relative_tolerance);
+      const bool neighborhood_rank_available = cell_id >= 0 && cell_regular_ranks[cell_id] >= 0;
+      const int regular_rank = neighborhood_rank_available ? cell_regular_ranks[cell_id] :
+                                                             std::min(2, static_cast<int>(scoped_coordinates.size()));
+      if (!neighborhood_rank_available) {
+        rank_numerically_incomplete = true;
+      }
+      const auto apply_scope = [&](FeatureCandidate* candidate) {
+        if (cell_id < 0) {
+          ApplyLegacyJointScope(batch, scoped_coordinates, candidate);
+        } else {
+          ApplyCandidateScope(batch, cell_id, scoped_coordinates, candidate);
+        }
+      };
+      if (sample.measure_kind == SupportMeasureKind::kContinuous) {
+        const bool proven_strict_confinement =
+            scoped_coordinates.size() == 1u ||
+            (exact_mapping_bound && sample.image_dimension_upper_bound >= 0 && sample.image_dimension_upper_bound < 2);
+        const bool sampled_strict_confinement = neighborhood_rank_available && regular_rank < 2;
+        if (proven_strict_confinement || sampled_strict_confinement) {
+          FeatureCandidate candidate = CandidateFromSample(
+              sample, FeatureMechanism::kStrictConfinement,
+              proven_strict_confinement ? direct_status : FeatureEvidenceStatus::kCandidate,
+              proven_strict_confinement ?
+                  "the scoped support dimension or exact mapping certificate bounds the sky image below dimension two" :
+                  "finite scoped differentials suggest confinement but do not prove a global image-dimension bound");
+          apply_scope(&candidate);
+          AddCandidate(candidate, options.sky_merge_tolerance, &out);
+        }
+        if (exact_mapping_bound && sample.image_dimension_upper_bound == 0 && sample.weight > 0.0) {
+          FeatureCandidate atom =
+              CandidateFromSample(sample, FeatureMechanism::kMeasureAtom, direct_status,
+                                  "an exact complete-cell mapping certificate proves constant sky direction");
+          atom.mapping_rank = 0;
+          apply_scope(&atom);
+          AddCandidate(atom, options.sky_merge_tolerance, &out);
+        }
+      }
+      if (differential.rank >= 0 && differential.rank < regular_rank) {
+        const double numerical_residual = std::max(differential.tangent_residual, sample.direction_jacobian_error);
+        const FeatureEvidenceStatus status =
+            globally_complete && neighborhood_rank_available &&
+                    numerical_residual <= std::max(1e-8, 10.0 * options.rank_relative_tolerance) ?
+                FeatureEvidenceStatus::kConfirmed :
+                FeatureEvidenceStatus::kCandidate;
+        FeatureCandidate candidate = CandidateFromSample(
+            sample, FeatureMechanism::kInteriorRankLoss, status,
+            "the complete-chain differential restricted to the scoped support loses S2 tangent rank");
+        candidate.mapping_rank = differential.rank;
+        candidate.singular_values[0] = differential.singular_values[0];
+        candidate.singular_values[1] = differential.singular_values[1];
+        candidate.residual = numerical_residual;
+        apply_scope(&candidate);
+        AddCandidate(candidate, options.sky_merge_tolerance, &out);
+      }
     }
   }
 
@@ -1820,61 +2068,83 @@ FeatureDiscoveryResult DiscoverFeatures(const FeatureSupportBatch& batch, const 
       constraint_numerically_incomplete = true;
       continue;
     }
-    std::vector<std::string> crossing_constraints;
-    FeatureCandidate first_crossing;
-    bool have_first_crossing = false;
-    for (const SupportConstraint& first_constraint : first.constraints) {
-      if (first_constraint.kind == ConstraintKind::kWeight) {
-        continue;
-      }
-      const SupportConstraint* second_constraint = FindConstraint(second, first_constraint);
-      if (!first_constraint.numerically_available || second_constraint == nullptr ||
-          !second_constraint->numerically_available) {
-        constraint_numerically_incomplete = true;
-        continue;
-      }
-      if (std::fabs(first_constraint.value) <= options.margin_tolerance ||
-          std::fabs(second_constraint->value) <= options.margin_tolerance ||
-          std::signbit(first_constraint.value) == std::signbit(second_constraint->value)) {
-        continue;
-      }
-      const double denominator = std::fabs(first_constraint.value) + std::fabs(second_constraint->value);
-      const double interpolation = std::fabs(first_constraint.value) / denominator;
-      FeatureCandidate candidate = ConstraintCandidate(
-          first, first_constraint, FeatureEvidenceStatus::kCandidate,
-          "opposite constraint-margin signs bracket a support transition; callback refinement preserves the branch");
-      if (!NormalizedInterpolation(first, second, interpolation, candidate.direction)) {
-        constraint_numerically_incomplete = true;
-        continue;
-      }
-      candidate.has_weight_sides = true;
-      candidate.weight_sides[0] = first.weight;
-      candidate.weight_sides[1] = second.weight;
-      candidate.residual = 0.0;
-      candidate.resolution = edge.parameter_distance;
-      if (RefineConstraintRoot(first, second, first_constraint, options, reevaluate, &candidate,
-                               &constraint_numerically_incomplete) &&
-          globally_complete) {
-        candidate.status = FeatureEvidenceStatus::kConfirmed;
-      }
-      AddCandidate(candidate, options.sky_merge_tolerance, &out);
-      crossing_constraints.push_back(first_constraint.name);
-      if (!have_first_crossing) {
-        first_crossing = candidate;
-        have_first_crossing = true;
-      }
+    std::vector<int> edge_cells = CellsForEdge(cell_axes, edge.first, edge.second);
+    if (edge_cells.empty()) {
+      edge_cells.push_back(-1);
     }
-    if (crossing_constraints.size() >= 2u && have_first_crossing) {
-      first_crossing.mechanism = FeatureMechanism::kSupportCorner;
-      first_crossing.status = FeatureEvidenceStatus::kCandidate;
-      first_crossing.active_constraints = crossing_constraints;
-      first_crossing.reason =
-          "multiple named support margins cross on one resolved edge; joint root refinement is still required";
-      AddCandidate(first_crossing, options.sky_merge_tolerance, &out);
+    int legacy_callback_calls = 0;
+    for (int cell_id : edge_cells) {
+      int& callback_calls = cell_id < 0 ? legacy_callback_calls : cell_callback_calls[cell_id];
+      std::vector<std::string> crossing_constraints;
+      FeatureCandidate first_crossing;
+      bool have_first_crossing = false;
+      for (const SupportConstraint& first_constraint : first.constraints) {
+        if (first_constraint.kind == ConstraintKind::kWeight) {
+          continue;
+        }
+        const SupportConstraint* second_constraint = FindConstraint(second, first_constraint);
+        if (!first_constraint.numerically_available || second_constraint == nullptr ||
+            !second_constraint->numerically_available) {
+          constraint_numerically_incomplete = true;
+          continue;
+        }
+        if (std::fabs(first_constraint.value) <= options.margin_tolerance ||
+            std::fabs(second_constraint->value) <= options.margin_tolerance ||
+            std::signbit(first_constraint.value) == std::signbit(second_constraint->value)) {
+          continue;
+        }
+        const double denominator = std::fabs(first_constraint.value) + std::fabs(second_constraint->value);
+        const double interpolation = std::fabs(first_constraint.value) / denominator;
+        FeatureCandidate candidate = ConstraintCandidate(
+            first, first_constraint, FeatureEvidenceStatus::kCandidate,
+            "opposite constraint-margin signs bracket a support transition; callback refinement preserves the branch");
+        candidate.evidence_id = EdgeEvidenceId(first, second, candidate.mechanism, first_constraint.name);
+        if (!NormalizedInterpolation(first, second, interpolation, candidate.direction)) {
+          constraint_numerically_incomplete = true;
+          continue;
+        }
+        candidate.has_weight_sides = true;
+        candidate.weight_sides[0] = first.weight;
+        candidate.weight_sides[1] = second.weight;
+        candidate.residual = 0.0;
+        candidate.resolution = edge.parameter_distance;
+        if (cell_id < 0) {
+          ApplyLegacyJointScope(batch, first.active_coordinates, &candidate);
+        } else {
+          ApplyCandidateScope(batch, cell_id, ScopeCoordinatesForCell(batch, cell_axes, cell_id), &candidate);
+        }
+        if (RefineConstraintRoot(first, second, first_constraint, options, reevaluate, &callback_calls, &candidate,
+                                 &constraint_numerically_incomplete) &&
+            globally_complete) {
+          candidate.status = FeatureEvidenceStatus::kConfirmed;
+        }
+        AddCandidate(candidate, options.sky_merge_tolerance, &out);
+        crossing_constraints.push_back(first_constraint.name);
+        if (!have_first_crossing) {
+          first_crossing = candidate;
+          have_first_crossing = true;
+        }
+      }
+      if (crossing_constraints.size() >= 2u && have_first_crossing) {
+        first_crossing.mechanism = FeatureMechanism::kSupportCorner;
+        first_crossing.status = FeatureEvidenceStatus::kCandidate;
+        std::sort(crossing_constraints.begin(), crossing_constraints.end());
+        first_crossing.active_constraints = crossing_constraints;
+        std::string event_name;
+        for (const std::string& name : crossing_constraints) {
+          event_name += name;
+          event_name.push_back('\0');
+        }
+        first_crossing.evidence_id = EdgeEvidenceId(first, second, FeatureMechanism::kSupportCorner, event_name);
+        first_crossing.reason =
+            "multiple named support margins cross on one resolved edge; joint root refinement is still required";
+        AddCandidate(first_crossing, options.sky_merge_tolerance, &out);
+      }
     }
   }
 
-  DiscoverFiniteWidthConcentrations(batch, options, globally_complete, &out, &concentration_resolution_incomplete);
+  DiscoverFiniteWidthConcentrations(batch, options, cell_axes, globally_complete, &out,
+                                    &concentration_resolution_incomplete);
   DiscoverWeightKinks(batch, options, &out, &constraint_numerically_incomplete);
 
   DiscoverSkyFeatures(batch, options, globally_complete, &out);
@@ -1891,19 +2161,21 @@ FeatureDiscoveryResult DiscoverFeatures(const FeatureSupportBatch& batch, const 
   }
   FeatureMechanismRecord& rank_record =
       out.mechanisms[static_cast<size_t>(MechanismIndex(FeatureMechanism::kInteriorRankLoss))];
-  if (rank_numerically_incomplete && rank_record.candidate_count == 0) {
+  if (rank_numerically_incomplete) {
     rank_record.status = FeatureEvidenceStatus::kNumericalIncomplete;
-    rank_record.reason = "at least one support row lacks a complete-chain differential";
+    rank_record.reason =
+        "at least one support scope lacks complete-chain differential or callback-search coverage; local candidates "
+        "remain available";
   }
   if (constraint_numerically_incomplete) {
     for (FeatureMechanism mechanism :
          { FeatureMechanism::kSupportBoundary, FeatureMechanism::kSupportCorner, FeatureMechanism::kOpticalKink,
            FeatureMechanism::kFilterBoundary, FeatureMechanism::kWeightKink }) {
       FeatureMechanismRecord& record = out.mechanisms[static_cast<size_t>(MechanismIndex(mechanism))];
-      if (record.candidate_count == 0) {
-        record.status = FeatureEvidenceStatus::kNumericalIncomplete;
-        record.reason = "at least one named constraint margin was unavailable on the supplied support";
-      }
+      record.status = FeatureEvidenceStatus::kNumericalIncomplete;
+      record.reason =
+          "at least one named constraint margin or callback refinement was incomplete; local candidates remain "
+          "available";
     }
   }
   FeatureMechanismRecord& concentration_record =

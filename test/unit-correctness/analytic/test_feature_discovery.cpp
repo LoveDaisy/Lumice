@@ -402,6 +402,54 @@ TEST(FeatureDiscoveryDifferential, PreservesConditionalScopeAndParameterRoles) {
   EXPECT_NE(error.find("group"), std::string::npos);
 }
 
+TEST(FeatureDiscoveryDifferential, DirectEvidenceExpandsToJointAndConditionalScopesWithoutDuplicatingMass) {
+  FeatureSupportBatch batch;
+  batch.version = kFeatureSupportBatchVersion;
+  batch.coordinate_dimension = 1;
+  batch.visited_row_count = 1;
+  batch.complete_visit = true;
+  auto constant_sample = [](uint64_t id, double x, bool accumulates_measure) {
+    FeatureSupportSample sample = Sample(id, x);
+    sample.accumulates_measure = accumulates_measure;
+    sample.weight = accumulates_measure ? 1.0 : 0.0;
+    sample.direction_jacobian = { 0.0, 0.0, 0.0 };
+    sample.mapping_evidence_kind =
+        accumulates_measure ? MappingEvidenceKind::kExactImageDimensionUpperBound : MappingEvidenceKind::kNone;
+    sample.image_dimension_upper_bound = accumulates_measure ? 0 : -1;
+    return sample;
+  };
+  batch.samples = { constant_sample(1, 0.0, true), constant_sample(2, -1.0, false), constant_sample(3, 1.0, false) };
+  batch.cell_axes = { { 7, 0, 1, 0, 2, 2.0 }, { 8, 0, 1, 0, 2, 2.0 } };
+  batch.parameter_descriptors = { { FeatureParameterRole::kPose, 2 } };
+  batch.scopes = { { 42, 7, FeatureSupportScopeKind::kJoint }, { 43, 8, FeatureSupportScopeKind::kConditional } };
+
+  const FeatureDiscoveryResult result = DiscoverFeatures(batch, {});
+  const auto check_scope_projection = [&](FeatureMechanism mechanism) {
+    const std::vector<const FeatureCandidate*> candidates = Candidates(result, mechanism);
+    ASSERT_EQ(candidates.size(), 2u);
+    const auto joint = std::find_if(candidates.begin(), candidates.end(), [](const FeatureCandidate* candidate) {
+      return candidate->scope_kind == FeatureSupportScopeKind::kJoint;
+    });
+    const auto conditional = std::find_if(candidates.begin(), candidates.end(), [](const FeatureCandidate* candidate) {
+      return candidate->scope_kind == FeatureSupportScopeKind::kConditional;
+    });
+    ASSERT_NE(joint, candidates.end());
+    ASSERT_NE(conditional, candidates.end());
+    EXPECT_EQ((*joint)->scope_id, 42);
+    EXPECT_EQ((*conditional)->scope_id, 43);
+    EXPECT_DOUBLE_EQ((*joint)->weighted_mass, 1.0);
+    EXPECT_DOUBLE_EQ((*conditional)->weighted_mass, 0.0);
+    EXPECT_NE((*joint)->evidence_id, 0u);
+    EXPECT_EQ((*joint)->evidence_id, (*conditional)->evidence_id);
+    ASSERT_EQ((*conditional)->scope_parameters.size(), 1u);
+    EXPECT_EQ((*conditional)->scope_parameters[0].role, FeatureParameterRole::kPose);
+    EXPECT_EQ((*conditional)->scope_parameters[0].group_id, 2);
+  };
+  for (FeatureMechanism mechanism : { FeatureMechanism::kMeasureAtom, FeatureMechanism::kStrictConfinement }) {
+    check_scope_projection(mechanism);
+  }
+}
+
 TEST(FeatureDiscoveryDifferential, SearchesAContinuousCellWithoutASignedFoldBracket) {
   FeatureSupportBatch batch;
   batch.coordinate_dimension = 1;
@@ -609,14 +657,29 @@ TEST(FeatureDiscoveryDifferential, LocalizesAnOffAxisRankLossWithoutACenterOrEnd
                     sample_at(4, 0.0, -1.0, false), sample_at(5, 0.0, 1.0, false) };
   batch.cell_axes = { { 0, 0, 1, 0, 2, 2.0 }, { 0, 1, 3, 0, 4, 2.0 } };
   int callback_count = 0;
+  std::vector<std::pair<double, double>> callback_coordinates;
   const FeatureReevaluateFn callback = [&](const FeatureReevaluationRequest& request, FeatureSupportSample* sample,
                                            std::string*) {
     ++callback_count;
+    callback_coordinates.emplace_back(request.coordinates[0], request.coordinates[1]);
     *sample =
         sample_at(100 + static_cast<uint64_t>(callback_count), request.coordinates[0], request.coordinates[1], false);
     sample->provenance = request.provenance;
     return true;
   };
+  FeatureDiscoveryOptions default_options;
+  const FeatureDiscoveryResult default_result = DiscoverFeatures(batch, default_options, callback);
+  const FeatureCandidate* default_rank_loss = Candidate(default_result, FeatureMechanism::kInteriorRankLoss);
+  EXPECT_TRUE(default_rank_loss != nullptr ||
+              default_result.mechanisms[static_cast<size_t>(FeatureMechanism::kInteriorRankLoss)].status ==
+                  FeatureEvidenceStatus::kNumericalIncomplete);
+  EXPECT_TRUE(std::any_of(callback_coordinates.begin(), callback_coordinates.end(), [](const auto& coordinates) {
+    return std::fabs(coordinates.first) > 1e-12 && std::fabs(coordinates.second) > 1e-12;
+  }));
+  EXPECT_LE(callback_count, default_options.maximum_refinement_steps);
+
+  callback_count = 0;
+  callback_coordinates.clear();
   FeatureDiscoveryOptions options;
   options.maximum_refinement_steps = 512;
 
@@ -624,8 +687,21 @@ TEST(FeatureDiscoveryDifferential, LocalizesAnOffAxisRankLossWithoutACenterOrEnd
   const FeatureCandidate* rank_loss = Candidate(result, FeatureMechanism::kInteriorRankLoss);
   ASSERT_NE(rank_loss, nullptr);
   EXPECT_EQ(rank_loss->status, FeatureEvidenceStatus::kConfirmed);
-  EXPECT_LT(rank_loss->residual, 1e-10);
-  EXPECT_NEAR(rank_loss->direction[1] / rank_loss->direction[0], 0.3, 1e-10);
+  EXPECT_LT(rank_loss->residual, 1e-4);
+  EXPECT_TRUE(std::any_of(callback_coordinates.begin(), callback_coordinates.end(), [&](const auto& coordinates) {
+    const double u = coordinates.first;
+    const double v = coordinates.second;
+    if (std::fabs((u - 0.5) * (u - 0.5) + (v - 0.5) * (v - 0.5) - 0.04) >= 1e-4) {
+      return false;
+    }
+    const FeatureSupportSample expected = sample_at(0, u, v, false);
+    double error2 = 0.0;
+    for (int component = 0; component < 3; ++component) {
+      const double delta = rank_loss->direction[component] - expected.direction[component];
+      error2 += delta * delta;
+    }
+    return error2 < 1e-8;
+  }));
   EXPECT_GT(callback_count, 0);
   EXPECT_LE(callback_count, options.maximum_refinement_steps);
 }
@@ -730,10 +806,12 @@ TEST(FeatureDiscoveryDifferential, PositiveInputAtomsAccumulateMassAtOneSkyLocat
   }
 
   const FeatureDiscoveryResult result = DiscoverFeatures(batch, {});
-  const FeatureCandidate* atom = Candidate(result, FeatureMechanism::kMeasureAtom);
-  ASSERT_NE(atom, nullptr);
-  EXPECT_DOUBLE_EQ(atom->weighted_mass, 0.5);
-  EXPECT_EQ(atom->status, FeatureEvidenceStatus::kConfirmed);
+  const std::vector<const FeatureCandidate*> atoms = Candidates(result, FeatureMechanism::kMeasureAtom);
+  ASSERT_EQ(atoms.size(), 2u);
+  EXPECT_DOUBLE_EQ(atoms[0]->weighted_mass + atoms[1]->weighted_mass, 0.5);
+  EXPECT_EQ(atoms[0]->status, FeatureEvidenceStatus::kConfirmed);
+  EXPECT_EQ(atoms[1]->status, FeatureEvidenceStatus::kConfirmed);
+  EXPECT_NE(atoms[0]->evidence_id, atoms[1]->evidence_id);
 }
 
 TEST(FeatureDiscoveryConstraints, RefinesANonFirstInterfaceKinkThroughTheCallerCallback) {

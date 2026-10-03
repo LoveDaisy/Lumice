@@ -78,6 +78,7 @@ constexpr size_t kFeatureSupportSampleV10Size = offsetof(LUMICE_ANALYTIC_Feature
 constexpr size_t kFeatureSupportBatchV9Size = offsetof(LUMICE_ANALYTIC_FeatureSupportBatch, cell_axis_count);
 constexpr size_t kFeatureSupportBatchV11Size =
     offsetof(LUMICE_ANALYTIC_FeatureSupportBatch, parameter_descriptor_count);
+constexpr size_t kFeatureCandidateScopeV12Size = offsetof(LUMICE_ANALYTIC_FeatureCandidateScope, evidence_id);
 static_assert(kFeatureSupportSampleV9Size ==
               offsetof(LUMICE_ANALYTIC_FeatureSupportSample, numerically_available) + sizeof(int));
 static_assert(kFeatureSupportSampleV10Size ==
@@ -86,6 +87,8 @@ static_assert(kFeatureSupportBatchV9Size ==
               offsetof(LUMICE_ANALYTIC_FeatureSupportBatch, edges) + sizeof(const LUMICE_ANALYTIC_FeatureSupportEdge*));
 static_assert(kFeatureSupportBatchV11Size == offsetof(LUMICE_ANALYTIC_FeatureSupportBatch, cell_axes) +
                                                  sizeof(const LUMICE_ANALYTIC_FeatureSupportCellAxis*));
+static_assert(kFeatureCandidateScopeV12Size ==
+              offsetof(LUMICE_ANALYTIC_FeatureCandidateScope, fixed_source_node_id) + sizeof(int));
 
 static_assert(static_cast<int>(lumice::analytic::FeatureEvidenceStatus::kConfirmed) ==
                   LUMICE_ANALYTIC_FEATURE_CONFIRMED &&
@@ -1266,6 +1269,7 @@ LUMICE_ANALYTIC_ErrorCode FillFeatureDiscoveryResult(const lumice::analytic::Fea
     scope.active_parameters = parameters.empty() ? nullptr : parameters.data();
     scope.fixed_spectrum_node_id = input.provenance.spectrum_node_id;
     scope.fixed_source_node_id = input.provenance.source_node_id;
+    scope.evidence_id = input.evidence_id;
     storage->candidate_scopes.push_back(scope);
   }
   storage->mechanisms.reserve(result.mechanisms.size());
@@ -1587,7 +1591,8 @@ LUMICE_ANALYTIC_ErrorCode LUMICE_ANALYTIC_GetFeatureCandidateScope(const LUMICE_
   if (result == nullptr || out_scope == nullptr) {
     return LUMICE_ANALYTIC_ERR_NULL_ARG;
   }
-  if (out_scope->struct_size < sizeof(LUMICE_ANALYTIC_FeatureCandidateScope)) {
+  const size_t caller_size = out_scope->struct_size;
+  if (caller_size < kFeatureCandidateScopeV12Size) {
     ZeroAfterStructSize(out_scope);
     return LUMICE_ANALYTIC_ERR_INVALID_VALUE;
   }
@@ -1600,7 +1605,9 @@ LUMICE_ANALYTIC_ErrorCode LUMICE_ANALYTIC_GetFeatureCandidateScope(const LUMICE_
   if (static_cast<size_t>(candidate_index) >= storage->candidate_scopes.size()) {
     return LUMICE_ANALYTIC_ERR_INVALID_VALUE;
   }
-  *out_scope = storage->candidate_scopes[static_cast<size_t>(candidate_index)];
+  LUMICE_ANALYTIC_FeatureCandidateScope value = storage->candidate_scopes[static_cast<size_t>(candidate_index)];
+  value.struct_size = static_cast<uint32_t>(caller_size);
+  std::memcpy(out_scope, &value, std::min(caller_size, sizeof(value)));
   return LUMICE_ANALYTIC_OK;
 }
 

@@ -172,6 +172,7 @@ nlohmann::ordered_json DiscoveryJson(const analytic::FeatureDiscoveryResult& dis
       { "scope",
         { { "id", candidate.scope_id },
           { "kind", ScopeKindName(candidate.scope_kind) },
+          { "evidence_id", candidate.evidence_id },
           { "active_parameters", scope_parameters },
           { "fixed_spectrum_node_id", candidate.provenance.spectrum_node_id },
           { "fixed_source_node_id", candidate.provenance.source_node_id } } },

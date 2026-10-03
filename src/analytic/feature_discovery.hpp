@@ -213,6 +213,9 @@ struct FeatureCandidate {
   int scope_id = -1;
   std::vector<int> scope_active_coordinates;
   std::vector<FeatureParameterDescriptor> scope_parameters;
+  // Stable within one complete query. Multiple scope projections of the same scientific event
+  // share this identifier; unrelated co-located events do not.
+  uint64_t evidence_id = 0;
   std::string reason;
 };
 

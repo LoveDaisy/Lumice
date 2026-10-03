@@ -23,6 +23,8 @@
 // face sequence and performs no symmetry reduction (doc/analytic-api.md section 3).
 //
 // Version notes, newest first (every bump says what changed, doc/analytic-api.md section 8.1):
+//   13 APPENDED evidence_id to the struct_size-protected FeatureCandidateScope query record. The
+//      candidate array stride, version 1/2/3/4 inputs and version 12 scope prefix are unchanged.
 //   12 ADDED feature-support version 4 parameter-role and support-scope records, plus
 //      LUMICE_ANALYTIC_GetFeatureCandidateScope. The candidate array and version 1/2/3 input
 //      layouts are unchanged.
@@ -90,7 +92,7 @@ extern "C" {
 
 // Interface version, a single integer (doc/analytic-api.md section 8.2): bumped on every
 // incompatible change, and in 0.x on every addition too. Independent of lumice_base.h's LUMICE_API_VERSION.
-#define LUMICE_ANALYTIC_API_VERSION 12
+#define LUMICE_ANALYTIC_API_VERSION 13
 
 // Return codes of the computation functions. The names shared with lumice_base.h's LUMICE_ErrorCode mean
 // the same thing there; the type is this header's own (doc/analytic-api.md section 5.2). A numerical
@@ -994,6 +996,8 @@ typedef struct LUMICE_ANALYTIC_FeatureCandidateScope_ {
   const LUMICE_ANALYTIC_FeatureParameterDescriptor* active_parameters;
   int fixed_spectrum_node_id;
   int fixed_source_node_id;
+  // ADDED version 13. Scope projections of one scientific event share this stable query-local id.
+  uint64_t evidence_id;
 } LUMICE_ANALYTIC_FeatureCandidateScope;
 
 // Input rows and nested constraints are walked with their declared strides. Counts must be

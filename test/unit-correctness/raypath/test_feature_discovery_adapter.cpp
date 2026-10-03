@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <numeric>
+#include <set>
 #include <vector>
 
 #include "raypath/feature_discovery_adapter.hpp"
@@ -201,6 +203,45 @@ TEST(FeatureDiscoveryAdapter, ReplaysTwentyOneIndependentShapeCoordinatesThrough
   });
   EXPECT_NE(atom, discovery.candidates.end())
       << "the exact shape-only direction proof must preserve real positive-mass continuous atoms";
+  const auto same_positive_provenance = [&](const analytic::FeatureCandidate& candidate) {
+    return candidate.provenance.member_index == positive->provenance.member_index &&
+           candidate.provenance.layer_index == positive->provenance.layer_index &&
+           candidate.provenance.interface_index == positive->provenance.interface_index &&
+           candidate.provenance.spectrum_node_id == positive->provenance.spectrum_node_id &&
+           candidate.provenance.source_node_id == positive->provenance.source_node_id &&
+           candidate.provenance.sample_index == positive->provenance.sample_index;
+  };
+  auto check_conditional_scope = [](const analytic::FeatureCandidate& candidate, std::set<int>* conditional_layers) {
+    ASSERT_FALSE(candidate.scope_parameters.empty());
+    for (const auto& parameter : candidate.scope_parameters) {
+      EXPECT_EQ(parameter.role, analytic::FeatureParameterRole::kShape);
+      conditional_layers->insert(parameter.group_id);
+    }
+  };
+  for (analytic::FeatureMechanism mechanism :
+       { analytic::FeatureMechanism::kMeasureAtom, analytic::FeatureMechanism::kStrictConfinement }) {
+    std::set<int> conditional_layers;
+    std::set<uint64_t> evidence_ids;
+    bool found_joint_mass = false;
+    for (const analytic::FeatureCandidate& candidate : discovery.candidates) {
+      if (candidate.mechanism != mechanism || !same_positive_provenance(candidate)) {
+        continue;
+      }
+      evidence_ids.insert(candidate.evidence_id);
+      if (candidate.scope_kind == analytic::FeatureSupportScopeKind::kJoint) {
+        found_joint_mass = found_joint_mass || candidate.weighted_mass > 0.0;
+        continue;
+      }
+      EXPECT_DOUBLE_EQ(candidate.weighted_mass, 0.0);
+      check_conditional_scope(candidate, &conditional_layers);
+    }
+    EXPECT_TRUE(found_joint_mass);
+    EXPECT_EQ(conditional_layers, (std::set<int>{ 0, 1, 2 }));
+    EXPECT_EQ(evidence_ids.size(), 1u) << "one source event must correlate all scope projections";
+  }
+  const double sky_mass = std::accumulate(discovery.sky_field.begin(), discovery.sky_field.end(), 0.0,
+                                          [](double sum, const auto& node) { return sum + node.value; });
+  EXPECT_NEAR(sky_mass, measure.total_contribution, 1e-12);
 
   analytic::FeatureReevaluationRequest complete_request;
   complete_request.provenance = positive->provenance;

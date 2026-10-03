@@ -72,7 +72,7 @@ schema 1 请求仍保留历史 fixture 输出作为 ABI 兼容前缀；该兼容
 
 ## 共享数值边界
 
-独立 analytic 库提供可批量消费的数值，不导出产品 report。API version 12 的
+独立 analytic 库提供可批量消费的数值，不导出产品 report。API version 13 的
 `LUMICE_ANALYTIC_DiscoverFeatures` 接收 `struct_size`/stride 版本化的 support rows、constraints、
 topology edges 和同步 callback，并返回 candidates、mechanism records 与 sky field；所有输出和字符串
 由单一 result storage 持有并通过 `LUMICE_ANALYTIC_ReleaseFeatureDiscoveryResult` 释放。通用发现所需的行数据包括具体几何/成员/波长/姿态、方向与坐标约定、有限入口测度、逐接口 `T/R`、命名的有效域和 TIR margin、必要的一阶/二阶切导数和折射率导数，以及逐行数值状态。
@@ -83,7 +83,7 @@ candidate 数组步长。版本 1–3 的原始前缀仍可读，旧调用方默
 产品 adapter 为每个实际测度行声明 spectrum、source、shape 和逐层 pose 角色。原始 cell 覆盖全部
 活动坐标并标为 joint；每层的活动 shape 或 pose 轴另组成 conditional cell，其余坐标固定在该行的
 真实 source/spectrum/其他层状态。条件候选不重复累计输入测度质量。schema 3 的
-`feature_discovery.candidates[].scope` 序列化 scope id/kind、活动坐标的角色和层，以及固定的
+`feature_discovery.candidates[].scope` 序列化 scope id/kind、稳定 `evidence_id`、活动坐标的角色和层，以及固定的
 spectrum/source node id，因此有限太阳造成的联合展宽不会抹去固定太阳节点下的姿态聚焦，也不会
 被误报为联合 rank loss。
 

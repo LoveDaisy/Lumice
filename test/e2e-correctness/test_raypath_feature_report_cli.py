@@ -29,7 +29,8 @@ def reference_configs(tmp_path_factory):
     for name, source in (("random", _RANDOM), ("plate", _PLATE)):
         config = json.loads(source.read_text())
         config["scene"]["light_source"]["spectrum"] = [
-            {"wavelength": wavelength, "weight": 1}
+            {
+  "wavelength" : wavelength, "weight" : 1}
             for wavelength in _REFERENCE_WAVELENGTHS
         ]
         path = directory / f"{name}.json"
@@ -161,6 +162,7 @@ def test_finite_solar_source_reports_conditional_pose_fold_without_joint_rank_lo
     )
     assert {candidate["scope"]["fixed_spectrum_node_id"] for candidate in conditional} == {0}
     assert all(0 <= candidate["scope"]["fixed_source_node_id"] < 8 for candidate in conditional)
+    assert all(candidate["scope"]["evidence_id"] > 0 for candidate in conditional)
     assert all(candidate["weighted_mass"] == 0 for candidate in conditional)
     assert not any(
         candidate["status"] == "confirmed" and candidate["scope"]["kind"] == "joint"
@@ -187,10 +189,31 @@ def test_rhombic_plate_keeps_plus_and_minus_120_as_general_strict_confinement(re
         (1, 3, 4, 2),
         (1, 3, 8, 2),
     }
+    scoped_strict = [
+        candidate
+        for candidate in doc["feature_discovery"]["candidates"]
+        if candidate["mechanism"] == "strict_confinement"
+    ]
+    evidence_ids = {candidate["scope"]["evidence_id"] for candidate in scoped_strict}
+    assert len(evidence_ids) > 2
+    assert len(evidence_ids) < len(scoped_strict)
+    assert 0 not in evidence_ids
+    assert all(
+        candidate["weighted_mass"] == 0
+        for candidate in scoped_strict
+        if candidate["scope"]["kind"] == "conditional"
+    )
+    assert all(
+        {candidate["scope"]["kind"] for candidate in scoped_strict if candidate["scope"]["evidence_id"] == evidence_id}
+        == {
+    "joint", "conditional"}
+        for evidence_id in evidence_ids
+    )
     strict = [feature for feature in doc["features"] if feature["mechanism"] == "strict_confinement"]
-    assert len(strict) == 2
+    assert len(strict) == len(scoped_strict)
     positions = [feature["positions"][0] for feature in strict]
-    assert sorted(position["relative_solar_azimuth_deg"] for position in positions) == pytest.approx([-120, 120], abs=1e-5)
+    relative_azimuths = sorted({round(position["relative_solar_azimuth_deg"], 5) for position in positions})
+    assert relative_azimuths == pytest.approx([-120, 120], abs=1e-5)
     for position in positions:
         assert position["spherical_separation_deg"] == pytest.approx(117.599764, abs=1e-5)
 
@@ -202,7 +225,8 @@ def test_rhombic_plate_1352_runs_the_same_mechanism_search_at_each_wavelength():
         doc = json.loads(result.stdout)
         assert doc["meta"]["sun"]["altitude_deg"] == pytest.approx(9.0)
         assert doc["meta"]["orientation_measure"] == "actual configured scene measure; see scene_measure.factors"
-        assert {tuple(chain[0]) for chain in doc["scene_measure"]["member_chains"]} == {
+        assert {tuple(chain[0]) for chain in doc["scene_measure"]["member_chains"]
+  } == {
             (1, 3, 5, 2), (1, 3, 7, 2),
         }
         assert len(doc["scene_measure"]["spectrum_nodes"]) == 1
