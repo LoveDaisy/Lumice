@@ -286,50 +286,61 @@ void RegisterPreviewBackgroundTests(ImGuiTestEngine* engine) {
       ctx->Yield(2);
       const float backgrounds[][3] = { { 0, 0, 0 }, { 0, 0, 1 }, { 0.2f, 0.35f, 0.6f }, { 0.8f, 0.8f, 0.8f } };
       const bool radiance = ctx->Test->UserData != nullptr;
-      {
-        for (bool lit : { false, true }) {
-          std::vector<unsigned char> reference;
-          std::vector<unsigned char> normal;
-          for (const auto& bg : backgrounds) {
-            g_req.Reset();
-            g_req.radiance = radiance;
-            g_req.display_mode = 1;
-            // Blue but not saturated: both channels and vignetting can still affect the answer.
-            g_req.uniform_xyz[0] = lit ? 0.04f : 0.0f;
-            g_req.uniform_xyz[1] = lit ? 0.04f : 0.0f;
-            g_req.uniform_xyz[2] = lit ? 0.06f : 0.0f;
-            std::copy(std::begin(bg), std::end(bg), g_req.sky_srgb);
-            RenderFrame(ctx);
-            if (g_req.rgba.empty()) {
-              IM_ERRORF("%s", "no GL frame");
+      for (bool lit : { false, true }) {
+        std::vector<unsigned char> reference;
+        std::vector<unsigned char> normal;
+        for (const auto& bg : backgrounds) {
+          g_req.Reset();
+          g_req.radiance = radiance;
+          g_req.display_mode = 1;
+          // Blue but not saturated: both channels and vignetting can still affect the answer.
+          g_req.uniform_xyz[0] = lit ? 0.04f : 0.0f;
+          g_req.uniform_xyz[1] = lit ? 0.04f : 0.0f;
+          g_req.uniform_xyz[2] = lit ? 0.06f : 0.0f;
+          std::copy(std::begin(bg), std::end(bg), g_req.sky_srgb);
+          RenderFrame(ctx);
+          if (g_req.rgba.empty()) {
+            IM_ERRORF("%s", "no GL frame");
+            return;
+          }
+          if (reference.empty()) {
+            reference = g_req.rgba;
+          }
+          if (g_req.rgba != reference) {
+            IM_ERRORF("B-R depends on sky: radiance=%d lit=%d sky=(%.2f,%.2f,%.2f)", radiance, lit, bg[0], bg[1],
+                      bg[2]);
+            return;
+          }
+          unsigned char rgb[3];
+          if (!ReadPixel(g_req.rgba, 256, 256, 0, 0, rgb) ||
+              (!lit && (rgb[0] != 128 || rgb[1] != 128 || rgb[2] != 128))) {
+            IM_ERRORF("%s", "zero halo must read exact GL mid-grey (128)");
+            return;
+          }
+          // Independent nonzero oracle, away from a rounding tie. At (64.5, -0.5), the
+          // pinhole's cos^3 factor is 0.712174706. XYZ (.04,.04,.06) gives linear R/B
+          // (.038220744,.057498212), hence gray*255 = 149.733757. Baking first truncates
+          // sRGB R/B to 55/67, then the same projection gives 148.334782. Neither value
+          // calls ChannelMathBrGray or reads its gain; a 2 -> 1.8 GLSL drift moves both.
+          if (lit) {
+            const int expected = radiance ? 148 : 150;
+            if (!ReadPixel(g_req.rgba, 256, 256, 64, 0, rgb) || rgb[0] != expected || rgb[1] != expected ||
+                rgb[2] != expected) {
+              IM_ERRORF("halo-only oracle: radiance=%d got=%d expected=%d", radiance, rgb[0], expected);
               return;
             }
-            if (reference.empty()) {
-              reference = g_req.rgba;
-            }
-            if (g_req.rgba != reference) {
-              IM_ERRORF("B-R depends on sky: radiance=%d lit=%d sky=(%.2f,%.2f,%.2f)", radiance, lit, bg[0], bg[1],
-                        bg[2]);
-              return;
-            }
-            unsigned char rgb[3];
-            if (!ReadPixel(g_req.rgba, 256, 256, 0, 0, rgb) ||
-                (!lit && (rgb[0] != 128 || rgb[1] != 128 || rgb[2] != 128))) {
-              IM_ERRORF("%s", "zero halo must read exact GL mid-grey (128)");
-              return;
-            }
-            g_req.display_mode = 0;
-            RenderFrame(ctx);
-            if (g_req.rgba.empty()) {
-              IM_ERRORF("%s", "no Normal frame");
-              return;
-            }
-            if (normal.empty()) {
-              normal = g_req.rgba;
-            } else if (g_req.rgba == normal) {
-              IM_ERRORF("%s", "Normal lost the sky background");
-              return;
-            }
+          }
+          g_req.display_mode = 0;
+          RenderFrame(ctx);
+          if (g_req.rgba.empty()) {
+            IM_ERRORF("%s", "no Normal frame");
+            return;
+          }
+          if (normal.empty()) {
+            normal = g_req.rgba;
+          } else if (g_req.rgba == normal) {
+            IM_ERRORF("%s", "Normal lost the sky background");
+            return;
           }
         }
       }
