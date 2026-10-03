@@ -220,7 +220,7 @@ void ResetTestState() {
   // Same shape, the import-warning sibling: a queued message left behind by one case would open
   // its modal on top of whatever the next case is driving. Several suites import configurations
   // that queue one as a side effect, which is why this is a reset rather than each case's job.
-  gui::ClearImportComplexFilterWarning();
+  gui::ClearLoadNotice();
   // Same shape again, for the export-overwrite prompt: a pending export left unanswered by one
   // case would raise its modal over the next one, and — worse than a stray warning — the next
   // case's stray click on "Overwrite" would write a file.
@@ -882,7 +882,7 @@ int main(int argc, char** argv) {
     // by one case cannot open a modal in the middle of the next one. What a reset cannot close is
     // a modal already on screen, so the case that opens this one dismisses it through its own OK
     // button — an open modal swallows every subsequent ItemClick in the process.
-    gui::RenderImportWarningPopup();
+    gui::RenderLoadNoticePopup();
     // The export-overwrite prompt, mirrored here from the same block of src/gui/main.cpp. A
     // confirmation modal that only the product's loop renders is a confirmation no test can drive
     // — and "the prompt never appeared, so the export silently did not happen" is precisely the

@@ -76,7 +76,7 @@ int UiPxI(int logical_px);
 //     size EVERY frame, not just on appearance, so it already tracks a scale change on the very
 //     next frame. Covers edit_modals.cpp's "Custom Spectrum" modal (SetNextWindowSize's width hint
 //     only survives the true appearing frame; height is 0 and always auto-fit) and every
-//     AlwaysAutoResize confirmation popup in app_panels.cpp (Import Warning, Overwrite Config
+//     AlwaysAutoResize confirmation popup in app_panels.cpp (Load Notice, Overwrite Config
 //     File, Warning, Unsaved Changes, Save Modified Config — none of which call SetNextWindowSize
 ///    at all).
 //   - SetNextWindowSizeConstraints() called unconditionally every frame the window is open (not

@@ -151,11 +151,11 @@ std::string CoreConfigDoc(const std::string& render_extra, const char* tone) {
 
 // Import `doc` into a scratch state and return whatever notice it produced.
 std::string ImportAndPeekNotice(const std::string& doc) {
-  gui::ClearImportComplexFilterWarning();
+  gui::ClearLoadNotice();
   gui::GuiState scratch;
   EXPECT_TRUE(gui::DeserializeFromJson(doc, scratch));
-  const std::string notice = gui::PeekImportComplexFilterWarning();
-  gui::ClearImportComplexFilterWarning();
+  const std::string notice = gui::PeekLoadNotice();
+  gui::ClearLoadNotice();
   return notice;
 }
 

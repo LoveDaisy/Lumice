@@ -232,9 +232,13 @@ extern bool g_show_export_overwrite_confirm_popup;
 extern std::filesystem::path g_pending_export_json_path;
 extern std::string g_pending_export_json_content;
 
-// Queue a user-visible warning surfaced by RenderImportWarningPopup; consecutive
-// calls within one import concatenate so all offending filters are reported.
-void SetImportComplexFilterWarning(const std::string& msg);
+// Queue a user-visible notice surfaced by RenderLoadNoticePopup; consecutive calls within one
+// load concatenate. Empty messages do nothing. Each message must carry its own impact and remedy.
+void AppendLoadNotice(const std::string& msg);
+
+// Decoded texture capability, not file version. Pure: no GL or queue mutation. Called only by
+// file loading, never for the renderer's internal 1x1 blank texture.
+std::string TextureLoadNotice(const LmcTexture& texture);
 
 // Report whatever degraded while the personal-defaults override file was last read, through the
 // same one-shot warning popup an import degradation uses. Call it immediately after a
@@ -246,10 +250,10 @@ void SetImportComplexFilterWarning(const std::string& msg);
 void SurfaceUserDefaultsDowngrades();
 
 // Test-only: read the pending warning text without opening the modal.
-std::string PeekImportComplexFilterWarning();
+std::string PeekLoadNotice();
 
 // Test-only: clear any queued warning (live path auto-consumes via the popup).
-void ClearImportComplexFilterWarning();
+void ClearLoadNotice();
 
 // Log sinks for GUI log panel
 extern std::shared_ptr<ImGuiLogSink> g_imgui_log_sink;
@@ -652,7 +656,7 @@ void RenderUnsavedPopup(GLFWwindow* window);
 // server exists and no run is inflight) invokes DoRun so the user can produce
 // a fresh render matching the current config, then re-invoke Save.
 void RenderSaveModifiedPopup(GLFWwindow* window);
-void RenderImportWarningPopup();
+void RenderLoadNoticePopup();
 // What that modal has to say, and why it is not a generic "file exists, overwrite?": the file being
 // replaced may be a core config the GUI merely read, and what goes back is the GUI's own re-emission
 // of it — everything the GUI cannot express is gone from the copy on disk. "Overwrite?" asks about a

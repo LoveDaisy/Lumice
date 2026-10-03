@@ -3062,44 +3062,45 @@ void RenderStatusBar(float window_width, float window_height) {
   ImGui::End();
 }
 
-// Pending message text for the Import Warning modal. Filled by
-// SetImportComplexFilterWarning from the JSON import path; consumed (and
-// cleared) by RenderImportWarningPopup when the user dismisses the modal.
+// One queue for load-time limitations and configuration changes, consumed by one modal.
+// Each producer owns its explanation and remedy; a texture limitation is not a config downgrade.
 namespace {
-std::string g_pending_import_warning;
+std::string g_pending_load_notice;
 }  // namespace
 
-void SetImportComplexFilterWarning(const std::string& msg) {
-  if (!g_pending_import_warning.empty()) {
-    g_pending_import_warning += "\n";
+void AppendLoadNotice(const std::string& msg) {
+  if (msg.empty()) {
+    return;
   }
-  g_pending_import_warning += msg;
+  if (!g_pending_load_notice.empty()) {
+    g_pending_load_notice += "\n";
+  }
+  g_pending_load_notice += msg;
 }
 
-std::string PeekImportComplexFilterWarning() {
-  return g_pending_import_warning;
+std::string PeekLoadNotice() {
+  return g_pending_load_notice;
 }
 
-void ClearImportComplexFilterWarning() {
-  g_pending_import_warning.clear();
+void ClearLoadNotice() {
+  g_pending_load_notice.clear();
 }
 
-void RenderImportWarningPopup() {
+void RenderLoadNoticePopup() {
   static std::string active_msg;
-  if (!g_pending_import_warning.empty()) {
-    active_msg = std::move(g_pending_import_warning);
+  if (!g_pending_load_notice.empty()) {
+    active_msg = std::move(g_pending_load_notice);
     // A moved-from std::string is valid-but-unspecified, not guaranteed empty;
     // clear() makes the trigger false next frame so the popup opens once.
-    g_pending_import_warning.clear();
-    ImGui::OpenPopup("Import Warning");
+    g_pending_load_notice.clear();
+    ImGui::OpenPopup("Load Notice");
   }
 
-  if (ImGui::BeginPopupModal("Import Warning", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-    ImGui::TextUnformatted("Some settings in the imported config could not be fully represented in the GUI:");
+  if (ImGui::BeginPopupModal("Load Notice", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    ImGui::TextUnformatted("Please note the following about this load:");
     ImGui::Separator();
     ImGui::TextUnformatted(active_msg.c_str());
     ImGui::Separator();
-    ImGui::TextUnformatted("They were simplified on load. Edit the config file / CLI directly to keep the originals.");
     if (ImGui::Button("OK", ImVec2(UiPx(80.0f), 0.0f))) {
       active_msg.clear();
       ImGui::CloseCurrentPopup();

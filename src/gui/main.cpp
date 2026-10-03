@@ -493,7 +493,7 @@ int main(int argc, char** argv) {
     gui::RenderUnsavedPopup(window);
     gui::RenderSaveModifiedPopup(window);
     gui::RenderDefaultsPanel(gui::g_state);
-    gui::RenderImportWarningPopup();
+    gui::RenderLoadNoticePopup();
     gui::RenderExportOverwriteConfirmPopup();
     gui::RenderScreenshotExportOptionsPopup();
     gui::RenderGuiWarningPopup();

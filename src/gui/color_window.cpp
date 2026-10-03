@@ -392,7 +392,7 @@ void RenderImportFromFilterUI(GuiState& state) {
                         "%d AND-composite row(s) in filter '%s' were skipped when imported as a color class "
                         "(color predicates are single-atom; use combine:all across multiple refs instead).",
                         skipped, f.name.c_str());
-          SetImportComplexFilterWarning(msg);
+          AppendLoadNotice(msg);
         }
         ImGui::CloseCurrentPopup();
       }

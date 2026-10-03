@@ -335,7 +335,7 @@ TEST(DocumentDefaultsChain, TypelessAxisSlotLoadsAsTheStructDefaultAndIsAnnounce
   for (const char* slot : { "zenith", "azimuth", "roll" }) {
     SCOPED_TRACE(slot);
     DoNew();
-    ClearImportComplexFilterWarning();
+    ClearLoadNotice();
     GuiState loaded = InitDefaultState();
 
     // Crystal 7 carries the typeless slot; crystal 3 stays well-formed, so a warning naming
@@ -374,17 +374,17 @@ TEST(DocumentDefaultsChain, TypelessAxisSlotLoadsAsTheStructDefaultAndIsAnnounce
     EXPECT_FLOAT_EQ(parsed.mean, 20.0f) << "the keys that WERE written must still be read";
     EXPECT_FLOAT_EQ(parsed.std, 5.0f);
 
-    const std::string warning = PeekImportComplexFilterWarning();
+    const std::string warning = PeekLoadNotice();
     EXPECT_FALSE(warning.empty()) << "the substitution must be surfaced, not just performed";
     EXPECT_NE(warning.find("id=7"), std::string::npos) << "must name the crystal, got: " << warning;
     EXPECT_NE(warning.find(std::string("axis.") + slot), std::string::npos) << "must name the slot, got: " << warning;
 
-    ClearImportComplexFilterWarning();
+    ClearLoadNotice();
   }
 
   // The layer-probability half.
   DoNew();
-  ClearImportComplexFilterWarning();
+  ClearLoadNotice();
   GuiState layers = InitDefaultState();
   ASSERT_TRUE(DeserializeFromJson(R"({
     "crystal": [{"id": 1, "type": "Prism", "height": 1.0, "face_distance": [1,1,1,1,1,1]}],
@@ -402,11 +402,11 @@ TEST(DocumentDefaultsChain, TypelessAxisSlotLoadsAsTheStructDefaultAndIsAnnounce
   ASSERT_EQ(layers.layers.size(), 2u);
   EXPECT_FLOAT_EQ(layers.layers[0].probability, 0.5f) << "a present `prob` must be read, not defaulted";
   EXPECT_FLOAT_EQ(layers.layers[1].probability, 0.0f) << "absent `prob` must load as core's 0.0f, not 1.0f";
-  const std::string layer_warning = PeekImportComplexFilterWarning();
+  const std::string layer_warning = PeekLoadNotice();
   EXPECT_FALSE(layer_warning.empty()) << "the substitution must be surfaced, not just performed";
   EXPECT_NE(layer_warning.find("1"), std::string::npos) << "must name the offending layer, got: " << layer_warning;
   EXPECT_NE(layer_warning.find("prob"), std::string::npos) << "must name the field, got: " << layer_warning;
-  ClearImportComplexFilterWarning();
+  ClearLoadNotice();
 }
 
 // A scattering layer with no `prob`: same shape as the axis slot above, and folded into the same
