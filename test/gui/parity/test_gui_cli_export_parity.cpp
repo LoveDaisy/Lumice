@@ -974,9 +974,8 @@ const ParityScene kScenes[] = {
   // What the row gates is the END-TO-END half no in-process test can: that a document shown as the
   // diagnostic leaves the GUI naming `channel_br` and comes back out of a child CLI process as the
   // same grey image — the formula's two implementations (C++ owner, GLSL copy) compared through
-  // their real pipelines. The background is non-zero on purpose: the diagnostic reads B - R off the
-  // pixel WITH its sky, so a sky that one arm added before the mode and the other after would move
-  // every empty pixel's grey.
+  // their real pipelines. The background is non-zero on purpose: B-R must ignore it in BOTH arms.
+  // One arm adding sky before the diagnostic moves every empty pixel away from mid grey.
   //
   // THRESHOLD. bm4 mean 36.701 sigma 0.058 (N=8: 7 isolated runs of this row, range 36.64-36.80,
   // plus one full-pool run at 36.64; whole-frame 25.98-26.15). 35.5 = mean - max(10 sigma, 1.0 dB)

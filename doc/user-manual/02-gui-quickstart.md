@@ -68,7 +68,7 @@ to see why it is disabled.
 
 ### Is this spot bluer or redder? — the Channel B−R display
 
-The **Normal | Channel B-R** switch in the top-right corner of the preview (dim until you hover it; greyed under Print mode, which has no separate red and blue to subtract) turns the preview into a colour diagnostic: every pixel shows the blue channel minus the red channel of the normal picture (the displayed sRGB values, after gamma — the same subtraction you would do in an image editor's channel calculator), as grey. Mid grey means no difference; lighter than mid grey is bluer, darker is redder. Pure blue reads white, pure red reads black, and any neutral pixel — including empty sky and everything outside the lens circle — reads mid grey. Switch back to **Normal** to get the ordinary picture; nothing is re-simulated either way.
+The **Normal | Channel B-R** switch in the top-right corner of the preview (dim until you hover it; greyed under Print mode, which has no separate red and blue to subtract) turns the preview into a colour diagnostic: every pixel shows the blue channel minus the red channel of the halo-only picture at the same exposure and view, **without the sky colour** (the displayed sRGB values, after gamma — the same subtraction you would do in an image editor's channel calculator), as grey. Mid grey means no difference; lighter than mid grey is bluer, darker is redder. Pure-blue halo reads white, pure-red halo reads black, and any neutral pixel — including empty sky and everything outside the lens circle — reads mid grey. Switch back to **Normal** to get the ordinary picture; nothing is re-simulated either way.
 
 Three things to know before reading the numbers:
 
@@ -96,7 +96,17 @@ Want to build a halo recipe yourself instead of opening the example? The shortes
 
 ## 6. Save and reload
 
-`File ▶ Save As` writes a `.lmc` (a JSON document Lumice can also run from the CLI). Reopening it in the GUI restores **crystal / light / render** data, the lens projection and the overlay settings — but **not** pure viewing state such as the crystal preview style. See [`05-faq.md`](05-faq.md) "GUI vs JSON capabilities" for the full divergence list.
+`File ▶ Save As` writes a `.lmc` (a binary project containing configuration and an optional preview cache; use Config JSON for the CLI). Reopening it in the GUI restores **crystal / light / render** data, the lens projection and the overlay settings — but **not** pure viewing state such as the crystal preview style. See [`05-faq.md`](05-faq.md) "GUI vs JSON capabilities" for the full divergence list.
+
+
+**Cached-preview capabilities:** a pre-v4 composited PNG has sky colour and exposure baked in;
+it remains viewable, but Channel B−R cannot accurately remove the sky. A v4 halo-only PNG supports
+sky-free B−R, but still has baked exposure and lacks the original XYZ needed for full EV/Print
+operation. XYZ caches (normally v5+) support all of these display operations. Loading reports the
+actual decoded cache capability, not just the file version; a file without a texture is silent.
+For either old PNG cache, **Run, then Save** regenerates and stores current data. Saving or Save Copy
+alone cannot recover lost data. Configuration-loss notices have their own remedies; Run does not
+restore a dropped filter or an unsupported distribution.
 
 To keep the picture itself, use `Save ▶ Screenshot...`. Before asking for a file name it opens an options window, prefilled with exactly what the preview shows: a **Line** and a **Label** box for each overlay (horizon, grid, lens border, the two families of angular-distance circles, the reference points) and the display mode (Normal / Channel B−R). Untick what this one picture should leave out — say, the grid's numbers but not its lines. Overlays the preview is not showing are greyed out: the options window can only take away, so turn an overlay on in the Overlay panel first if you want it in the picture. The choice applies to that export only; the panel and the preview stay as they were, and the next Screenshot starts from the screen again.
 

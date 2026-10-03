@@ -2242,8 +2242,9 @@ bool RenderDisplayModeControl() {
     } else {
       ImGui::SetTooltip(
           "Normal: the rendered image.\n\n"
-          "Channel B-R: is this spot bluer or redder? Shows blue minus red of the displayed\n"
-          "image as grey — mid grey is no difference, lighter is bluer, darker is redder.\n\n"
+          "Channel B-R: is this spot bluer or redder? Shows blue minus red of the halo-only\n"
+          "sRGB image after gamma, at the same exposure and view; sky colour excluded.\n"
+          "Mid grey is no difference (including empty sky), lighter is bluer, darker is redder.\n\n"
           "The value moves with EV, and once red or blue clips at full brightness the\n"
           "difference is flattened, so compare places at the same EV. Overlays are drawn\n"
           "on top in their own colours; the background photo and the colored composite\n"

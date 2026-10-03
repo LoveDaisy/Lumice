@@ -230,9 +230,11 @@ bool SaveLmcFile(const std::filesystem::path& path, const GuiState& state, const
 // `mode` says what the pixels MEAN, and a caller that displays them must branch on it — it
 // selects the PreviewRenderer upload entry point, and getting it wrong paints the sky twice, not
 // at all, or reads floats as bytes:
-//   kSrgbComposited — a pre-v4 bake with the sky already summed in; shown as it is.
+//   kSrgbComposited — a pre-v4 bake with sky summed in; viewable, but accurate sky-free B-R
+//                     is unavailable (gamma/clipping is not invertible).
 //   kSrgbRadiance   — a v4 bake: exposure applied, halo alone, 8-bit; the shader owes it the
-//                     lens's relative illumination and the sky.
+//                     lens's relative illumination and (Normal only) the sky. B-R excludes sky;
+//                     EV/Print still need original XYZ. Run then Save replaces either old bake.
 //   kXyz            — v5+: the unexposed linear XYZ energy the live preview itself uploads, with
 //                     the measurements (`meta`) that expose it. Same shader branch as a live run.
 // Exactly one of `srgb` / `xyz` is non-empty when HasPixels(), and `mode` names it.

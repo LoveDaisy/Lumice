@@ -317,6 +317,16 @@ Lumice uses a binary project file format (`.lmc`) that stores:
   as v6 on the next save. Files written by v4 and earlier embed an 8-bit PNG instead (exposure
   baked in) and still open, but keep their baked exposure until the next run.
 
+
+**Cached-preview capabilities:** a pre-v4 composited PNG has sky colour and exposure baked in;
+it remains viewable, but Channel B−R cannot accurately remove the sky. A v4 halo-only PNG supports
+sky-free B−R, but still has baked exposure and lacks the original XYZ needed for full EV/Print
+operation. XYZ caches (normally v5+) support all of these display operations. Loading reports the
+actual decoded cache capability, not just the file version; a file without a texture is silent.
+For either old PNG cache, **Run, then Save** regenerates and stores current data. Saving or Save Copy
+alone cannot recover lost data. Configuration-loss notices have their own remedies; Run does not
+restore a dropped filter or an unsupported distribution.
+
 The format uses a 44-byte header with magic number `LMC\0`, version field, flag bits (whether a texture is present, and which encoding it uses), and offset / size pointers to the JSON and texture payloads. Values are stored as human-readable semantic types (e.g. `"prism"` instead of enum indices) for forward compatibility. The texture section's own 32-byte header has no spare bytes left as of v6 (its last field became the float16 scale); adding a field there means growing the header and bumping the format version together.
 
 A project file with a texture is still larger than the old PNG bake, but half of what v5 was.
