@@ -86,6 +86,9 @@ struct RenderRequest {
   float roll = 0.0f;
   int visible = gui::kVisibleFull;
   bool front = false;
+  float globe_back_fade = 0.0f;
+  int display_mode = 0;
+  bool radiance = false;
 
   // The picker colour, in sRGB. Converted to linear on the way into PreviewParams, which is the
   // conversion app_panels.cpp performs in production.
@@ -130,6 +133,10 @@ void RunRenderRequest() {
     std::vector<unsigned char> baked(static_cast<std::size_t>(n) * 3);
     LUMICE_XyzToSrgbUint8WithBackground(xyz.data(), baked.data(), n, g_req.intensity_scale, sky_linear);
     gui::g_preview.UploadTexture(baked.data(), g_req.tex_size, g_req.tex_size);
+  } else if (g_req.radiance) {
+    std::vector<unsigned char> baked(static_cast<std::size_t>(n) * 3);
+    LUMICE_XyzToSrgbUint8(xyz.data(), baked.data(), n, g_req.intensity_scale);
+    gui::g_preview.UploadRadianceTexture(baked.data(), g_req.tex_size, g_req.tex_size);
   } else {
     gui::g_preview.UploadXyzTexture(xyz.data(), g_req.tex_size, g_req.tex_size);
   }
@@ -142,6 +149,8 @@ void RunRenderRequest() {
   params.view_proj.roll = g_req.roll;
   params.view_proj.visible = g_req.visible;
   params.view_proj.front = g_req.front;
+  params.view_proj.globe_back_fade = g_req.globe_back_fade;
+  params.display_mode = g_req.display_mode;
   params.source.max_abs_dz = gui::kDualFisheyeOverlap;
   params.source.r_scale = 1.0f / std::sqrt(1.0f + gui::kDualFisheyeOverlap);
   params.exposure.intensity_factor = 1.0f;
@@ -197,7 +206,7 @@ void RenderFrame(ImGuiTestContext* ctx) {
 bool ReadPixel(const std::vector<unsigned char>& rgba, int w, int h, float pos_x, float pos_y, unsigned char* out_rgb) {
   const int col = static_cast<int>(std::lround(pos_x + w * 0.5f));
   const int row = static_cast<int>(std::lround(h * 0.5f - pos_y));
-  if (col < 0 || col >= w || row < 0 || row >= h) {
+  if (col < 0 || col >= w || row < 0 || row >= h || rgba.size() != static_cast<std::size_t>(w) * h * 4) {
     return false;
   }
   const std::size_t off = (static_cast<std::size_t>(row) * w + col) * 4;
@@ -265,6 +274,123 @@ void ExpectBlackAt(const char* tag, const std::vector<unsigned char>& rgba, int 
 }  // namespace
 
 void RegisterPreviewBackgroundTests(ImGuiTestEngine* engine) {
+  // Real GL, two distinct texture decoders. Equality over the whole frame catches sky leakage;
+  // the literal middle-grey oracle catches a common-mode failure. Normal is a nonempty control.
+  for (bool radiance : { false, true }) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "preview_background",
+                                    radiance ? "channel_br_excludes_sky_radiance" : "channel_br_excludes_sky_xyz");
+    t->UserData = radiance ? &g_req : nullptr;
+    t->GuiFunc = PreviewBackgroundGuiFunc;
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      ctx->Yield(2);
+      const float backgrounds[][3] = { { 0, 0, 0 }, { 0, 0, 1 }, { 0.2f, 0.35f, 0.6f }, { 0.8f, 0.8f, 0.8f } };
+      const bool radiance = ctx->Test->UserData != nullptr;
+      {
+        for (bool lit : { false, true }) {
+          std::vector<unsigned char> reference;
+          std::vector<unsigned char> normal;
+          for (const auto& bg : backgrounds) {
+            g_req.Reset();
+            g_req.radiance = radiance;
+            g_req.display_mode = 1;
+            // Blue but not saturated: both channels and vignetting can still affect the answer.
+            g_req.uniform_xyz[0] = lit ? 0.04f : 0.0f;
+            g_req.uniform_xyz[1] = lit ? 0.04f : 0.0f;
+            g_req.uniform_xyz[2] = lit ? 0.06f : 0.0f;
+            std::copy(std::begin(bg), std::end(bg), g_req.sky_srgb);
+            RenderFrame(ctx);
+            if (g_req.rgba.empty()) {
+              IM_ERRORF("%s", "no GL frame");
+              return;
+            }
+            if (reference.empty()) {
+              reference = g_req.rgba;
+            }
+            if (g_req.rgba != reference) {
+              IM_ERRORF("B-R depends on sky: radiance=%d lit=%d sky=(%.2f,%.2f,%.2f)", radiance, lit, bg[0], bg[1],
+                        bg[2]);
+              return;
+            }
+            unsigned char rgb[3];
+            if (!ReadPixel(g_req.rgba, 256, 256, 0, 0, rgb) ||
+                (!lit && (rgb[0] != 128 || rgb[1] != 128 || rgb[2] != 128))) {
+              IM_ERRORF("%s", "zero halo must read exact GL mid-grey (128)");
+              return;
+            }
+            g_req.display_mode = 0;
+            RenderFrame(ctx);
+            if (g_req.rgba.empty()) {
+              IM_ERRORF("%s", "no Normal frame");
+              return;
+            }
+            if (normal.empty()) {
+              normal = g_req.rgba;
+            } else if (g_req.rgba == normal) {
+              IM_ERRORF("%s", "Normal lost the sky background");
+              return;
+            }
+          }
+        }
+      }
+    };
+  }
+
+  // A lit uniform field makes each clip observable. Black sky also pins the pre-change B-R
+  // contract: masking removes halo, not just background; globe fade still contributes light.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "preview_background", "channel_br_keeps_visibility_and_globe_fade");
+    t->GuiFunc = PreviewBackgroundGuiFunc;
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      ctx->Yield(2);
+      for (bool radiance : { false, true }) {
+        for (int gate = 0; gate < 3; ++gate) {
+          g_req.Reset();
+          g_req.radiance = radiance;
+          g_req.display_mode = 1;
+          std::fill(std::begin(g_req.sky_srgb), std::end(g_req.sky_srgb), 0);
+          g_req.uniform_xyz[0] = 0.04f;
+          g_req.uniform_xyz[1] = 0.04f;
+          g_req.uniform_xyz[2] = 0.06f;
+          g_req.lens_type = gui::kLensTypeFisheyeEqualArea;
+          g_req.fov = gate == 2 ? 270.0f : 180.0f;
+          g_req.canvas_w = gate == 0 ? 400 : 256;
+          g_req.canvas_h = gate == 0 ? 200 : 256;
+          g_req.visible = gate == 1 ? gui::kVisibleUpper : gui::kVisibleFull;
+          g_req.front = gate == 2;
+          RenderFrame(ctx);
+          unsigned char clipped[3], kept[3];
+          const float x = gate == 0 ? 180.0f : (gate == 2 ? 92.0f : 0.0f);
+          const float y = gate == 1 ? -60.0f : (gate == 2 ? 92.0f : 0.0f);
+          if (!ReadPixel(g_req.rgba, g_req.canvas_w, g_req.canvas_h, x, y, clipped) ||
+              !ReadPixel(g_req.rgba, g_req.canvas_w, g_req.canvas_h, 0, 30, kept) || clipped[0] != 128 ||
+              clipped[1] != 128 || clipped[2] != 128 || kept[0] <= 128) {
+            IM_ERRORF("halo visibility gate failed: radiance=%d gate=%d", radiance, gate);
+            return;
+          }
+        }
+        g_req.lens_type = gui::kLensTypeGlobe;
+        g_req.fov = 30.0f;
+        g_req.front = false;
+        g_req.visible = gui::kVisibleFull;
+        g_req.globe_back_fade = 0.0f;
+        RenderFrame(ctx);
+        unsigned char near_rgb[3], both_rgb[3];
+        if (!ReadPixel(g_req.rgba, 256, 256, 0, 0, near_rgb)) {
+          IM_ERRORF("%s", "no globe frame");
+          return;
+        }
+        g_req.globe_back_fade = 2.0f;
+        RenderFrame(ctx);
+        if (!ReadPixel(g_req.rgba, 256, 256, 0, 0, both_rgb) || both_rgb[0] <= near_rgb[0]) {
+          IM_ERRORF("globe far-side light no longer participates in B-R: radiance=%d", radiance);
+          return;
+        }
+      }
+    };
+  }
+
   // The identity the whole colour-space contract exists for, read off the screen: a pixel with no
   // halo energy renders as the sRGB triple the user picked, because LinearToSrgb(SrgbToLinear(x))
   // == x. This is the case that separates "the background is added in linear RGB" from "the

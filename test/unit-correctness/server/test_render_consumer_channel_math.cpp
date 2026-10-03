@@ -1,7 +1,7 @@
 // The channel-B-R display mode (RenderConfig::kDisplayChannelBr) on the CLI/server side, asserted on
 // the properties the mode owes rather than on a table of bytes. The byte-exact "the fused loop
 // computes exactly this" statement lives in test_render_consumer_post_snapshot_fusion.cpp's
-// ChannelBrOverNonzeroBackground case, beside the other branches of that loop.
+// ChannelBrIgnoresNonzeroBackground case, beside the other branches of that loop.
 //
 // What this file owns:
 //   - the whole pixel chain agrees with an INDEPENDENT reference implementation of it: the exposed
@@ -186,6 +186,38 @@ TEST(RenderConsumerChannelMath, NeutralIsMidGreyOnEveryFramePath) {
   ASSERT_FALSE(zero_scale.rgb.empty());
   EXPECT_EQ(std::count(zero_scale.rgb.begin(), zero_scale.rgb.end(), kMidGrey),
             static_cast<std::ptrdiff_t>(zero_scale.rgb.size()));
+}
+
+// Background choice is not part of the diagnostic signal. The nonempty frame also proves that
+// withholding sky from B-R must not remove it from Normal. Keep the early-exit paths in the matrix.
+TEST(RenderConsumerChannelMath, BackgroundDoesNotEnterTheDiagnostic) {
+  const float backgrounds[][3] = { { 0, 0, 0 }, { 0, 0, 1 }, { 0.03f, 0.1f, 0.2f }, { 0.8f, 0.8f, 0.8f } };
+  const auto reference = Snapshot(MakeConfig(RenderConfig::kDisplayChannelBr));
+  const auto normal = Snapshot(MakeConfig(RenderConfig::kDisplayNormal));
+  ASSERT_FALSE(reference.rgb.empty());
+  for (const auto& bg : backgrounds) {
+    auto cfg = MakeConfig(RenderConfig::kDisplayChannelBr);
+    std::copy(std::begin(bg), std::end(bg), cfg.background_);
+    const auto lit = Snapshot(cfg);
+    EXPECT_EQ(lit.rgb, reference.rgb);
+    if (lit.rgb.size() != reference.rgb.size()) {
+      ADD_FAILURE() << "missing frame";
+      continue;
+    }
+    EXPECT_EQ(lit.rgb[(32 * kW + 10) * 3], kMidGrey) << "unlit sky, even with a pure-blue background";
+    const auto empty = Snapshot(cfg, false);
+    EXPECT_EQ(std::count(empty.rgb.begin(), empty.rgb.end(), kMidGrey),
+              static_cast<std::ptrdiff_t>(reference.rgb.size()));
+    cfg.intensity_factor_ = 0;
+    const auto dark = Snapshot(cfg);
+    EXPECT_EQ(std::count(dark.rgb.begin(), dark.rgb.end(), kMidGrey),
+              static_cast<std::ptrdiff_t>(reference.rgb.size()));
+    cfg.intensity_factor_ = MakeConfig(RenderConfig::kDisplayNormal).intensity_factor_;
+    cfg.display_mode_ = RenderConfig::kDisplayNormal;
+    if (bg[2] > 0) {
+      EXPECT_NE(Snapshot(cfg).rgb, normal.rgb);
+    }
+  }
 }
 
 // display_mode normal is the Normal picture — byte for byte what a config that never mentions the
