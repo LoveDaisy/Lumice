@@ -122,7 +122,7 @@ _PRELUDE = textwrap.dedent(
                     ("sky_field", POINTER(SkyNode)), ("storage", c_void_p)]
 
     OK, NULL_ARG, INVALID_VALUE = 0, 1, 2
-    CONFIRMED, CANDIDATE = 0, 1
+    CONFIRMED, CANDIDATE, NUMERICAL_INCOMPLETE = 0, 1, 3
     ATOM, CONTINUOUS = 0, 1
     TIR = 2
     OPTICAL_KINK, MEASURE_ATOM, BRIGHTNESS_MAXIMUM = 3, 6, 9
@@ -280,6 +280,77 @@ def test_callback_refines_nonfirst_interface_and_preserves_owned_strings() -> No
         assert candidate.active_constraints[0] == b"layer[1].internal[2].tir"
         assert b"callback refinement" in candidate.reason
         lib.LUMICE_ANALYTIC_ReleaseFeatureDiscoveryResult(byref(result))
+        """
+    )
+
+
+def test_callback_rejects_wrong_branch_and_coordinates() -> None:
+    _run_child(
+        """
+        def one(defect):
+            keep = []
+            samples = []
+            for index, x in enumerate((-1.0, 1.0)):
+                coordinate = (c_double * 1)(x)
+                active = (c_int * 1)(0)
+                constraint = Constraint(sizeof(Constraint), b"actual-domain", 0, 2, 3, x, 1, 0, None)
+                constraints = (Constraint * 1)(constraint)
+                keep.extend((coordinate, active, constraints))
+                value = Sample()
+                value.struct_size = sizeof(Sample)
+                value.sample_id = index + 1
+                value.measure_kind = CONTINUOUS
+                value.support_dimension = 1
+                value.coordinates = coordinate
+                value.active_coordinates = active
+                value.direction[:] = (math.cos(x), math.sin(x), 0.0)
+                value.weight = 1.0
+                value.constraint_count = 1
+                value.constraint_stride = sizeof(Constraint)
+                value.constraints = constraints
+                value.numerically_available = 1
+                value.accumulates_measure = 1
+                samples.append(value)
+            sample_array = (Sample * 2)(*samples)
+            edge_array = (Edge * 1)(Edge(0, 1, 2.0))
+            batch = Batch(sizeof(Batch), 3, 1, 2, 1, 1, 2, sizeof(Sample), sample_array,
+                          1, edge_array, 0, None)
+
+            @CALLBACK
+            def refine(request, output, user_data):
+                x = request.contents.coordinates[0]
+                coordinate = (c_double * 1)(x if defect == "branch" else x + 5.0)
+                active = (c_int * 1)(0)
+                constraint = Constraint(sizeof(Constraint), b"actual-domain", 0, 2, 3, 0.0, 1, 0, None)
+                constraints = (Constraint * 1)(constraint)
+                keep.extend((coordinate, active, constraints))
+                value = output.contents
+                value.sample_id = 100
+                value.provenance = request.contents.provenance
+                if defect == "branch":
+                    value.provenance.member_index += 1
+                value.measure_kind = CONTINUOUS
+                value.support_dimension = 1
+                value.coordinates = coordinate
+                value.active_coordinates = active
+                value.direction[:] = (math.cos(x), math.sin(x), 0.0)
+                value.weight = 0.0
+                value.constraint_count = 1
+                value.constraint_stride = sizeof(Constraint)
+                value.constraints = constraints
+                value.numerically_available = 1
+                value.accumulates_measure = 0
+                return 1
+
+            rc, result = discover(batch, refine)
+            assert rc == OK
+            boundaries = [result.candidates[index] for index in range(result.candidate_count)
+                          if result.candidates[index].mechanism == 1]
+            assert len(boundaries) == 1 and boundaries[0].status == NUMERICAL_INCOMPLETE
+            lib.LUMICE_ANALYTIC_ReleaseFeatureDiscoveryResult(byref(result))
+
+        one("branch")
+        one("coordinates")
         """
     )
 

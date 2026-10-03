@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <functional>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -570,6 +571,8 @@ TEST(FeatureDiscoveryConstraints, RefinesANonFirstInterfaceKinkThroughTheCallerC
   const FeatureReevaluateFn callback = [](const FeatureReevaluationRequest& request, FeatureSupportSample* sample,
                                           std::string*) {
     *sample = Sample(100, request.coordinates[0]);
+    sample->accumulates_measure = false;
+    sample->provenance = request.provenance;
     sample->constraints.clear();
     sample->direction[0] = std::cos(request.coordinates[0]);
     sample->direction[1] = std::sin(request.coordinates[0]);
@@ -591,6 +594,56 @@ TEST(FeatureDiscoveryConstraints, RefinesANonFirstInterfaceKinkThroughTheCallerC
   EXPECT_EQ(kink->provenance.interface_index, 2);
   EXPECT_LE(kink->residual, 1e-8);
   EXPECT_NEAR(kink->direction[0], 1.0, 1e-12);
+}
+
+TEST(FeatureDiscoveryConstraints, RejectsMismatchedOrMalformedCallbackSamples) {
+  enum class Defect { kWrongBranch, kWrongCoordinates, kWrongInterface, kMissingMargin, kNonFiniteDirection };
+  for (Defect defect : { Defect::kWrongBranch, Defect::kWrongCoordinates, Defect::kWrongInterface,
+                         Defect::kMissingMargin, Defect::kNonFiniteDirection }) {
+    FeatureSupportBatch batch;
+    batch.coordinate_dimension = 1;
+    batch.complete_visit = true;
+    batch.samples = { Sample(1, -1.0), Sample(2, 1.0) };
+    batch.visited_row_count = batch.samples.size();
+    batch.edges.push_back({ 0, 1, 2.0 });
+    for (FeatureSupportSample& sample : batch.samples) {
+      sample.constraints[0].name = "domain.actual";
+      sample.constraints[0].kind = ConstraintKind::kDomain;
+      sample.constraints[0].layer_index = 2;
+      sample.constraints[0].interface_index = 3;
+      sample.constraints[0].value = sample.coordinates[0];
+    }
+    const FeatureReevaluateFn callback = [defect](const FeatureReevaluationRequest& request,
+                                                  FeatureSupportSample* sample, std::string*) {
+      *sample = Sample(100, request.coordinates[0]);
+      sample->accumulates_measure = false;
+      sample->provenance = request.provenance;
+      sample->constraints[0].name = "domain.actual";
+      sample->constraints[0].kind = ConstraintKind::kDomain;
+      sample->constraints[0].layer_index = 2;
+      sample->constraints[0].interface_index = 3;
+      sample->constraints[0].value = 0.0;
+      if (defect == Defect::kWrongBranch) {
+        ++sample->provenance.member_index;
+      } else if (defect == Defect::kWrongCoordinates) {
+        sample->coordinates[0] += 5.0;
+      } else if (defect == Defect::kWrongInterface) {
+        ++sample->constraints[0].interface_index;
+      } else if (defect == Defect::kMissingMargin) {
+        sample->constraints.clear();
+      } else {
+        sample->direction[0] = std::numeric_limits<double>::quiet_NaN();
+      }
+      return true;
+    };
+
+    const FeatureDiscoveryResult result = DiscoverFeatures(batch, {}, callback);
+    const FeatureCandidate* boundary = Candidate(result, FeatureMechanism::kSupportBoundary);
+    EXPECT_NE(boundary, nullptr);
+    if (boundary != nullptr) {
+      EXPECT_EQ(boundary->status, FeatureEvidenceStatus::kNumericalIncomplete);
+    }
+  }
 }
 
 TEST(FeatureDiscoveryConstraints, PreservesFilterSideWeightsAndDetectsExactCorners) {

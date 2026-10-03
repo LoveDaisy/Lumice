@@ -164,10 +164,33 @@ double TransportedDot(const double reference[3], const FeatureSupportSample& sam
   return Dot(transported, column.value);
 }
 
-bool CallbackSampleMatchesRequest(const FeatureSupportSample& sample, const FeatureReevaluationRequest& request) {
-  if (!sample.numerically_available || !IsFiniteDirection(sample.direction) ||
-      !SameProvenanceBranch(sample.provenance, request.provenance) ||
-      sample.coordinates.size() != request.coordinates.size()) {
+bool SameProvenance(const FeatureProvenance& first, const FeatureProvenance& second) {
+  return SameProvenanceBranch(first, second) && first.sample_index == second.sample_index;
+}
+
+bool ValidCallbackConstraint(const SupportConstraint& constraint, int coordinate_dimension) {
+  if (constraint.name.empty() || constraint.kind < ConstraintKind::kDomain ||
+      constraint.kind > ConstraintKind::kWeight ||
+      (constraint.numerically_available && !std::isfinite(constraint.value))) {
+    return false;
+  }
+  if (constraint.gradient_available) {
+    return constraint.gradient.size() == static_cast<size_t>(coordinate_dimension) && FiniteVector(constraint.gradient);
+  }
+  return constraint.gradient.empty();
+}
+
+bool CallbackSampleMatchesRequest(const FeatureSupportSample& sample, const FeatureReevaluationRequest& request,
+                                  const FeatureSupportSample& expected, int coordinate_dimension) {
+  if (!sample.numerically_available || !IsFiniteDirection(sample.direction) || sample.accumulates_measure ||
+      !SameProvenance(sample.provenance, request.provenance) || sample.measure_kind != expected.measure_kind ||
+      sample.support_dimension != expected.support_dimension || sample.finite_width != expected.finite_width ||
+      sample.active_coordinates != expected.active_coordinates ||
+      sample.coordinates.size() != request.coordinates.size() ||
+      sample.coordinates.size() != static_cast<size_t>(coordinate_dimension) || !FiniteVector(sample.coordinates) ||
+      !std::isfinite(sample.weight) || sample.weight < 0.0 ||
+      sample.mapping_evidence_kind != MappingEvidenceKind::kNone || sample.image_dimension_upper_bound != -1 ||
+      sample.mapping_error_bound != 0.0) {
     return false;
   }
   for (std::size_t index = 0; index < sample.coordinates.size(); ++index) {
@@ -175,28 +198,56 @@ bool CallbackSampleMatchesRequest(const FeatureSupportSample& sample, const Feat
       return false;
     }
   }
+  if (!sample.direction_jacobian.empty()) {
+    if (sample.direction_jacobian.size() != 3u * static_cast<size_t>(coordinate_dimension) ||
+        sample.direction_jacobian_column_available.size() != static_cast<size_t>(coordinate_dimension) ||
+        !FiniteVector(sample.direction_jacobian)) {
+      return false;
+    }
+  } else if (!sample.direction_jacobian_column_available.empty()) {
+    return false;
+  }
+  if (sample.direction_jacobian_available) {
+    if (sample.direction_jacobian.empty() || !std::isfinite(sample.direction_jacobian_error) ||
+        sample.direction_jacobian_error < 0.0 || !std::isfinite(sample.direction_jacobian_resolution) ||
+        !(sample.direction_jacobian_resolution > 0.0)) {
+      return false;
+    }
+    for (int coordinate : sample.active_coordinates) {
+      if (coordinate < 0 || coordinate >= coordinate_dimension ||
+          sample.direction_jacobian_column_available[static_cast<size_t>(coordinate)] == 0) {
+        return false;
+      }
+    }
+  }
+  if (!std::all_of(sample.constraints.begin(), sample.constraints.end(), [&](const SupportConstraint& constraint) {
+        return ValidCallbackConstraint(constraint, coordinate_dimension);
+      })) {
+    return false;
+  }
   return true;
 }
 
-bool EvaluateRankSearchSample(const FeatureReevaluateFn& reevaluate, const FeatureProvenance& provenance,
+bool EvaluateRankSearchSample(const FeatureReevaluateFn& reevaluate, const FeatureSupportSample& expected,
                               const std::vector<double>& coordinates, int maximum_calls, int* calls,
                               FeatureSupportSample* sample) {
   if (!reevaluate || *calls >= maximum_calls) {
     return false;
   }
   FeatureReevaluationRequest request;
-  request.provenance = provenance;
+  request.provenance = expected.provenance;
   request.coordinates = coordinates;
   std::string callback_error;
   ++*calls;
-  return reevaluate(request, sample, &callback_error) && CallbackSampleMatchesRequest(*sample, request);
+  return reevaluate(request, sample, &callback_error) &&
+         CallbackSampleMatchesRequest(*sample, request, expected, static_cast<int>(coordinates.size()));
 }
 
-bool EvaluateRankSearchColumn(const FeatureReevaluateFn& reevaluate, const FeatureProvenance& provenance,
+bool EvaluateRankSearchColumn(const FeatureReevaluateFn& reevaluate, const FeatureSupportSample& expected,
                               const std::vector<double>& coordinates, int coordinate_dimension, int coordinate_index,
                               double bracket_width, int maximum_calls, int* calls, FeatureSupportSample* sample,
                               TangentColumn* column) {
-  if (!EvaluateRankSearchSample(reevaluate, provenance, coordinates, maximum_calls, calls, sample)) {
+  if (!EvaluateRankSearchSample(reevaluate, expected, coordinates, maximum_calls, calls, sample)) {
     return false;
   }
   *column = RestrictedS2Column(*sample, coordinate_dimension, coordinate_index);
@@ -214,8 +265,8 @@ bool EvaluateRankSearchColumn(const FeatureReevaluateFn& reevaluate, const Featu
   upper_coordinates[static_cast<size_t>(coordinate_index)] += step;
   FeatureSupportSample lower;
   FeatureSupportSample upper;
-  if (!EvaluateRankSearchSample(reevaluate, provenance, lower_coordinates, maximum_calls, calls, &lower) ||
-      !EvaluateRankSearchSample(reevaluate, provenance, upper_coordinates, maximum_calls, calls, &upper)) {
+  if (!EvaluateRankSearchSample(reevaluate, expected, lower_coordinates, maximum_calls, calls, &lower) ||
+      !EvaluateRankSearchSample(reevaluate, expected, upper_coordinates, maximum_calls, calls, &upper)) {
     return false;
   }
   double raw[3]{};
@@ -300,9 +351,9 @@ bool RefineOneDimensionalRankLoss(const FeatureSupportBatch& batch, const Featur
     refinement_resolution = std::fabs(width);
     FeatureSupportSample evaluated;
     TangentColumn evaluated_column;
-    if (!EvaluateRankSearchColumn(reevaluate, lower_node->provenance, midpoint, batch.coordinate_dimension,
-                                  axis.coordinate_index, width, options.maximum_refinement_steps, &callback_calls,
-                                  &evaluated, &evaluated_column)) {
+    if (!EvaluateRankSearchColumn(reevaluate, *lower_node, midpoint, batch.coordinate_dimension, axis.coordinate_index,
+                                  width, options.maximum_refinement_steps, &callback_calls, &evaluated,
+                                  &evaluated_column)) {
       *numerical_incomplete = true;
       return false;
     }
@@ -424,8 +475,8 @@ bool RefineMultidimensionalRankLossLine(const FeatureSupportSample& first, const
                                 interpolation * (upper_coordinates[coordinate] - lower_coordinates[coordinate]);
     }
     FeatureSupportSample evaluated;
-    if (!EvaluateRankSearchSample(reevaluate, first.provenance, coordinates, options.maximum_refinement_steps,
-                                  callback_calls, &evaluated) ||
+    if (!EvaluateRankSearchSample(reevaluate, first, coordinates, options.maximum_refinement_steps, callback_calls,
+                                  &evaluated) ||
         !evaluated.direction_jacobian_available) {
       *numerical_incomplete = true;
       return false;
@@ -589,7 +640,8 @@ FeatureCandidate ConstraintCandidate(const FeatureSupportSample& sample, const S
 
 bool RefineConstraintRoot(const FeatureSupportSample& first, const FeatureSupportSample& second,
                           const SupportConstraint& target, const FeatureDiscoveryOptions& options,
-                          const FeatureReevaluateFn& reevaluate, FeatureCandidate* candidate) {
+                          const FeatureReevaluateFn& reevaluate, FeatureCandidate* candidate,
+                          bool* numerical_incomplete) {
   if (!reevaluate || first.coordinates.size() != second.coordinates.size()) {
     return false;
   }
@@ -603,6 +655,8 @@ bool RefineConstraintRoot(const FeatureSupportSample& first, const FeatureSuppor
   double lo_value = target.value;
   const SupportConstraint* second_constraint = FindConstraint(second, target);
   if (second_constraint == nullptr || !second_constraint->numerically_available) {
+    *numerical_incomplete = true;
+    candidate->status = FeatureEvidenceStatus::kNumericalIncomplete;
     return false;
   }
   double hi_value = second_constraint->value;
@@ -617,11 +671,16 @@ bool RefineConstraintRoot(const FeatureSupportSample& first, const FeatureSuppor
       request.coordinates[coordinate] = 0.5 * (lo[coordinate] + hi[coordinate]);
     }
     FeatureSupportSample evaluated;
-    if (!reevaluate(request, &evaluated, &callback_error)) {
+    if (!reevaluate(request, &evaluated, &callback_error) ||
+        !CallbackSampleMatchesRequest(evaluated, request, first, static_cast<int>(request.coordinates.size()))) {
+      *numerical_incomplete = true;
+      candidate->status = FeatureEvidenceStatus::kNumericalIncomplete;
       return false;
     }
     const SupportConstraint* constraint = FindConstraint(evaluated, target);
     if (constraint == nullptr || !constraint->numerically_available || !evaluated.numerically_available) {
+      *numerical_incomplete = true;
+      candidate->status = FeatureEvidenceStatus::kNumericalIncomplete;
       return false;
     }
     const double residual = std::fabs(constraint->value);
@@ -1332,7 +1391,7 @@ FeatureDiscoveryResult DiscoverFeatures(const FeatureSupportBatch& batch, const 
       }
       for (const std::vector<double>* coordinates : { &lower_coordinates, &upper_coordinates }) {
         FeatureSupportSample endpoint;
-        if (EvaluateRankSearchSample(reevaluate, center.provenance, *coordinates, options.maximum_refinement_steps,
+        if (EvaluateRankSearchSample(reevaluate, center, *coordinates, options.maximum_refinement_steps,
                                      &callback_calls, &endpoint) &&
             endpoint.direction_jacobian_available) {
           regular_ranks[static_cast<size_t>(center_index)] = std::max(
@@ -1511,7 +1570,9 @@ FeatureDiscoveryResult DiscoverFeatures(const FeatureSupportBatch& batch, const 
       candidate.weight_sides[1] = second.weight;
       candidate.residual = 0.0;
       candidate.resolution = edge.parameter_distance;
-      if (RefineConstraintRoot(first, second, first_constraint, options, reevaluate, &candidate) && globally_complete) {
+      if (RefineConstraintRoot(first, second, first_constraint, options, reevaluate, &candidate,
+                               &constraint_numerically_incomplete) &&
+          globally_complete) {
         candidate.status = FeatureEvidenceStatus::kConfirmed;
       }
       AddCandidate(candidate, options.sky_merge_tolerance, &out);
