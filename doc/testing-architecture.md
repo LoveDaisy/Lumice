@@ -1523,58 +1523,71 @@ cost distribution and states the tail it did not look at:
 
 ### §7.1 What each scope costs
 
-**Local.** Machine: the development Mac that `doc/machines.md` binds to the **Metal reference
-machine** role — Apple silicon, macOS ARM64, 12 logical cores (8 performance). Read every local
-figure below as a property of that machine and not of the suite; `doc/machines.md` is the single
-source for which host holds which role, and a different host moves all of them. Cache state: **warm** static build
-tree at the measured commit — `scripts/test.sh` does not build the static flavor, so no compile
-time is inside these numbers. Concurrency as noted per layer. Machine otherwise idle (load average
-2.2 at the start of the run).
+**Local slow-pool contract.** Before any layer runs, `scripts/test.sh pr` reads
+`pyproject.toml`'s `testpaths` as TOML, requires exactly one `test/performance` root and
+at least one other root, then passes those other roots as separate positional arguments
+with `-n 3 -m slow`. Phase 2 runs `pytest test/performance -m slow` without xdist. Thus a
+new configured correctness root joins phase 1 automatically; no second root list needs
+updating. A root named positively in `testpaths` is not excluded by `--ignore` — that option
+only excludes discovered children. CI already filters its positive matrix roots for the
+same reason; its file-level ignores and duration reports remain separate concerns.
+The two slow node-id sets must be disjoint and their union must equal bare
+`pytest --collect-only -m slow`. The script prints each pool's exit code and elapsed time,
+runs phase 2 even after a phase-1 failure, and retains the first failing pool's code in the
+layer summary. `quick`/`full` do not depend on the performance-root precondition.
+
+**Local.** Latest sample: **2026-10-03**, commit `65f093bd`, one unmodified
+`./scripts/test.sh pr` run on the development Mac bound to the **Metal reference machine**
+role in `doc/machines.md` — Apple silicon, macOS ARM64, 12 logical cores (8 performance),
+Python 3.11.5 / pytest 8.4.1. Static GUI/test build was ready; shared flavor was absent;
+CPM dependency sources were cached. No other simulation, test or build process was running
+at the pre-run check. No `PYTEST_ADDOPTS`, `LUMICE_LIB`, `CI` or GUI-skip override was set.
+Read these figures as a dated sample of that machine and test set, not a fixed case-count
+contract or a cross-machine throughput claim. `quick` and `full` subtotals below are sums
+of their layers inside this `pr` run, not separately timed invocations.
 
 | Scope | Layer | Wall clock | Concurrency |
 |---|---|---|---|
-| `quick` | `ctest -L "unit-correctness\|composition-correctness\|parity\|golden-analytic"` | 36s | ctest default |
-| `quick` | fast e2e (`pytest`, `-m "not slow"` via `pyproject.toml` `addopts`) | 96s | `-n auto` → 12 workers |
-| `quick` | `gui_test` correctness pool (`--fixed-dt`, negative filter) | 47s | single process |
-| | **`quick` total** | **179s** | |
-| `full` | `quick` + `gui_test` real-timing pool (no `--fixed-dt`, positive filter) | +11s | single process |
-| | **`full` total** | **190s** | |
-| `pr` | `full` + shared-lib build (the flavor was absent: cold configure + 43 TUs + install) | +14s | 12-way build |
-| `pr` | slow e2e phase 1 (`pytest --ignore=test/performance -n 3 -m slow`) | 361s | `-n 3` |
-| `pr` | slow e2e phase 2 (throughput gates, alone so they do not measure under load) | 14s | serial, single process |
-| | **`pr` total** | **627s** | |
+| `quick` | `ctest -L "unit-correctness\|composition-correctness\|parity\|golden-analytic"` (8/8 passed) | 67s | ctest default |
+| `quick` | fast e2e (`-m "not slow"` via `pyproject.toml` `addopts`, 219 passed) | 88s | `-n auto` → 12 workers |
+| `quick` | `gui_test` correctness pool (`--fixed-dt`, 513/513 passed) | 151s | single process |
+| | **`quick` layer subtotal** | **306s** | |
+| `full` | `gui_test` real-timing pool (no `--fixed-dt`, 6/6 passed) | +11s | single process |
+| | **`full` layer subtotal** | **317s** | |
+| `pr` | shared-lib cold configure + build + install | +21s | 12-way build |
+| `pr` | slow correctness: configured roots minus `test/performance`, `-m slow` | 183s | `-n 3` |
+| `pr` | slow performance: `pytest test/performance -m slow` | 79s | serial, single process |
+| | **`pr` measured wall clock** | **599.63s** | |
 
-Three things the `pr` row does not show on its face. **The shared-library layer is not a constant**:
-it cost 14s here because the shared flavor did not exist and had to be built (43 translation units,
-no GUI, no tests, CPM dependencies already cached), and on any later run in the same tree it is a
-freshness check costing effectively nothing — so the first `pr` of a session and the ones after it
-are different prices. **Phase 1 skipped 29 of its 109 collected items** (80 passed): the backend
-guards deselect what the machine cannot run, so this figure is what a Metal-capable Mac pays, not
-what the set costs everywhere. **The layers sum to 579s against a 627s wall clock**; the ~48s
-difference is the script's own preconditions — the static build-tree and `addopts` checks, the
-extraction of the two `gui_test` filters from `scripts/build.sh`, and the probe that asks
-`test/e2e/capi_runner.py` which library the slow layer would load — none of which is a test.
+Both slow pools returned **exit=0**; the scope ended with **`RESULT: PASS`**. Correctness
+collected **199** items (143 passed, 56 skipped); performance collected **4** (3 passed,
+1 skipped). Three collection-only calls independently compared node-id sets: baseline
+**203**, correctness **199**, performance **4**, intersection empty, union exactly equal
+to baseline. The performance subset of baseline was exactly phase 2, not merely equal
+in count. The phase-1 roots for this check came from the script's actual preflight.
+The backend guards account for the skipped items; they are not removed from coverage.
+Phase 2 still uses the local throughput gate's `precise` profile, not CI's cheaper profile.
 
-A standalone `quick` measured 172s on the previous day on the same machine, against 179s inside
-this run: treat single-run figures here as accurate to roughly ±5%, not better.
+The shell reports whole seconds for each layer/pool (their sum here rounds to 600s);
+pytest's internal timers reported 181.94s and 78.32s for the two slow pools. The shared-library
+cost is not constant: it was 21s because the flavor was missing, whereas a warm tree only
+pays the freshness check. These numbers supersede the older 627s `pr` sample, whose first
+slow phase still included performance roots; they are not a controlled before/after
+speedup measurement, because the test set and fixtures also changed between samples.
 
-The `pr` rows predate the fixture reductions that brought CI under its budget (the slow set's
-largest fixtures shrank several-fold; phase 2 locally still runs the throughput gate's `precise`
-profile, unchanged). Read the slow-e2e phase-1 figure as an upper bound until it is
-re-measured; `quick` and `full` do not run that set and are unaffected.
-
-**Compile is not in the table above, and is not negligible.** Measured on the same machine:
-a cold configure-plus-build of the static flavor with GUI and tests is **167s**; an incremental
-rebuild after touching one leaf `.cpp` is **33s**; after touching `src/core/math.hpp`, included by
-63 translation units, **49s**. So the honest first-run cost of `quick` on a cold tree is about
-350s, and its steady-state cost during an edit-test loop is about 210s.
+**Static build is outside the scope timer.** On this same run, a fresh-worktree
+`./scripts/build.sh -gtj release` cost **349.74s**, including its own tests and installation,
+before `pr` started. Earlier isolated compile measurements on this machine were 167s cold,
+33s after touching one leaf `.cpp`, and 49s after touching `src/core/math.hpp` (63 translation
+units). Those are historical measurements with different boundaries, not numbers to add
+to today's table to predict a current edit-test cycle.
 
 **CI.** Runners: GitHub-hosted, per job (`ubuntu-24.04`, `ubuntu-24.04-arm`, `macos-15`,
 `windows-2022`). Concurrency: the jobs below run in parallel, so the run's wall clock is its
 **longest job** plus the time the first job waited for a runner, not the sum; within a job, the
 fast e2e leg runs `pytest-xdist -n 2` on its measured 4-logical/2-physical-core runner and the slow
-e2e legs run `-n 3`, with the throughput gates re-run serially afterwards so they do not measure
-under load. The fast leg's value is an explicit SMT-sized CI setting, not a default for local runs
+e2e legs run `-n 3`, with the throughput gates excluded from that pool and run serially afterwards so they do not
+measure under load. The fast leg's value is an explicit SMT-sized CI setting, not a default for local runs
 or for other jobs.
 
 **The budget.** A pull request's CI run has an owner-set wall-clock budget of **10 minutes**, from
