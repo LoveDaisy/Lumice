@@ -790,7 +790,7 @@ Valuable design/architecture docs live in `doc/` (tracked). Consult the relevant
     （§8：GPU kernel / 密度排序 / 列表→预览高亮联动 / 多段链排除）。改光路分析面板 / 链 id 携带 /
     直方图 consumer / 分析运行 C API / 分析面板 GUI 前先读；用户可见行为见
     `doc/user-manual/06-raypath-analysis.md`。
-  - `feature-diagnostic-discovery-research.md` — **通用特征发现的研究判据（非已实现API）**：实际加权天空与机制候选双向核对；条件机制≠joint图峰；平滑密度峰、零有限支持及采样峰漂移三类反例。§9新增支持感知重要性提案/厚度延续冷启动、连续二维谱界与三类端点、深接口实际来源证据；两次真失败（拼接Sobol的联合偏置、提案模态塌缩）及一般测度/归类的未解边界。设计通用特征检出、归因及其共享接口前先读，不据此宣称全部输入已覆盖或正式API已交付。
+  - `feature-diagnostic-discovery-research.md` — **通用特征发现的研究判据（非已实现API）**：实际加权天空与机制候选双向核对；条件机制≠joint图峰；平滑密度峰、零有限支持及采样峰漂移三类反例。§9新增支持感知重要性提案/厚度延续冷启动、连续二维谱界与三类端点、深接口实际来源证据；两次真失败（拼接Sobol的联合偏置、提案模态塌缩）。§10新增Gaussian-only联合薄域、物理density/CDF分离、产品LUT/相关shape/真实三谱与两层链；错入射总量近似但峰偏19–26°，正确链仍有独立局部位置失败（求根残差/重复差≠采样误差）。§11核验独立参考自身局部误差、否决归一但覆盖低效的盒提案；条件角域提案仍未达整体0.1°。真实两层/相关shape来源关联已接通，条件pair临界而full map仍rank2有实证；§12把现有产品measure/L2/XYZ与确定性装配分开；零柱高锥直接支持有LI证据、strict-pole参数数≠支持维数已修、固定pose原子与有限太阳有正反、真实三谱二维色度/同色负例及声明支持四角闭环已核验；保留局部积分、多活动事件到实际结构关联及正式API未解。§13固定outer的条件角求积将谱点inner细化差压至.004°内，但真实脊法向变化与outer尾贡献仍未解；均值接近≠参考自身准确，未收敛iterate不得当位置；完整CDF纬度分段仅有两真实上游切片正证。0.1°是局部研究目标不是全域产品硬尺。设计通用特征检出、归因及其共享接口前先读，不据此宣称全部输入已覆盖或正式API已交付。
   - `raypath-cli-output.md` — **`Lumice raypath` 子命令与其 JSON 输出（schema_version 1）的字段参考**：
     单层光路 × 单晶体 × 单天空点的纤维分量、逐点详情、太阳方向球网格；计算与序列化都在引擎侧
     （`src/raypath/`，`lumice_raypath.h` v4.50 `LUMICE_AnalyzeSinglePath` → 不透明结果 → JSON），CLI 与将来的
