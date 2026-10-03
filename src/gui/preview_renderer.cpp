@@ -1203,14 +1203,17 @@ void main() {
           // See doc/print-mode-subtractive-ink.md.
           tex_color = clampAndGamma(radiance_linear + u_background);
         } else {
-          tex_color = clampAndGamma(radiance_linear + u_background);
+          // Both texture modes have halo-only linear light here, after visibility and vignetting.
+          // B-R must read it before sky is added, not try to subtract sky after gamma/clipping.
+          tex_color = u_display_mode == 1 ? clampAndGamma(radiance_linear)
+                                        : clampAndGamma(radiance_linear + u_background);
         }
       }
       final_color = tex_color;
     }
   }
 
-  // The channel-B-R display mode, on the finished pixel of the normal picture — sky included, and
+  // The channel-B-R display mode, on halo-only post-gamma channels (sky excluded), and
   // on EVERY pixel, the unimaged ones too: their zero-energy black is R == B and reads mid grey, the
   // same rule RenderConsumer::PostSnapshot applies on all of its frame paths (ApplyDisplayMode in
   // src/server/render.cpp). final_color is already post-gamma here, so no round trip is needed; the
@@ -1218,6 +1221,8 @@ void main() {
   // the markers and the lens border are drawn ON the diagnostic image in their own colours. Inert
   // under print, which never computes R and B separately. The background PHOTO is excluded one
   // level up (BgPhotoOnScreen, app.cpp), so u_bg_enabled is never set together with this.
+  // Legacy composited texels have no recoverable halo-only signal: diagnose the baked pixel as
+  // before. The load notice reports this limitation; no inverse sky subtraction is attempted.
   if (u_display_mode == 1 && u_tone != 1) {
     final_color = vec3(channelMathBrGray(final_color.r, final_color.b));
   }

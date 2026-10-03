@@ -1332,9 +1332,7 @@ void RenderConsumer::PostSnapshot() {
           // SHEET, two fields on purpose, so that "print onto the default black background" is not a
           // reachable state at all.
           if (!print_mode) {
-            if (paint_bg) {
-              rgb[j] += config_.background_[j];
-            } else if (masked_bg && !show_light) {
+            if (masked_bg && !show_light) {
               // SYNC:visible-mask-zero — the display clip. component_compositor.cpp's
               // ApplyCompositeBackground carries the twin of this line for the raypath-colour path;
               // both read the SAME visible_mask_ buffer, so the predicate is single-sourced and only
@@ -1348,10 +1346,13 @@ void RenderConsumer::PostSnapshot() {
               // VisibleForLabel), so what reaches here has already been admitted.
               rgb[j] = 0.0f;
             }
+            if (paint_bg && config_.display_mode_ != RenderConfig::kDisplayChannelBr) {
+              rgb[j] += config_.background_[j];
+            }
           }
         }
-        // After the background (B - R is read off the pixel the Normal mode would show, sky
-        // included) and before the annotations (which are drawn ON the diagnostic image).
+        // B-R reads the exposed, visibility-clipped halo without sky. Normal alone adds sky;
+        // annotations are drawn ON either image in their own colours.
         ApplyDisplayMode(config_.display_mode_, print_mode, rgb);
         CompositeAnnotations(band_layers, i, print_mode, rgb);
         for (int j = 0; j < 3; j++) {
