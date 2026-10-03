@@ -1523,6 +1523,19 @@ cost distribution and states the tail it did not look at:
 
 ### §7.1 What each scope costs
 
+**Local slow-pool contract.** Before any layer runs, `scripts/test.sh pr` reads
+`pyproject.toml`'s `testpaths` as TOML, requires exactly one `test/performance` root and
+at least one other root, then passes those other roots as separate positional arguments
+with `-n 3 -m slow`. Phase 2 runs `pytest test/performance -m slow` without xdist. Thus a
+new configured correctness root joins phase 1 automatically; no second root list needs
+updating. A root named positively in `testpaths` is not excluded by `--ignore` — that option
+only excludes discovered children. CI already filters its positive matrix roots for the
+same reason; its file-level ignores and duration reports remain separate concerns.
+The two slow node-id sets must be disjoint and their union must equal bare
+`pytest --collect-only -m slow`. The script prints each pool's exit code and elapsed time,
+runs phase 2 even after a phase-1 failure, and retains the first failing pool's code in the
+layer summary. `quick`/`full` do not depend on the performance-root precondition.
+
 **Local.** Machine: the development Mac that `doc/machines.md` binds to the **Metal reference
 machine** role — Apple silicon, macOS ARM64, 12 logical cores (8 performance). Read every local
 figure below as a property of that machine and not of the suite; `doc/machines.md` is the single
@@ -1540,7 +1553,7 @@ time is inside these numbers. Concurrency as noted per layer. Machine otherwise 
 | `full` | `quick` + `gui_test` real-timing pool (no `--fixed-dt`, positive filter) | +11s | single process |
 | | **`full` total** | **190s** | |
 | `pr` | `full` + shared-lib build (the flavor was absent: cold configure + 43 TUs + install) | +14s | 12-way build |
-| `pr` | slow e2e phase 1 (`pytest --ignore=test/performance -n 3 -m slow`) | 361s | `-n 3` |
+| `pr` | slow e2e phase 1 (historical sample, before positive-root exclusion) | 361s | `-n 3` |
 | `pr` | slow e2e phase 2 (throughput gates, alone so they do not measure under load) | 14s | serial, single process |
 | | **`pr` total** | **627s** | |
 
