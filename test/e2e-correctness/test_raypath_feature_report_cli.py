@@ -97,6 +97,29 @@ def test_random_35_report_pins_the_ordinary_minimum_deviation_boundary(reference
     assert feature["positions"][1]["deviation_deg"] == pytest.approx(22.371148713, abs=1e-5)
 
 
+def test_max_hits_one_external_reflection_is_reported_by_the_real_cli(tmp_path):
+    config = json.loads(_RANDOM.read_text())
+    config["scene"]["max_hits"] = 1
+    config["scene"]["light_source"]["altitude"] = 90
+    config["crystal"][0]["axis"] = {
+        name: {"type": "gauss", "mean": 0, "std": 0}
+        for name in ("zenith", "azimuth", "roll")
+    }
+    path = tmp_path / "one-face.json"
+    path.write_text(json.dumps(config))
+
+    result = _report(path, "1", "--events", "64", "--wavelength", "550")
+    assert result.returncode == 0, result.stderr
+    doc = json.loads(result.stdout)
+    assert doc["meta"]["requested_faces"] == [1]
+    assert doc["scene_measure"]["status"] == "confirmed"
+    assert doc["scene_measure"]["member_chains"] == [[[1]]]
+    assert doc["scene_measure"]["total_contribution"] > 0
+    layer = doc["scene_measure"]["sampled_rows"][0]["layers"][0]
+    assert layer["field"]["interfaces"][0]["kind"] == "external_reflection"
+    assert layer["outgoing_direction"] == pytest.approx([0, 0, 1], abs=1e-7)
+
+
 def test_report_states_the_feature_families_it_does_not_enumerate():
     result = _report(_RANDOM, "3-1-5", "--events", "8192")
     assert result.returncode == 0, result.stderr

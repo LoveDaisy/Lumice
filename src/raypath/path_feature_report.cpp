@@ -784,6 +784,21 @@ Error AnalyzePathFeatureReport(const ConfigManager& config, const PathFeatureRep
     *out = std::move(result);
     return {};
   }
+  if (request.path_layers.front().size() == 1) {
+    if (legacy_schema) {
+      return { ErrorCode::kInvalidPath, "schema 1 path feature reports require 2 to 64 faces" };
+    }
+    result.coverage.push_back(
+        { "positioned_features", CoverageStatus::kNotSupported,
+          "the one-face external-reflection scene measure is available; legacy positioned-feature fixtures require "
+          "a transmitted path" });
+    result.limitations = {
+      "automatic feature discovery is not part of scene-measure assembly",
+      "one-face external reflection has no legacy transmitted-path fixture",
+    };
+    *out = std::move(result);
+    return {};
+  }
 
   analytic::FaceNormalTable normals;
   analytic::FacePolygonTable polygons;
@@ -834,6 +849,12 @@ Error AnalyzePathFeatureReport(const ConfigManager& config, const PathFeatureRep
                               "label equivalence is claimed" });
 
   for (const std::vector<int>& faces : members) {
+    if (faces.size() == 1) {
+      result.coverage.push_back(
+          { "member " + std::to_string(result.members.size()), CoverageStatus::kNotSupported,
+            "one-face external reflection is present in scene_measure but has no legacy positioned-feature fixture" });
+      continue;
+    }
     std::vector<int> slots;
     const Error path_error = ResolveSingleLayerPath({ faces }, normals, &slots);
     if (!path_error.Ok()) {

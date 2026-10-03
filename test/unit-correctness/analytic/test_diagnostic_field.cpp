@@ -43,9 +43,33 @@ Fixture Build(const LUMICE_ANALYTIC_Crystal& crystal, const std::vector<int>& fa
   Fixture fixture;
   EXPECT_EQ(BuildFaceNormals(crystal, &fixture.normals, &fixture.polygons), Status::kOk);
   fixture.slots.resize(faces.size());
-  EXPECT_EQ(ResolveFaceSequence(fixture.normals, faces.data(), static_cast<int>(faces.size()), fixture.slots.data()),
+  EXPECT_EQ(ResolveDiagnosticFaceSequence(fixture.normals, faces.data(), static_cast<int>(faces.size()),
+                                          fixture.slots.data()),
             Status::kOk);
   return fixture;
+}
+
+LUMICE_ANALYTIC_Crystal RegularPrism(double scale = 1.0) {
+  LUMICE_ANALYTIC_Crystal crystal{};
+  crystal.kind = LUMICE_ANALYTIC_CRYSTAL_PRISM;
+  crystal.height = scale;
+  for (double& distance : crystal.face_distance) {
+    distance = scale;
+  }
+  return crystal;
+}
+
+double TextbookExternalReflectance(double refractive_index, double incidence_cosine) {
+  const double sine_squared = 1.0 - incidence_cosine * incidence_cosine;
+  if (sine_squared > refractive_index * refractive_index) {
+    return 1.0;
+  }
+  const double transmission_cosine = std::sqrt(1.0 - sine_squared / (refractive_index * refractive_index));
+  const double rs = (incidence_cosine - refractive_index * transmission_cosine) /
+                    (incidence_cosine + refractive_index * transmission_cosine);
+  const double rp = (refractive_index * incidence_cosine - transmission_cosine) /
+                    (refractive_index * incidence_cosine + transmission_cosine);
+  return 0.5 * (rs * rs + rp * rp);
 }
 
 Fixture Build(const std::vector<int>& faces) {
@@ -102,6 +126,223 @@ void ExpectStableIndexSamples(DiagnosticField* field, const DiagnosticRowInput& 
       }
     }
   }
+}
+
+TEST(DiagnosticField, OneFaceHeadOnReflectionHasIndependentValueAndDerivativeOracles) {
+  const std::vector<int> faces = { 1 };
+  Fixture fixture = Build(RegularPrism(), faces);
+  DiagnosticField field(fixture.normals, fixture.polygons, faces.data(), fixture.slots.data(), 1);
+  DiagnosticRowInput input;
+  input.refractive_index = 1.31;
+  input.incident_direction[2] = -1.0;
+  input.pose[0] = input.pose[4] = input.pose[8] = 1.0;
+  const DiagnosticFieldResult result = field.Evaluate(input);
+
+  ASSERT_EQ(result.path_status, DiagnosticPathStatus::kOk);
+  ASSERT_EQ(result.entry_status, DiagnosticEntryStatus::kOk);
+  ASSERT_EQ(result.interfaces.size(), 1u);
+  ASSERT_EQ(result.domain_margins.size(), 1u);
+  ASSERT_EQ(result.tir_margins.size(), 1u);
+  EXPECT_EQ(result.interfaces[0].kind, DiagnosticInterfaceKind::kExternalReflection);
+  EXPECT_EQ(result.interfaces[0].face_number, 1);
+  EXPECT_EQ(result.domain_margins[0].name, "external_reflection_incidence_cosine");
+  EXPECT_EQ(result.tir_margins[0].name, "external_reflection_tir_discriminant");
+  EXPECT_DOUBLE_EQ(result.domain_margins[0].value, 1.0);
+  EXPECT_DOUBLE_EQ(result.tir_margins[0].value, 1.0);
+  EXPECT_NEAR(result.entry_measure, 3.0 * std::sqrt(3.0) / 8.0, 1e-7);
+  const double reflectance = std::pow((input.refractive_index - 1.0) / (input.refractive_index + 1.0), 2);
+  EXPECT_NEAR(result.interfaces[0].coefficient, reflectance, 2e-12);
+  EXPECT_NEAR(result.fresnel_weight, reflectance, 2e-12);
+  EXPECT_NEAR(result.outgoing_direction[0], 0.0, 2e-12);
+  EXPECT_NEAR(result.outgoing_direction[1], 0.0, 2e-12);
+  EXPECT_NEAR(result.outgoing_direction[2], 1.0, 2e-12);
+
+  ASSERT_TRUE(result.direction_pose_jacobian_available);
+  const double expected_jacobian[9] = { 0.0, 2.0, 0.0, -2.0, 0.0, 0.0, 0.0, 0.0, 0.0 };
+  for (int i = 0; i < 9; ++i) {
+    EXPECT_NEAR(result.direction_pose_jacobian[i], expected_jacobian[i], 2e-7) << i;
+  }
+  ASSERT_TRUE(result.direction_pose_hessian_available);
+  double expected_hessian[27]{};
+  expected_hessian[9 * 0 + 3 * 0 + 2] = 1.0;
+  expected_hessian[9 * 0 + 3 * 2 + 0] = 1.0;
+  expected_hessian[9 * 1 + 3 * 1 + 2] = 1.0;
+  expected_hessian[9 * 1 + 3 * 2 + 1] = 1.0;
+  expected_hessian[9 * 2 + 3 * 0 + 0] = -4.0;
+  expected_hessian[9 * 2 + 3 * 1 + 1] = -4.0;
+  for (int i = 0; i < 27; ++i) {
+    EXPECT_NEAR(result.direction_pose_hessian[i], expected_hessian[i], 2e-5) << i;
+  }
+  ASSERT_TRUE(result.direction_index_derivative_available);
+  for (double derivative : result.direction_index_derivative) {
+    EXPECT_NEAR(derivative, 0.0, 1e-12);
+  }
+  ASSERT_TRUE(result.entry_index_derivative_available);
+  EXPECT_NEAR(result.entry_index_derivative, 0.0, 1e-12);
+  ASSERT_TRUE(result.interfaces[0].index_derivative_available);
+  EXPECT_NEAR(result.interfaces[0].index_derivative,
+              4.0 * (input.refractive_index - 1.0) / std::pow(input.refractive_index + 1.0, 3), 2e-9);
+  ASSERT_TRUE(result.domain_margins[0].index_derivative_available);
+  EXPECT_NEAR(result.domain_margins[0].index_derivative, 0.0, 1e-12);
+  ASSERT_TRUE(result.tir_margins[0].index_derivative_available);
+  EXPECT_NEAR(result.tir_margins[0].index_derivative, 0.0, 1e-12);
+}
+
+TEST(DiagnosticField, OneFaceObliqueAndTirBranchesMatchTextbookReflection) {
+  const std::vector<int> faces = { 1 };
+  Fixture fixture = Build(RegularPrism(), faces);
+  DiagnosticField field(fixture.normals, fixture.polygons, faces.data(), fixture.slots.data(), 1);
+  DiagnosticRowInput input;
+  input.pose[0] = input.pose[4] = input.pose[8] = 1.0;
+  const double sine = 0.6;
+  const double cosine = 0.8;
+  input.incident_direction[0] = sine;
+  input.incident_direction[2] = -cosine;
+
+  input.refractive_index = 1.31;
+  const DiagnosticFieldResult ordinary = field.Evaluate(input);
+  ASSERT_EQ(ordinary.path_status, DiagnosticPathStatus::kOk);
+  EXPECT_NEAR(ordinary.outgoing_direction[0], sine, 2e-12);
+  EXPECT_NEAR(ordinary.outgoing_direction[1], 0.0, 2e-12);
+  EXPECT_NEAR(ordinary.outgoing_direction[2], cosine, 2e-12);
+  EXPECT_NEAR(ordinary.entry_measure, 0.8 * 3.0 * std::sqrt(3.0) / 8.0, 1e-7);
+  EXPECT_NEAR(ordinary.interfaces[0].coefficient, TextbookExternalReflectance(1.31, cosine), 2e-12);
+  EXPECT_NEAR(ordinary.tir_margins[0].value, 1.0 - 0.36 / (1.31 * 1.31), 2e-12);
+  ASSERT_TRUE(ordinary.direction_pose_jacobian_available);
+  ASSERT_TRUE(ordinary.entry_pose_gradient_available);
+  ASSERT_TRUE(ordinary.interfaces[0].pose_derivative_available);
+  ASSERT_TRUE(ordinary.domain_margins[0].pose_derivative_available);
+  ASSERT_TRUE(ordinary.tir_margins[0].pose_derivative_available);
+  const auto expected_at_pose = [&](const double pose[9]) {
+    struct Expected {
+      double outgoing[3]{};
+      double cosine = 0.0;
+      double entry = 0.0;
+      double reflectance = 0.0;
+      double discriminant = 0.0;
+    } expected;
+    double body[3]{};
+    for (int component = 0; component < 3; ++component) {
+      body[component] = pose[component] * sine + pose[6 + component] * -cosine;
+    }
+    expected.cosine = -body[2];
+    body[2] = -body[2];
+    for (int component = 0; component < 3; ++component) {
+      expected.outgoing[component] =
+          pose[3 * component] * body[0] + pose[3 * component + 1] * body[1] + pose[3 * component + 2] * body[2];
+    }
+    expected.entry = 3.0 * std::sqrt(3.0) / 8.0 * expected.cosine;
+    expected.reflectance = TextbookExternalReflectance(input.refractive_index, expected.cosine);
+    expected.discriminant =
+        1.0 - (1.0 - expected.cosine * expected.cosine) / (input.refractive_index * input.refractive_index);
+    return expected;
+  };
+  constexpr double kIndependentStep = 1e-6;
+  for (int axis = 0; axis < 3; ++axis) {
+    double low_pose[9];
+    double high_pose[9];
+    Perturb(input.pose, axis, -kIndependentStep, low_pose);
+    Perturb(input.pose, axis, kIndependentStep, high_pose);
+    const auto low = expected_at_pose(low_pose);
+    const auto high = expected_at_pose(high_pose);
+    for (int component = 0; component < 3; ++component) {
+      EXPECT_NEAR(ordinary.direction_pose_jacobian[3 * component + axis],
+                  (high.outgoing[component] - low.outgoing[component]) / (2.0 * kIndependentStep), 2e-7);
+    }
+    EXPECT_NEAR(ordinary.entry_pose_gradient[axis], (high.entry - low.entry) / (2.0 * kIndependentStep), 2e-7);
+    EXPECT_NEAR(ordinary.interfaces[0].pose_gradient[axis],
+                (high.reflectance - low.reflectance) / (2.0 * kIndependentStep), 2e-7);
+    EXPECT_NEAR(ordinary.domain_margins[0].pose_gradient[axis], (high.cosine - low.cosine) / (2.0 * kIndependentStep),
+                2e-7);
+    EXPECT_NEAR(ordinary.tir_margins[0].pose_gradient[axis],
+                (high.discriminant - low.discriminant) / (2.0 * kIndependentStep), 2e-7);
+  }
+  ASSERT_TRUE(ordinary.interfaces[0].index_derivative_available);
+  ASSERT_TRUE(ordinary.tir_margins[0].index_derivative_available);
+  const double reflectance_low = TextbookExternalReflectance(1.31 - kIndependentStep, cosine);
+  const double reflectance_high = TextbookExternalReflectance(1.31 + kIndependentStep, cosine);
+  EXPECT_NEAR(ordinary.interfaces[0].index_derivative, (reflectance_high - reflectance_low) / (2.0 * kIndependentStep),
+              2e-7);
+  const auto discriminant = [&](double index) { return 1.0 - 0.36 / (index * index); };
+  EXPECT_NEAR(
+      ordinary.tir_margins[0].index_derivative,
+      (discriminant(1.31 + kIndependentStep) - discriminant(1.31 - kIndependentStep)) / (2.0 * kIndependentStep), 2e-7);
+
+  input.refractive_index = 0.5;
+  const DiagnosticFieldResult tir = field.Evaluate(input);
+  ASSERT_EQ(tir.path_status, DiagnosticPathStatus::kOk);
+  EXPECT_DOUBLE_EQ(tir.interfaces[0].coefficient, 1.0);
+  EXPECT_LT(tir.tir_margins[0].value, 0.0);
+  EXPECT_TRUE(tir.direction_pose_jacobian_available);
+  EXPECT_TRUE(tir.direction_index_derivative_available);
+  EXPECT_TRUE(tir.interfaces[0].index_derivative_available);
+  EXPECT_NEAR(tir.interfaces[0].index_derivative, 0.0, 1e-12);
+
+  input.refractive_index = sine;
+  const DiagnosticFieldResult kink = field.Evaluate(input);
+  ASSERT_EQ(kink.path_status, DiagnosticPathStatus::kOk);
+  EXPECT_NEAR(kink.tir_margins[0].value, 0.0, 2e-15);
+  EXPECT_TRUE(kink.direction_pose_jacobian_available);
+  EXPECT_TRUE(kink.direction_index_derivative_available);
+  EXPECT_FALSE(kink.interfaces[0].pose_derivative_available);
+  EXPECT_FALSE(kink.interfaces[0].index_derivative_available);
+
+  input.refractive_index = sine - 1e-3;
+  const DiagnosticFieldResult below = field.Evaluate(input);
+  input.refractive_index = sine + 1e-3;
+  const DiagnosticFieldResult above = field.Evaluate(input);
+  EXPECT_DOUBLE_EQ(below.interfaces[0].coefficient, 1.0);
+  EXPECT_LT(above.interfaces[0].coefficient, 1.0);
+  for (int component = 0; component < 3; ++component) {
+    EXPECT_NEAR(below.outgoing_direction[component], above.outgoing_direction[component], 2e-12);
+  }
+}
+
+TEST(DiagnosticField, OneFaceMeasureScalesWithActualPolygonOnPrismAndPyramid) {
+  const std::vector<int> basal_face = { 1 };
+  Fixture unit_fixture = Build(RegularPrism(), basal_face);
+  Fixture scaled_fixture = Build(RegularPrism(7.0), basal_face);
+  DiagnosticField unit_field(unit_fixture.normals, unit_fixture.polygons, basal_face.data(), unit_fixture.slots.data(),
+                             1);
+  DiagnosticField scaled_field(scaled_fixture.normals, scaled_fixture.polygons, basal_face.data(),
+                               scaled_fixture.slots.data(), 1);
+  DiagnosticRowInput input;
+  input.refractive_index = 1.31;
+  input.incident_direction[2] = -1.0;
+  input.pose[0] = input.pose[4] = input.pose[8] = 1.0;
+  const DiagnosticFieldResult unit = unit_field.Evaluate(input);
+  const DiagnosticFieldResult scaled = scaled_field.Evaluate(input);
+  ASSERT_EQ(unit.path_status, DiagnosticPathStatus::kOk);
+  ASSERT_EQ(scaled.path_status, DiagnosticPathStatus::kOk);
+  EXPECT_NEAR(scaled.entry_measure, 49.0 * unit.entry_measure, 2e-5);
+  EXPECT_NEAR(scaled.fresnel_weight, unit.fresnel_weight, 2e-12);
+
+  LUMICE_ANALYTIC_Crystal pyramid = RegularPrism();
+  pyramid.kind = LUMICE_ANALYTIC_CRYSTAL_PYRAMID;
+  pyramid.height = 0.5;
+  pyramid.upper_h = 0.25;
+  pyramid.lower_h = 0.6;
+  pyramid.upper_wedge_deg = 28.0;
+  pyramid.lower_wedge_deg = 38.0;
+  const std::vector<int> cone_face = { 13 };
+  Fixture pyramid_fixture = Build(pyramid, cone_face);
+  DiagnosticField pyramid_field(pyramid_fixture.normals, pyramid_fixture.polygons, cone_face.data(),
+                                pyramid_fixture.slots.data(), 1);
+  DiagnosticRowInput pyramid_input;
+  pyramid_input.refractive_index = 1.31;
+  const double wedge = 28.0 * 3.14159265358979323846 / 180.0;
+  const double expected_normal[3] = { std::cos(wedge), 0.0, std::sin(wedge) };
+  for (int component = 0; component < 3; ++component) {
+    pyramid_input.incident_direction[component] = -expected_normal[component];
+  }
+  pyramid_input.pose[0] = pyramid_input.pose[4] = pyramid_input.pose[8] = 1.0;
+  const DiagnosticFieldResult cone = pyramid_field.Evaluate(pyramid_input);
+  ASSERT_EQ(cone.path_status, DiagnosticPathStatus::kOk);
+  EXPECT_GT(cone.entry_measure, 0.0);
+  EXPECT_NEAR(cone.outgoing_direction[0], expected_normal[0], 2e-12);
+  EXPECT_NEAR(cone.outgoing_direction[1], expected_normal[1], 2e-12);
+  EXPECT_NEAR(cone.outgoing_direction[2], expected_normal[2], 2e-12);
+  EXPECT_NEAR(cone.interfaces[0].coefficient, std::pow(0.31 / 2.31, 2), 2e-12);
 }
 
 TEST(DiagnosticField, FourFaceRowReturnsEveryInterfaceAndMargin) {

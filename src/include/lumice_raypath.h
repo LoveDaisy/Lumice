@@ -103,10 +103,12 @@ LUMICE_API void LUMICE_SinglePathResultDestroy(LUMICE_SinglePathResult* result);
 #define LUMICE_PATH_FEATURE_REPORT_MAX_WAVELENGTH_COUNT 32
 // The largest number of explicit physical-L2 member chains accepted by one report request.
 #define LUMICE_PATH_FEATURE_REPORT_MAX_MEMBER_CHAIN_COUNT 4096
-// Every concrete layer face sequence has 2..64 faces. The aggregate path and explicit-chain
-// encodings are additionally bounded by the scene's actual scattering-layer count and, for
-// explicit selection, MAX_MEMBER_CHAIN_COUNT; all dimensions are validated before arrays are
-// copied by the synchronous bridge.
+// Every modern v2/v3 concrete layer face sequence has 1..64 faces: one face is the external
+// reflection at that finite crystal face; 2..64 retain the transmitted/internal-reflection/
+// transmitted chain. The frozen v1 prefix retains its historical 2..64 range. The aggregate path
+// and explicit-chain encodings are additionally bounded by the scene's actual scattering-layer
+// count and, for explicit selection, MAX_MEMBER_CHAIN_COUNT; all dimensions are validated before
+// arrays are copied by the synchronous bridge.
 #define LUMICE_PATH_FEATURE_REPORT_MAX_FACES_PER_LAYER 64
 // The report evaluates every admitted physical-L2 member at every wavelength twice: at the
 // requested resolution and at half that resolution. This bounds their combined synchronous work.

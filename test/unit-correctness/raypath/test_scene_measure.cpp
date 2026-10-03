@@ -781,6 +781,116 @@ TEST(SceneMeasure, AnInvalidRepresentableFaceCannotReceiveAFilterZeroCertificate
   EXPECT_NE(error.message.find("face"), std::string::npos) << error.message;
 }
 
+TEST(SceneMeasure, OneFaceExternalReflectionMatchesItsNormalIncidenceMeasure) {
+  AxisDistribution axis;
+  axis.latitude_dist = { DistributionType::kNoRandom, 90.0f, 0.0f };
+  axis.azimuth_dist = { DistributionType::kNoRandom, 0.0f, 0.0f };
+  axis.roll_dist = { DistributionType::kNoRandom, 0.0f, 0.0f };
+  auto config = Scene({ Prism(1, axis) }, { 0.0f });
+  config.scene_.light_source_.param_ = SunParam{ 90.0f, 0.0f, 0.0f };
+  config.scene_.max_hits_ = 1;
+  auto request = Request({ 1 }, { { 1 } }, 2);
+  request.member_selection = SceneMemberSelection::kConcrete;
+  SceneMeasureResult result;
+  const Error error = BuildSceneMeasure(config, request, &result);
+  ASSERT_TRUE(error.Ok()) << error.message;
+  ASSERT_EQ(result.spectrum_nodes.size(), 1u);
+  const double n = result.spectrum_nodes.front().refractive_index;
+  const double reflection = std::pow((n - 1.0) / (n + 1.0), 2);
+  const double basal_area = 3.0 * std::sqrt(3.0) / 8.0;
+  const double surface_area = 3.0 + 2.0 * basal_area;
+  EXPECT_EQ(result.status, SceneMeasureStatus::kConfirmed);
+  EXPECT_NEAR(result.total_contribution, 2.0 * basal_area / surface_area * reflection, 2e-8);
+  ASSERT_FALSE(result.rows.empty());
+  ASSERT_EQ(result.rows.front().layers.size(), 1u);
+  EXPECT_NEAR(result.rows.front().layers.front().outgoing_direction[0], 0.0, 1e-7);
+  EXPECT_NEAR(result.rows.front().layers.front().outgoing_direction[1], 0.0, 1e-7);
+  EXPECT_NEAR(result.rows.front().layers.front().outgoing_direction[2], 1.0, 1e-7);
+}
+
+TEST(SceneMeasure, OneFaceReflectionUsesPhysicalFiltersAndComposesWithATransmittedLayer) {
+  AxisDistribution axis;
+  axis.latitude_dist = { DistributionType::kNoRandom, 90.0f, 0.0f };
+  axis.azimuth_dist = { DistributionType::kNoRandom, 0.0f, 0.0f };
+  axis.roll_dist = { DistributionType::kNoRandom, 0.0f, 0.0f };
+  auto config = Scene({ Prism(1, axis), Prism(2, axis) }, { 1.0f, 0.0f });
+  config.scene_.light_source_.param_ = SunParam{ 90.0f, 0.0f, 0.0f };
+  config.scene_.max_hits_ = 2;
+  auto request = Request({ 1, 2 }, { { 1 }, { 2, 1 } }, 2);
+  request.member_selection = SceneMemberSelection::kExplicitChains;
+  request.explicit_member_chains = { { { 1 }, { 2, 1 } } };
+
+  const auto composed = Build(config, request);
+  ASSERT_EQ(composed.status, SceneMeasureStatus::kConfirmed);
+  ASSERT_GT(composed.total_contribution, 0.0);
+  ASSERT_FALSE(composed.rows.empty());
+  ASSERT_EQ(composed.rows.front().layers.size(), 2u);
+  const auto& reflection = composed.rows.front().layers[0];
+  const auto& transmission = composed.rows.front().layers[1];
+  ASSERT_EQ(reflection.status, SceneMeasureStatus::kConfirmed);
+  ASSERT_EQ(transmission.status, SceneMeasureStatus::kConfirmed);
+  EXPECT_NEAR(reflection.outgoing_direction[0], transmission.incident_direction[0], 1e-12);
+  EXPECT_NEAR(reflection.outgoing_direction[1], transmission.incident_direction[1], 1e-12);
+  EXPECT_NEAR(reflection.outgoing_direction[2], transmission.incident_direction[2], 1e-12);
+
+  EntryExitFilterParam accepted;
+  accepted.entry_ = 1;
+  accepted.exit_ = 1;
+  config.scene_.ms_[0].setting_[0].filter_ = { 101, FilterConfig::kSymNone, FilterConfig::kFilterIn,
+                                               SimpleFilterParam{ accepted } };
+  EXPECT_NEAR(Build(config, request).total_contribution, composed.total_contribution, 1e-12);
+
+  EntryExitFilterParam rejected;
+  rejected.entry_ = 1;
+  rejected.exit_ = 2;
+  config.scene_.ms_[0].setting_[0].filter_.param_ = SimpleFilterParam{ rejected };
+  const auto filtered = Build(config, request);
+  EXPECT_EQ(filtered.status, SceneMeasureStatus::kZeroWeight);
+  EXPECT_DOUBLE_EQ(filtered.total_contribution, 0.0);
+}
+
+TEST(SceneMeasure, OneFaceReflectionUsesFinitePoseShapeAndSolarSupport) {
+  AxisDistribution axis;
+  axis.latitude_dist = { DistributionType::kUniform, 90.0f, 2.0f };
+  axis.azimuth_dist = { DistributionType::kNoRandom, 0.0f, 0.0f };
+  axis.roll_dist = { DistributionType::kUniform, 0.0f, 3.0f };
+  CrystalConfig crystal = Prism(1, axis);
+  std::get<PrismCrystalParam>(crystal.param_).d_[0] = { DistributionType::kUniform, 1.0f, 0.1f };
+  auto config = Scene({ crystal }, { 0.0f });
+  config.scene_.light_source_.param_ = SunParam{ 90.0f, 0.0f, 1.0f };
+  auto request = Request({ 1 }, { { 1 } }, 32);
+  request.member_selection = SceneMemberSelection::kConcrete;
+  const auto result = Build(config, request);
+
+  EXPECT_EQ(result.status, SceneMeasureStatus::kConfirmed);
+  EXPECT_EQ(result.sun_nodes.size(), 4u);
+  EXPECT_GT(result.total_contribution, 0.0);
+  ASSERT_GT(result.rows.size(), 1u);
+  ASSERT_EQ(result.rows.front().layers.size(), 1u);
+  const double* first_outgoing = result.rows.front().layers.front().outgoing_direction;
+  bool saw_distinct_outgoing = false;
+  for (const auto& row : result.rows) {
+    if (row.layers.size() != 1u) {
+      ADD_FAILURE() << "one-face rows must contain exactly one layer";
+      continue;
+    }
+    const auto& layer = row.layers.front();
+    EXPECT_EQ(layer.status, SceneMeasureStatus::kConfirmed);
+    EXPECT_EQ(layer.faces, (std::vector<int>{ 1 }));
+    if (layer.field.interfaces.size() != 1u) {
+      ADD_FAILURE() << "one-face rows must contain exactly one interface";
+      continue;
+    }
+    EXPECT_EQ(layer.field.interfaces[0].kind, analytic::DiagnosticInterfaceKind::kExternalReflection);
+    EXPECT_GE(layer.pose_support_rank, 1);
+    saw_distinct_outgoing = saw_distinct_outgoing ||
+                            std::fabs(layer.outgoing_direction[0] - first_outgoing[0]) > 1e-6 ||
+                            std::fabs(layer.outgoing_direction[1] - first_outgoing[1]) > 1e-6 ||
+                            std::fabs(layer.outgoing_direction[2] - first_outgoing[2]) > 1e-6;
+  }
+  EXPECT_TRUE(saw_distinct_outgoing);
+}
+
 TEST(SceneMeasure, StaticMissingFacesAreRejectedButPartialRandomSupportIsAdmitted) {
   CrystalConfig crystal = Prism(1);
   auto& prism = std::get<PrismCrystalParam>(crystal.param_);

@@ -4,7 +4,7 @@ Raypath 诊断以当前场景的实际映射和测度为对象，不以路径、
 
 ## 输入与测度
 
-对实际晶体实例 `g`、具体物理成员 `p`、波长 `λ`、太阳盘方向 `s` 和姿态 `R∈SO(3)`，一个光滑路径分支定义方向映射 `F_{g,p,λ,s}`。其有效域由所有折射和入射 gate 的严格可行性决定。有限晶体入口面积、逐接口 Fresnel 权重、形状 ensemble、姿态分布、太阳盘、光谱和成员选择共同组成显式场景测度；亮度是该加权测度经 `F` 的推送。
+对实际晶体实例 `g`、具体物理成员 `p`、波长 `λ`、太阳盘方向 `s` 和姿态 `R∈SO(3)`，一个光滑路径分支定义方向映射 `F_{g,p,λ,s}`。其有效域由所有折射和入射 gate 的严格可行性决定。有限晶体入口面积、逐接口 Fresnel 权重、形状 ensemble、姿态分布、太阳盘、光谱和成员选择共同组成显式场景测度；亮度是该加权测度经 `F` 的推送。一面成员表示首面外反射；两面及以上成员表示入射透射、内部反射和出射透射组成的链。两者是同一场景测度中的物理分支，不由固定面号、形状或姿态白名单区分。
 
 内部反射的 TIR 判别式使 Fresnel 权重非光滑，却不使部分反射离开有效域。它因此是独立的光学候选，不能被当作路径不可行或域边界。
 
@@ -22,7 +22,7 @@ Raypath 诊断以当前场景的实际映射和测度为对象，不以路径、
 
 成员选择有四种明确形式：具体 L2 face sequence、按本层实际 shape/axis 的 physical P/B/D gate 展开后的全集、该全集上的逐层显式 mask，以及逐条列出的多层 member chain。具体和显式 chain 均按 face sequence 本身标识并逐值使用，不经过 P/B/D 扩展；P/B/D gate 只定义等价成员展开，不是任意合法 face sequence 的可达性白名单。显式 chain 因而能选择同入口面但内部序列不同的成员，也能表达非笛卡尔积的多层组合。label/L1 等价不参与这一选择。层内晶体质量是该层所有正 `crystal_proportion` 的总和作分母、同一 `crystal_id` 的全部 entry 各自贡献质量的混合，不能用首个匹配 entry 代表整组；每个 linked entry 仍独立执行产品 `FilterSpec` 的 raypath、entry/exit、direction、crystal、compound、action 和 symmetry 语义。filter 拒绝把对应 entry 的接受质量置零但不重新归一，其后整层无剩余质量时终止该 chain。跨层链还乘以前置层的 continuation probability 和末层的 exit probability。
 
-每层成员序列必须含 `2..kMaxHits` 个 face。晶体种类不允许的 face，以及在该 shape 分布全部支持上都不可能出现的 face，在积分前作为非法输入拒绝；只在部分随机 shape 上消失的 face 仍是合法 ensemble 输入，并在对应实际 draw 上记为 `physically_unreachable`。固定 filter 的严格零证书只能在该行每层实际 sampled shape 都已通过 `BuildFaceNormals` 与 `ResolveSingleLayerPath` 后使用，因此非法或本次 draw 缺面的成员不能借 filter 早退伪装成 `zero_weight`。
+每层成员序列必须含 `1..kMaxHits` 个 face，空序列非法。一面成员使用实际 face polygon 的投影面积和外介质到晶体的 Fresnel 反射；两面及以上成员保留透射链语义。晶体种类不允许的 face，以及在该 shape 分布全部支持上都不可能出现的 face，在积分前作为非法输入拒绝；只在部分随机 shape 上消失的 face 仍是合法 ensemble 输入，并在对应实际 draw 上记为 `physically_unreachable`。固定 filter 的严格零证书只能在该行每层实际 sampled shape 都已通过 `BuildFaceNormals` 与通用诊断路径解析后使用，因此非法或本次 draw 缺面的成员不能借 filter 早退伪装成 `zero_weight`。
 
 场景 spectrum 模式直接使用离散节点及其原始权重；illuminant 模式对产品的 `[380,780)` 均匀波长测度做分层节点积分，并在每个节点乘同一个 `GetIlluminantSpd` 权威函数。显式 diagnostic spectrum 是独立模式，不改写场景观测谱。零权重节点保留为 `zero_weight` 行。太阳直径为零时是中心方向质量为 1 的原子；非零时是产品球冠上的单位概率测度，各节点质量之和仍为 1。太阳直径改变方向分布而不隐式改变源总能量；另行需要 radiance/solid-angle 模式时必须由独立输入明确给出，不能借用默认场景语义。
 

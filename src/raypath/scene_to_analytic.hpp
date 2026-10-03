@@ -50,6 +50,12 @@ void SunIncidentDirection(const SunParam& sun, double out[3]);
 Error ResolveSingleLayerPath(const std::vector<std::vector<int>>& layers, const analytic::FaceNormalTable& table,
                              std::vector<int>* slots);
 
+// One layer of the modern scene-measure/diagnostic-field route. Unlike the older single-path
+// analysis surface above, this admits a one-face external reflection as well as 2..64-face
+// transmitted chains.
+Error ResolveDiagnosticLayerPath(const std::vector<int>& faces, const analytic::FaceNormalTable& table,
+                                 std::vector<int>* slots);
+
 // A crystal's axis distribution as the band sum's pose density (LI docs/band-sum-contract.md section
 // 2.2; the one-to-one table is LI ch11-pose-density-families.md section 1). A full-sphere uniform
 // axis is `random`; otherwise the azimuth must be uniform over 360 degrees, the zenith a Gaussian

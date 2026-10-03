@@ -121,15 +121,20 @@ struct DiagnosticField::Values {
 
 DiagnosticField::DiagnosticField(const FaceNormalTable& normals, const FacePolygonTable& polygons, const int* faces,
                                  const int* slots, int face_count)
-    : normals_(normals), faces_(faces, faces + face_count), slots_(slots, slots + face_count),
-      corridor_(normals, polygons, slots, face_count) {}
+    : normals_(normals), faces_(faces, faces + face_count), slots_(slots, slots + face_count) {
+  if (face_count == 1) {
+    external_reflection_.emplace(normals, polygons, slots[0]);
+  } else {
+    corridor_.emplace(normals, polygons, slots, face_count);
+  }
+}
 
 DiagnosticField::Values DiagnosticField::EvaluateValues(const DiagnosticRowInput& input) {
   Values values;
   const int face_count = static_cast<int>(faces_.size());
   values.coefficients.assign(face_count, QuietNan());
-  values.domain_margins.assign(BranchMarginCount(face_count), QuietNan());
-  values.tir_margins.assign(std::max(0, face_count - 2), QuietNan());
+  values.domain_margins.assign(face_count == 1 ? 1 : BranchMarginCount(face_count), QuietNan());
+  values.tir_margins.assign(face_count == 1 ? 1 : std::max(0, face_count - 2), QuietNan());
 
   // Finite support is a distinct diagnostic: a direction-domain failure must not erase its
   // independently decidable entry state.
@@ -139,7 +144,43 @@ DiagnosticField::Values DiagnosticField::EvaluateValues(const DiagnosticRowInput
                        input.pose[1 * 3 + i] * input.incident_direction[1] +
                        input.pose[2 * 3 + i] * input.incident_direction[2];
   }
-  const EntryMeasure entry = corridor_.Evaluate(incident_body, input.refractive_index);
+  if (external_reflection_) {
+    const ExternalReflectionResult reflection = external_reflection_->Evaluate(incident_body, input.refractive_index);
+    values.domain_margins[0] = reflection.incidence_cosine;
+    values.tir_margins[0] = reflection.tir_discriminant;
+    values.entry_topology_signature = reflection.topology_signature;
+    switch (reflection.status) {
+      case ExternalReflectionStatus::kOk:
+        values.path_status = DiagnosticPathStatus::kOk;
+        values.entry_status = DiagnosticEntryStatus::kOk;
+        values.entry_measure = reflection.entry_measure;
+        values.coefficients[0] = reflection.reflectance;
+        values.fresnel_weight = reflection.reflectance;
+        for (int row = 0; row < 3; ++row) {
+          values.outgoing[row] = input.pose[row * 3 + 0] * reflection.outgoing_direction[0] +
+                                 input.pose[row * 3 + 1] * reflection.outgoing_direction[1] +
+                                 input.pose[row * 3 + 2] * reflection.outgoing_direction[2];
+        }
+        break;
+      case ExternalReflectionStatus::kEntryBackface:
+        values.path_status = DiagnosticPathStatus::kPathInfeasible;
+        values.entry_status = DiagnosticEntryStatus::kEntryBackface;
+        values.entry_measure = 0.0;
+        break;
+      case ExternalReflectionStatus::kDegenerateFace:
+        values.path_status = DiagnosticPathStatus::kPathInfeasible;
+        values.entry_status = DiagnosticEntryStatus::kCorridorEmpty;
+        values.entry_measure = 0.0;
+        break;
+      case ExternalReflectionStatus::kNonFinite:
+        values.path_status = DiagnosticPathStatus::kNonFinite;
+        values.entry_status = DiagnosticEntryStatus::kNotEvaluated;
+        break;
+    }
+    return values;
+  }
+
+  const EntryMeasure entry = corridor_->Evaluate(incident_body, input.refractive_index);
   values.entry_status = ToEntryStatus(entry.status);
   values.entry_topology_signature = entry.topology_signature;
   values.entry_measure = entry.status == EntryMeasureStatus::kOk ? entry.value : 0.0;
@@ -198,24 +239,28 @@ DiagnosticFieldResult DiagnosticField::EvaluateWithoutDerivatives(const Diagnost
   for (int i = 0; i < face_count; i++) {
     DiagnosticInterface& interface = out.interfaces[static_cast<size_t>(i)];
     interface.face_number = faces_[static_cast<size_t>(i)];
-    interface.kind = i == 0 ? DiagnosticInterfaceKind::kEntryTransmission :
-                              (i + 1 == face_count ? DiagnosticInterfaceKind::kExitTransmission :
-                                                     DiagnosticInterfaceKind::kInternalReflection);
+    interface.kind = face_count == 1 ? DiagnosticInterfaceKind::kExternalReflection :
+                     i == 0          ? DiagnosticInterfaceKind::kEntryTransmission :
+                                       (i + 1 == face_count ? DiagnosticInterfaceKind::kExitTransmission :
+                                                              DiagnosticInterfaceKind::kInternalReflection);
     interface.coefficient = base.coefficients[static_cast<size_t>(i)];
   }
   out.domain_margins.resize(base.domain_margins.size());
   for (size_t i = 0; i < base.domain_margins.size(); i++) {
     DiagnosticMargin& margin = out.domain_margins[i];
-    margin.name = BranchMarginName(static_cast<int>(i), face_count);
-    margin.interface_index =
-        i < 2 ? 0 : (i + 2 >= base.domain_margins.size() ? face_count - 1 : static_cast<int>(i - 1));
+    margin.name =
+        face_count == 1 ? "external_reflection_incidence_cosine" : BranchMarginName(static_cast<int>(i), face_count);
+    margin.interface_index = face_count == 1 ? 0 :
+                             i < 2           ? 0 :
+                                     (i + 2 >= base.domain_margins.size() ? face_count - 1 : static_cast<int>(i - 1));
     margin.value = base.domain_margins[i];
   }
   out.tir_margins.resize(base.tir_margins.size());
   for (size_t i = 0; i < base.tir_margins.size(); i++) {
     DiagnosticMargin& margin = out.tir_margins[i];
-    margin.name = "internal_" + std::to_string(i + 1) + "_tir_discriminant";
-    margin.interface_index = static_cast<int>(i + 1);
+    margin.name = face_count == 1 ? "external_reflection_tir_discriminant" :
+                                    "internal_" + std::to_string(i + 1) + "_tir_discriminant";
+    margin.interface_index = face_count == 1 ? 0 : static_cast<int>(i + 1);
     margin.value = base.tir_margins[i];
   }
   return out;
@@ -369,9 +414,12 @@ void DiagnosticField::FillDerivatives(const DiagnosticRowInput& input, const Val
         kPoseFirstAbsoluteError);
   }
   for (size_t i = 0; i < out->interfaces.size(); i++) {
-    auto coefficient_compatible = [i, &base, &path_compatible](const Values& lo, const Values& hi) {
+    auto coefficient_compatible = [this, i, &base, &path_compatible](const Values& lo, const Values& hi) {
       if (!path_compatible(lo, hi)) {
         return false;
+      }
+      if (external_reflection_) {
+        return IsSmoothTirCoefficientSample(base.tir_margins[0], lo.tir_margins[0], hi.tir_margins[0]);
       }
       if (i == 0 || i + 1 == lo.coefficients.size()) {
         return true;
@@ -393,7 +441,8 @@ void DiagnosticField::FillDerivatives(const DiagnosticRowInput& input, const Val
   // with a geometry-only area reference instead of the centre value, which may approach zero at a
   // legitimate corridor boundary.  Corridor::Eps() is kEntryMeasureEpsRel times the shortest
   // crystal edge squared, so this reference follows any common change of length unit exactly.
-  const double entry_area_scale = corridor_.Eps() / kEntryMeasureEpsRel;
+  const double entry_area_scale =
+      external_reflection_ ? external_reflection_->Area() : corridor_->Eps() / kEntryMeasureEpsRel;
   fill_pose_scalar(
       base.entry_measure, [](const Values& v) { return v.entry_measure; }, &out->entry_pose_gradient_available,
       out->entry_pose_gradient, entry_compatible, kPoseFirstAbsoluteError * entry_area_scale);
@@ -473,9 +522,12 @@ void DiagnosticField::FillDerivatives(const DiagnosticRowInput& input, const Val
                       path_compatible, kIndexAbsoluteError);
   }
   for (size_t i = 0; i < out->interfaces.size(); i++) {
-    auto coefficient_compatible = [i, &base, &path_compatible](const Values& lo, const Values& hi) {
+    auto coefficient_compatible = [this, i, &base, &path_compatible](const Values& lo, const Values& hi) {
       if (!path_compatible(lo, hi)) {
         return false;
+      }
+      if (external_reflection_) {
+        return IsSmoothTirCoefficientSample(base.tir_margins[0], lo.tir_margins[0], hi.tir_margins[0]);
       }
       return i == 0 || i + 1 == lo.coefficients.size() ||
              IsSmoothTirCoefficientSample(base.tir_margins[i - 1], lo.tir_margins[i - 1], hi.tir_margins[i - 1]);

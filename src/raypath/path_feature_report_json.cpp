@@ -147,6 +147,20 @@ const char* DiagnosticEntryStatusName(analytic::DiagnosticEntryStatus status) {
   return "not_evaluated";
 }
 
+const char* DiagnosticInterfaceKindName(analytic::DiagnosticInterfaceKind kind) {
+  switch (kind) {
+    case analytic::DiagnosticInterfaceKind::kEntryTransmission:
+      return "entry_transmission";
+    case analytic::DiagnosticInterfaceKind::kInternalReflection:
+      return "internal_reflection";
+    case analytic::DiagnosticInterfaceKind::kExitTransmission:
+      return "exit_transmission";
+    case analytic::DiagnosticInterfaceKind::kExternalReflection:
+      return "external_reflection";
+  }
+  return "unknown";
+}
+
 nlohmann::ordered_json SceneMeasureJson(const SceneMeasureResult& measure) {
   nlohmann::ordered_json factors = nlohmann::ordered_json::array();
   for (const MeasureFactorDescriptor& factor : measure.factors) {
@@ -194,7 +208,9 @@ nlohmann::ordered_json SceneMeasureJson(const SceneMeasureResult& measure) {
       }
       nlohmann::ordered_json interfaces = nlohmann::ordered_json::array();
       for (const analytic::DiagnosticInterface& interface : layer.field.interfaces) {
-        interfaces.push_back({ { "face", interface.face_number }, { "coefficient", Num(interface.coefficient) } });
+        interfaces.push_back({ { "face", interface.face_number },
+                               { "kind", DiagnosticInterfaceKindName(interface.kind) },
+                               { "coefficient", Num(interface.coefficient) } });
       }
       nlohmann::ordered_json domain_margins = nlohmann::ordered_json::array();
       for (const analytic::DiagnosticMargin& margin : layer.field.domain_margins) {

@@ -615,6 +615,8 @@ LUMICE_ANALYTIC_DiagnosticInterfaceKind ToDiagnosticInterfaceKind(lumice::analyt
       return LUMICE_ANALYTIC_DIAGNOSTIC_INTERNAL_REFLECTION;
     case K::kExitTransmission:
       return LUMICE_ANALYTIC_DIAGNOSTIC_EXIT_TRANSMISSION;
+    case K::kExternalReflection:
+      return LUMICE_ANALYTIC_DIAGNOSTIC_EXTERNAL_REFLECTION;
   }
   return LUMICE_ANALYTIC_DIAGNOSTIC_ENTRY_TRANSMISSION;
 }
@@ -713,11 +715,11 @@ LUMICE_ANALYTIC_ErrorCode EvaluateDiagnosticFieldBatchImpl(const LUMICE_ANALYTIC
   if (const auto status = an::BuildFaceNormals(*crystal, &normals, &polygons); status != an::Status::kOk) {
     return ToErrorCode(status);
   }
-  if (face_count < 2 || face_count > an::kMaxFaceCount) {
+  if (face_count < 1 || face_count > an::kMaxFaceCount) {
     return LUMICE_ANALYTIC_ERR_INVALID_VALUE;
   }
   int slots[an::kMaxFaceCount];
-  if (an::ResolveFaceSequence(normals, faces, face_count, slots) != an::Status::kOk) {
+  if (an::ResolveDiagnosticFaceSequence(normals, faces, face_count, slots) != an::Status::kOk) {
     return LUMICE_ANALYTIC_ERR_INVALID_VALUE;
   }
 

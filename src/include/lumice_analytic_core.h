@@ -23,6 +23,9 @@
 // face sequence and performs no symmetry reduction (doc/analytic-api.md section 3).
 //
 // Version notes, newest first (every bump says what changed, doc/analytic-api.md section 8.1):
+//   8  ADDED one-face external-reflection semantics to EvaluateDiagnosticFieldBatch and appended
+//      LUMICE_ANALYTIC_DIAGNOSTIC_EXTERNAL_REFLECTION to DiagnosticInterfaceKind. The frozen
+//      version 7 DiagnosticFieldResult layout and every older computation contract are unchanged.
 //   7  ADDED LUMICE_ANALYTIC_DiagnosticFieldRow, LUMICE_ANALYTIC_DiagnosticFieldResult and their
 //      variable interface/margin records, LUMICE_ANALYTIC_EvaluateDiagnosticFieldBatch, and
 //      LUMICE_ANALYTIC_ReleaseDiagnosticFieldResult. Nothing existing changed.
@@ -76,7 +79,7 @@ extern "C" {
 
 // Interface version, a single integer (doc/analytic-api.md section 8.2): bumped on every
 // incompatible change, and in 0.x on every addition too. Independent of lumice_base.h's LUMICE_API_VERSION.
-#define LUMICE_ANALYTIC_API_VERSION 7
+#define LUMICE_ANALYTIC_API_VERSION 8
 
 // Return codes of the computation functions. The names shared with lumice_base.h's LUMICE_ErrorCode mean
 // the same thing there; the type is this header's own (doc/analytic-api.md section 5.2). A numerical
@@ -199,6 +202,7 @@ typedef enum LUMICE_ANALYTIC_DiagnosticInterfaceKind_ {
   LUMICE_ANALYTIC_DIAGNOSTIC_ENTRY_TRANSMISSION = 0,
   LUMICE_ANALYTIC_DIAGNOSTIC_INTERNAL_REFLECTION = 1,
   LUMICE_ANALYTIC_DIAGNOSTIC_EXIT_TRANSMISSION = 2,
+  LUMICE_ANALYTIC_DIAGNOSTIC_EXTERNAL_REFLECTION = 3,
 } LUMICE_ANALYTIC_DiagnosticInterfaceKind;
 
 typedef struct LUMICE_ANALYTIC_DiagnosticInterface_ {
@@ -254,7 +258,11 @@ typedef struct LUMICE_ANALYTIC_DiagnosticFieldResult_ {
   void* storage;  // opaque; LUMICE_ANALYTIC_ReleaseDiagnosticFieldResult
 } LUMICE_ANALYTIC_DiagnosticFieldResult;
 
-// Evaluates `rows[0..count)` for one deterministic crystal and concrete face sequence. The call
+// Evaluates `rows[0..count)` for one deterministic crystal and concrete face sequence. A one-face
+// sequence is the external reflection at that finite face: entry_measure is its projected area,
+// fresnel_weight is air-to-crystal reflectance, and the sole interface has kind
+// DIAGNOSTIC_EXTERNAL_REFLECTION. Sequences of 2..64 faces retain the transmitted/internal-
+// reflection/transmitted meaning of EvaluatePath. The call
 // constructs one internal field and reuses its geometry/path preparation across all rows; there is
 // no persistent handle or global cache. Direction, pose and refractive-index validation is per row:
 // a bad row has row_error = ERR_INVALID_VALUE and otherwise zero fields while later rows continue.
@@ -264,7 +272,7 @@ typedef struct LUMICE_ANALYTIC_DiagnosticFieldResult_ {
 //   ERR_NULL_ARG       crystal, faces, rows or out_results is NULL when count > 0
 //   ERR_INVALID_VALUE  count < 0 (touches nothing); first struct_size smaller than the complete
 //                      version 7 layout through storage; non-uniform result struct_size;
-//                      face_count outside 2..64; an absent face; a crystal field as for EvaluatePath
+//                      face_count outside 1..64; an absent face; a crystal field as for EvaluatePath
 //   ERR_INVALID_CONFIG crystal rejected by the engine's closed-form validity gate
 //   ERR_UNKNOWN        an internal failure; any completed row storage is reclaimed
 // count == 0 succeeds and touches no pointer. The first result's struct_size is the byte stride and

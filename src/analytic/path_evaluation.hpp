@@ -114,6 +114,11 @@ constexpr int kApiVersion = LUMICE_ANALYTIC_API_VERSION;
 // not valid.
 Status ResolveFaceSequence(const FaceNormalTable& table, const int* faces, int face_count, int* slots_out);
 
+// General diagnostic-field resolver. A one-face sequence is the external reflection at that face;
+// longer sequences retain ResolveFaceSequence's transmitted/internal-reflection/transmitted
+// meaning. The older path/fiber/discovery surfaces intentionally keep their 2..64 contract.
+Status ResolveDiagnosticFaceSequence(const FaceNormalTable& table, const int* faces, int face_count, int* slots_out);
+
 // Finite and |v| within kUnitTolerance of 1.
 bool ValidateUnitVector(const double v[3]);
 // Finite, R^T R within kRotationTolerance of I (entrywise) and det(R) > 0. `r` is row-major.

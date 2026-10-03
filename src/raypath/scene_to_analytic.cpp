@@ -136,6 +136,28 @@ Error ResolveSingleLayerPath(const std::vector<std::vector<int>>& layers, const 
   return {};
 }
 
+Error ResolveDiagnosticLayerPath(const std::vector<int>& faces, const analytic::FaceNormalTable& table,
+                                 std::vector<int>* slots) {
+  slots->clear();
+  if (faces.empty() || faces.size() > static_cast<size_t>(analytic::kMaxFaceCount)) {
+    return { ErrorCode::kInvalidPath, "a diagnostic path layer has 1 to " + std::to_string(analytic::kMaxFaceCount) +
+                                          " faces; got " + std::to_string(faces.size()) };
+  }
+  slots->resize(faces.size());
+  if (analytic::ResolveDiagnosticFaceSequence(table, faces.data(), static_cast<int>(faces.size()), slots->data()) !=
+      analytic::Status::kOk) {
+    for (int face : faces) {
+      if (table.SlotOf(face) < 0) {
+        slots->clear();
+        return { ErrorCode::kFaceNotInCrystal, "face " + std::to_string(face) + " is not a face of this crystal" };
+      }
+    }
+    slots->clear();
+    return { ErrorCode::kInvalidPath, "the diagnostic path layer is invalid" };
+  }
+  return {};
+}
+
 namespace {
 
 // A distribution's type as the config file spells it ("fixed" for a scalar, which the file writes

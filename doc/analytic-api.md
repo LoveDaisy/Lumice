@@ -9,7 +9,7 @@
 > 3) and component discovery `LUMICE_ANALYTIC_DiscoverComponents` (version 4); and module A v1's
 > per-pose diagnostics on `FiberResult` (version 5, §4.3); and module B v1, the band sum
 > `LUMICE_ANALYTIC_BandSum` (version 6, §4.6), and the general diagnostic-field direct batch
-> (version 7, §4.8). Module A serves the Analyze workspace's first phase,
+> (version 8, §4.8; its result layout remains the frozen version 7 layout). Module A serves the Analyze workspace's first phase,
 > module B its second, the single-path all-sky map (`doc/raypath-analysis.md` §5.1.8). The library is not in any
 > download package yet: that is §8.8's checklist, not done.
 >
@@ -953,6 +953,13 @@ records, `EvaluateDiagnosticFieldBatch` and `ReleaseDiagnosticFieldResult`. Noth
 changed. §4.8 is the record of the direct-batch decision and every coordinate, status, derivative,
 ownership and concurrency rule.
 
+Version 8 extends that batch's accepted path domain from 2–64 faces to 1–64 faces. A one-face path
+is the product's external reflection at that face and reports the appended
+`LUMICE_ANALYTIC_DIAGNOSTIC_EXTERNAL_REFLECTION` interface kind. The version 7 result structure,
+minimum size, stride and ownership rules are unchanged; the new enum value is carried in its
+existing `kind` field. The older path, fiber, discovery and band-sum entries retain their
+transmitted-chain minimum of two faces.
+
 ### 4.6 Module B: the band sum (as built, API version 6)
 
 The single-path brightness map of Analyze's second function. The specification is LI
@@ -978,11 +985,12 @@ every visual feature has been classified. Module C remains wave 3 (§10): its LI
 fixtures are a prerequisite for a stable public analytic surface, not evidence that it is already
 part of API version 6.
 
-### 4.8 General diagnostic field (as built, API version 7)
+### 4.8 General diagnostic field (as built, API version 8; version 7 result layout)
 
-This section fixes the consumer-facing mathematics and the version 7 direct-batch C ABI for the
-general field. The independent consumer below calls the built library; the coordinate, ownership
-and fail-closed rules are the public contract.
+This section fixes the consumer-facing mathematics and the direct-batch C ABI for the general
+field. Version 8 adds one-face external reflection without changing the version 7 result layout.
+The independent consumer below calls the built library; the coordinate, ownership and fail-closed
+rules are the public contract.
 
 **Geometry adaptation.**  The analytic library continues to accept the engine's deterministic
 closed-form prism and pyramid scalars.  An LI `Polyhedron` is losslessly adaptable only when all of
@@ -998,9 +1006,21 @@ the following hold:
 
 A mesh with an extra bevel, a missing closed-form face, a non-uniform affine transform, a plane
 whose normal or offset cannot be reproduced, a non-convex face, or an ambiguous face-number map is
-`not_supported`.  It is never projected onto the nearest prism/pyramid.  The non-reference fixture
-used by the independent consumer is a six-distance asymmetric prism; its planes and face numbers
-round-trip through this matrix before any optical expectation is evaluated.
+`not_supported`.  It is never projected onto the nearest prism/pyramid.  The non-reference
+fixtures include a six-distance asymmetric prism and pyramid cone faces; their planes and face
+numbers round-trip through this matrix before any optical expectation is evaluated.
+
+**Path meanings.** A sequence of two or more faces has the established enter-transmit, zero or more
+internal-reflect, exit-transmit meaning. A sequence of exactly one face means reflection from the
+external medium at that finite face. For outward body normal `N`, body-frame incident propagation
+direction `d = R^T s`, and `c = -d·N`, it is feasible when `c > 0`; its entry measure is
+`area(face) c` and its world outgoing direction is `R(d - 2(d·N)N)`. With crystal index `n`, the
+external-relative index is `eta = 1/n` and the reported TIR discriminant is
+`D = 1 - eta^2(1-c^2)`. The coefficient is the unpolarised external Fresnel reflectance for
+`D >= 0` and one for `D < 0`. At `D = 0` only the coefficient is non-smooth: the reflected
+direction remains valid. The interface kind is `EXTERNAL_REFLECTION`; its domain and TIR margins
+are named `external_reflection_incidence_cosine` and
+`external_reflection_tir_discriminant`. Empty paths remain invalid.
 
 **One field row.**  Geometry and one concrete face sequence are shared by a batch.  Each row carries
 its own refractive index, world propagation direction (sun to crystal), and row-major active
@@ -1028,17 +1048,19 @@ estimate must not exceed an absolute-plus-relative gate: `2e-6 + 2e-5 * scale` f
 pose first derivatives, `5e-5 + 2e-4 * scale` for pose Hessians, and
 `2e-8 + 2e-6 * scale` for dimensionless index derivatives, where
 `scale = max(|D_h|, |D_h2|, |D_returned|)`.  Entry measure and both of its derivatives carry the
-crystal length unit squared, so their corresponding absolute terms are multiplied by
-`min_edge_length^2`; unlike the centre entry area, this geometry-only scale remains nonzero and
-stable as a corridor approaches empty.  Consequently a common change of crystal length unit
-scales the entry value, derivative and absolute error gate together without changing availability.
+crystal length unit squared, so their corresponding absolute terms use a geometry-only area scale:
+`min_edge_length^2` for a transmitted corridor and the actual face area for an external
+reflection. Unlike the centre projected measure, either reference remains nonzero at grazing
+incidence. Consequently a common change of crystal length unit scales the entry value, derivative
+and absolute error gate together without changing availability.
 These calibrated local cancellation and truncation checks are an availability test, not a global
 mathematical error certificate.
 
 Every sample at both scales must also satisfy the field's applicable differentiability semantics.
 Direction and optical derivatives require every direction-domain margin at the centre and samples
-to exceed `1e-4`; all interface coefficients apply that full path gate, while an internal
-coefficient additionally keeps its own TIR discriminant on one side and outside its `1e-4` guard.
+to exceed `1e-4`; all interface coefficients apply that full path gate, while an internal or
+external reflection coefficient additionally keeps its own TIR discriminant on one side and
+outside its `1e-4` guard.
 Entry-measure derivatives instead require an `ENTRY_OK` corridor with an unchanged clipping
 topology, because finite support remains independently computable even when the optical path is not.
 Thus an un-crossed gate at one fixed scale is never by itself evidence that a derivative is smooth.
@@ -1063,6 +1085,7 @@ pre-ABI fixtures are:
 
 | family | path / variation | field evidence read |
 |---|---|---|
+| regular prism | one-face external reflection, normal/oblique incidence and `n < 1` critical neighbourhood | finite face area, reflected direction/Jacobian/Hessian, external Fresnel and branch-aware derivatives |
 | asymmetric prism | two-face transmission, non-identity pose | direction, both interfaces, entry measure, pose/index derivatives |
 | asymmetric prism | four-face path | all four coefficients/margins and both internal TIR discriminants |
 | asymmetric pyramid | cone-to-cone multi-reflection | face identity, variable counts and Hessian layout |

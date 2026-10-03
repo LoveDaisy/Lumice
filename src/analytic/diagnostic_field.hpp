@@ -5,10 +5,12 @@
 // layout and storage; this kernel owns the numerical meaning and derivative availability.
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
 #include "analytic/entry_measure.hpp"
+#include "analytic/external_reflection.hpp"
 #include "analytic/path_evaluation.hpp"
 
 namespace lumice::analytic {
@@ -43,7 +45,7 @@ enum class DiagnosticEntryStatus {
   kCorridorEmpty,
 };
 
-enum class DiagnosticInterfaceKind { kEntryTransmission, kInternalReflection, kExitTransmission };
+enum class DiagnosticInterfaceKind { kEntryTransmission, kInternalReflection, kExitTransmission, kExternalReflection };
 
 struct DiagnosticRowInput {
   double refractive_index = 0.0;
@@ -114,7 +116,8 @@ class DiagnosticField {
   const FaceNormalTable& normals_;
   std::vector<int> faces_;
   std::vector<int> slots_;
-  Corridor corridor_;
+  std::optional<Corridor> corridor_;
+  std::optional<ExternalReflectionFace> external_reflection_;
 };
 
 }  // namespace lumice::analytic

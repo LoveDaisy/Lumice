@@ -136,11 +136,11 @@ _PRELUDE = textwrap.dedent(
 
     OK, NULL_ARG, INVALID_VALUE = 0, 1, 2
     PATH_OK, ENTRY_OK = 0, 1
-    ENTRY_T, INTERNAL_R, EXIT_T = 0, 1, 2
+    ENTRY_T, INTERNAL_R, EXIT_T, EXTERNAL_R = 0, 1, 2, 3
 
     lib = ctypes.CDLL(LIB)
     lib.LUMICE_ANALYTIC_GetApiVersion.restype = c_int
-    assert lib.LUMICE_ANALYTIC_GetApiVersion() == 7
+    assert lib.LUMICE_ANALYTIC_GetApiVersion() == 8
     lib.LUMICE_ANALYTIC_EvaluateDiagnosticFieldBatch.restype = c_int
     lib.LUMICE_ANALYTIC_EvaluateDiagnosticFieldBatch.argtypes = [POINTER(Crystal), POINTER(c_int), c_int,
                                                                  POINTER(Row), c_int, c_void_p]
@@ -186,6 +186,101 @@ def _run_child(body: str) -> None:
     code = f"LIB = {str(_find_library())!r}\nROOT = {str(ROOT)!r}\n" + _PRELUDE + textwrap.dedent(body)
     proc = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=120)
     assert proc.returncode == 0, f"child failed (rc={proc.returncode}):\n{proc.stdout}\n{proc.stderr}"
+
+
+@pytest.mark.slow
+def test_one_face_external_reflection_has_independent_direction_and_fresnel_oracles() -> None:
+    _run_child(
+        """
+        crystal = prism()
+        for index in range(6):
+            crystal.face_distance[index] = 1.0
+        identity = (1., 0., 0., 0., 1., 0., 0., 0., 1.)
+        rows = (Row * 2)(row(index=1.31, incident=(0., 0., -1.), pose=identity),
+                         row(index=1.47, incident=(0., 0., -1.), pose=identity))
+        out = results(2)
+        assert call(crystal, (1,), rows, out) == OK
+        expected_jacobian = (0., 2., 0., -2., 0., 0., 0., 0., 0.)
+        expected_hessian = [0.] * 27
+        expected_hessian[9 * 0 + 3 * 0 + 2] = 1.
+        expected_hessian[9 * 0 + 3 * 2 + 0] = 1.
+        expected_hessian[9 * 1 + 3 * 1 + 2] = 1.
+        expected_hessian[9 * 1 + 3 * 2 + 1] = 1.
+        expected_hessian[9 * 2 + 3 * 0 + 0] = -4.
+        expected_hessian[9 * 2 + 3 * 1 + 1] = -4.
+        try:
+            for result, index in zip(out, (1.31, 1.47)):
+                assert result.row_error == OK and result.path_status == PATH_OK
+                assert result.entry_status == ENTRY_OK and result.interface_count == 1
+                assert result.interfaces[0].kind == EXTERNAL_R and result.interfaces[0].face_number == 1
+                close(result.fresnel_weight, ((index - 1.) / (index + 1.)) ** 2, 1e-12)
+                close(result.interfaces[0].coefficient, result.fresnel_weight, 1e-15)
+                close(result.entry_measure, 3. * math.sqrt(3.) / 8., 1e-7)
+                for actual, expected in zip(result.outgoing_direction, (0., 0., 1.)):
+                    close(actual, expected, 1e-12)
+                assert result.domain_margin_count == 1 and result.tir_margin_count == 1
+                assert result.domain_margins[0].name.decode() == "external_reflection_incidence_cosine"
+                assert result.tir_margins[0].name.decode() == "external_reflection_tir_discriminant"
+                close(result.domain_margins[0].value, 1., 1e-15)
+                close(result.tir_margins[0].value, 1., 1e-15)
+                assert result.direction_pose_jacobian_available and result.direction_pose_hessian_available
+                assert result.direction_index_derivative_available
+                for actual, expected in zip(result.direction_pose_jacobian, expected_jacobian):
+                    close(actual, expected, 1e-7)
+                for actual, expected in zip(result.direction_pose_hessian, expected_hessian):
+                    close(actual, expected, 2e-5)
+                for actual in result.direction_index_derivative:
+                    close(actual, 0., 1e-12)
+                assert result.entry_pose_gradient_available and result.entry_index_derivative_available
+                for actual in result.entry_pose_gradient:
+                    close(actual, 0., 1e-8)
+                close(result.entry_index_derivative, 0., 1e-12)
+                interface = result.interfaces[0]
+                assert interface.pose_derivative_available and interface.index_derivative_available
+                for actual in interface.pose_gradient:
+                    close(actual, 0., 1e-8)
+                close(interface.index_derivative, 4. * (index - 1.) / (index + 1.) ** 3, 2e-9)
+                assert result.domain_margins[0].pose_derivative_available
+                assert result.domain_margins[0].index_derivative_available
+                assert result.tir_margins[0].pose_derivative_available
+                assert result.tir_margins[0].index_derivative_available
+                close(result.domain_margins[0].index_derivative, 0., 1e-12)
+                close(result.tir_margins[0].index_derivative, 0., 1e-12)
+        finally:
+            for result in out:
+                lib.LUMICE_ANALYTIC_ReleaseDiagnosticFieldResult(byref(result))
+
+        sine, cosine = 0.6, 0.8
+        branch_rows = (Row * 4)(row(index=1.31, incident=(sine, 0., -cosine), pose=identity),
+                                row(index=0.5, incident=(sine, 0., -cosine), pose=identity),
+                                row(index=sine, incident=(sine, 0., -cosine), pose=identity),
+                                row(index=sine + 1e-3, incident=(sine, 0., -cosine), pose=identity))
+        branch_out = results(4)
+        assert call(crystal, (1,), branch_rows, branch_out) == OK
+        try:
+            for result in branch_out:
+                assert result.row_error == OK and result.path_status == PATH_OK
+                for actual, expected in zip(result.outgoing_direction, (sine, 0., cosine)):
+                    close(actual, expected, 1e-12)
+            transmitted_cosine = math.sqrt(1. - sine * sine / (1.31 * 1.31))
+            rs = (cosine - 1.31 * transmitted_cosine) / (cosine + 1.31 * transmitted_cosine)
+            rp = (1.31 * cosine - transmitted_cosine) / (1.31 * cosine + transmitted_cosine)
+            close(branch_out[0].interfaces[0].coefficient, .5 * (rs * rs + rp * rp), 2e-12)
+            assert branch_out[1].tir_margins[0].value < 0.
+            close(branch_out[1].interfaces[0].coefficient, 1., 0.)
+            assert branch_out[1].interfaces[0].index_derivative_available
+            close(branch_out[1].interfaces[0].index_derivative, 0., 1e-12)
+            close(branch_out[2].tir_margins[0].value, 0., 2e-15)
+            assert branch_out[2].direction_pose_jacobian_available
+            assert branch_out[2].direction_index_derivative_available
+            assert not branch_out[2].interfaces[0].pose_derivative_available
+            assert not branch_out[2].interfaces[0].index_derivative_available
+            assert branch_out[3].interfaces[0].coefficient < 1.
+        finally:
+            for result in branch_out:
+                lib.LUMICE_ANALYTIC_ReleaseDiagnosticFieldResult(byref(result))
+        """
+    )
 
 
 @pytest.mark.slow

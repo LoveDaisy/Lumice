@@ -241,8 +241,11 @@ Status BuildFaceNormals(const LUMICE_ANALYTIC_Crystal& crystal, FaceNormalTable*
   return Status::kOk;
 }
 
-Status ResolveFaceSequence(const FaceNormalTable& table, const int* faces, int face_count, int* slots_out) {
-  if (face_count < 2) {
+namespace {
+
+Status ResolveFaceSequenceWithMinimum(const FaceNormalTable& table, const int* faces, int face_count,
+                                      int minimum_face_count, int* slots_out) {
+  if (face_count < minimum_face_count || face_count > kMaxFaceCount) {
     return Status::kInvalidValue;
   }
   for (int k = 0; k < face_count; k++) {
@@ -253,6 +256,16 @@ Status ResolveFaceSequence(const FaceNormalTable& table, const int* faces, int f
     slots_out[k] = slot;
   }
   return Status::kOk;
+}
+
+}  // namespace
+
+Status ResolveFaceSequence(const FaceNormalTable& table, const int* faces, int face_count, int* slots_out) {
+  return ResolveFaceSequenceWithMinimum(table, faces, face_count, 2, slots_out);
+}
+
+Status ResolveDiagnosticFaceSequence(const FaceNormalTable& table, const int* faces, int face_count, int* slots_out) {
+  return ResolveFaceSequenceWithMinimum(table, faces, face_count, 1, slots_out);
 }
 
 bool ValidateUnitVector(const double v[3]) {

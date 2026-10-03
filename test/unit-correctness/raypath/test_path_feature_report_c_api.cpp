@@ -303,6 +303,15 @@ TEST(PathFeatureReportCApi, FrozenV451RequestRetainsSchemaOneWithoutScattering) 
   ASSERT_EQ(doc["wavelengths"].size(), 1u);
   EXPECT_DOUBLE_EQ(doc["wavelengths"][0]["nm"], wavelength);
   EXPECT_DOUBLE_EQ(doc["wavelengths"][0]["weight"], weight);
+
+  int one_face[1] = { 1 };
+  int one_count[1] = { 1 };
+  request.faces = one_face;
+  request.face_count = 1;
+  request.layer_face_counts = one_count;
+  outcome = AnalyseV451(scene.get(), request);
+  EXPECT_EQ(outcome.code, LUMICE_ERR_INVALID_VALUE);
+  EXPECT_NE(outcome.error.find("[2, 64]"), std::string::npos) << outcome.error;
 }
 
 TEST(PathFeatureReportCApi, AFutureTailIsIgnoredAfterTheKnownV3Extent) {
@@ -498,6 +507,33 @@ TEST(PathFeatureReportCApi, InvalidRepresentableMemberFacesAreRejectedBeforeFixe
   EXPECT_EQ(outcome.report, nullptr);
 }
 
+TEST(PathFeatureReportCApi, OneFaceExternalReflectionReachesTheActualSceneReport) {
+  auto config = nlohmann::json::parse(kSceneJson);
+  config["scene"]["max_hits"] = 1;
+  config["scene"]["light_source"]["altitude"] = 90.0;
+  config["crystal"][0]["axis"]["zenith"] = { { "type", "gauss" }, { "mean", 0.0 }, { "std", 0.0 } };
+  config["crystal"][0]["axis"]["azimuth"] = { { "type", "gauss" }, { "mean", 0.0 }, { "std", 0.0 } };
+  config["crystal"][0]["axis"]["roll"] = { { "type", "gauss" }, { "mean", 0.0 }, { "std", 0.0 } };
+  const std::string text = config.dump();
+  const ScenePtr scene = MakeScene(text.c_str());
+  Request request;
+  const int faces[1] = { 1 };
+  const int counts[1] = { 1 };
+  const double wavelength[1] = { 550.0 };
+  request.c.faces = faces;
+  request.c.face_count = 1;
+  request.c.layer_face_counts = counts;
+  request.c.member_selection = LUMICE_PATH_FEATURE_MEMBERS_CONCRETE;
+  request.c.spectrum_source = LUMICE_PATH_FEATURE_SPECTRUM_DIAGNOSTIC;
+  request.c.wavelengths_nm = wavelength;
+  request.c.wavelength_count = 1;
+  const Outcome outcome = Analyse(scene.get(), &request.c);
+  ASSERT_EQ(outcome.code, LUMICE_OK) << outcome.error;
+  const nlohmann::json doc = nlohmann::json::parse(Json(outcome.report.get()));
+  EXPECT_EQ(doc["scene_measure"]["member_chains"], nlohmann::json({ { { 1 } } }));
+  EXPECT_GT(doc["scene_measure"]["total_contribution"].get<double>(), 0.0);
+}
+
 TEST(PathFeatureReportCApi, OversizedPathEncodingIsRefusedBeforePerLayerDecoding) {
   const ScenePtr scene = MakeScene();
   Request request;
@@ -547,12 +583,12 @@ TEST(PathFeatureReportCApi, SceneDepthAndFaceBoundsAreValidatedBeforeArrayCopies
   EXPECT_NE(hostile_dimension.error.find("scattering layers"), std::string::npos) << hostile_dimension.error;
 
   request.c.layer_count = 1;
-  request.c.face_count = 1;
-  const int short_count[1] = { 1 };
+  request.c.face_count = 0;
+  const int short_count[1] = { 0 };
   request.c.layer_face_counts = short_count;
   const Outcome too_short = Analyse(scene.get(), &request.c);
   EXPECT_EQ(too_short.code, LUMICE_ERR_INVALID_VALUE);
-  EXPECT_NE(too_short.error.find("[2, 64]"), std::string::npos) << too_short.error;
+  EXPECT_NE(too_short.error.find("non-empty layer"), std::string::npos) << too_short.error;
 }
 
 TEST(PathFeatureReportCApi, SixtyFourFaceBoundaryIsAcceptedForPathAndExplicitChain) {

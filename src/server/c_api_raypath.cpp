@@ -118,7 +118,8 @@ bool CheckedMultiply(size_t lhs, size_t rhs, size_t* out) {
 }
 
 lumice::raypath::Error ValidateFaceEncoding(const int* layer_face_counts, size_t layer_face_count,
-                                            int declared_face_count, const std::string& name) {
+                                            int declared_face_count, int minimum_faces_per_layer,
+                                            const std::string& name) {
   namespace rp = lumice::raypath;
   size_t max_face_count = 0;
   if (!CheckedMultiply(layer_face_count, rp::kMaxSceneMeasureFacesPerLayer, &max_face_count) ||
@@ -130,8 +131,9 @@ lumice::raypath::Error ValidateFaceEncoding(const int* layer_face_counts, size_t
   size_t consumed = 0;
   for (size_t index = 0; index < layer_face_count; ++index) {
     const int count = layer_face_counts[index];
-    if (count < 2 || static_cast<size_t>(count) > rp::kMaxSceneMeasureFacesPerLayer) {
-      return { rp::ErrorCode::kInvalidPath, name + " layer face counts must each be in [2, " +
+    if (count < minimum_faces_per_layer || static_cast<size_t>(count) > rp::kMaxSceneMeasureFacesPerLayer) {
+      return { rp::ErrorCode::kInvalidPath, name + " layer face counts must each be in [" +
+                                                std::to_string(minimum_faces_per_layer) + ", " +
                                                 std::to_string(rp::kMaxSceneMeasureFacesPerLayer) + "]" };
     }
     const size_t declared = static_cast<size_t>(declared_face_count);
@@ -269,8 +271,9 @@ LUMICE_ErrorCode AnalyzeReport(const LUMICE_Scene* scene, const LUMICE_PathFeatu
                                                 "legacy path feature reports require exactly one layer" },
         err_buf, err_size);
   }
+  const int minimum_faces_per_layer = has_v2 ? 1 : 2;
   if (const rp::Error error = ValidateFaceEncoding(request.layer_face_counts, static_cast<size_t>(request.layer_count),
-                                                   request.face_count, "path encoding");
+                                                   request.face_count, minimum_faces_per_layer, "path encoding");
       !error.Ok()) {
     return Refuse(error, err_buf, err_size);
   }
@@ -290,7 +293,7 @@ LUMICE_ErrorCode AnalyzeReport(const LUMICE_Scene* scene, const LUMICE_PathFeatu
     }
     if (const rp::Error error =
             ValidateFaceEncoding(request.explicit_member_layer_face_counts, explicit_layer_face_count,
-                                 request.explicit_member_face_count, "explicit member encoding");
+                                 request.explicit_member_face_count, 1, "explicit member encoding");
         !error.Ok()) {
       return Refuse(error, err_buf, err_size);
     }

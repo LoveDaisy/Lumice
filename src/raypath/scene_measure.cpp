@@ -493,9 +493,9 @@ bool CouldFaceExistInShapeSupport(const CrystalParam& param, int face) {
 }
 
 Error ValidateMemberSequence(const LayerInput& layer, const std::vector<int>& faces, const std::string& name) {
-  if (faces.size() < 2 || faces.size() > kMaxSceneMeasureFacesPerLayer) {
+  if (faces.empty() || faces.size() > kMaxSceneMeasureFacesPerLayer) {
     return { ErrorCode::kInvalidPath,
-             name + " must contain 2 to " + std::to_string(kMaxSceneMeasureFacesPerLayer) + " faces" };
+             name + " must contain 1 to " + std::to_string(kMaxSceneMeasureFacesPerLayer) + " faces" };
   }
   const CrystalParam& param = layer.setting->crystal_.param_;
   const CrystalKind kind = KindOf(param);
@@ -1095,7 +1095,7 @@ bool MemberChainExistsInSample(uint32_t replay_seed, const std::vector<LayerInpu
       return false;
     }
     std::vector<int> slots;
-    if (!ResolveSingleLayerPath({ member_chain[layer_index] }, normals, &slots).Ok()) {
+    if (!ResolveDiagnosticLayerPath(member_chain[layer_index], normals, &slots).Ok()) {
       return false;
     }
   }
@@ -1207,7 +1207,7 @@ SceneMeasureLayerRow EvaluateLayer(RandomNumberGenerator& rng, const LayerInput&
     return out;
   }
   std::vector<int> slots;
-  if (const Error error = ResolveSingleLayerPath({ faces }, normals, &slots); !error.Ok()) {
+  if (const Error error = ResolveDiagnosticLayerPath(faces, normals, &slots); !error.Ok()) {
     out.status = SceneMeasureStatus::kPhysicallyUnreachable;
     out.reason = error.message;
     return out;

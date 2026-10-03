@@ -310,9 +310,10 @@ multiplies by selected member chains, spectrum nodes, and sun nodes. With no `--
 uses the configured scene spectrum; one explicit `--wavelength <nm>` selects that diagnostic node.
 The C API accepts up to 32 wavelength/weight pairs.
 Before copying any request array, the C bridge checks the layer count against the parsed scene
-(the frozen schema-1 prefix retains its one-layer no-scattering exception), requires every path and
-explicit-member layer to contain 2 through 64 faces, and verifies all aggregate dimensions with
-checked arithmetic. Explicit selection remains bounded to 4096 member chains.
+(the frozen schema-1 prefix retains its one-layer no-scattering exception), requires every modern
+path and explicit-member layer to contain 1 through 64 faces, and verifies all aggregate dimensions
+with checked arithmetic. The frozen schema-1 request retains its historical 2-through-64
+transmitted-chain contract. Explicit selection remains bounded to 4096 member chains.
 The synchronous report also rejects a request when physical-L2 members × wavelengths ×
 (fine samples + half-resolution coarse samples) would exceed 16,777,216 evaluations; rejection
 produces no partial report.
@@ -377,6 +378,13 @@ same availability status and force `numerical_incomplete` when their double repr
 consumers needing the complete field use deterministic replay or the row visitor. Status counts
 separate zero source weight, physical unreachability, and numerical incompleteness; a zero-weight
 row can retain an independent non-successful evaluation status.
+
+A one-face member is the product's first-surface external reflection: its only interface is
+`external_reflection`, its raw entry area is the projected area of that actual finite polygon, and
+its native factor remains `2*entry_measure/total_surface_area` times the external Fresnel
+reflectance. A member with two or more faces retains entry/exit transmission with any intervening
+internal reflections. Either form may appear at any layer of a multi-layer chain; each layer's
+outgoing direction is the next layer's incident direction.
 
 A physical-member mask addresses stable entry-face IDs in each layer, never an internal
 member-chain enumeration position. Schema 3 also accepts one mask per layer and exact member
