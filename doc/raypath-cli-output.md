@@ -301,11 +301,10 @@ if (doc.outcome === "discovered") {
 Lumice raypath -f <config> --crystal <id> --path <faces> --report [options]
 ```
 
-This mode answers a different question from `--target`: what fixture-backed brightness features
-the selected path has under the configured crystal shape and orientation ensemble. It accepts no
+This mode answers a different question from `--target`: what feature candidates the selected path
+produces under the configured scene measure, without choosing a sky target. It accepts no
 sky target, `--grid`, or `--warm`. `--events` is the even integration resolution in `[64, 1000000]`
-(default 8192), not a fiber seed count. The same value drives both the positioned-feature detector's
-fine resolution and the joint scene-measure sample count; the latter's evaluated row count also
+(default 8192), not a fiber seed count. The value drives the joint scene-measure sample count, whose evaluated row count also
 multiplies by selected member chains, spectrum nodes, and sun nodes. With no `--wavelength`, the CLI
 uses the configured scene spectrum; one explicit `--wavelength <nm>` selects that diagnostic node.
 The C API accepts up to 32 wavelength/weight pairs.
@@ -336,12 +335,13 @@ including every CLI request, emit schema 3.
 | `meta` | Nominal crystal scalars, requested face sequence, per-layer crystal ids, sun direction, orientation measure, and fine sample count. There is no target. |
 | `wavelengths[]` | `{nm, weight, refractive_index}` in request order. |
 | `scene_measure` | The deterministic integral over the actual scene distributions, described below. |
-| `physical_l2_members[]` | Concrete members admitted by the configured shape and orientation ensemble's physical P/B/D gating. This is never an L1/PBD label orbit. |
-| `features[]` | Positioned records supported by the detector matrix below. |
+| `feature_discovery` | The support-driven analytic result: completeness, local candidates, all mechanism records, and the scene-level equal-area sky field. |
+| `physical_l2_members[]` | Frozen schema-1 brightness projection. Empty in schema 3; concrete chains remain in `scene_measure.member_chains`. |
+| `features[]` | A compact positioned projection of `feature_discovery.candidates`; ids use `general.<mechanism>.<index>`. |
 | `coverage[]` | `{subject, status, reason}`; a non-success is stated rather than converted to an empty-feature claim. |
 | `limitations[]` | Stable non-claims that bound how the report may be interpreted. |
 
-Each member has its concrete `faces` and one row per wavelength. `brightness` contains the named
+In frozen schema 1, each member has its concrete `faces` and one row per wavelength. `brightness` contains the named
 orientation `measure`, coarse/fine sample counts, valid and positive sample counts, coarse/fine
 means of finite-crystal `A*T`, their absolute difference, and the wavelength-weighted fine mean.
 The area uses LI's `a=1` normalization. When a horizontal-family branch has one constant outgoing
@@ -392,32 +392,33 @@ chains. Exact chains are used verbatim, are not symmetry-expanded, can distingui
 the same entry face, and can express non-Cartesian multi-layer selections.
 
 The configured spectrum is the default. An explicit `--wavelength` selects a diagnostic delta
-spectrum. The top-level `wavelengths` and legacy positioned-feature brightness remain the compact
-fixture detector's wavelength list; consumers of the general integral use
+spectrum. In schema 3 the top-level `wavelengths` is projected directly from
 `scene_measure.spectrum_nodes`. The finite solar disc is a unit-mass source probability measure, and every
 shape and pose distribution is sampled with deterministic product coordinates. In a multi-layer
 chain, the outgoing direction and transmitted mass of one layer feed the next; global sun and
 spectrum weights are applied once, not once per layer.
 
-### 7.2 Positioned features and evidence
+### 7.2 General candidates and evidence
 
-The initial detector matrix is intentionally narrow:
+Schema 3 always runs the same analytic discovery kernel for one-face external reflection,
+transmitted paths, multi-layer chains, non-reference shapes, and arbitrary configured pose
+distributions. No crystal name, face sequence, nominal halo angle, or solar/antisolar label decides
+whether discovery runs. The eleven independent mechanism records cover restricted S² rank loss,
+support boundary/corner, optical/filter/weight kinks, measure atoms, strict confinement,
+finite-width concentration, and brightness maxima/ridges.
 
-- Random regular-prism `3-5`: the ordinary minimum-deviation dispersion edge, described as a
-  finite jump rather than a divergent Jacobian caustic.
-- Random regular-prism `3-1-5`: the solar-side ordinary dispersion edge; a separately labelled
-  caustic candidate; the confirmed antisolar internal-reflection TIR blue band; and the moving exit
-  gate recorded as assessed not visible. The TIR record compares the same boundary poses and
-  finite-crystal area with only internal reflectance removed, exposing both blue/red ratios.
-- The fixed rhombic-prism, 9°-sun, exact-horizontal `Rz(theta)` case: constant-direction branches
-  with positive finite-crystal support. A position records sky altitude/azimuth, relative solar
-  azimuth, and true spherical separation separately. Its two labels are ±120° in relative azimuth
-  while their spherical separation is about 117.599764°.
+Each local candidate retains member/layer/interface/spectrum/source/sample provenance, its world
+propagation direction, support dimension and rank, singular values, weighted mass, active named
+constraints, two-sided weights when applicable, residual, resolution, status, and reason. The
+compact `features` projection converts that direction into sky altitude/azimuth, relative solar
+azimuth and spherical separation without changing the analytic status. Multiple mechanisms at one
+location remain separate records.
 
-`evidence_status` distinguishes `confirmed` from `candidate`; `visible` is present only when the
-detector has made that assessment. The report does not promote a label-orbit result to physical L2
-equivalence, does not use a direction residual as a theta-dependent integration mask, and does not
-treat internal TIR as a path-validity gate.
+The `sky_field` marginalizes all supplied rows onto an equal-area `(z, azimuth)` grid. Every node
+reports mass, density per steradian, gradient norm, Hessian eigenvalues, coarse/fine error,
+resolution, sample count, and status. A maximum or ridge is confirmed only when its complete local
+neighborhood agrees at half resolution. Constraint crossings without successful same-branch
+callback refinement remain candidates.
 
 ### 7.3 Observed CLI example
 
@@ -426,7 +427,7 @@ This command is a runnable example against the checked-in fixed input:
 ```bash
 build/cmake_install/static/Lumice raypath \
   -f test/e2e/configs/raypath_feature_random_regular.json \
-  --crystal 1 --path 3-1-5 --report --events 8192
+  --crystal 1 --path 3-1-5 --report --events 64 --wavelength 550
 ```
 
 It writes one JSON document to stdout and progress to stderr. The stable parts
@@ -437,30 +438,36 @@ fixed-input observation, not general constants):
 {
   "schema": "lumice.path-feature-report",
   "schema_version": 3,
-  "meta": {"requested_faces": [3, 1, 5], "sample_count": 8192},
+  "meta": {"requested_faces": [3, 1, 5], "sample_count": 64},
+  "feature_discovery": {
+    "complete_visit": true,
+    "mechanisms": [
+      {"mechanism": "interior_rank_loss", "status": "numerical_incomplete"},
+      {"mechanism": "finite_width_concentration", "status": "candidate"},
+      {"mechanism": "brightness_maximum", "status": "confirmed"}
+    ],
+    "candidates": [
+      {"mechanism": "finite_width_concentration", "status": "candidate"}
+    ],
+    "sky_field": []
+  },
   "features": [
-    {"id": "random_regular.3-1-5.solar_dispersion_edge",
-     "evidence_status": "confirmed", "location": "solar side"},
-    {"id": "random_regular.3-1-5.solar_caustic_candidate",
-     "evidence_status": "candidate", "location": "solar side"},
-    {"id": "random_regular.3-1-5.antisolar_tir_blue_band",
-     "evidence_status": "confirmed", "visible": true},
-    {"id": "random_regular.3-1-5.exit_gate",
-     "evidence_status": "confirmed", "visible": false}
+    {"id": "general.finite_width_concentration.0",
+     "evidence_status": "candidate", "location": "computed sky position"}
   ]
 }
 ```
 
-The full output also carries `scene_measure`, the physical-L2 member list, per-member and
-per-wavelength `A*T` brightness rows, `coverage`, and `limitations`. Scripts
-must consume those fields rather than infer unsupported coverage from the four
-feature ids alone.
+Arrays above are abbreviated; the full output carries every candidate, all eleven mechanism
+records, every sky-field node, `scene_measure`, `coverage`, and `limitations`. Scripts must consume
+the mechanism statuses rather than infer unsupported coverage from feature ids alone.
 
 ### 7.4 Coverage and limitations
 
 Coverage statuses are `supported`, `not_supported`, `not_detected_at_resolution`,
 `numerical_incomplete`, and `physically_unreachable`. Consumers must display the status and reason;
-an empty `features` array alone never means that no physical feature exists. Current limitations
-include general all-sky enumeration, arbitrary oriented kink curves, open/multiple components,
-cone-crystal empty results, rank-0 feature discovery, solar-disc convolution, and prominence
-relative to other paths.
+an empty `features` array alone never means that no physical feature exists. Candidate and
+confirmed are local numerical evidence rather than an unconditional global certificate. The sky
+field marginalizes finite solar-disc and spectral contributions, but color causality and visual
+prominence are not classified. Coarse/fine differences and boundary residuals are convergence
+evidence, not exact error bounds.

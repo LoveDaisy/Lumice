@@ -48,11 +48,34 @@ Raypath 诊断以当前场景的实际映射和测度为对象，不以路径、
 
 有限候选池的完成、disk 条件下的拓扑证书或特殊几何的闭式公式，只在其明确前提下提供局部保证或加速；它们不证明所有输入或所有连通分量均已发现。
 
+### 当前实现边界
+
+产品 adapter 在 report 的 schema 3 路径中通过 `SceneMeasure` 的完整 visitor 构造版本化
+support batch；`visited_row_count` 在任何物化上限判断之前递增，因此 JSON 保存的代表行不参与发现。
+batch 保留实际 member chain、层/接口、谱/太阳节点、support 坐标、命名 margin、权重和完整链输出方向。
+多层姿态方向导数通过同一行状态上的双尺度扰动传播完整 `outgoing→incident` 链，再投影到天空
+`S²` 的二维切基判秩；三维嵌入矩阵的恒零行列式不作为临界证据。
+
+analytic kernel 对每个命名约束检查活动点和邻接边上的两侧符号，分别产生 support、TIR、filter
+和 weight 机制；多个同点活动约束另外产生 corner。没有同分支 callback 细化的交叉只保留
+`candidate`。输入原子按质量合并；严格低维支持、有限宽支持和孤立 rank-0 临界保持不同机制，
+后者不会升级成点质量。场景亮度由统一等面积天空网格边缘化，输出质量、每球面度密度、梯度、
+Hessian 特征值、分辨率与粗细误差；极大值和脊线只有在两级网格一致时才确认。输入按稳定
+`sample_id` 顺序累积，因此 visitor 分块和访问顺序不改变浮点求和顺序。
+
+schema 3 的 report 只序列化上述 analytic 结果，不再调用固定 reference prism、固定 face sequence
+或预设太阳侧的探测器。一面外反射、复合多层、非参考 shape 和未点名路径进入同一流程。冻结的
+schema 1 请求仍保留历史 fixture 输出作为 ABI 兼容前缀；该兼容层不决定 schema 3 是否运行发现。
+
 ## 共享数值边界
 
-独立 analytic 库提供可批量消费的数值，不导出产品 report。通用发现所需的行数据包括具体几何/成员/波长/姿态、方向与坐标约定、有限入口测度、逐接口 `T/R`、命名的有效域和 TIR margin、必要的一阶/二阶切导数和折射率导数，以及逐行数值状态。
+独立 analytic 库提供可批量消费的数值，不导出产品 report。API version 9 的
+`LUMICE_ANALYTIC_DiscoverFeatures` 接收 `struct_size`/stride 版本化的 support rows、constraints、
+topology edges 和同步 callback，并返回 candidates、mechanism records 与 sky field；所有输出和字符串
+由单一 result storage 持有并通过 `LUMICE_ANALYTIC_ReleaseFeatureDiscoveryResult` 释放。通用发现所需的行数据包括具体几何/成员/波长/姿态、方向与坐标约定、有限入口测度、逐接口 `T/R`、命名的有效域和 TIR margin、必要的一阶/二阶切导数和折射率导数，以及逐行数值状态。
 
-ABI 的函数粒度、缓存和数组形状由只加载 `liblumice_analytic` 的真实 consumer 决定；它必须与独立 JAX 或解析 oracle 对照，验证数组布局、错误、所有权、版本兼容和并发成本。产品 JSON 不是这一数值契约的替代品。
+只加载 `liblumice_analytic` 的 ctypes consumer 用独立等面积求和和约束根 oracle 验证数组布局、
+stride/version/pointer 错误、回调借用期、释放幂等、访问顺序和并发调用。产品 JSON 不是这一数值契约的替代品。
 
 ## 验收
 

@@ -57,8 +57,9 @@ ConfigManager Scene(bool random, bool horizontal, bool rhombic) {
 }
 
 PathFeatureReport Analyse(const ConfigManager& config, std::vector<int> faces, int samples = 8192,
-                          SceneSpectrumSource spectrum_source = SceneSpectrumSource::kScene) {
+                          SceneSpectrumSource spectrum_source = SceneSpectrumSource::kScene, int schema_version = 1) {
   PathFeatureReportRequest request;
+  request.schema_version = schema_version;
   request.crystal_id = 1;
   request.path_layers = { std::move(faces) };
   request.sample_count = samples;
@@ -176,6 +177,7 @@ TEST(PathFeatureReport, AComputedBrightnessOutsideTheFixedDetectorCaseDoesNotCla
 
 TEST(PathFeatureReport, TirBandRequiresTwoDistinctRefractiveIndices) {
   PathFeatureReportRequest request;
+  request.schema_version = 1;
   request.crystal_id = 1;
   request.path_layers = { { 3, 1, 5 } };
   request.wavelengths_nm = { 550.0 };
@@ -194,7 +196,8 @@ TEST(PathFeatureReport, TirBandRequiresTwoDistinctRefractiveIndices) {
 TEST(PathFeatureReport, DefaultDetectorSpectrumMatchesTheSceneMeasureSpectrum) {
   ConfigManager config = Scene(true, false, false);
   config.scene_.light_source_.spectrum_ = std::vector<WlParam>{ { 500.0f, 0.25f }, { 620.0f, 0.75f } };
-  const PathFeatureReport report = Analyse(config, { 3, 5 }, 64);
+  const PathFeatureReport report =
+      Analyse(config, { 3, 5 }, 64, SceneSpectrumSource::kScene, kFeatureReportSchemaVersion);
 
   ASSERT_EQ(report.wavelengths.size(), 2u);
   ASSERT_EQ(report.scene_measure.spectrum_nodes.size(), report.wavelengths.size());
@@ -202,18 +205,13 @@ TEST(PathFeatureReport, DefaultDetectorSpectrumMatchesTheSceneMeasureSpectrum) {
     EXPECT_DOUBLE_EQ(report.wavelengths[index].wavelength_nm, report.scene_measure.spectrum_nodes[index].wavelength_nm);
     EXPECT_DOUBLE_EQ(report.wavelengths[index].weight, report.scene_measure.spectrum_nodes[index].weight);
   }
-  ASSERT_FALSE(report.members.empty());
-  ASSERT_EQ(report.members.front().wavelengths.size(), report.wavelengths.size());
-  for (size_t index = 0; index < report.wavelengths.size(); index++) {
-    EXPECT_DOUBLE_EQ(report.members.front().wavelengths[index].wavelength.wavelength_nm,
-                     report.scene_measure.spectrum_nodes[index].wavelength_nm);
-    EXPECT_DOUBLE_EQ(report.members.front().wavelengths[index].wavelength.weight,
-                     report.scene_measure.spectrum_nodes[index].weight);
-  }
+  EXPECT_EQ(report.discovery.visited_row_count, static_cast<uint64_t>(report.scene_measure.evaluated_row_count));
+  EXPECT_FALSE(report.discovery.mechanisms.empty());
 }
 
 TEST(PathFeatureReportJson, UsesASeparateSchemaAndDoesNotAcquireATarget) {
-  const PathFeatureReport report = Analyse(Scene(true, false, false), { 3, 5 }, 64);
+  const PathFeatureReport report =
+      Analyse(Scene(true, false, false), { 3, 5 }, 64, SceneSpectrumSource::kScene, kFeatureReportSchemaVersion);
   const nlohmann::json doc = nlohmann::json::parse(PathFeatureReportToJson(report, "test-version"));
   EXPECT_EQ(doc["schema"], "lumice.path-feature-report");
   EXPECT_EQ(doc["schema_version"], 3);
@@ -244,7 +242,10 @@ TEST(PathFeatureReportJson, UsesASeparateSchemaAndDoesNotAcquireATarget) {
   EXPECT_EQ(doc["meta"]["requested_faces"], nlohmann::json({ 3, 5 }));
   EXPECT_FALSE(doc["meta"].contains("target"));
   EXPECT_FALSE(doc.contains("components"));
-  EXPECT_FALSE(doc["physical_l2_members"].empty());
+  EXPECT_TRUE(doc["physical_l2_members"].empty());
+  EXPECT_EQ(doc["feature_discovery"]["visited_row_count"], doc["scene_measure"]["evaluated_row_count"]);
+  EXPECT_EQ(doc["feature_discovery"]["mechanisms"].size(), 11u);
+  EXPECT_FALSE(doc["feature_discovery"]["candidates"].empty());
   EXPECT_FALSE(doc["coverage"].empty());
   EXPECT_FALSE(doc["limitations"].empty());
 }
@@ -294,7 +295,8 @@ TEST(PathFeatureReportJson, ZeroWidthTypedPoseFactorsSerializeAsAtoms) {
   config.crystals_.at(1).axis_ = axis;
   config.scene_.ms_[0].setting_[0].crystal_.axis_ = axis;
 
-  const PathFeatureReport report = Analyse(config, { 3, 5 }, 64);
+  const PathFeatureReport report =
+      Analyse(config, { 3, 5 }, 64, SceneSpectrumSource::kScene, kFeatureReportSchemaVersion);
   const nlohmann::json doc = nlohmann::json::parse(PathFeatureReportToJson(report, "test-version"));
   const auto& factors = doc["scene_measure"]["factors"];
   for (const char* name : { "pose.latitude", "pose.azimuth", "pose.roll" }) {
@@ -375,6 +377,11 @@ TEST(PathFeatureReportJson, MultiLayerPyramidRowsCarryReconstructibleShapeProven
     EXPECT_EQ(layer["upper_wedge_deg"], expected_shape.wedge_angle_u_);
     EXPECT_EQ(layer["lower_wedge_deg"], expected_shape.wedge_angle_l_);
   }
+  EXPECT_EQ(doc["feature_discovery"]["visited_row_count"], doc["scene_measure"]["evaluated_row_count"]);
+  EXPECT_EQ(doc["feature_discovery"]["mechanisms"].size(), 11u);
+  EXPECT_TRUE(std::none_of(doc["coverage"].begin(), doc["coverage"].end(), [](const auto& item) {
+    return item["subject"] == "positioned_features" && item["status"] == "not_supported";
+  }));
 }
 
 TEST(PathFeatureReportJson, NonFiniteMeasureValuesCarryAnExplicitNumericalStatus) {

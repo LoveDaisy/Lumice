@@ -532,6 +532,8 @@ TEST(PathFeatureReportCApi, OneFaceExternalReflectionReachesTheActualSceneReport
   const nlohmann::json doc = nlohmann::json::parse(Json(outcome.report.get()));
   EXPECT_EQ(doc["scene_measure"]["member_chains"], nlohmann::json({ { { 1 } } }));
   EXPECT_GT(doc["scene_measure"]["total_contribution"].get<double>(), 0.0);
+  EXPECT_EQ(doc["feature_discovery"]["visited_row_count"], doc["scene_measure"]["evaluated_row_count"]);
+  EXPECT_EQ(doc["feature_discovery"]["mechanisms"].size(), 11u);
 }
 
 TEST(PathFeatureReportCApi, OversizedPathEncodingIsRefusedBeforePerLayerDecoding) {

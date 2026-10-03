@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <cmath>
 #include <vector>
 
 #include "raypath/feature_discovery_adapter.hpp"
@@ -126,6 +127,60 @@ TEST(FeatureDiscoveryAdapter, DifferentiatesTheComposedDirectionThroughBothLayer
   EXPECT_LT(column_norm2[1], 1e-8)
       << "the parallel-face second layer must preserve its incident direction for every pose";
   EXPECT_LT(complete->direction_jacobian_error, 1e-4);
+}
+
+TEST(FeatureDiscoveryAdapter, PhysicalDirectionFilterCreatesItsOwnBoundaryMechanism) {
+  SceneMeasureRequest request;
+  request.layer_crystal_ids = { 1 };
+  request.path_layers = { { 1 } };
+  request.sample_count = 128;
+  request.sun_node_count = 2;
+  request.illuminant_node_count = 2;
+  request.seed = 0x64943u;
+
+  ConfigManager config = Scene();
+  analytic::FeatureSupportBatch baseline;
+  SceneMeasureResult baseline_measure;
+  ASSERT_TRUE(BuildFeatureSupportBatch(config, request, &baseline, &baseline_measure).Ok());
+  const auto centre = std::find_if(baseline.samples.begin(), baseline.samples.end(),
+                                   [](const auto& sample) { return sample.numerically_available; });
+  ASSERT_NE(centre, baseline.samples.end());
+  std::vector<double> angular_distances;
+  for (const auto& sample : baseline.samples) {
+    if (!sample.numerically_available) {
+      continue;
+    }
+    const double dot =
+        std::clamp(centre->direction[0] * sample.direction[0] + centre->direction[1] * sample.direction[1] +
+                       centre->direction[2] * sample.direction[2],
+                   -1.0, 1.0);
+    angular_distances.push_back(std::acos(dot) * 180.0 / 3.14159265358979323846);
+  }
+  ASSERT_FALSE(angular_distances.empty());
+  std::sort(angular_distances.begin(), angular_distances.end());
+  DirectionFilterParam direction;
+  direction.lon_ =
+      static_cast<float>(std::atan2(centre->direction[1], centre->direction[0]) * 180.0 / 3.14159265358979323846);
+  direction.lat_ = static_cast<float>(std::asin(centre->direction[2]) * 180.0 / 3.14159265358979323846);
+  direction.radii_ = static_cast<float>(angular_distances[angular_distances.size() / 2]);
+  config.scene_.ms_[0].setting_[0].filter_ = { 17, FilterConfig::kSymNone, FilterConfig::kFilterIn,
+                                               SimpleFilterParam{ direction } };
+
+  analytic::FeatureSupportBatch filtered;
+  SceneMeasureResult filtered_measure;
+  ASSERT_TRUE(BuildFeatureSupportBatch(config, request, &filtered, &filtered_measure).Ok());
+  analytic::FeatureDiscoveryOptions options;
+  options.sky_z_bins = 4;
+  options.sky_azimuth_bins = 8;
+  const analytic::FeatureDiscoveryResult result = analytic::DiscoverFeatures(filtered, options);
+  EXPECT_TRUE(std::any_of(result.candidates.begin(), result.candidates.end(), [](const auto& candidate) {
+    return candidate.mechanism == analytic::FeatureMechanism::kFilterBoundary && candidate.has_weight_sides;
+  }));
+  EXPECT_FALSE(std::any_of(baseline.samples.begin(), baseline.samples.end(), [](const auto& sample) {
+    return std::any_of(sample.constraints.begin(), sample.constraints.end(), [](const auto& constraint) {
+      return constraint.kind == analytic::ConstraintKind::kFilter && constraint.value < 0.0;
+    });
+  })) << "the default pass-through filter ledger must not manufacture a rejected side";
 }
 
 }  // namespace

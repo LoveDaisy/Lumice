@@ -15,6 +15,7 @@
 #include "analytic/path_evaluation.hpp"
 #include "core/crystal.hpp"
 #include "core/optics.hpp"
+#include "raypath/feature_discovery_adapter.hpp"
 #include "raypath/scene_to_analytic.hpp"
 #include "util/illuminant.hpp"
 #include "util/sky_direction.hpp"
@@ -388,6 +389,81 @@ CoverageStatus MeasureCoverage(SceneMeasureStatus status) {
   return CoverageStatus::kNotSupported;
 }
 
+CoverageStatus DiscoveryCoverage(analytic::FeatureEvidenceStatus status) {
+  switch (status) {
+    case analytic::FeatureEvidenceStatus::kConfirmed:
+    case analytic::FeatureEvidenceStatus::kCandidate:
+      return CoverageStatus::kSupported;
+    case analytic::FeatureEvidenceStatus::kNotDetectedAtResolution:
+      return CoverageStatus::kNotDetectedAtResolution;
+    case analytic::FeatureEvidenceStatus::kNumericalIncomplete:
+      return CoverageStatus::kNumericalIncomplete;
+    case analytic::FeatureEvidenceStatus::kPhysicallyUnreachable:
+      return CoverageStatus::kPhysicallyUnreachable;
+    case analytic::FeatureEvidenceStatus::kNotSupported:
+      return CoverageStatus::kNotSupported;
+  }
+  return CoverageStatus::kNotSupported;
+}
+
+const SpectrumMeasureNode* SpectrumNode(const SceneMeasureResult& measure, int node_id) {
+  const auto found = std::find_if(measure.spectrum_nodes.begin(), measure.spectrum_nodes.end(),
+                                  [node_id](const SpectrumMeasureNode& node) { return node.node_id == node_id; });
+  return found == measure.spectrum_nodes.end() ? nullptr : &*found;
+}
+
+void ProjectGeneralDiscovery(PathFeatureReport* report) {
+  report->wavelengths.reserve(report->scene_measure.spectrum_nodes.size());
+  for (const SpectrumMeasureNode& node : report->scene_measure.spectrum_nodes) {
+    report->wavelengths.push_back({ node.wavelength_nm, node.weight, node.refractive_index });
+  }
+  report->coverage.push_back({ "general_feature_discovery", CoverageStatus::kSupported,
+                               "all mechanism records come from the support-driven analytic kernel" });
+  for (const analytic::FeatureMechanismRecord& mechanism : report->discovery.mechanisms) {
+    report->coverage.push_back(
+        { "feature_mechanism." + std::string(analytic::FeatureMechanismName(mechanism.mechanism)),
+          DiscoveryCoverage(mechanism.status), mechanism.reason });
+  }
+  for (size_t index = 0; index < report->discovery.candidates.size(); ++index) {
+    const analytic::FeatureCandidate& candidate = report->discovery.candidates[index];
+    PathFeature feature;
+    feature.id =
+        "general." + std::string(analytic::FeatureMechanismName(candidate.mechanism)) + "." + std::to_string(index);
+    feature.kind = "feature_candidate";
+    feature.evidence_status = analytic::FeatureEvidenceStatusName(candidate.status);
+    feature.mechanism = analytic::FeatureMechanismName(candidate.mechanism);
+    feature.location = "computed sky position";
+    feature.interpretation = candidate.reason;
+    FeaturePosition position;
+    position.wavelength_nm = std::numeric_limits<double>::quiet_NaN();
+    position.refractive_index = std::numeric_limits<double>::quiet_NaN();
+    if (const SpectrumMeasureNode* spectrum =
+            SpectrumNode(report->scene_measure, candidate.provenance.spectrum_node_id);
+        spectrum != nullptr) {
+      position.wavelength_nm = spectrum->wavelength_nm;
+      position.refractive_index = spectrum->refractive_index;
+    }
+    double altitude = 0.0;
+    double azimuth = 0.0;
+    DirToAltAz(candidate.direction, &altitude, &azimuth);
+    position.altitude_deg = altitude;
+    position.azimuth_deg = azimuth;
+    position.relative_solar_azimuth_deg = WrapDeg(azimuth - report->meta.sun_azimuth_deg);
+    position.spherical_separation_deg = AngleBetween(report->meta.incident_direction, candidate.direction) * kRad2Deg;
+    feature.positions.push_back(position);
+    feature.metrics = {
+      { "support_dimension", static_cast<double>(candidate.support_dimension) },
+      { "mapping_rank", static_cast<double>(candidate.mapping_rank) },
+      { "singular_value_0", candidate.singular_values[0] },
+      { "singular_value_1", candidate.singular_values[1] },
+      { "weighted_mass", candidate.weighted_mass },
+      { "residual", candidate.residual },
+      { "resolution", candidate.resolution },
+    };
+    report->features.push_back(std::move(feature));
+  }
+}
+
 bool HasDistinctRefractiveIndices(const std::vector<ReportWavelength>& wavelengths) {
   for (size_t first = 0; first < wavelengths.size(); first++) {
     for (size_t second = first + 1; second < wavelengths.size(); second++) {
@@ -728,6 +804,7 @@ Error AnalyzePathFeatureReport(const ConfigManager& config, const PathFeatureRep
   }
 
   SceneMeasureResult scene_measure;
+  analytic::FeatureSupportBatch feature_support;
   if (!legacy_schema) {
     SceneMeasureRequest measure_request;
     measure_request.layer_crystal_ids = layer_crystal_ids;
@@ -744,7 +821,8 @@ Error AnalyzePathFeatureReport(const ConfigManager& config, const PathFeatureRep
     measure_request.sun_node_count = request.sun_node_count;
     measure_request.illuminant_node_count = request.illuminant_node_count;
     measure_request.seed = request.seed;
-    if (const Error error = BuildSceneMeasure(config, measure_request, &scene_measure); !error.Ok()) {
+    if (const Error error = BuildFeatureSupportBatch(config, measure_request, &feature_support, &scene_measure);
+        !error.Ok()) {
       return error;
     }
   }
@@ -767,37 +845,34 @@ Error AnalyzePathFeatureReport(const ConfigManager& config, const PathFeatureRep
   SunIncidentDirection(config.scene_.light_source_.param_, result.meta.incident_direction);
   result.meta.sample_count = request.sample_count;
   if (!legacy_schema) {
+    if (ExceedsSampleEvaluationBudget(result.scene_measure.member_chains.size(),
+                                      result.scene_measure.spectrum_nodes.size(), request.sample_count)) {
+      return { ErrorCode::kInvalidArgument, "physical-L2 members × wavelengths × (fine + coarse) exceeds the " +
+                                                std::to_string(kMaxFeatureReportSampleEvaluations) +
+                                                " sample-evaluation budget" };
+    }
     result.coverage.push_back({ "actual_scene_measure", MeasureCoverage(result.scene_measure.status),
                                 result.scene_measure.reason.empty() ?
                                     "actual shape, pose, sun, spectrum and selected physical members were assembled" :
                                     result.scene_measure.reason });
-  }
-
-  if (request.path_layers.size() > 1) {
-    result.coverage.push_back(
-        { "positioned_features", CoverageStatus::kNotSupported,
-          "the composed scene measure is available; automatic cross-layer feature discovery is a separate stage" });
+    analytic::FeatureDiscoveryOptions discovery_options;
+    discovery_options.sky_merge_tolerance =
+        std::sqrt(4.0 * kPi / (discovery_options.sky_z_bins * discovery_options.sky_azimuth_bins));
+    result.discovery = analytic::DiscoverFeatures(feature_support, discovery_options);
+    result.meta.orientation_measure = "actual configured scene measure; see scene_measure.factors";
+    ProjectGeneralDiscovery(&result);
     result.limitations = {
-      "automatic feature discovery is not part of scene-measure assembly",
-      "coarse/fine differences are integration evidence, not exact-error certificates",
+      "candidate and confirmed are local numerical evidence, not unconditional global completeness",
+      "finite solar-disc and spectral contributions are marginalized into the sky field; color causality and visual "
+      "prominence are not classified",
+      "constraint crossings without successful same-branch callback refinement remain candidates",
+      "coarse/fine differences and boundary residuals are convergence evidence, not exact-error certificates",
     };
     *out = std::move(result);
     return {};
   }
   if (request.path_layers.front().size() == 1) {
-    if (legacy_schema) {
-      return { ErrorCode::kInvalidPath, "schema 1 path feature reports require 2 to 64 faces" };
-    }
-    result.coverage.push_back(
-        { "positioned_features", CoverageStatus::kNotSupported,
-          "the one-face external-reflection scene measure is available; legacy positioned-feature fixtures require "
-          "a transmitted path" });
-    result.limitations = {
-      "automatic feature discovery is not part of scene-measure assembly",
-      "one-face external reflection has no legacy transmitted-path fixture",
-    };
-    *out = std::move(result);
-    return {};
+    return { ErrorCode::kInvalidPath, "schema 1 path feature reports require 2 to 64 faces" };
   }
 
   analytic::FaceNormalTable normals;

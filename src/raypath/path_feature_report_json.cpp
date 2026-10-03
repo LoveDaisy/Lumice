@@ -117,6 +117,66 @@ nlohmann::ordered_json FeatureJson(const PathFeature& feature) {
   return out;
 }
 
+nlohmann::ordered_json ProvenanceJson(const analytic::FeatureProvenance& provenance) {
+  return {
+    { "member_index", provenance.member_index },       { "layer_index", provenance.layer_index },
+    { "interface_index", provenance.interface_index }, { "spectrum_node_id", provenance.spectrum_node_id },
+    { "source_node_id", provenance.source_node_id },   { "sample_index", provenance.sample_index },
+  };
+}
+
+nlohmann::ordered_json DiscoveryJson(const analytic::FeatureDiscoveryResult& discovery) {
+  nlohmann::ordered_json candidates = nlohmann::ordered_json::array();
+  for (const analytic::FeatureCandidate& candidate : discovery.candidates) {
+    nlohmann::ordered_json value = {
+      { "mechanism", analytic::FeatureMechanismName(candidate.mechanism) },
+      { "status", analytic::FeatureEvidenceStatusName(candidate.status) },
+      { "provenance", ProvenanceJson(candidate.provenance) },
+      { "direction", Array(candidate.direction, 3) },
+      { "support_dimension", candidate.support_dimension },
+      { "mapping_rank", candidate.mapping_rank },
+      { "singular_values", Array(candidate.singular_values, 2) },
+      { "weighted_mass", Num(candidate.weighted_mass) },
+      { "residual", Num(candidate.residual) },
+      { "resolution", Num(candidate.resolution) },
+      { "active_constraints", candidate.active_constraints },
+      { "reason", candidate.reason },
+    };
+    if (candidate.has_weight_sides) {
+      value["weight_sides"] = Array(candidate.weight_sides, 2);
+    }
+    candidates.push_back(std::move(value));
+  }
+  nlohmann::ordered_json mechanisms = nlohmann::ordered_json::array();
+  for (const analytic::FeatureMechanismRecord& mechanism : discovery.mechanisms) {
+    mechanisms.push_back({ { "mechanism", analytic::FeatureMechanismName(mechanism.mechanism) },
+                           { "status", analytic::FeatureEvidenceStatusName(mechanism.status) },
+                           { "candidate_count", mechanism.candidate_count },
+                           { "reason", mechanism.reason } });
+  }
+  nlohmann::ordered_json sky_field = nlohmann::ordered_json::array();
+  for (const analytic::SkyFieldNode& node : discovery.sky_field) {
+    sky_field.push_back({ { "direction", Array(node.direction, 3) },
+                          { "value", Num(node.value) },
+                          { "normalized_value", Num(node.normalized_value) },
+                          { "gradient_norm", Num(node.gradient_norm) },
+                          { "hessian_eigenvalues", Array(node.hessian_eigenvalues, 2) },
+                          { "error", Num(node.error) },
+                          { "resolution", Num(node.resolution) },
+                          { "sample_count", node.sample_count },
+                          { "status", analytic::FeatureEvidenceStatusName(node.status) } });
+  }
+  return {
+    { "visited_row_count", discovery.visited_row_count },
+    { "evaluated_sample_count", discovery.evaluated_sample_count },
+    { "complete_visit", discovery.complete_visit },
+    { "materialization_complete", discovery.materialization_complete },
+    { "candidates", candidates },
+    { "mechanisms", mechanisms },
+    { "sky_field", sky_field },
+  };
+}
+
 const char* DiagnosticPathStatusName(analytic::DiagnosticPathStatus status) {
   switch (status) {
     case analytic::DiagnosticPathStatus::kOk:
@@ -431,6 +491,7 @@ std::string PathFeatureReportToJson(const PathFeatureReport& result, const char*
     { "meta", meta },
     { "wavelengths", wavelengths },
     { "scene_measure", SceneMeasureJson(result.scene_measure) },
+    { "feature_discovery", DiscoveryJson(result.discovery) },
     { "physical_l2_members", members },
     { "features", features },
     { "coverage", coverage },
@@ -438,6 +499,7 @@ std::string PathFeatureReportToJson(const PathFeatureReport& result, const char*
   };
   if (result.meta.schema_version < 3) {
     document.erase("scene_measure");
+    document.erase("feature_discovery");
   }
   return document.dump();
 }

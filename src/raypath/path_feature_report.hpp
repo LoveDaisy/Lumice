@@ -12,6 +12,7 @@
 #include <string>
 #include <vector>
 
+#include "analytic/feature_discovery.hpp"
 #include "config/config_manager.hpp"
 #include "raypath/scene_measure.hpp"
 #include "raypath/single_path_analysis.hpp"
@@ -139,6 +140,7 @@ struct FeatureReportMetadata {
 struct PathFeatureReport {
   FeatureReportMetadata meta;
   SceneMeasureResult scene_measure;
+  analytic::FeatureDiscoveryResult discovery;
   std::vector<ReportWavelength> wavelengths;
   std::vector<PhysicalMemberReport> members;
   std::vector<PathFeature> features;
