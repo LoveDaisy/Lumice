@@ -1,56 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1790995804507,
+  "lastUpdate": 1791029851808,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "f0add0b4a676a2e20ab27c782e9e9b5a182aac5b",
-          "message": "Merge pull request #355 from LoveDaisy/feat/cli-lens-and-grid-contract\n\nfeat(lens): the CLI/GUI lens contract — short-edge fov, defaults, focal length import, annotations at intensity 0",
-          "timestamp": "2026-09-13T07:31:34+08:00",
-          "tree_id": "14ed237826bf2e9217fc60dc8c0bd508aee5669a",
-          "url": "https://github.com/LoveDaisy/ice_halo_sim/commit/f0add0b4a676a2e20ab27c782e9e9b5a182aac5b"
-        },
-        "date": 1789256490985,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 404296.1,
-            "unit": "rays/sec",
-            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 594911.1,
-            "unit": "rays/sec",
-            "extra": "CPU: Neoverse-N2\\nCores: 4"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 501402.1,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 9V74 80-Core Processor\\nCores: 4"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 378549.8,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -4752,6 +4704,54 @@ window.BENCHMARK_DATA = {
             "value": 506276.2,
             "unit": "rays/sec",
             "extra": "CPU: AMD EPYC 9V45 96-Core Processor                \\nCores: 4"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "008837c9802a7b770cb84375e081eaa995c9a7ea",
+          "message": "Merge pull request #466 from LoveDaisy/fix/channel-br-background-free\n\nfix(render): exclude sky background from B-R diagnostic",
+          "timestamp": "2026-10-03T20:14:42+08:00",
+          "tree_id": "c2814c53d58b59a0419d2d23b677c39bebde293c",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/008837c9802a7b770cb84375e081eaa995c9a7ea"
+        },
+        "date": 1791029849585,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 347342.4,
+            "unit": "rays/sec",
+            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 513674.4,
+            "unit": "rays/sec",
+            "extra": "CPU: Neoverse-N2\\nCores: 4"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 370069.3,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 7763 64-Core Processor\\nCores: 4"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 312958.6,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
           }
         ]
       }
