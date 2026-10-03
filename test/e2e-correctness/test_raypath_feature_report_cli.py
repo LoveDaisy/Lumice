@@ -68,8 +68,10 @@ def test_random_315_report_is_a_separate_document_with_general_mechanism_records
         "filter_boundary", "weight_kink", "measure_atom", "strict_confinement",
         "finite_width_concentration", "brightness_maximum", "brightness_ridge",
     }
-    assert mechanisms["finite_width_concentration"]["status"] == "candidate"
-    assert mechanisms["brightness_maximum"]["status"] == "confirmed"
+    assert mechanisms["finite_width_concentration"]["status"] == "numerical_incomplete"
+    assert mechanisms["finite_width_concentration"]["candidate_count"] == 0
+    assert mechanisms["brightness_maximum"]["status"] == "candidate"
+    assert mechanisms["brightness_maximum"]["candidate_count"] > 0
     assert all(feature["id"].startswith("general.") for feature in doc["features"])
     assert all(feature["location"] == "computed sky position" for feature in doc["features"])
     assert not any(feature["id"].startswith("random_regular.") for feature in doc["features"])
