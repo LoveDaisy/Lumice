@@ -8,6 +8,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstring>
+#include <deque>
 #include <memory>
 #include <new>
 #include <string>
@@ -16,6 +17,7 @@
 #include "analytic/band_sum.hpp"
 #include "analytic/diagnostic_field.hpp"
 #include "analytic/discovery.hpp"
+#include "analytic/feature_discovery.hpp"
 #include "analytic/fiber_continuation.hpp"
 #include "analytic/path_evaluation.hpp"
 #include "analytic/path_fiber.hpp"
@@ -70,6 +72,18 @@ constexpr size_t kDiagnosticFieldResultV7Size =
     offsetof(LUMICE_ANALYTIC_DiagnosticFieldResult, storage) + sizeof(void*);
 static_assert(kDiagnosticFieldResultV7Size == sizeof(LUMICE_ANALYTIC_DiagnosticFieldResult),
               "the version 7 diagnostic-field layout ends with `storage`; append new fields after it");
+
+static_assert(static_cast<int>(lumice::analytic::FeatureEvidenceStatus::kConfirmed) ==
+                  LUMICE_ANALYTIC_FEATURE_CONFIRMED &&
+              static_cast<int>(lumice::analytic::FeatureEvidenceStatus::kNotSupported) ==
+                  LUMICE_ANALYTIC_FEATURE_NOT_SUPPORTED);
+static_assert(static_cast<int>(lumice::analytic::FeatureMechanism::kInteriorRankLoss) ==
+                  LUMICE_ANALYTIC_FEATURE_INTERIOR_RANK_LOSS &&
+              static_cast<int>(lumice::analytic::FeatureMechanism::kBrightnessRidge) ==
+                  LUMICE_ANALYTIC_FEATURE_BRIGHTNESS_RIDGE);
+static_assert(static_cast<int>(lumice::analytic::SupportMeasureKind::kAtom) == LUMICE_ANALYTIC_SUPPORT_ATOM &&
+              static_cast<int>(lumice::analytic::SupportMeasureKind::kContinuous) ==
+                  LUMICE_ANALYTIC_SUPPORT_CONTINUOUS);
 
 // Where each double array of one FiberResult sits in its storage block, for N poses and k margins.
 // The version 4 arrays keep their order — poses (9 N), sun directions (3 N), arclength increments
@@ -883,6 +897,333 @@ LUMICE_ANALYTIC_ErrorCode BandSumImpl(const LUMICE_ANALYTIC_Crystal* crystal,
   return LUMICE_ANALYTIC_OK;
 }
 
+template <typename T>
+const T* StrideElement(const T* base, uint32_t stride, int index) {
+  return reinterpret_cast<const T*>(reinterpret_cast<const unsigned char*>(base) +
+                                    static_cast<size_t>(stride) * static_cast<size_t>(index));
+}
+
+lumice::analytic::FeatureProvenance ToFeatureProvenance(const LUMICE_ANALYTIC_FeatureProvenance& value) {
+  lumice::analytic::FeatureProvenance out;
+  out.member_index = value.member_index;
+  out.layer_index = value.layer_index;
+  out.interface_index = value.interface_index;
+  out.spectrum_node_id = value.spectrum_node_id;
+  out.source_node_id = value.source_node_id;
+  out.sample_index = value.sample_index;
+  return out;
+}
+
+LUMICE_ANALYTIC_FeatureProvenance FromFeatureProvenance(const lumice::analytic::FeatureProvenance& value) {
+  LUMICE_ANALYTIC_FeatureProvenance out{};
+  out.member_index = value.member_index;
+  out.layer_index = value.layer_index;
+  out.interface_index = value.interface_index;
+  out.spectrum_node_id = value.spectrum_node_id;
+  out.source_node_id = value.source_node_id;
+  out.sample_index = value.sample_index;
+  return out;
+}
+
+bool ToConstraintKind(int value, lumice::analytic::ConstraintKind* out) {
+  if (value < LUMICE_ANALYTIC_CONSTRAINT_DOMAIN || value > LUMICE_ANALYTIC_CONSTRAINT_WEIGHT) {
+    return false;
+  }
+  *out = static_cast<lumice::analytic::ConstraintKind>(value);
+  return true;
+}
+
+LUMICE_ANALYTIC_ErrorCode ToFeatureSupportSample(const LUMICE_ANALYTIC_FeatureSupportSample& value,
+                                                 int coordinate_dimension,
+                                                 lumice::analytic::FeatureSupportSample* out) {
+  namespace an = lumice::analytic;
+  if (value.struct_size < sizeof(LUMICE_ANALYTIC_FeatureSupportSample) || value.support_dimension < 0 ||
+      value.constraint_count < 0) {
+    return LUMICE_ANALYTIC_ERR_INVALID_VALUE;
+  }
+  if ((coordinate_dimension > 0 && value.coordinates == nullptr) ||
+      (value.support_dimension > 0 && value.active_coordinates == nullptr) ||
+      (value.constraint_count > 0 && value.constraints == nullptr)) {
+    return LUMICE_ANALYTIC_ERR_NULL_ARG;
+  }
+  if (value.measure_kind < LUMICE_ANALYTIC_SUPPORT_ATOM || value.measure_kind > LUMICE_ANALYTIC_SUPPORT_CONTINUOUS ||
+      (value.finite_width != 0 && value.finite_width != 1) ||
+      (value.direction_jacobian_available != 0 && value.direction_jacobian_available != 1) ||
+      (value.numerically_available != 0 && value.numerically_available != 1)) {
+    return LUMICE_ANALYTIC_ERR_INVALID_VALUE;
+  }
+  if (value.direction_jacobian != nullptr && value.direction_jacobian_column_available == nullptr) {
+    return LUMICE_ANALYTIC_ERR_NULL_ARG;
+  }
+  if (value.direction_jacobian_available != 0 && value.direction_jacobian == nullptr) {
+    return LUMICE_ANALYTIC_ERR_NULL_ARG;
+  }
+  if (value.constraint_count > 0 && (value.constraint_stride < sizeof(LUMICE_ANALYTIC_SupportConstraint) ||
+                                     value.constraint_stride % alignof(LUMICE_ANALYTIC_SupportConstraint) != 0)) {
+    return LUMICE_ANALYTIC_ERR_INVALID_VALUE;
+  }
+  out->sample_id = value.sample_id;
+  out->provenance = ToFeatureProvenance(value.provenance);
+  out->measure_kind = static_cast<an::SupportMeasureKind>(value.measure_kind);
+  out->support_dimension = value.support_dimension;
+  out->finite_width = value.finite_width != 0;
+  if (coordinate_dimension > 0) {
+    out->coordinates.assign(value.coordinates, value.coordinates + coordinate_dimension);
+  }
+  if (value.support_dimension > 0) {
+    out->active_coordinates.assign(value.active_coordinates, value.active_coordinates + value.support_dimension);
+  }
+  std::copy(value.direction, value.direction + 3, out->direction);
+  out->weight = value.weight;
+  out->direction_jacobian_available = value.direction_jacobian_available != 0;
+  if (value.direction_jacobian != nullptr) {
+    out->direction_jacobian.assign(value.direction_jacobian,
+                                   value.direction_jacobian + 3 * static_cast<size_t>(coordinate_dimension));
+    out->direction_jacobian_column_available.assign(
+        value.direction_jacobian_column_available,
+        value.direction_jacobian_column_available + static_cast<size_t>(coordinate_dimension));
+  }
+  out->direction_jacobian_error = value.direction_jacobian_error;
+  out->direction_jacobian_resolution = value.direction_jacobian_resolution;
+  out->numerically_available = value.numerically_available != 0;
+  out->constraints.reserve(static_cast<size_t>(value.constraint_count));
+  for (int index = 0; index < value.constraint_count; ++index) {
+    const LUMICE_ANALYTIC_SupportConstraint& input = *StrideElement(value.constraints, value.constraint_stride, index);
+    if (input.struct_size < sizeof(LUMICE_ANALYTIC_SupportConstraint)) {
+      return LUMICE_ANALYTIC_ERR_INVALID_VALUE;
+    }
+    if (input.name == nullptr) {
+      return LUMICE_ANALYTIC_ERR_NULL_ARG;
+    }
+    an::SupportConstraint constraint;
+    if (!ToConstraintKind(input.kind, &constraint.kind) ||
+        (input.numerically_available != 0 && input.numerically_available != 1) ||
+        (input.gradient_available != 0 && input.gradient_available != 1)) {
+      return LUMICE_ANALYTIC_ERR_INVALID_VALUE;
+    }
+    if (input.gradient_available != 0 && coordinate_dimension > 0 && input.gradient == nullptr) {
+      return LUMICE_ANALYTIC_ERR_NULL_ARG;
+    }
+    if (input.gradient_available == 0 && input.gradient != nullptr) {
+      return LUMICE_ANALYTIC_ERR_INVALID_VALUE;
+    }
+    constraint.name = input.name;
+    constraint.layer_index = input.layer_index;
+    constraint.interface_index = input.interface_index;
+    constraint.value = input.value;
+    constraint.numerically_available = input.numerically_available != 0;
+    constraint.gradient_available = input.gradient_available != 0;
+    if (constraint.gradient_available && coordinate_dimension > 0) {
+      constraint.gradient.assign(input.gradient, input.gradient + coordinate_dimension);
+    }
+    out->constraints.push_back(std::move(constraint));
+  }
+  return LUMICE_ANALYTIC_OK;
+}
+
+LUMICE_ANALYTIC_ErrorCode ToFeatureSupportBatch(const LUMICE_ANALYTIC_FeatureSupportBatch* input,
+                                                lumice::analytic::FeatureSupportBatch* out) {
+  namespace an = lumice::analytic;
+  if (input == nullptr) {
+    return LUMICE_ANALYTIC_ERR_NULL_ARG;
+  }
+  if (input->struct_size < sizeof(LUMICE_ANALYTIC_FeatureSupportBatch) || input->sample_count < 0 ||
+      input->edge_count < 0 || input->coordinate_dimension < 0 ||
+      input->coordinate_dimension > LUMICE_ANALYTIC_MAX_FEATURE_COORDINATE_DIMENSION ||
+      (input->complete_visit != 0 && input->complete_visit != 1) ||
+      (input->materialization_complete != 0 && input->materialization_complete != 1)) {
+    return LUMICE_ANALYTIC_ERR_INVALID_VALUE;
+  }
+  if ((input->sample_count > 0 && input->samples == nullptr) || (input->edge_count > 0 && input->edges == nullptr)) {
+    return LUMICE_ANALYTIC_ERR_NULL_ARG;
+  }
+  if (input->sample_count > 0 && (input->sample_stride < sizeof(LUMICE_ANALYTIC_FeatureSupportSample) ||
+                                  input->sample_stride % alignof(LUMICE_ANALYTIC_FeatureSupportSample) != 0)) {
+    return LUMICE_ANALYTIC_ERR_INVALID_VALUE;
+  }
+  out->version = input->version;
+  out->coordinate_dimension = input->coordinate_dimension;
+  out->visited_row_count = input->visited_row_count;
+  out->complete_visit = input->complete_visit != 0;
+  out->materialization_complete = input->materialization_complete != 0;
+  out->samples.reserve(static_cast<size_t>(input->sample_count));
+  for (int index = 0; index < input->sample_count; ++index) {
+    an::FeatureSupportSample sample;
+    const LUMICE_ANALYTIC_ErrorCode code = ToFeatureSupportSample(
+        *StrideElement(input->samples, input->sample_stride, index), input->coordinate_dimension, &sample);
+    if (code != LUMICE_ANALYTIC_OK) {
+      return code;
+    }
+    out->samples.push_back(std::move(sample));
+  }
+  out->edges.reserve(static_cast<size_t>(input->edge_count));
+  for (int index = 0; index < input->edge_count; ++index) {
+    const LUMICE_ANALYTIC_FeatureSupportEdge& edge = input->edges[index];
+    out->edges.push_back({ edge.first, edge.second, edge.parameter_distance });
+  }
+  std::string error;
+  return an::ValidateFeatureSupportBatch(*out, &error) ? LUMICE_ANALYTIC_OK : LUMICE_ANALYTIC_ERR_INVALID_VALUE;
+}
+
+bool ToFeatureDiscoveryOptions(const LUMICE_ANALYTIC_FeatureDiscoveryOptions* input,
+                               lumice::analytic::FeatureDiscoveryOptions* out) {
+  if (input == nullptr) {
+    return true;
+  }
+  if (input->struct_size < sizeof(LUMICE_ANALYTIC_FeatureDiscoveryOptions)) {
+    return false;
+  }
+  auto positive_or_default = [](double value, double* destination) {
+    if (!std::isfinite(value) || value < 0.0) {
+      return false;
+    }
+    if (value > 0.0) {
+      *destination = value;
+    }
+    return true;
+  };
+  if (!positive_or_default(input->margin_tolerance, &out->margin_tolerance) ||
+      !positive_or_default(input->rank_relative_tolerance, &out->rank_relative_tolerance) ||
+      !positive_or_default(input->sky_merge_tolerance, &out->sky_merge_tolerance) ||
+      input->maximum_refinement_steps < 0 || input->sky_z_bins < 0 || input->sky_azimuth_bins < 0) {
+    return false;
+  }
+  if (input->maximum_refinement_steps > 0) {
+    out->maximum_refinement_steps = input->maximum_refinement_steps;
+  }
+  if (input->sky_z_bins > 0) {
+    out->sky_z_bins = input->sky_z_bins;
+  }
+  if (input->sky_azimuth_bins > 0) {
+    out->sky_azimuth_bins = input->sky_azimuth_bins;
+  }
+  return out->sky_z_bins >= 4 && out->sky_z_bins % 2 == 0 && out->sky_azimuth_bins >= 8 &&
+         out->sky_azimuth_bins % 2 == 0;
+}
+
+struct FeatureDiscoveryResultStorage {
+  std::deque<std::string> strings;
+  std::vector<std::vector<const char*>> active_constraint_pointers;
+  std::vector<LUMICE_ANALYTIC_FeatureCandidate> candidates;
+  std::vector<LUMICE_ANALYTIC_FeatureMechanismRecord> mechanisms;
+  std::vector<LUMICE_ANALYTIC_SkyFieldNode> sky_field;
+};
+
+LUMICE_ANALYTIC_ErrorCode FillFeatureDiscoveryResult(const lumice::analytic::FeatureDiscoveryResult& result,
+                                                     LUMICE_ANALYTIC_FeatureDiscoveryResult* out) {
+  auto storage = std::make_unique<FeatureDiscoveryResultStorage>();
+  storage->active_constraint_pointers.reserve(result.candidates.size());
+  storage->candidates.reserve(result.candidates.size());
+  for (const lumice::analytic::FeatureCandidate& input : result.candidates) {
+    storage->active_constraint_pointers.emplace_back();
+    auto& names = storage->active_constraint_pointers.back();
+    names.reserve(input.active_constraints.size());
+    for (const std::string& name : input.active_constraints) {
+      storage->strings.push_back(name);
+      names.push_back(storage->strings.back().c_str());
+    }
+    storage->strings.push_back(input.reason);
+    LUMICE_ANALYTIC_FeatureCandidate candidate{};
+    candidate.mechanism = static_cast<int>(input.mechanism);
+    candidate.status = static_cast<int>(input.status);
+    candidate.provenance = FromFeatureProvenance(input.provenance);
+    std::copy(input.direction, input.direction + 3, candidate.direction);
+    candidate.support_dimension = input.support_dimension;
+    candidate.mapping_rank = input.mapping_rank;
+    std::copy(input.singular_values, input.singular_values + 2, candidate.singular_values);
+    candidate.weighted_mass = input.weighted_mass;
+    candidate.has_weight_sides = input.has_weight_sides ? 1 : 0;
+    std::copy(input.weight_sides, input.weight_sides + 2, candidate.weight_sides);
+    candidate.residual = input.residual;
+    candidate.resolution = input.resolution;
+    candidate.active_constraint_count = static_cast<int>(names.size());
+    candidate.active_constraints = names.empty() ? nullptr : names.data();
+    candidate.reason = storage->strings.back().c_str();
+    storage->candidates.push_back(candidate);
+  }
+  storage->mechanisms.reserve(result.mechanisms.size());
+  for (const lumice::analytic::FeatureMechanismRecord& input : result.mechanisms) {
+    storage->strings.push_back(input.reason);
+    LUMICE_ANALYTIC_FeatureMechanismRecord record{};
+    record.mechanism = static_cast<int>(input.mechanism);
+    record.status = static_cast<int>(input.status);
+    record.candidate_count = input.candidate_count;
+    record.reason = storage->strings.back().c_str();
+    storage->mechanisms.push_back(record);
+  }
+  storage->sky_field.reserve(result.sky_field.size());
+  for (const lumice::analytic::SkyFieldNode& input : result.sky_field) {
+    LUMICE_ANALYTIC_SkyFieldNode node{};
+    std::copy(input.direction, input.direction + 3, node.direction);
+    node.value = input.value;
+    node.normalized_value = input.normalized_value;
+    node.gradient_norm = input.gradient_norm;
+    std::copy(input.hessian_eigenvalues, input.hessian_eigenvalues + 2, node.hessian_eigenvalues);
+    node.error = input.error;
+    node.resolution = input.resolution;
+    node.sample_count = input.sample_count;
+    node.status = static_cast<int>(input.status);
+    storage->sky_field.push_back(node);
+  }
+  out->visited_row_count = result.visited_row_count;
+  out->evaluated_sample_count = result.evaluated_sample_count;
+  out->complete_visit = result.complete_visit ? 1 : 0;
+  out->materialization_complete = result.materialization_complete ? 1 : 0;
+  out->candidate_count = static_cast<int>(storage->candidates.size());
+  out->candidates = storage->candidates.empty() ? nullptr : storage->candidates.data();
+  out->mechanism_count = static_cast<int>(storage->mechanisms.size());
+  out->mechanisms = storage->mechanisms.empty() ? nullptr : storage->mechanisms.data();
+  out->sky_field_count = static_cast<int>(storage->sky_field.size());
+  out->sky_field = storage->sky_field.empty() ? nullptr : storage->sky_field.data();
+  out->storage = storage.release();
+  return LUMICE_ANALYTIC_OK;
+}
+
+LUMICE_ANALYTIC_ErrorCode DiscoverFeaturesImpl(const LUMICE_ANALYTIC_FeatureSupportBatch* batch,
+                                               const LUMICE_ANALYTIC_FeatureDiscoveryOptions* options,
+                                               LUMICE_ANALYTIC_FeatureReevaluateFn reevaluate, void* user_data,
+                                               LUMICE_ANALYTIC_FeatureDiscoveryResult* out) {
+  namespace an = lumice::analytic;
+  if (out->struct_size < sizeof(LUMICE_ANALYTIC_FeatureDiscoveryResult)) {
+    return LUMICE_ANALYTIC_ERR_INVALID_VALUE;
+  }
+  an::FeatureSupportBatch kernel_batch;
+  const LUMICE_ANALYTIC_ErrorCode batch_code = ToFeatureSupportBatch(batch, &kernel_batch);
+  if (batch_code != LUMICE_ANALYTIC_OK) {
+    return batch_code;
+  }
+  an::FeatureDiscoveryOptions kernel_options;
+  if (!ToFeatureDiscoveryOptions(options, &kernel_options)) {
+    return LUMICE_ANALYTIC_ERR_INVALID_VALUE;
+  }
+  an::FeatureReevaluateFn kernel_callback;
+  if (reevaluate != nullptr) {
+    const int coordinate_dimension = kernel_batch.coordinate_dimension;
+    kernel_callback = [reevaluate, user_data, coordinate_dimension](const an::FeatureReevaluationRequest& request,
+                                                                    an::FeatureSupportSample* sample,
+                                                                    std::string* error) {
+      LUMICE_ANALYTIC_FeatureReevaluationRequest c_request{};
+      c_request.provenance = FromFeatureProvenance(request.provenance);
+      c_request.coordinate_dimension = coordinate_dimension;
+      c_request.coordinates = request.coordinates.data();
+      LUMICE_ANALYTIC_FeatureSupportSample c_sample{};
+      c_sample.struct_size = sizeof(c_sample);
+      if (reevaluate(&c_request, &c_sample, user_data) == 0) {
+        if (error != nullptr) {
+          *error = "the feature re-evaluation callback reported numerical unavailability";
+        }
+        return false;
+      }
+      const LUMICE_ANALYTIC_ErrorCode code = ToFeatureSupportSample(c_sample, coordinate_dimension, sample);
+      if (code != LUMICE_ANALYTIC_OK && error != nullptr) {
+        *error = "the feature re-evaluation callback returned a malformed sample";
+      }
+      return code == LUMICE_ANALYTIC_OK;
+    };
+  }
+  return FillFeatureDiscoveryResult(an::DiscoverFeatures(kernel_batch, kernel_options, kernel_callback), out);
+}
+
 }  // namespace
 
 extern "C" {
@@ -1087,6 +1428,35 @@ void LUMICE_ANALYTIC_ReleaseBandSumResult(LUMICE_ANALYTIC_BandSumResult* result)
     return;
   }
   std::unique_ptr<BandSumResultStorage> owned(static_cast<BandSumResultStorage*>(result->storage));
+  ZeroAfterStructSize(result);
+}
+
+LUMICE_ANALYTIC_ErrorCode LUMICE_ANALYTIC_DiscoverFeatures(const LUMICE_ANALYTIC_FeatureSupportBatch* batch,
+                                                           const LUMICE_ANALYTIC_FeatureDiscoveryOptions* options,
+                                                           LUMICE_ANALYTIC_FeatureReevaluateFn reevaluate,
+                                                           void* user_data,
+                                                           LUMICE_ANALYTIC_FeatureDiscoveryResult* out_result) {
+  if (out_result == nullptr) {
+    return LUMICE_ANALYTIC_ERR_NULL_ARG;
+  }
+  ZeroAfterStructSize(out_result);
+  try {
+    const LUMICE_ANALYTIC_ErrorCode code = DiscoverFeaturesImpl(batch, options, reevaluate, user_data, out_result);
+    if (code != LUMICE_ANALYTIC_OK) {
+      ZeroAfterStructSize(out_result);
+    }
+    return code;
+  } catch (...) {
+    ZeroAfterStructSize(out_result);
+    return LUMICE_ANALYTIC_ERR_UNKNOWN;
+  }
+}
+
+void LUMICE_ANALYTIC_ReleaseFeatureDiscoveryResult(LUMICE_ANALYTIC_FeatureDiscoveryResult* result) {
+  if (result == nullptr || result->struct_size < sizeof(LUMICE_ANALYTIC_FeatureDiscoveryResult)) {
+    return;
+  }
+  std::unique_ptr<FeatureDiscoveryResultStorage> owned(static_cast<FeatureDiscoveryResultStorage*>(result->storage));
   ZeroAfterStructSize(result);
 }
 

@@ -108,7 +108,7 @@ _PRELUDE = textwrap.dedent(
 
     lib = ctypes.CDLL(LIB)
     lib.LUMICE_ANALYTIC_GetApiVersion.restype = c_int
-    assert lib.LUMICE_ANALYTIC_GetApiVersion() == 8, "these bindings require lumice_analytic.h version 8"
+    assert lib.LUMICE_ANALYTIC_GetApiVersion() == 9, "these bindings require lumice_analytic.h version 9"
     lib.LUMICE_ANALYTIC_BandSum.restype = c_int
     lib.LUMICE_ANALYTIC_BandSum.argtypes = [POINTER(Crystal), POINTER(Problem), c_void_p]
     lib.LUMICE_ANALYTIC_ReleaseBandSumResult.restype = None

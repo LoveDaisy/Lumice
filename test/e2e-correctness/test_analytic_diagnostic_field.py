@@ -140,7 +140,7 @@ _PRELUDE = textwrap.dedent(
 
     lib = ctypes.CDLL(LIB)
     lib.LUMICE_ANALYTIC_GetApiVersion.restype = c_int
-    assert lib.LUMICE_ANALYTIC_GetApiVersion() == 8
+    assert lib.LUMICE_ANALYTIC_GetApiVersion() == 9
     lib.LUMICE_ANALYTIC_EvaluateDiagnosticFieldBatch.restype = c_int
     lib.LUMICE_ANALYTIC_EvaluateDiagnosticFieldBatch.argtypes = [POINTER(Crystal), POINTER(c_int), c_int,
                                                                  POINTER(Row), c_int, c_void_p]

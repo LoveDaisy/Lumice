@@ -23,6 +23,9 @@
 // face sequence and performs no symmetry reduction (doc/analytic-api.md section 3).
 //
 // Version notes, newest first (every bump says what changed, doc/analytic-api.md section 8.1):
+//   9  ADDED the general support-driven feature-discovery structs, re-evaluation callback,
+//      LUMICE_ANALYTIC_DiscoverFeatures and LUMICE_ANALYTIC_ReleaseFeatureDiscoveryResult.
+//      Nothing existing changed.
 //   8  ADDED one-face external-reflection semantics to EvaluateDiagnosticFieldBatch and appended
 //      LUMICE_ANALYTIC_DIAGNOSTIC_EXTERNAL_REFLECTION to DiagnosticInterfaceKind. The frozen
 //      version 7 DiagnosticFieldResult layout and every older computation contract are unchanged.
@@ -79,7 +82,7 @@ extern "C" {
 
 // Interface version, a single integer (doc/analytic-api.md section 8.2): bumped on every
 // incompatible change, and in 0.x on every addition too. Independent of lumice_base.h's LUMICE_API_VERSION.
-#define LUMICE_ANALYTIC_API_VERSION 8
+#define LUMICE_ANALYTIC_API_VERSION 9
 
 // Return codes of the computation functions. The names shared with lumice_base.h's LUMICE_ErrorCode mean
 // the same thing there; the type is this header's own (doc/analytic-api.md section 5.2). A numerical
@@ -728,6 +731,204 @@ LUMICE_ANALYTIC_API LUMICE_ANALYTIC_ErrorCode LUMICE_ANALYTIC_BandSum(const LUMI
 // Frees what BandSum allocated and zeroes the struct after struct_size. NULL-safe; a no-op on a
 // zero-filled struct.
 LUMICE_ANALYTIC_API void LUMICE_ANALYTIC_ReleaseBandSumResult(LUMICE_ANALYTIC_BandSumResult* result);
+
+// ---------------------------------------------------------------------------------------------
+// General feature discovery over a caller-supplied finite support. Unlike DiscoverComponents,
+// this operation has no target direction and no crystal-family vocabulary. The caller enumerates
+// its actual measure support, topology, weights and named constraint margins; the library owns all
+// classification and equal-area sky aggregation. Directions are world propagation directions
+// (crystal -> observer), so their displayed sky points are their negatives.
+// ---------------------------------------------------------------------------------------------
+#define LUMICE_ANALYTIC_FEATURE_SUPPORT_VERSION 1
+#define LUMICE_ANALYTIC_MAX_FEATURE_COORDINATE_DIMENSION 16
+
+typedef enum LUMICE_ANALYTIC_FeatureEvidenceStatus_ {
+  LUMICE_ANALYTIC_FEATURE_CONFIRMED = 0,
+  LUMICE_ANALYTIC_FEATURE_CANDIDATE = 1,
+  LUMICE_ANALYTIC_FEATURE_NOT_DETECTED_AT_RESOLUTION = 2,
+  LUMICE_ANALYTIC_FEATURE_NUMERICAL_INCOMPLETE = 3,
+  LUMICE_ANALYTIC_FEATURE_PHYSICALLY_UNREACHABLE = 4,
+  LUMICE_ANALYTIC_FEATURE_NOT_SUPPORTED = 5,
+} LUMICE_ANALYTIC_FeatureEvidenceStatus;
+
+typedef enum LUMICE_ANALYTIC_FeatureMechanism_ {
+  LUMICE_ANALYTIC_FEATURE_INTERIOR_RANK_LOSS = 0,
+  LUMICE_ANALYTIC_FEATURE_SUPPORT_BOUNDARY = 1,
+  LUMICE_ANALYTIC_FEATURE_SUPPORT_CORNER = 2,
+  LUMICE_ANALYTIC_FEATURE_OPTICAL_KINK = 3,
+  LUMICE_ANALYTIC_FEATURE_FILTER_BOUNDARY = 4,
+  LUMICE_ANALYTIC_FEATURE_WEIGHT_KINK = 5,
+  LUMICE_ANALYTIC_FEATURE_MEASURE_ATOM = 6,
+  LUMICE_ANALYTIC_FEATURE_STRICT_CONFINEMENT = 7,
+  LUMICE_ANALYTIC_FEATURE_FINITE_WIDTH_CONCENTRATION = 8,
+  LUMICE_ANALYTIC_FEATURE_BRIGHTNESS_MAXIMUM = 9,
+  LUMICE_ANALYTIC_FEATURE_BRIGHTNESS_RIDGE = 10,
+} LUMICE_ANALYTIC_FeatureMechanism;
+
+typedef enum LUMICE_ANALYTIC_SupportMeasureKind_ {
+  LUMICE_ANALYTIC_SUPPORT_ATOM = 0,
+  LUMICE_ANALYTIC_SUPPORT_CONTINUOUS = 1,
+} LUMICE_ANALYTIC_SupportMeasureKind;
+
+typedef enum LUMICE_ANALYTIC_ConstraintKind_ {
+  LUMICE_ANALYTIC_CONSTRAINT_DOMAIN = 0,
+  LUMICE_ANALYTIC_CONSTRAINT_ENTRY = 1,
+  LUMICE_ANALYTIC_CONSTRAINT_TIR = 2,
+  LUMICE_ANALYTIC_CONSTRAINT_FILTER = 3,
+  LUMICE_ANALYTIC_CONSTRAINT_WEIGHT = 4,
+} LUMICE_ANALYTIC_ConstraintKind;
+
+typedef struct LUMICE_ANALYTIC_FeatureProvenance_ {
+  int member_index;
+  int layer_index;
+  int interface_index;
+  int spectrum_node_id;
+  int source_node_id;
+  int sample_index;
+} LUMICE_ANALYTIC_FeatureProvenance;
+
+typedef struct LUMICE_ANALYTIC_SupportConstraint_ {
+  uint32_t struct_size;
+  const char* name;  // borrowed NUL-terminated string
+  int kind;          // LUMICE_ANALYTIC_ConstraintKind
+  int layer_index;
+  int interface_index;
+  double value;
+  int numerically_available;
+  int gradient_available;
+  const double* gradient;  // coordinate_dimension entries when available
+} LUMICE_ANALYTIC_SupportConstraint;
+
+typedef struct LUMICE_ANALYTIC_FeatureSupportSample_ {
+  uint32_t struct_size;
+  uint64_t sample_id;
+  LUMICE_ANALYTIC_FeatureProvenance provenance;
+  int measure_kind;  // LUMICE_ANALYTIC_SupportMeasureKind
+  int support_dimension;
+  int finite_width;
+  const double* coordinates;      // batch coordinate_dimension entries
+  const int* active_coordinates;  // support_dimension unique indices
+  double direction[3];
+  double weight;
+  int direction_jacobian_available;
+  const double* direction_jacobian;                    // row-major 3 x coordinate_dimension, or NULL
+  const uint8_t* direction_jacobian_column_available;  // coordinate_dimension entries with Jacobian
+  double direction_jacobian_error;
+  double direction_jacobian_resolution;
+  int constraint_count;
+  uint32_t constraint_stride;  // sizeof(LUMICE_ANALYTIC_SupportConstraint) for version 9
+  const LUMICE_ANALYTIC_SupportConstraint* constraints;
+  int numerically_available;
+} LUMICE_ANALYTIC_FeatureSupportSample;
+
+typedef struct LUMICE_ANALYTIC_FeatureSupportEdge_ {
+  int first;
+  int second;
+  double parameter_distance;
+} LUMICE_ANALYTIC_FeatureSupportEdge;
+
+typedef struct LUMICE_ANALYTIC_FeatureSupportBatch_ {
+  uint32_t struct_size;
+  uint32_t version;  // LUMICE_ANALYTIC_FEATURE_SUPPORT_VERSION
+  int coordinate_dimension;
+  uint64_t visited_row_count;
+  int complete_visit;
+  int materialization_complete;
+  int sample_count;
+  uint32_t sample_stride;  // sizeof(LUMICE_ANALYTIC_FeatureSupportSample) for version 9
+  const LUMICE_ANALYTIC_FeatureSupportSample* samples;
+  int edge_count;
+  const LUMICE_ANALYTIC_FeatureSupportEdge* edges;
+} LUMICE_ANALYTIC_FeatureSupportBatch;
+
+typedef struct LUMICE_ANALYTIC_FeatureReevaluationRequest_ {
+  LUMICE_ANALYTIC_FeatureProvenance provenance;
+  int coordinate_dimension;
+  const double* coordinates;
+} LUMICE_ANALYTIC_FeatureReevaluationRequest;
+
+// The library initializes out_sample->struct_size and calls synchronously. The callback returns 1
+// only after filling a complete sample for the requested coordinates and provenance. All pointers
+// it writes are borrowed only until the callback returns; the library copies them before returning
+// control. A 0 return is a local numerical-unavailability outcome and does not fail the call.
+typedef int (*LUMICE_ANALYTIC_FeatureReevaluateFn)(const LUMICE_ANALYTIC_FeatureReevaluationRequest* request,
+                                                   LUMICE_ANALYTIC_FeatureSupportSample* out_sample, void* user_data);
+
+typedef struct LUMICE_ANALYTIC_FeatureDiscoveryOptions_ {
+  uint32_t struct_size;
+  double margin_tolerance;         // 0 selects the default
+  double rank_relative_tolerance;  // 0 selects the default
+  double sky_merge_tolerance;      // 0 selects the default
+  int maximum_refinement_steps;    // 0 selects the default
+  int sky_z_bins;                  // 0 selects 8; otherwise even and >= 4
+  int sky_azimuth_bins;            // 0 selects 16; otherwise even and >= 8
+} LUMICE_ANALYTIC_FeatureDiscoveryOptions;
+
+typedef struct LUMICE_ANALYTIC_FeatureCandidate_ {
+  int mechanism;  // LUMICE_ANALYTIC_FeatureMechanism
+  int status;     // LUMICE_ANALYTIC_FeatureEvidenceStatus
+  LUMICE_ANALYTIC_FeatureProvenance provenance;
+  double direction[3];
+  int support_dimension;
+  int mapping_rank;
+  double singular_values[2];
+  double weighted_mass;
+  int has_weight_sides;
+  double weight_sides[2];
+  double residual;
+  double resolution;
+  int active_constraint_count;
+  const char* const* active_constraints;  // owned by result
+  const char* reason;                     // owned by result
+} LUMICE_ANALYTIC_FeatureCandidate;
+
+typedef struct LUMICE_ANALYTIC_FeatureMechanismRecord_ {
+  int mechanism;  // LUMICE_ANALYTIC_FeatureMechanism
+  int status;     // LUMICE_ANALYTIC_FeatureEvidenceStatus
+  int candidate_count;
+  const char* reason;  // owned by result
+} LUMICE_ANALYTIC_FeatureMechanismRecord;
+
+typedef struct LUMICE_ANALYTIC_SkyFieldNode_ {
+  double direction[3];
+  double value;
+  double normalized_value;
+  double gradient_norm;
+  double hessian_eigenvalues[2];
+  double error;
+  double resolution;
+  int sample_count;
+  int status;  // LUMICE_ANALYTIC_FeatureEvidenceStatus
+} LUMICE_ANALYTIC_SkyFieldNode;
+
+typedef struct LUMICE_ANALYTIC_FeatureDiscoveryResult_ {
+  uint32_t struct_size;  // caller sets sizeof(*out_result)
+  uint64_t visited_row_count;
+  int evaluated_sample_count;
+  int complete_visit;
+  int materialization_complete;
+  int candidate_count;
+  const LUMICE_ANALYTIC_FeatureCandidate* candidates;
+  int mechanism_count;
+  const LUMICE_ANALYTIC_FeatureMechanismRecord* mechanisms;
+  int sky_field_count;
+  const LUMICE_ANALYTIC_SkyFieldNode* sky_field;
+  void* storage;  // opaque; LUMICE_ANALYTIC_ReleaseFeatureDiscoveryResult
+} LUMICE_ANALYTIC_FeatureDiscoveryResult;
+
+// Input rows and nested constraints are walked with their declared strides. Counts must be
+// non-negative, every stride must cover the complete version 9 struct, and every required pointer
+// must be non-NULL. A semantically malformed support is ERR_INVALID_VALUE rather than a discovery
+// status. The callback and user_data are borrowed synchronously; NULL disables refinement.
+// Re-entrant: concurrent calls with distinct outputs own independent storage and callback state.
+LUMICE_ANALYTIC_API LUMICE_ANALYTIC_ErrorCode LUMICE_ANALYTIC_DiscoverFeatures(
+    const LUMICE_ANALYTIC_FeatureSupportBatch* batch, const LUMICE_ANALYTIC_FeatureDiscoveryOptions* options,
+    LUMICE_ANALYTIC_FeatureReevaluateFn reevaluate, void* user_data,
+    LUMICE_ANALYTIC_FeatureDiscoveryResult* out_result);
+
+// Frees all candidate strings/arrays, mechanism records and sky nodes, then zeroes the result after
+// struct_size. NULL-safe and idempotent on a zero-filled result.
+LUMICE_ANALYTIC_API void LUMICE_ANALYTIC_ReleaseFeatureDiscoveryResult(LUMICE_ANALYTIC_FeatureDiscoveryResult* result);
 
 
 #ifdef __cplusplus

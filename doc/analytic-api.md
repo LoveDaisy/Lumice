@@ -8,8 +8,9 @@
 > thread-safety (§5.3) decisions, fiber continuation `LUMICE_ANALYTIC_TraceFiber[Batch]` (version
 > 3) and component discovery `LUMICE_ANALYTIC_DiscoverComponents` (version 4); and module A v1's
 > per-pose diagnostics on `FiberResult` (version 5, §4.3); and module B v1, the band sum
-> `LUMICE_ANALYTIC_BandSum` (version 6, §4.6), and the general diagnostic-field direct batch
-> (version 8, §4.8; its result layout remains the frozen version 7 layout). Module A serves the Analyze workspace's first phase,
+> `LUMICE_ANALYTIC_BandSum` (version 6, §4.6), the general diagnostic-field direct batch
+> (version 8, §4.8; its result layout remains the frozen version 7 layout), and support-driven
+> general feature discovery (version 9, §4.9). Module A serves the Analyze workspace's first phase,
 > module B its second, the single-path all-sky map (`doc/raypath-analysis.md` §5.1.8). The library is not in any
 > download package yet: that is §8.8's checklist, not done.
 >
@@ -960,6 +961,11 @@ minimum size, stride and ownership rules are unchanged; the new enum value is ca
 existing `kind` field. The older path, fiber, discovery and band-sum entries retain their
 transmitted-chain minimum of two faces.
 
+Version 9 adds the support-driven feature-discovery records, synchronous re-evaluation callback,
+`LUMICE_ANALYTIC_DiscoverFeatures`, and `LUMICE_ANALYTIC_ReleaseFeatureDiscoveryResult`. Nothing
+existing changed. The new operation consumes concrete support rows rather than a named crystal or
+orientation family; §4.9 records its completeness, ownership, sky-field and concurrency contract.
+
 ### 4.6 Module B: the band sum (as built, API version 6)
 
 The single-path brightness map of Analyze's second function. The specification is LI
@@ -1229,6 +1235,44 @@ around a median of `1.002`, which is what the two noise floors predict together 
 per pixel for the merged pair, the band sum's `1/√K_eff` `2.0 %`: `±1.28σ` of their sum is `±5.7 %`).
 The contract's §6 unit and §8 conversion therefore hold for this implementation with nothing fitted,
 which also checks the `kLiAreaPerEngineArea` factor and the weight's Fresnel factor end to end.
+
+### 4.9 General support-driven feature discovery (as built, API version 9)
+
+`LUMICE_ANALYTIC_DiscoverFeatures` consumes a finite description of an actual scene measure. A
+support row identifies its discrete provenance, continuous embedding coordinates and active tangent
+coordinates, output direction, quadrature weight, optional full-chain direction Jacobian, and named
+domain/entry/TIR/filter/weight margins. Edges describe the caller's support topology. This contract
+does not accept a pose-family name, nominal halo angle, crystal name, or target direction, so those
+labels cannot silently restrict what is searched.
+
+The batch separates three completeness facts: `visited_row_count`, `complete_visit`, and
+`materialization_complete`. A bounded adapter increments the first before deciding whether it can
+retain a row. If either completeness flag is false, absence is `NUMERICAL_INCOMPLETE`, never a
+global no-feature certificate. Atomic measure, positive-width continuous support, strict
+low-dimensional confinement, the restricted S² differential rank, named constraint zero sets and
+crossings, and scene-level brightness structure remain separate mechanisms and records.
+
+The sky field uses equal-area `(z, azimuth)` cells. It marginalizes every supplied member, source,
+spectrum and support row by the caller's weights, reports both cell mass and density per steradian,
+and computes local gradients and Hessian eigenvalues. A brightness maximum or ridge is confirmed
+only when a complete fine neighborhood agrees with the corresponding half-resolution field;
+otherwise it remains a candidate. Samples are accumulated in `sample_id` order, so caller chunking
+or visitation order does not change floating-point summation.
+
+Constraint crossings are candidates from two-sided evidence. The optional callback is the only way
+the library refines them: it is invoked synchronously on the same provenance branch, its pointer
+fields are borrowed only until it returns, and a false return is local numerical unavailability.
+A complete batch plus a callback root within `margin_tolerance` can confirm the candidate. The
+callback, batch arrays and options are borrowed for the duration of the call; result arrays and all
+strings are owned by one result storage block until `ReleaseFeatureDiscoveryResult`. Release is
+NULL-safe and idempotent. Calls keep no writable global state and are re-entrant for distinct output
+and callback state.
+
+Every variable input row has a leading `struct_size`; rows and nested constraints use explicit
+strides. Version 9 requires each stride to cover the full first-published structure. A bad version,
+extent, stride, enum, pointer, non-finite scalar, unit direction, topology edge or duplicated sample
+id is a call-level `ERR_INVALID_VALUE`/`ERR_NULL_ARG`, with the output zero-filled after its preserved
+`struct_size`. Valid physical emptiness and unavailable local numerics are result states instead.
 
 ---
 
