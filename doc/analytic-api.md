@@ -10,7 +10,7 @@
 > per-pose diagnostics on `FiberResult` (version 5, §4.3); and module B v1, the band sum
 > `LUMICE_ANALYTIC_BandSum` (version 6, §4.6), the general diagnostic-field direct batch
 > (version 8, §4.8; its result layout remains the frozen version 7 layout), and support-driven
-> general feature discovery (version 11, §4.9). Module A serves the Analyze workspace's first phase,
+> general feature discovery (version 12, §4.9). Module A serves the Analyze workspace's first phase,
 > module B its second, the single-path all-sky map (`doc/raypath-analysis.md` §5.1.8). The library is not in any
 > download package yet: that is §8.8's checklist, not done.
 >
@@ -1236,7 +1236,7 @@ per pixel for the merged pair, the band sum's `1/√K_eff` `2.0 %`: `±1.28σ` o
 The contract's §6 unit and §8 conversion therefore hold for this implementation with nothing fitted,
 which also checks the `kLiAreaPerEngineArea` factor and the weight's Fresnel factor end to end.
 
-### 4.9 General support-driven feature discovery (as built, API version 11)
+### 4.9 General support-driven feature discovery (as built, API version 12)
 
 `LUMICE_ANALYTIC_DiscoverFeatures` consumes a finite description of an actual scene measure. A
 support row identifies its discrete provenance, continuous embedding coordinates and active tangent
@@ -1266,6 +1266,9 @@ or visitation order does not change floating-point summation.
 Constraint crossings are candidates from two-sided evidence. The optional callback is the only way
 the library refines them: it is invoked synchronously on the same provenance branch, its pointer
 fields are borrowed only until it returns, and a false return is local numerical unavailability.
+A successful response is accepted only when its complete provenance and coordinates match the
+request and its support, direction, Jacobian arrays and named margins are structurally and
+numerically valid. A mismatched response leaves local evidence numerically incomplete.
 A complete batch plus a callback root within `margin_tolerance` can confirm the candidate. The
 callback, batch arrays and options are borrowed for the duration of the call; result arrays and all
 strings are owned by one result storage block until `ReleaseFeatureDiscoveryResult`. Release is
@@ -1296,6 +1299,13 @@ remain readable and default to no certificate; version-3 rows require their comp
 extent, stride, enum, pointer, non-finite scalar, unit direction, topology edge or duplicated sample
 id is a call-level `ERR_INVALID_VALUE`/`ERR_NULL_ARG`, with the output zero-filled after its preserved
 `struct_size`. Valid physical emptiness and unavailable local numerics are result states instead.
+
+Version 12 adds support-batch version 4. Optional per-coordinate descriptors identify spectrum,
+source, shape and per-layer pose roles; explicit cell scopes distinguish joint support from a
+conditional slice with the other coordinates fixed at the row's actual state. Candidate array
+stride remains frozen: `LUMICE_ANALYTIC_GetFeatureCandidateScope` returns parallel scope id/kind,
+active coordinates and their role/group records from the result-owned storage. Version-1/2/3
+callers retain the legacy joint scope with unspecified roles.
 
 ---
 

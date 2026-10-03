@@ -76,12 +76,16 @@ static_assert(kDiagnosticFieldResultV7Size == sizeof(LUMICE_ANALYTIC_DiagnosticF
 constexpr size_t kFeatureSupportSampleV9Size = offsetof(LUMICE_ANALYTIC_FeatureSupportSample, accumulates_measure);
 constexpr size_t kFeatureSupportSampleV10Size = offsetof(LUMICE_ANALYTIC_FeatureSupportSample, mapping_evidence_kind);
 constexpr size_t kFeatureSupportBatchV9Size = offsetof(LUMICE_ANALYTIC_FeatureSupportBatch, cell_axis_count);
+constexpr size_t kFeatureSupportBatchV11Size =
+    offsetof(LUMICE_ANALYTIC_FeatureSupportBatch, parameter_descriptor_count);
 static_assert(kFeatureSupportSampleV9Size ==
               offsetof(LUMICE_ANALYTIC_FeatureSupportSample, numerically_available) + sizeof(int));
 static_assert(kFeatureSupportSampleV10Size ==
               offsetof(LUMICE_ANALYTIC_FeatureSupportSample, accumulates_measure) + sizeof(int));
 static_assert(kFeatureSupportBatchV9Size ==
               offsetof(LUMICE_ANALYTIC_FeatureSupportBatch, edges) + sizeof(const LUMICE_ANALYTIC_FeatureSupportEdge*));
+static_assert(kFeatureSupportBatchV11Size == offsetof(LUMICE_ANALYTIC_FeatureSupportBatch, cell_axes) +
+                                                 sizeof(const LUMICE_ANALYTIC_FeatureSupportCellAxis*));
 
 static_assert(static_cast<int>(lumice::analytic::FeatureEvidenceStatus::kConfirmed) ==
                   LUMICE_ANALYTIC_FEATURE_CONFIRMED &&
@@ -94,6 +98,14 @@ static_assert(static_cast<int>(lumice::analytic::FeatureMechanism::kInteriorRank
 static_assert(static_cast<int>(lumice::analytic::SupportMeasureKind::kAtom) == LUMICE_ANALYTIC_SUPPORT_ATOM &&
               static_cast<int>(lumice::analytic::SupportMeasureKind::kContinuous) ==
                   LUMICE_ANALYTIC_SUPPORT_CONTINUOUS);
+static_assert(static_cast<int>(lumice::analytic::FeatureParameterRole::kUnspecified) ==
+                  LUMICE_ANALYTIC_FEATURE_PARAMETER_UNSPECIFIED &&
+              static_cast<int>(lumice::analytic::FeatureParameterRole::kPose) ==
+                  LUMICE_ANALYTIC_FEATURE_PARAMETER_POSE);
+static_assert(static_cast<int>(lumice::analytic::FeatureSupportScopeKind::kJoint) ==
+                  LUMICE_ANALYTIC_FEATURE_SCOPE_JOINT &&
+              static_cast<int>(lumice::analytic::FeatureSupportScopeKind::kConditional) ==
+                  LUMICE_ANALYTIC_FEATURE_SCOPE_CONDITIONAL);
 
 // Where each double array of one FiberResult sits in its storage block, for N poses and k margins.
 // The version 4 arrays keep their order — poses (9 N), sun directions (3 N), arclength increments
@@ -984,7 +996,7 @@ LUMICE_ANALYTIC_ErrorCode ToFeatureSupportSample(const LUMICE_ANALYTIC_FeatureSu
   out->finite_width = value.finite_width != 0;
   out->accumulates_measure =
       support_version >= LUMICE_ANALYTIC_FEATURE_SUPPORT_VERSION_V2 ? value.accumulates_measure != 0 : true;
-  if (support_version >= LUMICE_ANALYTIC_FEATURE_SUPPORT_VERSION) {
+  if (support_version >= LUMICE_ANALYTIC_FEATURE_SUPPORT_VERSION_V3) {
     if (value.mapping_evidence_kind < LUMICE_ANALYTIC_MAPPING_EVIDENCE_NONE ||
         value.mapping_evidence_kind > LUMICE_ANALYTIC_MAPPING_EVIDENCE_EXACT_IMAGE_DIMENSION_UPPER_BOUND) {
       return LUMICE_ANALYTIC_ERR_INVALID_VALUE;
@@ -1069,8 +1081,12 @@ LUMICE_ANALYTIC_ErrorCode ToFeatureSupportBatch(const LUMICE_ANALYTIC_FeatureSup
   if (input->version != LUMICE_ANALYTIC_FEATURE_SUPPORT_VERSION_V1 && !dynamic_version) {
     return LUMICE_ANALYTIC_ERR_INVALID_VALUE;
   }
+  const size_t required_batch_size =
+      input->version == LUMICE_ANALYTIC_FEATURE_SUPPORT_VERSION_V1 ? kFeatureSupportBatchV9Size :
+      input->version < LUMICE_ANALYTIC_FEATURE_SUPPORT_VERSION     ? kFeatureSupportBatchV11Size :
+                                                                     sizeof(LUMICE_ANALYTIC_FeatureSupportBatch);
   if ((!dynamic_version && input->coordinate_dimension > LUMICE_ANALYTIC_MAX_FEATURE_COORDINATE_DIMENSION) ||
-      (dynamic_version && input->struct_size < sizeof(LUMICE_ANALYTIC_FeatureSupportBatch))) {
+      input->struct_size < required_batch_size) {
     return LUMICE_ANALYTIC_ERR_INVALID_VALUE;
   }
   constexpr size_t kMaximumInputScalars = 64u * 1024u * 1024u;
@@ -1079,13 +1095,20 @@ LUMICE_ANALYTIC_ErrorCode ToFeatureSupportBatch(const LUMICE_ANALYTIC_FeatureSup
     return LUMICE_ANALYTIC_ERR_INVALID_VALUE;
   }
   const int cell_axis_count = dynamic_version ? input->cell_axis_count : 0;
-  if (cell_axis_count < 0) {
+  const int parameter_descriptor_count =
+      input->version >= LUMICE_ANALYTIC_FEATURE_SUPPORT_VERSION ? input->parameter_descriptor_count : 0;
+  const int scope_count = input->version >= LUMICE_ANALYTIC_FEATURE_SUPPORT_VERSION ? input->scope_count : 0;
+  if (cell_axis_count < 0 || parameter_descriptor_count < 0 || scope_count < 0) {
     return LUMICE_ANALYTIC_ERR_INVALID_VALUE;
   }
   if ((input->sample_count > 0 && input->samples == nullptr) || (input->edge_count > 0 && input->edges == nullptr)) {
     return LUMICE_ANALYTIC_ERR_NULL_ARG;
   }
   if (dynamic_version && cell_axis_count > 0 && input->cell_axes == nullptr) {
+    return LUMICE_ANALYTIC_ERR_NULL_ARG;
+  }
+  if ((parameter_descriptor_count > 0 && input->parameter_descriptors == nullptr) ||
+      (scope_count > 0 && input->scopes == nullptr)) {
     return LUMICE_ANALYTIC_ERR_NULL_ARG;
   }
   const size_t required_sample_size =
@@ -1122,6 +1145,23 @@ LUMICE_ANALYTIC_ErrorCode ToFeatureSupportBatch(const LUMICE_ANALYTIC_FeatureSup
     const LUMICE_ANALYTIC_FeatureSupportCellAxis& axis = input->cell_axes[index];
     out->cell_axes.push_back(
         { axis.cell_id, axis.coordinate_index, axis.lower, axis.center, axis.upper, axis.parameter_span });
+  }
+  out->parameter_descriptors.reserve(static_cast<size_t>(parameter_descriptor_count));
+  for (int index = 0; index < parameter_descriptor_count; ++index) {
+    const LUMICE_ANALYTIC_FeatureParameterDescriptor& parameter = input->parameter_descriptors[index];
+    if (parameter.role < LUMICE_ANALYTIC_FEATURE_PARAMETER_UNSPECIFIED ||
+        parameter.role > LUMICE_ANALYTIC_FEATURE_PARAMETER_POSE) {
+      return LUMICE_ANALYTIC_ERR_INVALID_VALUE;
+    }
+    out->parameter_descriptors.push_back({ static_cast<an::FeatureParameterRole>(parameter.role), parameter.group_id });
+  }
+  out->scopes.reserve(static_cast<size_t>(scope_count));
+  for (int index = 0; index < scope_count; ++index) {
+    const LUMICE_ANALYTIC_FeatureSupportScope& scope = input->scopes[index];
+    if (scope.kind < LUMICE_ANALYTIC_FEATURE_SCOPE_JOINT || scope.kind > LUMICE_ANALYTIC_FEATURE_SCOPE_CONDITIONAL) {
+      return LUMICE_ANALYTIC_ERR_INVALID_VALUE;
+    }
+    out->scopes.push_back({ scope.scope_id, scope.cell_id, static_cast<an::FeatureSupportScopeKind>(scope.kind) });
   }
   std::string error;
   return an::ValidateFeatureSupportBatch(*out, &error) ? LUMICE_ANALYTIC_OK : LUMICE_ANALYTIC_ERR_INVALID_VALUE;
@@ -1166,6 +1206,9 @@ bool ToFeatureDiscoveryOptions(const LUMICE_ANALYTIC_FeatureDiscoveryOptions* in
 struct FeatureDiscoveryResultStorage {
   std::deque<std::string> strings;
   std::vector<std::vector<const char*>> active_constraint_pointers;
+  std::vector<std::vector<int>> scope_active_coordinates;
+  std::vector<std::vector<LUMICE_ANALYTIC_FeatureParameterDescriptor>> scope_active_parameters;
+  std::vector<LUMICE_ANALYTIC_FeatureCandidateScope> candidate_scopes;
   std::vector<LUMICE_ANALYTIC_FeatureCandidate> candidates;
   std::vector<LUMICE_ANALYTIC_FeatureMechanismRecord> mechanisms;
   std::vector<LUMICE_ANALYTIC_SkyFieldNode> sky_field;
@@ -1175,6 +1218,9 @@ LUMICE_ANALYTIC_ErrorCode FillFeatureDiscoveryResult(const lumice::analytic::Fea
                                                      LUMICE_ANALYTIC_FeatureDiscoveryResult* out) {
   auto storage = std::make_unique<FeatureDiscoveryResultStorage>();
   storage->active_constraint_pointers.reserve(result.candidates.size());
+  storage->scope_active_coordinates.reserve(result.candidates.size());
+  storage->scope_active_parameters.reserve(result.candidates.size());
+  storage->candidate_scopes.reserve(result.candidates.size());
   storage->candidates.reserve(result.candidates.size());
   for (const lumice::analytic::FeatureCandidate& input : result.candidates) {
     storage->active_constraint_pointers.emplace_back();
@@ -1202,6 +1248,25 @@ LUMICE_ANALYTIC_ErrorCode FillFeatureDiscoveryResult(const lumice::analytic::Fea
     candidate.active_constraints = names.empty() ? nullptr : names.data();
     candidate.reason = storage->strings.back().c_str();
     storage->candidates.push_back(candidate);
+
+    storage->scope_active_coordinates.push_back(input.scope_active_coordinates);
+    storage->scope_active_parameters.emplace_back();
+    auto& parameters = storage->scope_active_parameters.back();
+    parameters.reserve(input.scope_parameters.size());
+    for (const lumice::analytic::FeatureParameterDescriptor& parameter : input.scope_parameters) {
+      parameters.push_back({ static_cast<int>(parameter.role), parameter.group_id });
+    }
+    LUMICE_ANALYTIC_FeatureCandidateScope scope{};
+    scope.struct_size = sizeof(scope);
+    scope.scope_id = input.scope_id;
+    scope.kind = static_cast<int>(input.scope_kind);
+    scope.active_coordinate_count = static_cast<int>(input.scope_active_coordinates.size());
+    scope.active_coordinates =
+        input.scope_active_coordinates.empty() ? nullptr : storage->scope_active_coordinates.back().data();
+    scope.active_parameters = parameters.empty() ? nullptr : parameters.data();
+    scope.fixed_spectrum_node_id = input.provenance.spectrum_node_id;
+    scope.fixed_source_node_id = input.provenance.source_node_id;
+    storage->candidate_scopes.push_back(scope);
   }
   storage->mechanisms.reserve(result.mechanisms.size());
   for (const lumice::analytic::FeatureMechanismRecord& input : result.mechanisms) {
@@ -1514,6 +1579,29 @@ LUMICE_ANALYTIC_ErrorCode LUMICE_ANALYTIC_DiscoverFeatures(const LUMICE_ANALYTIC
     ZeroAfterStructSize(out_result);
     return LUMICE_ANALYTIC_ERR_UNKNOWN;
   }
+}
+
+LUMICE_ANALYTIC_ErrorCode LUMICE_ANALYTIC_GetFeatureCandidateScope(const LUMICE_ANALYTIC_FeatureDiscoveryResult* result,
+                                                                   int candidate_index,
+                                                                   LUMICE_ANALYTIC_FeatureCandidateScope* out_scope) {
+  if (result == nullptr || out_scope == nullptr) {
+    return LUMICE_ANALYTIC_ERR_NULL_ARG;
+  }
+  if (out_scope->struct_size < sizeof(LUMICE_ANALYTIC_FeatureCandidateScope)) {
+    ZeroAfterStructSize(out_scope);
+    return LUMICE_ANALYTIC_ERR_INVALID_VALUE;
+  }
+  ZeroAfterStructSize(out_scope);
+  if (result->struct_size < sizeof(LUMICE_ANALYTIC_FeatureDiscoveryResult) || result->storage == nullptr ||
+      candidate_index < 0 || candidate_index >= result->candidate_count) {
+    return LUMICE_ANALYTIC_ERR_INVALID_VALUE;
+  }
+  const auto* storage = static_cast<const FeatureDiscoveryResultStorage*>(result->storage);
+  if (static_cast<size_t>(candidate_index) >= storage->candidate_scopes.size()) {
+    return LUMICE_ANALYTIC_ERR_INVALID_VALUE;
+  }
+  *out_scope = storage->candidate_scopes[static_cast<size_t>(candidate_index)];
+  return LUMICE_ANALYTIC_OK;
 }
 
 void LUMICE_ANALYTIC_ReleaseFeatureDiscoveryResult(LUMICE_ANALYTIC_FeatureDiscoveryResult* result) {

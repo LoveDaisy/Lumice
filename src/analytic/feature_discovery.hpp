@@ -17,7 +17,8 @@ namespace lumice::analytic {
 constexpr int kLegacyFeatureDiscoveryCoordinateDimension = 16;
 constexpr uint32_t kFeatureSupportBatchVersionV1 = 1;
 constexpr uint32_t kFeatureSupportBatchVersionV2 = 2;
-constexpr uint32_t kFeatureSupportBatchVersion = 3;
+constexpr uint32_t kFeatureSupportBatchVersionV3 = 3;
+constexpr uint32_t kFeatureSupportBatchVersion = 4;
 
 enum class FeatureEvidenceStatus {
   kConfirmed,
@@ -58,6 +59,19 @@ enum class ConstraintKind {
   kTir,
   kFilter,
   kWeight,
+};
+
+enum class FeatureParameterRole {
+  kUnspecified,
+  kSpectrum,
+  kSource,
+  kShape,
+  kPose,
+};
+
+enum class FeatureSupportScopeKind {
+  kJoint,
+  kConditional,
 };
 
 const char* FeatureEvidenceStatusName(FeatureEvidenceStatus status);
@@ -138,6 +152,18 @@ struct FeatureSupportCellAxis {
   double parameter_span = 0.0;
 };
 
+struct FeatureParameterDescriptor {
+  FeatureParameterRole role = FeatureParameterRole::kUnspecified;
+  // A layer index for shape/pose parameters, or -1 when the role has no layer ownership.
+  int group_id = -1;
+};
+
+struct FeatureSupportScope {
+  int scope_id = -1;
+  int cell_id = -1;
+  FeatureSupportScopeKind kind = FeatureSupportScopeKind::kJoint;
+};
+
 struct FeatureSupportBatch {
   uint32_t version = kFeatureSupportBatchVersion;
   int coordinate_dimension = 0;
@@ -152,6 +178,11 @@ struct FeatureSupportBatch {
   std::vector<FeatureSupportSample> samples;
   std::vector<FeatureSupportEdge> edges;
   std::vector<FeatureSupportCellAxis> cell_axes;
+  // Empty descriptors preserve the version-1/2/3 behavior: all coordinates are unspecified.
+  // A current-version batch may identify every embedding coordinate's physical role and layer.
+  std::vector<FeatureParameterDescriptor> parameter_descriptors;
+  // A cell without an explicit entry retains the legacy joint-support interpretation.
+  std::vector<FeatureSupportScope> scopes;
 };
 
 // A re-evaluation request stays in the caller's parameterization and identifies the concrete
@@ -178,6 +209,10 @@ struct FeatureCandidate {
   double residual = 0.0;
   double resolution = 0.0;
   std::vector<std::string> active_constraints;
+  FeatureSupportScopeKind scope_kind = FeatureSupportScopeKind::kJoint;
+  int scope_id = -1;
+  std::vector<int> scope_active_coordinates;
+  std::vector<FeatureParameterDescriptor> scope_parameters;
   std::string reason;
 };
 

@@ -75,13 +75,21 @@ _PRELUDE = textwrap.dedent(
         _fields_ = [("cell_id", c_int), ("coordinate_index", c_int), ("lower", c_int),
                     ("center", c_int), ("upper", c_int), ("parameter_span", c_double)]
 
+    class Parameter(Structure):
+        _fields_ = [("role", c_int), ("group_id", c_int)]
+
+    class Scope(Structure):
+        _fields_ = [("scope_id", c_int), ("cell_id", c_int), ("kind", c_int)]
+
     class Batch(Structure):
         _fields_ = [("struct_size", c_uint32), ("version", c_uint32), ("coordinate_dimension", c_int),
                     ("visited_row_count", c_uint64), ("complete_visit", c_int),
                     ("materialization_complete", c_int), ("sample_count", c_int),
                     ("sample_stride", c_uint32), ("samples", POINTER(Sample)), ("edge_count", c_int),
                     ("edges", POINTER(Edge)), ("cell_axis_count", c_int),
-                    ("cell_axes", POINTER(CellAxis))]
+                    ("cell_axes", POINTER(CellAxis)), ("parameter_descriptor_count", c_int),
+                    ("parameter_descriptors", POINTER(Parameter)), ("scope_count", c_int),
+                    ("scopes", POINTER(Scope))]
 
     class Request(Structure):
         _fields_ = [("provenance", Provenance), ("coordinate_dimension", c_int),
@@ -121,21 +129,30 @@ _PRELUDE = textwrap.dedent(
                     ("mechanisms", POINTER(Mechanism)), ("sky_field_count", c_int),
                     ("sky_field", POINTER(SkyNode)), ("storage", c_void_p)]
 
+    class CandidateScope(Structure):
+        _fields_ = [("struct_size", c_uint32), ("scope_id", c_int), ("kind", c_int),
+                    ("active_coordinate_count", c_int), ("active_coordinates", POINTER(c_int)),
+                    ("active_parameters", POINTER(Parameter)), ("fixed_spectrum_node_id", c_int),
+                    ("fixed_source_node_id", c_int)]
+
     OK, NULL_ARG, INVALID_VALUE = 0, 1, 2
     CONFIRMED, CANDIDATE, NUMERICAL_INCOMPLETE = 0, 1, 3
     ATOM, CONTINUOUS = 0, 1
     TIR = 2
     OPTICAL_KINK, MEASURE_ATOM, BRIGHTNESS_MAXIMUM = 3, 6, 9
     NO_MAPPING_EVIDENCE, EXACT_IMAGE_DIMENSION_UPPER_BOUND = 0, 1
+    PARAMETER_POSE, SCOPE_CONDITIONAL = 4, 1
 
     lib = ctypes.CDLL(LIB)
     lib.LUMICE_ANALYTIC_GetApiVersion.restype = c_int
-    assert lib.LUMICE_ANALYTIC_GetApiVersion() == 11
+    assert lib.LUMICE_ANALYTIC_GetApiVersion() == 12
     lib.LUMICE_ANALYTIC_DiscoverFeatures.restype = c_int
     lib.LUMICE_ANALYTIC_DiscoverFeatures.argtypes = [POINTER(Batch), POINTER(Options), CALLBACK, c_void_p,
                                                       POINTER(Result)]
     lib.LUMICE_ANALYTIC_ReleaseFeatureDiscoveryResult.restype = None
     lib.LUMICE_ANALYTIC_ReleaseFeatureDiscoveryResult.argtypes = [POINTER(Result)]
+    lib.LUMICE_ANALYTIC_GetFeatureCandidateScope.restype = c_int
+    lib.LUMICE_ANALYTIC_GetFeatureCandidateScope.argtypes = [POINTER(Result), c_int, POINTER(CandidateScope)]
 
     def options():
         return Options(sizeof(Options), 0.0, 0.0, 0.0, 0, 8, 16)
@@ -408,6 +425,88 @@ def test_exact_mapping_certificate_is_required_for_a_continuous_atom() -> None:
     )
 
 
+def test_v4_conditional_scope_metadata_uses_parallel_candidate_query() -> None:
+    _run_child(
+        """
+        keep = []
+
+        def fold(index, x, original):
+            coordinate = (c_double * 1)(x)
+            active = (c_int * 1)(0)
+            phase = x * x
+            jacobian = (c_double * 3)(-2 * x * math.sin(phase), 2 * x * math.cos(phase), 0.0)
+            available = (c_uint8 * 1)(1)
+            keep.extend((coordinate, active, jacobian, available))
+            value = Sample()
+            value.struct_size = sizeof(Sample)
+            value.sample_id = index
+            value.measure_kind = CONTINUOUS
+            value.support_dimension = 1
+            value.coordinates = coordinate
+            value.active_coordinates = active
+            value.direction[:] = (math.cos(phase), math.sin(phase), 0.0)
+            value.weight = float(original)
+            value.direction_jacobian_available = 1
+            value.direction_jacobian = jacobian
+            value.direction_jacobian_column_available = available
+            value.direction_jacobian_resolution = 1.0e-6
+            value.constraint_stride = sizeof(Constraint)
+            value.numerically_available = 1
+            value.accumulates_measure = int(original)
+            return value
+
+        samples = (Sample * 3)(fold(1, .25, True), fold(2, -.75, False), fold(3, 1.25, False))
+        axes = (CellAxis * 1)(CellAxis(7, 0, 1, 0, 2, 2.0))
+        parameters = (Parameter * 1)(Parameter(PARAMETER_POSE, 3))
+        scopes = (Scope * 1)(Scope(42, 7, SCOPE_CONDITIONAL))
+        batch = Batch()
+        batch.struct_size = sizeof(Batch)
+        batch.version = 4
+        batch.coordinate_dimension = 1
+        batch.visited_row_count = 1
+        batch.complete_visit = 1
+        batch.materialization_complete = 1
+        batch.sample_count = 3
+        batch.sample_stride = sizeof(Sample)
+        batch.samples = samples
+        batch.cell_axis_count = 1
+        batch.cell_axes = axes
+        batch.parameter_descriptor_count = 1
+        batch.parameter_descriptors = parameters
+        batch.scope_count = 1
+        batch.scopes = scopes
+
+        @CALLBACK
+        def refine(request, output, user_data):
+            value = fold(100, request.contents.coordinates[0], False)
+            value.provenance = request.contents.provenance
+            output[0] = value
+            return 1
+
+        rc, result = discover(batch, refine)
+        assert rc == OK
+        found = False
+        for index in range(result.candidate_count):
+            if result.candidates[index].mechanism != 0:
+                continue
+            metadata = CandidateScope()
+            metadata.struct_size = sizeof(CandidateScope)
+            assert lib.LUMICE_ANALYTIC_GetFeatureCandidateScope(byref(result), index, byref(metadata)) == OK
+            if metadata.kind == SCOPE_CONDITIONAL:
+                assert metadata.scope_id == 42 and metadata.active_coordinate_count == 1
+                assert metadata.active_coordinates[0] == 0
+                assert metadata.active_parameters[0].role == PARAMETER_POSE
+                assert metadata.active_parameters[0].group_id == 3
+                found = True
+        assert found
+        lib.LUMICE_ANALYTIC_ReleaseFeatureDiscoveryResult(byref(result))
+        metadata = CandidateScope()
+        metadata.struct_size = sizeof(CandidateScope)
+        assert lib.LUMICE_ANALYTIC_GetFeatureCandidateScope(byref(result), 0, byref(metadata)) == INVALID_VALUE
+        """
+    )
+
+
 def test_malformed_stride_version_and_required_pointer_are_call_errors() -> None:
     _run_child(
         """
@@ -491,12 +590,12 @@ def test_v2_dynamic_coordinates_and_frozen_v1_prefix() -> None:
                                                     byref(result)) == OK
         lib.LUMICE_ANALYTIC_ReleaseFeatureDiscoveryResult(byref(result))
 
-        # A real version-1 caller's frozen prefixes remain accepted by the version-11 library.
+        # A real version-1 caller's frozen prefixes remain accepted by the version-12 library.
         class LegacySample(Structure):
             _fields_ = Sample._fields_[:-4]
 
         class LegacyBatch(Structure):
-            _fields_ = Batch._fields_[:-2]
+            _fields_ = Batch._fields_[:11]
 
         legacy_sample = LegacySample()
         legacy_sample.struct_size = sizeof(LegacySample)

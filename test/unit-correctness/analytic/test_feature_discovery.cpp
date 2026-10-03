@@ -329,6 +329,47 @@ TEST(FeatureDiscoveryDifferential, RefinesABracketedFoldBetweenMaterializedNodes
   EXPECT_LE(callback_count, FeatureDiscoveryOptions{}.maximum_refinement_steps);
 }
 
+TEST(FeatureDiscoveryDifferential, PreservesConditionalScopeAndParameterRoles) {
+  FeatureSupportBatch batch;
+  batch.coordinate_dimension = 1;
+  batch.visited_row_count = 1;
+  batch.complete_visit = true;
+  auto fold_sample = [](uint64_t id, double x, bool accumulates_measure) {
+    FeatureSupportSample sample = Sample(id, x);
+    const double phase = x * x;
+    sample.accumulates_measure = accumulates_measure;
+    sample.direction[0] = std::cos(phase);
+    sample.direction[1] = std::sin(phase);
+    sample.direction_jacobian = { -2.0 * x * std::sin(phase), 2.0 * x * std::cos(phase), 0.0 };
+    return sample;
+  };
+  batch.samples = { fold_sample(1, 0.25, true), fold_sample(2, -0.75, false), fold_sample(3, 1.25, false) };
+  batch.cell_axes.push_back({ 7, 0, 1, 0, 2, 2.0 });
+  batch.parameter_descriptors.push_back({ FeatureParameterRole::kPose, 3 });
+  batch.scopes.push_back({ 42, 7, FeatureSupportScopeKind::kConditional });
+  const FeatureReevaluateFn callback = [&](const FeatureReevaluationRequest& request, FeatureSupportSample* sample,
+                                           std::string*) {
+    *sample = fold_sample(100, request.coordinates[0], false);
+    sample->provenance = request.provenance;
+    return true;
+  };
+
+  const FeatureDiscoveryResult result = DiscoverFeatures(batch, {}, callback);
+  const FeatureCandidate* rank_loss = Candidate(result, FeatureMechanism::kInteriorRankLoss);
+  ASSERT_NE(rank_loss, nullptr);
+  EXPECT_EQ(rank_loss->scope_kind, FeatureSupportScopeKind::kConditional);
+  EXPECT_EQ(rank_loss->scope_id, 42);
+  EXPECT_EQ(rank_loss->scope_active_coordinates, std::vector<int>({ 0 }));
+  ASSERT_EQ(rank_loss->scope_parameters.size(), 1u);
+  EXPECT_EQ(rank_loss->scope_parameters[0].role, FeatureParameterRole::kPose);
+  EXPECT_EQ(rank_loss->scope_parameters[0].group_id, 3);
+
+  batch.parameter_descriptors[0].group_id = -1;
+  std::string error;
+  EXPECT_FALSE(ValidateFeatureSupportBatch(batch, &error));
+  EXPECT_NE(error.find("group"), std::string::npos);
+}
+
 TEST(FeatureDiscoveryDifferential, DoesNotInvokeRefinementWithoutASignedFoldBracket) {
   FeatureSupportBatch batch;
   batch.coordinate_dimension = 1;

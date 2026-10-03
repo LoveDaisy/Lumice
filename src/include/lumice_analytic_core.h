@@ -23,6 +23,11 @@
 // face sequence and performs no symmetry reduction (doc/analytic-api.md section 3).
 //
 // Version notes, newest first (every bump says what changed, doc/analytic-api.md section 8.1):
+//   12 ADDED feature-support version 4 parameter-role and support-scope records, plus
+//      LUMICE_ANALYTIC_GetFeatureCandidateScope. The candidate array and version 1/2/3 input
+//      layouts are unchanged.
+//   11 ADDED feature-support version 3 exact image-dimension evidence. Versions 1 and 2 retain
+//      their frozen sample prefixes. Nothing else changed.
 //   10 ADDED feature-support version 2: dynamic coordinate extents, an append-only
 //      accumulates_measure flag, and explicit local cell-axis topology. Version 1 keeps its
 //      published 16-coordinate limit and layouts. Nothing else changed.
@@ -85,7 +90,7 @@ extern "C" {
 
 // Interface version, a single integer (doc/analytic-api.md section 8.2): bumped on every
 // incompatible change, and in 0.x on every addition too. Independent of lumice_base.h's LUMICE_API_VERSION.
-#define LUMICE_ANALYTIC_API_VERSION 11
+#define LUMICE_ANALYTIC_API_VERSION 12
 
 // Return codes of the computation functions. The names shared with lumice_base.h's LUMICE_ErrorCode mean
 // the same thing there; the type is this header's own (doc/analytic-api.md section 5.2). A numerical
@@ -744,8 +749,9 @@ LUMICE_ANALYTIC_API void LUMICE_ANALYTIC_ReleaseBandSumResult(LUMICE_ANALYTIC_Ba
 // ---------------------------------------------------------------------------------------------
 #define LUMICE_ANALYTIC_FEATURE_SUPPORT_VERSION_V1 1
 #define LUMICE_ANALYTIC_FEATURE_SUPPORT_VERSION_V2 2
-#define LUMICE_ANALYTIC_FEATURE_SUPPORT_VERSION 3
-// Version 1's frozen cap. Versions 2 and 3 use checked dynamic buffers and have no dimension-only cap.
+#define LUMICE_ANALYTIC_FEATURE_SUPPORT_VERSION_V3 3
+#define LUMICE_ANALYTIC_FEATURE_SUPPORT_VERSION 4
+// Version 1's frozen cap. Later versions use checked dynamic buffers and have no dimension-only cap.
 #define LUMICE_ANALYTIC_MAX_FEATURE_COORDINATE_DIMENSION 16
 
 typedef enum LUMICE_ANALYTIC_FeatureEvidenceStatus_ {
@@ -788,6 +794,19 @@ typedef enum LUMICE_ANALYTIC_ConstraintKind_ {
   LUMICE_ANALYTIC_CONSTRAINT_FILTER = 3,
   LUMICE_ANALYTIC_CONSTRAINT_WEIGHT = 4,
 } LUMICE_ANALYTIC_ConstraintKind;
+
+typedef enum LUMICE_ANALYTIC_FeatureParameterRole_ {
+  LUMICE_ANALYTIC_FEATURE_PARAMETER_UNSPECIFIED = 0,
+  LUMICE_ANALYTIC_FEATURE_PARAMETER_SPECTRUM = 1,
+  LUMICE_ANALYTIC_FEATURE_PARAMETER_SOURCE = 2,
+  LUMICE_ANALYTIC_FEATURE_PARAMETER_SHAPE = 3,
+  LUMICE_ANALYTIC_FEATURE_PARAMETER_POSE = 4,
+} LUMICE_ANALYTIC_FeatureParameterRole;
+
+typedef enum LUMICE_ANALYTIC_FeatureSupportScopeKind_ {
+  LUMICE_ANALYTIC_FEATURE_SCOPE_JOINT = 0,
+  LUMICE_ANALYTIC_FEATURE_SCOPE_CONDITIONAL = 1,
+} LUMICE_ANALYTIC_FeatureSupportScopeKind;
 
 typedef struct LUMICE_ANALYTIC_FeatureProvenance_ {
   int member_index;
@@ -854,6 +873,17 @@ typedef struct LUMICE_ANALYTIC_FeatureSupportCellAxis_ {
   double parameter_span;
 } LUMICE_ANALYTIC_FeatureSupportCellAxis;
 
+typedef struct LUMICE_ANALYTIC_FeatureParameterDescriptor_ {
+  int role;      // LUMICE_ANALYTIC_FeatureParameterRole
+  int group_id;  // layer index for shape/pose, otherwise -1
+} LUMICE_ANALYTIC_FeatureParameterDescriptor;
+
+typedef struct LUMICE_ANALYTIC_FeatureSupportScope_ {
+  int scope_id;
+  int cell_id;
+  int kind;  // LUMICE_ANALYTIC_FeatureSupportScopeKind
+} LUMICE_ANALYTIC_FeatureSupportScope;
+
 typedef struct LUMICE_ANALYTIC_FeatureSupportBatch_ {
   uint32_t struct_size;
   uint32_t version;  // LUMICE_ANALYTIC_FEATURE_SUPPORT_VERSION
@@ -869,6 +899,12 @@ typedef struct LUMICE_ANALYTIC_FeatureSupportBatch_ {
   // ADDED version 10; required by feature-support version 2, absent from version 1's frozen prefix.
   int cell_axis_count;
   const LUMICE_ANALYTIC_FeatureSupportCellAxis* cell_axes;
+  // ADDED version 12; read only by feature-support version 4. Empty arrays preserve the legacy
+  // all-unspecified, joint-support interpretation.
+  int parameter_descriptor_count;
+  const LUMICE_ANALYTIC_FeatureParameterDescriptor* parameter_descriptors;
+  int scope_count;
+  const LUMICE_ANALYTIC_FeatureSupportScope* scopes;
 } LUMICE_ANALYTIC_FeatureSupportBatch;
 
 typedef struct LUMICE_ANALYTIC_FeatureReevaluationRequest_ {
@@ -946,6 +982,20 @@ typedef struct LUMICE_ANALYTIC_FeatureDiscoveryResult_ {
   void* storage;  // opaque; LUMICE_ANALYTIC_ReleaseFeatureDiscoveryResult
 } LUMICE_ANALYTIC_FeatureDiscoveryResult;
 
+// Parallel metadata for one candidate. This query keeps FeatureCandidate's published array stride
+// frozen while exposing which physical support was varied. The returned arrays are owned by
+// result and remain valid until LUMICE_ANALYTIC_ReleaseFeatureDiscoveryResult.
+typedef struct LUMICE_ANALYTIC_FeatureCandidateScope_ {
+  uint32_t struct_size;  // caller sets sizeof(*out_scope)
+  int scope_id;
+  int kind;  // LUMICE_ANALYTIC_FeatureSupportScopeKind
+  int active_coordinate_count;
+  const int* active_coordinates;
+  const LUMICE_ANALYTIC_FeatureParameterDescriptor* active_parameters;
+  int fixed_spectrum_node_id;
+  int fixed_source_node_id;
+} LUMICE_ANALYTIC_FeatureCandidateScope;
+
 // Input rows and nested constraints are walked with their declared strides. Counts must be
 // non-negative, every stride must cover the selected support version's layout, and every required
 // pointer must be non-NULL. A semantically malformed support is ERR_INVALID_VALUE rather than a discovery
@@ -955,6 +1005,12 @@ LUMICE_ANALYTIC_API LUMICE_ANALYTIC_ErrorCode LUMICE_ANALYTIC_DiscoverFeatures(
     const LUMICE_ANALYTIC_FeatureSupportBatch* batch, const LUMICE_ANALYTIC_FeatureDiscoveryOptions* options,
     LUMICE_ANALYTIC_FeatureReevaluateFn reevaluate, void* user_data,
     LUMICE_ANALYTIC_FeatureDiscoveryResult* out_result);
+
+// Reads support-scope metadata for candidates[candidate_index]. The result must still own its
+// storage. Old feature-support callers receive the legacy joint scope with unspecified roles.
+LUMICE_ANALYTIC_API LUMICE_ANALYTIC_ErrorCode
+LUMICE_ANALYTIC_GetFeatureCandidateScope(const LUMICE_ANALYTIC_FeatureDiscoveryResult* result, int candidate_index,
+                                         LUMICE_ANALYTIC_FeatureCandidateScope* out_scope);
 
 // Frees all candidate strings/arrays, mechanism records and sky nodes, then zeroes the result after
 // struct_size. NULL-safe and idempotent on a zero-filled result.

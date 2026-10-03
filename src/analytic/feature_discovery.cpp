@@ -543,6 +543,8 @@ double DirectionDistance(const double first[3], const double second[3]) {
 void AddCandidate(const FeatureCandidate& candidate, double merge_tolerance, FeatureDiscoveryResult* out) {
   for (FeatureCandidate& existing : out->candidates) {
     if (existing.mechanism == candidate.mechanism && SameProvenanceBranch(existing.provenance, candidate.provenance) &&
+        existing.scope_kind == candidate.scope_kind && existing.scope_id == candidate.scope_id &&
+        existing.scope_active_coordinates == candidate.scope_active_coordinates &&
         DirectionDistance(existing.direction, candidate.direction) <= merge_tolerance) {
       existing.weighted_mass += candidate.weighted_mass;
       existing.residual = std::max(existing.residual, candidate.residual);
@@ -577,8 +579,31 @@ FeatureCandidate CandidateFromSample(const FeatureSupportSample& sample, Feature
   candidate.support_dimension = sample.support_dimension;
   candidate.weighted_mass = sample.weight;
   candidate.resolution = sample.direction_jacobian_resolution;
+  candidate.scope_active_coordinates = sample.active_coordinates;
+  candidate.scope_parameters.resize(sample.active_coordinates.size());
   candidate.reason = std::move(reason);
   return candidate;
+}
+
+FeatureSupportScope ScopeForCell(const FeatureSupportBatch& batch, int cell_id) {
+  const auto found = std::find_if(batch.scopes.begin(), batch.scopes.end(),
+                                  [cell_id](const FeatureSupportScope& scope) { return scope.cell_id == cell_id; });
+  return found == batch.scopes.end() ? FeatureSupportScope{} : *found;
+}
+
+void ApplyCandidateScope(const FeatureSupportBatch& batch, int cell_id, const std::vector<int>& active_coordinates,
+                         FeatureCandidate* candidate) {
+  const FeatureSupportScope scope = ScopeForCell(batch, cell_id);
+  candidate->scope_kind = scope.kind;
+  candidate->scope_id = scope.scope_id;
+  candidate->scope_active_coordinates = active_coordinates;
+  candidate->scope_parameters.clear();
+  candidate->scope_parameters.reserve(active_coordinates.size());
+  for (int coordinate : active_coordinates) {
+    candidate->scope_parameters.push_back(batch.parameter_descriptors.empty() ?
+                                              FeatureParameterDescriptor{} :
+                                              batch.parameter_descriptors[static_cast<size_t>(coordinate)]);
+  }
 }
 
 int MechanismIndex(FeatureMechanism mechanism) {
@@ -1113,7 +1138,7 @@ bool ValidateFeatureSupportBatch(const FeatureSupportBatch& batch, std::string* 
     error->clear();
   }
   if (batch.version != kFeatureSupportBatchVersionV1 && batch.version != kFeatureSupportBatchVersionV2 &&
-      batch.version != kFeatureSupportBatchVersion) {
+      batch.version != kFeatureSupportBatchVersionV3 && batch.version != kFeatureSupportBatchVersion) {
     return Fail("unsupported feature support batch version", error);
   }
   if (batch.coordinate_dimension < 0 || (batch.version == kFeatureSupportBatchVersionV1 &&
@@ -1149,7 +1174,7 @@ bool ValidateFeatureSupportBatch(const FeatureSupportBatch& batch, std::string* 
         return Fail("samples without mapping evidence must not carry an image-dimension bound", error);
       }
     } else if (sample.mapping_evidence_kind == MappingEvidenceKind::kExactImageDimensionUpperBound) {
-      if (batch.version != kFeatureSupportBatchVersion || sample.measure_kind != SupportMeasureKind::kContinuous ||
+      if (batch.version < kFeatureSupportBatchVersionV3 || sample.measure_kind != SupportMeasureKind::kContinuous ||
           sample.support_dimension <= 0 || sample.image_dimension_upper_bound < 0 ||
           sample.image_dimension_upper_bound > std::min(2, sample.support_dimension) ||
           sample.mapping_error_bound != 0.0) {
@@ -1291,6 +1316,36 @@ bool ValidateFeatureSupportBatch(const FeatureSupportBatch& batch, std::string* 
       return Fail("a support cell cannot repeat a coordinate axis", error);
     }
   }
+  if (!batch.parameter_descriptors.empty()) {
+    if (batch.version != kFeatureSupportBatchVersion ||
+        batch.parameter_descriptors.size() != static_cast<size_t>(batch.coordinate_dimension)) {
+      return Fail("parameter descriptors require a current-version entry for every coordinate", error);
+    }
+    for (const FeatureParameterDescriptor& parameter : batch.parameter_descriptors) {
+      if (parameter.role < FeatureParameterRole::kUnspecified || parameter.role > FeatureParameterRole::kPose) {
+        return Fail("parameter descriptor role is outside the published enumeration", error);
+      }
+      const bool layered =
+          parameter.role == FeatureParameterRole::kShape || parameter.role == FeatureParameterRole::kPose;
+      if ((layered && parameter.group_id < 0) || (!layered && parameter.group_id != -1)) {
+        return Fail("parameter descriptor group does not match its physical role", error);
+      }
+    }
+  }
+  if (!batch.scopes.empty()) {
+    if (batch.version != kFeatureSupportBatchVersion || batch.parameter_descriptors.empty()) {
+      return Fail("explicit support scopes require current-version parameter descriptors", error);
+    }
+    std::set<int> scope_ids;
+    std::set<int> scoped_cells;
+    for (const FeatureSupportScope& scope : batch.scopes) {
+      if (scope.scope_id < 0 || cell_topology.find(scope.cell_id) == cell_topology.end() ||
+          (scope.kind != FeatureSupportScopeKind::kJoint && scope.kind != FeatureSupportScopeKind::kConditional) ||
+          !scope_ids.insert(scope.scope_id).second || !scoped_cells.insert(scope.cell_id).second) {
+        return Fail("support scopes require unique ids and valid, uniquely owned cells", error);
+      }
+    }
+  }
   for (size_t sample_index = 0; sample_index < batch.samples.size(); ++sample_index) {
     const FeatureSupportSample& sample = batch.samples[sample_index];
     if (sample.mapping_evidence_kind != MappingEvidenceKind::kExactImageDimensionUpperBound) {
@@ -1364,10 +1419,15 @@ FeatureDiscoveryResult DiscoverFeatures(const FeatureSupportBatch& batch, const 
     cell_axes[axis.cell_id].push_back(&axis);
   }
   for (const auto& [cell_id, axes] : cell_axes) {
-    (void)cell_id;
     if (axes.size() < 2u) {
       continue;
     }
+    std::vector<int> scoped_coordinates;
+    scoped_coordinates.reserve(axes.size());
+    for (const FeatureSupportCellAxis* axis : axes) {
+      scoped_coordinates.push_back(axis->coordinate_index);
+    }
+    std::sort(scoped_coordinates.begin(), scoped_coordinates.end());
     const int center_index = axes.front()->center;
     const FeatureSupportSample& center = batch.samples[static_cast<size_t>(center_index)];
     if (center.support_dimension < 2) {
@@ -1410,6 +1470,7 @@ FeatureDiscoveryResult DiscoverFeatures(const FeatureSupportBatch& batch, const 
               batch.samples[static_cast<size_t>(axis->lower)], batch.samples[static_cast<size_t>(axis->upper)],
               batch.coordinate_dimension, regular_rank, options, reevaluate, globally_complete, &callback_calls,
               &candidate, &rank_numerically_incomplete)) {
+        ApplyCandidateScope(batch, cell_id, scoped_coordinates, &candidate);
         AddCandidate(candidate, options.sky_merge_tolerance, &out);
       }
     }
@@ -1418,18 +1479,19 @@ FeatureDiscoveryResult DiscoverFeatures(const FeatureSupportBatch& batch, const 
       if (RefineMultidimensionalRankLossLine(joint_endpoints[0], joint_endpoints[1], batch.coordinate_dimension,
                                              regular_rank, options, reevaluate, globally_complete, &callback_calls,
                                              &candidate, &rank_numerically_incomplete)) {
+        ApplyCandidateScope(batch, cell_id, scoped_coordinates, &candidate);
         AddCandidate(candidate, options.sky_merge_tolerance, &out);
       }
     }
   }
   for (const FeatureSupportCellAxis& axis : batch.cell_axes) {
-    const FeatureSupportSample& center = batch.samples[static_cast<size_t>(axis.center)];
-    if (center.support_dimension != 1) {
+    if (cell_axes[axis.cell_id].size() != 1u) {
       continue;
     }
     FeatureCandidate candidate;
     if (RefineOneDimensionalRankLoss(batch, axis, options, reevaluate, globally_complete, &candidate,
                                      &rank_numerically_incomplete)) {
+      ApplyCandidateScope(batch, axis.cell_id, { axis.coordinate_index }, &candidate);
       AddCandidate(candidate, options.sky_merge_tolerance, &out);
     }
   }
