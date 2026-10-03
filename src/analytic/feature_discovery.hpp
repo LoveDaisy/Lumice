@@ -143,6 +143,8 @@ struct FeatureCandidate {
   int mapping_rank = -1;
   double singular_values[2]{};
   double weighted_mass = 0.0;
+  bool has_weight_sides = false;
+  double weight_sides[2]{};
   double residual = 0.0;
   double resolution = 0.0;
   std::vector<std::string> active_constraints;
@@ -161,6 +163,20 @@ struct FeatureDiscoveryOptions {
   double rank_relative_tolerance = 1e-6;
   double sky_merge_tolerance = 1e-5;
   int maximum_refinement_steps = 24;
+  int sky_z_bins = 8;
+  int sky_azimuth_bins = 16;
+};
+
+struct SkyFieldNode {
+  double direction[3]{};
+  double value = 0.0;
+  double normalized_value = 0.0;
+  double gradient_norm = 0.0;
+  double hessian_eigenvalues[2]{};
+  double error = 0.0;
+  double resolution = 0.0;
+  int sample_count = 0;
+  FeatureEvidenceStatus status = FeatureEvidenceStatus::kNotDetectedAtResolution;
 };
 
 struct FeatureDiscoveryResult {
@@ -170,6 +186,7 @@ struct FeatureDiscoveryResult {
   bool materialization_complete = false;
   std::vector<FeatureCandidate> candidates;
   std::vector<FeatureMechanismRecord> mechanisms;
+  std::vector<SkyFieldNode> sky_field;
 };
 
 // Returns false only for a malformed call contract.  A valid empty or numerically unavailable

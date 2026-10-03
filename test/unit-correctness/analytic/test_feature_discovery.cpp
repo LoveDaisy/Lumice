@@ -1,7 +1,10 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <cmath>
+#include <functional>
 #include <string>
+#include <vector>
 
 #include "analytic/feature_discovery.hpp"
 
@@ -12,6 +15,16 @@ const FeatureCandidate* Candidate(const FeatureDiscoveryResult& result, FeatureM
   const auto found = std::find_if(result.candidates.begin(), result.candidates.end(),
                                   [mechanism](const FeatureCandidate& item) { return item.mechanism == mechanism; });
   return found == result.candidates.end() ? nullptr : &*found;
+}
+
+std::vector<const FeatureCandidate*> Candidates(const FeatureDiscoveryResult& result, FeatureMechanism mechanism) {
+  std::vector<const FeatureCandidate*> matches;
+  for (const FeatureCandidate& candidate : result.candidates) {
+    if (candidate.mechanism == mechanism) {
+      matches.push_back(&candidate);
+    }
+  }
+  return matches;
 }
 
 FeatureSupportSample Sample(uint64_t id, double x) {
@@ -35,6 +48,30 @@ FeatureSupportSample Sample(uint64_t id, double x) {
   constraint.gradient = { -1.0 };
   sample.constraints.push_back(std::move(constraint));
   return sample;
+}
+
+FeatureSupportBatch DenseSkyBatch(int z_bins, int azimuth_bins, const std::function<double(int, int)>& density) {
+  constexpr double kPi = 3.14159265358979323846;
+  FeatureSupportBatch batch;
+  batch.complete_visit = true;
+  const double solid_angle = 4.0 * kPi / static_cast<double>(z_bins * azimuth_bins);
+  for (int z_index = 0; z_index < z_bins; ++z_index) {
+    const double z = -1.0 + (static_cast<double>(z_index) + 0.5) * 2.0 / z_bins;
+    const double radius = std::sqrt(1.0 - z * z);
+    for (int azimuth_index = 0; azimuth_index < azimuth_bins; ++azimuth_index) {
+      const double azimuth = (static_cast<double>(azimuth_index) + 0.5) * 2.0 * kPi / azimuth_bins;
+      FeatureSupportSample sample;
+      sample.sample_id = static_cast<uint64_t>(z_index * azimuth_bins + azimuth_index + 1);
+      sample.measure_kind = SupportMeasureKind::kAtom;
+      sample.direction[0] = radius * std::cos(azimuth);
+      sample.direction[1] = radius * std::sin(azimuth);
+      sample.direction[2] = z;
+      sample.weight = density(z_index, azimuth_index) * solid_angle;
+      batch.samples.push_back(std::move(sample));
+    }
+  }
+  batch.visited_row_count = batch.samples.size();
+  return batch;
 }
 
 TEST(FeatureDiscoveryModel, AcceptsACompleteContinuousSupportBatch) {
@@ -183,6 +220,169 @@ TEST(FeatureDiscoveryDifferential, PositiveInputAtomsAccumulateMassAtOneSkyLocat
   ASSERT_NE(atom, nullptr);
   EXPECT_DOUBLE_EQ(atom->weighted_mass, 0.5);
   EXPECT_EQ(atom->status, FeatureEvidenceStatus::kConfirmed);
+}
+
+TEST(FeatureDiscoveryConstraints, RefinesANonFirstInterfaceKinkThroughTheCallerCallback) {
+  FeatureSupportBatch batch;
+  batch.coordinate_dimension = 1;
+  batch.complete_visit = true;
+  batch.samples = { Sample(1, -1.0), Sample(2, 1.0) };
+  batch.visited_row_count = batch.samples.size();
+  batch.edges.push_back({ 0, 1, 2.0 });
+  for (FeatureSupportSample& sample : batch.samples) {
+    sample.constraints.clear();
+    SupportConstraint tir;
+    tir.name = "layer[1].internal[2].tir";
+    tir.kind = ConstraintKind::kTir;
+    tir.layer_index = 1;
+    tir.interface_index = 2;
+    tir.value = sample.coordinates[0];
+    sample.constraints.push_back(std::move(tir));
+  }
+  const FeatureReevaluateFn callback = [](const FeatureReevaluationRequest& request, FeatureSupportSample* sample,
+                                          std::string*) {
+    *sample = Sample(100, request.coordinates[0]);
+    sample->constraints.clear();
+    sample->direction[0] = std::cos(request.coordinates[0]);
+    sample->direction[1] = std::sin(request.coordinates[0]);
+    SupportConstraint tir;
+    tir.name = "layer[1].internal[2].tir";
+    tir.kind = ConstraintKind::kTir;
+    tir.layer_index = 1;
+    tir.interface_index = 2;
+    tir.value = request.coordinates[0];
+    sample->constraints.push_back(std::move(tir));
+    return true;
+  };
+
+  const FeatureDiscoveryResult result = DiscoverFeatures(batch, {}, callback);
+  const FeatureCandidate* kink = Candidate(result, FeatureMechanism::kOpticalKink);
+  ASSERT_NE(kink, nullptr);
+  EXPECT_EQ(kink->status, FeatureEvidenceStatus::kConfirmed);
+  EXPECT_EQ(kink->provenance.layer_index, 1);
+  EXPECT_EQ(kink->provenance.interface_index, 2);
+  EXPECT_LE(kink->residual, 1e-8);
+  EXPECT_NEAR(kink->direction[0], 1.0, 1e-12);
+}
+
+TEST(FeatureDiscoveryConstraints, PreservesFilterSideWeightsAndDetectsExactCorners) {
+  FeatureSupportBatch crossing;
+  crossing.coordinate_dimension = 1;
+  crossing.complete_visit = true;
+  crossing.samples = { Sample(1, -1.0), Sample(2, 1.0) };
+  crossing.visited_row_count = crossing.samples.size();
+  crossing.edges.push_back({ 0, 1, 2.0 });
+  crossing.samples[0].weight = 0.25;
+  crossing.samples[1].weight = 0.75;
+  for (FeatureSupportSample& sample : crossing.samples) {
+    sample.constraints[0].name = "physical_filter";
+    sample.constraints[0].kind = ConstraintKind::kFilter;
+    sample.constraints[0].value = sample.coordinates[0];
+  }
+  const FeatureDiscoveryResult crossing_result = DiscoverFeatures(crossing, {});
+  const FeatureCandidate* filter = Candidate(crossing_result, FeatureMechanism::kFilterBoundary);
+  ASSERT_NE(filter, nullptr);
+  EXPECT_EQ(filter->status, FeatureEvidenceStatus::kCandidate);
+  ASSERT_TRUE(filter->has_weight_sides);
+  EXPECT_DOUBLE_EQ(filter->weight_sides[0], 0.25);
+  EXPECT_DOUBLE_EQ(filter->weight_sides[1], 0.75);
+
+  FeatureSupportBatch corner_batch;
+  corner_batch.coordinate_dimension = 1;
+  corner_batch.complete_visit = true;
+  corner_batch.visited_row_count = 1;
+  FeatureSupportSample corner_sample = Sample(3, 0.0);
+  corner_sample.constraints[0].value = 0.0;
+  SupportConstraint second = corner_sample.constraints[0];
+  second.name = "domain.second";
+  second.kind = ConstraintKind::kDomain;
+  corner_sample.constraints.push_back(std::move(second));
+  corner_batch.samples.push_back(std::move(corner_sample));
+  const FeatureDiscoveryResult corner_result = DiscoverFeatures(corner_batch, {});
+  const FeatureCandidate* corner = Candidate(corner_result, FeatureMechanism::kSupportCorner);
+  ASSERT_NE(corner, nullptr);
+  EXPECT_EQ(corner->status, FeatureEvidenceStatus::kConfirmed);
+  EXPECT_EQ(corner->active_constraints.size(), 2u);
+}
+
+TEST(FeatureDiscoverySkyField, FindsResolutionStableMaximumAndIsVisitOrderIndependent) {
+  FeatureDiscoveryOptions options;
+  options.sky_z_bins = 8;
+  options.sky_azimuth_bins = 16;
+  const auto density = [](int z_index, int azimuth_index) {
+    const int azimuth_distance = std::min(std::abs(azimuth_index - 4), 16 - std::abs(azimuth_index - 4));
+    return 400.0 - 7.0 * std::abs(z_index - 4) - 3.0 * azimuth_distance * azimuth_distance;
+  };
+  FeatureSupportBatch batch = DenseSkyBatch(options.sky_z_bins, options.sky_azimuth_bins, density);
+  const FeatureDiscoveryResult forward = DiscoverFeatures(batch, options);
+  const std::vector<const FeatureCandidate*> maxima = Candidates(forward, FeatureMechanism::kBrightnessMaximum);
+  ASSERT_FALSE(maxima.empty());
+  EXPECT_TRUE(std::any_of(maxima.begin(), maxima.end(), [](const FeatureCandidate* candidate) {
+    return candidate->status == FeatureEvidenceStatus::kConfirmed;
+  }));
+
+  std::reverse(batch.samples.begin(), batch.samples.end());
+  const FeatureDiscoveryResult reverse = DiscoverFeatures(batch, options);
+  ASSERT_EQ(forward.sky_field.size(), reverse.sky_field.size());
+  for (size_t index = 0; index < forward.sky_field.size(); ++index) {
+    EXPECT_DOUBLE_EQ(forward.sky_field[index].value, reverse.sky_field[index].value);
+    EXPECT_DOUBLE_EQ(forward.sky_field[index].normalized_value, reverse.sky_field[index].normalized_value);
+  }
+}
+
+TEST(FeatureDiscoverySkyField, DistinguishesARidgeFromAnIsolatedMaximum) {
+  FeatureDiscoveryOptions options;
+  options.sky_z_bins = 8;
+  options.sky_azimuth_bins = 16;
+  const double z_profile[8] = { 1.0, 2.0, 2.0, 8.0, 10.0, 8.0, 2.0, 2.0 };
+  const FeatureSupportBatch batch =
+      DenseSkyBatch(options.sky_z_bins, options.sky_azimuth_bins, [&](int z_index, int) { return z_profile[z_index]; });
+  const FeatureDiscoveryResult result = DiscoverFeatures(batch, options);
+  EXPECT_EQ(Candidate(result, FeatureMechanism::kBrightnessMaximum), nullptr);
+  const std::vector<const FeatureCandidate*> ridges = Candidates(result, FeatureMechanism::kBrightnessRidge);
+  ASSERT_FALSE(ridges.empty());
+  EXPECT_TRUE(std::any_of(ridges.begin(), ridges.end(), [](const FeatureCandidate* candidate) {
+    return candidate->status == FeatureEvidenceStatus::kConfirmed;
+  }));
+}
+
+TEST(FeatureDiscoverySkyField, RemovingOneSourceMovesTheSceneMaximum) {
+  FeatureDiscoveryOptions options;
+  options.sky_z_bins = 8;
+  options.sky_azimuth_bins = 16;
+  const auto source_density = [](int peak, double scale, int z_index, int azimuth_index) {
+    const int azimuth_distance = std::min(std::abs(azimuth_index - peak), 16 - std::abs(azimuth_index - peak));
+    return scale * (400.0 - 7.0 * std::abs(z_index - 4) - 3.0 * azimuth_distance * azimuth_distance);
+  };
+  FeatureSupportBatch dominant = DenseSkyBatch(
+      8, 16, [&](int z_index, int azimuth_index) { return source_density(4, 2.0, z_index, azimuth_index); });
+  FeatureSupportBatch secondary = DenseSkyBatch(
+      8, 16, [&](int z_index, int azimuth_index) { return source_density(10, 1.0, z_index, azimuth_index); });
+  for (FeatureSupportSample& sample : dominant.samples) {
+    sample.provenance.source_node_id = 0;
+  }
+  for (FeatureSupportSample& sample : secondary.samples) {
+    sample.sample_id += 1000;
+    sample.provenance.source_node_id = 1;
+  }
+  FeatureSupportBatch combined = dominant;
+  combined.samples.insert(combined.samples.end(), secondary.samples.begin(), secondary.samples.end());
+  combined.visited_row_count = combined.samples.size();
+
+  const auto strongest_maximum = [](const FeatureDiscoveryResult& result) {
+    const auto maxima = Candidates(result, FeatureMechanism::kBrightnessMaximum);
+    return **std::max_element(maxima.begin(), maxima.end(), [](const auto* first, const auto* second) {
+      return first->weighted_mass < second->weighted_mass;
+    });
+  };
+  const FeatureCandidate combined_maximum = strongest_maximum(DiscoverFeatures(combined, options));
+  const FeatureCandidate secondary_maximum = strongest_maximum(DiscoverFeatures(secondary, options));
+  EXPECT_GT(combined_maximum.direction[1], 0.0);
+  EXPECT_LT(secondary_maximum.direction[1], 0.0);
+  EXPECT_LT(combined_maximum.direction[0] * secondary_maximum.direction[0] +
+                combined_maximum.direction[1] * secondary_maximum.direction[1] +
+                combined_maximum.direction[2] * secondary_maximum.direction[2],
+            0.5);
 }
 
 }  // namespace

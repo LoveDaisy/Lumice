@@ -71,6 +71,16 @@ TEST(FeatureDiscoveryAdapter, ConsumesEveryVisitorRowAndKeepsContinuousSupportDi
 
   std::string validation_error;
   EXPECT_TRUE(analytic::ValidateFeatureSupportBatch(batch, &validation_error)) << validation_error;
+
+  analytic::FeatureDiscoveryOptions options;
+  options.sky_z_bins = 4;
+  options.sky_azimuth_bins = 8;
+  const analytic::FeatureDiscoveryResult discovery = analytic::DiscoverFeatures(batch, options);
+  EXPECT_EQ(discovery.visited_row_count, batch.visited_row_count);
+  EXPECT_EQ(discovery.sky_field.size(), 32u);
+  EXPECT_TRUE(std::any_of(discovery.candidates.begin(), discovery.candidates.end(), [](const auto& candidate) {
+    return candidate.mechanism == analytic::FeatureMechanism::kFiniteWidthConcentration;
+  })) << "generic discovery must run on the materialized scene support without a named-family whitelist";
 }
 
 TEST(FeatureDiscoveryAdapter, DifferentiatesTheComposedDirectionThroughBothLayers) {

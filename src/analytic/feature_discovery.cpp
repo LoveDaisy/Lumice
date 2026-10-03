@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include <limits>
+#include <numeric>
 #include <set>
 #include <string>
 #include <utility>
@@ -117,6 +118,17 @@ void AddCandidate(const FeatureCandidate& candidate, double merge_tolerance, Fea
       existing.weighted_mass += candidate.weighted_mass;
       existing.residual = std::max(existing.residual, candidate.residual);
       existing.resolution = std::max(existing.resolution, candidate.resolution);
+      if (candidate.has_weight_sides) {
+        existing.has_weight_sides = true;
+        existing.weight_sides[0] = candidate.weight_sides[0];
+        existing.weight_sides[1] = candidate.weight_sides[1];
+      }
+      for (const std::string& constraint : candidate.active_constraints) {
+        if (std::find(existing.active_constraints.begin(), existing.active_constraints.end(), constraint) ==
+            existing.active_constraints.end()) {
+          existing.active_constraints.push_back(constraint);
+        }
+      }
       if (candidate.status == FeatureEvidenceStatus::kConfirmed) {
         existing.status = candidate.status;
       }
@@ -142,6 +154,308 @@ FeatureCandidate CandidateFromSample(const FeatureSupportSample& sample, Feature
 
 int MechanismIndex(FeatureMechanism mechanism) {
   return static_cast<int>(mechanism) - static_cast<int>(FeatureMechanism::kInteriorRankLoss);
+}
+
+FeatureMechanism MechanismForConstraint(ConstraintKind kind) {
+  switch (kind) {
+    case ConstraintKind::kDomain:
+    case ConstraintKind::kEntry:
+      return FeatureMechanism::kSupportBoundary;
+    case ConstraintKind::kTir:
+      return FeatureMechanism::kOpticalKink;
+    case ConstraintKind::kFilter:
+      return FeatureMechanism::kFilterBoundary;
+    case ConstraintKind::kWeight:
+      return FeatureMechanism::kWeightKink;
+  }
+  return FeatureMechanism::kSupportBoundary;
+}
+
+bool SameConstraint(const SupportConstraint& first, const SupportConstraint& second) {
+  return first.name == second.name && first.kind == second.kind && first.layer_index == second.layer_index &&
+         first.interface_index == second.interface_index;
+}
+
+const SupportConstraint* FindConstraint(const FeatureSupportSample& sample, const SupportConstraint& target) {
+  const auto found =
+      std::find_if(sample.constraints.begin(), sample.constraints.end(),
+                   [&](const SupportConstraint& candidate) { return SameConstraint(candidate, target); });
+  return found == sample.constraints.end() ? nullptr : &*found;
+}
+
+bool NormalizedInterpolation(const FeatureSupportSample& first, const FeatureSupportSample& second, double t,
+                             double direction[3]) {
+  for (int component = 0; component < 3; ++component) {
+    direction[component] = (1.0 - t) * first.direction[component] + t * second.direction[component];
+  }
+  const double norm = std::sqrt(Dot(direction, direction));
+  if (!std::isfinite(norm) || !(norm > 0.0)) {
+    return false;
+  }
+  for (int component = 0; component < 3; ++component) {
+    direction[component] /= norm;
+  }
+  return true;
+}
+
+FeatureCandidate ConstraintCandidate(const FeatureSupportSample& sample, const SupportConstraint& constraint,
+                                     FeatureEvidenceStatus status, std::string reason) {
+  FeatureCandidate candidate =
+      CandidateFromSample(sample, MechanismForConstraint(constraint.kind), status, std::move(reason));
+  candidate.provenance.layer_index = constraint.layer_index;
+  candidate.provenance.interface_index = constraint.interface_index;
+  candidate.residual = std::fabs(constraint.value);
+  candidate.active_constraints.push_back(constraint.name);
+  return candidate;
+}
+
+bool RefineConstraintRoot(const FeatureSupportSample& first, const FeatureSupportSample& second,
+                          const SupportConstraint& target, const FeatureDiscoveryOptions& options,
+                          const FeatureReevaluateFn& reevaluate, FeatureCandidate* candidate) {
+  if (!reevaluate || first.coordinates.size() != second.coordinates.size()) {
+    return false;
+  }
+  std::vector<double> lo = first.coordinates;
+  std::vector<double> hi = second.coordinates;
+  double lo_value = target.value;
+  const SupportConstraint* second_constraint = FindConstraint(second, target);
+  if (second_constraint == nullptr || !second_constraint->numerically_available) {
+    return false;
+  }
+  double hi_value = second_constraint->value;
+  FeatureSupportSample best;
+  double best_residual = std::numeric_limits<double>::infinity();
+  std::string callback_error;
+  for (int step = 0; step < options.maximum_refinement_steps; ++step) {
+    FeatureReevaluationRequest request;
+    request.provenance = first.provenance;
+    request.coordinates.resize(lo.size());
+    for (size_t coordinate = 0; coordinate < lo.size(); ++coordinate) {
+      request.coordinates[coordinate] = 0.5 * (lo[coordinate] + hi[coordinate]);
+    }
+    FeatureSupportSample evaluated;
+    if (!reevaluate(request, &evaluated, &callback_error)) {
+      return false;
+    }
+    const SupportConstraint* constraint = FindConstraint(evaluated, target);
+    if (constraint == nullptr || !constraint->numerically_available || !evaluated.numerically_available) {
+      return false;
+    }
+    const double residual = std::fabs(constraint->value);
+    if (residual < best_residual) {
+      best = evaluated;
+      best_residual = residual;
+    }
+    if (residual <= options.margin_tolerance) {
+      break;
+    }
+    if (std::signbit(constraint->value) == std::signbit(lo_value)) {
+      lo = request.coordinates;
+      lo_value = constraint->value;
+    } else {
+      hi = request.coordinates;
+      hi_value = constraint->value;
+    }
+  }
+  (void)hi_value;
+  if (!std::isfinite(best_residual)) {
+    return false;
+  }
+  std::copy(best.direction, best.direction + 3, candidate->direction);
+  candidate->residual = best_residual;
+  candidate->resolution = 0.0;
+  for (size_t coordinate = 0; coordinate < lo.size(); ++coordinate) {
+    const double delta = hi[coordinate] - lo[coordinate];
+    candidate->resolution += delta * delta;
+  }
+  candidate->resolution = std::sqrt(candidate->resolution);
+  return best_residual <= options.margin_tolerance;
+}
+
+bool ValidOptions(const FeatureDiscoveryOptions& options, std::string* error) {
+  if (!std::isfinite(options.margin_tolerance) || !(options.margin_tolerance > 0.0) ||
+      !std::isfinite(options.rank_relative_tolerance) || !(options.rank_relative_tolerance > 0.0) ||
+      !std::isfinite(options.sky_merge_tolerance) || !(options.sky_merge_tolerance > 0.0) ||
+      options.maximum_refinement_steps <= 0 || options.sky_z_bins < 4 || options.sky_z_bins % 2 != 0 ||
+      options.sky_azimuth_bins < 8 || options.sky_azimuth_bins % 2 != 0) {
+    return Fail("feature discovery options require positive tolerances and even sky grids of at least 4x8", error);
+  }
+  return true;
+}
+
+struct SkyGridCell {
+  double mass = 0.0;
+  int sample_count = 0;
+};
+
+struct SkyGrid {
+  int z_bins = 0;
+  int azimuth_bins = 0;
+  double solid_angle = 0.0;
+  std::vector<SkyGridCell> cells;
+};
+
+constexpr double kPi = 3.14159265358979323846;
+
+int SkyCellIndex(const double direction[3], int z_bins, int azimuth_bins) {
+  const double z_position = 0.5 * (std::max(-1.0, std::min(1.0, direction[2])) + 1.0);
+  const int z_index = std::min(z_bins - 1, static_cast<int>(z_position * z_bins));
+  double azimuth = std::atan2(direction[1], direction[0]);
+  if (azimuth < 0.0) {
+    azimuth += 2.0 * kPi;
+  }
+  const int azimuth_index = std::min(azimuth_bins - 1, static_cast<int>(azimuth * azimuth_bins / (2.0 * kPi)));
+  return z_index * azimuth_bins + azimuth_index;
+}
+
+SkyGrid BuildSkyGrid(const FeatureSupportBatch& batch, int z_bins, int azimuth_bins) {
+  SkyGrid grid;
+  grid.z_bins = z_bins;
+  grid.azimuth_bins = azimuth_bins;
+  grid.solid_angle = 4.0 * kPi / static_cast<double>(z_bins * azimuth_bins);
+  grid.cells.resize(static_cast<size_t>(z_bins * azimuth_bins));
+  std::vector<size_t> order(batch.samples.size());
+  std::iota(order.begin(), order.end(), 0u);
+  std::sort(order.begin(), order.end(), [&](size_t first, size_t second) {
+    return batch.samples[first].sample_id < batch.samples[second].sample_id;
+  });
+  for (size_t sample_index : order) {
+    const FeatureSupportSample& sample = batch.samples[sample_index];
+    if (!sample.numerically_available) {
+      continue;
+    }
+    SkyGridCell& cell = grid.cells[static_cast<size_t>(SkyCellIndex(sample.direction, z_bins, azimuth_bins))];
+    cell.mass += sample.weight;
+    ++cell.sample_count;
+  }
+  return grid;
+}
+
+const SkyGridCell& SkyCell(const SkyGrid& grid, int z_index, int azimuth_index) {
+  azimuth_index = (azimuth_index % grid.azimuth_bins + grid.azimuth_bins) % grid.azimuth_bins;
+  return grid.cells[static_cast<size_t>(z_index * grid.azimuth_bins + azimuth_index)];
+}
+
+double SkyDensity(const SkyGrid& grid, int z_index, int azimuth_index) {
+  return SkyCell(grid, z_index, azimuth_index).mass / grid.solid_angle;
+}
+
+void SkyCellDirection(const SkyGrid& grid, int z_index, int azimuth_index, double direction[3]) {
+  const double z = -1.0 + (static_cast<double>(z_index) + 0.5) * 2.0 / grid.z_bins;
+  const double azimuth = (static_cast<double>(azimuth_index) + 0.5) * 2.0 * kPi / grid.azimuth_bins;
+  const double radius = std::sqrt(std::max(0.0, 1.0 - z * z));
+  direction[0] = radius * std::cos(azimuth);
+  direction[1] = radius * std::sin(azimuth);
+  direction[2] = z;
+}
+
+struct SkyDifferential {
+  bool complete_neighborhood = false;
+  bool maximum = false;
+  bool ridge = false;
+  double gradient[2]{};
+  double gradient_norm = 0.0;
+  double hessian_eigenvalues[2]{};
+  double ridge_residual = 0.0;
+};
+
+SkyDifferential EvaluateSkyDifferential(const SkyGrid& grid, int z_index, int azimuth_index) {
+  SkyDifferential out;
+  if (z_index <= 0 || z_index + 1 >= grid.z_bins || SkyCell(grid, z_index, azimuth_index).sample_count == 0) {
+    return out;
+  }
+  for (int dz = -1; dz <= 1; ++dz) {
+    for (int da = -1; da <= 1; ++da) {
+      if (SkyCell(grid, z_index + dz, azimuth_index + da).sample_count == 0) {
+        return out;
+      }
+    }
+  }
+  out.complete_neighborhood = true;
+  const double center = SkyDensity(grid, z_index, azimuth_index);
+  const double left = SkyDensity(grid, z_index, azimuth_index - 1);
+  const double right = SkyDensity(grid, z_index, azimuth_index + 1);
+  const double down = SkyDensity(grid, z_index - 1, azimuth_index);
+  const double up = SkyDensity(grid, z_index + 1, azimuth_index);
+  out.maximum = center > left && center > right && center > down && center > up;
+  out.gradient[0] = 0.5 * (right - left);
+  out.gradient[1] = 0.5 * (up - down);
+  out.gradient_norm = std::hypot(out.gradient[0], out.gradient[1]);
+  const double h00 = right - 2.0 * center + left;
+  const double h11 = up - 2.0 * center + down;
+  const double h01 =
+      0.25 * (SkyDensity(grid, z_index + 1, azimuth_index + 1) - SkyDensity(grid, z_index + 1, azimuth_index - 1) -
+              SkyDensity(grid, z_index - 1, azimuth_index + 1) + SkyDensity(grid, z_index - 1, azimuth_index - 1));
+  const double trace = h00 + h11;
+  const double discriminant = std::hypot(h00 - h11, 2.0 * h01);
+  out.hessian_eigenvalues[0] = 0.5 * (trace - discriminant);
+  out.hessian_eigenvalues[1] = 0.5 * (trace + discriminant);
+  double eigenvector[2] = { h01, out.hessian_eigenvalues[0] - h00 };
+  double eigenvector_norm = std::hypot(eigenvector[0], eigenvector[1]);
+  if (!(eigenvector_norm > 1e-15)) {
+    eigenvector[0] =
+        std::fabs(h00 - out.hessian_eigenvalues[0]) < std::fabs(h11 - out.hessian_eigenvalues[0]) ? 1.0 : 0.0;
+    eigenvector[1] = eigenvector[0] == 0.0 ? 1.0 : 0.0;
+    eigenvector_norm = 1.0;
+  }
+  out.ridge_residual =
+      std::fabs((out.gradient[0] * eigenvector[0] + out.gradient[1] * eigenvector[1]) / eigenvector_norm);
+  const double curvature_scale = std::max(1e-12, std::fabs(out.hessian_eigenvalues[0]));
+  out.ridge = out.hessian_eigenvalues[0] < -1e-12 && out.ridge_residual <= 0.25 * curvature_scale;
+  return out;
+}
+
+void DiscoverSkyFeatures(const FeatureSupportBatch& batch, const FeatureDiscoveryOptions& options,
+                         bool globally_complete, FeatureDiscoveryResult* out) {
+  const SkyGrid fine = BuildSkyGrid(batch, options.sky_z_bins, options.sky_azimuth_bins);
+  const SkyGrid coarse = BuildSkyGrid(batch, options.sky_z_bins / 2, options.sky_azimuth_bins / 2);
+  out->sky_field.reserve(fine.cells.size());
+  for (int z_index = 0; z_index < fine.z_bins; ++z_index) {
+    for (int azimuth_index = 0; azimuth_index < fine.azimuth_bins; ++azimuth_index) {
+      const SkyGridCell& cell = SkyCell(fine, z_index, azimuth_index);
+      const SkyDifferential differential = EvaluateSkyDifferential(fine, z_index, azimuth_index);
+      const int coarse_z = z_index / 2;
+      const int coarse_azimuth = azimuth_index / 2;
+      const SkyDifferential coarse_differential = EvaluateSkyDifferential(coarse, coarse_z, coarse_azimuth);
+      SkyFieldNode node;
+      SkyCellDirection(fine, z_index, azimuth_index, node.direction);
+      node.value = cell.mass;
+      node.normalized_value = cell.mass / fine.solid_angle;
+      node.gradient_norm = differential.gradient_norm;
+      node.hessian_eigenvalues[0] = differential.hessian_eigenvalues[0];
+      node.hessian_eigenvalues[1] = differential.hessian_eigenvalues[1];
+      node.error = std::fabs(node.normalized_value - SkyDensity(coarse, coarse_z, coarse_azimuth));
+      node.resolution = std::sqrt(fine.solid_angle);
+      node.sample_count = cell.sample_count;
+      node.status = differential.complete_neighborhood ? FeatureEvidenceStatus::kCandidate :
+                                                         FeatureEvidenceStatus::kNumericalIncomplete;
+      out->sky_field.push_back(node);
+
+      for (FeatureMechanism mechanism : { FeatureMechanism::kBrightnessMaximum, FeatureMechanism::kBrightnessRidge }) {
+        const bool detected =
+            mechanism == FeatureMechanism::kBrightnessMaximum ? differential.maximum : differential.ridge;
+        if (!detected) {
+          continue;
+        }
+        const bool coarse_detected =
+            mechanism == FeatureMechanism::kBrightnessMaximum ? coarse_differential.maximum : coarse_differential.ridge;
+        FeatureCandidate candidate;
+        candidate.mechanism = mechanism;
+        candidate.status = globally_complete && differential.complete_neighborhood && coarse_detected ?
+                               FeatureEvidenceStatus::kConfirmed :
+                               FeatureEvidenceStatus::kCandidate;
+        std::copy(node.direction, node.direction + 3, candidate.direction);
+        candidate.weighted_mass = node.value;
+        candidate.residual =
+            mechanism == FeatureMechanism::kBrightnessMaximum ? node.gradient_norm : differential.ridge_residual;
+        candidate.resolution = node.resolution;
+        candidate.reason = mechanism == FeatureMechanism::kBrightnessMaximum ?
+                               "a complete equal-area sky neighborhood has a local brightness maximum" :
+                               "the sky-field Hessian has transverse negative curvature and a small normal gradient";
+        AddCandidate(candidate, options.sky_merge_tolerance, out);
+      }
+    }
+  }
 }
 
 }  // namespace
@@ -318,13 +632,13 @@ bool ValidateFeatureSupportBatch(const FeatureSupportBatch& batch, std::string* 
 }
 
 FeatureDiscoveryResult DiscoverFeatures(const FeatureSupportBatch& batch, const FeatureDiscoveryOptions& options,
-                                        const FeatureReevaluateFn&) {
+                                        const FeatureReevaluateFn& reevaluate) {
   FeatureDiscoveryResult out;
   out.visited_row_count = batch.visited_row_count;
   out.complete_visit = batch.complete_visit;
   out.materialization_complete = batch.materialization_complete;
   std::string error;
-  if (!ValidateFeatureSupportBatch(batch, &error)) {
+  if (!ValidateFeatureSupportBatch(batch, &error) || !ValidOptions(options, &error)) {
     for (int mechanism = static_cast<int>(FeatureMechanism::kInteriorRankLoss);
          mechanism <= static_cast<int>(FeatureMechanism::kBrightnessRidge); mechanism++) {
       out.mechanisms.push_back(
@@ -348,6 +662,7 @@ FeatureDiscoveryResult DiscoverFeatures(const FeatureSupportBatch& batch, const 
 
   const bool globally_complete = batch.complete_visit && batch.materialization_complete;
   bool rank_numerically_incomplete = false;
+  bool constraint_numerically_incomplete = false;
   for (const FeatureSupportSample& sample : batch.samples) {
     if (!sample.numerically_available) {
       rank_numerically_incomplete = true;
@@ -371,6 +686,29 @@ FeatureDiscoveryResult DiscoverFeatures(const FeatureSupportBatch& batch, const 
           CandidateFromSample(sample, FeatureMechanism::kFiniteWidthConcentration, FeatureEvidenceStatus::kCandidate,
                               "positive-width support is a resolution-dependent concentration, not an atom"),
           options.sky_merge_tolerance, &out);
+    }
+
+    std::vector<const SupportConstraint*> active_constraints;
+    for (const SupportConstraint& constraint : sample.constraints) {
+      if (!constraint.numerically_available) {
+        constraint_numerically_incomplete = true;
+        continue;
+      }
+      if (std::fabs(constraint.value) <= options.margin_tolerance) {
+        active_constraints.push_back(&constraint);
+        AddCandidate(ConstraintCandidate(sample, constraint, direct_status,
+                                         "a named support margin is active at a materialized support point"),
+                     options.sky_merge_tolerance, &out);
+      }
+    }
+    if (active_constraints.size() >= 2u) {
+      FeatureCandidate corner =
+          CandidateFromSample(sample, FeatureMechanism::kSupportCorner, direct_status,
+                              "two or more independent named constraints are active at the same support point");
+      for (const SupportConstraint* constraint : active_constraints) {
+        corner.active_constraints.push_back(constraint->name);
+      }
+      AddCandidate(corner, options.sky_merge_tolerance, &out);
     }
 
     if (sample.support_dimension <= 0) {
@@ -400,6 +738,64 @@ FeatureDiscoveryResult DiscoverFeatures(const FeatureSupportBatch& batch, const 
     }
   }
 
+  for (const FeatureSupportEdge& edge : batch.edges) {
+    const FeatureSupportSample& first = batch.samples[static_cast<size_t>(edge.first)];
+    const FeatureSupportSample& second = batch.samples[static_cast<size_t>(edge.second)];
+    if (!first.numerically_available || !second.numerically_available) {
+      constraint_numerically_incomplete = true;
+      continue;
+    }
+    std::vector<std::string> crossing_constraints;
+    FeatureCandidate first_crossing;
+    bool have_first_crossing = false;
+    for (const SupportConstraint& first_constraint : first.constraints) {
+      const SupportConstraint* second_constraint = FindConstraint(second, first_constraint);
+      if (!first_constraint.numerically_available || second_constraint == nullptr ||
+          !second_constraint->numerically_available) {
+        constraint_numerically_incomplete = true;
+        continue;
+      }
+      if (std::fabs(first_constraint.value) <= options.margin_tolerance ||
+          std::fabs(second_constraint->value) <= options.margin_tolerance ||
+          std::signbit(first_constraint.value) == std::signbit(second_constraint->value)) {
+        continue;
+      }
+      const double denominator = std::fabs(first_constraint.value) + std::fabs(second_constraint->value);
+      const double interpolation = std::fabs(first_constraint.value) / denominator;
+      FeatureCandidate candidate = ConstraintCandidate(
+          first, first_constraint, FeatureEvidenceStatus::kCandidate,
+          "opposite constraint-margin signs bracket a support transition; callback refinement preserves the branch");
+      if (!NormalizedInterpolation(first, second, interpolation, candidate.direction)) {
+        constraint_numerically_incomplete = true;
+        continue;
+      }
+      candidate.has_weight_sides = true;
+      candidate.weight_sides[0] = first.weight;
+      candidate.weight_sides[1] = second.weight;
+      candidate.residual = 0.0;
+      candidate.resolution = edge.parameter_distance;
+      if (RefineConstraintRoot(first, second, first_constraint, options, reevaluate, &candidate) && globally_complete) {
+        candidate.status = FeatureEvidenceStatus::kConfirmed;
+      }
+      AddCandidate(candidate, options.sky_merge_tolerance, &out);
+      crossing_constraints.push_back(first_constraint.name);
+      if (!have_first_crossing) {
+        first_crossing = candidate;
+        have_first_crossing = true;
+      }
+    }
+    if (crossing_constraints.size() >= 2u && have_first_crossing) {
+      first_crossing.mechanism = FeatureMechanism::kSupportCorner;
+      first_crossing.status = FeatureEvidenceStatus::kCandidate;
+      first_crossing.active_constraints = crossing_constraints;
+      first_crossing.reason =
+          "multiple named support margins cross on one resolved edge; joint root refinement is still required";
+      AddCandidate(first_crossing, options.sky_merge_tolerance, &out);
+    }
+  }
+
+  DiscoverSkyFeatures(batch, options, globally_complete, &out);
+
   for (const FeatureCandidate& candidate : out.candidates) {
     FeatureMechanismRecord& record = out.mechanisms[static_cast<size_t>(MechanismIndex(candidate.mechanism))];
     ++record.candidate_count;
@@ -416,6 +812,17 @@ FeatureDiscoveryResult DiscoverFeatures(const FeatureSupportBatch& batch, const 
     rank_record.status = FeatureEvidenceStatus::kNumericalIncomplete;
     rank_record.reason = "at least one support row lacks a complete-chain differential";
   }
+  if (constraint_numerically_incomplete) {
+    for (FeatureMechanism mechanism :
+         { FeatureMechanism::kSupportBoundary, FeatureMechanism::kSupportCorner, FeatureMechanism::kOpticalKink,
+           FeatureMechanism::kFilterBoundary, FeatureMechanism::kWeightKink }) {
+      FeatureMechanismRecord& record = out.mechanisms[static_cast<size_t>(MechanismIndex(mechanism))];
+      if (record.candidate_count == 0) {
+        record.status = FeatureEvidenceStatus::kNumericalIncomplete;
+        record.reason = "at least one named constraint margin was unavailable on the supplied support";
+      }
+    }
+  }
   if (!globally_complete) {
     for (FeatureMechanismRecord& record : out.mechanisms) {
       if (record.status == FeatureEvidenceStatus::kNotDetectedAtResolution) {
@@ -424,14 +831,6 @@ FeatureDiscoveryResult DiscoverFeatures(const FeatureSupportBatch& batch, const 
                                                 "the support exceeded the materialization budget";
       }
     }
-  }
-  for (FeatureMechanism mechanism :
-       { FeatureMechanism::kSupportBoundary, FeatureMechanism::kSupportCorner, FeatureMechanism::kOpticalKink,
-         FeatureMechanism::kFilterBoundary, FeatureMechanism::kWeightKink, FeatureMechanism::kBrightnessMaximum,
-         FeatureMechanism::kBrightnessRidge }) {
-    FeatureMechanismRecord& record = out.mechanisms[static_cast<size_t>(MechanismIndex(mechanism))];
-    record.status = FeatureEvidenceStatus::kNotSupported;
-    record.reason = "this mechanism is not evaluated by the differential milestone";
   }
   return out;
 }
