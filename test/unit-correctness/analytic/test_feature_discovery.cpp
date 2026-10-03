@@ -112,6 +112,14 @@ TEST(FeatureDiscoveryModel, DistinguishesAnEmptySupportFromAMalformedBatch) {
   ASSERT_FALSE(empty_result.mechanisms.empty());
   EXPECT_EQ(empty_result.mechanisms.front().status, FeatureEvidenceStatus::kPhysicallyUnreachable);
 
+  empty.visited_row_count = 100;
+  empty.materialization_complete = false;
+  const FeatureDiscoveryResult incomplete_result = DiscoverFeatures(empty, {});
+  ASSERT_FALSE(incomplete_result.mechanisms.empty());
+  EXPECT_TRUE(
+      std::all_of(incomplete_result.mechanisms.begin(), incomplete_result.mechanisms.end(),
+                  [](const auto& record) { return record.status == FeatureEvidenceStatus::kNumericalIncomplete; }));
+
   FeatureSupportBatch malformed;
   malformed.coordinate_dimension = 1;
   malformed.visited_row_count = 0;
@@ -119,6 +127,39 @@ TEST(FeatureDiscoveryModel, DistinguishesAnEmptySupportFromAMalformedBatch) {
   const FeatureDiscoveryResult malformed_result = DiscoverFeatures(malformed, {});
   ASSERT_FALSE(malformed_result.mechanisms.empty());
   EXPECT_EQ(malformed_result.mechanisms.front().status, FeatureEvidenceStatus::kNotSupported);
+}
+
+TEST(FeatureDiscoveryModel, RejectsMalformedCellAndEdgeTopology) {
+  FeatureSupportBatch batch;
+  batch.coordinate_dimension = 2;
+  batch.visited_row_count = 1;
+  FeatureSupportSample center = Sample(1, 0.0);
+  center.support_dimension = 2;
+  center.coordinates = { 0.0, 0.25 };
+  center.active_coordinates = { 0, 1 };
+  center.direction_jacobian = { 0.0, 0.0, 1.0, 0.0, 0.0, 0.0 };
+  center.direction_jacobian_column_available = { 1, 1 };
+  center.constraints[0].gradient = { -1.0, 0.0 };
+  FeatureSupportSample lower = center;
+  lower.sample_id = 2;
+  lower.accumulates_measure = false;
+  lower.coordinates = { -1.0, 0.0 };
+  FeatureSupportSample upper = center;
+  upper.sample_id = 3;
+  upper.accumulates_measure = false;
+  upper.coordinates = { 1.0, 0.0 };
+  batch.samples = { center, lower, upper };
+  batch.cell_axes.push_back({ 0, 0, 1, 0, 2, 2.0 });
+
+  std::string error;
+  EXPECT_FALSE(ValidateFeatureSupportBatch(batch, &error));
+  EXPECT_NE(error.find("differ only"), std::string::npos) << error;
+
+  batch.cell_axes.clear();
+  batch.edges.push_back({ 0, 2, std::sqrt(1.0 + 0.25 * 0.25) });
+  batch.samples[2].provenance.member_index = 1;
+  EXPECT_FALSE(ValidateFeatureSupportBatch(batch, &error));
+  EXPECT_NE(error.find("provenance branch"), std::string::npos) << error;
 }
 
 TEST(FeatureDiscoveryModel, RejectsAnUnknownBatchVersion) {

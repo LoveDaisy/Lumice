@@ -1,5 +1,6 @@
 #include "analytic/feature_discovery.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <limits>
 #include <map>
@@ -25,6 +26,16 @@ bool FiniteVector(const std::vector<double>& values) {
     }
   }
   return true;
+}
+
+bool NearlyEqual(double first, double second) {
+  constexpr double kRelativeTolerance = 1e-12;
+  const double scale = std::max({ 1.0, std::fabs(first), std::fabs(second) });
+  return std::fabs(first - second) <= kRelativeTolerance * scale;
+}
+
+bool SameActiveCoordinates(const FeatureSupportSample& first, const FeatureSupportSample& second) {
+  return first.active_coordinates == second.active_coordinates;
 }
 
 bool Fail(std::string message, std::string* error) {
@@ -772,7 +783,23 @@ bool ValidateFeatureSupportBatch(const FeatureSupportBatch& batch, std::string* 
     if (!std::isfinite(edge.parameter_distance) || !(edge.parameter_distance > 0.0)) {
       return Fail("support edge parameter_distance must be finite and positive", error);
     }
+    const FeatureSupportSample& first = batch.samples[static_cast<size_t>(edge.first)];
+    const FeatureSupportSample& second = batch.samples[static_cast<size_t>(edge.second)];
+    if (!SameProvenanceBranch(first.provenance, second.provenance) || !SameActiveCoordinates(first, second)) {
+      return Fail("support edge endpoints must belong to one continuous provenance branch", error);
+    }
+    double coordinate_distance2 = 0.0;
+    for (int coordinate : first.active_coordinates) {
+      const double delta =
+          second.coordinates[static_cast<size_t>(coordinate)] - first.coordinates[static_cast<size_t>(coordinate)];
+      coordinate_distance2 += delta * delta;
+    }
+    const double coordinate_distance = std::sqrt(coordinate_distance2);
+    if (!(coordinate_distance > 0.0) || !NearlyEqual(coordinate_distance, edge.parameter_distance)) {
+      return Fail("support edge parameter_distance must match its active-coordinate displacement", error);
+    }
   }
+  std::map<int, std::pair<int, std::set<int>>> cell_topology;
   for (const FeatureSupportCellAxis& axis : batch.cell_axes) {
     if (axis.cell_id < 0 || axis.coordinate_index < 0 || axis.coordinate_index >= batch.coordinate_dimension ||
         axis.lower < 0 || axis.center < 0 || axis.upper < 0 || axis.lower == axis.center || axis.center == axis.upper ||
@@ -786,8 +813,39 @@ bool ValidateFeatureSupportBatch(const FeatureSupportBatch& batch, std::string* 
     const FeatureSupportSample& upper = batch.samples[static_cast<size_t>(axis.upper)];
     if (!center.accumulates_measure || lower.accumulates_measure || upper.accumulates_measure ||
         !SameProvenanceBranch(lower.provenance, center.provenance) ||
-        !SameProvenanceBranch(center.provenance, upper.provenance)) {
+        !SameProvenanceBranch(center.provenance, upper.provenance) || !SameActiveCoordinates(lower, center) ||
+        !SameActiveCoordinates(center, upper)) {
       return Fail("support cell axes must attach two non-measure probes to one input-measure center", error);
+    }
+    if (std::find(center.active_coordinates.begin(), center.active_coordinates.end(), axis.coordinate_index) ==
+        center.active_coordinates.end()) {
+      return Fail("support cell coordinate_index must name an active support coordinate", error);
+    }
+    for (int coordinate = 0; coordinate < batch.coordinate_dimension; ++coordinate) {
+      if (coordinate == axis.coordinate_index) {
+        continue;
+      }
+      const size_t offset = static_cast<size_t>(coordinate);
+      if (!NearlyEqual(lower.coordinates[offset], center.coordinates[offset]) ||
+          !NearlyEqual(center.coordinates[offset], upper.coordinates[offset])) {
+        return Fail("support cell probes may differ only along coordinate_index", error);
+      }
+    }
+    const double lower_coordinate = lower.coordinates[static_cast<size_t>(axis.coordinate_index)];
+    const double center_coordinate = center.coordinates[static_cast<size_t>(axis.coordinate_index)];
+    const double upper_coordinate = upper.coordinates[static_cast<size_t>(axis.coordinate_index)];
+    if (!(lower_coordinate < center_coordinate && center_coordinate < upper_coordinate) ||
+        !NearlyEqual(upper_coordinate - lower_coordinate, axis.parameter_span)) {
+      return Fail("support cell coordinates must be ordered and match parameter_span", error);
+    }
+    auto& topology = cell_topology[axis.cell_id];
+    if (topology.second.empty()) {
+      topology.first = axis.center;
+    } else if (topology.first != axis.center) {
+      return Fail("all axes in one support cell must share the same center", error);
+    }
+    if (!topology.second.insert(axis.coordinate_index).second) {
+      return Fail("a support cell cannot repeat a coordinate axis", error);
     }
   }
   return true;
@@ -809,20 +867,24 @@ FeatureDiscoveryResult DiscoverFeatures(const FeatureSupportBatch& batch, const 
     return out;
   }
   out.evaluated_sample_count = static_cast<int>(batch.samples.size());
+  const bool globally_complete = batch.complete_visit && batch.materialization_complete;
+  const FeatureEvidenceStatus empty_status =
+      globally_complete ? FeatureEvidenceStatus::kPhysicallyUnreachable : FeatureEvidenceStatus::kNumericalIncomplete;
+  const char* empty_reason = globally_complete ?
+                                 "the supplied support is empty" :
+                                 (!batch.complete_visit ? "the adapter did not visit the complete input" :
+                                                          "the support exceeded the materialization budget");
   for (int mechanism = static_cast<int>(FeatureMechanism::kInteriorRankLoss);
        mechanism <= static_cast<int>(FeatureMechanism::kBrightnessRidge); mechanism++) {
-    out.mechanisms.push_back({ static_cast<FeatureMechanism>(mechanism),
-                               batch.samples.empty() ? FeatureEvidenceStatus::kPhysicallyUnreachable :
-                                                       FeatureEvidenceStatus::kNotDetectedAtResolution,
-                               0,
-                               batch.samples.empty() ? "the supplied support is empty" :
-                                                       "no candidate was detected at the supplied resolution" });
+    out.mechanisms.push_back(
+        { static_cast<FeatureMechanism>(mechanism),
+          batch.samples.empty() ? empty_status : FeatureEvidenceStatus::kNotDetectedAtResolution, 0,
+          batch.samples.empty() ? empty_reason : "no candidate was detected at the supplied resolution" });
   }
   if (batch.samples.empty()) {
     return out;
   }
 
-  const bool globally_complete = batch.complete_visit && batch.materialization_complete;
   bool rank_numerically_incomplete = false;
   bool constraint_numerically_incomplete = false;
   bool concentration_resolution_incomplete = false;
