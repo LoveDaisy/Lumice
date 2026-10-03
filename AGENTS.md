@@ -790,6 +790,7 @@ Valuable design/architecture docs live in `doc/` (tracked). Consult the relevant
     （§8：GPU kernel / 密度排序 / 列表→预览高亮联动 / 多段链排除）。改光路分析面板 / 链 id 携带 /
     直方图 consumer / 分析运行 C API / 分析面板 GUI 前先读；用户可见行为见
     `doc/user-manual/06-raypath-analysis.md`。
+  - `feature-diagnostic-discovery-research.md` — **通用特征发现的研究判据（非已实现API）**：实际加权天空与机制候选双向核对；条件机制≠joint图峰；平滑密度峰、零有限支持及采样峰漂移三类反例；真实LI数值消费缺口。设计通用特征检出、归因及其共享接口前先读，不据此宣称全部输入已覆盖。
   - `raypath-cli-output.md` — **`Lumice raypath` 子命令与其 JSON 输出（schema_version 1）的字段参考**：
     单层光路 × 单晶体 × 单天空点的纤维分量、逐点详情、太阳方向球网格；计算与序列化都在引擎侧
     （`src/raypath/`，`lumice_raypath.h` v4.50 `LUMICE_AnalyzeSinglePath` → 不透明结果 → JSON），CLI 与将来的
