@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1791039676747,
+  "lastUpdate": 1791039680406,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -4770,54 +4770,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "51fa59e29850545fd09b7f6041faaed4a4bea4cd",
-          "message": "Merge pull request #356 from LoveDaisy/feat/cuda-hostgen-black-and-energy-accounting\n\nfix(cuda): host root-gen fallback renders again; landed weight reduced per warp so the energy ledger matches legacy",
-          "timestamp": "2026-09-13T08:09:28+08:00",
-          "tree_id": "5310d81311d369114cdde3eb97a22ec84b3b27c2",
-          "url": "https://github.com/LoveDaisy/ice_halo_sim/commit/51fa59e29850545fd09b7f6041faaed4a4bea4cd"
-        },
-        "date": 1789258763979,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 1045324.7,
-            "unit": "rays/sec",
-            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 1180404.9,
-            "unit": "rays/sec",
-            "extra": "CPU: Neoverse-N2\\nCores: 4"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 813138.5,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 7763 64-Core Processor\\nCores: 4"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 812113,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 9V74 80-Core Processor                \\nCores: 4"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "22166140295c68e58e6375028394d4587a351c11",
           "message": "Merge pull request #357 from LoveDaisy/feat/view-center-angular-dist-grid\n\nfeat(annotation): view_dist — circles of constant angular distance from the optical axis, config → core → C API → GUI",
           "timestamp": "2026-09-13T12:02:01+08:00",
@@ -9506,6 +9458,54 @@ window.BENCHMARK_DATA = {
             "value": 594756.9,
             "unit": "rays/sec",
             "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "b6107e0c78b94e37fde81d77d8b596e16a2d3452",
+          "message": "Merge pull request #467 from LoveDaisy/fix/pytest-performance-pool-isolation\n\nfix(testing): isolate local slow pytest performance pool",
+          "timestamp": "2026-10-03T22:58:56+08:00",
+          "tree_id": "2bb7504b7cfd61fc451738fe5ed1567077d8d80b",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/b6107e0c78b94e37fde81d77d8b596e16a2d3452"
+        },
+        "date": 1791039679734,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 1241635.9,
+            "unit": "rays/sec",
+            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 1027606,
+            "unit": "rays/sec",
+            "extra": "CPU: Neoverse-N2\\nCores: 4"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 652597.8,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 9V74 80-Core Processor\\nCores: 4"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 938731.5,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 9V45 96-Core Processor                \\nCores: 4"
           }
         ]
       }
