@@ -210,9 +210,10 @@ inline constexpr float kAspectClampTolerance = 0.05f;
 //   (target_w - left_w - right_w) / (target_h - topbar_h - statusbar_h)
 // using the final integer window dimensions. That makes the small rounding error visible and lets
 // the same function measure a GLFW readback rather than only a planned request.
+// A zero achieved ratio means that chrome leaves no positive preview area.
 //
 // `was_clamped` is true when the relative deviation of achieved vs requested
-// exceeds kAspectClampTolerance; the GUI uses this to render a warning.
+// exceeds kAspectClampTolerance or no preview exists; the GUI uses this to render a warning.
 struct AspectFitResult {
   int target_w = 0;
   int target_h = 0;
@@ -229,8 +230,11 @@ inline AspectFitResult MeasureAspectFit(int window_w, int window_h, float ratio,
   out.requested_preview_ratio = ratio;
   const float preview_w = static_cast<float>(window_w) - left_w - right_w;
   const float preview_h = static_cast<float>(window_h) - topbar_h - statusbar_h;
-  if (ratio <= 0.0f || preview_w <= 0.0f || preview_h <= 0.0f) {
-    out.achieved_preview_ratio = ratio;
+  if (ratio <= 0.0f) {
+    return out;
+  }
+  if (preview_w <= 0.0f || preview_h <= 0.0f) {
+    out.was_clamped = true;
     return out;
   }
   out.achieved_preview_ratio = preview_w / preview_h;

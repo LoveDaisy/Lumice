@@ -1209,19 +1209,41 @@ TEST(AspectFitTest, PanelsCollapsedReducesOverhead) {
   EXPECT_GE(collapsed.achieved_preview_ratio, expanded.achieved_preview_ratio);
 }
 
-// Pathological case: chrome eats 100% of available height → helper must not
-// divide by zero / NaN; was_clamped should stay false (we have no signal).
-TEST(AspectFitTest, ChromeExceedsHeightYieldsBenignDefault) {
+// A non-Free ratio is unsatisfiable when chrome consumes the entire preview.
+TEST(AspectFitTest, ChromeExceedsHeightReportsNoPreview) {
   AspectFitResult fit =
       ResolveAspectFit(/*current_win_w=*/1280, /*ratio=*/2.0f,
                        /*work_w=*/1280, /*work_h=*/kMinWindowHeight, kLeftPanelWidth, kRightPanelWidth,
                        /*topbar_h=*/kMinWindowHeight,
                        /*statusbar_h=*/0.0f);
-  // Whatever the achieved ratio is, was_clamped must be deterministic (not
-  // NaN-driven). The function falls back to "achieved == requested" on the
-  // pathological branch.
-  EXPECT_FALSE(fit.was_clamped);
-  EXPECT_FLOAT_EQ(fit.achieved_preview_ratio, fit.requested_preview_ratio);
+  EXPECT_TRUE(fit.was_clamped);
+  EXPECT_FLOAT_EQ(fit.achieved_preview_ratio, 0.0f);
+}
+
+TEST(AspectFitTest, WorkareasSmallerThanChromeReportUnrepresentablePlannedAndActualSizes) {
+  constexpr float kRatio = 16.0f / 9.0f;
+  for (const auto workarea : { lumice::gui::MonitorRect{ 0, 0, 200, 800 }, lumice::gui::MonitorRect{ 0, 0, 1600, 40 },
+                               lumice::gui::MonitorRect{ 0, 0, 200, 40 } }) {
+    SCOPED_TRACE(workarea.w);
+    SCOPED_TRACE(workarea.h);
+    const auto constraints =
+        MakeWindowGeometryConstraints(1.5f, workarea, lumice::gui::WindowFrameInsets{ 8, 31, 8, 8 });
+    const auto planned = ResolveAspectFit(1600, kRatio, constraints, kLeftPanelWidth * 1.5f, kRightPanelWidth * 1.5f,
+                                          kTopBarHeight * 1.5f, kStatusBarHeight * 1.5f);
+    EXPECT_LE(planned.target_w, constraints.max_w);
+    EXPECT_LE(planned.target_h, constraints.max_h);
+    EXPECT_TRUE(planned.was_clamped);
+    EXPECT_FLOAT_EQ(planned.requested_preview_ratio, kRatio);
+    EXPECT_FLOAT_EQ(planned.achieved_preview_ratio, 0.0f);
+    const auto actual =
+        lumice::gui::MeasureAspectFit(constraints.max_w, constraints.max_h, kRatio, kLeftPanelWidth * 1.5f,
+                                      kRightPanelWidth * 1.5f, kTopBarHeight * 1.5f, kStatusBarHeight * 1.5f);
+    EXPECT_TRUE(actual.was_clamped);
+    EXPECT_FLOAT_EQ(actual.achieved_preview_ratio, 0.0f);
+  }
+  const auto free =
+      lumice::gui::MeasureAspectFit(1, 1, 0.0f, kLeftPanelWidth, kRightPanelWidth, kTopBarHeight, kStatusBarHeight);
+  EXPECT_FALSE(free.was_clamped);
 }
 
 // Windows applies glfwSetWindowSizeLimits after an aspect resize.  At 150% the content floor is

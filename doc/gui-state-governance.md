@@ -605,6 +605,9 @@ S1–S8 是立项时的种子，S9 / S10 是 S3 / S4 两个待核实分支核实
 | `aspect_preset` + `aspect_portrait` | 用户的取景意图（T-view） | 程序化 floor/scale/preset resize 必须保留；真正手工 resize 才转 Free。Match Background 与 1:1 的 Portrait 控件禁用，旧文档残留的 `aspect_portrait=true` 也不得反转其比例 |
 | `aspect_clamp` | 从实际窗口与 chrome 派生的结果，不是意图 | 每次 preset 协调后从 GLFW 实际 content size 重算；工作区无可行解时仍保留 preset，但提示实际 preview ratio；Free 清空它 |
 
+工作区小到 chrome 吃掉全部宽或高时，正比例预设仍被标为 clamped，achieved ratio 为 0 表示
+不存在有效预览区域；界面提示 No preview area，不把不存在的比例显示成已经满足目标。
+
 运行期的唯一编排入口是 `src/gui/ui_scale.cpp::RebuildForUiScale`：应用 visual language、重传字体纹理、
 应用共享窗口几何、重协调 active non-Free preset，最后才清 dirty。`main.cpp` 只拥有 monitor 输入与帧循环
 调度，`gui_test` 也调用这个入口；另写测试专用缩放算式或只断言 dirty 都不构成行为覆盖。

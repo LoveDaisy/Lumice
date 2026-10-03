@@ -225,6 +225,25 @@ TEST(WindowResizeState, SizeBeforeContentScalePreservesIntentUntilTheNextManualR
   gui::g_state = {};
 }
 
+TEST(WindowResizeState, AnActualSizeWithoutPreviewPreservesIntentAndReportsTheClamp) {
+  gui::g_state = {};
+  gui::g_state.aspect_preset = gui::AspectPreset::k16x9;
+  gui::ResetWindowResizeEvents();
+  gui::BeginProgrammaticWindowResize(/*resize_expected=*/true);
+  gui::EndProgrammaticWindowResize();
+  gui::WindowSizeCallback(nullptr, /*width=*/1, /*height=*/1);
+  gui::FinishWindowEventPoll();
+  EXPECT_EQ(gui::g_state.aspect_preset, gui::AspectPreset::k16x9);
+  EXPECT_TRUE(gui::g_state.aspect_clamp.was_clamped);
+  EXPECT_FLOAT_EQ(gui::g_state.aspect_clamp.achieved_preview_ratio, 0.0f);
+  EXPECT_FLOAT_EQ(gui::g_state.aspect_clamp.requested_preview_ratio, 16.0f / 9.0f);
+  gui::WindowSizeCallback(nullptr, /*width=*/1400, /*height=*/900);
+  gui::FinishWindowEventPoll();
+  EXPECT_EQ(gui::g_state.aspect_preset, gui::AspectPreset::kFree);
+  EXPECT_FALSE(gui::g_state.aspect_clamp.was_clamped);
+  gui::g_state = {};
+}
+
 TEST(WindowResizeEvents, ZeroOneOrTwoSynchronousCallbacksCannotExemptTheNextManualSize) {
   for (int callback_count : { 0, 1, 2 }) {
     SCOPED_TRACE(callback_count);
