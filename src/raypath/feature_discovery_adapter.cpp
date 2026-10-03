@@ -41,6 +41,8 @@ struct ReplayContext {
   std::map<BranchKey, SceneMeasureRow> rows;
   int coordinate_dimension = 0;
   std::vector<int> active_coordinates;
+  size_t spectrum_node_count = 0;
+  size_t sun_node_count = 0;
 };
 
 bool HasUsableDirection(const SceneMeasureRow& row) {
@@ -398,20 +400,19 @@ bool Reevaluate(const std::shared_ptr<const ReplayContext>& context,
   return true;
 }
 
-double CoordinateStep(int coordinate, const SceneMeasureRow& row, const SceneMeasureResult& measure,
-                      const ReplayContext& context) {
+double CoordinateStep(int coordinate, const std::vector<double>& coordinates, const ReplayContext& context) {
   if (coordinate == 0) {
-    return std::max(1e-3, 100.0 / std::max<size_t>(1, measure.spectrum_nodes.size()));
+    return std::max(1e-3, 100.0 / std::max<size_t>(1, context.spectrum_node_count));
   }
   if (coordinate == 1 || coordinate == 2) {
     const double radius = context.config.scene_.light_source_.param_.diameter_ * kPi / 360.0;
-    return std::max(1e-6, radius / std::max(4.0, std::sqrt(static_cast<double>(measure.sun_nodes.size()))));
+    return std::max(1e-6, radius / std::max(4.0, std::sqrt(static_cast<double>(context.sun_node_count))));
   }
   const MeasureFactorDescriptor* factor = FindFactor(context.factors, coordinate - 4);
   if (factor == nullptr) {
     return 0.0;
   }
-  const double center = PhysicalCoordinate(row, *factor);
+  const double center = coordinates[static_cast<size_t>(coordinate)];
   const bool pose = factor->name.rfind("pose.", 0) == 0;
   const double unit = pose ? kPi / 180.0 : 1.0;
   double step = std::fabs(factor->spread) * unit * 0.025;
@@ -425,6 +426,79 @@ double CoordinateStep(int coordinate, const SceneMeasureRow& row, const SceneMea
   return std::isfinite(step) ? step : 0.0;
 }
 
+bool ReevaluateWithJacobian(const std::shared_ptr<const ReplayContext>& context,
+                            const analytic::FeatureReevaluationRequest& request, FeatureSupportSample* sample,
+                            std::string* error) {
+  if (!Reevaluate(context, request, sample, error)) {
+    return false;
+  }
+  sample->direction_jacobian.assign(3u * static_cast<size_t>(context->coordinate_dimension), 0.0);
+  sample->direction_jacobian_column_available.assign(static_cast<size_t>(context->coordinate_dimension), 0);
+  const auto row = context->rows.find(Key(request.provenance));
+  if (row == context->rows.end()) {
+    return false;
+  }
+  double maximum_error = 0.0;
+  double maximum_resolution = 0.0;
+  for (int coordinate : sample->active_coordinates) {
+    const double step = CoordinateStep(coordinate, request.coordinates, *context);
+    if (!(step > 0.0)) {
+      if (error != nullptr) {
+        *error = "feature re-evaluation cannot construct a finite-difference stencil inside the support";
+      }
+      return false;
+    }
+    std::vector<double> lower_coordinates = request.coordinates;
+    std::vector<double> upper_coordinates = request.coordinates;
+    std::vector<double> lower_fine_coordinates = request.coordinates;
+    std::vector<double> upper_fine_coordinates = request.coordinates;
+    lower_coordinates[static_cast<size_t>(coordinate)] -= step;
+    upper_coordinates[static_cast<size_t>(coordinate)] += step;
+    lower_fine_coordinates[static_cast<size_t>(coordinate)] -= 0.5 * step;
+    upper_fine_coordinates[static_cast<size_t>(coordinate)] += 0.5 * step;
+    FeatureSupportSample lower;
+    FeatureSupportSample upper;
+    FeatureSupportSample lower_fine;
+    FeatureSupportSample upper_fine;
+    analytic::FeatureReevaluationRequest probe = request;
+    probe.coordinates = lower_coordinates;
+    if (!Reevaluate(context, probe, &lower, error)) {
+      return false;
+    }
+    probe.coordinates = upper_coordinates;
+    if (!Reevaluate(context, probe, &upper, error)) {
+      return false;
+    }
+    probe.coordinates = lower_fine_coordinates;
+    if (!Reevaluate(context, probe, &lower_fine, error)) {
+      return false;
+    }
+    probe.coordinates = upper_fine_coordinates;
+    if (!Reevaluate(context, probe, &upper_fine, error) || !sample->numerically_available ||
+        !lower.numerically_available || !upper.numerically_available || !lower_fine.numerically_available ||
+        !upper_fine.numerically_available) {
+      return false;
+    }
+    double column_error = 0.0;
+    for (int component = 0; component < 3; ++component) {
+      const double coarse = (upper.direction[component] - lower.direction[component]) / (2.0 * step);
+      const double fine = (upper_fine.direction[component] - lower_fine.direction[component]) / step;
+      const double correction = (fine - coarse) / 3.0;
+      sample->direction_jacobian[static_cast<size_t>(component * context->coordinate_dimension + coordinate)] =
+          fine + correction;
+      column_error = std::max(column_error, std::fabs(correction));
+    }
+    sample->direction_jacobian_column_available[static_cast<size_t>(coordinate)] = 1;
+    maximum_error = std::max(maximum_error, column_error);
+    maximum_resolution = std::max(maximum_resolution, 0.5 * step);
+  }
+  sample->direction_jacobian_error = maximum_error;
+  sample->direction_jacobian_resolution = maximum_resolution;
+  sample->direction_jacobian_available =
+      sample->numerically_available && !sample->active_coordinates.empty() && maximum_resolution > 0.0;
+  return sample->direction_jacobian_available;
+}
+
 bool EvaluateAt(const analytic::FeatureReevaluateFn& reevaluate, const FeatureSupportSample& base,
                 const std::vector<double>& coordinates, FeatureSupportSample* out) {
   analytic::FeatureReevaluationRequest request;
@@ -434,9 +508,8 @@ bool EvaluateAt(const analytic::FeatureReevaluateFn& reevaluate, const FeatureSu
   return reevaluate(request, out, &error);
 }
 
-void FillLocalCells(const std::map<BranchKey, SceneMeasureRow>& rows, const SceneMeasureResult& measure,
-                    const ReplayContext& context, const analytic::FeatureReevaluateFn& reevaluate,
-                    analytic::FeatureSupportBatch* batch) {
+void FillLocalCells(const std::map<BranchKey, SceneMeasureRow>& rows, const ReplayContext& context,
+                    const analytic::FeatureReevaluateFn& reevaluate, analytic::FeatureSupportBatch* batch) {
   const size_t original_count = batch->samples.size();
   uint64_t synthetic_id = uint64_t{ 1 } << 63u;
   for (size_t base_index = 0; base_index < original_count; ++base_index) {
@@ -451,7 +524,7 @@ void FillLocalCells(const std::map<BranchKey, SceneMeasureRow>& rows, const Scen
     double maximum_error = 0.0;
     double maximum_resolution = 0.0;
     for (int coordinate : base.active_coordinates) {
-      const double step = CoordinateStep(coordinate, row->second, measure, context);
+      const double step = CoordinateStep(coordinate, base.coordinates, context);
       if (!(step > 0.0)) {
         batch->materialization_complete = false;
         continue;
@@ -579,6 +652,8 @@ Error BuildFeatureSupportBatch(const ConfigManager& config, const SceneMeasureRe
   context->factors = measure->factors;
   context->active_coordinates = ActiveCoordinates(*measure);
   context->coordinate_dimension = CoordinateDimension(context->active_coordinates);
+  context->spectrum_node_count = measure->spectrum_nodes.size();
+  context->sun_node_count = measure->sun_nodes.size();
   batch->version = analytic::kFeatureSupportBatchVersion;
   batch->coordinate_dimension = context->coordinate_dimension;
   batch->visited_row_count = visited;
@@ -592,11 +667,10 @@ Error BuildFeatureSupportBatch(const ConfigManager& config, const SceneMeasureRe
     batch->samples.push_back(ConvertRow(row, *context, coordinates, true));
   }
 
-  const analytic::FeatureReevaluateFn callback = [context](const analytic::FeatureReevaluationRequest& request_value,
-                                                           FeatureSupportSample* sample, std::string* callback_error) {
-    return Reevaluate(context, request_value, sample, callback_error);
-  };
-  FillLocalCells(context->rows, *measure, *context, callback, batch);
+  const analytic::FeatureReevaluateFn raw_callback =
+      [context](const analytic::FeatureReevaluationRequest& request_value, FeatureSupportSample* sample,
+                std::string* callback_error) { return Reevaluate(context, request_value, sample, callback_error); };
+  FillLocalCells(context->rows, *context, raw_callback, batch);
   std::map<int, std::set<int>> cell_coordinates;
   for (const analytic::FeatureSupportCellAxis& axis : batch->cell_axes) {
     cell_coordinates[axis.center].insert(axis.coordinate_index);
@@ -613,7 +687,10 @@ Error BuildFeatureSupportBatch(const ConfigManager& config, const SceneMeasureRe
     }
   }
   if (reevaluate != nullptr) {
-    *reevaluate = callback;
+    *reevaluate = [context](const analytic::FeatureReevaluationRequest& request_value, FeatureSupportSample* sample,
+                            std::string* callback_error) {
+      return ReevaluateWithJacobian(context, request_value, sample, callback_error);
+    };
   }
   return {};
 }

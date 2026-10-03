@@ -191,6 +191,29 @@ TEST(FeatureDiscoveryAdapter, ReplaysTwentyOneIndependentShapeCoordinatesThrough
   EXPECT_NE(atom, discovery.candidates.end())
       << "the exact shape-only direction proof must preserve real positive-mass continuous atoms";
 
+  analytic::FeatureReevaluationRequest complete_request;
+  complete_request.provenance = positive->provenance;
+  complete_request.coordinates = positive->coordinates;
+  const int positive_index = static_cast<int>(std::distance(batch.samples.begin(), positive));
+  const auto first_axis = std::find_if(batch.cell_axes.begin(), batch.cell_axes.end(),
+                                       [positive_index](const auto& axis) { return axis.center == positive_index; });
+  ASSERT_NE(first_axis, batch.cell_axes.end());
+  const int shifted_coordinate = first_axis->coordinate_index;
+  const double upper =
+      batch.samples[static_cast<size_t>(first_axis->upper)].coordinates[static_cast<size_t>(shifted_coordinate)];
+  complete_request.coordinates[static_cast<size_t>(shifted_coordinate)] +=
+      0.2 * (upper - complete_request.coordinates[static_cast<size_t>(shifted_coordinate)]);
+  analytic::FeatureSupportSample complete_sample;
+  std::string complete_error;
+  ASSERT_TRUE(reevaluate(complete_request, &complete_sample, &complete_error)) << complete_error;
+  EXPECT_TRUE(complete_sample.direction_jacobian_available);
+  EXPECT_TRUE(
+      std::all_of(complete_sample.active_coordinates.begin(), complete_sample.active_coordinates.end(),
+                  [&](int coordinate) {
+                    return complete_sample.direction_jacobian_column_available[static_cast<size_t>(coordinate)] != 0;
+                  }))
+      << "a non-node product callback point must return all 21 active shape columns";
+
   analytic::FeatureReevaluationRequest invalid_request;
   invalid_request.provenance = positive->provenance;
   invalid_request.provenance.sample_index = -1;
@@ -224,10 +247,12 @@ TEST(FeatureDiscoveryAdapter, DifferentiatesTheComposedDirectionThroughBothLayer
 
   analytic::FeatureSupportBatch batch;
   SceneMeasureResult measure;
-  const Error error = BuildFeatureSupportBatch(config, request, &batch, &measure);
+  analytic::FeatureReevaluateFn reevaluate;
+  const Error error = BuildFeatureSupportBatch(config, request, &batch, &measure, &reevaluate);
   ASSERT_TRUE(error.Ok()) << error.message;
+  ASSERT_TRUE(reevaluate);
   const auto complete = std::find_if(batch.samples.begin(), batch.samples.end(), [](const auto& sample) {
-    return sample.direction_jacobian_available && sample.active_coordinates.size() == 2u;
+    return sample.accumulates_measure && sample.direction_jacobian_available && sample.active_coordinates.size() == 2u;
   });
   ASSERT_NE(complete, batch.samples.end()) << "a full-chain row must differentiate every active layer coordinate";
   double column_norm2[2]{};
@@ -244,6 +269,33 @@ TEST(FeatureDiscoveryAdapter, DifferentiatesTheComposedDirectionThroughBothLayer
   EXPECT_LT(column_norm2[1], 1e-8)
       << "the parallel-face second layer must preserve its incident direction for every pose";
   EXPECT_LT(complete->direction_jacobian_error, 1e-4);
+
+  const int center_index = static_cast<int>(std::distance(batch.samples.begin(), complete));
+  analytic::FeatureReevaluationRequest callback_request;
+  callback_request.provenance = complete->provenance;
+  callback_request.coordinates = complete->coordinates;
+  for (int coordinate : complete->active_coordinates) {
+    const auto axis = std::find_if(batch.cell_axes.begin(), batch.cell_axes.end(), [&](const auto& candidate) {
+      return candidate.center == center_index && candidate.coordinate_index == coordinate;
+    });
+    EXPECT_NE(axis, batch.cell_axes.end());
+    if (axis == batch.cell_axes.end()) {
+      return;
+    }
+    const double upper = batch.samples[static_cast<size_t>(axis->upper)].coordinates[static_cast<size_t>(coordinate)];
+    callback_request.coordinates[static_cast<size_t>(coordinate)] +=
+        0.2 * (upper - callback_request.coordinates[static_cast<size_t>(coordinate)]);
+  }
+  analytic::FeatureSupportSample callback_sample;
+  std::string callback_error;
+  ASSERT_TRUE(reevaluate(callback_request, &callback_sample, &callback_error)) << callback_error;
+  EXPECT_FALSE(callback_sample.accumulates_measure);
+  EXPECT_TRUE(callback_sample.direction_jacobian_available);
+  EXPECT_EQ(callback_sample.direction_jacobian.size(), 3u * static_cast<size_t>(batch.coordinate_dimension));
+  for (int coordinate : callback_sample.active_coordinates) {
+    EXPECT_NE(callback_sample.direction_jacobian_column_available[static_cast<size_t>(coordinate)], 0)
+        << "the arbitrary callback point must retain every full-chain active column";
+  }
 }
 
 TEST(FeatureDiscoveryAdapter, PhysicalDirectionFilterCreatesItsOwnBoundaryMechanism) {
