@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1790995801885,
+  "lastUpdate": 1790995804507,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9524,50 +9524,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "35235a01c6962917a905abe105b458ee0ba444ab",
-          "message": "Merge pull request #354 from LoveDaisy/feat/ray-num-slider-100b-log-scale\n\nfeat(gui): Rays(M) slider spans 0.1..100 000 M on a kLog track, one domain for both rows",
-          "timestamp": "2026-09-13T06:17:09+08:00",
-          "tree_id": "8c31257305277f134a3473abfb64eca3bdbdbc3a",
-          "url": "https://github.com/LoveDaisy/ice_halo_sim/commit/35235a01c6962917a905abe105b458ee0ba444ab"
-        },
-        "date": 1789252147861,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 79.7,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 100.1,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 93.4,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 88.7,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "f0add0b4a676a2e20ab27c782e9e9b5a182aac5b",
           "message": "Merge pull request #355 from LoveDaisy/feat/cli-lens-and-grid-contract\n\nfeat(lens): the CLI/GUI lens contract — short-edge fov, defaults, focal length import, annotations at intensity 0",
           "timestamp": "2026-09-13T07:31:34+08:00",
@@ -13867,6 +13823,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 96.1,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "5fd26ee965155e74cedf143214fd9a1c3a9a0314",
+          "message": "Merge pull request #465 from LoveDaisy/fix/ui-scale-window-geometry\n\nfix(gui): keep background aspect ratios consistent across UI scales",
+          "timestamp": "2026-10-03T10:47:02+08:00",
+          "tree_id": "2223b1e6369a418cca96f536688a1de685794a1c",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/5fd26ee965155e74cedf143214fd9a1c3a9a0314"
+        },
+        "date": 1790995803646,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 82.9,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 100.2,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 99.4,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 93.5,
             "unit": "%"
           }
         ]
