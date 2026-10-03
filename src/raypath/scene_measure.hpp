@@ -179,7 +179,12 @@ struct SceneMeasureLayerRow {
   double lower_wedge_deg = 0.0;
   std::vector<int> faces;
   std::vector<ShapeScalarSample> shape;
+  // Exact sampled analytic inputs retained for same-state full-chain re-evaluation. These are not
+  // a second scene model: they are the values already used to produce `field` below.
+  analytic::CrystalShape analytic_shape;
+  double refractive_index = 0.0;
   double pose_lon_lat_roll_rad[3]{};
+  double pose[9]{};
   // Dimension of the generated pose support in SO(3). -1 means the sampled float landed on a
   // singular longitude/latitude/roll chart while a positive-width generator spans nearby poses,
   // so one local differential cannot state the support dimension without understating it.

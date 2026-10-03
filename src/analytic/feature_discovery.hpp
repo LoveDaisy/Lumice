@@ -87,12 +87,18 @@ struct FeatureSupportSample {
   int support_dimension = 0;
   bool finite_width = false;
   std::vector<double> coordinates;
+  // Embedding-coordinate columns that span the actual continuous support tangent. Its extent is
+  // support_dimension; discrete provenance coordinates are deliberately absent.
+  std::vector<int> active_coordinates;
   double direction[3]{};  // world propagation direction; the displayed sky point is its negative
   double weight = 0.0;
   bool direction_jacobian_available = false;
   // Row-major [world component][coordinate].  Discovery projects this to an S2 tangent basis;
   // the embedding 3xN matrix is never ranked directly.
   std::vector<double> direction_jacobian;
+  std::vector<uint8_t> direction_jacobian_column_available;
+  double direction_jacobian_error = 0.0;
+  double direction_jacobian_resolution = 0.0;
   std::vector<SupportConstraint> constraints;
   bool numerically_available = true;
 };

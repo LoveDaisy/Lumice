@@ -1174,6 +1174,8 @@ SceneMeasureLayerRow EvaluateLayer(RandomNumberGenerator& rng, const LayerInput&
 
   const analytic::CrystalShape shape =
       SampleShape(rng, input.setting->crystal_.param_, input, layer_index, &out.shape, latents);
+  out.analytic_shape = shape;
+  out.refractive_index = refractive_index;
   out.upper_wedge_deg = shape.upper_wedge_deg;
   out.lower_wedge_deg = shape.lower_wedge_deg;
   float pose_values[3]{};
@@ -1226,6 +1228,7 @@ SceneMeasureLayerRow EvaluateLayer(RandomNumberGenerator& rng, const LayerInput&
   std::copy(incident, incident + 3, row_input.incident_direction);
   const float* matrix = rotation.GetMat();
   std::copy(matrix, matrix + 9, row_input.pose);
+  std::copy(row_input.pose, row_input.pose + 9, out.pose);
 
   analytic::DiagnosticField field(normals, polygons, faces.data(), slots.data(), static_cast<int>(faces.size()));
   out.field = include_derivatives ? field.Evaluate(row_input) : field.EvaluateWithoutDerivatives(row_input);
