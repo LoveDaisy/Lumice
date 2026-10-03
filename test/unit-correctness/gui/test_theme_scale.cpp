@@ -16,7 +16,10 @@
 
 #include <vector>
 
+#include "gui/app.hpp"
 #include "gui/theme.hpp"
+#include "gui/ui_scale.hpp"
+#include "gui/window_sizing.hpp"
 #include "imgui.h"
 
 namespace {
@@ -175,6 +178,175 @@ TEST_F(ThemeScale, RasterDensityChangesNoMetric) {
   // The one thing that IS allowed to change: the atlas holds more texels per glyph.
   EXPECT_GT(io.Fonts->TexWidth * io.Fonts->TexHeight, tex_area_at_one)
       << "sanity: the density did reach the rasterizer — a denser atlas is a larger one";
+}
+
+TEST(UiScalePolicy, MonitorAndUserInputsStayInTheirPlatformSpecificUnits) {
+  const gui::UiScaleParams params = gui::ResolveUiScaleParams(/*monitor_scale=*/1.5f,
+                                                              /*user_multiplier=*/1.25f);
+#if defined(__APPLE__)
+  EXPECT_FLOAT_EQ(params.layout_scale, 1.25f);
+  EXPECT_FLOAT_EQ(params.raster_density, 1.5f);
+#else
+  EXPECT_FLOAT_EQ(params.layout_scale, 1.875f);
+  EXPECT_FLOAT_EQ(params.raster_density, 1.0f);
+#endif
+}
+
+TEST(WindowResizeState, ManualResizeSelectsFreeAndClearsTheClamp) {
+  gui::g_state = {};
+  gui::g_state.aspect_preset = gui::AspectPreset::k16x9;
+  gui::g_state.aspect_clamp.was_clamped = true;
+  gui::ResetWindowResizeEvents();
+
+  gui::WindowSizeCallback(nullptr, /*width=*/1400, /*height=*/900);
+  gui::FinishWindowEventPoll();
+
+  EXPECT_EQ(gui::g_state.aspect_preset, gui::AspectPreset::kFree);
+  EXPECT_FALSE(gui::g_state.aspect_clamp.was_clamped);
+  gui::g_state = {};
+}
+
+TEST(WindowResizeState, SizeBeforeContentScalePreservesIntentUntilTheNextManualResize) {
+  gui::g_state = {};
+  gui::g_state.aspect_preset = gui::AspectPreset::k16x9;
+  gui::ResetWindowResizeEvents();
+  // GLFW Win32's WM_DPICHANGED calls SetWindowPos before its content-scale notification.
+  const unsigned int revision = gui::WindowContentScaleRevision();
+  gui::WindowSizeCallback(nullptr, /*width=*/1400, /*height=*/900);
+  gui::NotifyWindowContentScaleChanged();
+  gui::FinishWindowEventPoll();
+  EXPECT_NE(gui::WindowContentScaleRevision(), revision);
+  EXPECT_EQ(gui::g_state.aspect_preset, gui::AspectPreset::k16x9);
+  EXPECT_TRUE(gui::g_ui_scale_dirty);
+  gui::g_ui_scale_dirty = false;
+  gui::WindowSizeCallback(nullptr, /*width=*/1350, /*height=*/880);
+  gui::FinishWindowEventPoll();
+  EXPECT_EQ(gui::g_state.aspect_preset, gui::AspectPreset::kFree);
+  gui::g_state = {};
+}
+
+TEST(WindowResizeState, AnActualSizeWithoutPreviewPreservesIntentAndReportsTheClamp) {
+  gui::g_state = {};
+  gui::g_state.aspect_preset = gui::AspectPreset::k16x9;
+  gui::ResetWindowResizeEvents();
+  gui::BeginProgrammaticWindowResize(/*resize_expected=*/true);
+  gui::EndProgrammaticWindowResize();
+  gui::WindowSizeCallback(nullptr, /*width=*/1, /*height=*/1);
+  gui::FinishWindowEventPoll();
+  EXPECT_EQ(gui::g_state.aspect_preset, gui::AspectPreset::k16x9);
+  EXPECT_TRUE(gui::g_state.aspect_clamp.was_clamped);
+  EXPECT_FLOAT_EQ(gui::g_state.aspect_clamp.achieved_preview_ratio, 0.0f);
+  EXPECT_FLOAT_EQ(gui::g_state.aspect_clamp.requested_preview_ratio, 16.0f / 9.0f);
+  gui::WindowSizeCallback(nullptr, /*width=*/1400, /*height=*/900);
+  gui::FinishWindowEventPoll();
+  EXPECT_EQ(gui::g_state.aspect_preset, gui::AspectPreset::kFree);
+  EXPECT_FALSE(gui::g_state.aspect_clamp.was_clamped);
+  gui::g_state = {};
+}
+
+TEST(WindowResizeEvents, ZeroOneOrTwoSynchronousCallbacksCannotExemptTheNextManualSize) {
+  for (int callback_count : { 0, 1, 2 }) {
+    SCOPED_TRACE(callback_count);
+    gui::WindowResizeEvents events;
+    events.BeginRequest(/*resize_expected=*/true);
+    for (int i = 0; i < callback_count; ++i) {
+      EXPECT_TRUE(events.RecordResize(1400, 900));
+    }
+    events.EndRequest();
+    EXPECT_FALSE(events.FinishEventPoll());
+    EXPECT_FALSE(events.RecordResize(1350, 880));
+    EXPECT_TRUE(events.FinishEventPoll());
+  }
+}
+
+TEST(WindowResizeEvents, DelayedRequestsRemainCorrelatedWithinTheNextPoll) {
+  gui::WindowResizeEvents events;
+  events.BeginRequest(/*resize_expected=*/true);
+  events.EndRequest();
+  events.BeginRequest(/*resize_expected=*/true);
+  events.EndRequest();
+  EXPECT_TRUE(events.RecordResize(1400, 900));
+  EXPECT_TRUE(events.RecordResize(1500, 940));
+  EXPECT_FALSE(events.FinishEventPoll());
+  EXPECT_FALSE(events.RecordResize(1450, 920));
+  EXPECT_TRUE(events.FinishEventPoll());
+}
+
+TEST(WindowResizeEvents, UnacknowledgedRequestsCannotExemptOldReadbackOrLaterManualTargets) {
+  for (int manual_width : { 1400, 1600 }) {
+    SCOPED_TRACE(manual_width);
+    gui::WindowResizeEvents events;
+    events.BeginRequest(/*resize_expected=*/true);
+    events.EndRequest();
+    EXPECT_FALSE(events.FinishEventPoll());
+    EXPECT_FALSE(events.FinishEventPoll());
+    EXPECT_FALSE(events.RecordResize(manual_width, manual_width == 1400 ? 900 : 980));
+    EXPECT_TRUE(events.FinishEventPoll());
+  }
+
+  gui::WindowResizeEvents events;
+  events.BeginRequest(/*resize_expected=*/true);
+  events.EndRequest();
+  EXPECT_TRUE(events.RecordResize(1600, 980));
+  EXPECT_FALSE(events.FinishEventPoll());
+}
+
+TEST(WindowResizeEvents, AManualSizeAfterSettlementSupersedesAnUnacknowledgedRequest) {
+  gui::WindowResizeEvents events;
+  events.BeginRequest(/*resize_expected=*/true);
+  events.EndRequest();
+  EXPECT_FALSE(events.FinishEventPoll());
+  EXPECT_FALSE(events.RecordResize(1350, 880));
+  EXPECT_TRUE(events.FinishEventPoll());
+  EXPECT_FALSE(events.RecordResize(1400, 900));
+  EXPECT_TRUE(events.FinishEventPoll());
+}
+
+TEST(WindowResizeEvents, AdjustedAsynchronousResultSettlesOnceAndDoesNotExemptTheNextManualSize) {
+  gui::WindowResizeEvents events;
+  events.BeginRequest(/*resize_expected=*/true);
+  events.EndRequest();
+  EXPECT_TRUE(events.RecordResize(1420, 910));
+  EXPECT_TRUE(events.RecordResize(1420, 910));
+  EXPECT_FALSE(events.FinishEventPoll());
+  EXPECT_FALSE(events.RecordResize(1430, 910));
+  EXPECT_TRUE(events.FinishEventPoll());
+
+  events.BeginRequest(/*resize_expected=*/true);
+  events.EndRequest();
+  EXPECT_TRUE(events.RecordResize(1420, 910));
+  EXPECT_TRUE(events.RecordResize(1430, 910));
+  EXPECT_FALSE(events.FinishEventPoll());
+  EXPECT_FALSE(events.RecordResize(1440, 910));
+  EXPECT_TRUE(events.FinishEventPoll());
+}
+
+TEST(WindowResizeEvents, TargetThenAdjustedResultsStayInTheTransactionAndSettleAtThePollBoundary) {
+  gui::WindowResizeEvents events;
+  events.BeginRequest(/*resize_expected=*/true);
+  events.EndRequest();
+  EXPECT_TRUE(events.RecordResize(1400, 900));
+  EXPECT_TRUE(events.RecordResize(1420, 910));
+  EXPECT_TRUE(events.RecordResize(1440, 920));
+  EXPECT_FALSE(events.FinishEventPoll());
+  EXPECT_FALSE(events.RecordResize(1440, 920));
+  EXPECT_TRUE(events.FinishEventPoll());
+}
+
+TEST(WindowResizeEvents, NoOpWithoutCallbacksCannotExemptManualInputEvenBeforeSettlement) {
+  gui::WindowResizeEvents events;
+  events.BeginRequest(/*resize_expected=*/false);
+  events.EndRequest();
+  EXPECT_FALSE(events.RecordResize(1350, 880));
+  EXPECT_TRUE(events.FinishEventPoll());
+
+  events.BeginRequest(/*resize_expected=*/false);
+  EXPECT_TRUE(events.RecordResize(1350, 880));
+  events.EndRequest();
+  EXPECT_TRUE(events.RecordResize(1370, 890));
+  EXPECT_FALSE(events.FinishEventPoll());
+  EXPECT_FALSE(events.RecordResize(1360, 880));
+  EXPECT_TRUE(events.FinishEventPoll());
 }
 
 // WindowResizeCondForScale — the shared rule behind defaults_panel.cpp/analysis_panel.cpp/

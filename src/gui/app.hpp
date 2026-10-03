@@ -127,8 +127,8 @@ extern int g_server_worker_count;
 // holds); the scale in force is theme.cpp's CurrentUiScale, and nothing else caches it.
 //
 // g_ui_scale_dirty is the one channel to the rebuild — the monitor callback and the Settings
-// control both set it, and main.cpp's RebuildForUiScale clears it — so a scale change from either
-// source takes exactly the same path.
+// control both set it, and ui_scale.cpp's shared RebuildForUiScale clears it — so a scale change
+// from either source takes exactly the same path in the product and gui_test.
 extern float g_ui_scale_multiplier;
 extern bool g_ui_scale_dirty;
 
@@ -200,7 +200,14 @@ void JoinPendingCalibration();
 bool CalibrationPending();
 
 // Aspect ratio state
-extern int g_programmatic_resize;  // Counter: decremented by WindowSizeCallback, set by ApplyAspectRatio
+// Settle resize provenance after a full GLFW event poll, before scale rebuilding or NewFrame.
+void FinishWindowEventPoll();
+void NotifyWindowContentScaleChanged();
+unsigned int WindowContentScaleRevision();
+void ResetWindowResizeEvents();
+// Scope a programmatic operation whose callbacks may arrive during the next event poll.
+void BeginProgrammaticWindowResize(bool resize_expected);
+void EndProgrammaticWindowResize();
 
 // Unsaved changes popup state
 extern bool g_show_unsaved_popup;
@@ -256,6 +263,11 @@ void WindowSizeCallback(GLFWwindow* window, int width, int height);
 // Aspect ratio helpers. GetAspectRatio itself lives in gui_state.hpp, next to the AspectPreset
 // enum: it is a pure function of the preset and file_io.cpp's export path needs it too.
 void ApplyAspectRatio(GLFWwindow* window, AspectPreset preset, bool portrait, float override_ratio = 0.0f);
+
+// Apply the scaled content floor, current-monitor workarea and actual window frame from the same
+// geometry snapshot used by ApplyAspectRatio. Programmatic correction preserves an active preset;
+// the caller may re-apply that preset afterwards to restore its exact ratio at the new scale.
+void ApplyWindowGeometryForScale(GLFWwindow* window, float layout_scale);
 
 // The one AnnotationAnchors the live preview drives (app_panels.cpp, once per frame), and the
 // label sets built from what it holds for that frame. Exposed so the screenshot export renders

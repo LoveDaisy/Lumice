@@ -143,6 +143,35 @@ struct BgOverlayTestState {
   }
 };
 
+// Main-thread bridge for the rare case that intentionally changes the product window geometry.
+// GLFW's Cocoa backend may only be called from the main thread, while test bodies run in the test
+// coroutine thread. The request also gives the case an explicit restoration point for pool safety.
+struct WindowSizeTestState {
+  int width = 0;
+  int height = 0;
+  bool apply_aspect = false;
+  bool content_scale_change = false;
+  bool adjusted_async_resize = false;
+  bool report_target_first = false;
+  int min_width = 0;
+  int min_height = 0;
+  int max_width = 0;
+  int max_height = 0;
+  std::atomic<bool> requested{ false };
+  std::atomic<bool> done{ false };
+
+  void Reset() {
+    width = 0;
+    height = 0;
+    apply_aspect = false;
+    content_scale_change = false;
+    adjusted_async_resize = false;
+    report_target_first = false;
+    requested.store(false);
+    done.store(false);
+  }
+};
+
 // ========== Extern global variables (defined in test_gui_main.cpp) ==========
 
 extern ScreenshotCapture g_capture;
@@ -151,6 +180,7 @@ extern BgOverlayTestState g_bg_test;
 extern LeftPanelCaptureState g_left_panel_capture;
 extern FullFrameCaptureState g_fullframe_capture;
 extern AutoEvExportState g_auto_ev_export;
+extern WindowSizeTestState g_window_size_test;
 extern std::vector<unsigned char> g_synth_tex;
 extern int g_core_log_level;
 extern int g_gui_log_level;

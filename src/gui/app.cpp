@@ -19,6 +19,7 @@
 #include <vector>
 
 #include "gui/analysis_panel.hpp"
+#include "gui/aspect_ratio_rules.hpp"
 #include "gui/edit_modals.hpp"
 #include "gui/export_fbo_renderer.hpp"
 #include "gui/file_io.hpp"
@@ -156,8 +157,9 @@ bool CalibrationPending() {
          g_calibration_future.wait_for(std::chrono::seconds(0)) != std::future_status::ready;
 }
 
-int g_programmatic_resize = 0;
-
+namespace {
+WindowResizeEvents g_window_resize_events;
+}
 
 bool g_show_unsaved_popup = false;
 PendingAction g_pending_action = PendingAction::kNone;
@@ -233,9 +235,94 @@ void GlfwErrorCallback(int error, const char* description) {
   GUI_LOG_ERROR("GLFW Error {}: {}", error, description);
 }
 
-void WindowSizeCallback(GLFWwindow* /*window*/, int /*width*/, int /*height*/) {
-  if (g_programmatic_resize > 0) {
-    g_programmatic_resize--;
+namespace {
+
+constexpr float kCollapsedStripWidth = 20.0f;  // Must match kCollapseBtnSize in app_panels.cpp.
+
+float RequestedAspectRatio(AspectPreset preset, bool portrait, float override_ratio) {
+  float ratio = 0.0f;
+  if (preset == AspectPreset::kMatchBg) {
+    if (!g_preview.HasBackground()) {
+      return 0.0f;
+    }
+    ratio = override_ratio > 0.0f ? override_ratio : g_preview.GetBgAspect();
+  } else {
+    ratio = GetAspectRatio(preset);
+  }
+  return ApplyAspectOrientation(preset, portrait, ratio);
+}
+
+void UpdateAspectClampFromActualSize(int window_w, int window_h) {
+  const float ratio = RequestedAspectRatio(g_state.aspect_preset, g_state.aspect_portrait, 0.0f);
+  if (ratio <= 0.0f) {
+    g_state.aspect_clamp = {};
+    return;
+  }
+  const float left_w = UiPx(g_state.left_panel_collapsed ? kCollapsedStripWidth : kLeftPanelWidth);
+  const float right_w = UiPx(g_state.right_panel_collapsed ? kCollapsedStripWidth : kRightPanelWidth);
+  const AspectFitResult actual =
+      MeasureAspectFit(window_w, window_h, ratio, left_w, right_w, UiPx(kTopBarHeight), UiPx(kStatusBarHeight));
+  g_state.aspect_clamp.was_clamped = actual.was_clamped;
+  g_state.aspect_clamp.requested_preview_ratio = actual.requested_preview_ratio;
+  g_state.aspect_clamp.achieved_preview_ratio = actual.achieved_preview_ratio;
+}
+
+void SetProgrammaticWindowSize(GLFWwindow* window, int width, int height) {
+  int actual_w = 0;
+  int actual_h = 0;
+  glfwGetWindowSize(window, &actual_w, &actual_h);
+  if (actual_w == width && actual_h == height) {
+    return;
+  }
+  BeginProgrammaticWindowResize(/*resize_expected=*/true);
+  glfwSetWindowSize(window, width, height);
+  EndProgrammaticWindowResize();
+}
+
+void ClampLiveWindowPosition(GLFWwindow* window, const WindowGeometryConstraints& constraints) {
+  int pos_x = 0;
+  int pos_y = 0;
+  int win_w = 0;
+  int win_h = 0;
+  glfwGetWindowPos(window, &pos_x, &pos_y);
+  glfwGetWindowSize(window, &win_w, &win_h);
+  const WindowPosition clamped = ClampWindowPositionToWorkarea(pos_x, pos_y, win_w, win_h, constraints);
+  if (clamped.x != pos_x || clamped.y != pos_y) {
+    glfwSetWindowPos(window, clamped.x, clamped.y);
+  }
+}
+
+}  // namespace
+
+void WindowSizeCallback(GLFWwindow* /*window*/, int width, int height) {
+  if (g_window_resize_events.RecordResize(width, height)) {
+    UpdateAspectClampFromActualSize(width, height);
+  }
+}
+
+void NotifyWindowContentScaleChanged() {
+  g_window_resize_events.RecordContentScaleChange();
+  g_ui_scale_dirty = true;
+}
+
+unsigned int WindowContentScaleRevision() {
+  return g_window_resize_events.ContentScaleRevision();
+}
+
+void ResetWindowResizeEvents() {
+  g_window_resize_events = {};
+}
+
+void BeginProgrammaticWindowResize(bool resize_expected) {
+  g_window_resize_events.BeginRequest(resize_expected);
+}
+
+void EndProgrammaticWindowResize() {
+  g_window_resize_events.EndRequest();
+}
+
+void FinishWindowEventPoll() {
+  if (!g_window_resize_events.FinishEventPoll()) {
     return;
   }
   if (g_state.aspect_preset != AspectPreset::kFree) {
@@ -248,19 +335,7 @@ void WindowSizeCallback(GLFWwindow* /*window*/, int /*width*/, int /*height*/) {
 }
 
 void ApplyAspectRatio(GLFWwindow* window, AspectPreset preset, bool portrait, float override_ratio) {
-  float ratio = 0.0f;
-  if (preset == AspectPreset::kMatchBg) {
-    ratio = override_ratio > 0.0f ? override_ratio : g_preview.GetBgAspect();
-    if (!g_preview.HasBackground()) {
-      g_state.aspect_clamp = {};
-      return;
-    }
-  } else {
-    ratio = GetAspectRatio(preset);
-  }
-  if (portrait && ratio > 0.0f) {
-    ratio = 1.0f / ratio;
-  }
+  const float ratio = RequestedAspectRatio(preset, portrait, override_ratio);
   if (ratio <= 0.0f) {
     // kFree (or any other ratio-less preset) reaches here — no preview-region
     // ratio to honor, so any prior clamp warning is no longer relevant.
@@ -271,83 +346,44 @@ void ApplyAspectRatio(GLFWwindow* window, AspectPreset preset, bool portrait, fl
   int win_w = 0;
   int win_h = 0;
   glfwGetWindowSize(window, &win_w, &win_h);
-  int pos_x = 0;
-  int pos_y = 0;
-  glfwGetWindowPos(window, &pos_x, &pos_y);
-
-  constexpr float kCollapsedStripWidth = 20.0f;  // Must match kCollapseBtnSize in app_panels.cpp
   float left_w = UiPx(g_state.left_panel_collapsed ? kCollapsedStripWidth : kLeftPanelWidth);
   float right_w = UiPx(g_state.right_panel_collapsed ? kCollapsedStripWidth : kRightPanelWidth);
-
-  // Select the monitor containing the window center so multi-monitor users do
-  // not get yanked back to primary when aspect ratio changes (v11 bug #4).
-  int cx = pos_x + win_w / 2;
-  int cy = pos_y + win_h / 2;
-  int mon_count = 0;
-  GLFWmonitor** mons = glfwGetMonitors(&mon_count);
-  std::vector<MonitorRect> rects;
-  if (mon_count > 0) {
-    rects.reserve(static_cast<size_t>(mon_count));
-  }
-  for (int i = 0; i < mon_count; i++) {
-    MonitorRect r{};
-    glfwGetMonitorWorkarea(mons[i], &r.x, &r.y, &r.w, &r.h);
-    rects.push_back(r);
-  }
-  int work_x = 0;
-  int work_y = 0;
-  int work_w = 0;
-  int work_h = 0;
-  int mon_idx = SelectMonitorIndexByCenter(cx, cy, rects.data(), static_cast<int>(rects.size()));
-  if (mon_idx >= 0) {
-    const auto& r = rects[mon_idx];
-    work_x = r.x;
-    work_y = r.y;
-    work_w = r.w;
-    work_h = r.h;
-  } else {
-    glfwGetMonitorWorkarea(glfwGetPrimaryMonitor(), &work_x, &work_y, &work_w, &work_h);
-  }
-
+  const WindowGeometryConstraints constraints = GetCurrentWindowGeometryConstraints(window, CurrentUiScale());
   AspectFitResult fit =
-      ResolveAspectFit(win_w, ratio, work_w, work_h, left_w, right_w, UiPx(kTopBarHeight), UiPx(kStatusBarHeight));
+      ResolveAspectFit(win_w, ratio, constraints, left_w, right_w, UiPx(kTopBarHeight), UiPx(kStatusBarHeight));
   int target_w = fit.target_w;
   int target_h = fit.target_h;
 
-  g_programmatic_resize = 2;  // Expect up to 2 callbacks (some platforms fire intermediate + final)
-  glfwSetWindowSize(window, target_w, target_h);
+  SetProgrammaticWindowSize(window, target_w, target_h);
+  ClampLiveWindowPosition(window, constraints);
 
-  // Clamp window position to stay within the selected monitor's workarea.
-  // pos_x/pos_y were read at function entry (pre-resize); GLFW's SetWindowSize
-  // anchors on top-left, so the position remains valid post-resize.
-  bool moved = false;
-  if (pos_x + target_w > work_x + work_w) {
-    pos_x = work_x + work_w - target_w;
-    moved = true;
-  }
-  if (pos_y + target_h > work_y + work_h) {
-    pos_y = work_y + work_h - target_h;
-    moved = true;
-  }
-  if (pos_x < work_x) {
-    pos_x = work_x;
-    moved = true;
-  }
-  if (pos_y < work_y) {
-    pos_y = work_y;
-    moved = true;
-  }
-  if (moved) {
-    glfwSetWindowPos(window, pos_x, pos_y);
-  }
+  // GLFW documents the request as subject to window-manager limits. Read back what exists now and
+  // let a delayed X11/Wayland callback update it again later; state never claims the request was
+  // achieved merely because it was sent.
+  int actual_w = 0;
+  int actual_h = 0;
+  glfwGetWindowSize(window, &actual_w, &actual_h);
+  const AspectFitResult actual =
+      MeasureAspectFit(actual_w, actual_h, ratio, left_w, right_w, UiPx(kTopBarHeight), UiPx(kStatusBarHeight));
+  g_state.aspect_clamp.was_clamped = actual.was_clamped;
+  g_state.aspect_clamp.requested_preview_ratio = actual.requested_preview_ratio;
+  g_state.aspect_clamp.achieved_preview_ratio = actual.achieved_preview_ratio;
+}
 
-  // Surface the clamp signal to the GUI. Done after glfwSetWindowSize so the
-  // achieved/requested ratios written to state correspond to the size we
-  // actually asked the OS for (the resize callback may further fudge the size
-  // by ±1 px, but ResolveAspectFit already accounts for chrome rounding).
-  g_state.aspect_clamp.was_clamped = fit.was_clamped;
-  g_state.aspect_clamp.requested_preview_ratio = fit.requested_preview_ratio;
-  g_state.aspect_clamp.achieved_preview_ratio = fit.achieved_preview_ratio;
+void ApplyWindowGeometryForScale(GLFWwindow* window, float layout_scale) {
+  int cur_w = 0;
+  int cur_h = 0;
+  glfwGetWindowSize(window, &cur_w, &cur_h);
+  const WindowGeometryConstraints constraints = GetCurrentWindowGeometryConstraints(window, layout_scale);
+  const WindowSizePlan plan = PlanWindowSizeForScale(cur_w, cur_h, constraints);
+  // Updating limits can itself synchronously resize Win32 windows, before SetWindowSize runs.
+  BeginProgrammaticWindowResize(plan.resize);
+  glfwSetWindowSizeLimits(window, plan.min_w, plan.min_h, GLFW_DONT_CARE, GLFW_DONT_CARE);
+  if (plan.resize) {
+    glfwSetWindowSize(window, plan.target_w, plan.target_h);
+  }
+  EndProgrammaticWindowResize();
+  ClampLiveWindowPosition(window, constraints);
 }
 
 // The poller payload behind the texture currently on screen, retained by SyncFromPoller at the

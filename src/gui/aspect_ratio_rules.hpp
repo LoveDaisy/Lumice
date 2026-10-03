@@ -29,6 +29,13 @@ inline bool AspectFlipDisabled(AspectPreset preset) {
   return preset == AspectPreset::kFree || preset == AspectPreset::k1x1 || preset == AspectPreset::kMatchBg;
 }
 
+// Apply the saved orientation only to presets whose UI offers that choice. Older documents can
+// carry aspect_portrait=true while using Match Background; treating that stale bit as active would
+// transpose the image-derived ratio during a scale rebuild even though the control is disabled.
+inline float ApplyAspectOrientation(AspectPreset preset, bool portrait, float ratio) {
+  return portrait && ratio > 0.0f && !AspectFlipDisabled(preset) ? 1.0f / ratio : ratio;
+}
+
 }  // namespace lumice::gui
 
 #endif  // LUMICE_GUI_ASPECT_RATIO_RULES_HPP

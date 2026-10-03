@@ -589,3 +589,39 @@ S1–S8 是立项时的种子，S9 / S10 是 S3 / S4 两个待核实分支核实
 - **重新评估条件**（任一成立即重提评审并考虑加门禁）：(a) `src/gui/` 新增了视图侧副本或位置引用而**没有**在
   §11.4 追加裁定、code review 放过、直到用户报告缺陷才发现——证明「文档 + review 纪律」不够；(b) 出现第二次
   「同类缺陷合入 main 后才被发现」的实例（不论是否与 S1/S9/S10 同源）。
+
+---
+
+## 12. UI scale 与画幅：意图、事件和派生结果分开
+
+> 状态：as-built（2026-10-02）。这一节约束 Settings 的即时 UI 倍率、显示器 content-scale 变化、
+> 主窗口 resize 与 `AspectPreset` 的交界；窗口几何与单位契约见 `gui-visual-language.md` §4.1/§9.5。
+
+这条链有三种不同语义，不能因它们都参与一次 resize 而混为一个字段：
+
+| 状态 | 语义 / owner | 转换规则 |
+|---|---|---|
+| `g_ui_scale_multiplier` + 最近 monitor scale | 会话输入；前者由 Settings 即时改写，后者由 GLFW callback 记录 | 任一变化只置 `g_ui_scale_dirty`，不在 callback 内碰 ImGui/GL；下一帧边界由 `RebuildForUiScale` 消费 |
+| `aspect_preset` + `aspect_portrait` | 用户的取景意图（T-view） | 程序化 floor/scale/preset resize 必须保留；真正手工 resize 才转 Free。Match Background 与 1:1 的 Portrait 控件禁用，旧文档残留的 `aspect_portrait=true` 也不得反转其比例 |
+| `aspect_clamp` | 从实际窗口与 chrome 派生的结果，不是意图 | 每次 preset 协调后从 GLFW 实际 content size 重算；工作区无可行解时仍保留 preset，但提示实际 preview ratio；Free 清空它 |
+
+工作区小到 chrome 吃掉全部宽或高时，正比例预设仍被标为 clamped，achieved ratio 为 0 表示
+不存在有效预览区域；界面提示 No preview area，不把不存在的比例显示成已经满足目标。
+
+运行期的唯一编排入口是 `src/gui/ui_scale.cpp::RebuildForUiScale`：应用 visual language、重传字体纹理、
+应用共享窗口几何、重协调 active non-Free preset，最后才清 dirty。`main.cpp` 只拥有 monitor 输入与帧循环
+调度，`gui_test` 也调用这个入口；另写测试专用缩放算式或只断言 dirty 都不构成行为覆盖。
+重建仅结算入口时的输入代际；若窗口调整期间又上报 content-scale，新的 dirty 保留到下一帧，
+不能被当前重建尾部的清理覆盖。
+
+`WindowResizeEvents` 以操作的下一次 event poll 为有界事务，同步 callback 与该 poll 内全部尺寸通知
+都归属于程序化操作；每个结果立即重算 actual clamp，覆盖 target → OS 调整后的最终尺寸等多阶段
+序列。无论成功、拒绝或没有 callback，事务都在该 poll 边界退休，不累计次数或保留历史尺寸。
+无 resize 预期且没有同步 callback 的操作不打开事务；同尺寸 no-op 不获得任何回调豁免。
+GLFW 不提供 callback 的操作来源，因此这段短窗口中的手工输入也服从程序化事务优先级；
+下一 poll 恢复普通手工 resize → Free 语义。迟于结算的通知按新的外部 resize 处理。
+事务外的尺寸事件先记录，待 `FinishWindowEventPoll` 看完本轮 content-scale 通知后再判手工 resize：
+Win32 的 DPI 调整先报告尺寸、后报告 scale，不能在第一个 callback 就清掉画幅意图。
+这个状态不落盘，也不是另一份画幅状态。
+JSON export 对固定 preset 使用与窗口相同的 `ApplyAspectOrientation` 规则；Free/Match Background 没有可跨机器
+复现的固定导出比例，仍保留既有 2:1 fallback，这与屏幕上的 Match Background 跟图像比例不是同一个承诺。

@@ -22,6 +22,7 @@
 
 #include "gui/annotation_anchors.hpp"
 #include "gui/app.hpp"
+#include "gui/aspect_ratio_rules.hpp"
 #include "gui/axis_presets.hpp"
 #include "gui/export_fbo_renderer.hpp"
 #include "gui/field_editor_registry.hpp"
@@ -2044,9 +2045,7 @@ ScenePtr BuildScene(const GuiState& state, SceneIntent intent, FilterOverflowInf
       // "however wide the window happened to be" would render a different picture on the next
       // machine — so those two keep the 2:1 fallback above rather than inventing a number.
       float ratio = GetAspectRatio(state.aspect_preset);
-      if (state.aspect_portrait && ratio > 0.0f) {
-        ratio = 1.0f / ratio;  // same inversion ApplyAspectRatio applies to the window (app.cpp)
-      }
+      ratio = ApplyAspectOrientation(state.aspect_preset, state.aspect_portrait, ratio);
       if (ratio > 0.0f) {
         const int long_edge = static_cast<int>(std::lround(res * std::max(ratio, 1.0f / ratio)));
         dst.resolution_w = ratio >= 1.0f ? long_edge : res;

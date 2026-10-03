@@ -2076,8 +2076,12 @@ void RenderRightPanel(GLFWwindow* window, float window_width, float window_heigh
       // Dynamic ratio detail follows as a plain Text below.
       ImGui::PushStyleColor(ImGuiCol_Text, WarningTextColor());
       ImGui::Selectable("Screen too small for this aspect", false, ImGuiSelectableFlags_Disabled);
-      ImGui::Text("preview ~%.2f:1, export %.2f:1", g_state.aspect_clamp.achieved_preview_ratio,
-                  g_state.aspect_clamp.requested_preview_ratio);
+      if (g_state.aspect_clamp.achieved_preview_ratio > 0.0f) {
+        ImGui::Text("preview ~%.2f:1, export %.2f:1", g_state.aspect_clamp.achieved_preview_ratio,
+                    g_state.aspect_clamp.requested_preview_ratio);
+      } else {
+        ImGui::Text("No preview area, export %.2f:1", g_state.aspect_clamp.requested_preview_ratio);
+      }
       ImGui::PopStyleColor();
     }
 

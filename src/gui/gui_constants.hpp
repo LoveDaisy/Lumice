@@ -22,17 +22,15 @@ namespace lumice::gui {
 // when adding new control groups / expanding existing groups, re-evaluate this
 // constant to avoid spawning a scrollbar on fresh install. On constrained
 // displays (e.g. 1080p + large Dock, Windows 125% scaling), main.cpp clamps
-// the actual creation size via glfwGetMonitorWorkarea — see
-// ClampInitWindowSize() in main.cpp / ClampWindowSizeToWorkarea() in
-// window_sizing.hpp.
+// the actual creation size through PlanWindowSizeForScale(), using the monitor workarea and an
+// estimated frame until GLFW can report the live decorations.
 constexpr int kInitWindowWidth = 1600;
 constexpr int kInitWindowHeight = 980;
 constexpr int kMinWindowWidth = 1024;
 constexpr int kMinWindowHeight = 640;
-// Safe margin for OS window decorations (title bar + borders). Deducted from
-// the monitor work area (which already excludes menubar/Dock/taskbar) to
-// compute the usable creation size. 50 px covers the typical 28-32 px
-// decoration on macOS/Windows/Linux with ~1.5x buffer.
+// Conservative startup estimate for OS window decorations (title bar + borders), used only before
+// a GLFW window exists. Live geometry uses glfwGetWindowFrameSize instead. The monitor workarea
+// already excludes menubar/Dock/taskbar; 50 px covers the typical 28-32 px decoration with buffer.
 constexpr int kWindowDecorationMargin = 50;
 // Chrome geometry, 1x: read through UiPx() at every use (app_panels.cpp, app.cpp).
 constexpr float kLeftPanelWidth = 400.0f;

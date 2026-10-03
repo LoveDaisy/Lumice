@@ -31,8 +31,11 @@
 #include <string>
 #include <vector>
 
+#include "gui/app.hpp"
 #include "gui/field_editor_registry.hpp"
+#include "gui/gui_constants.hpp"
 #include "gui/gui_state.hpp"
+#include "gui/theme.hpp"
 #include "test_gui_shared.hpp"
 
 namespace {
@@ -248,6 +251,123 @@ constexpr int kAspectCaseCount = sizeof(kAspectCases) / sizeof(kAspectCases[0]);
 }  // namespace
 
 void RegisterBackgroundOverlayTests(ImGuiTestEngine* engine) {
+  {
+    ImGuiTest* t =
+        IM_REGISTER_TEST(engine, "background_overlay", "aspect_resize_and_dpi_events_preserve_manual_control");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      ctx->Yield(2);
+      const auto request = [ctx](bool apply_aspect, bool content_scale_change, int width, int height) {
+        g_window_size_test.apply_aspect = apply_aspect;
+        g_window_size_test.content_scale_change = content_scale_change;
+        g_window_size_test.width = width;
+        g_window_size_test.height = height;
+        g_window_size_test.done.store(false);
+        g_window_size_test.requested.store(true);
+        while (!g_window_size_test.done.load()) {
+          ctx->Yield();
+        }
+        ctx->Yield(2);
+      };
+      gui::g_state.aspect_preset = gui::AspectPreset::k16x9;
+      request(true, false, 0, 0);
+      IM_CHECK_EQ(gui::g_state.aspect_preset, gui::AspectPreset::k16x9);
+      // Reapplying an already-achieved ratio emits zero callbacks on Win32/Cocoa. It must not
+      // leave a credit that consumes the next actual, differently sized manual event.
+      request(true, false, 0, 0);
+      IM_CHECK_EQ(gui::g_state.aspect_preset, gui::AspectPreset::k16x9);
+      const int width = g_window_size_test.width;
+      const int height = g_window_size_test.height;
+      request(false, false, width - 8, height);
+      IM_CHECK_EQ(gui::g_state.aspect_preset, gui::AspectPreset::kFree);
+
+      gui::g_state.aspect_preset = gui::AspectPreset::k16x9;
+      request(false, true, width - 16, height);
+      IM_CHECK_EQ(gui::g_state.aspect_preset, gui::AspectPreset::k16x9);
+      IM_CHECK(!gui::g_ui_scale_dirty);
+      request(false, false, width - 24, height);
+      IM_CHECK_EQ(gui::g_state.aspect_preset, gui::AspectPreset::kFree);
+
+      gui::g_state.aspect_preset = gui::AspectPreset::k16x9;
+      g_window_size_test.adjusted_async_resize = true;
+      request(false, false, width - 128, height);
+      IM_CHECK_EQ(gui::g_state.aspect_preset, gui::AspectPreset::k16x9);
+      const auto actual_ratio = [] {
+        return (g_window_size_test.width - gui::UiPx(gui::kLeftPanelWidth + gui::kRightPanelWidth)) /
+               (g_window_size_test.height - gui::UiPx(gui::kTopBarHeight + gui::kStatusBarHeight));
+      };
+      IM_CHECK(std::abs(gui::g_state.aspect_clamp.achieved_preview_ratio - actual_ratio()) < 1e-5f);
+      IM_CHECK(gui::g_state.aspect_clamp.was_clamped);
+      request(false, false, width - 136, height);
+      IM_CHECK_EQ(gui::g_state.aspect_preset, gui::AspectPreset::kFree);
+      gui::g_state.aspect_preset = gui::AspectPreset::k16x9;
+      g_window_size_test.adjusted_async_resize = true;
+      g_window_size_test.report_target_first = true;
+      request(false, false, width - 144, height);
+      IM_CHECK_EQ(gui::g_state.aspect_preset, gui::AspectPreset::k16x9);
+      IM_CHECK(std::abs(gui::g_state.aspect_clamp.achieved_preview_ratio - actual_ratio()) < 1e-5f);
+      IM_CHECK(gui::g_state.aspect_clamp.was_clamped);
+      request(false, false, width - 152, height);
+      IM_CHECK_EQ(gui::g_state.aspect_preset, gui::AspectPreset::kFree);
+      request(false, false, gui::kInitWindowWidth, gui::kInitWindowHeight);
+    };
+  }
+
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "background_overlay", "match_background_tracks_runtime_ui_scale");
+    t->GuiFunc = BackgroundGuiFunc;
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      for (const BgImage& img : { kLandscape, kPortrait }) {
+        LoadRenderAndBackground(ctx, img);
+        if (ctx->IsError()) {
+          return;
+        }
+        gui::g_state.aspect_preset = gui::AspectPreset::kMatchBg;
+        gui::g_state.aspect_portrait = true;  // A stale saved orientation must not transpose the photo.
+        for (float scale : { 1.0f, 1.25f, 1.5f, 2.0f, 1.0f }) {
+          gui::SetUiScaleMultiplierImmediate(scale);
+          ctx->Yield(3);
+          g_window_size_test.apply_aspect = true;
+          g_window_size_test.content_scale_change = false;
+          g_window_size_test.done.store(false);
+          g_window_size_test.requested.store(true);
+          while (!g_window_size_test.done.load()) {
+            ctx->Yield();
+          }
+          ctx->Yield(2);
+          const float ratio = static_cast<float>(img.width) / img.height;
+          const float chrome_w = gui::UiPx(gui::kLeftPanelWidth + gui::kRightPanelWidth);
+          const float chrome_h = gui::UiPx(gui::kTopBarHeight + gui::kStatusBarHeight);
+          const float pw = g_window_size_test.width - chrome_w;
+          const float ph = g_window_size_test.height - chrome_h;
+          const bool feasible =
+              ratio >= (g_window_size_test.min_width - chrome_w) / (g_window_size_test.max_height - chrome_h) &&
+              ratio <= (g_window_size_test.max_width - chrome_w) / (g_window_size_test.min_height - chrome_h);
+          const bool valid =
+              gui::g_state.aspect_preset == gui::AspectPreset::kMatchBg && !gui::g_ui_scale_dirty && pw > 0 && ph > 0 &&
+              std::abs(gui::g_state.aspect_clamp.achieved_preview_ratio - pw / ph) < 1e-5f &&
+              (!feasible || (!gui::g_state.aspect_clamp.was_clamped && std::abs(pw - ph * ratio) <= 1.5f));
+          if (!valid) {
+            IM_ERRORF("background=%s scale=%.2f actual=%dx%d feasible=%d clamped=%d", img.file, scale,
+                      g_window_size_test.width, g_window_size_test.height, feasible,
+                      gui::g_state.aspect_clamp.was_clamped);
+            return;
+          }
+        }
+      }
+      gui::g_state.aspect_preset = gui::AspectPreset::kFree;
+      g_window_size_test.apply_aspect = false;
+      g_window_size_test.width = gui::kInitWindowWidth;
+      g_window_size_test.height = gui::kInitWindowHeight;
+      g_window_size_test.done.store(false);
+      g_window_size_test.requested.store(true);
+      while (!g_window_size_test.done.load()) {
+        ctx->Yield();
+      }
+      ctx->Yield(2);
+    };
+  }
   // The aspect a loaded image reports is the file's own, not the viewport's and not the previous
   // image's. Two independent registrations off one table (see kAspectCases), so a red run names
   // which orientation broke rather than stopping at the first.
