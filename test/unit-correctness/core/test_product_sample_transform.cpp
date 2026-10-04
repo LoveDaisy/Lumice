@@ -99,6 +99,30 @@ TEST(ProductSampleTransform, SphereAndFiniteCapKeepTwoDrawsEvenAtZeroRadius) {
   }
   EXPECT_EQ(production.GetUniform(), replay.GetUniform());
 }
+TEST(ProductSampleTransform, FixedAndZeroSpreadKeepTheirDifferentDrawClocks) {
+  auto& production = ns::RandomNumberGenerator::GetInstance();
+  production.SetSeed(7821);
+  ns::RandomNumberGenerator replay(7821);
+  ns::AxisDistribution axis;
+  axis.latitude_dist = { ns::DistributionType::kNoRandom, 90.f, 0.f };
+  float fixed[3];
+  ns::RandomSampler::SampleSphericalPointsSph(axis, fixed, 1);
+  EXPECT_EQ(fixed[1], 90.f * ns::math::kDegreeToRad);
+  EXPECT_EQ(production.GetUniform(), replay.GetUniform());
+  // A zero-spread Gaussian is still LUT-routed and consumes two uniforms;
+  // replacing it by the numerically identical fixed pose changes later rays.
+  axis.latitude_dist = { ns::DistributionType::kGaussian, 90.f, 0.f };
+  EXPECT_EQ(ns::lat_path::SelectLatPath(axis).kind, ns::lat_path::LatPathKind::kLutInverseCdf);
+  const float xi = replay.GetUniform();
+  const float flip = replay.GetUniform();
+  const auto* lut = ns::GetSharedLatLut(axis.latitude_dist);
+  const auto expected = ns::TransformLatitudeLut(*lut, { xi, flip });
+  float actual[3];
+  ns::RandomSampler::SampleSphericalPointsSph(axis, actual, 1, lut);
+  EXPECT_EQ(actual[1], expected.radians);
+  EXPECT_EQ(production.GetUniform(), replay.GetUniform());
+}
+
 TEST(ProductShapeSample, LeaderRecordReplaysWithoutRngOrFollowerRescaling) {
   ns::PrismCrystalParam p;
   p.h_ = { ns::DistributionType::kUniform, -2.f, .5f };
