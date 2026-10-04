@@ -1,4 +1,5 @@
 #include <cmath>
+#include <limits>
 #include <set>
 
 #include "core/color_util.hpp"
@@ -91,6 +92,30 @@ TEST(ProductInputSpectrum, QuadratureUsesProbabilityMassNotNanometers) {
   invalid.evaluation_budget = 3;
   EXPECT_FALSE(rp::AssembleSpectrumQuadrature(light, invalid, &out).Ok());
   EXPECT_TRUE(out.rows.empty());
+}
+
+TEST(ProductInputSpectrum, FullBandQuadratureRejectsIncorrectTotalMass) {
+  ns::LightSourceConfig light{};
+  light.spectrum_ = ns::IlluminantType::kE;
+  rp::SpectrumQuadrature q{
+    { { 430.f, .25 }, { 530.f, .25 }, { 630.f, .25 }, { 730.f, .25 } }, "four midpoints", 4, std::nullopt
+  };
+  rp::AssembledSpectrum out;
+  const double invalid_masses[]{ 0, .125, 1, std::numeric_limits<double>::max() };
+  for (double mass : invalid_masses) {
+    SCOPED_TRACE(mass);
+    for (auto& node : q.nodes)
+      node.probability_mass = mass;
+    EXPECT_FALSE(rp::AssembleSpectrumQuadrature(light, q, &out).Ok());
+    EXPECT_TRUE(out.rows.empty());
+    EXPECT_FALSE(out.quadrature.has_value());
+  }
+  // Unequal masses are legal; only the complete measure must have unit mass.
+  q.nodes = { { 450.f, .1 }, { 550.f, .2 }, { 650.f, .7 } };
+  ASSERT_TRUE(rp::AssembleSpectrumQuadrature(light, q, &out).Ok());
+  EXPECT_EQ(out.rows[0].measure_mass, .1);
+  EXPECT_EQ(out.rows[1].measure_mass, .2);
+  EXPECT_EQ(out.rows[2].measure_mass, .7);
 }
 
 TEST(ProductInputSource, ActualCapDrawMatchesProductionAndKeepsDomain) {

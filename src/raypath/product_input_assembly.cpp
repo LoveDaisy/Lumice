@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <type_traits>
 
 #include "analytic/entry_measure.hpp"
@@ -111,6 +112,8 @@ Error AssembleSpectrumQuadrature(const LightSourceConfig& light, const SpectrumQ
     return { ErrorCode::kInvalidArgument, "continuous quadrature requires explicit nodes, rule and budget" };
   }
   AssembledSpectrum result;
+  double total_mass = 0;
+  double compensation = 0;
   for (const auto& node : quadrature.nodes) {
     if (!InContinuousBand(node.wavelength_nm))
       return { ErrorCode::kInvalidArgument, "quadrature node outside [380,780)" };
@@ -119,8 +122,17 @@ Error AssembleSpectrumQuadrature(const LightSourceConfig& light, const SpectrumQ
                                            node.probability_mass, SpectrumOrigin::kQuadrature, quadrature.rule, &row);
     if (!error.Ok())
       return error;
+    const double adjusted = node.probability_mass - compensation;
+    const double next_mass = total_mass + adjusted;
+    compensation = (next_mass - total_mass) - adjusted;
+    total_mass = next_mass;
     result.rows.push_back(std::move(row));
   }
+  // This entry point integrates the complete probability measure, not a
+  // partial band. Allow double rounding, never silently renormalize weights.
+  constexpr double kMassTolerance = 64 * std::numeric_limits<double>::epsilon();
+  if (!std::isfinite(total_mass) || std::abs(total_mass - 1) > kMassTolerance)
+    return { ErrorCode::kInvalidArgument, "full-band quadrature probability masses must sum to one" };
   result.quadrature = quadrature;
   *out = std::move(result);
   return {};
@@ -325,6 +337,11 @@ Error AssembleProductInput(const ProductInputSnapshot& snapshot, const std::vect
   for (size_t i = 0; i < samples.size(); ++i) {
     if (snapshot.layers[i].scene_identity != snapshot.scene_identity || snapshot.layers[i].layer_index != i) {
       return { ErrorCode::kInvalidArgument, "layer does not belong to this scene/chain snapshot" };
+    }
+    const auto& identity = samples[i].identity;
+    if (identity.scene_identity != snapshot.scene_identity || identity.layer_index != snapshot.layers[i].layer_index ||
+        identity.crystal_id != snapshot.layers[i].crystal.id_) {
+      return { ErrorCode::kInvalidArgument, "sample does not belong to this scene/layer/crystal snapshot" };
     }
     AssembledProductLayer layer;
     error = RealizeLayer(snapshot.layers[i], samples[i], &layer);

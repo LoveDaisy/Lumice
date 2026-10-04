@@ -589,6 +589,8 @@ Hessian细化相对差小于 `2.76e-4`，独立LI自身小于 `2.32e-5`；两臂
   薄适配器，`RealizeShape` 是无 RNG 的核心。follower 复用 leader 完整值，
   height 取绝对值而 face distance 保留符号。Prism/Pyramid 的旧 draw 顺序不变。
   实例仍经产品工厂；零柱高、缺面与空实体不由装配层重新发明判据。
+  每层样本另带结构化的 scene identity、layer index、crystal id；装配逐一与
+  快照配对，交换层或跨场景的记录不能靠自由文本 provenance 蒙混进入。
 - **成员属于快照 ensemble，贡献属于实际 draw。** `physical_member_scope`
   只接自有场景身份、层/晶体键、完整分布配置、代表序列、显式 PBD 位与
   `kPhysical`，调用既有 gating/展开/精确去重。actual shape 不改变该物理类，
@@ -597,7 +599,9 @@ Hessian细化相对差小于 `2.76e-4`，独立LI自身小于 `2.32e-5`；两臂
 - **谱行保留权重来源。** 离散全谱逐行 `weight × CMF`；已抽得的产品样本为
   `SPD(wl) × CMF`、质量 1，不伪装成完整谱积分；连续求积要求显式节点、相对
   `Uniform[380,780)` 的概率质量、规则名、预算和可选误差估计，系数为
-  `q × SPD × CMF`。midpoint 的质量是 `1/N` 而非 `400/N`。实际 float 产品样本
+  `q × SPD × CMF`。完整谱节点质量须求和为 1（补偿求和，容差为 64 个 double
+  epsilon），错误请求被拒绝而非自动归一；这个入口不隐式表示部分谱域。
+  midpoint 的质量是 `1/N` 而非 `400/N`。实际 float 产品样本
   允许 `380 + 400*u` 舍入到 780 的端点，求积节点域仍按声明的半开区间。
   CMF 的整数 nm 舍入、SPD 和折射率均调用既有产品 owner，不复制表或插值规则。
 - **消费点按需组合。** 输出按逐层 actual 输入、逐层成员集合、源样本、谱行

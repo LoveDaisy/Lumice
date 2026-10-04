@@ -45,6 +45,7 @@ std::vector<rp::ProductLayerSample> Samples(const rp::ProductInputSnapshot& snap
   for (const auto& layer : snapshot.layers) {
     const auto plan = std::visit([](const auto& p) { return ns::BuildShapeDrawPlan(p); }, layer.crystal.param_);
     rp::ProductLayerSample sample;
+    sample.identity = { snapshot.scene_identity, layer.layer_index, layer.crystal.id_ };
     sample.axis = rp::DistributedAxisDraw{ ns::DistributionLatentDraw{}, {}, { .5f } };
     sample.provenance = "explicit shape leaders and pose draw";
     for (int i = 0; i < ns::kShapeScalarCount; ++i) {
@@ -158,6 +159,26 @@ TEST(ProductInputChain, SnapshotSurvivesSceneMutationAndSourceDestruction) {
   rp::ProductInput output;
   EXPECT_FALSE(
       rp::AssembleProductInput(bad, Samples(bad), { { .4f, .5f }, "cap" }, rp::DiscreteSpectrumSum{}, &output).Ok());
+  EXPECT_TRUE(output.layers.empty());
+}
+
+TEST(ProductInputChain, SamplesMustBelongToTheirSnapshotLayerAndCrystal) {
+  const auto snapshot = Capture(Scene(2));
+  auto samples = Samples(snapshot);
+  rp::ProductInput output;
+  std::swap(samples[0], samples[1]);
+  EXPECT_FALSE(
+      rp::AssembleProductInput(snapshot, samples, { { .4f, .5f }, "cap" }, rp::DiscreteSpectrumSum{}, &output).Ok());
+  EXPECT_TRUE(output.layers.empty());
+  samples = Samples(snapshot);
+  samples[0].identity.scene_identity = "another revision";
+  EXPECT_FALSE(
+      rp::AssembleProductInput(snapshot, samples, { { .4f, .5f }, "cap" }, rp::DiscreteSpectrumSum{}, &output).Ok());
+  EXPECT_TRUE(output.layers.empty());
+  samples = Samples(snapshot);
+  samples[0].identity.crystal_id = samples[1].identity.crystal_id;
+  EXPECT_FALSE(
+      rp::AssembleProductInput(snapshot, samples, { { .4f, .5f }, "cap" }, rp::DiscreteSpectrumSum{}, &output).Ok());
   EXPECT_TRUE(output.layers.empty());
 }
 

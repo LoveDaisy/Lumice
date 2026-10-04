@@ -36,6 +36,8 @@ struct SpectrumQuadratureNode {
   float wavelength_nm;
   double probability_mass;  // relative to Uniform[380,780), NOT nm
 };
+// Full-band probability measure: masses must sum to one within 64 double epsilons.
+// Partial-band integrals require a different, explicitly declared domain.
 struct SpectrumQuadrature {
   std::vector<SpectrumQuadratureNode> nodes;
   std::string rule;
@@ -97,7 +99,13 @@ struct DistributedAxisDraw {
   DistributionLatentDraw roll;
 };
 using ProductAxisDraw = std::variant<FullSphereAxisDraw, DistributedAxisDraw>;
+struct ProductSampleIdentity {
+  std::string scene_identity;
+  size_t layer_index = 0;
+  IdType crystal_id = 0;
+};
 struct ProductLayerSample {
+  ProductSampleIdentity identity;
   ProductAxisDraw axis;
   ShapeLeaderValues shape;
   std::string provenance;
