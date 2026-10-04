@@ -123,6 +123,131 @@ TEST(PathFeatureField, EmptyIsUnobservedAndInvalidInputClearsOutput) {
       EvaluateSphericalField({ { 1, { 0, 0, 1 }, { 1, 1, 1 } }, { 0, { 0, 0, 1 }, { 1, 1, 1 } } }, Query(), &out));
 }
 
+// Independent trapezoidal angular integration of explicit rotating directions.
+// It uses neither Bessel functions nor the product point-kernel implementation.
+SphericalJet AngularOracle(double c, const SphericalFieldQuery& query, int count) {
+  SphericalJet out;
+  const double k = 1 / (query.bandwidth_rad * query.bandwidth_rad);
+  const double normalization = k / (2 * kPi * -std::expm1(-2 * k)) / count;
+  for (int i = 0; i < count; ++i) {
+    const double phi = 2 * kPi * (i + .5) / count;
+    const double radius = std::sqrt((1 - c) * (1 + c));
+    const std::array<double, 3> d{ radius * std::cos(phi), radius * std::sin(phi), c };
+    double dot = 0;
+    double a = 0;
+    double b = 0;
+    for (int j = 0; j < 3; ++j) {
+      dot += d[j] * query.direction[j];
+      a += d[j] * query.basis[0][j];
+      b += d[j] * query.basis[1][j];
+    }
+    const double w = normalization * std::exp(k * (dot - 1));
+    out.value += w;
+    out.gradient[0] += k * w * a;
+    out.gradient[1] += k * w * b;
+    out.hessian[0] += w * (k * k * a * a - k * dot);
+    out.hessian[1] += w * k * k * a * b;
+    out.hessian[2] += w * (k * k * b * b - k * dot);
+  }
+  return out;
+}
+
+TEST(PathFeatureField, UniformOrbitMatchesIndependentAngularJets) {
+  // Includes the Bessel branch junction, narrow kernels, orbit/query poles,
+  // and broad kernels. Error is measured on the actual derivative scale.
+  for (double h : { .005, .07, std::sqrt(.64 / 50.0), .2, 2.0, 20.0 }) {
+    for (double c : { -.6, 0.0, .6, 1.0 }) {
+      for (double theta : { 0.0, .8, 1.2, kPi }) {
+        const SphericalFieldQuery query{ { std::sin(theta), 0, std::cos(theta) },
+                                         { { { std::cos(theta), 0, -std::sin(theta) }, { 0, 1, 0 } } },
+                                         h };
+        const WeightedSkySample row{
+          0, { std::sqrt((1 - c) * (1 + c)), 0, c }, { 1, 1, 1 }, std::array<double, 3>{ 0, 0, 1 }, 42
+        };
+        SphericalFieldValue result;
+        if (!EvaluateSphericalField({ row }, query, &result)) {
+          ADD_FAILURE() << "valid uniform orbit rejected";
+          return;
+        }
+        const auto expected = AngularOracle(c, query, 32768);
+        const double scale = std::max(expected.value, 1e-250);
+        EXPECT_NEAR(result.xyz[1].value, expected.value, scale * 2e-10);
+        for (int j = 0; j < 2; ++j) {
+          EXPECT_NEAR(result.xyz[1].gradient[j], expected.gradient[j], scale / h * 2e-8);
+        }
+        for (int j = 0; j < 3; ++j) {
+          EXPECT_NEAR(result.xyz[1].hessian[j], expected.hessian[j], scale / (h * h) * 2e-8);
+        }
+      }
+    }
+  }
+}
+
+TEST(PathFeatureField, OrbitIsNormalizedAndPreservesRotationalInvariance) {
+  const WeightedSkySample row{ 9, { .8, 0, .6 }, { 2, 3, 5 }, std::array<double, 3>{ 0, 0, 1 }, 73 };
+  double integral = 0;
+  constexpr int kCount = 4096;
+  for (int i = 0; i < kCount; ++i) {
+    const double z = -1 + 2.0 * (i + .5) / kCount;
+    const double r = std::sqrt((1 - z) * (1 + z));
+    const SphericalFieldQuery query{ { r, 0, z }, { { { z, 0, -r }, { 0, 1, 0 } } }, .12 };
+    SphericalFieldValue out;
+    if (!EvaluateSphericalField({ row }, query, &out)) {
+      ADD_FAILURE();
+      return;
+    }
+    integral += out.xyz[1].value * 4 * kPi / kCount;
+    auto rotated = query;
+    rotated.direction = { 0, r, z };
+    rotated.basis = { { { 0, z, -r }, { -1, 0, 0 } } };
+    SphericalFieldValue other;
+    if (!EvaluateSphericalField({ row }, rotated, &other)) {
+      ADD_FAILURE();
+      return;
+    }
+    EXPECT_NEAR(out.xyz[1].value, other.xyz[1].value, 1e-13);
+    EXPECT_NEAR(out.xyz[1].gradient[0], other.xyz[1].gradient[0], 1e-12);
+    EXPECT_NEAR(out.xyz[1].hessian[0], other.xyz[1].hessian[0], 1e-11);
+  }
+  EXPECT_NEAR(integral, 3, 1e-7);
+}
+
+TEST(PathFeatureField, OrbitSubdivisionDoesNotManufactureOuterEvidence) {
+  const WeightedSkySample row{ 4, { .8, 0, .6 }, { 2, 3, 5 }, std::array<double, 3>{ 0, 0, 1 }, 73 };
+  const WeightedSkySample other{ 5, { 0, 0, 1 }, { 1, 2, 3 } };
+  SphericalFieldValue original;
+  ASSERT_TRUE(EvaluateSphericalField({ row, other }, Query(), &original));
+  std::vector<WeightedSkySample> split(32, row);
+  for (auto& part : split) {
+    for (auto& weight : part.xyz_weight) {
+      weight /= 32;
+    }
+  }
+  split.push_back(other);
+  SphericalFieldValue out;
+  ASSERT_TRUE(EvaluateSphericalField(split, Query(), &out));
+  EXPECT_EQ(out.outer_sample_count, 2u);
+  EXPECT_EQ(original.outer_sample_count, out.outer_sample_count);
+  EXPECT_NEAR(original.effective_samples_y, out.effective_samples_y, 1e-13);
+  EXPECT_NEAR(original.xyz[1].value, out.xyz[1].value, 1e-13);
+  EXPECT_NEAR(original.xyz[1].hessian[0], out.xyz[1].hessian[0], 1e-12);
+  EXPECT_EQ(split[0].source_token, 73u);
+  // Integrating the spin is NOT a valid replacement for an anisotropic measure.
+  auto point = row;
+  point.uniform_orbit_axis.reset();
+  SphericalFieldValue orbit;
+  SphericalFieldValue anisotropic;
+  auto query = Query();
+  query.direction = { 0, .8, .6 };
+  query.basis = { { { 1, 0, 0 }, { 0, .6, -.8 } } };
+  ASSERT_TRUE(EvaluateSphericalField({ row }, query, &orbit));
+  ASSERT_TRUE(EvaluateSphericalField({ point }, query, &anisotropic));
+  EXPECT_GT(std::abs(orbit.xyz[1].value - anisotropic.xyz[1].value), .1);
+  point.uniform_orbit_axis = std::array<double, 3>{ 0, 0, 2 };
+  EXPECT_FALSE(EvaluateSphericalField({ point }, query, &out));
+  EXPECT_EQ(out.outer_sample_count, 0u);
+}
+
 TEST(PathFeatureField, IndependentPhysicalCloudFixture) {
   std::ifstream in(std::string(LUMICE_DIAGNOSTIC_FIXTURE_DIR) + "/weighted-sky.json");
   ASSERT_TRUE(in.is_open());
