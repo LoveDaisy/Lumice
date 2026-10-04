@@ -1232,6 +1232,14 @@ endif()
 # find_package(LumiceAnalytic <version>) and links Lumice::lumice_analytic (doc/analytic-api.md
 # section 8.4). Tests in this tree still load it from the build tree.
 if(BUILD_SHARED_LIBS AND NOT LUMICE_CUDA_ENABLED)
+  add_library(diagnostic_prototype_analytic SHARED "${PROJ_TEST_DIR}/support/diagnostic_prototype.cpp")
+  target_link_libraries(diagnostic_prototype_analytic PRIVATE lumice_analytic_kernel lumice_foundation_obj)
+  target_include_directories(diagnostic_prototype_analytic PRIVATE "${PROJ_TEST_DIR}/support")
+  install(TARGETS diagnostic_prototype_analytic
+          LIBRARY DESTINATION lib COMPONENT diagnostic_prototype
+          RUNTIME DESTINATION bin COMPONENT diagnostic_prototype)
+  install(FILES "${PROJ_TEST_DIR}/support/diagnostic_prototype.h" "${PROJ_SRC_DIR}/include/lumice_analytic_core.h"
+          DESTINATION include COMPONENT diagnostic_prototype)
   add_library(lumice_analytic SHARED
     "${PROJ_SRC_DIR}/analytic/analytic_lib.cpp")
   target_link_libraries(lumice_analytic PRIVATE lumice_analytic_kernel lumice_foundation_obj)

@@ -28,6 +28,7 @@ struct DiagnosticFeatureRecord {
   analytic::FieldWalkStop walk_stop = analytic::FieldWalkStop::kInvalidInput;
   // Local source token into result.measure; not a unique-cause assertion.
   std::optional<uint64_t> source_token;
+  std::optional<double> contributor_fraction_of_estimated_y;
   int internal_slot = -1;
   std::optional<analytic::InterfaceStationaryPoint> interface_event;
   std::vector<analytic::InterfaceCurve> interface_curves;

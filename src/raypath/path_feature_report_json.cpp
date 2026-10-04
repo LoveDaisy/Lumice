@@ -296,7 +296,8 @@ Json InterfacePointJson(const analytic::InterfaceStationaryPoint& point) {
   return { { "status", SolveName(point.status) },
            { "source", SourceJson(point.source) },
            { "value", OpticalJson(point.value) },
-           { "travelled_rad", Num(point.travelled_rad) } };
+           { "travelled_rad", Num(point.travelled_rad) },
+           { "accepted_source_poses", point.accepted_poses } };
 }
 Json BracketJson(const analytic::InterfaceEventBracket& bracket) {
   return { { "predicate", bracket.kind == analytic::InterfaceWalkStop::kGeometricContact ?
@@ -446,9 +447,26 @@ std::string ProductPathReportToJson(const ProductPathReport& result, const char*
         item["band"]["boundaries"].push_back(std::move(points));
       }
     }
+    if (feature.contributor_fraction_of_estimated_y) {
+      item["contributor_fraction_of_estimated_Y"] = Num(*feature.contributor_fraction_of_estimated_y);
+      item["source_relation"] = "one positive contributor to the estimated aggregate field, not a unique cause";
+    }
+    if (!feature.field_points.empty()) {
+      item["source_scope"] =
+          "aggregate physical-member/spectrum/product measure; source_token, when present, is a witness only";
+    }
     if (feature.source_token) {
       item["source_token"] = *feature.source_token;
       const auto& source = discovery.measure.sources[*feature.source_token];
+      ProductInput input;
+      const auto replay = ReplayDiagnosticSource(discovery.measure, *feature.source_token, &input);
+      if (replay.Ok()) {
+        const auto& layer = input.layers[0];
+        const auto& spectral = input.spectrum.rows[source.spectral_row];
+        item["positive_source_witness"] =
+            SourceJson({ layer.shape, layer.analytic_pose, input.source.incident_direction, spectral.refractive_index,
+                         *feature.source_token });
+      }
       document["sources"][std::to_string(*feature.source_token)] = { { "outer_sample", source.sample_index },
                                                                      { "member", source.member_index },
                                                                      { "spectral_row", source.spectral_row } };

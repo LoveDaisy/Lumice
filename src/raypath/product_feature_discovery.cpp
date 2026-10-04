@@ -549,6 +549,30 @@ Error DiscoverProductFeatures(const ProductDiagnosticSampler& sampler, const Pro
         record.reason = "seed did not solve the local field equation; not evidence of physical absence";
         record.field_points.push_back(fine);
       }
+      if (record.evidence == DiagnosticEvidence::kActual && !record.field_points.empty()) {
+        double strongest_y = 0;
+        const auto& point = record.field_points.front();
+        for (size_t token = 0; token < std::min<size_t>(64, result.measure.components.size()); ++token) {
+          a::SphericalFieldValue contribution;
+          if (!a::EvaluateSphericalField({ result.measure.components[token] }, point.query, &contribution, &budget)) {
+            break;
+          }
+          if (contribution.xyz[1].value > strongest_y) {
+            strongest_y = contribution.xyz[1].value;
+            record.source_token = result.measure.components[token].source_token;
+          }
+        }
+        if (record.source_token && point.field.xyz[1].value > 0) {
+          record.contributor_fraction_of_estimated_y = strongest_y / point.field.xyz[1].value;
+          for (size_t index = 0; index < result.features.size(); ++index) {
+            const auto& candidate = result.features[index];
+            if (candidate.interface_event && candidate.source_token == record.source_token) {
+              record.source_connected_feature = index;
+              break;
+            }
+          }
+        }
+      }
       if (colour && record.evidence == DiagnosticEvidence::kActual && record.field_points.size() > 1) {
         const auto& jet = record.field_points[0].field.xy[channel];
         const double half_range = .25 * options.bandwidth_rad * std::hypot(jet.gradient[0], jet.gradient[1]);
