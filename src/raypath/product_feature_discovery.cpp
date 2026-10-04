@@ -388,6 +388,9 @@ Error DiscoverProductFeatures(const ProductDiagnosticSampler& sampler, const Pro
   result.budget_exhausted = result.measure.budget_exhausted;
   if (fixed && result.measure.completed_samples == 1) {
     for (const auto& row : result.measure.components) {
+      if (!(row.xyz_weight[1] > 0)) {
+        continue;
+      }
       DiagnosticFeatureRecord record;
       record.kind = "positive_fixed_source_atom";
       record.evidence = DiagnosticEvidence::kActual;

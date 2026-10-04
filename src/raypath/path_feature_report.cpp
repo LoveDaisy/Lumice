@@ -13,6 +13,7 @@
 #include "analytic/entry_measure.hpp"
 #include "analytic/path_chain.hpp"
 #include "analytic/path_evaluation.hpp"
+#include "analytic/so3.hpp"
 #include "core/crystal.hpp"
 #include "core/optics.hpp"
 #include "raypath/physical_member_scope.hpp"
@@ -771,6 +772,128 @@ Error AnalyzePathFeatureReport(const ConfigManager& config, const PathFeatureRep
     "discovery are not covered",
     "coarse/fine differences and boundary residuals are convergence evidence, not exact-error certificates",
   };
+  *out = std::move(result);
+  return {};
+}
+
+Error BuildProductPathReport(const SceneConfig& scene, const std::string& identity,
+                             const std::vector<ProductLayerSelection>& selection,
+                             const ProductSpectrumRequest& spectrum, uint32_t seed,
+                             const ProductDiscoveryOptions& options, ProductPathReport* out) {
+  if (!out) {
+    return { ErrorCode::kInvalidArgument, "null product report output" };
+  }
+  *out = {};
+  const auto begin = std::chrono::steady_clock::now();
+  if (selection.size() != 1) {
+    return { ErrorCode::kMultiLayerUnsupported,
+             "multi-crystal diagnostic chains are unsupported; select one complete single-crystal path" };
+  }
+  ProductPathReport result;
+  auto error = CaptureProductInput(scene, identity, selection, &result.snapshot);
+  if (!error.Ok()) {
+    return error;
+  }
+  result.options = options;
+  result.seed = seed;
+  result.spectrum_scope =
+      std::holds_alternative<DiscreteSpectrumSum>(spectrum) ? "scene discrete spectrum, exact sum" :
+      std::holds_alternative<SpectrumQuadrature>(spectrum)  ? "scene continuous spectrum, declared quadrature" :
+                                                              "explicit diagnostic wavelength";
+  const ProductDiagnosticSampler sampler(result.snapshot, seed, spectrum);
+  error = sampler.Draw(0, &result.representative_input);
+  if (!error.Ok()) {
+    return error;
+  }
+  result.capture_seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - begin).count();
+  error = DiscoverProductFeatures(sampler, options, &result.discovery);
+  if (!error.Ok()) {
+    return error;
+  }
+  if (std::holds_alternative<SpectrumQuadrature>(spectrum)) {
+    // Refine the actual full-band measure, not a diagnostic RGB triple. Keep
+    // the same outer draws, kernel and levels when measuring spectral movement.
+    // Arbitrary external quadratures have no implicit refinement rule here.
+    const auto spectral_start = std::chrono::steady_clock::now();
+    const auto& base = std::get<SpectrumQuadrature>(spectrum);
+    bool refinement_available = base.rule == "dyadic full-band trapezoid" && base.nodes.size() >= 3;
+    if (refinement_available) {
+      const size_t intervals = base.nodes.size() - 1;
+      refinement_available = (intervals & (intervals - 1)) == 0 && intervals <= 256;
+      for (size_t j = 0; j <= intervals; ++j) {
+        refinement_available &=
+            base.nodes[j].wavelength_nm == std::min(380.f + 400.f * j / intervals, std::nextafter(780.f, 380.f));
+        refinement_available &= base.nodes[j].probability_mass == (j == 0 || j == intervals ? .5 : 1.) / intervals;
+      }
+    }
+    ProductDiagnosticMeasure refined;
+    if (refinement_available) {
+      SpectrumQuadrature next;
+      const size_t intervals = 2 * (base.nodes.size() - 1);
+      next.rule = base.rule;
+      next.evaluation_budget = intervals + 1;
+      for (size_t j = 0; j <= intervals; ++j) {
+        next.nodes.push_back({ std::min(380.f + 400.f * j / intervals, std::nextafter(780.f, 380.f)),
+                               (j == 0 || j == intervals ? .5 : 1.0) / intervals });
+      }
+      const ProductDiagnosticSampler verifier(result.snapshot, seed, next);
+      auto remaining = options.sampling;
+      const auto used = result.discovery.measure.optical_evaluations + result.discovery.event_path_evaluations;
+      remaining.max_optical_evaluations -= std::min(remaining.max_optical_evaluations, used);
+      remaining.requested_samples = result.discovery.measure.completed_samples;
+      if (remaining.requested_samples > 0) {
+        error = BuildProductDiagnosticMeasure(verifier, remaining, &refined);
+        refinement_available = error.Ok() && refined.completed_samples == remaining.requested_samples;
+      } else {
+        refinement_available = false;
+      }
+      result.spectral_optical_evaluations = refined.optical_evaluations;
+      result.discovery.budget_exhausted |= refined.budget_exhausted;
+    }
+    analytic::FieldWorkBudget verification_budget{ options.max_field_evaluations -
+                                                       std::min(options.max_field_evaluations,
+                                                                result.discovery.field_component_evaluations),
+                                                   0, options.sampling.deadline };
+    if (refinement_available) {
+      result.spectral_movement_rad = 0;
+    }
+    for (auto& feature : result.discovery.features) {
+      if (feature.evidence != DiagnosticEvidence::kActual) {
+        continue;
+      }
+      bool stable = refinement_available && !feature.field_points.empty();
+      for (const auto& point : feature.field_points) {
+        if (!stable) {
+          break;
+        }
+        const auto corrected = analytic::CorrectSphericalField(
+            refined.components, point.query.direction,
+            { feature.equation, feature.level, feature.bandwidth_rad, 1e-8, feature.bandwidth_rad * .5, 32 },
+            &verification_budget);
+        if (corrected.status != analytic::FieldSolveStatus::kConverged) {
+          stable = false;
+          break;
+        }
+        double cross[3];
+        analytic::so3::Cross3(corrected.query.direction.data(), point.query.direction.data(), cross);
+        const double movement =
+            std::atan2(analytic::so3::Norm3(cross),
+                       analytic::so3::Dot3(corrected.query.direction.data(), point.query.direction.data()));
+        *result.spectral_movement_rad = std::max(*result.spectral_movement_rad, movement);
+        stable &= movement <= options.location_resolution_rad;
+      }
+      if (!stable) {
+        feature.evidence = DiagnosticEvidence::kUnfinished;
+        feature.reason += "; continuous spectral quadrature accuracy not established for this geometry";
+      }
+    }
+    result.spectral_field_evaluations = verification_budget.component_evaluations;
+    result.spectral_seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - spectral_start).count();
+    result.discovery.budget_exhausted |= verification_budget.exhausted;
+    if (!refinement_available) {
+      result.discovery.unfinished.push_back("continuous spectral quadrature refinement incomplete");
+    }
+  }
   *out = std::move(result);
   return {};
 }

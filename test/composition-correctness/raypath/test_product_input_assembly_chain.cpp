@@ -7,6 +7,8 @@
 #include "core/lat_lut.hpp"
 #include "core/simulator.hpp"
 #include "gtest/gtest.h"
+#include "raypath/path_feature_report.hpp"
+#include "raypath/path_feature_report_json.hpp"
 #include "raypath/product_diagnostic_sampler.hpp"
 #include "raypath/product_feature_discovery.hpp"
 #include "raypath/product_input_assembly.hpp"
@@ -486,6 +488,76 @@ TEST(ProductInputChain, AutomaticColourContoursHaveIndependentFixedObservationPo
   }
 }
 
+TEST(ProductInputChain, ProductReportRetainsLayerScopeAndSourceNumerics) {
+  auto scene = Scene(2);
+  scene.light_source_.param_ = { 20.f, 0.f, 0.f };
+  scene.light_source_.spectrum_ = std::vector<ns::WlParam>{ { 550.f, 1.f } };
+  auto& axis = scene.ms_[1].setting_[0].crystal_.axis_;
+  axis.latitude_dist = { ns::DistributionType::kUniform, 90.f, 360.f };
+  axis.azimuth_dist = axis.roll_dist = { ns::DistributionType::kUniform, 0.f, 360.f };
+  const rp::ProductDiscoveryOptions options{ { 16384, 30000 }, .02, .001, 20000000, 1, 4, 0, 1 };
+  rp::ProductPathReport report;
+  ASSERT_TRUE(rp::BuildProductPathReport(scene, "two-layer scene, second-layer single path", { { 1, 2, { 3, 5 }, 0 } },
+                                         rp::DiscreteSpectrumSum{}, 1497, options, &report)
+                  .Ok());
+  const auto json = nlohmann::json::parse(rp::ProductPathReportToJson(report, "test"));
+  EXPECT_EQ(json.at("scope").at("layers").at(0).at("scene_layer"), 1);
+  EXPECT_EQ(json.at("spectrum").at(0).at("nm"), 550);
+  EXPECT_TRUE(json.contains("budget"));
+  EXPECT_TRUE(json.contains("unfinished"));
+  bool edge = false;
+  for (const auto& feature : json.at("features")) {
+    if (!feature.contains("physical_position")) {
+      continue;
+    }
+    edge = true;
+    EXPECT_EQ(feature.at("evidence"), "actual");
+    const auto& physical = feature.at("physical_position");
+    EXPECT_TRUE(physical.at("value").at("entry").at("geometry_evaluated"));
+    EXPECT_EQ(physical.at("source").at("pose").size(), 9u);
+    EXPECT_TRUE(json.at("sources").contains(std::to_string(feature.at("source_token").get<uint64_t>())));
+  }
+  EXPECT_TRUE(edge);
+  const auto error =
+      rp::BuildProductPathReport(scene, "two crystal chain", { { 0, 1, { 3, 5 }, 0 }, { 1, 2, { 3, 5 }, 0 } },
+                                 rp::DiscreteSpectrumSum{}, 1497, options, &report);
+  EXPECT_EQ(error.code, rp::ErrorCode::kMultiLayerUnsupported);
+}
+
+TEST(ProductInputChain, ProductReportRefinesTheSameContinuousSpectrumObservation) {
+  auto scene = Scene(1);
+  scene.light_source_.param_ = { 20.f, 0.f, .53f };
+  scene.light_source_.spectrum_ = ns::IlluminantType::kD65;
+  auto& crystal = scene.ms_[0].setting_[0].crystal_;
+  auto& shape = std::get<ns::PrismCrystalParam>(crystal.param_);
+  shape.h_ = shape.d_[0] = { ns::DistributionType::kUniform, 1.f, 1.4f };
+  shape.sync_group_[ns::kShapeScalarHeight] = shape.sync_group_[ns::kShapeScalarFace0] = 1;
+  crystal.axis_.latitude_dist = { ns::DistributionType::kGaussian, 90.f, 1.f };
+  crystal.axis_.azimuth_dist = crystal.axis_.roll_dist = { ns::DistributionType::kUniform, 0.f, 360.f };
+  rp::SpectrumQuadrature quadrature;
+  quadrature.rule = "dyadic full-band trapezoid";
+  quadrature.evaluation_budget = 33;
+  for (int j = 0; j <= 32; ++j) {
+    quadrature.nodes.push_back(
+        { std::min(380.f + 400.f * j / 32, std::nextafter(780.f, 380.f)), (j == 0 || j == 32 ? .5 : 1.) / 32 });
+  }
+  constexpr double kRad = 3.14159265358979323846 / 180;
+  const rp::ProductDiscoveryOptions options{ { 8192, 1000000 }, kRad, .05 * kRad, 250000000, 2, 4, 0, 0 };
+  rp::ProductPathReport report;
+  ASSERT_TRUE(rp::BuildProductPathReport(scene, "actual D65 scene", { { 0, 1, { 3, 5 }, 0 } }, quadrature, 1497,
+                                         options, &report)
+                  .Ok());
+  EXPECT_EQ(report.spectral_optical_evaluations, 8192u * 65);
+  EXPECT_GT(report.spectral_field_evaluations, 0u);
+  EXPECT_TRUE(report.spectral_movement_rad.has_value());
+  EXPECT_GT(report.spectral_seconds, 0);
+  EXPECT_TRUE(std::any_of(report.discovery.features.begin(), report.discovery.features.end(),
+                          [](const auto& f) { return f.evidence == rp::DiagnosticEvidence::kActual; }));
+  const auto json = nlohmann::json::parse(rp::ProductPathReportToJson(report, "test"));
+  EXPECT_EQ(json.at("budget").at("optical_evaluations"), 8192u * (33 + 65));
+  EXPECT_EQ(json.at("spectrum").size(), 33u);
+}
+
 TEST(ProductInputChain, AtomRequiresDeclaredZeroDimensionalSourceNotSampledRank) {
   auto scene = Scene(1);
   scene.light_source_.param_ = { 20.f, 0.f, 0.f };
@@ -504,6 +576,12 @@ TEST(ProductInputChain, AtomRequiresDeclaredZeroDimensionalSourceNotSampledRank)
     EXPECT_EQ(feature.geometry, rp::DiagnosticGeometry::kAtom);
     EXPECT_GT(feature.atom_xyz_mass[1], 0);
   }
+  const auto original_spectrum = scene.light_source_.spectrum_;
+  scene.light_source_.spectrum_ = std::vector<ns::WlParam>{ { 550.f, 0.f } };
+  const rp::ProductDiagnosticSampler dark(Capture(scene, 0, { 3, 5 }), 1497, rp::DiscreteSpectrumSum{});
+  ASSERT_TRUE(rp::DiscoverProductFeatures(dark, options, &result).Ok());
+  EXPECT_TRUE(result.features.empty());
+  scene.light_source_.spectrum_ = original_spectrum;
   scene.light_source_.param_.diameter_ = .53f;
   const rp::ProductDiagnosticSampler cap(Capture(scene, 0, { 3, 5 }), 1497, rp::DiscreteSpectrumSum{});
   ASSERT_TRUE(rp::DiscoverProductFeatures(cap, options, &result).Ok());

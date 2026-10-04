@@ -174,11 +174,12 @@ Error CaptureProductInput(const SceneConfig& scene, const std::string& scene_ide
   snapshot.light = scene.light_source_;
   for (size_t i = 0; i < selection.size(); ++i) {
     const auto& layer = selection[i];
-    if (layer.layer_index != i || i >= scene.ms_.size()) {
-      return { ErrorCode::kInvalidArgument, "a chain must start at layer zero and use consecutive layers" };
+    if ((selection.size() > 1 && layer.layer_index != i) || layer.layer_index >= scene.ms_.size()) {
+      return { ErrorCode::kInvalidArgument,
+               "a multi-crystal chain must start at layer zero and use consecutive layers" };
     }
     const CrystalConfig* found = nullptr;
-    for (const auto& setting : scene.ms_[i].setting_) {
+    for (const auto& setting : scene.ms_[layer.layer_index].setting_) {
       if (setting.crystal_.id_ != layer.crystal_id)
         continue;
       if (found)
@@ -187,8 +188,8 @@ Error CaptureProductInput(const SceneConfig& scene, const std::string& scene_ide
     }
     if (!found)
       return { ErrorCode::kUnknownCrystalId, "crystal key absent from selected layer" };
-    snapshot.layers.push_back(
-        { scene_identity, i, *found, layer.representative, layer.symmetry_bits, SymmetrySemantics::kPhysical });
+    snapshot.layers.push_back({ scene_identity, layer.layer_index, *found, layer.representative, layer.symmetry_bits,
+                                SymmetrySemantics::kPhysical });
   }
   *out = std::move(snapshot);
   return {};
@@ -335,7 +336,8 @@ Error AssembleProductInput(const ProductInputSnapshot& snapshot, const std::vect
   if (!error.Ok())
     return error;
   for (size_t i = 0; i < samples.size(); ++i) {
-    if (snapshot.layers[i].scene_identity != snapshot.scene_identity || snapshot.layers[i].layer_index != i) {
+    if (snapshot.layers[i].scene_identity != snapshot.scene_identity ||
+        (snapshot.layers.size() > 1 && snapshot.layers[i].layer_index != i)) {
       return { ErrorCode::kInvalidArgument, "layer does not belong to this scene/chain snapshot" };
     }
     const auto& identity = samples[i].identity;
