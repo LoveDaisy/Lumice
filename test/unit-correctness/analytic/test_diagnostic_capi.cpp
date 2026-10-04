@@ -49,14 +49,15 @@ TEST(DiagnosticCapi, RowsOwnershipRootSizeAndFourConcurrentConsumers) {
     EXPECT_TRUE(thread.get());
   }
   constexpr size_t kBase = offsetof(LUMICE_ANALYTIC_DiagnosticResult, curve_point_count);
-  alignas(LUMICE_ANALYTIC_DiagnosticResult) unsigned char bytes[sizeof(LUMICE_ANALYTIC_DiagnosticResult)];
-  std::fill_n(bytes, sizeof(bytes), 0x6d);
-  auto* partial = reinterpret_cast<LUMICE_ANALYTIC_DiagnosticResult*>(bytes);
+  LUMICE_ANALYTIC_DiagnosticResult backing{};
+  auto* bytes = reinterpret_cast<unsigned char*>(&backing);
+  std::fill_n(bytes, sizeof(backing), 0x6d);
+  auto* partial = &backing;
   partial->struct_size = kBase;
   ASSERT_EQ(LUMICE_ANALYTIC_EvaluateDiagnosticBatch(faces, 2, rows, 3, partial), LUMICE_ANALYTIC_OK);
   EXPECT_EQ(partial->optical_count, 3u);
   LUMICE_ANALYTIC_ReleaseDiagnosticResult(partial);
-  for (size_t j = kBase; j < sizeof(bytes); ++j) {
+  for (size_t j = kBase; j < sizeof(backing); ++j) {
     EXPECT_EQ(bytes[j], 0x6d);
   }
   partial->struct_size = sizeof(uint32_t);

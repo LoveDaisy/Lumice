@@ -90,7 +90,7 @@ Error AnalyzePathFeatureReport(const ConfigManager& config, const PathFeatureRep
     spectrum = std::move(quadrature);
   }
   const std::vector<ProductLayerSelection> selection{ { layer_index, request.crystal_id, request.path_layers[0],
-                                                        static_cast<uint8_t>(sym::kSymP | sym::kSymB | sym::kSymD) } };
+                                                        request.symmetry_bits } };
   ProductInputSnapshot snapshot;
   const std::string identity = layer_index >= config.scene_.ms_.size() ?
                                    "standalone configured crystal (not a scene allocation)" :
@@ -276,9 +276,12 @@ Error BuildProductPathReport(const SceneConfig& scene, const std::string& identi
       result.discovery.unfinished.push_back("continuous spectral quadrature refinement incomplete");
     }
   }
-  result.no_related_signal = std::all_of(
-      result.representative_input.spectrum.rows.begin(), result.representative_input.spectrum.rows.end(),
-      [](const auto& row) { return row.coefficient[0] == 0 && row.coefficient[1] == 0 && row.coefficient[2] == 0; });
+  result.no_related_signal =
+      std::holds_alternative<std::vector<WlParam>>(result.snapshot.light.spectrum_) &&
+      std::all_of(result.representative_input.spectrum.rows.begin(), result.representative_input.spectrum.rows.end(),
+                  [](const auto& row) {
+                    return row.coefficient[0] == 0 && row.coefficient[1] == 0 && row.coefficient[2] == 0;
+                  });
   *out = std::move(result);
   return {};
 }

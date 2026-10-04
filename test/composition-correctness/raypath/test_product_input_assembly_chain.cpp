@@ -660,7 +660,9 @@ TEST(ProductInputChain, ProductReportRefinesTheSameContinuousSpectrumObservation
   EXPECT_TRUE(std::any_of(report.discovery.features.begin(), report.discovery.features.end(),
                           [](const auto& f) { return f.evidence == rp::DiagnosticEvidence::kActual; }));
   const auto json = nlohmann::json::parse(rp::PathFeatureReportToJson(report, "test"));
-  EXPECT_EQ(json.at("budgets").at("optical_evaluations"), 8192u * (33 + 33 + 65));
+  // Two cap/shape corners, one cap edge and two shape ends also trace optics.
+  EXPECT_EQ(report.discovery.event_path_evaluations, 5u);
+  EXPECT_EQ(json.at("budgets").at("optical_evaluations"), 8192u * (33 + 33 + 65) + 5);
   EXPECT_EQ(json.at("spectrum").size(), 33u);
 }
 

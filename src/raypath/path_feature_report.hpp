@@ -31,6 +31,7 @@ struct PathFeatureReportRequest {
   uint64_t max_field_evaluations = kDefaultFeatureReportFieldEvaluations;
   double bandwidth_rad = 3.14159265358979323846 / 180;
   double location_resolution_rad = .05 * 3.14159265358979323846 / 180;
+  uint8_t symmetry_bits = 7;  // physical P|B|D; zero means the concrete requested path
   std::optional<size_t> scene_layer;
   std::optional<std::chrono::steady_clock::time_point> deadline;
 };

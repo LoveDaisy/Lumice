@@ -169,7 +169,7 @@ std::string PathFeatureReportToJson(const PathFeatureReport& result, const char*
   if (result.unsupported_multicrystal) {
     return Json{
       { "schema", "lumice.path-feature-report" },
-      { "schema_version", 2 },
+      { "schema_version", kFeatureReportSchemaVersion },
       { "outcome", "unsupported_multicrystal" },
       { "requested_path_layers", result.requested_path_layers },
       { "actual_features", Json::array() },
@@ -187,7 +187,7 @@ std::string PathFeatureReportToJson(const PathFeatureReport& result, const char*
 
   Json document = {
     { "schema", "lumice.path-feature-report" },
-    { "schema_version", 2 },
+    { "schema_version", kFeatureReportSchemaVersion },
 
     { "generator", { { "lumice", lumice_version }, { "analytic_api_version", analytic::kApiVersion } } },
     { "scope",

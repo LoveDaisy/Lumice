@@ -184,6 +184,12 @@ LUMICE_ErrorCode AnalyzeReport(const LUMICE_Scene* scene, const LUMICE_PathFeatu
     if (request.location_resolution_rad != 0) {
       req.location_resolution_rad = request.location_resolution_rad;
     }
+    if (request.symmetry_bits_plus_one < 0 || request.symmetry_bits_plus_one > 8) {
+      return Refuse({ rp::ErrorCode::kInvalidArgument, "invalid physical symmetry bits" }, err_buf, err_size);
+    }
+    if (request.symmetry_bits_plus_one > 0) {
+      req.symmetry_bits = static_cast<uint8_t>(request.symmetry_bits_plus_one - 1);
+    }
     if (request.scene_layer_plus_one < 0) {
       return Refuse({ rp::ErrorCode::kInvalidArgument, "negative scene layer selection" }, err_buf, err_size);
     }

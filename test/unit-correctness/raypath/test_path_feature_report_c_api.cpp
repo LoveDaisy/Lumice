@@ -202,4 +202,17 @@ TEST(PathFeatureReportCApi, OldRequestPrefixUsesNewDefaultsWithoutReadingTheSuff
   EXPECT_EQ(doc["budgets"]["max_optical_evaluations"], 4000000);
 }
 
+TEST(PathFeatureReportCApi, RequestedPhysicalMemberScopeIsNotSilentlyExpanded) {
+  const ScenePtr scene = MakeScene();
+  Request request;
+  request.c.symmetry_bits_plus_one = 1;
+  const auto outcome = Analyse(scene.get(), &request.c);
+  ASSERT_EQ(outcome.code, LUMICE_OK) << outcome.error;
+  const auto doc = nlohmann::json::parse(Json(outcome.report.get()));
+  EXPECT_EQ(doc["physical_members"].size(), 1u);
+  EXPECT_EQ(doc["scope"]["layers"][0]["symmetry_bits"], 0);
+  request.c.symmetry_bits_plus_one = 9;
+  EXPECT_EQ(Analyse(scene.get(), &request.c).code, LUMICE_ERR_INVALID_VALUE);
+}
+
 }  // namespace

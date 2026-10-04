@@ -79,7 +79,12 @@ def test_default_report_consumes_actual_continuous_spectrum_and_records_scope():
     assert len(doc["spectrum"]) == 33
     assert "continuous" in doc["scope"]["spectrum"]
     assert sum(row["measure_mass"] for row in doc["spectrum"]) == pytest.approx(1)
-    assert doc["spectral_verification"]["optical_evaluations"] > 0
+    if doc["spectral_verification"]["optical_evaluations"] == 0:
+        # A bounded call may exhaust its deadline before spectral refinement.
+        # Zero work is valid only with the explicit incomplete outcome/reason.
+        assert doc["budgets"]["exhausted"], doc["budgets"]
+        assert doc["outcome"] == "partial"
+        assert "continuous spectral quadrature refinement incomplete" in doc["unfinished_reasons"]
     assert doc["observation"]["kernel"] == "normalized_vMF"
     assert doc["unfinished_reasons"]  # no sampled empty set becomes an absence certificate
 
@@ -154,3 +159,13 @@ def test_report_parse_errors_write_usage_only_to_stderr_regardless_of_option_ord
     assert named in result.stderr
     assert "Usage:" in result.stderr
     assert result.stdout == ""
+
+
+def test_report_multicrystal_is_a_structured_zero_work_refusal():
+    result = _report(_RANDOM, "(3-5)->(1-3)")
+    assert result.returncode == 0, result.stderr
+    doc = json.loads(result.stdout)
+    assert doc["outcome"] == "unsupported_multicrystal"
+    assert doc["requested_path_layers"] == [[3, 5], [1, 3]]
+    assert doc["actual_features"] == []
+    assert doc["budgets"]["optical_evaluations"] == 0

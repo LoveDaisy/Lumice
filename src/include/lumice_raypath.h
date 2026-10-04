@@ -4,6 +4,8 @@
 // Single-path analysis: one single-layer raypath of one crystal entry, computed synchronously and
 // independently of any server.
 
+#include <stdint.h>
+
 #include "lumice_base.h"
 
 #ifdef __cplusplus
@@ -126,6 +128,7 @@ typedef struct LUMICE_PathFeatureReportRequest {
   double bandwidth_rad;              // 1 degree in radians; vMF observation, not a physical width
   double location_resolution_rad;    // .05 degree; local numerical target, not a global confidence bound
   int scene_layer_plus_one;          // 0 = first occurrence (or standalone configured crystal); otherwise layer+1
+  int symmetry_bits_plus_one;        // 0 = P|B|D default; otherwise (P=1, B=2, D=4 bits)+1; 1 selects a concrete path
 } LUMICE_PathFeatureReportRequest;
 
 typedef struct LUMICE_PathFeatureReport_ LUMICE_PathFeatureReport;
