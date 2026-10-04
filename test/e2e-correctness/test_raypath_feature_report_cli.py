@@ -200,3 +200,16 @@ def test_endpoint_bisection_budget_is_partial_not_a_physical_stop():
     stopped = [c for c in curves if c["termination"] == 6]
     assert stopped
     assert any(c["points"] for c in stopped)
+    complete = _report(_RANDOM, "3-1-5", "--events", "8192", "--wavelength", "550")
+    assert complete.returncode == 0, complete.stderr
+    full = json.loads(complete.stdout)
+    assert full["outcome"] == "completed"
+    assert not full["budgets"]["exhausted"]
+    full_features = full["actual_features"] + full["candidates"] + full["unfinished"]
+    full_curves = {f["source_token"]: f["source_curves"] for f in full_features if "source_curves" in f}
+    for feature in features:
+        for index, curve in enumerate(feature.get("source_curves", [])):
+            if curve["termination"] == 6:
+                finished = full_curves[feature["source_token"]][index]
+                assert finished["termination"] == 3
+                assert finished["events"]

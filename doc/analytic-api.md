@@ -1058,9 +1058,10 @@ oracles, not wrappers around the functions under test.
 | `ReleaseDiagnosticResult` | Releases all immutable result arrays; NULL-safe and repeat-safe after release |
 
 Every name has the `LUMICE_ANALYTIC_` prefix. The result root uses `struct_size`; its base group
-ends at `storage`, and the source-event suffix is written only if the whole suffix fits. No
-partial pointer group is returned. Inputs are fixed-version PODs, following §8.2; their layouts
-are not silently extended. Interfaces allocate exactly `interface_count` entries, not 64 entries
+ends at `storage`; the source-event and field-terminal suffixes are successive complete groups.
+Each group is written only if it fits, independently of later groups, so callers sized for the
+previous source-event suffix still receive it. No partial pointer/status group is returned. Inputs
+are fixed-version PODs, following §8.2; their layouts are not silently extended. Interfaces allocate exactly `interface_count` entries, not 64 entries
 per short path. Nested arrays live until the root is released. Four concurrent calls on separate
 outputs are covered by the ABI tests. Reusing a live result requires releasing it first.
 
@@ -1071,6 +1072,24 @@ rows may still be invalid or unsolved); `termination=6` means the shared budget 
 A row interrupted inside its solver is retained with `solve_status=6`. A zero evaluation budget
 returns an empty prefix. Invalid array/path arguments are still call errors even with zero budget;
 bad per-row inputs within the processed prefix remain isolated and do not suppress later rows.
+All three optical diagnostic entries share the same path-syntax check before allocating result
+storage or attempting numerical work. Nonpositive face numbers are call errors; a positive face
+number absent from a particular shape remains a source/row outcome.
+
+A deviation row's `deviation_available` covers its angle, correction, curvatures and Hessian error
+at the returned source/optics snapshot. On interruption it retains the last complete iterate;
+before any complete iterate it retains partial optics with that group unavailable. The status
+and work count describe the whole attempted solve, including work after that snapshot. An optical
+endpoint bracket interrupted by budget or numerical failure is not a physical termination:
+already accepted curve points survive, but no unfinished bracket is published as an optical gate.
+
+`TraceWeightedSkyField` reports `field_terminal_available` and `field_terminal_status` separately
+from its accepted `field[]` points and walk `termination`. The terminal solver reason distinguishes
+no signal, degenerate equation, iteration limit and budget exhaustion; on a normal stop it is the
+last accepted point's converged status. Copy-stage deadline exhaustion also reports budget status.
+Failed/censored iterates are not appended to the accepted geometry. Zero availability means no
+terminal status was provided (including calls to the other diagnostic functions). This optional
+result group refines the unreleased API-7 surface without changing any array element or input layout.
 
 The header defines row status/availability, units, basis order, numeric termination values,
 explicit evaluation/deadline parameters, and the bounded-copy behavior. Weighted samples already

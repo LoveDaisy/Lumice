@@ -209,6 +209,8 @@ static int TraceWeightedSkyFieldImpl(const LUMICE_ANALYTIC_WeightedSkySample* sa
     for (size_t i = 0; i < count; ++i) {
       if ((i % 1024) == 0 && std::chrono::steady_clock::now() >= deadline) {
         out->termination = 5;
+        out->field_terminal_available = 1;
+        out->field_terminal_status = static_cast<int>(a::FieldSolveStatus::kBudgetExceeded);
         return 0;
       }
       if (!a::ValidateUnitVector(samples[i].direction) ||
@@ -235,6 +237,7 @@ static int TraceWeightedSkyFieldImpl(const LUMICE_ANALYTIC_WeightedSkySample* sa
     a::FieldCurve curve;
     if (equation == 0) {
       auto point = a::CorrectSphericalField(input, { seed[0], seed[1], seed[2] }, solve, &budget);
+      curve.terminal = point;
       curve.stop = point.status == a::FieldSolveStatus::kConverged ? a::FieldWalkStop::kPointLimit :
                                                                      a::FieldWalkStop::kCorrectorFailed;
       if (point.status == a::FieldSolveStatus::kConverged) {
@@ -265,6 +268,12 @@ static int TraceWeightedSkyFieldImpl(const LUMICE_ANALYTIC_WeightedSkySample* sa
       std::copy_n(point.log_y_curvatures.begin(), 2, row.log_y_curvatures);
       storage->field.push_back(row);
     }
+    out->field_terminal_available = 1;
+    out->field_terminal_status =
+        static_cast<int>(curve.stop == a::FieldWalkStop::kCorrectorFailed ||
+                                 curve.stop == a::FieldWalkStop::kObservationCensored || curve.points.empty() ?
+                             curve.terminal.status :
+                             curve.points.back().status);
     out->component_evaluations = budget.component_evaluations;
     out->termination = budget.exhausted ? 5 : static_cast<int>(curve.stop);
     Finish(std::move(storage), out);
@@ -277,6 +286,7 @@ static int TraceWeightedSkyFieldImpl(const LUMICE_ANALYTIC_WeightedSkySample* sa
 
 namespace {
 constexpr size_t kDiagnosticBaseSize = offsetof(LUMICE_ANALYTIC_DiagnosticResult, curve_point_count);
+constexpr size_t kDiagnosticEventSize = offsetof(LUMICE_ANALYTIC_DiagnosticResult, field_terminal_available);
 void Clear(LUMICE_ANALYTIC_DiagnosticResult* out) {
   const auto end = std::min<size_t>(out->struct_size, sizeof(*out));
   if (end > sizeof(out->struct_size)) {
@@ -300,7 +310,9 @@ LUMICE_ANALYTIC_ErrorCode Invoke(LUMICE_ANALYTIC_DiagnosticResult* out, F call) 
            status == 1 ? LUMICE_ANALYTIC_ERR_INVALID_VALUE :
                          LUMICE_ANALYTIC_ERR_UNKNOWN;
   }
-  const size_t copied = size >= sizeof(full) ? sizeof(full) : kDiagnosticBaseSize;
+  const size_t copied = size >= sizeof(full)         ? sizeof(full) :
+                        size >= kDiagnosticEventSize ? kDiagnosticEventSize :
+                                                       kDiagnosticBaseSize;
   std::memcpy(reinterpret_cast<char*>(out) + sizeof(size), reinterpret_cast<const char*>(&full) + sizeof(size),
               copied - sizeof(size));
   return LUMICE_ANALYTIC_OK;

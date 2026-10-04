@@ -244,6 +244,15 @@ TEST(DiagnosticCapi, OpticalBracketInterruptionRetainsPointsButNotAPhysicalEndpo
 TEST(DiagnosticCapi, InterruptedDeviationReturnsOneConsistentIteration) {
   const auto source = Source();
   const int faces[]{ 3, 5 };
+  LUMICE_ANALYTIC_DiagnosticResult partial{};
+  partial.struct_size = sizeof(partial);
+  ASSERT_EQ(LUMICE_ANALYTIC_CorrectDeviationBatch(faces, 2, &source, 1, 21, 5000, &partial), LUMICE_ANALYTIC_OK);
+  ASSERT_EQ(partial.optical_count, 1u);
+  EXPECT_EQ(partial.optical[0].solve_status, 6);
+  EXPECT_TRUE(partial.optical[0].path_valid);
+  EXPECT_TRUE(partial.optical[0].direction_pose_available);
+  EXPECT_FALSE(partial.optical[0].deviation_available);
+  LUMICE_ANALYTIC_ReleaseDiagnosticResult(&partial);
   LUMICE_ANALYTIC_DiagnosticResult baseline{};
   baseline.struct_size = sizeof(baseline);
   // The first complete derivative snapshot; no line-search evaluation fits.
@@ -318,7 +327,7 @@ TEST(DiagnosticCapi, FieldTerminalReasonIsSeparateFromConvergedGeometry) {
   }
   const double distant[]{ std::sin(.3), 0, std::cos(.3) };
   // At most 32 corrections of .01 rad: this farther seed cannot reach the peak.
-  const double far_seed[]{ std::sin(1.), 0, std::cos(1.) };
+  const double far_seed[]{ std::sin(.4), 0, std::cos(.4) };
   check(0, 4, 1000, far_seed);
   if (HasFatalFailure()) {
     return;

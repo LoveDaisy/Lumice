@@ -618,7 +618,8 @@ LUMICE_ANALYTIC_API void LUMICE_ANALYTIC_ReleaseBandSumResult(LUMICE_ANALYTIC_Ba
 // error. Result arrays are immutable and library-owned until ReleaseDiagnosticResult; no pointer
 // survives release. Distinct outputs are re-entrant; do not release while another thread reads.
 // The root result uses struct_size, including in Release. Its first group ends at storage;
-// source-event fields are an optional suffix written only as a complete group. Smaller roots
+// source-event fields and field-terminal status are successive optional complete groups.
+// Each older complete group remains readable even when a later group does not fit. Smaller roots
 // are refused and only declared bytes are cleared. Larger caller structs retain unknown bytes.
 //
 // Coordinates: pose is body-to-world, row-major; incident/outgoing are propagation directions.
@@ -631,7 +632,14 @@ LUMICE_ANALYTIC_API void LUMICE_ANALYTIC_ReleaseBandSumResult(LUMICE_ANALYTIC_Ba
 //
 // solve_status: 0 converged, 1 invalid input, 2 unavailable, 3 no support at iterate, 4 degenerate,
 // 5 iteration limit, 6 budget exceeded. EvaluateDiagnosticBatch does not solve an equation (2).
+// deviation_available covers the angle/correction/curvature/error group, all at the returned
+// source/value. Interrupted correction returns its last complete snapshot, or partial optics
+// with deviation_available=0 if none completed; path_evaluations still counts all attempted work.
 // Field status: 0 converged, 1 invalid input, 2 no signal, 3 degenerate, 4 iteration limit, 5 budget.
+// field_terminal_status (only when field_terminal_available=1) keeps the final solver reason
+// separate from accepted geometry: the failed/censored trial, or the last accepted point on
+// a normal stop. Input-copy budget exhaustion also reports status 5. Failed iterates never
+// enter field[]. Other diagnostic functions leave this suffix unavailable.
 // Field equation: 0 log-Y peak, 1 log-Y ridge, 2 x level, 3 y level. A root is numerical only.
 // WalkField termination: 0 closed, 1 observation censored, 2 corrector failed, 3 point limit,
 // 4 invalid input, 5 budget exhausted. WalkEvent termination: 0 closed, 1 area threshold, 2 geometric contact bracket,
