@@ -146,7 +146,9 @@ void FindSourceBoundaries(const ProductDiscoveryOptions& options, ProductDiscove
   };
   std::vector<Coordinate> coordinates;
   if (base.source.domain.diameter_ > 0) {
-    coordinates.push_back({ 0, 0, "sun.cap_radial", { 1 } });
+    // TransformSphericalCap maps radial_uniform=0 to the rim; 1 is the
+    // centre coordinate singularity, not a physical source boundary.
+    coordinates.push_back({ 0, 0, "sun.cap_radial", { 0 } });
   }
   const auto bounded = [](const Distribution& d) {
     return d.type == DistributionType::kUniform && d.spread > 0 && d.spread < 360;
