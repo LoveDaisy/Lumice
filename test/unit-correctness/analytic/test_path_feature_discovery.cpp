@@ -248,6 +248,19 @@ TEST(PathFeatureField, OrbitSubdivisionDoesNotManufactureOuterEvidence) {
   EXPECT_EQ(out.outer_sample_count, 0u);
 }
 
+TEST(PathFeatureField, SymmetricMonotoneRegionIsNotAOneDimensionalRidge) {
+  // F = C cosh(k*z), k=4. At z=0.1 the smaller Hessian eigenvector is
+  // azimuthal, so e_min.grad(log F)=0 throughout an open annulus. Its zero
+  // residual is NOT a codimension-one curve. The meridional derivative is nonzero.
+  std::vector<WeightedSkySample> samples{ { 0, { 0, 0, 1 }, { 1, 1, 1 } }, { 1, { 0, 0, -1 }, { 1, 1, 1 } } };
+  const FieldSolveOptions options{ FieldEquation::kLogYRidge, 0, .5, 1e-10, .05, 32 };
+  const auto result = CorrectSphericalField(samples, { std::sqrt(.99), 0, .1 }, options, nullptr);
+  EXPECT_EQ(result.status, FieldSolveStatus::kDegenerate);
+  EXPECT_LT(result.log_y_curvatures[0], 0);
+  EXPECT_GT(result.log_y_curvatures[1], 0);
+  EXPECT_GT(std::hypot(result.field.xyz[1].gradient[0], result.field.xyz[1].gradient[1]), 0);
+}
+
 TEST(PathFeatureField, ContinuousPeakAndRidgeAreNumericalNotPhysicalClaims) {
   const std::vector<WeightedSkySample> point{ { 0, { 0, 0, 1 }, { 1, 2, 3 } } };
   FieldSolveOptions options{ FieldEquation::kLogYPeak, 0, .1, 1e-10, .05, 32 };
@@ -328,7 +341,8 @@ TEST(PathFeatureField, ContinuousWalkKeepsClosureCensoringAndBudgetDistinct) {
   EXPECT_EQ(partial.points.size(), 3u);
   EXPECT_LT(partial.points[1].query.direction[1] * closed.points[1].query.direction[1], 0);
   FieldWorkBudget budget;
-  budget.max_component_evaluations = 2;
+  // Each ridge point uses one field jet and four transverse derivative probes.
+  budget.max_component_evaluations = 10;
   const auto stopped = TraceSphericalField(ring, { 1, 0, 0 }, options, false, &budget);
   EXPECT_EQ(stopped.stop, FieldWalkStop::kCorrectorFailed);
   EXPECT_EQ(stopped.terminal.status, FieldSolveStatus::kBudgetExceeded);

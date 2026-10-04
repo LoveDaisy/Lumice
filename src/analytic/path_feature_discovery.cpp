@@ -240,6 +240,69 @@ bool EvaluateSphericalField(const std::vector<WeightedSkySample>& samples, const
   return true;
 }
 
+namespace {
+
+// Differentiate the ridge equation, including its MOVING Hessian eigenvector.
+// Replacing this derivative by lambda_min falsely accepts a zero equation on
+// an open axisymmetric annulus as a curve. Parallel-transport the reference
+// normal along its geodesic and align eigenvector signs before differencing.
+bool RidgeTransverseDerivative(const std::vector<WeightedSkySample>& samples, const FieldStationaryPoint& point,
+                               FieldWorkBudget* budget, double* derivative) {
+  std::array<double, 3> normal{};
+  for (int j = 0; j < 3; ++j) {
+    normal[j] = point.normal[0] * point.query.basis[0][j] + point.normal[1] * point.query.basis[1][j];
+  }
+  std::array<double, 3> tangent;
+  so3::Cross3(point.query.direction.data(), normal.data(), tangent.data());
+  double slopes[2]{};
+  double gradient_scale = 1;
+  const double step = std::min(.01, point.query.bandwidth_rad / 32);
+  for (int level = 0; level < 2; ++level) {
+    const double h = step / (level + 1);
+    double residuals[2]{};
+    for (int side = 0; side < 2; ++side) {
+      const double t = (2 * side - 1) * h;
+      SphericalFieldQuery query;
+      query.bandwidth_rad = point.query.bandwidth_rad;
+      query.basis[1] = tangent;
+      for (int j = 0; j < 3; ++j) {
+        query.direction[j] = std::cos(t) * point.query.direction[j] + std::sin(t) * normal[j];
+        query.basis[0][j] = -std::sin(t) * point.query.direction[j] + std::cos(t) * normal[j];
+      }
+      SphericalFieldValue field;
+      if (!EvaluateSphericalField(samples, query, &field, budget) || !(field.xyz[1].value > 0)) {
+        return false;
+      }
+      const auto& y = field.xyz[1];
+      const double g0 = y.gradient[0] / y.value;
+      const double g1 = y.gradient[1] / y.value;
+      const double h00 = y.hessian[0] / y.value - g0 * g0;
+      const double h01 = y.hessian[1] / y.value - g0 * g1;
+      const double h11 = y.hessian[2] / y.value - g1 * g1;
+      const double angle = .5 * std::atan2(2 * h01, h00 - h11);
+      double n0 = -std::sin(angle);
+      double n1 = std::cos(angle);
+      if (n0 < 0) {
+        n0 = -n0;
+        n1 = -n1;
+      }
+      // A ninety-degree change cannot identify the same eigenvector branch.
+      if (n0 < .5) {
+        return false;
+      }
+      residuals[side] = n0 * g0 + n1 * g1;
+      gradient_scale = std::max(gradient_scale, std::hypot(g0, g1));
+    }
+    slopes[level] = (residuals[1] - residuals[0]) / (2 * h);
+  }
+  const double error = std::abs(slopes[1] - slopes[0]) / 3;
+  const double rounding = 128 * std::numeric_limits<double>::epsilon() * gradient_scale / step;
+  *derivative = (4 * slopes[1] - slopes[0]) / 3;
+  return std::isfinite(*derivative) && std::abs(*derivative) > 4 * error + rounding;
+}
+
+}  // namespace
+
 FieldStationaryPoint CorrectSphericalField(const std::vector<WeightedSkySample>& samples,
                                            const std::array<double, 3>& seed, const FieldSolveOptions& options,
                                            FieldWorkBudget* budget) {
@@ -295,7 +358,13 @@ FieldStationaryPoint CorrectSphericalField(const std::vector<WeightedSkySample>&
           result.status = FieldSolveStatus::kDegenerate;
           return result;
         }
-        const double step = -(g0 * result.normal[0] + g1 * result.normal[1]) / result.log_y_curvatures[0];
+        double derivative = 0;
+        if (!RidgeTransverseDerivative(samples, result, budget, &derivative)) {
+          result.status =
+              budget && budget->exhausted ? FieldSolveStatus::kBudgetExceeded : FieldSolveStatus::kDegenerate;
+          return result;
+        }
+        const double step = -(g0 * result.normal[0] + g1 * result.normal[1]) / derivative;
         delta = { step * result.normal[0], step * result.normal[1] };
         break;
       }
