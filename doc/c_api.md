@@ -58,7 +58,14 @@ static_assert(LUMICE_API_VERSION >= 440, "Lumice header too old for this integra
 
 It is bumped when the public symbol set grows and on every BREAKING struct-layout change.
 
-**v4.51** is a pure append. Added the target-free path feature report:
+**v4.52** appends one complete budget/observation/layer-selection group to
+`LUMICE_PathFeatureReportRequest`; a v4.51 prefix still works with the new defaults. The report's
+JSON contract becomes schema 2: actual product input and spectrum, bounded numerical discovery,
+separate actual/candidate/unfinished records, partial work and explicit unsupported multi-crystal
+outcomes. Its numerical capability is shared with analytic API 7; the two version counters remain
+independent. No target-point/fiber/warm field or calculation changes. See `raypath-cli-output.md` §7.
+
+**v4.51** was a pure append (its schema-1 detector semantics are superseded by v4.52). Added the target-free path feature report:
 `LUMICE_PathFeatureReportRequest`, the opaque `LUMICE_PathFeatureReport`,
 `LUMICE_AnalyzePathFeatureReport`, `LUMICE_PathFeatureReportToJson`, and
 `LUMICE_PathFeatureReportDestroy`, plus sample-, wavelength-count, and combined-work bounds. It evaluates

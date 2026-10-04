@@ -1,5 +1,10 @@
 # Raypath Feature Diagnostic Acceptance Record
 
+> Historical schema-1 fixed-detector acceptance, not the current product contract. Schema 2
+> replaces that dispatcher and its unconditional visibility claims; see `raypath-cli-output.md`
+> §7 and `feature-diagnostic-discovery-research.md` §19. The recorded inputs, hashes and physical
+> observations below remain historical evidence and have not been regenerated.
+
 This is a fixed-input product acceptance record. Image evidence is observational,
 not a cross-machine golden and not a claim about every scene.
 

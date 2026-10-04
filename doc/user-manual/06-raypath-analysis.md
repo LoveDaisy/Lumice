@@ -117,31 +117,34 @@ clean = [r for r in rows if r[0] != "other (not recorded)" and not repeats(r[0])
 
 ## 7. Path feature reports from the CLI
 
-The GUI's Raypath Analysis window ranks the energy of complete raypaths in an
-ROI. It does not yet show path-feature reports or connect a feature to a
-clickable point in the preview. For the supported path-level diagnostic cases,
-use the CLI separately:
+The GUI analysis list still ranks complete raypaths in an ROI. It does not yet display the
+new path-feature document or make its records clickable in the preview.
 
 ```bash
-build/cmake_install/static/Lumice raypath \
-  -f test/e2e/configs/raypath_feature_random_regular.json \
-  --crystal 1 --path 3-1-5 --report --events 8192
+Lumice raypath -f config.json --crystal 1 --path 3-1-5 --report --budget-ms 15000
 ```
 
-`--report` has no sky target: it writes a separate JSON document describing
-physical L2 members, requested wavelengths, finite-crystal `A*T` brightness,
-positioned features, coverage, and limitations. It cannot be combined with
-`--target`, `--grid`, or `--warm`; use the existing target command when you
-need the fiber and per-pose detail at one point.
+Schema 2 uses the actual product shape/orientation/solar disc/spectrum, physical L2 members and
+one shared numerical route. It reports `actual_features`, conditional `candidates`, and
+`unfinished` records separately, with positions or ranges, source evidence and numerical budgets.
+There is no fixed path-name detector matrix. An internal TIR condition is not automatically an
+observed blue edge. A field-value colour band is defined by two levels at one observation scale,
+not by two different smoothing widths.
 
-The initial detector set is intentionally small. On the fixed regular-prism
-case, the output distinguishes a confirmed solar-side dispersion edge, a
-separate caustic candidate, a confirmed antisolar TIR blue band, and an
-assessed-but-not-visible exit gate. It does not enumerate all sky features,
-convolve the solar disc, decide general oriented kink curves, or discover
-open/multiple components, cone-crystal empty cases, or rank-0 features. Read
-`coverage` and `limitations`; an empty `features` list is not a proof that the
-path has no physical feature.
+This is conditional path optics under the configured source, not scene-allocation/filter weighting
+or illumination inherited from earlier scatterings.
+
+The default numerical deadline is 15 seconds; `--budget-ms` allows up to two minutes. Optical
+and field-work caps are separate. `--events` controls outer samples, not image pixels; without
+it the prefix adapts to the member/spectral work. No projection or 512² image is imposed.
+With no `--wavelength`, the scene spectrum is used. Supplying it explicitly selects a diagnostic
+spectrum, recorded as an override. An unfinished/partial report can still contain valid local
+actuals and candidates; empty arrays never establish physical absence. Multi-crystal chains are
+explicitly unsupported, but reflections within one crystal are allowed.
+
+`--target`, `--grid`, and `--warm` remain a separate, unchanged target-fiber workflow and cannot
+be combined with `--report`. The full definitions, limitations and version-1 migration are in
+[the report field reference](../raypath-cli-output.md#7-target-free-path-feature-report-schema-2).
 
 ## Further reading
 

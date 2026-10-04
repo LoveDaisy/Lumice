@@ -205,23 +205,28 @@ clean = [r for r in rows if r[0] != "other (not recorded)" and not repeats(r[0])
 
 ## 7. 从 CLI 读取路径特征报告
 
-GUI 的 Raypath Analysis 窗口按 ROI 对完整光路的能量排序；它目前**不会**显示路径特征报告，也不会把
-某个特征联动成预览中的可点击点。对于已支持的路径级诊断，请单独使用 CLI：
+GUI 分析列表仍按 ROI 排完整光路的能量，目前不显示新的路径特征文档，也不把记录联动为预览中的可点击点。
 
 ```bash
-build/cmake_install/static/Lumice raypath \
-  -f test/e2e/configs/raypath_feature_random_regular.json \
-  --crystal 1 --path 3-1-5 --report --events 8192
+Lumice raypath -f config.json --crystal 1 --path 3-1-5 --report --budget-ms 15000
 ```
 
-`--report` 没有天空 target：它输出一份独立 JSON，包含物理 L2 成员、请求波长、有限晶体 `A*T`
-亮度、有位置的特征、coverage 和 limitations。它不能与 `--target`、`--grid` 或 `--warm` 混用；需要
-某一点的 fiber 与逐位姿详情时，仍使用原有的 target 命令。
+schema 2 使用实际产品的 shape/取向/太阳盘/光谱、物理 L2 成员和同一份数值计算。输出分成
+`actual_features`、有物理条件依据的 `candidates` 与 `unfinished`，附位置或范围、源证据和预算。
+不再按固定光路名字选择公式。内部 TIR 条件不自动代表实际蓝边；色度条带是同一观察尺度下的两个水平，
+不是两个平滑尺度的位置包络。
 
-首批 detector 的范围刻意很小。固定正六棱柱例子会把已确认的太阳侧色散边、独立的焦散 candidate、
-已确认的反日 TIR 蓝带和“已评估但不可见”的 exit gate 分开写出。它不枚举全天特征、不卷积太阳盘、
-不判断一般定向 kink 曲线，也不发现 open/multiple component、锥晶空态或 rank-0 特征。必须读取
-`coverage` 与 `limitations`：空的 `features` 绝不是“该路径没有物理特征”的证明。
+这是配置光源下的条件光路诊断，不包含scene分配/filter权重或前级散射形成的入射场。
+
+默认数值时限 15 秒，`--budget-ms` 可显式给到两分钟；光学和场求值的工作上限分别记录。
+`--events` 控制外层样本，不是图像像素；省略时按成员与谱展开成本选择前缀。分析不绑定投影或 512² 图。
+不传 `--wavelength` 时使用场景真实光谱；传入则显式选择诊断谱，并在报告中标明覆盖。
+`partial` 文档可以包含独立可用的实际特征和候选；空数组不能证明物理上没有特征。
+多晶体链明确不支持，单晶体内部反射仍支持。
+
+`--target`、`--grid`、`--warm` 仍属未改变的目标点 fiber 流程，不能与 `--report` 混用。
+位置、观察量、尺度响应、源事件范围的精确定义，以及 schema 1 的迁移说明见
+[`../raypath-cli-output.md`](../raypath-cli-output.md) §7。
 
 ## 延伸阅读
 

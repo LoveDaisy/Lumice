@@ -295,110 +295,154 @@ if (doc.outcome === "discovered") {
 }
 ```
 
-## 7. Target-free path feature report
+## 7. Target-free path feature report (schema 2)
 
+```bash
+Lumice raypath -f <config> --crystal <id> --path <faces> --report \
+  --budget-ms 15000 --max-evaluations 4000000
 ```
-Lumice raypath -f <config> --crystal <id> --path <faces> --report [options]
-```
 
-This mode answers a different question from `--target`: what fixture-backed brightness features
-the selected path has under the configured crystal shape and orientation ensemble. It accepts no
-sky target, `--grid`, or `--warm`. `--events` is the even integration resolution in `[64, 1000000]`
-(default 8192), not a fiber seed count. With no `--wavelength`, the report uses the diagnostic
-endpoints whose refractive indices are 1.307 and 1.317; one explicit `--wavelength <nm>` replaces
-them. The C API accepts up to 32 wavelength/weight pairs.
-The synchronous report also rejects a request when physical-L2 members × wavelengths ×
-(fine samples + half-resolution coarse samples) would exceed 16,777,216 evaluations; rejection
-produces no partial report.
+This is a **single-crystal, target-free, bounded diagnostic**, not a second renderer and not a
+promise to enumerate every sky feature. Internal reflections are supported; a multi-crystal
+chain produces `outcome: "unsupported_multicrystal"` with zero evaluations, not a report on its
+first segment. A scene may contain several layers: the selected crystal's first occurrence is
+used, or the C request's `scene_layer_plus_one` selects a layer explicitly. A configured crystal
+that appears in no scattering entry may be inspected as a standalone object; its reported
+`scene_layer` is null and its identity says it is not a scene allocation.
 
-The public entry point is `LUMICE_AnalyzePathFeatureReport`, returning an immutable opaque
-`LUMICE_PathFeatureReport`. `LUMICE_PathFeatureReportToJson` has the same length-query/fetch and
-NUL-termination contract as `LUMICE_SinglePathResultToJson`. CLI and C callers therefore consume
-the same serialization.
+This is conditioned on the selected single-crystal path and the configured light source. It does
+not apply scene entry proportions, continuation probabilities, filters, other-path backgrounds,
+or illumination arriving from preceding scatterings. Selecting an entry in a later scene layer
+does not claim to solve that layer's full multiple-scattering illumination.
 
-### 7.1 Top-level shape
+The report uses the **actual product shape, correlations, orientation distribution, effective
+solar diameter and spectrum**, through the same pure transforms as simulation. It does not replace
+a finite sun with a point or a randomized shape with its mean. Physical L2 expansion is distinct
+from label P/B/D matching. The C request's `symmetry_bits_plus_one` explicitly selects P/B/D bits
+(or the single concrete path); zero retains the P|B|D default. There is no path-name or reference-shape detector dispatcher.
+
+With no `--wavelength`, discrete spectra are summed with their actual weights; a continuous
+illuminant uses full-band quadrature and a separate refinement check. `--wavelength <nm>` explicitly
+selects a diagnostic spectrum instead, labelled as such. The C API accepts up to 32 diagnostic
+wavelength/weight pairs; weights are charged once, not multiplied into the scene SPD again.
+
+`--events` is an even **outer draw** count in `[64, 1000000]`, not a pixel count or a fiber seed
+count. When omitted, a dyadic prefix up to 65536 is selected from the member/spectral expansion
+and optical work available for the main estimate, independent repeat and spectral refinement.
+The numerical defaults are 15000 ms, 4000000 optical evaluations and 250000000 weighted-component
+field evaluations. `--budget-ms` permits up to 120000 ms; `--max-evaluations` up to 16777216;
+`--max-field-evaluations` up to 1000000000. These bounds are checked inside numerical work, not
+only after it finishes. Bounded serialization follows the numerical deadline. Sampling is
+replayable, but which partial records fit a wall-clock deadline can vary across machines.
+
+### 7.1 One document and one owner
+
+`LUMICE_AnalyzePathFeatureReport` returns an immutable opaque result. CLI and C clients read the
+same `PathFeatureReportToJson` serialization. The v4.52 request suffix is read only when its
+complete group fits `struct_size`; the v4.51 prefix remains accepted with the new defaults.
+The JSON schema changes meaning and is therefore **version 2**, not an append to version 1.
+The target/fiber document and `--warm` contract in sections 1–6 are unchanged.
 
 | Key | Meaning |
 |---|---|
-| `schema`, `schema_version` | `"lumice.path-feature-report"`, version 1. This is not the target-fiber schema 1. |
-| `generator` | Lumice version and analytic-kernel API version. |
-| `conventions` | Member identity, brightness normalization, direction, and coverage wording carried with the document. |
-| `meta` | Nominal crystal scalars, requested face sequence, sun direction, orientation measure, and fine sample count. There is no target. |
-| `wavelengths[]` | `{nm, weight, refractive_index}` in request order. |
-| `physical_l2_members[]` | Concrete members admitted by the configured shape and orientation ensemble's physical P/B/D gating. This is never an L1/PBD label orbit. |
-| `features[]` | Positioned records supported by the detector matrix below. |
-| `coverage[]` | `{subject, status, reason}`; a non-success is stated rather than converted to an empty-feature claim. |
-| `limitations[]` | Stable non-claims that bound how the report may be interpreted. |
+| `schema`, `schema_version` | `lumice.path-feature-report`, 2 |
+| `outcome` | `completed`, `partial`, `unsupported_multicrystal`, or `no_related_feature` |
+| `scope` | Value-owned selected input, actual/diagnostic spectral scope, seed, scene/layer/crystal identity |
+| `support` | Pose coordinate count versus ZYZ support dimension, shape parameter count, source/spectral dimensions; unknown joint optical rank is null |
+| `physical_members` | Concrete physical-L2 face sequences; never an L1 label orbit |
+| `spectrum` | Actual nm, source weight, quadrature mass, refractive index and XYZ coefficient |
+| `actual_features` | Positive, locally supported numerical/physical records at their declared observation or source scope |
+| `candidates` | Verified conditional mechanism/source facts whose observed significance or full extent is unproved |
+| `unfinished` | Numerical feature records that did not establish the required evidence, retaining available diagnostics |
+| `unfinished_reasons`, `coverage` | Limits of the calculation; a bounded search is not global completeness |
+| `observation` | Kernel, bandwidth, local location target and search scope; no MC projection is imposed |
+| `budgets`, `timing` | Actual work, completed outer draws/repeat, exhaustion and per-stage seconds |
+| `sources` | Call-local tokens linking outer draw, member and spectral row; records also carry explicit source witnesses |
 
-Each member has its concrete `faces` and one row per wavelength. `brightness` contains the named
-orientation `measure`, coarse/fine sample counts, valid and positive sample counts, coarse/fine
-means of finite-crystal `A*T`, their absolute difference, and the wavelength-weighted fine mean.
-The area uses LI's `a=1` normalization. When a horizontal-family branch has one constant outgoing
-direction, the row also carries `fixed_outgoing_direction` and its maximum direction residual.
-Coarse/fine differences and boundary residuals are convergence evidence, not exact error bounds.
+An unsupported-chain document contains the requested path layers, empty evidence buckets, coverage
+and zero-work budgets, but no fabricated physical input/result payload.
 
-### 7.2 Positioned features and evidence
+A `partial` document can contain independently usable actuals and candidates. Conversely, an
+empty array does not prove absence. `no_related_feature` is currently issued for an exact zero
+spectral XYZ signal, not from an empty finite sample. Ordinary invalid arguments remain C errors
+and CLI errors, distinct from the structured unsupported-chain outcome.
 
-The initial detector matrix is intentionally narrow:
+### 7.2 What a position means
 
-- Random regular-prism `3-5`: the ordinary minimum-deviation dispersion edge, described as a
-  finite jump rather than a divergent Jacobian caustic.
-- Random regular-prism `3-1-5`: the solar-side ordinary dispersion edge; a separately labelled
-  caustic candidate; the confirmed antisolar internal-reflection TIR blue band; and the moving exit
-  gate recorded as assessed not visible. The TIR record compares the same boundary poses and
-  finite-crystal area with only internal reflectance removed, exposing both blue/red ratios.
-- The fixed rhombic-prism, 9°-sun, exact-horizontal `Rz(theta)` case: constant-direction branches
-  with positive finite-crystal support. A position records sky altitude/azimuth, relative solar
-  azimuth, and true spherical separation separately. Its two labels are ±120° in relative azimuth
-  while their spherical separation is about 117.599764°.
+Three quantities must not be conflated:
 
-`evidence_status` distinguishes `confirmed` from `candidate`; `visible` is present only when the
-detector has made that assessment. The report does not promote a label-orbit result to physical L2
-equivalence, does not use a direction residual as a theta-dependent integration mask, and does not
-treat internal TIR as a path-validity gate.
+1. **Physical/source position.** `physical_position` gives a locally corrected deviation minimum
+   of the actual direction map, its source, positive finite-crystal support and numerical
+   diagnostics. It is not the smoothed Y maximum and not a certificate of a global minimum.
+   A finite source or distributed shape can leave this a conditional candidate.
+2. **Fixed observation.** A peak, ridge or xy level set belongs to the recorded normalized vMF
+   kernel (`kappa = 1/h²`), field/component, level and local window. The default `h` is one degree,
+   and the local numerical location target is .05 degree; neither is an owner-defined universal
+   physical precision. Prefix and independent-repeat movements concern this same observation.
+3. **Scale response.** Changing `h` changes the observation. Its movement is reported separately,
+   never used as an integration error or an uncertainty-band endpoint. A failed scale solve does
+   not erase a valid fixed-observation result. Repeated estimates are evidence, not a rigorous
+   global confidence bound.
 
-### 7.3 Observed CLI example
+Geometry is `point`, `polyline`, `band` or `atom`, with unit world **viewing** directions (negative
+propagation). `field_points` retain the two-vector tangent basis, XYZ and two-dimensional xy jets,
+normal curvatures, ESS and solver correction. Jets are per steradian, with derivatives per radian
+and per radian squared. Field walks default to eight vertices; a point limit or observation mask
+is a numerical/window endpoint, not a physical source edge.
 
-This command is a runnable example against the checked-in fixed input:
+A chromatic `band` stores **two solved levels of the same xy field**, their boundary points and
+an explicit local-window definition. It is neither a natural unique “blue edge” nor a confidence
+interval. Larger requested windows need their own convergence evidence: the committed eight-point
+physical colour fixture fits its .05-degree local comparison budget including independent-reference
+refinement; this is not a certificate for arbitrary extensions or all inputs.
+
+A fixed shape/pose/point-source with discrete spectral support can produce positive `atom` records.
+Finite spread, a finite sun, a continuous spectral quadrature node, or a sampled zero Jacobian does
+not establish an atom. Two free ZYZ angles at a strict pole may describe one pose dimension;
+parameter counts and the joint optical-map rank are kept separate.
+
+### 7.3 Candidates, sources and endpoints
+
+- `conditional_internal_tir` retains the actual internal slot, reached-interface incidence,
+  discriminant, Fresnel factor and derivative availability. Every internal slot is eligible for
+  the bounded search; there is no privileged first slot. It does **not** assert an observed blue band.
+- `paired_interface` holds the original source geometry and actual spectrum fixed and removes
+  only the named slot's reflectance. Its XYZ/xy effect is conditional on that source and sums all
+  its exit directions; it is not the integrated sky-field effect or a unique-cause certificate.
+- `product_area_threshold`, `geometric_contact_bracket` and `optical_domain_gate` keep different
+  predicates. A source interval stores both endpoint poses/values and its width. The product
+  `A=0` can coexist with positive raw corridor area below epsilon. Original clip-edge slot/index
+  lineage comes from the existing clipper, not a second feasibility implementation.
+- `declared_source_boundary` and `declared_source_corner` concern explicit uniform/cap/product-CDF
+  coordinates with other draws fixed. They do not claim an outer sky boundary. Actual product CDF
+  endpoints can differ from ideal continuous-distribution endpoints; no idealized substitute is used.
+- `source_connected_feature` requires the same source identity and recorded numerical connector,
+  never sky proximity. A positive source witness is only one contributor to the aggregate field.
+  It is not a unique cause. Source tokens/feature ids are local to the document, not cross-run ids.
+
+A source-range geometry point is explicitly the **valid-side witness**, not an exact gate image.
+Unreached fields stay unavailable; a rejected optical side has no invented zero direction.
+Conditional SO(3)/body-incidence event continuation is enabled only on the established Haar chart;
+restricted source supports are not silently widened. Source walks have their own limit, separate
+from the observation-window limit. The calculation does not certify all components, all junctions,
+between-step absence of holes, or all weak features.
+
+### 7.4 Examples and migration
 
 ```bash
-build/cmake_install/static/Lumice raypath \
-  -f test/e2e/configs/raypath_feature_random_regular.json \
-  --crystal 1 --path 3-1-5 --report --events 8192
+# Actual scene spectrum, budget-aware prefix and partial results when necessary.
+Lumice raypath -f config.json --crystal 1 --path 3-1-5 --report
+# Explicit monochromatic diagnostic, not the scene SPD.
+Lumice raypath -f config.json --crystal 1 --path 3-5 --report --wavelength 550 --events 8192
+# Stop early, still serialize the available evidence rather than claiming absence.
+Lumice raypath -f config.json --crystal 1 --path 3-5 --report --budget-ms 1
 ```
 
-It writes one JSON document to stdout and progress to stderr. The stable parts
-of the observed document are shaped like this (numeric values shown are the
-fixed-input observation, not general constants):
-
-```json
-{
-  "schema": "lumice.path-feature-report",
-  "schema_version": 1,
-  "meta": {"requested_faces": [3, 1, 5], "sample_count": 8192},
-  "features": [
-    {"id": "random_regular.3-1-5.solar_dispersion_edge",
-     "evidence_status": "confirmed", "location": "solar side"},
-    {"id": "random_regular.3-1-5.solar_caustic_candidate",
-     "evidence_status": "candidate", "location": "solar side"},
-    {"id": "random_regular.3-1-5.antisolar_tir_blue_band",
-     "evidence_status": "confirmed", "visible": true},
-    {"id": "random_regular.3-1-5.exit_gate",
-     "evidence_status": "confirmed", "visible": false}
-  ]
-}
-```
-
-The full output also carries the physical-L2 member list, per-member and
-per-wavelength `A*T` brightness rows, `coverage`, and `limitations`. Scripts
-must consume those fields rather than infer unsupported coverage from the four
-feature ids alone.
-
-### 7.4 Coverage and limitations
-
-Coverage statuses are `supported`, `not_supported`, `not_detected_at_resolution`,
-`numerical_incomplete`, and `physically_unreachable`. Consumers must display the status and reason;
-an empty `features` array alone never means that no physical feature exists. Current limitations
-include general all-sky enumeration, arbitrary oriented kink curves, open/multiple components,
-cone-crystal empty results, rank-0 feature discovery, solar-disc convolution, and prominence
-relative to other paths.
+Version-1 `random_regular.*` ids, fixed red/blue endpoints, the formula detector matrix, unconditional
+visibility claims, per-member LI-normalized brightness rows and `evidence_status: confirmed` are
+removed. Read the three evidence buckets and their scope instead. Weighting now uses the product's
+`2A/S` times all interface factors and the actual spectral XYZ coefficient, not the old nominal
+`A*T` diagnostic convention. A reader requiring version 1 must reject version 2 rather than infer
+old meanings. Output still goes to stdout or atomically to `-o`; progress goes to stderr. Ctrl-C
+terminates the synchronous call without a completed JSON document and never replaces the output
+file with half a document. The GUI workspace is not added by this interface.
