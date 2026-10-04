@@ -30,5 +30,32 @@ int main(void) {
   int ok = rc == LUMICE_ANALYTIC_OK && eval.valid == 1 && eval.segment_count == 3 && length2 > 1.0 - 1e-12 &&
            length2 < 1.0 + 1e-12 && eval.fresnel_transmission > 0.0 && eval.fresnel_transmission < 1.0;
   LUMICE_ANALYTIC_ReleasePathEvaluation(&eval);
+  LUMICE_ANALYTIC_DiagnosticSource source = { 0 };
+  source.crystal = crystal;
+  source.refractive_index = 1.31;
+  source.token = 17;
+  for (int i = 0; i < 9; ++i) {
+    source.pose[i] = pose[i];
+  }
+  for (int i = 0; i < 3; ++i) {
+    source.incident[i] = incident[i];
+  }
+  LUMICE_ANALYTIC_DiagnosticResult diagnostics = { 0 };
+  diagnostics.struct_size = sizeof(diagnostics);
+  rc = LUMICE_ANALYTIC_EvaluateDiagnosticBatch(faces, 2, &source, 1, &diagnostics);
+  ok = ok && rc == LUMICE_ANALYTIC_OK && diagnostics.optical_count == 1 && diagnostics.optical[0].entry_available &&
+       diagnostics.optical[0].area > 0 && diagnostics.optical[0].direction_index_available &&
+       diagnostics.optical[0].source.token == 17;
+  LUMICE_ANALYTIC_ReleaseDiagnosticResult(&diagnostics);
+  LUMICE_ANALYTIC_ReleaseDiagnosticResult(&diagnostics);
+  LUMICE_ANALYTIC_WeightedSkySample sample = { 0 };
+  sample.direction[2] = 1;
+  sample.xyz_weight[0] = sample.xyz_weight[1] = sample.xyz_weight[2] = 1;
+  const double seed[3] = { 0, 0, 1 };
+  rc = LUMICE_ANALYTIC_TraceWeightedSkyField(&sample, 1, seed, 0, 0, .02, 1, 100, 1000, &diagnostics);
+  ok = ok && rc == LUMICE_ANALYTIC_OK && diagnostics.field_count == 1 && diagnostics.field[0].status == 0 &&
+       diagnostics.field[0].jets[6] > 0 && diagnostics.field[0].jets[9] < 0;
+  LUMICE_ANALYTIC_ReleaseDiagnosticResult(&diagnostics);
+  printf("LUMICE_ANALYTIC diagnostic numerics ok=%d\n", ok);
   return ok ? 0 : 1;
 }
