@@ -700,6 +700,8 @@ typedef struct LUMICE_ANALYTIC_DiagnosticResult {
   void* storage;
   size_t curve_point_count, source_event_count;
   const LUMICE_ANALYTIC_SourceEventRange* source_events;
+  // Optional complete suffix; zero availability means no field terminal status.
+  int field_terminal_available, field_terminal_status;
 } LUMICE_ANALYTIC_DiagnosticResult;
 LUMICE_ANALYTIC_API LUMICE_ANALYTIC_ErrorCode
 LUMICE_ANALYTIC_EvaluateDiagnosticBatch(const int* faces, int face_count, const LUMICE_ANALYTIC_DiagnosticSource* rows,

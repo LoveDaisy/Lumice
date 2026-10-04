@@ -221,6 +221,24 @@ TEST(DiagnosticCapi, OpticalBracketInterruptionRetainsPointsButNotAPhysicalEndpo
     return;
   }
   interrupted(complete_cost - 6);
+  if (HasFatalFailure()) {
+    return;
+  }
+  // The previously complete source-event suffix stays readable after growth.
+  constexpr size_t kEvents = offsetof(LUMICE_ANALYTIC_DiagnosticResult, field_terminal_available);
+  std::memset(&result, 0x6d, sizeof(result));
+  result.struct_size = kEvents;
+  ASSERT_EQ(LUMICE_ANALYTIC_TraceDiagnosticInterface(faces, 3, &source, 1, 1, 256, 4096, 5000, &result),
+            LUMICE_ANALYTIC_OK);
+  ASSERT_EQ(result.source_event_count, 1u);
+  EXPECT_EQ(result.curve_point_count, point_count);
+  EXPECT_LE(result.source_events[0].source_width_rad, 1e-7);
+  EXPECT_EQ(result.field_terminal_available, 0x6d6d6d6d);
+  EXPECT_EQ(result.field_terminal_status, 0x6d6d6d6d);
+  LUMICE_ANALYTIC_ReleaseDiagnosticResult(&result);
+  EXPECT_EQ(result.source_events, nullptr);
+  EXPECT_EQ(result.field_terminal_available, 0x6d6d6d6d);
+  EXPECT_EQ(result.field_terminal_status, 0x6d6d6d6d);
 }
 
 TEST(DiagnosticCapi, InterruptedDeviationReturnsOneConsistentIteration) {
@@ -265,4 +283,59 @@ TEST(DiagnosticCapi, InterruptedDeviationReturnsOneConsistentIteration) {
   LUMICE_ANALYTIC_ReleaseDiagnosticResult(&baseline);
 }
 
+TEST(DiagnosticCapi, FieldTerminalReasonIsSeparateFromConvergedGeometry) {
+  LUMICE_ANALYTIC_WeightedSkySample sample{};
+  sample.direction[2] = 1;
+  const double seed[]{ 0, 0, 1 };
+  const auto check = [&](int equation, int expected, uint64_t budget, const double* q) {
+    LUMICE_ANALYTIC_DiagnosticResult result{};
+    result.struct_size = sizeof(result);
+    ASSERT_EQ(LUMICE_ANALYTIC_TraceWeightedSkyField(&sample, 1, q, equation, .3, .02, 2, budget, 5000, &result),
+              LUMICE_ANALYTIC_OK);
+    EXPECT_EQ(result.field_terminal_available, 1);
+    EXPECT_EQ(result.field_terminal_status, expected);
+    EXPECT_EQ(result.field_count, expected == 0 ? 1u : 0u);
+    EXPECT_EQ(result.termination, expected == 0 ? 3 : expected == 5 ? 5 : 2);
+    LUMICE_ANALYTIC_ReleaseDiagnosticResult(&result);
+    EXPECT_EQ(result.field_terminal_available, 0);
+  };
+  check(0, 2, 1000, seed);  // Zero measure is no signal, not physical absence.
+  if (HasFatalFailure()) {
+    return;
+  }
+  check(2, 2, 1000, seed);  // The curve entry retains the same reason.
+  if (HasFatalFailure()) {
+    return;
+  }
+  std::fill_n(sample.xyz_weight, 3, 1);
+  check(2, 3, 1000, seed);  // Constant chromaticity has no level-set normal.
+  if (HasFatalFailure()) {
+    return;
+  }
+  check(0, 5, 0, seed);
+  if (HasFatalFailure()) {
+    return;
+  }
+  const double distant[]{ std::sin(.3), 0, std::cos(.3) };
+  // At most 32 corrections of .01 rad: this farther seed cannot reach the peak.
+  const double far_seed[]{ std::sin(1.), 0, std::cos(1.) };
+  check(0, 4, 1000, far_seed);
+  if (HasFatalFailure()) {
+    return;
+  }
+  check(0, 0, 1000, distant);
+  if (HasFatalFailure()) {
+    return;
+  }
+  LUMICE_ANALYTIC_DiagnosticResult partial{};
+  partial.struct_size = offsetof(LUMICE_ANALYTIC_DiagnosticResult, field_terminal_status);
+  partial.field_terminal_status = 0x6d6d6d6d;
+  ASSERT_EQ(LUMICE_ANALYTIC_TraceWeightedSkyField(&sample, 1, seed, 0, 0, .02, 2, 1000, 5000, &partial),
+            LUMICE_ANALYTIC_OK);
+  EXPECT_EQ(partial.field_count, 1u);
+  EXPECT_EQ(partial.field_terminal_available, 0);  // Never expose half a group.
+  EXPECT_EQ(partial.field_terminal_status, 0x6d6d6d6d);
+  LUMICE_ANALYTIC_ReleaseDiagnosticResult(&partial);
+  EXPECT_EQ(partial.field_terminal_status, 0x6d6d6d6d);
+}
 }  // namespace
