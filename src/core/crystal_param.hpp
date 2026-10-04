@@ -1,6 +1,7 @@
 #ifndef CORE_CRYSTAL_PARAM_H_
 #define CORE_CRYSTAL_PARAM_H_
 
+#include <array>
 #include <cstdint>
 
 #include "core/crystal_kind.hpp"
@@ -92,6 +93,12 @@ struct PyramidCrystalParam {
   float wedge_angle_u_ = 28.0f;
   float wedge_angle_l_ = 28.0f;  // Lower wedge angle (degrees)
 };
+
+// The authoritative slot mapping, also used by the shape draw planner. A null
+// slot is inapplicable; the pointers borrow only the supplied parameter.
+using ShapeScalarSlots = std::array<Distribution*, kShapeScalarCount>;
+ShapeScalarSlots GetShapeScalarSlots(PrismCrystalParam& p);
+ShapeScalarSlots GetShapeScalarSlots(PyramidCrystalParam& p);
 
 //! @brief Rewrite sync_group_ into its canonical form. Three rules, all required:
 //!   1. slots not applicable to this crystal type are zeroed;

@@ -610,6 +610,7 @@ set(lumice_core_src
   "${PROJ_SRC_DIR}/core/lat_lut.cpp"
   "${PROJ_SRC_DIR}/core/math.cpp"
   "${PROJ_SRC_DIR}/core/product_sample_transform.cpp"
+  "${PROJ_SRC_DIR}/core/shape_sample.cpp"
   "${PROJ_SRC_DIR}/core/miller_wedge.cpp"
   "${PROJ_SRC_DIR}/core/optics.cpp"
   "${PROJ_SRC_DIR}/core/parallel_rows.cpp"

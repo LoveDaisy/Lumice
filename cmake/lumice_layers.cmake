@@ -46,6 +46,8 @@ set(LUMICE_LAYER_foundation_FILES
   core/math.hpp
   core/product_sample_transform.cpp
   core/product_sample_transform.hpp
+  core/shape_sample.cpp
+  core/shape_sample.hpp
   core/miller_wedge.cpp
   core/miller_wedge.hpp
   core/optics.cpp

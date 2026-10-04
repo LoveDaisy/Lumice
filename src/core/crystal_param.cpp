@@ -6,8 +6,6 @@
 
 namespace lumice {
 
-namespace {
-
 // Which Distribution each ShapeScalar slot names on this crystal type, or nullptr
 // for a slot the type simply does not have. A prism has one height and six faces;
 // a pyramid has three stacked heights and six faces.
@@ -19,19 +17,19 @@ namespace {
 // to the C API. A previous revision kept a separate `kApplicable*` bool table for
 // canonicalization; the two encodings had nothing tying them together, so adding
 // a crystal type or moving a slot could silently desynchronize them.
-using ShapeScalarSlots = std::array<Distribution*, kShapeScalarCount>;
-
-ShapeScalarSlots PrismSlots(PrismCrystalParam& p) {
+ShapeScalarSlots GetShapeScalarSlots(PrismCrystalParam& p) {
   return {
     &p.h_, nullptr, nullptr, nullptr, &p.d_[0], &p.d_[1], &p.d_[2], &p.d_[3], &p.d_[4], &p.d_[5],
   };
 }
 
-ShapeScalarSlots PyramidSlots(PyramidCrystalParam& p) {
+ShapeScalarSlots GetShapeScalarSlots(PyramidCrystalParam& p) {
   return {
     nullptr, &p.h_pyr_u_, &p.h_prs_, &p.h_pyr_l_, &p.d_[0], &p.d_[1], &p.d_[2], &p.d_[3], &p.d_[4], &p.d_[5],
   };
 }
+
+namespace {
 
 // `slots` is read for its nullptr pattern only — never dereferenced — so this pass
 // works on exactly the same applicability fact NormalizeSyncGroupsImpl uses.
@@ -122,19 +120,19 @@ void NormalizeSyncGroupsImpl(const int sync_group[kShapeScalarCount], const Shap
 
 
 void CanonicalizeSyncGroups(PrismCrystalParam& p) {
-  CanonicalizeSyncGroupsImpl(p.sync_group_, PrismSlots(p));
+  CanonicalizeSyncGroupsImpl(p.sync_group_, GetShapeScalarSlots(p));
 }
 
 void CanonicalizeSyncGroups(PyramidCrystalParam& p) {
-  CanonicalizeSyncGroupsImpl(p.sync_group_, PyramidSlots(p));
+  CanonicalizeSyncGroupsImpl(p.sync_group_, GetShapeScalarSlots(p));
 }
 
 void NormalizeSyncGroups(PrismCrystalParam& p) {
-  NormalizeSyncGroupsImpl(p.sync_group_, PrismSlots(p));
+  NormalizeSyncGroupsImpl(p.sync_group_, GetShapeScalarSlots(p));
 }
 
 void NormalizeSyncGroups(PyramidCrystalParam& p) {
-  NormalizeSyncGroupsImpl(p.sync_group_, PyramidSlots(p));
+  NormalizeSyncGroupsImpl(p.sync_group_, GetShapeScalarSlots(p));
 }
 
 void PrepareSyncGroups(PrismCrystalParam& p) {
@@ -158,10 +156,10 @@ bool IsShapeScalarApplicable(CrystalKind kind, int slot) {
   // nothing outlives this call.
   if (kind == CrystalKind::kPrism) {
     PrismCrystalParam probe;
-    return PrismSlots(probe)[slot] != nullptr;
+    return GetShapeScalarSlots(probe)[slot] != nullptr;
   }
   PyramidCrystalParam probe;
-  return PyramidSlots(probe)[slot] != nullptr;
+  return GetShapeScalarSlots(probe)[slot] != nullptr;
 }
 
 }  // namespace lumice

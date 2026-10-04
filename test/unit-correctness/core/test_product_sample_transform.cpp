@@ -3,6 +3,7 @@
 #include "core/geo3d.hpp"
 #include "core/lat_lut.hpp"
 #include "core/product_sample_transform.hpp"
+#include "core/shape_sample.hpp"
 #include "core/shared/lat_path_selection.hpp"
 #include "gtest/gtest.h"
 
@@ -98,4 +99,60 @@ TEST(ProductSampleTransform, SphereAndFiniteCapKeepTwoDrawsEvenAtZeroRadius) {
   }
   EXPECT_EQ(production.GetUniform(), replay.GetUniform());
 }
+TEST(ProductShapeSample, LeaderRecordReplaysWithoutRngOrFollowerRescaling) {
+  ns::PrismCrystalParam p;
+  p.h_ = { ns::DistributionType::kUniform, -2.f, .5f };
+  for (auto& d : p.d_)
+    d = { ns::DistributionType::kUniform, 100.f, 12.f };
+  p.sync_group_[ns::kShapeScalarHeight] = 8;
+  p.sync_group_[ns::kShapeScalarFace0] = 8;
+  const auto plan = ns::BuildShapeDrawPlan(p);
+  ns::RandomNumberGenerator rng(764), production(764);
+  const auto values = ns::DrawShapeLeaders(rng, plan);
+  ns::ShapeSample sample;
+  ASSERT_EQ(ns::RealizeShape(plan, values, &sample), ns::ShapeSampleStatus::kOk);
+  EXPECT_EQ(values.size, 6u);
+  EXPECT_EQ(sample.raw[0], sample.raw[ns::kShapeScalarFace0]);
+  EXPECT_LT(sample.raw[0], 0.f);
+  EXPECT_EQ(sample.consumed[0], -sample.raw[0]);
+  EXPECT_EQ(sample.consumed[ns::kShapeScalarFace0], sample.raw[0]);
+  float distances[6];
+  EXPECT_EQ(ns::SamplePrismShapeScalars(production, p, distances), sample.consumed[0]);
+  for (int i = 0; i < 6; ++i)
+    EXPECT_EQ(distances[i], sample.consumed[ns::kShapeScalarFace0 + i]);
+  EXPECT_EQ(rng.GetUniform(), production.GetUniform());
+  auto bad = values;
+  bad.size--;
+  EXPECT_EQ(ns::RealizeShape(plan, bad, &sample), ns::ShapeSampleStatus::kMissingLeader);
+  bad = values;
+  bad.values[1] = bad.values[0];
+  EXPECT_EQ(ns::RealizeShape(plan, bad, &sample), ns::ShapeSampleStatus::kDuplicateLeader);
+  bad = values;
+  bad.values[0].slot = ns::kShapeScalarFace0;
+  EXPECT_EQ(ns::RealizeShape(plan, bad, &sample), ns::ShapeSampleStatus::kInvalidLeader);
+}
+
+TEST(ProductShapeSample, PyramidLeaderOrderAndCrossKindConsumption) {
+  ns::PyramidCrystalParam p;
+  p.h_pyr_u_ = { ns::DistributionType::kNoRandom, -.25f, 0.f };
+  p.h_prs_ = { ns::DistributionType::kNoRandom, 0.f, 0.f };
+  p.h_pyr_l_ = { ns::DistributionType::kNoRandom, .4f, 0.f };
+  for (auto& d : p.d_)
+    d = { ns::DistributionType::kNoRandom, 1.f, 0.f };
+  p.sync_group_[ns::kShapeScalarUpperH] = 9;
+  p.sync_group_[ns::kShapeScalarFace2] = 9;
+  ns::RandomNumberGenerator rng(43), ref(43);
+  const auto plan = ns::BuildShapeDrawPlan(p);
+  const auto values = ns::DrawShapeLeaders(rng, plan);
+  EXPECT_EQ(values.values[0].slot, ns::kShapeScalarUpperH);
+  EXPECT_EQ(values.values[1].slot, ns::kShapeScalarPrismH);
+  EXPECT_EQ(values.values[2].slot, ns::kShapeScalarLowerH);
+  ns::ShapeSample sample;
+  ASSERT_EQ(ns::RealizeShape(plan, values, &sample), ns::ShapeSampleStatus::kOk);
+  EXPECT_EQ(sample.consumed[ns::kShapeScalarUpperH], .25f);
+  EXPECT_EQ(sample.consumed[ns::kShapeScalarFace2], -.25f);
+  EXPECT_EQ(sample.consumed[ns::kShapeScalarPrismH], 0.f);
+  EXPECT_EQ(rng.GetUniform(), ref.GetUniform());
+}
+
 }  // namespace

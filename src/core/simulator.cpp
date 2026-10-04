@@ -32,6 +32,7 @@
 #include "core/lat_lut.hpp"
 #include "core/math.hpp"
 #include "core/optics.hpp"
+#include "core/shape_sample.hpp"
 #include "core/shared/lat_path_selection.hpp"
 #include "core/shared/pcg_shared.h"
 #include "core/trace_ops.hpp"
@@ -392,92 +393,6 @@ void InitRayOtherMs(RandomNumberGenerator& rng, const RayBuffer init_data[2], si
   }
 
   all_data.EmplaceBack(buffer_data[0]);
-}
-
-
-namespace {
-
-// One shape-scalar draw per sync group, per crystal instance.
-//
-// A slot declaring group 0 is independent and draws as it always did. A slot in
-// group g draws once — whichever slot reaches the group first, which by
-// construction is its lowest ShapeScalar index because both Sample*ShapeScalars
-// walk the slots in enum order — and every later member of g reuses that raw
-// value WITHOUT consuming the RNG. That is what keeps the no-sync case's RNG
-// stream byte-identical to the pre-sync-group behavior: with every group 0, the
-// cache is never touched and Draw() degenerates to rng_.Get().
-//
-// The cache holds the RAW draw, before the std::abs() that heights apply. A
-// group mixing a height with a face distance therefore shares one draw and the
-// height member folds it at its own use site. That asymmetry is the documented,
-// deliberate consequence of allowing cross-kind groups at all — the mechanism
-// does not forbid them, and validating dimensional commensurability would cost
-// a type table, an error path and docs to buy only "one odd but still-valid
-// state becomes inexpressible".
-class SyncGroupSampler {
- public:
-  explicit SyncGroupSampler(RandomNumberGenerator& rng) : rng_(rng) {}
-
-  float Draw(int group, const Distribution& dist) {
-    if (group == 0) {
-      return rng_.Get(dist);
-    }
-    for (int i = 0; i < cached_cnt_; i++) {
-      if (cached_group_[i] == group) {
-        return cached_value_[i];
-      }
-    }
-    const float value = rng_.Get(dist);
-    if (cached_cnt_ >= kShapeScalarCount) {
-      // Unreachable: each insert is a distinct group first seen at a distinct
-      // slot, and there are exactly kShapeScalarCount slots. Trapping rather
-      // than dropping the entry — a dropped entry would silently re-draw for a
-      // later member of the same group, i.e. break the group's whole contract.
-      FatalAbort("SyncGroupSampler cache overflow: %d groups over %d shape scalars", cached_cnt_, kShapeScalarCount);
-    }
-    cached_group_[cached_cnt_] = group;
-    cached_value_[cached_cnt_] = value;
-    cached_cnt_++;
-    return value;
-  }
-
- private:
-  RandomNumberGenerator& rng_;
-  int cached_group_[kShapeScalarCount]{};
-  float cached_value_[kShapeScalarCount]{};
-  int cached_cnt_ = 0;
-};
-
-}  // namespace
-
-
-// Heights are folded with std::abs — a negative height has no physical
-// interpretation independent of crystal orientation. face_distance is signed:
-// negative d shifts the plane past the origin, still yielding a valid convex
-// body as long as opposite-pair sums d_i + d_{i+3} > 0 (verified downstream by
-// Crystal::CreatePrism's Euler-manifold gate; degenerate combos are rejected as
-// zero-triangle Crystals rather than silently absolute-valued at the sampler
-// boundary, which was hiding an entire input path from the geometry pipeline).
-float SamplePrismShapeScalars(RandomNumberGenerator& rng, const PrismCrystalParam& p, float dist_out[6]) {
-  SyncGroupSampler sampler{ rng };
-  const float h = std::abs(sampler.Draw(p.sync_group_[kShapeScalarHeight], p.h_));
-  for (int i = 0; i < 6; i++) {
-    dist_out[i] = sampler.Draw(p.sync_group_[kShapeScalarFace0 + i], p.d_[i]);
-  }
-  return h;
-}
-
-
-// Same rationale as the prism branch: heights fold, face_distance is signed.
-void SamplePyramidShapeScalars(RandomNumberGenerator& rng, const PyramidCrystalParam& p, float& h1, float& h2,
-                               float& h3, float dist_out[6]) {
-  SyncGroupSampler sampler{ rng };
-  h1 = std::abs(sampler.Draw(p.sync_group_[kShapeScalarUpperH], p.h_pyr_u_));
-  h2 = std::abs(sampler.Draw(p.sync_group_[kShapeScalarPrismH], p.h_prs_));
-  h3 = std::abs(sampler.Draw(p.sync_group_[kShapeScalarLowerH], p.h_pyr_l_));
-  for (int i = 0; i < 6; i++) {
-    dist_out[i] = sampler.Draw(p.sync_group_[kShapeScalarFace0 + i], p.d_[i]);
-  }
 }
 
 
