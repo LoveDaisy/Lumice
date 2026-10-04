@@ -32,6 +32,7 @@
 #include "core/lat_lut.hpp"
 #include "core/math.hpp"
 #include "core/optics.hpp"
+#include "core/product_sample_transform.hpp"
 #include "core/shape_sample.hpp"
 #include "core/shared/lat_path_selection.hpp"
 #include "core/shared/pcg_shared.h"
@@ -263,7 +264,8 @@ Rotation BuildCrystalRotation(float azimuth_rad, float latitude_rad, float roll_
   // Chain reads inner-to-outer (Rotation::Chain left-multiplies):
   //   inner Rz(roll) -> middle Ry(latitude - pi/2) = Ry(-zenith) -> outer Rz(azimuth - pi).
   // Resulting matrix: R = Rz(azimuth - pi) * Ry(-zenith) * Rz(roll).
-  return Rotation(kEz, roll_rad).Chain(kEy, latitude_rad - math::kPi_2).Chain(kEz, azimuth_rad - math::kPi);
+  const auto angles = ProductRotationAngles(azimuth_rad, latitude_rad, roll_rad);
+  return Rotation(kEz, angles[0]).Chain(kEy, angles[1]).Chain(kEz, angles[2]);
 }
 
 

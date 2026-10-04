@@ -1,9 +1,18 @@
 #include "raypath/product_input_assembly.hpp"
 
+#include <algorithm>
 #include <cmath>
+#include <type_traits>
 
+#include "analytic/entry_measure.hpp"
+#include "analytic/so3.hpp"
 #include "core/color_util.hpp"
+#include "core/lat_lut.hpp"
 #include "core/optics.hpp"
+#include "core/shared/lat_path_selection.hpp"
+#include "core/shared/pcg_shared.h"
+#include "core/simulator.hpp"
+#include "core/trace_ops.hpp"
 #include "raypath/scene_to_analytic.hpp"
 #include "util/illuminant.hpp"
 
@@ -74,8 +83,11 @@ Error AssembleSampledSpectrum(const LightSourceConfig& light, const ProductWavel
     }
     weight = (*discrete)[*sample.discrete_slot].weight_;
   } else {
-    if (sample.discrete_slot || !InContinuousBand(sample.wavelength_nm)) {
-      return { ErrorCode::kInvalidArgument, "continuous product sample must lie in [380,780)" };
+    // The production float expression 380 + 400*u can round to 780 even
+    // when the stratifier returned the largest float strictly below one.
+    if (sample.discrete_slot || !std::isfinite(sample.wavelength_nm) || sample.wavelength_nm < 380.f ||
+        sample.wavelength_nm > 780.f) {
+      return { ErrorCode::kInvalidArgument, "continuous product sample must lie in the float-rounded [380,780] band" };
     }
     weight = GetIlluminantSpd(std::get<IlluminantType>(light.spectrum_), sample.wavelength_nm);
   }
@@ -138,6 +150,267 @@ Error AssembleSource(const SunParam& sun, const ProductSourceSample& sample, Ass
     v /= std::sqrt(norm);
   *out = std::move(result);
   return {};
+}
+
+Error CaptureProductInput(const SceneConfig& scene, const std::string& scene_identity,
+                          const std::vector<ProductLayerSelection>& selection, ProductInputSnapshot* out) {
+  *out = {};
+  if (scene_identity.empty() || selection.empty())
+    return { ErrorCode::kInvalidArgument, "empty scene identity or chain" };
+  ProductInputSnapshot snapshot;
+  snapshot.scene_identity = scene_identity;
+  snapshot.light = scene.light_source_;
+  for (size_t i = 0; i < selection.size(); ++i) {
+    const auto& layer = selection[i];
+    if (layer.layer_index != i || i >= scene.ms_.size()) {
+      return { ErrorCode::kInvalidArgument, "a chain must start at layer zero and use consecutive layers" };
+    }
+    const CrystalConfig* found = nullptr;
+    for (const auto& setting : scene.ms_[i].setting_) {
+      if (setting.crystal_.id_ != layer.crystal_id)
+        continue;
+      if (found)
+        return { ErrorCode::kInvalidArgument, "ambiguous crystal key within a layer" };
+      found = &setting.crystal_;
+    }
+    if (!found)
+      return { ErrorCode::kUnknownCrystalId, "crystal key absent from selected layer" };
+    snapshot.layers.push_back(
+        { scene_identity, i, *found, layer.representative, layer.symmetry_bits, SymmetrySemantics::kPhysical });
+  }
+  *out = std::move(snapshot);
+  return {};
+}
+
+namespace {
+
+bool ValidLatent(const Distribution& dist, DistributionLatentDraw draw) {
+  if (!std::isfinite(draw.value))
+    return false;
+  return dist.type == DistributionType::kNoRandom || dist.type == DistributionType::kGaussian ||
+         dist.type == DistributionType::kGaussianLegacy || UnitDraw(draw.value);
+}
+
+Error RealizeAxis(const AxisDistribution& axis, const ProductAxisDraw& draw, AssembledProductLayer* out) {
+  if (axis.IsFullSphereUniform()) {
+    const auto* full = std::get_if<FullSphereAxisDraw>(&draw);
+    if (!full || !UnitDraw(full->latitude_uniform) || !UnitDraw(full->longitude_uniform) ||
+        !ValidLatent(axis.roll_dist, full->roll)) {
+      return { ErrorCode::kInvalidArgument, "full-sphere axis requires latitude/longitude uniforms and roll draw" };
+    }
+    const auto point = TransformFullSpherePoint(full->latitude_uniform, full->longitude_uniform);
+    out->angles = { point[0], point[1], TransformDistribution(axis.roll_dist, full->roll) * math::kDegreeToRad };
+  } else {
+    const auto* general = std::get_if<DistributedAxisDraw>(&draw);
+    if (!general || !ValidLatent(axis.azimuth_dist, general->azimuth) || !ValidLatent(axis.roll_dist, general->roll)) {
+      return { ErrorCode::kInvalidArgument, "distributed axis requires explicit branch draws" };
+    }
+    LatitudeSample latitude;
+    const auto path = lat_path::SelectLatPath(axis);
+    if (path.kind == lat_path::LatPathKind::kLutInverseCdf) {
+      const auto* raw = std::get_if<LatitudeLutDraw>(&general->latitude);
+      if (!raw || !UnitDraw(raw->quantile) || !UnitDraw(raw->flip_uniform)) {
+        return { ErrorCode::kInvalidArgument, "latitude LUT requires CDF and flip uniforms" };
+      }
+      latitude = TransformLatitudeLut(*GetSharedLatLut(axis.latitude_dist), *raw);
+    } else {
+      const auto* raw = std::get_if<DistributionLatentDraw>(&general->latitude);
+      if (!raw || !ValidLatent(axis.latitude_dist, *raw))
+        return { ErrorCode::kInvalidArgument, "invalid latitude draw" };
+      const float value = TransformDistribution(axis.latitude_dist, *raw);
+      latitude = axis.latitude_dist.type == DistributionType::kGaussianLegacy ?
+                     TransformLegacyLatitude(value) :
+                     LatitudeSample{ value * math::kDegreeToRad, false };
+    }
+    out->angles = ComposeAxisAngles(latitude, TransformDistribution(axis.azimuth_dist, general->azimuth),
+                                    TransformDistribution(axis.roll_dist, general->roll));
+  }
+  for (float v : out->angles) {
+    if (!std::isfinite(v))
+      return { ErrorCode::kInvalidArgument, "non-finite realized axis" };
+  }
+  const auto& a = out->angles;
+  const auto rotation = BuildCrystalRotation(a[0], a[1], a[2]);
+  std::copy_n(rotation.GetMat(), 9, out->product_pose.begin());
+  // Same sampled angles and Euler convention as BuildCrystalRotation. Evaluate
+  // the elementary rotations in double rather than promoting a non-orthogonal
+  // float matrix into an API with a 1e-10 rotation tolerance.
+  const auto factors = ProductRotationAngles(a[0], a[1], a[2]);
+  const double inner[3]{ 0, 0, factors[0] };
+  const double middle[3]{ 0, factors[1], 0 };
+  const double outer[3]{ 0, 0, factors[2] };
+  double ri[9], rm[9], ro[9], temp[9];
+  analytic::so3::Exp(inner, ri);
+  analytic::so3::Exp(middle, rm);
+  analytic::so3::Exp(outer, ro);
+  analytic::so3::MatMul(rm, ri, temp);
+  analytic::so3::MatMul(ro, temp, out->analytic_pose.data());
+  return {};
+}
+
+Error RealizeLayer(const PhysicalMemberRequest& request, const ProductLayerSample& sample, AssembledProductLayer* out) {
+  if (sample.provenance.empty())
+    return { ErrorCode::kInvalidArgument, "layer sample provenance is required" };
+  auto error = ResolvePhysicalMemberScope(request, &out->scope);
+  if (!error.Ok())
+    return error;
+  out->sample = sample;
+  const auto plan = std::visit([](const auto& p) { return BuildShapeDrawPlan(p); }, request.crystal.param_);
+  const auto status = RealizeShape(plan, sample.shape, &out->shape_sample);
+  if (status != ShapeSampleStatus::kOk) {
+    return { ErrorCode::kInvalidArgument, "invalid shape leader record: " + std::to_string(static_cast<int>(status)) };
+  }
+  error = RealizeAxis(request.crystal.axis_, sample.axis, out);
+  if (!error.Ok())
+    return error;
+  const auto& v = out->shape_sample.consumed;
+  float distances[6];
+  std::copy_n(v.data() + kShapeScalarFace0, 6, distances);
+  for (int i = 0; i < 6; ++i)
+    out->shape.face_distance[i] = distances[i];
+  const Crystal actual = std::visit(
+      [&](const auto& p) {
+        const auto ensemble = DeriveGeometricSymmetry(p);
+        if constexpr (std::is_same_v<std::decay_t<decltype(p)>, PrismCrystalParam>) {
+          out->shape.kind = analytic::CrystalShapeKind::kPrism;
+          out->shape.height = v[kShapeScalarHeight];
+          return Crystal::CreatePrism(v[kShapeScalarHeight], distances, ensemble);
+        } else {
+          out->shape.kind = analytic::CrystalShapeKind::kPyramid;
+          out->shape.height = v[kShapeScalarPrismH];
+          out->shape.upper_h = v[kShapeScalarUpperH];
+          out->shape.lower_h = v[kShapeScalarLowerH];
+          out->shape.upper_wedge_deg = p.wedge_angle_u_;
+          out->shape.lower_wedge_deg = p.wedge_angle_l_;
+          return Crystal::CreatePyramid(p.wedge_angle_u_, p.wedge_angle_l_, v[kShapeScalarUpperH],
+                                        v[kShapeScalarPrismH], v[kShapeScalarLowerH], distances, ensemble);
+        }
+      },
+      request.crystal.param_);
+  const auto& geometry = actual.CfGeom();
+  std::vector<detail::EntrySubTri> triangles(detail::CountEntrySubTris(geometry));
+  detail::BuildEntrySubTris(geometry, triangles.data());
+  for (const auto& triangle : triangles)
+    out->surface_area += triangle.area;
+  out->geometry_status = analytic::BuildFaceNormals(out->shape, &out->normals, &out->polygons);
+  return {};
+}
+}  // namespace
+
+Error AssembleProductInput(const ProductInputSnapshot& snapshot, const std::vector<ProductLayerSample>& samples,
+                           const ProductSourceSample& source, const ProductSpectrumRequest& spectrum,
+                           ProductInput* out) {
+  *out = {};
+  if (snapshot.scene_identity.empty() || samples.empty() || samples.size() != snapshot.layers.size()) {
+    return { ErrorCode::kInvalidArgument, "one explicit sample is required for each snapshot layer" };
+  }
+  ProductInput result;
+  result.scene_identity = snapshot.scene_identity;
+  auto error = AssembleSource(snapshot.light.param_, source, &result.source);
+  if (!error.Ok())
+    return error;
+  error = std::visit(
+      [&](const auto& request) {
+        using T = std::decay_t<decltype(request)>;
+        if constexpr (std::is_same_v<T, DiscreteSpectrumSum>)
+          return AssembleDiscreteSpectrum(snapshot.light, &result.spectrum);
+        else if constexpr (std::is_same_v<T, ProductWavelengthSample>)
+          return AssembleSampledSpectrum(snapshot.light, request, &result.spectrum);
+        else
+          return AssembleSpectrumQuadrature(snapshot.light, request, &result.spectrum);
+      },
+      spectrum);
+  if (!error.Ok())
+    return error;
+  for (size_t i = 0; i < samples.size(); ++i) {
+    if (snapshot.layers[i].scene_identity != snapshot.scene_identity || snapshot.layers[i].layer_index != i) {
+      return { ErrorCode::kInvalidArgument, "layer does not belong to this scene/chain snapshot" };
+    }
+    AssembledProductLayer layer;
+    error = RealizeLayer(snapshot.layers[i], samples[i], &layer);
+    if (!error.Ok())
+      return error;
+    result.layers.push_back(std::move(layer));
+  }
+  *out = std::move(result);
+  return {};
+}
+
+Error EvaluateProductChain(const ProductInput& input, const std::vector<size_t>& members, size_t spectral_row,
+                           ProductChainEvaluation* out) {
+  *out = {};
+  if (members.empty() || members.size() != input.layers.size() || spectral_row >= input.spectrum.rows.size()) {
+    return { ErrorCode::kInvalidArgument, "invalid concrete member/spectrum selection" };
+  }
+  for (size_t i = 0; i < members.size(); ++i) {
+    if (members[i] >= input.layers[i].scope.members.size())
+      return { ErrorCode::kInvalidArgument, "member index out of range" };
+  }
+  const auto& spectrum = input.spectrum.rows[spectral_row];
+  auto direction = input.source.incident_direction;
+  double product = 1;
+  ProductChainEvaluation result;
+  for (size_t i = 0; i < members.size(); ++i) {
+    const auto& layer = input.layers[i];
+    const auto& faces = layer.scope.members[members[i]];
+    ProductLayerEvaluation evaluation;
+    evaluation.incident = direction;
+    if (layer.geometry_status != analytic::Status::kOk) {
+      result.layers.push_back(std::move(evaluation));
+      *out = std::move(result);
+      return {};
+    }
+    std::vector<int> slots(faces.size());
+    if (analytic::ResolveFaceSequence(layer.normals, faces.data(), static_cast<int>(faces.size()), slots.data()) !=
+        analytic::Status::kOk) {
+      evaluation.status = ProductContributionStatus::kMissingFace;
+      result.layers.push_back(std::move(evaluation));
+      *out = std::move(result);
+      return {};
+    }
+    std::vector<double> segments(3 * (faces.size() + 1));
+    evaluation.interface_transmittances.resize(faces.size());
+    analytic::PathOutputs optics{ {}, 0, segments.data(), evaluation.interface_transmittances.data() };
+    if (!analytic::EvaluatePath(layer.normals, slots.data(), static_cast<int>(slots.size()), spectrum.refractive_index,
+                                direction.data(), layer.analytic_pose.data(), &optics)) {
+      evaluation.status = ProductContributionStatus::kInvalidOptics;
+      result.layers.push_back(std::move(evaluation));
+      *out = std::move(result);
+      return {};
+    }
+    std::copy_n(optics.outgoing_direction, 3, evaluation.outgoing.begin());
+    evaluation.interface_product = optics.fresnel_transmission;
+    analytic::Corridor corridor(layer.normals, layer.polygons, slots.data(), static_cast<int>(slots.size()));
+    evaluation.entry_area = corridor.Evaluate(segments.data(), spectrum.refractive_index).value;
+    evaluation.entry_weight = lm_pcg::entry_weight(static_cast<float>(evaluation.entry_area), layer.surface_area);
+    evaluation.status =
+        evaluation.entry_weight > 0 ? ProductContributionStatus::kPositive : ProductContributionStatus::kZeroSupport;
+    product *= evaluation.entry_weight * evaluation.interface_product;
+    direction = evaluation.outgoing;
+    result.layers.push_back(std::move(evaluation));
+    if (product == 0)
+      break;
+  }
+  result.optical_weight = product;
+  for (int j = 0; j < 3; ++j)
+    result.xyz[j] = product * spectrum.coefficient[j];
+  *out = std::move(result);
+  return {};
+}
+
+bool NextProductMemberChain(const ProductInput& input, std::vector<size_t>* members) {
+  if (members->empty() || members->size() != input.layers.size())
+    return false;
+  for (size_t i = 0; i < members->size(); ++i) {
+    if ((*members)[i] >= input.layers[i].scope.members.size())
+      return false;
+  }
+  for (size_t i = members->size(); i-- > 0;) {
+    if (++(*members)[i] < input.layers[i].scope.members.size())
+      return true;
+    (*members)[i] = 0;
+  }
+  return false;
 }
 
 }  // namespace lumice::raypath

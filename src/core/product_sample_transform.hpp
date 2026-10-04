@@ -28,6 +28,8 @@ LatitudeSample TransformFullSphereLatitude(float unit_uniform);
 LatitudeSample TransformLatitudeLut(const LatLut& lut, LatitudeLutDraw draw);
 LatitudeSample TransformLegacyLatitude(float degrees);
 std::array<float, 3> ComposeAxisAngles(LatitudeSample latitude, float azimuth_deg, float roll_deg);
+// Inner-to-outer Euler factors: Rz(roll), Ry(latitude-pi/2), Rz(azimuth-pi).
+std::array<float, 3> ProductRotationAngles(float azimuth_rad, float latitude_rad, float roll_rad);
 // The production full-sphere fast path uses longitude in [0, 2*pi], not [-pi, pi].
 std::array<float, 2> TransformFullSpherePoint(float latitude_uniform, float longitude_uniform);
 

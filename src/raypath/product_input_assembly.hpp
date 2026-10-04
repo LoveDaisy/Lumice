@@ -8,6 +8,8 @@
 
 #include "config/light_config.hpp"
 #include "core/product_sample_transform.hpp"
+#include "core/shape_sample.hpp"
+#include "raypath/physical_member_scope.hpp"
 #include "raypath/single_path_analysis.hpp"
 
 namespace lumice::raypath {
@@ -65,6 +67,91 @@ struct AssembledSource {
   ProductSourceSample sample;
 };
 Error AssembleSource(const SunParam& sun, const ProductSourceSample& sample, AssembledSource* out);
+
+// Capture while the selected list and scene still refer to the same identity.
+// Only selected entries are copied; callers may destroy/edit the source scene.
+struct ProductLayerSelection {
+  size_t layer_index;
+  IdType crystal_id;
+  std::vector<int> representative;
+  uint8_t symmetry_bits;
+};
+struct ProductInputSnapshot {
+  std::string scene_identity;
+  LightSourceConfig light;
+  std::vector<PhysicalMemberRequest> layers;
+};
+Error CaptureProductInput(const SceneConfig& scene, const std::string& scene_identity,
+                          const std::vector<ProductLayerSelection>& selection, ProductInputSnapshot* out);
+
+struct FullSphereAxisDraw {
+  float latitude_uniform;
+  float longitude_uniform;
+  DistributionLatentDraw roll;
+};
+struct DistributedAxisDraw {
+  // The distribution draw is used only for fixed/degenerate and legacy paths.
+  // LUT paths require the two explicit CDF/flip uniforms instead.
+  std::variant<DistributionLatentDraw, LatitudeLutDraw> latitude;
+  DistributionLatentDraw azimuth;
+  DistributionLatentDraw roll;
+};
+using ProductAxisDraw = std::variant<FullSphereAxisDraw, DistributedAxisDraw>;
+struct ProductLayerSample {
+  ProductAxisDraw axis;
+  ShapeLeaderValues shape;
+  std::string provenance;
+};
+struct DiscreteSpectrumSum {};
+using ProductSpectrumRequest = std::variant<DiscreteSpectrumSum, ProductWavelengthSample, SpectrumQuadrature>;
+
+struct AssembledProductLayer {
+  PhysicalMemberScope scope;
+  ProductLayerSample sample;
+  ShapeSample shape_sample;
+  analytic::CrystalShape shape;
+  analytic::Status geometry_status = analytic::Status::kInvalidConfig;
+  analytic::FaceNormalTable normals;
+  analytic::FacePolygonTable polygons;
+  float surface_area = 0;
+  std::array<float, 3> angles{};
+  std::array<float, 9> product_pose{};
+  std::array<double, 9> analytic_pose{};
+};
+struct ProductInput {
+  std::string scene_identity;
+  AssembledSource source;
+  AssembledSpectrum spectrum;
+  std::vector<AssembledProductLayer> layers;
+};
+Error AssembleProductInput(const ProductInputSnapshot& snapshot, const std::vector<ProductLayerSample>& samples,
+                           const ProductSourceSample& source, const ProductSpectrumRequest& spectrum,
+                           ProductInput* out);
+
+enum class ProductContributionStatus { kPositive, kZeroSupport, kInvalidOptics, kMissingFace, kRejectedShape };
+struct ProductLayerEvaluation {
+  ProductContributionStatus status = ProductContributionStatus::kRejectedShape;
+  std::array<double, 3> incident{};
+  std::array<double, 3> outgoing{};
+  std::vector<double> interface_transmittances;
+  double entry_area = 0;
+  double entry_weight = 0;  // 2*A/S under the product's surface-area normalization
+  double interface_product = 0;
+};
+struct ProductChainEvaluation {
+  std::vector<ProductLayerEvaluation> layers;
+  double optical_weight = 0;
+  std::array<double, 3> xyz{};
+};
+// Evaluates ONE conditional chain, not a scene integral. Layer allocation,
+// continuation probabilities and filters remain the caller's scene policy.
+// Every layer consumes the preceding layer's real outgoing direction and the
+// SAME spectral row. Spectrum is charged once, after the optical product.
+Error EvaluateProductChain(const ProductInput& input, const std::vector<size_t>& members, size_t spectral_row,
+                           ProductChainEvaluation* out);
+// Start with one zero index per layer. Advances an odometer without allocating
+// a Cartesian product; false means exhausted (or a malformed cursor).
+bool NextProductMemberChain(const ProductInput& input, std::vector<size_t>* members);
 
 }  // namespace lumice::raypath
 #endif  // RAYPATH_PRODUCT_INPUT_ASSEMBLY_H_

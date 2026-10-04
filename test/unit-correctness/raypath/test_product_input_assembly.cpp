@@ -57,6 +57,16 @@ TEST(ProductInputSpectrum, ContinuousSampleDoesNotBecomeQuadratureOrConsumeRng) 
   EXPECT_EQ(rng.GetUniform(), reference.GetUniform());
 }
 
+TEST(ProductInputSpectrum, RoundedProductionUpperEndpointRemainsConsumable) {
+  ns::LightSourceConfig light{};
+  light.spectrum_ = ns::IlluminantType::kE;
+  const float unit = std::nextafter(1.f, 0.f);
+  const float wl = 380.f + 400.f * unit;
+  rp::AssembledSpectrum out;
+  ASSERT_TRUE(rp::AssembleSampledSpectrum(light, { wl, std::nullopt, "rounded host sample" }, &out).Ok());
+  EXPECT_EQ(out.rows[0].wavelength_nm, wl);
+}
+
 TEST(ProductInputSpectrum, QuadratureUsesProbabilityMassNotNanometers) {
   ns::LightSourceConfig light{};
   light.spectrum_ = ns::IlluminantType::kE;
