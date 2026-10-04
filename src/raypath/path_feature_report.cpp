@@ -99,7 +99,7 @@ Error AnalyzePathFeatureReport(const ConfigManager& config, const PathFeatureRep
   if (!error.Ok()) {
     return error;
   }
-  ILOG_INFO("[raypath report] product snapshot captured; resolving member/spectrum work");
+  ILOG_INFO(GetGlobalLogger(), "[raypath report] product snapshot captured; resolving member/spectrum work");
   ProductDiagnosticSampler sampler(snapshot, 1497, spectrum);
   ProductInput representative;
   error = sampler.Draw(0, &representative);
@@ -173,7 +173,7 @@ Error BuildProductPathReport(const SceneConfig& scene, const std::string& identi
     return error;
   }
   result.capture_seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - begin).count();
-  ILOG_INFO("[raypath report] assembling measure and bounded local/source discovery");
+  ILOG_INFO(GetGlobalLogger(), "[raypath report] assembling measure and bounded local/source discovery");
   error = DiscoverProductFeatures(sampler, options, &result.discovery);
   if (!error.Ok()) {
     return error;
@@ -182,7 +182,7 @@ Error BuildProductPathReport(const SceneConfig& scene, const std::string& identi
     // Refine the actual full-band measure, not a diagnostic RGB triple. Keep
     // the same outer draws, kernel and levels when measuring spectral movement.
     // Arbitrary external quadratures have no implicit refinement rule here.
-    ILOG_INFO("[raypath report] verifying continuous-spectrum quadrature");
+    ILOG_INFO(GetGlobalLogger(), "[raypath report] verifying continuous-spectrum quadrature");
     const auto spectral_start = std::chrono::steady_clock::now();
     const auto& base = std::get<SpectrumQuadrature>(spectrum);
     bool refinement_available = base.rule == "dyadic full-band trapezoid" && base.nodes.size() >= 3;
