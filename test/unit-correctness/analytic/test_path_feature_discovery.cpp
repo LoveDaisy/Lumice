@@ -248,6 +248,64 @@ TEST(PathFeatureField, OrbitSubdivisionDoesNotManufactureOuterEvidence) {
   EXPECT_EQ(out.outer_sample_count, 0u);
 }
 
+TEST(PathFeatureField, ContinuousPeakAndRidgeAreNumericalNotPhysicalClaims) {
+  const std::vector<WeightedSkySample> point{ { 0, { 0, 0, 1 }, { 1, 2, 3 } } };
+  FieldSolveOptions options{ FieldEquation::kLogYPeak, 0, .1, 1e-10, .05, 32 };
+  auto peak = CorrectSphericalField(point, { .1, 0, std::sqrt(.99) }, options, nullptr);
+  ASSERT_EQ(peak.status, FieldSolveStatus::kConverged);
+  EXPECT_NEAR(peak.query.direction[0], 0, 1e-10);
+  EXPECT_NEAR(peak.query.direction[2], 1, 1e-14);
+  EXPECT_LT(peak.log_y_curvatures[1], 0);
+  const std::vector<WeightedSkySample> ring{ { 0, { 1, 0, 0 }, { 1, 2, 3 }, std::array<double, 3>{ 0, 0, 1 }, 31 } };
+  options.equation = FieldEquation::kLogYRidge;
+  const auto ridge = CorrectSphericalField(ring, { std::sqrt(.99), 0, .1 }, options, nullptr);
+  ASSERT_EQ(ridge.status, FieldSolveStatus::kConverged);
+  EXPECT_NEAR(ridge.query.direction[2], 0, 1e-10);
+  EXPECT_LT(ridge.log_y_curvatures[0], -90);
+  EXPECT_NEAR(ridge.log_y_curvatures[1], 0, 1e-10);
+  // A single outer draw can yield a perfectly solved ring; that is not evidence
+  // of a converged physical integral or a positive-mass atom.
+  EXPECT_DOUBLE_EQ(ridge.field.effective_samples_y, 1);
+  options.max_iterations = 1;
+  const auto short_run = CorrectSphericalField(ring, { std::sqrt(.99), 0, .1 }, options, nullptr);
+  EXPECT_EQ(short_run.status, FieldSolveStatus::kIterationLimit);
+  EXPECT_GT(short_run.correction_rad, options.tolerance_rad);
+  EXPECT_NEAR(short_run.query.direction[2], .1, 1e-15);
+  EXPECT_EQ(CorrectSphericalField({}, { 1, 0, 0 }, options, nullptr).status, FieldSolveStatus::kNoSignal);
+}
+
+TEST(PathFeatureField, ContinuousChromaticityAndRealInnerBudgetStops) {
+  const double angle = .2;
+  const std::vector<WeightedSkySample> samples{ { 0, { std::sin(angle), 0, std::cos(angle) }, { 4, 2, 4 } },
+                                                { 1, { -std::sin(angle), 0, std::cos(angle) }, { 2, 4, 4 } } };
+  const FieldSolveOptions options{ FieldEquation::kChromaticityX, .3, .15, 1e-10, .05, 32 };
+  const auto root = CorrectSphericalField(samples, { .05, 0, std::sqrt(1 - .05 * .05) }, options, nullptr);
+  ASSERT_EQ(root.status, FieldSolveStatus::kConverged);
+  EXPECT_NEAR(root.query.direction[0], 0, 1e-10);
+  EXPECT_NEAR(root.field.xy[0].value, .3, 1e-10);
+  EXPECT_NEAR(root.field.xy[1].value, .3, 1e-10);
+  FieldWorkBudget budget;
+  budget.max_component_evaluations = 1;
+  const auto stopped = CorrectSphericalField(samples, { 0, 0, 1 }, options, &budget);
+  EXPECT_EQ(stopped.status, FieldSolveStatus::kBudgetExceeded);
+  EXPECT_TRUE(budget.exhausted);
+  EXPECT_EQ(budget.component_evaluations, 0u);
+  budget = {};
+  budget.max_component_evaluations = 1000;
+  budget.deadline = std::chrono::steady_clock::now();
+  SphericalFieldValue out;
+  EXPECT_FALSE(EvaluateSphericalField(samples, Query(), &out, &budget));
+  EXPECT_TRUE(budget.exhausted);
+  EXPECT_EQ(budget.component_evaluations, 0u);
+  budget = {};
+  budget.max_component_evaluations = 512;
+  const std::vector<WeightedSkySample> many(2048, samples.front());
+  EXPECT_FALSE(EvaluateSphericalField(many, Query(), &out, &budget));
+  EXPECT_TRUE(budget.exhausted);
+  EXPECT_EQ(budget.component_evaluations, 512u);
+  EXPECT_DOUBLE_EQ(out.xyz[1].value, 0);
+}
+
 TEST(PathFeatureField, IndependentPhysicalCloudFixture) {
   std::ifstream in(std::string(LUMICE_DIAGNOSTIC_FIXTURE_DIR) + "/weighted-sky.json");
   ASSERT_TRUE(in.is_open());

@@ -146,8 +146,18 @@ struct EffectiveCount {
 
 }  // namespace
 
+bool FieldWorkBudget::Consume(uint64_t count) {
+  if (exhausted || count > max_component_evaluations - std::min(component_evaluations, max_component_evaluations) ||
+      std::chrono::steady_clock::now() >= deadline) {
+    exhausted = true;
+    return false;
+  }
+  component_evaluations += count;
+  return true;
+}
+
 bool EvaluateSphericalField(const std::vector<WeightedSkySample>& samples, const SphericalFieldQuery& query,
-                            SphericalFieldValue* out) {
+                            SphericalFieldValue* out, FieldWorkBudget* budget) {
   if (!out) {
     return false;
   }
@@ -170,7 +180,12 @@ bool EvaluateSphericalField(const std::vector<WeightedSkySample>& samples, const
   EffectiveCount effective;
   uint64_t current_index = 0;
   double group_y = 0;
+  size_t processed = 0;
   for (const auto& sample : samples) {
+    if (budget && processed % 256 == 0 && !budget->Consume(std::min<size_t>(256, samples.size() - processed))) {
+      return false;
+    }
+    ++processed;
     if (sample.sample_index < current_index || !ValidateUnitVector(sample.direction.data()) ||
         (sample.uniform_orbit_axis && !ValidateUnitVector(sample.uniform_orbit_axis->data())) ||
         !std::all_of(sample.xyz_weight.begin(), sample.xyz_weight.end(),
@@ -223,6 +238,108 @@ bool EvaluateSphericalField(const std::vector<WeightedSkySample>& samples, const
   }
   *out = result;
   return true;
+}
+
+FieldStationaryPoint CorrectSphericalField(const std::vector<WeightedSkySample>& samples,
+                                           const std::array<double, 3>& seed, const FieldSolveOptions& options,
+                                           FieldWorkBudget* budget) {
+  FieldStationaryPoint result;
+  if (!ValidateUnitVector(seed.data()) || !(options.bandwidth_rad > 0) || !std::isfinite(options.bandwidth_rad) ||
+      !(options.tolerance_rad > 0) || !std::isfinite(options.tolerance_rad) || !(options.max_step_rad > 0) ||
+      !std::isfinite(options.max_step_rad) || options.max_step_rad >= kPi || options.max_iterations <= 0 ||
+      !std::isfinite(options.level)) {
+    return result;
+  }
+  auto q = seed;
+  for (int it = 0; it < options.max_iterations; ++it) {
+    result.query.direction = q;
+    result.query.bandwidth_rad = options.bandwidth_rad;
+    double basis[2][3];
+    so3::TangentBasis(q.data(), basis);
+    for (int i = 0; i < 2; ++i) {
+      std::copy_n(basis[i], 3, result.query.basis[i].begin());
+    }
+    result.iterations = it + 1;
+    if (!EvaluateSphericalField(samples, result.query, &result.field, budget)) {
+      result.status = budget && budget->exhausted ? FieldSolveStatus::kBudgetExceeded : FieldSolveStatus::kInvalidInput;
+      return result;
+    }
+    const auto& y = result.field.xyz[1];
+    if (!(y.value > 0)) {
+      result.status = FieldSolveStatus::kNoSignal;
+      return result;
+    }
+    const double g0 = y.gradient[0] / y.value;
+    const double g1 = y.gradient[1] / y.value;
+    const double h00 = y.hessian[0] / y.value - g0 * g0;
+    const double h01 = y.hessian[1] / y.value - g0 * g1;
+    const double h11 = y.hessian[2] / y.value - g1 * g1;
+    const double angle = .5 * std::atan2(2 * h01, h00 - h11);
+    result.normal = { -std::sin(angle), std::cos(angle) };
+    const double mid = .5 * (h00 + h11);
+    const double radius = std::hypot(.5 * (h00 - h11), h01);
+    result.log_y_curvatures = { mid - radius, mid + radius };
+    std::array<double, 2> delta{};
+    switch (options.equation) {
+      case FieldEquation::kLogYPeak: {
+        const double det = h00 * h11 - h01 * h01;
+        if (!(result.log_y_curvatures[1] < 0) || !(det > 0)) {
+          result.status = FieldSolveStatus::kDegenerate;
+          return result;
+        }
+        delta = { (-h11 * g0 + h01 * g1) / det, (h01 * g0 - h00 * g1) / det };
+        break;
+      }
+      case FieldEquation::kLogYRidge: {
+        if (!(result.log_y_curvatures[0] < 0) || !(radius > 0)) {
+          result.status = FieldSolveStatus::kDegenerate;
+          return result;
+        }
+        const double step = -(g0 * result.normal[0] + g1 * result.normal[1]) / result.log_y_curvatures[0];
+        delta = { step * result.normal[0], step * result.normal[1] };
+        break;
+      }
+      case FieldEquation::kChromaticityX:
+      case FieldEquation::kChromaticityY: {
+        const auto& jet = result.field.xy[options.equation == FieldEquation::kChromaticityX ? 0 : 1];
+        const double norm = std::hypot(jet.gradient[0], jet.gradient[1]);
+        if (!(norm > 0) || !result.field.chromaticity_available) {
+          result.status = FieldSolveStatus::kDegenerate;
+          return result;
+        }
+        result.normal = { jet.gradient[0] / norm, jet.gradient[1] / norm };
+        const double step = -(jet.value - options.level) / norm;
+        delta = { step * result.normal[0], step * result.normal[1] };
+        break;
+      }
+      default:
+        return result;
+    }
+    const double step = std::hypot(delta[0], delta[1]);
+    result.correction_rad = step;
+    if (!std::isfinite(step)) {
+      result.status = FieldSolveStatus::kDegenerate;
+      return result;
+    }
+    if (step <= options.tolerance_rad) {
+      result.status = FieldSolveStatus::kConverged;
+      return result;
+    }
+    const double advance = std::min(step, options.max_step_rad);
+    for (int j = 0; j < 3; ++j) {
+      const double tangent = (delta[0] * basis[0][j] + delta[1] * basis[1][j]) / step;
+      q[j] = std::cos(advance) * result.query.direction[j] + std::sin(advance) * tangent;
+    }
+    const double length = so3::Norm3(q.data());
+    for (auto& x : q) {
+      x /= length;
+    }
+    result.travelled_rad += advance;
+  }
+  // The published query/jet is the last EVALUATED point, not an unevaluated
+  // Newton proposal; an iteration-limited point is never marked converged.
+  result.status = FieldSolveStatus::kIterationLimit;
+  return result;
 }
 
 }  // namespace lumice::analytic

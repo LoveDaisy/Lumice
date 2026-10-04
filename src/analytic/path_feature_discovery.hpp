@@ -2,6 +2,7 @@
 #define LUMICE_ANALYTIC_PATH_FEATURE_DISCOVERY_HPP_
 
 #include <array>
+#include <chrono>
 #include <cstdint>
 #include <optional>
 #include <vector>
@@ -46,6 +47,42 @@ struct SphericalFieldValue {
   bool chromaticity_available = false;
 };
 
+struct FieldWorkBudget {
+  uint64_t max_component_evaluations = 0;
+  uint64_t component_evaluations = 0;
+  std::chrono::steady_clock::time_point deadline = std::chrono::steady_clock::time_point::max();
+  bool exhausted = false;
+  bool Consume(uint64_t count);
+};
+
+enum class FieldEquation { kLogYPeak, kLogYRidge, kChromaticityX, kChromaticityY };
+enum class FieldSolveStatus { kConverged, kInvalidInput, kNoSignal, kDegenerate, kIterationLimit, kBudgetExceeded };
+struct FieldSolveOptions {
+  FieldEquation equation = FieldEquation::kLogYRidge;
+  double level = 0;
+  double bandwidth_rad = 0;
+  double tolerance_rad = 1e-8;
+  double max_step_rad = 0;
+  int max_iterations = 32;
+};
+struct FieldStationaryPoint {
+  FieldSolveStatus status = FieldSolveStatus::kInvalidInput;
+  SphericalFieldQuery query;
+  SphericalFieldValue field;
+  std::array<double, 2> normal{};
+  std::array<double, 2> log_y_curvatures{};
+  double correction_rad = 0;
+  double travelled_rad = 0;
+  int iterations = 0;
+};
+
+// Local numerical correction only. Converged says the declared equation was
+// solved on THIS measure, not that an actual physical feature was discovered.
+// No product strength, morphology, sample sufficiency or stability thresholds.
+FieldStationaryPoint CorrectSphericalField(const std::vector<WeightedSkySample>& samples,
+                                           const std::array<double, 3>& seed, const FieldSolveOptions& options,
+                                           FieldWorkBudget* budget);
+
 // Normalized vMF convolution with kappa = 1 / bandwidth_rad^2. No angular
 // truncation or projection; no product classification or convergence claim.
 // Uniform orbits are integrated analytically, not expanded into optical rows.
@@ -53,7 +90,7 @@ struct SphericalFieldValue {
 // An empty measure is a valid zero field, NOT proof of physically absent support.
 // Invalid input or non-finite output returns false and clears the entire result.
 bool EvaluateSphericalField(const std::vector<WeightedSkySample>& samples, const SphericalFieldQuery& query,
-                            SphericalFieldValue* out);
+                            SphericalFieldValue* out, FieldWorkBudget* budget = nullptr);
 
 }  // namespace lumice::analytic
 
