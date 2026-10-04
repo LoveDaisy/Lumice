@@ -53,7 +53,10 @@ TEST(ProductInputSpectrum, ContinuousSampleDoesNotBecomeQuadratureOrConsumeRng) 
   ASSERT_TRUE(rp::AssembleSampledSpectrum(light, { wl, std::nullopt, "host batch 0" }, &out).Ok());
   EXPECT_FALSE(out.quadrature.has_value());
   EXPECT_EQ(out.rows.front().measure_mass, 1);
-  EXPECT_EQ(out.rows.front().source_weight, ns::GetIlluminantSpd(ns::IlluminantType::kD65, wl));
+  // Call the product owner, not its compiler-specialized constant-illuminant
+  // clone (GCC IPO can round that clone differently from the runtime call).
+  float (*volatile reference_spd)(ns::IlluminantType, float) = &ns::GetIlluminantSpd;
+  EXPECT_EQ(out.rows.front().source_weight, reference_spd(ns::IlluminantType::kD65, wl));
   EXPECT_EQ(rng.GetUniform(), reference.GetUniform());
 }
 
