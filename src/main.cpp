@@ -418,16 +418,15 @@ void PrintRaypathUsage(const char* prog_name, std::ostream& output = std::cout) 
          << "component's poses with per-pose detail (orientation angles, where the sun sits in\n"
          << "the crystal, transmittances, entry area), and the path's deviation over the whole\n"
          << "sun-direction sphere. With --report it instead produces a target-free physical-L2\n"
-         << "member/wavelength brightness and positioned-feature report with explicit coverage.\n"
+         << "actual/candidate/unfinished geometry with explicit product-source and spectral scope.\n"
          << "`analyze` lists the raypaths that light the sky; `raypath` is what you ask about one\n"
-         << "of them. The crystal is taken at its nominal shape (the\n"
-         << "centre of every shape distribution) and the sun as a point; both are recorded in\n"
-         << "the output's meta block. Deterministic: the same inputs give the same output.\n"
+         << "of them. Target mode uses the nominal crystal and point sun. Report mode instead\n"
+         << "uses the actual shape/pose/source/spectrum measure, including the solar disc.\n"
          << "\n"
-         << "Output: one JSON document (schema_version 1; fields in doc/raypath-cli-output.md)\n"
-         << "to stdout, or to -o <path> instead (never both). Progress goes to stderr: one line\n"
-         << "when the analysis starts and one when it ends. Unlike `analyze`, the analysis\n"
-         << "cannot be interrupted part-way and has no partial result: Ctrl-C ends the process\n"
+         << "Output: one JSON document (target schema 1; report schema 2; doc/raypath-cli-output.md)\n"
+         << "to stdout, or to -o <path> instead (never both). Progress goes to stderr. Target\n"
+         << "mode logs start/end; report mode also logs its stages and can retain partial results\n"
+         << "at its numerical budget; target mode has no partial result. Ctrl-C ends the process\n"
          << "and writes nothing. With -o the file is written to <path>.tmp and renamed over\n"
          << "<path>, so <path> is never half a file; an interrupted run may leave the .tmp.\n"
          << "\n"
@@ -441,14 +440,17 @@ void PrintRaypathUsage(const char* prog_name, std::ostream& output = std::cout) 
          << "                     The sky point (required unless --report), as altitude and azimuth in degrees\n"
          << "                     — azimuth measured as the sun's is, the same convention as\n"
          << "                     `analyze --center`.\n"
-         << "  --report           Produce the separate target-free path feature report (schema 1).\n"
+         << "  --report           Produce the separate target-free path feature report (schema 2).\n"
          << "                     It does not accept --target, --grid or --warm.\n"
          << "  --wavelength <nm>  The wavelength, in [350, 900]. Target mode defaults to the\n"
          << "                     config's single wavelength or 550; report mode without this\n"
-         << "                     option uses its documented red/blue diagnostic endpoints.\n"
+         << "                     option uses the actual scene spectrum.\n"
          << "  --events <N>       Target mode: SO(3) seed events (default 1M; max 100M). Report\n"
-         << "                     mode: even integration samples (default 8192; range 64..1M).\n"
+         << "                     mode: even outer samples (auto <=65536; range 64..1M).\n"
          << "                     An optional K/M suffix is accepted in either mode.\n"
+         << "  --budget-ms <N>    Report-only numerical deadline (default 15000; max 120000).\n"
+         << "  --max-evaluations <N>  Report-only optical work cap (default 4000000).\n"
+         << "  --max-field-evaluations <N>  Report-only weighted-component work cap (default 250000000).\n"
          << "  --grid <rows>      Latitude rows of the sun-direction grid (longitude twice that),\n"
          << "                     in [0, " << kRaypathMaxGridRows << "]; 0 leaves the grid out. Default: 90.\n"
          << "  --warm <file>      An earlier output of this subcommand: its component seeds start\n"
@@ -1223,6 +1225,9 @@ struct RaypathOptions {
   bool feature_report = false;
   std::optional<double> wavelength_nm;  // nullopt = the engine's choice (recorded in the output)
   int events = 0;                       // 0 = the engine's default
+  int report_budget_ms = 0;
+  uint64_t report_max_evaluations = 0;
+  uint64_t report_max_field_evaluations = 0;
   int grid_rows = 90;
   bool grid_given = false;
   std::filesystem::path warm_path;    // empty = no warm start
@@ -1947,7 +1952,8 @@ int ParseRaypathOptions(int argc, char** argv, int first, RaypathOptions& opts) 
       }
     }
     const bool takes_value = arg == "--crystal" || arg == "--path" || arg == "--target" || arg == "--wavelength" ||
-                             arg == "--events" || arg == "--grid" || arg == "--warm" || arg == "-o";
+                             arg == "--events" || arg == "--grid" || arg == "--warm" || arg == "-o" ||
+                             arg == "--budget-ms" || arg == "--max-evaluations" || arg == "--max-field-evaluations";
     if (takes_value && i + 1 >= argc) {
       std::cerr << "Error: " << arg << " requires an argument\n\n";
       print_error_usage();
@@ -2014,6 +2020,24 @@ int ParseRaypathOptions(int argc, char** argv, int first, RaypathOptions& opts) 
         return 1;
       }
       opts.events = static_cast<int>(*events);
+    } else if (arg == "--budget-ms" || arg == "--max-evaluations" || arg == "--max-field-evaluations") {
+      const std::string_view value = argv[++i];
+      const auto budget = ParseStrictUnsigned(value);
+      const uint64_t maximum = arg == "--budget-ms"       ? 120000 :
+                               arg == "--max-evaluations" ? LUMICE_PATH_FEATURE_REPORT_MAX_SAMPLE_EVALUATIONS :
+                                                            1000000000;
+      if (!budget || *budget == 0 || *budget > maximum) {
+        std::cerr << "Error: " << arg << " requires an integer in [1, " << maximum << "]\n\n";
+        print_error_usage();
+        return 1;
+      }
+      if (arg == "--budget-ms") {
+        opts.report_budget_ms = static_cast<int>(*budget);
+      } else if (arg == "--max-evaluations") {
+        opts.report_max_evaluations = *budget;
+      } else {
+        opts.report_max_field_evaluations = *budget;
+      }
     } else if (arg == "--grid") {
       const std::string_view value = argv[++i];
       const auto rows = ParseStrictUnsigned(value);
@@ -2065,6 +2089,12 @@ int ParseRaypathOptions(int argc, char** argv, int first, RaypathOptions& opts) 
       print_error_usage();
       return 1;
     }
+  }
+  if (!opts.feature_report &&
+      (opts.report_budget_ms || opts.report_max_evaluations || opts.report_max_field_evaluations)) {
+    std::cerr << "Error: --budget-ms and evaluation limits require --report\n\n";
+    print_error_usage();
+    return 1;
   }
   if (opts.feature_report && opts.target_alt_deg.has_value()) {
     std::cerr << "Error: --report does not accept --target; use one mode or the other\n\n";
@@ -2669,9 +2699,14 @@ int RunRaypath(const RaypathOptions& opts) {
     request.wavelengths_nm = opts.wavelength_nm.has_value() ? &wavelength : nullptr;
     request.wavelength_count = opts.wavelength_nm.has_value() ? 1 : 0;
     request.sample_count = opts.events;
+    request.budget_ms = opts.report_budget_ms;
+    request.max_optical_evaluations = opts.report_max_evaluations;
+    request.max_field_evaluations = opts.report_max_field_evaluations;
 
     std::cerr << "[raypath report] crystal " << *opts.crystal_id << ", path " << opts.path_text << ": "
-              << (opts.events > 0 ? opts.events : 8192) << " integration samples\n";
+              << (opts.events > 0 ? std::to_string(opts.events) : "auto (up to 65536)")
+              << " outer samples; capture/assemble/discover, "
+              << (opts.report_budget_ms > 0 ? opts.report_budget_ms : 15000) << " ms numerical budget\n";
     const auto start = std::chrono::steady_clock::now();
     LUMICE_PathFeatureReport* raw_report = nullptr;
     char err_buf[1024] = {};

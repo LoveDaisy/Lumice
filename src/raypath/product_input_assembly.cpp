@@ -164,6 +164,34 @@ Error AssembleSource(const SunParam& sun, const ProductSourceSample& sample, Ass
   return {};
 }
 
+ProductSupportDescription DescribeProductSupport(const ProductInputSnapshot& snapshot) {
+  ProductSupportDescription result;
+  result.source_direction_dimension = snapshot.light.param_.diameter_ > 0 ? 2 : 0;
+  result.spectral_dimension = std::holds_alternative<IlluminantType>(snapshot.light.spectrum_) ? 1 : 0;
+  const auto varying = [](const Distribution& distribution) {
+    return BuildDistributionDrawPlan(distribution).uniform_count != 0;
+  };
+  for (const auto& layer : snapshot.layers) {
+    const auto& axis = layer.crystal.axis_;
+    const bool latitude = varying(axis.latitude_dist), azimuth = varying(axis.azimuth_dist),
+               roll = varying(axis.roll_dist);
+    result.pose_coordinate_count += latitude + azimuth + roll;
+    const double folded = std::remainder(static_cast<double>(axis.latitude_dist.center), 180.0);
+    const bool strict_pole = !latitude && (folded == 90 || folded == -90);
+    result.pose_support_dimension += axis.IsFullSphereUniform() ? 3 :
+                                     strict_pole                ? static_cast<int>(azimuth || roll) :
+                                                                  latitude + azimuth + roll;
+    const auto plan =
+        std::visit([](const auto& parameter) { return BuildShapeDrawPlan(parameter); }, layer.crystal.param_);
+    for (int slot = 0; slot < kShapeScalarCount; ++slot) {
+      if (plan[slot].applicable && plan[slot].leader_slot == slot && varying(plan[slot].distribution)) {
+        ++result.shape_parameter_dimension;
+      }
+    }
+  }
+  return result;
+}
+
 Error CaptureProductInput(const SceneConfig& scene, const std::string& scene_identity,
                           const std::vector<ProductLayerSelection>& selection, ProductInputSnapshot* out) {
   *out = {};
@@ -397,6 +425,7 @@ Error EvaluateProductChain(const ProductInput& input, const std::vector<size_t>&
     std::vector<double> segments(3 * (faces.size() + 1));
     evaluation.interface_transmittances.resize(faces.size());
     analytic::PathOutputs optics{ {}, 0, segments.data(), evaluation.interface_transmittances.data() };
+    ++result.optical_evaluations;
     if (!analytic::EvaluatePath(layer.normals, slots.data(), static_cast<int>(slots.size()), spectrum.refractive_index,
                                 direction.data(), layer.analytic_pose.data(), &optics)) {
       evaluation.status = ProductContributionStatus::kInvalidOptics;

@@ -669,7 +669,7 @@ typedef struct LUMICE_ANALYTIC_DiagnosticOptics {
   double outgoing[3], area, raw_area, area_threshold, interface_product;
   double direction_pose_jacobian[9], direction_index_derivative[3], direction_index_error;
   int direction_pose_available, direction_index_available, interface_count;
-  LUMICE_ANALYTIC_DiagnosticInterface interfaces[64];
+  const LUMICE_ANALYTIC_DiagnosticInterface* interfaces;  // interface_count immutable rows
   size_t corridor_vertex_count;
   const double* corridor_vertices;  // packed xy; one original slot/edge pair per outgoing edge
   const int* corridor_edge_sources;
@@ -686,7 +686,7 @@ typedef struct LUMICE_ANALYTIC_SkyFieldPoint {
   double effective_samples_y, correction_rad, log_y_curvatures[2];
 } LUMICE_ANALYTIC_SkyFieldPoint;
 typedef struct LUMICE_ANALYTIC_SourceEventRange {
-  int kind;  // 1 = raw_area > area_threshold; 2 = raw_area > 0 (not an exact-contact certificate)
+  int kind;  // 1 = area threshold; 2 = raw geometric contact bracket; 3 = optical validity gate
   size_t positive_index, nonpositive_index;  // indices in optical
   double source_width_rad;
 } LUMICE_ANALYTIC_SourceEventRange;

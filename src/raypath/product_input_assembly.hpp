@@ -2,6 +2,7 @@
 #define RAYPATH_PRODUCT_INPUT_ASSEMBLY_H_
 
 #include <array>
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <vector>
@@ -83,6 +84,15 @@ struct ProductInputSnapshot {
   LightSourceConfig light;
   std::vector<PhysicalMemberRequest> layers;
 };
+struct ProductSupportDescription {
+  int pose_coordinate_count = 0;
+  int pose_support_dimension = 0;     // ZYZ quotient, not the optical map rank
+  int shape_parameter_dimension = 0;  // not a rank of realized polyhedra
+  int source_direction_dimension = 0;
+  int spectral_dimension = 0;
+};
+ProductSupportDescription DescribeProductSupport(const ProductInputSnapshot& snapshot);
+
 Error CaptureProductInput(const SceneConfig& scene, const std::string& scene_identity,
                           const std::vector<ProductLayerSelection>& selection, ProductInputSnapshot* out);
 
@@ -153,6 +163,7 @@ struct ProductLayerEvaluation {
   double interface_product = 0;
 };
 struct ProductChainEvaluation {
+  uint64_t optical_evaluations = 0;
   std::vector<ProductLayerEvaluation> layers;
   double optical_weight = 0;
   std::array<double, 3> xyz{};

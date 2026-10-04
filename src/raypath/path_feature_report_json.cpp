@@ -2,187 +2,19 @@
 
 #include <cmath>
 #include <nlohmann/json.hpp>
-
 namespace lumice::raypath {
-
 namespace {
-
 nlohmann::ordered_json Num(double value) {
   return std::isfinite(value) ? nlohmann::ordered_json(value) : nlohmann::ordered_json(nullptr);
 }
-
 nlohmann::ordered_json Array(const double* values, int count) {
   nlohmann::ordered_json out = nlohmann::ordered_json::array();
-  for (int i = 0; i < count; i++) {
+  for (int i = 0; i < count; ++i) {
     out.push_back(Num(values[i]));
   }
   return out;
 }
-
-const char* DistributionName(DistributionType type) {
-  switch (type) {
-    case DistributionType::kNoRandom:
-      return "fixed";
-    case DistributionType::kUniform:
-      return "uniform";
-    case DistributionType::kGaussian:
-      return "gauss";
-    case DistributionType::kZigzag:
-      return "zigzag";
-    case DistributionType::kLaplacian:
-      return "laplacian";
-    case DistributionType::kGaussianLegacy:
-      return "gauss_legacy";
-  }
-  return "unknown";
-}
-
-nlohmann::ordered_json WavelengthJson(const ReportWavelength& wavelength) {
-  return {
-    { "nm", Num(wavelength.wavelength_nm) },
-    { "weight", Num(wavelength.weight) },
-    { "refractive_index", Num(wavelength.refractive_index) },
-  };
-}
-
-nlohmann::ordered_json BrightnessJson(const BrightnessEstimate& brightness) {
-  nlohmann::ordered_json out = {
-    { "status", CoverageStatusName(brightness.status) },
-    { "measure", brightness.measure },
-    { "coarse_sample_count", brightness.coarse_sample_count },
-    { "fine_sample_count", brightness.fine_sample_count },
-    { "fine_valid_count", brightness.fine_valid_count },
-    { "fine_positive_count", brightness.fine_positive_count },
-    { "coarse_mean_A_times_T", Num(brightness.coarse_mean_at) },
-    { "fine_mean_A_times_T", Num(brightness.fine_mean_at) },
-    { "absolute_difference", Num(brightness.absolute_difference) },
-    { "weighted_mean_A_times_T", Num(brightness.weighted_mean_at) },
-  };
-  if (!brightness.reason.empty()) {
-    out["reason"] = brightness.reason;
-  }
-  if (brightness.has_fixed_direction) {
-    out["fixed_outgoing_direction"] = Array(brightness.fixed_direction, 3);
-    out["direction_residual_max_rad"] = Num(brightness.direction_residual_max);
-  }
-  return out;
-}
-
-nlohmann::ordered_json PositionJson(const FeaturePosition& position) {
-  nlohmann::ordered_json out = {
-    { "wavelength_nm", Num(position.wavelength_nm) },
-    { "refractive_index", Num(position.refractive_index) },
-  };
-  if (position.deviation_deg.has_value()) {
-    out["deviation_deg"] = Num(*position.deviation_deg);
-  }
-  if (position.altitude_deg.has_value()) {
-    out["altitude_deg"] = Num(*position.altitude_deg);
-  }
-  if (position.azimuth_deg.has_value()) {
-    out["azimuth_deg"] = Num(*position.azimuth_deg);
-  }
-  if (position.relative_solar_azimuth_deg.has_value()) {
-    out["relative_solar_azimuth_deg"] = Num(*position.relative_solar_azimuth_deg);
-  }
-  if (position.spherical_separation_deg.has_value()) {
-    out["spherical_separation_deg"] = Num(*position.spherical_separation_deg);
-  }
-  return out;
-}
-
-nlohmann::ordered_json FeatureJson(const PathFeature& feature) {
-  nlohmann::ordered_json positions = nlohmann::ordered_json::array();
-  for (const FeaturePosition& position : feature.positions) {
-    positions.push_back(PositionJson(position));
-  }
-  nlohmann::ordered_json metrics = nlohmann::ordered_json::object();
-  for (const FeatureMetric& metric : feature.metrics) {
-    metrics[metric.name] = Num(metric.value);
-  }
-  nlohmann::ordered_json out = {
-    { "id", feature.id },
-    { "kind", feature.kind },
-    { "evidence_status", feature.evidence_status },
-    { "mechanism", feature.mechanism },
-    { "location", feature.location },
-    { "interpretation", feature.interpretation },
-    { "positions", positions },
-    { "metrics", metrics },
-  };
-  if (feature.visible.has_value()) {
-    out["visible"] = *feature.visible;
-  }
-  return out;
-}
-
 }  // namespace
-
-std::string PathFeatureReportToJson(const PathFeatureReport& result, const char* lumice_version) {
-  nlohmann::ordered_json shape = nlohmann::ordered_json::array();
-  for (const NominalShapeScalar& scalar : result.meta.shape) {
-    shape.push_back({ { "name", scalar.name },
-                      { "value", Num(scalar.value) },
-                      { "distribution", DistributionName(scalar.distribution) },
-                      { "spread", Num(scalar.spread) } });
-  }
-  nlohmann::ordered_json wavelengths = nlohmann::ordered_json::array();
-  for (const ReportWavelength& wavelength : result.wavelengths) {
-    wavelengths.push_back(WavelengthJson(wavelength));
-  }
-  nlohmann::ordered_json members = nlohmann::ordered_json::array();
-  for (const PhysicalMemberReport& member : result.members) {
-    nlohmann::ordered_json member_wavelengths = nlohmann::ordered_json::array();
-    for (const MemberWavelengthReport& row : member.wavelengths) {
-      member_wavelengths.push_back(
-          { { "wavelength", WavelengthJson(row.wavelength) }, { "brightness", BrightnessJson(row.brightness) } });
-    }
-    members.push_back({ { "faces", member.faces }, { "wavelengths", member_wavelengths } });
-  }
-  nlohmann::ordered_json features = nlohmann::ordered_json::array();
-  for (const PathFeature& feature : result.features) {
-    features.push_back(FeatureJson(feature));
-  }
-  nlohmann::ordered_json coverage = nlohmann::ordered_json::array();
-  for (const CoverageItem& item : result.coverage) {
-    coverage.push_back(
-        { { "subject", item.subject }, { "status", CoverageStatusName(item.status) }, { "reason", item.reason } });
-  }
-  nlohmann::ordered_json document = {
-    { "schema", "lumice.path-feature-report" },
-    { "schema_version", result.meta.schema_version },
-    { "generator", { { "lumice", lumice_version }, { "analytic_api_version", result.meta.analytic_api_version } } },
-    { "conventions",
-      { { "member_semantics",
-          "physical L2 expansion under the configured shape and orientation ensemble; never an L1/PBD label orbit" },
-        { "brightness", "mean finite-crystal A*T in LI's a=1 area normalisation, under the named orientation measure" },
-        { "directions",
-          "world propagation directions; a sky point is altitude asin(-z), with azimuth measured as the sun's" },
-        { "coverage",
-          "unsupported, unresolved, not detected at a stated resolution and physically unreachable are distinct "
-          "states" } } },
-    { "meta",
-      { { "crystal",
-          { { "id", result.meta.crystal_id },
-            { "kind", result.meta.crystal_kind },
-            { "shape", shape },
-            { "shape_is_nominal", result.meta.shape_is_nominal } } },
-        { "requested_faces", result.meta.requested_faces },
-        { "sun",
-          { { "altitude_deg", Num(result.meta.sun_altitude_deg) },
-            { "azimuth_deg", Num(result.meta.sun_azimuth_deg) },
-            { "incident_direction", Array(result.meta.incident_direction, 3) } } },
-        { "orientation_measure", result.meta.orientation_measure },
-        { "sample_count", result.meta.sample_count } } },
-    { "wavelengths", wavelengths },
-    { "physical_l2_members", members },
-    { "features", features },
-    { "coverage", coverage },
-    { "limitations", result.limitations },
-  };
-  return document.dump();
-}
-
 namespace {
 using Json = nlohmann::ordered_json;
 
@@ -200,7 +32,7 @@ const char* EvidenceName(DiagnosticEvidence evidence) {
 const char* GeometryName(DiagnosticGeometry geometry) {
   switch (geometry) {
     case DiagnosticGeometry::kBand:
-      return "field_value_band";
+      return "band";
     case DiagnosticGeometry::kPoint:
       return "point";
     case DiagnosticGeometry::kPolyline:
@@ -208,7 +40,7 @@ const char* GeometryName(DiagnosticGeometry geometry) {
     case DiagnosticGeometry::kAtom:
       return "atom";
     case DiagnosticGeometry::kSourceRange:
-      return "source_event_range";
+      return "point";
   }
   return "point";
 }
@@ -300,9 +132,9 @@ Json InterfacePointJson(const analytic::InterfaceStationaryPoint& point) {
            { "accepted_source_poses", point.accepted_poses } };
 }
 Json BracketJson(const analytic::InterfaceEventBracket& bracket) {
-  return { { "predicate", bracket.kind == analytic::InterfaceWalkStop::kGeometricContact ?
-                              "raw_area > 0" :
-                              "raw_area > area_threshold" },
+  return { { "predicate", bracket.kind == analytic::InterfaceWalkStop::kGeometricContact ? "raw_area > 0" :
+                          bracket.kind == analytic::InterfaceWalkStop::kOpticalGate      ? "optical_domain_valid" :
+                                                                                           "raw_area > area_threshold" },
            { "positive", InterfacePointJson(bracket.positive) },
            { "nonpositive", InterfacePointJson(bracket.nonpositive) },
            { "source_width_rad", Num(bracket.source_width_rad) } };
@@ -333,11 +165,30 @@ Json FieldPointJson(const analytic::FieldStationaryPoint& point) {
 }
 }  // namespace
 
-std::string ProductPathReportToJson(const ProductPathReport& result, const char* lumice_version) {
+std::string PathFeatureReportToJson(const PathFeatureReport& result, const char* lumice_version) {
+  if (result.unsupported_multicrystal) {
+    return Json{
+      { "schema", "lumice.path-feature-report" },
+      { "schema_version", 2 },
+      { "outcome", "unsupported_multicrystal" },
+      { "requested_path_layers", result.requested_path_layers },
+      { "actual_features", Json::array() },
+      { "candidates", Json::array() },
+      { "unfinished", Json::array() },
+      { "coverage",
+        { { { "subject", "multi-crystal chain" },
+            { "status", "not_supported" },
+            { "reason",
+              "single-crystal internal reflections are supported, but this multi-crystal request was not "
+              "evaluated" } } } },
+      { "budgets", { { "optical_evaluations", 0 }, { "field_component_evaluations", 0 } } }
+    }.dump();
+  }
+
   Json document = {
     { "schema", "lumice.path-feature-report" },
     { "schema_version", 2 },
-    { "internal_provisional", true },
+
     { "generator", { { "lumice", lumice_version }, { "analytic_api_version", analytic::kApiVersion } } },
     { "scope",
       { { "scene_identity", result.snapshot.scene_identity },
@@ -354,13 +205,24 @@ std::string ProductPathReportToJson(const ProductPathReport& result, const char*
           "fixed-observation prefix movement, solver correction and scale response are different quantities; none is a "
           "global error certificate" } } }
   };
+  const auto support = DescribeProductSupport(result.snapshot);
+  document["support"] = { { "pose_coordinate_count", support.pose_coordinate_count },
+                          { "pose_support_dimension", support.pose_support_dimension },
+                          { "shape_parameter_dimension", support.shape_parameter_dimension },
+                          { "source_direction_dimension", support.source_direction_dimension },
+                          { "spectral_dimension", support.spectral_dimension },
+                          { "joint_optical_rank", nullptr },
+                          { "rank_scope",
+                            "conditional pose Jacobians are not the joint map rank; shape parameter count is not "
+                            "geometric image dimension" } };
   document["scope"]["light"] = nlohmann::json(result.snapshot.light);
   document["scope"]["layers"] = Json::array();
   for (const auto& layer : result.snapshot.layers) {
-    document["scope"]["layers"].push_back({ { "scene_layer", layer.layer_index },
-                                            { "crystal", nlohmann::json(layer.crystal) },
-                                            { "representative_faces", layer.representative },
-                                            { "symmetry_bits", layer.symmetry_bits } });
+    document["scope"]["layers"].push_back(
+        { { "scene_layer", result.standalone_crystal ? Json(nullptr) : Json(layer.layer_index) },
+          { "crystal", nlohmann::json(layer.crystal) },
+          { "representative_faces", layer.representative },
+          { "symmetry_bits", layer.symmetry_bits } });
   }
   document["physical_members"] = result.representative_input.layers[0].scope.members;
   document["spectrum"] = Json::array();
@@ -373,7 +235,9 @@ std::string ProductPathReportToJson(const ProductPathReport& result, const char*
                                      { "provenance", row.provenance } });
   }
   const auto& discovery = result.discovery;
-  document["budget"] = {
+  document["requested_outer_samples"] = result.requested_outer_samples;
+  document["budget_ms"] = result.budget_ms;
+  document["budgets"] = {
     { "requested_outer_samples", result.options.sampling.requested_samples },
     { "completed_outer_samples", discovery.measure.completed_samples },
     { "replicate_samples", discovery.replicate_samples },
@@ -385,11 +249,11 @@ std::string ProductPathReportToJson(const ProductPathReport& result, const char*
     { "field_component_evaluations", discovery.field_component_evaluations + result.spectral_field_evaluations },
     { "exhausted", discovery.budget_exhausted }
   };
-  document["timing_seconds"] = { { "spectral_verification", Num(result.spectral_seconds) },
-                                 { "capture", Num(result.capture_seconds) },
-                                 { "assembly", Num(discovery.assembly_seconds) },
-                                 { "source_events_and_edge_observations", Num(discovery.event_seconds) },
-                                 { "field_discovery", Num(discovery.field_seconds) } };
+  document["timing"] = { { "spectral_verification", Num(result.spectral_seconds) },
+                         { "capture", Num(result.capture_seconds) },
+                         { "assembly", Num(discovery.assembly_seconds) },
+                         { "source_events_and_edge_observations", Num(discovery.event_seconds) },
+                         { "field_discovery", Num(discovery.field_seconds) } };
   document["observation"] = { { "kernel", "normalized_vMF" },
                               { "bandwidth_rad", Num(result.options.bandwidth_rad) },
                               { "location_resolution_rad", Num(result.options.location_resolution_rad) },
@@ -400,7 +264,9 @@ std::string ProductPathReportToJson(const ProductPathReport& result, const char*
     { "field_component_evaluations", result.spectral_field_evaluations },
     { "movement_rad", result.spectral_movement_rad ? Num(*result.spectral_movement_rad) : Json(nullptr) }
   };
-  document["features"] = Json::array();
+  document["actual_features"] = Json::array();
+  document["candidates"] = Json::array();
+  document["unfinished"] = Json::array();
   document["sources"] = Json::object();
   for (size_t index = 0; index < discovery.features.size(); ++index) {
     const auto& feature = discovery.features[index];
@@ -480,6 +346,28 @@ std::string ProductPathReportToJson(const ProductPathReport& result, const char*
     if (feature.source_event) {
       item["source_event"] = BracketJson(*feature.source_event);
     }
+    if (feature.boundary_source && feature.boundary_value) {
+      item["declared_source_event"] = {
+        { "coordinates", feature.source_parameters },
+        { "source", SourceJson(*feature.boundary_source) },
+        { "value", OpticalJson(*feature.boundary_value) },
+        { "coordinate_units",
+          "normalized uniform latent endpoints; physical transforms belong to the recorded product model" }
+      };
+    }
+    if (feature.paired_interface) {
+      const auto& paired = *feature.paired_interface;
+      item["paired_interface"] = { { "slot", feature.internal_slot },
+                                   { "complete", paired.complete },
+                                   { "scope",
+                                     "original positive source witness at fixed shape/pose/incident/member, actual "
+                                     "spectrum; all exit directions, not the integrated sky field or a unique cause" },
+                                   { "actual_XYZ", paired.actual_xyz },
+                                   { "without_slot_XYZ", paired.without_slot_xyz } };
+      if (paired.chromaticity_available) {
+        item["paired_interface"]["xy_difference"] = paired.xy_difference;
+      }
+    }
     if (feature.interface_event) {
       item["internal_slot"] = feature.internal_slot;
       item["interface_event"] = InterfacePointJson(*feature.interface_event);
@@ -515,10 +403,30 @@ std::string ProductPathReportToJson(const ProductPathReport& result, const char*
     if (feature.geometry == DiagnosticGeometry::kAtom) {
       item["XYZ_mass"] = feature.atom_xyz_mass;
     }
-    document["features"].push_back(std::move(item));
+    if (feature.source_event) {
+      item["geometry"]["point_scope"] = "valid-side witness of the source interval, not an exact gate image";
+      if (!feature.sky_points.empty()) {
+        item["geometry"]["sky_points"] = Json::array({ feature.sky_points.front() });
+      }
+    }
+    const char* bucket = feature.evidence == DiagnosticEvidence::kActual    ? "actual_features" :
+                         feature.evidence == DiagnosticEvidence::kCandidate ? "candidates" :
+                                                                              "unfinished";
+    document[bucket].push_back(std::move(item));
   }
-  document["unfinished"] = discovery.unfinished;
-  document["outcome"] = discovery.budget_exhausted || !discovery.unfinished.empty() ? "unfinished" : "completed";
+  document["unfinished_reasons"] = discovery.unfinished;
+  document["coverage"] = {
+    { { "subject", "actual product input and physical L2" },
+      { "status", "supported" },
+      { "reason", "one selected crystal chain; actual distribution/shape/source/spectrum assembly" } },
+    { { "subject", "bounded local discovery" },
+      { "status", discovery.budget_exhausted ? "numerical_incomplete" : "supported" },
+      { "reason",
+        "only the recorded local windows and source seeds; no all-sky or source-topology completeness claim" } }
+  };
+  document["outcome"] = result.no_related_signal                                    ? "no_related_feature" :
+                        discovery.budget_exhausted || !discovery.unfinished.empty() ? "partial" :
+                                                                                      "completed";
   return document.dump();
 }
 

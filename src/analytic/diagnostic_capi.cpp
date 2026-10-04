@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstddef>
 #include <cstring>
 #include <memory>
@@ -14,6 +15,7 @@ namespace a = lumice::analytic;
 struct Storage {
   std::vector<LUMICE_ANALYTIC_DiagnosticOptics> optical;
   std::vector<LUMICE_ANALYTIC_SkyFieldPoint> field;
+  std::vector<std::vector<LUMICE_ANALYTIC_DiagnosticInterface>> interfaces;
   std::vector<LUMICE_ANALYTIC_SourceEventRange> events;
   std::vector<std::vector<double>> vertices;
   std::vector<std::vector<int>> edges;
@@ -66,9 +68,11 @@ LUMICE_ANALYTIC_DiagnosticOptics Optics(const a::DiagnosticInputRow& source, con
   result.direction_pose_available = value.direction_jacobian_available;
   result.direction_index_available = value.direction_index_available;
   result.interface_count = static_cast<int>(value.interfaces.size());
+  storage->interfaces.emplace_back(value.interfaces.size());
+  result.interfaces = storage->interfaces.back().data();
   for (size_t j = 0; j < value.interfaces.size(); ++j) {
     const auto& from = value.interfaces[j];
-    auto& to = result.interfaces[j];
+    auto& to = storage->interfaces.back()[j];
     to.reached = from.reached;
     to.factor_available = from.factor_available;
     to.pose_derivative_available = from.pose_gradient_available;
@@ -114,7 +118,10 @@ static int EvaluateDiagnosticBatchImpl(const int* faces, int face_count, const L
     return 1;
   }
   *out = {};
-  if (!faces || face_count < 2 || face_count > 64 || (row_count && !rows) || row_count > 1000000) {
+  if (!faces || (row_count && !rows)) {
+    return 3;
+  }
+  if (face_count < 2 || face_count > 64 || row_count > 1000000) {
     return 1;
   }
   try {
@@ -146,7 +153,11 @@ static int TraceDiagnosticInterfaceImpl(const int* faces, int face_count,
     return 1;
   }
   *out = {};
-  if (!faces || face_count < 2 || face_count > 64 || !source || budget_ms <= 0 || budget_ms > 120000) {
+  if (!faces || !source) {
+    return 3;
+  }
+  if (face_count < 2 || face_count > 64 || slot <= 0 || slot + 1 >= face_count || max_points < 2 || max_points > 4096 ||
+      budget_ms <= 0 || budget_ms > 120000) {
     return 1;
   }
   try {
@@ -183,8 +194,12 @@ static int TraceWeightedSkyFieldImpl(const LUMICE_ANALYTIC_WeightedSkySample* sa
     return 1;
   }
   *out = {};
-  if ((count && !samples) || count > 4000000 || !seed || equation < 0 || equation > 3 || budget_ms <= 0 ||
-      budget_ms > 120000) {
+  if ((count && !samples) || !seed) {
+    return 3;
+  }
+  if (count > 4000000 || equation < 0 || equation > 3 || budget_ms <= 0 || budget_ms > 120000 || max_points <= 0 ||
+      max_points > 4096 || !(bandwidth_rad > 0) || !std::isfinite(bandwidth_rad) || !std::isfinite(level) ||
+      !a::ValidateUnitVector(seed)) {
     return 1;
   }
   try {
@@ -195,6 +210,13 @@ static int TraceWeightedSkyFieldImpl(const LUMICE_ANALYTIC_WeightedSkySample* sa
       if ((i % 1024) == 0 && std::chrono::steady_clock::now() >= deadline) {
         out->termination = 5;
         return 0;
+      }
+      if (!a::ValidateUnitVector(samples[i].direction) ||
+          (i > 0 && samples[i].sample_index < samples[i - 1].sample_index) ||
+          (samples[i].has_orbit && !a::ValidateUnitVector(samples[i].orbit_axis)) ||
+          !std::all_of(samples[i].xyz_weight, samples[i].xyz_weight + 3,
+                       [](double x) { return std::isfinite(x) && x >= 0; })) {
+        return 1;
       }
       a::WeightedSkySample row;
       row.sample_index = samples[i].sample_index;
@@ -274,7 +296,9 @@ LUMICE_ANALYTIC_ErrorCode Invoke(LUMICE_ANALYTIC_DiagnosticResult* out, F call) 
   LUMICE_ANALYTIC_DiagnosticResult full{};
   const int status = call(&full);
   if (status) {
-    return status == 1 ? LUMICE_ANALYTIC_ERR_INVALID_VALUE : LUMICE_ANALYTIC_ERR_UNKNOWN;
+    return status == 3 ? LUMICE_ANALYTIC_ERR_NULL_ARG :
+           status == 1 ? LUMICE_ANALYTIC_ERR_INVALID_VALUE :
+                         LUMICE_ANALYTIC_ERR_UNKNOWN;
   }
   const size_t copied = size >= sizeof(full) ? sizeof(full) : kDiagnosticBaseSize;
   std::memcpy(reinterpret_cast<char*>(out) + sizeof(size), reinterpret_cast<const char*>(&full) + sizeof(size),

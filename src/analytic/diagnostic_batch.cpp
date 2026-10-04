@@ -166,6 +166,8 @@ InterfaceStationaryPoint CorrectInterfaceEvent(const std::vector<int>& faces, co
       options.max_step_rad >= 1 || options.max_iterations <= 0) {
     return result;
   }
+  auto trial_source = source;
+  double pending_step = 0;
   for (int i = 0; i < options.max_iterations; ++i) {
     // One ordinary trace, one pose jet and four index-difference traces in the
     // existing batch evaluator. Count all six, including a rejected iterate.
@@ -174,6 +176,8 @@ InterfaceStationaryPoint CorrectInterfaceEvent(const std::vector<int>& faces, co
       result.status = InterfaceSolveStatus::kBudgetExceeded;
       return result;
     }
+    result.source = trial_source;
+    result.travelled_rad += pending_step;
     std::vector<DiagnosticOutputRow> values;
     if (!EvaluateDiagnosticBatch(faces, { result.source }, { true, true }, &values)) {
       return result;
@@ -213,8 +217,9 @@ InterfaceStationaryPoint CorrectInterfaceEvent(const std::vector<int>& faces, co
     std::array<double, 9> next;
     so3::Exp(delta, rotation);
     so3::MatMul(result.source.pose.data(), rotation, next.data());
-    result.source.pose = next;
-    result.travelled_rad += std::abs(step);
+    trial_source = result.source;
+    trial_source.pose = next;
+    pending_step = std::abs(step);
   }
   result.status = InterfaceSolveStatus::kIterationLimit;
   return result;
@@ -279,6 +284,40 @@ InterfaceCurve TraceInterfaceCurve(const std::vector<int>& faces, const Diagnost
     so3::MatMul(current.source.pose.data(), rotation, trial.pose.data());
     auto next = correct(trial);
     if (next.status != InterfaceSolveStatus::kConverged) {
+      if (next.value.input_status == Status::kOk && (next.value.optical_failure == ChainFailure::kPathInfeasible ||
+                                                     next.value.optical_failure == ChainFailure::kTirBoundary)) {
+        auto positive = current;
+        auto negative = next;
+        bool valid_bracket = true;
+        for (int bisect = 0; bisect < 48 && distance(positive.source, negative.source) > event_resolution_rad;
+             ++bisect) {
+          double rel[9], w[3], half[9];
+          so3::MatTMul(positive.source.pose.data(), negative.source.pose.data(), rel);
+          so3::Log(rel, w);
+          for (auto& component : w) {
+            component *= .5;
+          }
+          so3::Exp(w, half);
+          auto middle_source = positive.source;
+          so3::MatMul(positive.source.pose.data(), half, middle_source.pose.data());
+          auto middle = correct(middle_source);
+          if (middle.status == InterfaceSolveStatus::kConverged && middle.value.path_valid) {
+            positive = std::move(middle);
+          } else if (middle.value.optical_failure == ChainFailure::kPathInfeasible ||
+                     middle.value.optical_failure == ChainFailure::kTirBoundary) {
+            negative = std::move(middle);
+          } else {
+            valid_bracket = false;
+            break;
+          }
+        }
+        const double width = distance(positive.source, negative.source);
+        if (valid_bracket && width <= event_resolution_rad) {
+          curve.events.push_back({ InterfaceWalkStop::kOpticalGate, std::move(positive), std::move(negative), width });
+          curve.stop = InterfaceWalkStop::kOpticalGate;
+          return curve;
+        }
+      }
       curve.stop = next.status == InterfaceSolveStatus::kBudgetExceeded ? InterfaceWalkStop::kBudgetExceeded :
                    next.status == InterfaceSolveStatus::kNoSupport      ? InterfaceWalkStop::kOpticalGate :
                                                                           InterfaceWalkStop::kCorrectorFailed;

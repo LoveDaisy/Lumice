@@ -12,20 +12,9 @@ namespace a = analytic;
 using Clock = std::chrono::steady_clock;
 
 bool FixedInput(const ProductInputSnapshot& snapshot) {
-  if (snapshot.light.param_.diameter_ != 0 || snapshot.layers.size() != 1) {
-    return false;
-  }
-  const auto& crystal = snapshot.layers[0].crystal;
-  const auto& axis = crystal.axis_;
-  for (const auto& dist : { axis.latitude_dist, axis.azimuth_dist, axis.roll_dist }) {
-    if (BuildDistributionDrawPlan(dist).uniform_count != 0) {
-      return false;
-    }
-  }
-  const auto plan = std::visit([](const auto& param) { return BuildShapeDrawPlan(param); }, crystal.param_);
-  return std::none_of(plan.begin(), plan.end(), [](const auto& slot) {
-    return slot.applicable && BuildDistributionDrawPlan(slot.distribution).uniform_count != 0;
-  });
+  const auto support = DescribeProductSupport(snapshot);
+  return snapshot.layers.size() == 1 && support.pose_support_dimension == 0 && support.shape_parameter_dimension == 0 &&
+         support.source_direction_dimension == 0;
 }
 
 double Distance(const std::array<double, 3>& x, const std::array<double, 3>& y) {
@@ -82,7 +71,7 @@ std::vector<std::array<double, 3>> Seeds(const ProductDiagnosticMeasure& measure
 
 DiagnosticEvidence Classify(const a::FieldStationaryPoint& fine, const a::FieldStationaryPoint& coarse,
                             const a::FieldStationaryPoint& scale, double resolution, double contrast,
-                            DiagnosticFeatureRecord* record) {
+                            DiagnosticFeatureRecord* record, double required_ess = 32) {
   record->minimum_effective_samples = std::min(fine.field.effective_samples_y, coarse.field.effective_samples_y);
   record->scale_status = scale.status;
   if (fine.status == a::FieldSolveStatus::kConverged && scale.status == a::FieldSolveStatus::kConverged) {
@@ -94,7 +83,8 @@ DiagnosticEvidence Classify(const a::FieldStationaryPoint& fine, const a::FieldS
   }
   record->prefix_movement_rad = Distance(fine.query.direction, coarse.query.direction);
   record->transverse_contrast = contrast;
-  if (record->prefix_movement_rad > resolution || record->minimum_effective_samples < 32 || !(contrast > 1e-3)) {
+  if (record->prefix_movement_rad > resolution || record->minimum_effective_samples < required_ess ||
+      !(contrast > 1e-3)) {
     record->reason = "position stability or positive transverse contrast not established at the declared resolution";
     return DiagnosticEvidence::kUnfinished;
   }
@@ -136,6 +126,129 @@ double Contrast(const std::vector<a::WeightedSkySample>& measure, const a::Field
   }
   const double y = point.field.xyz[1].value;
   return y > 0 ? 1 - std::max(side[0].xyz[1].value, side[1].xyz[1].value) / y : 0;
+}
+
+void FindSourceBoundaries(const ProductDiscoveryOptions& options, ProductDiscoveryResult* result) {
+  if (result->measure.sources.empty() || options.max_source_boundaries == 0) {
+    return;
+  }
+  ProductInput base;
+  if (!ReplayDiagnosticSource(result->measure, 0, &base).Ok()) {
+    return;
+  }
+  const auto& original = base.layers[0];
+  const auto& identity = result->measure.sources[0];
+  struct Coordinate {
+    int kind;
+    size_t index;
+    std::string name;
+    std::vector<float> ends;
+  };
+  std::vector<Coordinate> coordinates;
+  if (base.source.domain.diameter_ > 0) {
+    coordinates.push_back({ 0, 0, "sun.cap_radial", { 1 } });
+  }
+  const auto bounded = [](const Distribution& d) {
+    return d.type == DistributionType::kUniform && d.spread > 0 && d.spread < 360;
+  };
+  if (std::holds_alternative<DistributedAxisDraw>(original.sample.axis)) {
+    const auto& axis = original.scope.snapshot.crystal.axis_;
+    if (bounded(axis.azimuth_dist)) {
+      coordinates.push_back({ 1, 0, "axis.azimuth_uniform", { 0, 1 } });
+    }
+    if (bounded(axis.roll_dist)) {
+      coordinates.push_back({ 2, 0, "axis.roll_uniform", { 0, 1 } });
+    }
+    if (bounded(axis.latitude_dist) && std::abs(axis.latitude_dist.center) + axis.latitude_dist.spread * .5f < 90 &&
+        std::holds_alternative<LatitudeLutDraw>(std::get<DistributedAxisDraw>(original.sample.axis).latitude)) {
+      coordinates.push_back({ 4, 0, "axis.latitude_cdf", { 0, 1 } });
+    }
+  }
+  const auto plan =
+      std::visit([](const auto& param) { return BuildShapeDrawPlan(param); }, original.scope.snapshot.crystal.param_);
+  for (size_t j = 0; j < original.sample.shape.size; ++j) {
+    const int slot = original.sample.shape.values[j].slot;
+    if (plan[slot].distribution.type == DistributionType::kUniform && plan[slot].distribution.spread > 0) {
+      coordinates.push_back({ 3, j, "shape.leader." + std::to_string(slot), { 0, 1 } });
+    }
+  }
+  int found = 0;
+  auto evaluate = [&](const std::vector<std::pair<size_t, float>>& endpoints) {
+    if (found >= options.max_source_boundaries) {
+      return;
+    }
+    const auto spent =
+        result->measure.optical_evaluations + result->replicate_path_evaluations + result->event_path_evaluations;
+    if (spent >= options.sampling.max_optical_evaluations || Clock::now() >= options.sampling.deadline) {
+      result->budget_exhausted = true;
+      return;
+    }
+    auto sample = original.sample;
+    auto source = base.source.sample;
+    DiagnosticFeatureRecord record;
+    for (const auto& endpoint : endpoints) {
+      const auto& coordinate = coordinates[endpoint.first];
+      record.source_parameters.push_back({ coordinate.name, endpoint.second });
+      if (coordinate.kind == 0) {
+        source.draw.radial_uniform = endpoint.second;
+      } else if (coordinate.kind == 1) {
+        std::get<DistributedAxisDraw>(sample.axis).azimuth.value = endpoint.second;
+      } else if (coordinate.kind == 2) {
+        std::get<DistributedAxisDraw>(sample.axis).roll.value = endpoint.second;
+      } else if (coordinate.kind == 4) {
+        std::get<LatitudeLutDraw>(std::get<DistributedAxisDraw>(sample.axis).latitude).quantile = endpoint.second;
+      } else {
+        const int slot = sample.shape.values[coordinate.index].slot;
+        sample.shape.values[coordinate.index].value =
+            TransformDistribution(plan[slot].distribution, { endpoint.second });
+      }
+    }
+    ProductInput input;
+    if (!result->measure.run->Reassemble({ sample }, source, &input).Ok()) {
+      return;
+    }
+    const auto& layer = input.layers[0];
+    const auto& faces = layer.scope.members[identity.member_index];
+    a::DiagnosticInputRow row{ layer.shape, layer.analytic_pose, input.source.incident_direction,
+                               input.spectrum.rows[identity.spectral_row].refractive_index, 0 };
+    std::vector<a::DiagnosticOutputRow> values;
+    if (!a::EvaluateDiagnosticBatch(faces, { row }, { false, true }, &values)) {
+      return;
+    }
+    result->event_path_evaluations += values[0].path_evaluations;
+    if (!values[0].path_valid || !(values[0].entry.value > 0) || !(values[0].interface_product > 0)) {
+      return;
+    }
+    record.kind = endpoints.size() == 1 ? "declared_source_boundary" : "declared_source_corner";
+    record.evidence = DiagnosticEvidence::kCandidate;
+    record.reason =
+        "closure of declared product uniform/cap coordinates, other draws fixed; positive finite optical support; not "
+        "an outer sky edge or unique cause";
+    record.source_token = 0;
+    record.boundary_source = row;
+    record.boundary_value = values[0];
+    const auto& v = values[0].outgoing;
+    record.sky_points.push_back({ -v[0], -v[1], -v[2] });
+    result->features.push_back(std::move(record));
+    ++found;
+  };
+  // Two declared faces share a corner by their parameter values, never by sky
+  // proximity. Other coordinates retain the same replayable parent draw.
+  if (coordinates.size() >= 2) {
+    for (float x : coordinates[0].ends) {
+      for (float y : coordinates[1].ends) {
+        evaluate({ { 0, x }, { 1, y } });
+      }
+    }
+  }
+  for (size_t i = 0; i < coordinates.size(); ++i) {
+    for (float end : coordinates[i].ends) {
+      evaluate({ { i, end } });
+    }
+  }
+  if (!coordinates.empty()) {
+    result->unfinished.push_back("bounded declared-coordinate boundary samples, not complete source-boundary topology");
+  }
 }
 
 void FindDeviationEdges(const ProductDiscoveryOptions& options, ProductDiscoveryResult* result,
@@ -318,12 +431,54 @@ void FindEvents(const ProductDiscoveryOptions& options, ProductDiscoveryResult* 
       const auto& v = event.value.outgoing;
       record.sky_points.push_back({ -v[0], -v[1], -v[2] });
       record.interface_event = event;
+      PairedInterfaceEvidence paired;
+      paired.complete = true;
+      for (size_t spectral = 0; spectral < input.spectrum.rows.size(); ++spectral) {
+        const auto spent =
+            result->measure.optical_evaluations + result->replicate_path_evaluations + result->event_path_evaluations;
+        if (spent >= options.sampling.max_optical_evaluations || Clock::now() >= options.sampling.deadline) {
+          paired.complete = false;
+          result->budget_exhausted = true;
+          break;
+        }
+        ProductChainEvaluation value;
+        const auto paired_error = EvaluateProductChain(input, { source.member_index }, spectral, &value);
+        result->event_path_evaluations += value.optical_evaluations;
+        if (!paired_error.Ok() || value.layers.size() != 1) {
+          paired.complete = false;
+          break;
+        }
+        const auto& layer_value = value.layers[0];
+        // Removing a weight never relaxes the shape, entry or optical domain.
+        if (layer_value.status != ProductContributionStatus::kPositive) {
+          continue;
+        }
+        double without = layer_value.entry_weight;
+        for (size_t j = 0; j < layer_value.interface_transmittances.size(); ++j) {
+          if (j != static_cast<size_t>(slot)) {
+            without *= layer_value.interface_transmittances[j];
+          }
+        }
+        for (int j = 0; j < 3; ++j) {
+          paired.actual_xyz[j] += value.xyz[j];
+          paired.without_slot_xyz[j] += without * input.spectrum.rows[spectral].coefficient[j];
+        }
+      }
+      const double actual_sum = paired.actual_xyz[0] + paired.actual_xyz[1] + paired.actual_xyz[2];
+      const double without_sum = paired.without_slot_xyz[0] + paired.without_slot_xyz[1] + paired.without_slot_xyz[2];
+      paired.chromaticity_available = paired.complete && actual_sum > 0 && without_sum > 0;
+      if (paired.chromaticity_available) {
+        for (int j = 0; j < 2; ++j) {
+          paired.xy_difference[j] = paired.actual_xyz[j] / actual_sum - paired.without_slot_xyz[j] / without_sum;
+        }
+      }
+      record.paired_interface = paired;
       for (const bool reverse : { false, true }) {
         const auto used =
             result->measure.optical_evaluations + result->replicate_path_evaluations + result->event_path_evaluations;
         const uint64_t remaining =
             options.sampling.max_optical_evaluations - std::min(options.sampling.max_optical_evaluations, used);
-        auto curve = a::TraceInterfaceCurve(faces, event.source, slot, .01, 1e-7, std::max(2, options.max_curve_points),
+        auto curve = a::TraceInterfaceCurve(faces, event.source, slot, .01, 1e-7, options.max_source_curve_points,
                                             reverse, remaining, options.sampling.deadline);
         result->event_path_evaluations += curve.path_evaluations;
         result->budget_exhausted |= curve.stop == a::InterfaceWalkStop::kBudgetExceeded;
@@ -337,6 +492,7 @@ void FindEvents(const ProductDiscoveryOptions& options, ProductDiscoveryResult* 
           endpoint.evidence = DiagnosticEvidence::kCandidate;
           endpoint.geometry = DiagnosticGeometry::kSourceRange;
           endpoint.kind = bracket.kind == a::InterfaceWalkStop::kGeometricContact ? "geometric_contact_bracket" :
+                          bracket.kind == a::InterfaceWalkStop::kOpticalGate      ? "optical_domain_gate" :
                                                                                     "product_area_threshold";
           endpoint.reason =
               "same-interface source continuation brackets this predicate; no global topology or observed colour claim";
@@ -345,6 +501,9 @@ void FindEvents(const ProductDiscoveryOptions& options, ProductDiscoveryResult* 
           endpoint.source_event = bracket;
           endpoint.source_connected_feature = parent;
           for (const auto* bound : { &bracket.positive, &bracket.nonpositive }) {
+            if (!bound->value.path_valid) {
+              continue;
+            }
             const auto& outgoing = bound->value.outgoing;
             endpoint.sky_points.push_back({ -outgoing[0], -outgoing[1], -outgoing[2] });
           }
@@ -373,7 +532,9 @@ Error DiscoverProductFeatures(const ProductDiagnosticSampler& sampler, const Pro
       !std::isfinite(options.location_resolution_rad) || options.max_seeds <= 0 || options.max_seeds > 64 ||
       options.max_curve_points <= 0 || options.max_curve_points > 256 || options.max_interface_candidates < 0 ||
       options.max_interface_candidates > 256 || options.max_deviation_candidates < 0 ||
-      options.max_deviation_candidates > 256) {
+      options.max_deviation_candidates > 256 || options.max_source_curve_points < 2 ||
+      options.max_source_curve_points > 4096 || options.max_source_boundaries < 0 ||
+      options.max_source_boundaries > 256) {
     return { ErrorCode::kInvalidArgument, "invalid explicit discovery scale or bounded search size" };
   }
   const auto begin = Clock::now();
@@ -389,7 +550,8 @@ Error DiscoverProductFeatures(const ProductDiagnosticSampler& sampler, const Pro
   }
   result.assembly_seconds = std::chrono::duration<double>(Clock::now() - begin).count();
   result.budget_exhausted = result.measure.budget_exhausted;
-  if (fixed && result.measure.completed_samples == 1) {
+  if (fixed && std::holds_alternative<std::vector<WlParam>>(sampler.Snapshot().light.spectrum_) &&
+      result.measure.completed_samples == 1) {
     for (const auto& row : result.measure.components) {
       if (!(row.xyz_weight[1] > 0)) {
         continue;
@@ -428,10 +590,12 @@ Error DiscoverProductFeatures(const ProductDiagnosticSampler& sampler, const Pro
   result.budget_exhausted |= replicate.budget_exhausted;
   const auto event_start = Clock::now();
   a::FieldWorkBudget budget{ options.max_field_evaluations, 0, options.sampling.deadline };
+  FindSourceBoundaries(options, &result);
   FindDeviationEdges(options, &result, &budget);
   FindEvents(options, &result);
   result.event_seconds = std::chrono::duration<double>(Clock::now() - event_start).count();
   const auto field_start = Clock::now();
+  const double required_ess = fixed ? 1 : 32;
   auto verify_replicate = [&](const a::FieldStationaryPoint& point, const a::FieldSolveOptions& solve,
                               DiagnosticFeatureRecord* record) {
     const auto check = a::CorrectSphericalField(replicate.components, point.query.direction, solve, &budget);
@@ -441,14 +605,14 @@ Error DiscoverProductFeatures(const ProductDiagnosticSampler& sampler, const Pro
     }
     const double movement = Distance(point.query.direction, check.query.direction);
     record->replicate_movement_rad = std::max(record->replicate_movement_rad.value_or(0), movement);
-    if (movement > options.location_resolution_rad || check.field.effective_samples_y < 32) {
+    if (movement > options.location_resolution_rad || check.field.effective_samples_y < required_ess) {
       record->reason = "independent same-observation replicate disagrees at the declared location resolution";
       return false;
     }
     return true;
   };
   const auto seeds = Seeds(result.measure, options.max_seeds);
-  const uint64_t coarse_count = result.measure.completed_samples / 4;
+  const uint64_t coarse_count = fixed ? result.measure.completed_samples : result.measure.completed_samples / 4;
   std::vector<a::WeightedSkySample> coarse;
   for (const auto& row : result.measure.components) {
     if (row.sample_index < coarse_count) {
@@ -494,7 +658,8 @@ Error DiscoverProductFeatures(const ProductDiagnosticSampler& sampler, const Pro
         solve.bandwidth_rad /= std::sqrt(2.0);
         auto scale = a::CorrectSphericalField(result.measure.components, fine.query.direction, solve, &budget);
         const double contrast = Contrast(result.measure.components, fine, equation, &budget);
-        record.evidence = Classify(fine, previous, scale, options.location_resolution_rad, contrast, &record);
+        record.evidence =
+            Classify(fine, previous, scale, options.location_resolution_rad, contrast, &record, required_ess);
         solve.bandwidth_rad = options.bandwidth_rad;
         if (record.evidence == DiagnosticEvidence::kActual && !verify_replicate(fine, solve, &record)) {
           record.evidence = DiagnosticEvidence::kUnfinished;
@@ -518,8 +683,8 @@ Error DiscoverProductFeatures(const ProductDiagnosticSampler& sampler, const Pro
             scale = a::CorrectSphericalField(result.measure.components, point.query.direction, smaller, &budget);
             DiagnosticFeatureRecord evidence;
             if (Classify(point, previous, scale, options.location_resolution_rad,
-                         Contrast(result.measure.components, point, equation, &budget),
-                         &evidence) != DiagnosticEvidence::kActual) {
+                         Contrast(result.measure.components, point, equation, &budget), &evidence,
+                         required_ess) != DiagnosticEvidence::kActual) {
               record.walk_stop = a::FieldWalkStop::kCorrectorFailed;
               break;
             }
@@ -591,8 +756,8 @@ Error DiscoverProductFeatures(const ProductDiagnosticSampler& sampler, const Pro
             const auto previous = a::CorrectSphericalField(coarse, point.query.direction, solve, &budget);
             DiagnosticFeatureRecord evidence;
             if (Classify(point, previous, point, options.location_resolution_rad,
-                         Contrast(result.measure.components, point, equation, &budget),
-                         &evidence) != DiagnosticEvidence::kActual) {
+                         Contrast(result.measure.components, point, equation, &budget), &evidence,
+                         required_ess) != DiagnosticEvidence::kActual) {
               stable = false;
               break;
             }

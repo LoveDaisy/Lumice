@@ -169,8 +169,8 @@ Error BuildProductDiagnosticMeasure(const ProductDiagnosticSampler& sampler, con
           break;
         }
         ProductChainEvaluation value;
-        ++result.optical_evaluations;
         const auto evaluation_error = EvaluateProductChain(input, { member }, spectral, &value);
+        result.optical_evaluations += value.optical_evaluations;
         if (!evaluation_error.Ok()) {
           return evaluation_error;
         }

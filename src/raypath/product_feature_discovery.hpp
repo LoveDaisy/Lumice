@@ -8,6 +8,13 @@ namespace lumice::raypath {
 
 enum class DiagnosticEvidence { kActual, kCandidate, kUnfinished };
 enum class DiagnosticGeometry { kPoint, kPolyline, kAtom, kSourceRange, kBand };
+struct PairedInterfaceEvidence {
+  std::array<double, 3> actual_xyz{};
+  std::array<double, 3> without_slot_xyz{};
+  std::array<double, 2> xy_difference{};
+  bool chromaticity_available = false;
+  bool complete = false;
+};
 struct DiagnosticFeatureRecord {
   DiagnosticEvidence evidence = DiagnosticEvidence::kUnfinished;
   DiagnosticGeometry geometry = DiagnosticGeometry::kPoint;
@@ -30,7 +37,11 @@ struct DiagnosticFeatureRecord {
   std::optional<uint64_t> source_token;
   std::optional<double> contributor_fraction_of_estimated_y;
   int internal_slot = -1;
+  std::vector<std::pair<std::string, double>> source_parameters;
+  std::optional<analytic::DiagnosticInputRow> boundary_source;
+  std::optional<analytic::DiagnosticOutputRow> boundary_value;
   std::optional<analytic::InterfaceStationaryPoint> interface_event;
+  std::optional<PairedInterfaceEvidence> paired_interface;
   std::vector<analytic::InterfaceCurve> interface_curves;
   std::optional<analytic::InterfaceEventBracket> source_event;
   std::optional<size_t> source_connected_feature;
@@ -50,6 +61,8 @@ struct ProductDiscoveryOptions {
   int max_curve_points = 0;
   int max_interface_candidates = 0;
   int max_deviation_candidates = 0;
+  int max_source_curve_points = 256;
+  int max_source_boundaries = 8;
 };
 struct ProductDiscoveryResult {
   ProductDiagnosticMeasure measure;

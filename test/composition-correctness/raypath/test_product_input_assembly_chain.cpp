@@ -1,6 +1,8 @@
 #include <cmath>
 #include <fstream>
+#include <limits>
 #include <nlohmann/json.hpp>
+#include <set>
 
 #include "analytic/so3.hpp"
 #include "core/color_util.hpp"
@@ -523,6 +525,75 @@ TEST(ProductInputChain, AutomaticColourContoursHaveIndependentFixedObservationPo
   }
 }
 
+TEST(ProductInputChain, DeclaredSourceCornersMatchIndependentGeometryWithoutSkyJoining) {
+  std::ifstream in(std::string(LUMICE_DIAGNOSTIC_FIXTURE_DIR) + "/source-box.json");
+  ASSERT_TRUE(in.good());
+  const auto fixture = nlohmann::json::parse(in);
+  auto scene = Scene(1);
+  scene.light_source_.param_ = { 20, 0, 0 };
+  scene.light_source_.spectrum_ = std::vector<ns::WlParam>{ { 550, 1 } };
+  ns::PyramidCrystalParam p;
+  p.h_prs_ = { ns::DistributionType::kNoRandom, 0, 0 };
+  p.h_pyr_u_ = { ns::DistributionType::kNoRandom, .62f, 0 };
+  p.h_pyr_l_ = { ns::DistributionType::kNoRandom, .43f, 0 };
+  p.wedge_angle_u_ = 25;
+  p.wedge_angle_l_ = 34;
+  for (int j = 0; j < 6; ++j) {
+    p.d_[j] = { ns::DistributionType::kNoRandom, fixture["shape"]["face_distance"][j].get<float>(), 0 };
+  }
+  auto& crystal = scene.ms_[0].setting_[0].crystal_;
+  crystal.param_ = p;
+  crystal.axis_.latitude_dist = { ns::DistributionType::kUniform, fixture["latitude_mean"].get<float>(), .5f };
+  crystal.axis_.roll_dist = { ns::DistributionType::kUniform, fixture["roll_mean"].get<float>(), .5f };
+  crystal.axis_.azimuth_dist = { ns::DistributionType::kNoRandom, fixture["azimuth_mean"].get<float>(), 0 };
+  const auto snapshot = Capture(scene, 0, { 13, 15 });
+  const auto support = rp::DescribeProductSupport(snapshot);
+  EXPECT_EQ(support.pose_support_dimension, 2);
+  rp::ProductDiagnosticSampler sampler(snapshot, 1497, rp::DiscreteSpectrumSum{});
+  rp::ProductDiscoveryResult result;
+  ASSERT_TRUE(rp::DiscoverProductFeatures(sampler, { { 64, 1000 }, .02, .001, 1, 1, 1, 0, 0 }, &result).Ok());
+  std::set<std::pair<double, double>> corners;
+  for (const auto& feature : result.features) {
+    if (feature.kind != "declared_source_corner") {
+      continue;
+    }
+    EXPECT_EQ(feature.evidence, rp::DiagnosticEvidence::kCandidate);
+    if (feature.source_parameters.size() != 2 || !feature.boundary_value) {
+      ADD_FAILURE();
+      return;
+    }
+    corners.insert({ feature.source_parameters[0].second, feature.source_parameters[1].second });
+    EXPECT_GT(feature.boundary_value->entry.value, 0);
+    const auto& sky = feature.sky_points[0];
+    double nearest = 10;
+    for (const auto& ref : fixture["expected_sky_corners"]) {
+      const auto q = ref.get<std::array<double, 3>>();
+      double cross[3];
+      ns::analytic::so3::Cross3(sky.data(), q.data(), cross);
+      nearest =
+          std::min(nearest, std::atan2(ns::analytic::so3::Norm3(cross), ns::analytic::so3::Dot3(sky.data(), q.data())));
+    }
+    // The reference uses the ACTUAL product CDF endpoint poses, not ideal
+    // uniform-angle ends. The LUT brackets a histogram and has different ends.
+    EXPECT_LT(nearest, 1e-6);
+    const size_t corner =
+        static_cast<size_t>(2 * feature.source_parameters[0].second + feature.source_parameters[1].second);
+    const auto expected_pose = fixture["actual_product_endpoint_poses"][corner].get<std::array<double, 9>>();
+    for (int j = 0; j < 9; ++j) {
+      EXPECT_NEAR(feature.boundary_source->pose[j], expected_pose[j], 1e-6);
+    }
+  }
+  EXPECT_EQ(corners.size(), 4u);
+  auto& axis = scene.ms_[0].setting_[0].crystal_.axis_;
+  axis.latitude_dist = { ns::DistributionType::kNoRandom, 90, 0 };
+  axis.azimuth_dist = axis.roll_dist = { ns::DistributionType::kUniform, 0, 360 };
+  const auto pole = rp::DescribeProductSupport(Capture(scene, 0, { 13, 15 }));
+  EXPECT_EQ(pole.pose_coordinate_count, 2);
+  EXPECT_EQ(pole.pose_support_dimension, 1);
+  axis.latitude_dist = { ns::DistributionType::kGaussian, 90, .001f };
+  EXPECT_EQ(rp::DescribeProductSupport(Capture(scene, 0, { 13, 15 })).pose_support_dimension, 3);
+}
+
 TEST(ProductInputChain, ProductReportRetainsLayerScopeAndSourceNumerics) {
   auto scene = Scene(2);
   scene.light_source_.param_ = { 20.f, 0.f, 0.f };
@@ -531,17 +602,17 @@ TEST(ProductInputChain, ProductReportRetainsLayerScopeAndSourceNumerics) {
   axis.latitude_dist = { ns::DistributionType::kUniform, 90.f, 360.f };
   axis.azimuth_dist = axis.roll_dist = { ns::DistributionType::kUniform, 0.f, 360.f };
   const rp::ProductDiscoveryOptions options{ { 16384, 60000 }, .02, .001, 20000000, 1, 4, 0, 1 };
-  rp::ProductPathReport report;
+  rp::PathFeatureReport report;
   ASSERT_TRUE(rp::BuildProductPathReport(scene, "two-layer scene, second-layer single path", { { 1, 2, { 3, 5 }, 0 } },
                                          rp::DiscreteSpectrumSum{}, 1497, options, &report)
                   .Ok());
-  const auto json = nlohmann::json::parse(rp::ProductPathReportToJson(report, "test"));
+  const auto json = nlohmann::json::parse(rp::PathFeatureReportToJson(report, "test"));
   EXPECT_EQ(json.at("scope").at("layers").at(0).at("scene_layer"), 1);
   EXPECT_EQ(json.at("spectrum").at(0).at("nm"), 550);
-  EXPECT_TRUE(json.contains("budget"));
+  EXPECT_TRUE(json.contains("budgets"));
   EXPECT_TRUE(json.contains("unfinished"));
   bool edge = false;
-  for (const auto& feature : json.at("features")) {
+  for (const auto& feature : json.at("actual_features")) {
     if (!feature.contains("physical_position")) {
       continue;
     }
@@ -578,7 +649,7 @@ TEST(ProductInputChain, ProductReportRefinesTheSameContinuousSpectrumObservation
   }
   constexpr double kRad = 3.14159265358979323846 / 180;
   const rp::ProductDiscoveryOptions options{ { 8192, 1200000 }, kRad, .05 * kRad, 250000000, 2, 4, 0, 0 };
-  rp::ProductPathReport report;
+  rp::PathFeatureReport report;
   ASSERT_TRUE(rp::BuildProductPathReport(scene, "actual D65 scene", { { 0, 1, { 3, 5 }, 0 } }, quadrature, 1497,
                                          options, &report)
                   .Ok());
@@ -588,8 +659,8 @@ TEST(ProductInputChain, ProductReportRefinesTheSameContinuousSpectrumObservation
   EXPECT_GT(report.spectral_seconds, 0);
   EXPECT_TRUE(std::any_of(report.discovery.features.begin(), report.discovery.features.end(),
                           [](const auto& f) { return f.evidence == rp::DiagnosticEvidence::kActual; }));
-  const auto json = nlohmann::json::parse(rp::ProductPathReportToJson(report, "test"));
-  EXPECT_EQ(json.at("budget").at("optical_evaluations"), 8192u * (33 + 33 + 65));
+  const auto json = nlohmann::json::parse(rp::PathFeatureReportToJson(report, "test"));
+  EXPECT_EQ(json.at("budgets").at("optical_evaluations"), 8192u * (33 + 33 + 65));
   EXPECT_EQ(json.at("spectrum").size(), 33u);
 }
 
@@ -621,7 +692,9 @@ TEST(ProductInputChain, AtomRequiresDeclaredZeroDimensionalSourceNotSampledRank)
   const rp::ProductDiagnosticSampler cap(Capture(scene, 0, { 3, 5 }), 1497, rp::DiscreteSpectrumSum{});
   ASSERT_TRUE(rp::DiscoverProductFeatures(cap, options, &result).Ok());
   EXPECT_EQ(result.measure.completed_samples, 32u);
-  EXPECT_TRUE(result.features.empty());
+  for (const auto& feature : result.features) {
+    EXPECT_NE(feature.geometry, rp::DiagnosticGeometry::kAtom);
+  }
   EXPECT_TRUE(result.budget_exhausted);
   scene.light_source_.param_.diameter_ = 0;
   axis.roll_dist = { ns::DistributionType::kGaussian, 57.29578f, 1e-6f };
@@ -649,7 +722,7 @@ TEST(ProductInputChain, TargetFreeDeepInterfaceUsesEverySlotAndRealSource) {
   crystal.axis_.azimuth_dist = crystal.axis_.roll_dist = { ns::DistributionType::kUniform, 0.f, 360.f };
   scene.light_source_.param_ = { 20.f, 0.f, .53f };
   const rp::ProductDiagnosticSampler sampler(Capture(scene, 0, { 13, 15, 26, 28 }), 1497, rp::DiscreteSpectrumSum{});
-  rp::ProductDiscoveryOptions options{ { 16384, 100000 }, .02, .005, 1, 1, 1, 16 };
+  rp::ProductDiscoveryOptions options{ { 16384, 200000 }, .02, .005, 1, 1, 1, 16 };
   rp::ProductDiscoveryResult result;
   ASSERT_TRUE(rp::DiscoverProductFeatures(sampler, options, &result).Ok());
   bool late = false;
@@ -669,12 +742,20 @@ TEST(ProductInputChain, TargetFreeDeepInterfaceUsesEverySlotAndRealSource) {
     EXPECT_EQ(event.source.incident, original.source.incident_direction);
     EXPECT_EQ(event.source.refractive_index,
               original.spectrum.rows[result.measure.sources[*feature.source_token].spectral_row].refractive_index);
+    if (feature.paired_interface && feature.paired_interface->complete) {
+      const auto& paired = *feature.paired_interface;
+      for (int channel = 0; channel < 3; ++channel) {
+        EXPECT_GE(paired.without_slot_xyz[channel] * (1 + 64 * std::numeric_limits<double>::epsilon()),
+                  paired.actual_xyz[channel]);
+      }
+      EXPECT_TRUE(paired.chromaticity_available);
+    }
     late |= feature.internal_slot == 2;
   }
   EXPECT_TRUE(late);
   EXPECT_TRUE(result.budget_exhausted);
   EXPECT_GT(result.event_path_evaluations, 0u);
-  EXPECT_LE(result.event_path_evaluations + result.measure.optical_evaluations,
+  EXPECT_LE(result.event_path_evaluations + result.replicate_path_evaluations + result.measure.optical_evaluations,
             options.sampling.max_optical_evaluations);
 }
 

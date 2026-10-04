@@ -7,8 +7,6 @@
 
 namespace lumice::raypath {
 
-std::string ProductPathReportToJson(const ProductPathReport& result, const char* lumice_version);
-
 std::string PathFeatureReportToJson(const PathFeatureReport& result, const char* lumice_version);
 
 }  // namespace lumice::raypath

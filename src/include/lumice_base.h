@@ -519,7 +519,9 @@ extern "C" {
 // LUMICE_AnalyzePathFeatureReport, LUMICE_PathFeatureReportToJson and
 // LUMICE_PathFeatureReportDestroy, plus their sample/wavelength bounds. The new JSON schema is
 // separate from the unchanged v4.50 target-fiber schema.
-#define LUMICE_API_VERSION 451
+// ADDED (v4.52): report budget/observation/layer request suffix. Target-free reports now use
+// schema 2 and the actual product spectrum/measure; old target/fiber/warm schema stays 1.
+#define LUMICE_API_VERSION 452
 #define LUMICE_MAX_RENDER_RESULTS 16
 #define LUMICE_MAX_STATS_RESULTS 1
 

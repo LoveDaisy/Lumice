@@ -206,6 +206,10 @@ TEST(DiagnosticBatch, DeepInterfaceCorrectionKeepsPositiveSourcesAndBudget) {
     const auto low = CorrectInterfaceEvent(faces, row, { slot }, 5, deadline);
     EXPECT_EQ(low.status, InterfaceSolveStatus::kBudgetExceeded);
     EXPECT_EQ(low.path_evaluations, 0u);
+    const auto one_evaluation = CorrectInterfaceEvent(faces, row, { slot }, 6, deadline);
+    EXPECT_EQ(one_evaluation.status, InterfaceSolveStatus::kBudgetExceeded);
+    EXPECT_EQ(one_evaluation.source.pose, row.pose);
+    EXPECT_EQ(one_evaluation.travelled_rad, 0);
     const auto expired = CorrectInterfaceEvent(faces, row, { slot }, 192, std::chrono::steady_clock::now());
     EXPECT_EQ(expired.status, InterfaceSolveStatus::kBudgetExceeded);
     EXPECT_EQ(expired.path_evaluations, 0u);

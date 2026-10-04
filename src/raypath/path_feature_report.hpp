@@ -1,12 +1,6 @@
 #ifndef LUMICE_RAYPATH_PATH_FEATURE_REPORT_HPP_
 #define LUMICE_RAYPATH_PATH_FEATURE_REPORT_HPP_
 
-// Target-free diagnostics for one concrete single-layer raypath. Unlike
-// single_path_analysis.hpp this module does not solve a fiber through a requested sky point. It
-// expands the path only under the crystal entry's physical L2 symmetry, evaluates every concrete
-// member at every requested wavelength, and reports the small set of positioned features whose
-// mechanisms have an implemented, fixture-backed detector.
-
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -17,132 +11,42 @@
 #include "raypath/single_path_analysis.hpp"
 
 namespace lumice::raypath {
-
-constexpr int kFeatureReportSchemaVersion = 1;
-constexpr int kDefaultFeatureReportSampleCount = 8192;
+constexpr int kFeatureReportSchemaVersion = 2;
+constexpr int kDefaultFeatureReportSampleCount = 65536;
 constexpr int kMaxFeatureReportSampleCount = 1000000;
 constexpr int kMaxFeatureReportWavelengthCount = 32;
 constexpr uint64_t kMaxFeatureReportSampleEvaluations = 16777216;
-
+constexpr uint64_t kDefaultFeatureReportOpticalEvaluations = 4000000;
+constexpr uint64_t kDefaultFeatureReportFieldEvaluations = 250000000;
+constexpr int kDefaultFeatureReportBudgetMs = 15000;
+constexpr int kMaxFeatureReportBudgetMs = 120000;
 struct PathFeatureReportRequest {
   IdType crystal_id = 0;
   std::vector<std::vector<int>> path_layers;
   std::vector<double> wavelengths_nm;
   std::vector<double> wavelength_weights;
-  int sample_count = kDefaultFeatureReportSampleCount;
-};
-
-enum class CoverageStatus {
-  kSupported,
-  kNotSupported,
-  kNotDetectedAtResolution,
-  kNumericalIncomplete,
-  kPhysicallyUnreachable,
-};
-
-const char* CoverageStatusName(CoverageStatus status);
-
-struct CoverageItem {
-  std::string subject;
-  CoverageStatus status = CoverageStatus::kNotSupported;
-  std::string reason;
-};
-
-struct ReportWavelength {
-  double wavelength_nm = 0.0;
-  double weight = 0.0;
-  double refractive_index = 0.0;
-};
-
-struct BrightnessEstimate {
-  CoverageStatus status = CoverageStatus::kNotSupported;
-  int coarse_sample_count = 0;
-  int fine_sample_count = 0;
-  int fine_valid_count = 0;
-  int fine_positive_count = 0;
-  double coarse_mean_at = 0.0;
-  double fine_mean_at = 0.0;
-  double absolute_difference = 0.0;
-  double weighted_mean_at = 0.0;
-  std::string measure;
-  std::string reason;
-  bool has_fixed_direction = false;
-  double fixed_direction[3]{};
-  double direction_residual_max = 0.0;
-};
-
-struct MemberWavelengthReport {
-  ReportWavelength wavelength;
-  BrightnessEstimate brightness;
-};
-
-struct PhysicalMemberReport {
-  std::vector<int> faces;
-  std::vector<MemberWavelengthReport> wavelengths;
-};
-
-struct FeaturePosition {
-  double wavelength_nm = 0.0;
-  double refractive_index = 0.0;
-  std::optional<double> deviation_deg;
-  std::optional<double> altitude_deg;
-  std::optional<double> azimuth_deg;
-  std::optional<double> relative_solar_azimuth_deg;
-  std::optional<double> spherical_separation_deg;
-};
-
-struct FeatureMetric {
-  std::string name;
-  double value = 0.0;
-};
-
-struct PathFeature {
-  std::string id;
-  std::string kind;
-  std::string evidence_status;
-  std::string mechanism;
-  std::string location;
-  std::string interpretation;
-  std::optional<bool> visible;
-  std::vector<FeaturePosition> positions;
-  std::vector<FeatureMetric> metrics;
-};
-
-struct FeatureReportMetadata {
-  int schema_version = kFeatureReportSchemaVersion;
-  int analytic_api_version = 0;
-  IdType crystal_id = 0;
-  std::string crystal_kind;
-  std::vector<NominalShapeScalar> shape;
-  bool shape_is_nominal = false;
-  std::vector<int> requested_faces;
-  double sun_altitude_deg = 0.0;
-  double sun_azimuth_deg = 0.0;
-  double incident_direction[3]{};
-  std::string orientation_measure;
-  int sample_count = 0;
+  int sample_count = 0;  // zero selects a work-aware dyadic prefix
+  int budget_ms = kDefaultFeatureReportBudgetMs;
+  uint64_t max_optical_evaluations = kDefaultFeatureReportOpticalEvaluations;
+  uint64_t max_field_evaluations = kDefaultFeatureReportFieldEvaluations;
+  double bandwidth_rad = 3.14159265358979323846 / 180;
+  double location_resolution_rad = .05 * 3.14159265358979323846 / 180;
+  std::optional<size_t> scene_layer;
+  std::optional<std::chrono::steady_clock::time_point> deadline;
 };
 
 struct PathFeatureReport {
-  FeatureReportMetadata meta;
-  std::vector<ReportWavelength> wavelengths;
-  std::vector<PhysicalMemberReport> members;
-  std::vector<PathFeature> features;
-  std::vector<CoverageItem> coverage;
-  std::vector<std::string> limitations;
-};
-
-Error AnalyzePathFeatureReport(const ConfigManager& config, const PathFeatureReportRequest& request,
-                               PathFeatureReport* out);
-
-// Internal full-product route. Explicit options stay provisional until the
-// cold end-to-end budget and both numeric consumers have been measured.
-struct ProductPathReport {
   ProductInputSnapshot snapshot;
   ProductDiscoveryOptions options;
   ProductInput representative_input;
   ProductDiscoveryResult discovery;
   uint32_t seed = 0;
+  bool no_related_signal = false;
+  bool standalone_crystal = false;
+  bool unsupported_multicrystal = false;
+  std::vector<std::vector<int>> requested_path_layers;
+  uint64_t requested_outer_samples = 0;
+  int budget_ms = 0;
   double capture_seconds = 0;
   std::string spectrum_scope;
   std::optional<double> spectral_movement_rad;
@@ -153,8 +57,8 @@ struct ProductPathReport {
 Error BuildProductPathReport(const SceneConfig& scene, const std::string& identity,
                              const std::vector<ProductLayerSelection>& selection,
                              const ProductSpectrumRequest& spectrum, uint32_t seed,
-                             const ProductDiscoveryOptions& options, ProductPathReport* out);
-
+                             const ProductDiscoveryOptions& options, PathFeatureReport* out);
+Error AnalyzePathFeatureReport(const ConfigManager& config, const PathFeatureReportRequest& request,
+                               PathFeatureReport* out);
 }  // namespace lumice::raypath
-
 #endif  // LUMICE_RAYPATH_PATH_FEATURE_REPORT_HPP_
