@@ -2,10 +2,12 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstring>
 #include <future>
+#include <vector>
 
 #include "lumice_analytic_core.h"
 
@@ -65,6 +67,64 @@ TEST(DiagnosticCapi, RowsOwnershipRootSizeAndFourConcurrentConsumers) {
   EXPECT_EQ(LUMICE_ANALYTIC_EvaluateDiagnosticBatch(faces, 2, rows, 3, nullptr), LUMICE_ANALYTIC_ERR_NULL_ARG);
   LUMICE_ANALYTIC_ReleaseDiagnosticResult(nullptr);
 }
+TEST(DiagnosticCapi, DeviationStopsBeforeMaterializingTheUnprocessedTail) {
+  const int faces[]{ 3, 5 };
+  auto source = Source();
+  std::vector<LUMICE_ANALYTIC_DiagnosticSource> rows(100000, source);
+  LUMICE_ANALYTIC_DiagnosticResult result{};
+  result.struct_size = sizeof(result);
+  ASSERT_EQ(LUMICE_ANALYTIC_CorrectDeviationBatch(faces, 2, rows.data(), rows.size(), 0, 5000, &result),
+            LUMICE_ANALYTIC_OK);
+  EXPECT_EQ(result.optical_count, 0u);
+  EXPECT_EQ(result.path_evaluations, 0u);
+  EXPECT_EQ(result.termination, 6);
+  LUMICE_ANALYTIC_ReleaseDiagnosticResult(&result);
+
+  // Less than a single jet: the interrupted row is retained, not the tail.
+  ASSERT_EQ(LUMICE_ANALYTIC_CorrectDeviationBatch(faces, 2, rows.data(), rows.size(), 1, 5000, &result),
+            LUMICE_ANALYTIC_OK);
+  ASSERT_EQ(result.optical_count, 1u);
+  EXPECT_EQ(result.optical[0].solve_status, 6);
+  EXPECT_EQ(result.optical[0].source.token, source.token);
+  EXPECT_EQ(result.path_evaluations, 0u);
+  EXPECT_EQ(result.termination, 6);
+  LUMICE_ANALYTIC_ReleaseDiagnosticResult(&result);
+
+  const auto begin = std::chrono::steady_clock::now();
+  ASSERT_EQ(LUMICE_ANALYTIC_CorrectDeviationBatch(faces, 2, rows.data(), rows.size(), 1000000000, 1, &result),
+            LUMICE_ANALYTIC_OK);
+  const auto elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - begin).count();
+  EXPECT_LT(result.optical_count, rows.size());
+  EXPECT_EQ(result.termination, 6);
+  EXPECT_LT(elapsed, 1.0);
+  LUMICE_ANALYTIC_ReleaseDiagnosticResult(&result);
+}
+
+TEST(DiagnosticCapi, DeviationValidatesTheCallBeforeStoppingAndIsolatesBadRows) {
+  const int faces[]{ 3, 5 };
+  const int invalid_faces[]{ 0, 5 };
+  auto good = Source();
+  auto bad = good;
+  bad.pose[0] = 5;
+  bad.token = 58;
+  const LUMICE_ANALYTIC_DiagnosticSource rows[]{ good, bad, good };
+  LUMICE_ANALYTIC_DiagnosticResult result{};
+  result.struct_size = sizeof(result);
+  EXPECT_EQ(LUMICE_ANALYTIC_CorrectDeviationBatch(invalid_faces, 2, rows, 3, 0, 5000, &result),
+            LUMICE_ANALYTIC_ERR_INVALID_VALUE);
+  EXPECT_EQ(result.storage, nullptr);
+  EXPECT_EQ(LUMICE_ANALYTIC_CorrectDeviationBatch(faces, 2, nullptr, 3, 0, 5000, &result),
+            LUMICE_ANALYTIC_ERR_INVALID_VALUE);
+  ASSERT_EQ(LUMICE_ANALYTIC_CorrectDeviationBatch(faces, 2, rows, 3, 4096, 5000, &result), LUMICE_ANALYTIC_OK);
+  ASSERT_EQ(result.optical_count, 3u);
+  EXPECT_EQ(result.termination, 0);
+  EXPECT_EQ(result.optical[0].solve_status, 0);
+  EXPECT_NE(result.optical[1].input_status, 0);
+  EXPECT_EQ(result.optical[1].source.token, 58u);
+  EXPECT_EQ(result.optical[2].solve_status, 0);
+  LUMICE_ANALYTIC_ReleaseDiagnosticResult(&result);
+}
+
 TEST(DiagnosticCapi, DeviationAndFieldBudgetsRemainNumericOutcomes) {
   const int faces[]{ 3, 5 };
   auto source = Source();

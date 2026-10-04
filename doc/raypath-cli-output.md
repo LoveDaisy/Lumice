@@ -354,13 +354,20 @@ The target/fiber document and `--warm` contract in sections 1–6 are unchanged.
 | `actual_features` | Positive, locally supported numerical/physical records at their declared observation or source scope |
 | `candidates` | Verified conditional mechanism/source facts whose observed significance or full extent is unproved |
 | `unfinished` | Numerical feature records that did not establish the required evidence, retaining available diagnostics |
-| `unfinished_reasons`, `coverage` | Limits of the calculation; a bounded search is not global completeness |
+| `unfinished_reasons` | Required discovery/verification stages left incomplete or unavailable |
+| `coverage` | Supported scope and bounded-search limitations, not a claim of global completeness |
 | `observation` | Kernel, bandwidth, local location target and search scope; no MC projection is imposed |
 | `budgets`, `timing` | Actual work, completed outer draws/repeat, exhaustion and per-stage seconds |
 | `sources` | Call-local tokens linking outer draw, member and spectral row; records also carry explicit source witnesses |
 
 An unsupported-chain document contains the requested path layers, empty evidence buckets, coverage
 and zero-work budgets, but no fabricated physical input/result payload.
+
+`completed` means the declared bounded search stages finished, not that every seed established a
+feature. Unsuccessful local hypotheses remain in `unfinished` with their numerical diagnostics;
+they are not promoted to actuals. Global non-exhaustiveness and bounded source-boundary sampling
+live in `coverage[].limitations`, not in `unfinished_reasons`. Budget exhaustion or an incomplete
+required stage still gives `partial`; moving coverage notes does not remove those reasons.
 
 A `partial` document can contain independently usable actuals and candidates. Conversely, an
 empty array does not prove absence. `no_related_feature` is currently issued for an exact zero

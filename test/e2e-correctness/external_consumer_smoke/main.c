@@ -48,6 +48,18 @@ int main(void) {
        diagnostics.optical[0].source.token == 17;
   LUMICE_ANALYTIC_ReleaseDiagnosticResult(&diagnostics);
   LUMICE_ANALYTIC_ReleaseDiagnosticResult(&diagnostics);
+  /* Shared budgets return a processed prefix, not a row per unprocessed input. */
+  LUMICE_ANALYTIC_DiagnosticSource rows[3] = { source, source, source };
+  rows[1].pose[0] = 5;
+  rc = LUMICE_ANALYTIC_CorrectDeviationBatch(faces, 2, rows, 3, 0, 1000, &diagnostics);
+  ok = ok && rc == LUMICE_ANALYTIC_OK && diagnostics.optical_count == 0 && diagnostics.termination == 6 &&
+       diagnostics.path_evaluations == 0;
+  LUMICE_ANALYTIC_ReleaseDiagnosticResult(&diagnostics);
+  rc = LUMICE_ANALYTIC_CorrectDeviationBatch(faces, 2, rows, 3, 4096, 1000, &diagnostics);
+  ok = ok && rc == LUMICE_ANALYTIC_OK && diagnostics.optical_count == 3 && diagnostics.termination == 0 &&
+       diagnostics.optical[0].solve_status == 0 && diagnostics.optical[1].input_status != 0 &&
+       diagnostics.optical[2].solve_status == 0;
+  LUMICE_ANALYTIC_ReleaseDiagnosticResult(&diagnostics);
   LUMICE_ANALYTIC_WeightedSkySample sample = { 0 };
   sample.direction[2] = 1;
   sample.xyz_weight[0] = sample.xyz_weight[1] = sample.xyz_weight[2] = 1;

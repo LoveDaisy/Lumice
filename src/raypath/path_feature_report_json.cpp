@@ -420,7 +420,8 @@ std::string PathFeatureReportToJson(const PathFeatureReport& result, const char*
       { "status", "supported" },
       { "reason", "one selected crystal chain; actual distribution/shape/source/spectrum assembly" } },
     { { "subject", "bounded local discovery" },
-      { "status", discovery.budget_exhausted ? "numerical_incomplete" : "supported" },
+      { "status", discovery.budget_exhausted || !discovery.unfinished.empty() ? "numerical_incomplete" : "supported" },
+      { "limitations", discovery.limitations },
       { "reason",
         "only the recorded local windows and source seeds; no all-sky or source-topology completeness claim" } }
   };

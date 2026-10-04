@@ -713,6 +713,11 @@ LUMICE_ANALYTIC_API LUMICE_ANALYTIC_ErrorCode LUMICE_ANALYTIC_TraceWeightedSkyFi
     LUMICE_ANALYTIC_DiagnosticResult* out);
 LUMICE_ANALYTIC_API void LUMICE_ANALYTIC_ReleaseDiagnosticResult(LUMICE_ANALYTIC_DiagnosticResult* result);
 
+// Returns only the processed input prefix, in order: optical_count may be smaller than row_count.
+// termination: 0 = every row processed, 6 = shared evaluation/deadline budget exhausted.
+// An interrupted row is retained with solve_status=6; the unprocessed tail is neither read nor
+// materialized. Invalid rows within the prefix retain per-row status and do not stop later rows.
+// Array/path validation precedes budget stopping, including when max_evaluations is zero.
 LUMICE_ANALYTIC_API LUMICE_ANALYTIC_ErrorCode LUMICE_ANALYTIC_CorrectDeviationBatch(
     const int* faces, int face_count, const LUMICE_ANALYTIC_DiagnosticSource* rows, size_t row_count,
     uint64_t max_evaluations, int budget_ms, LUMICE_ANALYTIC_DiagnosticResult* out);

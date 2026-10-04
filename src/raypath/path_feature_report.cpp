@@ -22,18 +22,13 @@ Error AnalyzePathFeatureReport(const ConfigManager& config, const PathFeatureRep
       })) {
     return { ErrorCode::kInvalidPath, "non-empty layers with 2..64 positive face numbers are required" };
   }
-  if (request.path_layers.size() > 1) {
-    out->unsupported_multicrystal = true;
-    out->requested_path_layers = request.path_layers;
-    return {};
-  }
   if ((request.sample_count != 0 && (request.sample_count < 64 || request.sample_count > kMaxFeatureReportSampleCount ||
                                      request.sample_count % 2)) ||
       request.budget_ms <= 0 || request.budget_ms > kMaxFeatureReportBudgetMs || request.max_optical_evaluations == 0 ||
       request.max_optical_evaluations > kMaxFeatureReportSampleEvaluations || request.max_field_evaluations == 0 ||
       request.max_field_evaluations > 1000000000 || !(request.bandwidth_rad > 0) || request.bandwidth_rad >= 1 ||
       !std::isfinite(request.bandwidth_rad) || !(request.location_resolution_rad > 0) ||
-      !std::isfinite(request.location_resolution_rad)) {
+      !std::isfinite(request.location_resolution_rad) || request.symmetry_bits > 7) {
     return { ErrorCode::kInvalidArgument, "invalid report sample count, observation or bounded work/deadline request" };
   }
   if (request.wavelengths_nm.size() > kMaxFeatureReportWavelengthCount ||
@@ -98,6 +93,21 @@ Error AnalyzePathFeatureReport(const ConfigManager& config, const PathFeatureRep
   auto error = CaptureProductInput(scene, identity, selection, &snapshot);
   if (!error.Ok()) {
     return error;
+  }
+  // Validate the selected input without realizing a path or doing optical work,
+  // even when the requested chain is outside the supported single-crystal scope.
+  if (request.path_layers.size() > 1) {
+    AssembledSpectrum validated_spectrum;
+    error = std::holds_alternative<DiscreteSpectrumSum>(spectrum) ?
+                AssembleDiscreteSpectrum(scene.light_source_, &validated_spectrum) :
+                AssembleSpectrumQuadrature(scene.light_source_, std::get<SpectrumQuadrature>(spectrum),
+                                           &validated_spectrum);
+    if (!error.Ok()) {
+      return error;
+    }
+    out->unsupported_multicrystal = true;
+    out->requested_path_layers = request.path_layers;
+    return {};
   }
   ILOG_INFO(GetGlobalLogger(), "[raypath report] product snapshot captured; resolving member/spectrum work");
   ProductDiagnosticSampler sampler(snapshot, 1497, spectrum);

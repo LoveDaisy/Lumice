@@ -68,6 +68,7 @@ struct ProductDiscoveryResult {
   ProductDiagnosticMeasure measure;
   std::vector<DiagnosticFeatureRecord> features;
   std::vector<std::string> unfinished;
+  std::vector<std::string> limitations;
   uint64_t event_path_evaluations = 0;
   uint64_t replicate_path_evaluations = 0;
   uint64_t replicate_samples = 0;

@@ -33,6 +33,19 @@ def _report(config: Path, path: str, *args: str):
     )
 
 
+def test_bounded_nonfixed_report_completes_without_claiming_global_coverage():
+    result = _report(_RANDOM, "3-5", "--events", "64", "--wavelength", "550")
+    assert result.returncode == 0, result.stderr
+    doc = json.loads(result.stdout)
+    assert doc["outcome"] == "completed"
+    assert doc["unfinished_reasons"] == []
+    assert not doc["budgets"]["exhausted"]
+    assert doc["coverage"][1]["limitations"]
+    assert doc["candidates"]
+    # A completed bounded search is not a proof that every local hypothesis worked.
+    assert doc["unfinished"]
+
+
 def test_315_report_keeps_conditional_tir_distinct_from_observed_colour():
     result = _report(_RANDOM, "3-1-5", "--events", "8192", "--wavelength", "550")
     assert result.returncode == 0, result.stderr
@@ -86,7 +99,8 @@ def test_default_report_consumes_actual_continuous_spectrum_and_records_scope():
         assert doc["outcome"] == "partial"
         assert "continuous spectral quadrature refinement incomplete" in doc["unfinished_reasons"]
     assert doc["observation"]["kernel"] == "normalized_vMF"
-    assert doc["unfinished_reasons"]  # no sampled empty set becomes an absence certificate
+    assert doc["outcome"] in {"completed", "partial"}
+    assert doc["coverage"][1]["limitations"]  # bounded search is not an absence certificate
 
 
 def test_rhombic_plate_uses_physical_members_and_measured_peaks():

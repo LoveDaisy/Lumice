@@ -131,6 +131,40 @@ TEST(PathFeatureReportCApi, StructSizeAndLayerShapeAreValidated) {
   EXPECT_NE(outcome.error.find("one non-empty layer"), std::string::npos);
 }
 
+TEST(PathFeatureReportCApi, UnsupportedMultiCrystalStillRejectsInvalidInput) {
+  const ScenePtr scene = MakeScene();
+  const int faces[]{ 3, 5, 1, 3 };
+  const int layers[]{ 2, 2 };
+  Request request;
+  request.c.faces = faces;
+  request.c.face_count = 4;
+  request.c.layer_face_counts = layers;
+  request.c.layer_count = 2;
+  auto outcome = Analyse(scene.get(), &request.c);
+  ASSERT_EQ(outcome.code, LUMICE_OK) << outcome.error;
+  const auto document = nlohmann::json::parse(Json(outcome.report.get()));
+  EXPECT_EQ(document["outcome"], "unsupported_multicrystal");
+  EXPECT_EQ(document["budgets"]["optical_evaluations"], 0);
+
+  request.c.crystal_id = 99;
+  outcome = Analyse(scene.get(), &request.c);
+  EXPECT_EQ(outcome.code, LUMICE_ERR_INVALID_VALUE);
+  EXPECT_EQ(outcome.report, nullptr);
+  EXPECT_NE(outcome.error.find("unknown_crystal_id"), std::string::npos);
+  request.c.crystal_id = 1;
+  request.c.scene_layer_plus_one = 99;
+  EXPECT_EQ(Analyse(scene.get(), &request.c).code, LUMICE_ERR_INVALID_VALUE);
+  request.c.scene_layer_plus_one = 0;
+  request.c.budget_ms = -1;
+  EXPECT_EQ(Analyse(scene.get(), &request.c).code, LUMICE_ERR_INVALID_VALUE);
+  request.c.budget_ms = 0;
+  const double wavelength = 550, weight = -1;
+  request.c.wavelength_count = 1;
+  request.c.wavelengths_nm = &wavelength;
+  request.c.wavelength_weights = &weight;
+  EXPECT_EQ(Analyse(scene.get(), &request.c).code, LUMICE_ERR_INVALID_VALUE);
+}
+
 TEST(PathFeatureReportCApi, SerializesOnceAndKeepsTheResultImmutable) {
   const ScenePtr scene = MakeScene();
   Request request;

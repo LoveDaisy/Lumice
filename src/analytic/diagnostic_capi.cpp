@@ -350,10 +350,17 @@ LUMICE_ANALYTIC_ErrorCode LUMICE_ANALYTIC_CorrectDeviationBatch(const int* faces
     try {
       auto storage = std::make_unique<Storage>();
       const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(budget_ms);
+      const std::vector<int> path(faces, faces + face_count);
+      if (std::any_of(path.begin(), path.end(), [](int face) { return face <= 0; })) {
+        return 1;
+      }
       for (size_t i = 0; i < count; ++i) {
-        const auto point =
-            a::CorrectDeviationMinimum({ faces, faces + face_count }, Source(rows[i]), {},
-                                       max_evaluations - std::min(max_evaluations, full->path_evaluations), deadline);
+        if (full->path_evaluations >= max_evaluations || std::chrono::steady_clock::now() >= deadline) {
+          full->termination = 6;
+          break;
+        }
+        const auto point = a::CorrectDeviationMinimum(
+            path, Source(rows[i]), {}, max_evaluations - std::min(max_evaluations, full->path_evaluations), deadline);
         full->path_evaluations += point.path_evaluations;
         auto row = Optics(point.source, point.value, point.status, storage.get());
         row.deviation_available = point.value.path_valid;
@@ -362,6 +369,10 @@ LUMICE_ANALYTIC_ErrorCode LUMICE_ANALYTIC_CorrectDeviationBatch(const int* faces
         std::copy_n(point.objective_curvatures.begin(), 2, row.objective_curvatures);
         row.hessian_error = point.hessian_error;
         storage->optical.push_back(row);
+        if (point.status == a::InterfaceSolveStatus::kBudgetExceeded) {
+          full->termination = 6;
+          break;
+        }
       }
       Finish(std::move(storage), full);
       return 0;

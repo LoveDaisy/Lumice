@@ -247,7 +247,8 @@ void FindSourceBoundaries(const ProductDiscoveryOptions& options, ProductDiscove
     }
   }
   if (!coordinates.empty()) {
-    result->unfinished.push_back("bounded declared-coordinate boundary samples, not complete source-boundary topology");
+    result->limitations.push_back(
+        "bounded declared-coordinate boundary samples, not complete source-boundary topology");
   }
 }
 
@@ -517,7 +518,7 @@ void FindEvents(const ProductDiscoveryOptions& options, ProductDiscoveryResult* 
       ++found;
     }
   }
-  result->unfinished.push_back("bounded interface seed subset is not a complete event/topology search");
+  result->limitations.push_back("bounded interface seed subset is not a complete event/topology search");
 }
 
 }  // namespace
@@ -788,7 +789,7 @@ Error DiscoverProductFeatures(const ProductDiagnosticSampler& sampler, const Pro
   if (seeds.empty()) {
     result.unfinished.push_back("no positive sampling seeds; finite sampling cannot prove empty support");
   }
-  result.unfinished.push_back("bounded seed search, not exhaustive feature or source topology coverage");
+  result.limitations.push_back("bounded seed search, not exhaustive feature or source topology coverage");
   if (result.budget_exhausted) {
     result.unfinished.push_back(
         "deadline or evaluation budget exhausted; previously established local records retained");

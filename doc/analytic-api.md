@@ -1064,6 +1064,14 @@ are not silently extended. Interfaces allocate exactly `interface_count` entries
 per short path. Nested arrays live until the root is released. Four concurrent calls on separate
 outputs are covered by the ABI tests. Reusing a live result requires releasing it first.
 
+`CorrectDeviationBatch` shares one evaluation/deadline budget across the batch and returns only
+its processed prefix, in input order. `optical_count` can be less than the requested row count;
+the tail is not read or materialized. `termination=0` means every row was processed (individual
+rows may still be invalid or unsolved); `termination=6` means the shared budget stopped the call.
+A row interrupted inside its solver is retained with `solve_status=6`. A zero evaluation budget
+returns an empty prefix. Invalid array/path arguments are still call errors even with zero budget;
+bad per-row inputs within the processed prefix remain isolated and do not suppress later rows.
+
 The header defines row status/availability, units, basis order, numeric termination values,
 explicit evaluation/deadline parameters, and the bounded-copy behavior. Weighted samples already
 contain all physical and spectral coefficients. Shared outer draws must share their statistical
