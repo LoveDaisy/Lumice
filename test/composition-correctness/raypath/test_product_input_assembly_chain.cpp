@@ -5,6 +5,7 @@
 #include "core/lat_lut.hpp"
 #include "core/simulator.hpp"
 #include "gtest/gtest.h"
+#include "raypath/product_diagnostic_sampler.hpp"
 #include "raypath/product_input_assembly.hpp"
 
 namespace {
@@ -66,6 +67,50 @@ rp::ProductInput Assemble(const rp::ProductInputSnapshot& snapshot,
       rp::AssembleProductInput(snapshot, samples, { { 1.f, .3f }, "cap sample" }, rp::DiscreteSpectrumSum{}, &input);
   EXPECT_TRUE(error.Ok()) << error.message;
   return input;
+}
+
+TEST(ProductInputChain, JointSamplerReplaysPrefixesAndCorrelatedShapeFromSnapshot) {
+  auto scene = Scene(1, true);
+  scene.light_source_.param_ = { 20.f, 13.f, 1.4f };
+  auto& crystal = scene.ms_[0].setting_[0].crystal_;
+  auto& shape = std::get<ns::PrismCrystalParam>(crystal.param_);
+  shape.sync_group_[ns::kShapeScalarFace0] = shape.sync_group_[ns::kShapeScalarFace3] = 1;
+  crystal.axis_.azimuth_dist = { ns::DistributionType::kUniform, 0.f, 360.f };
+  crystal.axis_.latitude_dist = { ns::DistributionType::kGaussian, 88.f, 2.f };
+  const auto snapshot = Capture(scene, 0, { 3, 5 });
+  const rp::ProductDiagnosticSampler sampler(snapshot, 1497);
+  rp::ProductInput a;
+  rp::ProductInput b;
+  ASSERT_TRUE(sampler.Draw(17, rp::DiscreteSpectrumSum{}, &a).Ok());
+  ASSERT_TRUE(sampler.Draw((uint64_t{ 1 } << 32) + 17, rp::DiscreteSpectrumSum{}, &b).Ok());
+  EXPECT_NE(a.layers[0].analytic_pose, b.layers[0].analytic_pose);
+  ASSERT_TRUE(sampler.Draw(17, rp::DiscreteSpectrumSum{}, &b).Ok());
+  EXPECT_EQ(a.layers[0].analytic_pose, b.layers[0].analytic_pose);
+  EXPECT_EQ(a.source.incident_direction, b.source.incident_direction);
+  EXPECT_EQ(a.layers[0].shape_sample.raw, b.layers[0].shape_sample.raw);
+  EXPECT_EQ(a.layers[0].shape.face_distance[0], a.layers[0].shape.face_distance[3]);
+  uint32_t next = 0;
+  for (const auto& dimension : sampler.Dimensions()) {
+    EXPECT_EQ(dimension.offset, next);
+    next += dimension.width;
+  }
+  EXPECT_GT(next, 8u);
+  for (const auto type :
+       { ns::DistributionType::kNoRandom, ns::DistributionType::kUniform, ns::DistributionType::kGaussian,
+         ns::DistributionType::kLaplacian, ns::DistributionType::kZigzag, ns::DistributionType::kGaussianLegacy }) {
+    auto changed = snapshot;
+    changed.layers[0].crystal.axis_.latitude_dist = { type, 20.f, 5.f };
+    changed.layers[0].crystal.axis_.azimuth_dist.type = type;
+    const rp::ProductDiagnosticSampler branch(changed, 1497);
+    if (!branch.Draw(17, rp::DiscreteSpectrumSum{}, &b).Ok()) {
+      ADD_FAILURE() << "valid distribution branch rejected";
+      return;
+    }
+    EXPECT_TRUE(ns::analytic::ValidateRotation(b.layers[0].analytic_pose.data()));
+  }
+  scene.ms_.clear();
+  ASSERT_TRUE(sampler.Draw(17, rp::DiscreteSpectrumSum{}, &b).Ok());
+  EXPECT_EQ(a.layers[0].analytic_pose, b.layers[0].analytic_pose);
 }
 
 TEST(ProductInputChain, HaarOrbitConditionsOnActualCapRayAndRetainsPhysicalFamily) {
