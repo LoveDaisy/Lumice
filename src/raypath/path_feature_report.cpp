@@ -15,6 +15,7 @@
 #include "analytic/path_evaluation.hpp"
 #include "core/crystal.hpp"
 #include "core/optics.hpp"
+#include "raypath/physical_member_scope.hpp"
 #include "raypath/scene_to_analytic.hpp"
 #include "util/sky_direction.hpp"
 
@@ -147,35 +148,6 @@ std::vector<ReportWavelength> ResolveWavelengths(const LightSourceConfig& light,
       return {};
     }
     out.push_back({ choice.wavelength_nm, weights[i], choice.refractive_index });
-  }
-  return out;
-}
-
-std::vector<std::vector<int>> ExpandPhysicalMembers(const CrystalConfig& crystal, const std::vector<int>& faces) {
-  const GeometricSymmetry shape =
-      std::visit([](const auto& param) { return DeriveGeometricSymmetry(param); }, crystal.param_);
-  const SymmetryGating gating = DeriveSymmetryGating(SymmetrySemantics::kPhysical, shape, crystal.axis_);
-  const auto d = detail::DeriveDSymmetryParams(crystal.axis_);
-  std::vector<IdType> path;
-  path.reserve(faces.size());
-  for (int face : faces) {
-    path.push_back(static_cast<IdType>(face));
-  }
-  const uint8_t symmetry = kSymmetryPrism | kSymmetryBasal | kSymmetryDirection;
-  std::vector<std::vector<int>> out;
-  for (const auto& member : ExpandRaypathByPeriod(path, symmetry, d.sigma_a, d.d_applicable, gating.p_applicable,
-                                                  gating.b_applicable, kHexagonalFnPeriod, gating.geom)) {
-    std::vector<int> converted;
-    converted.reserve(member.size());
-    for (IdType face : member) {
-      converted.push_back(static_cast<int>(face));
-    }
-    if (std::find(out.begin(), out.end(), converted) == out.end()) {
-      out.push_back(std::move(converted));
-    }
-  }
-  if (out.empty()) {
-    out.push_back(faces);
   }
   return out;
 }
@@ -676,7 +648,14 @@ Error AnalyzePathFeatureReport(const ConfigManager& config, const PathFeatureRep
   if (!wavelength_error.Ok()) {
     return wavelength_error;
   }
-  const std::vector<std::vector<int>> members = ExpandPhysicalMembers(crystal_config, request.path_layers.front());
+  PhysicalMemberScope scope;
+  const auto scope_error = ResolvePhysicalMemberScope(
+      { "feature-report", 0, crystal_config, request.path_layers.front(),
+        static_cast<uint8_t>(sym::kSymP | sym::kSymB | sym::kSymD), SymmetrySemantics::kPhysical },
+      &scope);
+  if (!scope_error.Ok())
+    return scope_error;
+  const auto& members = scope.members;
   if (ExceedsSampleEvaluationBudget(members.size(), wavelengths.size(), request.sample_count)) {
     return { ErrorCode::kInvalidArgument, "physical-L2 members × wavelengths × (fine + coarse) exceeds the " +
                                               std::to_string(kMaxFeatureReportSampleEvaluations) +

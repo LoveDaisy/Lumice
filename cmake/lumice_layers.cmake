@@ -237,6 +237,8 @@ set(LUMICE_LAYER_raypath_FILES
   raypath/path_feature_report.cpp
   raypath/product_input_assembly.cpp
   raypath/product_input_assembly.hpp
+  raypath/physical_member_scope.cpp
+  raypath/physical_member_scope.hpp
   raypath/path_feature_report.hpp
   raypath/path_feature_report_json.cpp
   raypath/path_feature_report_json.hpp

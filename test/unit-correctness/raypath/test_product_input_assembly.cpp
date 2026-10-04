@@ -1,9 +1,11 @@
 #include <cmath>
+#include <set>
 
 #include "core/color_util.hpp"
 #include "core/geo3d.hpp"
 #include "core/wl_stratifier.hpp"
 #include "gtest/gtest.h"
+#include "raypath/physical_member_scope.hpp"
 #include "raypath/product_input_assembly.hpp"
 #include "util/illuminant.hpp"
 
@@ -98,4 +100,34 @@ TEST(ProductInputSource, ActualCapDrawMatchesProductionAndKeepsDomain) {
   EXPECT_EQ(rng.GetUniform(), replay.GetUniform());
   EXPECT_TRUE(ns::analytic::ValidateUnitVector(out.incident_direction.data()));
 }
+TEST(ProductInputMembers, SnapshotBitsAndEnsembleGateDoNotReadLiveState) {
+  ns::PrismCrystalParam param;
+  for (int i = 0; i < 6; ++i)
+    param.d_[i] = { ns::DistributionType::kNoRandom, i % 2 ? 1.2f : 1.f, 0.f };
+  ns::CrystalConfig crystal{ 7, param, {} };
+  crystal.axis_.azimuth_dist = { ns::DistributionType::kUniform, 0.f, 360.f };
+  rp::PhysicalMemberRequest request{
+    "scene 9", 1, crystal, { 3, 5 }, ns::sym::kSymP, ns::SymmetrySemantics::kPhysical
+  };
+  rp::PhysicalMemberScope locked;
+  ASSERT_TRUE(rp::ResolvePhysicalMemberScope(request, &locked).Ok());
+  EXPECT_EQ(locked.members, (std::vector<std::vector<int>>{ { 3, 5 } }));
+  request.crystal.axis_.roll_dist = { ns::DistributionType::kUniform, 0.f, 360.f };
+  rp::PhysicalMemberScope full;
+  ASSERT_TRUE(rp::ResolvePhysicalMemberScope(request, &full).Ok());
+  const std::set<std::vector<int>> expected{ { 3, 5 }, { 5, 7 }, { 7, 3 } };
+  EXPECT_EQ((std::set<std::vector<int>>(full.members.begin(), full.members.end())), expected);
+  EXPECT_EQ(full.members.size(), expected.size());
+  request.symmetry_bits = 0;
+  rp::PhysicalMemberScope none;
+  ASSERT_TRUE(rp::ResolvePhysicalMemberScope(request, &none).Ok());
+  EXPECT_EQ(none.members, locked.members);
+  request.representative = { 1, 2 };
+  EXPECT_EQ(full.snapshot.representative, (std::vector<int>{ 3, 5 }));
+  EXPECT_EQ(full.snapshot.symmetry_bits, ns::sym::kSymP);
+  EXPECT_EQ(full.snapshot.scene_identity, "scene 9");
+  request.semantics = ns::SymmetrySemantics::kLabel;
+  EXPECT_FALSE(rp::ResolvePhysicalMemberScope(request, &none).Ok());
+}
+
 }  // namespace
