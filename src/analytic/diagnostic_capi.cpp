@@ -121,7 +121,7 @@ static int EvaluateDiagnosticBatchImpl(const int* faces, int face_count, const L
   if (!faces || (row_count && !rows)) {
     return 3;
   }
-  if (face_count < 2 || face_count > 64 || row_count > 1000000) {
+  if (!a::ValidateDiagnosticPath(faces, face_count) || row_count > 1000000) {
     return 1;
   }
   try {
@@ -156,8 +156,8 @@ static int TraceDiagnosticInterfaceImpl(const int* faces, int face_count,
   if (!faces || !source) {
     return 3;
   }
-  if (face_count < 2 || face_count > 64 || slot <= 0 || slot + 1 >= face_count || max_points < 2 || max_points > 4096 ||
-      budget_ms <= 0 || budget_ms > 120000) {
+  if (!a::ValidateDiagnosticPath(faces, face_count) || slot <= 0 || slot >= face_count - 1 || max_points < 2 ||
+      max_points > 4096 || budget_ms <= 0 || budget_ms > 120000) {
     return 1;
   }
   try {
@@ -343,7 +343,7 @@ LUMICE_ANALYTIC_ErrorCode LUMICE_ANALYTIC_CorrectDeviationBatch(const int* faces
                                                                 size_t count, uint64_t max_evaluations, int budget_ms,
                                                                 LUMICE_ANALYTIC_DiagnosticResult* out) {
   return Invoke(out, [&](auto* full) {
-    if (!faces || face_count < 2 || face_count > 64 || (count && !rows) || count > 1000000 || budget_ms <= 0 ||
+    if (!a::ValidateDiagnosticPath(faces, face_count) || (count && !rows) || count > 1000000 || budget_ms <= 0 ||
         budget_ms > 120000) {
       return 1;
     }
@@ -351,9 +351,6 @@ LUMICE_ANALYTIC_ErrorCode LUMICE_ANALYTIC_CorrectDeviationBatch(const int* faces
       auto storage = std::make_unique<Storage>();
       const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(budget_ms);
       const std::vector<int> path(faces, faces + face_count);
-      if (std::any_of(path.begin(), path.end(), [](int face) { return face <= 0; })) {
-        return 1;
-      }
       for (size_t i = 0; i < count; ++i) {
         if (full->path_evaluations >= max_evaluations || std::chrono::steady_clock::now() >= deadline) {
           full->termination = 6;
@@ -363,7 +360,7 @@ LUMICE_ANALYTIC_ErrorCode LUMICE_ANALYTIC_CorrectDeviationBatch(const int* faces
             path, Source(rows[i]), {}, max_evaluations - std::min(max_evaluations, full->path_evaluations), deadline);
         full->path_evaluations += point.path_evaluations;
         auto row = Optics(point.source, point.value, point.status, storage.get());
-        row.deviation_available = point.value.path_valid;
+        row.deviation_available = point.deviation_available;
         row.deviation_rad = point.deviation_rad;
         row.correction_rad = point.correction_rad;
         std::copy_n(point.objective_curvatures.begin(), 2, row.objective_curvatures);

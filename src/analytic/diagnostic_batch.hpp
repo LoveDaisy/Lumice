@@ -58,6 +58,7 @@ struct DiagnosticBatchOptions {
 // n/pose/source and optical domain are per-row outcomes. No Scene or product
 // classification. Optional native n derivatives report two-step discrepancies,
 // not a product acceptance threshold or an integration error bound.
+bool ValidateDiagnosticPath(const int* faces, size_t face_count);
 bool EvaluateDiagnosticBatch(const std::vector<int>& faces, const std::vector<DiagnosticInputRow>& rows,
                              const DiagnosticBatchOptions& options, std::vector<DiagnosticOutputRow>* out);
 
@@ -135,6 +136,7 @@ struct DeviationStationaryPoint {
   InterfaceSolveStatus status = InterfaceSolveStatus::kInvalidInput;
   DiagnosticInputRow source;
   DiagnosticOutputRow value;
+  bool deviation_available = false;  // Complete angle/correction/curvature snapshot.
   double deviation_rad = 0;
   std::array<double, 2> objective_curvatures{};
   double hessian_error = 0;

@@ -138,14 +138,18 @@ DiagnosticOutputRow EvaluateRow(const std::vector<int>& faces, const DiagnosticI
 
 }  // namespace
 
+bool ValidateDiagnosticPath(const int* faces, size_t face_count) {
+  return faces && face_count >= 2 && face_count <= kMaxFaceCount &&
+         std::all_of(faces, faces + face_count, [](int face) { return face > 0; });
+}
+
 bool EvaluateDiagnosticBatch(const std::vector<int>& faces, const std::vector<DiagnosticInputRow>& rows,
                              const DiagnosticBatchOptions& options, std::vector<DiagnosticOutputRow>* out) {
   if (!out) {
     return false;
   }
   out->clear();
-  if (faces.size() < 2 || faces.size() > kMaxFaceCount ||
-      !std::all_of(faces.begin(), faces.end(), [](int face) { return face > 0; }) ||
+  if (!ValidateDiagnosticPath(faces.data(), faces.size()) ||
       (options.derivatives && (!(options.index_step > 0) || !std::isfinite(options.index_step)))) {
     return false;
   }
@@ -161,9 +165,10 @@ InterfaceStationaryPoint CorrectInterfaceEvent(const std::vector<int>& faces, co
                                                std::chrono::steady_clock::time_point deadline) {
   InterfaceStationaryPoint result;
   result.source = source;
-  if (options.internal_slot <= 0 || options.internal_slot + 1 >= static_cast<int>(faces.size()) ||
-      !(options.residual_tolerance > 0) || !std::isfinite(options.residual_tolerance) || !(options.max_step_rad > 0) ||
-      options.max_step_rad >= 1 || options.max_iterations <= 0) {
+  if (!ValidateDiagnosticPath(faces.data(), faces.size()) || options.internal_slot <= 0 ||
+      options.internal_slot >= static_cast<int>(faces.size()) - 1 || !(options.residual_tolerance > 0) ||
+      !std::isfinite(options.residual_tolerance) || !(options.max_step_rad > 0) || options.max_step_rad >= 1 ||
+      options.max_iterations <= 0) {
     return result;
   }
   auto trial_source = source;
@@ -229,8 +234,9 @@ InterfaceCurve TraceInterfaceCurve(const std::vector<int>& faces, const Diagnost
                                    double step_rad, double event_resolution_rad, int max_points, bool reverse,
                                    uint64_t max_path_evaluations, std::chrono::steady_clock::time_point deadline) {
   InterfaceCurve curve;
-  if (!(step_rad > 0) || step_rad >= .5 || !(event_resolution_rad > 0) || !std::isfinite(event_resolution_rad) ||
-      event_resolution_rad >= step_rad || max_points < 2 || max_points > 4096) {
+  if (!ValidateDiagnosticPath(faces.data(), faces.size()) || !(step_rad > 0) || step_rad >= .5 ||
+      !(event_resolution_rad > 0) || !std::isfinite(event_resolution_rad) || event_resolution_rad >= step_rad ||
+      max_points < 2 || max_points > 4096) {
     return curve;
   }
   auto correct = [&](const DiagnosticInputRow& source) {
@@ -284,11 +290,14 @@ InterfaceCurve TraceInterfaceCurve(const std::vector<int>& faces, const Diagnost
     so3::MatMul(current.source.pose.data(), rotation, trial.pose.data());
     auto next = correct(trial);
     if (next.status != InterfaceSolveStatus::kConverged) {
+      if (next.status == InterfaceSolveStatus::kBudgetExceeded) {
+        curve.stop = InterfaceWalkStop::kBudgetExceeded;
+        return curve;
+      }
       if (next.value.input_status == Status::kOk && (next.value.optical_failure == ChainFailure::kPathInfeasible ||
                                                      next.value.optical_failure == ChainFailure::kTirBoundary)) {
         auto positive = current;
         auto negative = next;
-        bool valid_bracket = true;
         for (int bisect = 0; bisect < 48 && distance(positive.source, negative.source) > event_resolution_rad;
              ++bisect) {
           double rel[9], w[3], half[9];
@@ -301,22 +310,28 @@ InterfaceCurve TraceInterfaceCurve(const std::vector<int>& faces, const Diagnost
           auto middle_source = positive.source;
           so3::MatMul(positive.source.pose.data(), half, middle_source.pose.data());
           auto middle = correct(middle_source);
+          if (middle.status == InterfaceSolveStatus::kBudgetExceeded) {
+            curve.stop = InterfaceWalkStop::kBudgetExceeded;
+            return curve;
+          }
           if (middle.status == InterfaceSolveStatus::kConverged && middle.value.path_valid) {
             positive = std::move(middle);
           } else if (middle.value.optical_failure == ChainFailure::kPathInfeasible ||
                      middle.value.optical_failure == ChainFailure::kTirBoundary) {
             negative = std::move(middle);
           } else {
-            valid_bracket = false;
-            break;
+            curve.stop = InterfaceWalkStop::kCorrectorFailed;
+            return curve;
           }
         }
         const double width = distance(positive.source, negative.source);
-        if (valid_bracket && width <= event_resolution_rad) {
+        if (width <= event_resolution_rad) {
           curve.events.push_back({ InterfaceWalkStop::kOpticalGate, std::move(positive), std::move(negative), width });
           curve.stop = InterfaceWalkStop::kOpticalGate;
           return curve;
         }
+        curve.stop = InterfaceWalkStop::kCorrectorFailed;
+        return curve;
       }
       curve.stop = next.status == InterfaceSolveStatus::kBudgetExceeded ? InterfaceWalkStop::kBudgetExceeded :
                    next.status == InterfaceSolveStatus::kNoSupport      ? InterfaceWalkStop::kOpticalGate :
@@ -387,6 +402,20 @@ DeviationStationaryPoint CorrectDeviationMinimum(const std::vector<int>& faces, 
       options.max_step_rad >= 1 || options.max_iterations <= 0) {
     return result;
   }
+  DeviationStationaryPoint snapshot;
+  auto finish = [&]() {
+    // Work counters and stop status describe the whole attempt; all numerical
+    // fields describe the last complete iterate, never an accepted trial whose
+    // derivative stencil has not finished. Before the first complete iterate,
+    // retain partial optics but leave deviation diagnostics unavailable.
+    if (!snapshot.deviation_available) {
+      return result;
+    }
+    snapshot.status = result.status;
+    snapshot.path_evaluations = result.path_evaluations;
+    return snapshot;
+  };
+  auto trial_source = source;
   auto evaluate = [&](const DiagnosticInputRow& row, bool derivatives, DiagnosticOutputRow* value) {
     const uint64_t cost = derivatives ? 6 : 1;
     if (max_path_evaluations - std::min(max_path_evaluations, result.path_evaluations) < cost ||
@@ -411,12 +440,18 @@ DeviationStationaryPoint CorrectDeviationMinimum(const std::vector<int>& faces, 
     return 1 - so3::Dot3(source.incident.data(), value.outgoing.data());
   };
   for (int iteration = 0; iteration < options.max_iterations; ++iteration) {
+    result.source = trial_source;
+    result.deviation_available = false;
+    result.deviation_rad = 0;
+    result.correction_rad = 0;
+    result.objective_curvatures = {};
+    result.hessian_error = 0;
     if (!evaluate(result.source, true, &result.value)) {
-      return result;
+      return finish();
     }
     if (!result.value.direction_jacobian_available) {
       result.status = InterfaceSolveStatus::kUnavailable;
-      return result;
+      return finish();
     }
     double cross[3];
     so3::Cross3(source.incident.data(), result.value.outgoing.data(), cross);
@@ -460,7 +495,7 @@ DeviationStationaryPoint CorrectDeviationMinimum(const std::vector<int>& faces, 
           }
           DiagnosticOutputRow trial;
           if (!evaluate(perturb(x * h, y * h), false, &trial)) {
-            return result;
+            return finish();
           }
           values[x + 1][y + 1] = objective(trial);
         }
@@ -483,15 +518,17 @@ DeviationStationaryPoint CorrectDeviationMinimum(const std::vector<int>& faces, 
     result.objective_curvatures = { mean - gap, mean + gap };
     if (!(result.objective_curvatures[0] > 2 * result.hessian_error)) {
       result.status = InterfaceSolveStatus::kDegenerate;
-      return result;
+      return finish();
     }
     const double determinant = hessian[0] * hessian[2] - hessian[1] * hessian[1];
     double dx = (-hessian[2] * gradient[0] + hessian[1] * gradient[1]) / determinant;
     double dy = (hessian[1] * gradient[0] - hessian[0] * gradient[1]) / determinant;
     result.correction_rad = std::hypot(dx, dy);
+    result.deviation_available = true;
+    snapshot = result;
     if (result.correction_rad <= options.tolerance_rad) {
       result.status = InterfaceSolveStatus::kConverged;
-      return result;
+      return finish();
     }
     if (iteration + 1 == options.max_iterations) {
       break;
@@ -506,11 +543,10 @@ DeviationStationaryPoint CorrectDeviationMinimum(const std::vector<int>& faces, 
       if (!evaluate(row, false, &value)) {
         if (result.status == InterfaceSolveStatus::kBudgetExceeded ||
             result.status == InterfaceSolveStatus::kInvalidInput) {
-          return result;
+          return finish();
         }
       } else if (objective(value) <= f) {
-        result.source = row;
-        result.value = std::move(value);
+        trial_source = row;
         accepted = true;
         break;
       }
@@ -519,11 +555,11 @@ DeviationStationaryPoint CorrectDeviationMinimum(const std::vector<int>& faces, 
     }
     if (!accepted) {
       result.status = InterfaceSolveStatus::kUnavailable;
-      return result;
+      return finish();
     }
   }
   result.status = InterfaceSolveStatus::kIterationLimit;
-  return result;
+  return finish();
 }
 
 }  // namespace lumice::analytic
