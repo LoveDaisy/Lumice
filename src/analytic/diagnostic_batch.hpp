@@ -91,5 +91,29 @@ InterfaceStationaryPoint CorrectInterfaceEvent(const std::vector<int>& faces, co
                                                const InterfaceSolveOptions& options, uint64_t max_path_evaluations,
                                                std::chrono::steady_clock::time_point deadline);
 
+// A local minimum of scattering deviation on the incident-direction quotient
+// of SO(3). This chart is valid only when the caller's support allows every
+// orientation. Shape, wavelength and incident ray remain fixed. Positive
+// finite entry measure is required at every numerical stencil and iterate;
+// touching an active domain gate is unavailable, never an unconstrained root.
+struct DeviationSolveOptions {
+  double tolerance_rad = 1e-8;
+  double max_step_rad = .1;
+  int max_iterations = 32;
+};
+struct DeviationStationaryPoint {
+  InterfaceSolveStatus status = InterfaceSolveStatus::kInvalidInput;
+  DiagnosticInputRow source;
+  DiagnosticOutputRow value;
+  double deviation_rad = 0;
+  std::array<double, 2> objective_curvatures{};
+  double hessian_error = 0;
+  double correction_rad = 0;
+  uint64_t path_evaluations = 0;
+};
+DeviationStationaryPoint CorrectDeviationMinimum(const std::vector<int>& faces, const DiagnosticInputRow& source,
+                                                 const DeviationSolveOptions& options, uint64_t max_path_evaluations,
+                                                 std::chrono::steady_clock::time_point deadline);
+
 }  // namespace lumice::analytic
 #endif  // LUMICE_ANALYTIC_DIAGNOSTIC_BATCH_HPP_

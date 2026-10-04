@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 #include "analytic/so3.hpp"
 
@@ -213,6 +214,154 @@ InterfaceStationaryPoint CorrectInterfaceEvent(const std::vector<int>& faces, co
     so3::MatMul(result.source.pose.data(), rotation, next.data());
     result.source.pose = next;
     result.travelled_rad += std::abs(step);
+  }
+  result.status = InterfaceSolveStatus::kIterationLimit;
+  return result;
+}
+
+DeviationStationaryPoint CorrectDeviationMinimum(const std::vector<int>& faces, const DiagnosticInputRow& source,
+                                                 const DeviationSolveOptions& options, uint64_t max_path_evaluations,
+                                                 std::chrono::steady_clock::time_point deadline) {
+  DeviationStationaryPoint result;
+  result.source = source;
+  if (!(options.tolerance_rad > 0) || !std::isfinite(options.tolerance_rad) || !(options.max_step_rad > 0) ||
+      options.max_step_rad >= 1 || options.max_iterations <= 0) {
+    return result;
+  }
+  auto evaluate = [&](const DiagnosticInputRow& row, bool derivatives, DiagnosticOutputRow* value) {
+    const uint64_t cost = derivatives ? 6 : 1;
+    if (max_path_evaluations - std::min(max_path_evaluations, result.path_evaluations) < cost ||
+        std::chrono::steady_clock::now() >= deadline) {
+      result.status = InterfaceSolveStatus::kBudgetExceeded;
+      return false;
+    }
+    std::vector<DiagnosticOutputRow> output;
+    if (!EvaluateDiagnosticBatch(faces, { row }, { derivatives, true }, &output)) {
+      result.status = InterfaceSolveStatus::kInvalidInput;
+      return false;
+    }
+    *value = std::move(output[0]);
+    result.path_evaluations += value->path_evaluations;
+    if (!value->path_valid || !value->entry_available || !(value->entry.value > 0) || !(value->interface_product > 0)) {
+      result.status = InterfaceSolveStatus::kNoSupport;
+      return false;
+    }
+    return true;
+  };
+  auto objective = [&](const DiagnosticOutputRow& value) {
+    return 1 - so3::Dot3(source.incident.data(), value.outgoing.data());
+  };
+  for (int iteration = 0; iteration < options.max_iterations; ++iteration) {
+    if (!evaluate(result.source, true, &result.value)) {
+      return result;
+    }
+    if (!result.value.direction_jacobian_available) {
+      result.status = InterfaceSolveStatus::kUnavailable;
+      return result;
+    }
+    double cross[3];
+    so3::Cross3(source.incident.data(), result.value.outgoing.data(), cross);
+    result.deviation_rad =
+        std::atan2(so3::Norm3(cross), so3::Dot3(source.incident.data(), result.value.outgoing.data()));
+    double incident_body[3];
+    double basis[2][3];
+    chain_detail::WorldToBody(result.source.pose.data(), source.incident.data(), incident_body);
+    so3::TangentBasis(incident_body, basis);
+    double gradient[2]{};
+    for (int j = 0; j < 2; ++j) {
+      for (int component = 0; component < 3; ++component) {
+        for (int axis = 0; axis < 3; ++axis) {
+          gradient[j] -=
+              source.incident[component] * result.value.direction_pose_jacobian[component][axis] * basis[j][axis];
+        }
+      }
+    }
+    auto perturb = [&](double x, double y) {
+      DiagnosticInputRow row = result.source;
+      double delta[3];
+      for (int j = 0; j < 3; ++j) {
+        delta[j] = x * basis[0][j] + y * basis[1][j];
+      }
+      double rotation[9];
+      so3::Exp(delta, rotation);
+      so3::MatMul(result.source.pose.data(), rotation, row.pose.data());
+      return row;
+    };
+    const double f = objective(result.value);
+    double hessians[2][3]{};
+    constexpr double kStep = 2e-4;
+    for (int refinement = 0; refinement < 2; ++refinement) {
+      const double h = kStep / (refinement + 1);
+      double values[3][3]{};
+      values[1][1] = f;
+      for (int x = -1; x <= 1; ++x) {
+        for (int y = -1; y <= 1; ++y) {
+          if (x == 0 && y == 0) {
+            continue;
+          }
+          DiagnosticOutputRow trial;
+          if (!evaluate(perturb(x * h, y * h), false, &trial)) {
+            return result;
+          }
+          values[x + 1][y + 1] = objective(trial);
+        }
+      }
+      hessians[refinement][0] = (values[0][1] - 2 * f + values[2][1]) / (h * h);
+      hessians[refinement][1] = (values[2][2] - values[2][0] - values[0][2] + values[0][0]) / (4 * h * h);
+      hessians[refinement][2] = (values[1][0] - 2 * f + values[1][2]) / (h * h);
+    }
+    // Bound the observed stencil discrepancy separately from objective rounding.
+    // This is a local numerical diagnostic, not a global minimum certificate.
+    double hessian[3];
+    result.hessian_error = 0;
+    for (int j = 0; j < 3; ++j) {
+      hessian[j] = (4 * hessians[1][j] - hessians[0][j]) / 3;
+      result.hessian_error = std::max(result.hessian_error, std::abs(hessians[1][j] - hessians[0][j]));
+    }
+    result.hessian_error += 64 * std::numeric_limits<double>::epsilon() / (kStep * kStep);
+    const double mean = .5 * (hessian[0] + hessian[2]);
+    const double gap = std::hypot(.5 * (hessian[0] - hessian[2]), hessian[1]);
+    result.objective_curvatures = { mean - gap, mean + gap };
+    if (!(result.objective_curvatures[0] > 2 * result.hessian_error)) {
+      result.status = InterfaceSolveStatus::kDegenerate;
+      return result;
+    }
+    const double determinant = hessian[0] * hessian[2] - hessian[1] * hessian[1];
+    double dx = (-hessian[2] * gradient[0] + hessian[1] * gradient[1]) / determinant;
+    double dy = (hessian[1] * gradient[0] - hessian[0] * gradient[1]) / determinant;
+    result.correction_rad = std::hypot(dx, dy);
+    if (result.correction_rad <= options.tolerance_rad) {
+      result.status = InterfaceSolveStatus::kConverged;
+      return result;
+    }
+    if (iteration + 1 == options.max_iterations) {
+      break;
+    }
+    const double scale = std::min(1.0, options.max_step_rad / result.correction_rad);
+    dx *= scale;
+    dy *= scale;
+    bool accepted = false;
+    for (int line = 0; line < 8; ++line) {
+      const auto row = perturb(dx, dy);
+      DiagnosticOutputRow value;
+      if (!evaluate(row, false, &value)) {
+        if (result.status == InterfaceSolveStatus::kBudgetExceeded ||
+            result.status == InterfaceSolveStatus::kInvalidInput) {
+          return result;
+        }
+      } else if (objective(value) <= f) {
+        result.source = row;
+        result.value = std::move(value);
+        accepted = true;
+        break;
+      }
+      dx *= .5;
+      dy *= .5;
+    }
+    if (!accepted) {
+      result.status = InterfaceSolveStatus::kUnavailable;
+      return result;
+    }
   }
   result.status = InterfaceSolveStatus::kIterationLimit;
   return result;

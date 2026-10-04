@@ -138,6 +138,138 @@ double Contrast(const std::vector<a::WeightedSkySample>& measure, const a::Field
   return y > 0 ? 1 - std::max(side[0].xyz[1].value, side[1].xyz[1].value) / y : 0;
 }
 
+void FindDeviationEdges(const ProductDiscoveryOptions& options, ProductDiscoveryResult* result,
+                        a::FieldWorkBudget* budget) {
+  const auto& measure = result->measure;
+  int found = 0;
+  ProductInput input;
+  for (size_t index = 0; index < measure.sources.size() && index < 64 && found < options.max_deviation_candidates;
+       ++index) {
+    if (!ReplayDiagnosticSource(measure, index, &input).Ok() || !SingleCrystalIncidentOrbit(input)) {
+      result->unfinished.push_back("minimum-deviation chart is unavailable on restricted orientation support");
+      return;
+    }
+    const auto& identity = measure.sources[index];
+    const auto& layer = input.layers[0];
+    const auto& faces = layer.scope.members[identity.member_index];
+    const auto spent = measure.optical_evaluations + result->event_path_evaluations;
+    const uint64_t available =
+        options.sampling.max_optical_evaluations - std::min(options.sampling.max_optical_evaluations, spent);
+    a::DiagnosticInputRow row{ layer.shape, layer.analytic_pose, input.source.incident_direction,
+                               input.spectrum.rows[identity.spectral_row].refractive_index, index };
+    auto minimum = a::CorrectDeviationMinimum(faces, row, {}, available, options.sampling.deadline);
+    result->event_path_evaluations += minimum.path_evaluations;
+    if (minimum.status == a::InterfaceSolveStatus::kBudgetExceeded) {
+      result->budget_exhausted = true;
+      result->unfinished.push_back("minimum-deviation source correction budget exhausted");
+      return;
+    }
+    if (minimum.status != a::InterfaceSolveStatus::kConverged) {
+      continue;
+    }
+    ++found;
+    DiagnosticFeatureRecord record;
+    record.kind = "local_minimum_deviation_edge";
+    record.evidence = DiagnosticEvidence::kCandidate;
+    record.reason =
+        "positive local direction-map minimum in the declared Haar quotient; not a global support certificate";
+    record.source_token = index;
+    record.deviation_minimum = minimum;
+    const auto& s = row.incident;
+    const std::array<double, 3> sun{ -s[0], -s[1], -s[2] };
+    const auto& v = minimum.value.outgoing;
+    const std::array<double, 3> q{ -v[0], -v[1], -v[2] };
+    record.sky_points.push_back(q);
+    record.orbit_axis = sun;
+    // A fixed shape and point source make the corrected locus a member/spectrum
+    // support feature. For distributed shape/source it remains conditional.
+    const auto& snapshot = measure.run->Snapshot();
+    const auto plan =
+        std::visit([](const auto& p) { return BuildShapeDrawPlan(p); }, snapshot.layers[0].crystal.param_);
+    const bool fixed_shape = std::none_of(plan.begin(), plan.end(), [](const auto& slot) {
+      return slot.applicable && BuildDistributionDrawPlan(slot.distribution).uniform_count != 0;
+    });
+    if (fixed_shape && snapshot.light.param_.diameter_ == 0) {
+      std::vector<a::WeightedSkySample> spectral, coarse;
+      for (const auto& component : measure.components) {
+        const auto& source = measure.sources[component.source_token];
+        if (source.member_index == identity.member_index && source.spectral_row == identity.spectral_row) {
+          spectral.push_back(component);
+          if (component.sample_index < measure.completed_samples / 4) {
+            coarse.push_back(component);
+          }
+        }
+      }
+      // Compare the same member/wavelength observation on either side of the
+      // physical radius. The observation peak is deliberately not the radius.
+      double normal[3];
+      const double cosine = a::so3::Dot3(q.data(), sun.data());
+      for (int j = 0; j < 3; ++j) {
+        normal[j] = cosine * q[j] - sun[j];
+      }
+      const double norm = a::so3::Norm3(normal);
+      bool observed = norm > 0;
+      a::SphericalFieldValue fields[2][2];
+      for (int prefix = 0; prefix < 2 && observed; ++prefix) {
+        for (int side = 0; side < 2 && observed; ++side) {
+          std::array<double, 3> direction;
+          const double step = (2 * side - 1) * options.bandwidth_rad;
+          for (int j = 0; j < 3; ++j) {
+            direction[j] = std::cos(step) * q[j] + std::sin(step) * normal[j] / norm;
+          }
+          observed = a::EvaluateSphericalField(prefix ? coarse : spectral, Query(direction, options.bandwidth_rad),
+                                               &fields[prefix][side], budget);
+        }
+      }
+      if (observed) {
+        double contrast[2];
+        record.minimum_effective_samples = std::numeric_limits<double>::infinity();
+        for (int prefix = 0; prefix < 2; ++prefix) {
+          const double inside = fields[prefix][0].xyz[1].value;
+          const double outside = fields[prefix][1].xyz[1].value;
+          contrast[prefix] = outside > 0 ? 1 - inside / outside : 0;
+          for (const auto& field : fields[prefix]) {
+            record.minimum_effective_samples = std::min(record.minimum_effective_samples, field.effective_samples_y);
+          }
+        }
+        record.bandwidth_rad = options.bandwidth_rad;
+        record.transverse_contrast = contrast[0];
+        record.observation_contrast_error = std::abs(contrast[0] - contrast[1]);
+        if (contrast[0] > .1 && record.observation_contrast_error < .05 * contrast[0] &&
+            record.minimum_effective_samples >= 32 && minimum.correction_rad <= options.location_resolution_rad) {
+          record.evidence = DiagnosticEvidence::kActual;
+          record.reason =
+              "positive local scattering edge for this fixed member/wavelength and Haar point source; fixed-h "
+              "inside/outside contrast stable across prefixes; global minimum unproved";
+        }
+      }
+    }
+    // The orbit is a real source symmetry, not a circle fitted to sky samples.
+    // Preserve its source range even if the point cap truncates drawing geometry.
+    const double sine = std::sin(minimum.deviation_rad);
+    if (sine > 0) {
+      const double step = std::min(.5 * options.bandwidth_rad / sine, .1);
+      for (int j = 1; j < options.max_curve_points; ++j) {
+        const double delta[]{ j * step * sun[0], j * step * sun[1], j * step * sun[2] };
+        double rotation[9];
+        std::array<double, 3> point;
+        a::so3::Exp(delta, rotation);
+        a::chain_detail::BodyToWorld(rotation, q.data(), point.data());
+        record.sky_points.push_back(point);
+        record.orbit_end_rad = j * step;
+      }
+    }
+    if (record.sky_points.size() > 1) {
+      record.geometry = DiagnosticGeometry::kPolyline;
+    }
+    record.walk_stop = a::FieldWalkStop::kPointLimit;
+    result->features.push_back(std::move(record));
+    if (budget->exhausted) {
+      return;
+    }
+  }
+}
+
 void FindEvents(const ProductDiscoveryOptions& options, ProductDiscoveryResult* result) {
   const auto& measure = result->measure;
   if (measure.components.empty()) {
@@ -202,7 +334,8 @@ Error DiscoverProductFeatures(const ProductDiagnosticSampler& sampler, const Pro
   if (!(options.bandwidth_rad > 0) || options.bandwidth_rad >= 1 || !(options.location_resolution_rad > 0) ||
       !std::isfinite(options.location_resolution_rad) || options.max_seeds <= 0 || options.max_seeds > 64 ||
       options.max_curve_points <= 0 || options.max_curve_points > 256 || options.max_interface_candidates < 0 ||
-      options.max_interface_candidates > 256) {
+      options.max_interface_candidates > 256 || options.max_deviation_candidates < 0 ||
+      options.max_deviation_candidates > 256) {
     return { ErrorCode::kInvalidArgument, "invalid explicit discovery scale or bounded search size" };
   }
   const auto begin = Clock::now();
@@ -237,10 +370,11 @@ Error DiscoverProductFeatures(const ProductDiagnosticSampler& sampler, const Pro
     return {};
   }
   const auto event_start = Clock::now();
+  a::FieldWorkBudget budget{ options.max_field_evaluations, 0, options.sampling.deadline };
+  FindDeviationEdges(options, &result, &budget);
   FindEvents(options, &result);
   result.event_seconds = std::chrono::duration<double>(Clock::now() - event_start).count();
   const auto field_start = Clock::now();
-  a::FieldWorkBudget budget{ options.max_field_evaluations, 0, options.sampling.deadline };
   const auto seeds = Seeds(result.measure, options.max_seeds);
   const uint64_t coarse_count = result.measure.completed_samples / 4;
   std::vector<a::WeightedSkySample> coarse;

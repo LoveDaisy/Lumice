@@ -28,6 +28,11 @@ struct DiagnosticFeatureRecord {
   std::optional<uint64_t> source_token;
   int internal_slot = -1;
   std::optional<analytic::InterfaceStationaryPoint> interface_event;
+  std::optional<analytic::DeviationStationaryPoint> deviation_minimum;
+  std::optional<std::array<double, 3>> orbit_axis;
+  double orbit_begin_rad = 0;
+  double orbit_end_rad = 0;
+  double observation_contrast_error = 0;
   std::array<double, 3> atom_xyz_mass{};
 };
 struct ProductDiscoveryOptions {
@@ -38,6 +43,7 @@ struct ProductDiscoveryOptions {
   int max_seeds = 0;
   int max_curve_points = 0;
   int max_interface_candidates = 0;
+  int max_deviation_candidates = 0;
 };
 struct ProductDiscoveryResult {
   ProductDiagnosticMeasure measure;

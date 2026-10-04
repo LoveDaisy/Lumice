@@ -383,6 +383,50 @@ TEST(ProductInputChain, FixedObservationDoesNotConfuseScaleResponseWithLocationE
   EXPECT_TRUE(found);
 }
 
+TEST(ProductInputChain, OrdinaryEdgeHasPhysicalRadiusAndSeparatePositiveContrast) {
+  constexpr double kRad = 3.14159265358979323846 / 180;
+  auto scene = Scene(1);
+  scene.light_source_.param_ = { 20.f, 0.f, 0.f };
+  scene.light_source_.spectrum_ = std::vector<ns::WlParam>{ { 450.f, .2f }, { 550.f, .3f }, { 650.f, .5f } };
+  auto& axis = scene.ms_[0].setting_[0].crystal_.axis_;
+  axis.latitude_dist = { ns::DistributionType::kUniform, 90.f, 360.f };
+  axis.azimuth_dist = axis.roll_dist = { ns::DistributionType::kUniform, 0.f, 360.f };
+  const auto snapshot = Capture(scene, 0, { 3, 5 });
+  const rp::ProductDiagnosticSampler sampler(snapshot, 1497, rp::DiscreteSpectrumSum{});
+  rp::ProductDiscoveryOptions options{ { 65536, 262144 }, kRad, .05 * kRad, 250000000, 1, 8, 0, 3 };
+  rp::ProductDiscoveryResult result;
+  ASSERT_TRUE(rp::DiscoverProductFeatures(sampler, options, &result).Ok());
+  int edges = 0;
+  for (const auto& feature : result.features) {
+    if (!feature.deviation_minimum) {
+      continue;
+    }
+    ++edges;
+    const auto& minimum = *feature.deviation_minimum;
+    EXPECT_EQ(feature.evidence, rp::DiagnosticEvidence::kActual);
+    const double n = minimum.source.refractive_index;
+    EXPECT_NEAR(minimum.deviation_rad, 2 * std::asin(n * .5) - 60 * kRad, 1e-10);
+    EXPECT_GT(feature.transverse_contrast, .7);
+    EXPECT_LT(feature.observation_contrast_error, .05 * feature.transverse_contrast);
+    EXPECT_GT(minimum.value.entry.value, 0);
+    EXPECT_EQ(feature.geometry, rp::DiagnosticGeometry::kPolyline);
+    EXPECT_TRUE(feature.orbit_axis.has_value());
+    EXPECT_GT(feature.orbit_end_rad, feature.orbit_begin_rad);
+    EXPECT_GT(std::abs(minimum.deviation_rad / kRad - 23.0996842241), .8);
+  }
+  EXPECT_EQ(edges, 3);
+  // Same path/shape under restricted support must not be promoted using the
+  // Haar chart. A sharply peaked distribution is not an orientation orbit.
+  axis.latitude_dist = { ns::DistributionType::kGaussian, 90.f, 1.f };
+  const rp::ProductDiagnosticSampler restricted(Capture(scene, 0, { 3, 5 }), 1497, rp::DiscreteSpectrumSum{});
+  options.sampling.requested_samples = 1024;
+  options.max_field_evaluations = 1;
+  ASSERT_TRUE(rp::DiscoverProductFeatures(restricted, options, &result).Ok());
+  for (const auto& feature : result.features) {
+    EXPECT_FALSE(feature.deviation_minimum.has_value());
+  }
+}
+
 TEST(ProductInputChain, AutomaticColourContoursHaveIndependentFixedObservationPositions) {
   std::ifstream in(std::string(LUMICE_DIAGNOSTIC_FIXTURE_DIR) + "/automatic-colour.json");
   ASSERT_TRUE(in.good());

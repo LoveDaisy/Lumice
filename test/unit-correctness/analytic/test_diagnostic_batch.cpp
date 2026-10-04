@@ -72,6 +72,60 @@ TEST(DiagnosticBatch, ErrorsArePerRowAndDerivativesUseTheActualPose) {
   EXPECT_TRUE(result.empty());
 }
 
+TEST(DiagnosticBatch, DeviationMinimumUsesTheDirectionMapNotTheObservedPeak) {
+  auto row = Input();
+  const auto deadline = std::chrono::steady_clock::time_point::max();
+  const auto minimum = CorrectDeviationMinimum({ 3, 5 }, row, {}, 1024, deadline);
+  ASSERT_EQ(minimum.status, InterfaceSolveStatus::kConverged);
+  const double expected = 2 * std::asin(row.refractive_index * .5) - 3.14159265358979323846 / 3;
+  EXPECT_NEAR(minimum.deviation_rad, expected, 1e-10);
+  EXPECT_GT(minimum.value.entry.value, 0);
+  EXPECT_GT(minimum.objective_curvatures[0], 2 * minimum.hessian_error);
+  EXPECT_LT(minimum.correction_rad, 1e-8);
+  EXPECT_LE(minimum.path_evaluations, 1024u);
+  EXPECT_EQ(minimum.source.source_token, row.source_token);
+  std::vector<DiagnosticOutputRow> replay;
+  ASSERT_TRUE(EvaluateDiagnosticBatch({ 3, 5 }, { minimum.source }, {}, &replay));
+  EXPECT_EQ(replay[0].outgoing, minimum.value.outgoing);
+  const auto limited = CorrectDeviationMinimum({ 3, 5 }, row, { 1e-8, .1, 1 }, 1024, deadline);
+  EXPECT_EQ(limited.status, InterfaceSolveStatus::kIterationLimit);
+  EXPECT_EQ(limited.source.pose, row.pose);
+  const auto expired = CorrectDeviationMinimum({ 3, 5 }, row, {}, 1024, std::chrono::steady_clock::now());
+  EXPECT_EQ(expired.status, InterfaceSolveStatus::kBudgetExceeded);
+  EXPECT_EQ(expired.path_evaluations, 0u);
+  const auto low = CorrectDeviationMinimum({ 3, 5 }, row, {}, 5, deadline);
+  EXPECT_EQ(low.status, InterfaceSolveStatus::kBudgetExceeded);
+  EXPECT_EQ(low.path_evaluations, 0u);
+}
+
+TEST(DiagnosticBatch, NonreferenceNormalsSetTheirOwnDeviationEdge) {
+  auto row = Input();
+  row.crystal.kind = CrystalShapeKind::kPyramid;
+  row.crystal.height = .73f;
+  row.crystal.upper_h = row.crystal.lower_h = .7f;
+  row.crystal.upper_wedge_deg = 25;
+  row.crystal.lower_wedge_deg = 34;
+  row.incident = { -std::cos(3.14159265358979323846 / 9), 0, -std::sin(3.14159265358979323846 / 9) };
+  row.pose = { 0.91448860974778201,  -0.40161343762916757, -0.04916532677865465,
+               -0.13052025871311235, -0.40782775363497287, 0.90368190500336698,
+               -0.38298178116854503, -0.81998973778989126, -0.42537252522022839 };
+  const double delta[]{ .02, -.01, .03 };
+  double rotation[9];
+  so3::Exp(delta, rotation);
+  const auto initial = row.pose;
+  so3::MatMul(initial.data(), rotation, row.pose.data());
+  const auto minimum = CorrectDeviationMinimum({ 13, 15 }, row, {}, 1024, std::chrono::steady_clock::time_point::max());
+  ASSERT_EQ(minimum.status, InterfaceSolveStatus::kConverged);
+  // Independent plane geometry: adjacent upper normals have a 120-degree
+  // azimuth gap, and their common axial component is sin(wedge).
+  const double axial = std::sin(25 * 3.14159265358979323846 / 180);
+  const double prism_angle = std::acos(.5 - 1.5 * axial * axial);
+  EXPECT_NEAR(minimum.deviation_rad, 2 * std::asin(row.refractive_index * std::sin(prism_angle / 2)) - prism_angle,
+              1e-10);
+  EXPECT_GT(minimum.value.entry.value, 0);
+  EXPECT_GT(minimum.deviation_rad, .5);
+}
+
 TEST(DiagnosticBatch, DeepInterfaceCorrectionKeepsPositiveSourcesAndBudget) {
   std::ifstream in(std::string(LUMICE_DIAGNOSTIC_FIXTURE_DIR) + "/internal-event.json");
   ASSERT_TRUE(in.good());
