@@ -183,3 +183,20 @@ def test_report_multicrystal_is_a_structured_zero_work_refusal():
     assert doc["requested_path_layers"] == [[3, 5], [1, 3]]
     assert doc["actual_features"] == []
     assert doc["budgets"]["optical_evaluations"] == 0
+
+
+def test_endpoint_bisection_budget_is_partial_not_a_physical_stop():
+    # This cap interrupts the final source curve inside its optical bracket.
+    # Other report stages still finish; their completion cannot hide this stop.
+    result = _report(_RANDOM, "3-1-5", "--events", "8192", "--wavelength", "550",
+                     "--max-evaluations", "405930")
+    assert result.returncode == 0, result.stderr
+    doc = json.loads(result.stdout)
+    assert doc["outcome"] == "partial"
+    assert doc["budgets"]["exhausted"]
+    assert doc["budgets"]["optical_evaluations"] <= 405930
+    features = doc["actual_features"] + doc["candidates"] + doc["unfinished"]
+    curves = [c for f in features for c in f.get("source_curves", [])]
+    stopped = [c for c in curves if c["termination"] == 6]
+    assert stopped
+    assert any(c["points"] for c in stopped)

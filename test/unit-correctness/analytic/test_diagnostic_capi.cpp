@@ -147,4 +147,121 @@ TEST(DiagnosticCapi, DeviationAndFieldBudgetsRemainNumericOutcomes) {
   EXPECT_EQ(result.field_count, 0u);
   LUMICE_ANALYTIC_ReleaseDiagnosticResult(&result);
 }
+TEST(DiagnosticCapi, SharedPathSyntaxPrecedesBudgetsForEveryOpticalEntry) {
+  const auto source = Source();
+  const auto check = [&](int middle, uint64_t budget) {
+    const int faces[]{ 3, middle, 5 };
+    LUMICE_ANALYTIC_DiagnosticResult result{};
+    result.struct_size = sizeof(result);
+    EXPECT_EQ(LUMICE_ANALYTIC_EvaluateDiagnosticBatch(faces, 3, &source, 1, &result),
+              LUMICE_ANALYTIC_ERR_INVALID_VALUE);
+    EXPECT_EQ(result.storage, nullptr);
+    LUMICE_ANALYTIC_ReleaseDiagnosticResult(&result);
+    EXPECT_EQ(LUMICE_ANALYTIC_TraceDiagnosticInterface(faces, 3, &source, 1, 0, 2, budget, 5000, &result),
+              LUMICE_ANALYTIC_ERR_INVALID_VALUE);
+    EXPECT_EQ(result.storage, nullptr);
+    LUMICE_ANALYTIC_ReleaseDiagnosticResult(&result);
+    EXPECT_EQ(LUMICE_ANALYTIC_CorrectDeviationBatch(faces, 3, &source, 1, budget, 5000, &result),
+              LUMICE_ANALYTIC_ERR_INVALID_VALUE);
+    EXPECT_EQ(result.storage, nullptr);
+    LUMICE_ANALYTIC_ReleaseDiagnosticResult(&result);
+  };
+  check(0, 0);
+  check(0, 1000);
+  check(-1, 0);
+  check(-1, 1000);
+  const int faces[]{ 3, 1, 5 };
+  LUMICE_ANALYTIC_DiagnosticResult result{};
+  result.struct_size = sizeof(result);
+  ASSERT_EQ(LUMICE_ANALYTIC_TraceDiagnosticInterface(faces, 3, &source, 1, 0, 2, 0, 5000, &result), LUMICE_ANALYTIC_OK);
+  EXPECT_EQ(result.termination, 6);
+  LUMICE_ANALYTIC_ReleaseDiagnosticResult(&result);
+  const int missing[]{ 3, 99, 5 };
+  ASSERT_EQ(LUMICE_ANALYTIC_TraceDiagnosticInterface(missing, 3, &source, 1, 0, 2, 1000, 5000, &result),
+            LUMICE_ANALYTIC_OK);
+  EXPECT_EQ(result.termination, 4);
+  LUMICE_ANALYTIC_ReleaseDiagnosticResult(&result);
+}
+
+TEST(DiagnosticCapi, OpticalBracketInterruptionRetainsPointsButNotAPhysicalEndpoint) {
+  // A positive TIR source whose reverse step crosses the exit optical gate.
+  auto source = Source();
+  const double pose[]{ .3137225515329565, -.4275785165760077, .847794062743018,   -.6280590212564823, .5761959481749768,
+                       .5230106070865962, -.712123603370933,  -.6965449314074434, -.08777888158662135 };
+  std::copy_n(pose, 9, source.pose);
+  source.incident[0] = -.9999999999999962;
+  source.incident[1] = -8.742277657347553e-8;
+  source.incident[2] = 0;
+  source.refractive_index = 1.3110129100622272;
+  const int faces[]{ 3, 1, 5 };
+  LUMICE_ANALYTIC_DiagnosticResult result{};
+  result.struct_size = sizeof(result);
+  ASSERT_EQ(LUMICE_ANALYTIC_TraceDiagnosticInterface(faces, 3, &source, 1, 1, 256, 4096, 5000, &result),
+            LUMICE_ANALYTIC_OK);
+  ASSERT_EQ(result.termination, 3);
+  ASSERT_EQ(result.source_event_count, 1u);
+  const auto complete_cost = result.path_evaluations;
+  const auto point_count = result.curve_point_count;
+  ASSERT_GT(complete_cost, 30u);
+  EXPECT_LE(result.source_events[0].source_width_rad, 1e-7);
+  LUMICE_ANALYTIC_ReleaseDiagnosticResult(&result);
+  const auto interrupted = [&](uint64_t budget) {
+    ASSERT_EQ(LUMICE_ANALYTIC_TraceDiagnosticInterface(faces, 3, &source, 1, 1, 256, budget, 5000, &result),
+              LUMICE_ANALYTIC_OK);
+    EXPECT_EQ(result.termination, 6);
+    EXPECT_EQ(result.curve_point_count, point_count);
+    EXPECT_GT(result.curve_point_count, 0u);
+    EXPECT_EQ(result.source_event_count, 0u);
+    EXPECT_LE(result.path_evaluations, budget);
+    LUMICE_ANALYTIC_ReleaseDiagnosticResult(&result);
+  };
+  interrupted(30);
+  if (HasFatalFailure()) {
+    return;
+  }
+  interrupted(complete_cost - 6);
+}
+
+TEST(DiagnosticCapi, InterruptedDeviationReturnsOneConsistentIteration) {
+  const auto source = Source();
+  const int faces[]{ 3, 5 };
+  LUMICE_ANALYTIC_DiagnosticResult baseline{};
+  baseline.struct_size = sizeof(baseline);
+  // The first complete derivative snapshot; no line-search evaluation fits.
+  ASSERT_EQ(LUMICE_ANALYTIC_CorrectDeviationBatch(faces, 2, &source, 1, 22, 5000, &baseline), LUMICE_ANALYTIC_OK);
+  ASSERT_EQ(baseline.optical_count, 1u);
+  const auto check = [&](uint64_t budget) {
+    SCOPED_TRACE(budget);
+    LUMICE_ANALYTIC_DiagnosticResult result{};
+    result.struct_size = sizeof(result);
+    ASSERT_EQ(LUMICE_ANALYTIC_CorrectDeviationBatch(faces, 2, &source, 1, budget, 5000, &result), LUMICE_ANALYTIC_OK);
+    ASSERT_EQ(result.optical_count, 1u);
+    const auto& row = result.optical[0];
+    EXPECT_EQ(row.solve_status, 6);
+    ASSERT_TRUE(row.deviation_available);
+    const auto* u = row.source.incident;
+    const auto* v = row.outgoing;
+    const double cross[]{ u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0] };
+    EXPECT_NEAR(row.deviation_rad,
+                std::atan2(std::hypot(cross[0], cross[1], cross[2]), u[0] * v[0] + u[1] * v[1] + u[2] * v[2]), 1e-14);
+    // Neither the next derivative pass nor its stencil fits: every diagnostic
+    // and the source pose must still belong to the first complete snapshot.
+    for (int j = 0; j < 9; ++j) {
+      EXPECT_EQ(row.source.pose[j], baseline.optical[0].source.pose[j]);
+    }
+    EXPECT_EQ(row.correction_rad, baseline.optical[0].correction_rad);
+    EXPECT_EQ(row.hessian_error, baseline.optical[0].hessian_error);
+    EXPECT_EQ(row.objective_curvatures[0], baseline.optical[0].objective_curvatures[0]);
+    EXPECT_EQ(row.objective_curvatures[1], baseline.optical[0].objective_curvatures[1]);
+    LUMICE_ANALYTIC_ReleaseDiagnosticResult(&result);
+  };
+  for (uint64_t budget = 23; budget <= 44; ++budget) {
+    check(budget);
+    if (HasFatalFailure()) {
+      break;
+    }
+  }
+  LUMICE_ANALYTIC_ReleaseDiagnosticResult(&baseline);
+}
+
 }  // namespace
