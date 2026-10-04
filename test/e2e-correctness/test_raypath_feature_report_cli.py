@@ -8,6 +8,7 @@ this layer owns the CLI, spectrum choice, scope, budget and output-file contract
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 
 import pytest
@@ -213,3 +214,66 @@ def test_endpoint_bisection_budget_is_partial_not_a_physical_stop():
                 finished = full_curves[feature["source_token"]][index]
                 assert finished["termination"] == 3
                 assert finished["events"]
+
+
+@pytest.mark.parametrize("altitude, bounded_axis", [(0, False), (25, False), (0, True), (25, True)])
+@pytest.mark.parametrize("diameter", [0, 2])
+def test_declared_sun_boundary_is_the_physical_cap_rim(tmp_path, altitude, bounded_axis, diameter):
+    config = json.loads(_RANDOM.read_text())
+    config["scene"]["light_source"].update(diameter=diameter, altitude=altitude)
+    if bounded_axis:
+        config["crystal"][0]["axis"]["azimuth"]["std"] = .5
+    path = tmp_path / "sun-boundary.json"
+    path.write_text(json.dumps(config))
+    result = _report(path, "3-5", "--events", "64", "--wavelength", "550")
+    assert result.returncode == 0, result.stderr
+    doc = json.loads(result.stdout)
+    assert doc["outcome"] == "completed"
+    events = [f for f in doc["candidates"] if "declared_source_event" in f]
+    sun_events = [f for f in events if "sun.cap_radial" in dict(f["declared_source_event"]["coordinates"])]
+    if diameter == 0:
+        assert not sun_events
+        if bounded_axis:
+            # The absence is specific to the point sun, not an empty report.
+            assert any("axis.azimuth_uniform" in dict(f["declared_source_event"]["coordinates"]) for f in events)
+        return
+
+    assert any(f["kind"] == "declared_source_boundary" for f in sun_events)
+    corners = [f for f in sun_events if f["kind"] == "declared_source_corner"]
+    assert len(corners) == (2 if bounded_axis else 0)
+    if bounded_axis:
+        assert {dict(f["declared_source_event"]["coordinates"])["axis.azimuth_uniform"] for f in corners} == {0, 1}
+    # Incident rays point away from the sun; derive the centre from the scene,
+    # independently of the product latent-coordinate transform.
+    altitude_rad = math.radians(altitude)
+    center = [-math.cos(altitude_rad), 0, -math.sin(altitude_rad)]
+    for feature in sun_events:
+        event = feature["declared_source_event"]
+        source, value = event["source"], event["value"]
+        incident = source["incident"]
+        cosine = sum(a * b for a, b in zip(center, incident)) / math.sqrt(sum(x * x for x in incident))
+        angle = math.acos(max(-1, min(1, cosine)))
+        # The product cap uses float cos(radius) and sqrt(1-cos²(radius)).
+        # At a 1-degree radius, float rounding allows a few microradians;
+        # 1e-5 rad also covers its float frame rotation, not sampling error.
+        assert angle == pytest.approx(math.radians(diameter / 2), abs=1e-5)
+        assert value["path_valid"]
+        assert value["entry"]["area"] > value["entry"]["area_threshold"]
+        assert value["interface_product"] > 0
+        member = doc["physical_members"][doc["sources"][str(feature["source_token"])]["member"]]
+        # Independent two-interface Snell construction for this regular prism:
+        # face 3 has normal +x, subsequent side normals are 60 degrees apart.
+        # Use the actual returned pose/member, not the representative path.
+        ray = incident
+        for face, eta, sign in zip(member, [1 / source["refractive_index"], source["refractive_index"]], [-1, 1]):
+            assert 3 <= face <= 8
+            theta = math.radians(60 * (face - 3))
+            pose = source["pose"]
+            normal = [sign * (pose[3 * j] * math.cos(theta) + pose[3 * j + 1] * math.sin(theta)) for j in range(3)]
+            incidence = sum(a * b for a, b in zip(ray, normal))
+            assert incidence > 0
+            discriminant = 1 - eta * eta * (1 - incidence * incidence)
+            assert discriminant > 0
+            ray = [eta * (v - incidence * n) + math.sqrt(discriminant) * n for v, n in zip(ray, normal)]
+        assert value["outgoing"] == pytest.approx(ray, abs=1e-10)
+        assert feature["geometry"]["sky_points"][0] == pytest.approx([-v for v in ray], abs=1e-10)
