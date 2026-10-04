@@ -78,6 +78,7 @@ struct InterfaceSolveOptions {
   double residual_tolerance = 1e-10;
   double max_step_rad = .05;
   int max_iterations = 32;
+  bool require_positive_entry = true;
 };
 struct InterfaceStationaryPoint {
   InterfaceSolveStatus status = InterfaceSolveStatus::kInvalidInput;
@@ -90,6 +91,35 @@ struct InterfaceStationaryPoint {
 InterfaceStationaryPoint CorrectInterfaceEvent(const std::vector<int>& faces, const DiagnosticInputRow& source,
                                                const InterfaceSolveOptions& options, uint64_t max_path_evaluations,
                                                std::chrono::steady_clock::time_point deadline);
+
+enum class InterfaceWalkStop {
+  kClosed,
+  kAreaThreshold,
+  kGeometricContact,
+  kOpticalGate,
+  kCorrectorFailed,
+  kPointLimit,
+  kBudgetExceeded,
+  kInvalidInput
+};
+struct InterfaceEventBracket {
+  InterfaceWalkStop kind = InterfaceWalkStop::kInvalidInput;
+  InterfaceStationaryPoint positive;
+  InterfaceStationaryPoint nonpositive;
+  double source_width_rad = 0;
+};
+struct InterfaceCurve {
+  std::vector<InterfaceStationaryPoint> points;
+  std::vector<InterfaceEventBracket> events;
+  InterfaceWalkStop stop = InterfaceWalkStop::kInvalidInput;
+  uint64_t path_evaluations = 0;
+};
+// Walk one direction of a conditional interface curve in the body-incident S2
+// quotient. Product-area and raw-geometric-contact brackets remain different
+// predicates. Brackets give local source ranges, not exact contact certificates.
+InterfaceCurve TraceInterfaceCurve(const std::vector<int>& faces, const DiagnosticInputRow& seed, int slot,
+                                   double step_rad, double event_resolution_rad, int max_points, bool reverse,
+                                   uint64_t max_path_evaluations, std::chrono::steady_clock::time_point deadline);
 
 // A local minimum of scattering deviation on the incident-direction quotient
 // of SO(3). This chart is valid only when the caller's support allows every

@@ -154,6 +154,49 @@ TEST(DiagnosticBatch, DeepInterfaceCorrectionKeepsPositiveSourcesAndBudget) {
       ADD_FAILURE() << static_cast<int>(event.status);
       return;
     }
+    std::ifstream contacts_in(std::string(LUMICE_DIAGNOSTIC_FIXTURE_DIR) + "/interface-contact.json");
+    if (!contacts_in.good()) {
+      ADD_FAILURE();
+      return;
+    }
+    const auto contacts = nlohmann::json::parse(contacts_in);
+    for (const bool reverse : { false, true }) {
+      const auto curve = TraceInterfaceCurve(faces, event.source, slot, .01, 1e-7, 256, reverse, 40000, deadline);
+      if (curve.stop != InterfaceWalkStop::kGeometricContact || curve.events.size() != 2) {
+        ADD_FAILURE() << "stop=" << static_cast<int>(curve.stop) << " events=" << curve.events.size()
+                      << " points=" << curve.points.size();
+        return;
+      }
+      EXPECT_EQ(curve.events[0].kind, InterfaceWalkStop::kAreaThreshold);
+      EXPECT_EQ(curve.events[1].kind, InterfaceWalkStop::kGeometricContact);
+      EXPECT_GT(curve.events[0].positive.value.entry.value, 0);
+      EXPECT_EQ(curve.events[0].nonpositive.value.entry.value, 0);
+      EXPECT_GT(curve.events[0].nonpositive.value.corridor.raw_area, 0);
+      EXPECT_GT(curve.events[1].positive.value.corridor.raw_area, 0);
+      EXPECT_EQ(curve.events[1].positive.value.entry.value, 0);
+      EXPECT_EQ(curve.events[1].nonpositive.value.corridor.raw_area, 0);
+      for (const auto& bracket : curve.events) {
+        EXPECT_LE(bracket.source_width_rad, 1e-7);
+        EXPECT_NEAR(bracket.positive.value.interfaces[slot].discriminant, 0, 1e-10);
+        double u[3];
+        chain_detail::WorldToBody(bracket.positive.source.pose.data(), row.incident.data(), u);
+        for (auto& component : u) {
+          component = -component;
+        }
+        double nearest = 10;
+        for (const auto& reference : contacts.at("events")) {
+          if (std::abs(reference.at("scope").at("refractive_index").get<double>() - row.refractive_index) > 1e-12) {
+            continue;
+          }
+          const auto q = reference.at(bracket.kind == InterfaceWalkStop::kGeometricContact ? "exact_u" : "product_u")
+                             .get<std::array<double, 3>>();
+          double cross[3];
+          so3::Cross3(u, q.data(), cross);
+          nearest = std::min(nearest, std::atan2(so3::Norm3(cross), so3::Dot3(u, q.data())));
+        }
+        EXPECT_LT(nearest, 2e-6);
+      }
+    }
     EXPECT_GT(event.value.entry.value, 0);
     EXPECT_NEAR(event.value.interfaces[slot].discriminant, 0, 1e-10);
     EXPECT_GT(std::abs(event.value.interfaces[1].discriminant), .001);

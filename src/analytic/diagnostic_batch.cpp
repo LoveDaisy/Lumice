@@ -185,8 +185,9 @@ InterfaceStationaryPoint CorrectInterfaceEvent(const std::vector<int>& faces, co
       result.status = InterfaceSolveStatus::kUnavailable;
       return result;
     }
-    if (!result.value.path_valid || !result.value.entry_available || !(result.value.entry.value > 0) ||
-        !(result.value.interface_product > 0)) {
+    if (!result.value.path_valid || !result.value.entry_available ||
+        (options.require_positive_entry &&
+         (!(result.value.entry.value > 0) || !(result.value.interface_product > 0)))) {
       result.status = InterfaceSolveStatus::kNoSupport;
       return result;
     }
@@ -217,6 +218,125 @@ InterfaceStationaryPoint CorrectInterfaceEvent(const std::vector<int>& faces, co
   }
   result.status = InterfaceSolveStatus::kIterationLimit;
   return result;
+}
+
+InterfaceCurve TraceInterfaceCurve(const std::vector<int>& faces, const DiagnosticInputRow& seed, int slot,
+                                   double step_rad, double event_resolution_rad, int max_points, bool reverse,
+                                   uint64_t max_path_evaluations, std::chrono::steady_clock::time_point deadline) {
+  InterfaceCurve curve;
+  if (!(step_rad > 0) || step_rad >= .5 || !(event_resolution_rad > 0) || !std::isfinite(event_resolution_rad) ||
+      event_resolution_rad >= step_rad || max_points < 2 || max_points > 4096) {
+    return curve;
+  }
+  auto correct = [&](const DiagnosticInputRow& source) {
+    const uint64_t remaining = max_path_evaluations - std::min(max_path_evaluations, curve.path_evaluations);
+    auto result = CorrectInterfaceEvent(faces, source, { slot, 1e-10, .05, 32, false }, remaining, deadline);
+    curve.path_evaluations += result.path_evaluations;
+    return result;
+  };
+  auto body = [](const DiagnosticInputRow& row) {
+    std::array<double, 3> incident;
+    chain_detail::WorldToBody(row.pose.data(), row.incident.data(), incident.data());
+    return incident;
+  };
+  auto distance = [&](const DiagnosticInputRow& x, const DiagnosticInputRow& y) {
+    const auto a = body(x);
+    const auto b = body(y);
+    double cross[3];
+    so3::Cross3(a.data(), b.data(), cross);
+    return std::atan2(so3::Norm3(cross), so3::Dot3(a.data(), b.data()));
+  };
+  auto predicate = [](const InterfaceStationaryPoint& point, bool geometric) {
+    return point.value.corridor.raw_area - (geometric ? 0 : point.value.corridor.area_threshold);
+  };
+  auto current = correct(seed);
+  if (current.status != InterfaceSolveStatus::kConverged || !(current.value.entry.value > 0)) {
+    curve.stop = current.status == InterfaceSolveStatus::kBudgetExceeded ? InterfaceWalkStop::kBudgetExceeded :
+                                                                           InterfaceWalkStop::kCorrectorFailed;
+    return curve;
+  }
+  curve.points.push_back(current);
+  std::array<double, 3> previous_tangent{};
+  for (int point = 1; point < max_points; ++point) {
+    const auto incident = body(current.source);
+    const auto& gradient = current.value.interfaces[slot].discriminant_pose_gradient;
+    double tangent[3];
+    so3::Cross3(incident.data(), gradient.data(), tangent);
+    const double norm = so3::Norm3(tangent);
+    if (!(norm > 0) || !std::isfinite(norm)) {
+      curve.stop = InterfaceWalkStop::kCorrectorFailed;
+      return curve;
+    }
+    double sign = point == 1 ? (reverse ? -1 : 1) : (so3::Dot3(tangent, previous_tangent.data()) < 0 ? -1 : 1);
+    double delta[3];
+    for (int j = 0; j < 3; ++j) {
+      previous_tangent[j] = sign * tangent[j] / norm;
+      delta[j] = step_rad * previous_tangent[j];
+    }
+    DiagnosticInputRow trial = current.source;
+    double rotation[9];
+    so3::Exp(delta, rotation);
+    so3::MatMul(current.source.pose.data(), rotation, trial.pose.data());
+    auto next = correct(trial);
+    if (next.status != InterfaceSolveStatus::kConverged) {
+      curve.stop = next.status == InterfaceSolveStatus::kBudgetExceeded ? InterfaceWalkStop::kBudgetExceeded :
+                   next.status == InterfaceSolveStatus::kNoSupport      ? InterfaceWalkStop::kOpticalGate :
+                                                                          InterfaceWalkStop::kCorrectorFailed;
+      return curve;
+    }
+    for (const bool geometric : { false, true }) {
+      if (!(predicate(current, geometric) > 0 && predicate(next, geometric) <= 0)) {
+        continue;
+      }
+      auto positive = current;
+      auto nonpositive = next;
+      for (int bisect = 0; bisect < 48 && distance(positive.source, nonpositive.source) > event_resolution_rad;
+           ++bisect) {
+        // Interpolate the existing SO(3) lift, then correct the SAME interface.
+        double rel[9];
+        double w[3];
+        so3::MatTMul(positive.source.pose.data(), nonpositive.source.pose.data(), rel);
+        so3::Log(rel, w);
+        for (auto& component : w) {
+          component *= .5;
+        }
+        double half[9];
+        so3::Exp(w, half);
+        auto middle_source = positive.source;
+        so3::MatMul(positive.source.pose.data(), half, middle_source.pose.data());
+        auto middle = correct(middle_source);
+        if (middle.status != InterfaceSolveStatus::kConverged) {
+          curve.stop = middle.status == InterfaceSolveStatus::kBudgetExceeded ? InterfaceWalkStop::kBudgetExceeded :
+                                                                                InterfaceWalkStop::kCorrectorFailed;
+          return curve;
+        }
+        if (predicate(middle, geometric) > 0) {
+          positive = std::move(middle);
+        } else {
+          nonpositive = std::move(middle);
+        }
+      }
+      const double width = distance(positive.source, nonpositive.source);
+      if (width > event_resolution_rad) {
+        curve.stop = InterfaceWalkStop::kCorrectorFailed;
+        return curve;
+      }
+      curve.events.push_back({ geometric ? InterfaceWalkStop::kGeometricContact : InterfaceWalkStop::kAreaThreshold,
+                               std::move(positive), std::move(nonpositive), width });
+    }
+    if (next.value.corridor.raw_area <= 0) {
+      curve.stop = InterfaceWalkStop::kGeometricContact;
+      return curve;
+    }
+    curve.points.push_back(next);
+    if (point > 8 && distance(seed, next.source) < step_rad * .5) {
+      curve.stop = InterfaceWalkStop::kClosed;
+      return curve;
+    }
+    current = std::move(next);
+  }
+  curve.stop = InterfaceWalkStop::kPointLimit;
+  return curve;
 }
 
 DeviationStationaryPoint CorrectDeviationMinimum(const std::vector<int>& faces, const DiagnosticInputRow& source,

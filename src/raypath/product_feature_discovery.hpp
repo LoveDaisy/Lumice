@@ -7,7 +7,7 @@
 namespace lumice::raypath {
 
 enum class DiagnosticEvidence { kActual, kCandidate, kUnfinished };
-enum class DiagnosticGeometry { kPoint, kPolyline, kAtom };
+enum class DiagnosticGeometry { kPoint, kPolyline, kAtom, kSourceRange };
 struct DiagnosticFeatureRecord {
   DiagnosticEvidence evidence = DiagnosticEvidence::kUnfinished;
   DiagnosticGeometry geometry = DiagnosticGeometry::kPoint;
@@ -28,6 +28,9 @@ struct DiagnosticFeatureRecord {
   std::optional<uint64_t> source_token;
   int internal_slot = -1;
   std::optional<analytic::InterfaceStationaryPoint> interface_event;
+  std::vector<analytic::InterfaceCurve> interface_curves;
+  std::optional<analytic::InterfaceEventBracket> source_event;
+  std::optional<size_t> source_connected_feature;
   std::optional<analytic::DeviationStationaryPoint> deviation_minimum;
   std::optional<std::array<double, 3>> orbit_axis;
   double orbit_begin_rad = 0;

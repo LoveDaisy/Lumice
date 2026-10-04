@@ -315,8 +315,43 @@ void FindEvents(const ProductDiscoveryOptions& options, ProductDiscoveryResult* 
       record.internal_slot = slot;
       const auto& v = event.value.outgoing;
       record.sky_points.push_back({ -v[0], -v[1], -v[2] });
-      record.interface_event = std::move(event);
+      record.interface_event = event;
+      for (const bool reverse : { false, true }) {
+        const auto used = result->measure.optical_evaluations + result->event_path_evaluations;
+        const uint64_t remaining =
+            options.sampling.max_optical_evaluations - std::min(options.sampling.max_optical_evaluations, used);
+        auto curve = a::TraceInterfaceCurve(faces, event.source, slot, .01, 1e-7, std::max(2, options.max_curve_points),
+                                            reverse, remaining, options.sampling.deadline);
+        result->event_path_evaluations += curve.path_evaluations;
+        result->budget_exhausted |= curve.stop == a::InterfaceWalkStop::kBudgetExceeded;
+        record.interface_curves.push_back(std::move(curve));
+      }
+      const size_t parent = result->features.size();
+      std::vector<DiagnosticFeatureRecord> endpoints;
+      for (const auto& curve : record.interface_curves) {
+        for (const auto& bracket : curve.events) {
+          DiagnosticFeatureRecord endpoint;
+          endpoint.evidence = DiagnosticEvidence::kCandidate;
+          endpoint.geometry = DiagnosticGeometry::kSourceRange;
+          endpoint.kind = bracket.kind == a::InterfaceWalkStop::kGeometricContact ? "geometric_contact_bracket" :
+                                                                                    "product_area_threshold";
+          endpoint.reason =
+              "same-interface source continuation brackets this predicate; no global topology or observed colour claim";
+          endpoint.source_token = index;
+          endpoint.internal_slot = slot;
+          endpoint.source_event = bracket;
+          endpoint.source_connected_feature = parent;
+          for (const auto* bound : { &bracket.positive, &bracket.nonpositive }) {
+            const auto& outgoing = bound->value.outgoing;
+            endpoint.sky_points.push_back({ -outgoing[0], -outgoing[1], -outgoing[2] });
+          }
+          endpoints.push_back(std::move(endpoint));
+        }
+      }
       result->features.push_back(std::move(record));
+      for (auto& endpoint : endpoints) {
+        result->features.push_back(std::move(endpoint));
+      }
       ++found;
     }
   }
