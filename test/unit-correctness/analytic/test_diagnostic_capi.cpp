@@ -186,14 +186,15 @@ TEST(DiagnosticCapi, SharedPathSyntaxPrecedesBudgetsForEveryOpticalEntry) {
 TEST(DiagnosticCapi, OpticalBracketInterruptionRetainsPointsButNotAPhysicalEndpoint) {
   // A positive TIR source whose reverse step crosses the exit optical gate.
   auto source = Source();
-  const double pose[]{ .3137225515329565, -.4275785165760077, .847794062743018,   -.6280590212564823, .5761959481749768,
-                       .5230106070865962, -.712123603370933,  -.6965449314074434, -.08777888158662135 };
+  const double pose[]{ 0.28904806222663315, -0.444630682913122,  0.8477940631634778,
+                       -0.629765589733407,  0.5786729389388005,  0.5182016323089559,
+                       -0.7210038278059024, -0.6836967058222104, -0.11274881257509889 };
   std::copy_n(pose, 9, source.pose);
   source.incident[0] = -.9999999999999962;
   source.incident[1] = -8.742277657347553e-8;
   source.incident[2] = 0;
   source.refractive_index = 1.3110129100622272;
-  const int faces[]{ 3, 1, 5 };
+  const int faces[]{ 7, 2, 5 };
   LUMICE_ANALYTIC_DiagnosticResult result{};
   result.struct_size = sizeof(result);
   ASSERT_EQ(LUMICE_ANALYTIC_TraceDiagnosticInterface(faces, 3, &source, 1, 1, 256, 4096, 5000, &result),
