@@ -2,6 +2,7 @@
 #define CORE_PRODUCT_SAMPLE_TRANSFORM_H_
 
 #include <array>
+#include <cstdint>
 
 #include "core/math.hpp"
 
@@ -15,6 +16,20 @@ struct DistributionLatentDraw {
   float value = 0.0f;
 };
 float TransformDistribution(const Distribution& dist, DistributionLatentDraw draw);
+
+// The random clock and the explicit uniform-coordinate map share this taxonomy.
+// RNG consumers retain their clock even for zero spread; deterministic schedulers
+// need no coordinate there. Box-Muller is only the explicit-coordinate adapter,
+// not a replacement for the production standard-library normal generator.
+enum class DistributionDrawKind { kConstant, kUnitUniform, kStandardNormal };
+struct DistributionDrawPlan {
+  DistributionDrawKind kind = DistributionDrawKind::kConstant;
+  uint32_t uniform_count = 0;
+};
+DistributionDrawPlan BuildDistributionDrawPlan(const Distribution& distribution);
+// Used coordinates must lie in (0,1). Unused coordinates are ignored.
+DistributionLatentDraw TransformDistributionUniforms(const DistributionDrawPlan& plan,
+                                                     const std::array<double, 2>& uniforms);
 
 struct LatitudeSample {
   float radians = 0.0f;

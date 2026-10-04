@@ -442,13 +442,10 @@ size_t RandomNumberGenerator::GetUniformIndex(size_t n) {
 
 
 float RandomNumberGenerator::Get(Distribution dist) {
-  switch (dist.type) {
-    case DistributionType::kUniform:
-    case DistributionType::kZigzag:
-    case DistributionType::kLaplacian:
+  switch (BuildDistributionDrawPlan(dist).kind) {
+    case DistributionDrawKind::kUnitUniform:
       return TransformDistribution(dist, { GetUniform() });
-    case DistributionType::kGaussian:
-    case DistributionType::kGaussianLegacy:
+    case DistributionDrawKind::kStandardNormal:
       return TransformDistribution(dist, { GetGaussian() });
     default:
       return TransformDistribution(dist, {});

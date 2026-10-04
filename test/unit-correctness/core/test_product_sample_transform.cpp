@@ -80,6 +80,32 @@ TEST(ProductSampleTransform, RawDistributionValuesHaveIndependentOracles) {
   EXPECT_NEAR(std::sqrt(sq / 10000 - std::pow(sum / 10000, 2)), 9.23275, 1e-4);
 }
 
+TEST(ProductSampleTransform, ExplicitUniformPlanOwnsAllLatentFamilies) {
+  const ns::DistributionType types[]{ ns::DistributionType::kNoRandom, ns::DistributionType::kUniform,
+                                      ns::DistributionType::kGaussian, ns::DistributionType::kGaussianLegacy,
+                                      ns::DistributionType::kZigzag,   ns::DistributionType::kLaplacian };
+  const uint32_t widths[]{ 0, 1, 2, 2, 1, 1 };
+  for (size_t i = 0; i < std::size(types); ++i) {
+    const ns::Distribution distribution{ types[i], 4.f, 2.f };
+    const auto plan = ns::BuildDistributionDrawPlan(distribution);
+    EXPECT_EQ(plan.uniform_count, widths[i]);
+    const auto draw = ns::TransformDistributionUniforms(plan, { .25, .5 });
+    if (widths[i] == 2) {
+      EXPECT_NEAR(draw.value, -std::sqrt(-2 * std::log(.25)), 1e-7);
+    } else if (widths[i] == 1) {
+      EXPECT_EQ(draw.value, .25f);
+    }
+    const ns::Distribution constant{ types[i], 4.f, 0.f };
+    const auto zero = ns::BuildDistributionDrawPlan(constant);
+    EXPECT_EQ(zero.kind, plan.kind);
+    EXPECT_EQ(zero.uniform_count, 0u);
+    EXPECT_EQ(ns::TransformDistribution(constant, ns::TransformDistributionUniforms(zero, { .1, .9 })), 4.f);
+  }
+  const auto normal = ns::BuildDistributionDrawPlan({ ns::DistributionType::kGaussian, 0.f, 1.f });
+  EXPECT_TRUE(std::isfinite(ns::TransformDistributionUniforms(normal, { 0x1p-54, .5 }).value));
+  EXPECT_LT(ns::TransformDistributionUniforms(normal, { 0x1p-54, .5 }).value, -8.f);
+}
+
 TEST(ProductSampleTransform, LegacyCrossingFlipsAzimuthAndRoll) {
   const auto latitude = ns::TransformLegacyLatitude(120.f);
   EXPECT_TRUE(latitude.flip);

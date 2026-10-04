@@ -36,6 +36,39 @@ float TransformDistribution(const Distribution& dist, DistributionLatentDraw dra
   }
 }
 
+DistributionDrawPlan BuildDistributionDrawPlan(const Distribution& distribution) {
+  DistributionDrawKind kind = DistributionDrawKind::kConstant;
+  switch (distribution.type) {
+    case DistributionType::kGaussian:
+    case DistributionType::kGaussianLegacy:
+      kind = DistributionDrawKind::kStandardNormal;
+      break;
+    case DistributionType::kUniform:
+    case DistributionType::kLaplacian:
+    case DistributionType::kZigzag:
+      kind = DistributionDrawKind::kUnitUniform;
+      break;
+    default:
+      break;
+  }
+  const uint32_t width = kind == DistributionDrawKind::kConstant || distribution.spread == 0 ? 0 :
+                         kind == DistributionDrawKind::kStandardNormal                       ? 2 :
+                                                                                               1;
+  return { kind, width };
+}
+
+DistributionLatentDraw TransformDistributionUniforms(const DistributionDrawPlan& plan,
+                                                     const std::array<double, 2>& uniforms) {
+  if (plan.uniform_count == 0) {
+    return { plan.kind == DistributionDrawKind::kUnitUniform ? .5f : 0.f };
+  }
+  if (plan.kind == DistributionDrawKind::kStandardNormal) {
+    return { static_cast<float>(std::sqrt(-2 * std::log(uniforms[0])) *
+                                std::cos(2 * 3.14159265358979323846 * uniforms[1])) };
+  }
+  return { std::min(static_cast<float>(uniforms[0]), std::nextafter(1.f, 0.f)) };
+}
+
 LatitudeSample TransformFullSphereLatitude(float unit_uniform) {
   const float u = std::max(-1.0f, std::min(1.0f, unit_uniform * 2.0f - 1.0f));
   return { std::asin(u), false };

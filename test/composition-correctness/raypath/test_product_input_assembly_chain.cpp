@@ -182,6 +182,12 @@ TEST(ProductInputChain, JointSamplerReplaysPrefixesAndCorrelatedShapeFromSnapsho
     changed.layers[0].crystal.axis_.latitude_dist = { type, 20.f, 5.f };
     changed.layers[0].crystal.axis_.azimuth_dist.type = type;
     const rp::ProductDiagnosticSampler branch(changed, 1497, rp::DiscreteSpectrumSum{});
+    for (const auto& dimension : branch.Dimensions()) {
+      if (dimension.name == "layer.0.azimuth") {
+        EXPECT_EQ(dimension.width,
+                  ns::BuildDistributionDrawPlan(changed.layers[0].crystal.axis_.azimuth_dist).uniform_count);
+      }
+    }
     if (!branch.Draw(17, &b).Ok()) {
       ADD_FAILURE() << "valid distribution branch rejected";
       return;

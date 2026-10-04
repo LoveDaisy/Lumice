@@ -10,15 +10,6 @@
 namespace lumice::raypath {
 namespace {
 
-uint32_t DrawWidth(const Distribution& distribution) {
-  if (distribution.type == DistributionType::kNoRandom || distribution.spread == 0) {
-    return 0;
-  }
-  return distribution.type == DistributionType::kGaussian || distribution.type == DistributionType::kGaussianLegacy ?
-             2 :
-             1;
-}
-
 // Random-access nested-scrambled Halton coordinates of ONE joint sequence.
 // Every prime digit uses a prefix-specific affine permutation. This preserves
 // each base's elementary intervals while decorrelating dimensions/scrambles;
@@ -53,17 +44,12 @@ float Unit(uint32_t seed, uint64_t sample_index, uint32_t dimension) {
 }
 
 DistributionLatentDraw Latent(const Distribution& distribution, uint32_t seed, uint64_t index, uint32_t offset) {
-  if (DrawWidth(distribution) == 0) {
-    return { distribution.type == DistributionType::kGaussian ||
-                     distribution.type == DistributionType::kGaussianLegacy ?
-                 0.f :
-                 .5f };
+  const auto plan = BuildDistributionDrawPlan(distribution);
+  std::array<double, 2> uniforms{};
+  for (uint32_t j = 0; j < plan.uniform_count; ++j) {
+    uniforms[j] = Uniform(seed, index, offset + j);
   }
-  if (DrawWidth(distribution) == 2) {
-    return { static_cast<float>(std::sqrt(-2 * std::log(Uniform(seed, index, offset))) *
-                                std::cos(2 * 3.14159265358979323846 * Uniform(seed, index, offset + 1))) };
-  }
-  return { Unit(seed, index, offset) };
+  return TransformDistributionUniforms(plan, uniforms);
 }
 
 }  // namespace
@@ -83,16 +69,18 @@ ProductDiagnosticSampler::ProductDiagnosticSampler(ProductInputSnapshot snapshot
     const auto& axis = crystal.axis_;
     const auto prefix = "layer." + std::to_string(i) + ".";
     const auto path = lat_path::SelectLatPath(axis).kind;
-    add(prefix + "latitude", path == lat_path::LatPathKind::kFullSphere    ? 1 :
-                             path == lat_path::LatPathKind::kLutInverseCdf ? 2 :
-                                                                             DrawWidth(axis.latitude_dist));
-    add(prefix + "azimuth", path == lat_path::LatPathKind::kFullSphere ? 1 : DrawWidth(axis.azimuth_dist));
-    add(prefix + "roll", DrawWidth(axis.roll_dist));
+    add(prefix + "latitude",
+        path == lat_path::LatPathKind::kFullSphere    ? 1 :
+        path == lat_path::LatPathKind::kLutInverseCdf ? 2 :
+                                                        BuildDistributionDrawPlan(axis.latitude_dist).uniform_count);
+    add(prefix + "azimuth",
+        path == lat_path::LatPathKind::kFullSphere ? 1 : BuildDistributionDrawPlan(axis.azimuth_dist).uniform_count);
+    add(prefix + "roll", BuildDistributionDrawPlan(axis.roll_dist).uniform_count);
     shape_plans_.push_back(std::visit([](const auto& param) { return BuildShapeDrawPlan(param); }, crystal.param_));
     const auto& plan = shape_plans_.back();
     for (int slot = 0; slot < kShapeScalarCount; ++slot) {
       if (plan[slot].applicable && plan[slot].leader_slot == slot) {
-        add(prefix + "shape." + std::to_string(slot), DrawWidth(plan[slot].distribution));
+        add(prefix + "shape." + std::to_string(slot), BuildDistributionDrawPlan(plan[slot].distribution).uniform_count);
       }
     }
   }
