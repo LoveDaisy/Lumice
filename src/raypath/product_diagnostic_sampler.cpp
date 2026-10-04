@@ -126,4 +126,77 @@ Error ProductDiagnosticSampler::Draw(uint64_t sample_index, const ProductSpectru
   return AssembleProductInput(snapshot_, samples, source, spectrum, out);
 }
 
+Error BuildProductDiagnosticMeasure(const ProductDiagnosticSampler& sampler, const ProductSpectrumRequest& spectrum,
+                                    const ProductSamplingBudget& budget, ProductDiagnosticMeasure* out) {
+  if (!out) {
+    return { ErrorCode::kInvalidArgument, "null diagnostic measure output" };
+  }
+  *out = {};
+  if (sampler.Snapshot().layers.size() != 1) {
+    return { ErrorCode::kMultiLayerUnsupported, "diagnostic measure requires one concrete crystal chain" };
+  }
+  if (budget.requested_samples == 0) {
+    return { ErrorCode::kInvalidArgument, "positive diagnostic sample count required" };
+  }
+  ProductDiagnosticMeasure result;
+  for (uint64_t i = 0; i < budget.requested_samples; ++i) {
+    if (std::chrono::steady_clock::now() >= budget.deadline ||
+        result.optical_evaluations >= budget.max_optical_evaluations) {
+      result.budget_exhausted = true;
+      break;
+    }
+    ProductInput input;
+    const auto error = sampler.Draw(i, spectrum, &input);
+    if (!error.Ok()) {
+      return error;
+    }
+    const auto orbit = SingleCrystalIncidentOrbit(input);
+    const auto component_begin = result.components.size();
+    const auto source_begin = result.sources.size();
+    for (size_t member = 0; member < input.layers[0].scope.members.size() && !result.budget_exhausted; ++member) {
+      for (size_t spectral = 0; spectral < input.spectrum.rows.size(); ++spectral) {
+        if (std::chrono::steady_clock::now() >= budget.deadline ||
+            result.optical_evaluations >= budget.max_optical_evaluations) {
+          result.budget_exhausted = true;
+          break;
+        }
+        ProductChainEvaluation value;
+        ++result.optical_evaluations;
+        const auto evaluation_error = EvaluateProductChain(input, { member }, spectral, &value);
+        if (!evaluation_error.Ok()) {
+          return evaluation_error;
+        }
+        if (!(value.optical_weight > 0)) {
+          continue;
+        }
+        analytic::WeightedSkySample component;
+        component.sample_index = i;
+        component.source_token = result.sources.size();
+        component.uniform_orbit_axis = orbit;
+        component.xyz_weight = value.xyz;
+        for (int j = 0; j < 3; ++j) {
+          component.direction[j] = -value.layers[0].outgoing[j];
+        }
+        result.sources.push_back({ i, member, spectral });
+        result.components.push_back(component);
+      }
+    }
+    if (result.budget_exhausted) {
+      result.components.resize(component_begin);
+      result.sources.resize(source_begin);
+      break;
+    }
+    ++result.completed_samples;
+  }
+  if (result.completed_samples > 0) {
+    for (auto& component : result.components) {
+      for (auto& weight : component.xyz_weight) {
+        weight /= result.completed_samples;
+      }
+    }
+  }
+  *out = std::move(result);
+  return {};
+}
+
 }  // namespace lumice::raypath

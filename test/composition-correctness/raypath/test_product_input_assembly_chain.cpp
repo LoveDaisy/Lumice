@@ -69,6 +69,50 @@ rp::ProductInput Assemble(const rp::ProductInputSnapshot& snapshot,
   return input;
 }
 
+TEST(ProductInputChain, DiagnosticMeasureKeepsWholeOuterDrawsAndReplayableSources) {
+  const auto snapshot = Capture(Scene(1));
+  const rp::ProductDiagnosticSampler sampler(snapshot, 1497);
+  rp::ProductDiagnosticMeasure out;
+  rp::ProductSamplingBudget budget{ 32, 96 };
+  ASSERT_TRUE(rp::BuildProductDiagnosticMeasure(sampler, rp::DiscreteSpectrumSum{}, budget, &out).Ok());
+  EXPECT_EQ(out.completed_samples, 32u);
+  EXPECT_EQ(out.optical_evaluations, 96u);
+  EXPECT_FALSE(out.budget_exhausted);
+  EXPECT_EQ(out.sources.size(), out.components.size());
+  ASSERT_GT(out.components.size(), 0u);
+  for (const auto& component : out.components) {
+    const auto& source = out.sources[component.source_token];
+    rp::ProductInput input;
+    rp::ProductChainEvaluation physical;
+    if (!sampler.Draw(source.sample_index, rp::DiscreteSpectrumSum{}, &input).Ok() ||
+        !rp::EvaluateProductChain(input, { source.member_index }, source.spectral_row, &physical).Ok()) {
+      ADD_FAILURE();
+      return;
+    }
+    EXPECT_EQ(component.sample_index, source.sample_index);
+    for (int j = 0; j < 3; ++j) {
+      EXPECT_DOUBLE_EQ(component.xyz_weight[j], physical.xyz[j] / 32);
+      EXPECT_DOUBLE_EQ(component.direction[j], -physical.layers[0].outgoing[j]);
+    }
+  }
+  budget.max_optical_evaluations = 5;
+  ASSERT_TRUE(rp::BuildProductDiagnosticMeasure(sampler, rp::DiscreteSpectrumSum{}, budget, &out).Ok());
+  EXPECT_TRUE(out.budget_exhausted);
+  EXPECT_EQ(out.completed_samples, 1u);
+  EXPECT_EQ(out.optical_evaluations, 5u);
+  for (const auto& component : out.components) {
+    EXPECT_EQ(component.sample_index, 0u);
+  }
+  budget.deadline = std::chrono::steady_clock::now();
+  ASSERT_TRUE(rp::BuildProductDiagnosticMeasure(sampler, rp::DiscreteSpectrumSum{}, budget, &out).Ok());
+  EXPECT_TRUE(out.budget_exhausted);
+  EXPECT_EQ(out.completed_samples, 0u);
+  EXPECT_EQ(out.optical_evaluations, 0u);
+  const rp::ProductDiagnosticSampler multi(Capture(Scene(2)), 1497);
+  EXPECT_EQ(rp::BuildProductDiagnosticMeasure(multi, rp::DiscreteSpectrumSum{}, {}, &out).code,
+            rp::ErrorCode::kMultiLayerUnsupported);
+}
+
 TEST(ProductInputChain, JointSamplerReplaysPrefixesAndCorrelatedShapeFromSnapshot) {
   auto scene = Scene(1, true);
   scene.light_source_.param_ = { 20.f, 13.f, 1.4f };
