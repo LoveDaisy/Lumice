@@ -112,6 +112,8 @@ set(LUMICE_LAYER_analytic_FILES
   analytic/path_chain.hpp
   analytic/path_evaluation.cpp
   analytic/path_evaluation.hpp
+  analytic/diagnostic_batch.cpp
+  analytic/diagnostic_batch.hpp
   analytic/path_feature_discovery.cpp
   analytic/path_feature_discovery.hpp
   analytic/path_fiber.cpp

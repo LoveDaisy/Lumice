@@ -39,6 +39,15 @@ struct ChainDomain {
   double failure_margin = 0.0;
 };
 
+// Optional prefix-local values/derivatives. A failed later gate must not erase
+// an already-reached interface's diagnostic. Unreached entries stay unavailable.
+template <class S>
+struct ChainInterfaceDiagnostics {
+  int reached = 0;
+  S incidence[kMaxFaceCount]{};
+  S discriminant[kMaxFaceCount]{};
+};
+
 namespace chain_detail {
 
 template <class S, class T>
@@ -96,7 +105,7 @@ inline bool Fail(ChainDomain* domain, ChainFailure failure, double margin) {
 template <class S>
 bool TracePathChain(const FaceNormalTable& table, const int* slots, int slot_count, double refractive_index,
                     const double incident_direction[3], const S pose[9], S outgoing[3], PathOutputs* detail,
-                    ChainDomain* domain) {
+                    ChainDomain* domain, ChainInterfaceDiagnostics<S>* diagnostics = nullptr) {
   using chain_detail::BodyToWorld;
   using chain_detail::Dot3;
   using chain_detail::Fail;
@@ -104,6 +113,9 @@ bool TracePathChain(const FaceNormalTable& table, const int* slots, int slot_cou
   constexpr bool kDetail = std::is_same_v<S, double>;
   if constexpr (!kDetail) {
     (void)detail;
+  }
+  if (diagnostics) {
+    *diagnostics = {};
   }
   const double n = refractive_index;
   const int last = slot_count - 1;
@@ -115,6 +127,11 @@ bool TracePathChain(const FaceNormalTable& table, const int* slots, int slot_cou
   const double entry_rr = 1.0 / n;
   const S entry_cos = -Dot3(normal, incident_direction);
   const S entry_disc = 1.0 - entry_rr * entry_rr * (1.0 - entry_cos * entry_cos);
+  if (diagnostics) {
+    diagnostics->reached = 1;
+    diagnostics->incidence[0] = entry_cos;
+    diagnostics->discriminant[0] = entry_disc;
+  }
   Record(domain, ValueOf(entry_cos));
   Record(domain, ValueOf(entry_disc));
   if (!std::isfinite(ValueOf(entry_cos)) || !std::isfinite(ValueOf(entry_disc))) {
@@ -148,7 +165,13 @@ bool TracePathChain(const FaceNormalTable& table, const int* slots, int slot_cou
     BodyToWorld(pose, table.normal[slots[k]], normal);
     const S cos_i = Dot3(normal, dir);
     // = -(LI's internal TIR discriminant); a diagnostic, not a gate, but a non-finite one fails.
-    const double disc = 1.0 - n * n * (1.0 - ValueOf(cos_i) * ValueOf(cos_i));
+    const S disc_jet = 1.0 - n * n * (1.0 - cos_i * cos_i);
+    const double disc = ValueOf(disc_jet);
+    if (diagnostics) {
+      diagnostics->reached = k + 1;
+      diagnostics->incidence[k] = cos_i;
+      diagnostics->discriminant[k] = disc_jet;
+    }
     Record(domain, ValueOf(cos_i));
     if (!std::isfinite(ValueOf(cos_i)) || !std::isfinite(disc)) {
       return Fail(domain, ChainFailure::kNonFinite, std::nan(""));
@@ -172,6 +195,11 @@ bool TracePathChain(const FaceNormalTable& table, const int* slots, int slot_cou
   BodyToWorld(pose, table.normal[slots[last]], normal);
   const S exit_cos = Dot3(normal, dir);
   const S exit_disc = 1.0 - n * n * (1.0 - exit_cos * exit_cos);
+  if (diagnostics) {
+    diagnostics->reached = slot_count;
+    diagnostics->incidence[last] = exit_cos;
+    diagnostics->discriminant[last] = exit_disc;
+  }
   Record(domain, ValueOf(exit_cos));
   Record(domain, ValueOf(exit_disc));
   if (!std::isfinite(ValueOf(exit_cos)) || !std::isfinite(ValueOf(exit_disc))) {
