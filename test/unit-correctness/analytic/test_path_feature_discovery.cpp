@@ -306,6 +306,35 @@ TEST(PathFeatureField, ContinuousChromaticityAndRealInnerBudgetStops) {
   EXPECT_DOUBLE_EQ(out.xyz[1].value, 0);
 }
 
+TEST(PathFeatureField, ContinuousWalkKeepsClosureCensoringAndBudgetDistinct) {
+  const std::vector<WeightedSkySample> ring{ { 0, { 1, 0, 0 }, { 1, 2, 3 }, std::array<double, 3>{ 0, 0, 1 }, 31 } };
+  FieldWalkOptions options{ { FieldEquation::kLogYRidge, 0, .1, 1e-10, .05, 32 }, .05, 0, 140 };
+  const auto closed = TraceSphericalField(ring, { 1, 0, 0 }, options, false, nullptr);
+  ASSERT_EQ(closed.stop, FieldWalkStop::kClosed);
+  EXPECT_GT(closed.points.size(), 120u);
+  for (const auto& point : closed.points) {
+    EXPECT_EQ(point.status, FieldSolveStatus::kConverged);
+    EXPECT_NEAR(point.query.direction[2], 0, 1e-10);
+  }
+  options.minimum_y = 2 * closed.points.front().field.xyz[1].value;
+  const auto censored = TraceSphericalField(ring, { 1, 0, 0 }, options, false, nullptr);
+  EXPECT_EQ(censored.stop, FieldWalkStop::kObservationCensored);
+  EXPECT_TRUE(censored.points.empty());
+  EXPECT_EQ(censored.terminal.status, FieldSolveStatus::kConverged);
+  options.minimum_y = 0;
+  options.max_points = 3;
+  const auto partial = TraceSphericalField(ring, { 1, 0, 0 }, options, true, nullptr);
+  EXPECT_EQ(partial.stop, FieldWalkStop::kPointLimit);
+  EXPECT_EQ(partial.points.size(), 3u);
+  EXPECT_LT(partial.points[1].query.direction[1] * closed.points[1].query.direction[1], 0);
+  FieldWorkBudget budget;
+  budget.max_component_evaluations = 2;
+  const auto stopped = TraceSphericalField(ring, { 1, 0, 0 }, options, false, &budget);
+  EXPECT_EQ(stopped.stop, FieldWalkStop::kCorrectorFailed);
+  EXPECT_EQ(stopped.terminal.status, FieldSolveStatus::kBudgetExceeded);
+  EXPECT_EQ(stopped.points.size(), 2u);
+}
+
 TEST(PathFeatureField, IndependentPhysicalCloudFixture) {
   std::ifstream in(std::string(LUMICE_DIAGNOSTIC_FIXTURE_DIR) + "/weighted-sky.json");
   ASSERT_TRUE(in.is_open());

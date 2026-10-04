@@ -83,6 +83,23 @@ FieldStationaryPoint CorrectSphericalField(const std::vector<WeightedSkySample>&
                                            const std::array<double, 3>& seed, const FieldSolveOptions& options,
                                            FieldWorkBudget* budget);
 
+enum class FieldWalkStop { kClosed, kObservationCensored, kCorrectorFailed, kPointLimit, kInvalidInput };
+struct FieldWalkOptions {
+  FieldSolveOptions corrector;
+  double step_rad = 0;
+  double minimum_y = 0;
+  int max_points = 0;
+};
+struct FieldCurve {
+  std::vector<FieldStationaryPoint> points;
+  FieldWalkStop stop = FieldWalkStop::kInvalidInput;
+  // The failed/censored trial is retained separately, never appended as a
+  // converged curve point. Observation censoring is not a physical source edge.
+  FieldStationaryPoint terminal;
+};
+FieldCurve TraceSphericalField(const std::vector<WeightedSkySample>& samples, const std::array<double, 3>& seed,
+                               const FieldWalkOptions& options, bool reverse, FieldWorkBudget* budget);
+
 // Normalized vMF convolution with kappa = 1 / bandwidth_rad^2. No angular
 // truncation or projection; no product classification or convergence claim.
 // Uniform orbits are integrated analytically, not expanded into optical rows.

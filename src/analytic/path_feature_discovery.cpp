@@ -342,4 +342,70 @@ FieldStationaryPoint CorrectSphericalField(const std::vector<WeightedSkySample>&
   return result;
 }
 
+FieldCurve TraceSphericalField(const std::vector<WeightedSkySample>& samples, const std::array<double, 3>& seed,
+                               const FieldWalkOptions& options, bool reverse, FieldWorkBudget* budget) {
+  FieldCurve result;
+  if (!(options.step_rad > 0) || !std::isfinite(options.step_rad) || options.step_rad >= kPi ||
+      !(options.minimum_y >= 0) || !std::isfinite(options.minimum_y) || options.max_points <= 0 ||
+      options.corrector.equation == FieldEquation::kLogYPeak) {
+    return result;
+  }
+  auto point = CorrectSphericalField(samples, seed, options.corrector, budget);
+  std::array<double, 3> previous_tangent{};
+  std::array<double, 3> first_tangent{};
+  for (int i = 0; i < options.max_points; ++i) {
+    if (point.status != FieldSolveStatus::kConverged) {
+      result.terminal = point;
+      result.stop = FieldWalkStop::kCorrectorFailed;
+      return result;
+    }
+    if (point.field.xyz[1].value < options.minimum_y) {
+      result.terminal = point;
+      result.stop = FieldWalkStop::kObservationCensored;
+      return result;
+    }
+    std::array<double, 3> tangent{};
+    for (int j = 0; j < 3; ++j) {
+      tangent[j] = -point.normal[1] * point.query.basis[0][j] + point.normal[0] * point.query.basis[1][j];
+    }
+    if ((i == 0 && reverse) || (i > 0 && so3::Dot3(tangent.data(), previous_tangent.data()) < 0)) {
+      for (auto& x : tangent) {
+        x = -x;
+      }
+    }
+    if (i == 0) {
+      first_tangent = tangent;
+    } else if (i > 4) {
+      const auto& first = result.points.front().query.direction;
+      double cross[3];
+      so3::Cross3(first.data(), point.query.direction.data(), cross);
+      const double distance = std::atan2(so3::Norm3(cross), so3::Dot3(first.data(), point.query.direction.data()));
+      if (distance < .75 * options.step_rad && so3::Dot3(tangent.data(), first_tangent.data()) > 0) {
+        result.points.push_back(point);
+        result.stop = FieldWalkStop::kClosed;
+        return result;
+      }
+    }
+    result.points.push_back(point);
+    if (i + 1 == options.max_points) {
+      break;
+    }
+    std::array<double, 3> next{};
+    for (int j = 0; j < 3; ++j) {
+      next[j] = std::cos(options.step_rad) * point.query.direction[j] + std::sin(options.step_rad) * tangent[j];
+    }
+    previous_tangent = tangent;
+    point = CorrectSphericalField(samples, next, options.corrector, budget);
+    // A large correction may land on another branch. Keep the trial, but do not
+    // connect it to this curve just because both trials solved their equations.
+    if (point.travelled_rad > options.step_rad) {
+      result.terminal = point;
+      result.stop = FieldWalkStop::kCorrectorFailed;
+      return result;
+    }
+  }
+  result.stop = FieldWalkStop::kPointLimit;
+  return result;
+}
+
 }  // namespace lumice::analytic
