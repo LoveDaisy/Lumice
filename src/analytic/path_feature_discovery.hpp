@@ -100,6 +100,20 @@ struct FieldCurve {
 FieldCurve TraceSphericalField(const std::vector<WeightedSkySample>& samples, const std::array<double, 3>& seed,
                                const FieldWalkOptions& options, bool reverse, FieldWorkBudget* budget);
 
+struct FieldBand {
+  std::array<double, 2> levels{};
+  std::array<std::vector<FieldStationaryPoint>, 2> boundaries;
+  FieldSolveStatus status = FieldSolveStatus::kInvalidInput;
+};
+// Two level boundaries of ONE fixed observation, locally transverse to a
+// supplied centre curve. This is a field-value range, never an error interval
+// or the envelope of different bandwidths. End caps belong to the caller's
+// declared local search window, not to a physical source boundary.
+FieldBand CorrectSphericalFieldBand(const std::vector<WeightedSkySample>& samples,
+                                    const std::vector<FieldStationaryPoint>& centre,
+                                    const std::array<double, 2>& levels, const FieldSolveOptions& options,
+                                    FieldWorkBudget* budget);
+
 // Normalized vMF convolution with kappa = 1 / bandwidth_rad^2. No angular
 // truncation or projection; no product classification or convergence claim.
 // Uniform orbits are integrated analytically, not expanded into optical rows.

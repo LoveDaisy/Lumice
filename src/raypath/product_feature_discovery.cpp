@@ -152,7 +152,8 @@ void FindDeviationEdges(const ProductDiscoveryOptions& options, ProductDiscovery
     const auto& identity = measure.sources[index];
     const auto& layer = input.layers[0];
     const auto& faces = layer.scope.members[identity.member_index];
-    const auto spent = measure.optical_evaluations + result->event_path_evaluations;
+    const auto spent =
+        measure.optical_evaluations + result->replicate_path_evaluations + result->event_path_evaluations;
     const uint64_t available =
         options.sampling.max_optical_evaluations - std::min(options.sampling.max_optical_evaluations, spent);
     a::DiagnosticInputRow row{ layer.shape, layer.analytic_pose, input.source.incident_direction,
@@ -292,7 +293,8 @@ void FindEvents(const ProductDiscoveryOptions& options, ProductDiscoveryResult* 
     a::DiagnosticInputRow row{ layer.shape, layer.analytic_pose, input.source.incident_direction,
                                input.spectrum.rows[source.spectral_row].refractive_index, index };
     for (int slot = 1; slot + 1 < static_cast<int>(faces.size()) && found < options.max_interface_candidates; ++slot) {
-      const auto spent = result->measure.optical_evaluations + result->event_path_evaluations;
+      const auto spent =
+          result->measure.optical_evaluations + result->replicate_path_evaluations + result->event_path_evaluations;
       const auto available =
           options.sampling.max_optical_evaluations - std::min(options.sampling.max_optical_evaluations, spent);
       auto event = a::CorrectInterfaceEvent(faces, row, { slot }, available, options.sampling.deadline);
@@ -317,7 +319,8 @@ void FindEvents(const ProductDiscoveryOptions& options, ProductDiscoveryResult* 
       record.sky_points.push_back({ -v[0], -v[1], -v[2] });
       record.interface_event = event;
       for (const bool reverse : { false, true }) {
-        const auto used = result->measure.optical_evaluations + result->event_path_evaluations;
+        const auto used =
+            result->measure.optical_evaluations + result->replicate_path_evaluations + result->event_path_evaluations;
         const uint64_t remaining =
             options.sampling.max_optical_evaluations - std::min(options.sampling.max_optical_evaluations, used);
         auto curve = a::TraceInterfaceCurve(faces, event.source, slot, .01, 1e-7, std::max(2, options.max_curve_points),
@@ -407,12 +410,43 @@ Error DiscoverProductFeatures(const ProductDiagnosticSampler& sampler, const Pro
     *out = std::move(result);
     return {};
   }
+  ProductDiagnosticMeasure replicate;
+  auto replicate_budget = options.sampling;
+  replicate_budget.requested_samples = result.measure.completed_samples;
+  replicate_budget.max_optical_evaluations -=
+      std::min(replicate_budget.max_optical_evaluations, result.measure.optical_evaluations);
+  if (replicate_budget.requested_samples > 0) {
+    const auto replicate_error =
+        BuildProductDiagnosticMeasure(sampler.IndependentReplicate(), replicate_budget, &replicate);
+    if (!replicate_error.Ok()) {
+      return replicate_error;
+    }
+  }
+  result.replicate_path_evaluations = replicate.optical_evaluations;
+  result.replicate_samples = replicate.completed_samples;
+  result.assembly_seconds = std::chrono::duration<double>(Clock::now() - begin).count();
+  result.budget_exhausted |= replicate.budget_exhausted;
   const auto event_start = Clock::now();
   a::FieldWorkBudget budget{ options.max_field_evaluations, 0, options.sampling.deadline };
   FindDeviationEdges(options, &result, &budget);
   FindEvents(options, &result);
   result.event_seconds = std::chrono::duration<double>(Clock::now() - event_start).count();
   const auto field_start = Clock::now();
+  auto verify_replicate = [&](const a::FieldStationaryPoint& point, const a::FieldSolveOptions& solve,
+                              DiagnosticFeatureRecord* record) {
+    const auto check = a::CorrectSphericalField(replicate.components, point.query.direction, solve, &budget);
+    if (check.status != a::FieldSolveStatus::kConverged) {
+      record->reason = "independent same-observation replicate not converged";
+      return false;
+    }
+    const double movement = Distance(point.query.direction, check.query.direction);
+    record->replicate_movement_rad = std::max(record->replicate_movement_rad.value_or(0), movement);
+    if (movement > options.location_resolution_rad || check.field.effective_samples_y < 32) {
+      record->reason = "independent same-observation replicate disagrees at the declared location resolution";
+      return false;
+    }
+    return true;
+  };
   const auto seeds = Seeds(result.measure, options.max_seeds);
   const uint64_t coarse_count = result.measure.completed_samples / 4;
   std::vector<a::WeightedSkySample> coarse;
@@ -461,6 +495,10 @@ Error DiscoverProductFeatures(const ProductDiagnosticSampler& sampler, const Pro
         auto scale = a::CorrectSphericalField(result.measure.components, fine.query.direction, solve, &budget);
         const double contrast = Contrast(result.measure.components, fine, equation, &budget);
         record.evidence = Classify(fine, previous, scale, options.location_resolution_rad, contrast, &record);
+        solve.bandwidth_rad = options.bandwidth_rad;
+        if (record.evidence == DiagnosticEvidence::kActual && !verify_replicate(fine, solve, &record)) {
+          record.evidence = DiagnosticEvidence::kUnfinished;
+        }
         record.sky_points.push_back(fine.query.direction);
         record.field_points.push_back(fine);
         if (equation != a::FieldEquation::kLogYPeak && record.evidence == DiagnosticEvidence::kActual) {
@@ -482,6 +520,10 @@ Error DiscoverProductFeatures(const ProductDiagnosticSampler& sampler, const Pro
             if (Classify(point, previous, scale, options.location_resolution_rad,
                          Contrast(result.measure.components, point, equation, &budget),
                          &evidence) != DiagnosticEvidence::kActual) {
+              record.walk_stop = a::FieldWalkStop::kCorrectorFailed;
+              break;
+            }
+            if (!verify_replicate(point, solve, &record)) {
               record.walk_stop = a::FieldWalkStop::kCorrectorFailed;
               break;
             }
@@ -507,7 +549,45 @@ Error DiscoverProductFeatures(const ProductDiagnosticSampler& sampler, const Pro
         record.reason = "seed did not solve the local field equation; not evidence of physical absence";
         record.field_points.push_back(fine);
       }
-      result.features.push_back(std::move(record));
+      if (colour && record.evidence == DiagnosticEvidence::kActual && record.field_points.size() > 1) {
+        const auto& jet = record.field_points[0].field.xy[channel];
+        const double half_range = .25 * options.bandwidth_rad * std::hypot(jet.gradient[0], jet.gradient[1]);
+        DiagnosticFeatureRecord band_record = record;
+        band_record.kind = channel == 0 ? "chromaticity_x_band" : "chromaticity_y_band";
+        band_record.geometry = DiagnosticGeometry::kBand;
+        band_record.scale_movement_rad.reset();
+        band_record.scale_status = a::FieldSolveStatus::kInvalidInput;
+        solve.bandwidth_rad = options.bandwidth_rad;
+        band_record.band = a::CorrectSphericalFieldBand(result.measure.components, record.field_points,
+                                                        { level - half_range, level + half_range }, solve, &budget);
+        bool stable = band_record.band->status == a::FieldSolveStatus::kConverged;
+        for (int side = 0; side < 2 && stable; ++side) {
+          solve.level = band_record.band->levels[side];
+          for (const auto& point : band_record.band->boundaries[side]) {
+            const auto previous = a::CorrectSphericalField(coarse, point.query.direction, solve, &budget);
+            DiagnosticFeatureRecord evidence;
+            if (Classify(point, previous, point, options.location_resolution_rad,
+                         Contrast(result.measure.components, point, equation, &budget),
+                         &evidence) != DiagnosticEvidence::kActual) {
+              stable = false;
+              break;
+            }
+            if (!verify_replicate(point, solve, &band_record)) {
+              stable = false;
+              break;
+            }
+            band_record.prefix_movement_rad = std::max(band_record.prefix_movement_rad, evidence.prefix_movement_rad);
+          }
+        }
+        band_record.evidence = stable ? DiagnosticEvidence::kActual : DiagnosticEvidence::kUnfinished;
+        band_record.reason = stable ? "local field-value range between two solved levels of one fixed xy observation; "
+                                      "transverse window caps, not physical or uncertainty bounds" :
+                                      "fixed-observation band boundaries not stable at every vertex";
+        result.features.push_back(std::move(record));
+        result.features.push_back(std::move(band_record));
+      } else {
+        result.features.push_back(std::move(record));
+      }
       if (budget.exhausted) {
         break;
       }

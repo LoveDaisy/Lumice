@@ -838,7 +838,8 @@ Error BuildProductPathReport(const SceneConfig& scene, const std::string& identi
       }
       const ProductDiagnosticSampler verifier(result.snapshot, seed, next);
       auto remaining = options.sampling;
-      const auto used = result.discovery.measure.optical_evaluations + result.discovery.event_path_evaluations;
+      const auto used = result.discovery.measure.optical_evaluations + result.discovery.replicate_path_evaluations +
+                        result.discovery.event_path_evaluations;
       remaining.max_optical_evaluations -= std::min(remaining.max_optical_evaluations, used);
       remaining.requested_samples = result.discovery.measure.completed_samples;
       if (remaining.requested_samples > 0) {
@@ -862,13 +863,25 @@ Error BuildProductPathReport(const SceneConfig& scene, const std::string& identi
         continue;
       }
       bool stable = refinement_available && !feature.field_points.empty();
+      std::vector<std::pair<const analytic::FieldStationaryPoint*, double>> points;
       for (const auto& point : feature.field_points) {
+        points.push_back({ &point, feature.level });
+      }
+      if (feature.band) {
+        for (int side = 0; side < 2; ++side) {
+          for (const auto& point : feature.band->boundaries[side]) {
+            points.push_back({ &point, feature.band->levels[side] });
+          }
+        }
+      }
+      for (const auto& entry : points) {
+        const auto& point = *entry.first;
         if (!stable) {
           break;
         }
         const auto corrected = analytic::CorrectSphericalField(
             refined.components, point.query.direction,
-            { feature.equation, feature.level, feature.bandwidth_rad, 1e-8, feature.bandwidth_rad * .5, 32 },
+            { feature.equation, entry.second, feature.bandwidth_rad, 1e-8, feature.bandwidth_rad * .5, 32 },
             &verification_budget);
         if (corrected.status != analytic::FieldSolveStatus::kConverged) {
           stable = false;

@@ -477,4 +477,37 @@ FieldCurve TraceSphericalField(const std::vector<WeightedSkySample>& samples, co
   return result;
 }
 
+FieldBand CorrectSphericalFieldBand(const std::vector<WeightedSkySample>& samples,
+                                    const std::vector<FieldStationaryPoint>& centre,
+                                    const std::array<double, 2>& levels, const FieldSolveOptions& options,
+                                    FieldWorkBudget* budget) {
+  FieldBand band;
+  band.levels = levels;
+  if (centre.size() < 2 || !(levels[0] < levels[1]) || !std::isfinite(levels[0]) || !std::isfinite(levels[1]) ||
+      (options.equation != FieldEquation::kChromaticityX && options.equation != FieldEquation::kChromaticityY)) {
+    return band;
+  }
+  for (int side = 0; side < 2; ++side) {
+    auto solve = options;
+    solve.level = levels[side];
+    for (const auto& seed : centre) {
+      if (seed.status != FieldSolveStatus::kConverged || seed.query.bandwidth_rad != solve.bandwidth_rad) {
+        return band;
+      }
+      auto point = CorrectSphericalField(samples, seed.query.direction, solve, budget);
+      if (point.status != FieldSolveStatus::kConverged) {
+        band.status = point.status;
+        return band;
+      }
+      if (point.travelled_rad > solve.bandwidth_rad) {
+        band.status = FieldSolveStatus::kDegenerate;
+        return band;
+      }
+      band.boundaries[side].push_back(std::move(point));
+    }
+  }
+  band.status = FieldSolveStatus::kConverged;
+  return band;
+}
+
 }  // namespace lumice::analytic

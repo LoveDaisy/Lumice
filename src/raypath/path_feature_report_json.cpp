@@ -199,6 +199,8 @@ const char* EvidenceName(DiagnosticEvidence evidence) {
 }
 const char* GeometryName(DiagnosticGeometry geometry) {
   switch (geometry) {
+    case DiagnosticGeometry::kBand:
+      return "field_value_band";
     case DiagnosticGeometry::kPoint:
       return "point";
     case DiagnosticGeometry::kPolyline:
@@ -373,9 +375,11 @@ std::string ProductPathReportToJson(const ProductPathReport& result, const char*
   document["budget"] = {
     { "requested_outer_samples", result.options.sampling.requested_samples },
     { "completed_outer_samples", discovery.measure.completed_samples },
+    { "replicate_samples", discovery.replicate_samples },
+    { "replicate_seed", result.seed ^ 0x9e3779b9u },
     { "max_optical_evaluations", result.options.sampling.max_optical_evaluations },
-    { "optical_evaluations",
-      discovery.measure.optical_evaluations + discovery.event_path_evaluations + result.spectral_optical_evaluations },
+    { "optical_evaluations", discovery.measure.optical_evaluations + discovery.replicate_path_evaluations +
+                                 discovery.event_path_evaluations + result.spectral_optical_evaluations },
     { "max_field_component_evaluations", result.options.max_field_evaluations },
     { "field_component_evaluations", discovery.field_component_evaluations + result.spectral_field_evaluations },
     { "exhausted", discovery.budget_exhausted }
@@ -410,6 +414,8 @@ std::string ProductPathReportToJson(const ProductPathReport& result, const char*
           { "level", Num(feature.level) },
           { "bandwidth_rad", Num(feature.bandwidth_rad) },
           { "prefix_movement_rad", Num(feature.prefix_movement_rad) },
+          { "replicate_movement_rad",
+            feature.replicate_movement_rad ? Num(*feature.replicate_movement_rad) : Json(nullptr) },
           { "contrast", Num(feature.transverse_contrast) },
           { "contrast_prefix_error", Num(feature.observation_contrast_error) },
           { "minimum_ESS", Num(feature.minimum_effective_samples) } } },
@@ -423,6 +429,22 @@ std::string ProductPathReportToJson(const ProductPathReport& result, const char*
         item["field_points"].push_back(FieldPointJson(point));
       }
       item["walk_stop"] = static_cast<int>(feature.walk_stop);
+    }
+    if (feature.band) {
+      item["band"] = {
+        { "levels", feature.band->levels },
+        { "status", static_cast<int>(feature.band->status) },
+        { "definition",
+          "same-field xy level interval within the recorded transverse coordinate window; caps are numerical" },
+        { "boundaries", Json::array() }
+      };
+      for (const auto& boundary : feature.band->boundaries) {
+        Json points = Json::array();
+        for (const auto& point : boundary) {
+          points.push_back(FieldPointJson(point));
+        }
+        item["band"]["boundaries"].push_back(std::move(points));
+      }
     }
     if (feature.source_token) {
       item["source_token"] = *feature.source_token;

@@ -27,6 +27,9 @@ class ProductDiagnosticSampler {
   // Prefix replay: identical snapshot/seed/index produces identical draws,
   // regardless of call order or the eventual number of samples requested.
   Error Draw(uint64_t sample_index, ProductInput* out) const;
+  ProductDiagnosticSampler IndependentReplicate() const {
+    return ProductDiagnosticSampler(snapshot_, seed_ ^ 0x9e3779b9u, spectrum_);
+  }
 
  private:
   ProductInputSnapshot snapshot_;

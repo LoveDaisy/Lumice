@@ -7,7 +7,7 @@
 namespace lumice::raypath {
 
 enum class DiagnosticEvidence { kActual, kCandidate, kUnfinished };
-enum class DiagnosticGeometry { kPoint, kPolyline, kAtom, kSourceRange };
+enum class DiagnosticGeometry { kPoint, kPolyline, kAtom, kSourceRange, kBand };
 struct DiagnosticFeatureRecord {
   DiagnosticEvidence evidence = DiagnosticEvidence::kUnfinished;
   DiagnosticGeometry geometry = DiagnosticGeometry::kPoint;
@@ -15,10 +15,12 @@ struct DiagnosticFeatureRecord {
   std::string reason;
   std::vector<std::array<double, 3>> sky_points;
   std::vector<analytic::FieldStationaryPoint> field_points;
+  std::optional<analytic::FieldBand> band;
   analytic::FieldEquation equation = analytic::FieldEquation::kLogYPeak;
   double level = 0;
   double bandwidth_rad = 0;
   double prefix_movement_rad = 0;
+  std::optional<double> replicate_movement_rad;
   std::optional<double> scale_movement_rad;
   analytic::FieldSolveStatus scale_status = analytic::FieldSolveStatus::kInvalidInput;
   double minimum_effective_samples = 0;
@@ -53,6 +55,8 @@ struct ProductDiscoveryResult {
   std::vector<DiagnosticFeatureRecord> features;
   std::vector<std::string> unfinished;
   uint64_t event_path_evaluations = 0;
+  uint64_t replicate_path_evaluations = 0;
+  uint64_t replicate_samples = 0;
   uint64_t field_component_evaluations = 0;
   double assembly_seconds = 0;
   double event_seconds = 0;
