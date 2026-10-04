@@ -35,6 +35,7 @@ CPMAddPackage(
 add_executable(unit_correctness_test
   "${PROJ_TEST_DIR}/test_main.cpp"
   # core/
+  "${PROJ_TEST_DIR}/unit-correctness/core/test_product_sample_transform.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/core/test_math.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/core/test_geo3d.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/core/test_optics.cpp"

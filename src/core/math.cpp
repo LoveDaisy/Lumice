@@ -12,6 +12,7 @@
 #include <string>
 
 #include "core/lat_lut.hpp"
+#include "core/product_sample_transform.hpp"
 #include "core/shared/lat_path_selection.hpp"
 #include "core/shared/pcg_shared.h"
 #include "util/fatal.hpp"
@@ -443,27 +444,14 @@ size_t RandomNumberGenerator::GetUniformIndex(size_t n) {
 float RandomNumberGenerator::Get(Distribution dist) {
   switch (dist.type) {
     case DistributionType::kUniform:
-      return (GetUniform() - 0.5f) * dist.UniformFullRange() + dist.UniformCenter();
+    case DistributionType::kZigzag:
+    case DistributionType::kLaplacian:
+      return TransformDistribution(dist, { GetUniform() });
     case DistributionType::kGaussian:
     case DistributionType::kGaussianLegacy:
-      return GetGaussian() * dist.Std() + dist.Mean();
-    case DistributionType::kZigzag:
-      // Rectified arcsine: |A·sin(2πU) + B| where A is the amplitude and B the tilt offset.
-      // The abs() is intentional: fold (flip=true) is unconditionally skipped — abs() guarantees
-      // phi >= 0 for all kZigzag inputs regardless of the amplitude / tilt values.
-      return std::abs(dist.Amplitude() * std::sin(GetUniform() * 2.0f * math::kPi) + dist.Tilt());
-    case DistributionType::kLaplacian: {
-      // Laplace inverse CDF: μ - b·sign(U-0.5)·ln(1-2|U-0.5|), returns degrees.
-      float u = GetUniform();
-      float sign = (u < 0.5f) ? -1.0f : 1.0f;
-      float arg = 1.0f - 2.0f * std::abs(u - 0.5f);
-      arg = std::max(arg, std::numeric_limits<float>::min());  // Clamp to avoid ln(0).
-      return dist.Location() - dist.Scale() * sign * std::log(arg);
-    }
-    case DistributionType::kNoRandom:
-      return dist.Value();
+      return TransformDistribution(dist, { GetGaussian() });
     default:
-      return 0.0f;
+      return TransformDistribution(dist, {});
   }
 }
 
@@ -482,11 +470,11 @@ void RandomNumberGenerator::SetSeed(uint32_t seed) {
 void RandomSampler::SampleSphericalPointsSph(float* data, size_t num, size_t step) {
   auto& rng = RandomNumberGenerator::GetInstance();
   for (size_t i = 0; i < num; i++) {
-    float u = rng.GetUniform() * 2 - 1;
-    float lambda = rng.GetUniform() * 2 * math::kPi;
-
-    data[i * step + 0] = lambda;
-    data[i * step + 1] = std::asin(u);
+    const float latitude_uniform = rng.GetUniform();
+    const float longitude_uniform = rng.GetUniform();
+    const auto point = TransformFullSpherePoint(latitude_uniform, longitude_uniform);
+    data[i * step + 0] = point[0];
+    data[i * step + 1] = point[1];
   }
 }
 
@@ -505,54 +493,23 @@ void RandomSampler::SampleSphericalPointsSph(const AxisDistribution& axis_dist, 
   auto decision = lat_path::SelectLatPath(axis_dist);
 
   for (size_t i = 0; i < num; i++) {
-    float phi = 0;
-    bool flip = false;
-
+    LatitudeSample latitude;
     if (decision.kind == lat_path::LatPathKind::kFullSphere) {
-      // Full-sphere uniform (IsFullSphereUniform()==true) reaching the parameterized overload —
-      // e.g. the Jacobian-correction unit test; production routes such axes through the dedicated
-      // SampleSphericalPointsSph(full-sphere) overload from simulator.cpp. Sample latitude directly
-      // with the area measure: phi = asin(u), u ~ U(-1,1), giving the uniform-on-sphere
-      // distribution. Matches the device sample_lat_lon_roll kLatPathFullSphere branch
-      // (pcg_shared.h). Before 330.3 this case fell through to the generic Jacobian-rejection branch
-      // (now retired), which reached the same distribution via cos(phi) rejection.
-      float u = std::max(-1.0f, std::min(1.0f, rng.GetUniform() * 2.0f - 1.0f));
-      phi = std::asin(u);
+      latitude = TransformFullSphereLatitude(rng.GetUniform());
     } else if (decision.kind == lat_path::LatPathKind::kLutInverseCdf) {
-      // Unified area-measure inverse-CDF LUT (330.2). One uniform draw + fixed binary search
-      // (no rejection loop); flip reproduces the pole-crossing azimuth flip via the per-bin
-      // flip probability. The LUT is amortized once per axis distribution, never per ray.
-      // Shares lm_pcg::invert_lat_lut / lat_lut_bin with the device kernels. Production
-      // (InitRay_rot) resolves the LUT once per crystal-batch and passes it in; the nullptr
-      // fallback routes to the shared build-once cache (task-335) so low-frequency callers
-      // (unit tests) still share one LUT instead of thrashing the old single-entry cache.
       const LatLut& lut = (lat_lut != nullptr) ? *lat_lut : *GetSharedLatLut(axis_dist.latitude_dist);
       const float xi = rng.GetUniform();
-      const float theta_z = lm_pcg::invert_lat_lut(xi, lut.theta.data(), lut.cdf.data(), LatLut::kNodes);
-      phi = math::kPi_2 - theta_z;
-      const uint32_t bin = lm_pcg::lat_lut_bin(theta_z, lut.theta.data(), LatLut::kNodes);
-      flip = rng.GetUniform() < lut.flip_prob[bin];
+      const float flip_uniform = rng.GetUniform();
+      latitude = TransformLatitudeLut(lut, { xi, flip_uniform });
     } else if (lat_type == DistributionType::kGaussianLegacy) {
-      // Legacy Gaussian: sample without Jacobian rejection (reproduces old behavior).
-      phi = rng.Get(axis_dist.latitude_dist) * math::kDegreeToRad;
-      auto [norm_phi, norm_flip] = detail::NormalizeLatitude(phi);
-      phi = norm_phi;
-      flip = norm_flip;
+      latitude = TransformLegacyLatitude(rng.Get(axis_dist.latitude_dist));
     } else {
-      // kNoRandom: no Jacobian needed (single deterministic orientation).
-      phi = rng.Get(axis_dist.latitude_dist) * math::kDegreeToRad;
+      latitude = { rng.Get(axis_dist.latitude_dist) * math::kDegreeToRad, false };
     }
-
-    float lambda = rng.Get(axis_dist.azimuth_dist) * math::kDegreeToRad;
-    float roll = rng.Get(axis_dist.roll_dist) * math::kDegreeToRad;
-    if (flip) {
-      lambda += math::kPi;
-      roll += math::kPi;
-    }
-
-    data[i * 3 + 0] = lambda;
-    data[i * 3 + 1] = phi;
-    data[i * 3 + 2] = roll;
+    const float azimuth = rng.Get(axis_dist.azimuth_dist);
+    const float roll = rng.Get(axis_dist.roll_dist);
+    const auto angles = ComposeAxisAngles(latitude, azimuth, roll);
+    std::copy(angles.begin(), angles.end(), data + i * 3);
   }
 }
 

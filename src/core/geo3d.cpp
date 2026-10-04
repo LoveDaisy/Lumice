@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "core/math.hpp"
+#include "core/product_sample_transform.hpp"
 #include "util/logger.hpp"
 
 namespace lumice {
@@ -200,30 +201,13 @@ void SampleSphCapPoint(float lon, float lat, float cap_radii, float* out_pt,  //
   }
 
   auto& rng = RandomNumberGenerator::GetInstance();
-  float c_cap = std::cos(cap_radii);
-  float c_lon = std::cos(lon);
-  float s_lon = std::sin(lon);
-  float c_lat = std::cos(lat);
-  float s_lat = std::sin(lat);
+  const auto cap = MakeSphericalCapTransform(lon, lat, cap_radii);
   for (size_t i = 0; i < sample_num; i++) {
-    // 1. Sample arount x-axis
-    float x = rng.GetUniform();
-    x += (1 - x) * c_cap;
-    float r = std::sqrt(1.0f - x * x);
-
-    float u = rng.GetUniform() * 2 * math::kPi;
-    float y = std::cos(u) * r;
-    float z = std::sin(u) * r;
-
-    // 2. Then rotate
-    // R = Rz(lon).Ry(-lat)
-    //     | cos(lon)cos(lat), -sin(lon), -cos(lon)sin(lat) |
-    //   = | sin(lon)cos(lat),  cos(lon), -sin(lon)sin(lat) |
-    //     | sin(lat),          0,         cos(lat)         |
+    const float radial_uniform = rng.GetUniform();
+    const float azimuth_uniform = rng.GetUniform();
+    const auto point = TransformSphericalCap(cap, { radial_uniform, azimuth_uniform });
     auto* p = reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(out_pt) + i * step);
-    p[0] = c_lon * c_lat * x - s_lon * y - c_lon * s_lat * z;
-    p[1] = s_lon * c_lat * x + c_lon * y - s_lon * s_lat * z;
-    p[2] = s_lat * x + c_lat * z;
+    std::copy(point.begin(), point.end(), p);
   }
 }
 
