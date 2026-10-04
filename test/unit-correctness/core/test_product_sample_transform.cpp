@@ -1,4 +1,6 @@
 #include <cmath>
+#include <cstdint>
+#include <cstring>
 
 #include "core/geo3d.hpp"
 #include "core/lat_lut.hpp"
@@ -9,6 +11,57 @@
 
 namespace {
 namespace ns = lumice;
+
+uint32_t FloatBits(float value) {
+  uint32_t bits;
+  static_assert(sizeof(bits) == sizeof(value));
+  std::memcpy(&bits, &value, sizeof(bits));
+  return bits;
+}
+
+// Preserve the old point sampler's expression independently of the production owner.
+float LegacyFullSphereLatitude(float unit_uniform) {
+  const float u = unit_uniform * 2 - 1;
+  return std::asin(u);
+}
+
+TEST(ProductSampleTransform, FullSphereLegalDrawsKeepLegacyBits) {
+  const float draws[]{ 0.f, std::nextafter(0.f, 1.f), .25f, std::nextafter(.5f, 0.f),
+                       .5f, std::nextafter(.5f, 1.f), .75f, std::nextafter(1.f, 0.f) };
+  for (float draw : draws) {
+    SCOPED_TRACE(draw);
+    const auto point = ns::TransformFullSpherePoint(draw, draw);
+    const auto latitude = ns::TransformFullSphereLatitude(draw);
+    const auto expected_bits = FloatBits(LegacyFullSphereLatitude(draw));
+    EXPECT_EQ(FloatBits(point[1]), expected_bits);
+    EXPECT_EQ(FloatBits(latitude.radians), expected_bits);
+    EXPECT_FALSE(latitude.flip);
+    EXPECT_EQ(FloatBits(point[0]), FloatBits(draw * 2 * ns::math::kPi));
+  }
+}
+
+TEST(ProductSampleTransform, FullSphereAxisKeepsLegacyBitsAndDrawClock) {
+  auto& production = ns::RandomNumberGenerator::GetInstance();
+  production.SetSeed(7821);
+  ns::RandomNumberGenerator replay(7821);
+  ns::AxisDistribution axis;
+  axis.latitude_dist = { ns::DistributionType::kUniform, 90.f, 360.f };
+  axis.azimuth_dist = { ns::DistributionType::kUniform, 0.f, 360.f };
+  axis.roll_dist = { ns::DistributionType::kUniform, 0.f, 360.f };
+  ASSERT_EQ(ns::lat_path::SelectLatPath(axis).kind, ns::lat_path::LatPathKind::kFullSphere);
+  for (int i = 0; i < 32; ++i) {
+    SCOPED_TRACE(i);
+    const float latitude = LegacyFullSphereLatitude(replay.GetUniform());
+    const float azimuth = (replay.GetUniform() - .5f) * 360.f;
+    const float roll = (replay.GetUniform() - .5f) * 360.f;
+    float actual[3];
+    ns::RandomSampler::SampleSphericalPointsSph(axis, actual, 1);
+    EXPECT_EQ(FloatBits(actual[0]), FloatBits(azimuth * ns::math::kDegreeToRad));
+    EXPECT_EQ(FloatBits(actual[1]), FloatBits(latitude));
+    EXPECT_EQ(FloatBits(actual[2]), FloatBits(roll * ns::math::kDegreeToRad));
+  }
+  EXPECT_EQ(FloatBits(production.GetUniform()), FloatBits(replay.GetUniform()));
+}
 
 TEST(ProductSampleTransform, RawDistributionValuesHaveIndependentOracles) {
   EXPECT_EQ(ns::TransformDistribution({ ns::DistributionType::kNoRandom, -3.f, 0.f }, {}), -3.f);
@@ -79,13 +132,16 @@ TEST(ProductSampleTransform, SphereAndFiniteCapKeepTwoDrawsEvenAtZeroRadius) {
   auto& production = ns::RandomNumberGenerator::GetInstance();
   production.SetSeed(293);
   ns::RandomNumberGenerator replay(293);
-  const float lat = replay.GetUniform();
-  const float lon = replay.GetUniform();
-  float sphere[2];
-  ns::RandomSampler::SampleSphericalPointsSph(sphere, 1, 2);
-  const auto expected = ns::TransformFullSpherePoint(lat, lon);
-  EXPECT_EQ(sphere[0], expected[0]);
-  EXPECT_EQ(sphere[1], expected[1]);
+  for (int i = 0; i < 32; ++i) {
+    SCOPED_TRACE(i);
+    const float lat = replay.GetUniform();
+    const float lon = replay.GetUniform();
+    float sphere[2];
+    ns::RandomSampler::SampleSphericalPointsSph(sphere, 1, 2);
+    EXPECT_EQ(FloatBits(sphere[0]), FloatBits(lon * 2 * ns::math::kPi));
+    EXPECT_EQ(FloatBits(sphere[1]), FloatBits(LegacyFullSphereLatitude(lat)));
+  }
+  EXPECT_EQ(FloatBits(production.GetUniform()), FloatBits(replay.GetUniform()));
   for (float radius : { 0.f, 4.f }) {
     const float radial = replay.GetUniform();
     const float azimuth = replay.GetUniform();
