@@ -883,6 +883,10 @@ TEST(ProductInputChain, EnsembleSetsStayFixedWhileActualDrawChangesGeometryAndCo
   EXPECT_EQ(regular.layers[0].scope.members, irregular.layers[0].scope.members);
   EXPECT_EQ(regular.layers[1].scope.members, irregular.layers[1].scope.members);
   EXPECT_NE(regular.layers[0].surface_area, irregular.layers[0].surface_area);
+  // The analytic geometry must carry the realized leaders too; changing only
+  // the production surface area can otherwise hide a nominal-shape substitution.
+  EXPECT_DOUBLE_EQ(irregular.layers[0].shape.face_distance[0], static_cast<double>(.8f));
+  EXPECT_DOUBLE_EQ(irregular.layers[1].shape.face_distance[0], static_cast<double>(1.1f));
   EXPECT_EQ(irregular.layers[1].shape.face_distance[0], irregular.layers[1].shape.face_distance[3]);
   std::vector<size_t> cursor(2, 0);
   double sum = 0;
