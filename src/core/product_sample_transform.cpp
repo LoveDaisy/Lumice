@@ -67,9 +67,8 @@ std::array<float, 3> ProductRotationAngles(float azimuth_rad, float latitude_rad
 }
 
 std::array<float, 2> TransformFullSpherePoint(float latitude_uniform, float longitude_uniform) {
-  const float u = latitude_uniform * 2 - 1;
   const float lambda = longitude_uniform * 2 * math::kPi;
-  return { lambda, std::asin(u) };
+  return { lambda, TransformFullSphereLatitude(latitude_uniform).radians };
 }
 
 SphericalCapTransform MakeSphericalCapTransform(float lon_rad, float lat_rad, float radius_rad) {
