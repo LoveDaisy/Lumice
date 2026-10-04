@@ -1,7 +1,9 @@
 #include <gtest/gtest.h>
 
 #include <cmath>
+#include <fstream>
 #include <limits>
+#include <nlohmann/json.hpp>
 
 #include "analytic/path_feature_discovery.hpp"
 
@@ -47,7 +49,7 @@ TEST(PathFeatureField, OffAxisDerivativesAndBasisRotation) {
   EXPECT_NEAR(rotated.xyz[1].hessian[1], .5 * (out.xyz[1].hessian[2] - out.xyz[1].hessian[0]), 1e-14);
 }
 
-TEST(PathFeatureField, SameColourIsNotALuminanceOrChromaticityEdge) {
+TEST(PathFeatureField, SameColourCanHaveStrongLuminanceGradient) {
   const std::vector<WeightedSkySample> samples = { { 0, { 0, 0, 1 }, { 2, 3, 5 } },
                                                    { 1, { .6, 0, .8 }, { 4, 6, 10 } } };
   SphericalFieldValue out;
@@ -119,6 +121,41 @@ TEST(PathFeatureField, EmptyIsUnobservedAndInvalidInputClearsOutput) {
   EXPECT_FALSE(EvaluateSphericalField({ { 0, { 0, 0, 1 }, { -1, 1, 1 } } }, Query(), &out));
   EXPECT_FALSE(
       EvaluateSphericalField({ { 1, { 0, 0, 1 }, { 1, 1, 1 } }, { 0, { 0, 0, 1 }, { 1, 1, 1 } } }, Query(), &out));
+}
+
+TEST(PathFeatureField, IndependentPhysicalCloudFixture) {
+  std::ifstream in(std::string(LUMICE_DIAGNOSTIC_FIXTURE_DIR) + "/weighted-sky.json");
+  ASSERT_TRUE(in.is_open());
+  const auto fixture = nlohmann::json::parse(in);
+  ASSERT_EQ(fixture.at("symmetry_semantics"), "none");
+  std::vector<WeightedSkySample> samples;
+  for (const auto& row : fixture.at("samples")) {
+    samples.push_back({ row.at("sample_index").get<uint64_t>(), row.at("direction").get<std::array<double, 3>>(),
+                        row.at("xyz_weight").get<std::array<double, 3>>() });
+  }
+  EXPECT_GT(samples.size(), 0u);
+  EXPECT_GT(fixture.at("queries").size(), 0u);
+  for (const auto& row : fixture.at("queries")) {
+    const SphericalFieldQuery query{ row.at("direction").get<std::array<double, 3>>(),
+                                     row.at("basis").get<std::array<std::array<double, 3>, 2>>(),
+                                     row.at("bandwidth_rad").get<double>() };
+    SphericalFieldValue result;
+    if (!EvaluateSphericalField(samples, query, &result)) {
+      ADD_FAILURE() << "valid physical cloud rejected";
+      return;
+    }
+    for (int c = 0; c < 5; ++c) {
+      const auto& expected = c < 3 ? row.at("xyz").at(c) : row.at("xy").at(c - 3);
+      const auto& jet = c < 3 ? result.xyz[c] : result.xy[c - 3];
+      const double actual[] = { jet.value,      jet.gradient[0], jet.gradient[1],
+                                jet.hessian[0], jet.hessian[1],  jet.hessian[2] };
+      for (int k = 0; k < 6; ++k) {
+        const double value = expected.at(k).get<double>();
+        EXPECT_NEAR(actual[k], value, 1e-10 * std::abs(value) + 1e-13) << "channel " << c << " term " << k;
+      }
+    }
+    EXPECT_NEAR(result.effective_samples_y, row.at("effective_samples_y").get<double>(), 1e-12);
+  }
 }
 
 }  // namespace
