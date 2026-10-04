@@ -228,7 +228,9 @@ def test_declared_sun_boundary_is_the_physical_cap_rim(tmp_path, altitude, bound
     result = _report(path, "3-5", "--events", "64", "--wavelength", "550")
     assert result.returncode == 0, result.stderr
     doc = json.loads(result.stdout)
-    assert doc["outcome"] == "completed"
+    # Restricted orientation can leave unrelated SO(3) searches unfinished;
+    # these declared-source candidates must still be evaluated within budget.
+    assert not doc["budgets"]["exhausted"]
     events = [f for f in doc["candidates"] if "declared_source_event" in f]
     sun_events = [f for f in events if "sun.cap_radial" in dict(f["declared_source_event"]["coordinates"])]
     if diameter == 0:
