@@ -19,14 +19,33 @@ uint32_t DrawWidth(const Distribution& distribution) {
              1;
 }
 
-// Open double uniform from a full-width hash, before conversion to the product's
-// float latents. No artificial Gaussian tail clamp. The finite PRNG resolution
-// remains explicit, as with every product random stream.
+// Random-access nested-scrambled Halton coordinates of ONE joint sequence.
+// Every prime digit uses a prefix-specific affine permutation. This preserves
+// each base's elementary intervals while decorrelating dimensions/scrambles;
+// hashing each completed coordinate instead would destroy low discrepancy.
+// An independent high-index epoch avoids float-precision prefix repetition.
 double Uniform(uint32_t seed, uint64_t sample_index, uint32_t dimension) {
-  const auto mixed = lm_pcg::pcg_seed_with_high(seed, static_cast<uint32_t>(sample_index >> 32));
-  const auto hash =
-      lm_pcg::pcg_hash(mixed ^ lm_pcg::pcg_hash(static_cast<uint32_t>(sample_index) * 1000003u + dimension));
-  return (static_cast<double>(hash) + .5) / 4294967296.0;
+  constexpr uint32_t kPrimes[] = { 2,   3,   5,   7,   11,  13,  17,  19,  23,  29,  31,  37,  41,  43,  47,  53,
+                                   59,  61,  67,  71,  73,  79,  83,  89,  97,  101, 103, 107, 109, 113, 127, 131,
+                                   137, 139, 149, 151, 157, 163, 167, 173, 179, 181, 191, 193, 197, 199, 211, 223,
+                                   227, 229, 233, 239, 241, 251, 257, 263, 269, 271, 277, 281, 283, 293, 307, 311 };
+  const uint32_t base = kPrimes[dimension % std::size(kPrimes)];
+  uint32_t prefix =
+      lm_pcg::pcg_seed_with_high(seed, static_cast<uint32_t>(sample_index >> 32)) ^ lm_pcg::pcg_hash(dimension);
+  uint64_t index = static_cast<uint32_t>(sample_index);
+  double weight = 1;
+  double value = 0;
+  while (weight > 0x1p-54) {
+    weight /= base;
+    const uint32_t digit = index % base;
+    index /= base;
+    const uint32_t hash = lm_pcg::pcg_hash(prefix);
+    const uint32_t multiplier = 1 + hash % (base - 1);
+    const uint32_t shift = lm_pcg::pcg_hash(hash) % base;
+    value += ((multiplier * digit + shift) % base) * weight;
+    prefix = lm_pcg::pcg_hash(prefix ^ (digit + 1) * 1000003u);
+  }
+  return std::clamp(value, 0x1p-54, 1 - 0x1p-53);
 }
 
 float Unit(uint32_t seed, uint64_t sample_index, uint32_t dimension) {
