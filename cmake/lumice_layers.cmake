@@ -235,6 +235,8 @@ set(LUMICE_LAYER_engine_FILES
 set(LUMICE_LAYER_raypath_FILES
   include/lumice_raypath.h
   raypath/path_feature_report.cpp
+  raypath/product_input_assembly.cpp
+  raypath/product_input_assembly.hpp
   raypath/path_feature_report.hpp
   raypath/path_feature_report_json.cpp
   raypath/path_feature_report_json.hpp
