@@ -569,3 +569,58 @@ Hessian细化相对差小于 `2.76e-4`，独立LI自身小于 `2.32e-5`；两臂
 以上仍是研究算法和可回读数值记录，未成为正式analytic发现接口。完整产品
 测度／L2／XYZ装配可独立推进；一般合法域、相关shape和连续谱的局部精度、
 活动事件连接、正式C++单源与安装树消费仍需各自证据。
+
+## 14. 产品输入装配的内部边界
+
+产品输入已有独立于发现算法的 C++ 消费路径：
+`CaptureProductInput` → `AssembleProductInput` → `EvaluateProductChain`
+（`src/raypath/product_input_assembly.*`）。这是一条**条件于显式样本和选中链**的
+内部边界，不是新公开 ABI，不修改已有 target、fiber、warm 或 feature report
+的请求和 JSON，也没有把旧固定 detector 升格为通用发现。
+
+- **采样值与抽样时钟分开。** `product_sample_transform` 持有 distribution、
+  latitude LUT/legacy fold、azimuth/roll 双 flip、full-sphere、finite-cap 的纯变换；
+  生产 `RandomNumberGenerator` / `RandomSampler` / `SampleSphCapPoint` 在原分支
+  取 draw 后调用它。诊断显式给 draw，不调用 RNG。`DistributionLatentDraw`
+  是变换前的正态/均匀变量，`ShapeLeaderValue` 是经过 leader 分布变换、尚未
+  被消费槽取绝对值的完整实值，两者不能互换。
+- **形状只有一个 realization。** `shape_sample` 的 `BuildShapeDrawPlan` 复用
+  `crystal_param` 的 slot 表和 canonical 同步分组，`DrawShapeLeaders` 是生产
+  薄适配器，`RealizeShape` 是无 RNG 的核心。follower 复用 leader 完整值，
+  height 取绝对值而 face distance 保留符号。Prism/Pyramid 的旧 draw 顺序不变。
+  实例仍经产品工厂；零柱高、缺面与空实体不由装配层重新发明判据。
+- **成员属于快照 ensemble，贡献属于实际 draw。** `physical_member_scope`
+  只接自有场景身份、层/晶体键、完整分布配置、代表序列、显式 PBD 位与
+  `kPhysical`，调用既有 gating/展开/精确去重。actual shape 不改变该物理类，
+  但决定哪些面存在、哪个成员能通过有限晶体。旧 report 也调用这个窄 owner，
+  明确保持其历史全 PBD 默认；新入口不借该默认读取后来的 UI 状态。
+- **谱行保留权重来源。** 离散全谱逐行 `weight × CMF`；已抽得的产品样本为
+  `SPD(wl) × CMF`、质量 1，不伪装成完整谱积分；连续求积要求显式节点、相对
+  `Uniform[380,780)` 的概率质量、规则名、预算和可选误差估计，系数为
+  `q × SPD × CMF`。midpoint 的质量是 `1/N` 而非 `400/N`。实际 float 产品样本
+  允许 `380 + 400*u` 舍入到 780 的端点，求积节点域仍按声明的半开区间。
+  CMF 的整数 nm 舍入、SPD 和折射率均调用既有产品 owner，不复制表或插值规则。
+- **消费点按需组合。** 输出按逐层 actual 输入、逐层成员集合、源样本、谱行
+  因子化持有数据；`NextProductMemberChain` 只推进一个索引向量，不分配全维
+  笛卡尔积。每次 `EvaluateProductChain` 只评一个具体链和一个谱行，后一层
+  使用前一层真实出射方向，同一波长贯穿，每层消费现有 finite-corridor 面积
+  与产品 `2A/S` 归一及各接口乘积，最终只乘一次谱系数。
+
+输入同时保留生产 float pose/direction 与 analytic 的 double 消费形式。
+姿态的 Euler 因素由 `ProductRotationAngles` 给出；double 矩阵用已有 SO(3)
+原语计算这些因素，不把仅 float 精度的矩阵冒充满足 `1e-10` 正交契约的矩阵。
+太阳的产品 float 方向同样保留，交给 analytic 前在 double 中单位化。
+
+验证分两种链路：同平台提取前后的固定种子序列逐位对照用于排除生产时钟漂移；
+长期测试使用独立解析值和跨平台 contract replay，不把某个标准库的
+`normal_distribution` 输出硬编码成跨平台 oracle。headless
+`raypath_composition_test` 属 `composition-correctness`，验证两层实际方向传播、
+每层面积/接口乘积、谱单次加权、相关 shape、ensemble/实例分离以及缺面/空实体
+的不同状态。它不需要 GUI 或渲染帧。
+
+**仍未交付的量必须保留边界：** 此入口不计算 scene 的晶体 allocation、
+continuation 概率或 filter 政策；它们由持有完整场景的后继积分调用者处理。
+它也不做局部积分误差控制、支持发现、活动事件连接、特征归因或空间色边判断。
+连续谱的任意有限节点预算没有全域精度保证。原语共享目前指 host 生产路径与
+诊断装配；GPU device generator 没有因此被替换。内部装配完成不是完整产品
+测度积分、通用发现或正式 analytic ABI 完成。
