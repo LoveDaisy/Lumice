@@ -1,5 +1,6 @@
 #include <cmath>
 
+#include "analytic/so3.hpp"
 #include "core/color_util.hpp"
 #include "core/lat_lut.hpp"
 #include "core/simulator.hpp"
@@ -65,6 +66,77 @@ rp::ProductInput Assemble(const rp::ProductInputSnapshot& snapshot,
       rp::AssembleProductInput(snapshot, samples, { { 1.f, .3f }, "cap sample" }, rp::DiscreteSpectrumSum{}, &input);
   EXPECT_TRUE(error.Ok()) << error.message;
   return input;
+}
+
+TEST(ProductInputChain, HaarOrbitConditionsOnActualCapRayAndRetainsPhysicalFamily) {
+  auto scene = Scene(1, true);
+  scene.light_source_.param_ = { 20.f, 13.f, 1.4f };
+  auto& crystal = scene.ms_[0].setting_[0].crystal_;
+  crystal.axis_.azimuth_dist = { ns::DistributionType::kUniform, 0.f, 360.f };
+  crystal.axis_.latitude_dist = { ns::DistributionType::kUniform, 90.f, 360.f };
+  auto& shape = std::get<ns::PrismCrystalParam>(crystal.param_);
+  shape.sync_group_[ns::kShapeScalarFace0] = shape.sync_group_[ns::kShapeScalarFace3] = 1;
+  const auto snapshot = Capture(scene, 0, { 3, 5 });
+  auto samples = Samples(snapshot);
+  size_t positive = 0;
+  // Explicit deterministic draws, not a distribution estimate. Every captured
+  // positive pose must retain its A/T/sky mapping throughout the conditional spin.
+  for (int j = 0; j < 512; ++j) {
+    samples[0].axis = rp::FullSphereAxisDraw{ (j % 8 + .5f) / 8, (j / 8 % 8 + .5f) / 8, { (j / 64 + .5f) / 8 } };
+    auto input = Assemble(snapshot, samples);
+    const auto axis = rp::SingleCrystalIncidentOrbit(input);
+    if (!axis) {
+      ADD_FAILURE() << "declared Haar input has no orbit";
+      return;
+    }
+    EXPECT_EQ(*axis, input.source.incident_direction);
+    EXPECT_NE(*axis, input.source.center_direction);
+    rp::ProductChainEvaluation original;
+    if (!rp::EvaluateProductChain(input, { 0 }, 1, &original).Ok()) {
+      ADD_FAILURE();
+      return;
+    }
+    if (!(original.optical_weight > 0)) {
+      continue;
+    }
+    ++positive;
+    const auto pose = input.layers[0].analytic_pose;
+    for (double angle : { .3, 1.1, 3.7 }) {
+      const double rotation_vector[] = { angle * (*axis)[0], angle * (*axis)[1], angle * (*axis)[2] };
+      double rotation[9];
+      ns::analytic::so3::Exp(rotation_vector, rotation);
+      ns::analytic::so3::MatMul(rotation, pose.data(), input.layers[0].analytic_pose.data());
+      rp::ProductChainEvaluation rotated;
+      if (!rp::EvaluateProductChain(input, { 0 }, 1, &rotated).Ok() || rotated.layers.size() != 1) {
+        ADD_FAILURE();
+        return;
+      }
+      EXPECT_NEAR(rotated.layers[0].entry_area, original.layers[0].entry_area, 1e-13);
+      EXPECT_NEAR(rotated.layers[0].interface_product, original.layers[0].interface_product, 1e-13);
+      EXPECT_NEAR(rotated.optical_weight, original.optical_weight, 1e-13);
+      for (int k = 0; k < 3; ++k) {
+        double expected = 0;
+        for (int l = 0; l < 3; ++l) {
+          expected += rotation[3 * k + l] * original.layers[0].outgoing[l];
+        }
+        EXPECT_NEAR(rotated.layers[0].outgoing[k], expected, 1e-13);
+      }
+    }
+  }
+  EXPECT_GT(positive, 0u);
+  auto input = Assemble(snapshot, samples);
+  input.layers[0].scope.snapshot.crystal.axis_.latitude_dist = { ns::DistributionType::kGaussian, 90.f, .01f };
+  EXPECT_FALSE(rp::SingleCrystalIncidentOrbit(input));
+  input = Assemble(snapshot, samples);
+  input.layers[0].scope.snapshot.crystal.axis_.roll_dist = { ns::DistributionType::kNoRandom, 0.f, 0.f };
+  EXPECT_FALSE(rp::SingleCrystalIncidentOrbit(input));
+  input = Assemble(snapshot, samples);
+  input.layers.push_back(input.layers[0]);
+  EXPECT_FALSE(rp::SingleCrystalIncidentOrbit(input));
+  scene.light_source_.param_.diameter_ = 0;
+  const auto point = Capture(scene, 0, { 3, 5 });
+  input = Assemble(point, samples);
+  EXPECT_EQ(rp::SingleCrystalIncidentOrbit(input), std::make_optional(input.source.incident_direction));
 }
 
 TEST(ProductInputChain, TwoLayersUseActualDirectionsOneWavelengthAndOneSpectralCharge) {

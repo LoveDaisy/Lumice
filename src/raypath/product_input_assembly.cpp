@@ -353,6 +353,13 @@ Error AssembleProductInput(const ProductInputSnapshot& snapshot, const std::vect
   return {};
 }
 
+std::optional<std::array<double, 3>> SingleCrystalIncidentOrbit(const ProductInput& input) {
+  if (input.layers.size() != 1 || !input.layers[0].scope.snapshot.crystal.axis_.IsFullSphereUniform()) {
+    return std::nullopt;
+  }
+  return input.source.incident_direction;
+}
+
 Error EvaluateProductChain(const ProductInput& input, const std::vector<size_t>& members, size_t spectral_row,
                            ProductChainEvaluation* out) {
   *out = {};

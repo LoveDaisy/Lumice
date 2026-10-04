@@ -136,6 +136,12 @@ Error AssembleProductInput(const ProductInputSnapshot& snapshot, const std::vect
                            const ProductSourceSample& source, const ProductSpectrumRequest& spectrum,
                            ProductInput* out);
 
+// Uniform world spin is valid conditional on THIS realized incident ray only
+// for a declared Haar pose independent of shape/source. A cap does not invalidate
+// it, but replacing each cap ray by the solar center would change the measure.
+// The single-crystal restriction is intentional; it is not a chain reduction.
+std::optional<std::array<double, 3>> SingleCrystalIncidentOrbit(const ProductInput& input);
+
 enum class ProductContributionStatus { kPositive, kZeroSupport, kInvalidOptics, kMissingFace, kRejectedShape };
 struct ProductLayerEvaluation {
   ProductContributionStatus status = ProductContributionStatus::kRejectedShape;
