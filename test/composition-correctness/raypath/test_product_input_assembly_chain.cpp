@@ -350,6 +350,38 @@ TEST(ProductInputChain, TargetFreeDiscoveryRetainsActualsAndBudgetState) {
   EXPECT_TRUE(result.budget_exhausted);
 }
 
+TEST(ProductInputChain, AtomRequiresDeclaredZeroDimensionalSourceNotSampledRank) {
+  auto scene = Scene(1);
+  scene.light_source_.param_ = { 20.f, 0.f, 0.f };
+  auto& axis = scene.ms_[0].setting_[0].crystal_.axis_;
+  axis.latitude_dist = { ns::DistributionType::kNoRandom, 90.f, 0.f };
+  axis.azimuth_dist = { ns::DistributionType::kNoRandom, 180.f, 0.f };
+  axis.roll_dist = { ns::DistributionType::kNoRandom, 57.29578f, 0.f };
+  rp::ProductDiscoveryOptions options{ { 32, 96 }, .02, .005, 0, 1, 1, 0 };
+  rp::ProductDiscoveryResult result;
+  const rp::ProductDiagnosticSampler fixed(Capture(scene, 0, { 3, 5 }), 1497, rp::DiscreteSpectrumSum{});
+  ASSERT_TRUE(rp::DiscoverProductFeatures(fixed, options, &result).Ok());
+  ASSERT_EQ(result.features.size(), 3u);
+  EXPECT_EQ(result.measure.completed_samples, 1u);
+  for (const auto& feature : result.features) {
+    EXPECT_EQ(feature.evidence, rp::DiagnosticEvidence::kActual);
+    EXPECT_EQ(feature.geometry, rp::DiagnosticGeometry::kAtom);
+    EXPECT_GT(feature.atom_xyz_mass[1], 0);
+  }
+  scene.light_source_.param_.diameter_ = .53f;
+  const rp::ProductDiagnosticSampler cap(Capture(scene, 0, { 3, 5 }), 1497, rp::DiscreteSpectrumSum{});
+  ASSERT_TRUE(rp::DiscoverProductFeatures(cap, options, &result).Ok());
+  EXPECT_EQ(result.measure.completed_samples, 32u);
+  EXPECT_TRUE(result.features.empty());
+  EXPECT_TRUE(result.budget_exhausted);
+  scene.light_source_.param_.diameter_ = 0;
+  axis.roll_dist = { ns::DistributionType::kGaussian, 57.29578f, 1e-6f };
+  const rp::ProductDiagnosticSampler thin(Capture(scene, 0, { 3, 5 }), 1497, rp::DiscreteSpectrumSum{});
+  ASSERT_TRUE(rp::DiscoverProductFeatures(thin, options, &result).Ok());
+  EXPECT_EQ(result.measure.completed_samples, 32u);
+  EXPECT_TRUE(result.features.empty());
+}
+
 TEST(ProductInputChain, TargetFreeDeepInterfaceUsesEverySlotAndRealSource) {
   auto scene = Scene(1);
   ns::PyramidCrystalParam p;
