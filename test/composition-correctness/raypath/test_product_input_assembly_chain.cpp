@@ -264,6 +264,52 @@ TEST(ProductInputChain, GaussianDensityPeakMatchesIndependentPhysicalQuadrature)
   }
 }
 
+TEST(ProductInputChain, CorrelatedShapeFiniteSunColourCrossingsMatchIndependentPhysics) {
+  std::ifstream in(std::string(LUMICE_DIAGNOSTIC_FIXTURE_DIR) + "/physical-colour.json");
+  ASSERT_TRUE(in.good());
+  const auto fixture = nlohmann::json::parse(in);
+  auto scene = Scene(1);
+  scene.light_source_.param_ = { 20.f, 0.f, .53f };
+  scene.light_source_.spectrum_ = std::vector<ns::WlParam>{ { 450.f, .2f }, { 550.f, .3f }, { 650.f, .5f } };
+  auto& crystal = scene.ms_[0].setting_[0].crystal_;
+  auto& shape = std::get<ns::PrismCrystalParam>(crystal.param_);
+  shape.h_ = shape.d_[0] = { ns::DistributionType::kUniform, 1.f, 1.4f };
+  shape.sync_group_[ns::kShapeScalarHeight] = shape.sync_group_[ns::kShapeScalarFace0] = 1;
+  crystal.axis_.latitude_dist = { ns::DistributionType::kGaussian, 90.f, 1.f };
+  crystal.axis_.azimuth_dist = crystal.axis_.roll_dist = { ns::DistributionType::kUniform, 0.f, 360.f };
+  const auto snapshot = Capture(scene, 0, { 3, 5 });
+  constexpr double kRad = 3.14159265358979323846 / 180;
+  for (uint32_t seed : { 1497u, 9713u }) {
+    const rp::ProductDiagnosticSampler sampler(snapshot, seed, rp::DiscreteSpectrumSum{});
+    rp::ProductDiagnosticMeasure measure;
+    if (!rp::BuildProductDiagnosticMeasure(sampler, { 65536, 196608 }, &measure).Ok()) {
+      ADD_FAILURE();
+      return;
+    }
+    EXPECT_EQ(measure.completed_samples, 65536u);
+    for (int i = 0; i < 4; ++i) {
+      const auto q = fixture.at("queries").at(i).get<std::array<double, 3>>();
+      const auto normal = fixture.at("normals").at(i).get<std::array<double, 3>>();
+      const auto equation =
+          i < 2 ? ns::analytic::FieldEquation::kChromaticityX : ns::analytic::FieldEquation::kChromaticityY;
+      const auto crossing = ns::analytic::CorrectSphericalField(measure.components, q,
+                                                                { equation, .4, kRad, 1e-8, .1 * kRad, 32 }, nullptr);
+      if (crossing.status != ns::analytic::FieldSolveStatus::kConverged) {
+        ADD_FAILURE() << "seed=" << seed << " query=" << i;
+        return;
+      }
+      const double offset = std::atan2(ns::analytic::so3::Dot3(crossing.query.direction.data(), normal.data()),
+                                       ns::analytic::so3::Dot3(crossing.query.direction.data(), q.data())) /
+                            kRad;
+      const double expected = fixture.at("independent_reference").at(1).at("positions").at(i).at("offset_deg");
+      EXPECT_NEAR(offset, expected, .05);
+      EXPECT_NEAR(crossing.field.xy[i / 2].value, .4, 1e-7);
+      EXPECT_GT(crossing.field.xyz[1].value, 0);
+      EXPECT_GT(crossing.field.effective_samples_y, 1000);
+    }
+  }
+}
+
 TEST(ProductInputChain, HaarOrbitConditionsOnActualCapRayAndRetainsPhysicalFamily) {
   auto scene = Scene(1, true);
   scene.light_source_.param_ = { 20.f, 13.f, 1.4f };
