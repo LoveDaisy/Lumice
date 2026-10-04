@@ -71,20 +71,22 @@ rp::ProductInput Assemble(const rp::ProductInputSnapshot& snapshot,
 
 TEST(ProductInputChain, DiagnosticMeasureKeepsWholeOuterDrawsAndReplayableSources) {
   const auto snapshot = Capture(Scene(1));
-  const rp::ProductDiagnosticSampler sampler(snapshot, 1497);
+  const rp::ProductDiagnosticSampler sampler(snapshot, 1497, rp::DiscreteSpectrumSum{});
   rp::ProductDiagnosticMeasure out;
   rp::ProductSamplingBudget budget{ 32, 96 };
-  ASSERT_TRUE(rp::BuildProductDiagnosticMeasure(sampler, rp::DiscreteSpectrumSum{}, budget, &out).Ok());
+  ASSERT_TRUE(rp::BuildProductDiagnosticMeasure(sampler, budget, &out).Ok());
   EXPECT_EQ(out.completed_samples, 32u);
   EXPECT_EQ(out.optical_evaluations, 96u);
   EXPECT_FALSE(out.budget_exhausted);
   EXPECT_EQ(out.sources.size(), out.components.size());
+  rp::ProductInput invalid_replay;
+  EXPECT_FALSE(rp::ReplayDiagnosticSource(out, out.sources.size(), &invalid_replay).Ok());
   ASSERT_GT(out.components.size(), 0u);
   for (const auto& component : out.components) {
     const auto& source = out.sources[component.source_token];
     rp::ProductInput input;
     rp::ProductChainEvaluation physical;
-    if (!sampler.Draw(source.sample_index, rp::DiscreteSpectrumSum{}, &input).Ok() ||
+    if (!rp::ReplayDiagnosticSource(out, component.source_token, &input).Ok() ||
         !rp::EvaluateProductChain(input, { source.member_index }, source.spectral_row, &physical).Ok()) {
       ADD_FAILURE();
       return;
@@ -96,7 +98,7 @@ TEST(ProductInputChain, DiagnosticMeasureKeepsWholeOuterDrawsAndReplayableSource
     }
   }
   budget.max_optical_evaluations = 5;
-  ASSERT_TRUE(rp::BuildProductDiagnosticMeasure(sampler, rp::DiscreteSpectrumSum{}, budget, &out).Ok());
+  ASSERT_TRUE(rp::BuildProductDiagnosticMeasure(sampler, budget, &out).Ok());
   EXPECT_TRUE(out.budget_exhausted);
   EXPECT_EQ(out.completed_samples, 1u);
   EXPECT_EQ(out.optical_evaluations, 5u);
@@ -104,13 +106,47 @@ TEST(ProductInputChain, DiagnosticMeasureKeepsWholeOuterDrawsAndReplayableSource
     EXPECT_EQ(component.sample_index, 0u);
   }
   budget.deadline = std::chrono::steady_clock::now();
-  ASSERT_TRUE(rp::BuildProductDiagnosticMeasure(sampler, rp::DiscreteSpectrumSum{}, budget, &out).Ok());
+  ASSERT_TRUE(rp::BuildProductDiagnosticMeasure(sampler, budget, &out).Ok());
   EXPECT_TRUE(out.budget_exhausted);
   EXPECT_EQ(out.completed_samples, 0u);
   EXPECT_EQ(out.optical_evaluations, 0u);
-  const rp::ProductDiagnosticSampler multi(Capture(Scene(2)), 1497);
-  EXPECT_EQ(rp::BuildProductDiagnosticMeasure(multi, rp::DiscreteSpectrumSum{}, {}, &out).code,
-            rp::ErrorCode::kMultiLayerUnsupported);
+  const rp::ProductDiagnosticSampler multi(Capture(Scene(2)), 1497, rp::DiscreteSpectrumSum{});
+  EXPECT_EQ(rp::BuildProductDiagnosticMeasure(multi, {}, &out).code, rp::ErrorCode::kMultiLayerUnsupported);
+}
+
+TEST(ProductInputChain, SourceReplayOwnsSpectrumAfterCallerAndSamplerExpire) {
+  auto scene = Scene(1);
+  rp::ProductDiagnosticMeasure first;
+  rp::ProductDiagnosticMeasure second;
+  {
+    auto snapshot = Capture(scene);
+    rp::ProductSpectrumRequest request = rp::ProductWavelengthSample{ 450.f, 0, "first spectrum" };
+    const rp::ProductDiagnosticSampler a(snapshot, 1497, request);
+    request = rp::ProductWavelengthSample{ 650.f, 2, "second spectrum" };
+    const rp::ProductDiagnosticSampler b(snapshot, 1497, request);
+    ASSERT_TRUE(rp::BuildProductDiagnosticMeasure(a, { 32, 32 }, &first).Ok());
+    ASSERT_TRUE(rp::BuildProductDiagnosticMeasure(b, { 32, 32 }, &second).Ok());
+  }
+  scene.ms_.clear();
+  ASSERT_FALSE(first.sources.empty());
+  ASSERT_FALSE(second.sources.empty());
+  rp::ProductInput a;
+  rp::ProductInput b;
+  ASSERT_TRUE(rp::ReplayDiagnosticSource(first, 0, &a).Ok());
+  ASSERT_TRUE(rp::ReplayDiagnosticSource(second, 0, &b).Ok());
+  ASSERT_EQ(a.spectrum.rows.size(), 1u);
+  ASSERT_EQ(b.spectrum.rows.size(), 1u);
+  EXPECT_EQ(a.spectrum.rows[0].wavelength_nm, 450.f);
+  EXPECT_EQ(a.spectrum.rows[0].source_weight, 2.f);
+  EXPECT_EQ(b.spectrum.rows[0].wavelength_nm, 650.f);
+  EXPECT_EQ(b.spectrum.rows[0].source_weight, 4.f);
+  EXPECT_NE(a.spectrum.rows[0].coefficient, b.spectrum.rows[0].coefficient);
+  // No replay call accepts a replacement spectrum or an unrelated sampler.
+  rp::ProductChainEvaluation physical;
+  ASSERT_TRUE(rp::EvaluateProductChain(a, { first.sources[0].member_index }, 0, &physical).Ok());
+  for (int j = 0; j < 3; ++j) {
+    EXPECT_DOUBLE_EQ(first.components[0].xyz_weight[j], physical.xyz[j] / first.completed_samples);
+  }
 }
 
 TEST(ProductInputChain, JointSamplerReplaysPrefixesAndCorrelatedShapeFromSnapshot) {
@@ -122,13 +158,13 @@ TEST(ProductInputChain, JointSamplerReplaysPrefixesAndCorrelatedShapeFromSnapsho
   crystal.axis_.azimuth_dist = { ns::DistributionType::kUniform, 0.f, 360.f };
   crystal.axis_.latitude_dist = { ns::DistributionType::kGaussian, 88.f, 2.f };
   const auto snapshot = Capture(scene, 0, { 3, 5 });
-  const rp::ProductDiagnosticSampler sampler(snapshot, 1497);
+  const rp::ProductDiagnosticSampler sampler(snapshot, 1497, rp::DiscreteSpectrumSum{});
   rp::ProductInput a;
   rp::ProductInput b;
-  ASSERT_TRUE(sampler.Draw(17, rp::DiscreteSpectrumSum{}, &a).Ok());
-  ASSERT_TRUE(sampler.Draw((uint64_t{ 1 } << 32) + 17, rp::DiscreteSpectrumSum{}, &b).Ok());
+  ASSERT_TRUE(sampler.Draw(17, &a).Ok());
+  ASSERT_TRUE(sampler.Draw((uint64_t{ 1 } << 32) + 17, &b).Ok());
   EXPECT_NE(a.layers[0].analytic_pose, b.layers[0].analytic_pose);
-  ASSERT_TRUE(sampler.Draw(17, rp::DiscreteSpectrumSum{}, &b).Ok());
+  ASSERT_TRUE(sampler.Draw(17, &b).Ok());
   EXPECT_EQ(a.layers[0].analytic_pose, b.layers[0].analytic_pose);
   EXPECT_EQ(a.source.incident_direction, b.source.incident_direction);
   EXPECT_EQ(a.layers[0].shape_sample.raw, b.layers[0].shape_sample.raw);
@@ -145,15 +181,15 @@ TEST(ProductInputChain, JointSamplerReplaysPrefixesAndCorrelatedShapeFromSnapsho
     auto changed = snapshot;
     changed.layers[0].crystal.axis_.latitude_dist = { type, 20.f, 5.f };
     changed.layers[0].crystal.axis_.azimuth_dist.type = type;
-    const rp::ProductDiagnosticSampler branch(changed, 1497);
-    if (!branch.Draw(17, rp::DiscreteSpectrumSum{}, &b).Ok()) {
+    const rp::ProductDiagnosticSampler branch(changed, 1497, rp::DiscreteSpectrumSum{});
+    if (!branch.Draw(17, &b).Ok()) {
       ADD_FAILURE() << "valid distribution branch rejected";
       return;
     }
     EXPECT_TRUE(ns::analytic::ValidateRotation(b.layers[0].analytic_pose.data()));
   }
   scene.ms_.clear();
-  ASSERT_TRUE(sampler.Draw(17, rp::DiscreteSpectrumSum{}, &b).Ok());
+  ASSERT_TRUE(sampler.Draw(17, &b).Ok());
   EXPECT_EQ(a.layers[0].analytic_pose, b.layers[0].analytic_pose);
 }
 

@@ -68,8 +68,9 @@ DistributionLatentDraw Latent(const Distribution& distribution, uint32_t seed, u
 
 }  // namespace
 
-ProductDiagnosticSampler::ProductDiagnosticSampler(ProductInputSnapshot snapshot, uint32_t seed)
-    : snapshot_(std::move(snapshot)), seed_(seed) {
+ProductDiagnosticSampler::ProductDiagnosticSampler(ProductInputSnapshot snapshot, uint32_t seed,
+                                                   ProductSpectrumRequest spectrum)
+    : snapshot_(std::move(snapshot)), seed_(seed), spectrum_(std::move(spectrum)) {
   uint32_t offset = 0;
   const auto add = [&](const std::string& name, uint32_t width) {
     dimensions_.push_back({ name, offset, width });
@@ -97,8 +98,7 @@ ProductDiagnosticSampler::ProductDiagnosticSampler(ProductInputSnapshot snapshot
   }
 }
 
-Error ProductDiagnosticSampler::Draw(uint64_t sample_index, const ProductSpectrumRequest& spectrum,
-                                     ProductInput* out) const {
+Error ProductDiagnosticSampler::Draw(uint64_t sample_index, ProductInput* out) const {
   if (!out) {
     return { ErrorCode::kInvalidArgument, "null product sample output" };
   }
@@ -142,11 +142,11 @@ Error ProductDiagnosticSampler::Draw(uint64_t sample_index, const ProductSpectru
     }
     samples.push_back(std::move(sample));
   }
-  return AssembleProductInput(snapshot_, samples, source, spectrum, out);
+  return AssembleProductInput(snapshot_, samples, source, spectrum_, out);
 }
 
-Error BuildProductDiagnosticMeasure(const ProductDiagnosticSampler& sampler, const ProductSpectrumRequest& spectrum,
-                                    const ProductSamplingBudget& budget, ProductDiagnosticMeasure* out) {
+Error BuildProductDiagnosticMeasure(const ProductDiagnosticSampler& sampler, const ProductSamplingBudget& budget,
+                                    ProductDiagnosticMeasure* out) {
   if (!out) {
     return { ErrorCode::kInvalidArgument, "null diagnostic measure output" };
   }
@@ -158,6 +158,7 @@ Error BuildProductDiagnosticMeasure(const ProductDiagnosticSampler& sampler, con
     return { ErrorCode::kInvalidArgument, "positive diagnostic sample count required" };
   }
   ProductDiagnosticMeasure result;
+  result.run = std::make_shared<const ProductDiagnosticSampler>(sampler);
   for (uint64_t i = 0; i < budget.requested_samples; ++i) {
     if (std::chrono::steady_clock::now() >= budget.deadline ||
         result.optical_evaluations >= budget.max_optical_evaluations) {
@@ -165,7 +166,7 @@ Error BuildProductDiagnosticMeasure(const ProductDiagnosticSampler& sampler, con
       break;
     }
     ProductInput input;
-    const auto error = sampler.Draw(i, spectrum, &input);
+    const auto error = sampler.Draw(i, &input);
     if (!error.Ok()) {
       return error;
     }
@@ -216,6 +217,13 @@ Error BuildProductDiagnosticMeasure(const ProductDiagnosticSampler& sampler, con
   }
   *out = std::move(result);
   return {};
+}
+
+Error ReplayDiagnosticSource(const ProductDiagnosticMeasure& measure, uint64_t source_token, ProductInput* out) {
+  if (!measure.run || source_token >= measure.sources.size()) {
+    return { ErrorCode::kInvalidArgument, "invalid diagnostic source token or missing run" };
+  }
+  return measure.run->Draw(measure.sources[source_token].sample_index, out);
 }
 
 }  // namespace lumice::raypath
