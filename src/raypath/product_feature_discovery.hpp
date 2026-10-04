@@ -19,7 +19,8 @@ struct DiagnosticFeatureRecord {
   double level = 0;
   double bandwidth_rad = 0;
   double prefix_movement_rad = 0;
-  double scale_movement_rad = 0;
+  std::optional<double> scale_movement_rad;
+  analytic::FieldSolveStatus scale_status = analytic::FieldSolveStatus::kInvalidInput;
   double minimum_effective_samples = 0;
   double transverse_contrast = 0;
   analytic::FieldWalkStop walk_stop = analytic::FieldWalkStop::kInvalidInput;

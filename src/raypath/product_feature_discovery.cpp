@@ -83,22 +83,24 @@ std::vector<std::array<double, 3>> Seeds(const ProductDiagnosticMeasure& measure
 DiagnosticEvidence Classify(const a::FieldStationaryPoint& fine, const a::FieldStationaryPoint& coarse,
                             const a::FieldStationaryPoint& scale, double resolution, double contrast,
                             DiagnosticFeatureRecord* record) {
-  record->minimum_effective_samples =
-      std::min({ fine.field.effective_samples_y, coarse.field.effective_samples_y, scale.field.effective_samples_y });
-  if (fine.status != a::FieldSolveStatus::kConverged || coarse.status != a::FieldSolveStatus::kConverged ||
-      scale.status != a::FieldSolveStatus::kConverged) {
-    record->reason = "local equation not converged at every prefix and observation scale";
+  record->minimum_effective_samples = std::min(fine.field.effective_samples_y, coarse.field.effective_samples_y);
+  record->scale_status = scale.status;
+  if (fine.status == a::FieldSolveStatus::kConverged && scale.status == a::FieldSolveStatus::kConverged) {
+    record->scale_movement_rad = Distance(fine.query.direction, scale.query.direction);
+  }
+  if (fine.status != a::FieldSolveStatus::kConverged || coarse.status != a::FieldSolveStatus::kConverged) {
+    record->reason = "local equation not converged at both prefixes of the fixed observation";
     return DiagnosticEvidence::kUnfinished;
   }
   record->prefix_movement_rad = Distance(fine.query.direction, coarse.query.direction);
-  record->scale_movement_rad = Distance(fine.query.direction, scale.query.direction);
   record->transverse_contrast = contrast;
-  if (record->prefix_movement_rad > resolution || record->scale_movement_rad > resolution ||
-      record->minimum_effective_samples < 32 || !(contrast > 1e-3)) {
+  if (record->prefix_movement_rad > resolution || record->minimum_effective_samples < 32 || !(contrast > 1e-3)) {
     record->reason = "position stability or positive transverse contrast not established at the declared resolution";
     return DiagnosticEvidence::kUnfinished;
   }
-  record->reason = "positive field structure stable under the recorded prefix and scale checks; bounded local search";
+  record->reason =
+      "positive field structure stable at fixed kernel/width/level under the recorded prefix check; scale response is "
+      "separate";
   return DiagnosticEvidence::kActual;
 }
 
@@ -312,7 +314,14 @@ Error DiscoverProductFeatures(const ProductDiagnosticSampler& sampler, const Pro
               break;
             }
             record.prefix_movement_rad = std::max(record.prefix_movement_rad, evidence.prefix_movement_rad);
-            record.scale_movement_rad = std::max(record.scale_movement_rad, evidence.scale_movement_rad);
+            if (record.scale_movement_rad && evidence.scale_movement_rad) {
+              record.scale_movement_rad = std::max(*record.scale_movement_rad, *evidence.scale_movement_rad);
+            } else {
+              record.scale_movement_rad.reset();
+            }
+            if (evidence.scale_status != a::FieldSolveStatus::kConverged) {
+              record.scale_status = evidence.scale_status;
+            }
             record.minimum_effective_samples =
                 std::min(record.minimum_effective_samples, evidence.minimum_effective_samples);
             record.sky_points.push_back(point.query.direction);

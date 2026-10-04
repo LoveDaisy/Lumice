@@ -350,6 +350,98 @@ TEST(ProductInputChain, TargetFreeDiscoveryRetainsActualsAndBudgetState) {
   EXPECT_TRUE(result.budget_exhausted);
 }
 
+TEST(ProductInputChain, FixedObservationDoesNotConfuseScaleResponseWithLocationError) {
+  constexpr double kRad = 3.14159265358979323846 / 180;
+  auto scene = Scene(1);
+  scene.light_source_.param_ = { 20.f, 0.f, 0.f };
+  scene.light_source_.spectrum_ = std::vector<ns::WlParam>{ { 450.f, .2f }, { 550.f, .3f }, { 650.f, .5f } };
+  auto& axis = scene.ms_[0].setting_[0].crystal_.axis_;
+  axis.latitude_dist = { ns::DistributionType::kUniform, 90.f, 360.f };
+  axis.azimuth_dist = axis.roll_dist = { ns::DistributionType::kUniform, 0.f, 360.f };
+  const rp::ProductDiagnosticSampler sampler(Capture(scene, 0, { 3, 5 }), 9713, rp::DiscreteSpectrumSum{});
+  rp::ProductDiscoveryOptions options{ { 65536, 262144 }, kRad, .05 * kRad, 250000000, 8, 8, 0 };
+  rp::ProductDiscoveryResult result;
+  ASSERT_TRUE(rp::DiscoverProductFeatures(sampler, options, &result).Ok());
+  bool found = false;
+  const double sun[]{ std::cos(20 * kRad), 0, std::sin(20 * kRad) };
+  for (const auto& feature : result.features) {
+    if (feature.kind != "intensity_ridge" || feature.evidence != rp::DiagnosticEvidence::kActual) {
+      continue;
+    }
+    found = true;
+    EXPECT_LT(feature.prefix_movement_rad, .05 * kRad);
+    EXPECT_TRUE(feature.scale_movement_rad.has_value());
+    if (feature.scale_movement_rad) {
+      // Independent LI quadrature: 128x256 vs 256x512 differs by 0.000054 deg.
+      // Changing h genuinely moves the peak by 0.245599 deg, not sampling error.
+      EXPECT_NEAR(*feature.scale_movement_rad / kRad, .2455992291, .02);
+    }
+    for (const auto& q : feature.sky_points) {
+      EXPECT_NEAR(std::acos(ns::analytic::so3::Dot3(q.data(), sun)) / kRad, 23.0996842241, .05);
+    }
+  }
+  EXPECT_TRUE(found);
+}
+
+TEST(ProductInputChain, AutomaticColourContoursHaveIndependentFixedObservationPositions) {
+  std::ifstream in(std::string(LUMICE_DIAGNOSTIC_FIXTURE_DIR) + "/automatic-colour.json");
+  ASSERT_TRUE(in.good());
+  const auto fixture = nlohmann::json::parse(in);
+  constexpr double kRad = 3.14159265358979323846 / 180;
+  auto scene = Scene(1);
+  scene.light_source_.param_ = { 20.f, 0.f, .53f };
+  scene.light_source_.spectrum_ = std::vector<ns::WlParam>{ { 450.f, .2f }, { 550.f, .3f }, { 650.f, .5f } };
+  auto& crystal = scene.ms_[0].setting_[0].crystal_;
+  auto& shape = std::get<ns::PrismCrystalParam>(crystal.param_);
+  shape.h_ = shape.d_[0] = { ns::DistributionType::kUniform, 1.f, 1.4f };
+  shape.sync_group_[ns::kShapeScalarHeight] = shape.sync_group_[ns::kShapeScalarFace0] = 1;
+  crystal.axis_.latitude_dist = { ns::DistributionType::kGaussian, 90.f, 1.f };
+  crystal.axis_.azimuth_dist = crystal.axis_.roll_dist = { ns::DistributionType::kUniform, 0.f, 360.f };
+  const rp::ProductDiagnosticSampler sampler(Capture(scene, 0, { 3, 5 }), 1497, rp::DiscreteSpectrumSum{});
+  rp::ProductDiscoveryOptions options{ { 65536, 262144 }, kRad, .05 * kRad, 250000000, 8, 8, 0 };
+  rp::ProductDiscoveryResult result;
+  ASSERT_TRUE(rp::DiscoverProductFeatures(sampler, options, &result).Ok());
+  for (const std::string channel : { "x", "y" }) {
+    const auto feature = std::find_if(result.features.begin(), result.features.end(), [&](const auto& f) {
+      return f.kind == "chromaticity_" + channel + "_contour" && f.evidence == rp::DiagnosticEvidence::kActual;
+    });
+    if (feature == result.features.end()) {
+      ADD_FAILURE() << channel;
+      return;
+    }
+    EXPECT_EQ(feature->geometry, rp::DiagnosticGeometry::kPolyline);
+    EXPECT_GT(feature->transverse_contrast, .001);
+    EXPECT_EQ(feature->bandwidth_rad, kRad);
+    // Actual reference curves are at the automatically chosen, recorded level,
+    // not the preselected 0.4 crossings used by the local corrector fixture.
+    for (const auto& ref : fixture.at("results")) {
+      if (ref.at("power") != 16 || ref.at("seed") != 1497 || ref.at("channel") != channel) {
+        continue;
+      }
+      const size_t vertex = ref.at("vertex");
+      if (vertex >= feature->sky_points.size()) {
+        ADD_FAILURE();
+        return;
+      }
+      EXPECT_NEAR(feature->level, ref.at("level").get<double>(), 1e-8);
+      const auto q = ref.at("query").get<std::array<double, 3>>();
+      const auto normal = ref.at("normal").get<std::array<double, 3>>();
+      const double offset = ref.at("reference_offset_deg").get<double>() * kRad;
+      std::array<double, 3> expected;
+      for (int j = 0; j < 3; ++j) {
+        expected[j] = std::cos(offset) * q[j] + std::sin(offset) * normal[j];
+      }
+      double cross[3];
+      ns::analytic::so3::Cross3(expected.data(), feature->sky_points[vertex].data(), cross);
+      // Independent 2^14x24 to 2^16x48 refinement moves these roots <=0.031 deg.
+      // Native error <=0.009 deg; the local 0.05-deg budget includes both.
+      EXPECT_LT(std::atan2(ns::analytic::so3::Norm3(cross),
+                           ns::analytic::so3::Dot3(expected.data(), feature->sky_points[vertex].data())),
+                .05 * kRad);
+    }
+  }
+}
+
 TEST(ProductInputChain, AtomRequiresDeclaredZeroDimensionalSourceNotSampledRank) {
   auto scene = Scene(1);
   scene.light_source_.param_ = { 20.f, 0.f, 0.f };
