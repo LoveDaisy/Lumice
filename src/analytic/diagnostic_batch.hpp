@@ -2,6 +2,7 @@
 #define LUMICE_ANALYTIC_DIAGNOSTIC_BATCH_HPP_
 
 #include <array>
+#include <chrono>
 #include <cstdint>
 #include <vector>
 
@@ -32,6 +33,7 @@ struct DiagnosticInterface {
 struct DiagnosticOutputRow {
   uint64_t source_token = 0;
   Status input_status = Status::kInvalidValue;
+  uint64_t path_evaluations = 0;
   ChainFailure optical_failure = ChainFailure::kNone;
   bool path_valid = false;
   std::array<double, 3> outgoing{};
@@ -58,6 +60,36 @@ struct DiagnosticBatchOptions {
 // not a product acceptance threshold or an integration error bound.
 bool EvaluateDiagnosticBatch(const std::vector<int>& faces, const std::vector<DiagnosticInputRow>& rows,
                              const DiagnosticBatchOptions& options, std::vector<DiagnosticOutputRow>* out);
+
+// A local conditional interface equation on SO(3), not a joint caustic or an
+// observed colour boundary. The caller owns whether this pose chart belongs
+// to its declared source measure. Each accepted iterate must retain A*T > 0.
+enum class InterfaceSolveStatus {
+  kConverged,
+  kInvalidInput,
+  kUnavailable,
+  kNoSupport,
+  kDegenerate,
+  kIterationLimit,
+  kBudgetExceeded
+};
+struct InterfaceSolveOptions {
+  int internal_slot = 0;
+  double residual_tolerance = 1e-10;
+  double max_step_rad = .05;
+  int max_iterations = 32;
+};
+struct InterfaceStationaryPoint {
+  InterfaceSolveStatus status = InterfaceSolveStatus::kInvalidInput;
+  DiagnosticInputRow source;
+  DiagnosticOutputRow value;
+  std::vector<std::array<double, 9>> accepted_poses;
+  double travelled_rad = 0;
+  uint64_t path_evaluations = 0;
+};
+InterfaceStationaryPoint CorrectInterfaceEvent(const std::vector<int>& faces, const DiagnosticInputRow& source,
+                                               const InterfaceSolveOptions& options, uint64_t max_path_evaluations,
+                                               std::chrono::steady_clock::time_point deadline);
 
 }  // namespace lumice::analytic
 #endif  // LUMICE_ANALYTIC_DIAGNOSTIC_BATCH_HPP_

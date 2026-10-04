@@ -39,6 +39,7 @@ DiagnosticOutputRow EvaluateRow(const std::vector<int>& faces, const DiagnosticI
   ChainDomain domain{ margins };
   ChainInterfaceDiagnostics<double> interfaces;
   PathOutputs detail{ {}, 0, segments.data(), factors.data() };
+  ++out.path_evaluations;
   out.path_valid = TracePathChain(normals, slots.data(), count, row.refractive_index, row.incident.data(),
                                   row.pose.data(), out.outgoing.data(), &detail, &domain, &interfaces);
   out.optical_failure = domain.failure;
@@ -75,6 +76,7 @@ DiagnosticOutputRow EvaluateRow(const std::vector<int>& faces, const DiagnosticI
   so3::Exp(delta, rotation);
   so3::MatMul(row.pose.data(), rotation, pose);
   ChainInterfaceDiagnostics<J> derivatives;
+  ++out.path_evaluations;
   const bool valid = TracePathChain(normals, slots.data(), count, row.refractive_index, row.incident.data(), pose,
                                     outgoing, nullptr, nullptr, &derivatives);
   for (int j = 0; j < std::min(interfaces.reached, derivatives.reached); ++j) {
@@ -100,6 +102,7 @@ DiagnosticOutputRow EvaluateRow(const std::vector<int>& faces, const DiagnosticI
   for (int level = 0; level < 2; ++level) {
     const double step = options.index_step / (level + 1);
     for (int side = 0; side < 2; ++side) {
+      ++out.path_evaluations;
       valid_side[level][side] = TracePathChain(
           normals, slots.data(), count, row.refractive_index + (2 * side - 1) * step, row.incident.data(),
           row.pose.data(), directions[level][side], nullptr, nullptr, &sides[level][side]);
@@ -150,6 +153,69 @@ bool EvaluateDiagnosticBatch(const std::vector<int>& faces, const std::vector<Di
     out->push_back(EvaluateRow(faces, row, options));
   }
   return true;
+}
+
+InterfaceStationaryPoint CorrectInterfaceEvent(const std::vector<int>& faces, const DiagnosticInputRow& source,
+                                               const InterfaceSolveOptions& options, uint64_t max_path_evaluations,
+                                               std::chrono::steady_clock::time_point deadline) {
+  InterfaceStationaryPoint result;
+  result.source = source;
+  if (options.internal_slot <= 0 || options.internal_slot + 1 >= static_cast<int>(faces.size()) ||
+      !(options.residual_tolerance > 0) || !std::isfinite(options.residual_tolerance) || !(options.max_step_rad > 0) ||
+      options.max_step_rad >= 1 || options.max_iterations <= 0) {
+    return result;
+  }
+  for (int i = 0; i < options.max_iterations; ++i) {
+    // One ordinary trace, one pose jet and four index-difference traces in the
+    // existing batch evaluator. Count all six, including a rejected iterate.
+    if (max_path_evaluations - std::min(max_path_evaluations, result.path_evaluations) < 6 ||
+        std::chrono::steady_clock::now() >= deadline) {
+      result.status = InterfaceSolveStatus::kBudgetExceeded;
+      return result;
+    }
+    std::vector<DiagnosticOutputRow> values;
+    if (!EvaluateDiagnosticBatch(faces, { result.source }, { true, true }, &values)) {
+      return result;
+    }
+    result.value = std::move(values[0]);
+    result.path_evaluations += result.value.path_evaluations;
+    const auto& face = result.value.interfaces[options.internal_slot];
+    if (!face.reached || !face.pose_gradient_available) {
+      result.status = InterfaceSolveStatus::kUnavailable;
+      return result;
+    }
+    if (!result.value.path_valid || !result.value.entry_available || !(result.value.entry.value > 0) ||
+        !(result.value.interface_product > 0)) {
+      result.status = InterfaceSolveStatus::kNoSupport;
+      return result;
+    }
+    result.accepted_poses.push_back(result.source.pose);
+    if (std::abs(face.discriminant) <= options.residual_tolerance) {
+      result.status = InterfaceSolveStatus::kConverged;
+      return result;
+    }
+    if (i + 1 == options.max_iterations) {
+      break;
+    }
+    const double norm = so3::Norm3(face.discriminant_pose_gradient.data());
+    if (!(norm > 0) || !std::isfinite(norm)) {
+      result.status = InterfaceSolveStatus::kDegenerate;
+      return result;
+    }
+    const double step = std::clamp(-face.discriminant / norm, -options.max_step_rad, options.max_step_rad);
+    double delta[3];
+    for (int j = 0; j < 3; ++j) {
+      delta[j] = step * face.discriminant_pose_gradient[j] / norm;
+    }
+    double rotation[9];
+    std::array<double, 9> next;
+    so3::Exp(delta, rotation);
+    so3::MatMul(result.source.pose.data(), rotation, next.data());
+    result.source.pose = next;
+    result.travelled_rad += std::abs(step);
+  }
+  result.status = InterfaceSolveStatus::kIterationLimit;
+  return result;
 }
 
 }  // namespace lumice::analytic

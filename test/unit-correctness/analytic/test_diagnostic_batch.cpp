@@ -1,6 +1,8 @@
 #include <gtest/gtest.h>
 
 #include <cmath>
+#include <fstream>
+#include <nlohmann/json.hpp>
 
 #include "analytic/diagnostic_batch.hpp"
 #include "analytic/so3.hpp"
@@ -68,6 +70,62 @@ TEST(DiagnosticBatch, ErrorsArePerRowAndDerivativesUseTheActualPose) {
   }
   EXPECT_FALSE(EvaluateDiagnosticBatch({ 3 }, { row }, {}, &result));
   EXPECT_TRUE(result.empty());
+}
+
+TEST(DiagnosticBatch, DeepInterfaceCorrectionKeepsPositiveSourcesAndBudget) {
+  std::ifstream in(std::string(LUMICE_DIAGNOSTIC_FIXTURE_DIR) + "/internal-event.json");
+  ASSERT_TRUE(in.good());
+  const auto fixture = nlohmann::json::parse(in);
+  for (const auto& item : fixture.at("cases")) {
+    const auto& shape = item.at("shape");
+    DiagnosticInputRow row;
+    row.crystal.kind = CrystalShapeKind::kPyramid;
+    row.crystal.height = shape.at("height");
+    row.crystal.upper_h = shape.at("upper_h");
+    row.crystal.lower_h = shape.at("lower_h");
+    row.crystal.upper_wedge_deg = shape.at("upper_wedge_deg");
+    row.crystal.lower_wedge_deg = shape.at("lower_wedge_deg");
+    for (int j = 0; j < 6; ++j) {
+      row.crystal.face_distance[j] = shape.at("face_distance").at(j);
+    }
+    row.refractive_index = item.at("refractive_index");
+    row.pose = item.at("seed_pose").get<std::array<double, 9>>();
+    row.incident = item.at("incident").get<std::array<double, 3>>();
+    row.source_token = 76;
+    const auto faces = item.at("faces").get<std::vector<int>>();
+    const int slot = item.at("internal_slot");
+    const auto deadline = std::chrono::steady_clock::time_point::max();
+    const auto event = CorrectInterfaceEvent(faces, row, { slot }, 192, deadline);
+    if (event.status != InterfaceSolveStatus::kConverged) {
+      ADD_FAILURE() << static_cast<int>(event.status);
+      return;
+    }
+    EXPECT_GT(event.value.entry.value, 0);
+    EXPECT_NEAR(event.value.interfaces[slot].discriminant, 0, 1e-10);
+    EXPECT_GT(std::abs(event.value.interfaces[1].discriminant), .001);
+    EXPECT_EQ(event.source.source_token, row.source_token);
+    EXPECT_LE(event.path_evaluations, 192u);
+    EXPECT_EQ(event.accepted_poses.back(), event.source.pose);
+    const auto low = CorrectInterfaceEvent(faces, row, { slot }, 5, deadline);
+    EXPECT_EQ(low.status, InterfaceSolveStatus::kBudgetExceeded);
+    EXPECT_EQ(low.path_evaluations, 0u);
+    const auto expired = CorrectInterfaceEvent(faces, row, { slot }, 192, std::chrono::steady_clock::now());
+    EXPECT_EQ(expired.status, InterfaceSolveStatus::kBudgetExceeded);
+    EXPECT_EQ(expired.path_evaluations, 0u);
+    const auto limited = CorrectInterfaceEvent(faces, row, { slot, 1e-10, .05, 1 }, 192, deadline);
+    EXPECT_EQ(limited.status, InterfaceSolveStatus::kIterationLimit);
+    EXPECT_EQ(limited.source.pose, row.pose);
+    // The independently verified point need not be the nearest correction from
+    // this seed: one equation on SO(3) has a two-dimensional family of roots.
+    row.pose = item.at("event_pose").get<std::array<double, 9>>();
+    std::vector<DiagnosticOutputRow> value;
+    if (!EvaluateDiagnosticBatch(faces, { row }, {}, &value)) {
+      ADD_FAILURE();
+      return;
+    }
+    EXPECT_NEAR(value[0].interfaces[slot].discriminant, 0, 1e-10);
+    EXPECT_NEAR(value[0].entry.value, item.at("independent_event_area").get<double>(), 1e-9);
+  }
 }
 
 TEST(DiagnosticBatch, LaterFailureDoesNotEraseReachedInterfaceFields) {
