@@ -18,6 +18,7 @@
 // polygons promoted to double (LI builds its own polyhedron in double). The exit gate uses the call's
 // refractive index, as LI's does.
 
+#include <array>
 #include <vector>
 
 #include "analytic/path_evaluation.hpp"
@@ -40,6 +41,21 @@ struct EntryMeasure {
   double area_perp_internal = 0.0;  // the corridor footprint perpendicular to the internal direction
 };
 
+struct CorridorEdgeSource {
+  int path_index = 0;
+  int edge_index = 0;  // original corner -> next corner in FacePolygonTable
+};
+struct CorridorDiagnostics {
+  bool geometry_evaluated = false;  // false when an optical gate stopped evaluation
+  double raw_area = 0;
+  double area_threshold = 0;
+  std::array<std::array<double, 3>, 2> projection_basis{};
+  std::vector<std::array<double, 2>> vertices;
+  // One outgoing edge per vertex. Incoming/outgoing sources identify a local
+  // intersection, not a proof of complete source-domain topology.
+  std::vector<CorridorEdgeSource> edge_sources;
+};
+
 // The unfolded corridor of one face sequence (LI corridor_polygons): the entry face polygon, each
 // reflecting face's polygon on the ghost crystal it is met on, and the exit face polygon on the last
 // ghost, in the body frame; plus the entry normal and the unfolded exit normal. Built once per
@@ -51,7 +67,7 @@ class Corridor {
 
   // A_P at a pose, given the body-frame incident propagation direction s_body = R^T s (unit) and the
   // refractive index.
-  EntryMeasure Evaluate(const double s_body[3], double refractive_index);
+  EntryMeasure Evaluate(const double s_body[3], double refractive_index, CorridorDiagnostics* diagnostics = nullptr);
 
   double Eps() const { return eps_; }
 

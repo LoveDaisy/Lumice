@@ -62,21 +62,26 @@ double PolygonArea(const std::vector<double>& p, int count) {
 
 // LI _ensure_ccw: a projection may flip the ring's handedness; reverse it when its signed area is
 // negative.
-void EnsureCcw(std::vector<double>* p, int count) {
+bool EnsureCcw(std::vector<double>* p, int count) {
   if (PolygonArea(*p, count) >= 0.0) {
-    return;
+    return false;
   }
   for (int i = 0, j = count - 1; i < j; i++, j--) {
     std::swap((*p)[2 * i], (*p)[2 * j]);
     std::swap((*p)[2 * i + 1], (*p)[2 * j + 1]);
   }
+  return true;
 }
 
 // LI _clip_halfplane: one Sutherland-Hodgman step, keeping the left side of the directed edge a -> b.
 // Per input corner i, in ring order: the corner itself when inside, then the crossing of edge
 // i -> i+1 when that edge crosses the line.
 int ClipHalfplane(const std::vector<double>& in, int count, const double a[2], const double b[2],
-                  std::vector<double>* out) {
+                  std::vector<double>* out, const std::vector<CorridorEdgeSource>* sources,
+                  const CorridorEdgeSource& clipping_source, std::vector<CorridorEdgeSource>* out_sources) {
+  if (out_sources) {
+    out_sources->clear();
+  }
   out->clear();
   const double ex = b[0] - a[0];
   const double ey = b[1] - a[1];
@@ -93,11 +98,17 @@ int ClipHalfplane(const std::vector<double>& in, int count, const double a[2], c
     if (in_p) {
       out->push_back(px);
       out->push_back(py);
+      if (out_sources) {
+        out_sources->push_back((*sources)[i]);
+      }
     }
     if (in_p != in_q) {
       const double t = s_p / (s_p - s_q);
       out->push_back(px + t * (qx - px));
       out->push_back(py + t * (qy - py));
+      if (out_sources) {
+        out_sources->push_back(in_p ? clipping_source : (*sources)[i]);
+      }
     }
   }
   return static_cast<int>(out->size() / 2);
@@ -145,8 +156,12 @@ Corridor::Corridor(const FaceNormalTable& normals, const FacePolygonTable& polyg
   eps_ = kEntryMeasureEpsRel * polygons.min_edge_length * polygons.min_edge_length;
 }
 
-EntryMeasure Corridor::Evaluate(const double s_body[3], double refractive_index) {
+EntryMeasure Corridor::Evaluate(const double s_body[3], double refractive_index, CorridorDiagnostics* diagnostics) {
   EntryMeasure m;
+  if (diagnostics) {
+    *diagnostics = {};
+    diagnostics->area_threshold = eps_;
+  }
   // Entry gate: the incident side has no critical angle (LI entry_ok with cos_tc = 0, and cos_i > 0).
   const double cos_i = -Dot3(entry_normal_, s_body);
   if (!(cos_i > 0.0)) {
@@ -185,7 +200,7 @@ EntryMeasure Corridor::Evaluate(const double s_body[3], double refractive_index)
   Cross3(d, u, w);
 
   // LI corridor_intersection: project every polygon along d, then clip the first by each later one.
-  auto project = [&](int poly, std::vector<double>* out) {
+  auto project = [&](int poly, std::vector<double>* out, bool* reversed) {
     out->clear();
     for (int v = offsets_[poly]; v < offsets_[poly + 1]; v++) {
       const double* p = &points_[3 * static_cast<size_t>(v)];
@@ -193,20 +208,45 @@ EntryMeasure Corridor::Evaluate(const double s_body[3], double refractive_index)
       out->push_back(Dot3(p, w));
     }
     const int count = offsets_[poly + 1] - offsets_[poly];
-    EnsureCcw(out, count);
+    *reversed = EnsureCcw(out, count);
     return count;
   };
-  int count = project(0, &poly_);
+  bool reversed = false;
+  int count = project(0, &poly_, &reversed);
+  std::vector<CorridorEdgeSource> sources;
+  std::vector<CorridorEdgeSource> next_sources;
+  if (diagnostics) {
+    for (int i = 0; i < count; ++i) {
+      sources.push_back({ 0, reversed ? (2 * count - 2 - i) % count : i });
+    }
+    for (int j = 0; j < 3; ++j) {
+      diagnostics->projection_basis[0][j] = u[j];
+      diagnostics->projection_basis[1][j] = w[j];
+    }
+    diagnostics->geometry_evaluated = true;
+  }
   const int polygon_count = static_cast<int>(offsets_.size()) - 1;
   for (int poly = 1; poly < polygon_count; poly++) {
-    const int clip_count = project(poly, &clip_);
+    const int clip_count = project(poly, &clip_, &reversed);
     for (int i = 0; i < clip_count; i++) {
       const int j = (i + 1) % clip_count;
-      count = ClipHalfplane(poly_, count, &clip_[2 * i], &clip_[2 * j], &next_);
+      const CorridorEdgeSource source{ poly, reversed ? (2 * clip_count - 2 - i) % clip_count : i };
+      count = ClipHalfplane(poly_, count, &clip_[2 * i], &clip_[2 * j], &next_, diagnostics ? &sources : nullptr,
+                            source, diagnostics ? &next_sources : nullptr);
+      if (diagnostics) {
+        sources.swap(next_sources);
+      }
       poly_.swap(next_);
     }
   }
   m.area_perp_internal = PolygonArea(poly_, count);
+  if (diagnostics) {
+    diagnostics->raw_area = m.area_perp_internal;
+    diagnostics->edge_sources = std::move(sources);
+    for (int i = 0; i < count; ++i) {
+      diagnostics->vertices.push_back({ poly_[2 * i], poly_[2 * i + 1] });
+    }
+  }
   if (m.area_perp_internal <= eps_) {
     m.status = EntryMeasureStatus::kCorridorEmpty;
     return m;

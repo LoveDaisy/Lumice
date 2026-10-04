@@ -88,6 +88,80 @@ TEST(EntryMeasure, NormalIncidenceThroughParallelFacesIsTheFaceArea) {
   EXPECT_NEAR(m.area_perp_internal, m.value, 1e-12);  // cos_i = cos_t = 1
 }
 
+TEST(EntryMeasure, OptionalLineageDistinguishesContactAreaGateAndOptics) {
+  // Two parallel squares offset transversely. At normal incidence their
+  // overlap is a unit square, a thin rectangle, a line, or empty, analytically.
+  FaceNormalTable normals;
+  normals.slot_cnt = 2;
+  normals.present[0] = normals.present[1] = true;
+  normals.normal[0][0] = 1;
+  normals.normal[1][0] = -1;
+  FacePolygonTable polygons;
+  polygons.corner_cnt[0] = polygons.corner_cnt[1] = 4;
+  polygons.min_edge_length = 1;
+  const int slots[] = { 0, 1 };
+  const double yz[4][2] = { { 0, 0 }, { 1, 0 }, { 1, 1 }, { 0, 1 } };
+  for (double shift : { 0.25, 1 - 1e-8, 1.0, 1.01 }) {
+    for (int i = 0; i < 4; ++i) {
+      polygons.corner[0][i][0] = .5;
+      polygons.corner[0][i][1] = yz[i][0];
+      polygons.corner[0][i][2] = yz[i][1];
+      polygons.corner[1][i][0] = -.5;
+      polygons.corner[1][i][1] = yz[3 - i][0] + shift;
+      polygons.corner[1][i][2] = yz[3 - i][1];
+    }
+    Corridor corridor(normals, polygons, slots, 2);
+    const double incident[] = { -1, 0, 0 };
+    const auto plain = corridor.Evaluate(incident, 1.31);
+    CorridorDiagnostics diagnostic;
+    const auto traced = corridor.Evaluate(incident, 1.31, &diagnostic);
+    EXPECT_EQ(plain.status, traced.status);
+    EXPECT_DOUBLE_EQ(plain.value, traced.value);
+    EXPECT_DOUBLE_EQ(plain.area_perp_internal, traced.area_perp_internal);
+    EXPECT_TRUE(diagnostic.geometry_evaluated);
+    EXPECT_DOUBLE_EQ(diagnostic.area_threshold, corridor.Eps());
+    EXPECT_NEAR(diagnostic.raw_area, std::max(0.0, 1 - shift), 1e-15);
+    EXPECT_EQ(diagnostic.vertices.size(), diagnostic.edge_sources.size());
+    if (shift < 1 && shift > .9) {
+      EXPECT_GT(diagnostic.raw_area, 0);
+      EXPECT_LT(diagnostic.raw_area, diagnostic.area_threshold);
+      EXPECT_EQ(traced.status, EntryMeasureStatus::kCorridorEmpty);
+    }
+    if (shift == 1) {
+      EXPECT_DOUBLE_EQ(diagnostic.raw_area, 0);
+      EXPECT_GE(diagnostic.vertices.size(), 2u);
+    }
+    for (size_t i = 0; i < diagnostic.vertices.size(); ++i) {
+      const auto source = diagnostic.edge_sources[i];
+      if (source.path_index < 0 || source.path_index >= 2 || source.edge_index < 0 || source.edge_index >= 4) {
+        ADD_FAILURE() << "invalid original-edge provenance";
+        return;
+      }
+      const auto* a = polygons.corner[source.path_index][source.edge_index];
+      const auto* b = polygons.corner[source.path_index][(source.edge_index + 1) % 4];
+      double pa[2]{};
+      double pb[2]{};
+      for (int k = 0; k < 2; ++k) {
+        for (int j = 0; j < 3; ++j) {
+          pa[k] += a[j] * diagnostic.projection_basis[k][j];
+          pb[k] += b[j] * diagnostic.projection_basis[k][j];
+        }
+      }
+      // Both endpoints of each clipped output edge lie on its declared source
+      // line; this checks original edge numbering through orientation reversal.
+      for (size_t v : { i, (i + 1) % diagnostic.vertices.size() }) {
+        const auto& p = diagnostic.vertices[v];
+        EXPECT_NEAR((pb[0] - pa[0]) * (p[1] - pa[1]) - (pb[1] - pa[1]) * (p[0] - pa[0]), 0, 1e-14);
+      }
+    }
+    const double backface[] = { 1, 0, 0 };
+    EXPECT_EQ(corridor.Evaluate(backface, 1.31, &diagnostic).status, EntryMeasureStatus::kEntryBackface);
+    EXPECT_FALSE(diagnostic.geometry_evaluated);
+    EXPECT_TRUE(diagnostic.vertices.empty());
+    EXPECT_TRUE(diagnostic.edge_sources.empty());
+  }
+}
+
 // The threshold is LI's area_eps: 1e-6 times the shortest crystal edge squared.
 TEST(EntryMeasure, EpsIsRelativeToTheShortestEdge) {
   const Built b = Build(Prism(), { 3, 5 });
