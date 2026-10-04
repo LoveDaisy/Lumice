@@ -1039,6 +1039,7 @@ set(lumice_analytic_kernel_src
   "${PROJ_SRC_DIR}/analytic/path_rank.cpp"
   "${PROJ_SRC_DIR}/analytic/pose_density.cpp"
   "${PROJ_SRC_DIR}/analytic/band_sum.cpp"
+  "${PROJ_SRC_DIR}/analytic/path_feature_discovery.cpp"
   # The capability's C ABI (lumice_analytic_core.h). No static object with a side effect, so it
   # may go wherever the kernel goes; the library-management TU (analytic_lib.cpp) may not.
   "${PROJ_SRC_DIR}/analytic/analytic_capi.cpp")

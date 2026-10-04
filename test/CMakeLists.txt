@@ -260,6 +260,7 @@ add_executable(unit_correctness_test
   "${PROJ_TEST_DIR}/unit-correctness/analytic/test_path_rank.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/analytic/test_pose_density.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/analytic/test_band_sum.cpp"
+  "${PROJ_TEST_DIR}/unit-correctness/analytic/test_path_feature_discovery.cpp"
   # Parity with Lumice Integral: replays LI's exported fixtures (test/fixtures/li-parity/) against
   # the same kernels. Unit-correctness rather than parity-cross-backend: that layer's oracle is the
   # legacy CPU backend (doc/testing-architecture.md section 3, step 5), and this target already
