@@ -1,0 +1,58 @@
+#ifndef LUMICE_RAYPATH_PRODUCT_FEATURE_DISCOVERY_HPP_
+#define LUMICE_RAYPATH_PRODUCT_FEATURE_DISCOVERY_HPP_
+
+#include "analytic/diagnostic_batch.hpp"
+#include "raypath/product_diagnostic_sampler.hpp"
+
+namespace lumice::raypath {
+
+enum class DiagnosticEvidence { kActual, kCandidate, kUnfinished };
+enum class DiagnosticGeometry { kPoint, kPolyline, kAtom };
+struct DiagnosticFeatureRecord {
+  DiagnosticEvidence evidence = DiagnosticEvidence::kUnfinished;
+  DiagnosticGeometry geometry = DiagnosticGeometry::kPoint;
+  std::string kind;
+  std::string reason;
+  std::vector<std::array<double, 3>> sky_points;
+  std::vector<analytic::FieldStationaryPoint> field_points;
+  analytic::FieldEquation equation = analytic::FieldEquation::kLogYPeak;
+  double level = 0;
+  double bandwidth_rad = 0;
+  double prefix_movement_rad = 0;
+  double scale_movement_rad = 0;
+  double minimum_effective_samples = 0;
+  double transverse_contrast = 0;
+  analytic::FieldWalkStop walk_stop = analytic::FieldWalkStop::kInvalidInput;
+  // Local source token into result.measure; not a unique-cause assertion.
+  std::optional<uint64_t> source_token;
+  int internal_slot = -1;
+  std::optional<analytic::InterfaceStationaryPoint> interface_event;
+  std::array<double, 3> atom_xyz_mass{};
+};
+struct ProductDiscoveryOptions {
+  ProductSamplingBudget sampling;
+  double bandwidth_rad = 0;
+  double location_resolution_rad = 0;
+  uint64_t max_field_evaluations = 0;
+  int max_seeds = 0;
+  int max_curve_points = 0;
+  int max_interface_candidates = 0;
+};
+struct ProductDiscoveryResult {
+  ProductDiagnosticMeasure measure;
+  std::vector<DiagnosticFeatureRecord> features;
+  std::vector<std::string> unfinished;
+  uint64_t event_path_evaluations = 0;
+  uint64_t field_component_evaluations = 0;
+  double assembly_seconds = 0;
+  double event_seconds = 0;
+  double field_seconds = 0;
+  bool budget_exhausted = false;
+};
+// Explicit internal budget/scale contract, not yet a public default policy.
+// No path/shape dispatcher and no target coordinate or feature name as input.
+Error DiscoverProductFeatures(const ProductDiagnosticSampler& sampler, const ProductDiscoveryOptions& options,
+                              ProductDiscoveryResult* out);
+
+}  // namespace lumice::raypath
+#endif  // LUMICE_RAYPATH_PRODUCT_FEATURE_DISCOVERY_HPP_

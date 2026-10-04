@@ -8,6 +8,7 @@
 #include "core/simulator.hpp"
 #include "gtest/gtest.h"
 #include "raypath/product_diagnostic_sampler.hpp"
+#include "raypath/product_feature_discovery.hpp"
 #include "raypath/product_input_assembly.hpp"
 
 namespace {
@@ -308,6 +309,92 @@ TEST(ProductInputChain, CorrelatedShapeFiniteSunColourCrossingsMatchIndependentP
       EXPECT_GT(crossing.field.effective_samples_y, 1000);
     }
   }
+}
+
+TEST(ProductInputChain, TargetFreeDiscoveryRetainsActualsAndBudgetState) {
+  auto scene = Scene(1);
+  scene.light_source_.param_ = { 20.f, 0.f, 0.f };
+  scene.light_source_.spectrum_ = std::vector<ns::WlParam>{ { 550.f, 1.f } };
+  auto& axis = scene.ms_[0].setting_[0].crystal_.axis_;
+  axis.latitude_dist = { ns::DistributionType::kNoRandom, 90.f, 0.f };
+  axis.azimuth_dist = { ns::DistributionType::kNoRandom, 180.f, 0.f };
+  axis.roll_dist = { ns::DistributionType::kGaussian, 57.2957795f, 1.1459156f };
+  const rp::ProductDiagnosticSampler sampler(Capture(scene, 0, { 3, 5 }), 1497, rp::DiscreteSpectrumSum{});
+  constexpr double kRad = 3.14159265358979323846 / 180;
+  rp::ProductDiscoveryOptions options{ { 262144, 262144 }, .02 * kRad, .005 * kRad, 100000000, 1, 3, 0 };
+  rp::ProductDiscoveryResult result;
+  ASSERT_TRUE(rp::DiscoverProductFeatures(sampler, options, &result).Ok());
+  bool peak = false;
+  for (const auto& feature : result.features) {
+    if (feature.kind == "intensity_peak" && feature.evidence == rp::DiagnosticEvidence::kActual) {
+      peak = true;
+      const auto& q = feature.sky_points[0];
+      EXPECT_NEAR(std::atan2(q[1], q[0]) / kRad, 26.59704, .002);
+      EXPECT_GT(feature.transverse_contrast, .1);
+    }
+    EXPECT_NE(feature.kind, "chromaticity_x_contour");
+    EXPECT_NE(feature.kind, "chromaticity_y_contour");
+  }
+  EXPECT_TRUE(peak);
+  EXPECT_FALSE(result.budget_exhausted);
+  EXPECT_GT(result.field_component_evaluations, 0u);
+  EXPECT_LE(result.field_component_evaluations, options.max_field_evaluations);
+  options.max_field_evaluations = 1;
+  ASSERT_TRUE(rp::DiscoverProductFeatures(sampler, options, &result).Ok());
+  EXPECT_TRUE(result.budget_exhausted);
+  EXPECT_TRUE(result.features.empty());
+  EXPECT_FALSE(result.unfinished.empty());
+  options.sampling.deadline = std::chrono::steady_clock::now();
+  ASSERT_TRUE(rp::DiscoverProductFeatures(sampler, options, &result).Ok());
+  EXPECT_EQ(result.measure.optical_evaluations, 0u);
+  EXPECT_TRUE(result.budget_exhausted);
+}
+
+TEST(ProductInputChain, TargetFreeDeepInterfaceUsesEverySlotAndRealSource) {
+  auto scene = Scene(1);
+  ns::PyramidCrystalParam p;
+  p.h_prs_ = { ns::DistributionType::kNoRandom, .73f, 0.f };
+  p.h_pyr_u_ = { ns::DistributionType::kNoRandom, .62f, 0.f };
+  p.h_pyr_l_ = { ns::DistributionType::kNoRandom, .43f, 0.f };
+  p.wedge_angle_u_ = 25.f;
+  p.wedge_angle_l_ = 34.f;
+  const float distances[]{ 1.13f, .97f, 1.07f, 1.19f, .91f, 1.04f };
+  for (int j = 0; j < 6; ++j) {
+    p.d_[j] = { ns::DistributionType::kNoRandom, distances[j], 0.f };
+  }
+  auto& crystal = scene.ms_[0].setting_[0].crystal_;
+  crystal.param_ = p;
+  crystal.axis_.latitude_dist = { ns::DistributionType::kUniform, 90.f, 360.f };
+  crystal.axis_.azimuth_dist = crystal.axis_.roll_dist = { ns::DistributionType::kUniform, 0.f, 360.f };
+  scene.light_source_.param_ = { 20.f, 0.f, .53f };
+  const rp::ProductDiagnosticSampler sampler(Capture(scene, 0, { 13, 15, 26, 28 }), 1497, rp::DiscreteSpectrumSum{});
+  rp::ProductDiscoveryOptions options{ { 16384, 100000 }, .02, .005, 1, 1, 1, 16 };
+  rp::ProductDiscoveryResult result;
+  ASSERT_TRUE(rp::DiscoverProductFeatures(sampler, options, &result).Ok());
+  bool late = false;
+  for (const auto& feature : result.features) {
+    if (!feature.interface_event) {
+      continue;
+    }
+    EXPECT_EQ(feature.evidence, rp::DiagnosticEvidence::kCandidate);
+    const auto& event = *feature.interface_event;
+    EXPECT_GT(event.value.entry.value, 0);
+    EXPECT_NEAR(event.value.interfaces[feature.internal_slot].discriminant, 0, 1e-10);
+    rp::ProductInput original;
+    if (!rp::ReplayDiagnosticSource(result.measure, *feature.source_token, &original).Ok()) {
+      ADD_FAILURE();
+      return;
+    }
+    EXPECT_EQ(event.source.incident, original.source.incident_direction);
+    EXPECT_EQ(event.source.refractive_index,
+              original.spectrum.rows[result.measure.sources[*feature.source_token].spectral_row].refractive_index);
+    late |= feature.internal_slot == 2;
+  }
+  EXPECT_TRUE(late);
+  EXPECT_TRUE(result.budget_exhausted);
+  EXPECT_GT(result.event_path_evaluations, 0u);
+  EXPECT_LE(result.event_path_evaluations + result.measure.optical_evaluations,
+            options.sampling.max_optical_evaluations);
 }
 
 TEST(ProductInputChain, HaarOrbitConditionsOnActualCapRayAndRetainsPhysicalFamily) {
