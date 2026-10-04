@@ -1,0 +1,99 @@
+{
+  "description": "Independent LI single-crystal Gaussian density peak reference; normalized shape constants cancel from peak positions.",
+  "inputs": {
+    "height": 1,
+    "face_distances": [
+      1,
+      1,
+      1,
+      1,
+      1,
+      1
+    ],
+    "faces": [
+      3,
+      5
+    ],
+    "sun_altitude_deg": 20,
+    "sun_diameter_deg": 0,
+    "wavelength_nm": 550,
+    "refractive_index": 1.3110129100622272,
+    "roll_mean_rad": 1.0,
+    "roll_std_rad": 0.020000001415610313
+  },
+  "integration": "Uniform theta midpoint on mean +/- 8 sigma, weighted by the physical Gaussian PDF and LI entry area times power; no sampled product cloud in oracle. Sphere vMF evaluated at altitude 20 degrees. Tail probability <1.3e-15.",
+  "reference": [
+    {
+      "count": 16384,
+      "h": 0.01,
+      "az_deg": 26.59689156866697,
+      "value": 28507.561313608854,
+      "tangent_log_curvature": -42379.137030085585,
+      "success": true
+    },
+    {
+      "count": 16384,
+      "h": 0.02,
+      "az_deg": 26.59703558908779,
+      "value": 14226.266337424811,
+      "tangent_log_curvature": -42207.421202638536,
+      "success": true
+    },
+    {
+      "count": 32768,
+      "h": 0.01,
+      "az_deg": 26.596907012079264,
+      "value": 28507.56136659497,
+      "tangent_log_curvature": -42383.66745936537,
+      "success": true
+    },
+    {
+      "count": 32768,
+      "h": 0.02,
+      "az_deg": 26.597037718304676,
+      "value": 14226.266335245498,
+      "tangent_log_curvature": -42207.42079814654,
+      "success": true
+    }
+  ],
+  "source_hashes": {
+    "lumice_integral/parity_export.py": "ed6257e7a7add6f8b4a80fdef234f225598b42df669db4704ccf578cd2bd6d75",
+    "lumice_integral/s2_store.py": "07a38555376aa3d7c50e6268d98a94a76e3823987f580440775cfbe3ae865839",
+    "lumice_integral/focusing.py": "3d4ea358dfd74fad30dd24f7247e36239c91e83d9edcd7396c2f9e30fd08dbf5",
+    "lumice_integral/pose_density_provenance.py": "913142ae0d4336bbc09b8e6c8141bc15d0c5cd036c13524441950b7f23392ec4",
+    "lumice_integral/resample.py": "1a56fa54c2485ecb4248cbaffab28c75a95146ac6d87dab52347357c8dc1600b",
+    "lumice_integral/strip_pixel.py": "ca91c5c5e683ebe96f5a79ccf453991f5cadb9ea3d832f9ee86c50fded71f89e",
+    "lumice_integral/discovery.py": "fca28b164cbf58905bca7cac054ae103b42401c2d393203e219b6aefb7e951ae",
+    "lumice_integral/quadrature.py": "9b3d5e42443008af0686094cc7965cf2d695862236d71447b43d294d0b51e1a8",
+    "lumice_integral/contour_quadrature.py": "dc7ad7a5ccfa73e84cb3c3c7def3f008093788ca544b33c82413814c90ee6e8a",
+    "lumice_integral/ch10_verdicts.py": "e5a69f58b6d8561803fbc4cc55179e600d913f0362bf9c9c705981ef160114ef",
+    "lumice_integral/__init__.py": "9de581589f3b47c381fab7d955288a1ef396ca380650fb60bcaafba1d1783324",
+    "lumice_integral/raypath_diagnostic_reference.py": "eb56351807832833c49801871b97ecb5d60bfb121f0811462f67e12b98a4406f",
+    "lumice_integral/path_weight.py": "cbdd387fc5bf3f12609d4bf614802b506d0c39e25759f8a835fbe0e99bee07ec",
+    "lumice_integral/continuation.py": "21be53191c7f142920c2390a8a6d9b9fcf29dd148422e4e53f1af0610f9652ba",
+    "lumice_integral/strip_driver.py": "602c964e3a59752f1eb294f63f22f23333b2f4e739b7019ff761557ff7d75fe1",
+    "lumice_integral/strip_io.py": "b38afe577a0337e874e216bca64c1f2a9106cb860de6b2f6cd870546836533aa",
+    "lumice_integral/camera.py": "f716f156140552e8db4a4b5fcb8b16c77351d5f1a0966fe67baba5b7bb3411ae",
+    "lumice_integral/so3.py": "551b13cada1668a343c3eef6e3967ef921d78eecec0707b4159e9206cbebabc4",
+    "lumice_integral/pose_density.py": "1b817512427d72bb61e716ab53c4d379d691e2bcfb3d78e1301e1b88a7255b9a",
+    "lumice_integral/chromatic.py": "75ea49294fc3287a886862fac5d94d42d8160e42e084b8411f3e4f79981fb8d2",
+    "lumice_integral/provenance.py": "ba8c033ea701f9010dd6bfc98f8345a2c78be5d876c6122dd6ed25d21f484b96",
+    "lumice_integral/path_class.py": "663bc8f8cbcde4fb3a962f6f6bd6cbc2180fb6baf8a1f95161d7f2303e61c66b",
+    "lumice_integral/analytic.py": "c17bffc12b51b2b129260ef55a4a8eae993339ff547a77bd03bc6623a9042f82",
+    "lumice_integral/weights.py": "ec47b97defc1272c92026c63c0d0ce279cc0e6c2d3559f2963aef61a9c6e6deb",
+    "lumice_integral/band_sum.py": "86b0de386c2489d5e91875e11e721dcaa607cbd11ba2f1b27efb73e7767ed24d",
+    "lumice_integral/contour.py": "2d6b64d4c573413e6236e76194d52e122693278f925d5b84bd2ba24f141282c2",
+    "lumice_integral/optics.py": "c1cb1603fcf2e5d979262c0572200d0fc0f0a1389e56bdadd710dda72fb791b6",
+    "lumice_integral/figure_data.py": "a59c8df940cd109e751e285bc8ae0b7e109f1d14b8d53d10d07d7fb1a0311875",
+    "lumice_integral/canonical_scene.py": "b0ece19f7d8dc8aca9af06d7d93670684ef8460cc970c736e53848ff73fb5ac3",
+    "lumice_integral/geometry/pyramid.py": "4e83b9fd7e69247f1fd3cf50ff8018f7f9234b93ae2b0f3835e905dab1050566",
+    "lumice_integral/geometry/unfold.py": "2c7abcea2e10afba3b4551321ef9640c9f25b68dcb65ee4048d1173cf0d2faef",
+    "lumice_integral/geometry/feasibility.py": "db6f07cc3761bd6c3b8185f3808887b683cf006139acfd07fb39f4485d7f50cb",
+    "lumice_integral/geometry/__init__.py": "79d85431fa80857b61b7804214495c91ab1c51d1f20bc53ac645f141a31064e8",
+    "lumice_integral/geometry/core.py": "ac021998accc444d3198cb0a71a269a6f152bd32f7998a6be6794df7186388e1",
+    "lumice_integral/geometry/entry_measure.py": "832d80862c3c31f7905f1a440a18d74fa2180534a9602dada109adcc8126aa9b",
+    "lumice_integral/geometry/enumerate.py": "69f72f0b279d57131eade93fdc137003401503de083bd7c5822f47bf1e44de79",
+    "lumice_integral/geometry/closed_form.py": "fba4f0f798df7ad470954d0d49d6c682786d88233f2d6347fb2e1c545fb6370f"
+  },
+  "tolerance_rationale": "Local position resolution 0.002 degree (1/5 of narrower observation width); reference two-order angular displacement <0.000016 degree. No all-input product threshold."
+}

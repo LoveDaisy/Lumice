@@ -311,6 +311,8 @@ add_executable(raypath_composition_test
   "${PROJ_TEST_DIR}/composition-correctness/raypath/test_product_input_assembly_chain.cpp")
 target_link_libraries(raypath_composition_test PRIVATE GTest::gtest ${CMAKE_THREAD_LIBS_INIT}
   lumice_obj lumice_foundation_obj lumice_analytic_kernel lumice_raypath_obj)
+target_compile_definitions(raypath_composition_test PRIVATE
+  LUMICE_DIAGNOSTIC_FIXTURE_DIR="${PROJ_TEST_DIR}/fixtures/raypath-diagnostics")
 add_test(NAME LumiceRaypathCompositionTest COMMAND raypath_composition_test)
 set_tests_properties(LumiceRaypathCompositionTest PROPERTIES LABELS "composition-correctness")
 

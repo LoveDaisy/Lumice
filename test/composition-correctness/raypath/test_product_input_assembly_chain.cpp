@@ -1,4 +1,6 @@
 #include <cmath>
+#include <fstream>
+#include <nlohmann/json.hpp>
 
 #include "analytic/so3.hpp"
 #include "core/color_util.hpp"
@@ -197,6 +199,69 @@ TEST(ProductInputChain, JointSamplerReplaysPrefixesAndCorrelatedShapeFromSnapsho
   scene.ms_.clear();
   ASSERT_TRUE(sampler.Draw(17, &b).Ok());
   EXPECT_EQ(a.layers[0].analytic_pose, b.layers[0].analytic_pose);
+}
+
+TEST(ProductInputChain, GaussianDensityPeakMatchesIndependentPhysicalQuadrature) {
+  auto scene = Scene(1);
+  scene.light_source_.param_ = { 20.f, 0.f, 0.f };
+  scene.light_source_.spectrum_ = std::vector<ns::WlParam>{ { 550.f, 1.f } };
+  auto& axis = scene.ms_[0].setting_[0].crystal_.axis_;
+  axis.latitude_dist = { ns::DistributionType::kNoRandom, 90.f, 0.f };
+  axis.azimuth_dist = { ns::DistributionType::kNoRandom, 180.f, 0.f };
+  axis.roll_dist = { ns::DistributionType::kGaussian, static_cast<float>(180 / 3.14159265358979323846),
+                     static_cast<float>(.02 * 180 / 3.14159265358979323846) };
+  const auto snapshot = Capture(scene, 0, { 3, 5 });
+  // Independent LI geometry/optics, Gaussian angular quadrature at two orders.
+  // See the fixture for inputs, raw results and the reference's own error.
+  std::ifstream input(std::string(LUMICE_DIAGNOSTIC_FIXTURE_DIR) + "/gaussian-density.json");
+  ASSERT_TRUE(input.good());
+  const auto fixture = nlohmann::json::parse(input);
+  const auto& references = fixture.at("reference");
+  ASSERT_EQ(references.size(), 4u);
+  for (uint32_t seed : { 1497u, 9713u }) {
+    const rp::ProductDiagnosticSampler sampler(snapshot, seed, rp::DiscreteSpectrumSum{});
+    rp::ProductDiagnosticMeasure measure;
+    if (!rp::BuildProductDiagnosticMeasure(sampler, { 262144, 262144 }, &measure).Ok()) {
+      ADD_FAILURE();
+      return;
+    }
+    EXPECT_EQ(measure.completed_samples, 262144u);
+    std::array<double, 3> mean{};
+    for (const auto& row : measure.components) {
+      for (int j = 0; j < 3; ++j) {
+        mean[j] += row.xyz_weight[1] * row.direction[j];
+      }
+    }
+    const double norm = ns::analytic::so3::Norm3(mean.data());
+    for (auto& v : mean) {
+      v /= norm;
+    }
+    for (int scale = 0; scale < 2; ++scale) {
+      const double h = (.01 * (scale + 1)) * 3.14159265358979323846 / 180;
+      const auto peak = ns::analytic::CorrectSphericalField(
+          measure.components, mean, { ns::analytic::FieldEquation::kLogYPeak, 0, h, 1e-10, h * .4, 64 }, nullptr);
+      if (peak.status != ns::analytic::FieldSolveStatus::kConverged) {
+        ADD_FAILURE() << "seed=" << seed << " scale=" << scale;
+        return;
+      }
+      const double az = std::atan2(peak.query.direction[1], peak.query.direction[0]) * 180 / 3.14159265358979323846;
+      // Local 0.002-degree resolution, 1/5 of the narrower observation width;
+      // reference self-difference is <0.000016 degrees. Not a global product bar.
+      EXPECT_NEAR(az, references.at(2 + scale).at("az_deg").get<double>(), .002);
+      EXPECT_LT(peak.log_y_curvatures[1], 0);
+      EXPECT_GT(peak.field.xyz[1].value, 0);
+      EXPECT_GT(peak.field.effective_samples_y, 10000);
+      auto displaced = peak.query;
+      const double delta = .15 * 3.14159265358979323846 / 180;
+      for (int j = 0; j < 3; ++j) {
+        displaced.direction[j] = std::cos(delta) * peak.query.direction[j] + std::sin(delta) * peak.query.basis[0][j];
+        displaced.basis[0][j] = -std::sin(delta) * peak.query.direction[j] + std::cos(delta) * peak.query.basis[0][j];
+      }
+      ns::analytic::SphericalFieldValue flank;
+      EXPECT_TRUE(ns::analytic::EvaluateSphericalField(measure.components, displaced, &flank));
+      EXPECT_GT(peak.field.xyz[1].value, flank.xyz[1].value);
+    }
+  }
 }
 
 TEST(ProductInputChain, HaarOrbitConditionsOnActualCapRayAndRetainsPhysicalFamily) {
