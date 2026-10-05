@@ -224,7 +224,7 @@ void FindSourceBoundaries(const DiscoveryOptions& options, DiscoveryResult* resu
     record.kind = endpoints.size() == 1 ? "declared_source_boundary" : "declared_source_corner";
     record.evidence = DiagnosticEvidence::kCandidate;
     record.reason =
-        "closure of declared sample uniform/cap coordinates, other draws fixed; positive finite optical support; not "
+        "closure of declared product uniform/cap coordinates, other draws fixed; positive finite optical support; not "
         "an outer sky edge or unique cause";
     record.source_token = 0;
     record.boundary_source = row;

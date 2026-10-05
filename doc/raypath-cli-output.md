@@ -475,10 +475,14 @@ The raypath module under `src/raypath/` exposes exactly three public headers to 
 
 The bridge (`src/server/c_api_raypath.cpp`) compiles exactly these three (plus its own
 server/config includes) — this minimal set *is* the module's surface to the engine, by
-construction rather than by convention: everything else under `src/raypath/` sits in `detail/`
-and may be included only by the module itself and its own tests (`test/unit-correctness/raypath/`,
+construction rather than by convention. Everything else under `src/raypath/` is module-internal
+in one of two shapes: headers in `detail/` are internal by location and may be included only by
+the module itself and its own tests (`test/unit-correctness/raypath/`,
 `test/composition-correctness/raypath/`, which deliberately reach into `detail/` as the module's
-own white-box oracle). `detail/path_feature_report_json.{hpp,cpp}` is internal on the same
+own white-box oracle); the one legacy exception is `src/raypath/scene_to_analytic.{hpp,cpp}`,
+internal by consumer fact though not relocated — its only includes are `single_path_analysis.cpp`,
+`detail/input_assembly.cpp` and the module's own test — and a candidate for a future `detail/`
+move in its own change. `detail/path_feature_report_json.{hpp,cpp}` is internal on the same
 grounds: the bridge takes a JSON string now, and the only other consumer of the report types ever
 was that same composition test.
 

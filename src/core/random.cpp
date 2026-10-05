@@ -197,8 +197,6 @@ bool AxisDistribution::IsFullSphereUniform() const {
 }
 
 
-// Qualified definition rather than a `namespace detail { ... }` block, matching
-// detail::NormalizeLatitude above — this file spells detail members that way.
 bool detail::IsFullTurnUniform(DistributionType type, float full_range_deg) {
   return type == DistributionType::kUniform && FloatEqual(full_range_deg, 360.0f);
 }
