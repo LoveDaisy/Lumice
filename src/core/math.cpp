@@ -12,7 +12,7 @@
 #include <string>
 
 #include "core/lat_lut.hpp"
-#include "core/product_sample_transform.hpp"
+#include "core/sample_transform.hpp"
 #include "core/shared/lat_path_selection.hpp"
 #include "core/shared/pcg_shared.h"
 #include "util/fatal.hpp"

@@ -4,7 +4,7 @@
 
 #include "core/geo3d.hpp"
 #include "core/lat_lut.hpp"
-#include "core/product_sample_transform.hpp"
+#include "core/sample_transform.hpp"
 #include "core/shape_sample.hpp"
 #include "core/shared/lat_path_selection.hpp"
 #include "gtest/gtest.h"
@@ -25,7 +25,7 @@ float LegacyFullSphereLatitude(float unit_uniform) {
   return std::asin(u);
 }
 
-TEST(ProductSampleTransform, FullSphereLegalDrawsKeepLegacyBits) {
+TEST(SampleTransform, FullSphereLegalDrawsKeepLegacyBits) {
   const float draws[]{ 0.f, std::nextafter(0.f, 1.f), .25f, std::nextafter(.5f, 0.f),
                        .5f, std::nextafter(.5f, 1.f), .75f, std::nextafter(1.f, 0.f) };
   for (float draw : draws) {
@@ -40,7 +40,7 @@ TEST(ProductSampleTransform, FullSphereLegalDrawsKeepLegacyBits) {
   }
 }
 
-TEST(ProductSampleTransform, FullSphereAxisKeepsLegacyBitsAndDrawClock) {
+TEST(SampleTransform, FullSphereAxisKeepsLegacyBitsAndDrawClock) {
   auto& production = ns::RandomNumberGenerator::GetInstance();
   production.SetSeed(7821);
   ns::RandomNumberGenerator replay(7821);
@@ -63,7 +63,7 @@ TEST(ProductSampleTransform, FullSphereAxisKeepsLegacyBitsAndDrawClock) {
   EXPECT_EQ(FloatBits(production.GetUniform()), FloatBits(replay.GetUniform()));
 }
 
-TEST(ProductSampleTransform, RawDistributionValuesHaveIndependentOracles) {
+TEST(SampleTransform, RawDistributionValuesHaveIndependentOracles) {
   EXPECT_EQ(ns::TransformDistribution({ ns::DistributionType::kNoRandom, -3.f, 0.f }, {}), -3.f);
   EXPECT_EQ(ns::TransformDistribution({ ns::DistributionType::kUniform, 4.f, 8.f }, { .25f }), 2.f);
   EXPECT_EQ(ns::TransformDistribution({ ns::DistributionType::kGaussian, 4.f, 3.f }, { -2.f }), -2.f);
@@ -80,7 +80,7 @@ TEST(ProductSampleTransform, RawDistributionValuesHaveIndependentOracles) {
   EXPECT_NEAR(std::sqrt(sq / 10000 - std::pow(sum / 10000, 2)), 9.23275, 1e-4);
 }
 
-TEST(ProductSampleTransform, ExplicitUniformPlanOwnsAllLatentFamilies) {
+TEST(SampleTransform, ExplicitUniformPlanOwnsAllLatentFamilies) {
   const ns::DistributionType types[]{ ns::DistributionType::kNoRandom, ns::DistributionType::kUniform,
                                       ns::DistributionType::kGaussian, ns::DistributionType::kGaussianLegacy,
                                       ns::DistributionType::kZigzag,   ns::DistributionType::kLaplacian };
@@ -106,7 +106,7 @@ TEST(ProductSampleTransform, ExplicitUniformPlanOwnsAllLatentFamilies) {
   EXPECT_LT(ns::TransformDistributionUniforms(normal, { 0x1p-54, .5 }).value, -8.f);
 }
 
-TEST(ProductSampleTransform, LegacyCrossingFlipsAzimuthAndRoll) {
+TEST(SampleTransform, LegacyCrossingFlipsAzimuthAndRoll) {
   const auto latitude = ns::TransformLegacyLatitude(120.f);
   EXPECT_TRUE(latitude.flip);
   EXPECT_NEAR(latitude.radians, 60.f * ns::math::kDegreeToRad, 1e-6f);
@@ -115,7 +115,7 @@ TEST(ProductSampleTransform, LegacyCrossingFlipsAzimuthAndRoll) {
   EXPECT_EQ(angles[2], 20.f * ns::math::kDegreeToRad + ns::math::kPi);
 }
 
-TEST(ProductSampleTransform, ProductionDrawScheduleMatchesExplicitReplay) {
+TEST(SampleTransform, ProductionDrawScheduleMatchesExplicitReplay) {
   // Both RNGs run the same standard library. Absolute normal-distribution pins
   // are not portable between libc++, libstdc++ and MSVC.
   const ns::DistributionType types[]{ ns::DistributionType::kNoRandom, ns::DistributionType::kUniform,
@@ -154,7 +154,7 @@ TEST(ProductSampleTransform, ProductionDrawScheduleMatchesExplicitReplay) {
   EXPECT_EQ(production.GetUniform(), replay.GetUniform());
 }
 
-TEST(ProductSampleTransform, SphereAndFiniteCapKeepTwoDrawsEvenAtZeroRadius) {
+TEST(SampleTransform, SphereAndFiniteCapKeepTwoDrawsEvenAtZeroRadius) {
   auto& production = ns::RandomNumberGenerator::GetInstance();
   production.SetSeed(293);
   ns::RandomNumberGenerator replay(293);
@@ -181,7 +181,7 @@ TEST(ProductSampleTransform, SphereAndFiniteCapKeepTwoDrawsEvenAtZeroRadius) {
   }
   EXPECT_EQ(production.GetUniform(), replay.GetUniform());
 }
-TEST(ProductSampleTransform, FixedAndZeroSpreadKeepTheirDifferentDrawClocks) {
+TEST(SampleTransform, FixedAndZeroSpreadKeepTheirDifferentDrawClocks) {
   auto& production = ns::RandomNumberGenerator::GetInstance();
   production.SetSeed(7821);
   ns::RandomNumberGenerator replay(7821);
@@ -205,7 +205,7 @@ TEST(ProductSampleTransform, FixedAndZeroSpreadKeepTheirDifferentDrawClocks) {
   EXPECT_EQ(production.GetUniform(), replay.GetUniform());
 }
 
-TEST(ProductShapeSample, LeaderRecordReplaysWithoutRngOrFollowerRescaling) {
+TEST(ShapeSample, LeaderRecordReplaysWithoutRngOrFollowerRescaling) {
   ns::PrismCrystalParam p;
   p.h_ = { ns::DistributionType::kUniform, -2.f, .5f };
   for (auto& d : p.d_)
@@ -238,7 +238,7 @@ TEST(ProductShapeSample, LeaderRecordReplaysWithoutRngOrFollowerRescaling) {
   EXPECT_EQ(ns::RealizeShape(plan, bad, &sample), ns::ShapeSampleStatus::kInvalidLeader);
 }
 
-TEST(ProductShapeSample, PyramidLeaderOrderAndCrossKindConsumption) {
+TEST(ShapeSample, PyramidLeaderOrderAndCrossKindConsumption) {
   ns::PyramidCrystalParam p;
   p.h_pyr_u_ = { ns::DistributionType::kNoRandom, -.25f, 0.f };
   p.h_prs_ = { ns::DistributionType::kNoRandom, 0.f, 0.f };

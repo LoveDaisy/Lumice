@@ -1,8 +1,8 @@
-#ifndef LUMICE_RAYPATH_PRODUCT_FEATURE_DISCOVERY_HPP_
-#define LUMICE_RAYPATH_PRODUCT_FEATURE_DISCOVERY_HPP_
+#ifndef LUMICE_RAYPATH_DETAIL_FEATURE_DISCOVERY_HPP_
+#define LUMICE_RAYPATH_DETAIL_FEATURE_DISCOVERY_HPP_
 
 #include "analytic/diagnostic_batch.hpp"
-#include "raypath/product_diagnostic_sampler.hpp"
+#include "raypath/detail/diagnostic_sampler.hpp"
 
 namespace lumice::raypath {
 
@@ -52,8 +52,8 @@ struct DiagnosticFeatureRecord {
   double observation_contrast_error = 0;
   std::array<double, 3> atom_xyz_mass{};
 };
-struct ProductDiscoveryOptions {
-  ProductSamplingBudget sampling;
+struct DiscoveryOptions {
+  SamplingBudget sampling;
   double bandwidth_rad = 0;
   double location_resolution_rad = 0;
   uint64_t max_field_evaluations = 0;
@@ -64,8 +64,8 @@ struct ProductDiscoveryOptions {
   int max_source_curve_points = 256;
   int max_source_boundaries = 8;
 };
-struct ProductDiscoveryResult {
-  ProductDiagnosticMeasure measure;
+struct DiscoveryResult {
+  DiagnosticMeasure measure;
   std::vector<DiagnosticFeatureRecord> features;
   std::vector<std::string> unfinished;
   std::vector<std::string> limitations;
@@ -80,8 +80,7 @@ struct ProductDiscoveryResult {
 };
 // Explicit internal budget/scale contract, not yet a public default policy.
 // No path/shape dispatcher and no target coordinate or feature name as input.
-Error DiscoverProductFeatures(const ProductDiagnosticSampler& sampler, const ProductDiscoveryOptions& options,
-                              ProductDiscoveryResult* out);
+Error DiscoverFeatures(const DiagnosticSampler& sampler, const DiscoveryOptions& options, DiscoveryResult* out);
 
 }  // namespace lumice::raypath
-#endif  // LUMICE_RAYPATH_PRODUCT_FEATURE_DISCOVERY_HPP_
+#endif  // LUMICE_RAYPATH_DETAIL_FEATURE_DISCOVERY_HPP_

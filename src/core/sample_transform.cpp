@@ -1,4 +1,4 @@
-#include "core/product_sample_transform.hpp"
+#include "core/sample_transform.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -95,7 +95,7 @@ std::array<float, 3> ComposeAxisAngles(LatitudeSample latitude, float azimuth_de
   return { lambda, latitude.radians, roll };
 }
 
-std::array<float, 3> ProductRotationAngles(float azimuth_rad, float latitude_rad, float roll_rad) {
+std::array<float, 3> PoseEulerFactors(float azimuth_rad, float latitude_rad, float roll_rad) {
   return { roll_rad, latitude_rad - math::kPi_2, azimuth_rad - math::kPi };
 }
 

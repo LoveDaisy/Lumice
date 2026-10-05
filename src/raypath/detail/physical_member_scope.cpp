@@ -1,4 +1,4 @@
-#include "raypath/physical_member_scope.hpp"
+#include "raypath/detail/physical_member_scope.hpp"
 
 #include <algorithm>
 #include <limits>

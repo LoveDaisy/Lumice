@@ -6,15 +6,15 @@
 #include "core/geo3d.hpp"
 #include "core/wl_stratifier.hpp"
 #include "gtest/gtest.h"
-#include "raypath/physical_member_scope.hpp"
-#include "raypath/product_input_assembly.hpp"
+#include "raypath/detail/input_assembly.hpp"
+#include "raypath/detail/physical_member_scope.hpp"
 #include "util/illuminant.hpp"
 
 namespace {
 namespace ns = lumice;
 namespace rp = lumice::raypath;
 
-TEST(ProductInputSpectrum, DiscreteWeightsAreChargedOnceAndMonoKeepsChromaticity) {
+TEST(AssembledInputSpectrum, DiscreteWeightsAreChargedOnceAndMonoKeepsChromaticity) {
   ns::LightSourceConfig light{};
   light.spectrum_ = std::vector<ns::WlParam>{ { 450.f, 2.f }, { 550.f, .3f }, { 650.f, 4.f } };
   rp::AssembledSpectrum output;
@@ -42,7 +42,7 @@ TEST(ProductInputSpectrum, DiscreteWeightsAreChargedOnceAndMonoKeepsChromaticity
   EXPECT_NEAR(c[1] / sum, (7 * c[1]) / (7 * sum), 1e-15);
 }
 
-TEST(ProductInputSpectrum, ContinuousSampleDoesNotBecomeQuadratureOrConsumeRng) {
+TEST(AssembledInputSpectrum, ContinuousSampleDoesNotBecomeQuadratureOrConsumeRng) {
   ns::LightSourceConfig light{};
   light.spectrum_ = ns::IlluminantType::kD65;
   ns::RandomNumberGenerator rng(55), reference(55);
@@ -54,14 +54,14 @@ TEST(ProductInputSpectrum, ContinuousSampleDoesNotBecomeQuadratureOrConsumeRng) 
   ASSERT_TRUE(rp::AssembleSampledSpectrum(light, { wl, std::nullopt, "host batch 0" }, &out).Ok());
   EXPECT_FALSE(out.quadrature.has_value());
   EXPECT_EQ(out.rows.front().measure_mass, 1);
-  // Call the product owner, not its compiler-specialized constant-illuminant
+  // Call the assembled-input owner, not its compiler-specialized constant-illuminant
   // clone (GCC IPO can round that clone differently from the runtime call).
   float (*volatile reference_spd)(ns::IlluminantType, float) = &ns::GetIlluminantSpd;
   EXPECT_EQ(out.rows.front().source_weight, reference_spd(ns::IlluminantType::kD65, wl));
   EXPECT_EQ(rng.GetUniform(), reference.GetUniform());
 }
 
-TEST(ProductInputSpectrum, RoundedProductionUpperEndpointRemainsConsumable) {
+TEST(AssembledInputSpectrum, RoundedProductionUpperEndpointRemainsConsumable) {
   ns::LightSourceConfig light{};
   light.spectrum_ = ns::IlluminantType::kE;
   const float unit = std::nextafter(1.f, 0.f);
@@ -71,7 +71,7 @@ TEST(ProductInputSpectrum, RoundedProductionUpperEndpointRemainsConsumable) {
   EXPECT_EQ(out.rows[0].wavelength_nm, wl);
 }
 
-TEST(ProductInputSpectrum, QuadratureUsesProbabilityMassNotNanometers) {
+TEST(AssembledInputSpectrum, QuadratureUsesProbabilityMassNotNanometers) {
   ns::LightSourceConfig light{};
   light.spectrum_ = ns::IlluminantType::kE;
   const rp::SpectrumQuadrature q{
@@ -94,7 +94,7 @@ TEST(ProductInputSpectrum, QuadratureUsesProbabilityMassNotNanometers) {
   EXPECT_TRUE(out.rows.empty());
 }
 
-TEST(ProductInputSpectrum, FullBandQuadratureRejectsIncorrectTotalMass) {
+TEST(AssembledInputSpectrum, FullBandQuadratureRejectsIncorrectTotalMass) {
   ns::LightSourceConfig light{};
   light.spectrum_ = ns::IlluminantType::kE;
   rp::SpectrumQuadrature q{
@@ -118,19 +118,19 @@ TEST(ProductInputSpectrum, FullBandQuadratureRejectsIncorrectTotalMass) {
   EXPECT_EQ(out.rows[2].measure_mass, .7);
 }
 
-TEST(ProductInputSource, ActualCapDrawMatchesProductionAndKeepsDomain) {
+TEST(AssembledInputSource, ActualCapDrawMatchesProductionAndKeepsDomain) {
   ns::SunParam sun{ 21.f, 33.f, 8.f };
   auto& rng = ns::RandomNumberGenerator::GetInstance();
   rng.SetSeed(732);
   ns::RandomNumberGenerator replay(732);
-  rp::ProductSourceSample sample{ { replay.GetUniform(), replay.GetUniform() }, "source draw 0" };
+  rp::SourceSample sample{ { replay.GetUniform(), replay.GetUniform() }, "source draw 0" };
   rp::AssembledSource out;
   ASSERT_TRUE(rp::AssembleSource(sun, sample, &out).Ok());
   float actual[3];
   ns::SampleSphCapPoint(213.f, -21.f, 4.f, actual);
   double dot = 0;
   for (int j = 0; j < 3; ++j) {
-    EXPECT_EQ(actual[j], out.product_direction[j]);
+    EXPECT_EQ(actual[j], out.sampled_direction[j]);
     dot += out.center_direction[j] * out.incident_direction[j];
   }
   EXPECT_GE(dot, std::cos(4.0 * 3.141592653589793 / 180));
@@ -138,7 +138,7 @@ TEST(ProductInputSource, ActualCapDrawMatchesProductionAndKeepsDomain) {
   EXPECT_EQ(rng.GetUniform(), replay.GetUniform());
   EXPECT_TRUE(ns::analytic::ValidateUnitVector(out.incident_direction.data()));
 }
-TEST(ProductInputMembers, SnapshotBitsAndEnsembleGateDoNotReadLiveState) {
+TEST(AssembledInputMembers, SnapshotBitsAndEnsembleGateDoNotReadLiveState) {
   ns::PrismCrystalParam param;
   for (int i = 0; i < 6; ++i)
     param.d_[i] = { ns::DistributionType::kNoRandom, i % 2 ? 1.2f : 1.f, 0.f };

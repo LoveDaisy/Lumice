@@ -1,5 +1,5 @@
-#ifndef RAYPATH_PHYSICAL_MEMBER_SCOPE_H_
-#define RAYPATH_PHYSICAL_MEMBER_SCOPE_H_
+#ifndef RAYPATH_DETAIL_PHYSICAL_MEMBER_SCOPE_H_
+#define RAYPATH_DETAIL_PHYSICAL_MEMBER_SCOPE_H_
 
 #include <cstddef>
 #include <cstdint>
@@ -30,4 +30,4 @@ struct PhysicalMemberScope {
 Error ResolvePhysicalMemberScope(const PhysicalMemberRequest& request, PhysicalMemberScope* out);
 
 }  // namespace lumice::raypath
-#endif  // RAYPATH_PHYSICAL_MEMBER_SCOPE_H_
+#endif  // RAYPATH_DETAIL_PHYSICAL_MEMBER_SCOPE_H_

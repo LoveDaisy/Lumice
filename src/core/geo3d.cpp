@@ -12,7 +12,7 @@
 #include <vector>
 
 #include "core/math.hpp"
-#include "core/product_sample_transform.hpp"
+#include "core/sample_transform.hpp"
 #include "util/logger.hpp"
 
 namespace lumice {

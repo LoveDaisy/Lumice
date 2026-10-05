@@ -73,7 +73,7 @@ Error AnalyzePathFeatureReport(const ConfigManager& config, const PathFeatureRep
       scene.ms_.push_back({ 0, { setting } });
     }
   }
-  ProductSpectrumRequest spectrum = DiscreteSpectrumSum{};
+  SpectrumRequest spectrum = DiscreteSpectrumSum{};
   if (std::holds_alternative<IlluminantType>(scene.light_source_.spectrum_)) {
     SpectrumQuadrature quadrature;
     quadrature.rule = "dyadic full-band trapezoid";
@@ -84,13 +84,13 @@ Error AnalyzePathFeatureReport(const ConfigManager& config, const PathFeatureRep
     }
     spectrum = std::move(quadrature);
   }
-  const std::vector<ProductLayerSelection> selection{ { layer_index, request.crystal_id, request.path_layers[0],
-                                                        request.symmetry_bits } };
-  ProductInputSnapshot snapshot;
+  const std::vector<LayerSelection> selection{ { layer_index, request.crystal_id, request.path_layers[0],
+                                                 request.symmetry_bits } };
+  InputSnapshot snapshot;
   const std::string identity = layer_index >= config.scene_.ms_.size() ?
                                    "standalone configured crystal (not a scene allocation)" :
                                    "selected scene entry snapshot";
-  auto error = CaptureProductInput(scene, identity, selection, &snapshot);
+  auto error = CaptureInput(scene, identity, selection, &snapshot);
   if (!error.Ok()) {
     return error;
   }
@@ -109,9 +109,9 @@ Error AnalyzePathFeatureReport(const ConfigManager& config, const PathFeatureRep
     out->requested_path_layers = request.path_layers;
     return {};
   }
-  ILOG_INFO(GetGlobalLogger(), "[raypath report] product snapshot captured; resolving member/spectrum work");
-  ProductDiagnosticSampler sampler(snapshot, 1497, spectrum);
-  ProductInput representative;
+  ILOG_INFO(GetGlobalLogger(), "[raypath report] input snapshot captured; resolving member/spectrum work");
+  DiagnosticSampler sampler(snapshot, 1497, spectrum);
+  AssembledInput representative;
   error = sampler.Draw(0, &representative);
   if (!error.Ok()) {
     return error;
@@ -128,16 +128,16 @@ Error AnalyzePathFeatureReport(const ConfigManager& config, const PathFeatureRep
       samples *= 2;
     }
   }
-  ProductDiscoveryOptions options{ { samples, request.max_optical_evaluations,
-                                     request.deadline.value_or(begin + std::chrono::milliseconds(request.budget_ms)) },
-                                   request.bandwidth_rad,
-                                   request.location_resolution_rad,
-                                   request.max_field_evaluations,
-                                   8,
-                                   8,
-                                   4,
-                                   6 };
-  error = BuildProductPathReport(scene, identity, selection, spectrum, 1497, options, out);
+  DiscoveryOptions options{ { samples, request.max_optical_evaluations,
+                              request.deadline.value_or(begin + std::chrono::milliseconds(request.budget_ms)) },
+                            request.bandwidth_rad,
+                            request.location_resolution_rad,
+                            request.max_field_evaluations,
+                            8,
+                            8,
+                            4,
+                            6 };
+  error = BuildPathFeatureReport(scene, identity, selection, spectrum, 1497, options, out);
   if (!error.Ok()) {
     return error;
   }
@@ -153,12 +153,11 @@ Error AnalyzePathFeatureReport(const ConfigManager& config, const PathFeatureRep
   return {};
 }
 
-Error BuildProductPathReport(const SceneConfig& scene, const std::string& identity,
-                             const std::vector<ProductLayerSelection>& selection,
-                             const ProductSpectrumRequest& spectrum, uint32_t seed,
-                             const ProductDiscoveryOptions& options, PathFeatureReport* out) {
+Error BuildPathFeatureReport(const SceneConfig& scene, const std::string& identity,
+                             const std::vector<LayerSelection>& selection, const SpectrumRequest& spectrum,
+                             uint32_t seed, const DiscoveryOptions& options, PathFeatureReport* out) {
   if (!out) {
-    return { ErrorCode::kInvalidArgument, "null product report output" };
+    return { ErrorCode::kInvalidArgument, "null report output" };
   }
   *out = {};
   const auto begin = std::chrono::steady_clock::now();
@@ -167,7 +166,7 @@ Error BuildProductPathReport(const SceneConfig& scene, const std::string& identi
              "multi-crystal diagnostic chains are unsupported; select one complete single-crystal path" };
   }
   PathFeatureReport result;
-  auto error = CaptureProductInput(scene, identity, selection, &result.snapshot);
+  auto error = CaptureInput(scene, identity, selection, &result.snapshot);
   if (!error.Ok()) {
     return error;
   }
@@ -177,14 +176,14 @@ Error BuildProductPathReport(const SceneConfig& scene, const std::string& identi
       std::holds_alternative<DiscreteSpectrumSum>(spectrum) ? "scene discrete spectrum, exact sum" :
       std::holds_alternative<SpectrumQuadrature>(spectrum)  ? "scene continuous spectrum, declared quadrature" :
                                                               "explicit diagnostic wavelength";
-  const ProductDiagnosticSampler sampler(result.snapshot, seed, spectrum);
+  const DiagnosticSampler sampler(result.snapshot, seed, spectrum);
   error = sampler.Draw(0, &result.representative_input);
   if (!error.Ok()) {
     return error;
   }
   result.capture_seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - begin).count();
   ILOG_INFO(GetGlobalLogger(), "[raypath report] assembling measure and bounded local/source discovery");
-  error = DiscoverProductFeatures(sampler, options, &result.discovery);
+  error = DiscoverFeatures(sampler, options, &result.discovery);
   if (!error.Ok()) {
     return error;
   }
@@ -205,7 +204,7 @@ Error BuildProductPathReport(const SceneConfig& scene, const std::string& identi
         refinement_available &= base.nodes[j].probability_mass == (j == 0 || j == intervals ? .5 : 1.) / intervals;
       }
     }
-    ProductDiagnosticMeasure refined;
+    DiagnosticMeasure refined;
     if (refinement_available) {
       SpectrumQuadrature next;
       const size_t intervals = 2 * (base.nodes.size() - 1);
@@ -215,14 +214,14 @@ Error BuildProductPathReport(const SceneConfig& scene, const std::string& identi
         next.nodes.push_back({ std::min(380.f + 400.f * j / intervals, std::nextafter(780.f, 380.f)),
                                (j == 0 || j == intervals ? .5 : 1.0) / intervals });
       }
-      const ProductDiagnosticSampler verifier(result.snapshot, seed, next);
+      const DiagnosticSampler verifier(result.snapshot, seed, next);
       auto remaining = options.sampling;
       const auto used = result.discovery.measure.optical_evaluations + result.discovery.replicate_path_evaluations +
                         result.discovery.event_path_evaluations;
       remaining.max_optical_evaluations -= std::min(remaining.max_optical_evaluations, used);
       remaining.requested_samples = result.discovery.measure.completed_samples;
       if (remaining.requested_samples > 0) {
-        error = BuildProductDiagnosticMeasure(verifier, remaining, &refined);
+        error = BuildDiagnosticMeasure(verifier, remaining, &refined);
         refinement_available = error.Ok() && refined.completed_samples == remaining.requested_samples;
       } else {
         refinement_available = false;

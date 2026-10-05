@@ -1,5 +1,5 @@
-#ifndef RAYPATH_PRODUCT_INPUT_ASSEMBLY_H_
-#define RAYPATH_PRODUCT_INPUT_ASSEMBLY_H_
+#ifndef RAYPATH_DETAIL_INPUT_ASSEMBLY_H_
+#define RAYPATH_DETAIL_INPUT_ASSEMBLY_H_
 
 #include <array>
 #include <cstdint>
@@ -8,14 +8,14 @@
 #include <vector>
 
 #include "config/light_config.hpp"
-#include "core/product_sample_transform.hpp"
+#include "core/sample_transform.hpp"
 #include "core/shape_sample.hpp"
-#include "raypath/physical_member_scope.hpp"
+#include "raypath/detail/physical_member_scope.hpp"
 #include "raypath/single_path_analysis.hpp"
 
 namespace lumice::raypath {
 
-enum class SpectrumOrigin { kDiscreteSum, kProductSample, kQuadrature };
+enum class SpectrumOrigin { kDiscreteSum, kSampled, kQuadrature };
 struct SpectralRow {
   float wavelength_nm = 0;
   double source_weight = 0;
@@ -26,7 +26,7 @@ struct SpectralRow {
   SpectrumOrigin origin = SpectrumOrigin::kDiscreteSum;
   std::string provenance;
 };
-struct ProductWavelengthSample {
+struct WavelengthSample {
   float wavelength_nm;
   // Required for a discrete spectrum, absent for a continuous one. Weight is
   // read from that source slot, never supplied/charged again by the caller.
@@ -51,50 +51,49 @@ struct AssembledSpectrum {
   std::optional<SpectrumQuadrature> quadrature;
 };
 Error AssembleDiscreteSpectrum(const LightSourceConfig& light, AssembledSpectrum* out);
-Error AssembleSampledSpectrum(const LightSourceConfig& light, const ProductWavelengthSample& sample,
-                              AssembledSpectrum* out);
+Error AssembleSampledSpectrum(const LightSourceConfig& light, const WavelengthSample& sample, AssembledSpectrum* out);
 Error AssembleSpectrumQuadrature(const LightSourceConfig& light, const SpectrumQuadrature& quadrature,
                                  AssembledSpectrum* out);
 
-struct ProductSourceSample {
+struct SourceSample {
   SphericalCapDraw draw;
   std::string provenance;
 };
 struct AssembledSource {
   SunParam domain{};
   std::array<double, 3> center_direction{};
-  // Exact product float direction, kept separately from the normalized double
+  // Exact single-precision sample direction, kept separately from the normalized double
   // direction supplied to the analytic kernel (whose inputs must be unit).
-  std::array<float, 3> product_direction{};
+  std::array<float, 3> sampled_direction{};
   std::array<double, 3> incident_direction{};
-  ProductSourceSample sample;
+  SourceSample sample;
 };
-Error AssembleSource(const SunParam& sun, const ProductSourceSample& sample, AssembledSource* out);
+Error AssembleSource(const SunParam& sun, const SourceSample& sample, AssembledSource* out);
 
 // Capture while the selected list and scene still refer to the same identity.
 // Only selected entries are copied; callers may destroy/edit the source scene.
-struct ProductLayerSelection {
+struct LayerSelection {
   size_t layer_index;
   IdType crystal_id;
   std::vector<int> representative;
   uint8_t symmetry_bits;
 };
-struct ProductInputSnapshot {
+struct InputSnapshot {
   std::string scene_identity;
   LightSourceConfig light;
   std::vector<PhysicalMemberRequest> layers;
 };
-struct ProductSupportDescription {
+struct SupportDescription {
   int pose_coordinate_count = 0;
   int pose_support_dimension = 0;     // ZYZ quotient, not the optical map rank
   int shape_parameter_dimension = 0;  // not a rank of realized polyhedra
   int source_direction_dimension = 0;
   int spectral_dimension = 0;
 };
-ProductSupportDescription DescribeProductSupport(const ProductInputSnapshot& snapshot);
+SupportDescription DescribeSupport(const InputSnapshot& snapshot);
 
-Error CaptureProductInput(const SceneConfig& scene, const std::string& scene_identity,
-                          const std::vector<ProductLayerSelection>& selection, ProductInputSnapshot* out);
+Error CaptureInput(const SceneConfig& scene, const std::string& scene_identity,
+                   const std::vector<LayerSelection>& selection, InputSnapshot* out);
 
 struct FullSphereAxisDraw {
   float latitude_uniform;
@@ -108,24 +107,24 @@ struct DistributedAxisDraw {
   DistributionLatentDraw azimuth;
   DistributionLatentDraw roll;
 };
-using ProductAxisDraw = std::variant<FullSphereAxisDraw, DistributedAxisDraw>;
-struct ProductSampleIdentity {
+using AxisDraw = std::variant<FullSphereAxisDraw, DistributedAxisDraw>;
+struct SampleIdentity {
   std::string scene_identity;
   size_t layer_index = 0;
   IdType crystal_id = 0;
 };
-struct ProductLayerSample {
-  ProductSampleIdentity identity;
-  ProductAxisDraw axis;
+struct LayerSample {
+  SampleIdentity identity;
+  AxisDraw axis;
   ShapeLeaderValues shape;
   std::string provenance;
 };
 struct DiscreteSpectrumSum {};
-using ProductSpectrumRequest = std::variant<DiscreteSpectrumSum, ProductWavelengthSample, SpectrumQuadrature>;
+using SpectrumRequest = std::variant<DiscreteSpectrumSum, WavelengthSample, SpectrumQuadrature>;
 
-struct AssembledProductLayer {
+struct AssembledLayer {
   PhysicalMemberScope scope;
-  ProductLayerSample sample;
+  LayerSample sample;
   ShapeSample shape_sample;
   analytic::CrystalShape shape;
   analytic::Status geometry_status = analytic::Status::kInvalidConfig;
@@ -133,38 +132,39 @@ struct AssembledProductLayer {
   analytic::FacePolygonTable polygons;
   float surface_area = 0;
   std::array<float, 3> angles{};
-  std::array<float, 9> product_pose{};
+  std::array<float, 9> sample_pose{};
   std::array<double, 9> analytic_pose{};
 };
-struct ProductInput {
+struct AssembledInput {
   std::string scene_identity;
   AssembledSource source;
   AssembledSpectrum spectrum;
-  std::vector<AssembledProductLayer> layers;
+  std::vector<AssembledLayer> layers;
 };
-Error AssembleProductInput(const ProductInputSnapshot& snapshot, const std::vector<ProductLayerSample>& samples,
-                           const ProductSourceSample& source, const ProductSpectrumRequest& spectrum,
-                           ProductInput* out);
+Error AssembleInput(const InputSnapshot& snapshot, const std::vector<LayerSample>& samples, const SourceSample& source,
+                    const SpectrumRequest& spectrum, AssembledInput* out);
 
 // Uniform world spin is valid conditional on THIS realized incident ray only
 // for a declared Haar pose independent of shape/source. A cap does not invalidate
 // it, but replacing each cap ray by the solar center would change the measure.
 // The single-crystal restriction is intentional; it is not a chain reduction.
-std::optional<std::array<double, 3>> SingleCrystalIncidentOrbit(const ProductInput& input);
+std::optional<std::array<double, 3>> SingleCrystalIncidentOrbit(const AssembledInput& input);
 
-enum class ProductContributionStatus { kPositive, kZeroSupport, kInvalidOptics, kMissingFace, kRejectedShape };
-struct ProductLayerEvaluation {
-  ProductContributionStatus status = ProductContributionStatus::kRejectedShape;
+enum class ContributionStatus { kPositive, kZeroSupport, kInvalidOptics, kMissingFace, kRejectedShape };
+struct LayerEvaluation {
+  ContributionStatus status = ContributionStatus::kRejectedShape;
   std::array<double, 3> incident{};
   std::array<double, 3> outgoing{};
   std::vector<double> interface_transmittances;
   double entry_area = 0;
-  double entry_weight = 0;  // 2*A/S under the product's surface-area normalization
+  double entry_weight = 0;  // 2*A/S under the raypath surface-area normalization
+  // Math product (not a product-line name): all interface Fresnel transmittances multiplied
+  // together; assigned from analytic::PathOutputs::fresnel_transmission.
   double interface_product = 0;
 };
-struct ProductChainEvaluation {
+struct ChainEvaluation {
   uint64_t optical_evaluations = 0;
-  std::vector<ProductLayerEvaluation> layers;
+  std::vector<LayerEvaluation> layers;
   double optical_weight = 0;
   std::array<double, 3> xyz{};
 };
@@ -172,11 +172,11 @@ struct ProductChainEvaluation {
 // continuation probabilities and filters remain the caller's scene policy.
 // Every layer consumes the preceding layer's real outgoing direction and the
 // SAME spectral row. Spectrum is charged once, after the optical product.
-Error EvaluateProductChain(const ProductInput& input, const std::vector<size_t>& members, size_t spectral_row,
-                           ProductChainEvaluation* out);
+Error EvaluateChain(const AssembledInput& input, const std::vector<size_t>& members, size_t spectral_row,
+                    ChainEvaluation* out);
 // Start with one zero index per layer. Advances an odometer without allocating
 // a Cartesian product; false means exhausted (or a malformed cursor).
-bool NextProductMemberChain(const ProductInput& input, std::vector<size_t>* members);
+bool NextMemberChain(const AssembledInput& input, std::vector<size_t>* members);
 
 }  // namespace lumice::raypath
-#endif  // RAYPATH_PRODUCT_INPUT_ASSEMBLY_H_
+#endif  // RAYPATH_DETAIL_INPUT_ASSEMBLY_H_

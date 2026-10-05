@@ -573,12 +573,12 @@ Hessian细化相对差小于 `2.76e-4`，独立LI自身小于 `2.32e-5`；两臂
 ## 14. 产品输入装配的内部边界
 
 产品输入已有独立于发现算法的 C++ 消费路径：
-`CaptureProductInput` → `AssembleProductInput` → `EvaluateProductChain`
-（`src/raypath/product_input_assembly.*`）。这是一条**条件于显式样本和选中链**的
+`CaptureInput` → `AssembleInput` → `EvaluateChain`
+（`src/raypath/detail/input_assembly.*`）。这是一条**条件于显式样本和选中链**的
 内部边界，不是新公开 ABI，不修改已有 target、fiber、warm 或 feature report
 的请求和 JSON，也没有把旧固定 detector 升格为通用发现。
 
-- **采样值与抽样时钟分开。** `product_sample_transform` 持有 distribution、
+- **采样值与抽样时钟分开。** `sample_transform` 持有 distribution、
   latitude LUT/legacy fold、azimuth/roll 双 flip、full-sphere、finite-cap 的纯变换；
   生产 `RandomNumberGenerator` / `RandomSampler` / `SampleSphCapPoint` 在原分支
   取 draw 后调用它。诊断显式给 draw，不调用 RNG。`DistributionLatentDraw`
@@ -606,7 +606,7 @@ Hessian细化相对差小于 `2.76e-4`，独立LI自身小于 `2.32e-5`；两臂
   CMF 的整数 nm 舍入、SPD 和折射率均调用既有产品 owner，不复制表或插值规则。
 - **消费点按需组合。** 输出按逐层 actual 输入、逐层成员集合、源样本、谱行
   因子化持有数据；`NextProductMemberChain` 只推进一个索引向量，不分配全维
-  笛卡尔积。每次 `EvaluateProductChain` 只评一个具体链和一个谱行，后一层
+  笛卡尔积。每次 `EvaluateChain` 只评一个具体链和一个谱行，后一层
   使用前一层真实出射方向，同一波长贯穿，每层消费现有 finite-corridor 面积
   与产品 `2A/S` 归一及各接口乘积，最终只乘一次谱系数。
 
@@ -696,7 +696,7 @@ continuation，不是无洞、全分量或任意受限取向的连接完备性�
 `[0,.001,.01,.05,.25,.5,.75,.95,.99,.999,1]` 十段，各段GL2/GL4，配原64²
 周期角格；共20/40个纬度节点，质量和为1，不截尾、不按某条谱的支持删另一条谱。
 外层使用原序列的128/512嵌套前缀。纬度映射调用产品纯变换owner，不复刻LUT
-反演或flip；研究适配器尚未整体切换到`AssembleProductInput`，不是该完整边界
+反演或flip；研究适配器尚未整体切换到`AssembleInput`，不是该完整边界
 的新验收。LI仍用独立CDF、几何、光学、表面积及不对齐角格。
 
 这次验证覆盖整个上游前缀，不再只是两个条件切片。同前缀原单纬度与完整CDF
@@ -808,9 +808,9 @@ C++核校正与原数值位置一致。独立LI用另一组姿态序列及12/24�
 
 ### 18.1 联合样本的来源与分布 owner
 
-`ProductDiagnosticSampler` 用一张显式维表生成可随机访问的 scrambled Halton 前缀，
+`DiagnosticSampler` 用一张显式维表生成可随机访问的 scrambled Halton 前缀，
 再交给产品纯变换与 realization；分布的 latent kind、所需 uniform 坐标数及坐标到
-latent 的映射只由 `product_sample_transform` 持有。生产 RNG 同样读取其 kind，
+latent 的映射只由 `sample_transform` 持有。生产 RNG 同样读取其 kind，
 但保留原标准库正态生成器与零宽分布的抽样时钟，未被替换为 Halton/Box–Muller。
 
 一次 sampler 不可变地绑定 snapshot、seed **与谱请求**。measure 自持 const run；
@@ -854,7 +854,7 @@ uniform、1° Gaussian 倾角和 .53°太阳直径的四个二维 xy 截线交�
 
 ### 18.4 观察尺度位移不是采样误差（历史实施边界，后续见§19）
 
-`product_feature_discovery` 的内部目标自由试验已连接真实 measure、局部 field
+`feature_discovery` 的内部目标自由试验已连接真实 measure、局部 field
 校正、有限曲线段和显式 source candidate。非首 TIR 候选复用 native AD/原 clipper，
 逐内部 slot 校正，接受的迭代均有 `A*T > 0`，保留谱/source、原始逐接口数值与
 预算。当前 SO(3) 来源路径只在已证 Haar 域签适用，不外推有限取向支持。固定

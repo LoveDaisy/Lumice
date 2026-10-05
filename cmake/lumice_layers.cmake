@@ -44,8 +44,8 @@ set(LUMICE_LAYER_foundation_FILES
   core/lat_lut.hpp
   core/math.cpp
   core/math.hpp
-  core/product_sample_transform.cpp
-  core/product_sample_transform.hpp
+  core/sample_transform.cpp
+  core/sample_transform.hpp
   core/shape_sample.cpp
   core/shape_sample.hpp
   core/miller_wedge.cpp
@@ -240,14 +240,14 @@ set(LUMICE_LAYER_engine_FILES
 set(LUMICE_LAYER_raypath_FILES
   include/lumice_raypath.h
   raypath/path_feature_report.cpp
-  raypath/product_diagnostic_sampler.cpp
-  raypath/product_diagnostic_sampler.hpp
-  raypath/product_feature_discovery.cpp
-  raypath/product_feature_discovery.hpp
-  raypath/product_input_assembly.cpp
-  raypath/product_input_assembly.hpp
-  raypath/physical_member_scope.cpp
-  raypath/physical_member_scope.hpp
+  raypath/detail/diagnostic_sampler.cpp
+  raypath/detail/diagnostic_sampler.hpp
+  raypath/detail/feature_discovery.cpp
+  raypath/detail/feature_discovery.hpp
+  raypath/detail/input_assembly.cpp
+  raypath/detail/input_assembly.hpp
+  raypath/detail/physical_member_scope.cpp
+  raypath/detail/physical_member_scope.hpp
   raypath/path_feature_report.hpp
   raypath/path_feature_report_json.cpp
   raypath/path_feature_report_json.hpp

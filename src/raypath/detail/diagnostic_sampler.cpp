@@ -1,4 +1,4 @@
-#include "raypath/product_diagnostic_sampler.hpp"
+#include "raypath/detail/diagnostic_sampler.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -54,8 +54,7 @@ DistributionLatentDraw Latent(const Distribution& distribution, uint32_t seed, u
 
 }  // namespace
 
-ProductDiagnosticSampler::ProductDiagnosticSampler(ProductInputSnapshot snapshot, uint32_t seed,
-                                                   ProductSpectrumRequest spectrum)
+DiagnosticSampler::DiagnosticSampler(InputSnapshot snapshot, uint32_t seed, SpectrumRequest spectrum)
     : snapshot_(std::move(snapshot)), seed_(seed), spectrum_(std::move(spectrum)) {
   uint32_t offset = 0;
   const auto add = [&](const std::string& name, uint32_t width) {
@@ -86,14 +85,14 @@ ProductDiagnosticSampler::ProductDiagnosticSampler(ProductInputSnapshot snapshot
   }
 }
 
-Error ProductDiagnosticSampler::Draw(uint64_t sample_index, ProductInput* out) const {
+Error DiagnosticSampler::Draw(uint64_t sample_index, AssembledInput* out) const {
   if (!out) {
-    return { ErrorCode::kInvalidArgument, "null product sample output" };
+    return { ErrorCode::kInvalidArgument, "null assembled input output" };
   }
-  const ProductSourceSample source{ { Unit(seed_, sample_index, dimensions_[0].offset),
-                                      Unit(seed_, sample_index, dimensions_[1].offset) },
-                                    "diagnostic joint source" };
-  std::vector<ProductLayerSample> samples;
+  const SourceSample source{ { Unit(seed_, sample_index, dimensions_[0].offset),
+                               Unit(seed_, sample_index, dimensions_[1].offset) },
+                             "diagnostic joint source" };
+  std::vector<LayerSample> samples;
   size_t cursor = 2;
   for (size_t i = 0; i < snapshot_.layers.size(); ++i) {
     const auto& layer = snapshot_.layers[i];
@@ -101,7 +100,7 @@ Error ProductDiagnosticSampler::Draw(uint64_t sample_index, ProductInput* out) c
     const auto latitude = dimensions_[cursor++].offset;
     const auto azimuth = dimensions_[cursor++].offset;
     const auto roll = dimensions_[cursor++].offset;
-    ProductLayerSample sample;
+    LayerSample sample;
     sample.identity = { snapshot_.scene_identity, layer.layer_index, layer.crystal.id_ };
     sample.provenance = "joint counter " + std::to_string(sample_index);
     if (axis.IsFullSphereUniform()) {
@@ -130,11 +129,10 @@ Error ProductDiagnosticSampler::Draw(uint64_t sample_index, ProductInput* out) c
     }
     samples.push_back(std::move(sample));
   }
-  return AssembleProductInput(snapshot_, samples, source, spectrum_, out);
+  return AssembleInput(snapshot_, samples, source, spectrum_, out);
 }
 
-Error BuildProductDiagnosticMeasure(const ProductDiagnosticSampler& sampler, const ProductSamplingBudget& budget,
-                                    ProductDiagnosticMeasure* out) {
+Error BuildDiagnosticMeasure(const DiagnosticSampler& sampler, const SamplingBudget& budget, DiagnosticMeasure* out) {
   if (!out) {
     return { ErrorCode::kInvalidArgument, "null diagnostic measure output" };
   }
@@ -145,15 +143,15 @@ Error BuildProductDiagnosticMeasure(const ProductDiagnosticSampler& sampler, con
   if (budget.requested_samples == 0) {
     return { ErrorCode::kInvalidArgument, "positive diagnostic sample count required" };
   }
-  ProductDiagnosticMeasure result;
-  result.run = std::make_shared<const ProductDiagnosticSampler>(sampler);
+  DiagnosticMeasure result;
+  result.run = std::make_shared<const DiagnosticSampler>(sampler);
   for (uint64_t i = 0; i < budget.requested_samples; ++i) {
     if (std::chrono::steady_clock::now() >= budget.deadline ||
         result.optical_evaluations >= budget.max_optical_evaluations) {
       result.budget_exhausted = true;
       break;
     }
-    ProductInput input;
+    AssembledInput input;
     const auto error = sampler.Draw(i, &input);
     if (!error.Ok()) {
       return error;
@@ -168,8 +166,8 @@ Error BuildProductDiagnosticMeasure(const ProductDiagnosticSampler& sampler, con
           result.budget_exhausted = true;
           break;
         }
-        ProductChainEvaluation value;
-        const auto evaluation_error = EvaluateProductChain(input, { member }, spectral, &value);
+        ChainEvaluation value;
+        const auto evaluation_error = EvaluateChain(input, { member }, spectral, &value);
         result.optical_evaluations += value.optical_evaluations;
         if (!evaluation_error.Ok()) {
           return evaluation_error;
@@ -207,7 +205,7 @@ Error BuildProductDiagnosticMeasure(const ProductDiagnosticSampler& sampler, con
   return {};
 }
 
-Error ReplayDiagnosticSource(const ProductDiagnosticMeasure& measure, uint64_t source_token, ProductInput* out) {
+Error ReplayDiagnosticSource(const DiagnosticMeasure& measure, uint64_t source_token, AssembledInput* out) {
   if (!measure.run || source_token >= measure.sources.size()) {
     return { ErrorCode::kInvalidArgument, "invalid diagnostic source token or missing run" };
   }

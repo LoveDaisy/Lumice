@@ -7,7 +7,7 @@
 #include <vector>
 
 #include "config/config_manager.hpp"
-#include "raypath/product_feature_discovery.hpp"
+#include "raypath/detail/feature_discovery.hpp"
 #include "raypath/single_path_analysis.hpp"
 
 namespace lumice::raypath {
@@ -37,10 +37,10 @@ struct PathFeatureReportRequest {
 };
 
 struct PathFeatureReport {
-  ProductInputSnapshot snapshot;
-  ProductDiscoveryOptions options;
-  ProductInput representative_input;
-  ProductDiscoveryResult discovery;
+  InputSnapshot snapshot;
+  DiscoveryOptions options;
+  AssembledInput representative_input;
+  DiscoveryResult discovery;
   uint32_t seed = 0;
   bool no_related_signal = false;
   bool standalone_crystal = false;
@@ -55,10 +55,9 @@ struct PathFeatureReport {
   uint64_t spectral_field_evaluations = 0;
   double spectral_seconds = 0;
 };
-Error BuildProductPathReport(const SceneConfig& scene, const std::string& identity,
-                             const std::vector<ProductLayerSelection>& selection,
-                             const ProductSpectrumRequest& spectrum, uint32_t seed,
-                             const ProductDiscoveryOptions& options, PathFeatureReport* out);
+Error BuildPathFeatureReport(const SceneConfig& scene, const std::string& identity,
+                             const std::vector<LayerSelection>& selection, const SpectrumRequest& spectrum,
+                             uint32_t seed, const DiscoveryOptions& options, PathFeatureReport* out);
 Error AnalyzePathFeatureReport(const ConfigManager& config, const PathFeatureReportRequest& request,
                                PathFeatureReport* out);
 }  // namespace lumice::raypath
