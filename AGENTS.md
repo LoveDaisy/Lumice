@@ -77,6 +77,11 @@ before downloading into it).
 
 - `src/config/`: configuration parsing and simulation config data
 - `src/core/`: math, optics, simulator, filters, buffers, ray paths
+- `src/raypath/`: the raypath analysis module. Its surface to the engine is the three public
+  headers `path_feature_report.hpp` / `single_path_analysis.hpp` / `single_path_json.hpp` (the
+  bridge `src/server/c_api_raypath.cpp` compiles exactly these); everything under
+  `src/raypath/detail/` is internal implementation, includable only by the module itself and
+  its own tests (`doc/raypath-cli-output.md` §8).
 - `src/gui/`: GUI app, panels, preview, file IO, poller
 - `src/server/`: server-side render, consumer, stats, C API bridge
 - `src/util/`: logger, threading, queue, arguments, color data

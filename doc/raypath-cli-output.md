@@ -265,9 +265,14 @@ is `S_x`, e.g. `1-6-2` (its `focusing.family_pinned` label does not cover Parry 
 - Angles: degrees; zenith in [0, 180], azimuth and roll in (−180, 180]. At zenith 0 or 180 only
   azimuth ± roll is defined: roll is 0, azimuth carries the whole angle, `degenerate` is true.
 - Units: `_deg` degrees, `_rad` radians, `_nm` nanometres.
-- `null` = a number that is not defined (NaN).
+- `null` = a number that is not defined (NaN or an infinity — JSON cannot spell either).
 - Numbers are the shortest decimal that reads back as the same double, so `seed` round-trips
   bit-exactly; the two numeric `sun_grid` arrays are rounded to 9 significant digits first (size).
+
+These two encoding rules are consumer-visible contract, so they have exactly one implementation
+owner: `src/raypath/detail/json_values.hpp` (`Num` / `GridNum` / `Array`), included by both
+serializers — the single-path document and the section-7 report. Neither schema may hand-roll its
+own copy of the non-finite-to-`null` mapping or the sun-grid rounding again.
 
 ## 5. `--warm`
 
@@ -454,3 +459,39 @@ removed. Read the three evidence buckets and their scope instead. Weighting now 
 old meanings. Output still goes to stdout or atomically to `-o`; progress goes to stderr. Ctrl-C
 terminates the synchronous call without a completed JSON document and never replaces the output
 file with half a document. The GUI workspace is not added by this interface.
+
+
+## 8. Module boundary and surface
+
+The raypath module under `src/raypath/` exposes exactly three public headers to the engine:
+
+- `src/raypath/path_feature_report.hpp` — the feature-report entry point, narrowed to
+  `PathFeatureReportRequest` + its constants + `AnalyzePathFeatureReport(config, request,
+  product_version, std::string* json_out)`: the module runs the analysis, assembles the report and
+  serializes it internally, so the caller never compiles the report types.
+- `src/raypath/single_path_analysis.hpp` — `AnalyzeSinglePath` over the analytic kernel.
+- `src/raypath/single_path_json.hpp` — `ToJson` / `ParseWarmSeeds` (`kSunGridSignificantDigits`
+  included, as a published constant).
+
+The bridge (`src/server/c_api_raypath.cpp`) compiles exactly these three (plus its own
+server/config includes) — this minimal set *is* the module's surface to the engine, by
+construction rather than by convention: everything else under `src/raypath/` sits in `detail/`
+and may be included only by the module itself and its own tests (`test/unit-correctness/raypath/`,
+`test/composition-correctness/raypath/`, which deliberately reach into `detail/` as the module's
+own white-box oracle). `detail/path_feature_report_json.{hpp,cpp}` is internal on the same
+grounds: the bridge takes a JSON string now, and the only other consumer of the report types ever
+was that same composition test.
+
+The boundary is cheap to re-verify mechanically — the include closure of the three public
+headers must contain no `raypath/detail` file and no `analytic/diagnostic_batch`:
+
+```bash
+printf '#include "raypath/path_feature_report.hpp"
+#include "raypath/single_path_analysis.hpp"
+#include "raypath/single_path_json.hpp"
+' | g++ -H -fsyntax-only -x c++ - -std=c++17 -I src 2>&1 | grep -cE "analytic/diagnostic_batch|feature_discovery|raypath/detail"
+```
+
+`0` is the expected answer. This is the probe that pinned the boundary when the bridge surface
+was narrowed (its baseline counted 6 hits — four internal headers plus the analytic kernel
+surface — before the narrowing landed).
