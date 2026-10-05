@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1791174023647,
+  "lastUpdate": 1791174026150,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9524,50 +9524,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "22166140295c68e58e6375028394d4587a351c11",
-          "message": "Merge pull request #357 from LoveDaisy/feat/view-center-angular-dist-grid\n\nfeat(annotation): view_dist — circles of constant angular distance from the optical axis, config → core → C API → GUI",
-          "timestamp": "2026-09-13T12:02:01+08:00",
-          "tree_id": "6875aee1957344381ca66a902bb0dc2ba20f8f02",
-          "url": "https://github.com/LoveDaisy/ice_halo_sim/commit/22166140295c68e58e6375028394d4587a351c11"
-        },
-        "date": 1789273864943,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 83.5,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 99.6,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 94.6,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 88.2,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "682bf9aadbd77a61c2d7697ccd4b353bb70a06be",
           "message": "Merge pull request #358 from LoveDaisy/fix/equidistant-focal-length-factor-two\n\nfix(config): equidistant lens f→fov conversion was half the documented value",
           "timestamp": "2026-09-13T12:42:20+08:00",
@@ -13867,6 +13823,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 92.4,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "928b8accd21aa950eeb249c13ad4bd8b4028b1b9",
+          "message": "Merge pull request #468 from LoveDaisy/scrum/raypath-general-diagnostics-v2\n\nfeat(raypath): phase-1 raypath feature diagnostics (scrum-649)",
+          "timestamp": "2026-10-05T12:17:39+08:00",
+          "tree_id": "b9531b058ecf0cc3746ac4253f6cbb3fd2ee8930",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/928b8accd21aa950eeb249c13ad4bd8b4028b1b9"
+        },
+        "date": 1791174025668,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 94.2,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 100,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 96.7,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 91.2,
             "unit": "%"
           }
         ]
