@@ -5,6 +5,7 @@
 #include <cstddef>
 
 #include "core/crystal_param.hpp"
+#include "core/random.hpp"
 
 namespace lumice {
 

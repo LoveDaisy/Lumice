@@ -2,6 +2,7 @@
 #define CORE_RAYPATH_H_
 
 #include <algorithm>
+#include <cassert>
 #include <cmath>
 #include <cstring>
 #include <type_traits>

@@ -10,7 +10,7 @@ namespace lumice {
 // ---- Core math types ----
 
 inline bool operator==(const Distribution& a, const Distribution& b) {
-  // Field comparison lives in core/math.hpp next to Distribution itself, so the
+  // Field comparison lives in core/random.hpp next to Distribution itself, so the
   // sync-group normalization path shares it rather than keeping a second copy in
   // step. See DistributionValueEqual for the static_assert guard.
   return DistributionValueEqual(a, b);

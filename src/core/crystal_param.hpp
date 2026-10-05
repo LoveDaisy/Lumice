@@ -6,6 +6,7 @@
 
 #include "core/crystal_kind.hpp"
 #include "core/math.hpp"
+#include "core/random.hpp"
 
 // The crystal shape parameters and the rules on them that need no JSON: the shape-scalar index
 // space, the two param structs, the sync-group passes, and the P/B/D symmetry bits. They live in

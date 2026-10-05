@@ -1,4 +1,4 @@
-#include "raypath/product_input_assembly.hpp"
+#include "raypath/detail/input_assembly.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -71,8 +71,7 @@ Error AssembleDiscreteSpectrum(const LightSourceConfig& light, AssembledSpectrum
   return {};
 }
 
-Error AssembleSampledSpectrum(const LightSourceConfig& light, const ProductWavelengthSample& sample,
-                              AssembledSpectrum* out) {
+Error AssembleSampledSpectrum(const LightSourceConfig& light, const WavelengthSample& sample, AssembledSpectrum* out) {
   *out = {};
   double weight = 0;
   if (sample.provenance.empty())
@@ -88,13 +87,13 @@ Error AssembleSampledSpectrum(const LightSourceConfig& light, const ProductWavel
     // when the stratifier returned the largest float strictly below one.
     if (sample.discrete_slot || !std::isfinite(sample.wavelength_nm) || sample.wavelength_nm < 380.f ||
         sample.wavelength_nm > 780.f) {
-      return { ErrorCode::kInvalidArgument, "continuous product sample must lie in the float-rounded [380,780] band" };
+      return { ErrorCode::kInvalidArgument, "continuous sample must lie in the float-rounded [380,780] band" };
     }
     weight = GetIlluminantSpd(std::get<IlluminantType>(light.spectrum_), sample.wavelength_nm);
   }
   SpectralRow row;
   const auto error =
-      PhysicalSpectralRow(sample.wavelength_nm, weight, 1, SpectrumOrigin::kProductSample, sample.provenance, &row);
+      PhysicalSpectralRow(sample.wavelength_nm, weight, 1, SpectrumOrigin::kSampled, sample.provenance, &row);
   if (!error.Ok())
     return error;
   out->rows.push_back(std::move(row));
@@ -138,7 +137,7 @@ Error AssembleSpectrumQuadrature(const LightSourceConfig& light, const SpectrumQ
   return {};
 }
 
-Error AssembleSource(const SunParam& sun, const ProductSourceSample& sample, AssembledSource* out) {
+Error AssembleSource(const SunParam& sun, const SourceSample& sample, AssembledSource* out) {
   *out = {};
   if (!std::isfinite(sun.altitude_) || !std::isfinite(sun.azimuth_) || !std::isfinite(sun.diameter_) ||
       sun.diameter_ < 0 || sun.diameter_ > 360 || !UnitDraw(sample.draw.radial_uniform) ||
@@ -152,10 +151,10 @@ Error AssembleSource(const SunParam& sun, const ProductSourceSample& sample, Ass
   const auto cap =
       MakeSphericalCapTransform((sun.azimuth_ + 180.f) * math::kDegreeToRad, -sun.altitude_ * math::kDegreeToRad,
                                 (sun.diameter_ / 2.f) * math::kDegreeToRad);
-  result.product_direction = TransformSphericalCap(cap, sample.draw);
+  result.sampled_direction = TransformSphericalCap(cap, sample.draw);
   double norm = 0;
   for (int i = 0; i < 3; ++i) {
-    result.incident_direction[i] = result.product_direction[i];
+    result.incident_direction[i] = result.sampled_direction[i];
     norm += result.incident_direction[i] * result.incident_direction[i];
   }
   for (auto& v : result.incident_direction)
@@ -164,8 +163,8 @@ Error AssembleSource(const SunParam& sun, const ProductSourceSample& sample, Ass
   return {};
 }
 
-ProductSupportDescription DescribeProductSupport(const ProductInputSnapshot& snapshot) {
-  ProductSupportDescription result;
+SupportDescription DescribeSupport(const InputSnapshot& snapshot) {
+  SupportDescription result;
   result.source_direction_dimension = snapshot.light.param_.diameter_ > 0 ? 2 : 0;
   result.spectral_dimension = std::holds_alternative<IlluminantType>(snapshot.light.spectrum_) ? 1 : 0;
   const auto varying = [](const Distribution& distribution) {
@@ -192,12 +191,12 @@ ProductSupportDescription DescribeProductSupport(const ProductInputSnapshot& sna
   return result;
 }
 
-Error CaptureProductInput(const SceneConfig& scene, const std::string& scene_identity,
-                          const std::vector<ProductLayerSelection>& selection, ProductInputSnapshot* out) {
+Error CaptureInput(const SceneConfig& scene, const std::string& scene_identity,
+                   const std::vector<LayerSelection>& selection, InputSnapshot* out) {
   *out = {};
   if (scene_identity.empty() || selection.empty())
     return { ErrorCode::kInvalidArgument, "empty scene identity or chain" };
-  ProductInputSnapshot snapshot;
+  InputSnapshot snapshot;
   snapshot.scene_identity = scene_identity;
   snapshot.light = scene.light_source_;
   for (size_t i = 0; i < selection.size(); ++i) {
@@ -232,7 +231,7 @@ bool ValidLatent(const Distribution& dist, DistributionLatentDraw draw) {
          dist.type == DistributionType::kGaussianLegacy || UnitDraw(draw.value);
 }
 
-Error RealizeAxis(const AxisDistribution& axis, const ProductAxisDraw& draw, AssembledProductLayer* out) {
+Error RealizeAxis(const AxisDistribution& axis, const AxisDraw& draw, AssembledLayer* out) {
   if (axis.IsFullSphereUniform()) {
     const auto* full = std::get_if<FullSphereAxisDraw>(&draw);
     if (!full || !UnitDraw(full->latitude_uniform) || !UnitDraw(full->longitude_uniform) ||
@@ -272,11 +271,11 @@ Error RealizeAxis(const AxisDistribution& axis, const ProductAxisDraw& draw, Ass
   }
   const auto& a = out->angles;
   const auto rotation = BuildCrystalRotation(a[0], a[1], a[2]);
-  std::copy_n(rotation.GetMat(), 9, out->product_pose.begin());
+  std::copy_n(rotation.GetMat(), 9, out->sample_pose.begin());
   // Same sampled angles and Euler convention as BuildCrystalRotation. Evaluate
   // the elementary rotations in double rather than promoting a non-orthogonal
   // float matrix into an API with a 1e-10 rotation tolerance.
-  const auto factors = ProductRotationAngles(a[0], a[1], a[2]);
+  const auto factors = PoseEulerFactors(a[0], a[1], a[2]);
   const double inner[3]{ 0, 0, factors[0] };
   const double middle[3]{ 0, factors[1], 0 };
   const double outer[3]{ 0, 0, factors[2] };
@@ -289,7 +288,7 @@ Error RealizeAxis(const AxisDistribution& axis, const ProductAxisDraw& draw, Ass
   return {};
 }
 
-Error RealizeLayer(const PhysicalMemberRequest& request, const ProductLayerSample& sample, AssembledProductLayer* out) {
+Error RealizeLayer(const PhysicalMemberRequest& request, const LayerSample& sample, AssembledLayer* out) {
   if (sample.provenance.empty())
     return { ErrorCode::kInvalidArgument, "layer sample provenance is required" };
   auto error = ResolvePhysicalMemberScope(request, &out->scope);
@@ -338,14 +337,13 @@ Error RealizeLayer(const PhysicalMemberRequest& request, const ProductLayerSampl
 }
 }  // namespace
 
-Error AssembleProductInput(const ProductInputSnapshot& snapshot, const std::vector<ProductLayerSample>& samples,
-                           const ProductSourceSample& source, const ProductSpectrumRequest& spectrum,
-                           ProductInput* out) {
+Error AssembleInput(const InputSnapshot& snapshot, const std::vector<LayerSample>& samples, const SourceSample& source,
+                    const SpectrumRequest& spectrum, AssembledInput* out) {
   *out = {};
   if (snapshot.scene_identity.empty() || samples.empty() || samples.size() != snapshot.layers.size()) {
     return { ErrorCode::kInvalidArgument, "one explicit sample is required for each snapshot layer" };
   }
-  ProductInput result;
+  AssembledInput result;
   result.scene_identity = snapshot.scene_identity;
   auto error = AssembleSource(snapshot.light.param_, source, &result.source);
   if (!error.Ok())
@@ -355,7 +353,7 @@ Error AssembleProductInput(const ProductInputSnapshot& snapshot, const std::vect
         using T = std::decay_t<decltype(request)>;
         if constexpr (std::is_same_v<T, DiscreteSpectrumSum>)
           return AssembleDiscreteSpectrum(snapshot.light, &result.spectrum);
-        else if constexpr (std::is_same_v<T, ProductWavelengthSample>)
+        else if constexpr (std::is_same_v<T, WavelengthSample>)
           return AssembleSampledSpectrum(snapshot.light, request, &result.spectrum);
         else
           return AssembleSpectrumQuadrature(snapshot.light, request, &result.spectrum);
@@ -373,7 +371,7 @@ Error AssembleProductInput(const ProductInputSnapshot& snapshot, const std::vect
         identity.crystal_id != snapshot.layers[i].crystal.id_) {
       return { ErrorCode::kInvalidArgument, "sample does not belong to this scene/layer/crystal snapshot" };
     }
-    AssembledProductLayer layer;
+    AssembledLayer layer;
     error = RealizeLayer(snapshot.layers[i], samples[i], &layer);
     if (!error.Ok())
       return error;
@@ -383,15 +381,15 @@ Error AssembleProductInput(const ProductInputSnapshot& snapshot, const std::vect
   return {};
 }
 
-std::optional<std::array<double, 3>> SingleCrystalIncidentOrbit(const ProductInput& input) {
+std::optional<std::array<double, 3>> SingleCrystalIncidentOrbit(const AssembledInput& input) {
   if (input.layers.size() != 1 || !input.layers[0].scope.snapshot.crystal.axis_.IsFullSphereUniform()) {
     return std::nullopt;
   }
   return input.source.incident_direction;
 }
 
-Error EvaluateProductChain(const ProductInput& input, const std::vector<size_t>& members, size_t spectral_row,
-                           ProductChainEvaluation* out) {
+Error EvaluateChain(const AssembledInput& input, const std::vector<size_t>& members, size_t spectral_row,
+                    ChainEvaluation* out) {
   *out = {};
   if (members.empty() || members.size() != input.layers.size() || spectral_row >= input.spectrum.rows.size()) {
     return { ErrorCode::kInvalidArgument, "invalid concrete member/spectrum selection" };
@@ -403,11 +401,11 @@ Error EvaluateProductChain(const ProductInput& input, const std::vector<size_t>&
   const auto& spectrum = input.spectrum.rows[spectral_row];
   auto direction = input.source.incident_direction;
   double product = 1;
-  ProductChainEvaluation result;
+  ChainEvaluation result;
   for (size_t i = 0; i < members.size(); ++i) {
     const auto& layer = input.layers[i];
     const auto& faces = layer.scope.members[members[i]];
-    ProductLayerEvaluation evaluation;
+    LayerEvaluation evaluation;
     evaluation.incident = direction;
     if (layer.geometry_status != analytic::Status::kOk) {
       result.layers.push_back(std::move(evaluation));
@@ -417,7 +415,7 @@ Error EvaluateProductChain(const ProductInput& input, const std::vector<size_t>&
     std::vector<int> slots(faces.size());
     if (analytic::ResolveFaceSequence(layer.normals, faces.data(), static_cast<int>(faces.size()), slots.data()) !=
         analytic::Status::kOk) {
-      evaluation.status = ProductContributionStatus::kMissingFace;
+      evaluation.status = ContributionStatus::kMissingFace;
       result.layers.push_back(std::move(evaluation));
       *out = std::move(result);
       return {};
@@ -428,7 +426,7 @@ Error EvaluateProductChain(const ProductInput& input, const std::vector<size_t>&
     ++result.optical_evaluations;
     if (!analytic::EvaluatePath(layer.normals, slots.data(), static_cast<int>(slots.size()), spectrum.refractive_index,
                                 direction.data(), layer.analytic_pose.data(), &optics)) {
-      evaluation.status = ProductContributionStatus::kInvalidOptics;
+      evaluation.status = ContributionStatus::kInvalidOptics;
       result.layers.push_back(std::move(evaluation));
       *out = std::move(result);
       return {};
@@ -438,8 +436,7 @@ Error EvaluateProductChain(const ProductInput& input, const std::vector<size_t>&
     analytic::Corridor corridor(layer.normals, layer.polygons, slots.data(), static_cast<int>(slots.size()));
     evaluation.entry_area = corridor.Evaluate(segments.data(), spectrum.refractive_index).value;
     evaluation.entry_weight = lm_pcg::entry_weight(static_cast<float>(evaluation.entry_area), layer.surface_area);
-    evaluation.status =
-        evaluation.entry_weight > 0 ? ProductContributionStatus::kPositive : ProductContributionStatus::kZeroSupport;
+    evaluation.status = evaluation.entry_weight > 0 ? ContributionStatus::kPositive : ContributionStatus::kZeroSupport;
     product *= evaluation.entry_weight * evaluation.interface_product;
     direction = evaluation.outgoing;
     result.layers.push_back(std::move(evaluation));
@@ -453,7 +450,7 @@ Error EvaluateProductChain(const ProductInput& input, const std::vector<size_t>&
   return {};
 }
 
-bool NextProductMemberChain(const ProductInput& input, std::vector<size_t>* members) {
+bool NextMemberChain(const AssembledInput& input, std::vector<size_t>* members) {
   if (members->empty() || members->size() != input.layers.size())
     return false;
   for (size_t i = 0; i < members->size(); ++i) {

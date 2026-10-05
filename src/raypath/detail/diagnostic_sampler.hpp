@@ -1,5 +1,5 @@
-#ifndef LUMICE_RAYPATH_PRODUCT_DIAGNOSTIC_SAMPLER_HPP_
-#define LUMICE_RAYPATH_PRODUCT_DIAGNOSTIC_SAMPLER_HPP_
+#ifndef LUMICE_RAYPATH_DETAIL_DIAGNOSTIC_SAMPLER_HPP_
+#define LUMICE_RAYPATH_DETAIL_DIAGNOSTIC_SAMPLER_HPP_
 
 #include <chrono>
 #include <cstdint>
@@ -8,7 +8,7 @@
 #include <vector>
 
 #include "analytic/path_feature_discovery.hpp"
-#include "raypath/product_input_assembly.hpp"
+#include "raypath/detail/input_assembly.hpp"
 
 namespace lumice::raypath {
 
@@ -19,26 +19,25 @@ struct DiagnosticDrawDimension {
   uint32_t offset = 0;
   uint32_t width = 0;
 };
-class ProductDiagnosticSampler {
+class DiagnosticSampler {
  public:
-  ProductDiagnosticSampler(ProductInputSnapshot snapshot, uint32_t seed, ProductSpectrumRequest spectrum);
+  DiagnosticSampler(InputSnapshot snapshot, uint32_t seed, SpectrumRequest spectrum);
   const std::vector<DiagnosticDrawDimension>& Dimensions() const { return dimensions_; }
-  const ProductInputSnapshot& Snapshot() const { return snapshot_; }
+  const InputSnapshot& Snapshot() const { return snapshot_; }
   // Prefix replay: identical snapshot/seed/index produces identical draws,
   // regardless of call order or the eventual number of samples requested.
-  Error Draw(uint64_t sample_index, ProductInput* out) const;
-  Error Reassemble(const std::vector<ProductLayerSample>& samples, const ProductSourceSample& source,
-                   ProductInput* out) const {
-    return AssembleProductInput(snapshot_, samples, source, spectrum_, out);
+  Error Draw(uint64_t sample_index, AssembledInput* out) const;
+  Error Reassemble(const std::vector<LayerSample>& samples, const SourceSample& source, AssembledInput* out) const {
+    return AssembleInput(snapshot_, samples, source, spectrum_, out);
   }
-  ProductDiagnosticSampler IndependentReplicate() const {
-    return ProductDiagnosticSampler(snapshot_, seed_ ^ 0x9e3779b9u, spectrum_);
+  DiagnosticSampler IndependentReplicate() const {
+    return DiagnosticSampler(snapshot_, seed_ ^ 0x9e3779b9u, spectrum_);
   }
 
  private:
-  ProductInputSnapshot snapshot_;
+  InputSnapshot snapshot_;
   uint32_t seed_;
-  ProductSpectrumRequest spectrum_;
+  SpectrumRequest spectrum_;
   std::vector<DiagnosticDrawDimension> dimensions_;
   std::vector<ShapeDrawPlan> shape_plans_;
 };
@@ -48,18 +47,18 @@ struct DiagnosticSourceIdentity {
   size_t member_index = 0;
   size_t spectral_row = 0;
 };
-struct ProductDiagnosticMeasure {
+struct DiagnosticMeasure {
   std::vector<analytic::WeightedSkySample> components;
   // components[i].source_token indexes this table. Actual shapes/poses/source
   // are replayed through run, which owns the snapshot, seed AND spectrum request.
   // A source token is local to this measure, not a cross-run identifier.
   std::vector<DiagnosticSourceIdentity> sources;
-  std::shared_ptr<const ProductDiagnosticSampler> run;
+  std::shared_ptr<const DiagnosticSampler> run;
   uint64_t completed_samples = 0;
   uint64_t optical_evaluations = 0;
   bool budget_exhausted = false;
 };
-struct ProductSamplingBudget {
+struct SamplingBudget {
   uint64_t requested_samples = 0;
   uint64_t max_optical_evaluations = 0;
   std::chrono::steady_clock::time_point deadline = std::chrono::steady_clock::time_point::max();
@@ -67,9 +66,8 @@ struct ProductSamplingBudget {
 // One concrete single-crystal chain, all its physical members and spectral rows.
 // Only complete outer draws enter the measure. A partial member/spectrum group
 // is discarded on deadline, while its spent evaluations remain in the ledger.
-Error BuildProductDiagnosticMeasure(const ProductDiagnosticSampler& sampler, const ProductSamplingBudget& budget,
-                                    ProductDiagnosticMeasure* out);
-Error ReplayDiagnosticSource(const ProductDiagnosticMeasure& measure, uint64_t source_token, ProductInput* out);
+Error BuildDiagnosticMeasure(const DiagnosticSampler& sampler, const SamplingBudget& budget, DiagnosticMeasure* out);
+Error ReplayDiagnosticSource(const DiagnosticMeasure& measure, uint64_t source_token, AssembledInput* out);
 
 }  // namespace lumice::raypath
-#endif  // LUMICE_RAYPATH_PRODUCT_DIAGNOSTIC_SAMPLER_HPP_
+#endif  // LUMICE_RAYPATH_DETAIL_DIAGNOSTIC_SAMPLER_HPP_

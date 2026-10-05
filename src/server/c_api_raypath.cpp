@@ -15,7 +15,6 @@
 #include "config/config_manager.hpp"
 #include "include/lumice_raypath.h"
 #include "raypath/path_feature_report.hpp"
-#include "raypath/path_feature_report_json.hpp"
 #include "raypath/single_path_analysis.hpp"
 #include "raypath/single_path_json.hpp"
 #include "server/c_api_engine_internal.hpp"  // lumice::capi::ToCApiErrorCode
@@ -205,12 +204,12 @@ LUMICE_ErrorCode AnalyzeReport(const LUMICE_Scene* scene, const LUMICE_PathFeatu
     return lumice::capi::ToCApiErrorCode(err.code);
   }
   req.deadline = request_begin + std::chrono::milliseconds(req.budget_ms);
-  rp::PathFeatureReport report;
-  if (const rp::Error e = rp::AnalyzePathFeatureReport(config, req, &report); !e.Ok()) {
+  std::string report_json;
+  if (const rp::Error e = rp::AnalyzePathFeatureReport(config, req, LUMICE_GetVersionString(), &report_json); !e.Ok()) {
     return Refuse(e, err_buf, err_size);
   }
   auto handle = std::make_unique<LUMICE_PathFeatureReport_>();
-  handle->json = rp::PathFeatureReportToJson(report, LUMICE_GetVersionString());
+  handle->json = std::move(report_json);
   *out = handle.release();
   return LUMICE_OK;
 }

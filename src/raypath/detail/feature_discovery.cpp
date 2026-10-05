@@ -1,4 +1,4 @@
-#include "raypath/product_feature_discovery.hpp"
+#include "raypath/detail/feature_discovery.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -11,8 +11,8 @@ namespace {
 namespace a = analytic;
 using Clock = std::chrono::steady_clock;
 
-bool FixedInput(const ProductInputSnapshot& snapshot) {
-  const auto support = DescribeProductSupport(snapshot);
+bool FixedInput(const InputSnapshot& snapshot) {
+  const auto support = DescribeSupport(snapshot);
   return snapshot.layers.size() == 1 && support.pose_support_dimension == 0 && support.shape_parameter_dimension == 0 &&
          support.source_direction_dimension == 0;
 }
@@ -35,7 +35,7 @@ a::SphericalFieldQuery Query(const std::array<double, 3>& direction, double band
   return query;
 }
 
-std::vector<std::array<double, 3>> Seeds(const ProductDiagnosticMeasure& measure, int count) {
+std::vector<std::array<double, 3>> Seeds(const DiagnosticMeasure& measure, int count) {
   std::vector<std::array<double, 3>> seeds;
   std::array<double, 3> mean{};
   double total = 0;
@@ -128,11 +128,11 @@ double Contrast(const std::vector<a::WeightedSkySample>& measure, const a::Field
   return y > 0 ? 1 - std::max(side[0].xyz[1].value, side[1].xyz[1].value) / y : 0;
 }
 
-void FindSourceBoundaries(const ProductDiscoveryOptions& options, ProductDiscoveryResult* result) {
+void FindSourceBoundaries(const DiscoveryOptions& options, DiscoveryResult* result) {
   if (result->measure.sources.empty() || options.max_source_boundaries == 0) {
     return;
   }
-  ProductInput base;
+  AssembledInput base;
   if (!ReplayDiagnosticSource(result->measure, 0, &base).Ok()) {
     return;
   }
@@ -205,7 +205,7 @@ void FindSourceBoundaries(const ProductDiscoveryOptions& options, ProductDiscove
             TransformDistribution(plan[slot].distribution, { endpoint.second });
       }
     }
-    ProductInput input;
+    AssembledInput input;
     if (!result->measure.run->Reassemble({ sample }, source, &input).Ok()) {
       return;
     }
@@ -254,11 +254,10 @@ void FindSourceBoundaries(const ProductDiscoveryOptions& options, ProductDiscove
   }
 }
 
-void FindDeviationEdges(const ProductDiscoveryOptions& options, ProductDiscoveryResult* result,
-                        a::FieldWorkBudget* budget) {
+void FindDeviationEdges(const DiscoveryOptions& options, DiscoveryResult* result, a::FieldWorkBudget* budget) {
   const auto& measure = result->measure;
   int found = 0;
-  ProductInput input;
+  AssembledInput input;
   for (size_t index = 0; index < measure.sources.size() && index < 64 && found < options.max_deviation_candidates;
        ++index) {
     if (!ReplayDiagnosticSource(measure, index, &input).Ok() || !SingleCrystalIncidentOrbit(input)) {
@@ -387,12 +386,12 @@ void FindDeviationEdges(const ProductDiscoveryOptions& options, ProductDiscovery
   }
 }
 
-void FindEvents(const ProductDiscoveryOptions& options, ProductDiscoveryResult* result) {
+void FindEvents(const DiscoveryOptions& options, DiscoveryResult* result) {
   const auto& measure = result->measure;
   if (measure.components.empty()) {
     return;
   }
-  ProductInput input;
+  AssembledInput input;
   int found = 0;
   // One bounded source subset, all internal slots, no preferred hemisphere or
   // path. This chart is admissible only for the already-proved Haar measure.
@@ -444,8 +443,8 @@ void FindEvents(const ProductDiscoveryOptions& options, ProductDiscoveryResult* 
           result->budget_exhausted = true;
           break;
         }
-        ProductChainEvaluation value;
-        const auto paired_error = EvaluateProductChain(input, { source.member_index }, spectral, &value);
+        ChainEvaluation value;
+        const auto paired_error = EvaluateChain(input, { source.member_index }, spectral, &value);
         result->event_path_evaluations += value.optical_evaluations;
         if (!paired_error.Ok() || value.layers.size() != 1) {
           paired.complete = false;
@@ -453,7 +452,7 @@ void FindEvents(const ProductDiscoveryOptions& options, ProductDiscoveryResult* 
         }
         const auto& layer_value = value.layers[0];
         // Removing a weight never relaxes the shape, entry or optical domain.
-        if (layer_value.status != ProductContributionStatus::kPositive) {
+        if (layer_value.status != ContributionStatus::kPositive) {
           continue;
         }
         double without = layer_value.entry_weight;
@@ -525,10 +524,9 @@ void FindEvents(const ProductDiscoveryOptions& options, ProductDiscoveryResult* 
 
 }  // namespace
 
-Error DiscoverProductFeatures(const ProductDiagnosticSampler& sampler, const ProductDiscoveryOptions& options,
-                              ProductDiscoveryResult* out) {
+Error DiscoverFeatures(const DiagnosticSampler& sampler, const DiscoveryOptions& options, DiscoveryResult* out) {
   if (!out) {
-    return { ErrorCode::kInvalidArgument, "null product discovery output" };
+    return { ErrorCode::kInvalidArgument, "null discovery output" };
   }
   *out = {};
   if (!(options.bandwidth_rad > 0) || options.bandwidth_rad >= 1 || !(options.location_resolution_rad > 0) ||
@@ -541,13 +539,13 @@ Error DiscoverProductFeatures(const ProductDiagnosticSampler& sampler, const Pro
     return { ErrorCode::kInvalidArgument, "invalid explicit discovery scale or bounded search size" };
   }
   const auto begin = Clock::now();
-  ProductDiscoveryResult result;
+  DiscoveryResult result;
   auto sampling = options.sampling;
   const bool fixed = FixedInput(sampler.Snapshot());
   if (fixed) {
     sampling.requested_samples = 1;
   }
-  const auto error = BuildProductDiagnosticMeasure(sampler, sampling, &result.measure);
+  const auto error = BuildDiagnosticMeasure(sampler, sampling, &result.measure);
   if (!error.Ok()) {
     return error;
   }
@@ -575,14 +573,13 @@ Error DiscoverProductFeatures(const ProductDiagnosticSampler& sampler, const Pro
     *out = std::move(result);
     return {};
   }
-  ProductDiagnosticMeasure replicate;
+  DiagnosticMeasure replicate;
   auto replicate_budget = options.sampling;
   replicate_budget.requested_samples = result.measure.completed_samples;
   replicate_budget.max_optical_evaluations -=
       std::min(replicate_budget.max_optical_evaluations, result.measure.optical_evaluations);
   if (replicate_budget.requested_samples > 0) {
-    const auto replicate_error =
-        BuildProductDiagnosticMeasure(sampler.IndependentReplicate(), replicate_budget, &replicate);
+    const auto replicate_error = BuildDiagnosticMeasure(sampler.IndependentReplicate(), replicate_budget, &replicate);
     if (!replicate_error.Ok()) {
       return replicate_error;
     }

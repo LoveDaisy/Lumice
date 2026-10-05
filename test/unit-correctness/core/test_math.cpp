@@ -5,6 +5,7 @@
 
 #include "core/geo3d.hpp"
 #include "core/math.hpp"
+#include "core/random.hpp"
 
 extern std::string config_file_name;
 using namespace lumice;

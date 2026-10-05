@@ -1,11 +1,10 @@
 #include "raypath/single_path_json.hpp"
 
-#include <cmath>
-#include <cstdio>
-#include <cstdlib>
 #include <nlohmann/json.hpp>
 #include <string>
 #include <vector>
+
+#include "raypath/detail/json_values.hpp"
 
 namespace lumice::raypath {
 
@@ -18,36 +17,9 @@ constexpr const char* kKeyIncomplete = "incomplete";
 constexpr const char* kKeySeed = "seed";
 constexpr int kSeedLength = 9;
 
-// A double as a JSON value: NaN and the infinities (which JSON cannot spell) become null.
-nlohmann::ordered_json Num(double x) {
-  if (!std::isfinite(x)) {
-    return nullptr;
-  }
-  return x;
-}
-
-// Rounded to kSunGridSignificantDigits: the shortest decimal of the rounded double then has at most
-// that many digits, which is the whole point (size), and it reads back as the rounded value.
-nlohmann::ordered_json GridNum(double x) {
-  if (!std::isfinite(x)) {
-    return nullptr;
-  }
-  char buf[32];
-  std::snprintf(buf, sizeof(buf), "%.*g", kSunGridSignificantDigits, x);
-  return std::strtod(buf, nullptr);
-}
-
-nlohmann::ordered_json Array(const double* v, int n) {
-  nlohmann::ordered_json a = nlohmann::ordered_json::array();
-  for (int i = 0; i < n; i++) {
-    a.push_back(Num(v[i]));
-  }
-  return a;
-}
-
-nlohmann::ordered_json Array(const std::vector<double>& v) {
-  return Array(v.data(), static_cast<int>(v.size()));
-}
+using detail::Array;
+using detail::GridNum;
+using detail::Num;
 
 // The config's own spelling of a distribution; a plain number in the config is "fixed".
 const char* DistributionName(DistributionType type) {

@@ -3,8 +3,8 @@
 #include <algorithm>
 #include <nlohmann/json.hpp>
 
-#include "raypath/path_feature_report.hpp"
-#include "raypath/path_feature_report_json.hpp"
+#include "raypath/detail/path_feature_report.hpp"
+#include "raypath/detail/path_feature_report_json.hpp"
 
 namespace lumice::raypath {
 namespace {
@@ -36,7 +36,7 @@ TEST(PathFeatureReport, ActualSpectrumPhysicalScopeAndNoFormulaDispatcher) {
   request.sample_count = 8192;
   request.max_field_evaluations = 1;
   PathFeatureReport report;
-  ASSERT_TRUE(AnalyzePathFeatureReport(Scene(), request, &report).Ok());
+  ASSERT_TRUE(AssemblePathFeatureReport(Scene(), request, &report).Ok());
   const auto document = nlohmann::json::parse(PathFeatureReportToJson(report, "test"));
   EXPECT_EQ(document.at("schema_version"), 2);
   EXPECT_EQ(document.at("spectrum").size(), 3u);
@@ -62,7 +62,7 @@ TEST(PathFeatureReport, LargeExpandedRequestsStopAsPartialNotAsAnUpfrontAbsence)
   request.max_field_evaluations = 1;
   request.budget_ms = 100;
   PathFeatureReport report;
-  ASSERT_TRUE(AnalyzePathFeatureReport(Scene(), request, &report).Ok());
+  ASSERT_TRUE(AssemblePathFeatureReport(Scene(), request, &report).Ok());
   EXPECT_EQ(report.discovery.measure.optical_evaluations, 100u);
   EXPECT_TRUE(report.discovery.budget_exhausted);
   EXPECT_FALSE(report.discovery.unfinished.empty());
@@ -75,7 +75,7 @@ TEST(PathFeatureReport, BoundedSearchCompletionIsDistinctFromGlobalCoverage) {
   request.sample_count = 64;
   request.wavelengths_nm = { 550 };
   PathFeatureReport report;
-  ASSERT_TRUE(AnalyzePathFeatureReport(Scene(), request, &report).Ok());
+  ASSERT_TRUE(AssemblePathFeatureReport(Scene(), request, &report).Ok());
   EXPECT_EQ(report.discovery.measure.completed_samples, 64u);
   EXPECT_FALSE(report.discovery.budget_exhausted);
   EXPECT_TRUE(report.discovery.unfinished.empty());
@@ -94,33 +94,33 @@ TEST(PathFeatureReport, UnsupportedChainsDoNotBypassRequestValidation) {
   valid.path_layers = { { 3, 5 }, { 1, 3 } };
   auto config = Scene();
   PathFeatureReport report;
-  ASSERT_TRUE(AnalyzePathFeatureReport(config, valid, &report).Ok());
+  ASSERT_TRUE(AssemblePathFeatureReport(config, valid, &report).Ok());
   EXPECT_TRUE(report.unsupported_multicrystal);
   EXPECT_EQ(report.discovery.measure.optical_evaluations, 0u);
   EXPECT_TRUE(report.snapshot.layers.empty());
 
   auto request = valid;
   request.crystal_id = 99;
-  EXPECT_EQ(AnalyzePathFeatureReport(config, request, &report).code, ErrorCode::kUnknownCrystalId);
+  EXPECT_EQ(AssemblePathFeatureReport(config, request, &report).code, ErrorCode::kUnknownCrystalId);
   EXPECT_FALSE(report.unsupported_multicrystal);
   request = valid;
   request.scene_layer = 99;
-  EXPECT_EQ(AnalyzePathFeatureReport(config, request, &report).code, ErrorCode::kInvalidArgument);
+  EXPECT_EQ(AssemblePathFeatureReport(config, request, &report).code, ErrorCode::kInvalidArgument);
   request = valid;
   request.budget_ms = -1;
-  EXPECT_EQ(AnalyzePathFeatureReport(config, request, &report).code, ErrorCode::kInvalidArgument);
+  EXPECT_EQ(AssemblePathFeatureReport(config, request, &report).code, ErrorCode::kInvalidArgument);
   request = valid;
   request.symmetry_bits = 8;
-  EXPECT_EQ(AnalyzePathFeatureReport(config, request, &report).code, ErrorCode::kInvalidArgument);
+  EXPECT_EQ(AssemblePathFeatureReport(config, request, &report).code, ErrorCode::kInvalidArgument);
   request = valid;
   request.bandwidth_rad = 0;
-  EXPECT_EQ(AnalyzePathFeatureReport(config, request, &report).code, ErrorCode::kInvalidArgument);
+  EXPECT_EQ(AssemblePathFeatureReport(config, request, &report).code, ErrorCode::kInvalidArgument);
   request = valid;
   request.wavelengths_nm = { 550 };
   request.wavelength_weights = { -1 };
-  EXPECT_EQ(AnalyzePathFeatureReport(config, request, &report).code, ErrorCode::kWavelengthOutOfRange);
+  EXPECT_EQ(AssemblePathFeatureReport(config, request, &report).code, ErrorCode::kWavelengthOutOfRange);
   config.scene_.light_source_.spectrum_ = std::vector<WlParam>{ { 550, -1 } };
-  EXPECT_FALSE(AnalyzePathFeatureReport(config, valid, &report).Ok());
+  EXPECT_FALSE(AssemblePathFeatureReport(config, valid, &report).Ok());
 }
 
 TEST(PathFeatureReport, ExactZeroSpectralSignalIsNotAClaimBasedOnEmptySampling) {
@@ -131,11 +131,11 @@ TEST(PathFeatureReport, ExactZeroSpectralSignalIsNotAClaimBasedOnEmptySampling) 
   request.path_layers = { { 3, 5 } };
   request.sample_count = 64;
   PathFeatureReport report;
-  ASSERT_TRUE(AnalyzePathFeatureReport(config, request, &report).Ok());
+  ASSERT_TRUE(AssemblePathFeatureReport(config, request, &report).Ok());
   EXPECT_TRUE(report.no_related_signal);
   EXPECT_EQ(nlohmann::json::parse(PathFeatureReportToJson(report, "test"))["outcome"], "no_related_feature");
   request.path_layers = { { 3, 5 }, { 1, 3 } };
-  EXPECT_TRUE(AnalyzePathFeatureReport(config, request, &report).Ok());
+  EXPECT_TRUE(AssemblePathFeatureReport(config, request, &report).Ok());
   EXPECT_EQ(nlohmann::json::parse(PathFeatureReportToJson(report, "test"))["outcome"], "unsupported_multicrystal");
 }
 }  // namespace
