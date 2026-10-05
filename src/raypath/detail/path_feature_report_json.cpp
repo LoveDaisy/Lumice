@@ -1,4 +1,4 @@
-#include "raypath/path_feature_report_json.hpp"
+#include "raypath/detail/path_feature_report_json.hpp"
 
 #include <cmath>
 #include <nlohmann/json.hpp>

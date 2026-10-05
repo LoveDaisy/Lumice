@@ -5,11 +5,13 @@
 #include <limits>
 
 #include "analytic/so3.hpp"
+#include "raypath/detail/path_feature_report.hpp"
+#include "raypath/detail/path_feature_report_json.hpp"
 #include "util/logger.hpp"
 
 namespace lumice::raypath {
-Error AnalyzePathFeatureReport(const ConfigManager& config, const PathFeatureReportRequest& request,
-                               PathFeatureReport* out) {
+Error AssemblePathFeatureReport(const ConfigManager& config, const PathFeatureReportRequest& request,
+                                PathFeatureReport* out) {
   if (!out) {
     return { ErrorCode::kInvalidArgument, "null report output" };
   }
@@ -150,6 +152,19 @@ Error AnalyzePathFeatureReport(const ConfigManager& config, const PathFeatureRep
   if (diagnostic_spectrum) {
     out->spectrum_scope = "explicit diagnostic spectrum override; not the scene SPD";
   }
+  return {};
+}
+
+Error AnalyzePathFeatureReport(const ConfigManager& config, const PathFeatureReportRequest& request,
+                               const std::string& product_version, std::string* json_out) {
+  if (!json_out) {
+    return { ErrorCode::kInvalidArgument, "null report output" };
+  }
+  PathFeatureReport report;
+  if (const Error error = AssemblePathFeatureReport(config, request, &report); !error.Ok()) {
+    return error;
+  }
+  *json_out = PathFeatureReportToJson(report, product_version.c_str());
   return {};
 }
 

@@ -249,8 +249,9 @@ set(LUMICE_LAYER_raypath_FILES
   raypath/detail/physical_member_scope.cpp
   raypath/detail/physical_member_scope.hpp
   raypath/path_feature_report.hpp
-  raypath/path_feature_report_json.cpp
-  raypath/path_feature_report_json.hpp
+  raypath/detail/path_feature_report.hpp
+  raypath/detail/path_feature_report_json.cpp
+  raypath/detail/path_feature_report_json.hpp
   raypath/scene_to_analytic.cpp
   raypath/scene_to_analytic.hpp
   raypath/single_path_analysis.cpp

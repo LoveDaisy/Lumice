@@ -12,8 +12,8 @@
 #include "raypath/detail/diagnostic_sampler.hpp"
 #include "raypath/detail/feature_discovery.hpp"
 #include "raypath/detail/input_assembly.hpp"
-#include "raypath/path_feature_report.hpp"
-#include "raypath/path_feature_report_json.hpp"
+#include "raypath/detail/path_feature_report.hpp"
+#include "raypath/detail/path_feature_report_json.hpp"
 
 namespace {
 namespace ns = lumice;

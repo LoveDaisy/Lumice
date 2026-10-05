@@ -3,7 +3,7 @@
 
 #include <string>
 
-#include "raypath/path_feature_report.hpp"
+#include "raypath/detail/path_feature_report.hpp"
 
 namespace lumice::raypath {
 
