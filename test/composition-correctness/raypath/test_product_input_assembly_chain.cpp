@@ -506,7 +506,12 @@ TEST(ProductInputChain, AutomaticColourContoursHaveIndependentFixedObservationPo
         ADD_FAILURE();
         return;
       }
-      EXPECT_NEAR(feature->level, ref.at("level").get<double>(), 1e-8);
+      // The recorded level is compared across ISAs: arm64 FMA chains and x86-64
+      // separately-rounded arithmetic drift ~16 float ulp here (measured 4.7e-7,
+      // identical on Ubuntu x86_64 and Windows MSVC against this fixture). The
+      // assertion guards the automatic level choice, which moves by far more
+      // than 1e-6 when the selection logic actually changes.
+      EXPECT_NEAR(feature->level, ref.at("level").get<double>(), 1e-6);
       const auto q = ref.at("query").get<std::array<double, 3>>();
       const auto normal = ref.at("normal").get<std::array<double, 3>>();
       const double offset = ref.at("reference_offset_deg").get<double>() * kRad;
