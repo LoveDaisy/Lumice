@@ -637,8 +637,10 @@ typedef struct LUMICE_RaypathAnalysisRequest_ {
 
   // LUMICE_RAYPATH_ROI_CONE only. `cone_center` is a world direction in the convention every
   // direction in this API uses (the direction light TRAVELS: altitude = asin(-z), the zenith is
-  // z = -1 — LUMICE_UnprojectPixel below returns one). Need not be normalized; a zero vector is
-  // rejected. `cone_radius_rad` must be positive. `cone_ring_count` splits [0, radius] into
+  // z = -1 — LUMICE_UnprojectPixel below returns one; the full travel-vs-position semantics,
+  // including why the travel direction of sky point P selects P itself here, is
+  // doc/coordinate-convention.md "Direction-Vector Semantics"). Need not be normalized; a zero
+  // vector is rejected. `cone_radius_rad` must be positive. `cone_ring_count` splits [0, radius] into
   // that many equal angular-distance rings, 1..LUMICE_MAX_RAYPATH_CONE_RINGS. There is no
   // per-cone stop (removed in v4.34): the run's length is the ray budget below, or
   // LUMICE_StopServer, in every ROI mode.

@@ -178,6 +178,21 @@ TEST(SinglePathJson, EveryFieldOfADiscoveredResultHasItsKey) {
   EXPECT_FALSE(doc["meta"]["crystal"].contains("upper_wedge_deg"));
 }
 
+// The `directions` convention sentence states the light-travel semantics — that
+// target_direction is the propagation of light arriving FROM the target sky point and that a
+// direction's displayed point is the one it comes from. The wording is free-text (not a
+// parsing contract), but a drift back toward a "crystal -> observer" phrasing reads as if the
+// field pointed AT the sky point, which is exactly the misreading the sentence exists to
+// prevent; the substrings below are what pin it.
+TEST(SinglePathJson, DirectionsConventionStatesTheLightTravelSemantics) {
+  const nlohmann::json doc = Doc(Halo());
+  const std::string directions = doc["conventions"]["directions"];
+  EXPECT_NE(directions.find("light-travel convention"), std::string::npos);
+  EXPECT_NE(directions.find("arriving from the target sky point"), std::string::npos);
+  EXPECT_NE(directions.find("asin(-d.z)"), std::string::npos);
+  EXPECT_NE(directions.find("atan2(y, x) - 180"), std::string::npos);
+}
+
 TEST(SinglePathJson, AClosedComponentHasNoBackwardTrace) {
   const nlohmann::json doc = Doc(Halo());
   int closed = 0;

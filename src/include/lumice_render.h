@@ -225,7 +225,8 @@ LUMICE_API void LUMICE_ReleaseAnnotationAnchors(LUMICE_AnnotationAnchors* anchor
 // subsun".
 //
 // The convention is the one every direction in this family uses: the direction light TRAVELS, so
-// altitude = asin(-z) and the ZENITH IS z = -1. `sun_dir` need not be a unit vector — it is
+// altitude = asin(-z) and the ZENITH IS z = -1 (travel-vs-position semantics:
+// doc/coordinate-convention.md "Direction-Vector Semantics"). `sun_dir` need not be a unit vector — it is
 // normalized on entry, exactly like LUMICE_AnnotationRequest::reference_dir — and is ignored
 // outright by the two pole ids.
 //

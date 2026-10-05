@@ -328,9 +328,10 @@ Anchors ComputeAnchors(const Request& req);
 // mask_detail::VisibleByRange / FrontVisible — that one is for "does this pixel image sky" and
 // belongs to the inverse (LUMICE_UnprojectPixel), not to a marker.
 //
-// `dir` is in the convention every direction here is in (light TRAVELS, zenith is z = -1); it
-// need not be normalized, and a zero vector falls back to the zenith the way Request::reference_dir
-// does. A degenerate view (non-positive width / height) yields `valid == false`. Cost: one
+// `dir` is in the convention every direction here is in (light TRAVELS, zenith is z = -1; the
+// travel-vs-position semantics live in doc/coordinate-convention.md "Direction-Vector
+// Semantics"); it need not be normalized, and a zero vector falls back to the zenith the way
+// Request::reference_dir does. A degenerate view (non-positive width / height) yields `valid == false`. Cost: one
 // projection — no allocation, no walk — so it is safe to call per frame, per marker.
 CanvasPoint ProjectDirectionOnView(const ViewSnapshot& view, const float dir[3]);
 

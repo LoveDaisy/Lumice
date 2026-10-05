@@ -584,3 +584,65 @@ shared by every pixel, which is what a convention mismatch is. A projection erro
 that relocated content without softening it (a rotation, a mirrored disc) keeps
 the checkerboard sharp and passes here; those are covered by the `lens_proj`
 reference images and `test_visible_mask_gui_parity.cpp`.
+
+## 12. Direction-Vector Semantics (Travel vs Position)
+
+Sections §2–§3 fix the world frame for **position-like** quantities. This section is the
+single authority for **direction vectors** — the unit 3-vectors that flow through the C API
+(`cone_center`, `incident_direction`, `target_direction`, `outgoing_direction`,
+`LUMICE_UnprojectPixel`'s result), and for how they relate to the sky-point labels users
+write in configs and on the CLI (`--center`, `--target`, the GUI pick readout).
+
+**Two kinds of unit vector, one frame.** Both live in the §2 world frame (+z the zenith,
+azimuth per §3); they differ only by a negation:
+
+- the **position** of a sky point `(alt, az)` — the vector pointing AT it:
+  `pos = (cos alt · cos az, cos alt · sin az, +sin alt)`;
+- the **travel direction** of light arriving FROM that point — the propagation an outgoing
+  ray carries when it is displayed there: `AltAzToDir(alt, az) = −pos =
+  (−cos alt · cos az, −cos alt · sin az, −sin alt)`.
+
+This reconciles the two statements that read as a contradiction before this section existed:
+"the zenith is z = −1" (`lumice_engine.h`'s direction contract) and "+z is the zenith" (§2).
+The first speaks about travel directions — light arriving from the zenith travels straight
+DOWN, `z = −1`; the second about position vectors. Same frame, two vector kinds, one
+negation apart. Concretely: `LUMICE_UnprojectPixel` returns travel directions; a render's
+`ProjectExitToPixel` consumes a ray's outgoing propagation `w` and lands it on the pixel whose
+travel direction is `−w`.
+
+**The display rule.** A ray that exits with propagation `w` is displayed at (and its energy
+accumulates at) the sky point it comes from: `position(display) = −w`, i.e. the label
+`DirToAltAz(w)` (`alt = asin(−z)`, `az = atan2(y, x) − 180` — the `−180` here only undoes the
+negation between travel and position; it is a different −180° from §8's crystal-chain offset).
+A halo ray deviated by `δ` from the sun's incoming direction therefore displays at label
+distance `δ` from the sun's label — the user-visible geometry every oracle in the tests is
+written against.
+
+**What fills what.** `src/util/sky_direction.hpp` (`AltAzToDir` / `DirToAltAz`) is the one
+implementation of the label ↔ travel-direction conversion. The fill rule for every
+light-travel-convention consumer:
+
+| field | correct fill | a negated fill would query |
+|---|---|---|
+| `LUMICE_RaypathAnalysisRequest.cone_center` (CLI `--center`, GUI Point mode) | `AltAzToDir(P)` | P's antipode |
+| single-path `target_direction` (CLI `raypath --target`) | `AltAzToDir(P)` | P's antipode |
+| `incident_direction` (`SunIncidentDirection`) | `AltAzToDir(sun)` | a source at the antisolar point |
+
+Why the cone fill is the negated position and still selects P itself:
+`ConeMembership` dots the centre against outgoing propagations, and a ray displayed at P
+propagates along `AltAzToDir(P)` — so `dot(AltAzToDir(P), w) = cos(angle(P, display(w)))`.
+The same identity makes `AltAzToDir(P)` the correct fiber target: the kernel seeks exits
+whose propagation equals the vector handed in, and those are exactly the exits displayed at
+P. The absolute-position tests that pin this (`test_cone_absolute_sky_position_at_non_zero_altitude`,
+`test_cone_azimuth_is_not_mirrored_on_a_fixed_pose`,
+`test_target_absolute_sky_position_at_non_zero_altitude`) use the 22° halo and hand geometry
+as oracles, precisely because a self-consistency check passes under every one of these
+conventions — including the wrong ones.
+
+**External tools passing position vectors.** A consumer whose own API speaks in position
+vectors (Lumice Integral's `sun_direction(alt, az)` is `pos`, not `−pos`) must negate before
+filling an engine direction field, and must not read an engine travel direction as a bearing
+without adding the 180° back. Most confusion to date has come from comparing a LI azimuth
+(position bearing, LI's kernel targets are positions) with an engine CLI label (also a
+position bearing) while forgetting that the two kernels' target FIELDS sit on opposite sides
+of the travel/position negation: same labels, different vector kinds handed to the kernel.

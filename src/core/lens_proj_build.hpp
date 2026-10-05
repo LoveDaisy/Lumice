@@ -438,7 +438,8 @@ inline MaskDir RectangularPixelToWorld(const lm_proj::ProjParams& p, const Rotat
 //
 // SYNC:visible-hemisphere-predicate — the GUI preview states the same rule a second time, in
 // GLSL, because the language boundary makes sharing a function body impossible: preview_renderer.cpp's
-// fragment shader computes `lat = asin(-world_dir.z)` and discards on `u_visible == 0 && lat < 0`
+// fragment shader computes `lat = asin(-world_dir.z)` (the light-travel reading of world_dir —
+// doc/coordinate-convention.md "Direction-Vector Semantics") and discards on `u_visible == 0 && lat < 0`
 // / `u_visible == 1 && lat > 0`. The two are equivalent rather than merely similar
 // (lat < 0 <=> -z < 0 <=> z > 0, which is this function's `kUpper && wz > 0`), and the
 // equivalence is not left to that derivation: test_visible_mask_gui_parity.cpp compares the two

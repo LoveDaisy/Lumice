@@ -95,7 +95,7 @@ not know. `schema_version` is bumped only when a field changes meaning or is rem
 | `faces` | The analysed face sequence |
 | `sun.altitude_deg`, `sun.azimuth_deg`, `sun.diameter_deg` | From the config; the diameter is recorded, not used (the sun is a point here) |
 | `sun.incident_direction` | World propagation direction sun → crystal |
-| `target.altitude_deg`, `target.azimuth_deg`, `target.direction`, `target.deviation_deg` | The sky point; `direction` is crystal → observer; `deviation_deg` is the sun–target angle |
+| `target.altitude_deg`, `target.azimuth_deg`, `target.direction`, `target.deviation_deg` | The sky point; `direction` is the light-travel direction arriving from it (§4); `deviation_deg` is the sun–target angle |
 | `wavelength.nm`, `wavelength.source` (`user` / `config` / `default`), `wavelength.refractive_index` | |
 | `discovery_settings.sample_count`, `band_half_width_rad`, `cluster_radius_rad`, `distance_threshold_rad`, `warm_seed_count` | The search as run |
 
@@ -120,7 +120,7 @@ Each point:
 | `sun_in_crystal` | Unit 3-vector: where the sun sits in the crystal frame. **This is the point to plot on the sun-direction sphere**: the component is a curve there, lying on the level set `sun_grid.deviation_rad == meta.target.deviation_deg` (in radians) |
 | `residual_norm` | The continuation's residual at this point |
 | `valid` | The path's direction-level validity at this pose |
-| `outgoing_direction` | World, crystal → observer (zeros when not valid) |
+| `outgoing_direction` | World, the exit propagation — displayed at the sky point it comes from (§4; zeros when not valid) |
 | `segment_directions` | `(len(faces) + 1) × 3` numbers, body frame: incident, internal legs, outgoing |
 | `interface_transmittances` | One per face: T at entry and exit, R at internal faces |
 | `total_transmission` | Their product. Not a relative intensity on its own |
@@ -259,8 +259,11 @@ is `S_x`, e.g. `1-6-2` (its `focusing.family_pinned` label does not cover Parry 
 
 - Frames: world `+z` is the zenith, azimuth counter-clockwise from `+x` seen from `+z`; body is the
   crystal frame, `+z` its c-axis (`doc/coordinate-convention.md`).
-- Directions are propagation directions. The sky point a direction `d` comes from sits at altitude
-  `asin(-d.z)`.
+- Directions follow the light-travel convention (`doc/coordinate-convention.md`, "Direction-Vector
+  Semantics"): `incident_direction` propagates sun → crystal; `target_direction` is the propagation of
+  light arriving from the target sky point (the search seeks exits displayed there); `outgoing_direction`
+  is the exit propagation, displayed at the sky point it comes from. For any such `d` that point sits at
+  altitude `asin(-d.z)`, azimuth `atan2(y, x) − 180`.
 - Pose: `R = Rz(azimuth − 180) · Ry(−zenith) · Rz(roll)`, body → world, written row-major.
 - Angles: degrees; zenith in [0, 180], azimuth and roll in (−180, 180]. At zenith 0 or 180 only
   azimuth ± roll is defined: roll is 0, azimuth carries the whole angle, `degenerate` is true.
