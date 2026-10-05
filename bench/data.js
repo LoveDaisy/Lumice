@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1791235736078,
+  "lastUpdate": 1791235739466,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9524,50 +9524,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "682bf9aadbd77a61c2d7697ccd4b353bb70a06be",
-          "message": "Merge pull request #358 from LoveDaisy/fix/equidistant-focal-length-factor-two\n\nfix(config): equidistant lens f→fov conversion was half the documented value",
-          "timestamp": "2026-09-13T12:42:20+08:00",
-          "tree_id": "ad66fbc16fa5d96511d2e7667a3348c6c69b86d5",
-          "url": "https://github.com/LoveDaisy/ice_halo_sim/commit/682bf9aadbd77a61c2d7697ccd4b353bb70a06be"
-        },
-        "date": 1789275331756,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 79.8,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 99.9,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 94.5,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 87.8,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "b10d1bbc134afb64423fa842b7740de5a59934f2",
           "message": "Merge pull request #359 from LoveDaisy/feat/analysis-panel-polish\n\nfeat(gui): raypath analysis panel polish — first-picture gate, draw layer, geometry, thousands grouping, Export CSV",
           "timestamp": "2026-09-13T14:55:21+08:00",
@@ -13867,6 +13823,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 91.2,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "6abcd36409158fd01a12b110cb2c89ba688dc8a1",
+          "message": "Merge pull request #470 from LoveDaisy/fix/sky-direction-convention-mismatch\n\nfix(sky-direction): resolve convention-mismatch investigation — call sites proven correct, defense lines landed",
+          "timestamp": "2026-10-06T05:26:14+08:00",
+          "tree_id": "bc8d78bd7c6d3609d7eccaeeaf39dcb4e38e96f7",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/6abcd36409158fd01a12b110cb2c89ba688dc8a1"
+        },
+        "date": 1791235738621,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 93.2,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 100,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 94.9,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 94.9,
             "unit": "%"
           }
         ]
