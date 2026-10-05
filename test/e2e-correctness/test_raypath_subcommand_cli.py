@@ -27,6 +27,7 @@ not re-asserted here beyond what the CLI adds.
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 
 import pytest
@@ -137,6 +138,38 @@ def test_a_target_beyond_the_paths_deviation_range_is_out_of_reach():
     reach = doc["reach"]
     assert reach["target_in_range"] is False
     assert reach["target_deviation_rad"] > reach["deviation_max_rad"] + reach["tolerance_rad"]
+
+
+def test_target_absolute_sky_position_at_non_zero_altitude():
+    """The absolute direction convention of `--target`, through the label pair a wrong fill
+    would swap: (43, 0) — the 22° ring's bright edge straight above the sun, label distance
+    23° from (20, 0), inside 3-5's deviation support [~21.9°, ~50.1°] — versus its antipode
+    (-43, 180), label distance 157°, beyond every deviation the path can produce. The
+    oracle is independent halo physics plus hand geometry (the great-circle distance), not
+    self-consistency: a `target_direction` filled with the negation of the correct vector
+    queries the antipode's deviation (180 - 23 = 157°), which turns the discovered case
+    into the empty one and this test red. Note what this pair can and cannot see: fiber
+    existence depends on the deviation only, so an azimuth-mirrored fill (same deviation)
+    is invisible here and is pinned on the cone side instead
+    (test_raypath_analysis_cli.py::test_cone_azimuth_is_not_mirrored_on_a_fixed_pose)."""
+    discovered = _raypath("--crystal", "1", "--path", "3-5", "--target", "43,0",
+                          "--events", "50k", "--grid", "0")
+    assert discovered.returncode == 0, discovered.stderr
+    doc = json.loads(discovered.stdout)
+    assert doc["outcome"] == "discovered"
+    assert doc["reach"]["target_in_range"] is True
+    assert doc["components"], "a 3-5 target on the 22° ring must find its fiber"
+    # Hand-computed great-circle distance between (20, 0) and (43, 0): 23 degrees.
+    assert math.isclose(doc["reach"]["target_deviation_rad"], math.radians(23.0), abs_tol=1e-9)
+
+    flipped = _raypath("--crystal", "1", "--path", "3-5", "--target", "-43,180",
+                       "--events", "50k", "--grid", "0")
+    assert flipped.returncode == 0, flipped.stderr
+    doc_fl = json.loads(flipped.stdout)
+    assert doc_fl["outcome"] == "discovered"
+    assert doc_fl["reach"]["target_in_range"] is False
+    assert doc_fl["components"] == []
+    assert math.isclose(doc_fl["reach"]["target_deviation_rad"], math.radians(157.0), abs_tol=1e-9)
 
 
 def test_rank_zero_path_is_a_point_mass():

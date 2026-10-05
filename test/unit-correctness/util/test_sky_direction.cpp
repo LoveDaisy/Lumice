@@ -85,3 +85,71 @@ TEST(SkyDirection, AltAzRoundTripsThroughDir) {
     }
   }
 }
+
+// AltAzToDir is the negation of the sky point's POSITION vector (world frame: +z the zenith,
+// azimuth counter-clockwise from +x, the label azimuth equal to the position bearing). This is
+// the identity that separates "the direction light travels from the point" from "the direction
+// that points at the point" — conflating the two is how a cone centre or a fiber target gets
+// silently filled with the antipode of the sky point the user named.
+TEST(SkyDirection, TravelDirectionIsTheNegatedPositionVector) {
+  const float alts[] = { -80.0f, -43.0f, -5.0f, 0.0f, 20.0f, 45.0f, 79.0f };
+  const float azs[] = { -175.0f, -120.0f, -33.0f, 0.0f, 47.0f, 135.0f, 178.0f };
+  const float deg2rad = lumice::kDeg2Rad;
+  for (const float alt : alts) {
+    for (const float az : azs) {
+      float travel[3] = { 0.0f, 0.0f, 0.0f };
+      lumice::AltAzToDir(alt, az, travel);
+      const float position[3] = { std::cos(alt * deg2rad) * std::cos(az * deg2rad),
+                                  std::cos(alt * deg2rad) * std::sin(az * deg2rad), std::sin(alt * deg2rad) };
+      EXPECT_NEAR(travel[0], -position[0], kTol) << "alt " << alt << " az " << az;
+      EXPECT_NEAR(travel[1], -position[1], kTol) << "alt " << alt << " az " << az;
+      EXPECT_NEAR(travel[2], -position[2], kTol) << "alt " << alt << " az " << az;
+    }
+  }
+}
+
+// The display rule that makes the light-travel convention the right fill for cone centres and
+// fiber targets: a ray whose PROPAGATION is `w` is displayed at the sky point it comes from,
+// i.e. at the label DirToAltAz(w) = the label of position(-w). Checking it through the helper
+// pair: the propagation of light arriving from P reads back as P, and its negation — a vector
+// POINTING at P, what a careless "toward the point" fill would produce — reads back as P's
+// antipode.
+TEST(SkyDirection, OutgoingPropagationDisplaysAtItsComesFromLabel) {
+  const float alts[] = { -70.0f, -24.0f, 0.0f, 18.0f, 52.0f, 86.0f };
+  const float azs[] = { -160.0f, -95.0f, -8.0f, 0.0f, 61.0f, 148.0f };
+  for (const float alt : alts) {
+    for (const float az : azs) {
+      float arriving[3] = { 0.0f, 0.0f, 0.0f };
+      lumice::AltAzToDir(alt, az, arriving);
+      float label_alt = 0.0f;
+      float label_az = 0.0f;
+      lumice::DirToAltAz(arriving, &label_alt, &label_az);
+      EXPECT_NEAR(label_alt, alt, 1e-3f) << "alt " << alt << " az " << az;
+      if (std::fabs(alt) < 89.0f) {
+        EXPECT_NEAR(label_az, az, 1e-3f) << "alt " << alt << " az " << az;
+      }
+      // The negation — a vector heading TOWARD the point — is what an outgoing ray's
+      // propagation looks like when it is displayed at that point, and it must NOT read
+      // back as the point itself.
+      const float toward[3] = { -arriving[0], -arriving[1], -arriving[2] };
+      float flipped_alt = 0.0f;
+      float flipped_az = 0.0f;
+      lumice::DirToAltAz(toward, &flipped_alt, &flipped_az);
+      EXPECT_NEAR(flipped_alt, -alt, 1e-3f) << "alt " << alt << " az " << az;
+      if (std::fabs(alt) < 80.0f) {
+        // Azimuths compare in [0, 360): the wrap boundary sits between -180 and 180, and
+        // a point exactly on it reads back from either side.
+        auto wrap360 = [](float a) {
+          while (a < 0.0f) {
+            a += 360.0f;
+          }
+          while (a >= 360.0f) {
+            a -= 360.0f;
+          }
+          return a;
+        };
+        EXPECT_NEAR(wrap360(flipped_az), wrap360(az + 180.0f), 1e-3f) << "alt " << alt << " az " << az;
+      }
+    }
+  }
+}
