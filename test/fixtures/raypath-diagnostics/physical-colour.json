@@ -1,0 +1,218 @@
+{
+  "queries": [
+    [
+      0.8607560349537933,
+      0.36609718226674587,
+      0.35365505994821184
+    ],
+    [
+      0.8719266901400358,
+      0.36990156683251085,
+      0.3208062933863605
+    ],
+    [
+      0.8572738140210341,
+      0.37277711273421904,
+      0.3551321331777358
+    ],
+    [
+      0.8684678984971963,
+      0.3766757870911527,
+      0.322302436694364
+    ]
+  ],
+  "normals": [
+    [
+      0.38635555168106417,
+      -0.9222384632976582,
+      0.014338915565497153
+    ],
+    [
+      0.3807150214671734,
+      -0.9241774307450618,
+      0.030856910582659904
+    ],
+    [
+      0.39364708123725145,
+      -0.9191462165614599,
+      0.014567361262312624
+    ],
+    [
+      0.38787233944705973,
+      -0.9211770282465709,
+      0.031431368450662536
+    ]
+  ],
+  "axes": [
+    0,
+    0,
+    1,
+    1
+  ],
+  "sha256": "b1f855985acfeb61ee99356f8c71635a7eb8c7c106cc3b53ebe31649ec4eeb1c",
+  "independent_reference": [
+    {
+      "power": 12,
+      "shape_nodes": 12,
+      "optical_evaluations": 147456,
+      "positions": [
+        {
+          "axis": "x",
+          "offset_deg": -0.019030403874453438,
+          "native_offset_deg": -6.284344240292612e-10,
+          "bracket_signs": [
+            -0.038519282174073466,
+            0.04082655945811697
+          ]
+        },
+        {
+          "axis": "x",
+          "offset_deg": -0.02880503691378342,
+          "native_offset_deg": -6.173203061240454e-10,
+          "bracket_signs": [
+            -0.03797236626538869,
+            0.04093297571957916
+          ]
+        },
+        {
+          "axis": "y",
+          "offset_deg": -0.018937504691093367,
+          "native_offset_deg": -9.020664039951419e-10,
+          "bracket_signs": [
+            -0.02929024065173902,
+            0.02064611041026343
+          ]
+        },
+        {
+          "axis": "y",
+          "offset_deg": -0.03059978729821088,
+          "native_offset_deg": -9.712388795672297e-10,
+          "bracket_signs": [
+            -0.028812880742788427,
+            0.02070585585643453
+          ]
+        }
+      ],
+      "build_seconds": 1.8963495418429375,
+      "total_seconds": 1.901281917002052
+    },
+    {
+      "power": 14,
+      "shape_nodes": 24,
+      "optical_evaluations": 1179648,
+      "positions": [
+        {
+          "axis": "x",
+          "offset_deg": 0.005485228125917297,
+          "native_offset_deg": -6.284344240292612e-10,
+          "bracket_signs": [
+            -0.038850769882679326,
+            0.03965215258729704
+          ]
+        },
+        {
+          "axis": "x",
+          "offset_deg": 0.011718746440071696,
+          "native_offset_deg": -6.173203061240454e-10,
+          "bracket_signs": [
+            -0.03893511502201252,
+            0.039248825629446205
+          ]
+        },
+        {
+          "axis": "y",
+          "offset_deg": 0.006121847246096711,
+          "native_offset_deg": -9.020664039951419e-10,
+          "bracket_signs": [
+            -0.02938761519023475,
+            0.020184295566113786
+          ]
+        },
+        {
+          "axis": "y",
+          "offset_deg": 0.010781550796470028,
+          "native_offset_deg": -9.712388795672297e-10,
+          "bracket_signs": [
+            -0.029433443764636857,
+            0.02005132708721613
+          ]
+        }
+      ],
+      "build_seconds": 4.308387249941006,
+      "total_seconds": 4.354285416891798
+    }
+  ],
+  "input": {
+    "faces": [
+      3,
+      5
+    ],
+    "shape": {
+      "height": 1.0,
+      "face_distance": [
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    "indices": [
+      1.3156924295898642,
+      1.3110129100622272,
+      1.308038815909098
+    ],
+    "sun_alt": 20.0,
+    "solar_radius": 0.265,
+    "ops": [
+      {
+        "axis": [
+          0,
+          0,
+          1
+        ],
+        "kind": "uniform",
+        "mean": 0.0,
+        "width": 360.0
+      },
+      {
+        "axis": [
+          0,
+          1,
+          0
+        ],
+        "kind": "gaussian",
+        "mean": 0.0,
+        "width": 1.0
+      },
+      {
+        "axis": [
+          0,
+          0,
+          1
+        ],
+        "kind": "uniform",
+        "mean": -180.0,
+        "width": 360.0
+      }
+    ],
+    "wavelength_nm": [
+      450.0,
+      550.0,
+      650.0
+    ],
+    "spectral_weights": [
+      0.2,
+      0.3,
+      0.5
+    ],
+    "spectral_numerator": [
+      0
+    ],
+    "spectral_prior_fraction": 0.2,
+    "spectral_contrast": 0.05,
+    "shape_measure": "height and d0 share same raw uniform(.3,1.7); entry weight 2A/S_total"
+  },
+  "tolerance_rationale": "Local colour crossing resolution 0.05 degree (1/20 of the 1-degree observation kernel); independent LI order self-difference 0.0246 to 0.0414 degree. Not a global discovery tolerance."
+}

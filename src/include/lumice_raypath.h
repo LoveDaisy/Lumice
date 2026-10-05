@@ -4,6 +4,8 @@
 // Single-path analysis: one single-layer raypath of one crystal entry, computed synchronously and
 // independently of any server.
 
+#include <stdint.h>
+
 #include "lumice_base.h"
 
 #ifdef __cplusplus
@@ -93,14 +95,13 @@ LUMICE_API void LUMICE_SinglePathResultDestroy(LUMICE_SinglePathResult* result);
 
 // =============== Target-Free Path Feature Report ===============
 // A separate report contract for one path without a sky target. It expands the input path under
-// the selected crystal entry's physical L2 symmetry, evaluates concrete members at discrete
-// wavelengths, and returns positioned, fixture-backed features plus explicit coverage and
-// limitations. It does not add fields to the single-path schema above.
+// the selected crystal entry's physical L2 symmetry, samples the actual product measure and
+// spectrum, and returns bounded actual/candidate/unfinished geometry with explicit numerical
+// and source evidence. It does not add fields to the single-path schema above.
 
 #define LUMICE_PATH_FEATURE_REPORT_MAX_SAMPLE_COUNT 1000000
 #define LUMICE_PATH_FEATURE_REPORT_MAX_WAVELENGTH_COUNT 32
-// The report evaluates every admitted physical-L2 member at every wavelength twice: at the
-// requested resolution and at half that resolution. This bounds their combined synchronous work.
+// Maximum permitted optical work request, including replicas, spectral refinement and source corrections.
 #define LUMICE_PATH_FEATURE_REPORT_MAX_SAMPLE_EVALUATIONS 16777216
 
 typedef struct LUMICE_PathFeatureReportRequest {
@@ -111,21 +112,29 @@ typedef struct LUMICE_PathFeatureReportRequest {
   const int* layer_face_counts;
   int layer_count;
   // Optional discrete wavelengths and spectral weights. wavelength_count == 0 selects the
-  // report's documented red/blue diagnostic endpoints. weights may be NULL, meaning 1 for every
+  // scene's actual spectrum (including continuous illuminants). weights may be NULL, meaning 1 for every
   // wavelength. Every wavelength must lie in [350, 900] nm; every weight is finite and >= 0.
   const double* wavelengths_nm;
   const double* wavelength_weights;
   int wavelength_count;
-  // Even integer in [64, LUMICE_PATH_FEATURE_REPORT_MAX_SAMPLE_COUNT]; 0 selects 8192. The report
-  // records both this fine resolution and its half-resolution estimate. The combined work is at
-  // most LUMICE_PATH_FEATURE_REPORT_MAX_SAMPLE_EVALUATIONS: physical-L2 members × wavelengths ×
-  // (sample_count + sample_count / 2).
+  // Even outer sample count in [64, MAX_SAMPLE_COUNT]. Zero chooses a dyadic prefix <=65536
+  // from the physical-member/spectrum work expansion. Explicit requests may stop partially.
   int sample_count;
+  // Appended v4.52 group, read only when the whole group fits struct_size. A zero field
+  // selects its documented default. Older v4.51 requests remain valid with these defaults.
+  int budget_ms;                     // 15000; maximum 120000. Numerical deadline, followed by bounded serialization.
+  uint64_t max_optical_evaluations;  // 4000000; maximum MAX_SAMPLE_EVALUATIONS
+  uint64_t max_field_evaluations;    // 250000000; maximum 1000000000 (weighted components)
+  double bandwidth_rad;              // 1 degree in radians; vMF observation, not a physical width
+  double location_resolution_rad;    // .05 degree; local numerical target, not a global confidence bound
+  int scene_layer_plus_one;          // 0 = first occurrence (or standalone configured crystal); otherwise layer+1
+  int symmetry_bits_plus_one;        // 0 = P|B|D default; otherwise (P=1, B=2, D=4 bits)+1; 1 selects a concrete path
 } LUMICE_PathFeatureReportRequest;
 
 typedef struct LUMICE_PathFeatureReport_ LUMICE_PathFeatureReport;
 
-// Synchronous and deterministic. Error and ownership rules match LUMICE_AnalyzeSinglePath. The
+// Synchronous with replayable sampling; deadline-limited coverage may vary. Ownership matches
+// LUMICE_AnalyzeSinglePath. The
 // request deliberately has no target and no warm-start field: this is a path-level report, not a
 // target fiber search.
 LUMICE_API LUMICE_ErrorCode LUMICE_AnalyzePathFeatureReport(const LUMICE_Scene* scene,
@@ -133,7 +142,7 @@ LUMICE_API LUMICE_ErrorCode LUMICE_AnalyzePathFeatureReport(const LUMICE_Scene* 
                                                             LUMICE_PathFeatureReport** out, char* err_buf,
                                                             size_t err_size);
 
-// UTF-8 JSON with schema "lumice.path-feature-report", schema_version 1. Uses the same
+// UTF-8 JSON with schema "lumice.path-feature-report", schema_version 2. Uses the same
 // length-query/fetch and truncation contract as LUMICE_SinglePathResultToJson.
 LUMICE_API LUMICE_ErrorCode LUMICE_PathFeatureReportToJson(const LUMICE_PathFeatureReport* result, char* out_buf,
                                                            size_t buf_size, size_t* out_len);

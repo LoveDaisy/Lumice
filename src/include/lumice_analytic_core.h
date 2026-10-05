@@ -22,6 +22,7 @@
 // this header passes them, it does not define them. Symmetry: every function takes one concrete
 // face sequence and performs no symmetry reduction (doc/analytic-api.md section 3).
 //
+// Version 7 adds diagnostic batches, finite-source interface curves and weighted-sky field walks.
 // Version notes, newest first (every bump says what changed, doc/analytic-api.md section 8.1):
 //   5  APPENDED to LUMICE_ANALYTIC_FiberResult, under the struct_size rule: branch_margin_count,
 //      branch_margin_names, branch_margins, jacobian_available, normal_jacobian, singular_values —
@@ -45,6 +46,7 @@
 //      LUMICE_ANALYTIC_EvaluatePath, LUMICE_ANALYTIC_ReleasePathEvaluation — the first computation.
 //   1  LUMICE_ANALYTIC_GetApiVersion and LUMICE_ANALYTIC_SetLogCallback only.
 
+#include <stddef.h>
 #include <stdint.h>
 
 #ifdef __cplusplus
@@ -71,7 +73,7 @@ extern "C" {
 
 // Interface version, a single integer (doc/analytic-api.md section 8.2): bumped on every
 // incompatible change, and in 0.x on every addition too. Independent of lumice_base.h's LUMICE_API_VERSION.
-#define LUMICE_ANALYTIC_API_VERSION 6
+#define LUMICE_ANALYTIC_API_VERSION 7
 
 // Return codes of the computation functions. The names shared with lumice_base.h's LUMICE_ErrorCode mean
 // the same thing there; the type is this header's own (doc/analytic-api.md section 5.2). A numerical
@@ -608,6 +610,127 @@ LUMICE_ANALYTIC_API LUMICE_ANALYTIC_ErrorCode LUMICE_ANALYTIC_BandSum(const LUMI
 // zero-filled struct.
 LUMICE_ANALYTIC_API void LUMICE_ANALYTIC_ReleaseBandSumResult(LUMICE_ANALYTIC_BandSumResult* result);
 
+
+// ---------------------------------------------------------------------------------------------
+// Version 7: conditional optics and fixed-observation numerical discovery. No Scene, symmetry,
+// actual/candidate product labels, or cache handle. Inputs are fixed POD layouts for this version.
+// A batch shares faces/options; bad shape/n/pose/source is per-row, malformed array/path is a call
+// error. Result arrays are immutable and library-owned until ReleaseDiagnosticResult; no pointer
+// survives release. Distinct outputs are re-entrant; do not release while another thread reads.
+// The root result uses struct_size, including in Release. Its first group ends at storage;
+// source-event fields and field-terminal status are successive optional complete groups.
+// Each older complete group remains readable even when a later group does not fit. Smaller roots
+// are refused and only declared bytes are cleared. Larger caller structs retain unknown bytes.
+//
+// Coordinates: pose is body-to-world, row-major; incident/outgoing are propagation directions.
+// Weighted samples are VIEWING directions. Weights already include every physical/spectral
+// coefficient exactly once. has_orbit=1 declares a NORMALIZED full uniform world-axis orbit:
+// the caller must establish invariance of its measure and weight; never infer it from sparse rows.
+// Rows sharing an outer statistical draw must share sample_index; token is opaque provenance.
+// Tangent basis consists of two consecutive world unit vectors. Jets are per sr, per rad and
+// per rad^2; their five fields are X,Y,Z,x,y. No xy data is usable unless xy_available=1.
+//
+// solve_status: 0 converged, 1 invalid input, 2 unavailable, 3 no support at iterate, 4 degenerate,
+// 5 iteration limit, 6 budget exceeded. EvaluateDiagnosticBatch does not solve an equation (2).
+// deviation_available covers the angle/correction/curvature/error group, all at the returned
+// source/value. Interrupted correction returns its last complete snapshot, or partial optics
+// with deviation_available=0 if none completed; path_evaluations still counts all attempted work.
+// Field status: 0 converged, 1 invalid input, 2 no signal, 3 degenerate, 4 iteration limit, 5 budget.
+// field_terminal_status (only when field_terminal_available=1) keeps the final solver reason
+// separate from accepted geometry: the failed/censored trial, or the last accepted point on
+// a normal stop. Input-copy budget exhaustion also reports status 5. Failed iterates never
+// enter field[]. Other diagnostic functions leave this suffix unavailable.
+// Field equation: 0 log-Y peak, 1 log-Y ridge, 2 x level, 3 y level. A root is numerical only.
+// WalkField termination: 0 closed, 1 observation censored, 2 corrector failed, 3 point limit,
+// 4 invalid input, 5 budget exhausted. WalkEvent termination: 0 closed, 1 area threshold, 2 geometric contact bracket,
+// 3 optical gate, 4 corrector failed, 5 point limit, 6 budget exceeded, 7 invalid input.
+// Event walking uses the incident S2 quotient; the caller must admit the full Haar pose chart.
+// Step is .01 rad, endpoint bracket width <=1e-7 rad, discriminant tolerance 1e-10. It may retain
+// source points below the product area threshold to locate the distinct raw contact bracket.
+// Field walking uses vMF kappa=1/h^2, steps .5h, corrector tolerance 1e-8 rad; no physical endpoint
+// or actualness is inferred from its termination. Equation 0 returns one corrected peak, not a curve. max_points and
+// explicit work/deadline bound it. Same-cloud inputs are copied within each call; no hidden cold preparation or
+// persistent cache. Independent prefix/replicate error and scale response belong to the consumer, not these roots.
+// ---------------------------------------------------------------------------------------------
+typedef struct LUMICE_ANALYTIC_DiagnosticSource {
+  LUMICE_ANALYTIC_Crystal crystal;
+  double pose[9];
+  double incident[3];
+  double refractive_index;
+  uint64_t token;
+} LUMICE_ANALYTIC_DiagnosticSource;
+typedef struct LUMICE_ANALYTIC_WeightedSkySample {
+  uint64_t sample_index;
+  uint64_t source_token;
+  double direction[3];
+  double xyz_weight[3];
+  int has_orbit;
+  double orbit_axis[3];
+} LUMICE_ANALYTIC_WeightedSkySample;
+typedef struct LUMICE_ANALYTIC_DiagnosticInterface {
+  int reached, factor_available, pose_derivative_available, index_derivative_available;
+  double incidence, discriminant, factor, pose_gradient[3], index_derivative, index_error;
+} LUMICE_ANALYTIC_DiagnosticInterface;
+typedef struct LUMICE_ANALYTIC_DiagnosticOptics {
+  LUMICE_ANALYTIC_DiagnosticSource source;
+  int solve_status, input_status, path_valid, optical_failure, entry_available, geometry_evaluated;
+  double outgoing[3], area, raw_area, area_threshold, interface_product;
+  double direction_pose_jacobian[9], direction_index_derivative[3], direction_index_error;
+  int direction_pose_available, direction_index_available, interface_count;
+  const LUMICE_ANALYTIC_DiagnosticInterface* interfaces;  // interface_count immutable rows
+  size_t corridor_vertex_count;
+  const double* corridor_vertices;  // packed xy; one original slot/edge pair per outgoing edge
+  const int* corridor_edge_sources;
+  double corridor_basis[6];
+  int deviation_available;
+  double deviation_rad, correction_rad, objective_curvatures[2], hessian_error;
+} LUMICE_ANALYTIC_DiagnosticOptics;
+typedef struct LUMICE_ANALYTIC_SkyFieldPoint {
+  int status;
+  double direction[3], tangent_basis[6], bandwidth_rad;
+  // Five covariant jets: X,Y,Z,x,y; each value,g0,g1,H00,H01,H11.
+  double jets[30];
+  int xy_available;
+  double effective_samples_y, correction_rad, log_y_curvatures[2];
+} LUMICE_ANALYTIC_SkyFieldPoint;
+typedef struct LUMICE_ANALYTIC_SourceEventRange {
+  int kind;  // 1 = area threshold; 2 = raw geometric contact bracket; 3 = optical validity gate
+  size_t positive_index, nonpositive_index;  // indices in optical
+  double source_width_rad;
+} LUMICE_ANALYTIC_SourceEventRange;
+typedef struct LUMICE_ANALYTIC_DiagnosticResult {
+  uint32_t struct_size;
+  size_t optical_count, field_count;
+  const LUMICE_ANALYTIC_DiagnosticOptics* optical;
+  const LUMICE_ANALYTIC_SkyFieldPoint* field;
+  uint64_t path_evaluations, component_evaluations;
+  int termination;
+  void* storage;
+  size_t curve_point_count, source_event_count;
+  const LUMICE_ANALYTIC_SourceEventRange* source_events;
+  // Optional complete suffix; zero availability means no field terminal status.
+  int field_terminal_available, field_terminal_status;
+} LUMICE_ANALYTIC_DiagnosticResult;
+LUMICE_ANALYTIC_API LUMICE_ANALYTIC_ErrorCode
+LUMICE_ANALYTIC_EvaluateDiagnosticBatch(const int* faces, int face_count, const LUMICE_ANALYTIC_DiagnosticSource* rows,
+                                        size_t row_count, LUMICE_ANALYTIC_DiagnosticResult* out);
+LUMICE_ANALYTIC_API LUMICE_ANALYTIC_ErrorCode LUMICE_ANALYTIC_TraceDiagnosticInterface(
+    const int* faces, int face_count, const LUMICE_ANALYTIC_DiagnosticSource* source, int slot, int reverse,
+    int max_points, uint64_t max_evaluations, int budget_ms, LUMICE_ANALYTIC_DiagnosticResult* out);
+LUMICE_ANALYTIC_API LUMICE_ANALYTIC_ErrorCode LUMICE_ANALYTIC_TraceWeightedSkyField(
+    const LUMICE_ANALYTIC_WeightedSkySample* samples, size_t count, const double seed[3], int equation, double level,
+    double bandwidth_rad, int max_points, uint64_t max_evaluations, int budget_ms,
+    LUMICE_ANALYTIC_DiagnosticResult* out);
+LUMICE_ANALYTIC_API void LUMICE_ANALYTIC_ReleaseDiagnosticResult(LUMICE_ANALYTIC_DiagnosticResult* result);
+
+// Returns only the processed input prefix, in order: optical_count may be smaller than row_count.
+// termination: 0 = every row processed, 6 = shared evaluation/deadline budget exhausted.
+// An interrupted row is retained with solve_status=6; the unprocessed tail is neither read nor
+// materialized. Invalid rows within the prefix retain per-row status and do not stop later rows.
+// Array/path validation precedes budget stopping, including when max_evaluations is zero.
+LUMICE_ANALYTIC_API LUMICE_ANALYTIC_ErrorCode LUMICE_ANALYTIC_CorrectDeviationBatch(
+    const int* faces, int face_count, const LUMICE_ANALYTIC_DiagnosticSource* rows, size_t row_count,
+    uint64_t max_evaluations, int budget_ms, LUMICE_ANALYTIC_DiagnosticResult* out);
 
 #ifdef __cplusplus
 }

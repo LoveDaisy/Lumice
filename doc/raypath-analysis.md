@@ -31,7 +31,7 @@
 |---|---|---|---|
 | **(i) 识别**：列出一个区域里各光路成分与占比 | ✅ 已交付（PR #347） | 完整链 id、专用分析运行、CPU 路 | §3；[`raypath-analysis-panel.md`](raypath-analysis-panel.md) |
 | **(ii) 剥离**：在渲染图上即时开关某个桶 | ⏸ 搁置（owner 2026-08-26 裁定） | 每桶真实辐射量（内存墙所在） | §4 |
-| **选定光路后的三功能**：① 光路详情（fiber） ② 单光路全天图（产品形态见 §5.1.8） ③ 预设点 | 🟡 计算接口部分交付：①已有目标点 C API/CLI；③已有 target-free 最小 feature report；GUI、全天图和通用特征枚举仍未交付 | 已交付部分：Lumice C++ 单光路反解 / fiber、物理 L2 成员亮度及固定案例机制；后续：S² `D_P` 场与更一般的特征检测 | §5.1 |
+| **选定光路后的三功能**：① 光路详情（fiber） ② 单光路全天图（产品形态见 §5.1.8） ③ 预设点 | 🟡 计算接口部分交付：①已有目标点 C API/CLI；③已有有界target-free产品report schema2；GUI、全天图和全域完备枚举仍未交付 | 已交付部分：Lumice C++ 单光路反解 / fiber、实际产品输入/物理 L2、场特征/条件源候选与共享数值API；后续：工作区联动与超出当前有界范围的检测 | §5.1 |
 | (i) 面板的四个机制级升级点 | 🔜 各有触发条件，未触发 | 同 (i) | §5.2；[`raypath-analysis-panel.md`](raypath-analysis-panel.md) §8 |
 
 ## 2. 拆分决策：(i) 识别 vs (ii) 剥离
@@ -252,8 +252,8 @@ LI Phase II 把光路上所有权重对姿态的依赖收拢成一个方向（�
 颜色说明同样必须带范围。LI 固定诊断 reference 的
 [`6a6c592`](https://github.com/LoveDaisy/Lumice-Integral/blob/6a6c592a653fd9b4aa38b3d418143526de58a5a7/docs/raypath-diagnostic-reference.md)
 明确：随机取向 `3-1-5` 的“无红边”只指已检查的反日侧出射门，不能外推为全天无红边，也不能说
-路径“只有蓝色”。同一 reference 在约 `δ = 130–142°` 给出 TIR 权重折线对应的蓝带；本仓固定
-report 进一步确认太阳侧约 22° 的普通最小偏折色散红--蓝边，并把同位置的 caustic 保留为 candidate。
+路径“只有蓝色”。同一 reference 在约 `δ = 130–142°` 给出 TIR 权重折线对应的蓝带；本仓历史固定
+report 在其固定输入下进一步确认太阳侧约 22° 的普通最小偏折色散红--蓝边，并把同位置的 caustic 保留为 candidate。
 内反射折线在该检查范围内偏向蓝色，但这不是所有颜色机制的通则。判据、符号约定与特征分类仍以 LI
 [`chromatic-module-c.md`](https://github.com/LoveDaisy/Lumice-Integral/blob/6a6c592a653fd9b4aa38b3d418143526de58a5a7/docs/chromatic-module-c.md)
 和 `docs/conventions.md` #22 为准，本文不重新推导。
@@ -539,27 +539,24 @@ Analyze 窗口正式排期即满足 §5.1.6 移植触发的第一个条件（「
 > （`src/raypath/`，C API `LUMICE_AnalyzeSinglePath`）提供，界面复用同一模块与同一份 JSON
 > （字段见 `doc/raypath-cli-output.md`，用法见 `doc/user-manual/03-cli-quickstart.md`）。
 
-`Lumice raypath --report` 与 `LUMICE_AnalyzePathFeatureReport` 另提供不带 target 的最小路径级
-feature report。它按配置实际允许的物理 L2 成员和波长积分有限晶体 `A*T`，并只在已有固定数值证据的
-范围内定位普通色散边、`3-1-5` 的内部反射 TIR 蓝带，以及理想水平菱形薄板的两个 ±120°分支。
-为保持同步 C API 的可预测成本，主积分的成员 × 波长 ×（fine + coarse）评估总数最多为 16,777,216；
-超出该预算的请求以 `invalid_argument` 拒绝，不产生部分 report。
-它不是全天特征枚举器；未支持、当前分辨率未检出、数值未完成与物理不可达由 coverage 分开表达。
-旧的目标点接口仍负责 fiber 与晶体内逐段详情，两份 JSON schema 彼此独立。
+`Lumice raypath --report` 与 `LUMICE_AnalyzePathFeatureReport` 提供不带target的有界单晶体诊断。
+当前schema 2已经取代固定path/参考形状detector，沿实际产品输入、physical L2与同一analytic数值实现，
+分别给actual/candidate/unfinished的点、曲线、同场条带和源范围。实际光谱、太阳盘、相关shape及取向不再
+由固定红蓝两点或名义输入替换；普通物理内缘、固定观察量的峰/脊/xy水平与尺度响应分开。内部TIR条件
+不自动成为可见蓝边；有限支持、area epsilon、光学门、声明源边和数值终止分别保留。
 
-**已验收的诊断边界（2026-10-01）**：固定随机正六棱柱下，`3-5` 的普通最小偏折红内缘以及
-`3-1-5` 的太阳侧色散边已确认；后者的焦散只保留为 candidate。`3-1-5` 的反日特征则是独立确认的
-内部反射 TIR 蓝带，不是路径失效：同一边界姿态去掉内部反射后蓝/红比会翻转，而 exit gate 已评估为
-不可见。理想水平菱形薄板的 ±120°分支同时报告相对太阳方位和真实球面夹角，不能把两者混同；每个
-物理 L2 成员、波长和有限晶体 `A*T` 都是独立证据。`--target` 已验证有限 arc、多 arc、开 arc 和
-`point_mass` 的点级表示，但后两类及锥晶空结果并没有被升级为 report 的 feature discovery。
-完整固定输入、命令、数值和哈希记录见
-[`raypath-feature-diagnostic-acceptance.md`](raypath-feature-diagnostic-acceptance.md)。
+默认15秒、光学与field工作双限额；达到预算保留已经建立的局部证据，空采样不证明物理无特征。
+多晶体链返回unsupported，单晶体内部多次反射仍支持；旧target/fiber/warm保持原接口与schema 1。
+analytic API 7让独立安装树客户端消费相同数值，但产品分级和唯一JSON仍在engine/raypath。
+范围、字段与迁移以 [`raypath-cli-output.md`](raypath-cli-output.md) §7 为准。
+
+**历史固定案例验收（2026-10-01）**保存在
+[`raypath-feature-diagnostic-acceptance.md`](raypath-feature-diagnostic-acceptance.md)。它的物理观察有明确输入，
+但旧schema-1 detector的功能表与无条件visibility声明不再是当前产品合同，不能据旧报告推断一般场景。
 
 **尚未交付的交互层**：当前 GUI 不消费 feature report，也没有把「亮度分布 + 多个位置化特征 +
 对应机制」联动到 Analyze 工作区。布局、选择语义和退化交互仍是设计问题；不得以 HTML 原型或目标点
-fiber 查询冒充这一 GUI 能力。未来界面应显示 report 的 coverage 与 limitations，并在用户选择
-`representative_target` 后再调用旧目标点接口获取 fiber 详情。
+fiber 查询冒充这一 GUI 能力。未来界面应显示报告的scope/evidence/coverage与unfinished原因，用户选择具体sky direction后再调用旧目标点接口获取fiber详情。
 
 **窗口关系与场景同步（2026-09-27 owner 裁定）**：
 

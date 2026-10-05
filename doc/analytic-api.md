@@ -1,6 +1,6 @@
 # `liblumice_analytic`: the published analytic interface
 
-> Status: **partly built** (2026-09-30). As built: the target and its per-library export list
+> Status: **partly built** (2026-10-04). As built: the target and its per-library export list
 > (§2.5), logging handed to the host (§6), and packaging with a `find_package` config plus the
 > version policy (§8), and an external-consumer smoke test that builds a C program and loads the
 > library from Python using the install tree alone (§8.7); and the whole of the first module's v0
@@ -8,7 +8,8 @@
 > thread-safety (§5.3) decisions, fiber continuation `LUMICE_ANALYTIC_TraceFiber[Batch]` (version
 > 3) and component discovery `LUMICE_ANALYTIC_DiscoverComponents` (version 4); and module A v1's
 > per-pose diagnostics on `FiberResult` (version 5, §4.3); and module B v1, the band sum
-> `LUMICE_ANALYTIC_BandSum` (version 6, §4.6). Module A serves the Analyze workspace's first phase,
+> `LUMICE_ANALYTIC_BandSum` (version 6, §4.6), plus diagnostic optics/source/weighted-field numerics
+> (version 7, §4.7), consumed by the bounded schema-2 product report and an install-only research client. Module A serves the Analyze workspace's first phase,
 > module B its second, the single-path all-sky map (`doc/raypath-analysis.md` §5.1.8). The library is not in any
 > download package yet: that is §8.8's checklist, not done.
 >
@@ -951,23 +952,6 @@ reworded only its §10 paragraph "Fiber and level set", with no change of meanin
 records what is built and the choices the contract leaves to an implementation; it does not
 restate the contract.
 
-### 4.7 Product diagnostic boundary (as built, API version 6)
-
-The engine's target-free `LUMICE_AnalyzePathFeatureReport` is a product C API, not a new
-`liblumice_analytic` module. It composes the engine scene with the built module-A/module-B
-capabilities to report finite-crystal, physical-L2-member and wavelength-scoped `A*T` evidence for
-a deliberately small set of fixed cases. Its separate schema and coverage states are documented in
-[`raypath-cli-output.md`](raypath-cli-output.md) §7.
-
-This distinction matters for scope. Version 6 provides one path/class at a time and the caller's
-explicit spectrum; it does not publish Module C's `dp_field`, contour, focusing, chromatic
-classification, solar-disc convolution, all-sky enumeration, or general orientation-family
-detectors. The current report can therefore confirm the fixed ordinary-dispersion and TIR cases,
-and expose a horizontal-family location with per-member/wavelength evidence, without claiming that
-every visual feature has been classified. Module C remains wave 3 (§10): its LI contract and parity
-fixtures are a prerequisite for a stable public analytic surface, not evidence that it is already
-part of API version 6.
-
 **Call.** `LUMICE_ANALYTIC_BandSum(crystal, problem, out_result)` and
 `LUMICE_ANALYTIC_ReleaseBandSumResult(result)`; the header comment is the complete list of call
 errors. The problem carries the path, index and incident direction as `DiscoverComponents`' does,
@@ -1056,6 +1040,78 @@ The contract's §6 unit and §8 conversion therefore hold for this implementatio
 which also checks the `kLiAreaPerEngineArea` factor and the weight's Fresnel factor end to end.
 
 ---
+
+### 4.7 Diagnostic numerics (API 7, as built)
+
+The diagnostic surface shares the same `diagnostic_batch` and `path_feature_discovery` kernels
+with the product report. It takes no Scene, no physical-L2 request, and no product JSON. Product
+actual/candidate/unfinished classification remains in `raypath`; the library reports numerical
+values and termination only. Primitive geometry/optics in Lumice Integral remain independent
+oracles, not wrappers around the functions under test.
+
+| Function | Numerical operation |
+|---|---|
+| `EvaluateDiagnosticBatch` | Shared concrete faces, per-row actual crystal/pose/incident/index/token; per-slot fields, directional derivatives and finite support |
+| `CorrectDeviationBatch` | Local positive-support deviation minima on an admitted full orientation quotient; not a global support certificate |
+| `TraceDiagnosticInterface` | Conditional internal-slot source curve and distinct area/raw-contact/optical-gate brackets |
+| `TraceWeightedSkyField` | Shared weighted point/orbit measure; corrected log-Y peak or continuous ridge/xy level curve, with XYZ/xy jets |
+| `ReleaseDiagnosticResult` | Releases all immutable result arrays; NULL-safe and repeat-safe after release |
+
+Every name has the `LUMICE_ANALYTIC_` prefix. The result root uses `struct_size`; its base group
+ends at `storage`; the source-event and field-terminal suffixes are successive complete groups.
+Each group is written only if it fits, independently of later groups, so callers sized for the
+previous source-event suffix still receive it. No partial pointer/status group is returned. Inputs
+are fixed-version PODs, following §8.2; their layouts are not silently extended. Interfaces allocate exactly `interface_count` entries, not 64 entries
+per short path. Nested arrays live until the root is released. Four concurrent calls on separate
+outputs are covered by the ABI tests. Reusing a live result requires releasing it first.
+
+`CorrectDeviationBatch` shares one evaluation/deadline budget across the batch and returns only
+its processed prefix, in input order. `optical_count` can be less than the requested row count;
+the tail is not read or materialized. `termination=0` means every row was processed (individual
+rows may still be invalid or unsolved); `termination=6` means the shared budget stopped the call.
+A row interrupted inside its solver is retained with `solve_status=6`. A zero evaluation budget
+returns an empty prefix. Invalid array/path arguments are still call errors even with zero budget;
+bad per-row inputs within the processed prefix remain isolated and do not suppress later rows.
+All three optical diagnostic entries share the same path-syntax check before allocating result
+storage or attempting numerical work. Nonpositive face numbers are call errors; a positive face
+number absent from a particular shape remains a source/row outcome.
+
+A deviation row's `deviation_available` covers its angle, correction, curvatures and Hessian error
+at the returned source/optics snapshot. On interruption it retains the last complete iterate;
+before any complete iterate it retains partial optics with that group unavailable. The status
+and work count describe the whole attempted solve, including work after that snapshot. An optical
+endpoint bracket interrupted by budget or numerical failure is not a physical termination:
+already accepted curve points survive, but no unfinished bracket is published as an optical gate.
+
+`TraceWeightedSkyField` reports `field_terminal_available` and `field_terminal_status` separately
+from its accepted `field[]` points and walk `termination`. The terminal solver reason distinguishes
+no signal, degenerate equation, iteration limit and budget exhaustion; on a normal stop it is the
+last accepted point's converged status. Copy-stage deadline exhaustion also reports budget status.
+Failed/censored iterates are not appended to the accepted geometry. Zero availability means no
+terminal status was provided (including calls to the other diagnostic functions). This optional
+result group refines the unreleased API-7 surface without changing any array element or input layout.
+
+The header defines row status/availability, units, basis order, numeric termination values,
+explicit evaluation/deadline parameters, and the bounded-copy behavior. Weighted samples already
+contain all physical and spectral coefficients. Shared outer draws must share their statistical
+id: quadrature nodes are not independent samples. A normalized uniform orbit is valid only when
+the caller has established its source/weight invariance. Conditional pose Jacobians do not
+establish joint optical-map rank or a positive-mass atom.
+
+A real research consumer was first compiled against a temporary install-only numerical bridge,
+then replayed through the formal installed library with no private include path, Scene or engine
+JSON. It reads physical xy/Hessian curves, non-first-slot discriminant/index derivatives, source
+poses and raw/support-area endpoints. Its historical optical cloud lacks outer sample ids, so it
+conservatively uses one statistical group (ESS 1), rather than inventing independence. The
+permanent installed C smoke also computes diagnostic optics and a field peak. The prototype
+source/target is removed; one implementation remains. The unstripped link probe and export-table
+check continue to guard the foundation/analytic closure and exact header surface.
+
+Numerical roots are not an integration-accuracy or global-topology promise. The report's prefix,
+independent-repeat, spectral-refinement and observation-scale comparisons remain distinct.
+Source brackets identify predicates and ranges; they are not exact-contact certificates or
+assertions that the interface makes a visible blue band. No hidden persistent preparation/cache
+or host callback is introduced.
 
 ## 5. Conventions, errors, threading **(design)**
 
@@ -1273,8 +1329,8 @@ gone. Throughout this document, "the engine headers" means that set.
   declaration out of foundation or the kernel either, and `-fvisibility=hidden` alone would export
   whatever one of them marks. The guarantee comes from the **per-library export list** (§2.5),
   declared once in `cmake/export_surfaces.cmake`: engine = the six engine headers plus
-  `lumice_analytic_core.h` (93 names), `liblumice_testapi` = engine plus the `LUMICE_TEST_*` hooks
-  (95), `liblumice_analytic` = `lumice_analytic.h` plus the core header (11). Its test is
+  `lumice_analytic_core.h` (101 names), `liblumice_testapi` = engine plus the `LUMICE_TEST_*` hooks
+  (103), `liblumice_analytic` = `lumice_analytic.h` plus the core header (16). Its test is
   mechanical: `scripts/check_export_surface.py` compares a built binary's export table with the
   names its surface headers declare, and both `test_export_symbol_scope.py` and `release.yml`
   (every packaged engine file, both ISA builds) run it.
@@ -1311,7 +1367,7 @@ subsections keep that number.
 ### 8.2 Compatible and incompatible changes
 
 An incompatible change bumps the integer. In 0.x a compatible one bumps it too — every addition so
-far has (versions 2, 3, 4 and 6 each added functions and nothing else incompatible; version 5
+far has (versions 2, 3, 4, 6 and 7 each added functions and nothing else incompatible; version 5
 appended fields to `FiberResult` under the `struct_size` rule below), and that is the rule: `find_package` accepts only the exact version (§8.4) and a ctypes binding pins the version it
 was written against, so the integer is the only way a consumer can tell which functions a library
 has. From 1.0, when compatibility is promised, a compatible change leaves the integer alone and the

@@ -3,6 +3,7 @@
 
 #include <gtest/gtest.h>
 
+#include <cstddef>
 #include <cstring>
 #include <memory>
 #include <nlohmann/json.hpp>
@@ -105,7 +106,7 @@ TEST(PathFeatureReportCApi, NullArgumentsAndPointersAreRejected) {
 TEST(PathFeatureReportCApi, StructSizeAndLayerShapeAreValidated) {
   const ScenePtr scene = MakeScene();
   Request short_request;
-  short_request.c.struct_size = sizeof(short_request.c) - 2 * sizeof(int);
+  short_request.c.struct_size = offsetof(LUMICE_PathFeatureReportRequest, sample_count);
   Outcome outcome = Analyse(scene.get(), &short_request.c);
   EXPECT_EQ(outcome.code, LUMICE_ERR_INVALID_VALUE);
   EXPECT_NE(outcome.error.find("struct_size"), std::string::npos);
@@ -130,6 +131,40 @@ TEST(PathFeatureReportCApi, StructSizeAndLayerShapeAreValidated) {
   EXPECT_NE(outcome.error.find("one non-empty layer"), std::string::npos);
 }
 
+TEST(PathFeatureReportCApi, UnsupportedMultiCrystalStillRejectsInvalidInput) {
+  const ScenePtr scene = MakeScene();
+  const int faces[]{ 3, 5, 1, 3 };
+  const int layers[]{ 2, 2 };
+  Request request;
+  request.c.faces = faces;
+  request.c.face_count = 4;
+  request.c.layer_face_counts = layers;
+  request.c.layer_count = 2;
+  auto outcome = Analyse(scene.get(), &request.c);
+  ASSERT_EQ(outcome.code, LUMICE_OK) << outcome.error;
+  const auto document = nlohmann::json::parse(Json(outcome.report.get()));
+  EXPECT_EQ(document["outcome"], "unsupported_multicrystal");
+  EXPECT_EQ(document["budgets"]["optical_evaluations"], 0);
+
+  request.c.crystal_id = 99;
+  outcome = Analyse(scene.get(), &request.c);
+  EXPECT_EQ(outcome.code, LUMICE_ERR_INVALID_VALUE);
+  EXPECT_EQ(outcome.report, nullptr);
+  EXPECT_NE(outcome.error.find("unknown_crystal_id"), std::string::npos);
+  request.c.crystal_id = 1;
+  request.c.scene_layer_plus_one = 99;
+  EXPECT_EQ(Analyse(scene.get(), &request.c).code, LUMICE_ERR_INVALID_VALUE);
+  request.c.scene_layer_plus_one = 0;
+  request.c.budget_ms = -1;
+  EXPECT_EQ(Analyse(scene.get(), &request.c).code, LUMICE_ERR_INVALID_VALUE);
+  request.c.budget_ms = 0;
+  const double wavelength = 550, weight = -1;
+  request.c.wavelength_count = 1;
+  request.c.wavelengths_nm = &wavelength;
+  request.c.wavelength_weights = &weight;
+  EXPECT_EQ(Analyse(scene.get(), &request.c).code, LUMICE_ERR_INVALID_VALUE);
+}
+
 TEST(PathFeatureReportCApi, SerializesOnceAndKeepsTheResultImmutable) {
   const ScenePtr scene = MakeScene();
   Request request;
@@ -141,9 +176,9 @@ TEST(PathFeatureReportCApi, SerializesOnceAndKeepsTheResultImmutable) {
   EXPECT_EQ(Json(outcome.report.get()), first);
   const nlohmann::json doc = nlohmann::json::parse(first);
   EXPECT_EQ(doc["schema"], "lumice.path-feature-report");
-  EXPECT_EQ(doc["schema_version"], 1);
-  EXPECT_EQ(doc["meta"]["sample_count"], 64);
-  EXPECT_EQ(doc["wavelengths"].size(), 2u);
+  EXPECT_EQ(doc["schema_version"], 2);
+  EXPECT_EQ(doc["budgets"]["requested_outer_samples"], 64);
+  EXPECT_EQ(doc["spectrum"].size(), 33u);
 
   char small[8];
   size_t full_length = 0;
@@ -163,15 +198,15 @@ TEST(PathFeatureReportCApi, AcceptsExplicitWavelengthsAndRejectsInvalidCounts) {
   Outcome outcome = Analyse(scene.get(), &request.c);
   ASSERT_EQ(outcome.code, LUMICE_OK) << outcome.error;
   const nlohmann::json doc = nlohmann::json::parse(Json(outcome.report.get()));
-  EXPECT_DOUBLE_EQ(doc["wavelengths"][0]["nm"].get<double>(), 500.0);
-  EXPECT_DOUBLE_EQ(doc["wavelengths"][1]["weight"].get<double>(), 0.75);
+  EXPECT_DOUBLE_EQ(doc["spectrum"][0]["nm"].get<double>(), 500.0);
+  EXPECT_DOUBLE_EQ(doc["spectrum"][1]["source_weight"].get<double>(), 0.75);
 
   request.c.wavelengths_nm = nullptr;
   outcome = Analyse(scene.get(), &request.c);
   EXPECT_EQ(outcome.code, LUMICE_ERR_NULL_ARG);
 }
 
-TEST(PathFeatureReportCApi, RejectsCombinedMemberWavelengthAndSampleWorkAboveThePublicBudget) {
+TEST(PathFeatureReportCApi, StopsExpandedWorkAtTheExplicitBudget) {
   const ScenePtr scene = MakeScene();
   Request request;
   std::vector<double> wavelengths(LUMICE_PATH_FEATURE_REPORT_MAX_WAVELENGTH_COUNT, 550.0);
@@ -179,10 +214,39 @@ TEST(PathFeatureReportCApi, RejectsCombinedMemberWavelengthAndSampleWorkAboveThe
   request.c.wavelength_count = static_cast<int>(wavelengths.size());
   request.c.sample_count = LUMICE_PATH_FEATURE_REPORT_MAX_SAMPLE_COUNT;
 
+  request.c.max_optical_evaluations = 100;
+  request.c.max_field_evaluations = 1;
   const Outcome outcome = Analyse(scene.get(), &request.c);
-  EXPECT_EQ(outcome.code, LUMICE_ERR_INVALID_VALUE);
-  EXPECT_EQ(outcome.report, nullptr);
-  EXPECT_NE(outcome.error.find("sample-evaluation budget"), std::string::npos);
+  ASSERT_EQ(outcome.code, LUMICE_OK) << outcome.error;
+  const auto doc = nlohmann::json::parse(Json(outcome.report.get()));
+  EXPECT_EQ(doc["outcome"], "partial");
+  EXPECT_EQ(doc["budgets"]["optical_evaluations"], 100);
+}
+
+TEST(PathFeatureReportCApi, OldRequestPrefixUsesNewDefaultsWithoutReadingTheSuffix) {
+  const ScenePtr scene = MakeScene();
+  Request request;
+  request.c.struct_size = offsetof(LUMICE_PathFeatureReportRequest, sample_count) + sizeof(int);
+  request.c.budget_ms = -1;
+  request.c.max_optical_evaluations = 1;
+  const auto outcome = Analyse(scene.get(), &request.c);
+  ASSERT_EQ(outcome.code, LUMICE_OK) << outcome.error;
+  const auto doc = nlohmann::json::parse(Json(outcome.report.get()));
+  EXPECT_EQ(doc["budget_ms"], 15000);
+  EXPECT_EQ(doc["budgets"]["max_optical_evaluations"], 4000000);
+}
+
+TEST(PathFeatureReportCApi, RequestedPhysicalMemberScopeIsNotSilentlyExpanded) {
+  const ScenePtr scene = MakeScene();
+  Request request;
+  request.c.symmetry_bits_plus_one = 1;
+  const auto outcome = Analyse(scene.get(), &request.c);
+  ASSERT_EQ(outcome.code, LUMICE_OK) << outcome.error;
+  const auto doc = nlohmann::json::parse(Json(outcome.report.get()));
+  EXPECT_EQ(doc["physical_members"].size(), 1u);
+  EXPECT_EQ(doc["scope"]["layers"][0]["symmetry_bits"], 0);
+  request.c.symmetry_bits_plus_one = 9;
+  EXPECT_EQ(Analyse(scene.get(), &request.c).code, LUMICE_ERR_INVALID_VALUE);
 }
 
 }  // namespace

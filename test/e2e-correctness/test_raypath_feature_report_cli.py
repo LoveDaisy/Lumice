@@ -1,13 +1,14 @@
 """Target-free ``Lumice raypath --report`` through the real static CLI.
 
-The numeric assertions are the compact Lumice-side acceptance slice of the independently generated
-diagnostic reference at revision 366b7946e07231f6a714216279f57e07b0b71957. The production report
-does not read that research artifact at runtime.
+The schema-two route consumes physical input and reports bounded numerical evidence.
+Scientific kernels have independent fixtures in the analytic and composition layers;
+this layer owns the CLI, spectrum choice, scope, budget and output-file contracts.
 """
 
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 
 import pytest
@@ -33,111 +34,104 @@ def _report(config: Path, path: str, *args: str):
     )
 
 
-def test_random_315_report_is_a_separate_document_with_both_feature_mechanisms():
-    result = _report(_RANDOM, "3-1-5", "--events", "8192")
+def test_bounded_nonfixed_report_completes_without_claiming_global_coverage():
+    result = _report(_RANDOM, "3-5", "--events", "64", "--wavelength", "550")
+    assert result.returncode == 0, result.stderr
+    doc = json.loads(result.stdout)
+    assert doc["outcome"] == "completed"
+    assert doc["unfinished_reasons"] == []
+    assert not doc["budgets"]["exhausted"]
+    assert doc["coverage"][1]["limitations"]
+    assert doc["candidates"]
+    # A completed bounded search is not a proof that every local hypothesis worked.
+    assert doc["unfinished"]
+
+
+def test_315_report_keeps_conditional_tir_distinct_from_observed_colour():
+    result = _report(_RANDOM, "3-1-5", "--events", "8192", "--wavelength", "550")
     assert result.returncode == 0, result.stderr
     doc = json.loads(result.stdout)
     assert doc["schema"] == "lumice.path-feature-report"
-    assert doc["schema_version"] == 1
-    assert "target" not in doc["meta"]
-    assert len(doc["physical_l2_members"]) == 24
-    features = {feature["id"]: feature for feature in doc["features"]}
-    ordinary = features["random_regular.3-1-5.solar_dispersion_edge"]
-    assert ordinary["evidence_status"] == "confirmed"
-    assert ordinary["positions"][0]["deviation_deg"] == pytest.approx(21.612019265, abs=1e-5)
-    assert ordinary["positions"][1]["deviation_deg"] == pytest.approx(22.371148713, abs=1e-5)
-    assert features["random_regular.3-1-5.solar_caustic_candidate"]["evidence_status"] == "candidate"
-    tir = features["random_regular.3-1-5.antisolar_tir_blue_band"]
-    assert tir["evidence_status"] == "confirmed"
-    assert tir["positions"][0]["deviation_deg"] == pytest.approx(130.358885186, abs=1e-6)
-    assert tir["positions"][1]["deviation_deg"] == pytest.approx(138.854666882, abs=1e-6)
-    assert tir["metrics"]["production_blue_red_ratio"] > 1
-    assert tir["metrics"]["without_internal_R_blue_red_ratio"] < 1
-    assert tir["metrics"]["sample_count"] == 14
-    assert features["random_regular.3-1-5.exit_gate"]["visible"] is False
+    assert doc["schema_version"] == 2
+    assert "target" not in doc
+    assert len(doc["physical_members"]) == 24
+    candidates = [f for f in (doc["actual_features"] + doc["candidates"] + doc["unfinished"]) if f["kind"] == "conditional_internal_tir"]
+    assert candidates
+    for feature in candidates:
+        assert feature["evidence"] == "candidate"
+        slot = feature["internal_slot"]
+        event = feature["interface_event"]
+        assert event["value"]["entry"]["area"] > 0
+        assert abs(event["value"]["interfaces"][slot]["discriminant"]) < 1e-10
+        assert feature["source_token"] is not None
+    assert not any("blue_band" in f["kind"] for f in (doc["actual_features"] + doc["candidates"] + doc["unfinished"]))
     assert "[raypath report]" in result.stderr
 
 
-def test_random_35_report_pins_the_ordinary_minimum_deviation_boundary():
-    result = _report(_RANDOM, "3-5", "--events", "8192")
+def test_report_physical_radius_is_not_the_smoothed_brightness_peak():
+    import math
+
+    result = _report(_RANDOM, "3-5", "--events", "8192", "--wavelength", "550")
     assert result.returncode == 0, result.stderr
     doc = json.loads(result.stdout)
-    assert doc["meta"]["requested_faces"] == [3, 5]
-    assert len(doc["features"]) == 1
-    feature = doc["features"][0]
-    assert feature["id"] == "random_regular.3-5.inner_edge"
-    assert feature["evidence_status"] == "confirmed"
-    assert feature["mechanism"] == "ordinary minimum-deviation dispersion"
-    assert feature["positions"][0]["deviation_deg"] == pytest.approx(21.612019265, abs=1e-5)
-    assert feature["positions"][1]["deviation_deg"] == pytest.approx(22.371148713, abs=1e-5)
+    assert doc["scope"]["layers"][0]["representative_faces"] == [3, 5]
+    edges = [f for f in (doc["actual_features"] + doc["candidates"] + doc["unfinished"]) if "physical_position" in f]
+    assert edges
+    for feature in edges:
+        position = feature["physical_position"]
+        n = position["source"]["refractive_index"]
+        assert position["deviation_rad"] == pytest.approx(2 * math.asin(n / 2) - math.pi / 3, abs=1e-10)
+        assert position["value"]["entry"]["area"] > 0
+        assert feature["geometry"]["sky_points"]
+    assert "not the scene SPD" in doc["scope"]["spectrum"]
 
 
-def test_report_states_the_feature_families_it_does_not_enumerate():
-    result = _report(_RANDOM, "3-1-5", "--events", "8192")
-    assert result.returncode == 0, result.stderr
-    limitations = json.loads(result.stdout)["limitations"]
-    assert "not an all-sky feature enumerator" in limitations
-    assert any("open or multiple components" in limitation for limitation in limitations)
-    assert any("general oriented kink curves" in limitation for limitation in limitations)
-    assert any("cone-crystal empty results" in limitation for limitation in limitations)
-    assert any("rank-0 feature discovery" in limitation for limitation in limitations)
-
-
-def test_rhombic_plate_keeps_plus_and_minus_120_separate_from_spherical_distance():
-    result = _report(_PLATE, "1-3-4-2", "--events", "8192")
+def test_default_report_consumes_actual_continuous_spectrum_and_records_scope():
+    result = _report(_RANDOM, "3-5")
     assert result.returncode == 0, result.stderr
     doc = json.loads(result.stdout)
-    assert len(doc["physical_l2_members"]) == 2
-    assert {tuple(member["faces"]) for member in doc["physical_l2_members"]} == {
-        (1, 3, 4, 2),
-        (1, 3, 8, 2),
-    }
-    assert len(doc["features"]) == 2
-    positions = [feature["positions"][0] for feature in doc["features"]]
-    assert sorted(position["relative_solar_azimuth_deg"] for position in positions) == [-120.0, 120.0]
-    for position in positions:
-        assert position["spherical_separation_deg"] == pytest.approx(117.599764152, abs=1e-9)
-    expected_red = 0.0008701214984864252
-    expected_blue = 0.0008910040533079951
-    expected_ratio = 1.023999584952096
-    for member in doc["physical_l2_members"]:
-        wavelengths = {sample["wavelength"]["nm"]: sample for sample in member["wavelengths"]}
-        assert sorted(wavelengths) == pytest.approx([430.019737408, 694.362898124], abs=1e-9)
-        for wavelength in wavelengths.values():
-            brightness = wavelength["brightness"]
-            assert brightness["status"] == "supported"
-            assert brightness["fine_positive_count"] > 0
-            assert brightness["fine_mean_A_times_T"] > 0
-            assert brightness["absolute_difference"] < 3e-9
-            assert len(brightness["fixed_outgoing_direction"]) == 3
-            assert brightness["direction_residual_max_rad"] < 1e-12
-        red = wavelengths[694.3628981235904]["brightness"]["fine_mean_A_times_T"]
-        blue = wavelengths[430.0197374077313]["brightness"]["fine_mean_A_times_T"]
-        assert red == pytest.approx(expected_red, abs=1e-9)
-        assert blue == pytest.approx(expected_blue, abs=1e-9)
-        assert blue / red == pytest.approx(expected_ratio, abs=1e-9)
+    assert len(doc["spectrum"]) == 33
+    assert "continuous" in doc["scope"]["spectrum"]
+    assert sum(row["measure_mass"] for row in doc["spectrum"]) == pytest.approx(1)
+    if doc["spectral_verification"]["optical_evaluations"] == 0:
+        # A bounded call may exhaust its deadline before spectral refinement.
+        # Zero work is valid only with the explicit incomplete outcome/reason.
+        assert doc["budgets"]["exhausted"], doc["budgets"]
+        assert doc["outcome"] == "partial"
+        assert "continuous spectral quadrature refinement incomplete" in doc["unfinished_reasons"]
+    assert doc["observation"]["kernel"] == "normalized_vMF"
+    assert doc["outcome"] in {"completed", "partial"}
+    assert doc["coverage"][1]["limitations"]  # bounded search is not an absence certificate
 
 
-def test_rhombic_plate_1352_keeps_the_blue_l2_members_and_tint_values():
-    result = _report(_PLATE, "1-3-5-2", "--events", "8192")
+def test_rhombic_plate_uses_physical_members_and_measured_peaks():
+    import math
+
+    result = _report(_PLATE, "1-3-4-2", "--events", "8192", "--wavelength", "550")
     assert result.returncode == 0, result.stderr
     doc = json.loads(result.stdout)
-    assert doc["meta"]["sun"]["altitude_deg"] == pytest.approx(9.0)
-    assert doc["meta"]["orientation_measure"] == "Rz(theta), theta uniform under dtheta/(2*pi); c axis exactly vertical"
-    assert {tuple(member["faces"]) for member in doc["physical_l2_members"]} == {
-        (1, 3, 5, 2),
-        (1, 3, 7, 2),
-    }
-    expected_red = 0.0001104536442463968
-    expected_blue = 0.0001803007775026744
-    expected_ratio = 1.6323660367462811
-    for member in doc["physical_l2_members"]:
-        samples = {sample["wavelength"]["nm"]: sample for sample in member["wavelengths"]}
-        red = samples[694.3628981235904]["brightness"]["fine_mean_A_times_T"]
-        blue = samples[430.0197374077313]["brightness"]["fine_mean_A_times_T"]
-        assert red == pytest.approx(expected_red, abs=1e-9)
-        assert blue == pytest.approx(expected_blue, abs=1e-9)
-        assert blue / red == pytest.approx(expected_ratio, abs=1e-9)
+    assert {tuple(member) for member in doc["physical_members"]} == {(1, 3, 4, 2), (1, 3, 8, 2)}
+    peaks = [f for f in (doc["actual_features"] + doc["candidates"] + doc["unfinished"]) if f["kind"] == "intensity_peak" and f["evidence"] == "actual"]
+    assert peaks
+    relative = []
+    for feature in peaks:
+        q = feature["geometry"]["sky_points"][0]
+        az = math.degrees(math.atan2(q[1], q[0]))
+        relative.append((az - 180 + 180) % 360 - 180)
+        assert feature["field_points"][0]["xyz"][1]["value"] > 0
+    assert min(abs(x - 120) for x in relative) < .1
+    assert min(abs(x + 120) for x in relative) < .1
+
+
+@pytest.mark.parametrize("budget", [["--budget-ms", "1"], ["--max-evaluations", "100"]])
+def test_report_low_budget_returns_partial_json_instead_of_empty_feature_claim(budget):
+    result = _report(_RANDOM, "3-5", *budget)
+    assert result.returncode == 0, result.stderr
+    doc = json.loads(result.stdout)
+    assert doc["outcome"] == "partial"
+    assert doc["budgets"]["exhausted"]
+    if budget[0] == "--max-evaluations":
+        assert doc["budgets"]["optical_evaluations"] == 100
 
 
 def test_report_output_file_is_atomic_and_stdout_stays_empty(tmp_path):
@@ -180,3 +174,108 @@ def test_report_parse_errors_write_usage_only_to_stderr_regardless_of_option_ord
     assert named in result.stderr
     assert "Usage:" in result.stderr
     assert result.stdout == ""
+
+
+def test_report_multicrystal_is_a_structured_zero_work_refusal():
+    result = _report(_RANDOM, "(3-5)->(1-3)")
+    assert result.returncode == 0, result.stderr
+    doc = json.loads(result.stdout)
+    assert doc["outcome"] == "unsupported_multicrystal"
+    assert doc["requested_path_layers"] == [[3, 5], [1, 3]]
+    assert doc["actual_features"] == []
+    assert doc["budgets"]["optical_evaluations"] == 0
+
+
+def test_endpoint_bisection_budget_is_partial_not_a_physical_stop():
+    # This cap interrupts the final source curve inside its optical bracket.
+    # Other report stages still finish; their completion cannot hide this stop.
+    result = _report(_RANDOM, "3-1-5", "--events", "8192", "--wavelength", "550",
+                     "--max-evaluations", "405930")
+    assert result.returncode == 0, result.stderr
+    doc = json.loads(result.stdout)
+    assert doc["outcome"] == "partial"
+    assert doc["budgets"]["exhausted"]
+    assert doc["budgets"]["optical_evaluations"] <= 405930
+    features = doc["actual_features"] + doc["candidates"] + doc["unfinished"]
+    curves = [c for f in features for c in f.get("source_curves", [])]
+    stopped = [c for c in curves if c["termination"] == 6]
+    assert stopped
+    assert any(c["points"] for c in stopped)
+    complete = _report(_RANDOM, "3-1-5", "--events", "8192", "--wavelength", "550")
+    assert complete.returncode == 0, complete.stderr
+    full = json.loads(complete.stdout)
+    assert full["outcome"] == "completed"
+    assert not full["budgets"]["exhausted"]
+    full_features = full["actual_features"] + full["candidates"] + full["unfinished"]
+    full_curves = {f["source_token"]: f["source_curves"] for f in full_features if "source_curves" in f}
+    for feature in features:
+        for index, curve in enumerate(feature.get("source_curves", [])):
+            if curve["termination"] == 6:
+                finished = full_curves[feature["source_token"]][index]
+                assert finished["termination"] == 3
+                assert finished["events"]
+
+
+@pytest.mark.parametrize("altitude, bounded_axis", [(0, False), (25, False), (0, True), (25, True)])
+@pytest.mark.parametrize("diameter", [0, 2])
+def test_declared_sun_boundary_is_the_physical_cap_rim(tmp_path, altitude, bounded_axis, diameter):
+    config = json.loads(_RANDOM.read_text())
+    config["scene"]["light_source"].update(diameter=diameter, altitude=altitude)
+    if bounded_axis:
+        config["crystal"][0]["axis"]["azimuth"]["std"] = .5
+    path = tmp_path / "sun-boundary.json"
+    path.write_text(json.dumps(config))
+    result = _report(path, "3-5", "--events", "64", "--wavelength", "550")
+    assert result.returncode == 0, result.stderr
+    doc = json.loads(result.stdout)
+    # Restricted orientation can leave unrelated SO(3) searches unfinished;
+    # these declared-source candidates must still be evaluated within budget.
+    assert not doc["budgets"]["exhausted"]
+    events = [f for f in doc["candidates"] if "declared_source_event" in f]
+    sun_events = [f for f in events if "sun.cap_radial" in dict(f["declared_source_event"]["coordinates"])]
+    if diameter == 0:
+        assert not sun_events
+        if bounded_axis:
+            # The absence is specific to the point sun, not an empty report.
+            assert any("axis.azimuth_uniform" in dict(f["declared_source_event"]["coordinates"]) for f in events)
+        return
+
+    assert any(f["kind"] == "declared_source_boundary" for f in sun_events)
+    corners = [f for f in sun_events if f["kind"] == "declared_source_corner"]
+    assert len(corners) == (2 if bounded_axis else 0)
+    if bounded_axis:
+        assert {dict(f["declared_source_event"]["coordinates"])["axis.azimuth_uniform"] for f in corners} == {0, 1}
+    # Incident rays point away from the sun; derive the centre from the scene,
+    # independently of the product latent-coordinate transform.
+    altitude_rad = math.radians(altitude)
+    center = [-math.cos(altitude_rad), 0, -math.sin(altitude_rad)]
+    for feature in sun_events:
+        event = feature["declared_source_event"]
+        source, value = event["source"], event["value"]
+        incident = source["incident"]
+        cosine = sum(a * b for a, b in zip(center, incident)) / math.sqrt(sum(x * x for x in incident))
+        angle = math.acos(max(-1, min(1, cosine)))
+        # The product cap uses float cos(radius) and sqrt(1-cos²(radius)).
+        # At a 1-degree radius, float rounding allows a few microradians;
+        # 1e-5 rad also covers its float frame rotation, not sampling error.
+        assert angle == pytest.approx(math.radians(diameter / 2), abs=1e-5)
+        assert value["path_valid"]
+        assert value["entry"]["area"] > value["entry"]["area_threshold"]
+        assert value["interface_product"] > 0
+        member = doc["physical_members"][doc["sources"][str(feature["source_token"])]["member"]]
+        # Independent two-interface Snell construction for this regular prism:
+        # face 3 has normal +x, subsequent side normals are 60 degrees apart.
+        # Use the actual returned pose/member, not the representative path.
+        ray = incident
+        for face, eta, sign in zip(member, [1 / source["refractive_index"], source["refractive_index"]], [-1, 1]):
+            assert 3 <= face <= 8
+            theta = math.radians(60 * (face - 3))
+            pose = source["pose"]
+            normal = [sign * (pose[3 * j] * math.cos(theta) + pose[3 * j + 1] * math.sin(theta)) for j in range(3)]
+            incidence = sum(a * b for a, b in zip(ray, normal))
+            assert incidence > 0
+            discriminant = 1 - eta * eta * (1 - incidence * incidence)
+            assert discriminant > 0
+            ray = [eta * (v - incidence * n) + math.sqrt(discriminant) * n for v, n in zip(ray, normal)]
+        assert value["outgoing"] == pytest.approx(ray, abs=1e-10)
+        assert feature["geometry"]["sky_points"][0] == pytest.approx([-v for v in ray], abs=1e-10)

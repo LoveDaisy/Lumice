@@ -125,6 +125,7 @@ LUMICE_ErrorCode Analyze(const LUMICE_Scene* scene, const LUMICE_SinglePathReque
 LUMICE_ErrorCode AnalyzeReport(const LUMICE_Scene* scene, const LUMICE_PathFeatureReportRequest& request,
                                LUMICE_PathFeatureReport** out, char* err_buf, size_t err_size) {
   namespace rp = lumice::raypath;
+  const auto request_begin = std::chrono::steady_clock::now();
 
   rp::PathFeatureReportRequest req;
   req.crystal_id = static_cast<lumice::IdType>(request.crystal_id);
@@ -136,7 +137,7 @@ LUMICE_ErrorCode AnalyzeReport(const LUMICE_Scene* scene, const LUMICE_PathFeatu
   if (request.face_count < 0 || request.layer_count < 0 || request.wavelength_count < 0) {
     return Refuse({ rp::ErrorCode::kInvalidArgument, "negative face, layer or wavelength count" }, err_buf, err_size);
   }
-  if (request.layer_count != 1 || request.face_count <= 0 || request.faces == nullptr ||
+  if (request.layer_count <= 0 || request.face_count <= 0 || request.faces == nullptr ||
       request.layer_face_counts == nullptr) {
     return Refuse({ rp::ErrorCode::kInvalidPath,
                     "a path feature report requires one non-empty layer with a non-null face sequence" },
@@ -166,7 +167,36 @@ LUMICE_ErrorCode AnalyzeReport(const LUMICE_Scene* scene, const LUMICE_PathFeatu
   if (request.wavelength_weights != nullptr) {
     req.wavelength_weights.assign(request.wavelength_weights, request.wavelength_weights + request.wavelength_count);
   }
-  req.sample_count = request.sample_count == 0 ? rp::kDefaultFeatureReportSampleCount : request.sample_count;
+  req.sample_count = request.sample_count;
+  if (request.struct_size >= sizeof(LUMICE_PathFeatureReportRequest)) {
+    if (request.budget_ms != 0) {
+      req.budget_ms = request.budget_ms;
+    }
+    if (request.max_optical_evaluations != 0) {
+      req.max_optical_evaluations = request.max_optical_evaluations;
+    }
+    if (request.max_field_evaluations != 0) {
+      req.max_field_evaluations = request.max_field_evaluations;
+    }
+    if (request.bandwidth_rad != 0) {
+      req.bandwidth_rad = request.bandwidth_rad;
+    }
+    if (request.location_resolution_rad != 0) {
+      req.location_resolution_rad = request.location_resolution_rad;
+    }
+    if (request.symmetry_bits_plus_one < 0 || request.symmetry_bits_plus_one > 8) {
+      return Refuse({ rp::ErrorCode::kInvalidArgument, "invalid physical symmetry bits" }, err_buf, err_size);
+    }
+    if (request.symmetry_bits_plus_one > 0) {
+      req.symmetry_bits = static_cast<uint8_t>(request.symmetry_bits_plus_one - 1);
+    }
+    if (request.scene_layer_plus_one < 0) {
+      return Refuse({ rp::ErrorCode::kInvalidArgument, "negative scene layer selection" }, err_buf, err_size);
+    }
+    if (request.scene_layer_plus_one > 0) {
+      req.scene_layer = static_cast<size_t>(request.scene_layer_plus_one - 1);
+    }
+  }
 
   lumice::ConfigManager config;
   if (const lumice::Error err = lumice::ParseConfigManager(SceneRoot(scene), "LUMICE_AnalyzePathFeatureReport",
@@ -174,6 +204,7 @@ LUMICE_ErrorCode AnalyzeReport(const LUMICE_Scene* scene, const LUMICE_PathFeatu
     WriteError(err_buf, err_size, "invalid_scene: " + err.message);
     return lumice::capi::ToCApiErrorCode(err.code);
   }
+  req.deadline = request_begin + std::chrono::milliseconds(req.budget_ms);
   rp::PathFeatureReport report;
   if (const rp::Error e = rp::AnalyzePathFeatureReport(config, req, &report); !e.Ok()) {
     return Refuse(e, err_buf, err_size);

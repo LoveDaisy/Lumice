@@ -35,6 +35,7 @@ CPMAddPackage(
 add_executable(unit_correctness_test
   "${PROJ_TEST_DIR}/test_main.cpp"
   # core/
+  "${PROJ_TEST_DIR}/unit-correctness/core/test_product_sample_transform.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/core/test_math.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/core/test_geo3d.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/core/test_optics.cpp"
@@ -259,6 +260,9 @@ add_executable(unit_correctness_test
   "${PROJ_TEST_DIR}/unit-correctness/analytic/test_path_rank.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/analytic/test_pose_density.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/analytic/test_band_sum.cpp"
+  "${PROJ_TEST_DIR}/unit-correctness/analytic/test_path_feature_discovery.cpp"
+  "${PROJ_TEST_DIR}/unit-correctness/analytic/test_diagnostic_batch.cpp"
+  "${PROJ_TEST_DIR}/unit-correctness/analytic/test_diagnostic_capi.cpp"
   # Parity with Lumice Integral: replays LI's exported fixtures (test/fixtures/li-parity/) against
   # the same kernels. Unit-correctness rather than parity-cross-backend: that layer's oracle is the
   # legacy CPU backend (doc/testing-architecture.md section 3, step 5), and this target already
@@ -271,9 +275,12 @@ add_executable(unit_correctness_test
   "${PROJ_TEST_DIR}/unit-correctness/raypath/test_single_path_json.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/raypath/test_single_path_c_api.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/raypath/test_path_feature_report.cpp"
+  "${PROJ_TEST_DIR}/unit-correctness/raypath/test_product_input_assembly.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/raypath/test_path_feature_report_c_api.cpp")
 target_include_directories(unit_correctness_test
   PRIVATE ${PROJ_TEST_DIR})
+target_compile_definitions(unit_correctness_test PRIVATE
+  LUMICE_DIAGNOSTIC_FIXTURE_DIR="${PROJ_TEST_DIR}/fixtures/raypath-diagnostics")
 target_link_libraries(unit_correctness_test
   PRIVATE GTest::gtest ${CMAKE_THREAD_LIBS_INIT} lumice_obj lumice_foundation_obj lumice_analytic_kernel lumice_raypath_obj)
 # The configure-time tier, for test_c_api_engine_isa_level.cpp to hold the engine's run-time
@@ -298,6 +305,17 @@ add_test(NAME "LumiceUnitCorrectnessTest" COMMAND unit_correctness_test
   "${CMAKE_CURRENT_BINARY_DIR}"
   "${CMAKE_SOURCE_DIR}")
 set_tests_properties("LumiceUnitCorrectnessTest" PROPERTIES LABELS "unit-correctness")
+
+# Headless raypath composition has no GUI link dependency and runs in every test build.
+add_executable(raypath_composition_test
+  "${PROJ_TEST_DIR}/test_main.cpp"
+  "${PROJ_TEST_DIR}/composition-correctness/raypath/test_product_input_assembly_chain.cpp")
+target_link_libraries(raypath_composition_test PRIVATE GTest::gtest ${CMAKE_THREAD_LIBS_INIT}
+  lumice_obj lumice_foundation_obj lumice_analytic_kernel lumice_raypath_obj)
+target_compile_definitions(raypath_composition_test PRIVATE
+  LUMICE_DIAGNOSTIC_FIXTURE_DIR="${PROJ_TEST_DIR}/fixtures/raypath-diagnostics")
+add_test(NAME LumiceRaypathCompositionTest COMMAND raypath_composition_test)
+set_tests_properties(LumiceRaypathCompositionTest PROPERTIES LABELS "composition-correctness")
 
 # --------------------------------------------------------------------------------------------------
 # capi_header_self_containment_test (unit-correctness): every engine surface header compiles when it
