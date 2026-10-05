@@ -357,6 +357,7 @@ The target/fiber document and `--warm` contract in sections 1–6 are unchanged.
 | `unfinished_reasons` | Required discovery/verification stages left incomplete or unavailable |
 | `coverage` | Supported scope and bounded-search limitations, not a claim of global completeness |
 | `observation` | Kernel, bandwidth, local location target and search scope; no MC projection is imposed |
+| `requested_outer_samples` | The request's `sample_count` verbatim: with no `--events` (auto mode) it is **0**, not the planned count; the resolved dyadic prefix actually used is `budgets.requested_outer_samples` |
 | `budgets`, `timing` | Actual work, completed outer draws/repeat, exhaustion and per-stage seconds |
 | `sources` | Call-local tokens linking outer draw, member and spectral row; records also carry explicit source witnesses |
 
