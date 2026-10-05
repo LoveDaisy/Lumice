@@ -71,6 +71,7 @@
 #include "server/render.hpp"
 #include "support/thread_budget.hpp"
 #include "util/queue.hpp"
+#include "util/sky_direction.hpp"
 
 namespace lumice {
 namespace {
@@ -459,6 +460,49 @@ TEST(RaypathHistogramConsumer, ConeWithOneRingAndAnOffAxisCentre) {
   EXPECT_EQ(r.entries_[0].count_, 1u);
   ASSERT_EQ(r.entries_[0].ring_energy_.size(), 1u);
   EXPECT_DOUBLE_EQ(r.entries_[0].ring_energy_[0], r.entries_[0].energy_);
+}
+
+// The absolute direction convention at a NON-ZERO centre altitude, through the same fill the
+// CLI's `--center` and the GUI's Point mode use (AltAzToDir). A cone centred at sky point P
+// must select the rays DISPLAYED at P — whose propagation is AltAzToDir(P), the direction that
+// light arriving from P travels — and must NOT select the rays displayed at P's antipode or at
+// either azimuth mirror, whose propagations are the negations/axis flips of that vector. A
+// sign error in this fill (the antipode) or a misread convention (a mirror) fails exactly one
+// of the four assertions below; the zero-altitude case cannot tell them apart, which is why
+// the centre altitude here is 43 degrees.
+TEST(RaypathHistogramConsumer, ConeCentreAtNonZeroAltitudeSelectsItsOwnSkyPoint) {
+  RaypathRoiSpec roi;
+  roi.mode_ = RaypathRoiMode::kCone;
+  lumice::AltAzToDir(43.0f, 25.0f, roi.cone_center_);
+  roi.cone_radius_rad_ = 3.0f * lumice::kDeg2Rad;
+  roi.cone_ring_count_ = 2;
+  RaypathHistogramConsumer c(roi);
+
+  Batch b(1);
+  b.AddChain(1, 0, 1, { 3, 5 }).AddChain(2, 0, 1, { 1, 2 });
+  float displayed[3];   // propagation of a ray that DISPLAYS at (43, 25)
+  float antipode[3];    // displays at (-43, -155): 180 degrees away
+  float az_mirror[3];   // displays at (43, -155): the same-altitude azimuth mirror
+  float alt_mirror[3];  // displays at (-43, 25): the altitude mirror
+  lumice::AltAzToDir(43.0f, 25.0f, displayed);
+  lumice::AltAzToDir(-43.0f, -155.0f, antipode);
+  lumice::AltAzToDir(43.0f, -155.0f, az_mirror);
+  lumice::AltAzToDir(-43.0f, 25.0f, alt_mirror);
+  b.AddRay(1, 1.0f, displayed[0], displayed[1], displayed[2]);
+  b.AddRay(1, 1.0f, displayed[0], displayed[1], displayed[2]);
+  b.AddRay(2, 1.0f, antipode[0], antipode[1], antipode[2]);
+  b.AddRay(2, 1.0f, az_mirror[0], az_mirror[1], az_mirror[2]);
+  b.AddRay(2, 1.0f, alt_mirror[0], alt_mirror[1], alt_mirror[2]);
+  c.Consume(b.data);
+  auto r = Snapshot(c);
+  const auto* on_centre = Find(r, "crystal1(3-5)");
+  const auto* elsewhere = Find(r, "crystal1(1-2)");
+  ASSERT_NE(on_centre, nullptr);
+  EXPECT_EQ(on_centre->count_, 2u) << "the rays displayed at the centre's own sky point are members";
+  // A chain every ray of which the cone rejected has no row at all (entries are born from
+  // counted rays), so "absent" and "present with count 0" both mean the same thing here.
+  EXPECT_TRUE(elsewhere == nullptr || elsewhere->count_ == 0u)
+      << "antipode and both mirrors are outside a 3-degree cone";
 }
 
 // ---------------------------------------------------------------------------

@@ -122,7 +122,8 @@ struct SinglePathMetadata {
 
   double target_altitude_deg = 0.0;
   double target_azimuth_deg = 0.0;
-  double target_direction[3]{};       // world, propagation crystal -> observer
+  double target_direction[3]{};       // world, light-travel direction arriving from the target sky point
+                                      // (doc/coordinate-convention.md "Direction-Vector Semantics")
   double target_deviation_deg = 0.0;  // angle between the sun and the target sky point
 
   double wavelength_nm = 0.0;

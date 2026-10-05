@@ -146,6 +146,63 @@ class TestAnalyzeCli(LumiceTestCase):
                            f"on-ring {rows_on[0]} total {head_on['total_energy']} vs off-ring "
                            f"{rows_off[0] if rows_off else '(nothing)'} total {head_off['total_energy']}")
 
+    def test_cone_absolute_sky_position_at_non_zero_altitude(self):
+        """The absolute direction convention of `--center`, at a centre altitude where the
+        wrong readings separate. `test_cone_on_and_off_the_ring` compares an on-ring point
+        against halo-free sky; this one names the THREE points a wrong fill would actually
+        collect — the antipode (-43, 180), the same-altitude azimuth mirror (43, 180) and
+        the altitude mirror (-43, 0) — and holds each against the on-ring point (43, 0),
+        all at radius 2°. The oracle is independent halo physics: the 22° ring's light sits
+        at label distance ~22-23° from the sun (20, 0) and the prism's two-refraction
+        deviation support tops out near 50°, so no convention error can put 3-5 energy at
+        any of the three flipped points (all >= 63° away). Measured contrast at this seed
+        and budget: the on-ring cone's leading energy is ~47x the best flipped point's
+        (the flips carry only long-chain noise); 10x is the floor. At altitude 0 the
+        antipode and the azimuth mirror coincide — which is why the zero-altitude cone
+        tests cannot tell a flipped fill from a correct one and this test exists."""
+        flips = {"antipode": "-43,180", "azimuth mirror": "43,180", "altitude mirror": "-43,0"}
+        on_ring = self._analyze("--roi", "cone", "--center", _ON_RING, "--radius", "2")
+        self.assertEqual(on_ring.returncode, 0, on_ring.stderr)
+        head_on, rows_on = _parse_csv(on_ring.stdout)
+        on_top = _top_energy(head_on, rows_on)
+        self.assertEqual(rows_on[0][0], _HALO_22)
+        for name, centre in flips.items():
+            flipped = self._analyze("--roi", "cone", "--center", centre, "--radius", "2")
+            self.assertEqual(flipped.returncode, 0, flipped.stderr)
+            head_fl, rows_fl = _parse_csv(flipped.stdout)
+            fl_top = _top_energy(head_fl, rows_fl) if rows_fl else 0.0
+            self.assertGreater(on_top, 10.0 * fl_top,
+                               f"{name} ({centre}) collected as much energy as the ring itself: "
+                               f"on {head_on['total_energy']} vs flip {head_fl['total_energy']}")
+
+    def test_cone_azimuth_is_not_mirrored_on_a_fixed_pose(self):
+        """The azimuth axis of `--center` labels, on a scene whose sky is NOT mirror
+        symmetric: raypath_analysis_fixed_pose_135.json pins one prism pose (axis zenith
+        90, azimuth 135, roll 0, sun at (20, 0)), so its arcs sit at definite azimuths —
+        the 4-1-7 tangent-arc-family energy lands at (20, +90) and nothing at all lands
+        at (20, -90) (the mirrored side belongs to other chains' arcs, and at this budget
+        it is empty). A centre fill that read the label's azimuth mirrored (az -> -az)
+        would collect the dark side and this goes red; every rotationally symmetric scene
+        — the whole-sky and on/off-ring tests included — is structurally blind to that
+        flip, because a mirrored ring is still the ring."""
+        config = CONFIGS_DIR / "raypath_analysis_fixed_pose_135.json"
+        plus = self.run_lumice(["analyze", "-f", str(config), "--seed", _SEED,
+                                "--roi", "cone", "--center", "20,90", "--radius", "4",
+                                "--symmetry", "none"], timeout=180)
+        minus = self.run_lumice(["analyze", "-f", str(config), "--seed", _SEED,
+                                 "--roi", "cone", "--center", "20,-90", "--radius", "4",
+                                 "--symmetry", "none"], timeout=180)
+        self.assertEqual(plus.returncode, 0, plus.stderr)
+        self.assertEqual(minus.returncode, 0, minus.stderr)
+        head_p, rows_p = _parse_csv(plus.stdout)
+        head_m, rows_m = _parse_csv(minus.stdout)
+        self.assertTrue(rows_p, "the +90 side of the fixed pose carries the 4-1-7 arc")
+        self.assertEqual(rows_p[0][0], "4-1-7", [r[0] for r in rows_p[:5]])
+        self.assertGreater(float(rows_p[0][1]), 80.0, "4-1-7 dominates its own arc")
+        # The mirrored side is empty at this budget: not fewer rays — none.
+        self.assertEqual(int(head_m["total_rays"]), 0,
+                         f"the -90 side must be dark; got {rows_m[:3]}")
+
     def test_frame_roi_reads_the_render_entry(self):
         """`--roi frame` on the fixture's one render[] entry: a non-default lens
         (fisheye_equal_area) and the default visible range, read through the engine's own

@@ -354,3 +354,52 @@ Preset 与 Case 的对应关系：
 **回归守卫**：`test/golden-analytic/core/test_visible_mask.cpp` 里两条对前向与掩码自带反向做**精确相等**往返的用例（`GlobeInverse.RoundTripsAgainstTheForwardGlobeBranch`、`RectangularInverse.RoundTripsAgainstTheForwardRectangularBranch`）。它们要求原样拿回出发像素、零容差——这正是半像素偏心一旦重现就会变红、而不会被某条容差静默吸收的原因。
 
 第三对配对有自己的守卫，在 `test/gui/functional/test_preview_dual_fisheye_gather.cpp`。它不可能写成 C++ 往返——gather 活在 GLSL 里，而在测试里镜像一份该公式只会让断言自证自身。它改为直接跑真实 shader，并把源格式的 `r_scale` 置为 1：这使显示侧反投影与 gather 侧正投影成为同一投影、同一尺度，整条链塌缩成一个恒等映射——画布像素 `(col, row)` 必须读到源纹素 `(col, row)`。再以单纹素棋盘直接测这条约定：锐利即表示每个片元只读了一个纹素，塌成一片平坦中灰即表示它平均了一个 2×2 块。注意它的覆盖边界：它检测的是**所有像素共有的系统性偏移**，也就是约定失配本身的形态。一个把内容整体搬走却不使其糊化的投影错误（旋转、镜像圆盘）会保持棋盘锐利、在这里通过；那类问题由 `lens_proj` 参考图与 `test_visible_mask_gui_parity.cpp` 覆盖。
+
+## 15. 方向向量语义（travel 与 position）
+
+§2–§3 固定的是**位置类**量的世界系。本节是**方向向量**的唯一权威——即流经 C API 的单位
+3 向量（`cone_center`、`incident_direction`、`target_direction`、`outgoing_direction`、
+`LUMICE_UnprojectPixel` 的返回值），以及它们与用户在 config / CLI / GUI 取点读数里写的
+天区点标签（`--center`、`--target`）的关系。
+
+**两种单位向量，同一个系。** 都在 §2 世界系（+z 天顶、方位角按 §3）；差别只有一个取负：
+
+- 天区点 `(alt, az)` 的**位置**——指向它的向量：
+  `pos = (cos alt · cos az, cos alt · sin az, +sin alt)`；
+- 从该点**来光**的 travel 方向——出射光线被显示在该点时携带的传播方向：
+  `AltAzToDir(alt, az) = −pos = (−cos alt · cos az, −cos alt · sin az, −sin alt)`。
+
+这同时调和了两句此前读起来矛盾的话：「zenith is z = −1」（`lumice_engine.h` 的方向契约）与
+「+z 是天顶」（§2）。前者说的是 travel 方向——从天顶来的光竖直向下传播，`z = −1`；后者说的
+是位置向量。同一系、两类量、差一个取负。具体地：`LUMICE_UnprojectPixel` 返回 travel 方向；
+渲染的 `ProjectExitToPixel` 吃光线出射传播 `w`，落在 travel 方向为 `−w` 的那个像素上。
+
+**显示规则。** 出射传播为 `w` 的光线显示在（能量累积在）它「所来之处」：
+`position(display) = −w`，即标签 `DirToAltAz(w)`（`alt = asin(−z)`、
+`az = atan2(y, x) − 180`——这里的 −180° 只是把 travel↔position 的取负抵消回去；与 §8
+晶体链的 −180° 偏移是两回事）。因此偏离太阳入射方向 `δ` 的晕光显示在距太阳标签 `δ` 的
+标签处——测试里所有 oracle 针对的正是这个用户可见几何。
+
+**谁填什么。** `src/util/sky_direction.hpp`（`AltAzToDir` / `DirToAltAz`）是标签 ↔ travel
+方向换位的唯一实现。每个 light-travel 约定消费者的填充规则：
+
+| 字段 | 正确填充 | 取负后会查询 |
+|---|---|---|
+| `LUMICE_RaypathAnalysisRequest.cone_center`（CLI `--center`、GUI Point 模式） | `AltAzToDir(P)` | P 的对跖点 |
+| 单光路 `target_direction`（CLI `raypath --target`） | `AltAzToDir(P)` | P 的对跖点 |
+| `incident_direction`（`SunIncidentDirection`） | `AltAzToDir(sun)` | 反日点处的光源 |
+
+为什么锥中心填「位置的取负」选中的恰是 P 本身：`ConeMembership` 拿中心与出射传播点积，
+而显示在 P 的光线传播方向就是 `AltAzToDir(P)`——于是
+`dot(AltAzToDir(P), w) = cos(angle(P, display(w)))`。同一恒等式使 `AltAzToDir(P)` 成为正确
+的 fiber 目标：kernel 寻找传播方向等于所给向量的出射，而那些正是显示在 P 的出射。钉住
+这件事的绝对位置测试（`test_cone_absolute_sky_position_at_non_zero_altitude`、
+`test_cone_azimuth_is_not_mirrored_on_a_fixed_pose`、
+`test_target_absolute_sky_position_at_non_zero_altitude`）用 22° 晕与手算几何当 oracle——
+正因为自洽性断言在这些约定（包括错的那些）下全部通过。
+
+**外部工具传位置向量时。** 自家 API 说位置向量的消费者（Lumice Integral 的
+`sun_direction(alt, az)` 是 `pos` 而非 `−pos`）在填引擎方向字段前必须取负，读引擎 travel
+方向当 bearing 用时必须把 180° 加回去。迄今大多数混淆来自：拿 LI 的方位角（位置 bearing，
+LI kernel 的 target 是位置）与引擎 CLI 标签（也是位置 bearing）对比时，忘了两个 kernel 的
+target **字段**分别落在 travel/position 取负的两侧——标签相同，交给 kernel 的向量种类不同。
