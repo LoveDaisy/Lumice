@@ -4,6 +4,7 @@
 #include <cmath>
 
 #include "core/math.hpp"
+#include "core/random.hpp"
 
 namespace lumice {
 

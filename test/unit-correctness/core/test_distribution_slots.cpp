@@ -7,6 +7,7 @@
 #include <limits>
 
 #include "core/math.hpp"
+#include "core/random.hpp"
 
 // Per-type slot semantics of lumice::Distribution: which of the two float slots each
 // DistributionType reads as its anchor and which as its spread, and that

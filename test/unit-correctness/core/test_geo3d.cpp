@@ -5,6 +5,7 @@
 
 #include "core/geo3d.hpp"
 #include "core/math.hpp"
+#include "core/random.hpp"
 
 namespace {
 

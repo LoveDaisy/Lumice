@@ -609,6 +609,7 @@ set(lumice_core_src
   "${PROJ_SRC_DIR}/core/geo3d_closedform.cpp"
   "${PROJ_SRC_DIR}/core/lat_lut.cpp"
   "${PROJ_SRC_DIR}/core/math.cpp"
+  "${PROJ_SRC_DIR}/core/random.cpp"
   "${PROJ_SRC_DIR}/core/sample_transform.cpp"
   "${PROJ_SRC_DIR}/core/shape_sample.cpp"
   "${PROJ_SRC_DIR}/core/miller_wedge.cpp"

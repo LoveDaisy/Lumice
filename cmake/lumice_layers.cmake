@@ -44,6 +44,8 @@ set(LUMICE_LAYER_foundation_FILES
   core/lat_lut.hpp
   core/math.cpp
   core/math.hpp
+  core/random.cpp
+  core/random.hpp
   core/sample_transform.cpp
   core/sample_transform.hpp
   core/shape_sample.cpp

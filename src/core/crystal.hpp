@@ -9,6 +9,7 @@
 #include "core/crystal_kind.hpp"
 #include "core/def.hpp"
 #include "core/geo3d.hpp"
+#include "core/random.hpp"
 
 namespace lumice {
 
