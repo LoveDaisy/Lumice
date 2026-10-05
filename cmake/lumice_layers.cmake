@@ -246,6 +246,7 @@ set(LUMICE_LAYER_raypath_FILES
   raypath/detail/feature_discovery.hpp
   raypath/detail/input_assembly.cpp
   raypath/detail/input_assembly.hpp
+  raypath/detail/json_values.hpp
   raypath/detail/physical_member_scope.cpp
   raypath/detail/physical_member_scope.hpp
   raypath/path_feature_report.hpp

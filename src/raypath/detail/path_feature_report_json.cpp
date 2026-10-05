@@ -1,21 +1,13 @@
 #include "raypath/detail/path_feature_report_json.hpp"
 
-#include <cmath>
 #include <nlohmann/json.hpp>
+
+#include "raypath/detail/json_values.hpp"
+
 namespace lumice::raypath {
 namespace {
-nlohmann::ordered_json Num(double value) {
-  return std::isfinite(value) ? nlohmann::ordered_json(value) : nlohmann::ordered_json(nullptr);
-}
-nlohmann::ordered_json Array(const double* values, int count) {
-  nlohmann::ordered_json out = nlohmann::ordered_json::array();
-  for (int i = 0; i < count; ++i) {
-    out.push_back(Num(values[i]));
-  }
-  return out;
-}
-}  // namespace
-namespace {
+using detail::Array;
+using detail::Num;
 using Json = nlohmann::ordered_json;
 
 const char* EvidenceName(DiagnosticEvidence evidence) {
