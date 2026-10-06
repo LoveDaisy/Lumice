@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1791256190604,
+  "lastUpdate": 1791256192700,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9524,50 +9524,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "b10d1bbc134afb64423fa842b7740de5a59934f2",
-          "message": "Merge pull request #359 from LoveDaisy/feat/analysis-panel-polish\n\nfeat(gui): raypath analysis panel polish — first-picture gate, draw layer, geometry, thousands grouping, Export CSV",
-          "timestamp": "2026-09-13T14:55:21+08:00",
-          "tree_id": "ffbfcccfae868fd3b9504d3d98acd998d41a1933",
-          "url": "https://github.com/LoveDaisy/ice_halo_sim/commit/b10d1bbc134afb64423fa842b7740de5a59934f2"
-        },
-        "date": 1789283180008,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 88.5,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 99.6,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 89.1,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 90.4,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "90d23cafd492e0f65663df5a681c439b0fa09f35",
           "message": "Merge pull request #360 from LoveDaisy/feat/analysis-standing-cpu-pool\n\nfeat(server): standing CPU analysis pool on the GPU route, woken by session kind",
           "timestamp": "2026-09-13T15:15:21+08:00",
@@ -13867,6 +13823,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 94.9,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "236483fc270669e06b5b472f997c6e03974f82f5",
+          "message": "Merge pull request #471 from LoveDaisy/docs/raypath-case-corpus\n\ndocs(cases): add raypath analysis scenario-case corpus index",
+          "timestamp": "2026-10-06T11:07:25+08:00",
+          "tree_id": "05675d1c473a536b58ff6c00a95dbda93a7db23c",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/236483fc270669e06b5b472f997c6e03974f82f5"
+        },
+        "date": 1791256192193,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 88.2,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 99.9,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 99,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 94.1,
             "unit": "%"
           }
         ]
