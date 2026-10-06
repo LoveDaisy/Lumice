@@ -965,31 +965,54 @@ kernel void trace_layer_kernel(
       float cw  = (ch == 0u) ? w_refl : w_refr;
       if (cw < 0.0f) { continue; }
 
-      // Polygon-slab traversal via the cross-backend single-source
-      // intersect (lm_traversal::SlabFaceT, see core/shared/traversal_shared.h).
-      // t_far is initialised to 1e30f — equal to SlabFaceT's sentinel for
-      // non-candidate faces — so `t < t_far` naturally skips them without
-      // an explicit denom-gate at the call site.
-      // From-face exclusion: Metal uses the post-loop eps_thr relaxed
-      // threshold (see below) rather than an explicit fi==to_face skip; this
-      // is equivalent to CUDA's skip on convex crystals (see traversal_shared.h
-      // header for the equivalence condition and non-convex caveat).
-      //
-      // K-shape pool: walk THIS ray's polygon slice only
-      // ([shape_poly_off, shape_poly_end)) inside the shared poly_*
-      // buffers. `far_face` still records the ABSOLUTE polygon index (the
-      // loop variable `fi`), so cont_face → next-hit's to_face stays a
-      // valid direct index into poly_n / poly_d.
+      // Birth classification: a child born on face `to_face` with
+      // denom_src = c·n_src > 0 has LEFT the convex crystal — the signed
+      // distance to the source plane strictly increases along the ray, so no
+      // re-hit is possible. Pure sign test, no epsilon, identical in shape to
+      // CUDA's exit gates (entry external-reflect children exit
+      // unconditionally; refracted exits gate on cos_exit > 0.0f,
+      // cuda_trace_backend.cu); see traversal_shared.h for the cross-backend
+      // statement. Here denom_src is evaluated in its factored form from the
+      // Fresnel inputs — reflection child: r·n = −cos_theta; refraction
+      // child (non-TIR, so sd > 0): f·n = sd·cos_theta, sign = cos_theta's —
+      // the same geometric quantity without re-reading the source normal:
+      // holding nx/ny/nz (or a re-loaded copy, which the compiler CSEs back
+      // into them) live across the child loop costs one occupancy register
+      // step (threadgroup 512 → 448). An outward child skips the slab walk
+      // below and falls to the exit block: with the walk skipped, far_face
+      // stays -1 and the `far_face >= 0` accept test fails, so it flows
+      // through the SAME else (exit) path as a slab miss — no second copy of
+      // the exit logic. (The CPU mirror keeps the walk for its face-outer/
+      // ray-inner vectorisable shape and discards the outward ray's slab
+      // result at scatter-back — semantics identical.)
       float t_far = 1e30f;
       int   far_face = -1;
-      for (uint fi = shape_poly_off; fi < shape_poly_end; fi++) {
-        float fnx = poly_n[fi * 3u + 0u];
-        float fny = poly_n[fi * 3u + 1u];
-        float fnz = poly_n[fi * 3u + 2u];
-        float fd  = poly_d[fi];
-        float t = lm_traversal::SlabFaceT(cdx, cdy, cdz, ox, oy, oz, fnx, fny, fnz, fd);
-        if (t < t_far) {
-          t_far = t; far_face = int(fi);
+      if ((ch == 0u ? -cos_theta : sd * cos_theta) <= 0.0f) {
+        //
+        // Polygon-slab traversal via the cross-backend single-source
+        // intersect (lm_traversal::SlabFaceT, see core/shared/traversal_shared.h).
+        // t_far is initialised to 1e30f — equal to SlabFaceT's sentinel for
+        // non-candidate faces — so `t < t_far` naturally skips them without
+        // an explicit denom-gate at the call site. Inward children only
+        // (denom_src ≤ 0): the post-loop eps_thr source-face guard below is
+        // mechanical belt-and-braces — an inward child's source plane is not a
+        // slab candidate to begin with, because SlabFaceT's denominator gate
+        // excludes it.
+        //
+        // K-shape pool: walk THIS ray's polygon slice only
+        // ([shape_poly_off, shape_poly_end)) inside the shared poly_*
+        // buffers. `far_face` still records the ABSOLUTE polygon index (the
+        // loop variable `fi`), so cont_face → next-hit's to_face stays a
+        // valid direct index into poly_n / poly_d.
+        for (uint fi = shape_poly_off; fi < shape_poly_end; fi++) {
+          float fnx = poly_n[fi * 3u + 0u];
+          float fny = poly_n[fi * 3u + 1u];
+          float fnz = poly_n[fi * 3u + 2u];
+          float fd  = poly_d[fi];
+          float t = lm_traversal::SlabFaceT(cdx, cdy, cdz, ox, oy, oz, fnx, fny, fnz, fd);
+          if (t < t_far) {
+            t_far = t; far_face = int(fi);
+          }
         }
       }
       float eps_thr = (to_face != kInvalidId && far_face != int(to_face)) ? -kFloatEps : kFloatEps;

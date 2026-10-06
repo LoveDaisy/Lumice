@@ -20,13 +20,45 @@
 //     backend's post-loop accept threshold (`eps_thr`). If this value is ever
 //     re-tuned, **all three constants must move together**.
 //
-// From-face exclusion strategy (caller responsibility):
-//   - CUDA uses explicit `fi == from_poly` skip inside the slab loop.
-//   - Metal/CPU use the post-loop `eps_thr` relaxed threshold for the source
-//     face. Both strategies are equivalent **only on convex crystals** (where
-//     a ray leaving its source face cannot legitimately re-hit any face). If
-//     a non-convex crystal type is ever wired through, this equivalence
-//     breaks; the caller must then re-verify its exclusion strategy.
+// From-face strategy (caller responsibility):
+//   - All three backends classify an outward-going child AT BIRTH and never
+//     let it consume a slab result. CPU and Metal test the source-face
+//     denominator sign where the child is born (denom_src = d·n_src > 0.0f —
+//     a pure sign test, no epsilon; optics.cpp PropagateSlab and
+//     lumice_trace.metal trace_layer_kernel) and record the child as an exit
+//     with its position unchanged. Metal evaluates the same quantity in its
+//     factored form from the Fresnel inputs (reflection child r·n = −cosθ;
+//     refraction child f·n = sd·cosθ, sign = cosθ's) to keep the source
+//     normal's live range out of the child loop — an occupancy register step
+//     (threadgroup 512 → 448) otherwise. CUDA does the same classification
+//     constructively: entry external-reflect children exit unconditionally
+//     and refracted exits gate on cos_exit > 0.0f (cuda_trace_backend.cu).
+//     The CPU/Metal and CUDA predicates are deliberately identical in shape
+//     — a sign test with no epsilon on any side — so no (0, ε] band can
+//     re-open where an outward child slips back into the slab. denom_src ==
+//     0.0f counts as inward: a deliberate tie-break on the same boundary as
+//     CUDA's cos_exit > 0.0f (measure-zero band; the residual channel matches
+//     the reference backend bit for bit), not a defect to "fix"
+//     asymmetrically.
+//   - What remains inside the slab loops is mechanical belt-and-braces, not
+//     semantics: CUDA's explicit `fi == from_poly` skip, and Metal/CPU's
+//     post-loop `eps_thr` threshold for the source face. For an INWARD child
+//     (denom_src ≤ 0 < kSlabEps) the source plane is not a slab candidate in
+//     the first place — SlabFaceT's denominator gate excludes it — so those
+//     guards only backstop float noise. This equivalence premise (outward
+//     children never consume a slab result) is what makes the two in-loop
+//     strategies interchangeable.
+//   - Convexity: the slab's "face with the minimum valid t is the exit face"
+//     invariant additionally presupposes a ray that STARTS INSIDE a convex
+//     crystal whose every polygon plane bounds a real (non-degenerate) face.
+//     A birth point a few ulp inside its source plane plus a grazing outward
+//     denominator inflates t = |δ|/denom past any fixed guard, and the convex
+//     half-space property hands positive t to other faces as well — which is
+//     exactly why outward children must be classified before the slab and not
+//     inside it. If a non-convex crystal type is ever wired through (see
+//     CreateConcavePyramidMesh in geo3d, currently NOT wired to the
+//     config/Crystal factory), outward rays CAN legitimately re-hit and the
+//     birth classification — not just the in-loop guards — must be revisited.
 //
 // Convex-crystal invariant: the face with the minimum valid t (denom > eps)
 // is guaranteed to be the exit face. There is always at least one such face
@@ -52,7 +84,8 @@ LM_CONSTANT float kSlabEps = 1e-5f;
 // without requiring a separate `denom > eps` check at the call site.
 //
 // Caller responsibilities:
-//   - from-face exclusion (see header note on convex-crystal equivalence)
+//   - outward-child birth classification before the slab (see header note on
+//     the from-face strategy)
 //   - min-t tracking across faces
 //   - post-loop accept threshold (e.g. eps_thr relaxation for TIR-edge cases)
 // 10 scalar params (3 dir + 3 origin + 3 normal + plane const) — scalar-only
