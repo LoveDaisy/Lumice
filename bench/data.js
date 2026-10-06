@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1791270323889,
+  "lastUpdate": 1791270326431,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9524,50 +9524,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "90d23cafd492e0f65663df5a681c439b0fa09f35",
-          "message": "Merge pull request #360 from LoveDaisy/feat/analysis-standing-cpu-pool\n\nfeat(server): standing CPU analysis pool on the GPU route, woken by session kind",
-          "timestamp": "2026-09-13T15:15:21+08:00",
-          "tree_id": "0e81a696990d2128a156faf657717d6b2838d130",
-          "url": "https://github.com/LoveDaisy/ice_halo_sim/commit/90d23cafd492e0f65663df5a681c439b0fa09f35"
-        },
-        "date": 1789284495186,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 63.2,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 99.6,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 95.3,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 88.7,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "0eba76808ec4e34d0e76e5c741347a0779db27c2",
           "message": "Merge pull request #361 from LoveDaisy/feat/panel-state-round-trip\n\nfeat(gui): panel-derived state round trip — analysis list freshness predicate, colour-ref layer re-indexing",
           "timestamp": "2026-09-13T15:37:56+08:00",
@@ -13867,6 +13823,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 94.1,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "0c45b96ea97e477e6973097a68acbf4e6e7e3825",
+          "message": "Merge pull request #472 from LoveDaisy/fix/outward-child-selfhit-leak\n\nfix(core): classify outward children at birth in CPU/Metal slab traversal",
+          "timestamp": "2026-10-06T15:02:49+08:00",
+          "tree_id": "5a3cb903bdbd5960d3ed2fddfb7201cfe72a62d2",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/0c45b96ea97e477e6973097a68acbf4e6e7e3825"
+        },
+        "date": 1791270325652,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 84,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 100.2,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 98.6,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 93.5,
             "unit": "%"
           }
         ]
