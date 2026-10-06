@@ -8,6 +8,7 @@
 #include "core/crystal.hpp"
 #include "core/math.hpp"
 #include "core/optics.hpp"
+#include "core/shared/traversal_shared.h"
 
 using namespace lumice;
 
@@ -837,4 +838,229 @@ TEST_F(PropagateTest, ToFaceIsPolygonFaceIndex) {
   ASSERT_NE(fid_out[0], kInvalidId);
   EXPECT_LT(fid_out[0], crystal_.PolygonFaceCount()) << "fid_out must be a polygon-face index, got " << fid_out[0]
                                                      << " (PolygonFaceCount=" << crystal_.PolygonFaceCount() << ")";
+}
+
+// ============================================================================
+// Outward-child birth-classification sentinels.
+//
+// Both HitSurface children born on face f can leave the crystal immediately:
+// the entry external-reflection child (grazing incidence, Fresnel R→1) and the
+// near-critical-angle refracted exit child (exit direction nearly tangent to
+// the exit face). Their common signature is d·n_f > 0 at birth, and the
+// contract under test is that such a ray is classified as EXITING at birth —
+// to_face == kInvalidId, position unchanged — never fed to the slab search.
+//
+// Why the slab search alone cannot decide this: a real birth point sits a few
+// ulp INSIDE the source plane (δ_f = p·n_f + fd < 0, float rounding of the
+// hit point), and a grazing outward direction makes denom = d·n_f → 0, so the
+// source plane's t = |δ_f|/denom inflates past the +kFloatEps self-hit guard
+// (the guard compares a length against 1e-5 while the failing quantity is the
+// ~1 ulp residual δ). The source plane then wins min-t and the ray
+// phantom-re-hits its own face — chains grow an adjacent duplicate face
+// (impossible inside a convex crystal) and the re-hit at cos>0 grazes into
+// TIR, flipping the ray back inside: non-physical exits, i.e. stray sky dots.
+// Born within ~1 ulp of a shared edge, the same outward child instead
+// phantom-hits the NEIGHBOURING face (no duplicate-face signature).
+//
+// Each test first ASSERTs its constructed geometry (residuals and grazing
+// denominator land in the expected bands) so coordinate rounding on any
+// platform fails loudly instead of silently defusing the sentinel.
+// ============================================================================
+
+// Family A, entry external-reflection child: born ~1e-7 (a few ulp) inside the
+// fn=3 plane, grazing direction d·n_f ≈ 3e-3 in the x-y plane. Un-classified,
+// the source plane wins min-t with t_f ≈ 1e-7/3e-3 = 3.3e-5 > +kFloatEps and
+// the phantom self-hit is accepted (fid_out == fn=3) — the exact shape the
+// leak investigation caught as `4-4-…` chains.
+TEST_F(PropagateTest, OutwardChildGrazingReflectionExits) {
+  const float kSqrt3 = std::sqrt(3.0f);
+
+  const float kFn3Norm[3] = { 1.0f, 0.0f, 0.0f };
+  IdType src_poly = FindPolygonFaceByNormal(crystal_, kFn3Norm);
+  ASSERT_NE(src_poly, kInvalidId) << "Could not find fn=3 polygon face";
+  const float* n_src = crystal_.GetPolygonFaceNormal() + src_poly * 3;
+  const float fd_src = crystal_.GetPolygonFaceDist()[src_poly];
+
+  // Birth point at the fn=3 face centre (y=0, away from any edge), shifted
+  // 1e-7 inward so the plane residual is a few-ulp negative value — the float
+  // rounding a real hit point carries.
+  constexpr float kInwardShift = 1e-7f;
+  float pos[3] = { kSqrt3 / 4.0f - kInwardShift, 0.0f, 0.0f };
+  constexpr float kGrazingCos = 3e-3f;
+  float dir[3] = { kGrazingCos, std::sqrt(1.0f - kGrazingCos * kGrazingCos), 0.0f };
+
+  float delta_f = pos[0] * n_src[0] + pos[1] * n_src[1] + pos[2] * n_src[2] + fd_src;
+  ASSERT_LT(delta_f, 0.0f) << "birth point must sit inside the source plane";
+  ASSERT_GT(delta_f, -2e-7f) << "residual left the few-ulp band: " << delta_f;
+  float denom_src = dir[0] * n_src[0] + dir[1] * n_src[1] + dir[2] * n_src[2];
+  ASSERT_GT(denom_src, 2e-3f) << "grazing denominator below band: " << denom_src;
+  ASSERT_LT(denom_src, 4e-3f) << "grazing denominator above band: " << denom_src;
+
+  float w[1] = { 1.0f };
+  float pos_out[3] = {};
+  IdType fid_out[1] = { kInvalidId };
+
+  float_bf_t d_in(dir, 3 * sizeof(float));
+  float_bf_t p_in(pos, 3 * sizeof(float));
+  float_bf_t wt_in(w, sizeof(float));
+  id_bf_t fi_src(&src_poly, sizeof(IdType));
+  float_bf_t p_out(pos_out, 3 * sizeof(float));
+  id_bf_t fi_out(fid_out, sizeof(IdType));
+
+  Propagate(crystal_, 1, 1, d_in, p_in, wt_in, fi_src, p_out, fi_out);
+
+  EXPECT_EQ(fid_out[0], kInvalidId) << "outward child must exit at birth, got phantom hit on face " << fid_out[0];
+  // Exit at the birth point: position must come back unchanged.
+  EXPECT_FLOAT_EQ(pos_out[0], pos[0]);
+  EXPECT_FLOAT_EQ(pos_out[1], pos[1]);
+  EXPECT_FLOAT_EQ(pos_out[2], pos[2]);
+}
+
+// Family A, near-critical-angle refracted exit child: same residual budget as
+// the reflection test (born ~1e-7 inside the exit face), but the near-tangent
+// direction runs along z — the shape of an internal ray refracting out at
+// θᵢ→θc⁻ where the exit direction grazes the exit face. Mechanism and
+// assertion are identical to the reflection variant; the two families differ
+// only in which HitSurface child produces the grazing outward direction.
+TEST_F(PropagateTest, OutwardChildNearCriticalExitExits) {
+  const float kSqrt3 = std::sqrt(3.0f);
+
+  const float kFn3Norm[3] = { 1.0f, 0.0f, 0.0f };
+  IdType src_poly = FindPolygonFaceByNormal(crystal_, kFn3Norm);
+  ASSERT_NE(src_poly, kInvalidId) << "Could not find fn=3 polygon face";
+  const float* n_src = crystal_.GetPolygonFaceNormal() + src_poly * 3;
+  const float fd_src = crystal_.GetPolygonFaceDist()[src_poly];
+
+  constexpr float kInwardShift = 1e-7f;
+  float pos[3] = { kSqrt3 / 4.0f - kInwardShift, 0.0f, 0.0f };
+  constexpr float kGrazingCos = 3e-3f;
+  float dir[3] = { kGrazingCos, 0.0f, std::sqrt(1.0f - kGrazingCos * kGrazingCos) };
+
+  float delta_f = pos[0] * n_src[0] + pos[1] * n_src[1] + pos[2] * n_src[2] + fd_src;
+  ASSERT_LT(delta_f, 0.0f) << "birth point must sit inside the source plane";
+  ASSERT_GT(delta_f, -2e-7f) << "residual left the few-ulp band: " << delta_f;
+  float denom_src = dir[0] * n_src[0] + dir[1] * n_src[1] + dir[2] * n_src[2];
+  ASSERT_GT(denom_src, 2e-3f) << "grazing denominator below band: " << denom_src;
+  ASSERT_LT(denom_src, 4e-3f) << "grazing denominator above band: " << denom_src;
+
+  float w[1] = { 1.0f };
+  float pos_out[3] = {};
+  IdType fid_out[1] = { kInvalidId };
+
+  float_bf_t d_in(dir, 3 * sizeof(float));
+  float_bf_t p_in(pos, 3 * sizeof(float));
+  float_bf_t wt_in(w, sizeof(float));
+  id_bf_t fi_src(&src_poly, sizeof(IdType));
+  float_bf_t p_out(pos_out, 3 * sizeof(float));
+  id_bf_t fi_out(fid_out, sizeof(IdType));
+
+  Propagate(crystal_, 1, 1, d_in, p_in, wt_in, fi_src, p_out, fi_out);
+
+  EXPECT_EQ(fid_out[0], kInvalidId) << "outward child must exit at birth, got phantom hit on face " << fid_out[0];
+}
+
+// Family B, edge birth: born ~2 ulp inside the fn=3 plane AND ~1 ulp inside
+// the fn=4 plane (the fn=3 ∩ fn=4 edge region), direction along n_f + n_g so
+// both denominators are ≈ 0.866. Un-classified, the source plane's t_f ≈
+// 2.8e-7 loses to the neighbour's t_g ≈ 1.4e-7 in the min-t race; the source
+// +eps guard never gets to reject anything, and the −kFloatEps relaxation for
+// non-source faces accepts the phantom neighbour hit (fid_out == fn=4). No
+// duplicate face appears in the chain — this is the signature-free variant
+// the adjacent-duplicate probes cannot see.
+TEST_F(PropagateTest, OutwardChildAtEdgeBirthExits) {
+  const float kSqrt3 = std::sqrt(3.0f);
+
+  const float kFn3Norm[3] = { 1.0f, 0.0f, 0.0f };
+  const float kFn4Norm[3] = { 0.5f, kSqrt3 / 2.0f, 0.0f };
+  IdType src_poly = FindPolygonFaceByNormal(crystal_, kFn3Norm);
+  IdType nbr_poly = FindPolygonFaceByNormal(crystal_, kFn4Norm);
+  ASSERT_NE(src_poly, kInvalidId) << "Could not find fn=3 polygon face";
+  ASSERT_NE(nbr_poly, kInvalidId) << "Could not find fn=4 polygon face";
+  const float* n_src = crystal_.GetPolygonFaceNormal() + src_poly * 3;
+  const float fd_src = crystal_.GetPolygonFaceDist()[src_poly];
+  const float* n_nbr = crystal_.GetPolygonFaceNormal() + nbr_poly * 3;
+  const float fd_nbr = crystal_.GetPolygonFaceDist()[nbr_poly];
+
+  // Birth point near the shared vertex (√3/4, 0.25): δ_f ≈ −2.4e-7 (2 ulp),
+  // δ_g ≈ −1.2e-7 (1 ulp — closer to the plane, so the neighbour wins min-t).
+  constexpr float kInwardShift = 2.4e-7f;
+  float pos[3] = { kSqrt3 / 4.0f - kInwardShift, 0.25f, 0.0f };
+  // Outward along n_f + n_g: d·n_f = d·n_g ≈ 0.866 after normalisation.
+  float dir[3] = { 1.5f, kSqrt3 / 2.0f, 0.0f };
+  float dlen = std::sqrt(dir[0] * dir[0] + dir[1] * dir[1]);
+  dir[0] /= dlen;
+  dir[1] /= dlen;
+
+  float delta_f = pos[0] * n_src[0] + pos[1] * n_src[1] + pos[2] * n_src[2] + fd_src;
+  float delta_g = pos[0] * n_nbr[0] + pos[1] * n_nbr[1] + pos[2] * n_nbr[2] + fd_nbr;
+  ASSERT_LT(delta_f, -1.5e-7f) << "source residual below band: " << delta_f;
+  ASSERT_GT(delta_f, -3.5e-7f) << "source residual above band: " << delta_f;
+  ASSERT_LT(delta_g, -5e-8f) << "neighbour residual must stay inside (negative): " << delta_g;
+  ASSERT_GT(delta_g, -2e-7f) << "neighbour residual below band: " << delta_g;
+  // The phantom-neighbour mechanism needs the neighbour to win min-t over the
+  // source plane: |δ_g| < |δ_f| at (near-)equal denominators.
+  ASSERT_LT(delta_f, delta_g) << "neighbour must be closer to its plane than the source";
+  float denom_src = dir[0] * n_src[0] + dir[1] * n_src[1] + dir[2] * n_src[2];
+  ASSERT_GT(denom_src, 0.8f) << "denominator below band: " << denom_src;
+  ASSERT_LT(denom_src, 0.93f) << "denominator above band: " << denom_src;
+
+  float w[1] = { 1.0f };
+  float pos_out[3] = {};
+  IdType fid_out[1] = { kInvalidId };
+
+  float_bf_t d_in(dir, 3 * sizeof(float));
+  float_bf_t p_in(pos, 3 * sizeof(float));
+  float_bf_t wt_in(w, sizeof(float));
+  id_bf_t fi_src(&src_poly, sizeof(IdType));
+  float_bf_t p_out(pos_out, 3 * sizeof(float));
+  id_bf_t fi_out(fid_out, sizeof(IdType));
+
+  Propagate(crystal_, 1, 1, d_in, p_in, wt_in, fi_src, p_out, fi_out);
+
+  EXPECT_EQ(fid_out[0], kInvalidId) << "edge-born outward child must exit at birth, got phantom hit on face "
+                                    << fid_out[0];
+}
+
+// Band sentinel: outward child with d·n_f ∈ (0, kSlabEps) — below the slab's
+// denominator gate. Un-classified (the current engine), the source plane is
+// not even a slab candidate at this denominator, while the convex-hull
+// half-space property hands the ray a positive-t hit on some other face,
+// accepted by the −kFloatEps relaxation — the signature-free other-face
+// phantom. This is exactly the ray a birth predicate with an epsilon
+// threshold (`denom_src > kSlabEps`) would misclassify as inward; the tests
+// pin that the birth classification is a pure sign test with no epsilon, so
+// the (0, kSlabEps] band can never re-open.
+TEST_F(PropagateTest, OutwardChildBandDenomExits) {
+  const float kSqrt3 = std::sqrt(3.0f);
+
+  const float kFn3Norm[3] = { 1.0f, 0.0f, 0.0f };
+  IdType src_poly = FindPolygonFaceByNormal(crystal_, kFn3Norm);
+  ASSERT_NE(src_poly, kInvalidId) << "Could not find fn=3 polygon face";
+  const float* n_src = crystal_.GetPolygonFaceNormal() + src_poly * 3;
+
+  constexpr float kInwardShift = 1e-7f;
+  float pos[3] = { kSqrt3 / 4.0f - kInwardShift, 0.0f, 0.0f };
+  // sqrt(1 - (5e-6)^2) rounds to 1.0f in float32; the direction is
+  // intentionally NOT renormalised so d·n_f is exactly the band value.
+  constexpr float kBandCos = 5e-6f;
+  float dir[3] = { kBandCos, std::sqrt(1.0f - kBandCos * kBandCos), 0.0f };
+
+  float denom_src = dir[0] * n_src[0] + dir[1] * n_src[1] + dir[2] * n_src[2];
+  ASSERT_GT(denom_src, 1e-6f) << "band denominator below band: " << denom_src;
+  ASSERT_LT(denom_src, lm_traversal::kSlabEps) << "band denominator must stay under the slab gate: " << denom_src;
+
+  float w[1] = { 1.0f };
+  float pos_out[3] = {};
+  IdType fid_out[1] = { kInvalidId };
+
+  float_bf_t d_in(dir, 3 * sizeof(float));
+  float_bf_t p_in(pos, 3 * sizeof(float));
+  float_bf_t wt_in(w, sizeof(float));
+  id_bf_t fi_src(&src_poly, sizeof(IdType));
+  float_bf_t p_out(pos_out, 3 * sizeof(float));
+  id_bf_t fi_out(fid_out, sizeof(IdType));
+
+  Propagate(crystal_, 1, 1, d_in, p_in, wt_in, fi_src, p_out, fi_out);
+
+  EXPECT_EQ(fid_out[0], kInvalidId) << "band outward child must exit at birth, got phantom hit on face " << fid_out[0];
 }

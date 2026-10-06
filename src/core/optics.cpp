@@ -73,6 +73,7 @@ static void PropagateSlab(const Crystal& crystal, size_t num, size_t step, const
   alignas(64) float t_far[kMaxSlabRays];
   int far_face[kMaxSlabRays];
   int src_poly[kMaxSlabRays];
+  bool outward[kMaxSlabRays];
 
   for (size_t i = 0; i < num; i++) {
     const float* d = d_in.Ptr(i);
@@ -87,28 +88,51 @@ static void PropagateSlab(const Crystal& crystal, size_t num, size_t step, const
     far_face[i] = -1;
     IdType src_id = from_face_in[i / step];
     src_poly[i] = (src_id != kInvalidId) ? static_cast<int>(src_id) : -1;
+    // Birth classification: a child born on its source face with
+    // denom_src = d·n_src > 0 has LEFT the convex crystal — d·n_src > 0 means
+    // the signed distance to the source plane strictly increases along the
+    // ray, so no re-hit is possible. Pure sign test, no epsilon, identical in
+    // shape to CUDA's exit gates (entry external-reflect exits
+    // unconditionally; refracted exits gate on cos_exit > 0.0f,
+    // cuda_trace_backend.cu) — see traversal_shared.h. The scatter-back loop
+    // turns this flag into an exit. Rays with no source face (src_poly < 0,
+    // initial entry rays) are not classified and keep the plain slab path.
+    outward[i] = false;
+    if (src_poly[i] >= 0) {
+      const float* n_src = pn + src_poly[i] * 3;
+      outward[i] = dx[i] * n_src[0] + dy[i] * n_src[1] + dz[i] * n_src[2] > 0.0f;
+    }
   }
 
   // Face-outer, ray-inner: find minimum t among exit faces (denom > eps)
   //
   // CONVEXITY ASSUMPTION (latent — keep in mind before adding crystal types):
   // This "nearest plane the ray is exiting" next-face search is only correct for a
-  // CONVEX crystal whose every polygon plane bounds a real (non-degenerate) face.
-  // It does NOT special-case outward-going rays (those leaving their source face with
-  // d·n_src > 0): on a convex crystal such a ray provably cannot re-hit another face,
-  // so no spurious plane is selectable — but that guarantee relies on two invariants:
-  //   (1) all configured crystals are convex (CreateConcavePyramidMesh exists in geo3d
-  //       but is NOT wired to the config/Crystal factory; if a concave type is ever
-  //       wired through here, outward rays CAN legitimately re-hit and this search will
-  //       misclassify them);
-  //   (2) no degenerate / zero-area plane leaks into the polygon-face set — ensured by
-  //       task-geometry-gen-numerical-robustness (#133), which kills the fake-basal face
-  //       at extreme wedge that previously made outward first-bounce reflections select a
-  //       phantom plane (the B-ring bug).
-  // A defensive `d·n_src > 0` outward-skip was prototyped (#132, PropagateSlab) but not
-  // merged: #133 removed the root-cause trigger, so the skip guards no live scenario and
-  // adds a hot-loop branch + bakes in the convexity assumption. If either invariant above
-  // is broken in the future, revisit #132's outward-skip (gated to convex crystals).
+  // CONVEX crystal whose every polygon plane bounds a real (non-degenerate) face,
+  // and its "min-t = exit face" invariant presupposes a ray that STARTS INSIDE the
+  // crystal. Outward-going children therefore never consume the search result:
+  // they are classified as exits at birth (denom_src > 0.0f, see the gather loop)
+  // and dropped at scatter-back. Feeding them to this search was the source of
+  // phantom re-hits: a real birth point sits a few ulp INSIDE the source plane
+  // (δ < 0), and a grazing outward denominator inflates t = |δ|/denom past the
+  // +kFloatEps self-hit guard (a guard with the wrong dimensions — it compares a
+  // length against 1e-5 while the failing quantity is the ~1 ulp residual), while
+  // the convex half-space property hands positive t to other faces as well —
+  // either way the child "hit" a plane it cannot reach, chains grew adjacent
+  // duplicate faces (impossible inside a convex crystal), and the grazing re-hit
+  // forced TIR back inside, producing non-physical exits (stray sky dots).
+  // The convexity argument leans on two further invariants:
+  //   (1) all configured crystals are convex (CreateConcavePyramidMesh exists in
+  //       geo3d but is NOT wired to the config/Crystal factory; if a concave
+  //       type is ever wired through here, outward rays CAN legitimately re-hit
+  //       and the birth classification must be revisited along with this search);
+  //   (2) no degenerate / zero-area plane leaks into the polygon-face set —
+  //       ensured by the numerical-robustness rework (#133), which kills the
+  //       fake-basal face at extreme wedge that previously made outward
+  //       first-bounce reflections select a phantom plane (the B-ring bug).
+  // (An earlier defensive `d·n_src > 0` outward-skip prototype (#132,
+  // PropagateSlab) was not merged at the time; the birth classification that
+  // now stands is its constructive landing, aligned with CUDA's semantics.)
   for (size_t fi = 0; fi < poly_cnt; fi++) {
     float nx = pn[fi * 3 + 0];
     float ny = pn[fi * 3 + 1];
@@ -139,8 +163,27 @@ static void PropagateSlab(const Crystal& crystal, size_t num, size_t step, const
     float* out_pt = p_out.Ptr(i);
     IdType* out_face = to_face_out.Ptr(i);
 
+    // Outward child (birth classification, see gather loop): exits right here
+    // with its position unchanged. The slab walk above still ran for this ray
+    // ON PURPOSE — keeping the face loop face-outer/ray-inner over the whole
+    // batch preserves the vectorisable SoA shape, and a per-ray early skip
+    // would break it. Only this scatter point discards the outward ray's slab
+    // result; do not "simplify" it into a per-ray skip inside the face loop.
+    if (outward[i]) {
+      out_pt[0] = px[i];
+      out_pt[1] = py[i];
+      out_pt[2] = pz[i];
+      *out_face = kInvalidId;
+      continue;
+    }
+
     // Use relaxed threshold for non-source faces to accept t≈0 TIR-edge hits.
-    // Source face keeps +kFloatEps to prevent self-selection.
+    // Source face keeps +kFloatEps to prevent self-selection. With the birth
+    // classification above, an inward child (denom_src ≤ 0 < kSlabEps) never
+    // offers its source plane as a slab candidate — SlabFaceT's denominator
+    // gate excludes it — so the source-face +eps branch below is structurally
+    // dead for src_poly >= 0 and survives only as the defensive path for
+    // src_poly == -1 (no source face to classify against).
     float eps_thr = (src_poly[i] >= 0 && far_face[i] != src_poly[i]) ? -math::kFloatEps : math::kFloatEps;
     if (far_face[i] >= 0 && t_far[i] > eps_thr) {
       float t = t_far[i];
