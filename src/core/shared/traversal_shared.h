@@ -37,9 +37,10 @@
 //     — a sign test with no epsilon on any side — so no (0, ε] band can
 //     re-open where an outward child slips back into the slab. denom_src ==
 //     0.0f counts as inward: a deliberate tie-break on the same boundary as
-//     CUDA's cos_exit > 0.0f (measure-zero band; the residual channel matches
-//     the reference backend bit for bit), not a defect to "fix"
-//     asymmetrically.
+//     CUDA's cos_exit > 0.0f (measure-zero band; the tie-break direction
+//     matches CUDA's by construction — both gate exits on `> 0` — while
+//     near-zero values may differ by ~1 ulp across backends, factored form
+//     vs full dot product), not a defect to "fix" asymmetrically.
 //   - What remains inside the slab loops is mechanical belt-and-braces, not
 //     semantics: CUDA's explicit `fi == from_poly` skip, and Metal/CPU's
 //     post-loop `eps_thr` threshold for the source face. For an INWARD child

@@ -987,7 +987,10 @@ kernel void trace_layer_kernel(
       // result at scatter-back — semantics identical.)
       float t_far = 1e30f;
       int   far_face = -1;
-      if ((ch == 0u ? -cos_theta : sd * cos_theta) <= 0.0f) {
+      // denom_src in its factored form (derivation above); named so the
+      // cross-backend birth-classification term stays greppable here too.
+      float denom_src = (ch == 0u) ? -cos_theta : sd * cos_theta;
+      if (denom_src <= 0.0f) {
         //
         // Polygon-slab traversal via the cross-backend single-source
         // intersect (lm_traversal::SlabFaceT, see core/shared/traversal_shared.h).
