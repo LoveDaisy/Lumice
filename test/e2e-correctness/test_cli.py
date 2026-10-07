@@ -1033,3 +1033,116 @@ class TestBenchmarkIsaField(LumiceTestCase):
                 f"LUMICE_ISA_LEVEL={isa_level}, CMAKE_BUILD_TYPE={build_type}, "
                 f"LUMICE_COMPILER_ID_SNAPSHOT={compiler_id} (expected {expected!r})",
             )
+
+
+class TestConfigSilentNoopWarnings(LumiceTestCase):
+    """The two config shapes that used to be silent no-ops now say so at startup.
+
+    Both were hit twice by the diagnostics-universality probe matrix and are just
+    as reachable by hand: a top-level `filter` entry no scattering entry binds
+    (the config loads, renders, and the output is byte-identical to the same
+    document without the filter), and `render: []` (the simulation runs to
+    completion, exits 0, and writes no image anywhere). The misplaced-key cases
+    cover the third shape of the same family: a `filter` key written where the
+    parser ignores it as an unknown key.
+
+    Same layer rationale as TestScatteringProbRequired: the C++ unit tests prove
+    the parser warns when called directly; only the binary a user runs proves the
+    CLI does. Derived from halo_22 by exactly one edit per case.
+    """
+
+    def _mutated_halo_22(self, mutate, name):
+        """halo_22.json with the ray budget cut (see `_cheap_halo_22_config`) plus one
+        mutation. These cases assert on log text and exit codes, not image content,
+        so the ray budget buys nothing. Returns the new config's path."""
+        doc = json.loads((CONFIGS_DIR / "halo_22.json").read_text())
+        doc["scene"]["ray_num"] = 20000
+        mutate(doc)
+        out = Path(self.output_dir) / name
+        out.write_text(json.dumps(doc))
+        return out
+
+    def test_warn_unreferenced_top_level_filter(self):
+        """A declared filter no entry binds is inert — the warning names it and the fix."""
+        cfg = self._mutated_halo_22(
+            lambda d: d.update(filter=[{"id": 1, "type": "none"}]),
+            "halo_22_unreferenced_filter.json",
+        )
+        result = self.run_lumice(["-f", str(cfg), "-o", self.output_dir])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        combined = result.stdout + result.stderr
+        context = f"\nSTDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"
+        self.assertIn("declared but never bound", combined, "expected unbound-filter warning" + context)
+        self.assertIn("[1]", combined, "warning must list the inert filter's id" + context)
+
+    def test_no_warn_when_all_filters_bound(self):
+        """Negative control: a declared filter an entry binds stays silent (AC2's mirror)."""
+        def bind(d):
+            d["filter"] = [{"id": 1, "type": "none"}]
+            d["scene"]["scattering"][0]["entries"][0]["filter"] = 1
+
+        cfg = self._mutated_halo_22(bind, "halo_22_bound_filter.json")
+        result = self.run_lumice(["-f", str(cfg), "-o", self.output_dir])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        combined = result.stdout + result.stderr
+        self.assertNotIn(
+            "declared but never bound",
+            combined,
+            f"warning fired on a fully bound config:\nSTDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}",
+        )
+
+    def test_warn_empty_render_list(self):
+        """`render: []` runs to completion with zero output — the warning is the only
+        difference, and it must not be fatal (exit 0). Analysis-only configs share
+        the shape but commit through the analysis path, not this one."""
+        cfg = self._mutated_halo_22(lambda d: d.update(render=[]), "halo_22_empty_render.json")
+        result = self.run_lumice(["-f", str(cfg), "-o", self.output_dir])
+        self.assertEqual(result.returncode, 0, "empty render is legal, not an error")
+        combined = result.stdout + result.stderr
+        context = f"\nSTDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"
+        self.assertIn('render" list is empty', combined, "expected empty-render warning" + context)
+        self.assertEqual(glob.glob(os.path.join(self.output_dir, "img_*.jpg")), [], "still writes no image")
+
+        # AC2's positive/negative symmetry in one place: the unmodified config (non-empty
+        # render) must stay silent. This is the same cheap render the case above ran.
+        plain = _cheap_halo_22_config(self.output_dir)
+        plain_result = self.run_lumice(["-f", str(plain), "-o", self.output_dir])
+        self.assertEqual(plain_result.returncode, 0, plain_result.stderr)
+        self.assertNotIn(
+            'render" list is empty',
+            plain_result.stdout + plain_result.stderr,
+            "warning fired on a config with a non-empty render list",
+        )
+
+    def test_warn_misplaced_filter_key_at_scene_level(self):
+        """A `filter` key on `scene` is ignored as an unknown key — the natural
+        hand-authoring mistake of declaring filters one level too deep."""
+        cfg = self._mutated_halo_22(
+            lambda d: d["scene"].update(filter=[{"id": 1, "type": "none"}]),
+            "halo_22_scene_filter_key.json",
+        )
+        result = self.run_lumice(["-f", str(cfg), "-o", self.output_dir])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        combined = result.stdout + result.stderr
+        self.assertIn(
+            "has no effect here",
+            combined,
+            f"expected misplaced-key warning:\nSTDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}",
+        )
+
+    def test_warn_misplaced_filter_key_at_layer_level(self):
+        """The same key on a scattering layer (one shallower than the entry that
+        actually reads it) — the more likely typo, since `entries[].filter` is the
+        binding spelling and siblings sit right next to it."""
+        cfg = self._mutated_halo_22(
+            lambda d: d["scene"]["scattering"][0].update(filter=1),
+            "halo_22_layer_filter_key.json",
+        )
+        result = self.run_lumice(["-f", str(cfg), "-o", self.output_dir])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        combined = result.stdout + result.stderr
+        self.assertIn(
+            "has no effect here",
+            combined,
+            f"expected misplaced-key warning:\nSTDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}",
+        )
