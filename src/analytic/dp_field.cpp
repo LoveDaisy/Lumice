@@ -2,6 +2,8 @@
 
 #include <cmath>
 
+#include "analytic/jet2.hpp"
+
 namespace lumice::analytic {
 namespace {
 
@@ -144,6 +146,27 @@ int DomainMargins(const ChainInterfaceDiagnostics<S>& interfaces, int slot_count
 
 // Explicit instantiation for the two scalar types the field runs.
 template int DomainMargins<double>(const ChainInterfaceDiagnostics<double>&, int, double[2 * kMaxFaceCount]);
+template int DomainMargins<Jet2<4>>(const ChainInterfaceDiagnostics<Jet2<4>>&, int, Jet2<4>[2 * kMaxFaceCount]);
+
+// (e1, e2) at unit u: cross with the least-aligned coordinate axis, so the basis never degenerates
+// (|u x axis| = sqrt(1 - u_axis^2) >= sqrt(2/3); LI tangent_basis).
+void TangentBasis(const double u[3], double basis[2][3]) {
+  int k = 0;
+  for (int i = 1; i < 3; i++) {
+    if (std::fabs(u[i]) < std::fabs(u[k])) {
+      k = i;
+    }
+  }
+  double axis[3] = { 0.0, 0.0, 0.0 };
+  axis[k] = 1.0;
+  double e1[3];
+  Cross3(u, axis, e1);
+  const double norm = std::sqrt(Dot3(e1, e1));
+  for (int i = 0; i < 3; i++) {
+    basis[0][i] = e1[i] / norm;
+  }
+  Cross3(u, basis[0], basis[1]);
+}
 
 int ValidityMargins(const double* domain_margins, int margin_count, double out[kMaxFaceCount + 2]) {
   int count = 0;
@@ -240,6 +263,91 @@ FieldSample DeviationField::Sample(const double u[3]) const {
   sample.a_p = entry.value;
   sample.location = LocateByValidityMargins(sample.validity_margins, validity_count);
   return sample;
+}
+
+namespace {
+
+// angle(a, b) = atan2(|a x b|, a . b) in jets — the same formula as the double path's
+// AngleBetween, so the jet is the derivative of the value the layer reports, not of a lookalike.
+// |a x b| crosses zero at angle 0 and pi; Sqrt there is non-finite in any forward mode — LI's JAX
+// norm behaves the same. The value stays exact; consumers stay off the crease.
+template <int N>
+Jet2<N> AngleJet(const Jet2<N> a[3], const Jet2<N> b[3]) {
+  Jet2<N> cross[3] = { a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0] };
+  Jet2<N> cross_sq = cross[0] * cross[0] + cross[1] * cross[1] + cross[2] * cross[2];
+  Jet2<N> dot = a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+  return Atan2(Sqrt(cross_sq), dot);
+}
+
+}  // namespace
+
+FieldJet DeviationField::Differentiate(const double u[3]) const {
+  using J = Jet2<4>;
+  FieldJet jet;
+  // The identity pose as constants; the four dual directions are u_0, u_1, u_2 (slots 0..2) and
+  // the refractive index (slot 3) — the ∂/∂n of LI index_derivatives_batch.
+  const J pose[9] = { J(1.0), J(0.0), J(0.0), J(0.0), J(1.0), J(0.0), J(0.0), J(0.0), J(1.0) };
+  const J index = J::Variable(refractive_index_, 3);
+  J u_jet[3] = { J::Variable(u[0], 0), J::Variable(u[1], 1), J::Variable(u[2], 2) };
+  const J incident[3] = { -u_jet[0], -u_jet[1], -u_jet[2] };
+  J outgoing[3];
+  ChainInterfaceDiagnostics<J> interfaces;
+  TracePathChain<J, ChainEvaluation::kEvaluateAll>(*table_, slots_, slot_count_, index, incident, pose, outgoing,
+                                                   nullptr, nullptr, &interfaces);
+
+  // The field's value jet: the slab form for a degenerate fold (no n in it — d_p_dn comes out 0
+  // on its own, LI's "0 for a slab"), the chain deviation atan2(|phi x (-u)|, phi . (-u))
+  // otherwise.
+  Jet2<4> minus_u[3] = { -u_jet[0], -u_jet[1], -u_jet[2] };
+  J mu[3];
+  for (int i = 0; i < 3; i++) {
+    mu[i] = fold_.fold_matrix[i * 3 + 0] * u_jet[0] + fold_.fold_matrix[i * 3 + 1] * u_jet[1] +
+            fold_.fold_matrix[i * 3 + 2] * u_jet[2];
+  }
+  const J value = fold_.degenerate ? AngleJet(mu, u_jet) : AngleJet(outgoing, minus_u);
+
+  jet.value = value.a;
+  jet.d_p_dn = value.v[3];
+
+  // Ambient gradient and Hessian in the u slots; the tangent projection and the second
+  // fundamental form term give the S^2 objects (FieldJet's docstring).
+  double gradient[3];
+  double hessian[3][3];
+  for (int i = 0; i < 3; i++) {
+    gradient[i] = value.v[i];
+    for (int j = 0; j < 3; j++) {
+      hessian[i][j] = value.h[i][j];
+    }
+  }
+  const double radial = Dot3(gradient, u);
+  for (int i = 0; i < 3; i++) {
+    jet.tangent_gradient[i] = gradient[i] - radial * u[i];
+  }
+  TangentBasis(u, jet.tangent_basis);
+  const double* e1 = jet.tangent_basis[0];
+  const double* e2 = jet.tangent_basis[1];
+  for (int a = 0; a < 2; a++) {
+    const double* ea = a == 0 ? e1 : e2;
+    for (int b = 0; b < 2; b++) {
+      const double* eb = b == 0 ? e1 : e2;
+      double sum = 0.0;
+      for (int i = 0; i < 3; i++) {
+        for (int j = 0; j < 3; j++) {
+          sum += ea[i] * (hessian[i][j] - (i == j ? radial : 0.0)) * eb[j];
+        }
+      }
+      jet.hessian[a][b] = sum;
+    }
+  }
+
+  // The domain margin vector and its index derivative from the same run.
+  J margins[2 * kMaxFaceCount];
+  jet.margin_count = DomainMargins(interfaces, slot_count_, margins);
+  for (int i = 0; i < jet.margin_count; i++) {
+    jet.margins[i] = margins[i].a;
+    jet.margins_dn[i] = margins[i].v[3];
+  }
+  return jet;
 }
 
 }  // namespace lumice::analytic

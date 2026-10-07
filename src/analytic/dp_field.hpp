@@ -39,6 +39,31 @@ constexpr double kBoundaryMarginAtol = 1e-10;
 // kBoundaryMarginAtol of zero), or exterior.
 enum class DomainLocation { kInterior, kBoundary, kExterior };
 
+// The field's first- and second-order jets at one u, from one Jet2<4> chain evaluation with
+// (u_0, u_1, u_2, n) as the four dual directions — the field layer's ∂/∂u and ∂/∂n in one sweep
+// (LI index_derivatives_batch: dD_P/dn is the direction dispersion of the field, 0 for a slab;
+// d disc_k/dn says which wavelength reflects totally on which side of a TIR onset).
+//   value:            the field as evaluated (d_slab for a degenerate fold, d_p otherwise)
+//   tangent_gradient: the S^2 gradient g - (g . u) u (ambient gradient projected; orthogonal to u)
+//   tangent_basis:    (e1, e2), the cross with the least-aligned coordinate axis (LI tangent_basis)
+//   hessian:          the Riemannian Hessian B (H - (u . g) I) B^T in that basis. The (u . g)
+//                     term is the sphere's second fundamental form and is not optional: at the 3-5
+//                     minimum-deviation point the ambient gradient is radial, not zero, and
+//                     dropping the term flips both eigenvalue signs (LI measured [-5.4, -4.7]
+//                     naive against [+0.34, +0.96] corrected). It equals the Hessian of the field
+//                     in the chart u(t) = normalize(u + t1 e1 + t2 e2), which is the form the
+//                     difference oracle tests.
+struct FieldJet {
+  double value = 0.0;
+  double tangent_gradient[3] = {};
+  double tangent_basis[2][3] = {};
+  double hessian[2][2] = {};
+  double d_p_dn = 0.0;
+  double margins[2 * kMaxFaceCount] = {};
+  double margins_dn[2 * kMaxFaceCount] = {};
+  int margin_count = 0;
+};
+
 // The fold pre-screen of a face sequence (LI FoldScreen): with n_a the entry normal and
 // n~_b = M^T n_b the unfolded exit normal (M the fold matrix, the reflections of the internal
 // faces left-multiplied in path order), |n_a . n~_b| = 1 means the entry and exit refractions
@@ -126,6 +151,11 @@ class DeviationField {
   double DSlab(const double u[3]) const;
 
   FieldSample Sample(const double u[3]) const;
+
+  // The jets of the field at u (FieldJet): one Jet2<4> evaluation of the same chain, so value,
+  // gradients and Hessian come from one expression tree — no second derivation of anything
+  // Sample computes.
+  FieldJet Differentiate(const double u[3]) const;
 
  private:
   const FaceNormalTable* table_;

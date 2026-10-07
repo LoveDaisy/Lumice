@@ -406,5 +406,212 @@ TEST(DPField, SlabFieldHasNoNan) {
   }
 }
 
+
+// ---------------------------------------------------------------------------------------------
+// Jets: tangent gradient, Riemannian Hessian, d/dn (plan Step 4; the FieldJet docstring carries
+// the chart identity the differences below rely on)
+// ---------------------------------------------------------------------------------------------
+
+// The chart the Hessian lives in: u(t) = normalize(u + t1 e1 + t2 e2) has d^2/dt_k dt_j of the
+// field exactly B (H - (u . g) I) B^T, and the gradient components g . e_a are the chart's first
+// derivatives — so both jet objects are checked by differencing the double evaluation the layer
+// itself reports (d_value), an oracle that shares nothing with the Jet2 rules.
+TEST(DPField, JetsMatchChartDifferencesOfTheDoubleEvaluation) {
+  const Fixture f(Prism(1.0));
+  struct Case {
+    const char* name;
+    int faces[4];
+    int count;
+    double u[3];
+  };
+  // A generic interior point of 3-5 (off the critical point, so the gradient is nonzero) and a
+  // generic point of the 3-1-6 slab field (on the kink circle, where d_value is the slab form and
+  // smooth — the TIR margin is a diagnostic the value never sees).
+  double u_min[3];
+  MinDeviationDirection(f.normals, u_min, kN550);
+  const double tilted[3] = { u_min[0], u_min[1] + 0.05, -0.08 };
+  double t_norm = std::sqrt(tilted[0] * tilted[0] + tilted[1] * tilted[1] + tilted[2] * tilted[2]);
+  const double u_direct[3] = { tilted[0] / t_norm, tilted[1] / t_norm, tilted[2] / t_norm };
+  const double kink_z = -std::sqrt(kN550 * kN550 - 1.0);
+  const double kink_r = std::sqrt(1.0 - kink_z * kink_z);
+  const double u_kink[3] = { 0.5 * kink_r, std::sqrt(3.0) / 2.0 * kink_r, kink_z };
+  const Case cases[] = { { "3-5", { 3, 5, 0, 0 }, 2, { u_direct[0], u_direct[1], u_direct[2] } },
+                         { "3-1-6 slab", { 3, 1, 6, 0 }, 3, { u_kink[0], u_kink[1], u_kink[2] } } };
+  for (const Case& c : cases) {
+    const DeviationField field = f.Field(c.faces, c.count, kN550);
+    const FieldJet jet = field.Differentiate(c.u);
+    const auto chart = [&](double t1, double t2) {
+      double w[3] = { c.u[0] + t1 * jet.tangent_basis[0][0] + t2 * jet.tangent_basis[1][0],
+                      c.u[1] + t1 * jet.tangent_basis[0][1] + t2 * jet.tangent_basis[1][1],
+                      c.u[2] + t1 * jet.tangent_basis[0][2] + t2 * jet.tangent_basis[1][2] };
+      const double norm = std::sqrt(w[0] * w[0] + w[1] * w[1] + w[2] * w[2]);
+      for (int i = 0; i < 3; i++) {
+        w[i] /= norm;
+      }
+      return field.Sample(w).d_value;
+    };
+    // First derivatives along the basis directions.
+    const double h1 = 1e-6;
+    for (int a = 0; a < 2; a++) {
+      const double t1p = a == 0 ? h1 : 0.0, t1m = a == 0 ? -h1 : 0.0;
+      const double t2p = a == 1 ? h1 : 0.0, t2m = a == 1 ? -h1 : 0.0;
+      const double fd = (chart(t1p, t2p) - chart(t1m, t2m)) / (2.0 * h1);
+      const double g_a = jet.tangent_gradient[0] * jet.tangent_basis[a][0] +
+                         jet.tangent_gradient[1] * jet.tangent_basis[a][1] +
+                         jet.tangent_gradient[2] * jet.tangent_basis[a][2];
+      EXPECT_NEAR(g_a, fd, 1e-8 * (1.0 + std::fabs(fd))) << c.name << " gradient e" << a + 1;
+    }
+    // Mixed second derivatives, one per Hessian entry.
+    const double h2 = 1e-5;
+    for (int a = 0; a < 2; a++) {
+      for (int b = 0; b < 2; b++) {
+        const double d1 = a == 0 ? 1.0 : 0.0, d2 = a == 1 ? 1.0 : 0.0;
+        const double e1 = b == 0 ? 1.0 : 0.0, e2 = b == 1 ? 1.0 : 0.0;
+        const double fd = (chart(h2 * (d1 + e1), h2 * (d2 + e2)) - chart(h2 * (d1 - e1), h2 * (d2 - e2)) -
+                           chart(-h2 * (d1 - e1), -h2 * (d2 - e2)) + chart(-h2 * (d1 + e1), -h2 * (d2 + e2))) /
+                          (4.0 * h2 * h2);
+        EXPECT_NEAR(jet.hessian[a][b], fd, 1e-6 * (1.0 + std::fabs(fd))) << c.name << " hessian " << a << b;
+      }
+    }
+    // Structure: the tangent gradient is orthogonal to u, the basis is orthonormal.
+    const double g_dot_u =
+        jet.tangent_gradient[0] * c.u[0] + jet.tangent_gradient[1] * c.u[1] + jet.tangent_gradient[2] * c.u[2];
+    EXPECT_NEAR(g_dot_u, 0.0, 1e-14) << c.name;
+    for (int a = 0; a < 2; a++) {
+      EXPECT_NEAR(
+          jet.tangent_basis[a][0] * c.u[0] + jet.tangent_basis[a][1] * c.u[1] + jet.tangent_basis[a][2] * c.u[2], 0.0,
+          1e-14)
+          << c.name << " basis row " << a << " is tangent";
+    }
+    EXPECT_NEAR(jet.tangent_basis[0][0] * jet.tangent_basis[1][0] + jet.tangent_basis[0][1] * jet.tangent_basis[1][1] +
+                    jet.tangent_basis[0][2] * jet.tangent_basis[1][2],
+                0.0, 1e-14)
+        << c.name;
+  }
+}
+
+// The tangent basis never degenerates: u aligned with each coordinate axis still yields an
+// orthonormal pair (the least-aligned-axis cross of LI tangent_basis).
+TEST(DPField, TangentBasisAlongTheThreeAxes) {
+  const Fixture f(Prism(1.0));
+  const int faces[2] = { 3, 5 };
+  const DeviationField field = f.Field(faces, 2, kN550);
+  const double axes[3][3] = { { 1.0, 0.0, 0.0 }, { 0.0, 1.0, 0.0 }, { 0.0, 0.0, 1.0 } };
+  for (const auto& u : axes) {
+    const FieldJet jet = field.Differentiate(u);
+    for (int a = 0; a < 2; a++) {
+      const double norm = std::sqrt(jet.tangent_basis[a][0] * jet.tangent_basis[a][0] +
+                                    jet.tangent_basis[a][1] * jet.tangent_basis[a][1] +
+                                    jet.tangent_basis[a][2] * jet.tangent_basis[a][2]);
+      EXPECT_NEAR(norm, 1.0, 1e-14);
+    }
+  }
+}
+
+// The 3-5 minimum-deviation point is a radial critical point: the tangent gradient vanishes, the
+// ambient gradient does not (it is parallel to u — that is why the second fundamental form term
+// matters), and both Riemannian Hessian eigenvalues are positive: a constrained minimum, the sign
+// pattern LI measured as [+0.34, +0.96] against the naive projection's [-5.4, -4.7].
+TEST(DPField, MinimumDeviationIsARadialCriticalPoint) {
+  const Fixture f(Prism(1.0));
+  const int faces[2] = { 3, 5 };
+  const DeviationField field = f.Field(faces, 2, kN550);
+  double u[3];
+  MinDeviationDirection(f.normals, u, kN550);
+  const FieldJet jet = field.Differentiate(u);
+  const double g_norm =
+      std::sqrt(jet.tangent_gradient[0] * jet.tangent_gradient[0] + jet.tangent_gradient[1] * jet.tangent_gradient[1] +
+                jet.tangent_gradient[2] * jet.tangent_gradient[2]);
+  EXPECT_LT(g_norm, 1e-8) << "a constrained critical point";
+  const double trace = jet.hessian[0][0] + jet.hessian[1][1];
+  const double det = jet.hessian[0][0] * jet.hessian[1][1] - jet.hessian[0][1] * jet.hessian[1][0];
+  EXPECT_GT(trace, 0.0);
+  EXPECT_GT(det, 0.0) << "both eigenvalues positive: the deviation minimum";
+  // And of a sane size (LI measured 0.34 and 0.96 at n = 1.31).
+  const double half_trace = 0.5 * trace;
+  const double root = std::sqrt(std::max(half_trace * half_trace - det, 0.0));
+  EXPECT_GT(half_trace + root, 0.05);
+  EXPECT_LT(half_trace - root, 5.0);
+}
+
+// dD_P/dn against a difference of the field's own evaluation at perturbed indices (the field is
+// built per index), on the non-slab 3-1-5 where the derivative is nonzero (the dispersion that
+// moves a halo's red edge); and the domain margins' d/dn the same way.
+TEST(DPField, IndexDerivativeMatchesDifference) {
+  const Fixture f(Prism(1.0));
+  const int faces[3] = { 3, 1, 5 };
+  double u_min[3];
+  MinDeviationDirection(f.normals, u_min, kN550);
+  const double norm = std::sqrt(u_min[0] * u_min[0] + u_min[1] * u_min[1] + 0.05 * 0.05);
+  const double u[3] = { u_min[0] / norm, u_min[1] / norm, -0.05 / norm };
+
+  const DeviationField field = f.Field(faces, 3, kN550);
+  const FieldJet jet = field.Differentiate(u);
+  const double h = 1e-6;
+  const DeviationField plus = f.Field(faces, 3, kN550 + h);
+  const DeviationField minus = f.Field(faces, 3, kN550 - h);
+  const FieldSample s_plus = plus.Sample(u);
+  const FieldSample s_minus = minus.Sample(u);
+
+  const double fd_dn = (s_plus.d_value - s_minus.d_value) / (2.0 * h);
+  EXPECT_NEAR(jet.d_p_dn, fd_dn, 1e-7 * (1.0 + std::fabs(fd_dn)));
+  ASSERT_NE(std::fabs(fd_dn), 0.0);
+  EXPECT_GT(std::fabs(jet.d_p_dn), 1e-2) << "the dispersion of a refracting path is nonzero";
+
+  // Margin values agree with the same-index sample's (the same expressions in another scalar
+  // type, so to rounding, not bitwise) and every d margin/dn matches its own difference.
+  const FieldSample s_same = field.Sample(u);
+  ASSERT_EQ(s_same.margin_count, jet.margin_count);
+  for (int i = 0; i < jet.margin_count; i++) {
+    EXPECT_NEAR(jet.margins[i], s_same.margins[i], 1e-12) << "margin " << i;
+    const double fd_m = (s_plus.margins[i] - s_minus.margins[i]) / (2.0 * h);
+    EXPECT_NEAR(jet.margins_dn[i], fd_m, 1e-6 * (1.0 + std::fabs(fd_m))) << "margin " << i;
+  }
+}
+
+// A slab's field does not see the refractive index: dD_P/dn is exactly 0 (LI index_derivatives
+// "0 for a slab" — d_slab's expression tree has no n in it), at a kink-circle point of 3-1-6 and
+// at the beta crease point. The plan's closed form d/dn 2 asin sqrt(n^2 - 1) is a different
+// object: the derivative of the kink circle's constant value as the circle itself moves with n —
+// the following test pins that one.
+TEST(DPField, SlabIndexDerivativeIsExactlyZero) {
+  const Fixture prism_fixture(Prism(1.0));
+  {
+    const int faces[3] = { 3, 1, 6 };
+    const DeviationField field = prism_fixture.Field(faces, 3, kN550);
+    const double u_z = -std::sqrt(kN550 * kN550 - 1.0);
+    const double u[3] = { std::sqrt(1.0 - u_z * u_z), 0.0, u_z };
+    EXPECT_DOUBLE_EQ(field.Differentiate(u).d_p_dn, 0.0);
+  }
+  const Fixture beta_fixture(Beta());
+  {
+    const int faces[4] = { 4, 8, 7, 5 };
+    const DeviationField field = beta_fixture.Field(faces, 4, kN550);
+    const double u[3] = { 0.0, 1.0, 0.0 };  // the interior crease point
+    EXPECT_DOUBLE_EQ(field.Differentiate(u).d_p_dn, 0.0);
+  }
+}
+
+// The kink family's dispersion: evaluated at the moving kink circle u_z(n) = -sqrt(n^2 - 1), the
+// slab constant follows 2 asin sqrt(n^2 - 1), whose closed-form derivative is
+// 2n / (sqrt(n^2 - 1) sqrt(2 - n^2)) — the plan's anchor, correctly read as the family derivative
+// (at a fixed u the slab derivative is the 0 above).
+TEST(DPField, KinkFamilyDispersionMatchesTheClosedForm) {
+  const Fixture f(Prism(1.0));
+  const int faces[3] = { 3, 1, 6 };
+  const double h = 1e-5;
+  double values[2];
+  int k = 0;
+  for (double n : { kN550 - h, kN550 + h }) {
+    const DeviationField field = f.Field(faces, 3, n);
+    const double u_z = -std::sqrt(n * n - 1.0);
+    const double u[3] = { std::sqrt(1.0 - u_z * u_z), 0.0, u_z };
+    values[k++] = field.Sample(u).d_value;
+  }
+  const double fd = (values[1] - values[0]) / (2.0 * h);
+  const double closed = 2.0 * kN550 / (std::sqrt(kN550 * kN550 - 1.0) * std::sqrt(2.0 - kN550 * kN550));
+  EXPECT_NEAR(fd, closed, 1e-8 * (1.0 + std::fabs(closed)));
+}
+
 }  // namespace
 }  // namespace lumice::analytic
