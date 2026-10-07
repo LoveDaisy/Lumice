@@ -771,6 +771,12 @@ PartitionResult IntervalPartition(const DeviationField& field, const std::vector
   for (const BoundaryCriticalPoint& point : extrema) {
     values.push_back(point.value);
   }
+  if (values.empty() && !loop.has_plateau) {
+    // An inconsistent record: a non-constant loop with no extremum cannot exist (its restriction
+    // to the loop attains one), and an interior point against such a record is refused rather
+    // than read out of bounds — LI's own path here is an unhandled ValueError on the empty min.
+    return Escape(EscapeRegime::kLoopExtremaNotAlternating, "loop extrema do not alternate: [] (an empty record)");
+  }
 
   // The interior extremum: its kind (the ring probe decides a degenerate point's side), the edge
   // it must reach first, and the closed-loop range between them.
