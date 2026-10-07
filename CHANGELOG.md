@@ -2836,6 +2836,7 @@ it was thinking of and false of the C struct beside it.
 - Basic ice crystal halo simulation
 - Support for common crystal types (hexagonal prism, plate, column)
 
+[4.7.2]: https://github.com/LoveDaisy/ice_halo_sim/compare/v4.7.1...v4.7.2
 [4.7.1]: https://github.com/LoveDaisy/ice_halo_sim/compare/v4.7.0...v4.7.1
 [4.7.0]: https://github.com/LoveDaisy/ice_halo_sim/compare/v4.6.1...v4.7.0
 [4.6.1]: https://github.com/LoveDaisy/ice_halo_sim/compare/v4.6.0...v4.6.1
