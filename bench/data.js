@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1791368216023,
+  "lastUpdate": 1791368219779,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -4770,54 +4770,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "673e55308cc451c53b25f590d5d48bf83f9ecf17",
-          "message": "Merge pull request #362 from LoveDaisy/feat/angular-distance-section-merge\n\nfeat(gui): merge both angular-distance ring families into one collapsed Angular Distance section",
-          "timestamp": "2026-09-13T16:21:39+08:00",
-          "tree_id": "5b13f138562a66f363f9e17a9a4111ed6049f9d4",
-          "url": "https://github.com/LoveDaisy/ice_halo_sim/commit/673e55308cc451c53b25f590d5d48bf83f9ecf17"
-        },
-        "date": 1789288418055,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 843028.5,
-            "unit": "rays/sec",
-            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 1184766.5,
-            "unit": "rays/sec",
-            "extra": "CPU: Neoverse-N2\\nCores: 4"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 810535.7,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 7763 64-Core Processor\\nCores: 4"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 671131.4,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "1a6c43be3f9fa9d8d89a3115d1fdf2f994e3a984",
           "message": "Merge pull request #363 from LoveDaisy/chore/angular-distance-from-naming\n\nfeat(gui): name the Angular Distance section \"from...\" and its rows Sun / Lens Center",
           "timestamp": "2026-09-13T20:15:08+08:00",
@@ -9504,6 +9456,54 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 578976.3,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "215a850397ac9dd42e2eb7b30ebcb657294c11f2",
+          "message": "Merge pull request #474 from LoveDaisy/chore/release-4.7.2\n\nchore(release): cut 4.7.2",
+          "timestamp": "2026-10-07T18:13:09+08:00",
+          "tree_id": "b9ed9fbd7711749ea472f0e75e9c4ad8a572d253",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/215a850397ac9dd42e2eb7b30ebcb657294c11f2"
+        },
+        "date": 1791368219106,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 841842.2,
+            "unit": "rays/sec",
+            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 1012411.4,
+            "unit": "rays/sec",
+            "extra": "CPU: Neoverse-N2\\nCores: 4"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 730612.7,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 7763 64-Core Processor\\nCores: 4"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 581714.4,
             "unit": "rays/sec",
             "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
           }
