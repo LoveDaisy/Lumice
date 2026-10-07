@@ -1,56 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1791368222516,
+  "lastUpdate": 1791393517408,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "6a6ae79565932a61955ad281237b6445b8a5d48f",
-          "message": "Merge pull request #364 from LoveDaisy/chore/hide-ray-allocation-checkbox\n\nchore(gui): hide Adaptive ray allocation checkbox from the main panel",
-          "timestamp": "2026-09-13T22:02:17+08:00",
-          "tree_id": "53eedb96fe96c777dbf6f5fd7d8737f2e45e20f6",
-          "url": "https://github.com/LoveDaisy/ice_halo_sim/commit/6a6ae79565932a61955ad281237b6445b8a5d48f"
-        },
-        "date": 1789308811645,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 364112,
-            "unit": "rays/sec",
-            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 593775.1,
-            "unit": "rays/sec",
-            "extra": "CPU: Neoverse-N2\\nCores: 4"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 541896.8,
-            "unit": "rays/sec",
-            "extra": "CPU: INTEL(R) XEON(R) PLATINUM 8573C\\nCores: 4"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 345735.7,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 9V74 80-Core Processor                \\nCores: 4"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -4752,6 +4704,54 @@ window.BENCHMARK_DATA = {
             "value": 311091.5,
             "unit": "rays/sec",
             "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "e6ca36f9b55e42a684caa58bff4213abf37f4cd0",
+          "message": "Merge pull request #475 from LoveDaisy/feat/schema3-measure-layer\n\nfeat(raypath): schema3 measure layer (task-661)",
+          "timestamp": "2026-10-08T01:15:42+08:00",
+          "tree_id": "eecb54e33af022f4804aa681db1b25ae0dc6cdf4",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/e6ca36f9b55e42a684caa58bff4213abf37f4cd0"
+        },
+        "date": 1791393515242,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 281847.9,
+            "unit": "rays/sec",
+            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 506725.5,
+            "unit": "rays/sec",
+            "extra": "CPU: Neoverse-N2\\nCores: 4"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 369723.1,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 7763 64-Core Processor\\nCores: 4"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 347100,
+            "unit": "rays/sec",
+            "extra": "CPU: Intel(R) Xeon(R) Platinum 8370C CPU @ 2.80GHz\\nCores: 4"
           }
         ]
       }
