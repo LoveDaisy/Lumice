@@ -615,4 +615,286 @@ bool SlabCreaseGates(const DeviationField& field, const DegenerateFoldSet& fold_
   return true;
 }
 
+// ---- the partition -------------------------------------------------------------------------------------
+
+namespace {
+
+// LI's kind vocabulary in messages ('minimum' / 'maximum' / ...).
+const char* CriticalKindName(CriticalKind kind) {
+  switch (kind) {
+    case CriticalKind::kMinimum:
+      return "minimum";
+    case CriticalKind::kMaximum:
+      return "maximum";
+    case CriticalKind::kSaddle:
+      return "saddle";
+    case CriticalKind::kDegenerate:
+      return "degenerate";
+  }
+  return "unknown";
+}
+
+// A short, faithful double rendering for message texts (LI's f-strings print reprs; the stable
+// part of every message is its prefix, the numbers are diagnostics).
+std::string Num(double value) {
+  std::ostringstream out;
+  out.precision(17);
+  out << value;
+  return out.str();
+}
+
+std::string IntList(const std::vector<int>& values) {
+  std::ostringstream out;
+  out << '(';
+  for (size_t i = 0; i < values.size(); i++) {
+    if (i > 0) {
+      out << ", ";
+    }
+    out << values[i];
+  }
+  out << ')';
+  return out.str();
+}
+
+// D_P on the part of a kSideRingRad ring around `point` inside U_P (LI _side_values): the ring in
+// the tangent basis of the point, the strictly-inside members by the gates, their d_value (the
+// slab form for a degenerate fold).
+std::vector<double> SideValues(const DeviationField& field, const double point[3]) {
+  double basis[2][3];
+  TangentBasis(point, basis);
+  std::vector<double> values;
+  double margins[kMaxFaceCount + 2];
+  for (int k = 0; k < kSideRingDirections; k++) {
+    const double t = 2.0 * kPi * static_cast<double>(k) / static_cast<double>(kSideRingDirections);
+    double u[3];
+    for (int i = 0; i < 3; i++) {
+      u[i] = std::cos(kSideRingRad) * point[i] +
+             std::sin(kSideRingRad) * (std::cos(t) * basis[0][i] + std::sin(t) * basis[1][i]);
+    }
+    const int count = field.ValidityMarginsAt(u, margins);
+    bool inside = true;
+    for (int m = 0; m < count; m++) {
+      if (!(margins[m] > 0.0)) {
+        inside = false;
+        break;
+      }
+    }
+    if (inside) {
+      values.push_back(field.Sample(u).d_value);
+    }
+  }
+  return values;
+}
+
+PartitionResult Escape(EscapeRegime regime, std::string message) {
+  PartitionResult result;
+  result.escaped = true;
+  result.regime = regime;
+  result.message = std::move(message);
+  return result;  // intervals stay empty — the mechanical invariant of PartitionResult
+}
+
+}  // namespace
+
+PartitionResult IntervalPartition(const DeviationField& field, const std::vector<InteriorCriticalPoint>& interior,
+                                  const DegenerateFoldSet* fold_set, const BoundaryLoopData& loop,
+                                  const DomainTopology& topology) {
+  if (!topology.IsDisk()) {
+    if (!topology.has_grid_audit) {
+      // No audit ran: a hand-built topology, or an empty audit ladder — the pre-52.7 escape.
+      return Escape(EscapeRegime::kNotDiskUnaudited,
+                    "U_P is not a disk on the " + std::to_string(topology.lattice_n) +
+                        "-point lattice: " + std::to_string(topology.domain_components) + " component(s), complement " +
+                        std::to_string(topology.complement_components));
+    }
+    const ChartAudit& audit = topology.grid_audit;
+    if (audit.verdict == AuditVerdict::kUnconverged) {
+      return Escape(EscapeRegime::kNotDiskUnconverged,
+                    "U_P is not a disk: lattice " + std::to_string(topology.lattice_n) + " says " +
+                        std::to_string(audit.lattice_domain_count) + "/" +
+                        std::to_string(audit.lattice_complement_count) + ", chart grids " + IntList(audit.grids) +
+                        " say " + IntList(audit.domain_counts) + "/" + IntList(audit.complement_counts) +
+                        "; counts are not resolution-converged, the topology is not established");
+    }
+    if (audit.verdict == AuditVerdict::kConfirmed) {
+      return Escape(EscapeRegime::kNotDiskConfirmed,
+                    "U_P is not a disk: " + std::to_string(topology.domain_components) + " component(s), complement " +
+                        std::to_string(topology.complement_components) + " (lattice " +
+                        std::to_string(topology.lattice_n) + " and chart grids " + IntList(audit.grids) + " agree)");
+    }
+    // Corrected: the grids agree on a count the lattice got wrong, and the adjudicated counts
+    // still fail the disk test.
+    return Escape(EscapeRegime::kNotDiskCorrected,
+                  "U_P is not a disk: " + std::to_string(topology.domain_components) + " component(s), complement " +
+                      std::to_string(topology.complement_components) + " (chart grids " + IntList(audit.grids) +
+                      " agree, correcting the lattice " + std::to_string(topology.lattice_n) + " counts " +
+                      std::to_string(audit.lattice_domain_count) + "/" +
+                      std::to_string(audit.lattice_complement_count) + ")");
+  }
+
+  if (fold_set != nullptr && fold_set->circle_interior_fraction > 0.0) {
+    EscapeRegime regime = EscapeRegime::kSlabCreaseContradiction;
+    std::string message;
+    if (!SlabCreaseGates(field, *fold_set, loop, &regime, &message)) {
+      return Escape(regime, std::move(message));
+    }
+  }
+
+  if (interior.size() > 1) {
+    std::string kinds;
+    for (size_t i = 0; i < interior.size(); i++) {
+      if (i > 0) {
+        kinds += ", ";
+      }
+      kinds += CriticalKindName(interior[i].kind);
+    }
+    return Escape(EscapeRegime::kMultipleInteriorCriticalPoints,
+                  std::to_string(interior.size()) + " interior critical points: " + kinds);
+  }
+
+  const std::vector<BoundaryCriticalPoint>& extrema = loop.critical_points;
+  for (size_t i = 0; i < extrema.size(); i++) {
+    if (extrema[i].kind == extrema[(i + 1) % extrema.size()].kind) {
+      std::string kinds = "[";
+      for (size_t k = 0; k < extrema.size(); k++) {
+        if (k > 0) {
+          kinds += ", ";
+        }
+        kinds += CriticalKindName(extrema[k].kind);
+      }
+      kinds += "]";
+      return Escape(EscapeRegime::kLoopExtremaNotAlternating, "loop extrema do not alternate: " + kinds);
+    }
+  }
+  std::vector<double> values;
+  values.reserve(extrema.size());
+  for (const BoundaryCriticalPoint& point : extrema) {
+    values.push_back(point.value);
+  }
+
+  // The interior extremum: its kind (the ring probe decides a degenerate point's side), the edge
+  // it must reach first, and the closed-loop range between them.
+  double closed_range[2] = { 0.0, 0.0 };
+  bool has_closed_range = false;
+  if (!interior.empty()) {
+    const InteriorCriticalPoint& point = interior[0];
+    CriticalKind kind = point.kind;
+    if (kind != CriticalKind::kMinimum && kind != CriticalKind::kMaximum) {
+      if (kind == CriticalKind::kDegenerate && field.fold().degenerate) {
+        const std::vector<double> ring = SideValues(field, point.position);
+        bool all_above = ring.size() == static_cast<size_t>(kSideRingDirections);
+        bool all_below = all_above;
+        for (double side : ring) {
+          all_above = all_above && side > point.value;
+          all_below = all_below && side < point.value;
+        }
+        if (all_above) {
+          kind = CriticalKind::kMinimum;
+        } else if (all_below) {
+          kind = CriticalKind::kMaximum;
+        }
+      }
+      if (kind != CriticalKind::kMinimum && kind != CriticalKind::kMaximum) {
+        std::ostringstream position;
+        position.precision(17);
+        position << "[" << point.position[0] << ", " << point.position[1] << ", " << point.position[2] << "]";
+        return Escape(EscapeRegime::kInteriorCriticalPointNotSimple,
+                      "interior critical point of kind '" + std::string(CriticalKindName(point.kind)) + "' at " +
+                          position.str() + ", D = " + Num(point.value));
+      }
+    }
+    const double v = point.value;
+    double edge = 0.0;
+    std::vector<const double*> touching_positions;
+    if (loop.has_plateau) {
+      // A constant loop: every point of dU_P is both its minimum and its maximum, at the plateau.
+      edge = loop.plateau_value;
+      touching_positions.push_back(loop.first_point);
+    } else {
+      edge = values[0];
+      for (double value : values) {
+        edge = kind == CriticalKind::kMinimum ? std::min(edge, value) : std::max(edge, value);
+      }
+      for (const BoundaryCriticalPoint& extremum : extrema) {
+        if (extremum.kind == kind && std::fabs(extremum.value - edge) <= kExtremumAtol) {
+          touching_positions.push_back(extremum.position);
+        }
+      }
+    }
+    const double sign = kind == CriticalKind::kMinimum ? 1.0 : -1.0;
+    bool reaches = false;
+    for (const double* position : touching_positions) {
+      for (double side : SideValues(field, position)) {
+        if (sign * (side - edge) < -1e-12) {
+          reaches = true;
+          break;
+        }
+      }
+      if (reaches) {
+        break;
+      }
+    }
+    if (!reaches || sign * (edge - v) <= 0.0) {
+      const char* kind_name = CriticalKindName(kind);
+      return Escape(EscapeRegime::kSublevelNotReachingBoundary,
+                    std::string("interior ") + kind_name + " D = " + Num(v) + " and loop " + kind_name + " " +
+                        Num(edge) +
+                        ": the sublevel component of the interior extremum is not shown to reach dU_P first at "
+                        "the loop extremum");
+    }
+    closed_range[0] = std::min(v, edge);
+    closed_range[1] = std::max(v, edge);
+    has_closed_range = true;
+  }
+
+  // The critical values: interior, loop extrema, corners and the plateau constant, merged within
+  // kExtremumAtol (LI critical_values).
+  std::vector<double> raw;
+  raw.reserve(interior.size() + extrema.size() + loop.corners.size() + 1);
+  for (const InteriorCriticalPoint& point : interior) {
+    raw.push_back(point.value);
+  }
+  for (const BoundaryCriticalPoint& point : extrema) {
+    raw.push_back(point.value);
+  }
+  for (const LoopCorner& corner : loop.corners) {
+    raw.push_back(corner.value);
+  }
+  if (loop.has_plateau) {
+    raw.push_back(loop.plateau_value);
+  }
+  std::sort(raw.begin(), raw.end());
+  std::vector<double> breaks;
+  for (double value : raw) {
+    if (breaks.empty() || value - breaks.back() > kExtremumAtol) {
+      breaks.push_back(value);
+    }
+  }
+
+  PartitionResult result;
+  for (size_t i = 0; i + 1 < breaks.size(); i++) {
+    const double delta = 0.5 * (breaks[i] + breaks[i + 1]);
+    int crossings = 0;
+    for (size_t k = 0; k < values.size(); k++) {
+      const double lo = std::min(values[k], values[(k + 1) % values.size()]);
+      const double hi = std::max(values[k], values[(k + 1) % values.size()]);
+      if (lo < delta && delta < hi) {
+        crossings++;
+      }
+    }
+    if (crossings % 2 != 0) {
+      return Escape(EscapeRegime::kOddBoundaryCrossings,
+                    "odd number of boundary crossings (" + std::to_string(crossings) + ") at delta = " + Num(delta));
+    }
+    DeviationInterval interval;
+    interval.lower = breaks[i];
+    interval.upper = breaks[i + 1];
+    interval.n_closed = has_closed_range && closed_range[0] < delta && delta < closed_range[1] ? 1 : 0;
+    interval.n_open = crossings / 2;
+    interval.n_components = interval.n_closed + interval.n_open;
+    result.intervals.push_back(interval);
+  }
+  return result;
+}
+
 }  // namespace lumice::analytic

@@ -258,6 +258,46 @@ struct BoundaryLoopData {
 bool SlabCreaseGates(const DeviationField& field, const DegenerateFoldSet& fold_set, const BoundaryLoopData& loop,
                      EscapeRegime* regime, std::string* message);
 
+// ---- the partition -----------------------------------------------------------------------------------
+
+// (lower, upper) in radians with the constant counts of {D_P = delta} for lower < delta < upper
+// (LI DeviationInterval). n_components = n_closed + n_open always.
+struct DeviationInterval {
+  double lower = 0.0;
+  double upper = 0.0;
+  int n_components = 0;
+  int n_closed = 0;
+  int n_open = 0;
+};
+
+// IntervalPartition's result: either the partition or the escape that refused it. The escape is
+// DATA, not an exception — a fail-closed answer the report side consumes explicitly. Mechanical
+// invariant (asserted by the tests, load-bearing for the consumers): `escaped` implies
+// `intervals` is EMPTY and `message` carries the failing check's LI text — an ignored escape
+// therefore fails loudly downstream as no intervals at all, not as stale ones.
+struct PartitionResult {
+  bool escaped = false;
+  EscapeRegime regime = EscapeRegime::kNotDiskUnaudited;  // meaningful when escaped
+  std::string message;                                    // LI's raise text, stable prefixes
+  std::vector<DeviationInterval> intervals;
+};
+
+// The partition of [min D_P, max D_P] with the counts of every interval (LI interval_partition).
+// `interior` is the caller's interior critical point set (the slab members for a degenerate fold —
+// SlabInteriorCriticalPoints; the lattice-Newton set of the focusing layer otherwise); `fold_set`
+// null for a non-degenerate path; `loop` the boundary walk's record (660.3's BoundaryLoopData);
+// `topology` from DomainTopologyOf. The reasoning: between consecutive critical values (interior,
+// loop extrema, corners, a plateau's constant — merged within kExtremumAtol) the counts are
+// constant; every open arc end is a boundary crossing so n_open is half the crossings of every
+// monotone stretch of the loop; with one interior extremum a closed loop exists exactly between
+// its value and the loop extremum its sublevel component provably reaches first (the ring probe
+// of the degenerate case decides min/max, and the reach is checked on a small ring at the
+// touching extremum). Everything outside that reasoning escapes with its own regime and LI's
+// message text — never silently.
+PartitionResult IntervalPartition(const DeviationField& field, const std::vector<InteriorCriticalPoint>& interior,
+                                  const DegenerateFoldSet* fold_set, const BoundaryLoopData& loop,
+                                  const DomainTopology& topology);
+
 }  // namespace lumice::analytic
 
 #endif  // LUMICE_ANALYTIC_DP_PARTITION_HPP_
