@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <sstream>
 #include <string>
 #include <utility>
@@ -547,6 +548,11 @@ std::vector<InteriorCriticalPoint> SlabInteriorCriticalPoints(const DeviationFie
     }
     point.value = field.Sample(axis_point.position).d_value;  // the slab form: exact at the axis
     point.kind = CriticalKind::kDegenerate;
+    // LI's degenerate branch: no Hessian there (arccos is not smooth on the slab critical set),
+    // the gradient norm of the onset is the cone slope the focusing layer probes instead.
+    point.hessian_eigenvalues[0] = std::numeric_limits<double>::quiet_NaN();
+    point.hessian_eigenvalues[1] = std::numeric_limits<double>::quiet_NaN();
+    point.gradient_norm = 0.0;
     points.push_back(point);
   }
   return points;

@@ -122,6 +122,8 @@ set(LUMICE_LAYER_analytic_FILES
   analytic/dp_boundary.hpp
   analytic/dp_field.cpp
   analytic/dp_field.hpp
+  analytic/dp_focus.cpp
+  analytic/dp_focus.hpp
   analytic/dp_partition.cpp
   analytic/dp_partition.hpp
   analytic/dp_weight_kink.cpp
@@ -134,6 +136,8 @@ set(LUMICE_LAYER_analytic_FILES
   analytic/path_rank.hpp
   analytic/pose_density.cpp
   analytic/pose_density.hpp
+  analytic/reflection_group.cpp
+  analytic/reflection_group.hpp
   analytic/so3.hpp
   include/lumice_analytic.h
   include/lumice_analytic_core.h

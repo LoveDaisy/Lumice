@@ -21,6 +21,7 @@
 // Internal header of the analytic kernel: nothing here is part of the C ABI (the report surface is
 // a later subtask's).
 
+#include <limits>
 #include <string>
 #include <utility>
 #include <vector>
@@ -149,11 +150,17 @@ DomainTopology DomainTopologyOf(const DeviationField& field, int lattice_n, cons
 enum class CriticalKind { kMinimum, kMaximum, kSaddle, kDegenerate };
 
 // An interior critical point of D_P (a zero of its S^2 gradient inside U_P, or a member of a
-// slab path's closed-form critical set). `value` is D_P in radians.
+// slab path's closed-form critical set). `value` is D_P in radians. `hessian_eigenvalues` and
+// `gradient_norm` carry what the focusing layer's onset table reads off the point (LI
+// InteriorCriticalPoint's fields; the partition itself consumes only the kind) — for a slab
+// branch member they are NaN and 0 (LI's degenerate branch), the Newton branch fills both.
 struct InteriorCriticalPoint {
   double position[3] = {};
   double value = 0.0;
   CriticalKind kind = CriticalKind::kMinimum;
+  double hessian_eigenvalues[2] = { std::numeric_limits<double>::quiet_NaN(),
+                                    std::numeric_limits<double>::quiet_NaN() };
+  double gradient_norm = 0.0;
 };
 
 // The slab critical set of a degenerate-fold path — {+-n_M} U {u . n_M = 0} — and where it lies
