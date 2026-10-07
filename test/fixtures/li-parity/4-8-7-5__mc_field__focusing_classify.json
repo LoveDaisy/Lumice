@@ -1,0 +1,153 @@
+{
+ "cell": {
+  "detects": {
+   "chromatic_class": "the PBD class: lit member set per index, tint energies/ratio, tir fractions (entry measure x Fresnel through one kernel on a plate family sample)",
+   "chromatic_diagnose": "the colour verdict (kind/color/visible), every feature's criterion quantities, the threshold snapshot (N_RED/N_BLUE/EDGE_MIN_SHIFT_RAD/EDGE_SPREAD_PER_SHIFT/TINT_RATIO_MIN)",
+   "dp_field_kinks": "TIR-onset curve structure (step/margin/method, arc count, closed, ends) and D envelope per index; the constant circles pin their closed-form value (3-1-6, C06)",
+   "dp_field_sample": "D_P / gradient / U_P gate margins / A_P / T_P / w at fixed u: chain or index drift, gate-set change, corridor (entry measure) regression, weight-kernel mismatch",
+   "dp_field_topology": "partition bounds and counts, critical values, corner margin signatures, degenerate-fold fields, domain topology counts: partition escapes, corner Newton, slab-crease gates, chart audit",
+   "focusing_classify": "the kind-1 onset table and its labels (mechanism, profile, jacobian_focusing, multiplicity), gradient_norm_range, family_pinned",
+   "wavelength_critical_table": "onset displacement across n(lambda): the wavelength-critical preset (task 42.4)"
+  },
+  "label": "mc_field",
+  "name": "4-8-7-5__mc_field",
+  "path": "4-8-7-5",
+  "rationale": "the C05 cell on the beta crystal (from_lumice(3.0, [2,1,1,2,1,1]), the 659 config): a degenerate fold with the axis on the c axis, the partition [0, 50.161742, 120] deg, both intervals (2, 0, 2), the blade critical value 120 deg (the corpus' 119.99999999 is this value at grid resolution) and classify jacobian@blade (boundary_extremum/degenerate plus the slab circle)",
+  "serves": [
+   "A1",
+   "A2",
+   "A4"
+  ]
+ },
+ "expected": {
+  "confined_dimensions": 0,
+  "confinement_widths_deg": [],
+  "dimension_collapse": false,
+  "family_pinned": false,
+  "gradient_norm_range": [
+   0.00017320508010773415,
+   1.731985844701453
+  ],
+  "halo_map_rank": 2,
+  "jacobian_focusing": true,
+  "mechanism": "jacobian",
+  "onsets": [
+   {
+    "gradient_norm": 1.7320508054038146,
+    "jacobian_focusing": false,
+    "location": "boundary",
+    "measure_limit": null,
+    "multiplicity": 2,
+    "profile": "cone_point",
+    "source": "slab_axis",
+    "value_deg": 0.0
+   },
+   {
+    "gradient_norm": 1.7320508075688776,
+    "jacobian_focusing": false,
+    "location": "boundary",
+    "measure_limit": null,
+    "multiplicity": 2,
+    "profile": "boundary_onset",
+    "source": "boundary_extremum",
+    "value_deg": 1.4696666969953688e-13
+   },
+   {
+    "gradient_norm": 1.667618233325774,
+    "jacobian_focusing": false,
+    "location": "boundary",
+    "measure_limit": null,
+    "multiplicity": 4,
+    "profile": "boundary_onset",
+    "source": "corner",
+    "value_deg": 50.16174167059926
+   },
+   {
+    "gradient_norm": 4.0812800145388334e-08,
+    "jacobian_focusing": true,
+    "location": "boundary",
+    "measure_limit": null,
+    "multiplicity": 2,
+    "profile": "degenerate",
+    "source": "boundary_extremum",
+    "value_deg": 119.99999999999999
+   },
+   {
+    "gradient_norm": 0.0,
+    "jacobian_focusing": true,
+    "location": "interior",
+    "measure_limit": null,
+    "multiplicity": 1,
+    "profile": "inverse_sqrt_divergence",
+    "source": "slab_circle",
+    "value_deg": 120.00000000000001
+   }
+  ],
+  "path": "4-8-7-5"
+ },
+ "fixture_kind": "focusing_classify",
+ "format": "lumice-integral/analytic-parity",
+ "input": {
+  "crystal": {
+   "face_distance": [
+    2.0,
+    1.0,
+    1.0,
+    2.0,
+    1.0,
+    1.0
+   ],
+   "height": 3.0,
+   "kind": "prism",
+   "lower_h": 0.0,
+   "lower_wedge_deg": 0.0,
+   "upper_h": 0.0,
+   "upper_wedge_deg": 0.0
+  },
+  "faces": [
+   4,
+   8,
+   7,
+   5
+  ],
+  "lattice_n": 20000,
+  "pose_density": {
+   "family": "random"
+  },
+  "refractive_index": 1.3110129170742788,
+  "refractive_index_label": "550nm"
+ },
+ "provenance": {
+  "conventions_sha256": "933beb6cb38220ca0e64d696cb50f37e3ccb91e0ede70616ecabeaf521ba7f21",
+  "li_rev": "4d0184c6f2789cd9945961197463ca4e6cbeb593",
+  "li_tracked_tree_clean": true
+ },
+ "schema_version": 1,
+ "symmetry_semantics": "none",
+ "tolerance": {
+  "confinement_widths_deg": {
+   "basis": "exact: empty under the random density (the only density these cells export)",
+   "value": 0.0
+  },
+  "gradient_norm_range": {
+   "basis": "relative: AD of the same closed-form chain: a gradient norm near zero (a critical point, a cone axis probe at CONE_PROBE_RAD) is relative-noisy at the 1e-9 level and gradient_norm_range is a min/max over the fixed 20000-point Fibonacci lattice; 1e-6 relative covers both",
+   "value": 1e-06
+  },
+  "labels": {
+   "basis": "exact: mechanism, jacobian_focusing, dimension_collapse, halo_map_rank, confined_dimensions, family_pinned and every onset's (location, source, profile, jacobian_focusing, multiplicity)",
+   "value": 0.0
+  },
+  "measure_limit": {
+   "basis": "relative: 2 pi / sqrt(det H) of the AD Hessian at a finite_jump onset",
+   "value": 1e-08
+  },
+  "onset_gradient_norm": {
+   "basis": "relative (null for a non-finite norm, an exit-TIR end): AD of the same closed-form chain: a gradient norm near zero (a critical point, a cone axis probe at CONE_PROBE_RAD) is relative-noisy at the 1e-9 level and gradient_norm_range is a min/max over the fixed 20000-point Fibonacci lattice; 1e-6 relative covers both",
+   "value": 1e-06
+  },
+  "onset_value_deg": {
+   "basis": "absolute, deg: interior critical points are Newton iterates of the tangent gradient (|grad| <= 1e-10, dp_field.field) and boundary extrema bisected to ~1e-12 rad; 1e-8 deg = 1.7e-10 rad leaves >= 1e2 room",
+   "value": 1e-08
+  }
+ }
+}

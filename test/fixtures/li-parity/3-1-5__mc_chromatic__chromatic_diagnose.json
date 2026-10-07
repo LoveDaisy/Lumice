@@ -1,0 +1,131 @@
+{
+ "cell": {
+  "detects": {
+   "chromatic_class": "the PBD class: lit member set per index, tint energies/ratio, tir fractions (entry measure x Fresnel through one kernel on a plate family sample)",
+   "chromatic_diagnose": "the colour verdict (kind/color/visible), every feature's criterion quantities, the threshold snapshot (N_RED/N_BLUE/EDGE_MIN_SHIFT_RAD/EDGE_SPREAD_PER_SHIFT/TINT_RATIO_MIN)",
+   "dp_field_kinks": "TIR-onset curve structure (step/margin/method, arc count, closed, ends) and D envelope per index; the constant circles pin their closed-form value (3-1-6, C06)",
+   "dp_field_sample": "D_P / gradient / U_P gate margins / A_P / T_P / w at fixed u: chain or index drift, gate-set change, corridor (entry measure) regression, weight-kernel mismatch",
+   "dp_field_topology": "partition bounds and counts, critical values, corner margin signatures, degenerate-fold fields, domain topology counts: partition escapes, corner Newton, slab-crease gates, chart audit",
+   "focusing_classify": "the kind-1 onset table and its labels (mechanism, profile, jacobian_focusing, multiplicity), gradient_norm_range, family_pinned",
+   "wavelength_critical_table": "onset displacement across n(lambda): the wavelength-critical preset (task 42.4)"
+  },
+  "label": "mc_chromatic",
+  "name": "3-1-5__mc_chromatic",
+  "path": "3-1-5",
+  "rationale": "the C02 criterion layer: the kink edge is blue/visible while the exit gate is red/not visible (sigma 108.7 deg against |Delta| 0.33 deg), the divergence from the issue's expected red gate recorded in chromatic-module-c.md \"Evidence\"",
+  "serves": [
+   "A4"
+  ]
+ },
+ "expected": {
+  "color": "blue",
+  "coverage_complete": true,
+  "faces": [
+   3,
+   1,
+   5
+  ],
+  "features": [
+   {
+    "color": "blue",
+    "contrast": 0.63639400815124,
+    "delta_blue": 2.4220750258444004,
+    "delta_red": 2.2768398304506823,
+    "direction_dispersion": 0.019874677155115813,
+    "kind": "edge",
+    "lit_fraction": 1.0,
+    "positive_fraction": 1.0,
+    "shift": 0.12785147795611995,
+    "source": "internal_1_tir_discriminant",
+    "spread": 0.08513017617707908,
+    "visible": true,
+    "weight": 0.014752368381158194
+   },
+   {
+    "color": "red",
+    "contrast": 0.9581256195650196,
+    "delta_blue": 1.6757215989682526,
+    "delta_red": 1.6778840948677278,
+    "direction_dispersion": 424673.7372797241,
+    "kind": "gate_edge",
+    "lit_fraction": 0.7819767441860465,
+    "positive_fraction": 0.0,
+    "shift": -0.005704224357569565,
+    "source": "exit_snell_discriminant",
+    "spread": 1.89632792435587,
+    "visible": false,
+    "weight": 7.928274648552483e-09
+   }
+  ],
+  "kind": "edge",
+  "n_blue": 1.317,
+  "n_red": 1.307,
+  "notes": [],
+  "position": 2.4220750258444004,
+  "tint": null,
+  "visible": true
+ },
+ "fixture_kind": "chromatic_diagnose",
+ "format": "lumice-integral/analytic-parity",
+ "input": {
+  "angles_convention": "radians; delta_red/delta_blue are the median D of the feature's line at each index",
+  "crystal": {
+   "face_distance": [
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0
+   ],
+   "height": 0.5,
+   "kind": "prism",
+   "lower_h": 0.0,
+   "lower_wedge_deg": 0.0,
+   "upper_h": 0.0,
+   "upper_wedge_deg": 0.0
+  },
+  "faces": [
+   3,
+   1,
+   5
+  ],
+  "lattice_n": 20000,
+  "n_blue": 1.317,
+  "n_red": 1.307,
+  "thresholds": {
+   "authority": "lumice_integral.chromatic; this block is a recorded snapshot, not a second implementation",
+   "calibration_white_max_deviation": 0.05,
+   "edge_min_shift_rad": 0.008726646259971648,
+   "edge_spread_per_shift": 1.0,
+   "n_blue": 1.317,
+   "n_red": 1.307,
+   "tint_ratio_min": 1.1
+  }
+ },
+ "provenance": {
+  "conventions_sha256": "933beb6cb38220ca0e64d696cb50f37e3ccb91e0ede70616ecabeaf521ba7f21",
+  "li_rev": "4d0184c6f2789cd9945961197463ca4e6cbeb593",
+  "li_tracked_tree_clean": true
+ },
+ "schema_version": 1,
+ "symmetry_semantics": "none",
+ "tolerance": {
+  "feature_angles": {
+   "basis": "absolute, rad, per feature (delta_red, delta_blue, shift, spread, direction_dispersion): medians and spreads over a backend's own sampling of the same curve: march spacing ~3.5e-3 rad on the closed-form circles and the curves are traced to curve accuracy, so medians/ptp agree at the spacing level; 2e-3 rad is half the observed spacing.  Cells with a closed-form value (the constant kinks) are pinned tighter by the anchor tests, not by this tolerance",
+   "value": 0.002
+  },
+  "feature_fractions": {
+   "basis": "absolute (positive_fraction, contrast, lit_fraction) and weight relative: sampled medians over a backend's own curve sampling",
+   "value": 0.02
+  },
+  "position": {
+   "basis": "absolute, rad: medians and spreads over a backend's own sampling of the same curve: march spacing ~3.5e-3 rad on the closed-form circles and the curves are traced to curve accuracy, so medians/ptp agree at the spacing level; 2e-3 rad is half the observed spacing.  Cells with a closed-form value (the constant kinks) are pinned tighter by the anchor tests, not by this tolerance",
+   "value": 0.002
+  },
+  "verdict": {
+   "basis": "exact: kind, color, visible, coverage_complete, notes and the feature list in order (kind, source, color, visible)",
+   "value": 0.0
+  }
+ }
+}

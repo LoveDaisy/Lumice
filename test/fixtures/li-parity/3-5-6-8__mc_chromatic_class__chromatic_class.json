@@ -1,0 +1,254 @@
+{
+ "cell": {
+  "detects": {
+   "chromatic_class": "the PBD class: lit member set per index, tint energies/ratio, tir fractions (entry measure x Fresnel through one kernel on a plate family sample)",
+   "chromatic_diagnose": "the colour verdict (kind/color/visible), every feature's criterion quantities, the threshold snapshot (N_RED/N_BLUE/EDGE_MIN_SHIFT_RAD/EDGE_SPREAD_PER_SHIFT/TINT_RATIO_MIN)",
+   "dp_field_kinks": "TIR-onset curve structure (step/margin/method, arc count, closed, ends) and D envelope per index; the constant circles pin their closed-form value (3-1-6, C06)",
+   "dp_field_sample": "D_P / gradient / U_P gate margins / A_P / T_P / w at fixed u: chain or index drift, gate-set change, corridor (entry measure) regression, weight-kernel mismatch",
+   "dp_field_topology": "partition bounds and counts, critical values, corner margin signatures, degenerate-fold fields, domain topology counts: partition escapes, corner Newton, slab-crease gates, chart audit",
+   "focusing_classify": "the kind-1 onset table and its labels (mechanism, profile, jacobian_focusing, multiplicity), gradient_norm_range, family_pinned",
+   "wavelength_critical_table": "onset displacement across n(lambda): the wavelength-critical preset (task 42.4)"
+  },
+  "label": "mc_chromatic_class",
+  "name": "3-5-6-8__mc_chromatic_class",
+  "path": "3-5-6-8",
+  "rationale": "the impossible-literal class: 3-5-6-8 itself is not a face set of this plate; four other members carry the class to a white verdict at ratio 1.029",
+  "serves": [
+   "A4"
+  ]
+ },
+ "expected": {
+  "feasibility_resolution_rad": null,
+  "lit_members": {
+   "blue": [
+    [
+     4,
+     8,
+     7,
+     5
+    ],
+    [
+     5,
+     7,
+     8,
+     4
+    ],
+    [
+     7,
+     5,
+     4,
+     8
+    ],
+    [
+     8,
+     4,
+     5,
+     7
+    ]
+   ],
+   "red": [
+    [
+     4,
+     8,
+     7,
+     5
+    ],
+    [
+     5,
+     7,
+     8,
+     4
+    ],
+    [
+     7,
+     5,
+     4,
+     8
+    ],
+    [
+     8,
+     4,
+     5,
+     7
+    ]
+   ]
+  },
+  "members": [
+   [
+    3,
+    5,
+    6,
+    8
+   ],
+   [
+    3,
+    7,
+    6,
+    4
+   ],
+   [
+    4,
+    6,
+    7,
+    3
+   ],
+   [
+    4,
+    8,
+    7,
+    5
+   ],
+   [
+    5,
+    3,
+    8,
+    6
+   ],
+   [
+    5,
+    7,
+    8,
+    4
+   ],
+   [
+    6,
+    4,
+    3,
+    7
+   ],
+   [
+    6,
+    8,
+    3,
+    5
+   ],
+   [
+    7,
+    3,
+    4,
+    6
+   ],
+   [
+    7,
+    5,
+    4,
+    8
+   ],
+   [
+    8,
+    4,
+    5,
+    7
+   ],
+   [
+    8,
+    6,
+    5,
+    3
+   ]
+  ],
+  "verdict": {
+   "color": "white",
+   "coverage_complete": true,
+   "faces": [
+    3,
+    5,
+    6,
+    8
+   ],
+   "features": [],
+   "kind": "none",
+   "n_blue": 1.317,
+   "n_red": 1.307,
+   "notes": [],
+   "position": null,
+   "tint": {
+    "direction_dispersion": 1.9902234515510181e-16,
+    "energy_blue": 0.06145207649804118,
+    "energy_red": 0.059715307753704615,
+    "ratio": 1.029084146254422,
+    "tir_fraction_blue": 0.982482549937339,
+    "tir_fraction_red": 0.9798461472495746
+   },
+   "visible": false
+  }
+ },
+ "fixture_kind": "chromatic_class",
+ "format": "lumice-integral/analytic-parity",
+ "input": {
+  "crystal": {
+   "face_distance": [
+    1.5,
+    1.0,
+    1.0,
+    1.5,
+    1.0,
+    1.0
+   ],
+   "height": 0.5,
+   "kind": "prism",
+   "lower_h": 0.0,
+   "lower_wedge_deg": 0.0,
+   "upper_h": 0.0,
+   "upper_wedge_deg": 0.0
+  },
+  "family": {
+   "family": "plate",
+   "sampler": "pose_density.sample_plate_poses: uniform spin, half-normal tilt, uniform tilt direction, numpy.random.default_rng(seed)",
+   "samples": 100000,
+   "seed": 3,
+   "sun_altitude_deg": 9.0,
+   "zenith_std_deg": 1.0
+  },
+  "n_blue": 1.317,
+  "n_red": 1.307,
+  "representative": [
+   3,
+   5,
+   6,
+   8
+  ],
+  "thresholds": {
+   "authority": "lumice_integral.chromatic; this block is a recorded snapshot, not a second implementation",
+   "calibration_white_max_deviation": 0.05,
+   "edge_min_shift_rad": 0.008726646259971648,
+   "edge_spread_per_shift": 1.0,
+   "n_blue": 1.317,
+   "n_red": 1.307,
+   "tint_ratio_min": 1.1
+  }
+ },
+ "provenance": {
+  "conventions_sha256": "933beb6cb38220ca0e64d696cb50f37e3ccb91e0ede70616ecabeaf521ba7f21",
+  "li_rev": "4d0184c6f2789cd9945961197463ca4e6cbeb593",
+  "li_tracked_tree_clean": true
+ },
+ "schema_version": 1,
+ "symmetry_semantics": "none",
+ "tolerance": {
+  "direction_dispersion": {
+   "basis": "absolute, rad: zero for a slab-like class (measured < 1e-12 in LI); a dispersive class reports its own note and none is exported",
+   "value": 1e-09
+  },
+  "members": {
+   "basis": "exact: the PBD orbit (chromatic.class_members) and, per index, the lit member list (a sampled verdict on the family sample; chromatic's own resolution statement, ChromaticVerdict docstring)",
+   "value": 0.0
+  },
+  "tint_energies": {
+   "basis": "relative: statistical: the family sample is LI's numpy PCG64 stream (sample_plate_poses, seed 3, 1e5 poses); a backend estimates the same family mean from its own sample.  LI's split-half sigma of the ratio at 1e5 poses is <= 3e-3 on the three class cells, so 5e-2 is > 15 sigma; energies carry the same relative room",
+   "value": 0.05
+  },
+  "tint_ratio": {
+   "basis": "absolute: statistical: the family sample is LI's numpy PCG64 stream (sample_plate_poses, seed 3, 1e5 poses); a backend estimates the same family mean from its own sample.  LI's split-half sigma of the ratio at 1e5 poses is <= 3e-3 on the three class cells, so 5e-2 is > 15 sigma; energies carry the same relative room",
+   "value": 0.05
+  },
+  "tir_fractions": {
+   "basis": "absolute: an A T-weighted fraction of the same sampled reflections",
+   "value": 0.01
+  },
+  "verdict": {
+   "basis": "exact: kind, color, visible, notes",
+   "value": 0.0
+  }
+ }
+}

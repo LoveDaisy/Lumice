@@ -1,0 +1,138 @@
+{
+ "cell": {
+  "detects": {
+   "chromatic_class": "the PBD class: lit member set per index, tint energies/ratio, tir fractions (entry measure x Fresnel through one kernel on a plate family sample)",
+   "chromatic_diagnose": "the colour verdict (kind/color/visible), every feature's criterion quantities, the threshold snapshot (N_RED/N_BLUE/EDGE_MIN_SHIFT_RAD/EDGE_SPREAD_PER_SHIFT/TINT_RATIO_MIN)",
+   "dp_field_kinks": "TIR-onset curve structure (step/margin/method, arc count, closed, ends) and D envelope per index; the constant circles pin their closed-form value (3-1-6, C06)",
+   "dp_field_sample": "D_P / gradient / U_P gate margins / A_P / T_P / w at fixed u: chain or index drift, gate-set change, corridor (entry measure) regression, weight-kernel mismatch",
+   "dp_field_topology": "partition bounds and counts, critical values, corner margin signatures, degenerate-fold fields, domain topology counts: partition escapes, corner Newton, slab-crease gates, chart audit",
+   "focusing_classify": "the kind-1 onset table and its labels (mechanism, profile, jacobian_focusing, multiplicity), gradient_norm_range, family_pinned",
+   "wavelength_critical_table": "onset displacement across n(lambda): the wavelength-critical preset (task 42.4)"
+  },
+  "label": "mc_field",
+  "name": "3-5__mc_field",
+  "path": "3-5",
+  "rationale": "the kind-1 representative: the 22 deg inner edge on the canonical column.  The interior minimum is the closed form 2 asin(n sin 30 deg) - 60 deg (21.916127 deg at n(550)); the wavelength table moves it 0.581 deg across 450/550/650 nm (task 42.4's caliber)",
+  "serves": [
+   "A1",
+   "A2",
+   "A4"
+  ]
+ },
+ "expected": {
+  "indices": {
+   "450nm": 1.3156924365566363,
+   "550nm": 1.3110129170742788,
+   "650nm": 1.308038822937431
+  },
+  "labels": [
+   "450nm",
+   "550nm",
+   "650nm"
+  ],
+  "onsets": [
+   {
+    "displacement_deg": 0.5809619664163819,
+    "jacobian_focusing": false,
+    "location": "interior",
+    "profile": "finite_jump",
+    "source": "interior_minimum",
+    "values_deg": {
+     "450nm": 22.271638558687034,
+     "550nm": 21.91612697180054,
+     "650nm": 21.690676592270652
+    }
+   },
+   {
+    "displacement_deg": 0.6309409060009372,
+    "jacobian_focusing": false,
+    "location": "boundary",
+    "profile": "boundary_onset",
+    "source": "boundary_extremum",
+    "values_deg": {
+     "450nm": 43.459768992285774,
+     "550nm": 43.074447749249835,
+     "650nm": 42.82882808628484
+    }
+   },
+   {
+    "displacement_deg": 0.6037058636961987,
+    "jacobian_focusing": false,
+    "location": "boundary",
+    "profile": "boundary_onset",
+    "source": "boundary_extremum",
+    "values_deg": {
+     "450nm": 43.91384812533941,
+     "550nm": 43.54513290869757,
+     "650nm": 43.310142261643215
+    }
+   },
+   {
+    "displacement_deg": 0.7483039485684984,
+    "jacobian_focusing": false,
+    "location": "boundary",
+    "profile": "boundary_onset",
+    "source": "corner",
+    "values_deg": {
+     "450nm": 50.618816105822624,
+     "550nm": 50.16174125260171,
+     "650nm": 49.870512157254126
+    }
+   }
+  ],
+  "path": "3-5"
+ },
+ "fixture_kind": "wavelength_critical_table",
+ "format": "lumice-integral/analytic-parity",
+ "input": {
+  "crystal": {
+   "face_distance": [
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0
+   ],
+   "height": 1.0,
+   "kind": "prism",
+   "lower_h": 0.0,
+   "lower_wedge_deg": 0.0,
+   "upper_h": 0.0,
+   "upper_wedge_deg": 0.0
+  },
+  "faces": [
+   3,
+   5
+  ],
+  "indices": {
+   "450nm": 1.3156924365566363,
+   "550nm": 1.3110129170742788,
+   "650nm": 1.308038822937431
+  },
+  "pose_density": {
+   "family": "random"
+  }
+ },
+ "provenance": {
+  "conventions_sha256": "933beb6cb38220ca0e64d696cb50f37e3ccb91e0ede70616ecabeaf521ba7f21",
+  "li_rev": "4d0184c6f2789cd9945961197463ca4e6cbeb593",
+  "li_tracked_tree_clean": true
+ },
+ "schema_version": 1,
+ "symmetry_semantics": "none",
+ "tolerance": {
+  "displacement_deg": {
+   "basis": "absolute, deg: the max-min of one row's values, the difference of two values_deg",
+   "value": 2e-08
+  },
+  "structure": {
+   "basis": "exact: path, labels, indices and every row's (location, source, profile, jacobian_focusing)",
+   "value": 0.0
+  },
+  "values_deg": {
+   "basis": "absolute, deg per label: interior critical points are Newton iterates of the tangent gradient (|grad| <= 1e-10, dp_field.field) and boundary extrema bisected to ~1e-12 rad; 1e-8 deg = 1.7e-10 rad leaves >= 1e2 room",
+   "value": 1e-08
+  }
+ }
+}
