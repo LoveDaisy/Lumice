@@ -45,10 +45,13 @@ double Determinant(const double m[9]) {
 
 // ---- fold pre-screen --------------------------------------------------------------------------------
 
-FoldScreen BuildFoldScreen(const FaceNormalTable& table, const int* slots, int slot_count) {
-  FoldScreen screen;
-  // M = S(n_k) ... S(n_1), one reflection per internal face, left-multiplied in path order (LI
-  // geometry.fold_matrix).
+void FoldMatrixOf(const FaceNormalTable& table, const int* slots, int slot_count, double out[9]) {
+  for (int i = 0; i < 9; i++) {
+    out[i] = i % 4 == 0 ? 1.0 : 0.0;
+  }
+  // One Householder reflection S(n) = I - 2 n n^T per internal face, left-multiplied onto the
+  // running product in path order (LI geometry.fold_matrix; a prefix call with slot_count = k + 1
+  // yields R_k, the fold of the first k - 1 reflections).
   for (int k = 1; k < slot_count - 1; k++) {
     const double* n = table.normal[slots[k]];
     double s[9];
@@ -60,15 +63,21 @@ FoldScreen BuildFoldScreen(const FaceNormalTable& table, const int* slots, int s
     double product[9];
     for (int i = 0; i < 3; i++) {
       for (int j = 0; j < 3; j++) {
-        product[i * 3 + j] = s[i * 3 + 0] * screen.fold_matrix[0 * 3 + j] +
-                             s[i * 3 + 1] * screen.fold_matrix[1 * 3 + j] +
-                             s[i * 3 + 2] * screen.fold_matrix[2 * 3 + j];
+        product[i * 3 + j] =
+            s[i * 3 + 0] * out[0 * 3 + j] + s[i * 3 + 1] * out[1 * 3 + j] + s[i * 3 + 2] * out[2 * 3 + j];
       }
     }
     for (int i = 0; i < 9; i++) {
-      screen.fold_matrix[i] = product[i];
+      out[i] = product[i];
     }
   }
+}
+
+FoldScreen BuildFoldScreen(const FaceNormalTable& table, const int* slots, int slot_count) {
+  FoldScreen screen;
+  // M = S(n_k) ... S(n_1), one reflection per internal face, left-multiplied in path order (LI
+  // geometry.fold_matrix) — the product's one authority is FoldMatrixOf.
+  FoldMatrixOf(table, slots, slot_count, screen.fold_matrix);
   // n_a . M^T n_b with the body normals of the entry and exit faces.
   double m_t[9];
   for (int i = 0; i < 3; i++) {
@@ -249,7 +258,20 @@ int DeviationField::ValidityMarginsAt(const double u[3], double out[kMaxFaceCoun
   return ValidityMargins(margins, margin_count, out);
 }
 
-FieldSample DeviationField::Sample(const double u[3]) const {
+int DeviationField::DomainMarginsAt(const double u[3], double out[2 * kMaxFaceCount]) const {
+  // The same corridor-free chain evaluation ValidityMarginsAt runs, answering the full vector: the
+  // walk's gate bookkeeping ranks the internal TIR diagnostics too, which the validity subset
+  // never carries. Still no mutable member (the class docstring's thread-safety paragraph).
+  const double identity[9] = { 1, 0, 0, 0, 1, 0, 0, 0, 1 };
+  const double incident[3] = { -u[0], -u[1], -u[2] };
+  ChainInterfaceDiagnostics<double> interfaces;
+  double outgoing[3];
+  TracePathChain<double, ChainEvaluation::kEvaluateAll>(*table_, slots_, slot_count_, refractive_index_, incident,
+                                                        identity, outgoing, nullptr, nullptr, &interfaces);
+  return DomainMargins(interfaces, slot_count_, out);
+}
+
+FieldSample DeviationField::SampleOptical(const double u[3]) const {
   FieldSample sample;
   // One chain evaluation at the identity pose (the field is a function of the body frame):
   // incident = -u, everything else follows from it. The chain's ChainDomain output is not read:
@@ -295,11 +317,17 @@ FieldSample DeviationField::Sample(const double u[3]) const {
                                  refractive_index_ * interfaces.incidence[last] * n_exit[2] };
   sample.d_p_exit_limit = Deviation(d_exit, u);
 
-  // A_P at the identity pose: s_body = R^T s = -u.
+  sample.location = LocateByValidityMargins(sample.validity_margins, sample.validity_count);
+  return sample;
+}
+
+FieldSample DeviationField::Sample(const double u[3]) const {
+  // SampleOptical plus the entry measure — the corridor is the only mutable-member touch, kept
+  // here and out of the walks' entry.
+  FieldSample sample = SampleOptical(u);
   const double s_body[3] = { -u[0], -u[1], -u[2] };
   const EntryMeasure entry = corridor_.Evaluate(s_body, refractive_index_);
   sample.a_p = entry.value;
-  sample.location = LocateByValidityMargins(sample.validity_margins, sample.validity_count);
   return sample;
 }
 
@@ -386,6 +414,29 @@ FieldJet DeviationField::Differentiate(const double u[3]) const {
     jet.margins_dn[i] = margins[i].v[3];
   }
   return jet;
+}
+
+void DeviationField::MarginsWithGradient(const double u[3], MarginJet* out) const {
+  // One Jet<3> chain evaluation — the same chain body the double path runs, with u seeded as the
+  // three dual directions and the refractive index a plain constant (LI margins_jacobian jacfwd
+  // in u alone; d/dn is FieldJet's fourth direction and the focusing layer's, not the walk's).
+  using J = Jet<3>;
+  const J pose[9] = { J(1.0), J(0.0), J(0.0), J(0.0), J(1.0), J(0.0), J(0.0), J(0.0), J(1.0) };
+  J u_jet[3] = { J::Variable(u[0], 0), J::Variable(u[1], 1), J::Variable(u[2], 2) };
+  const J incident[3] = { -u_jet[0], -u_jet[1], -u_jet[2] };
+  J refractive_index = refractive_index_;
+  J outgoing[3];
+  ChainInterfaceDiagnostics<J> interfaces;
+  TracePathChain<J, ChainEvaluation::kEvaluateAll>(*table_, slots_, slot_count_, refractive_index, incident, pose,
+                                                   outgoing, nullptr, nullptr, &interfaces);
+  J margins[2 * kMaxFaceCount];
+  out->margin_count = DomainMargins(interfaces, slot_count_, margins);
+  for (int i = 0; i < out->margin_count; i++) {
+    out->margins[i] = margins[i].a;
+    for (int k = 0; k < 3; k++) {
+      out->gradient[i][k] = margins[i].v[k];
+    }
+  }
 }
 
 }  // namespace lumice::analytic

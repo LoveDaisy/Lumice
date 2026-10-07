@@ -91,6 +91,13 @@ struct FoldScreen {
 // eigenvector there.
 FoldScreen BuildFoldScreen(const FaceNormalTable& table, const int* slots, int slot_count);
 
+// The prefix fold matrix M = S(n_k) ... S(n_1) over `slots`'s internal faces (slots 1 ..
+// slot_count - 2), left-multiplied in path order, row-major into `out` (LI geometry.fold_matrix).
+// The single authority of the product: BuildFoldScreen's matrix is this at the full sequence, and
+// the boundary walk's incidence normals read its prefixes (R_{k-1}^T n_k) and its transpose at
+// the exit (M^T n_b) — no second reflection-product loop anywhere else (a56).
+void FoldMatrixOf(const FaceNormalTable& table, const int* slots, int slot_count, double out[9]);
+
 // The domain margin vector in LI's order and sign (LI optics.domain_margin_names): entry
 // (incidence cosine, Snell discriminant), each internal reflection (incidence cosine, TIR
 // discriminant n^2 (1 - cos^2) - 1, positive = total), exit (incidence cosine, Snell
@@ -165,6 +172,16 @@ bool OnUpClosure(const double* validity_margins, int count);
 enum class RoutedDeviationStatus { kOk, kNotFinite };
 RoutedDeviationStatus RoutedDeviation(const FieldSample& sample, bool slab_path, double* out);
 
+// The domain margin vector and its ambient u-gradient in one struct (LI margins_jacobian's pair):
+// the same margin vector DomainMarginsAt reports, next to d(margin)/d(u_i) from a Jet<3> sweep.
+// Ambient, not tangent-projected — projection belongs to the consumer that knows its own metric
+// use (the walk's tangent gradient; the chart differences of the tests).
+struct MarginJet {
+  double margins[2 * kMaxFaceCount] = {};
+  double gradient[2 * kMaxFaceCount][3] = {};
+  int margin_count = 0;
+};
+
 // The fixed face sequence on one crystal as a field: holds the resolved slots, the fold screen
 // and the corridor, and evaluates points. One chain evaluation per point, no allocation once
 // constructed (the corridor's clipping scratch grows once). Batch (vmap) shapes wait for a real
@@ -199,16 +216,38 @@ class DeviationField {
   // "u is in U_P" is `every margin > 0` here and nowhere else.
   int ValidityMarginsAt(const double u[3], double out[kMaxFaceCount + 2]) const;
 
+  // The FULL domain margin vector of u (LI margin_vector's layout: validity gates and the internal
+  // TIR diagnostics together, LI's TIR sign) with no other bookkeeping — like ValidityMarginsAt
+  // in touching no mutable member, but answering the diagnostics too. The boundary walk's gate
+  // bookkeeping and the kink walks read margins the validity subset does not carry (the internal
+  // TIR discriminants are their subject); returns 2 * slot_count.
+  int DomainMarginsAt(const double u[3], double out[2 * kMaxFaceCount]) const;
+
   // The slab field angle(M u, u) (LI d_slab); meaningful for a degenerate fold, where it equals
   // d_p on the closure of U_P.
   double DSlab(const double u[3]) const;
 
   FieldSample Sample(const double u[3]) const;
 
+  // Everything Sample evaluates except the entry measure: one chain evaluation's five quantities
+  // and domain bookkeeping, with `a_p` left at 0 because no corridor is touched — no mutable
+  // member, const and thread-safe like ValidityMarginsAt. The walks' evaluation entry: a boundary
+  // or kink walk asks for thousands of values and gradients and never for A_P (rho, which needs
+  // it, belongs to the measure layer), so it never pays the corridor's clipping.
+  FieldSample SampleOptical(const double u[3]) const;
+
   // The jets of the field at u (FieldJet): one Jet2<4> evaluation of the same chain, so value,
   // gradients and Hessian come from one expression tree — no second derivation of anything
   // Sample computes.
   FieldJet Differentiate(const double u[3]) const;
+
+  // The domain margin vector with its AMBIENT u-gradient, from one Jet<3> chain evaluation (LI
+  // margins_jacobian, jacfwd first order): the values in `margins` and d(margin)/d(u_i) in
+  // `gradient`, the ambient gradient of the R^3 embedding. The sphere's tangent projection is the
+  // consumer's step (LI boundary._tangent), deliberately not done here; the refractive index is a
+  // plain constant of the sweep (no d/dn — that is FieldJet's fourth direction, the focusing
+  // layer's). The walks' corrector, corner Newton and most-violated ranking all read this.
+  void MarginsWithGradient(const double u[3], MarginJet* out) const;
 
  private:
   const FaceNormalTable* table_;

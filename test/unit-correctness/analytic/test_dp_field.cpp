@@ -624,6 +624,175 @@ TEST(DPField, ValidityMarginsAtMatchesSample) {
 
 
 // ---------------------------------------------------------------------------------------------
+// The walk's evaluation entries (660.3 plan Step 1): FoldMatrixOf, DomainMarginsAt,
+// SampleOptical, MarginsWithGradient
+// ---------------------------------------------------------------------------------------------
+
+// FoldMatrixOf is the reflection product's single authority: BuildFoldScreen's matrix is the full
+// sequence's call (the refactor invariance), and a prefix call with slot_count = k + 1 gives
+// R_{k-1} — for the first internal face exactly the one Householder reflection S(n_1).
+TEST(DPField, FoldMatrixOfIsTheScreensProductAndItsPrefixes) {
+  const Fixture prism(Prism(1.0));
+  const Fixture beta(Beta());
+  struct Case {
+    const Fixture* fixture;
+    int faces[5];
+    int count;
+  };
+  const Case cases[] = { { &prism, { 3, 5, 6, 7, 3 }, 5 },
+                         { &prism, { 3, 1, 6, 0, 0 }, 3 },
+                         { &prism, { 4, 8, 7, 5, 0 }, 4 },
+                         { &beta, { 4, 8, 7, 5, 0 }, 4 } };
+  for (const Case& c : cases) {
+    int slots[kMaxFaceCount];
+    if (ResolveFaceSequence(c.fixture->normals, c.faces, c.count, slots) != Status::kOk) {
+      ADD_FAILURE() << "ResolveFaceSequence failed for " << c.count << " faces";
+      continue;
+    }
+    const DeviationField field = c.fixture->Field(c.faces, c.count, kN550);
+    double product[9];
+    FoldMatrixOf(c.fixture->normals, slots, c.count, product);
+    for (int i = 0; i < 9; i++) {
+      EXPECT_NEAR(product[i], field.fold().fold_matrix[i], 0.0) << "entry " << i << " of " << c.count << " faces";
+    }
+    if (c.count >= 3) {
+      // The prefix over (a, m_1, x) folds exactly one reflection — S(n_1); the two-face prefix
+      // folds nothing and is the identity (LI incidence_normals' R_0).
+      double prefix[9];
+      FoldMatrixOf(c.fixture->normals, slots, 3, prefix);
+      const double* n1 = c.fixture->normals.normal[slots[1]];
+      double s[9];
+      for (int i = 0; i < 3; i++) {
+        for (int j = 0; j < 3; j++) {
+          s[i * 3 + j] = (i == j ? 1.0 : 0.0) - 2.0 * n1[i] * n1[j];
+        }
+      }
+      for (int i = 0; i < 9; i++) {
+        EXPECT_NEAR(prefix[i], s[i], 1e-15);
+      }
+      FoldMatrixOf(c.fixture->normals, slots, 2, prefix);
+      for (int i = 0; i < 9; i++) {
+        EXPECT_DOUBLE_EQ(prefix[i], i % 4 == 0 ? 1.0 : 0.0);
+      }
+    }
+  }
+}
+
+// DomainMarginsAt answers the full vector — the validity gates the subset carries AND the internal
+// TIR diagnostics it does not — with the same values Sample reports (the walk's bookkeeping reads
+// the diagnostics to rank the kink curves).
+TEST(DPField, DomainMarginsAtMatchesSampleIncludingTirPositions) {
+  const Fixture f(Prism(1.0));
+  const int faces[5] = { 3, 5, 6, 7, 3 };
+  const DeviationField field = f.Field(faces, 5, kN550);
+  const double us[3][3] = { { 0.0, -0.48947414775668885, 0.8720178086930698 }, { 0.3, -0.5, 0.8 }, { 0.2, 0.9, 0.1 } };
+  for (const auto& u : us) {
+    double un[3];
+    const double norm = std::sqrt(u[0] * u[0] + u[1] * u[1] + u[2] * u[2]);
+    for (int i = 0; i < 3; i++) {
+      un[i] = u[i] / norm;
+    }
+    double margins[2 * kMaxFaceCount];
+    const int count = field.DomainMarginsAt(un, margins);
+    const FieldSample s = field.Sample(un);
+    EXPECT_EQ(count, s.margin_count);
+    EXPECT_EQ(count, 10);  // 5 interfaces x (incidence, discriminant)
+    for (int i = 0; i < count; i++) {
+      EXPECT_DOUBLE_EQ(margins[i], s.margins[i]) << "margin " << i;
+    }
+  }
+}
+
+// SampleOptical is Sample minus the corridor: every optical quantity identical, a_p untouched at
+// zero (the walks never pay the entry measure's clipping).
+TEST(DPField, SampleOpticalMatchesSampleExceptTheEntryMeasure) {
+  const Fixture f(Prism(1.0));
+  const int faces[4] = { 3, 5, 6, 7 };
+  const DeviationField field = f.Field(faces, 4, kN550);
+  const double us[2][3] = { { 0.0, -0.48947414775668885, 0.8720178086930698 }, { 0.3, -0.5, 0.8 } };
+  for (const auto& u : us) {
+    double un[3];
+    const double norm = std::sqrt(u[0] * u[0] + u[1] * u[1] + u[2] * u[2]);
+    for (int i = 0; i < 3; i++) {
+      un[i] = u[i] / norm;
+    }
+    const FieldSample optical = field.SampleOptical(un);
+    const FieldSample full = field.Sample(un);
+    EXPECT_DOUBLE_EQ(optical.d_p, full.d_p);
+    EXPECT_DOUBLE_EQ(optical.d_value, full.d_value);
+    EXPECT_DOUBLE_EQ(optical.d_p_grazing, full.d_p_grazing);
+    EXPECT_DOUBLE_EQ(optical.d_p_exit_limit, full.d_p_exit_limit);
+    EXPECT_DOUBLE_EQ(optical.t_p, full.t_p);
+    EXPECT_EQ(optical.v_p, full.v_p);
+    EXPECT_EQ(optical.location, full.location);
+    EXPECT_EQ(optical.margin_count, full.margin_count);
+    EXPECT_DOUBLE_EQ(optical.a_p, 0.0);
+  }
+}
+
+// The ambient margin gradient of a Jet<3> sweep, against two oracles that share nothing with the
+// forward-mode rules: the closed forms the first two margins have (the entry cosine is exactly
+// n_a . u, the entry Snell discriminant 1 - (1 - c^2)/n^2 with c = n_a . u), and the chart
+// difference of the double evaluation for every margin of 3-5-6-7-3 (whose vector carries the
+// internal TIR diagnostics and the exit discriminant the walk ranks).
+TEST(DPField, MarginGradientsMatchClosedFormsAndChartDifferences) {
+  const Fixture f(Prism(1.0));
+  const int faces[5] = { 3, 5, 6, 7, 3 };
+  const DeviationField field = f.Field(faces, 5, kN550);
+  const double u_in[3] = { 0.0, -0.48947414775668885, 0.8720178086930698 };
+  double u[3];
+  const double norm = std::sqrt(u_in[0] * u_in[0] + u_in[1] * u_in[1] + u_in[2] * u_in[2]);
+  for (int i = 0; i < 3; i++) {
+    u[i] = u_in[i] / norm;
+  }
+  const double* n_a = field.EntryNormal();
+
+  // Closed forms of the entry pair.
+  MarginJet jet;
+  field.MarginsWithGradient(u, &jet);
+  EXPECT_EQ(jet.margin_count, 10);
+  const double c = n_a[0] * u[0] + n_a[1] * u[1] + n_a[2] * u[2];
+  for (int i = 0; i < 3; i++) {
+    EXPECT_NEAR(jet.gradient[0][i], n_a[i], 1e-15) << "entry cosine gradient " << i;
+    EXPECT_NEAR(jet.gradient[1][i], 2.0 * c * n_a[i] / (kN550 * kN550), 1e-15) << "entry disc gradient " << i;
+  }
+
+  // Chart differences: u(t) = normalize(u + t a) has d/dt of margin_k exactly the ambient gradient
+  // projected on a's tangent part, for every margin of the vector.
+  double basis[2][3];
+  TangentBasis(u, basis);
+  const double h = 1e-6;
+  const auto chart_margins = [&](double t, int which, double out[2 * kMaxFaceCount]) {
+    const double* e = basis[which];
+    double w[3] = { u[0] + t * e[0], u[1] + t * e[1], u[2] + t * e[2] };
+    const double wn = std::sqrt(w[0] * w[0] + w[1] * w[1] + w[2] * w[2]);
+    for (int i = 0; i < 3; i++) {
+      w[i] /= wn;
+    }
+    field.DomainMarginsAt(w, out);
+  };
+  for (int a = 0; a < 2; a++) {
+    const double* e = basis[a];
+    double plus[2 * kMaxFaceCount];
+    double minus[2 * kMaxFaceCount];
+    chart_margins(h, a, plus);
+    chart_margins(-h, a, minus);
+    for (int k = 0; k < jet.margin_count; k++) {
+      const double fd = (plus[k] - minus[k]) / (2.0 * h);
+      const double g_tangent = jet.gradient[k][0] * e[0] + jet.gradient[k][1] * e[1] + jet.gradient[k][2] * e[2];
+      EXPECT_NEAR(g_tangent, fd, 1e-8 * (1.0 + std::fabs(fd))) << "margin " << k << " direction " << a;
+    }
+  }
+  // The values themselves are DomainMarginsAt's (one sweep, same numbers up to FMA-grade noise).
+  double margins[2 * kMaxFaceCount];
+  field.DomainMarginsAt(u, margins);
+  for (int k = 0; k < jet.margin_count; k++) {
+    EXPECT_NEAR(jet.margins[k], margins[k], 1e-15 * (1.0 + std::fabs(margins[k])));
+  }
+}
+
+
+// ---------------------------------------------------------------------------------------------
 // Jets: tangent gradient, Riemannian Hessian, d/dn (plan Step 4; the FieldJet docstring carries
 // the chart identity the differences below rely on)
 // ---------------------------------------------------------------------------------------------
