@@ -109,10 +109,11 @@ the owner's to create, on the merge commit.
 2. **Bootstrap the chore**: `/chore-bootstrap release-X.Y.Z`, then work it in a linked worktree
    on its own branch (`AGENTS.md`, "Where a change lives, and from where it is made").
 3. **Enumerate, then decide per PR**: run the three commands under "Sourcing" in `CHANGELOG.md`
-   (merge commits, first-parent non-merges, and the `LUMICE_API_VERSION` diff — with `main` in
+   (merge commits, first-parent non-merges, and the API-version diff — with `main` in
    place of the tag that does not exist yet). For every PR in the output, record in the chore's
-   progress notes a **per-PR disposition**: entry written (and under which heading — `Added` /
-   `Changed` / `Fixed` / `Breaking Changes`), or no entry plus one sentence of why. The table is
+   progress notes a **per-PR disposition**: entry written (and under which heading — the
+   artifact section plus its `Added` / `Changed` / `Fixed` prefix, or `Breaking Changes`; the
+   grouping rule is in `CHANGELOG.md`), or no entry plus one sentence of why. The table is
    the audit trail that the section is complete; it stays in the chore, not in the changelog.
 4. **Write the section and set the version**: add `## [X.Y.Z] - <UTC date>` at the top of the
    version list in `CHANGELOG.md`, with its entries under the file's headings, then

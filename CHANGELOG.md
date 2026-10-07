@@ -33,8 +33,9 @@ A change earns an entry if at least one of these is true:
 
 - it changes what appears on screen, in a rendered image, in CLI/GUI output, or in a produced
   file (`.lmc`, exported JSON, an image);
-- it changes the shape or behavior of the public C API (`src/include/lumice.h`) — a new
-  function, a changed signature, an ABI-affecting struct change, a semantic change to an
+- it changes the shape or behavior of the public C API — the engine capability headers
+  `src/include/lumice_*.h`, or the analytic library's `src/include/lumice_analytic*.h` — a
+  new function, a changed signature, an ABI-affecting struct change, a semantic change to an
   existing field;
 - it changes what a config file (JSON) accepts, means, or defaults to;
 - it changes what ships in a release artifact (binary linking, packaging, signing) in a way a
@@ -56,6 +57,18 @@ same user-visible change (a feature PR plus its same-cycle follow-up fixes, wher
 has no independent user effect). **Split** one PR into several entries when it bundles
 unrelated user-visible changes. The test is the same one as above: does splitting or merging
 change what a reader needs to know about one perceptible behavior?
+
+### Grouping by artifact
+
+From [4.7.2] on, a version's entries are grouped under one `###` heading per artifact the
+reader meets the change in — `CLI`, `GUI`, `Rendered output (GUI + CLI)` for engine behavior
+both shells render, `Engine C API`, `liblumice_analytic` — and the change category becomes a
+bold prefix on each entry (`**Added:**`, `**Changed:**`, `**Fixed:**`). The category semantics
+in the next section are unchanged; only the grouping axis moved: the product now spans GUI,
+CLI and library surfaces, and a flat category list made every reader scan past the other
+surfaces' entries. A `### ⚠️ Breaking Changes` subsection, when one is earned, sits alongside
+the artifact headings and holds the whole of the breaking change. Sections before [4.7.2]
+keep the `### Added` / `### Changed` / `### Fixed` layout and are not rewritten.
 
 ### Which section an entry goes in
 
@@ -108,21 +121,22 @@ against git:
 ```bash
 git log <prev_tag>..<tag> --oneline --grep='^Merge pull request #'   # PRs merged via merge commit
 git log <prev_tag>..<tag> --first-parent --no-merges                 # squashed PRs and direct commits
-git diff <prev_tag>..<tag> -- src/include/lumice.h | grep LUMICE_API_VERSION   # C API moved → Breaking candidates
+git diff <prev_tag>..<tag> -- src/include/ | grep 'API_VERSION'            # C API moved → Breaking candidates
 ```
 
 The second command is not redundant: dependabot bumps and admin-merged single-commit PRs land
 with no merge commit to grep for, and direct-to-main commits appear in no PR list at all.
-The third is the mechanical trigger for the `Breaking Changes` subsection: if the version
-constant moved, at least one PR in the span changed the C API and its entry has to say what
-a compiled consumer sees. (Before the release is cut, `<tag>` does not exist yet — use the
+The third is the mechanical trigger for the `Breaking Changes` subsection: if a version
+constant moved (`LUMICE_API_VERSION` in `lumice_base.h`, or `LUMICE_ANALYTIC_API_VERSION` in
+`lumice_analytic_core.h`), at least one PR in the span changed a C API surface and its entry
+has to say what a compiled consumer sees. (Before the release is cut, `<tag>` does not exist yet — use the
 branch, e.g. `v4.5.0..main`.)
 
 A PR's own description is not authoritative on whether it breaks the C API. Diff the header
 across each version boundary instead, to see *what* moved rather than only that it did:
 
 ```bash
-git diff <prev_tag> <tag> -- src/include/lumice.h
+git diff <prev_tag> <tag> -- src/include/
 ```
 
 This is not a belt-and-braces check. Over the v4.1.4–v4.1.14 backfill it surfaced six ABI
@@ -132,6 +146,99 @@ them in a PR that called itself "backward compatible", which was true of the JSO
 it was thinking of and false of the C struct beside it.
 
 </details>
+
+## [4.7.2] - 2026-10-07
+
+### CLI
+
+- **Added: the `Lumice raypath` subcommand** (#445) — the physics behind one raypath, without
+  the UI. `Lumice analyze` lists a scene's raypaths; `Lumice raypath --crystal <n> --path <p>`
+  takes one of them and reports what the light does through that one crystal: fiber components
+  at a sky point (seed search, then the fiber walk — the level set on the sun-direction sphere),
+  per-point detail (crystal pose, the sun as seen inside the crystal, segment directions,
+  per-interface energy), a grid over the sun-direction sphere, and a `reach` field that splits
+  an empty result three ways — a degenerate point-mass path, a geometrically unreachable
+  target, and a target not excluded but not found (most often because no finite crystal admits
+  the passage). `--warm` re-reads a previous run's JSON and densifies from its seeds. The result
+  is serialized once in the engine (target schema 1, `doc/raypath-cli-output.md`; user-manual
+  section in en/zh). This is the analysis half of the raypath feature: the GUI workspace it
+  feeds is still being designed, and the JSON grows by appended fields only.
+- **Added: `Lumice raypath --report` — target-free feature diagnostics** (#464, #468). Instead
+  of following one chosen path, `--report` asks which halo features the document's *actual*
+  spectrum, crystal shape and orientation fold can support, and answers per candidate with a
+  three-tier verdict — `actual` (confirmed by sampled evidence), `candidate` (plausible but
+  under-evidenced), or `unfinished` with its reason — alongside per-wavelength finite-crystal
+  A·T estimates, convergence evidence, positions and explicit coverage limits. A combined
+  numerical budget bounds the work (`--budget-ms`, default 15 s, max 120 s;
+  `--max-evaluations`; `--max-field-evaluations`); a run that exhausts it still emits its
+  partial report marked `partial`, and a report that fails to parse leaves stdout empty.
+  Serialization is report schema 2 (`doc/raypath-cli-output.md` §7); the target/fiber/`--warm`
+  contracts above are unchanged.
+
+### GUI
+
+- **Fixed: window geometry at fractional Windows display scales** (#465). Match Background
+  computed its window size from an unscaled minimum, so at a fractional scale the system
+  imposed its own scaled minimum instead — changing the preview's aspect ratio and leaving
+  blank bands above and below the image. Startup, aspect presets and scale changes now share
+  one geometry model (current monitor work area, actual decoration sizes, scaled minimums);
+  programmatic resizes settle as bounded transactions that expire unconfirmed results rather
+  than act on them; and a preview area that cannot represent the requested aspect is clamped
+  and reported from the actual area.
+- **Changed: import diagnostics live in one Load Notice** (#466). The warnings raised while
+  loading a document are consolidated into a single load-time notice, and a preview restored
+  from cache states what its texture mode can and cannot show (recommending Run then Save)
+  instead of leaving the limitation implicit. Cached previews are kept; nothing reruns behind
+  the user's back.
+
+### Rendered output (GUI + CLI)
+
+- **Fixed: sporadic light-leak points on Parry-oriented scenes** (#472). Single bright pixels
+  near azimuth 160–162°, altitude ≈0° (beta-reported, no multi-scattering). CPU and Metal
+  judged whether a spawned child ray had left the crystal implicitly: the face it was born on
+  could win the min-t race at t ≈ 0⁺ and slip past a guard whose epsilon has the wrong
+  dimension for grazing children (t = δ/denom, so denom → 0 blows a ~1 ulp plane residual past
+  any fixed ε) — the child then re-hit its own birth face, TIR'd back inside and exited
+  unphysically. Each event carries ~1e-5 of the ray's energy but is visible because
+  grazing-incidence Fresnel reflection is near-total. Children are now classified at birth by
+  the pure sign of the source denominator, in CPU and Metal (CUDA already had the semantics;
+  the three backends now share one shape), which also removes the edge-birth phantom family.
+- **Fixed: the `channel_br` display mode no longer subtracts the sky into the diagnostic**
+  (#466). The B−R difference used to include the configured sky background — an empty blue
+  sky rendered white, which is background, not signal. Both the CLI's and the GUI's B−R output
+  now diagnose halos only; the post-gamma formula, gain, exposure, masking and annotations are
+  unchanged, so a scene whose sky contributes no channel difference renders as before.
+
+### Engine C API
+
+- **Added: `LUMICE_API_VERSION` 449 → 452** (#445, #464, #468) — new functions only; nothing
+  existing changed shape or meaning. v450 adds `LUMICE_AnalyzeSinglePath` /
+  `LUMICE_SinglePathResultToJson` / `LUMICE_SinglePathResultDestroy` — the single-path result
+  is serialized once in the engine, and the CLI and the future GUI read the same JSON — plus
+  `LUMICE_SetLogLevel(NULL)` to set the engine-wide log level. v451 adds the
+  path-feature-report entry points with their
+  `LUMICE_PATH_FEATURE_REPORT_MAX_SAMPLE_COUNT` / `..._MAX_WAVELENGTH_COUNT` bounds. v452 adds
+  a report-request suffix carrying budgets, observation, layer and symmetry bits; requests in
+  the old prefix form are accepted with the new defaults.
+- **Changed: the single `lumice.h` is gone; the C API is six capability headers** (#453) —
+  `lumice_{base,scene,render,editor,engine,raypath}.h`, one bridge file per header, same
+  functions and values: the split left the export tables byte-identical and moved neither API
+  version. The engine and testapi shared libraries additionally export the analytic capability
+  (`lumice_analytic_core.h`), and each packaged library's export surface is declared once in
+  `cmake/export_surfaces.cmake` and checked in CI and at packaging time. The headers still do
+  not ship in the download packages, so this reaches source-level consumers only.
+
+### liblumice_analytic
+
+- **Added: `LUMICE_ANALYTIC_API_VERSION` 1 → 7** (#444, #446, #468) — the analytic library's
+  surface grew to two modules plus diagnostic numerics: module A
+  (`LUMICE_ANALYTIC_EvaluatePath`, `TraceFiber` / `TraceFiberBatch` with per-pose diagnostics,
+  `DiscoverComponents`), module B (`LUMICE_ANALYTIC_BandSum` — bounded sums over sampled
+  poses, rank-0 point-mass branch included), and the v7 diagnostics (batch diagnostic
+  evaluation, source-event brackets, weighted-field values, fixed-observation colour bands).
+  The kernels are pinned against Lumice Integral by replayed parity fixtures. Consumers build
+  against the install tree with `find_package(LumiceAnalytic 7)`; the library is not yet part
+  of the download packages.
 
 ## [4.7.1] - 2026-09-28
 
