@@ -1037,6 +1037,7 @@ set(lumice_analytic_kernel_src
   "${PROJ_SRC_DIR}/analytic/path_fiber.cpp"
   "${PROJ_SRC_DIR}/analytic/entry_measure.cpp"
   "${PROJ_SRC_DIR}/analytic/dp_field.cpp"
+  "${PROJ_SRC_DIR}/analytic/dp_boundary.cpp"
   "${PROJ_SRC_DIR}/analytic/dp_partition.cpp"
   "${PROJ_SRC_DIR}/analytic/discovery.cpp"
   "${PROJ_SRC_DIR}/analytic/path_rank.cpp"

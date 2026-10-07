@@ -118,6 +118,8 @@ set(LUMICE_LAYER_analytic_FILES
   analytic/diagnostic_capi.cpp
   analytic/diagnostic_batch.cpp
   analytic/diagnostic_batch.hpp
+  analytic/dp_boundary.cpp
+  analytic/dp_boundary.hpp
   analytic/dp_field.cpp
   analytic/dp_field.hpp
   analytic/dp_partition.cpp

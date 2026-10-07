@@ -180,10 +180,10 @@ void TangentBasis(const double u[3], double basis[2][3]) {
 int ValidityMargins(const double* domain_margins, int margin_count, double out[kMaxFaceCount + 2]) {
   int count = 0;
   for (int i = 0; i < margin_count; i++) {
-    // The validity subset is every position except the internal TIR slots — odd positions of the
-    // internal interfaces, i.e. positions 3, 5, ... (position 1 is the entry Snell discriminant,
-    // a gate). Rebuilt from the layout, never restated (LI validity_margin_indices).
-    if (i % 2 == 0 || i == 1 || i == margin_count - 1) {
+    // The validity subset is every position except the internal TIR slots (IsValidityMarginPosition,
+    // the layout's single statement). Rebuilt from the layout, never restated (LI
+    // validity_margin_indices).
+    if (IsValidityMarginPosition(i, margin_count)) {
       out[count++] = domain_margins[i];
     }
   }

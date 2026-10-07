@@ -112,6 +112,14 @@ int DomainMargins(const ChainInterfaceDiagnostics<S>& interfaces, int slot_count
 // Returns how many were written (slot_count + 2).
 int ValidityMargins(const double* domain_margins, int margin_count, double out[kMaxFaceCount + 2]);
 
+// Position i of the domain margin vector is a validity gate (LI validity_margin_indices): every
+// position except the internal TIR slots — odd positions of the internal interfaces. The single
+// statement of the subset's layout: ValidityMargins reads it for the values, the boundary walk's
+// active list for the indices, so the two can never drift apart.
+inline bool IsValidityMarginPosition(int i, int margin_count) {
+  return i % 2 == 0 || i == 1 || i == margin_count - 1;
+}
+
 // DomainLocation of u given its validity margins (LI location): a non-finite smallest margin is
 // exterior; within kBoundaryMarginAtol of zero is boundary; the sign decides otherwise.
 DomainLocation LocateByValidityMargins(const double* validity_margins, int count);
@@ -205,6 +213,10 @@ class DeviationField {
   const FoldScreen& fold() const { return fold_; }
   double RefractiveIndex() const { return refractive_index_; }
   int SlotCount() const { return slot_count_; }
+  // The construction inputs, for the walk layers (the boundary walk's identity detection reads
+  // the face numbers, its incidence normals the table's slots — one field, one sequence).
+  const FaceNormalTable& table() const { return *table_; }
+  const int* slots() const { return slots_; }
   // The entry face's body normal n_a: the axis of the orthographic chart the topology audit
   // projects U_P onto (U_P lies in its open hemisphere, the entry incidence gate).
   const double* EntryNormal() const { return table_->normal[slots_[0]]; }
