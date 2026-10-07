@@ -158,8 +158,34 @@ std::vector<double> SupportEdges(const Distribution& slot, bool* spiky) {
   return edges;
 }
 
-// The fold-image spikes of p_fold inside (-pi/2, pi/2): the phi-values whose branch-A or
-// branch-B preimage sits on the proposal's support edge.
+// Both fold-image families of one preimage value x, inside the latitude range (-pi/2, pi/2):
+// branch A phi = x + 2 pi k, branch B phi = pi - x + 2 pi k (the two preimages of the folded
+// latitude, FoldLatitude). The k range is DERIVED from x's magnitude — no config-bounded window:
+// an extreme support edge (|edge| beyond one full turn) still lands its image in range through
+// the k that the inequality admits, and the strict range filter drops the rest.
+std::vector<double> FoldImagesOf(double x) {
+  std::vector<double> images;
+  const double bases[2] = { x, kPi - x };
+  for (double base : bases) {
+    const int k_lo = static_cast<int>(std::floor((-kHalfPi - base) / kTwoPi));
+    const int k_hi = static_cast<int>(std::ceil((kHalfPi - base) / kTwoPi));
+    for (int k = k_lo; k <= k_hi; k++) {
+      const double phi = base + kTwoPi * k;
+      if (phi > -kHalfPi && phi < kHalfPi) {
+        images.push_back(phi);
+      }
+    }
+  }
+  std::sort(images.begin(), images.end());
+  images.erase(std::unique(images.begin(), images.end(), [](double a, double b) { return std::fabs(a - b) < 1e-12; }),
+               images.end());
+  return images;
+}
+
+// The fold-image SPIKES of p_fold inside (-pi/2, pi/2): the phi-values whose branch-A or
+// branch-B preimage sits on the proposal's support edge. kZigzag's edges are integrable 1/sqrt
+// spikes that a plain panel rule undershoots badly — the quadratures below split at these
+// phi-values (as panel EDGES, where the arcsine weight or a sqrt substitution absorbs them).
 std::vector<double> FoldImageSpikes(const Distribution& slot) {
   bool spiky = false;
   const std::vector<double> edges = SupportEdges(slot, &spiky);
@@ -168,19 +194,83 @@ std::vector<double> FoldImageSpikes(const Distribution& slot) {
   }
   std::vector<double> spikes;
   for (double e : edges) {
-    for (int branch = 0; branch < 2; branch++) {
-      for (int k = -1; k <= 1; k++) {
-        const double phi = branch == 0 ? e + kTwoPi * k : kPi - e + kTwoPi * k;
-        if (phi > -kHalfPi && phi < kHalfPi) {
-          spikes.push_back(phi);
-        }
-      }
+    for (double phi : FoldImagesOf(e)) {
+      spikes.push_back(phi);
     }
   }
   std::sort(spikes.begin(), spikes.end());
   spikes.erase(std::unique(spikes.begin(), spikes.end(), [](double a, double b) { return std::fabs(a - b) < 1e-12; }),
                spikes.end());
   return spikes;
+}
+
+// The fold images of the slot's own density BREAKS (SlotDensityBreaks: support edges and kinks):
+// a kinked law's branch-B image (kLaplacian's |x - mu| mirrored by the fold) is a real kink of
+// p_fold/rho_phi, so the quadratures split at it too; a uniform's images are value-continuous
+// (equal-density copies meet) and splitting them is harmless. Empty for laws without breaks.
+std::vector<double> FoldImageKinks(const Distribution& slot) {
+  std::vector<double> kinks;
+  for (double b : SlotDensityBreaks(slot)) {
+    for (double phi : FoldImagesOf(b)) {
+      kinks.push_back(phi);
+    }
+  }
+  std::sort(kinks.begin(), kinks.end());
+  kinks.erase(std::unique(kinks.begin(), kinks.end(), [](double a, double b) { return std::fabs(a - b) < 1e-12; }),
+              kinks.end());
+  return kinks;
+}
+
+// Panel integral of f over (a, b), split at `cuts`, with the sqrt-substitution s -> s^2 applied
+// at any cut that is one of `spikes` (f's integrable 1/sqrt edges): the substitution removes the
+// singularity exactly, a plain panel rule would undershoot it badly (the Z measurement: ~24% on
+// tilt 30 / amplitude 20). `spikes` must be sorted; interior smooth panels take composite GL.
+template <class F>
+double IntegrateWithFoldImages(F&& f, const std::vector<double>& cuts, const std::vector<double>& spikes, double a,
+                               double b, int gl_panels_per_half = 8, int gl_order = 16) {
+  auto is_spike = [&spikes](double x) {
+    return std::any_of(spikes.begin(), spikes.end(), [x](double s) { return std::fabs(x - s) < 1e-12; });
+  };
+  std::vector<double> edges{ a };
+  for (double c : cuts) {
+    if (c > a && c < b) {
+      edges.push_back(c);
+    }
+  }
+  edges.push_back(b);
+  std::sort(edges.begin(), edges.end());
+  edges.erase(std::unique(edges.begin(), edges.end(), [](double u, double v) { return std::fabs(u - v) < 1e-12; }),
+              edges.end());
+  const int n = 256;
+  double total = 0.0;
+  for (size_t i = 0; i + 1 < edges.size(); i++) {
+    const double lo = edges[i], hi = edges[i + 1];
+    if (!(hi > lo)) {
+      continue;
+    }
+    const double mid = 0.5 * (lo + hi);
+    if (is_spike(lo)) {
+      const double smax = std::sqrt(mid - lo);
+      const double ds = smax / n;
+      for (int j = 0; j < n; j++) {
+        const double sq = (j + 0.5) * ds;
+        total += f(lo + sq * sq) * 2.0 * sq * ds;
+      }
+    } else {
+      total += CompositeGaussLegendre(f, lo, mid, gl_panels_per_half, gl_order);
+    }
+    if (is_spike(hi)) {
+      const double smax = std::sqrt(hi - mid);
+      const double ds = smax / n;
+      for (int j = 0; j < n; j++) {
+        const double sq = (j + 0.5) * ds;
+        total += f(hi - sq * sq) * 2.0 * sq * ds;
+      }
+    } else {
+      total += CompositeGaussLegendre(f, mid, hi, gl_panels_per_half, gl_order);
+    }
+  }
+  return total;
 }
 
 }  // namespace
@@ -299,62 +389,24 @@ LatitudeDensity MakeLatitudeDensity(const Distribution& lat_slot) {
   law.kind_ = LatitudeLawKind::kFoldedArea;
   {
     // Z = integral of p_fold * cos over [-pi/2, pi/2], on panels split at the density's kinks
-    // and support edges, with the sqrt-substitution at the fold-image SPIKES (the zigzag
-    // family's arcsine edges, where a plain panel rule undershoots the integrable divergence
-    // badly — measured 24% on tilt 30 / amplitude 20).
+    // and support edges AND at their fold images (branch-B kinks of kinked laws; the fold-image
+    // SPIKES of the zigzag family's arcsine edges, where the sqrt-substitution removes the
+    // integrable divergence exactly — a plain panel rule undershoots it badly, measured 24% on
+    // tilt 30 / amplitude 20).
     auto integrand = [&lat_slot](double phi) {
       return (FoldedProposalDensity(lat_slot, phi, false) + FoldedProposalDensity(lat_slot, phi, true)) * std::cos(phi);
     };
     std::vector<double> cuts = SlotDensityBreaks(lat_slot);
+    for (double b : FoldImageKinks(lat_slot)) {
+      cuts.push_back(b);
+    }
     for (double b : FoldImageSpikes(lat_slot)) {
       cuts.push_back(b);
     }
     std::sort(cuts.begin(), cuts.end());
     cuts.erase(std::unique(cuts.begin(), cuts.end(), [](double a, double b) { return std::fabs(a - b) < 1e-12; }),
                cuts.end());
-    const std::vector<double>& spikes = FoldImageSpikes(lat_slot);
-    auto is_spike = [&spikes](double x) {
-      return std::any_of(spikes.begin(), spikes.end(), [x](double s) { return std::fabs(x - s) < 1e-12; });
-    };
-    std::vector<double> edges{ -kHalfPi };
-    for (double c : cuts) {
-      if (c > -kHalfPi && c < kHalfPi) {
-        edges.push_back(c);
-      }
-    }
-    edges.push_back(kHalfPi);
-    double z_total = 0.0;
-    for (size_t i = 0; i + 1 < edges.size(); i++) {
-      const double a = edges[i], b = edges[i + 1];
-      if (!(b > a)) {
-        continue;
-      }
-      const double mid = 0.5 * (a + b);
-      const int n = 256;
-      double piece = 0.0;
-      if (is_spike(a)) {
-        const double smax = std::sqrt(mid - a);
-        const double ds = smax / n;
-        for (int j = 0; j < n; j++) {
-          const double sq = (j + 0.5) * ds;
-          piece += integrand(a + sq * sq) * 2.0 * sq * ds;
-        }
-      } else {
-        piece += CompositeGaussLegendre(integrand, a, mid, 8, 16);
-      }
-      if (is_spike(b)) {
-        const double smax = std::sqrt(b - mid);
-        const double ds = smax / n;
-        for (int j = 0; j < n; j++) {
-          const double sq = (j + 0.5) * ds;
-          piece += integrand(b - sq * sq) * 2.0 * sq * ds;
-        }
-      } else {
-        piece += CompositeGaussLegendre(integrand, mid, b, 8, 16);
-      }
-      z_total += piece;
-    }
-    law.norm_ = z_total;
+    law.norm_ = IntegrateWithFoldImages(integrand, cuts, FoldImageSpikes(lat_slot), -kHalfPi, kHalfPi);
   }
   if (!(law.norm_ > 0.0)) {
     // Unreachable for spread > 0 (the fold preserves mass and cos > 0 on the open interval);
@@ -422,7 +474,23 @@ double LatitudeDensity::FlipProbability(double phi_rad) const {
 }
 
 double LatitudeDensity::TotalMass() const {
-  return CompositeGaussLegendre([this](double phi) { return Evaluate(phi); }, -kHalfPi, kHalfPi, 64, 16);
+  // The same fold-aware panel split the Z normalization uses: the plain rule underreads a
+  // kZigzag proposal's arcsine spikes badly (the Z measurement: ~24%) and a kinked law's
+  // branch-B fold image is a real kink — the accessor is honest for EVERY folded law, there is
+  // no "spike-free" precondition. (The Dirac kinds' Evaluate is identically 0, so the split
+  // machinery reads their 0 mass unchanged.)
+  std::vector<double> cuts = SlotDensityBreaks(proposal_);
+  for (double b : FoldImageKinks(proposal_)) {
+    cuts.push_back(b);
+  }
+  for (double b : FoldImageSpikes(proposal_)) {
+    cuts.push_back(b);
+  }
+  std::sort(cuts.begin(), cuts.end());
+  cuts.erase(std::unique(cuts.begin(), cuts.end(), [](double a, double b) { return std::fabs(a - b) < 1e-12; }),
+             cuts.end());
+  return IntegrateWithFoldImages([this](double phi) { return Evaluate(phi); }, cuts, FoldImageSpikes(proposal_),
+                                 -kHalfPi, kHalfPi, 32, 16);
 }
 
 // ---------------------------------------------------------------------------
@@ -526,19 +594,37 @@ double ZonalMarginalAt(const LatitudeDensity& lat, const Distribution& proposal,
     }
     return 1.0 / (kPi * std::sqrt(d_lo * d_hi));
   };
-  // Split at the slot's own breaks so each piece has at most the two sqrt-singular endpoints
-  // (where c meets c_lo/c_hi) and is otherwise smooth. On each piece the integrand is exactly
-  // g(phi)/sqrt((phi - a)(b - phi)) with g smooth — the kernel's own 1/sqrt factors ARE the
-  // Chebyshev weight — so the rule integrates g at the Chebyshev nodes and multiplies by the
-  // weight's integral pi. (Evaluating the FULL integrand at the nodes would apply the weight
-  // twice — the factorization below is the load-bearing step.)
+  // Split at the slot's own breaks AND their fold images (branch-B kinks of kinked laws), plus
+  // the fold-image SPIKES of spiky support edges (kZigzag's arcsine edges) — a spike must sit on
+  // a panel EDGE, where the arcsine weight absorbs it exactly (rho_phi's 1/sqrt cancels the
+  // weight's sqrt and g stays smooth); left inside g it degrades the rule to algebraic order at
+  // best and underreads unboundedly at worst (the MakeLatitudeDensity measurement: 24%). The
+  // degenerate coincidence of a spike with the kernel's own singular endpoint (a measure-zero
+  // config alignment) makes m(c) genuinely log-divergent — the same honest-degenerate precedent
+  // as ZigzagDensityValue's +inf support endpoint.
   std::vector<double> cuts;
   for (double b : SlotDensityBreaks(proposal)) {
     if (b > lo && b < hi) {
       cuts.push_back(b);
     }
   }
+  for (double b : FoldImageKinks(proposal)) {
+    if (b > lo && b < hi) {
+      cuts.push_back(b);
+    }
+  }
+  for (double s : FoldImageSpikes(proposal)) {
+    if (s > lo && s < hi) {
+      cuts.push_back(s);
+    }
+  }
   std::sort(cuts.begin(), cuts.end());
+  // Each piece then has at most the two sqrt-singular endpoints (where c meets c_lo/c_hi, and
+  // any spike parked on an edge) and is otherwise smooth. On each piece the integrand is exactly
+  // g(phi)/sqrt((phi - a)(b - phi)) with g smooth — the kernel's own 1/sqrt factors ARE the
+  // Chebyshev weight — so the rule integrates g at the Chebyshev nodes and multiplies by the
+  // weight's integral pi. (Evaluating the FULL integrand at the nodes would apply the weight
+  // twice — the factorization below is the load-bearing step.)
   std::vector<double> edges;
   edges.push_back(lo);
   edges.insert(edges.end(), cuts.begin(), cuts.end());
@@ -770,14 +856,34 @@ void UMarginal::SpinOrbitPoint(double theta_rad, double u_out[3]) const {
 }
 
 double UMarginal::SpinOrbitThetaDensity(double theta_rad) const {
+  if (kind_ != USupportKind::kSpinOrbit) {
+    // The orbit laws answer their own support kind; guards mirror DensitySolidAngle's (a caller
+    // reading this on an area/point/degenerate measure must not get a plausible-looking number
+    // that is the density of nothing).
+    return 0.0;
+  }
   double at = 0.0;
   if (SlotIsDirac(axis_.azimuth_dist, &at)) {
     return 0.0;  // a Dirac azimuth has no orbit density; the support kind is not kSpinOrbit
   }
-  return SlotDensityValue(axis_.azimuth_dist, theta_rad);
+  // The orbit parameter is a CIRCLE quantity (u(theta) = u(theta + 2 pi)), so the marginal
+  // density is the WRAPPED az law — the same authority MuPositive's membership leg reads. The
+  // unwrapped slot value would read zero on the seam image of any support crossing +-pi (e.g.
+  // Uniform(180 +- 20), a mainstream config: a producer emitting parameters in atan2's
+  // (-pi, pi] convention lands half its lit arc at (-pi, -0.6 pi)) and a kFiberParameter
+  // quadrature would drop those samples silently while CertifyVisibility counts them in
+  // support. Uniform[0, 360] (the C12 anchor) agrees a.e. under both readings.
+  bool dirac_dummy = false;
+  double at_dummy = 0.0;
+  return WrappedSlotDensity(axis_.azimuth_dist, theta_rad, &dirac_dummy, &at_dummy);
 }
 
 double UMarginal::OrbitDensity(double parameter_rad, double u_out[3]) const {
+  if (kind_ != USupportKind::kSpinOrbit && kind_ != USupportKind::kRollOrbit && kind_ != USupportKind::kLatitudeOrbit) {
+    // Orbit laws answer orbit kinds (guards mirror DensitySolidAngle's); Point/SpinOrbitPoint
+    // are the maps for the other kinds.
+    return 0.0;
+  }
   double v[3];
   double phi0 = 0.0, roll0 = 0.0, az0 = 0.0;
   DiracLatRoll(&phi0, &roll0);
@@ -794,7 +900,11 @@ double UMarginal::OrbitDensity(double parameter_rad, double u_out[3]) const {
       u_out[1] = v[1];
       u_out[2] = v[2];
     }
-    return SlotDensityValue(axis_.roll_dist, parameter_rad);
+    // The roll parameter is a circle quantity (Rz(-r) has period 2 pi): WRAPPED law, same seam
+    // argument as SpinOrbitThetaDensity's.
+    bool dirac_dummy = false;
+    double at_dummy = 0.0;
+    return WrappedSlotDensity(axis_.roll_dist, parameter_rad, &dirac_dummy, &at_dummy);
   }
   if (kind_ == USupportKind::kLatitudeOrbit) {
     v[0] = sun_[0];
@@ -808,16 +918,20 @@ double UMarginal::OrbitDensity(double parameter_rad, double u_out[3]) const {
       u_out[1] = v[1];
       u_out[2] = v[2];
     }
+    // The latitude parameter is NOT a circle quantity: the folded law already sums the fold
+    // preimages and lives on [-pi/2, pi/2] — the raw (unwrapped) evaluation is the correct one.
     return lat_.Evaluate(parameter_rad);
   }
-  // kSpinOrbit: parameter = theta (the azimuth draw).
+  // kSpinOrbit: parameter = theta (the azimuth draw), a circle quantity — WRAPPED law.
   SpinOrbitPoint(parameter_rad, v);
   if (u_out != nullptr) {
     u_out[0] = v[0];
     u_out[1] = v[1];
     u_out[2] = v[2];
   }
-  return SlotDensityValue(axis_.azimuth_dist, parameter_rad);
+  bool dirac_dummy = false;
+  double at_dummy = 0.0;
+  return WrappedSlotDensity(axis_.azimuth_dist, parameter_rad, &dirac_dummy, &at_dummy);
 }
 
 void UMarginal::Point(double u_out[3]) const {

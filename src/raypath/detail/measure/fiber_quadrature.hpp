@@ -60,8 +60,16 @@ struct FiberQuadratureResult {
   int total = 0;       // all samples
   // Samples the stream's binding could not read: a kFiberParameter binding on a measure whose
   // kind() is not kSpinOrbit, or a kSolidAngle binding on a measure without a regular area
-  // support. They are dropped, and counted here so a mis-bound stream is distinguishable from a
-  // dark one ("coverage gaps keep their reason").
+  // support (an out-of-registry binding value lands in the switch's fail-visible default and
+  // counts here too). They are dropped, and counted here so a mis-bound stream is
+  // distinguishable from a dark one ("coverage gaps keep their reason").
+  // REGISTERED INHERITANCE, not covered by this counter: a kSolidAngle stream on a kArea
+  // measure whose FAMILY is a registered read-as-zero gap at the density level (the
+  // Dirac-azimuth / Dirac-latitude preimage families, declared_density.hpp's v1 gap list)
+  // reads mu = 0 with NO mismatch — the density answers "unanswered" as zero and the quadrature
+  // cannot tell. Integration must consult the density layer's registration before feeding such
+  // families to a quadrature; the pin tests (DiracAzimuthAreaFamily... / DiracLatitude...) make
+  // the zero visible at the density layer, where the authority lives.
   int binding_mismatch = 0;
 };
 

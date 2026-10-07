@@ -138,5 +138,33 @@ TEST(WeightProfile, EscapedAndEmptyCurvesPassthroughTheirExistence) {
   EXPECT_EQ(p1.existence, ExistenceState::kEscaped);
 }
 
+TEST(WeightProfile, OrbitMeasureReadsZeroIsTheRegisteredGap) {
+  // The profile-side registration (the header's read-as-zero block): rho_u is the AREA density,
+  // so a curve under the plate family's kSpinOrbit measure — the contract header's canonical
+  // closed kind-1 curve — reads zero along the WHOLE curve with in_support = 0, indistinguishable
+  // from a curve outside the support. The pin makes the registered "unanswered" visible; the
+  // along-orbit parameter reading (UMarginal::OrbitDensity) is the v2 variant, drawing on the
+  // same per-kind parameter inversion registered in declared_density.hpp's gap list.
+  const double sun[3] = { 0.0, 0.6, 0.8 };
+  const UMarginal plate = MakeUMarginal(MakeAxis(Uniform(0.0, 360.0), NoRandom(90.0), NoRandom(0.0)), sun);
+  ASSERT_EQ(plate.kind(), USupportKind::kSpinOrbit);
+  const CriticalSetCurve curve = LatitudeCircleCurve(30.0 * kDeg, 32, true);
+  const WeightProfile profile = SampleWeightProfile(plate, curve);
+  ASSERT_EQ(profile.points.size(), static_cast<size_t>(32));
+  for (const WeightProfileSample& p : profile.points) {
+    EXPECT_EQ(p.rho_u, 0.0);
+  }
+  EXPECT_EQ(profile.in_support, 0);
+  EXPECT_EQ(profile.total, 0.0);
+  EXPECT_EQ(profile.existence, ExistenceState::kComputed);
+  // The point kind reads the same registered zero (a point mass has no dOmega density; the
+  // delta reading is the same v2 per-kind variant).
+  const UMarginal point = MakeUMarginal(MakeAxis(NoRandom(30.0), NoRandom(45.0), NoRandom(60.0)), sun);
+  ASSERT_EQ(point.kind(), USupportKind::kPoint);
+  const WeightProfile p2 = SampleWeightProfile(point, curve);
+  EXPECT_EQ(p2.in_support, 0);
+  EXPECT_EQ(p2.total, 0.0);
+}
+
 }  // namespace
 }  // namespace lumice::raypath

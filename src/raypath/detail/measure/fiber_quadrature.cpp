@@ -46,6 +46,14 @@ FiberQuadratureResult QuadratureIntensity(const UMarginal& measure, const FiberS
         }
         out.in_support++;
         break;
+      default:
+        // An out-of-registry binding value must not read as mu = 0 with the sample silently
+        // dropped (indistinguishable from dark): the same reportable path as a kind mismatch.
+        // The registered table (RegisteredMeasureBindings) + the coverage walk are the a50
+        // half; this default is the other — a future value without its routing arm lands here
+        // and is COUNTED, not swallowed.
+        out.binding_mismatch++;
+        continue;
     }
     out.intensity += mu * s.area * s.transmission * s.weight;
     out.kept++;

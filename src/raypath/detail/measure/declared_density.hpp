@@ -94,8 +94,11 @@
 //                   at fixed phi under uniform lambda. Equivalence conditions of the fast path:
 //                   azimuth full-turn uniform AND roll full-turn uniform AND slot independence
 //                   (the product law) — exactly the two predicates; a config that fails them
-//                   takes the general path. The fast path is exact for any latitude slot (its
-//                   rho_phi may itself be folded, legacy, or the full-sphere law).
+//                   takes the general path. The fast path handles ANY latitude slot (its
+//                   rho_phi may itself be folded, legacy, or the full-sphere law): the
+//                   fold-image spikes of a kZigzag proposal are split and absorbed by the
+//                   arcsine weight exactly, and its interior fold kinks converge algebraically
+//                   — the same disclaimer SlotDensityBreaks carries for the Z integral.
 //                   GENERAL PATH (slow): rho_u(u_0) = integral d(roll_out) of the roll law times
 //                   the sum over the (lambda*, phi*) preimages of Rz(-roll_out) Ry(pi/2 - phi*)
 //                   Rz(pi - lambda*) s_hat = u_0 of rho_pose(lambda*, phi*, roll_out) /
@@ -112,7 +115,10 @@
 //
 // v1 surface gaps (pre-registered, fill when a consumer needs them): MuPositive's parameter
 // inversion is wired for kSpinOrbit only (kRollOrbit / kLatitudeOrbit answer membership by
-// distance-to-orbit); kDegenerateSunGeometry answers nothing; the general path does not solve
+// distance-to-orbit — a point on the orbit OUTSIDE the law's parameter support reads positive;
+// pinned by test as the registered approximation) — and SampleWeightProfile inherits the same
+// source: any non-kArea measure reads rho_u = 0 along a curve (the profile-side registration is
+// weight_profile.hpp's); kDegenerateSunGeometry answers nothing; the general path does not solve
 // the Dirac-latitude preimage (a fixed-zenith family with NON-uniform azimuth and spread roll —
 // the symmetric members of that family take the fast zonal path, which carries the Dirac mass
 // exactly as the arcsine ring); the general path ALSO does not solve the Dirac-AZIMUTH preimage
@@ -188,10 +194,10 @@ class LatitudeDensity {
   double point() const { return point_; }
   // Z of the kFoldedArea law (integral of p_fold * cos); 1 for the others.
   double norm() const { return norm_; }
-  // The normalization integral in double Gauss-Legendre (the test's ruler reuses it). Spike-free
-  // laws only: a kZigzag proposal's 1/sqrt cusps need the spike-split quadrature that
-  // MakeLatitudeDensity's own Z integral uses — the plain rule underreads zigzag measurably
-  // (the spec block's measurement: ~24%).
+  // The normalization integral, on the same fold-aware panel split the Z computation uses
+  // (the test's ruler reuses it) — honest for every folded law, including a kZigzag proposal's
+  // 1/sqrt spikes and a kinked law's branch-B fold images (a plain rule underreads the zigzag
+  // spikes measurably: the spec block's measurement, ~24%).
   double TotalMass() const;
 
  private:
@@ -265,17 +271,23 @@ class UMarginal {
 
   // The GENERAL path's value at u, computed even where DensitySolidAngle would take the fast
   // zonal path. Exposed because the fast path's equivalence claim (Table 4) is checkable only
-  // against this; production callers use DensitySolidAngle.
+  // against this; production callers use DensitySolidAngle. REGISTERED degraded accuracy on
+  // spiky-latitude kArea families (a kZigzag proposal): the roll midpoint undershoots the
+  // rho_phi fold-image spikes its panels cross (~5% measured on tilt 30 / amplitude 20, vs the
+  // split fast path — the pair test pins it); the fast path is the production answer there.
   double DensitySolidAngleGeneral(const double u[3]) const;
 
   // Spin-orbit accessors (kSpinOrbit only; the plate-family fiber):
   //   u(theta) = Rz(-roll_0) . Ry(pi/2 - phi_0) . Rz(pi - theta) . s_hat
-  //   density w.r.t. dtheta at theta = the az slot law there.
+  //   density w.r.t. dtheta at theta = the WRAPPED az slot law there (theta is a circle
+  //   parameter; the density entry answers 0 on any other support kind).
   void SpinOrbitPoint(double theta_rad, double u_out[3]) const;
   double SpinOrbitThetaDensity(double theta_rad) const;
 
-  // The latitude/roll orbit point+parameter density, for the other one-dimensional kinds
-  // (parameter conventions in Table 4). u_out receives the orbit point when non-null.
+  // The orbit parameter's density. kSpinOrbit / kRollOrbit / kLatitudeOrbit only (other kinds
+  // answer 0, mirroring DensitySolidAngle's guard). The SPIN and ROLL parameters are circle
+  // quantities, so their densities are the WRAPPED slot laws; the LATITUDE parameter is not
+  // (the folded law lives on [-pi/2, pi/2] and already sums the fold preimages) and reads raw.
   double OrbitDensity(double parameter_rad, double u_out[3]) const;
 
   // The single support point (kPoint only).
@@ -303,8 +315,11 @@ class UMarginal {
 };
 
 // Builds the u-marginal of `axis` under the sun at `sun_dir` (a unit vector pointing AT the sun;
-// the propagation direction of incident light is -sun_dir). sun_dir must be unit to ~1e-10 and
-// not at a pole (|z| < 1 - 1e-12), else the result reports kDegenerateSunGeometry.
+// the propagation direction of incident light is -sun_dir). sun_dir is normalized internally, so
+// any NONZERO vector works (a zero vector is undefined caller error); a sun at a pole
+// (|z| > 1 - 1e-12) reports kDegenerateSunGeometry UNLESS every slot is Dirac — an all-Dirac
+// pose keeps kPoint (the collapsed azimuth takes no freedom a point mass still has; the
+// classification checks the point case first).
 UMarginal MakeUMarginal(const AxisDistribution& axis, const double sun_dir[3]);
 
 }  // namespace lumice::raypath

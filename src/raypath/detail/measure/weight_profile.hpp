@@ -20,6 +20,22 @@
 // carries kind-1 curve data yet; v1 pins the primitive on mock curves with analytic densities
 // (a latitude circle under a zonal measure, a meridian arc under a band measure) and the real
 // anchor waits for the 660 port's critical sets.
+//
+// REGISTERED READ-AS-ZERO GAPS (the density layer's registered gaps surface here; zero means
+// "unanswered", not "dark" — the same discipline as declared_density.hpp's v1 gap list):
+//   - rho_u is the AREA density (w.r.t. dOmega): only a kArea measure answers it. A curve under
+//     an orbit-kind measure (kSpinOrbit / kRollOrbit / kLatitudeOrbit) or the point kind reads
+//     rho_u = 0 along the WHOLE curve with in_support = 0 — indistinguishable from a curve
+//     lying outside the support. The contract header names the plate family's restricted
+//     latitude circle (kSpinOrbit under the C12 config) the canonical closed kind-1 curve, so
+//     this is the first real integration shape, not a corner: the along-orbit PARAMETER density
+//     (UMarginal::OrbitDensity) is the v2 reading variant, and it draws on the same per-kind
+//     parameter inversion declared in declared_density.hpp's gap list (wired for kSpinOrbit
+//     only). Pinned visible by WeightProfile.OrbitMeasureReadsZeroIsTheRegisteredGap.
+//   - A kArea measure whose FAMILY is a registered read-as-zero gap at the density level (the
+//     Dirac-azimuth / Dirac-latitude preimage families, declared_density.hpp's list) reads the
+//     same zero here — the profile adds no signal of its own; integration must consult the
+//     density layer's registration before feeding such families to a profile.
 
 #include <vector>
 

@@ -86,6 +86,8 @@ const char* ChainEventKindName(ChainEventKind kind);
 const std::vector<ChainEventKind>& RegisteredChainEventKinds();
 
 // How a fiber sample stream's weights bind to the declared measure (see FiberSampleStream).
+// Routing-sensitive (the quadrature switches on it), so it carries a registered table like the
+// open enums above — accessors after FiberSampleStream, where the type is complete.
 enum class MeasureBinding {
   // weight is a solid-angle element dOmega on u-S^2; the measure factor is the u-marginal density
   // rho_u w.r.t. dOmega (regular two-dimensional supports only).
@@ -204,12 +206,23 @@ struct FiberSampleStream {
   std::vector<FiberSample> samples;
   MeasureBinding binding = MeasureBinding::kSolidAngle;
   // The evidence form of the whole stream (see the header's evidence-form block). One form per
-  // stream: a producer holding both structural and sampled facts sends two streams.
+  // stream: a producer holding both structural and sampled facts sends two streams. Routing-
+  // sensitive (the certificate quantifies over it), so it carries a registered table too —
+  // accessors below, after the type is complete.
   enum class EvidenceForm { kStructural, kSampledExhaustive, kSampledPartial };
   EvidenceForm evidence = EvidenceForm::kSampledPartial;
   // Human-stable identifier of the producing source (for report provenance); free text.
   const char* source_name = "";
 };
+
+// The two routing-sensitive enums' registered tables (a50, same mechanism as the four open
+// tables above): a NEW binding or evidence value must extend its table, its routing switch
+// (QuadratureIntensity's — whose fail-visible default counts an un-routed value in
+// binding_mismatch instead of swallowing the sample) and the coverage walk in the same change.
+const char* MeasureBindingName(MeasureBinding binding);
+const std::vector<MeasureBinding>& RegisteredMeasureBindings();
+const char* EvidenceFormName(FiberSampleStream::EvidenceForm form);
+const std::vector<FiberSampleStream::EvidenceForm>& RegisteredEvidenceForms();
 
 // ---------------------------------------------------------------------------
 // PartitionContext: what the geometry layer's partition says about the delta-slice this object

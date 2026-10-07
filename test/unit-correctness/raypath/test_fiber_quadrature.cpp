@@ -28,6 +28,7 @@
 #include "raypath/detail/measure/declared_density.hpp"
 #include "raypath/detail/measure/fiber_quadrature.hpp"
 #include "raypath/detail/measure/measure_geometry_contract.hpp"
+#include "raypath/detail/measure/visibility_certificate.hpp"
 
 namespace lumice::raypath {
 namespace {
@@ -428,6 +429,73 @@ TEST(FiberQuadrature, BindingMismatchIsReportedNotSilent) {
   const FiberQuadratureResult q2 = QuadratureIntensity(area, wrong_parameter, 1e-9);
   EXPECT_EQ(q2.binding_mismatch, 1);
   EXPECT_EQ(q2.kept, 0);
+}
+
+TEST(FiberQuadrature, OutOfRegistryBindingValueIsFailVisible) {
+  // The registered table's a50 partner (the quadrature switch's fail-visible default): a
+  // binding value OUTSIDE the registry counts in binding_mismatch instead of reading as
+  // mu = 0 with the sample silently dropped (indistinguishable from dark).
+  const UMarginal measure = PlateMeasure();
+  FiberSampleStream stream;
+  stream.binding = static_cast<MeasureBinding>(0x2A);  // not a registered value
+  stream.samples.push_back(MockSample(1, 0, 0, 0.5, 0.8, 0.0, 0.1));
+  const FiberQuadratureResult q = QuadratureIntensity(measure, stream, 1e-9);
+  EXPECT_EQ(q.binding_mismatch, 1);
+  EXPECT_EQ(q.kept, 0);
+  EXPECT_EQ(q.total, 1);
+  EXPECT_EQ(q.intensity, 0.0);
+}
+
+TEST(FiberQuadrature, SeamCrossingFiberStreamAgreesWithTheCertificate) {
+  // The frozen-entry pair test (round 3's certified<->quadrature finding): on a seam-crossing
+  // spin-orbit measure (azimuth Uniform(180 +- 20), support [160, 200] deg), a producer
+  // emitting parameters in atan2's (-180, 180] convention lands the support's second half at
+  // (-180, -160]. The density entries read those WRAPPED — the same authority the certificate's
+  // membership leg (MuPositive) uses — so the quadrature must keep exactly the samples the
+  // certificate counts in support, with both halves contributing; the unwrapped reading would
+  // drop half the lit arc silently.
+  double sun[3];
+  SunHat(sun);
+  AxisDistribution axis;
+  axis.azimuth_dist = { DistributionType::kUniform, 180.0f, 40.0f };
+  axis.latitude_dist = { DistributionType::kNoRandom, 90.0f, 0.0f };
+  axis.roll_dist = { DistributionType::kNoRandom, 0.0f, 0.0f };
+  const UMarginal measure = MakeUMarginal(axis, sun);
+  ASSERT_EQ(measure.kind(), USupportKind::kSpinOrbit);
+
+  const double dtheta = 5.0 * kDeg;
+  // Two points of the raw half (170, 165 deg) and two of the seam-imaged half (190 -> -170,
+  // 185 -> -175 deg); the u points are built FROM each sample's own parameter, so any
+  // convention mismatch between the density and the map would surface.
+  const double params_deg[4] = { 170.0, 165.0, -170.0, -175.0 };
+  FiberSampleStream stream;
+  stream.binding = MeasureBinding::kFiberParameter;
+  stream.evidence = FiberSampleStream::EvidenceForm::kSampledExhaustive;
+  double u_known[3];
+  for (int i = 0; i < 4; i++) {
+    const double theta = params_deg[i] * kDeg;
+    double u[3];
+    measure.SpinOrbitPoint(theta, u);
+    u_known[0] = u[0];
+    u_known[1] = u[1];
+    u_known[2] = u[2];
+    stream.samples.push_back(MockSample(u[0], u[1], u[2], 1.0, 1.0, theta, dtheta));
+    // Sanity: each sample sits on the orbit under the certificate's own membership leg.
+    EXPECT_TRUE(measure.MuPositive(u, 1e-9)) << "param " << params_deg[i];
+  }
+  (void)u_known;
+
+  const FiberQuadratureResult q = QuadratureIntensity(measure, stream, 1e-9);
+  EXPECT_EQ(q.total, 4);
+  EXPECT_EQ(q.kept, 4);
+  EXPECT_EQ(q.in_support, 4);
+  // Uniform(180, 40) carries density 1/(40 deg) per radian (the FULL range is the spread).
+  EXPECT_NEAR(q.intensity, 4.0 * (1.0 / (40.0 * kDeg)) * dtheta, 1e-12);
+
+  // The certificate's membership leg reads the same wrapped authority: the same stream is
+  // all-lit in-support under exhaustive evidence, so it certifies.
+  const VisibilityCertificate cert = CertifyVisibility(measure, stream, nullptr, nullptr, 1e-9);
+  EXPECT_EQ(cert.state, VisibilityState::kCertified);
 }
 
 TEST(FiberQuadrature, TintQuotientReportsUndefinedOnDarkDenominator) {

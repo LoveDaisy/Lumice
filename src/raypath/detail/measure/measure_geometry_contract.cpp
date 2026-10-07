@@ -67,4 +67,40 @@ const std::vector<ChainEventKind>& RegisteredChainEventKinds() {
   return kKinds;
 }
 
+const char* MeasureBindingName(MeasureBinding binding) {
+  switch (binding) {
+    case MeasureBinding::kSolidAngle:
+      return "solid_angle";
+    case MeasureBinding::kFiberParameter:
+      return "fiber_parameter";
+  }
+  return "unknown";
+}
+
+const std::vector<MeasureBinding>& RegisteredMeasureBindings() {
+  static const std::vector<MeasureBinding> kBindings = { MeasureBinding::kSolidAngle, MeasureBinding::kFiberParameter };
+  return kBindings;
+}
+
+const char* EvidenceFormName(FiberSampleStream::EvidenceForm form) {
+  switch (form) {
+    case FiberSampleStream::EvidenceForm::kStructural:
+      return "structural";
+    case FiberSampleStream::EvidenceForm::kSampledExhaustive:
+      return "sampled_exhaustive";
+    case FiberSampleStream::EvidenceForm::kSampledPartial:
+      return "sampled_partial";
+  }
+  return "unknown";
+}
+
+const std::vector<FiberSampleStream::EvidenceForm>& RegisteredEvidenceForms() {
+  static const std::vector<FiberSampleStream::EvidenceForm> kForms = {
+    FiberSampleStream::EvidenceForm::kStructural,
+    FiberSampleStream::EvidenceForm::kSampledExhaustive,
+    FiberSampleStream::EvidenceForm::kSampledPartial,
+  };
+  return kForms;
+}
+
 }  // namespace lumice::raypath

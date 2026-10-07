@@ -527,11 +527,14 @@ TEST(DeclaredDensity, ZonalArcsineRingForAFixedZenithFamily) {
     // rho_u = m(c)/(2 pi) w.r.t. dOmega.
     EXPECT_NEAR(m.DensitySolidAngle(u), expected / kTwoPi, 2e-3 * expected) << "c = " << c;
   }
-  // Off the ring: zero (outside the arcsine interval the density vanishes).
-  const double out_u[3] = { std::sqrt(1.0 - 0.25), 0.0, 0.5 };
-  if (0.5 < c_lo || 0.5 > c_hi) {
-    EXPECT_EQ(m.DensitySolidAngle(out_u), 0.0);
-  }
+  // Off the ring: zero (outside the arcsine interval the density vanishes). The probe is chosen
+  // PROVABLY outside — 0.95 > c_hi = cos(phi0 - alt) = cos(40 deg) ~ 0.766 — and the relation is
+  // asserted before use: a conditional negative once executed nothing here (an in-range 0.5
+  // probe made the branch dead while reading as coverage).
+  ASSERT_GT(0.95, c_hi);
+  const double c_out = 0.95;
+  const double out_u[3] = { std::sqrt(1.0 - c_out * c_out), 0.0, c_out };
+  EXPECT_EQ(m.DensitySolidAngle(out_u), 0.0);
 }
 
 double ZonalMassCtxF(double z, void* ctx);
@@ -618,7 +621,6 @@ TEST(DeclaredDensity, GeneralPathHandlesDiracRollAndSpreadAzimuth) {
     for (int j = 0; j < n_phi; j++) {
       const double phi = -kHalfPi + (j + 0.5) * kPi / n_phi;
       double v[3] = { s[0], s[1], s[2] };
-      const double psi = lam + kPi - 0.0;  // Rz(pi - lambda): longitude shifts by pi - lambda
       // u = Rz(0) Ry(pi/2 - phi) Rz(pi - lambda) s_hat — build by rotating s_hat.
       const double w_lon = std::atan2(s[1], s[0]) + kPi - lam;
       double w[3] = { std::cos(alt) * std::cos(w_lon), std::cos(alt) * std::sin(w_lon), std::sin(alt) };
@@ -704,6 +706,156 @@ TEST(DeclaredDensity, OverlapFamilyCrossTableAgainstPoseDensity) {
       const double converted = mine * 8.0 * kPi * kPi / std::cos(phi);
       EXPECT_NEAR(converted, li_haar, 1e-9 * li_haar) << "phi = " << phi << " lam = " << lam;
     }
+  }
+}
+
+TEST(DeclaredDensity, SpinOrbitAndRollOrbitDensitiesAreWrappedOnTheCircle) {
+  // The orbit parameters are circle quantities (u(theta) = u(theta + 2 pi)), so the density
+  // entries read the WRAPPED slot law — the same authority MuPositive's membership leg uses. A
+  // seam-crossing support (azimuth Uniform(180 +- 20): support [160, 200] deg) has its second
+  // half land in (-180, -160] under a producer's atan2 parameter convention; the unwrapped slot
+  // value reads ZERO there and a kFiberParameter quadrature would silently drop those samples
+  // (round 3's Major: the one authority reading the unwrapped law in a wrapped codebase).
+  const double alt = 9.0 * kDeg;
+  const double s[3] = { std::cos(alt), 0.0, std::sin(alt) };
+  const UMarginal spin = MakeUMarginal(Axis(Uniform(180.0, 40.0), NoRandom(90.0), NoRandom(0.0)), s);
+  ASSERT_EQ(spin.kind(), USupportKind::kSpinOrbit);
+  const double expected = 1.0 / (40.0 * kDeg);
+  const double in_support = 190.0 * kDeg;   // inside [160, 200]
+  const double seam_image = -170.0 * kDeg;  // the SAME circle point, atan2 convention
+  const double off = 100.0 * kDeg;          // outside the support
+  double u_seam[3], u_support[3];
+  spin.SpinOrbitPoint(seam_image, u_seam);
+  spin.SpinOrbitPoint(in_support, u_support);
+  for (int i = 0; i < 3; i++) {
+    EXPECT_NEAR(u_seam[i], u_support[i], 1e-12);  // the parameters name one circle point
+  }
+  EXPECT_NEAR(spin.SpinOrbitThetaDensity(in_support), expected, 1e-12);
+  EXPECT_NEAR(spin.SpinOrbitThetaDensity(seam_image), expected, 1e-12);  // wrapped: positive
+  EXPECT_EQ(spin.SpinOrbitThetaDensity(in_support + kTwoPi), expected);  // periodic
+  EXPECT_EQ(spin.SpinOrbitThetaDensity(off), 0.0);
+
+  // The roll orbit's parameter is a circle quantity too: same seam behavior through
+  // OrbitDensity (which also writes the same orbit point for both spellings).
+  const UMarginal roll = MakeUMarginal(Axis(NoRandom(0.0), NoRandom(45.0), Uniform(180.0, 40.0)), s);
+  ASSERT_EQ(roll.kind(), USupportKind::kRollOrbit);
+  double u0[3], u1[3];
+  EXPECT_NEAR(roll.OrbitDensity(in_support, u0), expected, 1e-12);
+  EXPECT_NEAR(roll.OrbitDensity(seam_image, u1), expected, 1e-12);
+  for (int i = 0; i < 3; i++) {
+    EXPECT_NEAR(u0[i], u1[i], 1e-12);
+  }
+  // The latitude orbit's parameter is NOT a circle quantity: the folded law is read raw and is
+  // zero outside [-pi/2, pi/2] — the asymmetry is the law, not an oversight.
+  const UMarginal lat = MakeUMarginal(Axis(NoRandom(0.0), Gauss(60.0, 5.0), NoRandom(0.0)), s);
+  ASSERT_EQ(lat.kind(), USupportKind::kLatitudeOrbit);
+  EXPECT_GT(lat.OrbitDensity(60.0 * kDeg, nullptr), 0.0);
+  EXPECT_EQ(lat.OrbitDensity(60.0 * kDeg + kTwoPi, nullptr), 0.0);
+}
+
+TEST(DeclaredDensity, DensityEntriesGuardTheirSupportKind) {
+  // Guards mirror DensitySolidAngle's: a density entry read on a foreign support kind answers
+  // 0 (the caller checks kind()), never a plausible-looking number that is the density of
+  // nothing — SlotDensityValue of a spread slot on an area measure was exactly that.
+  const double sun[3] = { 0.0, 0.6, 0.8 };
+  const UMarginal area = MakeUMarginal(Axis(Uniform(0.0, 360.0), Gauss(60.0, 5.0), Uniform(0.0, 360.0)), sun);
+  ASSERT_EQ(area.kind(), USupportKind::kArea);
+  EXPECT_EQ(area.SpinOrbitThetaDensity(1.0), 0.0);
+  EXPECT_EQ(area.OrbitDensity(1.0, nullptr), 0.0);
+  const UMarginal point = MakeUMarginal(Axis(NoRandom(30.0), NoRandom(45.0), NoRandom(60.0)), sun);
+  ASSERT_EQ(point.kind(), USupportKind::kPoint);
+  EXPECT_EQ(point.SpinOrbitThetaDensity(1.0), 0.0);
+  EXPECT_EQ(point.OrbitDensity(1.0, nullptr), 0.0);
+}
+
+TEST(DeclaredDensity, DiracLatitudeGeneralPathIsTheRegisteredReadAsZeroGap) {
+  // The second registered read-as-zero family (the header's v1 list; pinned visible like the
+  // Dirac-azimuth one above): latitude FIXED with azimuth AND roll spread classifies kArea
+  // with the fast predicates false, and the general path does not solve the Dirac-latitude
+  // preimage — DensitySolidAngle reads 0 and MuPositive reads false everywhere. Zero is
+  // "unanswered": integration must treat this family as unanswerable until the v2 preimage
+  // solve (the quadrature/profile registrations point here).
+  const double sun[3] = { 0.0, 0.6, 0.8 };
+  const AxisDistribution axis = Axis(Gauss(30.0, 10.0), NoRandom(60.0), Uniform(0.0, 360.0));
+  const UMarginal m = MakeUMarginal(axis, sun);
+  ASSERT_EQ(m.kind(), USupportKind::kArea);
+  ASSERT_FALSE(m.fast_path());
+  const double probes[3][3] = { { 0.0, 0.6, 0.8 }, { 0.3, -0.5, 0.81 }, { -0.7, 0.1, 0.7 } };
+  for (const auto& u : probes) {
+    EXPECT_EQ(m.DensitySolidAngle(u), 0.0);
+    EXPECT_EQ(m.DensitySolidAngleGeneral(u), 0.0);
+    EXPECT_FALSE(m.MuPositive(u, 1e-6));
+  }
+}
+
+TEST(DeclaredDensity, OrbitKindMuPositiveDistanceOnlyIsTheRegisteredV1Approximation) {
+  // The registered v1 gap made visible (the header's list): kRollOrbit / kLatitudeOrbit answer
+  // membership by DISTANCE-TO-ORBIT only — a point on the orbit circle OUTSIDE the law's
+  // parameter support reads positive, because the parameter density is not inverted. Pinned so
+  // integration meets a declared approximation, not an accident; the inversion is the v2 fill.
+  const double sun[3] = { 0.0, 0.6, 0.8 };
+  // Roll law Uniform(90, 180) (support [0, 180) deg): the circle point at r = 270 deg is on
+  // the orbit but outside the parameter support (its wrapped density is 0) — distance-to-orbit
+  // still answers true.
+  const UMarginal roll = MakeUMarginal(Axis(NoRandom(0.0), NoRandom(45.0), Uniform(90.0, 180.0)), sun);
+  ASSERT_EQ(roll.kind(), USupportKind::kRollOrbit);
+  double on_circle_outside[3], on_circle_inside[3];
+  roll.OrbitDensity(270.0 * kDeg, on_circle_outside);
+  roll.OrbitDensity(30.0 * kDeg, on_circle_inside);
+  EXPECT_EQ(roll.OrbitDensity(270.0 * kDeg, nullptr), 0.0);  // the density honestly reads 0 there
+  EXPECT_TRUE(roll.MuPositive(on_circle_inside, 1e-9));
+  EXPECT_TRUE(roll.MuPositive(on_circle_outside, 1e-9));  // THE registered approximation
+  const double pole[3] = { 0.0, 0.0, 1.0 };               // a genuinely off-circle point
+  EXPECT_FALSE(roll.MuPositive(pole, 1e-9));
+  // Same shape for the latitude orbit: phi = 200 deg is outside the folded law's [-90, 90].
+  const UMarginal lat = MakeUMarginal(Axis(NoRandom(0.0), Gauss(60.0, 5.0), NoRandom(0.0)), sun);
+  ASSERT_EQ(lat.kind(), USupportKind::kLatitudeOrbit);
+  double lat_outside[3];
+  lat.OrbitDensity(200.0 * kDeg, lat_outside);
+  EXPECT_EQ(lat.OrbitDensity(200.0 * kDeg, nullptr), 0.0);
+  EXPECT_TRUE(lat.MuPositive(lat_outside, 1e-9));
+}
+
+TEST(DeclaredDensity, TotalMassIsHonestForEveryFoldedLaw) {
+  // The accessor shares the Z integral's fold-aware split: the spike laws (kZigzag) and the
+  // kinked fold-active laws (kLaplacian's branch-B kink image) integrate to 1, and so does an
+  // extreme support whose fold image only lands through the DERIVED k window (|center| + spread
+  // beyond a full turn — the case a hardcoded k in {-1,0,1} silently dropped: the image at
+  // +30 deg of the 750 deg support edge).
+  EXPECT_NEAR(MakeLatitudeDensity(Zigzag(30.0, 20.0)).TotalMass(), 1.0, 1e-3);
+  EXPECT_NEAR(MakeLatitudeDensity(Zigzag(650.0, 100.0)).TotalMass(), 1.0, 3e-3);
+  EXPECT_NEAR(MakeLatitudeDensity(Laplace(120.0, 30.0)).TotalMass(), 1.0, 1e-3);
+  EXPECT_NEAR(MakeLatitudeDensity(Gauss(30.0, 20.0)).TotalMass(), 1.0, 1e-12);
+  EXPECT_NEAR(MakeLatitudeDensity(Legacy(30.0, 20.0)).TotalMass(), 1.0, 1e-12);
+  EXPECT_NEAR(MakeFullSphereLatitude().TotalMass(), 1.0, 1e-12);
+}
+
+TEST(DeclaredDensity, ZigzagLatitudeFastPathNormalizesAndAgreesWithTheGeneralPath) {
+  // The fast path's fold-image spike split (round 3's Major: the unsplit rule underreads the
+  // zigzag family at the arcsine edges while the header claimed exactness): the zonal integral
+  // must normalize over the u-sphere, and the general (preimage) path — an independent
+  // authority — must agree at its own roll-quadrature floor.
+  const double sun[3] = { 0.6, 0.0, 0.8 };
+  const UMarginal m = MakeUMarginal(Axis(Uniform(0.0, 360.0), Zigzag(30.0, 20.0), Uniform(0.0, 360.0)), sun);
+  ASSERT_EQ(m.kind(), USupportKind::kArea);
+  ASSERT_TRUE(m.fast_path());
+  ZonalCtx ctx{ &m };
+  EXPECT_NEAR(Integrate(ZonalMassCtxF, &ctx, -1.0 + 1e-9, 1.0 - 1e-9, 96, 24), 1.0, 2e-3);
+  for (double z : { 0.15, 0.45 }) {
+    const double lon = 0.9;
+    const double u[3] = { std::sqrt(1.0 - z * z) * std::cos(lon), std::sqrt(1.0 - z * z) * std::sin(lon), z };
+    const double fast = m.DensitySolidAngle(u);
+    if (!(fast > 0.0)) {
+      ADD_FAILURE() << "z = " << z << ": the fast path must be positive in the support";
+      continue;
+    }
+    const double general = m.DensitySolidAngleGeneral(u);
+    // Pinned at the MEASURED pair floor on this family (4.2% at z = 0.45): the general path's
+    // roll midpoint undershoots the rho_phi fold-image spikes its panels cross — the same
+    // physical spike the fast path now splits at its panel edges. Direction and size are the
+    // registered degraded accuracy of DensitySolidAngleGeneral on spiky-latitude families
+    // (the fast path is the production answer here; the general path is the equivalence check).
+    EXPECT_NEAR(general, fast, 5e-2 * fast) << "z = " << z;
   }
 }
 

@@ -182,9 +182,19 @@ TEST(MeasureContract, RegisteredTablesCoverTheirEnums) {
   EXPECT_EQ(RegisteredChainEventKinds().size(), 4);
   EXPECT_EQ(RegisteredEscapeRegimes().size(), 1);
   EXPECT_EQ(RegisteredVisibilityStates().size(), 4);
+  // The routing-sensitive pair is registered too (a50): the quadrature switches on the binding,
+  // the certificate quantifies over the evidence form.
+  EXPECT_EQ(RegisteredMeasureBindings().size(), 2);
+  EXPECT_EQ(RegisteredEvidenceForms().size(), 3);
   // Every registered value's name is non-null and unique within its table.
   for (ExistenceState s : RegisteredExistenceStates()) {
     EXPECT_NE(ExistenceStateName(s), nullptr);
+  }
+  for (MeasureBinding b : RegisteredMeasureBindings()) {
+    EXPECT_NE(MeasureBindingName(b), nullptr);
+  }
+  for (FiberSampleStream::EvidenceForm f : RegisteredEvidenceForms()) {
+    EXPECT_NE(EvidenceFormName(f), nullptr);
   }
   std::vector<const char*> names;
   for (ChainEventKind k : RegisteredChainEventKinds()) {
@@ -229,6 +239,12 @@ TEST(MeasureContract, EvidenceFormsAndBindingsAreDistinctValues) {
   EXPECT_NE(FiberSampleStream::EvidenceForm::kSampledExhaustive, FiberSampleStream::EvidenceForm::kSampledPartial);
   EXPECT_NE(FiberSampleStream::EvidenceForm::kStructural, FiberSampleStream::EvidenceForm::kSampledPartial);
   EXPECT_NE(MeasureBinding::kSolidAngle, MeasureBinding::kFiberParameter);
+  // The report-facing spellings are stable strings (the registered tables carry them).
+  EXPECT_STREQ(MeasureBindingName(MeasureBinding::kSolidAngle), "solid_angle");
+  EXPECT_STREQ(MeasureBindingName(MeasureBinding::kFiberParameter), "fiber_parameter");
+  EXPECT_STREQ(EvidenceFormName(FiberSampleStream::EvidenceForm::kStructural), "structural");
+  EXPECT_STREQ(EvidenceFormName(FiberSampleStream::EvidenceForm::kSampledExhaustive), "sampled_exhaustive");
+  EXPECT_STREQ(EvidenceFormName(FiberSampleStream::EvidenceForm::kSampledPartial), "sampled_partial");
 }
 
 // --- Partition context routes escapes by name. ----------------------------------------------
