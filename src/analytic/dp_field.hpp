@@ -272,6 +272,11 @@ class DeviationField {
   mutable Corridor corridor_;
 };
 
+// The U_P membership predicate (every validity margin strictly positive) — the one definition the
+// "here and nowhere else" sentence on ValidityMarginsAt points at: the boundary walk's start-point
+// search and the kink curves' clipping read this, not per-consumer copies (a56).
+bool InsideUp(const DeviationField& field, const double u[3]);
+
 }  // namespace lumice::analytic
 
 #endif  // LUMICE_ANALYTIC_DP_FIELD_HPP_

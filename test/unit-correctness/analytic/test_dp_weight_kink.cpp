@@ -114,6 +114,12 @@ TEST(DPWeightKink, SingleMirrorSlabKinkIsOneLevelOfD) {
         continue;
       }
       const KinkCurve& curve = curves[0];
+      // The value loop below indexes arcs[0] against AllPoints' full-arc walk: one arc is the
+      // fixture's own premise, not an implementation accident.
+      if (curve.arcs.size() != 1u) {
+        ADD_FAILURE() << "expected one arc";
+        continue;
+      }
       // AC2: the closed form is the declared authority.
       EXPECT_EQ(curve.coverage, KinkCoverage::kClosedFormAuthority);
       EXPECT_EQ(MarginName(3, curve.margin), "internal_1_tir_discriminant");
@@ -243,14 +249,6 @@ TEST(DPWeightKink, WalkAgreesWithTheClosedFormOnASlab) {
   const std::vector<KinkCurve> closed_curves = WeightKinks(field, KinkOptions{});
   const KinkCurve& closed_form = closed_curves[0];
   const KinkCurve marched = MarchedKink(field, 1, KinkOptions{});
-  printf("closed normal=(%.17g,%.17g,%.17g) marched_narcs=%zu\n", closed_form.normal[0], closed_form.normal[1],
-         closed_form.normal[2], marched.arcs.size());
-  for (const KinkArc& a : marched.arcs) {
-    printf("  arc npts=%zu first=(%.17g,%.17g,%.17g)\n", a.points.size() / 3, a.points[0], a.points[1], a.points[2]);
-    double m3[2 * kMaxFaceCount];
-    field.DomainMarginsAt(&a.points[0], m3);
-    printf("  margins at first: m2=%.3e m3=%.3e m5=%.3e\n", m3[2], m3[3], m3[5]);
-  }
   EXPECT_EQ(marched.coverage, KinkCoverage::kMarchedUncertified);
   ASSERT_FALSE(marched.arcs.empty());
   const double expected = 2.0 * std::asin(std::sqrt(index * index - 1.0));
@@ -289,8 +287,6 @@ TEST(DPWeightKink, LiljequistOnsetMaximumIsOnTheMarchedKinks) {
   const DeviationField field = f.Field(faces, 5, 1.31);
   const std::vector<KinkCurve> curves = WeightKinks(field, KinkOptions{});
   ASSERT_EQ(curves.size(), 3u);
-  const std::vector<double> points_unused = AllPoints(curves[0]);
-  (void)points_unused;
   for (const KinkCurve& curve : curves) {
     EXPECT_EQ(curve.coverage, KinkCoverage::kMarchedUncertified);
     const std::vector<double> points = AllPoints(curve);
@@ -453,6 +449,7 @@ TEST(DPWeightKink, KinkSpanMovesWithWavelength) {
   const int faces[3] = { 3, 1, 5 };
   const double n[3] = { 1.3193340315881368, 1.3110129170742788, 1.3068763664637266 };
   const double span_deg[3][2] = { { 141.003938, 143.652221 }, { 132.458136, 136.842378 }, { 129.364361, 134.255299 } };
+  double measured_lo[3] = {};
   for (int k = 0; k < 3; k++) {
     const DeviationField field = f.Field(faces, 3, n[k]);
     const std::vector<KinkCurve> curves = WeightKinks(field, KinkOptions{});
@@ -471,9 +468,12 @@ TEST(DPWeightKink, KinkSpanMovesWithWavelength) {
     }
     EXPECT_NEAR(Deg(lo), span_deg[k][0], 2e-3);
     EXPECT_NEAR(Deg(hi), span_deg[k][1], 2e-3);
+    measured_lo[k] = Deg(lo);
   }
-  EXPECT_GT(span_deg[0][0], span_deg[1][0]);
-  EXPECT_GT(span_deg[1][0], span_deg[2][0]);
+  // The dump's monotonicity check, on the implementation's own output (the literal table above is
+  // the anchor, not the subject — the NEAR bounds already carry it transitively).
+  EXPECT_GT(measured_lo[0], measured_lo[1]);
+  EXPECT_GT(measured_lo[1], measured_lo[2]);
 }
 
 // // ---------------------------------------------------------------------------------------------

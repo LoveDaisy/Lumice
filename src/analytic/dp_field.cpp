@@ -439,4 +439,15 @@ void DeviationField::MarginsWithGradient(const double u[3], MarginJet* out) cons
   }
 }
 
+bool InsideUp(const DeviationField& field, const double u[3]) {
+  double margins[kMaxFaceCount + 2];
+  const int count = field.ValidityMarginsAt(u, margins);
+  for (int k = 0; k < count; k++) {
+    if (!(margins[k] > 0.0)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 }  // namespace lumice::analytic

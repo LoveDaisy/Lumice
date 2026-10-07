@@ -478,17 +478,6 @@ struct StartPoint {
   int margin = -1;
 };
 
-bool InsideUp(const DeviationField& field, const double u[3]) {
-  double margins[kMaxFaceCount + 2];
-  const int count = field.ValidityMarginsAt(u, margins);
-  for (int k = 0; k < count; k++) {
-    if (!(margins[k] > 0.0)) {
-      return false;
-    }
-  }
-  return true;
-}
-
 StartPoint FindStartPoint(const BoundaryWalker& walker, int lattice_n) {
   const DeviationField& field = walker.field();
   const std::string path_id = PathId(walker);
@@ -598,6 +587,14 @@ StartPoint FindStartPoint(const BoundaryWalker& walker, int lattice_n) {
     }
   }
   const int bad_count = walker.Violated(out, nullptr, 0, bad);
+  if (bad_count == 0) {
+    // The bisection ended on the InsideUp/Violated shell (a margin within [-kViolationAtol, 0]):
+    // `out` is outside U_P yet nothing is violated enough to name a gate, and MostViolated
+    // requires count >= 1. Fail closed — LI raises here (most_violated of an empty list).
+    start.status = WalkStatus::kStartNoEdge;
+    start.message = "U_P of " + path_id + " boundary bisection ended inside the violation shell";
+    return start;
+  }
   start.margin = walker.MostViolated(out, bad, bad_count);
   walker.Correct(inside, start.margin);
   Copy3(inside, start.u);
@@ -795,6 +792,10 @@ WalkStatus GoldenExtremum(const BoundaryWalker& walker, const BoundaryPiece& pie
   point(0.5 * (lo + hi), position);
   if (exit_tir_piece) {
     *value = walker.DOnExitTir(position);
+    if (!std::isfinite(*value)) {  // the midpoint is a fresh point — re-check like f() does
+      *message = "D_P is not finite at " + PointList(position) + " on " + PathId(walker);
+      return WalkStatus::kNotFinite;
+    }
   } else if (walker.D(position, value) != RoutedDeviationStatus::kOk) {
     *message = "D_P is not finite at " + PointList(position) + " on " + PathId(walker);
     return WalkStatus::kNotFinite;
@@ -1147,12 +1148,16 @@ WalkResult WalkBoundary(const DeviationField& field, const BoundaryWalkOptions& 
 
   bool has_plateau = false;
   double plateau_value = 0.0;
-  if (LoopCriticalPoints(walker, pieces, corners, &result.loop.critical_points, &has_plateau, &plateau_value,
-                         &message) != WalkStatus::kOk) {
+  // Filled locally and moved in only on success: a failure here must not deliver the extrema
+  // assembled so far — status != kOk implies an empty loop (the header's mechanical invariant).
+  std::vector<BoundaryCriticalPoint> critical;
+  if (LoopCriticalPoints(walker, pieces, corners, &critical, &has_plateau, &plateau_value, &message) !=
+      WalkStatus::kOk) {
     result.status = WalkStatus::kNotFinite;
     result.message = message;
     return result;
   }
+  result.loop.critical_points = std::move(critical);
   result.loop.has_plateau = has_plateau;
   result.loop.plateau_value = plateau_value;
   for (const WalkerCorner& corner : corners) {

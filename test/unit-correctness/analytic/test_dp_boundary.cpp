@@ -430,10 +430,7 @@ TEST(DPBoundary, CornersOnTheEntryCircleMatchA1DScanWithPathDomain) {
     for (int i = 0; i < 3; i++) {
       u[i] = std::cos(lo) * basis[0][i] + std::sin(lo) * basis[1][i];
     }
-    found.push_back(Angle(u, record.corners[0].position) < Angle(u, record.corners[1].position) ?
-                        Angle(u, record.corners[0].position) :
-                        Angle(u, record.corners[1].position));
-    found[found.size() - 1] = std::min(Angle(u, record.corners[0].position), Angle(u, record.corners[1].position));
+    found.push_back(std::min(Angle(u, record.corners[0].position), Angle(u, record.corners[1].position)));
     lo_flag = flag1;
   }
   ASSERT_EQ(found.size(), 2u);
@@ -980,6 +977,9 @@ TEST(DPBoundary, TruncatedWalkRefusesWithEmptyLoop) {
   options.max_walk_steps = 5;  // the lune is ~480 steps around: 5 cannot close
   const WalkResult walk = WalkBoundary(field, options);
   EXPECT_EQ(walk.status, WalkStatus::kStepsExhausted);
+  // The slug is a pinned contract (the refusal's stable name for future consumers), not
+  // decoration: pinned here so it cannot silently drift.
+  EXPECT_STREQ(WalkStatusName(walk.status), "steps_exhausted");
   EXPECT_NE(walk.message.find("did not reach a corner"), std::string::npos);
   EXPECT_TRUE(walk.loop.critical_points.empty());
   EXPECT_TRUE(walk.loop.corners.empty());

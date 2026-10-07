@@ -148,7 +148,8 @@ class BoundaryWalker {
   // order. entry_snell_discriminant stays a gate but never vanishes for n > 1, so it never
   // becomes a piece.
   const std::vector<int>& active() const { return active_; }
-  // The identity map of IdenticalMargins: -1 when the margin is kept, else the kept margin.
+  // The identity map of IdenticalMargins: 0 when the margin is kept, else the kept margin (0 is
+  // unambiguous — kept indices are positive, the entry margin is never dropped).
   int KeptOf(int margin) const { return kept_of_[margin]; }
   // The {dropped, kept} pairs themselves (LI identical_margins' dict), for the walk record.
   const std::vector<std::pair<int, int>>& identical() const { return identical_; }
@@ -189,7 +190,8 @@ class BoundaryWalker {
   // `excluded`; returns how many were written.
   int Violated(const double u[3], const int* excluded, int excluded_count, int out[kMaxFaceCount + 2]) const;
   // The margin of `names` farthest outside at u, in signed distance m / |grad m| (LI
-  // most_violated).
+  // most_violated). Precondition: count >= 1 — an empty list has no answer (the callers reach it
+  // only with a non-empty violated set; FindStartPoint fail-closes on the shell where that fails).
   int MostViolated(const double u[3], const int* names, int count) const;
   // The active margins other than `margin` whose value is within kCoincidentAtol of zero at u.
   int CoincidentWith(const double u[3], int margin, int out[kMaxFaceCount + 2]) const;

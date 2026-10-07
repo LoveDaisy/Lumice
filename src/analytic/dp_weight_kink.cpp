@@ -32,17 +32,6 @@ void Unit(double v[3]) {
   }
 }
 
-bool InsideUp(const DeviationField& field, const double u[3]) {
-  double margins[kMaxFaceCount + 2];
-  const int count = field.ValidityMarginsAt(u, margins);
-  for (int k = 0; k < count; k++) {
-    if (!(margins[k] > 0.0)) {
-      return false;
-    }
-  }
-  return true;
-}
-
 // D_P on points of C_k through the exit-Snell closure convention (LI _arc_values): finite plain
 // values pass, non-finite ones on the closure read the limit, off the closure the arc fails (LI
 // raises; a failure here is the seed walk's refusal in the marched loop, the curve's status in
@@ -183,8 +172,14 @@ KinkCurve CircleCurve(const BoundaryWalker& walker, int step, int margin, const 
     arc.closed = closed;
     arc.end_gates[0] = gate_lo;
     arc.end_gates[1] = gate_hi;
-    if (ArcValues(walker, arc.points, &arc.values, &curve.note) != WalkStatus::kOk) {
+    std::string failure;
+    if (ArcValues(walker, arc.points, &arc.values, &failure) != WalkStatus::kOk) {
+      // Drop the failed arc: the curve keeps no partially-filled data, the same mechanical
+      // invariant as the boundary walk (status != kOk, no half-arc). The note is appended to,
+      // never overwritten — it may already carry the off-sphere explanation.
       curve.status = WalkStatus::kNotFinite;
+      curve.note = curve.note.empty() ? failure : curve.note + "; " + failure;
+      return;
     }
     curve.arcs.push_back(std::move(arc));
   };
