@@ -1040,6 +1040,7 @@ set(lumice_analytic_kernel_src
   "${PROJ_SRC_DIR}/analytic/dp_boundary.cpp"
   "${PROJ_SRC_DIR}/analytic/dp_partition.cpp"
   "${PROJ_SRC_DIR}/analytic/dp_weight_kink.cpp"
+  "${PROJ_SRC_DIR}/analytic/dp_chromatic.cpp"
   "${PROJ_SRC_DIR}/analytic/dp_focus.cpp"
   "${PROJ_SRC_DIR}/analytic/reflection_group.cpp"
   "${PROJ_SRC_DIR}/analytic/discovery.cpp"
