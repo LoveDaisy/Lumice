@@ -464,6 +464,13 @@ TEST(FiberQuadrature, SeamCrossingFiberStreamAgreesWithTheCertificate) {
   ASSERT_EQ(measure.kind(), USupportKind::kSpinOrbit);
 
   const double dtheta = 5.0 * kDeg;
+  // Tolerance note: the probes are built forward through SpinOrbitPoint and MuPositive recovers
+  // the parameter via atan2 before rebuilding the orbit point, so the angular distance crosses
+  // acos(dot ~ 1) whose error floor is sqrt(machine eps) ~ 1e-8 (acos square-root amplification,
+  // the numerical-robustness convention) — 1e-6 matches the file's established MuPositive
+  // tolerance and sits well above that floor. Platform rounding (x86_64 / MSVC vs ARM) must not
+  // decide the verdict.
+  const double kSupportTol = 1e-6;
   // Two points of the raw half (170, 165 deg) and two of the seam-imaged half (190 -> -170,
   // 185 -> -175 deg); the u points are built FROM each sample's own parameter, so any
   // convention mismatch between the density and the map would surface.
@@ -481,11 +488,11 @@ TEST(FiberQuadrature, SeamCrossingFiberStreamAgreesWithTheCertificate) {
     u_known[2] = u[2];
     stream.samples.push_back(MockSample(u[0], u[1], u[2], 1.0, 1.0, theta, dtheta));
     // Sanity: each sample sits on the orbit under the certificate's own membership leg.
-    EXPECT_TRUE(measure.MuPositive(u, 1e-9)) << "param " << params_deg[i];
+    EXPECT_TRUE(measure.MuPositive(u, kSupportTol)) << "param " << params_deg[i];
   }
   (void)u_known;
 
-  const FiberQuadratureResult q = QuadratureIntensity(measure, stream, 1e-9);
+  const FiberQuadratureResult q = QuadratureIntensity(measure, stream, kSupportTol);
   EXPECT_EQ(q.total, 4);
   EXPECT_EQ(q.kept, 4);
   EXPECT_EQ(q.in_support, 4);
@@ -494,7 +501,7 @@ TEST(FiberQuadrature, SeamCrossingFiberStreamAgreesWithTheCertificate) {
 
   // The certificate's membership leg reads the same wrapped authority: the same stream is
   // all-lit in-support under exhaustive evidence, so it certifies.
-  const VisibilityCertificate cert = CertifyVisibility(measure, stream, nullptr, nullptr, 1e-9);
+  const VisibilityCertificate cert = CertifyVisibility(measure, stream, nullptr, nullptr, kSupportTol);
   EXPECT_EQ(cert.state, VisibilityState::kCertified);
 }
 
