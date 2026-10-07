@@ -21,6 +21,8 @@
 // Internal header of the analytic kernel: nothing here is part of the C ABI (the report surface is
 // a later subtask's).
 
+#include <string>
+#include <utility>
 #include <vector>
 
 #include "analytic/dp_field.hpp"
@@ -139,6 +141,122 @@ bool ChartComponentCounts(const unsigned char* valid, const unsigned char* off_c
 // `ladder` == nullptr selects kDefaultAuditLadder; a non-null empty ladder (ladder_count == 0)
 // turns the audit off — the rollback switch, degraded to the pre-52.7 semantics.
 DomainTopology DomainTopologyOf(const DeviationField& field, int lattice_n, const int* ladder, int ladder_count);
+
+// ---- the degenerate fold set (task 52.8's evidence) ---------------------------------------------------
+
+// Morse kind of a critical point (LI InteriorCriticalPoint.kind's vocabulary). The partition
+// consumes the kind; the saddle and degenerate labels are what it refuses.
+enum class CriticalKind { kMinimum, kMaximum, kSaddle, kDegenerate };
+
+// An interior critical point of D_P (a zero of its S^2 gradient inside U_P, or a member of a
+// slab path's closed-form critical set). `value` is D_P in radians.
+struct InteriorCriticalPoint {
+  double position[3] = {};
+  double value = 0.0;
+  CriticalKind kind = CriticalKind::kMinimum;
+};
+
+// The slab critical set of a degenerate-fold path — {+-n_M} U {u . n_M = 0} — and where it lies
+// relative to U_P (LI DegenerateFoldSet). `axis_points` are +-n_M with their location;
+// `circle_interior_fraction` is the fraction of a dense sampling of the crease (the great circle
+// u . n_M = 0) inside U_P — 0 when the circle only grazes it, 22.76% on the beta crystal's
+// 4-8-7-5. The `crease_*` fields are that sampling's cluster evidence, resolution-limited —
+// evidence rather than proof (the chart-audit standard): `crease_interior_arcs` is the number of
+// maximal interior runs of the crease (0 exactly when the fraction is 0; a fraction claiming
+// otherwise is a contradiction the partition refuses), `crease_closed_ridge` says some interior
+// run never comes within kCreaseContactMargin of dU_P (level loops around it are not the boundary
+// walk's to count), and `crease_touching_arc` says the crease hugs dU_P over more than
+// kCreaseTouchingArcRad — a tangency or coincidence, not a transversal crossing.
+struct DegenerateFoldSet {
+  bool has_axis = false;  // false exactly for M = I, whose set is degenerate: no points, fraction 0
+  double axis[3] = {};    // n_M: eigenvalue +1 of a rotation, -1 of a mirror
+  struct AxisPoint {
+    double position[3] = {};
+    DomainLocation location = DomainLocation::kExterior;
+  };
+  AxisPoint axis_points[2];
+  int axis_point_count = 0;  // 0 without an axis, else 2 (+-n_M)
+  double circle_interior_fraction = 0.0;
+  int crease_interior_arcs = 0;
+  bool crease_closed_ridge = false;
+  bool crease_touching_arc = false;
+};
+
+// Maximal circular runs of a boolean mask as (start index, length), wrapping runs included (LI
+// _circular_runs). A run crossing index 0 is ONE run — the wrap-merge lesson of 52.8's review:
+// a naive linear pass on the raw mask splits it in two and miscounts both halves. Table-driven
+// test subject.
+std::vector<std::pair<int, int>> CircularRuns(const unsigned char* mask, int n);
+
+// Locates the slab critical set of a degenerate fold relative to U_P and clusters its crease
+// sampling (LI degenerate_fold_set): +-n_M through ValidityMarginsAt, the crease circle
+// `circle_samples` points of the tangent basis at n_M, inside = binding gate above
+// kBoundaryMarginAtol, the cluster fields from circular runs of that mask. A screen without an
+// axis yields the empty set.
+DegenerateFoldSet BuildDegenerateFoldSet(const DeviationField& field, int circle_samples);
+
+// The interior members of a slab path's critical set (LI interior_critical_points' degenerate
+// branch): the axis points located interior, value taken in the slab form (exact where the chain
+// loses sqrt(eps)), kind degenerate — the ring probe of the partition decides their side. The
+// non-slab branch (lattice Newton) belongs to the focusing layer, not here; a caller with a
+// non-degenerate path passes its own (usually empty) interior.
+std::vector<InteriorCriticalPoint> SlabInteriorCriticalPoints(const DeviationField& field,
+                                                              const DegenerateFoldSet& fold_set);
+
+// ---- the boundary loop as the partition consumes it (filled by the walk, 660.3) -----------------------
+
+// A local extremum of D_P restricted to dU_P: inside a smooth piece (corner false) or at a
+// corner. `strict` is false when the extremum is a plateau run of the loop (several samples
+// equal within kExtremumAtol), not a strict local extremum: the slab-crease gate accepts only
+// strict members as its blade evidence (a plateau at the blade value is the signature of a crease
+// touching, not crossing, dU_P). LI BoundaryCriticalPoint.
+struct BoundaryCriticalPoint {
+  double position[3] = {};
+  double value = 0.0;
+  CriticalKind kind = CriticalKind::kMinimum;
+  bool strict = true;
+  bool corner = false;
+};
+
+// A corner of dU_P (LI Corner): position and the corner's D_P value; the margin bookkeeping of
+// the walk's own record stays on the walk side, the partition consumes the value.
+struct LoopCorner {
+  double position[3] = {};
+  double value = 0.0;
+};
+
+// dU_P as one closed walk, the partition's consumption face of it (LI BoundaryLoop, the subset
+// the certificate reads). `critical_points` is in WALK ORDER (the alternation check is a real
+// order property); `first_point` is the walk's first sample point (a plateau loop's ring probe
+// is taken there — any one of its points would do, the walk's first is the natural one).
+// `has_plateau` marks a loop of constant D_P (a mirror slab's crease circle as dU_P itself: no
+// isolated extremum, the constant value carried by `plateau_value` alone).
+//
+// This type lives on the CONSUMER side by design: the boundary walk (660.3) is its producer and
+// includes this header — the data contract belongs to the semantics that read it, which is not a
+// layer inversion but the settled include direction of the interface.
+struct BoundaryLoopData {
+  std::vector<BoundaryCriticalPoint> critical_points;
+  std::vector<LoopCorner> corners;
+  double first_point[3] = {};
+  bool has_plateau = false;
+  double plateau_value = 0.0;
+};
+
+// ---- the slab-crease three-check gate (task 52.8) ------------------------------------------------------
+
+// The three checks that let a crease through U_P take the generic partition (LI _slab_crease_gates):
+// (0) the fold set's own sampling holds interior arcs of the crease (a fraction claiming arcs
+// that are not there is a contradiction); (a) the boundary walk carries the blade value — D_P at
+// any crease point, d_slab of a tangent basis vector of the fold axis — as a STRICT local
+// maximum (only transversal crease ends produce one; a plateau at the blade is a tangency
+// signature); (2a) the crease does not hug dU_P over an arc; (2b) no interior crease arc closes
+// without touching dU_P. Returns true when all hold (the crease's transversal ends are then
+// ordinary loop extrema and the generic mechanism applies); on failure returns false with the
+// failing regime and its LI message text (report-side grep compatibility). Run only for a fold
+// set with circle_interior_fraction > 0.
+bool SlabCreaseGates(const DeviationField& field, const DegenerateFoldSet& fold_set, const BoundaryLoopData& loop,
+                     EscapeRegime* regime, std::string* message);
 
 }  // namespace lumice::analytic
 

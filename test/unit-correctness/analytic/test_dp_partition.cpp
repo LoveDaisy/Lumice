@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <cmath>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "analytic/dp_partition.hpp"
@@ -29,6 +30,18 @@ LUMICE_ANALYTIC_Crystal Prism() {
   c.height = 1.0;
   for (int i = 0; i < 6; i++) {
     c.face_distance[i] = 1.0;
+  }
+  return c;
+}
+
+// The beta crystal of the 52.x fixtures: fd = [2, 1, 1, 2, 1, 1], h = 3.
+LUMICE_ANALYTIC_Crystal Beta() {
+  LUMICE_ANALYTIC_Crystal c{};
+  c.kind = LUMICE_ANALYTIC_CRYSTAL_PRISM;
+  c.height = 3.0;
+  const double fd[6] = { 2.0, 1.0, 1.0, 2.0, 1.0, 1.0 };
+  for (int i = 0; i < 6; i++) {
+    c.face_distance[i] = fd[i];
   }
   return c;
 }
@@ -256,6 +269,170 @@ TEST(DPPartition, HealthyPathsPayNoAudit) {
   EXPECT_TRUE(topology.IsDisk());
   EXPECT_EQ(topology.domain_components, 1);
   EXPECT_EQ(topology.complement_components, 1);
+}
+
+// ---------------------------------------------------------------------------------------------
+// The degenerate fold set and its circular runs (task 52.8's evidence half)
+// ---------------------------------------------------------------------------------------------
+
+// LI _circular_runs' semantics, table-driven: a run crossing index 0 is ONE run (the wrap-merge
+// lesson of 52.8's review — a naive linear pass splits it and miscounts both halves).
+TEST(DPPartition, CircularRunsMergeTheWrappingRun) {
+  const struct {
+    const char* what;
+    std::vector<unsigned char> mask;
+    std::vector<std::pair<int, int>> want;
+  } rows[] = {
+    { "two interior runs", { 0, 0, 1, 1, 0, 1, 0, 0 }, { { 2, 2 }, { 5, 1 } } },
+    { "a run across index 0", { 1, 1, 0, 0, 1, 1, 1, 0 }, { { 0, 2 }, { 4, 3 } } },
+    { "one run wrapping the end to the start", { 1, 0, 0, 1 }, { { 3, 2 } } },
+    { "all true", { 1, 1, 1, 1 }, { { 0, 4 } } },
+    { "all false", { 0, 0, 0, 0 }, {} },
+  };
+  for (const auto& row : rows) {
+    const std::vector<std::pair<int, int>> runs = CircularRuns(row.mask.data(), static_cast<int>(row.mask.size()));
+    if (runs.size() != row.want.size()) {
+      ADD_FAILURE() << row.what << ": got " << runs.size() << " run(s), want " << row.want.size();
+      continue;
+    }
+    for (size_t k = 0; k < runs.size(); k++) {
+      EXPECT_EQ(runs[k], row.want[k]) << row.what << " run " << k;
+    }
+  }
+}
+
+// The one positive fixture of the cluster evidence: the beta crystal's 4-8-7-5, whose crease (the
+// c-axis great circle, D_P = 120 deg along it) crosses U_P's interior as one arc — 22.764% of
+// its sampling — without closing inside (no closed ridge) or hugging dU_P (no touching arc), and
+// both axis points sit ON dU_P (so the slab interior set is empty). Every number is LI's
+// (dp-slab-partition-completion's probe, the task-dir anchor dump).
+TEST(DPPartition, BetaFoldSetHoldsOneInteriorCreaseArc) {
+  const Fixture f(Beta());
+  const int faces[4] = { 4, 8, 7, 5 };
+  const DeviationField field = f.Field(faces, 4, 1.3110129);
+  const DegenerateFoldSet fold_set = BuildDegenerateFoldSet(field, kFoldCircleSamples);
+  ASSERT_TRUE(fold_set.has_axis);
+  EXPECT_GT(std::fabs(fold_set.axis[2]), 1.0 - 1e-12) << "the fold axis is the c-axis";
+  EXPECT_NEAR(fold_set.circle_interior_fraction, 0.227639, 2e-4);
+  EXPECT_EQ(fold_set.crease_interior_arcs, 1);
+  EXPECT_FALSE(fold_set.crease_closed_ridge);
+  EXPECT_FALSE(fold_set.crease_touching_arc);
+  ASSERT_EQ(fold_set.axis_point_count, 2);
+  EXPECT_EQ(fold_set.axis_points[0].location, DomainLocation::kBoundary);
+  EXPECT_EQ(fold_set.axis_points[1].location, DomainLocation::kBoundary);
+  const std::vector<InteriorCriticalPoint> interior = SlabInteriorCriticalPoints(field, fold_set);
+  EXPECT_TRUE(interior.empty()) << "both axis points are on dU_P: no interior member";
+}
+
+// The grazing fixtures: a crease that only touches U_P holds no interior arc (fraction exactly 0)
+// — 3-1-6's crease is a grazing boundary, 3-5-6-7-3's entry circle is coincident with the crease
+// (the touching-arc evidence) and +n_3 is an interior axis point at D = pi.
+TEST(DPPartition, GrazingCreaseHoldsNoInteriorArc) {
+  const Fixture f(Prism());
+  {
+    const int faces[3] = { 3, 1, 6 };
+    const DeviationField field = f.Field(faces, 3, kN131);
+    const DegenerateFoldSet fold_set = BuildDegenerateFoldSet(field, kFoldCircleSamples);
+    EXPECT_EQ(fold_set.circle_interior_fraction, 0.0);
+    EXPECT_EQ(fold_set.crease_interior_arcs, 0);
+  }
+  {
+    const int faces[5] = { 3, 5, 6, 7, 3 };
+    const DeviationField field = f.Field(faces, 5, kN131);
+    const DegenerateFoldSet fold_set = BuildDegenerateFoldSet(field, kFoldCircleSamples);
+    EXPECT_EQ(fold_set.circle_interior_fraction, 0.0);
+    EXPECT_EQ(fold_set.crease_interior_arcs, 0);
+    EXPECT_TRUE(fold_set.crease_touching_arc) << "the coincident entry circle hugs dU_P all round";
+    ASSERT_EQ(fold_set.axis_point_count, 2);
+    EXPECT_EQ(fold_set.axis_points[0].location, DomainLocation::kInterior);
+    EXPECT_EQ(fold_set.axis_points[1].location, DomainLocation::kExterior);
+    const std::vector<InteriorCriticalPoint> interior = SlabInteriorCriticalPoints(field, fold_set);
+    ASSERT_EQ(interior.size(), 1u);
+    EXPECT_EQ(interior[0].kind, CriticalKind::kDegenerate);
+    EXPECT_NEAR(interior[0].value, kPi, 1e-12) << "D_P = pi at the mirror axis point";
+  }
+}
+
+// ---------------------------------------------------------------------------------------------
+// The slab-crease three-check gate (task 52.8's four fail-closed forms + the holding case)
+// ---------------------------------------------------------------------------------------------
+
+namespace {
+
+// A loop whose critical points carry `value` as a strict maximum (the blade evidence the gate
+// wants), plus one minimum so the data is not vacuous.
+BoundaryLoopData LoopWithStrictMaximum(double value) {
+  BoundaryLoopData loop;
+  BoundaryCriticalPoint maximum;
+  maximum.value = value;
+  maximum.kind = CriticalKind::kMaximum;
+  maximum.strict = true;
+  loop.critical_points.push_back(maximum);
+  BoundaryCriticalPoint minimum;
+  minimum.value = value - 1.0;
+  minimum.kind = CriticalKind::kMinimum;
+  minimum.strict = true;
+  loop.critical_points.push_back(minimum);
+  return loop;
+}
+
+}  // namespace
+
+// The four fail-closed forms, each with its own regime and its LI message text (report-side grep
+// compatibility), plus the holding case on the real beta evidence: the gates pass when the arc
+// evidence, the strict blade carriage and the two non-degeneracy checks all hold.
+TEST(DPPartition, SlabCreaseGatesFourFormsAndHoldingCase) {
+  const Fixture f(Beta());
+  const int faces[4] = { 4, 8, 7, 5 };
+  const DeviationField field = f.Field(faces, 4, 1.3110129);
+  const DegenerateFoldSet real = BuildDegenerateFoldSet(field, kFoldCircleSamples);
+  double basis[2][3];
+  TangentBasis(real.axis, basis);
+  const double blade = field.DSlab(basis[0]);  // 120.00000000000001 deg, LI's own value
+
+  // The holding case: the real evidence and a loop carrying the blade as a strict maximum.
+  EscapeRegime regime = EscapeRegime::kNotDiskUnaudited;
+  std::string message;
+  EXPECT_TRUE(SlabCreaseGates(field, real, LoopWithStrictMaximum(blade), &regime, &message));
+
+  // Form 0: a fraction claiming interior arcs the crease sampling does not hold.
+  DegenerateFoldSet patched = real;
+  patched.crease_interior_arcs = 0;
+  EXPECT_FALSE(SlabCreaseGates(field, patched, LoopWithStrictMaximum(blade), &regime, &message));
+  EXPECT_EQ(regime, EscapeRegime::kSlabCreaseContradiction);
+  EXPECT_NE(message.find("holds no interior arc"), std::string::npos);
+
+  // Form (a): no strict local maximum at the blade value (a foreign loop, maxima far away).
+  BoundaryLoopData foreign = LoopWithStrictMaximum(blade - 0.2);
+  EXPECT_FALSE(SlabCreaseGates(field, real, foreign, &regime, &message));
+  EXPECT_EQ(regime, EscapeRegime::kSlabCreaseNotCarried);
+  EXPECT_NE(message.find("not carried by the boundary walk as a strict local maximum"), std::string::npos);
+
+  // Form (a) again, the plateau trap: a NON-strict maximum at the blade does not carry it.
+  BoundaryLoopData plateau = LoopWithStrictMaximum(blade);
+  plateau.critical_points[0].strict = false;
+  EXPECT_FALSE(SlabCreaseGates(field, real, plateau, &regime, &message));
+  EXPECT_EQ(regime, EscapeRegime::kSlabCreaseNotCarried);
+
+  // Form 2a: the crease hugging dU_P over an arc (a tangency or coincidence, not a crossing).
+  patched = real;
+  patched.crease_touching_arc = true;
+  EXPECT_FALSE(SlabCreaseGates(field, patched, LoopWithStrictMaximum(blade), &regime, &message));
+  EXPECT_EQ(regime, EscapeRegime::kSlabCreaseTouching);
+  EXPECT_NE(message.find("non-transversal contact"), std::string::npos);
+
+  // Form 2b: an interior crease arc that never reaches dU_P (a closed ridge).
+  patched = real;
+  patched.crease_closed_ridge = true;
+  EXPECT_FALSE(SlabCreaseGates(field, patched, LoopWithStrictMaximum(blade), &regime, &message));
+  EXPECT_EQ(regime, EscapeRegime::kSlabCreaseClosedRidge);
+  EXPECT_NE(message.find("closed ridge"), std::string::npos);
+
+  // The four regimes are four names: no form is merged into another (AC1's 52.8 side).
+  EXPECT_STRNE(EscapeRegimeName(EscapeRegime::kSlabCreaseContradiction),
+               EscapeRegimeName(EscapeRegime::kSlabCreaseNotCarried));
+  EXPECT_STRNE(EscapeRegimeName(EscapeRegime::kSlabCreaseTouching),
+               EscapeRegimeName(EscapeRegime::kSlabCreaseClosedRidge));
 }
 
 }  // namespace

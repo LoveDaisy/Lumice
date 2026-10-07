@@ -2,11 +2,16 @@
 
 #include <algorithm>
 #include <cmath>
+#include <sstream>
+#include <string>
+#include <utility>
 
 #include "analytic/discovery.hpp"
 
 namespace lumice::analytic {
 namespace {
+
+constexpr double kPi = 3.14159265358979323846;
 
 double Dot3(const double a[3], const double b[3]) {
   return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
@@ -417,6 +422,197 @@ DomainTopology DomainTopologyOf(const DeviationField& field, int lattice_n, cons
   topology.has_grid_audit = true;
   topology.grid_audit = std::move(audit);
   return topology;
+}
+
+// ---- the degenerate fold set -------------------------------------------------------------------------
+
+std::vector<std::pair<int, int>> CircularRuns(const unsigned char* mask, int n) {
+  std::vector<std::pair<int, int>> runs;
+  int any = 0;
+  int first_false = -1;
+  for (int i = 0; i < n; i++) {
+    if (mask[i]) {
+      any++;
+    } else if (first_false < 0) {
+      first_false = i;
+    }
+  }
+  if (any == 0) {
+    return runs;
+  }
+  if (any == n) {
+    runs.emplace_back(0, n);
+    return runs;
+  }
+  // Rotate so index 0 of the rolled mask is False: no run crosses it, and the starts/ends pairing
+  // is linear (LI _circular_runs).
+  const int rotate = first_false;
+  const auto rolled = [mask, n, rotate](int k) { return mask[(k + rotate) % n] != 0; };
+  int run_start = -1;
+  for (int k = 0; k < n; k++) {
+    const bool here = rolled(k);
+    const bool next = rolled((k + 1) % n);
+    if (!here && next) {
+      run_start = k + 1;
+    } else if (here && !next) {
+      // k is the run's last index; started at run_start (>= 1, never across index 0).
+      runs.emplace_back((run_start + rotate) % n, k - run_start + 1);
+    }
+  }
+  std::sort(runs.begin(), runs.end());
+  return runs;
+}
+
+DegenerateFoldSet BuildDegenerateFoldSet(const DeviationField& field, int circle_samples) {
+  DegenerateFoldSet fold_set;
+  const FoldScreen& screen = field.fold();
+  if (!screen.has_axis) {
+    return fold_set;  // M = I: no critical set to locate
+  }
+  for (int i = 0; i < 3; i++) {
+    fold_set.axis[i] = screen.axis[i];
+  }
+  fold_set.has_axis = true;
+  fold_set.axis_point_count = 2;
+  for (int sign = 0; sign < 2; sign++) {
+    DegenerateFoldSet::AxisPoint& point = fold_set.axis_points[sign];
+    const double s = sign == 0 ? 1.0 : -1.0;
+    for (int i = 0; i < 3; i++) {
+      point.position[i] = s * screen.axis[i];
+    }
+    double margins[kMaxFaceCount + 2];
+    const int count = field.ValidityMarginsAt(point.position, margins);
+    point.location = LocateByValidityMargins(margins, count);
+  }
+
+  double basis[2][3];
+  TangentBasis(screen.axis, basis);
+  std::vector<double> binding(circle_samples);
+  std::vector<unsigned char> inside(circle_samples);
+  double margins[kMaxFaceCount + 2];
+  for (int k = 0; k < circle_samples; k++) {
+    const double t = 2.0 * kPi * static_cast<double>(k) / static_cast<double>(circle_samples);
+    double u[3];
+    for (int i = 0; i < 3; i++) {
+      u[i] = std::cos(t) * basis[0][i] + std::sin(t) * basis[1][i];
+    }
+    const int count = field.ValidityMarginsAt(u, margins);
+    double smallest = margins[0];
+    for (int m = 1; m < count; m++) {
+      smallest = std::min(smallest, margins[m]);
+    }
+    binding[k] = smallest;
+    inside[k] = smallest > kBoundaryMarginAtol ? 1 : 0;
+  }
+  const std::vector<std::pair<int, int>> arcs = CircularRuns(inside.data(), circle_samples);
+  int inside_count = 0;
+  for (int k = 0; k < circle_samples; k++) {
+    inside_count += inside[k];
+  }
+  fold_set.circle_interior_fraction = static_cast<double>(inside_count) / static_cast<double>(circle_samples);
+  fold_set.crease_interior_arcs = static_cast<int>(arcs.size());
+  for (const auto& [start, length] : arcs) {
+    double contact = binding[start];
+    for (int k = 0; k < length; k++) {
+      contact = std::min(contact, binding[(start + k) % circle_samples]);
+    }
+    if (contact > kCreaseContactMargin) {
+      fold_set.crease_closed_ridge = true;
+    }
+  }
+  std::vector<unsigned char> touching(circle_samples);
+  for (int k = 0; k < circle_samples; k++) {
+    touching[k] = std::fabs(binding[k]) <= kCreaseContactMargin ? 1 : 0;
+  }
+  const double spacing = 2.0 * kPi / static_cast<double>(circle_samples);
+  for (const auto& [start, length] : CircularRuns(touching.data(), circle_samples)) {
+    if (static_cast<double>(length) * spacing >= kCreaseTouchingArcRad) {
+      fold_set.crease_touching_arc = true;
+    }
+  }
+  return fold_set;
+}
+
+std::vector<InteriorCriticalPoint> SlabInteriorCriticalPoints(const DeviationField& field,
+                                                              const DegenerateFoldSet& fold_set) {
+  std::vector<InteriorCriticalPoint> points;
+  for (int k = 0; k < fold_set.axis_point_count; k++) {
+    const auto& axis_point = fold_set.axis_points[k];
+    if (axis_point.location != DomainLocation::kInterior) {
+      continue;
+    }
+    InteriorCriticalPoint point;
+    for (int i = 0; i < 3; i++) {
+      point.position[i] = axis_point.position[i];
+    }
+    point.value = field.Sample(axis_point.position).d_value;  // the slab form: exact at the axis
+    point.kind = CriticalKind::kDegenerate;
+    points.push_back(point);
+  }
+  return points;
+}
+
+// ---- the slab-crease three-check gate -----------------------------------------------------------------
+
+namespace {
+
+// LI's {:.3%} of the interior fraction ("22.764%").
+std::string Percent3(double fraction) {
+  std::ostringstream out;
+  out.setf(std::ios::fixed);
+  out.precision(3);
+  out << fraction * 100.0 << '%';
+  return out.str();
+}
+
+}  // namespace
+
+bool SlabCreaseGates(const DeviationField& field, const DegenerateFoldSet& fold_set, const BoundaryLoopData& loop,
+                     EscapeRegime* regime, std::string* message) {
+  const auto fail = [regime, message](EscapeRegime which, std::string text) {
+    if (regime != nullptr) {
+      *regime = which;
+    }
+    if (message != nullptr) {
+      *message = std::move(text);
+    }
+    return false;
+  };
+  const std::string fraction = Percent3(fold_set.circle_interior_fraction);
+  if (fold_set.crease_interior_arcs == 0) {
+    return fail(EscapeRegime::kSlabCreaseContradiction,
+                "the slab crease evidence contradicts the premise: circle_interior_fraction = " + fraction +
+                    " but the crease sampling holds no interior arc of the crease u . n_M = 0 inside U_P");
+  }
+  // The blade: D_P at any crease point — d_slab of a tangent basis vector of the fold axis,
+  // constant along the crease of a rotation or mirror slab.
+  double basis[2][3];
+  TangentBasis(fold_set.axis, basis);
+  const double blade = field.DSlab(basis[0]);
+  bool carried = false;
+  for (const BoundaryCriticalPoint& point : loop.critical_points) {
+    if (point.kind == CriticalKind::kMaximum && point.strict && std::fabs(point.value - blade) <= kExtremumAtol) {
+      carried = true;
+      break;
+    }
+  }
+  if (!carried) {
+    return fail(EscapeRegime::kSlabCreaseNotCarried,
+                "the slab crease u . n_M = 0 runs through U_P (" + fraction +
+                    " of its sampling) but its blade value is not carried by the boundary walk as a strict "
+                    "local maximum");
+  }
+  if (fold_set.crease_touching_arc) {
+    return fail(EscapeRegime::kSlabCreaseTouching,
+                "the slab crease u . n_M = 0 touches or runs along dU_P over an arc of its sampling "
+                "(a non-transversal contact: its crossings cannot be counted as extrema)");
+  }
+  if (fold_set.crease_closed_ridge) {
+    return fail(EscapeRegime::kSlabCreaseClosedRidge,
+                "an interior arc of the slab crease u . n_M = 0 never reaches dU_P (a closed ridge: "
+                "the level loops around it are not the boundary walk's to count)");
+  }
+  return true;
 }
 
 }  // namespace lumice::analytic
