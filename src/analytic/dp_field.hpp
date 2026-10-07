@@ -34,6 +34,12 @@ constexpr double kFoldDotAtol = 1e-9;
 // A point is on dU_P rather than inside when its smallest validity margin is within this of zero
 // (LI BOUNDARY_MARGIN_ATOL).
 constexpr double kBoundaryMarginAtol = 1e-10;
+// A validity margin below -kViolationAtol violates U_P; rounding of a margin that only touches
+// zero (a square such as the exit Snell discriminant = entry incidence cosine^2 on 3-5-6-7-3) is
+// ~2e-16 and must not fail the closure test. LI boundary.VIOLATION_ATOL, pinned at 100x that
+// rounding (the observed negative extreme of a Newton-settled corner is -1e-15); the coupling
+// "the closure threshold reuses the violation constant" is LI's own decision, carried here.
+constexpr double kViolationAtol = 1e-13;
 
 // Where u sits relative to U_P (LI location): interior, boundary (smallest validity margin within
 // kBoundaryMarginAtol of zero), or exterior.
@@ -103,6 +109,11 @@ int ValidityMargins(const double* domain_margins, int margin_count, double out[k
 // exterior; within kBoundaryMarginAtol of zero is boundary; the sign decides otherwise.
 DomainLocation LocateByValidityMargins(const double* validity_margins, int count);
 
+// (e1, e2) at unit u: cross with the least-aligned coordinate axis, so the basis never degenerates
+// (|u x axis| = sqrt(1 - u_axis^2) >= sqrt(2/3); LI tangent_basis). The basis of the ring probes
+// and the crease circle of the partition, and of the boundary walk to come.
+void TangentBasis(const double u[3], double basis[2][3]);
+
 // One point of the field: the five quantities of the layer plus the domain bookkeeping, from one
 // chain evaluation. `d_p` is the chain's deviation in atan2 form (arccos loses sqrt(eps) next to
 // D = 0 and pi, which slab paths reach on whole arcs) — NaN beyond the exit Snell limit, the
@@ -128,23 +139,65 @@ struct FieldSample {
   double margins[2 * kMaxFaceCount] = {};
   int margin_count = 0;
   double validity_margins[kMaxFaceCount + 2] = {};
+  int validity_count = 0;
 };
+
+// True when every validity margin is at or above -kViolationAtol: u is in the closure of U_P as
+// far as rounding can tell (a Newton-settled corner sits at gate values ~±1e-16). The predicate
+// half of the exit-Snell closure convention (LI boundary.Walker.violated's complement).
+bool OnUpClosure(const double* validity_margins, int count);
+
+// The routed deviation of a sample (LI boundary.Walker.d, the exit-Snell closure convention of LI
+// task 52.6). Three-way, first match wins:
+//   1. a finite `d_value` passes through unchanged — the healthy path is bit-identical, the
+//      router never re-evaluates what the chain already answered (slab paths live here: d_slab
+//      has no square root);
+//   2. a non-finite d_p of a non-slab path whose gates pass OnUpClosure returns
+//      `d_p_exit_limit` (the disc -> 0+ closure value: the exit square root reads the
+//      rounding-negative side of the exit Snell discriminant exactly at a settled corner or a
+//      kink arc coincident with the exit-Snell zero set);
+//   3. anything else — non-finite off the closure, or a non-finite value of a slab path (an
+//      anomaly: d_slab has no root to round) — is kNotFinite, and the caller must fail closed
+//      (the value is not guessed; LI raises RuntimeError there).
+// `slab_path` is the field's fold().degenerate, passed explicitly. The consumers are the boundary
+// and weight-kink walks (660.3); the partition's ring probes stay strictly inside U_P and read
+// `d_value` directly.
+enum class RoutedDeviationStatus { kOk, kNotFinite };
+RoutedDeviationStatus RoutedDeviation(const FieldSample& sample, bool slab_path, double* out);
 
 // The fixed face sequence on one crystal as a field: holds the resolved slots, the fold screen
 // and the corridor, and evaluates points. One chain evaluation per point, no allocation once
 // constructed (the corridor's clipping scratch grows once). Batch (vmap) shapes wait for a real
 // consumer; a single-point entry is the object the partition and the walks take.
+//
+// Lifetime: the constructor borrows `normals` and `polygons` by pointer — both tables must outlive
+// every use of the field (the entry measure and every chain evaluation dereference them).
+//
+// Thread safety: Sample and Differentiate on ONE instance are not thread-safe — the corridor's
+// clipping scratch is mutable member state. Parallel consumers build one field per thread (the
+// constructor is cheap: the fold screen and the corridor polygons are small); ValidityMarginsAt is
+// the one evaluation entry that touches no mutable member and is safe to call concurrently.
 class DeviationField {
  public:
   // `slots` as ResolveFaceSequence returns them, 2 <= slot_count <= kMaxFaceCount; `polygons` the
   // same crystal's corner polygons (BuildFaceNormals's second output) — the entry measure reads
-  // them; `refractive_index` the wavelength's.
+  // them, and so must outlive this object (class docstring); `refractive_index` the wavelength's.
   DeviationField(const FaceNormalTable& normals, const FacePolygonTable& polygons, const int* slots, int slot_count,
                  double refractive_index);
 
   const FoldScreen& fold() const { return fold_; }
   double RefractiveIndex() const { return refractive_index_; }
   int SlotCount() const { return slot_count_; }
+  // The entry face's body normal n_a: the axis of the orthographic chart the topology audit
+  // projects U_P onto (U_P lies in its open hemisphere, the entry incidence gate).
+  const double* EntryNormal() const { return table_->normal[slots_[0]]; }
+
+  // The validity margins of u with no other bookkeeping: one kEvaluateAll chain evaluation, the
+  // domain margin vector, the validity subset — nothing else (no corridor: no mutable member is
+  // touched, the call is const and thread-safe). This is the single gate-reading entry of the
+  // batch paths (the lattice count, the chart audit and the fold-set sampling of the partition):
+  // "u is in U_P" is `every margin > 0` here and nowhere else.
+  int ValidityMarginsAt(const double u[3], double out[kMaxFaceCount + 2]) const;
 
   // The slab field angle(M u, u) (LI d_slab); meaningful for a degenerate fold, where it equals
   // d_p on the closure of U_P.

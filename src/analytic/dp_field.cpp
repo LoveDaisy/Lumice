@@ -195,6 +195,27 @@ DomainLocation LocateByValidityMargins(const double* validity_margins, int count
   return smallest > 0.0 ? DomainLocation::kInterior : DomainLocation::kExterior;
 }
 
+bool OnUpClosure(const double* validity_margins, int count) {
+  for (int i = 0; i < count; i++) {
+    if (!(validity_margins[i] >= -kViolationAtol)) {
+      return false;  // a NaN margin is off the closure too: fail closed on it
+    }
+  }
+  return true;
+}
+
+RoutedDeviationStatus RoutedDeviation(const FieldSample& sample, bool slab_path, double* out) {
+  if (std::isfinite(sample.d_value)) {
+    *out = sample.d_value;
+    return RoutedDeviationStatus::kOk;
+  }
+  if (!slab_path && OnUpClosure(sample.validity_margins, sample.validity_count)) {
+    *out = sample.d_p_exit_limit;
+    return RoutedDeviationStatus::kOk;
+  }
+  return RoutedDeviationStatus::kNotFinite;
+}
+
 // ---- the field --------------------------------------------------------------------------------------
 
 DeviationField::DeviationField(const FaceNormalTable& normals, const FacePolygonTable& polygons, const int* slots,
@@ -212,27 +233,44 @@ double DeviationField::DSlab(const double u[3]) const {
   return AngleBetween(mu, u);
 }
 
+int DeviationField::ValidityMarginsAt(const double u[3], double out[kMaxFaceCount + 2]) const {
+  // The same kEvaluateAll chain evaluation Sample runs, stopped before everything past the
+  // margins: no deviation, no corridor — no mutable member is touched (the class docstring's
+  // thread-safety paragraph). The batch paths of the partition read the gates here and nowhere
+  // else.
+  const double identity[9] = { 1, 0, 0, 0, 1, 0, 0, 0, 1 };
+  const double incident[3] = { -u[0], -u[1], -u[2] };
+  ChainInterfaceDiagnostics<double> interfaces;
+  double outgoing[3];
+  TracePathChain<double, ChainEvaluation::kEvaluateAll>(*table_, slots_, slot_count_, refractive_index_, incident,
+                                                        identity, outgoing, nullptr, nullptr, &interfaces);
+  double margins[2 * kMaxFaceCount];
+  const int margin_count = DomainMargins(interfaces, slot_count_, margins);
+  return ValidityMargins(margins, margin_count, out);
+}
+
 FieldSample DeviationField::Sample(const double u[3]) const {
   FieldSample sample;
   // One chain evaluation at the identity pose (the field is a function of the body frame):
-  // incident = -u, everything else follows from it.
+  // incident = -u, everything else follows from it. The chain's ChainDomain output is not read:
+  // the layer's margins come from the interface diagnostics through DomainMargins — the single
+  // conversion point of the TIR sign — and the domain's own validity packing would be a second
+  // derivation of the same gates (nullptr below says so at the call site).
   const double identity[9] = { 1, 0, 0, 0, 1, 0, 0, 0, 1 };
   const double incident[3] = { -u[0], -u[1], -u[2] };
-  double margins[kMaxFaceCount + 2];
-  ChainDomain domain{ margins };
   ChainInterfaceDiagnostics<double> interfaces;
   double outgoing[3];
   double segments[3 * (kMaxFaceCount + 1)];
   double transmittances[kMaxFaceCount];
   PathOutputs detail{ {}, 0.0, segments, transmittances };
   const bool valid = TracePathChain<double, ChainEvaluation::kEvaluateAll>(
-      *table_, slots_, slot_count_, refractive_index_, incident, identity, outgoing, &detail, &domain, &interfaces);
+      *table_, slots_, slot_count_, refractive_index_, incident, identity, outgoing, &detail, nullptr, &interfaces);
 
   sample.d_p = Deviation(outgoing, u);
   sample.v_p = valid;
   sample.t_p = valid ? detail.fresnel_transmission : 0.0;
   sample.margin_count = DomainMargins(interfaces, slot_count_, sample.margins);
-  const int validity_count = ValidityMargins(sample.margins, sample.margin_count, sample.validity_margins);
+  sample.validity_count = ValidityMargins(sample.margins, sample.margin_count, sample.validity_margins);
 
   sample.d_value = fold_.degenerate ? DSlab(u) : sample.d_p;
 
@@ -261,7 +299,7 @@ FieldSample DeviationField::Sample(const double u[3]) const {
   const double s_body[3] = { -u[0], -u[1], -u[2] };
   const EntryMeasure entry = corridor_.Evaluate(s_body, refractive_index_);
   sample.a_p = entry.value;
-  sample.location = LocateByValidityMargins(sample.validity_margins, validity_count);
+  sample.location = LocateByValidityMargins(sample.validity_margins, sample.validity_count);
   return sample;
 }
 

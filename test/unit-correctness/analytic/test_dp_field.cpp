@@ -10,6 +10,7 @@
 #include <gtest/gtest.h>
 
 #include <cmath>
+#include <limits>
 
 #include "analytic/dp_field.hpp"
 #include "analytic/path_evaluation.hpp"
@@ -406,6 +407,221 @@ TEST(DPField, SlabFieldHasNoNan) {
   }
 }
 
+// ---------------------------------------------------------------------------------------------
+// The exit-Snell closure convention (LI task 52.6, RoutedDeviation) and the near-limit behaviour
+// of the two limit forms. The anchors are LI's dumped corners of 3-5-6-7 at n(550): one corner's
+// plain d_p is finite, the other's is NaN (the exit square root on the rounding-negative side of
+// the discriminant), both on the closure of U_P with the closure value 50.161740000308 deg.
+// ---------------------------------------------------------------------------------------------
+
+// LI's two settled corners of 3-5-6-7 @ n(550) (task-dir anchor dump, full precision). Both sit
+// on the exit-Snell curve; LI's chain reads the discriminant on the rounding-negative side at the
+// second one and routes it to the closure limit, Lumice's reads it non-negative at both — the
+// true residual is ~1e-15 and its sign is the chain's rounding, which is exactly the situation
+// the closure convention exists for. The corner RECORD value (LI's, either form) is
+// 50.161740000308 deg.
+constexpr double kCornerFinite[3] = { 0.0, -0.48947414775668885, 0.8720178086930698 };
+constexpr double kCornerNan[3] = { 0.0, -0.4894741477566886, -0.8720178086930699 };
+constexpr double kClosureCornerDeg = 50.161740000308;
+
+// A transversal crossing of the exit-Snell zero curve of 3-5-6-7 @ n(550) with every OTHER gate
+// comfortably inside U_P (>= +0.008): unlike the corners, a single-gate crossing, so the closure
+// window [-1e-13, 0) of the discriminant is reachable by bisection alone.
+struct ExitSnellCrossing {
+  double u_cross[3];  // the bisection's NaN-side endpoint: disc in (-1e-16, 0), other gates > 0
+  double start[3];
+  double dir[3];  // the tangent direction the geodesic leaves `start` along
+};
+
+bool ExitSnellCrossingOf(const DeviationField& field, ExitSnellCrossing* out) {
+  const double start[3] = { 0.0, -0.578931, 0.815376 };
+  double basis[2][3];
+  TangentBasis(start, basis);
+  const double phi = -kPi / 6.0;
+  double dir[3];
+  for (int i = 0; i < 3; i++) {
+    dir[i] = std::cos(phi) * basis[0][i] + std::sin(phi) * basis[1][i];
+    out->start[i] = start[i];
+    out->dir[i] = dir[i];
+  }
+  const double kFar = 0.135;  // disc < 0 there, every other gate >= +0.001 (measured)
+  const auto point = [&](double t, double u[3]) {
+    for (int i = 0; i < 3; i++) {
+      u[i] = std::cos(t) * start[i] + std::sin(t) * dir[i];
+    }
+  };
+  double t_lo = 0.0;  // disc > 0 (the invariant: the start is inside, d_p finite)
+  double t_hi = kFar;
+  for (int step = 0; step < 70; step++) {
+    const double t = 0.5 * (t_lo + t_hi);
+    double u[3];
+    point(t, u);
+    if (field.Sample(u).d_p >= 0.0 && std::isfinite(field.Sample(u).d_p)) {
+      t_lo = t;
+    } else {
+      t_hi = t;
+    }
+  }
+  point(t_hi, out->u_cross);
+  const FieldSample cross = field.Sample(out->u_cross);
+  const double disc = cross.margins[cross.margin_count - 1];
+  double other = 1.0;
+  for (int m = 0; m + 1 < cross.validity_count; m++) {
+    other = std::min(other, cross.validity_margins[m]);
+  }
+  EXPECT_FALSE(std::isfinite(cross.d_p));
+  EXPECT_GT(disc, -1e-13) << "the bisection endpoint sits in the closure window";
+  EXPECT_LT(disc, 0.0);
+  EXPECT_GT(other, 1e-3) << "every other gate is comfortably inside U_P";
+  return true;
+}
+
+// |limit - d_p| shrinks like sqrt(disc) on the U_P side of the crossing (the two limit forms are
+// the transmitted direction's disc -> 0+ value; d_p itself carries the sqrt(disc) term). This is
+// the near-limit anchor the boundary walk (660.3) consumes both forms against.
+TEST(DPField, ExitLimitFormsConvergeToDpAsDiscVanishes) {
+  const Fixture f(Prism(1.0));
+  const int faces[4] = { 3, 5, 6, 7 };
+  const DeviationField field = f.Field(faces, 4, kN550);
+  ExitSnellCrossing crossing;
+  ASSERT_TRUE(ExitSnellCrossingOf(field, &crossing));
+  double previous = 1.0;
+  for (double offset : { 1e-5, 1e-7, 1e-9 }) {
+    // offset in geodesic parameter pulls the point back into the U_P side of the crossing.
+    double u[3];
+    for (int i = 0; i < 3; i++) {
+      u[i] = std::cos(offset) * crossing.u_cross[i] + std::sin(offset) * (-crossing.dir[i]);
+    }
+    const double norm = std::sqrt(u[0] * u[0] + u[1] * u[1] + u[2] * u[2]);
+    for (int i = 0; i < 3; i++) {
+      u[i] /= norm;
+    }
+    const FieldSample s = field.Sample(u);
+    const double disc = s.margins[s.margin_count - 1];
+    if (!std::isfinite(s.d_p) || disc <= 0.0) {
+      ADD_FAILURE() << "the U_P side of the crossing at offset " << offset << ": finite d_p, disc > 0";
+      continue;
+    }
+    const double d_grazing = std::fabs(s.d_p_grazing - s.d_p);
+    const double d_limit = std::fabs(s.d_p_exit_limit - s.d_p);
+    EXPECT_LT(d_grazing, 5.0 * std::sqrt(disc) + 1e-15);
+    EXPECT_LT(d_limit, 5.0 * std::sqrt(disc) + 1e-15);
+    EXPECT_LT(d_limit, previous) << "the difference shrinks as disc -> 0+";
+    previous = std::max(previous * 0.999, d_limit);
+  }
+}
+
+// The routed deviation at the settled corners (52.6): both corners' plain d_p is finite under
+// Lumice's rounding (LI's reads NaN at the second), so both take the passthrough branch bit-exact
+// — and the exit-limit form at both is LI's corner record value 50.161740000308 deg, the value
+// LI's own walker consumes there. The NaN branch itself is pinned live at the transversal
+// crossing below.
+TEST(DPField, RoutedDeviationAtTheClosureCorner) {
+  const Fixture f(Prism(1.0));
+  const int faces[4] = { 3, 5, 6, 7 };
+  const DeviationField field = f.Field(faces, 4, kN550);
+  for (const auto& corner : { kCornerFinite, kCornerNan }) {
+    const FieldSample s = field.Sample(corner);
+    double routed = 0.0;
+    if (!std::isfinite(s.d_p) || RoutedDeviation(s, /*slab_path=*/false, &routed) != RoutedDeviationStatus::kOk) {
+      ADD_FAILURE() << "a corner with finite d_p takes the passthrough branch";
+      continue;
+    }
+    EXPECT_EQ(routed, s.d_value) << "a finite value passes through bit-exact";
+    ExpectNearDeg(s.d_p_exit_limit, kClosureCornerDeg, 1e-9, "the closure-corner value (LI 52.6)");
+    EXPECT_TRUE(OnUpClosure(s.validity_margins, s.validity_count)) << "a settled corner is on the closure";
+  }
+
+  // The branch itself, live: non-finite d_p on the closure routes to the exit-limit value.
+  ExitSnellCrossing crossing;
+  ASSERT_TRUE(ExitSnellCrossingOf(field, &crossing));
+  const FieldSample nan_side = field.Sample(crossing.u_cross);
+  ASSERT_FALSE(std::isfinite(nan_side.d_p));
+  double routed = 0.0;
+  ASSERT_EQ(RoutedDeviation(nan_side, /*slab_path=*/false, &routed), RoutedDeviationStatus::kOk);
+  EXPECT_EQ(routed, nan_side.d_p_exit_limit) << "the closure branch returns the limit form";
+  EXPECT_TRUE(std::isfinite(routed));
+}
+
+// Fail-closed: a non-finite d_p off the closure is refused (the value is not guessed), a slab
+// path's non-finite value has no closure branch to take (an anomaly), and a NaN validity margin
+// fails the closure predicate too. The off-closure point is live: at the far end of the crossing
+// geodesic the discriminant gate is far below -kViolationAtol.
+TEST(DPField, RoutedDeviationFailsClosed) {
+  const Fixture f(Prism(1.0));
+  const int faces[4] = { 3, 5, 6, 7 };
+  const DeviationField field = f.Field(faces, 4, kN550);
+  ExitSnellCrossing crossing;
+  ASSERT_TRUE(ExitSnellCrossingOf(field, &crossing));
+
+  double u_far[3];
+  for (int i = 0; i < 3; i++) {
+    u_far[i] = std::cos(0.135) * crossing.start[i] + std::sin(0.135) * crossing.dir[i];
+  }
+  const FieldSample deep = field.Sample(u_far);
+  ASSERT_FALSE(std::isfinite(deep.d_p));
+  ASSERT_LT(deep.validity_margins[deep.validity_count - 1], -1e-9) << "past the exit Snell limit";
+  double routed = 123.0;
+  EXPECT_EQ(RoutedDeviation(deep, /*slab_path=*/false, &routed), RoutedDeviationStatus::kNotFinite);
+
+  // A slab path's d_value has no square root: non-finite there is an anomaly, never routed.
+  FieldSample slab_nan{};
+  slab_nan.d_value = std::numeric_limits<double>::quiet_NaN();
+  slab_nan.d_p_exit_limit = 0.5;
+  for (int i = 0; i < kMaxFaceCount + 2; i++) {
+    slab_nan.validity_margins[i] = 1.0;  // on the closure: must not matter
+  }
+  slab_nan.validity_count = 4;
+  EXPECT_EQ(RoutedDeviation(slab_nan, /*slab_path=*/true, &routed), RoutedDeviationStatus::kNotFinite);
+
+  // A NaN margin is off the closure (fail closed on it), and so is a real violation.
+  FieldSample off_closure{};
+  off_closure.d_value = std::numeric_limits<double>::quiet_NaN();
+  off_closure.d_p_exit_limit = 0.5;
+  for (int i = 0; i < kMaxFaceCount + 2; i++) {
+    off_closure.validity_margins[i] = 0.1;
+  }
+  off_closure.validity_count = 4;
+  off_closure.validity_margins[2] = std::numeric_limits<double>::quiet_NaN();
+  EXPECT_FALSE(OnUpClosure(off_closure.validity_margins, 4));
+  off_closure.validity_margins[2] = -1e-9;
+  EXPECT_FALSE(OnUpClosure(off_closure.validity_margins, 4));
+  EXPECT_EQ(RoutedDeviation(off_closure, /*slab_path=*/false, &routed), RoutedDeviationStatus::kNotFinite);
+}
+
+// ValidityMarginsAt is the batch paths' single gate entry: the same values Sample reports, with
+// none of Sample's other bookkeeping (the partition's lattice count, chart audit and fold-set
+// sampling read the gates through it).
+TEST(DPField, ValidityMarginsAtMatchesSample) {
+  const Fixture f(Prism(1.0));
+  const int faces[4] = { 3, 5, 6, 7 };
+  const DeviationField field = f.Field(faces, 4, kN550);
+  const double us[3][3] = { { 0.0, 0.0, 1.0 }, { 0.3, -0.5, 0.8 }, { 0.0, -1.0, 0.0 } };
+  for (const auto& u : us) {
+    double un[3];
+    const double norm = std::sqrt(u[0] * u[0] + u[1] * u[1] + u[2] * u[2]);
+    for (int i = 0; i < 3; i++) {
+      un[i] = u[i] / norm;
+    }
+    double margins[kMaxFaceCount + 2];
+    const int count = field.ValidityMarginsAt(un, margins);
+    const FieldSample s = field.Sample(un);
+    if (count != s.validity_count) {
+      ADD_FAILURE() << "ValidityMarginsAt count " << count << " != Sample's " << s.validity_count;
+      continue;
+    }
+    for (int i = 0; i < count; i++) {
+      EXPECT_DOUBLE_EQ(margins[i], s.validity_margins[i]) << "margin " << i;
+    }
+  }
+  // The entry normal accessor: face 3's body normal (the chart axis of the topology audit).
+  const double* n_a = field.EntryNormal();
+  const int slot3 = f.normals.SlotOf(3);
+  for (int i = 0; i < 3; i++) {
+    EXPECT_DOUBLE_EQ(n_a[i], f.normals.normal[slot3][i]);
+  }
+}
+
 
 // ---------------------------------------------------------------------------------------------
 // Jets: tangent gradient, Riemannian Hessian, d/dn (plan Step 4; the FieldJet docstring carries
@@ -614,4 +830,6 @@ TEST(DPField, KinkFamilyDispersionMatchesTheClosedForm) {
 }
 
 }  // namespace
+
+
 }  // namespace lumice::analytic
