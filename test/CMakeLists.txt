@@ -258,6 +258,7 @@ add_executable(unit_correctness_test
   "${PROJ_TEST_DIR}/unit-correctness/analytic/test_path_fiber.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/analytic/test_entry_measure.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/analytic/test_dp_field.cpp"
+  "${PROJ_TEST_DIR}/unit-correctness/analytic/test_dp_partition.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/analytic/test_discovery.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/analytic/test_path_rank.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/analytic/test_pose_density.cpp"

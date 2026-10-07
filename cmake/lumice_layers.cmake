@@ -120,6 +120,8 @@ set(LUMICE_LAYER_analytic_FILES
   analytic/diagnostic_batch.hpp
   analytic/dp_field.cpp
   analytic/dp_field.hpp
+  analytic/dp_partition.cpp
+  analytic/dp_partition.hpp
   analytic/path_feature_discovery.cpp
   analytic/path_feature_discovery.hpp
   analytic/path_fiber.cpp
