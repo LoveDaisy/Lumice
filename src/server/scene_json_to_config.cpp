@@ -649,6 +649,16 @@ static bool ConfigHasFilter(const ConfigScratch& c, int id) {
 // Named ...SceneParams (not JsonToScene) to avoid colliding, on sight, with the public opaque
 // type LUMICE_Scene — this file-static parser has always been about the scene PARAMS block only.
 static LUMICE_ErrorCode JsonToSceneParams(const nlohmann::json& scene, ConfigScratch* out) {
+  // A "filter" key on the scene object is dropped here as an unknown key and so never reaches
+  // core's from_json — which the re-serialization through ConfigToJson makes permanent: the key
+  // is gone from the committed document and from any round-tripped save. Twin of the check in
+  // core's ParseSceneConfig (the two parsers are independent implementations by design, same
+  // standing as the "background_color" warning pair).
+  if (scene.contains("filter")) {
+    LOG_WARNING(
+        "scene: key \"filter\" has no effect here — declare filters top-level and bind them per entry, on "
+        "scene.scattering[].entries[].\"filter\"");
+  }
   // Light source: required, and so are its `type` / `altitude` / `spectrum` keys (core
   // LightSourceConfig::from_json reads all three with .at()). A `type` other than "sun" is
   // rejected rather than mirrored: core only logs and leaves its SunParam at the all-zero default.
@@ -765,6 +775,17 @@ static LUMICE_ErrorCode JsonToSceneParams(const nlohmann::json& scene, ConfigScr
     for (int i = 0; i < out->scatter_count; i++) {
       const auto& lj = scat[i];
       auto& layer = out->scattering[i];
+      // The layer-level twin of the scene-level check above: a "filter" key here is dropped as
+      // an unknown key before the re-serialization, and it is the likeliest filter typo — the
+      // binding spelling lives one level down on each entry, right next to the layer's own
+      // fields. Core's ParseScatteringInfo carries the same check for documents that reach it
+      // without passing through this parser.
+      if (lj.contains("filter")) {
+        LOG_WARNING(
+            "JsonToSceneParams: scene.scattering[{}]: key \"filter\" has no effect here — the binding key "
+            "lives on each entry, scene.scattering[{}].entries[].\"filter\"",
+            i, i);
+      }
       // "prob" is required, mirroring core's ParseScatteringInfo. This must be checked HERE and
       // not left to core: the CLI reaches core only via this function, which then re-serializes
       // the parsed struct through ConfigToJson — and that writer emits `prob` unconditionally,
