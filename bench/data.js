@@ -1,56 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1791393524731,
+  "lastUpdate": 1791416512472,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "19741f43a26b205cd9953af019cae4b44fd12984",
-          "message": "Merge pull request #365 from LoveDaisy/feat/overlay-panel-ux\n\nfeat(gui): Overlay panel UX — Lens Center circle defaults and a Reference Points All row",
-          "timestamp": "2026-09-14T00:15:21+08:00",
-          "tree_id": "d43c7c2948629dec68903aa2f4de6ded9dcafbae",
-          "url": "https://github.com/LoveDaisy/ice_halo_sim/commit/19741f43a26b205cd9953af019cae4b44fd12984"
-        },
-        "date": 1789316823021,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 360973,
-            "unit": "rays/sec",
-            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 591105.8,
-            "unit": "rays/sec",
-            "extra": "CPU: Neoverse-N2\\nCores: 4"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 420399.3,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 7763 64-Core Processor\\nCores: 4"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 345762.9,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 9V74 80-Core Processor                \\nCores: 4"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -4752,6 +4704,54 @@ window.BENCHMARK_DATA = {
             "value": 347100,
             "unit": "rays/sec",
             "extra": "CPU: Intel(R) Xeon(R) Platinum 8370C CPU @ 2.80GHz\\nCores: 4"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "ff81cb51f24df08becce17e67dc341e7acd0ddf7",
+          "message": "Merge pull request #476 from LoveDaisy/fix/config-silent-noop-guards\n\nfix(config): warn on the two silent no-op config shapes",
+          "timestamp": "2026-10-08T07:38:14+08:00",
+          "tree_id": "72d56acc7970f3c253fb3fb79133f22677d0d85f",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/ff81cb51f24df08becce17e67dc341e7acd0ddf7"
+        },
+        "date": 1791416510607,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 411294.3,
+            "unit": "rays/sec",
+            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 507563.5,
+            "unit": "rays/sec",
+            "extra": "CPU: Neoverse-N2\\nCores: 4"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 367807.3,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 7763 64-Core Processor\\nCores: 4"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 309804.8,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
           }
         ]
       }
