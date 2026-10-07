@@ -182,6 +182,13 @@ struct WeightSingularChain {
 // NOT enough for certificate discrimination (an A = 0 corridor and a T = 0 TIR gate are different
 // unlit reasons). A certificate-grade stream needs the split fields filled; "660-side sources
 // should expose the A/T decomposition" is pre-registered as an expected integration-gap entry.
+// A SECOND pre-registered integration gap, same shape: CERTIFICATE-GRADE STREAMS REQUIRE u
+// FIDELITY — `u` must be the real body-frame sun direction, never a placeholder. A
+// kFiberParameter stream is quadrature-legal with placeholder u (QuadratureIntensity reads only
+// `parameter` under that binding), but CertifyVisibility reads `u` of every sample for support
+// membership under EVERY binding, so the same stream fed to the certificate answers
+// no_in_support_samples across the board — an integration-time symptom whose cause would be
+// unreadable without this note.
 // ---------------------------------------------------------------------------
 struct FiberSample {
   double u[3] = { 0.0, 0.0, 0.0 };

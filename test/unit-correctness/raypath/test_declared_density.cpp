@@ -411,6 +411,25 @@ TEST(DeclaredDensity, USupportClassificationAndKinds) {
             USupportKind::kSpinOrbit);
 }
 
+TEST(DeclaredDensity, DiracAzimuthAreaFamilyIsTheRegisteredReadAsZeroGap) {
+  // The registered v1 gap (the header's list, review round 2): azimuth FIXED with latitude AND
+  // roll spread classifies kArea, the fast predicates do not hold, and the general path zeroes
+  // every preimage term — DensitySolidAngle reads 0 and MuPositive reads false everywhere. The
+  // pin makes the gap VISIBLE (a classified kind answering zero), so an integration-time
+  // consumer meets a registered "unanswered", not an undocumented "dark".
+  const double sun[3] = { 0.0, 0.6, 0.8 };
+  const AxisDistribution axis = Axis(NoRandom(30.0), Gauss(60.0, 5.0), Uniform(0.0, 360.0));
+  const UMarginal m = MakeUMarginal(axis, sun);
+  ASSERT_EQ(m.kind(), USupportKind::kArea);
+  ASSERT_FALSE(m.fast_path());
+  const double probes[3][3] = { { 0.0, 0.6, 0.8 }, { 0.3, -0.5, 0.81 }, { -0.7, 0.1, 0.7 } };
+  for (const auto& u : probes) {
+    EXPECT_EQ(m.DensitySolidAngle(u), 0.0);
+    EXPECT_EQ(m.DensitySolidAngleGeneral(u), 0.0);
+    EXPECT_FALSE(m.MuPositive(u, 1e-6));
+  }
+}
+
 TEST(DeclaredDensity, UPointIsTheComposedRotationOfTheSun) {
   // u = Rz(-roll) Ry(pi/2 - phi) Rz(pi - az) s_hat, built here by explicit matrix products
   // (independent construction; the implementation's SpinOrbitPoint factors share the claim).

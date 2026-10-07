@@ -479,6 +479,9 @@ double PoseTorusDensity(const LatitudeDensity& lat, const Distribution& az, doub
   double at = 0.0;
   const double az_d = WrappedSlotDensity(az, flip_branch ? lambda_out - kPi : lambda_out, &dirac, &at);
   if (dirac) {
+    // A Dirac azimuth zeroes every preimage term: the general path never solves the
+    // fixed-azimuth (phi, roll) preimage — the REGISTERED read-as-zero gap in the header's
+    // v1 gap list (zero = "unanswered", not "dark").
     return 0.0;
   }
   const double f = lat.FlipProbability(phi);
@@ -691,9 +694,12 @@ double UMarginal::DensitySolidAngleGeneral(const double u[3]) const {
   if (kind_ != USupportKind::kArea) {
     return 0.0;
   }
-  // The general path: the roll-torus integral of the preimage sum. A Dirac latitude with
-  // non-uniform azimuth/roll is not implemented (the header's gap list: the fast path covers the
-  // symmetric family, the Dirac-latitude preimage solve is a v2 addition); it reads as zero.
+  // The general path: the roll-torus integral of the preimage sum. Two registered read-as-zero
+  // families (the header's gap list): a Dirac latitude with non-uniform azimuth/roll (the fast
+  // path covers the symmetric members; the Dirac-latitude preimage solve is a v2 addition), and
+  // a Dirac AZIMUTH with latitude AND roll spread (every preimage term is zeroed by
+  // PoseTorusDensity's Dirac guard; the (phi, roll) preimage under a fixed azimuth is v2).
+  // Both read as zero everywhere — "unanswered", not "dark".
   if (lat_.kind() == LatitudeLawKind::kDiracUnfolded || lat_.kind() == LatitudeLawKind::kDiracFolded) {
     return 0.0;
   }

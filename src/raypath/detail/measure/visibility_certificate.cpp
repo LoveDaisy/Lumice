@@ -32,6 +32,7 @@ namespace {
 constexpr const char* kReasonEscape = "partition_escape";
 constexpr const char* kReasonTruncated = "kind1_walk_truncated";
 constexpr const char* kReasonKind1Escaped = "kind1_escaped";
+constexpr const char* kReasonKind1S4Declared = "kind1_s4_declared";
 constexpr const char* kReasonNoSupportSamples = "no_in_support_samples";
 constexpr const char* kReasonPartialEvidence = "sampled_partial_evidence";
 constexpr const char* kReasonNoKind1 = "no_kind1_curve";
@@ -64,9 +65,17 @@ VisibilityCertificate CertifyVisibility(const UMarginal& measure, const FiberSam
     out.reason = kReasonTruncated;
     return out;
   }
-  if (kind1 != nullptr && kind1->existence != ExistenceState::kComputed) {
+  if (kind1 != nullptr && kind1->existence == ExistenceState::kEscaped) {
     out.state = VisibilityState::kUnproven;
     out.reason = kReasonKind1Escaped;
+    return out;
+  }
+  if (kind1 != nullptr && kind1->existence == ExistenceState::kS4Declared) {
+    // A declared-but-not-walked curve is a different blocking condition than an escape (one
+    // reason per condition): whether it can serve as unlit's curve-presence leg is a 660-side
+    // semantic call, escalated — until then it answers nothing, on the conservative side.
+    out.state = VisibilityState::kUnproven;
+    out.reason = kReasonKind1S4Declared;
     return out;
   }
 

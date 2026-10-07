@@ -8,8 +8,8 @@
 // below are frozen with the mock tests; integration may not reinterpret them.
 //
 //   certified   the evidence form is kStructural or kSampledExhaustive, every in-support sample
-//               has mu > 0, A > 0, T > 0 and non-degenerate jets. (Pointwise mu·A·T > 0 lifted to
-//               the whole object by the declared coverage of the evidence.)
+//               has mu > 0, A > 0, T > 0, a valid chain, and non-degenerate jets. (Pointwise
+//               mu·A·T > 0 lifted to the whole object by the declared coverage of the evidence.)
 //   partial     lit and dark both occur among the in-support samples (0 < lit_fraction < 1):
 //               some covered measure is lit, some is not. A mixed observation, not a coverage
 //               claim — it holds under any evidence form, including kSampledPartial.
@@ -19,7 +19,8 @@
 //               present (computed, non-empty), the declared measure is positive SOMEWHERE on the
 //               curve's support neighbourhood (the object is not outside the crystal ensemble's
 //               declared orientations — mu positive at some curve point), and EVERY in-support
-//               fiber candidate has A·T = 0 under a kStructural or kSampledExhaustive stream.
+//               fiber candidate is not lit (A·T <= 0, or an invalid chain) under a kStructural or
+//               kSampledExhaustive stream.
 //               Under kSampledPartial this combination is NOT unlit — it routes to unproven (a
 //               finite spot sample cannot certify "no passage anywhere").
 //   unproven    anything the evidence cannot decide: partition coverage incomplete (an escape

@@ -140,8 +140,12 @@ TEST(MeasureContract, CurveCarriesUnitVectorsAndPairedParameters) {
     EXPECT_NEAR(u[0] * u[0] + u[1] * u[1] + u[2] * u[2], 1.0, 1e-14);
     const double* t = &curve.tangent[3 * i];
     EXPECT_NEAR(u[0] * t[0] + u[1] * t[1] + u[2] * t[2], 0.0, 1e-14);  // tangent orthogonal
-    // critical_d_p row i holds wavelengths_nm.size() entries (row-major, per the contract).
-    EXPECT_FALSE(std::isnan(curve.critical_d_p[i * curve.wavelengths_nm.size() + 1]));
+    // critical_d_p row i holds wavelengths_nm.size() entries (row-major, per the contract),
+    // pinned per cell against the mock's 21.4 + 0.6 k: the row-major layout is content-checked,
+    // not just in-bounds.
+    for (size_t k = 0; k < curve.wavelengths_nm.size(); k++) {
+      EXPECT_NEAR(curve.critical_d_p[i * curve.wavelengths_nm.size() + k], 21.4 + 0.6 * static_cast<double>(k), 1e-12);
+    }
   }
   // The per-wavelength table's row k belongs to wavelengths_nm[k]: the mock wrote 21.4 + 0.6 k.
   EXPECT_NEAR(curve.critical_d_p[0], 21.4, 1e-12);

@@ -115,7 +115,13 @@
 // distance-to-orbit); kDegenerateSunGeometry answers nothing; the general path does not solve
 // the Dirac-latitude preimage (a fixed-zenith family with NON-uniform azimuth and spread roll —
 // the symmetric members of that family take the fast zonal path, which carries the Dirac mass
-// exactly as the arcsine ring). Adding any of these is a new function or a wider branch, not a
+// exactly as the arcsine ring); the general path ALSO does not solve the Dirac-AZIMUTH preimage
+// (azimuth fixed, latitude AND roll both spread): that family classifies kArea with the fast
+// predicates false and every preimage term zeroed by PoseTorusDensity's Dirac guard, so
+// DensitySolidAngle reads it as ZERO everywhere — a REGISTERED read-as-zero gap (the (phi, roll)
+// preimage of u under a fixed azimuth is a real two-dimensional absolutely-continuous density;
+// zero is "unanswered", not "dark" — downstream consumers must treat kArea + Dirac azimuth as
+// unanswerable until v2). Adding any of these is a new function or a wider branch, not a
 // semantic change to what is already answered.
 //
 // --- Relation to analytic::PoseDensity (deliberate DOUBLE implementation, not a fork) -------
