@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1791367469806,
+  "lastUpdate": 1791367471959,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9524,50 +9524,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "0eba76808ec4e34d0e76e5c741347a0779db27c2",
-          "message": "Merge pull request #361 from LoveDaisy/feat/panel-state-round-trip\n\nfeat(gui): panel-derived state round trip — analysis list freshness predicate, colour-ref layer re-indexing",
-          "timestamp": "2026-09-13T15:37:56+08:00",
-          "tree_id": "e7548f5a60a46f37b724f835b81f368a1b59d85a",
-          "url": "https://github.com/LoveDaisy/ice_halo_sim/commit/0eba76808ec4e34d0e76e5c741347a0779db27c2"
-        },
-        "date": 1789285836317,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 70.8,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 99.6,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 94.6,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 87.9,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "673e55308cc451c53b25f590d5d48bf83f9ecf17",
           "message": "Merge pull request #362 from LoveDaisy/feat/angular-distance-section-merge\n\nfeat(gui): merge both angular-distance ring families into one collapsed Angular Distance section",
           "timestamp": "2026-09-13T16:21:39+08:00",
@@ -13867,6 +13823,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 93.5,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "148248ccbf3b62682cd8191b787af84268d788d7",
+          "message": "Merge pull request #473 from LoveDaisy/docs/corpus-c12-tint-caliber\n\ndocs(corpus): C12 tint multi-caliber + C06 LI closed-form anchor",
+          "timestamp": "2026-10-07T17:57:54+08:00",
+          "tree_id": "87b8eff64500a3715263acfc8706ee01d3846e00",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/148248ccbf3b62682cd8191b787af84268d788d7"
+        },
+        "date": 1791367471375,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 85.7,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 100.1,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 98.4,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 93.9,
             "unit": "%"
           }
         ]
