@@ -124,6 +124,8 @@ set(LUMICE_LAYER_analytic_FILES
   analytic/dp_field.hpp
   analytic/dp_partition.cpp
   analytic/dp_partition.hpp
+  analytic/dp_weight_kink.cpp
+  analytic/dp_weight_kink.hpp
   analytic/path_feature_discovery.cpp
   analytic/path_feature_discovery.hpp
   analytic/path_fiber.cpp

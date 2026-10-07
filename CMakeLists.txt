@@ -1039,6 +1039,7 @@ set(lumice_analytic_kernel_src
   "${PROJ_SRC_DIR}/analytic/dp_field.cpp"
   "${PROJ_SRC_DIR}/analytic/dp_boundary.cpp"
   "${PROJ_SRC_DIR}/analytic/dp_partition.cpp"
+  "${PROJ_SRC_DIR}/analytic/dp_weight_kink.cpp"
   "${PROJ_SRC_DIR}/analytic/discovery.cpp"
   "${PROJ_SRC_DIR}/analytic/path_rank.cpp"
   "${PROJ_SRC_DIR}/analytic/pose_density.cpp"

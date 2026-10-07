@@ -775,6 +775,10 @@ PartitionResult IntervalPartition(const DeviationField& field, const std::vector
     // An inconsistent record: a non-constant loop with no extremum cannot exist (its restriction
     // to the loop attains one), and an interior point against such a record is refused rather
     // than read out of bounds — LI's own path here is an unhandled ValueError on the empty min.
+    // Since the boundary walk (dp_boundary) the partition's loop data comes from, an empty loop
+    // can only reach here from a hand-built caller: the walk's own refusals carry no loop data
+    // and never enter the partition (kept as this regime rather than a new one — no real
+    // failure has ever taken this path).
     return Escape(EscapeRegime::kLoopExtremaNotAlternating, "loop extrema do not alternate: [] (an empty record)");
   }
 

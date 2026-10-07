@@ -275,7 +275,20 @@ RoutedDeviationStatus BoundaryWalker::D(const double u[3], double* out) const {
 }
 
 double BoundaryWalker::DOnExitTir(const double u[3]) const {
-  return field_.SampleOptical(u).d_p_grazing;
+  const FieldSample sample = field_.SampleOptical(u);
+  if (std::isfinite(sample.d_p_grazing)) {
+    return sample.d_p_grazing;
+  }
+  // The grazing form starts from the transmitted direction, already NaN wherever disc < 0 (LI
+  // field.py: same mathematics as d_p_exit_limit, two float paths). The corrector's 1e-16 push
+  // targets a non-negative margin, but the discriminant's own evaluation noise is +-2.3e-16 (a
+  // difference of ~1.7-scale terms), so a landed point can still read negative — on the closure
+  // the root-free path serves the same limit; off it the NaN stands and the caller fails closed.
+  double routed = 0.0;
+  if (RoutedDeviation(sample, false, &routed) == RoutedDeviationStatus::kOk) {
+    return routed;
+  }
+  return sample.d_p_grazing;
 }
 
 void BoundaryWalker::Correct(double u[3], int margin) const {
@@ -738,6 +751,10 @@ WalkStatus GoldenExtremum(const BoundaryWalker& walker, const BoundaryPiece& pie
     double at_value = 0.0;
     if (exit_tir_piece) {
       at_value = walker.DOnExitTir(at);
+      if (!std::isfinite(at_value)) {
+        refused = true;  // off the closure entirely: fail the refinement, do not search garbage
+        return 0.0;
+      }
     } else if (walker.D(at, &at_value) != RoutedDeviationStatus::kOk) {
       refused = true;
       return 0.0;

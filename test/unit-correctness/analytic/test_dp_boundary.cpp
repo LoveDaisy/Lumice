@@ -860,6 +860,133 @@ TEST(DPBoundary, ClosureNeedsTwoStepsOfArcAndCreditsTheExactReturn) {
 }
 
 // ---------------------------------------------------------------------------------------------
+// End to end: the walk feeds the partition (AC3) — 660.2's anchor table re-derived with the
+// real walk instead of the hand-built BoundaryLoopData of test_dp_partition
+// ---------------------------------------------------------------------------------------------
+
+// The full chain per fixture: DomainTopologyOf (the audited disk the partition needs),
+// BuildDegenerateFoldSet + SlabInteriorCriticalPoints for a degenerate fold (the non-slab
+// lattice-Newton interior set is the focusing layer's — empty here, 660.2's own end-to-end
+// scope), WalkBoundary for the loop, IntervalPartition for the intervals. The expected values
+// are 660.2's anchors (that task's anchors.json, LI commit 4d0184c6): the walk now produces the
+// loop data those tests hardcoded.
+TEST(DPBoundary, WalkFeedsThePartitionEndToEnd) {
+  struct Interval {
+    double lower_deg;
+    double upper_deg;
+    int n_components;
+    int n_closed;
+    int n_open;
+  };
+  struct Case {
+    const char* name;
+    bool beta;
+    int faces[5];
+    int count;
+    double index;
+    bool degenerate;  // a degenerate fold: build the fold set and the slab interior
+    std::vector<Interval> intervals;
+  };
+  const std::vector<Case> cases = {
+    { "beta_4875",
+      true,
+      { 4, 8, 7, 5, 0 },
+      4,
+      kN550,
+      true,
+      { { 0.0, 50.161740, 2, 0, 2 }, { 50.161740, 120.0, 2, 0, 2 } } },
+    { "prism_3145",
+      false,
+      { 3, 1, 4, 5, 0 },
+      4,
+      kN550,
+      false,
+      { { 21.916125676, 120.0, 1, 0, 1 }, { 120.0, 151.6674077, 1, 0, 1 } } },
+    { "prism_3415",
+      false,
+      { 3, 4, 1, 5, 0 },
+      4,
+      kN550,
+      false,
+      { { 21.916125676, 120.0, 1, 0, 1 }, { 120.0, 151.6674077, 1, 0, 1 } } },
+    { "prism_3567_n131",
+      false,
+      { 3, 5, 6, 7, 0 },
+      4,
+      kN131,
+      false,
+      { { 50.062619753, 141.83929991, 2, 0, 2 }, { 141.83929991, 163.465157696, 1, 0, 1 } } },
+    { "prism_35673",
+      false,
+      { 3, 5, 6, 7, 3 },
+      5,
+      kN131,
+      true,
+      { { 0.0, 98.16070009, 2, 0, 2 }, { 98.16070009, 180.0, 1, 1, 0 } } },
+    { "prism_121", false, { 1, 2, 1, 0, 0 }, 3, kN131, true, { { 0.0, 180.0, 1, 1, 0 } } },
+  };
+  const Fixture prism(Prism());
+  const Fixture beta(Beta());
+  for (const Case& c : cases) {
+    const Fixture& fixture = c.beta ? beta : prism;
+    const DeviationField field = fixture.Field(c.faces, c.count, c.index);
+    const DomainTopology topology = DomainTopologyOf(field, kTopologyLatticeN, nullptr, 0);
+    if (!topology.IsDisk()) {
+      ADD_FAILURE() << c.name << ": topology is not a disk";
+      continue;
+    }
+
+    DegenerateFoldSet fold_set;
+    std::vector<InteriorCriticalPoint> interior;
+    if (c.degenerate) {
+      fold_set = BuildDegenerateFoldSet(field, kFoldCircleSamples);
+      interior = SlabInteriorCriticalPoints(field, fold_set);
+    }
+    const WalkResult walk = WalkBoundary(field, BoundaryWalkOptions{});
+    if (walk.status != WalkStatus::kOk) {
+      ADD_FAILURE() << c.name << ": " << walk.message;
+      continue;
+    }
+    // The walk's loop data is exactly what the partition consumes — no hand-building anywhere.
+    const PartitionResult partition =
+        IntervalPartition(field, interior, c.degenerate ? &fold_set : nullptr, walk.loop, topology);
+    if (partition.escaped) {
+      ADD_FAILURE() << c.name << ": " << partition.message;
+      continue;
+    }
+    if (partition.intervals.size() != c.intervals.size()) {
+      ADD_FAILURE() << c.name << ": " << partition.intervals.size() << " intervals, expected " << c.intervals.size();
+      continue;
+    }
+    for (size_t k = 0; k < c.intervals.size(); k++) {
+      const DeviationInterval& got = partition.intervals[k];
+      EXPECT_NEAR(Deg(got.lower), c.intervals[k].lower_deg, 5e-6) << c.name << " interval " << k << " lower";
+      EXPECT_NEAR(Deg(got.upper), c.intervals[k].upper_deg, 5e-6) << c.name << " interval " << k << " upper";
+      EXPECT_EQ(got.n_components, c.intervals[k].n_components) << c.name << " interval " << k;
+      EXPECT_EQ(got.n_closed, c.intervals[k].n_closed) << c.name << " interval " << k;
+      EXPECT_EQ(got.n_open, c.intervals[k].n_open) << c.name << " interval " << k;
+    }
+  }
+}
+
+// AC2's truncation half (the declared-coverage complement on the boundary side): a walk whose
+// step budget cannot close is a NAMED refusal carrying no loop data — the mechanical invariant
+// the consumers rely on (an ignored refusal reads as no loop at all, never a half-walk).
+TEST(DPBoundary, TruncatedWalkRefusesWithEmptyLoop) {
+  const Fixture f(Prism());
+  const int faces[2] = { 3, 5 };
+  const DeviationField field = f.Field(faces, 2, kN131);
+  BoundaryWalkOptions options;
+  options.max_walk_steps = 5;  // the lune is ~480 steps around: 5 cannot close
+  const WalkResult walk = WalkBoundary(field, options);
+  EXPECT_EQ(walk.status, WalkStatus::kStepsExhausted);
+  EXPECT_NE(walk.message.find("did not reach a corner"), std::string::npos);
+  EXPECT_TRUE(walk.loop.critical_points.empty());
+  EXPECT_TRUE(walk.loop.corners.empty());
+  EXPECT_FALSE(walk.loop.has_plateau);
+}
+
+// // ---------------------------------------------------------------------------------------------
 // Plateau extrema of a cyclic sequence (LI _plateau_extrema's tables)
 // ---------------------------------------------------------------------------------------------
 
@@ -920,5 +1047,3 @@ TEST(DPBoundary, PlateauExtremaConstantLoop) {
 
 }  // namespace
 }  // namespace lumice::analytic
-
-namespace lumice::analytic {}  // namespace lumice::analytic
