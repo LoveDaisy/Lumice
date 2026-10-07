@@ -1254,6 +1254,18 @@ Error ServerImpl::CommitConfig(const nlohmann::json& config_json, bool* out_reus
   // an image nobody can read, which is precisely why it has to be said out loud rather than refused.
   WarnLowContrastHeadroom(logger_, new_config.renderers_);
 
+  // The render-side twin of the same "wrote it, got nothing" family: an empty "render" list runs
+  // the simulation to completion, exits 0, and writes no image anywhere — this line is the only
+  // difference. Analysis-only configs legitimately use "render": [], but they commit through
+  // StartRaypathAnalysis, never through CommitConfig, so the legitimate shape cannot reach this
+  // warning. Same standing as the family above: diagnostic only, never a reason to fail the commit.
+  if (new_config.renderers_.empty()) {
+    ILOG_WARN(logger_,
+              "CommitConfig: config \"render\" list is empty — the simulation will run but no image or "
+              "output file is written; add at least one render entry (analysis-only configs legitimately use "
+              "\"render\": [] and go through the analysis path, not here)");
+  }
+
   // Stop → rebuild consumers → Start
   auto stop_start = std::chrono::steady_clock::now();
   Stop();

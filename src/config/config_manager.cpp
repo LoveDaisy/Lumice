@@ -2,10 +2,13 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <deque>
 #include <nlohmann/json.hpp>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <variant>
+#include <vector>
 
 #include "config/filter_config.hpp"
 #include "config/light_config.hpp"
@@ -253,6 +256,17 @@ static MsInfo ParseScatteringInfo(const nlohmann::json& j_s, const ConfigManager
   static const FilterConfig kDefaultNoneFilter{ kInvalidId, FilterConfig::kSymNone, FilterConfig::kFilterIn,
                                                 NoneFilterParam{} };
   MsInfo ms{};
+  // A "filter" key HERE (on the layer, not on an entry) is ignored as an unknown key — but it is
+  // the likeliest typo around filters, because the binding spelling "filter" lives one level down
+  // on each entry and sits right next to the layer's own fields. Ignored-in-silence is exactly the
+  // failure mode ParseRenderConfig's "background_color" comment describes; same disposition: say
+  // it, change nothing.
+  if (j_s.contains("filter")) {
+    LOG_WARNING(
+        "scene.scattering[{}]: key \"filter\" has no effect here — filters are declared top-level and bound per "
+        "entry, on scene.scattering[{}].entries[].\"filter\"",
+        layer_index, layer_index);
+  }
   // "prob" is required. It used to be optional, silently taking MsInfo's value-initialized 0.0f —
   // an implicit default that was never a written contract, which is exactly how a downstream
   // loader came to mirror a different value. The message names the layer because a config can
@@ -287,6 +301,16 @@ static MsInfo ParseScatteringInfo(const nlohmann::json& j_s, const ConfigManager
 
 SceneConfig ParseSceneConfig(const nlohmann::json& j_scene, const ConfigManager& m) {
   SceneConfig scene{};
+
+  // Twin of the layer-level check in ParseScatteringInfo: a "filter" key on the scene object is
+  // ignored as an unknown key, and writing it here is the natural hand-authoring mistake of
+  // declaring filters one level too deep. The value is dropped either way; the warning is the
+  // only thing that can tell the author.
+  if (j_scene.contains("filter")) {
+    LOG_WARNING(
+        "scene: key \"filter\" has no effect here — declare filters top-level and bind them per entry, on "
+        "scene.scattering[].entries[].\"filter\"");
+  }
 
   const auto& j_ray_num = j_scene.at("ray_num");
   if (j_ray_num.is_string() && j_ray_num.get<std::string>() == "infinite") {
@@ -400,6 +424,64 @@ void from_json(const nlohmann::json& j, ConfigManager& m) {
   // regression on pre-336 configs).
   if (j.contains("raypath_color")) {
     j.at("raypath_color").get_to(m.raypath_color_);
+  }
+
+  // A top-level filter nothing binds is inert: the config loads, renders, and its output is
+  // byte-identical to the same document without the filter — with no line anywhere saying so.
+  // "Bound" means REACHABLE, not mentioned: roots are the entries' own filter bindings, edges are
+  // bound complex filters to their members, so a simple filter referenced only by an unbound
+  // complex filter is just as inert as one never named at all. The walk is one hop wide in effect
+  // but written as a plain BFS because the graph it walks is exactly this shallow: pass 2 above
+  // resolves complex members through filters_.at into SimpleFilterParam, so a loadable config
+  // cannot contain complex-to-complex references. Aggregated into a single line on purpose — a
+  // library-style config declares several filters at once, and one per id would turn one mistake
+  // into a wall. A config cannot say whether an unbound filter is a forgotten binding or a
+  // deliberate library entry; the warning states the fact either way, and both authors need it.
+  {
+    std::set<IdType> reachable;
+    std::deque<IdType> pending;
+    for (const auto& ms : m.scene_.ms_) {
+      for (const auto& setting : ms.setting_) {
+        if (setting.filter_.id_ != kInvalidId && reachable.insert(setting.filter_.id_).second) {
+          pending.push_back(setting.filter_.id_);
+        }
+      }
+    }
+    while (!pending.empty()) {
+      const auto it = m.filters_.find(pending.front());
+      pending.pop_front();
+      if (it == m.filters_.end()) {
+        continue;
+      }
+      if (const auto* complex_param = std::get_if<ComplexFilterParam>(&it->second.param_)) {
+        for (const auto& group : complex_param->filters_) {
+          for (const auto& member : group) {
+            if (reachable.insert(member.first).second) {
+              pending.push_back(member.first);
+            }
+          }
+        }
+      }
+    }
+    std::vector<IdType> unbound;
+    for (const auto& entry : m.filters_) {
+      if (reachable.count(entry.first) == 0) {
+        unbound.push_back(entry.first);
+      }
+    }
+    if (!unbound.empty()) {
+      std::string ids;
+      for (IdType id : unbound) {
+        if (!ids.empty()) {
+          ids += ", ";
+        }
+        ids += std::to_string(id);
+      }
+      LOG_WARNING(
+          "config: {} filter(s) declared but never bound: [{}] — a filter only takes effect when bound via "
+          "scene.scattering[].entries[].\"filter\"; remove it if it is an unused library entry",
+          unbound.size(), ids);
+    }
   }
 }
 
