@@ -77,9 +77,13 @@ DiagnosticOutputRow EvaluateRow(const std::vector<int>& faces, const DiagnosticI
   so3::Exp(delta, rotation);
   so3::MatMul(row.pose.data(), rotation, pose);
   ChainInterfaceDiagnostics<J> derivatives;
+  // Constants of the map seeded into the scalar type (zero derivative): the pose is the only
+  // dual variable here.
+  const J index_jet = J(row.refractive_index);
+  const J incident_jet[3] = { J(row.incident[0]), J(row.incident[1]), J(row.incident[2]) };
   ++out.path_evaluations;
-  const bool valid = TracePathChain(normals, slots.data(), count, row.refractive_index, row.incident.data(), pose,
-                                    outgoing, nullptr, nullptr, &derivatives);
+  const bool valid = TracePathChain(normals, slots.data(), count, index_jet, incident_jet, pose, outgoing, nullptr,
+                                    nullptr, &derivatives);
   for (int j = 0; j < std::min(interfaces.reached, derivatives.reached); ++j) {
     auto& face = out.interfaces[j];
     std::copy_n(derivatives.discriminant[j].v, 3, face.discriminant_pose_gradient.begin());

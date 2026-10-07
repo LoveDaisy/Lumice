@@ -6,8 +6,11 @@
 // refract_smooth / reflect_internal). It is the one implementation of "a point on a path":
 // EvaluatePath (path_evaluation.cpp) runs it in double and asks for the per-segment detail; the
 // fiber adapter (path_fiber.hpp) runs it in double for the domain and event classification, and in
-// Jet<3> for the direction's derivative. Internal header: path_evaluation.hpp keeps the kernel's
-// public two-stage interface, and nothing here is part of the C ABI.
+// Jet<3> for the direction's derivative; the u-S^2 field layer (dp_field.hpp) runs it at the
+// identity pose in double and in Jet2<4> (three u directions plus the refractive index, hence the
+// scalar-typed incident direction and index below) in the kEvaluateAll mode. Internal header:
+// path_evaluation.hpp keeps the kernel's public two-stage interface, and nothing here is part of
+// the C ABI.
 
 #include <cmath>
 #include <type_traits>
@@ -17,6 +20,22 @@
 #include "core/shared/optics_shared.h"
 
 namespace lumice::analytic {
+
+// Which evaluation the chain runs. The two modes are LI's two readers of one chain body —
+// optics.py's _path_domain (gated, first failure) and trace_path (gate-free smooth branch) — and
+// must not become two chain implementations.
+enum class ChainEvaluation {
+  // Stop at the first failed gate (the default; existing callers are unchanged). The margins are
+  // recorded up to and including the failed gate.
+  kFirstFailure,
+  // Keep evaluating after a failed gate: the smooth branch itself has no gates (reflections take
+  // no square root; the exit refraction goes NaN beyond its Snell limit by its own sqrt), so every
+  // interface's margins and diagnostics are still produced, the outgoing direction keeps its
+  // smooth-branch value (NaN included), and the first failure is recorded with the same order and
+  // kinds as kFirstFailure. LI field.py's evaluation layer; its root finders re-check membership
+  // themselves.
+  kEvaluateAll,
+};
 
 // Which validity gate failed first, in LI's gate order — the event kind the continuation reports
 // (LI TerminationReason values of the same names).
@@ -29,9 +48,18 @@ enum class ChainFailure {
 
 // Validity margins and first failure, as LI's _path_domain reports them. `margins` must hold
 // slot_count + 2 doubles; it is filled in LI's validity_margin_names order (entry incidence cosine,
-// entry Snell discriminant, each internal face's incidence cosine, exit incidence cosine, exit Snell
-// discriminant) up to and including the gate that failed, and `margin_count` says how many.
+// entry Snell discriminant, each internal face's incidence cosine, exit incidence cosine, exit
+// Snell discriminant) up to and including the gate that failed in kFirstFailure mode, or in full
+// (no truncation — the chain does not stop) in kEvaluateAll mode; `margin_count` says how many.
 // `failure_margin` is the failing margin (NaN for kNonFinite), as LI's event_margin.
+//
+// The internal TIR discriminant is not in this vector in either mode (it gates nothing; LI keeps
+// it as a diagnostic). Its sign convention is an explicit decision, not an oversight: inside the
+// chain it is 1 - n^2 (1 - cos^2) (the module A convention this header froze, the negated LI
+// value), and the field layer converts to LI's n^2 (1 - cos^2) - 1 at the single documented
+// point that builds the LI domain margin vector (dp_field.hpp). Unifying the two signs belongs to
+// a later subtask of its own and must not be done here — module A's reported margins are a frozen
+// cross-repository contract.
 struct ChainDomain {
   double* margins = nullptr;
   int margin_count = 0;
@@ -40,7 +68,10 @@ struct ChainDomain {
 };
 
 // Optional prefix-local values/derivatives. A failed later gate must not erase
-// an already-reached interface's diagnostic. Unreached entries stay unavailable.
+// an already-reached interface's diagnostic. Unreached entries stay unavailable (kEvaluateAll
+// reaches every interface). `discriminant` is the chain's own convention: the Snell discriminant
+// (positive = transmitting) at entry and exit, the negated LI TIR discriminant at internal faces
+// (see ChainDomain's sign decision).
 template <class S>
 struct ChainInterfaceDiagnostics {
   int reached = 0;
@@ -94,21 +125,46 @@ inline bool Fail(ChainDomain* domain, ChainFailure failure, double margin) {
   return false;
 }
 
+// One gate's verdict. `condition_failed` is the gate's failure condition. In kFirstFailure every
+// failure stops the chain (true); in kEvaluateAll the first failure is recorded — later ones
+// change nothing — and the chain keeps evaluating (false). `first_failure_seen` carries the
+// evaluate-mode state between gates.
+template <ChainEvaluation kMode>
+inline bool GateStops(ChainDomain* domain, bool condition_failed, ChainFailure failure, double margin,
+                      bool* first_failure_seen) {
+  if (!condition_failed) {
+    return false;
+  }
+  if constexpr (kMode == ChainEvaluation::kFirstFailure) {
+    Fail(domain, failure, margin);
+    return true;
+  } else {
+    if (!*first_failure_seen) {
+      *first_failure_seen = true;
+      Fail(domain, failure, margin);
+    }
+    return false;
+  }
+}
+
 }  // namespace chain_detail
 
 // Traces `slots` through the crystal at `pose`. Returns `valid` (every validity margin > 0); on
-// true `outgoing` holds the world-frame outgoing direction. Stops at the first failed gate; on false
-// `outgoing` is not set. `detail` (double only) receives the body-frame segments, the interface
-// transmittances and their product, as PathOutputs documents; `domain` receives the margins and
-// the first failure. Either may be null. Gates look at the value part only, so a Jet evaluation
-// takes the branch the double one takes.
-template <class S>
-bool TracePathChain(const FaceNormalTable& table, const int* slots, int slot_count, double refractive_index,
-                    const double incident_direction[3], const S pose[9], S outgoing[3], PathOutputs* detail,
+// true `outgoing` holds the world-frame outgoing direction. In kFirstFailure mode the chain stops
+// at the first failed gate and `outgoing` is not set; in kEvaluateAll it always is, NaN included
+// (the smooth branch's own boundary). `detail` (double only) receives the body-frame segments,
+// the interface transmittances and their product, as PathOutputs documents; `domain` receives the
+// margins and the first failure. Either may be null. Gates look at the value part only, so a Jet
+// or Jet2 evaluation takes the branch the double one takes. `refractive_index` and
+// `incident_direction` are scalar-typed so the field layer can seed the index and the incident
+// direction as dual variables (Jet2<4>'s fourth and first three slots).
+template <class S, ChainEvaluation kMode = ChainEvaluation::kFirstFailure>
+bool TracePathChain(const FaceNormalTable& table, const int* slots, int slot_count, S refractive_index,
+                    const S incident_direction[3], const S pose[9], S outgoing[3], PathOutputs* detail,
                     ChainDomain* domain, ChainInterfaceDiagnostics<S>* diagnostics = nullptr) {
   using chain_detail::BodyToWorld;
   using chain_detail::Dot3;
-  using chain_detail::Fail;
+  using chain_detail::GateStops;
   using chain_detail::Record;
   constexpr bool kDetail = std::is_same_v<S, double>;
   if constexpr (!kDetail) {
@@ -117,14 +173,15 @@ bool TracePathChain(const FaceNormalTable& table, const int* slots, int slot_cou
   if (diagnostics) {
     *diagnostics = {};
   }
-  const double n = refractive_index;
+  const S n = refractive_index;
   const int last = slot_count - 1;
+  bool failed = false;  // kEvaluateAll only: has the first failure been recorded
   double fresnel = 1.0;
 
   // Entry: refraction into the crystal, normal toward the incident medium is the outward normal.
   S normal[3];
   BodyToWorld(pose, table.normal[slots[0]], normal);
-  const double entry_rr = 1.0 / n;
+  const S entry_rr = 1.0 / n;
   const S entry_cos = -Dot3(normal, incident_direction);
   const S entry_disc = 1.0 - entry_rr * entry_rr * (1.0 - entry_cos * entry_cos);
   if (diagnostics) {
@@ -134,14 +191,17 @@ bool TracePathChain(const FaceNormalTable& table, const int* slots, int slot_cou
   }
   Record(domain, ValueOf(entry_cos));
   Record(domain, ValueOf(entry_disc));
-  if (!std::isfinite(ValueOf(entry_cos)) || !std::isfinite(ValueOf(entry_disc))) {
-    return Fail(domain, ChainFailure::kNonFinite, std::nan(""));
+  if (GateStops<kMode>(domain, !std::isfinite(ValueOf(entry_cos)) || !std::isfinite(ValueOf(entry_disc)),
+                       ChainFailure::kNonFinite, std::nan(""), &failed)) {
+    return false;
   }
-  if (!(ValueOf(entry_cos) > 0.0)) {
-    return Fail(domain, ChainFailure::kPathInfeasible, ValueOf(entry_cos));
+  if (GateStops<kMode>(domain, !(ValueOf(entry_cos) > 0.0), ChainFailure::kPathInfeasible, ValueOf(entry_cos),
+                       &failed)) {
+    return false;
   }
-  if (!(ValueOf(entry_disc) > 0.0)) {
-    return Fail(domain, ChainFailure::kTirBoundary, ValueOf(entry_disc));
+  if (GateStops<kMode>(domain, !(ValueOf(entry_disc) > 0.0), ChainFailure::kTirBoundary, ValueOf(entry_disc),
+                       &failed)) {
+    return false;
   }
 
   S dir[3];
@@ -173,11 +233,12 @@ bool TracePathChain(const FaceNormalTable& table, const int* slots, int slot_cou
       diagnostics->discriminant[k] = disc_jet;
     }
     Record(domain, ValueOf(cos_i));
-    if (!std::isfinite(ValueOf(cos_i)) || !std::isfinite(disc)) {
-      return Fail(domain, ChainFailure::kNonFinite, std::nan(""));
+    if (GateStops<kMode>(domain, !std::isfinite(ValueOf(cos_i)) || !std::isfinite(disc), ChainFailure::kNonFinite,
+                         std::nan(""), &failed)) {
+      return false;
     }
-    if (!(ValueOf(cos_i) > 0.0)) {
-      return Fail(domain, ChainFailure::kPathInfeasible, ValueOf(cos_i));
+    if (GateStops<kMode>(domain, !(ValueOf(cos_i) > 0.0), ChainFailure::kPathInfeasible, ValueOf(cos_i), &failed)) {
+      return false;
     }
     for (int i = 0; i < 3; i++) {
       dir[i] -= 2.0 * cos_i * normal[i];
@@ -202,16 +263,20 @@ bool TracePathChain(const FaceNormalTable& table, const int* slots, int slot_cou
   }
   Record(domain, ValueOf(exit_cos));
   Record(domain, ValueOf(exit_disc));
-  if (!std::isfinite(ValueOf(exit_cos)) || !std::isfinite(ValueOf(exit_disc))) {
-    return Fail(domain, ChainFailure::kNonFinite, std::nan(""));
+  if (GateStops<kMode>(domain, !std::isfinite(ValueOf(exit_cos)) || !std::isfinite(ValueOf(exit_disc)),
+                       ChainFailure::kNonFinite, std::nan(""), &failed)) {
+    return false;
   }
-  if (!(ValueOf(exit_cos) > 0.0)) {
-    return Fail(domain, ChainFailure::kPathInfeasible, ValueOf(exit_cos));
+  if (GateStops<kMode>(domain, !(ValueOf(exit_cos) > 0.0), ChainFailure::kPathInfeasible, ValueOf(exit_cos), &failed)) {
+    return false;
   }
-  if (!(ValueOf(exit_disc) > 0.0)) {
-    return Fail(domain, ChainFailure::kTirBoundary, ValueOf(exit_disc));
+  if (GateStops<kMode>(domain, !(ValueOf(exit_disc) > 0.0), ChainFailure::kTirBoundary, ValueOf(exit_disc), &failed)) {
+    return false;
   }
   {
+    // Beyond the exit Snell limit (exit_disc < 0) the root is NaN and so is the outgoing
+    // direction — the smooth branch's own boundary, LI trace_path's convention (the field layer's
+    // d_p_grazing / d_p_exit_limit exist to read values there).
     const S k = n * exit_cos - Sqrt(exit_disc);
     for (int i = 0; i < 3; i++) {
       outgoing[i] = n * dir[i] - k * normal[i];
@@ -225,10 +290,10 @@ bool TracePathChain(const FaceNormalTable& table, const int* slots, int slot_cou
       detail->fresnel_transmission = fresnel;
     }
   }
-  if (domain != nullptr) {
+  if (domain != nullptr && !failed) {
     domain->failure = ChainFailure::kNone;
   }
-  return true;
+  return !failed;
 }
 
 }  // namespace lumice::analytic
