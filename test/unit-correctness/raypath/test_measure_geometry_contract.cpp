@@ -141,7 +141,7 @@ TEST(MeasureContract, CurveCarriesUnitVectorsAndPairedParameters) {
     const double* t = &curve.tangent[3 * i];
     EXPECT_NEAR(u[0] * t[0] + u[1] * t[1] + u[2] * t[2], 0.0, 1e-14);  // tangent orthogonal
     // critical_d_p row i holds wavelengths_nm.size() entries (row-major, per the contract).
-    EXPECT_FALSE(std::isnan(curve.critical_d_p[3 * i + 1]));
+    EXPECT_FALSE(std::isnan(curve.critical_d_p[i * curve.wavelengths_nm.size() + 1]));
   }
   // The per-wavelength table's row k belongs to wavelengths_nm[k]: the mock wrote 21.4 + 0.6 k.
   EXPECT_NEAR(curve.critical_d_p[0], 21.4, 1e-12);
@@ -233,7 +233,7 @@ TEST(MeasureContract, PartitionContextNamesItsEscapeRegime) {
   PartitionContext escaped;
   escaped.coverage = PartitionContext::Coverage::kIncomplete;
   escaped.escape_regime = EscapeRegime::kSlabCrease;
-  EXPECT_STREQ(EscapeRegimeName(escaped.escape_regime), "slab_creuse");
+  EXPECT_STREQ(EscapeRegimeName(escaped.escape_regime), "slab_crease");
 
   PartitionContext unknown;  // the default is kUnknown: v1 producers that do not partition yet
   EXPECT_EQ(unknown.coverage, PartitionContext::Coverage::kUnknown);

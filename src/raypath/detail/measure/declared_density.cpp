@@ -26,7 +26,9 @@ double WrappedSlotDensity(const Distribution& slot, double x_rad, bool* dirac, d
   }
   *dirac = false;
   // The k-window: |2 pi k| beyond 40 scales is e^{-800} for the narrowest gaussian and e^{-40}
-  // for the widest laplacian anyone can write with a float spread; both are 0 in double.
+  // for the widest laplacian anyone can write with a float spread; both are 0 in double. Premise:
+  // `spread` is a config-bounded degree value (a float), so `reach / kTwoPi` stays far inside
+  // int range — no overflow guard is taken here.
   const double reach = 40.0 * std::fabs(static_cast<double>(slot.spread)) * kDegToRad + kTwoPi;
   const int kmax = static_cast<int>(reach / kTwoPi) + 1;
   double sum = 0.0;

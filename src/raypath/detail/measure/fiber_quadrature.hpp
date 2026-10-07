@@ -54,9 +54,15 @@ namespace lumice::raypath {
 struct FiberQuadratureResult {
   // sum of mu * A * T * w over kept samples (A*T > 0). NaN-free: an empty stream gives 0.
   double intensity = 0.0;
-  int kept = 0;        // samples with A * T > 0 (the SampleEvent kept-iff-positive convention)
+  int kept = 0;        // samples kept by the SampleEvent convention: A * T > 0 AND valid (a sample with
+                       // A*T > 0 but valid == false is counted out of both kept and intensity)
   int in_support = 0;  // samples whose u the declared measure covers (mu > 0 within tolerance)
   int total = 0;       // all samples
+  // Samples the stream's binding could not read: a kFiberParameter binding on a measure whose
+  // kind() is not kSpinOrbit, or a kSolidAngle binding on a measure without a regular area
+  // support. They are dropped, and counted here so a mis-bound stream is distinguishable from a
+  // dark one ("coverage gaps keep their reason").
+  int binding_mismatch = 0;
 };
 
 // The quadrature of one stream. `angular_tol_rad` is the support-membership tolerance handed to

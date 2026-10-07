@@ -15,6 +15,11 @@ FiberQuadratureResult QuadratureIntensity(const UMarginal& measure, const FiberS
     double mu = 0.0;
     switch (stream.binding) {
       case MeasureBinding::kSolidAngle:
+        // dOmega weights need a regular area support; anything else cannot answer this binding.
+        if (measure.kind() != USupportKind::kArea) {
+          out.binding_mismatch++;
+          continue;
+        }
         mu = measure.DensitySolidAngle(s.u);
         if (mu <= 0.0) {
           // Off-support for a two-dimensional support: outside the declared measure, the sample
@@ -31,7 +36,9 @@ FiberQuadratureResult QuadratureIntensity(const UMarginal& measure, const FiberS
         // The stream declares its own fiber parameterization; v1 carries spin orbits, whose
         // density the measure answers directly at the sample's parameter.
         if (measure.kind() != USupportKind::kSpinOrbit) {
-          continue;  // the binding and the measure disagree: no density, no contribution
+          out.binding_mismatch++;  // the binding and the measure disagree: no density, no
+                                   // contribution — but the mismatch is reportable, not silent
+          continue;
         }
         mu = measure.SpinOrbitThetaDensity(s.parameter);
         if (!(mu > 0.0)) {

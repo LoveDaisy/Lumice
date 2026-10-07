@@ -10,9 +10,11 @@
 //   certified   the evidence form is kStructural or kSampledExhaustive, every in-support sample
 //               has mu > 0, A > 0, T > 0 and non-degenerate jets. (Pointwise mu·A·T > 0 lifted to
 //               the whole object by the declared coverage of the evidence.)
-//   partial     the evidence covers the support in the measured sense and 0 < lit_fraction < 1:
-//               some covered measure is lit, some is not. lit_fraction = (sum of weights of lit
-//               in-support samples) / (sum of weights of all in-support samples).
+//   partial     lit and dark both occur among the in-support samples (0 < lit_fraction < 1):
+//               some covered measure is lit, some is not. A mixed observation, not a coverage
+//               claim — it holds under any evidence form, including kSampledPartial.
+//               lit_fraction = (sum of weights of lit in-support samples) / (sum of weights of all
+//               in-support samples).
 //   unlit       the C09 "contour present, no passage" verdict, precisely: a kind-1 curve is
 //               present (computed, non-empty), the declared measure is positive SOMEWHERE on the
 //               curve's support neighbourhood (the object is not outside the crystal ensemble's
@@ -43,12 +45,17 @@ const std::vector<VisibilityState>& RegisteredVisibilityStates();
 
 struct VisibilityCertificate {
   VisibilityState state = VisibilityState::kUnproven;
-  // Measure-weighted lit fraction over the in-support samples (NaN when there is none).
+  // Measure-weighted lit fraction over the in-support samples: NaN when there is no in-support
+  // sample; the fail-closed early exits (degenerate / escape / truncated / kind-1 not computed)
+  // keep the 0.0 default instead.
   double lit_fraction = 0.0;
   // Which evidence form the verdict rests on (the stream's form; mirrors it for the report).
   FiberSampleStream::EvidenceForm evidence = FiberSampleStream::EvidenceForm::kSampledPartial;
-  // True when every in-support sample's jets were non-degenerate (a false with any state means
-  // degenerate jets were seen — they alone cannot downgrade certified, they accompany it).
+  // True when every in-support sample's jets were non-degenerate. Part of the certified
+  // conjunction (the plan's "mu·A·T > 0 + non-degenerate jets"): a degenerate jet among the
+  // in-support samples downgrades certified to unproven with reason "degenerate_jets" — the
+  // producer could not certify the local normal Jacobian, so the pointwise statement is not
+  // lifted to the whole object. jets_ok stays false with any state, so the report can name it.
   bool jets_ok = true;
   // Discriminated A/T boundary flags over the in-support samples (the unlit reasons).
   bool saw_zero_area = false;          // some in-support sample has A == 0, T > 0
@@ -65,9 +72,13 @@ struct VisibilityCertificate {
 // decides: no in-support sample at all is unproven; all-lit under kStructural or
 // kSampledExhaustive evidence is CERTIFIED (a per-point statement — a kUnknown or absent
 // partition does not block it: the object's bucket placement consumes existence and partition
-// separately, this certificate owns only visibility); mixed lit/dark is partial; all-dark with a
-// computed non-empty kind-1 curve under exhaustive evidence is unlit (C09); everything else is
-// unproven with a named reason.
+// separately, this certificate owns only visibility), unless a degenerate jet was seen among the
+// in-support samples — then unproven with reason "degenerate_jets" (the certified conjunction
+// keeps its jets leg); mixed lit/dark is partial; all-dark with a computed non-empty kind-1 curve
+// under exhaustive evidence is unlit (C09) when the declared measure is positive somewhere on the
+// curve — a curve lying entirely in the measure's zero set routes unproven
+// ("kind1_curve_measure_zero": the dark in-support samples say nothing about an unreachable
+// contour); everything else is unproven with a named reason.
 VisibilityCertificate CertifyVisibility(const UMarginal& measure, const FiberSampleStream& stream,
                                         const CriticalSetCurve* kind1, const PartitionContext* partition,
                                         double angular_tol_rad);

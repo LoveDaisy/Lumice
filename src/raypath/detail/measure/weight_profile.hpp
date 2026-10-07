@@ -5,17 +5,16 @@
 // curve, w(s) = rho_u(u(s)) along the curve, and its declared quadrature. The curve comes from
 // the geometry layer (scrum 660); this module owns only the density reading and the rule.
 //
-// DECLARED QUADRATURE RULE (frozen): the profile integral is the trapezoid rule in the curve's
-// own point spacing, over the rho_u values read at the curve's points, w.r.t. dOmega per unit
-// curve... precisely: the primitive evaluates rho_u(u_i) at every curve point and reports
+// DECLARED QUADRATURE RULE (frozen): the primitive evaluates rho_u(u_i) at every curve point and
+// reports
 //   total = trapezoid_i ( rho_u(u_i) ) over the curve parameter spacing,
-// taken over the curve's OWN polyline (chord lengths between consecutive u points, closed curves
-// wrap). This is a PROFILE, not a brightness: it integrates the density along the curve (a
-// line integral of rho_u w.r.t. arclength), the quantity M2 of the schema3 vocabulary — the
-// brightness of a feature involves A·T on top and belongs to the fiber quadrature, not here.
-// The A·T-enriched variant (optional enrichment when fiber data is present at the curve's
-// points) is deliberately NOT in v1: no producer exists yet, and the enrichment interface is
-// pre-registered as an integration-time addition (adding a function is not a semantic change).
+// i.e. the trapezoid line integral of rho_u over the curve's OWN polyline (chord lengths between
+// consecutive u points, closed curves wrap — a line integral of rho_u w.r.t. chord arclength). This is a PROFILE, not a
+// brightness: it integrates the density along the curve (a line integral of rho_u w.r.t. arclength), the quantity M2 of
+// the schema3 vocabulary — the brightness of a feature involves A·T on top and belongs to the fiber quadrature, not
+// here. The A·T-enriched variant (optional enrichment when fiber data is present at the curve's points) is deliberately
+// NOT in v1: no producer exists yet, and the enrichment interface is pre-registered as an integration-time addition
+// (adding a function is not a semantic change).
 //
 // NUMERIC ANCHOR (pre-declared suspension, see fiber_quadrature.hpp's spec block): no LI fixture
 // carries kind-1 curve data yet; v1 pins the primitive on mock curves with analytic densities

@@ -81,6 +81,25 @@ TEST(VisibilityCertificate, AllLitExhaustiveIsCertified) {
   EXPECT_EQ(std::string(cert.reason), "");
 }
 
+TEST(VisibilityCertificate, JetsDegenerateDowngradesCertifiedToUnproven) {
+  // The plan's certified conjunction keeps its jets leg: all-lit + exhaustive + ONE degenerate
+  // jet among the in-support samples must NOT certify (the producer could not certify the local
+  // normal Jacobian) — fail-closed to unproven with the stable reason, jets_ok recording it.
+  const UMarginal measure = PlateMeasure();
+  FiberSampleStream stream;
+  stream.evidence = FiberSampleStream::EvidenceForm::kSampledExhaustive;
+  stream.binding = MeasureBinding::kFiberParameter;
+  for (int i = 0; i < 16; i++) {
+    stream.samples.push_back(OnOrbitSample(measure, 2.0 * kPi * i / 16, 0.5, 0.8, 1.0 / 16.0));
+  }
+  stream.samples[3].jet_degenerate = true;
+  const VisibilityCertificate cert = CertifyVisibility(measure, stream, nullptr, nullptr, 1e-6);
+  EXPECT_EQ(cert.state, VisibilityState::kUnproven);
+  EXPECT_EQ(std::string(cert.reason), "degenerate_jets");
+  EXPECT_FALSE(cert.jets_ok);
+  EXPECT_NEAR(cert.lit_fraction, 1.0, 1e-12);  // the observation is all-lit; the guarantee failed
+}
+
 TEST(VisibilityCertificate, MixedLitIsPartialWithMeasureWeightedFraction) {
   const UMarginal measure = PlateMeasure();
   FiberSampleStream stream;
@@ -115,6 +134,33 @@ TEST(VisibilityCertificate, C09ContourPresentNoPassageIsUnlit) {
   EXPECT_EQ(cert.state, VisibilityState::kUnlit);
   EXPECT_TRUE(cert.saw_zero_area);
   EXPECT_TRUE(cert.saw_zero_transmission);
+}
+
+TEST(VisibilityCertificate, Kind1CurveInMeasureDeadZoneIsNotUnlit) {
+  // The frozen unlit spec's second leg: the declared measure must be positive SOMEWHERE on the
+  // curve. A computed, non-empty contour lying entirely OUTSIDE the declared orientations (a
+  // 40-degree-latitude circle, far off the 9-degree spin orbit) cannot be vouched for by dark
+  // in-support samples — unproven with a stable reason, not unlit.
+  const UMarginal measure = PlateMeasure();
+  FiberSampleStream stream;
+  stream.evidence = FiberSampleStream::EvidenceForm::kSampledExhaustive;
+  for (int i = 0; i < 8; i++) {
+    stream.samples.push_back(OnOrbitSample(measure, 0.8 * i, 0.0, 0.5, 0.1));  // all dark, on support
+  }
+  CriticalSetCurve off_support;
+  off_support.existence = ExistenceState::kComputed;
+  const int points = 8;
+  off_support.u.resize(3 * static_cast<size_t>(points));
+  for (int i = 0; i < points; i++) {
+    const double lat = 40.0 * kDeg;
+    double* u = &off_support.u[3 * i];
+    u[0] = std::cos(lat) * std::cos(2.0 * kPi * i / points);
+    u[1] = std::cos(lat) * std::sin(2.0 * kPi * i / points);
+    u[2] = std::sin(lat);
+  }
+  const VisibilityCertificate cert = CertifyVisibility(measure, stream, &off_support, nullptr, 1e-6);
+  EXPECT_EQ(cert.state, VisibilityState::kUnproven);
+  EXPECT_EQ(std::string(cert.reason), "kind1_curve_measure_zero");
 }
 
 TEST(VisibilityCertificate, AllDarkWithoutContourIsUnprovenNotUnlit) {

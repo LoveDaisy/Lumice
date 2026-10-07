@@ -71,7 +71,8 @@ const std::vector<ExistenceState>& RegisteredExistenceStates();
 // Partition escape regimes, named by the geometry layer's partition machinery (LI module C's
 // TopologyEscape). Open on purpose: the report side is fail-closed against unknown regimes, and a
 // regime name is data. Registered today (LI wave-3 pull-forward 52.8, the 3-1-4-5/3-4-1-5 family):
-// "slab_creuse" is the one regime the port has named so far; the table exists so the walk test can
+// "slab_crease" is the one regime the port has named so far — the spelling is LI's own
+// (dp_field/certificate.py `_slab_crease_gates`); the table exists so the walk test can
 // hold the registry honest, not to bound the set.
 enum class EscapeRegime { kSlabCrease };
 const char* EscapeRegimeName(EscapeRegime regime);

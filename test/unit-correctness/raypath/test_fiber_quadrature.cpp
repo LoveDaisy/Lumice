@@ -401,6 +401,35 @@ TEST(FiberQuadrature, SolidAngleBindingWeightsByTheAreaDensity) {
   EXPECT_EQ(q.in_support, 2);
 }
 
+TEST(FiberQuadrature, BindingMismatchIsReportedNotSilent) {
+  // A stream whose binding the measure cannot answer (dOmega weights on a spin orbit; a fiber
+  // parameter on an area support) is dropped AND counted in binding_mismatch — a mis-bound stream
+  // is distinguishable from a dark one ("coverage gaps keep their reason").
+  const UMarginal spin = PlateMeasure();  // kSpinOrbit
+  ASSERT_EQ(spin.kind(), USupportKind::kSpinOrbit);
+  FiberSampleStream mismatched;
+  mismatched.binding = MeasureBinding::kSolidAngle;  // the spin orbit has no dOmega density
+  mismatched.samples.push_back(MockSample(1, 0, 0, 0.5, 0.8, 0.0, 0.1));
+  const FiberQuadratureResult q = QuadratureIntensity(spin, mismatched, 1e-9);
+  EXPECT_EQ(q.binding_mismatch, 1);
+  EXPECT_EQ(q.kept, 0);
+  EXPECT_EQ(q.total, 1);
+
+  double sun[3];
+  SunHat(sun);
+  AxisDistribution area_axis;
+  area_axis.azimuth_dist = { DistributionType::kUniform, 0.0f, 360.0f };
+  area_axis.latitude_dist = { DistributionType::kUniform, 90.0f, 360.0f };
+  area_axis.roll_dist = { DistributionType::kUniform, 0.0f, 360.0f };
+  const UMarginal area = MakeUMarginal(area_axis, sun);  // kArea
+  FiberSampleStream wrong_parameter;
+  wrong_parameter.binding = MeasureBinding::kFiberParameter;  // the area support has no orbit
+  wrong_parameter.samples.push_back(MockSample(0.6, 0.8, 0.0, 0.5, 0.8, 0.0, 0.1));
+  const FiberQuadratureResult q2 = QuadratureIntensity(area, wrong_parameter, 1e-9);
+  EXPECT_EQ(q2.binding_mismatch, 1);
+  EXPECT_EQ(q2.kept, 0);
+}
+
 TEST(FiberQuadrature, TintQuotientReportsUndefinedOnDarkDenominator) {
   FiberQuadratureResult blue, red;
   blue.intensity = 0.5;

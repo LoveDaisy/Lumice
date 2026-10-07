@@ -150,8 +150,10 @@ double SlotDegenerateValue(const Distribution& slot);
 
 // The density of the kZigzag law |A sin(2 pi U) + B| at y (A = spread, B = center, radians):
 // a finite sum over the up-to-four preimages t of +-y on one sine period,
-// sum 1/(2 pi A |cos t|), empty outside the support. Exposed for its own unit test; callers use
-// SlotDensityValue.
+// sum 1/(2 pi A |cos t|), empty outside the support. At an EXACT support endpoint
+// (|y| == A + |B|) the law genuinely diverges and this returns +inf — a measure-zero point;
+// callers summing samples must tolerate or exclude the endpoint, the value is not clamped.
+// Exposed for its own unit test; callers use SlotDensityValue.
 double ZigzagDensityValue(double amplitude_rad, double tilt_rad, double y_rad);
 
 // ---------------------------------------------------------------------------
@@ -180,7 +182,10 @@ class LatitudeDensity {
   double point() const { return point_; }
   // Z of the kFoldedArea law (integral of p_fold * cos); 1 for the others.
   double norm() const { return norm_; }
-  // The normalization integral in double Gauss-Legendre (the test's ruler reuses it).
+  // The normalization integral in double Gauss-Legendre (the test's ruler reuses it). Spike-free
+  // laws only: a kZigzag proposal's 1/sqrt cusps need the spike-split quadrature that
+  // MakeLatitudeDensity's own Z integral uses — the plain rule underreads zigzag measurably
+  // (the spec block's measurement: ~24%).
   double TotalMass() const;
 
  private:
@@ -241,12 +246,15 @@ class UMarginal {
   bool fast_path() const { return fast_; }
 
   // Certificate side: is the declared measure positive at u (within angular_tol_rad of the
-  // support)? For kArea this is rho_u(u) > 0; for the orbit kinds it is on-curve membership with
-  // a positive parameter density; for kPoint, proximity to the point.
+  // support)? v1 per-kind behavior: kArea answers rho_u(u) > 0; kSpinOrbit answers on-orbit
+  // membership WITH a positive parameter density (the parameter is inverted from u);
+  // kRollOrbit / kLatitudeOrbit answer membership by distance-to-orbit only — their parameter
+  // density is not inverted (the v1 gap below), so a point on the orbit outside the law's
+  // parameter support reads positive here; kPoint answers proximity to the point.
   bool MuPositive(const double u[3], double angular_tol_rad) const;
 
-  // rho_u w.r.t. dOmega. kArea only (0 with kind() reporting anything else — the caller checked).
-  // NaN when kind() == kDegenerateSunGeometry.
+  // rho_u w.r.t. dOmega. kArea only — any other kind() returns 0.0, kDegenerateSunGeometry
+  // included (0, not NaN: the caller checks kind() and reports the degenerate case itself).
   double DensitySolidAngle(const double u[3]) const;
 
   // The GENERAL path's value at u, computed even where DensitySolidAngle would take the fast

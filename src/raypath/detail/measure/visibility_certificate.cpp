@@ -36,6 +36,8 @@ constexpr const char* kReasonNoSupportSamples = "no_in_support_samples";
 constexpr const char* kReasonPartialEvidence = "sampled_partial_evidence";
 constexpr const char* kReasonNoKind1 = "no_kind1_curve";
 constexpr const char* kReasonDegenerateMeasure = "degenerate_measure";
+constexpr const char* kReasonDegenerateJets = "degenerate_jets";
+constexpr const char* kReasonKind1MeasureZero = "kind1_curve_measure_zero";
 
 }  // namespace
 
@@ -112,6 +114,14 @@ VisibilityCertificate CertifyVisibility(const UMarginal& measure, const FiberSam
                           stream.evidence == FiberSampleStream::EvidenceForm::kSampledExhaustive;
 
   if (all_lit && saw_lit && exhaustive) {
+    // The certified conjunction keeps its jets leg (the frozen header's and the plan's definition):
+    // a degenerate jet means the producer could not certify the local normal Jacobian, so the
+    // pointwise statement is refused the lift to the whole object — fail-closed to unproven.
+    if (!out.jets_ok) {
+      out.state = VisibilityState::kUnproven;
+      out.reason = kReasonDegenerateJets;
+      return out;
+    }
     // A per-point statement under declared coverage; partition kUnknown does not block it.
     out.state = VisibilityState::kCertified;
     return out;
@@ -122,9 +132,26 @@ VisibilityCertificate CertifyVisibility(const UMarginal& measure, const FiberSam
   }
   if (all_dark && exhaustive) {
     // C09's precise form: a computed, NON-EMPTY kind-1 contour exists (the geometric object is
-    // present), the declared measure covers the stream's points, and no candidate passes.
+    // present), the declared measure is positive SOMEWHERE ON THE CURVE (the frozen header's
+    // second leg — a contour outside the ensemble's declared orientations is not evidence the
+    // object is reachable), the stream's points sit in the declared support, and no candidate
+    // passes.
     if (kind1 != nullptr && !kind1->u.empty()) {
-      out.state = VisibilityState::kUnlit;
+      bool curve_mu_positive = false;
+      for (size_t i = 0; i + 2 < kind1->u.size(); i += 3) {
+        if (measure.MuPositive(&kind1->u[i], angular_tol_rad)) {
+          curve_mu_positive = true;
+          break;
+        }
+      }
+      if (curve_mu_positive) {
+        out.state = VisibilityState::kUnlit;
+        return out;
+      }
+      // The contour lies entirely in the declared measure's zero set: the dark in-support samples
+      // say nothing about it — not unlit (the spec's measure leg fails), and nothing is lit.
+      out.state = VisibilityState::kUnproven;
+      out.reason = kReasonKind1MeasureZero;
       return out;
     }
     // All dark without the contour: not unlit (nothing vouches the object's presence), and not

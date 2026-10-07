@@ -33,7 +33,7 @@ const std::vector<ExistenceState>& RegisteredExistenceStates() {
 const char* EscapeRegimeName(EscapeRegime regime) {
   switch (regime) {
     case EscapeRegime::kSlabCrease:
-      return "slab_creuse";
+      return "slab_crease";
   }
   return "unknown";
 }
