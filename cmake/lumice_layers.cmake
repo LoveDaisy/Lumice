@@ -111,6 +111,7 @@ set(LUMICE_LAYER_analytic_FILES
   analytic/fiber_continuation.cpp
   analytic/fiber_continuation.hpp
   analytic/jet.hpp
+  analytic/jet2.hpp
   analytic/path_chain.hpp
   analytic/path_evaluation.cpp
   analytic/path_evaluation.hpp

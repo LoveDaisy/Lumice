@@ -252,6 +252,7 @@ add_executable(unit_correctness_test
   # test/e2e-correctness/test_analytic_log_sink.py.
   "${PROJ_TEST_DIR}/unit-correctness/analytic/test_path_evaluation.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/analytic/test_jet.cpp"
+  "${PROJ_TEST_DIR}/unit-correctness/analytic/test_jet2.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/analytic/test_so3.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/analytic/test_fiber_continuation.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/analytic/test_path_fiber.cpp"
