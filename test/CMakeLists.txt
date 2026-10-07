@@ -276,7 +276,15 @@ add_executable(unit_correctness_test
   "${PROJ_TEST_DIR}/unit-correctness/raypath/test_single_path_c_api.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/raypath/test_path_feature_report.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/raypath/test_input_assembly.cpp"
-  "${PROJ_TEST_DIR}/unit-correctness/raypath/test_path_feature_report_c_api.cpp")
+  "${PROJ_TEST_DIR}/unit-correctness/raypath/test_path_feature_report_c_api.cpp"
+  # schema3 measure layer: the geometry<->measure contract, the declared densities, the
+  # visibility certificate, the fiber quadrature with the LI #51 tint anchors, the weight
+  # profile primitive.
+  "${PROJ_TEST_DIR}/unit-correctness/raypath/test_measure_geometry_contract.cpp"
+  "${PROJ_TEST_DIR}/unit-correctness/raypath/test_declared_density.cpp"
+  "${PROJ_TEST_DIR}/unit-correctness/raypath/test_visibility_certificate.cpp"
+  "${PROJ_TEST_DIR}/unit-correctness/raypath/test_fiber_quadrature.cpp"
+  "${PROJ_TEST_DIR}/unit-correctness/raypath/test_weight_profile.cpp")
 target_include_directories(unit_correctness_test
   PRIVATE ${PROJ_TEST_DIR})
 target_compile_definitions(unit_correctness_test PRIVATE
