@@ -249,6 +249,16 @@ set(LUMICE_LAYER_raypath_FILES
   raypath/detail/input_assembly.cpp
   raypath/detail/input_assembly.hpp
   raypath/detail/json_values.hpp
+  raypath/detail/measure/declared_density.cpp
+  raypath/detail/measure/declared_density.hpp
+  raypath/detail/measure/fiber_quadrature.cpp
+  raypath/detail/measure/fiber_quadrature.hpp
+  raypath/detail/measure/measure_geometry_contract.cpp
+  raypath/detail/measure/measure_geometry_contract.hpp
+  raypath/detail/measure/visibility_certificate.cpp
+  raypath/detail/measure/visibility_certificate.hpp
+  raypath/detail/measure/weight_profile.cpp
+  raypath/detail/measure/weight_profile.hpp
   raypath/detail/physical_member_scope.cpp
   raypath/detail/physical_member_scope.hpp
   raypath/path_feature_report.hpp
