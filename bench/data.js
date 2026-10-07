@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1791416515798,
+  "lastUpdate": 1791416518175,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9524,50 +9524,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "6a6ae79565932a61955ad281237b6445b8a5d48f",
-          "message": "Merge pull request #364 from LoveDaisy/chore/hide-ray-allocation-checkbox\n\nchore(gui): hide Adaptive ray allocation checkbox from the main panel",
-          "timestamp": "2026-09-13T22:02:17+08:00",
-          "tree_id": "53eedb96fe96c777dbf6f5fd7d8737f2e45e20f6",
-          "url": "https://github.com/LoveDaisy/ice_halo_sim/commit/6a6ae79565932a61955ad281237b6445b8a5d48f"
-        },
-        "date": 1789308819353,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 79.4,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 99.6,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 92.8,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 90.4,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "19741f43a26b205cd9953af019cae4b44fd12984",
           "message": "Merge pull request #365 from LoveDaisy/feat/overlay-panel-ux\n\nfeat(gui): Overlay panel UX — Lens Center circle defaults and a Reference Points All row",
           "timestamp": "2026-09-14T00:15:21+08:00",
@@ -13867,6 +13823,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 91.6,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "ff81cb51f24df08becce17e67dc341e7acd0ddf7",
+          "message": "Merge pull request #476 from LoveDaisy/fix/config-silent-noop-guards\n\nfix(config): warn on the two silent no-op config shapes",
+          "timestamp": "2026-10-08T07:38:14+08:00",
+          "tree_id": "72d56acc7970f3c253fb3fb79133f22677d0d85f",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/ff81cb51f24df08becce17e67dc341e7acd0ddf7"
+        },
+        "date": 1791416517448,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 92.6,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 99.9,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 99.1,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 94,
             "unit": "%"
           }
         ]
