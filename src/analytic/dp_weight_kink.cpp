@@ -51,11 +51,6 @@ WalkStatus ArcValues(const BoundaryWalker& walker, const std::vector<double>& po
   return WalkStatus::kOk;
 }
 
-// The both-ways walk of one seed (LI _walk_both_ways): forward with stop_at the seed (a loop
-// inside U_P closes there), then backward from the seed; an open arc's two ends name their
-// stopping gates.
-namespace {
-
 // The shared walk knobs of the kink search, as walk_zero_set takes them.
 BoundaryWalkOptions WalkOptionsOf(const KinkOptions& options) {
   BoundaryWalkOptions out;
@@ -63,8 +58,6 @@ BoundaryWalkOptions WalkOptionsOf(const KinkOptions& options) {
   out.max_walk_steps = options.max_walk_steps;
   return out;
 }
-
-}  // namespace
 
 // The angle where the circle leaves U_P between an inside and an outside sample, and the gate
 // that stops it (LI _bisect_end): bisection on the angle, the gate read just outside.
@@ -174,9 +167,10 @@ KinkCurve CircleCurve(const BoundaryWalker& walker, int step, int margin, const 
     arc.end_gates[1] = gate_hi;
     std::string failure;
     if (ArcValues(walker, arc.points, &arc.values, &failure) != WalkStatus::kOk) {
-      // Drop the failed arc: the curve keeps no partially-filled data, the same mechanical
-      // invariant as the boundary walk (status != kOk, no half-arc). The note is appended to,
-      // never overwritten — it may already carry the off-sphere explanation.
+      // Drop the failed arc: the curve keeps no partially-filled arc; unlike the boundary walk's
+      // empty-loop invariant, status != kOk here records the refusal while complete arcs may
+      // remain (later runs still push). The note is appended to, never overwritten — it may
+      // already carry the off-sphere explanation.
       curve.status = WalkStatus::kNotFinite;
       curve.note = curve.note.empty() ? failure : curve.note + "; " + failure;
       return;
@@ -318,6 +312,9 @@ KinkCurve MarchedCurve(const BoundaryWalker& walker, int step, int margin, const
 
 }  // namespace
 
+// The both-ways walk of one seed (LI _walk_both_ways): forward with stop_at the seed (a loop
+// inside U_P closes there), then backward from the seed; an open arc's two ends name their
+// stopping gates.
 KinkSeedArc KinkWalkBothWays(const BoundaryWalker& walker, const double start[3], int margin,
                              const KinkOptions& options, void* /*user*/) {
   KinkSeedArc out;

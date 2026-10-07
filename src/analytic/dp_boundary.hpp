@@ -221,7 +221,8 @@ enum class WalkStatus {
   kStepsExhausted,   // RuntimeError: MAX_WALK_STEPS without a corner or a closure
   kStartNoPoint,     // ValueError: U_P has no point on the lattice
   kStartCoversAll,   // ValueError: U_P covers the whole lattice — no boundary
-  kStartNoEdge,      // ValueError: no lattice point next to the boundary
+  kStartNoEdge,      // ValueError: no lattice point next to the boundary — also the
+                     // start-bisection shell fail-close (the message text distinguishes)
   kCornerNotSimple,  // RuntimeError: a corner's outgoing margin is not unique
   kNotClosed,        // RuntimeError: 1000 pieces without closing
   kNotFinite,        // RuntimeError: D_P off the closure of U_P (fail closed)
