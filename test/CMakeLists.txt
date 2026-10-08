@@ -295,7 +295,10 @@ add_executable(unit_correctness_test
   "${PROJ_TEST_DIR}/unit-correctness/raypath/test_visibility_certificate.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/raypath/test_fiber_quadrature.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/raypath/test_contour_contract_docking.cpp"
-  "${PROJ_TEST_DIR}/unit-correctness/raypath/test_weight_profile.cpp")
+  "${PROJ_TEST_DIR}/unit-correctness/raypath/test_weight_profile.cpp"
+  # schema3 report core (666.1): the object record's data layer — the bucket-derivation grid,
+  # the fail-closed arms, the open-enum registered tables.
+  "${PROJ_TEST_DIR}/unit-correctness/raypath/test_structure_object.cpp")
 target_include_directories(unit_correctness_test
   PRIVATE ${PROJ_TEST_DIR})
 target_compile_definitions(unit_correctness_test PRIVATE
