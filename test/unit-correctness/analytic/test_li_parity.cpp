@@ -1769,16 +1769,26 @@ TEST_P(LiParityChromaticDiagnose, MatchesLi) {
              Tolerance(f, "feature_angles"));
     CloseAbs(where, "shift", feature.shift, reference.at("shift").get<double>(), Tolerance(f, "feature_angles"));
     CloseAbs(where, "spread", feature.spread, reference.at("spread").get<double>(), Tolerance(f, "feature_angles"));
-    CloseAbs(where, "direction_dispersion", feature.direction_dispersion,
-             reference.at("direction_dispersion").get<double>(), Tolerance(f, "feature_angles"));
+    // Convention 3 (LI fixtures doc "Three conventions"): a gate_edge feature is walked on the
+    // gate margin's own zero set, so lit_fraction, weight and direction_dispersion are each
+    // backend's rounding luck there; the fixture exports them null and pins nothing, and the
+    // production ChromaticFeature keeps computing them. An edge (weight-kink) feature keeps
+    // every field.
+    const bool gate_feature = reference.at("kind").get<std::string>() == "gate_edge";
+    if (!gate_feature) {
+      CloseAbs(where, "direction_dispersion", feature.direction_dispersion,
+               reference.at("direction_dispersion").get<double>(), Tolerance(f, "feature_angles"));
+    }
     CloseAbs(where, "positive_fraction", feature.positive_fraction, reference.at("positive_fraction").get<double>(),
              Tolerance(f, "feature_fractions"));
     CloseAbs(where, "contrast", feature.contrast, reference.at("contrast").get<double>(),
              Tolerance(f, "feature_fractions"));
-    CloseAbs(where, "lit_fraction", feature.lit_fraction, reference.at("lit_fraction").get<double>(),
-             Tolerance(f, "feature_fractions"));
-    CloseRelative(where, "weight", feature.weight, reference.at("weight").get<double>(),
-                  Tolerance(f, "feature_fractions"));
+    if (!gate_feature) {
+      CloseAbs(where, "lit_fraction", feature.lit_fraction, reference.at("lit_fraction").get<double>(),
+               Tolerance(f, "feature_fractions"));
+      CloseRelative(where, "weight", feature.weight, reference.at("weight").get<double>(),
+                    Tolerance(f, "feature_fractions"));
+    }
   }
 }
 

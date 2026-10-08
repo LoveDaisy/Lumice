@@ -46,15 +46,15 @@
     "contrast": 0.9581256195650196,
     "delta_blue": 1.6757215989682526,
     "delta_red": 1.6778840948677278,
-    "direction_dispersion": 424673.7372797241,
+    "direction_dispersion": null,
     "kind": "gate_edge",
-    "lit_fraction": 0.7819767441860465,
+    "lit_fraction": null,
     "positive_fraction": 0.0,
     "shift": -0.005704224357569565,
     "source": "exit_snell_discriminant",
     "spread": 1.89632792435587,
     "visible": false,
-    "weight": 1.9820686621381206e-09
+    "weight": null
    }
   ],
   "kind": "edge",
@@ -104,19 +104,19 @@
   }
  },
  "provenance": {
-  "conventions_sha256": "933beb6cb38220ca0e64d696cb50f37e3ccb91e0ede70616ecabeaf521ba7f21",
-  "li_rev": "c61ee849401c82b3a89b168b1150b4392966da31",
+  "conventions_sha256": "49e65828af908b4bf645a4a150ad23ee558ac7dcb8d45fd4059bca3c6f4a52f6",
+  "li_rev": "ccee65afc66699c3f59d4a3769379a151fed4343",
   "li_tracked_tree_clean": true
  },
  "schema_version": 1,
  "symmetry_semantics": "none",
  "tolerance": {
   "feature_angles": {
-   "basis": "absolute, rad, per feature (delta_red, delta_blue, shift, spread, direction_dispersion): medians and spreads over a backend's own sampling of the same curve: march spacing ~3.5e-3 rad on the closed-form circles and the curves are traced to curve accuracy, so medians/ptp agree at the spacing level; 2e-3 rad is half the observed spacing.  Cells with a closed-form value (the constant kinks) are pinned tighter by the anchor tests, not by this tolerance",
+   "basis": "absolute, rad, per feature (delta_red, delta_blue, shift, spread; direction_dispersion of an edge feature): medians and spreads over a backend's own sampling of the same curve: march spacing ~3.5e-3 rad on the closed-form circles and the curves are traced to curve accuracy, so medians/ptp agree at the spacing level; 2e-3 rad is half the observed spacing.  Cells with a closed-form value (the constant kinks) are pinned tighter by the anchor tests, not by this tolerance. Convention 3: a gate feature's lit_fraction, weight and direction_dispersion are evaluated on the gate's own zero set (the singular set of the quantity itself) and are exported as null on both sides, availability compared exactly; visible keeps its bare value (its shift/spread clauses decide it, its lit input is not pinned)",
    "value": 0.002
   },
   "feature_fractions": {
-   "basis": "absolute (positive_fraction, contrast, lit_fraction) and weight relative: sampled medians over a backend's own curve sampling",
+   "basis": "absolute (positive_fraction, contrast, lit_fraction of an edge feature) and weight relative (an edge feature): sampled medians over a backend's own curve sampling. Convention 3: a gate feature's lit_fraction, weight and direction_dispersion are evaluated on the gate's own zero set (the singular set of the quantity itself) and are exported as null on both sides, availability compared exactly; visible keeps its bare value (its shift/spread clauses decide it, its lit input is not pinned)",
    "value": 0.02
   },
   "position": {
