@@ -182,4 +182,30 @@ VisibilityCertificate CertifyVisibility(const UMarginal& measure, const FiberSam
   return out;
 }
 
+VisibilityCertificate CertifyVisibilityPerComponent(const UMarginal& measure, const FiberSampleStream& stream,
+                                                    const std::vector<const CriticalSetCurve*>& components,
+                                                    const PartitionContext* partition, double angular_tol_rad) {
+  // One pass, strongest verdict first (the header's aggregate order). No components at all is
+  // the null-curve call: the stream alone decides (fail closed to whatever it answers).
+  VisibilityCertificate out;
+  for (int pass = 0; pass < 4; pass++) {
+    for (const CriticalSetCurve* component : components) {
+      if (component == nullptr) {
+        continue;  // a null slot is no component (the caller's filter, not an error)
+      }
+      const VisibilityCertificate one = CertifyVisibility(measure, stream, component, partition, angular_tol_rad);
+      const int verdict = one.state == VisibilityState::kUnlit    ? 0 :
+                          one.state == VisibilityState::kUnproven ? 1 :
+                          one.state == VisibilityState::kPartial  ? 2 :
+                                                                    3;
+      if (verdict == pass) {
+        return one;  // the decisive component's certificate, wholesale
+      }
+    }
+  }
+  out.state = VisibilityState::kUnproven;
+  out.reason = kReasonNoKind1;
+  return out;  // an empty component list: nothing grounds any verdict
+}
+
 }  // namespace lumice::raypath
