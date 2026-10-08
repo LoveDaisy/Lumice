@@ -294,19 +294,20 @@ double Tolerance(const Json& fixture, const std::string& quantity) {
 // carries an exit-TIR corner emits `<quantity>_corner` at degrees(EXTREMUM_ATOL), and its corner
 // rows read the tier while every other row keeps the default key. The tier's EXISTENCE is decided
 // by the export side's mechanism predicate (a corner whose gradient norm is null — the value there
-// is cross-ISA rounding luck through the sqrt fold, measured 3.5e-7..7.6e-7 deg on PR #477's CI),
-// never by a mismatch: this file cannot produce a tier by editing anything local, because a
-// "cross-platform tier" is not "widen whatever disagrees" (the header discipline; LI's emission
-// and this read are one contract). Key-present implies every corner row of that fixture is
-// singular (LI's emission contract); a fixture mixing well-behaved corners with singular ones
-// must move LI's emission to per-row first.
+// is cross-ISA rounding luck through the sqrt fold), never by a mismatch: this file cannot produce
+// a tier by editing anything local, because a "cross-platform tier" is not "widen whatever
+// disagrees" (the header discipline; LI's emission and this read are one contract). Key-present
+// implies every corner row of that fixture is singular (LI's emission contract); a fixture mixing
+// well-behaved corners with singular ones must move LI's emission to per-row first. Measured
+// per-platform drift numbers and any recalibration live in the fixture tolerance blocks' basis
+// text and LI's fixtures doc — read them there, never copy the numbers into this comment.
 double RowTolerance(const Json& fixture, const std::string& quantity, const Json& reference_row) {
   const Json& tolerance = fixture.at("tolerance");
   const std::string corner_key = quantity + "_corner";
   if (reference_row.at("source").get<std::string>() == "corner" && tolerance.contains(corner_key)) {
     return tolerance.at(corner_key).at("value").get<double>();
   }
-  return tolerance.at(quantity).at("value").get<double>();
+  return Tolerance(fixture, quantity);
 }
 
 // One line per compared quantity, printed red or green, so a run records how much room each
