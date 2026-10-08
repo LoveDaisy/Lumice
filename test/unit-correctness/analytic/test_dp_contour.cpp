@@ -318,9 +318,10 @@ TEST(DPContour, ClosedKinkRuleMatchesTheSeamConstants) {
   // node grid) is the sum of the segment trapezoids, and its error is PURE Euler-Maclaurin seams,
   // -h^2/12 * sum [f'(segment end) - f'(segment start)] = -h^2 / 3 — predictable in advance, which
   // is the rule's claim (the kink-blind periodic rule's constant is a mix of kink-cell and seam
-  // terms with no closed law: here it lands at +h^2 / 4, which happens to be smaller — the cut
-  // rule does not promise a smaller constant, it promises the analytic one — and both laws are
-  // asserted: the cut rule at -h^2/3 exactly, the blind one at +h^2/6).
+  // terms with no closed law: here it lands at +h^2 / 6, which happens to be smaller in
+  // magnitude than the cut rule's -h^2/3 — the cut rule does not promise a smaller constant, it
+  // promises the analytic one — and both laws are asserted: the cut rule at -h^2/3 exactly, the
+  // blind one at +h^2/6).
   const auto node_grid = [&](int n, bool mark_kinks) {
     std::vector<double> params(n);
     std::vector<char> kink(n, 0);

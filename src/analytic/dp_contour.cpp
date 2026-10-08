@@ -11,10 +11,12 @@ namespace {
 constexpr double kPi = 3.14159265358979323846;
 constexpr double kTwoPi = 2.0 * kPi;
 
-// The orbit-collapse threshold, in the measure layer's form (declared_density.hpp's
-// kDegenerateSunGeometry: |s_z| > 1 - 1e-12, i.e. 1 - s_z^2 < 1e-12) so both layers call the
-// same geometry collapsed.
-constexpr double kSunPoleOneMinus = 1e-12;
+// The orbit-collapse threshold, algebraically equal to the measure layer's declared form
+// (declared_density.hpp's kDegenerateSunGeometry: |s_z| > 1 - 1e-12): that inequality IS
+// 1 - s_z^2 < 2e-12 (up to the 1e-24 tail), NOT < 1e-12 — the constant below is the squared
+// form's exact value so both layers call the same geometry collapsed. One side moving must
+// update the other; the paths in this comment are the retrieval anchor.
+constexpr double kSunPoleOneMinus = 2e-12;
 
 void Copy3(const double from[3], double to[3]) {
   to[0] = from[0];
@@ -92,7 +94,10 @@ void OpenTrapezoidWeights(const std::vector<double>& params, std::vector<double>
 }
 
 // The forward parameter step from index i to index next on the 2 pi circle (params ascending
-// over one period, any start): the seam step closes the period.
+// over one period, any start): the seam step closes the period. The closed path TRUSTS the
+// caller's coverage claim (dp_contour.hpp: "the params cover one full 2 pi-period circle"): a
+// span falling short of 2 pi passes silently and the weight sum is short by the same amount —
+// nothing validates the precondition.
 double CircleStep(const std::vector<double>& params, size_t i, size_t next) {
   if (next != 0) {
     return params[next] - params[i];

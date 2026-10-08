@@ -81,6 +81,8 @@ int DeclaredCurveRuleOrder(CurveRule rule);
 //   `closed`: the params cover one full 2 pi-period circle and the weight of the seam interval
 //   [theta_{N-1}, theta_0 + 2 pi] wraps onto its endpoints (the only closed parameterization v1
 //   produces: spin orbits and latitude circles — a non-2pi period would extend this signature).
+//   The coverage is a precondition, not a check: a params list whose total span falls short of
+//   2 pi passes silently and the weights sum to that shorter span.
 //   `kink`: per-point marks; read only under kKinkSegmented (ignored, not validated, otherwise —
 //   the rule choice itself is the caller's structural statement).
 // A kink rule on a closed curve cuts at every marked point; the segments between consecutive
@@ -153,6 +155,8 @@ struct OrbitFiberStream {
 // `sun_hat` points AT the sun; the incident propagation is -sun_hat. The degeneracy threshold
 // matches the measure layer's kDegenerateSunGeometry form (|s_z| > 1 - 1e-12,
 // declared_density.hpp) so the two layers call the same geometry collapsed.
+// Input domain: `grid` must be >= 1 (the sample count is cast to size_t — a non-positive value
+// wraps and fails far from this signature; a non-positive grid is a caller bug, not a verdict).
 OrbitFiberStream MakeOrbitFiberStream(const FaceNormalTable& normals, const FacePolygonTable& polygons,
                                       const int* slots, int slot_count, const PoseDensitySpec& spec,
                                       const double sun_hat[3], double refractive_index, int grid);
@@ -186,6 +190,10 @@ struct RestrictedFamilyCurve {
 // a family axis or a pole sun returns the same verdicts as the orbit producer (empty / all
 // degenerate is not applicable here — there is no orbit to restrict to), as an EMPTY curve with
 // the reason in `note`.
+// Input domain: `grid` must be >= 1 (same wrap hazard as the orbit producer). The wavelength
+// tables `wavelengths_nm` / `indices` are PARALLEL arrays of `wavelength_count` entries — both
+// must be non-null when the count is > 0; with count 0 both may be null and no chromatic rows
+// are produced.
 RestrictedFamilyCurve MakeRestrictedFamilyCurve(const FaceNormalTable& normals, const FacePolygonTable& polygons,
                                                 const int* slots, int slot_count, const PoseDensitySpec& spec,
                                                 const double sun_hat[3], double base_index,
@@ -228,6 +236,12 @@ ChainCurve ChainFromBoundaryPieces(const BoundaryWalkRecord& record, WalkStatus 
 // arcs is an empty chain with the curve's own status and note). The arc completeness vocabulary
 // (KinkCurve::Complete, coverage) rides in `note`: existence is the WALK's status, the arcs'
 // uncertified completeness is 660.3's honesty rule and is not flattened into existence.
+// `param` semantics under concatenation: cumulative chord arclength from point 0 over the WHOLE
+// polyline, so the jump from one arc's end to the next arc's first point is counted as if it
+// were a real chord — per-component differences are faithful, ACROSS components the absolute
+// values are not comparable (each later arc's params carry the accumulated jumps before it). A
+// consumer must re-split at the kink marks and read within-segment differences (the declared
+// consumption for the B2 production adapter).
 ChainCurve ChainFromKinkArcs(const KinkCurve& curve);
 
 }  // namespace lumice::analytic

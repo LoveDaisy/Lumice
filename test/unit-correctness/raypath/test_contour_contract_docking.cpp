@@ -183,8 +183,27 @@ CriticalSetCurve ToContract(const analytic::RestrictedFamilyCurve& curve) {
 WeightSingularChain ToContract(const analytic::ChainCurve& chain) {
   WeightSingularChain out;
   out.is_gate_boundary = chain.is_gate_boundary;
-  EXPECT_EQ(chain.existence, analytic::CurveExistence::kComputed);  // mapping helper: EXPECT
-  out.existence = ExistenceState::kComputed;
+  // Value-for-value across the mirrored enums, all four arms spelled (the mirrors' docking
+  // claim: a drift on either side breaks THIS switch — -Wswitch on an added/renamed analytic
+  // arm, an unread mapping here). kEscaped / kS4Declared are partition/report vocabulary the
+  // contour producers never emit; their arms exist so the translation stays total, not because
+  // a producer chain is expected to carry them.
+  switch (chain.existence) {
+    case analytic::CurveExistence::kComputed:
+      out.existence = ExistenceState::kComputed;
+      break;
+    case analytic::CurveExistence::kEscaped:
+      out.existence = ExistenceState::kEscaped;
+      break;
+    case analytic::CurveExistence::kWalkTruncated:
+      out.existence = ExistenceState::kWalkTruncated;
+      break;
+    case analytic::CurveExistence::kS4Declared:
+      out.existence = ExistenceState::kS4Declared;
+      break;
+  }
+  // The walk message has no contract-side carrier in v1 (the struct carries no note field —
+  // the same vocabulary gap as event's -1), so `note` stops here by contract, not by omission.
   out.u = chain.u;
   out.param = chain.param;
   out.kink = chain.kink;
@@ -496,6 +515,9 @@ TEST(ContourDocking, C12TintReproducesTheLI51Authority) {
   // (white +-0.012, blue +-0.02 at 8192 — the plan's "do not tighten the authority's
   // tolerances"): the LI #51 kernel, E = (1/2 pi) int A T dtheta per member of the 24-member
   // L1/PBD orbit, tint = blue/red energy per target.
+  // Sync duty: the authority values and tolerances below are duplicated with
+  // test_fiber_quadrature.cpp's C12 block (there the handwritten grid, here the producer path —
+  // the redundancy is the point); when LI's anchors or tolerances move, change BOTH.
   const Tables t = RhombicPlate();
   const UMarginal measure = PlateMeasure();
   const ClassTint white = ClassTintOverOrbit(t, { 1, 3, 4, 2 }, 8192, measure, 9.0, 180.0);
@@ -566,7 +588,7 @@ TEST(ContourDocking, C11FamilyCollapseValidArcAndOutgoing) {
   TargetSpot(20.0, -120.0, spot[1]);
 
   int valid = 0;
-  double landing_min[2] = { 1e9, 1e9 };
+  double landing_max = 0.0;  // max over valid samples of the NEAREST spot's distance
   for (const analytic::OrbitFiberPoint& p : stream.samples) {
     if (!p.valid) {
       continue;
@@ -574,17 +596,43 @@ TEST(ContourDocking, C11FamilyCollapseValidArcAndOutgoing) {
     valid++;
     // The spot a beam lands on is -outgoing.
     const double landing[3] = { -p.outgoing[0], -p.outgoing[1], -p.outgoing[2] };
+    double nearest = 1e9;
     for (int k = 0; k < 2; k++) {
       const double diff[3] = { landing[0] - spot[k][0], landing[1] - spot[k][1], landing[2] - spot[k][2] };
-      landing_min[k] = std::min(landing_min[k], Norm3(diff));
+      nearest = std::min(nearest, Norm3(diff));
     }
+    landing_max = std::max(landing_max, nearest);
   }
   // The valid arc: 60 degrees at the grid's resolution (one cell = 0.5 deg).
   EXPECT_NEAR(valid * 360.0 / grid, 60.0, 1.0);
-  // Every valid sample's landing sits on ONE of the two spots within the corpus's 3.8e-12.
-  const double best = std::min(landing_min[0], landing_min[1]);
-  printf("[c11-landing] min |landing - spot| = %.3e (spot+ %.3e spot- %.3e)\n", best, landing_min[0], landing_min[1]);
-  EXPECT_LE(best, 3.8e-12);
+  // EVERY valid sample's landing sits on ONE of the two spots within the corpus's 3.8e-12 — the
+  // pointwise form the AC declares. A min over samples would certify "at least one lucky
+  // sample"; the fold identity claims all of them, so the statistic is max-of-nearest.
+  printf("[c11-landing] max-over-valid |landing - nearest spot| = %.3e\n", landing_max);
+  EXPECT_LE(landing_max, 3.8e-12);
+}
+
+TEST(ContourDocking, ChainMappingCarriesAWalkTruncatedChainAcrossTheBoundary) {
+  // The mirror enum's docking claim needs a non-kComputed chain actually crossing ToContract:
+  // the analytic side's kWalkTruncated chain (a walk refusal with an empty record — the same
+  // construction ChainStatusMappingAndTrustTheStatus pins on the analytic side) mapped into the
+  // contract's WeightSingularChain, the mechanical fields carried one-for-one and the refusal
+  // status surviving the boundary. The walk message itself has no contract carrier (no note
+  // field on the struct — declared in ToContract), so it is asserted on the analytic side only.
+  analytic::BoundaryWalkRecord empty;
+  const analytic::ChainCurve truncated = analytic::ChainFromBoundaryPieces(empty, analytic::WalkStatus::kStepsExhausted,
+                                                                           "MAX_WALK_STEPS without a corner");
+  ASSERT_EQ(truncated.existence, analytic::CurveExistence::kWalkTruncated);
+  ASSERT_NE(truncated.note.find("MAX_WALK_STEPS"), std::string::npos);
+
+  const WeightSingularChain out = ToContract(truncated);
+  EXPECT_TRUE(out.is_gate_boundary);  // kind-2 flag passthrough: this mapping IS the boundary-walk path
+  EXPECT_EQ(out.existence, ExistenceState::kWalkTruncated);
+  EXPECT_TRUE(out.u.empty());
+  EXPECT_TRUE(out.param.empty());
+  EXPECT_TRUE(out.kink.empty());
+  EXPECT_TRUE(out.event.empty());
+  EXPECT_FALSE(out.closed);  // closure IS the kOk certificate; a refusal never closes
 }
 
 }  // namespace
