@@ -283,6 +283,8 @@ set(LUMICE_LAYER_raypath_FILES
   raypath/detail/schema3/geometry_source.hpp
   raypath/detail/schema3/structure_object.cpp
   raypath/detail/schema3/structure_object.hpp
+  raypath/detail/schema3/structure_enumeration.cpp
+  raypath/detail/schema3/structure_enumeration.hpp
   raypath/detail/schema3/support_block.cpp
   raypath/detail/schema3/support_block.hpp
   raypath/path_feature_report.hpp

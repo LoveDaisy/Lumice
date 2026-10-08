@@ -21,36 +21,23 @@ bool AtEndpoint(double value, const std::vector<analytic::DeviationInterval>& in
   return false;
 }
 
-}  // namespace
-
-MemberSupport MemberSupportOf(const analytic::FaceNormalTable& normals, const analytic::FacePolygonTable& polygons,
-                              const int* slots, int slot_count, double base_index, const std::vector<int>& member,
-                              const std::vector<double>& wavelengths_nm, const std::vector<double>& indices) {
-  MemberSupport row;
-  row.member = member;
-  const analytic::DeviationField field(normals, polygons, slots, slot_count, base_index);
-  const AxisAssembly assembly = AssembleAxis(field);
-  row.axis = assembly.axis;
-  if (!assembly.axis.walk_closed || assembly.axis.context.coverage != PartitionContext::Coverage::kComplete) {
-    // Fail closed: a refused or escaped axis has no intervals, hence no endpoint objects and no
-    // constant-curve reading — the refusal is the row's content.
-    return row;
-  }
-  for (const analytic::CriticalOnset& onset : assembly.onsets) {
-    if (AtEndpoint(onset.value, assembly.axis.intervals)) {
-      row.endpoint_onsets.push_back(onset);
-    }
-  }
-
-  // The closed-form constant-D_P circles at the base index, then the n-continuation leg: the
-  // same weight step re-read at each of the caller's indices (one WeightKinks pass per index,
-  // shared by every curve — the marched steps of that pass are the price of the authority).
-  const std::vector<analytic::KinkCurve> base_kinks = analytic::WeightKinks(field, analytic::KinkOptions{});
-  std::vector<std::vector<analytic::KinkCurve>> per_lambda_kinks(indices.size());
+// The closed-form constant-D_P circles at the base index, then the n-continuation leg: the same
+// weight step re-read at each of the caller's indices (one WeightKinks pass per index, shared by
+// every curve — the marched steps of that pass are the price of the authority).
+std::vector<ConstantDeltaCurve> ConstantCurvesFor(const analytic::FaceNormalTable& normals,
+                                                  const analytic::FacePolygonTable& polygons, const int* slots,
+                                                  int slot_count, double base_index,
+                                                  const std::vector<double>& wavelengths_nm,
+                                                  const std::vector<double>& indices) {
+  const analytic::DeviationField base(normals, polygons, slots, slot_count, base_index);
+  const std::vector<analytic::KinkCurve> base_kinks = analytic::WeightKinks(base, analytic::KinkOptions{});
+  std::vector<std::vector<analytic::KinkCurve>> per_lambda_kinks;
+  per_lambda_kinks.reserve(std::min(wavelengths_nm.size(), indices.size()));
   for (size_t k = 0; k < indices.size() && k < wavelengths_nm.size(); k++) {
     const analytic::DeviationField per_lambda(normals, polygons, slots, slot_count, indices[k]);
-    per_lambda_kinks[k] = analytic::WeightKinks(per_lambda, analytic::KinkOptions{});
+    per_lambda_kinks.push_back(analytic::WeightKinks(per_lambda, analytic::KinkOptions{}));
   }
+  std::vector<ConstantDeltaCurve> out;
   for (const analytic::KinkCurve& kink : base_kinks) {
     if (kink.coverage != analytic::KinkCoverage::kClosedFormAuthority || kink.arcs.empty() ||
         kink.arcs[0].values.empty()) {
@@ -75,9 +62,47 @@ MemberSupport MemberSupportOf(const analytic::FaceNormalTable& normals, const an
         }
       }
     }
-    row.constant_curves.push_back(std::move(curve));
+    out.push_back(std::move(curve));
   }
+  return out;
+}
+
+MemberSupport RowFrom(const AxisAssembly& assembly, const analytic::FaceNormalTable& normals,
+                      const analytic::FacePolygonTable& polygons, const int* slots, int slot_count, double base_index,
+                      const std::vector<int>& member, const std::vector<double>& wavelengths_nm,
+                      const std::vector<double>& indices) {
+  MemberSupport row;
+  row.member = member;
+  row.axis = assembly.axis;
+  if (!assembly.axis.walk_closed || assembly.axis.context.coverage != PartitionContext::Coverage::kComplete) {
+    // Fail closed: a refused or escaped axis has no intervals, hence no endpoint objects and no
+    // constant-curve reading — the refusal is the row's content.
+    return row;
+  }
+  for (const analytic::CriticalOnset& onset : assembly.onsets) {
+    if (AtEndpoint(onset.value, assembly.axis.intervals)) {
+      row.endpoint_onsets.push_back(onset);
+    }
+  }
+  row.constant_curves = ConstantCurvesFor(normals, polygons, slots, slot_count, base_index, wavelengths_nm, indices);
   return row;
+}
+
+}  // namespace
+
+MemberSupport SupportRowOf(const AxisAssembly& assembly, const analytic::FaceNormalTable& normals,
+                           const analytic::FacePolygonTable& polygons, const int* slots, int slot_count,
+                           double base_index, const std::vector<int>& member, const std::vector<double>& wavelengths_nm,
+                           const std::vector<double>& indices) {
+  return RowFrom(assembly, normals, polygons, slots, slot_count, base_index, member, wavelengths_nm, indices);
+}
+
+MemberSupport MemberSupportOf(const analytic::FaceNormalTable& normals, const analytic::FacePolygonTable& polygons,
+                              const int* slots, int slot_count, double base_index, const std::vector<int>& member,
+                              const std::vector<double>& wavelengths_nm, const std::vector<double>& indices) {
+  const analytic::DeviationField field(normals, polygons, slots, slot_count, base_index);
+  return RowFrom(AssembleAxis(field), normals, polygons, slots, slot_count, base_index, member, wavelengths_nm,
+                 indices);
 }
 
 FamilySupport AggregateFamily(const std::vector<MemberSupport>& rows) {

@@ -51,6 +51,24 @@ struct MemberSupport {
   std::vector<ConstantDeltaCurve> constant_curves;       // closed constant-D_P circles inside
 };
 
+// The Phi-class aggregate: whether one reflection-group orbit's rows share the support — every
+// row's partition completed and the interval endpoints agree within kExtremumAtol. `intervals`
+// is the shared list when `shared`, empty otherwise (an agreeing family reports its intervals
+// once; a disagreeing one reports nothing rather than a fabricated union). `members` carries the
+// clustered rows' face sequences (the enumeration's clustering fills it).
+struct FamilySupport {
+  bool shared = false;
+  std::vector<analytic::DeviationInterval> intervals;
+  std::vector<std::vector<int>> members;
+};
+FamilySupport AggregateFamily(const std::vector<MemberSupport>& rows);
+
+// The layer's support block (the schema3 top-level `support` field's content).
+struct SupportBlock {
+  std::vector<MemberSupport> members;
+  std::vector<FamilySupport> families;
+};
+
 // Builds one member's support row. `wavelengths_nm` / `indices` are parallel arrays (the
 // caller's n-continuation table; both empty = no per-wavelength leg); the base index drives the
 // partition and the onset table.
@@ -58,15 +76,12 @@ MemberSupport MemberSupportOf(const analytic::FaceNormalTable& normals, const an
                               const int* slots, int slot_count, double base_index, const std::vector<int>& member,
                               const std::vector<double>& wavelengths_nm, const std::vector<double>& indices);
 
-// The Phi-class aggregate: whether one reflection-group orbit's rows share the support — every
-// row's partition completed and the interval endpoints agree within kExtremumAtol. `intervals`
-// is the shared list when `shared`, empty otherwise (an agreeing family reports its intervals
-// once; a disagreeing one reports nothing rather than a fabricated union).
-struct FamilySupport {
-  bool shared = false;
-  std::vector<analytic::DeviationInterval> intervals;
-};
-FamilySupport AggregateFamily(const std::vector<MemberSupport>& rows);
+// The row from an assembly the caller already ran (the enumeration's path — one axis assembly
+// per member feeds the objects AND this row).
+MemberSupport SupportRowOf(const AxisAssembly& assembly, const analytic::FaceNormalTable& normals,
+                           const analytic::FacePolygonTable& polygons, const int* slots, int slot_count,
+                           double base_index, const std::vector<int>& member, const std::vector<double>& wavelengths_nm,
+                           const std::vector<double>& indices);
 
 }  // namespace lumice::raypath::schema3
 

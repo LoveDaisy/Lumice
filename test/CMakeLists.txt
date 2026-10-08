@@ -305,7 +305,10 @@ add_executable(unit_correctness_test
   "${PROJ_TEST_DIR}/unit-correctness/raypath/test_geometry_source.cpp"
   # schema3 report core (666.1): the support block — the delta-axis facts per member,
   # the C05/C06 120-degree complement, the hole-edge constant curve with dispersion.
-  "${PROJ_TEST_DIR}/unit-correctness/raypath/test_support_block.cpp")
+  "${PROJ_TEST_DIR}/unit-correctness/raypath/test_support_block.cpp"
+  # schema3 report core (666.1): the enumeration driver — the C09 unlit shape, the C11
+  # identity fields, the S2 chains, the coverage table, A1 registration, families.
+  "${PROJ_TEST_DIR}/unit-correctness/raypath/test_structure_enumeration.cpp")
 target_include_directories(unit_correctness_test
   PRIVATE ${PROJ_TEST_DIR})
 target_compile_definitions(unit_correctness_test PRIVATE
