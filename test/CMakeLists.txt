@@ -293,6 +293,7 @@ add_executable(unit_correctness_test
   "${PROJ_TEST_DIR}/unit-correctness/raypath/test_declared_density.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/raypath/test_visibility_certificate.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/raypath/test_fiber_quadrature.cpp"
+  "${PROJ_TEST_DIR}/unit-correctness/raypath/test_contour_contract_docking.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/raypath/test_weight_profile.cpp")
 target_include_directories(unit_correctness_test
   PRIVATE ${PROJ_TEST_DIR})
