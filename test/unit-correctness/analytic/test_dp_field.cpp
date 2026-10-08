@@ -398,10 +398,30 @@ TEST(DPField, SlabFieldHasNoNan) {
   const Fixture f(Prism(1.0));
   const int faces[3] = { 3, 1, 6 };
   const DeviationField field = f.Field(faces, 3, kN550);
-  const double axis[2][3] = { { 0.0, 0.0, 1.0 }, { 0.0, 0.0, -1.0 } };
-  for (const auto& u : axis) {
+  // The axis sits exactly on the entry gate: the prism face normal is horizontal, so the gate
+  // cosine is exactly 0 on every ISA, and v_p is false — the fail-closed contract pinned here is
+  // the gate verdict, not the NaN bit of d_p. kEvaluateAll evaluates past the failed gate, the
+  // exit Snell discriminant lands at ~±1e-16, and the SIGN of that residual — hence whether the
+  // outgoing direction, and with it d_p, is NaN — is the platform's rounding order (LI
+  // convention 3; the same family as the arm64-vs-x86 fixture drift that moved the angle
+  // tolerances in commit ba512cd1). The two axis ends differ in the location band, both
+  // deterministically: at one end the evaluated-through internal incidence at the basal face is
+  // -1/n (the chain's ray moves away from it), the smallest validity margin is strongly negative
+  // and the point is kExterior; at the other the ray meets the basal face head-on (incidence
+  // +1/n), every margin sits at-or-inside the band and the point is kBoundary.
+  {
+    const double u[3] = { 0.0, 0.0, 1.0 };
     const FieldSample s = field.Sample(u);
-    EXPECT_TRUE(std::isnan(s.d_p)) << "the chain hits the entry gate at the axis";
+    EXPECT_FALSE(s.v_p) << "the axis sits on the entry gate: its margin is exactly 0";
+    EXPECT_EQ(s.location, DomainLocation::kExterior) << "axis +z";
+    EXPECT_TRUE(std::isfinite(s.d_value)) << "the slab form has no square root";
+    ExpectNearDeg(s.d_value, 180.0, 1e-9, "at the axis M u = -u: the crease value is pi");
+  }
+  {
+    const double u[3] = { 0.0, 0.0, -1.0 };
+    const FieldSample s = field.Sample(u);
+    EXPECT_FALSE(s.v_p) << "the axis sits on the entry gate: its margin is exactly 0";
+    EXPECT_EQ(s.location, DomainLocation::kBoundary) << "axis -z";
     EXPECT_TRUE(std::isfinite(s.d_value)) << "the slab form has no square root";
     ExpectNearDeg(s.d_value, 180.0, 1e-9, "at the axis M u = -u: the crease value is pi");
   }
