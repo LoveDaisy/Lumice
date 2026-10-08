@@ -29,6 +29,7 @@
 
 #include "analytic/dp_contour.hpp"
 #include "analytic/dp_field.hpp"
+#include "analytic/dp_focus.hpp"
 #include "analytic/dp_partition.hpp"
 #include "raypath/detail/measure/measure_geometry_contract.hpp"
 
@@ -73,11 +74,24 @@ struct PartitionedAxis {
   std::vector<analytic::DeviationInterval> intervals;            // empty unless coverage == kComplete
 };
 
-// The partition of `field`'s D_P axis: the kernel's own assembly (WalkBoundary -> interior
-// critical points, slab branch or lattice Newton -> DomainTopologyOf -> IntervalPartition). A
-// walk refusal means no partition was run (coverage kUnknown, intervals empty — the kernel's
-// own fail-closed shape); an escape means the partition refused (coverage kIncomplete, intervals
-// empty — PartitionResult's mechanical invariant); a complete partition carries its intervals.
+// The ONE assembly of a field's axis (the kernel's own call order — WalkBoundary -> interior
+// critical points, slab branch or lattice Newton -> DomainTopologyOf -> IntervalPartition, and
+// FieldOnsets' table off the same walk/interior): every consumer (the partition reading, the
+// support block's endpoint objects, the enumeration's chains) reads this, so the expensive
+// pieces run once and no consumer re-derives a second assembly. `record` is filled on a closed
+// walk (the kernel's own invariant: a refusal delivers no loop data).
+struct AxisAssembly {
+  PartitionedAxis axis;
+  std::vector<analytic::CriticalOnset> onsets;  // FieldOnsets' table; empty when the walk refused
+  analytic::BoundaryWalkRecord record;          // the closed walk's rich bookkeeping (chains)
+};
+
+AxisAssembly AssembleAxis(const analytic::DeviationField& field);
+
+// The partition view of the assembly (the certificate's consumption face). A walk refusal means
+// no partition was run (coverage kUnknown, intervals empty — the kernel's own fail-closed
+// shape); an escape means the partition refused (coverage kIncomplete, intervals empty —
+// PartitionResult's mechanical invariant); a complete partition carries its intervals.
 PartitionedAxis PartitionAxisOf(const analytic::DeviationField& field);
 
 // The kernel regime slug -> the contract's registered EscapeRegime value, by name (the

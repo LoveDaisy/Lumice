@@ -302,7 +302,10 @@ add_executable(unit_correctness_test
   # schema3 report core (666.1): the geometry adapter — walk-status/existence mapping per kernel
   # value, the contract conversions, the regime slug table (G3 evidence), the beta partition
   # anchors, the G5 u-fidelity verification.
-  "${PROJ_TEST_DIR}/unit-correctness/raypath/test_geometry_source.cpp")
+  "${PROJ_TEST_DIR}/unit-correctness/raypath/test_geometry_source.cpp"
+  # schema3 report core (666.1): the support block — the delta-axis facts per member,
+  # the C05/C06 120-degree complement, the hole-edge constant curve with dispersion.
+  "${PROJ_TEST_DIR}/unit-correctness/raypath/test_support_block.cpp")
 target_include_directories(unit_correctness_test
   PRIVATE ${PROJ_TEST_DIR})
 target_compile_definitions(unit_correctness_test PRIVATE

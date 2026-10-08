@@ -70,18 +70,20 @@ FiberSampleStream StreamOf(const analytic::OrbitFiberStream& stream) {
   return out;
 }
 
-PartitionedAxis PartitionAxisOf(const analytic::DeviationField& field) {
-  PartitionedAxis out;
-  const analytic::WalkResult walk = analytic::WalkBoundary(field, analytic::BoundaryWalkOptions{});
-  out.walk_status = walk.status;
-  out.walk_closed = walk.status == analytic::WalkStatus::kOk;
-  if (!out.walk_closed) {
+AxisAssembly AssembleAxis(const analytic::DeviationField& field) {
+  AxisAssembly out;
+  analytic::BoundaryWalkRecord record;
+  const analytic::WalkResult walk = analytic::WalkBoundary(field, analytic::BoundaryWalkOptions{}, &record);
+  out.axis.walk_status = walk.status;
+  out.axis.walk_closed = walk.status == analytic::WalkStatus::kOk;
+  if (!out.axis.walk_closed) {
     // No loop, no partition (the kernel's own fail-closed shape): the certificate is
-    // unavailable at its kind-2 object.
-    out.context.coverage = PartitionContext::Coverage::kUnknown;
-    out.message = walk.message;
+    // unavailable at its kind-2 object, and there is no loop data to keep.
+    out.axis.context.coverage = PartitionContext::Coverage::kUnknown;
+    out.axis.message = walk.message;
     return out;
   }
+  out.record = std::move(record);
   std::vector<analytic::InteriorCriticalPoint> interior;
   analytic::DegenerateFoldSet fold_set;
   const analytic::DegenerateFoldSet* fold_set_ptr = nullptr;
@@ -99,14 +101,19 @@ PartitionedAxis PartitionAxisOf(const analytic::DeviationField& field) {
     // The escape is DATA (PartitionResult's mechanical invariant: intervals empty). The slug is
     // the report-side datum; the contract's typed field gets the default (G3 pending — the
     // module docstring records why that field is not authoritative here).
-    out.context.coverage = PartitionContext::Coverage::kIncomplete;
-    out.regime_slug = analytic::EscapeRegimeName(partition.regime);
-    out.message = partition.message;
+    out.axis.context.coverage = PartitionContext::Coverage::kIncomplete;
+    out.axis.regime_slug = analytic::EscapeRegimeName(partition.regime);
+    out.axis.message = partition.message;
     return out;
   }
-  out.context.coverage = PartitionContext::Coverage::kComplete;
-  out.intervals = partition.intervals;
+  out.axis.context.coverage = PartitionContext::Coverage::kComplete;
+  out.axis.intervals = partition.intervals;
+  out.onsets = analytic::FieldOnsets(field, fold_set_ptr, walk.loop, analytic::InteriorNewtonOptions{});
   return out;
+}
+
+PartitionedAxis PartitionAxisOf(const analytic::DeviationField& field) {
+  return AssembleAxis(field).axis;
 }
 
 bool ContractRegimeOfSlug(const std::string& slug, EscapeRegime* out) {
