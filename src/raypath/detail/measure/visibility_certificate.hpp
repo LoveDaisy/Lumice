@@ -69,7 +69,10 @@ struct VisibilityCertificate {
 // verdict comes from the stream alone); `partition` may be null (treated as kUnknown coverage).
 // Routing, in order: a degenerate measure is unproven; a kIncomplete partition (a real escape)
 // is unproven fail-closed — an escaped slice cannot vouch anything; a kind-1 curve whose
-// existence is not kComputed is unproven (walk_truncated / escaped). From there the stream
+// existence is not kComputed is unproven (walk_truncated / escaped / s4_declared each with its
+// own stable reason, and — the enum being open — ANY other value with reason
+// "kind1_existence_unknown": the routing is negative-form fail-closed, an existence value this
+// code has never seen never reads as computed). From there the stream
 // decides: no in-support sample at all is unproven; all-lit under kStructural or
 // kSampledExhaustive evidence is CERTIFIED (a per-point statement — a kUnknown or absent
 // partition does not block it: the object's bucket placement consumes existence and partition

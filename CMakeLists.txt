@@ -1071,6 +1071,7 @@ add_library(lumice_raypath_obj OBJECT
   "${PROJ_SRC_DIR}/raypath/detail/feature_discovery.cpp"
   "${PROJ_SRC_DIR}/raypath/detail/input_assembly.cpp"
   "${PROJ_SRC_DIR}/raypath/detail/physical_member_scope.cpp"
+  "${PROJ_SRC_DIR}/raypath/detail/schema3/geometry_source.cpp"
   "${PROJ_SRC_DIR}/raypath/detail/schema3/structure_object.cpp"
   "${PROJ_SRC_DIR}/raypath/detail/path_feature_report_json.cpp"
   "${PROJ_SRC_DIR}/raypath/detail/measure/declared_density.cpp"

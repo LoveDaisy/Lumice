@@ -298,7 +298,11 @@ add_executable(unit_correctness_test
   "${PROJ_TEST_DIR}/unit-correctness/raypath/test_weight_profile.cpp"
   # schema3 report core (666.1): the object record's data layer — the bucket-derivation grid,
   # the fail-closed arms, the open-enum registered tables.
-  "${PROJ_TEST_DIR}/unit-correctness/raypath/test_structure_object.cpp")
+  "${PROJ_TEST_DIR}/unit-correctness/raypath/test_structure_object.cpp"
+  # schema3 report core (666.1): the geometry adapter — walk-status/existence mapping per kernel
+  # value, the contract conversions, the regime slug table (G3 evidence), the beta partition
+  # anchors, the G5 u-fidelity verification.
+  "${PROJ_TEST_DIR}/unit-correctness/raypath/test_geometry_source.cpp")
 target_include_directories(unit_correctness_test
   PRIVATE ${PROJ_TEST_DIR})
 target_compile_definitions(unit_correctness_test PRIVATE

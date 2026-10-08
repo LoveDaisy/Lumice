@@ -278,5 +278,24 @@ TEST(VisibilityCertificate, RegisteredStatesWalk) {
   EXPECT_STREQ(VisibilityStateName(VisibilityState::kUnlit), "unlit");
 }
 
+// G7 (661's registered integration gap, fixed here): the existence routing must be NEGATIVE-form
+// fail-closed — an existence value the certificate does not know (a value appended to the open
+// enum after this code was written, constructed here by cast) answers unproven with a stable
+// reason, NEVER the stream sweep (which the old per-== whitelist fell through to, reading an
+// unknown existence as computed).
+TEST(VisibilityCertificate, UnknownExistenceValueRoutesFailClosed) {
+  const UMarginal measure = PlateMeasure();
+  FiberSampleStream stream;
+  stream.evidence = FiberSampleStream::EvidenceForm::kSampledExhaustive;
+  for (int i = 0; i < 8; i++) {
+    stream.samples.push_back(OnOrbitSample(measure, 0.8 * i, 0.5, 0.7, 0.1));  // all lit
+  }
+  CriticalSetCurve unknown;
+  unknown.existence = static_cast<ExistenceState>(99);  // a value appended after this code
+  const VisibilityCertificate cert = CertifyVisibility(measure, stream, &unknown, nullptr, 1e-6);
+  EXPECT_EQ(cert.state, VisibilityState::kUnproven);
+  EXPECT_EQ(std::string(cert.reason), "kind1_existence_unknown");
+}
+
 }  // namespace
 }  // namespace lumice::raypath

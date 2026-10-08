@@ -33,6 +33,7 @@ constexpr const char* kReasonEscape = "partition_escape";
 constexpr const char* kReasonTruncated = "kind1_walk_truncated";
 constexpr const char* kReasonKind1Escaped = "kind1_escaped";
 constexpr const char* kReasonKind1S4Declared = "kind1_s4_declared";
+constexpr const char* kReasonKind1Unknown = "kind1_existence_unknown";
 constexpr const char* kReasonNoSupportSamples = "no_in_support_samples";
 constexpr const char* kReasonPartialEvidence = "sampled_partial_evidence";
 constexpr const char* kReasonNoKind1 = "no_kind1_curve";
@@ -60,22 +61,29 @@ VisibilityCertificate CertifyVisibility(const UMarginal& measure, const FiberSam
     out.reason = kReasonEscape;
     return out;
   }
-  if (kind1 != nullptr && kind1->existence == ExistenceState::kWalkTruncated) {
+  if (kind1 != nullptr && kind1->existence != ExistenceState::kComputed) {
+    // G7: the negative form of the old per-== whitelist. A non-computed curve answers nothing —
+    // and the contract's enum is OPEN, so the default arm is reachable by construction: a value
+    // appended after this code was written routes fail-closed (unproven with its own stable
+    // reason) instead of falling through to the stream sweep, which read it as computed.
     out.state = VisibilityState::kUnproven;
-    out.reason = kReasonTruncated;
-    return out;
-  }
-  if (kind1 != nullptr && kind1->existence == ExistenceState::kEscaped) {
-    out.state = VisibilityState::kUnproven;
-    out.reason = kReasonKind1Escaped;
-    return out;
-  }
-  if (kind1 != nullptr && kind1->existence == ExistenceState::kS4Declared) {
-    // A declared-but-not-walked curve is a different blocking condition than an escape (one
-    // reason per condition): whether it can serve as unlit's curve-presence leg is a 660-side
-    // semantic call, escalated — until then it answers nothing, on the conservative side.
-    out.state = VisibilityState::kUnproven;
-    out.reason = kReasonKind1S4Declared;
+    switch (kind1->existence) {
+      case ExistenceState::kWalkTruncated:
+        out.reason = kReasonTruncated;
+        break;
+      case ExistenceState::kEscaped:
+        out.reason = kReasonKind1Escaped;
+        break;
+      case ExistenceState::kS4Declared:
+        // A declared-but-not-walked curve is a different blocking condition than an escape (one
+        // reason per condition): whether it can serve as unlit's curve-presence leg is a 660-side
+        // semantic call, escalated — until then it answers nothing, on the conservative side.
+        out.reason = kReasonKind1S4Declared;
+        break;
+      default:
+        out.reason = kReasonKind1Unknown;
+        break;
+    }
     return out;
   }
 
