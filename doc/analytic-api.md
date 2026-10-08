@@ -1,6 +1,6 @@
 # `liblumice_analytic`: the published analytic interface
 
-> Status: **partly built** (2026-10-04). As built: the target and its per-library export list
+> Status: **partly built** (2026-10-08). As built: the target and its per-library export list
 > (§2.5), logging handed to the host (§6), and packaging with a `find_package` config plus the
 > version policy (§8), and an external-consumer smoke test that builds a C program and loads the
 > library from Python using the install tree alone (§8.7); and the whole of the first module's v0
@@ -9,7 +9,9 @@
 > 3) and component discovery `LUMICE_ANALYTIC_DiscoverComponents` (version 4); and module A v1's
 > per-pose diagnostics on `FiberResult` (version 5, §4.3); and module B v1, the band sum
 > `LUMICE_ANALYTIC_BandSum` (version 6, §4.6), plus diagnostic optics/source/weighted-field numerics
-> (version 7, §4.7), consumed by the bounded schema-2 product report and an install-only research client. Module A serves the Analyze workspace's first phase,
+> (version 7, §4.7), consumed by the bounded schema-2 product report and an install-only research
+> client; and the u-S² field layer, module C's first published half (version 8, §4.8) — the
+> schema3 report's geometry layer, consumed so far by the ABI tests and smoke only. Module A serves the Analyze workspace's first phase,
 > module B its second, the single-path all-sky map (`doc/raypath-analysis.md` §5.1.8). The library is not in any
 > download package yet: that is §8.8's checklist, not done.
 >
@@ -1114,7 +1116,67 @@ Source brackets identify predicates and ranges; they are not exact-contact certi
 assertions that the interface makes a visible blue band. No hidden persistent preparation/cache
 or host callback is introduced.
 
+### 4.8 The u-S² field layer (API 8, as built)
+
+Version 8 publishes the geometry port's kernels (`src/analytic/dp_*.hpp`, the C++ port of LI's
+dp_field / dp_boundary / dp_weight_kink / dp_partition / focusing / chromatic modules; JAX is the
+authority, these are derived implementations). By the u-S² reduction (LI `docs/phase2.md` §1) every
+geometric and optical weight of one fixed face sequence is a function of u — the sun direction in
+the crystal frame — at the identity pose, and these calls publish that layer's objects. No Scene,
+no symmetry reduction, no product labels: the report side (schema3, the B line) is the consumer.
+
+| Call | Object it publishes |
+|---|---|
+| `TraceBoundaryLoop` | kind-2: dU_P walked once around — restricted critical points in walk order, corners, plateau, the closure certificate itself |
+| `TraceWeightKinks` | kind-3: the TIR onset curve C_k of every internal reflection, closed form where the check passes, marched otherwise; `coverage` says which (the completeness declaration) |
+| `ClassifyCriticalStructure` | kind-1: every critical onset with its profile, the gradient-norm range, the density's confined dimensions, `family_pinned`, the mechanism roll-up |
+| `PartitionDeviationAxis` | the completeness certificate: the delta-axis intervals with their component counts, or the refusal |
+| `TraceWavelengthCriticalTable` | the onsets followed across caller-given refractive indices, aligned by rank (n-continuation) |
+| `TraceRestrictedFamilyCurve` | kind-1 restricted: the family latitude circle with D_P at a base index and per wavelength |
+| `DiagnoseChromatic` / `DiagnoseClassTint` | the two-index colour verdicts with the declared threshold snapshot; the class call adds members and lit sets |
+
+**Open enumerations.** `WalkStatus` and `EscapeRegime` are open sets (conclusions §4 item 5
+requires the escapes open for the report side's fail-closed consumption): each result carries the
+value's stable slug string next to it, a caller must handle an unknown value inside a known group,
+and later versions may add values. The number segments are this layer's own, disjoint from
+`LUMICE_ANALYTIC_Reason`'s. Every other v8 enumeration is closed — LI's frozen vocabulary, pinned
+by the parity fixtures.
+
+**Error discipline.** A bad crystal / face sequence / index / density / family / grid is a call
+error; every numerical outcome — a refused walk, an escaped partition, kink seeds that failed, a
+restricted-curve point whose routed D_P is NaN — is result data. The two fail-closed mechanical
+invariants hold at this surface and are pinned by the ABI tests: a refused boundary walk delivers
+an EMPTY loop, and the partition delivers NO intervals unless its walk closed and its reasoning
+did not escape. `PartitionResult` separates the two refusal layers (the walk's own
+`walk_status` versus the reasoning's `regime`) because `IntervalPartition` presupposes a walked
+loop — the bridge refuses before it, never silently.
+
+**Cost and determinism.** Every call rebuilds its field and keeps no state between calls — no
+handle (§9 item 15's reasoning: the shape freezes once published, and waits for a real consumer).
+Costs are lattice-scale: the 20000-point seeding lattice per walk, the partition's 20000-point
+topology lattice (plus a chart-grid audit when a count is plural); measured on the arm64
+reference machine, the 4-8-7-5 partition is ~0.33 s and a 3-5 boundary walk ~3 ms; a call is
+seconds at worst. Deterministic: no random numbers anywhere on this layer — `DiagnoseClassTint`'s
+family sample is a seed-seeded stream inside the call, so its result is fixed by its inputs
+including the seed; the stream is not LI's numpy stream, and the parity caliber there is the
+fixture tolerance, not bit equality.
+
+**Acceptance anchors** (replayed through the ABI by
+`test/unit-correctness/analytic/test_dp_capi.cpp` and
+`test/e2e-correctness/test_analytic_dp_surface.py`): the beta crystal's 4-8-7-5 partitions at
+[0°, 50.161740°, 120°]; 3-1-6's kink is the closed form with spread ~0 and the dark-hole rim
+verdict (blue, visible, at 2 asin √(n²−1)); 3-5-6-7's internal-1 onset coincides with the
+exit-Snell boundary piece while its internal-2 onset misses U_P entirely (an empty curve with NaN
+spread — data); the rank-0 path {3,6} is the point mass; the rhombic plate's parhelion class
+tints blue at ratio 1.492 ± 0.05.
+
+**Not in v8, deliberately.** The contour layer's quadrature rules, orbit fiber stream and chain
+mappings (660.5) stay in-process: their consumers are the measure layer (B1), with no cross-ABI
+consumer — publishing a surface nobody consumes is §9 item 15's rejected shape. See §9 item 16
+for the reopen condition.
+
 ## 5. Conventions, errors, threading **(design)**
+
 
 ### 5.1 Conventions are cited, not defined
 
@@ -1330,8 +1392,8 @@ gone. Throughout this document, "the engine headers" means that set.
   declaration out of foundation or the kernel either, and `-fvisibility=hidden` alone would export
   whatever one of them marks. The guarantee comes from the **per-library export list** (§2.5),
   declared once in `cmake/export_surfaces.cmake`: engine = the six engine headers plus
-  `lumice_analytic_core.h` (101 names), `liblumice_testapi` = engine plus the `LUMICE_TEST_*` hooks
-  (103), `liblumice_analytic` = `lumice_analytic.h` plus the core header (16). Its test is
+  `lumice_analytic_core.h` (109 names), `liblumice_testapi` = engine plus the `LUMICE_TEST_*` hooks
+  (111), `liblumice_analytic` = `lumice_analytic.h` plus the core header (24). Its test is
   mechanical: `scripts/check_export_surface.py` compares a built binary's export table with the
   names its surface headers declare, and both `test_export_symbol_scope.py` and `release.yml`
   (every packaged engine file, both ISA builds) run it.
@@ -1570,6 +1632,7 @@ functions. The first real module's work opens this list. **The state described h
 | 13 | ~~Verify no thread-unsafe static cache in the called geometry/optics code (§5.3).~~ **Answered** — none on `EvaluatePath`'s call graph; pinned by a concurrency test (§5.3). | The first-module implementation (`EvaluatePath`, 2026-09-29) |
 | 14 | An optional batch-mode `FiberResult` variant that also returns per-point segment directions and interface transmittances (today only `EvaluatePath` returns those, §4.3), for a caller with many accepted poses who would otherwise pay one ctypes call per point to get them — in tension with §4.3's own binding-overhead concern. **Not built in v0**: `FiberResult` returns the point list only (§4.3); a caller that needs per-point segments calls `EvaluatePath` per pose. Still open. | Wave 2, with the diagnostics extension |
 | 15 | Reuse of one band-sum sample across calls on the same crystal, path and sun (LI `band-sum-contract.md` §3, a SHOULD): a handle-style API that builds the sorted kept events once and sums several pixel tables or densities against them. **Not built in version 6** (§4.6): every `BandSum` call rebuilds its sample, which costs about 9× for an L2 row summed member by member (the contract's 1.8 s vs 0.2 s at `N = 1e6`). A handle is an API shape that freezes once published, so it waits for its consumer. | The Analyze all-sky map wiring, on its measured need |
+| 16 | ~~Are the contour layer's products (660.5: `SampleCurveWeights` / `ChordLineIntegral` / `OrbitFiberStream` / `ChainFrom*`) part of the C ABI?~~ **Answered — no, and v8 does not carry them** (scrum 660.6): their consumers are in-process (the measure layer B1), so publishing them would be the §9 item 15 shape — a frozen surface with no consumer. The result structs of version 8 are first-published whole, and the same rule would apply. **Reopen when** a cross-ABI consumer appears: the B-line adapter moving through a shared library, or an LI second-batch fixture needing the M1 orbit stream through the ABI — then it is a 0.x additive bump. | The field-layer surface (API 8, 2026-10-08) |
 
 ---
 
@@ -1582,7 +1645,7 @@ dependency one wave later.
 |---|---|---|---|
 | **1** | Module A v0: `EvaluatePath` + **seed search** + `TraceFiber[Batch]`, point list only | Function 1: fiber detail | Writes the discovery contract, exports parity fixtures, researches the diagnostics/weights contract; does not switch |
 | 2 | Module A v1 (diagnostics + weights, `struct_size`-compatible extension); module B (single-path S² binning + banded sum) | Function 2: single-path all-sky map | Certifies A v1, then switches fiber and retires the JAX continuation |
-| 3 | Module C (`dp_field` / `contour` / `focusing`, `Jet2` forward hyper-dual). Spec source: LI `docs/chromatic-module-c.md` (LI #49, 2026-09-30): three kinds of critical line — `D_P` critical points, the boundary `∂U_P`, and the weight kinks (TIR onset of an internal reflection, `DPField.weight_kinks`, not part of `∂U_P`) — plus the two-index colour criterion (`N_RED` / `N_BLUE`, the `ChromaticFeature` table); no per-pose field is added, so modules A and B do not change | Function 3: preset points and mechanism labels | After ch12/12.1 are done with it: switch B, then C |
+| 3 | Module C, **as built in API version 8** (§4.8): the u-S² field layer — kind-1/2/3 critical objects, the delta-axis partition with its open escape regimes, per-wavelength critical tables, the restricted family curve, the chromatic verdicts with their declared threshold snapshot. The port's in-process halves stay internal: Jet2 hyper-dual and the contour quadrature/orbit producers (§9 item 16). No per-pose field is added, so modules A and B do not change | Function 3: preset points and mechanism labels; the schema3 report's geometry layer | The first batch is certified (94 fixtures, §10.1); LI consumes the v8 surface for its second batch (the HANDOFF of 2026-10-08); LI's own switch rhythm unchanged |
 
 **Parity fixtures flow LI → Lumice.** LI exports them at a pinned revision; this repo copies them in
 and runs them in CI. A change goes one way: LI changes first → re-export → this repo's parity goes

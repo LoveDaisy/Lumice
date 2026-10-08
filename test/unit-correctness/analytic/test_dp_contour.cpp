@@ -208,6 +208,16 @@ TEST(DPContour, OpenTrapezoidWeightsAndRefuseWrongShape) {
   EXPECT_TRUE(SampleCurveWeights(CurveRule::kChordTrapezoid, params, true, {}).empty());
 }
 
+// A size mismatch is a caller bug: the answer is NaN, never a plausible 0.0 (an empty curve
+// still integrates to a legitimate zero).
+TEST(DPContour, ChordLineIntegralSizeMismatchIsNanNotZero) {
+  const std::vector<double> u = { 1.0, 0.0, 0.0, 0.0, 1.0, 0.0 };
+  const std::vector<double> f = { 1.0, 1.0 };
+  EXPECT_TRUE(std::isnan(ChordLineIntegral(u, { 1.0 }, false)));
+  EXPECT_TRUE(std::isnan(ChordLineIntegral(u, { 1.0, 1.0, 1.0 }, true)));
+  EXPECT_DOUBLE_EQ(ChordLineIntegral({}, {}, true), 0.0);
+}
+
 TEST(DPContour, ChordArcLengthOfAGreatCircleArc) {
   // Open arc of the equator from 0 to Delta: the chord sum approaches Delta from below with the
   // analytic deficit Delta^3 / (24 N^2) — O(h^2), the declared order, with its constant.
@@ -371,6 +381,53 @@ TEST(DPContour, ClosedKinkRuleMatchesTheSeamConstants) {
     const double cut128 = apply(params2, marks2, CurveRule::kKinkSegmented, true);
     EXPECT_NEAR((cut64 - 4.0) / (cut128 - 4.0), 4.0, 0.05);
   }
+}
+
+// The two loud refusals of the weight rules, pinned (the r2 review's declared-but-untested
+// branches): a closed kink rule with no cut does not apply, and the seam step of the closed walk
+// closes the period through CircleStep's next==0 branch.
+TEST(DPContour, ClosedKinkRuleWithoutMarksIsTheEmptyAnswer) {
+  const std::vector<double> params = { 0.0, kTwoPi / 4.0, kTwoPi / 2.0, 3.0 * kTwoPi / 4.0 };
+  // A closed kink rule needs at least one mark (the cut makes the circle a list of open arcs);
+  // without one the zero-weight answer is louder than a silent wrap over an uncut kink — the
+  // integral reads 0, never a guessed value.
+  const std::vector<double> w = SampleCurveWeights(CurveRule::kKinkSegmented, params, true, {});
+  ASSERT_EQ(w.size(), params.size());
+  for (double weight : w) {
+    EXPECT_DOUBLE_EQ(weight, 0.0);
+  }
+  // The same rule OPEN ignores the (absent) marks: the open trapezoid, weights summing to the
+  // covered span.
+  const std::vector<double> open = SampleCurveWeights(CurveRule::kKinkSegmented, params, false, {});
+  ASSERT_EQ(open.size(), params.size());
+  double sum = 0.0;
+  for (double weight : open) {
+    sum += weight;
+  }
+  EXPECT_NEAR(sum, 3.0 * kTwoPi / 4.0, 1e-12);
+}
+
+TEST(DPContour, SeamStepClosesThePeriodThroughCircleStep) {
+  // One mark at the seam node: the cut walk leaves the mark, rounds the whole circle and comes
+  // back through CircleStep(params, count-1, 0) — the next==0 branch, legal only there (the two
+  // call sites reach it with i == count-1 by construction of (i + 1) % count; i is ignored in
+  // that branch by design, the seam step reading only the ends). The weights must be the exact
+  // node-cell halves summing to one period.
+  const int n = 8;
+  std::vector<double> params(n);
+  std::vector<char> kink(n, 0);
+  for (int i = 0; i < n; i++) {
+    params[i] = kTwoPi * i / n;
+  }
+  kink[0] = 1;  // the seam node: cuts = [0], from == to
+  const std::vector<double> w = SampleCurveWeights(CurveRule::kKinkSegmented, params, true, kink);
+  ASSERT_EQ(w.size(), params.size());
+  double sum = 0.0;
+  for (int i = 0; i < n; i++) {
+    EXPECT_NEAR(w[i], kTwoPi / n, 1e-12) << "node " << i;
+    sum += w[i];
+  }
+  EXPECT_NEAR(sum, kTwoPi, 1e-12);
 }
 
 // ---- the orbit producer -----------------------------------------------------------------------------------

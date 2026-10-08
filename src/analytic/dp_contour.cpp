@@ -209,8 +209,13 @@ std::vector<double> SampleCurveWeights(CurveRule rule, const std::vector<double>
 
 double ChordLineIntegral(const std::vector<double>& u, const std::vector<double>& f, bool closed) {
   const size_t count = f.size();
-  if (count == 0 || u.size() != 3 * count) {
-    return 0.0;
+  if (count == 0) {
+    return 0.0;  // an empty curve integrates to zero legitimately
+  }
+  if (u.size() != 3 * count) {
+    // A size mismatch is a caller bug: an answer indistinguishable from a true zero would hide
+    // it (the failure discipline the rest of this file keeps — NaN, not 0.0).
+    return std::numeric_limits<double>::quiet_NaN();
   }
   double total = 0.0;
   for (size_t i = 0; i + 1 < count; i++) {
@@ -264,7 +269,8 @@ OrbitFiberStream MakeOrbitFiberStream(const FaceNormalTable& normals, const Face
     outputs.interface_transmittances = transmittances.data();
     const bool valid = EvaluatePath(normals, slots, slot_count, refractive_index, incident, pose, &outputs);
     OrbitFiberPoint& point = out.samples[static_cast<size_t>(i)];
-    // u = R^T s_hat (the pose's rows dotted with the sun); the corridor wants the body-frame
+    // u = R^T s_hat: entry r is the sun dotted with the pose's COLUMN r (u = R^T s, so R's
+    // columns are R^T's rows); the corridor wants the body-frame
     // PROPAGATION direction, which is -u.
     for (int r = 0; r < 3; r++) {
       point.u[r] = pose[r] * sun_hat[0] + pose[3 + r] * sun_hat[1] + pose[6 + r] * sun_hat[2];

@@ -163,6 +163,9 @@ FiberSampleStream ToContract(const analytic::OrbitFiberStream& stream) {
   out.binding = MeasureBinding::kFiberParameter;
   out.evidence = FiberSampleStream::EvidenceForm::kSampledExhaustive;
   out.source_name = stream.source_name;
+  // The producer-side fields note / spin_degenerate / grid have no contract-side carrier in v1
+  // (the struct carries none of them): they stop here by contract, not by omission — the same
+  // carrier-gap discipline the chain mapping's note declares.
   return out;
 }
 
@@ -177,6 +180,9 @@ CriticalSetCurve ToContract(const analytic::RestrictedFamilyCurve& curve) {
   out.wavelengths_nm = curve.wavelengths_nm;
   out.critical_d_p = curve.critical_d_p;
   out.support_param = curve.support_param;
+  // The producer-side fields indices / routed_nonfinite / note have no contract-side carrier in
+  // v1: they stop here by contract, not by omission — the same carrier-gap discipline the chain
+  // mapping's note declares.
   return out;
 }
 
