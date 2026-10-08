@@ -186,8 +186,11 @@ TEST(EntryMeasure, MatchesRhombicPlateDiagnosticSnapshot) {
 
 // Pins from LI's geometry.entry_measure at li_rev bfbd042 (the fixture crystals of 3-5__random,
 // 3-5-6-7__random and 13-15-26-28__random, those fixtures' incident direction and n = 1.31, uniformly
-// random poses): the status of every row, and the value up to the unit — this library's crystals are
-// half the size of LI's in length (value ratio 0.25). Over 12000 such poses the statuses agreed
+// random poses): the status of every row, and the value up to the unit — these pins are pre-
+// caliber-fix captures, when LI exported at hexagon edge 1 and this library's reference crystal
+// (circumscribed diameter 1) was a quarter of its area (value ratio 0.25; LI's module C caliber
+// fix later moved LI's export scale to this reference, making the ratio 1 for new captures — the
+// frozen literals keep the 0.25). Over 12000 such poses the statuses agreed
 // everywhere and the value ratio stayed within 1.4e-5 of 0.25, the spread of the float closed-form
 // corners on the pyramid's smallest corridors. Statuses: 0 ok, 1 entry_backface,
 // 2 exit_critical_angle, 3 corridor_empty (the 3-5 sample had no corridor_empty pose).

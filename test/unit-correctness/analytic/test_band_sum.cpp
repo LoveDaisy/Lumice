@@ -226,7 +226,9 @@ TEST(BandSum, PointMassGoesToTheFirstPixelHoldingTheSun) {
 }
 
 // The regular prism's 3-6 at n = 1.31, sun at 15 degrees elevation: LI's recorded rank-0 mass under
-// the random density (contract section 5: 0.11816635 at N = 1e5), and the psi average of a density
+// the random density (contract section 5: 0.11816635 at N = 1e5 at LI's pre-caliber-fix edge-1
+// crystal; the engine reference scale LI's fixtures carry since the module C caliber fix gives the
+// same lattice exactly a quarter of it), and the psi average of a density
 // so wide it is 1 everywhere reproducing the lattice mean.
 TEST(BandSum, RankZeroMassesOfThePrismsParallelPair) {
   LUMICE_ANALYTIC_Crystal crystal{};
@@ -248,7 +250,7 @@ TEST(BandSum, RankZeroMassesOfThePrismsParallelPair) {
   const std::vector<SampleEvent> events = sampler.BuildEvents(n);
   const PointMass lattice = RankZeroMass(events, n, incident, Random());
   EXPECT_EQ(lattice.method, PointMassMethod::kLatticeMean);
-  EXPECT_NEAR(lattice.m, 0.11816635, 5e-9);
+  EXPECT_NEAR(lattice.m, 0.0295415875, 2e-9);
 
   PoseDensitySpec wide;
   wide.family = PoseFamily::kColumn;

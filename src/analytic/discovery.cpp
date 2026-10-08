@@ -214,7 +214,7 @@ std::vector<SampleEvent> IceDiscovery::BuildEvents(int sample_count) {
     if (!EvaluateLatticePoint(sample_count, i, &event.event, &transmission)) {
       continue;
     }
-    event.weight = kLiAreaPerEngineArea * EntryMeasureAt(event.event) * transmission;
+    event.weight = EntryMeasureAt(event.event) * transmission;
     if (event.weight > 0.0) {
       events.push_back(event);
     }

@@ -974,10 +974,12 @@ estimator — which is how the red-state checks below came out.
   both call it, so the two cannot disagree about what an event is. `BuildEvents` keeps every event
   with `w = A·T > 0` in increasing `(D, index)`; a pixel's band is two binary searches on `D`,
   left-closed right-open.
-- **Units.** Values are the contract's (§6: hexagon edge `a = 1`). This library's crystals are half
-  LI's in length, so the entry measure is a quarter of LI's; `kLiAreaPerEngineArea = 4` is applied
-  once, where `BuildEvents` forms `w`. Discovery keeps the native unit, since it only gates on
-  `A > 0`.
+- **Units.** `w` is the entry measure times the Fresnel factor in this library's native unit: the
+  area of the closed-form reference crystal (circumscribed diameter 1). LI's contract declared
+  values at hexagon edge 1, and until LI's module C caliber fix moved its export crystals to this
+  same reference scale, `BuildEvents` bridged the 4× area ratio with `kLiAreaPerEngineArea = 4`;
+  the two scales now coincide and the bridge is retired. Discovery keeps the native unit, since it
+  only gates on `A > 0`.
 - **Pose densities** (contract §2.2). `ρ` reads only the third row of the pose; the pixel half
   (`W₃`) is computed once per pixel and the event half (the rows of `F`) once per event, so a
   non-random density costs three dot products per event in the band. `I` and `Q` are LI's ±12σ
@@ -1036,8 +1038,7 @@ above 10 % of the peak), with the two runs `0.9996` of each other; by 0.5° band
 21.5° to 25°, `0.995`–`1.008`. Per pixel, the ratio's 10th–90th percentile is `0.949`–`1.055`
 around a median of `1.002`, which is what the two noise floors predict together (Monte Carlo `4.0 %`
 per pixel for the merged pair, the band sum's `1/√K_eff` `2.0 %`: `±1.28σ` of their sum is `±5.7 %`).
-The contract's §6 unit and §8 conversion therefore hold for this implementation with nothing fitted,
-which also checks the `kLiAreaPerEngineArea` factor and the weight's Fresnel factor end to end.
+That check (run while this library still carried the `kLiAreaPerEngineArea` bridge, before LI's module C caliber fix moved both sides to the engine reference scale) validated the then-current unit conversion and the weight's Fresnel factor end to end, with nothing fitted.
 
 ---
 
