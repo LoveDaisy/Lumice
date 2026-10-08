@@ -106,9 +106,9 @@ int main(void) {
   LUMICE_ANALYTIC_BoundaryLoopResult loop = { 0 };
   loop.struct_size = sizeof(loop);
   rc = LUMICE_ANALYTIC_TraceBoundaryLoop(&crystal, faces, 2, 1.31, &loop);
-  ok = ok && rc == LUMICE_ANALYTIC_OK && loop.status == LUMICE_ANALYTIC_WALK_OK &&
-       loop.status_name != NULL && loop.status_name[0] == 'o' && loop.message == NULL &&
-       loop.critical_point_count > 0 && loop.corner_count > 0 && loop.has_plateau == 0;
+  ok = ok && rc == LUMICE_ANALYTIC_OK && loop.status == LUMICE_ANALYTIC_WALK_OK && loop.status_name != NULL &&
+       loop.status_name[0] == 'o' && loop.message == NULL && loop.critical_point_count > 0 && loop.corner_count > 0 &&
+       loop.has_plateau == 0;
   LUMICE_ANALYTIC_ReleaseBoundaryLoopResult(&loop);
   LUMICE_ANALYTIC_ReleaseBoundaryLoopResult(&loop);
   ok = ok && loop.critical_point_positions == NULL && loop.storage == NULL;
