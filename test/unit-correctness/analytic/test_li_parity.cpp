@@ -69,6 +69,12 @@ constexpr double kDensifySpacing = 1e-3;
 // LI parity_export._compare_traces: `abs(got - ref) <= rtol * ref + 1e-12`. The absolute term only
 // makes a zero-length reference (a one-pose trace) comparable; it is LI's recipe, not a tolerance.
 constexpr double kArclengthAbsoluteGuard = 1e-12;
+// LI's divergence threshold for onset gradient norms (focusing.DIVERGENT_GRADIENT_NORM, LI task 54;
+// the fixtures doc's convention 1). A fixture exports its onset gradient as null for a non-finite
+// OR >= kDivergentGradientNorm norm, and the availability comparison below reads the same
+// convention. Pinned deliberately (the kRotationTolerance pattern): a threshold change has to be
+// re-agreed with LI, not drift here.
+constexpr double kDivergentGradientNorm = 1e6;
 
 bool ArclengthWithin(double got, double reference, double rtol) {
   return std::fabs(got - reference) <= rtol * reference + kArclengthAbsoluteGuard;
@@ -1662,7 +1668,14 @@ TEST_P(LiParityFocusingClassify, MatchesLi) {
              RowTolerance(f, "onset_value_deg", reference));
     const Json& reference_norm = reference.at("gradient_norm");
     if (reference_norm.is_null()) {
-      EXPECT_FALSE(std::isfinite(onset.gradient_norm)) << where << " gradient_norm availability differs";
+      // The null reference means LI's divergence convention (kDivergentGradientNorm), not literally
+      // NaN: at an exit-TIR corner |grad D| is unbounded, and whether the AD chain's exit
+      // discriminant rounds negative (a NaN norm — macOS, Linux x86_64) or positive (a finite
+      // ~1e8 reading at the same fold-adjacent position — Ubuntu ARM64 on PR #477's CI) is the
+      // platform's rounding order. A raw finite value is read through the same convention the
+      // export applied; a norm in [0, kDivergentGradientNorm) here would be a genuine mismatch.
+      EXPECT_FALSE(std::isfinite(onset.gradient_norm) && onset.gradient_norm < kDivergentGradientNorm)
+          << where << " gradient_norm availability differs (Lumice's raw norm: " << onset.gradient_norm << ")";
     } else if (!std::isfinite(onset.gradient_norm)) {
       ADD_FAILURE() << where << " gradient_norm availability differs";
     } else {
