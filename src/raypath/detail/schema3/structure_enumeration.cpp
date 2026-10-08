@@ -7,14 +7,30 @@
 
 #include "analytic/dp_contour.hpp"
 #include "analytic/dp_weight_kink.hpp"
+#include "analytic/reflection_group.hpp"
 #include "raypath/detail/measure/visibility_certificate.hpp"
 
 namespace lumice::raypath::schema3 {
 namespace {
 
-// The orbit tolerance the certificate calls run at — NOT a free knob: the measured floor is
-// test_geometry_source.cpp's acos-at-1 finding (~1.5e-8 rad), so 1e-6 (three decades of margin).
-constexpr double kOrbitAngularTol = 1e-6;
+// The member's Phi-class annotation: the canonical (lexicographically smallest) member of its
+// PBD orbit — reflection_group.hpp's label-arithmetic orbit, the family semantics' orbit.
+// Empty when the orbit cannot be computed (a face outside the supported rings): the row then
+// asserts no class membership and never joins an existing family.
+std::string PhiClassNoteOf(const std::vector<int>& member) {
+  std::vector<std::vector<int>> orbit;
+  if (!analytic::PbdOrbit(member.data(), static_cast<int>(member.size()), &orbit) || orbit.empty()) {
+    return "";
+  }
+  std::string note;
+  for (size_t i = 0; i < orbit[0].size(); i++) {
+    if (i > 0) {
+      note += "-";
+    }
+    note += std::to_string(orbit[0][i]);
+  }
+  return note;
+}
 
 StructureObjectRecord BaseRecord(ObjectKind kind, const std::vector<int>& member) {
   StructureObjectRecord record;
@@ -56,6 +72,7 @@ MemberEnumeration EnumerateMember(const EnumerationInput& in, const std::vector<
     return out;  // a sequence this crystal cannot host: the caller's filter, not an error
   }
   const int slot_count = static_cast<int>(member.size());
+  out.phi_class_note = PhiClassNoteOf(member);
 
   // ONE axis assembly feeds the support row, the kind-2 chain, the corners and the kind-1
   // existence (the expensive pieces run once per member).
@@ -80,6 +97,7 @@ MemberEnumeration EnumerateMember(const EnumerationInput& in, const std::vector<
     for (const analytic::WalkerCorner& corner : assembly.record.corners) {
       StructureObjectRecord junction = BaseRecord(ObjectKind::kS6Junction, member);
       junction.existence = ExistenceState::kComputed;
+      junction.walk_s = std::nan("");  // walk arclength not applicable to a junction (the NaN)
       junction.u = { corner.position[0], corner.position[1], corner.position[2] };
       out.objects.push_back(std::move(junction));
     }
@@ -95,9 +113,23 @@ MemberEnumeration EnumerateMember(const EnumerationInput& in, const std::vector<
     kink_object.walk_s = std::nan("");
     kink_object.u = chain.u;
     if (kink.status != analytic::WalkStatus::kOk) {
-      kink_object.walk_s = 0.0;  // the kink walk's own refusal: the arcs it managed, declared
+      kink_object.walk_s = 0.0;  // the declared truncation spelling: 0.0 = the walk was cut
+                                 // before the record and the covered amount is UNKNOWN (the
+                                 // kernel exposes no pre-truncation arclength) — never a
+                                 // measured zero
     }
     out.objects.push_back(std::move(kink_object));
+  }
+
+  // One orbit stream per member, built once and shared by the kind-1 leg and the restricted
+  // leg (identical parameters: a second build would sample the grid twice and hand the two
+  // certificates different streams to disagree on).
+  const bool stream_wanted = in.measure != nullptr && in.density != nullptr && in.grid > 0;
+  analytic::OrbitFiberStream orbit;
+  if (stream_wanted) {
+    orbit = analytic::MakeOrbitFiberStream(*in.normals, *in.polygons, slots, slot_count, *in.density, in.sun_dir,
+                                           in.base_index, in.grid);
+    out.stream_points_built = static_cast<long long>(orbit.samples.size());
   }
 
   // -- kind-1 (unrestricted): the member's critical-value structure. Existence rides the same
@@ -111,20 +143,18 @@ MemberEnumeration EnumerateMember(const EnumerationInput& in, const std::vector<
                                                                                        ExistenceState::kEscaped) :
             ExistenceState::kWalkTruncated;
     kind1.escape_regime_slug = assembly.axis.regime_slug;
+    // walk_s spelling: NaN on a closed walk; 0.0 = truncated before the record, covered amount
+    // UNKNOWN (the declared convention — never a measured zero).
     kind1.walk_s = assembly.axis.walk_closed ? std::nan("") : 0.0;
     if (in.measure != nullptr) {
       PartitionContext partition = assembly.axis.context;
-      if (in.density != nullptr && in.grid > 0) {
-        const analytic::OrbitFiberStream orbit = analytic::MakeOrbitFiberStream(
-            *in.normals, *in.polygons, slots, slot_count, *in.density, in.sun_dir, in.base_index, in.grid);
-        if (!orbit.samples.empty()) {
-          const FiberSampleStream stream = StreamOf(orbit);
-          kind1.visibility = CertifyVisibility(*in.measure, stream, nullptr, &partition, kOrbitAngularTol);
-        }
-      } else {
+      if (!stream_wanted) {
         // No stream the v1 producers can build for this measure: the visibility field ships its
         // fail-closed default (unproven), which is the registered v1 shape.
         kind1.visibility = CertifyVisibility(*in.measure, FiberSampleStream{}, nullptr, &partition, kOrbitAngularTol);
+      } else if (!orbit.samples.empty()) {
+        const FiberSampleStream stream = StreamOf(orbit);
+        kind1.visibility = CertifyVisibility(*in.measure, stream, nullptr, &partition, kOrbitAngularTol);
       }
     }
     // chromatic: the kernel's path-level verdict (rank-0 paths have no field; skip them).
@@ -137,10 +167,10 @@ MemberEnumeration EnumerateMember(const EnumerationInput& in, const std::vector<
     out.objects.push_back(std::move(kind1));
   }
 
-  // -- kind-1 restricted: the family-pinned curve, certified against the orbit stream — the v1
-  // carrier of the C09 unlit shape ("contour present, no passage").
-  if (in.measure != nullptr && in.density != nullptr && in.grid > 0 &&
-      analytic::FamilyPinned(*in.normals, slots, slot_count, *in.density)) {
+  // -- kind-1 restricted: the family-pinned curve, certified against the member's own orbit
+  // stream (built once, above) — the v1 carrier of the C09 unlit shape ("contour present, no
+  // passage").
+  if (stream_wanted && analytic::FamilyPinned(*in.normals, slots, slot_count, *in.density)) {
     const analytic::RestrictedFamilyCurve curve = analytic::MakeRestrictedFamilyCurve(
         *in.normals, *in.polygons, slots, slot_count, *in.density, in.sun_dir, in.base_index, in.wavelengths_nm.data(),
         in.indices.data(), static_cast<int>(in.indices.size()), in.grid);
@@ -149,8 +179,6 @@ MemberEnumeration EnumerateMember(const EnumerationInput& in, const std::vector<
       restricted.existence = ExistenceState::kComputed;
       restricted.walk_s = std::nan("");
       restricted.u = curve.u;
-      const analytic::OrbitFiberStream orbit = analytic::MakeOrbitFiberStream(
-          *in.normals, *in.polygons, slots, slot_count, *in.density, in.sun_dir, in.base_index, in.grid);
       if (!orbit.samples.empty()) {
         const CriticalSetCurve kind1_curve = CurveOf(curve);
         const FiberSampleStream stream = StreamOf(orbit);
@@ -159,6 +187,10 @@ MemberEnumeration EnumerateMember(const EnumerationInput& in, const std::vector<
       }
       out.objects.push_back(std::move(restricted));
     }
+  }
+  // The Phi-class annotation rides every object of the member (one orbit read per member).
+  for (StructureObjectRecord& object : out.objects) {
+    object.phi_class_note = out.phi_class_note;
   }
   return out;
 }
@@ -187,29 +219,25 @@ EnumeratedCoverage V1Coverage() {
 Schema3DiscoveryCore EnumerateLayer(const EnumerationInput& in, const std::vector<std::vector<int>>& members) {
   Schema3DiscoveryCore core;
   core.coverage = V1Coverage();
-  std::vector<MemberSupport> shared_rows;
+  long long stream_points = 0;
   for (const std::vector<int>& member : members) {
     MemberEnumeration one = EnumerateMember(in, member);
     for (StructureObjectRecord& object : one.objects) {
       core.objects.push_back(std::move(object));
     }
-    // Family aggregation: rows whose support intervals are IDENTICAL (within the partition's
-    // merge constant) share one FamilySupport — the machine form of, e.g., C06's eight PBD
-    // variants sharing their support. A row clusters with the first row it matches; a refused
-    // row matches nothing.
+    stream_points += one.stream_points_built;
+    // Family aggregation (the plan's Phi-class semantics): a row joins a family only when it
+    // sits in the SAME reflection-group orbit (the carried note — the kernel PBD orbit's
+    // canonical member) AND on the same support (SameSupport — the one ruler, shared with
+    // AggregateFamily). A row with no computable orbit asserts no class membership: it never
+    // joins an existing family (fail closed); a refused or escaped row has no intervals to
+    // share and matches nothing either way.
     if (!one.support.member.empty() && one.support.axis.context.coverage == PartitionContext::Coverage::kComplete) {
       bool clustered = false;
-      for (FamilySupport& family : core.support.families) {
-        // Compare against the family's own intervals (carried on the FamilySupport).
-        if (family.shared && family.intervals.size() == one.support.axis.intervals.size()) {
-          bool same = true;
-          for (size_t i = 0; i < family.intervals.size(); i++) {
-            same = same && std::fabs(family.intervals[i].lower - one.support.axis.intervals[i].lower) <=
-                               analytic::kExtremumAtol;
-            same = same && std::fabs(family.intervals[i].upper - one.support.axis.intervals[i].upper) <=
-                               analytic::kExtremumAtol;
-          }
-          if (same) {
+      if (!one.phi_class_note.empty()) {
+        for (FamilySupport& family : core.support.families) {
+          if (family.shared && family.phi_class_note == one.phi_class_note &&
+              SameSupport(family.intervals, one.support.axis.intervals)) {
             family.members.push_back(one.support.member);
             clustered = true;
             break;
@@ -220,19 +248,18 @@ Schema3DiscoveryCore EnumerateLayer(const EnumerationInput& in, const std::vecto
         FamilySupport family;
         family.shared = true;
         family.intervals = one.support.axis.intervals;
+        family.phi_class_note = one.phi_class_note;
         family.members.push_back(one.support.member);
         core.support.families.push_back(std::move(family));
       }
     }
     core.support.members.push_back(std::move(one.support));
   }
-  // The budget: what the enumeration itself spawned (the declared-resolution samplings; the
-  // kernel-internal counts stay a registered gap).
-  long long samplings = 0;
-  if (in.measure != nullptr && in.density != nullptr && in.grid > 0) {
-    samplings += static_cast<long long>(in.grid) * (1 + static_cast<long long>(members.size()));
-  }
-  core.budget.sampling_evaluations = samplings;
+  // The budget: the stream points the enumeration itself built, counted where they were built
+  // (one orbit stream per member with the measure side) — not estimated from a formula, which
+  // is how the count drifted when a second consumer leg appeared. The kernel-internal counts
+  // stay a registered gap.
+  core.budget.sampling_evaluations = stream_points;
   core.budget.max_optical_evaluations = 0;  // unconstrained in v1; 666.3 wires the flag
   return core;
 }

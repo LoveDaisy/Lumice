@@ -35,6 +35,12 @@
 
 namespace lumice::raypath::schema3 {
 
+// The angular tolerance every orbit-stream certificate call runs at — a caller discipline, not
+// a free knob: the measured floor is test_geometry_source.cpp's acos-at-1 finding (~1.5e-8 rad),
+// so 1e-6 keeps three decades of margin. Named here (not in a consumer's anonymous namespace)
+// because the next certificate consumer (666.2's corroboration wiring) reads the same ruler.
+inline constexpr double kOrbitAngularTol = 1e-6;
+
 // ---------------------------------------------------------------------------
 // The mirrored-struct -> contract conversions (the production mapping).
 // ---------------------------------------------------------------------------

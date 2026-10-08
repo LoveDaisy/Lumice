@@ -55,13 +55,22 @@ struct MemberSupport {
 // row's partition completed and the interval endpoints agree within kExtremumAtol. `intervals`
 // is the shared list when `shared`, empty otherwise (an agreeing family reports its intervals
 // once; a disagreeing one reports nothing rather than a fabricated union). `members` carries the
-// clustered rows' face sequences (the enumeration's clustering fills it).
+// clustered rows' face sequences and `phi_class_note` their shared orbit annotation (both
+// filled by the enumeration's clustering, which owns the identity side; empty note = the orbit
+// was never asserted).
 struct FamilySupport {
   bool shared = false;
   std::vector<analytic::DeviationInterval> intervals;
   std::vector<std::vector<int>> members;
+  std::string phi_class_note;
 };
 FamilySupport AggregateFamily(const std::vector<MemberSupport>& rows);
+
+// Whether two rows sit on the SAME delta-axis support: equal-length interval lists whose
+// endpoints agree within the partition's own merge constant (kExtremumAtol). The one ruler for
+// family aggregation — AggregateFamily and the enumeration's clustering both read it, so the
+// "same support" comparison has a single implementation.
+bool SameSupport(const std::vector<analytic::DeviationInterval>& a, const std::vector<analytic::DeviationInterval>& b);
 
 // The layer's support block (the schema3 top-level `support` field's content).
 struct SupportBlock {

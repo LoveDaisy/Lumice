@@ -34,6 +34,7 @@
 // the schema1 words onto curve points); the word each OBJECT kind would carry is A1's
 // registration below, pinned by test.
 
+#include <string>
 #include <vector>
 
 #include "analytic/dp_chromatic.hpp"
@@ -75,6 +76,9 @@ struct EnumerationInput {
   std::vector<double> indices;
   const UMarginal* measure = nullptr;
   const analytic::PoseDensitySpec* density = nullptr;
+  // The sun direction (unit, world frame). It must be the SAME sun the declared measure was
+  // built against: a mismatch parks every orbit sample outside the declared support and the
+  // certificates fail closed to unproven/no_in_support_samples with no further diagnostic.
   double sun_dir[3] = { 0.0, 0.0, 1.0 };
   int grid = 720;  // the orbit stream / restricted curve's declared resolution
 };
@@ -91,15 +95,22 @@ struct Schema3DiscoveryCore {
 struct MemberEnumeration {
   std::vector<StructureObjectRecord> objects;
   MemberSupport support;
+  // The member's Phi-class annotation: the canonical (lexicographically smallest) member of its
+  // PBD orbit — reflection_group.hpp's label-arithmetic orbit, the family semantics' orbit.
+  // Empty when the orbit cannot be computed (a face outside the kernel's supported rings): the
+  // row then asserts no class membership and never joins an existing family.
+  std::string phi_class_note;
+  // The stream points this member's enumeration actually built (0 = no measure side ran).
+  long long stream_points_built = 0;
 };
 
 // Enumerates one member (one fixed face sequence). The member must resolve on the crystal (a
 // rejected sequence returns an empty enumeration — the caller's filter, not an error).
 MemberEnumeration EnumerateMember(const EnumerationInput& in, const std::vector<int>& member);
 
-// Enumerates a layer: every member, then the family aggregate (rows whose support intervals are
-// identical share one FamilySupport — the Phi-class expression of, e.g., C06's eight PBD
-// variants).
+// Enumerates a layer: every member, then the family aggregate. A row joins a family only when
+// it shares BOTH the reflection-group orbit (the carried Phi-class note) and the intervals
+// (SameSupport) — the Phi-class expression of, e.g., C06's eight PBD variants.
 Schema3DiscoveryCore EnumerateLayer(const EnumerationInput& in, const std::vector<std::vector<int>>& members);
 
 }  // namespace lumice::raypath::schema3

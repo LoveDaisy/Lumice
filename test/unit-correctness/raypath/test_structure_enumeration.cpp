@@ -18,10 +18,12 @@
 #include <algorithm>
 #include <cmath>
 #include <set>
+#include <string>
 #include <vector>
 
 #include "analytic/dp_contour.hpp"
 #include "analytic/dp_focus.hpp"
+#include "analytic/reflection_group.hpp"
 #include "core/random.hpp"
 #include "raypath/detail/measure/declared_density.hpp"
 #include "raypath/detail/schema3/structure_enumeration.hpp"
@@ -212,6 +214,10 @@ TEST(StructureEnumeration, BetaEnumerationCarriesS2ChainsAndKind1) {
   ASSERT_NE(junction, nullptr);
   EXPECT_FALSE(junction->u.empty());
   EXPECT_FALSE(junction->has_sky_position);
+  // walk_s spellings: NaN on everything a walk arclength does not apply to (the junction, the
+  // closed gate curve) — the declared convention, pinned so no implicit 0.0 comes back.
+  EXPECT_TRUE(std::isnan(junction->walk_s));
+  EXPECT_TRUE(std::isnan(gate->walk_s));
   // kind-1: the critical-value structure, chromatic assessed with the declared snapshot.
   const StructureObjectRecord* kind1 = FindKind(one.objects, ObjectKind::kKind1);
   ASSERT_NE(kind1, nullptr);
@@ -310,10 +316,70 @@ TEST(StructureEnumeration, LayerFamilyAggregationClustersIdenticalSupports) {
   EXPECT_EQ(c06, 1u);
   EXPECT_EQ(c05, 1u);
   EXPECT_EQ(core.support.members.size(), 3u);
+  // The Phi-class gate the clustering runs on: every family carries a note, and the C06 pair's
+  // note is the kernel orbit's canonical member (read through the kernel's own authority — the
+  // single ruler the gate compares).
+  std::string c06_note;
+  for (const FamilySupport& family : core.support.families) {
+    if (family.phi_class_note.empty()) {
+      ADD_FAILURE() << "a family without its Phi-class note";
+      continue;
+    }
+    if (family.members.size() == 2u) {
+      c06_note = family.phi_class_note;
+    }
+  }
+  const std::vector<int> c06_member = { 4, 8, 1, 7, 5 };
+  std::vector<std::vector<int>> orbit;
+  ASSERT_TRUE(analytic::PbdOrbit(c06_member.data(), static_cast<int>(c06_member.size()), &orbit));
+  ASSERT_FALSE(orbit.empty());
+  std::string canonical;
+  for (size_t i = 0; i < orbit[0].size(); i++) {
+    if (i > 0) {
+      canonical += "-";
+    }
+    canonical += std::to_string(orbit[0][i]);
+  }
+  EXPECT_EQ(c06_note, canonical);
   // The budget: the v1 default is unconstrained, and the sampling count is positive only when
   // the measure side ran (it did not here).
   EXPECT_EQ(core.budget.max_optical_evaluations, 0);
   EXPECT_EQ(core.budget.sampling_evaluations, 0);
+}
+
+// ---- the Phi-class note on objects and the build-site budget --------------------------------------
+
+TEST(StructureEnumeration, PhiClassNoteCarriedAndBudgetCountedWhereBuilt) {
+  const Tables t = RhombicPlate();
+  const EnumerationInput in = C12Input(t);
+  const std::vector<int> member = { 2, 4, 5, 1 };
+  const Schema3DiscoveryCore core = EnumerateLayer(in, { member });
+  // Every object carries its member's Phi-class note, and the note is the orbit's canonical
+  // member per the kernel's own authority (the same ruler the clustering gate runs on).
+  std::vector<std::vector<int>> orbit;
+  ASSERT_TRUE(analytic::PbdOrbit(member.data(), static_cast<int>(member.size()), &orbit));
+  ASSERT_FALSE(orbit.empty());
+  std::string canonical;
+  for (size_t i = 0; i < orbit[0].size(); i++) {
+    if (i > 0) {
+      canonical += "-";
+    }
+    canonical += std::to_string(orbit[0][i]);
+  }
+  ASSERT_FALSE(core.objects.empty());
+  for (const StructureObjectRecord& object : core.objects) {
+    EXPECT_EQ(object.phi_class_note, canonical);
+  }
+  // The budget counts the points where they were BUILT: one orbit stream for this member, the
+  // actual sample count — not a formula's estimate (the formula under-counted the moment a
+  // second consumer leg existed).
+  int slots[analytic::kMaxFaceCount];
+  ASSERT_EQ(analytic::ResolveFaceSequence(t.normals, member.data(), static_cast<int>(member.size()), slots),
+            analytic::Status::kOk);
+  const analytic::OrbitFiberStream expected = analytic::MakeOrbitFiberStream(
+      t.normals, t.polys, slots, static_cast<int>(member.size()), *in.density, in.sun_dir, in.base_index, in.grid);
+  EXPECT_EQ(core.budget.sampling_evaluations, static_cast<long long>(expected.samples.size()));
+  EXPECT_GT(core.budget.sampling_evaluations, 0);
 }
 
 }  // namespace

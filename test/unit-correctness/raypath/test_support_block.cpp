@@ -106,10 +106,15 @@ TEST(SupportBlock, C05C06ComplementAt120Degrees) {
   ASSERT_EQ(c05.axis.intervals.size(), 2u);
   ASSERT_EQ(c06.axis.intervals.size(), 2u);
   // The complement, as interval predicates: C05's upper edge IS C06's lower edge, and both are
-  // the corpus's 120-degree cut (nine digits; the shared-edge comparison is the structural form).
+  // the corpus's 120-degree cut. The shared edge rides structure, not a bit-coincidence between
+  // two independent partition runs: each endpoint agrees with the SAME reference cut within the
+  // partition's own merge constant kExtremumAtol (no absolute-epsilon cross-run comparison —
+  // the plan's risk-4 line).
   EXPECT_NEAR(c05.axis.intervals.back().upper / kDeg, 120.0, 1e-6);
   EXPECT_NEAR(c06.axis.intervals.front().lower / kDeg, 120.0, 1e-6);
-  EXPECT_LE(std::fabs(c05.axis.intervals.back().upper - c06.axis.intervals.front().lower), 1e-9);
+  const double cut = 120.0 * kDeg;
+  EXPECT_LE(std::fabs(c05.axis.intervals.back().upper - cut), analytic::kExtremumAtol);
+  EXPECT_LE(std::fabs(c06.axis.intervals.front().lower - cut), analytic::kExtremumAtol);
   // And every endpoint of both rows carries its onset.
   ExpectEndpointsCarryOnsets(c05);
   ExpectEndpointsCarryOnsets(c06);

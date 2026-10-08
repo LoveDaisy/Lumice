@@ -44,6 +44,7 @@
 // Geometry: the sky position and the u-space preimage are BOTH first-class explicit fields (the
 // design's own requirement — neither is derived from the other in this module).
 
+#include <cmath>
 #include <string>
 #include <vector>
 
@@ -131,7 +132,11 @@ struct StructureObjectRecord {
   // -- existence (the contract's enum; the regime slug is DATA)
   ExistenceState existence = ExistenceState::kComputed;
   std::string escape_regime_slug;  // kernel EscapeRegimeName slug; read when existence == kEscaped
-  double walk_s = 0.0;             // arclength covered before truncation (NaN when not applicable)
+  // Walk arclength, the declared two-spelling convention (every write site keeps it):
+  //   NaN  walk arclength does not apply to this object (closed curves, junctions);
+  //   0.0  the walk was truncated BEFORE the record and the kernel exposes no pre-truncation
+  //        arclength — the covered amount is UNKNOWN (declared unknown, never a measured zero).
+  double walk_s = std::nan("");
   // -- visibility (the certificate, verbatim; default = the fail-closed unproven)
   VisibilityCertificate visibility{};
   // -- chromatic (the verdict verbatim + the declared-parameter snapshot)

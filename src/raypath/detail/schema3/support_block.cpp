@@ -117,19 +117,25 @@ FamilySupport AggregateFamily(const std::vector<MemberSupport>& rows) {
   }
   const std::vector<analytic::DeviationInterval>& first = rows[0].axis.intervals;
   for (const MemberSupport& row : rows) {
-    if (row.axis.intervals.size() != first.size()) {
+    if (!SameSupport(row.axis.intervals, first)) {
       return out;
-    }
-    for (size_t i = 0; i < first.size(); i++) {
-      if (std::fabs(row.axis.intervals[i].lower - first[i].lower) > kSameValueTol ||
-          std::fabs(row.axis.intervals[i].upper - first[i].upper) > kSameValueTol) {
-        return out;
-      }
     }
   }
   out.shared = true;
   out.intervals = first;
   return out;
+}
+
+bool SameSupport(const std::vector<analytic::DeviationInterval>& a, const std::vector<analytic::DeviationInterval>& b) {
+  if (a.size() != b.size()) {
+    return false;
+  }
+  for (size_t i = 0; i < a.size(); i++) {
+    if (std::fabs(a[i].lower - b[i].lower) > kSameValueTol || std::fabs(a[i].upper - b[i].upper) > kSameValueTol) {
+      return false;
+    }
+  }
+  return true;
 }
 
 }  // namespace lumice::raypath::schema3
