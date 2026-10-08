@@ -145,9 +145,10 @@ TEST(ReflectionGroup, PbdOrbitOfOneThreeFiveTwo) {
   std::vector<std::vector<int>> members;
   ASSERT_TRUE(PbdOrbit(faces, 4, &members));
   ASSERT_EQ(members.size(), 24u);
-  // Spot checks against hand-worked images: R^c_2 (shift 2) maps 3->5, 5->7; F^f_3 (flip, shift 0)
-  // maps side n -> -n mod the ring: 3->6? No — flip shift 0 maps n -> 0 - n: 3->3-3=0->6, 5->4.
-  // Image of R2: (1, 5, 7, 2); its B swap: (2, 5, 7, 1). Image of F(shift 0): (1, 6, 4, 2).
+  // Spot checks against hand-worked images: R^c_2 (shift 2) maps side n -> n+2: 3->5, 5->7 —
+  // image (1, 5, 7, 2); its B swap: (2, 5, 7, 1). Flip (shift 0) negates the side number
+  // (n -> -n): 3->3, 5->7 — image (1, 3, 7, 2). Flip shift 3 maps n -> 3 - n: 3->6, 5->4 —
+  // image (1, 6, 4, 2).
   const auto contains = [&members](const int(&want)[4]) {
     for (const std::vector<int>& member : members) {
       if (member.size() == 4 && member[0] == want[0] && member[1] == want[1] && member[2] == want[2] &&
@@ -159,7 +160,8 @@ TEST(ReflectionGroup, PbdOrbitOfOneThreeFiveTwo) {
   };
   EXPECT_TRUE(contains({ 1, 5, 7, 2 }));
   EXPECT_TRUE(contains({ 2, 5, 7, 1 }));
-  EXPECT_TRUE(contains({ 1, 6, 4, 2 }));
+  EXPECT_TRUE(contains({ 1, 3, 7, 2 }));
+  EXPECT_TRUE(contains({ 1, 6, 4, 2 }));  // flip shift 3's image
   EXPECT_TRUE(contains({ 1, 3, 5, 2 }));  // the identity image of itself
   // Sorted output: the first member is lexicographically smallest.
   EXPECT_EQ(members[0], (std::vector<int>{ 1, 3, 5, 2 }));

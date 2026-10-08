@@ -37,14 +37,6 @@ double AngleBetween(const double a[3], const double b[3]) {
   return std::atan2(Norm3(cross), Dot3(a, b));
 }
 
-void FibonacciPoint(int n, int i, double u[3]) {
-  double f[3];
-  LatticePoint(n, i, f);
-  u[0] = -f[0];
-  u[1] = -f[1];
-  u[2] = -f[2];
-}
-
 // Median of a sample (LI np.median: the average of the two middle entries on an even count).
 double Median(std::vector<double> values) {
   if (values.empty()) {
@@ -94,7 +86,7 @@ double MedianWeightInside(const DeviationField& field, int lattice_n) {
   std::vector<double> lit;
   for (int i = 0; i < lattice_n; i++) {
     double u[3];
-    FibonacciPoint(lattice_n, i, u);
+    FibonacciAntipodePoint(lattice_n, i, u);
     if (!InsideUp(field, u)) {
       continue;
     }
@@ -358,6 +350,51 @@ ChromaticVerdict VerdictOf(std::vector<int> faces, const std::vector<ChromaticFe
   verdict.has_position = true;
   verdict.position = top->color == ChromaticColor::kBlue ? top->delta_blue : top->delta_red;
   verdict.features = features;
+  return verdict;
+}
+
+// The tint verdict (LI _tint_verdict, verbatim including its comment): not lit at all, lit at one
+// index only (the extreme tint, never "no colour"), dispersing (no single tint), or the ratio's
+// colour.
+ChromaticVerdict TintVerdictOf(std::vector<int> faces, const TintMetrics& tint, double n_red, double n_blue) {
+  ChromaticVerdict verdict;
+  verdict.faces = std::move(faces);
+  verdict.n_red = n_red;
+  verdict.n_blue = n_blue;
+  verdict.has_tint = true;
+  verdict.tint = tint;
+  if (tint.energy_red <= 0.0 && tint.energy_blue <= 0.0) {
+    verdict.notes.push_back("class not lit at either index");
+    return verdict;
+  }
+  if (tint.energy_red <= 0.0 || tint.energy_blue <= 0.0) {
+    verdict.kind = ChromaticVerdictKind::kTint;
+    verdict.color = tint.energy_red <= 0.0 ? ChromaticColor::kBlue : ChromaticColor::kRed;
+    verdict.visible = true;
+    verdict.notes.push_back("class lit at n = " + Number(tint.energy_red <= 0.0 ? n_blue : n_red) + " only");
+    return verdict;
+  }
+  if (tint.direction_dispersion >= kEdgeMinShiftRad) {
+    std::ostringstream note;
+    note << std::fixed << std::setprecision(2) << "red and blue land " << tint.direction_dispersion * 180.0 / kPi
+         << " deg apart: the ordinary dispersion of the direction map spreads the colours, the spot has "
+            "no single tint (outside this criterion)";
+    verdict.notes.push_back(note.str());
+    return verdict;
+  }
+  if (tint.ratio >= kTintRatioMin) {
+    verdict.kind = ChromaticVerdictKind::kTint;
+    verdict.color = ChromaticColor::kBlue;
+    verdict.visible = true;
+    return verdict;
+  }
+  if (tint.ratio <= 1.0 / kTintRatioMin) {
+    verdict.kind = ChromaticVerdictKind::kTint;
+    verdict.color = ChromaticColor::kRed;
+    verdict.visible = true;
+    return verdict;
+  }
+  verdict.color = ChromaticColor::kWhite;
   return verdict;
 }
 
@@ -648,42 +685,11 @@ ClassVerdict DiagnoseClass(const FaceNormalTable& normals, const FacePolygonTabl
   out.verdict.tint.tir_fraction_blue = tir_blue_total > 0.0 ? tir_blue / tir_blue_total : kNaN;
   out.verdict.tint.direction_dispersion = spread_weight > 0.0 ? spread_sum / spread_weight : 0.0;
 
-  // The tint verdict (LI _tint_verdict): not lit at all, lit at one index only (the extreme tint,
-  // never "no colour"), dispersing (no single tint), or the ratio's colour.
-  ChromaticVerdict& verdict = out.verdict;
-  if (energy_red <= 0.0 && energy_blue <= 0.0) {
-    verdict.notes.push_back("class not lit at either index");
-    return out;
-  }
-  if (energy_red <= 0.0 || energy_blue <= 0.0) {
-    verdict.kind = ChromaticVerdictKind::kTint;
-    verdict.color = energy_red <= 0.0 ? ChromaticColor::kBlue : ChromaticColor::kRed;
-    verdict.visible = true;
-    verdict.notes.push_back("class lit at n = " + Number(energy_red <= 0.0 ? n_blue : n_red) + " only");
-    return out;
-  }
-  if (verdict.tint.direction_dispersion >= kEdgeMinShiftRad) {
-    std::ostringstream note;
-    note << std::fixed << std::setprecision(2) << "red and blue land "
-         << verdict.tint.direction_dispersion * 180.0 / kPi
-         << " deg apart: the ordinary dispersion of the direction map spreads the colours, the spot has "
-            "no single tint (outside this criterion)";
-    verdict.notes.push_back(note.str());
-    return out;
-  }
-  if (verdict.tint.ratio >= kTintRatioMin) {
-    verdict.kind = ChromaticVerdictKind::kTint;
-    verdict.color = ChromaticColor::kBlue;
-    verdict.visible = true;
-    return out;
-  }
-  if (verdict.tint.ratio <= 1.0 / kTintRatioMin) {
-    verdict.kind = ChromaticVerdictKind::kTint;
-    verdict.color = ChromaticColor::kRed;
-    verdict.visible = true;
-    return out;
-  }
-  verdict.color = ChromaticColor::kWhite;
+  const ChromaticVerdict tint_verdict = TintVerdictOf(out.representative, out.verdict.tint, n_red, n_blue);
+  out.verdict.kind = tint_verdict.kind;
+  out.verdict.color = tint_verdict.color;
+  out.verdict.visible = tint_verdict.visible;
+  out.verdict.notes = tint_verdict.notes;
   return out;
 }
 

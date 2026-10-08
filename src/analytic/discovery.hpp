@@ -278,6 +278,18 @@ void DiscoverOnPool(const Map& map, const TargetChart& chart, const Continuation
 // theta = pi (1 + sqrt 5)(i + 1/2), written in LI's evaluation order.
 void LatticePoint(int n, int i, double u[3]);
 
+// Point i of the PLAIN Fibonacci lattice (LI fibonacci_sphere): the antipode of LatticePoint,
+// whose convention is the store's. The focusing / chromatic layers' seed and range lattices are
+// LI's plain one, so they read the negation — one named helper instead of per-module copies of
+// the negation and its non-obvious reason.
+inline void FibonacciAntipodePoint(int n, int i, double u[3]) {
+  double f[3];
+  LatticePoint(n, i, f);
+  u[0] = -f[0];
+  u[1] = -f[1];
+  u[2] = -f[2];
+}
+
 // One kept band event: lattice index, deviation D = angle(phi, -u), u and the body-frame outgoing
 // direction phi = Phi_P(-u).
 struct BandEvent {

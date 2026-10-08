@@ -243,5 +243,85 @@ TEST(DPChromatic, ImpossibleLiteralClassCarriedByOrbit) {
   }
 }
 
+// The tint verdict's five shapes (LI _tint_verdict, constructed at the roll-up itself — the
+// one-sided shape has no small real class on the calibration crystals, review round 1 Major 1):
+// not lit, lit at one index only (the extreme tint), dispersing, ratio blue, ratio red,
+// in-band white.
+TEST(DPChromatic, TintVerdictRollUpShapes) {
+  const std::vector<int> faces = { 1, 3, 5, 2 };
+  TintMetrics metrics;
+  metrics.tir_fraction_red = 0.9;
+  metrics.tir_fraction_blue = 0.9;
+
+  TintMetrics unlit = metrics;
+  unlit.energy_red = 0.0;
+  unlit.energy_blue = 0.0;
+  const ChromaticVerdict not_lit = TintVerdictOf(faces, unlit, kNRed, kNBlue);
+  EXPECT_EQ(not_lit.kind, ChromaticVerdictKind::kNone);
+  EXPECT_EQ(not_lit.color, ChromaticColor::kNone);
+  EXPECT_FALSE(not_lit.visible);
+  ASSERT_EQ(not_lit.notes.size(), 1u);
+  EXPECT_EQ(not_lit.notes[0], "class not lit at either index");
+
+  TintMetrics one_sided = metrics;
+  one_sided.energy_red = 0.0;
+  one_sided.energy_blue = 0.02;
+  const ChromaticVerdict blue_only = TintVerdictOf(faces, one_sided, kNRed, kNBlue);
+  EXPECT_EQ(blue_only.kind, ChromaticVerdictKind::kTint);  // LI: the extreme tint, not "no colour"
+  EXPECT_EQ(blue_only.color, ChromaticColor::kBlue);
+  EXPECT_TRUE(blue_only.visible);
+  ASSERT_EQ(blue_only.notes.size(), 1u);
+  EXPECT_EQ(blue_only.notes[0], "class lit at n = 1.317 only");
+  TintMetrics red_only = one_sided;
+  red_only.energy_red = 0.02;
+  red_only.energy_blue = 0.0;
+  const ChromaticVerdict red_only_verdict = TintVerdictOf(faces, red_only, kNRed, kNBlue);
+  EXPECT_EQ(red_only_verdict.kind, ChromaticVerdictKind::kTint);
+  EXPECT_EQ(red_only_verdict.color, ChromaticColor::kRed);
+  EXPECT_TRUE(red_only_verdict.visible);
+  ASSERT_EQ(red_only_verdict.notes.size(), 1u);
+  EXPECT_EQ(red_only_verdict.notes[0], "class lit at n = 1.307 only");
+
+  TintMetrics dispersive = metrics;
+  dispersive.energy_red = 0.01;
+  dispersive.energy_blue = 0.01;
+  dispersive.direction_dispersion = kEdgeMinShiftRad;
+  const ChromaticVerdict spread = TintVerdictOf(faces, dispersive, kNRed, kNBlue);
+  EXPECT_EQ(spread.kind, ChromaticVerdictKind::kNone);
+  EXPECT_FALSE(spread.visible);
+  ASSERT_EQ(spread.notes.size(), 1u);
+  EXPECT_NE(spread.notes[0].find("no single tint"), std::string::npos);
+
+  TintMetrics blue = metrics;
+  blue.energy_red = 0.01;
+  blue.energy_blue = 0.02;
+  blue.ratio = 2.0;
+  const ChromaticVerdict tint_blue = TintVerdictOf(faces, blue, kNRed, kNBlue);
+  EXPECT_EQ(tint_blue.kind, ChromaticVerdictKind::kTint);
+  EXPECT_EQ(tint_blue.color, ChromaticColor::kBlue);
+  EXPECT_TRUE(tint_blue.visible);
+  EXPECT_TRUE(tint_blue.notes.empty());
+  EXPECT_DOUBLE_EQ(tint_blue.tint.ratio, 2.0);
+  EXPECT_EQ(tint_blue.faces, faces);
+  EXPECT_DOUBLE_EQ(tint_blue.n_red, kNRed);
+  EXPECT_DOUBLE_EQ(tint_blue.n_blue, kNBlue);
+  EXPECT_TRUE(tint_blue.has_tint);
+
+  TintMetrics red = blue;
+  red.ratio = 0.5;
+  const ChromaticVerdict tint_red = TintVerdictOf(faces, red, kNRed, kNBlue);
+  EXPECT_EQ(tint_red.kind, ChromaticVerdictKind::kTint);
+  EXPECT_EQ(tint_red.color, ChromaticColor::kRed);
+  EXPECT_TRUE(tint_red.visible);
+
+  TintMetrics white = blue;
+  white.ratio = 1.0;
+  const ChromaticVerdict tint_white = TintVerdictOf(faces, white, kNRed, kNBlue);
+  EXPECT_EQ(tint_white.kind, ChromaticVerdictKind::kNone);
+  EXPECT_EQ(tint_white.color, ChromaticColor::kWhite);
+  EXPECT_FALSE(tint_white.visible);
+  EXPECT_TRUE(tint_white.notes.empty());
+}
+
 }  // namespace
 }  // namespace lumice::analytic

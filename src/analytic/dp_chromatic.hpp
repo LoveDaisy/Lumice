@@ -27,11 +27,12 @@
 // reported but gives no tint verdict.
 //
 // THE THRESHOLDS ARE DECLARED PARAMETERS, NOT CONSTANTS OF NATURE (issue AC3): the index pair,
-// the solar-disc edge floor, the spread-per-shift ratio and the tint ratio travel WITH every
-// verdict through ChromaticThresholdsSnapshot — a recorded snapshot of the constants below, not
-// a second implementation — so a consumer sees which declared criterion produced a label. They
-// are LI's frozen values, copied verbatim (the tint threshold is twice the plain-Fresnel
-// dispersion deviation of the calibration classes).
+// the solar-disc edge floor, the spread-per-shift ratio and the tint ratio are provided alongside
+// every verdict through ChromaticThresholdsSnapshot — a recorded snapshot of the constants below,
+// not a second implementation, paired with the verdict by the consumer (LI puts them on the
+// fixture's input side the same way) — so a consumer sees which declared criterion produced a
+// label. They are LI's frozen values, copied verbatim (the tint threshold is twice the
+// plain-Fresnel dispersion deviation of the calibration classes).
 //
 // JAX is the authority, this is the derived implementation. LI's raise sites become data: a
 // boundary walk that refuses turns into the note "gates not analysed" with coverage_complete
@@ -39,10 +40,13 @@
 //
 // Internal header of the analytic kernel: nothing here is part of the C ABI. Dependency
 // direction: dp_chromatic -> {dp_field, dp_boundary, dp_weight_kink, path_chain (the reflectance
-// kernel of the chain), reflection_group (the class orbit), pose_density (the family sampler)}.
-// The measure-layer-weighted tint ABSOLUTE brightness is out of scope here (B1): this layer
-// reports the ratio and its verdict only.
+// kernel of the chain), reflection_group (the class orbit), discovery (the Fibonacci lattice)}.
+// The plate family sampler is this layer's own (PlateFamilySpec / SamplePlatePoses below — LI's
+// pose_density module was superseded by it at port time). The measure-layer-weighted tint
+// ABSOLUTE brightness is out of scope here (B1): this layer reports the ratio and its verdict
+// only.
 
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -151,8 +155,12 @@ struct TintMetrics {
 // `has_position` false without one). `kUnresolved`: no assessed feature, but a kink or gate
 // exists at one index only — an onset between n_red and n_blue, the strongest colour shape,
 // which the two-index metrics cannot measure; the notes name it (never a silent kNone). A plate
-// verdict is kTint with the colour of the ratio, kNone / white inside the threshold, or kNone /
-// none for a class that disperses (a note says so). `coverage_complete` is false when a line the
+// verdict has five shapes (LI _tint_verdict, all exhaustive): not lit at all — kNone / none with
+// the note; lit at ONE index only — kTint / that index's colour / visible with the note (LI's
+// "the extreme tint, not 'no colour'": the single-index power sum is the strongest tint shape
+// the two-index criterion can name); dispersing — kNone / none with the note; the ratio inside
+// the band ends — kTint / blue or red / visible; the ratio inside the band — kNone / white.
+// `coverage_complete` is false when a line the
 // verdict rests on was not fully analysed: a weight-kink walk with failed seeds or gates that
 // could not be walked; the notes say which.
 struct ChromaticVerdict {
@@ -196,6 +204,13 @@ ChromaticVerdict Diagnose(const FaceNormalTable& normals, const FacePolygonTable
 ChromaticVerdict VerdictOf(std::vector<int> faces, const std::vector<ChromaticFeature>& features,
                            std::vector<std::string> notes, double n_red, double n_blue, bool unresolved,
                            bool coverage_complete);
+
+// The plate-class tint verdict of weighted-power metrics (LI _tint_verdict, a standalone function
+// there too): the five plate shapes of the ChromaticVerdict doc — not lit (kNone + note), lit at
+// one index only (kTint / visible + note, the extreme tint), dispersing (kNone + note), ratio
+// tint (kTint / visible) or inside-band white (kNone / white). Sets faces / n_red / n_blue /
+// tint / has_tint from the arguments like VerdictOf sets its own.
+ChromaticVerdict TintVerdictOf(std::vector<int> faces, const TintMetrics& tint, double n_red, double n_blue);
 
 // ---- oriented crystals: the class verdict (plate family) ----------------------------------------------------
 

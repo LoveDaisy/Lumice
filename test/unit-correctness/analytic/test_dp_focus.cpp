@@ -5,6 +5,10 @@
 // paths (a walk with no lattice point, an onset count that changes across n). LI's own bounds are
 // the assertion constants where it has them (the spread circles' 1e-9 deg); measured JAX values
 // sit in comments as context, not as bounds — cross-ISA discipline keeps them out of EXPECTs.
+// Declared exception: InteriorMinimumOfThreeFiveIsTheClosedForm anchors the Hessian eigenvalues
+// to LI's measured 0.34 / 0.96 inside a deliberately wide 0.1 window — a class check (O(1),
+// positive, of LI's measured order) whose value is the cross-check itself; the pinned anchors
+// above stay at the fixture calibers.
 //
 // symmetry_semantics: none for the onset table; the family_pinned block states its density in
 // PoseDensitySpec fields, no reduction involved.

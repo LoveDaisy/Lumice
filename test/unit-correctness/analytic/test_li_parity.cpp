@@ -1596,8 +1596,14 @@ TEST_P(LiParityFocusingClassify, MatchesLi) {
   const std::vector<int> faces = IntList(input.at("faces"));
   int slots[kMaxFaceCount];
   ASSERT_EQ(ResolveFaceSequence(table, faces.data(), static_cast<int>(faces.size()), slots), Status::kOk);
-  const FocusingClassification got = Classify(table, polygons, slots, static_cast<int>(faces.size()),
-                                              RandomDensityOf(input), input.at("refractive_index").get<double>());
+  FocusingOptions options;
+  if (input.contains("lattice_n")) {
+    options.lattice_n = input.at("lattice_n").get<int>();
+    options.newton.lattice_n = options.lattice_n;
+  }
+  const FocusingClassification got =
+      Classify(table, polygons, slots, static_cast<int>(faces.size()), RandomDensityOf(input),
+               input.at("refractive_index").get<double>(), options);
   ASSERT_FALSE(got.escaped) << name << " classify escaped: " << got.escape_message;
 
   // labels: exact (tolerance 0 by contract — structure, not numbers)
@@ -1679,8 +1685,13 @@ TEST_P(LiParityWavelengthTable, MatchesLi) {
     labels.push_back(label.get<std::string>());
     indices.push_back(input.at("indices").at(label.get<std::string>()).get<double>());
   }
+  FocusingOptions options;
+  if (input.contains("lattice_n")) {
+    options.lattice_n = input.at("lattice_n").get<int>();
+    options.newton.lattice_n = options.lattice_n;
+  }
   const WavelengthCriticalTable got = WavelengthCriticalTableOf(table, polygons, slots, static_cast<int>(faces.size()),
-                                                                RandomDensityOf(input), labels, indices);
+                                                                RandomDensityOf(input), labels, indices, options);
   ASSERT_FALSE(got.escaped) << name << " table escaped: " << got.message;
   EXPECT_EQ(got.path, expected.at("path").get<std::string>()) << name;
   ASSERT_EQ(got.onsets.size(), expected.at("onsets").size()) << name;

@@ -41,7 +41,7 @@
 //
 // Internal header of the analytic kernel: nothing here is part of the C ABI (the report surface
 // is 660.6's). Dependency direction: dp_focus -> {dp_field, dp_partition, dp_boundary,
-// path_rank, pose_density, reflection_group}.
+// path_rank, pose_density, reflection_group, discovery (the Fibonacci lattice)}.
 //
 // Migration note (660.3 review): InteriorCriticalPointsOf is a generic field-topology primitive
 // that lives here because dp_focus is today its only consumer; a non-focusing consumer (e.g. the
@@ -202,9 +202,12 @@ struct FocusingOptions {
 // Every critical value's onset: the interior set (slab onsets for a degenerate fold — the axis
 // cone points and the rotation circle, LI _slab_onsets — or the Newton set otherwise), plus every
 // restricted extremum and corner of `loop` with its gradient-based profile, merged (LI
-// field_onsets + _merged). `fold_set` is null for a non-degenerate path. Sorted by value.
+// field_onsets + _merged). `fold_set` is null for a non-degenerate path; `newton` carries the
+// interior search's knobs (the caller's FocusingOptions.newton; the default is LI's own). Sorted
+// by value.
 std::vector<CriticalOnset> FieldOnsets(const DeviationField& field, const DegenerateFoldSet* fold_set,
-                                       const BoundaryLoopData& loop);
+                                       const BoundaryLoopData& loop,
+                                       const InteriorNewtonOptions& newton = InteriorNewtonOptions());
 
 // (min, max) of |grad D_P| on the U_P points of a `lattice_n` Fibonacci lattice — a sampled
 // bound, not a proof; false when no lattice point is inside or every norm is non-finite (LI

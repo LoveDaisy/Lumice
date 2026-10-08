@@ -34,16 +34,6 @@ double AngleBetween(const double a[3], const double b[3]) {
   return std::atan2(Norm3(cross), Dot3(a, b));
 }
 
-// Point i of the plain Fibonacci lattice (LI fibonacci_sphere) — discovery.hpp's LatticePoint is
-// its antipode, the store's convention; the seed and range lattices here are LI's plain one.
-void FibonacciPoint(int n, int i, double u[3]) {
-  double f[3];
-  LatticePoint(n, i, f);
-  u[0] = -f[0];
-  u[1] = -f[1];
-  u[2] = -f[2];
-}
-
 // The wedge of a face sequence in degrees, atan2 form: the angle of n_a against -M^T n_b with M
 // the fold matrix (LI geometry.wedge_angle_deg; FoldMatrixOf is the product's single authority —
 // this reads it, it is not a second reflection-product loop). Rank 0 is decided by path_rank.cpp
@@ -60,16 +50,18 @@ double WedgeAngleDeg(const FaceNormalTable& table, const int* slots, int slot_co
   return Deg(AngleBetween(na, unfolded));
 }
 
-// The smallest validity margin of u, NaN included as "smallest" (a non-finite gate is exterior);
-// callers compare against positive thresholds, and every comparison with NaN is false, which is
-// the fail-closed answer.
+// The smallest validity margin of u, NaN included as "smallest" wherever it sits (a non-finite
+// gate is exterior); callers compare against positive thresholds, and every comparison with NaN
+// is false, which is the fail-closed answer. Note dp_field's LocateByValidityMargins orders with
+// std::min, where a NaN survives only in the lead — this function is the stricter of the two on
+// purpose: one NaN gate marks the whole point exterior.
 double SmallestGate(const DeviationField& field, const double u[3]) {
   double margins[kMaxFaceCount + 2];
   const int count = field.ValidityMarginsAt(u, margins);
   double smallest = margins[0];
   for (int k = 1; k < count; k++) {
-    if (!(margins[k] > smallest)) {
-      smallest = margins[k];  // true for a smaller value and for NaN alike
+    if (std::isnan(margins[k]) || margins[k] < smallest) {
+      smallest = margins[k];  // a NaN anywhere poisons the minimum from its position on
     }
   }
   return smallest;
@@ -148,7 +140,7 @@ std::vector<InteriorCriticalPoint> InteriorCriticalPointsOf(const DeviationField
   std::vector<double> seeds;
   for (int i = 0; i < options.lattice_n; i++) {
     double u[3];
-    FibonacciPoint(options.lattice_n, i, u);
+    FibonacciAntipodePoint(options.lattice_n, i, u);
     if (InsideUp(field, u)) {
       seeds.push_back(u[0]);
       seeds.push_back(u[1]);
@@ -478,7 +470,7 @@ std::vector<CriticalOnset> MergeOnsets(std::vector<CriticalOnset> onsets) {
 }  // namespace
 
 std::vector<CriticalOnset> FieldOnsets(const DeviationField& field, const DegenerateFoldSet* fold_set,
-                                       const BoundaryLoopData& loop) {
+                                       const BoundaryLoopData& loop, const InteriorNewtonOptions& newton) {
   std::vector<CriticalOnset> onsets;
   if (field.fold().degenerate && fold_set != nullptr) {
     onsets = SlabOnsets(field, *fold_set, kFocusingCircleSamples);
@@ -486,8 +478,7 @@ std::vector<CriticalOnset> FieldOnsets(const DeviationField& field, const Degene
     // The Newton set of the non-slab branch; the slab branch's interior points are the fold set's
     // axis members, already in SlabOnsets (their kind is degenerate but their onset is the cone
     // point, LI reports them once, there).
-    const InteriorNewtonOptions options;
-    for (const InteriorCriticalPoint& point : InteriorCriticalPointsOf(field, options)) {
+    for (const InteriorCriticalPoint& point : InteriorCriticalPointsOf(field, newton)) {
       onsets.push_back(InteriorOnset(point));
     }
   }
@@ -529,7 +520,7 @@ bool GradientNormRange(const DeviationField& field, int lattice_n, double out[2]
   double largest = -kInf;
   for (int i = 0; i < lattice_n; i++) {
     double u[3];
-    FibonacciPoint(lattice_n, i, u);
+    FibonacciAntipodePoint(lattice_n, i, u);
     if (!InsideUp(field, u)) {
       continue;
     }
@@ -606,7 +597,7 @@ FocusingClassification Classify(const FaceNormalTable& normals, const FacePolygo
     fold_set = BuildDegenerateFoldSet(field, kFoldCircleSamples);
     fold_set_ptr = &fold_set;
   }
-  out.onsets = FieldOnsets(field, fold_set_ptr, walk.loop);
+  out.onsets = FieldOnsets(field, fold_set_ptr, walk.loop, options.newton);
   double range[2];
   if (GradientNormRange(field, options.lattice_n, range)) {
     out.has_gradient_norm_range = true;
@@ -626,6 +617,11 @@ WavelengthCriticalTable WavelengthCriticalTableOf(const FaceNormalTable& normals
   if (labels.empty()) {
     table.escaped = true;
     table.message = "indices is empty";
+    return table;
+  }
+  if (labels.size() != indices.size()) {
+    table.escaped = true;
+    table.message = "labels and indices differ";
     return table;
   }
   std::vector<FocusingClassification> classifications;
