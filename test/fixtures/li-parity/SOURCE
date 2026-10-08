@@ -1,8 +1,8 @@
 # LI analytic parity fixtures, copied verbatim from a Lumice Integral export.
 # Read by test/unit-correctness/analytic/test_li_parity.cpp, which requires every fixture's
 # provenance.li_rev to equal li_rev below. Update flow: doc/analytic-api.md "Parity with LI".
-li_rev: ccee65afc66699c3f59d4a3769379a151fed4343
-li_ref: origin/main (LI PR #52, module C singular-set convention: a gate_edge chromatic feature exports lit_fraction/weight/direction_dispersion as null on both sides, availability compared exactly — convention 3 in the fixtures doc; band-sum contract units reconciled with the engine reference scale)
+li_rev: 98b4a8c7ec70e519f3744279840c2814f871ade7
+li_ref: origin/main (LI PR #53, per-row corner-value tier: a fixture whose classification carries an exit-TIR corner — source "corner" with a null gradient norm — emits onset_value_deg_corner / values_deg_corner + displacement_deg_corner at degrees(EXTREMUM_ATOL) and the corner rows read the tier, every other row keeping the 1e-8/2e-8 defaults — convention 1's value half in the fixtures doc; follows PR #52's singular-set convention)
 export_command: uv run python scripts/export_analytic_parity.py --output-dir "<dir>" --verify
-export_date: 2026-10-08
+export_date: 2026-10-09
 verify: 120/120 fixtures pass (13766 comparisons)

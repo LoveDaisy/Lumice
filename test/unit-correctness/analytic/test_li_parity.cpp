@@ -284,6 +284,25 @@ double Tolerance(const Json& fixture, const std::string& quantity) {
   return fixture.at("tolerance").at(quantity).at("value").get<double>();
 }
 
+// Per-row tier read (LI's fixtures doc, convention 1's value half): a fixture whose classification
+// carries an exit-TIR corner emits `<quantity>_corner` at degrees(EXTREMUM_ATOL), and its corner
+// rows read the tier while every other row keeps the default key. The tier's EXISTENCE is decided
+// by the export side's mechanism predicate (a corner whose gradient norm is null — the value there
+// is cross-ISA rounding luck through the sqrt fold, measured 3.5e-7..7.6e-7 deg on PR #477's CI),
+// never by a mismatch: this file cannot produce a tier by editing anything local, because a
+// "cross-platform tier" is not "widen whatever disagrees" (the header discipline; LI's emission
+// and this read are one contract). Key-present implies every corner row of that fixture is
+// singular (LI's emission contract); a fixture mixing well-behaved corners with singular ones
+// must move LI's emission to per-row first.
+double RowTolerance(const Json& fixture, const std::string& quantity, const Json& reference_row) {
+  const Json& tolerance = fixture.at("tolerance");
+  const std::string corner_key = quantity + "_corner";
+  if (reference_row.at("source").get<std::string>() == "corner" && tolerance.contains(corner_key)) {
+    return tolerance.at(corner_key).at("value").get<double>();
+  }
+  return tolerance.at(quantity).at("value").get<double>();
+}
+
 // One line per compared quantity, printed red or green, so a run records how much room each
 // tolerance actually leaves (the first cross-backend evidence about them, LI section 5).
 void Report(const std::string& fixture, const std::string& quantity, double error, double tolerance) {
@@ -1640,7 +1659,7 @@ TEST_P(LiParityFocusingClassify, MatchesLi) {
     EXPECT_EQ(onset.JacobianFocusing(), reference.at("jacobian_focusing").get<bool>()) << where;
     EXPECT_EQ(onset.multiplicity, reference.at("multiplicity").get<int>()) << where;
     CloseAbs(where, "value_deg", onset.value * 180.0 / kPi, reference.at("value_deg").get<double>(),
-             Tolerance(f, "onset_value_deg"));
+             RowTolerance(f, "onset_value_deg", reference));
     const Json& reference_norm = reference.at("gradient_norm");
     if (reference_norm.is_null()) {
       EXPECT_FALSE(std::isfinite(onset.gradient_norm)) << where << " gradient_norm availability differs";
@@ -1706,10 +1725,10 @@ TEST_P(LiParityWavelengthTable, MatchesLi) {
     EXPECT_EQ(row.jacobian_focusing, reference.at("jacobian_focusing").get<bool>()) << where;
     for (size_t j = 0; j < labels.size(); j++) {
       CloseAbs(where, "values_deg[" + labels[j] + "]", row.values_deg[j],
-               reference.at("values_deg").at(labels[j]).get<double>(), Tolerance(f, "values_deg"));
+               reference.at("values_deg").at(labels[j]).get<double>(), RowTolerance(f, "values_deg", reference));
     }
     CloseAbs(where, "displacement_deg", row.displacement_deg, reference.at("displacement_deg").get<double>(),
-             Tolerance(f, "displacement_deg"));
+             RowTolerance(f, "displacement_deg", reference));
   }
 }
 

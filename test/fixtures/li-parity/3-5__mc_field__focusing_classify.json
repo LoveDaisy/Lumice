@@ -107,7 +107,7 @@
  },
  "provenance": {
   "conventions_sha256": "49e65828af908b4bf645a4a150ad23ee558ac7dcb8d45fd4059bca3c6f4a52f6",
-  "li_rev": "ccee65afc66699c3f59d4a3769379a151fed4343",
+  "li_rev": "98b4a8c7ec70e519f3744279840c2814f871ade7",
   "li_tracked_tree_clean": true
  },
  "schema_version": 1,
@@ -136,6 +136,10 @@
   "onset_value_deg": {
    "basis": "absolute, deg: interior critical points are Newton iterates of the tangent gradient (|grad| <= 1e-10, dp_field.field) and boundary extrema bisected to ~1e-12 rad; 1e-8 deg = 1.7e-10 rad leaves >= 1e2 room.  The ~1e-12 claim holds for isolated extrema only: a near-degenerate pair of corners (values differing by more than this tolerance yet within EXTREMUM_ATOL) is merged by focusing and the surviving member is each backend's floating-point order, so the affected fixture's tolerance block widens its onset-value tolerance to the merge tolerance itself; exactly degenerate symmetric pairs stay at this tolerance",
    "value": 1e-08
+  },
+  "onset_value_deg_corner": {
+   "basis": "absolute, deg, corner tier: the corner rows of this fixture are exit-TIR corners (gradient_norm null, the same convention that nulls their gradient): the walk's located position on an unbounded gradient is each platform's rounding luck and the sqrt fold carries it into the value \u2014 cross-ISA drift 3.5e-7..7.6e-7 deg measured on PR #477's CI (the same family as the 1e-8 cross-ISA red behind Lumice's ba512cd1).  Emitted only when the classification carries such a corner, so key-present means every corner row of the fixture is one; a fixture that someday mixes well-behaved corners (finite gradient_norm) with singular ones must move the tier to per-row emission first; interior critical points are Newton iterates of the tangent gradient (|grad| <= 1e-10, dp_field.field) and boundary extrema bisected to ~1e-12 rad; 1e-8 deg = 1.7e-10 rad leaves >= 1e2 room.  The ~1e-12 claim holds for isolated extrema only: a near-degenerate pair of corners (values differing by more than this tolerance yet within EXTREMUM_ATOL) is merged by focusing and the surviving member is each backend's floating-point order, so the affected fixture's tolerance block widens its onset-value tolerance to the merge tolerance itself; exactly degenerate symmetric pairs stay at this tolerance",
+   "value": 5.729577951308232e-06
   }
  }
 }
