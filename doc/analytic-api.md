@@ -1133,7 +1133,7 @@ no symmetry reduction, no product labels: the report side (schema3, the B line) 
 | `PartitionDeviationAxis` | the completeness certificate: the delta-axis intervals with their component counts, or the refusal |
 | `TraceWavelengthCriticalTable` | the onsets followed across caller-given refractive indices, aligned by rank (n-continuation) |
 | `TraceRestrictedFamilyCurve` | kind-1 restricted: the family latitude circle with D_P at a base index and per wavelength |
-| `DiagnoseChromatic` / `DiagnoseClassTint` | the two-index colour verdicts with the declared threshold snapshot; the class call adds members and lit sets |
+| `DiagnoseChromatic` / `DiagnoseClassTint` | the two-index colour verdicts with the declared threshold snapshot (the snapshot's `n_red` / `n_blue` are the call's own pair, the four remaining fields the frozen LI constants); the class call adds members and lit sets |
 
 **Open enumerations.** `WalkStatus` and `EscapeRegime` are open sets (conclusions §4 item 5
 requires the escapes open for the report side's fail-closed consumption): each result carries the
@@ -1144,22 +1144,29 @@ by the parity fixtures.
 
 **Error discipline.** A bad crystal / face sequence / index / density / family / grid is a call
 error; every numerical outcome — a refused walk, an escaped partition, kink seeds that failed, a
-restricted-curve point whose routed D_P is NaN — is result data. The two fail-closed mechanical
-invariants hold at this surface and are pinned by the ABI tests: a refused boundary walk delivers
-an EMPTY loop, and the partition delivers NO intervals unless its walk closed and its reasoning
-did not escape. `PartitionResult` separates the two refusal layers (the walk's own
-`walk_status` versus the reasoning's `regime`) because `IntervalPartition` presupposes a walked
-loop — the bridge refuses before it, never silently.
+restricted-curve point whose routed D_P is NaN — is result data. The caller-sized work parameters
+are bounded (each item is evaluated in full and the calls cannot be cancelled, the band sum §4.6
+reasoning): `DiagnoseClassTint`'s samples, `TraceRestrictedFamilyCurve`'s grid and
+`TraceWavelengthCriticalTable`'s count are all capped at 10000000, over which the call errors.
+The two fail-closed mechanical invariants hold at this surface; their evidence is two-layer —
+the kernel layer's tests pin the red arms (a synthetically injected refusal / escape), while the
+ABI tests pin the green arms and the shapes, and the bridge's early-exit construction keeps the
+refused-walk arm here: a refused boundary walk delivers an EMPTY loop, and the partition delivers
+NO intervals unless its walk closed and its reasoning did not escape. `PartitionResult` separates
+the two refusal layers (the walk's own `walk_status` versus the reasoning's `regime`) because
+`IntervalPartition` presupposes a walked loop — the bridge refuses before it, never silently.
 
 **Cost and determinism.** Every call rebuilds its field and keeps no state between calls — no
 handle (§9 item 15's reasoning: the shape freezes once published, and waits for a real consumer).
 Costs are lattice-scale: the 20000-point seeding lattice per walk, the partition's 20000-point
 topology lattice (plus a chart-grid audit when a count is plural); measured on the arm64
-reference machine, the 4-8-7-5 partition is ~0.33 s and a 3-5 boundary walk ~3 ms; a call is
-seconds at worst. Deterministic: no random numbers anywhere on this layer — `DiagnoseClassTint`'s
-family sample is a seed-seeded stream inside the call, so its result is fixed by its inputs
-including the seed; the stream is not LI's numpy stream, and the parity caliber there is the
-fixture tolerance, not bit equality.
+reference machine, the 4-8-7-5 partition is ~0.33 s and a 3-5 boundary walk ~3 ms — a lattice
+call is seconds at worst. `DiagnoseClassTint` is the exception that scales with its sample: cost
+is linear in `samples` (the e2e's 100000-sample call runs in seconds), and the 10000000 cap
+bounds it at roughly two orders above that per call. Deterministic: no random numbers anywhere
+on this layer — `DiagnoseClassTint`'s family sample is a seed-seeded stream inside the call, so
+its result is fixed by its inputs including the seed; the stream is not LI's numpy stream, and
+the parity caliber there is the fixture tolerance, not bit equality.
 
 **Acceptance anchors** (replayed through the ABI by
 `test/unit-correctness/analytic/test_dp_capi.cpp` and

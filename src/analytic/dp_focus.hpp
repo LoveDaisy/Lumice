@@ -227,6 +227,7 @@ struct FocusingClassification {
   ConfinedDimensions confined;
   bool family_pinned = false;
   bool escaped = false;
+  WalkStatus escape_status = WalkStatus::kOk;  // the refusing walk's status when escaped
   std::string escape_message;
 
   bool JacobianFocusing() const;

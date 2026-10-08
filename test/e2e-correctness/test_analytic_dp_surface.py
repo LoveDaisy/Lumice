@@ -238,14 +238,6 @@ c_ulonglong, c_void_p, sizeof
     """
 )
 
-_RUNNER = textwrap.dedent(
-    """
-    import json, sys
-    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "e2e-correctness")) if False else None
-    """
-)
-
-
 def _run(body: str) -> str:
     """Runs one child interpreter with the bindings plus `body`; returns its stdout."""
     lib = _find()
@@ -299,7 +291,7 @@ def test_boundary_loop_walks_and_partition_replays_the_beta_anchor():
         for i in range(part.interval_count):
             row = part.intervals[i]
             assert row.n_components == row.n_closed + row.n_open
-        assert part.audit_verdict == b""  # a disk pays no audit
+        assert part.audit_verdict is None  # a disk pays no audit
         release("LUMICE_ANALYTIC_ReleasePartitionResult", part)
         assert not part.intervals
 

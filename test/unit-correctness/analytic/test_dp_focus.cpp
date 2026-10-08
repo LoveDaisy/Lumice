@@ -592,6 +592,9 @@ TEST(DPFocus, RefusalsAreData) {
     const FocusingClassification label = Classify(f.normals, f.polygons, slots, 5, Random(), 1.34);
     EXPECT_TRUE(label.escaped);
     EXPECT_TRUE(label.onsets.empty());
+    // The typed status travels with the message (the ABI's translation reads this field, not the
+    // message's text).
+    EXPECT_EQ(label.escape_status, WalkStatus::kStartNoPoint);
     EXPECT_NE(label.escape_message.find("start_no_point"), std::string::npos)
         << "the walk's own refusal slug reaches the message: " << label.escape_message;
   }

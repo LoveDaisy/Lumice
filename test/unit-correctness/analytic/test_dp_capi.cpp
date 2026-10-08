@@ -176,6 +176,9 @@ TEST(DpCapi, ErrorTableRefusesAndZeroFillsEveryCall) {
     EXPECT_EQ(
         LUMICE_ANALYTIC_TraceWavelengthCriticalTable(&crystal, kFaces35, 2, RandomDensity(), labels, indices, -1, &out),
         LUMICE_ANALYTIC_ERR_INVALID_VALUE);
+    EXPECT_EQ(LUMICE_ANALYTIC_TraceWavelengthCriticalTable(&crystal, kFaces35, 2, RandomDensity(), labels, indices,
+                                                           10000001, &out),
+              LUMICE_ANALYTIC_ERR_INVALID_VALUE);
     EXPECT_EQ(LUMICE_ANALYTIC_TraceWavelengthCriticalTable(&crystal, kFaces35, 2, RandomDensity(), labels, bad_indices,
                                                            2, &out),
               LUMICE_ANALYTIC_ERR_INVALID_VALUE);
@@ -197,7 +200,13 @@ TEST(DpCapi, ErrorTableRefusesAndZeroFillsEveryCall) {
                                                          wavelengths, indices, 1, 8, &out),
               LUMICE_ANALYTIC_ERR_NULL_ARG);
     EXPECT_EQ(LUMICE_ANALYTIC_TraceRestrictedFamilyCurve(&crystal, kFaces35, 2, PlateDensityAtPole(), sun, 1.31,
+                                                         nullptr, nullptr, 1, 8, &out),
+              LUMICE_ANALYTIC_ERR_NULL_ARG);
+    EXPECT_EQ(LUMICE_ANALYTIC_TraceRestrictedFamilyCurve(&crystal, kFaces35, 2, PlateDensityAtPole(), sun, 1.31,
                                                          wavelengths, indices, 1, 0, &out),
+              LUMICE_ANALYTIC_ERR_INVALID_VALUE);
+    EXPECT_EQ(LUMICE_ANALYTIC_TraceRestrictedFamilyCurve(&crystal, kFaces35, 2, PlateDensityAtPole(), sun, 1.31,
+                                                         wavelengths, indices, 1, 10000001, &out),
               LUMICE_ANALYTIC_ERR_INVALID_VALUE);
     EXPECT_EQ(LUMICE_ANALYTIC_TraceRestrictedFamilyCurve(&crystal, kFaces35, 2, PlateDensityAtPole(), sun, -1.0,
                                                          wavelengths, indices, 1, 8, &out),
@@ -218,6 +227,8 @@ TEST(DpCapi, ErrorTableRefusesAndZeroFillsEveryCall) {
     EXPECT_EQ(LUMICE_ANALYTIC_DiagnoseChromatic(nullptr, kFaces35, 2, 1.31, 1.32, &out), LUMICE_ANALYTIC_ERR_NULL_ARG);
     EXPECT_EQ(LUMICE_ANALYTIC_DiagnoseChromatic(&crystal, kFaces35, 2, 1.31, 0.0, &out),
               LUMICE_ANALYTIC_ERR_INVALID_VALUE);
+    EXPECT_EQ(LUMICE_ANALYTIC_DiagnoseChromatic(&crystal, kFaces35, 2, 0.0, 1.32, &out),
+              LUMICE_ANALYTIC_ERR_INVALID_VALUE);
     LUMICE_ANALYTIC_PlateFamily family{};
     family.sun_altitude_deg = 9.0;
     family.zenith_std_deg = 1.0;
@@ -231,6 +242,9 @@ TEST(DpCapi, ErrorTableRefusesAndZeroFillsEveryCall) {
     family.samples = 1000;
     family.zenith_std_deg = 0.0;
     EXPECT_EQ(LUMICE_ANALYTIC_DiagnoseClassTint(&crystal, kFaces35, 2, family, kNRed, kNBlue, &out),
+              LUMICE_ANALYTIC_ERR_INVALID_VALUE);
+    family.zenith_std_deg = 1.0;
+    EXPECT_EQ(LUMICE_ANALYTIC_DiagnoseClassTint(&crystal, kFaces35, 2, family, 0.0, kNBlue, &out),
               LUMICE_ANALYTIC_ERR_INVALID_VALUE);
     EXPECT_EQ(out.storage, nullptr);
     LUMICE_ANALYTIC_ReleaseChromaticResult(&out);
@@ -299,7 +313,7 @@ TEST(DpCapi, PartitionReplaysTheBetaAnchorAndTheMechanicalInvariants) {
   EXPECT_GT(out.lattice_n, 0);
   EXPECT_EQ(out.domain_components, 1);
   EXPECT_EQ(out.complement_components, 1);
-  EXPECT_STREQ(out.audit_verdict, "") << "a disk pays no audit";
+  EXPECT_EQ(out.audit_verdict, nullptr) << "a disk pays no audit";
   LUMICE_ANALYTIC_ReleasePartitionResult(&out);
   LUMICE_ANALYTIC_ReleasePartitionResult(&out);
   EXPECT_EQ(out.intervals, nullptr);
@@ -545,6 +559,16 @@ TEST(DpCapi, ChromaticVerdictCarriesTheDarkHoleRimAndTheThresholds) {
   LUMICE_ANALYTIC_ReleaseChromaticResult(&out);
   EXPECT_EQ(out.features, nullptr);
   EXPECT_EQ(out.notes, nullptr);
+
+  // A non-frozen pair comes back as the call's own pair; the four frozen constants stay LI's.
+  LUMICE_ANALYTIC_ChromaticResult shifted{};
+  shifted.struct_size = sizeof(shifted);
+  ASSERT_EQ(LUMICE_ANALYTIC_DiagnoseChromatic(&crystal, faces, 3, 1.45, 1.50, &shifted), LUMICE_ANALYTIC_OK);
+  EXPECT_DOUBLE_EQ(shifted.thresholds.n_red, 1.45);
+  EXPECT_DOUBLE_EQ(shifted.thresholds.n_blue, 1.50);
+  EXPECT_DOUBLE_EQ(shifted.thresholds.edge_spread_per_shift, 1.0);
+  LUMICE_ANALYTIC_ReleaseChromaticResult(&shifted);
+  LUMICE_ANALYTIC_ReleaseChromaticResult(&shifted);
 }
 
 TEST(DpCapi, ClassTintReplaysTheRhombicPlateAnchor) {

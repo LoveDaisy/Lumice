@@ -784,8 +784,11 @@ LUMICE_ANALYTIC_API LUMICE_ANALYTIC_ErrorCode LUMICE_ANALYTIC_CorrectDeviationBa
 // density / family / grid is a call error; every numerical outcome of a run computation — a
 // boundary walk that refuses, a partition that escapes, kink arcs with failed seeds, routed
 // non-finite points — is RESULT DATA in the fields below, never an error code. The two
-// fail-closed mechanical invariants of the kernels hold at this surface and are pinned by the
-// ABI tests: a refused boundary walk delivers an EMPTY loop (status != OK implies
+// fail-closed mechanical invariants of the kernels hold at this surface. Their evidence is
+// two-layer: the kernel layer's tests pin the red arms (a synthetically injected refusal /
+// escape), while this ABI's tests pin the green arms and the shapes — the refused-walk arm is
+// additionally kept here by construction, the bridge building the refused result through its own
+// early-exit path. A refused boundary walk delivers an EMPTY loop (status != OK implies
 // critical_point_count == 0 and corner_count == 0), and an escaped partition delivers NO
 // intervals (escaped != 0 implies interval_count == 0).
 //
@@ -1033,12 +1036,15 @@ typedef struct LUMICE_ANALYTIC_ClassificationResult_ {
 
 // The delta-axis partition of D_P on U_P with the counts of every interval — the completeness
 // certificate. Two refusal layers, both data and both leaving NO intervals (mechanical
-// invariants, pinned at this surface): walk_status != OK — the boundary loop itself was refused,
-// so there is no loop to partition (message is the walk's text); escaped != 0 — the loop was
-// walked but the reasoning refused, with the regime named openly and message carrying the
-// failing check's LI text. The topology evidence is the adjudicated component counts of U_P and
-// its complement on the lattice, with the chart audit's verdict slug ("confirmed", "corrected",
-// "unconverged"; "" when no audit ran — a disk needs none).
+// invariants; the kernel layer's tests pin the red arms, this ABI's tests the green arms and the
+// shapes, and the bridge's early-exit construction keeps the refused-walk arm here):
+// walk_status != OK — the boundary loop itself was refused, so there is no loop to partition
+// (message is the walk's text; the topology counts and audit_verdict below are then not computed
+// — only lattice_n is still published); escaped != 0 — the loop was walked but the reasoning
+// refused, with the regime named openly and message carrying the failing check's LI text. The
+// topology evidence is the adjudicated component counts of U_P and its complement on the
+// lattice, with the chart audit's verdict slug ("confirmed", "corrected", "unconverged"; NULL
+// when no audit ran — a disk needs none).
 typedef struct LUMICE_ANALYTIC_PartitionResult_ {
   uint32_t struct_size;  // caller sets sizeof(*out) before the call (section 8.2)
   int walk_status;       // LUMICE_ANALYTIC_WalkStatus (open)
@@ -1053,8 +1059,8 @@ typedef struct LUMICE_ANALYTIC_PartitionResult_ {
   int lattice_n;
   int domain_components;
   int complement_components;
-  const char* audit_verdict;
-  void* storage;  // opaque; LUMICE_ANALYTIC_ReleasePartitionResult
+  const char* audit_verdict;  // the chart audit's verdict slug; NULL when no audit ran
+  void* storage;              // opaque; LUMICE_ANALYTIC_ReleasePartitionResult
 } LUMICE_ANALYTIC_PartitionResult;
 
 // One onset followed across refractive indices, aligned by rank: values_deg parallels the
@@ -1114,7 +1120,9 @@ typedef struct LUMICE_ANALYTIC_RestrictedCurveResult_ {
 
 // The declared chromatic thresholds that produced a verdict — a snapshot of the criterion's
 // parameters, not constants of nature; paired with the verdict so a consumer reads which
-// declared criterion labelled it.
+// declared criterion labelled it. n_red / n_blue are the CALL's own pair: the criterion runs at
+// the pair you pass, and that pair is what comes back; the four remaining fields are the frozen
+// LI snapshot values (whose defaults name the calibration pair 1.307 / 1.317).
 typedef struct LUMICE_ANALYTIC_ChromaticThresholds_ {
   double n_red;
   double n_blue;
@@ -1262,8 +1270,16 @@ LUMICE_ANALYTIC_API void LUMICE_ANALYTIC_ReleasePartitionResult(LUMICE_ANALYTIC_
 // data rather than pairing unrelated onsets. `count` labels/indices; an empty set escapes
 // ("indices is empty") rather than erroring — the kernel's own verdict.
 //
-// Call errors: as TraceBoundaryLoop, plus ERR_NULL_ARG for labels or indices NULL with
-// count > 0, and ERR_INVALID_VALUE for count < 0 or a non-finite / non-positive index.
+// Call errors:
+//   ERR_NULL_ARG       crystal, faces, out, labels or indices is NULL (the latter two only with
+//                      count > 0)
+//   ERR_INVALID_VALUE  out->struct_size smaller than this struct; face_count < 2 or > 64; a face
+//                      number the crystal does not have; count < 0 or count > 10000000; a
+//                      non-finite or non-positive index; an invalid density (an unknown family, a
+//                      missing or non-positive width, a zenith mean outside [0, 180] or a
+//                      used-but-non-zero field)
+//   ERR_INVALID_CONFIG crystal rejected by the engine's closed-form validity gate
+//   ERR_UNKNOWN        an internal failure (out of memory); out is zero-filled
 // Re-entrant on distinct outputs.
 LUMICE_ANALYTIC_API LUMICE_ANALYTIC_ErrorCode LUMICE_ANALYTIC_TraceWavelengthCriticalTable(
     const LUMICE_ANALYTIC_Crystal* crystal, const int* faces, int face_count, LUMICE_ANALYTIC_PoseDensity density,
@@ -1280,10 +1296,10 @@ LUMICE_ANALYTIC_API void LUMICE_ANALYTIC_ReleaseWavelengthTableResult(LUMICE_ANA
 // no chromatic rows).
 //
 // Call errors: as TraceBoundaryLoop, plus ERR_NULL_ARG for sun_hat NULL or a wavelength table
-// NULL with wavelength_count > 0, and ERR_INVALID_VALUE for grid < 1, wavelength_count < 0, a
-// non-finite / non-positive base_index or wavelength index, or a non-finite / non-unit sun_hat.
-// An empty curve (no family axis, sun at the pole) is a SUCCESS with the reason in note.
-// Re-entrant on distinct outputs.
+// NULL with wavelength_count > 0, and ERR_INVALID_VALUE for grid outside 1..10000000,
+// wavelength_count < 0, a non-finite / non-positive base_index or wavelength index, or a
+// non-finite / non-unit sun_hat. An empty curve (no family axis, sun at the pole) is a SUCCESS
+// with the reason in note. Re-entrant on distinct outputs.
 LUMICE_ANALYTIC_API LUMICE_ANALYTIC_ErrorCode LUMICE_ANALYTIC_TraceRestrictedFamilyCurve(
     const LUMICE_ANALYTIC_Crystal* crystal, const int* faces, int face_count, LUMICE_ANALYTIC_PoseDensity density,
     const double sun_hat[3], double base_index, const double* wavelengths_nm, const double* indices,

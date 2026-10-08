@@ -26,9 +26,11 @@
 namespace {
 namespace an = lumice::analytic;
 
-// Upper bound of DiagnoseClassTint's family sample: each pose is evaluated in full and the call
-// cannot be cancelled (the band sum's own reasoning for its bound, section 4.6).
-constexpr int kMaxPlateSamples = 10000000;
+// Upper bound of the caller-sized work parameters (DiagnoseClassTint's family sample,
+// TraceRestrictedFamilyCurve's grid, TraceWavelengthCriticalTable's count): each item is
+// evaluated in full and the calls cannot be cancelled (the band sum's own reasoning for its
+// bound, section 4.6).
+constexpr int kMaxCallerItems = 10000000;
 
 template <class T>
 void ZeroAfterStructSize(T* out) {
@@ -148,7 +150,8 @@ int WalkStatusOf(an::WalkStatus status) {
     case an::WalkStatus::kBadOrientation:
       return LUMICE_ANALYTIC_WALK_BAD_ORIENTATION;
   }
-  return LUMICE_ANALYTIC_WALK_OK;  // -Wswitch keeps this unreachable as the kernel grows
+  return LUMICE_ANALYTIC_WALK_NOT_FINITE;  // -Wswitch keeps this unreachable as the kernel grows;
+                                           // the default is a refusal, never a success
 }
 
 int EscapeRegimeOf(an::EscapeRegime regime) {
@@ -397,19 +400,6 @@ int OnsetProfileOf(an::OnsetProfile profile) {
   return LUMICE_ANALYTIC_PROFILE_DEGENERATE;
 }
 
-int EscapeStatusFromMessage(const std::string& message) {
-  // The kernel's classify carries the walk refusal only as its composed text ("slug: detail"),
-  // built from the same slug table; the typed open-enum status is recovered by prefix match
-  // against that table (kOk excluded: a refusal never maps to it).
-  for (int v = static_cast<int>(an::WalkStatus::kStepsExhausted);
-       v <= static_cast<int>(an::WalkStatus::kBadOrientation); ++v) {
-    if (message.rfind(std::string(an::WalkStatusName(static_cast<an::WalkStatus>(v))) + ":", 0) == 0) {
-      return WalkStatusOf(static_cast<an::WalkStatus>(v));
-    }
-  }
-  return LUMICE_ANALYTIC_WALK_NOT_FINITE;
-}
-
 struct ClassificationStorage {
   Strings strings;
   std::vector<LUMICE_ANALYTIC_CriticalOnset> onsets;
@@ -437,9 +427,8 @@ int ClassifyCriticalStructureImpl(const LUMICE_ANALYTIC_Crystal* crystal, const 
   out->halo_map_rank = classification.halo_map_rank;
   out->escaped = classification.escaped ? 1 : 0;
   if (classification.escaped) {
-    out->escape_status = EscapeStatusFromMessage(classification.escape_message);
-    out->escape_status_name = storage->strings.Intern(an::WalkStatusName(static_cast<an::WalkStatus>(
-        out->escape_status == LUMICE_ANALYTIC_WALK_OK ? LUMICE_ANALYTIC_WALK_NOT_FINITE : out->escape_status)));
+    out->escape_status = WalkStatusOf(classification.escape_status);
+    out->escape_status_name = storage->strings.Intern(an::WalkStatusName(classification.escape_status));
     out->escape_message = storage->strings.Intern(classification.escape_message);
   }
   for (const an::CriticalOnset& onset : classification.onsets) {
@@ -532,7 +521,7 @@ int PartitionDeviationAxisImpl(const LUMICE_ANALYTIC_Crystal* crystal, const int
   out->domain_components = topology.domain_components;
   out->complement_components = topology.complement_components;
   out->audit_verdict =
-      storage->strings.Intern(topology.has_grid_audit ? an::AuditVerdictName(topology.grid_audit.verdict) : "");
+      topology.has_grid_audit ? storage->strings.Intern(an::AuditVerdictName(topology.grid_audit.verdict)) : nullptr;
   out->storage = storage.release();
   return 0;
 }
@@ -565,6 +554,9 @@ int TraceWavelengthCriticalTableImpl(const LUMICE_ANALYTIC_Crystal* crystal, con
   }
   if (count < 0 || (count > 0 && (labels == nullptr || indices == nullptr))) {
     return count < 0 ? 1 : 3;
+  }
+  if (count > kMaxCallerItems) {
+    return 1;
   }
   for (int k = 0; k < count; ++k) {
     if (!std::isfinite(indices[k]) || indices[k] <= 0.0) {
@@ -641,8 +633,11 @@ int TraceRestrictedFamilyCurveImpl(const LUMICE_ANALYTIC_Crystal* crystal, const
   if (sun_hat == nullptr) {
     return 3;
   }
-  if (grid < 1 || wavelength_count < 0 || (wavelength_count > 0 && (wavelengths_nm == nullptr || indices == nullptr)) ||
-      !std::isfinite(base_index) || base_index <= 0.0 || !an::ValidateUnitVector(sun_hat)) {
+  if (wavelength_count < 0 || (wavelength_count > 0 && (wavelengths_nm == nullptr || indices == nullptr))) {
+    return wavelength_count < 0 ? 1 : 3;
+  }
+  if (grid < 1 || grid > kMaxCallerItems || !std::isfinite(base_index) || base_index <= 0.0 ||
+      !an::ValidateUnitVector(sun_hat)) {
     return 1;
   }
   for (int k = 0; k < wavelength_count; ++k) {
@@ -753,7 +748,8 @@ class ChromaticStorage {
   std::vector<int> lit_sizes_blue;
   std::vector<int> lit_members_blue;
 
-  void FillVerdict(const an::ChromaticVerdict& verdict, LUMICE_ANALYTIC_ChromaticResult* out) {
+  void FillVerdict(const an::ChromaticVerdict& verdict, double n_red, double n_blue,
+                   LUMICE_ANALYTIC_ChromaticResult* out) {
     out->verdict_kind = VerdictKindOf(verdict.kind);
     out->color = ColorOf(verdict.color);
     out->visible = verdict.visible ? 1 : 0;
@@ -781,6 +777,11 @@ class ChromaticStorage {
       notes.push_back(strings.Intern(note));
     }
     FillThresholds(an::ChromaticThresholdsSnapshot(), &out->thresholds);
+    // The criterion pair is the call's own: the snapshot's four frozen constants record the
+    // criterion, but the verdict was computed at the pair the caller passed, and that pair is
+    // what the consumer must read back (the snapshot's defaults name LI's calibration pair).
+    out->thresholds.n_red = n_red;
+    out->thresholds.n_blue = n_blue;
     out->has_tint = verdict.has_tint ? 1 : 0;
     out->energy_red = verdict.tint.energy_red;
     out->energy_blue = verdict.tint.energy_blue;
@@ -828,6 +829,9 @@ int ValidateChromaticIndices(double n_red, double n_blue) {
 
 int DiagnoseChromaticImpl(const LUMICE_ANALYTIC_Crystal* crystal, const int* faces, int face_count, double n_red,
                           double n_blue, LUMICE_ANALYTIC_ChromaticResult* out) {
+  if (ValidateChromaticIndices(n_red, n_blue) != 0) {
+    return 1;
+  }
   an::FaceNormalTable table;
   an::FacePolygonTable polygons;
   std::vector<int> slots;
@@ -837,7 +841,7 @@ int DiagnoseChromaticImpl(const LUMICE_ANALYTIC_Crystal* crystal, const int* fac
   }
   const an::ChromaticVerdict verdict = an::Diagnose(table, polygons, slots.data(), face_count, n_red, n_blue);
   auto storage = std::make_unique<ChromaticStorage>();
-  storage->FillVerdict(verdict, out);
+  storage->FillVerdict(verdict, n_red, n_blue, out);
   storage->Finish(out);
   out->storage = storage.release();
   return 0;
@@ -846,8 +850,11 @@ int DiagnoseChromaticImpl(const LUMICE_ANALYTIC_Crystal* crystal, const int* fac
 int DiagnoseClassTintImpl(const LUMICE_ANALYTIC_Crystal* crystal, const int* faces, int face_count,
                           const LUMICE_ANALYTIC_PlateFamily& family, double n_red, double n_blue,
                           LUMICE_ANALYTIC_ChromaticResult* out) {
+  if (ValidateChromaticIndices(n_red, n_blue) != 0) {
+    return 1;
+  }
   if (!std::isfinite(family.sun_altitude_deg) || !std::isfinite(family.zenith_std_deg) ||
-      family.zenith_std_deg <= 0.0 || family.samples < 1 || family.samples > kMaxPlateSamples) {
+      family.zenith_std_deg <= 0.0 || family.samples < 1 || family.samples > kMaxCallerItems) {
     return 1;
   }
   an::FaceNormalTable table;
@@ -866,7 +873,7 @@ int DiagnoseClassTintImpl(const LUMICE_ANALYTIC_Crystal* crystal, const int* fac
   // own convention); slots would read as labels outside the universe.
   const an::ClassVerdict klass = an::DiagnoseClass(table, polygons, faces, face_count, spec, n_red, n_blue);
   auto storage = std::make_unique<ChromaticStorage>();
-  storage->FillVerdict(klass.verdict, out);
+  storage->FillVerdict(klass.verdict, n_red, n_blue, out);
   storage->FillMembers(klass, out);
   storage->Finish(out);
   out->storage = storage.release();

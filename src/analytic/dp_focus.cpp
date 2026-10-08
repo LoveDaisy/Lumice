@@ -588,6 +588,7 @@ FocusingClassification Classify(const FaceNormalTable& normals, const FacePolygo
   const WalkResult walk = WalkBoundary(field, options.walk);
   if (walk.status != WalkStatus::kOk) {
     out.escaped = true;
+    out.escape_status = walk.status;
     out.escape_message = std::string(WalkStatusName(walk.status)) + ": " + walk.message;
     return out;
   }
