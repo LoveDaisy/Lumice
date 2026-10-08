@@ -37,6 +37,14 @@ constexpr double kPi = 3.14159265358979323846;
 constexpr double kTwoPi = 2.0 * kPi;
 constexpr double kDeg = kPi / 180.0;
 
+// LI #51 snapshots carry A in LI's hexagon-edge-1 normalisation; the engine crystal at
+// face_distance 1 is half that edge, so engine areas are LI's / 4. The product-side constant
+// was retired with the LI caliber fix (band_sum weights are the entry measure of the reference
+// crystal itself now — see the 660.4 retirement commit), but these snapshot literals still
+// live in the old normalisation: the conversion is a fixture concern of this test, kept here
+// as a local literal rather than a product constant.
+constexpr double kLiAreaPerEngineArea = 4.0;
+
 // LI conventions #22: the wavelength-pool ends, parameters of every chromatic verdict.
 constexpr double kNRed = 1.307;
 constexpr double kNBlue = 1.317;
@@ -46,7 +54,7 @@ constexpr double kNBlue = 1.317;
 // precision so the cross-check needs no binary fixture: five effective poses per class, the
 // body-frame sun u, the SO(3) pose, and A / T / outgoing at both indices. A is in LI's
 // normalisation (hexagon edge a = 1); the engine crystal at face_distance 1 is half the edge, so
-// engine areas are LI's / 4 (analytic::kLiAreaPerEngineArea).
+// engine areas are LI's / 4 (kLiAreaPerEngineArea).
 struct SnapshotPose {
   double u[3];
   double rotation[9];
@@ -577,10 +585,9 @@ TEST(FiberQuadratureC12, SnapshotPosesReproduceTheLI51Fixture) {
   for (const SnapshotPose& snap : kWhiteSnapshots) {
     const SnapshotCheck red = EvaluateAt(t, white, kNRed, snap.rotation, snap.u);
     const SnapshotCheck blue_idx = EvaluateAt(t, white, kNBlue, snap.rotation, snap.u);
-    EXPECT_NEAR(red.a_engine, snap.a_red / analytic::kLiAreaPerEngineArea,
-                1e-9 * snap.a_red / analytic::kLiAreaPerEngineArea + 1e-15);
-    EXPECT_NEAR(blue_idx.a_engine, snap.a_blue / analytic::kLiAreaPerEngineArea,
-                1e-9 * snap.a_blue / analytic::kLiAreaPerEngineArea + 1e-15);
+    EXPECT_NEAR(red.a_engine, snap.a_red / kLiAreaPerEngineArea, 1e-9 * snap.a_red / kLiAreaPerEngineArea + 1e-15);
+    EXPECT_NEAR(blue_idx.a_engine, snap.a_blue / kLiAreaPerEngineArea,
+                1e-9 * snap.a_blue / kLiAreaPerEngineArea + 1e-15);
     EXPECT_NEAR(red.t, snap.t_red, 1e-9 * snap.t_red);
     EXPECT_NEAR(blue_idx.t, snap.t_blue, 1e-9 * snap.t_blue);
     for (int i = 0; i < 3; i++) {
@@ -591,10 +598,9 @@ TEST(FiberQuadratureC12, SnapshotPosesReproduceTheLI51Fixture) {
   for (const SnapshotPose& snap : kBlueSnapshots) {
     const SnapshotCheck red = EvaluateAt(t, blue, kNRed, snap.rotation, snap.u);
     const SnapshotCheck blue_idx = EvaluateAt(t, blue, kNBlue, snap.rotation, snap.u);
-    EXPECT_NEAR(red.a_engine, snap.a_red / analytic::kLiAreaPerEngineArea,
-                1e-9 * snap.a_red / analytic::kLiAreaPerEngineArea + 1e-15);
-    EXPECT_NEAR(blue_idx.a_engine, snap.a_blue / analytic::kLiAreaPerEngineArea,
-                1e-9 * snap.a_blue / analytic::kLiAreaPerEngineArea + 1e-15);
+    EXPECT_NEAR(red.a_engine, snap.a_red / kLiAreaPerEngineArea, 1e-9 * snap.a_red / kLiAreaPerEngineArea + 1e-15);
+    EXPECT_NEAR(blue_idx.a_engine, snap.a_blue / kLiAreaPerEngineArea,
+                1e-9 * snap.a_blue / kLiAreaPerEngineArea + 1e-15);
     EXPECT_NEAR(red.t, snap.t_red, 1e-9 * snap.t_red);
     EXPECT_NEAR(blue_idx.t, snap.t_blue, 1e-9 * snap.t_blue);
     for (int i = 0; i < 3; i++) {
