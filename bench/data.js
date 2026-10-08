@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1791489567674,
+  "lastUpdate": 1791489569669,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9524,50 +9524,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "19741f43a26b205cd9953af019cae4b44fd12984",
-          "message": "Merge pull request #365 from LoveDaisy/feat/overlay-panel-ux\n\nfeat(gui): Overlay panel UX — Lens Center circle defaults and a Reference Points All row",
-          "timestamp": "2026-09-14T00:15:21+08:00",
-          "tree_id": "d43c7c2948629dec68903aa2f4de6ded9dcafbae",
-          "url": "https://github.com/LoveDaisy/ice_halo_sim/commit/19741f43a26b205cd9953af019cae4b44fd12984"
-        },
-        "date": 1789316830599,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 76,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 99.9,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 96.2,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 90.8,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "c4288079e3f5670454e7cc8788194498a3f584f2",
           "message": "Merge pull request #366 from LoveDaisy/feat/analysis-session-ray-allocation\n\nfeat(analysis): analysis sessions follow scene.ray_allocation; drop the Rays column",
           "timestamp": "2026-09-14T00:38:07+08:00",
@@ -13867,6 +13823,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 94,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "1e88e8c405777eac6aa3f56227a2a0ccd28e82b6",
+          "message": "Merge pull request #477 from LoveDaisy/feat/schema3-geometry-port\n\nfeat(analytic): schema3 geometry layer port (u-S2 field, partition, walks, focusing/chromatic, contour, API v8)",
+          "timestamp": "2026-10-09T03:56:32+08:00",
+          "tree_id": "6d823a2cb115de1d1cc95c3511bd06308e497425",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/1e88e8c405777eac6aa3f56227a2a0ccd28e82b6"
+        },
+        "date": 1791489569285,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 88.3,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 99.8,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 99.1,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 94.8,
             "unit": "%"
           }
         ]
