@@ -1042,6 +1042,7 @@ set(lumice_analytic_kernel_src
   "${PROJ_SRC_DIR}/analytic/dp_weight_kink.cpp"
   "${PROJ_SRC_DIR}/analytic/dp_chromatic.cpp"
   "${PROJ_SRC_DIR}/analytic/dp_focus.cpp"
+  "${PROJ_SRC_DIR}/analytic/dp_contour.cpp"
   "${PROJ_SRC_DIR}/analytic/reflection_group.cpp"
   "${PROJ_SRC_DIR}/analytic/discovery.cpp"
   "${PROJ_SRC_DIR}/analytic/path_rank.cpp"

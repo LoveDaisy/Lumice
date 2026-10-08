@@ -122,6 +122,8 @@ set(LUMICE_LAYER_analytic_FILES
   analytic/dp_boundary.hpp
   analytic/dp_chromatic.cpp
   analytic/dp_chromatic.hpp
+  analytic/dp_contour.cpp
+  analytic/dp_contour.hpp
   analytic/dp_field.cpp
   analytic/dp_field.hpp
   analytic/dp_focus.cpp

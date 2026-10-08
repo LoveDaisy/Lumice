@@ -263,6 +263,7 @@ add_executable(unit_correctness_test
   "${PROJ_TEST_DIR}/unit-correctness/analytic/test_dp_partition.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/analytic/test_dp_focus.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/analytic/test_dp_chromatic.cpp"
+  "${PROJ_TEST_DIR}/unit-correctness/analytic/test_dp_contour.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/analytic/test_reflection_group.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/analytic/test_discovery.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/analytic/test_path_rank.cpp"
