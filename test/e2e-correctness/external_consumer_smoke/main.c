@@ -102,5 +102,16 @@ int main(void) {
   ok = ok && diagnostics.storage == NULL && diagnostics.source_events == NULL &&
        diagnostics.field_terminal_available == 73 && diagnostics.field_terminal_status == 74;
   printf("LUMICE_ANALYTIC diagnostic numerics ok=%d\n", ok);
+  /* One version-8 call: the boundary loop of the same 3-5 path, the kind-2 object. */
+  LUMICE_ANALYTIC_BoundaryLoopResult loop = { 0 };
+  loop.struct_size = sizeof(loop);
+  rc = LUMICE_ANALYTIC_TraceBoundaryLoop(&crystal, faces, 2, 1.31, &loop);
+  ok = ok && rc == LUMICE_ANALYTIC_OK && loop.status == LUMICE_ANALYTIC_WALK_OK &&
+       loop.status_name != NULL && loop.status_name[0] == 'o' && loop.message == NULL &&
+       loop.critical_point_count > 0 && loop.corner_count > 0 && loop.has_plateau == 0;
+  LUMICE_ANALYTIC_ReleaseBoundaryLoopResult(&loop);
+  LUMICE_ANALYTIC_ReleaseBoundaryLoopResult(&loop);
+  ok = ok && loop.critical_point_positions == NULL && loop.storage == NULL;
+  printf("LUMICE_ANALYTIC field layer ok=%d\n", ok);
   return ok ? 0 : 1;
 }
