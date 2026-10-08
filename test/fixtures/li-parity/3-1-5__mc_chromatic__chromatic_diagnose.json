@@ -39,7 +39,7 @@
     "source": "internal_1_tir_discriminant",
     "spread": 0.08513017617707908,
     "visible": true,
-    "weight": 0.014752368381158194
+    "weight": 0.0036880920952895484
    },
    {
     "color": "red",
@@ -54,7 +54,7 @@
     "source": "exit_snell_discriminant",
     "spread": 1.89632792435587,
     "visible": false,
-    "weight": 7.928274648552483e-09
+    "weight": 1.9820686621381206e-09
    }
   ],
   "kind": "edge",
@@ -105,7 +105,7 @@
  },
  "provenance": {
   "conventions_sha256": "933beb6cb38220ca0e64d696cb50f37e3ccb91e0ede70616ecabeaf521ba7f21",
-  "li_rev": "4d0184c6f2789cd9945961197463ca4e6cbeb593",
+  "li_rev": "c61ee849401c82b3a89b168b1150b4392966da31",
   "li_tracked_tree_clean": true
  },
  "schema_version": 1,

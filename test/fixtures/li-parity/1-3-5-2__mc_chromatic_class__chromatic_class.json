@@ -236,8 +236,8 @@
    "position": null,
    "tint": {
     "direction_dispersion": 9.231439633876655e-16,
-    "energy_blue": 0.00078050658375676,
-    "energy_red": 0.0005233017385139108,
+    "energy_blue": 0.00019512664593919,
+    "energy_red": 0.0001308254346284777,
     "ratio": 1.4915038997830732,
     "tir_fraction_blue": 0.537021771351145,
     "tir_fraction_red": 0.4389442524723966
@@ -292,7 +292,7 @@
  },
  "provenance": {
   "conventions_sha256": "933beb6cb38220ca0e64d696cb50f37e3ccb91e0ede70616ecabeaf521ba7f21",
-  "li_rev": "4d0184c6f2789cd9945961197463ca4e6cbeb593",
+  "li_rev": "c61ee849401c82b3a89b168b1150b4392966da31",
   "li_tracked_tree_clean": true
  },
  "schema_version": 1,

@@ -54,7 +54,7 @@
     "value_deg": 43.5451321515281
    },
    {
-    "gradient_norm": 43273165.563634425,
+    "gradient_norm": null,
     "jacobian_focusing": false,
     "location": "boundary",
     "measure_limit": null,
@@ -99,7 +99,7 @@
  },
  "provenance": {
   "conventions_sha256": "933beb6cb38220ca0e64d696cb50f37e3ccb91e0ede70616ecabeaf521ba7f21",
-  "li_rev": "4d0184c6f2789cd9945961197463ca4e6cbeb593",
+  "li_rev": "c61ee849401c82b3a89b168b1150b4392966da31",
   "li_tracked_tree_clean": true
  },
  "schema_version": 1,
@@ -110,7 +110,7 @@
    "value": 0.0
   },
   "gradient_norm_range": {
-   "basis": "relative: AD of the same closed-form chain: a gradient norm near zero (a critical point, a cone axis probe at CONE_PROBE_RAD) is relative-noisy at the 1e-9 level and gradient_norm_range is a min/max over the fixed 20000-point Fibonacci lattice; 1e-6 relative covers both",
+   "basis": "relative: AD of the same closed-form chain: a gradient norm near zero (a critical point, a cone axis probe at CONE_PROBE_RAD) is relative-noisy at the 1e-9 level and gradient_norm_range is a min/max over the fixed 20000-point Fibonacci lattice; 1e-6 relative covers both.  An onset gradient that is non-finite or divergent (>= focusing.DIVERGENT_GRADIENT_NORM, the exit-TIR corner convention: |grad D| is unbounded there and a finite value is floating-point luck) is exported as null on both sides",
    "value": 1e-06
   },
   "labels": {
@@ -122,12 +122,12 @@
    "value": 1e-08
   },
   "onset_gradient_norm": {
-   "basis": "relative (null for a non-finite norm, an exit-TIR end): AD of the same closed-form chain: a gradient norm near zero (a critical point, a cone axis probe at CONE_PROBE_RAD) is relative-noisy at the 1e-9 level and gradient_norm_range is a min/max over the fixed 20000-point Fibonacci lattice; 1e-6 relative covers both",
+   "basis": "relative (null for a non-finite or divergent norm, an exit-TIR corner): AD of the same closed-form chain: a gradient norm near zero (a critical point, a cone axis probe at CONE_PROBE_RAD) is relative-noisy at the 1e-9 level and gradient_norm_range is a min/max over the fixed 20000-point Fibonacci lattice; 1e-6 relative covers both.  An onset gradient that is non-finite or divergent (>= focusing.DIVERGENT_GRADIENT_NORM, the exit-TIR corner convention: |grad D| is unbounded there and a finite value is floating-point luck) is exported as null on both sides",
    "value": 1e-06
   },
   "onset_value_deg": {
-   "basis": "absolute, deg: interior critical points are Newton iterates of the tangent gradient (|grad| <= 1e-10, dp_field.field) and boundary extrema bisected to ~1e-12 rad; 1e-8 deg = 1.7e-10 rad leaves >= 1e2 room",
-   "value": 1e-08
+   "basis": "absolute, deg, widened from 1e-08: two corners of this path differ by more than 1e-08 deg yet within EXTREMUM_ATOL, and the merge's surviving member is each backend's floating-point order: interior critical points are Newton iterates of the tangent gradient (|grad| <= 1e-10, dp_field.field) and boundary extrema bisected to ~1e-12 rad; 1e-8 deg = 1.7e-10 rad leaves >= 1e2 room.  The ~1e-12 claim holds for isolated extrema only: a near-degenerate pair of corners (values differing by more than this tolerance yet within EXTREMUM_ATOL) is merged by focusing and the surviving member is each backend's floating-point order, so the affected fixture's tolerance block widens its onset-value tolerance to the merge tolerance itself; exactly degenerate symmetric pairs stay at this tolerance",
+   "value": 5.729577951308232e-06
   }
  }
 }
