@@ -1036,6 +1036,14 @@ set(lumice_analytic_kernel_src
   "${PROJ_SRC_DIR}/analytic/fiber_continuation.cpp"
   "${PROJ_SRC_DIR}/analytic/path_fiber.cpp"
   "${PROJ_SRC_DIR}/analytic/entry_measure.cpp"
+  "${PROJ_SRC_DIR}/analytic/dp_field.cpp"
+  "${PROJ_SRC_DIR}/analytic/dp_boundary.cpp"
+  "${PROJ_SRC_DIR}/analytic/dp_partition.cpp"
+  "${PROJ_SRC_DIR}/analytic/dp_weight_kink.cpp"
+  "${PROJ_SRC_DIR}/analytic/dp_chromatic.cpp"
+  "${PROJ_SRC_DIR}/analytic/dp_focus.cpp"
+  "${PROJ_SRC_DIR}/analytic/dp_contour.cpp"
+  "${PROJ_SRC_DIR}/analytic/reflection_group.cpp"
   "${PROJ_SRC_DIR}/analytic/discovery.cpp"
   "${PROJ_SRC_DIR}/analytic/path_rank.cpp"
   "${PROJ_SRC_DIR}/analytic/pose_density.cpp"
@@ -1043,6 +1051,7 @@ set(lumice_analytic_kernel_src
   "${PROJ_SRC_DIR}/analytic/path_feature_discovery.cpp"
   "${PROJ_SRC_DIR}/analytic/diagnostic_batch.cpp"
   "${PROJ_SRC_DIR}/analytic/diagnostic_capi.cpp"
+  "${PROJ_SRC_DIR}/analytic/dp_capi.cpp"
   # The capability's C ABI (lumice_analytic_core.h). No static object with a side effect, so it
   # may go wherever the kernel goes; the library-management TU (analytic_lib.cpp) may not.
   "${PROJ_SRC_DIR}/analytic/analytic_capi.cpp")

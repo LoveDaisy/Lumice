@@ -1190,9 +1190,565 @@
   }
  ],
  "format": "lumice-integral/analytic-parity",
+ "module_c_cells": [
+  {
+   "crystal": {
+    "face_distance": [
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0
+    ],
+    "height": 1.0,
+    "kind": "prism",
+    "lower_h": 0.0,
+    "lower_wedge_deg": 0.0,
+    "upper_h": 0.0,
+    "upper_wedge_deg": 0.0
+   },
+   "detects": {
+    "dp_field_sample": "D_P / gradient / U_P gate margins / A_P / T_P / w at fixed u: chain or index drift, gate-set change, corridor (entry measure) regression, weight-kernel mismatch",
+    "dp_field_topology": "partition bounds and counts, critical values, corner margin signatures, degenerate-fold fields, domain topology counts: partition escapes, corner Newton, slab-crease gates, chart audit",
+    "focusing_classify": "the kind-1 onset table and its labels (mechanism, profile, jacobian_focusing, multiplicity), gradient_norm_range, family_pinned",
+    "wavelength_critical_table": "onset displacement across n(lambda): the wavelength-critical preset (task 42.4)"
+   },
+   "files": [
+    "3-5__mc_field__dp_field_sample.json",
+    "3-5__mc_field__dp_field_topology.json",
+    "3-5__mc_field__focusing_classify.json",
+    "3-5__mc_field__wavelength_critical_table.json"
+   ],
+   "indices": {
+    "450nm": 1.3156924365566363,
+    "550nm": 1.3110129170742788,
+    "650nm": 1.308038822937431
+   },
+   "label": "mc_field",
+   "name": "3-5__mc_field",
+   "path": "3-5",
+   "rationale": "the kind-1 representative: the 22 deg inner edge on the canonical column.  The interior minimum is the closed form 2 asin(n sin 30 deg) - 60 deg (21.916127 deg at n(550)); the wavelength table moves it 0.581 deg across 450/550/650 nm (task 42.4's caliber)",
+   "serves": [
+    "A1",
+    "A2",
+    "A4"
+   ],
+   "skipped": []
+  },
+  {
+   "crystal": {
+    "face_distance": [
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0
+    ],
+    "height": 1.0,
+    "kind": "prism",
+    "lower_h": 0.0,
+    "lower_wedge_deg": 0.0,
+    "upper_h": 0.0,
+    "upper_wedge_deg": 0.0
+   },
+   "detects": {
+    "dp_field_sample": "D_P / gradient / U_P gate margins / A_P / T_P / w at fixed u: chain or index drift, gate-set change, corridor (entry measure) regression, weight-kernel mismatch",
+    "dp_field_topology": "partition bounds and counts, critical values, corner margin signatures, degenerate-fold fields, domain topology counts: partition escapes, corner Newton, slab-crease gates, chart audit",
+    "focusing_classify": "the kind-1 onset table and its labels (mechanism, profile, jacobian_focusing, multiplicity), gradient_norm_range, family_pinned"
+   },
+   "files": [
+    "3-1-5__mc_field__dp_field_sample.json",
+    "3-1-5__mc_field__dp_field_topology.json",
+    "3-1-5__mc_field__focusing_classify.json"
+   ],
+   "indices": {
+    "550nm": 1.3110129170742788
+   },
+   "label": "mc_field",
+   "name": "3-1-5__mc_field",
+   "path": "3-1-5",
+   "rationale": "the kind-2 representative: one basal internal reflection; its smallest critical value is the boundary extremum 21.916127 deg (the exit-TIR curve's minimum, the same closed form as 3-5's interior minimum); classify pins the kind-2 attribution against 4-8-7-5's jacobian@blade",
+   "serves": [
+    "A1",
+    "A2",
+    "A3",
+    "A4"
+   ],
+   "skipped": []
+  },
+  {
+   "crystal": {
+    "face_distance": [
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0
+    ],
+    "height": 1.0,
+    "kind": "prism",
+    "lower_h": 0.0,
+    "lower_wedge_deg": 0.0,
+    "upper_h": 0.0,
+    "upper_wedge_deg": 0.0
+   },
+   "detects": {
+    "dp_field_kinks": "TIR-onset curve structure (step/margin/method, arc count, closed, ends) and D envelope per index; the constant circles pin their closed-form value (3-1-6, C06)"
+   },
+   "files": [
+    "3-1-5__mc_kinks__dp_field_kinks.json"
+   ],
+   "indices": {
+    "400nm": 1.3193340315881368,
+    "550nm": 1.3110129170742788,
+    "700nm": 1.3068763664637266
+   },
+   "label": "mc_kinks",
+   "name": "3-1-5__mc_kinks",
+   "path": "3-1-5",
+   "rationale": "the C02 kink family: the basal TIR onset sweeps [129.364, 134.255] deg at 700 nm, [132.458, 136.842] at 550 nm and [141.004, 143.652] at 400 nm (the explore's red/blue ends are n(700)/n(400), read from this sweep); the corpus anchor 131.030 deg lies inside the 700 nm span",
+   "serves": [
+    "A3"
+   ],
+   "skipped": []
+  },
+  {
+   "crystal": {
+    "face_distance": [
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0
+    ],
+    "height": 1.0,
+    "kind": "prism",
+    "lower_h": 0.0,
+    "lower_wedge_deg": 0.0,
+    "upper_h": 0.0,
+    "upper_wedge_deg": 0.0
+   },
+   "detects": {
+    "dp_field_sample": "D_P / gradient / U_P gate margins / A_P / T_P / w at fixed u: chain or index drift, gate-set change, corridor (entry measure) regression, weight-kernel mismatch",
+    "dp_field_topology": "partition bounds and counts, critical values, corner margin signatures, degenerate-fold fields, domain topology counts: partition escapes, corner Newton, slab-crease gates, chart audit"
+   },
+   "files": [
+    "3-1-6__mc_field__dp_field_sample.json",
+    "3-1-6__mc_field__dp_field_topology.json"
+   ],
+   "indices": {
+    "550nm": 1.3110129170742788
+   },
+   "label": "mc_field",
+   "name": "3-1-6__mc_field",
+   "path": "3-1-6",
+   "rationale": "a single-mirror slab between opposite side faces: the partition is the whole range [0, 180] deg, one component open at both ends",
+   "serves": [
+    "A1",
+    "A2"
+   ],
+   "skipped": []
+  },
+  {
+   "crystal": {
+    "face_distance": [
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0
+    ],
+    "height": 1.0,
+    "kind": "prism",
+    "lower_h": 0.0,
+    "lower_wedge_deg": 0.0,
+    "upper_h": 0.0,
+    "upper_wedge_deg": 0.0
+   },
+   "detects": {
+    "dp_field_kinks": "TIR-onset curve structure (step/margin/method, arc count, closed, ends) and D envelope per index; the constant circles pin their closed-form value (3-1-6, C06)"
+   },
+   "files": [
+    "3-1-6__mc_kinks__dp_field_kinks.json"
+   ],
+   "indices": {
+    "550nm": 1.3110129170742788
+   },
+   "label": "mc_kinks",
+   "name": "3-1-6__mc_kinks",
+   "path": "3-1-6",
+   "rationale": "the constant kink: the whole onset circle sits on D = 2 asin sqrt(n^2 - 1) = 115.945100 deg at n(550) (the 52 SUMMARY's 115.945094 was the truncated n = 1.3110129 caliber), spread < 1e-12 rad",
+   "serves": [
+    "A3"
+   ],
+   "skipped": []
+  },
+  {
+   "crystal": {
+    "face_distance": [
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0
+    ],
+    "height": 1.0,
+    "kind": "prism",
+    "lower_h": 0.0,
+    "lower_wedge_deg": 0.0,
+    "upper_h": 0.0,
+    "upper_wedge_deg": 0.0
+   },
+   "detects": {
+    "dp_field_kinks": "TIR-onset curve structure (step/margin/method, arc count, closed, ends) and D envelope per index; the constant circles pin their closed-form value (3-1-6, C06)",
+    "dp_field_topology": "partition bounds and counts, critical values, corner margin signatures, degenerate-fold fields, domain topology counts: partition escapes, corner Newton, slab-crease gates, chart audit"
+   },
+   "files": [
+    "3-1-4-5__mc_field__dp_field_topology.json",
+    "3-1-4-5__mc_field__dp_field_kinks.json"
+   ],
+   "indices": {
+    "550nm": 1.3110129170742788
+   },
+   "label": "mc_field",
+   "name": "3-1-4-5__mc_field",
+   "path": "3-1-4-5",
+   "rationale": "the basal-reflection circle as a domain gate: the partition splits exactly at 120.000000 deg (the complementary circle of C05/C06, isomorphic across crystals) and the kink reaches up to 149.246753 deg",
+   "serves": [
+    "A2",
+    "A3"
+   ],
+   "skipped": []
+  },
+  {
+   "crystal": {
+    "face_distance": [
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0
+    ],
+    "height": 1.0,
+    "kind": "prism",
+    "lower_h": 0.0,
+    "lower_wedge_deg": 0.0,
+    "upper_h": 0.0,
+    "upper_wedge_deg": 0.0
+   },
+   "detects": {
+    "dp_field_topology": "partition bounds and counts, critical values, corner margin signatures, degenerate-fold fields, domain topology counts: partition escapes, corner Newton, slab-crease gates, chart audit"
+   },
+   "files": [
+    "3-4-1-5__mc_field__dp_field_topology.json"
+   ],
+   "indices": {
+    "550nm": 1.3110129170742788
+   },
+   "label": "mc_field",
+   "name": "3-4-1-5__mc_field",
+   "path": "3-4-1-5",
+   "rationale": "the complementary-circle twin of 3-1-4-5: the same split at 120.000000 deg with the kink on the second reflection instead of the first",
+   "serves": [
+    "A2"
+   ],
+   "skipped": []
+  },
+  {
+   "crystal": {
+    "face_distance": [
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0
+    ],
+    "height": 1.0,
+    "kind": "prism",
+    "lower_h": 0.0,
+    "lower_wedge_deg": 0.0,
+    "upper_h": 0.0,
+    "upper_wedge_deg": 0.0
+   },
+   "detects": {
+    "dp_field_kinks": "TIR-onset curve structure (step/margin/method, arc count, closed, ends) and D envelope per index; the constant circles pin their closed-form value (3-1-6, C06)",
+    "dp_field_sample": "D_P / gradient / U_P gate margins / A_P / T_P / w at fixed u: chain or index drift, gate-set change, corridor (entry measure) regression, weight-kernel mismatch",
+    "dp_field_topology": "partition bounds and counts, critical values, corner margin signatures, degenerate-fold fields, domain topology counts: partition escapes, corner Newton, slab-crease gates, chart audit"
+   },
+   "files": [
+    "3-5-6-7__mc_field__dp_field_sample.json",
+    "3-5-6-7__mc_field__dp_field_topology.json",
+    "3-5-6-7__mc_field__dp_field_kinks.json"
+   ],
+   "indices": {
+    "550nm": 1.3110129170742788
+   },
+   "label": "mc_field",
+   "name": "3-5-6-7__mc_field",
+   "path": "3-5-6-7",
+   "rationale": "the machinery regression cell (tasks dp-exit-snell-nan-convention, dp-thin-neck-topology, dp-slab-partition-completion): the partition completes from the D limit 50.161742 deg, the domain is one component (chart-audit corrected), and the marched kink arcs carry no NaN",
+   "serves": [
+    "A1",
+    "A2",
+    "A3"
+   ],
+   "skipped": []
+  },
+  {
+   "crystal": {
+    "face_distance": [
+     2.0,
+     1.0,
+     1.0,
+     2.0,
+     1.0,
+     1.0
+    ],
+    "height": 3.0,
+    "kind": "prism",
+    "lower_h": 0.0,
+    "lower_wedge_deg": 0.0,
+    "upper_h": 0.0,
+    "upper_wedge_deg": 0.0
+   },
+   "detects": {
+    "dp_field_sample": "D_P / gradient / U_P gate margins / A_P / T_P / w at fixed u: chain or index drift, gate-set change, corridor (entry measure) regression, weight-kernel mismatch",
+    "dp_field_topology": "partition bounds and counts, critical values, corner margin signatures, degenerate-fold fields, domain topology counts: partition escapes, corner Newton, slab-crease gates, chart audit",
+    "focusing_classify": "the kind-1 onset table and its labels (mechanism, profile, jacobian_focusing, multiplicity), gradient_norm_range, family_pinned"
+   },
+   "files": [
+    "4-8-7-5__mc_field__dp_field_sample.json",
+    "4-8-7-5__mc_field__dp_field_topology.json",
+    "4-8-7-5__mc_field__focusing_classify.json"
+   ],
+   "indices": {
+    "550nm": 1.3110129170742788
+   },
+   "label": "mc_field",
+   "name": "4-8-7-5__mc_field",
+   "path": "4-8-7-5",
+   "rationale": "the C05 cell on the beta crystal (from_lumice(3.0, [2,1,1,2,1,1]), the 659 config): a degenerate fold with the axis on the c axis, the partition [0, 50.161742, 120] deg, both intervals (2, 0, 2), the blade critical value 120 deg (the corpus' 119.99999999 is this value at grid resolution) and classify jacobian@blade (boundary_extremum/degenerate plus the slab circle)",
+   "serves": [
+    "A1",
+    "A2",
+    "A4"
+   ],
+   "skipped": []
+  },
+  {
+   "crystal": {
+    "face_distance": [
+     2.0,
+     1.0,
+     1.0,
+     2.0,
+     1.0,
+     1.0
+    ],
+    "height": 3.0,
+    "kind": "prism",
+    "lower_h": 0.0,
+    "lower_wedge_deg": 0.0,
+    "upper_h": 0.0,
+    "upper_wedge_deg": 0.0
+   },
+   "detects": {
+    "dp_field_kinks": "TIR-onset curve structure (step/margin/method, arc count, closed, ends) and D envelope per index; the constant circles pin their closed-form value (3-1-6, C06)"
+   },
+   "files": [
+    "4-8-1-7-5__mc_kinks__dp_field_kinks.json"
+   ],
+   "indices": {
+    "400nm": 1.3193340315881368,
+    "550nm": 1.3110129170742788,
+    "700nm": 1.3068763664637266
+   },
+   "label": "mc_kinks",
+   "name": "4-8-1-7-5__mc_kinks",
+   "path": "4-8-1-7-5",
+   "rationale": "the C06 cell: the basal reflection's TIR onset is a closed-form constant circle at 149.246753 deg (550 nm) with dispersion +1.850629 deg from 400 to 700 nm (the corpus anchor +1.87 deg); the two side reflection onsets march from the 120 deg gate",
+   "serves": [
+    "A3"
+   ],
+   "skipped": []
+  },
+  {
+   "crystal": {
+    "face_distance": [
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0
+    ],
+    "height": 0.5,
+    "kind": "prism",
+    "lower_h": 0.0,
+    "lower_wedge_deg": 0.0,
+    "upper_h": 0.0,
+    "upper_wedge_deg": 0.0
+   },
+   "detects": {
+    "chromatic_diagnose": "the colour verdict (kind/color/visible), every feature's criterion quantities, the threshold snapshot (N_RED/N_BLUE/EDGE_MIN_SHIFT_RAD/EDGE_SPREAD_PER_SHIFT/TINT_RATIO_MIN)"
+   },
+   "files": [
+    "3-1-6__mc_chromatic__chromatic_diagnose.json"
+   ],
+   "indices": {},
+   "label": "mc_chromatic",
+   "name": "3-1-6__mc_chromatic",
+   "path": "3-1-6",
+   "rationale": "the dark hole's rim: edge/blue/visible at delta = 2 asin sqrt(n_blue^2 - 1), shift 3.354 deg, spread 0 (chromatic-module-c.md \"Evidence\"; the crystal is that fixture's HexPrism() = from_lumice(0.5))",
+   "serves": [
+    "A4"
+   ],
+   "skipped": []
+  },
+  {
+   "crystal": {
+    "face_distance": [
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0
+    ],
+    "height": 0.5,
+    "kind": "prism",
+    "lower_h": 0.0,
+    "lower_wedge_deg": 0.0,
+    "upper_h": 0.0,
+    "upper_wedge_deg": 0.0
+   },
+   "detects": {
+    "chromatic_diagnose": "the colour verdict (kind/color/visible), every feature's criterion quantities, the threshold snapshot (N_RED/N_BLUE/EDGE_MIN_SHIFT_RAD/EDGE_SPREAD_PER_SHIFT/TINT_RATIO_MIN)"
+   },
+   "files": [
+    "3-1-5__mc_chromatic__chromatic_diagnose.json"
+   ],
+   "indices": {},
+   "label": "mc_chromatic",
+   "name": "3-1-5__mc_chromatic",
+   "path": "3-1-5",
+   "rationale": "the C02 criterion layer: the kink edge is blue/visible while the exit gate is red/not visible (sigma 108.7 deg against |Delta| 0.33 deg), the divergence from the issue's expected red gate recorded in chromatic-module-c.md \"Evidence\"",
+   "serves": [
+    "A4"
+   ],
+   "skipped": []
+  },
+  {
+   "crystal": {
+    "face_distance": [
+     1.5,
+     1.0,
+     1.0,
+     1.5,
+     1.0,
+     1.0
+    ],
+    "height": 0.5,
+    "kind": "prism",
+    "lower_h": 0.0,
+    "lower_wedge_deg": 0.0,
+    "upper_h": 0.0,
+    "upper_wedge_deg": 0.0
+   },
+   "detects": {
+    "chromatic_class": "the PBD class: lit member set per index, tint energies/ratio, tir fractions (entry measure x Fresnel through one kernel on a plate family sample)"
+   },
+   "files": [
+    "1-3-5-2__mc_chromatic_class__chromatic_class.json"
+   ],
+   "indices": {},
+   "label": "mc_chromatic_class",
+   "name": "1-3-5-2__mc_chromatic_class",
+   "path": "1-3-5-2",
+   "rationale": "the 120 deg parhelion tint on the rhombic plate (h/a = 1, sun 9 deg): tint blue, ratio 1.492, four of the 24 members lit (the printed digits of chromatic-module-c.md \"Evidence\")",
+   "serves": [
+    "A4"
+   ],
+   "skipped": []
+  },
+  {
+   "crystal": {
+    "face_distance": [
+     1.5,
+     1.0,
+     1.0,
+     1.5,
+     1.0,
+     1.0
+    ],
+    "height": 0.5,
+    "kind": "prism",
+    "lower_h": 0.0,
+    "lower_wedge_deg": 0.0,
+    "upper_h": 0.0,
+    "upper_wedge_deg": 0.0
+   },
+   "detects": {
+    "chromatic_class": "the PBD class: lit member set per index, tint energies/ratio, tir fractions (entry measure x Fresnel through one kernel on a plate family sample)"
+   },
+   "files": [
+    "1-3-4-2__mc_chromatic_class__chromatic_class.json"
+   ],
+   "indices": {},
+   "label": "mc_chromatic_class",
+   "name": "1-3-4-2__mc_chromatic_class",
+   "path": "1-3-4-2",
+   "rationale": "the white control: ratio 0.965 on the same plate and family (a class whose reflections stay partial across the index pair; the TINT_RATIO_MIN calibration neighbour)",
+   "serves": [
+    "A4"
+   ],
+   "skipped": []
+  },
+  {
+   "crystal": {
+    "face_distance": [
+     1.5,
+     1.0,
+     1.0,
+     1.5,
+     1.0,
+     1.0
+    ],
+    "height": 0.5,
+    "kind": "prism",
+    "lower_h": 0.0,
+    "lower_wedge_deg": 0.0,
+    "upper_h": 0.0,
+    "upper_wedge_deg": 0.0
+   },
+   "detects": {
+    "chromatic_class": "the PBD class: lit member set per index, tint energies/ratio, tir fractions (entry measure x Fresnel through one kernel on a plate family sample)"
+   },
+   "files": [
+    "3-5-6-8__mc_chromatic_class__chromatic_class.json"
+   ],
+   "indices": {},
+   "label": "mc_chromatic_class",
+   "name": "3-5-6-8__mc_chromatic_class",
+   "path": "3-5-6-8",
+   "rationale": "the impossible-literal class: 3-5-6-8 itself is not a face set of this plate; four other members carry the class to a white verdict at ratio 1.029",
+   "serves": [
+    "A4"
+   ],
+   "skipped": []
+  }
+ ],
  "provenance": {
-  "conventions_sha256": "0f4f1e65d95ec2a8ae929a1b015fb7361adaf334a8a690d8a5e97cb519936948",
-  "li_rev": "31c682e05e642d14e4d980e63a2e74ab850f219c",
+  "conventions_sha256": "49e65828af908b4bf645a4a150ad23ee558ac7dcb8d45fd4059bca3c6f4a52f6",
+  "li_rev": "98b4a8c7ec70e519f3744279840c2814f871ade7",
   "li_tracked_tree_clean": true
  },
  "schema_version": 1,

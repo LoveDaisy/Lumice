@@ -41,6 +41,8 @@
 
 #include "analytic/band_sum.hpp"
 #include "analytic/discovery.hpp"
+#include "analytic/dp_chromatic.hpp"
+#include "analytic/dp_focus.hpp"
 #include "analytic/fiber_continuation.hpp"
 #include "analytic/path_evaluation.hpp"
 #include "analytic/path_fiber.hpp"
@@ -67,6 +69,12 @@ constexpr double kDensifySpacing = 1e-3;
 // LI parity_export._compare_traces: `abs(got - ref) <= rtol * ref + 1e-12`. The absolute term only
 // makes a zero-length reference (a one-pose trace) comparable; it is LI's recipe, not a tolerance.
 constexpr double kArclengthAbsoluteGuard = 1e-12;
+// LI's divergence threshold for onset gradient norms (focusing.DIVERGENT_GRADIENT_NORM, LI task 54;
+// the fixtures doc's convention 1). A fixture exports its onset gradient as null for a non-finite
+// OR >= kDivergentGradientNorm norm, and the availability comparison below reads the same
+// convention. Pinned deliberately (the kRotationTolerance pattern): a threshold change has to be
+// re-agreed with LI, not drift here.
+constexpr double kDivergentGradientNorm = 1e6;
 
 bool ArclengthWithin(double got, double reference, double rtol) {
   return std::fabs(got - reference) <= rtol * reference + kArclengthAbsoluteGuard;
@@ -117,10 +125,11 @@ std::map<std::string, std::string> ReadSource() {
 }
 
 // The manifest sections that list fixture files (LI section 2): the path x category matrix, the
-// wave 2 edge cells and the band-sum cells. Any other top-level key is ignored, as LI requires of a
-// reader; a file listed only under an unknown key is then on disk but unlisted, and the manifest
-// test's listed == present check goes red instead of the file being silently dropped.
-constexpr const char* kManifestSections[] = { "cells", "edge_cells", "band_sum_cells" };
+// wave 2 edge cells, the band-sum cells and the module C cells. Any other top-level key is
+// ignored, as LI requires of a reader; a file listed only under an unknown key is then on disk but
+// unlisted, and the manifest test's listed == present check goes red instead of the file being
+// silently dropped.
+constexpr const char* kManifestSections[] = { "cells", "edge_cells", "band_sum_cells", "module_c_cells" };
 
 // Every fixture file `manifest` lists, in section then manifest order. Pure, so the unknown-key rule
 // is tested on this very function.
@@ -150,8 +159,14 @@ std::vector<std::string> ManifestFilesOf(const Json& manifest) {
 // Why a fixture's content is not (yet) compared. Each fixture that carries such content gets one
 // LiParitySkipped case that checks the content is present and then skips with the reason, so the
 // uncompared part is counted by gtest rather than dropped. Whoever implements a comparison removes
-// its reason here and adds the comparison to the kind's suite. Every fixture kind of the current
-// set is compared in full, so there is no reason today; the machinery stays for the next wave.
+// its reason here and adds the comparison to the kind's suite. The module C dp_field kinds (sample
+// / topology / kinks) are the one carried-not-compared family today: their readers belong to the
+// field layers' own follow-up of the geometry port, and the update flow lands the files (verified
+// by LI's exporter) before the readers exist.
+const char* const kCarriedNotComparedKinds[] = { "dp_field_sample", "dp_field_topology", "dp_field_kinks" };
+const char* const kCarriedNotComparedReason =
+    "the dp_field sample/topology/kinks reader is a tracked follow-up of the geometry port; the "
+    "fixture is landed and exporter-verified, not yet replayed by this library";
 
 // What the reader knows about one fixture file: its kind (the JSON's `fixture_kind`, the only
 // authority; the file name is checked against it by LiParityProvenance) and the parts of it that are
@@ -170,6 +185,11 @@ FixtureInfo FixtureInfoOf(const std::string& file, const Json& fixture) {
     return info;  // empty kind: counted as unknown by the manifest test
   }
   info.kind = fixture.value("fixture_kind", "");
+  for (const char* kind : kCarriedNotComparedKinds) {
+    if (info.kind == kind) {
+      info.skip_reason = kCarriedNotComparedReason;
+    }
+  }
   return info;
 }
 
@@ -268,6 +288,26 @@ Curve Poses(const Json& j) {
 
 double Tolerance(const Json& fixture, const std::string& quantity) {
   return fixture.at("tolerance").at(quantity).at("value").get<double>();
+}
+
+// Per-row tier read (LI's fixtures doc, convention 1's value half): a fixture whose classification
+// carries an exit-TIR corner emits `<quantity>_corner` at degrees(EXTREMUM_ATOL), and its corner
+// rows read the tier while every other row keeps the default key. The tier's EXISTENCE is decided
+// by the export side's mechanism predicate (a corner whose gradient norm is null — the value there
+// is cross-ISA rounding luck through the sqrt fold), never by a mismatch: this file cannot produce
+// a tier by editing anything local, because a "cross-platform tier" is not "widen whatever
+// disagrees" (the header discipline; LI's emission and this read are one contract). Key-present
+// implies every corner row of that fixture is singular (LI's emission contract); a fixture mixing
+// well-behaved corners with singular ones must move LI's emission to per-row first. Measured
+// per-platform drift numbers and any recalibration live in the fixture tolerance blocks' basis
+// text and LI's fixtures doc — read them there, never copy the numbers into this comment.
+double RowTolerance(const Json& fixture, const std::string& quantity, const Json& reference_row) {
+  const Json& tolerance = fixture.at("tolerance");
+  const std::string corner_key = quantity + "_corner";
+  if (reference_row.at("source").get<std::string>() == "corner" && tolerance.contains(corner_key)) {
+    return tolerance.at(corner_key).at("value").get<double>();
+  }
+  return Tolerance(fixture, quantity);
 }
 
 // One line per compared quantity, printed red or green, so a run records how much room each
@@ -709,7 +749,15 @@ TEST(LiParityFixtures, ManifestMatchesDirectoryAndSource) {
   // fixture kind LI adds later would otherwise pass provenance alone and be silently dropped; here it
   // goes red and points at the reader.
   size_t claimed = 0;
-  for (const char* kind : { "evaluate_path", "trace_fiber", "seed_search", "band_sum" }) {
+  for (const char* kind : { "evaluate_path", "trace_fiber", "seed_search", "band_sum", "focusing_classify",
+                            "wavelength_critical_table", "chromatic_diagnose", "chromatic_class" }) {
+    const size_t n = ManifestFilesOfKind(kind).size();
+    EXPECT_GT(n, 0u) << "no fixture of kind " << kind;
+    claimed += n;
+  }
+  // The carried-not-compared kinds are claimed through LiParitySkipped (their reason rides in
+  // FixtureInfoOf), not through a comparison suite; they count against the listing all the same.
+  for (const char* kind : kCarriedNotComparedKinds) {
     const size_t n = ManifestFilesOfKind(kind).size();
     EXPECT_GT(n, 0u) << "no fixture of kind " << kind;
     claimed += n;
@@ -1524,6 +1572,347 @@ TEST_P(LiParityBandSum, MatchesLi) {
 INSTANTIATE_TEST_SUITE_P(All, LiParityBandSum, testing::ValuesIn(ManifestFilesOfKind("band_sum")), CaseName);
 
 // ------------------------------------------------------------------------------------------------
+// Module C (wave 3): focusing and chromatic — kind-1 onset tables and colour verdicts
+// ------------------------------------------------------------------------------------------------
+
+// LI parity_export's comparison kernels: `_close` is an absolute bound, `_close_relative` divides
+// by max(1, |expected|) — a relative bound with an absolute floor of 1, so a small reference is
+// compared absolutely. Written out once here; the suites below read every bound from the
+// fixture's tolerance block.
+void CloseAbs(const std::string& fixture, const std::string& quantity, double got, double reference, double atol) {
+  Report(fixture, quantity, std::fabs(got - reference), atol);
+  EXPECT_LE(std::fabs(got - reference), atol) << fixture << " " << quantity;
+}
+
+void CloseRelative(const std::string& fixture, const std::string& quantity, double got, double reference, double rtol) {
+  const double error = std::fabs(got - reference) / std::max(1.0, std::fabs(reference));
+  Report(fixture, quantity, error, rtol);
+  EXPECT_LE(error, rtol) << fixture << " " << quantity;
+}
+
+// The random density every module C cell exports (input.pose_density = {"family": "random"}); a
+// later wave exporting a non-random density goes red here rather than being silently replayed.
+PoseDensitySpec RandomDensityOf(const Json& input) {
+  EXPECT_EQ(input.at("pose_density").at("family").get<std::string>(), "random");
+  PoseDensitySpec spec;
+  spec.family = PoseFamily::kRandom;
+  return spec;
+}
+
+// int faces of a fixture's face array ("faces" / "representative").
+std::vector<int> IntList(const Json& j) {
+  std::vector<int> out;
+  for (const Json& x : j) {
+    out.push_back(x.get<int>());
+  }
+  return out;
+}
+
+class LiParityFocusingClassify : public testing::TestWithParam<std::string> {};
+
+TEST_P(LiParityFocusingClassify, MatchesLi) {
+  const std::string name = GetParam();
+  const Json f = LoadJson(name);
+  const Json& input = f.at("input");
+  const Json& expected = f.at("expected");
+  LUMICE_ANALYTIC_Crystal crystal = CrystalOf(input.at("crystal"));
+  FaceNormalTable table;
+  FacePolygonTable polygons;
+  ASSERT_EQ(BuildFaceNormals(crystal, &table, &polygons), Status::kOk);
+  const std::vector<int> faces = IntList(input.at("faces"));
+  int slots[kMaxFaceCount];
+  ASSERT_EQ(ResolveFaceSequence(table, faces.data(), static_cast<int>(faces.size()), slots), Status::kOk);
+  FocusingOptions options;
+  if (input.contains("lattice_n")) {
+    options.lattice_n = input.at("lattice_n").get<int>();
+    options.newton.lattice_n = options.lattice_n;
+  }
+  const FocusingClassification got =
+      Classify(table, polygons, slots, static_cast<int>(faces.size()), RandomDensityOf(input),
+               input.at("refractive_index").get<double>(), options);
+  ASSERT_FALSE(got.escaped) << name << " classify escaped: " << got.escape_message;
+
+  // labels: exact (tolerance 0 by contract — structure, not numbers)
+  EXPECT_EQ(got.path, expected.at("path").get<std::string>()) << name;
+  EXPECT_EQ(got.halo_map_rank, expected.at("halo_map_rank").get<int>()) << name;
+  EXPECT_EQ(got.Mechanism(), expected.at("mechanism").get<std::string>()) << name;
+  EXPECT_EQ(got.JacobianFocusing(), expected.at("jacobian_focusing").get<bool>()) << name;
+  EXPECT_EQ(got.DimensionCollapse(), expected.at("dimension_collapse").get<bool>()) << name;
+  EXPECT_EQ(got.confined.dimensions, expected.at("confined_dimensions").get<int>()) << name;
+  ASSERT_EQ(got.confined.widths_rad.size(), expected.at("confinement_widths_deg").size()) << name;
+  EXPECT_EQ(got.family_pinned, expected.at("family_pinned").get<bool>()) << name;
+
+  const Json& reference_range = expected.at("gradient_norm_range");
+  if (reference_range.is_null()) {
+    EXPECT_FALSE(got.has_gradient_norm_range) << name;
+  } else {
+    ASSERT_TRUE(got.has_gradient_norm_range) << name;
+    CloseRelative(name, "gradient_norm_range.min", got.gradient_norm_range[0], reference_range.at(0).get<double>(),
+                  Tolerance(f, "gradient_norm_range"));
+    CloseRelative(name, "gradient_norm_range.max", got.gradient_norm_range[1], reference_range.at(1).get<double>(),
+                  Tolerance(f, "gradient_norm_range"));
+  }
+
+  const Json& reference_onsets = expected.at("onsets");
+  ASSERT_EQ(got.onsets.size(), reference_onsets.size()) << name;
+  for (size_t k = 0; k < got.onsets.size(); k++) {
+    const CriticalOnset& onset = got.onsets[k];
+    const Json& reference = reference_onsets.at(k);
+    const std::string where =
+        name + " onset " + std::to_string(k) + " (" + reference.at("source").get<std::string>() + ")";
+    EXPECT_EQ(OnsetLocationName(onset.location), reference.at("location").get<std::string>()) << where;
+    EXPECT_EQ(OnsetSourceName(onset.source), reference.at("source").get<std::string>()) << where;
+    EXPECT_EQ(OnsetProfileName(onset.profile), reference.at("profile").get<std::string>()) << where;
+    EXPECT_EQ(onset.JacobianFocusing(), reference.at("jacobian_focusing").get<bool>()) << where;
+    EXPECT_EQ(onset.multiplicity, reference.at("multiplicity").get<int>()) << where;
+    CloseAbs(where, "value_deg", onset.value * 180.0 / kPi, reference.at("value_deg").get<double>(),
+             RowTolerance(f, "onset_value_deg", reference));
+    const Json& reference_norm = reference.at("gradient_norm");
+    if (reference_norm.is_null()) {
+      // The null reference means LI's divergence convention (kDivergentGradientNorm), not literally
+      // NaN: at an exit-TIR corner |grad D| is unbounded, and whether the AD chain's exit
+      // discriminant rounds negative (a NaN norm — macOS, Linux x86_64) or positive (a finite
+      // ~1e8 reading at the same fold-adjacent position — Ubuntu ARM64 on PR #477's CI) is the
+      // platform's rounding order. A raw finite value is read through the same convention the
+      // export applied; a norm in [0, kDivergentGradientNorm) here would be a genuine mismatch.
+      EXPECT_FALSE(std::isfinite(onset.gradient_norm) && onset.gradient_norm < kDivergentGradientNorm)
+          << where << " gradient_norm availability differs (Lumice's raw norm: " << onset.gradient_norm << ")";
+    } else if (!std::isfinite(onset.gradient_norm)) {
+      ADD_FAILURE() << where << " gradient_norm availability differs";
+    } else {
+      CloseRelative(where, "gradient_norm", onset.gradient_norm, reference_norm.get<double>(),
+                    Tolerance(f, "onset_gradient_norm"));
+    }
+    const Json& reference_limit = reference.at("measure_limit");
+    if (reference_limit.is_null()) {
+      EXPECT_FALSE(onset.has_measure_limit) << where << " measure_limit availability differs";
+    } else if (!onset.has_measure_limit) {
+      ADD_FAILURE() << where << " measure_limit availability differs";
+    } else {
+      CloseRelative(where, "measure_limit", onset.measure_limit, reference_limit.get<double>(),
+                    Tolerance(f, "measure_limit"));
+    }
+  }
+}
+
+INSTANTIATE_TEST_SUITE_P(All, LiParityFocusingClassify, testing::ValuesIn(ManifestFilesOfKind("focusing_classify")),
+                         CaseName);
+
+class LiParityWavelengthTable : public testing::TestWithParam<std::string> {};
+
+TEST_P(LiParityWavelengthTable, MatchesLi) {
+  const std::string name = GetParam();
+  const Json f = LoadJson(name);
+  const Json& input = f.at("input");
+  const Json& expected = f.at("expected");
+  LUMICE_ANALYTIC_Crystal crystal = CrystalOf(input.at("crystal"));
+  FaceNormalTable table;
+  FacePolygonTable polygons;
+  ASSERT_EQ(BuildFaceNormals(crystal, &table, &polygons), Status::kOk);
+  const std::vector<int> faces = IntList(input.at("faces"));
+  int slots[kMaxFaceCount];
+  ASSERT_EQ(ResolveFaceSequence(table, faces.data(), static_cast<int>(faces.size()), slots), Status::kOk);
+  std::vector<std::string> labels;
+  std::vector<double> indices;
+  for (const Json& label : expected.at("labels")) {
+    labels.push_back(label.get<std::string>());
+    indices.push_back(input.at("indices").at(label.get<std::string>()).get<double>());
+  }
+  FocusingOptions options;
+  if (input.contains("lattice_n")) {
+    options.lattice_n = input.at("lattice_n").get<int>();
+    options.newton.lattice_n = options.lattice_n;
+  }
+  const WavelengthCriticalTable got = WavelengthCriticalTableOf(table, polygons, slots, static_cast<int>(faces.size()),
+                                                                RandomDensityOf(input), labels, indices, options);
+  ASSERT_FALSE(got.escaped) << name << " table escaped: " << got.message;
+  EXPECT_EQ(got.path, expected.at("path").get<std::string>()) << name;
+  ASSERT_EQ(got.onsets.size(), expected.at("onsets").size()) << name;
+  for (size_t k = 0; k < got.onsets.size(); k++) {
+    const WavelengthOnsetShift& row = got.onsets[k];
+    const Json& reference = expected.at("onsets").at(k);
+    const std::string where =
+        name + " row " + std::to_string(k) + " (" + reference.at("source").get<std::string>() + ")";
+    EXPECT_EQ(OnsetLocationName(row.location), reference.at("location").get<std::string>()) << where;
+    EXPECT_EQ(OnsetSourceName(row.source), reference.at("source").get<std::string>()) << where;
+    EXPECT_EQ(OnsetProfileName(row.profile), reference.at("profile").get<std::string>()) << where;
+    EXPECT_EQ(row.jacobian_focusing, reference.at("jacobian_focusing").get<bool>()) << where;
+    for (size_t j = 0; j < labels.size(); j++) {
+      CloseAbs(where, "values_deg[" + labels[j] + "]", row.values_deg[j],
+               reference.at("values_deg").at(labels[j]).get<double>(), RowTolerance(f, "values_deg", reference));
+    }
+    CloseAbs(where, "displacement_deg", row.displacement_deg, reference.at("displacement_deg").get<double>(),
+             RowTolerance(f, "displacement_deg", reference));
+  }
+}
+
+INSTANTIATE_TEST_SUITE_P(All, LiParityWavelengthTable,
+                         testing::ValuesIn(ManifestFilesOfKind("wavelength_critical_table")), CaseName);
+
+class LiParityChromaticDiagnose : public testing::TestWithParam<std::string> {};
+
+TEST_P(LiParityChromaticDiagnose, MatchesLi) {
+  const std::string name = GetParam();
+  const Json f = LoadJson(name);
+  const Json& input = f.at("input");
+  const Json& expected = f.at("expected");
+  LUMICE_ANALYTIC_Crystal crystal = CrystalOf(input.at("crystal"));
+  FaceNormalTable table;
+  FacePolygonTable polygons;
+  ASSERT_EQ(BuildFaceNormals(crystal, &table, &polygons), Status::kOk);
+  const std::vector<int> faces = IntList(input.at("faces"));
+  int slots[kMaxFaceCount];
+  ASSERT_EQ(ResolveFaceSequence(table, faces.data(), static_cast<int>(faces.size()), slots), Status::kOk);
+  ChromaticOptions options;
+  options.lattice_n = input.at("lattice_n").get<int>();
+  const ChromaticVerdict got = Diagnose(table, polygons, slots, static_cast<int>(faces.size()),
+                                        input.at("n_red").get<double>(), input.at("n_blue").get<double>(), options);
+
+  // verdict: exact — kind, color, visible, coverage_complete, notes and the feature list in order.
+  EXPECT_EQ(ChromaticVerdictKindName(got.kind), expected.at("kind").get<std::string>()) << name;
+  EXPECT_EQ(ChromaticColorName(got.color), expected.at("color").get<std::string>()) << name;
+  EXPECT_EQ(got.visible, expected.at("visible").get<bool>()) << name;
+  EXPECT_EQ(got.coverage_complete, expected.at("coverage_complete").get<bool>()) << name;
+  ASSERT_EQ(got.notes.size(), expected.at("notes").size()) << name;
+  for (size_t k = 0; k < got.notes.size(); k++) {
+    EXPECT_EQ(got.notes[k], expected.at("notes").at(k).get<std::string>()) << name << " note " << k;
+  }
+  const Json& reference_position = expected.at("position");
+  if (reference_position.is_null()) {
+    EXPECT_FALSE(got.has_position) << name;
+  } else if (!got.has_position) {
+    ADD_FAILURE() << name << " position availability differs";
+  } else {
+    CloseAbs(name, "position", got.position, reference_position.get<double>(), Tolerance(f, "position"));
+  }
+  const Json& reference_features = expected.at("features");
+  ASSERT_EQ(got.features.size(), reference_features.size()) << name;
+  for (size_t k = 0; k < got.features.size(); k++) {
+    const ChromaticFeature& feature = got.features[k];
+    const Json& reference = reference_features.at(k);
+    const std::string where =
+        name + " feature " + std::to_string(k) + " (" + reference.at("source").get<std::string>() + ")";
+    EXPECT_EQ(ChromaticFeatureKindName(feature.kind), reference.at("kind").get<std::string>()) << where;
+    EXPECT_EQ(feature.source, reference.at("source").get<std::string>()) << where;
+    EXPECT_EQ(ChromaticColorName(feature.color), reference.at("color").get<std::string>()) << where;
+    EXPECT_EQ(feature.visible, reference.at("visible").get<bool>()) << where;
+    CloseAbs(where, "delta_red", feature.delta_red, reference.at("delta_red").get<double>(),
+             Tolerance(f, "feature_angles"));
+    CloseAbs(where, "delta_blue", feature.delta_blue, reference.at("delta_blue").get<double>(),
+             Tolerance(f, "feature_angles"));
+    CloseAbs(where, "shift", feature.shift, reference.at("shift").get<double>(), Tolerance(f, "feature_angles"));
+    CloseAbs(where, "spread", feature.spread, reference.at("spread").get<double>(), Tolerance(f, "feature_angles"));
+    // Convention 3 (LI fixtures doc "Three conventions"): a gate_edge feature is walked on the
+    // gate margin's own zero set, so lit_fraction, weight and direction_dispersion are each
+    // backend's rounding luck there; the fixture exports them null and pins nothing, and the
+    // production ChromaticFeature keeps computing them. An edge (weight-kink) feature keeps
+    // every field.
+    const bool gate_feature = reference.at("kind").get<std::string>() == "gate_edge";
+    if (!gate_feature) {
+      CloseAbs(where, "direction_dispersion", feature.direction_dispersion,
+               reference.at("direction_dispersion").get<double>(), Tolerance(f, "feature_angles"));
+    }
+    CloseAbs(where, "positive_fraction", feature.positive_fraction, reference.at("positive_fraction").get<double>(),
+             Tolerance(f, "feature_fractions"));
+    CloseAbs(where, "contrast", feature.contrast, reference.at("contrast").get<double>(),
+             Tolerance(f, "feature_fractions"));
+    if (!gate_feature) {
+      CloseAbs(where, "lit_fraction", feature.lit_fraction, reference.at("lit_fraction").get<double>(),
+               Tolerance(f, "feature_fractions"));
+      CloseRelative(where, "weight", feature.weight, reference.at("weight").get<double>(),
+                    Tolerance(f, "feature_fractions"));
+    }
+  }
+}
+
+INSTANTIATE_TEST_SUITE_P(All, LiParityChromaticDiagnose, testing::ValuesIn(ManifestFilesOfKind("chromatic_diagnose")),
+                         CaseName);
+
+class LiParityChromaticClass : public testing::TestWithParam<std::string> {};
+
+TEST_P(LiParityChromaticClass, MatchesLi) {
+  const std::string name = GetParam();
+  const Json f = LoadJson(name);
+  const Json& input = f.at("input");
+  const Json& expected = f.at("expected");
+  LUMICE_ANALYTIC_Crystal crystal = CrystalOf(input.at("crystal"));
+  FaceNormalTable table;
+  FacePolygonTable polygons;
+  ASSERT_EQ(BuildFaceNormals(crystal, &table, &polygons), Status::kOk);
+  const std::vector<int> representative = IntList(input.at("representative"));
+  const Json& family = input.at("family");
+  ASSERT_EQ(family.at("family").get<std::string>(), "plate") << name << " the exported families are plates";
+  PlateFamilySpec spec;
+  spec.sun_altitude_deg = family.at("sun_altitude_deg").get<double>();
+  spec.zenith_std_deg = family.at("zenith_std_deg").get<double>();
+  spec.samples = family.at("samples").get<int>();
+  spec.seed = family.at("seed").get<unsigned long long>();
+  const ClassVerdict got =
+      DiagnoseClass(table, polygons, representative.data(), static_cast<int>(representative.size()), spec,
+                    input.at("n_red").get<double>(), input.at("n_blue").get<double>());
+
+  // members and the lit member lists per index: exact — the orbit is label arithmetic and the lit
+  // sets are structural on the family sample (chromatic's own resolution statement).
+  ASSERT_EQ(got.members.size(), expected.at("members").size()) << name;
+  for (size_t k = 0; k < got.members.size(); k++) {
+    const Json& reference = expected.at("members").at(k);
+    if (got.members[k].size() != reference.size()) {
+      ADD_FAILURE() << name << " member " << k << " length " << got.members[k].size() << " != " << reference.size();
+      continue;
+    }
+    for (size_t j = 0; j < got.members[k].size(); j++) {
+      EXPECT_EQ(got.members[k][j], reference.at(j).get<int>()) << name << " member " << k << " face " << j;
+    }
+  }
+  for (const char* label : { "red", "blue" }) {
+    const std::vector<std::vector<int>>& lit = label == std::string("red") ? got.lit_members_red : got.lit_members_blue;
+    const Json& reference_lit = expected.at("lit_members").at(label);
+    EXPECT_EQ(lit.size(), reference_lit.size()) << name << " lit " << label;
+    for (size_t k = 0; k < lit.size(); k++) {
+      if (lit[k].size() != reference_lit.at(k).size()) {
+        ADD_FAILURE() << name << " lit " << label << " member " << k << " length " << lit[k].size()
+                      << " != " << reference_lit.at(k).size();
+        continue;
+      }
+      for (size_t j = 0; j < lit[k].size(); j++) {
+        EXPECT_EQ(lit[k][j], reference_lit.at(k).at(j).get<int>()) << name << " lit " << label << " member " << k;
+      }
+    }
+  }
+  // verdict: exact kind / color / visible / notes / coverage; the tint numbers statistical.
+  const Json& reference_verdict = expected.at("verdict");
+  EXPECT_EQ(ChromaticVerdictKindName(got.verdict.kind), reference_verdict.at("kind").get<std::string>()) << name;
+  EXPECT_EQ(ChromaticColorName(got.verdict.color), reference_verdict.at("color").get<std::string>()) << name;
+  EXPECT_EQ(got.verdict.visible, reference_verdict.at("visible").get<bool>()) << name;
+  ASSERT_EQ(got.verdict.notes.size(), reference_verdict.at("notes").size()) << name;
+  for (size_t k = 0; k < got.verdict.notes.size(); k++) {
+    EXPECT_EQ(got.verdict.notes[k], reference_verdict.at("notes").at(k).get<std::string>()) << name << " note " << k;
+  }
+  EXPECT_EQ(got.verdict.coverage_complete, reference_verdict.at("coverage_complete").get<bool>()) << name;
+  const Json& reference_tint = reference_verdict.at("tint");
+  ASSERT_FALSE(reference_tint.is_null()) << name;
+  if (!got.verdict.has_tint) {
+    ADD_FAILURE() << name << " tint availability differs";
+    return;
+  }
+  CloseRelative(name, "tint.energy_red", got.verdict.tint.energy_red, reference_tint.at("energy_red").get<double>(),
+                Tolerance(f, "tint_energies"));
+  CloseRelative(name, "tint.energy_blue", got.verdict.tint.energy_blue, reference_tint.at("energy_blue").get<double>(),
+                Tolerance(f, "tint_energies"));
+  CloseAbs(name, "tint.ratio", got.verdict.tint.ratio, reference_tint.at("ratio").get<double>(),
+           Tolerance(f, "tint_ratio"));
+  CloseAbs(name, "tint.tir_fraction_red", got.verdict.tint.tir_fraction_red,
+           reference_tint.at("tir_fraction_red").get<double>(), Tolerance(f, "tir_fractions"));
+  CloseAbs(name, "tint.tir_fraction_blue", got.verdict.tint.tir_fraction_blue,
+           reference_tint.at("tir_fraction_blue").get<double>(), Tolerance(f, "tir_fractions"));
+  CloseAbs(name, "tint.direction_dispersion", got.verdict.tint.direction_dispersion,
+           reference_tint.at("direction_dispersion").get<double>(), Tolerance(f, "direction_dispersion"));
+}
+
+INSTANTIATE_TEST_SUITE_P(All, LiParityChromaticClass, testing::ValuesIn(ManifestFilesOfKind("chromatic_class")),
+                         CaseName);
+
+// ------------------------------------------------------------------------------------------------
 // What is carried but not compared: counted, with its reason, never dropped
 // ------------------------------------------------------------------------------------------------
 
@@ -1541,11 +1930,20 @@ TEST_P(LiParitySkipped, CarriedButNotCompared) {
   const Json& expected = f.at("expected");
   const Json& tolerance = f.at("tolerance");
   // A reason added here needs its content check: that the uncompared part is present in `input`,
-  // `expected` and `tolerance` with the shape LI section 3 gives it.
-  (void)input;
-  (void)expected;
-  (void)tolerance;
-  FAIL() << "no content check for skip reason: " << info->skip_reason;
+  // `expected` and `tolerance` with the shape LI section 3 gives it. The module C dp_field kinds
+  // carry one scene per kind: a crystal, a face sequence, at least one refractive index, and the
+  // exported observables with their tolerance block. Their readers are the geometry port's
+  // tracked follow-up; until they land, this checks the payload is intact and names why it is
+  // not replayed.
+  ASSERT_TRUE(input.is_object()) << info->file;
+  ASSERT_TRUE(expected.is_object()) << info->file;
+  ASSERT_TRUE(tolerance.is_object()) << info->file;
+  EXPECT_TRUE(input.contains("crystal")) << info->file;
+  EXPECT_TRUE(input.contains("faces")) << info->file;
+  EXPECT_TRUE(input.contains("refractive_index") || input.contains("indices")) << info->file;
+  EXPECT_FALSE(expected.empty()) << info->file;
+  EXPECT_FALSE(tolerance.empty()) << info->file;
+  GTEST_SKIP() << info->skip_reason;
 }
 
 // Empty while every kind is compared in full; allowed to be, so the machinery can stay.

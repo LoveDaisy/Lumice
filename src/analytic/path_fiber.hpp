@@ -39,10 +39,12 @@ class IcePathMap {
 
   // The outgoing direction; NaN where the chain's own gates reject the pose (continuation only asks
   // after Domain accepted it, so this is reached only if a Jet run rounds across a gate the double
-  // run passed, and then reports non_finite).
+  // run passed, and then reports non_finite). The incident direction and the index are constants
+  // of the map: seeded into the scalar type with zero derivative.
   template <class S>
   void Direction(const S r[9], S out[3]) const {
-    if (!TracePathChain<S>(*table_, slots_, slot_count_, refractive_index_, incident_, r, out, nullptr, nullptr)) {
+    const S incident[3] = { S(incident_[0]), S(incident_[1]), S(incident_[2]) };
+    if (!TracePathChain<S>(*table_, slots_, slot_count_, S(refractive_index_), incident, r, out, nullptr, nullptr)) {
       for (int i = 0; i < 3; i++) {
         out[i] = S(std::numeric_limits<double>::quiet_NaN());
       }

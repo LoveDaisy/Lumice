@@ -22,8 +22,35 @@
 // this header passes them, it does not define them. Symmetry: every function takes one concrete
 // face sequence and performs no symmetry reduction (doc/analytic-api.md section 3).
 //
-// Version 7 adds diagnostic batches, finite-source interface curves and weighted-sky field walks.
+// Version 8 adds the u-S^2 field layer of one fixed face sequence (kind-1/2/3 critical structure,
+// the delta-axis partition with its escape regimes, per-wavelength onset tables, the restricted
+// family curve and the chromatic verdicts).
 // Version notes, newest first (every bump says what changed, doc/analytic-api.md section 8.1):
+//   8  ADDED LUMICE_ANALYTIC_WalkStatus, LUMICE_ANALYTIC_EscapeRegime, LUMICE_ANALYTIC_CriticalKind,
+//      LUMICE_ANALYTIC_OnsetLocation, LUMICE_ANALYTIC_OnsetSource, LUMICE_ANALYTIC_OnsetProfile,
+//      LUMICE_ANALYTIC_KinkCoverage, LUMICE_ANALYTIC_CurveExistence,
+//      LUMICE_ANALYTIC_ChromaticFeatureKind, LUMICE_ANALYTIC_ChromaticColor,
+//      LUMICE_ANALYTIC_ChromaticVerdictKind, LUMICE_ANALYTIC_CriticalOnset,
+//      LUMICE_ANALYTIC_DeviationInterval, LUMICE_ANALYTIC_WavelengthOnsetRow,
+//      LUMICE_ANALYTIC_WeightKinkArc, LUMICE_ANALYTIC_WeightKinkCurve,
+//      LUMICE_ANALYTIC_ChromaticFeature, LUMICE_ANALYTIC_ChromaticThresholds,
+//      LUMICE_ANALYTIC_PlateFamily, and the result structs and functions of the eight calls
+//      TraceBoundaryLoop, TraceWeightKinks, ClassifyCriticalStructure, PartitionDeviationAxis,
+//      TraceWavelengthCriticalTable, TraceRestrictedFamilyCurve, DiagnoseChromatic,
+//      DiagnoseClassTint with their seven Release functions. Nothing existing changed.
+//   7  ADDED LUMICE_ANALYTIC_DiagnosticSource, LUMICE_ANALYTIC_WeightedSkySample,
+//      LUMICE_ANALYTIC_DiagnosticInterface, LUMICE_ANALYTIC_DiagnosticOptics,
+//      LUMICE_ANALYTIC_SkyFieldPoint, LUMICE_ANALYTIC_SourceEventRange,
+//      LUMICE_ANALYTIC_DiagnosticResult, LUMICE_ANALYTIC_EvaluateDiagnosticBatch,
+//      LUMICE_ANALYTIC_TraceDiagnosticInterface, LUMICE_ANALYTIC_TraceWeightedSkyField,
+//      LUMICE_ANALYTIC_ReleaseDiagnosticResult, LUMICE_ANALYTIC_CorrectDeviationBatch —
+//      conditional optics and fixed-observation numerical discovery (section 4.7's struct_size
+//      group rules). Nothing existing changed.
+//   6  ADDED LUMICE_ANALYTIC_PoseFamily, LUMICE_ANALYTIC_PoseDensity, LUMICE_ANALYTIC_PixelTable,
+//      LUMICE_ANALYTIC_BandSumProblem, LUMICE_ANALYTIC_BandPixelStatus, LUMICE_ANALYTIC_BandPixel,
+//      LUMICE_ANALYTIC_PointMassMethod, LUMICE_ANALYTIC_BandSumResult, LUMICE_ANALYTIC_BandSum,
+//      LUMICE_ANALYTIC_ReleaseBandSumResult — the single-path brightness map (section 4.6).
+//      Nothing existing changed.
 //   5  APPENDED to LUMICE_ANALYTIC_FiberResult, under the struct_size rule: branch_margin_count,
 //      branch_margin_names, branch_margins, jacobian_available, normal_jacobian, singular_values —
 //      the per-pose diagnostics of LI docs/analytic-parity-fixtures.md section 3.2. A caller
@@ -73,7 +100,7 @@ extern "C" {
 
 // Interface version, a single integer (doc/analytic-api.md section 8.2): bumped on every
 // incompatible change, and in 0.x on every addition too. Independent of lumice_base.h's LUMICE_API_VERSION.
-#define LUMICE_ANALYTIC_API_VERSION 7
+#define LUMICE_ANALYTIC_API_VERSION 8
 
 // Return codes of the computation functions. The names shared with lumice_base.h's LUMICE_ErrorCode mean
 // the same thing there; the type is this header's own (doc/analytic-api.md section 5.2). A numerical
@@ -731,6 +758,586 @@ LUMICE_ANALYTIC_API void LUMICE_ANALYTIC_ReleaseDiagnosticResult(LUMICE_ANALYTIC
 LUMICE_ANALYTIC_API LUMICE_ANALYTIC_ErrorCode LUMICE_ANALYTIC_CorrectDeviationBatch(
     const int* faces, int face_count, const LUMICE_ANALYTIC_DiagnosticSource* rows, size_t row_count,
     uint64_t max_evaluations, int budget_ms, LUMICE_ANALYTIC_DiagnosticResult* out);
+
+// ---------------------------------------------------------------------------------------------
+// Version 8: the u-S^2 field layer of one fixed face sequence (doc/analytic-api.md section 4.8).
+// By the u-S^2 reduction (LI docs/phase2.md section 1) every geometric and optical weight of a
+// path is a function of u alone — the sun direction in the crystal frame — at the identity pose.
+// These calls publish that layer's objects: the deviation field's critical structure (kind-1
+// critical values with their onset profiles, kind-2 the boundary dU_P walked once around, kind-3
+// the weight kinks, the TIR onsets of the internal reflections), the delta-axis partition with
+// its completeness certificate and its escape regimes, the per-wavelength critical table, the
+// restricted family curve of an oriented density, and the two-index chromatic verdicts. The
+// kernels are the C++ port of LI's dp_field / dp_boundary / dp_weight_kink / dp_partition /
+// dp_focusing / dp_chromatic modules; JAX is the authority, these are derived implementations.
+//
+// Every call builds its field from scratch and keeps no state between calls (no handle: a handle
+// freezes once published, and waits for a real consumer, doc/analytic-api.md section 9 item 15).
+// Costs are lattice-scale: the walks seed from a 20000-point Fibonacci lattice, the partition
+// adds a 20000-point topology lattice and (on a plural count) a chart-grid audit; each call is
+// seconds at most and single-threaded. Deterministic: no random numbers anywhere on this layer
+// (the plate-class tint's family sample is a seed-seeded mt19937_64 stream inside
+// DiagnoseClassTint, so that call's result is fixed by its inputs including the seed; the stream
+// is not LI's numpy stream — the parity caliber there is a tolerance, not bit equality).
+//
+// Error discipline (as everywhere on this surface): a bad crystal / face sequence / index /
+// density / family / grid is a call error; every numerical outcome of a run computation — a
+// boundary walk that refuses, a partition that escapes, kink arcs with failed seeds, routed
+// non-finite points — is RESULT DATA in the fields below, never an error code. The two
+// fail-closed mechanical invariants of the kernels hold at this surface. Their evidence is
+// two-layer: the kernel layer's tests pin the red arms (a synthetically injected refusal /
+// escape), while this ABI's tests pin the green arms and the shapes — the refused-walk arm is
+// additionally kept here by construction, the bridge building the refused result through its own
+// early-exit path. A refused boundary walk delivers an EMPTY loop (status != OK implies
+// critical_point_count == 0 and corner_count == 0), and an escaped partition delivers NO
+// intervals (escaped != 0 implies interval_count == 0).
+//
+// Open enumerations. WalkStatus and EscapeRegime are OPEN sets: the kernels refuse by regime and
+// never silently merge one into another, and later versions may add values (conclusions section
+// 4 item 5 requires the escapes open for the report side's fail-closed consumption). A caller
+// must handle an unknown value inside a known group; each result therefore carries the value's
+// stable slug string next to it (the kernels' own name tables — report-side grep compatibility).
+// The number segments are this layer's own and deliberately disjoint from LUMICE_ANALYTIC_Reason's
+// (0 / 100+ / 200+ / 300+). Every other enumeration below is CLOSED: LI's frozen vocabulary,
+// pinned by the parity fixtures.
+// ---------------------------------------------------------------------------------------------
+
+// How a boundary walk (TraceBoundaryLoop, and the walks inside the other calls) ends. kOK is the
+// closed loop — the completeness certificate itself; every other value is a named truncation or
+// refusal with LI's message text. OPEN set.
+typedef enum LUMICE_ANALYTIC_WalkStatus_ {
+  LUMICE_ANALYTIC_WALK_OK = 0,
+  LUMICE_ANALYTIC_WALK_STEPS_EXHAUSTED = 1,    // step budget without a corner or a closure
+  LUMICE_ANALYTIC_WALK_START_NO_POINT = 2,     // U_P has no point on the lattice
+  LUMICE_ANALYTIC_WALK_START_COVERS_ALL = 3,   // U_P covers the whole lattice: no boundary
+  LUMICE_ANALYTIC_WALK_START_NO_EDGE = 4,      // no lattice point next to the boundary
+  LUMICE_ANALYTIC_WALK_CORNER_NOT_SIMPLE = 5,  // a corner's outgoing margin is not unique
+  LUMICE_ANALYTIC_WALK_NOT_CLOSED = 6,         // pieces without closing
+  LUMICE_ANALYTIC_WALK_NOT_FINITE = 7,         // the field off the closure of U_P (fail closed)
+  LUMICE_ANALYTIC_WALK_BAD_ORIENTATION = 8,
+} LUMICE_ANALYTIC_WalkStatus;
+
+// Why the partition reasoning refused (LUMICE_ANALYTIC_PartitionResult.escaped): every regime the
+// simple disk / single-extremum reasoning does not cover, one value each, none ever resolved
+// silently. OPEN set.
+typedef enum LUMICE_ANALYTIC_EscapeRegime_ {
+  LUMICE_ANALYTIC_ESCAPE_NOT_DISK_UNAUDITED = 0,
+  LUMICE_ANALYTIC_ESCAPE_NOT_DISK_UNCONVERGED = 1,
+  LUMICE_ANALYTIC_ESCAPE_NOT_DISK_CONFIRMED = 2,
+  LUMICE_ANALYTIC_ESCAPE_NOT_DISK_CORRECTED = 3,
+  LUMICE_ANALYTIC_ESCAPE_SLAB_CREASE_CONTRADICTION = 4,
+  LUMICE_ANALYTIC_ESCAPE_SLAB_CREASE_NOT_CARRIED = 5,
+  LUMICE_ANALYTIC_ESCAPE_SLAB_CREASE_TOUCHING = 6,
+  LUMICE_ANALYTIC_ESCAPE_SLAB_CREASE_CLOSED_RIDGE = 7,
+  LUMICE_ANALYTIC_ESCAPE_MULTIPLE_INTERIOR_CRITICAL_POINTS = 8,
+  LUMICE_ANALYTIC_ESCAPE_LOOP_EXTREMA_NOT_ALTERNATING = 9,
+  LUMICE_ANALYTIC_ESCAPE_ODD_BOUNDARY_CROSSINGS = 10,
+  LUMICE_ANALYTIC_ESCAPE_INTERIOR_CRITICAL_POINT_NOT_SIMPLE = 11,
+  LUMICE_ANALYTIC_ESCAPE_SUBLEVEL_NOT_REACHING_BOUNDARY = 12,
+} LUMICE_ANALYTIC_EscapeRegime;
+
+// Morse kind of a critical point. CLOSED set (LI's vocabulary).
+typedef enum LUMICE_ANALYTIC_CriticalKind_ {
+  LUMICE_ANALYTIC_CRITICAL_MINIMUM = 0,
+  LUMICE_ANALYTIC_CRITICAL_MAXIMUM = 1,
+  LUMICE_ANALYTIC_CRITICAL_SADDLE = 2,
+  LUMICE_ANALYTIC_CRITICAL_DEGENERATE = 3,
+} LUMICE_ANALYTIC_CriticalKind;
+
+// Where a critical onset sits and what produced it. CLOSED set (LI's vocabulary, the parity
+// fixtures pin the slugs "interior"/"boundary", "interior_minimum"/..., "finite_jump"/...).
+typedef enum LUMICE_ANALYTIC_OnsetLocation_ {
+  LUMICE_ANALYTIC_ONSET_INTERIOR = 0,
+  LUMICE_ANALYTIC_ONSET_BOUNDARY = 1,
+} LUMICE_ANALYTIC_OnsetLocation;
+
+typedef enum LUMICE_ANALYTIC_OnsetSource_ {
+  LUMICE_ANALYTIC_ONSET_INTERIOR_MINIMUM = 0,
+  LUMICE_ANALYTIC_ONSET_INTERIOR_MAXIMUM = 1,
+  LUMICE_ANALYTIC_ONSET_INTERIOR_SADDLE = 2,
+  LUMICE_ANALYTIC_ONSET_INTERIOR_DEGENERATE = 3,
+  LUMICE_ANALYTIC_ONSET_SLAB_AXIS = 4,
+  LUMICE_ANALYTIC_ONSET_SLAB_CIRCLE = 5,
+  LUMICE_ANALYTIC_ONSET_BOUNDARY_EXTREMUM = 6,
+  LUMICE_ANALYTIC_ONSET_CORNER = 7,
+} LUMICE_ANALYTIC_OnsetSource;
+
+typedef enum LUMICE_ANALYTIC_OnsetProfile_ {
+  LUMICE_ANALYTIC_PROFILE_FINITE_JUMP = 0,
+  LUMICE_ANALYTIC_PROFILE_LOG_DIVERGENCE = 1,
+  LUMICE_ANALYTIC_PROFILE_INVERSE_SQRT_DIVERGENCE = 2,
+  LUMICE_ANALYTIC_PROFILE_CONE_POINT = 3,
+  LUMICE_ANALYTIC_PROFILE_CREASE = 4,
+  LUMICE_ANALYTIC_PROFILE_BOUNDARY_ONSET = 5,
+  LUMICE_ANALYTIC_PROFILE_DEGENERATE = 6,
+} LUMICE_ANALYTIC_OnsetProfile;
+
+// Which way a weight-kink curve was found — the completeness declaration's first half: the
+// closed-form circle is complete by construction, the marched arcs are structurally not a
+// completeness claim. CLOSED set.
+typedef enum LUMICE_ANALYTIC_KinkCoverage_ {
+  LUMICE_ANALYTIC_KINK_CLOSED_FORM_AUTHORITY = 0,
+  LUMICE_ANALYTIC_KINK_MARCHED_UNCERTIFIED = 1,
+} LUMICE_ANALYTIC_KinkCoverage;
+
+// A curve object's existence state (the measure contract's vocabulary; TraceRestrictedFamilyCurve
+// emits kComputed — an empty curve with its reason in `note` when the density has no family axis
+// or the sun sits at the axis pole). CLOSED set.
+typedef enum LUMICE_ANALYTIC_CurveExistence_ {
+  LUMICE_ANALYTIC_EXISTENCE_COMPUTED = 0,
+  LUMICE_ANALYTIC_EXISTENCE_ESCAPED = 1,
+  LUMICE_ANALYTIC_EXISTENCE_WALK_TRUNCATED = 2,
+  LUMICE_ANALYTIC_EXISTENCE_S4_DECLARED = 3,
+} LUMICE_ANALYTIC_CurveExistence;
+
+// Chromatic vocabulary. CLOSED set (LI's, the parity fixtures pin the slugs).
+typedef enum LUMICE_ANALYTIC_ChromaticFeatureKind_ {
+  LUMICE_ANALYTIC_CHROMATIC_EDGE = 0,       // a weight kink C_k
+  LUMICE_ANALYTIC_CHROMATIC_GATE_EDGE = 1,  // a gate of U_P that moves with n
+} LUMICE_ANALYTIC_ChromaticFeatureKind;
+
+typedef enum LUMICE_ANALYTIC_ChromaticColor_ {
+  LUMICE_ANALYTIC_COLOR_BLUE = 0,
+  LUMICE_ANALYTIC_COLOR_RED = 1,
+  LUMICE_ANALYTIC_COLOR_WHITE = 2,
+  LUMICE_ANALYTIC_COLOR_NONE = 3,
+} LUMICE_ANALYTIC_ChromaticColor;
+
+typedef enum LUMICE_ANALYTIC_ChromaticVerdictKind_ {
+  LUMICE_ANALYTIC_VERDICT_EDGE = 0,
+  LUMICE_ANALYTIC_VERDICT_GATE_EDGE = 1,
+  LUMICE_ANALYTIC_VERDICT_TINT = 2,
+  LUMICE_ANALYTIC_VERDICT_UNRESOLVED = 3,
+  LUMICE_ANALYTIC_VERDICT_NONE = 4,
+} LUMICE_ANALYTIC_ChromaticVerdictKind;
+
+// One critical value of the deviation field and the profile it produces for a random orientation.
+// value / measure_limit in radians; measure_limit (the limit of the level-set measure
+// int dl / |grad D|) exists only for a finite_jump. gradient_norm is |grad D_P| at the point —
+// infinity at an exit-TIR end of the boundary, where the gradient is unbounded.
+typedef struct LUMICE_ANALYTIC_CriticalOnset_ {
+  double value;
+  int location;  // LUMICE_ANALYTIC_OnsetLocation
+  int source;    // LUMICE_ANALYTIC_OnsetSource
+  int profile;   // LUMICE_ANALYTIC_OnsetProfile
+  double gradient_norm;
+  int has_measure_limit;
+  double measure_limit;
+  int multiplicity;  // critical points merged into this record (same value, location, source,
+                     // profile); the record keeps the smallest gradient_norm
+} LUMICE_ANALYTIC_CriticalOnset;
+
+// One interval of the delta axis with the constant counts of {D_P = delta} for
+// lower < delta < upper: n_components = n_closed + n_open always.
+typedef struct LUMICE_ANALYTIC_DeviationInterval_ {
+  double lower;
+  double upper;
+  int n_components;
+  int n_closed;
+  int n_open;
+} LUMICE_ANALYTIC_DeviationInterval;
+
+// dU_P walked once around: the completeness certificate's kind-2 object. On status OK the loop
+// holds its restricted critical points in WALK ORDER (the partition's alternation check is an
+// order property), its corners, the walk's first sample point, and either an isolated-extremum
+// loop or a plateau (a loop of constant D_P — critical_point_count 0, has_plateau 1). On any
+// other status the loop is EMPTY: no half-walk is ever delivered. All arrays live in `storage`
+// until LUMICE_ANALYTIC_ReleaseBoundaryLoopResult.
+typedef struct LUMICE_ANALYTIC_BoundaryLoopResult_ {
+  uint32_t struct_size;     // caller sets sizeof(*out) before the call (section 8.2)
+  int status;               // LUMICE_ANALYTIC_WalkStatus (open)
+  const char* status_name;  // the status's slug ("ok", "steps_exhausted", ...); NULL when status
+                            // is a value this library does not know
+  const char* message;      // the refusal's LI text; NULL when status is OK
+  int critical_point_count;
+  const double* critical_point_positions;     // 3N, unit u
+  const double* critical_point_values;        // N, radians
+  const int* critical_point_kinds;            // N, LUMICE_ANALYTIC_CriticalKind
+  const unsigned char* critical_point_flags;  // N: bit 0 strict, bit 1 corner
+  int corner_count;
+  const double* corner_positions;  // 3N, in walk order
+  const double* corner_values;     // N, radians
+  int has_plateau;                 // 1 on a constant loop
+  double plateau_value;            // radians; meaningful when has_plateau
+  double first_point[3];           // the walk's first sample point (unit u)
+  void* storage;                   // opaque; LUMICE_ANALYTIC_ReleaseBoundaryLoopResult
+} LUMICE_ANALYTIC_BoundaryLoopResult;
+
+// One arc of a weight kink: a header into the flattened point arrays of
+// LUMICE_ANALYTIC_WeightKinksResult (successive complete groups, the DiagnosticResult shape).
+typedef struct LUMICE_ANALYTIC_WeightKinkArc_ {
+  int first_point;  // index into arc_points / arc_values
+  int point_count;
+  int closed;       // a whole loop inside U_P (end_gate then {-1, -1})
+  int end_gate[2];  // the gate margin index stopping each end; -1 where no gate does
+} LUMICE_ANALYTIC_WeightKinkArc;
+
+// The TIR onset curve C_k of one internal reflection: one row per internal step, in step order
+// (no rows for an entry-exit path). Array elements are layout-frozen (section 8.2): arc POINTS
+// live in the result's flattened arrays, never in this row. spread is the width max - min of
+// D_P on C_k (NaN without arcs, 0 on a single-mirror slab); note carries the curve's own
+// verdict text (an onset off S^2, the first refused seed's message); failed_seeds counts the
+// marched seeds whose walk refused — no failure is ever silent, and zero failures is still NOT
+// a completeness certificate for a marched curve (the coverage field says which way it was
+// found).
+typedef struct LUMICE_ANALYTIC_WeightKinkCurve_ {
+  int step;          // 1-based internal step k
+  int margin;        // the step's TIR-discriminant margin index
+  double index;      // the call's refractive index
+  int coverage;      // LUMICE_ANALYTIC_KinkCoverage
+  int has_normal;    // closed form only
+  double normal[3];  // the unfolded incidence normal m_k, unit
+  int failed_seeds;
+  int status;  // LUMICE_ANALYTIC_WalkStatus (open): the closed form's own refusal;
+               // a marched seed's refusal is counted, never set here
+  const char* status_name;
+  const char* note;  // "" when there is none
+  double spread;
+  int first_arc;  // index into the result's arc array
+  int arc_count;
+} LUMICE_ANALYTIC_WeightKinkCurve;
+
+typedef struct LUMICE_ANALYTIC_WeightKinksResult_ {
+  uint32_t struct_size;  // caller sets sizeof(*out) before the call (section 8.2)
+  int curve_count;
+  const LUMICE_ANALYTIC_WeightKinkCurve* curves;  // curve_count rows, step order
+  int arc_count;
+  const LUMICE_ANALYTIC_WeightKinkArc* arcs;  // arc_count headers, curve then arc order
+  int arc_point_count;
+  const double* arc_points;  // 3 * arc_point_count, unit u, arcs concatenated in header order
+  const double* arc_values;  // arc_point_count, D_P in radians at each point
+  void* storage;             // opaque; LUMICE_ANALYTIC_ReleaseWeightKinksResult
+} LUMICE_ANALYTIC_WeightKinksResult;
+
+// The kind-1 focusing label of one face sequence under one pose density: every critical value's
+// onset, the sampled gradient-norm range, the dimensions the density confines and whether the
+// density's sigma->0 family lies in one level set (family_pinned). `mechanism` is the slug of
+// the roll-up ("point_mass", "none", "jacobian", "dimension_collapse",
+// "jacobian+dimension_collapse"). A refused boundary walk is DATA: escaped 1 with the walk's
+// status, and NO onsets.
+typedef struct LUMICE_ANALYTIC_ClassificationResult_ {
+  uint32_t struct_size;  // caller sets sizeof(*out) before the call (section 8.2)
+  int halo_map_rank;     // 0 (a point mass) or 2
+  int escaped;
+  int escape_status;  // LUMICE_ANALYTIC_WalkStatus when escaped
+  const char* escape_status_name;
+  const char* escape_message;  // NULL when not escaped
+  int onset_count;
+  const LUMICE_ANALYTIC_CriticalOnset* onsets;  // value order
+  int has_gradient_norm_range;                  // a sampled bound, not a proof
+  double gradient_norm_range[2];
+  int confined_dimensions;  // the pose dimensions the density confines
+  int confined_width_count;
+  const double* confined_widths_rad;  // confined_width_count entries
+  int family_pinned;
+  const char* mechanism;  // the roll-up slug; never NULL on success
+  void* storage;          // opaque; LUMICE_ANALYTIC_ReleaseClassificationResult
+} LUMICE_ANALYTIC_ClassificationResult;
+
+// The delta-axis partition of D_P on U_P with the counts of every interval — the completeness
+// certificate. Two refusal layers, both data and both leaving NO intervals (mechanical
+// invariants; the kernel layer's tests pin the red arms, this ABI's tests the green arms and the
+// shapes, and the bridge's early-exit construction keeps the refused-walk arm here):
+// walk_status != OK — the boundary loop itself was refused, so there is no loop to partition
+// (message is the walk's text; the topology counts and audit_verdict below are then not computed
+// — only lattice_n is still published); escaped != 0 — the loop was walked but the reasoning
+// refused, with the regime named openly and message carrying the failing check's LI text. The
+// topology evidence is the adjudicated component counts of U_P and its complement on the
+// lattice, with the chart audit's verdict slug ("confirmed", "corrected", "unconverged"; NULL
+// when no audit ran — a disk needs none).
+typedef struct LUMICE_ANALYTIC_PartitionResult_ {
+  uint32_t struct_size;  // caller sets sizeof(*out) before the call (section 8.2)
+  int walk_status;       // LUMICE_ANALYTIC_WalkStatus (open)
+  const char* walk_status_name;
+  const char* walk_message;  // NULL when the walk closed
+  int escaped;
+  int regime;               // LUMICE_ANALYTIC_EscapeRegime (open); meaningful when escaped
+  const char* regime_name;  // the regime's slug; NULL when not escaped or unknown
+  const char* message;      // the refusal's LI text; NULL when not escaped
+  int interval_count;
+  const LUMICE_ANALYTIC_DeviationInterval* intervals;  // ascending, adjacent (upper == next lower)
+  int lattice_n;
+  int domain_components;
+  int complement_components;
+  const char* audit_verdict;  // the chart audit's verdict slug; NULL when no audit ran
+  void* storage;              // opaque; LUMICE_ANALYTIC_ReleasePartitionResult
+} LUMICE_ANALYTIC_PartitionResult;
+
+// One onset followed across refractive indices, aligned by rank: values_deg parallels the
+// call's labels (values_deg[first_value + k] at labels[k]); displacement_deg is max - min.
+typedef struct LUMICE_ANALYTIC_WavelengthOnsetRow_ {
+  int location;  // LUMICE_ANALYTIC_OnsetLocation
+  int source;    // LUMICE_ANALYTIC_OnsetSource
+  int profile;   // LUMICE_ANALYTIC_OnsetProfile
+  int jacobian_focusing;
+  int first_value;  // index into the result's values_deg
+  double displacement_deg;
+} LUMICE_ANALYTIC_WavelengthOnsetRow;
+
+// The critical table across refractive indices. Rank pairing is accepted only when every index
+// carries the same onset count and every rank the same (location, source, profile) at every
+// index; a topology that changes with n is DATA (escaped 1, message names the rank), following
+// it is not this layer's job. The call's labels and indices are echoed back so the result is
+// self-contained.
+typedef struct LUMICE_ANALYTIC_WavelengthTableResult_ {
+  uint32_t struct_size;  // caller sets sizeof(*out) before the call (section 8.2)
+  int escaped;
+  const char* message;  // NULL when not escaped
+  int label_count;
+  const char* const* labels;  // label_count entries, the call's labels
+  const double* indices;      // label_count entries, the call's indices
+  int onset_count;
+  const LUMICE_ANALYTIC_WavelengthOnsetRow* onsets;  // value order at the first index
+  const double* values_deg;                          // onset_count * label_count, row-major (onset, label)
+  void* storage;                                     // opaque; LUMICE_ANALYTIC_ReleaseWavelengthTableResult
+} LUMICE_ANALYTIC_WavelengthTableResult;
+
+// The restricted family curve: the circle of u about the density's family axis at the sun's
+// polar angle, with D_P sampled along it at base_index and re-sampled per wavelength
+// (n-continuation; the index table is the caller's). Existence is kComputed on success; a
+// density without a family axis, or a sun at the axis pole, is an EMPTY curve (point_count 0)
+// with the reason in `note` — a verdict, not an error. routed_nonfinite counts the points whose
+// routed D_P is NaN even under the exit-Snell closure routing: the circle is sampled where the
+// field does not exist, which is data, never a silent zero.
+typedef struct LUMICE_ANALYTIC_RestrictedCurveResult_ {
+  uint32_t struct_size;   // caller sets sizeof(*out) before the call (section 8.2)
+  int closed;             // always 1 when point_count > 0 (the latitude circle is a loop)
+  int existence;          // LUMICE_ANALYTIC_CurveExistence
+  const char* note;       // "" when there is none
+  int point_count;        // the call's grid
+  const double* u;        // 3N, unit
+  const double* tangent;  // 3N, unit, the theta-derivative of the circle
+  const double* d_p;      // N, radians, routed, at base_index
+  int wavelength_count;
+  const double* wavelengths_nm;
+  const double* indices;
+  const double* critical_d_p;   // N * wavelength_count, row-major (point, wavelength); NaN where
+                                // routed_nonfinite counts
+  const double* support_param;  // N, theta in [0, 2 pi)
+  int routed_nonfinite;
+  void* storage;  // opaque; LUMICE_ANALYTIC_ReleaseRestrictedCurveResult
+} LUMICE_ANALYTIC_RestrictedCurveResult;
+
+// The declared chromatic thresholds that produced a verdict — a snapshot of the criterion's
+// parameters, not constants of nature; paired with the verdict so a consumer reads which
+// declared criterion labelled it. n_red / n_blue are the CALL's own pair: the criterion runs at
+// the pair you pass, and that pair is what comes back; the four remaining fields are the frozen
+// LI snapshot values (whose defaults name the calibration pair 1.307 / 1.317).
+typedef struct LUMICE_ANALYTIC_ChromaticThresholds_ {
+  double n_red;
+  double n_blue;
+  double edge_min_shift_rad;
+  double edge_spread_per_shift;
+  double calibration_white_max_deviation;
+  double tint_ratio_min;
+} LUMICE_ANALYTIC_ChromaticThresholds;
+
+// One colour source of a path: a weight kink (EDGE) or a moving gate of U_P (GATE_EDGE), with
+// the two-index metrics at its line. source is the margin's name ("internal_1_tir_discriminant",
+// "exit_snell_discriminant", ...). Angles in radians.
+typedef struct LUMICE_ANALYTIC_ChromaticFeature_ {
+  int kind;  // LUMICE_ANALYTIC_ChromaticFeatureKind
+  const char* source;
+  int color;  // LUMICE_ANALYTIC_ChromaticColor
+  double positive_fraction;
+  double delta_red;
+  double delta_blue;
+  double shift;
+  double spread;
+  double direction_dispersion;
+  double contrast;
+  double weight;
+  double lit_fraction;
+  int visible;
+} LUMICE_ANALYTIC_ChromaticFeature;
+
+// A chromatic verdict: the dominant feature's kind / color / visible / position (random
+// orientation), or the plate-class tint roll-up; every assessed feature, the notes (never a
+// silent NONE), the threshold snapshot, and — class verdicts only — the class's members and the
+// members lit at each index. For DiagnoseChromatic the class suffix is empty (member_count 0,
+// has_tint 0); a rank-0 path is not a chromatic subject at all — the caller labels it
+// point_mass from ClassifyCriticalStructure.
+typedef struct LUMICE_ANALYTIC_ChromaticResult_ {
+  uint32_t struct_size;  // caller sets sizeof(*out) before the call (section 8.2)
+  int verdict_kind;      // LUMICE_ANALYTIC_ChromaticVerdictKind
+  int color;             // LUMICE_ANALYTIC_ChromaticColor
+  int visible;
+  int has_position;
+  double position;        // radians; meaningful when has_position
+  int coverage_complete;  // 0 when a line the verdict rests on was not fully analysed; the notes
+                          // say which
+  int feature_count;
+  const LUMICE_ANALYTIC_ChromaticFeature* features;
+  int note_count;
+  const char* const* notes;
+  LUMICE_ANALYTIC_ChromaticThresholds thresholds;
+  // Class verdict suffix (DiagnoseClassTint): members as flattened face sequences, the counts
+  // per member in the sizes arrays; lit_* are the members lit at each index (subset indices
+  // into members, ascending). Empty for DiagnoseChromatic.
+  int member_count;
+  const int* member_sizes;  // member_count face counts
+  const int* members;       // sum(member_sizes) face numbers
+  int lit_red_count;
+  const int* lit_sizes_red;  // lit_red_count member indices
+  const int* lit_members_red;
+  int lit_blue_count;
+  const int* lit_sizes_blue;
+  const int* lit_members_blue;
+  int has_tint;
+  double energy_red;  // the tint metrics below are meaningful when has_tint
+  double energy_blue;
+  double ratio;  // NaN where its denominator vanishes
+  double tir_fraction_red;
+  double tir_fraction_blue;
+  double tint_direction_dispersion;  // NaN where no pose is lit at both indices
+  void* storage;                     // opaque; LUMICE_ANALYTIC_ReleaseChromaticResult
+} LUMICE_ANALYTIC_ChromaticResult;
+
+// The plate family of the class tint (DiagnoseClassTint): poses with the c axis tilted from the
+// zenith by |N(0, zenith_std_deg)| in a uniform direction, uniform spin, lit by a sun at
+// sun_altitude_deg. samples is the family sample size, 1..10000000 (each pose is evaluated in
+// full); seed seeds the call's deterministic sample stream.
+typedef struct LUMICE_ANALYTIC_PlateFamily_ {
+  double sun_altitude_deg;
+  double zenith_std_deg;
+  int samples;
+  unsigned long long seed;
+} LUMICE_ANALYTIC_PlateFamily;
+
+// Walks dU_P once around: the boundary loop of the valid domain, its corners, and the restricted
+// extrema of D_P along it (kind-2). One closed walk is the completeness claim; every refusal is
+// a named status with an empty loop.
+//
+// Call errors (out is zero-filled after struct_size, so Release is safe):
+//   ERR_NULL_ARG       crystal, faces or out is NULL
+//   ERR_INVALID_VALUE  out->struct_size smaller than this struct; face_count < 2 or > 64; a face
+//                      number the crystal does not have; refractive_index not finite and positive;
+//                      a crystal field as for EvaluatePath
+//   ERR_INVALID_CONFIG crystal rejected by the engine's closed-form validity gate
+//   ERR_UNKNOWN        an internal failure (out of memory); out is zero-filled
+// Re-entrant: safe to call concurrently on distinct outputs; keeps no state between calls.
+LUMICE_ANALYTIC_API LUMICE_ANALYTIC_ErrorCode
+LUMICE_ANALYTIC_TraceBoundaryLoop(const LUMICE_ANALYTIC_Crystal* crystal, const int* faces, int face_count,
+                                  double refractive_index, LUMICE_ANALYTIC_BoundaryLoopResult* out);
+
+// Frees what TraceBoundaryLoop allocated and zeroes the struct after struct_size. NULL-safe; a
+// no-op on a zero-filled struct.
+LUMICE_ANALYTIC_API void LUMICE_ANALYTIC_ReleaseBoundaryLoopResult(LUMICE_ANALYTIC_BoundaryLoopResult* result);
+
+// Traces the weight kinks: the TIR onset curve C_k of every internal reflection, closed form
+// where the incidence normal passes the check, marched otherwise (kind-3). An entry-exit path
+// has no internal reflection and succeeds with curve_count 0.
+//
+// Call errors: as TraceBoundaryLoop. Re-entrant on distinct outputs.
+LUMICE_ANALYTIC_API LUMICE_ANALYTIC_ErrorCode LUMICE_ANALYTIC_TraceWeightKinks(const LUMICE_ANALYTIC_Crystal* crystal,
+                                                                               const int* faces, int face_count,
+                                                                               double refractive_index,
+                                                                               LUMICE_ANALYTIC_WeightKinksResult* out);
+
+// Frees what TraceWeightKinks allocated and zeroes the struct after struct_size. NULL-safe.
+LUMICE_ANALYTIC_API void LUMICE_ANALYTIC_ReleaseWeightKinksResult(LUMICE_ANALYTIC_WeightKinksResult* result);
+
+// Classifies the critical structure of one face sequence under one pose density (kind-1): every
+// critical onset with its profile, the gradient-norm range, the density's confined dimensions
+// and the family_pinned label, rolled up into the mechanism slug. The density is validated like
+// BandSum's (an unknown family, a missing or non-positive width, a zenith mean outside [0, 180]
+// or a used-but-non-zero field is ERR_INVALID_VALUE).
+//
+// Call errors: as TraceBoundaryLoop, plus ERR_INVALID_VALUE for an invalid density.
+// Re-entrant on distinct outputs.
+LUMICE_ANALYTIC_API LUMICE_ANALYTIC_ErrorCode LUMICE_ANALYTIC_ClassifyCriticalStructure(
+    const LUMICE_ANALYTIC_Crystal* crystal, const int* faces, int face_count, double refractive_index,
+    LUMICE_ANALYTIC_PoseDensity density, LUMICE_ANALYTIC_ClassificationResult* out);
+
+// Frees what ClassifyCriticalStructure allocated and zeroes the struct after struct_size.
+// NULL-safe.
+LUMICE_ANALYTIC_API void LUMICE_ANALYTIC_ReleaseClassificationResult(LUMICE_ANALYTIC_ClassificationResult* result);
+
+// Partitions the deviation axis: the intervals of [min D_P, max D_P] with the component counts
+// of each level set, the completeness certificate of the field layer. A refused certificate is
+// an escape — data, with the regime named openly and no intervals.
+//
+// Call errors: as TraceBoundaryLoop. Re-entrant on distinct outputs.
+LUMICE_ANALYTIC_API LUMICE_ANALYTIC_ErrorCode
+LUMICE_ANALYTIC_PartitionDeviationAxis(const LUMICE_ANALYTIC_Crystal* crystal, const int* faces, int face_count,
+                                       double refractive_index, LUMICE_ANALYTIC_PartitionResult* out);
+
+// Frees what PartitionDeviationAxis allocated and zeroes the struct after struct_size. NULL-safe.
+LUMICE_ANALYTIC_API void LUMICE_ANALYTIC_ReleasePartitionResult(LUMICE_ANALYTIC_PartitionResult* result);
+
+// Follows every onset across refractive indices, aligned by rank: the per-wavelength critical
+// table (n-continuation; n(lambda) is the caller's). A topology that changes with n escapes as
+// data rather than pairing unrelated onsets. `count` labels/indices; an empty set escapes
+// ("indices is empty") rather than erroring — the kernel's own verdict.
+//
+// Call errors:
+//   ERR_NULL_ARG       crystal, faces, out, labels or indices is NULL (the latter two only with
+//                      count > 0)
+//   ERR_INVALID_VALUE  out->struct_size smaller than this struct; face_count < 2 or > 64; a face
+//                      number the crystal does not have; count < 0 or count > 10000000; a
+//                      non-finite or non-positive index; an invalid density (an unknown family, a
+//                      missing or non-positive width, a zenith mean outside [0, 180] or a
+//                      used-but-non-zero field)
+//   ERR_INVALID_CONFIG crystal rejected by the engine's closed-form validity gate
+//   ERR_UNKNOWN        an internal failure (out of memory); out is zero-filled
+// Re-entrant on distinct outputs.
+LUMICE_ANALYTIC_API LUMICE_ANALYTIC_ErrorCode LUMICE_ANALYTIC_TraceWavelengthCriticalTable(
+    const LUMICE_ANALYTIC_Crystal* crystal, const int* faces, int face_count, LUMICE_ANALYTIC_PoseDensity density,
+    const char* const* labels, const double* indices, int count, LUMICE_ANALYTIC_WavelengthTableResult* out);
+
+// Frees what TraceWavelengthCriticalTable allocated and zeroes the struct after struct_size.
+// NULL-safe.
+LUMICE_ANALYTIC_API void LUMICE_ANALYTIC_ReleaseWavelengthTableResult(LUMICE_ANALYTIC_WavelengthTableResult* result);
+
+// Samples the restricted family curve of one face sequence under one pose density: the circle of
+// u about the family axis at the sun's polar angle, D_P along it at base_index and per
+// wavelength (kind-1, restricted). grid is the point count, >= 1; sun_hat is the unit direction
+// AT the sun; the wavelength tables are parallel arrays of wavelength_count entries (0 legal:
+// no chromatic rows).
+//
+// Call errors: as TraceBoundaryLoop, plus ERR_NULL_ARG for sun_hat NULL or a wavelength table
+// NULL with wavelength_count > 0, and ERR_INVALID_VALUE for grid outside 1..10000000,
+// wavelength_count < 0, a non-finite / non-positive base_index or wavelength index, or a
+// non-finite / non-unit sun_hat. An empty curve (no family axis, sun at the pole) is a SUCCESS
+// with the reason in note. Re-entrant on distinct outputs.
+LUMICE_ANALYTIC_API LUMICE_ANALYTIC_ErrorCode LUMICE_ANALYTIC_TraceRestrictedFamilyCurve(
+    const LUMICE_ANALYTIC_Crystal* crystal, const int* faces, int face_count, LUMICE_ANALYTIC_PoseDensity density,
+    const double sun_hat[3], double base_index, const double* wavelengths_nm, const double* indices,
+    int wavelength_count, int grid, LUMICE_ANALYTIC_RestrictedCurveResult* out);
+
+// Frees what TraceRestrictedFamilyCurve allocated and zeroes the struct after struct_size.
+// NULL-safe.
+LUMICE_ANALYTIC_API void LUMICE_ANALYTIC_ReleaseRestrictedCurveResult(LUMICE_ANALYTIC_RestrictedCurveResult* result);
+
+// The random-orientation colour verdict of one face sequence: every weight kink and every moving
+// gate of U_P between n_red and n_blue as a feature, the dominant one the verdict. The class
+// suffix of the result is empty. Rank-0 paths are not a chromatic subject (label them
+// point_mass from ClassifyCriticalStructure).
+//
+// Call errors: as TraceBoundaryLoop, plus ERR_INVALID_VALUE for n_red or n_blue not finite and
+// positive. Re-entrant on distinct outputs.
+LUMICE_ANALYTIC_API LUMICE_ANALYTIC_ErrorCode LUMICE_ANALYTIC_DiagnoseChromatic(const LUMICE_ANALYTIC_Crystal* crystal,
+                                                                                const int* faces, int face_count,
+                                                                                double n_red, double n_blue,
+                                                                                LUMICE_ANALYTIC_ChromaticResult* out);
+
+// The plate-class tint verdict: the reflection class of `faces` under a plate family, its
+// members, the members lit at each index, the tint metrics over the family sample and the tint
+// verdict of the blue/red ratio. The family sample is seeded (deterministic per seed; not LI's
+// numpy stream — the parity caliber is a tolerance).
+//
+// Call errors: as DiagnoseChromatic, plus ERR_INVALID_VALUE for zenith_std_deg not finite and
+// positive, sun_altitude_deg not finite, or samples outside 1..10000000. Re-entrant on distinct
+// outputs.
+LUMICE_ANALYTIC_API LUMICE_ANALYTIC_ErrorCode LUMICE_ANALYTIC_DiagnoseClassTint(const LUMICE_ANALYTIC_Crystal* crystal,
+                                                                                const int* faces, int face_count,
+                                                                                LUMICE_ANALYTIC_PlateFamily family,
+                                                                                double n_red, double n_blue,
+                                                                                LUMICE_ANALYTIC_ChromaticResult* out);
+
+// Frees what DiagnoseChromatic / DiagnoseClassTint allocated and zeroes the struct after
+// struct_size. NULL-safe.
+LUMICE_ANALYTIC_API void LUMICE_ANALYTIC_ReleaseChromaticResult(LUMICE_ANALYTIC_ChromaticResult* result);
 
 #ifdef __cplusplus
 }

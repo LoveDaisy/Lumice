@@ -278,6 +278,18 @@ void DiscoverOnPool(const Map& map, const TargetChart& chart, const Continuation
 // theta = pi (1 + sqrt 5)(i + 1/2), written in LI's evaluation order.
 void LatticePoint(int n, int i, double u[3]);
 
+// Point i of the PLAIN Fibonacci lattice (LI fibonacci_sphere): the antipode of LatticePoint,
+// whose convention is the store's. The focusing / chromatic layers' seed and range lattices are
+// LI's plain one, so they read the negation — one named helper instead of per-module copies of
+// the negation and its non-obvious reason.
+inline void FibonacciAntipodePoint(int n, int i, double u[3]) {
+  double f[3];
+  LatticePoint(n, i, f);
+  u[0] = -f[0];
+  u[1] = -f[1];
+  u[2] = -f[2];
+}
+
 // One kept band event: lattice index, deviation D = angle(phi, -u), u and the body-frame outgoing
 // direction phi = Phi_P(-u).
 struct BandEvent {
@@ -294,12 +306,11 @@ struct SampleEvent {
   double weight = 0.0;
 };
 
-// This library's closed-form crystals are half LI's in length (face distance 1 is a hexagon of
-// apothem sqrt(3)/4, edge 1/2; LI's has edge 1), so an entry measure, an area, is a quarter of LI's
-// (doc/analytic-api.md section 4.4). The band sum's weights are in LI's normalisation, which is
-// where its values are defined (contract section 6); discovery only gates on A > 0 and keeps the
-// native unit.
-constexpr double kLiAreaPerEngineArea = 4.0;
+// The event weight is the entry measure times the Fresnel factor in this library's native unit:
+// the area of the closed-form reference crystal (circumscribed diameter 1). LI exported fixtures
+// at hexagon edge 1 until its module C caliber fix moved its export crystals to this same
+// reference scale, so the two units coincide and the x4 area bridge this header used to carry
+// (kLiAreaPerEngineArea) is retired; discovery only gates on A > 0 and keeps the native unit.
 
 // Deviation delta = angle(s, d), as LI's StoreSeeds.candidates computes it.
 double TargetDeviation(const double incident_direction[3], const double target_direction[3]);
@@ -328,7 +339,8 @@ class IceDiscovery {
   std::vector<BandEvent> BuildBand(int sample_count, double delta, double half_width);
 
   // LI docs/band-sum-contract.md section 3: every kept event (w = A T > 0) of the n-point lattice, in
-  // increasing (D, index), with w in LI's normalisation (kLiAreaPerEngineArea). The same lattice
+  // increasing (D, index), with w in the native entry-measure unit (the engine reference scale,
+  // LI's own since its module C caliber fix). The same lattice
   // point, path chain, deviation and gates as BuildBand (one EvaluateLatticePoint), without the band.
   std::vector<SampleEvent> BuildEvents(int sample_count);
 

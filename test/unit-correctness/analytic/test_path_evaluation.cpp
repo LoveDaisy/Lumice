@@ -724,6 +724,86 @@ TEST_F(PathEvaluationTest, ChainReportsNonFiniteBeforeAnyGate) {
   EXPECT_TRUE(std::isnan(domain.failure_margin));
 }
 
+// The kEvaluateAll mode (the field layer's): past a failed gate the chain keeps evaluating — the
+// full validity margin vector is produced, the first failure is the same gate kFirstFailure
+// reports, and the outgoing direction is the smooth branch's own value (NaN beyond the exit Snell
+// limit) where kFirstFailure leaves it unset. On a valid pose the two modes agree on every output.
+TEST_F(PathEvaluationTest, EvaluateAllModeCompletesMarginsPastTheFailedGate) {
+  Use(Prism(1.0));
+  const int slots[2] = { table_.SlotOf(3), table_.SlotOf(5) };
+  const double identity[9] = { 1, 0, 0, 0, 1, 0, 0, 0, 1 };
+  // Normal incidence on face 3: the internal ray continues straight and meets face 5 (120 deg
+  // around the prism) at 60 deg incidence — beyond ice's critical angle, so the exit Snell gate
+  // fails while the entry is perfectly fine.
+  const double incident[3] = { -table_.normal[slots[0]][0], -table_.normal[slots[0]][1], -table_.normal[slots[0]][2] };
+
+  double short_margins[4];  // two faces -> four validity margins
+  ChainDomain short_domain{ short_margins };
+  double short_out[3] = { 3.0, 3.0, 3.0 };
+  EXPECT_FALSE(TracePathChain<double>(table_, slots, 2, kN, incident, identity, short_out, nullptr, &short_domain));
+  ASSERT_EQ(short_domain.failure, ChainFailure::kTirBoundary);
+  EXPECT_EQ(short_domain.margin_count, 4);  // the failing interface's margins are recorded with it
+  EXPECT_GT(short_out[0], 2.0);             // ... and the direction stays unset
+
+  double margins[4] = { -99.0, -99.0, -99.0, -99.0 };
+  ChainDomain domain{ margins };
+  double out[3] = { 0.0, 0.0, 0.0 };
+  ChainInterfaceDiagnostics<double> diag;
+  const bool evaluated = TracePathChain<double, ChainEvaluation::kEvaluateAll>(table_, slots, 2, kN, incident, identity,
+                                                                               out, nullptr, &domain, &diag);
+  EXPECT_FALSE(evaluated);
+  EXPECT_EQ(domain.failure, short_domain.failure);
+  EXPECT_DOUBLE_EQ(domain.failure_margin, short_domain.failure_margin);
+  EXPECT_EQ(domain.margin_count, 4);
+  EXPECT_EQ(diag.reached, 2);
+  for (int i = 0; i < 4; i++) {
+    EXPECT_DOUBLE_EQ(margins[i], short_margins[i]) << i;
+  }
+  // The smooth branch's own boundary: the exit square root of a negative discriminant is NaN, and
+  // so is the outgoing direction (LI trace_path's convention).
+  EXPECT_TRUE(std::isnan(out[0]));
+  EXPECT_TRUE(std::isnan(out[1]));
+  EXPECT_TRUE(std::isnan(out[2]));
+
+  // A valid pose: the minimum-deviation direction of the 3-5 wedge (u at i = asin(n/2) from the
+  // entry normal in the principal plane, toward the exit face). Both modes return the same
+  // margins, direction and validity (a fresh double run of one expression tree, so bitwise).
+  const double n3[3] = { table_.normal[slots[0]][0], table_.normal[slots[0]][1], table_.normal[slots[0]][2] };
+  const double n5[3] = { table_.normal[slots[1]][0], table_.normal[slots[1]][1], table_.normal[slots[1]][2] };
+  double t_hat[3];
+  const double proj = n5[0] * n3[0] + n5[1] * n3[1] + n5[2] * n3[2];
+  for (int i = 0; i < 3; i++) {
+    t_hat[i] = n5[i] - proj * n3[i];
+  }
+  const double t_norm = std::sqrt(t_hat[0] * t_hat[0] + t_hat[1] * t_hat[1] + t_hat[2] * t_hat[2]);
+  const double inc = std::asin(kN / 2.0);
+  double u_min[3];
+  for (int i = 0; i < 3; i++) {
+    // The entry side is away from face 5: the incident ray -u heads toward it, bends toward the
+    // entry normal inside, and crosses the prism to meet face 5 at the symmetric incidence.
+    u_min[i] = std::cos(inc) * n3[i] - std::sin(inc) * t_hat[i] / t_norm;
+  }
+  const double incident_valid[3] = { -u_min[0], -u_min[1], -u_min[2] };
+  double v_margins[4];
+  double v_short_margins[4];
+  ChainDomain v_domain{ v_margins };
+  ChainDomain v_short_domain{ v_short_margins };
+  double v_out[3];
+  double v_short_out[3];
+  const bool v_evaluated = TracePathChain<double, ChainEvaluation::kEvaluateAll>(table_, slots, 2, kN, incident_valid,
+                                                                                 identity, v_out, nullptr, &v_domain);
+  ASSERT_TRUE(v_evaluated);
+  ASSERT_TRUE(
+      TracePathChain<double>(table_, slots, 2, kN, incident_valid, identity, v_short_out, nullptr, &v_short_domain));
+  EXPECT_EQ(v_domain.margin_count, v_short_domain.margin_count);
+  for (int i = 0; i < 4; i++) {
+    EXPECT_DOUBLE_EQ(v_margins[i], v_short_margins[i]) << i;
+  }
+  for (int i = 0; i < 3; i++) {
+    EXPECT_DOUBLE_EQ(v_out[i], v_short_out[i]) << i;
+  }
+}
+
 // EvaluatePath does not ask for the domain report; asking for it changes nothing it returns, and a
 // Jet<3> run of the same chain has the double run's values (to rounding: the double one may fuse
 // a multiply-add, see jet.hpp) — so the continuation's direction and its derivative are the
@@ -757,8 +837,10 @@ TEST_F(PathEvaluationTest, DomainReportAndJetRunLeaveTheDirectionUnchanged) {
       for (int i = 0; i < 9; i++) {
         pose_jet[i] = Jet<3>(r[i]);
       }
+      const Jet<3> incident_jet[3] = { Jet<3>(kSun[0]), Jet<3>(kSun[1]), Jet<3>(kSun[2]) };
       Jet<3> out_jet[3];
-      if (!TracePathChain<Jet<3>>(table_, slots.data(), fc, kN, kSun, pose_jet, out_jet, nullptr, nullptr)) {
+      if (!TracePathChain<Jet<3>>(table_, slots.data(), fc, Jet<3>(kN), incident_jet, pose_jet, out_jet, nullptr,
+                                  nullptr)) {
         ADD_FAILURE() << "the Jet run took another branch";
         continue;
       }

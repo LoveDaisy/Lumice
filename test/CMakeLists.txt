@@ -252,10 +252,19 @@ add_executable(unit_correctness_test
   # test/e2e-correctness/test_analytic_log_sink.py.
   "${PROJ_TEST_DIR}/unit-correctness/analytic/test_path_evaluation.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/analytic/test_jet.cpp"
+  "${PROJ_TEST_DIR}/unit-correctness/analytic/test_jet2.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/analytic/test_so3.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/analytic/test_fiber_continuation.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/analytic/test_path_fiber.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/analytic/test_entry_measure.cpp"
+  "${PROJ_TEST_DIR}/unit-correctness/analytic/test_dp_boundary.cpp"
+  "${PROJ_TEST_DIR}/unit-correctness/analytic/test_dp_weight_kink.cpp"
+  "${PROJ_TEST_DIR}/unit-correctness/analytic/test_dp_field.cpp"
+  "${PROJ_TEST_DIR}/unit-correctness/analytic/test_dp_partition.cpp"
+  "${PROJ_TEST_DIR}/unit-correctness/analytic/test_dp_focus.cpp"
+  "${PROJ_TEST_DIR}/unit-correctness/analytic/test_dp_chromatic.cpp"
+  "${PROJ_TEST_DIR}/unit-correctness/analytic/test_dp_contour.cpp"
+  "${PROJ_TEST_DIR}/unit-correctness/analytic/test_reflection_group.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/analytic/test_discovery.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/analytic/test_path_rank.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/analytic/test_pose_density.cpp"
@@ -263,6 +272,7 @@ add_executable(unit_correctness_test
   "${PROJ_TEST_DIR}/unit-correctness/analytic/test_path_feature_discovery.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/analytic/test_diagnostic_batch.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/analytic/test_diagnostic_capi.cpp"
+  "${PROJ_TEST_DIR}/unit-correctness/analytic/test_dp_capi.cpp"
   # Parity with Lumice Integral: replays LI's exported fixtures (test/fixtures/li-parity/) against
   # the same kernels. Unit-correctness rather than parity-cross-backend: that layer's oracle is the
   # legacy CPU backend (doc/testing-architecture.md section 3, step 5), and this target already
@@ -284,6 +294,7 @@ add_executable(unit_correctness_test
   "${PROJ_TEST_DIR}/unit-correctness/raypath/test_declared_density.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/raypath/test_visibility_certificate.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/raypath/test_fiber_quadrature.cpp"
+  "${PROJ_TEST_DIR}/unit-correctness/raypath/test_contour_contract_docking.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/raypath/test_weight_profile.cpp")
 target_include_directories(unit_correctness_test
   PRIVATE ${PROJ_TEST_DIR})

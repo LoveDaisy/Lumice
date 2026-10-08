@@ -111,12 +111,28 @@ set(LUMICE_LAYER_analytic_FILES
   analytic/fiber_continuation.cpp
   analytic/fiber_continuation.hpp
   analytic/jet.hpp
+  analytic/jet2.hpp
   analytic/path_chain.hpp
   analytic/path_evaluation.cpp
   analytic/path_evaluation.hpp
   analytic/diagnostic_capi.cpp
   analytic/diagnostic_batch.cpp
   analytic/diagnostic_batch.hpp
+  analytic/dp_boundary.cpp
+  analytic/dp_boundary.hpp
+  analytic/dp_capi.cpp
+  analytic/dp_chromatic.cpp
+  analytic/dp_chromatic.hpp
+  analytic/dp_contour.cpp
+  analytic/dp_contour.hpp
+  analytic/dp_field.cpp
+  analytic/dp_field.hpp
+  analytic/dp_focus.cpp
+  analytic/dp_focus.hpp
+  analytic/dp_partition.cpp
+  analytic/dp_partition.hpp
+  analytic/dp_weight_kink.cpp
+  analytic/dp_weight_kink.hpp
   analytic/path_feature_discovery.cpp
   analytic/path_feature_discovery.hpp
   analytic/path_fiber.cpp
@@ -125,6 +141,8 @@ set(LUMICE_LAYER_analytic_FILES
   analytic/path_rank.hpp
   analytic/pose_density.cpp
   analytic/pose_density.hpp
+  analytic/reflection_group.cpp
+  analytic/reflection_group.hpp
   analytic/so3.hpp
   include/lumice_analytic.h
   include/lumice_analytic_core.h
