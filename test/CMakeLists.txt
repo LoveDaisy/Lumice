@@ -312,7 +312,11 @@ add_executable(unit_correctness_test
   # schema3 report core (666.2): the mc_evidence block — the v2 observation record demoted
   # wholesale (the carry invariants), the migration ledger reconciled against the real
   # serializer emission, the maximal-record round-trip (no silent drop).
-  "${PROJ_TEST_DIR}/unit-correctness/raypath/test_mc_evidence.cpp")
+  "${PROJ_TEST_DIR}/unit-correctness/raypath/test_mc_evidence.cpp"
+  # schema3 report core (666.2): the MC attribution core — the judgment table cell by cell,
+  # the forward ESS gate (the AC2 negative control), the declared-width tolerance, the two
+  # delta-image branches, the presence-ESS statistic, the C12 restricted integration.
+  "${PROJ_TEST_DIR}/unit-correctness/raypath/test_mc_attribution.cpp")
 target_include_directories(unit_correctness_test
   PRIVATE ${PROJ_TEST_DIR})
 target_compile_definitions(unit_correctness_test PRIVATE

@@ -281,6 +281,8 @@ set(LUMICE_LAYER_raypath_FILES
   raypath/detail/physical_member_scope.hpp
   raypath/detail/schema3/geometry_source.cpp
   raypath/detail/schema3/geometry_source.hpp
+  raypath/detail/schema3/mc_attribution.cpp
+  raypath/detail/schema3/mc_attribution.hpp
   raypath/detail/schema3/mc_evidence.cpp
   raypath/detail/schema3/mc_evidence.hpp
   raypath/detail/schema3/structure_object.cpp

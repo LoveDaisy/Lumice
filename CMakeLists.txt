@@ -1072,6 +1072,7 @@ add_library(lumice_raypath_obj OBJECT
   "${PROJ_SRC_DIR}/raypath/detail/input_assembly.cpp"
   "${PROJ_SRC_DIR}/raypath/detail/physical_member_scope.cpp"
   "${PROJ_SRC_DIR}/raypath/detail/schema3/geometry_source.cpp"
+  "${PROJ_SRC_DIR}/raypath/detail/schema3/mc_attribution.cpp"
   "${PROJ_SRC_DIR}/raypath/detail/schema3/mc_evidence.cpp"
   "${PROJ_SRC_DIR}/raypath/detail/schema3/structure_object.cpp"
   "${PROJ_SRC_DIR}/raypath/detail/schema3/structure_enumeration.cpp"
