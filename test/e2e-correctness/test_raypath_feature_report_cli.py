@@ -1,8 +1,12 @@
 """Target-free ``Lumice raypath --report`` through the real static CLI.
 
-The schema-two route consumes physical input and reports bounded numerical evidence.
-Scientific kernels have independent fixtures in the analytic and composition layers;
-this layer owns the CLI, spectrum choice, scope, budget and output-file contracts.
+The schema-three route consumes physical input and reports bounded numerical evidence: the
+geometry layer's structural objects and delta-axis support block are the primary record
+(doc/raypath-cli-output.md §7), and the Monte-Carlo side rides along as corroboration
+(``mc_evidence``). Scientific kernels have independent fixtures in the analytic and
+composition layers; this layer owns the CLI, spectrum choice, scope, budget and output-file
+contracts. The corpus-cell wiring (C01-C16 anchors and the dissolved (iii) red states) lives
+in ``test_raypath_feature_schema3_cases.py``.
 """
 
 from __future__ import annotations
@@ -110,6 +114,21 @@ def test_report_physical_radius_is_not_the_smoothed_brightness_peak():
         assert position["value"]["entry"]["area"] > 0
         assert feature["geometry"]["sky_points"]
     assert "not the scene SPD" in doc["scope"]["spectrum_scope"]
+    # The geometry layer's delta axis carries the same closed form: the interior-minimum
+    # onset of each member's partition IS the minimum-deviation edge, read off the same
+    # document's support block (a regular prism reads one value per member).
+    onsets = [
+        onset
+        for member in doc["support"]["members"]
+        for onset in member["endpoint_onsets"]
+        if onset["source"] == "interior_minimum"
+    ]
+    assert onsets
+    closed_form = 2 * math.asin(edges[0]["physical_position"]["source"]["refractive_index"] / 2) - math.pi / 3
+    for onset in onsets:
+        assert onset["value_rad"] == pytest.approx(closed_form, abs=1e-10)
+        assert onset["profile"] == "finite_jump"
+        assert onset["has_measure_limit"] is True
 
 
 def test_default_report_consumes_actual_continuous_spectrum_and_records_scope():
