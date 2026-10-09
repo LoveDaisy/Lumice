@@ -5,7 +5,9 @@
 //         (a new top-level key must claim a ledger row or join this file's declared new-key
 //         set, or the emission is unaccounted for);
 //   AC2b  the ledger's 34 record-field rows are the serialization checklist: a maximal record
-//         (every field populated) must surface each row's key;
+//         (every field populated) must surface each row's key; the schema3 blocks' struct
+//         fields are pinned per block from maximal instances two ways (a dropped field and an
+//         unaccounted emission both go red — Schema3BlocksEmitEveryDeclaredField);
 //   D2    the three buckets are a derived view: segment(object) == BucketOf(object) per object;
 //   D3/D4 the outcome grammar, the unconditional ruling block, the non-finite spellings;
 //   AC1   the self-description (conventions, the vocabulary coverage row) and the narrowed
@@ -26,8 +28,11 @@
 
 #include "raypath/detail/path_feature_report.hpp"
 #include "raypath/detail/path_feature_report_json.hpp"
+#include "raypath/detail/schema3/mc_attribution.hpp"
 #include "raypath/detail/schema3/mc_evidence.hpp"
+#include "raypath/detail/schema3/no_related_feature.hpp"
 #include "raypath/detail/schema3/structure_object.hpp"
+#include "raypath/detail/schema3/support_block.hpp"
 
 namespace lumice::raypath {
 namespace {
@@ -159,7 +164,267 @@ PathFeatureReportRequest SmallRequest() {
   return request;
 }
 
+std::set<std::string> KeysOf(const nlohmann::json& object) {
+  std::set<std::string> keys;
+  for (auto it = object.begin(); it != object.end(); ++it) {
+    keys.insert(it.key());
+  }
+  return keys;
+}
+
+// Two-way block pin: every declared key present, every emitted key declared. `what` names the
+// block in the failure output.
+void ExpectKeySet(const nlohmann::json& object, std::initializer_list<const char*> expected, const char* what) {
+  const std::set<std::string> got = KeysOf(object);
+  std::set<std::string> want;
+  for (const char* key : expected) {
+    want.insert(key);
+    EXPECT_NE(got.find(key), got.end()) << what << " dropped its " << key << " key";
+  }
+  for (const std::string& key : got) {
+    EXPECT_NE(want.find(key), want.end()) << what << " emits unaccounted key " << key;
+  }
+}
+
 }  // namespace
+
+TEST(PathFeatureReportJsonV3, Schema3BlocksEmitEveryDeclaredField) {
+  // AC2(b), the block half: each schema3 struct's fields surface in the JSON, pinned per block
+  // from a MAXIMAL instance (every field populated; gated emissions pinned in the state that
+  // opens the gate). The declared sets are enumerated from the struct headers in the same
+  // change as the struct: a new struct field that skips its line here stays unserialized in
+  // silence, which is exactly what this test exists to prevent. (The record checklist half of
+  // AC2(b) rides the ledger — RecordFieldChecklistRidesTheLedger; the mc_evidence block's
+  // discovery payload decomposes across the ledger's top-level homes, which AC2a already
+  // reconciles, so no second inventory of it lives here.)
+  V3Run run = RunV3OrDie(ReportScene(), SmallRequest());
+  ASSERT_FALSE(run.assembled.core.objects.empty());
+  ASSERT_FALSE(run.assembled.core.support.members.empty());
+
+  // -- StructureObjectRecord, every field populated (identity, four machines, geometry,
+  //    diagnostics), each gated emission's gate opened.
+  schema3::StructureObjectRecord& object = run.assembled.core.objects.front();
+  schema3::CorroborationAnnotation& annotation = run.assembled.annotations.front();
+  object.kind = schema3::ObjectKind::kKind3;
+  object.member = { 3, 5 };
+  object.slot = 3;
+  object.phi_class_note = "sentinel_phi_note";
+  object.existence = ExistenceState::kEscaped;  // opens the escape_regime_slug gate
+  object.escape_regime_slug = "slab_crease";
+  object.walk_s = 1.5;
+  object.visibility = {};
+  object.visibility.state = VisibilityState::kCertified;
+  object.visibility.lit_fraction = 0.75;
+  object.visibility.jets_ok = true;
+  object.visibility.saw_zero_area = true;
+  object.visibility.saw_zero_transmission = true;
+  object.visibility.reason = "sentinel_visibility_reason";
+  object.chromatic_assessed = true;
+  object.chromatic = {};
+  object.chromatic.kind = analytic::ChromaticVerdictKind::kTint;
+  object.chromatic.color = analytic::ChromaticColor::kRed;
+  object.chromatic.visible = true;
+  object.chromatic.coverage_complete = false;
+  object.chromatic.has_position = true;
+  object.chromatic.position = 0.02;
+  analytic::ChromaticFeature feature{};
+  feature.kind = analytic::ChromaticFeatureKind::kEdge;
+  feature.source = "sentinel_feature_source";
+  feature.color = analytic::ChromaticColor::kBlue;
+  feature.visible = true;
+  feature.positive_fraction = 0.1;
+  feature.delta_red = 0.01;
+  feature.delta_blue = 0.02;
+  feature.shift = 0.03;
+  feature.spread = 0.04;
+  feature.direction_dispersion = 0.05;
+  feature.contrast = 0.06;
+  feature.weight = 0.07;
+  feature.lit_fraction = 0.08;
+  object.chromatic.features = { feature };
+  object.chromatic.has_tint = true;
+  object.chromatic.tint = { 1.0, 2.0, 3.0, 4.0, 5.0, 6.0 };
+  object.chromatic.notes = { "sentinel_chromatic_note" };
+  annotation = {};
+  annotation.state = schema3::CorroborationState::kObserved;
+  annotation.presence_ess = 50.0;
+  annotation.match_distance = 0.01;
+  annotation.tolerance_rad = 0.02;
+  annotation.matched_record = 0;
+  annotation.matched_record_ess = 40.0;
+  annotation.ruler = "sentinel_corroboration_ruler";
+  annotation.reason = "sentinel_corroboration_reason";
+  object.has_sky_position = true;
+  object.sky_position[0] = 0.1;
+  object.sky_position[1] = 0.2;
+  object.sky_position[2] = 0.3;
+  object.u = { 0.1, 0.2, 0.3 };
+  object.counterfactual = { true, 2.07, 0.75 };
+
+  const nlohmann::json maximal = nlohmann::json::parse(PathFeatureReportV3ToJson(run.report, run.assembled, "test"));
+  const nlohmann::json* serialized = nullptr;
+  for (const char* segment : { "actual", "candidate", "unfinished" }) {
+    for (const nlohmann::json& entry : maximal["features"][segment]) {
+      if (entry["id"] == 0) {
+        serialized = &entry;
+      }
+    }
+  }
+  ASSERT_NE(serialized, nullptr) << "the mutated object (id 0) must appear in some segment";
+  const nlohmann::json& record = *serialized;
+  ExpectKeySet(record,
+               { "id", "kind", "member", "slot", "phi_class_note", "existence", "visibility", "chromatic",
+                 "corroboration", "geometry", "diagnostics" },
+               "features[] object");
+  ExpectKeySet(record["existence"], { "state", "walk_s", "escape_regime_slug" }, "existence block");
+  ExpectKeySet(record["visibility"],
+               { "state", "lit_fraction", "evidence", "jets_ok", "saw_zero_area", "saw_zero_transmission", "reason" },
+               "visibility block");
+  ExpectKeySet(record["chromatic"], { "assessed", "verdict", "thresholds" }, "chromatic block");
+  ExpectKeySet(record["chromatic"]["verdict"],
+               { "kind", "color", "visible", "coverage_complete", "faces", "n_red", "n_blue", "position_rad",
+                 "features", "tint", "notes" },
+               "chromatic verdict");
+  EXPECT_FALSE(record["chromatic"]["verdict"]["coverage_complete"].get<bool>())
+      << "the mutated false must ride through (a line the verdict rests on was not analysed)";
+  EXPECT_EQ(record["chromatic"]["verdict"]["tint"]["energy_red"].get<double>(), 1.0);
+  ExpectKeySet(record["chromatic"]["verdict"]["features"][0],
+               { "kind", "source", "color", "visible", "positive_fraction", "delta_red_rad", "delta_blue_rad",
+                 "shift_rad", "spread_rad", "direction_dispersion", "contrast", "weight", "lit_fraction" },
+               "chromatic feature row");
+  ExpectKeySet(
+      record["chromatic"]["verdict"]["tint"],
+      { "energy_red", "energy_blue", "ratio", "tir_fraction_red", "tir_fraction_blue", "direction_dispersion" },
+      "chromatic tint block");
+  ExpectKeySet(record["chromatic"]["thresholds"],
+               { "n_red", "n_blue", "edge_min_shift_rad", "edge_spread_per_shift", "calibration_white_max_deviation",
+                 "tint_ratio_min" },
+               "chromatic thresholds snapshot");
+  ExpectKeySet(record["corroboration"],
+               { "state", "presence_ess", "match_distance_rad", "tolerance_rad", "matched_record", "matched_record_ess",
+                 "ruler", "reason" },
+               "corroboration block");
+  ExpectKeySet(record["geometry"], { "u", "sky_position" }, "geometry block");
+  ExpectKeySet(record["diagnostics"]["counterfactual"], { "available", "with_slot", "without_slot" },
+               "counterfactual block");
+
+  // -- UnattributedOutcome, error gate open.
+  schema3::UnattributedStructure finding{};
+  finding.record_index = 0;
+  finding.position = { 1.0, 0.0, 0.0 };
+  finding.delta_rad = 0.5;
+  finding.record_ess = 100.0;
+  finding.min_margin_rad = 0.25;
+  finding.ruler = "sentinel_unattributed_ruler";
+  run.assembled.unattributed.structures.push_back(finding);
+  run.assembled.unattributed.skipped_no_position = 1;
+  run.assembled.unattributed.skipped_below_ess = 2;
+  run.assembled.unattributed.counts = { 7, 3 };
+  run.assembled.unattributed.error = "sentinel_unattributed_error";
+  const nlohmann::json attributed = nlohmann::json::parse(PathFeatureReportV3ToJson(run.report, run.assembled, "test"));
+  ExpectKeySet(attributed["unattributed_structures"],
+               { "structures", "skipped_no_position", "skipped_below_ess", "error" }, "unattributed block");
+  ExpectKeySet(attributed["unattributed_structures"]["structures"].back(),
+               { "record_index", "position", "delta_rad", "record_ess", "min_margin_rad", "ruler" },
+               "unattributed structure row");
+
+  // -- McEvidenceBlock face: the emitted keys; maximal spectral_verification (movement spelled
+  //    as a number — the early path's null face is the multicrystal test's).
+  run.assembled.mc.spectral_verification.available = true;
+  run.assembled.mc.spectral_verification.movement_rad = 0.5;
+  const nlohmann::json evidenced = nlohmann::json::parse(PathFeatureReportV3ToJson(run.report, run.assembled, "test"));
+  ExpectKeySet(evidenced["mc_evidence"],
+               { "records", "observation_options", "spectral_verification", "observation_scope_note", "unfinished" },
+               "mc_evidence block");
+  ExpectKeySet(evidenced["mc_evidence"]["spectral_verification"],
+               { "available", "movement_rad", "optical_evaluations", "field_component_evaluations", "seconds" },
+               "spectral_verification block");
+  ExpectKeySet(evidenced["mc_evidence"]["observation_options"],
+               { "kernel", "bandwidth_rad", "location_resolution_rad", "search_scope" }, "observation_options block");
+
+  // -- NoRelatedRuling: the four conditions and the gate ride always; `basis` joins exactly
+  //    when issued (the struct's own gating).
+  const nlohmann::json unissued = nlohmann::json::parse(PathFeatureReportV3ToJson(run.report, run.assembled, "test"));
+  ExpectKeySet(unissued["no_related_feature"],
+               { "issued", "partition_complete_no_escape", "partition_failure", "all_objects_unlit_or_none",
+                 "unlit_failure", "no_sufficient_ess_unattributed", "unattributed_failure", "s4_scope_declared",
+                 "s4_failure", "two_d_valid_support", "s4_scope_note", "absence_not_proven_note" },
+               "unissued ruling block");
+  run.assembled.ruling.issued = true;
+  run.assembled.ruling.basis = schema3::NoRelatedBasis::kZeroSpectralSignal;
+  run.assembled.ruling.partition_failure = "sentinel_partition_failure";
+  run.assembled.ruling.unlit_failure = "sentinel_unlit_failure";
+  run.assembled.ruling.unattributed_failure = "sentinel_unattributed_failure";
+  run.assembled.ruling.s4_failure = "sentinel_s4_failure";
+  run.assembled.ruling.s4_scope_note = "sentinel_s4_scope_note";
+  const nlohmann::json issued = nlohmann::json::parse(PathFeatureReportV3ToJson(run.report, run.assembled, "test"));
+  ExpectKeySet(issued["no_related_feature"],
+               { "issued", "basis", "partition_complete_no_escape", "partition_failure", "all_objects_unlit_or_none",
+                 "unlit_failure", "no_sufficient_ess_unattributed", "unattributed_failure", "s4_scope_declared",
+                 "s4_failure", "two_d_valid_support", "s4_scope_note", "absence_not_proven_note" },
+               "issued ruling block");
+  run.assembled.ruling.issued = false;
+
+  // -- Support block: one maximal member row (every partition face and both gated arms open)
+  //    and both family forms.
+  schema3::MemberSupport& row = run.assembled.core.support.members.front();
+  row.axis.regime_slug = "slab_crease";  // opens the slug + regime gate
+  row.axis.message = "sentinel_partition_message";
+  row.axis.intervals = { analytic::DeviationInterval{ 0.4, 0.5, 2, 1, 1 } };
+  analytic::CriticalOnset onset{};
+  onset.value = 0.1;
+  onset.gradient_norm = 0.6;
+  onset.has_measure_limit = true;
+  onset.measure_limit = 0.2;
+  row.endpoint_onsets = { onset };
+  schema3::ConstantDeltaCurve curve{};
+  curve.d_p = 0.3;
+  curve.weight_step = 2;
+  curve.wavelengths_nm = { 550 };
+  curve.critical_d_p = { 0.31 };
+  row.constant_curves = { curve };
+  analytic::DeviationInterval shared_interval{};
+  shared_interval.lower = 0.4;
+  shared_interval.upper = 0.5;
+  shared_interval.n_components = 2;
+  shared_interval.n_closed = 1;
+  shared_interval.n_open = 1;
+  schema3::FamilySupport shared_family{};
+  shared_family.shared = true;
+  shared_family.intervals = { shared_interval };
+  shared_family.members = { { 3, 5 } };
+  shared_family.phi_class_note = "sentinel_family_phi";
+  schema3::FamilySupport disjoint_family{};
+  disjoint_family.shared = false;
+  disjoint_family.intervals = { shared_interval };  // carried but never emitted (see below)
+  disjoint_family.members = { { 1, 3 } };
+  disjoint_family.phi_class_note = "sentinel_other_phi";
+  run.assembled.core.support.families = { shared_family, disjoint_family };
+  const nlohmann::json supported = nlohmann::json::parse(PathFeatureReportV3ToJson(run.report, run.assembled, "test"));
+  ExpectKeySet(supported["support"], { "members", "families" }, "support block");
+  const nlohmann::json& member_row = supported["support"]["members"][0];
+  ExpectKeySet(member_row, { "member", "partition", "endpoint_onsets", "constant_curves" }, "support member row");
+  ExpectKeySet(
+      member_row["partition"],
+      { "coverage", "walk_status", "walk_closed", "intervals", "escape_regime_slug", "escape_regime", "message" },
+      "partition block");
+  ExpectKeySet(member_row["partition"]["intervals"][0],
+               { "lower_rad", "upper_rad", "n_components", "n_closed", "n_open" }, "partition interval row");
+  ExpectKeySet(member_row["endpoint_onsets"][0],
+               { "value_rad", "location", "source", "profile", "gradient_norm", "has_measure_limit", "measure_limit",
+                 "multiplicity" },
+               "endpoint onset row");
+  ExpectKeySet(member_row["constant_curves"][0], { "d_p_rad", "weight_step", "wavelengths_nm", "critical_d_p_rad" },
+               "constant curve row");
+  const nlohmann::json& shared_row = supported["support"]["families"][0];
+  const nlohmann::json& disjoint_row = supported["support"]["families"][1];
+  ExpectKeySet(shared_row, { "shared", "intervals", "members", "phi_class_note" }, "shared family row");
+  EXPECT_EQ(shared_row["intervals"].size(), 1u) << "a shared family reports its intervals once";
+  EXPECT_TRUE(disjoint_row["intervals"].empty())
+      << "a non-shared family emits an EMPTY intervals list by contract — the struct's carried "
+         "intervals are deliberately not reported (no fabricated union; per-member intervals "
+         "live on the member rows), not a dropped field";
+}
 
 TEST(PathFeatureReportJsonV3, LedgerTopLevelHomesReconcileTheEmission) {
   // AC2a, both ways. Every top-level ledger row's v3 home (its FIRST path segment) must exist
@@ -419,6 +684,9 @@ TEST(PathFeatureReportJsonV3, UnsupportedMulticrystalTakesTheV3EarlyShape) {
   schema3::AssembledSchema3Report empty{};
   const nlohmann::json document = nlohmann::json::parse(PathFeatureReportV3ToJson(report, empty, "test"));
   EXPECT_EQ(document["outcome"], "unsupported_multicrystal");
+  // The early path rides the SAME version constant as the main path — a second spelling here
+  // would mislabel the document on the next bump while it still names the v3 shape.
+  EXPECT_EQ(document["schema_version"], kFeatureReportSchemaVersion);
   EXPECT_EQ(document["requested_path_layers"], nlohmann::json({ { 3, 5 }, { 1, 3 } }));
   EXPECT_TRUE(document["features"]["actual"].empty());
   EXPECT_TRUE(document["features"]["candidate"].empty());

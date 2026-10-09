@@ -172,7 +172,6 @@ Json FieldPointJson(const analytic::FieldStationaryPoint& point) {
   }
   return result;
 }
-}  // namespace
 
 // One v2 discovery record's JSON face — the single owner shared by both serializers: the v2
 // buckets (actual_features/candidates/unfinished) and the v3 mc_evidence.records ride the SAME
@@ -321,9 +320,8 @@ Json FeatureRecordJson(const DiscoveryResult& discovery, const DiagnosticFeature
   return item;
 }
 
-namespace {
-
 // -- schema3 serialization helpers (666.3 Step 2) ----------------------------------------------
+
 // The rule: enum spellings come from the registered *Name() functions or, where the contract
 // has no registered table, from ONE local switch here (the v2 EvidenceName precedent); the
 // migration ledger is read by the v3 unit tests, not spelled again by the serializer.
@@ -394,6 +392,9 @@ Json SupportBlockJson(const Schema3DiscoveryCore& core) {
   }
   Json families = Json::array();
   for (const FamilySupport& family : core.support.families) {
+    // A non-shared family emits an EMPTY intervals list by contract (FamilySupport: a
+    // disagreeing family reports no union rather than a fabricated one; the per-member
+    // intervals live on the member rows above). Not a dropped field.
     families.push_back({ { "shared", family.shared },
                          { "intervals", family.shared ? IntervalsJson(family.intervals) : Json::array() },
                          { "members", family.members },
@@ -406,6 +407,7 @@ Json ChromaticJson(const StructureObjectRecord& object) {
   Json verdict = { { "kind", ChromaticVerdictKindName(object.chromatic.kind) },
                    { "color", ChromaticColorName(object.chromatic.color) },
                    { "visible", object.chromatic.visible },
+                   { "coverage_complete", object.chromatic.coverage_complete },
                    { "faces", object.chromatic.faces },
                    { "n_red", Num(object.chromatic.n_red) },
                    { "n_blue", Num(object.chromatic.n_blue) } };
@@ -501,7 +503,7 @@ std::string PathFeatureReportV3ToJson(const PathFeatureReport& result, const sch
     // The early path in the v3 shape: the segments and blocks it names, empty; the refusal row.
     return Json{
       { "schema", "lumice.path-feature-report" },
-      { "schema_version", 3 },
+      { "schema_version", kFeatureReportSchemaVersion },
       { "outcome", "unsupported_multicrystal" },
       { "requested_path_layers", result.requested_path_layers },
       { "features", { { "actual", Json::array() }, { "candidate", Json::array() }, { "unfinished", Json::array() } } },

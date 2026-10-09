@@ -8,11 +8,10 @@
 
 namespace lumice::raypath {
 
-std::string PathFeatureReportToJson(const PathFeatureReport& result, const char* lumice_version);
-
-// The schema3 form: same product input, the assembled schema3 model side. The production
-// entry once the flip lands (666.3 Step 3); until then it is reachable from the v3 tests
-// only. `result.unsupported_multicrystal` takes the v3 early shape and ignores `assembled`.
+// The v3 report serializer — the production entry behind `--report` and the C API's
+// `LUMICE_PathFeatureReportToJson` (the v2 document assembly was removed in the same commit
+// that flipped the public face to schema_version 3). `result.unsupported_multicrystal` takes
+// the v3 early shape and ignores `assembled`.
 std::string PathFeatureReportV3ToJson(const PathFeatureReport& result, const schema3::AssembledSchema3Report& assembled,
                                       const char* lumice_version);
 

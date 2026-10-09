@@ -1,6 +1,7 @@
 #include "raypath/detail/schema3/report_assembly.hpp"
 
 #include <algorithm>
+#include <cassert>
 #include <chrono>
 #include <limits>
 
@@ -15,6 +16,10 @@ constexpr int kEnumerationGrid = 720;
 }  // namespace
 
 AssembledSchema3Report AssembleSchema3Report(PathFeatureReport&& report, uint64_t max_optical_evaluations) {
+  // The header's precondition, mechanized: the early path never ran the discovery this module
+  // reads, so assembling over it dereferences an empty layer (the shape the production wiring
+  // hit once as SIGSEGV before the conditional-assembly discipline existed).
+  assert(!report.unsupported_multicrystal);
   AssembledSchema3Report out;
   const AssembledLayer& layer = report.representative_input.layers.front();
 
