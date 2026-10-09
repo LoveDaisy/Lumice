@@ -382,5 +382,76 @@ TEST(StructureEnumeration, PhiClassNoteCarriedAndBudgetCountedWhereBuilt) {
   EXPECT_GT(core.budget.sampling_evaluations, 0);
 }
 
+// ---- the walk-arclength spelling, one owner over every registered status --------------------------
+
+TEST(StructureEnumeration, KinkWalkArclengthSpellingOverEveryRegisteredStatus) {
+  // The declared two-spelling convention, single owner: a closed walk (kOk) carries NaN ("a
+  // walk arclength does not apply"); EVERY refusal carries 0.0 ("truncated before the record,
+  // the covered amount is UNKNOWN" — never a measured zero). Pinned per status so a new
+  // WalkStatus value added to the kernel's enum lands here as a red before it ships.
+  EXPECT_TRUE(std::isnan(KinkWalkArclength(analytic::WalkStatus::kOk)));
+  for (const analytic::WalkStatus status :
+       { analytic::WalkStatus::kStepsExhausted, analytic::WalkStatus::kStartNoPoint,
+         analytic::WalkStatus::kStartCoversAll, analytic::WalkStatus::kStartNoEdge,
+         analytic::WalkStatus::kCornerNotSimple, analytic::WalkStatus::kNotClosed, analytic::WalkStatus::kNotFinite,
+         analytic::WalkStatus::kBadOrientation }) {
+    EXPECT_EQ(KinkWalkArclength(status), 0.0) << "status " << analytic::WalkStatusName(status);
+  }
+  // And the enumeration's kink branch reads the helper: a truncated kink object's walk_s is the
+  // 0.0 spelling, a closed one's is NaN (the synthetic route: a real truncated kink needs a
+  // refusal this crystal does not reliably produce, so the pin here is the helper itself — the
+  // kink branch's calls are covered by the build and the closed-arm cases above).
+  const StructureObjectRecord* kink =
+      FindKind(EnumerateMember(C12Input(RhombicPlate()), { 2, 4, 5, 1 }).objects, ObjectKind::kKind3);
+  if (kink != nullptr) {
+    EXPECT_TRUE(std::isnan(kink->walk_s) || kink->walk_s == 0.0);
+  }
+}
+
+// ---- the orbit stream carried on the core, parallel to the support rows ---------------------------
+
+TEST(StructureEnumeration, OrbitStreamCarriedOnTheCoreParallelToSupportRows) {
+  const Tables t = RhombicPlate();
+  const std::vector<int> member = { 2, 4, 5, 1 };
+  const Schema3DiscoveryCore core = EnumerateLayer(C12Input(t), { member });
+  // The parallel-slot invariant: one orbit stream per support row, same order, the ONLY read
+  // entry for the corroboration wiring (MemberEnumeration.orbit is the move-out staging field).
+  ASSERT_EQ(core.orbits.size(), core.support.members.size());
+  ASSERT_EQ(core.orbits.size(), 1u);
+  // The carried stream is the stream the enumeration built (the same build the visibility
+  // certificate consumed): identical sample count to a direct build with the same parameters.
+  int slots[analytic::kMaxFaceCount];
+  ASSERT_EQ(analytic::ResolveFaceSequence(t.normals, member.data(), static_cast<int>(member.size()), slots),
+            analytic::Status::kOk);
+  static const analytic::PoseDensitySpec spec = PlateSpec();
+  const double sun[3] = { std::cos(9.0 * kDeg), 0.0, std::sin(9.0 * kDeg) };
+  const analytic::OrbitFiberStream expected =
+      analytic::MakeOrbitFiberStream(t.normals, t.polys, slots, static_cast<int>(member.size()), spec, sun, 1.307, 256);
+  ASSERT_EQ(core.orbits[0].samples.size(), expected.samples.size());
+  EXPECT_FALSE(core.orbits[0].samples.empty());
+  // The world-frame outgoing rides the carried stream (the enhanced matching layer's input).
+  // Invalid orbit points (path refused / A or T zero) carry a zeroed outgoing — the zero IS
+  // their "no direction" spelling, so the unit-norm pin runs over the non-zero ones only.
+  for (const analytic::OrbitFiberPoint& point : core.orbits[0].samples) {
+    const double norm = std::sqrt(point.outgoing[0] * point.outgoing[0] + point.outgoing[1] * point.outgoing[1] +
+                                  point.outgoing[2] * point.outgoing[2]);
+    if (norm == 0.0) {
+      EXPECT_FALSE(point.valid);
+      continue;
+    }
+    EXPECT_NEAR(norm, 1.0, 1e-9);
+  }
+  // No measure side: the slot still exists (the parallel invariant holds) and the stream is
+  // empty — declared, not absent.
+  EnumerationInput bare_input;
+  bare_input.normals = &t.normals;
+  bare_input.polygons = &t.polys;
+  bare_input.base_index = 1.307;
+  const Schema3DiscoveryCore bare = EnumerateLayer(bare_input, { member });
+  ASSERT_EQ(bare.orbits.size(), 1u);
+  EXPECT_TRUE(bare.orbits[0].samples.empty());
+  EXPECT_EQ(bare.orbits.size(), bare.support.members.size());
+}
+
 }  // namespace
 }  // namespace lumice::raypath::schema3

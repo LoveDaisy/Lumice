@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <set>
 #include <string>
 
 #include "analytic/dp_contour.hpp"
@@ -60,6 +59,10 @@ int EventWordForObjectKind(ObjectKind kind) {
   return -1;  // unknown kind: no word (fail closed, same as the named non-carriers)
 }
 
+double KinkWalkArclength(analytic::WalkStatus status) {
+  return status == analytic::WalkStatus::kOk ? std::nan("") : 0.0;
+}
+
 MemberEnumeration EnumerateMember(const EnumerationInput& in, const std::vector<int>& member) {
   MemberEnumeration out;
   if (in.normals == nullptr || in.polygons == nullptr || member.size() < 2 ||
@@ -110,20 +113,15 @@ MemberEnumeration EnumerateMember(const EnumerationInput& in, const std::vector<
     StructureObjectRecord kink_object = BaseRecord(ObjectKind::kKind3, member);
     kink_object.slot = kink.step;
     kink_object.existence = ExistenceOf(chain.existence);
-    kink_object.walk_s = std::nan("");
+    kink_object.walk_s = KinkWalkArclength(kink.status);
     kink_object.u = chain.u;
-    if (kink.status != analytic::WalkStatus::kOk) {
-      kink_object.walk_s = 0.0;  // the declared truncation spelling: 0.0 = the walk was cut
-                                 // before the record and the covered amount is UNKNOWN (the
-                                 // kernel exposes no pre-truncation arclength) — never a
-                                 // measured zero
-    }
     out.objects.push_back(std::move(kink_object));
   }
 
   // One orbit stream per member, built once and shared by the kind-1 leg and the restricted
   // leg (identical parameters: a second build would sample the grid twice and hand the two
-  // certificates different streams to disagree on).
+  // certificates different streams to disagree on). The stream moves out with the enumeration
+  // (core.orbits — the corroboration wiring's read entry).
   const bool stream_wanted = in.measure != nullptr && in.density != nullptr && in.grid > 0;
   analytic::OrbitFiberStream orbit;
   if (stream_wanted) {
@@ -192,6 +190,7 @@ MemberEnumeration EnumerateMember(const EnumerationInput& in, const std::vector<
   for (StructureObjectRecord& object : out.objects) {
     object.phi_class_note = out.phi_class_note;
   }
+  out.orbit = std::move(orbit);
   return out;
 }
 
@@ -220,41 +219,20 @@ Schema3DiscoveryCore EnumerateLayer(const EnumerationInput& in, const std::vecto
   Schema3DiscoveryCore core;
   core.coverage = V1Coverage();
   long long stream_points = 0;
+  std::vector<std::string> notes;
   for (const std::vector<int>& member : members) {
     MemberEnumeration one = EnumerateMember(in, member);
     for (StructureObjectRecord& object : one.objects) {
       core.objects.push_back(std::move(object));
     }
     stream_points += one.stream_points_built;
-    // Family aggregation (the plan's Phi-class semantics): a row joins a family only when it
-    // sits in the SAME reflection-group orbit (the carried note — the kernel PBD orbit's
-    // canonical member) AND on the same support (SameSupport — the one ruler, shared with
-    // AggregateFamily). A row with no computable orbit asserts no class membership: it never
-    // joins an existing family (fail closed); a refused or escaped row has no intervals to
-    // share and matches nothing either way.
-    if (!one.support.member.empty() && one.support.axis.context.coverage == PartitionContext::Coverage::kComplete) {
-      bool clustered = false;
-      if (!one.phi_class_note.empty()) {
-        for (FamilySupport& family : core.support.families) {
-          if (family.shared && family.phi_class_note == one.phi_class_note &&
-              SameSupport(family.intervals, one.support.axis.intervals)) {
-            family.members.push_back(one.support.member);
-            clustered = true;
-            break;
-          }
-        }
-      }
-      if (!clustered) {
-        FamilySupport family;
-        family.shared = true;
-        family.intervals = one.support.axis.intervals;
-        family.phi_class_note = one.phi_class_note;
-        family.members.push_back(one.support.member);
-        core.support.families.push_back(std::move(family));
-      }
-    }
+    notes.push_back(std::move(one.phi_class_note));
+    core.orbits.push_back(std::move(one.orbit));
     core.support.members.push_back(std::move(one.support));
   }
+  // Family clustering: the ONE implementation (support_block's ClusterFamilies — the same
+  // gates the inline loop used: same orbit note, SameSupport, complete partition).
+  core.support.families = ClusterFamilies(core.support.members, notes);
   // The budget: the stream points the enumeration itself built, counted where they were built
   // (one orbit stream per member with the measure side) — not estimated from a formula, which
   // is how the count drifted when a second consumer leg appeared. The kernel-internal counts

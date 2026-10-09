@@ -54,17 +54,28 @@ struct MemberSupport {
 // The Phi-class aggregate: whether one reflection-group orbit's rows share the support — every
 // row's partition completed and the interval endpoints agree within kExtremumAtol. `intervals`
 // is the shared list when `shared`, empty otherwise (an agreeing family reports its intervals
-// once; a disagreeing one reports nothing rather than a fabricated union). `members` carries the
-// clustered rows' face sequences and `phi_class_note` their shared orbit annotation (both
-// filled by the enumeration's clustering, which owns the identity side; empty note = the orbit
-// was never asserted).
+// once; a disagreeing one reports nothing rather than a fabricated union). `members` carries
+// the clustered rows' face sequences and `phi_class_note` their shared orbit annotation (empty
+// note = the orbit was never asserted). Both identity fields are filled by ClusterFamilies,
+// which owns the clustering; rows that fail any gate join no family and start none.
 struct FamilySupport {
   bool shared = false;
   std::vector<analytic::DeviationInterval> intervals;
   std::vector<std::vector<int>> members;
   std::string phi_class_note;
 };
-FamilySupport AggregateFamily(const std::vector<MemberSupport>& rows);
+
+// The ONE family clustering (the enumeration's former inline loop, promoted so the
+// same-support comparison cannot fork a second implementation). Three gates per row, all
+// required: the SAME Phi-class note as the family (both non-empty — a row whose orbit cannot
+// be computed asserts no class membership and never joins one), the SAME support
+// (SameSupport), and a COMPLETE partition (a refused or escaped row has no intervals to
+// share). First-come grouping: a row joins the first family passing all three gates, else
+// starts its own (two notes on the same support stay two families — the a56 hole as a
+// first-class negative). `rows` and `phi_class_notes` are parallel; the caller owns the notes
+// (the enumeration's per-member annotation).
+std::vector<FamilySupport> ClusterFamilies(const std::vector<MemberSupport>& rows,
+                                           const std::vector<std::string>& phi_class_notes);
 
 // Whether two rows sit on the SAME delta-axis support: equal-length interval lists whose
 // endpoints agree within the partition's own merge constant (kExtremumAtol). The one ruler for

@@ -1,5 +1,6 @@
 #include "raypath/detail/schema3/support_block.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <utility>
 
@@ -105,25 +106,37 @@ MemberSupport MemberSupportOf(const analytic::FaceNormalTable& normals, const an
                  indices);
 }
 
-FamilySupport AggregateFamily(const std::vector<MemberSupport>& rows) {
-  FamilySupport out;
-  if (rows.empty()) {
-    return out;
-  }
-  for (const MemberSupport& row : rows) {
-    if (row.axis.context.coverage != PartitionContext::Coverage::kComplete) {
-      return out;  // one refusal and the family shares nothing
+std::vector<FamilySupport> ClusterFamilies(const std::vector<MemberSupport>& rows,
+                                           const std::vector<std::string>& phi_class_notes) {
+  std::vector<FamilySupport> families;
+  const size_t count = std::min(rows.size(), phi_class_notes.size());
+  for (size_t i = 0; i < count; i++) {
+    const MemberSupport& row = rows[i];
+    const std::string& note = phi_class_notes[i];
+    // Gate 1: a complete partition (a refused or escaped row has no intervals to share);
+    // gate 2: a computable orbit (an empty note asserts no class membership).
+    if (row.axis.context.coverage != PartitionContext::Coverage::kComplete || note.empty()) {
+      continue;
+    }
+    bool clustered = false;
+    for (FamilySupport& family : families) {
+      // Gate 3: same orbit note AND same support (SameSupport — the one ruler).
+      if (family.shared && family.phi_class_note == note && SameSupport(family.intervals, row.axis.intervals)) {
+        family.members.push_back(row.member);
+        clustered = true;
+        break;
+      }
+    }
+    if (!clustered) {
+      FamilySupport family;
+      family.shared = true;
+      family.intervals = row.axis.intervals;
+      family.phi_class_note = note;
+      family.members.push_back(row.member);
+      families.push_back(std::move(family));
     }
   }
-  const std::vector<analytic::DeviationInterval>& first = rows[0].axis.intervals;
-  for (const MemberSupport& row : rows) {
-    if (!SameSupport(row.axis.intervals, first)) {
-      return out;
-    }
-  }
-  out.shared = true;
-  out.intervals = first;
-  return out;
+  return families;
 }
 
 bool SameSupport(const std::vector<analytic::DeviationInterval>& a, const std::vector<analytic::DeviationInterval>& b) {

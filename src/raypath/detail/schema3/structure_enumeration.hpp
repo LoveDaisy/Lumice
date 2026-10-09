@@ -83,10 +83,15 @@ struct EnumerationInput {
   int grid = 720;  // the orbit stream / restricted curve's declared resolution
 };
 
-// The core's consumption face (666.2/666.3 read this).
+// The core's consumption face (666.2/666.3 read this). `orbits` is parallel to
+// `support.members` (one orbit stream per member row, same order, one slot each — empty when
+// no measure side ran); EnumerateLayer is its only writer and the streams' only read entry
+// past this header: MemberEnumeration.orbit below is the move-out staging field, not a second
+// home for the same stream.
 struct Schema3DiscoveryCore {
   std::vector<StructureObjectRecord> objects;
   SupportBlock support;
+  std::vector<analytic::OrbitFiberStream> orbits;
   EnumeratedCoverage coverage;
   EnumerationBudget budget;
 };
@@ -102,7 +107,16 @@ struct MemberEnumeration {
   std::string phi_class_note;
   // The stream points this member's enumeration actually built (0 = no measure side ran).
   long long stream_points_built = 0;
+  // The member's orbit stream, MOVED out to Schema3DiscoveryCore.orbits by EnumerateLayer
+  // (staging field — do not read past the layer call; the core's slot is the home).
+  analytic::OrbitFiberStream orbit;
 };
+
+// The walk-arclength spelling, one owner (every write site calls this — the convention rides
+// the function, not per-site comments): kOk -> NaN ("a walk arclength does not apply"); every
+// refusal -> 0.0 ("the walk was truncated BEFORE the record and the kernel exposes no
+// pre-truncation arclength — the covered amount is UNKNOWN", never a measured zero).
+double KinkWalkArclength(analytic::WalkStatus status);
 
 // Enumerates one member (one fixed face sequence). The member must resolve on the crystal (a
 // rejected sequence returns an empty enumeration — the caller's filter, not an error).
