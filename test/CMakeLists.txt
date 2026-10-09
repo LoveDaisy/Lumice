@@ -324,7 +324,11 @@ add_executable(unit_correctness_test
   # schema3 report (666.3): the production assembly — the living wiring of the enumeration,
   # the demoted evidence and the attribution over a real report, the two declared skips, the
   # budget/timing legs, and the A4 cost baseline on the three standard scenarios.
-  "${PROJ_TEST_DIR}/unit-correctness/raypath/test_schema3_report_assembly.cpp")
+  "${PROJ_TEST_DIR}/unit-correctness/raypath/test_schema3_report_assembly.cpp"
+  # schema3 report (666.3): the v3 serializer — the ledger-reconciled emission (top-level homes
+  # both ways, the 34-field record checklist on a maximal record), the derived-bucket segments,
+  # the outcome grammar and unconditional ruling, the non-finite spellings, the self-description.
+  "${PROJ_TEST_DIR}/unit-correctness/raypath/test_path_feature_report_json_v3.cpp")
 target_include_directories(unit_correctness_test
   PRIVATE ${PROJ_TEST_DIR})
 target_compile_definitions(unit_correctness_test PRIVATE

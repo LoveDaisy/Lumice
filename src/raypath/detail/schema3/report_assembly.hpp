@@ -37,6 +37,7 @@ struct AssembledSchema3Report {
   std::vector<CorroborationAnnotation> annotations;  // parallel to core.objects
   McEvidenceBlock mc;
   UnattributedOutcome unattributed;
+  McAttributionCounts corroboration_counts;  // the backward pass's own attribution counts
   NoRelatedRuling ruling;
   double enumeration_seconds = 0;
   double attribution_seconds = 0;

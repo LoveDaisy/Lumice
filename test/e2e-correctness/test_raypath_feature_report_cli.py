@@ -34,10 +34,26 @@ def _report(config: Path, path: str, *args: str):
     )
 
 
+def _load_report(result, expect_version: int):
+    """Parse a report document, refusing a version this reader does not understand.
+
+    The version gate is the in-repo face of the reader discipline (v2 readers reject v3 and
+    vice versa): the error names BOTH versions, so a consumer that silently misreads a newer
+    document can never come back green here.
+    """
+    doc = json.loads(result.stdout)
+    version = doc.get("schema_version")
+    if version != expect_version:
+        raise AssertionError(
+            f"document is schema_version {version}; this reader requires schema_version {expect_version}"
+        )
+    return doc
+
+
 def test_bounded_nonfixed_report_completes_without_claiming_global_coverage():
     result = _report(_RANDOM, "3-5", "--events", "64", "--wavelength", "550")
     assert result.returncode == 0, result.stderr
-    doc = json.loads(result.stdout)
+    doc = _load_report(result, 2)
     assert doc["outcome"] == "completed"
     assert doc["unfinished_reasons"] == []
     assert not doc["budgets"]["exhausted"]
@@ -50,7 +66,7 @@ def test_bounded_nonfixed_report_completes_without_claiming_global_coverage():
 def test_315_report_keeps_conditional_tir_distinct_from_observed_colour():
     result = _report(_RANDOM, "3-1-5", "--events", "8192", "--wavelength", "550")
     assert result.returncode == 0, result.stderr
-    doc = json.loads(result.stdout)
+    doc = _load_report(result, 2)
     assert doc["schema"] == "lumice.path-feature-report"
     assert doc["schema_version"] == 2
     assert "target" not in doc
@@ -73,7 +89,7 @@ def test_report_physical_radius_is_not_the_smoothed_brightness_peak():
 
     result = _report(_RANDOM, "3-5", "--events", "8192", "--wavelength", "550")
     assert result.returncode == 0, result.stderr
-    doc = json.loads(result.stdout)
+    doc = _load_report(result, 2)
     assert doc["scope"]["layers"][0]["representative_faces"] == [3, 5]
     edges = [f for f in (doc["actual_features"] + doc["candidates"] + doc["unfinished"]) if "physical_position" in f]
     assert edges
@@ -89,7 +105,7 @@ def test_report_physical_radius_is_not_the_smoothed_brightness_peak():
 def test_default_report_consumes_actual_continuous_spectrum_and_records_scope():
     result = _report(_RANDOM, "3-5")
     assert result.returncode == 0, result.stderr
-    doc = json.loads(result.stdout)
+    doc = _load_report(result, 2)
     assert len(doc["spectrum"]) == 33
     assert "continuous" in doc["scope"]["spectrum"]
     assert sum(row["measure_mass"] for row in doc["spectrum"]) == pytest.approx(1)
@@ -109,7 +125,7 @@ def test_rhombic_plate_uses_physical_members_and_measured_peaks():
 
     result = _report(_PLATE, "1-3-4-2", "--events", "8192", "--wavelength", "550")
     assert result.returncode == 0, result.stderr
-    doc = json.loads(result.stdout)
+    doc = _load_report(result, 2)
     assert {tuple(member) for member in doc["physical_members"]} == {(1, 3, 4, 2), (1, 3, 8, 2)}
     peaks = [f for f in (doc["actual_features"] + doc["candidates"] + doc["unfinished"]) if f["kind"] == "intensity_peak" and f["evidence"] == "actual"]
     assert peaks
@@ -127,7 +143,7 @@ def test_rhombic_plate_uses_physical_members_and_measured_peaks():
 def test_report_low_budget_returns_partial_json_instead_of_empty_feature_claim(budget):
     result = _report(_RANDOM, "3-5", *budget)
     assert result.returncode == 0, result.stderr
-    doc = json.loads(result.stdout)
+    doc = _load_report(result, 2)
     assert doc["outcome"] == "partial"
     assert doc["budgets"]["exhausted"]
     if budget[0] == "--max-evaluations":
@@ -139,7 +155,7 @@ def test_report_output_file_is_atomic_and_stdout_stays_empty(tmp_path):
     result = _report(_RANDOM, "3-5", "--events", "64", "-o", str(output))
     assert result.returncode == 0, result.stderr
     assert result.stdout == ""
-    assert json.loads(output.read_text())["schema"] == "lumice.path-feature-report"
+    assert json.loads(output.read_text())["schema_version"] == 2
     assert not Path(str(output) + ".tmp").exists()
 
 
@@ -179,7 +195,7 @@ def test_report_parse_errors_write_usage_only_to_stderr_regardless_of_option_ord
 def test_report_multicrystal_is_a_structured_zero_work_refusal():
     result = _report(_RANDOM, "(3-5)->(1-3)")
     assert result.returncode == 0, result.stderr
-    doc = json.loads(result.stdout)
+    doc = _load_report(result, 2)
     assert doc["outcome"] == "unsupported_multicrystal"
     assert doc["requested_path_layers"] == [[3, 5], [1, 3]]
     assert doc["actual_features"] == []
@@ -192,7 +208,7 @@ def test_endpoint_bisection_budget_is_partial_not_a_physical_stop():
     result = _report(_RANDOM, "3-1-5", "--events", "8192", "--wavelength", "550",
                      "--max-evaluations", "405930")
     assert result.returncode == 0, result.stderr
-    doc = json.loads(result.stdout)
+    doc = _load_report(result, 2)
     assert doc["outcome"] == "partial"
     assert doc["budgets"]["exhausted"]
     assert doc["budgets"]["optical_evaluations"] <= 405930
@@ -203,7 +219,7 @@ def test_endpoint_bisection_budget_is_partial_not_a_physical_stop():
     assert any(c["points"] for c in stopped)
     complete = _report(_RANDOM, "3-1-5", "--events", "8192", "--wavelength", "550")
     assert complete.returncode == 0, complete.stderr
-    full = json.loads(complete.stdout)
+    full = _load_report(complete, 2)
     assert full["outcome"] == "completed"
     assert not full["budgets"]["exhausted"]
     full_features = full["actual_features"] + full["candidates"] + full["unfinished"]
@@ -227,7 +243,7 @@ def test_declared_sun_boundary_is_the_physical_cap_rim(tmp_path, altitude, bound
     path.write_text(json.dumps(config))
     result = _report(path, "3-5", "--events", "64", "--wavelength", "550")
     assert result.returncode == 0, result.stderr
-    doc = json.loads(result.stdout)
+    doc = _load_report(result, 2)
     # Restricted orientation can leave unrelated SO(3) searches unfinished;
     # these declared-source candidates must still be evaluated within budget.
     assert not doc["budgets"]["exhausted"]

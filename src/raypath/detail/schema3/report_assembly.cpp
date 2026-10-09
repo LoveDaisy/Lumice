@@ -87,6 +87,7 @@ AssembledSchema3Report AssembleSchema3Report(const PathFeatureReport& report, ui
   CorroborationOutcome corroboration = DeriveCorroboration(input);
   out.attribution_seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - attribution_begin).count();
   out.annotations = std::move(corroboration.annotations);
+  out.corroboration_counts = corroboration.counts;
   out.core = std::move(corroboration.core);  // the corroboration-written copy is THE core
   out.mc = std::move(mc);
   // The ruling reads the final core; the support kind rides even when the measure side was
