@@ -320,7 +320,11 @@ add_executable(unit_correctness_test
   # schema3 report core (666.2): the no_related_feature dual-form ruling — rule A outranks B,
   # the four B conditions each break on their own leg, the kArea gate beside them, and the
   # zero-signal predicate at its single home.
-  "${PROJ_TEST_DIR}/unit-correctness/raypath/test_no_related_feature.cpp")
+  "${PROJ_TEST_DIR}/unit-correctness/raypath/test_no_related_feature.cpp"
+  # schema3 report (666.3): the production assembly — the living wiring of the enumeration,
+  # the demoted evidence and the attribution over a real report, the two declared skips, the
+  # budget/timing legs, and the A4 cost baseline on the three standard scenarios.
+  "${PROJ_TEST_DIR}/unit-correctness/raypath/test_schema3_report_assembly.cpp")
 target_include_directories(unit_correctness_test
   PRIVATE ${PROJ_TEST_DIR})
 target_compile_definitions(unit_correctness_test PRIVATE

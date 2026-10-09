@@ -1075,6 +1075,7 @@ add_library(lumice_raypath_obj OBJECT
   "${PROJ_SRC_DIR}/raypath/detail/schema3/mc_attribution.cpp"
   "${PROJ_SRC_DIR}/raypath/detail/schema3/mc_evidence.cpp"
   "${PROJ_SRC_DIR}/raypath/detail/schema3/no_related_feature.cpp"
+  "${PROJ_SRC_DIR}/raypath/detail/schema3/report_assembly.cpp"
   "${PROJ_SRC_DIR}/raypath/detail/schema3/structure_object.cpp"
   "${PROJ_SRC_DIR}/raypath/detail/schema3/structure_enumeration.cpp"
   "${PROJ_SRC_DIR}/raypath/detail/schema3/support_block.cpp"
