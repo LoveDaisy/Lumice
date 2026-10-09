@@ -22,6 +22,7 @@
 // MOVED into the evidence carry: the v2 document path is gone, so nothing reads
 // report.discovery past this call.
 
+#include <chrono>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -33,6 +34,16 @@
 #include "raypath/detail/schema3/structure_enumeration.hpp"
 
 namespace lumice::raypath::schema3 {
+
+// The enumeration leg's anti-hang cap (the one ENFORCED bound in the budget vocabulary). The
+// quality budgets around it are report-only by A4's ruling; this one is a robustness floor
+// against pathological inputs, not a quality knob, and is deliberately NOT coupled to the
+// request's `--budget-ms` (which bounds the discovery legs' quality/cost trade). Measured
+// basis: the heaviest legal corpus leg runs ~12 s; the C10 degenerate family, once its
+// quadratic shift statistic is refused by the kernel's declared pair bound, enumerates its
+// 12-member PBD orbit in ~60-90 s locally; CI runners measured up to 1.9x slower, so 300 s
+// keeps >=1.6x headroom over that worst case and >=25x over any legal leg.
+constexpr long long kEnumerationHangCapMs = 300000;
 
 struct AssembledSchema3Report {
   Schema3DiscoveryCore core;                         // the corroboration-written core (DeriveCorroboration's copy)
@@ -47,7 +58,9 @@ struct AssembledSchema3Report {
   std::string density_skip_note;  // non-empty = the density leg was declared skipped
 };
 
-AssembledSchema3Report AssembleSchema3Report(PathFeatureReport&& report, uint64_t max_optical_evaluations);
+AssembledSchema3Report AssembleSchema3Report(
+    PathFeatureReport&& report, uint64_t max_optical_evaluations,
+    std::chrono::steady_clock::time_point enumeration_deadline = std::chrono::steady_clock::time_point::max());
 
 }  // namespace lumice::raypath::schema3
 #endif  // LUMICE_RAYPATH_DETAIL_SCHEMA3_REPORT_ASSEMBLY_HPP_

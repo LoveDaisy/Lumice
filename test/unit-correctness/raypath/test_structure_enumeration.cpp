@@ -16,6 +16,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <set>
 #include <string>
@@ -451,6 +452,69 @@ TEST(StructureEnumeration, OrbitStreamCarriedOnTheCoreParallelToSupportRows) {
   ASSERT_EQ(bare.orbits.size(), 1u);
   EXPECT_TRUE(bare.orbits[0].samples.empty());
   EXPECT_EQ(bare.orbits.size(), bare.support.members.size());
+}
+
+// ---- the anti-hang deadline: the honest truncated face -------------------------------------------
+
+TEST(StructureEnumeration, DeadlineProducesHonestTruncation) {
+  // A past deadline cuts every member before its axis assembly: kind-1 ships the declared
+  // walk_truncated face (walk_s 0.0, no u), the support row takes the walk-refused shape, and
+  // the budget says so. No object may carry a curve body — a truncated enumeration never
+  // fabricates one.
+  const Tables t = C11Plate();
+  EnumerationInput in;
+  in.normals = &t.normals;
+  in.polygons = &t.polys;
+  in.base_index = 1.307;
+  const Schema3DiscoveryCore core =
+      EnumerateLayer(in, { { 1, 4, 5, 2 }, { 3, 6, 4, 8 } }, std::chrono::steady_clock::time_point::min());
+  EXPECT_TRUE(core.budget.truncated);
+  EXPECT_FALSE(core.budget.truncation_note.empty());
+  EXPECT_EQ(core.budget.hang_cap_ms, 0);  // the layer reports cuts; the caller owns the cap value
+  ASSERT_EQ(core.support.members.size(), 2u);
+  for (const MemberSupport& row : core.support.members) {
+    EXPECT_FALSE(row.axis.walk_closed);
+    EXPECT_EQ(row.axis.context.coverage, PartitionContext::Coverage::kUnknown);
+    EXPECT_NE(row.axis.message.find("anti-hang deadline"), std::string::npos);
+  }
+  bool saw_kind1 = false;
+  for (const StructureObjectRecord& object : core.objects) {
+    saw_kind1 |= object.kind == ObjectKind::kKind1;
+    EXPECT_EQ(object.existence, ExistenceState::kWalkTruncated);
+    EXPECT_EQ(object.walk_s, 0.0);
+    EXPECT_TRUE(object.u.empty()) << "no fabricated curve body on a truncated enumeration";
+  }
+  EXPECT_TRUE(saw_kind1);
+}
+
+TEST(StructureEnumeration, CarryBoundTruncatesDenseDegenerateCurves) {
+  // The C10 member (3-6-4-8 on the plate): the marched kink walk's seed coverage fails on the
+  // latitude-circle family and produces ~780k duplicated arc points — real kernel output whose
+  // report body the carry bound refuses. The object ships the declared truncated face and the
+  // member's truncation note names the cut; the member's affordable second kink stays computed.
+  const Tables t = C11Plate();
+  EnumerationInput in;
+  in.normals = &t.normals;
+  in.polygons = &t.polys;
+  in.base_index = 1.307;
+  const MemberEnumeration one = EnumerateMember(in, { 3, 6, 4, 8 });
+  const StructureObjectRecord* dense = nullptr;
+  size_t computed_kinks = 0;
+  for (const StructureObjectRecord& object : one.objects) {
+    if (object.kind != ObjectKind::kKind3) {
+      continue;
+    }
+    if (object.existence == ExistenceState::kWalkTruncated) {
+      dense = &object;
+    } else {
+      computed_kinks++;
+    }
+  }
+  ASSERT_NE(dense, nullptr);
+  EXPECT_EQ(dense->walk_s, 0.0);
+  EXPECT_TRUE(dense->u.empty());
+  EXPECT_NE(one.truncation_note.find("carry bound"), std::string::npos);
+  EXPECT_GE(computed_kinks, 1u);  // the affordable kink is untouched by the bound
 }
 
 }  // namespace

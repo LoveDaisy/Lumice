@@ -34,6 +34,7 @@
 // the schema1 words onto curve points); the word each OBJECT kind would carry is A1's
 // registration below, pinned by test.
 
+#include <chrono>
 #include <string>
 #include <vector>
 
@@ -50,6 +51,15 @@ namespace lumice::raypath::schema3 {
 // ChainEventKind value an object kind's events carry, or -1 when no pinned word applies.
 int EventWordForObjectKind(ObjectKind kind);
 
+// The report-side carry bound on one object's u preimage (points). A curve denser than this is
+// real kernel output, but carrying it is the report leg's own cost: the object ships the
+// declared truncated face (existence kWalkTruncated, walk_s 0.0, no u — the covered amount is
+// UNKNOWN, never a downsampled body) and the budget's truncation note names it. Sits ~27x above
+// the largest measured legal corpus curve (a closed-form circle's 3600 samples) and ~8x below
+// the degenerate-family pathology (corpus C10's 780k-point duplicated marched arcs), whose
+// carried JSON would have been tens of megabytes per object.
+constexpr size_t kMaxCarriedCurvePoints = 100000;
+
 // The vocabulary ledger's machine face (Table A): every registered kind appears EXACTLY once,
 // as produced or declared-not-produced, with the reason string for the declared ones.
 struct EnumeratedCoverage {
@@ -61,9 +71,17 @@ struct EnumeratedCoverage {
 // Cost accounting over the caller's budget vocabulary. v1 counts what the enumeration itself
 // spawns (the declared-resolution samplings); the kernel-internal walk/Newton evaluation counts
 // are NOT introspectable and stay a registered gap (the G4 family).
+//
+// The anti-hang fields are the one ENFORCED bound in the budget vocabulary (the quality budgets
+// above are report-only by A4's ruling): when the caller installs a deadline, members or legs a
+// deadline cut ship the honest truncated face and say so here — a robustness floor against
+// pathological inputs, not a quality knob.
 struct EnumerationBudget {
   long long max_optical_evaluations = 0;  // <= 0: unconstrained (666.3 wires the flag)
   long long sampling_evaluations = 0;     // orbit + restricted stream points built
+  long long hang_cap_ms = 0;              // the installed anti-hang cap; 0 = none installed
+  bool truncated = false;                 // the cap fired somewhere in this enumeration
+  std::string truncation_note;            // what was cut (empty when not truncated)
 };
 
 // One layer's inputs. The pointers are borrowed and must outlive the call; the measure side is
@@ -110,6 +128,9 @@ struct MemberEnumeration {
   // The member's orbit stream, MOVED out to Schema3DiscoveryCore.orbits by EnumerateLayer
   // (staging field — do not read past the layer call; the core's slot is the home).
   analytic::OrbitFiberStream orbit;
+  // Non-empty when the anti-hang deadline or the carry bound cut a leg of this member (what
+  // was cut and why); the layer folds these into the budget's truncation note.
+  std::string truncation_note;
 };
 
 // The walk-arclength spelling, one owner (every write site calls this — the convention rides
@@ -119,13 +140,24 @@ struct MemberEnumeration {
 double KinkWalkArclength(analytic::WalkStatus status);
 
 // Enumerates one member (one fixed face sequence). The member must resolve on the crystal (a
-// rejected sequence returns an empty enumeration — the caller's filter, not an error).
-MemberEnumeration EnumerateMember(const EnumerationInput& in, const std::vector<int>& member);
+// rejected sequence returns an empty enumeration — the caller's filter, not an error). The
+// deadline is the caller's anti-hang cap: past it, the remaining legs ship the honest
+// truncated face (kind-1 kWalkTruncated + walk_s 0.0 when the axis assembly itself did not
+// run; true existence with the later legs absent when it did) and the member's truncation
+// note says what was cut. The default is no deadline (max()), which every existing caller
+// and test keeps.
+MemberEnumeration EnumerateMember(
+    const EnumerationInput& in, const std::vector<int>& member,
+    std::chrono::steady_clock::time_point deadline = std::chrono::steady_clock::time_point::max());
 
 // Enumerates a layer: every member, then the family aggregate. A row joins a family only when
 // it shares BOTH the reflection-group orbit (the carried Phi-class note) and the intervals
-// (SameSupport) — the Phi-class expression of, e.g., C06's eight PBD variants.
-Schema3DiscoveryCore EnumerateLayer(const EnumerationInput& in, const std::vector<std::vector<int>>& members);
+// (SameSupport) — the Phi-class expression of, e.g., C06's eight PBD variants. The deadline is
+// EnumerateMember's (a member the cap cut still contributes its row, so the support block
+// stays one row per member); the budget's truncation fields report the cuts.
+Schema3DiscoveryCore EnumerateLayer(
+    const EnumerationInput& in, const std::vector<std::vector<int>>& members,
+    std::chrono::steady_clock::time_point deadline = std::chrono::steady_clock::time_point::max());
 
 }  // namespace lumice::raypath::schema3
 

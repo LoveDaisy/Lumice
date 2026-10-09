@@ -15,7 +15,8 @@ constexpr int kEnumerationGrid = 720;
 
 }  // namespace
 
-AssembledSchema3Report AssembleSchema3Report(PathFeatureReport&& report, uint64_t max_optical_evaluations) {
+AssembledSchema3Report AssembleSchema3Report(PathFeatureReport&& report, uint64_t max_optical_evaluations,
+                                             std::chrono::steady_clock::time_point enumeration_deadline) {
   // The header's precondition, mechanized: the early path never ran the discovery this module
   // reads, so assembling over it dereferences an empty layer (the shape the production wiring
   // hit once as SIGSEGV before the conditional-assembly discipline existed).
@@ -57,12 +58,17 @@ AssembledSchema3Report AssembleSchema3Report(PathFeatureReport&& report, uint64_
   in.grid = kEnumerationGrid;
 
   const auto enumeration_begin = std::chrono::steady_clock::now();
-  out.core = EnumerateLayer(in, layer.scope.members);
+  out.core = EnumerateLayer(in, layer.scope.members, enumeration_deadline);
   out.enumeration_seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - enumeration_begin).count();
   // The budget's configured cap rides the report (the request's own vocabulary); the
   // enumeration counts what it built, the kernel-internal counts stay the registered gap.
   out.core.budget.max_optical_evaluations =
       static_cast<long long>(std::min<uint64_t>(max_optical_evaluations, std::numeric_limits<long long>::max()));
+  // The anti-hang cap's installed value rides the budget only when a deadline was installed
+  // (the default-argument callers — unit tests, future non-CLI consumers — keep hang_cap_ms 0).
+  if (enumeration_deadline != std::chrono::steady_clock::time_point::max()) {
+    out.core.budget.hang_cap_ms = kEnumerationHangCapMs;
+  }
 
   // The demoted evidence: the spectral-verification record rides (it re-measured these same
   // records under a refined spectrum). A continuous-spectrum quadrature document is the

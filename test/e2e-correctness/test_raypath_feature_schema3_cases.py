@@ -28,6 +28,8 @@ _RANDOM = _CONFIGS / "raypath_feature_random_regular.json"
 _BETA = _CONFIGS / "raypath_feature_beta_prism.json"
 _CONE = _CONFIGS / "raypath_feature_cone.json"
 _COLUMN = _CONFIGS / "raypath_feature_column.json"
+_PLATE = _CONFIGS / "raypath_feature_plate_target.json"
+_PLATE_H08 = _CONFIGS / "raypath_feature_plate_h08.json"
 _PLATE_GAUSS = _CONFIGS / "raypath_feature_plate_gauss.json"
 _RHOMBIC = _CONFIGS / "raypath_feature_rhombic_plate.json"
 _RHOMBIC_GAUSS = _CONFIGS / "raypath_feature_rhombic_plate_gauss.json"
@@ -221,6 +223,42 @@ def test_plate_family_restricted_object_pins_the_azimuth_difference_support():
         # (one point per grid node; grid 720 is the flip-time default).
         assert len(record["geometry"]["u"]) > 0
         assert len(record["geometry"]["u"]) % 3 == 0
+
+
+# ---- C10: the latitude-circle degenerate family terminates with honest truncation (AC3) --------
+
+
+@pytest.mark.parametrize("config", [_PLATE, _PLATE_H08])
+def test_c10_degenerate_family_report_terminates_with_honest_truncation(config):
+    # The corpus's red state: both plate heights hung >420 s on this leg before the anti-hang
+    # bounds landed. Now the run terminates with the honest truncated face: the dense kind-3
+    # bodies (the marched kink walk's duplicated arcs on this family) ship walk_truncated with
+    # no curve data, the chromatic leg assesses what its declared comparison bound affords, and
+    # the budget names the cuts. Nothing is fabricated in place of what did not run.
+    doc = _report(config, "3-6-4-8", "--wavelength", "550", "--events", "8192")
+    enumeration = doc["budgets"]["enumeration"]
+    assert enumeration["hang_cap_ms"] == 300000
+    assert enumeration["truncated"] is True
+    assert enumeration["truncation_note"]
+
+    objects = _objects(doc)
+    assert objects
+    dense = [
+        f
+        for f in objects
+        if f["kind"] == "kind_3" and f["existence"]["state"] == "walk_truncated"
+    ]
+    assert dense, "the degenerate family's dense kink bodies must be the declared truncation"
+    for record in dense:
+        assert record["existence"]["walk_s"] == 0.0  # covered amount UNKNOWN, the declared spelling
+        assert record["geometry"]["u"] == []  # no fabricated curve body
+
+    # Every terminal state is one of the honest three, and a walk_truncated object never
+    # carries a body (the truncation note is the only place the cut is named).
+    for record in objects:
+        assert record["existence"]["state"] in ("computed", "escaped", "walk_truncated")
+        if record["existence"]["state"] == "walk_truncated":
+            assert record["geometry"]["u"] == []
 
 
 # ---- C12: the rhombic plate's chromatic face and the density-skip boundary (AC1) ----------------

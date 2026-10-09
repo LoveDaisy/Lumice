@@ -727,7 +727,10 @@ std::string PathFeatureReportV3ToJson(const PathFeatureReport& result, const sch
     { "exhausted", discovery.budget_exhausted },
     { "enumeration",
       { { "max_optical_evaluations", assembled.core.budget.max_optical_evaluations },
-        { "sampling_evaluations", assembled.core.budget.sampling_evaluations } } },
+        { "sampling_evaluations", assembled.core.budget.sampling_evaluations },
+        { "hang_cap_ms", assembled.core.budget.hang_cap_ms },
+        { "truncated", assembled.core.budget.truncated },
+        { "truncation_note", assembled.core.budget.truncation_note } } },
     { "attribution", { { "dp_evaluations", attribution_dp }, { "presence_ess_queries", attribution_presence } } }
   };
 

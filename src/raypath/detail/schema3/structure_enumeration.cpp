@@ -63,7 +63,52 @@ double KinkWalkArclength(analytic::WalkStatus status) {
   return status == analytic::WalkStatus::kOk ? std::nan("") : 0.0;
 }
 
-MemberEnumeration EnumerateMember(const EnumerationInput& in, const std::vector<int>& member) {
+namespace {
+
+// The declared truncated face of an object whose curve body the report leg does not carry
+// (the carry bound fired, or the leg was cut before the body existed): existence
+// kWalkTruncated, walk_s 0.0 (the covered amount is UNKNOWN), no u — never a downsampled or
+// half-computed body.
+void MakeTruncatedFace(StructureObjectRecord* record) {
+  record->existence = ExistenceState::kWalkTruncated;
+  record->walk_s = 0.0;
+  record->u.clear();
+}
+
+// The report-side carry bound: real kernel output above kMaxCarriedCurvePoints is shipped as
+// the declared truncated face, with the cut named in the member's truncation note.
+bool CapCarriedCurve(StructureObjectRecord* record, const std::vector<int>& member, const char* kind_label,
+                     std::string* note) {
+  if (record->u.size() / 3 <= kMaxCarriedCurvePoints) {
+    return false;
+  }
+  MakeTruncatedFace(record);
+  *note += std::string("curve body above the carry bound not carried for ") + kind_label + " of member " +
+           std::to_string(member.front()) + "-" + std::to_string(member.back()) + "; ";
+  return true;
+}
+
+// The kind-1 record when the anti-hang deadline fired before this member's axis assembly ran:
+// existence unknown (the declared walk_truncated + walk_s 0.0 face), no visibility, no
+// chromatic, and the support row the walk-refused shape already uses (no intervals, coverage
+// kUnknown, the refusal as the message).
+StructureObjectRecord DeadlineKind1(const std::vector<int>& member, MemberSupport* support) {
+  StructureObjectRecord kind1 = BaseRecord(ObjectKind::kKind1, member);
+  kind1.existence = ExistenceState::kWalkTruncated;
+  kind1.walk_s = 0.0;
+  support->member = member;
+  support->axis.message = "enumeration cut at the anti-hang deadline before the axis assembly";
+  return kind1;
+}
+
+bool PastDeadline(std::chrono::steady_clock::time_point deadline) {
+  return std::chrono::steady_clock::now() >= deadline;
+}
+
+}  // namespace
+
+MemberEnumeration EnumerateMember(const EnumerationInput& in, const std::vector<int>& member,
+                                  std::chrono::steady_clock::time_point deadline) {
   MemberEnumeration out;
   if (in.normals == nullptr || in.polygons == nullptr || member.size() < 2 ||
       member.size() > static_cast<size_t>(analytic::kMaxFaceCount)) {
@@ -76,6 +121,15 @@ MemberEnumeration EnumerateMember(const EnumerationInput& in, const std::vector<
   }
   const int slot_count = static_cast<int>(member.size());
   out.phi_class_note = PhiClassNoteOf(member);
+  std::string& note = out.truncation_note;
+
+  // Stage gate: the axis assembly is the member's first expensive leg; past the deadline it
+  // has not run, so nothing of this member is known.
+  if (PastDeadline(deadline)) {
+    out.objects.push_back(DeadlineKind1(member, &out.support));
+    note = "axis assembly not run (deadline); ";
+    return out;
+  }
 
   // ONE axis assembly feeds the support row, the kind-2 chain, the corners and the kind-1
   // existence (the expensive pieces run once per member).
@@ -93,6 +147,7 @@ MemberEnumeration EnumerateMember(const EnumerationInput& in, const std::vector<
       gate.existence = ExistenceOf(boundary_chain.existence);
       gate.walk_s = std::nan("");
       gate.u = boundary_chain.u;
+      CapCarriedCurve(&gate, member, "kind-2", &note);
       out.objects.push_back(std::move(gate));
     }
 
@@ -106,6 +161,27 @@ MemberEnumeration EnumerateMember(const EnumerationInput& in, const std::vector<
     }
   }
 
+  // Stage gate: past the deadline the remaining legs (kind-3, orbit stream, kind-1
+  // visibility/chromatic, restricted) do not run. Kind-1 keeps the existence the axis
+  // assembly actually established, with the later legs absent — the assessed=false chromatic
+  // and the unproven visibility default are the declared not-run shapes.
+  if (PastDeadline(deadline)) {
+    StructureObjectRecord kind1 = BaseRecord(ObjectKind::kKind1, member);
+    kind1.existence =
+        assembly.axis.walk_closed ?
+            (assembly.axis.context.coverage == PartitionContext::Coverage::kComplete ? ExistenceState::kComputed :
+                                                                                       ExistenceState::kEscaped) :
+            ExistenceState::kWalkTruncated;
+    kind1.escape_regime_slug = assembly.axis.regime_slug;
+    kind1.walk_s = assembly.axis.walk_closed ? std::nan("") : 0.0;
+    out.objects.push_back(std::move(kind1));
+    note += "kind-3/orbit/visibility/chromatic/restricted legs not run (deadline); ";
+    for (StructureObjectRecord& object : out.objects) {
+      object.phi_class_note = out.phi_class_note;
+    }
+    return out;
+  }
+
   // -- kind-3: one object per weight-kink curve (slot = the internal step)
   const std::vector<analytic::KinkCurve> kinks = analytic::WeightKinks(field, analytic::KinkOptions{});
   for (const analytic::KinkCurve& kink : kinks) {
@@ -115,6 +191,7 @@ MemberEnumeration EnumerateMember(const EnumerationInput& in, const std::vector<
     kink_object.existence = ExistenceOf(chain.existence);
     kink_object.walk_s = KinkWalkArclength(kink.status);
     kink_object.u = chain.u;
+    CapCarriedCurve(&kink_object, member, "kind-3", &note);
     out.objects.push_back(std::move(kink_object));
   }
 
@@ -155,8 +232,10 @@ MemberEnumeration EnumerateMember(const EnumerationInput& in, const std::vector<
         kind1.visibility = CertifyVisibility(*in.measure, stream, nullptr, &partition, kOrbitAngularTol);
       }
     }
-    // chromatic: the kernel's path-level verdict (rank-0 paths have no field; skip them).
-    if (slot_count >= 3) {
+    // chromatic: the kernel's path-level verdict (rank-0 paths have no field; skip them). The
+    // stage gate keeps a deadline-fired member from starting the leg at all; inside it, the
+    // kernel's own shift-pair bound refuses the features a declared bound cannot compare.
+    if (slot_count >= 3 && !PastDeadline(deadline)) {
       kind1.chromatic =
           analytic::Diagnose(*in.normals, *in.polygons, slots, slot_count, analytic::kNRed, analytic::kNBlue);
       kind1.chromatic_assessed = true;
@@ -167,8 +246,11 @@ MemberEnumeration EnumerateMember(const EnumerationInput& in, const std::vector<
 
   // -- kind-1 restricted: the family-pinned curve, certified against the member's own orbit
   // stream (built once, above) — the v1 carrier of the C09 unlit shape ("contour present, no
-  // passage").
-  if (stream_wanted && analytic::FamilyPinned(*in.normals, slots, slot_count, *in.density)) {
+  // passage"). Stage gate: the deadline applies here too (the curve body and its certificate
+  // are the member's last expensive leg).
+  if (PastDeadline(deadline)) {
+    note += "restricted leg not run (deadline); ";
+  } else if (stream_wanted && analytic::FamilyPinned(*in.normals, slots, slot_count, *in.density)) {
     const analytic::RestrictedFamilyCurve curve = analytic::MakeRestrictedFamilyCurve(
         *in.normals, *in.polygons, slots, slot_count, *in.density, in.sun_dir, in.base_index, in.wavelengths_nm.data(),
         in.indices.data(), static_cast<int>(in.indices.size()), in.grid);
@@ -177,7 +259,8 @@ MemberEnumeration EnumerateMember(const EnumerationInput& in, const std::vector<
       restricted.existence = ExistenceState::kComputed;
       restricted.walk_s = std::nan("");
       restricted.u = curve.u;
-      if (!orbit.samples.empty()) {
+      CapCarriedCurve(&restricted, member, "kind-1-restricted", &note);
+      if (restricted.existence == ExistenceState::kComputed && !orbit.samples.empty()) {
         const CriticalSetCurve kind1_curve = CurveOf(curve);
         const FiberSampleStream stream = StreamOf(orbit);
         restricted.visibility =
@@ -215,13 +298,15 @@ EnumeratedCoverage V1Coverage() {
 
 }  // namespace
 
-Schema3DiscoveryCore EnumerateLayer(const EnumerationInput& in, const std::vector<std::vector<int>>& members) {
+Schema3DiscoveryCore EnumerateLayer(const EnumerationInput& in, const std::vector<std::vector<int>>& members,
+                                    std::chrono::steady_clock::time_point deadline) {
   Schema3DiscoveryCore core;
   core.coverage = V1Coverage();
   long long stream_points = 0;
   std::vector<std::string> notes;
+  std::string truncation_notes;
   for (const std::vector<int>& member : members) {
-    MemberEnumeration one = EnumerateMember(in, member);
+    MemberEnumeration one = EnumerateMember(in, member, deadline);
     for (StructureObjectRecord& object : one.objects) {
       core.objects.push_back(std::move(object));
     }
@@ -229,6 +314,14 @@ Schema3DiscoveryCore EnumerateLayer(const EnumerationInput& in, const std::vecto
     notes.push_back(std::move(one.phi_class_note));
     core.orbits.push_back(std::move(one.orbit));
     core.support.members.push_back(std::move(one.support));
+    if (!one.truncation_note.empty()) {
+      core.budget.truncated = true;
+      truncation_notes +=
+          "member " + std::to_string(member.front()) + "-" + std::to_string(member.back()) + ": " + one.truncation_note;
+    }
+  }
+  if (core.budget.truncated) {
+    core.budget.truncation_note = std::move(truncation_notes);
   }
   // Family clustering: the ONE implementation (support_block's ClusterFamilies — the same
   // gates the inline loop used: same orbit note, SameSupport, complete partition).

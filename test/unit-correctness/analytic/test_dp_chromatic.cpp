@@ -74,6 +74,17 @@ const ChromaticFeature* FeatureOf(const ChromaticVerdict& verdict, ChromaticFeat
   return nullptr;
 }
 
+// The corpus C10 crystal: the plain plate at h = 0.3, all face distances 1.
+LUMICE_ANALYTIC_Crystal PlateH03() {
+  LUMICE_ANALYTIC_Crystal c{};
+  c.kind = LUMICE_ANALYTIC_CRYSTAL_PRISM;
+  c.height = 0.3;
+  for (int i = 0; i < 6; i++) {
+    c.face_distance[i] = 1.0;
+  }
+  return c;
+}
+
 // ---------------------------------------------------------------------------------------------
 // The declared thresholds (AC3: the parameters travel with the output)
 // ---------------------------------------------------------------------------------------------
@@ -321,6 +332,30 @@ TEST(DPChromatic, TintVerdictRollUpShapes) {
   EXPECT_EQ(tint_white.color, ChromaticColor::kWhite);
   EXPECT_FALSE(tint_white.visible);
   EXPECT_TRUE(tint_white.notes.empty());
+}
+
+// ---------------------------------------------------------------------------------------------
+// The declared shift-pair bound (the corpus C10 degenerate family)
+// ---------------------------------------------------------------------------------------------
+
+TEST(DPChromatic, DenseShiftPairIsDeclaredNotAssessed) {
+  // On the latitude-circle degenerate family the marched kink walk's seed coverage fails and
+  // the step-1 kink carries ~780k duplicated arc points at each index. The declared pair bound
+  // refuses the comparison — a half-computed median would be a fabricated statistic — and the
+  // verdict names the refusal (the "gates not analysed" honesty shape) while keeping the
+  // affordable features.
+  Fixture fixture(PlateH03());
+  const int faces[4] = { 3, 6, 4, 8 };
+  int slots[4];
+  fixture.Resolve(faces, 4, slots);
+  const ChromaticVerdict verdict = Diagnose(fixture.normals, fixture.polygons, slots, 4, kNRed, kNBlue);
+  EXPECT_FALSE(verdict.coverage_complete);
+  bool named = false;
+  for (const std::string& note : verdict.notes) {
+    named |= note.find("too dense to compare") != std::string::npos;
+  }
+  EXPECT_TRUE(named) << "the refusal must be declared, not silent";
+  EXPECT_FALSE(verdict.features.empty()) << "the affordable features stay assessed";
 }
 
 }  // namespace

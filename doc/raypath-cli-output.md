@@ -350,10 +350,23 @@ The numerical defaults are 15000 ms, 4000000 optical evaluations and 250000000 w
 field evaluations. `--budget-ms` permits up to 120000 ms; `--max-evaluations` up to 16777216;
 `--max-field-evaluations` up to 1000000000. These bounds are checked inside numerical work, not
 only after it finishes. Bounded serialization follows the numerical deadline. The MC and
-attribution legs are deadline-bounded; the geometry layer's **enumeration leg is not**
-budget-constrained — its cost is reported (`timing.enumeration`, `budgets.enumeration`), not
-clamped. Sampling is replayable, but which partial records fit a wall-clock deadline can vary
-across machines.
+attribution legs are deadline-bounded by that quality budget. The geometry layer's
+**enumeration leg** carries two different kinds of bound, and the difference is the contract:
+
+- Its **quality budgets are report-only** — the leg's cost is measured and reported
+  (`timing.enumeration`, `budgets.enumeration`), never clamped by `--budget-ms`.
+- A fixed **anti-hang cap is enforced** (`budgets.enumeration.hang_cap_ms`, 300000 ms): a
+  member or leg the cap cuts ships the honest truncated face (`walk_truncated`, `walk_s` 0.0,
+  no curve body) and `budgets.enumeration.truncated` plus `truncation_note` name what was cut.
+  The cap is a robustness floor against pathological inputs, not a quality knob, and is
+  deliberately not coupled to `--budget-ms`.
+
+Two declared refusal bounds ride beside it, same honesty shape: an object whose curve body is
+denser than the carry bound ships truncated with no body (real kernel output the report leg
+declines to carry), and a chromatic feature whose red/blue curves are too dense to compare is
+reported not assessed inside its verdict (`coverage_complete` false, the refusal in `notes`) —
+never half-compared. Sampling is replayable, but which partial records fit a wall-clock deadline
+can vary across machines.
 
 ### 7.1 One document and one owner
 
@@ -384,7 +397,7 @@ An unsupported-chain document keeps the early shape: `schema`, `schema_version`,
 | `mc_evidence` | The demoted observation record: the schema-2 feature records with classification preserved, observation options, spectral verification, stage incompleteness (§7.5) |
 | `coverage` | Bounded-search honesty rows, the object-kind vocabulary row, declared measure/density skips |
 | `observation` | Narrowed to the corroboration-observation declaration; `ruler` points at `mc_evidence.observation_options` |
-| `budgets` | The work account, including the `enumeration` and `attribution` legs |
+| `budgets` | The work account, including the `enumeration` and `attribution` legs; `budgets.enumeration` also carries the enforced anti-hang cap (`hang_cap_ms`, `truncated`, `truncation_note`) |
 | `timing` | Per-stage seconds, including `enumeration` and `attribution` |
 | `sources` | Token → `{outer_sample, member, spectral_row}`; records also carry their own witness objects |
 | `no_related_feature` | The absence ruling: `issued`, `basis` and the named checks, emitted unconditionally (§7.6) |
