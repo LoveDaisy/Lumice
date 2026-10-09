@@ -308,7 +308,11 @@ add_executable(unit_correctness_test
   "${PROJ_TEST_DIR}/unit-correctness/raypath/test_support_block.cpp"
   # schema3 report core (666.1): the enumeration driver — the C09 unlit shape, the C11
   # identity fields, the S2 chains, the coverage table, A1 registration, families.
-  "${PROJ_TEST_DIR}/unit-correctness/raypath/test_structure_enumeration.cpp")
+  "${PROJ_TEST_DIR}/unit-correctness/raypath/test_structure_enumeration.cpp"
+  # schema3 report core (666.2): the mc_evidence block — the v2 observation record demoted
+  # wholesale (the carry invariants), the migration ledger reconciled against the real
+  # serializer emission, the maximal-record round-trip (no silent drop).
+  "${PROJ_TEST_DIR}/unit-correctness/raypath/test_mc_evidence.cpp")
 target_include_directories(unit_correctness_test
   PRIVATE ${PROJ_TEST_DIR})
 target_compile_definitions(unit_correctness_test PRIVATE
