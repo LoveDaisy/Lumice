@@ -22,16 +22,22 @@
 //           directions (world frame). It can only ADD a match (the layers combine by min), never
 //           remove one.
 //
-// The ESS gate is two-caliber (plan A4): the FORWARD gate and the `observed` arm read the
-// RECORD's own minimum_effective_samples (v2's significance standing, Y-ESS); the backward
-// not-observed arms read the REGIONAL PRESENCE ESS — the kernel-windowed Kish ESS
-// ((sum k)^2 / sum k^2, k = exp(kappa (cos delta_distance - 1)), kappa = 1/h^2) of the MC
-// components at the object's delta image. Presence deliberately ignores the weights: the MC's
-// qualification to witness "no light here" comes from being SAMPLED in the window, not from
-// brightness — the Y-ESS of a dark region is ~0 and would structurally kill the unlit arm.
-// (Any common scale cancels in the Kish ratio; the 2D kernel's normalization authority stays in
-// analytic/path_feature_discovery.hpp — this is the delta-marginal form the base ruler itself
-// declares.)
+// The ESS gate is two-caliber (plan A4 as sharpened by implementation evidence): the FORWARD
+// gate and the `observed` arm read the RECORD's own minimum_effective_samples (v2's
+// significance standing, Y-ESS); the backward not-observed arms read the REGIONAL PRESENCE
+// ESS — the kernel-windowed Kish ESS ((sum k)^2 / sum k^2, k = exp(kappa (cos delta_distance -
+// 1)), kappa = 1/h^2) of the MC components at the object's delta image, grouped by outer draw
+// (one draw, one sampling act — the same grouping discipline as the kernel's own EffectiveCount).
+// Presence deliberately ignores the row weights: the MC's qualification to witness a window
+// comes from what it RECORDED there, not from how bright the rows are — the Y-ESS of a dark
+// region is ~0 and would structurally kill the unlit arm. Honest boundary (measured, not
+// assumed): the v2 measure builder drops zero-weight draws, so the components are the
+// LIGHT-BEARING rows — presence is the standing of the MC's recorded observation, not of its
+// raw sampling; a chain that never transmits into the window reads zero and lands the object
+// in not_observed_insufficient_ess (the C-arm's measured shape), which is the fail-closed
+// direction. (Any common scale cancels in the Kish ratio; the 2D kernel's normalization
+// authority stays in analytic/path_feature_discovery.hpp — this is the delta-marginal form the
+// base ruler itself declares.)
 //
 // The judgment table (plan A1 as refined by its plan review — the two Minor refinements are
 // IN: `observed` requires the matched record's OWN ESS at/above the floor, and a match that

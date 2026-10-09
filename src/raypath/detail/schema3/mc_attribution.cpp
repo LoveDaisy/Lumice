@@ -142,9 +142,10 @@ std::string RulerString(const McAttributionInput& input, bool orbit_used) {
 }
 
 std::string PresenceReadingNote() {
-  return "presence ESS weights the corroboration: the absence claim is corroborated only to the "
-         "MC's sampled standing in the window, and an insufficient standing leaves the "
-         "corroboration itself undeclared";
+  return "presence ESS weights the corroboration: it counts the MC's RECORDED observation "
+         "(light-bearing rows, grouped by outer draw) in the window — the v2 measure drops "
+         "zero-weight draws, so this is the standing of what the MC recorded, not of its raw "
+         "sampling; an insufficient standing leaves the corroboration itself undeclared";
 }
 
 // The judgment table's lit/unlit arms, shared shape: presence decides, the near-miss note rides.
@@ -312,9 +313,28 @@ double PresenceEss(const std::vector<analytic::WeightedSkySample>& components,
   const double kappa = 1.0 / (h_rad * h_rad);
   // Any common scale cancels in the Kish ratio, so the kernel value runs unnormalized — the
   // normalized authority (and its orbit branch) stays in analytic/path_feature_discovery.hpp.
+  // Rows are grouped by outer draw (sample_index, the builder's emission order): one draw is
+  // one sampling act even when it contributed several member/spectral rows — the grouping rule
+  // mirrors analytic/path_feature_discovery's own EffectiveCount discipline, and it keeps the
+  // count conservative (a red flag must rest on genuinely independent observations).
   double sum = 0.0;
   double sum_squared = 0.0;
+  uint64_t current_index = 0;
+  bool first = true;
+  double group = 0.0;
+  auto close_group = [&] {
+    if (!first) {
+      sum += group;
+      sum_squared += group * group;
+    }
+  };
   for (const analytic::WeightedSkySample& component : components) {
+    if (first || component.sample_index != current_index) {
+      close_group();
+      group = 0.0;
+      current_index = component.sample_index;
+      first = false;
+    }
     const double delta = AngleBetween(sun_dir, component.direction.data());
     double best = -kInf;
     for (const double image : image_delta_rad) {
@@ -323,10 +343,9 @@ double PresenceEss(const std::vector<analytic::WeightedSkySample>& components,
     if (best <= -1.0) {
       continue;  // exp(kappa * -2) underflow territory: no presence contribution
     }
-    const double k = std::exp(kappa * (best - 1.0));
-    sum += k;
-    sum_squared += k * k;
+    group += std::exp(kappa * (best - 1.0));
   }
+  close_group();
   return sum_squared > 0.0 ? sum * sum / sum_squared : 0.0;
 }
 

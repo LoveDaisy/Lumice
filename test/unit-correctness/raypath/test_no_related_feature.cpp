@@ -17,7 +17,9 @@
 #include <vector>
 
 #include "raypath/detail/input_assembly.hpp"
+#include "raypath/detail/path_feature_report.hpp"
 #include "raypath/detail/schema3/no_related_feature.hpp"
+#include "raypath/path_feature_report.hpp"
 
 namespace lumice::raypath::schema3 {
 namespace {
@@ -228,6 +230,63 @@ TEST(ZeroSpectralSignal, ExactZeroCoefficientRowsAreTheConfigStatement) {
   snapshot.light.spectrum_ = IlluminantType::kD65;
   representative.spectrum.rows = { zero_row };
   EXPECT_FALSE(ZeroSpectralSignal(snapshot, representative));
+}
+
+// ---- the ruling on real producers (Step 4-D) ------------------------------------------------------
+
+TEST(NoRelatedFeature, RealZeroSignalReportIssuesBasisA) {
+  // D1: the v2 zero-signal control cell (the report test's own shape), the REAL predicate on
+  // the REAL report, the ruling consuming its verdict.
+  PrismCrystalParam prism;
+  prism.h_ = { DistributionType::kNoRandom, 1, 0 };
+  for (auto& distance : prism.d_) {
+    distance = { DistributionType::kNoRandom, 1, 0 };
+  }
+  CrystalConfig crystal{};
+  crystal.id_ = 1;
+  crystal.param_ = prism;
+  crystal.axis_.latitude_dist = { DistributionType::kUniform, 90, 360 };
+  crystal.axis_.azimuth_dist = crystal.axis_.roll_dist = { DistributionType::kUniform, 0, 360 };
+  ConfigManager config;
+  config.crystals_.emplace(1, crystal);
+  config.scene_.light_source_.param_ = { 20, 0, 0 };
+  config.scene_.light_source_.spectrum_ = SpectrumConfig(std::vector<WlParam>{ { 550, 0 } });
+  ScatteringSetting entry{};
+  entry.crystal_ = crystal;
+  entry.crystal_proportion_ = 1;
+  config.scene_.ms_.push_back({ 0, { entry } });
+  PathFeatureReportRequest request;
+  request.crystal_id = 1;
+  request.path_layers = { { 3, 5 } };
+  request.sample_count = 64;
+  request.budget_ms = 120000;  // replayability: the clock must not end this run
+  PathFeatureReport report;
+  ASSERT_TRUE(AssemblePathFeatureReport(config, request, &report).Ok());
+  EXPECT_TRUE(report.no_related_signal);  // the v2 report's own rule-A verdict
+  // The single authority, read directly: the same verdict the schema3 ruling consumes.
+  const bool zero = ZeroSpectralSignal(report.snapshot, report.representative_input);
+  ASSERT_TRUE(zero);
+  RulingCore fixture = RulingCore().WithCompletePartition().WithUnlitObject().WithS4Declared();
+  const NoRelatedRuling ruling = DeriveNoRelatedFeature(fixture.core, CleanForward(), USupportKind::kArea, zero);
+  EXPECT_TRUE(ruling.issued);
+  EXPECT_EQ(ruling.basis, NoRelatedBasis::kZeroSpectralSignal);
+}
+
+TEST(NoRelatedFeature, RealSpinOrbitMeasureClosesTheTwoDGate) {
+  // D2: the real declared measure's own kind() closes rule 3's gate — the restricted family's
+  // absence is the support block's expression, never this ruling.
+  const double s[3] = { 1.0, 0.0, 0.0 };
+  AxisDistribution axis;
+  axis.azimuth_dist = { DistributionType::kUniform, 0.0f, 360.0f };
+  axis.latitude_dist = { DistributionType::kNoRandom, 90.0f, 0.0f };
+  axis.roll_dist = { DistributionType::kNoRandom, 0.0f, 0.0f };
+  const UMarginal spin_orbit = MakeUMarginal(axis, s);
+  ASSERT_EQ(spin_orbit.kind(), USupportKind::kSpinOrbit);
+  RulingCore fixture = RulingCore().WithCompletePartition().WithUnlitObject().WithS4Declared();
+  const NoRelatedRuling ruling = DeriveNoRelatedFeature(fixture.core, CleanForward(), spin_orbit.kind(), false);
+  EXPECT_FALSE(ruling.issued);
+  EXPECT_FALSE(ruling.two_d_valid_support);
+  EXPECT_TRUE(ruling.partition_complete_no_escape);
 }
 
 }  // namespace

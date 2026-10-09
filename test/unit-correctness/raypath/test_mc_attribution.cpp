@@ -20,11 +20,17 @@
 #include <gtest/gtest.h>
 
 #include <cmath>
+#include <limits>
 #include <string>
 #include <vector>
 
 #include "core/optics.hpp"
+#include "raypath/detail/input_assembly.hpp"
+#include "raypath/detail/path_feature_report.hpp"
 #include "raypath/detail/schema3/mc_attribution.hpp"
+#include "raypath/detail/schema3/mc_evidence.hpp"
+#include "raypath/path_feature_report.hpp"
+#include "raypath/scene_to_analytic.hpp"
 
 namespace lumice::raypath::schema3 {
 namespace {
@@ -32,6 +38,7 @@ namespace {
 constexpr double kPi = 3.14159265358979323846;
 constexpr double kDeg = kPi / 180.0;
 constexpr double kH = 1.0 * kDeg;  // the synthetic observation bandwidth (v2's default)
+constexpr size_t kNoIndex = std::numeric_limits<size_t>::max();
 
 struct Tables {
   analytic::FaceNormalTable normals;
@@ -81,9 +88,10 @@ DiagnosticFeatureRecord ActualAt(const std::vector<std::array<double, 3>>& sky_p
   return record;
 }
 
-analytic::WeightedSkySample ComponentAt(double delta) {
+analytic::WeightedSkySample ComponentAt(double delta, uint64_t sample_index) {
   analytic::WeightedSkySample sample;
-  sample.sample_index = 0;  // presence reads directions only — the weights are irrelevant (A4)
+  sample.sample_index = sample_index;  // one row per draw: the draw-grouped presence reads 1
+                                       // Kish unit per component
   sample.direction = SkyAt(delta);
   return sample;
 }
@@ -93,8 +101,8 @@ McEvidenceBlock EvidenceOf(const std::vector<DiagnosticFeatureRecord>& records,
                            const std::vector<double>& component_deltas) {
   DiscoveryResult result;
   result.features = records;
-  for (const double delta : component_deltas) {
-    result.measure.components.push_back(ComponentAt(delta));
+  for (size_t i = 0; i < component_deltas.size(); i++) {
+    result.measure.components.push_back(ComponentAt(component_deltas[i], i));
   }
   DiscoveryOptions options;
   options.bandwidth_rad = kH;
@@ -342,7 +350,7 @@ TEST(McAttribution, LowPresenceRoutesBothArmsToNotObservedInsufficientEss) {
       EvidenceOf({ ActualAt({ SkyAt(90.0 * kDeg) }, 1000.0) }, std::vector<double>(8, image.delta_rad.front()));
   const CorroborationOutcome unlit_outcome = DeriveCorroboration(InputOf(fixture.core, unlit, t));
   EXPECT_EQ(unlit_outcome.annotations[kind1_index].state, CorroborationState::kNotObservedInsufficientEss);
-  EXPECT_NE(unlit_outcome.annotations[kind1_index].reason.find("corroborated only to the MC's sampled standing"),
+  EXPECT_NE(unlit_outcome.annotations[kind1_index].reason.find("leaves the corroboration itself undeclared"),
             std::string::npos);
 }
 
@@ -488,7 +496,7 @@ TEST(McAttribution, PresenceEssIsTheKernelWindowedKishCount) {
   const double sun[3] = { 0.0, 0.0, 1.0 };
   std::vector<analytic::WeightedSkySample> components;
   for (int i = 0; i < 64; i++) {
-    components.push_back(ComponentAt(22.0 * kDeg));
+    components.push_back(ComponentAt(22.0 * kDeg, static_cast<uint64_t>(i)));
   }
   McAttributionCounts counts;
   // Every component at the image: the Kish count IS the draw count.
@@ -583,6 +591,275 @@ TEST(McAttribution, RestrictedObjectIntegratesEndToEndOnRealProducers) {
   // The forward side of the same evidence: nothing unattributed (the record was attributed).
   const UnattributedOutcome forward = DeriveUnattributed(input);
   EXPECT_TRUE(forward.structures.empty());
+}
+
+// ---- the living cases: real v2 evidence over real producers (Step 4) -----------------------------
+
+namespace {
+
+// The Haar prism scene (the v2 report tests' shape): crystal 1 (h = 1, all face distances 1),
+// sun 20 deg, full-sphere Haar axis. The spectrum request shape is the CALLER's: A runs the
+// explicit single-wavelength form (cheap rows, the peak clears the ESS floor); B runs the
+// continuous illuminant with the auto budget — the budget allocator spreads the auto count
+// over member x spectral-row expansion, so a full-band quadrature measure gets only a few
+// hundred outer draws: the weighted field starves (Y-ESS ~0, actual = 0) deterministically.
+// That premise is B's subject; if the budget allocator changes, re-measure it first.
+ConfigManager HaarPrismScene(bool continuous_spectrum) {
+  PrismCrystalParam prism;
+  prism.h_ = { DistributionType::kNoRandom, 1, 0 };
+  for (auto& distance : prism.d_) {
+    distance = { DistributionType::kNoRandom, 1, 0 };
+  }
+  CrystalConfig crystal{};
+  crystal.id_ = 1;
+  crystal.param_ = prism;
+  crystal.axis_.latitude_dist = { DistributionType::kUniform, 90, 360 };
+  crystal.axis_.azimuth_dist = crystal.axis_.roll_dist = { DistributionType::kUniform, 0, 360 };
+  ConfigManager config;
+  config.crystals_.emplace(1, crystal);
+  config.scene_.light_source_.param_ = { 20, 0, 0 };
+  config.scene_.light_source_.spectrum_ =
+      continuous_spectrum ? SpectrumConfig(IlluminantType::kD65) : SpectrumConfig(std::vector<WlParam>{ { 550, 1 } });
+  ScatteringSetting entry{};
+  entry.crystal_ = crystal;
+  entry.crystal_proportion_ = 1;
+  config.scene_.ms_.push_back({ 0, { entry } });
+  return config;
+}
+
+// The plate scene (the C12 crystal's shape: h = 1, fd = [1.5, 1, 1, 1.5, 1, 1]), plate axis,
+// sun 9 deg — the C-arm's configuration.
+ConfigManager PlateScene() {
+  PrismCrystalParam prism;
+  prism.h_ = { DistributionType::kNoRandom, 1, 0 };
+  const double fd[6] = { 1.5, 1, 1, 1.5, 1, 1 };
+  for (int i = 0; i < 6; i++) {
+    prism.d_[i] = { DistributionType::kNoRandom, static_cast<float>(fd[i]), 0 };
+  }
+  CrystalConfig crystal{};
+  crystal.id_ = 1;
+  crystal.param_ = prism;
+  // The plate family: azimuth uniform, latitude and roll locked.
+  crystal.axis_.latitude_dist = { DistributionType::kNoRandom, 90, 0 };
+  crystal.axis_.azimuth_dist = { DistributionType::kUniform, 0, 360 };
+  crystal.axis_.roll_dist = { DistributionType::kNoRandom, 0, 0 };
+  ConfigManager config;
+  config.crystals_.emplace(1, crystal);
+  config.scene_.light_source_.param_ = { 9, 0, 0 };
+  config.scene_.light_source_.spectrum_ = SpectrumConfig(std::vector<WlParam>{ { 550, 1 } });
+  ScatteringSetting entry{};
+  entry.crystal_ = crystal;
+  entry.crystal_proportion_ = 1;
+  config.scene_.ms_.push_back({ 0, { entry } });
+  return config;
+}
+
+// One living run: the real v2 report, the schema3 enumeration over the SAME crystal tables and
+// base index, the sun at the scene's solar center, and the evidence block moved together.
+struct LivingRun {
+  PathFeatureReport report;
+  Schema3DiscoveryCore core;
+  McAttributionInput input;
+};
+
+LivingRun RunLiving(const ConfigManager& config, const PathFeatureReportRequest& request,
+                    const std::vector<std::vector<int>>& members, const UMarginal* measure,
+                    const analytic::PoseDensitySpec* density, int grid) {
+  LivingRun run;
+  const Error error = AssemblePathFeatureReport(config, request, &run.report);
+  if (!error.Ok()) {
+    EXPECT_TRUE(error.Ok()) << error.message;
+    return run;  // ASSERT semantics are unavailable in a value-returning helper
+  }
+  EnumerationInput in;
+  in.normals = &run.report.representative_input.layers[0].normals;
+  in.polygons = &run.report.representative_input.layers[0].polygons;
+  if (run.report.representative_input.spectrum.rows.empty()) {
+    ADD_FAILURE() << "the assembled input carries no spectral rows";
+    return run;
+  }
+  in.base_index = run.report.representative_input.spectrum.rows[0].refractive_index;
+  // The scene's solar center, AT the sun: SunIncidentDirection names the propagation
+  // (sun -> crystal), so the at-sun direction is its negation.
+  double sun_hat[3];
+  SunIncidentDirection(config.scene_.light_source_.param_, sun_hat);
+  for (int i = 0; i < 3; i++) {
+    in.sun_dir[i] = -sun_hat[i];
+  }
+  in.measure = measure;
+  in.density = density;
+  in.grid = grid;
+  run.core = EnumerateLayer(in, members);
+  run.input.core = &run.core;
+  run.input.mc = nullptr;  // set after the move, below
+  run.input.geometry.normals = in.normals;
+  run.input.geometry.polygons = in.polygons;
+  run.input.geometry.base_index = in.base_index;
+  for (int i = 0; i < 3; i++) {
+    run.input.geometry.sun_dir[i] = in.sun_dir[i];
+  }
+  run.input.h_rad = request.bandwidth_rad;
+  return run;
+}
+
+}  // namespace
+
+TEST(McAttribution, LivingExplicitEventsAttributeTheRealPeak) {
+  // A (the two-way living pair, forward and backward): Haar prism, 550 nm, 16384 explicit
+  // events. The MC finds the minimum-deviation peak (kActual), the forward pass attributes it
+  // to the kind-1 critical delta, and the same object derives `observed`. The explicit events
+  // are the premise: at the auto budget this measure starves (see the B arm below).
+  ConfigManager config = HaarPrismScene(false);
+  PathFeatureReportRequest request;
+  request.crystal_id = 1;
+  request.path_layers = { { 3, 5 } };
+  request.sample_count = 16384;
+  request.wavelengths_nm = { 550 };
+  // The pipeline is replayable (fixed seed) but bounded by wall-clock; the max budget keeps
+  // the deadline from ever biting, so the living case stays byte-reproducible across machines.
+  request.budget_ms = 120000;
+  LivingRun run = RunLiving(config, request, { { 3, 5 } }, nullptr, nullptr, 0);
+  ASSERT_FALSE(run.report.discovery.features.empty());
+  size_t actuals = 0;
+  for (const DiagnosticFeatureRecord& record : run.report.discovery.features) {
+    actuals += record.evidence == DiagnosticEvidence::kActual ? 1 : 0;
+  }
+  // The premise (the explicit-events rescue of the starved auto budget): the peak clears the
+  // significance bar.
+  ASSERT_GT(actuals, 0u) << "explicit events must surface at least one kActual on the 3-5 control cell";
+  schema3::McEvidenceBlock* mc =
+      new schema3::McEvidenceBlock(schema3::McEvidenceOf(std::move(run.report.discovery), run.report.options));
+  run.input.mc = mc;
+  const CorroborationOutcome outcome = DeriveCorroboration(run.input);
+  EXPECT_TRUE(outcome.error.empty()) << outcome.error;
+  const UnattributedOutcome forward = DeriveUnattributed(run.input);
+  EXPECT_TRUE(forward.error.empty()) << forward.error;
+  // The kind-1 object of 3-5: the MC peak sits at its minimum-deviation endpoint -> observed,
+  // and that record is not in the unattributed list.
+  size_t kind1_index = kNoIndex;
+  for (size_t i = 0; i < run.core.objects.size(); i++) {
+    if (run.core.objects[i].kind == ObjectKind::kKind1) {
+      kind1_index = i;
+    }
+  }
+  ASSERT_NE(kind1_index, kNoIndex);
+  EXPECT_EQ(outcome.annotations[kind1_index].state, CorroborationState::kObserved)
+      << outcome.annotations[kind1_index].reason;
+  const long long matched = outcome.annotations[kind1_index].matched_record;
+  ASSERT_GE(matched, 0);
+  for (const UnattributedStructure& structure : forward.structures) {
+    EXPECT_NE(static_cast<long long>(structure.record_index), matched)
+        << "the record the kind-1 observed must not also be unattributed";
+  }
+  delete mc;
+}
+
+TEST(McAttribution, LivingStarvedAutoBudgetStaysSilent) {
+  // B (the AC2 real shape): the SAME scene, continuous illuminant, auto budget. The auto
+  // budget's starvation is deterministic (a few hundred outer draws over the full-band
+  // quadrature, Y-ESS ~0, actual = 0) — and the hunger is in the WEIGHTED field, not in the
+  // sampling: the record still carries plenty of light-bearing rows in the object's delta
+  // window (measured 15.5k row-level before the draw grouping). So the AC2 content lands on
+  // the forward side — no kActual, no
+  // unattributed output at all — while the kind-1 (unproven: no measure side on this core)
+  // follows the judgment table's unproven arm: nothing to contradict at sufficient recorded
+  // presence -> consistent. (The plan's B narrative expected not_observed_insufficient_ess;
+  // the measured premise refines which arm the table yields — the table stands, the case is
+  // written to what the producers actually do.)
+  ConfigManager config = HaarPrismScene(true);
+  PathFeatureReportRequest request;
+  request.crystal_id = 1;
+  request.path_layers = { { 3, 5 } };
+  request.sample_count = 0;    // auto
+  request.budget_ms = 120000;  // the evaluations cap, not the clock, must end this run
+  LivingRun run = RunLiving(config, request, { { 3, 5 } }, nullptr, nullptr, 0);
+  size_t actuals = 0;
+  for (const DiagnosticFeatureRecord& record : run.report.discovery.features) {
+    actuals += record.evidence == DiagnosticEvidence::kActual ? 1 : 0;
+  }
+  ASSERT_EQ(actuals, 0u) << "the auto x quadrature starvation must hold: it is this case's measured premise";
+  schema3::McEvidenceBlock* mc =
+      new schema3::McEvidenceBlock(schema3::McEvidenceOf(std::move(run.report.discovery), run.report.options));
+  run.input.mc = mc;
+  const UnattributedOutcome forward = DeriveUnattributed(run.input);
+  EXPECT_TRUE(forward.error.empty());
+  EXPECT_TRUE(forward.structures.empty());
+  EXPECT_EQ(forward.skipped_below_ess, 0);  // nothing reached the gate at all
+  const CorroborationOutcome outcome = DeriveCorroboration(run.input);
+  EXPECT_TRUE(outcome.error.empty());
+  for (size_t i = 0; i < run.core.objects.size(); i++) {
+    if (run.core.objects[i].kind != ObjectKind::kKind1) {
+      continue;
+    }
+    EXPECT_EQ(run.core.objects[i].visibility.state, VisibilityState::kUnproven);
+    EXPECT_EQ(outcome.annotations[i].state, CorroborationState::kConsistent) << outcome.annotations[i].reason;
+    EXPECT_GE(outcome.annotations[i].presence_ess, 32.0);
+    EXPECT_NE(outcome.annotations[i].reason.find("nothing the MC could contradict"), std::string::npos);
+  }
+  delete mc;
+}
+
+TEST(McAttribution, LivingUnlitRestrictedReadsInsufficientOnZeroRecordedPresence) {
+  // C: the C12 plate's fully-dark restricted member (the C09 shape), real MC at standing.
+  // MEASURED SHAPE (differs from the plan's C narrative, which expected `consistent`): the
+  // chain never transmits into the object's delta window, and the v2 measure records
+  // light-bearing rows only — so the window's recorded presence is exactly zero and the
+  // unlit arm lands in not_observed_insufficient_ess (the fail-closed reading: the absence
+  // claim is corroborated only to the recorded standing, and there is none). The
+  // consistent-on-unlit arm with real light near the window stays pinned synthetically; a
+  // living config with light beside a dark curve is a registered follow-up, not a silent
+  // downgrade. (A4's point survives the refinement: the backward standing is not the record's
+  // own Y-ESS — that is ~0 for a dark region BY CONSTRUCTION and would kill the arm regardless
+  // of what the MC recorded.)
+  ConfigManager config = PlateScene();
+  PathFeatureReportRequest request;
+  request.crystal_id = 1;
+  request.path_layers = { { 2, 4, 5, 1 } };
+  request.sample_count = 65536;
+  request.wavelengths_nm = { 550 };
+  request.budget_ms = 120000;  // same replayability guard as the A arm
+  // The enumeration's measure side: the plate UMarginal over the scene's own sun.
+  const double alt = 9.0 * kDeg;
+  const double s[3] = { std::cos(alt), 0.0, std::sin(alt) };
+  static const UMarginal plate = [s] {
+    AxisDistribution axis;
+    axis.azimuth_dist = { DistributionType::kUniform, 0.0f, 360.0f };
+    axis.latitude_dist = { DistributionType::kNoRandom, 90.0f, 0.0f };
+    axis.roll_dist = { DistributionType::kNoRandom, 0.0f, 0.0f };
+    return MakeUMarginal(axis, s);
+  }();
+  static const analytic::PoseDensitySpec spec = [] {
+    analytic::PoseDensitySpec spec;
+    spec.family = analytic::PoseFamily::kPlate;
+    spec.zenith_mean_deg = 0.0;
+    spec.zenith_std_deg = 1.0;
+    return spec;
+  }();
+  LivingRun run = RunLiving(config, request, { { 2, 4, 5, 1 } }, &plate, &spec, 256);
+  const StructureObjectRecord* restricted = nullptr;
+  size_t restricted_index = kNoIndex;
+  for (size_t i = 0; i < run.core.objects.size(); i++) {
+    if (run.core.objects[i].kind == ObjectKind::kKind1Restricted) {
+      restricted = &run.core.objects[i];
+      restricted_index = i;
+    }
+  }
+  ASSERT_NE(restricted, nullptr) << "2-4-5-1 must be family-pinned on the plate";
+  ASSERT_EQ(restricted->visibility.state, VisibilityState::kUnlit)
+      << "the C09 premise: the pinned member is fully dark on its declared orbit";
+  schema3::McEvidenceBlock* mc =
+      new schema3::McEvidenceBlock(schema3::McEvidenceOf(std::move(run.report.discovery), run.report.options));
+  run.input.mc = mc;
+  const CorroborationOutcome outcome = DeriveCorroboration(run.input);
+  EXPECT_TRUE(outcome.error.empty()) << outcome.error;
+  EXPECT_EQ(outcome.annotations[restricted_index].state, CorroborationState::kNotObservedInsufficientEss)
+      << outcome.annotations[restricted_index].reason;
+  // The weight information survives: the annotation carries the standing the arm leaned on
+  // (zero — the recorded observation has no rows in this window at all).
+  EXPECT_DOUBLE_EQ(outcome.annotations[restricted_index].presence_ess, 0.0);
+  EXPECT_NE(outcome.annotations[restricted_index].reason.find("leaves the corroboration itself undeclared"),
+            std::string::npos);
+  delete mc;
 }
 
 }  // namespace
