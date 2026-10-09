@@ -305,6 +305,13 @@ if (doc.outcome === "discovered") {
 
 ## 7. Target-free path feature report (schema 2)
 
+> **schema3 pointer (666.3)**: `--report` now emits **schema_version 3** — the structural-object
+> report (top-level `scope` / `support` / `features{actual,candidate,unfinished}` /
+> `unattributed_structures` / `mc_evidence` / `coverage` / `observation` / `budgets` / `timing` /
+> `sources` / `no_related_feature` + `outcome`). A reader requiring version 2 must reject version
+> 3 (§1 version discipline; the in-repo face is the e2e `_load_report` gate). This section still
+> documents the schema-2 field face; its rewrite is task 666.4.
+
 ```bash
 Lumice raypath -f <config> --crystal <id> --path <faces> --report \
   --budget-ms 15000 --max-evaluations 4000000

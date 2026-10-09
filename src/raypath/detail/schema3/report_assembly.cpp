@@ -14,7 +14,7 @@ constexpr int kEnumerationGrid = 720;
 
 }  // namespace
 
-AssembledSchema3Report AssembleSchema3Report(const PathFeatureReport& report, uint64_t max_optical_evaluations) {
+AssembledSchema3Report AssembleSchema3Report(PathFeatureReport&& report, uint64_t max_optical_evaluations) {
   AssembledSchema3Report out;
   const AssembledLayer& layer = report.representative_input.layers.front();
 
@@ -68,8 +68,9 @@ AssembledSchema3Report AssembleSchema3Report(const PathFeatureReport& report, ui
   spectral.optical_evaluations = report.spectral_optical_evaluations;
   spectral.field_component_evaluations = report.spectral_field_evaluations;
   spectral.seconds = report.spectral_seconds;
-  // A COPY here: the v2 serializer still reads report.discovery (pre-flip); the flip moves it.
-  McEvidenceBlock mc = McEvidenceOf(report.discovery, report.options, spectral);
+  // The production form: the discovery MOVES into the carry (the v2 document path is gone —
+  // nothing reads report.discovery past this call).
+  McEvidenceBlock mc = McEvidenceOf(std::move(report.discovery), report.options, spectral);
 
   McAttributionInput input;
   input.core = &out.core;

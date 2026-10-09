@@ -7,6 +7,7 @@
 #include "analytic/so3.hpp"
 #include "raypath/detail/path_feature_report.hpp"
 #include "raypath/detail/path_feature_report_json.hpp"
+#include "raypath/detail/schema3/report_assembly.hpp"
 #include "util/logger.hpp"
 
 namespace lumice::raypath {
@@ -164,7 +165,13 @@ Error AnalyzePathFeatureReport(const ConfigManager& config, const PathFeatureRep
   if (const Error error = AssemblePathFeatureReport(config, request, &report); !error.Ok()) {
     return error;
   }
-  *json_out = PathFeatureReportToJson(report, product_version.c_str());
+  // The multicrystal early path never ran the discovery; the assembly's precondition excludes
+  // it and the v3 early shape ignores the assembled side.
+  const schema3::AssembledSchema3Report assembled =
+      report.unsupported_multicrystal ?
+          schema3::AssembledSchema3Report{} :
+          schema3::AssembleSchema3Report(std::move(report), request.max_optical_evaluations);
+  *json_out = PathFeatureReportV3ToJson(report, assembled, product_version.c_str());
   return {};
 }
 

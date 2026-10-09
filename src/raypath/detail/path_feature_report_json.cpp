@@ -495,133 +495,6 @@ Json Schema3ObjectJson(const StructureObjectRecord& object, const CorroborationA
 
 }  // namespace
 
-std::string PathFeatureReportToJson(const PathFeatureReport& result, const char* lumice_version) {
-  if (result.unsupported_multicrystal) {
-    return Json{
-      { "schema", "lumice.path-feature-report" },
-      { "schema_version", kFeatureReportSchemaVersion },
-      { "outcome", "unsupported_multicrystal" },
-      { "requested_path_layers", result.requested_path_layers },
-      { "actual_features", Json::array() },
-      { "candidates", Json::array() },
-      { "unfinished", Json::array() },
-      { "coverage",
-        { { { "subject", "multi-crystal chain" },
-            { "status", "not_supported" },
-            { "reason",
-              "single-crystal internal reflections are supported, but this multi-crystal request was not "
-              "evaluated" } } } },
-      { "budgets", { { "optical_evaluations", 0 }, { "field_component_evaluations", 0 } } }
-    }.dump();
-  }
-
-  Json document = {
-    { "schema", "lumice.path-feature-report" },
-    { "schema_version", kFeatureReportSchemaVersion },
-
-    { "generator", { { "lumice", lumice_version }, { "analytic_api_version", analytic::kApiVersion } } },
-    { "scope",
-      { { "scene_identity", result.snapshot.scene_identity },
-        { "spectrum", result.spectrum_scope },
-        { "seed", result.seed },
-        { "member_semantics", "physical_L2" } } },
-    { "conventions",
-      { { "sky", "unit world viewing direction, negative propagation" },
-        { "pose", "row-major body-to-world SO(3)" },
-        { "angles", "radians" },
-        { "field", "normalized vMF per steradian; tangent gradients per radian and Hessians per radian squared" },
-        { "weight", "product 2A/S times all interface factors times source spectral XYZ coefficient once" },
-        { "uncertainty",
-          "fixed-observation prefix movement, solver correction and scale response are different quantities; none is a "
-          "global error certificate" } } }
-  };
-  const auto support = DescribeSupport(result.snapshot);
-  document["support"] = { { "pose_coordinate_count", support.pose_coordinate_count },
-                          { "pose_support_dimension", support.pose_support_dimension },
-                          { "shape_parameter_dimension", support.shape_parameter_dimension },
-                          { "source_direction_dimension", support.source_direction_dimension },
-                          { "spectral_dimension", support.spectral_dimension },
-                          { "joint_optical_rank", nullptr },
-                          { "rank_scope",
-                            "conditional pose Jacobians are not the joint map rank; shape parameter count is not "
-                            "geometric image dimension" } };
-  document["scope"]["light"] = nlohmann::json(result.snapshot.light);
-  document["scope"]["layers"] = Json::array();
-  for (const auto& layer : result.snapshot.layers) {
-    document["scope"]["layers"].push_back(
-        { { "scene_layer", result.standalone_crystal ? Json(nullptr) : Json(layer.layer_index) },
-          { "crystal", nlohmann::json(layer.crystal) },
-          { "representative_faces", layer.representative },
-          { "symmetry_bits", layer.symmetry_bits } });
-  }
-  document["physical_members"] = result.representative_input.layers[0].scope.members;
-  document["spectrum"] = Json::array();
-  for (const auto& row : result.representative_input.spectrum.rows) {
-    document["spectrum"].push_back({ { "nm", row.wavelength_nm },
-                                     { "source_weight", Num(row.source_weight) },
-                                     { "measure_mass", Num(row.measure_mass) },
-                                     { "index", Num(row.refractive_index) },
-                                     { "XYZ_coefficient", row.coefficient },
-                                     { "provenance", row.provenance } });
-  }
-  const auto& discovery = result.discovery;
-  document["requested_outer_samples"] = result.requested_outer_samples;
-  document["budget_ms"] = result.budget_ms;
-  document["budgets"] = {
-    { "requested_outer_samples", result.options.sampling.requested_samples },
-    { "completed_outer_samples", discovery.measure.completed_samples },
-    { "replicate_samples", discovery.replicate_samples },
-    { "replicate_seed", result.seed ^ 0x9e3779b9u },
-    { "max_optical_evaluations", result.options.sampling.max_optical_evaluations },
-    { "optical_evaluations", discovery.measure.optical_evaluations + discovery.replicate_path_evaluations +
-                                 discovery.event_path_evaluations + result.spectral_optical_evaluations },
-    { "max_field_component_evaluations", result.options.max_field_evaluations },
-    { "field_component_evaluations", discovery.field_component_evaluations + result.spectral_field_evaluations },
-    { "exhausted", discovery.budget_exhausted }
-  };
-  document["timing"] = { { "spectral_verification", Num(result.spectral_seconds) },
-                         { "capture", Num(result.capture_seconds) },
-                         { "assembly", Num(discovery.assembly_seconds) },
-                         { "source_events_and_edge_observations", Num(discovery.event_seconds) },
-                         { "field_discovery", Num(discovery.field_seconds) } };
-  document["observation"] = { { "kernel", "normalized_vMF" },
-                              { "bandwidth_rad", Num(result.options.bandwidth_rad) },
-                              { "location_resolution_rad", Num(result.options.location_resolution_rad) },
-                              { "search_scope",
-                                "bounded source-seeded local structures; not exhaustive all-sky or source topology" } };
-  document["spectral_verification"] = {
-    { "optical_evaluations", result.spectral_optical_evaluations },
-    { "field_component_evaluations", result.spectral_field_evaluations },
-    { "movement_rad", result.spectral_movement_rad ? Num(*result.spectral_movement_rad) : Json(nullptr) }
-  };
-  document["actual_features"] = Json::array();
-  document["candidates"] = Json::array();
-  document["unfinished"] = Json::array();
-  document["sources"] = Json::object();
-  for (size_t index = 0; index < discovery.features.size(); ++index) {
-    const DiagnosticFeatureRecord& feature = discovery.features[index];
-    const char* bucket = feature.evidence == DiagnosticEvidence::kActual    ? "actual_features" :
-                         feature.evidence == DiagnosticEvidence::kCandidate ? "candidates" :
-                                                                              "unfinished";
-    document[bucket].push_back(FeatureRecordJson(discovery, feature, index, &document["sources"]));
-  }
-  document["unfinished_reasons"] = discovery.unfinished;
-  document["coverage"] = {
-    { { "subject", "actual product input and physical L2" },
-      { "status", "supported" },
-      { "reason", "one selected crystal chain; actual distribution/shape/source/spectrum assembly" } },
-    { { "subject", "bounded local discovery" },
-      { "status", discovery.budget_exhausted || !discovery.unfinished.empty() ? "numerical_incomplete" : "supported" },
-      { "limitations", discovery.limitations },
-      { "reason",
-        "only the recorded local windows and source seeds; no all-sky or source-topology completeness claim" } }
-  };
-  document["outcome"] = result.no_related_signal                                    ? "no_related_feature" :
-                        discovery.budget_exhausted || !discovery.unfinished.empty() ? "partial" :
-                                                                                      "completed";
-  return document.dump();
-}
-
 std::string PathFeatureReportV3ToJson(const PathFeatureReport& result, const schema3::AssembledSchema3Report& assembled,
                                       const char* lumice_version) {
   if (result.unsupported_multicrystal) {
@@ -656,10 +529,7 @@ std::string PathFeatureReportV3ToJson(const PathFeatureReport& result, const sch
   const DiscoveryResult& discovery = assembled.mc.discovery;
   Json document = {
     { "schema", "lumice.path-feature-report" },
-    // The schema3 document's version. A literal until the flip (666.3 Step 3) swaps in
-    // kFeatureReportSchemaVersion — until then the build constant still names the v2 emission
-    // the production path serves.
-    { "schema_version", 3 },
+    { "schema_version", kFeatureReportSchemaVersion },
     { "generator", { { "lumice", lumice_version }, { "analytic_api_version", analytic::kApiVersion } } },
     { "conventions",
       { { "sky", "unit world viewing direction, negative propagation" },
@@ -690,7 +560,7 @@ std::string PathFeatureReportV3ToJson(const PathFeatureReport& result, const sch
   // pairs inside a nested object, so the two array-valued members are assigned, not listed.
   const auto support = DescribeSupport(result.snapshot);
   document["scope"] = { { "scene_identity", result.snapshot.scene_identity },
-                        { "spectrum", result.spectrum_scope },
+                        { "spectrum_scope", result.spectrum_scope },
                         { "seed", result.seed },
                         { "member_semantics", "physical_L2" },
                         { "light", nlohmann::json(result.snapshot.light) },

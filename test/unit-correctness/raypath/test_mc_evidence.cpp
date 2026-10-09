@@ -3,8 +3,10 @@
 // exception). Pinned here: the carry invariants (count, order and the records' own `evidence`
 // classification survive the move untouched; the options ruler moves field-for-field), the
 // migration ledger's mechanical face (every row legal, renamed/deprecated rows carry a note,
-// and the ledger's top-level key set reconciles against `PathFeatureReportToJson`'s ACTUAL
-// emission — same set, each exactly once), and the maximal-record round-trip (a record with
+// the ledger's top-level v3 homes reconcile against the schema3 serializer's actual emission,
+// both ways — the v3 witness is PathFeatureReportJsonV3.LedgerTopLevelHomesReconcileTheEmission,
+// which replaced this file's v2-emission reconciliation when the v2 document path was deleted),
+// and the maximal-record round-trip (a record with
 // every field — all optionals included — filled with sentinel values reads back field-for-field
 // through the block: the no-silent-drop mechanical face).
 //
@@ -21,7 +23,6 @@
 #include <vector>
 
 #include "raypath/detail/path_feature_report.hpp"
-#include "raypath/detail/path_feature_report_json.hpp"
 #include "raypath/detail/schema3/mc_evidence.hpp"
 
 namespace lumice::raypath {
@@ -177,32 +178,6 @@ TEST(McEvidence, MigrationLedgerRowsAreWellFormed) {
         std::string(row.section == schema3::MigrationSection::kTopLevel ? "top:" : "field:") + row.v2_key);
     EXPECT_TRUE(inserted) << "duplicate ledger key: " << row.v2_key;
   }
-}
-
-TEST(McEvidence, MigrationLedgerReconcilesTheSerializerEmission) {
-  // A real v2 document through the real serializer: the ledger's top-level section must name
-  // EXACTLY the key set the document carries (same set; a JSON object cannot carry a duplicate,
-  // so the set equality plus the ledger's own duplicate check is the once-only face).
-  PathFeatureReportRequest request;
-  request.crystal_id = 1;
-  request.path_layers = { { 3, 5 } };
-  request.sample_count = 64;
-  request.wavelengths_nm = { 550 };
-  PathFeatureReport report;
-  ASSERT_TRUE(AssemblePathFeatureReport(ReportScene(), request, &report).Ok());
-  const auto document = nlohmann::json::parse(PathFeatureReportToJson(report, "test"));
-  std::set<std::string> emitted;
-  for (auto it = document.begin(); it != document.end(); ++it) {
-    emitted.insert(it.key());
-  }
-  std::set<std::string> ledger_keys;
-  for (const schema3::McMigrationRow& row : schema3::kMcMigrationLedger) {
-    if (row.section == schema3::MigrationSection::kTopLevel) {
-      ledger_keys.insert(row.v2_key);
-    }
-  }
-  EXPECT_EQ(ledger_keys, emitted) << "the ledger's top-level section and the serializer's "
-                                     "emission must name the same key set (v2 is frozen)";
 }
 
 // ---- the maximal-record round-trip (the no-silent-drop mechanical face) --------------------------

@@ -69,7 +69,7 @@ V3Run RunV3OrDie(const ConfigManager& config, const PathFeatureReportRequest& re
   if (!error.Ok()) {
     return run;
   }
-  run.assembled = schema3::AssembleSchema3Report(run.report, request.max_optical_evaluations);
+  run.assembled = schema3::AssembleSchema3Report(std::move(run.report), request.max_optical_evaluations);
   run.document = nlohmann::json::parse(PathFeatureReportV3ToJson(run.report, run.assembled, "test"));
   return run;
 }
@@ -208,7 +208,8 @@ TEST(PathFeatureReportJsonV3, RecordFieldChecklistRidesTheLedger) {
   ASSERT_TRUE(AssemblePathFeatureReport(ReportScene(), request, &report).Ok());
   ASSERT_FALSE(report.discovery.measure.sources.empty()) << "the scene must carry at least one witness source";
   report.discovery.features = { MaximalRecord(report.discovery.measure.sources.size() - 1) };
-  schema3::AssembledSchema3Report assembled = schema3::AssembleSchema3Report(report, request.max_optical_evaluations);
+  schema3::AssembledSchema3Report assembled =
+      schema3::AssembleSchema3Report(std::move(report), request.max_optical_evaluations);
   const nlohmann::json document = nlohmann::json::parse(PathFeatureReportV3ToJson(report, assembled, "test"));
   const nlohmann::json& record = document["mc_evidence"]["records"][0];
   EXPECT_EQ(record["id"], 0);

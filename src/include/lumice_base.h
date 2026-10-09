@@ -521,7 +521,10 @@ extern "C" {
 // separate from the unchanged v4.50 target-fiber schema.
 // ADDED (v4.52): report budget/observation/layer request suffix. Target-free reports now use
 // schema 2 and the actual product spectrum/measure; old target/fiber/warm schema stays 1.
-#define LUMICE_API_VERSION 452
+// CHANGED (v4.53): the target-free feature report document is schema 3 (the structural-object
+// report: scope/support/features/unattributed_structures/mc_evidence/coverage; v2 readers must
+// reject v3); the request struct and the old schema-1 target/fiber/warm face are unchanged.
+#define LUMICE_API_VERSION 453
 #define LUMICE_MAX_RENDER_RESULTS 16
 #define LUMICE_MAX_STATS_RESULTS 1
 

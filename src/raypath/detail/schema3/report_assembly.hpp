@@ -18,7 +18,9 @@
 //
 // Precondition: `report` is a completed single-crystal assembly (!unsupported_multicrystal —
 // that early path never ran the discovery this module reads; the serializer owns its v3 shape)
-// with a non-empty representative spectrum and at least one assembled layer.
+// with a non-empty representative spectrum and at least one assembled layer. The discovery is
+// MOVED into the evidence carry: the v2 document path is gone, so nothing reads
+// report.discovery past this call.
 
 #include <cstdint>
 #include <string>
@@ -45,7 +47,7 @@ struct AssembledSchema3Report {
   std::string density_skip_note;  // non-empty = the density leg was declared skipped
 };
 
-AssembledSchema3Report AssembleSchema3Report(const PathFeatureReport& report, uint64_t max_optical_evaluations);
+AssembledSchema3Report AssembleSchema3Report(PathFeatureReport&& report, uint64_t max_optical_evaluations);
 
 }  // namespace lumice::raypath::schema3
 #endif  // LUMICE_RAYPATH_DETAIL_SCHEMA3_REPORT_ASSEMBLY_HPP_

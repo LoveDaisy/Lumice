@@ -89,7 +89,7 @@ AssembledSchema3Report AssembleOrDie(const ConfigManager& config, const PathFeat
   if (!error.Ok()) {
     return {};
   }
-  return AssembleSchema3Report(report, request.max_optical_evaluations);
+  return AssembleSchema3Report(std::move(report), request.max_optical_evaluations);
 }
 
 }  // namespace
