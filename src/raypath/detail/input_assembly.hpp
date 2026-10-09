@@ -150,6 +150,14 @@ Error AssembleInput(const InputSnapshot& snapshot, const std::vector<LayerSample
 // The single-crystal restriction is intentional; it is not a chain reduction.
 std::optional<std::array<double, 3>> SingleCrystalIncidentOrbit(const AssembledInput& input);
 
+// The exact zero-spectral-signal predicate (the v2 report's `no_related_signal`, the rule-A
+// basis of the schema3 no-related-feature ruling): the snapshot's light is a discrete WlParam
+// list AND every assembled spectral row's XYZ coefficient is exactly zero. The one authority —
+// the v2 assembler and the schema3 ruling both read this (the schema3 module consumes the
+// boolean; the predicate lives with the input types it reads). An exact zero is a CONFIG
+// statement, never a claim based on empty sampling.
+bool ZeroSpectralSignal(const InputSnapshot& snapshot, const AssembledInput& representative);
+
 enum class ContributionStatus { kPositive, kZeroSupport, kInvalidOptics, kMissingFace, kRejectedShape };
 struct LayerEvaluation {
   ContributionStatus status = ContributionStatus::kRejectedShape;

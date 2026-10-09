@@ -316,7 +316,11 @@ add_executable(unit_correctness_test
   # schema3 report core (666.2): the MC attribution core — the judgment table cell by cell,
   # the forward ESS gate (the AC2 negative control), the declared-width tolerance, the two
   # delta-image branches, the presence-ESS statistic, the C12 restricted integration.
-  "${PROJ_TEST_DIR}/unit-correctness/raypath/test_mc_attribution.cpp")
+  "${PROJ_TEST_DIR}/unit-correctness/raypath/test_mc_attribution.cpp"
+  # schema3 report core (666.2): the no_related_feature dual-form ruling — rule A outranks B,
+  # the four B conditions each break on their own leg, the kArea gate beside them, and the
+  # zero-signal predicate at its single home.
+  "${PROJ_TEST_DIR}/unit-correctness/raypath/test_no_related_feature.cpp")
 target_include_directories(unit_correctness_test
   PRIVATE ${PROJ_TEST_DIR})
 target_compile_definitions(unit_correctness_test PRIVATE

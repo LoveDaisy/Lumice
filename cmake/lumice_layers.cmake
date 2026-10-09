@@ -285,6 +285,8 @@ set(LUMICE_LAYER_raypath_FILES
   raypath/detail/schema3/mc_attribution.hpp
   raypath/detail/schema3/mc_evidence.cpp
   raypath/detail/schema3/mc_evidence.hpp
+  raypath/detail/schema3/no_related_feature.cpp
+  raypath/detail/schema3/no_related_feature.hpp
   raypath/detail/schema3/structure_object.cpp
   raypath/detail/schema3/structure_object.hpp
   raypath/detail/schema3/structure_enumeration.cpp

@@ -300,12 +300,7 @@ Error BuildPathFeatureReport(const SceneConfig& scene, const std::string& identi
       result.discovery.unfinished.push_back("continuous spectral quadrature refinement incomplete");
     }
   }
-  result.no_related_signal =
-      std::holds_alternative<std::vector<WlParam>>(result.snapshot.light.spectrum_) &&
-      std::all_of(result.representative_input.spectrum.rows.begin(), result.representative_input.spectrum.rows.end(),
-                  [](const auto& row) {
-                    return row.coefficient[0] == 0 && row.coefficient[1] == 0 && row.coefficient[2] == 0;
-                  });
+  result.no_related_signal = ZeroSpectralSignal(result.snapshot, result.representative_input);
   *out = std::move(result);
   return {};
 }
