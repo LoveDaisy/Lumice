@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "entries": [
     {
       "id": "test/e2e-correctness/test_raypath_analysis_capi.py::test_adaptive_allocation_cuts_rare_row_noise_without_moving_the_means",
@@ -168,6 +168,134 @@
       "job": "e2e-test",
       "ci_seconds": 65,
       "reason": "Pins the schema3 report contract that an exhausted evaluation budget lands as outcome=partial with termination=6 source curves, not as a physical stop or silent absorption: the cap interrupts the final source curve inside its optical bracket while the other report stages still complete. The claim needs two full CLI report runs on the 3-1-5 scene (capped at 405930 optical evaluations plus the unconstrained comparison), so the cost is the engine's own report work; the contract spans CLI args through the engine to the JSON verdict, so no cheaper layer carries it."
+    }
+  ],
+  "phase_budgets": [
+    {
+      "job": "Ubuntu x86_64",
+      "phase": "build",
+      "max_seconds": 420,
+      "reason": "Caps compilation and linking on the required Ubuntu x86_64 leg; cache statistics distinguish a cold seed from source-driven rebuild cost."
+    },
+    {
+      "job": "Ubuntu x86_64",
+      "phase": "ctest",
+      "max_seconds": 360,
+      "reason": "Caps the cumulative correctness pool after schema3 fixture costs were removed; per-case registration alone cannot see many sub-minute regressions."
+    },
+    {
+      "job": "Ubuntu x86_64",
+      "phase": "build+ctest",
+      "members": ["build", "ctest"],
+      "max_seconds": 720,
+      "reason": "Keeps the serial build-and-correctness segment within the owner's preferred twelve-minute PR budget."
+    },
+    {
+      "job": "Ubuntu ARM64",
+      "phase": "build",
+      "max_seconds": 420,
+      "reason": "Caps compilation and linking on the ARM64 portability leg while preserving its baseline-ISA coverage."
+    },
+    {
+      "job": "Ubuntu ARM64",
+      "phase": "ctest",
+      "max_seconds": 360,
+      "reason": "Caps cumulative CTest work on ARM64 without moving scientific or cross-ISA checks off the platform."
+    },
+    {
+      "job": "Ubuntu ARM64",
+      "phase": "build+ctest",
+      "members": ["build", "ctest"],
+      "max_seconds": 720,
+      "reason": "Keeps the serial build-and-correctness segment within the owner's preferred twelve-minute PR budget."
+    },
+    {
+      "job": "macOS ARM64",
+      "phase": "build",
+      "max_seconds": 420,
+      "reason": "Caps compilation and linking on the Metal/reference-platform build leg without removing Apple-only coverage."
+    },
+    {
+      "job": "macOS ARM64",
+      "phase": "ctest",
+      "max_seconds": 360,
+      "reason": "Caps cumulative CTest work on macOS while retaining analytic and Metal-specific failure modes."
+    },
+    {
+      "job": "macOS ARM64",
+      "phase": "build+ctest",
+      "members": ["build", "ctest"],
+      "max_seconds": 720,
+      "reason": "Keeps the serial build-and-correctness segment within the owner's preferred twelve-minute PR budget."
+    },
+    {
+      "job": "Windows MSVC x86_64",
+      "phase": "build",
+      "max_seconds": 420,
+      "reason": "Caps the release-matching MSVC build while cache statistics preserve the cold-versus-rebuild diagnosis."
+    },
+    {
+      "job": "Windows MSVC x86_64",
+      "phase": "ctest",
+      "max_seconds": 360,
+      "reason": "Caps cumulative MSVC CTest work after removing repeated schema3 assembly from serializer-only propositions."
+    },
+    {
+      "job": "Windows MSVC x86_64",
+      "phase": "build+ctest",
+      "members": ["build", "ctest"],
+      "max_seconds": 720,
+      "reason": "Keeps the release-matching build-and-correctness segment within the owner's preferred twelve-minute PR budget."
+    },
+    {
+      "job": "e2e-test",
+      "phase": "e2e",
+      "max_seconds": 600,
+      "reason": "The complete fast E2E phase has an owner-set ten-minute target; this cumulative bound catches growth spread across sub-minute tests."
+    },
+    {
+      "job": "E2E Slow (Ubuntu x86_64)",
+      "phase": "e2e-slow-correctness",
+      "max_seconds": 480,
+      "reason": "Caps the parallel correctness pool on Ubuntu while retaining shared-library and regression-sentinel responsibilities."
+    },
+    {
+      "job": "E2E Slow (Ubuntu x86_64)",
+      "phase": "e2e-slow-performance",
+      "max_seconds": 180,
+      "reason": "Caps the serial GPU-isolated throughput pool separately so correctness concurrency cannot hide its cost."
+    },
+    {
+      "job": "E2E Slow (Ubuntu x86_64)",
+      "phase": "e2e-slow",
+      "members": ["e2e-slow-correctness", "e2e-slow-performance"],
+      "max_seconds": 600,
+      "reason": "Caps both serial slow pools together at the owner's ten-minute target."
+    },
+    {
+      "job": "E2E Slow (macOS ARM64 parity)",
+      "phase": "e2e-slow-correctness",
+      "max_seconds": 600,
+      "reason": "Caps the parity leg's complete slow-test phase while preserving its independent Metal and C API oracles."
+    },
+    {
+      "job": "E2E Slow (macOS ARM64 rest)",
+      "phase": "e2e-slow-correctness",
+      "max_seconds": 600,
+      "reason": "Caps the macOS correctness pool while retaining Apple-only parity and regression responsibilities."
+    },
+    {
+      "job": "E2E Slow (macOS ARM64 rest)",
+      "phase": "e2e-slow-performance",
+      "max_seconds": 180,
+      "reason": "Caps the serial Metal throughput pool separately from the concurrent correctness workload."
+    },
+    {
+      "job": "E2E Slow (macOS ARM64 rest)",
+      "phase": "e2e-slow",
+      "members": ["e2e-slow-correctness", "e2e-slow-performance"],
+      "max_seconds": 720,
+      "reason": "Caps the longest slow-test leg at the owner's preferred twelve-minute bound."
     }
   ]
 }

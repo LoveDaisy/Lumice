@@ -3,13 +3,12 @@
 // living cases promote the mc_attribution tests' verified RunLiving shape to the production
 // entry — the enumeration now runs with its declared measure and density sides (the orbit
 // streams, the restricted leg, the 33-row n-continuation table) instead of the naked core —
-// and pin the assembly's own faces: the annotation parallelism, the budget legs, the two
-// declared skips (degenerate sun, unsupported density), and the A4 cost baseline.
+// and pin the assembly's own faces: the annotation parallelism, the budget legs, and the two
+// declared skips (degenerate sun, unsupported density).
 
 #include <gtest/gtest.h>
 
 #include <cmath>
-#include <iostream>
 #include <string>
 #include <vector>
 
@@ -333,39 +332,6 @@ TEST(Schema3ReportAssembly, DeclaredSkipsCoverDegenerateSunAndUnsupportedDensity
     EXPECT_NE(assembled.density_skip_note.find("not expressible"), std::string::npos) << assembled.density_skip_note;
     EXPECT_EQ(assembled.core.budget.sampling_evaluations, 0) << "no streams without a density spec";
     EXPECT_FALSE(assembled.core.objects.empty());
-  }
-}
-
-TEST(Schema3ReportAssembly, CostBaselineThreeStandardScenarios) {
-  // The A4 initial judgment (666.3 plan): the assembly module's absolute cost on the three
-  // standard scenarios, printed for the task progress and the later full-path comparison. The
-  // cap keeps a pathological slowdown visible instead of hanging.
-  struct Scenario {
-    const char* name;
-    ConfigManager config;
-    std::vector<int> path;
-  };
-  std::vector<Scenario> scenarios;
-  scenarios.push_back({ "prism-3-5", PrismScene(false), { 3, 5 } });
-  scenarios.push_back({ "prism-3-1-5", PrismScene(false), { 3, 1, 5 } });
-  scenarios.push_back({ "plate-1-3-4-2", PlateScene(), { 1, 3, 4, 2 } });
-  for (const Scenario& scenario : scenarios) {
-    PathFeatureReportRequest request;
-    request.crystal_id = 1;
-    request.path_layers = { scenario.path };
-    request.sample_count = 8192;
-    request.wavelengths_nm = { 550 };
-    request.budget_ms = 120000;
-    const AssembledSchema3Report assembled = AssembleOrDie(scenario.config, request);
-    if (assembled.annotations.size() != assembled.core.objects.size()) {
-      ADD_FAILURE() << "annotations must stay parallel to the objects for " << scenario.name;
-      continue;
-    }
-    std::cout << "[ASSEMBLY-COST] scenario=" << scenario.name << " members=" << assembled.core.support.members.size()
-              << " objects=" << assembled.core.objects.size() << " enumeration_s=" << assembled.enumeration_seconds
-              << " attribution_s=" << assembled.attribution_seconds
-              << " sampling_evaluations=" << assembled.core.budget.sampling_evaluations << " measure_note=["
-              << assembled.measure_skip_note << "] density_note=[" << assembled.density_skip_note << "]" << std::endl;
   }
 }
 
