@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1791599689046,
+  "lastUpdate": 1791599692028,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9524,50 +9524,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "c4288079e3f5670454e7cc8788194498a3f584f2",
-          "message": "Merge pull request #366 from LoveDaisy/feat/analysis-session-ray-allocation\n\nfeat(analysis): analysis sessions follow scene.ray_allocation; drop the Rays column",
-          "timestamp": "2026-09-14T00:38:07+08:00",
-          "tree_id": "d76d462fb476b2cff0e3581ec03afa0c622be7a6",
-          "url": "https://github.com/LoveDaisy/ice_halo_sim/commit/c4288079e3f5670454e7cc8788194498a3f584f2"
-        },
-        "date": 1789318086117,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 76.9,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 99.5,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 93.5,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 88.3,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "fd1bb1cffe3edfbbf7c4de2a1eff5ff0ecb5ea1a",
           "message": "Merge pull request #367 from LoveDaisy/chore/release-4.6.0\n\nchore(release): cut 4.6.0",
           "timestamp": "2026-09-14T01:21:05+08:00",
@@ -13867,6 +13823,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 94.8,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "826acd4bd8a4c3757162564f22e74f56e8c39510",
+          "message": "Merge pull request #478 from LoveDaisy/feat/schema3-report\n\nfeat(raypath): schema3 report - state machines, support block, unattributed, mc_evidence, schema_version=3",
+          "timestamp": "2026-10-10T10:31:01+08:00",
+          "tree_id": "6cbc9655451153e80826f2030b8cca8d1547e6bc",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/826acd4bd8a4c3757162564f22e74f56e8c39510"
+        },
+        "date": 1791599691228,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 88.1,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 99.9,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 100.2,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 94.9,
             "unit": "%"
           }
         ]
