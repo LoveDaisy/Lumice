@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1791655085376,
+  "lastUpdate": 1791655087528,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9524,50 +9524,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "9232bccb77567b58b5b9342c1049e69337b2fb44",
-          "message": "Merge pull request #369 from LoveDaisy/feat/cli-raypath-analyze\n\ncli: add the `analyze` subcommand — raypath analysis from the command line",
-          "timestamp": "2026-09-14T20:18:27+08:00",
-          "tree_id": "aa2b67b0a92fe71b387a76367f305cdf54930982",
-          "url": "https://github.com/LoveDaisy/ice_halo_sim/commit/9232bccb77567b58b5b9342c1049e69337b2fb44"
-        },
-        "date": 1789389141341,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 75.6,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 99.6,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 94.2,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 89,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "f220e71f72ceab196f527085937d1268369d7e63",
           "message": "Merge pull request #370 from LoveDaisy/chore/cli-render-seed-and-small-fixes\n\nchore: render --seed, double emitted-energy accumulators, manual fixes, GUI log sink to stderr",
           "timestamp": "2026-09-16T08:42:53+08:00",
@@ -13867,6 +13823,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 87.4,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "f50e9639b74896229064fc6f302f8fbfa2251e06",
+          "message": "Merge pull request #481 from LoveDaisy/chore/mc-corner-tier-contract-sync\n\nClarify mixed-corner tolerance consumer comment",
+          "timestamp": "2026-10-11T01:54:48+08:00",
+          "tree_id": "485185c3b80de593fe4ee9348baf6c20b9c33bde",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/f50e9639b74896229064fc6f302f8fbfa2251e06"
+        },
+        "date": 1791655086873,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 96.2,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 99.9,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 98.3,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 93.2,
             "unit": "%"
           }
         ]
