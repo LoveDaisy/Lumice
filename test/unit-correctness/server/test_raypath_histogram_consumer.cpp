@@ -1689,7 +1689,7 @@ TEST(ReducedRaypathHistogramOf, DistinctSymmetriesKeepIndependentMemosAndDoNotEv
 // ---------------------------------------------------------------------------
 // Frame-vs-analysis share calibration: the AC2 identity extended to the
 // dual-fisheye fold boundary. The calibrated lens-domain semantics and the
-// defect statement live in doc/coordinate-convention.md §12; the measured
+// defect statement live in doc/coordinate-convention.md §13; the measured
 // reference-scene gap this family of tests pins is frame ΣY / analysis Σ =
 // 0.8107.
 // ---------------------------------------------------------------------------
@@ -1743,9 +1743,12 @@ double HistogramSumY(const SimData& data) {
 // (frame ΣY / analysis Σ = 0.8107). The fix turns the dropped assertion at
 // the bottom into the identity pin (image ΣY == analysis ΣY); until then this
 // pins the loss itself, so a partial fix — these collapse directions landing
-// again — fails loudly here. A loss widening to other directions stays green
-// in this pin: it is caught by FullSkyIdentityOnRectangularFrame and the
-// real-scene cross-check.
+// again — fails loudly here. A dual-family loss widening to other directions
+// is NOT covered by this pin nor by FullSkyIdentityOnRectangularFrame (the
+// rect identity exercises only the shared projection path, not the dual
+// fold); the safety net there is the real-scene cross-check's full row read
+// against the recorded reference (frame ΣY / analysis Σ = 0.8107 on the
+// reference scene; crosscheck full row 0.6021).
 TEST(RaypathHistogramConsumer, FoldBoundaryDropsDirectThroughEnergyOnDualFisheyeFrame) {
   const RenderConfig cfg = DualFullSkyCfg();
 
@@ -1773,7 +1776,7 @@ TEST(RaypathHistogramConsumer, FoldBoundaryDropsDirectThroughEnergyOnDualFisheye
 
   // The frame side deposits NONE of it: every one of these directions
   // collapses to x_norm = +1.0f with z_hemi = 0, so fy = cy + r = img_h and
-  // the bounds check skips the row (doc/coordinate-convention.md §12).
+  // the bounds check skips the row (doc/coordinate-convention.md §13).
   EXPECT_EQ(ImageSumY(cfg, b.data), 0.0)
       << "fold-boundary defect changed: either partially fixed (turn this pin "
          "into the identity assertion image ΣY == analysis ΣY) or the loss got wider";
@@ -1877,11 +1880,11 @@ TEST(RaypathHistogramConsumer, FullSkyIdentityOnRectangularFrame) {
 // are still admitted by `kFisheyeEqualAreaMinCz`, and the diagonal-azimuth
 // members land in the square canvas's corner region, so the up frame and the
 // down frame each deposit them once and their summed share exceeds 1
-// (measured 1.121 on the reference scene; doc/coordinate-convention.md §12).
+// (measured 1.121 on the reference scene; doc/coordinate-convention.md §13).
 // A tightening of MinCz toward 0 or a rim clip in the frame's bounds check
 // drops these directions and fails here; a canvas-map change moves their
 // landing out of the corner region. The cardinal-azimuth negative control
-// pins the other half of the §12 statement: past the rim the projection is
+// pins the other half of the §13 statement: past the rim the projection is
 // azimuth-clipped by the square canvas, so a same-rho cardinal direction
 // projects past the canvas edge and is dropped.
 TEST(RaypathHistogramConsumer, SingleFisheyeCornerBandImagedPastDiskRim) {
@@ -1946,7 +1949,7 @@ TEST(RaypathHistogramConsumer, SingleFisheyeCornerBandImagedPastDiskRim) {
     }
   }
 
-  // Negative control on the azimuth, pinning the doc §12 azimuth-clipping
+  // Negative control on the azimuth, pinning the doc §13 azimuth-clipping
   // statement: a cardinal-azimuth direction at the same rho projects past the
   // canvas edge (pixel offset rho·short/2 along one axis), where the frame's
   // bounds check drops it. ProjectExitToPixel still reports the hit — the

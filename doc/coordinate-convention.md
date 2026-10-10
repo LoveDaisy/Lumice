@@ -647,7 +647,7 @@ without adding the 180° back. Most confusion to date has come from comparing a 
 position bearing) while forgetting that the two kernels' target FIELDS sit on opposite sides
 of the travel/position negation: same labels, different vector kinds handed to the kernel.
 
-## 12. Lens Landing Domain (Full-Sky Coverage per Family)
+## 13. Lens Landing Domain (Full-Sky Coverage per Family)
 
 §10/§11 fix where a direction lands *on* the canvas. This section fixes the
 question underneath every cross-check between an image and a direction-domain
@@ -713,6 +713,9 @@ that compare against render-arm denominators inherit this caveat (see
 **Cross-check rule.** The only legal image↔analysis share comparison is
 same-domain: a cone ROI computed on both sides (the analysis `--roi cone`, and
 the image integrated over the cone's pixels through the inverse of the same
-projection). Comparing a frame share against a full-sky analysis share is a
-category error even after the defect above is fixed, because of the single-fisheye
-corner semantics alone.
+projection). The rectangular full-sky frame is the trivial same-domain case —
+its landing domain *is* the whole sky (the Rectangular bullet above), which is
+exactly what makes it the calibration arm. For every fisheye family, comparing
+a frame share against a full-sky analysis share is a category error even after
+the defect above is fixed, because of the single-fisheye corner and
+azimuth-clipping semantics alone.

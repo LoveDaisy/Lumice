@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Cone-domain cross-check between a render frame and a raypath analysis run.
 
-The frame-vs-analysis share calibration (doc/coordinate-convention.md §12): the only exact form of an
+The frame-vs-analysis share calibration (doc/coordinate-convention.md §13): the only exact form of an
 image <-> analysis share comparison is same-domain — a cone ROI on both sides.
 This tool drives both arms, integrates the frame over the cone's pixels through
 the inverse of the engine's own projection (equal-area single fisheye and
@@ -255,7 +255,7 @@ def main() -> None:
                          "with your scene's own residue as evidence.")
     ap.add_argument("--expect-frame-defect", action="store_true",
                     help="declare up front that the full-frame row is expected to be INCONSISTENT while the "
-                         "dual-fisheye fold-boundary defect (doc/coordinate-convention.md 12) is unfixed; the "
+                         "dual-fisheye fold-boundary defect (doc/coordinate-convention.md §13) is unfixed; the "
                          "overall verdict is then carried by the remaining rows. Without this flag an "
                          "inconsistent full-frame row exits 1.")
     args = ap.parse_args()
@@ -333,9 +333,14 @@ def main() -> None:
     mc_tol = args.mc_tol  # see --mc-tol: per-row +/- does not bound the total; default generous on purpose
     quant = audit["cone_rim_area_bound_rel"]
     full_inconsistent = abs(full_ratio - 1.0) > mc_tol + quant
-    if args.expect_frame_defect and not full_inconsistent:
-        print("NOTE: full-frame row is consistent — the declared fold-boundary defect no longer "
-              "reproduces; drop --expect-frame-defect")
+    if args.expect_frame_defect:
+        if not full_inconsistent:
+            print("NOTE: full-frame row is consistent — the declared fold-boundary defect no longer "
+                  "reproduces; drop --expect-frame-defect")
+        else:
+            print(f"NOTE: full-frame ratio {full_ratio:.4f} vs the on-record defect reference "
+                  "0.8107 (reference scene) — a materially different ratio means the defect grew "
+                  "or changed shape, not that it reproduced as recorded")
     rows_out.append({
         "comparison": "full-frame cone Y vs analyze cone total",
         "frame": full_energy,
@@ -377,7 +382,8 @@ def main() -> None:
             "quantization_bound": round(quant, 5),
         })
 
-    print(json.dumps({"cone": args.cone, "audit": audit, "rows": rows_out}, indent=1))
+    print(json.dumps({"cone": args.cone, "audit": audit, "rows": rows_out,
+                      "analyze_max_row_noise_pct": noise}, indent=1))
     bad = [r for r in rows_out if r["verdict"].startswith("INCONSISTENT")]
     if bad:
         print(f"VERDICT: INCONSISTENT ({len(bad)}/{len(rows_out)} rows outside tolerance)")
