@@ -120,6 +120,9 @@ bool ContractRegimeOfSlug(const std::string& slug, EscapeRegime* out) {
   for (const EscapeRegime regime : RegisteredEscapeRegimes()) {
     // The sentinel is in the table (the registered string face is complete) but is not a regime
     // name (G3): a name lookup must not accept "unset" as an escape answer, so the walk skips it.
+    // This skip stays the single sanctioned shape only while this is the sole name-lookup
+    // consumer; a second lookup consumer must centralize the exclusion (a regime-only accessor
+    // or a named predicate), not copy the skip.
     if (regime == EscapeRegime::kUnset) {
       continue;
     }

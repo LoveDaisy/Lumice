@@ -430,7 +430,8 @@ member:
 - `partition`: `coverage` (`complete` / `incomplete` / `unknown`), `walk_status`, `walk_closed`,
   `intervals[]` (`lower_rad`, `upper_rad`, `n_components`, `n_closed`, `n_open`). When the
   partition walk escaped, `escape_regime_slug` names the regime — the slug is data, not an enum
-  promise. The typed `escape_regime` appears only when a producer set a contract-registered
+  promise. The typed `escape_regime` appears only beside a non-empty `escape_regime_slug` (the
+  two gates stack: empty slug ⇒ no typed key), and only when a producer set a contract-registered
   regime (none does today: every kernel regime slug lacks a contract value); at the `unset`
   default — no escape, or a refusal whose regime the slug alone names — the key is omitted rather
   than spelled `"unset"`, and `null` stays reserved for non-finite numbers. A `message` may ride

@@ -82,10 +82,12 @@ const std::vector<ExistenceState>& RegisteredExistenceStates();
 // escape answer. Two consequences pinned here: (1) with kUnset in the table,
 // RegisteredEscapeRegimes is the enum's complete registered string face (sentinel included), NOT
 // a roster of regime names — "unset" is not a regime, and the name-lookup consumer
-// (ContractRegimeOfSlug) excludes the sentinel explicitly; (2) the judging consumers
-// (CertifyVisibility, DeriveBucket) read only coverage/existence — their signatures structurally
-// carry the field but their read sets do not include it, so the sentinel cannot enter a verdict
-// (the invariance negative controls pin both arms).
+// (ContractRegimeOfSlug) excludes the sentinel explicitly; (2) the judging consumers read only
+// coverage/existence, so the sentinel cannot enter a verdict: CertifyVisibility's signature
+// structurally carries the context but its read set does not include the field, while
+// DeriveBucket's signature carries only existence x visibility — the field can reach a bucket
+// only through the certificate face (the invariance negative controls pin both arms, the bucket
+// arm end-to-end).
 enum class EscapeRegime { kSlabCrease, kUnset };
 const char* EscapeRegimeName(EscapeRegime regime);
 const std::vector<EscapeRegime>& RegisteredEscapeRegimes();

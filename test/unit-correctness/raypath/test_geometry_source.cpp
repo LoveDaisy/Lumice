@@ -200,6 +200,7 @@ TEST(GeometrySource, RegimeSlugMappingWalksBothTables) {
       continue;
     }
     EXPECT_STRNE(slug, "unknown_escape_regime") << "unnammed kernel regime " << static_cast<int>(regime);
+    EXPECT_STRNE(slug, "unset") << "kernel slug collides with the G3 sentinel spelling";
     EXPECT_FALSE(ContractRegimeOfSlug(slug, nullptr))
         << "kernel slug '" << slug << "' unexpectedly matches a contract value; update the G3 as-built row";
   }
