@@ -675,13 +675,19 @@ of `lm_proj::ProjectExitToPixel`):
 - **Single fisheye (fov 180) on a square canvas**: the inscribed disk covers the
   forward hemisphere (`rho^2 = 1 - cz <= 1`). Past 90° (`cz < 0`, `rho > 1`)
   `kFisheyeEqualAreaMinCz = -1 + 1e-3` (the antipode numerical floor) still
-  admits directions, and the square canvas — whose half-diagonal reaches
-  `rho = sqrt(2)`, i.e. `cz = -1` — images the whole admitted band down to that
-  cull floor (theta up to ~177.4°); every direction past 90° lands in the
-  corner region. The corners of one view are
-  therefore the horizon band of the opposite view: an up-looking and a
-  down-looking frame each deposit that band once, so their summed share exceeds
-  1 (measured 1.121 on the reference scene). This is the display-domain
+  admits directions down to theta ≈ 177.4° — but admission is not landing.
+  The EAR forward map is azimuth-preserving (pixel radius `rho · short/2`),
+  and the square canvas's bounds check clips azimuth a second time: of the
+  admitted off-disk directions only the diagonal sectors
+  (`max(|cos φ|, |sin φ|) ≤ 1/rho`) land inside the canvas; the rest project
+  past the canvas edge and are dropped silently. The landing azimuth share
+  shrinks from every azimuth at the rim (`rho = 1`) to zero at the
+  half-diagonal (`rho = sqrt(2)`), so this family's uniform-sky landed
+  fraction is strictly below 1.0 — a single-fisheye square frame is *not* a
+  full-sky calibration arm. Near the rim (`rho ≈ 1`, most azimuths landing)
+  the corners of one view are still the horizon band of the opposite view: an
+  up-looking and a down-looking frame each deposit that band once, so their
+  summed share exceeds 1 (measured 1.121 on the reference scene). This is the display-domain
   semantics — each frame is "what this view's canvas sees" — not an energy
   leak: no pixel receives energy twice within one frame, and the exposure
   anchor does not read frames.

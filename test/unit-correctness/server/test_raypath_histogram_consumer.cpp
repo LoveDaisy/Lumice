@@ -1874,13 +1874,16 @@ TEST(RaypathHistogramConsumer, FullSkyIdentityOnRectangularFrame) {
 // The corner-ingest mechanism of the single-fisheye family, pinned
 // constructively (the display-domain arm of the calibration): directions past
 // the disk rim — `rho = sqrt(1 - cz) > 1`, i.e. more than 90 deg off axis —
-// are still admitted by `kFisheyeEqualAreaMinCz` and imaged by the square
-// canvas corners, so the up frame and the down frame each deposit the shared
-// horizon band once and their summed share exceeds 1 (measured 1.121 on the
-// reference scene; doc/coordinate-convention.md §12). A tightening of MinCz
-// toward 0 or a rim clip in the frame's bounds check drops these directions
-// and fails here; a canvas-map change moves their landing out of the corner
-// region.
+// are still admitted by `kFisheyeEqualAreaMinCz`, and the diagonal-azimuth
+// members land in the square canvas's corner region, so the up frame and the
+// down frame each deposit them once and their summed share exceeds 1
+// (measured 1.121 on the reference scene; doc/coordinate-convention.md §12).
+// A tightening of MinCz toward 0 or a rim clip in the frame's bounds check
+// drops these directions and fails here; a canvas-map change moves their
+// landing out of the corner region. The cardinal-azimuth negative control
+// pins the other half of the §12 statement: past the rim the projection is
+// azimuth-clipped by the square canvas, so a same-rho cardinal direction
+// projects past the canvas edge and is dropped.
 TEST(RaypathHistogramConsumer, SingleFisheyeCornerBandImagedPastDiskRim) {
   // Square canvas so the corner region (rho in (1, sqrt(2))) exists at all.
   RenderConfig cfg;
@@ -1941,6 +1944,26 @@ TEST(RaypathHistogramConsumer, SingleFisheyeCornerBandImagedPastDiskRim) {
         ADD_FAILURE() << "corner-band ray " << i << " landed inside the disk region: the canvas map changed";
       }
     }
+  }
+
+  // Negative control on the azimuth, pinning the doc §12 azimuth-clipping
+  // statement: a cardinal-azimuth direction at the same rho projects past the
+  // canvas edge (pixel offset rho·short/2 along one axis), where the frame's
+  // bounds check drops it. ProjectExitToPixel still reports the hit — the
+  // drop happens in ProjectAndClassifyRay's bounds check — so the assertion
+  // is on the reported pixel being out of the canvas.
+  {
+    const float s = std::sqrt(1.0f - kCz * kCz);
+    float d[3];
+    WorldDir(cfg, s, 0.0f, kCz, d);
+    const Rotation rot = MakeCameraRotation(cfg);
+    const auto pp = BuildProjParams(cfg, rot, static_cast<float>(std::min(cfg.resolution_[0], cfg.resolution_[1])));
+    const auto hit = lm_proj::ProjectExitToPixel(pp, d[0], d[1], d[2]);
+    ASSERT_EQ(hit.count, 1) << "cardinal-azimuth control: projection function stopped admitting past-rim directions";
+    const bool in_canvas = hit.hits[0].px >= 0 && hit.hits[0].px < static_cast<int>(cfg.resolution_[0]) &&
+                           hit.hits[0].py >= 0 && hit.hits[0].py < static_cast<int>(cfg.resolution_[1]);
+    ASSERT_FALSE(in_canvas) << "cardinal-azimuth control landed (px=" << hit.hits[0].px << ", py=" << hit.hits[0].py
+                            << "): the past-rim azimuth clipping changed";
   }
 
   // AC2 tolerance shape: per-pixel float `+=` with no compensation; each
