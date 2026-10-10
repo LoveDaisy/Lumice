@@ -487,6 +487,16 @@ drift from the states.
 
 ### 7.5 mc_evidence: the demoted observation record
 
+**Share-domain caveat (added after the frame-vs-analysis calibration audit).** Every
+`mc_evidence` field whose semantics compares an MC share against a render-arm
+denominator inherits two calibrated facts: an analysis share lives on the whole-sky
+domain while a render frame share lives on the lens landing domain
+(`doc/coordinate-convention.md` §12), and — until the dual-fisheye fold-boundary
+defect is fixed — a dual-fisheye frame additionally under-counts by the scene's
+direct-through energy (measured 18.9% on the reference scene, in a scene-dependent
+way). Same-domain (cone ROI) comparison is the only exact form; whole-sky-vs-frame
+share comparisons are corroboration-grade, never exact.
+
 `mc_evidence.records` carries the schema-2 discovery records unchanged in shape, with the
 classification preserved verbatim on each record's `evidence` field (`actual` / `candidate` /
 `unfinished`). Record kinds keep their schema-2 semantics:
