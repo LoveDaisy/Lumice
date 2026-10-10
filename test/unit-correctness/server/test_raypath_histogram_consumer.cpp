@@ -1733,64 +1733,319 @@ double HistogramSumY(const SimData& data) {
   return sum;
 }
 
-// CURRENT-BEHAVIOUR PIN of the fold-boundary defect (red state committed
-// before this pin; see the previous commit for the red run: image_sum = 0 vs
-// expected 1.9899): the direct-through travel directions of a horizon-sun
-// scene collapse onto wx = -1.0f in float32, the dual-fisheye fold boundary
-// bins them at py == img_h — one row past the canvas — and the frame's bounds
-// check drops them silently, while the analysis consumer counts every ray.
-// Measured on the reference scene this deletes 18.9% of the frame energy
-// (frame ΣY / analysis Σ = 0.8107). The fix turns the dropped assertion at
-// the bottom into the identity pin (image ΣY == analysis ΣY); until then this
-// pins the loss itself, so a partial fix — these collapse directions landing
-// again — fails loudly here. A dual-family loss widening to other directions
-// is NOT covered by this pin nor by FullSkyIdentityOnRectangularFrame (the
-// rect identity exercises only the shared projection path, not the dual
-// fold); the safety net there is the real-scene cross-check's full row read
-// against the recorded reference (frame ΣY / analysis Σ = 0.8107 on the
-// reference scene; crosscheck full row 0.6021).
+// The fold-boundary tangent direction set: the exact direct-through axes of
+// a horizon-sun scene and the float32 collapse band around them (samples
+// from the probe of the real trace: wx = -1.00000012 / -1 / -0.99999994),
+// plus the symmetric tangent set — +x (the first row, in canvas) and the
+// y-axis horizon members that put y_norm = ±1 on the upper/lower circle
+// rims, the lower-circle one being the fx = img_w column tangent. Shared by
+// the identity pins below; one chain 1-2, weight 0.5, wl 550.
+std::pair<double, double> AddTangentRays(Batch& b) {
+  constexpr float kDirs[][3] = {
+    { -1.0f, 0.0f, 0.0f },   { -1.0f, 1e-7f, 0.0f }, { -1.0f, -1e-7f, 0.0f }, { -1.0f, 0.0f, 1e-7f },
+    { -1.0f, 0.0f, -1e-7f }, { 1.0f, 0.0f, 0.0f },   { 0.0f, -1.0f, 0.0f },   { 0.0f, -1.0f, 1e-7f },
+    { 0.0f, -1.0f, -1e-7f }, { 0.0f, 1.0f, 1e-7f },
+  };
+  double expected_sum = 0.0;
+  double abs_sum = 0.0;
+  for (const auto& d : kDirs) {
+    constexpr float kW = 0.5f;
+    b.AddRay(1, kW, d);
+    expected_sum += Y(550.0f, kW);
+    abs_sum += std::fabs(Y(550.0f, kW));
+  }
+  return { expected_sum, abs_sum };
+}
+
+// AC2 identity over the dual-fisheye fold boundary (the green half; the red
+// run of the former CURRENT-BEHAVIOUR pin is in progress history): the
+// direct-through travel directions of a horizon-sun scene collapse onto
+// wx = -1.0f in float32 and land exactly on the fold boundary's canvas-edge
+// tangent points (x_norm = +1.0f → fy = cy + r = img_h; the lower-circle
+// counterpart puts y_norm = +1.0f → fx = img_w). ProjectExitToPixel's dual
+// branch clamps the floored integer pixel into the canvas, binning those
+// measure-zero tangent directions into the last edge bin (the same
+// boundary-belongs-to-edge-bin convention as the rect branch's lon = +pi
+// wrap; doc/coordinate-convention.md §13), so the frame keeps every ray the
+// analysis side counts. Pre-fix reference numbers, kept as history: the drop
+// deleted 18.9% of the reference scene's frame energy (frame/analysis =
+// 0.8107; crosscheck full row 0.6021).
+//
+// Landing pin: the identity assertion is blind to WHERE the energy lands —
+// a clamp to the wrong edge or dimension passes it — so the exact landing of
+// every tangent direction is pinned below against ProjectExitToPixel
+// directly. The y-axis members' fx sits exactly on the circle-centre column
+// boundary (±1e-7 in wy moves fx by ~6e-6 px, floor either side), so their
+// column is a two-pixel window; the dimension the clamp owns is asserted
+// exactly.
 //
 // Cross-platform audit (alongside the rect pole blade, PR #479): this pin
 // needs no cross-platform headroom because its collapse cascade involves no
-// platform-variant transcendental. All four members carry wz = 0 or ±1e-7f,
-// so z_hemi = 0 or fl32(1 + 1e-7f) = 1 + 2^-23, and sqrt(1 + 2^-23) sits one
-// ulp-below-midpoint — still rounds to 1.0f, correctly rounded as IEEE 754
-// requires of sqrt on every platform — so k = r_scale/sqrt(...) = 1 exact,
-// x_norm = 1.0f exact, fy = 1.0f·r + r = img_h exact, and the drop is decided
-// by integer floor. The rect pole, by contrast, runs its cascade through
-// asinf(±1), whose last ulp is the platform libm's choice — see the
-// pole-neighbourhood member of FullSkyIdentityOnRectangularFrame.
-TEST(RaypathHistogramConsumer, FoldBoundaryDropsDirectThroughEnergyOnDualFisheyeFrame) {
+// platform-variant transcendental. The x-axis members carry wz = 0 or
+// ±1e-7f, so z_hemi = 0 or fl32(1 + 1e-7f) = 1 + 2^-23, and sqrt(1 + 2^-23)
+// sits one ulp-below-midpoint — still rounds to 1.0f, correctly rounded as
+// IEEE 754 requires of sqrt on every platform — so k = r_scale/sqrt(...) = 1
+// exact, x_norm = 1.0f exact, fy = 1.0f·r + r = img_h exact, and the integer
+// clamp (not a platform libm) decides the landing. The rect pole, by
+// contrast, runs its cascade through asinf(±1), whose last ulp is the
+// platform libm's choice — see the pole-neighbourhood member of
+// FullSkyIdentityOnRectangularFrame.
+TEST(RaypathHistogramConsumer, FoldBoundaryKeepsDirectThroughEnergyOnDualFisheyeFrame) {
   const RenderConfig cfg = DualFullSkyCfg();
 
   Batch b(1);
   b.AddChain(1, 0, 1, { 1, 2 });
-  // Exactly (-1,0,0) and the float32 collapse band around it: the Snell
-  // round-trip of the direct-through families lands here (samples from the
-  // probe of the real trace: wx = -1.00000012 / -1 / -0.99999994).
-  const float dirs[][3] = {
-    { -1.0f, 0.0f, 0.0f },
-    { -1.0f, 1e-7f, 0.0f },
-    { -1.0f, 0.0f, 1e-7f },
-    { -1.0f, 0.0f, -1e-7f },
-  };
-  double expected_sum = 0.0;
-  for (const auto& d : dirs) {
-    b.AddRay(1, 0.5f, d);
-    expected_sum += Y(550.0f, 0.5f);
-  }
+  const auto [expected_sum, abs_sum] = AddTangentRays(b);
   b.data.ray_seg_count_ = b.data.outgoing_w_.size();
   b.data.outgoing_component_.assign(b.data.outgoing_w_.size(), 0u);
 
   // The analysis side counts every ray (full sky, no projection).
   EXPECT_DOUBLE_EQ(HistogramSumY(b.data), expected_sum);
 
-  // The frame side deposits NONE of it: every one of these directions
-  // collapses to x_norm = +1.0f with z_hemi = 0, so fy = cy + r = img_h and
-  // the bounds check skips the row (doc/coordinate-convention.md §13).
-  EXPECT_EQ(ImageSumY(cfg, b.data), 0.0)
-      << "fold-boundary defect changed: either partially fixed (turn this pin "
-         "into the identity assertion image ΣY == analysis ΣY) or the loss got wider";
+  // The frame side must deposit all of it: every direction above lands on
+  // the fold boundary's tangent points, the clamp bins them into the last
+  // edge row/column, and no energy leaves the frame. Tolerance shape as in
+  // FullSkyIdentityOnRectangularFrame: the image path performs one narrowing
+  // per pixel (double running sum → float), so a pixel's error is bounded
+  // by its own sum times FLT_EPSILON, and the whole-frame bound
+  // max_p(n_p)·FLT_EPSILON·Σ|y| carries headroom.
+  double image_sum = 0.0;
+  size_t max_per_pixel = 0;
+  {
+    RenderConsumer rc(cfg, lumice::test::kTestThreadBudget, ColorClassTable{});
+    rc.Consume(b.data);
+    rc.PrepareSnapshot();
+    const RawXyzResult raw = rc.GetRawXyzResult();
+    ASSERT_NE(raw.xyz_buffer_, nullptr);
+    const size_t total_pix = static_cast<size_t>(raw.img_width_) * static_cast<size_t>(raw.img_height_);
+    for (size_t i = 0; i < total_pix; i++) {
+      image_sum += raw.xyz_buffer_[i * 3 + 1];
+    }
+    ASSERT_GT(image_sum, 0.0) << "positive control: the frame must have imaged the rays";
+    std::map<int, size_t> per_pixel;
+    const Rotation rot = MakeCameraRotation(cfg);
+    const auto pp = BuildProjParams(cfg, rot, static_cast<float>(std::min(cfg.resolution_[0], cfg.resolution_[1])));
+    for (size_t i = 0; i < b.data.outgoing_w_.size(); i++) {
+      const auto hit = lm_proj::ProjectExitToPixel(pp, b.data.outgoing_d_[i * 3], b.data.outgoing_d_[i * 3 + 1],
+                                                   b.data.outgoing_d_[i * 3 + 2]);
+      if (hit.count != 1) {
+        ADD_FAILURE() << "fixture: fold-boundary ray " << i << " must land exactly once (count " << hit.count << ")";
+        continue;
+      }
+      if (hit.hits[0].px < 0 || hit.hits[0].px >= static_cast<int>(cfg.resolution_[0]) || hit.hits[0].py < 0 ||
+          hit.hits[0].py >= static_cast<int>(cfg.resolution_[1])) {
+        ADD_FAILURE() << "fixture: ray " << i << " landed out of canvas (px=" << hit.hits[0].px
+                      << ", py=" << hit.hits[0].py << "); the consumer would drop it silently";
+        continue;
+      }
+      per_pixel[hit.hits[0].py * cfg.resolution_[0] + hit.hits[0].px]++;
+    }
+    for (const auto& [pix, n] : per_pixel) {
+      max_per_pixel = std::max(max_per_pixel, n);
+    }
+  }
+  const double bound = static_cast<double>(max_per_pixel) * FLT_EPSILON * abs_sum;
+  EXPECT_NEAR(image_sum, expected_sum, bound) << "fold-boundary frame Σ Y vs analysis Σ; bound=" << bound;
+  // And the bound is not so loose that it would let a dropped ray through:
+  // every term is the same Y(550, 0.5) and far above it.
+  EXPECT_GT(Y(550.0f, 0.5f), bound) << "a single missing ray must exceed the tolerance";
+
+  // Landing pin — edge-bin ownership, per direction. Upper circle centre
+  // column cx = 64, lower circle cx = 192, r = 64, cy = 64.
+  struct Landing {
+    float dir[3];
+    int py;
+    int px_lo;
+    int px_hi;
+  };
+  const Landing landings[] = {
+    // x_norm = +1 tangent (wx = -1): the fy = img_h row — upper circle for
+    // wz <= 0, lower for wz > 0; both clamp to the last row.
+    { { -1.0f, 0.0f, 0.0f }, 127, 64, 64 },
+    { { -1.0f, 1e-7f, 0.0f }, 127, 63, 64 },
+    { { -1.0f, -1e-7f, 0.0f }, 127, 63, 64 },
+    { { -1.0f, 0.0f, 1e-7f }, 127, 192, 192 },
+    { { -1.0f, 0.0f, -1e-7f }, 127, 64, 64 },
+    // x_norm = -1 (wx = +1): the fy = 0 first row — same tangent set,
+    // already in canvas.
+    { { 1.0f, 0.0f, 0.0f }, 0, 64, 64 },
+    // y_norm = +1 (wy = -1): upper circle lands px = 0 (in canvas), lower
+    // circle (wz > 0) lands px = img_w — the column the same clamp catches.
+    { { 0.0f, -1.0f, 0.0f }, 64, 0, 0 },
+    { { 0.0f, -1.0f, 1e-7f }, 64, 255, 255 },
+    { { 0.0f, -1.0f, -1e-7f }, 64, 0, 0 },
+    { { 0.0f, 1.0f, 1e-7f }, 64, 128, 128 },
+  };
+  {
+    const Rotation rot = MakeCameraRotation(cfg);
+    const auto pp = BuildProjParams(cfg, rot, static_cast<float>(std::min(cfg.resolution_[0], cfg.resolution_[1])));
+    for (const auto& l : landings) {
+      const auto hit = lm_proj::ProjectExitToPixel(pp, l.dir[0], l.dir[1], l.dir[2]);
+      if (hit.count != 1) {
+        ADD_FAILURE() << "tangent direction (" << l.dir[0] << "," << l.dir[1] << "," << l.dir[2]
+                      << ") must produce its main hit (count " << hit.count << ")";
+        continue;
+      }
+      EXPECT_EQ(hit.hits[0].py, l.py) << "dir=(" << l.dir[0] << "," << l.dir[1] << "," << l.dir[2] << ")";
+      EXPECT_GE(hit.hits[0].px, l.px_lo) << "dir=(" << l.dir[0] << "," << l.dir[1] << "," << l.dir[2] << ")";
+      EXPECT_LE(hit.hits[0].px, l.px_hi) << "dir=(" << l.dir[0] << "," << l.dir[1] << "," << l.dir[2] << ")";
+    }
+  }
+}
+
+// AC3 across the whole dual family: the four dual types share the
+// ProjectExitToPixel dual branch, and all four forwards are exact at the
+// tangent points — EAR: k = r_scale/sqrt(1+0) = 1; EDR: acosf(0) and
+// LM_PI_2F are the same f32 value, divided to exactly 1; STR: tanf(pi/4_f32)
+// rounds to exactly 1; ORT: the raw dx at z_hemi >= 0 — so x_norm = ±1.0f on
+// every platform, and one clamp covers all four. Identity per type over the
+// same tangent set.
+TEST(RaypathHistogramConsumer, FoldBoundaryIdentityAcrossDualFamilies) {
+  const LensParam::LensType kTypes[] = {
+    LensParam::kDualFisheyeEqualArea,
+    LensParam::kDualFisheyeEquidistant,
+    LensParam::kDualFisheyeStereographic,
+    LensParam::kDualFisheyeOrthographic,
+  };
+  for (const auto type : kTypes) {
+    RenderConfig cfg = DualFullSkyCfg();
+    cfg.lens_.type_ = type;
+
+    Batch b(1);
+    b.AddChain(1, 0, 1, { 1, 2 });
+    const auto [expected_sum, abs_sum] = AddTangentRays(b);
+    b.data.ray_seg_count_ = b.data.outgoing_w_.size();
+    b.data.outgoing_component_.assign(b.data.outgoing_w_.size(), 0u);
+
+    EXPECT_DOUBLE_EQ(HistogramSumY(b.data), expected_sum);
+
+    double image_sum = 0.0;
+    {
+      RenderConsumer rc(cfg, lumice::test::kTestThreadBudget, ColorClassTable{});
+      rc.Consume(b.data);
+      rc.PrepareSnapshot();
+      const RawXyzResult raw = rc.GetRawXyzResult();
+      if (raw.xyz_buffer_ == nullptr) {
+        ADD_FAILURE() << "dual family " << static_cast<int>(type) << ": no xyz buffer";
+        continue;
+      }
+      const size_t total_pix = static_cast<size_t>(raw.img_width_) * static_cast<size_t>(raw.img_height_);
+      for (size_t i = 0; i < total_pix; i++) {
+        image_sum += raw.xyz_buffer_[i * 3 + 1];
+      }
+    }
+    // Every ray is one segment of equal weight, so the whole-frame bound
+    // with max_p(n_p) ≤ n_rays is 10·FLT_EPSILON·Σ|y| — three orders under
+    // one term.
+    const double bound = static_cast<double>(b.data.outgoing_w_.size()) * FLT_EPSILON * abs_sum;
+    EXPECT_NEAR(image_sum, expected_sum, bound)
+        << "dual family " << static_cast<int>(type) << ": fold-boundary frame Σ Y vs analysis Σ; bound=" << bound;
+    EXPECT_GT(Y(550.0f, 0.5f), bound) << "a single missing ray must exceed the tolerance";
+
+    // And no direction of the tangent set may land out of canvas — the clamp
+    // must hold on this type too (checked directly, not through the sums).
+    const Rotation rot = MakeCameraRotation(cfg);
+    const auto pp = BuildProjParams(cfg, rot, static_cast<float>(std::min(cfg.resolution_[0], cfg.resolution_[1])));
+    for (size_t i = 0; i < b.data.outgoing_d_.size() / 3; i++) {
+      const auto hit = lm_proj::ProjectExitToPixel(pp, b.data.outgoing_d_[i * 3], b.data.outgoing_d_[i * 3 + 1],
+                                                   b.data.outgoing_d_[i * 3 + 2]);
+      if (hit.count != 1) {
+        ADD_FAILURE() << "dual family " << static_cast<int>(type) << ": ray " << i << " count " << hit.count;
+        continue;
+      }
+      EXPECT_GE(hit.hits[0].px, 0) << "dual family " << static_cast<int>(type) << ": ray " << i;
+      EXPECT_LT(hit.hits[0].px, cfg.resolution_[0]) << "dual family " << static_cast<int>(type) << ": ray " << i;
+      EXPECT_GE(hit.hits[0].py, 0) << "dual family " << static_cast<int>(type) << ": ray " << i;
+      EXPECT_LT(hit.hits[0].py, cfg.resolution_[1]) << "dual family " << static_cast<int>(type) << ": ray " << i;
+    }
+  }
+}
+
+// AC3 over a genuinely uniform direction set on the dual EAR frame — the
+// in-tree form of the synthetic probe's finding (uniform sets measured
+// exactly 1.0 even pre-fix: the tangent set is measure-zero, so a generic
+// direction set cannot see the old drop). This is the companion that keeps
+// the clamp from ever *moving* generic landings: the identity must hold here
+// too, and a clamp rewrite that shifted in-canvas pixels would show up as a
+// double-count against the analysis sum.
+TEST(RaypathHistogramConsumer, FullSkyIdentityOnDualFisheyeFrame) {
+  const RenderConfig cfg = DualFullSkyCfg();
+
+  constexpr size_t kRays = 4000;
+  uint32_t state = 987654321u;
+  auto next = [&state]() {
+    state = state * 1664525u + 1013904223u;
+    return static_cast<float>(state >> 8) / static_cast<float>(1u << 24);
+  };
+  Batch b(1);
+  b.AddChain(1, 0, 1, { 1, 2 });
+  double expected_sum = 0.0;
+  double abs_sum = 0.0;
+  auto emit = [&](float dx, float dy, float dz) {
+    const float w = 0.1f + next();
+    const float wl = 480.0f + next() * 140.0f;
+    b.data.outgoing_wl_.push_back(wl);
+    b.AddRay(1, w, dx, dy, dz);
+    expected_sum += Y(wl, w);
+    abs_sum += std::fabs(Y(wl, w));
+  };
+  // Uniform over the sphere (cos z uniform) — both horizon bands, both fold
+  // boundaries' neighbourhoods and both poles.
+  for (size_t i = 0; i < kRays; i++) {
+    const float z = 2.0f * next() - 1.0f;
+    const float phi = next() * 2.0f * math::kPi;
+    const float r = std::sqrt(std::max(0.0f, 1.0f - z * z));
+    emit(r * std::cos(phi), r * std::sin(phi), z);
+  }
+  b.data.ray_seg_count_ = b.data.outgoing_w_.size();
+  b.data.outgoing_component_.assign(b.data.outgoing_w_.size(), 0u);
+
+  EXPECT_DOUBLE_EQ(HistogramSumY(b.data), expected_sum);
+
+  double image_sum = 0.0;
+  size_t max_per_pixel = 0;
+  {
+    RenderConsumer rc(cfg, lumice::test::kTestThreadBudget, ColorClassTable{});
+    rc.Consume(b.data);
+    rc.PrepareSnapshot();
+    const RawXyzResult raw = rc.GetRawXyzResult();
+    ASSERT_NE(raw.xyz_buffer_, nullptr);
+    const size_t total_pix = static_cast<size_t>(raw.img_width_) * static_cast<size_t>(raw.img_height_);
+    for (size_t i = 0; i < total_pix; i++) {
+      image_sum += raw.xyz_buffer_[i * 3 + 1];
+    }
+    ASSERT_GT(image_sum, 0.0) << "positive control: the frame must have imaged the rays";
+    std::map<int, size_t> per_pixel;
+    const Rotation rot = MakeCameraRotation(cfg);
+    const auto pp = BuildProjParams(cfg, rot, static_cast<float>(std::min(cfg.resolution_[0], cfg.resolution_[1])));
+    for (size_t i = 0; i < b.data.outgoing_w_.size(); i++) {
+      const auto hit = lm_proj::ProjectExitToPixel(pp, b.data.outgoing_d_[i * 3], b.data.outgoing_d_[i * 3 + 1],
+                                                   b.data.outgoing_d_[i * 3 + 2]);
+      if (hit.count != 1) {
+        ADD_FAILURE() << "fixture: uniform-set ray " << i << " must land exactly once (dual, no overlap; count "
+                      << hit.count << ")";
+        continue;
+      }
+      if (hit.hits[0].px < 0 || hit.hits[0].px >= static_cast<int>(cfg.resolution_[0]) || hit.hits[0].py < 0 ||
+          hit.hits[0].py >= static_cast<int>(cfg.resolution_[1])) {
+        ADD_FAILURE() << "fixture: ray " << i << " landed out of canvas (px=" << hit.hits[0].px
+                      << ", py=" << hit.hits[0].py << "); the consumer would drop it silently";
+        continue;
+      }
+      per_pixel[hit.hits[0].py * cfg.resolution_[0] + hit.hits[0].px]++;
+    }
+    for (const auto& [pix, n] : per_pixel) {
+      max_per_pixel = std::max(max_per_pixel, n);
+    }
+  }
+  const double bound = static_cast<double>(max_per_pixel) * FLT_EPSILON * abs_sum;
+  EXPECT_NEAR(image_sum, expected_sum, bound) << "uniform-set dual frame Σ Y vs analysis Σ; bound=" << bound;
+  // The bound must stay far under one term, or a dropped ray could hide in it.
+  double min_term = 1e300;
+  for (size_t i = 0; i < b.data.outgoing_w_.size(); i++) {
+    min_term = std::min(min_term, Y(b.data.outgoing_wl_[i], b.data.outgoing_w_[i]));
+  }
+  EXPECT_GT(min_term, bound) << "a single missing ray must exceed the tolerance";
 }
 
 // The AC2 identity over a genuinely full-sky direction set — every direction
