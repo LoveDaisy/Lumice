@@ -345,11 +345,10 @@ target_compile_definitions(unit_correctness_test PRIVATE
 set_target_properties(unit_correctness_test PROPERTIES
   BUILD_RPATH "$<TARGET_FILE_DIR:GTest::gtest>")
 
-# Every gTest binary writes one raw XML file per CTest invocation. CI deletes this
-# directory before its measured run; creating it at configure time keeps local
-# `ctest` calls valid without requiring a wrapper.
-set(LUMICE_GTEST_DURATION_DIR "${CMAKE_CURRENT_BINARY_DIR}/test-durations")
-file(MAKE_DIRECTORY "${LUMICE_GTEST_DURATION_DIR}")
+# gTest duration XML is opt-in per CTest invocation through GoogleTest's
+# GTEST_OUTPUT=xml:<unique-directory>/ environment variable. The gtest-duration label below is the
+# machine-readable authority the duration collector uses to require one XML report for each gTest
+# CTest case; local CTest calls that do not request reports have no shared output side effect.
 
 # 3rd argv = repository root. test_json_parser_parity.cpp enumerates the on-disk config corpora
 # (examples/, test/e2e/configs/, test/fixtures/) from it, so newly added corpus files are covered
@@ -357,9 +356,8 @@ file(MAKE_DIRECTORY "${LUMICE_GTEST_DURATION_DIR}")
 add_test(NAME "LumiceUnitCorrectnessTest" COMMAND unit_correctness_test
   "${PROJ_TEST_DIR}/fixtures/v3_config.json"
   "${CMAKE_CURRENT_BINARY_DIR}"
-  "${CMAKE_SOURCE_DIR}"
-  "--gtest_output=xml:${LUMICE_GTEST_DURATION_DIR}/LumiceUnitCorrectnessTest.xml")
-set_tests_properties("LumiceUnitCorrectnessTest" PROPERTIES LABELS "unit-correctness")
+  "${CMAKE_SOURCE_DIR}")
+set_tests_properties("LumiceUnitCorrectnessTest" PROPERTIES LABELS "unit-correctness;gtest-duration")
 
 # Headless raypath composition has no GUI link dependency and runs in every test build.
 add_executable(raypath_composition_test
@@ -370,9 +368,8 @@ target_link_libraries(raypath_composition_test PRIVATE GTest::gtest ${CMAKE_THRE
   lumice_obj lumice_foundation_obj lumice_analytic_kernel lumice_raypath_obj)
 target_compile_definitions(raypath_composition_test PRIVATE
   LUMICE_DIAGNOSTIC_FIXTURE_DIR="${PROJ_TEST_DIR}/fixtures/raypath-diagnostics")
-add_test(NAME LumiceRaypathCompositionTest COMMAND raypath_composition_test
-  "--gtest_output=xml:${LUMICE_GTEST_DURATION_DIR}/LumiceRaypathCompositionTest.xml")
-set_tests_properties(LumiceRaypathCompositionTest PROPERTIES LABELS "composition-correctness")
+add_test(NAME LumiceRaypathCompositionTest COMMAND raypath_composition_test)
+set_tests_properties(LumiceRaypathCompositionTest PROPERTIES LABELS "composition-correctness;gtest-duration")
 
 # --------------------------------------------------------------------------------------------------
 # capi_header_self_containment_test (unit-correctness): every engine surface header compiles when it
@@ -447,9 +444,8 @@ set_target_properties(parity_test PROPERTIES
 
 add_test(NAME "LumiceParityTest" COMMAND parity_test
   "${PROJ_TEST_DIR}/fixtures/v3_config.json"
-  "${CMAKE_CURRENT_BINARY_DIR}"
-  "--gtest_output=xml:${LUMICE_GTEST_DURATION_DIR}/LumiceParityTest.xml")
-set_tests_properties("LumiceParityTest" PROPERTIES LABELS "parity")
+  "${CMAKE_CURRENT_BINARY_DIR}")
+set_tests_properties("LumiceParityTest" PROPERTIES LABELS "parity;gtest-duration")
 
 # --------------------------------------------------------------------------------------------------
 # golden_analytic_test
@@ -492,9 +488,8 @@ set_target_properties(golden_analytic_test PROPERTIES
 
 add_test(NAME "LumiceGoldenAnalyticTest" COMMAND golden_analytic_test
   "${PROJ_TEST_DIR}/fixtures/v3_config.json"
-  "${CMAKE_CURRENT_BINARY_DIR}"
-  "--gtest_output=xml:${LUMICE_GTEST_DURATION_DIR}/LumiceGoldenAnalyticTest.xml")
-set_tests_properties("LumiceGoldenAnalyticTest" PROPERTIES LABELS "golden-analytic")
+  "${CMAKE_CURRENT_BINARY_DIR}")
+set_tests_properties("LumiceGoldenAnalyticTest" PROPERTIES LABELS "golden-analytic;gtest-duration")
 
 # --------------------------------------------------------------------------------------------------
 # gui_unit_test — unit-correctness layer, gui subsystem, second CMake target.
@@ -635,9 +630,8 @@ if(BUILD_GUI)
   set_target_properties(gui_unit_test PROPERTIES
     BUILD_RPATH "$<TARGET_FILE_DIR:GTest::gtest>")
 
-  add_test(NAME "LumiceGuiUnitTest" COMMAND gui_unit_test
-    "--gtest_output=xml:${LUMICE_GTEST_DURATION_DIR}/LumiceGuiUnitTest.xml")
-  set_tests_properties("LumiceGuiUnitTest" PROPERTIES LABELS "unit-correctness")
+  add_test(NAME "LumiceGuiUnitTest" COMMAND gui_unit_test)
+  set_tests_properties("LumiceGuiUnitTest" PROPERTIES LABELS "unit-correctness;gtest-duration")
 endif()
 
 # --------------------------------------------------------------------------------------------------
@@ -727,9 +721,9 @@ if(BUILD_GUI)
   set_target_properties(composition_correctness_test PROPERTIES
     BUILD_RPATH "$<TARGET_FILE_DIR:GTest::gtest>")
 
-  add_test(NAME "LumiceCompositionCorrectnessTest" COMMAND composition_correctness_test
-    "--gtest_output=xml:${LUMICE_GTEST_DURATION_DIR}/LumiceCompositionCorrectnessTest.xml")
-  set_tests_properties("LumiceCompositionCorrectnessTest" PROPERTIES LABELS "composition-correctness")
+  add_test(NAME "LumiceCompositionCorrectnessTest" COMMAND composition_correctness_test)
+  set_tests_properties("LumiceCompositionCorrectnessTest" PROPERTIES
+    LABELS "composition-correctness;gtest-duration")
 endif()
 
 # --------------------------------------------------------------------------------------------------

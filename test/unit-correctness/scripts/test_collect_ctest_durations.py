@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import json
-import math
-import subprocess
 import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -24,6 +22,28 @@ def write_xml(path: Path, cases: list[dict[str, str]]) -> Path:
     return path
 
 
+def write_metadata(path: Path, tests: list[tuple[str, str, bool]]) -> Path:
+    payload = {
+        "kind": "ctestInfo",
+        "tests": [
+            {
+                "name": name,
+                "command": [f"/bin/{executable}"],
+                "properties": [
+                    {
+                        "name": "LABELS",
+                        "value": ["unit-correctness", *(("gtest-duration",) if is_gtest else ())],
+                    }
+                ],
+            }
+            for name, executable, is_gtest in tests
+        ],
+        "version": {"major": 1, "minor": 0},
+    }
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    return path
+
+
 def test_collects_parameterized_gtest_cases_and_plain_ctest_cases(tmp_path):
     ctest = write_xml(
         tmp_path / "ctest.xml",
@@ -32,14 +52,24 @@ def test_collects_parameterized_gtest_cases_and_plain_ctest_cases(tmp_path):
             {"name": "LumiceCapiHeaderSelfContainment", "classname": "ctest", "time": "0.2"},
         ],
     )
-    gtest = write_xml(
-        tmp_path / "unit.xml",
+    metadata = write_metadata(
+        tmp_path / "metadata.json",
+        [
+            ("LumiceUnitCorrectnessTest", "unit_correctness_test", True),
+            ("LumiceCapiHeaderSelfContainment", "capi_header_self_containment_test", False),
+        ],
+    )
+    report_dir = tmp_path / "gtest"
+    report_dir.mkdir()
+    write_xml(
+        report_dir / "unit_correctness_test.xml",
         [
             {"name": "Handles/0", "classname": "TypedSuite/Int", "time": "1.25"},
             {"name": "Skipped", "classname": "Suite", "time": "0", "status": "notrun"},
         ],
     )
-    assert collector.collect(ctest, {"LumiceUnitCorrectnessTest": gtest}) == {
+    names, specs = collector._ctest_metadata(metadata, report_dir)
+    assert collector.collect(ctest, names, specs) == {
         "LumiceUnitCorrectnessTest::TypedSuite/Int.Handles/0": 1.25,
         "LumiceUnitCorrectnessTest::Suite.Skipped": 0.0,
         "CTest::LumiceCapiHeaderSelfContainment": 0.2,
@@ -48,11 +78,22 @@ def test_collects_parameterized_gtest_cases_and_plain_ctest_cases(tmp_path):
 
 @pytest.mark.parametrize(
     "kind",
-    ["missing-gtest", "empty-ctest", "bad-xml", "duplicate-ctest", "duplicate-gtest", "nonfinite", "negative"],
+    [
+        "missing-gtest",
+        "empty-ctest",
+        "bad-xml",
+        "duplicate-ctest",
+        "duplicate-gtest",
+        "nonfinite",
+        "negative",
+        "metadata-missing-run",
+        "run-missing-metadata",
+    ],
 )
 def test_rejects_incomplete_or_invalid_reports(tmp_path, kind):
     ctest_cases = [{"name": "Unit", "classname": "ctest", "time": "1"}]
     gtest_cases = [{"name": "Case", "classname": "Suite", "time": "1"}]
+    metadata_tests = [("Unit", "unit_test", True)]
     if kind == "empty-ctest":
         ctest_cases = []
     elif kind == "duplicate-ctest":
@@ -63,19 +104,50 @@ def test_rejects_incomplete_or_invalid_reports(tmp_path, kind):
         gtest_cases[0]["time"] = "nan"
     elif kind == "negative":
         gtest_cases[0]["time"] = "-1"
+    elif kind == "metadata-missing-run":
+        metadata_tests.append(("Other", "other_test", False))
+    elif kind == "run-missing-metadata":
+        ctest_cases.append({"name": "Other", "classname": "ctest", "time": "1"})
     ctest = write_xml(tmp_path / "ctest.xml", ctest_cases)
-    gtest = write_xml(tmp_path / "gtest.xml", gtest_cases)
+    metadata = write_metadata(tmp_path / "metadata.json", metadata_tests)
+    report_dir = tmp_path / "gtest"
+    report_dir.mkdir()
+    gtest = report_dir / "unit_test.xml"
+    if kind != "missing-gtest":
+        write_xml(gtest, gtest_cases)
     if kind == "bad-xml":
         gtest.write_text("<broken", encoding="utf-8")
-    specs = {"Missing": gtest} if kind == "missing-gtest" else {"Unit": gtest}
+    names, specs = collector._ctest_metadata(metadata, report_dir)
     with pytest.raises(collector.ReportError):
-        collector.collect(ctest, specs)
+        collector.collect(ctest, names, specs)
+
+
+def test_rejects_two_ctest_cases_sharing_one_gtest_report(tmp_path):
+    metadata = write_metadata(
+        tmp_path / "metadata.json",
+        [("UnitA", "unit_test", True), ("UnitB", "unit_test", True)],
+    )
+    with pytest.raises(collector.ReportError, match="is shared with UnitA"):
+        collector._ctest_metadata(metadata, tmp_path / "gtest")
 
 
 def test_cli_refuses_to_overwrite_a_report(tmp_path):
     ctest = write_xml(tmp_path / "ctest.xml", [{"name": "Plain", "classname": "ctest", "time": "0.1"}])
+    metadata = write_metadata(tmp_path / "metadata.json", [("Plain", "plain_test", False)])
+    report_dir = tmp_path / "gtest"
+    report_dir.mkdir()
     output = tmp_path / "durations.json"
-    assert collector.main(["--ctest-junit", str(ctest), "--output", str(output)]) == 0
+    args = [
+        "--ctest-junit",
+        str(ctest),
+        "--ctest-metadata",
+        str(metadata),
+        "--gtest-dir",
+        str(report_dir),
+        "--output",
+        str(output),
+    ]
+    assert collector.main(args) == 0
     original = output.read_text(encoding="utf-8")
-    assert collector.main(["--ctest-junit", str(ctest), "--output", str(output)]) == 1
+    assert collector.main(args) == 1
     assert output.read_text(encoding="utf-8") == original

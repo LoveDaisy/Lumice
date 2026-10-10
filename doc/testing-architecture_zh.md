@@ -1005,10 +1005,12 @@ run 耗时超过 **T = 60 s** 的每条测试都须有带理由的登记；`phas
 
 **量的是什么。** 三种边界分开留痕：
 
-- gTest binary 写原始 XML，CTest 写本次选中清单的 JUnit；`collect_ctest_durations.py` 对账后产出
-  `<CTest name>::<suite>.<case>`。缺失/坏/空 XML、未运行目标、重复 ID 与非有限时长均判错。case 时间
-  不含进程启动与 suite/global setup，故保留原始 CTest JUnit/`LastTest.log`，不把 suite 总时长加到
-  case 上冒充墙钟。
+- gTest 的 invocation 通过 `GTEST_OUTPUT` 显式传入独立输出目录；CTest metadata 用
+  `gtest-duration` label 标记参与者并给出可执行文件名，因此 workflow 不再维护第二份 target/path 清单。
+  CTest 同时写本次选中清单的 JUnit；`collect_ctest_durations.py` 对 metadata、JUnit 与 XML 三方对账后
+  产出 `<CTest name>::<suite>.<case>`。缺失/坏/空 XML、metadata 与实跑集合不符、两个 CTest case 共用
+  一份报告、重复 ID 与非有限时长均判错；未显式请求耗时证据的本地 CTest 不写 XML。case 时间不含进程
+  启动与 suite/global setup，故保留原始 CTest JUnit/`LastTest.log`，不把 suite 总时长加到 case 上冒充墙钟。
 - pytest 仍由 `duration_report_plugin.py` 写 setup + call + teardown；共享 fixture 单列为
   `<定义处>::<fixture:NAME>`，多 worker 取最大值，避免把 setup 随机归给第一条用例。
 - `measure_ci_phase.py` 用 monotonic 包住真实命令，实时透传输出与退出码；每次 invocation 用独立文件且

@@ -2079,12 +2079,16 @@ says nothing — most entries do (see below).
 
 **What is measured.** There are three boundaries, and none is allowed to impersonate another:
 
-- **gTest cases:** each registered gTest binary writes XML. CTest also writes JUnit for the selected
-  run, and `scripts/collect_ctest_durations.py` reconciles the two lists before producing stable ids
-  of the form `<CTest name>::<suite>.<case>`. Missing/bad/empty gTest XML, a selected CTest target
-  that did not run, duplicate ids and non-finite durations are errors. gTest's case timer does not
-  include process startup or suite/global setup; the raw CTest JUnit and `LastTest.log` are retained
-  beside it rather than adding a suite total to the case table and calling the sum wall clock.
+- **gTest cases:** the invocation supplies a unique output directory through GoogleTest's
+  `GTEST_OUTPUT`; CTest metadata marks each participating test with the `gtest-duration` label and
+  supplies its executable name, so there is no second workflow list of gTest targets or report paths.
+  CTest also writes JUnit for the selected run, and `scripts/collect_ctest_durations.py` reconciles
+  metadata, JUnit and XML before producing stable ids of the form `<CTest name>::<suite>.<case>`.
+  Missing/bad/empty gTest XML, a metadata/run mismatch, two CTest cases sharing one report, duplicate
+  ids and non-finite durations are errors. A local CTest invocation that does not request duration
+  evidence writes no XML. gTest's case timer does not include process startup or suite/global setup;
+  the raw CTest JUnit and `LastTest.log` are retained beside it rather than adding a suite total to the
+  case table and calling the sum wall clock.
 - **pytest cases and fixtures:** setup + call + teardown of each test, written by the pytest plugin
   `scripts/duration_report_plugin.py`, which CI loads explicitly (`PYTHONPATH=scripts pytest -p
   duration_report_plugin --duration-report=PATH`); nothing else loads it, and without the option it

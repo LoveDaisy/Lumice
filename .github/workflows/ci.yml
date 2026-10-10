@@ -336,8 +336,12 @@ jobs:
       - name: Test
         shell: bash
         run: |
-          rm -rf build/test/test-durations
-          mkdir -p build/test/test-durations
+          report_dir="$GITHUB_WORKSPACE/ci-duration/gtest"
+          mkdir -p "$report_dir"
+          ctest --test-dir build --show-only=json-v1 \
+            -L "unit-correctness|composition-correctness|parity|golden-analytic" \
+            > ci-duration/ctest-metadata.json
+          export GTEST_OUTPUT="xml:$report_dir/"
           python scripts/measure_ci_phase.py --report ci-duration/ctest.json --phase ctest -- \
             ctest --test-dir build --output-on-failure \
               -L "unit-correctness|composition-correctness|parity|golden-analytic" \
@@ -346,20 +350,10 @@ jobs:
       - name: Collect and check CTest durations
         shell: bash
         run: |
-          gtest_args=(
-            --gtest "LumiceUnitCorrectnessTest=build/test/test-durations/LumiceUnitCorrectnessTest.xml"
-            --gtest "LumiceRaypathCompositionTest=build/test/test-durations/LumiceRaypathCompositionTest.xml"
-            --gtest "LumiceParityTest=build/test/test-durations/LumiceParityTest.xml"
-            --gtest "LumiceGoldenAnalyticTest=build/test/test-durations/LumiceGoldenAnalyticTest.xml"
-          )
-          if [ "${{ matrix.build_gui }}" = "ON" ]; then
-            gtest_args+=(
-              --gtest "LumiceGuiUnitTest=build/test/test-durations/LumiceGuiUnitTest.xml"
-              --gtest "LumiceCompositionCorrectnessTest=build/test/test-durations/LumiceCompositionCorrectnessTest.xml"
-            )
-          fi
           python scripts/collect_ctest_durations.py \
-            --ctest-junit ci-duration/ctest.xml "${gtest_args[@]}" \
+            --ctest-junit ci-duration/ctest.xml \
+            --ctest-metadata ci-duration/ctest-metadata.json \
+            --gtest-dir ci-duration/gtest \
             --output ci-duration/ctest-durations.json
           python scripts/check_test_durations.py --job "${{ matrix.name }}" \
             --report ci-duration/ctest-durations.json \
@@ -373,7 +367,6 @@ jobs:
           name: ctest-durations-${{ matrix.cache_key }}
           path: |
             ci-duration
-            build/test/test-durations
             build/Testing/Temporary/LastTest.log
           if-no-files-found: warn
           retention-days: 30

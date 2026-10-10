@@ -325,9 +325,10 @@ deleting its line, and an entry whose edge is gone fails the check.
   `id`, `job`, `ci_seconds` and a real reason; >2× its registered time, a stale id, malformed data or
   `TODO` is red. `phase_budgets` limits measured wall-clock phases and serial aggregates, catching
   cumulative growth when every case remains below 60 s; missing/unknown/duplicate phase reports and
-  an over-limit sum are red. The build matrix emits CTest JUnit plus one XML per gTest binary
-  (`collect_ctest_durations.py` reconciles them), while pytest emits case/fixture reports through
-  `duration_report_plugin.py`; `measure_ci_phase.py` records the real command's monotonic wall clock
+  an over-limit sum are red. The build matrix emits CTest JUnit plus invocation-scoped XML for each
+  `gtest-duration`-labelled binary (`collect_ctest_durations.py` reconciles metadata, JUnit and XML),
+  while pytest emits case/fixture reports through `duration_report_plugin.py`;
+  `measure_ci_phase.py` records the real command's monotonic wall clock
   and exit code. Raw reports are uploaded on every outcome. This runtime input does not exist at
   pre-commit time, so the gate is not part of `check_policies.py`. There is no flag/env/inline
   exemption: change the reviewed registry or make the work cheaper. A new test job is not covered
