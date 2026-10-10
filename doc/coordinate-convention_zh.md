@@ -417,9 +417,18 @@ ROI），要么带上下面各 family 的落域分数。
 
 **每 family 落域**（均匀全天方向的落域分数）：
 
-- **Rectangular**：1.0——`lon` 模 wrap、`lat` 永不越界。全天空 rect 帧与全天空
-  analysis total 一致到 float 求和噪声（实测相对 4e-8），这使该 family 成为能量
-  对账审计的校准臂。
+- **Rectangular**：1.0——`lon` 模 wrap、`|polar| < 1` 的方向 `lat` 全部留在画布内。
+  精确极点（`|polar| == 1.0f`）坐在这张图的 f32 刀刃上：`py = floor(-asinf(polar)·scale + H/2)`
+  在 `lat = ±π/2` 处灾难性相消，平台 `asinf(±1.0f)` 的末位 ulp 决定落最后一块画布行
+  还是画布外一行（被帧侧 bounds check 静默丢弃）。Apple libm 把 π/2 向下舍、落界内；
+  glibc x86_64/aarch64 与 MSVC 向上舍、丢弃——同一 fixture 跨 CI 实测（run
+  38034154651：Ubuntu x86_64 / Ubuntu ARM64 / Windows MSVC 红、macOS 绿），并在
+  macOS 上把 `lat` 朝 glibc 方向拨 1 ulp 复现了丢弃。离极点 δ 弧度的方向以 δ·`scale`
+  像素的边距落盘，所以刀刃是输入方向的一个测度零集合，不是邻域效应（均匀球面集
+  `|z| ≤ 0.9999975` 仍有 0.023 px 的行边距）。全天空 rect 帧与全天空
+  analysis total 一致到 float 求和噪声（实测相对 4e-8；该残差是逐像素 double 累加
+  在发布时一次性收窄到 float 的机制——`src/server/render.hpp`/`render.cpp`——能量
+  恒等式测试的容差把它形式化），这使该 family 成为能量对账审计的校准臂。
 - **Dual-fisheye**：方向→圆盘映射 1.0（每半球折到一个圆盘，`rho² = 1 − |z| ≤ 1` 严格
   成立），**除下述实测缺陷外**。
 - **单鱼眼（fov 180）方形画布**：内切圆覆盖前半球（`rho² = 1 − cz ≤ 1`）。90° 之后

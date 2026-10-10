@@ -666,10 +666,24 @@ fractions below.
 **Landing domain per family** (uniform-sky landed fraction, lens-scale formulas
 of `lm_proj::ProjectExitToPixel`):
 
-- **Rectangular**: 1.0 — `lon` wraps by modulo, `lat` never leaves the canvas.
-  A rectangular full-sky frame and a full-sky analysis total agree to float
-  summation noise (measured 4e-8 relative), which is what makes this family the
-  calibration arm for energy-accounting audits.
+- **Rectangular**: 1.0 — `lon` wraps by modulo, `lat` stays inside the canvas
+  for every direction with `|polar| < 1`. The exact poles (`|polar| == 1.0f`)
+  sit on an f32 blade of the map: `py = floor(-asinf(polar)·scale + H/2)`
+  cancels catastrophically at `lat = ±π/2`, so the last ulp of the platform's
+  `asinf(±1.0f)` decides between the last canvas row and one row past it
+  (where the frame's bounds check drops the ray). Apple libm rounds π/2 down
+  and lands in-canvas; glibc x86_64/aarch64 and MSVC round up and drop —
+  measured on the same fixture across CI (run 38034154651: Ubuntu x86_64 /
+  Ubuntu ARM64 / Windows MSVC red, macOS green), and reproduced on macOS by
+  pushing `lat` one ulp in the glibc direction. A direction δ radians off the
+  pole lands with margin δ·`scale` pixels, so the blade is a measure-zero set
+  of input directions, not a neighbourhood effect (a uniform sphere set with
+  `|z| ≤ 0.9999975` keeps a 0.023 px row margin). A rectangular full-sky
+  frame and a full-sky analysis total agree to float summation noise (measured
+  4e-8 relative; that residual is a per-pixel double running sum narrowed to
+  float once at publish — `src/server/render.hpp`/`render.cpp` — the
+  mechanism the energy-identity test's tolerance formalizes), which is what
+  makes this family the calibration arm for energy-accounting audits.
 - **Dual-fisheye**: 1.0 on the direction→disk map (each hemisphere folds onto
   one disk, `rho^2 = 1 - |z| <= 1` exactly), **except** one measured defect below.
 - **Single fisheye (fov 180) on a square canvas**: the inscribed disk covers the

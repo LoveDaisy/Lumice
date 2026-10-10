@@ -1749,6 +1749,17 @@ double HistogramSumY(const SimData& data) {
 // fold); the safety net there is the real-scene cross-check's full row read
 // against the recorded reference (frame ΣY / analysis Σ = 0.8107 on the
 // reference scene; crosscheck full row 0.6021).
+//
+// Cross-platform audit (alongside the rect pole blade, PR #479): this pin
+// needs no cross-platform headroom because its collapse cascade involves no
+// platform-variant transcendental. All four members carry wz = 0 or ±1e-7f,
+// so z_hemi = 0 or fl32(1 + 1e-7f) = 1 + 2^-23, and sqrt(1 + 2^-23) sits one
+// ulp-below-midpoint — still rounds to 1.0f, correctly rounded as IEEE 754
+// requires of sqrt on every platform — so k = r_scale/sqrt(...) = 1 exact,
+// x_norm = 1.0f exact, fy = 1.0f·r + r = img_h exact, and the drop is decided
+// by integer floor. The rect pole, by contrast, runs its cascade through
+// asinf(±1), whose last ulp is the platform libm's choice — see the
+// pole-neighbourhood member of FullSkyIdentityOnRectangularFrame.
 TEST(RaypathHistogramConsumer, FoldBoundaryDropsDirectThroughEnergyOnDualFisheyeFrame) {
   const RenderConfig cfg = DualFullSkyCfg();
 
@@ -1784,11 +1795,15 @@ TEST(RaypathHistogramConsumer, FoldBoundaryDropsDirectThroughEnergyOnDualFisheye
 
 // The AC2 identity over a genuinely full-sky direction set — every direction
 // including the horizon band and the exact direct-through axis — on the one
-// family whose landing domain is the whole sky (rectangular: lon wraps, lat
-// never leaves the canvas). This is the green half of the calibration: the
-// same batch through this consumer and through a full-coverage frame sums to
-// the same number, which is what licenses the frame as the energy-accounting
-// calibration arm (measured on the reference scene: 4e-8 relative).
+// family whose landing domain is the whole sky (rectangular: lon wraps; lat
+// stays in the canvas for every |polar| < 1, the exact poles being an f32
+// blade the fixture steps around — see the pole-neighbourhood member below
+// and doc/coordinate-convention.md §13). This is the green half of the
+// calibration: the same batch through this consumer and through a
+// full-coverage frame sums to the same number, which is what licenses the
+// frame as the energy-accounting calibration arm (measured on the reference
+// scene: 4e-8 relative — that residual is the double-accumulator narrowing
+// dust the bound below formalizes, not per-pixel float `+=` drift).
 TEST(RaypathHistogramConsumer, FullSkyIdentityOnRectangularFrame) {
   RenderConfig cfg;
   cfg.id_ = 0;
@@ -1830,7 +1845,27 @@ TEST(RaypathHistogramConsumer, FullSkyIdentityOnRectangularFrame) {
   // dual-fisheye fold boundary loses them.
   emit(1.0f, 0.0f, 0.0f);
   emit(-1.0f, 0.0f, 0.0f);
-  emit(0.0f, 0.0f, 1.0f);
+  // Pole NEIGHBOURHOOD, 0.01 rad off the zenith — deliberately NOT the exact
+  // pole — pinned as compile-time f32 bit patterns (hex float literals;
+  // 0.00999983307 / 0.999949992 in decimal). The exact pole sits on an f32
+  // blade of this map: py = floor(-asinf(polar)·scale + H/2) cancels
+  // catastrophically at lat = ±π/2, so the last ulp of the platform's
+  // asinf(±1) decides py = 31 vs 32 on this pose. Apple libm rounds π/2 down
+  // (0xBFC90FDA) and lands in-canvas; glibc x86_64/aarch64 and MSVC round up
+  // (0xBFC90FDB), land one row past the canvas, and the frame's bounds check
+  // silently drops the ray (PR #479 red on Ubuntu x86_64 / Ubuntu ARM64 /
+  // Windows MSVC, green on macOS, run 38034154651; the drop was reproduced on
+  // macOS by pushing lat one ulp in the same direction — diff = the pole
+  // term + 1.1e-6, matching CI's 0.0875742). A one-ulp libm disagreement is
+  // not what this identity tests, and no tolerance can absorb a whole
+  // dropped ray without blinding it, so the fixture excludes the
+  // measure-zero exact poles (the uniform members top out at |z| ≤
+  // 0.9999975, a 0.023 px row margin — safe) and keeps the neighbourhood
+  // with this member: it lands 0.102 px inside the canvas edge, ~1e5 times
+  // the ulp dust any asinf cascade contributes. Fixed bit patterns rather
+  // than runtime sinf/cosf keep the fixture inputs bit-identical across
+  // platforms, which every cross-platform number cited above assumes.
+  emit(0x1.23D657p-7f, 0.0f, 0x1.7FFCB9p-1f);
   b.data.ray_seg_count_ = b.data.outgoing_w_.size();
   b.data.outgoing_component_.assign(b.data.outgoing_w_.size(), 0u);
 
@@ -1838,12 +1873,23 @@ TEST(RaypathHistogramConsumer, FullSkyIdentityOnRectangularFrame) {
   EXPECT_DOUBLE_EQ(hist_sum, expected_sum);
   const double image_sum = ImageSumY(cfg, b.data);
   ASSERT_GT(image_sum, 0.0) << "positive control: the frame must have imaged the rays";
-  // The AC2 tolerance shape (same derivation as the pin above): RenderConsumer's
-  // CPU path does per-pixel float `+=` with no compensation, so the image is
-  // within Σ_p n_p·FLT_EPSILON·S_p ≤ max_p(n_p)·FLT_EPSILON·Σ|y| of the exact
-  // sum; max_p(n_p) is counted with the same projection the render used — a
-  // rectangular full-sky frame lands every ray exactly once (lon wraps, lat
-  // never leaves the canvas). Bit equality is not claimed.
+  // The tolerance shape is the mechanism floor of the ONE rounding the image
+  // path performs per pixel: RenderConsumer accumulates internal_xyz_ in
+  // double (src/server/render.hpp) and narrows to float once in
+  // PrepareSnapshot (src/server/render.cpp), and every added term is the
+  // same fl32(kCmfY[wl]·w) product the test's Y() returns — bit-equal on a
+  // non-contracting compiler, ≤ ½ ulp apart per term under contraction. A
+  // pixel's float value therefore differs from its exact sum by at most
+  // ½ ulp (narrowing) + n_p·½ ulp (contraction) ≤ 2·FLT_EPSILON·Σ_p|y|, and
+  // the whole-frame bound max_p(n_p)·FLT_EPSILON·Σ|y| carries 5× headroom at
+  // this fixture's max_p(n_p) = 10, with max_p(n_p) counted through the same
+  // projection the render used (a rectangular full-sky frame lands every ray
+  // exactly once — lon wraps, lat in-canvas; the fixture asserts the
+  // landings below). Measured residuals sit far under the floor: 1.16e-6
+  // absolute on Ubuntu x86_64 (PR #479 CI, run 38034154651), 1.10e-6 on the
+  // macOS reproduction of that red state. Bit equality is not claimed. Do
+  // not tighten this bound from a local green run: the floor is set by the
+  // narrowing mechanism (2·FLT_EPSILON·Σ|y|), not by one machine's weather.
   std::map<int, size_t> per_pixel;
   {
     const Rotation rot = MakeCameraRotation(cfg);
@@ -1854,6 +1900,21 @@ TEST(RaypathHistogramConsumer, FullSkyIdentityOnRectangularFrame) {
       if (hit.count != 1) {
         ADD_FAILURE() << "fixture: ray " << i << " must land exactly once on the rectangular map (count " << hit.count
                       << ")";
+        continue;
+      }
+      // Guard-then-use, integer precision: the frame's bounds check drops
+      // out-of-canvas pixels silently, and a py of -1 here would index
+      // before the buffer through this map, so an out-of-canvas landing must
+      // be refused right here — as an integer fact, before the float sum
+      // comparison can misread a whole dropped ray as rounding noise. This
+      // is the assertion the PR #479 red state slipped past (py = 32 read as
+      // count == 1).
+      if (hit.hits[0].px < 0 || hit.hits[0].px >= static_cast<int>(cfg.resolution_[0]) || hit.hits[0].py < 0 ||
+          hit.hits[0].py >= static_cast<int>(cfg.resolution_[1])) {
+        ADD_FAILURE() << "fixture: ray " << i << " landed out of canvas (px=" << hit.hits[0].px
+                      << ", py=" << hit.hits[0].py << ", dir=" << b.data.outgoing_d_[i * 3] << ","
+                      << b.data.outgoing_d_[i * 3 + 1] << "," << b.data.outgoing_d_[i * 3 + 2]
+                      << "); the consumer would drop it silently";
         continue;
       }
       per_pixel[hit.hits[0].py * cfg.resolution_[0] + hit.hits[0].px]++;
@@ -1969,14 +2030,21 @@ TEST(RaypathHistogramConsumer, SingleFisheyeCornerBandImagedPastDiskRim) {
                             << "): the past-rim azimuth clipping changed";
   }
 
-  // AC2 tolerance shape: per-pixel float `+=` with no compensation; each
-  // direction lands on its own pixel, so max_p(n_p) = 1 and the bound is
-  // FLT_EPSILON·Σ|y| — far below any single term.
+  // AC2 tolerance shape, carrying the mechanism floor with headroom: each
+  // direction lands on its own pixel, and the image path rounds twice — the
+  // fl32(kCmfY·w) product in the term (≤ ½ ulp apart from this test's Y()
+  // under a contracting compiler) and the single double→float narrowing in
+  // PrepareSnapshot (½ ulp) — so the per-pixel error reaches
+  // 2·FLT_EPSILON·Σ|y| worst case and the bound runs 2× that. The former
+  // FLT_EPSILON·Σ|y| shape sat exactly ON that floor, one contracting
+  // compiler away from a platform-red with zero signal (the rect pole red
+  // was the same family at full scale). Still far below any single term, so
+  // a dropped ray stays loud.
   double min_term = 1e300;
   for (size_t i = 0; i < b.data.outgoing_w_.size(); i++) {
     min_term = std::min(min_term, Y(b.data.outgoing_wl_[i], b.data.outgoing_w_[i]));
   }
-  const double bound = FLT_EPSILON * abs_sum;
+  const double bound = 4 * FLT_EPSILON * abs_sum;
   EXPECT_GT(min_term, bound) << "a single missing ray must exceed the tolerance";
 
   // The up frame deposits every corner-band ray exactly once; the opposite
