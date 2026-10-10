@@ -1612,11 +1612,12 @@ workflow; documentation-only follow-up commits still run the full matrix.
 | Run | Head | Wall clock | Critical-path job | Cache and governed-phase evidence |
 |---|---|---:|---:|---|
 | 38086331832 | `0fc3ecf7` | **565s (9.42 min)** | Windows MSVC x86_64, 562s | compiler caches restored from `f50e9639`; Windows sccache 502/507 hits, build 87.5s, CTest 400.8s, aggregate 488.4s |
+| 38087102711 | `6d37da11` | **630s (10.50 min)** | e2e-test, 627s | same `f50e9639` cache seed; e2e phase 500.7s; Windows sccache 502/507 hits, aggregate 488.4s |
 
-One successful sample does not close the cohort; this table is expanded to at least three before
-the current configuration is accepted. The 565-second sample meets the ten-minute target, while
-the phase reports remain evidence about measured serial regions rather than substitutes for the
-complete-run wall clock.
+Two successful samples do not close the cohort; this table is expanded to at least three before
+the current configuration is accepted. The first two remain below the 12-minute preferred upper
+bound; the phase reports remain evidence about measured serial regions rather than substitutes for
+the complete-run wall clock.
 
 **Measured (historical pre-schema3 cohort).** The table below is the final acceptance cohort of the
 2026-10-01 workflow/test configuration: five successful runs, four pull-request events and the

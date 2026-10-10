@@ -957,9 +957,10 @@ registry 在 `0fc3ecf7` 冻结；此前两次完整诊断 run 只校准 Windows/
 | Run | Head | 完整墙钟 | 关键路径 | 缓存与受治理阶段 |
 |---|---|---:|---:|---|
 | 38086331832 | `0fc3ecf7` | **565s（9.42 分钟）** | Windows MSVC x86_64，562s | compiler cache 恢复自 `f50e9639`；Windows sccache 502/507 hits，build 87.5s、CTest 400.8s、聚合 488.4s |
+| 38087102711 | `6d37da11` | **630s（10.50 分钟）** | e2e-test，627s | 同一 `f50e9639` cache seed；e2e phase 500.7s；Windows sccache 502/507 hits、聚合 488.4s |
 
-单个成功样本不构成 cohort；至少累计三次后才裁定当前配置。首样本达到 10 分钟目标，但 phase 报告只
-描述被包裹的串行区段，不能替代完整 run 墙钟。
+两个成功样本仍不构成 cohort；至少累计三次后才裁定当前配置。当前两次都低于 12 分钟优选上限；
+phase 报告只描述被包裹的串行区段，不能替代完整 run 墙钟。
 
 `e2e-test` job 测试步的 `timeout-minutes: 10`（以及 `e2e-slow` 测试步的 `timeout-minutes: 25`）是
 **owner 设定的预算，不是挂死探测器**。它们是单步预算；整个 run 的 owner 口径是 **10 分钟目标、
