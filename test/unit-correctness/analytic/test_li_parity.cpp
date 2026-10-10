@@ -290,17 +290,13 @@ double Tolerance(const Json& fixture, const std::string& quantity) {
   return fixture.at("tolerance").at(quantity).at("value").get<double>();
 }
 
-// Per-row tier read (LI's fixtures doc, convention 1's value half): a fixture whose classification
-// carries an exit-TIR corner emits `<quantity>_corner` at degrees(EXTREMUM_ATOL), and its corner
-// rows read the tier while every other row keeps the default key. The tier's EXISTENCE is decided
-// by the export side's mechanism predicate (a corner whose gradient norm is null — the value there
-// is cross-ISA rounding luck through the sqrt fold), never by a mismatch: this file cannot produce
-// a tier by editing anything local, because a "cross-platform tier" is not "widen whatever
-// disagrees" (the header discipline; LI's emission and this read are one contract). Key-present
-// implies every corner row of that fixture is singular (LI's emission contract); a fixture mixing
-// well-behaved corners with singular ones must move LI's emission to per-row first. Measured
-// per-platform drift numbers and any recalibration live in the fixture tolerance blocks' basis
-// text and LI's fixtures doc — read them there, never copy the numbers into this comment.
+// Per-row tier read (LI fixtures doc, conventions 1 and 2): any singular corner causes LI to
+// emit the fixture-level `<quantity>_corner` key, and each `source == "corner"` row selects it;
+// every other row keeps the fixture default. This is supported only while the corner tier is no
+// wider than that default for every finite-gradient corner. Mixed 3-1-5 is safe because its
+// near-degenerate default already equals the corner tier. The export-side mechanism predicate
+// decides key existence, never a mismatch; drift evidence and recalibration belong in LI and the
+// fixture tolerance blocks, not here.
 double RowTolerance(const Json& fixture, const std::string& quantity, const Json& reference_row) {
   const Json& tolerance = fixture.at("tolerance");
   const std::string corner_key = quantity + "_corner";
