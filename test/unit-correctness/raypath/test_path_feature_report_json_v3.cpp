@@ -426,6 +426,33 @@ TEST(PathFeatureReportJsonV3, Schema3BlocksEmitEveryDeclaredField) {
          "live on the member rows), not a dropped field";
 }
 
+TEST(PathFeatureReportJsonV3, UnsetEscapeRegimeOmitsTheTypedKey) {
+  // G3: the typed escape_regime field's default is the kUnset sentinel — a partition that
+  // escaped (the slug names the regime) but carries no contract-registered regime value must NOT
+  // emit the typed key at all. Serializing the sentinel's own spelling ("unset") would just move
+  // the fake-data problem: the old default wrote "slab_crease" here, a regime name the record
+  // never escaped with. The slug key is the datum and still rides; the typed key returns only
+  // when a producer actually sets a registered regime.
+  V3Run run = RunV3OrDie(ReportScene(), SmallRequest());
+  ASSERT_FALSE(run.assembled.core.support.members.empty());
+  schema3::MemberSupport& row = run.assembled.core.support.members.front();
+  row.axis.regime_slug = "slab_crease_touching";  // the kernel-facing slug, non-empty
+  // context.escape_regime stays at its kUnset default: the "no regime was set" state.
+  const nlohmann::json document = nlohmann::json::parse(PathFeatureReportV3ToJson(run.report, run.assembled, "test"));
+  const nlohmann::json& partition = document["support"]["members"][0]["partition"];
+  EXPECT_FALSE(partition.contains("escape_regime"))
+      << "the kUnset sentinel must omit the typed key, not serialize the sentinel's own name";
+  EXPECT_TRUE(partition.contains("escape_regime_slug"))
+      << "the slug is the regime's datum and rides regardless of the sentinel";
+
+  // The explicit arm: a producer that sets a registered regime keeps both keys.
+  row.axis.context.escape_regime = EscapeRegime::kSlabCrease;
+  const nlohmann::json named = nlohmann::json::parse(PathFeatureReportV3ToJson(run.report, run.assembled, "test"));
+  const nlohmann::json& named_partition = named["support"]["members"][0]["partition"];
+  EXPECT_EQ(named_partition["escape_regime"], "slab_crease");
+  EXPECT_EQ(named_partition["escape_regime_slug"], "slab_crease_touching");
+}
+
 TEST(PathFeatureReportJsonV3, LedgerTopLevelHomesReconcileTheEmission) {
   // AC2a, both ways. Every top-level ledger row's v3 home (its FIRST path segment) must exist
   // in the emitted document; every emitted top-level key must be claimed by a ledger home or
