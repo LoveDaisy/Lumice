@@ -162,6 +162,12 @@
       "job": "e2e-test",
       "ci_seconds": 30,
       "reason": "Shared setup of the adaptive-allocation regression test: proportional and adaptive renders of two scenes, one to show adaptive moves no expected pixel (PSNR pair) and one to show the mechanism actually ran; both need full renders."
+    },
+    {
+      "id": "test/e2e-correctness/test_raypath_feature_report_cli.py::test_endpoint_bisection_budget_is_partial_not_a_physical_stop",
+      "job": "e2e-test",
+      "ci_seconds": 65,
+      "reason": "Pins the schema3 report contract that an exhausted evaluation budget lands as outcome=partial with termination=6 source curves, not as a physical stop or silent absorption: the cap interrupts the final source curve inside its optical bracket while the other report stages still complete. The claim needs two full CLI report runs on the 3-1-5 scene (capped at 405930 optical evaluations plus the unconstrained comparison), so the cost is the engine's own report work; the contract spans CLI args through the engine to the JSON verdict, so no cheaper layer carries it."
     }
   ]
 }
