@@ -218,8 +218,8 @@
     {
       "job": "macOS ARM64",
       "phase": "ctest",
-      "max_seconds": 360,
-      "reason": "Caps cumulative CTest work on macOS while retaining analytic and Metal-specific failure modes."
+      "max_seconds": 480,
+      "reason": "Caps cumulative CTest work on macOS while retaining analytic and Metal-specific failure modes; the 480-second ceiling leaves measured runner variance below the separate 720-second build+ctest bound."
     },
     {
       "job": "macOS ARM64",
