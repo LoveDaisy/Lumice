@@ -1603,6 +1603,21 @@ queueing, cache restore/save, dependency setup or every auxiliary step, so compl
 is still checked from GitHub's job timestamps and re-checked whenever a change adds a job or
 lengthens the longest one.
 
+**Measured (current schema3 cost-governance cohort; acceptance in progress).** Cost-affecting
+product code, tests, workflow, build flags and registry were frozen at `0fc3ecf7`, after two
+complete diagnostic runs calibrated the Windows and macOS CTest phase ceilings without changing
+the separate 720-second `build+ctest` bound. Every row below is a complete successful pull-request
+workflow; documentation-only follow-up commits still run the full matrix.
+
+| Run | Head | Wall clock | Critical-path job | Cache and governed-phase evidence |
+|---|---|---:|---:|---|
+| 38086331832 | `0fc3ecf7` | **565s (9.42 min)** | Windows MSVC x86_64, 562s | compiler caches restored from `f50e9639`; Windows sccache 502/507 hits, build 87.5s, CTest 400.8s, aggregate 488.4s |
+
+One successful sample does not close the cohort; this table is expanded to at least three before
+the current configuration is accepted. The 565-second sample meets the ten-minute target, while
+the phase reports remain evidence about measured serial regions rather than substitutes for the
+complete-run wall clock.
+
 **Measured (historical pre-schema3 cohort).** The table below is the final acceptance cohort of the
 2026-10-01 workflow/test configuration: five successful runs, four pull-request events and the
 intervening push to `main`. It remains evidence for the cache lifecycle and the measurement method,

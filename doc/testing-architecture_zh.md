@@ -950,6 +950,17 @@ parity 相关（次）。
 > 本文件尚未镜像那整个 §7（属于既有缺口，不由本节引入），这里只同步新增的这一小节，其编号与
 > 英文版 §7.6 对齐，供两侧交叉引用。
 
+**当前 schema3 成本治理 cohort（验收进行中）。** 影响成本的产品代码、测试、workflow、构建参数与
+registry 在 `0fc3ecf7` 冻结；此前两次完整诊断 run 只校准 Windows/macOS CTest 单阶段上限，独立的
+`build+ctest=720s` 聚合闸未变。以下每行都是完整成功的 PR workflow，文档后续提交仍运行全矩阵：
+
+| Run | Head | 完整墙钟 | 关键路径 | 缓存与受治理阶段 |
+|---|---|---:|---:|---|
+| 38086331832 | `0fc3ecf7` | **565s（9.42 分钟）** | Windows MSVC x86_64，562s | compiler cache 恢复自 `f50e9639`；Windows sccache 502/507 hits，build 87.5s、CTest 400.8s、聚合 488.4s |
+
+单个成功样本不构成 cohort；至少累计三次后才裁定当前配置。首样本达到 10 分钟目标，但 phase 报告只
+描述被包裹的串行区段，不能替代完整 run 墙钟。
+
 `e2e-test` job 测试步的 `timeout-minutes: 10`（以及 `e2e-slow` 测试步的 `timeout-minutes: 25`）是
 **owner 设定的预算，不是挂死探测器**。它们是单步预算；整个 run 的 owner 口径是 **10 分钟目标、
 12 分钟优选上限、15 分钟硬上限**。正常成功 run 超过 15 分钟不通过；12–15 分钟必须列明已处理的
