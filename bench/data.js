@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1791644146280,
+  "lastUpdate": 1791644148538,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9524,50 +9524,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "7a9430ef19ad7197b2befd279263c2e4e3474f45",
-          "message": "Merge pull request #368 from LoveDaisy/chore/cli-subcommands\n\ncli: split the flat flag set into render / benchmark subcommands",
-          "timestamp": "2026-09-14T18:29:48+08:00",
-          "tree_id": "5979324f4b5810dffb657260e392b8fab205f97d",
-          "url": "https://github.com/LoveDaisy/ice_halo_sim/commit/7a9430ef19ad7197b2befd279263c2e4e3474f45"
-        },
-        "date": 1789382394087,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 73,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 99.8,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 92.3,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 87.1,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "9232bccb77567b58b5b9342c1049e69337b2fb44",
           "message": "Merge pull request #369 from LoveDaisy/feat/cli-raypath-analyze\n\ncli: add the `analyze` subcommand — raypath analysis from the command line",
           "timestamp": "2026-09-14T20:18:27+08:00",
@@ -13867,6 +13823,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 91.6,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "6e0a5b01d67218589710fdc63aaa96e5c9bab05d",
+          "message": "Merge pull request #480 from LoveDaisy/fix/dual-fisheye-fold-boundary-loss\n\nfix(raypath): clamp dual-fisheye fold-boundary pixels into canvas (task-670)",
+          "timestamp": "2026-10-10T22:52:34+08:00",
+          "tree_id": "9b991e7eb24effad677fcd4328ccfd41633c9d4f",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/6e0a5b01d67218589710fdc63aaa96e5c9bab05d"
+        },
+        "date": 1791644147835,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 90.3,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 100,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 99.1,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 87.4,
             "unit": "%"
           }
         ]
