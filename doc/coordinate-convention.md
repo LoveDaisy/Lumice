@@ -671,11 +671,14 @@ of `lm_proj::ProjectExitToPixel`):
   summation noise (measured 4e-8 relative), which is what makes this family the
   calibration arm for energy-accounting audits.
 - **Dual-fisheye**: 1.0 on the direction→disk map (each hemisphere folds onto
-  one disk, `rho = 1 - |z| <= 1` exactly), **except** one measured defect below.
+  one disk, `rho^2 = 1 - |z| <= 1` exactly), **except** one measured defect below.
 - **Single fisheye (fov 180) on a square canvas**: the inscribed disk covers the
-  forward hemisphere; `kFisheyeEqualAreaMinCz = -1 + 1e-3` (the antipode
-  numerical floor) admits the band past 90°, and the square canvas corners
-  image directions up to `2·atan(√2) ≈ 109.5°`. The corners of one view are
+  forward hemisphere (`rho^2 = 1 - cz <= 1`). Past 90° (`cz < 0`, `rho > 1`)
+  `kFisheyeEqualAreaMinCz = -1 + 1e-3` (the antipode numerical floor) still
+  admits directions, and the square canvas — whose half-diagonal reaches
+  `rho = sqrt(2)`, i.e. `cz = -1` — images the whole admitted band down to that
+  cull floor (theta up to ~177.4°); every direction past 90° lands in the
+  corner region. The corners of one view are
   therefore the horizon band of the opposite view: an up-looking and a
   down-looking frame each deposit that band once, so their summed share exceeds
   1 (measured 1.121 on the reference scene). This is the display-domain

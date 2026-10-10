@@ -162,8 +162,10 @@ def frame_cone_energy(
                 n_cone += 1
                 energy += float(img[py, px, 1])
 
-    # self-checks (a56): discrete disk area and analytic cone cap area.
-    short = min(w, h)
+    # self-checks (a56): discrete disk area and analytic cone cap area. The
+    # dual short side reuses pixel_to_display_dual's exact formula
+    # (min(w // 2, h)) — one owner for the radius, not two (a56).
+    short = min(w // 2, h) if ltype in SUPPORTED_DUAL else min(w, h)
     r_disk = short / 2.0
     if ltype in SUPPORTED_SINGLE:
         expected_disk = math.pi * r_disk * r_disk
@@ -243,9 +245,14 @@ def main() -> None:
     ap.add_argument("--seed", type=int, default=None)
     ap.add_argument("--filter-config", default=None, help="optional second config with the filter wired (scattering entry filter ref)")
     ap.add_argument("--chain", default=None, help="with --filter-config: the chain row to cross-check")
-    ap.add_argument("--lumice", default=None, help="path to the Lumice binary (default: ../build/Release/static/bin/Lumice relative to this script)")
+    ap.add_argument("--lumice", default=None, help="path to the Lumice binary (default: ../build/cmake_install/static/Lumice relative to this script)")
     ap.add_argument("--out-dir", default=None, help="scratch dir for npy/csv/log artifacts")
     ap.add_argument("--symmetry", default="PBD", help="analyze --symmetry (default PBD)")
+    ap.add_argument("--mc-tol", type=float, default=0.005,
+                    help="total-energy MC noise band as a fraction (default 0.005). The CSV +/- column is "
+                         "per-row and does not bound the total; the reference scene's full-frame additivity "
+                         "residue measured +0.08%%, so the default is a generous blind band — tighten it "
+                         "with your scene's own residue as evidence.")
     ap.add_argument("--expect-frame-defect", action="store_true",
                     help="declare up front that the full-frame row is expected to be INCONSISTENT while the "
                          "dual-fisheye fold-boundary defect (doc/coordinate-convention.md 12) is unfixed; the "
@@ -254,7 +261,7 @@ def main() -> None:
     args = ap.parse_args()
 
     lumice = args.lumice or os.path.join(
-        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "build", "Release", "static", "bin", "Lumice"
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "build", "cmake_install", "static", "Lumice"
     )
     if not os.path.exists(lumice):
         die(f"Lumice binary not found at {lumice} (pass --lumice)")
@@ -274,6 +281,11 @@ def main() -> None:
         die(f"lens {ltype} not supported (v1: equal-area single fisheye + dual fisheye EAR only)")
     res = (int(renderer["resolution"][0]), int(renderer["resolution"][1]))
     fov = float(renderer["lens"].get("fov", 180.0))
+    if fov != 180.0:
+        # The inverse mappings and the omega_pix self-check assume the
+        # 180-deg hemisphere; a non-180 fov would only surface as an unrelated
+        # disk-self-check failure, so guard it explicitly.
+        die(f"fov {fov} not supported (this tool assumes the 180-deg hemisphere)")
     # cone must sit inside the landing domain: single EAR disk reaches 90 deg
     # from the view axis (corners reach further but a cone must not rely on
     # them); dual disks fold at the horizon.
@@ -318,9 +330,12 @@ def main() -> None:
 
     rows_out = []
     full_ratio = full_energy / total
-    mc_tol = 0.005  # generous MC band (reference scene: additivity residue +0.08%); the CSV +/- column is per-row and does not bound total
+    mc_tol = args.mc_tol  # see --mc-tol: per-row +/- does not bound the total; default generous on purpose
     quant = audit["cone_rim_area_bound_rel"]
     full_inconsistent = abs(full_ratio - 1.0) > mc_tol + quant
+    if args.expect_frame_defect and not full_inconsistent:
+        print("NOTE: full-frame row is consistent — the declared fold-boundary defect no longer "
+              "reproduces; drop --expect-frame-defect")
     rows_out.append({
         "comparison": "full-frame cone Y vs analyze cone total",
         "frame": full_energy,

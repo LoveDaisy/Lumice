@@ -1742,8 +1742,10 @@ double HistogramSumY(const SimData& data) {
 // Measured on the reference scene this deletes 18.9% of the frame energy
 // (frame ΣY / analysis Σ = 0.8107). The fix turns the dropped assertion at
 // the bottom into the identity pin (image ΣY == analysis ΣY); until then this
-// pins the loss itself, so any silent change in either direction — a partial
-// fix, or a wider loss — fails loudly here.
+// pins the loss itself, so a partial fix — these collapse directions landing
+// again — fails loudly here. A loss widening to other directions stays green
+// in this pin: it is caught by FullSkyIdentityOnRectangularFrame and the
+// real-scene cross-check.
 TEST(RaypathHistogramConsumer, FoldBoundaryDropsDirectThroughEnergyOnDualFisheyeFrame) {
   const RenderConfig cfg = DualFullSkyCfg();
 
@@ -1833,9 +1835,133 @@ TEST(RaypathHistogramConsumer, FullSkyIdentityOnRectangularFrame) {
   EXPECT_DOUBLE_EQ(hist_sum, expected_sum);
   const double image_sum = ImageSumY(cfg, b.data);
   ASSERT_GT(image_sum, 0.0) << "positive control: the frame must have imaged the rays";
-  // Same tolerance shape as the AC2 pin above: per-pixel float accumulation,
-  // bounded by the running partial sum per pixel.
-  EXPECT_NEAR(image_sum, expected_sum, 1e-5 * abs_sum);
+  // The AC2 tolerance shape (same derivation as the pin above): RenderConsumer's
+  // CPU path does per-pixel float `+=` with no compensation, so the image is
+  // within Σ_p n_p·FLT_EPSILON·S_p ≤ max_p(n_p)·FLT_EPSILON·Σ|y| of the exact
+  // sum; max_p(n_p) is counted with the same projection the render used — a
+  // rectangular full-sky frame lands every ray exactly once (lon wraps, lat
+  // never leaves the canvas). Bit equality is not claimed.
+  std::map<int, size_t> per_pixel;
+  {
+    const Rotation rot = MakeCameraRotation(cfg);
+    const auto pp = BuildProjParams(cfg, rot, static_cast<float>(std::min(cfg.resolution_[0], cfg.resolution_[1])));
+    for (size_t i = 0; i < b.data.outgoing_w_.size(); i++) {
+      const auto hit = lm_proj::ProjectExitToPixel(pp, b.data.outgoing_d_[i * 3], b.data.outgoing_d_[i * 3 + 1],
+                                                   b.data.outgoing_d_[i * 3 + 2]);
+      if (hit.count != 1) {
+        ADD_FAILURE() << "fixture: ray " << i << " must land exactly once on the rectangular map (count " << hit.count
+                      << ")";
+        continue;
+      }
+      per_pixel[hit.hits[0].py * cfg.resolution_[0] + hit.hits[0].px]++;
+    }
+  }
+  size_t max_per_pixel = 0;
+  for (const auto& [pix, n] : per_pixel) {
+    max_per_pixel = std::max(max_per_pixel, n);
+  }
+  const double bound = static_cast<double>(max_per_pixel) * FLT_EPSILON * abs_sum;
+  EXPECT_NEAR(image_sum, expected_sum, bound) << "full-sky frame Σ Y vs analysis Σ; bound=" << bound;
+  // And the bound is not so loose that it would let a dropped ray through:
+  // the smallest single term is far above it.
+  double min_term = 1e300;
+  for (size_t i = 0; i < b.data.outgoing_w_.size(); i++) {
+    min_term = std::min(min_term, Y(b.data.outgoing_wl_[i], b.data.outgoing_w_[i]));
+  }
+  EXPECT_GT(min_term, bound) << "a single missing ray must exceed the tolerance";
+}
+
+// The corner-ingest mechanism of the single-fisheye family, pinned
+// constructively (the display-domain arm of the calibration): directions past
+// the disk rim — `rho = sqrt(1 - cz) > 1`, i.e. more than 90 deg off axis —
+// are still admitted by `kFisheyeEqualAreaMinCz` and imaged by the square
+// canvas corners, so the up frame and the down frame each deposit the shared
+// horizon band once and their summed share exceeds 1 (measured 1.121 on the
+// reference scene; doc/coordinate-convention.md §12). A tightening of MinCz
+// toward 0 or a rim clip in the frame's bounds check drops these directions
+// and fails here; a canvas-map change moves their landing out of the corner
+// region.
+TEST(RaypathHistogramConsumer, SingleFisheyeCornerBandImagedPastDiskRim) {
+  // Square canvas so the corner region (rho in (1, sqrt(2))) exists at all.
+  RenderConfig cfg;
+  cfg.id_ = 0;
+  cfg.lens_.type_ = LensParam::kFisheyeEqualArea;
+  cfg.lens_.fov_ = 180.0f;
+  cfg.resolution_[0] = 32;
+  cfg.resolution_[1] = 32;
+  cfg.view_.el_ = 90.0f;
+  cfg.visible_ = RenderConfig::kFull;
+
+  // Camera-frame directions on the canvas diagonals, past the rim:
+  // cz = -0.5625 gives rho = sqrt(1 - cz) = 1.25, comfortably inside the
+  // corner band (1, sqrt(2)) and away from both of its edges in float32.
+  constexpr float kCz = -0.5625f;
+  constexpr float kRho = 1.25f;
+  ASSERT_FLOAT_EQ(std::sqrt(1.0f - kCz), kRho) << "fixture: direction set must sit off the disk rim";
+  const float t = std::sqrt((1.0f - kCz * kCz) / 2.0f);
+  const float dirs[][3] = {
+    { t, t, kCz },
+    { -t, t, kCz },
+    { t, -t, kCz },
+    { -t, -t, kCz },
+  };
+
+  Batch b(1);
+  b.AddChain(1, 0, 1, { 1, 2 });
+  double expected_sum = 0.0;
+  double abs_sum = 0.0;
+  for (const auto& c : dirs) {
+    float d[3];
+    WorldDir(cfg, c[0], c[1], c[2], d);
+    constexpr float kW = 0.5f;
+    b.data.outgoing_wl_.push_back(550.0f);
+    b.AddRay(1, kW, d);
+    expected_sum += Y(550.0f, kW);
+    abs_sum += std::fabs(Y(550.0f, kW));
+  }
+  b.data.ray_seg_count_ = b.data.outgoing_w_.size();
+  b.data.outgoing_component_.assign(b.data.outgoing_w_.size(), 0u);
+
+  // Landing prediction, up frame: every direction lands exactly once, in the
+  // corner region (outside the inscribed disk, inside the square).
+  {
+    const Rotation rot = MakeCameraRotation(cfg);
+    const auto pp = BuildProjParams(cfg, rot, static_cast<float>(std::min(cfg.resolution_[0], cfg.resolution_[1])));
+    for (size_t i = 0; i < b.data.outgoing_w_.size(); i++) {
+      const auto hit = lm_proj::ProjectExitToPixel(pp, b.data.outgoing_d_[i * 3], b.data.outgoing_d_[i * 3 + 1],
+                                                   b.data.outgoing_d_[i * 3 + 2]);
+      if (hit.count != 1) {
+        ADD_FAILURE() << "corner-band ray " << i << " dropped (count " << hit.count
+                      << "): kFisheyeEqualAreaMinCz or the frame bounds check changed";
+        continue;
+      }
+      const float ddx = (hit.hits[0].px + 0.5f) - static_cast<float>(cfg.resolution_[0]) / 2.0f;
+      const float ddy = (hit.hits[0].py + 0.5f) - static_cast<float>(cfg.resolution_[1]) / 2.0f;
+      if (std::sqrt(ddx * ddx + ddy * ddy) <= static_cast<float>(cfg.resolution_[0]) / 2.0f) {
+        ADD_FAILURE() << "corner-band ray " << i << " landed inside the disk region: the canvas map changed";
+      }
+    }
+  }
+
+  // AC2 tolerance shape: per-pixel float `+=` with no compensation; each
+  // direction lands on its own pixel, so max_p(n_p) = 1 and the bound is
+  // FLT_EPSILON·Σ|y| — far below any single term.
+  double min_term = 1e300;
+  for (size_t i = 0; i < b.data.outgoing_w_.size(); i++) {
+    min_term = std::min(min_term, Y(b.data.outgoing_wl_[i], b.data.outgoing_w_[i]));
+  }
+  const double bound = FLT_EPSILON * abs_sum;
+  EXPECT_GT(min_term, bound) << "a single missing ray must exceed the tolerance";
+
+  // The up frame deposits every corner-band ray exactly once; the opposite
+  // view deposits the same directions again, inside its disk — together that
+  // is the >1 summed share.
+  const double up_sum = ImageSumY(cfg, b.data);
+  EXPECT_NEAR(up_sum, expected_sum, bound) << "up frame Σ Y vs analysis Σ (corner band)";
+  RenderConfig down = cfg;
+  down.view_.el_ = -90.0f;
+  const double down_sum = ImageSumY(down, b.data);
+  EXPECT_NEAR(down_sum, expected_sum, bound) << "down frame Σ Y vs analysis Σ (same band, inside its disk)";
 }
 }  // namespace
 }  // namespace lumice
