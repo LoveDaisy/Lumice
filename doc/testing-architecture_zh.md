@@ -82,8 +82,10 @@ purpose 本身不足以完全分开八层中的两层：`unit-correctness`、`co
 - **命名**：`test_<chain-topic>_chain.cpp`；gtest `TEST(<ChainTopic>Chain, <behavior>)`，其中
   `<chain-topic>` 命名的是这次协作本身（如文档往返、运行生命周期），绝不是单一 `src/` 文件名——
   一条跨多个单元的链条压不进一个单元的名字里。
-- **物理位置**：`test/composition-correctness/<subsystem>/`；今天只有 `test/composition-correctness/gui/`
-  一个 subsystem 被填充。
+- **物理位置**：`test/composition-correctness/<subsystem>/`；今天已有
+  `test/composition-correctness/gui/` 与 `test/composition-correctness/raypath/`。后者的
+  `test_schema3_report_assembly_chain.cpp` 保留真实 report→枚举→归因接线，纯 serializer 字段命题仍在
+  `unit-correctness`。
 - **归属判据（把这层与两个邻层分开的东西）**：证伪该命题是否需要**两个或更多协作的 `src/`
   单元**（不是一个只为给另一个搭夹具而调用的单元），**且**是否**既不需要真实帧也不需要合成的
   输入事件**？两条都必须成立。链条长度本身不足以把一个用例送到这里——一条同时还需要渲染帧或
@@ -922,7 +924,7 @@ PSNR 看不见"的缺陷——每一对因场景改动而变化的读数，都�
 | 层 | 目标态路径 | 现状 C++（unit/integration） | 现状 e2e（pytest） | 现状 gui | 迁移约束 |
 |----|-----------|-------------------------------|---------------------|----------|----------|
 | **unit-correctness** | `test/unit-correctness/<subsystem>/` | `test_math`、`test_geo3d`、`test_optics`†、`test_crystal`、`test_rng`、`test_queue`、`test_threading_pool`、`test_color_space`、`test_json`、`test_filter`、`test_filter_spec`、`test_config_snapshot`、`test_render_config`、`test_sim_data`、`test_simulator`、`test_cpu_info`、`test_raypath_segments`、`test_reduce_raypath_audit`、`test_c_api`、`test_exit_records`、`test_proj`(integration)、`test_integration_main`；`gui` subsystem 第一个 target `unit_correctness_test`（只链 `lumice_obj`，header-only 可达）：`test_axis_presets`、`test_filter_sop_grammar`、`test_gui_widget_rules`（已吸收原先独立的 `test_slider_mapping` 与 `test_window_sizing` 两个文件——`SliderMapping` / `WindowSizingTest` 两个 suite 现住在这里）、`test_user_defaults_eligibility`；第二个 target `gui_unit_test`（见右）：`test_defaults_diff`、`test_state_reconcile`、`test_preview_renderer`、`test_export_params`、`test_crystal_renderer`、`test_render_handedness_guard`（渲染 `right=+az` 跨实现手性 guard——绝对屏侧判据，与 `test_projection` 的 golden 绝对列钉子配对；它是唯一需要 `lumice_gui_obj` 与 `lumice_obj` 一起链接的用例，因而 `gui_unit_test` 是它唯一可能的归宿）、`test_axis_absent_alignment`、`test_user_defaults`、`test_render_bg_logic`、`test_sampling_density_stats`、`test_server_poller`、`test_face_number_overlay`、`test_overlay_labels`、`test_composite_preview`、`test_color_window_logic`，外加 `gui_unit_test_env`（在任何用例跑之前安装本 target 的个人默认值隔离基线） | — | — | 本层的 `gui` subsystem 目录由**两个**按链接边界拆开的 CMake target 共用（§2）：`unit_correctness_test`（只链 `lumice_obj`）与 `gui_unit_test`（额外链 `lumice_gui_obj`，无窗口）。两者同挂 LABEL `unit-correctness`，所以用例在两者之间搬家**不需要**改任何 `-L` 选择器——但**需要**在两个 `add_executable` 的源文件列表之间搬，且 `gui_unit_test` 只在 `if(BUILD_GUI)` 门内存在。 |
-| **composition-correctness** | `test/composition-correctness/<subsystem>/` | `gui` subsystem，单一 target `composition_correctness_test`（§2 的同名警示）：`test_document_roundtrip_chain`、`test_document_defaults_chain`、`test_document_switch_chain`、`test_legacy_document_chain`、`test_scene_commit_chain`、`test_filter_reconstruct_chain`、`test_raypath_color_document_chain`、`test_run_lifecycle_chain`、`test_run_warning_chain`、`test_user_defaults_chain`、`test_field_editor_chain`、`test_edit_modal_chain`、`test_preview_projection_chain` | — | — | 最新的一层（§1.2）；今天只有 `gui` subsystem 被填充。文件名是链条的主题，绝不是某个单一 `src/` 单元的名字——见 §1.2 的命名规则。 |
+| **composition-correctness** | `test/composition-correctness/<subsystem>/` | `raypath` subsystem，`raypath_composition_test`：`test_input_assembly_chain`、`test_schema3_report_assembly_chain`（真实 report→结构枚举→MC 归因接线；纯 serializer 字段命题留在 unit）；`gui` subsystem，`composition_correctness_test`：`test_document_roundtrip_chain`、`test_document_defaults_chain`、`test_document_switch_chain`、`test_legacy_document_chain`、`test_scene_commit_chain`、`test_filter_reconstruct_chain`、`test_raypath_color_document_chain`、`test_run_lifecycle_chain`、`test_run_warning_chain`、`test_user_defaults_chain`、`test_field_editor_chain`、`test_edit_modal_chain`、`test_preview_projection_chain` | — | — | 最新的一层（§1.2）；今天已有 `gui` 与 `raypath` 两个 subsystem。文件名是链条的主题，绝不是某个单一 `src/` 单元的名字——见 §1.2 的命名规则。 |
 | **golden-analytic** | `test/golden-analytic/<subsystem>/` | `test_projection`†、`test_optics` 内闭式段†、`MultiMsContinuationNormalIncidence`（在 `test_metal_trace_parity.cpp`，2-MS 解析锚） | — | — | †逐文件确认"解析真值 vs unit-correctness"边界后才拆出 |
 | **parity-cross-backend** | `test/parity-cross-backend/<subsystem>/` | `test_metal_trace_parity`、`test_metal_root_gen`、`test_metal_trace_backend`、`test_metal_filter_match_parity`(.mm)、`test_cpu_trace_backend` | `test_metal_exit_seam_parity`、`test_metal_batch_invariance`、`test_device_gen_default_path`、`test_cpu_backend_route`、**projection 子系统**（315.5）：`test_metal_projection_parity`、`test_cuda_projection_parity`（共用 `_projection_battery.py`） | — | `_parity_metrics.py` 是 parity 指标单一真源——**DO_NOT_MIGRATE_INDEPENDENTLY**（与其依赖者一起移）。能量守恒 + 跨 seed 双门是 267.3 补强——**勿删**。`test_metal_batch_invariance` 的能量守恒 `xfail` 是**合法的**（worst-case drain 未落地）——勿当 bug "修"掉。`_projection_battery.py` 是共享的 per-projection battery（oracle = legacy CPU）——与 `test_{metal,cuda}_projection_parity` 一起移。 |
 | **e2e-correctness** | `test/e2e-correctness/`（平铺） | — | `test_smoke`、`test_cli`、`test_raypath_equivalence` | — | — |
@@ -949,10 +951,11 @@ parity 相关（次）。
 > 英文版 §7.6 对齐，供两侧交叉引用。
 
 `e2e-test` job 测试步的 `timeout-minutes: 10`（以及 `e2e-slow` 测试步的 `timeout-minutes: 25`）是
-**owner 设定的预算，不是挂死探测器**。它们是单步预算，高于整个 run 的 10 分钟墙钟预算（英文版
-§7.1）；后者没有任何 timeout 在守——每一步都在自己的预算内，整个 run 仍可能超出，所以 run 绿
-不能证明 run 预算成立，能证明的是英文版 §7.1 的实测表。这个区分决定了两种相反的应对：挂死探测器触发意味着什么东西卡住了，
-重跑是合理的第一反应；预算触发意味着它计时的那套测试已经装不进分配给它的时间，重跑解决不了这
+**owner 设定的预算，不是挂死探测器**。它们是单步预算；整个 run 的 owner 口径是 **10 分钟目标、
+12 分钟优选上限、15 分钟硬上限**。正常成功 run 超过 15 分钟不通过；12–15 分钟必须列明已处理的
+有效杠杆、剩余成本与未达 10/12 分钟的原因，不能把 15 分钟当新目标。phase registry 只约束已接线的
+关键执行段，排队、setup、缓存与附加步骤仍须由完整 GitHub cohort 裁定。这个区分决定了两种相反的
+应对：挂死探测器触发意味着什么东西卡住了，重跑是合理的第一反应；预算触发意味着它计时的那套测试已经装不进分配给它的时间，重跑解决不了这
 件事——下一次跑它还是这么大，不看原因就重跑只是烧 CI 时间去重新得出同一个事实。预算的用意很
 明确：套件变大时逼着"这个测试值不值它的开销"被回答一次，而不是永远不被问。
 
@@ -984,30 +987,34 @@ parity 相关（次）。
 12.8 分钟 CI 的慢测试就是在它生效期间进入 PR 层的。本节是它的机械那一半，**补强而不替代**
 §7.3：§7.3 仍负责在改动之前（而不是 CI 红了之后）把这个问题提出来。
 
-**规则。** 在接线了本闸的每个 CI job 里，本次 run 中耗时超过 **T = 60 s** 的每条测试，都必须在
-`test/duration_registry.json` 中有一条带理由的登记。`scripts/check_test_durations.py` 在 job 末尾
-一个 step 里把本 job 的实测耗时与登记表比对，以下任一情况判红：
+**规则。** registry v2 在一个权威里保存两类约束：`entries` 延续单例规则——在接线 job 中，本次
+run 耗时超过 **T = 60 s** 的每条测试都须有带理由的登记；`phase_budgets` 登记真实墙钟阶段及其串行
+聚合，要求每个成员恰好有一份报告、未知 phase 判红、成员和不得超过 `max_seconds`。后者专门捕获
+「每条都低于 60 s、总量却持续膨胀」的形状，不能用 worker-seconds 求和代替。
+
+`scripts/check_test_durations.py` 在 job 末尾比对同一张表。单例侧以下任一情况判红：
 
 1. 未为本 job 登记的测试耗时超过 T；
 2. 已登记的测试耗时超过其登记值 `ci_seconds` 的 **2 倍**；
 3. 已登记的测试在本 job 中**根本没有运行**（改名、移动或删除）；在该 runner 上被 skip 的测试仍算
-   存在（约 0 s），平台 skip 不会被当成陈旧。若本 job 的登记条目一条都没出现，报错改为提示
-   `ci.yml` 里的 `--job` 名与登记表 `job` 字段可能不一致；
-4. 登记表格式错误（字段多/少、`id`+`job` 重复、秒数非正），或 `reason` 为空或占位符 `TODO`。
+   存在（约 0 s），平台 skip 不会被当成陈旧；
+4. 登记表或报告格式错误、ID/phase 重复、数值非法，或 `reason` 为空/为 `TODO`。
 
 已登记但本次耗时**不到其登记值一半**的只给 notice、不判红：条目多半登记得过高，而过高的条目会让
 测试悄悄变慢而不被发现；下调或删除由作者决定。已登记但只是低于 T 的，什么也不说明——多数条目都是如此（见下）。
 
-**量的是什么。** 每条测试的 setup + call + teardown，由 pytest 插件
-`scripts/duration_report_plugin.py` 写出；CI 显式加载（`PYTHONPATH=scripts pytest -p
-duration_report_plugin --duration-report=PATH`），别处不加载，不带该选项时它什么也不做。
-**module / class / package / session 作用域 fixture 的 setup** 不记在恰好触发它的测试头上，而是
-单独成条：`<定义处>::<fixture:NAME>`（参数化 fixture 附 `[<param 序号>]`），多个 worker 各建一次时
-取最大值。原因：xdist 默认 `--dist load` 下，哪条测试先在某个 worker 上请求共享 fixture 每次 run
-都不同（实测三次 `-n 3` 运行，同一个 module fixture 落在三条不同的参数化用例上）。`--dist loadfile`
-也能稳定它，但代价是把整个文件压到一个 worker 上，拉长的正是本闸要守的墙钟。unittest 的
-`setUpClass` 同样以 `...::<fixture:_unittest_setUpClass_fixture_<Class>>` 的形式出现。未拆出的：
-共享 fixture 的 teardown，以及 fixture 之外的一次性懒加载成本。
+**量的是什么。** 三种边界分开留痕：
+
+- gTest binary 写原始 XML，CTest 写本次选中清单的 JUnit；`collect_ctest_durations.py` 对账后产出
+  `<CTest name>::<suite>.<case>`。缺失/坏/空 XML、未运行目标、重复 ID 与非有限时长均判错。case 时间
+  不含进程启动与 suite/global setup，故保留原始 CTest JUnit/`LastTest.log`，不把 suite 总时长加到
+  case 上冒充墙钟。
+- pytest 仍由 `duration_report_plugin.py` 写 setup + call + teardown；共享 fixture 单列为
+  `<定义处>::<fixture:NAME>`，多 worker 取最大值，避免把 setup 随机归给第一条用例。
+- `measure_ci_phase.py` 用 monotonic 包住真实命令，实时透传输出与退出码；每次 invocation 用独立文件且
+  拒绝覆盖。phase 是进程墙钟，不是 pytest worker-seconds 或 gTest case 秒数之和。
+
+pytest 未拆出的仍是共享 fixture teardown 与 fixture 外的一次性懒加载成本。
 
 **为什么是这两个数。** 两个数由"什么都不改时，同一条测试的墙钟在 CI run 之间能差多少"决定，
 在闸门打开前于本 workflow 自己的 runner 上实测：串行的 `e2e-test` 最多 **1.25 倍**（同一套件在一台
@@ -1028,13 +1035,11 @@ T，属预期。两个系数都是脚本常量，改它就是一个可评审的 
 提交里改它的 `id`；否则陈旧规则会判红，并给出同一函数在本次 run 中的新 id。测试变便宜后，在同一
 改动里下调或删除其条目。
 
-**覆盖范围。** `e2e-test`（job 名 `e2e-test`）与 `e2e-slow` 三条腿（job 名
-`E2E Slow (<matrix name>)`），各自合并其所有 pytest 调用的报告（phase 1，以及有 phase 2 的腿的
-phase 2）。**未覆盖**：ctest 与 `gui_test`（CI 日志里 ctest 只有二进制粒度，`gui_test` 在 build job
-中不运行；它们的膨胀由 job 墙钟体现）、`windows-shared-export` 的 slow 文件、`policy` job 的脚本
-单测。**新增的 pytest job** 在同样接线之前不受覆盖——每个 pytest 调用加
-`-p duration_report_plugin --duration-report=...`、job 末尾加 "Check test durations" step——而且
-没有任何东西检查它是否接线了。
+**覆盖范围。** 四条 build matrix 腿采集本次选中的 CTest 与其中 gTest case，并登记 `build`、
+`ctest` 及 `build+ctest` 聚合；`e2e-test` 登记完整 `e2e` phase；三条 `e2e-slow` 腿分别登记并行
+correctness、存在时的串行 performance 及两者之和。原始 JUnit/XML/JSON 与 `LastTest.log` 都以
+`if: always()` 上传。未覆盖：另跑的 GUI visual step、`windows-shared-export` 的 slow 文件、policy
+脚本单测。未来新 job 在显式接线报告、checker 与 artifact 之前不受覆盖，当前没有门禁自动审计这一点。
 
 **运行时检查，不是 diff 检查。** AGENTS.md 列出的四个 checker 读源码或 diff，所以也能在
 pre-commit 中运行；本闸读的是 CI job 刚量出来的耗时，这份输入别处不存在，所以不能在提交前运行，
@@ -1044,8 +1049,8 @@ pre-commit 中运行；本闸读的是 CI job 刚量出来的耗时，这份输�
 登记表的 diff 就是评审要读的证据。本检查通过，则该改动在测试耗时方面即为合规——评审不在其外追加
 耗时要求。阈值不对，就改脚本里的常量。
 
-**与 §7.3 的关系。** §7.3 仍然不设上限，其理由（上限会催生迎合上限的估算）依然成立，因为本闸同样
-没有上限：超过 T 的测试可以留下，只是必须在一份有人评审的文件里被论证。变化在于：逐条测试的那一
-半问题，现在由机器在每次 run 中提出，而不再依赖有人记得去问。
+**与 §7.3 的关系。** 单例侧仍无上限：超过 T 的测试可以保留，但必须论证。phase budget 是 owner
+10/12/15 分钟口径的机械分配，超限不能靠逐条登记消掉；先查重复工作、工作量、缓存和争用，改 phase
+上限本身就是需评审的预算决定。完整 run 仍有未计入 phase 的成本，所以最终判据仍是真实 GitHub cohort。
 
 本闸自身开销：末尾 step 读两份小 JSON 的几秒，加上插件在运行中的记账；不新增 job，也不新增 runner。

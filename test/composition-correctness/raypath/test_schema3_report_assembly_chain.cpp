@@ -93,7 +93,7 @@ AssembledSchema3Report AssembleOrDie(const ConfigManager& config, const PathFeat
 
 }  // namespace
 
-TEST(Schema3ReportAssembly, ExplicitEventsProduceObservedKind1) {
+TEST(Schema3ReportAssemblyChain, ExplicitEventsProduceObservedKind1) {
   // The 666.2 A-arm shape through the production assembly: Haar prism, 550 nm, explicit events.
   // The MC finds the minimum-deviation peak (kActual); the kind-1 object of 3-5 derives
   // `observed`; the ruling cannot issue (a lit, witnessed object breaks the unlit-or-none arm).
@@ -151,7 +151,7 @@ TEST(Schema3ReportAssembly, ExplicitEventsProduceObservedKind1) {
   EXPECT_TRUE(assembled.density_skip_note.empty());
 }
 
-TEST(Schema3ReportAssembly, AutoStarveStaysSilentAndCarries33RowContinuation) {
+TEST(Schema3ReportAssemblyChain, AutoStarveStaysSilentAndCarries33RowContinuation) {
   // The 666.2 B-arm shape through the production assembly: continuous illuminant, auto budget.
   // The starvation is deterministic (the weighted field never reaches standing): no kActual, no
   // unattributed output, and the kind-1 (unproven at this budget's measure) reads `consistent`
@@ -181,7 +181,7 @@ TEST(Schema3ReportAssembly, AutoStarveStaysSilentAndCarries33RowContinuation) {
   EXPECT_TRUE(consistent_kind1) << "unproven kind-1 on sufficient presence reads consistent";
 }
 
-TEST(Schema3ReportAssembly, ContinuousSpectrumFeedsThe33RowContinuationTable) {
+TEST(Schema3ReportAssemblyChain, ContinuousSpectrumFeedsThe33RowContinuationTable) {
   // The n-continuation leg at production resolution: the beta plate (the C05/C06 crystal)
   // under the D65 quadrature. The assembly builds the (nm, index) table from the assembled
   // spectrum rows and hands it to the enumeration; the basal TIR kink's constant circle comes
@@ -234,7 +234,7 @@ TEST(Schema3ReportAssembly, ContinuousSpectrumFeedsThe33RowContinuationTable) {
   EXPECT_TRUE(found) << "the basal TIR kink's constant circle must ride the continuation table";
 }
 
-TEST(Schema3ReportAssembly, PlateRestrictedCarriesItsAnnotation) {
+TEST(Schema3ReportAssemblyChain, PlateRestrictedCarriesItsAnnotation) {
   // The 666.2 C-arm shape through the production assembly: the C12 plate's fully-dark
   // restricted member (the C09 shape) at real MC standing. The pinned member is 2-4-5-1 — the
   // measured family-pinned shape on this crystal at sun 9 deg (the living C arm's premise).
@@ -266,7 +266,7 @@ TEST(Schema3ReportAssembly, PlateRestrictedCarriesItsAnnotation) {
   EXPECT_TRUE(restricted_found) << "2-4-5-1 must be family-pinned on the plate";
 }
 
-TEST(Schema3ReportAssembly, DeclaredSkipsCoverDegenerateSunAndUnsupportedDensity) {
+TEST(Schema3ReportAssemblyChain, DeclaredSkipsCoverDegenerateSunAndUnsupportedDensity) {
   // Skip arm 1 — the sun at a pole: MakeUMarginal reports kDegenerateSunGeometry, the assembly
   // skips the measure side whole (no streams, kind-1 unproven) and declares the skip; the rule-B
   // gate reads the non-kArea kind and refuses to issue.

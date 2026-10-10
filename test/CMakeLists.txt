@@ -365,7 +365,7 @@ set_tests_properties("LumiceUnitCorrectnessTest" PROPERTIES LABELS "unit-correct
 add_executable(raypath_composition_test
   "${PROJ_TEST_DIR}/test_main.cpp"
   "${PROJ_TEST_DIR}/composition-correctness/raypath/test_input_assembly_chain.cpp"
-  "${PROJ_TEST_DIR}/composition-correctness/raypath/test_schema3_report_assembly.cpp")
+  "${PROJ_TEST_DIR}/composition-correctness/raypath/test_schema3_report_assembly_chain.cpp")
 target_link_libraries(raypath_composition_test PRIVATE GTest::gtest ${CMAKE_THREAD_LIBS_INIT}
   lumice_obj lumice_foundation_obj lumice_analytic_kernel lumice_raypath_obj)
 target_compile_definitions(raypath_composition_test PRIVATE
