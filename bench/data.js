@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1791629301364,
+  "lastUpdate": 1791629303459,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9524,50 +9524,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "fd1bb1cffe3edfbbf7c4de2a1eff5ff0ecb5ea1a",
-          "message": "Merge pull request #367 from LoveDaisy/chore/release-4.6.0\n\nchore(release): cut 4.6.0",
-          "timestamp": "2026-09-14T01:21:05+08:00",
-          "tree_id": "bd318927bfaf54e9b78b5aacd9ba6b7628b02941",
-          "url": "https://github.com/LoveDaisy/ice_halo_sim/commit/fd1bb1cffe3edfbbf7c4de2a1eff5ff0ecb5ea1a"
-        },
-        "date": 1789320645631,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 73.1,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 99.8,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 94.4,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 83.5,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "7a9430ef19ad7197b2befd279263c2e4e3474f45",
           "message": "Merge pull request #368 from LoveDaisy/chore/cli-subcommands\n\ncli: split the flat flag set into render / benchmark subcommands",
           "timestamp": "2026-09-14T18:29:48+08:00",
@@ -13867,6 +13823,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 94.9,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "a2c5d90a7a3f0918d628d6b49921aad3a0a7c8ed",
+          "message": "Merge pull request #479 from LoveDaisy/fix/analyze-render-share-calibration\n\nShare-domain calibration: lens landing semantics + dual fold-boundary defect + cone cross-check tool (task-669)",
+          "timestamp": "2026-10-10T18:45:27+08:00",
+          "tree_id": "45ab14128501225882d5f360859fce217f5b3a9f",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/a2c5d90a7a3f0918d628d6b49921aad3a0a7c8ed"
+        },
+        "date": 1791629302856,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 106.6,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 99.6,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 98.9,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 91.6,
             "unit": "%"
           }
         ]
