@@ -684,8 +684,12 @@ of `lm_proj::ProjectExitToPixel`):
   float once at publish — `src/server/render.hpp`/`render.cpp` — the
   mechanism the energy-identity test's tolerance formalizes), which is what
   makes this family the calibration arm for energy-accounting audits.
-- **Dual-fisheye**: 1.0 on the direction→disk map (each hemisphere folds onto
-  one disk, `rho^2 = 1 - |z| <= 1` exactly), **except** one measured defect below.
+- **Dual-fisheye**: 1.0 — each hemisphere folds onto one inscribed disk
+  (`rho^2 = 1 - |z| <= 1` exactly), and the fold boundary's tangent set (where
+  a disk meets the canvas edge) belongs to the last edge bin:
+  `ProjectExitToPixel` clamps the dual branch's post-floor integer pixels into
+  the canvas (the one family that clamps internally; every other family keeps
+  caller-side bounds checks) — see the record below.
 - **Single fisheye (fov 180) on a square canvas**: the inscribed disk covers the
   forward hemisphere (`rho^2 = 1 - cz <= 1`). Past 90° (`cz < 0`, `rho > 1`)
   `kFisheyeEqualAreaMinCz = -1 + 1e-3` (the antipode numerical floor) still
@@ -706,30 +710,40 @@ of `lm_proj::ProjectExitToPixel`):
   leak: no pixel receives energy twice within one frame, and the exposure
   anchor does not read frames.
 
-**Known defect (measured, unfixed at the time of writing): dual-fisheye
-fold-boundary loss.** A segment whose travel direction rounds to `wx == -1.0f`
-in float32 — the direct-through families of a horizon sun (parallel-face
-transmission and the low-deviation side-entry chains; the 22° halo itself is 22°
-away and unaffected) — projects to `sx = +1.0f`, `z_hemi = 0`, `x_norm = +1.0f`,
-`fy = cy + r = 128.0f`, `py = 128` — one row past the canvas — and
-`ProjectAndClassifyRay`'s bounds check (`src/core/lens_proj_build.hpp`) drops it
-silently. On the reference scene this deletes 5.98% of segments carrying 18.9%
-of the frame energy (measured: frame sum vs analysis total = 0.8107; uniform
-direction sets measure exactly 1.0, which is why any synthetic-orientation test
-with a generic direction set cannot see it). `analyze --roi frame` reproduces
-the same number bit-for-bit, because both paths share the same projection
-predicate. Until a fix lands, **a dual-fisheye frame's total is known to
-under-count by the direct-through energy of the scene**, in a scene-dependent
-way that no normalization constant can absorb; the `mc_evidence` share fields
-that compare against render-arm denominators inherit this caveat (see
-`doc/raypath-cli-output.md` §7).
+**Fold-boundary loss (dual-fisheye): fixed — was a silent edge-bin drop.** A
+segment whose travel direction rounds to `wx == -1.0f` in float32 — the
+direct-through families of a horizon sun (parallel-face transmission and the
+low-deviation side-entry chains; the 22° halo itself is 22° away and
+unaffected) — projects to `sx = +1.0f`, `z_hemi = 0`, `x_norm = +1.0f`,
+`fy = cy + r = 128.0f`, `py = 128`: the fold boundary meets the canvas edge,
+and floor's half-open binning put that tangent set one row or column past the
+canvas, where every caller's bounds check (`src/core/lens_proj_build.hpp` and
+its kernel-side siblings) dropped it silently. On the reference scene this
+deleted 5.98% of segments carrying 18.9% of the frame energy (historical
+measurement, pre-fix: frame sum vs analysis total = 0.8107; uniform direction
+sets measured exactly 1.0 — a generic synthetic direction set is structurally
+blind to the defect, which is why the regression pin drives the collapsing
+directions themselves). `analyze --roi frame` reproduced the same number
+bit-for-bit, both paths sharing the projection predicate. Fixed by clamping
+the dual branch's post-floor integer pixels into the last edge bin
+(`lm_proj::ProjectExitToPixel` in `src/core/shared/projection_shared.h`,
+commit `30ac22e8`): boundary-belongs-to-edge-bin, the same convention as the
+rectangular family's `lon = +pi` modulo wrap. A dual-fisheye frame total and a
+full-sky analysis total now agree to float summation noise, on the reference
+scene at both 256x128 and 1024x512 (the identity pins in the raypath
+histogram consumer suite and the cone cross-check tool both hold without an
+escape flag). The `mc_evidence` caveat that inherited this under-count
+against render-arm dual denominators is lifted for this item (see
+`doc/raypath-cli-output.md` §7.5).
 
 **Cross-check rule.** The only legal image↔analysis share comparison is
 same-domain: a cone ROI computed on both sides (the analysis `--roi cone`, and
 the image integrated over the cone's pixels through the inverse of the same
 projection). The rectangular full-sky frame is the trivial same-domain case —
 its landing domain *is* the whole sky (the Rectangular bullet above), which is
-exactly what makes it the calibration arm. For every fisheye family, comparing
-a frame share against a full-sky analysis share is a category error even after
-the defect above is fixed, because of the single-fisheye corner and
-azimuth-clipping semantics alone.
+exactly what makes it the calibration arm. For a single-fisheye frame,
+comparing a frame share against a full-sky analysis share is a category error —
+the corner and azimuth-clipping semantics alone put that landing domain below
+1.0 per view (and their two-view sum above). The dual-fisheye family, at
+exactly 1.0, is the fisheye exception: since the fold-boundary fix its frame
+total is a legal full-sky comparator, alongside the rectangular frame.

@@ -429,8 +429,10 @@ ROI），要么带上下面各 family 的落域分数。
   analysis total 一致到 float 求和噪声（实测相对 4e-8；该残差是逐像素 double 累加
   在发布时一次性收窄到 float 的机制——`src/server/render.hpp`/`render.cpp`——能量
   恒等式测试的容差把它形式化），这使该 family 成为能量对账审计的校准臂。
-- **Dual-fisheye**：方向→圆盘映射 1.0（每半球折到一个圆盘，`rho² = 1 − |z| ≤ 1` 严格
-  成立），**除下述实测缺陷外**。
+- **Dual-fisheye**：方向→圆盘映射 1.0（每半球折到一个内切圆盘，`rho² = 1 − |z| ≤ 1`
+  严格成立）；折叠边界的切点集（圆盘与画布缘相切处）归属最后一行/列边 bin：
+  `ProjectExitToPixel` 对 dual 分支 floor 后的整数像素做画布内 clamp（唯一在函数内
+  clamp 的 family，其余 family 仍由调用方做 bounds check）——见下方记录。
 - **单鱼眼（fov 180）方形画布**：内切圆覆盖前半球（`rho² = 1 − cz ≤ 1`）。90° 之后
   （`cz < 0`、`rho > 1`）`kFisheyeEqualAreaMinCz = −1+1e-3`（对跖点数值下限）仍放行到
   天顶角 ≈ 177.4°——但放行不等于落盘。EAR 前向映射是方位保持的（像点半径
@@ -443,20 +445,27 @@ ROI），要么带上下面各 family 的落域分数。
   之和大于 1（参考场景实测 1.121）。这是**显示域语义**——每张图就是「这个
   视向的画布所见」——不是能量泄漏：单帧内没有像素重复收能，曝光锚也不读帧。
 
-**已知缺陷（实测，撰写本文时未修）：dual-fisheye 折叠边界丢失。** travel 方向在
+**折叠边界丢失（dual-fisheye）：已修复——原为边 bin 静默丢弃。** travel 方向在
 float32 里舍入到 `wx == −1.0f` 的 segment——地平太阳场景下的直穿类光路（平行面透射
 与低偏向侧入射链；22° 晕本身偏 22°，不受影响）——投影为 `sx = +1.0f`、`z_hemi = 0`、
-`x_norm = +1.0f`、`fy = cy + r = 128.0f`、`py = 128`，恰好画布外一行，被
-`ProjectAndClassifyRay` 的 bounds check（`src/core/lens_proj_build.hpp`）静默丢弃。
-参考场景上这删掉 5.98% 的 segment、18.9% 的帧能量（实测：帧 sumY 与 analysis total
-之比 = 0.8107；均匀方向集实测恰为 1.0——所以任何用一般方向集的合成单测都看不见它）。
-`analyze --roi frame` 逐位复现同一数字，因为两条路共享同一投影谓词。修复落地前，
-**dual-fisheye 帧的总能量已知会按场景依赖的方式少计直穿类能量**，任何归一化常数都
-吸收不了；与渲染臂分母比较的 `mc_evidence` 份额字段继承此注意事项（见
-`doc/raypath-cli-output.md` §7）。
+`x_norm = +1.0f`、`fy = cy + r = 128.0f`、`py = 128`：折叠边界与画布缘相切，floor 的
+半开分箱把该切点集放进画布外一行/一列，被所有调用方的 bounds check
+（`src/core/lens_proj_build.hpp` 及 kernel 侧同源谓词）静默丢弃。参考场景上这删掉
+5.98% 的 segment、18.9% 的帧能量（历史实测，修复前：帧 sumY 与 analysis total
+之比 = 0.8107；均匀方向集实测恰为 1.0——一般方向集的合成单测结构性看不见此缺陷，
+所以回归 pin 直接驱动坍缩方向本身）。`analyze --roi frame` 逐位复现同一数字，两条路
+共享同一投影谓词。修复 = 把 dual 分支 floor 后的整数像素 clamp 进最后一条边 bin
+（`lm_proj::ProjectExitToPixel`，`src/core/shared/projection_shared.h`，commit
+`30ac22e8`）：边界归边 bin，与 rectangular 族 `lon = +π` 模 wrap 同族约定。修复后
+dual-fisheye 帧总能量与全天空 analysis total 一致到 float 求和噪声（参考场景 256×128
+与 1024×512 双分辨率实测；raypath histogram consumer 套件的恒等 pin 与 cone 对表工具
+均已无 escape flag 常绿）。与渲染臂 dual 分母比较的 `mc_evidence` 注意事项就此项
+解除（见 `doc/raypath-cli-output.md` §7.5）。
 
 **互检规则。** 图像↔analysis 份额唯一合法的比较是**同域**：两侧同取 cone ROI
 （analysis 的 `--roi cone`，与图像经同一投影的逆映射在锥内像素上的积分）。矩形
 全天空帧是平凡的特例——它的落域**就是**全天空（上文 Rectangular 条），这正是它
-能当校准臂的原因。对全部鱼眼族，即便上述缺陷修好，拿帧份额对比全天空 analysis
-份额仍是范畴错误——单鱼眼的角落与方位裁剪语义单独就决定了这一点。
+能当校准臂的原因。对单鱼眼帧，拿帧份额对比全天空 analysis 份额是范畴错误——
+角落与方位裁剪语义单独就把单视向落域压到 1.0 以下（两视向之和又高于 1）。
+dual-fisheye 族恰为 1.0，是鱼眼族的例外：折叠边界修复后，其帧总能量是合法的
+全天空比较对象，与矩形帧并列。

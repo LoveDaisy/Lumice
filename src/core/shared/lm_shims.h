@@ -43,6 +43,7 @@
 #define LM_FLOOR(x) metal::floor(x)
 // Integer min — LM_FMIN is float-only; callers use this for pixel-index math.
 #define LM_MIN(a, b) ((a) < (b) ? (a) : (b))
+#define LM_MAX(a, b) ((a) > (b) ? (a) : (b))
 #define LM_PI_F (M_PI_F)
 #define LM_PI_2F (M_PI_2_F)
 #elif defined(__CUDACC__)
@@ -72,6 +73,7 @@
 #define LM_CLAMP(x, a, b) fminf(fmaxf((x), (a)), (b))
 #define LM_FLOOR(x) floorf(x)
 #define LM_MIN(a, b) ((a) < (b) ? (a) : (b))
+#define LM_MAX(a, b) ((a) > (b) ? (a) : (b))
 #define LM_PI_F 3.14159265358979323846f
 #define LM_PI_2F 1.5707963267948966f
 #else
@@ -100,6 +102,7 @@
 #define LM_CLAMP(x, a, b) std::clamp((x), (a), (b))
 #define LM_FLOOR(x) std::floor(x)
 #define LM_MIN(a, b) ((a) < (b) ? (a) : (b))
+#define LM_MAX(a, b) ((a) > (b) ? (a) : (b))
 #define LM_PI_F 3.14159265358979323846f
 #define LM_PI_2F 1.5707963267948966f
 #endif

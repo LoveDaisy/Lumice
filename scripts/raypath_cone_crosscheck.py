@@ -20,6 +20,18 @@ Semantics borrowed verbatim from the engine (a56: one authority per meaning):
 Self-checks (fail = non-zero exit): inscribed-disk pixel count against the
 discrete circle area, and the cone pixel count against its analytic cap area
 within an explicit rim-band bound.
+
+Known sampling bound (honest envelope, not a defect): the inverse samples each
+pixel's CENTRE; a bin whose centre falls off the disk (rho^2 > 1) represents no
+direction and is skipped, even when the disk rim cuts through the bin and the
+bin holds energy. Since the fold-boundary fix deposits the fold tangent band
+into those edge bins, a dual-fisheye frame's cone integration under-counts by
+their energy near the rim — measured 0.24% of the frame on the reference scene
+at cone radius 180 deg, invisible for cones clear of the canvas edge (e.g.
+radius 30 deg on the horizon). A full-frame identity check therefore uses the
+raw frame sum against the analysis total, not a 180-deg cone row; at radius 180
+this tool's quantization bound is ~2.0 anyway, so the row's verdict cannot be
+discriminating there.
 """
 
 from __future__ import annotations
@@ -253,11 +265,6 @@ def main() -> None:
                          "per-row and does not bound the total; the reference scene's full-frame additivity "
                          "residue measured +0.08%%, so the default is a generous blind band — tighten it "
                          "with your scene's own residue as evidence.")
-    ap.add_argument("--expect-frame-defect", action="store_true",
-                    help="declare up front that the full-frame row is expected to be INCONSISTENT while the "
-                         "dual-fisheye fold-boundary defect (doc/coordinate-convention.md §13) is unfixed; the "
-                         "overall verdict is then carried by the remaining rows. Without this flag an "
-                         "inconsistent full-frame row exits 1.")
     args = ap.parse_args()
 
     lumice = args.lumice or os.path.join(
@@ -333,21 +340,12 @@ def main() -> None:
     mc_tol = args.mc_tol  # see --mc-tol: per-row +/- does not bound the total; default generous on purpose
     quant = audit["cone_rim_area_bound_rel"]
     full_inconsistent = abs(full_ratio - 1.0) > mc_tol + quant
-    if args.expect_frame_defect:
-        if not full_inconsistent:
-            print("NOTE: full-frame row is consistent — the declared fold-boundary defect no longer "
-                  "reproduces; drop --expect-frame-defect")
-        else:
-            print(f"NOTE: full-frame ratio {full_ratio:.4f} vs the on-record defect reference "
-                  "0.8107 (reference scene) — a materially different ratio means the defect grew "
-                  "or changed shape, not that it reproduced as recorded")
     rows_out.append({
         "comparison": "full-frame cone Y vs analyze cone total",
         "frame": full_energy,
         "analysis": total,
         "ratio": round(full_ratio, 6),
-        "verdict": ("expected-inconsistent (declared fold-boundary defect)" if full_inconsistent and args.expect_frame_defect
-                    else "consistent" if not full_inconsistent else "INCONSISTENT"),
+        "verdict": "consistent" if not full_inconsistent else "INCONSISTENT",
         "mc_tolerance": round(mc_tol, 5),
         "quantization_bound": round(quant, 5),
     })

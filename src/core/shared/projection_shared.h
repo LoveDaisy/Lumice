@@ -297,7 +297,11 @@ LM_FN void DualFisheyeToPixelXY(float x_norm, float y_norm, bool is_upper, int w
 //   hits[1]           — dual-fisheye overlap dual-write (bump_landed=false).
 //   count             — 0=miss/cull, 1=main only, 2=main + overlap.
 // Bounds culling (px/py against 0..img_w/h-1) is intentionally NOT done here;
-// callers do the range check on the returned integer pixels. This function's
+// callers do the range check on the returned integer pixels. Dual-fisheye
+// exception: the dual branch's disks are inscribed in the canvas, so it DOES
+// clamp its integer pixels into [0, img_w-1] / [0, img_h-1] — every dual
+// pixel it returns is guaranteed in-canvas, and the callers' check is a
+// no-op for them (kept for the other families). This function's
 // own miss contract is `count=0` (hits[0] left unwritten); the legacy CPU
 // convention of translating a miss to pixel {-1,-1} is applied one layer up,
 // by lens_proj.hpp's callers, not by ProjectExitToPixel itself.
@@ -429,11 +433,25 @@ LM_FN ProjResult ProjectExitToPixel(LM_THREAD const ProjParams& p, float wx, flo
     // still called DualFisheyeToPixel and wrote a pixel (only ortho sets
     // valid=false, and legacy code stored the resulting pixel unchecked).
     // Preserve that behaviour: forward hits[0] regardless of xy.valid.
+    // Post-floor clamp: the dual disks are inscribed in the canvas by
+    // construction (|x_norm|,|y_norm| <= r_scale <= 1), so the only
+    // out-of-canvas landings are the measure-zero tangent set where the fold
+    // boundary meets the canvas edge (x_norm = +1.0f → fy = img_h; lower
+    // circle y_norm = +1.0f → fx = img_w) plus its ~1e-7 f32 overshoot band —
+    // a floored half-open bin puts those one pixel past the edge, where every
+    // consumer's bounds check would silently drop the energy (the direct-through
+    // directions of a horizon sun land exactly there). Clamp the INT pixel into
+    // the last edge bin; boundary-belongs-to-edge-bin, the same convention as
+    // the rect branch's lon = +pi modulo wrap (doc/coordinate-convention.md
+    // §13). The clamped displacement is bounded by ~1 ulp of the disk radius —
+    // no genuinely off-canvas direction can be pulled in. DualFisheyeToPixelXY's
+    // float output stays untouched (bit-level mirror of projection.cpp's
+    // DualFisheyeToPixel, which has no pixel/energy ownership consumer).
     float fx = 0.0f;
     float fy = 0.0f;
     DualFisheyeToPixelXY(xy.x, xy.y, is_upper, p.img_w, p.img_h, &fx, &fy);
-    r.hits[0].px = static_cast<int>(LM_FLOOR(fx));
-    r.hits[0].py = static_cast<int>(LM_FLOOR(fy));
+    r.hits[0].px = LM_MIN(LM_MAX(static_cast<int>(LM_FLOOR(fx)), 0), p.img_w - 1);
+    r.hits[0].py = LM_MIN(LM_MAX(static_cast<int>(LM_FLOOR(fy)), 0), p.img_h - 1);
     r.hits[0].bump_landed = true;
     r.hits[0].weight = 1.0f;
     r.count = 1;
@@ -454,8 +472,8 @@ LM_FN ProjResult ProjectExitToPixel(LM_THREAD const ProjParams& p, float wx, flo
       float fx2 = 0.0f;
       float fy2 = 0.0f;
       DualFisheyeToPixelXY(xy2.x, xy2.y, !is_upper, p.img_w, p.img_h, &fx2, &fy2);
-      r.hits[1].px = static_cast<int>(LM_FLOOR(fx2));
-      r.hits[1].py = static_cast<int>(LM_FLOOR(fy2));
+      r.hits[1].px = LM_MIN(LM_MAX(static_cast<int>(LM_FLOOR(fx2)), 0), p.img_w - 1);
+      r.hits[1].py = LM_MIN(LM_MAX(static_cast<int>(LM_FLOOR(fy2)), 0), p.img_h - 1);
       r.hits[1].bump_landed = false;
       r.hits[1].weight = 1.0f;
       r.count = 2;

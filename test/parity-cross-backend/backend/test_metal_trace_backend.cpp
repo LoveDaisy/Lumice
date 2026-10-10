@@ -232,7 +232,8 @@ TEST(MetalTraceBackend, TraceLayerKernelOccupancy) {
   std::fprintf(stderr,
                "[occupancy] trace_layer_kernel maxTotalThreadsPerThreadgroup=%zu "
                "(1024 plan → 704 @M5 → 640 @DR-3 baseline → 576 @358.1 raypath-color "
-               "pass → 512 @multi-renderer exit loop, each ruled benign after throughput "
+               "pass → 512 @multi-renderer exit loop → 448 @dual-fisheye fold-boundary "
+               "int clamp, each ruled benign after throughput "
                "re-measure; R1 ruled benign @268.6)\n",
                max_threads);
   // task-358.1 (metal-color-parity) 640→576: the Step 2/4 MSL emit-gate additions
@@ -264,13 +265,26 @@ TEST(MetalTraceBackend, TraceLayerKernelOccupancy) {
   // does not translate into a throughput change (ALU-bound kernel, occupancy is a
   // non-binding constraint, as the R1 ruling above found). Same "re-measure, rule benign,
   // relax guard" path as 1024→704→640→576.
-  EXPECT_GE(max_threads, static_cast<size_t>(512))
-      << "trace_layer_kernel occupancy regressed below the 512 multi-renderer baseline "
-         "(1024 plan → 704 @M5 → 640 @DR-3 → 576 @358.1 → 512 @multi-renderer) — "
+  // Dual-fisheye fold-boundary int clamp 512→448: ProjectExitToPixel's dual
+  // branch now clamps its post-floor integer pixels into the canvas (two
+  // LM_MIN/LM_MAX pairs per hit), which costs one more occupancy quantum.
+  // Re-measured 2026-10-10 on the same box, pre- vs post-clamp arm, the
+  // committed battery (test_metal_throughput.py) run 3x per arm around the
+  // rebuild, Metal multi rays/s:
+  //   ms_multi_crystal_complex_filter: base 11.1/22.2/18.0M  clamp 10.9/22.4/20.5M
+  //   ms_multi_crystal_filtered_bd:    base 15.2/22.2/14.8M  clamp 17.8/20.7/24.8M
+  // The two arms' samples span the same range (both arms cross ~11-24M), all
+  // 12 samples pass the D1 gate and the sanity floor (min ratio 2.32), and the
+  // medians moved UP (complex 18.0→20.5M, bd 15.2→20.7M) — within the battery's
+  // single-sample thermal spread, no throughput change. Same "re-measure, rule
+  // benign, relax guard" path as 1024→704→640→576→512.
+  EXPECT_GE(max_threads, static_cast<size_t>(448))
+      << "trace_layer_kernel occupancy regressed below the 448 dual-fold-clamp baseline "
+         "(1024 plan → 704 @M5 → 640 @DR-3 → 576 @358.1 → 512 @multi-renderer → "
+         "448 @dual-fisheye fold-boundary int clamp) — "
          "re-measure multi-MS+filter throughput vs the active D1 gate and reconsider "
-         "plan R1 option B (split filter gate into independent dispatch); see scratchpad/"
-         "scrum-gpu-single-engine-continuation/task-fused-emit-gate/plan.md "
-         "and progress.md for context.";
+         "plan R1 option B (split filter gate into independent dispatch); see "
+         "doc/gpu-single-engine-implementation.md for context.";
 }
 
 // =============================================================================
