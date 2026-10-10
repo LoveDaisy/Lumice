@@ -186,7 +186,11 @@ TEST(GeometrySource, RegimeSlugMappingWalksBothTables) {
     analytic::EscapeRegime::kInteriorCriticalPointNotSimple,
     analytic::EscapeRegime::kSublevelNotReachingBoundary,
   };
-  ASSERT_EQ(RegisteredEscapeRegimes().size(), 1u);  // the contract table's current size
+  ASSERT_EQ(RegisteredEscapeRegimes().size(), 2u);  // "slab_crease" + the G3 "unset" sentinel
+  // The sentinel is in the table but is not a regime name: the lookup excludes it (G3).
+  out = EscapeRegime::kSlabCrease;
+  EXPECT_FALSE(ContractRegimeOfSlug("unset", &out));
+  EXPECT_EQ(out, EscapeRegime::kSlabCrease);
   for (const analytic::EscapeRegime regime : kernel_regimes) {
     const char* slug = analytic::EscapeRegimeName(regime);
     if (slug == nullptr) {

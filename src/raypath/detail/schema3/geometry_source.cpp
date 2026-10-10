@@ -118,6 +118,11 @@ PartitionedAxis PartitionAxisOf(const analytic::DeviationField& field) {
 
 bool ContractRegimeOfSlug(const std::string& slug, EscapeRegime* out) {
   for (const EscapeRegime regime : RegisteredEscapeRegimes()) {
+    // The sentinel is in the table (the registered string face is complete) but is not a regime
+    // name (G3): a name lookup must not accept "unset" as an escape answer, so the walk skips it.
+    if (regime == EscapeRegime::kUnset) {
+      continue;
+    }
     if (slug == EscapeRegimeName(regime)) {
       if (out != nullptr) {
         *out = regime;

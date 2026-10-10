@@ -74,7 +74,19 @@ const std::vector<ExistenceState>& RegisteredExistenceStates();
 // "slab_crease" is the one regime the port has named so far — the spelling is LI's own
 // (dp_field/certificate.py `_slab_crease_gates`); the table exists so the walk test can
 // hold the registry honest, not to bound the set.
-enum class EscapeRegime { kSlabCrease };
+//
+// kUnset is a SENTINEL, not a regime (G3 owner ruling, 2026-10-09): it is the escape_regime
+// fields' default and means "no regime applies / none was set". The kernel's regimes travel as
+// slug STRINGS (PartitionedAxis::regime_slug, StructureObjectRecord::escape_regime_slug) and none
+// of the slugs the port names has a contract value, so a producer never writes kUnset as an
+// escape answer. Two consequences pinned here: (1) with kUnset in the table,
+// RegisteredEscapeRegimes is the enum's complete registered string face (sentinel included), NOT
+// a roster of regime names — "unset" is not a regime, and the name-lookup consumer
+// (ContractRegimeOfSlug) excludes the sentinel explicitly; (2) the judging consumers
+// (CertifyVisibility, DeriveBucket) read only coverage/existence — their signatures structurally
+// carry the field but their read sets do not include it, so the sentinel cannot enter a verdict
+// (the invariance negative controls pin both arms).
+enum class EscapeRegime { kSlabCrease, kUnset };
 const char* EscapeRegimeName(EscapeRegime regime);
 const std::vector<EscapeRegime>& RegisteredEscapeRegimes();
 
@@ -137,8 +149,9 @@ struct SupportPiece {
 // ---------------------------------------------------------------------------
 struct CriticalSetCurve {
   ExistenceState existence = ExistenceState::kComputed;
-  EscapeRegime escape_regime = EscapeRegime::kSlabCrease;  // read only when existence == kEscaped
-  double walk_s = 0.0;                                     // arclength covered before truncation
+  EscapeRegime escape_regime = EscapeRegime::kUnset;  // read only when existence == kEscaped;
+                                                      // kUnset = none set (sentinel, not a regime)
+  double walk_s = 0.0;                                // arclength covered before truncation
   bool closed = false;
   std::vector<double> u;        // 3 * point_count
   std::vector<double> tangent;  // 3 * point_count
@@ -160,10 +173,10 @@ struct CriticalSetCurve {
 struct WeightSingularChain {
   bool is_gate_boundary = false;  // kind-2 when true, kind-3 (kink polyline) when false
   ExistenceState existence = ExistenceState::kComputed;
-  EscapeRegime escape_regime = EscapeRegime::kSlabCrease;
-  std::vector<double> u;      // 3 * point_count
-  std::vector<double> param;  // source parameterization, pairs with `u`
-  std::vector<char> kink;     // point_count, 1 where the chain kinks
+  EscapeRegime escape_regime = EscapeRegime::kUnset;  // kUnset = none set (sentinel, not a regime)
+  std::vector<double> u;                              // 3 * point_count
+  std::vector<double> param;                          // source parameterization, pairs with `u`
+  std::vector<char> kink;                             // point_count, 1 where the chain kinks
   // ChainEventKind value per point, -1 for "no event"; pairs with `u`.
   std::vector<int> event;
   bool closed = false;
@@ -234,7 +247,8 @@ const std::vector<FiberSampleStream::EvidenceForm>& RegisteredEvidenceForms();
 struct PartitionContext {
   enum class Coverage { kComplete, kIncomplete, kUnknown };
   Coverage coverage = Coverage::kUnknown;
-  EscapeRegime escape_regime = EscapeRegime::kSlabCrease;  // read when coverage == kIncomplete
+  EscapeRegime escape_regime = EscapeRegime::kUnset;  // read when coverage == kIncomplete;
+                                                      // kUnset = none set (sentinel, not a regime)
 };
 
 }  // namespace lumice::raypath
