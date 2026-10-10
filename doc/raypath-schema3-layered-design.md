@@ -121,7 +121,9 @@ implementation for anything the two repos both compute.
   where the walks already produce them).
 - **G-family ledger (report-core's Step-5 closeout):** G1 (az-Dirac pre-image — registered gap,
   v2 measure layer), G2 (s4_declared cannot ground `unlit` — pinned by test), G3 (escape-regime
-  default — owner-raised, slug flows as data meanwhile), G4 (μ-scan cost — measured sub-ms,
+  default — ruled 2026-10-09, candidate (a) landed: the contract enum carries a `kUnset` sentinel
+  as the fields' default, regime names keep flowing as slug strings, and the typed key serializes
+  only when a producer sets a registered regime), G4 (μ-scan cost — measured sub-ms,
   re-evaluate at ≥10⁴-point curves), G5 (producer u-fidelity true; the acos resolution floor
   sets a ≥1e-6 membership tolerance per
   [`numerical-robustness.md`](./numerical-robustness.md)), G6 (non-kArea measures read zero along
