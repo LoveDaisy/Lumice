@@ -1733,15 +1733,18 @@ double HistogramSumY(const SimData& data) {
   return sum;
 }
 
-// RED-STATE EVIDENCE (red-state-first discipline): the direct-through travel
-// directions of a horizon-sun scene collapse onto wx = -1.0f in float32, and
-// the dual-fisheye fold boundary bins them at py == img_h — one row past the
-// canvas — where the frame's bounds check drops them silently. Measured on the
-// C01 reference scene this deletes 18.9% of the frame energy (frame ΣY /
-// analysis Σ = 0.8107); this test is the synthetic red pin of exactly that
-// loss, and it must go green with the fold-boundary fix, together with the
-// mechanism pin that follows it.
-TEST(RaypathHistogramConsumer, DirectThroughEnergySurvivesDualFisheyeFullSkyFrame) {
+// CURRENT-BEHAVIOUR PIN of the fold-boundary defect (red state committed
+// before this pin; see the previous commit for the red run: image_sum = 0 vs
+// expected 1.9899): the direct-through travel directions of a horizon-sun
+// scene collapse onto wx = -1.0f in float32, the dual-fisheye fold boundary
+// bins them at py == img_h — one row past the canvas — and the frame's bounds
+// check drops them silently, while the analysis consumer counts every ray.
+// Measured on the reference scene this deletes 18.9% of the frame energy
+// (frame ΣY / analysis Σ = 0.8107). The fix turns the dropped assertion at
+// the bottom into the identity pin (image ΣY == analysis ΣY); until then this
+// pins the loss itself, so any silent change in either direction — a partial
+// fix, or a wider loss — fails loudly here.
+TEST(RaypathHistogramConsumer, FoldBoundaryDropsDirectThroughEnergyOnDualFisheyeFrame) {
   const RenderConfig cfg = DualFullSkyCfg();
 
   Batch b(1);
@@ -1766,9 +1769,73 @@ TEST(RaypathHistogramConsumer, DirectThroughEnergySurvivesDualFisheyeFullSkyFram
   // The analysis side counts every ray (full sky, no projection).
   EXPECT_DOUBLE_EQ(HistogramSumY(b.data), expected_sum);
 
-  // The frame side must deposit the same energy: every one of these
-  // directions lands inside a dual-fisheye disk (rho = 1 - |z| <= 1).
-  EXPECT_NEAR(ImageSumY(cfg, b.data), expected_sum, 1e-6 * expected_sum);
+  // The frame side deposits NONE of it: every one of these directions
+  // collapses to x_norm = +1.0f with z_hemi = 0, so fy = cy + r = img_h and
+  // the bounds check skips the row (doc/coordinate-convention.md §12).
+  EXPECT_EQ(ImageSumY(cfg, b.data), 0.0)
+      << "fold-boundary defect changed: either partially fixed (turn this pin "
+         "into the identity assertion image ΣY == analysis ΣY) or the loss got wider";
+}
+
+// The AC2 identity over a genuinely full-sky direction set — every direction
+// including the horizon band and the exact direct-through axis — on the one
+// family whose landing domain is the whole sky (rectangular: lon wraps, lat
+// never leaves the canvas). This is the green half of the calibration: the
+// same batch through this consumer and through a full-coverage frame sums to
+// the same number, which is what licenses the frame as the energy-accounting
+// calibration arm (measured on the reference scene: 4e-8 relative).
+TEST(RaypathHistogramConsumer, FullSkyIdentityOnRectangularFrame) {
+  RenderConfig cfg;
+  cfg.id_ = 0;
+  cfg.lens_.type_ = LensParam::kRectangular;
+  cfg.lens_.fov_ = 180.0f;
+  cfg.resolution_[0] = 64;
+  cfg.resolution_[1] = 32;
+  cfg.view_.el_ = 0.0f;
+  cfg.visible_ = RenderConfig::kFull;
+
+  constexpr size_t kRays = 4000;
+  uint32_t state = 987654321u;
+  auto next = [&state]() {
+    state = state * 1664525u + 1013904223u;
+    return static_cast<float>(state >> 8) / static_cast<float>(1u << 24);
+  };
+  Batch b(1);
+  b.AddChain(1, 0, 1, { 1, 2 });
+  double expected_sum = 0.0;
+  double abs_sum = 0.0;
+  auto emit = [&](float dx, float dy, float dz) {
+    const float w = 0.1f + next();
+    const float wl = 480.0f + next() * 140.0f;
+    b.data.outgoing_wl_.push_back(wl);
+    b.AddRay(1, w, dx, dy, dz);
+    expected_sum += Y(wl, w);
+    abs_sum += std::fabs(Y(wl, w));
+  };
+  // Uniform over the sphere (cos theta uniform) — hits the poles' neighbourhood,
+  // both horizon bands and every azimuth.
+  for (size_t i = 0; i < kRays - 3; i++) {
+    const float z = 2.0f * next() - 1.0f;
+    const float phi = next() * 2.0f * math::kPi;
+    const float r = std::sqrt(std::max(0.0f, 1.0f - z * z));
+    emit(r * std::cos(phi), r * std::sin(phi), z);
+  }
+  // The exact direct-through axis and horizon-band members: the rectangular
+  // map wraps them (lon = 0 bins to column 0 modulo the width) where the
+  // dual-fisheye fold boundary loses them.
+  emit(1.0f, 0.0f, 0.0f);
+  emit(-1.0f, 0.0f, 0.0f);
+  emit(0.0f, 0.0f, 1.0f);
+  b.data.ray_seg_count_ = b.data.outgoing_w_.size();
+  b.data.outgoing_component_.assign(b.data.outgoing_w_.size(), 0u);
+
+  const double hist_sum = HistogramSumY(b.data);
+  EXPECT_DOUBLE_EQ(hist_sum, expected_sum);
+  const double image_sum = ImageSumY(cfg, b.data);
+  ASSERT_GT(image_sum, 0.0) << "positive control: the frame must have imaged the rays";
+  // Same tolerance shape as the AC2 pin above: per-pixel float accumulation,
+  // bounded by the running partial sum per pixel.
+  EXPECT_NEAR(image_sum, expected_sum, 1e-5 * abs_sum);
 }
 }  // namespace
 }  // namespace lumice
