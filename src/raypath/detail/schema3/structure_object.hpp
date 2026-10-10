@@ -10,11 +10,11 @@
 //
 //   existence     computed | escaped(regime name) | walk_truncated | s4_declared. The enum is the
 //                 measure contract's ExistenceState (its registered table and names are the
-//                 single authority); `escaped` carries the kernel's regime slug as DATA
-//                 (EscapeRegimeName's string, open set, report side fail-closed on unknown — the
-//                 contract header's own words). G3 (the contract's enum-typed default-value
-//                 policy) is escalated to the owner; until the ruling the slug flows HERE, at the
-//                 object layer, and the contract struct is untouched.
+//                 single authority); `escaped` carries the kernel's regime slug as DATA (the
+//                 kernel EscapeRegimeName's string, open set, report side fail-closed on unknown
+//                 — the contract header's own words). G3 ruled (owner 2026-10-09): the contract's
+//                 typed escape_regime carries the kUnset sentinel by default and production never
+//                 writes it; the slug flows HERE, at the object layer, as the regime's datum.
 //   visibility    the measure layer's VisibilityCertificate verbatim (state + lit_fraction +
 //                 evidence form + jets_ok + the discriminated A/T flags + reason). One authority:
 //                 CertifyVisibility produces it, this record only carries it.

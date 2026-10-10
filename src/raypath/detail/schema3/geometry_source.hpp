@@ -18,11 +18,12 @@
 // The partition assembly (PartitionAxisOf) repeats the kernel's own call ORDER (the kind-2 walk,
 // the interior set, the topology, IntervalPartition — the sequence PartitionDeviationAxisImpl
 // runs); the semantics live entirely in the kernel calls. The escape regime crosses as the
-// kernel's slug STRING (data, G3's interim shape): the contract's typed escape_regime field has
-// no value for any regime the port names today (the contract registered "slab_crease", the port
-// spells each refusal separately), so the object layer reads PartitionedAxis::regime_slug and
-// the contract struct stays untouched until the owner rules (G3, escalated — not decided here).
-// The certificate consumes only `coverage`, so no false data flows meanwhile.
+// kernel's slug STRING (data — the G3 ruling, owner 2026-10-09): the contract's typed
+// escape_regime field has no value for any regime the port names today (the contract registered
+// "slab_crease" plus the kUnset sentinel, the port spells each refusal separately), so the
+// object layer reads PartitionedAxis::regime_slug and the typed field keeps its kUnset sentinel
+// default — a contract slot production never writes. The certificate consumes only `coverage`,
+// so the sentinel cannot enter a verdict (the invariance negative controls pin both arms).
 
 #include <string>
 #include <vector>
@@ -71,8 +72,9 @@ FiberSampleStream StreamOf(const analytic::OrbitFiberStream& stream);
 // ---------------------------------------------------------------------------
 
 struct PartitionedAxis {
-  PartitionContext context{};  // the contract value type; kIncomplete carries NO trustworthy
-                               // regime until G3 rules (see the module docstring)
+  PartitionContext context{};  // the contract value type; kIncomplete names the refusal in
+                               // `regime_slug` below — the typed field keeps its kUnset sentinel
+                               // (no kernel slug has a contract value; see the module docstring)
   std::string regime_slug;     // kernel EscapeRegimeName slug — the report-side datum (data)
   std::string message;         // the walk's or the escape's LI message text (stable prefixes)
   analytic::WalkStatus walk_status = analytic::WalkStatus::kOk;  // the kind-2 walk's own status
@@ -101,10 +103,11 @@ AxisAssembly AssembleAxis(const analytic::DeviationField& field);
 PartitionedAxis PartitionAxisOf(const analytic::DeviationField& field);
 
 // The kernel regime slug -> the contract's registered EscapeRegime value, by name (the
-// registered table IS the mapping — a future contract value maps without touching this
-// function). False when no contract value carries that slug: today that is EVERY kernel regime
-// (the contract registered only "slab_crease", the port names only suffixed refusals — the G3
-// evidence; the slug stays data at the object layer meanwhile).
+// registered table IS the mapping minus the kUnset sentinel, which is not a regime name — a
+// future contract REGIME value maps without touching this function). False when no contract
+// regime carries that slug: today that is EVERY kernel regime (the port names only suffixed
+// refusals, none of which the contract registers — the slug stays data at the object layer,
+// G3 as-built).
 bool ContractRegimeOfSlug(const std::string& slug, EscapeRegime* out);
 
 }  // namespace lumice::raypath::schema3

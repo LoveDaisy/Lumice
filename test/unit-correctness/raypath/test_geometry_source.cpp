@@ -1,11 +1,12 @@
 // The schema3 geometry adapter (src/raypath/detail/schema3/geometry_source.{hpp,cpp}): the
 // production consumer the contour docking test carried its mappings for. The walk-status ->
 // existence reading per kernel value, the mirrored-struct -> contract conversions, the escape
-// regime slug table (the G3 interim: kernel slugs are data, the contract's typed field is not
-// authoritative until the owner rules), the beta crystal's partition anchors through the C++
-// direct path (the ABI test pins the same numbers — the adapter must not drift), and the G5
-// u-fidelity verification (the contract's pre-registered integration gap: producer streams carry
-// the TRUE body-frame sun direction, verified by the certificate's own membership predicate).
+// regime slug table (G3 as-built: kernel slugs are data, the contract's typed field carries the
+// kUnset sentinel and production never writes it), the beta crystal's partition anchors through
+// the C++ direct path (the ABI test pins the same numbers — the adapter must not drift), and the
+// G5 u-fidelity verification (the contract's pre-registered integration gap: producer streams
+// carry the TRUE body-frame sun direction, verified by the certificate's own membership
+// predicate).
 //
 // symmetry_semantics: none — fixed face sequences and declared measures, no filter expansion.
 
@@ -24,6 +25,7 @@
 #include "raypath/detail/measure/declared_density.hpp"
 #include "raypath/detail/measure/visibility_certificate.hpp"
 #include "raypath/detail/schema3/geometry_source.hpp"
+#include "raypath/detail/schema3/structure_object.hpp"
 
 namespace lumice::raypath::schema3 {
 namespace {
@@ -155,11 +157,11 @@ TEST(GeometrySource, ChainMappingCarriesFieldsAndStopsAtTheContractVocabulary) {
   EXPECT_FALSE(out.closed);
 }
 
-// ---- the escape regime slug table (G3's interim evidence) -------------------------------------
+// ---- the escape regime slug table (G3 as-built: the sentinel is not a regime name) ------------
 
 TEST(GeometrySource, RegimeSlugMappingWalksBothTables) {
-  // The contract's own registered value maps by name — the mechanism the future G3 ruling will
-  // extend without touching this function.
+  // The contract's own registered regime value maps by name — the mechanism a future contract
+  // regime extends without touching this function (the kUnset sentinel is the one excluded row).
   EscapeRegime out = EscapeRegime::kSlabCrease;
   EXPECT_TRUE(ContractRegimeOfSlug(EscapeRegimeName(EscapeRegime::kSlabCrease), &out));
   EXPECT_EQ(out, EscapeRegime::kSlabCrease);
@@ -167,10 +169,10 @@ TEST(GeometrySource, RegimeSlugMappingWalksBothTables) {
   out = EscapeRegime::kSlabCrease;
   EXPECT_FALSE(ContractRegimeOfSlug("not_a_registered_slug", &out));
   EXPECT_EQ(out, EscapeRegime::kSlabCrease);
-  // G3's evidence, pinned: the port names each refusal separately and NONE of its slugs is the
-  // contract's registered "slab_crease" today — every kernel regime is unrepresentable in the
-  // contract's typed field, which is why the slug flows as data at the object layer (the
-  // escalation carries this row).
+  // G3's ruling shape, pinned: the port names each refusal separately and NONE of its slugs is
+  // a contract-registered regime — every kernel regime stays unrepresentable in the contract's
+  // typed field, which is why the slug flows as data at the object layer and the typed field
+  // keeps its kUnset sentinel default.
   const analytic::EscapeRegime kernel_regimes[] = {
     analytic::EscapeRegime::kNotDiskUnaudited,
     analytic::EscapeRegime::kNotDiskUnconverged,
@@ -199,7 +201,7 @@ TEST(GeometrySource, RegimeSlugMappingWalksBothTables) {
     }
     EXPECT_STRNE(slug, "unknown_escape_regime") << "unnammed kernel regime " << static_cast<int>(regime);
     EXPECT_FALSE(ContractRegimeOfSlug(slug, nullptr))
-        << "kernel slug '" << slug << "' unexpectedly matches a contract value; update the G3 row";
+        << "kernel slug '" << slug << "' unexpectedly matches a contract value; update the G3 as-built row";
   }
 }
 
@@ -277,7 +279,10 @@ TEST(GeometrySource, EscapeFormCarriesSlugAsDataWithNoIntervals) {
   EXPECT_TRUE(axis.intervals.empty());
   EXPECT_FALSE(axis.message.empty());
   EscapeRegime matched = EscapeRegime::kSlabCrease;
-  EXPECT_FALSE(ContractRegimeOfSlug(axis.regime_slug, &matched));  // G3: unrepresentable today
+  // The slug has no contract-side enum value (the table's mapping excludes the kernel's slugs,
+  // G3 as-built): the slug is the datum, the typed field keeps its kUnset sentinel default.
+  EXPECT_FALSE(ContractRegimeOfSlug(axis.regime_slug, &matched));
+  EXPECT_EQ(axis.context.escape_regime, EscapeRegime::kUnset);
   // The certificate's consumption of the refusal: unproven with its own reason, whatever the
   // stream says.
   UMarginal measure = PlateMeasure();
@@ -295,6 +300,54 @@ TEST(GeometrySource, EscapeFormCarriesSlugAsDataWithNoIntervals) {
   const VisibilityCertificate cert = CertifyVisibility(measure, stream, nullptr, &axis.context, 1e-6);
   EXPECT_EQ(cert.state, VisibilityState::kUnproven);
   EXPECT_EQ(std::string(cert.reason), "partition_escape");
+}
+
+TEST(GeometrySource, BucketDerivationIsInvariantToTheEscapeRegimeSentinel) {
+  // G3's negative control, bucket arm: the real 3-1-5-7 escape walk, the sentinel flipped on
+  // the axis context (the ONLY differing field between the two arms), the full judgment chain
+  // re-run — certificate and derived bucket must come out identical. DeriveBucket's signature
+  // carries only existence x visibility, so the field could reach the bucket only THROUGH the
+  // certificate; this arm pins that end-to-end face (the certificate arm in
+  // test_visibility_certificate.cpp pins the certificate itself). The kUnset side is also the
+  // explicit anchor for the existence machine's non-escaped default: an axis as the kernel
+  // assembles it carries the sentinel, never a regime value.
+  const Tables t = Prism();
+  analytic::Status resolve = analytic::Status::kInvalidConfig;
+  analytic::DeviationField field = FieldOf(t, { 3, 1, 5, 7 }, kN550, &resolve);
+  ASSERT_EQ(resolve, analytic::Status::kOk);
+  const PartitionedAxis walked = PartitionAxisOf(field);
+  ASSERT_EQ(walked.context.coverage, PartitionContext::Coverage::kIncomplete);
+  ASSERT_FALSE(walked.regime_slug.empty());
+  ASSERT_EQ(walked.context.escape_regime, EscapeRegime::kUnset);  // the as-assembled default
+
+  PartitionedAxis with_sentinel = walked;
+  PartitionedAxis with_regime = walked;
+  with_regime.context.escape_regime =
+      EscapeRegime::kSlabCrease;  // the retired fake default, kept only as this arm's foil
+
+  const UMarginal measure = PlateMeasure();
+  FiberSampleStream stream;
+  stream.evidence = FiberSampleStream::EvidenceForm::kSampledExhaustive;
+  for (int i = 0; i < 8; i++) {
+    FiberSample s;
+    measure.SpinOrbitPoint(0.8 * i, s.u);
+    s.area = 0.5;
+    s.transmission = 0.7;
+    s.valid = true;
+    s.weight = 0.1;
+    stream.samples.push_back(s);
+  }
+  const VisibilityCertificate cert_sentinel = CertifyVisibility(measure, stream, nullptr, &with_sentinel.context, 1e-6);
+  const VisibilityCertificate cert_regime = CertifyVisibility(measure, stream, nullptr, &with_regime.context, 1e-6);
+  EXPECT_EQ(cert_sentinel.state, cert_regime.state);
+  EXPECT_EQ(std::string(cert_sentinel.reason), std::string(cert_regime.reason));
+
+  StructureObjectRecord from_sentinel;
+  from_sentinel.existence = ExistenceOfWalkStatus(with_sentinel.walk_status);
+  from_sentinel.visibility = cert_sentinel;
+  StructureObjectRecord from_regime = from_sentinel;
+  from_regime.visibility = cert_regime;
+  EXPECT_EQ(BucketOf(from_sentinel), BucketOf(from_regime));
 }
 
 // ---- G5: the producer feeds certificate-grade u (the contract's pre-registered gap) ------------

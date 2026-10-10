@@ -99,8 +99,8 @@ AxisAssembly AssembleAxis(const analytic::DeviationField& field) {
       analytic::IntervalPartition(field, interior, fold_set_ptr, walk.loop, topology);
   if (partition.escaped) {
     // The escape is DATA (PartitionResult's mechanical invariant: intervals empty). The slug is
-    // the report-side datum; the contract's typed field gets the default (G3 pending — the
-    // module docstring records why that field is not authoritative here).
+    // the report-side datum; the contract's typed field keeps its kUnset sentinel (no kernel
+    // slug has a contract value — G3 as-built; the module docstring records the shape).
     out.axis.context.coverage = PartitionContext::Coverage::kIncomplete;
     out.axis.regime_slug = analytic::EscapeRegimeName(partition.regime);
     out.axis.message = partition.message;

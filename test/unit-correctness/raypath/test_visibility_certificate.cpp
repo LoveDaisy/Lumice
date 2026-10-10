@@ -216,6 +216,30 @@ TEST(VisibilityCertificate, EscapeAndTruncatedRouteFailClosed) {
   EXPECT_EQ(CertifyVisibility(measure, stream, &escaped_curve, nullptr, 1e-6).reason, std::string("kind1_escaped"));
 }
 
+TEST(VisibilityCertificate, VerdictIgnoresTheEscapeRegimeSentinel) {
+  // G3's negative control, certificate arm: the certificate's read set is the partition's
+  // coverage alone — its signature structurally carries escape_regime but never reads it. Same
+  // coverage, the two values the field can carry (the kUnset default vs a registered regime):
+  // state and reason must come out identical. A judgment that starts reading escape_regime
+  // turns this red.
+  const UMarginal measure = PlateMeasure();
+  FiberSampleStream stream;
+  stream.evidence = FiberSampleStream::EvidenceForm::kStructural;
+  for (int i = 0; i < 8; i++) {
+    stream.samples.push_back(OnOrbitSample(measure, 0.8 * i, 0.5, 0.7, 0.1));
+  }
+  PartitionContext unset;  // escape_regime at its kUnset default
+  unset.coverage = PartitionContext::Coverage::kIncomplete;
+  PartitionContext named;
+  named.coverage = PartitionContext::Coverage::kIncomplete;
+  named.escape_regime = EscapeRegime::kSlabCrease;
+  ASSERT_EQ(unset.escape_regime, EscapeRegime::kUnset);
+  const VisibilityCertificate from_unset = CertifyVisibility(measure, stream, nullptr, &unset, 1e-6);
+  const VisibilityCertificate from_named = CertifyVisibility(measure, stream, nullptr, &named, 1e-6);
+  EXPECT_EQ(from_unset.state, from_named.state);
+  EXPECT_EQ(std::string(from_unset.reason), std::string(from_named.reason));
+}
+
 TEST(VisibilityCertificate, UnknownPartitionDoesNotBlockCertified) {
   // A per-point visibility certificate is local: the v1 producer shape (no partition run yet)
   // can still certify its own samples — the object's bucket placement consumes the partition
