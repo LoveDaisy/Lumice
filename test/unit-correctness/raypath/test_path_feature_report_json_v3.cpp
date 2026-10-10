@@ -368,7 +368,10 @@ TEST(PathFeatureReportJsonV3, Schema3BlocksEmitEveryDeclaredField) {
   // -- Support block: one maximal member row (every partition face and both gated arms open)
   //    and both family forms.
   schema3::MemberSupport& row = run.assembled.core.support.members.front();
-  row.axis.regime_slug = "slab_crease";  // opens the slug + regime gate
+  row.axis.regime_slug = "slab_crease";                        // opens the slug + regime gate
+  row.axis.context.escape_regime = EscapeRegime::kSlabCrease;  // opens the typed-key gate (G3);
+                                                               // the kUnset arm is
+                                                               // UnsetEscapeRegimeOmitsTheTypedKey's
   row.axis.message = "sentinel_partition_message";
   row.axis.intervals = { analytic::DeviationInterval{ 0.4, 0.5, 2, 1, 1 } };
   analytic::CriticalOnset onset{};

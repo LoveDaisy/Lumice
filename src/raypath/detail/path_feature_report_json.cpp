@@ -358,8 +358,13 @@ Json SupportBlockJson(const Schema3DiscoveryCore& core) {
                        { "walk_closed", row.axis.walk_closed },
                        { "intervals", IntervalsJson(row.axis.intervals) } };
     if (!row.axis.regime_slug.empty()) {
-      partition["escape_regime_slug"] = row.axis.regime_slug;  // the slug is DATA (G3 interim)
-      partition["escape_regime"] = EscapeRegimeName(row.axis.context.escape_regime);
+      partition["escape_regime_slug"] = row.axis.regime_slug;  // the slug is DATA: the regime's name
+      // G3: the typed key names a contract-registered regime and omits at the kUnset sentinel —
+      // serializing "unset" would re-spell the fake default the sentinel replaced. The slug above
+      // is the regime's datum; a producer that someday sets a registered regime gets the key back.
+      if (row.axis.context.escape_regime != EscapeRegime::kUnset) {
+        partition["escape_regime"] = EscapeRegimeName(row.axis.context.escape_regime);
+      }
     }
     if (!row.axis.message.empty()) {
       partition["message"] = row.axis.message;
