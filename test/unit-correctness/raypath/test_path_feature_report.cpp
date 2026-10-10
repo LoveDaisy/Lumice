@@ -5,9 +5,20 @@
 
 #include "raypath/detail/path_feature_report.hpp"
 #include "raypath/detail/path_feature_report_json.hpp"
+#include "raypath/detail/schema3/report_assembly.hpp"
 
 namespace lumice::raypath {
 namespace {
+
+// The production flip path: assemble, schema3-assemble (the discovery moves into the carry),
+// serialize v3. Callers must read report.discovery BEFORE calling this.
+nlohmann::json V3Document(PathFeatureReport& report) {
+  const schema3::AssembledSchema3Report assembled =
+      report.unsupported_multicrystal ?
+          schema3::AssembledSchema3Report{} :
+          schema3::AssembleSchema3Report(std::move(report), report.options.sampling.max_optical_evaluations);
+  return nlohmann::json::parse(PathFeatureReportV3ToJson(report, assembled, "test"));
+}
 ConfigManager Scene() {
   PrismCrystalParam prism;
   prism.h_ = { DistributionType::kNoRandom, 1, 0 };
@@ -37,21 +48,21 @@ TEST(PathFeatureReport, ActualSpectrumPhysicalScopeAndNoFormulaDispatcher) {
   request.max_field_evaluations = 1;
   PathFeatureReport report;
   ASSERT_TRUE(AssemblePathFeatureReport(Scene(), request, &report).Ok());
-  const auto document = nlohmann::json::parse(PathFeatureReportToJson(report, "test"));
-  EXPECT_EQ(document.at("schema_version"), 2);
-  EXPECT_EQ(document.at("spectrum").size(), 3u);
-  EXPECT_EQ(document.at("spectrum")[0]["nm"], 450);
-  EXPECT_EQ(document.at("scope").at("member_semantics"), "physical_L2");
-  EXPECT_EQ(document.at("outcome"), "partial");
-  EXPECT_FALSE(document.contains("target"));
-  EXPECT_FALSE(document.contains("internal_provisional"));
-  EXPECT_FALSE(document.at("sources").empty());
   bool candidate = false;
   for (const auto& feature : report.discovery.features) {
     EXPECT_EQ(feature.kind.find("random_regular"), std::string::npos);
     candidate |= feature.deviation_minimum.has_value();
   }
   EXPECT_TRUE(candidate);
+  const auto document = V3Document(report);
+  EXPECT_EQ(document.at("schema_version"), 3);
+  EXPECT_EQ(document.at("scope").at("spectrum").size(), 3u);
+  EXPECT_EQ(document.at("scope").at("spectrum")[0]["nm"], 450);
+  EXPECT_EQ(document.at("scope").at("member_semantics"), "physical_L2");
+  EXPECT_EQ(document.at("outcome"), "partial");
+  EXPECT_FALSE(document.contains("target"));
+  EXPECT_FALSE(document.contains("internal_provisional"));
+  EXPECT_FALSE(document.at("sources").empty());
 }
 TEST(PathFeatureReport, LargeExpandedRequestsStopAsPartialNotAsAnUpfrontAbsence) {
   PathFeatureReportRequest request;
@@ -66,7 +77,7 @@ TEST(PathFeatureReport, LargeExpandedRequestsStopAsPartialNotAsAnUpfrontAbsence)
   EXPECT_EQ(report.discovery.measure.optical_evaluations, 100u);
   EXPECT_TRUE(report.discovery.budget_exhausted);
   EXPECT_FALSE(report.discovery.unfinished.empty());
-  EXPECT_EQ(nlohmann::json::parse(PathFeatureReportToJson(report, "test"))["outcome"], "partial");
+  EXPECT_EQ(V3Document(report)["outcome"], "partial");
 }
 TEST(PathFeatureReport, BoundedSearchCompletionIsDistinctFromGlobalCoverage) {
   PathFeatureReportRequest request;
@@ -80,12 +91,18 @@ TEST(PathFeatureReport, BoundedSearchCompletionIsDistinctFromGlobalCoverage) {
   EXPECT_FALSE(report.discovery.budget_exhausted);
   EXPECT_TRUE(report.discovery.unfinished.empty());
   EXPECT_FALSE(report.discovery.limitations.empty());
-  const auto document = nlohmann::json::parse(PathFeatureReportToJson(report, "test"));
+  const std::vector<std::string> limitations = report.discovery.limitations;  // the assembly moves discovery
+  const auto document = V3Document(report);
   EXPECT_EQ(document["outcome"], "completed");
-  EXPECT_EQ(document["coverage"][1]["limitations"], report.discovery.limitations);
-  EXPECT_FALSE(document["candidates"].empty());
-  // Completing the bounded search does not upgrade unsuccessful local hypotheses.
-  EXPECT_FALSE(document["unfinished"].empty());
+  EXPECT_EQ(document["coverage"][1]["limitations"], limitations);
+  EXPECT_FALSE(document["features"]["candidate"].empty());
+  // Completing the bounded search does not upgrade unsuccessful local hypotheses: the MC side
+  // carries unfinished records (the record face of the demoted evidence).
+  int unfinished_records = 0;
+  for (const auto& record : document["mc_evidence"]["records"]) {
+    unfinished_records += record["evidence"] == "unfinished" ? 1 : 0;
+  }
+  EXPECT_GT(unfinished_records, 0);
 }
 
 TEST(PathFeatureReport, UnsupportedChainsDoNotBypassRequestValidation) {
@@ -133,10 +150,10 @@ TEST(PathFeatureReport, ExactZeroSpectralSignalIsNotAClaimBasedOnEmptySampling) 
   PathFeatureReport report;
   ASSERT_TRUE(AssemblePathFeatureReport(config, request, &report).Ok());
   EXPECT_TRUE(report.no_related_signal);
-  EXPECT_EQ(nlohmann::json::parse(PathFeatureReportToJson(report, "test"))["outcome"], "no_related_feature");
+  EXPECT_EQ(V3Document(report)["outcome"], "no_related_feature");
   request.path_layers = { { 3, 5 }, { 1, 3 } };
   EXPECT_TRUE(AssemblePathFeatureReport(config, request, &report).Ok());
-  EXPECT_EQ(nlohmann::json::parse(PathFeatureReportToJson(report, "test"))["outcome"], "unsupported_multicrystal");
+  EXPECT_EQ(V3Document(report)["outcome"], "unsupported_multicrystal");
 }
 }  // namespace
 }  // namespace lumice::raypath

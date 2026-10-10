@@ -142,7 +142,7 @@ LUMICE_API LUMICE_ErrorCode LUMICE_AnalyzePathFeatureReport(const LUMICE_Scene* 
                                                             LUMICE_PathFeatureReport** out, char* err_buf,
                                                             size_t err_size);
 
-// UTF-8 JSON with schema "lumice.path-feature-report", schema_version 2. Uses the same
+// UTF-8 JSON with schema "lumice.path-feature-report", schema_version 3. Uses the same
 // length-query/fetch and truncation contract as LUMICE_SinglePathResultToJson.
 LUMICE_API LUMICE_ErrorCode LUMICE_PathFeatureReportToJson(const LUMICE_PathFeatureReport* result, char* out_buf,
                                                            size_t buf_size, size_t* out_len);

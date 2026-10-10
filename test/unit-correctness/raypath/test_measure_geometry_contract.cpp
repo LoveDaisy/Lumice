@@ -180,7 +180,9 @@ TEST(MeasureContract, ExistenceVocabularyIsSchema3Pinned) {
 TEST(MeasureContract, RegisteredTablesCoverTheirEnums) {
   EXPECT_EQ(RegisteredExistenceStates().size(), 4);
   EXPECT_EQ(RegisteredChainEventKinds().size(), 4);
-  EXPECT_EQ(RegisteredEscapeRegimes().size(), 1);
+  // Two rows: "slab_crease" (the one regime the port names) + "unset" — the G3 sentinel, whose
+  // row makes the table the enum's complete registered string face, not a roster of regimes.
+  EXPECT_EQ(RegisteredEscapeRegimes().size(), 2);
   EXPECT_EQ(RegisteredVisibilityStates().size(), 4);
   // The routing-sensitive pair is registered too (a50): the quadrature switches on the binding,
   // the certificate quantifies over the evidence form.
@@ -254,9 +256,23 @@ TEST(MeasureContract, PartitionContextNamesItsEscapeRegime) {
   escaped.coverage = PartitionContext::Coverage::kIncomplete;
   escaped.escape_regime = EscapeRegime::kSlabCrease;
   EXPECT_STREQ(EscapeRegimeName(escaped.escape_regime), "slab_crease");
+  // The sentinel's spelling (G3): the registered face's second row, never an escape answer.
+  EXPECT_STREQ(EscapeRegimeName(EscapeRegime::kUnset), "unset");
 
   PartitionContext unknown;  // the default is kUnknown: v1 producers that do not partition yet
   EXPECT_EQ(unknown.coverage, PartitionContext::Coverage::kUnknown);
+}
+
+TEST(MeasureContract, DefaultFieldsCarryUnsetSentinel) {
+  // G3: the escape_regime fields' default is the unset sentinel, never a regime value — the old
+  // kSlabCrease default made every non-escaped record carry a regime name it never escaped with
+  // (fake data). Someone restoring that default reinstates the fake data and goes red here.
+  CriticalSetCurve curve;
+  WeightSingularChain chain;
+  PartitionContext partition;
+  EXPECT_EQ(curve.escape_regime, EscapeRegime::kUnset);
+  EXPECT_EQ(chain.escape_regime, EscapeRegime::kUnset);
+  EXPECT_EQ(partition.escape_regime, EscapeRegime::kUnset);
 }
 
 }  // namespace

@@ -81,6 +81,15 @@ constexpr double kTintRatioMin = 1.0 + 2.0 * kCalibrationWhiteMaxDeviation;
 constexpr double kGateStaticAtol = 1e-9;
 // Fibonacci lattice of the gate-contrast weight reference inside U_P.
 constexpr int kContrastLatticeN = 20000;
+// A feature's red-blue shift statistic pairs every red curve point with its nearest blue point
+// (ShiftOf, O(red_points * blue_points)). A curve pair denser than this many point products is
+// DECLARED not assessed — note + coverage_complete false, the "gates not analysed" honesty
+// shape — never compared in a truncated way (a half-computed median is a fabricated statistic).
+// Execution boundary, not a numeric-semantic change: no walk, threshold or verdict constant is
+// touched. The default sits ~8x above the largest measured legal corpus pair (closed-form
+// circles, 3600 x 3600) and ~6000x below the degenerate-family pathology that motivated it
+// (duplicated marched arcs, corpus C10: 780825 x 789472 measured hours per member).
+constexpr long long kMaxShiftComparisonPairs = 100000000;
 
 // The declared-parameter snapshot that travels with every chromatic verdict (LI
 // mc_thresholds_snapshot's field set, minus its bookkeeping strings): the constants above as

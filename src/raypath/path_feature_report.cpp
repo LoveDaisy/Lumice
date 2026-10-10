@@ -7,6 +7,7 @@
 #include "analytic/so3.hpp"
 #include "raypath/detail/path_feature_report.hpp"
 #include "raypath/detail/path_feature_report_json.hpp"
+#include "raypath/detail/schema3/report_assembly.hpp"
 #include "util/logger.hpp"
 
 namespace lumice::raypath {
@@ -164,7 +165,18 @@ Error AnalyzePathFeatureReport(const ConfigManager& config, const PathFeatureRep
   if (const Error error = AssemblePathFeatureReport(config, request, &report); !error.Ok()) {
     return error;
   }
-  *json_out = PathFeatureReportToJson(report, product_version.c_str());
+  // The multicrystal early path never ran the discovery; the assembly's precondition excludes
+  // it and the v3 early shape ignores the assembled side. The enumeration leg's anti-hang
+  // deadline starts here: the enforced robustness floor (kEnumerationHangCapMs), independent
+  // of the request's quality budget (--budget-ms bounds the discovery legs, report-only by
+  // A4 for the enumeration's own cost vocabulary).
+  const schema3::AssembledSchema3Report assembled =
+      report.unsupported_multicrystal ?
+          schema3::AssembledSchema3Report{} :
+          schema3::AssembleSchema3Report(
+              std::move(report), request.max_optical_evaluations,
+              std::chrono::steady_clock::now() + std::chrono::milliseconds(schema3::kEnumerationHangCapMs));
+  *json_out = PathFeatureReportV3ToJson(report, assembled, product_version.c_str());
   return {};
 }
 
@@ -300,12 +312,7 @@ Error BuildPathFeatureReport(const SceneConfig& scene, const std::string& identi
       result.discovery.unfinished.push_back("continuous spectral quadrature refinement incomplete");
     }
   }
-  result.no_related_signal =
-      std::holds_alternative<std::vector<WlParam>>(result.snapshot.light.spectrum_) &&
-      std::all_of(result.representative_input.spectrum.rows.begin(), result.representative_input.spectrum.rows.end(),
-                  [](const auto& row) {
-                    return row.coefficient[0] == 0 && row.coefficient[1] == 0 && row.coefficient[2] == 0;
-                  });
+  result.no_related_signal = ZeroSpectralSignal(result.snapshot, result.representative_input);
   *out = std::move(result);
   return {};
 }

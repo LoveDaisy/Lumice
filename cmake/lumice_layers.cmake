@@ -279,6 +279,22 @@ set(LUMICE_LAYER_raypath_FILES
   raypath/detail/measure/weight_profile.hpp
   raypath/detail/physical_member_scope.cpp
   raypath/detail/physical_member_scope.hpp
+  raypath/detail/schema3/geometry_source.cpp
+  raypath/detail/schema3/geometry_source.hpp
+  raypath/detail/schema3/mc_attribution.cpp
+  raypath/detail/schema3/mc_attribution.hpp
+  raypath/detail/schema3/mc_evidence.cpp
+  raypath/detail/schema3/mc_evidence.hpp
+  raypath/detail/schema3/no_related_feature.cpp
+  raypath/detail/schema3/no_related_feature.hpp
+  raypath/detail/schema3/report_assembly.cpp
+  raypath/detail/schema3/report_assembly.hpp
+  raypath/detail/schema3/structure_object.cpp
+  raypath/detail/schema3/structure_object.hpp
+  raypath/detail/schema3/structure_enumeration.cpp
+  raypath/detail/schema3/structure_enumeration.hpp
+  raypath/detail/schema3/support_block.cpp
+  raypath/detail/schema3/support_block.hpp
   raypath/path_feature_report.hpp
   raypath/detail/path_feature_report.hpp
   raypath/detail/path_feature_report_json.cpp

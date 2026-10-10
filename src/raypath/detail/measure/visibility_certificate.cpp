@@ -33,6 +33,7 @@ constexpr const char* kReasonEscape = "partition_escape";
 constexpr const char* kReasonTruncated = "kind1_walk_truncated";
 constexpr const char* kReasonKind1Escaped = "kind1_escaped";
 constexpr const char* kReasonKind1S4Declared = "kind1_s4_declared";
+constexpr const char* kReasonKind1Unknown = "kind1_existence_unknown";
 constexpr const char* kReasonNoSupportSamples = "no_in_support_samples";
 constexpr const char* kReasonPartialEvidence = "sampled_partial_evidence";
 constexpr const char* kReasonNoKind1 = "no_kind1_curve";
@@ -60,22 +61,29 @@ VisibilityCertificate CertifyVisibility(const UMarginal& measure, const FiberSam
     out.reason = kReasonEscape;
     return out;
   }
-  if (kind1 != nullptr && kind1->existence == ExistenceState::kWalkTruncated) {
+  if (kind1 != nullptr && kind1->existence != ExistenceState::kComputed) {
+    // G7: the negative form of the old per-== whitelist. A non-computed curve answers nothing —
+    // and the contract's enum is OPEN, so the default arm is reachable by construction: a value
+    // appended after this code was written routes fail-closed (unproven with its own stable
+    // reason) instead of falling through to the stream sweep, which read it as computed.
     out.state = VisibilityState::kUnproven;
-    out.reason = kReasonTruncated;
-    return out;
-  }
-  if (kind1 != nullptr && kind1->existence == ExistenceState::kEscaped) {
-    out.state = VisibilityState::kUnproven;
-    out.reason = kReasonKind1Escaped;
-    return out;
-  }
-  if (kind1 != nullptr && kind1->existence == ExistenceState::kS4Declared) {
-    // A declared-but-not-walked curve is a different blocking condition than an escape (one
-    // reason per condition): whether it can serve as unlit's curve-presence leg is a 660-side
-    // semantic call, escalated — until then it answers nothing, on the conservative side.
-    out.state = VisibilityState::kUnproven;
-    out.reason = kReasonKind1S4Declared;
+    switch (kind1->existence) {
+      case ExistenceState::kWalkTruncated:
+        out.reason = kReasonTruncated;
+        break;
+      case ExistenceState::kEscaped:
+        out.reason = kReasonKind1Escaped;
+        break;
+      case ExistenceState::kS4Declared:
+        // A declared-but-not-walked curve is a different blocking condition than an escape (one
+        // reason per condition): whether it can serve as unlit's curve-presence leg is a 660-side
+        // semantic call, escalated — until then it answers nothing, on the conservative side.
+        out.reason = kReasonKind1S4Declared;
+        break;
+      default:
+        out.reason = kReasonKind1Unknown;
+        break;
+    }
     return out;
   }
 
@@ -172,6 +180,41 @@ VisibilityCertificate CertifyVisibility(const UMarginal& measure, const FiberSam
   out.state = VisibilityState::kUnproven;
   out.reason = kReasonPartialEvidence;
   return out;
+}
+
+VisibilityCertificate CertifyVisibilityPerComponent(const UMarginal& measure, const FiberSampleStream& stream,
+                                                    const std::vector<const CriticalSetCurve*>& components,
+                                                    const PartitionContext* partition, double angular_tol_rad) {
+  // Each component is certified EXACTLY ONCE (the module's "expensive pieces run once"
+  // discipline), and the strongest verdict wins — unlit > unproven > partial > certified, the
+  // header's aggregate order. The winner's certificate returns wholesale. An empty or all-null
+  // list grounds no verdict here: fail closed to unproven/no_kind1_curve. The stream is NOT
+  // consulted on that path — the null-curve call is CertifyVisibility's own, not this
+  // aggregate's.
+  VisibilityCertificate best;
+  int best_rank = -1;
+  for (const CriticalSetCurve* component : components) {
+    if (component == nullptr) {
+      continue;  // a null slot is no component (the caller's filter, not an error)
+    }
+    const VisibilityCertificate one = CertifyVisibility(measure, stream, component, partition, angular_tol_rad);
+    const int rank = one.state == VisibilityState::kUnlit    ? 0 :
+                     one.state == VisibilityState::kUnproven ? 1 :
+                     one.state == VisibilityState::kPartial  ? 2 :
+                                                               3;
+    if (best_rank < 0 || rank < best_rank) {
+      best = one;
+      best_rank = rank;
+      if (rank == 0) {
+        break;  // unlit cannot be beaten
+      }
+    }
+  }
+  if (best_rank < 0) {
+    best.state = VisibilityState::kUnproven;
+    best.reason = kReasonNoKind1;
+  }
+  return best;
 }
 
 }  // namespace lumice::raypath

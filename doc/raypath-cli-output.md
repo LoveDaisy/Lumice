@@ -303,7 +303,7 @@ if (doc.outcome === "discovered") {
 }
 ```
 
-## 7. Target-free path feature report (schema 2)
+## 7. Target-free path feature report (schema 3)
 
 ```bash
 Lumice raypath -f <config> --crystal <id> --path <faces> --report \
@@ -329,6 +329,15 @@ a finite sun with a point or a randomized shape with its mean. Physical L2 expan
 from label P/B/D matching. The C request's `symmetry_bits_plus_one` explicitly selects P/B/D bits
 (or the single concrete path); zero retains the P|B|D default. There is no path-name or reference-shape detector dispatcher.
 
+The document has two evidence layers. The **geometry layer** enumerates the chain's structural
+objects on the orientation-reduced sphere (the `u`-S² pre-image: critical sets of the deviation
+map, gate boundaries, transmission-weight kinks, restricted-family images) and attaches exact
+certificates — the delta-axis partition, endpoint onsets, visibility certificates, chromatic
+verdicts. The **MC layer** is demoted to corroboration: the schema-2 observation records ride
+along as `mc_evidence`, they may support or contradict a structural object, and they neither
+promote nor erase one. An MC red flag (`not_observed_despite_sufficient_ess`, an
+`sufficient-ESS` unattributed structure) is reported as a disagreement, never resolved silently.
+
 With no `--wavelength`, discrete spectra are summed with their actual weights; a continuous
 illuminant uses full-band quadrature and a separate refinement check. `--wavelength <nm>` explicitly
 selects a diagnostic spectrum instead, labelled as such. The C API accepts up to 32 diagnostic
@@ -340,110 +349,231 @@ and optical work available for the main estimate, independent repeat and spectra
 The numerical defaults are 15000 ms, 4000000 optical evaluations and 250000000 weighted-component
 field evaluations. `--budget-ms` permits up to 120000 ms; `--max-evaluations` up to 16777216;
 `--max-field-evaluations` up to 1000000000. These bounds are checked inside numerical work, not
-only after it finishes. Bounded serialization follows the numerical deadline. Sampling is
-replayable, but which partial records fit a wall-clock deadline can vary across machines.
+only after it finishes. Bounded serialization follows the numerical deadline. The MC and
+attribution legs are deadline-bounded by that quality budget. The geometry layer's
+**enumeration leg** carries two different kinds of bound, and the difference is the contract:
+
+- Its **quality budgets are report-only** — the leg's cost is measured and reported
+  (`timing.enumeration`, `budgets.enumeration`), never clamped by `--budget-ms`.
+- A fixed **anti-hang cap is enforced** (`budgets.enumeration.hang_cap_ms`, 300000 ms): a
+  member or leg the cap cuts ships the honest truncated face (`walk_truncated`, `walk_s` 0.0,
+  no curve body) and `budgets.enumeration.truncated` plus `truncation_note` name what was cut.
+  The cap is a robustness floor against pathological inputs, not a quality knob, and is
+  deliberately not coupled to `--budget-ms`.
+
+Two declared refusal bounds ride beside it, same honesty shape: an object whose curve body is
+denser than the carry bound ships truncated with no body (real kernel output the report leg
+declines to carry), and a chromatic feature whose red/blue curves are too dense to compare is
+reported not assessed inside its verdict (`coverage_complete` false, the refusal in `notes`) —
+never half-compared. Sampling is replayable, but which partial records fit a wall-clock deadline
+can vary across machines.
 
 ### 7.1 One document and one owner
 
 `LUMICE_AnalyzePathFeatureReport` returns an immutable opaque result. CLI and C clients read the
-same `PathFeatureReportToJson` serialization. The v4.52 request suffix is read only when its
-complete group fits `struct_size`; the v4.51 prefix remains accepted with the new defaults.
-The JSON schema changes meaning and is therefore **version 2**, not an append to version 1.
+same serialization. The v4.52 request suffix is read only when its complete group fits
+`struct_size`; the v4.51 prefix remains accepted with the new defaults.
+The JSON schema changed meaning and is therefore **version 3**, not an append to version 2.
+A reader requiring version 2 must reject version 3, and a version-3 reader must reject version 2
+(§1 version discipline; the in-repo face is the e2e `_load_report` gate).
 The target/fiber document and `--warm` contract in sections 1–6 are unchanged.
+
+An unsupported-chain document keeps the early shape: `schema`, `schema_version`, `outcome`,
+`requested_path_layers`, the three empty feature buckets, an empty `mc_evidence`, the
+`not_supported` coverage row and zero-work budgets — the requested input, no fabricated payload.
+
+### 7.2 Top-level keys
 
 | Key | Meaning |
 |---|---|
-| `schema`, `schema_version` | `lumice.path-feature-report`, 2 |
+| `schema`, `schema_version` | `lumice.path-feature-report`, 3 |
+| `generator` | Lumice version and the analytic kernel's `analytic_api_version` |
+| `conventions` | Unit conventions plus the spelling notes: `walk_s` (null = no arclength applies; 0.0 = truncated with no pre-truncation arclength exposed), `null` (JSON cannot spell non-finite numbers), `min_margin_rad`, `features_buckets`, `chromatic_thresholds` |
 | `outcome` | `completed`, `partial`, `unsupported_multicrystal`, or `no_related_feature` |
-| `scope` | Value-owned selected input, actual/diagnostic spectral scope, seed, scene/layer/crystal identity |
-| `support` | Pose coordinate count versus ZYZ support dimension, shape parameter count, source/spectral dimensions; unknown joint optical rank is null |
-| `physical_members` | Concrete physical-L2 face sequences; never an L1 label orbit |
-| `spectrum` | Actual nm, source weight, quadrature mass, refractive index and XYZ coefficient |
-| `actual_features` | Positive, locally supported numerical/physical records at their declared observation or source scope |
-| `candidates` | Verified conditional mechanism/source facts whose observed significance or full extent is unproved |
-| `unfinished` | Numerical feature records that did not establish the required evidence, retaining available diagnostics |
-| `unfinished_reasons` | Required discovery/verification stages left incomplete or unavailable |
-| `coverage` | Supported scope and bounded-search limitations, not a claim of global completeness |
-| `observation` | Kernel, bandwidth, local location target and search scope; no MC projection is imposed |
-| `requested_outer_samples` | The request's `sample_count` verbatim: with no `--events` (auto mode) it is **0**, not the planned count; the resolved dyadic prefix actually used is `budgets.requested_outer_samples` |
-| `budgets`, `timing` | Actual work, completed outer draws/repeat, exhaustion and per-stage seconds |
-| `sources` | Call-local tokens linking outer draw, member and spectral row; records also carry explicit source witnesses |
+| `scope` | The input identity: scene identity, spectral scope and rows, seed, light, layers, physical members, support dimensions, request echo |
+| `support` | The delta-axis block: per-member partition intervals, endpoint onsets, constant curves; the family aggregate (§7.3) |
+| `features` | `{actual, candidate, unfinished}` — a **derived view** over the structure-object records (existence × visibility); no bucket is stored on an object (§7.4) |
+| `unattributed_structures` | The MC side's forward detector: sky structures no object accounts for, with the detector's silences visible (§7.5) |
+| `mc_evidence` | The demoted observation record: the schema-2 feature records with classification preserved, observation options, spectral verification, stage incompleteness (§7.5) |
+| `coverage` | Bounded-search honesty rows, the object-kind vocabulary row, declared measure/density skips |
+| `observation` | Narrowed to the corroboration-observation declaration; `ruler` points at `mc_evidence.observation_options` |
+| `budgets` | The work account, including the `enumeration` and `attribution` legs; `budgets.enumeration` also carries the enforced anti-hang cap (`hang_cap_ms`, `truncated`, `truncation_note`) |
+| `timing` | Per-stage seconds, including `enumeration` and `attribution` |
+| `sources` | Token → `{outer_sample, member, spectral_row}`; records also carry their own witness objects |
+| `no_related_feature` | The absence ruling: `issued`, `basis` and the named checks, emitted unconditionally (§7.6) |
 
-An unsupported-chain document contains the requested path layers, empty evidence buckets, coverage
-and zero-work budgets, but no fabricated physical input/result payload.
+`completed` means the declared bounded stages finished, not that every hypothesis was
+corroborated. MC-side incompleteness — budget exhaustion, or unfinished stage strings in
+`mc_evidence.unfinished` — yields `partial`; a `partial` document can still carry usable
+structure. `no_related_feature` is the absence ruling of §7.6, never an empty-sample inference.
+Ordinary invalid arguments remain C errors and CLI errors, distinct from the structured
+unsupported-chain outcome.
 
-`completed` means the declared bounded search stages finished, not that every seed established a
-feature. Unsuccessful local hypotheses remain in `unfinished` with their numerical diagnostics;
-they are not promoted to actuals. Global non-exhaustiveness and bounded source-boundary sampling
-live in `coverage[].limitations`, not in `unfinished_reasons`. Budget exhaustion or an incomplete
-required stage still gives `partial`; moving coverage notes does not remove those reasons.
+### 7.3 scope and support
 
-A `partial` document can contain independently usable actuals and candidates. Conversely, an
-empty array does not prove absence. `no_related_feature` is currently issued for an exact zero
-spectral XYZ signal, not from an empty finite sample. Ordinary invalid arguments remain C errors
-and CLI errors, distinct from the structured unsupported-chain outcome.
+`scope` carries the assembled input, verbatim:
 
-### 7.2 What a position means
+- `scene_identity`, `seed`, `member_semantics` (`"physical_L2"`), `light`;
+- `layers[]` (`scene_layer`, `crystal`, `representative_faces`, `symmetry_bits`) and
+  `physical_members` — concrete physical-L2 face sequences, never an L1 label orbit;
+- `spectrum[]` rows (`nm`, `source_weight`, `measure_mass`, `index`, `XYZ_coefficient`,
+  `provenance`) and `spectrum_scope` — **two keys, two things**: the assembled rows versus the
+  one-string declaration of what the spectrum is (the v2 document's single `spectrum` string
+  reading no longer exists);
+- `support_dimensions` (pose/shape/source/spectral dimension counts; `joint_optical_rank` stays
+  null with its `rank_scope` caveat), `requested_outer_samples` (the request verbatim; 0 = auto —
+  the resolved count lives in `budgets.requested_outer_samples`), `budget_ms`.
 
-Three quantities must not be conflated:
+`support` is the delta-axis face — the schema-1 `reach`, in target-free form, per physical
+member:
 
-1. **Physical/source position.** `physical_position` gives a locally corrected deviation minimum
-   of the actual direction map, its source, positive finite-crystal support and numerical
-   diagnostics. It is not the smoothed Y maximum and not a certificate of a global minimum.
-   A finite source or distributed shape can leave this a conditional candidate.
-2. **Fixed observation.** A peak, ridge or xy level set belongs to the recorded normalized vMF
-   kernel (`kappa = 1/h²`), field/component, level and local window. The default `h` is one degree,
-   and the local numerical location target is .05 degree; neither is an owner-defined universal
-   physical precision. Prefix and independent-repeat movements concern this same observation.
-3. **Scale response.** Changing `h` changes the observation. Its movement is reported separately,
-   never used as an integration error or an uncertainty-band endpoint. A failed scale solve does
-   not erase a valid fixed-observation result. Repeated estimates are evidence, not a rigorous
-   global confidence bound.
+- `partition`: `coverage` (`complete` / `incomplete` / `unknown`), `walk_status`, `walk_closed`,
+  `intervals[]` (`lower_rad`, `upper_rad`, `n_components`, `n_closed`, `n_open`). When the
+  partition walk escaped, `escape_regime_slug` names the regime — the slug is data, not an enum
+  promise. The typed `escape_regime` appears only beside a non-empty `escape_regime_slug` (the
+  two gates stack: empty slug ⇒ no typed key), and only when a producer set a contract-registered
+  regime (none does today: every kernel regime slug lacks a contract value); at the `unset`
+  default — no escape, or a refusal whose regime the slug alone names — the key is omitted rather
+  than spelled `"unset"`, and `null` stays reserved for non-finite numbers. A `message` may ride
+  beside a refusal.
+- `endpoint_onsets[]`: every partition endpoint carries one — `value_rad`, `location`
+  (`boundary` / `interior`), `source` (`interior_minimum` / `boundary_extremum` / `corner`),
+  `profile` (`finite_jump` / `boundary_onset` / `log_divergence`), `gradient_norm`,
+  `multiplicity`, and `measure_limit` when `has_measure_limit`.
+- `constant_curves[]`: constant-D_P closed curves with their n-continuation dispersion table —
+  `d_p_rad`, `weight_step`, `wavelengths_nm[]`, `critical_d_p_rad[]` (one critical value per
+  spectral row). This is how a structure position is reproduced at every wavelength without
+  re-walking.
+- `families[]`: the per-family aggregate — `shared`, `intervals`, `members`, `phi_class_note`.
+  A non-shared family emits an **empty** `intervals` list by contract: a disagreeing family
+  reports no union rather than a fabricated one, and the per-member rows above are the authority.
 
-Geometry is `point`, `polyline`, `band` or `atom`, with unit world **viewing** directions (negative
-propagation). `field_points` retain the two-vector tangent basis, XYZ and two-dimensional xy jets,
-normal curvatures, ESS and solver correction. Jets are per steradian, with derivatives per radian
-and per radian squared. Field walks default to eight vertices; a point limit or observation mask
-is a numerical/window endpoint, not a physical source edge.
+### 7.4 Structure objects and the derived buckets
 
-A chromatic `band` stores **two solved levels of the same xy field**, their boundary points and
-an explicit local-window definition. It is neither a natural unique “blue edge” nor a confidence
-interval. Larger requested windows need their own convergence evidence: the committed eight-point
-physical colour fixture fits its .05-degree local comparison budget including independent-reference
-refinement; this is not a certificate for arbitrary extensions or all inputs.
+Each object record carries its identity — `kind` (an open registry, currently `kind_1`,
+`kind_1_restricted`, `kind_2`, `kind_3`, `corridor_closed`, `s3_support_boundary`,
+`s4_branch_boundary`, `s5_density_feature`, `s6_junction`), `member`, `slot`,
+`phi_class_note` — and four state machines:
 
-A fixed shape/pose/point-source with discrete spectral support can produce positive `atom` records.
-Finite spread, a finite sun, a continuous spectral quadrature node, or a sampled zero Jacobian does
-not establish an atom. Two free ZYZ angles at a strict pole may describe one pose dimension;
-parameter counts and the joint optical-map rank are kept separate.
+- `existence`: `computed` | `escaped` (with `escape_regime_slug` — the regime name is data) |
+  `walk_truncated` | `s4_declared`. `walk_s` follows the conventions note above.
+- `visibility`: `certified` | `partial` | `unlit` | `unproven`, with `lit_fraction`, the
+  `evidence` form (`structural` / `sampled_exhaustive` / `sampled_partial`), `jets_ok`,
+  `saw_zero_area`, `saw_zero_transmission` and a `reason`. `certified` is the pointwise
+  certificate (measure · area · transmission > 0 with non-degenerate jets over in-support
+  samples). `unlit` means the geometry is there and the light is not — it lands in `candidate`,
+  which is the precise form of "has a contour, no illumination".
+- `chromatic`: `assessed` + `verdict` + `thresholds`. The verdict carries `kind`, `color`,
+  `visible`, `coverage_complete`, `faces`, `n_red`/`n_blue`, optional `position_rad`,
+  `features[]` (per-feature `kind`/`color`/`delta_red`/`delta_blue`/`shift`/`spread`/
+  `contrast`/`weight`/`lit_fraction`), optional `tint` (`energy_red`, `energy_blue`, `ratio`,
+  `tir_fraction_red`, `tir_fraction_blue`, `direction_dispersion`) and `notes`. `thresholds`
+  ride every object: they are declared calibration parameters, not universal physics.
+- `corroboration`: `observed` | `consistent` | `not_observed_insufficient_ess` |
+  `not_observed_despite_sufficient_ess` (a true-disagreement red flag) | `unchecked`, with the
+  ruler text, `tolerance_rad`, and the matched MC record index and its ESS. The base ruler
+  matches on the delta axis and does not discriminate azimuth — a declared limitation, spelled
+  in the `ruler` field.
 
-### 7.3 Candidates, sources and endpoints
+Geometry holds `u` — the orientation-reduced pre-image, a first-class citizen — and
+`sky_position` when the object has one (unit world **viewing** directions, negative
+propagation). `diagnostics.counterfactual` is the paired counterfactual
+(`available`, `with_slot`, `without_slot`): the same source with one slot's reflectance removed.
 
-- `conditional_internal_tir` retains the actual internal slot, reached-interface incidence,
-  discriminant, Fresnel factor and derivative availability. Every internal slot is eligible for
-  the bounded search; there is no privileged first slot. It does **not** assert an observed blue band.
-- `paired_interface` holds the original source geometry and actual spectrum fixed and removes
-  only the named slot's reflectance. Its XYZ/xy effect is conditional on that source and sums all
-  its exit directions; it is not the integrated sky-field effect or a unique-cause certificate.
-- `product_area_threshold`, `geometric_contact_bracket` and `optical_domain_gate` keep different
-  predicates. A source interval stores both endpoint poses/values and its width. The product
-  `A=0` can coexist with positive raw corridor area below epsilon. Original clip-edge slot/index
-  lineage comes from the existing clipper, not a second feasibility implementation.
-- `declared_source_boundary` and `declared_source_corner` concern explicit uniform/cap/product-CDF
-  coordinates with other draws fixed. They do not claim an outer sky boundary. Actual product CDF
-  endpoints can differ from ideal continuous-distribution endpoints; no idealized substitute is used.
-- `source_connected_feature` requires the same source identity and recorded numerical connector,
-  never sky proximity. A positive source witness is only one contributor to the aggregate field.
-  It is not a unique cause. Source tokens/feature ids are local to the document, not cross-run ids.
+The three `features` buckets are a derived view, computed as computed+`certified` → `actual`;
+computed+`partial`/`unlit`/`unproven` → `candidate`; everything else → `unfinished`. No bucket
+field is stored on an object; a reader re-derives or trusts, but cannot find a stored bucket to
+drift from the states.
 
-A source-range geometry point is explicitly the **valid-side witness**, not an exact gate image.
-Unreached fields stay unavailable; a rejected optical side has no invented zero direction.
-Conditional SO(3)/body-incidence event continuation is enabled only on the established Haar chart;
-restricted source supports are not silently widened. Source walks have their own limit, separate
-from the observation-window limit. The calculation does not certify all components, all junctions,
-between-step absence of holes, or all weak features.
+### 7.5 mc_evidence: the demoted observation record
 
-### 7.4 Examples and migration
+`mc_evidence.records` carries the schema-2 discovery records unchanged in shape, with the
+classification preserved verbatim on each record's `evidence` field (`actual` / `candidate` /
+`unfinished`). Record kinds keep their schema-2 semantics:
+
+- `physical_position` is a locally corrected deviation minimum of the actual direction map, not
+  the smoothed Y maximum and not a global-minimum certificate.
+- `conditional_internal_tir` retains the internal slot, reached-interface incidence,
+  discriminant and Fresnel factor; it does **not** assert an observed blue band.
+- `paired_interface` removes only the named slot's reflectance at fixed source geometry; its
+  XYZ/xy effect is conditional on that source and is not the integrated sky-field effect.
+- `declared_source_boundary` / `declared_source_corner` concern explicit uniform/cap/product-CDF
+  coordinates with other draws fixed; they do not claim an outer sky boundary.
+
+The three-quantities discipline is unchanged — physical/source position ≠ fixed observation
+(normalized vMF kernel, `kappa = 1/h²`, default `h` one degree, `.05`-degree location target) ≠
+scale response — but it now scopes the corroboration layer only. Record-level shapes keep their
+schema-2 contracts: geometry is `point`, `polyline`, `band` or `atom`; `field_points` retain the
+two-vector tangent basis, XYZ and 2D xy jets, normal curvatures, ESS and solver correction (jets
+per steradian, derivatives per radian / radian²; field walks default to eight vertices, and a
+point limit or observation mask is a numerical/window endpoint, not a physical source edge). A
+chromatic `band` stores two solved levels of the same xy field with an explicit local-window
+definition — neither a natural unique "blue edge" nor a confidence interval. A fixed
+shape/pose/point-source with discrete spectral support can produce positive `atom` records;
+finite spread, a finite sun or a continuous quadrature node does not establish one.
+`product_area_threshold`, `geometric_contact_bracket` and `optical_domain_gate` keep different
+predicates; a source interval stores both endpoint poses/values and its width. A source-range
+geometry point is explicitly the **valid-side witness**, not an exact gate image; unreached
+fields stay unavailable and a rejected optical side has no invented zero direction.
+`source_connected_feature` requires the same source identity and recorded numerical connector,
+never sky proximity; source tokens and record ids are local to the document, not cross-run ids.
+
+`observation_options`, `spectral_verification` (which can downgrade records),
+`observation_scope_note` and `unfinished` (stage-level incompleteness strings) complete the
+block.
+
+`unattributed_structures` is the forward direction: an MC-significant sky structure is checked
+against every object image (tolerance `max(h, declared width)`), gated by an ESS floor so a
+starved MC cannot vote. Each structure reports `record_index`, `position`, `delta_rad`,
+`record_ess`, `min_margin_rad` and the `ruler`; the detector's silences are visible
+(`skipped_no_position`, `skipped_below_ess`) and a detector failure is an `error`, not an empty
+array.
+
+### 7.6 no_related_feature: the dual-form ruling
+
+The outcome value `no_related_feature` is issued only by the ruling, and the ruling block is
+emitted unconditionally — a refusal to issue is itself part of the report:
+
+- Form A, `basis: "zero_spectral_signal"`: an exact zero spectral XYZ signal. Zero signal
+  implies absence by itself; A has priority over B.
+- Form B, `basis: "certified_smooth_radiance"`: a certificate, checked and named field by field
+  — `partition_complete_no_escape`, `all_objects_unlit_or_none` (the check is over **lit**
+  objects; kind-1 is pure geometry and exists even where A = 0), `no_sufficient_ess_unattributed`
+  (a sufficient-ESS unattributed structure vetoes B), `s4_scope_declared` (the v1 certificate
+  does not cover branch-boundary features), `two_d_valid_support` (B v1 signs only on 2D-valid
+  support). Any failed check withholds the basis.
+- When neither form is licensed, the block still reports every check with `issued: false` and
+  the fixed note: the document reports `completed` with an empty feature list, and an empty list
+  does not prove absence.
+- `basis` also rides the top level beside `outcome`, exactly when issued. A restricted family's
+  absence is expressed by the support block — the restricted image itself is the feature — not
+  by form B.
+
+### 7.7 Version discipline and the v2 → v3 migration map
+
+A reader requiring version 2 must reject version 3 rather than infer old meanings. The mechanical
+authority for this map is the migration ledger the unit tests reconcile against; the summary:
+
+| v2 key | v3 home |
+|---|---|
+| `support` (dimension description) | `scope.support_dimensions` — the v3 top-level `support` name is reused by the delta-axis block |
+| `physical_members` | `scope.physical_members` |
+| `spectrum` | `scope.spectrum` (rows); the declared string splits to `scope.spectrum_scope` |
+| `requested_outer_samples`, `budget_ms` | `scope.requested_outer_samples`, `scope.budget_ms` (the resolved count stays in `budgets.requested_outer_samples`) |
+| `observation` | demoted into `mc_evidence.observation_options` + the scope note; the v3 top-level `observation` is re-issued narrowed to the corroboration declaration |
+| `spectral_verification` | `mc_evidence.spectral_verification` |
+| `actual_features` / `candidates` / `unfinished` arrays | `mc_evidence.records`, classification kept on each record's `evidence` field |
+| `unfinished_reasons` | `mc_evidence.unfinished` |
+| `sources` | the re-derived projection beside `mc_evidence.records[].source_token` |
+| — | new: `support` (delta axis), `features` buckets over structure objects, `unattributed_structures`, `no_related_feature` (ruling), `generator`, the `enumeration`/`attribution` budget and timing legs |
+
+Version-1 removals stay removed (old `random_regular.*` ids, fixed red/blue endpoints, the
+formula detector matrix, unconditional visibility claims, `evidence_status: confirmed`).
+Per-member LI-normalized brightness rows stay removed; the chromatic verdict's `tint` block is
+the schema-3 colour-ratio face. Weighting still uses the product's `2A/S` times all interface
+factors and the actual spectral XYZ coefficient.
+
+### 7.8 Examples
 
 ```bash
 # Actual scene spectrum, budget-aware prefix and partial results when necessary.
@@ -454,14 +584,9 @@ Lumice raypath -f config.json --crystal 1 --path 3-5 --report --wavelength 550 -
 Lumice raypath -f config.json --crystal 1 --path 3-5 --report --budget-ms 1
 ```
 
-Version-1 `random_regular.*` ids, fixed red/blue endpoints, the formula detector matrix, unconditional
-visibility claims, per-member LI-normalized brightness rows and `evidence_status: confirmed` are
-removed. Read the three evidence buckets and their scope instead. Weighting now uses the product's
-`2A/S` times all interface factors and the actual spectral XYZ coefficient, not the old nominal
-`A*T` diagnostic convention. A reader requiring version 1 must reject version 2 rather than infer
-old meanings. Output still goes to stdout or atomically to `-o`; progress goes to stderr. Ctrl-C
-terminates the synchronous call without a completed JSON document and never replaces the output
-file with half a document. The GUI workspace is not added by this interface.
+Output goes to stdout or atomically to `-o`; progress goes to stderr. Ctrl-C terminates the
+synchronous call without a completed JSON document and never replaces the output file with half
+a document. The GUI workspace is not added by this interface.
 
 
 ## 8. Module boundary and surface

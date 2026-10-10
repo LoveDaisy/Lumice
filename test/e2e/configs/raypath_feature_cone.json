@@ -1,0 +1,63 @@
+{
+ "crystal": [
+  {
+   "id": 1,
+   "type": "pyramid",
+   "shape": {
+    "prism_h": 1.0,
+    "upper_h": 0.4,
+    "lower_h": 0.4,
+    "upper_indices": [
+     1,
+     0,
+     1
+    ],
+    "lower_indices": [
+     1,
+     0,
+     1
+    ]
+   },
+   "axis": {
+    "zenith": {
+     "type": "gauss",
+     "mean": 0,
+     "std": 1
+    },
+    "azimuth": {
+     "type": "uniform",
+     "mean": 0,
+     "std": 360
+    },
+    "roll": {
+     "type": "gauss",
+     "mean": 0,
+     "std": 5
+    }
+   }
+  }
+ ],
+ "filter": [],
+ "scene": {
+  "light_source": {
+   "type": "sun",
+   "altitude": 20,
+   "azimuth": 0,
+   "spectrum": "D65"
+  },
+  "ray_num": 1000,
+  "max_hits": 7,
+  "scattering": [
+   {
+    "prob": 0,
+    "entries": [
+     {
+      "crystal": 1,
+      "proportion": 1
+     }
+    ]
+   }
+  ]
+ },
+ "render": []
+}

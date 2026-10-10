@@ -34,12 +34,14 @@ const char* EscapeRegimeName(EscapeRegime regime) {
   switch (regime) {
     case EscapeRegime::kSlabCrease:
       return "slab_crease";
+    case EscapeRegime::kUnset:
+      return "unset";  // the sentinel's own spelling (G3): a name for the walk, never an escape answer
   }
   return "unknown";
 }
 
 const std::vector<EscapeRegime>& RegisteredEscapeRegimes() {
-  static const std::vector<EscapeRegime> kRegimes = { EscapeRegime::kSlabCrease };
+  static const std::vector<EscapeRegime> kRegimes = { EscapeRegime::kSlabCrease, EscapeRegime::kUnset };
   return kRegimes;
 }
 

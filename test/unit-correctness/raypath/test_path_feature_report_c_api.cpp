@@ -176,9 +176,9 @@ TEST(PathFeatureReportCApi, SerializesOnceAndKeepsTheResultImmutable) {
   EXPECT_EQ(Json(outcome.report.get()), first);
   const nlohmann::json doc = nlohmann::json::parse(first);
   EXPECT_EQ(doc["schema"], "lumice.path-feature-report");
-  EXPECT_EQ(doc["schema_version"], 2);
+  EXPECT_EQ(doc["schema_version"], 3);
   EXPECT_EQ(doc["budgets"]["requested_outer_samples"], 64);
-  EXPECT_EQ(doc["spectrum"].size(), 33u);
+  EXPECT_EQ(doc["scope"]["spectrum"].size(), 33u);
 
   char small[8];
   size_t full_length = 0;
@@ -198,8 +198,8 @@ TEST(PathFeatureReportCApi, AcceptsExplicitWavelengthsAndRejectsInvalidCounts) {
   Outcome outcome = Analyse(scene.get(), &request.c);
   ASSERT_EQ(outcome.code, LUMICE_OK) << outcome.error;
   const nlohmann::json doc = nlohmann::json::parse(Json(outcome.report.get()));
-  EXPECT_DOUBLE_EQ(doc["spectrum"][0]["nm"].get<double>(), 500.0);
-  EXPECT_DOUBLE_EQ(doc["spectrum"][1]["source_weight"].get<double>(), 0.75);
+  EXPECT_DOUBLE_EQ(doc["scope"]["spectrum"][0]["nm"].get<double>(), 500.0);
+  EXPECT_DOUBLE_EQ(doc["scope"]["spectrum"][1]["source_weight"].get<double>(), 0.75);
 
   request.c.wavelengths_nm = nullptr;
   outcome = Analyse(scene.get(), &request.c);
@@ -232,7 +232,7 @@ TEST(PathFeatureReportCApi, OldRequestPrefixUsesNewDefaultsWithoutReadingTheSuff
   const auto outcome = Analyse(scene.get(), &request.c);
   ASSERT_EQ(outcome.code, LUMICE_OK) << outcome.error;
   const auto doc = nlohmann::json::parse(Json(outcome.report.get()));
-  EXPECT_EQ(doc["budget_ms"], 15000);
+  EXPECT_EQ(doc["scope"]["budget_ms"], 15000);
   EXPECT_EQ(doc["budgets"]["max_optical_evaluations"], 4000000);
 }
 
@@ -243,7 +243,7 @@ TEST(PathFeatureReportCApi, RequestedPhysicalMemberScopeIsNotSilentlyExpanded) {
   const auto outcome = Analyse(scene.get(), &request.c);
   ASSERT_EQ(outcome.code, LUMICE_OK) << outcome.error;
   const auto doc = nlohmann::json::parse(Json(outcome.report.get()));
-  EXPECT_EQ(doc["physical_members"].size(), 1u);
+  EXPECT_EQ(doc["scope"]["physical_members"].size(), 1u);
   EXPECT_EQ(doc["scope"]["layers"][0]["symmetry_bits"], 0);
   request.c.symmetry_bits_plus_one = 9;
   EXPECT_EQ(Analyse(scene.get(), &request.c).code, LUMICE_ERR_INVALID_VALUE);

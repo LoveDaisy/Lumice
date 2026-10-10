@@ -465,4 +465,14 @@ bool NextMemberChain(const AssembledInput& input, std::vector<size_t>* members) 
   return false;
 }
 
+bool ZeroSpectralSignal(const InputSnapshot& snapshot, const AssembledInput& representative) {
+  if (!std::holds_alternative<std::vector<WlParam>>(snapshot.light.spectrum_)) {
+    return false;
+  }
+  return std::all_of(representative.spectrum.rows.begin(), representative.spectrum.rows.end(),
+                     [](const SpectralRow& row) {
+                       return row.coefficient[0] == 0 && row.coefficient[1] == 0 && row.coefficient[2] == 0;
+                     });
+}
+
 }  // namespace lumice::raypath

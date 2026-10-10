@@ -69,7 +69,10 @@ struct VisibilityCertificate {
 // verdict comes from the stream alone); `partition` may be null (treated as kUnknown coverage).
 // Routing, in order: a degenerate measure is unproven; a kIncomplete partition (a real escape)
 // is unproven fail-closed — an escaped slice cannot vouch anything; a kind-1 curve whose
-// existence is not kComputed is unproven (walk_truncated / escaped). From there the stream
+// existence is not kComputed is unproven (walk_truncated / escaped / s4_declared each with its
+// own stable reason, and — the enum being open — ANY other value with reason
+// "kind1_existence_unknown": the routing is negative-form fail-closed, an existence value this
+// code has never seen never reads as computed). From there the stream
 // decides: no in-support sample at all is unproven; all-lit under kStructural or
 // kSampledExhaustive evidence is CERTIFIED (a per-point statement — a kUnknown or absent
 // partition does not block it: the object's bucket placement consumes existence and partition
@@ -83,6 +86,22 @@ struct VisibilityCertificate {
 VisibilityCertificate CertifyVisibility(const UMarginal& measure, const FiberSampleStream& stream,
                                         const CriticalSetCurve* kind1, const PartitionContext* partition,
                                         double angular_tol_rad);
+
+// G8's ruling (661's registered question, answered in 666.1): a kind-1 object whose critical set
+// has SEVERAL connected components certifies PER COMPONENT and the object layer aggregates the
+// union — adding a function, not changing the single-curve semantics. Each component's verdict
+// is exactly CertifyVisibility on that curve alone. The aggregate, strongest first:
+//   unlit     any component unlit — SOUND on one component alone: unlit's three legs (a present
+//             curve, the measure positive on it, every in-support candidate dark) are grounded
+//             by that component plus the shared stream; no other component's state enters them;
+//   unproven  else any component unproven (an undecided component keeps the object undecided);
+//   partial   else any component partial (a mixed observation, not a coverage claim);
+//   certified else all components certified.
+// The decisive component's certificate is carried wholesale (its lit_fraction, saw flags and
+// reason are that component's; the report's per-component rows carry their own).
+VisibilityCertificate CertifyVisibilityPerComponent(const UMarginal& measure, const FiberSampleStream& stream,
+                                                    const std::vector<const CriticalSetCurve*>& components,
+                                                    const PartitionContext* partition, double angular_tol_rad);
 
 }  // namespace lumice::raypath
 

@@ -43,6 +43,11 @@ The first consumer is LI, through a Python binding (ctypes or pybind, LI's choic
 is therefore a **pure C ABI**: no C++ types, no callbacks into the host other than logging, plain
 POD structs and fixed-width arrays that a ctypes `Structure` can declare line for line.
 
+The module-C half (the u-S² field layer, §4.8) is the geometry layer of the schema3 feature
+report: how its objects, support block and the demoted MC layer fit together — and the two-repo
+discipline this library implements — is recorded in
+`doc/raypath-schema3-layered-design.md`.
+
 ---
 
 ## 1. Naming **(owner)** and the spelling rules under it **(design)**

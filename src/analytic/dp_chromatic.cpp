@@ -157,6 +157,15 @@ GateCurve CurveOf(const KinkCurve& kink) {
   return curve;
 }
 
+// Total curve points of one kink's arcs (the shift statistic's per-index input size).
+size_t KinkPointCount(const KinkCurve& kink) {
+  size_t points = 0;
+  for (const KinkArc& arc : kink.arcs) {
+    points += arc.points.size() / 3;
+  }
+  return points;
+}
+
 // The kink feature of one TIR onset at both indices (LI _kink_feature).
 ChromaticFeature KinkFeature(const DeviationField& red, const DeviationField& blue, const KinkCurve& kink_red,
                              const KinkCurve& kink_blue, int slot_count) {
@@ -237,7 +246,8 @@ GateCurve PiecesByMargin(const BoundaryWalkRecord& record, int margin) {
 // bound at one index only land in `unresolved`.
 std::vector<ChromaticFeature> GateFeatures(const DeviationField& red, const DeviationField& blue,
                                            const BoundaryWalkRecord& red_record, const BoundaryWalkRecord& blue_record,
-                                           int slot_count, std::vector<std::string>* unresolved) {
+                                           int slot_count, std::vector<std::string>* unresolved,
+                                           std::vector<std::string>* skip_notes, bool* complete) {
   const int margin_count = 2 * slot_count;
   auto has_curve = [&](const BoundaryWalkRecord& record, int margin) {
     return !PiecesByMargin(record, margin).values.empty();
@@ -257,6 +267,17 @@ std::vector<ChromaticFeature> GateFeatures(const DeviationField& red, const Devi
     }
     const GateCurve curve_red = PiecesByMargin(red_record, margin);
     const GateCurve curve_blue = PiecesByMargin(blue_record, margin);
+    // The shift statistic pairs every red boundary point with its nearest blue point: a pair
+    // denser than the declared bound is named not assessed (the same honesty shape as a walk
+    // refusal — the gates this margin would have produced are not silently dropped).
+    if (static_cast<long long>(curve_red.values.size()) * static_cast<long long>(curve_blue.values.size()) >
+        kMaxShiftComparisonPairs) {
+      skip_notes->push_back(MarginName(slot_count, margin) + ": red/blue boundary curves too dense to compare (" +
+                            std::to_string(curve_red.values.size()) + " x " + std::to_string(curve_blue.values.size()) +
+                            " points): feature not assessed");
+      *complete = false;
+      continue;
+    }
     // A gate that does not move with n is no colour source (its margin vanishes on the other
     // index's curve to kGateStaticAtol).
     double largest = 0.0;
@@ -463,7 +484,19 @@ ChromaticVerdict Diagnose(const FaceNormalTable& normals, const FacePolygonTable
     const bool arcs_red = !kink_red.arcs.empty();
     const bool arcs_blue = !kink_blue.arcs.empty();
     if (arcs_red && arcs_blue) {
-      features.push_back(KinkFeature(red, blue, kink_red, kink_blue, slot_count));
+      // The shift statistic pairs every red kink point with its nearest blue point: a pair
+      // denser than the declared bound is named not assessed (the same honesty shape as a walk
+      // refusal — the feature is not silently dropped and not half-computed).
+      const size_t red_points = KinkPointCount(kink_red);
+      const size_t blue_points = KinkPointCount(kink_blue);
+      if (static_cast<long long>(red_points) * static_cast<long long>(blue_points) > kMaxShiftComparisonPairs) {
+        notes.push_back(MarginName(slot_count, kink_red.margin) + ": red/blue kink curves too dense to compare (" +
+                        std::to_string(red_points) + " x " + std::to_string(blue_points) +
+                        " points): feature not assessed");
+        complete = false;
+      } else {
+        features.push_back(KinkFeature(red, blue, kink_red, kink_blue, slot_count));
+      }
     } else if (arcs_red || arcs_blue) {
       const KinkCurve& present = arcs_red ? kink_red : kink_blue;
       unresolved.push_back(MarginName(slot_count, present.margin) + ": weight kink at n = " + Number(present.index) +
@@ -486,9 +519,11 @@ ChromaticVerdict Diagnose(const FaceNormalTable& normals, const FacePolygonTable
     notes.push_back("gates not analysed: " + std::string(WalkStatusName(refused.status)) + ": " + refused.message);
     complete = false;
   } else {
+    std::vector<std::string> gate_skip_notes;
     const std::vector<ChromaticFeature> gates =
-        GateFeatures(red, blue, red_record, blue_record, slot_count, &unresolved);
+        GateFeatures(red, blue, red_record, blue_record, slot_count, &unresolved, &gate_skip_notes, &complete);
     features.insert(features.end(), gates.begin(), gates.end());
+    notes.insert(notes.end(), gate_skip_notes.begin(), gate_skip_notes.end());
   }
 
   notes.insert(notes.end(), unresolved.begin(), unresolved.end());

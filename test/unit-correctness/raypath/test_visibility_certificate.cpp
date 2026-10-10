@@ -216,6 +216,30 @@ TEST(VisibilityCertificate, EscapeAndTruncatedRouteFailClosed) {
   EXPECT_EQ(CertifyVisibility(measure, stream, &escaped_curve, nullptr, 1e-6).reason, std::string("kind1_escaped"));
 }
 
+TEST(VisibilityCertificate, VerdictIgnoresTheEscapeRegimeSentinel) {
+  // G3's negative control, certificate arm: the certificate's read set is the partition's
+  // coverage alone — its signature structurally carries escape_regime but never reads it. Same
+  // coverage, the two values the field can carry (the kUnset default vs a registered regime):
+  // state and reason must come out identical. A judgment that starts reading escape_regime
+  // turns this red.
+  const UMarginal measure = PlateMeasure();
+  FiberSampleStream stream;
+  stream.evidence = FiberSampleStream::EvidenceForm::kStructural;
+  for (int i = 0; i < 8; i++) {
+    stream.samples.push_back(OnOrbitSample(measure, 0.8 * i, 0.5, 0.7, 0.1));
+  }
+  PartitionContext unset;  // escape_regime at its kUnset default
+  unset.coverage = PartitionContext::Coverage::kIncomplete;
+  PartitionContext named;
+  named.coverage = PartitionContext::Coverage::kIncomplete;
+  named.escape_regime = EscapeRegime::kSlabCrease;
+  ASSERT_EQ(unset.escape_regime, EscapeRegime::kUnset);
+  const VisibilityCertificate from_unset = CertifyVisibility(measure, stream, nullptr, &unset, 1e-6);
+  const VisibilityCertificate from_named = CertifyVisibility(measure, stream, nullptr, &named, 1e-6);
+  EXPECT_EQ(from_unset.state, from_named.state);
+  EXPECT_EQ(std::string(from_unset.reason), std::string(from_named.reason));
+}
+
 TEST(VisibilityCertificate, UnknownPartitionDoesNotBlockCertified) {
   // A per-point visibility certificate is local: the v1 producer shape (no partition run yet)
   // can still certify its own samples — the object's bucket placement consumes the partition
@@ -276,6 +300,82 @@ TEST(VisibilityCertificate, RegisteredStatesWalk) {
   ASSERT_EQ(RegisteredVisibilityStates().size(), 4);
   EXPECT_STREQ(VisibilityStateName(VisibilityState::kCertified), "certified");
   EXPECT_STREQ(VisibilityStateName(VisibilityState::kUnlit), "unlit");
+}
+
+// G7 (661's registered integration gap, fixed here): the existence routing must be NEGATIVE-form
+// fail-closed — an existence value the certificate does not know (a value appended to the open
+// enum after this code was written, constructed here by cast) answers unproven with a stable
+// reason, NEVER the stream sweep (which the old per-== whitelist fell through to, reading an
+// unknown existence as computed).
+TEST(VisibilityCertificate, UnknownExistenceValueRoutesFailClosed) {
+  const UMarginal measure = PlateMeasure();
+  FiberSampleStream stream;
+  stream.evidence = FiberSampleStream::EvidenceForm::kSampledExhaustive;
+  for (int i = 0; i < 8; i++) {
+    stream.samples.push_back(OnOrbitSample(measure, 0.8 * i, 0.5, 0.7, 0.1));  // all lit
+  }
+  CriticalSetCurve unknown;
+  unknown.existence = static_cast<ExistenceState>(99);  // a value appended after this code
+  const VisibilityCertificate cert = CertifyVisibility(measure, stream, &unknown, nullptr, 1e-6);
+  EXPECT_EQ(cert.state, VisibilityState::kUnproven);
+  EXPECT_EQ(std::string(cert.reason), "kind1_existence_unknown");
+}
+
+// G2's ruling, pinned (661's escalated question, answered in 666.1): a DECLARED-but-not-walked
+// curve cannot serve as unlit's curve-presence leg — the frozen unlit definition requires a
+// COMPUTED non-empty curve ("a kind-1 curve is present (computed, non-empty)"), and a
+// declaration is not a computation. The exact C09 shape with s4_declared substituted routes
+// unproven with its own reason, never unlit.
+TEST(VisibilityCertificate, S4DeclaredCurveCannotGroundUnlit) {
+  const UMarginal measure = PlateMeasure();
+  FiberSampleStream stream;
+  stream.evidence = FiberSampleStream::EvidenceForm::kSampledExhaustive;
+  for (int i = 0; i < 12; i++) {
+    stream.samples.push_back(OnOrbitSample(measure, 2.0 * kPi * i / 12, 0.0, 0.7, 1.0 / 12.0));  // all dark
+  }
+  CriticalSetCurve curve = OrbitKind1Curve(measure, 12);  // ON the support, mu positive on it
+  curve.existence = ExistenceState::kS4Declared;          // ...but only DECLARED, not walked
+  const VisibilityCertificate cert = CertifyVisibility(measure, stream, &curve, nullptr, 1e-6);
+  EXPECT_EQ(cert.state, VisibilityState::kUnproven);
+  EXPECT_EQ(std::string(cert.reason), "kind1_s4_declared");
+}
+
+// G8's ruling, pinned (661's registered question, answered in 666.1): a multi-component kind-1
+// object certifies PER COMPONENT and aggregates the union. The synthetic case the plan names:
+// one component with the measure positive on it, one entirely in the zero set — the object is
+// unlit on the first component alone (its three legs are grounded by that component plus the
+// shared stream), and the zero-set component's indecision does not touch the verdict.
+TEST(VisibilityCertificate, MultiComponentUnionAggregatesPerComponent) {
+  const UMarginal measure = PlateMeasure();
+  FiberSampleStream stream;
+  stream.evidence = FiberSampleStream::EvidenceForm::kSampledExhaustive;
+  for (int i = 0; i < 12; i++) {
+    stream.samples.push_back(OnOrbitSample(measure, 2.0 * kPi * i / 12, 0.0, 0.7, 1.0 / 12.0));  // all dark
+  }
+  const CriticalSetCurve on_support = OrbitKind1Curve(measure, 12);  // mu positive on it
+  CriticalSetCurve in_zero_set;                                      // a 40-degree circle, off the orbit
+  in_zero_set.existence = ExistenceState::kComputed;
+  const int points = 8;
+  in_zero_set.u.resize(3 * static_cast<size_t>(points));
+  for (int i = 0; i < points; i++) {
+    const double lat = 40.0 * kDeg;
+    double* u = &in_zero_set.u[3 * i];
+    u[0] = std::cos(lat) * std::cos(2.0 * kPi * i / points);
+    u[1] = std::cos(lat) * std::sin(2.0 * kPi * i / points);
+    u[2] = std::sin(lat);
+  }
+  // Per component (the single-curve semantics, unchanged): unlit vs zero-set-unproven.
+  EXPECT_EQ(CertifyVisibility(measure, stream, &on_support, nullptr, 1e-6).state, VisibilityState::kUnlit);
+  EXPECT_EQ(std::string(CertifyVisibility(measure, stream, &in_zero_set, nullptr, 1e-6).reason),
+            "kind1_curve_measure_zero");
+  // The union: unlit on the positive component alone.
+  const std::vector<const CriticalSetCurve*> components = { &on_support, &in_zero_set };
+  const VisibilityCertificate union_cert = CertifyVisibilityPerComponent(measure, stream, components, nullptr, 1e-6);
+  EXPECT_EQ(union_cert.state, VisibilityState::kUnlit);
+  EXPECT_TRUE(union_cert.saw_zero_area || union_cert.saw_zero_transmission);
+  // And with the components swapped, the same verdict (the aggregate is order-free).
+  const std::vector<const CriticalSetCurve*> swapped = { &in_zero_set, &on_support };
+  EXPECT_EQ(CertifyVisibilityPerComponent(measure, stream, swapped, nullptr, 1e-6).state, VisibilityState::kUnlit);
 }
 
 }  // namespace

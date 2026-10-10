@@ -14,10 +14,21 @@
 #include "raypath/detail/input_assembly.hpp"
 #include "raypath/detail/path_feature_report.hpp"
 #include "raypath/detail/path_feature_report_json.hpp"
+#include "raypath/detail/schema3/report_assembly.hpp"
 
 namespace {
 namespace ns = lumice;
 namespace rp = lumice::raypath;
+namespace schema3 = lumice::raypath::schema3;
+
+// The flip path: assemble, schema3-assemble (the discovery moves into the carry), serialize v3.
+nlohmann::json ReportV3Document(rp::PathFeatureReport& report) {
+  const schema3::AssembledSchema3Report assembled =
+      report.unsupported_multicrystal ?
+          schema3::AssembledSchema3Report{} :
+          schema3::AssembleSchema3Report(std::move(report), report.options.sampling.max_optical_evaluations);
+  return nlohmann::json::parse(rp::PathFeatureReportV3ToJson(report, assembled, "test"));
+}
 
 ns::SceneConfig Scene(size_t count, bool random_shape = false) {
   ns::SceneConfig scene{};
@@ -610,13 +621,18 @@ TEST(AssembledInputChain, FeatureReportRetainsLayerScopeAndSourceNumerics) {
   ASSERT_TRUE(rp::BuildPathFeatureReport(scene, "two-layer scene, second-layer single path", { { 1, 2, { 3, 5 }, 0 } },
                                          rp::DiscreteSpectrumSum{}, 1497, options, &report)
                   .Ok());
-  const auto json = nlohmann::json::parse(rp::PathFeatureReportToJson(report, "test"));
+  bool edge_seen_before = false;
+  for (const auto& feature : report.discovery.features) {
+    edge_seen_before |= feature.deviation_minimum.has_value();
+  }
+  ASSERT_TRUE(edge_seen_before) << "the scene must carry a physical edge before the assembly moves discovery";
+  const auto json = ReportV3Document(report);
   EXPECT_EQ(json.at("scope").at("layers").at(0).at("scene_layer"), 1);
-  EXPECT_EQ(json.at("spectrum").at(0).at("nm"), 550);
+  EXPECT_EQ(json.at("scope").at("spectrum").at(0).at("nm"), 550);
   EXPECT_TRUE(json.contains("budgets"));
-  EXPECT_TRUE(json.contains("unfinished"));
+  EXPECT_TRUE(json.contains("unattributed_structures"));
   bool edge = false;
-  for (const auto& feature : json.at("actual_features")) {
+  for (const auto& feature : json.at("mc_evidence").at("records")) {
     if (!feature.contains("physical_position")) {
       continue;
     }
@@ -663,11 +679,12 @@ TEST(AssembledInputChain, FeatureReportRefinesTheSameContinuousSpectrumObservati
   EXPECT_GT(report.spectral_seconds, 0);
   EXPECT_TRUE(std::any_of(report.discovery.features.begin(), report.discovery.features.end(),
                           [](const auto& f) { return f.evidence == rp::DiagnosticEvidence::kActual; }));
-  const auto json = nlohmann::json::parse(rp::PathFeatureReportToJson(report, "test"));
   // Two cap/shape corners, one cap edge and two shape ends also trace optics.
-  EXPECT_EQ(report.discovery.event_path_evaluations, 5u);
+  const uint64_t event_evaluations = report.discovery.event_path_evaluations;
+  const auto json = ReportV3Document(report);
+  EXPECT_EQ(event_evaluations, 5u);
   EXPECT_EQ(json.at("budgets").at("optical_evaluations"), 8192u * (33 + 33 + 65) + 5);
-  EXPECT_EQ(json.at("spectrum").size(), 33u);
+  EXPECT_EQ(json.at("scope").at("spectrum").size(), 33u);
 }
 
 TEST(AssembledInputChain, AtomRequiresDeclaredZeroDimensionalSourceNotSampledRank) {

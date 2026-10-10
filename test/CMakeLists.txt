@@ -295,7 +295,40 @@ add_executable(unit_correctness_test
   "${PROJ_TEST_DIR}/unit-correctness/raypath/test_visibility_certificate.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/raypath/test_fiber_quadrature.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/raypath/test_contour_contract_docking.cpp"
-  "${PROJ_TEST_DIR}/unit-correctness/raypath/test_weight_profile.cpp")
+  "${PROJ_TEST_DIR}/unit-correctness/raypath/test_weight_profile.cpp"
+  # schema3 report core (666.1): the object record's data layer — the bucket-derivation grid,
+  # the fail-closed arms, the open-enum registered tables.
+  "${PROJ_TEST_DIR}/unit-correctness/raypath/test_structure_object.cpp"
+  # schema3 report core (666.1): the geometry adapter — walk-status/existence mapping per kernel
+  # value, the contract conversions, the regime slug table (G3 evidence), the beta partition
+  # anchors, the G5 u-fidelity verification.
+  "${PROJ_TEST_DIR}/unit-correctness/raypath/test_geometry_source.cpp"
+  # schema3 report core (666.1): the support block — the delta-axis facts per member,
+  # the C05/C06 120-degree complement, the hole-edge constant curve with dispersion.
+  "${PROJ_TEST_DIR}/unit-correctness/raypath/test_support_block.cpp"
+  # schema3 report core (666.1): the enumeration driver — the C09 unlit shape, the C11
+  # identity fields, the S2 chains, the coverage table, A1 registration, families.
+  "${PROJ_TEST_DIR}/unit-correctness/raypath/test_structure_enumeration.cpp"
+  # schema3 report core (666.2): the mc_evidence block — the v2 observation record demoted
+  # wholesale (the carry invariants), the migration ledger reconciled against the real
+  # serializer emission, the maximal-record round-trip (no silent drop).
+  "${PROJ_TEST_DIR}/unit-correctness/raypath/test_mc_evidence.cpp"
+  # schema3 report core (666.2): the MC attribution core — the judgment table cell by cell,
+  # the forward ESS gate (the AC2 negative control), the declared-width tolerance, the two
+  # delta-image branches, the presence-ESS statistic, the C12 restricted integration.
+  "${PROJ_TEST_DIR}/unit-correctness/raypath/test_mc_attribution.cpp"
+  # schema3 report core (666.2): the no_related_feature dual-form ruling — rule A outranks B,
+  # the four B conditions each break on their own leg, the kArea gate beside them, and the
+  # zero-signal predicate at its single home.
+  "${PROJ_TEST_DIR}/unit-correctness/raypath/test_no_related_feature.cpp"
+  # schema3 report (666.3): the production assembly — the living wiring of the enumeration,
+  # the demoted evidence and the attribution over a real report, the two declared skips, the
+  # budget/timing legs, and the A4 cost baseline on the three standard scenarios.
+  "${PROJ_TEST_DIR}/unit-correctness/raypath/test_schema3_report_assembly.cpp"
+  # schema3 report (666.3): the v3 serializer — the ledger-reconciled emission (top-level homes
+  # both ways, the 34-field record checklist on a maximal record), the derived-bucket segments,
+  # the outcome grammar and unconditional ruling, the non-finite spellings, the self-description.
+  "${PROJ_TEST_DIR}/unit-correctness/raypath/test_path_feature_report_json_v3.cpp")
 target_include_directories(unit_correctness_test
   PRIVATE ${PROJ_TEST_DIR})
 target_compile_definitions(unit_correctness_test PRIVATE
