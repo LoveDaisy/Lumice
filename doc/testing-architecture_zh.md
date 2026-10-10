@@ -950,7 +950,7 @@ parity 相关（次）。
 > 本文件尚未镜像那整个 §7（属于既有缺口，不由本节引入），这里只同步新增的这一小节，其编号与
 > 英文版 §7.6 对齐，供两侧交叉引用。
 
-**当前 schema3 成本治理 cohort（验收进行中）。** 影响成本的产品代码、测试、workflow、构建参数与
+**当前 schema3 成本治理验收 cohort。** 影响成本的产品代码、测试、workflow、构建参数与
 registry 在 `0fc3ecf7` 冻结；此前两次完整诊断 run 只校准 Windows/macOS CTest 单阶段上限，独立的
 `build+ctest=720s` 聚合闸未变。以下每行都是完整成功的 PR workflow，文档后续提交仍运行全矩阵：
 
@@ -958,9 +958,14 @@ registry 在 `0fc3ecf7` 冻结；此前两次完整诊断 run 只校准 Windows/
 |---|---|---:|---:|---|
 | 38086331832 | `0fc3ecf7` | **565s（9.42 分钟）** | Windows MSVC x86_64，562s | compiler cache 恢复自 `f50e9639`；Windows sccache 502/507 hits，build 87.5s、CTest 400.8s、聚合 488.4s |
 | 38087102711 | `6d37da11` | **630s（10.50 分钟）** | e2e-test，627s | 同一 `f50e9639` cache seed；e2e phase 500.7s；Windows sccache 502/507 hits、聚合 488.4s |
+| 38087917243 | `bd2e1c59` | **659s（10.98 分钟）** | E2E Slow (macOS ARM64 rest)，650s | 同一 `f50e9639` cache seed；macOS slow phases 493.6s；Windows sccache 502/507 hits、聚合 484.6s |
 
-两个成功样本仍不构成 cohort；至少累计三次后才裁定当前配置。当前两次都低于 12 分钟优选上限；
-phase 报告只描述被包裹的串行区段，不能替代完整 run 墙钟。
+中位数为 **630s（10.50 分钟）**，最大值为 **659s（10.98 分钟）**。中位数比 10 分钟目标多
+30s，但三次均低于 12 分钟优选上限与 15 分钟硬上限。已落实的主要杠杆包括：serializer 命题不再
+重复做完整 schema3 assembly、C API/report 请求只枚举命题所需的 physical member、删除无阈值的研究
+计时 case；三次也都恢复自同一 main compiler-cache seed。剩余关键路径在 Windows CTest、fast E2E
+与 macOS slow pool 之间移动，没有暴露一条持续主导的重复 raypath 链；phase 报告只描述被包裹的串行
+区段，不能替代完整 run 墙钟。
 
 `e2e-test` job 测试步的 `timeout-minutes: 10`（以及 `e2e-slow` 测试步的 `timeout-minutes: 25`）是
 **owner 设定的预算，不是挂死探测器**。它们是单步预算；整个 run 的 owner 口径是 **10 分钟目标、

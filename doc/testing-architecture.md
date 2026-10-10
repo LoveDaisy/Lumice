@@ -1603,7 +1603,7 @@ queueing, cache restore/save, dependency setup or every auxiliary step, so compl
 is still checked from GitHub's job timestamps and re-checked whenever a change adds a job or
 lengthens the longest one.
 
-**Measured (current schema3 cost-governance cohort; acceptance in progress).** Cost-affecting
+**Measured (current schema3 cost-governance acceptance cohort).** Cost-affecting
 product code, tests, workflow, build flags and registry were frozen at `0fc3ecf7`, after two
 complete diagnostic runs calibrated the Windows and macOS CTest phase ceilings without changing
 the separate 720-second `build+ctest` bound. Every row below is a complete successful pull-request
@@ -1613,11 +1613,17 @@ workflow; documentation-only follow-up commits still run the full matrix.
 |---|---|---:|---:|---|
 | 38086331832 | `0fc3ecf7` | **565s (9.42 min)** | Windows MSVC x86_64, 562s | compiler caches restored from `f50e9639`; Windows sccache 502/507 hits, build 87.5s, CTest 400.8s, aggregate 488.4s |
 | 38087102711 | `6d37da11` | **630s (10.50 min)** | e2e-test, 627s | same `f50e9639` cache seed; e2e phase 500.7s; Windows sccache 502/507 hits, aggregate 488.4s |
+| 38087917243 | `bd2e1c59` | **659s (10.98 min)** | E2E Slow (macOS ARM64 rest), 650s | same `f50e9639` cache seed; macOS slow phases 493.6s; Windows sccache 502/507 hits, aggregate 484.6s |
 
-Two successful samples do not close the cohort; this table is expanded to at least three before
-the current configuration is accepted. The first two remain below the 12-minute preferred upper
-bound; the phase reports remain evidence about measured serial regions rather than substitutes for
-the complete-run wall clock.
+The median is **630s (10.50 min)** and the maximum is **659s (10.98 min)**. The cohort misses
+the ten-minute median target by 30 seconds, but every run remains below the 12-minute preferred
+upper bound and the 15-minute hard bound. The cost reduction removed repeated schema3 assembly
+from serializer propositions, restricted C API/report requests to the physical member their
+claims need, and removed the threshold-free research timing case; all samples also restored the
+same default-branch compiler-cache seed. The remaining critical path moved between Windows CTest,
+fast E2E and the macOS slow pool instead of exposing one persistent redundant raypath chain. The
+phase reports are evidence about those measured serial regions, not substitutes for the complete
+run's wall clock.
 
 **Measured (historical pre-schema3 cohort).** The table below is the final acceptance cohort of the
 2026-10-01 workflow/test configuration: five successful runs, four pull-request events and the
