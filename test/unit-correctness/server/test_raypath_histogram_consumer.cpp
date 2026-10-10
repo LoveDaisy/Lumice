@@ -1686,5 +1686,89 @@ TEST(ReducedRaypathHistogramOf, DistinctSymmetriesKeepIndependentMemosAndDoNotEv
       << "symmetry=7's memo should survive an interleaved symmetry=0 read, not be evicted by it";
 }
 
+// ---------------------------------------------------------------------------
+// Frame-vs-analysis share calibration: the AC2 identity extended to the
+// dual-fisheye fold boundary. The calibrated lens-domain semantics and the
+// defect statement live in doc/coordinate-convention.md §12; the measured
+// reference-scene gap this family of tests pins is frame ΣY / analysis Σ =
+// 0.8107.
+// ---------------------------------------------------------------------------
+
+// A dual-fisheye full-sky frame at the reference-scene resolution, view on the
+// horizon, no overlap (r_scale = 1: each hemisphere folds onto one disk).
+RenderConfig DualFullSkyCfg() {
+  RenderConfig cfg;
+  cfg.id_ = 0;
+  cfg.lens_.type_ = LensParam::kDualFisheyeEqualArea;
+  cfg.lens_.fov_ = 180.0f;
+  cfg.resolution_[0] = 256;
+  cfg.resolution_[1] = 128;
+  cfg.view_.el_ = 0.0f;
+  cfg.visible_ = RenderConfig::kFull;
+  return cfg;
+}
+
+double ImageSumY(const RenderConfig& cfg, const SimData& data) {
+  RenderConsumer rc(cfg, lumice::test::kTestThreadBudget, ColorClassTable{});
+  rc.Consume(data);
+  rc.PrepareSnapshot();
+  const RawXyzResult raw = rc.GetRawXyzResult();
+  EXPECT_NE(raw.xyz_buffer_, nullptr);
+  double image_sum = 0.0;
+  const size_t total_pix = static_cast<size_t>(raw.img_width_) * static_cast<size_t>(raw.img_height_);
+  for (size_t i = 0; i < total_pix; i++) {
+    image_sum += raw.xyz_buffer_[i * 3 + 1];
+  }
+  return image_sum;
+}
+
+double HistogramSumY(const SimData& data) {
+  RaypathHistogramConsumer hist(FullSky());
+  hist.Consume(data);
+  const auto r = Snapshot(hist);
+  double sum = 0.0;
+  for (const auto& e : r.entries_) {
+    sum += e.energy_;
+  }
+  return sum;
+}
+
+// RED-STATE EVIDENCE (red-state-first discipline): the direct-through travel
+// directions of a horizon-sun scene collapse onto wx = -1.0f in float32, and
+// the dual-fisheye fold boundary bins them at py == img_h — one row past the
+// canvas — where the frame's bounds check drops them silently. Measured on the
+// C01 reference scene this deletes 18.9% of the frame energy (frame ΣY /
+// analysis Σ = 0.8107); this test is the synthetic red pin of exactly that
+// loss, and it must go green with the fold-boundary fix, together with the
+// mechanism pin that follows it.
+TEST(RaypathHistogramConsumer, DirectThroughEnergySurvivesDualFisheyeFullSkyFrame) {
+  const RenderConfig cfg = DualFullSkyCfg();
+
+  Batch b(1);
+  b.AddChain(1, 0, 1, { 1, 2 });
+  // Exactly (-1,0,0) and the float32 collapse band around it: the Snell
+  // round-trip of the direct-through families lands here (samples from the
+  // probe of the real trace: wx = -1.00000012 / -1 / -0.99999994).
+  const float dirs[][3] = {
+    { -1.0f, 0.0f, 0.0f },
+    { -1.0f, 1e-7f, 0.0f },
+    { -1.0f, 0.0f, 1e-7f },
+    { -1.0f, 0.0f, -1e-7f },
+  };
+  double expected_sum = 0.0;
+  for (const auto& d : dirs) {
+    b.AddRay(1, 0.5f, d);
+    expected_sum += Y(550.0f, 0.5f);
+  }
+  b.data.ray_seg_count_ = b.data.outgoing_w_.size();
+  b.data.outgoing_component_.assign(b.data.outgoing_w_.size(), 0u);
+
+  // The analysis side counts every ray (full sky, no projection).
+  EXPECT_DOUBLE_EQ(HistogramSumY(b.data), expected_sum);
+
+  // The frame side must deposit the same energy: every one of these
+  // directions lands inside a dual-fisheye disk (rho = 1 - |z| <= 1).
+  EXPECT_NEAR(ImageSumY(cfg, b.data), expected_sum, 1e-6 * expected_sum);
+}
 }  // namespace
 }  // namespace lumice
