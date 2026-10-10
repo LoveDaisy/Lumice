@@ -10,7 +10,8 @@
 // A row carries, all measured at ONE assembly of the field (geometry_source.hpp's AssembleAxis —
 // the partition, the onsets and the walk record come from that one pass):
 //   - the member (the face sequence, schema1's literal spelling) and the partition axis
-//     (intervals + the contract's coverage state + the escape slug as data, G3 interim);
+//     (intervals + the contract's coverage state + the escape slug as data, the typed regime a
+//     kUnset-by-default contract slot per G3);
 //   - the ENDPOINT objects: kernel onsets (FieldOnsets' own table) whose value sits at an
 //     interval endpoint within the partition's own merge constant kExtremumAtol — the profile
 //     vocabulary (finite_jump / log_divergence / boundary_onset / degenerate / ...) is the

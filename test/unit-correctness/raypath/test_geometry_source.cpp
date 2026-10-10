@@ -266,8 +266,8 @@ TEST(GeometrySource, EscapeFormCarriesSlugAsDataWithNoIntervals) {
   // The LI-parity refusal shapes, on the REAL paths conclusions section 4 row 5 named: the
   // uniform prism's 3-1-5-7 (crease touching dU_P) escapes the partition — coverage incomplete,
   // the regime slug named, no intervals (PartitionResult's mechanical invariant), the slug has
-  // no contract-side enum value (G3 pending), and the certificate consumes the context
-  // fail-closed (partition_escape, unproven).
+  // no contract-side regime value (the typed field keeps its kUnset sentinel, G3 as-built), and
+  // the certificate consumes the context fail-closed (partition_escape, unproven).
   const Tables t = Prism();
   analytic::Status resolve = analytic::Status::kInvalidConfig;
   analytic::DeviationField field = FieldOf(t, { 3, 1, 5, 7 }, kN550, &resolve);

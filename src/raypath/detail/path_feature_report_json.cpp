@@ -460,7 +460,7 @@ Json ChromaticJson(const StructureObjectRecord& object) {
 Json Schema3ObjectJson(const StructureObjectRecord& object, const CorroborationAnnotation& annotation, size_t id) {
   Json existence = { { "state", ExistenceStateName(object.existence) }, { "walk_s", Num(object.walk_s) } };
   if (object.existence == ExistenceState::kEscaped && !object.escape_regime_slug.empty()) {
-    existence["escape_regime_slug"] = object.escape_regime_slug;  // the slug is DATA (G3 interim)
+    existence["escape_regime_slug"] = object.escape_regime_slug;  // the slug is DATA: the regime's name
   }
   const VisibilityCertificate& visibility = object.visibility;
   Json visibility_json = {
