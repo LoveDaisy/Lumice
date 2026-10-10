@@ -646,3 +646,90 @@ without adding the 180° back. Most confusion to date has come from comparing a 
 (position bearing, LI's kernel targets are positions) with an engine CLI label (also a
 position bearing) while forgetting that the two kernels' target FIELDS sit on opposite sides
 of the travel/position negation: same labels, different vector kinds handed to the kernel.
+
+## 13. Lens Landing Domain (Full-Sky Coverage per Family)
+
+§10/§11 fix where a direction lands *on* the canvas. This section fixes the
+question underneath every cross-check between an image and a direction-domain
+statistic: **which directions a lens family lands on the canvas at all**, and
+therefore what a per-frame energy share means before it may be compared with a
+full-sky number (an analysis `total_energy`, a chain-table share, `mc_evidence`).
+
+**Share-domain statement.** An analysis run (`Lumice analyze`, `--roi sky`)
+accumulates every outgoing segment regardless of direction: its share of a chain
+lives on the **whole-sky domain**. A render frame accumulates only segments the
+lens deposits into a pixel: its share lives on the **lens landing domain**. The
+two are different denominators **by design**; comparing them requires either a
+same-domain cross-check (a cone ROI on both sides) or the explicit landing
+fractions below.
+
+**Landing domain per family** (uniform-sky landed fraction, lens-scale formulas
+of `lm_proj::ProjectExitToPixel`):
+
+- **Rectangular**: 1.0 — `lon` wraps by modulo, `lat` stays inside the canvas
+  for every direction with `|polar| < 1`. The exact poles (`|polar| == 1.0f`)
+  sit on an f32 blade of the map: `py = floor(-asinf(polar)·scale + H/2)`
+  cancels catastrophically at `lat = ±π/2`, so the last ulp of the platform's
+  `asinf(±1.0f)` decides between the last canvas row and one row past it
+  (where the frame's bounds check drops the ray). Apple libm rounds π/2 down
+  and lands in-canvas; glibc x86_64/aarch64 and MSVC round up and drop —
+  measured on the same fixture across CI (run 38034154651: Ubuntu x86_64 /
+  Ubuntu ARM64 / Windows MSVC red, macOS green), and reproduced on macOS by
+  pushing `lat` one ulp in the glibc direction. A direction δ radians off the
+  pole lands with margin δ·`scale` pixels, so the blade is a measure-zero set
+  of input directions, not a neighbourhood effect (a uniform sphere set with
+  `|z| ≤ 0.9999975` keeps a 0.023 px row margin). A rectangular full-sky
+  frame and a full-sky analysis total agree to float summation noise (measured
+  4e-8 relative; that residual is a per-pixel double running sum narrowed to
+  float once at publish — `src/server/render.hpp`/`render.cpp` — the
+  mechanism the energy-identity test's tolerance formalizes), which is what
+  makes this family the calibration arm for energy-accounting audits.
+- **Dual-fisheye**: 1.0 on the direction→disk map (each hemisphere folds onto
+  one disk, `rho^2 = 1 - |z| <= 1` exactly), **except** one measured defect below.
+- **Single fisheye (fov 180) on a square canvas**: the inscribed disk covers the
+  forward hemisphere (`rho^2 = 1 - cz <= 1`). Past 90° (`cz < 0`, `rho > 1`)
+  `kFisheyeEqualAreaMinCz = -1 + 1e-3` (the antipode numerical floor) still
+  admits directions down to theta ≈ 177.4° — but admission is not landing.
+  The EAR forward map is azimuth-preserving (pixel radius `rho · short/2`),
+  and the square canvas's bounds check clips azimuth a second time: of the
+  admitted off-disk directions only the diagonal sectors
+  (`max(|cos φ|, |sin φ|) ≤ 1/rho`) land inside the canvas; the rest project
+  past the canvas edge and are dropped silently. The landing azimuth share
+  shrinks from every azimuth at the rim (`rho = 1`) to zero at the
+  half-diagonal (`rho = sqrt(2)`), so this family's uniform-sky landed
+  fraction is strictly below 1.0 — a single-fisheye square frame is *not* a
+  full-sky calibration arm. Near the rim (`rho ≈ 1`, most azimuths landing)
+  the corners of one view are still the horizon band of the opposite view: an
+  up-looking and a down-looking frame each deposit that band once, so their
+  summed share exceeds 1 (measured 1.121 on the reference scene). This is the display-domain
+  semantics — each frame is "what this view's canvas sees" — not an energy
+  leak: no pixel receives energy twice within one frame, and the exposure
+  anchor does not read frames.
+
+**Known defect (measured, unfixed at the time of writing): dual-fisheye
+fold-boundary loss.** A segment whose travel direction rounds to `wx == -1.0f`
+in float32 — the direct-through families of a horizon sun (parallel-face
+transmission and the low-deviation side-entry chains; the 22° halo itself is 22°
+away and unaffected) — projects to `sx = +1.0f`, `z_hemi = 0`, `x_norm = +1.0f`,
+`fy = cy + r = 128.0f`, `py = 128` — one row past the canvas — and
+`ProjectAndClassifyRay`'s bounds check (`src/core/lens_proj_build.hpp`) drops it
+silently. On the reference scene this deletes 5.98% of segments carrying 18.9%
+of the frame energy (measured: frame sum vs analysis total = 0.8107; uniform
+direction sets measure exactly 1.0, which is why any synthetic-orientation test
+with a generic direction set cannot see it). `analyze --roi frame` reproduces
+the same number bit-for-bit, because both paths share the same projection
+predicate. Until a fix lands, **a dual-fisheye frame's total is known to
+under-count by the direct-through energy of the scene**, in a scene-dependent
+way that no normalization constant can absorb; the `mc_evidence` share fields
+that compare against render-arm denominators inherit this caveat (see
+`doc/raypath-cli-output.md` §7).
+
+**Cross-check rule.** The only legal image↔analysis share comparison is
+same-domain: a cone ROI computed on both sides (the analysis `--roi cone`, and
+the image integrated over the cone's pixels through the inverse of the same
+projection). The rectangular full-sky frame is the trivial same-domain case —
+its landing domain *is* the whole sky (the Rectangular bullet above), which is
+exactly what makes it the calibration arm. For every fisheye family, comparing
+a frame share against a full-sky analysis share is a category error even after
+the defect above is fixed, because of the single-fisheye corner and
+azimuth-clipping semantics alone.

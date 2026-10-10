@@ -335,6 +335,12 @@ GUI 把 ROI 放 session tier 不进文档是同一个判断。展示层派生（
   本身对 `visible`/`front` 一无所知。
 - **全天**：不做任何空间判定，所有出射光线都计入。
 
+**份额的域语义（2026-10-10 校准后）**：`--roi sky`（与本面板的全天档）的份额活在**全天空域**，
+渲染帧的份额活在**镜头落域**——两个分母不同是设计使然，与渲染帧互检的唯一精确形态是同域
+（锥 ROI 两侧同取；CLI 侧 `scripts/raypath_cone_crosscheck.py` 是先例）。每 family 的落域定义、
+单鱼眼角落语义与 dual-fisheye 折叠边界缺陷（帧分母的已知口径债）见
+`doc/coordinate-convention.md` §13 与 `doc/raypath-cli-output.md` §7.5。
+
 ### 3.5 累加器字段
 
 每个链 id 对应的最小状态是：能量累加（Σ(Y·w)）、命中计数、（锥形 ROI 时）按环分桶的

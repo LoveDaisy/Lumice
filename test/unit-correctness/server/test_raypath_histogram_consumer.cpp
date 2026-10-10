@@ -1686,5 +1686,376 @@ TEST(ReducedRaypathHistogramOf, DistinctSymmetriesKeepIndependentMemosAndDoNotEv
       << "symmetry=7's memo should survive an interleaved symmetry=0 read, not be evicted by it";
 }
 
+// ---------------------------------------------------------------------------
+// Frame-vs-analysis share calibration: the AC2 identity extended to the
+// dual-fisheye fold boundary. The calibrated lens-domain semantics and the
+// defect statement live in doc/coordinate-convention.md §13; the measured
+// reference-scene gap this family of tests pins is frame ΣY / analysis Σ =
+// 0.8107.
+// ---------------------------------------------------------------------------
+
+// A dual-fisheye full-sky frame at the reference-scene resolution, view on the
+// horizon, no overlap (r_scale = 1: each hemisphere folds onto one disk).
+RenderConfig DualFullSkyCfg() {
+  RenderConfig cfg;
+  cfg.id_ = 0;
+  cfg.lens_.type_ = LensParam::kDualFisheyeEqualArea;
+  cfg.lens_.fov_ = 180.0f;
+  cfg.resolution_[0] = 256;
+  cfg.resolution_[1] = 128;
+  cfg.view_.el_ = 0.0f;
+  cfg.visible_ = RenderConfig::kFull;
+  return cfg;
+}
+
+double ImageSumY(const RenderConfig& cfg, const SimData& data) {
+  RenderConsumer rc(cfg, lumice::test::kTestThreadBudget, ColorClassTable{});
+  rc.Consume(data);
+  rc.PrepareSnapshot();
+  const RawXyzResult raw = rc.GetRawXyzResult();
+  EXPECT_NE(raw.xyz_buffer_, nullptr);
+  double image_sum = 0.0;
+  const size_t total_pix = static_cast<size_t>(raw.img_width_) * static_cast<size_t>(raw.img_height_);
+  for (size_t i = 0; i < total_pix; i++) {
+    image_sum += raw.xyz_buffer_[i * 3 + 1];
+  }
+  return image_sum;
+}
+
+double HistogramSumY(const SimData& data) {
+  RaypathHistogramConsumer hist(FullSky());
+  hist.Consume(data);
+  const auto r = Snapshot(hist);
+  double sum = 0.0;
+  for (const auto& e : r.entries_) {
+    sum += e.energy_;
+  }
+  return sum;
+}
+
+// CURRENT-BEHAVIOUR PIN of the fold-boundary defect (red state committed
+// before this pin; see the previous commit for the red run: image_sum = 0 vs
+// expected 1.9899): the direct-through travel directions of a horizon-sun
+// scene collapse onto wx = -1.0f in float32, the dual-fisheye fold boundary
+// bins them at py == img_h — one row past the canvas — and the frame's bounds
+// check drops them silently, while the analysis consumer counts every ray.
+// Measured on the reference scene this deletes 18.9% of the frame energy
+// (frame ΣY / analysis Σ = 0.8107). The fix turns the dropped assertion at
+// the bottom into the identity pin (image ΣY == analysis ΣY); until then this
+// pins the loss itself, so a partial fix — these collapse directions landing
+// again — fails loudly here. A dual-family loss widening to other directions
+// is NOT covered by this pin nor by FullSkyIdentityOnRectangularFrame (the
+// rect identity exercises only the shared projection path, not the dual
+// fold); the safety net there is the real-scene cross-check's full row read
+// against the recorded reference (frame ΣY / analysis Σ = 0.8107 on the
+// reference scene; crosscheck full row 0.6021).
+//
+// Cross-platform audit (alongside the rect pole blade, PR #479): this pin
+// needs no cross-platform headroom because its collapse cascade involves no
+// platform-variant transcendental. All four members carry wz = 0 or ±1e-7f,
+// so z_hemi = 0 or fl32(1 + 1e-7f) = 1 + 2^-23, and sqrt(1 + 2^-23) sits one
+// ulp-below-midpoint — still rounds to 1.0f, correctly rounded as IEEE 754
+// requires of sqrt on every platform — so k = r_scale/sqrt(...) = 1 exact,
+// x_norm = 1.0f exact, fy = 1.0f·r + r = img_h exact, and the drop is decided
+// by integer floor. The rect pole, by contrast, runs its cascade through
+// asinf(±1), whose last ulp is the platform libm's choice — see the
+// pole-neighbourhood member of FullSkyIdentityOnRectangularFrame.
+TEST(RaypathHistogramConsumer, FoldBoundaryDropsDirectThroughEnergyOnDualFisheyeFrame) {
+  const RenderConfig cfg = DualFullSkyCfg();
+
+  Batch b(1);
+  b.AddChain(1, 0, 1, { 1, 2 });
+  // Exactly (-1,0,0) and the float32 collapse band around it: the Snell
+  // round-trip of the direct-through families lands here (samples from the
+  // probe of the real trace: wx = -1.00000012 / -1 / -0.99999994).
+  const float dirs[][3] = {
+    { -1.0f, 0.0f, 0.0f },
+    { -1.0f, 1e-7f, 0.0f },
+    { -1.0f, 0.0f, 1e-7f },
+    { -1.0f, 0.0f, -1e-7f },
+  };
+  double expected_sum = 0.0;
+  for (const auto& d : dirs) {
+    b.AddRay(1, 0.5f, d);
+    expected_sum += Y(550.0f, 0.5f);
+  }
+  b.data.ray_seg_count_ = b.data.outgoing_w_.size();
+  b.data.outgoing_component_.assign(b.data.outgoing_w_.size(), 0u);
+
+  // The analysis side counts every ray (full sky, no projection).
+  EXPECT_DOUBLE_EQ(HistogramSumY(b.data), expected_sum);
+
+  // The frame side deposits NONE of it: every one of these directions
+  // collapses to x_norm = +1.0f with z_hemi = 0, so fy = cy + r = img_h and
+  // the bounds check skips the row (doc/coordinate-convention.md §13).
+  EXPECT_EQ(ImageSumY(cfg, b.data), 0.0)
+      << "fold-boundary defect changed: either partially fixed (turn this pin "
+         "into the identity assertion image ΣY == analysis ΣY) or the loss got wider";
+}
+
+// The AC2 identity over a genuinely full-sky direction set — every direction
+// including the horizon band and the exact direct-through axis — on the one
+// family whose landing domain is the whole sky (rectangular: lon wraps; lat
+// stays in the canvas for every |polar| < 1, the exact poles being an f32
+// blade the fixture steps around — see the pole-neighbourhood member below
+// and doc/coordinate-convention.md §13). This is the green half of the
+// calibration: the same batch through this consumer and through a
+// full-coverage frame sums to the same number, which is what licenses the
+// frame as the energy-accounting calibration arm (measured on the reference
+// scene: 4e-8 relative — that residual is the double-accumulator narrowing
+// dust the bound below formalizes, not per-pixel float `+=` drift).
+TEST(RaypathHistogramConsumer, FullSkyIdentityOnRectangularFrame) {
+  RenderConfig cfg;
+  cfg.id_ = 0;
+  cfg.lens_.type_ = LensParam::kRectangular;
+  cfg.lens_.fov_ = 180.0f;
+  cfg.resolution_[0] = 64;
+  cfg.resolution_[1] = 32;
+  cfg.view_.el_ = 0.0f;
+  cfg.visible_ = RenderConfig::kFull;
+
+  constexpr size_t kRays = 4000;
+  uint32_t state = 987654321u;
+  auto next = [&state]() {
+    state = state * 1664525u + 1013904223u;
+    return static_cast<float>(state >> 8) / static_cast<float>(1u << 24);
+  };
+  Batch b(1);
+  b.AddChain(1, 0, 1, { 1, 2 });
+  double expected_sum = 0.0;
+  double abs_sum = 0.0;
+  auto emit = [&](float dx, float dy, float dz) {
+    const float w = 0.1f + next();
+    const float wl = 480.0f + next() * 140.0f;
+    b.data.outgoing_wl_.push_back(wl);
+    b.AddRay(1, w, dx, dy, dz);
+    expected_sum += Y(wl, w);
+    abs_sum += std::fabs(Y(wl, w));
+  };
+  // Uniform over the sphere (cos theta uniform) — hits the poles' neighbourhood,
+  // both horizon bands and every azimuth.
+  for (size_t i = 0; i < kRays - 3; i++) {
+    const float z = 2.0f * next() - 1.0f;
+    const float phi = next() * 2.0f * math::kPi;
+    const float r = std::sqrt(std::max(0.0f, 1.0f - z * z));
+    emit(r * std::cos(phi), r * std::sin(phi), z);
+  }
+  // The exact direct-through axis and horizon-band members: the rectangular
+  // map wraps them (lon = 0 bins to column 0 modulo the width) where the
+  // dual-fisheye fold boundary loses them.
+  emit(1.0f, 0.0f, 0.0f);
+  emit(-1.0f, 0.0f, 0.0f);
+  // Pole NEIGHBOURHOOD, 0.01 rad off the zenith — deliberately NOT the exact
+  // pole — pinned as compile-time f32 bit patterns (hex float literals;
+  // 0.00999983307 / 0.999949992 in decimal). The exact pole sits on an f32
+  // blade of this map: py = floor(-asinf(polar)·scale + H/2) cancels
+  // catastrophically at lat = ±π/2, so the last ulp of the platform's
+  // asinf(±1) decides py = 31 vs 32 on this pose. Apple libm rounds π/2 down
+  // (0xBFC90FDA) and lands in-canvas; glibc x86_64/aarch64 and MSVC round up
+  // (0xBFC90FDB), land one row past the canvas, and the frame's bounds check
+  // silently drops the ray (PR #479 red on Ubuntu x86_64 / Ubuntu ARM64 /
+  // Windows MSVC, green on macOS, run 38034154651; the drop was reproduced on
+  // macOS by pushing lat one ulp in the same direction — diff = the pole
+  // term + 1.1e-6, matching CI's 0.0875742). A one-ulp libm disagreement is
+  // not what this identity tests, and no tolerance can absorb a whole
+  // dropped ray without blinding it, so the fixture excludes the
+  // measure-zero exact poles (the uniform members top out at |z| ≤
+  // 0.9999975, a 0.023 px row margin — safe) and keeps the neighbourhood
+  // with this member: it lands 0.102 px inside the canvas edge, ~1e5 times
+  // the ulp dust any asinf cascade contributes. Fixed bit patterns rather
+  // than runtime sinf/cosf keep the fixture inputs bit-identical across
+  // platforms, which every cross-platform number cited above assumes.
+  emit(0x1.23D657p-7f, 0.0f, 0x1.7FFCB9p-1f);
+  b.data.ray_seg_count_ = b.data.outgoing_w_.size();
+  b.data.outgoing_component_.assign(b.data.outgoing_w_.size(), 0u);
+
+  const double hist_sum = HistogramSumY(b.data);
+  EXPECT_DOUBLE_EQ(hist_sum, expected_sum);
+  const double image_sum = ImageSumY(cfg, b.data);
+  ASSERT_GT(image_sum, 0.0) << "positive control: the frame must have imaged the rays";
+  // The tolerance shape is the mechanism floor of the ONE rounding the image
+  // path performs per pixel: RenderConsumer accumulates internal_xyz_ in
+  // double (src/server/render.hpp) and narrows to float once in
+  // PrepareSnapshot (src/server/render.cpp), and every added term is the
+  // same fl32(kCmfY[wl]·w) product the test's Y() returns — bit-equal on a
+  // non-contracting compiler, ≤ ½ ulp apart per term under contraction. A
+  // pixel's float value therefore differs from its exact sum by at most
+  // ½ ulp (narrowing) + n_p·½ ulp (contraction) ≤ 2·FLT_EPSILON·Σ_p|y|, and
+  // the whole-frame bound max_p(n_p)·FLT_EPSILON·Σ|y| carries 5× headroom at
+  // this fixture's max_p(n_p) = 10, with max_p(n_p) counted through the same
+  // projection the render used (a rectangular full-sky frame lands every ray
+  // exactly once — lon wraps, lat in-canvas; the fixture asserts the
+  // landings below). Measured residuals sit far under the floor: 1.16e-6
+  // absolute on Ubuntu x86_64 (PR #479 CI, run 38034154651), 1.10e-6 on the
+  // macOS reproduction of that red state. Bit equality is not claimed. Do
+  // not tighten this bound from a local green run: the floor is set by the
+  // narrowing mechanism (2·FLT_EPSILON·Σ|y|), not by one machine's weather.
+  std::map<int, size_t> per_pixel;
+  {
+    const Rotation rot = MakeCameraRotation(cfg);
+    const auto pp = BuildProjParams(cfg, rot, static_cast<float>(std::min(cfg.resolution_[0], cfg.resolution_[1])));
+    for (size_t i = 0; i < b.data.outgoing_w_.size(); i++) {
+      const auto hit = lm_proj::ProjectExitToPixel(pp, b.data.outgoing_d_[i * 3], b.data.outgoing_d_[i * 3 + 1],
+                                                   b.data.outgoing_d_[i * 3 + 2]);
+      if (hit.count != 1) {
+        ADD_FAILURE() << "fixture: ray " << i << " must land exactly once on the rectangular map (count " << hit.count
+                      << ")";
+        continue;
+      }
+      // Guard-then-use, integer precision: the frame's bounds check drops
+      // out-of-canvas pixels silently, and a py of -1 here would index
+      // before the buffer through this map, so an out-of-canvas landing must
+      // be refused right here — as an integer fact, before the float sum
+      // comparison can misread a whole dropped ray as rounding noise. This
+      // is the assertion the PR #479 red state slipped past (py = 32 read as
+      // count == 1).
+      if (hit.hits[0].px < 0 || hit.hits[0].px >= static_cast<int>(cfg.resolution_[0]) || hit.hits[0].py < 0 ||
+          hit.hits[0].py >= static_cast<int>(cfg.resolution_[1])) {
+        ADD_FAILURE() << "fixture: ray " << i << " landed out of canvas (px=" << hit.hits[0].px
+                      << ", py=" << hit.hits[0].py << ", dir=" << b.data.outgoing_d_[i * 3] << ","
+                      << b.data.outgoing_d_[i * 3 + 1] << "," << b.data.outgoing_d_[i * 3 + 2]
+                      << "); the consumer would drop it silently";
+        continue;
+      }
+      per_pixel[hit.hits[0].py * cfg.resolution_[0] + hit.hits[0].px]++;
+    }
+  }
+  size_t max_per_pixel = 0;
+  for (const auto& [pix, n] : per_pixel) {
+    max_per_pixel = std::max(max_per_pixel, n);
+  }
+  const double bound = static_cast<double>(max_per_pixel) * FLT_EPSILON * abs_sum;
+  EXPECT_NEAR(image_sum, expected_sum, bound) << "full-sky frame Σ Y vs analysis Σ; bound=" << bound;
+  // And the bound is not so loose that it would let a dropped ray through:
+  // the smallest single term is far above it.
+  double min_term = 1e300;
+  for (size_t i = 0; i < b.data.outgoing_w_.size(); i++) {
+    min_term = std::min(min_term, Y(b.data.outgoing_wl_[i], b.data.outgoing_w_[i]));
+  }
+  EXPECT_GT(min_term, bound) << "a single missing ray must exceed the tolerance";
+}
+
+// The corner-ingest mechanism of the single-fisheye family, pinned
+// constructively (the display-domain arm of the calibration): directions past
+// the disk rim — `rho = sqrt(1 - cz) > 1`, i.e. more than 90 deg off axis —
+// are still admitted by `kFisheyeEqualAreaMinCz`, and the diagonal-azimuth
+// members land in the square canvas's corner region, so the up frame and the
+// down frame each deposit them once and their summed share exceeds 1
+// (measured 1.121 on the reference scene; doc/coordinate-convention.md §13).
+// A tightening of MinCz toward 0 or a rim clip in the frame's bounds check
+// drops these directions and fails here; a canvas-map change moves their
+// landing out of the corner region. The cardinal-azimuth negative control
+// pins the other half of the §13 statement: past the rim the projection is
+// azimuth-clipped by the square canvas, so a same-rho cardinal direction
+// projects past the canvas edge and is dropped.
+TEST(RaypathHistogramConsumer, SingleFisheyeCornerBandImagedPastDiskRim) {
+  // Square canvas so the corner region (rho in (1, sqrt(2))) exists at all.
+  RenderConfig cfg;
+  cfg.id_ = 0;
+  cfg.lens_.type_ = LensParam::kFisheyeEqualArea;
+  cfg.lens_.fov_ = 180.0f;
+  cfg.resolution_[0] = 32;
+  cfg.resolution_[1] = 32;
+  cfg.view_.el_ = 90.0f;
+  cfg.visible_ = RenderConfig::kFull;
+
+  // Camera-frame directions on the canvas diagonals, past the rim:
+  // cz = -0.5625 gives rho = sqrt(1 - cz) = 1.25, comfortably inside the
+  // corner band (1, sqrt(2)) and away from both of its edges in float32.
+  constexpr float kCz = -0.5625f;
+  constexpr float kRho = 1.25f;
+  ASSERT_FLOAT_EQ(std::sqrt(1.0f - kCz), kRho) << "fixture: direction set must sit off the disk rim";
+  const float t = std::sqrt((1.0f - kCz * kCz) / 2.0f);
+  const float dirs[][3] = {
+    { t, t, kCz },
+    { -t, t, kCz },
+    { t, -t, kCz },
+    { -t, -t, kCz },
+  };
+
+  Batch b(1);
+  b.AddChain(1, 0, 1, { 1, 2 });
+  double expected_sum = 0.0;
+  double abs_sum = 0.0;
+  for (const auto& c : dirs) {
+    float d[3];
+    WorldDir(cfg, c[0], c[1], c[2], d);
+    constexpr float kW = 0.5f;
+    b.data.outgoing_wl_.push_back(550.0f);
+    b.AddRay(1, kW, d);
+    expected_sum += Y(550.0f, kW);
+    abs_sum += std::fabs(Y(550.0f, kW));
+  }
+  b.data.ray_seg_count_ = b.data.outgoing_w_.size();
+  b.data.outgoing_component_.assign(b.data.outgoing_w_.size(), 0u);
+
+  // Landing prediction, up frame: every direction lands exactly once, in the
+  // corner region (outside the inscribed disk, inside the square).
+  {
+    const Rotation rot = MakeCameraRotation(cfg);
+    const auto pp = BuildProjParams(cfg, rot, static_cast<float>(std::min(cfg.resolution_[0], cfg.resolution_[1])));
+    for (size_t i = 0; i < b.data.outgoing_w_.size(); i++) {
+      const auto hit = lm_proj::ProjectExitToPixel(pp, b.data.outgoing_d_[i * 3], b.data.outgoing_d_[i * 3 + 1],
+                                                   b.data.outgoing_d_[i * 3 + 2]);
+      if (hit.count != 1) {
+        ADD_FAILURE() << "corner-band ray " << i << " dropped (count " << hit.count
+                      << "): kFisheyeEqualAreaMinCz or the frame bounds check changed";
+        continue;
+      }
+      const float ddx = (hit.hits[0].px + 0.5f) - static_cast<float>(cfg.resolution_[0]) / 2.0f;
+      const float ddy = (hit.hits[0].py + 0.5f) - static_cast<float>(cfg.resolution_[1]) / 2.0f;
+      if (std::sqrt(ddx * ddx + ddy * ddy) <= static_cast<float>(cfg.resolution_[0]) / 2.0f) {
+        ADD_FAILURE() << "corner-band ray " << i << " landed inside the disk region: the canvas map changed";
+      }
+    }
+  }
+
+  // Negative control on the azimuth, pinning the doc §13 azimuth-clipping
+  // statement: a cardinal-azimuth direction at the same rho projects past the
+  // canvas edge (pixel offset rho·short/2 along one axis), where the frame's
+  // bounds check drops it. ProjectExitToPixel still reports the hit — the
+  // drop happens in ProjectAndClassifyRay's bounds check — so the assertion
+  // is on the reported pixel being out of the canvas.
+  {
+    const float s = std::sqrt(1.0f - kCz * kCz);
+    float d[3];
+    WorldDir(cfg, s, 0.0f, kCz, d);
+    const Rotation rot = MakeCameraRotation(cfg);
+    const auto pp = BuildProjParams(cfg, rot, static_cast<float>(std::min(cfg.resolution_[0], cfg.resolution_[1])));
+    const auto hit = lm_proj::ProjectExitToPixel(pp, d[0], d[1], d[2]);
+    ASSERT_EQ(hit.count, 1) << "cardinal-azimuth control: projection function stopped admitting past-rim directions";
+    const bool in_canvas = hit.hits[0].px >= 0 && hit.hits[0].px < static_cast<int>(cfg.resolution_[0]) &&
+                           hit.hits[0].py >= 0 && hit.hits[0].py < static_cast<int>(cfg.resolution_[1]);
+    ASSERT_FALSE(in_canvas) << "cardinal-azimuth control landed (px=" << hit.hits[0].px << ", py=" << hit.hits[0].py
+                            << "): the past-rim azimuth clipping changed";
+  }
+
+  // AC2 tolerance shape, carrying the mechanism floor with headroom: each
+  // direction lands on its own pixel, and the image path rounds twice — the
+  // fl32(kCmfY·w) product in the term (≤ ½ ulp apart from this test's Y()
+  // under a contracting compiler) and the single double→float narrowing in
+  // PrepareSnapshot (½ ulp) — so the per-pixel error reaches
+  // 2·FLT_EPSILON·Σ|y| worst case and the bound runs 2× that. The former
+  // FLT_EPSILON·Σ|y| shape sat exactly ON that floor, one contracting
+  // compiler away from a platform-red with zero signal (the rect pole red
+  // was the same family at full scale). Still far below any single term, so
+  // a dropped ray stays loud.
+  double min_term = 1e300;
+  for (size_t i = 0; i < b.data.outgoing_w_.size(); i++) {
+    min_term = std::min(min_term, Y(b.data.outgoing_wl_[i], b.data.outgoing_w_[i]));
+  }
+  const double bound = 4 * FLT_EPSILON * abs_sum;
+  EXPECT_GT(min_term, bound) << "a single missing ray must exceed the tolerance";
+
+  // The up frame deposits every corner-band ray exactly once; the opposite
+  // view deposits the same directions again, inside its disk — together that
+  // is the >1 summed share.
+  const double up_sum = ImageSumY(cfg, b.data);
+  EXPECT_NEAR(up_sum, expected_sum, bound) << "up frame Σ Y vs analysis Σ (corner band)";
+  RenderConfig down = cfg;
+  down.view_.el_ = -90.0f;
+  const double down_sum = ImageSumY(down, b.data);
+  EXPECT_NEAR(down_sum, expected_sum, bound) << "down frame Σ Y vs analysis Σ (same band, inside its disk)";
+}
 }  // namespace
 }  // namespace lumice
