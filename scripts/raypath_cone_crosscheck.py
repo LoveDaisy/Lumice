@@ -20,6 +20,18 @@ Semantics borrowed verbatim from the engine (a56: one authority per meaning):
 Self-checks (fail = non-zero exit): inscribed-disk pixel count against the
 discrete circle area, and the cone pixel count against its analytic cap area
 within an explicit rim-band bound.
+
+Known sampling bound (honest envelope, not a defect): the inverse samples each
+pixel's CENTRE; a bin whose centre falls off the disk (rho^2 > 1) represents no
+direction and is skipped, even when the disk rim cuts through the bin and the
+bin holds energy. Since the fold-boundary fix deposits the fold tangent band
+into those edge bins, a dual-fisheye frame's cone integration under-counts by
+their energy near the rim — measured 0.24% of the frame on the reference scene
+at cone radius 180 deg, invisible for cones clear of the canvas edge (e.g.
+radius 30 deg on the horizon). A full-frame identity check therefore uses the
+raw frame sum against the analysis total, not a 180-deg cone row; at radius 180
+this tool's quantization bound is ~2.0 anyway, so the row's verdict cannot be
+discriminating there.
 """
 
 from __future__ import annotations
