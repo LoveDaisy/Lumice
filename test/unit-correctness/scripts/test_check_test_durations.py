@@ -121,13 +121,13 @@ def write_registry(tmp_path: Path, payload) -> Path:
 @pytest.mark.parametrize(
     "payload",
     [
-        {"entries": []},
-        {"version": 2, "entries": []},
-        {"version": 1, "entries": [{"id": "a", "job": JOB, "ci_seconds": 40}]},
-        {"version": 1, "entries": [{**entry("a", 40), "note": "x"}]},
-        {"version": 1, "entries": [entry("a", "40")]},
-        {"version": 1, "entries": [entry("a", 0)]},
-        {"version": 1, "entries": [entry("a", 40), entry("a", 45)]},
+        {"entries": [], "phase_budgets": []},
+        {"version": 1, "entries": [], "phase_budgets": []},
+        {"version": 2, "entries": [{"id": "a", "job": JOB, "ci_seconds": 40}], "phase_budgets": []},
+        {"version": 2, "entries": [{**entry("a", 40), "note": "x"}], "phase_budgets": []},
+        {"version": 2, "entries": [entry("a", "40")], "phase_budgets": []},
+        {"version": 2, "entries": [entry("a", 0)], "phase_budgets": []},
+        {"version": 2, "entries": [entry("a", 40), entry("a", 45)], "phase_budgets": []},
     ],
     ids=["no-version", "wrong-version", "missing-field", "unknown-field", "string-seconds", "zero-seconds",
          "duplicate"],
@@ -140,7 +140,7 @@ def test_malformed_registry_is_rejected(tmp_path, payload):
 def test_main_is_red_on_malformed_registry(tmp_path, capsys):
     report = tmp_path / "r.json"
     report.write_text("{}", encoding="utf-8")
-    registry = write_registry(tmp_path, {"version": 1})
+    registry = write_registry(tmp_path, {"version": 2})
     assert ctd.main(["--job", JOB, "--report", str(report), "--registry", str(registry)]) == 1
     assert "::error::" in capsys.readouterr().out
 
@@ -153,7 +153,7 @@ def test_two_reports_of_one_job_are_merged(tmp_path, capsys):
     phase1.write_text(json.dumps({"a.py::t": 40, "::<fixture:f>": 3}), encoding="utf-8")
     phase2.write_text(json.dumps({"perf.py::t": 90, "::<fixture:f>": 5}), encoding="utf-8")
     assert ctd.load_reports([phase1, phase2]) == {"a.py::t": 40, "perf.py::t": 90, "::<fixture:f>": 5}
-    registry = write_registry(tmp_path, {"version": 1, "entries": [entry("a.py::t", 40)]})
+    registry = write_registry(tmp_path, {"version": 2, "entries": [entry("a.py::t", 40)], "phase_budgets": []})
     argv = ["--job", JOB, "--report", str(phase1), "--report", str(phase2), "--registry", str(registry)]
     assert ctd.main(argv) == 1
     out = capsys.readouterr().out
@@ -166,6 +166,65 @@ def test_check_runs_well_under_a_second_on_a_suite_sized_input():
     start = time.perf_counter()
     run(durations, entries)
     assert time.perf_counter() - start < 1.0
+
+
+# --- cumulative phase budgets -------------------------------------------------
+
+def phase_budget(phase: str, limit: float, members=None, job: str = JOB, reason: str = "bounds the PR path"):
+    result = {"job": job, "phase": phase, "max_seconds": limit, "reason": reason}
+    if members is not None:
+        result["members"] = members
+    return result
+
+
+def test_phase_budget_catches_many_individually_cheap_tests():
+    durations = {f"t.py::case_{i}": 10.0 for i in range(50)}
+    test_errors, _ = run(durations, [])
+    phase_errors, _ = ctd.check_phases(JOB, {"tests": 501.0}, [phase_budget("tests", 500)])
+    assert test_errors == []
+    assert len(phase_errors) == 1 and "over its 500s limit" in phase_errors[0]
+
+
+def test_phase_boundary_and_aggregate_are_checked_without_worker_second_summing():
+    budgets = [
+        phase_budget("build", 300),
+        phase_budget("ctest", 200),
+        phase_budget("critical-path", 449, members=["build", "ctest"]),
+    ]
+    errors, notices = ctd.check_phases(JOB, {"build": 250, "ctest": 200}, budgets)
+    assert len(errors) == 1 and "critical-path" in errors[0]
+    assert any("ctest" in notice and "200.0s / 200s" in notice for notice in notices)
+
+
+def test_missing_unknown_and_duplicate_phase_reports_are_red(tmp_path):
+    budgets = [phase_budget("tests", 60)]
+    errors, _ = ctd.check_phases(JOB, {}, budgets)
+    assert len(errors) == 1 and "missing reports" in errors[0]
+    errors, _ = ctd.check_phases(JOB, {"typo": 1}, budgets)
+    assert any("no registered phase budget" in error for error in errors)
+
+    first = tmp_path / "one.json"
+    second = tmp_path / "two.json"
+    payload = {"phase": "tests", "seconds": 1.0, "exit_code": 0}
+    first.write_text(json.dumps(payload), encoding="utf-8")
+    second.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(ValueError, match="duplicate phase"):
+        ctd.load_phase_reports([first, second])
+
+
+def test_phase_report_and_budget_schema_reject_invalid_values(tmp_path):
+    registry = {
+        "version": 2,
+        "entries": [],
+        "phase_budgets": [phase_budget("aggregate", 10, members=["tests", "tests"])],
+    }
+    with pytest.raises(ctd.RegistryError, match="duplicates"):
+        ctd.load_registry(write_registry(tmp_path, registry))
+
+    report = tmp_path / "phase.json"
+    report.write_text(json.dumps({"phase": "tests", "seconds": float("nan"), "exit_code": 0}), encoding="utf-8")
+    with pytest.raises(ValueError, match="seconds"):
+        ctd.load_phase_reports([report])
 
 
 # --- the plugin, from a real pytest session ---------------------------------

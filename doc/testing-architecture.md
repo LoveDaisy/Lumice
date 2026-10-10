@@ -1437,7 +1437,7 @@ health items that must not be moved/deleted casually.
 | Layer | Target-state path | Current C++ (unit/integration) | Current e2e (pytest) | Current gui | Migration constraint |
 |-------|-------------------|-------------------------------|----------------------|-------------|----------------------|
 | **unit-correctness** | `test/unit-correctness/<subsystem>/` | `test_math`, `test_geo3d`, `test_optics`†, `test_crystal`, `test_rng`, `test_queue`, `test_threading_pool`, `test_color_space`, `test_json`, `test_filter`, `test_filter_spec`, `test_config_snapshot`, `test_render_config`, `test_sim_data`, `test_simulator`, `test_cpu_info`, `test_raypath_segments`, `test_reduce_raypath_audit`, `test_c_api`, `test_exit_records`, `test_proj`(integration), `test_integration_main`; `gui` subsystem, first target `unit_correctness_test` (`lumice_obj` only, header-only-reachable): `test_axis_presets`, `test_filter_sop_grammar`, `test_gui_widget_rules` (which absorbed the former standalone `test_slider_mapping` and `test_window_sizing` files — their `SliderMapping` / `WindowSizingTest` suites live there now), `test_user_defaults_eligibility`; second target, `gui_unit_test` (see below): `test_defaults_diff`, `test_state_reconcile`, `test_preview_renderer`, `test_export_params`, `test_crystal_renderer`, `test_render_handedness_guard` (render `right=+az` cross-implementation handedness guard — absolute screen-side, pairs with the `test_projection` golden absolute-column pins; it is the one case that needs `lumice_gui_obj` and `lumice_obj` linked together, which is why `gui_unit_test` is its only possible home), `test_axis_absent_alignment`, `test_user_defaults`, `test_render_bg_logic`, `test_sampling_density_stats`, `test_server_poller`, `test_face_number_overlay`, `test_overlay_labels`, `test_composite_preview`, `test_color_window_logic`, plus `gui_unit_test_env` (installs this target's personal-defaults isolation baseline before any case runs) | — | — | `test/unit-correctness/scripts/test_check_new_refs.py` is a pytest member of this layer, run by the `policy` CI job and deliberately outside `testpaths` (§1.1). It is a regression net over a diff parser whose failures are silent — a broken parse reports success — so **do not delete a case for being redundant** without re-running it against the defect it pins. This layer's `gui` subsystem directory is shared by **two** CMake targets split on a link boundary (§2): `unit_correctness_test` (`lumice_obj` only) and `gui_unit_test` (also `lumice_gui_obj`, windowless). Both carry LABEL `unit-correctness`, so no `-L` selector changes when a case moves between them — but a file **does** have to move between the two `add_executable` source lists, and `gui_unit_test` only exists under `if(BUILD_GUI)`. |
-| **composition-correctness** | `test/composition-correctness/<subsystem>/` | `gui` subsystem, single target `composition_correctness_test` (§2's name-overlap caution): `test_document_roundtrip_chain`, `test_document_defaults_chain`, `test_document_switch_chain`, `test_legacy_document_chain`, `test_scene_commit_chain`, `test_filter_reconstruct_chain`, `test_raypath_color_document_chain`, `test_run_lifecycle_chain`, `test_run_warning_chain`, `test_user_defaults_chain`, `test_field_editor_chain`, `test_edit_modal_chain`, `test_preview_projection_chain` | — | — | Newest layer (§1.2); today populated only by the `gui` subsystem. A file name is the chain's topic, never a single `src/` unit's name — see §1.2's naming rule. |
+| **composition-correctness** | `test/composition-correctness/<subsystem>/` | **raypath** subsystem, `raypath_composition_test`: `test_input_assembly_chain`, `test_schema3_report_assembly_chain` (real report → structural enumeration → MC attribution wiring; serializer-only field tests stay in unit-correctness); **gui** subsystem, `composition_correctness_test`: `test_document_roundtrip_chain`, `test_document_defaults_chain`, `test_document_switch_chain`, `test_legacy_document_chain`, `test_scene_commit_chain`, `test_filter_reconstruct_chain`, `test_raypath_color_document_chain`, `test_run_lifecycle_chain`, `test_run_warning_chain`, `test_user_defaults_chain`, `test_field_editor_chain`, `test_edit_modal_chain`, `test_preview_projection_chain` | — | — | Newest layer (§1.2), now populated by the `gui` and `raypath` subsystems. A file name is the chain's topic, never a single `src/` unit's name — see §1.2's naming rule. |
 | **golden-analytic** | `test/golden-analytic/<subsystem>/` | `test_projection`†, analytic segments inside `test_optics`†, `MultiMsContinuationNormalIncidence` (in `test_metal_trace_parity.cpp`, 2-MS analytic anchor) | — | — | †split out only after per-file confirmation of the analytic-truth boundary vs unit-correctness |
 | **parity-cross-backend** | `test/parity-cross-backend/<subsystem>/` | `test_metal_trace_parity`, `test_metal_root_gen`, `test_metal_trace_backend`, `test_metal_filter_match_parity`(.mm), `test_cpu_trace_backend` | `test_metal_exit_seam_parity`, `test_metal_batch_invariance`, `test_device_gen_default_path`, `test_cpu_backend_route`, **projection subsystem** (315.5): `test_metal_projection_parity`, `test_cuda_projection_parity` (shared `_projection_battery.py`) | — | `_parity_metrics.py` is the single source of parity metrics — **DO_NOT_MIGRATE_INDEPENDENTLY** (move with its dependents). Energy-conservation + cross-seed double gate is a 267.3 reinforcement — **DO NOT DELETE**. The `test_metal_batch_invariance` exit-conservation `xfail` is **legitimate** (worst-case drain not yet landed) — do not "fix" it by deleting. `_projection_battery.py` is the shared per-projection battery (oracle = legacy CPU) — move with `test_{metal,cuda}_projection_parity`. |
 | **e2e-correctness** | `test/e2e-correctness/` (flat) | — | `test_smoke`, `test_cli`, `test_raypath_equivalence` | — | — |
@@ -1590,14 +1590,46 @@ e2e legs run `-n 3`, with the throughput gates excluded from that pool and run s
 measure under load. The fast leg's value is an explicit SMT-sized CI setting, not a default for local runs
 or for other jobs.
 
-**The budget.** A pull request's CI run has an owner-set wall-clock budget of **10 minutes**, from
-the run's creation to its last job's completion. The fallback is 12 minutes and it is not a second
-target: a run that needs more than 12 minutes is answered by removing tests, not by moving the
-number. Nothing enforces this per run — §7.7 enforces its per-test half — so it is checked by
-measurement, as below, and re-checked whenever a change adds a job or lengthens the longest one.
+**The budget.** A pull request's CI run has an owner-set wall-clock **target of 10 minutes**, from
+the run's creation to its last job's completion. **12 minutes is the preferred upper bound; 15
+minutes is the hard upper bound.** A normal successful run over 15 minutes does not pass. A final
+configuration between 12 and 15 minutes is not automatically rejected, but its disposition must
+name the useful levers already exhausted, the remaining cost, and why the 10/12-minute result was
+not reached. Fifteen minutes is therefore not a new target.
 
-**Measured.** The final acceptance cohort contains five successful runs of the final workflow and
-test configuration on 2026-10-01: four pull-request events and the intervening push to `main`.
+§7.7 mechanically enforces the measured serial phases on the likely critical paths (including
+build + CTest aggregates and whole pytest phases). It deliberately does not pretend to measure
+queueing, cache restore/save, dependency setup or every auxiliary step, so complete run wall clock
+is still checked from GitHub's job timestamps and re-checked whenever a change adds a job or
+lengthens the longest one.
+
+**Measured (current schema3 cost-governance acceptance cohort).** Cost-affecting
+product code, tests, workflow, build flags and registry were frozen at `0fc3ecf7`, after two
+complete diagnostic runs calibrated the Windows and macOS CTest phase ceilings without changing
+the separate 720-second `build+ctest` bound. Every row below is a complete successful pull-request
+workflow; documentation-only follow-up commits still run the full matrix.
+
+| Run | Head | Wall clock | Critical-path job | Cache and governed-phase evidence |
+|---|---|---:|---:|---|
+| 38086331832 | `0fc3ecf7` | **565s (9.42 min)** | Windows MSVC x86_64, 562s | compiler caches restored from `f50e9639`; Windows sccache 502/507 hits, build 87.5s, CTest 400.8s, aggregate 488.4s |
+| 38087102711 | `6d37da11` | **630s (10.50 min)** | e2e-test, 627s | same `f50e9639` cache seed; e2e phase 500.7s; Windows sccache 502/507 hits, aggregate 488.4s |
+| 38087917243 | `bd2e1c59` | **659s (10.98 min)** | E2E Slow (macOS ARM64 rest), 650s | same `f50e9639` cache seed; macOS slow phases 493.6s; Windows sccache 502/507 hits, aggregate 484.6s |
+
+The median is **630s (10.50 min)** and the maximum is **659s (10.98 min)**. The cohort misses
+the ten-minute median target by 30 seconds, but every run remains below the 12-minute preferred
+upper bound and the 15-minute hard bound. The cost reduction removed repeated schema3 assembly
+from serializer propositions, restricted C API/report requests to the physical member their
+claims need, and removed the threshold-free research timing case; all samples also restored the
+same default-branch compiler-cache seed. The remaining critical path moved between Windows CTest,
+fast E2E and the macOS slow pool instead of exposing one persistent redundant raypath chain. The
+phase reports are evidence about those measured serial regions, not substitutes for the complete
+run's wall clock.
+
+**Measured (historical pre-schema3 cohort).** The table below is the final acceptance cohort of the
+2026-10-01 workflow/test configuration: five successful runs, four pull-request events and the
+intervening push to `main`. It remains evidence for the cache lifecycle and the measurement method,
+not a current cost guarantee after schema3 expanded the report path; the current configuration's
+cohort is recorded separately when it is frozen.
 The push additionally enables the main-only benchmark jobs; mixing the two event types in this
 cohort is the owner-set acceptance scope, not a claim that their job sets are identical. The wall
 clock below is computed from the run's creation timestamp to the latest job completion timestamp,
@@ -1996,9 +2028,10 @@ question.)
 ### §7.6 A red against the timeout budget: what to do, and what not to do
 
 The `e2e-test` job's `timeout-minutes: 10` on its test step (and `e2e-slow`'s `timeout-minutes: 25`
-on its) are **owner-set budgets, not hang detectors**. They are step budgets and sit above the
-whole run's 10-minute budget of §7.1, which no timeout enforces: a run can blow that budget with
-every step inside its own, so a green run is not evidence the run budget holds — §7.1's table is. The distinction matters because the two call for opposite responses.
+on its) are **owner-set budgets, not hang detectors**. They are step budgets, distinct from the
+whole run's 10-minute target and 12/15-minute bounds of §7.1. The phase registry enforces measured
+critical execution segments, but setup, queueing and auxiliary steps remain outside it; a green job
+can therefore still miss the run target, and the complete cohort in §7.1 remains the final judge.
 A hang detector firing means something got stuck — a rerun is a reasonable first move. A budget
 firing means the suite it is timing no longer fits in the time allotted to it, which a rerun cannot
 fix: the suite is still that size on the next run, and rerunning a red without reading why only
@@ -2035,17 +2068,22 @@ claim about the suite being CPU-starved a guess rather than a measurement. The h
 why this one job uses exactly `pytest-xdist -n 2`. It is not evidence for `-n auto`, for changing
 local `pytest`, or for copying the value to a different runner without measuring that runner first.
 
-### §7.7 The duration registry: every slow PR-layer test is argued for, mechanically
+### §7.7 The duration registry: slow tests and cumulative phases are argued for mechanically
 
 §7.3 asks the author a question before a change and makes them reconcile the answer after it. It
 cannot stop anything: two slow tests that together cost about 12.8 minutes of CI entered the PR layer
 while it was in force. This section is the mechanical half. It does not replace §7.3, which still
 decides when the question is asked (before the change, not after CI has turned red).
 
-**The rule.** In every CI job wired to it (list below), each test that took longer than **T = 60 s**
-in that run must have an entry in `test/duration_registry.json`, and that entry must carry a reason.
-`scripts/check_test_durations.py` compares the job's measured durations against the registry in a
-step at the end of the job, and turns the job red when, for that job:
+**The rule.** Registry v2 has two sections in one authority. `entries` keeps the per-test rule: in
+every wired CI job, each test that took longer than **T = 60 s** in that run must have an entry with
+a reason. `phase_budgets` names measured wall-clock phases and aggregates of serial phases; every
+required member must be reported exactly once, an unregistered reported phase is an error, and the
+sum must not exceed `max_seconds`. This second rule catches a suite made of many individually
+sub-minute tests — the shape the per-test threshold is structurally unable to see.
+
+`scripts/check_test_durations.py` compares both kinds of report with the same registry near the end
+of the job. The per-test side turns the job red when, for that job:
 
 1. a test **not registered** for the job took more than T;
 2. a **registered** test took more than **2×** its registered `ci_seconds`;
@@ -2061,11 +2099,29 @@ the entry is probably set too high, and an entry set too high lets the test slow
 Whether to lower or delete it is the author's decision. A registered test that merely ran under T
 says nothing — most entries do (see below).
 
-**What is measured.** Setup + call + teardown of each test, written by the pytest plugin
-`scripts/duration_report_plugin.py`, which CI loads explicitly (`PYTHONPATH=scripts pytest -p
-duration_report_plugin --duration-report=PATH`); nothing else loads it, and without the option it
-does nothing. Setup is counted because that is where the most expensive fixtures spend their time.
-One refinement makes that stable under `pytest-xdist`: the setup of a **module-, class-, package- or
+**What is measured.** There are three boundaries, and none is allowed to impersonate another:
+
+- **gTest cases:** the invocation supplies a unique output directory through GoogleTest's
+  `GTEST_OUTPUT`; CTest metadata marks each participating test with the `gtest-duration` label and
+  supplies its executable name, so there is no second workflow list of gTest targets or report paths.
+  CTest also writes JUnit for the selected run, and `scripts/collect_ctest_durations.py` reconciles
+  metadata, JUnit and XML before producing stable ids of the form `<CTest name>::<suite>.<case>`.
+  Missing/bad/empty gTest XML, a metadata/run mismatch, two CTest cases sharing one report, duplicate
+  ids and non-finite durations are errors. A local CTest invocation that does not request duration
+  evidence writes no XML. gTest's case timer does not include process startup or suite/global setup;
+  the raw CTest JUnit and `LastTest.log` are retained beside it rather than adding a suite total to the
+  case table and calling the sum wall clock.
+- **pytest cases and fixtures:** setup + call + teardown of each test, written by the pytest plugin
+  `scripts/duration_report_plugin.py`, which CI loads explicitly (`PYTHONPATH=scripts pytest -p
+  duration_report_plugin --duration-report=PATH`); nothing else loads it, and without the option it
+  does nothing. Setup is counted because that is where the most expensive fixtures spend their time.
+- **phases:** `scripts/measure_ci_phase.py` uses a monotonic clock around the real command, streams
+  its output unchanged and propagates its exit code. Each invocation writes a unique report and
+  refuses to overwrite one, so stale output cannot satisfy a later run. Phase seconds are process
+  wall clock; they are never a sum of pytest worker-seconds or gTest case times.
+
+One refinement makes pytest fixture attribution stable under `pytest-xdist`: the setup of a
+**module-, class-, package- or
 session-scoped fixture** is not charged to the test that happened to create it, but reported as an
 entry of its own, `<where it is defined>::<fixture:NAME>` (with `[<param index>]` for a parametrized
 fixture), taking the largest value if several workers each created it. Under xdist's default
@@ -2109,14 +2165,18 @@ renaming a function, changing a parametrize id), change its `id` in the same com
 will otherwise go red and name the new id it can see for the same function. When an entry's test is
 made cheaper, lower or delete the entry in the same change.
 
-**Where it runs.** `e2e-test` (job name `e2e-test`) and the three `e2e-slow` legs (job name
-`E2E Slow (<matrix name>)`), each with the reports of all its pytest calls (phase 1 and, where the
-leg has one, phase 2). **Not covered**: ctest and `gui_test` (CI logs give ctest only per-binary
-times, and `gui_test` does not run in the build jobs; their growth shows up in the job's wall clock
-instead); the `windows-shared-export` job's slow files; the `policy` job's script unit tests.
-A **new pytest job** is not covered until it is wired the same way — `-p duration_report_plugin
---duration-report=...` on each pytest call and a "Check test durations" step at the end — and
-nothing checks that it was.
+**Where it runs.** The four build-matrix jobs collect every selected CTest target and the gTest cases
+inside the six gTest binaries that exist for that matrix entry; the GUI-only two are expected only
+when `BUILD_GUI=ON`. Their registered raw phases are `build` and `ctest`, with a `build+ctest`
+aggregate. `e2e-test` registers the whole `e2e` phase. The three `e2e-slow` legs register the
+parallel correctness pool and, on legs that have it, the serial performance pool plus their sum.
+All raw JUnit/XML/JSON and `LastTest.log` files are uploaded with `if: always()` so a red remains
+diagnosable.
+
+**Not covered:** the CI `gui_test` visual step (its selected groups run after the main CTest phase),
+`windows-shared-export`'s slow files, and the `policy` job's script unit tests. A new pytest or CTest
+job is not covered until it emits reports, calls the checker and uploads the raw evidence; nothing
+mechanically audits that every future job did so.
 
 **A runtime check, not a diff check.** The four checkers AGENTS.md lists (`check_policies.py`,
 `check_new_refs.py`, `check_new_gui_tests.py`, `check_loop_fatal_asserts.py`) read the source or a
@@ -2129,10 +2189,11 @@ evidence a reviewer reads. If the check passes, the change is compliant with res
 duration — review does not add duration demands beyond it. If a threshold is wrong, change the
 constant in the script.
 
-**Relation to §7.3.** §7.3 still has no ceiling, and its reason — a ceiling produces estimates shaped
-to fit it — still holds, because this gate has no ceiling either: a test over T is allowed to stay,
-it only has to be argued for in a file someone reviews. What changed is that the per-test half of
-the question is now asked by the machine every run, instead of relying on someone remembering to.
+**Relation to §7.3.** The per-test side still has no ceiling: a test over T may stay, but only after
+its cost and defect are argued in a reviewed entry. Phase budgets are different — they are the
+mechanical allocation of the owner-set 10/12/15-minute run policy, so exceeding one is not cured by
+registering every constituent case. First identify redundant work, changed workload, cache state or
+runner contention; changing a phase limit is itself a reviewed budget decision. The complete run
+still has costs outside those phases, which is why the GitHub cohort remains the final judge.
 
-The gate's own cost is the few seconds of the final step (reading two small JSON files) plus the
-plugin's bookkeeping during the run; it adds no job and no runner.
+The gate's own cost is a few seconds for XML conversion and JSON checks; it adds no job or runner.

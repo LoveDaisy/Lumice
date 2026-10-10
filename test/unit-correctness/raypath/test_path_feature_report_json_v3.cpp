@@ -12,8 +12,9 @@
 //   D3/D4 the outcome grammar, the unconditional ruling block, the non-finite spellings;
 //   AC1   the self-description (conventions, the vocabulary coverage row) and the narrowed
 //         observation.
-// The document is produced through the real assembly (AssembleSchema3Report) over a real v2
-// report on the standing Haar-prism scene.
+// The document is produced by the real serializer from a directly constructed minimal legal
+// PathFeatureReport + AssembledSchema3Report. Assembly wiring has its own composition tests; making
+// serializer field tests pay the physical enumeration cost would prove the same chain repeatedly.
 
 #include <gtest/gtest.h>
 
@@ -37,44 +38,74 @@
 namespace lumice::raypath {
 namespace {
 
-ConfigManager ReportScene() {
-  PrismCrystalParam prism;
-  prism.h_ = { DistributionType::kNoRandom, 1, 0 };
-  for (auto& distance : prism.d_) {
-    distance = { DistributionType::kNoRandom, 1, 0 };
-  }
-  CrystalConfig crystal{};
-  crystal.id_ = 1;
-  crystal.param_ = prism;
-  crystal.axis_.latitude_dist = { DistributionType::kUniform, 90, 360 };
-  crystal.axis_.azimuth_dist = crystal.axis_.roll_dist = { DistributionType::kUniform, 0, 360 };
-  ConfigManager config;
-  config.crystals_.emplace(1, crystal);
-  config.scene_.light_source_.param_ = { 20, 0, 0 };
-  config.scene_.light_source_.spectrum_ = SpectrumConfig(std::vector<WlParam>{ { 550, 1 } });
-  ScatteringSetting entry{};
-  entry.crystal_ = crystal;
-  entry.crystal_proportion_ = 1;
-  config.scene_.ms_.push_back({ 0, { entry } });
-  return config;
-}
-
 struct V3Run {
   PathFeatureReport report;
   schema3::AssembledSchema3Report assembled;
   nlohmann::json document;
 };
 
-// One real report through the real assembly and the v3 serializer. The caller mutates
-// `run.report` before assembling when it needs injected content.
-V3Run RunV3OrDie(const ConfigManager& config, const PathFeatureReportRequest& request) {
+V3Run MinimalV3Run() {
   V3Run run;
-  const Error error = AssemblePathFeatureReport(config, request, &run.report);
-  EXPECT_TRUE(error.Ok()) << error.message;
-  if (!error.Ok()) {
-    return run;
-  }
-  run.assembled = schema3::AssembleSchema3Report(std::move(run.report), request.max_optical_evaluations);
+  run.report.snapshot.scene_identity = "serializer-fixture";
+  run.report.snapshot.light.spectrum_ = std::vector<WlParam>{ { 550, 1 } };
+  PhysicalMemberRequest layer{};
+  layer.scene_identity = run.report.snapshot.scene_identity;
+  layer.crystal.id_ = 1;
+  layer.representative = { 3, 5 };
+  layer.semantics = SymmetrySemantics::kPhysical;
+  run.report.snapshot.layers = { layer };
+  run.report.options.sampling.requested_samples = 64;
+  run.report.options.sampling.max_optical_evaluations = 1000;
+  run.report.options.bandwidth_rad = 0.01;
+  run.report.options.location_resolution_rad = 0.001;
+  run.report.requested_outer_samples = 64;
+  run.report.requested_path_layers = { { 3, 5 } };
+  run.report.budget_ms = 100;
+  run.report.spectrum_scope = "explicit wavelengths";
+
+  run.report.representative_input.scene_identity = run.report.snapshot.scene_identity;
+  AssembledLayer assembled_layer{};
+  assembled_layer.scope.snapshot = layer;
+  assembled_layer.scope.members = { { 3, 5 } };
+  run.report.representative_input.layers = { assembled_layer };
+  SpectralRow spectral{};
+  spectral.wavelength_nm = 550;
+  spectral.source_weight = 1;
+  spectral.measure_mass = 1;
+  spectral.refractive_index = 1.31;
+  spectral.coefficient = { 0.1, 0.2, 0.3 };
+  spectral.provenance = "serializer fixture";
+  run.report.representative_input.spectrum.rows = { spectral };
+
+  schema3::StructureObjectRecord object{};
+  object.member = { 3, 5 };
+  object.visibility.state = VisibilityState::kCertified;
+  run.assembled.core.objects = { object };
+  schema3::MemberSupport support{};
+  support.member = { 3, 5 };
+  run.assembled.core.support.members = { support };
+  run.assembled.core.coverage.produced = {
+    schema3::ObjectKind::kKind1, schema3::ObjectKind::kKind1Restricted, schema3::ObjectKind::kKind2,
+    schema3::ObjectKind::kKind3, schema3::ObjectKind::kS6Junction,
+  };
+  run.assembled.core.coverage.declared_not_produced = {
+    schema3::ObjectKind::kCorridorClosed,
+    schema3::ObjectKind::kS3SupportBoundary,
+    schema3::ObjectKind::kS4BranchBoundary,
+    schema3::ObjectKind::kS5DensityFeature,
+  };
+  run.assembled.core.coverage.declared_reasons = {
+    "serializer fixture",
+    "serializer fixture",
+    "serializer fixture",
+    "serializer fixture",
+  };
+  schema3::CorroborationAnnotation annotation{};
+  annotation.state = schema3::CorroborationState::kObserved;
+  run.assembled.annotations = { annotation };
+  run.assembled.mc.observation_options = run.report.options;
+  run.assembled.mc.observation_scope_note = schema3::kMcObservationScopeNote;
+  run.assembled.mc.discovery.measure.sources.push_back({ 0, 0, 0 });
   run.document = nlohmann::json::parse(PathFeatureReportV3ToJson(run.report, run.assembled, "test"));
   return run;
 }
@@ -154,16 +185,6 @@ DiagnosticFeatureRecord MaximalRecord(size_t valid_source_token) {
   return in;
 }
 
-PathFeatureReportRequest SmallRequest() {
-  PathFeatureReportRequest request;
-  request.crystal_id = 1;
-  request.path_layers = { { 3, 5 } };
-  request.sample_count = 64;
-  request.wavelengths_nm = { 550 };
-  request.budget_ms = 120000;
-  return request;
-}
-
 std::set<std::string> KeysOf(const nlohmann::json& object) {
   std::set<std::string> keys;
   for (auto it = object.begin(); it != object.end(); ++it) {
@@ -197,7 +218,7 @@ TEST(PathFeatureReportJsonV3, Schema3BlocksEmitEveryDeclaredField) {
   // AC2(b) rides the ledger — RecordFieldChecklistRidesTheLedger; the mc_evidence block's
   // discovery payload decomposes across the ledger's top-level homes, which AC2a already
   // reconciles, so no second inventory of it lives here.)
-  V3Run run = RunV3OrDie(ReportScene(), SmallRequest());
+  V3Run run = MinimalV3Run();
   ASSERT_FALSE(run.assembled.core.objects.empty());
   ASSERT_FALSE(run.assembled.core.support.members.empty());
 
@@ -436,7 +457,7 @@ TEST(PathFeatureReportJsonV3, UnsetEscapeRegimeOmitsTheTypedKey) {
   // the fake-data problem: the old default wrote "slab_crease" here, a regime name the record
   // never escaped with. The slug key is the datum and still rides; the typed key returns only
   // when a producer actually sets a registered regime.
-  V3Run run = RunV3OrDie(ReportScene(), SmallRequest());
+  V3Run run = MinimalV3Run();
   ASSERT_FALSE(run.assembled.core.support.members.empty());
   schema3::MemberSupport& row = run.assembled.core.support.members.front();
   row.axis.regime_slug = "slab_crease_touching";  // the kernel-facing slug, non-empty
@@ -461,7 +482,7 @@ TEST(PathFeatureReportJsonV3, LedgerTopLevelHomesReconcileTheEmission) {
   // in the emitted document; every emitted top-level key must be claimed by a ledger home or
   // belong to the v3-new blocks the migration never carried (declared here — a new top-level
   // key that joins neither set is an unaccounted emission and goes red).
-  V3Run run = RunV3OrDie(ReportScene(), SmallRequest());
+  V3Run run = MinimalV3Run();
   std::set<std::string> emitted;
   for (auto it = run.document.begin(); it != run.document.end(); ++it) {
     emitted.insert(it.key());
@@ -497,15 +518,9 @@ TEST(PathFeatureReportJsonV3, RecordFieldChecklistRidesTheLedger) {
   // (every field populated, source_token naming a real measure entry) must surface every row's
   // key in mc_evidence.records[0]; a row whose key never appears is a field the serializer
   // dropped.
-  PathFeatureReportRequest request = SmallRequest();
-  request.sample_count = 64;
-  PathFeatureReport report;
-  ASSERT_TRUE(AssemblePathFeatureReport(ReportScene(), request, &report).Ok());
-  ASSERT_FALSE(report.discovery.measure.sources.empty()) << "the scene must carry at least one witness source";
-  report.discovery.features = { MaximalRecord(report.discovery.measure.sources.size() - 1) };
-  schema3::AssembledSchema3Report assembled =
-      schema3::AssembleSchema3Report(std::move(report), request.max_optical_evaluations);
-  const nlohmann::json document = nlohmann::json::parse(PathFeatureReportV3ToJson(report, assembled, "test"));
+  V3Run run = MinimalV3Run();
+  run.assembled.mc.discovery.features = { MaximalRecord(0) };
+  const nlohmann::json document = nlohmann::json::parse(PathFeatureReportV3ToJson(run.report, run.assembled, "test"));
   const nlohmann::json& record = document["mc_evidence"]["records"][0];
   EXPECT_EQ(record["id"], 0);
   EXPECT_EQ(record["kind"], "sentinel_kind");
@@ -560,7 +575,7 @@ TEST(PathFeatureReportJsonV3, RecordFieldChecklistRidesTheLedger) {
 TEST(PathFeatureReportJsonV3, SegmentsMatchTheDerivedBucketsPerObject) {
   // D2: the keyed segments are a DERIVED view — segment(object) == BucketOf(object) for every
   // object, and the three id sets partition the records.
-  V3Run run = RunV3OrDie(ReportScene(), SmallRequest());
+  V3Run run = MinimalV3Run();
   std::vector<int> segment_of(run.assembled.core.objects.size(), -1);
   const std::pair<const char*, schema3::FeatureBucket> segments[3] = {
     { "actual", schema3::FeatureBucket::kActual },
@@ -590,7 +605,7 @@ TEST(PathFeatureReportJsonV3, SegmentsMatchTheDerivedBucketsPerObject) {
 }
 
 TEST(PathFeatureReportJsonV3, SelfDescriptionCoversTheSchema3Semantics) {
-  V3Run run = RunV3OrDie(ReportScene(), SmallRequest());
+  V3Run run = MinimalV3Run();
   const nlohmann::json& conventions = run.document["conventions"];
   for (const char* key : { "sky", "pose", "angles", "field", "weight", "uncertainty", "walk_s", "null",
                            "min_margin_rad", "features_buckets", "chromatic_thresholds" }) {
@@ -632,8 +647,7 @@ TEST(PathFeatureReportJsonV3, OutcomeGrammarAndUnconditionalRuling) {
   // D3: the ruling block is ALWAYS present with its full condition face; the outcome reads
   // no_related_feature exactly when issued, with the basis beside it; the completed/partial
   // arms follow the v2 criteria.
-  PathFeatureReportRequest request = SmallRequest();
-  V3Run run = RunV3OrDie(ReportScene(), request);
+  V3Run run = MinimalV3Run();
   const nlohmann::json& ruling = run.document["no_related_feature"];
   for (const char* key :
        { "issued", "partition_complete_no_escape", "partition_failure", "all_objects_unlit_or_none", "unlit_failure",
@@ -661,8 +675,7 @@ TEST(PathFeatureReportJsonV3, OutcomeGrammarAndUnconditionalRuling) {
 TEST(PathFeatureReportJsonV3, NonFiniteSpellingsFollowTheDeclaredConventions) {
   // D4: walk_s NaN -> null, walk_s 0.0 stays 0.0; min_margin_rad inf -> null (the empty-object
   // minimum), a finite margin stays a number.
-  PathFeatureReportRequest request = SmallRequest();
-  V3Run run = RunV3OrDie(ReportScene(), request);
+  V3Run run = MinimalV3Run();
   bool saw_null_walk = false;
   for (const char* segment : { "actual", "candidate", "unfinished" }) {
     for (const nlohmann::json& object : run.document["features"][segment]) {
@@ -705,12 +718,9 @@ TEST(PathFeatureReportJsonV3, NonFiniteSpellingsFollowTheDeclaredConventions) {
 }
 
 TEST(PathFeatureReportJsonV3, UnsupportedMulticrystalTakesTheV3EarlyShape) {
-  ConfigManager config = ReportScene();
-  PathFeatureReportRequest request = SmallRequest();
-  request.path_layers = { { 3, 5 }, { 1, 3 } };
   PathFeatureReport report;
-  ASSERT_TRUE(AssemblePathFeatureReport(config, request, &report).Ok());
-  ASSERT_TRUE(report.unsupported_multicrystal);
+  report.unsupported_multicrystal = true;
+  report.requested_path_layers = { { 3, 5 }, { 1, 3 } };
   schema3::AssembledSchema3Report empty{};
   const nlohmann::json document = nlohmann::json::parse(PathFeatureReportV3ToJson(report, empty, "test"));
   EXPECT_EQ(document["outcome"], "unsupported_multicrystal");

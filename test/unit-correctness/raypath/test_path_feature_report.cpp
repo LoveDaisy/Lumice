@@ -44,6 +44,7 @@ TEST(PathFeatureReport, ActualSpectrumPhysicalScopeAndNoFormulaDispatcher) {
   PathFeatureReportRequest request;
   request.crystal_id = 1;
   request.path_layers = { { 3, 5 } };
+  request.symmetry_bits = 0;
   request.sample_count = 8192;
   request.max_field_evaluations = 1;
   PathFeatureReport report;
@@ -68,6 +69,7 @@ TEST(PathFeatureReport, LargeExpandedRequestsStopAsPartialNotAsAnUpfrontAbsence)
   PathFeatureReportRequest request;
   request.crystal_id = 1;
   request.path_layers = { { 3, 1, 5 } };
+  request.symmetry_bits = 0;
   request.sample_count = 1000000;
   request.max_optical_evaluations = 100;
   request.max_field_evaluations = 1;
@@ -83,6 +85,7 @@ TEST(PathFeatureReport, BoundedSearchCompletionIsDistinctFromGlobalCoverage) {
   PathFeatureReportRequest request;
   request.crystal_id = 1;
   request.path_layers = { { 3, 5 } };
+  request.symmetry_bits = 0;
   request.sample_count = 64;
   request.wavelengths_nm = { 550 };
   PathFeatureReport report;
@@ -146,6 +149,7 @@ TEST(PathFeatureReport, ExactZeroSpectralSignalIsNotAClaimBasedOnEmptySampling) 
   PathFeatureReportRequest request;
   request.crystal_id = 1;
   request.path_layers = { { 3, 5 } };
+  request.symmetry_bits = 0;
   request.sample_count = 64;
   PathFeatureReport report;
   ASSERT_TRUE(AssemblePathFeatureReport(config, request, &report).Ok());

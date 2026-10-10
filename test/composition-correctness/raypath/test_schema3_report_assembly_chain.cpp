@@ -3,13 +3,12 @@
 // living cases promote the mc_attribution tests' verified RunLiving shape to the production
 // entry — the enumeration now runs with its declared measure and density sides (the orbit
 // streams, the restricted leg, the 33-row n-continuation table) instead of the naked core —
-// and pin the assembly's own faces: the annotation parallelism, the budget legs, the two
-// declared skips (degenerate sun, unsupported density), and the A4 cost baseline.
+// and pin the assembly's own faces: the annotation parallelism, the budget legs, and the two
+// declared skips (degenerate sun, unsupported density).
 
 #include <gtest/gtest.h>
 
 #include <cmath>
-#include <iostream>
 #include <string>
 #include <vector>
 
@@ -94,7 +93,7 @@ AssembledSchema3Report AssembleOrDie(const ConfigManager& config, const PathFeat
 
 }  // namespace
 
-TEST(Schema3ReportAssembly, ExplicitEventsProduceObservedKind1) {
+TEST(Schema3ReportAssemblyChain, ExplicitEventsProduceObservedKind1) {
   // The 666.2 A-arm shape through the production assembly: Haar prism, 550 nm, explicit events.
   // The MC finds the minimum-deviation peak (kActual); the kind-1 object of 3-5 derives
   // `observed`; the ruling cannot issue (a lit, witnessed object breaks the unlit-or-none arm).
@@ -152,7 +151,7 @@ TEST(Schema3ReportAssembly, ExplicitEventsProduceObservedKind1) {
   EXPECT_TRUE(assembled.density_skip_note.empty());
 }
 
-TEST(Schema3ReportAssembly, AutoStarveStaysSilentAndCarries33RowContinuation) {
+TEST(Schema3ReportAssemblyChain, AutoStarveStaysSilentAndCarries33RowContinuation) {
   // The 666.2 B-arm shape through the production assembly: continuous illuminant, auto budget.
   // The starvation is deterministic (the weighted field never reaches standing): no kActual, no
   // unattributed output, and the kind-1 (unproven at this budget's measure) reads `consistent`
@@ -182,7 +181,7 @@ TEST(Schema3ReportAssembly, AutoStarveStaysSilentAndCarries33RowContinuation) {
   EXPECT_TRUE(consistent_kind1) << "unproven kind-1 on sufficient presence reads consistent";
 }
 
-TEST(Schema3ReportAssembly, ContinuousSpectrumFeedsThe33RowContinuationTable) {
+TEST(Schema3ReportAssemblyChain, ContinuousSpectrumFeedsThe33RowContinuationTable) {
   // The n-continuation leg at production resolution: the beta plate (the C05/C06 crystal)
   // under the D65 quadrature. The assembly builds the (nm, index) table from the assembled
   // spectrum rows and hands it to the enumeration; the basal TIR kink's constant circle comes
@@ -235,7 +234,7 @@ TEST(Schema3ReportAssembly, ContinuousSpectrumFeedsThe33RowContinuationTable) {
   EXPECT_TRUE(found) << "the basal TIR kink's constant circle must ride the continuation table";
 }
 
-TEST(Schema3ReportAssembly, PlateRestrictedCarriesItsAnnotation) {
+TEST(Schema3ReportAssemblyChain, PlateRestrictedCarriesItsAnnotation) {
   // The 666.2 C-arm shape through the production assembly: the C12 plate's fully-dark
   // restricted member (the C09 shape) at real MC standing. The pinned member is 2-4-5-1 — the
   // measured family-pinned shape on this crystal at sun 9 deg (the living C arm's premise).
@@ -267,7 +266,7 @@ TEST(Schema3ReportAssembly, PlateRestrictedCarriesItsAnnotation) {
   EXPECT_TRUE(restricted_found) << "2-4-5-1 must be family-pinned on the plate";
 }
 
-TEST(Schema3ReportAssembly, DeclaredSkipsCoverDegenerateSunAndUnsupportedDensity) {
+TEST(Schema3ReportAssemblyChain, DeclaredSkipsCoverDegenerateSunAndUnsupportedDensity) {
   // Skip arm 1 — the sun at a pole: MakeUMarginal reports kDegenerateSunGeometry, the assembly
   // skips the measure side whole (no streams, kind-1 unproven) and declares the skip; the rule-B
   // gate reads the non-kArea kind and refuses to issue.
@@ -333,39 +332,6 @@ TEST(Schema3ReportAssembly, DeclaredSkipsCoverDegenerateSunAndUnsupportedDensity
     EXPECT_NE(assembled.density_skip_note.find("not expressible"), std::string::npos) << assembled.density_skip_note;
     EXPECT_EQ(assembled.core.budget.sampling_evaluations, 0) << "no streams without a density spec";
     EXPECT_FALSE(assembled.core.objects.empty());
-  }
-}
-
-TEST(Schema3ReportAssembly, CostBaselineThreeStandardScenarios) {
-  // The A4 initial judgment (666.3 plan): the assembly module's absolute cost on the three
-  // standard scenarios, printed for the task progress and the later full-path comparison. The
-  // cap keeps a pathological slowdown visible instead of hanging.
-  struct Scenario {
-    const char* name;
-    ConfigManager config;
-    std::vector<int> path;
-  };
-  std::vector<Scenario> scenarios;
-  scenarios.push_back({ "prism-3-5", PrismScene(false), { 3, 5 } });
-  scenarios.push_back({ "prism-3-1-5", PrismScene(false), { 3, 1, 5 } });
-  scenarios.push_back({ "plate-1-3-4-2", PlateScene(), { 1, 3, 4, 2 } });
-  for (const Scenario& scenario : scenarios) {
-    PathFeatureReportRequest request;
-    request.crystal_id = 1;
-    request.path_layers = { scenario.path };
-    request.sample_count = 8192;
-    request.wavelengths_nm = { 550 };
-    request.budget_ms = 120000;
-    const AssembledSchema3Report assembled = AssembleOrDie(scenario.config, request);
-    if (assembled.annotations.size() != assembled.core.objects.size()) {
-      ADD_FAILURE() << "annotations must stay parallel to the objects for " << scenario.name;
-      continue;
-    }
-    std::cout << "[ASSEMBLY-COST] scenario=" << scenario.name << " members=" << assembled.core.support.members.size()
-              << " objects=" << assembled.core.objects.size() << " enumeration_s=" << assembled.enumeration_seconds
-              << " attribution_s=" << assembled.attribution_seconds
-              << " sampling_evaluations=" << assembled.core.budget.sampling_evaluations << " measure_note=["
-              << assembled.measure_skip_note << "] density_note=[" << assembled.density_skip_note << "]" << std::endl;
   }
 }
 

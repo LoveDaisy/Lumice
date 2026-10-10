@@ -319,24 +319,21 @@ deleting its line, and an entry whose edge is gone fails the check.
   the four defect-shape generalizations (syntax → fatality → loop order → parameter binding) that
   motivated it — a checker for only the first of those reads a clean scan as "does not occur
   here" on exactly the inputs it was meant to catch.
-- **Test-duration registry — a runtime gate, not a fifth diff-scoped checker.** In `e2e-test` and
-  the three `e2e-slow` legs, every test that took more than **60 s** in that CI run must have an
-  entry in `test/duration_registry.json` (`id`, `job`, `ci_seconds`, `reason`: which defect it guards
-  against and why it cannot be faster or move to a cheaper layer), or the job's final
-  "Check test durations" step (`scripts/check_test_durations.py`) goes red. It also goes red when a
-  registered test runs more than 2× its `ci_seconds`, when a registered test no longer runs in that
-  job (rename/move/delete — change the `id` in the same commit), and when a `reason` is empty or
-  `TODO`. A red prints the exact registry line to paste, with `reason: "TODO"` so it cannot be
-  committed as printed. Unlike the four checkers above it reads what a CI job just *measured*, so it
-  cannot run in the pre-commit hook and is not part of `check_policies.py`. The measurement comes from
-  `scripts/duration_report_plugin.py`, loaded explicitly per pytest call (`PYTHONPATH=scripts pytest
-  -p duration_report_plugin --duration-report=PATH`); a **new pytest job is not covered until it is
-  wired the same way**, and nothing checks that it was. Same discipline as the checkers above: no
-  flag, env var or inline marker exempts a test — the only way through is a registry entry, whose
-  diff is the evidence a reviewer reads — and the checker is the rule: if it passes, do not add
-  duration demands in review; if a threshold is wrong, change the constant in the script. Rules,
-  the reasoning behind 60 s and 2× (measured runner-to-runner spread up to 1.9×), the shared-fixture entries and what is not covered:
-  `doc/testing-architecture.md` §7.7.
+- **Test-duration registry — a runtime gate, not a fifth diff-scoped checker.**
+  `test/duration_registry.json` v2 is the single authority for two different quantities. `entries`
+  keeps the per-test rule: in every wired job, a test over **60 s** must be registered with its
+  `id`, `job`, `ci_seconds` and a real reason; >2× its registered time, a stale id, malformed data or
+  `TODO` is red. `phase_budgets` limits measured wall-clock phases and serial aggregates, catching
+  cumulative growth when every case remains below 60 s; missing/unknown/duplicate phase reports and
+  an over-limit sum are red. The build matrix emits CTest JUnit plus invocation-scoped XML for each
+  `gtest-duration`-labelled binary (`collect_ctest_durations.py` reconciles metadata, JUnit and XML),
+  while pytest emits case/fixture reports through `duration_report_plugin.py`;
+  `measure_ci_phase.py` records the real command's monotonic wall clock
+  and exit code. Raw reports are uploaded on every outcome. This runtime input does not exist at
+  pre-commit time, so the gate is not part of `check_policies.py`. There is no flag/env/inline
+  exemption: change the reviewed registry or make the work cheaper. A new test job is not covered
+  until it wires reports, checker and artifacts, and nothing audits that automatically. Full rules,
+  the 60 s / 2× calibration, phase boundaries and uncovered jobs: `doc/testing-architecture.md` §7.7.
 - E2E test layout (purpose-primary; see `doc/testing-architecture.md` §6):
   - `test/e2e-correctness/` — full-stack correctness via CLI/PSNR (smoke, CLI behavior, raypath equivalence) + `references/*.jpg`
   - `test/parity-cross-backend/backend/` — backend-equivalence oracles (Metal exit-seam parity, device-gen default path, cpu_backend route, Metal batch invariance) + C++ siblings from 270.3

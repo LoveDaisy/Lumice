@@ -50,18 +50,19 @@ ScenePtr MakeScene() {
 }
 
 struct Request {
-  int faces[3] = { 3, 1, 5 };
-  int layers[1] = { 3 };
+  int faces[3] = { 3, 5, 0 };
+  int layers[1] = { 2 };
   LUMICE_PathFeatureReportRequest c{};
 
   Request() {
     c.struct_size = sizeof(c);
     c.crystal_id = 1;
     c.faces = faces;
-    c.face_count = 3;
+    c.face_count = 2;
     c.layer_face_counts = layers;
     c.layer_count = 1;
     c.sample_count = 64;
+    c.symmetry_bits_plus_one = 1;
   }
 };
 
@@ -112,7 +113,7 @@ TEST(PathFeatureReportCApi, StructSizeAndLayerShapeAreValidated) {
   EXPECT_NE(outcome.error.find("struct_size"), std::string::npos);
 
   Request multi_layer;
-  multi_layer.layers[0] = 2;
+  multi_layer.layers[0] = 1;
   outcome = Analyse(scene.get(), &multi_layer.c);
   EXPECT_EQ(outcome.code, LUMICE_ERR_INVALID_VALUE);
   EXPECT_NE(outcome.error.find("layer face counts"), std::string::npos);

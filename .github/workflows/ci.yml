@@ -310,7 +310,12 @@ jobs:
           ${{ env.LUMICE_COMPILER_LAUNCHER_ARGS }}
 
       - name: Build
-        run: cmake --build build --parallel
+        shell: bash
+        run: |
+          rm -rf ci-duration
+          mkdir -p ci-duration
+          python scripts/measure_ci_phase.py --report ci-duration/build.json --phase build -- \
+            cmake --build build --parallel
 
       # Diagnostics, never a gate — hence the `|| true` on both calls. The hit rate is the one
       # number the step timestamps cannot supply: it is what tells a later reader whether a
@@ -329,7 +334,42 @@ jobs:
           sccache --stop-server || true
 
       - name: Test
-        run: ctest --test-dir build --output-on-failure -L "unit-correctness|composition-correctness|parity|golden-analytic"
+        shell: bash
+        run: |
+          report_dir="$GITHUB_WORKSPACE/ci-duration/gtest"
+          mkdir -p "$report_dir"
+          ctest --test-dir build --show-only=json-v1 \
+            -L "unit-correctness|composition-correctness|parity|golden-analytic" \
+            > ci-duration/ctest-metadata.json
+          export GTEST_OUTPUT="xml:$report_dir/"
+          python scripts/measure_ci_phase.py --report ci-duration/ctest.json --phase ctest -- \
+            ctest --test-dir build --output-on-failure \
+              -L "unit-correctness|composition-correctness|parity|golden-analytic" \
+              --output-junit "$GITHUB_WORKSPACE/ci-duration/ctest.xml"
+
+      - name: Collect and check CTest durations
+        shell: bash
+        run: |
+          python scripts/collect_ctest_durations.py \
+            --ctest-junit ci-duration/ctest.xml \
+            --ctest-metadata ci-duration/ctest-metadata.json \
+            --gtest-dir ci-duration/gtest \
+            --output ci-duration/ctest-durations.json
+          python scripts/check_test_durations.py --job "${{ matrix.name }}" \
+            --report ci-duration/ctest-durations.json \
+            --phase-report ci-duration/build.json \
+            --phase-report ci-duration/ctest.json
+
+      - name: Upload CTest duration evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ctest-durations-${{ matrix.cache_key }}
+          path: |
+            ci-duration
+            build/Testing/Temporary/LastTest.log
+          if-no-files-found: warn
+          retention-days: 30
 
       # gui_unit_test is the first test target that only exists on some matrix entries (it is
       # inside `if(BUILD_GUI)`), which makes "green" and "ran" separable in a way they were not
@@ -1273,8 +1313,14 @@ jobs:
         # the "Check test durations" step below (doc/testing-architecture.md §7.7).
         run: |
           nproc
-          PYTHONPATH=scripts pytest -n 2 -v -m "not slow" --durations=20 \
-            -p duration_report_plugin --duration-report="$RUNNER_TEMP/durations.json"
+          rm -rf "$RUNNER_TEMP/e2e-phase"
+          mkdir -p "$RUNNER_TEMP/e2e-phase"
+          python3 scripts/measure_ci_phase.py \
+            --report "$RUNNER_TEMP/e2e-phase/e2e.json" --phase e2e -- \
+            pytest -n 2 -v -m "not slow" --durations=20 \
+              -p duration_report_plugin --duration-report="$RUNNER_TEMP/durations.json"
+        env:
+          PYTHONPATH: scripts
         # This is an owner-set BUDGET, not a hang detector (see doc/testing-architecture.md
         # §7): if the suite cannot fit in 10 minutes, that means the suite is too
         # large, not that the timeout should grow. On red here, read this step's
@@ -1301,7 +1347,21 @@ jobs:
         # must be registered in test/duration_registry.json with a reason
         # (doc/testing-architecture.md §7.7). On red, the log names the test and
         # prints the registry line to add — or make the test faster instead.
-        run: python3 scripts/check_test_durations.py --job "e2e-test" --report "$RUNNER_TEMP/durations.json"
+        run: >
+          python3 scripts/check_test_durations.py --job "e2e-test"
+          --report "$RUNNER_TEMP/durations.json"
+          --phase-report "$RUNNER_TEMP/e2e-phase/e2e.json"
+
+      - name: Upload E2E duration evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: duration-reports-e2e-test
+          path: |
+            ${{ runner.temp }}/durations.json
+            ${{ runner.temp }}/e2e-phase
+          if-no-files-found: warn
+          retention-days: 30
 
       - name: Save CPM dependencies (main only)
         if: success() && github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.cpm_restore.outputs.cache-hit != 'true'
@@ -1540,8 +1600,14 @@ jobs:
           done
           # -p duration_report_plugin: see the "Check test durations" step below.
           export PYTHONPATH=scripts
-          pytest $phase1_args -n 3 -v -m slow --durations=20 \
-            -p duration_report_plugin --duration-report="$RUNNER_TEMP/durations-phase1.json"
+          rm -rf "$RUNNER_TEMP/e2e-slow-phases"
+          mkdir -p "$RUNNER_TEMP/e2e-slow-phases"
+          rc=0
+          python3 scripts/measure_ci_phase.py \
+            --report "$RUNNER_TEMP/e2e-slow-phases/correctness.json" \
+            --phase e2e-slow-correctness -- \
+            pytest $phase1_args -n 3 -v -m slow --durations=20 \
+              -p duration_report_plugin --duration-report="$RUNNER_TEMP/durations-phase1.json" || rc=$?
           # Phase 2 — serial + GPU-isolated: the throughput gates run alone so the
           # measured rate is not deflated by concurrent tests. Only legs whose args
           # include test/performance run this (the leg named "parity" lists files
@@ -1556,10 +1622,18 @@ jobs:
           # test/e2e/_multi_renderer_throughput.py. -rP keeps the gates' measured
           # ratio/CoV lines in the log when they pass, which pytest otherwise drops.
           case "${{ matrix.pytest_args }}" in
-            *test/performance*) pytest test/performance -v -m slow --durations=20 -rP \
-              --dual-gate-profile=ci \
-              -p duration_report_plugin --duration-report="$RUNNER_TEMP/durations-phase2.json" ;;
+            *test/performance*)
+              phase2_rc=0
+              python3 scripts/measure_ci_phase.py \
+                --report "$RUNNER_TEMP/e2e-slow-phases/performance.json" \
+                --phase e2e-slow-performance -- \
+                pytest test/performance -v -m slow --durations=20 -rP \
+                  --dual-gate-profile=ci \
+                  -p duration_report_plugin --duration-report="$RUNNER_TEMP/durations-phase2.json" || phase2_rc=$?
+              if [ "$rc" -eq 0 ]; then rc=$phase2_rc; fi
+              ;;
           esac
+          exit "$rc"
         # 25, not the original 15: phase 1 alone measured 500-552s on a slow runner day
         # (vs. 361s on a fast day) and phase 2's Metal dual-renderer throughput gate
         # (test_metal_dual_renderer_throughput, added by #372) measured 278s on a
@@ -1580,10 +1654,27 @@ jobs:
         # report only on legs that run it, so the second --report is conditional.
         run: |
           reports=(--report "$RUNNER_TEMP/durations-phase1.json")
+          phases=(--phase-report "$RUNNER_TEMP/e2e-slow-phases/correctness.json")
           if [ -f "$RUNNER_TEMP/durations-phase2.json" ]; then
             reports+=(--report "$RUNNER_TEMP/durations-phase2.json")
           fi
-          python3 scripts/check_test_durations.py --job "E2E Slow (${{ matrix.name }})" "${reports[@]}"
+          if [ -f "$RUNNER_TEMP/e2e-slow-phases/performance.json" ]; then
+            phases+=(--phase-report "$RUNNER_TEMP/e2e-slow-phases/performance.json")
+          fi
+          python3 scripts/check_test_durations.py --job "E2E Slow (${{ matrix.name }})" \
+            "${reports[@]}" "${phases[@]}"
+
+      - name: Upload slow E2E duration evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: duration-reports-e2e-slow-${{ matrix.name }}
+          path: |
+            ${{ runner.temp }}/durations-phase1.json
+            ${{ runner.temp }}/durations-phase2.json
+            ${{ runner.temp }}/e2e-slow-phases
+          if-no-files-found: warn
+          retention-days: 30
 
       - name: Save CPM dependencies (main only)
         if: success() && github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.cpm_restore.outputs.cache-hit != 'true'

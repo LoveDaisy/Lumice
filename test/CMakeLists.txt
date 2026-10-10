@@ -321,10 +321,6 @@ add_executable(unit_correctness_test
   # the four B conditions each break on their own leg, the kArea gate beside them, and the
   # zero-signal predicate at its single home.
   "${PROJ_TEST_DIR}/unit-correctness/raypath/test_no_related_feature.cpp"
-  # schema3 report (666.3): the production assembly — the living wiring of the enumeration,
-  # the demoted evidence and the attribution over a real report, the two declared skips, the
-  # budget/timing legs, and the A4 cost baseline on the three standard scenarios.
-  "${PROJ_TEST_DIR}/unit-correctness/raypath/test_schema3_report_assembly.cpp"
   # schema3 report (666.3): the v3 serializer — the ledger-reconciled emission (top-level homes
   # both ways, the 34-field record checklist on a maximal record), the derived-bucket segments,
   # the outcome grammar and unconditional ruling, the non-finite spellings, the self-description.
@@ -349,6 +345,11 @@ target_compile_definitions(unit_correctness_test PRIVATE
 set_target_properties(unit_correctness_test PROPERTIES
   BUILD_RPATH "$<TARGET_FILE_DIR:GTest::gtest>")
 
+# gTest duration XML is opt-in per CTest invocation through GoogleTest's
+# GTEST_OUTPUT=xml:<unique-directory>/ environment variable. The gtest-duration label below is the
+# machine-readable authority the duration collector uses to require one XML report for each gTest
+# CTest case; local CTest calls that do not request reports have no shared output side effect.
+
 # 3rd argv = repository root. test_json_parser_parity.cpp enumerates the on-disk config corpora
 # (examples/, test/e2e/configs/, test/fixtures/) from it, so newly added corpus files are covered
 # automatically without editing a hard-coded file list.
@@ -356,18 +357,19 @@ add_test(NAME "LumiceUnitCorrectnessTest" COMMAND unit_correctness_test
   "${PROJ_TEST_DIR}/fixtures/v3_config.json"
   "${CMAKE_CURRENT_BINARY_DIR}"
   "${CMAKE_SOURCE_DIR}")
-set_tests_properties("LumiceUnitCorrectnessTest" PROPERTIES LABELS "unit-correctness")
+set_tests_properties("LumiceUnitCorrectnessTest" PROPERTIES LABELS "unit-correctness;gtest-duration")
 
 # Headless raypath composition has no GUI link dependency and runs in every test build.
 add_executable(raypath_composition_test
   "${PROJ_TEST_DIR}/test_main.cpp"
-  "${PROJ_TEST_DIR}/composition-correctness/raypath/test_input_assembly_chain.cpp")
+  "${PROJ_TEST_DIR}/composition-correctness/raypath/test_input_assembly_chain.cpp"
+  "${PROJ_TEST_DIR}/composition-correctness/raypath/test_schema3_report_assembly_chain.cpp")
 target_link_libraries(raypath_composition_test PRIVATE GTest::gtest ${CMAKE_THREAD_LIBS_INIT}
   lumice_obj lumice_foundation_obj lumice_analytic_kernel lumice_raypath_obj)
 target_compile_definitions(raypath_composition_test PRIVATE
   LUMICE_DIAGNOSTIC_FIXTURE_DIR="${PROJ_TEST_DIR}/fixtures/raypath-diagnostics")
 add_test(NAME LumiceRaypathCompositionTest COMMAND raypath_composition_test)
-set_tests_properties(LumiceRaypathCompositionTest PROPERTIES LABELS "composition-correctness")
+set_tests_properties(LumiceRaypathCompositionTest PROPERTIES LABELS "composition-correctness;gtest-duration")
 
 # --------------------------------------------------------------------------------------------------
 # capi_header_self_containment_test (unit-correctness): every engine surface header compiles when it
@@ -443,7 +445,7 @@ set_target_properties(parity_test PROPERTIES
 add_test(NAME "LumiceParityTest" COMMAND parity_test
   "${PROJ_TEST_DIR}/fixtures/v3_config.json"
   "${CMAKE_CURRENT_BINARY_DIR}")
-set_tests_properties("LumiceParityTest" PROPERTIES LABELS "parity")
+set_tests_properties("LumiceParityTest" PROPERTIES LABELS "parity;gtest-duration")
 
 # --------------------------------------------------------------------------------------------------
 # golden_analytic_test
@@ -487,7 +489,7 @@ set_target_properties(golden_analytic_test PROPERTIES
 add_test(NAME "LumiceGoldenAnalyticTest" COMMAND golden_analytic_test
   "${PROJ_TEST_DIR}/fixtures/v3_config.json"
   "${CMAKE_CURRENT_BINARY_DIR}")
-set_tests_properties("LumiceGoldenAnalyticTest" PROPERTIES LABELS "golden-analytic")
+set_tests_properties("LumiceGoldenAnalyticTest" PROPERTIES LABELS "golden-analytic;gtest-duration")
 
 # --------------------------------------------------------------------------------------------------
 # gui_unit_test — unit-correctness layer, gui subsystem, second CMake target.
@@ -629,7 +631,7 @@ if(BUILD_GUI)
     BUILD_RPATH "$<TARGET_FILE_DIR:GTest::gtest>")
 
   add_test(NAME "LumiceGuiUnitTest" COMMAND gui_unit_test)
-  set_tests_properties("LumiceGuiUnitTest" PROPERTIES LABELS "unit-correctness")
+  set_tests_properties("LumiceGuiUnitTest" PROPERTIES LABELS "unit-correctness;gtest-duration")
 endif()
 
 # --------------------------------------------------------------------------------------------------
@@ -720,7 +722,8 @@ if(BUILD_GUI)
     BUILD_RPATH "$<TARGET_FILE_DIR:GTest::gtest>")
 
   add_test(NAME "LumiceCompositionCorrectnessTest" COMMAND composition_correctness_test)
-  set_tests_properties("LumiceCompositionCorrectnessTest" PROPERTIES LABELS "composition-correctness")
+  set_tests_properties("LumiceCompositionCorrectnessTest" PROPERTIES
+    LABELS "composition-correctness;gtest-duration")
 endif()
 
 # --------------------------------------------------------------------------------------------------
