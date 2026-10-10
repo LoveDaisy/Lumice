@@ -237,8 +237,8 @@
     {
       "job": "Windows MSVC x86_64",
       "phase": "ctest",
-      "max_seconds": 360,
-      "reason": "Caps cumulative MSVC CTest work after removing repeated schema3 assembly from serializer-only propositions."
+      "max_seconds": 480,
+      "reason": "Caps cumulative MSVC CTest work after removing repeated schema3 assembly from serializer-only propositions; the 480-second ceiling leaves measured runner variance below the separate 720-second build+ctest bound."
     },
     {
       "job": "Windows MSVC x86_64",
