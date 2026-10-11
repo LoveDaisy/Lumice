@@ -1610,10 +1610,9 @@ void RenderRightPanel(GLFWwindow* window, float window_width, float window_heigh
       for (int idx : kLensTypePresentationOrder) {
         bool selected = (r.lens_type == idx);
         if (ImGui::Selectable(kLensTypeNames[idx], selected)) {
-          // The lens switch and its pose fix-ups live in gui_state.hpp, shared with the defaults
-          // panel's per-row lens editor. .lmc loading and tests bypass both controls by writing
-          // lens_type directly, so they keep their fov.
-          ApplyLensTypeSelection(r, idx);
+          // SelectLensType owns both the view transform and session-intent transition. .lmc loading
+          // and tests bypass the control by writing lens_type directly, so they keep their fov.
+          SelectLensType(g_state, idx);
         }
         if (selected) {
           ImGui::SetItemDefaultFocus();

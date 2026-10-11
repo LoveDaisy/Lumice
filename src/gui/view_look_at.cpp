@@ -156,4 +156,70 @@ bool ResolveLookAtPose(LookAtId id, float sun_altitude_deg, const FieldEditorCon
   return true;
 }
 
+namespace {
+
+bool ApplyLookAtTarget(GuiState& state, LookAtId target) {
+  const FieldEditorConstraint el_c = ConstraintFor("renderer.elevation", state);
+  const FieldEditorConstraint az_c = ConstraintFor("renderer.azimuth", state);
+  if (!el_c.enabled || !az_c.enabled) {
+    return false;
+  }
+
+  float az = 0.0f;
+  float el = 0.0f;
+  if (!ResolveLookAtPose(target, state.sun.altitude, el_c, az_c, &az, &el)) {
+    return false;
+  }
+  state.renderer.azimuth = az;
+  state.renderer.elevation = el;
+  return true;
+}
+
+}  // namespace
+
+bool SelectLookAtTarget(GuiState& state, LookAtId target) {
+  if (!IsValidLookAtId(target) || !ApplyLookAtTarget(state, target)) {
+    return false;
+  }
+  state.look_at.target = target;
+  return true;
+}
+
+bool SetLookAtLocked(GuiState& state, bool locked) {
+  if (!locked) {
+    state.look_at.locked = false;
+    return true;
+  }
+  if (!ApplyLookAtTarget(state, state.look_at.target)) {
+    state.look_at.locked = false;
+    return false;
+  }
+  state.look_at.locked = true;
+  return true;
+}
+
+void UnlockLookAt(GuiState& state) {
+  state.look_at.locked = false;
+}
+
+bool UpdateLockedLookAt(GuiState& state) {
+  if (!state.look_at.locked) {
+    return false;
+  }
+  if (ApplyLookAtTarget(state, state.look_at.target)) {
+    return true;
+  }
+  state.look_at.locked = false;
+  return false;
+}
+
+bool SelectLensType(GuiState& state, int new_lens_type) {
+  if (state.renderer.lens_type == new_lens_type) {
+    return false;
+  }
+  UnlockLookAt(state);
+  TransformViewForLensSelection(state.renderer, new_lens_type);
+  return true;
+}
+
 }  // namespace lumice::gui

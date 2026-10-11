@@ -591,7 +591,7 @@ TEST(SceneCommitChain, TheExportedFrontClipIsTheEffectiveOneUnderEveryLens) {
   int exported_on = 0;
   for (int lens = 0; lens < kLensTypeCount; ++lens) {
     SeedOneEntryDocument();
-    ApplyLensTypeSelection(g_state.renderer, lens);
+    TransformViewForLensSelection(g_state.renderer, lens);
     g_state.renderer.front = true;
     std::string json;
     std::string warning;

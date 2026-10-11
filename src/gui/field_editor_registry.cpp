@@ -10,6 +10,7 @@
 #include "gui/ray_num_domain.hpp"
 #include "gui/slider_format_rules.hpp"
 #include "gui/theme.hpp"
+#include "gui/view_look_at.hpp"
 #include "imgui.h"
 #include "include/lumice_render.h"
 #include "util/fatal.hpp"
@@ -454,11 +455,8 @@ Applicability WhenBackgroundShown(const GuiState& state) {
 // Entries that need their own control rather than one of the factories above.
 // ------------------------------------------------------------------------------------------------
 
-// The lens combo, in kLensTypePresentationOrder (the enum order is NOT the display order, so
-// ImGui::Combo over kLensTypeNames would list them wrong) and with the same side effects the main
-// UI's combo applies on a switch — resetting fov to the new lens' default and mirroring az/el
-// across the globe boundary. Those live in ApplyLensTypeSelection so both call sites run the SAME
-// transition rather than two copies that agree today.
+// The lens combo, in kLensTypePresentationOrder (the enum order is NOT the display order). Both
+// lens controls call SelectLensType, the user-action owner for pose fix-ups and session transitions.
 FieldEditorEntry LensTypeField() {
   FieldEditorEntry entry;
   entry.kind = FieldEditorKind::kCombo;
@@ -472,7 +470,7 @@ FieldEditorEntry LensTypeField() {
       for (const int idx : kLensTypePresentationOrder) {
         const bool selected = (r.lens_type == idx);
         if (ImGui::Selectable(kLensTypeNames[idx], selected) && r.lens_type != idx) {
-          ApplyLensTypeSelection(r, idx);
+          SelectLensType(state, idx);
           changed = true;
         }
         if (selected) {

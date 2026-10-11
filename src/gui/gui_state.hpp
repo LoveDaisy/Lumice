@@ -17,6 +17,7 @@
 
 #include "gui/analysis_result.hpp"
 #include "gui/gui_constants.hpp"
+#include "gui/view_look_at_types.hpp"
 #include "include/lumice_base.h"    // LUMICE_RayCount (64-bit ray-count type)
 #include "include/lumice_engine.h"  // LUMICE_RayCount (64-bit ray-count type)
 #include "include/lumice_render.h"  // LUMICE_RayCount (64-bit ray-count type)
@@ -811,15 +812,12 @@ inline ViewDefaults DefaultViewParamsFor(int lens_type) {
   return { fov, 0.0f, azimuth, 0.0f };
 }
 
-// The whole of "the user picked a different lens": the new lens type plus the pose fix-ups that go
-// with it. Called by every control that offers the choice — the View panel's combo and the defaults
-// panel's per-row editor — because these fix-ups are not decoration, they are what keeps the view
-// pointing at the same thing across the switch, and a second control that only assigned lens_type
-// would leave a pose the first control can never produce.
+// Low-level pose transform used when a lens type actually changes. This does not model the user
+// action or any session state; `SelectLensType` in view_look_at.cpp is the GUI action owner.
 //
 // Deliberately NOT applied by .lmc loading or by tests that write lens_type directly: those carry
 // their own fov/pose and must keep them.
-inline void ApplyLensTypeSelection(RenderConfig& r, int new_lens_type) {
+inline void TransformViewForLensSelection(RenderConfig& r, int new_lens_type) {
   if (r.lens_type == new_lens_type) {
     return;
   }
@@ -1407,6 +1405,10 @@ struct GuiState {
   // Renderer (copy model: GuiState owns a single renderer directly).
   // Single-renderer enforced by the GUI; if multi-renderer is ever needed, revisit.
   RenderConfig renderer;
+
+  // Named camera target and follow intent. Session-only: files persist the resulting pose, not the
+  // instruction to keep rewriting it as scene inputs change.
+  LookAtSession look_at;
 
   // Raypath color classes (task-342.3 GUI, atop task-342.2 C API surface).
   // Physical array order == LUMICE class id == lane binding. `z_order` inside

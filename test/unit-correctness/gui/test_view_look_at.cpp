@@ -503,3 +503,94 @@ TEST(ViewLookAtPose, EveryPresetLandsInsideTheBoundsUnderEveryLens) {
     check_lens(lens);
   }
 }
+
+TEST(ViewLookAtSession, DefaultsToAnUnlockedSunWithoutChangingTheCamera) {
+  lumice::gui::GuiState state;
+  EXPECT_EQ(state.look_at.target, LookAtId::kSun);
+  EXPECT_FALSE(state.look_at.locked);
+  EXPECT_FLOAT_EQ(state.renderer.azimuth, 0.0f);
+  EXPECT_FLOAT_EQ(state.renderer.elevation, 0.0f);
+}
+
+TEST(ViewLookAtSession, SelectionLockAndFollowUseOneAtomicTransition) {
+  lumice::gui::GuiState state;
+  state.sun.altitude = 25.0f;
+
+  ASSERT_TRUE(lumice::gui::SelectLookAtTarget(state, LookAtId::kSun));
+  EXPECT_EQ(state.look_at.target, LookAtId::kSun);
+  EXPECT_FALSE(state.look_at.locked);
+  EXPECT_NEAR(state.renderer.azimuth, 0.0f, 1e-3f);
+  EXPECT_NEAR(state.renderer.elevation, 25.0f, 1e-3f);
+
+  state.renderer.azimuth = 80.0f;
+  state.renderer.elevation = -20.0f;
+  ASSERT_TRUE(lumice::gui::SetLookAtLocked(state, true));
+  EXPECT_TRUE(state.look_at.locked);
+  EXPECT_NEAR(state.renderer.azimuth, 0.0f, 1e-3f);
+  EXPECT_NEAR(state.renderer.elevation, 25.0f, 1e-3f);
+
+  state.sun.altitude = 40.0f;
+  ASSERT_TRUE(lumice::gui::UpdateLockedLookAt(state));
+  EXPECT_NEAR(state.renderer.elevation, 40.0f, 1e-3f);
+
+  ASSERT_TRUE(lumice::gui::SelectLookAtTarget(state, LookAtId::kSubsun));
+  EXPECT_EQ(state.look_at.target, LookAtId::kSubsun);
+  EXPECT_TRUE(state.look_at.locked);
+  EXPECT_NEAR(state.renderer.elevation, -40.0f, 1e-3f);
+
+  ASSERT_TRUE(lumice::gui::SelectLookAtTarget(state, LookAtId::kZenith));
+  state.sun.altitude = -30.0f;
+  ASSERT_TRUE(lumice::gui::UpdateLockedLookAt(state));
+  EXPECT_EQ(state.look_at.target, LookAtId::kZenith);
+  EXPECT_NEAR(state.renderer.elevation, 90.0f, 1e-3f);
+}
+
+TEST(ViewLookAtSession, UnlockKeepsTheTargetAndCurrentPose) {
+  lumice::gui::GuiState state;
+  state.sun.altitude = 20.0f;
+  ASSERT_TRUE(lumice::gui::SelectLookAtTarget(state, LookAtId::kSubsun));
+  ASSERT_TRUE(lumice::gui::SetLookAtLocked(state, true));
+  const float az = state.renderer.azimuth;
+  const float el = state.renderer.elevation;
+
+  lumice::gui::UnlockLookAt(state);
+  state.sun.altitude = 55.0f;
+  EXPECT_FALSE(lumice::gui::UpdateLockedLookAt(state));
+  EXPECT_FALSE(state.look_at.locked);
+  EXPECT_EQ(state.look_at.target, LookAtId::kSubsun);
+  EXPECT_FLOAT_EQ(state.renderer.azimuth, az);
+  EXPECT_FLOAT_EQ(state.renderer.elevation, el);
+}
+
+TEST(ViewLookAtSession, RejectedTransitionsDoNotPartiallyChangeState) {
+  lumice::gui::GuiState state;
+  state.renderer.azimuth = 12.0f;
+  state.renderer.elevation = 34.0f;
+
+  EXPECT_FALSE(lumice::gui::SelectLookAtTarget(state, static_cast<LookAtId>(-1)));
+  EXPECT_EQ(state.look_at.target, LookAtId::kSun);
+  EXPECT_FLOAT_EQ(state.renderer.azimuth, 12.0f);
+  EXPECT_FLOAT_EQ(state.renderer.elevation, 34.0f);
+
+  state.renderer.lens_type = lumice::gui::kLensTypeDualFisheyeEqualArea;
+  EXPECT_FALSE(lumice::gui::SetLookAtLocked(state, true));
+  EXPECT_FALSE(state.look_at.locked);
+  EXPECT_EQ(state.look_at.target, LookAtId::kSun);
+  EXPECT_FLOAT_EQ(state.renderer.azimuth, 12.0f);
+  EXPECT_FLOAT_EQ(state.renderer.elevation, 34.0f);
+}
+
+TEST(ViewLookAtSession, UserLensSelectionUnlocksOnlyWhenTheLensActuallyChanges) {
+  lumice::gui::GuiState state;
+  state.look_at.target = LookAtId::kSubsun;
+  state.look_at.locked = true;
+
+  EXPECT_FALSE(lumice::gui::SelectLensType(state, state.renderer.lens_type));
+  EXPECT_TRUE(state.look_at.locked);
+
+  EXPECT_TRUE(lumice::gui::SelectLensType(state, lumice::gui::kLensTypeGlobe));
+  EXPECT_FALSE(state.look_at.locked);
+  EXPECT_EQ(state.look_at.target, LookAtId::kSubsun);
+  EXPECT_EQ(state.renderer.lens_type, lumice::gui::kLensTypeGlobe);
+  EXPECT_FLOAT_EQ(state.renderer.fov, 30.0f);
+}
