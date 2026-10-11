@@ -36,6 +36,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -56,6 +57,7 @@
 #include "gui/gui_constants.hpp"
 #include "gui/theme.hpp"
 #include "gui/user_defaults.hpp"
+#include "gui/view_look_at.hpp"
 #include "imgui_internal.h"
 #include "imgui_te_utils.h"
 #include "support/user_defaults_test_env.hpp"
@@ -3373,6 +3375,36 @@ void RegisterDefaultsPanelTests(ImGuiTestEngine* engine) {
       SaveDefaultsPanel(ctx);
       IM_CHECK(ReadSavedWedgePresets(panel.dir()).empty());
       IM_CHECK(!ctx->ItemExists("**/###wedge_preset_warning_0"));
+    };
+  }
+
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "defaults_panel", "editing_view_angles_takes_over_from_look_at_lock");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ScopedPanel panel(ctx, "look_at_manual_takeover");
+      gui::g_state.sun.altitude = 20.0f;
+      IM_CHECK(gui::SelectLookAtTarget(gui::g_state, gui::LookAtId::kSun));
+      IM_CHECK(gui::SetLookAtLocked(gui::g_state, true));
+
+      panel.OpenOn(gui::DefaultsPanelSection::kSettings);
+      FilterTo(ctx, "renderer.elevation");
+      ctx->ItemInputValue(ValueInputRef("renderer.elevation").c_str(), 12.0f);
+      ctx->Yield(3);
+      IM_CHECK(!gui::g_state.look_at.locked);
+      IM_CHECK_LT(std::fabs(gui::g_state.renderer.elevation - 12.0f), 1e-3f);
+
+      IM_CHECK(gui::SetLookAtLocked(gui::g_state, true));
+      FilterTo(ctx, "renderer.azimuth");
+      ctx->ItemInputValue(ValueInputRef("renderer.azimuth").c_str(), 31.0f);
+      ctx->Yield(3);
+      IM_CHECK(!gui::g_state.look_at.locked);
+      IM_CHECK_LT(std::fabs(gui::g_state.renderer.azimuth - 31.0f), 1e-3f);
+
+      gui::g_state.sun.altitude = 48.0f;
+      ctx->Yield(3);
+      IM_CHECK_LT(std::fabs(gui::g_state.renderer.azimuth - 31.0f), 1e-3f);
+      IM_CHECK_EQ(gui::g_state.look_at.target, gui::LookAtId::kSun);
+      FilterTo(ctx, "");
     };
   }
 }

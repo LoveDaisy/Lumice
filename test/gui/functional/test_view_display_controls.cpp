@@ -177,8 +177,22 @@ struct ScopedBackground {
 const char* const kViewInputs[] = { "**/##FOV##view_input", "**/##Elevation##view_input", "**/##Azimuth##view_input",
                                     "**/##Roll##view_input" };
 
-// The Look At entry. A "###" id, so the icon in its label is not part of it.
-const char* const kLookAtButton = "**/###view_look_at";
+// The Look At combo and its follow checkbox. BeginCombo does not register its label with the test
+// engine, so callers address the combo by the id ImGui hashes inside the right-panel window.
+constexpr const char* kLookAtComboLabel = "###view_look_at";
+const char* const kLookAtLock = "**/Lock##view_look_at_lock";
+
+ImGuiID LookAtComboId(ImGuiTestContext* ctx) {
+  const ImGuiTestItemInfo elevation = ctx->ItemInfo("**/##Elevation##view_input", ImGuiTestOpFlags_NoError);
+  if (elevation.Window == nullptr) {
+    return 0;
+  }
+  return ImGui::GetIDWithSeed(kLookAtComboLabel, nullptr, elevation.Window->ID);
+}
+
+ImGuiTestItemInfo LookAtComboInfo(ImGuiTestContext* ctx) {
+  return ctx->ItemInfo(LookAtComboId(ctx), ImGuiTestOpFlags_NoError);
+}
 
 // Open the Look At menu and pick one entry by its visible name.
 //
@@ -187,13 +201,19 @@ const char* const kLookAtButton = "**/###view_look_at";
 // SetRef() does — so the popup has to BECOME the ref before the wildcard search rather than inside
 // it. Reports nothing itself; the caller checks the state that was supposed to change.
 void PickLookAt(ImGuiTestContext* ctx, const char* entry) {
-  ctx->SetRef("//##RightPanel");
-  ctx->ItemClick(kLookAtButton);
+  ctx->ItemClick(LookAtComboId(ctx));
   ctx->Yield(2);
   ctx->SetRef("//$FOCUSED");
   ctx->ItemClick((std::string("**/") + entry).c_str());
   ctx->Yield(2);
   ctx->SetRef("");
+}
+
+void PickLens(ImGuiTestContext* ctx, int lens) {
+  ctx->SetRef("//##RightPanel");
+  ctx->ComboClick((std::string("Lens Type##view/") + gui::kLensTypeNames[lens]).c_str());
+  ctx->SetRef("");
+  ctx->Yield(2);
 }
 
 }  // namespace
@@ -1357,13 +1377,15 @@ void RegisterViewDisplayControlTests(ImGuiTestEngine* engine) {
       for (const int lens : gui::kLensTypePresentationOrder) {
         gui::g_state.renderer.lens_type = lens;
         ctx->Yield(3);
-        const ImGuiTestItemInfo look_at = ctx->ItemInfo(kLookAtButton, ImGuiTestOpFlags_NoError);
+        const ImGuiTestItemInfo look_at = LookAtComboInfo(ctx);
+        const ImGuiTestItemInfo lock = ctx->ItemInfo(kLookAtLock, ImGuiTestOpFlags_NoError);
         const ImGuiTestItemInfo elevation = ctx->ItemInfo("**/##Elevation##view_input", ImGuiTestOpFlags_NoError);
-        if (look_at.ID == 0) {
-          IM_ERRORF("lens %d does not offer the Look At entry at all", lens);
-        } else if (IsDisabled(look_at) != IsDisabled(elevation)) {
-          IM_ERRORF("lens %d: Look At disabled=%d but the Elevation slider disabled=%d", lens,
-                    static_cast<int>(IsDisabled(look_at)), static_cast<int>(IsDisabled(elevation)));
+        if (look_at.ID == 0 || lock.ID == 0) {
+          IM_ERRORF("lens %d does not offer the Look At combo and Lock checkbox", lens);
+        } else if (IsDisabled(look_at) != IsDisabled(elevation) || IsDisabled(lock) != IsDisabled(elevation)) {
+          IM_ERRORF("lens %d: Look At disabled=%d, Lock disabled=%d, Elevation disabled=%d", lens,
+                    static_cast<int>(IsDisabled(look_at)), static_cast<int>(IsDisabled(lock)),
+                    static_cast<int>(IsDisabled(elevation)));
         }
 
         if (ctx->IsError()) {
@@ -1527,8 +1549,7 @@ void RegisterViewDisplayControlTests(ImGuiTestEngine* engine) {
       gui::g_state.renderer.lens_type = gui::kLensTypeLinear;
       ctx->Yield(3);
 
-      ctx->SetRef("//##RightPanel");
-      ctx->ItemClick(kLookAtButton);
+      ctx->ItemClick(LookAtComboId(ctx));
       ctx->Yield(2);
       ctx->SetRef("//$FOCUSED");
       for (int i = 0; i < LUMICE_ANNOTATION_MARKER_COUNT; ++i) {
@@ -1570,6 +1591,148 @@ void RegisterViewDisplayControlTests(ImGuiTestEngine* engine) {
       // root either, so the weaker-looking lookup is the same claim without the side effect.
       PickLookAt(ctx, "Sun");
       IM_CHECK(!ctx->ItemExists("**/Anthelion"));
+    };
+  }
+
+  {
+    ImGuiTest* t =
+        IM_REGISTER_TEST(engine, "view_display_controls", "a_locked_target_follows_scene_edits_without_a_run");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      const ScopedPopups popup_guard(ctx);
+      ctx->Yield(3);
+
+      PickLookAt(ctx, "Sun");
+      ctx->ItemClick(kLookAtLock);
+      ctx->Yield(2);
+      IM_CHECK(gui::g_state.look_at.locked);
+      IM_CHECK_EQ(gui::g_state.look_at.target, gui::LookAtId::kSun);
+
+      ctx->ItemInputValue("**/##Altitude_input", 40.0f);
+      ctx->Yield(3);
+      IM_CHECK_LT(std::fabs(gui::g_state.renderer.elevation - 40.0f), 1e-3f);
+
+      PickLookAt(ctx, "Subsun");
+      IM_CHECK(gui::g_state.look_at.locked);
+      IM_CHECK_EQ(gui::g_state.look_at.target, gui::LookAtId::kSubsun);
+      IM_CHECK_LT(std::fabs(gui::g_state.renderer.elevation + 40.0f), 1e-3f);
+
+      PickLookAt(ctx, "Zenith");
+      const float fixed_elevation = gui::g_state.renderer.elevation;
+      ctx->ItemClose("**/View");
+      ctx->ItemInputValue("**/##Altitude_input", -15.0f);
+      ctx->Yield(3);
+      IM_CHECK(gui::g_state.look_at.locked);
+      IM_CHECK_EQ(gui::g_state.renderer.elevation, fixed_elevation);
+      ctx->ItemOpen("**/View");
+      ctx->Yield(2);
+
+      ctx->ItemClick(kLookAtLock);
+      const float unlocked_elevation = gui::g_state.renderer.elevation;
+      ctx->ItemInputValue("**/##Altitude_input", 25.0f);
+      ctx->Yield(3);
+      IM_CHECK(!gui::g_state.look_at.locked);
+      IM_CHECK_EQ(gui::g_state.look_at.target, gui::LookAtId::kZenith);
+      IM_CHECK_EQ(gui::g_state.renderer.elevation, unlocked_elevation);
+    };
+  }
+
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "view_display_controls",
+                                    "manual_pose_edits_take_over_but_roll_fov_and_reset_keep_the_contract");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      const ScopedPopups popup_guard(ctx);
+      ctx->Yield(3);
+
+      PickLookAt(ctx, "Sun");
+      ctx->ItemClick(kLookAtLock);
+      ctx->ItemInputValue("**/##Elevation##view_input", 12.0f);
+      ctx->Yield(3);
+      IM_CHECK(!gui::g_state.look_at.locked);
+      IM_CHECK_LT(std::fabs(gui::g_state.renderer.elevation - 12.0f), 1e-3f);
+      ctx->ItemInputValue("**/##Altitude_input", 48.0f);
+      ctx->Yield(3);
+      IM_CHECK_LT(std::fabs(gui::g_state.renderer.elevation - 12.0f), 1e-3f);
+
+      ctx->ItemClick(kLookAtLock);
+      IM_CHECK(gui::g_state.look_at.locked);
+      ctx->ItemInputValue("**/##Roll##view_input", 27.0f);
+      ctx->ItemInputValue("**/##FOV##view_input", 65.0f);
+      ctx->Yield(3);
+      IM_CHECK(gui::g_state.look_at.locked);
+      IM_CHECK_LT(std::fabs(gui::g_state.renderer.roll - 27.0f), 1e-3f);
+      IM_CHECK_LT(std::fabs(gui::g_state.renderer.fov - 65.0f), 1e-3f);
+
+      ctx->ItemClick("**/Reset##view");
+      ctx->Yield(2);
+      IM_CHECK(!gui::g_state.look_at.locked);
+      IM_CHECK_EQ(gui::g_state.look_at.target, gui::LookAtId::kSun);
+      const gui::ViewDefaults defaults = gui::DefaultViewParamsFor(gui::g_state.renderer.lens_type);
+      IM_CHECK_EQ(gui::g_state.renderer.fov, defaults.fov);
+      IM_CHECK_EQ(gui::g_state.renderer.elevation, defaults.elevation);
+      IM_CHECK_EQ(gui::g_state.renderer.azimuth, defaults.azimuth);
+      IM_CHECK_EQ(gui::g_state.renderer.roll, defaults.roll);
+    };
+  }
+
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "view_display_controls", "look_at_controls_share_one_unclipped_row");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      ctx->Yield(3);
+
+      const ImGuiTestItemInfo reset = ctx->ItemInfo("**/Reset##view", ImGuiTestOpFlags_NoError);
+      const ImGuiTestItemInfo combo = LookAtComboInfo(ctx);
+      const ImGuiTestItemInfo lock = ctx->ItemInfo(kLookAtLock, ImGuiTestOpFlags_NoError);
+      IM_CHECK(reset.ID != 0 && combo.ID != 0 && lock.ID != 0);
+      IM_CHECK(reset.Window == combo.Window && combo.Window == lock.Window);
+      if (reset.RectFull.Max.x > combo.RectFull.Min.x || combo.RectFull.Max.x > lock.RectFull.Min.x) {
+        IM_ERRORF("Reset / Look At / Lock overlap: reset [%.1f, %.1f], combo [%.1f, %.1f], lock [%.1f, %.1f]",
+                  reset.RectFull.Min.x, reset.RectFull.Max.x, combo.RectFull.Min.x, combo.RectFull.Max.x,
+                  lock.RectFull.Min.x, lock.RectFull.Max.x);
+      }
+      if (reset.RectFull.Min.y != combo.RectFull.Min.y || combo.RectFull.Min.y != lock.RectFull.Min.y) {
+        IM_ERRORF("Reset / Look At / Lock are not on one row: y %.1f / %.1f / %.1f", reset.RectFull.Min.y,
+                  combo.RectFull.Min.y, lock.RectFull.Min.y);
+      }
+      IM_CHECK(lock.Window != nullptr);
+      IM_CHECK_LE(lock.RectFull.Max.x, lock.Window->InnerRect.Max.x);
+    };
+  }
+
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "view_display_controls",
+                                    "lens_selection_clears_lock_without_reviving_it_after_full_sky");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      const ScopedPopups popup_guard(ctx);
+      ctx->Yield(3);
+
+      PickLookAt(ctx, "Sun");
+      ctx->ItemClick(kLookAtLock);
+      IM_CHECK(gui::g_state.look_at.locked);
+      const int initial_lens = gui::g_state.renderer.lens_type;
+
+      PickLens(ctx, initial_lens);
+      IM_CHECK(gui::g_state.look_at.locked);
+
+      const int next_lens = initial_lens == gui::kLensTypeGlobe ? gui::kLensTypeLinear : gui::kLensTypeGlobe;
+      PickLens(ctx, next_lens);
+      IM_CHECK(!gui::g_state.look_at.locked);
+      IM_CHECK_EQ(gui::g_state.look_at.target, gui::LookAtId::kSun);
+
+      ctx->ItemClick(kLookAtLock);
+      IM_CHECK(gui::g_state.look_at.locked);
+      PickLens(ctx, gui::kLensTypeRectangular);
+      IM_CHECK(!gui::g_state.look_at.locked);
+      IM_CHECK(IsDisabled(LookAtComboInfo(ctx)));
+      IM_CHECK(IsDisabled(ctx->ItemInfo(kLookAtLock)));
+
+      PickLens(ctx, gui::kLensTypeLinear);
+      IM_CHECK(!gui::g_state.look_at.locked);
+      IM_CHECK(!IsDisabled(LookAtComboInfo(ctx)));
+      IM_CHECK(!IsDisabled(ctx->ItemInfo(kLookAtLock)));
     };
   }
 }

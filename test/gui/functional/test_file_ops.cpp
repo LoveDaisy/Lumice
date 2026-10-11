@@ -945,6 +945,7 @@ void RegisterFileOpsTests(ImGuiTestEngine* engine) {
       ScopedStagedDocument previous(ctx);
       IM_CHECK(previous.staged);
       const auto serial = previous.staged_serial();
+      gui::g_state.look_at = { gui::LookAtId::kSubsun, true };
 
       s_open_path = path;
       YieldUntilTrue(ctx, kSettleYieldLimit, [] { return s_open_done; });
@@ -953,6 +954,8 @@ void RegisterFileOpsTests(ImGuiTestEngine* engine) {
       IM_CHECK(ImGui::IsPopupOpen("Load Notice"));
       IM_CHECK(gui::PeekLoadNotice().empty());
       IM_CHECK_EQ(static_cast<int>(gui::g_state.run_intent), static_cast<int>(gui::RunIntent::kLoaded));
+      IM_CHECK_EQ(gui::g_state.look_at.target, gui::LookAtId::kSun);
+      IM_CHECK(!gui::g_state.look_at.locked);
       ctx->ItemClick("Load Notice/OK");
       ctx->Yield(2);
       IM_CHECK(!ImGui::IsPopupOpen("Load Notice"));

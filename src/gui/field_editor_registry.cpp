@@ -156,6 +156,18 @@ FieldEditorEntry FloatField(SlotFn<float> access, FloatDomainFn domain, const ch
   return entry;
 }
 
+FieldEditorEntry UnlocksLookAtOnEdit(FieldEditorEntry entry) {
+  const auto render = entry.Render;
+  entry.Render = [render](GuiState& state, const char* id_base) {
+    if (!render(state, id_base)) {
+      return false;
+    }
+    UnlockLookAt(state);
+    return true;
+  };
+  return entry;
+}
+
 FieldEditorEntry IntField(SlotFn<int> access, int min_value, int max_value,
                           ApplicabilityFn applicable = AlwaysApplies) {
   FieldEditorEntry entry;
@@ -690,18 +702,20 @@ const std::unordered_map<std::string, FieldEditorEntry>& Registry() {
                                     "%.0f", SliderScale::kLinear, NotUnderFullSky),
                          "FOV"));
     map.emplace("renderer.elevation",
-                Labelled(FloatField([](GuiState& s) { return &s.renderer.elevation; },
-                                    [](const GuiState& s) {
-                                      // Globe clamps one degree short of the pole, where the view matrix
-                                      // degenerates.
-                                      const float limit = (s.renderer.lens_type == kLensTypeGlobe) ? 89.0f : 90.0f;
-                                      return std::pair<float, float>(-limit, limit);
-                                    },
-                                    "%.2f", SliderScale::kLinear, NotUnderFullSky),
+                Labelled(UnlocksLookAtOnEdit(FloatField([](GuiState& s) { return &s.renderer.elevation; },
+                                                        [](const GuiState& s) {
+                                                          // Globe clamps one degree short of the pole, where the view
+                                                          // matrix degenerates.
+                                                          const float limit =
+                                                              (s.renderer.lens_type == kLensTypeGlobe) ? 89.0f : 90.0f;
+                                                          return std::pair<float, float>(-limit, limit);
+                                                        },
+                                                        "%.2f", SliderScale::kLinear, NotUnderFullSky)),
                          "Elevation"));
     map.emplace("renderer.azimuth",
-                Labelled(FloatField([](GuiState& s) { return &s.renderer.azimuth; }, FixedDomain(-180.0f, 180.0f),
-                                    "%.2f", SliderScale::kLinear, NotUnderFullSky),
+                Labelled(UnlocksLookAtOnEdit(FloatField([](GuiState& s) { return &s.renderer.azimuth; },
+                                                        FixedDomain(-180.0f, 180.0f), "%.2f", SliderScale::kLinear,
+                                                        NotUnderFullSky)),
                          "Azimuth"));
     map.emplace("renderer.roll",
                 Labelled(FloatField([](GuiState& s) { return &s.renderer.roll; }, FixedDomain(-180.0f, 180.0f), "%.2f",
