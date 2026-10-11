@@ -330,10 +330,13 @@ deleting its line, and an entry whose edge is gone fails the check.
   while pytest emits case/fixture reports through `duration_report_plugin.py`;
   `measure_ci_phase.py` records the real command's monotonic wall clock
   and exit code. Raw reports are uploaded on every outcome. This runtime input does not exist at
-  pre-commit time, so the gate is not part of `check_policies.py`. There is no flag/env/inline
-  exemption: change the reviewed registry or make the work cheaper. A new test job is not covered
-  until it wires reports, checker and artifacts, and nothing audits that automatically. Full rules,
-  the 60 s / 2× calibration, phase boundaries and uncovered jobs: `doc/testing-architecture.md` §7.7.
+  pre-commit time, so the gate is not part of `check_policies.py`. There is no per-test/env/inline
+  exemption. The sole exception is the maintainer-authorized, one-run cold-build protocol for phase
+  budgets containing `build`; it never excuses test runtime or correctness, and a PR whole-run/job
+  rerun cannot consume it again. A new test job is not covered until it wires reports, checker and
+  artifacts, and nothing audits that automatically. Full registry rules, the 60 s / 2× calibration,
+  phase boundaries and uncovered jobs: `doc/testing-architecture.md` §7.7. The cold-build protocol's
+  single authority is §7.8.
 - E2E test layout (purpose-primary; see `doc/testing-architecture.md` §6):
   - `test/e2e-correctness/` — full-stack correctness via CLI/PSNR (smoke, CLI behavior, raypath equivalence) + `references/*.jpg`
   - `test/parity-cross-backend/backend/` — backend-equivalence oracles (Metal exit-seam parity, device-gen default path, cpu_backend route, Metal batch invariance) + C++ siblings from 270.3

@@ -676,6 +676,10 @@ if(BUILD_GUI)
     "${PROJ_TEST_DIR}/composition-correctness/gui/test_user_defaults_chain.cpp"
     "${PROJ_TEST_DIR}/composition-correctness/gui/test_field_editor_chain.cpp"
     "${PROJ_TEST_DIR}/composition-correctness/gui/test_edit_modal_chain.cpp"
+    # Document reset / persistence / effect reconciliation -> named camera follow intent: every
+    # successful reset clears it, files and snapshots never carry it, and camera-only changes stay
+    # outside the simulation and display effect lanes.
+    "${PROJ_TEST_DIR}/composition-correctness/gui/test_look_at_session_chain.cpp"
     # Document reset (every FrontendResetReason) -> the open edit modal: closed, its positional
     # binding dropped, since the pool its buffers were copied from has been replaced.
     "${PROJ_TEST_DIR}/composition-correctness/gui/test_edit_modal_document_reset_chain.cpp"

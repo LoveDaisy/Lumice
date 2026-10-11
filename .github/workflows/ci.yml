@@ -62,6 +62,8 @@ jobs:
   # used to sit here (`github.event_name == 'push'`) predates that filter and now
   # would mean "never run on a PR".
   build:
+    env:
+      LUMICE_ALLOW_COLD_BUILD: ${{ github.event_name == 'pull_request' && github.run_attempt == 1 && contains(github.event.pull_request.labels.*.name, 'ci:allow-cold-build') }}
     strategy:
       fail-fast: false
       matrix:
@@ -120,6 +122,25 @@ jobs:
 
     steps:
       - uses: actions/checkout@v7
+
+      - name: Audit cold-build authorization
+        shell: bash
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number || 'none' }}
+          EVENT_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          lines=(
+            "## Cold-build authorization"
+            "- Event: \`$GITHUB_EVENT_NAME\`"
+            "- Pull request: \`$PR_NUMBER\`"
+            "- Head: \`$EVENT_HEAD_SHA\`"
+            "- Run: \`$GITHUB_RUN_ID\`, attempt \`$GITHUB_RUN_ATTEMPT\`"
+            "- Authorized: \`$LUMICE_ALLOW_COLD_BUILD\`"
+          )
+          for line in "${lines[@]}"; do
+            echo "$line"
+            echo "$line" >> "$GITHUB_STEP_SUMMARY"
+          done
 
       # GUI builds need icon resources from LFS, but NOT test reference images.
       # Selective fetch saves ~16MB bandwidth per run vs `lfs: true`.
@@ -310,6 +331,7 @@ jobs:
           ${{ env.LUMICE_COMPILER_LAUNCHER_ARGS }}
 
       - name: Build
+        id: build
         shell: bash
         run: |
           rm -rf ci-duration
@@ -317,11 +339,33 @@ jobs:
           python scripts/measure_ci_phase.py --report ci-duration/build.json --phase build -- \
             cmake --build build --parallel
 
+      # A successful compile can publish a main seed even if a later test or duration gate is red.
+      # The helper signs only machine-readable zero-error statistics plus real stored entries;
+      # diagnostics below remain best-effort and cannot sign readiness.
+      - name: Prepare ccache seed (main only)
+        if: matrix.ccache && github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.build.outcome == 'success' && steps.ccache_restore.outputs.cache-hit != 'true'
+        id: ccache_ready
+        shell: bash
+        run: >
+          python scripts/prepare_ci_compiler_cache.py
+          --tool ccache
+          --cache-dir ccache_cache
+          --report ci-duration/ccache-ready.json
+
+      - name: Prepare sccache seed (main only)
+        if: matrix.msvc && github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.build.outcome == 'success' && steps.sccache_restore.outputs.cache-hit != 'true'
+        id: sccache_ready
+        shell: bash
+        run: >
+          python scripts/prepare_ci_compiler_cache.py
+          --tool sccache
+          --cache-dir sccache_cache
+          --report ci-duration/sccache-ready.json
+
       # Diagnostics, never a gate — hence the `|| true` on both calls. The hit rate is the one
       # number the step timestamps cannot supply: it is what tells a later reader whether a
-      # slow Build was a cold cache or a real regression. Stopping the server afterwards
-      # flushes its state to disk before the explicit main-only save at the end of the job; no
-      # compilation happens after this point.
+      # slow Build was a cold cache or a real regression. sccache has already awaited every
+      # cache write before its compiler response; stopping the server only closes it cleanly.
       - name: ccache statistics (Ubuntu x86_64 / ARM64, macOS)
         if: always() && matrix.ccache
         run: ccache --show-stats --verbose || true
@@ -332,6 +376,20 @@ jobs:
         run: |
           sccache --show-stats || true
           sccache --stop-server || true
+
+      - name: Save ccache directory (main only)
+        if: ${{ !cancelled() && matrix.ccache && github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.build.outcome == 'success' && steps.ccache_ready.outcome == 'success' && steps.ccache_restore.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v6
+        with:
+          path: ccache_cache
+          key: ${{ steps.ccache_restore.outputs.cache-primary-key }}
+
+      - name: Save sccache directory (main only)
+        if: ${{ !cancelled() && matrix.msvc && github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.build.outcome == 'success' && steps.sccache_ready.outcome == 'success' && steps.sccache_restore.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v6
+        with:
+          path: sccache_cache
+          key: ${{ steps.sccache_restore.outputs.cache-primary-key }}
 
       - name: Test
         shell: bash
@@ -355,10 +413,17 @@ jobs:
             --ctest-metadata ci-duration/ctest-metadata.json \
             --gtest-dir ci-duration/gtest \
             --output ci-duration/ctest-durations.json
-          python scripts/check_test_durations.py --job "${{ matrix.name }}" \
-            --report ci-duration/ctest-durations.json \
-            --phase-report ci-duration/build.json \
+          duration_args=(
+            --job "${{ matrix.name }}"
+            --report ci-duration/ctest-durations.json
+            --phase-report ci-duration/build.json
             --phase-report ci-duration/ctest.json
+            --summary "$GITHUB_STEP_SUMMARY"
+          )
+          if [ "$LUMICE_ALLOW_COLD_BUILD" = "true" ]; then
+            duration_args+=(--allow-cold-build)
+          fi
+          python scripts/check_test_durations.py "${duration_args[@]}"
 
       - name: Upload CTest duration evidence
         if: always()
@@ -500,28 +565,15 @@ jobs:
             build/Release/static/bin/Lumice.exe
           retention-days: 7
 
-      # Pull requests restore the default branch's entries but never create per-SHA copies.
-      # Only a successful push to main may refresh the shared cache seeds.
-      - name: Save ccache directory (main only)
-        if: success() && matrix.ccache && github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.ccache_restore.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v6
-        with:
-          path: ccache_cache
-          key: ${{ steps.ccache_restore.outputs.cache-primary-key }}
-
+      # Pull requests restore dependency sources but never create per-SHA copies.
+      # Compiler seeds are saved immediately after a verified successful build above;
+      # CPM keeps its existing whole-job success policy because this task does not change it.
       - name: Save CPM dependencies (main only)
         if: success() && github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.cpm_restore.outputs.cache-hit != 'true'
         uses: actions/cache/save@v6
         with:
           path: cpm_cache
           key: ${{ steps.cpm_restore.outputs.cache-primary-key }}
-
-      - name: Save sccache directory (main only)
-        if: success() && matrix.msvc && github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.sccache_restore.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v6
-        with:
-          path: sccache_cache
-          key: ${{ steps.sccache_restore.outputs.cache-primary-key }}
 
   # CUDA compile-only: nvcc actually compiles the .cu translation units on every
   # PR and every push to main. No GPU is required (nvcc emits PTX/object from CPU). Runtime and
@@ -2215,7 +2267,7 @@ jobs:
         # repo on a day nobody touched it. Raise the cap deliberately instead.
         # numpy is the data dependency of the cone-tool inverse-mapping unit
         # tests below; same cap rationale.
-        run: pip install 'pytest<9' 'numpy<3'
+        run: pip install 'pytest<9' 'numpy<3' 'PyYAML<7'
 
       # The gates' own unit tests live here rather than in the e2e pytest run:
       # they need no build and must run on every commit, which is this job's

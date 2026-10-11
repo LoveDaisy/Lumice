@@ -74,7 +74,9 @@ namespace {
 // 88 with angular_dist_picker (an Angular Distance pick in flight), registered kSession like
 // analysis and ineligible for the same reason: a gesture in progress is not part of the document.
 // Not serialized, so no row can reach the panel.
-constexpr std::size_t kExpectedGovernedFieldCount = 88;
+// 89 with look_at, the named camera target and follow intent. It is session-only: files persist the
+// resulting pose, not an instruction to keep changing it when the sun moves.
+constexpr std::size_t kExpectedGovernedFieldCount = 89;
 
 std::vector<std::string> AllGovernedFieldNames() {
   std::vector<std::string> names;

@@ -434,7 +434,7 @@ TEST(DocumentRoundtripChain, TheStoredFrontClipSurvivesTheDocumentUnderALensItDo
   for (const int lens : { kLensTypeDualFisheyeEqualArea, kLensTypeGlobe }) {
     EXPECT_FALSE(EffectiveFrontForLens(lens, true)) << "lens " << lens << " is no longer one that ignores front";
     GuiState before = MinimalDocument();
-    ApplyLensTypeSelection(before.renderer, lens);
+    TransformViewForLensSelection(before.renderer, lens);
     before.renderer.front = true;
     GuiState after = MinimalDocument();
     if (!DeserializeGuiStateJson(SerializeGuiStateJson(before), after)) {

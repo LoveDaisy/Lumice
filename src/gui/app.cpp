@@ -817,6 +817,11 @@ void ResetFrontendState(GuiState& state, FrontendResetReason reason, const LmcTe
   // into whatever the new document has at the same position. Same shape: unconditional, no
   // reason-grouped block.
   CloseEditModalOnDocumentReset();
+  // The named camera target is session intent, not document state. Every successful document reset
+  // drops both the target and the lock so a previous document cannot move the newly loaded camera
+  // on the next preview frame. Revert also clears it: the view itself is preserved, but no old
+  // follow intent may wake back up after the scene fields are restored.
+  state.look_at = LookAtSession{};
   // And the Summary window, unconditionally for the same reason: it is a picture of the document
   // these reasons replace or restore, so an open one would carry over showing the next document
   // under the previous one's title. Deliberately NOT the analysis window's per-reason rule below

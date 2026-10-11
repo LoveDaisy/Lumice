@@ -30,6 +30,7 @@
 
 #include "gui/gui_state.hpp"
 #include "gui/preview_renderer.hpp"
+#include "gui/view_look_at.hpp"
 #include "test_gui_shared.hpp"
 
 namespace {
@@ -581,6 +582,37 @@ void RegisterPreviewViewportTests(ImGuiTestEngine* engine) {
       IM_CHECK_EQ(gui::g_state.renderer.azimuth, 5.0f);
       IM_CHECK_EQ(gui::g_state.renderer.elevation, 3.0f);
       IM_CHECK_EQ(gui::g_state.renderer.fov, 60.0f);
+    };
+  }
+
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "preview_viewport", "a_camera_drag_takes_over_from_a_locked_target");
+    t->GuiFunc = UploadSynthTexture;
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      g_upload_done = false;
+      ctx->Yield(4);
+      IM_CHECK(gui::g_preview.HasTexture());
+
+      gui::g_state.sun.altitude = 20.0f;
+      IM_CHECK(gui::SelectLookAtTarget(gui::g_state, gui::LookAtId::kSun));
+      IM_CHECK(gui::SetLookAtLocked(gui::g_state, true));
+      ctx->Yield(2);
+      IM_CHECK(gui::g_state.look_at.locked);
+
+      ctx->ItemDragWithDelta(kInteract, ImVec2(60.0f, 40.0f));
+      ctx->Yield(2);
+      IM_CHECK(!gui::g_state.look_at.locked);
+      const float dragged_azimuth = gui::g_state.renderer.azimuth;
+      const float dragged_elevation = gui::g_state.renderer.elevation;
+      IM_CHECK_NE(dragged_azimuth, 0.0f);
+      IM_CHECK_NE(dragged_elevation, 20.0f);
+
+      gui::g_state.sun.altitude = 55.0f;
+      ctx->Yield(3);
+      IM_CHECK_EQ(gui::g_state.renderer.azimuth, dragged_azimuth);
+      IM_CHECK_EQ(gui::g_state.renderer.elevation, dragged_elevation);
+      IM_CHECK_EQ(gui::g_state.look_at.target, gui::LookAtId::kSun);
     };
   }
 }

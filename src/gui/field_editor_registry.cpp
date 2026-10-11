@@ -10,6 +10,7 @@
 #include "gui/ray_num_domain.hpp"
 #include "gui/slider_format_rules.hpp"
 #include "gui/theme.hpp"
+#include "gui/view_look_at.hpp"
 #include "imgui.h"
 #include "include/lumice_render.h"
 #include "util/fatal.hpp"
@@ -151,6 +152,18 @@ FieldEditorEntry FloatField(SlotFn<float> access, FloatDomainFn domain, const ch
       return false;
     }
     return CommitIfEdited(*slot, drag.working, range.first, range.second);
+  };
+  return entry;
+}
+
+FieldEditorEntry UnlocksLookAtOnEdit(FieldEditorEntry entry) {
+  const auto render = entry.Render;
+  entry.Render = [render](GuiState& state, const char* id_base) {
+    if (!render(state, id_base)) {
+      return false;
+    }
+    UnlockLookAt(state);
+    return true;
   };
   return entry;
 }
@@ -454,11 +467,8 @@ Applicability WhenBackgroundShown(const GuiState& state) {
 // Entries that need their own control rather than one of the factories above.
 // ------------------------------------------------------------------------------------------------
 
-// The lens combo, in kLensTypePresentationOrder (the enum order is NOT the display order, so
-// ImGui::Combo over kLensTypeNames would list them wrong) and with the same side effects the main
-// UI's combo applies on a switch — resetting fov to the new lens' default and mirroring az/el
-// across the globe boundary. Those live in ApplyLensTypeSelection so both call sites run the SAME
-// transition rather than two copies that agree today.
+// The lens combo, in kLensTypePresentationOrder (the enum order is NOT the display order). Both
+// lens controls call SelectLensType, the user-action owner for pose fix-ups and session transitions.
 FieldEditorEntry LensTypeField() {
   FieldEditorEntry entry;
   entry.kind = FieldEditorKind::kCombo;
@@ -472,7 +482,7 @@ FieldEditorEntry LensTypeField() {
       for (const int idx : kLensTypePresentationOrder) {
         const bool selected = (r.lens_type == idx);
         if (ImGui::Selectable(kLensTypeNames[idx], selected) && r.lens_type != idx) {
-          ApplyLensTypeSelection(r, idx);
+          SelectLensType(state, idx);
           changed = true;
         }
         if (selected) {
@@ -692,18 +702,20 @@ const std::unordered_map<std::string, FieldEditorEntry>& Registry() {
                                     "%.0f", SliderScale::kLinear, NotUnderFullSky),
                          "FOV"));
     map.emplace("renderer.elevation",
-                Labelled(FloatField([](GuiState& s) { return &s.renderer.elevation; },
-                                    [](const GuiState& s) {
-                                      // Globe clamps one degree short of the pole, where the view matrix
-                                      // degenerates.
-                                      const float limit = (s.renderer.lens_type == kLensTypeGlobe) ? 89.0f : 90.0f;
-                                      return std::pair<float, float>(-limit, limit);
-                                    },
-                                    "%.2f", SliderScale::kLinear, NotUnderFullSky),
+                Labelled(UnlocksLookAtOnEdit(FloatField([](GuiState& s) { return &s.renderer.elevation; },
+                                                        [](const GuiState& s) {
+                                                          // Globe clamps one degree short of the pole, where the view
+                                                          // matrix degenerates.
+                                                          const float limit =
+                                                              (s.renderer.lens_type == kLensTypeGlobe) ? 89.0f : 90.0f;
+                                                          return std::pair<float, float>(-limit, limit);
+                                                        },
+                                                        "%.2f", SliderScale::kLinear, NotUnderFullSky)),
                          "Elevation"));
     map.emplace("renderer.azimuth",
-                Labelled(FloatField([](GuiState& s) { return &s.renderer.azimuth; }, FixedDomain(-180.0f, 180.0f),
-                                    "%.2f", SliderScale::kLinear, NotUnderFullSky),
+                Labelled(UnlocksLookAtOnEdit(FloatField([](GuiState& s) { return &s.renderer.azimuth; },
+                                                        FixedDomain(-180.0f, 180.0f), "%.2f", SliderScale::kLinear,
+                                                        NotUnderFullSky)),
                          "Azimuth"));
     map.emplace("renderer.roll",
                 Labelled(FloatField([](GuiState& s) { return &s.renderer.roll; }, FixedDomain(-180.0f, 180.0f), "%.2f",

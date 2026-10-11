@@ -1610,10 +1610,9 @@ void RenderRightPanel(GLFWwindow* window, float window_width, float window_heigh
       for (int idx : kLensTypePresentationOrder) {
         bool selected = (r.lens_type == idx);
         if (ImGui::Selectable(kLensTypeNames[idx], selected)) {
-          // The lens switch and its pose fix-ups live in gui_state.hpp, shared with the defaults
-          // panel's per-row lens editor. .lmc loading and tests bypass both controls by writing
-          // lens_type directly, so they keep their fov.
-          ApplyLensTypeSelection(r, idx);
+          // SelectLensType owns both the view transform and session-intent transition. .lmc loading
+          // and tests bypass the control by writing lens_type directly, so they keep their fov.
+          SelectLensType(g_state, idx);
         }
         if (selected) {
           ImGui::SetItemDefaultFocus();
@@ -1700,10 +1699,22 @@ void RenderRightPanel(GLFWwindow* window, float window_width, float window_heigh
     const FieldEditorConstraint el_c = ConstraintFor("renderer.elevation", g_state);
     const FieldEditorConstraint az_c = ConstraintFor("renderer.azimuth", g_state);
     ImGui::BeginDisabled(!el_c.enabled);
-    SliderWithInput(PanelLabel("renderer.elevation", "view").c_str(), &r.elevation, static_cast<float>(el_c.min_value),
-                    static_cast<float>(el_c.max_value), el_c.fmt, el_c.scale);
-    SliderWithInput(PanelLabel("renderer.azimuth", "view").c_str(), &r.azimuth, static_cast<float>(az_c.min_value),
-                    static_cast<float>(az_c.max_value), az_c.fmt, az_c.scale);
+    bool elevation_committed = false;
+    bool elevation_active = false;
+    const bool elevation_changed =
+        SliderWithInput(PanelLabel("renderer.elevation", "view").c_str(), &r.elevation,
+                        static_cast<float>(el_c.min_value), static_cast<float>(el_c.max_value), el_c.fmt, el_c.scale,
+                        LabelPlacement::kTrailing, &elevation_committed, &elevation_active);
+    bool azimuth_committed = false;
+    bool azimuth_active = false;
+    const bool azimuth_changed =
+        SliderWithInput(PanelLabel("renderer.azimuth", "view").c_str(), &r.azimuth, static_cast<float>(az_c.min_value),
+                        static_cast<float>(az_c.max_value), az_c.fmt, az_c.scale, LabelPlacement::kTrailing,
+                        &azimuth_committed, &azimuth_active);
+    if ((elevation_changed && (elevation_active || elevation_committed)) ||
+        (azimuth_changed && (azimuth_active || azimuth_committed))) {
+      UnlockLookAt(g_state);
+    }
     ImGui::EndDisabled();
     // roll's gate is the wider one (full-sky OR globe) — again read, not restated.
     const FieldEditorConstraint roll_c = ConstraintFor("renderer.roll", g_state);
@@ -1713,78 +1724,57 @@ void RenderRightPanel(GLFWwindow* window, float window_width, float window_heigh
     ImGui::EndDisabled();
 
     ImGui::Separator();
-    // Two buttons sharing one right-aligned row. Triple hash on the Look At label for the same
-    // reason the marker folds use one: the label carries a glyph, and ImGui hashes the WHOLE label,
-    // so a "##" id would contain the icon codepoint and swapping the icon would silently rename the
-    // item every test locates it by.
+    if (ImGui::SmallButton("Reset##view")) {
+      UnlockLookAt(g_state);
+      const ViewDefaults d = DefaultViewParamsFor(r.lens_type);
+      r.fov = d.fov;
+      r.elevation = d.elevation;
+      r.azimuth = d.azimuth;
+      r.roll = d.roll;
+    }
+
+    ImGui::SameLine();
     constexpr const char* kLookAtId = "###view_look_at";
-    const std::string look_at_label = std::string("Look At ") + ICON_FA_CHEVRON_DOWN + kLookAtId;
-    const float frame_pad_x = ImGui::GetStyle().FramePadding.x * 2.0f;
-    float btn_w = ImGui::CalcTextSize("Reset").x + frame_pad_x;
-    const float look_at_w = ImGui::CalcTextSize(look_at_label.c_str(), nullptr, true).x + frame_pad_x;
-    const float pair_w = look_at_w + ImGui::GetStyle().ItemSpacing.x + btn_w;
-    float avail = ImGui::GetContentRegionAvail().x;
-    if (avail > pair_w) {
-      ImGui::SameLine(avail - pair_w);
+    constexpr const char* kLockLabel = "Lock##view_look_at_lock";
+    const char* look_at_preview = LookAtDisplayName(g_state.look_at.target);
+    if (look_at_preview == nullptr) {
+      look_at_preview = "Sun";
     }
-    // The gate is READ from the elevation field's own constraint, not restated: this entry writes
-    // exactly what the Az/El sliders write, so "when may it be used" has to be the same question,
-    // answered in the same place. Under a full-sky lens there is no single viewing direction to
-    // point anywhere, and an entry that stayed live there would offer to centre the camera on the
-    // sun in a view that shows every direction at once.
+    const ImGuiStyle& style = ImGui::GetStyle();
+    const float lock_w = ImGui::GetFrameHeight() + style.ItemInnerSpacing.x + ImGui::CalcTextSize("Lock").x;
+    const float combo_w = std::max(UiPx(100.0f), ImGui::GetContentRegionAvail().x - lock_w - style.ItemSpacing.x);
+    ImGui::SetNextItemWidth(combo_w);
     ImGui::BeginDisabled(!el_c.enabled);
-    if (ImGui::SmallButton(look_at_label.c_str())) {
-      ImGui::OpenPopup(kLookAtId);
-    }
-    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-      if (!el_c.enabled && el_c.disabled_reason != nullptr) {
-        ImGui::SetTooltip("%s", el_c.disabled_reason);
-      } else {
-        ImGui::SetTooltip("Point the camera at a named direction");
-      }
-    }
-    ImGui::EndDisabled();
-    // Outside the disabled block: the popup is its own window, and a disabled scope wrapping it
-    // would grey out entries that are only reachable when the button was live in the first place.
-    if (ImGui::BeginPopup(kLookAtId)) {
+    if (ImGui::BeginCombo(kLookAtId, look_at_preview)) {
       for (int i = 0; i < static_cast<int>(LookAtId::kCount); ++i) {
         const auto id = static_cast<LookAtId>(i);
         const char* name = LookAtDisplayName(id);
         if (name == nullptr) {
           continue;
         }
-        // The Horizon series is grouped under its own heading: its entries are named relative to
-        // the sun ("Sun +90°") and read differently from the marker names above them, which the
-        // user can also find as dots on the canvas. A heading is not an item, so it does not change
-        // what the entries are looked up by.
         if (id == kFirstHorizonLookAt) {
           ImGui::SeparatorText("Horizon");
         }
-        if (ImGui::Selectable(name)) {
-          float az = 0.0f;
-          float el = 0.0f;
-          // Handed the SLIDERS' OWN constraints, the ones already read above for those sliders —
-          // so "which poses may a preset produce" is not a second opinion about the bounds, and
-          // Globe's one-degree back-off from the pole applies here for free.
-          if (ResolveLookAtPose(id, g_state.sun.altitude, el_c, az_c, &az, &el)) {
-            r.elevation = el;
-            r.azimuth = az;
-          }
-          // Roll and fov are the user's framing, not part of "look at that". A preset that reset
-          // them would silently undo work every time it was used.
-          ImGui::CloseCurrentPopup();
+        const bool selected = id == g_state.look_at.target;
+        if (ImGui::Selectable(name, selected)) {
+          SelectLookAtTarget(g_state, id);
+        }
+        if (selected) {
+          ImGui::SetItemDefaultFocus();
         }
       }
-      ImGui::EndPopup();
+      ImGui::EndCombo();
+    }
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+      ImGui::SetTooltip("%s", el_c.enabled ? "Choose a named direction; Lock follows it as the scene changes." :
+                                             el_c.disabled_reason);
     }
     ImGui::SameLine();
-    if (ImGui::SmallButton("Reset##view")) {
-      ViewDefaults d = DefaultViewParamsFor(r.lens_type);
-      r.fov = d.fov;
-      r.elevation = d.elevation;
-      r.azimuth = d.azimuth;
-      r.roll = d.roll;
+    bool locked = g_state.look_at.locked;
+    if (Checkbox(kLockLabel, &locked)) {
+      SetLookAtLocked(g_state, locked);
     }
+    ImGui::EndDisabled();
 
     ImGui::PopItemWidth();
   }
@@ -2312,6 +2302,10 @@ void RenderPreviewPanel(GLFWwindow* window, float window_width, float window_hei
                    ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoBackground |
                    ImGuiWindowFlags_NoBringToFrontOnFocus);
 
+  // GUI-frame camera-intent reconciliation. It runs whether or not a picture exists or the View
+  // section is expanded, and before this frame assembles any view-dependent inputs.
+  UpdateLockedLookAt(g_state);
+
   // Renderer invariants (previously in RenderViewBar, runs every frame).
   // Copy-model: GuiState always owns a single renderer, no vector/index bookkeeping needed.
   {
@@ -2727,35 +2721,38 @@ void RenderPreviewPanel(GLFWwindow* window, float window_width, float window_hei
       }
 
       if (!gestures_locked && !bg_modifier && !full_sky && is_active && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
-        ImVec2 delta = io.MouseDelta;
-        // Sensitivity is the lens's angular resolution at the frame center, so one pixel of
-        // drag moves the content one pixel whatever the FOV and viewport are. A fixed deg/px
-        // was ~180x too fast at fov=1° and ~70x too slow at fov=179°. vp_w/vp_h are
-        // framebuffer pixels (set above from the DPI scale), the same units
-        // ProjectWorldDirToScreen works in, which is what makes this DPI-correct for free.
-        float gain = ComputeDragGainDegPerPixel(rc.lens_type, rc.fov, g_preview_vp.vp_w, g_preview_vp.vp_h);
-        // Globe is outside-in: u_view_matrix * (0,0,D) yields camera world
-        // position, so +az/+el move the camera and the sphere drifts in the
-        // opposite direction. Flip both signs so a right/down drag moves the
-        // sphere right/down, matching the inside-out lenses' feel.
-        if (rc.lens_type == kLensTypeGlobe) {
-          rc.azimuth += delta.x * gain;
-          rc.elevation -= delta.y * gain;
-        } else {
-          rc.azimuth -= delta.x * gain;
-          rc.elevation += delta.y * gain;
+        const ImVec2 delta = io.MouseDelta;
+        if (delta.x != 0.0f || delta.y != 0.0f) {
+          UnlockLookAt(g_state);
+          // Sensitivity is the lens's angular resolution at the frame center, so one pixel of
+          // drag moves the content one pixel whatever the FOV and viewport are. A fixed deg/px
+          // was ~180x too fast at fov=1° and ~70x too slow at fov=179°. vp_w/vp_h are
+          // framebuffer pixels (set above from the DPI scale), the same units
+          // ProjectWorldDirToScreen works in, which is what makes this DPI-correct for free.
+          const float gain = ComputeDragGainDegPerPixel(rc.lens_type, rc.fov, g_preview_vp.vp_w, g_preview_vp.vp_h);
+          // Globe is outside-in: u_view_matrix * (0,0,D) yields camera world
+          // position, so +az/+el move the camera and the sphere drifts in the
+          // opposite direction. Flip both signs so a right/down drag moves the
+          // sphere right/down, matching the inside-out lenses' feel.
+          if (rc.lens_type == kLensTypeGlobe) {
+            rc.azimuth += delta.x * gain;
+            rc.elevation -= delta.y * gain;
+          } else {
+            rc.azimuth -= delta.x * gain;
+            rc.elevation += delta.y * gain;
+          }
+          // Wrap azimuth into [-180, 180] so dragging past the slider's clamp
+          // boundary continues seamlessly instead of getting pinned at ±180.
+          if (rc.azimuth > 180.0f) {
+            rc.azimuth -= 360.0f;
+          } else if (rc.azimuth < -180.0f) {
+            rc.azimuth += 360.0f;
+          }
+          // Globe lens needs a tighter clamp to avoid view-matrix degeneracy at
+          // ±90°; inside-out lenses keep the existing ±90° range.
+          const float el_lim = (rc.lens_type == kLensTypeGlobe) ? 89.0f : 90.0f;
+          rc.elevation = std::max(-el_lim, std::min(el_lim, rc.elevation));
         }
-        // Wrap azimuth into [-180, 180] so dragging past the slider's clamp
-        // boundary continues seamlessly instead of getting pinned at ±180.
-        if (rc.azimuth > 180.0f) {
-          rc.azimuth -= 360.0f;
-        } else if (rc.azimuth < -180.0f) {
-          rc.azimuth += 360.0f;
-        }
-        // Globe lens needs a tighter clamp to avoid view-matrix degeneracy at
-        // ±90°; inside-out lenses keep the existing ±90° range.
-        float el_lim = (rc.lens_type == kLensTypeGlobe) ? 89.0f : 90.0f;
-        rc.elevation = std::max(-el_lim, std::min(el_lim, rc.elevation));
       }
 
       if (!gestures_locked && !bg_modifier && !full_sky && is_hovered && io.MouseWheel != 0.0f) {

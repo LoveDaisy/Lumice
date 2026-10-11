@@ -2,7 +2,7 @@
 #define LUMICE_GUI_VIEW_LOOK_AT_HPP
 
 #include "gui/field_editor_registry.hpp"  // FieldEditorConstraint — the sliders' own bounds
-#include "include/lumice_render.h"        // LUMICE_ANNOTATION_MARKER_* — the id space the first six entries ARE
+#include "gui/view_look_at_types.hpp"
 
 namespace lumice::gui {
 
@@ -19,10 +19,6 @@ namespace lumice::gui {
 // The presets write ONLY azimuth and elevation. Roll and fov are the user's framing, not part of
 // "look at that"; a preset that reset them would silently undo work every time it was used.
 
-// A direction offered in the Look At menu. The first six ARE the marker id space, value for value
-// — the whole point of the feature is that the user reads a name off the Overlay list and turns to
-// the same name, so a second numbering would be an invitation to drift.
-//
 // The four entries after the markers are the Horizon series, and they sit after rather than among
 // them on purpose: a horizon point has no landing point on the canvas, which is exactly why core
 // refuses to give it a MarkerId (see annotation_overlay.hpp's SunHorizonDir). The series shares ONE
@@ -35,20 +31,6 @@ namespace lumice::gui {
 // The bearings are RELATIVE TO THE SUN, not compass points: the GUI pins the sun at azimuth 0
 // (doc/gui-state-governance.md §9.3), so a label reading "East" would send the user looking for a
 // compass the scene does not have.
-enum class LookAtId : int {
-  kZenith = LUMICE_ANNOTATION_MARKER_ZENITH,
-  kNadir = LUMICE_ANNOTATION_MARKER_NADIR,
-  kSun = LUMICE_ANNOTATION_MARKER_SUN,
-  kSubsun = LUMICE_ANNOTATION_MARKER_SUBSUN,
-  kAnthelion = LUMICE_ANNOTATION_MARKER_ANTHELION,
-  kAntisolar = LUMICE_ANNOTATION_MARKER_ANTISOLAR,
-  // The Horizon series: level, at the sun's bearing plus the stated offset.
-  kSunHorizon = LUMICE_ANNOTATION_MARKER_COUNT,  // toward the sun (offset 0)
-  kHorizonSunPlus90 = LUMICE_ANNOTATION_MARKER_COUNT + 1,
-  kHorizonAntiSun = LUMICE_ANNOTATION_MARKER_COUNT + 2,
-  kHorizonSunMinus90 = LUMICE_ANNOTATION_MARKER_COUNT + 3,
-  kCount = LUMICE_ANNOTATION_MARKER_COUNT + 4,
-};
 
 // The first id of the Horizon series, for a caller that wants to draw a section header before it.
 constexpr LookAtId kFirstHorizonLookAt = LookAtId::kSunHorizon;
@@ -112,6 +94,13 @@ bool ResolveLookAtAzEl(LookAtId id, float sun_altitude_deg, float* out_az_deg, f
 // Returns false and writes nothing when ResolveLookAtAzEl does.
 bool ResolveLookAtPose(LookAtId id, float sun_altitude_deg, const FieldEditorConstraint& el_c,
                        const FieldEditorConstraint& az_c, float* out_az_deg, float* out_el_deg);
+
+// User-level state transitions. These are the only GUI actions that change the follow intent.
+bool SelectLookAtTarget(GuiState& state, LookAtId target);
+bool SetLookAtLocked(GuiState& state, bool locked);
+void UnlockLookAt(GuiState& state);
+bool UpdateLockedLookAt(GuiState& state);
+bool SelectLensType(GuiState& state, int new_lens_type);
 
 }  // namespace lumice::gui
 
