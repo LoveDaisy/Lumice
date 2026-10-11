@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1791724201184,
+  "lastUpdate": 1791724203662,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9524,50 +9524,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "f10f34cfcd966500675c24f83142ce2b7267622e",
-          "message": "Merge pull request #371 from LoveDaisy/feat/adaptive-allocation-gate-statistics\n\ntest(e2e): judge adaptive allocation on row energy with a Šidák worst-row threshold; keep smoke PSNR failure samples",
-          "timestamp": "2026-09-16T09:04:20+08:00",
-          "tree_id": "93b698302b5b77fb9b6d221be0c96348ecf0fe95",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/f10f34cfcd966500675c24f83142ce2b7267622e"
-        },
-        "date": 1789521267378,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 71.4,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 100,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 93.6,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 89.3,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "4b269f31e994c541505f45df5390fa783fd5eb4c",
           "message": "Merge pull request #372 from LoveDaisy/feat/multi-renderer-gpu-backend\n\nfeat: device-fused multi-renderer sessions on Metal and CUDA (scrum multi-renderer-gpu-backend)",
           "timestamp": "2026-09-16T14:15:30+08:00",
@@ -13867,6 +13823,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 92.3,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "edebcf3766408a5da0e9750157314d7325aaa469",
+          "message": "Merge pull request #483 from LoveDaisy/feat/look-at-target-lock\n\nfeat(gui): add Look At target locking with manual takeover",
+          "timestamp": "2026-10-11T21:06:44+08:00",
+          "tree_id": "fb7774db9dcb6b30ed6ab81c83175faa1687100b",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/edebcf3766408a5da0e9750157314d7325aaa469"
+        },
+        "date": 1791724202846,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 102.7,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 99.8,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 98.7,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 92.5,
             "unit": "%"
           }
         ]
