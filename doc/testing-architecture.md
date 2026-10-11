@@ -2183,11 +2183,12 @@ mechanically audits that every future job did so.
 diff, so they also run in the pre-commit hook. This one reads what a CI job just measured; its input
 does not exist anywhere else, so it cannot run before commit and is not part of `check_policies.py`.
 
-**No exemption, and the checker is the rule.** There is no flag, environment variable or inline
-marker to let a slow test through; the only way is a registry entry, and the registry's diff is the
-evidence a reviewer reads. If the check passes, the change is compliant with respect to test
-duration — review does not add duration demands beyond it. If a threshold is wrong, change the
-constant in the script.
+**No per-test exemption, and the checker is the rule.** There is no flag, environment variable or
+inline marker to let a slow test through; the only way is a registry entry, and the registry's diff is
+the evidence a reviewer reads. The narrowly authorized exception for *phase budgets containing the
+build phase* is defined separately in §7.8 and does not alter this per-test rule. If the check passes,
+the change is compliant with respect to test duration — review does not add duration demands beyond
+it. If a threshold is wrong, change the constant in the script.
 
 **Relation to §7.3.** The per-test side still has no ceiling: a test over T may stay, but only after
 its cost and defect are argued in a reviewed entry. Phase budgets are different — they are the
@@ -2197,3 +2198,59 @@ runner contention; changing a phase limit is itself a reviewed budget decision. 
 still has costs outside those phases, which is why the GitHub cohort remains the final judge.
 
 The gate's own cost is a few seconds for XML conversion and JSON checks; it adds no job or runner.
+
+### §7.8 The one-run cold-build exception
+
+This exception exists for one measured failure shape: a pull request's compiler cache missed, the
+build and tests completed correctly, and only the registered `build` budget (or a serial aggregate
+that explicitly contains `build`) exceeded its limit. It accepts that one run's compilation cost; it
+does **not** change any number in `test/duration_registry.json`, subtract time, zero a report or claim
+the original budget was met. The log and job summary retain the measured seconds, the registered
+limit and the words `accepted with cold-build exception`.
+
+**What can be accepted.** `scripts/check_test_durations.py --allow-cold-build` changes only an
+over-limit `phase_budgets` row whose `members` contains `build`. Every non-build member of such an
+aggregate has its own direct budget, so a slow `ctest` remains red even when `build+ctest` is marked as
+a cold-build exception. Per-test registration, non-build phases and aggregates, missing/duplicate or
+unknown reports, malformed registry data, empty reasons, and every nonzero phase command exit remain
+red. Compilation, linking and test assertions run normally. In particular, the Ubuntu GUI visual step
+still has to execute and pass; the exception merely lets a valid cold build reach it.
+
+**How one PR run is authorized.** The label `ci:allow-cold-build` is a momentary input used to create
+one new `pull_request` `synchronize` run, not a permission that stays on the PR. The maintainer sequence
+is fixed:
+
+1. add the label;
+2. push the intended commit so GitHub creates a new run carrying that event payload;
+3. observe that run's id, head SHA and event; and
+4. remove the label immediately, without waiting for Configure, Build or the final result.
+
+Adding or removing the label alone does not trigger this workflow. The build job defines the decision
+once as `event_name == pull_request && run_attempt == 1 && payload has the label`; its first audit step,
+before Configure, records the event, PR, head, run id/attempt and result. A whole-run or single-job
+rerun reuses the old event payload but has `run_attempt > 1`, so it mechanically receives **no
+exception**. Do not rerun an authorized PR run to consume the permission again. If a later commit has
+a separately confirmed cold-cache fact, repeat all four steps to create another independently
+auditable run. Evidence for revocation is the label's removed state plus the authorized run's immutable
+payload/audit; do not spend another hosted build merely to demonstrate that removal.
+
+**Compiler-cache publication is independent of test success.** Pull requests remain restore-only.
+On a `push` to `main`, after Build succeeds and before Test starts, the job reads machine-readable
+compiler-cache statistics and verifies real stored entries. ccache additionally reconciles each miss
+with its synchronous result+manifest writes; sccache 0.17.0 reports `cache_write_errors` after awaiting
+writes before the compiler response. Only a non-cancelled main run, a successful Build and readiness
+check, and a non-exact restore may save under the paired restore action's primary key. A failed or
+skipped Build, bad/unknown statistics, write-accounting mismatch, empty cache, exact hit or cancellation
+before publication does not save. A later test, duration or GUI red still leaves that compiler seed
+available; caching compiler outputs is not a claim that tests passed. CPM and every other cache keep
+their existing lifecycle.
+
+**Hosted acceptance closes the loop.** The authorized PR run must pass all unaffected correctness and
+test-duration gates and must show the Ubuntu GUI visual group actually ran. Its build-containing budget
+may still read over 10, 12 or 15 minutes; record that as the owner-accepted cold-build exception, never
+as compliance with the original limit. After merge, `main` receives no PR exception. Its first run may
+remain red on the original cold budget, but a successful verified Build must publish the new main seed.
+Only then may that same main run be rerun as a warm-cache probe: unlike a PR authorization rerun, this
+rerun consumes no exception and exists to verify the exact new seed restores and every original phase
+budget passes. If the warm run remains red, diagnose it; the cold-build exception is spent and cannot
+be carried forward.

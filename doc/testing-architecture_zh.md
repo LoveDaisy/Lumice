@@ -1064,12 +1064,20 @@ correctness、存在时的串行 performance 及两者之和。原始 JUnit/XML/
 pre-commit 中运行；本闸读的是 CI job 刚量出来的耗时，这份输入别处不存在，所以不能在提交前运行，
 也不并入 `check_policies.py`。
 
-**无豁免，checker 即规则。** 没有 flag、环境变量或 inline 标记可以放行慢测试；唯一的办法是登记，
-登记表的 diff 就是评审要读的证据。本检查通过，则该改动在测试耗时方面即为合规——评审不在其外追加
-耗时要求。阈值不对，就改脚本里的常量。
+**单测试无豁免，checker 即规则。** 没有 flag、环境变量或 inline 标记可以放行慢测试；唯一的办法是登记，
+登记表的 diff 就是评审要读的证据。唯一例外是英文权威 §7.8 定义的、只作用于**含 Build 的 phase
+budget** 的一次性冷构建授权；它不改变本段的单测试规则。本检查通过，则该改动在测试耗时方面即为
+合规——评审不在其外追加耗时要求。阈值不对，就改脚本里的常量。
 
 **与 §7.3 的关系。** 单例侧仍无上限：超过 T 的测试可以保留，但必须论证。phase budget 是 owner
 10/12/15 分钟口径的机械分配，超限不能靠逐条登记消掉；先查重复工作、工作量、缓存和争用，改 phase
 上限本身就是需评审的预算决定。完整 run 仍有未计入 phase 的成本，所以最终判据仍是真实 GitHub cohort。
 
 本闸自身开销：末尾 step 读两份小 JSON 的几秒，加上插件在运行中的记账；不新增 job，也不新增 runner。
+
+## §7.8 单次冷构建例外
+
+完整协议以英文版 [`§7.8 The one-run cold-build exception`](testing-architecture.md#78-the-one-run-cold-build-exception)
+为唯一权威。这里仅保留两个执行时不可漏掉的否定项：**测试运行耗时、测试失败、编译/链接失败及坏报告
+一律没有豁免**；带 `ci:allow-cold-build` payload 的 PR run 也只在 `run_attempt == 1` 时获得一次授权，
+**不得用 whole-run 或单 job rerun 重复消费**。标签只用于创建新 run，观察到目标 run 后立即移除。

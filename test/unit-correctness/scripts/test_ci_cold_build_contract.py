@@ -8,6 +8,9 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parents[3]
 WORKFLOW_PATH = REPO_ROOT / ".github" / "workflows" / "ci.yml"
 REGISTRY_PATH = REPO_ROOT / "test" / "duration_registry.json"
+ENGLISH_DOC_PATH = REPO_ROOT / "doc" / "testing-architecture.md"
+CHINESE_DOC_PATH = REPO_ROOT / "doc" / "testing-architecture_zh.md"
+AGENTS_PATH = REPO_ROOT / "AGENTS.md"
 AUTH_EXPRESSION = (
     "${{ github.event_name == 'pull_request' && github.run_attempt == 1 && "
     "contains(github.event.pull_request.labels.*.name, 'ci:allow-cold-build') }}"
@@ -113,3 +116,16 @@ def test_gui_visual_regression_contract_is_unchanged():
     assert 'timeout-minutes' in step and step["timeout-minutes"] == "10"
     assert '--filter "modal_layout,defaults_panel_layout"' in step["run"]
     assert "xvfb-run -a build/Release/static/bin/gui_test" in step["run"]
+
+
+def test_english_doc_is_the_single_protocol_authority():
+    english = ENGLISH_DOC_PATH.read_text(encoding="utf-8")
+    chinese = CHINESE_DOC_PATH.read_text(encoding="utf-8")
+    agents = AGENTS_PATH.read_text(encoding="utf-8")
+    assert english.count("### §7.8 The one-run cold-build exception") == 1
+    assert "testing-architecture.md#78-the-one-run-cold-build-exception" in chinese
+    assert "测试运行耗时、测试失败、编译/链接失败及坏报告\n一律没有豁免" in chinese
+    assert "不得用 whole-run 或单 job rerun 重复消费" in chinese
+    assert "cold-build protocol's\n  single authority is §7.8" in agents
+    assert "it never excuses test runtime or correctness" in agents
+    assert "a PR whole-run/job\n  rerun cannot consume it again" in agents
