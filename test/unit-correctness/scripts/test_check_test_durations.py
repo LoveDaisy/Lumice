@@ -180,7 +180,7 @@ def phase_budget(phase: str, limit: float, members=None, job: str = JOB, reason:
 def test_phase_budget_catches_many_individually_cheap_tests():
     durations = {f"t.py::case_{i}": 10.0 for i in range(50)}
     test_errors, _ = run(durations, [])
-    phase_errors, _ = ctd.check_phases(JOB, {"tests": 501.0}, [phase_budget("tests", 500)])
+    phase_errors, _, _ = ctd.check_phases(JOB, {"tests": 501.0}, [phase_budget("tests", 500)])
     assert test_errors == []
     assert len(phase_errors) == 1 and "over its 500s limit" in phase_errors[0]
 
@@ -191,16 +191,88 @@ def test_phase_boundary_and_aggregate_are_checked_without_worker_second_summing(
         phase_budget("ctest", 200),
         phase_budget("critical-path", 449, members=["build", "ctest"]),
     ]
-    errors, notices = ctd.check_phases(JOB, {"build": 250, "ctest": 200}, budgets)
+    errors, notices, warnings = ctd.check_phases(JOB, {"build": 250, "ctest": 200}, budgets)
     assert len(errors) == 1 and "critical-path" in errors[0]
+    assert warnings == []
     assert any("ctest" in notice and "200.0s / 200s" in notice for notice in notices)
+
+
+def test_cold_build_exception_accepts_only_build_budgets_and_preserves_raw_cost():
+    budgets = [
+        phase_budget("build", 420),
+        phase_budget("ctest", 480),
+        phase_budget("build+ctest", 720, members=["build", "ctest"]),
+    ]
+    phases = {"build": 477.375, "ctest": 398.109}
+    errors, _, warnings = ctd.check_phases(JOB, phases, budgets)
+    assert len(errors) == 2
+    assert warnings == []
+
+    errors, notices, warnings = ctd.check_phases(JOB, phases, budgets, allow_cold_build=True)
+    assert errors == []
+    assert len(warnings) == 2
+    assert all("accepted with cold-build exception" in warning for warning in warnings)
+    assert any("477.4s" in warning and "420s limit" in warning for warning in warnings)
+    assert any("875.5s" in warning and "720s limit" in warning for warning in warnings)
+    assert any("cold-build exception is enabled" in notice for notice in notices)
+
+
+def test_cold_build_exception_does_not_accept_test_or_non_build_aggregate_overruns():
+    budgets = [
+        phase_budget("build", 420),
+        phase_budget("ctest", 480),
+        phase_budget("build+ctest", 720, members=["build", "ctest"]),
+        phase_budget("test-total", 450, members=["ctest"]),
+    ]
+    errors, _, warnings = ctd.check_phases(
+        JOB, {"build": 477.375, "ctest": 500.0}, budgets, allow_cold_build=True
+    )
+    assert any("phase budget 'ctest'" in error for error in errors)
+    assert any("phase budget 'test-total'" in error for error in errors)
+    assert not any("phase budget 'build'" in error for error in errors)
+    assert {warning.split(" for job", 1)[0] for warning in warnings} == {
+        "phase budget 'build'",
+        "phase budget 'build+ctest'",
+    }
+
+
+def test_nonzero_phase_exit_is_red_before_any_budget_exception(tmp_path):
+    report = tmp_path / "phase.json"
+    report.write_text(json.dumps({"phase": "build", "seconds": 477.375, "exit_code": 2}), encoding="utf-8")
+    with pytest.raises(ValueError, match="phase 'build' exited with code 2"):
+        ctd.load_phase_reports([report])
+
+
+def test_cli_writes_the_same_cold_build_exception_to_log_and_summary(tmp_path, capsys):
+    report = tmp_path / "build.json"
+    report.write_text(json.dumps({"phase": "build", "seconds": 477.375, "exit_code": 0}), encoding="utf-8")
+    registry = write_registry(
+        tmp_path,
+        {"version": 2, "entries": [], "phase_budgets": [phase_budget("build", 420)]},
+    )
+    summary = tmp_path / "summary.md"
+    argv = [
+        "--job", JOB,
+        "--phase-report", str(report),
+        "--registry", str(registry),
+        "--allow-cold-build",
+        "--summary", str(summary),
+    ]
+    assert ctd.main(argv) == 0
+    output = capsys.readouterr().out
+    summary_text = summary.read_text(encoding="utf-8")
+    expected = "took 477.4s (build), over its 420s limit; accepted with cold-build exception"
+    assert expected in output
+    assert expected in summary_text
+    assert "Cold-build exception: `enabled`" in summary_text
+    assert "accepted with cold-build exception" in output.splitlines()[-1]
 
 
 def test_missing_unknown_and_duplicate_phase_reports_are_red(tmp_path):
     budgets = [phase_budget("tests", 60)]
-    errors, _ = ctd.check_phases(JOB, {}, budgets)
+    errors, _, _ = ctd.check_phases(JOB, {}, budgets)
     assert len(errors) == 1 and "missing reports" in errors[0]
-    errors, _ = ctd.check_phases(JOB, {"typo": 1}, budgets)
+    errors, _, _ = ctd.check_phases(JOB, {"typo": 1}, budgets)
     assert any("no registered phase budget" in error for error in errors)
 
     first = tmp_path / "one.json"

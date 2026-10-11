@@ -3,7 +3,8 @@
 
 Per-test reports are `{id: seconds}`. Phase reports come from
 `measure_ci_phase.py`. Both are checked against the single tracked authority,
-`test/duration_registry.json`; there is no exemption switch.
+`test/duration_registry.json`. A maintainer-authorized cold-build run may accept
+only over-limit phase budgets whose registered members include `build`.
 """
 from __future__ import annotations
 
@@ -133,6 +134,8 @@ def load_phase_reports(paths: list[Path]) -> dict[str, float]:
             raise ValueError(f"{path}: seconds must be finite and non-negative")
         if isinstance(exit_code, bool) or not isinstance(exit_code, int):
             raise ValueError(f"{path}: exit_code must be an integer")
+        if exit_code != 0:
+            raise ValueError(f"{path}: phase {phase!r} exited with code {exit_code}")
         if phase in phases:
             raise ValueError(f"{path}: duplicate phase report for {phase}")
         phases[phase] = float(seconds)
@@ -200,9 +203,12 @@ def check(job: str, durations: dict[str, float], entries: list[dict]) -> tuple[l
     return errors, notices
 
 
-def check_phases(job: str, phases: dict[str, float], budgets: list[dict]) -> tuple[list[str], list[str]]:
+def check_phases(
+    job: str, phases: dict[str, float], budgets: list[dict], allow_cold_build: bool = False
+) -> tuple[list[str], list[str], list[str]]:
     errors: list[str] = []
     notices: list[str] = []
+    warnings: list[str] = []
     selected = [budget for budget in budgets if budget["job"] == job]
     known_members = {member for budget in selected for member in budget.get("members", [budget["phase"]])}
     for phase in sorted(set(phases) - known_members):
@@ -221,17 +227,41 @@ def check_phases(job: str, phases: dict[str, float], budgets: list[dict]) -> tup
             continue
         seconds = sum(phases[member] for member in members)
         if seconds > budget["max_seconds"]:
-            errors.append(
+            message = (
                 f"phase budget {budget['phase']!r} for job {job!r} took {seconds:.1f}s "
                 f"({'+'.join(members)}), over its {budget['max_seconds']}s limit"
             )
+            if allow_cold_build and "build" in members:
+                warnings.append(f"{message}; accepted with cold-build exception")
+            else:
+                errors.append(message)
         else:
             notices.append(
                 f"phase budget {budget['phase']!r} for job {job!r}: {seconds:.1f}s / {budget['max_seconds']}s"
             )
     if not selected:
         notices.append(f"the registry has no phase budgets for job {job!r}")
-    return errors, notices
+    if allow_cold_build:
+        notices.append(f"cold-build exception is enabled for job {job!r}")
+    return errors, notices, warnings
+
+
+def write_summary(
+    path: Path, job: str, errors: list[str], warnings: list[str], notices: list[str], allow_cold_build: bool
+) -> None:
+    lines = [
+        "## CI duration check",
+        "",
+        f"- Job: `{job}`",
+        f"- Cold-build exception: `{'enabled' if allow_cold_build else 'disabled'}`",
+        f"- Result: `{'FAIL' if errors else 'PASS'}`",
+    ]
+    for title, messages in (("Errors", errors), ("Cold-build exceptions", warnings), ("Notices", notices)):
+        if not messages:
+            continue
+        lines.extend(["", f"### {title}", ""])
+        lines.extend(f"- {message}" for message in messages)
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -240,6 +270,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--report", type=Path, action="append", default=[])
     parser.add_argument("--phase-report", type=Path, action="append", default=[])
     parser.add_argument("--registry", type=Path, default=DEFAULT_REGISTRY)
+    parser.add_argument("--allow-cold-build", action="store_true")
+    parser.add_argument("--summary", type=Path)
     args = parser.parse_args(argv)
     if not args.report and not args.phase_report:
         parser.error("at least one --report or --phase-report is required")
@@ -248,23 +280,43 @@ def main(argv: list[str] | None = None) -> int:
         phases = load_phase_reports(args.phase_report)
         entries, budgets = load_registry(args.registry)
     except (RegistryError, ValueError) as error:
-        print(f"::error::{error}")
+        message = str(error)
+        print(f"::error::{message}")
+        if args.summary:
+            try:
+                write_summary(args.summary, args.job, [message], [], [], args.allow_cold_build)
+            except OSError as summary_error:
+                print(f"::error::{args.summary}: cannot write summary: {summary_error}")
         return 1
     errors, notices = check(args.job, durations, entries)
-    phase_errors, phase_notices = check_phases(args.job, phases, budgets)
+    phase_errors, phase_notices, warnings = check_phases(
+        args.job, phases, budgets, allow_cold_build=args.allow_cold_build
+    )
     errors.extend(phase_errors)
     notices.extend(phase_notices)
     for message in notices:
         print(f"::notice::{message}")
+    for message in warnings:
+        print(f"::warning::{message}")
     for message in errors:
         first, _, rest = message.partition("\n")
         print(f"::error::{first}")
         if rest:
             print(rest)
+    if args.summary:
+        try:
+            write_summary(args.summary, args.job, errors, warnings, notices, args.allow_cold_build)
+        except OSError as error:
+            print(f"::error::{args.summary}: cannot write summary: {error}")
+            return 1
     if errors:
         print(f"check_test_durations: {len(errors)} problem(s) for job {args.job!r}")
         return 1
-    print(f"check_test_durations: OK for job {args.job!r} ({len(durations)} ids, {len(phases)} phases checked)")
+    suffix = " accepted with cold-build exception" if warnings else ""
+    print(
+        f"check_test_durations: OK for job {args.job!r} "
+        f"({len(durations)} ids, {len(phases)} phases checked){suffix}"
+    )
     return 0
 
 
