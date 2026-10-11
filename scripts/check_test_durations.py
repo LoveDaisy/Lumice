@@ -261,7 +261,8 @@ def write_summary(
             continue
         lines.extend(["", f"### {title}", ""])
         lines.extend(f"- {message}" for message in messages)
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    with path.open("a", encoding="utf-8") as output:
+        output.write("\n".join(lines) + "\n")
 
 
 def main(argv: list[str] | None = None) -> int:

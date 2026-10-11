@@ -251,6 +251,7 @@ def test_cli_writes_the_same_cold_build_exception_to_log_and_summary(tmp_path, c
         {"version": 2, "entries": [], "phase_budgets": [phase_budget("build", 420)]},
     )
     summary = tmp_path / "summary.md"
+    summary.write_text("audit evidence\n", encoding="utf-8")
     argv = [
         "--job", JOB,
         "--phase-report", str(report),
@@ -264,6 +265,7 @@ def test_cli_writes_the_same_cold_build_exception_to_log_and_summary(tmp_path, c
     expected = "took 477.4s (build), over its 420s limit; accepted with cold-build exception"
     assert expected in output
     assert expected in summary_text
+    assert summary_text.startswith("audit evidence\n")
     assert "Cold-build exception: `enabled`" in summary_text
     assert "accepted with cold-build exception" in output.splitlines()[-1]
 
