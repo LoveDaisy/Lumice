@@ -1736,14 +1736,16 @@ void RenderRightPanel(GLFWwindow* window, float window_width, float window_heigh
     ImGui::SameLine();
     constexpr const char* kLookAtId = "###view_look_at";
     constexpr const char* kLockLabel = "Lock##view_look_at_lock";
-    const char* target_name = LookAtDisplayName(g_state.look_at.target);
-    const std::string look_at_preview = std::string("Look At: ") + (target_name != nullptr ? target_name : "Sun");
+    const char* look_at_preview = LookAtDisplayName(g_state.look_at.target);
+    if (look_at_preview == nullptr) {
+      look_at_preview = "Sun";
+    }
     const ImGuiStyle& style = ImGui::GetStyle();
     const float lock_w = ImGui::GetFrameHeight() + style.ItemInnerSpacing.x + ImGui::CalcTextSize("Lock").x;
     const float combo_w = std::max(UiPx(100.0f), ImGui::GetContentRegionAvail().x - lock_w - style.ItemSpacing.x);
     ImGui::SetNextItemWidth(combo_w);
     ImGui::BeginDisabled(!el_c.enabled);
-    if (ImGui::BeginCombo(kLookAtId, look_at_preview.c_str())) {
+    if (ImGui::BeginCombo(kLookAtId, look_at_preview)) {
       for (int i = 0; i < static_cast<int>(LookAtId::kCount); ++i) {
         const auto id = static_cast<LookAtId>(i);
         const char* name = LookAtDisplayName(id);

@@ -194,6 +194,37 @@ ImGuiTestItemInfo LookAtComboInfo(ImGuiTestContext* ctx) {
   return ctx->ItemInfo(LookAtComboId(ctx), ImGuiTestOpFlags_NoError);
 }
 
+bool LookAtControlsFitOneRow(ImGuiTestContext* ctx, float ui_scale) {
+  const ImGuiTestItemInfo reset = ctx->ItemInfo("**/Reset##view", ImGuiTestOpFlags_NoError);
+  const ImGuiTestItemInfo combo = LookAtComboInfo(ctx);
+  const ImGuiTestItemInfo lock = ctx->ItemInfo(kLookAtLock, ImGuiTestOpFlags_NoError);
+  if (reset.ID == 0 || combo.ID == 0 || lock.ID == 0 || reset.Window == nullptr || reset.Window != combo.Window ||
+      combo.Window != lock.Window) {
+    IM_ERRORF("UI scale %.2f: Reset / Look At / Lock are not all present in the right panel", ui_scale);
+    return false;
+  }
+  if (reset.RectFull.Max.x > combo.RectFull.Min.x || combo.RectFull.Max.x > lock.RectFull.Min.x) {
+    IM_ERRORF("UI scale %.2f: Reset / Look At / Lock overlap", ui_scale);
+    return false;
+  }
+  if (reset.RectFull.Min.y != combo.RectFull.Min.y || combo.RectFull.Min.y != lock.RectFull.Min.y) {
+    IM_ERRORF("UI scale %.2f: Reset / Look At / Lock are not on one row", ui_scale);
+    return false;
+  }
+  if (lock.RectFull.Max.x > lock.Window->InnerRect.Max.x) {
+    IM_ERRORF("UI scale %.2f: Lock extends beyond the right panel", ui_scale);
+    return false;
+  }
+  const float longest_preview_width =
+      ImGui::CalcTextSize("Away from sun").x + ImGui::GetFrameHeight() + ImGui::GetStyle().FramePadding.x;
+  if (combo.RectFull.GetWidth() < longest_preview_width) {
+    IM_ERRORF("UI scale %.2f: longest Look At preview needs %.1f px but combo has %.1f px", ui_scale,
+              longest_preview_width, combo.RectFull.GetWidth());
+    return false;
+  }
+  return true;
+}
+
 // Open the Look At menu and pick one entry by its visible name.
 //
 // Two steps, for the reason test_color_window.cpp records at its own popup helper: a wildcard path
@@ -1680,24 +1711,21 @@ void RegisterViewDisplayControlTests(ImGuiTestEngine* engine) {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "view_display_controls", "look_at_controls_share_one_unclipped_row");
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
+      const ScopedPopups popup_guard(ctx);
       ctx->Yield(3);
 
-      const ImGuiTestItemInfo reset = ctx->ItemInfo("**/Reset##view", ImGuiTestOpFlags_NoError);
-      const ImGuiTestItemInfo combo = LookAtComboInfo(ctx);
-      const ImGuiTestItemInfo lock = ctx->ItemInfo(kLookAtLock, ImGuiTestOpFlags_NoError);
-      IM_CHECK(reset.ID != 0 && combo.ID != 0 && lock.ID != 0);
-      IM_CHECK(reset.Window == combo.Window && combo.Window == lock.Window);
-      if (reset.RectFull.Max.x > combo.RectFull.Min.x || combo.RectFull.Max.x > lock.RectFull.Min.x) {
-        IM_ERRORF("Reset / Look At / Lock overlap: reset [%.1f, %.1f], combo [%.1f, %.1f], lock [%.1f, %.1f]",
-                  reset.RectFull.Min.x, reset.RectFull.Max.x, combo.RectFull.Min.x, combo.RectFull.Max.x,
-                  lock.RectFull.Min.x, lock.RectFull.Max.x);
+      PickLookAt(ctx, "Away from sun");
+      ctx->ItemClick(kLookAtLock);
+      IM_CHECK(gui::g_state.look_at.locked);
+      IM_CHECK_EQ(gui::g_state.look_at.target, gui::LookAtId::kHorizonAntiSun);
+
+      for (const float scale : { 1.0f, 1.5f, 1.0f }) {
+        gui::SetUiScaleMultiplierImmediate(scale);
+        ctx->Yield(3);
+        if (!LookAtControlsFitOneRow(ctx, scale)) {
+          return;
+        }
       }
-      if (reset.RectFull.Min.y != combo.RectFull.Min.y || combo.RectFull.Min.y != lock.RectFull.Min.y) {
-        IM_ERRORF("Reset / Look At / Lock are not on one row: y %.1f / %.1f / %.1f", reset.RectFull.Min.y,
-                  combo.RectFull.Min.y, lock.RectFull.Min.y);
-      }
-      IM_CHECK(lock.Window != nullptr);
-      IM_CHECK_LE(lock.RectFull.Max.x, lock.Window->InnerRect.Max.x);
     };
   }
 
