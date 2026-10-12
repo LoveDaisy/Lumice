@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1791781593545,
+  "lastUpdate": 1791781595895,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9524,50 +9524,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "eff2ea9db23ead9488cd19184d31ecc1fce4f339",
-          "message": "Merge pull request #373 from LoveDaisy/feat/axis-modal-custom-preset-memory\n\nfeat(gui): remember each crystal's last Custom axis triple in the edit modal",
-          "timestamp": "2026-09-16T22:02:36+08:00",
-          "tree_id": "e82f08c3e0d37f056f07a7e1e0c21781d6a0133a",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/eff2ea9db23ead9488cd19184d31ecc1fce4f339"
-        },
-        "date": 1789568005628,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 85.5,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 99.8,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 93.5,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 87.8,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "f28752902bc36099d973c676533fb29e7e6e1991",
           "message": "Merge pull request #374 from LoveDaisy/feat/cuda-discrete-spectrum-wl-pool-cache\n\nfix(cuda): rebuild the wl pool every BeginSession under a discrete spectrum",
           "timestamp": "2026-09-16T22:34:39+08:00",
@@ -13867,6 +13823,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 94,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "87a9d3bd2b85c0f0373e5ecf32c77bd163a39cb6",
+          "message": "Merge pull request #484 from LoveDaisy/chore/release-4.7.3\n\nchore(release): cut 4.7.3",
+          "timestamp": "2026-10-12T13:03:05+08:00",
+          "tree_id": "dc8ccddd040a6828e7b0f0bd8e0d347da506521e",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/87a9d3bd2b85c0f0373e5ecf32c77bd163a39cb6"
+        },
+        "date": 1791781595244,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 91.9,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 100,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 99.7,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 95,
             "unit": "%"
           }
         ]
