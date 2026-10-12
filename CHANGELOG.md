@@ -180,6 +180,14 @@ it was thinking of and false of the C struct beside it.
   selected target is retained, so re-checking `Lock` resumes following it. `Reset`, a lens
   change, or a document New/Open/Revert turns `Lock` off (document changes also reset the target
   to Sun); full-sky lenses disable both controls.
+- **Changed: the Sun diameter field accepts 0 — a point source** (#486). The GUI's sun-diameter
+  editor clamped the value at a 0.1° floor, so a point-source sun (diameter 0, which the
+  engine's default scene uses and the config file has always accepted) could not be entered
+  from the panel. The floor is gone; the tooltip names what 0 means.
+- **Fixed: the Look At row aligns with the panel's control grid** (#487, #489). The `Reset` /
+  `Look At` / `Lock` row drew its three controls at mismatched heights and off the grid the
+  right panel's other rows follow; all three now share one full-height row that ends on the
+  Lock checkbox, its right edge on the same line the FOV input ends on.
 
 ### Rendered output (GUI + CLI)
 
