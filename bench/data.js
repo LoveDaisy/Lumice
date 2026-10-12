@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1791783422666,
+  "lastUpdate": 1791783426239,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -4770,54 +4770,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "f28752902bc36099d973c676533fb29e7e6e1991",
-          "message": "Merge pull request #374 from LoveDaisy/feat/cuda-discrete-spectrum-wl-pool-cache\n\nfix(cuda): rebuild the wl pool every BeginSession under a discrete spectrum",
-          "timestamp": "2026-09-16T22:34:39+08:00",
-          "tree_id": "8e6d0b7a6f8bcb70d49405b289412534a3c5eb49",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/f28752902bc36099d973c676533fb29e7e6e1991"
-        },
-        "date": 1789569950247,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 829195.1,
-            "unit": "rays/sec",
-            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 1188996.8,
-            "unit": "rays/sec",
-            "extra": "CPU: Neoverse-N2\\nCores: 4"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 959731.2,
-            "unit": "rays/sec",
-            "extra": "CPU: INTEL(R) XEON(R) PLATINUM 8573C\\nCores: 4"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 670299.9,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "ab1ba3499938a637c44b1102fef825610033d17e",
           "message": "Merge pull request #375 from LoveDaisy/feat/isa-engine-dll-dispatch\n\nrelease: one shell per entry point + two internal engine libraries picked by CPUID / glibc-hwcaps (scrum-566)",
           "timestamp": "2026-09-17T09:29:18+08:00",
@@ -9504,6 +9456,54 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 700011.2,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 9V74 80-Core Processor                \\nCores: 4"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "46671819d8f4c160a624710d644cfca2c5892361",
+          "message": "Merge pull request #485 from LoveDaisy/chore/migrate-repo-name-lumice\n\ndocs: migrate repo name ice_halo_sim to Lumice",
+          "timestamp": "2026-10-12T13:34:20+08:00",
+          "tree_id": "aec7c127f5820de64118e9f6a204ec6cb003c8ff",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/46671819d8f4c160a624710d644cfca2c5892361"
+        },
+        "date": 1791783425563,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 1057844.5,
+            "unit": "rays/sec",
+            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 1009943.6,
+            "unit": "rays/sec",
+            "extra": "CPU: Neoverse-N2\\nCores: 4"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 1074214.9,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 9V45 96-Core Processor\\nCores: 4"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 708785.8,
             "unit": "rays/sec",
             "extra": "CPU: AMD EPYC 9V74 80-Core Processor                \\nCores: 4"
           }
