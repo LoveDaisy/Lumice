@@ -714,7 +714,7 @@ push 到 `main` 的 benchmark 结果会通过
 [github-action-benchmark](https://github.com/benchmark-action/github-action-benchmark)
 自动存储到 `gh-pages` 分支。Chart.js 仪表盘地址：
 
-**https://lovedaisy.github.io/ice_halo_sim/bench/**
+**https://lovedaisy.github.io/Lumice/bench/**
 
 仪表盘追踪 12 条时间序列（4 平台 × 3 指标）：
 

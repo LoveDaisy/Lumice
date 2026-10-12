@@ -1200,7 +1200,7 @@ Benchmark results from pushes to `main` are automatically stored to the `gh-page
 using [github-action-benchmark](https://github.com/benchmark-action/github-action-benchmark).
 A Chart.js dashboard is available at:
 
-**https://lovedaisy.github.io/ice_halo_sim/bench/**
+**https://lovedaisy.github.io/Lumice/bench/**
 
 The dashboard tracks 12 time-series (4 platforms × 3 metrics):
 
