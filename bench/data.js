@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1791847903786,
+  "lastUpdate": 1791847905726,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9512,50 +9512,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "f392ee3a91e7a6975dd11b1c7e2867ef8800efa0",
-          "message": "Merge pull request #379 from LoveDaisy/feat/cli-raw-float-export\n\nfeat(cli): --format npy raw float32 XYZ export with sidecar metadata",
-          "timestamp": "2026-09-19T00:39:06+08:00",
-          "tree_id": "7f3a5e880b4c85c0d6f7ca6ecef4f6edd0373fc9",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/f392ee3a91e7a6975dd11b1c7e2867ef8800efa0"
-        },
-        "date": 1789750243085,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 92.4,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 99.7,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 98.4,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 93.8,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "53fa48878ac86e2a3794c6b98f02d20fc12744c0",
           "message": "Merge pull request #380 from LoveDaisy/fix/fp32-accumulator-compensation\n\nfix(server): widen long-chain fp32 accumulators to double (sub-sun hue drift with ray count)",
           "timestamp": "2026-09-19T00:59:38+08:00",
@@ -13850,6 +13806,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 95.2,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "5b267889368334c2aed943d7bae310becb382cba",
+          "message": "Merge pull request #491 from LoveDaisy/chore/release-4.7.3-recut\n\nchore(release): recut 4.7.3",
+          "timestamp": "2026-10-13T07:28:24+08:00",
+          "tree_id": "b91244d1d5185b200796d088072f6fd80ca186d1",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/5b267889368334c2aed943d7bae310becb382cba"
+        },
+        "date": 1791847905236,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 97.4,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 99.9,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 99,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 92.9,
             "unit": "%"
           }
         ]
