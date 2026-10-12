@@ -13,16 +13,36 @@ sys.path.insert(0, str(SCRIPTS))
 import prepare_ci_compiler_cache as cache_ready  # noqa: E402
 
 
-def test_ccache_stats_require_zero_errors_and_two_writes_per_miss():
+def test_ccache_stats_require_zero_errors_and_one_write_per_miss():
+    # Concurrent misses can share one result key, so two writes per miss is not a
+    # legal lower bound (7 misses / 13 writes was rejected on a fully warm build);
+    # write < miss still means at least one miss persisted nothing.
+    assert cache_ready._parse_ccache_stats("internal_error\t0\ncache_miss\t7\nlocal_storage_write\t13") == {
+        "internal_error": 0,
+        "cache_miss": 7,
+        "local_storage_write": 13,
+    }
+    # Boundary: every miss persisted exactly one object.
+    assert cache_ready._parse_ccache_stats("internal_error\t0\ncache_miss\t2\nlocal_storage_write\t2") == {
+        "internal_error": 0,
+        "cache_miss": 2,
+        "local_storage_write": 2,
+    }
+    # Classic state: one result plus one manifest per miss.
     assert cache_ready._parse_ccache_stats("internal_error\t0\ncache_miss\t6\nlocal_storage_write\t12") == {
         "internal_error": 0,
         "cache_miss": 6,
         "local_storage_write": 12,
     }
+    assert cache_ready._parse_ccache_stats("internal_error\t0\ncache_miss\t0\nlocal_storage_write\t0") == {
+        "internal_error": 0,
+        "cache_miss": 0,
+        "local_storage_write": 0,
+    }
     with pytest.raises(cache_ready.CacheReadinessError, match="2 internal error"):
         cache_ready._parse_ccache_stats("internal_error\t2\ncache_miss\t0\nlocal_storage_write\t0")
-    with pytest.raises(cache_ready.CacheReadinessError, match="2 miss.*only 3 local write"):
-        cache_ready._parse_ccache_stats("internal_error\t0\ncache_miss\t2\nlocal_storage_write\t3")
+    with pytest.raises(cache_ready.CacheReadinessError, match="2 miss.*only 1 local write"):
+        cache_ready._parse_ccache_stats("internal_error\t0\ncache_miss\t2\nlocal_storage_write\t1")
 
 
 @pytest.mark.parametrize("raw", ["", "cache_miss 2", "internal_error\tnot-a-number", "internal_error\t0\ninternal_error\t0"])
