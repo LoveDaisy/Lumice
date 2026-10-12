@@ -147,6 +147,60 @@ it was thinking of and false of the C struct beside it.
 
 </details>
 
+## [4.7.3] - 2026-10-12
+
+### ⚠️ Breaking Changes
+
+- **`Lumice raypath --report` now emits schema 3** (#475, #477, #478; `LUMICE_API_VERSION`
+  452 → 453). The target-free feature report serializes as `schema_version: 3` where 4.7.2
+  emitted 2, and a reader written for the schema-2 document must reject a v3 document (the
+  engine's own reader does) — update any script that parses `--report` JSON to accept schema 3.
+  The change is the report's shape, not just its number: where schema 2 was a per-feature list
+  with Monte-Carlo evidence, schema 3 emits structural objects — a `scope` block, a `support`
+  block carrying the delta-axis partition with its completeness certificate, the per-wavelength
+  onset table and the restricted family curve, per-feature blocks, `unattributed_structures`,
+  and `mc_evidence` demoted to a corroboration field. The request surface (target schema 1, the
+  fiber walk, `--warm`) is unchanged.
+
+### CLI
+
+- **Changed: config fields that silently did nothing now warn at startup** (#476). A config that
+  declares a filter nothing binds, places a `filter` key where nothing reads it (on the scene or
+  a scattering layer, instead of per entry), or commits an empty `render` list used to be
+  accepted without a trace; the engine now logs a warning naming the no-op. Every such config
+  still renders byte-identically — the change is the warning, not new behavior.
+
+### GUI
+
+- **Added: Look At target locking** (#483). The camera row is now `Reset` → `Look At` → `Lock`.
+  The `Look At` combo points the camera at a named direction in one click; with `Lock` checked,
+  the camera keeps following that direction as scene values such as sun altitude change, without
+  a Run. Editing `Elevation` or `Azimuth`, or dragging the preview to rotate it, turns `Lock`
+  off and keeps that manual view; changing `Roll`, `FOV`, or the preview zoom does not. The
+  selected target is retained, so re-checking `Lock` resumes following it. `Reset`, a lens
+  change, or a document New/Open/Revert turns `Lock` off (document changes also reset the target
+  to Sun); full-sky lenses disable both controls.
+
+### Rendered output (GUI + CLI)
+
+- **Fixed: dual-fisheye fold-boundary energy loss** (#480). The dual-fisheye projection passed
+  the fold-boundary direction through a float32 rounding that pushed rays out of the projection
+  and let the bounds check silently drop them — roughly 18.9% of a dual-fisheye frame's energy.
+  The boundary is now clamped after the floor, so the dropped rays render; the projection's
+  shared path is fixed once, for both the CLI and the GUI.
+
+### liblumice_analytic
+
+- **Added: `LUMICE_ANALYTIC_API_VERSION` 7 → 8 — the u-S² field layer** (#477). Eight new calls
+  (`TraceBoundaryLoop`, `TraceWeightKinks`, `ClassifyCriticalStructure`, `PartitionDeviationAxis`,
+  `TraceWavelengthCriticalTable`, `TraceRestrictedFamilyCurve`, `DiagnoseChromatic`,
+  `DiagnoseClassTint`) with their result structs, `Release` functions and twelve enumerations
+  publish the deviation-field geometry of one fixed face sequence: kind-1/2/3 critical structure,
+  the delta-axis partition with its escape regimes, per-wavelength onset tables, the restricted
+  family curve, and the two-index chromatic verdicts. Nothing existing changed. The kernels are
+  the C++ port of Lumice Integral's field layer, pinned against it by parity fixtures; the
+  library is still not part of the download packages.
+
 ## [4.7.2] - 2026-10-07
 
 ### CLI
@@ -2836,6 +2890,7 @@ it was thinking of and false of the C struct beside it.
 - Basic ice crystal halo simulation
 - Support for common crystal types (hexagonal prism, plate, column)
 
+[4.7.3]: https://github.com/LoveDaisy/ice_halo_sim/compare/v4.7.2...v4.7.3
 [4.7.2]: https://github.com/LoveDaisy/ice_halo_sim/compare/v4.7.1...v4.7.2
 [4.7.1]: https://github.com/LoveDaisy/ice_halo_sim/compare/v4.7.0...v4.7.1
 [4.7.0]: https://github.com/LoveDaisy/ice_halo_sim/compare/v4.6.1...v4.7.0
