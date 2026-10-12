@@ -655,7 +655,10 @@ const std::unordered_map<std::string, FieldEditorEntry>& Registry() {
     // constant-domain row, sim.ray_num_millions below, is gated too — in gui/ray_num_domain.hpp,
     // where its quadruple is defined once for this row and the analysis panel's.
     {
-      constexpr float kSunDiameterMin = 0.1f;
+      // 0 is legal here and means a point source: the engine's default scene ships diameter 0.0
+      // and the CLI/JSON path has never had a lower bound. The old 0.1 was carried over verbatim
+      // from the first panel commit with no recorded reason -- do not copy it back.
+      constexpr float kSunDiameterMin = 0.0f;
       constexpr float kSunDiameterMax = 5.0f;
       constexpr const char* kSunDiameterFmt = "%.2f";
       static_assert(

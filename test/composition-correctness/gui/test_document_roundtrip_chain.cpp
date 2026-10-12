@@ -145,6 +145,10 @@ const std::vector<FieldProbe>& FieldProbes() {
         const EntryCard& e = s.layers.at(0).entries.at(0);
         return std::string(e.enabled ? "on" : "off") + " @" + std::to_string(e.proportion);
       } },
+    { "sun.diameter",
+      // 0 is legal (point source) and is not the GUI default (0.5), so a probe parked at 0 fails
+      // if any writer clamps or floors the field on the way out or back in.
+      [](GuiState& s) { s.sun.diameter = 0.0f; }, [](const GuiState& s) { return std::to_string(s.sun.diameter); } },
     { "sun.custom_spectrum",
       // The discrete spectrum is a list, not a name, and it is the one light-source field whose
       // absence leaves a perfectly valid document that simulates a different colour of sunlight.

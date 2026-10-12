@@ -2038,7 +2038,7 @@ void RenderSceneControls(GuiState& state) {
                   static_cast<float>(dia_c.max_value), dia_c.fmt, dia_c.scale);
   ImGui::EndGroup();
   if (ImGui::IsItemHovered()) {
-    ImGui::SetTooltip("Angular diameter of the sun disk");
+    ImGui::SetTooltip("Angular diameter of the sun disk. 0 = point source.");
   }
   PushLabelColumnItemWidth();
   // Combo carries kSpectrumCount presets + "Custom..." tail (item count = kSpectrumComboItemCount).
