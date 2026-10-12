@@ -1,56 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1791821675702,
+  "lastUpdate": 1791846638449,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "f392ee3a91e7a6975dd11b1c7e2867ef8800efa0",
-          "message": "Merge pull request #379 from LoveDaisy/feat/cli-raw-float-export\n\nfeat(cli): --format npy raw float32 XYZ export with sidecar metadata",
-          "timestamp": "2026-09-19T00:39:06+08:00",
-          "tree_id": "7f3a5e880b4c85c0d6f7ca6ecef4f6edd0373fc9",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/f392ee3a91e7a6975dd11b1c7e2867ef8800efa0"
-        },
-        "date": 1789750236767,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 424241.3,
-            "unit": "rays/sec",
-            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 511972.7,
-            "unit": "rays/sec",
-            "extra": "CPU: Neoverse-N2\\nCores: 4"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 360873.5,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 7763 64-Core Processor\\nCores: 4"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 284794.9,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 9V74 80-Core Processor                \\nCores: 4"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -4746,6 +4698,54 @@ window.BENCHMARK_DATA = {
             "value": 311742,
             "unit": "rays/sec",
             "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "b45848cea4b9c09ffeec37e4f3f442ae13cd62e6",
+          "message": "Merge pull request #489 from LoveDaisy/fix/look-at-row-grid-polish\n\nFix: revert right panel to 300px and end the Look At row on the Lock square",
+          "timestamp": "2026-10-13T07:07:41+08:00",
+          "tree_id": "5b2702f367d17c7dd47f5ddeb66a544d1cd3c8e1",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/b45848cea4b9c09ffeec37e4f3f442ae13cd62e6"
+        },
+        "date": 1791846636498,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 346695.5,
+            "unit": "rays/sec",
+            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 505387.6,
+            "unit": "rays/sec",
+            "extra": "CPU: Neoverse-N2\\nCores: 4"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 363833.5,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 7763 64-Core Processor\\nCores: 4"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 498390.5,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 9V45 96-Core Processor                \\nCores: 4"
           }
         ]
       }
