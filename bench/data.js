@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1791815060247,
+  "lastUpdate": 1791815062501,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9512,50 +9512,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "695de9ed0e5a901e96e0c747c5b6235ed051c10d",
-          "message": "Merge pull request #377 from LoveDaisy/chore/ci-e2e-slow-macos-rest-timeout\n\nfix(ci): widen E2E Slow (macOS rest) step timeout 15→25 min",
-          "timestamp": "2026-09-17T16:56:21+08:00",
-          "tree_id": "de8b1ecd633d6f3a4476f875f401bac57c4c5feb",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/695de9ed0e5a901e96e0c747c5b6235ed051c10d"
-        },
-        "date": 1789636081065,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 84.1,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 99.7,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 95.6,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 90,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "444cec705397fdcccafdc87329cb670fe0a4983d",
           "message": "Merge pull request #376 from LoveDaisy/feat/cuda-persistent-device-buffers\n\nperf(cuda): persist lat_lut buffers and make EnsureSessionBuffers grow-only",
           "timestamp": "2026-09-17T17:17:49+08:00",
@@ -13855,6 +13811,45 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 94.8,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "cdb4c383c1637dc4de908ea64859de306a7ec22c",
+          "message": "Merge pull request #487 from LoveDaisy/fix/look-at-row-alignment\n\nfix(gui): align the View Look At row to the panel's control grid",
+          "timestamp": "2026-10-12T22:17:52+08:00",
+          "tree_id": "684e0d405dc952e70143ce6cf8d78cd922de7278",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/cdb4c383c1637dc4de908ea64859de306a7ec22c"
+        },
+        "date": 1791815061923,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 98.6,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 100.1,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 98.6,
             "unit": "%"
           }
         ]
