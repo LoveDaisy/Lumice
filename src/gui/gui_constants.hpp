@@ -34,7 +34,13 @@ constexpr int kMinWindowHeight = 640;
 constexpr int kWindowDecorationMargin = 50;
 // Chrome geometry, 1x: read through UiPx() at every use (app_panels.cpp, app.cpp).
 constexpr float kLeftPanelWidth = 400.0f;
-constexpr float kRightPanelWidth = 300.0f;
+// Wide enough that the View group's Look At row can end on the label column's left edge — the
+// line every control row above it ends on — while its combo still fits the longest menu entry
+// unclipped. At 300 the two constraints miss each other by ~27 logical px at 1x with the
+// scrollbar shown (the row's measured worst case across UI scales). The arbiter is
+// look_at_controls_share_one_unclipped_row, not this comment: if that test goes red on its
+// right-edge assertion, this width is the knob the red points at.
+constexpr float kRightPanelWidth = 340.0f;
 constexpr float kTopBarHeight = 40.0f;
 constexpr float kStatusBarHeight = 28.0f;
 

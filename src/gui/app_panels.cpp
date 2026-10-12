@@ -1182,8 +1182,8 @@ struct OverlayRowSpec {
 // stops them being three column layouts as well.
 //
 // The Alpha width is calibrated against THIS panel's width budget and not carried over from the
-// wider layout the first table was written for: the right panel is kRightPanelWidth (300 px) wide,
-// which leaves a table ~274 px, and the fixed columns plus cell padding claim all but ~129 px of
+// wider layout the first table was written for: the right panel is kRightPanelWidth (340 px) wide,
+// which leaves a table ~314 px, and the fixed columns plus cell padding claim all but ~169 px of
 // it. Anything this column takes comes straight off the Name column, which is the only stretching
 // one — so this number is the name column's budget stated from the other side. The arbiter is not
 // this comment but test_overlay_controls.cpp's the_columns_line_up_and_no_name_is_cut_off, which
@@ -1555,9 +1555,9 @@ void RenderOverlaysTab() {
   };
 
   // The Alpha column width is calibrated against THIS panel's width budget, not carried over from
-  // the wider layout this table was first written for: the right panel is kRightPanelWidth (300 px)
-  // wide, which leaves the table ~274 px, and the fixed columns plus cell padding claim all but
-  // ~129 px of it. Anything that column takes comes straight off the Name column, which is the only
+  // the wider layout this table was first written for: the right panel is kRightPanelWidth (340 px)
+  // wide, which leaves the table ~314 px, and the fixed columns plus cell padding claim all but
+  // ~169 px of it. Anything that column takes comes straight off the Name column, which is the only
   // stretching one — so that number (kAlphaColWidth in SetupOverlayTableColumns) is the name
   // column's budget stated from the other side. The arbiter is not this comment but
   // test_overlay_controls.cpp's the_columns_line_up_and_no_name_is_cut_off: if a font or style
@@ -1724,7 +1724,15 @@ void RenderRightPanel(GLFWwindow* window, float window_width, float window_heigh
     ImGui::EndDisabled();
 
     ImGui::Separator();
-    if (ImGui::SmallButton("Reset##view")) {
+    // One row, three pieces: [Reset][combo][Lock], all full-frame-height widgets so the row reads
+    // as one line rather than a short button between two tall ones. Laid out by hand instead of
+    // through the pushed item width because three widgets share the line — but it answers to the
+    // SAME grid the rows above get from PushLabelColumnItemWidth(): controls end where the label
+    // column begins. Restating that line here (rather than reading GetContentRegionAvail(), which
+    // would run the row to the panel's content edge, off the grid) is the alignment contract; the
+    // test that holds it is look_at_controls_share_one_unclipped_row.
+    const float row_avail = ImGui::GetContentRegionAvail().x;  // before Reset: the whole line
+    if (ImGui::Button("Reset##view")) {
       UnlockLookAt(g_state);
       const ViewDefaults d = DefaultViewParamsFor(r.lens_type);
       r.fov = d.fov;
@@ -1741,8 +1749,30 @@ void RenderRightPanel(GLFWwindow* window, float window_width, float window_heigh
       look_at_preview = "Sun";
     }
     const ImGuiStyle& style = ImGui::GetStyle();
+    // Reset's width is read off the drawn button rather than estimated — the text's pixel width is
+    // ImGui's to know. Lock's is a restatement of ImGui Checkbox's own layout formula (square
+    // frame + ItemInnerSpacing + label); the wrapper in panels.cpp adds a border, not geometry.
+    const float reset_w = ImGui::GetItemRectSize().x;
     const float lock_w = ImGui::GetFrameHeight() + style.ItemInnerSpacing.x + ImGui::CalcTextSize("Lock").x;
-    const float combo_w = std::max(UiPx(100.0f), ImGui::GetContentRegionAvail().x - lock_w - style.ItemSpacing.x);
+    // The width that keeps the longest menu entry unclipped, over the SAME set the popup renders —
+    // a floor taken over a prefix of the ids would quietly stop covering the longest name whenever
+    // it moved out of that prefix. At kRightPanelWidth's shipped value the grid width below always
+    // clears this floor; if a longer name or a style change ever flips that, the floor binds and
+    // the row ends PAST the label line rather than clip an entry — "unclipped" wins over aligned,
+    // the same priority look_at_controls_share_one_unclipped_row asserts, and its right-edge
+    // assertion going red is the signal that kRightPanelWidth is the knob to turn.
+    float preview_floor = 0.0f;
+    for (int i = 0; i < static_cast<int>(LookAtId::kCount); ++i) {
+      const char* name = LookAtDisplayName(static_cast<LookAtId>(i));
+      if (name == nullptr) {
+        continue;
+      }
+      preview_floor =
+          std::max(preview_floor, ImGui::CalcTextSize(name).x + ImGui::GetFrameHeight() + style.FramePadding.x);
+    }
+    const float col_right_offset = UiPx(kLabelColWidth) + LabelColumnGapX();
+    const float combo_w =
+        std::max(preview_floor, row_avail - col_right_offset - reset_w - lock_w - 2.0f * style.ItemSpacing.x);
     ImGui::SetNextItemWidth(combo_w);
     ImGui::BeginDisabled(!el_c.enabled);
     if (ImGui::BeginCombo(kLookAtId, look_at_preview)) {
