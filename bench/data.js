@@ -1,56 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1791807954646,
+  "lastUpdate": 1791815057155,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "444cec705397fdcccafdc87329cb670fe0a4983d",
-          "message": "Merge pull request #376 from LoveDaisy/feat/cuda-persistent-device-buffers\n\nperf(cuda): persist lat_lut buffers and make EnsureSessionBuffers grow-only",
-          "timestamp": "2026-09-17T17:17:49+08:00",
-          "tree_id": "df38477d8c88f2a853e31bcf30cab5d180449a9c",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/444cec705397fdcccafdc87329cb670fe0a4983d"
-        },
-        "date": 1789637232764,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 396954.7,
-            "unit": "rays/sec",
-            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 595726.6,
-            "unit": "rays/sec",
-            "extra": "CPU: Neoverse-N2\\nCores: 4"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 425231.2,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 7763 64-Core Processor\\nCores: 4"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 380484.2,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -4752,6 +4704,48 @@ window.BENCHMARK_DATA = {
             "value": 311691.8,
             "unit": "rays/sec",
             "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "cdb4c383c1637dc4de908ea64859de306a7ec22c",
+          "message": "Merge pull request #487 from LoveDaisy/fix/look-at-row-alignment\n\nfix(gui): align the View Look At row to the panel's control grid",
+          "timestamp": "2026-10-12T22:17:52+08:00",
+          "tree_id": "684e0d405dc952e70143ce6cf8d78cd922de7278",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/cdb4c383c1637dc4de908ea64859de306a7ec22c"
+        },
+        "date": 1791815055691,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 344357.2,
+            "unit": "rays/sec",
+            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 503499.9,
+            "unit": "rays/sec",
+            "extra": "CPU: Neoverse-N2\\nCores: 4"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 469007.2,
+            "unit": "rays/sec",
+            "extra": "CPU: INTEL(R) XEON(R) PLATINUM 8573C\\nCores: 4"
           }
         ]
       }
