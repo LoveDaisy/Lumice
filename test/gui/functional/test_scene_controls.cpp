@@ -127,7 +127,8 @@ void RegisterSceneControlTests(ImGuiTestEngine* engine) {
         { kAltitude, -90.0f, -90.0f, &gui::g_state.sun.altitude },  // in range: identity
         { kAltitude, 90.0f, 90.0f, &gui::g_state.sun.altitude },
         { kDiameter, 40.0f, 5.0f, &gui::g_state.sun.diameter },  // out of range: clamped
-        { kDiameter, -1.0f, 0.1f, &gui::g_state.sun.diameter },
+        { kDiameter, -1.0f, 0.0f, &gui::g_state.sun.diameter },
+        { kDiameter, 0.0f, 0.0f, &gui::g_state.sun.diameter },  // in range: identity (0 = point source)
       };
       for (const Bound& b : kBounds) {
         ctx->ItemInputValue(b.input, b.typed);

@@ -853,7 +853,7 @@ TEST(ShapeScalarDomain, EveryPairedRowChangesItsReadoutWithinTheToleratedDrag) {
     { "Range", 0.0f, 360.0f, "%.3g", SliderScale::kSqrt },
     { "Amplitude", 0.0f, 90.0f, "%.3g", SliderScale::kSqrt },
     { "Scale", 0.0f, 90.0f, "%.3g", SliderScale::kSqrt },
-    { "sun.diameter", 0.1f, 5.0f, "%.2f", SliderScale::kLinear },
+    { "sun.diameter", 0.0f, 5.0f, "%.2f", SliderScale::kLinear },
     // The ray budget: six decades on one track, hence kLog and a relative format. Its production
     // spelling is gui/ray_num_domain.hpp, the one definition both the document row and the
     // analysis panel's row read; written out here for the same reason as the rows above.
@@ -953,7 +953,7 @@ TEST(SliderFormatGate, NothingTheBoundAcceptsMeasuresFrozen) {
     { "Prism H", 0.0f, 100.0f, "", SliderScale::kLogLinear },
     { "Upper H", 0.0f, 1.0f, "", SliderScale::kLinear },
     { "Face", 0.0f, 2.0f, "", SliderScale::kLinear },
-    { "sun.diameter", 0.1f, 5.0f, "", SliderScale::kLinear },
+    { "sun.diameter", 0.0f, 5.0f, "", SliderScale::kLinear },
     { "ray_num_millions", 0.1f, 100000.0f, "", SliderScale::kLog },
     { "Std", 0.0f, 180.0f, "", SliderScale::kSqrt },
     { "Range", 0.0f, 360.0f, "", SliderScale::kSqrt },
