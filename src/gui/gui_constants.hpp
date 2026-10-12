@@ -36,11 +36,16 @@ constexpr int kWindowDecorationMargin = 50;
 constexpr float kLeftPanelWidth = 400.0f;
 // Wide enough that the View group's Look At row can end on the label column's left edge — the
 // line every control row above it ends on — while its combo still fits the longest menu entry
-// unclipped. At 300 the two constraints miss each other by ~27 logical px at 1x with the
-// scrollbar shown (the row's measured worst case across UI scales). The arbiter is
+// unclipped. The row's Lock checkbox only budgets its square (its label lives in the label
+// column), which claws back ItemInnerSpacing + the "Lock" text width (~32 logical px at 1x)
+// against the combo; measured against the widest the anti-clipping floor has run under this
+// geometry, 300 clears it by single-digit logical px at the tightest state (1.5x with the
+// scrollbar shown) — green but tight, and the slack scales with the font, so a font metric
+// change or a longer menu entry can flip it. The arbiter is
 // look_at_controls_share_one_unclipped_row, not this comment: if that test goes red on its
-// right-edge assertion, this width is the knob the red points at.
-constexpr float kRightPanelWidth = 340.0f;
+// right-edge assertion, the floor has started to bind and this width is the knob the red
+// points at.
+constexpr float kRightPanelWidth = 300.0f;
 constexpr float kTopBarHeight = 40.0f;
 constexpr float kStatusBarHeight = 28.0f;
 
