@@ -1182,8 +1182,8 @@ struct OverlayRowSpec {
 // stops them being three column layouts as well.
 //
 // The Alpha width is calibrated against THIS panel's width budget and not carried over from the
-// wider layout the first table was written for: the right panel is kRightPanelWidth (340 px) wide,
-// which leaves a table ~314 px, and the fixed columns plus cell padding claim all but ~169 px of
+// wider layout the first table was written for: the right panel is kRightPanelWidth (300 px) wide,
+// which leaves a table ~274 px, and the fixed columns plus cell padding claim all but ~129 px of
 // it. Anything this column takes comes straight off the Name column, which is the only stretching
 // one — so this number is the name column's budget stated from the other side. The arbiter is not
 // this comment but test_overlay_controls.cpp's the_columns_line_up_and_no_name_is_cut_off, which
@@ -1555,9 +1555,9 @@ void RenderOverlaysTab() {
   };
 
   // The Alpha column width is calibrated against THIS panel's width budget, not carried over from
-  // the wider layout this table was first written for: the right panel is kRightPanelWidth (340 px)
-  // wide, which leaves the table ~314 px, and the fixed columns plus cell padding claim all but
-  // ~169 px of it. Anything that column takes comes straight off the Name column, which is the only
+  // the wider layout this table was first written for: the right panel is kRightPanelWidth (300 px)
+  // wide, which leaves the table ~274 px, and the fixed columns plus cell padding claim all but
+  // ~129 px of it. Anything that column takes comes straight off the Name column, which is the only
   // stretching one — so that number (kAlphaColWidth in SetupOverlayTableColumns) is the name
   // column's budget stated from the other side. The arbiter is not this comment but
   // test_overlay_controls.cpp's the_columns_line_up_and_no_name_is_cut_off: if a font or style
@@ -1750,10 +1750,14 @@ void RenderRightPanel(GLFWwindow* window, float window_width, float window_heigh
     }
     const ImGuiStyle& style = ImGui::GetStyle();
     // Reset's width is read off the drawn button rather than estimated — the text's pixel width is
-    // ImGui's to know. Lock's is a restatement of ImGui Checkbox's own layout formula (square
-    // frame + ItemInnerSpacing + label); the wrapper in panels.cpp adds a border, not geometry.
+    // ImGui's to know. The Lock checkbox budgets only its square: Checkbox lays itself out as
+    // square frame + ItemInnerSpacing + label, and because LabelColumnGapX() == ItemInnerSpacing.x
+    // (panels.cpp's settled value) the square's right edge lands on the control column's right
+    // edge — the same line the FOV input ends on — and the "Lock" text starts exactly on the
+    // trailing labels' text line. Both alignments are this one formula's consequence; the test
+    // that measures them is look_at_controls_share_one_unclipped_row.
     const float reset_w = ImGui::GetItemRectSize().x;
-    const float lock_w = ImGui::GetFrameHeight() + style.ItemInnerSpacing.x + ImGui::CalcTextSize("Lock").x;
+    const float lock_square_w = ImGui::GetFrameHeight();
     // The width that keeps the longest menu entry unclipped, over the SAME set the popup renders —
     // a floor taken over a prefix of the ids would quietly stop covering the longest name whenever
     // it moved out of that prefix. At kRightPanelWidth's shipped value the grid width below always
@@ -1772,7 +1776,7 @@ void RenderRightPanel(GLFWwindow* window, float window_width, float window_heigh
     }
     const float col_right_offset = UiPx(kLabelColWidth) + LabelColumnGapX();
     const float combo_w =
-        std::max(preview_floor, row_avail - col_right_offset - reset_w - lock_w - 2.0f * style.ItemSpacing.x);
+        std::max(preview_floor, row_avail - col_right_offset - reset_w - lock_square_w - 2.0f * style.ItemSpacing.x);
     ImGui::SetNextItemWidth(combo_w);
     ImGui::BeginDisabled(!el_c.enabled);
     if (ImGui::BeginCombo(kLookAtId, look_at_preview)) {

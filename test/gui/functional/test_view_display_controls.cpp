@@ -195,13 +195,22 @@ ImGuiTestItemInfo LookAtComboInfo(ImGuiTestContext* ctx) {
 }
 
 bool LookAtControlsFitOneRow(ImGuiTestContext* ctx, float ui_scale) {
+  // Scroll the row into view first: at 2x it starts below the harness window's fold, and a
+  // clipped Reset never registers its debug label (ButtonEx returns from its clipped branch
+  // before the test-engine hook), so the wildcard lookup would answer "not present" for a row
+  // that did draw — while the Lock checkbox registers even when clipped, which is what makes the
+  // scroll target resolvable. Same ScrollToItemY-before-ItemInfo pattern as
+  // test_marker_panel.cpp. The alignment claims are scroll-invariant.
+  ctx->ScrollToItemY(kLookAtLock);
+  ctx->Yield(3);
   const ImGuiTestItemInfo reset = ctx->ItemInfo("**/Reset##view", ImGuiTestOpFlags_NoError);
   const ImGuiTestItemInfo combo = LookAtComboInfo(ctx);
   const ImGuiTestItemInfo lock = ctx->ItemInfo(kLookAtLock, ImGuiTestOpFlags_NoError);
   const ImGuiTestItemInfo fov_input = ctx->ItemInfo(kViewInputs[0], ImGuiTestOpFlags_NoError);
-  if (reset.ID == 0 || combo.ID == 0 || lock.ID == 0 || fov_input.ID == 0 || reset.Window == nullptr ||
-      reset.Window != combo.Window || combo.Window != lock.Window) {
-    IM_ERRORF("UI scale %.2f: Reset / Look At / Lock are not all present in the right panel", ui_scale);
+  const ImGuiTestItemInfo fov_label = ctx->ItemInfo("**/##FOV##view_label", ImGuiTestOpFlags_NoError);
+  if (reset.ID == 0 || combo.ID == 0 || lock.ID == 0 || fov_input.ID == 0 || fov_label.ID == 0 ||
+      reset.Window == nullptr || reset.Window != combo.Window || combo.Window != lock.Window) {
+    IM_ERRORF("UI scale %.2f: Reset / Look At / Lock / FOV input are not all present in the right panel", ui_scale);
     return false;
   }
   if (reset.RectFull.Max.x > combo.RectFull.Min.x || combo.RectFull.Max.x > lock.RectFull.Min.x) {
@@ -212,19 +221,24 @@ bool LookAtControlsFitOneRow(ImGuiTestContext* ctx, float ui_scale) {
     IM_ERRORF("UI scale %.2f: Reset / Look At / Lock are not on one row", ui_scale);
     return false;
   }
-  // The row's two alignment claims, as measurements. Equal heights: all three are full-frame
-  // widgets — Reset used to be a SmallButton, half a frame tall between two full ones. Right
-  // edge: the row ends on the label column's left edge, the line every control row above ends
-  // on; the FOV input is the anchor because it is the rightmost control of the cluster directly
-  // above (the trailing-label-column case already measures that line through it).
+  // The row's alignment claims, as measurements. Equal heights: all three are full-frame widgets
+  // — Reset used to be a SmallButton, half a frame tall between two full ones. Square right edge:
+  // the checkbox's item rect includes its label, so the square's right edge is Min.x +
+  // GetFrameHeight(), and it must land on the control column's right edge — the line every
+  // control row above ends on; the FOV input is the anchor because it is the rightmost control of
+  // the cluster directly above. Label start: Checkbox's own layout puts its label at square +
+  // ItemInnerSpacing, and that must coincide with the trailing labels' text line; the FOV label
+  // is that line's anchor. The two claims measure the geometry independently — each can go red
+  // on its own, and the label one does not rest on LabelColumnGapX() == ItemInnerSpacing.x, so a
+  // future change to that gap shows up here rather than silently misaligning.
   //
   // 0.5f is statement-of-arithmetic slack, not sampled tolerance: every width involved is built
   // from the same style constants, so exact agreement is the expectation and the epsilon only
   // forgives float summation order.
   //
-  // If the right-edge check goes red while the unclipped one below still passes, the combo's
+  // If the square-edge check goes red while the unclipped one below still passes, the combo's
   // floor (the longest entry's unclipped preview width, same formula as below) has started to
-  // bind: the row is ending past the label line on purpose rather than clip an entry name, and
+  // bind: the square is ending past the label line on purpose rather than clip an entry name, and
   // kRightPanelWidth is the knob the red points at.
   if (std::fabs(reset.RectFull.GetHeight() - combo.RectFull.GetHeight()) > 0.5f ||
       std::fabs(combo.RectFull.GetHeight() - lock.RectFull.GetHeight()) > 0.5f ||
@@ -234,9 +248,16 @@ bool LookAtControlsFitOneRow(ImGuiTestContext* ctx, float ui_scale) {
               static_cast<double>(lock.RectFull.GetHeight()));
     return false;
   }
-  if (std::fabs(lock.RectFull.Max.x - fov_input.RectFull.Max.x) > 0.5f) {
-    IM_ERRORF("UI scale %.2f: the row ends at x=%.1f, but the control column ends at x=%.1f (FOV input)", ui_scale,
-              static_cast<double>(lock.RectFull.Max.x), static_cast<double>(fov_input.RectFull.Max.x));
+  const float lock_square_right = lock.RectFull.Min.x + ImGui::GetFrameHeight();
+  if (std::fabs(lock_square_right - fov_input.RectFull.Max.x) > 0.5f) {
+    IM_ERRORF("UI scale %.2f: the Lock square ends at x=%.1f, but the control column ends at x=%.1f (FOV input)",
+              ui_scale, static_cast<double>(lock_square_right), static_cast<double>(fov_input.RectFull.Max.x));
+    return false;
+  }
+  if (std::fabs(lock_square_right + ImGui::GetStyle().ItemInnerSpacing.x - fov_label.RectFull.Min.x) > 0.5f) {
+    IM_ERRORF("UI scale %.2f: the Lock label starts at x=%.1f, but the trailing labels start at x=%.1f (FOV label)",
+              ui_scale, static_cast<double>(lock_square_right + ImGui::GetStyle().ItemInnerSpacing.x),
+              static_cast<double>(fov_label.RectFull.Min.x));
     return false;
   }
   if (lock.RectFull.Max.x > lock.Window->InnerRect.Max.x) {
@@ -1747,7 +1768,7 @@ void RegisterViewDisplayControlTests(ImGuiTestEngine* engine) {
       IM_CHECK(gui::g_state.look_at.locked);
       IM_CHECK_EQ(gui::g_state.look_at.target, gui::LookAtId::kHorizonAntiSun);
 
-      for (const float scale : { 1.0f, 1.5f, 1.0f }) {
+      for (const float scale : { 1.0f, 1.5f, 2.0f, 1.0f }) {
         gui::SetUiScaleMultiplierImmediate(scale);
         ctx->Yield(3);
         if (!LookAtControlsFitOneRow(ctx, scale)) {
