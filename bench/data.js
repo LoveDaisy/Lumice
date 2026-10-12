@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1791846642207,
+  "lastUpdate": 1791846644585,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9512,50 +9512,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "fbd9e333c05a864d3df8756f7a171910bc9fd37a",
-          "message": "Merge pull request #378 from LoveDaisy/feat/cpu-worker-side-projection\n\nperf(core): move legacy-CPU per-ray projection onto the simulator workers",
-          "timestamp": "2026-09-18T04:05:22+08:00",
-          "tree_id": "14b5ad3b0df1857b2e43b1dde29f1d4fdd79955a",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/fbd9e333c05a864d3df8756f7a171910bc9fd37a"
-        },
-        "date": 1789676304671,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 94.7,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 99.7,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 97.6,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 92,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "f392ee3a91e7a6975dd11b1c7e2867ef8800efa0",
           "message": "Merge pull request #379 from LoveDaisy/feat/cli-raw-float-export\n\nfeat(cli): --format npy raw float32 XYZ export with sidecar metadata",
           "timestamp": "2026-09-19T00:39:06+08:00",
@@ -13850,6 +13806,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 93.6,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "b45848cea4b9c09ffeec37e4f3f442ae13cd62e6",
+          "message": "Merge pull request #489 from LoveDaisy/fix/look-at-row-grid-polish\n\nFix: revert right panel to 300px and end the Look At row on the Lock square",
+          "timestamp": "2026-10-13T07:07:41+08:00",
+          "tree_id": "5b2702f367d17c7dd47f5ddeb66a544d1cd3c8e1",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/b45848cea4b9c09ffeec37e4f3f442ae13cd62e6"
+        },
+        "date": 1791846643819,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 79.6,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 100.2,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 97.8,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 95.2,
             "unit": "%"
           }
         ]
