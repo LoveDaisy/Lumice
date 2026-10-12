@@ -14,9 +14,11 @@ import prepare_ci_compiler_cache as cache_ready  # noqa: E402
 
 
 def test_ccache_stats_require_zero_errors_and_one_write_per_miss():
-    # Concurrent misses can share one result key, so two writes per miss is not a
-    # legal lower bound (7 misses / 13 writes was rejected on a fully warm build);
-    # write < miss still means at least one miss persisted nothing.
+    # A miss's manifest update is legitimately skipped when the manifest already
+    # lists this result key (a restored seed whose result files were evicted --
+    # dangling reference), so two writes per miss is not a legal lower bound
+    # (7 misses / 13 writes was rejected on a fully warm build); write < miss
+    # still means at least one miss persisted nothing.
     assert cache_ready._parse_ccache_stats("internal_error\t0\ncache_miss\t7\nlocal_storage_write\t13") == {
         "internal_error": 0,
         "cache_miss": 7,
