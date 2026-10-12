@@ -48,8 +48,12 @@ def _parse_ccache_stats(raw: str) -> dict[str, int]:
         raise CacheReadinessError(f"ccache statistics are missing: {', '.join(sorted(missing))}")
     if stats["internal_error"] != 0:
         raise CacheReadinessError(f"ccache reported {stats['internal_error']} internal error(s)")
-    # A direct-mode miss writes one result and one manifest before returning.
-    minimum_writes = 2 * stats["cache_miss"]
+    # A successful miss always writes its result entry, but its manifest update can be
+    # legitimately skipped when the manifest already lists this result key (e.g. a
+    # restored seed whose result files were evicted; observed live as 7 misses with 13
+    # local writes on a fully warm build). So write < miss means some miss persisted
+    # nothing at all, which is the corruption this audit rejects.
+    minimum_writes = stats["cache_miss"]
     if stats["local_storage_write"] < minimum_writes:
         raise CacheReadinessError(
             f"ccache reported {stats['cache_miss']} miss(es) but only "

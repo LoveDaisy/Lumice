@@ -2236,12 +2236,14 @@ payload/audit; do not spend another hosted build merely to demonstrate that remo
 
 **Compiler-cache publication is independent of test success.** Pull requests remain restore-only.
 On a `push` to `main`, after Build succeeds and before Test starts, the job reads machine-readable
-compiler-cache statistics and verifies real stored entries. ccache additionally reconciles each miss
-with its synchronous result+manifest writes; sccache 0.17.0 reports `cache_write_errors` after awaiting
-writes before the compiler response. Only a non-cancelled main run, a successful Build and readiness
-check, and a non-exact restore may save under the paired restore action's primary key. A failed or
-skipped Build, bad/unknown statistics, write-accounting mismatch, empty cache, exact hit or cancellation
-before publication does not save. A later test, duration or GUI red still leaves that compiler seed
+compiler-cache statistics and verifies real stored entries. ccache additionally requires at least one
+local write per miss (`write < miss` means some miss persisted nothing; the per-miss manifest update
+can be legitimately skipped when the manifest already lists the result key, as in a restored seed whose
+result files were evicted, so two writes per miss is not a legal floor); sccache 0.17.0 reports
+`cache_write_errors` after awaiting writes before the compiler response. Only a non-cancelled main run,
+a successful Build and readiness check, and a non-exact restore may save under the paired restore
+action's primary key. A failed or skipped Build, bad/unknown statistics, write-accounting mismatch,
+empty cache, exact hit or cancellation before publication does not save. A later test, duration or GUI red still leaves that compiler seed
 available; caching compiler outputs is not a claim that tests passed. CPM and every other cache keep
 their existing lifecycle.
 
