@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1791815057155,
+  "lastUpdate": 1791815060247,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -4764,54 +4764,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "695de9ed0e5a901e96e0c747c5b6235ed051c10d",
-          "message": "Merge pull request #377 from LoveDaisy/chore/ci-e2e-slow-macos-rest-timeout\n\nfix(ci): widen E2E Slow (macOS rest) step timeout 15→25 min",
-          "timestamp": "2026-09-17T16:56:21+08:00",
-          "tree_id": "de8b1ecd633d6f3a4476f875f401bac57c4c5feb",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/695de9ed0e5a901e96e0c747c5b6235ed051c10d"
-        },
-        "date": 1789636078593,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 836630.7,
-            "unit": "rays/sec",
-            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 1185785.5,
-            "unit": "rays/sec",
-            "extra": "CPU: Neoverse-N2\\nCores: 4"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 742597.6,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 9V74 80-Core Processor\\nCores: 4"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 800993.5,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 9V74 80-Core Processor                \\nCores: 4"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "444cec705397fdcccafdc87329cb670fe0a4983d",
           "message": "Merge pull request #376 from LoveDaisy/feat/cuda-persistent-device-buffers\n\nperf(cuda): persist lat_lut buffers and make EnsureSessionBuffers grow-only",
           "timestamp": "2026-09-17T17:17:49+08:00",
@@ -9500,6 +9452,48 @@ window.BENCHMARK_DATA = {
             "value": 591142.8,
             "unit": "rays/sec",
             "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "cdb4c383c1637dc4de908ea64859de306a7ec22c",
+          "message": "Merge pull request #487 from LoveDaisy/fix/look-at-row-alignment\n\nfix(gui): align the View Look At row to the panel's control grid",
+          "timestamp": "2026-10-12T22:17:52+08:00",
+          "tree_id": "684e0d405dc952e70143ce6cf8d78cd922de7278",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/cdb4c383c1637dc4de908ea64859de306a7ec22c"
+        },
+        "date": 1791815059841,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 1018257.4,
+            "unit": "rays/sec",
+            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 1007889.7,
+            "unit": "rays/sec",
+            "extra": "CPU: Neoverse-N2\\nCores: 4"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 924417.8,
+            "unit": "rays/sec",
+            "extra": "CPU: INTEL(R) XEON(R) PLATINUM 8573C\\nCores: 4"
           }
         ]
       }
