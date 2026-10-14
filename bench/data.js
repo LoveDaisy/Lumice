@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792000475348,
+  "lastUpdate": 1792000477902,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9512,50 +9512,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "6f38f1a7758e76516f2e71424805ca2f32020ade",
-          "message": "Merge pull request #382 from LoveDaisy/feat/perf-followthrough\n\nperf: follow-through scrum — per-platform worker cap, GUI startup prewarm, CUDA hit-budget fix, PostSnapshot parallelization, measurement discipline",
-          "timestamp": "2026-09-19T15:59:56+08:00",
-          "tree_id": "6bd42c6a11fb1d48fb9d34ac461583994b914805",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/6f38f1a7758e76516f2e71424805ca2f32020ade"
-        },
-        "date": 1789805608878,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 87.7,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 99.6,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 98.1,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 94,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "96c437719d62599f74bab998e9baa5a4192900a7",
           "message": "Merge pull request #384 from LoveDaisy/feat/lmc-f16-texture-dual-path\n\nfeat(gui): .lmc v6 float16 texture with the live preview quantized through the same codec",
           "timestamp": "2026-09-20T01:45:06+08:00",
@@ -13850,6 +13806,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 94.1,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "92c54af058536b731f3f2a7bc50a444704146b7f",
+          "message": "Merge pull request #494 from LoveDaisy/feat/analysis-crystal-id-mismatch\n\nfix(gui): align analysis list crystal numbers with card IDs",
+          "timestamp": "2026-10-15T01:51:21+08:00",
+          "tree_id": "d43c91f95f5daa0bd5c9b3c56b99635d451c6af2",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/92c54af058536b731f3f2a7bc50a444704146b7f"
+        },
+        "date": 1792000477226,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 80.4,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 99.9,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 99.3,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 93.7,
             "unit": "%"
           }
         ]
