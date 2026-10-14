@@ -1761,6 +1761,11 @@ void RegisterViewDisplayControlTests(ImGuiTestEngine* engine) {
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
       const ScopedPopups popup_guard(ctx);
+      // The scale loop below grows the shared window at 2.0x (the rebuild raises the window
+      // minimum; the product leaves it grown once the multiplier returns to 1x). The guard hands
+      // the basis back to the next case — including when an IM_CHECK inside the loop returns
+      // early, which is exactly when a tail statement would not run.
+      const ScopedWindowBasis window_basis(ctx);
       ctx->Yield(3);
 
       PickLookAt(ctx, "Away from sun");
