@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1791980359999,
+  "lastUpdate": 1791980364929,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -4764,54 +4764,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "11cc9ff591a8d177621c226af7d970ad200ad6fb",
-          "message": "Merge pull request #381 from LoveDaisy/feat/lmc-linear-xyz-texture\n\nfeat(gui): store the .lmc preview texture as unexposed linear XYZ (format v5)",
-          "timestamp": "2026-09-19T02:24:05+08:00",
-          "tree_id": "46941acdc2657c651126351d9db7f5e5664612d3",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/11cc9ff591a8d177621c226af7d970ad200ad6fb"
-        },
-        "date": 1789756617732,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 919791.2,
-            "unit": "rays/sec",
-            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 1013670.6,
-            "unit": "rays/sec",
-            "extra": "CPU: Neoverse-N2\\nCores: 4"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 709696.4,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 7763 64-Core Processor\\nCores: 4"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 566169.2,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "6f38f1a7758e76516f2e71424805ca2f32020ade",
           "message": "Merge pull request #382 from LoveDaisy/feat/perf-followthrough\n\nperf: follow-through scrum — per-platform worker cap, GUI startup prewarm, CUDA hit-budget fix, PostSnapshot parallelization, measurement discipline",
           "timestamp": "2026-09-19T15:59:56+08:00",
@@ -9494,6 +9446,54 @@ window.BENCHMARK_DATA = {
             "value": 583812,
             "unit": "rays/sec",
             "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "d732ea5937ccbe41714459898520e6607d066b12",
+          "message": "Merge pull request #493 from LoveDaisy/fix/gui-test-window-size-leak\n\ntest(gui): restore shared window basis at case entry with a leak sentinel",
+          "timestamp": "2026-10-14T20:16:19+08:00",
+          "tree_id": "18a408014d7f5b0bdfc2b2667c2dd6fa2d21835e",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/d732ea5937ccbe41714459898520e6607d066b12"
+        },
+        "date": 1791980364261,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 1004421.5,
+            "unit": "rays/sec",
+            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 1009465.9,
+            "unit": "rays/sec",
+            "extra": "CPU: Neoverse-N2\\nCores: 4"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 724818.9,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 7763 64-Core Processor\\nCores: 4"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 700811.1,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 9V74 80-Core Processor                \\nCores: 4"
           }
         ]
       }
