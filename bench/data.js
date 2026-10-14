@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1791980364929,
+  "lastUpdate": 1791980367461,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9512,50 +9512,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "11cc9ff591a8d177621c226af7d970ad200ad6fb",
-          "message": "Merge pull request #381 from LoveDaisy/feat/lmc-linear-xyz-texture\n\nfeat(gui): store the .lmc preview texture as unexposed linear XYZ (format v5)",
-          "timestamp": "2026-09-19T02:24:05+08:00",
-          "tree_id": "46941acdc2657c651126351d9db7f5e5664612d3",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/11cc9ff591a8d177621c226af7d970ad200ad6fb"
-        },
-        "date": 1789756620521,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 92.8,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 99.8,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 98,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 91.6,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "6f38f1a7758e76516f2e71424805ca2f32020ade",
           "message": "Merge pull request #382 from LoveDaisy/feat/perf-followthrough\n\nperf: follow-through scrum — per-platform worker cap, GUI startup prewarm, CUDA hit-budget fix, PostSnapshot parallelization, measurement discipline",
           "timestamp": "2026-09-19T15:59:56+08:00",
@@ -13845,6 +13801,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Ubuntu x86_64",
             "value": 99.2,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 94.1,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "d732ea5937ccbe41714459898520e6607d066b12",
+          "message": "Merge pull request #493 from LoveDaisy/fix/gui-test-window-size-leak\n\ntest(gui): restore shared window basis at case entry with a leak sentinel",
+          "timestamp": "2026-10-14T20:16:19+08:00",
+          "tree_id": "18a408014d7f5b0bdfc2b2667c2dd6fa2d21835e",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/d732ea5937ccbe41714459898520e6607d066b12"
+        },
+        "date": 1791980366663,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 95.7,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 99.9,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 98.8,
             "unit": "%"
           },
           {
