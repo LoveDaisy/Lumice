@@ -256,6 +256,9 @@ void RegisterBackgroundOverlayTests(ImGuiTestEngine* engine) {
         IM_REGISTER_TEST(engine, "background_overlay", "aspect_resize_and_dpi_events_preserve_manual_control");
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
+      // Every request below moves the shared window; the guard hands the 1600x980 basis back to
+      // the next case even when an IM_CHECK above returns early.
+      const ScopedWindowBasis window_basis(ctx);
       ctx->Yield(2);
       const auto request = [ctx](bool apply_aspect, bool content_scale_change, int width, int height) {
         g_window_size_test.apply_aspect = apply_aspect;
@@ -309,7 +312,6 @@ void RegisterBackgroundOverlayTests(ImGuiTestEngine* engine) {
       IM_CHECK(gui::g_state.aspect_clamp.was_clamped);
       request(false, false, width - 152, height);
       IM_CHECK_EQ(gui::g_state.aspect_preset, gui::AspectPreset::kFree);
-      request(false, false, gui::kInitWindowWidth, gui::kInitWindowHeight);
     };
   }
 
@@ -318,6 +320,10 @@ void RegisterBackgroundOverlayTests(ImGuiTestEngine* engine) {
     t->GuiFunc = BackgroundGuiFunc;
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
+      // The scale loop below grows the shared window at 2.0x and the aspect handshakes resize it
+      // to the photo's ratio; the guard hands the basis back even when the early return inside
+      // the loop fires.
+      const ScopedWindowBasis window_basis(ctx);
       for (const BgImage& img : { kLandscape, kPortrait }) {
         LoadRenderAndBackground(ctx, img);
         if (ctx->IsError()) {
@@ -356,16 +362,6 @@ void RegisterBackgroundOverlayTests(ImGuiTestEngine* engine) {
           }
         }
       }
-      gui::g_state.aspect_preset = gui::AspectPreset::kFree;
-      g_window_size_test.apply_aspect = false;
-      g_window_size_test.width = gui::kInitWindowWidth;
-      g_window_size_test.height = gui::kInitWindowHeight;
-      g_window_size_test.done.store(false);
-      g_window_size_test.requested.store(true);
-      while (!g_window_size_test.done.load()) {
-        ctx->Yield();
-      }
-      ctx->Yield(2);
     };
   }
   // The aspect a loaded image reports is the file's own, not the viewport's and not the previous
