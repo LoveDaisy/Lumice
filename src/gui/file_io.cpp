@@ -1873,12 +1873,11 @@ void FillGridLines(const std::vector<float>& angles, const float color[3], float
 
 }  // namespace
 
-std::map<int, int> ComputeCrystalPoolToCoreIdMap(const GuiState& state) {
+std::map<int, int> ComputeCrystalPoolToCoreIdMap(const std::vector<Layer>& layers) {
   std::map<int, int> pool_to_core;
-  const int layer_n =
-      static_cast<int>(std::min(state.layers.size(), static_cast<size_t>(LUMICE_MAX_CONFIG_SCATTER_LAYERS)));
+  const int layer_n = static_cast<int>(std::min(layers.size(), static_cast<size_t>(LUMICE_MAX_CONFIG_SCATTER_LAYERS)));
   for (int i = 0; i < layer_n; i++) {
-    const auto& layer = state.layers[i];
+    const auto& layer = layers[i];
     const int entry_n =
         static_cast<int>(std::min(layer.entries.size(), static_cast<size_t>(LUMICE_MAX_CONFIG_SCATTER_ENTRIES)));
     for (int k = 0; k < entry_n; k++) {
@@ -1897,6 +1896,10 @@ std::map<int, int> ComputeCrystalPoolToCoreIdMap(const GuiState& state) {
     }
   }
   return pool_to_core;
+}
+
+std::map<int, int> ComputeCrystalPoolToCoreIdMap(const GuiState& state) {
+  return ComputeCrystalPoolToCoreIdMap(state.layers);
 }
 
 LUMICE_RayCount SimRayCount(const SimConfig& sim) {

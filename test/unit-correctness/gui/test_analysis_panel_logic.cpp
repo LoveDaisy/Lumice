@@ -907,6 +907,77 @@ TEST(AnalysisPanelLogic, JoinerForDisplayRedrawsOnlyTheLayerJoiner) {
   EXPECT_EQ(JoinerForDisplay("3->5"), "3->5");
 }
 
+// The crystal prefix each row shows is the card's pool number, not the scene's: every
+// segment-leading "C<core>(" is rewritten to "#<pool>(" under the map, everything else passes
+// through. The samples are the four official display forms (lumice_engine.h at
+// LUMICE_RaypathHistogramEntry) plus the shapes the rewrite must leave alone: an id the map
+// lacks, a bare "C1" with no "(", a "DC1(" whose C is not at a segment start, and a body cut
+// off mid-chain (the token, not the chain, is the rewrite's unit).
+TEST(AnalysisPanelLogic, AnalysisRowLabelRewritesCrystalTokensToCardNumbers) {
+  const std::string arrow = std::string(" ") + ICON_FA_ARROW_RIGHT + " ";
+  const std::map<int, int> aligned = { { 0, 0 }, { 1, 1 }, { 2, 2 }, { 4, 4 } };
+  const std::map<int, int> sparse = { { 0, 5 }, { 1, 2 }, { 2, 0 }, { 4, 1 } };
+  for (const auto& m : { aligned, sparse }) {
+    EXPECT_EQ(AnalysisRowLabel("3-5", m), "3-5");
+    EXPECT_EQ(AnalysisRowLabel("", m), "");
+    EXPECT_EQ(AnalysisRowLabel("(3-5) -> (1-3)", m), "(3-5)" + arrow + "(1-3)");
+    EXPECT_EQ(AnalysisRowLabel("C1(3-5)", m), std::string("#") + std::to_string(m.at(1)) + "(3-5)");
+    EXPECT_EQ(AnalysisRowLabel("C1(1-3) -> C4(3-5)", m),
+              "#" + std::to_string(m.at(1)) + "(1-3)" + arrow + "#" + std::to_string(m.at(4)) + "(3-5)");
+    // Mixed layers: only the tokened ones move.
+    EXPECT_EQ(AnalysisRowLabel("C1(3-5) -> (1-3) -> (4)", m),
+              "#" + std::to_string(m.at(1)) + "(3-5)" + arrow + "(1-3)" + arrow + "(4)");
+    // The token, not the chain, is the unit: a truncated body still rewrites its complete token.
+    EXPECT_EQ(AnalysisRowLabel("C1(3-5", m), "#" + std::to_string(m.at(1)) + "(3-5");
+  }
+  // An id the map lacks keeps the raw prefix, per segment and alone.
+  EXPECT_EQ(AnalysisRowLabel("C7(3-5)", aligned), "C7(3-5)");
+  EXPECT_EQ(AnalysisRowLabel("C0(1-3) -> C7(3-5)", aligned), "#0(1-3)" + arrow + "C7(3-5)");
+  // Not token-shaped: a bare id with no "(", and a C that is not at a segment start.
+  EXPECT_EQ(AnalysisRowLabel("C1", aligned), "C1");
+  EXPECT_EQ(AnalysisRowLabel("C1(3-5) -> C1", aligned), "#1(3-5)" + arrow + "C1");
+  EXPECT_EQ(AnalysisRowLabel("DC1(3-5)", aligned), "DC1(3-5)");
+  // An empty map (no snapshot) rewrites nothing and reorders nothing.
+  const std::map<int, int> none;
+  EXPECT_EQ(AnalysisRowLabel("C1(1-3) -> C4(3-5)", none), "C1(1-3)" + arrow + "C4(3-5)");
+}
+
+// The map is the Analyze-time snapshot's, not the live document's: a card deleted after the
+// analysis keeps its number in the map, because the snapshot still describes the scene the
+// result was computed from. Without a snapshot the map is empty.
+TEST(AnalysisPanelLogic, AnalysisCoreToPoolMapDerivesFromTheSnapshotNotTheLiveDocument) {
+  GuiState state;
+  state.crystals.assign(3, CrystalConfig{});
+  Layer layer;
+  layer.probability = 1.0f;
+  for (int i = 0; i < 3; ++i) {
+    EntryCard e;
+    e.crystal_id = i;
+    layer.entries.push_back(e);
+  }
+  state.layers.assign(1, layer);
+  state.analysis_result.analyzed_scene = GuiState::AnalysisSceneIdentity::From(state);
+
+  const std::map<int, int> m = AnalysisCoreToPoolMap(state);
+  ASSERT_EQ(m.size(), 3u);
+  EXPECT_EQ(m.at(0), 0);
+  EXPECT_EQ(m.at(1), 1);
+  EXPECT_EQ(m.at(2), 2);
+
+  // Delete the middle card: the live document now has two entries, but the map — derived from
+  // the untouched snapshot — still names all three pools.
+  GuiState deleted = state;
+  deleted.layers[0].entries.erase(deleted.layers[0].entries.begin() + 1);
+  const std::map<int, int> snapshot_map = AnalysisCoreToPoolMap(deleted);
+  EXPECT_EQ(snapshot_map.size(), 3u);
+  EXPECT_EQ(snapshot_map.at(2), 2);
+
+  // No snapshot: empty map, and the row labels stay the raw text.
+  GuiState no_snapshot = state;
+  no_snapshot.analysis_result.analyzed_scene.reset();
+  EXPECT_TRUE(AnalysisCoreToPoolMap(no_snapshot).empty());
+}
+
 TEST(AnalysisPanelLogic, ExcludeWritesOneFilterOutFilterBoundToEveryEntryOfTheCrystal) {
   GuiState state = TwoCrystalDocument();
   auto p = MakePayload(1, LUMICE_RAYPATH_ROI_FULL_SKY, { 5.0 });

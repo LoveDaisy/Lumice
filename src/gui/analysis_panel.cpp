@@ -661,6 +661,75 @@ std::string JoinerForDisplay(std::string_view display) {
 
 namespace {
 
+// The crystal-token stage of AnalysisRowLabel, on the raw text the joiner redraw has not yet
+// touched. Walks the display one segment at a time — a segment starts at the string or just
+// after the " -> " joiner, and that is the only place the v4.33 grammar puts a crystal prefix —
+// and rewrites a leading "C<digits>(" to "#<pool>(" when `core_to_pool` knows the id. Anything
+// else, including a token-shaped run with an id the map lacks or a malformed one ("C1" with no
+// "(", a "DC1(" some other text happens to carry), passes through byte for byte.
+std::string RewriteCrystalPrefixes(std::string_view display, const std::map<int, int>& core_to_pool) {
+  static constexpr std::string_view kJoiner = " -> ";
+  std::string out;
+  out.reserve(display.size());
+  size_t pos = 0;
+  while (true) {
+    const size_t joiner = display.find(kJoiner, pos);
+    const std::string_view segment =
+        display.substr(pos, joiner == std::string_view::npos ? std::string_view::npos : joiner - pos);
+    if (!segment.empty() && segment.front() == 'C') {
+      size_t digits_end = 1;
+      while (digits_end < segment.size() && segment[digits_end] >= '0' && segment[digits_end] <= '9') {
+        ++digits_end;
+      }
+      // A digit run long enough to overflow an int is not an id the engine ever wrote; treat it
+      // as not a token and keep the raw bytes.
+      if (digits_end > 1 && digits_end <= 10 && digits_end < segment.size() && segment[digits_end] == '(') {
+        int core_id = 0;
+        for (size_t i = 1; i < digits_end; ++i) {
+          core_id = core_id * 10 + (segment[i] - '0');
+        }
+        const auto it = core_to_pool.find(core_id);
+        if (it != core_to_pool.end()) {
+          out += '#';
+          out += std::to_string(it->second);
+          out.append(segment.substr(digits_end));
+        } else {
+          out.append(segment);
+        }
+      } else {
+        out.append(segment);
+      }
+    } else {
+      out.append(segment);
+    }
+    if (joiner == std::string_view::npos) {
+      break;
+    }
+    out.append(kJoiner);
+    pos = joiner + kJoiner.size();
+  }
+  return out;
+}
+
+}  // namespace
+
+std::map<int, int> AnalysisCoreToPoolMap(const GuiState& state) {
+  std::map<int, int> core_to_pool;
+  if (!state.analysis_result.analyzed_scene.has_value()) {
+    return core_to_pool;
+  }
+  for (const auto& [pool, core] : ComputeCrystalPoolToCoreIdMap(state.analysis_result.analyzed_scene->layers)) {
+    core_to_pool.emplace(core, pool);
+  }
+  return core_to_pool;
+}
+
+std::string AnalysisRowLabel(std::string_view display, const std::map<int, int>& core_to_pool) {
+  return JoinerForDisplay(RewriteCrystalPrefixes(display, core_to_pool));
+}
+
+namespace {
+
 // The members of `segment`'s class under P/B/D bits `symmetry` on crystal `cr`, in the meaning
 // `semantics` (LUMICE_SYMMETRY_SEMANTICS_*), each as "a-b-c" text, the segment itself first; empty
 // when the engine cannot answer.
