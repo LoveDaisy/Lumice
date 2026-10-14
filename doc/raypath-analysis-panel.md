@@ -624,18 +624,34 @@ C 结构体里的 `chain[]`/`segment[]` 与 `display` 描述同一条链，前�
 `LUMICE_RAYPATH_DISPLAY_MAX`(=3200) 的病态链，每次读帧时 WARN 一次），正常场景下两者互为镜像。
 
 **连接符的分工：core 给 ASCII，GUI 只在绘制时做呈现映射。** 层间连接符在 `display` 里是 ASCII
-` -> `，这是 C API 契约（`lumice_engine.h` 在 `LUMICE_RaypathHistogramEntry` 处写明）、CLI 打印的原样、
-也是 Exclude 生成的 filter 名称（`"Exclude " + display`）里的字节——不放 U+2192，因为内嵌 body
+` -> `，这是 C API 契约（`lumice_engine.h` 在 `LUMICE_RaypathHistogramEntry` 处写明）与 CLI 打印的
+原样——不放 U+2192，因为内嵌 body
 字体 Roboto Medium 的 cmap 没有这个字形（Arrows 块整块缺失，fontTools 一手核过），放了在 GUI 上
 只会渲染成 `?`。GUI 结果列表的行标签则经 `JoinerForDisplay`（`src/gui/analysis_panel.cpp`）把
 每个 ` -> ` 换成 FontAwesome 的 `ICON_FA_ARROW_RIGHT` 字形（前后各一个空格）再交给
 `ImGui::Selectable`；这是一个纯字符串重写（连接符是链文本里唯一含空格的位置，不需要解析链语法），
-**只有这一处调用**，`selected_entry` 的比较与写入、Exclude filter 名、CLI 都仍读原始 `display`。
-要换成 Roboto 自带的 `›`（U+203A），只改这个函数里的替换串。与此配套，body 字体的 glyph range 显式
-覆盖了 General Punctuation 块（`src/gui/theme.cpp`，`AddBodyFont`），所以面板文案里的 em-dash /
-`›` / `»` 不再是 `?`；`test/gui/functional/test_body_font_glyph_coverage.cpp` 直接问图集这些码点
-在不在，`test_raypath_analysis_panel.cpp` 的 `chain_label_shows_arrow_glyph_not_qmark` 在双层
-场景上验证屏幕上的行标签就是这个重写、点击后选中的仍是原始 ASCII。
+它现在是 `AnalysisRowLabel` 的连接符级（见下段）。`selected_entry` 的比较与写入、CLI 都仍读原始
+`display`。要换成 Roboto 自带的 `›`（U+203A），只改这个函数里的替换串。与此配套，body 字体的 glyph
+range 显式覆盖了 General Punctuation 块（`src/gui/theme.cpp`，`AddBodyFont`），所以面板文案里的
+em-dash / `›` / `»` 不再是 `?`；`test/gui/functional/test_body_font_glyph_coverage.cpp` 直接问图集
+这些码点在不在，`test_raypath_analysis_panel.cpp` 的 `chain_label_shows_arrow_glyph_not_qmark` 在
+双层场景上验证屏幕上的行标签就是这个重写、点击后选中的仍是原始 ASCII。
+
+**晶体前缀的同款分工（2026-10-15）：屏显用卡片 pool 号，interchange 面仍是一份 core 文本。**
+`display` 里的 `C<id>` 是 scene 插入序 id，而 GUI 晶体卡片的 `#N` 是 pool 槽位号——两套编号没有共享键
+（拖拽重排与删卡都动插入序、不动 pool 号），直接显示 `C<n>` 会与卡片对不上。GUI 行标签经
+`AnalysisRowLabel`（同文件）在每个 segment 起始位（串首或 ` -> ` 之后——文法里晶体前缀只出现在这两处）
+把 `C<digits>(` token 重写为 `#<pool>(`：结果行用 `AnalysisCoreToPoolMap` 从 Analyze 时快照
+（`AnalysisSceneIdentity::layers`）反推——卡片后来被拖拽或删除，结果行的数字仍指分析时的那张卡
+（stale 由 freshness banner 说明，数字不随活体漂移）；灰行（excluded rows）用活体文档的 map——它们的
+display 本就是同一活体 map 构造的，自洽；**Exclude 新建的 filter 名**（`"Exclude " + label`）用结果行的
+同一 label——名字是自由文本，绑定/追加/幂等都走 filter 槽位，`excluded_memory` 键是 (pool, token)，
+名字不参与任何匹配或持久化键。id 不在映射内、token 形状不完整时原样保留 `C<n>`（旧拼写诚实，错号不行）。
+`selected_entry`、Export CSV、Copy raypath/Copy row 与 CLI 全部保持 raw `display`——**interchange 面
+仍然只有 core 的一个实现**，本段与上一段是同一个原则的两个实例：core 给契约文本，GUI 只做呈现重写。
+组合层钉子是 `test_raypath_analysis_row_label_chain.cpp`（拖拽/删卡两条路径 + 灰行活体编号），
+功能层锚点是 `chain_label_shows_arrow_glyph_not_qmark` 与 `search_narrows_visible_rows`（后者钉
+搜索的双词汇：raw `C2(` 与屏显 `#2(` 命中同一行）。
 
 **symmetry 来源：「方案 A vs 方案 B」的问题已随对称性改为显示态而结构性消失（2026-09-12更新，
 commit `9efc4779`/`39557d8b`/`c8e271f5`/`b12da83a`）**。设计阶段 §2 第 2 条留了一个开放决策——默认
