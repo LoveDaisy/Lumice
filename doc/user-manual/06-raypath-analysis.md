@@ -124,12 +124,17 @@ new path-feature document or make its records clickable in the preview.
 Lumice raypath -f config.json --crystal 1 --path 3-1-5 --report --budget-ms 15000
 ```
 
-Schema 2 uses the actual product shape/orientation/solar disc/spectrum, physical L2 members and
-one shared numerical route. It reports `actual_features`, conditional `candidates`, and
-`unfinished` records separately, with positions or ranges, source evidence and numerical budgets.
-There is no fixed path-name detector matrix. An internal TIR condition is not automatically an
-observed blue edge. A field-value colour band is defined by two levels at one observation scale,
-not by two different smoothing widths.
+Schema 3 uses the actual product shape/orientation/solar disc/spectrum, physical L2 members and
+one shared numerical route. Its evidence comes in two layers: a **geometry layer** that
+enumerates the path's structural objects on the orientation-reduced sphere (deviation-map
+critical sets, gate boundaries, transmission-weight kinks, restricted-family images) with exact
+certificates, and a **demoted Monte-Carlo layer** (`mc_evidence`) that may corroborate or
+contradict an object but never promotes or erases one. The `features` buckets (`actual` /
+`candidate` / `unfinished`) are derived from object states, and the kinds the enumerator
+actually produces are reported in the document's coverage row. There is no fixed path-name
+detector matrix. An internal TIR condition is not automatically an observed blue edge. A
+field-value colour band is defined by two levels at one observation scale, not by two different
+smoothing widths.
 
 This is conditional path optics under the configured source, not scene-allocation/filter weighting
 or illumination inherited from earlier scatterings.
@@ -143,8 +148,9 @@ actuals and candidates; empty arrays never establish physical absence. Multi-cry
 explicitly unsupported, but reflections within one crystal are allowed.
 
 `--target`, `--grid`, and `--warm` remain a separate, unchanged target-fiber workflow and cannot
-be combined with `--report`. The full definitions, limitations and version-1 migration are in
-[the report field reference](../raypath-cli-output.md#7-target-free-path-feature-report-schema-2).
+be combined with `--report`. The full definitions, limitations and the version-2 to version-3
+migration are in
+[the report field reference](../raypath-cli-output.md#7-target-free-path-feature-report-schema-3).
 
 ## Further reading
 

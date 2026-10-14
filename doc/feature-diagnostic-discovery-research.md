@@ -1,6 +1,12 @@
 # 通用特征发现：研究判据
 
-> 状态：研究结论，不是已实现的发现 API（2026-10-04）。现有 path-feature report 仍是固定案例检测器；本文不改变其支持范围、schema 或 analytic 库版本。
+> 状态：研究结论（2026-10-04 写定）。**记录身份（2026-10-14 更新）**：本文的研究判据与反例
+> 仍然成立，但它写作时针对的两个前身都已被替代——文首所称「现有 path-feature report」的
+> schema-2 MC 发现层，已被 **schema 3** 取代（几何层升为一等证据、MC 降级为佐证；当前权威 =
+> [`raypath-cli-output.md`](raypath-cli-output.md) §7 字段合同 +
+> [`raypath-schema3-layered-design.md`](raypath-schema3-layered-design.md) 分层决策）；§19 记录的
+> 产品落地状态亦以该两处为当前事实（§19 写定时的「schema2/CLI、analytic API7」表述保留为当时的
+> 基线，不回改）。本文不改变任何支持范围、schema 或 analytic 库版本；失败实验与原数值全部保留。
 
 相关：[分析路线图](raypath-analysis.md)、[analytic 能力](analytic-api.md)、[光路对称语义](raypath-symmetry.md)、[数值鲁棒性](numerical-robustness.md)。
 

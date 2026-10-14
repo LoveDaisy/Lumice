@@ -1,9 +1,13 @@
 # Raypath Feature Diagnostic Acceptance Record
 
-> Historical schema-1 fixed-detector acceptance, not the current product contract. Schema 2
-> replaces that dispatcher and its unconditional visibility claims; see `raypath-cli-output.md`
-> §7 and `feature-diagnostic-discovery-research.md` §19. The recorded inputs, hashes and physical
-> observations below remain historical evidence and have not been regenerated.
+> Historical schema-1 fixed-detector acceptance (recorded 2026-10-02), not the current product
+> contract. Two successors have since replaced that dispatcher and its unconditional visibility
+> claims: schema 2's MC discovery layer first, and now **schema 3** — the geometry-layer report
+> whose field contract is `raypath-cli-output.md` §7 and whose layering decision is
+> `raypath-schema3-layered-design.md` (the research history and its §19 landing record live in
+> `feature-diagnostic-discovery-research.md`). The recorded inputs, hashes and physical
+> observations below remain historical evidence and have not been regenerated; the fixed red/blue
+> endpoints and unconditional visibility statements they exercised are not the current report's.
 
 This is a fixed-input product acceptance record. Image evidence is observational,
 not a cross-machine golden and not a claim about every scene.

@@ -485,6 +485,15 @@ computed+`partial`/`unlit`/`unproven` → `candidate`; everything else → `unfi
 field is stored on an object; a reader re-derives or trusts, but cannot find a stored bucket to
 drift from the states.
 
+The registry's **production coverage is itself reported** in the `coverage` block's vocabulary
+row (`produced` / `declared_not_produced`, from `V1Coverage()`), so a reader can tell planned
+vocabulary from what the enumerator actually emits. Today `produced` holds `kind_1`,
+`kind_1_restricted`, `kind_2`, `kind_3` and `s6_junction`; `corridor_closed` (no v8 producer for
+the A=0 corridor — the LI second batch is the donor), `s3_support_boundary`, `s4_branch_boundary`
+(owner ruling: declared, not traced) and `s5_density_feature` (v2 measure layer) are declared
+but never produced, each with its reason carried beside it. An object kind outside `produced`
+cannot appear in `features[]` of this build.
+
 ### 7.5 mc_evidence: the demoted observation record
 
 **Share-domain caveat (added after the frame-vs-analysis calibration audit).** Every

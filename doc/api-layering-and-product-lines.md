@@ -219,7 +219,8 @@ L1 的渲染与标注（11 天 13 次，几乎都落在 `LUMICE_RenderParam`）�
 `WINDOWS_EXPORT_ALL_SYMBOLS`、库默认 console sink 的宿主接管、semver / ABI 与废弃政策、
 install / export 打包、LI 侧 binding 冒烟测试兼作「第三方消费者」样例）；共享库的实际内容随
 第一个成熟算法模块一起进去，不做没有内容、只为发布而发布的库。第一个候选模块是单光路反解 +
-fiber 行走——语义稳定、体量小。这部分已立项为本仓一个 scrum（尚未推进）。
+fiber 行走——语义稳定、体量小。这一项已落地为 `liblumice_analytic`（基础设施与第一模块均已
+as-built，见 `analytic-api.md`；本节写作时的「已立项、尚未推进」表述为当时状态）。
 
 ---
 
