@@ -9,7 +9,9 @@
 > 3) and component discovery `LUMICE_ANALYTIC_DiscoverComponents` (version 4); and module A v1's
 > per-pose diagnostics on `FiberResult` (version 5, §4.3); and module B v1, the band sum
 > `LUMICE_ANALYTIC_BandSum` (version 6, §4.6), plus diagnostic optics/source/weighted-field numerics
-> (version 7, §4.7), consumed by the bounded schema-2 product report and an install-only research
+> (version 7, §4.7), consumed by the bounded product feature report (schema 3 — its geometry layer
+> is §4.8's surface, and its MC corroboration leg still rides these diagnostics) and an install-only
+> research
 > client; and the u-S² field layer, module C's first published half (version 8, §4.8) — the
 > schema3 report's geometry layer, consumed so far by the ABI tests and smoke only. Module A serves the Analyze workspace's first phase,
 > module B its second, the single-path all-sky map (`doc/raypath-analysis.md` §5.1.8). The library is not in any
