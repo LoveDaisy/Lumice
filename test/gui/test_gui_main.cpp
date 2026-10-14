@@ -11,6 +11,7 @@
 
 #include <cfloat>
 #include <chrono>
+#include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -49,6 +50,9 @@
 #include "imgui_internal.h"
 #include "imgui_te_engine.h"
 #include "imgui_te_exporters.h"
+// For ImGuiTestEngine::TestContext: the case-entry window-basis audit names the running test's
+// Category/Name, and that field lives in the engine struct, not the public context header.
+#include "imgui_te_internal.h"
 #include "support/scoped_result_frame.hpp"
 #include "test_gui_shared.hpp"
 
@@ -61,6 +65,7 @@ LeftPanelCaptureState g_left_panel_capture;
 FullFrameCaptureState g_fullframe_capture;
 AutoEvExportState g_auto_ev_export;
 WindowSizeTestState g_window_size_test;
+WindowBasisAudit g_window_basis_audit;
 int g_core_log_level = LUMICE_LOG_INFO;
 int g_gui_log_level = LUMICE_LOG_INFO;
 bool g_enable_visible = false;
@@ -206,6 +211,16 @@ void ResetTestState() {
   gui::g_ui_scale_multiplier = gui::kFactoryUiScaleMultiplier;
   gui::g_ui_scale_dirty = gui::CurrentUiScale() != 1.0f;
   g_window_size_test.Reset();
+  // The shared GLFW window's geometry is suite-global state that nothing above owned: a case
+  // whose ui-scale rebuild raises the window minimum hands the grown size to every later case's
+  // captures (the product deliberately leaves an already-grown window alone once the multiplier
+  // returns to 1x). Ask the main loop to put the window back at the kInit basis before this
+  // case's first capture — same per-case-boundary responsibility as the ImGui storage/scroll
+  // clears elsewhere in this function. A restore is also a leak by some earlier case: the audit
+  // names the mutator and the run's exit code answers for it. Queued after DoNew() so the
+  // restore's resize callback sees a freshly reset g_state (aspect preset back at kFree), not
+  // whatever the previous case left behind.
+  g_window_basis_audit.requested.store(true);
 
   // Runtime state
   gui::g_show_unsaved_popup = false;
@@ -354,6 +369,25 @@ ScopedPopups::~ScopedPopups() {
   }
   // One frame for the window to go away with it. Yield is the only ImGuiTestContext call that still
   // does anything once the case has failed.
+  ctx_->Yield(2);
+}
+
+// See the contract note in test_gui_shared.hpp. The restore is the handshake idiom the aspect and
+// defaults-panel suites used to hand-write at their tails: apply_aspect=false so this is a plain
+// resize — whose product callback cancels a still-active aspect preset — aimed at the kInit
+// basis, wait for the reply, then let two frames settle. ResetTestState()'s audit restore is the
+// catch-all for cases that do not carry this guard; a case that moves the window declares one of
+// these so the restore survives its own early returns.
+ScopedWindowBasis::~ScopedWindowBasis() {
+  g_window_size_test.apply_aspect = false;
+  g_window_size_test.content_scale_change = false;
+  g_window_size_test.width = gui::kInitWindowWidth;
+  g_window_size_test.height = gui::kInitWindowHeight;
+  g_window_size_test.done.store(false);
+  g_window_size_test.requested.store(true);
+  while (!g_window_size_test.done.load()) {
+    ctx_->Yield();
+  }
   ctx_->Yield(2);
 }
 
@@ -726,6 +760,24 @@ int main(int argc, char** argv) {
 
   // Main loop — runs until all tests complete
   bool window_size_reply_pending = false;
+  // Names whoever last moved the shared window, for the case-entry audit's leak line below; both
+  // geometry-mutation throat points in this loop record through it before mutating. Category/Name
+  // are static literals owned by the registered test; between tests the tag degrades to
+  // "startup", which carries the mechanism string — enough for one grep.
+  const auto record_mutator = [engine](const char* mechanism, ...) {
+    char detail[128];
+    va_list args;
+    va_start(args, mechanism);
+    vsnprintf(detail, sizeof(detail), mechanism, args);
+    va_end(args);
+    const ImGuiTest* running = engine->TestContext != nullptr ? engine->TestContext->Test : nullptr;
+    if (running == nullptr || running->Category == nullptr || running->Name == nullptr) {
+      snprintf(g_window_basis_audit.last_mutator, sizeof(g_window_basis_audit.last_mutator), "startup (%s)", detail);
+    } else {
+      snprintf(g_window_basis_audit.last_mutator, sizeof(g_window_basis_audit.last_mutator), "%s/%s (%s)",
+               running->Category, running->Name, detail);
+    }
+  };
   while (true) {
     glfwPollEvents();
     gui::FinishWindowEventPoll();
@@ -741,7 +793,29 @@ int main(int argc, char** argv) {
     }
     gui::SyncFromPoller();  // Sync server data for perf tests (no-op when g_server is null)
 
+    // Case-entry window-basis audit (see WindowBasisAudit in test_gui_shared.hpp). Serviced once
+    // per ResetTestState() request, ahead of the handshake service below so the audit's restore
+    // can never overwrite a resize the same iteration's handshake applies, and before every
+    // capture hook this frame could serve. A restore only fires when a leak exists, so
+    // steady-state runs inject no resize events between ResetTestState()'s
+    // ResetWindowResizeEvents() and the case body.
+    if (g_window_basis_audit.requested.exchange(false)) {
+      int basis_w = 0;
+      int basis_h = 0;
+      glfwGetWindowSize(window, &basis_w, &basis_h);
+      if (basis_w != gui::kInitWindowWidth || basis_h != gui::kInitWindowHeight) {
+        g_window_basis_audit.leaks_seen++;
+        fprintf(stderr,
+                "[window-basis-leak] case entry found the shared window at %dx%d (basis %dx%d); last geometry "
+                "mutator: %s — restoring\n",
+                basis_w, basis_h, gui::kInitWindowWidth, gui::kInitWindowHeight, g_window_basis_audit.last_mutator);
+        glfwSetWindowSize(window, gui::kInitWindowWidth, gui::kInitWindowHeight);
+      }
+    }
+
     if (g_window_size_test.requested.exchange(false)) {
+      record_mutator("window_size_test handshake (apply_aspect=%d, target %dx%d)",
+                     g_window_size_test.apply_aspect ? 1 : 0, g_window_size_test.width, g_window_size_test.height);
       if (g_window_size_test.apply_aspect) {
         gui::ApplyAspectRatio(window, gui::g_state.aspect_preset, gui::g_state.aspect_portrait);
       } else {
@@ -768,11 +842,20 @@ int main(int argc, char** argv) {
     // The same frame-boundary rebuild the product runs: Settings tests exercise atlas/style,
     // window geometry and active aspect reconciliation rather than stopping at the dirty flag.
     if (gui::g_ui_scale_dirty) {
+      int rebuild_w = 0;
+      int rebuild_h = 0;
+      glfwGetWindowSize(window, &rebuild_w, &rebuild_h);
       if (gui::RebuildForUiScale(window, io, /*monitor_scale_x=*/1.0f, /*monitor_scale_y=*/1.0f) &&
           use_contrast_palette) {
         // This harness-only palette is deliberately applied after the product language, at startup
         // and after every runtime rebuild, so a scale case cannot change later contrast snapshots.
         gui::ApplyContrastPaletteForTest(ImGui::GetStyle());
+      }
+      int rebuilt_w = 0;
+      int rebuilt_h = 0;
+      glfwGetWindowSize(window, &rebuilt_w, &rebuilt_h);
+      if (rebuilt_w != rebuild_w || rebuilt_h != rebuild_h) {
+        record_mutator("ui-scale rebuild (multiplier=%.2f)", static_cast<double>(gui::g_ui_scale_multiplier));
       }
     }
 
@@ -1046,5 +1129,9 @@ int main(int argc, char** argv) {
 #ifdef _WIN32
   timeEndPeriod(1);
 #endif
-  return (count_tested == count_success) ? 0 : 1;
+  // A window-basis leak is a run-level red, deliberately: the per-case results already passed
+  // because the audit restored the geometry before any capture read it, so the only place left
+  // to fail the run is here. Note this also stops a regen driver's full-suite run — that is the
+  // intended order (fix the leak first, then reshoot), not a regen malfunction.
+  return (count_tested == count_success && g_window_basis_audit.leaks_seen == 0) ? 0 : 1;
 }

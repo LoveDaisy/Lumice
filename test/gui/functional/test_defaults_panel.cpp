@@ -1402,6 +1402,10 @@ void RegisterDefaultsPanelTests(ImGuiTestEngine* engine) {
         IM_REGISTER_TEST(engine, "defaults_panel", "the_ui_scale_preference_applies_now_and_is_stored_on_save");
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ScopedPanel panel(ctx, "panel_app_ui_scale");
+      // The 16:9 preset below plus the rebuild at the 100% pick resize the shared window to the
+      // preset's ratio; the guard hands the 1600x980 basis back even when an IM_CHECK above
+      // returns early.
+      const ScopedWindowBasis window_basis(ctx);
       panel.OpenOn(gui::DefaultsPanelSection::kSettings);
 
       // A LITERAL id path, not a "**/" wildcard: ImGui::BeginCombo never registers a debug label
@@ -1481,17 +1485,8 @@ void RegisterDefaultsPanelTests(ImGuiTestEngine* engine) {
 
       // The saved overlay remains 150%; the unsaved 100% choice above is intentionally discarded
       // on close, while the process-wide visual language is already back at the reference basis.
-      // Restore the shared GLFW window on its owning thread so later pool cases inherit neither
-      // this preset nor its ratio-resized geometry.
-      gui::g_state.aspect_preset = gui::AspectPreset::kFree;
-      g_window_size_test.width = gui::kInitWindowWidth;
-      g_window_size_test.height = gui::kInitWindowHeight;
-      g_window_size_test.done.store(false);
-      g_window_size_test.requested.store(true);
-      while (!g_window_size_test.done.load()) {
-        ctx->Yield();
-      }
-      ctx->Yield(2);
+      // The guard hands the shared GLFW window back to the next case, so later pool cases
+      // inherit neither this preset nor its ratio-resized geometry.
     };
   }
 
