@@ -20,6 +20,7 @@
 // writes the third through DeriveAnalysisInProgress. No widget writes a document field.
 
 #include <cstdint>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -276,11 +277,45 @@ std::string FormatSegmentRaypathText(const LUMICE_RaypathChainSegment& segment);
 // framed by single spaces: the embedded body font (Roboto Medium) has no U+2192, so the core's
 // ASCII arrow is the one form that survives in every consumer, and this is the one place that
 // redraws it for the screen. A pure string rewrite, not a parse of the chain grammar — the
-// joiner is the only place a space occurs in the text, so there is nothing to disambiguate. No
-// other reader goes through it: the Exclude filter's name, `selected_entry` and the CLI all keep
-// the raw field. RenderResultList's row label is the only render-time caller. The glyph is the
-// one line to change should the owner prefer Roboto's own U+203A.
+// joiner is the only place a space occurs in the text, so there is nothing to disambiguate. It
+// is the joiner stage of AnalysisRowLabel below, which adds the crystal-prefix rewrite; the
+// row labels of the list go through AnalysisRowLabel, while `selected_entry`, the CSV, Copy and
+// the CLI all keep the raw field — the label is presentation, everything that matches or
+// persists stays the core text. The glyph is the one line to change should the owner prefer
+// Roboto's own U+203A.
 std::string JoinerForDisplay(std::string_view display);
+
+// pool slot -> core crystal id, over a bare layer list, by the rule the committed scene numbers
+// crystals (first reference in entry order — the same walk ComputeCrystalPoolToCoreIdMap's
+// GuiState overload in file_io.hpp mirrors). Declared here, next to its one production caller,
+// rather than in file_io.hpp beside the GuiState overload: file_io.hpp sits inside app.hpp's
+// include graph, so a declaration added there revalidates every TU that reaches it, and this
+// function's audience is this panel and its tests. The definition stays in file_io.cpp with the
+// GuiState overload, which delegates to it — one walk implementation, two entry points.
+std::map<int, int> ComputeCrystalPoolToCoreIdMap(const std::vector<Layer>& layers);
+
+// core crystal id -> pool slot, for the scene the result on show was computed from: the reverse
+// of ComputeCrystalPoolToCoreIdMap over analysis_result.analyzed_scene->layers —
+// the snapshot captured at Analyze time. A card moved or deleted since keeps the number it had
+// when the result was made: the freshness banner already says the list is stale, and the
+// numbers do not move under it. Derived every frame, stored nowhere (the snapshot itself is the
+// only copy). Empty without a snapshot, and then AnalysisRowLabel leaves the raw text alone —
+// a C<n> is honest, a guessed number is not.
+std::map<int, int> AnalysisCoreToPoolMap(const GuiState& state);
+
+// The presentation of an entry's `display` text in the list: JoinerForDisplay's joiner redraw,
+// with each segment-leading crystal token "C<core>(" — the one shape the v4.33 format puts a
+// crystal id in (lumice_engine.h at LUMICE_RaypathHistogramEntry) — rewritten to "#<pool>(",
+// the spelling the crystal cards use, under `core_to_pool`. The scan anchors at segment starts
+// — string start and just after the " -> " joiner — because that is where the grammar puts the
+// prefix; a "C1(" embedded anywhere else is not a crystal token. A token whose id the map
+// lacks, or that is not shaped like the token at all ("C1" with no "("), passes through
+// unchanged, for the same reason the map above can be empty: an old-style C<n> is honest, a
+// wrong number is not. Result rows rewrite with the Analyze-time map (AnalysisCoreToPoolMap),
+// the greyed excluded rows with the live document's (their own display text is built from it),
+// and the Exclude filter's name with the Analyze-time one — the name of the row the user
+// clicked.
+std::string AnalysisRowLabel(std::string_view display, const std::map<int, int>& core_to_pool);
 
 // The exclusion itself, on an eligible selection, reaching every entry that uses the chain's
 // crystal (the histogram counted it wherever it was used). Entries with no filter get one: a
@@ -349,12 +384,13 @@ std::vector<ExcludedRaypathRow> ComputeExcludedRaypathRows(const GuiState& state
 bool ApplyIncludeAgain(GuiState& state, const ExcludedRaypathRow& row);
 
 // The three texts a greyed row is drawn and copied with, in the header so a test can hold the
-// screen to them: the row's label (the chain as JoinerForDisplay draws it, then the "excluded"
-// tag — one selectable, one addressable label); the Energy cell ("was 12.34%", or an em dash
-// without a memory); and the "Copy row" text (`display,excluded,<was_pct or empty>` — three
-// fields, not the CSV's four: a greyed row has no cumulative share and no noise, and Export CSV
-// does not write it).
-std::string ExcludedRowLabel(std::string_view display);
+// screen to them: the row's label (the chain as AnalysisRowLabel draws it under `core_to_pool` —
+// the live document's map, the one the row's own display text was built from — then the
+// "excluded" tag: one selectable, one addressable label); the Energy cell ("was 12.34%", or an
+// em dash without a memory); and the "Copy row" text (`display,excluded,<was_pct or empty>` —
+// three fields, not the CSV's four: a greyed row has no cumulative share and no noise, and
+// Export CSV does not write it).
+std::string ExcludedRowLabel(std::string_view display, const std::map<int, int>& core_to_pool);
 std::string ExcludedRowWasText(const std::optional<double>& was_pct);
 std::string ExcludedRowCopyText(const ExcludedRaypathRow& row);
 // The Include again button's label (an icon, so it fits the +/- column), one per row under a

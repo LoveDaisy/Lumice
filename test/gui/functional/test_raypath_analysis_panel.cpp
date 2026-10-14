@@ -15,6 +15,7 @@
 #include <cstring>
 #include <filesystem>
 #include <initializer_list>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -24,6 +25,7 @@
 #include "IconsFontAwesome6.h"
 #include "gui/analysis_panel.hpp"
 #include "gui/edit_modals.hpp"
+#include "gui/file_io.hpp"
 #include "gui/gui_constants.hpp"
 #include "gui/gui_logger.hpp"
 #include "gui/log_sink.hpp"
@@ -768,9 +770,14 @@ bool ShowHaloDocumentWithResult(ImGuiTestContext* ctx, unsigned long long genera
 
 // The path of the greyed row for `display`, and of its Include again button — the row is a
 // selectable labelled ExcludedRowLabel under a PushID of the display text, the button a child of
-// that id, so "**/<display>/<button>" resolves to it and to no other row's.
+// that id, so "**/<display>/<button>" resolves to it and to no other row's. The label is built
+// the way RenderResultList builds it: rewritten under the live document's map.
 std::string ExcludedRowPath(const std::string& display) {
-  return "**/" + gui::ExcludedRowLabel(display);
+  std::map<int, int> core_to_pool;
+  for (const auto& [pool, core] : gui::ComputeCrystalPoolToCoreIdMap(gui::g_state)) {
+    core_to_pool.emplace(core, pool);
+  }
+  return "**/" + gui::ExcludedRowLabel(display, core_to_pool);
 }
 
 std::string IncludeAgainPath(const std::string& display) {
@@ -2055,13 +2062,16 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
 
   // The chain label on screen. Core formats a multi-layer chain as "(3-5) -> (1-3)" — the C API
   // contract, ASCII on purpose because the body font has no U+2192 — and the list draws that
-  // text through JoinerForDisplay, which redraws the joiner as the ICON_FA_ARROW_RIGHT glyph.
-  // Two things have to be true of a real multi-layer row, and the unit truth table can show
-  // neither: the row's label in the ImGui tree IS the rewritten text (so the render path goes
-  // through the function, not around it), and the rewritten text has no "?" — the fallback ImGui
-  // draws for a codepoint the atlas lacks, which is what the arrow WOULD be if it were U+2192.
-  // The first multi-layer row is used, not the first row: which chain carries the most energy is
-  // the scene's business (on this scene the top rows are single-layer), not this label's.
+  // text through AnalysisRowLabel, which redraws the joiner as the ICON_FA_ARROW_RIGHT glyph
+  // and each "C<core>(" crystal prefix as the card's "#<pool>(".
+  // Three things have to be true of a real multi-layer row, and the unit truth table can show
+  // none of them: the row's label in the ImGui tree IS the rewritten text (so the render path
+  // goes through the function, not around it), the rewritten text has no "?" — the fallback
+  // ImGui draws for a codepoint the atlas lacks, which is what the arrow WOULD be if it were
+  // U+2192 — and the crystal prefix came out spelled the way the cards spell it, checked against
+  // hand-written literals rather than the same helper the render runs. The first multi-layer row
+  // is used, not the first row: which chain carries the most energy is the scene's business (on
+  // this scene the top rows are single-layer), not this label's.
   {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "chain_label_shows_arrow_glyph_not_qmark");
     t->TestFunc = [](ImGuiTestContext* ctx) {
@@ -2088,8 +2098,16 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       IM_CHECK(multi != nullptr);
       const std::string raw = multi->display;
       IM_CHECK(raw.find(" -> ") != std::string::npos);
-      // The production rewrite of the production text.
-      const std::string label = gui::JoinerForDisplay(raw);
+      if (raw.front() != 'C') {
+        IM_ERRORF("expected a C-prefixed row (this scene's layers hold two crystals each), got \"%s\"", raw.c_str());
+      }
+      // The production rewrite of the production text — the same function and the same
+      // Analyze-time map the render path reads.
+      const std::string label = gui::AnalysisRowLabel(raw, gui::AnalysisCoreToPoolMap(gui::g_state));
+      // Hand-written literals, independent of that helper: the prefix came out in the card's
+      // spelling, and no scene-spelled crystal token survives to the screen.
+      IM_CHECK(label.rfind("#", 0) == 0);
+      IM_CHECK(label.find('C') == std::string::npos);
       IM_CHECK(label.find(ICON_FA_ARROW_RIGHT) != std::string::npos);
       IM_CHECK(label.find(" -> ") == std::string::npos);
       IM_CHECK(label.find('?') == std::string::npos);
@@ -2116,8 +2134,9 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
   }
 
   // The search box over the list (592.2). Four rows put on show directly — three chains and an
-  // "other" bucket — and the box is typed into. What it does: hide the rows whose RAW text does
-  // not contain the typed text, case-insensitively. What it must not do: touch the numbers. The
+  // "other" bucket — and the box is typed into. What it does: hide the rows whose raw text AND
+  // drawn label do not contain the typed text, case-insensitively — so the CSV's "C2(" and the
+  // card spelling "#2(" find the same row. What it must not do: touch the numbers. The
   // display order and the Cumulative % column are the whole list's, hidden rows included (a
   // shown row's Cumulative % still reads "down to this row of everything"), and the selection is
   // the chain's text, so a selected row that the search hides is still the selection and the
@@ -2132,6 +2151,21 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ScopedServerGuard guard;
       ResetTestState();
+      // A scene for the label rewrite to number by: three crystals, three entries in the root
+      // layer, and the Analyze-time snapshot taken from it — so the hand-written display's
+      // "C2(" maps to card #2 and the drawn label spells "#2(". The search then has two
+      // vocabularies to find the row by, which is what the assertions below pin.
+      gui::g_state.crystals.assign(3, gui::CrystalConfig{});
+      gui::Layer search_layer;
+      search_layer.probability = 1.0f;
+      for (int i = 0; i < 3; ++i) {
+        gui::EntryCard entry;
+        entry.crystal_id = i;
+        entry.proportion = 100.0f;
+        search_layer.entries.push_back(entry);
+      }
+      gui::g_state.layers.assign(1, search_layer);
+      gui::g_state.analysis_result.analyzed_scene = gui::GuiState::AnalysisSceneIdentity::From(gui::g_state);
       auto payload = std::make_shared<gui::AnalysisPayload>();
       payload->snapshot_generation = 3;
       payload->roi_mode = LUMICE_RAYPATH_ROI_FULL_SKY;
@@ -2162,8 +2196,12 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       ctx->Yield(1);
       ctx->SetRef(kWindowRef);
 
-      // Rows are found by what is DRAWN: the multi-layer row's label carries the arrow glyph.
-      const std::string multi_label = gui::JoinerForDisplay(displays[2]);
+      // Rows are found by what is DRAWN: the multi-layer row's label carries the arrow glyph and
+      // the card's "#2(" spelling.
+      const std::string multi_label = gui::AnalysisRowLabel(displays[2], gui::AnalysisCoreToPoolMap(gui::g_state));
+      // Hand-written literal, independent of the helper: "C2(...)" under the snapshot built
+      // above draws as the card spelling with the glyph joiner and nothing else moved.
+      IM_CHECK_STR_EQ(multi_label.c_str(), ("#2(3-5) " ICON_FA_ARROW_RIGHT " (1-3)"));
       const std::string other_path = std::string("**/").append(gui::kAnalysisOtherRowLabel);
       auto row_shown = [&](const std::string& label) {
         return ctx->ItemInfo(("**/" + label).c_str(), ImGuiTestOpFlags_NoError).ID != 0;
@@ -2213,6 +2251,13 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       // Case-insensitive: the user types what they remember, not the exact case.
       search("c2(");
       IM_CHECK(row_shown(multi_label));
+      // "#2(": only the DRAWN label carries it — the raw text has no '#' in it — so this is the
+      // card spelling finding the row the C2 spelling finds: same row, two vocabularies.
+      search("#2(");
+      IM_CHECK(!row_shown("3-5"));
+      IM_CHECK(!row_shown("1-2"));
+      IM_CHECK(row_shown(multi_label));
+      IM_CHECK(!row_shown(gui::kAnalysisOtherRowLabel));
 
       // The selection outlives being hidden, and Exclude's verdict does not depend on the box.
       search("");
@@ -2386,8 +2431,9 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       choose("1-2", "Copy row");
       IM_CHECK_STR_EQ(ImGui::GetClipboardText(), csv_row("1-2").c_str());
       IM_CHECK(std::strstr(ImGui::GetClipboardText(), " (-") != nullptr);
-      // The multi-layer row is found on screen by its glyph label and copies its raw text.
-      const std::string multi_label = gui::JoinerForDisplay(displays[2]);
+      // The multi-layer row is found on screen by its drawn label (card spelling under the
+      // Analyze-time map, arrow glyph for the joiner) and copies its raw text.
+      const std::string multi_label = gui::AnalysisRowLabel(displays[2], gui::AnalysisCoreToPoolMap(gui::g_state));
       choose(multi_label, "Copy raypath");
       IM_CHECK_STR_EQ(ImGui::GetClipboardText(), displays[2]);
       choose(multi_label, "Copy row");

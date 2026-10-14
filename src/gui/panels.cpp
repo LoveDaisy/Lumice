@@ -13,6 +13,7 @@
 #include "gui/crystal_preview.hpp"
 #include "gui/destructive_style.hpp"
 #include "gui/edit_modals.hpp"
+#include "gui/entry_delete.hpp"
 #include "gui/field_editor_registry.hpp"
 #include "gui/gui_constants.hpp"
 #include "gui/gui_state.hpp"
@@ -189,6 +190,19 @@ void MoveEntryWithinLayer(GuiState& state, int layer_idx, int from_idx, int to_i
     std::rotate(entries.begin() + to_idx, entries.begin() + from_idx, entries.begin() + from_idx + 1);
   }
   NotifyEntryMoved(state, layer_idx, from_idx, to_idx);
+}
+
+bool DeleteLayerEntry(GuiState& state, int layer_idx, int entry_idx) {
+  if (layer_idx < 0 || layer_idx >= static_cast<int>(state.layers.size())) {
+    return false;
+  }
+  auto& entries = state.layers[layer_idx].entries;
+  if (entry_idx < 0 || entry_idx >= static_cast<int>(entries.size()) || entries.size() <= 1) {
+    return false;
+  }
+  entries.erase(entries.begin() + entry_idx);
+  NotifyEntryDeleted(state, layer_idx, entry_idx);
+  return true;
 }
 
 int DuplicateEntryBelow(GuiState& state, int layer_idx, int entry_idx) {
@@ -1970,10 +1984,10 @@ void RenderLayer(GuiState& state, int layer_idx) {
       }
     }
 
-    if (pending_delete_entry >= 0 && layer.entries.size() > 1) {
-      layer.entries.erase(layer.entries.begin() + pending_delete_entry);
-      NotifyEntryDeleted(state, layer_idx, pending_delete_entry);
-      g_thumbnail_cache.OnLayerStructureChanged();
+    if (pending_delete_entry >= 0) {
+      if (DeleteLayerEntry(state, layer_idx, pending_delete_entry)) {
+        g_thumbnail_cache.OnLayerStructureChanged();
+      }
     } else if (pending_duplicate_entry >= 0) {
       DuplicateEntryBelow(state, layer_idx, pending_duplicate_entry);
     } else if (pending_move_from >= 0) {
