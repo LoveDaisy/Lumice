@@ -431,6 +431,12 @@ deleting its line, and an entry whose edge is gone fails the check.
   real OS config directory, so any case reaching the no-arg `MakeNewDocumentState()` reads
   whatever that machine has saved. A green run is not evidence the isolation holds; point `HOME`
   at a directory containing a `user_defaults.json` and re-run to check.
+  Isolation extends to the shared GLFW window's geometry: `ResetTestState()` restores it to the
+  1600x980 `kInit` basis at every case entry, and a test that moves the window declares a
+  `ScopedWindowBasis` guard rather than hand-writing a tail restore; a case entry that finds the
+  window elsewhere prints a `[window-basis-leak]` line naming the last geometry mutator and fails
+  the whole run's exit code (a leak is a run-level red, and it also stops a regen driver's
+  full-suite run on purpose — fix the leak, then reshoot).
 - Windows physical-desktop validation uses `scripts/win_remote_test.sh` together with `scripts/win_test_watcher.ps1`.
 - Performance diagnostics and workflows are documented in `doc/performance-testing.md`.
 

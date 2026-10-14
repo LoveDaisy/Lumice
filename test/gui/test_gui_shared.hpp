@@ -172,6 +172,37 @@ struct WindowSizeTestState {
   }
 };
 
+// Case-entry audit for the shared GLFW window's geometry. ResetTestState() asks the main loop
+// (fire-and-forget: no reply handshake, the window either is at the kInit basis or gets put back
+// before the case's first capture) to compare the window against that basis; finding it elsewhere
+// means some earlier case leaked a resize, which is counted and named, and the run's exit code
+// answers for it. The mutator tag is written only by the main loop at the two geometry-mutation
+// throat points (the window-size handshake service and the ui-scale rebuild), so everything here
+// is main-thread state except `requested`. Deliberately not a WindowSizeTestState member: that
+// handshake's reply would overwrite a test body's own in-flight resize target.
+struct WindowBasisAudit {
+  std::atomic<bool> requested{ false };
+  int leaks_seen = 0;
+  char last_mutator[192] = "startup";
+};
+
+// Leaves the shared GLFW window at the kInitWindowWidth x kInitWindowHeight basis when the case's
+// scope ends. Restores through the WindowSizeTestState handshake rather than a direct GLFW call:
+// the case body runs on the test coroutine thread, and GLFW's Cocoa backend may only be called
+// from the thread that owns the window. The restore lives in the destructor because a fatal
+// IM_CHECK expands to a return from the case body, so tail statements run only in the passing
+// runs — the runs that need restoring least (same reasoning as ScopedPopups above).
+struct ScopedWindowBasis {
+  explicit ScopedWindowBasis(ImGuiTestContext* ctx) : ctx_(ctx) {}
+  ~ScopedWindowBasis();
+
+  ScopedWindowBasis(const ScopedWindowBasis&) = delete;
+  ScopedWindowBasis& operator=(const ScopedWindowBasis&) = delete;
+
+ private:
+  ImGuiTestContext* ctx_;
+};
+
 // ========== Extern global variables (defined in test_gui_main.cpp) ==========
 
 extern ScreenshotCapture g_capture;
@@ -181,6 +212,7 @@ extern LeftPanelCaptureState g_left_panel_capture;
 extern FullFrameCaptureState g_fullframe_capture;
 extern AutoEvExportState g_auto_ev_export;
 extern WindowSizeTestState g_window_size_test;
+extern WindowBasisAudit g_window_basis_audit;
 extern std::vector<unsigned char> g_synth_tex;
 extern int g_core_log_level;
 extern int g_gui_log_level;
