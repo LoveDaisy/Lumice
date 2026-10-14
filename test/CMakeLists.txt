@@ -695,6 +695,11 @@ if(BUILD_GUI)
     # the greyed rows the list derives from the filters -> Include again back through the pool
     # primitives, read by the reconciler as the document edit it is.
     "${PROJ_TEST_DIR}/composition-correctness/gui/test_raypath_analysis_excluded_rows_chain.cpp"
+    # The Analyze-time scene snapshot -> the core->pool map -> the row label: every row's crystal
+    # prefix spells the crystal card's pool number across a drag-reorder and a card delete (the
+    # two edits that move the scene's insertion-order ids), and the greyed rows spell the live
+    # document's.
+    "${PROJ_TEST_DIR}/composition-correctness/gui/test_raypath_analysis_row_label_chain.cpp"
     # Analyze -> (edit, Run | Revert) -> the list-freshness banner's verdict: the one comparison
     # both lifecycle paths are meant to reach, asserted through the real DoAnalyze / DoRun /
     # DoRevert against a live server.
