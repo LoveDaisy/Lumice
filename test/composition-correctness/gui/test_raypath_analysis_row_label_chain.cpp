@@ -184,7 +184,7 @@ TEST(RaypathAnalysisRowLabelChain, ExcludedRowLabelsSpellTheLiveCardNumber) {
   const std::vector<ExcludedRaypathRow> rows = ComputeExcludedRaypathRows(g_state);
   ASSERT_EQ(rows.size(), 1u);
   EXPECT_EQ(rows[0].display, "C0(3-5)");
-  const std::string label = ExcludedRowLabel(rows[0].display);
+  const std::string label = ExcludedRowLabel(rows[0].display, LiveCoreToPoolMap());
   EXPECT_EQ(label.find("#0(3-5)"), 0u) << label;
   EXPECT_NE(label.find("excluded"), std::string::npos) << label;
 }

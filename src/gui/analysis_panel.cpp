@@ -91,15 +91,18 @@ bool ContainsCaseInsensitive(const char* haystack, const char* needle) {
   return it != h.end() || n.empty();
 }
 
-// Whether a row whose raw text is `display` stays on screen under the search box. Matches the
-// raw text — the ASCII " -> " joiner, what the CSV and the CLI print — not the arrow-glyph label
-// JoinerForDisplay draws, since the user types what they read in a log. Deliberately NOT
+// Whether a row stays on screen under the search box: `display` is the row's raw text and
+// `label` the text drawn for it, and either may match, case-insensitively. The raw arm is the
+// ASCII " -> " joiner and the "C<n>(" crystal prefix — what the CSV and the CLI print, so the
+// user can type what they read in a log; the label arm is the arrow glyph and the crystal
+// card's "#<pool>(" spelling — what the user sees on the row. Deliberately NOT
 // ImGuiTextFilter::PassFilter: that splits on commas and reads a leading '-' as "exclude rows
-// containing the rest", so "->" would hide exactly the multi-layer rows it is meant to find. The
-// predicate takes the row's text and nothing else, so a row that is not a payload entry (a
-// greyed excluded chain, say) can be run through the same box.
-bool RaypathRowMatchesSearch(const char* display) {
-  return ContainsCaseInsensitive(display, g_analysis_search_filter.InputBuf);
+// containing the rest", so "->" would hide exactly the multi-layer rows it is meant to find.
+// The predicate takes the row's two texts and nothing else, so a row that is not a payload
+// entry (a greyed excluded chain, say) can be run through the same box.
+bool RaypathRowMatchesSearch(const char* display, const std::string& label) {
+  return ContainsCaseInsensitive(display, g_analysis_search_filter.InputBuf) ||
+         ContainsCaseInsensitive(label.c_str(), g_analysis_search_filter.InputBuf);
 }
 
 // A row's Energy cell: its display energy as a percentage of the list's total, 0 for an empty
@@ -861,7 +864,10 @@ bool ApplyExcludeSelectedRaypath(GuiState& state) {
       }
     }
     FilterConfig filter;
-    filter.name = std::string("Exclude ") + e->display;
+    // The name spells the label the row was clicked under (the card's number), not the raw
+    // interchange text: a name is free text the user reads, never a key — binding, appending and
+    // idempotence all go by the filter's pool slot, `excluded_memory` by (pool, token).
+    filter.name = "Exclude " + AnalysisRowLabel(e->display, AnalysisCoreToPoolMap(state));
     filter.action = 1;  // filter_out
     // The row is a PHYSICAL class: the paths the list merged under its symmetry on this crystal's
     // shape and orientation. A filter's P/B/D is a LABEL equivalence, so the filter must remove
@@ -1072,8 +1078,8 @@ bool ApplyIncludeAgain(GuiState& state, const ExcludedRaypathRow& row) {
   return true;
 }
 
-std::string ExcludedRowLabel(std::string_view display) {
-  return JoinerForDisplay(display) + "   " ICON_FA_BAN " excluded";
+std::string ExcludedRowLabel(std::string_view display, const std::map<int, int>& core_to_pool) {
+  return AnalysisRowLabel(display, core_to_pool) + "   " ICON_FA_BAN " excluded";
 }
 
 std::string ExcludedRowWasText(const std::optional<double>& was_pct) {
@@ -1454,6 +1460,16 @@ void RenderResultList(GuiState& state) {
   // every frame, from the filters and the result — nothing is cached between frames, so a filter
   // edit anywhere (the modal, a Revert, Include again below) is on screen the frame it lands.
   const std::vector<ExcludedRaypathRow> excluded = ComputeExcludedRaypathRows(state);
+  // The two maps the row labels spell their crystal numbers by, built once per frame. Result
+  // rows read the Analyze-time snapshot (a card moved or deleted since the analysis does not
+  // move the numbers of the result computed before it); the greyed rows read the live document —
+  // their own display text was built from its map, and their labels rewrite it back by the same
+  // one.
+  const std::map<int, int> result_core_to_pool = AnalysisCoreToPoolMap(state);
+  std::map<int, int> live_core_to_pool;
+  for (const auto& [pool, core] : ComputeCrystalPoolToCoreIdMap(state)) {
+    live_core_to_pool.emplace(core, pool);
+  }
   if (view.payload->entries.empty() && excluded.empty()) {
     ImGui::TextDisabled("No ray reached this region.");
     return;
@@ -1487,7 +1503,10 @@ void RenderResultList(GuiState& state) {
     }
     // The search hides rows; it does not re-sum them. `row` still indexes display_cumulative_pct,
     // so a shown row's Cumulative % is "down to this row of the whole list", hidden rows included.
-    if (!RaypathRowMatchesSearch(e.display)) {
+    // The label is built for the search either way: the raw text and the drawn one are both
+    // searchable, and the label is what the row will draw below.
+    const std::string label = AnalysisRowLabel(e.display, result_core_to_pool);
+    if (!RaypathRowMatchesSearch(e.display, label)) {
       continue;
     }
     ImGui::TableNextRow();
@@ -1495,9 +1514,9 @@ void RenderResultList(GuiState& state) {
     // The id is the ORIGINAL index, so a re-sort moves the row and not the widget; the selection
     // itself is the chain's text, so it survives a re-read under another symmetry too.
     ImGui::PushID(idx);
-    // The label is the presentation (arrow glyph for the layer joiner); the selection stays the
-    // raw `display`, the text every other reader of the entry compares against.
-    const std::string label = JoinerForDisplay(e.display);
+    // The label is the presentation (the arrow glyph for the layer joiner, the crystal card's
+    // "#<pool>" for the crystal prefix); the selection stays the raw `display`, the text every
+    // other reader of the entry compares against.
     const bool selected = state.analysis.selected_entry.has_value() && *state.analysis.selected_entry == e.display;
     if (ImGui::Selectable(label.c_str(), selected, ImGuiSelectableFlags_SpanAllColumns)) {
       state.analysis.selected_entry = std::string(e.display);
@@ -1541,7 +1560,8 @@ void RenderResultList(GuiState& state) {
   // remembered share, not a term of display_total (the row is not in display_order at all, so
   // the Cumulative column and the total need no special case). AllowOverlap: the Include again
   // button in the last column sits on the row's span and must win the hover. Under the same
-  // search as the result rows — the raw display text, so "3-5" finds an excluded 3-5 too. One
+  // search as the result rows — raw text or drawn label, so "3-5" finds an excluded 3-5 and
+  // "#0(3-5)" finds it by the number the card shows. One
   // PushID per row, on the display text: unique here (the token appears once per crystal, and a
   // token still in the result is not a row), and what a test addresses the button through.
   // The click is applied after the loop, not inside it: ApplyIncludeAgain writes the pool, and
@@ -1549,15 +1569,15 @@ void RenderResultList(GuiState& state) {
   // next frame derives the rows as they then are.
   const ExcludedRaypathRow* include_again = nullptr;
   for (const ExcludedRaypathRow& x : excluded) {
-    if (!RaypathRowMatchesSearch(x.display.c_str())) {
+    const std::string label = ExcludedRowLabel(x.display, live_core_to_pool);
+    if (!RaypathRowMatchesSearch(x.display.c_str(), label)) {
       continue;
     }
     ImGui::TableNextRow();
     ImGui::TableSetColumnIndex(0);
     ImGui::PushID(x.display.c_str());
     ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-    ImGui::Selectable(ExcludedRowLabel(x.display).c_str(), false,
-                      ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowOverlap);
+    ImGui::Selectable(label.c_str(), false, ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowOverlap);
     ImGui::PopStyleColor();
     if (ImGui::IsItemHovered()) {
       ImGui::SetTooltip(

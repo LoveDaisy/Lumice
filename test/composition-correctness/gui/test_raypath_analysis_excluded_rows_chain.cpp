@@ -10,6 +10,7 @@
 #include <gtest/gtest.h>
 
 #include <cstdio>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -19,6 +20,7 @@
 #include "gui/analysis_panel.hpp"
 #include "gui/analysis_result.hpp"
 #include "gui/app.hpp"
+#include "gui/file_io.hpp"
 #include "gui/gui_state.hpp"
 #include "gui/gui_state_reconcile.hpp"
 #include "gui/raypath_segments.hpp"
@@ -142,11 +144,16 @@ TEST(RaypathAnalysisExcludedRowsChain, ExcludeThenNewResultWithoutTheRow_Produce
   ASSERT_TRUE(rows[0].was_pct.has_value());
   EXPECT_DOUBLE_EQ(*rows[0].was_pct, 75.0);
   EXPECT_EQ(rows[0].memory_seq, 1u);
-  // The texts the row is drawn and copied with.
+  // The texts the row is drawn and copied with. The label is the way RenderResultList draws it:
+  // rewritten under the live document's map (here the one-crystal document's identity map).
+  std::map<int, int> core_to_pool;
+  for (const auto& [pool, core] : ComputeCrystalPoolToCoreIdMap(g_state)) {
+    core_to_pool.emplace(core, pool);
+  }
   EXPECT_EQ(ExcludedRowWasText(rows[0].was_pct), "was 75.00%");
   EXPECT_EQ(ExcludedRowCopyText(rows[0]), "3-5,excluded,75.0000");
-  EXPECT_NE(ExcludedRowLabel(rows[0].display).find("3-5"), std::string::npos);
-  EXPECT_NE(ExcludedRowLabel(rows[0].display).find("excluded"), std::string::npos);
+  EXPECT_NE(ExcludedRowLabel(rows[0].display, core_to_pool).find("3-5"), std::string::npos);
+  EXPECT_NE(ExcludedRowLabel(rows[0].display, core_to_pool).find("excluded"), std::string::npos);
 
   // Read under another symmetry: the share is not comparable, the row still is a row.
   g_state.analysis_result.entries_symmetry = LUMICE_RAYPATH_SYMMETRY_P;

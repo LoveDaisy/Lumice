@@ -375,12 +375,13 @@ std::vector<ExcludedRaypathRow> ComputeExcludedRaypathRows(const GuiState& state
 bool ApplyIncludeAgain(GuiState& state, const ExcludedRaypathRow& row);
 
 // The three texts a greyed row is drawn and copied with, in the header so a test can hold the
-// screen to them: the row's label (the chain as JoinerForDisplay draws it, then the "excluded"
-// tag — one selectable, one addressable label); the Energy cell ("was 12.34%", or an em dash
-// without a memory); and the "Copy row" text (`display,excluded,<was_pct or empty>` — three
-// fields, not the CSV's four: a greyed row has no cumulative share and no noise, and Export CSV
-// does not write it).
-std::string ExcludedRowLabel(std::string_view display);
+// screen to them: the row's label (the chain as AnalysisRowLabel draws it under `core_to_pool` —
+// the live document's map, the one the row's own display text was built from — then the
+// "excluded" tag: one selectable, one addressable label); the Energy cell ("was 12.34%", or an
+// em dash without a memory); and the "Copy row" text (`display,excluded,<was_pct or empty>` —
+// three fields, not the CSV's four: a greyed row has no cumulative share and no noise, and
+// Export CSV does not write it).
+std::string ExcludedRowLabel(std::string_view display, const std::map<int, int>& core_to_pool);
 std::string ExcludedRowWasText(const std::optional<double>& was_pct);
 std::string ExcludedRowCopyText(const ExcludedRaypathRow& row);
 // The Include again button's label (an icon, so it fits the +/- column), one per row under a
