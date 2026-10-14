@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1791973845731,
+  "lastUpdate": 1791973848078,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9512,50 +9512,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "53fa48878ac86e2a3794c6b98f02d20fc12744c0",
-          "message": "Merge pull request #380 from LoveDaisy/fix/fp32-accumulator-compensation\n\nfix(server): widen long-chain fp32 accumulators to double (sub-sun hue drift with ray count)",
-          "timestamp": "2026-09-19T00:59:38+08:00",
-          "tree_id": "f432b8348761a5f45dc462565e3814371088db89",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/53fa48878ac86e2a3794c6b98f02d20fc12744c0"
-        },
-        "date": 1789751530587,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 88.8,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 99.9,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 98.6,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 93.4,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "11cc9ff591a8d177621c226af7d970ad200ad6fb",
           "message": "Merge pull request #381 from LoveDaisy/feat/lmc-linear-xyz-texture\n\nfeat(gui): store the .lmc preview texture as unexposed linear XYZ (format v5)",
           "timestamp": "2026-09-19T02:24:05+08:00",
@@ -13850,6 +13806,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 92.9,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "7ce6259807c4d988af8af1a1bee70b276ca2173e",
+          "message": "Merge pull request #492 from LoveDaisy/chore/raypath-docs-current-state\n\ndocs(raypath): align analysis docs with the current product state",
+          "timestamp": "2026-10-14T18:27:14+08:00",
+          "tree_id": "b5ab7d4c031478152f3808435eb5a75fa97f6fbf",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/7ce6259807c4d988af8af1a1bee70b276ca2173e"
+        },
+        "date": 1791973847340,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 94.4,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 100.1,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 99.2,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 94.1,
             "unit": "%"
           }
         ]
