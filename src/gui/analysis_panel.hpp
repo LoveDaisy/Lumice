@@ -285,8 +285,17 @@ std::string FormatSegmentRaypathText(const LUMICE_RaypathChainSegment& segment);
 // Roboto's own U+203A.
 std::string JoinerForDisplay(std::string_view display);
 
+// pool slot -> core crystal id, over a bare layer list, by the rule the committed scene numbers
+// crystals (first reference in entry order — the same walk ComputeCrystalPoolToCoreIdMap's
+// GuiState overload in file_io.hpp mirrors). Declared here, next to its one production caller,
+// rather than in file_io.hpp beside the GuiState overload: file_io.hpp sits inside app.hpp's
+// include graph, so a declaration added there revalidates every TU that reaches it, and this
+// function's audience is this panel and its tests. The definition stays in file_io.cpp with the
+// GuiState overload, which delegates to it — one walk implementation, two entry points.
+std::map<int, int> ComputeCrystalPoolToCoreIdMap(const std::vector<Layer>& layers);
+
 // core crystal id -> pool slot, for the scene the result on show was computed from: the reverse
-// of ComputeCrystalPoolToCoreIdMap (file_io.hpp) over analysis_result.analyzed_scene's layers —
+// of ComputeCrystalPoolToCoreIdMap over analysis_result.analyzed_scene->layers —
 // the snapshot captured at Analyze time. A card moved or deleted since keeps the number it had
 // when the result was made: the freshness banner already says the list is stale, and the
 // numbers do not move under it. Derived every frame, stored nowhere (the snapshot itself is the

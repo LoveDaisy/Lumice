@@ -13,6 +13,7 @@
 #include "gui/crystal_preview.hpp"
 #include "gui/destructive_style.hpp"
 #include "gui/edit_modals.hpp"
+#include "gui/entry_delete.hpp"
 #include "gui/field_editor_registry.hpp"
 #include "gui/gui_constants.hpp"
 #include "gui/gui_state.hpp"

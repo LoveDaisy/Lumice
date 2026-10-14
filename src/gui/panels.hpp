@@ -296,13 +296,6 @@ void MoveEntryWithinLayer(GuiState& state, int layer_idx, int from_idx, int to_i
 // Returns the copy's index, or -1 when the indices are out of range.
 int DuplicateEntryBelow(GuiState& state, int layer_idx, int entry_idx);
 
-// Remove the entry from its layer and repair every positional binding into the layer through
-// NotifyEntryDeleted (edit_modals.hpp) — the card delete button's one structural step, shared
-// with tests, so the binding repair is written once. The last remaining entry of a layer is not
-// deletable (the layer would be left empty): a no-op returning false. The card's view cache
-// (the thumbnail) is the caller's concern.
-bool DeleteLayerEntry(GuiState& state, int layer_idx, int entry_idx);
-
 }  // namespace lumice::gui
 
 #endif  // LUMICE_GUI_PANELS_HPP

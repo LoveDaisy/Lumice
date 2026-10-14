@@ -20,6 +20,10 @@
 #include <utility>
 #include <vector>
 
+// For ComputeCrystalPoolToCoreIdMap's layers overload, whose declaration lives in
+// analysis_panel.hpp next to its caller (see the note there); the definition stays here with
+// the GuiState overload it mirrors.
+#include "gui/analysis_panel.hpp"
 #include "gui/annotation_anchors.hpp"
 #include "gui/app.hpp"
 #include "gui/aspect_ratio_rules.hpp"

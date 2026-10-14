@@ -18,6 +18,7 @@
 
 #include "gui/analysis_panel.hpp"
 #include "gui/app.hpp"
+#include "gui/entry_delete.hpp"
 #include "gui/gui_state.hpp"
 #include "gui/panels.hpp"
 

@@ -25,7 +25,6 @@ struct GuiState;
 struct SimConfig;
 struct PreviewViewport;
 struct FilterConfig;
-struct Layer;
 
 // Identifies which filter reference triggered an ABI-bounds overflow inside BuildScene.
 // Populated only when BuildScene returns nullptr AND the caller passed a non-null pointer.
@@ -119,12 +118,6 @@ ScenePtr BuildScene(const GuiState& state, SceneIntent intent, FilterOverflowInf
 // (LUMICE_RaypathChainSegment::crystal_id) and needs the pool slot it came from. Injective by
 // construction (each value is the map's size at insertion), so the reverse lookup is unique.
 std::map<int, int> ComputeCrystalPoolToCoreIdMap(const GuiState& state);
-
-// The same walk over a bare layer list, so the analysis panel can number the scene a result was
-// computed from by the rule the committed scene numbers it: the result's layers are the
-// Analyze-time snapshot (GuiState::AnalysisSceneIdentity::layers), not the live document, and
-// they reach this as they were captured rather than through a GuiState.
-std::map<int, int> ComputeCrystalPoolToCoreIdMap(const std::vector<Layer>& layers);
 
 // Format a human-readable locator ("filter \"NAME\", Layer L / Entry E", or just
 // "Layer L / Entry E" when the filter is unnamed) from a FilterOverflowInfo, using 1-based
