@@ -1876,6 +1876,12 @@ struct GuiState {
   // hard-reset special cases (a filter's presence flipping, a colour struct edit) serve epoch
   // accounting, not this question. A narrower struct with one question is cheaper than either
   // coupling.
+  //
+  // CrystalConfig's sticky axis label rides along inside `crystals` (the whole struct is compared
+  // by operator==), so a pure relabel — OK on an edit that changed only the label — reads as
+  // stale here. That is accepted, conservative overreach: the label is document state, the list's
+  // banner is allowed to over-report, and exempting one field would need a second comparator whose
+  // every future field would have to be weighed again. Not written as a special case on purpose.
   struct AnalysisSceneIdentity {
     std::vector<CrystalConfig> crystals;
     std::vector<Layer> layers;

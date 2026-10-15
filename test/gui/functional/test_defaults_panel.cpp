@@ -41,6 +41,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <limits>
 #include <nlohmann/json.hpp>
 #include <optional>
 #include <set>
@@ -98,7 +99,7 @@ class ScopedPanel {
   //
   // What it no longer does is fold the preset nodes. A TreeNode's open flag lives in the panel
   // window's ImGui storage, and this teardown used to be the only thing in the suite that put it
-  // back — measured, not assumed: with the fold removed, the presets_expanded and presets_warning
+  // back — measured, not assumed: with the fold removed, the presets_expanded
   // references failed at 16.8 dB while the same scenes passed on their own. ResetTestState() now
   // clears every window's storage at the start of the next case, which also closes the honest
   // limit this teardown carried: the test context short-circuits every action once an error is
@@ -2500,40 +2501,31 @@ void RegisterDefaultsPanelTests(ImGuiTestEngine* engine) {
   // ===============================================================================================
 
   {
-    // A std edit is clamped to the preset's open domain, and the warning cell follows the VALUE
-    // rather than the event: 25 is above Column's domain and must be adjusted with the warning
-    // appearing; 0.3 is inside it and must be stored verbatim with the warning GONE. A one-sided
-    // case would be satisfied by a panel that clamped everything, and a warning that outlived the
-    // value that caused it would point at a number that is no longer there.
-    //
-    // Each state is asserted after a Save, because a preset edit is an edit of the working copy
-    // like every other edit in this panel. The warning assertions are not: they are pure UI state
-    // and never depended on the file.
-    ImGuiTest* t =
-        IM_REGISTER_TEST(engine, "defaults_panel", "a_preset_std_edit_clamps_and_the_warning_follows_the_value");
+    // A std edit is stored VERBATIM, in both directions, and the warning cell never fills: since
+    // the axis label went sticky, an out-of-usual-range retune is an ordinary value the crystal's
+    // badge reports — the store has nothing to refuse. A one-sided case would be satisfied by a
+    // panel that mangled one direction, so both are asserted, each after a Save (a preset edit is
+    // an edit of the working copy like every other edit in this panel).
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "defaults_panel", "a_preset_std_edit_stores_verbatim_and_stays_quiet");
     t->TestFunc = [](ImGuiTestContext* ctx) {
-      ScopedPanel panel(ctx, "panel_preset_clamp");
+      ScopedPanel panel(ctx, "panel_preset_verbatim");
       panel.OpenOn(gui::DefaultsPanelSection::kPresets);
       ctx->ItemOpen("**/###preset_Column");
       ctx->Yield(3);
 
       ctx->ItemInputValue("**/###preset_std_column", 25.0f);
       ctx->Yield(3);
-      IM_CHECK(ctx->ItemExists("**/###preset_warning_column"));
+      IM_CHECK(!ctx->ItemExists("**/###preset_warning_column"));
       SaveDefaultsPanel(ctx);
       {
         const auto stored = ReadPresetStd(ReadOverlayFile(panel.dir()), "column");
         IM_CHECK(stored.has_value());
-        IM_CHECK(*stored < gui::kColumnPlateParryZenithStdUpperBound);
-        IM_CHECK(*stored > 0.0f);
-        // The clamp is reported once, when the panel adjusts the value — not again on the Save that
-        // commits it. A second notice would tell the user something new had gone wrong.
+        IM_CHECK_EQ(*stored, 25.0f);
         IM_CHECK_EQ(gui::TakeUserDefaultsDowngradeCount(), 0);
       }
 
       ctx->ItemInputValue("**/###preset_std_column", 0.3f);
       ctx->Yield(3);
-      IM_CHECK(!ctx->ItemExists("**/###preset_warning_column"));
       SaveDefaultsPanel(ctx);
       {
         const auto stored = ReadPresetStd(ReadOverlayFile(panel.dir()), "column");
@@ -2544,46 +2536,39 @@ void RegisterDefaultsPanelTests(ImGuiTestEngine* engine) {
   }
 
   {
-    // A clamped std is SHOWN with enough digits to read back as the value that was stored.
+    // A stored std is SHOWN with enough digits to read back as the value that is stored.
     //
-    // The domains are open, so a clamp lands on a neighbouring float: Lowitz's lower bound clamps
-    // to nextafter(15, +inf) = 15.000001, which a fixed 7-digit format renders as "15" — directly
-    // under a line telling the user the value must stay GREATER than 15. That is the shape of the
-    // defect this guards, and it is why the precision is computed per value rather than fixed.
+    // The remaining shape of the old clamp-era defect: a value that needs eight significant digits
+    // — nextafter(15, +inf) = 15.000001, as an older build's clamp target or a hand edit would
+    // store — must not render as "15" through a fixed short format, because "15" parses to exactly
+    // the excluded bound. The precision is computed per value (RoundTripPrecisionForAxisPresetStd,
+    // via the box's PresetStdDisplayFormat), and the case pins the on-screen half of that rule.
     //
-    // Read by activating the box, which is the only way its text is observable at all (see
-    // ActivatedInputText) and is also what a user does before reading a number closely. The rule
-    // itself is pinned off-screen in composition-correctness/gui/test_user_defaults_chain.cpp;
-    // what is left for this layer is whether the box on screen goes through it.
-    ImGuiTest* t = IM_REGISTER_TEST(engine, "defaults_panel", "a_clamped_std_is_shown_with_enough_digits_to_read_back");
+    // Seeded straight into the file, the way an old build's stored value arrives. Read by
+    // activating the box, the only way its text is observable at all (see ActivatedInputText).
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "defaults_panel", "a_stored_std_is_shown_with_enough_digits_to_read_back");
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ScopedPanel panel(ctx, "panel_preset_precision");
+      WriteRawOverlay(panel.dir(), R"({"presets":{"axis":{"lowitz":{"zenith_std":15.000001}}}})");
       panel.OpenOn(gui::DefaultsPanelSection::kPresets);
       ctx->ItemOpen("**/###preset_Lowitz");
       ctx->Yield(3);
 
-      // Below Lowitz's lower bound, so the clamp lands just INSIDE it — the case where the extra
-      // digit is the difference between a true reading and a lie.
-      ctx->ItemInputValue("**/###preset_std_lowitz", 1.0f);
-      ctx->Yield(3);
-      IM_CHECK(ctx->ItemExists("**/###preset_warning_lowitz"));
-
       const std::string shown = ActivatedInputText(ctx, "**/###preset_std_lowitz");
       IM_CHECK(!shown.empty());
       // The claim, stated as the reader's own test rather than against a number: what the box shows
-      // must READ BACK as a value inside the domain. "15" parses to exactly the excluded bound, so
-      // this fails on the defect and passes only on a rendering that carries the extra digit.
+      // must READ BACK as the stored value. "15" parses to exactly the neighbouring bound, so this
+      // fails on the defect and passes only on a rendering that carries the extra digit.
       IM_CHECK_STR_NE(shown.c_str(), "15");
       IM_CHECK_GT(std::strtof(shown.c_str(), nullptr), gui::kLowitzZenithStdLowerBound);
 
-      // ...and it is the value that would actually be STORED, not a prettier neighbour of it. Read
-      // after a Save because the edit is in the working copy until then — the process-wide cache
-      // still answers the factory value while the panel is open, which is a different case's
-      // subject and would make a comparison against it meaningless here.
+      // ...and it is the value on disk, not a prettier neighbour of it.
       SaveDefaultsPanel(ctx);
       const auto stored = ReadPresetStd(ReadOverlayFile(panel.dir()), "lowitz");
       IM_CHECK(stored.has_value());
       IM_CHECK_EQ(std::strtof(shown.c_str(), nullptr), *stored);
+      // And the stored float IS the one the case seeded: one ulp above the bound.
+      IM_CHECK(*stored == std::nextafter(gui::kLowitzZenithStdLowerBound, std::numeric_limits<float>::infinity()));
     };
   }
 

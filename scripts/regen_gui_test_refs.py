@@ -151,7 +151,6 @@ GROUPS: dict[str, ReferenceGroup] = {
             "filtered",
             "no_changes",
             "presets_expanded",
-            "presets_warning",
             "wedge_presets",
         ],
         modes=[None],
