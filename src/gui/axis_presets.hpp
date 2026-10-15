@@ -13,8 +13,6 @@
 
 namespace lumice::gui {
 
-enum class AxisPreset { kColumn, kPlate, kParry, kLowitz, kRandom, kCustom };
-
 inline const char* AxisPresetLabel(AxisPreset p) {
   switch (p) {
     case AxisPreset::kColumn:
@@ -250,6 +248,42 @@ static_assert(axis_preset_detail::AxisPresetTableIsInEnumOrder(),
 // static_asserts above guarantee the cast lands on the matching row).
 inline constexpr const AxisPresetEntry& AxisPresetEntryFor(AxisPreset preset) {
   return kAxisPresets[static_cast<std::size_t>(preset)];
+}
+
+// AxisPreset <-> its JSON spelling, used by the .lmc axis block's "label" key (file_io.cpp).
+// Lowercase, matching AxisDistTypeJsonName above. Pure lookups with no logging and no fallback for
+// an unrecognised spelling: ParseCrystal is the only caller on the read side and states its own
+// answer (warn + derive-once), while the write side always produces a table name. Deliberately not
+// routed through kAxisPresets[].label — that field is the capitalized display name, and reusing it
+// as the stored spelling would couple the .lmc wire format to a UI string. Not override_json_name
+// either: that one is nullptr for Random/Custom, which store nothing in the override file but
+// still need a label spelling. A distinct switch, all six values listed, so a renamed or added
+// enumerator breaks the build here instead of silently changing what gets written.
+inline const char* AxisPresetJsonName(AxisPreset preset) {
+  switch (preset) {
+    case AxisPreset::kColumn:
+      return "column";
+    case AxisPreset::kPlate:
+      return "plate";
+    case AxisPreset::kParry:
+      return "parry";
+    case AxisPreset::kLowitz:
+      return "lowitz";
+    case AxisPreset::kRandom:
+      return "random";
+    case AxisPreset::kCustom:
+      return "custom";
+  }
+  return "custom";
+}
+
+inline std::optional<AxisPreset> AxisPresetFromJsonName(std::string_view spelled) {
+  for (const auto& entry : kAxisPresets) {
+    if (spelled == AxisPresetJsonName(entry.id)) {
+      return entry.id;
+    }
+  }
+  return std::nullopt;
 }
 
 namespace axis_preset_detail {

@@ -23,6 +23,7 @@
 #include <vector>
 
 #include "gui/app.hpp"
+#include "gui/axis_presets.hpp"
 #include "gui/file_io.hpp"
 #include "gui/gui_state.hpp"
 #include "gui/panels.hpp"  // MoveEntryWithinLayer
@@ -1632,6 +1633,103 @@ TEST(DocumentRoundtripChain, AReorderedLayerKeepsItsOrderInTheDocumentAndTheExpo
     exported.push_back(je.at("proportion").get<float>() / last);
   }
   EXPECT_EQ(exported, expected) << "the core JSON export did not keep the reordered layer's order";
+}
+
+// ---- The sticky axis label (CrystalConfig::axis_preset, .lmc key axis.label) ----
+
+// ① The stored label survives the round trip verbatim, INCLUDING the state the field exists to
+// protect: label != what the parameters classify as. The parameters under test read as Parry
+// (zenith gauss at 90, narrow; roll locked); the user's label says Column. A writer that elided
+// the key when it equals the constructor default, or a reader that re-derived it, would hand back
+// Parry — the exact flip sticky semantics forbid. The stored spelling is also pinned to the
+// lowercase table name, not the capitalized display label.
+TEST(DocumentRoundtripChain, AxisLabelSurvivesTheRoundTripEvenWhenItDisagreesWithTheParameters) {
+  GuiState before = MinimalDocument();
+  CrystalConfig& c = before.crystals.at(0);
+  c.zenith = AxisDist{ AxisDistType::kGauss, 90.0f, 1.0f };
+  c.azimuth = AxisDist{ AxisDistType::kUniform, 0.0f, 360.0f };
+  c.roll = AxisDist{ AxisDistType::kGauss, 0.0f, 1.0f };
+  ASSERT_EQ(ClassifyAxisPreset(c.zenith, c.azimuth, c.roll), AxisPreset::kParry)
+      << "premise: the parameters under test classify as Parry, not as the stored label below";
+  c.axis_preset = AxisPreset::kColumn;
+
+  const std::string json_str = SerializeGuiStateJson(before);
+  const nlohmann::json doc = nlohmann::json::parse(json_str);
+  ASSERT_EQ(doc.at("layers").at(0).at("entries").at(0).at("crystal").at("axis").at("label").get<std::string>(),
+            std::string("column"))
+      << "axis.label must carry the lowercase table spelling";
+
+  GuiState after;
+  ASSERT_TRUE(DeserializeGuiStateJson(json_str, after));
+  ASSERT_EQ(after.crystals.size(), 1u);
+  EXPECT_EQ(after.crystals.at(0).axis_preset, AxisPreset::kColumn)
+      << "the stored label did not survive; it came back re-derived from Parry-classifying parameters";
+  EXPECT_EQ(after.crystals.at(0).zenith, c.zenith) << "the label round trip must not touch the parameters";
+  EXPECT_EQ(after.crystals.at(0).roll, c.roll);
+}
+
+// ② A document written before the label key existed derives the label once from the parameters —
+// and does it on BOTH load paths that carry crystals, the .lmc inline form and the core-config
+// crystal array. The parameters are Plate-typical while the field still holds its kRandom
+// constructor default, so a reader that "derived" by keeping the default would fail: Plate is the
+// answer only ClassifyAxisPreset can produce here.
+TEST(DocumentRoundtripChain, AnOldDocumentWithoutALabelDerivesItOnceFromTheParameters) {
+  // Path 1: .lmc inline. The current writer adds axis.label; strip it to stand in for an old file.
+  GuiState before = MinimalDocument();
+  before.crystals.at(0).zenith = AxisDist{ AxisDistType::kGauss, 0.0f, 1.0f };
+  ASSERT_EQ(ClassifyAxisPreset(before.crystals.at(0).zenith, before.crystals.at(0).azimuth, before.crystals.at(0).roll),
+            AxisPreset::kPlate)
+      << "premise: the parameters under test classify as Plate, not as the field's default label";
+  nlohmann::json doc = nlohmann::json::parse(SerializeGuiStateJson(before));
+  doc.at("layers").at(0).at("entries").at(0).at("crystal").at("axis").erase("label");
+
+  GuiState after;
+  ASSERT_TRUE(DeserializeGuiStateJson(doc.dump(), after));
+  ASSERT_EQ(after.crystals.size(), 1u);
+  EXPECT_EQ(after.crystals.at(0).axis_preset, AxisPreset::kPlate)
+      << "an old inline document must derive its label from the parameters once";
+
+  // Path 2: the core-config crystal array (DeserializeFromJson), crystals placed in the pool
+  // through a scattering entry that references them by id.
+  const std::string core_doc = R"json({
+    "crystal": [{
+      "id": 1,
+      "type": "prism",
+      "axis": {
+        "zenith": {"type": "gauss", "mean": 0.0, "std": 1.0},
+        "azimuth": {"type": "uniform", "mean": 0.0, "std": 360.0},
+        "roll": {"type": "gauss", "mean": 0.0, "std": 1.0}
+      }
+    }],
+    "scene": {"scattering": [{"entries": [{"crystal": 1}]}]}
+  })json";
+  GuiState from_core;
+  ASSERT_TRUE(DeserializeFromJson(core_doc, from_core));
+  ASSERT_EQ(from_core.crystals.size(), 1u);
+  EXPECT_EQ(from_core.crystals.at(0).axis_preset, AxisPreset::kPlate)
+      << "an old core-config document must derive its label from the parameters once";
+}
+
+// ③ An unrecognisable spelling is announced — THIS notice's sentence, not just "some notice
+// happened" (the notice string accumulates across a load, so a non-empty check is always true
+// when any other downgrade coexists) — and the label falls back to derive-once rather than to a
+// guessed preset.
+TEST(DocumentRoundtripChain, AnUnknownAxisLabelIsAnnouncedAndDerivedFromTheParameters) {
+  GuiState before = MinimalDocument();
+  before.crystals.at(0).zenith = AxisDist{ AxisDistType::kGauss, 0.0f, 1.0f };  // classifies as Plate
+  nlohmann::json doc = nlohmann::json::parse(SerializeGuiStateJson(before));
+  doc.at("layers").at(0).at("entries").at(0).at("crystal").at("axis").at("label") = "cylindre";
+
+  ClearLoadNotice();
+  GuiState after;
+  ASSERT_TRUE(DeserializeGuiStateJson(doc.dump(), after));
+  ASSERT_EQ(after.crystals.size(), 1u);
+  EXPECT_EQ(after.crystals.at(0).axis_preset, AxisPreset::kPlate)
+      << "an unknown spelling must fall back to derive-once, not to a default label";
+  const std::string notice = PeekLoadNotice();
+  EXPECT_NE(notice.find("axis.label"), std::string::npos)
+      << "the popup did not carry THIS notice's sentence, so something else raised it: " << notice;
+  ClearLoadNotice();
 }
 
 }  // namespace lumice::gui

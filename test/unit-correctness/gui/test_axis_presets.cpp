@@ -123,6 +123,59 @@ TEST(AxisPresetTest, AxisDistTypeJsonNamesRoundTripAndAreTheOnDiskSpellings) {
   EXPECT_FALSE(AxisDistTypeFromJsonName("triangular").has_value());
 }
 
+// The sticky label's stored spelling: every preset round-trips through the lowercase name, the
+// names are pinned as literals (they are the on-disk contract of .lmc axis.label), and the
+// lookup rejects anything else — including the capitalized display labels and the override-file
+// spellings' neighbours.
+TEST(AxisPresetTest, AxisPresetJsonNamesRoundTripAndAreTheOnDiskSpellings) {
+  using lumice::gui::AxisPresetFromJsonName;
+  using lumice::gui::AxisPresetJsonName;
+  EXPECT_STREQ(AxisPresetJsonName(AxisPreset::kColumn), "column");
+  EXPECT_STREQ(AxisPresetJsonName(AxisPreset::kPlate), "plate");
+  EXPECT_STREQ(AxisPresetJsonName(AxisPreset::kParry), "parry");
+  EXPECT_STREQ(AxisPresetJsonName(AxisPreset::kLowitz), "lowitz");
+  EXPECT_STREQ(AxisPresetJsonName(AxisPreset::kRandom), "random");
+  EXPECT_STREQ(AxisPresetJsonName(AxisPreset::kCustom), "custom");
+  for (int i = 0; i < 6; ++i) {
+    const auto preset = static_cast<AxisPreset>(i);
+    const auto back = AxisPresetFromJsonName(AxisPresetJsonName(preset));
+    if (!back.has_value()) {
+      ADD_FAILURE() << "enumerator " << i << " does not round-trip";
+      continue;
+    }
+    EXPECT_EQ(static_cast<int>(*back), i);
+  }
+  EXPECT_FALSE(AxisPresetFromJsonName("Column").has_value());  // case matters: not a display label
+  EXPECT_FALSE(AxisPresetFromJsonName("").has_value());
+  EXPECT_FALSE(AxisPresetFromJsonName("prism").has_value());
+}
+
+// The label is sticky document state: editing the three axis distributions must not move it. This
+// is the storage-level half of AC2 — every production consumer reads the stored field (the
+// ClassifyAxisPreset call-form grep pins that), and this pins that the FIELD itself has no
+// derivation hiding inside the struct.
+TEST(AxisPresetTest, StoredLabelIsStickyUnderParameterEdits) {
+  using lumice::gui::CrystalConfig;
+  CrystalConfig c;
+  c.zenith = { AxisDistType::kGauss, 90.0f, 1.0f };
+  c.azimuth = lumice::gui::kAzFullUniform;
+  c.roll = lumice::gui::kRollFreeUniform;
+  ASSERT_EQ(ClassifyAxisPreset(c.zenith, c.azimuth, c.roll), AxisPreset::kColumn)
+      << "premise: the parameters classify as Column, matching the field default only by the "
+         "default triple — so the mutations below are real edits, not identity moves";
+  c.axis_preset = AxisPreset::kLowitz;
+
+  // Parameter edits the modal can express, applied straight to the config. The edited triple
+  // classifies as Lowitz again, so the case exercises "label survives edits it agrees with"; the
+  // disagreeing direction is the roundtrip chain's sticky case.
+  c.zenith = { AxisDistType::kGauss, 0.0f, 40.0f };
+  c.roll = { AxisDistType::kGauss, 0.0f, 1.0f };
+  EXPECT_EQ(c.axis_preset, AxisPreset::kLowitz) << "a parameter edit moved the stored label";
+  EXPECT_EQ(ClassifyAxisPreset(c.zenith, c.azimuth, c.roll), AxisPreset::kLowitz)
+      << "premise drift: the edited triple no longer classifies as the label, so this case no "
+         "longer exercises 'label survives edits it agrees with'";
+}
+
 // AxisDistTypeLabel is a view over kAxisDistTypeComboItems, so it must agree with that string
 // entry by entry — walked here independently rather than through the function under test.
 TEST(AxisPresetTest, AxisDistTypeLabelIsAViewOverTheComboItemString) {
