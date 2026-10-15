@@ -199,10 +199,12 @@ bool IsCurrentModalDApplicable();
 // this: the buffers are the modal's own, and the pool is the document.
 struct EditModalBuffers {
   CrystalConfig crystal;
-  AxisDist axis[3];                      // zenith, azimuth, roll
-  AxisPreset axis_preset;                // the label buffer (the sticky label being edited)
-  FilterConfig filter_top;               // name / action / sym_*; `param` is always empty here
-  std::vector<std::string> filter_rows;  // one string per OR row, blank rows included
+  AxisDist axis[3];                              // zenith, azimuth, roll
+  AxisPreset axis_preset = AxisPreset::kRandom;  // the label buffer (the sticky label being edited);
+                                                 // defaulted so the modal-closed early return reads a
+                                                 // well-defined value like every other member
+  FilterConfig filter_top;                       // name / action / sym_*; `param` is always empty here
+  std::vector<std::string> filter_rows;          // one string per OR row, blank rows included
 };
 EditModalBuffers GetEditModalBuffers();
 

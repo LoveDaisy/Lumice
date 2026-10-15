@@ -1545,9 +1545,9 @@ static void FillAxisDist(const AxisDist& src, LUMICE_Distribution* dst) {
 // Helper: fill a LUMICE_CrystalParam from GUI CrystalConfig.
 // `dst->id` is deliberately NOT set: LUMICE_SceneAddCrystal ignores any incoming .id and
 // assigns its own sequential id, returned via out_id (lumice_scene.h "Incremental build" contract).
-// Field-sync guard: see the static_assert(sizeof(CrystalConfig) == 232) near
-// SerializeCrystal above. One copy guards both functions (same TU, identical
-// condition); this comment keeps the pairing obvious to readers.
+// Field-sync guard: see the sizeof(CrystalConfig) static_assert near SerializeCrystal above —
+// the number itself lives only there, never here. One copy guards both functions (same TU,
+// identical condition); this comment keeps the pairing obvious to readers.
 void FillCrystalParam(const CrystalConfig& c, LUMICE_CrystalParam* dst) {
   dst->type = c.type == CrystalType::kPrism ? 0 : 1;
   // GUI shape fields are now first-class ShapeDist; map each straight to LUMICE_Distribution so a

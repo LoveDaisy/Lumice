@@ -549,10 +549,12 @@ std::string DescribeAxisPresetZenithTypeDomain(AxisPreset preset) {
 }
 
 // Assembled, not restated: the mean and its tolerance come from the preset table's own row and the
-// classifier's epsilon, the spread domain is the std-domain sentence above, and roll free/locked
-// reads the table's roll row through the classifier's own full-uniform predicate. No number in the
-// output has a second copy here — drift between this text and the badge predicate is a change to
-// one of those sources, visible everywhere at once.
+// classifier's epsilon, the spread domain is the std-domain sentence above, roll free/locked
+// reads the table's roll row through the classifier's own full-uniform predicate, and the zenith
+// distribution family is the accepted-type list (a Column label over a Zigzag zenith is out of
+// domain with every other clause satisfied, so the sentence must name that face too). No number in
+// the output has a second copy here — drift between this text and the badge predicate is a change
+// to one of those sources, visible everywhere at once.
 std::string DescribeAxisPresetDomain(AxisPreset preset) {
   if (preset == AxisPreset::kRandom) {
     return "all three axes uniform over the full 360";
@@ -569,6 +571,8 @@ std::string DescribeAxisPresetDomain(AxisPreset preset) {
   out += DescribeAxisPresetZenithStdDomain(preset);
   out += "; azimuth a full-circle uniform; roll ";
   out += axis_preset_detail::IsFullUniform360(entry.roll) ? "free" : "locked near 0";
+  out += "; zenith distribution ";
+  out += DescribeAxisPresetZenithTypeDomain(preset);
   return out;
 }
 

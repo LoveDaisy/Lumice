@@ -1514,9 +1514,13 @@ static void RenderAxisModal(GuiState& state) {
   const ImVec4 active_color = AccentColor();
   const ImVec4 active_text_color = ImGui::GetStyleColorVec4(ImGuiCol_WindowBg);
 
+  // One note, two hover homes: the caption and every chip below. The chips are the high-frequency
+  // path, and this row's pixels used to mean "apply definition" — the "renaming loads nothing"
+  // note belongs where the pointer actually lands, not only on the small print.
+  constexpr const char* kLabelOnlyNote = "Sets the label only — parameters are unchanged.";
   ImGui::Text("Label:");
   if (ImGui::IsItemHovered()) {
-    ImGui::SetTooltip("%s", "Sets the label only — parameters are unchanged.");
+    ImGui::SetTooltip("%s", kLabelOnlyNote);
   }
   for (const auto& entry : kAxisPresets) {
     ImGui::SameLine();
@@ -1536,6 +1540,9 @@ static void RenderAxisModal(GuiState& state) {
     }
     if (highlighted) {
       ImGui::PopStyleColor(4);
+    }
+    if (ImGui::IsItemHovered()) {
+      ImGui::SetTooltip("%s", kLabelOnlyNote);
     }
   }
   // Out-of-domain badge on the active chip: the live edit buffer has drifted from the label. The

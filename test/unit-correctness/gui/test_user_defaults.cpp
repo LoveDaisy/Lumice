@@ -909,6 +909,23 @@ TEST_F(UserDefaults, ABrokenOverrideFileCostsTheDefaultsAndSaysSoWithoutBreaking
 }
 
 // ================================================================================
+// D9 — the badge tooltip's domain sentence names the zenith type family
+// ================================================================================
+// A Column label over a Zigzag zenith is out of domain while the mean, spread, azimuth and roll
+// clauses of Column's sentence are all satisfied — without the distribution-family clause the
+// tooltip would list four satisfied conditions and leave the actual reason unsaid. The family
+// text comes from DescribeAxisPresetZenithTypeDomain, the same accepted-set list the preset
+// library's type combo draws from, so the sentence cannot drift from what the classifier reads.
+TEST_F(UserDefaults, AxisPresetDomainSentenceNamesTheZenithTypeFamily) {
+  const std::string column = gui::DescribeAxisPresetDomain(gui::AxisPreset::kColumn);
+  EXPECT_NE(column.find("zenith distribution"), std::string::npos);
+  EXPECT_NE(column.find("Gauss"), std::string::npos);
+  EXPECT_EQ(column.find("Zigzag"), std::string::npos) << "Zigzag is not in Column's accepted set";
+  const std::string lowitz = gui::DescribeAxisPresetDomain(gui::AxisPreset::kLowitz);
+  EXPECT_NE(lowitz.find("Zigzag"), std::string::npos) << "Zigzag is in Lowitz's accepted set";
+}
+
+// ================================================================================
 // D8 — load-time out-of-domain preset values are stored verbatim, silently
 // ================================================================================
 // Since the axis label went sticky, an out-of-domain retune is an ordinary personal default: the
